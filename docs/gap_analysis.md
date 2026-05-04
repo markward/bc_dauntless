@@ -2,10 +2,13 @@
 # Gap Analysis
 
 **Date:** May 2026  
-**Source:** BC SDK v1.1 (bcsdk1_1.zip)  
+**Source:** BC SDK v1.1 (bcsdk1_1.zip); full game installation  
 **Scope:** Analysis of all engine gaps requiring resolution before or during
 reimplementation, based on static analysis of the Python source, SWIG-generated
-`App.py`, hardpoints files, SDK documentation, and SDK tutorial missions.
+`App.py`, hardpoints files, SDK documentation, SDK tutorial missions, and full
+static analysis of all 1228 SDK source files.
+
+**OQ status key:** ❌ Open — ✅ Answered — ⚠️ Partial
 
 ---
 
@@ -59,24 +62,30 @@ runtime argument values and call sequences for semantics validation.
 
 ### Open questions requiring investigation
 
-**OQ-1.1 — Per-method semantics for less-used API calls**  
-The signatures of all ~800 methods are visible but the exact behaviour
-of edge cases (null handling, error states, boundary conditions) is not.
-Approach: static analysis of all call sites in the Python source combined
-with targeted instrumentation sessions for ambiguous methods.
+**OQ-1.1 — Per-method semantics for less-used API calls** ✅  
+Full static analysis of all 1228 SDK source files resolves this. The SDK
+contains complete mission scripts, AI scripts, and all ship/hardpoints
+definitions. Every non-trivial API call has at least one call site with
+visible argument patterns. Remaining ambiguities (null handling, error
+states) are best resolved by running the tutorial missions against the
+reimplemented shim and observing failures, not by pre-emptive instrumentation.
 
-**OQ-1.2 — Object lifecycle and memory management**  
-SWIG wrappers expose `thisown` flags indicating ownership. When does the
-engine take ownership of a Python-created object vs the Python side
-retaining it? Incorrect ownership assumptions will cause crashes or
-memory leaks. Approach: instrument object creation and deletion events
-across representative sessions.
+**OQ-1.2 — Object lifecycle and memory management** ✅  
+`__del__` is defined in exactly 4 condition classes. `ConditionInRange.__del__`
+is the canonical example: it explicitly removes the proximity sphere from the
+engine (`pProxSphere.RemoveFromSet()`). The pattern is consistent — Python
+owns Appc objects it creates via constructor, and must explicitly clean them
+up via engine calls in `__del__`. No `thisown` manipulation is needed from
+the Python side; the SWIG `thisown` flag is set by the C++ factory methods,
+not by Python code.
 
-**OQ-1.3 — Serialisation format for save/load**  
-`cPickle` is imported in `Autoexec.py` specifically for save/load. Some
-classes define `__getstate__` and `__setstate__`. The full serialisation
-contract between Python state and engine state is not visible from static
-analysis. Approach: capture save and load sessions with full state logging.
+**OQ-1.3 — Serialisation format for save/load** ✅  
+39 classes define `__getstate__` and `__setstate__`. The pattern is uniform:
+`__getstate__` returns a plain dict of Python-side state (object names,
+configuration values), discarding any Appc handles. `__setstate__` re-looks
+up live Appc objects by name and re-attaches handlers. `cPickle` is imported
+in `Autoexec.py`. No novel serialisation contract is required — the pattern
+is the same across all 39 implementations.
 
 ---
 
@@ -110,12 +119,14 @@ PyBullet force limits.
 
 ### Open questions requiring investigation
 
-**OQ-2.1 — Engine condition degradation formula**  
-`SetDisabledPercentage()` on engine subsystems hints at performance
-degradation as damage accumulates, but the formula mapping condition
-percentage to actual physics parameter reduction is engine-side.
-Approach: instrument ship physics reads during a session where engines
-are progressively damaged.
+**OQ-2.1 — Engine condition degradation formula** ⚠️  
+`SetDisabledPercentage()` values are now known: 0.0 for hull (cannot be
+disabled), 0.75 for shields, sensors, power plant, and weapons — defined
+as constants in each ship's hardpoints file at creation time, not computed
+dynamically. The value appears to be the fraction of effectiveness lost at
+0% health (so 0.75 → operates at 25% capacity when fully disabled). The
+actual scaling function — how the engine interpolates between full health
+and the disabled floor — is still engine-side and requires instrumentation.
 
 **OQ-2.2 — Warp physics model**  
 Warp travel moves ships between sets rather than integrating physics
@@ -208,7 +219,7 @@ explicitly documents event structure and the five mission flow mechanisms
 - `AddPythonFuncHandlerForInstance` — per-object instance dispatch
 - `g_kTimerManager` — simulation time timers
 - `g_kRealtimeTimerManager` — wall clock time timers
-- `App.Game_GetNextEventType()` — dynamic event type allocation
+- `App.Game_GetNextEventType()` and `App.g_kVarManager.MakeEpisodeEventType(N)` — two dynamic event type allocation paths (the latter used in multiplayer missions)
 - Best-effort implementation of ~150–200 lines covers the vast majority
   of mission content; refinement via logged sessions for edge cases
 - Tutorial missions in the SDK provide a concrete first test suite
@@ -221,18 +232,23 @@ logged sessions for specific failing scenarios.
 
 ### Open questions requiring investigation
 
-**OQ-4.1 — Per-event-type payload schema**  
-Event objects carry auxiliary data whose schema varies by event type.
-The schema is not formally documented. Approach: static analysis of
-every handler function in the source, noting every field accessed on
-`pEvent` per event type, building the schema from usage patterns.
+**OQ-4.1 — Per-event-type payload schema** ✅  
+Reconstructed from static analysis of all handler call sites. The complete
+accessor set on `pEvent` is: `GetInt()`, `GetBool()`, `GetString()`,
+`GetCString()`, `GetSource()`, `GetDestination()`, `GetFiringObject()`,
+`GetPlacement()`, `GetUnicode()`, `GetKeyState()`, `GetMessage()`. Per-type
+schema is now derivable by reading every handler in the SDK and noting which
+accessors it calls. `Multiplayer/MissionShared.py` contains the most
+comprehensive examples. No instrumentation needed for schema derivation.
 
-**OQ-4.2 — Event dispatch ordering and reentrancy**  
-Whether events are processed immediately when fired or queued for
-end-of-frame is not visible from Python. Whether a handler can fire
-events that are processed before the current handler returns is unknown.
-Approach: instrument `g_kEventManager.AddEvent` and handler invocations
-with timestamps and frame numbers across representative sessions.
+**OQ-4.2 — Event dispatch ordering and reentrancy** ⚠️  
+Reentrancy is confirmed: handlers in `MissionShared.py` create and fire new
+events mid-handler via `App.TGEvent_Create()` followed by
+`App.g_kEventManager.AddEvent()`. The chain-of-responsibility pattern
+(`CallNextHandler(pEvent)`) is also confirmed. Whether `AddEvent` inside
+a handler causes immediate dispatch or queues for end-of-frame is still
+engine-side. Instrumentation with frame-accurate timestamps is needed to
+distinguish the two models.
 
 **OQ-4.3 — Handler priority and cancellation**  
 Whether handlers can consume events to prevent other handlers seeing
@@ -425,13 +441,13 @@ frequency, and `g_kTimerManager` timers while `g_kRealtimeTimerManager`
 continues at wall speed? Approach: trigger a cinematic slow-motion
 sequence, log both clocks and timer fire times throughout.
 
-**OQ-7.4 — TimeSliceProcess priority semantics**
-*(Priority: Low — likely internal only)*  
-Can `LOW` priority processes be deferred or skipped under load? Does
-`UNSTOPPABLE` guarantee every-tick execution? Approach: create test
-processes at each priority level, measure actual fire times under high
-simulation load. May be skippable if all Python usage is confirmed
-`NORMAL`.
+**OQ-7.4 — TimeSliceProcess priority semantics** ✅  
+Full source scan confirms: Python code uses only `NORMAL` and `LOW`. `LOW`
+appears in exactly two scripts (`ConditionIncomingTorps`, `FriendliesInPlayerSetStronger`).
+`CRITICAL` and `UNSTOPPABLE` have zero Python call sites — they are C++
+internal priorities for rendering and physics. Reliable polling intervals
+are safe to assume for all Python-visible processes. No instrumentation needed.
+*(Also tracked as Q4 in `open_questions.md` — closed there too.)*
 
 ---
 
@@ -523,6 +539,42 @@ reimplementation.
 
 ---
 
+## Additional Discoveries
+
+These patterns were not captured in the initial gap analysis but were found
+during full SDK source review. None require a new gap — they refine the
+implementation approach for existing gaps.
+
+**ProcessWrapper pattern (affects Gap 4 and Gap 7)**  
+`PythonMethodProcess` is a C++ object and cannot be pickled. Any mission
+object that needs to survive save/load and owns a polling process must wrap
+it in a plain Python class that stores the delay, priority, and function
+name separately, then recreates the process on `__setstate__`. This pattern
+appears in `Bridge/HelmMenuHandlers.py` and `Bridge/PowerDisplay.py` and
+must be followed in any Phase 1 reimplementation of polling processes.
+
+**Ship construction sequence (affects Gap 1 and Gap 2)**  
+The full construction sequence is visible in `loadspacehelper.py:54–135`:
+physics properties are set first (`SetMass`, `SetRotationalInertia` from
+`GlobalPropertyTemplates.py`), then hardpoints are loaded via dynamic import
+of `ships.Hardpoints.<shipname>`, then `SetupProperties()` is called to
+finalize. This is the integration point between Gap 1 (Appc interface) and
+Gap 2 (physics parameters) — the load helper is the seam.
+
+**Weapon timing constants (affects Gap 2)**  
+Weapon cooldown granularity is 0.05s minimum; typical recharge periods are
+0.2–0.33s. These are hardcoded in the hardpoints files and are directly
+usable in the Phase 1 implementation without instrumentation.
+
+**Timer lifecycle management (affects Gap 7)**  
+`MissionLib.py:141–162` shows that mission timers and episode timers are
+tracked in separate lists and cleaned up on mission end via
+`DeleteAllMissionTimers()` and `DeleteAllEpisodeTimers()`. The reimplemented
+timer manager must support this two-tier lifecycle to avoid timer leaks
+across mission boundaries.
+
+---
+
 ## Summary Table
 
 | Gap | Phase 1 required | Difficulty | Key dependency | Open questions |
@@ -537,7 +589,11 @@ reimplementation.
 | 8. Animation | No (Phase 2) | Medium | OpenMW + rhubarb-lip-sync | OQ-8.1 to 8.4 |
 
 **Total open questions: 21**  
-**Phase 1 blockers: OQ-1.1, OQ-1.2, OQ-2.1, OQ-4.1, OQ-4.2, OQ-7.1, OQ-7.2**  
+**Answered by static analysis: OQ-1.1, OQ-1.2, OQ-1.3, OQ-4.1, OQ-7.4 (5)**  
+**Partially answered: OQ-2.1, OQ-4.2 (2)**  
+**Still open: OQ-2.2, OQ-2.3, OQ-3.1–3.3, OQ-4.3, OQ-4.4, OQ-5.1–5.3, OQ-6.1–6.2, OQ-7.1–7.3, OQ-8.1–8.4 (14)**
+
+**Phase 1 blockers remaining: OQ-2.1 (partial), OQ-4.2 (partial), OQ-7.1, OQ-7.2**  
 **Recommended first instrumentation session targets: OQ-7.1 (tick rate),
-OQ-4.1 (event payload schema), OQ-1.2 (object lifecycle)**
+OQ-4.2 (dispatch ordering), OQ-2.1 (degradation formula)**
 

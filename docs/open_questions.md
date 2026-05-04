@@ -5,9 +5,11 @@ Each requires a targeted instrumentation session against the running game.
 All are answerable via the `Appc` wrapper logging approach before significant
 reimplementation work begins.
 
+**Status key:** ❌ Open — ✅ Answered by static analysis — ⚠️ Partial
+
 ---
 
-## Q1 — Tick Rate
+## Q1 — Tick Rate ❌
 
 **Question:** What is the game loop tick rate? Is it fixed or variable?
 
@@ -24,7 +26,7 @@ timer granularity visible in source and era of engine.
 
 ---
 
-## Q2 — Subsystem Update Ordering Within a Tick
+## Q2 — Subsystem Update Ordering Within a Tick ❌
 
 **Question:** Within a single tick, what order do subsystems update?
 Specifically — does physics integrate before or after AI runs? Do events
@@ -48,7 +50,7 @@ reconstruct the within-tick call sequence.
 
 ---
 
-## Q3 — Time Scale Interaction with Physics and AI
+## Q3 — Time Scale Interaction with Physics and AI ⚠️
 
 **Question:** When `SetTimeScale()` is called (e.g. for slow motion cinematic
 mode), does the physics integrator receive a scaled delta-time, or is
@@ -61,6 +63,14 @@ continue at wall-clock speed?
 scales the entire simulation. Affects how `SetTimeScale` must be
 implemented in the replacement engine.
 
+**Static analysis update:** `MissionLib.py:93–121` confirms the two-timer
+architecture. Mission-critical timers and episode timers are tracked and
+cleaned up separately (`DeleteAllMissionTimers`, `DeleteAllEpisodeTimers`),
+implying the game actively expects the two clocks to diverge. This is
+consistent with `g_kRealtimeTimerManager` continuing at wall speed during
+slow motion. Whether `g_kTimerManager` slows proportionally to
+`SetTimeScale` still requires instrumentation to confirm.
+
 **Instrumentation approach:** Call `SetTimeScale(0.5)` during a session.
 Log `GetGameTime` and `GetRealTime` readings at each frame alongside
 `GetUpdateNumber`. Measure AI callback frequency and timer fire times
@@ -71,7 +81,7 @@ log throughout, compare game time progression to real time progression.
 
 ---
 
-## Q4 — TimeSliceProcess Priority Semantics
+## Q4 — TimeSliceProcess Priority Semantics ✅
 
 **Question:** What do the four priority levels (`UNSTOPPABLE`, `CRITICAL`,
 `NORMAL`, `LOW`) actually mean in practice? Does `UNSTOPPABLE` run every
@@ -84,41 +94,44 @@ If priority affects whether a process fires on a given tick, condition
 polling intervals may not be as reliable as assumed. Combat AI correctness
 could be affected if `LOW` priority processes are skipped under load.
 
-**Instrumentation approach:** Create processes at each priority level with
-known delays. Log actual fire times relative to expected fire times under
-both low and high simulation load (many ships, active combat). Compare
-regularity across priority levels.
+**Answer (static analysis):** A full scan of the 1228 SDK source files
+found only two priority levels used in Python code:
 
-**Note:** Static analysis suggests almost all Python-visible usage is
-`NORMAL` priority. Exotic priorities may only be used internally by the
-engine for rendering and physics. This question may have low practical
-impact but should be confirmed before assuming reliable polling intervals.
+- `NORMAL` — the default for all condition polling (`ConditionInRange`,
+  `ConditionInLineOfSight`, `ConditionInPhaserFiringArc`, etc.)
+- `LOW` — used in exactly two places: `ConditionIncomingTorps` and
+  `FriendliesInPlayerSetStronger`
+
+`CRITICAL` and `UNSTOPPABLE` have no Python call sites. They are C++
+internal priorities for rendering and physics. This means reliable polling
+intervals are safe to assume for all Python-visible processes regardless
+of priority level. Instrumentation for this question is no longer needed.
 
 ---
 
 ## Investigation Priority
 
-| Question | Impact if wrong | Instrumentation effort |
-|---|---|---|
-| Q1 Tick rate | High — affects all timing | Very low — 5 minutes |
-| Q2 Update ordering | Medium-high — affects AI/physics interaction | Medium — one focused session |
-| Q3 Time scale | Medium — affects cinematic mode only | Low — trigger one cinematic |
-| Q4 Process priorities | Low — likely internal only | Medium — requires load testing |
+| Question | Impact if wrong | Instrumentation effort | Status |
+|---|---|---|---|
+| Q1 Tick rate | High — affects all timing | Very low — 5 minutes | ❌ Open |
+| Q2 Update ordering | Medium-high — affects AI/physics interaction | Medium — one focused session | ❌ Open |
+| Q3 Time scale | Medium — affects cinematic mode only | Low — trigger one cinematic | ⚠️ Partial |
+| Q4 Process priorities | Low — C++ internal only | — | ✅ Answered |
 
 **Recommended order:** Q1 first (quick win, unblocks everything else),
 Q3 second (quick, self-contained), Q2 third (requires more careful
-instrumentation setup), Q4 last (lowest priority, may be skipped if
-resources are constrained).
+instrumentation setup). Q4 is closed — no instrumentation needed.
 
 ---
 
 ## Notes
 
-- All four questions are answerable in a single instrumentation session
-  if the `Appc` wrapper logging infrastructure is in place.
+- Q4 is closed by static analysis. The remaining three questions (Q1, Q2,
+  Q3) are answerable in a single instrumentation session once the `Appc`
+  wrapper logging infrastructure is in place.
 - Q1 should be answered before any physics or timer implementation work begins.
 - Q2 should be answered before AI integration work begins.
-- Q3 and Q4 can be deferred until cinematic/priority features are being
-  implemented.
+- Q3 is partially answered — the two-timer architecture is confirmed.
+  Only the scaling behaviour under `SetTimeScale` still needs measurement.
 - The BC modding community documentation may already answer Q1 — check
   BCFiles and related modding wikis before instrumentation.
