@@ -20,7 +20,7 @@ _PY2_PRINT_BARE = re.compile(r'^(\s*)print\s*$', re.MULTILINE)
 def _fix_py2_syntax(source: str) -> str:
     """Rewrite Python 2-only syntax that ast.parse rejects."""
     source = source.replace('<>', '!=')
-    source = source.replace('.has_key(', '.__contains__(')
+    source = re.sub(r'\.has_key\s*\(', '.__contains__(', source)
     source = _PY2_RAISE.sub(lambda m: m.group(1) + '(' + m.group(2).rstrip() + ')', source)
     source = _PY2_OCTAL.sub(
         lambda m: '0o' + m.group(1) if any(c != '0' for c in m.group(1)) else m.group(0),
@@ -72,6 +72,43 @@ class _MoveGlobalsToTop(ast.NodeTransformer):
         return node
 
     visit_AsyncFunctionDef = visit_FunctionDef
+
+
+class _FixPy2Sort(ast.NodeTransformer):
+    """Rewrite x.sort(cmp_func) → x.sort(key=functools.cmp_to_key(cmp_func)).
+
+    Python 2 list.sort accepted a positional comparison function; Python 3
+    removed that parameter.  All SDK occurrences follow the Python 2 pattern.
+    """
+
+    def visit_Call(self, node):
+        self.generic_visit(node)
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "sort"
+            and len(node.args) == 1
+            and not node.keywords
+        ):
+            cmp_arg = node.args[0]
+            cmp_to_key = ast.Call(
+                func=ast.Attribute(
+                    value=ast.Call(
+                        func=ast.Name(id="__import__", ctx=ast.Load()),
+                        args=[ast.Constant(value="functools")],
+                        keywords=[],
+                    ),
+                    attr="cmp_to_key",
+                    ctx=ast.Load(),
+                ),
+                args=[cmp_arg],
+                keywords=[],
+            )
+            return ast.Call(
+                func=node.func,
+                args=[],
+                keywords=[ast.keyword(arg="key", value=cmp_to_key)],
+            )
+        return node
 
 
 class _FixDottedImport(ast.NodeTransformer):
@@ -156,8 +193,8 @@ class _Stub:
     def __rtruediv__(self, o): return 0.0
     def __floordiv__(self, o): return 0
     def __rfloordiv__(self, o): return 0
-    def __mod__(self, o): return 0
-    def __rmod__(self, o): return 0
+    def __mod__(self, o): return "" if isinstance(o, (str, tuple)) else 0
+    def __rmod__(self, o): return "" if isinstance(o, (str, tuple)) else 0
     def __neg__(self): return 0
     def __pos__(self): return 0
     def __abs__(self): return 0
@@ -218,6 +255,7 @@ class _SDKLoader(importlib.abc.Loader):
             tree = ast.parse(source, filename=self.path)
         tree = _MoveGlobalsToTop().visit(tree)
         tree = _FixDottedImport().visit(tree)
+        tree = _FixPy2Sort().visit(tree)
         ast.fix_missing_locations(tree)
         code = compile(tree, self.path, "exec")
         module.__dict__.setdefault('apply', lambda f, a=(), kw={}: f(*a, **kw))
@@ -334,13 +372,10 @@ def pytest_configure(config):
     if not any(isinstance(f, _SDKFinder) for f in sys.meta_path):
         sys.meta_path.insert(0, _SDKFinder())
 
-    # Callable stubs: attributes must be callable (return None).
-    _callable_stubs = [
-        "LoadBridge",
-    ]
-    for name in _callable_stubs:
-        if name not in sys.modules:
-            sys.modules[name] = _StubModule(name)
+    # LoadBridge is a real Phase 1 shim (LoadBridge.py at project root) that
+    # registers an empty "bridge" SetClass.  Remove any stale stub entry so the
+    # real module is picked up on first import.
+    sys.modules.pop("LoadBridge", None)
 
     # Bridge: real SDK package at sdk/Build/scripts/Bridge/.  Setting __path__
     # lets Python (and _SDKFinder) find Bridge.* submodules.  HelmMenuHandlers
@@ -361,7 +396,10 @@ def pytest_configure(config):
         _actions.__path__ = [str(SDK_SCRIPTS / "Actions")]  # type: ignore[attr-defined]
         sys.modules["Actions"] = _actions
 
-    # Plain stubs: imported but no attributes accessed in Phase 1 code paths.
+    # Plain stubs: modules that are imported but whose attributes are not
+    # accessed in Phase 1 code paths, or are pure UI/bridge handlers.
+    # Use _StubModule so that any attribute access returns a chainable stub
+    # rather than raising AttributeError.
     _plain_stubs = [
         "imp",  # removed in Python 3.12; loadspacehelper imports but never uses it
         "Bridge.TacticalCharacterHandlers",
@@ -372,20 +410,36 @@ def pytest_configure(config):
         "BridgeHandlers",
         "Actions.MissionScriptActions",
     ]
-    for name in _plain_stubs:
-        if name not in sys.modules:
-            sys.modules[name] = types.ModuleType(name)
+    for _stub_name in _plain_stubs:
+        if _stub_name not in sys.modules:
+            _stub = _StubModule(_stub_name)
+            sys.modules[_stub_name] = _stub
+            _parent, _, _child = _stub_name.rpartition(".")
+            if _parent and _parent in sys.modules:
+                try:
+                    setattr(sys.modules[_parent], _child, _stub)
+                except (AttributeError, TypeError):
+                    pass
 
-    # Multiplayer UI modules require live game objects (panes, menus) that are
-    # not available in headless Phase 1 testing.  Pre-stubbing prevents loading
-    # the real module and avoids NoneType crashes from uninitialized UI state.
+    # Multiplayer: pre-create the package so child stubs land as attributes.
+    if "Multiplayer" not in sys.modules:
+        _mp_pkg = types.ModuleType("Multiplayer")
+        _mp_pkg.__path__ = [str(SDK_SCRIPTS / "Multiplayer")]  # type: ignore[attr-defined]
+        sys.modules["Multiplayer"] = _mp_pkg
+
     _multiplayer_ui_stubs = [
         "Multiplayer.MultiplayerMenus",
         "Multiplayer.MissionMenusShared",
     ]
-    for name in _multiplayer_ui_stubs:
-        if name not in sys.modules:
-            sys.modules[name] = _StubModule(name)
+    for _mp_name in _multiplayer_ui_stubs:
+        _stub = _StubModule(_mp_name)
+        sys.modules[_mp_name] = _stub
+        _parent, _, _child = _mp_name.rpartition(".")
+        if _parent in sys.modules:
+            try:
+                setattr(sys.modules[_parent], _child, _stub)
+            except (AttributeError, TypeError):
+                pass
 
     # Characters: alias package for Bridge.Characters.  SDK scripts in Bridge/
     # use bare `import Characters.X` relying on Python 1.5 implicit relative

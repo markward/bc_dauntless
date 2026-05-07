@@ -11,6 +11,18 @@ from engine.appc.events import TGEventHandlerObject
 from engine.appc.math import TGPoint3, TGMatrix3
 
 
+class _NodeStub:
+    """Chainable stub for animation/render node — truthy, accepts any call."""
+    def __getattr__(self, name):
+        return self
+    def __call__(self, *args, **kwargs):
+        return _NodeStub()
+    def __bool__(self):
+        return True
+    def __repr__(self):
+        return "<_NodeStub>"
+
+
 class ObjectClass(TGEventHandlerObject):
     def __init__(self):
         super().__init__()
@@ -155,6 +167,13 @@ class ObjectClass(TGEventHandlerObject):
 
     def GetNode(self):
         return None
+
+    def GetAnimNode(self) -> "_NodeStub":
+        return _NodeStub()
+
+    def GetWorldForwardTG(self) -> TGPoint3:
+        """Return forward vector (row 1 of rotation matrix, BC uses Y-forward)."""
+        return self._rotation.GetRow(1)
 
     def GetContainingSetName(self) -> str:
         if self._containing_set is not None:

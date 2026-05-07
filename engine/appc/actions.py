@@ -87,6 +87,12 @@ def TGAction_Cast(obj) -> "TGAction | None":
     return None
 
 
+# Track call depth per (module, func) to prevent infinite recursion when a
+# delayed sequence action re-enters the same function synchronously in Phase 1.
+_script_action_depth: dict[tuple[str, str], int] = {}
+_SCRIPT_ACTION_MAX_DEPTH = 2
+
+
 class TGScriptAction(TGAction):
     def __init__(self, module_name: str, func_name: str, *args):
         super().__init__()
@@ -95,16 +101,23 @@ class TGScriptAction(TGAction):
         self._args = args
 
     def _do_play(self) -> None:
-        mod = sys.modules.get(self._module_name)
-        if mod is None:
-            try:
-                import importlib
-                mod = importlib.import_module(self._module_name)
-            except (ImportError, ModuleNotFoundError):
-                return
-        fn = getattr(mod, self._func_name, None)
-        if fn is not None:
-            fn(self, *self._args)
+        key = (self._module_name, self._func_name)
+        if _script_action_depth.get(key, 0) >= _SCRIPT_ACTION_MAX_DEPTH:
+            return
+        _script_action_depth[key] = _script_action_depth.get(key, 0) + 1
+        try:
+            mod = sys.modules.get(self._module_name)
+            if mod is None:
+                try:
+                    import importlib
+                    mod = importlib.import_module(self._module_name)
+                except (ImportError, ModuleNotFoundError):
+                    return
+            fn = getattr(mod, self._func_name, None)
+            if fn is not None:
+                fn(self, *self._args)
+        finally:
+            _script_action_depth[key] -= 1
 
 
 def TGScriptAction_Create(module_name: str, func_name: str, *args) -> TGScriptAction:
@@ -158,7 +171,9 @@ class TGSoundAction(TGTimedAction):
         self._sound_name = sound_name
 
 
-def TGSoundAction_Create(sound_name: str = "") -> TGSoundAction:
+def TGSoundAction_Create(*args) -> TGSoundAction:
+    """Accept (sound_name,) or (sound_name, flags, ...) — extra args are renderer hints ignored in Phase 1."""
+    sound_name = args[0] if args and isinstance(args[0], str) else ""
     return TGSoundAction(sound_name)
 
 

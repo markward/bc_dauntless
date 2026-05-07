@@ -59,6 +59,24 @@ class TGPoint3:
         v.Unitize()
         return v
 
+    def Scale(self, factor: float) -> None:
+        """In-place scalar multiply (matches NiPoint3.Scale in the Appc interface)."""
+        self.x *= factor
+        self.y *= factor
+        self.z *= factor
+
+    def Add(self, other: "TGPoint3") -> None:
+        """In-place vector add (matches NiPoint3.Add in the Appc interface)."""
+        self.x += other.x
+        self.y += other.y
+        self.z += other.z
+
+    def Set(self, other: "TGPoint3") -> None:
+        """Copy XYZ from another TGPoint3 (in-place assignment)."""
+        self.x = other.x
+        self.y = other.y
+        self.z = other.z
+
     def Unitize(self) -> "TGPoint3":
         n = self.Length()
         if n > 1e-12:

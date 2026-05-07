@@ -28,6 +28,22 @@ class ShipClass(DamageableObject):
     def GetNetType(self) -> int:
         return self._net_type
 
+    # ── Subsystem iteration ───────────────────────────────────────────────────
+    # Phase 1 ships have no subsystems; these stubs terminate while-loops that
+    # follow the SDK pattern:
+    #   kIter = pShip.StartGetSubsystemMatch(type)
+    #   pSub  = pShip.GetNextSubsystemMatch(kIter)
+    #   while (pSub != None): ...
+
+    def StartGetSubsystemMatch(self, match_type=None):
+        return None
+
+    def GetNextSubsystemMatch(self, iterator=None):
+        return None
+
+    def EndGetSubsystemMatch(self, iterator=None):
+        pass
+
 
 def ShipClass_Create(class_name: str = "") -> ShipClass:
     return ShipClass()
@@ -35,7 +51,8 @@ def ShipClass_Create(class_name: str = "") -> ShipClass:
 
 def ShipClass_GetObject(pSet, name: str) -> "ShipClass | None":
     if pSet is None:
-        return None
+        from engine.appc.sets import SetClass_GetNull
+        pSet = SetClass_GetNull()
     obj = pSet.GetObject(name)
     if isinstance(obj, ShipClass):
         return obj

@@ -11,7 +11,7 @@ from engine.appc.math import (
     TGPoint3_GetModelRight, TGPoint3_GetModelLeft,
 )
 from engine.appc.objects import ObjectClass, PhysicsObjectClass, DamageableObject, ObjectGroup
-from engine.appc.sets import SetClass, SetManager, SetClass_Create
+from engine.appc.sets import SetClass, SetManager, SetClass_Create, SetClass_GetNull
 from engine.appc.placement import PlacementObject, Waypoint, Waypoint_Create
 from engine.appc.ships import (
     ShipClass, ShipClass_Create, ShipClass_GetObject,
@@ -174,8 +174,8 @@ class _Stub:
     def __rtruediv__(self, o): return 0.0
     def __floordiv__(self, o):  return 0
     def __rfloordiv__(self, o): return 0
-    def __mod__(self, o):   return 0
-    def __rmod__(self, o):  return 0
+    def __mod__(self, o):   return "" if isinstance(o, (str, tuple)) else 0
+    def __rmod__(self, o):  return "" if isinstance(o, (str, tuple)) else 0
     def __neg__(self):      return 0
     def __pos__(self):      return 0
     def __abs__(self):      return 0
