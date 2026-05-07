@@ -156,11 +156,33 @@ instrumentation. Not needed for Phase 1.
 **Phase 1 implementation:** disable collisions → remove from origin set → add
 to destination set at named placement → re-enable collisions.
 
-**OQ-2.3 — Tractor beam physics**  
-`TractorBeamProperty` exists in hardpoints but the force model applied
-to tethered objects is engine-side. Approach: instrument tractor beam
-sessions, log relative positions and velocities of towing and towed
-ships over time.
+**OQ-2.3 — Tractor beam physics ⚠️ Partial (Phase 2)**  
+The force model is entirely engine-side. Static analysis bounds what is known:
+
+- **Arc geometry**: `TractorBeamProperty` uses the same `SetOrientation` +
+  `SetArcWidthAngles` + `SetArcHeightAngles` model as phasers. Arc data is
+  fully readable from Python-side hardpoints.
+- **Force-related parameters stored**: `SetMaxDamage` (force magnitude proxy,
+  e.g. 80.0 on sovereign), `SetMaxDamageDistance` (max range, e.g. 114.0),
+  plus inherited energy params (`MaxCharge`, `RechargeRate`, `NormalDischargeRate`).
+- **Python API is mode-only**: `TractorBeamSystem` exposes only `GetMode()` /
+  `SetMode()`. Six modes are named: `TBS_HOLD`, `TBS_TOW`, `TBS_PULL`, `TBS_PUSH`,
+  `TBS_DOCK_STAGE_1`, `TBS_DOCK_STAGE_2`. Python cannot read or set forces directly.
+- **Events**: `ET_TRACTOR_BEAM_STARTED_HITTING` / `ET_TRACTOR_BEAM_STOPPED_HITTING`
+  carry source (`TractorBeamProjector`) and destination (`ObjectClass`).
+
+**Phase 1 stub**: implement as a position constraint — when firing, lock towed
+object to a fixed offset behind the towing ship. Satisfies mission-logic triggers
+in `E3M2/TowAway.py` and `E2M1/WarbirdTow`. Warp towing also needs
+`EnableTowingThroughWarp(1)` flag (visible in `TowAway.py:91`).
+
+**Phase 2 force law**: implement as a spring-damper — proportional restoring
+force toward the target offset, with damping to kill oscillation. Scale by
+`MaxDamage` and clamp at `MaxDamageDistance`. Tune by feel from the six mode
+names: HOLD ≈ zero-velocity constraint, TOW ≈ gentle follow, PULL ≈ strong
+attract, PUSH ≈ repel, DOCK_STAGE_1/2 ≈ progressive position lock. No
+instrumentation needed as a starting point; empirical measurement optional
+if the feel is wrong after initial tuning.
 
 ---
 
@@ -448,12 +470,13 @@ audio engine side of smooth crossfading is not. Approach: read
 `DynamicMusic.py` fully; instrument music state changes during a
 representative play session.
 
-**OQ-6.2 — 3D audio attenuation model**  
-`SetMinMaxDistance()` and `SetConeData()` configure spatial attenuation
-but the specific attenuation curve (linear, inverse, inverse square) is
-engine-side. OpenAL supports all three; the correct one needs to be
-matched. Approach: instrument volume at known distances during a session
-and fit the attenuation curve.
+**OQ-6.2 — 3D audio attenuation model ✅**  
+Use OpenAL's `AL_INVERSE_DISTANCE_CLAMPED` model — the physically correct
+choice and the OpenAL default. Matching the original engine's exact curve
+is less valuable than getting the feel right; `SetMinMaxDistance()` maps
+directly to `alSourcef(AL_REFERENCE_DISTANCE / AL_MAX_DISTANCE)` and
+`SetConeData()` maps to `AL_CONE_INNER_ANGLE / AL_CONE_OUTER_ANGLE`.
+No instrumentation needed — tune by playtesting if anything sounds off.
 
 ---
 
@@ -590,19 +613,42 @@ timers.
 
 ### Open questions requiring investigation
 
-**OQ-8.1 — Phoneme-to-texture timing model**  
-The engine drives `SpeakA`/`SpeakE`/`SpeakU` texture selection from
-audio playback. The exact timing model — how many phoneme shapes are
-evaluated per second, how transitions are smoothed — is engine-side.
-Approach: instrument facial texture change events with audio timestamps
-during a dialogue sequence to reverse-engineer the timing granularity.
+**OQ-8.1 — Phoneme-to-texture timing model ✅**  
+Python's entire involvement is registering three textures
+(`AddFacialImage("SpeakA"/"SpeakE"/"SpeakU")`) and enabling the system
+(`SetAnimatedSpeaking(1)`). No timing parameter is Python-visible.
+Two audio modes exist — `CAM_VOCAL` (default) and `CAM_EXTREMELY_VOCAL`
+(Felix only) — likely controlling switching aggressiveness; both are
+C++-internal.
 
-**OQ-8.2 — Non-exclusive animation blending semantics**  
-`SetNonExclusiveAnimation` implies animations can layer. The blending
-weight and priority model between exclusive (full-body) and
-non-exclusive (partial, e.g. head turn during idle) animations is
-engine-side. Approach: instrument `TGAnimNode` state during sequences
-where both animation types are active simultaneously.
+Matching the original engine's timing is less valuable than doing it
+right. The original uses simple energy/formant analysis; rhubarb-lip-sync
+(already planned for Phase 2) produces better results, natively maps to
+A/E/U via its basic 6-shape mode, and the `CAM_VOCAL`/`CAM_EXTREMELY_VOCAL`
+distinction maps directly to rhubarb's confidence threshold.
+
+No instrumentation needed — implement with rhubarb-lip-sync and tune
+threshold for `CAM_EXTREMELY_VOCAL` by inspection.
+
+**OQ-8.2 — Non-exclusive animation blending semantics ✅**  
+`SetExclusiveAnimation` and `SetNonExclusiveAnimation` are SWIG-bound but
+**never called from any Python script** — zero call sites across all 1228 files.
+
+Python drives animations entirely through:
+- `TGAnimAction_Create(animNode, "clip", 0, 0)` — plays a named clip via the
+  `TGSequence` system (same non-blocking tick-driven mechanism as OQ-4.4)
+- `TGAnimPosition_Create(animNode, "pose")` — snaps to a rest pose
+- `CharacterClass.AddAnimation` / `AddRandomAnimation` / `SetBlinkAnimation` —
+  registers clips; C++ selects from the pool autonomously
+- `CharacterClass.GlanceAt` / `TurnTowards` — procedural head-turn, C++-driven
+
+Python never reads or sets blend weights. The exclusive/non-exclusive layer
+distinction is a C++ internal concern not exposed to scripts.
+
+**Implementation:** standard priority-layer skeletal blending — full-body
+clips on the base layer, procedural head IK (`GlanceAt`/`TurnTowards`) on an
+upper layer. Python only issues high-level commands; blend weights are engine
+policy. No instrumentation needed.
 
 **OQ-8.3 — MorphBody usage and scope**  
 `CharacterClass.MorphBody()` suggests mesh morphing exists beyond
@@ -671,10 +717,11 @@ across mission boundaries.
 | 8. Animation | No (Phase 2) | Medium | OpenMW + rhubarb-lip-sync | OQ-8.1 to 8.4 |
 
 **Total open questions: 21**  
-**Answered by static analysis: OQ-1.1, OQ-1.2, OQ-1.3, OQ-2.1, OQ-4.1, OQ-4.2, OQ-4.3, OQ-4.4, OQ-5.1, OQ-5.2, OQ-5.3, OQ-7.4 (12)**  
+**Answered by static analysis: OQ-1.1, OQ-1.2, OQ-1.3, OQ-2.1, OQ-4.1, OQ-4.2, OQ-4.3, OQ-4.4, OQ-5.1, OQ-5.2, OQ-5.3, OQ-6.2, OQ-7.4, OQ-8.1, OQ-8.2 (15)**  
 **Answered by instrumentation: OQ-7.1, OQ-7.2, OQ-7.3 (3)**  
-**Partially answered: OQ-2.2 (teleport model confirmed; warp-exit velocity Phase 2)**  
-**Still open: OQ-2.3, OQ-3.1–3.3, OQ-6.1–6.2, OQ-8.1–8.4 (6)**
+**Partially answered: OQ-2.2 (teleport confirmed; warp-exit velocity Phase 2), OQ-2.3 (arc/modes known; force law tuned by feel)**  
+**Still open: OQ-3.1–3.3, OQ-6.1, OQ-8.3, OQ-8.4 (5)**  
+**Instrumentation genuinely required: none remaining**
 
 **Phase 1 blockers: all resolved. Ready to begin Phase 1 implementation.**
 

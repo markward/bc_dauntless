@@ -8,7 +8,7 @@ The original engine is a compiled C++ binary exposed to Python via a SWIG-genera
 
 ## Current stage
 
-**Discovery and analysis.** We are resolving open questions in `docs/gap_analysis.md` and `docs/open_questions.md` before any significant implementation. The repo is set up on a Windows machine to enable instrumentation of the live game installation.
+**Discovery complete. Ready to begin Phase 1 implementation.** All open questions blocking Phase 1 are resolved. See `docs/gap_analysis.md` for the full record. The repo is set up on a Windows machine; the instrumentation tooling in `tools/` remains available for Phase 2 questions.
 
 ## Implementation phases
 
@@ -52,10 +52,11 @@ The original engine is a compiled C++ binary exposed to Python via a SWIG-genera
 
 ### Gap analysis OQs (21 total)
 
-- Closed by static analysis: OQ-1.1, 1.2, 1.3, 2.1, 4.1, 4.2, 7.4
-- Closed by instrumentation: OQ-7.1, OQ-7.2
-- Partially answered: OQ-7.3 (cinematic time scale — non-blocker)
-- Still open: 10 OQs across gaps 2, 3, 4, 5, 6, 8 (all Phase 2)
+- Closed by static analysis: OQ-1.1, 1.2, 1.3, 2.1, 4.1, 4.2, 4.3, 4.4, 5.1, 5.2, 5.3, 6.2, 7.4, 8.1, 8.2 (15)
+- Closed by instrumentation: OQ-7.1, OQ-7.2, OQ-7.3 (3)
+- Partially answered: OQ-2.2 (teleport confirmed; warp-exit velocity Phase 2), OQ-2.3 (arc/modes known; force law tuned by feel)
+- Still open: OQ-3.1–3.3, OQ-6.1, OQ-8.3, OQ-8.4 — all Phase 2, all file-inspection or grep work
+- **No remaining OQs require running the live game**
 
 **Phase 1 blockers: all resolved. Ready to begin Phase 1 implementation.**
 
