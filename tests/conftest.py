@@ -1,6 +1,7 @@
 import ast
 import importlib.abc
 import importlib.machinery
+import re
 import sys
 import types
 import warnings
@@ -9,18 +10,64 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent
 SDK_SCRIPTS = PROJECT_ROOT / "sdk" / "Build" / "scripts"
 
+_PY2_OCTAL = re.compile(r'(?<![\w.])0([0-7]+)\b')
+_PY2_RAISE = re.compile(r'^(\s*raise\s+\w[\w.]*)\s*,\s*(.*)', re.MULTILINE)
+_PY2_PRINT_FILE = re.compile(r'^(\s*)print\s*>>\s*(\S+)\s*,\s*(.*?)\s*$', re.MULTILINE)
+_PY2_PRINT_STMT = re.compile(r'^(\s*)print\s+(?!\()(.+?)\s*$', re.MULTILINE)
+_PY2_PRINT_BARE = re.compile(r'^(\s*)print\s*$', re.MULTILINE)
+
+
+def _fix_py2_syntax(source: str) -> str:
+    """Rewrite Python 2-only syntax that ast.parse rejects."""
+    source = source.replace('<>', '!=')
+    source = source.replace('.has_key(', '.__contains__(')
+    source = _PY2_RAISE.sub(lambda m: m.group(1) + '(' + m.group(2).rstrip() + ')', source)
+    source = _PY2_OCTAL.sub(
+        lambda m: '0o' + m.group(1) if any(c != '0' for c in m.group(1)) else m.group(0),
+        source,
+    )
+    source = _PY2_PRINT_FILE.sub(r'\1print(\3, file=\2)', source)
+    source = _PY2_PRINT_STMT.sub(r'\1print(\2)', source)
+    source = _PY2_PRINT_BARE.sub(r'\1print()', source)
+    return source
+
 
 class _MoveGlobalsToTop(ast.NodeTransformer):
     """Move global declarations to the top of each function body.
 
     SDK scripts were written for Python 1.5/2.x, which allowed using a name
-    before its global declaration in the same function. Python 3 treats this
-    as a SyntaxError at compile time.
+    before its global declaration anywhere in the function (even inside if/for/try
+    blocks). Python 3 treats this as a SyntaxError at compile time.
     """
+
+    @staticmethod
+    def _hoist_globals(stmts):
+        """Extract Global nodes from stmts and all nested blocks, except nested functions/classes."""
+        extracted = []
+        remaining = []
+        for stmt in stmts:
+            if isinstance(stmt, ast.Global):
+                extracted.append(stmt)
+            elif isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                remaining.append(stmt)
+            else:
+                for attr in ('body', 'orelse', 'finalbody'):
+                    child = getattr(stmt, attr, None)
+                    if child:
+                        g, c = _MoveGlobalsToTop._hoist_globals(child)
+                        extracted.extend(g)
+                        setattr(stmt, attr, c)
+                if isinstance(stmt, ast.Try):
+                    for handler in stmt.handlers:
+                        g, c = _MoveGlobalsToTop._hoist_globals(handler.body)
+                        extracted.extend(g)
+                        handler.body = c
+                remaining.append(stmt)
+        return extracted, remaining
+
     def visit_FunctionDef(self, node):
         self.generic_visit(node)
-        globals_stmts = [s for s in node.body if isinstance(s, ast.Global)]
-        other_stmts = [s for s in node.body if not isinstance(s, ast.Global)]
+        globals_stmts, other_stmts = self._hoist_globals(node.body)
         node.body = globals_stmts + other_stmts
         return node
 
@@ -52,11 +99,32 @@ class _FixDottedImport(ast.NodeTransformer):
             and len(node.args) == 1
             and not node.keywords
         ):
+            # Generate: (lambda _x: _sdk_importlib.import_module(_x) if isinstance(_x, str) else _x)(arg)
+            # Guards against stubs being passed as module names.
+            _n = '_sdk_import_name'
             return ast.Call(
-                func=ast.Attribute(
-                    value=ast.Name(id="_sdk_importlib", ctx=ast.Load()),
-                    attr="import_module",
-                    ctx=ast.Load(),
+                func=ast.Lambda(
+                    args=ast.arguments(
+                        posonlyargs=[], args=[ast.arg(arg=_n)],
+                        vararg=None, kwonlyargs=[], kw_defaults=[],
+                        kwarg=None, defaults=[]
+                    ),
+                    body=ast.IfExp(
+                        test=ast.Call(
+                            func=ast.Name(id='isinstance', ctx=ast.Load()),
+                            args=[ast.Name(id=_n, ctx=ast.Load()), ast.Name(id='str', ctx=ast.Load())],
+                            keywords=[]
+                        ),
+                        body=ast.Call(
+                            func=ast.Attribute(
+                                value=ast.Name(id="_sdk_importlib", ctx=ast.Load()),
+                                attr="import_module", ctx=ast.Load(),
+                            ),
+                            args=[ast.Name(id=_n, ctx=ast.Load())],
+                            keywords=[],
+                        ),
+                        orelse=ast.Name(id=_n, ctx=ast.Load()),
+                    )
                 ),
                 args=node.args,
                 keywords=[],
@@ -64,21 +132,78 @@ class _FixDottedImport(ast.NodeTransformer):
         return node
 
 
+class _Stub:
+    """Recursive stub for unimplemented engine objects."""
+    def __getattr__(self, name): return _Stub()
+    def __call__(self, *args, **kwargs): return _Stub()
+    def __bool__(self): return True
+    def __hash__(self): return id(self)
+    def __getitem__(self, key): return _Stub()
+    def __setitem__(self, key, value): pass
+    def __delitem__(self, key): pass
+    def __iter__(self): return iter([])
+    def __len__(self): return 0
+    def __int__(self): return 0
+    def __float__(self): return 0.0
+    def __index__(self): return 0
+    def __add__(self, o): return o if isinstance(o, str) else 0
+    def __radd__(self, o): return o if isinstance(o, str) else 0
+    def __sub__(self, o): return 0
+    def __rsub__(self, o): return 0
+    def __mul__(self, o): return 0
+    def __rmul__(self, o): return 0
+    def __truediv__(self, o): return 0.0
+    def __rtruediv__(self, o): return 0.0
+    def __floordiv__(self, o): return 0
+    def __rfloordiv__(self, o): return 0
+    def __mod__(self, o): return 0
+    def __rmod__(self, o): return 0
+    def __neg__(self): return 0
+    def __pos__(self): return 0
+    def __abs__(self): return 0
+    def __or__(self, o): return 0
+    def __ror__(self, o): return 0
+    def __and__(self, o): return 0
+    def __rand__(self, o): return 0
+    def __xor__(self, o): return 0
+    def __rxor__(self, o): return 0
+    def __lshift__(self, o): return 0
+    def __rshift__(self, o): return 0
+    def __invert__(self): return 0
+    def __lt__(self, o): return False
+    def __le__(self, o): return False
+    def __gt__(self, o): return False
+    def __ge__(self, o): return False
+    def __eq__(self, o): return isinstance(o, type(self))
+    def __ne__(self, o): return not isinstance(o, type(self))
+
+
 class _StubModule(types.ModuleType):
-    """Module where any attribute access returns a no-op callable returning None.
+    """Module where any attribute access returns a chainable stub.
 
     Used for SDK-side modules whose implementations are pure UI/bridge and
     irrelevant to Phase 1 headless logic.
     """
     def __getattr__(self, name):
-        return lambda *args, **kwargs: None
+        return _Stub()
+
+
+class _AliasLoader(importlib.abc.Loader):
+    """Loader that reuses an already-loaded module (for bare-name → qualified-name aliasing)."""
+    def __init__(self, existing_module):
+        self._module = existing_module
+    def create_module(self, spec):
+        return self._module
+    def exec_module(self, module):
+        pass
 
 
 class _SDKLoader(importlib.abc.Loader):
     """Load an SDK script with Python 2 compatibility fixes applied."""
 
-    def __init__(self, path: str):
+    def __init__(self, path: str, also_register_as: str = None):
         self.path = path
+        self.also_register_as = also_register_as
 
     def create_module(self, spec):
         return None
@@ -87,6 +212,7 @@ class _SDKLoader(importlib.abc.Loader):
         with open(self.path, encoding="utf-8", errors="replace") as f:
             source = f.read()
         source = source.expandtabs(4)
+        source = _fix_py2_syntax(source)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             tree = ast.parse(source, filename=self.path)
@@ -94,7 +220,19 @@ class _SDKLoader(importlib.abc.Loader):
         tree = _FixDottedImport().visit(tree)
         ast.fix_missing_locations(tree)
         code = compile(tree, self.path, "exec")
+        module.__dict__.setdefault('apply', lambda f, a=(), kw={}: f(*a, **kw))
+        module.__dict__.setdefault('BORG', 0x00000200)  # QuickBattle.py omits this; BORG_CUBE = 0x200
         exec(code, module.__dict__)
+        # Python 1.5 compat: also register under the qualified dotted name so that
+        # package.Submodule attribute lookups resolve correctly.
+        if self.also_register_as and self.also_register_as not in sys.modules:
+            sys.modules[self.also_register_as] = module
+            parent, _, attr = self.also_register_as.rpartition('.')
+            if parent and parent in sys.modules:
+                try:
+                    setattr(sys.modules[parent], attr, module)
+                except (AttributeError, TypeError):
+                    pass
 
 
 class _SDKFinder(importlib.abc.MetaPathFinder):
@@ -123,6 +261,65 @@ class _SDKFinder(importlib.abc.MetaPathFinder):
             )
             spec.submodule_search_locations = [str(pkg_init.parent)]
             return spec
+        # Submodule via explicit path: parent package has __path__ pointing into
+        # an SDK directory (e.g. Characters → Bridge/Characters).  Use our loader
+        # so Python 2 compatibility fixes are applied to the submodule too.
+        if path:
+            child = fullname.rpartition(".")[2]
+            for _search_dir in path:
+                _p = Path(_search_dir)
+                if str(SDK_SCRIPTS) not in str(_p):
+                    continue
+                _cand = _p / (child + ".py")
+                if _cand.exists():
+                    _rel_parts = _cand.relative_to(SDK_SCRIPTS).with_suffix("").parts
+                    _qual = ".".join(_rel_parts)
+                    if _qual != fullname and _qual in sys.modules:
+                        loader = _AliasLoader(sys.modules[_qual])
+                    else:
+                        loader = _SDKLoader(str(_cand), also_register_as=(_qual if _qual != fullname else None))
+                    return importlib.machinery.ModuleSpec(fullname, loader, origin=str(_cand))
+                _pkg = _p / child / "__init__.py"
+                if _pkg.exists():
+                    _rel_parts = (_p / child).relative_to(SDK_SCRIPTS).parts
+                    _qual = ".".join(_rel_parts)
+                    if _qual != fullname and _qual in sys.modules:
+                        loader = _AliasLoader(sys.modules[_qual])
+                    else:
+                        loader = _SDKLoader(str(_pkg), also_register_as=(_qual if _qual != fullname else None))
+                    spec = importlib.machinery.ModuleSpec(fullname, loader, origin=str(_pkg))
+                    spec.submodule_search_locations = [str(_p / child)]
+                    return spec
+        # Python 1.5 implicit relative import fallback: BC engine added each SDK
+        # package directory to sys.path, so bare `import X` inside Bridge/ found
+        # Bridge/X.py.  Search SDK subdirectories for a unique match.
+        if "." not in fullname:
+            matches = sorted(SDK_SCRIPTS.rglob(f"{fullname}.py"))
+            # Python 1.5 compat: prefer the file in the same directory as the
+            # calling SDK module (covers both load-time and call-time imports).
+            # Walk the call stack to find the innermost SDK frame.
+            caller_dir = None
+            frame = sys._getframe(1)
+            while frame is not None:
+                co_file = frame.f_code.co_filename
+                if str(SDK_SCRIPTS) in co_file:
+                    caller_dir = Path(co_file).parent
+                    break
+                frame = frame.f_back
+            if caller_dir:
+                matches.sort(key=lambda p: (p.parent != caller_dir, str(p)))
+            for candidate in matches:
+                rel_parts = candidate.relative_to(SDK_SCRIPTS).with_suffix("").parts
+                qualified = ".".join(rel_parts)
+                if qualified in sys.modules:
+                    # Reuse the already-initialized module so module-level state
+                    # (e.g. MissionShared.g_pDatabase) is shared, not reset.
+                    loader = _AliasLoader(sys.modules[qualified])
+                else:
+                    # Load fresh and also register under the qualified dotted name
+                    # so that package.Submodule attribute lookups work.
+                    loader = _SDKLoader(str(candidate), also_register_as=qualified)
+                return importlib.machinery.ModuleSpec(fullname, loader, origin=str(candidate))
         return None
 
 
@@ -147,17 +344,24 @@ def pytest_configure(config):
         if name not in sys.modules:
             sys.modules[name] = _StubModule(name)
 
-    # Bridge.HelmMenuHandlers: callable stub that must also be accessible as an
-    # attribute on the Bridge module (import Bridge.HelmMenuHandlers; then
-    # Bridge.HelmMenuHandlers.attr = x). Pre-populate both sys.modules and the
-    # parent module attribute so Python's import fast-path works without
-    # requiring Bridge to have __path__.
+    # Bridge: real SDK package at sdk/Build/scripts/Bridge/.  Setting __path__
+    # lets Python (and _SDKFinder) find Bridge.* submodules.  HelmMenuHandlers
+    # is pre-stubbed as callable because MissionLib writes to its attributes.
     if "Bridge" not in sys.modules:
-        sys.modules["Bridge"] = types.ModuleType("Bridge")
+        _bridge = types.ModuleType("Bridge")
+        _bridge.__path__ = [str(SDK_SCRIPTS / "Bridge")]  # type: ignore[attr-defined]
+        sys.modules["Bridge"] = _bridge
     if "Bridge.HelmMenuHandlers" not in sys.modules:
         _helm = _StubModule("Bridge.HelmMenuHandlers")
         sys.modules["Bridge.HelmMenuHandlers"] = _helm
         sys.modules["Bridge"].HelmMenuHandlers = _helm  # type: ignore[attr-defined]
+
+    # Actions: real SDK package at sdk/Build/scripts/Actions/.  Setting __path__
+    # lets Python (and _SDKFinder) find Actions.* submodules.
+    if "Actions" not in sys.modules:
+        _actions = types.ModuleType("Actions")
+        _actions.__path__ = [str(SDK_SCRIPTS / "Actions")]  # type: ignore[attr-defined]
+        sys.modules["Actions"] = _actions
 
     # Plain stubs: imported but no attributes accessed in Phase 1 code paths.
     _plain_stubs = [
@@ -167,9 +371,44 @@ def pytest_configure(config):
         "Bridge.ScienceCharacterHandlers",
         "Bridge.EngineerCharacterHandlers",
         "BridgeHandlers",
-        "Actions",
         "Actions.MissionScriptActions",
     ]
     for name in _plain_stubs:
         if name not in sys.modules:
             sys.modules[name] = types.ModuleType(name)
+
+    # Multiplayer UI modules require live game objects (panes, menus) that are
+    # not available in headless Phase 1 testing.  Pre-stubbing prevents loading
+    # the real module and avoids NoneType crashes from uninitialized UI state.
+    _multiplayer_ui_stubs = [
+        "Multiplayer.MultiplayerMenus",
+        "Multiplayer.MissionMenusShared",
+    ]
+    for name in _multiplayer_ui_stubs:
+        if name not in sys.modules:
+            sys.modules[name] = _StubModule(name)
+
+    # Characters: alias package for Bridge.Characters.  SDK scripts in Bridge/
+    # use bare `import Characters.X` relying on Python 1.5 implicit relative
+    # imports; our finder handles submodule lookups via the __path__ below.
+    if "Characters" not in sys.modules:
+        _chars = types.ModuleType("Characters")
+        _chars.__path__ = [str(SDK_SCRIPTS / "Bridge" / "Characters")]  # type: ignore[attr-defined]
+        sys.modules["Characters"] = _chars
+
+    # Episode-level scripts: pre-load so their globals are initialized to
+    # FALSE (0) for missions that read carry-over state from earlier episodes.
+    import importlib as _il
+    if "Maelstrom.Episode6.Episode6" not in sys.modules:
+        try:
+            _ep6 = _il.import_module("Maelstrom.Episode6.Episode6")
+            _ep6.g_bDevoreDestroyed = 0
+            _ep6.g_bSFDestroyed = 0
+            _ep6.g_bVentureDestroyed = 0
+        except Exception:
+            pass
+    if "Maelstrom.Episode7.Episode7" not in sys.modules:
+        try:
+            _il.import_module("Maelstrom.Episode7.Episode7")
+        except Exception:
+            pass

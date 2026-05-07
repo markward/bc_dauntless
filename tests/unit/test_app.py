@@ -46,6 +46,8 @@ def test_stub_call_does_not_raise():
     assert result is not None
 
 
-def test_stub_is_falsy():
+def test_stub_is_truthy():
+    # Stubs are truthy: they represent valid-but-unimplemented objects so that
+    # SDK guards like `if not pSet: return None` don't short-circuit Phase 1.
     stub = App.SomeUnimplementedThing()
-    assert not stub
+    assert stub

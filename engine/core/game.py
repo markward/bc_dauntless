@@ -29,7 +29,15 @@ class Episode(TGObject):
         self._current_mission = mission
 
 
+def Game_GetDifficulty() -> int:
+    return 1  # MEDIUM
+
+
 class Game(TGObject):
+    EASY = 0
+    MEDIUM = 1
+    HARD = 2
+
     def __init__(self):
         super().__init__()
         self._current_episode: Episode | None = None
