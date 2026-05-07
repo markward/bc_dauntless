@@ -72,6 +72,18 @@ def run_mission_with_loop(
         except Exception as exc:
             return ("init_fail", exc, 0)
 
+        # Fire ET_MISSION_START — episode is destination, broadcast handlers also fire
+        start_evt = TGEvent()
+        start_evt.SetEventType(App.ET_MISSION_START)
+        start_evt.SetDestination(episode)
+        App.g_kEventManager.AddEvent(start_evt)
+
+        from engine.core.loop import GameLoop
+        loop = GameLoop()
+        for i in range(n_ticks):
+            loop.tick()
+            ticks_done = i + 1
+
         return ("pass", None, ticks_done)
     except Exception as exc:
         return ("loop_fail", exc, ticks_done)
