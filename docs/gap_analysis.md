@@ -427,12 +427,12 @@ ticks in Quick Battle. Theoretical 1/60 = 16.667 ms; deviation is within
 measurement error. Physics time step = 16.667 ms. `TimeSliceProcess`
 minimum polling granularity = 16.667 ms.
 
-**OQ-7.2 — Subsystem update ordering within a tick**
-*(Priority: High — resolve before AI integration)*  
-Does physics integrate before or after AI runs? Do events fire before
-or after physics? Approach: log `GetUpdateNumber` alongside physics
-reads/writes, AI callbacks, event dispatch, and timer calls. Sort by
-frame number to reconstruct within-tick ordering.
+**OQ-7.2 — Subsystem update ordering within a tick** ✅  
+**Python AI runs first, before physics.** Measured via `GetTimeSinceFrameStart()`
+logged at each `GetGameTime` call (85.7s session, 60 samples): median position
+0.28 ms = 2% into the 16.82 ms tick. Loop ordering confirmed:
+**AI/Python → physics → render**. AI reads positions from the previous tick;
+physics has not yet integrated when Python callbacks fire.
 
 **OQ-7.3 — Time scale interaction with physics and AI** ⚠️  
 *(Priority: Medium — resolve before cinematic implementation)*  
@@ -591,11 +591,11 @@ across mission boundaries.
 
 **Total open questions: 21**  
 **Answered by static analysis: OQ-1.1, OQ-1.2, OQ-1.3, OQ-4.1, OQ-7.4 (5)**  
-**Answered by instrumentation: OQ-7.1 (6 total)**  
+**Answered by instrumentation: OQ-7.1, OQ-7.2 (7 total)**  
 **Partially answered: OQ-2.1, OQ-4.2, OQ-7.3 (3)**  
-**Still open: OQ-2.2, OQ-2.3, OQ-3.1–3.3, OQ-4.3, OQ-4.4, OQ-5.1–5.3, OQ-6.1–6.2, OQ-7.2, OQ-8.1–8.4 (13)**
+**Still open: OQ-2.2, OQ-2.3, OQ-3.1–3.3, OQ-4.3, OQ-4.4, OQ-5.1–5.3, OQ-6.1–6.2, OQ-8.1–8.4 (12)**
 
-**Phase 1 blockers remaining: OQ-2.1 (partial), OQ-4.2 (partial), OQ-7.2**  
-**Recommended next instrumentation targets: OQ-7.2 (subsystem ordering),
-OQ-4.2 (dispatch ordering), OQ-2.1 (degradation formula)**
+**Phase 1 blockers remaining: OQ-2.1 (partial), OQ-4.2 (partial)**  
+**Recommended next instrumentation targets: OQ-4.2 (event dispatch ordering),
+OQ-2.1 (degradation formula)**
 

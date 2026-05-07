@@ -41,7 +41,7 @@ does not affect the accuracy of the total-frames / total-wall calculation.
 
 ---
 
-## Q2 — Subsystem Update Ordering Within a Tick ❌
+## Q2 — Subsystem Update Ordering Within a Tick ✅
 
 **Question:** Within a single tick, what order do subsystems update?
 Specifically — does physics integrate before or after AI runs? Do events
@@ -52,16 +52,25 @@ the renderer?
 integrated for that frame will make different decisions than one reading
 after. Ordering affects correctness of combat AI and mission trigger timing.
 
-**Instrumentation approach:** Log `GetUpdateNumber` alongside every
-significant `Appc` call category — physics reads, AI callbacks, event
-dispatch, render calls. Sort by frame number and wall-clock time to
-reconstruct the within-tick call sequence.
+**Answer: Python AI runs at the very start of each tick, before physics.**
 
-**Specific calls to watch:**
-- `PhysicsObjectClass` position/velocity reads and writes
-- `ArtificialIntelligence` update callbacks
-- `TGEventManager` dispatch calls
-- `TGTimerManager` tick calls
+Measured via `GetTimeSinceFrameStart()` logged alongside each `GetGameTime`
+call during a Quick Battle session (85.7s wall, 5095 ticks, 60 samples):
+
+```
+Frame position:  median 0.28 ms = 2% into the 16.82 ms tick
+                 min 0.03 ms / max 0.46 ms (excluding 2 startup outliers)
+Loop ordering:   AI/Python → physics → render  (standard pattern confirmed)
+```
+
+**Implications:**
+- When a Python condition script reads a ship position, it sees the state
+  from the *previous* tick — physics has not yet integrated for the current tick.
+- The reimplemented engine should follow the same ordering: run all Python
+  AI callbacks first, then step physics, then render.
+- Event handler timing relative to physics is not yet measured (only
+  GetGameTime call sites were instrumented), but given 2% entry point,
+  Python almost certainly runs before all other subsystems.
 
 ---
 
@@ -131,7 +140,7 @@ of priority level. Instrumentation for this question is no longer needed.
 | Question | Impact if wrong | Instrumentation effort | Status |
 |---|---|---|---|
 | Q1 Tick rate | High — affects all timing | — | ✅ 60 Hz fixed |
-| Q2 Update ordering | Medium-high — affects AI/physics interaction | Medium — one focused session | ❌ Open |
+| Q2 Update ordering | Medium-high — affects AI/physics interaction | — | ✅ AI first, then physics |
 | Q3 Time scale | Medium — affects cinematic mode only | Low — trigger one cinematic | ⚠️ Partial (baseline confirmed) |
 | Q4 Process priorities | Low — C++ internal only | — | ✅ Answered |
 
@@ -144,8 +153,8 @@ instrumentation setup). Q4 is closed — no instrumentation needed.
 ## Notes
 
 - Q1 is closed: 60 Hz fixed tick rate, confirmed by instrumentation.
+- Q2 is closed: Python AI runs at ~2% into each tick (before physics and render).
 - Q4 is closed by static analysis.
 - Q3 baseline (time_scale ≈ 1.0 at normal speed) is confirmed. The open
   part is the cinematic SetTimeScale() behaviour — still needs a targeted
   session with a slow-motion trigger.
-- Q2 remains open and should be answered before AI integration work begins.

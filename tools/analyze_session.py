@@ -1,4 +1,5 @@
-"""Analyze a BCTickLog.cfg session and report tick rate (Q1) and time scale (Q3)."""
+"""Analyze a BCTickLog.cfg session and report tick rate (Q1), time scale (Q3),
+and frame position of Python AI calls (Q2)."""
 import pathlib
 import statistics
 import sys
@@ -7,8 +8,12 @@ PROJECT_ROOT = pathlib.Path(__file__).parent.parent
 DEFAULT_LOG = PROJECT_ROOT / "game" / "BCTickLog.cfg"
 
 
-def read_log(log_path: pathlib.Path) -> list[tuple[float, int, float]]:
-    """Parse the [BCTickLog] section from a SaveConfigFile-format .cfg file."""
+def read_log(log_path: pathlib.Path) -> list[tuple[float, int, float, float | None]]:
+    """Parse the [BCTickLog] section from a SaveConfigFile-format .cfg file.
+
+    Returns list of (wall_time, frame, game_time, frame_pos_s).
+    frame_pos_s is None for old 3-field log entries.
+    """
     if not log_path.exists():
         print(f"Log not found: {log_path}")
         print("Run setup.py --recompile, play Quick Battle for 30s, then retry.")
@@ -38,12 +43,14 @@ def read_log(log_path: pathlib.Path) -> list[tuple[float, int, float]]:
             elif key.startswith("t") and key[1:].isdigit():
                 tick_data[int(key[1:])] = val
 
-    entries: list[tuple[float, int, float]] = []
+    entries: list[tuple[float, int, float, float | None]] = []
     for i in range(count):
         raw = tick_data.get(i, "")
         parts = raw.split()
-        if len(parts) == 3:
-            entries.append((float(parts[0]), int(parts[1]), float(parts[2])))
+        if len(parts) == 4:
+            entries.append((float(parts[0]), int(parts[1]), float(parts[2]), float(parts[3])))
+        elif len(parts) == 3:
+            entries.append((float(parts[0]), int(parts[1]), float(parts[2]), None))
     return entries
 
 
@@ -58,6 +65,7 @@ def analyze(log_path: pathlib.Path) -> None:
     wall = [e[0] for e in entries]
     frames = [e[1] for e in entries]
     game_t = [e[2] for e in entries]
+    frame_pos = [e[3] for e in entries if e[3] is not None]
 
     total_wall = wall[-1] - wall[0]
     total_frames = frames[-1] - frames[0]
@@ -86,6 +94,38 @@ def analyze(log_path: pathlib.Path) -> None:
         pct = 100.0 * skipped / len(frame_steps)
         print(f"Note:       {skipped}/{len(frame_steps)} samples ({pct:.0f}%) skipped frames")
         print("            Python not called every tick - tick rate above is still accurate.")
+
+    # Q2: frame position — where in the tick does Python AI get called?
+    if frame_pos:
+        tick_s = total_wall / total_frames  # measured tick duration in seconds
+        fp_ms = [v * 1000.0 for v in frame_pos]
+        # Outliers: values larger than 2x the tick period are measurement
+        # artefacts (startup, pause/resume). Filter for the verdict but report both.
+        clean = [v for v in frame_pos if v <= 2.0 * tick_s]
+        outliers = len(frame_pos) - len(clean)
+        print()
+        print(f"Q2 frame position (where in the {period_ms:.2f} ms tick Python AI is called):")
+        print(f"  median: {statistics.median(fp_ms):.3f} ms")
+        print(f"  mean:   {statistics.mean(fp_ms):.3f} ms")
+        print(f"  min:    {min(fp_ms):.3f} ms")
+        print(f"  max:    {max(fp_ms):.3f} ms")
+        if len(fp_ms) > 1:
+            print(f"  stdev:  {statistics.stdev(fp_ms):.3f} ms")
+        if outliers:
+            print(f"  ({outliers} outlier(s) > 2x tick period excluded from verdict)")
+        if clean:
+            median_frac = statistics.median(clean) / tick_s
+            median_ms = statistics.median(clean) * 1000.0
+            if median_frac < 0.25:
+                verdict = "early in tick — before most C++ subsystems"
+            elif median_frac > 0.75:
+                verdict = "late in tick — after most C++ subsystems"
+            else:
+                verdict = "mid-tick"
+            print(f"  -> Python AI called {verdict} ({median_ms:.2f} ms = {median_frac*100:.0f}% into {period_ms:.2f} ms tick)")
+    else:
+        print()
+        print("Q2: no frame_pos data (old log format — rerun with current snippet)")
 
     print()
     for candidate_hz in (20, 25, 30, 60):

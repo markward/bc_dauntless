@@ -46,19 +46,18 @@ The original engine is a compiled C++ binary exposed to Python via a SWIG-genera
 | Q | Topic | Status |
 |---|---|---|
 | Q1 | Tick rate — fixed or variable? what Hz? | ✅ **60 Hz fixed** (16.67 ms/tick) |
-| Q2 | Subsystem update ordering within a tick | ❌ Open — resolve before AI integration |
+| Q2 | Subsystem update ordering within a tick | ✅ **AI/Python first** (~2% into tick), then physics, then render |
 | Q3 | Time scale interaction with physics/AI/timers | ⚠️ Partial — baseline 1.0 confirmed, cinematic case open |
 | Q4 | TimeSliceProcess priority semantics | ✅ Closed — static analysis sufficient |
-
-**Q2 is now the highest priority instrumentation target.**
 
 ### Gap analysis OQs (21 total)
 
 - Closed by static analysis: OQ-1.1, 1.2, 1.3, 4.1, 7.4
+- Closed by instrumentation: OQ-7.1, OQ-7.2
 - Partially answered: OQ-2.1 (degradation formula), OQ-4.2 (dispatch ordering)
-- Still open: 14 OQs across gaps 2, 3, 4, 5, 6, 7, 8
+- Still open: 12 OQs across gaps 2, 3, 4, 5, 6, 8
 
-**Phase 1 blockers:** OQ-2.1, OQ-4.2, OQ-7.1 (= Q1), OQ-7.2 (= Q2)
+**Phase 1 blockers remaining:** OQ-2.1, OQ-4.2
 
 ## Instrumentation approach
 

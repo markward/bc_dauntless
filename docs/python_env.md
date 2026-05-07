@@ -45,10 +45,9 @@ Spawn flags: `P_WAIT P_NOWAIT P_NOWAITO P_OVERLAY P_DETACH`
 
 Built-in C extension — 5802 exported names. SWIG-generated Python 1.5 bindings.
 
-**Important:** `UtopiaModule.GetGameTime = wrapper` breaks the game. SWIG C extension
-objects in Python 1.5 do not support Python-level attribute replacement on module
-functions. The C++ engine appears to call the underlying C function directly rather than
-going through the Python attribute each time.
+**Note:** `UtopiaModule.GetGameTime = wrapper` is the confirmed working approach for
+per-tick instrumentation. See `tools/appc_logger.py` (commit `180e3f1`) for the working
+implementation used to answer Q1.
 
 Appc name sample (first quarter, alphabetical):
 ```
@@ -130,7 +129,7 @@ All defined in `sdk/Build/scripts/App.py` lines 13179–14020. Available at impo
 
 - Code runs at **module import time** (appended to end of `App.py`) — engine globals
   (`g_kConfigMapping`, `Appc`, `g_kSystemWrapper`) are all accessible at that point.
-- `UtopiaModule.GetGameTime` patching breaks the game — do not use.
+- `UtopiaModule.GetGameTime` wrapping works — confirmed via Q1 instrumentation session.
 - Iterating large lists with per-item string operations crashes — applies to `dir(Appc)`
   (5802 names) and `globals().keys()` (thousands of App module names). Use fixed-index
   slices instead; do not loop over these collections in snippet code.
