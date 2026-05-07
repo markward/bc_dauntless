@@ -200,3 +200,44 @@ def run_mission(module_name: str) -> tuple[str, Exception | None]:
         _set_current_game(None)
         for key in [k for k in sys.modules if k not in _BASELINE_MODULES]:
             del sys.modules[key]
+
+
+def main() -> None:
+    setup_sdk()
+    missions = discover_missions()
+
+    print("open_stbc mission harness")
+    print("=" * 50)
+    print(f"Found {len(missions)} missions\n")
+    print("Running Initialize()...\n")
+
+    results: dict[str, tuple[str, Exception | None]] = {}
+    for name in missions:
+        status, exc = run_mission(name)
+        results[name] = (status, exc)
+        marker = "PASS" if status == "pass" else "FAIL"
+        if exc:
+            err_line = str(exc).splitlines()[0][:90]
+            print(f"  {marker}  {name}")
+            print(f"         {type(exc).__name__}: {err_line}")
+        else:
+            print(f"  {marker}  {name}")
+
+    passed = sum(1 for s, _ in results.values() if s == "pass")
+    failed = len(results) - passed
+    print(f"\n{'=' * 50}")
+    print(f"Results: {passed} passed, {failed} failed of {len(results)} total")
+
+    if failed:
+        errors: Counter[str] = Counter()
+        for status, exc in results.values():
+            if exc is not None:
+                key = f"{type(exc).__name__}: {str(exc).splitlines()[0][:80]}"
+                errors[key] += 1
+        print(f"\nTop errors ({len(errors)} distinct):")
+        for msg, count in errors.most_common(15):
+            print(f"  [{count:2d}]  {msg}")
+
+
+if __name__ == "__main__":
+    main()
