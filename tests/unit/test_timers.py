@@ -94,6 +94,16 @@ def test_duration_stops_timer():
     assert len(called) == 3
 
 
+def test_timer_manager_tracks_absolute_time():
+    em = TGEventManager()
+    tm = TGTimerManager(em)
+    assert tm.get_time() == 0.0
+    tm.tick(TICK)
+    assert abs(tm.get_time() - TICK) < 1e-9
+    tm.tick(TICK)
+    assert abs(tm.get_time() - 2 * TICK) < 1e-9
+
+
 def test_delete_timer_stops_firing():
     called = []
     mod = types.ModuleType("_tt4")

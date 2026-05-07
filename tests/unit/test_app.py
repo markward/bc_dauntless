@@ -46,6 +46,33 @@ def test_stub_call_does_not_raise():
     assert result is not None
 
 
+def test_et_entered_set_is_int():
+    assert isinstance(App.ET_ENTERED_SET, int)
+
+
+def test_et_object_exploding_is_int():
+    assert isinstance(App.ET_OBJECT_EXPLODING, int)
+
+
+def test_game_get_next_event_type_increments():
+    t1 = App.Game_GetNextEventType()
+    t2 = App.Game_GetNextEventType()
+    assert isinstance(t1, int)
+    assert t2 == t1 + 1
+
+
+def test_utopia_get_game_time_returns_float():
+    t = App.g_kUtopiaModule.GetGameTime()
+    assert isinstance(t, float)
+
+
+def test_utopia_get_game_time_reflects_timer_manager():
+    original = App.g_kTimerManager._time
+    App.g_kTimerManager._time = 5.0
+    assert App.g_kUtopiaModule.GetGameTime() == 5.0
+    App.g_kTimerManager._time = original
+
+
 def test_stub_is_truthy():
     # Stubs are truthy: they represent valid-but-unimplemented objects so that
     # SDK guards like `if not pSet: return None` don't short-circuit Phase 1.

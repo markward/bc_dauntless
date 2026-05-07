@@ -6,10 +6,9 @@ class TGTimer(TGObject):
     def __init__(self):
         super().__init__()
         self._start: float = 0.0
-        self._delay: float = 0.0
+        self._delay: float = -1.0
         self._duration: float = -1.0
         self._event: TGEvent | None = None
-        self._elapsed: float = 0.0
         self._next_fire: float = 0.0
         self._done: bool = False
         self._fire_pending: bool = False
@@ -39,19 +38,18 @@ class TGTimer(TGObject):
     def GetEvent(self) -> TGEvent | None:
         return self._event
 
-    def tick(self, delta: float) -> None:
+    def _advance(self, abs_time: float) -> None:
+        """Fire if abs_time has reached or passed _next_fire."""
         if self._done:
             return
-        self._elapsed += delta
-        while self._elapsed >= self._next_fire:
-            if self._event is not None:
-                self._fire_pending = True
+        while abs_time >= self._next_fire:
+            self._fire_pending = True
             if self._delay <= 0:
                 self._done = True
-                break
+                return
             self._next_fire += self._delay
-        # duration > 0: stop when total elapsed time reaches the duration limit
-        if self._duration > 0 and self._elapsed >= self._duration:
+        # _duration > 0: stop when total manager time reaches the duration limit
+        if self._duration > 0 and abs_time >= self._duration:
             self._done = True
 
 
@@ -63,6 +61,10 @@ class TGTimerManager:
     def __init__(self, event_manager: TGEventManager):
         self._event_manager = event_manager
         self._timers: dict[int, TGTimer] = {}
+        self._time: float = 0.0
+
+    def get_time(self) -> float:
+        return self._time
 
     def AddTimer(self, timer: TGTimer) -> None:
         timer._fire_pending = False
@@ -75,13 +77,11 @@ class TGTimerManager:
         self._timers.pop(obj_id, None)
 
     def tick(self, delta: float) -> None:
-        to_remove = []
+        self._time += delta
         for obj_id, timer in list(self._timers.items()):
             timer._fire_pending = False
-            timer.tick(delta)
+            timer._advance(self._time)
             if timer._fire_pending and timer._event is not None:
                 self._event_manager.AddEvent(timer._event)
             if timer._done:
-                to_remove.append(obj_id)
-        for obj_id in to_remove:
-            self._timers.pop(obj_id, None)
+                self._timers.pop(obj_id, None)

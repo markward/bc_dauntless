@@ -24,6 +24,33 @@ ET_ACTION_COMPLETED = 101
 ET_MISSION_START = 102
 ET_EPISODE_START = 103
 ET_OBJECT_DELETED = 104
+ET_ENTERED_SET = 105
+ET_OBJECT_EXPLODING = 106
+
+_next_event_type_id = 200
+
+
+def Game_GetNextEventType() -> int:
+    global _next_event_type_id
+    result = _next_event_type_id
+    _next_event_type_id += 1
+    return result
+
+
+Mission_GetNextEventType = Game_GetNextEventType
+Episode_GetNextEventType = Game_GetNextEventType
+
+
+# ── UtopiaModule ───────────────────────────────────────────────────────────────
+
+class _UtopiaModule:
+    def GetGameTime(self) -> float:
+        return g_kTimerManager.get_time()
+
+    def __getattr__(self, name):
+        return _Stub()
+
+g_kUtopiaModule = _UtopiaModule()
 
 
 # ── Typed event objects ────────────────────────────────────────────────────────

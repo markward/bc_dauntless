@@ -71,8 +71,29 @@ class TGEventHandlerObject(TGObject):
 class TGEventManager(TGObject):
     def __init__(self):
         super().__init__()
+        # {event_type: [(dest_obj, qualified_name), ...]}
+        self._broadcast_handlers: dict[int, list[tuple["TGEventHandlerObject", str]]] = {}
+
+    def AddBroadcastPythonFuncHandler(
+        self, event_type: int, dest: "TGEventHandlerObject", qualified_name: str, *extra
+    ) -> None:
+        self._broadcast_handlers.setdefault(event_type, []).append((dest, qualified_name))
+
+    def RemoveBroadcastHandler(
+        self, event_type: int, dest: "TGEventHandlerObject", qualified_name: str
+    ) -> None:
+        handlers = self._broadcast_handlers.get(event_type, [])
+        entry = (dest, qualified_name)
+        if entry in handlers:
+            handlers.remove(entry)
+
+    RemoveBroadcastHandlerForInstance = RemoveBroadcastHandler
 
     def AddEvent(self, event: TGEvent) -> None:
         dest = event.GetDestination()
         if dest is not None:
             dest.ProcessEvent(event)
+        for bd, name in self._broadcast_handlers.get(event.GetEventType(), []):
+            fn = _resolve_handler(name)
+            if fn is not None:
+                fn(bd, event)
