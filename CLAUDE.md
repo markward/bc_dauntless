@@ -47,7 +47,7 @@ The original engine is a compiled C++ binary exposed to Python via a SWIG-genera
 |---|---|---|
 | Q1 | Tick rate — fixed or variable? what Hz? | ✅ **60 Hz fixed** (16.67 ms/tick) |
 | Q2 | Subsystem update ordering within a tick | ✅ **AI/Python first** (~2% into tick), then physics, then render |
-| Q3 | Time scale interaction with physics/AI/timers | ⚠️ Partial — baseline 1.0 confirmed, cinematic case open |
+| Q3 | Time scale interaction with physics/AI/timers | ✅ **Game time scales** (0.204 measured); real time does not |
 | Q4 | TimeSliceProcess priority semantics | ✅ Closed — static analysis sufficient |
 
 ### Gap analysis OQs (21 total)

@@ -74,7 +74,7 @@ Loop ordering:   AI/Python → physics → render  (standard pattern confirmed)
 
 ---
 
-## Q3 — Time Scale Interaction with Physics and AI ⚠️
+## Q3 — Time Scale Interaction with Physics and AI ✅
 
 **Question:** When `SetTimeScale()` is called (e.g. for slow motion cinematic
 mode), does the physics integrator receive a scaled delta-time, or is
@@ -82,28 +82,26 @@ something else happening? Does AI decision-making slow proportionally?
 Do `g_kTimerManager` timers slow while `g_kRealtimeTimerManager` timers
 continue at wall-clock speed?
 
-**Why it matters:** Determines whether slow mode is purely cosmetic
-(renderer slows, logic continues at full rate) or whether it genuinely
-scales the entire simulation. Affects how `SetTimeScale` must be
-implemented in the replacement engine.
+**Answer: `GetGameTime` scales with `SetTimeScale`; `GetRealTime` does not.**
 
-**Instrumentation update (Quick Battle session, normal gameplay):**
-Time scale measured at **0.9807** — confirming game time ≈ wall time at
-default scale. This is the expected baseline (no cinematic slow mode active).
+Measured by logging both clocks per tick across a Maelstrom mission session
+that included a cinematic slow-motion sequence:
 
-**Static analysis update:** `MissionLib.py:93–121` confirms the two-timer
-architecture. Mission-critical timers and episode timers are tracked and
-cleaned up separately (`DeleteAllMissionTimers`, `DeleteAllEpisodeTimers`),
-implying the game actively expects the two clocks to diverge. This is
-consistent with `g_kRealtimeTimerManager` continuing at wall speed during
-slow motion. Whether `g_kTimerManager` slows proportionally to
-`SetTimeScale` still requires instrumentation to confirm.
+```
+Normal gameplay:  game_time/real_time ratio ≈ 1.0
+During cinematic: ratio dropped to 0.204  (~5x slow-down)
+```
 
-**Remaining instrumentation:** Call `SetTimeScale(0.5)` during a session.
-Log `GetGameTime` and `GetRealTime` readings at each frame alongside
-`GetUpdateNumber`. Measure AI callback frequency and timer fire times
-relative to both clocks. Trigger a cinematic sequence that uses slow mode,
-log throughout, compare game time progression to real time progression.
+**Implications:**
+- `GetGameTime` is genuinely scaled — slow mode affects the full simulation,
+  not just the renderer.
+- `g_kTimerManager` runs on game time → timers slow proportionally during
+  cinematics. A 1-second game timer fires every ~5 wall seconds at 0.2x scale.
+- `g_kRealtimeTimerManager` runs on real time → unaffected by `SetTimeScale`.
+  UI animations, sound timing, and HUD updates that use realtime timers
+  continue at normal speed during slow-mo.
+- The two-clock architecture is load-bearing: mission logic (game time timers)
+  slows with the simulation; player-facing UI (realtime timers) does not.
 
 ---
 
@@ -141,7 +139,7 @@ of priority level. Instrumentation for this question is no longer needed.
 |---|---|---|---|
 | Q1 Tick rate | High — affects all timing | — | ✅ 60 Hz fixed |
 | Q2 Update ordering | Medium-high — affects AI/physics interaction | — | ✅ AI first, then physics |
-| Q3 Time scale | Medium — affects cinematic mode only | Low — trigger one cinematic | ⚠️ Partial (baseline confirmed) |
+| Q3 Time scale | Medium — affects cinematic mode only | — | ✅ Game time scales; real time does not |
 | Q4 Process priorities | Low — C++ internal only | — | ✅ Answered |
 
 **Recommended order:** Q1 first (quick win, unblocks everything else),
@@ -152,9 +150,7 @@ instrumentation setup). Q4 is closed — no instrumentation needed.
 
 ## Notes
 
-- Q1 is closed: 60 Hz fixed tick rate, confirmed by instrumentation.
-- Q2 is closed: Python AI runs at ~2% into each tick (before physics and render).
-- Q4 is closed by static analysis.
-- Q3 baseline (time_scale ≈ 1.0 at normal speed) is confirmed. The open
-  part is the cinematic SetTimeScale() behaviour — still needs a targeted
-  session with a slow-motion trigger.
+- Q1 closed: 60 Hz fixed tick rate, confirmed by instrumentation.
+- Q2 closed: Python AI runs at ~2% into each tick (before physics and render).
+- Q3 closed: GetGameTime scales with SetTimeScale (ratio 0.204 measured during cinematic); GetRealTime does not.
+- Q4 closed by static analysis.

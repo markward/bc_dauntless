@@ -9,14 +9,14 @@ DEFAULT_LOG = PROJECT_ROOT / "game" / "BCTickLog.cfg"
 
 
 def read_log(log_path: pathlib.Path) -> tuple[
-    list[tuple[float, int, float, float | None]],
+    list[tuple[float, int, float, float | None, float | None]],
     list[tuple[float, int, float]],
 ]:
     """Parse the [BCTickLog] section from a SaveConfigFile-format .cfg file.
 
     Returns:
-      ticks:  list of (wall_time, frame, game_time, frame_pos_s)
-              frame_pos_s is None for old 3-field entries
+      ticks:  list of (wall_time, frame, game_time, frame_pos_s, real_time)
+              frame_pos_s and real_time are None for old log entries
       events: list of (wall_time, frame, frame_pos_s) from AddEvent wrapper
     """
     if not log_path.exists():
@@ -53,13 +53,15 @@ def read_log(log_path: pathlib.Path) -> tuple[
             elif key.startswith("t") and key[1:].isdigit():
                 tick_data[int(key[1:])] = val
 
-    ticks: list[tuple[float, int, float, float | None]] = []
+    ticks: list[tuple[float, int, float, float | None, float | None]] = []
     for i in range(count):
         parts = tick_data.get(i, "").split()
-        if len(parts) == 4:
-            ticks.append((float(parts[0]), int(parts[1]), float(parts[2]), float(parts[3])))
+        if len(parts) == 5:
+            ticks.append((float(parts[0]), int(parts[1]), float(parts[2]), float(parts[3]), float(parts[4])))
+        elif len(parts) == 4:
+            ticks.append((float(parts[0]), int(parts[1]), float(parts[2]), float(parts[3]), None))
         elif len(parts) == 3:
-            ticks.append((float(parts[0]), int(parts[1]), float(parts[2]), None))
+            ticks.append((float(parts[0]), int(parts[1]), float(parts[2]), None, None))
 
     events: list[tuple[float, int, float]] = []
     for i in range(evcount):
@@ -82,6 +84,7 @@ def analyze(log_path: pathlib.Path) -> None:
     frames = [e[1] for e in entries]
     game_t = [e[2] for e in entries]
     frame_pos = [e[3] for e in entries if e[3] is not None]
+    real_t = [e[4] for e in entries if e[4] is not None]
 
     total_wall = wall[-1] - wall[0]
     total_frames = frames[-1] - frames[0]
@@ -169,6 +172,39 @@ def analyze(log_path: pathlib.Path) -> None:
     else:
         print()
         print("OQ-4.2: no event data (rerun with current snippet)")
+
+    # OQ-7.3: time scale — does GetGameTime slow relative to GetRealTime?
+    if len(real_t) >= 2 and len(real_t) == len(game_t):
+        # Compute per-interval ratio: game_time_delta / real_time_delta
+        # A ratio of 1.0 = normal speed; 0.5 = half speed (slow-mo)
+        ratios = []
+        for i in range(1, len(real_t)):
+            dt_real = real_t[i] - real_t[i - 1]
+            dt_game = game_t[i] - game_t[i - 1]
+            if dt_real > 0.001:  # ignore near-zero intervals
+                ratios.append(dt_game / dt_real)
+        if ratios:
+            min_ratio = min(ratios)
+            max_ratio = max(ratios)
+            mean_ratio = statistics.mean(ratios)
+            print()
+            print("OQ-7.3 time scale (game_time_delta / real_time_delta per interval):")
+            print(f"  mean:  {mean_ratio:.4f}")
+            print(f"  min:   {min_ratio:.4f}")
+            print(f"  max:   {max_ratio:.4f}")
+            if min_ratio < 0.8:
+                print(f"  -> Time scaling detected: ratio dropped to {min_ratio:.3f}")
+                print("     GetGameTime slows relative to GetRealTime during slow-mo")
+                print("     => g_kTimerManager should use game time (scales with SetTimeScale)")
+            else:
+                print("  -> No time scaling detected (all ratios near 1.0)")
+                print("     Play a mission with a cinematic slow-motion sequence to test")
+    elif real_t:
+        print()
+        print("OQ-7.3: real_time data present but count mismatch — rerun with current snippet")
+    else:
+        print()
+        print("OQ-7.3: no real_time data (old log format — rerun with current snippet)")
 
     print()
     for candidate_hz in (20, 25, 30, 60):

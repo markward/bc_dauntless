@@ -8,7 +8,7 @@
 # Wraps GetGameTime (AI call timing -- Q1/Q2) and TGEventManager.AddEvent
 # (event dispatch timing -- OQ-4.2).
 #
-# Tick log format:  "wall frame game_time frame_pos_s"
+# Tick log format:  "wall frame game_time frame_pos_s real_time"
 # Event log format: "wall frame frame_pos_s"
 #
 # Python 1.5 compatible: no f-strings, no True/False, no import X as Y.
@@ -40,11 +40,12 @@ try:
     def _on_get_game_time(self):
         global _last_frame, _last_save
         game_time = _orig_GetGameTime(self)
+        real_time = g_kUtopiaModule.GetRealTime()
         frame = g_kSystemWrapper.GetUpdateNumber()
         wall = _time_func()
         frame_pos = g_kSystemWrapper.GetTimeSinceFrameStart()
         if frame != _last_frame:
-            _ticks.append("%f %d %f %f" % (wall, frame, game_time, frame_pos))
+            _ticks.append("%f %d %f %f %f" % (wall, frame, game_time, frame_pos, real_time))
             _last_frame = frame
             if wall - _last_save >= 30.0:
                 _flush()

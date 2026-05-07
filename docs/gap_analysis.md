@@ -139,12 +139,22 @@ cut even at full health.
   (approximation sufficient for Phase 1 — only used for bridge dialogue)
 - No continuous effectiveness interpolation is needed for AI correctness
 
-**OQ-2.2 — Warp physics model**  
-Warp travel moves ships between sets rather than integrating physics
-across large distances. The transition mechanics — how velocity is
-handled at warp entry/exit, how the stretched warp visual model relates
-to collision radius — are engine-side. Approach: instrument warp
-entry/exit sequences with position and velocity logging.
+**OQ-2.2 — Warp physics model** ⚠️  
+**Warp is a teleport, not physics integration** — confirmed by static analysis.
+`ShipScriptActions.py:54–61` shows the transition:
+`pOriginSet.RemoveObjectFromSet(pShip.GetName())` then
+`pDestSet.AddObjectToSet(pShip, pShip.GetName())`. The ship appears at a named
+placement in the destination set. Collisions are explicitly disabled before warp
+(`Warp.py:288`: `pShip.SetCollisionsOn(0)`) and re-enabled after. The 8-state
+warp sequence (`WES_WARP_INITIATED` → `WES_WARPING` → `WES_NOT_WARPING`) is
+purely visual/sequencing — no physics integration occurs.
+
+**Open (Phase 2 only):** Velocity at warp exit is engine-side. Whether it is
+zeroed, preserved from entry, or derived from placement orientation requires
+instrumentation. Not needed for Phase 1.
+
+**Phase 1 implementation:** disable collisions → remove from origin set → add
+to destination set at named placement → re-enable collisions.
 
 **OQ-2.3 — Tractor beam physics**  
 `TractorBeamProperty` exists in hardpoints but the force model applied
@@ -356,12 +366,17 @@ arc data follows the same pattern as phasers. Approach: read a torpedo
 tube hardpoints definition and confirm the arc parameter pattern matches
 the phaser implementation.
 
-**OQ-5.3 — Warp radius during warp transition**  
-`ConditionInRange` contains special handling for ships currently warping,
-accessing `GetClonedModelRadius()` when warp state is not
-`WES_NOT_WARPING`. The relationship between warp visual stretch and
-effective collision radius is engine-side. Approach: instrument radius
-reads during warp entry/exit sequences.
+**OQ-5.3 — Warp radius during warp transition** ✅  
+**`GetRadius()` is inflated during warp; use `GetClonedModelRadius()` instead.**
+`ConditionInRange.py:201–212` contains an explicit comment and fix:
+*"If pObject1 is warping in, its radius is going to be messed up."*
+During warp, `GetRadius()` returns the stretched visual model size. The ship
+maintains a "cloned model" (the unstretched ship) accessible via
+`HasClonedModel()` / `GetClonedModelRadius()`. Proximity checks must use
+`GetClonedModelRadius()` when `GetWarpState() != WES_NOT_WARPING`, or
+range calculations will be wildly wrong. Collisions are disabled during warp
+anyway (`SetCollisionsOn(0)`), so this only affects Python-level proximity
+logic, not physics collision detection.
 
 ---
 
@@ -473,13 +488,14 @@ logged at each `GetGameTime` call (85.7s session, 60 samples): median position
 **AI/Python → physics → render**. AI reads positions from the previous tick;
 physics has not yet integrated when Python callbacks fire.
 
-**OQ-7.3 — Time scale interaction with physics and AI** ⚠️  
-*(Priority: Medium — resolve before cinematic implementation)*  
-Baseline confirmed: time_scale = 0.98 ≈ 1.0 in normal Quick Battle
-gameplay. Open question: does `SetTimeScale(0.5)` scale physics
-delta-time, AI callback frequency, and `g_kTimerManager` timers while
-`g_kRealtimeTimerManager` continues at wall speed? Requires a targeted
-session triggering a cinematic slow-motion sequence.
+**OQ-7.3 — Time scale interaction with physics and AI** ✅  
+**`GetGameTime` scales with `SetTimeScale`; `GetRealTime` does not.**
+Measured by logging both clocks per tick during a Maelstrom mission with a
+cinematic slow-motion sequence. During the cinematic the ratio
+`game_time_delta / real_time_delta` dropped to **0.204** (~5x slow-down),
+confirming the full simulation — not just the renderer — scales with
+`SetTimeScale`. `g_kTimerManager` uses game time and slows proportionally;
+`g_kRealtimeTimerManager` uses real time and is unaffected.
 
 **OQ-7.4 — TimeSliceProcess priority semantics** ✅  
 Full source scan confirms: Python code uses only `NORMAL` and `LOW`. `LOW`
@@ -629,10 +645,10 @@ across mission boundaries.
 | 8. Animation | No (Phase 2) | Medium | OpenMW + rhubarb-lip-sync | OQ-8.1 to 8.4 |
 
 **Total open questions: 21**  
-**Answered by static analysis: OQ-1.1, OQ-1.2, OQ-1.3, OQ-2.1, OQ-4.1, OQ-4.2, OQ-4.3, OQ-4.4, OQ-7.4 (9)**  
-**Answered by instrumentation: OQ-7.1, OQ-7.2 (2)**  
-**Partially answered: OQ-7.3 (1)**  
-**Still open: OQ-2.2, OQ-2.3, OQ-3.1–3.3, OQ-5.1–5.3, OQ-6.1–6.2, OQ-8.1–8.4 (8)**
+**Answered by static analysis: OQ-1.1, OQ-1.2, OQ-1.3, OQ-2.1, OQ-4.1, OQ-4.2, OQ-4.3, OQ-4.4, OQ-5.3, OQ-7.4 (10)**  
+**Answered by instrumentation: OQ-7.1, OQ-7.2, OQ-7.3 (3)**  
+**Partially answered: OQ-2.2 (teleport model confirmed; warp-exit velocity Phase 2)**  
+**Still open: OQ-2.3, OQ-3.1–3.3, OQ-5.1, OQ-5.2, OQ-6.1–6.2, OQ-8.1–8.4 (8)**
 
 **Phase 1 blockers: all resolved. Ready to begin Phase 1 implementation.**
 
