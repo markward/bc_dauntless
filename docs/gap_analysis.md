@@ -119,14 +119,25 @@ PyBullet force limits.
 
 ### Open questions requiring investigation
 
-**OQ-2.1 — Engine condition degradation formula** ⚠️  
-`SetDisabledPercentage()` values are now known: 0.0 for hull (cannot be
-disabled), 0.75 for shields, sensors, power plant, and weapons — defined
-as constants in each ship's hardpoints file at creation time, not computed
-dynamically. The value appears to be the fraction of effectiveness lost at
-0% health (so 0.75 → operates at 25% capacity when fully disabled). The
-actual scaling function — how the engine interpolates between full health
-and the disabled floor — is still engine-side and requires instrumentation.
+**OQ-2.1 — Engine condition degradation formula** ✅  
+`SetDisabledPercentage(X)` defines a binary health threshold: `IsDisabled()`
+returns true when `GetConditionPercentage() <= X`. No continuous degradation
+curve exists at the Python level — all AI and game logic uses the binary
+`IsDisabled()` test. The original assumption (X = effectiveness floor at 0%
+health) was incorrect; X is the disable threshold.
+
+`GetCombinedConditionPercentage()` is a separate combined health×power metric
+used only for bridge crew dialogue. `HelmCharacterHandlers.py:114–122` defines
+the full state machine: ≥0.95 = "Functional", <0.95 and not disabled =
+"Damaged", disabled with condition >0 = "Destroyed", condition=0 = "Destroyed".
+`HelmCharacterHandlers.py:293` confirms the combined value drops when power is
+cut even at full health.
+
+**Phase 1 implementation:**
+- `IsDisabled()` = `GetConditionPercentage() <= GetDisabledPercentage()`
+- `GetCombinedConditionPercentage()` ≈ `health_fraction × power_fraction`
+  (approximation sufficient for Phase 1 — only used for bridge dialogue)
+- No continuous effectiveness interpolation is needed for AI correctness
 
 **OQ-2.2 — Warp physics model**  
 Warp travel moves ships between sets rather than integrating physics
@@ -598,11 +609,10 @@ across mission boundaries.
 | 8. Animation | No (Phase 2) | Medium | OpenMW + rhubarb-lip-sync | OQ-8.1 to 8.4 |
 
 **Total open questions: 21**  
-**Answered by static analysis: OQ-1.1, OQ-1.2, OQ-1.3, OQ-4.1, OQ-4.2, OQ-7.4 (6)**  
+**Answered by static analysis: OQ-1.1, OQ-1.2, OQ-1.3, OQ-2.1, OQ-4.1, OQ-4.2, OQ-7.4 (7)**  
 **Answered by instrumentation: OQ-7.1, OQ-7.2 (2)**  
-**Partially answered: OQ-2.1, OQ-7.3 (2)**  
-**Still open: OQ-2.2, OQ-2.3, OQ-3.1–3.3, OQ-4.3, OQ-4.4, OQ-5.1–5.3, OQ-6.1–6.2, OQ-8.1–8.4 (11)**
+**Partially answered: OQ-7.3 (1)**  
+**Still open: OQ-2.2, OQ-2.3, OQ-3.1–3.3, OQ-4.3, OQ-4.4, OQ-5.1–5.3, OQ-6.1–6.2, OQ-8.1–8.4 (10)**
 
-**Phase 1 blockers remaining: OQ-2.1 (partial) — last blocker**  
-**Recommended next target: OQ-2.1 (degradation formula)**
+**Phase 1 blockers: all resolved. Ready to begin Phase 1 implementation.**
 
