@@ -1,1 +1,78 @@
-# TGEvent, TGEventManager
+import sys
+from engine.core.ids import TGObject
+
+
+class TGEvent(TGObject):
+    def __init__(self):
+        super().__init__()
+        self._event_type: int = 0
+        self._destination: "TGEventHandlerObject | None" = None
+        self._source: "TGObject | None" = None
+
+    def SetEventType(self, event_type: int) -> None:
+        self._event_type = event_type
+
+    def GetEventType(self) -> int:
+        return self._event_type
+
+    def SetDestination(self, dest: "TGEventHandlerObject") -> None:
+        self._destination = dest
+
+    def GetDestination(self) -> "TGEventHandlerObject | None":
+        return self._destination
+
+    def SetSource(self, source: "TGObject") -> None:
+        self._source = source
+
+    def GetSource(self) -> "TGObject | None":
+        return self._source
+
+
+def TGEvent_Create() -> TGEvent:
+    return TGEvent()
+
+
+def _resolve_handler(qualified_name: str):
+    """Resolve 'module.func' to the callable, or None if not found."""
+    dot = qualified_name.rfind(".")
+    if dot == -1:
+        return None
+    mod_name, func_name = qualified_name[:dot], qualified_name[dot + 1:]
+    mod = sys.modules.get(mod_name)
+    if mod is None:
+        return None
+    return getattr(mod, func_name, None)
+
+
+class TGEventHandlerObject(TGObject):
+    def __init__(self):
+        super().__init__()
+        # {event_type: [qualified_handler_name, ...]}
+        self._handlers: dict[int, list[str]] = {}
+
+    def AddPythonFuncHandlerForInstance(self, event_type: int, qualified_name: str) -> None:
+        self._handlers.setdefault(event_type, []).append(qualified_name)
+
+    def RemoveHandlerForInstance(self, event_type: int, qualified_name: str) -> None:
+        handlers = self._handlers.get(event_type, [])
+        if qualified_name in handlers:
+            handlers.remove(qualified_name)
+
+    def RemoveAllInstanceHandlers(self) -> None:
+        self._handlers.clear()
+
+    def ProcessEvent(self, event: TGEvent) -> None:
+        for name in self._handlers.get(event.GetEventType(), []):
+            fn = _resolve_handler(name)
+            if fn is not None:
+                fn(self, event)
+
+
+class TGEventManager(TGObject):
+    def __init__(self):
+        super().__init__()
+
+    def AddEvent(self, event: TGEvent) -> None:
+        dest = event.GetDestination()
+        if dest is not None:
+            dest.ProcessEvent(event)
