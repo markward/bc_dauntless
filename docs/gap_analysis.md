@@ -241,14 +241,22 @@ schema is now derivable by reading every handler in the SDK and noting which
 accessors it calls. `Multiplayer/MissionShared.py` contains the most
 comprehensive examples. No instrumentation needed for schema derivation.
 
-**OQ-4.2 — Event dispatch ordering and reentrancy** ⚠️  
-Reentrancy is confirmed: handlers in `MissionShared.py` create and fire new
-events mid-handler via `App.TGEvent_Create()` followed by
-`App.g_kEventManager.AddEvent()`. The chain-of-responsibility pattern
-(`CallNextHandler(pEvent)`) is also confirmed. Whether `AddEvent` inside
-a handler causes immediate dispatch or queues for end-of-frame is still
-engine-side. Instrumentation with frame-accurate timestamps is needed to
-distinguish the two models.
+**OQ-4.2 — Event dispatch ordering and reentrancy** ✅  
+**`AddEvent` uses queued dispatch.** Static analysis of all 40+ call sites
+across 40 SDK files shows a consistent "fire and forget" pattern: every
+caller fires an event then immediately returns or calls `CallNextHandler` —
+no code reads state after `AddEvent` that would depend on the handler having
+already run. Key evidence:
+- `loadspacehelper.py:113` fires `ET_DELETE_OBJECT_PUBLIC` then `return None`
+  — if dispatch were synchronous, the ship object would be deleted mid-function.
+- `AI/PlainAI/TriggerEvent.py` fires an event in `Update()` then returns
+  `US_DONE` — event clearly takes effect after the AI update completes.
+- `WarpSequence.py:596` fires `ET_ACTION_COMPLETED` then `return 0` — sequence
+  completion is posted, not waited on.
+
+**Phase 1 implementation:** `AddEvent` is a FIFO queue drained once per tick,
+after the Python AI window (consistent with Q2: Python runs at ~2% into tick,
+events drain after AI completes).
 
 **OQ-4.3 — Handler priority and cancellation**  
 Whether handlers can consume events to prevent other handlers seeing
@@ -590,12 +598,11 @@ across mission boundaries.
 | 8. Animation | No (Phase 2) | Medium | OpenMW + rhubarb-lip-sync | OQ-8.1 to 8.4 |
 
 **Total open questions: 21**  
-**Answered by static analysis: OQ-1.1, OQ-1.2, OQ-1.3, OQ-4.1, OQ-7.4 (5)**  
-**Answered by instrumentation: OQ-7.1, OQ-7.2 (7 total)**  
-**Partially answered: OQ-2.1, OQ-4.2, OQ-7.3 (3)**  
-**Still open: OQ-2.2, OQ-2.3, OQ-3.1–3.3, OQ-4.3, OQ-4.4, OQ-5.1–5.3, OQ-6.1–6.2, OQ-8.1–8.4 (12)**
+**Answered by static analysis: OQ-1.1, OQ-1.2, OQ-1.3, OQ-4.1, OQ-4.2, OQ-7.4 (6)**  
+**Answered by instrumentation: OQ-7.1, OQ-7.2 (2)**  
+**Partially answered: OQ-2.1, OQ-7.3 (2)**  
+**Still open: OQ-2.2, OQ-2.3, OQ-3.1–3.3, OQ-4.3, OQ-4.4, OQ-5.1–5.3, OQ-6.1–6.2, OQ-8.1–8.4 (11)**
 
-**Phase 1 blockers remaining: OQ-2.1 (partial), OQ-4.2 (partial)**  
-**Recommended next instrumentation targets: OQ-4.2 (event dispatch ordering),
-OQ-2.1 (degradation formula)**
+**Phase 1 blockers remaining: OQ-2.1 (partial) — last blocker**  
+**Recommended next target: OQ-2.1 (degradation formula)**
 

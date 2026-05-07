@@ -5,13 +5,11 @@
 # Runs inside the App module namespace (UtopiaModule, g_kSystemWrapper,
 # g_kConfigMapping all available directly).
 #
-# Wraps GetGameTime to sample wall time / frame / game time / frame position
-# every tick. Buffers in memory; flushes to BCTickLog.cfg every 30s via
-# SaveConfigFile (C++ file I/O - bypasses whatever blocks Python-level open()).
+# Wraps GetGameTime (AI call timing -- Q1/Q2) and TGEventManager.AddEvent
+# (event dispatch timing -- OQ-4.2).
 #
-# Log format: "wall_time frame_num game_time frame_pos_ms"
-#   frame_pos_ms = GetTimeSinceFrameStart() in seconds -- WHERE in the tick
-#                  Python AI is called (0.0 = start, ~0.016 = end of 60Hz tick)
+# Tick log format:  "wall frame game_time frame_pos_s"
+# Event log format: "wall frame frame_pos_s"
 #
 # Python 1.5 compatible: no f-strings, no True/False, no import X as Y.
 ###############################################################################
@@ -21,7 +19,10 @@ try:
     _time_func = time.clock
     _last_frame = -1
     _ticks = []
+    _ev_log = []
+    _EV_MAX = 200
     _orig_GetGameTime = UtopiaModule.GetGameTime
+    _orig_AddEvent = TGEventManager.AddEvent
 
     def _flush():
         i = 0
@@ -29,6 +30,11 @@ try:
             g_kConfigMapping.SetStringValue("BCTickLog", "t" + str(i), line)
             i = i + 1
         g_kConfigMapping.SetIntValue("BCTickLog", "count", len(_ticks))
+        j = 0
+        for line in _ev_log:
+            g_kConfigMapping.SetStringValue("BCTickLog", "ev" + str(j), line)
+            j = j + 1
+        g_kConfigMapping.SetIntValue("BCTickLog", "evcount", len(_ev_log))
         g_kConfigMapping.SaveConfigFile("BCTickLog.cfg")
 
     def _on_get_game_time(self):
@@ -45,8 +51,17 @@ try:
                 _last_save = wall
         return game_time
 
+    def _on_add_event(self, pEvent):
+        if len(_ev_log) < _EV_MAX:
+            frame = g_kSystemWrapper.GetUpdateNumber()
+            pos = g_kSystemWrapper.GetTimeSinceFrameStart()
+            wall = _time_func()
+            _ev_log.append("%f %d %f" % (wall, frame, pos))
+        return _orig_AddEvent(self, pEvent)
+
     _last_save = _time_func()
     UtopiaModule.GetGameTime = _on_get_game_time
+    TGEventManager.AddEvent = _on_add_event
 
 except:
     try:

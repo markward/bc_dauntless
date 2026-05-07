@@ -8,11 +8,16 @@ PROJECT_ROOT = pathlib.Path(__file__).parent.parent
 DEFAULT_LOG = PROJECT_ROOT / "game" / "BCTickLog.cfg"
 
 
-def read_log(log_path: pathlib.Path) -> list[tuple[float, int, float, float | None]]:
+def read_log(log_path: pathlib.Path) -> tuple[
+    list[tuple[float, int, float, float | None]],
+    list[tuple[float, int, float]],
+]:
     """Parse the [BCTickLog] section from a SaveConfigFile-format .cfg file.
 
-    Returns list of (wall_time, frame, game_time, frame_pos_s).
-    frame_pos_s is None for old 3-field log entries.
+    Returns:
+      ticks:  list of (wall_time, frame, game_time, frame_pos_s)
+              frame_pos_s is None for old 3-field entries
+      events: list of (wall_time, frame, frame_pos_s) from AddEvent wrapper
     """
     if not log_path.exists():
         print(f"Log not found: {log_path}")
@@ -20,7 +25,9 @@ def read_log(log_path: pathlib.Path) -> list[tuple[float, int, float, float | No
         sys.exit(1)
 
     tick_data: dict[int, str] = {}
+    ev_data: dict[int, str] = {}
     count = 0
+    evcount = 0
     in_section = False
 
     with open(log_path) as f:
@@ -31,31 +38,40 @@ def read_log(log_path: pathlib.Path) -> list[tuple[float, int, float, float | No
                 continue
             if line.startswith("[") and in_section:
                 break
-            # Config format uses = for strings, | for ints — handle both.
             sep = "=" if "=" in line else "|" if "|" in line else ""
             if not in_section or not sep:
                 continue
             key, _, val = line.partition(sep)
             if key == "count":
                 count = int(val)
+            elif key == "evcount":
+                evcount = int(val)
             elif key in ("err_type", "err_value"):
                 print(f"Snippet error recorded: {key}={val}")
+            elif key.startswith("ev") and key[2:].isdigit():
+                ev_data[int(key[2:])] = val
             elif key.startswith("t") and key[1:].isdigit():
                 tick_data[int(key[1:])] = val
 
-    entries: list[tuple[float, int, float, float | None]] = []
+    ticks: list[tuple[float, int, float, float | None]] = []
     for i in range(count):
-        raw = tick_data.get(i, "")
-        parts = raw.split()
+        parts = tick_data.get(i, "").split()
         if len(parts) == 4:
-            entries.append((float(parts[0]), int(parts[1]), float(parts[2]), float(parts[3])))
+            ticks.append((float(parts[0]), int(parts[1]), float(parts[2]), float(parts[3])))
         elif len(parts) == 3:
-            entries.append((float(parts[0]), int(parts[1]), float(parts[2]), None))
-    return entries
+            ticks.append((float(parts[0]), int(parts[1]), float(parts[2]), None))
+
+    events: list[tuple[float, int, float]] = []
+    for i in range(evcount):
+        parts = ev_data.get(i, "").split()
+        if len(parts) == 3:
+            events.append((float(parts[0]), int(parts[1]), float(parts[2])))
+
+    return ticks, events
 
 
 def analyze(log_path: pathlib.Path) -> None:
-    entries = read_log(log_path)
+    entries, events = read_log(log_path)
 
     if len(entries) < 10:
         print(f"Only {len(entries)} entries — need at least 10.")
@@ -126,6 +142,33 @@ def analyze(log_path: pathlib.Path) -> None:
     else:
         print()
         print("Q2: no frame_pos data (old log format — rerun with current snippet)")
+
+    # OQ-4.2: event dispatch timing — when in the tick does AddEvent fire?
+    if events:
+        tick_s = total_wall / total_frames
+        ev_pos = [e[2] for e in events]
+        ev_ms = [v * 1000.0 for v in ev_pos]
+        # AI window: frame_pos values consistent with Q2 result (~0.28ms, <1ms)
+        ai_window_s = 0.001
+        in_ai = sum(1 for v in ev_pos if v <= ai_window_s)
+        outside_ai = len(ev_pos) - in_ai
+        print()
+        print(f"OQ-4.2 event dispatch (first {len(events)} AddEvent calls):")
+        print(f"  median frame_pos: {statistics.median(ev_ms):.3f} ms")
+        print(f"  mean frame_pos:   {statistics.mean(ev_ms):.3f} ms")
+        print(f"  min:              {min(ev_ms):.3f} ms")
+        print(f"  max:              {max(ev_ms):.3f} ms")
+        print(f"  within AI window (<1ms):  {in_ai}/{len(ev_pos)} ({100*in_ai//len(ev_pos)}%)")
+        print(f"  outside AI window (>1ms): {outside_ai}/{len(ev_pos)} ({100*outside_ai//len(ev_pos)}%)")
+        if in_ai > outside_ai:
+            print("  -> Events dispatched primarily from Python AI window")
+            print("     (consistent with synchronous / Python-driven dispatch)")
+        else:
+            print("  -> Events dispatched throughout the tick (C++ drives most events)")
+            print("     Need handler-side instrumentation to determine reentrancy model")
+    else:
+        print()
+        print("OQ-4.2: no event data (rerun with current snippet)")
 
     print()
     for candidate_hz in (20, 25, 30, 60):

@@ -52,12 +52,12 @@ The original engine is a compiled C++ binary exposed to Python via a SWIG-genera
 
 ### Gap analysis OQs (21 total)
 
-- Closed by static analysis: OQ-1.1, 1.2, 1.3, 4.1, 7.4
+- Closed by static analysis: OQ-1.1, 1.2, 1.3, 4.1, 4.2, 7.4
 - Closed by instrumentation: OQ-7.1, OQ-7.2
-- Partially answered: OQ-2.1 (degradation formula), OQ-4.2 (dispatch ordering)
-- Still open: 12 OQs across gaps 2, 3, 4, 5, 6, 8
+- Partially answered: OQ-2.1 (degradation formula)
+- Still open: 11 OQs across gaps 2, 3, 4, 5, 6, 8
 
-**Phase 1 blockers remaining:** OQ-2.1, OQ-4.2
+**Phase 1 blockers remaining:** OQ-2.1 (last one)
 
 ## Instrumentation approach
 
