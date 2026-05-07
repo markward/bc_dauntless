@@ -237,6 +237,7 @@ class _SDKLoader(importlib.abc.Loader):
         ast.fix_missing_locations(tree)
         code = compile(tree, self.path, "exec")
         module.__dict__.setdefault('apply', lambda f, a=(), kw={}: f(*a, **kw))
+        module.__dict__.setdefault('reload', lambda m: m)  # Python 2 builtin; no-op in Phase 1
         module.__dict__.setdefault('BORG', 0x00000200)  # QuickBattle.py omits this; BORG_CUBE = 0x200
         exec(code, module.__dict__)
         if self.also_register_as and self.also_register_as not in sys.modules:
@@ -330,7 +331,7 @@ def setup_sdk() -> None:
     if not any(isinstance(f, _SDKFinder) for f in sys.meta_path):
         sys.meta_path.insert(0, _SDKFinder())
 
-    _callable_stubs = ["loadspacehelper", "LoadBridge"]
+    _callable_stubs = ["LoadBridge"]
     for name in _callable_stubs:
         if name not in sys.modules:
             sys.modules[name] = _StubModule(name)
@@ -350,6 +351,7 @@ def setup_sdk() -> None:
         sys.modules["Actions"] = _actions
 
     _plain_stubs = [
+        "imp",  # removed in Python 3.12; loadspacehelper imports but never uses it
         "Bridge.TacticalCharacterHandlers",
         "Bridge.HelmCharacterHandlers",
         "Bridge.XOCharacterHandlers",

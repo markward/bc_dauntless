@@ -221,6 +221,7 @@ class _SDKLoader(importlib.abc.Loader):
         ast.fix_missing_locations(tree)
         code = compile(tree, self.path, "exec")
         module.__dict__.setdefault('apply', lambda f, a=(), kw={}: f(*a, **kw))
+        module.__dict__.setdefault('reload', lambda m: m)  # Python 2 builtin; no-op in Phase 1
         module.__dict__.setdefault('BORG', 0x00000200)  # QuickBattle.py omits this; BORG_CUBE = 0x200
         exec(code, module.__dict__)
         # Python 1.5 compat: also register under the qualified dotted name so that
@@ -334,10 +335,7 @@ def pytest_configure(config):
         sys.meta_path.insert(0, _SDKFinder())
 
     # Callable stubs: attributes must be callable (return None).
-    # loadspacehelper.CreateShip etc. are called by MissionLib; returning None
-    # keeps the pPlayer != None guards false so creation branches are skipped.
     _callable_stubs = [
-        "loadspacehelper",
         "LoadBridge",
     ]
     for name in _callable_stubs:
@@ -365,6 +363,7 @@ def pytest_configure(config):
 
     # Plain stubs: imported but no attributes accessed in Phase 1 code paths.
     _plain_stubs = [
+        "imp",  # removed in Python 3.12; loadspacehelper imports but never uses it
         "Bridge.TacticalCharacterHandlers",
         "Bridge.HelmCharacterHandlers",
         "Bridge.XOCharacterHandlers",

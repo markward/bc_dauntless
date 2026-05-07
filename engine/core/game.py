@@ -14,7 +14,39 @@ def _set_current_game(game: "Game | None") -> None:
 
 
 class Mission(TGEventHandlerObject):
-    pass
+    def __init__(self):
+        super().__init__()
+        self._friendly_group = None
+        self._enemy_group = None
+        self._neutral_group = None
+        self._tractor_group = None
+
+    def _make_group(self):
+        from engine.appc.objects import ObjectGroup
+        return ObjectGroup()
+
+    def GetFriendlyGroup(self):
+        if self._friendly_group is None:
+            self._friendly_group = self._make_group()
+        return self._friendly_group
+
+    def GetEnemyGroup(self):
+        if self._enemy_group is None:
+            self._enemy_group = self._make_group()
+        return self._enemy_group
+
+    def GetNeutralGroup(self):
+        if self._neutral_group is None:
+            self._neutral_group = self._make_group()
+        return self._neutral_group
+
+    def GetTractorGroup(self):
+        if self._tractor_group is None:
+            self._tractor_group = self._make_group()
+        return self._tractor_group
+
+    def GetPrecreatedShip(self, script_name: str):
+        return None
 
 
 class Episode(TGObject):

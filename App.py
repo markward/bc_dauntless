@@ -4,6 +4,12 @@ from engine.appc.events import (
     TGEventHandlerObject, TGEventManager,
 )
 from engine.appc.timers import TGTimer, TGTimer_Create, TGTimerManager
+from engine.appc.objects import ObjectClass, PhysicsObjectClass, DamageableObject, ObjectGroup
+from engine.appc.sets import SetClass, SetManager, SetClass_Create
+from engine.appc.ships import (
+    ShipClass, ShipClass_Create, ShipClass_GetObject,
+    ShipClass_Cast, ShipClass_GetObjectByID,
+)
 from engine.core.game import Game, Episode, Mission, Game_GetCurrentGame, _set_current_game, Game_GetDifficulty
 
 # ── Numeric constants ──────────────────────────────────────────────────────────
@@ -16,6 +22,7 @@ TWO_PI = math.pi * 2.0
 g_kEventManager = TGEventManager()
 g_kTimerManager = TGTimerManager(g_kEventManager)
 g_kRealtimeTimerManager = TGTimerManager(g_kEventManager)
+g_kSetManager = SetManager()
 
 # ── Event-type constants (integers; values are arbitrary but stable) ───────────
 # Only the subset needed for Phase 1.  Add more as SDK scripts demand them.
@@ -39,6 +46,18 @@ def Game_GetNextEventType() -> int:
 
 Mission_GetNextEventType = Game_GetNextEventType
 Episode_GetNextEventType = Game_GetNextEventType
+
+# ── Player hardpoint file (set by MissionLib.CreatePlayerShip) ─────────────────
+_player_hardpoint_filename: "str | None" = None
+
+
+def Game_GetPlayerHardpointFileName() -> "str | None":
+    return _player_hardpoint_filename
+
+
+def Game_SetPlayerHardpointFileName(filename: str) -> None:
+    global _player_hardpoint_filename
+    _player_hardpoint_filename = filename
 
 
 # ── UtopiaModule ───────────────────────────────────────────────────────────────

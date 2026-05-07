@@ -6,8 +6,8 @@ def test_loadspacehelper_create_ship_callable():
 
 def test_loadspacehelper_preload_ship_callable():
     import loadspacehelper
-    result = loadspacehelper.PreloadShip("Galaxy", 1)
-    assert result is not None
+    # PreloadShip is a void procedure; it should not raise
+    loadspacehelper.PreloadShip("Galaxy", 1)
 
 
 def test_load_bridge_load_callable():
