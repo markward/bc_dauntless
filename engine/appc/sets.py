@@ -22,6 +22,8 @@ class SetClass(TGEventHandlerObject):
     def AddObjectToSet(self, obj, identifier: str) -> bool:
         if hasattr(obj, "SetName"):
             obj.SetName(identifier)
+        if hasattr(obj, "_containing_set"):
+            obj._containing_set = self
         self._objects[identifier] = obj
         return True
 

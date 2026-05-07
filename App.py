@@ -4,8 +4,15 @@ from engine.appc.events import (
     TGEventHandlerObject, TGEventManager,
 )
 from engine.appc.timers import TGTimer, TGTimer_Create, TGTimerManager
+from engine.appc.math import (
+    TGPoint3, TGMatrix3,
+    TGPoint3_GetModelForward, TGPoint3_GetModelBackward,
+    TGPoint3_GetModelUp, TGPoint3_GetModelDown,
+    TGPoint3_GetModelRight, TGPoint3_GetModelLeft,
+)
 from engine.appc.objects import ObjectClass, PhysicsObjectClass, DamageableObject, ObjectGroup
 from engine.appc.sets import SetClass, SetManager, SetClass_Create
+from engine.appc.placement import PlacementObject, Waypoint, Waypoint_Create
 from engine.appc.ships import (
     ShipClass, ShipClass_Create, ShipClass_GetObject,
     ShipClass_Cast, ShipClass_GetObjectByID,
