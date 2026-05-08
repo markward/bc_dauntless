@@ -250,3 +250,32 @@ def test_property_set_get_properties_by_type():
     assert weapons == [phaser]
     subsystems = list(s.GetPropertiesByType(SubsystemProperty))
     assert subsystems == [hull, shield, phaser]
+
+
+def test_property_list_sdk_iteration_protocol():
+    s = TGModelPropertySet()
+    hull = HullProperty("Hull")
+    shield = ShieldProperty("Shield Generator")
+    s.AddToSet("Scene Root", hull)
+    s.AddToSet("Scene Root", shield)
+    lst = s.GetPropertyList()
+    lst.TGBeginIteration()
+    assert lst.TGGetNumItems() == 2
+    first = lst.TGGetNext()
+    assert first.GetProperty() is hull
+    second = lst.TGGetNext()
+    assert second.GetProperty() is shield
+    lst.TGDoneIterating()
+    lst.TGDestroy()
+
+
+def test_property_list_iter_round_trip_after_sdk_protocol():
+    s = TGModelPropertySet()
+    hull = HullProperty("Hull")
+    s.AddToSet("Scene Root", hull)
+    lst = s.GetPropertyList()
+    lst.TGBeginIteration()
+    lst.TGGetNext()
+    lst.TGDoneIterating()
+    # After iteration, list(lst) should still yield all items via __iter__
+    assert list(lst) == [hull]

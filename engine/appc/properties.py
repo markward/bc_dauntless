@@ -211,6 +211,48 @@ class TGModelPropertyManager:
         self._global = {k: v for k, v in self._global.items() if v is not prop}
 
 
+# ── TGModelPropertyInstance / TGModelPropertyList ─────────────────────────────
+# SDK call sites (loadspacehelper.py:171-189) iterate the result of
+# GetPropertyList()/GetPropertiesByType() via TGBeginIteration / TGGetNumItems
+# / TGGetNext / TGDoneIterating / TGDestroy. TGGetNext returns an "instance"
+# wrapper exposing GetProperty() to extract the underlying TGModelProperty —
+# see SDK App.py:2316-2342 for reference.
+
+class _TGModelPropertyInstance:
+    def __init__(self, prop):
+        self._prop = prop
+
+    def GetProperty(self):
+        return self._prop
+
+
+class _TGModelPropertyList:
+    def __init__(self, props):
+        self._props = list(props)
+        self._index = 0
+
+    def __iter__(self):
+        # Preserve Python list() compatibility for tests/non-SDK callers.
+        return iter(self._props)
+
+    def TGBeginIteration(self):
+        self._index = 0
+
+    def TGGetNumItems(self):
+        return len(self._props)
+
+    def TGGetNext(self):
+        prop = self._props[self._index]
+        self._index += 1
+        return _TGModelPropertyInstance(prop)
+
+    def TGDoneIterating(self):
+        self._index = 0
+
+    def TGDestroy(self):
+        pass
+
+
 # ── TGModelPropertySet ────────────────────────────────────────────────────────
 # Holds (node_name, prop) pairs. node_name (e.g. "Scene Root") is a renderer
 # concept stored but unused in Phase 1.
@@ -223,7 +265,9 @@ class TGModelPropertySet:
         self._entries.append((node_name, prop))
 
     def GetPropertyList(self):
-        return iter([prop for _node, prop in self._entries])
+        return _TGModelPropertyList([prop for _node, prop in self._entries])
 
     def GetPropertiesByType(self, type_cls):
-        return iter([prop for _node, prop in self._entries if isinstance(prop, type_cls)])
+        return _TGModelPropertyList(
+            [prop for _node, prop in self._entries if isinstance(prop, type_cls)]
+        )
