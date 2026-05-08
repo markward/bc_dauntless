@@ -71,6 +71,32 @@ class SetClass(TGEventHandlerObject):
         """Phase 1 stub — always reports the location as empty."""
         return 1
 
+    # ── Object iteration ─────────────────────────────────────────────────────
+    # SDK pattern (MissionLib.HideCharacters):
+    #   pObject = pSet.GetFirstObject()
+    #   pFirstObject = pObject
+    #   while not App.IsNull(pObject):
+    #       pObject = pSet.GetNextObject(pObject.GetObjID())
+    #       if (pObject.GetObjID() == pFirstObject.GetObjID()):
+    #           pObject = App.CharacterClass_CreateNull()  # exit
+    # Real iteration must terminate — empty sets return None, populated sets
+    # walk and wrap so the wrap-detection branch fires.
+
+    def GetFirstObject(self):
+        if not self._objects:
+            return None
+        return next(iter(self._objects.values()))
+
+    def GetNextObject(self, obj_id):
+        # Iterate _objects in insertion order, find the one whose GetObjID()
+        # matches obj_id, and return the next one (wrapping to first).
+        items = list(self._objects.values())
+        for i, obj in enumerate(items):
+            if hasattr(obj, "GetObjID") and obj.GetObjID() == int(obj_id):
+                # Wrap to the head — caller's wrap-detection branch will fire.
+                return items[(i + 1) % len(items)]
+        return None
+
     # ── Cameras ──────────────────────────────────────────────────────────────
     # Mirror sdk/.../App.py:3548-3555.  CutsceneCameraBegin/End rely on the
     # presence/absence semantics; mission scripts also call GetActiveCamera

@@ -438,3 +438,87 @@ def ObjectGroup_FromModule(module_name: str, attr_name: str) -> ObjectGroup:
 
 def ObjectGroupWithInfo_Cast(obj):
     return obj if isinstance(obj, ObjectGroupWithInfo) else None
+
+
+# ── ObjectClass module-level helpers ──────────────────────────────────────────
+
+def ObjectClass_Cast(obj) -> "ObjectClass | None":
+    """Return obj if it is an ObjectClass, else None.
+
+    SDK callers (Effects.py:555, MissionLib.py:1516/3919) chain
+    ``App.ObjectClass_Cast(pUnknown).GetName()`` after a downcast — in
+    Phase 1 the cast is a runtime isinstance check.  Returns None for
+    non-ObjectClass inputs so SDK guards (`if pObject:`) short-circuit
+    correctly.
+    """
+    return obj if isinstance(obj, ObjectClass) else None
+
+
+def ObjectClass_GetObject(pSet, name) -> "ObjectClass | None":
+    """Look up an object by name within a SetClass.
+
+    SDK pattern: ``App.ObjectClass_GetObject(pSet, sObjectName)`` (Camera.py:374).
+    Mirrors the per-class GetObject helpers (ShipClass_GetObject, CharacterClass_GetObject)
+    but without the type filter — returns whatever is registered under the name.
+    """
+    if pSet is None or not hasattr(pSet, "GetObject"):
+        return None
+    obj = pSet.GetObject(str(name))
+    return obj if isinstance(obj, ObjectClass) else None
+
+
+def ObjectClass_GetObjectByID(pSet, obj_id) -> "ObjectClass | None":
+    """Look up an object by integer ID, scoped to pSet (or globally if None).
+
+    SDK pattern (MissionLib.py:3219): ``App.ObjectClass_GetObjectByID(
+    App.SetClass_GetNull(), idTarget)`` — a None pSet means "search the
+    null set", which in Appc semantics scans the global object table.
+    Phase 1 routes through ``engine.core.ids.get_object_by_id``.
+    """
+    from engine.core.ids import get_object_by_id
+    obj = get_object_by_id(int(obj_id))
+    return obj if isinstance(obj, ObjectClass) else None
+
+
+# ── IsNull ────────────────────────────────────────────────────────────────────
+
+def IsNull(obj) -> int:
+    """Return 1 when obj is the null sentinel, 0 otherwise.
+
+    SDK iteration pattern (MissionLib.HideCharacters, CharacterMenuInterface):
+
+        pObject = pSet.GetFirstObject()
+        while not App.IsNull(pObject):
+            ...
+            pObject = pSet.GetNextObject(pObject.GetObjID())
+            if (pObject.GetObjID() == pFirstObject.GetObjID()):
+                pObject = App.CharacterClass_CreateNull()   # null sentinel
+
+    Considers as "null":
+    * Python None
+    * Any object marked with ``_is_null = True`` (CharacterClass_CreateNull
+      sets this flag so the iteration loop exits cleanly)
+    * App._NamedStub fall-through stubs — these represent unimplemented
+      engine calls.  Treating them as null lets iteration loops over not-yet-
+      implemented set methods (GetFirstObject / GetNextObject) terminate
+      after the first iteration instead of looping forever.
+
+    Note: TGObject.__getattr__ returns a truthy _Stub for any unknown attr,
+    so plain ``getattr(obj, "_is_null", False)`` would always succeed.
+    Inspect the instance dict directly to bypass the stub fallback.
+    """
+    if obj is None:
+        return 1
+    # Detect stub-class instances by class name (avoids importing App at
+    # module load time and the resulting circular dependency).  All three
+    # stub families represent "no real implementation" — for the SDK iteration
+    # patterns IsNull guards, treating them as null lets the loop exit.
+    cls_name = type(obj).__name__
+    if cls_name in ("_NamedStub", "_Stub", "_RendererStub", "_NodeStub"):
+        return 1
+    try:
+        if obj.__dict__.get("_is_null", False):
+            return 1
+    except AttributeError:
+        pass
+    return 0

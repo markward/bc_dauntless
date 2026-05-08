@@ -148,3 +148,101 @@ def test_app_exposes_helpers():
     assert App.ObjectGroup_ForceToGroup is ObjectGroup_ForceToGroup
     assert App.ObjectGroup_FromModule is ObjectGroup_FromModule
     assert App.ObjectGroupWithInfo is ObjectGroupWithInfo
+
+
+# ── ObjectClass module-level helpers ─────────────────────────────────────────
+from engine.appc.objects import (
+    ObjectClass_Cast, ObjectClass_GetObject, ObjectClass_GetObjectByID,
+    IsNull,
+)
+from engine.appc.objects import ObjectClass
+
+
+def test_object_class_cast_returns_object_for_object():
+    obj = ObjectClass()
+    assert ObjectClass_Cast(obj) is obj
+
+
+def test_object_class_cast_returns_object_for_subclass():
+    """ShipClass and CharacterClass are subclasses; cast should accept them."""
+    from engine.appc.ships import ShipClass
+    ship = ShipClass()
+    assert ObjectClass_Cast(ship) is ship
+
+
+def test_object_class_cast_returns_none_for_non_object():
+    assert ObjectClass_Cast(None) is None
+    assert ObjectClass_Cast("string") is None
+    assert ObjectClass_Cast(42) is None
+
+
+def test_object_class_get_object_finds_by_name():
+    pSet = SetClass()
+    obj = ObjectClass()
+    pSet.AddObjectToSet(obj, "alpha")
+    assert ObjectClass_GetObject(pSet, "alpha") is obj
+
+
+def test_object_class_get_object_returns_none_for_missing():
+    pSet = SetClass()
+    assert ObjectClass_GetObject(pSet, "nope") is None
+
+
+def test_object_class_get_object_with_none_set_returns_none():
+    assert ObjectClass_GetObject(None, "alpha") is None
+
+
+def test_object_class_get_object_by_id_finds_by_id():
+    obj = ObjectClass()
+    found = ObjectClass_GetObjectByID(None, obj.GetObjID())
+    assert found is obj
+
+
+def test_object_class_get_object_by_id_unknown_returns_none():
+    assert ObjectClass_GetObjectByID(None, 9999999) is None
+
+
+# ── IsNull ───────────────────────────────────────────────────────────────────
+
+def test_is_null_for_none():
+    assert IsNull(None) == 1
+
+
+def test_is_null_for_normal_object_returns_zero():
+    assert IsNull(ObjectClass()) == 0
+    assert IsNull("string") == 0
+    assert IsNull(42) == 0
+
+
+def test_is_null_for_character_class_create_null_sentinel():
+    """CharacterClass_CreateNull returns a sentinel that must register as null
+    so the SDK iteration loop pattern (HideCharacters) exits cleanly."""
+    null_char = App.CharacterClass_CreateNull()
+    assert IsNull(null_char) == 1
+
+
+def test_is_null_for_normal_character_returns_zero():
+    real_char = App.CharacterClass_Create()
+    assert IsNull(real_char) == 0
+
+
+def test_is_null_for_named_stub_returns_one():
+    """SDK iteration loops call GetFirstObject() / GetNextObject() — both
+    unimplemented in Phase 1, so they fall through to NamedStub.  IsNull
+    must treat NamedStub as null so the loop exits immediately rather than
+    spinning forever."""
+    stub = App.SomeUnknownThing  # falls through to _NamedStub
+    assert type(stub).__name__ == "_NamedStub"
+    assert IsNull(stub) == 1
+
+
+def test_is_null_for_stub_returns_one():
+    from engine.core.ids import _Stub
+    assert IsNull(_Stub()) == 1
+
+
+def test_app_exposes_object_class_helpers():
+    assert App.ObjectClass_Cast is ObjectClass_Cast
+    assert App.ObjectClass_GetObject is ObjectClass_GetObject
+    assert App.ObjectClass_GetObjectByID is ObjectClass_GetObjectByID
+    assert App.IsNull is IsNull

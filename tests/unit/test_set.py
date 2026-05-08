@@ -137,3 +137,45 @@ def test_get_rendered_set_returns_none_when_unset():
     from engine.appc.sets import SetManager
     fresh = SetManager()
     assert fresh.GetRenderedSet() is None
+
+
+# ── SetClass.GetFirstObject / GetNextObject iteration ────────────────────────
+
+def test_get_first_object_returns_none_when_empty():
+    s = SetClass()
+    assert s.GetFirstObject() is None
+
+
+def test_get_first_object_returns_first_inserted():
+    from engine.appc.objects import ObjectClass
+    s = SetClass()
+    a, b = ObjectClass(), ObjectClass()
+    s.AddObjectToSet(a, "alpha")
+    s.AddObjectToSet(b, "beta")
+    assert s.GetFirstObject() is a
+
+
+def test_get_next_object_walks_in_insertion_order():
+    from engine.appc.objects import ObjectClass
+    s = SetClass()
+    a, b, c = ObjectClass(), ObjectClass(), ObjectClass()
+    s.AddObjectToSet(a, "alpha")
+    s.AddObjectToSet(b, "beta")
+    s.AddObjectToSet(c, "gamma")
+    assert s.GetNextObject(a.GetObjID()) is b
+    assert s.GetNextObject(b.GetObjID()) is c
+
+
+def test_get_next_object_wraps_to_first():
+    """SDK iteration loop relies on wrap-around to detect end-of-iteration."""
+    from engine.appc.objects import ObjectClass
+    s = SetClass()
+    a, b = ObjectClass(), ObjectClass()
+    s.AddObjectToSet(a, "alpha")
+    s.AddObjectToSet(b, "beta")
+    assert s.GetNextObject(b.GetObjID()) is a
+
+
+def test_get_next_object_returns_none_for_unknown_id():
+    s = SetClass()
+    assert s.GetNextObject(999999) is None

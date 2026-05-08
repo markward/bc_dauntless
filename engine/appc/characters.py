@@ -470,7 +470,15 @@ def CharacterClass_Create(body_nif: str = "", head_nif: str = "") -> CharacterCl
 
 
 def CharacterClass_CreateNull() -> CharacterClass:
-    return CharacterClass()
+    """Return a sentinel CharacterClass marked as "null".
+
+    SDK iteration loops (MissionLib.HideCharacters) assign the result of
+    CreateNull to the loop variable when wrap-around is detected — the
+    next ``App.IsNull(pObject)`` check then sees the null marker and exits.
+    """
+    char = CharacterClass()
+    char._is_null = True
+    return char
 
 
 def CharacterClass_Cast(obj) -> "CharacterClass | None":
