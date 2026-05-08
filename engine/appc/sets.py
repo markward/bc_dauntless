@@ -97,6 +97,16 @@ class SetClass(TGEventHandlerObject):
                 return items[(i + 1) % len(items)]
         return None
 
+    # ── Proximity manager ───────────────────────────────────────────────────
+    # SDK pattern (E6M4): pSet.GetProximityManager().AddObject(pProbe).
+    # Lazy-create a single per-set instance so AddObject calls accumulate
+    # rather than dropping into fresh stubs each call.
+    def GetProximityManager(self):
+        if not hasattr(self, "_proximity_manager") or self._proximity_manager is None:
+            from engine.appc.planet import ProximityManager
+            self._proximity_manager = ProximityManager(self)
+        return self._proximity_manager
+
     # ── Cameras ──────────────────────────────────────────────────────────────
     # Mirror sdk/.../App.py:3548-3555.  CutsceneCameraBegin/End rely on the
     # presence/absence semantics; mission scripts also call GetActiveCamera
