@@ -123,3 +123,30 @@ def test_app_module_exposes_subsystem_classes_and_constants():
     assert App.TractorBeamSystem.TBS_TOW == 1
     assert App.PhaserSystem.PP_LOW == 0
     assert App.PhaserSystem.PP_HIGH == 1
+
+
+# ── WarpEngineSubsystem_GetWarpEffectTime module-level wrapper ───────────────
+
+def test_module_level_warp_effect_time_default():
+    """SDK pattern: pSeq.AddAction(a, b, App.WarpEngineSubsystem_GetWarpEffectTime() / 2.0)."""
+    t = App.WarpEngineSubsystem_GetWarpEffectTime()
+    assert isinstance(t, float)
+    assert t > 0.0   # must be positive so the / 2.0 division gives a real delay
+
+
+def test_module_level_warp_effect_time_set_round_trip():
+    original = App.WarpEngineSubsystem_GetWarpEffectTime()
+    App.WarpEngineSubsystem_SetWarpEffectTime(5.0)
+    assert App.WarpEngineSubsystem_GetWarpEffectTime() == 5.0
+    # Restore for other tests.
+    App.WarpEngineSubsystem_SetWarpEffectTime(original)
+
+
+def test_module_level_warp_effect_time_independent_from_instance():
+    """Each WarpEngineSubsystem instance has its own GetWarpEffectTime;
+    the module-level default is engine-wide and not tied to any one ship."""
+    inst = WarpEngineSubsystem()
+    inst.SetWarpEffectTime(99.0)
+    # Module-level value is unchanged.
+    assert App.WarpEngineSubsystem_GetWarpEffectTime() != 99.0
+    assert inst.GetWarpEffectTime() == 99.0

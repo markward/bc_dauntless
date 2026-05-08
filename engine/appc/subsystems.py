@@ -284,3 +284,26 @@ class WarpEngineSubsystem(PoweredSubsystem):
 
     def SetWarpState(self, state) -> None:
         self._warp_state = int(state)
+
+
+# ── Module-level WarpEngineSubsystem helpers ─────────────────────────────────
+# SDK callers (WarpSequence.py:95-282) reach for a class-level / engine-default
+# warp effect time when sequencing the warp begin / end / flash actions:
+#
+#     pWS.AddAction(pWarpEndAction, pWarpBeginAction,
+#                   App.WarpEngineSubsystem_GetWarpEffectTime() / 2.0)
+#
+# This is the default warp-transition duration in seconds, independent of any
+# specific ship's warp engine.  Default 3.0s matches BC's warp animation length.
+
+_warp_effect_time_default: float = 3.0
+
+
+def WarpEngineSubsystem_GetWarpEffectTime() -> float:
+    return _warp_effect_time_default
+
+
+def WarpEngineSubsystem_SetWarpEffectTime(seconds: float) -> None:
+    """Override the engine-default warp effect time (used by tests)."""
+    global _warp_effect_time_default
+    _warp_effect_time_default = float(seconds)

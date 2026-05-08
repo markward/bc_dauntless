@@ -81,6 +81,7 @@ from engine.appc.subsystems import (
     ShipSubsystem, PoweredSubsystem, WeaponSystem,
     TorpedoSystem, PhaserSystem, PulseWeaponSystem, TractorBeamSystem,
     SensorSubsystem, ImpulseEngineSubsystem, WarpEngineSubsystem,
+    WarpEngineSubsystem_GetWarpEffectTime, WarpEngineSubsystem_SetWarpEffectTime,
 )
 from engine.appc.properties import (
     TGModelProperty,
