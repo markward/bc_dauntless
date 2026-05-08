@@ -38,11 +38,18 @@ fi
 
 echo "$UPSTREAM_SHA" > "$MIRROR_DIR/UPSTREAM_VERSION"
 
-# Re-apply local patches if any.
+# Re-apply local patches if any. cd into the project root so `git apply
+# --directory=...` resolves the path consistently regardless of the CWD the
+# script was invoked from.
+cd "$PROJECT_ROOT"
 if compgen -G "$MIRROR_DIR/patches/*.patch" > /dev/null; then
   for p in "$MIRROR_DIR"/patches/*.patch; do
     echo "Applying $p"
-    git apply --directory="native/third_party/openmw_nif" "$p"
+    if ! git apply --directory="native/third_party/openmw_nif" "$p"; then
+      echo "error: patch $p failed to apply." >&2
+      echo "error: mirror may be inconsistent. Inspect the patch or remove it from patches/." >&2
+      exit 1
+    fi
   done
 fi
 
