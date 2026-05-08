@@ -14,6 +14,7 @@ add_executable(nif_tests
     nif/types_test.cc
     nif/reader_test.cc
     nif/version_test.cc
+    nif/canonical_dump.cc
 )
 
 target_link_libraries(nif_tests
