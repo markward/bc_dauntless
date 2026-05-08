@@ -1,5 +1,5 @@
 add_library(nif STATIC
-    src/empty.cc
+    src/file.cc
     src/reader.cc
 )
 
