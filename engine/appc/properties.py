@@ -35,3 +35,85 @@ class TGModelProperty:
                 return data.get((field, args), None)
             return getter
         raise AttributeError(attr)
+
+
+# ── Subclass hierarchy ────────────────────────────────────────────────────────
+# Subclasses are thin: only class-level constants. All Set*/Get* behaviour is
+# inherited from the data-bag base.
+
+class PositionOrientationProperty(TGModelProperty):
+    pass
+
+
+class EngineGlowProperty(TGModelProperty):
+    pass
+
+
+class SubsystemProperty(TGModelProperty):
+    pass
+
+
+class HullProperty(SubsystemProperty):
+    pass
+
+
+class PowerProperty(SubsystemProperty):
+    pass
+
+
+class WeaponProperty(SubsystemProperty):
+    pass
+
+
+class EnergyWeaponProperty(WeaponProperty):
+    pass
+
+
+class PhaserProperty(EnergyWeaponProperty):
+    pass
+
+
+class PulseWeaponProperty(EnergyWeaponProperty):
+    pass
+
+
+class TractorBeamProperty(EnergyWeaponProperty):
+    pass
+
+
+class TorpedoTubeProperty(WeaponProperty):
+    pass
+
+
+class PoweredSubsystemProperty(SubsystemProperty):
+    pass
+
+
+class ShieldProperty(PoweredSubsystemProperty):
+    FRONT_SHIELDS  = 0
+    REAR_SHIELDS   = 1
+    TOP_SHIELDS    = 2
+    BOTTOM_SHIELDS = 3
+    LEFT_SHIELDS   = 4
+    RIGHT_SHIELDS  = 5
+    NUM_SHIELDS    = 6
+
+
+class SensorProperty(PoweredSubsystemProperty):
+    pass
+
+
+class RepairSubsystemProperty(PoweredSubsystemProperty):
+    pass
+
+
+class WeaponSystemProperty(PoweredSubsystemProperty):
+    WST_UNKNOWN = 0
+    WST_PHASER  = 1
+    WST_TORPEDO = 2
+    WST_PULSE   = 3
+    WST_TRACTOR = 4
+
+
+class TorpedoSystemProperty(WeaponSystemProperty):
+    pass
