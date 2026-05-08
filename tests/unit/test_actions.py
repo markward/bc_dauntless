@@ -219,3 +219,143 @@ def test_tgobject_get_tgobject_ptr_roundtrip():
     obj_id = a.GetObjID()
     result = App.TGObject_GetTGObjectPtr(obj_id)
     assert result is a
+
+
+# ── TGSequence_Cast ──────────────────────────────────────────────────────────
+
+def test_tgsequence_cast_returns_sequence():
+    from engine.appc.actions import TGSequence_Cast
+    seq = App.TGSequence_Create()
+    assert TGSequence_Cast(seq) is seq
+
+
+def test_tgsequence_cast_returns_none_for_non_sequence():
+    from engine.appc.actions import TGSequence_Cast
+    assert TGSequence_Cast(App.TGAction_CreateNull()) is None
+    assert TGSequence_Cast(None) is None
+
+
+# ── TGActionManager named registry ───────────────────────────────────────────
+
+def test_tg_action_manager_register_and_find():
+    mgr = TGActionManager()
+    a = App.TGAction_CreateNull()
+    mgr.RegisterAction(a, "FriendlyFireWarning")
+    assert mgr.FindAction("FriendlyFireWarning") is a
+    assert mgr.IsRegistered("FriendlyFireWarning") == 1
+
+
+def test_tg_action_manager_register_replaces_prior():
+    """SDK pattern: re-registering under the same name replaces the prior."""
+    mgr = TGActionManager()
+    a = App.TGAction_CreateNull()
+    b = App.TGAction_CreateNull()
+    mgr.RegisterAction(a, "X")
+    mgr.RegisterAction(b, "X")
+    assert mgr.FindAction("X") is b
+
+
+def test_tg_action_manager_unregister():
+    mgr = TGActionManager()
+    a = App.TGAction_CreateNull()
+    mgr.RegisterAction(a, "X")
+    mgr.UnregisterAction("X")
+    assert mgr.IsRegistered("X") == 0
+    assert mgr.FindAction("X") is None
+
+
+def test_module_level_register_action_uses_singleton():
+    """SDK call: ``App.TGActionManager_RegisterAction(pAction, "name")``
+    routes to the global g_kTGActionManager."""
+    a = App.TGAction_CreateNull()
+    App.TGActionManager_RegisterAction(a, "TestAction")
+    assert App.TGActionManager_FindAction("TestAction") is a
+    App.TGActionManager_UnregisterAction("TestAction")
+
+
+# ── TGCreditAction ───────────────────────────────────────────────────────────
+
+def test_tg_credit_action_factory_records_args():
+    ca = App.TGCreditAction_Create("Hello", None, 0.5, 0.025, 5, 0.25, 0.5, 12)
+    assert isinstance(ca, App.TGCreditAction)
+    assert ca._text == "Hello"
+
+
+def test_tg_credit_action_set_color():
+    ca = App.TGCreditAction_Create("X", None)
+    ca.SetColor(0.1, 0.2, 0.3, 0.4)
+    assert ca._color == (0.1, 0.2, 0.3, 0.4)
+
+
+def test_tg_credit_action_set_default_color_round_trip():
+    App.TGCreditAction_SetDefaultColor(0.65, 0.65, 1.0, 1.0)
+    assert App.TGCreditAction_GetDefaultColor() == (0.65, 0.65, 1.0, 1.0)
+    # New banner inherits the default at construction.
+    ca = App.TGCreditAction_Create("X", None)
+    assert ca._color == (0.65, 0.65, 1.0, 1.0)
+    # Reset for subsequent tests.
+    App.TGCreditAction_SetDefaultColor(1.0, 1.0, 1.0, 1.0)
+
+
+def test_tg_credit_action_play_completes():
+    ca = App.TGCreditAction_Create("X", None)
+    ca.Play()
+    assert ca.IsPlaying() is False
+
+
+def test_tg_credit_action_justify_constants_distinct():
+    cs = {
+        App.TGCreditAction.JUSTIFY_LEFT,
+        App.TGCreditAction.JUSTIFY_RIGHT,
+        App.TGCreditAction.JUSTIFY_TOP,
+        App.TGCreditAction.JUSTIFY_BOTTOM,
+        App.TGCreditAction.JUSTIFY_CENTER,
+    }
+    assert len(cs) == 5
+
+
+# ── TGConditionAction ────────────────────────────────────────────────────────
+
+def test_tg_condition_action_starts_in_wait_state():
+    ca = App.TGConditionAction_Create()
+    assert ca.GetState() == App.TGConditionAction.TGCA_WAIT
+
+
+def test_tg_condition_action_add_condition_subscribes():
+    from engine.appc.ai import TGCondition
+    ca = App.TGConditionAction_Create()
+    cond = TGCondition()
+    ca.AddCondition(cond)
+    # Underlying TGCondition wired up to invoke ConditionChanged.
+    assert ca in cond._handlers
+
+
+def test_tg_condition_action_completes_on_condition_change():
+    from engine.appc.ai import TGCondition
+    ca = App.TGConditionAction_Create()
+    cond = TGCondition()
+    ca.AddCondition(cond)
+    cond.SetActive()
+    cond.SetStatus(1)
+    assert ca.GetState() == App.TGConditionAction.TGCA_COMPLETED
+
+
+def test_tg_condition_action_play_evaluates_existing_truthy_status():
+    """If a condition is already truthy when Play() runs, complete immediately."""
+    from engine.appc.ai import TGCondition
+    ca = App.TGConditionAction_Create()
+    cond = TGCondition()
+    cond._status = 1   # bypass handler firing for setup
+    ca.AddCondition(cond)
+    ca.Play()
+    assert ca.GetState() == App.TGConditionAction.TGCA_COMPLETED
+
+
+def test_tg_condition_action_in_sequence():
+    """SDK pattern: pSequence.AppendAction(pConditionAction); pSequence.AddAction(pNext, pConditionAction)."""
+    seq = App.TGSequence_Create()
+    ca = App.TGConditionAction_Create()
+    seq.AppendAction(ca)
+    next_action = App.TGAction_CreateNull()
+    seq.AddAction(next_action, ca)
+    assert seq.GetNumActions() == 2

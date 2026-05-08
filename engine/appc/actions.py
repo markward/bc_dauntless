@@ -153,6 +153,13 @@ def TGSequence_Create() -> TGSequence:
     return TGSequence()
 
 
+def TGSequence_Cast(obj) -> "TGSequence | None":
+    """SDK pattern: ``App.TGSequence_Cast(pAction)`` to test+cast.  Returns
+    obj if it's a TGSequence, else None.  Used in MissionLib for sequence
+    flattening — checking whether an inner action is itself a sub-sequence."""
+    return obj if isinstance(obj, TGSequence) else None
+
+
 class TGTimedAction(TGAction):
     def __init__(self):
         super().__init__()
@@ -200,7 +207,143 @@ def SubtitleAction_Create(database=None, string_id: str = "") -> SubtitleAction:
 
 
 class TGActionManager(TGEventHandlerObject):
-    pass
+    """Named-action registry.
+
+    SDK call sites (MissionLib.py:3972, 4015, 4102, 4107) register actions
+    under a string name so they can be re-fetched and cancelled later — the
+    "FriendlyFireWarning" and "FriendlyFireGameOver" patterns post deferred
+    actions and cancel any prior pending one before posting a new one.
+    """
+    def __init__(self):
+        super().__init__()
+        self._registered: dict = {}  # name -> action (most-recent under each key)
+
+    def RegisterAction(self, action, name: str) -> None:
+        self._registered[str(name)] = action
+
+    def UnregisterAction(self, name: str) -> None:
+        self._registered.pop(str(name), None)
+
+    def FindAction(self, name: str):
+        return self._registered.get(str(name))
+
+    def IsRegistered(self, name: str) -> int:
+        return 1 if str(name) in self._registered else 0
+
+
+def TGActionManager_RegisterAction(action, name: str) -> None:
+    """Module-level convenience wrapper used by SDK MissionLib.
+
+    Routes to the global g_kTGActionManager singleton in App.py.  Late-bind
+    via importlib so this module doesn't depend on App at load time.
+    """
+    import App
+    App.g_kTGActionManager.RegisterAction(action, name)
+
+
+def TGActionManager_UnregisterAction(name: str) -> None:
+    import App
+    App.g_kTGActionManager.UnregisterAction(name)
+
+
+def TGActionManager_FindAction(name: str):
+    import App
+    return App.g_kTGActionManager.FindAction(name)
+
+
+# ── TGCreditAction ──────────────────────────────────────────────────────────
+# Credit-roll text overlay used by mission-summary screens (MissionLib.py:5416)
+# and the friendly-fire / game-over banners.  Phase 1 stores the text+layout
+# args; rendering is Phase 2.
+
+class TGCreditAction(TGTimedAction):
+    JUSTIFY_LEFT   = 0
+    JUSTIFY_RIGHT  = 1
+    JUSTIFY_TOP    = 2
+    JUSTIFY_BOTTOM = 3
+    JUSTIFY_CENTER = 4
+
+    def __init__(self, *args):
+        super().__init__()
+        # SDK constructor is variadic — common forms:
+        #   (text, subtitle_window, x, y, time, fade_in, fade_out, font_size)
+        #   (text, subtitle_window) — for short banners
+        # Stash everything for round-trip + Phase 2 rendering.
+        self._args = args
+        self._text = args[0] if args else ""
+        self._subtitle = args[1] if len(args) > 1 else None
+        self._color = _credit_default_color  # tuple (r, g, b, a)
+
+    def SetColor(self, r: float, g: float, b: float, a: float = 1.0) -> None:
+        self._color = (float(r), float(g), float(b), float(a))
+
+
+def TGCreditAction_Create(*args) -> TGCreditAction:
+    return TGCreditAction(*args)
+
+
+# Module-level default color set via TGCreditAction_SetDefaultColor.
+# Banners created without an explicit SetColor inherit this — matches Appc
+# behaviour where SetDefaultColor pokes a process-global.
+_credit_default_color: tuple = (1.0, 1.0, 1.0, 1.0)
+
+
+def TGCreditAction_SetDefaultColor(r, g, b, a=1.0) -> None:
+    global _credit_default_color
+    _credit_default_color = (float(r), float(g), float(b), float(a))
+
+
+def TGCreditAction_GetDefaultColor() -> tuple:
+    return _credit_default_color
+
+
+# ── TGConditionAction ───────────────────────────────────────────────────────
+# Action that completes when its conditions transition.  Mission scripts use
+# it as a sequence-step gate — `pSequence.AppendAction(pConditionAction)` then
+# `pSequence.AddAction(pNextAction, pConditionAction)` makes pNextAction wait
+# for the condition to flip before it plays.
+
+class TGConditionAction(TGAction):
+    TGCA_WAIT      = 0   # action is pending — sequence stalls here
+    TGCA_COMPLETED = 1   # condition fired — sequence advances
+
+    def __init__(self):
+        super().__init__()
+        self._conditions: list = []
+        self._state = self.TGCA_WAIT
+
+    def AddCondition(self, condition) -> None:
+        self._conditions.append(condition)
+        # Subscribe so ConditionChanged is invoked when the underlying
+        # TGCondition transitions; the AI ConditionScript and ConditionInRange
+        # primitives both push their handler pattern through TGCondition.AddHandler.
+        if hasattr(condition, "AddHandler"):
+            condition.AddHandler(self)
+
+    def GetConditions(self) -> list:
+        return list(self._conditions)
+
+    def ConditionChanged(self, cond) -> None:
+        # Any condition flipping moves us to COMPLETED + invokes the
+        # TGAction Completed() flow so dependent actions run.
+        self._state = self.TGCA_COMPLETED
+        self.Completed()
+
+    def GetState(self) -> int:
+        return self._state
+
+    def _do_play(self) -> None:
+        # Phase 1: synchronously evaluate conditions; if any has truthy
+        # status already, complete immediately.  Otherwise the wait is
+        # pending until ConditionChanged fires (Phase 2 simulation loop).
+        for cond in self._conditions:
+            if hasattr(cond, "GetStatus") and cond.GetStatus():
+                self._state = self.TGCA_COMPLETED
+                return
+
+
+def TGConditionAction_Create() -> TGConditionAction:
+    return TGConditionAction()
 
 
 class TGObjPtrEvent(TGEvent):

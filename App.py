@@ -28,11 +28,16 @@ from engine.appc.ships import (
 from engine.appc.actions import (
     TGAction, TGNullAction, TGAction_CreateNull, TGAction_Cast,
     TGScriptAction, TGScriptAction_Create,
-    TGSequence, TGSequence_Create,
+    TGSequence, TGSequence_Create, TGSequence_Cast,
     TGTimedAction, TGSoundAction, TGSoundAction_Create,
     TGAnimAction, TGAnimAction_Create,
     SubtitleAction, SubtitleAction_Create,
     TGActionManager,
+    TGActionManager_RegisterAction, TGActionManager_UnregisterAction,
+    TGActionManager_FindAction,
+    TGCreditAction, TGCreditAction_Create,
+    TGCreditAction_SetDefaultColor, TGCreditAction_GetDefaultColor,
+    TGConditionAction, TGConditionAction_Create,
     TGObjPtrEvent, TGObjPtrEvent_Create,
     TGObject_GetTGObjectPtr,
 )
