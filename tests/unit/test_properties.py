@@ -129,3 +129,91 @@ def test_factory_returns_correct_subclass(factory, cls):
     p = factory("Test Name")
     assert isinstance(p, cls)
     assert p.GetName() == "Test Name"
+
+
+from engine.appc.properties import TGModelPropertyManager
+
+
+@pytest.fixture
+def mgr():
+    return TGModelPropertyManager()
+
+
+def test_scope_constants():
+    assert TGModelPropertyManager.LOCAL_TEMPLATES == 0
+    assert TGModelPropertyManager.GLOBAL_TEMPLATES == 1
+
+
+def test_register_local_then_find(mgr):
+    p = HullProperty("Hull")
+    mgr.RegisterLocalTemplate(p)
+    assert mgr.FindByName("Hull", TGModelPropertyManager.LOCAL_TEMPLATES) is p
+
+
+def test_register_global_then_find(mgr):
+    p = HullProperty("Hull")
+    mgr.RegisterGlobalTemplate(p)
+    assert mgr.FindByName("Hull", TGModelPropertyManager.GLOBAL_TEMPLATES) is p
+
+
+def test_find_by_name_unknown_returns_none(mgr):
+    assert mgr.FindByName("Missing", TGModelPropertyManager.LOCAL_TEMPLATES) is None
+    assert mgr.FindByName("Missing", TGModelPropertyManager.GLOBAL_TEMPLATES) is None
+
+
+def test_local_and_global_scopes_are_independent(mgr):
+    local_hull = HullProperty("Hull")
+    global_hull = HullProperty("Hull")
+    mgr.RegisterLocalTemplate(local_hull)
+    mgr.RegisterGlobalTemplate(global_hull)
+    assert mgr.FindByName("Hull", TGModelPropertyManager.LOCAL_TEMPLATES) is local_hull
+    assert mgr.FindByName("Hull", TGModelPropertyManager.GLOBAL_TEMPLATES) is global_hull
+
+
+def test_clear_local_does_not_affect_global(mgr):
+    mgr.RegisterLocalTemplate(HullProperty("L"))
+    mgr.RegisterGlobalTemplate(HullProperty("G"))
+    mgr.ClearLocalTemplates()
+    assert mgr.FindByName("L", TGModelPropertyManager.LOCAL_TEMPLATES) is None
+    assert mgr.FindByName("G", TGModelPropertyManager.GLOBAL_TEMPLATES) is not None
+
+
+def test_clear_global_does_not_affect_local(mgr):
+    mgr.RegisterLocalTemplate(HullProperty("L"))
+    mgr.RegisterGlobalTemplate(HullProperty("G"))
+    mgr.ClearGlobalTemplates()
+    assert mgr.FindByName("L", TGModelPropertyManager.LOCAL_TEMPLATES) is not None
+    assert mgr.FindByName("G", TGModelPropertyManager.GLOBAL_TEMPLATES) is None
+
+
+def test_find_by_name_and_type_match(mgr):
+    p = ShieldProperty("Shields")
+    mgr.RegisterLocalTemplate(p)
+    found = mgr.FindByNameAndType("Shields", ShieldProperty, TGModelPropertyManager.LOCAL_TEMPLATES)
+    assert found is p
+
+
+def test_find_by_name_and_type_mismatch(mgr):
+    p = ShieldProperty("Shields")
+    mgr.RegisterLocalTemplate(p)
+    found = mgr.FindByNameAndType("Shields", HullProperty, TGModelPropertyManager.LOCAL_TEMPLATES)
+    assert found is None
+
+
+def test_is_local_and_is_global(mgr):
+    local_p = HullProperty("L")
+    global_p = HullProperty("G")
+    mgr.RegisterLocalTemplate(local_p)
+    mgr.RegisterGlobalTemplate(global_p)
+    assert mgr.IsLocalTemplate(local_p) is True
+    assert mgr.IsLocalTemplate(global_p) is False
+    assert mgr.IsGlobalTemplate(global_p) is True
+    assert mgr.IsGlobalTemplate(local_p) is False
+
+
+def test_remove_template(mgr):
+    p = HullProperty("Hull")
+    mgr.RegisterLocalTemplate(p)
+    mgr.RemoveTemplate(p)
+    assert mgr.FindByName("Hull", TGModelPropertyManager.LOCAL_TEMPLATES) is None
+    assert mgr.IsLocalTemplate(p) is False

@@ -134,3 +134,52 @@ def ShieldProperty_Create(name):              return ShieldProperty(name)
 def SensorProperty_Create(name):              return SensorProperty(name)
 def RepairSubsystemProperty_Create(name):     return RepairSubsystemProperty(name)
 def TorpedoSystemProperty_Create(name):       return TorpedoSystemProperty(name)
+
+
+# ── TGModelPropertyManager ────────────────────────────────────────────────────
+# loadspacehelper.py:90 calls ClearLocalTemplates() between ship loads, so the
+# manager is genuinely stateful across hardpoint imports. App.py's singleton
+# lives for the whole session.
+#
+# Renderer-only methods (RegisterFilter, AddFilter, ApplyFilters, etc.) are
+# Phase 2 concerns; they fall through to App.py's _NamedStub via __getattr__.
+
+class TGModelPropertyManager:
+    LOCAL_TEMPLATES  = 0
+    GLOBAL_TEMPLATES = 1
+
+    def __init__(self):
+        self._local: dict = {}
+        self._global: dict = {}
+
+    def _store(self, scope):
+        return self._local if scope == self.LOCAL_TEMPLATES else self._global
+
+    def RegisterLocalTemplate(self, prop):
+        self._local[prop.GetName()] = prop
+
+    def RegisterGlobalTemplate(self, prop):
+        self._global[prop.GetName()] = prop
+
+    def ClearLocalTemplates(self):
+        self._local.clear()
+
+    def ClearGlobalTemplates(self):
+        self._global.clear()
+
+    def FindByName(self, name, scope):
+        return self._store(scope).get(name)
+
+    def FindByNameAndType(self, name, type_cls, scope):
+        prop = self._store(scope).get(name)
+        return prop if isinstance(prop, type_cls) else None
+
+    def IsLocalTemplate(self, prop):
+        return prop in self._local.values()
+
+    def IsGlobalTemplate(self, prop):
+        return prop in self._global.values()
+
+    def RemoveTemplate(self, prop):
+        self._local  = {k: v for k, v in self._local.items()  if v is not prop}
+        self._global = {k: v for k, v in self._global.items() if v is not prop}
