@@ -234,7 +234,11 @@ class _NamedStub(_Stub):
         self._name = name
 
     def __getattr__(self, attr):
-        return _NamedStub(f"{self._name}.{attr}")
+        name = self.__dict__.get("_name", "<unknown>")
+        return _NamedStub(f"{name}.{attr}")
+
+    def __repr__(self):
+        return f"<App._NamedStub {self._name!r}>"
 
     def __call__(self, *args, **kwargs):
         _stub_tracker.record(self._name)
