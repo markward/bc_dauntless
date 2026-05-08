@@ -57,6 +57,13 @@ MANIFEST
 .python-version
 uv.lock.bak
 
+# =============================================================================
+# RUNTIME ARTIFACTS
+# =============================================================================
+# Save files written by SaveLoadManager (.BCS files at saves/ root)
+saves/*.BCS
+saves/missions/
+
 # Type checking
 .mypy_cache/
 .dmypy.json

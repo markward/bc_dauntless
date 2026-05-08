@@ -46,6 +46,13 @@ from engine.core.game import (
 from engine.appc.localization import TGLocalizationManager, TGLocalizationDatabase, _TGString
 from engine.appc.var_manager import TGVarManager
 from engine.appc.save_load import SaveLoadManager
+from engine.appc.characters import (
+    CharacterClass, CharacterClass_Create, CharacterClass_CreateNull,
+    CharacterClass_Cast, CharacterClass_GetObject,
+    CharacterClass_SetVolumeForLineType, CharacterClass_GetVolumeForLineType,
+    STButton, STMenu, STTopLevelMenu,
+    STButton_CreateW, STMenu_Cast, STTopLevelMenu_CreateW, STTopLevelMenu_Cast,
+)
 from engine.appc.ai import (
     ArtificialIntelligence,
     TGCondition, TGConditionHandler,
