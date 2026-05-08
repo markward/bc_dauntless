@@ -19,5 +19,5 @@ add_subdirectory(src/nif)
 option(OPEN_STBC_BUILD_TESTS "Build native tests for open_stbc" ON)
 if(OPEN_STBC_BUILD_TESTS)
   enable_testing()
-  # add_subdirectory(tests) is added in Task 7
+  add_subdirectory(tests)
 endif()
