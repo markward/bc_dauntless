@@ -21,6 +21,8 @@ void Reader::require(std::size_t n) {
 
 std::uint8_t Reader::read_uint8() { require(1); return data_[offset_++]; }
 
+std::uint8_t Reader::peek_uint8() { require(1); return data_[offset_]; }
+
 std::uint16_t Reader::read_uint16() {
     require(2); std::uint16_t v; std::memcpy(&v, data_ + offset_, 2); offset_ += 2; return v;
 }

@@ -15,6 +15,8 @@ add_executable(nif_tests
     nif/reader_test.cc
     nif/version_test.cc
     nif/canonical_dump.cc
+    nif/header_unit_test.cc
+    nif/header_test.cc
 )
 
 target_link_libraries(nif_tests
@@ -26,6 +28,13 @@ target_link_libraries(nif_tests
 target_include_directories(nif_tests
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+# Bake the project root path into the test binary so sample-file paths
+# resolve regardless of the working directory ctest is invoked from.
+target_compile_definitions(nif_tests
+    PRIVATE
+        OPEN_STBC_PROJECT_ROOT="${CMAKE_SOURCE_DIR}"
 )
 
 gtest_discover_tests(nif_tests)

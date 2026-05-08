@@ -34,6 +34,9 @@ public:
     std::string read_line();
     void read_bytes(unsigned char* out, std::size_t n);
 
+    /// Look at the next byte without advancing the cursor.
+    std::uint8_t peek_uint8();
+
     std::size_t offset() const { return offset_; }
     std::size_t bytes_remaining() const { return size_ - offset_; }
     const std::filesystem::path& source() const { return source_; }
