@@ -117,3 +117,20 @@ class WeaponSystemProperty(PoweredSubsystemProperty):
 
 class TorpedoSystemProperty(WeaponSystemProperty):
     pass
+
+
+# ── Factory functions ─────────────────────────────────────────────────────────
+# SDK call sites use App.XxxProperty_Create("Name") rather than the
+# constructor directly. These mirror the SDK's Appc.new_XxxProperty pattern.
+
+def PositionOrientationProperty_Create(name): return PositionOrientationProperty(name)
+def HullProperty_Create(name):                return HullProperty(name)
+def PowerProperty_Create(name):               return PowerProperty(name)
+def PhaserProperty_Create(name):              return PhaserProperty(name)
+def PulseWeaponProperty_Create(name):         return PulseWeaponProperty(name)
+def TractorBeamProperty_Create(name):         return TractorBeamProperty(name)
+def TorpedoTubeProperty_Create(name):         return TorpedoTubeProperty(name)
+def ShieldProperty_Create(name):              return ShieldProperty(name)
+def SensorProperty_Create(name):              return SensorProperty(name)
+def RepairSubsystemProperty_Create(name):     return RepairSubsystemProperty(name)
+def TorpedoSystemProperty_Create(name):       return TorpedoSystemProperty(name)

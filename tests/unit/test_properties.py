@@ -100,3 +100,32 @@ def test_data_bag_works_on_subclasses():
     p = ShieldProperty("Shield Generator")
     p.SetMaxShields(ShieldProperty.FRONT_SHIELDS, 4500.0)
     assert p.GetMaxShields(ShieldProperty.FRONT_SHIELDS) == 4500.0
+
+
+from engine.appc.properties import (
+    PositionOrientationProperty_Create,
+    HullProperty_Create, PowerProperty_Create,
+    PhaserProperty_Create, PulseWeaponProperty_Create,
+    TractorBeamProperty_Create, TorpedoTubeProperty_Create,
+    ShieldProperty_Create, SensorProperty_Create,
+    RepairSubsystemProperty_Create, TorpedoSystemProperty_Create,
+)
+
+
+@pytest.mark.parametrize("factory,cls", [
+    (PositionOrientationProperty_Create, PositionOrientationProperty),
+    (HullProperty_Create, HullProperty),
+    (PowerProperty_Create, PowerProperty),
+    (PhaserProperty_Create, PhaserProperty),
+    (PulseWeaponProperty_Create, PulseWeaponProperty),
+    (TractorBeamProperty_Create, TractorBeamProperty),
+    (TorpedoTubeProperty_Create, TorpedoTubeProperty),
+    (ShieldProperty_Create, ShieldProperty),
+    (SensorProperty_Create, SensorProperty),
+    (RepairSubsystemProperty_Create, RepairSubsystemProperty),
+    (TorpedoSystemProperty_Create, TorpedoSystemProperty),
+])
+def test_factory_returns_correct_subclass(factory, cls):
+    p = factory("Test Name")
+    assert isinstance(p, cls)
+    assert p.GetName() == "Test Name"
