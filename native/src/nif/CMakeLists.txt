@@ -7,6 +7,7 @@ add_library(nif STATIC
     src/blocks/av_object_base.cc
     src/blocks/ni_node.cc
     src/blocks/ni_tri_shape.cc
+    src/blocks/properties.cc
 )
 
 target_include_directories(nif

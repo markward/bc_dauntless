@@ -11,6 +11,9 @@
 
 namespace nif {
 
+/// Reads the NiObjectNET fields (name, extra_data_link, controller_link).
+ObjectNetBase parse_object_net_base(Reader& r);
+
 /// Reads the NiObjectNET + NiAVObject fields in v3.1 order. Throws if the
 /// has_bounding_volume flag is 1 (bounding-volume body parsing is deferred
 /// until a sample file requires it).

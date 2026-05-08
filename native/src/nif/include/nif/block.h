@@ -14,6 +14,14 @@ namespace nif {
 /// Texture coordinate (u, v). 8 bytes.
 struct TexCoord { float u, v; };
 
+/// NiObjectNET base fields shared by every named NIF block (NiAVObject
+/// blocks, NiProperty blocks, etc.). Field layout for v3.1.
+struct ObjectNetBase {
+    std::string name;
+    std::uint32_t extra_data_link = 0;
+    std::uint32_t controller_link = 0;
+};
+
 /// NiAVObject-derived block fields shared by NiNode and NiTriShape (and
 /// other scene-graph blocks). Field layout for v3.1.
 struct AvObjectBase {
@@ -73,7 +81,36 @@ struct NiTriShapeData {
     std::vector<std::vector<std::uint16_t>> match_groups;
 };
 
-using Block = std::variant<std::monostate, NiNode, NiTriShape, NiTriShapeData>;
+/// Z-buffer test/write property. v3.1 has only NiObjectNET base + flags.
+struct NiZBufferProperty {
+    ObjectNetBase obj;
+    std::uint16_t flags = 0;
+};
+
+/// Vertex-color application mode. v3.1 has flags + vertex_mode + lighting_mode.
+struct NiVertexColorProperty {
+    ObjectNetBase obj;
+    std::uint16_t flags = 0;
+    std::uint32_t vertex_mode = 0;
+    std::uint32_t lighting_mode = 0;
+};
+
+/// Alpha-blend / alpha-test property. v3.1 has flags + threshold.
+struct NiAlphaProperty {
+    ObjectNetBase obj;
+    std::uint16_t flags = 0;
+    std::uint8_t threshold = 0;
+};
+
+using Block = std::variant<
+    std::monostate,
+    NiNode,
+    NiTriShape,
+    NiTriShapeData,
+    NiZBufferProperty,
+    NiVertexColorProperty,
+    NiAlphaProperty
+>;
 
 struct BlockHandle {
     const Block* ptr = nullptr;

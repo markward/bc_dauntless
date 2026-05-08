@@ -7,11 +7,20 @@
 
 namespace nif {
 
+ObjectNetBase parse_object_net_base(Reader& r) {
+    ObjectNetBase o;
+    o.name = r.read_string_uint32();
+    o.extra_data_link = r.read_uint32();
+    o.controller_link = r.read_uint32();
+    return o;
+}
+
 AvObjectBase parse_av_object_base(Reader& r, const char* block_type) {
     AvObjectBase a;
-    a.name = r.read_string_uint32();
-    a.extra_data_link = r.read_uint32();
-    a.controller_link = r.read_uint32();
+    auto base = parse_object_net_base(r);
+    a.name = std::move(base.name);
+    a.extra_data_link = base.extra_data_link;
+    a.controller_link = base.controller_link;
     a.flags = r.read_uint16();
     a.translation = r.read_vec3();
     a.rotation = r.read_mat3x3();
