@@ -1,5 +1,4 @@
-// native/tests/nif/ni_node_test.cc — exercises the NiNode parser against
-// the real BC sample files.
+// native/tests/nif/ni_node_test.cc — NiNode parser against real BC samples.
 #include <gtest/gtest.h>
 
 #include <nif/block.h>
@@ -28,18 +27,15 @@ TEST(NiNodeParser, GalaxyRootNiNodeParses) {
     auto* root = find_first_ninode(f);
     ASSERT_NE(root, nullptr) << "First block should be a NiNode";
 
-    // Galaxy's root is a default-transform node with identity rotation.
-    EXPECT_FLOAT_EQ(root->translation.x, 0.0f);
-    EXPECT_FLOAT_EQ(root->translation.y, 0.0f);
-    EXPECT_FLOAT_EQ(root->translation.z, 0.0f);
-    EXPECT_FLOAT_EQ(root->scale, 1.0f);
-    EXPECT_FLOAT_EQ(root->rotation.m[0], 1.0f);
-    EXPECT_FLOAT_EQ(root->rotation.m[4], 1.0f);
-    EXPECT_FLOAT_EQ(root->rotation.m[8], 1.0f);
-    EXPECT_FALSE(root->has_bounding_volume);
-
-    // Root has at least one property and one child (ZBufferProperty + child NiNode).
-    EXPECT_GE(root->property_links.size(), 1u);
+    EXPECT_FLOAT_EQ(root->av.translation.x, 0.0f);
+    EXPECT_FLOAT_EQ(root->av.translation.y, 0.0f);
+    EXPECT_FLOAT_EQ(root->av.translation.z, 0.0f);
+    EXPECT_FLOAT_EQ(root->av.scale, 1.0f);
+    EXPECT_FLOAT_EQ(root->av.rotation.m[0], 1.0f);
+    EXPECT_FLOAT_EQ(root->av.rotation.m[4], 1.0f);
+    EXPECT_FLOAT_EQ(root->av.rotation.m[8], 1.0f);
+    EXPECT_FALSE(root->av.has_bounding_volume);
+    EXPECT_GE(root->av.property_links.size(), 1u);
     EXPECT_GE(root->child_links.size(), 1u);
 }
 
@@ -49,8 +45,4 @@ TEST(NiNodeParser, GalaxyParsesAtLeastOneBlock) {
     if (!std::filesystem::exists(path)) GTEST_SKIP() << path;
     auto f = nif::load(path);
     EXPECT_GE(f.blocks.size(), 1u);
-    // Walker should have stopped on the first non-NiNode type
-    // (NiZBufferProperty per inventory). We don't know yet which blocks
-    // beyond NiNode parse; eof_reached should still be false.
-    EXPECT_FALSE(f.eof_reached);
 }

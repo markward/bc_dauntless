@@ -20,6 +20,7 @@ add_executable(nif_tests
     nif/error_test.cc
     nif/resolver_test.cc
     nif/ni_node_test.cc
+    nif/ni_tri_shape_test.cc
 )
 
 target_link_libraries(nif_tests

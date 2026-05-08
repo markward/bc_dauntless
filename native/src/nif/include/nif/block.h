@@ -3,6 +3,7 @@
 
 #include <nif/types.h>
 
+#include <array>
 #include <cstdint>
 #include <string>
 #include <variant>
@@ -10,27 +11,69 @@
 
 namespace nif {
 
-/// Generic node object — the primary scene-graph spine.
-/// Field layout per v3.1; verified against Galaxy.nif's root node.
-/// References are stored as raw v3.x link IDs (uint32); the resolver maps
-/// them to BlockHandle later.
-struct NiNode {
+/// Texture coordinate (u, v). 8 bytes.
+struct TexCoord { float u, v; };
+
+/// NiAVObject-derived block fields shared by NiNode and NiTriShape (and
+/// other scene-graph blocks). Field layout for v3.1.
+struct AvObjectBase {
     std::string name;
     std::uint32_t extra_data_link = 0;   // 0 = no extra data
     std::uint32_t controller_link = 0;   // 0 = no controller
     std::uint16_t flags = 0;
     Vec3 translation{};
-    Mat3x3 rotation{ .m = {1, 0, 0, 0, 1, 0, 0, 0, 1} };  // identity default
+    Mat3x3 rotation{ .m = {1, 0, 0, 0, 1, 0, 0, 0, 1} };
     float scale = 1.0f;
     Vec3 velocity{};
     std::vector<std::uint32_t> property_links;
     bool has_bounding_volume = false;
-    // bounding_volume struct deferred until a sample file exercises it
+    // bounding_volume body deferred until a sample file requires it.
+};
+
+/// Generic scene-graph node. Adds child + effect arrays to the AV base.
+struct NiNode {
+    AvObjectBase av;
     std::vector<std::uint32_t> child_links;
     std::vector<std::uint32_t> effect_links;
 };
 
-using Block = std::variant<std::monostate, NiNode>;
+/// Single triangle-mesh shape. Adds a Data ref pointing to a
+/// NiTriShapeData block.
+struct NiTriShape {
+    AvObjectBase av;
+    std::uint32_t data_link = 0;
+};
+
+/// Vertex / index / per-vertex-attribute storage for an NiTriShape.
+/// Inherits NiGeometryData → NiTriBasedGeomData → NiTriShapeData.
+/// Field layout for v3.1.
+struct NiTriShapeData {
+    // NiGeometryData (v3.1 filtered):
+    std::uint16_t num_vertices = 0;
+    bool has_vertices = false;
+    std::vector<Vec3> vertices;
+    bool has_normals = false;
+    std::vector<Vec3> normals;
+    Vec3 bound_center{};
+    float bound_radius = 0.0f;
+    bool has_vertex_colors = false;
+    std::vector<Color4> vertex_colors;
+    std::uint16_t data_flags = 0;        // lower 6 bits = number of UV sets
+    bool has_uv = false;
+    /// uv_sets[set_index][vertex_index]
+    std::vector<std::vector<TexCoord>> uv_sets;
+    // NiTriBasedGeomData:
+    std::uint16_t num_triangles = 0;
+    // NiTriShapeData:
+    std::uint32_t num_triangle_points = 0;
+    /// Each triangle is three uint16 vertex indices.
+    std::vector<std::array<std::uint16_t, 3>> triangles;
+    std::uint16_t num_match_groups = 0;
+    /// Each match group is a list of vertex indices that share a position.
+    std::vector<std::vector<std::uint16_t>> match_groups;
+};
+
+using Block = std::variant<std::monostate, NiNode, NiTriShape, NiTriShapeData>;
 
 struct BlockHandle {
     const Block* ptr = nullptr;
