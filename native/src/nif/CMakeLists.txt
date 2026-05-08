@@ -1,7 +1,9 @@
 add_library(nif STATIC
+    src/dispatch.cc
     src/file.cc
     src/header.cc
     src/reader.cc
+    src/resolver.cc
 )
 
 target_include_directories(nif

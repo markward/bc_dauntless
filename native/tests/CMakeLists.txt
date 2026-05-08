@@ -17,6 +17,8 @@ add_executable(nif_tests
     nif/canonical_dump.cc
     nif/header_unit_test.cc
     nif/header_test.cc
+    nif/error_test.cc
+    nif/resolver_test.cc
 )
 
 target_link_libraries(nif_tests

@@ -66,6 +66,13 @@ std::string Reader::read_string_uint8() {
     return s;
 }
 
+std::string Reader::read_string_fixed(std::size_t n) {
+    require(n);
+    std::string s(reinterpret_cast<const char*>(data_ + offset_), n);
+    offset_ += n;
+    return s;
+}
+
 std::string Reader::read_line() {
     std::string s;
     while (true) {

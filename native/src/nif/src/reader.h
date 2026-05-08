@@ -29,6 +29,9 @@ public:
 
     std::string read_string_uint32();
     std::string read_string_uint8();
+    /// Read exactly `n` bytes as a string. Used for v3.x type-name reads
+    /// where the length was already consumed.
+    std::string read_string_fixed(std::size_t n);
     /// Read until \n, return content without the newline; consumes the \n.
     /// v3.1 NIFs use multi-line text headers.
     std::string read_line();
