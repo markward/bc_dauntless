@@ -26,15 +26,41 @@ class TGModelProperty:
             field = attr[3:]
             data = self._data
             def setter(*args):
-                data[(field, args[:-1])] = args[-1]
+                data[(field, _hashable_key(args[:-1]))] = args[-1]
             return setter
         if attr.startswith("Get"):
             field = attr[3:]
             data = self._data
             def getter(*args):
-                return data.get((field, args), None)
+                return data.get((field, _hashable_key(args)), None)
             return getter
         raise AttributeError(attr)
+
+
+def _hashable_key(args: tuple) -> tuple:
+    """Convert a tuple of args into a hashable key.
+
+    Falls back to repr() for any element that isn't hashable (e.g.
+    TGPoint3, which defines __eq__ but not __hash__). This keeps the
+    data-bag tolerant of SDK setters that pass unhashable arguments
+    such as SetOrientation(forward_vec, up_vec).
+    """
+    try:
+        hash(args)
+        return args
+    except TypeError:
+        return tuple(
+            a if _is_hashable(a) else repr(a)
+            for a in args
+        )
+
+
+def _is_hashable(value) -> bool:
+    try:
+        hash(value)
+        return True
+    except TypeError:
+        return False
 
 
 # ── Subclass hierarchy ────────────────────────────────────────────────────────

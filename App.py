@@ -29,6 +29,26 @@ from engine.appc.actions import (
     TGObject_GetTGObjectPtr,
 )
 from engine.core.game import Game, Episode, Mission, Game_GetCurrentGame, _set_current_game, Game_GetDifficulty
+from engine.appc.properties import (
+    TGModelProperty,
+    TGModelPropertyManager, TGModelPropertySet,
+    PositionOrientationProperty,
+    EngineGlowProperty,
+    SubsystemProperty,
+    HullProperty, PowerProperty,
+    WeaponProperty, EnergyWeaponProperty,
+    PhaserProperty, PulseWeaponProperty, TractorBeamProperty,
+    TorpedoTubeProperty,
+    PoweredSubsystemProperty,
+    ShieldProperty, SensorProperty, RepairSubsystemProperty,
+    WeaponSystemProperty, TorpedoSystemProperty,
+    PositionOrientationProperty_Create,
+    HullProperty_Create, PowerProperty_Create,
+    PhaserProperty_Create, PulseWeaponProperty_Create,
+    TractorBeamProperty_Create, TorpedoTubeProperty_Create,
+    ShieldProperty_Create, SensorProperty_Create,
+    RepairSubsystemProperty_Create, TorpedoSystemProperty_Create,
+)
 
 # ── Numeric constants ──────────────────────────────────────────────────────────
 NULL_ID = 0
@@ -42,6 +62,7 @@ g_kTimerManager = TGTimerManager(g_kEventManager)
 g_kRealtimeTimerManager = TGTimerManager(g_kEventManager)
 g_kSetManager = SetManager()
 g_kTGActionManager = TGActionManager()
+g_kModelPropertyManager = TGModelPropertyManager()
 
 # ── Event-type constants (integers; values are arbitrary but stable) ───────────
 # Only the subset needed for Phase 1.  Add more as SDK scripts demand them.
