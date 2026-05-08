@@ -117,6 +117,16 @@ The ConfigMapping API (argument order confirmed from SDK scripts):
 - Loop is single-threaded from Python's perspective (`sys.setcheckinterval(200)` in `Autoexec.py`)
 - Python priority levels actually used: `NORMAL` (most things) and `LOW` (2 scripts only); `CRITICAL`/`UNSTOPPABLE` are C++ internal
 
+## Project-root SDK shims
+
+Some Python files at the project root exist specifically to **shadow SDK modules of the same name**. SDK scripts use bare imports (`import App`, `import LoadBridge`), and `tests/conftest.py` configures `_SDKFinder` to check `PROJECT_ROOT` before falling back to `sdk/Build/scripts/`. This is how Phase 1 swaps real SDK behaviour for headless stubs without forking the SDK tree.
+
+Current shims:
+- `App.py` — Phase 1 replacement for `Appc.dll` / `sdk/Build/scripts/App.py`
+- `LoadBridge.py` — empty `SetClass` registration so `g_kSetManager.GetSet("bridge")` works headless
+
+Add new SDK-name shadows at the root only when needed; keep application code in `engine/`. If a third shim shows up, consider grouping them into a `shims/` directory and updating `_SDKFinder` accordingly.
+
 ## Setup
 
 ```bash
