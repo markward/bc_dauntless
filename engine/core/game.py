@@ -65,6 +65,40 @@ def Game_GetDifficulty() -> int:
     return 1  # MEDIUM
 
 
+# ── Difficulty multipliers ─────────────────────────────────────────────────────
+# Mission scripts call Game_SetDifficultyMultipliers(off_easy, off_med, off_hard,
+# def_easy, def_med, def_hard) at mission init (e.g. E6M1.py:159) to tune damage
+# scaling.  Get*DifficultyMultiplier() returns the active value for the current
+# Game_GetDifficulty().  Defaults are 1.0 across the board (no scaling) — matches
+# Appc's pre-init behaviour from loadspacehelper.py:154-155 which calls these
+# unconditionally and would multiply by 1.0 with no SetDifficultyMultipliers call.
+_difficulty_offensive: list[float] = [1.0, 1.0, 1.0]
+_difficulty_defensive: list[float] = [1.0, 1.0, 1.0]
+
+
+def Game_SetDifficultyMultipliers(
+    off_easy: float, off_med: float, off_hard: float,
+    def_easy: float, def_med: float, def_hard: float,
+) -> None:
+    global _difficulty_offensive, _difficulty_defensive
+    _difficulty_offensive = [float(off_easy), float(off_med), float(off_hard)]
+    _difficulty_defensive = [float(def_easy), float(def_med), float(def_hard)]
+
+
+def Game_SetDefaultDifficultyMultipliers() -> None:
+    global _difficulty_offensive, _difficulty_defensive
+    _difficulty_offensive = [1.0, 1.0, 1.0]
+    _difficulty_defensive = [1.0, 1.0, 1.0]
+
+
+def Game_GetOffensiveDifficultyMultiplier() -> float:
+    return _difficulty_offensive[Game_GetDifficulty()]
+
+
+def Game_GetDefensiveDifficultyMultiplier() -> float:
+    return _difficulty_defensive[Game_GetDifficulty()]
+
+
 class Game(TGObject):
     EASY = 0
     MEDIUM = 1
@@ -86,3 +120,28 @@ class Game(TGObject):
 
     def SetPlayer(self, player) -> None:
         self._player = player
+
+    # SDK uses both spellings; GetCurrentPlayer is the module-exposed form.
+    GetCurrentPlayer = GetPlayer
+    SetCurrentPlayer = SetPlayer
+
+
+def Game_GetCurrentPlayer():
+    """Return the player ship for the current Game, or None.
+
+    SDK call sites (110+ across MissionLib, BridgeHandlers, TacticalInterface*,
+    Camera, mission scripts) follow the pattern:
+        pPlayer = App.Game_GetCurrentPlayer()
+        if pPlayer:
+            ...
+    Headless harness runs without creating a player ship, so this returns
+    None and the guarded branches skip cleanly.
+    """
+    if _current_game is None:
+        return None
+    return _current_game.GetCurrentPlayer()
+
+
+def Game_SetCurrentPlayer(player) -> None:
+    if _current_game is not None:
+        _current_game.SetCurrentPlayer(player)

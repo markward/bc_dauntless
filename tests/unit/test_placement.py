@@ -141,3 +141,123 @@ def test_waypoint_create_in_existing_set_wires_containing_set():
     wp = Waypoint_Create("Galaxy1Start", "Biranu1", None)
     assert wp.GetContainingSet() is s
     App.g_kSetManager.DeleteSet("Biranu1")
+
+
+# ── Waypoint_Cast / PlacementObject_Cast ──────────────────────────────────────
+
+from engine.appc.placement import (
+    Waypoint_Cast, PlacementObject_Cast,
+    PlacementObject_GetObjectBySetName, PlacementObject_GetObject,
+)
+
+
+def test_waypoint_cast_returns_waypoint_for_waypoint():
+    wp = Waypoint()
+    assert Waypoint_Cast(wp) is wp
+
+
+def test_waypoint_cast_returns_none_for_non_waypoint():
+    assert Waypoint_Cast(ObjectClass()) is None
+    assert Waypoint_Cast(None) is None
+
+
+def test_placement_object_cast_returns_placement_for_placement():
+    p = PlacementObject()
+    assert PlacementObject_Cast(p) is p
+
+
+def test_placement_object_cast_returns_none_for_non_placement():
+    assert PlacementObject_Cast(ObjectClass()) is None
+
+
+# ── PlacementObject_GetObjectBySetName ────────────────────────────────────────
+
+def test_get_object_by_set_name_returns_placement_in_set():
+    s = App.SetClass_Create()
+    App.g_kSetManager.AddSet(s, "Biranu2")
+    wp = Waypoint_Create("Cam1", "Biranu2", None)
+    out = PlacementObject_GetObjectBySetName("Biranu2", "Cam1")
+    assert out is wp
+    App.g_kSetManager.DeleteSet("Biranu2")
+
+
+def test_get_object_by_set_name_unknown_set_falls_back_to_global():
+    """A few mission scripts run waypoint setup before the set is added
+    to the SetManager — the global registry catches those lookups."""
+    wp = Waypoint_Create("Orphan", "MissingSet", None)
+    out = PlacementObject_GetObjectBySetName("MissingSet", "Orphan")
+    assert out is wp
+
+
+def test_get_object_by_set_name_unknown_name_returns_none():
+    s = App.SetClass_Create()
+    App.g_kSetManager.AddSet(s, "Biranu3")
+    out = PlacementObject_GetObjectBySetName("Biranu3", "NotThere")
+    assert out is None
+    App.g_kSetManager.DeleteSet("Biranu3")
+
+
+def test_placement_object_get_object_takes_set_and_name():
+    """SDK signature: App.PlacementObject_GetObject(pSet, name).
+    Used by MissionLib (nav point lookups), Camera, WarpSequence."""
+    s = App.SetClass_Create()
+    App.g_kSetManager.AddSet(s, "Biranu4")
+    wp = Waypoint_Create("NavA", "Biranu4", None)
+    assert PlacementObject_GetObject(s, "NavA") is wp
+    assert PlacementObject_GetObject(s, "Missing") is None
+    App.g_kSetManager.DeleteSet("Biranu4")
+
+
+def test_placement_object_get_object_with_none_set_falls_back_to_registry():
+    wp = Waypoint_Create("RegistryWP", "NoSuchSet", None)
+    assert PlacementObject_GetObject(None, "RegistryWP") is wp
+
+
+# ── Waypoint.InsertAfterObj ──────────────────────────────────────────────────
+
+def test_insert_after_obj_links_pair():
+    a, b = Waypoint(), Waypoint()
+    b.InsertAfterObj(a)
+    assert a.GetNext() is b
+    assert b.GetPrev() is a
+
+
+def test_insert_after_obj_chains_three():
+    a, b, c = Waypoint(), Waypoint(), Waypoint()
+    b.InsertAfterObj(a)
+    c.InsertAfterObj(b)
+    assert a.GetNext() is b
+    assert b.GetNext() is c
+    assert c.GetPrev() is b
+    assert b.GetPrev() is a
+
+
+def test_insert_after_obj_into_middle_relinks_neighbours():
+    a, c = Waypoint(), Waypoint()
+    c.InsertAfterObj(a)        # a <-> c
+    b = Waypoint()
+    b.InsertAfterObj(a)        # a <-> b <-> c
+    assert a.GetNext() is b
+    assert b.GetPrev() is a
+    assert b.GetNext() is c
+    assert c.GetPrev() is b
+
+
+def test_insert_after_obj_with_none_leaves_self_isolated():
+    a = Waypoint()
+    a.InsertAfterObj(None)
+    assert a.GetPrev() is None
+    assert a.GetNext() is None
+
+
+def test_insert_after_obj_detaches_self_from_prior_chain():
+    a, b, c = Waypoint(), Waypoint(), Waypoint()
+    b.InsertAfterObj(a)        # a <-> b
+    c.InsertAfterObj(b)        # a <-> b <-> c
+    # Re-attach b directly after c — should detach b from between a and c.
+    b.InsertAfterObj(c)
+    assert a.GetNext() is c    # c is now directly after a
+    assert c.GetPrev() is a
+    assert c.GetNext() is b
+    assert b.GetPrev() is c
+    assert b.GetNext() is None

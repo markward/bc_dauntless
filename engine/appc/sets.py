@@ -22,10 +22,18 @@ class SetClass(TGEventHandlerObject):
         super().__init__()
         self._name: str = ""
         self._objects: dict[str, object] = {}
+        # Camera registry — driven by AddCameraToSet / SetActiveCamera.
+        # CutsceneCameraBegin (sdk/.../Actions/CameraScriptActions.py) checks
+        # `if not pSet.GetCamera(sCamera):` to decide whether to add a new
+        # cutscene camera, so GetCamera must return None until something is
+        # actually added.  Returning a truthy renderer stub triggers the
+        # "already been called" KeyError on first invocation.
+        self._cameras: dict[str, object] = {}
+        self._active_camera_name: "str | None" = None
 
     def __getattr__(self, name: str):
         """Return a chainable stub for renderer-specific methods not needed in Phase 1
-        (CreateAmbientLight, SetBackgroundModel, AddCameraToSet, GetLight, etc.)."""
+        (CreateAmbientLight, SetBackgroundModel, GetLight, etc.)."""
         if name.startswith("_"):
             raise AttributeError(name)
         return lambda *args, **kwargs: _RendererStub()
@@ -63,10 +71,35 @@ class SetClass(TGEventHandlerObject):
         """Phase 1 stub — always reports the location as empty."""
         return 1
 
+    # ── Cameras ──────────────────────────────────────────────────────────────
+    # Mirror sdk/.../App.py:3548-3555.  CutsceneCameraBegin/End rely on the
+    # presence/absence semantics; mission scripts also call GetActiveCamera
+    # to copy its position when adding a new cutscene camera.
+
+    def GetCamera(self, name: str):
+        return self._cameras.get(name)
+
+    def AddCameraToSet(self, camera, name: str) -> None:
+        self._cameras[name] = camera
+
+    def RemoveCameraFromSet(self, name: str) -> None:
+        self._cameras.pop(name, None)
+        if self._active_camera_name == name:
+            self._active_camera_name = None
+
+    def GetActiveCamera(self):
+        if self._active_camera_name is None:
+            return None
+        return self._cameras.get(self._active_camera_name)
+
+    def SetActiveCamera(self, name: str) -> None:
+        self._active_camera_name = name
+
 
 class SetManager:
     def __init__(self):
         self._sets: dict[str, SetClass] = {}
+        self._rendered_set_name: "str | None" = None
 
     def AddSet(self, pSet: SetClass, name: str) -> None:
         pSet.SetName(name)
@@ -88,7 +121,16 @@ class SetManager:
         return len(self._sets)
 
     def GetRenderedSet(self) -> "SetClass | None":
-        return None
+        if self._rendered_set_name is None:
+            return None
+        return self._sets.get(self._rendered_set_name)
+
+    def MakeRenderedSet(self, name: str) -> None:
+        # Switches the camera/render focus to the named set.  Phase 1 has no
+        # renderer, but the SDK CameraScriptActions.ChangeRenderedSet calls
+        # this during cinematic transitions and the lookup result is fed
+        # back through GetRenderedSet — so we record the name for round-trip.
+        self._rendered_set_name = name
 
 
 class _NullSet(SetClass):

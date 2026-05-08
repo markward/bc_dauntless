@@ -86,3 +86,54 @@ def test_app_g_kSetManager_accessible():
 def test_app_set_class_create():
     s = App.SetClass_Create()
     assert isinstance(s, SetClass)
+
+
+# ── SetClass cameras ──────────────────────────────────────────────────────────
+
+def test_get_camera_returns_none_when_unset():
+    """CutsceneCameraBegin's `if not pSet.GetCamera(name):` guard depends on
+    a freshly-loaded set having no cameras yet."""
+    s = SetClass()
+    assert s.GetCamera("CutsceneCam") is None
+
+
+def test_add_camera_then_get_round_trip():
+    s = SetClass()
+    cam = object()
+    s.AddCameraToSet(cam, "CutsceneCam")
+    assert s.GetCamera("CutsceneCam") is cam
+
+
+def test_active_camera_round_trip():
+    s = SetClass()
+    cam = object()
+    s.AddCameraToSet(cam, "MainCam")
+    assert s.GetActiveCamera() is None
+    s.SetActiveCamera("MainCam")
+    assert s.GetActiveCamera() is cam
+
+
+def test_remove_camera_clears_active_when_active():
+    s = SetClass()
+    cam = object()
+    s.AddCameraToSet(cam, "MainCam")
+    s.SetActiveCamera("MainCam")
+    s.RemoveCameraFromSet("MainCam")
+    assert s.GetCamera("MainCam") is None
+    assert s.GetActiveCamera() is None
+
+
+# ── SetManager rendered-set tracking ──────────────────────────────────────────
+
+def test_make_rendered_set_round_trip():
+    sm = App.g_kSetManager
+    pSet = SetClass()
+    sm.AddSet(pSet, "bridge")
+    sm.MakeRenderedSet("bridge")
+    assert sm.GetRenderedSet() is pSet
+
+
+def test_get_rendered_set_returns_none_when_unset():
+    from engine.appc.sets import SetManager
+    fresh = SetManager()
+    assert fresh.GetRenderedSet() is None

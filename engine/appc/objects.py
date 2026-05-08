@@ -308,6 +308,9 @@ class ObjectGroup(TGEventHandlerObject):
     def __init__(self):
         super().__init__()
         self._names: list[str] = []
+        # Per-name event flags (SetEventFlag/ClearEventFlag/IsEventFlagSet).
+        # SDK uses these to mark group-membership events as already-handled.
+        self._event_flags: dict[str, set[int]] = {}
 
     def AddName(self, name: str) -> None:
         if name not in self._names:
@@ -316,12 +319,122 @@ class ObjectGroup(TGEventHandlerObject):
     def RemoveName(self, name: str) -> None:
         if name in self._names:
             self._names.remove(name)
+        self._event_flags.pop(name, None)
 
     def RemoveAllNames(self) -> None:
         self._names.clear()
+        self._event_flags.clear()
 
-    def IsNameInGroup(self, name: str) -> bool:
-        return name in self._names
+    def IsNameInGroup(self, name: str) -> int:
+        return 1 if name in self._names else 0
 
     def GetNumActiveObjects(self) -> int:
         return len(self._names)
+
+    # ── Name iteration ───────────────────────────────────────────────────────
+    def GetNameTuple(self) -> tuple:
+        # Returned to SDK callers like MissionLib.SetupWeaponHitHandlers which
+        # expect to call ``list(group.GetNameTuple())``.
+        return tuple(self._names)
+
+    # ── Active-object lookup against a SetClass ──────────────────────────────
+    def GetActiveObjectTupleInSet(self, pSet) -> tuple:
+        """Return live ObjectClass instances from pSet whose name is in this group.
+
+        Mirrors sdk/.../App.py:ObjectGroup_GetActiveObjectTupleInSet.  Callers:
+        E1M2.py:3364 (proximity check), TacticalInterfaceHandlers.py (target
+        list), MissionLib.py:4132 (player containing-set scan).
+        """
+        if pSet is None:
+            return ()
+        result = []
+        for name in self._names:
+            obj = pSet.GetObject(name) if hasattr(pSet, "GetObject") else None
+            if obj is not None:
+                result.append(obj)
+        return tuple(result)
+
+    # ── Event flags ──────────────────────────────────────────────────────────
+    def SetEventFlag(self, name: str, flag: int) -> None:
+        self._event_flags.setdefault(name, set()).add(int(flag))
+
+    def ClearEventFlag(self, name: str, flag: int) -> None:
+        flags = self._event_flags.get(name)
+        if flags is not None:
+            flags.discard(int(flag))
+
+    def IsEventFlagSet(self, name: str, flag: int) -> int:
+        return 1 if int(flag) in self._event_flags.get(name, set()) else 0
+
+
+class ObjectGroupWithInfo(ObjectGroup):
+    """ObjectGroup with per-name metadata.
+
+    FixApp.py wires `__getitem__/__setitem__/__delitem__` onto this class
+    so SDK callers can use dict-syntax (``group[name] = info``) — but the
+    underlying named methods (``GetInfo`` / ``AddNameAndInfo`` / ``RemoveName``)
+    are what FixApp aliases.
+    """
+    def __init__(self):
+        super().__init__()
+        self._info: dict[str, object] = {}
+
+    def AddNameAndInfo(self, name: str, info) -> None:
+        self.AddName(name)
+        self._info[name] = info
+
+    def GetInfo(self, name: str):
+        return self._info.get(name)
+
+    def RemoveName(self, name: str) -> None:
+        super().RemoveName(name)
+        self._info.pop(name, None)
+
+    def __getitem__(self, name: str):
+        return self.GetInfo(name)
+
+    def __setitem__(self, name: str, info) -> None:
+        self.AddNameAndInfo(name, info)
+
+    def __delitem__(self, name: str) -> None:
+        self.RemoveName(name)
+
+
+# ── Module-level helpers ──────────────────────────────────────────────────────
+
+def ObjectGroup_ForceToGroup(arg) -> ObjectGroup:
+    """Coerce a name list / single name / existing ObjectGroup to an ObjectGroup.
+
+    SDK call sites (E1M2.py:3363, AI/Compound/CloakAttack.py:16, AI/PlainAI/
+    Flee.py:33, etc.) pass either a list of object names or an already-built
+    ObjectGroup; the helper hands back a usable ObjectGroup either way.
+    """
+    if isinstance(arg, ObjectGroup):
+        return arg
+    group = ObjectGroup()
+    if isinstance(arg, str):
+        group.AddName(arg)
+    elif arg is not None:
+        for name in arg:
+            group.AddName(str(name))
+    return group
+
+
+def ObjectGroup_FromModule(module_name: str, attr_name: str) -> ObjectGroup:
+    """Re-fetch ``module.attr_name`` and coerce it to an ObjectGroup.
+
+    SDK pattern used by AI templates: each AI invocation re-imports the
+    mission module and reads ``pEnemies`` / ``pFriendlies`` etc., letting
+    those lists change at runtime as ships join or die.
+    """
+    import importlib
+    try:
+        mod = importlib.import_module(module_name)
+    except ImportError:
+        return ObjectGroup()
+    arg = getattr(mod, attr_name, None)
+    return ObjectGroup_ForceToGroup(arg) if arg is not None else ObjectGroup()
+
+
+def ObjectGroupWithInfo_Cast(obj):
+    return obj if isinstance(obj, ObjectGroupWithInfo) else None

@@ -10,9 +10,17 @@ from engine.appc.math import (
     TGPoint3_GetModelUp, TGPoint3_GetModelDown,
     TGPoint3_GetModelRight, TGPoint3_GetModelLeft,
 )
-from engine.appc.objects import ObjectClass, PhysicsObjectClass, DamageableObject, ObjectGroup
+from engine.appc.objects import (
+    ObjectClass, PhysicsObjectClass, DamageableObject,
+    ObjectGroup, ObjectGroupWithInfo,
+    ObjectGroup_ForceToGroup, ObjectGroup_FromModule, ObjectGroupWithInfo_Cast,
+)
 from engine.appc.sets import SetClass, SetManager, SetClass_Create, SetClass_GetNull
-from engine.appc.placement import PlacementObject, Waypoint, Waypoint_Create
+from engine.appc.placement import (
+    PlacementObject, Waypoint, Waypoint_Create,
+    Waypoint_Cast, PlacementObject_Cast,
+    PlacementObject_GetObjectBySetName, PlacementObject_GetObject,
+)
 from engine.appc.ships import (
     ShipClass, ShipClass_Create, ShipClass_GetObject,
     ShipClass_Cast, ShipClass_GetObjectByID,
@@ -28,7 +36,20 @@ from engine.appc.actions import (
     TGObjPtrEvent, TGObjPtrEvent_Create,
     TGObject_GetTGObjectPtr,
 )
-from engine.core.game import Game, Episode, Mission, Game_GetCurrentGame, _set_current_game, Game_GetDifficulty
+from engine.core.game import (
+    Game, Episode, Mission, Game_GetCurrentGame, _set_current_game,
+    Game_GetDifficulty,
+    Game_SetDifficultyMultipliers, Game_SetDefaultDifficultyMultipliers,
+    Game_GetOffensiveDifficultyMultiplier, Game_GetDefensiveDifficultyMultiplier,
+    Game_GetCurrentPlayer, Game_SetCurrentPlayer,
+)
+from engine.appc.localization import TGLocalizationManager, TGLocalizationDatabase, _TGString
+from engine.appc.var_manager import TGVarManager
+from engine.appc.subsystems import (
+    ShipSubsystem, PoweredSubsystem, WeaponSystem,
+    TorpedoSystem, PhaserSystem, PulseWeaponSystem, TractorBeamSystem,
+    SensorSubsystem, ImpulseEngineSubsystem, WarpEngineSubsystem,
+)
 from engine.appc.properties import (
     TGModelProperty,
     TGModelPropertyManager, TGModelPropertySet,
@@ -42,12 +63,19 @@ from engine.appc.properties import (
     PoweredSubsystemProperty,
     ShieldProperty, SensorProperty, RepairSubsystemProperty,
     WeaponSystemProperty, TorpedoSystemProperty,
+    ShipProperty,
+    EngineProperty, ImpulseEngineProperty, WarpEngineProperty,
+    CloakingSubsystemProperty,
     PositionOrientationProperty_Create,
     HullProperty_Create, PowerProperty_Create,
     PhaserProperty_Create, PulseWeaponProperty_Create,
     TractorBeamProperty_Create, TorpedoTubeProperty_Create,
     ShieldProperty_Create, SensorProperty_Create,
     RepairSubsystemProperty_Create, TorpedoSystemProperty_Create,
+    ShipProperty_Create,
+    EngineProperty_Create, ImpulseEngineProperty_Create, WarpEngineProperty_Create,
+    WeaponSystemProperty_Create,
+    CloakingSubsystemProperty_Create,
 )
 
 # ── Numeric constants ──────────────────────────────────────────────────────────
@@ -63,6 +91,40 @@ g_kRealtimeTimerManager = TGTimerManager(g_kEventManager)
 g_kSetManager = SetManager()
 g_kTGActionManager = TGActionManager()
 g_kModelPropertyManager = TGModelPropertyManager()
+g_kLocalizationManager = TGLocalizationManager()
+# VarManager shares the event-type allocator with Game_GetNextEventType so
+# IDs returned by MakeEpisodeEventType are unique across all event-type sources.
+# Lambda indirection — Game_GetNextEventType is defined further down in this
+# module, so we can't reference it directly at this point.
+g_kVarManager = TGVarManager(event_type_allocator=lambda: Game_GetNextEventType())
+
+
+# ── TGSystemWrapper ────────────────────────────────────────────────────────────
+# SDK App.py:279 binds TGSystemWrapperClass.GetRandomNumber(n) which returns
+# an int in [0, n-1].  Effects.py uses it heavily for particle-effect
+# randomisation; mission scripts use it for AI variation.
+#
+# Headless engine uses Python's random; SetRandomSeed lets tests pin determinism.
+import random as _random
+
+
+class _SystemWrapper:
+    def __init__(self):
+        self._rng = _random.Random()
+
+    def GetRandomNumber(self, upper_exclusive: int) -> int:
+        if upper_exclusive <= 0:
+            return 0
+        return self._rng.randrange(int(upper_exclusive))
+
+    def SetRandomSeed(self, seed) -> None:
+        self._rng.seed(seed)
+
+    def __getattr__(self, name):
+        return _NamedStub(name)
+
+
+g_kSystemWrapper = _SystemWrapper()
 
 # ── Event-type constants (integers; values are arbitrary but stable) ───────────
 # Only the subset needed for Phase 1.  Add more as SDK scripts demand them.
@@ -86,6 +148,11 @@ def Game_GetNextEventType() -> int:
 
 Mission_GetNextEventType = Game_GetNextEventType
 Episode_GetNextEventType = Game_GetNextEventType
+# Module-level alias used by AI/Compound/, Conditions/, MainMenu/ scripts:
+#   ET_X = App.UtopiaModule_GetNextEventType()
+# SDK App.py:10687 binds this to Appc.UtopiaModule_GetNextEventType — same
+# event-id allocator under the hood as the Game/Mission/Episode forms above.
+UtopiaModule_GetNextEventType = Game_GetNextEventType
 
 # ── Player hardpoint file (set by MissionLib.CreatePlayerShip) ─────────────────
 _player_hardpoint_filename: "str | None" = None
@@ -103,8 +170,76 @@ def Game_SetPlayerHardpointFileName(filename: str) -> None:
 # ── UtopiaModule ───────────────────────────────────────────────────────────────
 
 class _UtopiaModule:
+    def __init__(self):
+        # Friendly-fire damage accumulator: tracks recent unintended-friendly
+        # damage dealt by the player (MissionLib.py:3722-3724).  Crew comments
+        # ("Friendly Fire") fire when this exceeds a threshold; SDK clears it
+        # to 0 between missions.  Float (damage units), default 0.
+        self._friendly_fire = 0.0
+        # Maximum permitted friendly-fire accumulation before triggering the
+        # full reaction (MissionLib.py SetMaxFriendlyFire).  Default 0 = engine
+        # default which scripts override per-mission.
+        self._friendly_fire_max = 0.0
+        # Threshold below the max that triggers the warning ("watch your fire")
+        # rather than the full violation (MissionLib.py SetFriendlyFireWarningPoints).
+        self._friendly_fire_warning_points = 0.0
+        # Tractor-time accumulator: seconds the player has held a friendly
+        # ship in tractor (MissionLib.py:3870-3873).  Triggers warnings when
+        # held too long.  Float (seconds), default 0.
+        self._friendly_tractor_time = 0.0
+        # Captain name — saved in BCS save filenames (MissionLib.py:2801) and
+        # shown in UI.  Default "Picard" matches the BC default profile.
+        self._captain_name = "Picard"
+
     def GetGameTime(self) -> float:
         return g_kTimerManager.get_time()
+
+    def SetCurrentFriendlyFire(self, value) -> None:
+        self._friendly_fire = float(value)
+
+    def GetCurrentFriendlyFire(self) -> float:
+        return self._friendly_fire
+
+    def SetMaxFriendlyFire(self, value) -> None:
+        self._friendly_fire_max = float(value)
+
+    def GetMaxFriendlyFire(self) -> float:
+        return self._friendly_fire_max
+
+    def SetFriendlyFireWarningPoints(self, value) -> None:
+        self._friendly_fire_warning_points = float(value)
+
+    def GetFriendlyFireWarningPoints(self) -> float:
+        return self._friendly_fire_warning_points
+
+    def SetFriendlyTractorTime(self, value) -> None:
+        self._friendly_tractor_time = float(value)
+
+    def GetFriendlyTractorTime(self) -> float:
+        return self._friendly_tractor_time
+
+    def SetCaptainName(self, name) -> None:
+        self._captain_name = str(name)
+
+    def GetCaptainName(self):
+        # SDK chains .GetCString() on the result — return _TGString so the
+        # downstream call resolves on a real method, not a _NamedStub.
+        return _TGString(self._captain_name)
+
+    # ── Multiplayer state ────────────────────────────────────────────────────
+    # The headless harness never enters network play; all three accessors
+    # report the single-player offline state.  Real multiplayer requires the
+    # network stack which is Phase 2.
+    def IsHost(self) -> int: return 0
+    def IsClient(self) -> int: return 0
+    def IsMultiplayer(self) -> int: return 0
+    def GetNetwork(self): return None  # SDK callers guard with `if pNetwork:`
+
+    # Event-type allocator on the UtopiaModule receiver as well, matching the
+    # SDK pattern App.g_kUtopiaModule.GetNextEventType() (in addition to the
+    # module-level App.UtopiaModule_GetNextEventType form).
+    def GetNextEventType(self) -> int:
+        return Game_GetNextEventType()
 
     def __getattr__(self, name):
         return _NamedStub(name)
@@ -136,7 +271,8 @@ class _TGIntEvent(_TGTypedEvent):
 class _TGStringEvent(_TGTypedEvent):
     def __init__(self): super().__init__(); self._val = ""
     def SetString(self, v): self._val = str(v) if not isinstance(v, _Stub) else ""
-    def GetString(self): return self._val
+    def GetString(self): return _TGString(self._val)
+    def GetCString(self): return self._val
 
 class _TGFloatEvent(_TGTypedEvent):
     def __init__(self): super().__init__(); self._val = 0.0

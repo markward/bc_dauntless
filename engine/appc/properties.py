@@ -145,6 +145,36 @@ class TorpedoSystemProperty(WeaponSystemProperty):
     pass
 
 
+# Ship template — top-level data container for ship-class definitions
+# (mass, model, affiliation, AI string, etc).  See sdk/.../GlobalPropertyTemplates.py
+# and ships/Hardpoints/*.py for setter call sites.
+class ShipProperty(TGModelProperty):
+    pass
+
+
+# Engine subsystems.  EngineProperty is the lightweight type-tagged form used
+# by hardpoint scripts that need named per-engine entries (Port Warp, Star Warp).
+# Impulse/WarpEngineProperty are powered-subsystem forms with speed/accel data.
+class EngineProperty(SubsystemProperty):
+    EP_IMPULSE = 0
+    EP_WARP    = 1
+
+
+class ImpulseEngineProperty(PoweredSubsystemProperty):
+    pass
+
+
+class WarpEngineProperty(PoweredSubsystemProperty):
+    pass
+
+
+# Cloaking system — used by birdofprey, warbird, vorcha, sunbuster, kessok*
+# (sdk/.../ships/Hardpoints/*).  Powered subsystem with a single domain-specific
+# attribute (CloakStrength) plus the inherited subsystem fields.
+class CloakingSubsystemProperty(PoweredSubsystemProperty):
+    pass
+
+
 # ── Factory functions ─────────────────────────────────────────────────────────
 # SDK call sites use App.XxxProperty_Create("Name") rather than the
 # constructor directly. These mirror the SDK's Appc.new_XxxProperty pattern.
@@ -160,6 +190,12 @@ def ShieldProperty_Create(name):              return ShieldProperty(name)
 def SensorProperty_Create(name):              return SensorProperty(name)
 def RepairSubsystemProperty_Create(name):     return RepairSubsystemProperty(name)
 def TorpedoSystemProperty_Create(name):       return TorpedoSystemProperty(name)
+def ShipProperty_Create(name):                return ShipProperty(name)
+def EngineProperty_Create(name):              return EngineProperty(name)
+def ImpulseEngineProperty_Create(name):       return ImpulseEngineProperty(name)
+def WarpEngineProperty_Create(name):          return WarpEngineProperty(name)
+def WeaponSystemProperty_Create(name):        return WeaponSystemProperty(name)
+def CloakingSubsystemProperty_Create(name):   return CloakingSubsystemProperty(name)
 
 
 # ── TGModelPropertyManager ────────────────────────────────────────────────────

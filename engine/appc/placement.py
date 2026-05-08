@@ -69,8 +69,31 @@ class Waypoint(PlacementObject):
     def GetPrev(self) -> "Waypoint | None":
         return self._prev
 
-    def InsertAfterObj(self, other: "Waypoint") -> None:
-        pass
+    def InsertAfterObj(self, other: "Waypoint | None") -> None:
+        """Splice ``self`` into the waypoint chain immediately after ``other``.
+
+        Doubly-linked list mutation matching the SDK's Waypoint chain
+        (sdk/.../Maelstrom/.../E7M1_DeepSpace_Placements.py builds named
+        cutscene-camera chains this way).  If ``other`` is None, ``self``
+        becomes a free-standing waypoint with no neighbours.
+        """
+        # Detach self from any current chain first to avoid corrupted links
+        # if the caller is re-arranging existing nodes.
+        if self._prev is not None:
+            self._prev._next = self._next
+        if self._next is not None:
+            self._next._prev = self._prev
+        self._prev = None
+        self._next = None
+
+        if other is None or other is self:
+            return
+
+        self._prev = other
+        self._next = other._next
+        if other._next is not None:
+            other._next._prev = self
+        other._next = self
 
 
 def Waypoint_Create(name: str, set_name: str, parent=None) -> Waypoint:
@@ -86,3 +109,47 @@ def Waypoint_Create(name: str, set_name: str, parent=None) -> Waypoint:
         s.AddObjectToSet(wp, name)
 
     return wp
+
+
+def Waypoint_Cast(obj) -> "Waypoint | None":
+    """Return ``obj`` if it's a Waypoint, else None.  Mirrors Appc.Waypoint_Cast."""
+    return obj if isinstance(obj, Waypoint) else None
+
+
+def PlacementObject_Cast(obj) -> "PlacementObject | None":
+    return obj if isinstance(obj, PlacementObject) else None
+
+
+def PlacementObject_GetObjectBySetName(set_name: str, placement_name: str):
+    """Look up a placement by name within the named set.
+
+    Mirrors sdk/.../App.py:PlacementObject_GetObjectBySetName.  E7M2 placement
+    scripts use this together with Waypoint_Cast to walk per-set cutscene
+    waypoint chains.  Returns None if the set doesn't exist or the placement
+    isn't in it.  Falls back to the global waypoint registry when the set
+    isn't found, since a few mission scripts run waypoint setup before the
+    target set has been added to the SetManager.
+    """
+    import App
+    s = App.g_kSetManager.GetSet(set_name)
+    if s is not None:
+        obj = s.GetObject(placement_name)
+        if obj is not None:
+            return obj
+    return _waypoint_registry.get(placement_name)
+
+
+def PlacementObject_GetObject(pSet, name: str):
+    """Look up a placement by name within a SetClass.
+
+    SDK signature: ``App.PlacementObject_GetObject(pSet, name)``.  Used by
+    MissionLib for nav-point/initial-waypoint lookups, by Camera.py for
+    object-of-interest tracking, by WarpSequence.py for warp endpoints.
+    Returns None if the placement isn't in the set.  Falls back to the
+    global waypoint registry as a safety net.
+    """
+    if pSet is not None and hasattr(pSet, "GetObject"):
+        obj = pSet.GetObject(name)
+        if obj is not None:
+            return obj
+    return _waypoint_registry.get(name)

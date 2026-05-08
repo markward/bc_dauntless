@@ -279,3 +279,142 @@ def test_property_list_iter_round_trip_after_sdk_protocol():
     lst.TGDoneIterating()
     # After iteration, list(lst) should still yield all items via __iter__
     assert list(lst) == [hull]
+
+
+# ── ShipProperty / EngineProperty / WeaponSystemProperty (Phase 1) ────────────
+from engine.appc.properties import (
+    ShipProperty, ShipProperty_Create,
+    EngineProperty, EngineProperty_Create,
+    ImpulseEngineProperty, ImpulseEngineProperty_Create,
+    WarpEngineProperty, WarpEngineProperty_Create,
+    WeaponSystemProperty_Create,
+    CloakingSubsystemProperty, CloakingSubsystemProperty_Create,
+)
+
+
+def test_ship_property_inherits_tg_model_property():
+    p = ShipProperty("ambassador")
+    assert isinstance(p, TGModelProperty)
+    assert p.GetName() == "ambassador"
+
+
+def test_ship_property_factory():
+    p = ShipProperty_Create("ambassador")
+    assert isinstance(p, ShipProperty)
+    assert p.GetName() == "ambassador"
+
+
+def test_ship_property_data_bag_round_trip():
+    p = ShipProperty_Create("nebula")
+    p.SetGenus(2)
+    p.SetSpecies(7)
+    p.SetMass(50000.0)
+    p.SetShipName("Nebula Class")
+    p.SetModelFilename("ships/nebula.nif")
+    p.SetDamageResolution(8)
+    p.SetAffiliation(1)
+    assert p.GetGenus() == 2
+    assert p.GetSpecies() == 7
+    assert p.GetMass() == 50000.0
+    assert p.GetShipName() == "Nebula Class"
+    assert p.GetModelFilename() == "ships/nebula.nif"
+    assert p.GetDamageResolution() == 8
+    assert p.GetAffiliation() == 1
+
+
+def test_engine_property_inherits_subsystem_property():
+    p = EngineProperty("Port Warp")
+    assert isinstance(p, SubsystemProperty)
+    assert isinstance(p, TGModelProperty)
+
+
+def test_engine_property_type_constants():
+    assert hasattr(EngineProperty, "EP_IMPULSE")
+    assert hasattr(EngineProperty, "EP_WARP")
+    assert EngineProperty.EP_IMPULSE != EngineProperty.EP_WARP
+
+
+def test_engine_property_factory_and_set_engine_type():
+    p = EngineProperty_Create("Port Warp")
+    assert isinstance(p, EngineProperty)
+    p.SetEngineType(EngineProperty.EP_WARP)
+    assert p.GetEngineType() == EngineProperty.EP_WARP
+
+
+def test_impulse_engine_property_inherits_powered_subsystem():
+    p = ImpulseEngineProperty("Impulse Engines")
+    assert isinstance(p, PoweredSubsystemProperty)
+    assert isinstance(p, SubsystemProperty)
+
+
+def test_impulse_engine_factory_and_setters():
+    p = ImpulseEngineProperty_Create("Impulse Engines")
+    assert isinstance(p, ImpulseEngineProperty)
+    p.SetMaxSpeed(120.0)
+    p.SetMaxAccel(25.0)
+    p.SetMaxAngularVelocity(0.5)
+    p.SetMaxAngularAccel(0.25)
+    assert p.GetMaxSpeed() == 120.0
+    assert p.GetMaxAccel() == 25.0
+    assert p.GetMaxAngularVelocity() == 0.5
+    assert p.GetMaxAngularAccel() == 0.25
+
+
+def test_warp_engine_property_inherits_powered_subsystem():
+    p = WarpEngineProperty("Warp Engines")
+    assert isinstance(p, PoweredSubsystemProperty)
+    assert isinstance(p, SubsystemProperty)
+
+
+def test_warp_engine_factory():
+    p = WarpEngineProperty_Create("Warp Engines")
+    assert isinstance(p, WarpEngineProperty)
+    assert p.GetName() == "Warp Engines"
+
+
+def test_weapon_system_property_factory():
+    p = WeaponSystemProperty_Create("Phaser System")
+    assert isinstance(p, WeaponSystemProperty)
+    assert p.GetName() == "Phaser System"
+    p.SetWeaponSystemType(WeaponSystemProperty.WST_PHASER)
+    p.SetAimedWeapon(1)
+    p.SetFiringChainString("ABAB")
+    assert p.GetWeaponSystemType() == WeaponSystemProperty.WST_PHASER
+    assert p.GetAimedWeapon() == 1
+    assert p.GetFiringChainString() == "ABAB"
+
+
+def test_cloaking_subsystem_inherits_powered_subsystem():
+    p = CloakingSubsystemProperty("Cloaking Device")
+    assert isinstance(p, PoweredSubsystemProperty)
+    assert isinstance(p, SubsystemProperty)
+
+
+def test_cloaking_subsystem_factory_and_setters():
+    p = CloakingSubsystemProperty_Create("Cloaking Device")
+    assert isinstance(p, CloakingSubsystemProperty)
+    p.SetCloakStrength(0.85)
+    p.SetCritical(1)
+    p.SetMaxCondition(800.0)
+    assert p.GetCloakStrength() == 0.85
+    assert p.GetCritical() == 1
+    assert p.GetMaxCondition() == 800.0
+
+
+def test_subsystem_property_inherited_setters_via_data_bag():
+    """All Subsystem* setters used by hardpoints should round-trip via data bag."""
+    p = ImpulseEngineProperty_Create("Impulse Engines")
+    p.SetCritical(1)
+    p.SetMaxCondition(1000.0)
+    p.SetDisabledPercentage(0.25)
+    p.SetRadius(50.0)
+    p.SetPrimary(1)
+    p.SetTargetable(1)
+    p.SetRepairComplexity(3)
+    assert p.GetCritical() == 1
+    assert p.GetMaxCondition() == 1000.0
+    assert p.GetDisabledPercentage() == 0.25
+    assert p.GetRadius() == 50.0
+    assert p.GetPrimary() == 1
+    assert p.GetTargetable() == 1
+    assert p.GetRepairComplexity() == 3
