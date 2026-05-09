@@ -362,6 +362,17 @@ def setup_sdk() -> None:
     """Install SDK finder and stub modules. Call once before run_mission()."""
     global _BASELINE_MODULES
 
+    # Pre-import stdlib modules that BC's SDK shadows. The SDK finder we're
+    # about to install sits at sys.meta_path[0] and `sdk/Build/scripts/` has a
+    # Python-1.5-era `string.py` (uses backtick-repr syntax) that masks
+    # stdlib's `string`. Without this, anything that triggers
+    # `import logging` -> `from string import Template` after setup_sdk()
+    # tries to load the SDK's `string.py` and crashes with SyntaxError.
+    # Under pytest the issue is hidden because pytest itself imports logging
+    # (-> string) at startup, so the modules are already cached. The host
+    # binary doesn't have that luxury — call this before the finder.
+    import string  # noqa: F401
+
     if not any(isinstance(f, _SDKFinder) for f in sys.meta_path):
         sys.meta_path.insert(0, _SDKFinder())
 
