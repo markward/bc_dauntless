@@ -54,6 +54,25 @@ NiAlphaProperty parse_NiAlphaProperty_body(Reader& r) {
     return p;
 }
 
+// NiMaterialProperty (v3.1):
+//   NiObjectNET base
+//   flags (uint16; until 10.0.1.2)
+//   ambient (Color3), diffuse (Color3), specular (Color3), emissive (Color3)
+//   glossiness (float), alpha (float)
+//   (Emissive Mult is BSVER > 21, absent in v3.1)
+NiMaterialProperty parse_NiMaterialProperty_body(Reader& r) {
+    NiMaterialProperty p;
+    p.obj = parse_object_net_base(r);
+    p.flags = r.read_uint16();
+    p.ambient = r.read_color3();
+    p.diffuse = r.read_color3();
+    p.specular = r.read_color3();
+    p.emissive = r.read_color3();
+    p.glossiness = r.read_float();
+    p.alpha = r.read_float();
+    return p;
+}
+
 }  // namespace
 
 NIF_REGISTER_BLOCK(NiZBufferProperty, [](Reader& r) -> Block {
@@ -66,6 +85,10 @@ NIF_REGISTER_BLOCK(NiVertexColorProperty, [](Reader& r) -> Block {
 
 NIF_REGISTER_BLOCK(NiAlphaProperty, [](Reader& r) -> Block {
     return parse_NiAlphaProperty_body(r);
+});
+
+NIF_REGISTER_BLOCK(NiMaterialProperty, [](Reader& r) -> Block {
+    return parse_NiMaterialProperty_body(r);
 });
 
 }  // namespace nif

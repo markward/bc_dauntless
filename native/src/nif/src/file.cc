@@ -7,6 +7,8 @@
 #include "reader.h"
 #include "resolver.h"
 
+#include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <vector>
 
@@ -95,9 +97,31 @@ bool walk_blocks(File& f, Reader& r) {
             return false;
         }
 
-        auto block = dispatch.get(type_name)(r);
-        f.block_ids.push_back(link_id);
-        f.blocks.push_back(std::move(block));
+        if (std::getenv("NIF_TRACE")) {
+            std::fprintf(stderr,
+                         "[nif] block %zu @ 0x%zx type=%s body_starts_at=0x%zx\n",
+                         f.blocks.size(), r.offset() - 4 - type_name.size() - 4,
+                         type_name.c_str(), r.offset());
+        }
+        // During incremental parser development, registered parsers may
+        // have layout bugs on real BC blocks. Treat a parse failure as a
+        // walker stop (same as encountering an unknown type) rather than
+        // propagating — this keeps `nif::load` usable while we iterate on
+        // individual block layouts. Synthetic per-parser unit tests still
+        // catch correctness regressions on the parsers themselves.
+        try {
+            auto block = dispatch.get(type_name)(r);
+            if (std::getenv("NIF_TRACE")) {
+                std::fprintf(stderr, "[nif]   body_ended_at=0x%zx\n", r.offset());
+            }
+            f.block_ids.push_back(link_id);
+            f.blocks.push_back(std::move(block));
+        } catch (const ParseError& e) {
+            if (std::getenv("NIF_TRACE")) {
+                std::fprintf(stderr, "[nif]   parser error: %s\n", e.what());
+            }
+            return false;
+        }
     }
 }
 

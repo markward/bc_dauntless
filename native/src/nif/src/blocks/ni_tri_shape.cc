@@ -67,7 +67,7 @@ std::uint32_t read_bool_uint32(Reader& r, const char* field) {
     return v;
 }
 
-NiTriShapeData parse_NiTriShapeData_body(Reader& r) {
+[[maybe_unused]] NiTriShapeData parse_NiTriShapeData_body(Reader& r) {
     NiTriShapeData d;
 
     d.num_vertices = r.read_uint16();
@@ -162,8 +162,15 @@ NIF_REGISTER_BLOCK(NiTriShape, [](Reader& r) -> Block {
     return parse_NiTriShape_body(r);
 });
 
-NIF_REGISTER_BLOCK(NiTriShapeData, [](Reader& r) -> Block {
-    return parse_NiTriShapeData_body(r);
-});
+// NiTriShapeData parser kept for synthetic unit tests but NOT registered
+// for dispatch yet. The schema-derived layout (Has Vertices uint32 bool
+// after Num Vertices) does not match what BC v3.1 files actually contain —
+// hand-decoding Galaxy.nif's first NiTriShapeData at offset 0x553 shows
+// non-bool bytes immediately after Num Vertices. Layout investigation is
+// open work; once resolved, change this comment back into a
+// NIF_REGISTER_BLOCK invocation.
+//
+// To probe: NIF_TRACE=1 nif::load(file) prints per-block offsets so the
+// walker can be re-engaged when the parser is fixed.
 
 }  // namespace nif

@@ -128,6 +128,18 @@ struct NiTextureProperty {
     std::uint32_t image_link = 0;
 };
 
+/// Surface material property. v3.1: flags + 4 colors + glossiness + alpha.
+struct NiMaterialProperty {
+    ObjectNetBase obj;
+    std::uint16_t flags = 0;
+    Color3 ambient{ 1.0f, 1.0f, 1.0f };
+    Color3 diffuse{ 1.0f, 1.0f, 1.0f };
+    Color3 specular{ 1.0f, 1.0f, 1.0f };
+    Color3 emissive{ 0.0f, 0.0f, 0.0f };
+    float glossiness = 10.0f;
+    float alpha = 1.0f;
+};
+
 using Block = std::variant<
     std::monostate,
     NiNode,
@@ -138,7 +150,8 @@ using Block = std::variant<
     NiAlphaProperty,
     NiTextureModeProperty,
     NiImage,
-    NiTextureProperty
+    NiTextureProperty,
+    NiMaterialProperty
 >;
 
 struct BlockHandle {
