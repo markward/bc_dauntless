@@ -95,12 +95,14 @@ void frame() {
 
     if (fh > 0) g_camera.aspect = static_cast<float>(fw) / static_cast<float>(fh);
 
+    auto lookup = [](scenegraph::ModelHandle h) -> const assets::Model* {
+        if (h == 0 || h > g_loaded_models.size()) return nullptr;
+        return g_loaded_models[h - 1].handle.get();
+    };
+
     g_world.propagate();
-    g_submitter.submit_opaque(g_world, g_camera, *g_pipeline,
-        [](scenegraph::ModelHandle h) -> const assets::Model* {
-            if (h == 0 || h > g_loaded_models.size()) return nullptr;
-            return g_loaded_models[h - 1].handle.get();
-        });
+    g_submitter.submit_skybox(lookup(g_world.skybox_model()), g_camera, *g_pipeline);
+    g_submitter.submit_opaque(g_world, g_camera, *g_pipeline, lookup);
 
     g_window->poll_events();
     g_window->swap_buffers();

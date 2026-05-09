@@ -52,3 +52,27 @@ def test_scene_setup_round_trip():
             _open_stbc_host.destroy_instance(iid)
     finally:
         _open_stbc_host.shutdown()
+
+
+def test_set_skybox_does_not_crash_in_frame():
+    if not GALAXY_NIF.is_file():
+        pytest.skip("BC asset not available")
+    if not GALAXY_TEX.is_dir():
+        pytest.skip("BC texture dir not available")
+    os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
+    import _open_stbc_host
+    try:
+        _open_stbc_host.init(256, 256, "skybox-test")
+    except RuntimeError as e:
+        pytest.skip(f"no GL: {e}")
+    try:
+        h = _open_stbc_host.load_model(str(GALAXY_NIF), str(GALAXY_TEX))
+        # Reuse the Galaxy as a stand-in skybox for this test.
+        _open_stbc_host.set_skybox(h)
+        _open_stbc_host.set_camera(
+            eye=(0, 0, 1500), target=(0, 0, 0), up=(0, 1, 0),
+            fov_y_rad=1.0472, near=1.0, far=10000.0,
+        )
+        _open_stbc_host.frame()
+    finally:
+        _open_stbc_host.shutdown()
