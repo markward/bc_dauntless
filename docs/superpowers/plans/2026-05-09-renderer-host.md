@@ -33,7 +33,10 @@ Edit `native/CMakeLists.txt`. After the `add_subdirectory(third_party/glm)` line
 
 ```cmake
 # CPython embedding for the renderer host.
-find_package(Python3 3.11 REQUIRED COMPONENTS Development Embed)
+# Use the granular Development.Embed component (CMake's modern form) — the
+# legacy "Embed" alias isn't always recognized as a standalone component
+# name. Python.framework on macOS satisfies this even when Py_ENABLE_SHARED=0.
+find_package(Python3 3.11 REQUIRED COMPONENTS Development.Embed)
 
 # pybind11 via FetchContent (vendored copies are too heavy; FetchContent caches
 # under build/_deps and is reused across configures).
@@ -92,7 +95,7 @@ Create `native/src/host/.gitkeep` (empty file). It will be removed in Task 2 onc
 
 - [ ] **Step 3: Run cmake configure to verify Python and pybind11 resolve**
 
-Run: `cmake -S native -B build`
+Run: `cmake -S . -B build`
 Expected output includes:
 - `-- Found Python3: ... (found suitable version "3.11..." or higher)`
 - `-- Performing Test HAVE_NO_DEPRECATED -- Success` (from pybind11)
@@ -1023,7 +1026,7 @@ void Window::framebuffer_size(int* w, int* h) const noexcept {
 
 - [ ] **Step 5: Verify the renderer library builds in isolation**
 
-Run: `cmake -S native -B build && cmake --build build --target renderer`
+Run: `cmake -S . -B build && cmake --build build --target renderer`
 Expected: success. The pattern matches the asset pipeline's layout (see `native/src/assets/CMakeLists.txt`) — `include/renderer/*.h` for public headers, `*.cc` at the directory root for implementation.
 
 - [ ] **Step 6: Write the failing test**
@@ -1454,7 +1457,7 @@ Wire into parent: modify `native/tests/CMakeLists.txt` to add `add_subdirectory(
 
 - [ ] **Step 4: Run test, verify it fails (camera.h missing)**
 
-Run: `cmake -S native -B build && cmake --build build --target scenegraph_tests`
+Run: `cmake -S . -B build && cmake --build build --target scenegraph_tests`
 Expected: FAIL — `scenegraph/camera.h: No such file or directory`.
 
 - [ ] **Step 5: Implement Camera**
@@ -2648,7 +2651,7 @@ add_executable(renderer_tests
 
 Run:
 ```bash
-cmake -S native -B build && cmake --build build --target renderer_tests
+cmake -S . -B build && cmake --build build --target renderer_tests
 ctest --test-dir build -R "Pipeline" --output-on-failure
 ```
 Expected: 1 pass.
@@ -3142,7 +3145,7 @@ embed_shader(SHADER_SKYBOX_FS shaders/skybox.frag skybox_fs)
 
 - [ ] **Step 3: Verify build**
 
-Run: `cmake -S native -B build && cmake --build build --target renderer`
+Run: `cmake -S . -B build && cmake --build build --target renderer`
 Expected: success. Generated headers `embedded_skybox_vs.h` and `embedded_skybox_fs.h` exist under `build/native/src/renderer/`.
 
 - [ ] **Step 4: Commit**
