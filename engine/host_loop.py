@@ -135,7 +135,22 @@ def _world_matrix_row_major(ship) -> list:
 def run(mission_name: str = SHIP_GATE_MISSION,
         max_ticks: Optional[int] = None) -> int:
     """Boot the renderer, init the named mission, run until the window closes
-    or max_ticks is reached. Returns 0 on clean exit."""
+    or max_ticks is reached. Returns 0 on clean exit.
+
+    Debug knobs (env vars):
+      OPEN_STBC_HOST_HEADLESS=1     — hide the window (used by tests).
+      OPEN_STBC_HOST_VERBOSE=1      — print loaded ships, player position,
+                                      camera state on the first tick.
+      OPEN_STBC_HOST_FIXED_CAMERA=1 — ignore third-person follow; use a
+                                      fixed camera at (0, 0, 1500) looking
+                                      at the world origin (matches the
+                                      headless ship-gate test that's known
+                                      to frame the Galaxy correctly).
+    """
+    import os as _os
+    verbose = _os.environ.get("OPEN_STBC_HOST_VERBOSE") == "1"
+    fixed_camera = _os.environ.get("OPEN_STBC_HOST_FIXED_CAMERA") == "1"
+
     _setup_sdk()
     _init_mission(mission_name)
 
@@ -174,6 +189,19 @@ def run(mission_name: str = SHIP_GATE_MISSION,
             # Fallback: follow the first ship we found.
             player = next(iter(instances.keys()))
 
+        if verbose:
+            print(f"[host_loop] mission={mission_name}", flush=True)
+            print(f"[host_loop] {len(instances)} render instance(s) created", flush=True)
+            for ship, _iid in list(instances.items())[:5]:
+                p = ship.GetWorldLocation()
+                print(f"[host_loop]   ship script={ship.GetScript()!r} "
+                      f"world=({p.x:.2f}, {p.y:.2f}, {p.z:.2f})", flush=True)
+            if player is not None:
+                pp = player.GetWorldLocation()
+                print(f"[host_loop] player world=({pp.x:.2f}, {pp.y:.2f}, {pp.z:.2f})", flush=True)
+            else:
+                print("[host_loop] no player ship found", flush=True)
+
         loop = GameLoop()
         ticks = 0
         while not r.should_close():
@@ -184,7 +212,10 @@ def run(mission_name: str = SHIP_GATE_MISSION,
                 r.set_world_transform(iid, _world_matrix_row_major(ship))
 
             # Camera: third-person offset behind the player ship (or origin).
-            if player is not None:
+            if fixed_camera:
+                eye = (0.0, 0.0, 1500.0)
+                target = (0.0, 0.0, 0.0)
+            elif player is not None:
                 p = player.GetWorldLocation()
                 eye = (p.x, p.y + 30.0, p.z + 200.0)
                 target = (p.x, p.y, p.z)
@@ -193,6 +224,9 @@ def run(mission_name: str = SHIP_GATE_MISSION,
                 target = (0.0, 0.0, 0.0)
             r.set_camera(eye=eye, target=target, up=(0.0, 1.0, 0.0),
                          fov_y_rad=1.0472, near=1.0, far=100000.0)
+
+            if verbose and ticks == 0:
+                print(f"[host_loop] tick 0 camera eye={eye} target={target}", flush=True)
 
             r.frame()
             ticks += 1
