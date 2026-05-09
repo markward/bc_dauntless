@@ -78,10 +78,28 @@ int main(int argc, char* argv[]) {
 
     Py_InitializeEx(/*initsigs=*/1);
 
-    int rc = call_banner();
-
-    if (Py_FinalizeEx() < 0) {
-        return 2;
+    int rc = 0;
+    if (argc >= 2 && std::string(argv[1]) == "--smoke-check") {
+        PyObject* mod = PyImport_ImportModule("engine.bootstrap");
+        if (!mod) { PyErr_Print(); rc = 1; goto teardown; }
+        PyObject* fn = PyObject_GetAttrString(mod, "smoke_check");
+        if (!fn) { PyErr_Print(); Py_DECREF(mod); rc = 1; goto teardown; }
+        {
+            PyObject* result = PyObject_CallNoArgs(fn);
+            Py_DECREF(fn);
+            Py_DECREF(mod);
+            if (!result) { PyErr_Print(); rc = 1; goto teardown; }
+            PyObject* repr = PyObject_Repr(result);
+            Py_DECREF(result);
+            if (!repr) { PyErr_Print(); rc = 1; goto teardown; }
+            std::printf("%s\n", PyUnicode_AsUTF8(repr));
+            Py_DECREF(repr);
+        }
+    } else {
+        rc = call_banner();
     }
+
+teardown:
+    if (Py_FinalizeEx() < 0) return 2;
     return rc;
 }
