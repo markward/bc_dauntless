@@ -25,6 +25,7 @@ the list.
 16. **`NiBinaryVoxelData` semantics.** Defer to scene-graph or physics.
 17. **Save/load.** Phase 1 concern; pipeline rebuilds on load.
 18. **Streaming / virtual textures.** Not needed today.
+19. **Material → texture stage linking.** Discovered 2026-05-09 during renderer-host Task 17: every Galaxy.nif material comes back with `stages[Base].texture_index = -1` even though `Model::textures` is populated. The `apply_texturing_property` / `apply_multi_texture_property` paths in `material_build.cc` aren't matching the source_link to the per-texture `image_to_texture` map for BC's NiTexturingProperty → NiSourceTexture → NiImage chain. Renderer currently masks the bug with a 1×1 white-texture fallback in `FrameSubmitter::ensure_white_texture()`, but every BC ship will render untextured until this is fixed. Existing `ModelSmokeTest.LoadsGalaxyEndToEnd` doesn't catch it because it only asserts `model->textures.size() > 0`, not that materials reference them.
 
 ## v1 deviations from the original plan
 
