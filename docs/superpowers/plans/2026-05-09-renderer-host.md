@@ -2154,11 +2154,14 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 GALAXY_NIF = PROJECT_ROOT / "game" / "data" / "Models" / "Ships" / "Galaxy" / "Galaxy.nif"
+GALAXY_TEX = PROJECT_ROOT / "game" / "data" / "Models" / "SharedTextures" / "FedShips" / "High"
 
 
 def test_scene_setup_round_trip():
     if not GALAXY_NIF.is_file():
         pytest.skip(f"BC asset not available at {GALAXY_NIF}")
+    if not GALAXY_TEX.is_dir():
+        pytest.skip(f"BC texture dir not available at {GALAXY_TEX}")
     os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
     import _open_stbc_host
     try:
@@ -2167,8 +2170,7 @@ def test_scene_setup_round_trip():
         pytest.skip(f"no GL context available: {e}")
 
     try:
-        ship = _open_stbc_host.load_model(str(GALAXY_NIF),
-                                          "data/Models/SharedTextures/FedShips/High")
+        ship = _open_stbc_host.load_model(str(GALAXY_NIF), str(GALAXY_TEX))
 
         ids = []
         for x in (-50.0, 0.0, 50.0):
