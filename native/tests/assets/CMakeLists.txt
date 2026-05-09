@@ -1,5 +1,6 @@
 add_executable(assets_tests
     cpu/sanity_test.cc
+    cpu/header_compile_test.cc
 )
 
 target_link_libraries(assets_tests
