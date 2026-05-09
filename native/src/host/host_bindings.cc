@@ -18,8 +18,10 @@
 #include <renderer/window.h>
 #include <scenegraph/world.h>
 #include <scenegraph/camera.h>
+#include <assets/cache.h>
 
 #include <cstdlib>
+#include <filesystem>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -34,6 +36,25 @@ std::unique_ptr<renderer::Window> g_window;
 scenegraph::World g_world;
 scenegraph::Camera g_camera;
 
+struct LoadedModel {
+    std::filesystem::path nif_path;
+    assets::ModelHandle handle;
+};
+
+std::unique_ptr<assets::AssetCache> g_cache;
+std::vector<LoadedModel> g_loaded_models;  // index = our public ModelHandle - 1
+
+scenegraph::ModelHandle load_model_impl(const std::string& nif_path,
+                                        const std::string& texture_search_path) {
+    if (!g_window) {
+        throw std::runtime_error("load_model: init must be called first (asset upload needs a GL context)");
+    }
+    if (!g_cache) g_cache = std::make_unique<assets::AssetCache>();
+    auto handle = g_cache->load(nif_path, texture_search_path);
+    g_loaded_models.push_back({nif_path, std::move(handle)});
+    return static_cast<scenegraph::ModelHandle>(g_loaded_models.size());
+}
+
 void init(int width, int height, const std::string& title) {
     if (g_window) {
         throw std::runtime_error("_open_stbc_host: init called while host already initialized");
@@ -41,9 +62,14 @@ void init(int width, int height, const std::string& title) {
     // Visible by default. Tests that need offscreen can set OPEN_STBC_HOST_HEADLESS=1.
     bool visible = std::getenv("OPEN_STBC_HOST_HEADLESS") == nullptr;
     g_window = std::make_unique<renderer::Window>(width, height, title, visible);
+    g_world = scenegraph::World{};
+    g_loaded_models.clear();
 }
 
 void shutdown() {
+    g_loaded_models.clear();
+    g_cache.reset();
+    g_world = scenegraph::World{};
     g_window.reset();
 }
 
@@ -72,6 +98,8 @@ PYBIND11_MODULE(_open_stbc_host, m) {
     m.def("shutdown", &shutdown);
     m.def("should_close", &should_close);
     m.def("frame", &frame);
+    m.def("load_model", &load_model_impl,
+          py::arg("nif_path"), py::arg("texture_search_path"));
 
     py::class_<scenegraph::InstanceId>(m, "InstanceId")
         .def_readonly("index", &scenegraph::InstanceId::index)
