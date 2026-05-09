@@ -3,6 +3,7 @@
 
 #include <nif/error.h>
 #include <nif/types.h>
+#include <nif/version.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -14,6 +15,11 @@ namespace nif {
 class Reader {
 public:
     Reader(const unsigned char* data, std::size_t size, std::filesystem::path source);
+
+    /// File-level version, set by the header parser before block parsers run.
+    /// Used by per-block parsers to gate version-conditional fields.
+    void set_version(Version v) { version_ = v; }
+    Version version() const { return version_; }
 
     std::uint8_t  read_uint8();
     std::uint16_t read_uint16();
@@ -51,6 +57,7 @@ private:
     std::size_t size_;
     std::size_t offset_ = 0;
     std::filesystem::path source_;
+    Version version_{};
 };
 
 }  // namespace nif

@@ -25,6 +25,9 @@ struct File {
     /// if it stopped earlier (e.g., on an unimplemented block type during
     /// the early phases when only some parsers are registered).
     bool eof_reached = false;
+    /// Populated when the walker stopped on an unknown block type. Empty
+    /// when eof_reached is true or when an exception was thrown.
+    std::string stopped_at_block_type;
 
     File() = default;
     File(const File&) = delete;

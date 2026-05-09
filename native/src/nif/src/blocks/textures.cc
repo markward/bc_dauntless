@@ -26,9 +26,11 @@ NiTextureModeProperty parse_NiTextureModeProperty_body(Reader& r) {
     NiTextureModeProperty p;
     p.obj = parse_object_net_base(r);
     p.flags = r.read_uint16();
-    // PS2 L / PS2 K are signed shorts (since 3.1, until 10.2.0.0).
-    p.ps2_l = static_cast<std::int16_t>(r.read_uint16());
-    p.ps2_k = static_cast<std::int16_t>(r.read_uint16());
+    // PS2 L / PS2 K are since 3.1 — absent in v3.0.
+    if (r.version().value >= 0x03010000) {
+        p.ps2_l = static_cast<std::int16_t>(r.read_uint16());
+        p.ps2_k = static_cast<std::int16_t>(r.read_uint16());
+    }
     return p;
 }
 
@@ -41,7 +43,10 @@ NiImage parse_NiImage_body(Reader& r) {
         img.image_data_link = r.read_uint32();
     }
     img.unknown_int = r.read_uint32();
-    img.unknown_float = r.read_float();  // since 3.1, present in v3.1
+    // unknown_float appeared since 3.1 — absent in v3.0.
+    if (r.version().value >= 0x03010000) {
+        img.unknown_float = r.read_float();
+    }
     return img;
 }
 
@@ -50,6 +55,12 @@ NiTextureProperty parse_NiTextureProperty_body(Reader& r) {
     p.obj = parse_object_net_base(r);
     p.flags = r.read_uint16();
     p.image_link = r.read_uint32();
+    // Unknown Ints 2 (2 × uint32) — present in v3.0 only (since 3.0 until 3.03).
+    // v3.0 = 0x03000000, v3.03 = 0x03000300, v3.1 = 0x03010000 > 3.03.
+    if (r.version().value >= 0x03000000 && r.version().value <= 0x03000300) {
+        r.read_uint32();
+        r.read_uint32();
+    }
     return p;
 }
 

@@ -295,6 +295,29 @@ struct NiStringExtraData {
     std::string string_data;
 };
 
+/// Voxel-collision extra data. References a NiBinaryVoxelData block.
+struct NiBinaryVoxelExtraData {
+    std::uint32_t next_extra_data_link = 0;
+    std::uint32_t unknown_int = 0;
+    std::uint32_t data_link = 0;
+};
+
+/// Raw voxel-collision data block. Field set per niflib's
+/// NiBinaryVoxelData::Read.
+struct NiBinaryVoxelData {
+    std::uint16_t unknown_short1 = 0;
+    std::uint16_t unknown_short2 = 0;
+    std::uint16_t unknown_short3 = 0;
+    std::array<float, 7> unknown_7_floats{};
+    /// 7 × 12 bytes of opaque preamble data.
+    std::array<std::array<std::uint8_t, 12>, 7> unknown_bytes1{};
+    std::uint32_t num_unknown_vectors = 0;
+    std::vector<Vec3> unknown_vectors;
+    std::uint32_t num_unknown_bytes2 = 0;
+    std::vector<std::uint8_t> unknown_bytes2;
+    std::array<std::uint32_t, 5> unknown_5_ints{};
+};
+
 /// Surface material property. v3.1: flags + 4 colors + glossiness + alpha.
 struct NiMaterialProperty {
     ObjectNetBase obj;
@@ -325,7 +348,9 @@ using Block = std::variant<
     NiMultiTextureProperty,
     NiKeyframeData,
     NiStringExtraData,
-    NiFlipController
+    NiFlipController,
+    NiBinaryVoxelExtraData,
+    NiBinaryVoxelData
 >;
 
 struct BlockHandle {

@@ -17,8 +17,9 @@ endif()
 # Public library.
 add_subdirectory(src/nif)
 
-# Tests are wired in Task 7. The structural-walker oracle (replacing the
-# original OpenMW oracle target after the v3.1 plan amendment) lands in Task 6.
+# Diagnostic tools that consume the public library.
+add_subdirectory(tools/scan_nifs)
+
 option(OPEN_STBC_BUILD_TESTS "Build native tests for open_stbc" ON)
 if(OPEN_STBC_BUILD_TESTS)
   enable_testing()

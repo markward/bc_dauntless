@@ -21,4 +21,24 @@ NIF_REGISTER_BLOCK(NiStringExtraData, [](Reader& r) -> Block {
     return d;
 });
 
+// NiBinaryVoxelExtraData v3.1: NiExtraData base + unknown_int + data_link.
+// Used as the root block of every "_vox.nif" voxel-collision file.
+NIF_REGISTER_BLOCK(NiBinaryVoxelExtraData, [](Reader& r) -> Block {
+    NiBinaryVoxelExtraData d;
+    d.next_extra_data_link = r.read_uint32();
+    d.unknown_int = r.read_uint32();
+    d.data_link = r.read_uint32();
+    return d;
+});
+
+// NiBinaryVoxelData parser intentionally NOT registered. niflib's auto-gen
+// Read expects an `unknownBytes1[7][12]` array followed by Vector4-typed
+// unknownVectors and a trailing `unknown5Ints[5]`, but on real BC v3.x
+// `_vox.nif` files this layout produces truncation errors and length-zero
+// desyncs. Determining the real v3.x layout is its own investigation.
+//
+// Files that have an NiBinaryVoxelExtraData reach that block, then the
+// walker reports "stuck on NiBinaryVoxelData" cleanly — useful coverage
+// data for future work.
+
 }  // namespace nif

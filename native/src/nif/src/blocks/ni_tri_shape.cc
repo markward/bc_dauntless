@@ -131,13 +131,16 @@ NiTriShapeData parse_NiTriShapeData_body(Reader& r) {
         d.triangles.push_back(tri);
     }
 
-    d.num_match_groups = r.read_uint16();
-    d.match_groups.resize(d.num_match_groups);
-    for (auto& group : d.match_groups) {
-        auto num = r.read_uint16();
-        group.reserve(num);
-        for (std::uint16_t i = 0; i < num; ++i) {
-            group.push_back(r.read_uint16());
+    // num_match_groups + match_groups appeared since 3.1 — absent in v3.0.
+    if (r.version().value >= 0x03010000) {
+        d.num_match_groups = r.read_uint16();
+        d.match_groups.resize(d.num_match_groups);
+        for (auto& group : d.match_groups) {
+            auto num = r.read_uint16();
+            group.reserve(num);
+            for (std::uint16_t i = 0; i < num; ++i) {
+                group.push_back(r.read_uint16());
+            }
         }
     }
 

@@ -96,6 +96,7 @@ bool walk_blocks(File& f, Reader& r) {
                              "[nif] STOP: no parser for block %zu type=%s\n",
                              f.blocks.size(), type_name.c_str());
             }
+            f.stopped_at_block_type = type_name;
             return false;
         }
 
@@ -122,6 +123,7 @@ bool walk_blocks(File& f, Reader& r) {
             if (std::getenv("NIF_TRACE")) {
                 std::fprintf(stderr, "[nif]   parser error: %s\n", e.what());
             }
+            f.stopped_at_block_type = "<parse error in " + type_name + ">: " + e.what();
             return false;
         }
     }
@@ -139,6 +141,7 @@ File load(const std::filesystem::path& path) {
     auto h = parse_header(r);
     f.version = h.version;
     f.header_lines = h.lines;
+    r.set_version(h.version);  // make version available to per-block parsers
 
     f.eof_reached = walk_blocks(f, r);
 
