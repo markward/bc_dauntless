@@ -20,6 +20,54 @@ DEFAULT_SKYBOX_NIF: Optional[str] = None  # No skybox NIF in BC assets; spec def
 DEFAULT_TEXTURE_SEARCH = "data/Models/SharedTextures/FedShips/High"
 DEFAULT_PLAYER_SET = "Biranu1"  # M1 Basic-specific
 
+# Camera-follow constants used by run() to position the third-person camera.
+CAM_BACK_DIST = 600.0
+CAM_UP_DIST   = 200.0
+
+
+class _PlayerControl:
+    """Keyboard-driven ship-transform integrator.
+
+    Reads keys via a duck-typed `h` (the _open_stbc_host bindings module
+    or a test fake) and updates the player's transform each tick. v1
+    writes _position / _rotation directly because Phase 1's
+    engine/physics/simulation.py is empty; when physics lands, this
+    becomes target-velocity / target-heading instead.
+    """
+
+    TURN_RATE_RAD_PER_S = 1.5   # ~86°/s — half-turn in ~2.1s
+    IMPULSE_UNIT        = 50.0  # BC units/s per impulse level
+    REVERSE_LEVEL       = -2    # signed level set by R key
+
+    def __init__(self):
+        self.impulse_level = 0  # signed: -2..9; 0 = stop
+
+    def apply(self, player, dt: float, h) -> None:
+        """Read keys, update player transform.
+
+        `h` is the _open_stbc_host bindings module (or any object with
+        key_state, key_pressed, and `keys.KEY_*` attributes).
+        """
+        # 1. Throttle (one-shot edges). R is checked before digits so a
+        #    simultaneous R + digit press picks R; in practice no human
+        #    would do that on the same frame.
+        if h.key_pressed(h.keys.KEY_R):
+            self.impulse_level = self.REVERSE_LEVEL
+        elif h.key_pressed(h.keys.KEY_0):
+            self.impulse_level = 0
+        else:
+            digit_codes = [
+                h.keys.KEY_1, h.keys.KEY_2, h.keys.KEY_3, h.keys.KEY_4,
+                h.keys.KEY_5, h.keys.KEY_6, h.keys.KEY_7, h.keys.KEY_8,
+                h.keys.KEY_9,
+            ]
+            for level, code in enumerate(digit_codes, start=1):
+                if h.key_pressed(code):
+                    self.impulse_level = level
+                    break
+
+        # Tasks 5 and 6 add rotation and position integration here.
+
 
 def _setup_sdk() -> None:
     """Install SDK finder + AST transforms so SDK script imports work."""
