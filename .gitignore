@@ -212,6 +212,9 @@ cmake-build-*/
 *.opensdf
 *.sdf
 *.cachefile
+
+# clangd index cache (per-project, auto-regenerated)
+.cache/
 *.VC.db
 *.VC.VC.opendb
 

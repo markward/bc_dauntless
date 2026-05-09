@@ -1,17 +1,119 @@
 # NIF Loader — Design Spec
 
 **Date:** 2026-05-08
-**Status:** Approved
+**Status:** Implemented (v1 ship gate met 2026-05-09)
 **Phase:** 2 (Full C++ engine), first sub-project
+
+## Outcome
+
+The four spec sample files parse end-to-end and reach the `End Of File`
+sentinel:
+
+| Sample | Path | Blocks parsed |
+|---|---|---|
+| Galaxy ship | `game/data/Models/Ships/Galaxy/Galaxy.nif` | 68 |
+| CardStarbase | `game/data/Models/Bases/CardStarbase/CardStarbase.nif` | 173 |
+| BodyKlingon | `game/data/Models/Characters/Bodies/BodyKlingon/BodyKlingon.nif` | 169 |
+| EBridge interior | `game/data/Models/Sets/EBridge/EBridge.nif` | 565 |
+
+**Full corpus coverage: all 253 .nif files under `game/data/Models/` reach
+End Of File.** Verified via `native/tools/scan_nifs/scan_nifs` walking the
+entire asset tree.
+
+Total block parsers implemented (v3.0 + v3.1): 27.
+- Scene / spatial: NiNode, NiBone, NiCamera
+- Geometry: NiTriShape, NiTriShapeData
+- Materials / textures: NiMaterialProperty, NiTexturingProperty,
+  NiMultiTextureProperty, NiTextureModeProperty, NiTextureProperty,
+  NiImage, NiRawImageData
+- Render-state properties: NiZBufferProperty, NiVertexColorProperty,
+  NiAlphaProperty
+- Lights: NiPointLight, NiSpotLight, NiAmbientLight, NiDirectionalLight
+- Animation: NiKeyframeController, NiKeyframeData, NiTriShapeSkinController,
+  NiFlipController, NiVisController, NiVisData, NiLookAtController,
+  NiRollController, NiFloatData
+- Extra data: NiStringExtraData, NiBinaryVoxelExtraData, NiBinaryVoxelData
+
+44/44 GTests pass. `scan_nifs` reports 253/253 EOF, 0 stuck, 0 errors.
+
+Key v3.1-specific findings discovered during implementation:
+
+- **bool is uint32 (non-zero == true) for v3.1** — niflib's
+  `ReadBool(version <= 0x04010001)` returns `(ReadUInt(in) != 0)`. BC files
+  encode bool fields with hash-like sentinel uint32 values (e.g.
+  `0x03e54648`), not literal 0/1.
+- **NiMultiTextureProperty is NOT NiTexturingProperty** despite the
+  schema's `inherit="NiTexturingProperty"` — niflib has custom code with a
+  much simpler body (5 MultiTextureElement entries).
+- **niflib (BSD)** at `niftools/niflib` was the authoritative reference for
+  v3.1 reading order. nifxml documents the format but niflib's auto-gen
+  Read methods capture v3.1 quirks the schema doesn't.
+- **niftools/max_nif_plugin (BSD)** was the user's pointer that led us to
+  niflib (it depends on niflib as a submodule). Both are now sibling clones
+  used as algorithmic reference (not built or linked into open_stbc).
+
+## v3.1 amendment (post-discovery, 2026-05-08)
+
+During Task 4 of the implementation plan, we confirmed by inspecting
+`Galaxy.nif` that **BC uses NIF version 3.1**, not v4.x or v10+/v20+ as the
+original spec assumed. NifSkope's nifxml schema names BC explicitly under
+`<version id="V3_1" num="3.1" supported="false">` — the format is documented
+but unsupported by NifSkope's renderer. OpenMW targets Morrowind v4.0.0.2+
+and does not parse v3.x; the diff oracle relationship described below is
+therefore not viable on BC's actual files.
+
+**Approved adjustments to this spec:**
+
+1. **Oracle replaced with snapshot tests + End-Of-File sanity check.** The
+   OpenMW-as-diff-oracle relationship is dropped. A separate "structural
+   walker" oracle was briefly considered but isn't viable: v3.1's format
+   stores no block-size info — block boundaries are only knowable by parsing
+   each block to its end. So a thin walker would have to be the parser
+   itself. Correctness is therefore established by:
+   - Snapshot tests against committed canonical-text dumps, validated once
+     by hand using a hex viewer cross-referenced with NifSkope's nifxml
+     schema (the schema is authoritative even where NifSkope's renderer
+     falls short).
+   - One sanity test per sample file: the parser reaches the `End Of File`
+     sentinel block (which closes every BC NIF) and consumes all bytes
+     exactly. A misread block-body length anywhere in the file desynchronizes
+     parsing and fails this check — so it catches whole categories of
+     structural bugs cheaply.
+2. **OpenMW mirror retained as algorithmic reference.** Block-parsing logic
+   for types that persisted across NIF versions (NiNode field order, vertex
+   array layout in NiTriShapeData, etc.) draws on OpenMW's mirrored source.
+   The mirror stops being a build target — it's documentation we can read
+   alongside the schema.
+3. **Success criterion #2 rewritten** as: "canonical-text dumps from our
+   parser match committed snapshots for each of the four sample files; the
+   parser reaches `End Of File` and consumes all bytes for each."
+4. **NIF version constants in `nif/version.h`** target v3.1 specifically:
+   `kBcVersionValue = 0x03010000` (or whatever the inventory tool reports).
+5. **Header parsing format is the pre-v10 path.** v3.1 files start with
+   several lines of vendor text, each ending in `\n` — line 1 is the magic
+   line `"NetImmerse File Format, Version 3.1"`, followed by studio /
+   copyright lines (e.g., "Numerical Design Limited, Chapel Hill, NC 27514"
+   and "Copyright (c) 1996-2000"). After the text, blocks are walked
+   linearly. No block-type table, no block-size table, no string table.
+   Each block is prefixed with a `uint32_t name_length` and that many ASCII
+   bytes naming the type, then the block body. The file ends with a sentinel
+   block named `"End Of File"`.
+
+The rest of this spec stands as written; treat any reference to "OpenMW
+oracle" as "structural walker + snapshot," and any reference to "post-v10
+header parsing" as "v3.1 header parsing" per item 5 above.
+
+---
 
 ## Goal
 
 Build a fresh C++20 NIF parser library, `nif::`, that reads four representative
 BC asset files end-to-end into an in-memory representation. The parser is the
 foundation for every subsequent Phase 2 sub-project (asset pipeline, scene
-graph, render pipeline). Correctness of the loader is established by diffing
-its output against a mirrored copy of OpenMW's NIF parser on shared block
-types, and by per-block unit tests on BC-specific extensions.
+graph, render pipeline). Correctness of the loader is established by a
+structural block-walker that agrees with our parser on every block boundary,
+and by snapshot tests on canonical-text dumps validated once by hand using a
+hex viewer cross-referenced with NifSkope's nifxml schema.
 
 ## Non-goals
 

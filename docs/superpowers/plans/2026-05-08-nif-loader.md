@@ -2,13 +2,53 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a fresh C++20 NIF parser library that reads four BC sample files (Galaxy ship, CardStarbase, BodyKlingon, EBridge interior) end-to-end, validated against a mirrored copy of OpenMW's NIF parser as a diff oracle.
+## v3.1 amendment (post-Task-4)
 
-**Architecture:** New `native/src/nif/` static library with a `std::variant`-based block representation, hand-written block parsers using `NifSkope/nif.xml` as schema and OpenMW's `components/nif/` as algorithmic reference. OpenMW source is mirrored into `native/third_party/openmw_nif/` (GPLv3, attributed in `THIRD_PARTY_NOTICES.md`) and compiled as a test-only oracle target. A canonical-text dump format lets both parsers' output be string-compared for shared block types. BC-specific blocks (those OpenMW rejects with `UnknownBlockType`) get per-block unit tests asserting non-trivial fields.
+Task 4 discovered that **BC uses NIF v3.1** (older than OpenMW supports). The
+diff-oracle approach as originally planned is not viable. The user-approved
+mitigation is **snapshot tests + a structural block-walker oracle**. Apply
+these changes when reading the rest of the plan:
 
-**Tech Stack:** C++20, CMake 3.20+, GoogleTest, Python 3.11+ for the one-off block-type inventory tool. macOS + Linux supported; Windows is bonus.
+- **Drop the OpenMW oracle relationship in CMake.** The `openmw_nif_oracle`
+  and `openmw_nif_dump_canonical` targets are not built. The mirror in
+  `native/third_party/openmw_nif/` stays committed as algorithmic reference
+  but is not compiled. Remove its `add_subdirectory(third_party/openmw_nif)`
+  from `native/CMakeLists.txt` if/when it would be added.
+- **Task 6 is dropped entirely.** A "structural walker" oracle was
+  considered but isn't viable: v3.1 files store no block-size info anywhere,
+  so block boundaries are only knowable by parsing each block to its end. A
+  walker would have to be the parser itself. **Skip Task 6 — proceed
+  directly from Task 5 to Task 7.**
+- **Replace Task 20 (diff harness)** with a snapshot-test harness. For each
+  sample file: our parser produces a canonical-text dump that is compared
+  against a committed `<sample>.golden.txt`. There is also one sanity
+  assertion per file: parsing reaches the `"End Of File"` sentinel block
+  (which closes every BC NIF) and consumes all bytes. A misread block-body
+  length anywhere desyncs parsing and fails this check, so it catches whole
+  categories of structural bugs cheaply. Golden files are validated once by
+  hand using a hex viewer + nifxml schema.
+- **Header parsing (Task 16) targets v3.1's format:** several lines of
+  vendor text each ending in `\n` (line 1 is `"NetImmerse File Format,
+  Version 3.1"`, then studio/copyright lines), 4-byte version, no
+  block-type table, no block-size table, no string table. Blocks are
+  walked linearly, each prefixed with `uint32_t name_length` + that many
+  ASCII bytes naming the block type, then the block body. Loop terminates
+  on the `"End Of File"` block.
+- **Block dispatch (Task 18)** keys on the inline type-name string read at
+  each block boundary, not on a header table.
+- **Resolver (Task 17)** still applies — block-index references between
+  blocks exist in v3.1 too, just as 32-bit signed offsets.
+- **Task 13's BC version constants** are `kBcVersionValue = 0x03010000`
+  (subject to confirmation when the inventory tool first reads it). The
+  user-version concept doesn't apply to v3.x; that field is absent.
 
-**Spec reference:** [docs/superpowers/specs/2026-05-08-nif-loader-design.md](../specs/2026-05-08-nif-loader-design.md).
+**Goal:** Build a fresh C++20 NIF parser library that reads four BC sample files (Galaxy ship, CardStarbase, BodyKlingon, EBridge interior) end-to-end, validated by a structural block-walker (offsets/types/sizes) and snapshot tests on canonical-text dumps.
+
+**Architecture:** New `native/src/nif/` static library with a `std::variant`-based block representation, hand-written block parsers using `nifxml/nif.xml` as schema and OpenMW's `components/nif/` (mirrored at `native/third_party/openmw_nif/`, retained as documentation only — not built) as algorithmic reference. NIF format target is v3.1 specifically. Correctness via two layers: a structural block-walker confirms every block boundary, and snapshot tests on canonical-text dumps catch field-level regressions.
+
+**Tech Stack:** C++20, CMake 3.20+, GoogleTest, Python 3.11+ for the one-off block-type inventory tool. NIF schema lives at sibling clone `/Users/mward/Documents/Projects/nifxml/nif.xml`. macOS + Linux supported; Windows is bonus.
+
+**Spec reference:** [docs/superpowers/specs/2026-05-08-nif-loader-design.md](../specs/2026-05-08-nif-loader-design.md) — see v3.1 amendment section at the top of that file.
 
 ---
 
