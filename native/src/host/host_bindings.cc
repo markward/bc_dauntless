@@ -13,6 +13,7 @@
 
 #include <pybind11/pybind11.h>
 
+#include <glad/glad.h>
 #include <renderer/window.h>
 
 #include <cstdlib>
@@ -47,6 +48,11 @@ void frame() {
     if (!g_window) {
         throw std::runtime_error("_open_stbc_host: frame called before init");
     }
+    int fw = 0, fh = 0;
+    g_window->framebuffer_size(&fw, &fh);
+    glViewport(0, 0, fw, fh);
+    glClearColor(0.05f, 0.07f, 0.10f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     g_window->poll_events();
     g_window->swap_buffers();
 }
