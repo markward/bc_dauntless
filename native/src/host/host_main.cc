@@ -1,4 +1,6 @@
 // native/src/host/host_main.cc
+//
+// open_stbc_host — embedded-CPython renderer host binary.
 
 #include <Python.h>
 
@@ -6,10 +8,68 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <string>
+
+namespace {
+
+// Locate the project root from the running binary's path. The binary lives at
+// <root>/build/bin/open_stbc_host, so root is two parents up from the binary
+// dir. This is a build-tree assumption — the binary is not yet meant to be
+// installed system-wide.
+std::filesystem::path discover_project_root(const char* argv0) {
+    std::filesystem::path bin_path = std::filesystem::canonical(argv0);
+    return bin_path.parent_path().parent_path().parent_path();
+}
+
+// Set PYTHONPATH so the embedded interpreter can find engine/ (and the SDK
+// scripts via the project's existing sys.path-based finder). Honors an active
+// uv venv's site-packages via VIRTUAL_ENV when set.
+void configure_python_path(const std::filesystem::path& project_root) {
+    std::string pythonpath = project_root.string();
+
+    if (const char* venv = std::getenv("VIRTUAL_ENV")) {
+        // Best-effort glob — site-packages lives under .venv/lib/pythonX.Y/site-packages.
+        // We don't pin the minor version; the embedded interpreter's own version
+        // controls what site-packages directory exists. Add the parent lib/ dir
+        // and let Python resolve. If absent, embedding still works for the
+        // engine/ source tree.
+        std::filesystem::path venv_lib = std::filesystem::path(venv) / "lib";
+        if (std::filesystem::is_directory(venv_lib)) {
+            for (const auto& entry : std::filesystem::directory_iterator(venv_lib)) {
+                std::filesystem::path sp = entry.path() / "site-packages";
+                if (std::filesystem::is_directory(sp)) {
+                    pythonpath += ":" + sp.string();
+                }
+            }
+        }
+    }
+
+    setenv("PYTHONPATH", pythonpath.c_str(), /*overwrite=*/1);
+}
+
+int call_banner() {
+    PyObject* mod = PyImport_ImportModule("engine.bootstrap");
+    if (!mod) { PyErr_Print(); return 1; }
+    PyObject* fn = PyObject_GetAttrString(mod, "banner");
+    if (!fn) { PyErr_Print(); Py_DECREF(mod); return 1; }
+    PyObject* result = PyObject_CallNoArgs(fn);
+    Py_DECREF(fn);
+    Py_DECREF(mod);
+    if (!result) { PyErr_Print(); return 1; }
+    const char* text = PyUnicode_AsUTF8(result);
+    std::printf("%s\n", text ? text : "<no banner>");
+    Py_DECREF(result);
+    return 0;
+}
+
+}  // namespace
 
 int main(int argc, char* argv[]) {
-    (void)argc;
-    (void)argv;
+    if (argc < 1) return 1;
+
+    auto project_root = discover_project_root(argv[0]);
+    configure_python_path(project_root);
 
     if (PyImport_AppendInittab("_open_stbc_host", PyInit__open_stbc_host) != 0) {
         std::fprintf(stderr, "open_stbc_host: PyImport_AppendInittab failed\n");
@@ -18,24 +78,10 @@ int main(int argc, char* argv[]) {
 
     Py_InitializeEx(/*initsigs=*/1);
 
-    PyObject* mod = PyImport_ImportModule("_open_stbc_host");
-    if (!mod) {
-        PyErr_Print();
-        Py_FinalizeEx();
-        return 1;
-    }
-    Py_DECREF(mod);
-
-    PyObject* sys = PyImport_ImportModule("sys");
-    PyObject* version = PyObject_GetAttrString(sys, "version");
-    const char* version_str = PyUnicode_AsUTF8(version);
-    std::printf("open_stbc_host: Python %s, _open_stbc_host imported\n",
-                version_str ? version_str : "<unknown>");
-    Py_DECREF(version);
-    Py_DECREF(sys);
+    int rc = call_banner();
 
     if (Py_FinalizeEx() < 0) {
         return 2;
     }
-    return 0;
+    return rc;
 }
