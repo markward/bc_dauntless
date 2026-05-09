@@ -1,4 +1,5 @@
 add_library(assets STATIC
+    src/gl_handle.cc
     src/mesh_lifetime.cc
     src/texture_lifetime.cc
 )
