@@ -29,6 +29,7 @@
 #include <stdexcept>
 #include <string>
 #include <tuple>
+#include <unordered_map>
 #include <vector>
 
 namespace py = pybind11;
@@ -46,6 +47,11 @@ struct LoadedModel {
 
 std::unique_ptr<assets::AssetCache> g_cache;
 std::vector<LoadedModel> g_loaded_models;  // index = our public ModelHandle - 1
+
+// Tracks key state from the previous frame() so key_pressed can detect
+// rising edges. Only keys that have been queried via key_pressed appear
+// here; lookup misses (key never queried) are treated as "previously up".
+std::unordered_map<int, bool> g_prev_key_state;
 std::unique_ptr<renderer::Pipeline> g_pipeline;
 // FrameSubmitter is a unique_ptr (not a static instance) so its destructor —
 // which calls glDeleteTextures on the white-fallback texture — runs from
@@ -97,6 +103,7 @@ void shutdown() {
     g_cache.reset();
     g_world = scenegraph::World{};
     g_window.reset();
+    g_prev_key_state.clear();
 }
 
 bool should_close() {
@@ -125,6 +132,11 @@ void frame() {
     g_submitter->submit_opaque(g_world, g_camera, *g_pipeline, lookup);
 
     g_window->poll_events();
+    // Snapshot tracked keys' current state so the NEXT call to key_pressed
+    // sees the right "previous" value for rising-edge detection.
+    for (auto& [k, prev] : g_prev_key_state) {
+        prev = (glfwGetKey(g_window->native_handle(), k) == GLFW_PRESS);
+    }
     g_window->swap_buffers();
 }
 
@@ -206,6 +218,35 @@ PYBIND11_MODULE(_open_stbc_host, m) {
     keys.attr("KEY_7") = GLFW_KEY_7;
     keys.attr("KEY_8") = GLFW_KEY_8;
     keys.attr("KEY_9") = GLFW_KEY_9;
+
+    m.def("key_state",
+          [](int key) {
+              if (!g_window) {
+                  throw std::runtime_error("key_state: init must be called first");
+              }
+              return g_window->key_state(key);
+          },
+          py::arg("key"),
+          "Returns true while the key is held.");
+
+    m.def("key_pressed",
+          [](int key) {
+              if (!g_window) {
+                  throw std::runtime_error("key_pressed: init must be called first");
+              }
+              const bool now = g_window->key_state(key);
+              auto it = g_prev_key_state.find(key);
+              const bool prev = (it != g_prev_key_state.end()) && it->second;
+              if (it == g_prev_key_state.end()) {
+                  // First query: register the key for tracking. Initial prev
+                  // is the current state, so a key already held when the
+                  // caller starts polling does NOT count as a rising edge.
+                  g_prev_key_state[key] = now;
+              }
+              return now && !prev;
+          },
+          py::arg("key"),
+          "Returns true on the first frame the key is pressed (rising edge).");
 
     // Test/debug helper: read one RGBA8 pixel from the most recently
     // presented frame. Reads GL_FRONT (the buffer that swap_buffers
