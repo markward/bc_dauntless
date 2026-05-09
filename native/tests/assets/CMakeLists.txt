@@ -2,6 +2,7 @@ add_executable(assets_tests
     cpu/sanity_test.cc
     cpu/header_compile_test.cc
     cpu/path_resolver_test.cc
+    cpu/texture_decode_test.cc
 )
 
 target_link_libraries(assets_tests
