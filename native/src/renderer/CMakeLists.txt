@@ -18,10 +18,11 @@ add_library(renderer STATIC
     window.cc
     shader.cc
     pipeline.cc
+    frame.cc
 )
 target_include_directories(renderer
     PUBLIC include
     PRIVATE "${CMAKE_CURRENT_BINARY_DIR}"
 )
 target_compile_features(renderer PUBLIC cxx_std_20)
-target_link_libraries(renderer PUBLIC assets glad glfw glm)
+target_link_libraries(renderer PUBLIC assets scenegraph glad glfw glm)
