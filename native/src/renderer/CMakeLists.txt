@@ -13,6 +13,8 @@ endfunction()
 
 embed_shader(SHADER_OPAQUE_VS shaders/opaque.vert opaque_vs)
 embed_shader(SHADER_OPAQUE_FS shaders/opaque.frag opaque_fs)
+embed_shader(SHADER_SKYBOX_VS shaders/skybox.vert skybox_vs)
+embed_shader(SHADER_SKYBOX_FS shaders/skybox.frag skybox_fs)
 
 add_library(renderer STATIC
     window.cc
