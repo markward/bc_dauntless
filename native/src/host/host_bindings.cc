@@ -15,6 +15,7 @@
 #include <pybind11/stl.h>
 
 #include <glad/glad.h>
+#include <GLFW/glfw3.h>
 #include <renderer/window.h>
 #include <renderer/pipeline.h>
 #include <renderer/frame.h>
@@ -186,6 +187,25 @@ PYBIND11_MODULE(_open_stbc_host, m) {
     m.def("set_skybox",
           [](scenegraph::ModelHandle h) { g_world.set_skybox(h); },
           py::arg("model"));
+
+    auto keys = m.def_submodule("keys", "GLFW key-code constants for input bindings.");
+    keys.attr("KEY_W") = GLFW_KEY_W;
+    keys.attr("KEY_S") = GLFW_KEY_S;
+    keys.attr("KEY_A") = GLFW_KEY_A;
+    keys.attr("KEY_D") = GLFW_KEY_D;
+    keys.attr("KEY_Q") = GLFW_KEY_Q;
+    keys.attr("KEY_E") = GLFW_KEY_E;
+    keys.attr("KEY_R") = GLFW_KEY_R;
+    keys.attr("KEY_0") = GLFW_KEY_0;
+    keys.attr("KEY_1") = GLFW_KEY_1;
+    keys.attr("KEY_2") = GLFW_KEY_2;
+    keys.attr("KEY_3") = GLFW_KEY_3;
+    keys.attr("KEY_4") = GLFW_KEY_4;
+    keys.attr("KEY_5") = GLFW_KEY_5;
+    keys.attr("KEY_6") = GLFW_KEY_6;
+    keys.attr("KEY_7") = GLFW_KEY_7;
+    keys.attr("KEY_8") = GLFW_KEY_8;
+    keys.attr("KEY_9") = GLFW_KEY_9;
 
     // Test/debug helper: read one RGBA8 pixel from the most recently
     // presented frame. Reads GL_FRONT (the buffer that swap_buffers
