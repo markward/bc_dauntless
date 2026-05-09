@@ -37,3 +37,12 @@ but niflib's auto-gen `Read` methods capture quirks the schema doesn't
 `NiMultiTextureProperty`'s actual field layout). niflib is BSD-licensed
 (GPLv3-compatible); none of niflib's code is linked into open_stbc, only
 read as documentation.
+
+## stb_image (native/third_party/stb)
+
+Single-header image loader by Sean Barrett. Used by the `assets` library
+for TGA (and optionally PNG/JPEG/BMP) decoding.
+
+- Upstream: https://github.com/nothings/stb
+- Pinned commit: see `native/third_party/stb/UPSTREAM_VERSION`
+- License: dual public-domain / MIT (see `LICENSE` in vendor dir)

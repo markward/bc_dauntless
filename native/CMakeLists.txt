@@ -14,6 +14,9 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   add_compile_options(-Wall -Wextra -Wpedantic -Wno-unused-parameter)
 endif()
 
+# Third-party vendored libraries.
+add_subdirectory(third_party/stb)
+
 # Public library.
 add_subdirectory(src/nif)
 
