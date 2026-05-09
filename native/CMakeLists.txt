@@ -17,6 +17,7 @@ endif()
 # Third-party vendored libraries.
 add_subdirectory(third_party/stb)
 add_subdirectory(third_party/glad)
+add_subdirectory(third_party/glm)
 
 # Public library.
 add_subdirectory(src/nif)

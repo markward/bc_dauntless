@@ -55,3 +55,12 @@ library to load GL 3.3 core function pointers.
 - Upstream: https://github.com/Dav1dde/glad / https://glad.dav1d.de/
 - Generation parameters: see `native/third_party/glad/UPSTREAM_VERSION`
 - License: MIT (see `LICENSE` in vendor dir)
+
+## glm (native/third_party/glm)
+
+Header-only math library for OpenGL. Used by the `assets` library for
+matrix / quaternion math.
+
+- Upstream: https://github.com/g-truc/glm
+- Pinned release: see `native/third_party/glm/UPSTREAM_VERSION`
+- License: MIT (see `LICENSE` in vendor dir)
