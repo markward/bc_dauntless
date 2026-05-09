@@ -16,6 +16,8 @@
 
 #include <glad/glad.h>
 #include <renderer/window.h>
+#include <renderer/pipeline.h>
+#include <renderer/frame.h>
 #include <scenegraph/world.h>
 #include <scenegraph/camera.h>
 #include <assets/cache.h>
@@ -43,6 +45,8 @@ struct LoadedModel {
 
 std::unique_ptr<assets::AssetCache> g_cache;
 std::vector<LoadedModel> g_loaded_models;  // index = our public ModelHandle - 1
+std::unique_ptr<renderer::Pipeline> g_pipeline;
+renderer::FrameSubmitter g_submitter;
 
 scenegraph::ModelHandle load_model_impl(const std::string& nif_path,
                                         const std::string& texture_search_path) {
@@ -62,11 +66,13 @@ void init(int width, int height, const std::string& title) {
     // Visible by default. Tests that need offscreen can set OPEN_STBC_HOST_HEADLESS=1.
     bool visible = std::getenv("OPEN_STBC_HOST_HEADLESS") == nullptr;
     g_window = std::make_unique<renderer::Window>(width, height, title, visible);
+    g_pipeline = std::make_unique<renderer::Pipeline>();
     g_world = scenegraph::World{};
     g_loaded_models.clear();
 }
 
 void shutdown() {
+    g_pipeline.reset();
     g_loaded_models.clear();
     g_cache.reset();
     g_world = scenegraph::World{};
@@ -78,7 +84,7 @@ bool should_close() {
 }
 
 void frame() {
-    if (!g_window) {
+    if (!g_window || !g_pipeline) {
         throw std::runtime_error("_open_stbc_host: frame called before init");
     }
     int fw = 0, fh = 0;
@@ -86,6 +92,16 @@ void frame() {
     glViewport(0, 0, fw, fh);
     glClearColor(0.05f, 0.07f, 0.10f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    if (fh > 0) g_camera.aspect = static_cast<float>(fw) / static_cast<float>(fh);
+
+    g_world.propagate();
+    g_submitter.submit_opaque(g_world, g_camera, *g_pipeline,
+        [](scenegraph::ModelHandle h) -> const assets::Model* {
+            if (h == 0 || h > g_loaded_models.size()) return nullptr;
+            return g_loaded_models[h - 1].handle.get();
+        });
+
     g_window->poll_events();
     g_window->swap_buffers();
 }
