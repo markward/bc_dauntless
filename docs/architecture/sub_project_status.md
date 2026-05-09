@@ -11,7 +11,7 @@ into the spec docs for full context.
 | # | Sub-project | Status | Spec | Deferred-work tracker |
 |---|---|---|---|---|
 | 1 | NIF loader | Implemented (v1 ship gate met 2026-05-09) | [2026-05-08-nif-loader-design.md](../superpowers/specs/2026-05-08-nif-loader-design.md) | (closed at v1; no backlog) |
-| 2 | Asset pipeline | Approved, pending implementation | [2026-05-09-asset-pipeline-design.md](../superpowers/specs/2026-05-09-asset-pipeline-design.md) | [§ Deferred / future work](../superpowers/specs/2026-05-09-asset-pipeline-design.md#deferred--future-work) |
+| 2 | Asset pipeline | Implemented (v1 ship gate met 2026-05-09; 99 tests passing including end-to-end Galaxy.nif smoke) | [2026-05-09-asset-pipeline-design.md](../superpowers/specs/2026-05-09-asset-pipeline-design.md) | [§ Deferred / future work](../superpowers/specs/2026-05-09-asset-pipeline-design.md#deferred--future-work) + [`native/src/assets/docs/deferred_work.md`](../../native/src/assets/docs/deferred_work.md) |
 | 3 | Scene-graph runtime | Not started | — | — |
 | 4 | Render pipeline (window/context/shaders/draws) | Not started | — | — |
 | 5 | Python ↔ C++ glue | Not started | — | — |
