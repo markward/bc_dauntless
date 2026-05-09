@@ -45,6 +45,9 @@ public:
 
     /// Look at the next byte without advancing the cursor.
     std::uint8_t peek_uint8();
+    /// Peek up to `n` bytes without advancing. Returns the number of bytes
+    /// actually written to `out` (capped at bytes_remaining()).
+    std::size_t peek_bytes(unsigned char* out, std::size_t n);
 
     std::size_t offset() const { return offset_; }
     std::size_t bytes_remaining() const { return size_ - offset_; }

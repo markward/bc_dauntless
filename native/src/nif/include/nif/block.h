@@ -448,6 +448,10 @@ struct NiBinaryVoxelData {
     std::uint32_t num_unknown_bytes2 = 0;
     std::vector<std::uint8_t> unknown_bytes2;
     std::array<std::uint32_t, 5> unknown_5_ints{};
+    /// Opaque voxel-grid bytes captured between the parsed header and the
+    /// End Of File marker. Real v3.x voxel encoding is undocumented; this
+    /// preserves the bytes so future work can decode them.
+    std::vector<std::uint8_t> raw_voxel_payload;
 };
 
 /// Surface material property. v3.1: flags + 4 colors + glossiness + alpha.

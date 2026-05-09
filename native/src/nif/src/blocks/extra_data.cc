@@ -31,14 +31,51 @@ NIF_REGISTER_BLOCK(NiBinaryVoxelExtraData, [](Reader& r) -> Block {
     return d;
 });
 
-// NiBinaryVoxelData parser intentionally NOT registered. niflib's auto-gen
-// Read expects an `unknownBytes1[7][12]` array followed by Vector4-typed
-// unknownVectors and a trailing `unknown5Ints[5]`, but on real BC v3.x
-// `_vox.nif` files this layout produces truncation errors and length-zero
-// desyncs. Determining the real v3.x layout is its own investigation.
+// NiBinaryVoxelData v3.x — partial parser.
 //
-// Files that have an NiBinaryVoxelExtraData reach that block, then the
-// walker reports "stuck on NiBinaryVoxelData" cleanly — useful coverage
-// data for future work.
+// niflib's auto-gen Read describes a fixed-size header (3 uint16 + 7 floats
+// + 7×12 bytes) followed by `Num Unknown Vectors` (uint32) + Vector4 array
+// + `Num Unknown Bytes 2` (uint32) + byte array + 5 trailing uint32. That
+// layout doesn't match real BC v3.x voxel files: the bytes after the
+// 7-float bounds section are clearly RLE/bit-packed voxel grid data, not
+// the schema's variable-length structure.
+//
+// Across all 84 _vox files in the BC asset corpus, NiBinaryVoxelData is
+// always followed immediately by the End Of File sentinel (verified via
+// list_nif_blocks.py inventory). So we use a pragmatic scan: read the
+// fixed-size header (3 dimension shorts + 7 bound floats), then advance
+// the cursor byte-by-byte until the next 15 bytes match the EOF marker
+// (`0b 00 00 00 "End Of File"`). The walker resumes on the marker and
+// the file completes cleanly. The opaque voxel-grid bytes between the
+// header and the EOF marker are stored in `raw_voxel_payload` for future
+// decoding work.
+namespace {
+inline constexpr std::size_t kEofMarkerSize = 15;
+inline constexpr unsigned char kEofMarker[kEofMarkerSize] = {
+    0x0b, 0x00, 0x00, 0x00,
+    'E','n','d',' ','O','f',' ','F','i','l','e',
+};
+
+NiBinaryVoxelData parse_NiBinaryVoxelData_body(Reader& r) {
+    NiBinaryVoxelData d;
+    d.unknown_short1 = r.read_uint16();
+    d.unknown_short2 = r.read_uint16();
+    d.unknown_short3 = r.read_uint16();
+    for (auto& f : d.unknown_7_floats) f = r.read_float();
+    while (r.bytes_remaining() >= kEofMarkerSize) {
+        unsigned char buf[kEofMarkerSize];
+        r.peek_bytes(buf, kEofMarkerSize);
+        if (std::memcmp(buf, kEofMarker, kEofMarkerSize) == 0) {
+            break;  // walker resumes on the marker
+        }
+        d.raw_voxel_payload.push_back(r.read_uint8());
+    }
+    return d;
+}
+}  // namespace
+
+NIF_REGISTER_BLOCK(NiBinaryVoxelData, [](Reader& r) -> Block {
+    return parse_NiBinaryVoxelData_body(r);
+});
 
 }  // namespace nif

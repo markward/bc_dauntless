@@ -1,6 +1,7 @@
 // native/src/nif/src/reader.cc
 #include "reader.h"
 
+#include <algorithm>
 #include <cstring>
 
 namespace nif {
@@ -22,6 +23,12 @@ void Reader::require(std::size_t n) {
 std::uint8_t Reader::read_uint8() { require(1); return data_[offset_++]; }
 
 std::uint8_t Reader::peek_uint8() { require(1); return data_[offset_]; }
+
+std::size_t Reader::peek_bytes(unsigned char* out, std::size_t n) {
+    auto take = std::min(n, bytes_remaining());
+    if (take > 0) std::memcpy(out, data_ + offset_, take);
+    return take;
+}
 
 std::uint16_t Reader::read_uint16() {
     require(2); std::uint16_t v; std::memcpy(&v, data_ + offset_, 2); offset_ += 2; return v;

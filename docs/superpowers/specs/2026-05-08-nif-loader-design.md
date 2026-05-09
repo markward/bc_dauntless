@@ -6,7 +6,7 @@
 
 ## Outcome
 
-All four BC v3.1 sample files parse end-to-end and reach the `End Of File`
+The four spec sample files parse end-to-end and reach the `End Of File`
 sentinel:
 
 | Sample | Path | Blocks parsed |
@@ -16,12 +16,25 @@ sentinel:
 | BodyKlingon | `game/data/Models/Characters/Bodies/BodyKlingon/BodyKlingon.nif` | 169 |
 | EBridge interior | `game/data/Models/Sets/EBridge/EBridge.nif` | 565 |
 
-Total v3.1 block parsers implemented: 16 (NiNode, NiBone, NiTriShape,
-NiTriShapeData, NiZBufferProperty, NiVertexColorProperty, NiAlphaProperty,
-NiMaterialProperty, NiTexturingProperty, NiMultiTextureProperty,
-NiTextureModeProperty, NiTextureProperty, NiImage, NiStringExtraData,
-NiKeyframeController, NiKeyframeData, NiTriShapeSkinController,
-NiFlipController). 44/44 tests pass.
+**Full corpus coverage: all 253 .nif files under `game/data/Models/` reach
+End Of File.** Verified via `native/tools/scan_nifs/scan_nifs` walking the
+entire asset tree.
+
+Total block parsers implemented (v3.0 + v3.1): 27.
+- Scene / spatial: NiNode, NiBone, NiCamera
+- Geometry: NiTriShape, NiTriShapeData
+- Materials / textures: NiMaterialProperty, NiTexturingProperty,
+  NiMultiTextureProperty, NiTextureModeProperty, NiTextureProperty,
+  NiImage, NiRawImageData
+- Render-state properties: NiZBufferProperty, NiVertexColorProperty,
+  NiAlphaProperty
+- Lights: NiPointLight, NiSpotLight, NiAmbientLight, NiDirectionalLight
+- Animation: NiKeyframeController, NiKeyframeData, NiTriShapeSkinController,
+  NiFlipController, NiVisController, NiVisData, NiLookAtController,
+  NiRollController, NiFloatData
+- Extra data: NiStringExtraData, NiBinaryVoxelExtraData, NiBinaryVoxelData
+
+44/44 GTests pass. `scan_nifs` reports 253/253 EOF, 0 stuck, 0 errors.
 
 Key v3.1-specific findings discovered during implementation:
 
