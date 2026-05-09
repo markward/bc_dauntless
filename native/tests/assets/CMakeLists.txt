@@ -5,6 +5,7 @@ add_executable(assets_tests
     cpu/mesh_build_test.cc
     cpu/path_resolver_test.cc
     cpu/raw_image_decode_test.cc
+    cpu/skeleton_build_test.cc
     cpu/texture_decode_test.cc
 )
 
