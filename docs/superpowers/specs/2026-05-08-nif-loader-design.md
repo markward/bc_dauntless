@@ -1,8 +1,43 @@
 # NIF Loader — Design Spec
 
 **Date:** 2026-05-08
-**Status:** Approved (with v3.1 amendment, see below)
+**Status:** Implemented (v1 ship gate met 2026-05-09)
 **Phase:** 2 (Full C++ engine), first sub-project
+
+## Outcome
+
+All four BC v3.1 sample files parse end-to-end and reach the `End Of File`
+sentinel:
+
+| Sample | Path | Blocks parsed |
+|---|---|---|
+| Galaxy ship | `game/data/Models/Ships/Galaxy/Galaxy.nif` | 68 |
+| CardStarbase | `game/data/Models/Bases/CardStarbase/CardStarbase.nif` | 173 |
+| BodyKlingon | `game/data/Models/Characters/Bodies/BodyKlingon/BodyKlingon.nif` | 169 |
+| EBridge interior | `game/data/Models/Sets/EBridge/EBridge.nif` | 565 |
+
+Total v3.1 block parsers implemented: 16 (NiNode, NiBone, NiTriShape,
+NiTriShapeData, NiZBufferProperty, NiVertexColorProperty, NiAlphaProperty,
+NiMaterialProperty, NiTexturingProperty, NiMultiTextureProperty,
+NiTextureModeProperty, NiTextureProperty, NiImage, NiStringExtraData,
+NiKeyframeController, NiKeyframeData, NiTriShapeSkinController,
+NiFlipController). 44/44 tests pass.
+
+Key v3.1-specific findings discovered during implementation:
+
+- **bool is uint32 (non-zero == true) for v3.1** — niflib's
+  `ReadBool(version <= 0x04010001)` returns `(ReadUInt(in) != 0)`. BC files
+  encode bool fields with hash-like sentinel uint32 values (e.g.
+  `0x03e54648`), not literal 0/1.
+- **NiMultiTextureProperty is NOT NiTexturingProperty** despite the
+  schema's `inherit="NiTexturingProperty"` — niflib has custom code with a
+  much simpler body (5 MultiTextureElement entries).
+- **niflib (BSD)** at `niftools/niflib` was the authoritative reference for
+  v3.1 reading order. nifxml documents the format but niflib's auto-gen
+  Read methods capture v3.1 quirks the schema doesn't.
+- **niftools/max_nif_plugin (BSD)** was the user's pointer that led us to
+  niflib (it depends on niflib as a submodule). Both are now sibling clones
+  used as algorithmic reference (not built or linked into open_stbc).
 
 ## v3.1 amendment (post-discovery, 2026-05-08)
 

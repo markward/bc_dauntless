@@ -21,6 +21,7 @@ add_executable(nif_tests
     nif/resolver_test.cc
     nif/ni_node_test.cc
     nif/ni_tri_shape_test.cc
+    nif/ship_gate_test.cc
 )
 
 target_link_libraries(nif_tests
