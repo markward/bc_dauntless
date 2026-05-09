@@ -239,9 +239,14 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
             int mesh_idx = static_cast<int>(model.meshes.size());
             model.nodes[node_index].meshes.push_back(mesh_idx);
         }
-        Mesh mesh = mesh_upload(MeshCpu(cpu));  // copy: keep original for retention path
-        if (ctx.keep_cpu_data) mesh.set_cpu_data(std::move(cpu));
-        model.meshes.push_back(std::move(mesh));
+        // Avoid copying the CPU vertex data unless retention is requested.
+        if (ctx.keep_cpu_data) {
+            Mesh mesh = mesh_upload(MeshCpu(cpu));
+            mesh.set_cpu_data(std::move(cpu));
+            model.meshes.push_back(std::move(mesh));
+        } else {
+            model.meshes.push_back(mesh_upload(std::move(cpu)));
+        }
     }
     if (!any_trishape) throw ModelBuildError("no NiTriShape in NIF file");
 

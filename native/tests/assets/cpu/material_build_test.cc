@@ -86,10 +86,11 @@ TEST(MaterialBuild, NiTexturingPropertyMapsStagesViaImageMap) {
     auto m = assets::detail::build_material(in);
 
     using S = assets::Material::StageSlot;
-    EXPECT_EQ(m.stages[(int)S::Base].texture_index, 3);
-    EXPECT_EQ(m.stages[(int)S::Glow].texture_index, 7);
-    EXPECT_EQ(m.stages[(int)S::Dark].texture_index, -1);
-    EXPECT_EQ(m.stages[(int)S::Base].apply_mode, 2u);
+    auto i = [](S s) { return static_cast<std::size_t>(s); };
+    EXPECT_EQ(m.stages[i(S::Base)].texture_index, 3);
+    EXPECT_EQ(m.stages[i(S::Glow)].texture_index, 7);
+    EXPECT_EQ(m.stages[i(S::Dark)].texture_index, -1);
+    EXPECT_EQ(m.stages[i(S::Base)].apply_mode, 2u);
 }
 
 TEST(MaterialBuild, NiMultiTexturePropertyMaps5Slots) {
@@ -107,9 +108,10 @@ TEST(MaterialBuild, NiMultiTexturePropertyMaps5Slots) {
     auto m = assets::detail::build_material(in);
 
     using S = assets::Material::StageSlot;
-    EXPECT_EQ(m.stages[(int)S::Base].texture_index, 0);
-    EXPECT_EQ(m.stages[(int)S::Glow].texture_index, 1);
-    EXPECT_EQ(m.stages[(int)S::Detail].texture_index, -1);
+    auto i = [](S s) { return static_cast<std::size_t>(s); };
+    EXPECT_EQ(m.stages[i(S::Base)].texture_index, 0);
+    EXPECT_EQ(m.stages[i(S::Glow)].texture_index, 1);
+    EXPECT_EQ(m.stages[i(S::Detail)].texture_index, -1);
 }
 
 TEST(MaterialBuild, NiVertexColorPropertyCopiesModes) {

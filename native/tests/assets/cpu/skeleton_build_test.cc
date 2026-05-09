@@ -98,3 +98,51 @@ TEST(SkeletonBuild, IdentifiesRoot) {
         result.skeleton.bones[result.skeleton.root_bone_index].name,
         "Pelvis");
 }
+
+TEST(SkeletonBuild, ParentWalkThroughNonBoneNiNode) {
+    // Hierarchy: Root(0) -> Pelvis(1, bone) -> SpineHelper(2, plain NiNode)
+    //                                          -> Chest(3, bone)
+    // SpineHelper is NOT in the skin's bone_links; Chest's parent should
+    // resolve transitively to Pelvis, not -1.
+    nif::File f;
+    {
+        nif::NiNode root;
+        root.av.obj.name = "Root";
+        root.child_links = {1};
+        f.blocks.push_back(root);
+    }
+    {
+        nif::NiNode pelvis;
+        pelvis.av.obj.name = "Pelvis";
+        pelvis.child_links = {2};
+        f.blocks.push_back(pelvis);
+    }
+    {
+        nif::NiNode helper;
+        helper.av.obj.name = "SpineHelper";  // NOT skinned to
+        helper.child_links = {3};
+        f.blocks.push_back(helper);
+    }
+    {
+        nif::NiNode chest;
+        chest.av.obj.name = "Chest";
+        f.blocks.push_back(chest);
+    }
+    {
+        nif::NiTriShapeSkinController c;
+        c.num_bones = 2;
+        c.bone_links = {1, 3};  // only Pelvis and Chest are bones
+        f.blocks.push_back(c);
+    }
+
+    auto result = assets::detail::build_skeleton(f);
+    ASSERT_EQ(result.skeleton.bones.size(), 2u);
+
+    int pelvis = find_bone(result.skeleton, "Pelvis");
+    int chest  = find_bone(result.skeleton, "Chest");
+    ASSERT_NE(pelvis, -1);
+    ASSERT_NE(chest, -1);
+    EXPECT_EQ(result.skeleton.bones[pelvis].parent_index, -1);
+    EXPECT_EQ(result.skeleton.bones[chest].parent_index, pelvis)
+        << "Chest's parent should walk through SpineHelper to Pelvis";
+}

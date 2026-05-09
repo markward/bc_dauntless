@@ -1,10 +1,28 @@
 #include "mesh_upload.h"
 
+#include <assets/texture.h>  // for GlUploadError
+
 #include "gl_handle.h"
 
 #include <cstddef>
+#include <cstdio>
+#include <string>
 
 namespace assets::detail {
+
+namespace {
+
+void check_gl(const char* op) {
+    GLenum err = glGetError();
+    if (err == GL_NO_ERROR) return;
+    while (glGetError() != GL_NO_ERROR) {}
+    char buf[8];
+    std::snprintf(buf, sizeof(buf), "%X", err);
+    throw GlUploadError(
+        std::string("GL error during ") + op + ": 0x" + buf, err);
+}
+
+}  // namespace
 
 Mesh upload_mesh(const MeshCpu& cpu) {
     GLuint vao = 0, vbo = 0, ebo = 0;
@@ -55,6 +73,7 @@ Mesh upload_mesh(const MeshCpu& cpu) {
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 
+    check_gl("upload_mesh");
     return Mesh(
         vao_h.release(), vbo_h.release(), ebo_h.release(),
         static_cast<std::uint32_t>(cpu.indices.size()),

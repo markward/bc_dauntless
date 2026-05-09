@@ -69,17 +69,18 @@ void apply_texturing_property(
     const std::unordered_map<std::uint32_t, int>* image_to_texture)
 {
     using S = Material::StageSlot;
-    apply_stage(m.stages[(int)S::Base],   src.base,     src.apply_mode, image_to_texture);
-    apply_stage(m.stages[(int)S::Dark],   src.dark,     src.apply_mode, image_to_texture);
-    apply_stage(m.stages[(int)S::Detail], src.detail,   src.apply_mode, image_to_texture);
-    apply_stage(m.stages[(int)S::Gloss],  src.gloss,    src.apply_mode, image_to_texture);
-    apply_stage(m.stages[(int)S::Glow],   src.glow,     src.apply_mode, image_to_texture);
-    apply_stage(m.stages[(int)S::Bump],   src.bump_map, src.apply_mode, image_to_texture);
-    apply_stage(m.stages[(int)S::Decal0], src.decal0,   src.apply_mode, image_to_texture);
+    auto idx = [](S s) { return static_cast<std::size_t>(s); };
+    apply_stage(m.stages[idx(S::Base)],   src.base,     src.apply_mode, image_to_texture);
+    apply_stage(m.stages[idx(S::Dark)],   src.dark,     src.apply_mode, image_to_texture);
+    apply_stage(m.stages[idx(S::Detail)], src.detail,   src.apply_mode, image_to_texture);
+    apply_stage(m.stages[idx(S::Gloss)],  src.gloss,    src.apply_mode, image_to_texture);
+    apply_stage(m.stages[idx(S::Glow)],   src.glow,     src.apply_mode, image_to_texture);
+    apply_stage(m.stages[idx(S::Bump)],   src.bump_map, src.apply_mode, image_to_texture);
+    apply_stage(m.stages[idx(S::Decal0)], src.decal0,   src.apply_mode, image_to_texture);
     if (src.texture_count >= 8)
-        apply_stage(m.stages[(int)S::Decal1], src.decal1, src.apply_mode, image_to_texture);
+        apply_stage(m.stages[idx(S::Decal1)], src.decal1, src.apply_mode, image_to_texture);
     if (src.texture_count >= 9)
-        apply_stage(m.stages[(int)S::Decal2], src.decal2, src.apply_mode, image_to_texture);
+        apply_stage(m.stages[idx(S::Decal2)], src.decal2, src.apply_mode, image_to_texture);
 }
 
 void apply_multi_texture_property(
@@ -94,7 +95,7 @@ void apply_multi_texture_property(
     for (std::size_t i = 0; i < 5; ++i) {
         const auto& el = src.elements[i];
         if (!el.has_image) continue;
-        auto& stage = m.stages[(int)slot_map[i]];
+        auto& stage = m.stages[static_cast<std::size_t>(slot_map[i])];
         int tex_idx = -1;
         if (image_to_texture) {
             if (auto it = image_to_texture->find(el.image_link); it != image_to_texture->end()) {

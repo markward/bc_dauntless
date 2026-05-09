@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <span>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 #include <glad/glad.h>
@@ -48,6 +49,18 @@ public:
 class UnsupportedTga : public std::runtime_error {
 public:
     using std::runtime_error::runtime_error;
+};
+
+/// Thrown when a GL upload (glTexImage2D / glBufferData / etc.) leaves
+/// glGetError() in a non-NO_ERROR state. Carries the raw GLenum from the
+/// last error fetch.
+class GlUploadError : public std::runtime_error {
+public:
+    GlUploadError(std::string what, GLenum gl_error)
+        : std::runtime_error(std::move(what)), gl_error_(gl_error) {}
+    GLenum gl_error() const noexcept { return gl_error_; }
+private:
+    GLenum gl_error_;
 };
 
 // Public utilities; the renderer can use these for its own internal assets

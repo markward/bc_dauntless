@@ -2,6 +2,9 @@
 
 #include "gl_handle.h"
 
+#include <cstdio>
+#include <string>
+
 namespace assets {
 
 namespace {
@@ -22,6 +25,17 @@ GLenum gl_format(Image::Format f) {
         case Image::Format::R8:    return GL_RED;
     }
     return GL_RGBA;
+}
+
+/// Drains the GL error queue; throws GlUploadError if any error was set.
+void check_gl(const char* op) {
+    GLenum err = glGetError();
+    if (err == GL_NO_ERROR) return;
+    while (glGetError() != GL_NO_ERROR) {}  // drain remainder
+    char buf[8];
+    std::snprintf(buf, sizeof(buf), "%X", err);
+    throw GlUploadError(
+        std::string("GL error during ") + op + ": 0x" + buf, err);
 }
 
 }  // namespace
@@ -56,6 +70,7 @@ Texture upload_image(const Image& image, bool generate_mipmaps) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
     glBindTexture(GL_TEXTURE_2D, 0);
 
+    check_gl("upload_image");
     return Texture(handle.release(), image.width, image.height, mipmaps);
 }
 

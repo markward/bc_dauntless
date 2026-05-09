@@ -84,16 +84,23 @@ SkeletonBuildResult build_skeleton(const nif::File& f) {
         auto bit = out.nif_block_to_bone_index.find(block_idx);
         if (bit == out.nif_block_to_bone_index.end()) continue;
         int self_bone = bit->second;
-        auto pit = parents.find(block_idx);
-        if (pit == parents.end()) {
-            out.skeleton.bones[self_bone].parent_index = -1;
-            continue;
+
+        // Walk up the parent chain through any non-bone NiNodes until we
+        // find another bone or hit the scene root. A skeleton like
+        //   Pelvis(bone) -> Spine(plain NiNode) -> Chest(bone)
+        // must record Chest's parent as Pelvis, not -1.
+        int parent_bone = -1;
+        for (auto current = parents.find(block_idx);
+             current != parents.end();
+             current = parents.find(current->second))
+        {
+            auto parent_bit = out.nif_block_to_bone_index.find(current->second);
+            if (parent_bit != out.nif_block_to_bone_index.end()) {
+                parent_bone = parent_bit->second;
+                break;
+            }
         }
-        auto parent_bit = out.nif_block_to_bone_index.find(pit->second);
-        out.skeleton.bones[self_bone].parent_index =
-            (parent_bit != out.nif_block_to_bone_index.end())
-                ? parent_bit->second
-                : -1;
+        out.skeleton.bones[self_bone].parent_index = parent_bone;
     }
 
     for (std::size_t i = 0; i < out.skeleton.bones.size(); ++i) {
