@@ -54,24 +54,19 @@ NiTriShape parse_NiTriShape_body(Reader& r) {
     return s;
 }
 
-std::uint32_t read_bool_uint32(Reader& r, const char* field) {
-    auto v = r.read_uint32();
-    if (v != 0 && v != 1) {
-        ParseError e(std::string("NiTriShapeData ") + field +
-                     " bool not 0 or 1: " + std::to_string(v));
-        e.file = r.source();
-        e.byte_offset = r.offset();
-        e.block_type = "NiTriShapeData";
-        throw e;
-    }
-    return v;
+/// v3.x NIFs encode bool as uint32 with "non-zero == true" semantics —
+/// niflib's own ReadBool returns `(ReadUInt(in) != 0)` for these versions.
+/// Real BC files use uint32 values like 0x03e54648 (a hash-like sentinel)
+/// for true; do NOT reject them as malformed.
+bool read_bool_uint32(Reader& r) {
+    return r.read_uint32() != 0;
 }
 
-[[maybe_unused]] NiTriShapeData parse_NiTriShapeData_body(Reader& r) {
+NiTriShapeData parse_NiTriShapeData_body(Reader& r) {
     NiTriShapeData d;
 
     d.num_vertices = r.read_uint16();
-    d.has_vertices = (read_bool_uint32(r, "has_vertices") == 1);
+    d.has_vertices = read_bool_uint32(r);
     if (d.has_vertices) {
         d.vertices.reserve(d.num_vertices);
         for (std::uint16_t i = 0; i < d.num_vertices; ++i) {
@@ -79,7 +74,7 @@ std::uint32_t read_bool_uint32(Reader& r, const char* field) {
         }
     }
 
-    d.has_normals = (read_bool_uint32(r, "has_normals") == 1);
+    d.has_normals = read_bool_uint32(r);
     if (d.has_normals) {
         d.normals.reserve(d.num_vertices);
         for (std::uint16_t i = 0; i < d.num_vertices; ++i) {
@@ -90,7 +85,7 @@ std::uint32_t read_bool_uint32(Reader& r, const char* field) {
     d.bound_center = r.read_vec3();
     d.bound_radius = r.read_float();
 
-    d.has_vertex_colors = (read_bool_uint32(r, "has_vertex_colors") == 1);
+    d.has_vertex_colors = read_bool_uint32(r);
     if (d.has_vertex_colors) {
         d.vertex_colors.reserve(d.num_vertices);
         for (std::uint16_t i = 0; i < d.num_vertices; ++i) {
@@ -98,19 +93,20 @@ std::uint32_t read_bool_uint32(Reader& r, const char* field) {
         }
     }
 
+    // numUvSets is uint16 in v3.1; lower 6 bits encode the number of UV sets.
     d.data_flags = r.read_uint16();
-    d.has_uv = (read_bool_uint32(r, "has_uv") == 1);
+    d.has_uv = read_bool_uint32(r);
     auto num_uv_sets = static_cast<std::uint32_t>(d.data_flags & 0x3F);
-    if (d.has_uv) {
-        d.uv_sets.resize(num_uv_sets);
-        for (auto& set : d.uv_sets) {
-            set.reserve(d.num_vertices);
-            for (std::uint16_t i = 0; i < d.num_vertices; ++i) {
-                TexCoord t;
-                t.u = r.read_float();
-                t.v = r.read_float();
-                set.push_back(t);
-            }
+    // Per niflib's NiGeometryData::Read, uvSets are always read regardless
+    // of has_uv — has_uv is informational only.
+    d.uv_sets.resize(num_uv_sets);
+    for (auto& set : d.uv_sets) {
+        set.reserve(d.num_vertices);
+        for (std::uint16_t i = 0; i < d.num_vertices; ++i) {
+            TexCoord t;
+            t.u = r.read_float();
+            t.v = r.read_float();
+            set.push_back(t);
         }
     }
 
@@ -162,15 +158,8 @@ NIF_REGISTER_BLOCK(NiTriShape, [](Reader& r) -> Block {
     return parse_NiTriShape_body(r);
 });
 
-// NiTriShapeData parser kept for synthetic unit tests but NOT registered
-// for dispatch yet. The schema-derived layout (Has Vertices uint32 bool
-// after Num Vertices) does not match what BC v3.1 files actually contain —
-// hand-decoding Galaxy.nif's first NiTriShapeData at offset 0x553 shows
-// non-bool bytes immediately after Num Vertices. Layout investigation is
-// open work; once resolved, change this comment back into a
-// NIF_REGISTER_BLOCK invocation.
-//
-// To probe: NIF_TRACE=1 nif::load(file) prints per-block offsets so the
-// walker can be re-engaged when the parser is fixed.
+NIF_REGISTER_BLOCK(NiTriShapeData, [](Reader& r) -> Block {
+    return parse_NiTriShapeData_body(r);
+});
 
 }  // namespace nif
