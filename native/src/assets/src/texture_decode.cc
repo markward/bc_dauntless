@@ -5,6 +5,8 @@
 #define STBI_NO_STDIO
 #include <stb_image.h>
 
+#include <nif/block.h>
+
 #include <string>
 
 namespace assets {
@@ -60,6 +62,34 @@ Image decode_tga(std::span<const std::uint8_t> bytes) {
         static_cast<std::size_t>(channels);
     img.pixels.assign(data, data + total);
     stbi_image_free(data);
+    return img;
+}
+
+Image decode_raw_image(const nif::NiRawImageData& raw) {
+    Image img;
+    img.width  = raw.width;
+    img.height = raw.height;
+
+    std::size_t channels = 0;
+    switch (raw.image_type) {
+        case 1: img.format = Image::Format::RGB8;  channels = 3; break;
+        case 2: img.format = Image::Format::RGBA8; channels = 4; break;
+        default:
+            throw UnsupportedTga(
+                "NiRawImageData::image_type expected 1 (RGB) or 2 (RGBA), got "
+                + std::to_string(raw.image_type));
+    }
+
+    const std::size_t expected =
+        static_cast<std::size_t>(raw.width) *
+        static_cast<std::size_t>(raw.height) * channels;
+    if (raw.pixels.size() != expected) {
+        throw TextureDecodeError(
+            "NiRawImageData payload size mismatch: expected "
+            + std::to_string(expected) + ", got "
+            + std::to_string(raw.pixels.size()));
+    }
+    img.pixels = raw.pixels;
     return img;
 }
 
