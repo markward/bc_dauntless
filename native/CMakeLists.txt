@@ -23,12 +23,15 @@ add_subdirectory(third_party/glm)
 add_subdirectory(src/nif)
 add_subdirectory(src/assets)
 
+# enable_testing() must precede any add_subdirectory whose CMakeLists registers
+# add_test (scan_nifs registers its corpus-coverage test conditionally).
+enable_testing()
+
 # Diagnostic tools that consume the public library.
 add_subdirectory(tools/scan_nifs)
 
 option(OPEN_STBC_BUILD_TESTS "Build native tests for open_stbc" ON)
 if(OPEN_STBC_BUILD_TESTS)
-  enable_testing()
   set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
   set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
   set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)

@@ -19,6 +19,34 @@ uv run pytest
 
 See `docs/gap_analysis.md` for the engine gap analysis and implementation phases.
 
+## NIF parser corpus test
+
+`native/tools/scan_nifs/` is a C++ binary that walks a directory tree, runs `nif::load` on every `.nif` file, and reports per-file outcomes — files that reached `End Of File`, files where the walker stopped on an unknown block type (grouped by type), and files that threw (grouped by message). It exits 0 only if every file reached EOF.
+
+It's wired up as a ctest target (`scan_nifs_corpus`) that points at `game/data` when a BC install is present. The test is registered conditionally — if `game/data` is absent, no test is added (CI without assets just skips it). Re-run cmake configure after dropping in `game/`.
+
+```bash
+cmake -S native -B build
+cmake --build build --target scan_nifs
+ctest --test-dir build -R scan_nifs --output-on-failure
+```
+
+You can also run the binary directly against any directory tree:
+
+```bash
+./build/tools/scan_nifs/scan_nifs game/data
+```
+
+## Game-loop harness
+
+`tools/gameloop_harness.py` discovers every SDK mission script, calls `Initialize(pMission)`, fires `ET_MISSION_START`, and advances the headless `GameLoop` for N ticks per mission. It reports per-mission pass/init-fail/loop-fail status and a grouped error summary — useful for catching regressions across the full mission corpus.
+
+```bash
+uv run python tools/gameloop_harness.py              # default: 36000 ticks (~10 min @ 60 Hz)
+uv run python tools/gameloop_harness.py --ticks 600  # shorter run
+uv run python tools/gameloop_harness.py --profile    # adds a ranked stub-call profile
+```
+
 ## References & acknowledgements
 
 The Phase 2 NIF parser draws on two open-source projects:
