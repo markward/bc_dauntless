@@ -145,12 +145,12 @@ def test_held_W_pitch_rate_saturates_at_max_angular_velocity():
     assert abs(pc.GetCurrentPitchRate() - 0.28) < 1e-3
 
 
-def test_held_A_yaw_rate_saturates_at_negative_max_angular_velocity():
-    """A = yaw left = -MaxAngularVelocity target.  Cap is symmetric."""
+def test_held_D_yaw_rate_saturates_at_negative_max_angular_velocity():
+    """D = yaw left = -MaxAngularVelocity target.  Cap is symmetric."""
     pc = _PlayerControl()
     ship = _galaxy_like_ship()
     reader = _Reader()
-    reader.held.add(reader.keys.KEY_A)
+    reader.held.add(reader.keys.KEY_D)
     for _ in range(60 * 30):
         pc.apply(ship, dt=1.0/60, h=reader)
     assert abs(pc.GetCurrentYawRate() - (-0.28)) < 1e-3
@@ -181,23 +181,23 @@ def test_movement_uses_ramped_current_speed_along_forward():
 # and the current rate accelerates toward it at MaxAngularAccel rad/s².
 
 def test_yaw_rate_ramps_at_max_angular_accel_from_rest():
-    """Hold D from rest with MaxAngularVelocity=0.28, MaxAngularAccel=0.12.
+    """Hold A from rest with MaxAngularVelocity=0.28, MaxAngularAccel=0.12.
     After 1.0 s the yaw rate is 0.12 rad/s (still below the cap)."""
     pc = _PlayerControl()
     ship = _galaxy_like_ship()
     reader = _Reader()
-    reader.held.add(reader.keys.KEY_D)
+    reader.held.add(reader.keys.KEY_A)
     for _ in range(60):
         pc.apply(ship, dt=1.0/60, h=reader)
     assert abs(pc.GetCurrentYawRate() - 0.12) < 1e-3
 
 
 def test_yaw_rate_caps_at_max_angular_velocity():
-    """Hold D long enough — yaw rate converges to MaxAngularVelocity, not past."""
+    """Hold A long enough — yaw rate converges to MaxAngularVelocity, not past."""
     pc = _PlayerControl()
     ship = _galaxy_like_ship()
     reader = _Reader()
-    reader.held.add(reader.keys.KEY_D)
+    reader.held.add(reader.keys.KEY_A)
     for _ in range(60 * 30):  # 30 seconds
         pc.apply(ship, dt=1.0/60, h=reader)
     assert abs(pc.GetCurrentYawRate() - 0.28) < 1e-3
@@ -215,17 +215,17 @@ def test_pitch_rate_ramps_negative_for_S():
 
 
 def test_angular_rate_decelerates_on_key_release():
-    """Spin up yaw rate, release D — yaw rate ramps back toward 0 at
+    """Spin up yaw rate, release A — yaw rate ramps back toward 0 at
     MaxAngularAccel.  Halfway through the decel ramp, rate is still positive."""
     pc = _PlayerControl()
     ship = _galaxy_like_ship()
     reader = _Reader()
-    reader.held.add(reader.keys.KEY_D)
+    reader.held.add(reader.keys.KEY_A)
     for _ in range(60 * 5):  # 5 s — well past the cap
         pc.apply(ship, dt=1.0/60, h=reader)
     rate_before = pc.GetCurrentYawRate()
     assert abs(rate_before - 0.28) < 1e-3
-    reader.held.discard(reader.keys.KEY_D)
+    reader.held.discard(reader.keys.KEY_A)
     for _ in range(60):  # 1.0 s of decel — 0.28 - 0.12 = 0.16 rad/s expected
         pc.apply(ship, dt=1.0/60, h=reader)
     rate_after = pc.GetCurrentYawRate()
@@ -233,13 +233,13 @@ def test_angular_rate_decelerates_on_key_release():
 
 
 def test_rotation_integrates_ramped_angular_rate():
-    """Hold A from rest with MaxAngularVelocity=0.28, MaxAngularAccel=0.12.
+    """Hold D from rest with MaxAngularVelocity=0.28, MaxAngularAccel=0.12.
     Over 1.0 s, ship's heading rotates by ∫(yaw_rate dt) = 0.5*0.12*1² = 0.06 rad."""
     import math
     pc = _PlayerControl()
     ship = _galaxy_like_ship()
     reader = _Reader()
-    reader.held.add(reader.keys.KEY_A)
+    reader.held.add(reader.keys.KEY_D)
     for _ in range(60):
         pc.apply(ship, dt=1.0/60, h=reader)
     forward = ship.GetWorldRotation().GetRow(1)

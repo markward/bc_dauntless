@@ -189,10 +189,10 @@ class _PlayerControl:
         roll_target  = 0.0
         if h.key_state(h.keys.KEY_W): pitch_target += ang_rate
         if h.key_state(h.keys.KEY_S): pitch_target -= ang_rate
-        if h.key_state(h.keys.KEY_A): yaw_target   -= ang_rate
-        if h.key_state(h.keys.KEY_D): yaw_target   += ang_rate
-        if h.key_state(h.keys.KEY_Q): roll_target  += ang_rate
-        if h.key_state(h.keys.KEY_E): roll_target  -= ang_rate
+        if h.key_state(h.keys.KEY_A): yaw_target   += ang_rate
+        if h.key_state(h.keys.KEY_D): yaw_target   -= ang_rate
+        if h.key_state(h.keys.KEY_Q): roll_target  -= ang_rate
+        if h.key_state(h.keys.KEY_E): roll_target  += ang_rate
         self._current_pitch_rate = self._ramp_toward(self._current_pitch_rate, pitch_target, ang_step)
         self._current_yaw_rate   = self._ramp_toward(self._current_yaw_rate,   yaw_target,   ang_step)
         self._current_roll_rate  = self._ramp_toward(self._current_roll_rate,  roll_target,  ang_step)

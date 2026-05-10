@@ -184,13 +184,13 @@ def test_pitch_up_rotates_forward_above_horizontal():
 
 
 def test_yaw_left_rotates_forward_toward_minus_x():
-    """Hold A (yaw left) for one second. Forward rotates around world Z
+    """Hold D (yaw left) for one second. Forward rotates around world Z
     (which is also ship-Z at identity start) by -1.5 rad: from +Y toward -X."""
     import math
     pc = _PlayerControl()
     ship = _FakeShip()
     reader = _FakeKeyReader()
-    reader.held.add(reader.keys.KEY_A)
+    reader.held.add(reader.keys.KEY_D)
     for _ in range(60):
         pc.apply(ship, dt=1.0/60, h=reader)
     forward = ship.GetWorldRotation().GetRow(1)
@@ -259,14 +259,14 @@ def test_full_stop_after_movement_stops_advancement():
 
 
 def test_roll_left_rotates_up_toward_minus_x():
-    """Hold Q (roll left) for one second at identity start. Roll is
+    """Hold E (roll left) for one second at identity start. Roll is
     around ship-Y (forward axis). Ship's up (row 2) starts at +Z, rolls
     -1.5 rad around +Y: up goes from +Z toward -X."""
     import math
     pc = _PlayerControl()
     ship = _FakeShip()
     reader = _FakeKeyReader()
-    reader.held.add(reader.keys.KEY_Q)
+    reader.held.add(reader.keys.KEY_E)
     for _ in range(60):
         pc.apply(ship, dt=1.0/60, h=reader)
     up = ship.GetWorldRotation().GetRow(2)
