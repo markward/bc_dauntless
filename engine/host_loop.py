@@ -200,8 +200,12 @@ class _PlayerControl:
         yaw_rate   = self._current_yaw_rate
         roll_rate  = self._current_roll_rate
 
-        # 4. Rotation integration (post-multiply small per-tick rotation
-        #    in ship-local frame).  Pitch → yaw → roll Euler order.
+        # 4. Rotation integration.  BC uses row-vector matrices where
+        #    v_world = v_body * R, so the rows of R are the body axes in
+        #    world space.  Composing a body-frame delta D means D acts on
+        #    the body vector first: v_world = (v_body * D) * R = v_body *
+        #    (D * R).  So body-frame rotation is PRE-multiply (D * R), not
+        #    post-multiply.  Pitch → yaw → roll Euler order.
         from engine.appc.math import TGMatrix3, TGPoint3
         X_AXIS = TGPoint3(1.0, 0.0, 0.0)
         Y_AXIS = TGPoint3(0.0, 1.0, 0.0)
@@ -212,7 +216,8 @@ class _PlayerControl:
             R_pitch = TGMatrix3(); R_pitch.MakeRotation(pitch_rate * dt, X_AXIS)
             R_yaw   = TGMatrix3(); R_yaw.MakeRotation(yaw_rate   * dt, Z_AXIS)
             R_roll  = TGMatrix3(); R_roll.MakeRotation(roll_rate  * dt, Y_AXIS)
-            R = R.MultMatrix(R_pitch).MultMatrix(R_yaw).MultMatrix(R_roll)
+            delta = R_pitch.MultMatrix(R_yaw).MultMatrix(R_roll)
+            R = delta.MultMatrix(R)
             player.SetMatrixRotation(R)
 
         # 5. Position integration (forward = ship-local Y axis in world).

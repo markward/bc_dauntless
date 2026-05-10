@@ -275,3 +275,44 @@ def test_roll_left_rotates_up_toward_minus_x():
     assert abs(up.x - expected_x) < 1e-3, f"up.x={up.x}, expected {expected_x}"
     assert abs(up.y) < 1e-3
     assert abs(up.z - expected_z) < 1e-3
+
+
+def test_roll_after_yaw_is_body_frame_not_world():
+    """Regression: after yawing 90° left, holding Q must roll around the
+    ship's own forward axis (now world -X), not around world +Y. Under a
+    body-frame integrator the forward vector is invariant under roll, so
+    after rolling for one second the forward axis still points along -X.
+
+    Under a (buggy) world-frame integrator, Q rolls around world +Y, which
+    *does* rotate the -X forward vector and tilts it toward -Z — the bug
+    the user describes ("roll acts like pitch after yaw")."""
+    import math
+    from engine.appc.math import TGMatrix3, TGPoint3
+    pc = _PlayerControl()
+    ship = _FakeShip()
+    reader = _FakeKeyReader()
+
+    # Pre-yaw the ship 90° left (rotation about +Z by -π/2).
+    R_yaw90 = TGMatrix3()
+    R_yaw90.MakeRotation(-math.pi / 2, TGPoint3(0.0, 0.0, 1.0))
+    ship.SetMatrixRotation(R_yaw90)
+    fwd0 = ship.GetWorldRotation().GetRow(1)
+    assert abs(fwd0.x - (-1.0)) < 1e-9, "precondition: forward should be -X after 90° left yaw"
+    assert abs(fwd0.y) < 1e-9
+    assert abs(fwd0.z) < 1e-9
+
+    # Now hold Q (roll) for one second.
+    reader.held.add(reader.keys.KEY_Q)
+    for _ in range(60):
+        pc.apply(ship, dt=1.0/60, h=reader)
+
+    # Roll about ship-forward leaves the forward axis invariant.
+    fwd = ship.GetWorldRotation().GetRow(1)
+    assert abs(fwd.x - (-1.0)) < 1e-3, f"forward.x={fwd.x}, expected -1.0 (roll must not change forward)"
+    assert abs(fwd.y) < 1e-3, f"forward.y={fwd.y}, expected 0"
+    assert abs(fwd.z) < 1e-3, f"forward.z={fwd.z}, expected 0 (this is the bug: world-frame roll tilts forward toward -Z)"
+
+    # And the up vector must rotate in the world Y-Z plane (around -X),
+    # not in the X-Z plane (which would be world-frame roll around +Y).
+    up = ship.GetWorldRotation().GetRow(2)
+    assert abs(up.x) < 1e-3, f"up.x={up.x}, expected 0 (up should stay in Y-Z plane under body roll about -X)"
