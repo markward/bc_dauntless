@@ -111,8 +111,21 @@ def aggregate_for_renderer(pSet, project_root):
             continue  # silent: script-author bug
         abs_path = (project_root / "game" / b._texture_path).resolve()
         if not abs_path.is_file():
-            missing_paths.append(b._texture_path)
-            continue
+            # BC scripts reference textures by base path (e.g.
+            # "data/Backgrounds/treknebula.tga"); the actual files live
+            # under <dir>/High/, <dir>/Medium/, <dir>/Low/. Try High first
+            # for the highest fidelity.
+            from pathlib import Path as _Path
+            rel = _Path(b._texture_path)
+            for lod in ("High", "Medium", "Low"):
+                lod_path = (project_root / "game" /
+                            rel.parent / lod / rel.name).resolve()
+                if lod_path.is_file():
+                    abs_path = lod_path
+                    break
+            else:
+                missing_paths.append(b._texture_path)
+                continue
         rot = b.GetWorldRotation()
         m9 = [
             rot._m[0][0], rot._m[0][1], rot._m[0][2],
