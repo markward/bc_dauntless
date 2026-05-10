@@ -479,8 +479,14 @@ def run(mission_name: str = SHIP_GATE_MISSION,
             r.set_camera(eye=eye, target=target, up=up_vec,
                          fov_y_rad=1.0472, near=1.0, far=100000.0)
 
+            ambient, directionals = _aggregate_lights(
+                _resolve_active_lighting_set(player))
+            r.set_lighting(ambient, directionals)
+
             if verbose and ticks == 0:
                 print(f"[host_loop] tick 0 camera eye={eye} target={target}", flush=True)
+                print(f"[host_loop] tick 0 lighting ambient={ambient} "
+                      f"directionals={directionals}", flush=True)
 
             r.frame()
             ticks += 1
