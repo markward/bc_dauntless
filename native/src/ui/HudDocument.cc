@@ -27,13 +27,13 @@ void HudDocument::update(const HudState& state) {
     char buf[256];
 
     if (el_ship_)
-        el_ship_->SetInnerRML(("Ship: " + state.ship_name).c_str());
+        el_ship_->SetInnerRML(state.ship_name.c_str());
 
     if (el_system_)
-        el_system_->SetInnerRML(("System: " + state.system_name).c_str());
+        el_system_->SetInnerRML(state.system_name.c_str());
 
     if (el_pos_) {
-        std::snprintf(buf, sizeof(buf), "Pos: %.1f %.1f %.1f",
+        std::snprintf(buf, sizeof(buf), "%.1f %.1f %.1f",
                       state.pos_x, state.pos_y, state.pos_z);
         el_pos_->SetInnerRML(buf);
     }
@@ -41,7 +41,7 @@ void HudDocument::update(const HudState& state) {
     if (el_rot_) {
         // \xc2\xb0 is the UTF-8 encoding of the degree sign (U+00B0).
         std::snprintf(buf, sizeof(buf),
-                      "Rot: Y%.0f\xc2\xb0 P%.0f\xc2\xb0 R%.0f\xc2\xb0",
+                      "Y%.0f\xc2\xb0 P%.0f\xc2\xb0 R%.0f\xc2\xb0",
                       state.yaw_deg, state.pitch_deg, state.roll_deg);
         el_rot_->SetInnerRML(buf);
     }

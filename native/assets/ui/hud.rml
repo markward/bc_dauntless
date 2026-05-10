@@ -5,10 +5,22 @@
 </head>
 <body>
     <div id="hud">
-        <div id="ship-name">Ship: ---</div>
-        <div id="system-name">System: ---</div>
-        <div id="pos">Pos: 0.0 0.0 0.0</div>
-        <div id="rot">Rot: Y0° P0° R0°</div>
+        <div class="stat">
+            <div class="label">Ship</div>
+            <div id="ship-name" class="value">---</div>
+        </div>
+        <div class="stat">
+            <div class="label">System</div>
+            <div id="system-name" class="value">---</div>
+        </div>
+        <div class="stat">
+            <div class="label">Pos</div>
+            <div id="pos" class="value">0.0 0.0 0.0</div>
+        </div>
+        <div class="stat">
+            <div class="label">Rot</div>
+            <div id="rot" class="value">Y0° P0° R0°</div>
+        </div>
     </div>
 </body>
 </rml>
