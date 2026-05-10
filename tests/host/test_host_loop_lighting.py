@@ -72,15 +72,23 @@ def test_aggregate_lights_ambient_last_wins():
 
 def test_aggregate_lights_directional_negates_forward():
     """BC's directional forward is 'where the light shines'; renderer
-    wants 'direction toward the light'. host_loop must negate."""
+    wants 'direction toward the light'. host_loop must negate every
+    component. Uses a non-axis forward so each axis exercises the sign
+    flip individually — an axis-aligned input would mask a partial
+    negation that left positive zeros in place."""
     import App
     from engine import host_loop
     pSet = App.SetClass_Create()
-    pSet.CreateDirectionalLight(1.0, 1.0, 1.0, 1.0, 0.0, 1.0, 0.0, "d1")
+    # Forward = (0.5, 0.5, -0.5): non-zero on every axis; the negation
+    # must produce (-0.5, -0.5, 0.5) — sign-flip on x, y AND z.
+    pSet.CreateDirectionalLight(1.0, 1.0, 1.0, 1.0, 0.5, 0.5, -0.5, "d1")
     _, directionals = host_loop._aggregate_lights(pSet)
     assert len(directionals) == 1
     direction, color = directionals[0]
-    assert direction == (-0.0, -1.0, -0.0)
+    dx, dy, dz = direction
+    assert dx == pytest.approx(-0.5)
+    assert dy == pytest.approx(-0.5)
+    assert dz == pytest.approx(0.5)
     assert color == (1.0, 1.0, 1.0)
 
 
