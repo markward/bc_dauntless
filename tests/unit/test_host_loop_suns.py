@@ -73,3 +73,40 @@ def test_aggregate_suns_returns_empty_for_sun_with_no_texture():
         assert pSun not in result
     finally:
         App.g_kSetManager.DeleteSet("_test_agg_suns_no_tex")
+
+
+def test_aggregate_suns_applies_astro_scale(tmp_path):
+    """Sun position, radius, and corona_radius are all multiplied by ASTRO_SCALE."""
+    import App
+    from engine.appc.planet import Sun_Create
+    from engine import host_loop
+    from engine.scale import ASTRO_SCALE
+    import engine.host_loop as hl
+    import pytest
+
+    # Create a fake texture file so the sun passes the existence check.
+    tex_dir = tmp_path / "game" / "data" / "Textures"
+    tex_dir.mkdir(parents=True)
+    (tex_dir / "SunBase.tga").write_bytes(b"FAKE")
+
+    pSet = App.SetClass_Create()
+    pSun = Sun_Create(4000.0, 2000.0, 0.0)  # radius=4000, atmosphere=2000
+    pSun.SetTranslateXYZ(10.0, 20.0, 30.0)
+    pSet.AddObjectToSet(pSun, "Sun")
+    App.g_kSetManager.AddSet(pSet, "_test_agg_suns_astro_scale")
+
+    original_root = hl.PROJECT_ROOT
+    hl.PROJECT_ROOT = tmp_path
+    try:
+        result = host_loop._aggregate_suns()
+    finally:
+        hl.PROJECT_ROOT = original_root
+        App.g_kSetManager.DeleteSet("_test_agg_suns_astro_scale")
+
+    assert len(result) == 1
+    d = result[0]
+    assert d["position"] == pytest.approx((10.0 * ASTRO_SCALE,
+                                           20.0 * ASTRO_SCALE,
+                                           30.0 * ASTRO_SCALE))
+    assert d["radius"]        == pytest.approx(4000.0 * ASTRO_SCALE)
+    assert d["corona_radius"] == pytest.approx((4000.0 + 2000.0) * ASTRO_SCALE)

@@ -224,11 +224,24 @@ def _iter_suns() -> Iterable:
 
 
 def _aggregate_suns() -> list:
-    """Collect sun render descriptors from all active sets."""
+    """Collect sun render descriptors with ASTRO_SCALE applied to position and radii."""
     from engine.appc.planet import aggregate_suns_for_renderer
     import App
-    return aggregate_suns_for_renderer(
+    raw = aggregate_suns_for_renderer(
         PROJECT_ROOT, list(App.g_kSetManager._sets.values()))
+    return [
+        {
+            "position": (
+                d["position"][0] * ASTRO_SCALE,
+                d["position"][1] * ASTRO_SCALE,
+                d["position"][2] * ASTRO_SCALE,
+            ),
+            "radius":            d["radius"]        * ASTRO_SCALE,
+            "base_texture_path": d["base_texture_path"],
+            "corona_radius":     d["corona_radius"] * ASTRO_SCALE,
+        }
+        for d in raw
+    ]
 
 
 def _planet_nif_path(planet, *, verbose: bool = False) -> Optional[str]:
