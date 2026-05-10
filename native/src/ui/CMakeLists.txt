@@ -16,6 +16,14 @@ target_include_directories(ui
     PRIVATE "${rmlui_SOURCE_DIR}/Backends"
 )
 
+# Use our glad for RmlUi's GL3 backend rather than RmlUi's vendored glad 2.x
+# — otherwise both libraries define the same glad_glXXX symbols and the host
+# binary fails to link with 357 duplicate symbols. RMLUI_GL3_CUSTOM_LOADER
+# names a header to #include in place of RmlUi_Include_GL3.h.
+target_compile_definitions(ui PRIVATE
+    "RMLUI_GL3_CUSTOM_LOADER=<glad/glad.h>"
+)
+
 # glad must be included before any GL headers; linking it here makes its
 # include path available to the backend sources.
 target_link_libraries(ui PUBLIC RmlUi::Core glad glfw)
