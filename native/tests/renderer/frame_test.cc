@@ -66,10 +66,14 @@ TEST_F(FrameTest, OpaquePassRunsWithoutGLError) {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     renderer::FrameSubmitter submitter;
+    renderer::Lighting lighting;  // default-constructed: matches the
+                                  // pre-Phase-1 hardcoded values that the
+                                  // existing pixel-litness assertion below
+                                  // was tuned against.
     submitter.submit_opaque(world, cam, *p,
         [model_h](scenegraph::ModelHandle h) -> const assets::Model* {
             return reinterpret_cast<const assets::Model*>(h);
-        });
+        }, lighting);
 
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 
