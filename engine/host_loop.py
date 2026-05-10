@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 from engine import renderer as r
+from engine.scale import SHIP_SCALE, ASTRO_SCALE, PLANET_NIF_NATIVE_RADIUS
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -349,6 +350,19 @@ def _world_matrix_row_major(ship) -> list:
         rot._m[1][0], rot._m[1][1], rot._m[1][2], loc.y,
         rot._m[2][0], rot._m[2][1], rot._m[2][2], loc.z,
         0.0,          0.0,          0.0,          1.0,
+    ]
+
+
+def _ship_world_matrix(ship) -> list:
+    """Row-major TRS mat4 for a ship: mesh scaled by SHIP_SCALE, position unchanged."""
+    loc = ship.GetWorldLocation()
+    rot = ship.GetWorldRotation()
+    s = SHIP_SCALE
+    return [
+        rot._m[0][0]*s, rot._m[0][1]*s, rot._m[0][2]*s, loc.x,
+        rot._m[1][0]*s, rot._m[1][1]*s, rot._m[1][2]*s, loc.y,
+        rot._m[2][0]*s, rot._m[2][1]*s, rot._m[2][2]*s, loc.z,
+        0.0,            0.0,            0.0,            1.0,
     ]
 
 
