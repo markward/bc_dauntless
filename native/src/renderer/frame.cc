@@ -127,14 +127,23 @@ std::uint32_t FrameSubmitter::ensure_white_texture() {
 void FrameSubmitter::submit_opaque(const scenegraph::World& world,
                                    const scenegraph::Camera& camera,
                                    Pipeline& pipeline,
-                                   const ModelLookup& lookup) {
+                                   const ModelLookup& lookup,
+                                   const Lighting& lighting) {
     auto& shader = pipeline.opaque_shader();
     shader.use();
     shader.set_mat4("u_view", camera.view_matrix());
     shader.set_mat4("u_proj", camera.proj_matrix());
-    shader.set_vec3("u_ambient_light", glm::vec3(0.1f));
-    shader.set_vec3("u_dir_light_dir_ws", glm::normalize(glm::vec3(0.3f, 1.0f, 0.2f)));
-    shader.set_vec3("u_dir_light_color", glm::vec3(1.0f));
+
+    shader.set_vec3("u_ambient_light", lighting.ambient);
+    shader.set_int("u_dir_light_count", lighting.directional_count);
+    if (lighting.directional_count > 0) {
+        shader.set_vec3_array("u_dir_light_dir_ws",
+                              lighting.directional_dir_ws,
+                              lighting.directional_count);
+        shader.set_vec3_array("u_dir_light_color",
+                              lighting.directional_color,
+                              lighting.directional_count);
+    }
 
     const GLuint white = ensure_white_texture();
 

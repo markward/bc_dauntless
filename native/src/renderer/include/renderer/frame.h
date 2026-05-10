@@ -4,11 +4,27 @@
 #include <cstdint>
 #include <functional>
 
+#include <glm/glm.hpp>
+
 namespace assets { struct Model; }
 namespace scenegraph { class World; struct Camera; }
 namespace renderer { class Pipeline; }
 
 namespace renderer {
+
+struct Lighting {
+    static constexpr int MaxDirectionals = 4;
+    /// Combined color × dimmer, applied as a uniform additive term.
+    glm::vec3 ambient = glm::vec3(0.1f);
+    /// 0..MaxDirectionals; values past `directional_count` are ignored.
+    int directional_count = 1;
+    /// Direction TOWARD the light source, world space, normalized.
+    glm::vec3 directional_dir_ws[MaxDirectionals] = {
+        glm::normalize(glm::vec3(0.3f, 1.0f, 0.2f))
+    };
+    /// Color × dimmer per directional.
+    glm::vec3 directional_color[MaxDirectionals] = { glm::vec3(1.0f) };
+};
 
 class FrameSubmitter {
 public:
@@ -25,7 +41,8 @@ public:
     void submit_opaque(const scenegraph::World& world,
                        const scenegraph::Camera& camera,
                        Pipeline& pipeline,
-                       const ModelLookup& lookup);
+                       const ModelLookup& lookup,
+                       const Lighting& lighting);
 
     /// Render the skybox model with depth-write off, depth-test LEQUAL,
     /// projection translation removed. Caller-provided `skybox_model` may be
