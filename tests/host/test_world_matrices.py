@@ -50,6 +50,16 @@ def test_ship_world_matrix_scales_mesh_not_position():
     assert m[15] == pytest.approx(1.0)
 
 
+def test_camera_constants_match_ship_scale():
+    """CAM_BACK_DIST and CAM_UP_DIST must be scaled by SHIP_SCALE relative to
+    their original BC values (600 and 200 respectively)."""
+    from engine import host_loop
+    from engine.scale import SHIP_SCALE
+
+    assert host_loop.CAM_BACK_DIST == pytest.approx(600.0 * SHIP_SCALE)
+    assert host_loop.CAM_UP_DIST   == pytest.approx(200.0 * SHIP_SCALE)
+
+
 def test_astro_world_matrix_scales_mesh_and_position():
     """Identity rotation, radius=170: position * ASTRO_SCALE, mesh scale from radius."""
     from engine import host_loop

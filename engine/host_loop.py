@@ -31,9 +31,9 @@ DEFAULT_DIRECTIONALS: list = [
     ((0.3, 1.0, 0.2), (1.0, 1.0, 1.0)),
 ]
 
-# Camera-follow constants used by run() to position the third-person camera.
-CAM_BACK_DIST = 600.0
-CAM_UP_DIST   = 200.0
+# Camera-follow constants scaled to match SHIP_SCALE (original BC values: 600, 200).
+CAM_BACK_DIST = 600.0 * SHIP_SCALE
+CAM_UP_DIST   = 200.0 * SHIP_SCALE
 
 
 class _PlayerControl:
@@ -524,7 +524,7 @@ def run(mission_name: str = SHIP_GATE_MISSION,
 
             # Camera: third-person offset behind the player ship (or origin).
             if fixed_camera:
-                eye = (0.0, 0.0, 1500.0)
+                eye = (0.0, 0.0, 1500.0 * SHIP_SCALE)
                 target = (0.0, 0.0, 0.0)
                 up_vec = (0.0, 1.0, 0.0)
             elif player is not None:
@@ -542,7 +542,7 @@ def run(mission_name: str = SHIP_GATE_MISSION,
                 target = (0.0, 0.0, 0.0)
                 up_vec = (0.0, 1.0, 0.0)
             r.set_camera(eye=eye, target=target, up=up_vec,
-                         fov_y_rad=1.0472, near=1.0, far=100000.0)
+                         fov_y_rad=1.0472, near=1.0, far=2_000_000.0)
 
             active_set = _resolve_active_set(player)
             ambient, directionals = _aggregate_lights(active_set)

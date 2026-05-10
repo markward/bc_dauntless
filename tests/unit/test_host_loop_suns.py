@@ -84,13 +84,15 @@ def test_aggregate_suns_applies_astro_scale(tmp_path):
     import engine.host_loop as hl
     import pytest
 
-    # Create a fake texture file so the sun passes the existence check.
-    tex_dir = tmp_path / "game" / "data" / "Textures"
-    tex_dir.mkdir(parents=True)
-    (tex_dir / "SunBase.tga").write_bytes(b"FAKE")
+    # Use a uniquely-named texture so we can filter out leftover suns from
+    # other tests that may still be sitting in g_kSetManager.
+    tex_rel = "data/Textures/UniqueSunForAstroScaleTest.tga"
+    tex_abs = tmp_path / "game" / tex_rel
+    tex_abs.parent.mkdir(parents=True)
+    tex_abs.write_bytes(b"FAKE")
 
     pSet = App.SetClass_Create()
-    pSun = Sun_Create(4000.0, 2000.0, 0.0)  # radius=4000, atmosphere=2000
+    pSun = Sun_Create(4000.0, 2000.0, 0.0, tex_rel, "")
     pSun.SetTranslateXYZ(10.0, 20.0, 30.0)
     pSet.AddObjectToSet(pSun, "Sun")
     App.g_kSetManager.AddSet(pSet, "_test_agg_suns_astro_scale")
@@ -103,8 +105,10 @@ def test_aggregate_suns_applies_astro_scale(tmp_path):
         hl.PROJECT_ROOT = original_root
         App.g_kSetManager.DeleteSet("_test_agg_suns_astro_scale")
 
-    assert len(result) == 1
-    d = result[0]
+    expected_tex = str(tex_abs.resolve())
+    matches = [d for d in result if d["base_texture_path"] == expected_tex]
+    assert len(matches) == 1
+    d = matches[0]
     assert d["position"] == pytest.approx((10.0 * ASTRO_SCALE,
                                            20.0 * ASTRO_SCALE,
                                            30.0 * ASTRO_SCALE))
