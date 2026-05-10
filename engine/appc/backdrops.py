@@ -79,3 +79,61 @@ def StarSphere_Create() -> StarSphere:
 
 def BackdropSphere_Create() -> BackdropSphere:
     return BackdropSphere()
+
+
+def aggregate_for_renderer(pSet, project_root):
+    """Project SetClass._backdrops into a flat list of dicts that the
+    C++ side can consume verbatim.
+
+    Each entry has shape:
+        {
+            "texture_path": str (absolute),
+            "kind": "star" | "backdrop",
+            "h_tile": float,   "v_tile": float,
+            "h_span": float,   "v_span": float,
+            "world_rotation": list[9] (column-major flatten of mat3),
+            "target_poly_count": int (>= 64),
+        }
+
+    Backdrops with empty texture paths are dropped silently (script
+    bug we can't fix from here). Backdrops whose texture file does not
+    exist under project_root/game/ are dropped with a once-per-set
+    warning (pSet._backdrop_warned flag) — same gate pattern as the
+    lighting overflow warning.
+    """
+    if pSet is None or not getattr(pSet, "_backdrops", None):
+        return []
+
+    out = []
+    missing_paths = []
+    for b in pSet._backdrops:
+        if not b._texture_path:
+            continue  # silent: script-author bug
+        abs_path = (project_root / "game" / b._texture_path).resolve()
+        if not abs_path.is_file():
+            missing_paths.append(b._texture_path)
+            continue
+        rot = b.GetWorldRotation()
+        m9 = [
+            rot._m[0][0], rot._m[0][1], rot._m[0][2],
+            rot._m[1][0], rot._m[1][1], rot._m[1][2],
+            rot._m[2][0], rot._m[2][1], rot._m[2][2],
+        ]
+        out.append({
+            "texture_path": str(abs_path),
+            "kind": b._kind,
+            "h_tile": b._texture_h_tile,
+            "v_tile": b._texture_v_tile,
+            "h_span": b._horizontal_span,
+            "v_span": b._vertical_span,
+            "world_rotation": m9,
+            "target_poly_count": max(int(b._target_poly_count), 64),
+        })
+
+    if missing_paths and not getattr(pSet, "_backdrop_warned", False):
+        print(f"[backdrops] dropped {len(missing_paths)} backdrop(s) "
+              f"with unresolvable textures from set "
+              f"{pSet.GetName()!r}: {missing_paths!r}", flush=True)
+        pSet._backdrop_warned = True
+
+    return out
