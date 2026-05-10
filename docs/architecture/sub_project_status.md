@@ -17,6 +17,7 @@ into the spec docs for full context.
 | 3-6+ | BC light data interpretation (Python-script lighting) | Implemented (2026-05-10; 1 ambient + up to 4 directionals; v1 ship gate Galaxy still lit via fallback) | [2026-05-10-bc-light-data-design.md](../superpowers/specs/2026-05-10-bc-light-data-design.md) | (folded into renderer-host's `deferred_work.md`) |
 | 3-6+ | Star-sphere skybox + backdrop layers | Implemented (2026-05-10; BC's StarSphere + BackdropSphere registrations driven from script through new BackdropPass) | [2026-05-10-skybox-backdrops-design.md](../superpowers/specs/2026-05-10-skybox-backdrops-design.md) | (folded into renderer-host's `deferred_work.md`) |
 | 3-6+ | Sun rendering (procedural sphere body + corona shell) | Implemented (2026-05-10; SunPass draws textured UV-sphere at world position; corona additive shell) | [2026-05-10-sun-rendering-design.md](../superpowers/specs/2026-05-10-sun-rendering-design.md) | (folded into renderer-host's `deferred_work.md`) |
+| 3-6+ | Emissive/glow-map rendering (AddLOD `_glow` convention) | Implemented (2026-05-10; opaque shader adds `u_emissive_color + glow.rgb * glow.a`; `model_build.cc` routes `*_glow.tga` images to both Base and Glow stages) | [2026-05-10-glow-map-rendering-design.md](../superpowers/specs/2026-05-10-glow-map-rendering-design.md) | (folded into renderer-host's `deferred_work.md`) |
 
 ## Asset pipeline — known follow-ups
 

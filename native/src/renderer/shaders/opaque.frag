@@ -6,6 +6,9 @@ in vec2 v_uv;
 uniform sampler2D u_base_color;
 uniform vec3 u_diffuse_color;
 
+uniform sampler2D u_glow_map;
+uniform vec3 u_emissive_color;
+
 uniform vec3 u_ambient_light;
 
 const int MAX_DIR_LIGHTS = 4;
@@ -22,7 +25,8 @@ void main() {
         float ndotl = max(dot(n, normalize(u_dir_light_dir_ws[i])), 0.0);
         lit_dir += ndotl * u_dir_light_color[i];
     }
-    vec4 tex = texture(u_base_color, v_uv);
-    vec3 lit = (u_ambient_light + lit_dir) * u_diffuse_color * tex.rgb;
-    frag_color = vec4(lit, 1.0);
+    vec4 tex  = texture(u_base_color, v_uv);
+    vec3 lit  = (u_ambient_light + lit_dir) * u_diffuse_color * tex.rgb;
+    vec4 glow = texture(u_glow_map, v_uv);
+    frag_color = vec4(lit + u_emissive_color + glow.rgb * glow.a, 1.0);
 }

@@ -100,6 +100,24 @@ added.
 
 ## What is NOT done
 
-- `AddLOD` search-string texture discovery — `material_build.cc` already handles it.
 - Specular (`_specular`, args 9–10).
-- Post-process bloom.
+- Post-process bloom — tracked as item #24 in
+  [`native/src/host/docs/deferred_work.md`](../../../native/src/host/docs/deferred_work.md).
+
+## Implementation note (2026-05-10)
+
+The spec's original premise — "the NIF loader already places the resulting
+texture into NiTexturingProperty.glow, and material_build.cc already
+populates Material::stages[StageSlot::Glow]" — was wrong. Stock BC ship
+NIFs use the old single-texture `NiTextureProperty` and reference the
+`*_glow.tga` files directly as their image. BC's runtime AddLOD `_glow`
+suffix arg tells the engine: any NiImage whose filename ends in `_glow`
+should serve dual duty — its RGB is the hull's base color, its alpha is
+the self-illumination mask.
+
+Implemented in `model_build.cc::load_all_textures` (`filename_is_glow`
+classifier) and `material_build.cc::apply_texture_property` (binds the
+detected glow image to **both** `StageSlot::Base` and `StageSlot::Glow`
+so the lit term uses hull color naturally and the glow term boosts
+alpha-masked pixels). Suffix is hardcoded to `_glow`; threading the
+actual AddLOD suffix arg from Python is deferred.

@@ -153,6 +153,15 @@ the list.
 23. **Auto-damping toggle.** Some space sims auto-damp angular velocity
     when no input is held; v1 doesn't (release = stop turning, but no
     re-centering).
+24. **Bloom pass over ship glow lights.** The glow stage now lights up
+    window/engine/nacelle pixels via `glow.rgb * glow.a` in the opaque
+    shader (`opaque.frag`), but those pixels are LDR and not blurred.
+    Adding bloom would: (a) render the opaque pass into an off-screen
+    FBO (or use MRT to capture the glow term separately), (b) Gaussian-
+    blur a bright-extract or the glow channel via ping-pong half-res
+    FBOs, (c) composite back to the backbuffer. Most of the FBO ping-
+    pong scaffolding was prototyped for the sun corona before being
+    reverted (commit `72d91aa`); recoverable. Depends on item 9.
 
 ## v1 deviations from the original plan
 

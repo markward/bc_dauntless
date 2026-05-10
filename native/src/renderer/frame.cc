@@ -24,7 +24,8 @@ namespace {
 void draw_model(const assets::Model& model,
                 const glm::mat4& world,
                 Shader& shader,
-                GLuint white_fallback) {
+                GLuint white_fallback,
+                GLuint black_fallback) {
     // Walk nodes; each node may reference one or more meshes by index. The
     // node's local_transform is composed with parent transforms here. The
     // asset pipeline already orders nodes such that parents precede children,
@@ -46,6 +47,7 @@ void draw_model(const assets::Model& model,
                 ? model.materials[mesh.material_index()]
                 : assets::Material{});
             shader.set_vec3("u_diffuse_color", mat.diffuse);
+            shader.set_vec3("u_emissive_color", mat.emissive);
 
             const int base_tex = mat.stages[
                 static_cast<std::size_t>(assets::Material::StageSlot::Base)
@@ -57,6 +59,17 @@ void draw_model(const assets::Model& model,
                 glBindTexture(GL_TEXTURE_2D, white_fallback);
             }
             shader.set_int("u_base_color", 0);
+
+            const int glow_tex = mat.stages[
+                static_cast<std::size_t>(assets::Material::StageSlot::Glow)
+            ].texture_index;
+            glActiveTexture(GL_TEXTURE1);
+            if (glow_tex >= 0) {
+                glBindTexture(GL_TEXTURE_2D, model.textures[glow_tex].id());
+            } else {
+                glBindTexture(GL_TEXTURE_2D, black_fallback);
+            }
+            shader.set_int("u_glow_map", 1);
 
             glBindVertexArray(mesh.vao());
             glDrawElements(GL_TRIANGLES, mesh.index_count(), GL_UNSIGNED_INT, nullptr);
@@ -73,6 +86,11 @@ FrameSubmitter::~FrameSubmitter() {
         glDeleteTextures(1, &t);
         white_texture_ = 0;
     }
+    if (black_texture_ != 0) {
+        GLuint t = black_texture_;
+        glDeleteTextures(1, &t);
+        black_texture_ = 0;
+    }
 }
 
 std::uint32_t FrameSubmitter::ensure_white_texture() {
@@ -88,6 +106,21 @@ std::uint32_t FrameSubmitter::ensure_white_texture() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     white_texture_ = t;
     return white_texture_;
+}
+
+std::uint32_t FrameSubmitter::ensure_black_texture() {
+    if (black_texture_ != 0) return black_texture_;
+    GLuint t = 0;
+    glGenTextures(1, &t);
+    glBindTexture(GL_TEXTURE_2D, t);
+    const std::uint8_t black[4] = {0, 0, 0, 255};
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, black);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    black_texture_ = t;
+    return black_texture_;
 }
 
 void FrameSubmitter::submit_opaque(const scenegraph::World& world,
@@ -112,10 +145,11 @@ void FrameSubmitter::submit_opaque(const scenegraph::World& world,
     }
 
     const GLuint white = ensure_white_texture();
+    const GLuint black = ensure_black_texture();
 
     world.for_each_visible([&](const scenegraph::Instance& inst) {
         const assets::Model* m = lookup(inst.model_handle);
-        if (m) draw_model(*m, inst.world, shader, white);
+        if (m) draw_model(*m, inst.world, shader, white, black);
     });
 }
 

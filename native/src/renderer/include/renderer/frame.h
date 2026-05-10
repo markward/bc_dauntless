@@ -74,6 +74,12 @@ private:
     /// (the GL "zero texture") and the lighting math actually shows up.
     std::uint32_t white_texture_ = 0;
     std::uint32_t ensure_white_texture();
+
+    /// Lazily-allocated 1x1 black texture (RGBA 0,0,0,255) used as the
+    /// fallback for the Glow stage when a mesh has no glow texture.
+    /// Sampling it returns (0,0,0,1) so the glow term contributes nothing.
+    std::uint32_t black_texture_ = 0;
+    std::uint32_t ensure_black_texture();
 };
 
 }  // namespace renderer

@@ -9,9 +9,12 @@
 
 #include <assets/texture.h>
 
+#include <algorithm>
+#include <cctype>
 #include <fstream>
 #include <functional>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace fs = std::filesystem;
 
@@ -33,15 +36,32 @@ std::vector<std::uint8_t> read_file(const fs::path& p) {
     return bytes;
 }
 
+/// True if `fname`'s extension-less basename ends in "_glow"
+/// (case-insensitive). Matches BC's AddLOD suffix convention.
+bool filename_is_glow(std::string_view fname) {
+    auto dot = fname.find_last_of('.');
+    auto stem = (dot == std::string_view::npos) ? fname : fname.substr(0, dot);
+    if (stem.size() < 5) return false;
+    std::string tail(stem.substr(stem.size() - 5));
+    std::transform(tail.begin(), tail.end(), tail.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return tail == "_glow";
+}
+
+struct TextureLoadResult {
+    std::unordered_map<std::uint32_t, int> image_to_texture;
+    std::unordered_set<std::uint32_t>      glow_image_links;
+};
+
 /// Walk all NiImage blocks; load + decode + upload referenced TGAs (or
 /// embedded NiRawImageData). Returns: nif block index of NiImage -> Model::textures index.
-std::unordered_map<std::uint32_t, int> load_all_textures(
+TextureLoadResult load_all_textures(
     const nif::File& f,
     Model& model,
     const ModelBuildContext& ctx,
     const LinkResolver& resolver)
 {
-    std::unordered_map<std::uint32_t, int> map;
+    TextureLoadResult out;
     auto upload = ctx.texture_uploader
         ? ctx.texture_uploader
         : TextureUploaderFn(&assets::upload_image);
@@ -77,10 +97,13 @@ std::unordered_map<std::uint32_t, int> load_all_textures(
         // identity, where link_id == block_index.
         const std::uint32_t link_id =
             (i < f.block_ids.size()) ? f.block_ids[i] : i;
-        map[link_id] = static_cast<int>(model.textures.size());
+        out.image_to_texture[link_id] = static_cast<int>(model.textures.size());
+        if (img->use_external != 0 && filename_is_glow(img->file_name)) {
+            out.glow_image_links.insert(link_id);
+        }
         model.textures.push_back(std::move(tex));
     }
-    return map;
+    return out;
 }
 
 glm::mat4 av_to_local_transform(const nif::AvObjectBase& av) {
@@ -159,10 +182,12 @@ MaterialInputs gather_material_inputs(
     const nif::File& f,
     const nif::NiTriShape& shape,
     const std::unordered_map<std::uint32_t, int>& image_to_texture,
+    const std::unordered_set<std::uint32_t>& glow_image_links,
     const LinkResolver& resolver)
 {
     MaterialInputs in;
     in.image_to_texture = &image_to_texture;
+    in.glow_image_links = &glow_image_links;
     for (auto link : shape.av.property_links) {
         auto idx = resolver.resolve(link);
         if (idx == LinkResolver::kInvalidIndex) continue;
@@ -212,7 +237,7 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
     model.skeleton = std::move(skel.skeleton);
 
     // 2. Textures.
-    auto image_to_texture = load_all_textures(f, model, ctx, resolver);
+    auto tex_result = load_all_textures(f, model, ctx, resolver);
 
     // 3. Nodes.
     auto nodes = build_nodes(f, resolver);
@@ -237,7 +262,8 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
         }
         if (!data) continue;  // shape with no data block — skip silently
 
-        auto mat_inputs = gather_material_inputs(f, *shape, image_to_texture, resolver);
+        auto mat_inputs = gather_material_inputs(
+            f, *shape, tex_result.image_to_texture, tex_result.glow_image_links, resolver);
         Material mat = build_material(mat_inputs);
         int mat_index = static_cast<int>(model.materials.size());
         model.materials.push_back(std::move(mat));

@@ -21,7 +21,6 @@ const std::filesystem::path kGalaxyNif =
     kProjectRoot / "game" / "data" / "Models" / "Ships" / "Galaxy" / "Galaxy.nif";
 const std::filesystem::path kGalaxyTex =
     kProjectRoot / "game" / "data" / "Models" / "SharedTextures" / "FedShips" / "High";
-
 class FrameTest : public ::testing::Test {
 protected:
     std::unique_ptr<renderer::Window> w;
@@ -83,6 +82,55 @@ TEST_F(FrameTest, OpaquePassRunsWithoutGLError) {
     glReadPixels(128, 128, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
     int total = pixel[0] + pixel[1] + pixel[2];
     EXPECT_GT(total, 0) << "center pixel was black; opaque pass produced nothing";
+}
+
+TEST_F(FrameTest, GlowContributesWithZeroAmbient) {
+    // Galaxy.nif's NiImages reference "Ent-D_*_glow.tga" files directly
+    // (BC's AddLOD "_glow" suffix convention). model_build.cc detects the
+    // suffix and routes those textures into Material::StageSlot::Glow.
+    auto model_h = cache->load(kGalaxyNif, kGalaxyTex);
+
+    scenegraph::World world;
+    auto iid = world.create_instance(
+        reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
+    world.set_world_transform(iid, glm::mat4(1.0f));
+
+    scenegraph::Camera cam;
+    cam.eye    = glm::vec3(0.0f, 0.0f, 1500.0f);
+    cam.target = glm::vec3(0.0f, 0.0f, 0.0f);
+    cam.aspect = 1.0f;
+
+    glViewport(0, 0, 256, 256);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    renderer::FrameSubmitter submitter;
+    renderer::Lighting zero_lighting;
+    zero_lighting.ambient           = glm::vec3(0.0f);
+    zero_lighting.directional_count = 0;
+    submitter.submit_opaque(world, cam, *p,
+        [model_h](scenegraph::ModelHandle h) -> const assets::Model* {
+            return reinterpret_cast<const assets::Model*>(h);
+        }, zero_lighting);
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+
+    // Scan a 5×5 grid across the saucer section; at least one pixel must be
+    // non-zero to prove the glow pass contributed.  Clear colour is black so
+    // background pixels are also 0 — only glow raises a pixel above 0.
+    int max_total = 0;
+    for (int dx = -40; dx <= 40; dx += 20) {
+        for (int dy = -40; dy <= 40; dy += 20) {
+            unsigned char px[4] = {0};
+            glReadPixels(128 + dx, 128 + dy, 1, 1,
+                         GL_RGBA, GL_UNSIGNED_BYTE, px);
+            int t = px[0] + px[1] + px[2];
+            if (t > max_total) max_total = t;
+        }
+    }
+    EXPECT_GT(max_total, 0)
+        << "Expected glow to contribute to at least one pixel with zero "
+           "ambient lighting; all sampled pixels were black.";
 }
 
 }  // namespace
