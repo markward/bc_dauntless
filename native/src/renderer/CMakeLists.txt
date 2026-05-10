@@ -23,6 +23,7 @@ add_library(renderer STATIC
     shader.cc
     pipeline.cc
     frame.cc
+    sphere_mesh.cc
 )
 target_include_directories(renderer
     PUBLIC include
