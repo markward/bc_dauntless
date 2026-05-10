@@ -37,6 +37,11 @@ class SetClass(TGEventHandlerObject):
         # from engine.appc.placement which imports from engine.appc.objects).
         self._lights: 'list["Light"]' = []
         self._lights_by_name: 'dict[str, "Light"]' = {}
+        # Backdrops — populated by pSet.AddBackdropToSet(). Ordered list
+        # (insertion order = draw order); names aren't indexed because BC
+        # scripts only ever pass them positionally to AddBackdropToSet,
+        # never look them up later.
+        self._backdrops: 'list["Backdrop"]' = []
 
     def __getattr__(self, name: str):
         """Return a chainable stub for renderer-specific methods not needed in Phase 1
@@ -174,6 +179,17 @@ class SetClass(TGEventHandlerObject):
 
     def GetLight(self, name):
         return self._lights_by_name.get(name)
+
+    # ── Backdrops ──────────────────────────────────────────────────────────
+    # SDK signature: pSet.AddBackdropToSet(obj, name).
+    # Insertion order is draw order: StarSphere first, nebula overlays
+    # alpha-blended on top in registration order.
+
+    def AddBackdropToSet(self, backdrop, name):
+        if hasattr(backdrop, "SetName"):
+            backdrop.SetName(name)
+        self._backdrops.append(backdrop)
+        return None
 
 
 class SetManager:

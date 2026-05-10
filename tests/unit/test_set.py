@@ -211,6 +211,29 @@ def test_set_create_directional_light_8_arg():
     assert pSet.GetLight("light1") is light
 
 
+def test_set_backdrops_initially_empty():
+    pSet = App.SetClass_Create()
+    assert pSet._backdrops == []
+
+
+def test_add_backdrop_to_set_appends_in_order():
+    pSet = App.SetClass_Create()
+    star = App.StarSphere_Create()
+    cloud1 = App.BackdropSphere_Create()
+    cloud2 = App.BackdropSphere_Create()
+    pSet.AddBackdropToSet(star, "stars")
+    pSet.AddBackdropToSet(cloud1, "nebula1")
+    pSet.AddBackdropToSet(cloud2, "nebula2")
+    assert pSet._backdrops == [star, cloud1, cloud2]
+
+
+def test_add_backdrop_assigns_name_to_object():
+    pSet = App.SetClass_Create()
+    star = App.StarSphere_Create()
+    pSet.AddBackdropToSet(star, "Backdrop stars")
+    assert star.GetName() == "Backdrop stars"
+
+
 def test_set_unrelated_renderer_methods_still_stub():
     """Regression: catch-all _RendererStub still handles non-light methods."""
     pSet = App.SetClass_Create()
