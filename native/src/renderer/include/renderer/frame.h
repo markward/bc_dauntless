@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <string>
 
 #include <glm/glm.hpp>
 
@@ -24,6 +25,21 @@ struct Lighting {
     };
     /// Color × dimmer per directional.
     glm::vec3 directional_color[MaxDirectionals] = { glm::vec3(1.0f) };
+};
+
+enum class BackdropKind { Star, Backdrop };
+
+struct Backdrop {
+    /// Source descriptor; matched against the renderer's per-texture
+    /// cache. The renderer uploads on first sight and reuses thereafter.
+    std::string texture_path;
+    BackdropKind kind = BackdropKind::Star;
+    float h_tile = 1.0f;
+    float v_tile = 1.0f;
+    float h_span = 1.0f;
+    float v_span = 1.0f;
+    glm::mat3 world_rotation = glm::mat3(1.0f);
+    int target_poly_count = 256;
 };
 
 class FrameSubmitter {
