@@ -37,29 +37,44 @@ def _setup_for_pixel_test():
     return _open_stbc_host
 
 
-def test_backdrop_renders_into_corner_pixel():
-    """Backdrop pixel at corner of viewport (no opaque geometry there)
-    must NOT be the clear-color value (~13, 18, 26)."""
+def test_backdrop_overpaints_clear_color():
+    """With the backdrop bound the rendered row must NOT match the
+    clear-color floor (64 px × 57 = 3648). The starfield is sparse
+    black-with-stars: most pixels are darker than the clear color
+    (texture sky is near-black) and stars push some pixels much
+    brighter — either way the row sum departs from the floor.
+
+    Compares against the no-backdrop baseline: empty backdrop list
+    leaves the screen at clear color so its row sum is exactly 3648.
+    Setting a backdrop must change that sum."""
     h = _setup_for_pixel_test()
     try:
+        # Establish the no-backdrop baseline.
+        h.set_backdrops([])
+        floor = _settle_and_sample_row(h, 32)
+        assert floor == 3648, (
+            f"empty-backdrop row should be exact clear-color sum 3648, "
+            f"got {floor}; clear-color or framebuffer setup changed?")
+
         h.set_backdrops([_star_descriptor()])
-        h.frame()
-        r, g, b, a = h.read_pixel(0, 0)
-        clear = (13, 18, 26)
-        diff = abs(int(r) - clear[0]) + abs(int(g) - clear[1]) + abs(int(b) - clear[2])
-        assert diff > 5, (
-            f"corner pixel = ({r},{g},{b}) — looks like the clear color; "
+        with_stars = _settle_and_sample_row(h, 32)
+
+        assert with_stars != floor, (
+            f"row sum unchanged after binding starfield ({with_stars}); "
             f"backdrop did not render")
     finally:
         h.shutdown()
 
 
-def _sample_row_brightness_sum(h, y: int) -> int:
-    """Walk a horizontal stripe of the framebuffer and sum every R+G+B
-    channel. The stars texture is sparse (mostly black with bright dots);
-    a single-pixel sample often misses, but a 64-pixel stripe is very
-    likely to overlap several stars and produce a deterministic-but-
-    rotation-sensitive signature."""
+def _settle_and_sample_row(h, y: int) -> int:
+    """Render two frames before sampling to defeat headless-window
+    double-buffer staleness — on macOS GLFW hidden windows, read_pixel
+    on GL_FRONT can return the previous frame's contents until a second
+    swap_buffers has cycled. Then walk a horizontal stripe and sum
+    R+G+B channels. The stars texture is sparse so a 64-pixel stripe
+    is more robust than a single-pixel sample."""
+    h.frame()
+    h.frame()
     fw, _ = h.framebuffer_size()
     total = 0
     for i in range(64):
@@ -80,8 +95,7 @@ def test_camera_rotation_changes_pixels_translation_does_not():
     try:
         h.set_backdrops([_star_descriptor()])
 
-        h.frame()
-        baseline = _sample_row_brightness_sum(h, 32)
+        baseline = _settle_and_sample_row(h, 32)
 
         # Translate forward 1000 units (camera moves toward origin).
         h.set_camera(
@@ -90,8 +104,7 @@ def test_camera_rotation_changes_pixels_translation_does_not():
             up=(0.0, 1.0, 0.0),
             fov_y_rad=1.0472, near=1.0, far=100000.0,
         )
-        h.frame()
-        translated = _sample_row_brightness_sum(h, 32)
+        translated = _settle_and_sample_row(h, 32)
 
         # Rotation: 30° about up axis from baseline view.
         import math
@@ -103,8 +116,7 @@ def test_camera_rotation_changes_pixels_translation_does_not():
             up=(0.0, 1.0, 0.0),
             fov_y_rad=1.0472, near=1.0, far=100000.0,
         )
-        h.frame()
-        rotated = _sample_row_brightness_sum(h, 32)
+        rotated = _settle_and_sample_row(h, 32)
 
         # Translation: same brightness sum within tolerance.
         assert abs(translated - baseline) <= 10, (
