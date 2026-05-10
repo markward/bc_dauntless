@@ -33,8 +33,10 @@ class SetClass(TGEventHandlerObject):
         # Lights — populated by App.LightPlacement_Create + Config*Light or by
         # the pSet.Create*Light shortcut methods below. _lights_by_name is the
         # GetLight index; _lights preserves insertion order for aggregation.
-        self._lights: list = []
-        self._lights_by_name: dict[str, object] = {}
+        # Forward-quoted to avoid an import cycle (engine.appc.lights imports
+        # from engine.appc.placement which imports from engine.appc.objects).
+        self._lights: 'list["Light"]' = []
+        self._lights_by_name: 'dict[str, "Light"]' = {}
 
     def __getattr__(self, name: str):
         """Return a chainable stub for renderer-specific methods not needed in Phase 1
