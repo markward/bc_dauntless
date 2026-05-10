@@ -424,7 +424,8 @@ def run(mission_name: str = SHIP_GATE_MISSION,
     import App
     from engine.core.loop import GameLoop
 
-    r.init(1280, 720, "open_stbc")
+    r.init(1280, 720, "open_stbc",
+           str(PROJECT_ROOT / "native" / "assets" / "ui"))
     try:
         # Per-NIF cache so the same mesh isn't reloaded once per ship.
         nif_to_handle: dict[str, int] = {}
@@ -565,6 +566,30 @@ def run(mission_name: str = SHIP_GATE_MISSION,
                          fov_y_rad=1.0472, near=1.0, far=2_000_000.0)
 
             active_set = _resolve_active_set(player)
+
+            if player is not None:
+                _R = player.GetWorldRotation()
+                _p = player.GetWorldLocation()
+                _yaw, _pitch, _roll = _extract_ypr(_R)
+                _set_name = next(
+                    (n for n, s in App.g_kSetManager._sets.items()
+                     if s is active_set),
+                    ""
+                ) if active_set is not None else ""
+                try:
+                    _raw_script = player.GetScript() or ""
+                except Exception:
+                    _raw_script = ""
+                _ship_display = _raw_script.split(".")[-1] if _raw_script else "---"
+                r.set_hud_state({
+                    "pos":    (_p.x, _p.y, _p.z),
+                    "yaw":    _yaw,
+                    "pitch":  _pitch,
+                    "roll":   _roll,
+                    "system": _set_name or "---",
+                    "ship":   _ship_display,
+                })
+
             ambient, directionals = _aggregate_lights(active_set)
             r.set_lighting(ambient, directionals)
 
