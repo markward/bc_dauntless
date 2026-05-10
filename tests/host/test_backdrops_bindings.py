@@ -30,3 +30,9 @@ def test_set_backdrops_many_descriptors_does_not_raise():
         "target_poly_count": 256,
     }
     _open_stbc_host.set_backdrops([descriptor] * 10)
+
+
+def test_renderer_module_set_backdrops_wrapper_exists():
+    from engine import renderer
+    assert hasattr(renderer, "set_backdrops")
+    renderer.set_backdrops([])

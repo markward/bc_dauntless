@@ -67,3 +67,19 @@ def set_lighting(ambient: Tuple[float, float, float],
     additional ones are silently dropped by the bindings.
     """
     _h.set_lighting(ambient, directionals)
+
+
+def set_backdrops(backdrops: list) -> None:
+    """Configure the renderer's ordered backdrop list. Each entry is a
+    dict matching engine.appc.backdrops.aggregate_for_renderer's output:
+
+        {
+            "texture_path": str (absolute),
+            "kind": "star" | "backdrop",
+            "h_tile": float, "v_tile": float,
+            "h_span": float, "v_span": float,
+            "world_rotation": list[9],
+            "target_poly_count": int,
+        }
+    """
+    _h.set_backdrops(backdrops)
