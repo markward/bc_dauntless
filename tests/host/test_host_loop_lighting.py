@@ -180,6 +180,30 @@ def test_resolve_active_lighting_set_returns_none_for_no_lights():
         App.g_kSetManager.DeleteSet("Empty")
 
 
+def test_verbose_mode_logs_lighting_on_tick0(capsys):
+    """OPEN_STBC_HOST_VERBOSE=1 prints the resolved lighting on tick 0
+    so log scrapers can confirm which (ambient, directionals) tuple the
+    renderer was given."""
+    from pathlib import Path
+
+    PROJECT_ROOT = Path(__file__).parent.parent.parent
+    GALAXY_NIF = PROJECT_ROOT / "game" / "data" / "Models" / "Ships" / "Galaxy" / "Galaxy.nif"
+    if not GALAXY_NIF.is_file():
+        pytest.skip("BC assets not available")
+
+    os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
+    os.environ["OPEN_STBC_HOST_VERBOSE"] = "1"
+    try:
+        from engine import host_loop
+        rc = host_loop.run("Custom.Tutorial.Episode.M1Basic.M1Basic", max_ticks=2)
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "tick 0 lighting ambient=" in out
+        assert "directionals=" in out
+    finally:
+        os.environ.pop("OPEN_STBC_HOST_VERBOSE", None)
+
+
 def test_g_lighting_persists_across_frames():
     """A second frame() without a new set_lighting must use the lighting
     from the first set_lighting call. Isolates the C++-side persistence
