@@ -1,21 +1,25 @@
 body {
     margin: 0dp;
     padding: 0dp;
+    width: 100%;
+    height: 100%;
+    font-family: antonio;
+    font-size: 14dp;
+    color: #c8d8e8;
 }
 
 #hud {
     position: absolute;
     right: 10dp;
     top: 10dp;
+    width: 280dp;
     text-align: right;
-    color: #c8d8e8;
-    font-size: 14dp;
-    font-family: antonio;
-    background-color: rgba(0, 0, 0, 0.45);
+    background-color: #00000074;
     padding: 8dp;
     border-radius: 4dp;
 }
 
 #hud div {
     margin-bottom: 2dp;
+    white-space: nowrap;
 }
