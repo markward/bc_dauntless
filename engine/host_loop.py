@@ -13,6 +13,26 @@ from typing import Iterable, Optional
 from engine import renderer as r
 from engine.scale import SHIP_SCALE, ASTRO_SCALE, PLANET_NIF_NATIVE_RADIUS
 
+import math as _math
+
+
+def _extract_ypr(R) -> tuple:
+    """Yaw/pitch/roll in degrees from a BC row-vector TGMatrix3.
+
+    BC convention: Row 0 = right, Row 1 = forward (Y), Row 2 = up (Z).
+    Yaw:   atan2(forward.x, forward.y) - heading around world Z
+    Pitch: asin(forward.z)             - elevation (+ = nose up)
+    Roll:  atan2(-right.z, up.z)       - bank (+ = right wing down)
+    """
+    fwd = R.GetRow(1)
+    up  = R.GetRow(2)
+    rgt = R.GetRow(0)
+    yaw_deg   = _math.degrees(_math.atan2(fwd.x, fwd.y))
+    pitch_deg = _math.degrees(_math.asin(max(-1.0, min(1.0, fwd.z))))
+    roll_deg  = _math.degrees(_math.atan2(-rgt.z, up.z))
+    return yaw_deg, pitch_deg, roll_deg
+
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # v1 ship-gate selections — Task 25 pins these from the pick_*.py scan results.
