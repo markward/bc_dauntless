@@ -28,3 +28,12 @@ def test_set_lighting_clamps_to_max_directionals():
         (0.1, 0.1, 0.1),
         [((0.0, 1.0, 0.0), (1.0, 1.0, 1.0))] * 8,
     )
+
+
+def test_renderer_module_set_lighting_wrapper():
+    """The Python wrapper round-trips arguments to the bindings."""
+    from engine import renderer
+    renderer.set_lighting(
+        (0.1, 0.2, 0.3),
+        [((0.0, 1.0, 0.0), (1.0, 1.0, 1.0))],
+    )
