@@ -8,7 +8,7 @@
 #include <cstdio>
 #include <string>
 
-namespace assets::detail {
+namespace assets {
 
 namespace {
 
@@ -29,9 +29,9 @@ Mesh upload_mesh(const MeshCpu& cpu) {
     glGenVertexArrays(1, &vao);
     glGenBuffers(1, &vbo);
     glGenBuffers(1, &ebo);
-    VertexArrayHandle vao_h(vao);
-    BufferHandle      vbo_h(vbo);
-    BufferHandle      ebo_h(ebo);
+    detail::VertexArrayHandle vao_h(vao);
+    detail::BufferHandle      vbo_h(vbo);
+    detail::BufferHandle      ebo_h(ebo);
 
     glBindVertexArray(vao);
 
@@ -80,4 +80,4 @@ Mesh upload_mesh(const MeshCpu& cpu) {
         cpu.material_index, cpu.node_index);
 }
 
-}  // namespace assets::detail
+}  // namespace assets

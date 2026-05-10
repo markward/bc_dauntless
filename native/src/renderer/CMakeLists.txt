@@ -24,6 +24,7 @@ add_library(renderer STATIC
     pipeline.cc
     frame.cc
     sphere_mesh.cc
+    backdrop_pass.cc
 )
 target_include_directories(renderer
     PUBLIC include

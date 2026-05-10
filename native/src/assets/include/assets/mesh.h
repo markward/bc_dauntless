@@ -62,4 +62,9 @@ private:
     std::vector<Mesh> lod_chain_;
 };
 
+/// Upload a CPU-side mesh to a GL VAO/VBO/EBO triple. Public so the
+/// renderer can build its own meshes (e.g. backdrop spheres) without
+/// going through the model-build pipeline.
+Mesh upload_mesh(const MeshCpu& cpu);
+
 }  // namespace assets

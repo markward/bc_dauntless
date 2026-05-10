@@ -96,6 +96,16 @@ void Shader::set_int(const std::string& name, int v) const {
     if (loc >= 0) glUniform1i(loc, v);
 }
 
+void Shader::set_vec2(const std::string& name, const glm::vec2& v) const {
+    GLint loc = glGetUniformLocation(program_, name.c_str());
+    if (loc >= 0) glUniform2fv(loc, 1, glm::value_ptr(v));
+}
+
+void Shader::set_mat3(const std::string& name, const glm::mat3& v) const {
+    GLint loc = glGetUniformLocation(program_, name.c_str());
+    if (loc >= 0) glUniformMatrix3fv(loc, 1, GL_FALSE, glm::value_ptr(v));
+}
+
 void Shader::set_vec3_array(const std::string& name,
                             const glm::vec3* data,
                             int count) const {
