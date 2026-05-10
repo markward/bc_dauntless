@@ -18,9 +18,8 @@
 namespace renderer {
 
 SunPass::~SunPass() {
-    if (quad_vao_) glDeleteVertexArrays(1, &quad_vao_);
-    // Fbo / Mesh / Texture destructors release their GL handles.
-    // Caller must ensure the GL context is alive when this dtor runs.
+    // assets::Mesh / assets::Texture destructors release GL handles.
+    // Caller must ensure the GL context is still alive when this dtor runs.
 }
 
 assets::Mesh* SunPass::ensure_sphere(int target_tris) {
@@ -67,10 +66,6 @@ assets::Texture* SunPass::ensure_texture(const std::string& path) {
     }
 }
 
-void SunPass::ensure_quad_vao() {
-    if (!quad_vao_) glGenVertexArrays(1, &quad_vao_);
-}
-
 void SunPass::render(const std::vector<SunDescriptor>& suns,
                      const scenegraph::Camera& camera,
                      Pipeline& pipeline) {
@@ -80,7 +75,6 @@ void SunPass::render(const std::vector<SunDescriptor>& suns,
     shader.use();
     shader.set_mat4("u_proj", camera.proj_matrix());
     shader.set_mat4("u_view", camera.view_matrix());
-    shader.set_int("u_texture", 0);
 
     glDepthMask(GL_TRUE);
     glDepthFunc(GL_LESS);
@@ -92,97 +86,43 @@ void SunPass::render(const std::vector<SunDescriptor>& suns,
         glCullFace(GL_BACK);
         return;
     }
-
-    // ── Body pass ──────────────────────────────────────────────────────────
     glBindVertexArray(sphere->vao());
 
     for (const auto& s : suns) {
         assets::Texture* tex = ensure_texture(s.base_texture_path);
         if (!tex) continue;
 
+        // Body: opaque sphere scaled to radius, translated to world position
         glm::mat4 model = glm::translate(glm::mat4(1.0f), s.position)
                         * glm::scale(glm::mat4(1.0f), glm::vec3(s.radius));
         shader.set_mat4("u_model", model);
         shader.set_int("u_corona", 0);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, tex->id());
+        shader.set_int("u_texture", 0);
         glDrawElements(GL_TRIANGLES,
                        static_cast<GLsizei>(sphere->index_count()),
                        GL_UNSIGNED_INT, nullptr);
-    }
 
-    // ── Corona pass — FBO render + separable Gaussian blur ─────────────────
-    // Check whether any sun actually needs a corona before allocating FBOs.
-    bool any_corona = false;
-    for (const auto& s : suns) {
-        if (s.corona_radius > s.radius && ensure_texture(s.base_texture_path))
-            { any_corona = true; break; }
-    }
-
-    if (any_corona) {
-        GLint vp[4];
-        glGetIntegerv(GL_VIEWPORT, vp);
-        const int fw = vp[2], fh = vp[3];
-
-        // Pass A: draw corona sphere(s) into fbo_[0] ─────────────────────
-        fbo_[0].resize(fw, fh);
-        fbo_[0].bind();
-        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
-        glDisable(GL_DEPTH_TEST);   // FBO has no depth attachment
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-        glDepthMask(GL_FALSE);
-
-        shader.use();
-        glBindVertexArray(sphere->vao());
-
-        for (const auto& s : suns) {
-            if (s.corona_radius <= s.radius) continue;
-            assets::Texture* tex = ensure_texture(s.base_texture_path);
-            if (!tex) continue;
+        // Corona: additive semi-transparent shell — depth writes off so the
+        // halo doesn't occlude opaque geometry behind it.
+        if (s.corona_radius > s.radius) {
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+            glDepthMask(GL_FALSE);
             glm::mat4 corona_model =
                 glm::translate(glm::mat4(1.0f), s.position)
                 * glm::scale(glm::mat4(1.0f), glm::vec3(s.corona_radius));
             shader.set_mat4("u_model", corona_model);
             shader.set_int("u_corona", 1);
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, tex->id());
             glDrawElements(GL_TRIANGLES,
                            static_cast<GLsizei>(sphere->index_count()),
                            GL_UNSIGNED_INT, nullptr);
+            glDepthMask(GL_TRUE);
+            glDisable(GL_BLEND);
         }
-
-        Fbo::unbind();
-        glDisable(GL_BLEND);
-        glEnable(GL_DEPTH_TEST);
-
-        // Pass B: horizontal Gaussian blur  fbo_[0] → fbo_[1] ────────────
-        auto& blur = pipeline.blur_shader();
-        ensure_quad_vao();
-        glBindVertexArray(quad_vao_);
-        glActiveTexture(GL_TEXTURE0);
-
-        fbo_[1].resize(fw, fh);
-        fbo_[1].bind();
-        glClear(GL_COLOR_BUFFER_BIT);
-        blur.use();
-        blur.set_int("u_source", 0);
-        blur.set_vec2("u_direction", glm::vec2(1.0f, 0.0f));
-        glBindTexture(GL_TEXTURE_2D, fbo_[0].color_id());
-        glDrawArrays(GL_TRIANGLES, 0, 3);
-        Fbo::unbind();
-
-        // Pass C: vertical blur  fbo_[1] → main FB (additive composite) ──
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_ONE, GL_ONE);
-        blur.set_vec2("u_direction", glm::vec2(0.0f, 1.0f));
-        glBindTexture(GL_TEXTURE_2D, fbo_[1].color_id());
-        glDrawArrays(GL_TRIANGLES, 0, 3);
-        glDisable(GL_BLEND);
     }
 
-    // Restore state
     glCullFace(GL_BACK);
     glDepthMask(GL_TRUE);
     glDepthFunc(GL_LESS);

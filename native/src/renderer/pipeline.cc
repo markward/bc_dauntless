@@ -9,16 +9,13 @@
 #include "embedded_backdrop_fs.h"
 #include "embedded_sun_vs.h"
 #include "embedded_sun_fs.h"
-#include "embedded_blur_vs.h"
-#include "embedded_blur_fs.h"
 
 namespace renderer {
 
 Pipeline::Pipeline() {
     opaque_ = std::make_unique<Shader>(shader_src::opaque_vs, shader_src::opaque_fs);
     backdrop_ = std::make_unique<Shader>(shader_src::backdrop_vs, shader_src::backdrop_fs);
-    sun_  = std::make_unique<Shader>(shader_src::sun_vs,  shader_src::sun_fs);
-    blur_ = std::make_unique<Shader>(shader_src::blur_vs, shader_src::blur_fs);
+    sun_ = std::make_unique<Shader>(shader_src::sun_vs, shader_src::sun_fs);
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
     glEnable(GL_CULL_FACE);
