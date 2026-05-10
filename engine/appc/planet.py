@@ -134,10 +134,14 @@ def Planet_Cast(obj) -> "Planet | None":
     return obj if isinstance(obj, Planet) else None
 
 
+_SUN_DEFAULT_TEXTURE = "data/Textures/SunBase.tga"
+
+
 def aggregate_suns_for_renderer(project_root, pSets):
     """Return list[dict] for all Sun objects across pSets.
 
-    Suns with empty base_texture or unresolvable paths are dropped with a
+    Suns with no base_texture fall back to SunBase.tga (the BC engine default).
+    Suns whose resolved texture path does not exist are dropped with a
     once-per-object warning (suppressed after first fire via _sun_warned).
     Suns with radius <= 0 are dropped silently.
     """
@@ -150,16 +154,7 @@ def aggregate_suns_for_renderer(project_root, pSets):
             if radius <= 0:
                 continue
             loc = obj.GetWorldLocation()
-            tex_rel = obj.GetModelPath()
-            if not tex_rel:
-                if not obj.__dict__.get("_sun_warned", False):
-                    print(
-                        f"[suns] no texture for Sun at "
-                        f"({loc.x:.0f},{loc.y:.0f},{loc.z:.0f}); skipping",
-                        flush=True,
-                    )
-                    obj.__dict__["_sun_warned"] = True
-                continue
+            tex_rel = obj.GetModelPath() or _SUN_DEFAULT_TEXTURE
             abs_path = (project_root / "game" / tex_rel).resolve()
             if not abs_path.is_file():
                 if not obj.__dict__.get("_sun_warned", False):

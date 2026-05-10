@@ -50,27 +50,17 @@ def test_aggregate_set_with_no_suns_returns_empty():
     assert result == []
 
 
-def test_aggregate_drops_sun_with_empty_texture_with_warning(capsys):
+def test_aggregate_uses_default_texture_when_none_specified():
+    """Sun_Create with no texture falls back to SunBase.tga (BC engine default)."""
     import App
     from engine.appc.planet import aggregate_suns_for_renderer, Sun_Create
     pSet = App.SetClass_Create()
     pSun = Sun_Create(4000.0, 4000.0, 500.0)  # no texture arg
     pSet.AddObjectToSet(pSun, "Sun")
     result = aggregate_suns_for_renderer(PROJECT_ROOT, [pSet])
-    assert result == []
-    assert "[suns]" in capsys.readouterr().out
-
-
-def test_aggregate_empty_texture_warning_fires_once(capsys):
-    import App
-    from engine.appc.planet import aggregate_suns_for_renderer, Sun_Create
-    pSet = App.SetClass_Create()
-    pSun = Sun_Create(4000.0, 4000.0, 500.0)
-    pSet.AddObjectToSet(pSun, "Sun")
-    aggregate_suns_for_renderer(PROJECT_ROOT, [pSet])
-    capsys.readouterr()  # drain first warning
-    aggregate_suns_for_renderer(PROJECT_ROOT, [pSet])
-    assert capsys.readouterr().out == ""
+    # SunBase.tga is present in game/data/Textures/ so the sun should be included
+    assert len(result) == 1
+    assert result[0]["base_texture_path"].endswith("SunBase.tga")
 
 
 def test_aggregate_drops_unresolvable_texture_with_warning(capsys):
