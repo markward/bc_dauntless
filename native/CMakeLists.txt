@@ -35,6 +35,19 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(pybind11)
 
+# RmlUi — HTML/CSS UI framework. Samples/tests off so RmlUi only builds RmlCore;
+# we compile the GLFW+GL3 backends ourselves in native/src/ui so they pick up
+# our existing glad + glfw targets rather than any system copies.
+FetchContent_Declare(
+    RmlUi
+    GIT_REPOSITORY https://github.com/mikke89/RmlUi.git
+    GIT_TAG        6.0
+)
+set(RMLUI_SAMPLES       OFF   CACHE BOOL   "" FORCE)
+set(RMLUI_TESTS         OFF   CACHE BOOL   "" FORCE)
+set(RMLUI_LOTTIE_PLUGIN OFF   CACHE BOOL   "" FORCE)
+FetchContent_MakeAvailable(RmlUi)
+
 # Public libraries.
 add_subdirectory(src/nif)
 add_subdirectory(src/assets)
@@ -55,6 +68,9 @@ add_subdirectory(third_party/glfw)
 
 # Renderer library (window + GL context wrapper).
 add_subdirectory(src/renderer)
+
+# UI library (RmlUi integration + HUD).
+add_subdirectory(src/ui)
 
 # Scene-graph data + math (pure C++, no GL).
 add_subdirectory(src/scenegraph)
