@@ -12,18 +12,12 @@ out vec3 v_pos_local;
 out vec2 v_uv;
 
 void main() {
-    // Scale the unit sphere outward so its vertices live comfortably
-    // inside the view frustum. Without this scale a vertex at distance 1
-    // from origin sits exactly on the near plane (near=1.0); some
-    // vertices land BEHIND the camera and get clipped, the surviving
-    // ones produce w ≈ 0..1 and perspective-divide is unstable.
-    // 1000.0 is well below the typical far plane (100000) so we have
-    // plenty of margin; the actual depth is pinned to the far plane by
-    // the z=w idiom below regardless.
-    vec3 rotated = u_world_rotation * (a_pos * 1000.0);
+    vec3 rotated = u_world_rotation * a_pos;
     v_pos_local = rotated;
     v_uv = a_uv;
     vec4 clip = u_proj * u_view_no_translation * vec4(rotated, 1.0);
+    // Skybox-depth idiom: force fragment to the far plane so any
+    // subsequently-drawn opaque geometry always wins LEQUAL depth tests.
     clip.z = clip.w;
     gl_Position = clip;
 }
