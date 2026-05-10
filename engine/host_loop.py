@@ -20,6 +20,16 @@ DEFAULT_SKYBOX_NIF: Optional[str] = None  # No skybox NIF in BC assets; spec def
 DEFAULT_TEXTURE_SEARCH = "data/Models/SharedTextures/FedShips/High"
 DEFAULT_PLAYER_SET = "Biranu1"  # M1 Basic-specific
 
+# Lighting defaults — used by both the per-tick fallback (when no active set
+# has lights) and as the conceptual source of truth that the C++
+# host_bindings.cc default-constructed Lighting struct mirrors.
+DEFAULT_AMBIENT: tuple[float, float, float] = (0.1, 0.1, 0.1)
+DEFAULT_DIRECTIONALS: list = [
+    # Single top-down directional matching frame.cc's pre-Phase-1 default.
+    # ((dx, dy, dz) toward light, (r, g, b))
+    ((0.3, 1.0, 0.2), (1.0, 1.0, 1.0)),
+]
+
 # Camera-follow constants used by run() to position the third-person camera.
 CAM_BACK_DIST = 600.0
 CAM_UP_DIST   = 200.0
@@ -236,6 +246,85 @@ def _ship_nif_path(ship, *, verbose: bool = False) -> Optional[str]:
             print(f"[host_loop]   skip: NIF file not found at {abs_path}", flush=True)
         return None
     return str(abs_path)
+
+
+def _resolve_active_lighting_set(player):
+    """Return the SetClass whose lights apply to the rendered scene.
+
+    Order:
+      1. g_kSetManager.GetRenderedSet() — set explicitly via
+         MissionLib.MakeRenderedSet during scene transitions. Used when
+         present and has lights.
+      2. The set containing the player ship — fallback for when Phase 1
+         hasn't wired MakeRenderedSet up. Used when has lights.
+      3. None — caller falls through to DEFAULT_AMBIENT / DEFAULT_DIRECTIONALS.
+    """
+    import App
+    rendered = App.g_kSetManager.GetRenderedSet()
+    if rendered is not None and getattr(rendered, "_lights", None):
+        return rendered
+    if player is not None:
+        for s in App.g_kSetManager._sets.values():
+            if any(o is player for o in getattr(s, "_objects", {}).values()):
+                if getattr(s, "_lights", None):
+                    return s
+    return None
+
+
+def _aggregate_lights(pSet):
+    """Collapse SetClass._lights into (ambient_rgb, [directionals × ≤4]).
+
+    Ambient: last-wins across configured ambients, color × dimmer.
+    Directionals: in insertion order, capped at 4 (with a one-shot warning
+        when more were configured), filtering out zero-length directions.
+        Each is ((dx_to_light, dy_to_light, dz_to_light), (r, g, b)).
+    Returns (DEFAULT_AMBIENT, DEFAULT_DIRECTIONALS) when pSet is None or
+    has no usable lights after filtering.
+    """
+    if pSet is None:
+        return DEFAULT_AMBIENT, DEFAULT_DIRECTIONALS
+
+    from engine.appc.lights import Light
+
+    ambient: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    found_ambient = False
+    directionals: list = []
+    overflowed = False
+
+    for light in pSet._lights:
+        if light._kind == Light.KIND_AMBIENT:
+            r, g, b = light._color
+            d = light._dimmer
+            ambient = (r * d, g * d, b * d)
+            found_ambient = True
+        elif light._kind == Light.KIND_DIRECTIONAL:
+            dx, dy, dz = light._direction_world
+            mag2 = dx * dx + dy * dy + dz * dz
+            if mag2 < 1e-12:
+                continue  # zero-vector guard
+            # BC forward = direction light shines; shader wants TOWARD light.
+            dir_to_light = (-dx, -dy, -dz)
+            r, g, b = light._color
+            dim = light._dimmer
+            color = (r * dim, g * dim, b * dim)
+            if len(directionals) < 4:
+                directionals.append((dir_to_light, color))
+            else:
+                overflowed = True
+
+    if overflowed:
+        # One log line per aggregation call — MissionLib runs this each tick
+        # so we can't suppress to once-per-set without state. The print is
+        # short and the case is rare (only multi-directional mods).
+        print(f"[host_loop] dropped extra directional lights from set "
+              f"{pSet.GetName()!r} (>4 configured)", flush=True)
+
+    if not found_ambient and not directionals:
+        # Active set was selected but had only filtered-out junk; treat as
+        # "no usable lights" → defaults.
+        return DEFAULT_AMBIENT, DEFAULT_DIRECTIONALS
+
+    return ambient, directionals
 
 
 def _world_matrix_row_major(ship) -> list:
