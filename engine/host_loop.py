@@ -59,19 +59,93 @@ CAM_UP_DIST   = 200.0 * SHIP_SCALE
 class _PlayerControl:
     """Keyboard-driven ship-transform integrator.
 
-    Reads keys via a duck-typed `h` (the _open_stbc_host bindings module
-    or a test fake) and updates the player's transform each tick. v1
-    writes _position / _rotation directly because Phase 1's
-    engine/physics/simulation.py is empty; when physics lands, this
-    becomes target-velocity / target-heading instead.
+    Throttle:
+        1-9 → target speed = (level/9) × MaxSpeed
+        0   → target = 0
+        R   → target = -0.25 × MaxSpeed (BC's "reverse 1/4 impulse" idiom)
+
+    Speed ramps from current toward target at MaxAccel rate (units/s²).
+    Held W/S/A/D/Q/E turns at MaxAngularVelocity (no angular ramp in v1).
+
+    When the ship has no ImpulseEngineSubsystem with non-zero MaxSpeed,
+    falls back to legacy IMPULSE_UNIT × level so fake-ship tests and
+    ships before SetupProperties has run still work.
     """
 
-    TURN_RATE_RAD_PER_S = 1.5   # ~86°/s — half-turn in ~2.1s
-    IMPULSE_UNIT        = 50.0  # BC units/s per impulse level
-    REVERSE_LEVEL       = -2    # signed level set by R key
+    # Legacy fallbacks — used when the live impulse subsystem isn't populated.
+    TURN_RATE_RAD_PER_S = 1.5    # ~86°/s
+    IMPULSE_UNIT        = 50.0   # BC units/s per level
+    FALLBACK_MAX_ACCEL  = 1.0e9  # effectively instant — preserves legacy semantics
+    REVERSE_LEVEL       = -2
+
+    # Reverse magnitude as a fraction of MaxSpeed (BC convention: ¼ impulse).
+    REVERSE_FRACTION = 0.25
 
     def __init__(self):
         self.impulse_level = 0  # signed: -2..9; 0 = stop
+        self._current_speed = 0.0
+        self._current_pitch_rate = 0.0
+        self._current_yaw_rate   = 0.0
+        self._current_roll_rate  = 0.0
+
+    # ── Hardpoint accessors ──────────────────────────────────────────────────
+
+    @staticmethod
+    def _get_ies(player):
+        getter = getattr(player, "GetImpulseEngineSubsystem", None)
+        return getter() if getter else None
+
+    def GetTargetSpeed(self, player) -> float:
+        """Convert impulse_level into a target speed using the ship's
+        ImpulseEngineProperty.MaxSpeed when present, or the legacy
+        per-level placeholder otherwise."""
+        ies = self._get_ies(player)
+        max_speed = ies.GetMaxSpeed() if ies is not None else 0.0
+        if max_speed > 0.0:
+            if self.impulse_level >= 0:
+                return (self.impulse_level / 9.0) * max_speed
+            return -self.REVERSE_FRACTION * max_speed
+        return self.impulse_level * self.IMPULSE_UNIT
+
+    def GetCurrentSpeed(self) -> float:
+        return self._current_speed
+
+    def _max_accel(self, player) -> float:
+        ies = self._get_ies(player)
+        if ies is not None and ies.GetMaxSpeed() > 0.0:
+            a = ies.GetMaxAccel()
+            return a if a > 0.0 else self.FALLBACK_MAX_ACCEL
+        return self.FALLBACK_MAX_ACCEL
+
+    def _angular_rate(self, player) -> float:
+        ies = self._get_ies(player)
+        if ies is not None and ies.GetMaxAngularVelocity() > 0.0:
+            return ies.GetMaxAngularVelocity()
+        return self.TURN_RATE_RAD_PER_S
+
+    def _angular_accel(self, player) -> float:
+        """Per-axis angular acceleration (rad/s²).  When the IES has no
+        MaxAngularAccel value, falls back to a very large rate so the legacy
+        snap-to-rate semantics are preserved (tests using fake ships keep
+        seeing instant rotation onset)."""
+        ies = self._get_ies(player)
+        if ies is not None and ies.GetMaxAngularVelocity() > 0.0:
+            a = ies.GetMaxAngularAccel()
+            return a if a > 0.0 else self.FALLBACK_MAX_ACCEL
+        return self.FALLBACK_MAX_ACCEL
+
+    def GetCurrentPitchRate(self) -> float: return self._current_pitch_rate
+    def GetCurrentYawRate(self)   -> float: return self._current_yaw_rate
+    def GetCurrentRollRate(self)  -> float: return self._current_roll_rate
+
+    @staticmethod
+    def _ramp_toward(current: float, target: float, step: float) -> float:
+        delta = target - current
+        if abs(delta) <= step:
+            return target
+        return current + (step if delta > 0 else -step)
+
+    # ── Per-tick step ────────────────────────────────────────────────────────
 
     def apply(self, player, dt: float, h) -> None:
         """Read keys, update player transform.
@@ -79,9 +153,7 @@ class _PlayerControl:
         `h` is the _open_stbc_host bindings module (or any object with
         key_state, key_pressed, and `keys.KEY_*` attributes).
         """
-        # 1. Throttle (one-shot edges). R is checked before digits so a
-        #    simultaneous R + digit press picks R; in practice no human
-        #    would do that on the same frame.
+        # 1. Throttle (one-shot edges).  R is checked before digits.
         if h.key_pressed(h.keys.KEY_R):
             self.impulse_level = self.REVERSE_LEVEL
         elif h.key_pressed(h.keys.KEY_0):
@@ -97,28 +169,39 @@ class _PlayerControl:
                     self.impulse_level = level
                     break
 
-        # 2. Angular rates (continuous while held).
-        # Sign convention (row-vector matrices, Y=forward, Z=up):
-        #   Rotating around +X by +θ pushes row 1 (forward) toward -Z = nose DOWN
-        #     → W (pitch down) is +rate, S (pitch up) is -rate.
-        #   Rotating around +Z by +θ moves row 1 toward +X = yaw RIGHT
-        #     → D is +rate, A is -rate.
-        #   Rotating around +Y by +θ moves row 2 (up) toward -X = roll LEFT
-        #     → Q (roll left) is +rate, E (roll right) is -rate.
-        pitch_rate = 0.0
-        yaw_rate   = 0.0
-        roll_rate  = 0.0
-        if h.key_state(h.keys.KEY_W): pitch_rate += self.TURN_RATE_RAD_PER_S
-        if h.key_state(h.keys.KEY_S): pitch_rate -= self.TURN_RATE_RAD_PER_S
-        if h.key_state(h.keys.KEY_A): yaw_rate   -= self.TURN_RATE_RAD_PER_S
-        if h.key_state(h.keys.KEY_D): yaw_rate   += self.TURN_RATE_RAD_PER_S
-        if h.key_state(h.keys.KEY_Q): roll_rate  += self.TURN_RATE_RAD_PER_S
-        if h.key_state(h.keys.KEY_E): roll_rate  -= self.TURN_RATE_RAD_PER_S
+        # 2. Linear speed ramp toward target at MaxAccel rate.
+        self._current_speed = self._ramp_toward(
+            self._current_speed,
+            self.GetTargetSpeed(player),
+            self._max_accel(player) * dt,
+        )
 
-        # 3. Rotation integration (post-multiply small per-tick rotation
-        #    in ship-local frame). Order pitch -> yaw -> roll matches
-        #    flight-sim convention; at small dt, composition order is
-        #    not visually distinguishable from any other Euler order.
+        # 3. Angular rates: held keys set a per-axis target rate; current rate
+        #    ramps toward target at MaxAngularAccel.
+        # Sign convention (row-vector matrices, Y=forward, Z=up):
+        #   +X rotation tilts forward (row 1) toward -Z = nose DOWN.
+        #   +Z rotation tilts forward toward +X = yaw RIGHT.
+        #   +Y rotation tilts up (row 2) toward -X = roll LEFT.
+        ang_rate    = self._angular_rate(player)
+        ang_step    = self._angular_accel(player) * dt
+        pitch_target = 0.0
+        yaw_target   = 0.0
+        roll_target  = 0.0
+        if h.key_state(h.keys.KEY_W): pitch_target += ang_rate
+        if h.key_state(h.keys.KEY_S): pitch_target -= ang_rate
+        if h.key_state(h.keys.KEY_A): yaw_target   -= ang_rate
+        if h.key_state(h.keys.KEY_D): yaw_target   += ang_rate
+        if h.key_state(h.keys.KEY_Q): roll_target  += ang_rate
+        if h.key_state(h.keys.KEY_E): roll_target  -= ang_rate
+        self._current_pitch_rate = self._ramp_toward(self._current_pitch_rate, pitch_target, ang_step)
+        self._current_yaw_rate   = self._ramp_toward(self._current_yaw_rate,   yaw_target,   ang_step)
+        self._current_roll_rate  = self._ramp_toward(self._current_roll_rate,  roll_target,  ang_step)
+        pitch_rate = self._current_pitch_rate
+        yaw_rate   = self._current_yaw_rate
+        roll_rate  = self._current_roll_rate
+
+        # 4. Rotation integration (post-multiply small per-tick rotation
+        #    in ship-local frame).  Pitch → yaw → roll Euler order.
         from engine.appc.math import TGMatrix3, TGPoint3
         X_AXIS = TGPoint3(1.0, 0.0, 0.0)
         Y_AXIS = TGPoint3(0.0, 1.0, 0.0)
@@ -132,15 +215,14 @@ class _PlayerControl:
             R = R.MultMatrix(R_pitch).MultMatrix(R_yaw).MultMatrix(R_roll)
             player.SetMatrixRotation(R)
 
-        # 4. Position integration (forward = ship-local Y axis in world).
-        if self.impulse_level != 0:
+        # 5. Position integration (forward = ship-local Y axis in world).
+        if self._current_speed != 0.0:
             forward = R.GetRow(1)
-            speed   = self.impulse_level * self.IMPULSE_UNIT
             p = player.GetTranslate()
             player.SetTranslateXYZ(
-                p.x + forward.x * speed * dt,
-                p.y + forward.y * speed * dt,
-                p.z + forward.z * speed * dt,
+                p.x + forward.x * self._current_speed * dt,
+                p.y + forward.y * self._current_speed * dt,
+                p.z + forward.z * self._current_speed * dt,
             )
 
 
