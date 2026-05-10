@@ -53,10 +53,6 @@ def set_camera(eye: Tuple[float, float, float],
     _h.set_camera(eye, target, up, fov_y_rad, near, far)
 
 
-def set_skybox(model: int) -> None:
-    _h.set_skybox(model)
-
-
 def set_lighting(ambient: Tuple[float, float, float],
                  directionals: list) -> None:
     """Configure the renderer's lighting state for subsequent frame()s.

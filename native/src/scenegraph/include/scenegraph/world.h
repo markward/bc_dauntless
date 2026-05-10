@@ -34,9 +34,6 @@ public:
         }
     }
 
-    void set_skybox(ModelHandle model) noexcept { skybox_model_ = model; }
-    ModelHandle skybox_model() const noexcept { return skybox_model_; }
-
 private:
     struct Slot {
         Instance instance;
@@ -45,7 +42,6 @@ private:
     };
     std::vector<Slot> slots_;
     std::vector<std::uint32_t> free_;
-    ModelHandle skybox_model_ = 0;
 };
 
 }  // namespace scenegraph

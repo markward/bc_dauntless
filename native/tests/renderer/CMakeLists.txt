@@ -3,7 +3,6 @@ add_executable(renderer_tests
     shader_test.cc
     pipeline_test.cc
     frame_test.cc
-    skybox_test.cc
 )
 
 target_link_libraries(renderer_tests

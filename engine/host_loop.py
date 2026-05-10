@@ -16,7 +16,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # v1 ship-gate selections — Task 25 pins these from the pick_*.py scan results.
 SHIP_GATE_MISSION = "Custom.Tutorial.Episode.M1Basic.M1Basic"
-DEFAULT_SKYBOX_NIF: Optional[str] = None  # No skybox NIF in BC assets; spec defers
 DEFAULT_TEXTURE_SEARCH = "data/Models/SharedTextures/FedShips/High"
 DEFAULT_PLAYER_SET = "Biranu1"  # M1 Basic-specific
 
@@ -336,10 +335,6 @@ def run(mission_name: str = SHIP_GATE_MISSION,
 
     r.init(1280, 720, "open_stbc")
     try:
-        if DEFAULT_SKYBOX_NIF:
-            sky = r.load_model(DEFAULT_SKYBOX_NIF, DEFAULT_TEXTURE_SEARCH)
-            r.set_skybox(sky)
-
         # Per-NIF cache so the same mesh isn't reloaded once per ship.
         nif_to_handle: dict[str, int] = {}
         instances: dict[object, object] = {}  # ship -> InstanceId

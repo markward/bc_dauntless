@@ -40,9 +40,9 @@ def test_set_camera_does_not_raise():
     )
 
 
-def test_set_skybox_does_not_raise():
+def test_set_backdrops_does_not_raise():
     import _open_stbc_host
-    _open_stbc_host.set_skybox(0)
+    _open_stbc_host.set_backdrops([])
 
 
 def test_set_world_transform_rejects_wrong_length_after_init():

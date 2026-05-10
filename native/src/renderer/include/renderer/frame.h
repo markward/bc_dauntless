@@ -60,14 +60,6 @@ public:
                        const ModelLookup& lookup,
                        const Lighting& lighting);
 
-    /// Render the skybox model with depth-write off, depth-test LEQUAL,
-    /// projection translation removed. Caller-provided `skybox_model` may be
-    /// null — in which case this function is a no-op. Must run before the
-    /// opaque pass.
-    void submit_skybox(const assets::Model* skybox_model,
-                       const scenegraph::Camera& camera,
-                       Pipeline& pipeline);
-
 private:
     /// Lazily-allocated 1x1 white texture used as a fallback when a material
     /// has no Base-stage texture. Keeps the sampler bound to a valid object

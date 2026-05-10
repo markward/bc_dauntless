@@ -143,7 +143,7 @@ void frame() {
     };
 
     g_world.propagate();
-    g_submitter->submit_skybox(lookup(g_world.skybox_model()), g_camera, *g_pipeline);
+    g_backdrop_pass->render(g_backdrops, g_camera, *g_pipeline);
     g_submitter->submit_opaque(g_world, g_camera, *g_pipeline, lookup, g_lighting);
 
     g_window->poll_events();
@@ -211,9 +211,6 @@ PYBIND11_MODULE(_open_stbc_host, m) {
           },
           py::arg("eye"), py::arg("target"), py::arg("up"),
           py::arg("fov_y_rad"), py::arg("near"), py::arg("far"));
-    m.def("set_skybox",
-          [](scenegraph::ModelHandle h) { g_world.set_skybox(h); },
-          py::arg("model"));
 
     m.def("set_lighting",
           [](std::tuple<float,float,float> ambient,
