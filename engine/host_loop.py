@@ -212,6 +212,24 @@ def _iter_planets(*, verbose: bool = False) -> Iterable:
                 yield obj
 
 
+def _iter_suns() -> Iterable:
+    """Walk every Sun in every active set."""
+    import App
+    from engine.appc.planet import Sun
+    for pSet in App.g_kSetManager._sets.values():
+        for obj in _iter_set_objects(pSet):
+            if isinstance(obj, Sun):
+                yield obj
+
+
+def _aggregate_suns() -> list:
+    """Collect sun render descriptors from all active sets."""
+    from engine.appc.planet import aggregate_suns_for_renderer
+    import App
+    return aggregate_suns_for_renderer(
+        PROJECT_ROOT, list(App.g_kSetManager._sets.values()))
+
+
 def _planet_nif_path(planet, *, verbose: bool = False) -> Optional[str]:
     """Return absolute path to the planet's NIF, or None if unavailable."""
     rel = planet.GetModelPath()
