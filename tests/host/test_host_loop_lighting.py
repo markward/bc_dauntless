@@ -149,3 +149,57 @@ def test_resolve_active_lighting_set_returns_none_for_no_lights():
         assert active is None
     finally:
         App.g_kSetManager.DeleteSet("Empty")
+
+
+def test_set_lighting_changes_rendered_pixel():
+    """End-to-end: set_lighting with bright red ambient changes the
+    on-screen pixel sampled at the centre of the frame, vs. set_lighting
+    with black ambient + no directionals."""
+    from pathlib import Path
+
+    PROJECT_ROOT = Path(__file__).parent.parent.parent
+    GALAXY_NIF = PROJECT_ROOT / "game" / "data" / "Models" / "Ships" / "Galaxy" / "Galaxy.nif"
+    if not GALAXY_NIF.is_file():
+        pytest.skip("BC assets not available")
+
+    os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
+    import _open_stbc_host
+
+    _open_stbc_host.init(640, 360, "test_set_lighting_changes_pixel")
+    try:
+        tex_search = str(PROJECT_ROOT / "game" / "data" / "Models" /
+                         "SharedTextures" / "FedShips" / "High")
+        h = _open_stbc_host.load_model(str(GALAXY_NIF), tex_search)
+        iid = _open_stbc_host.create_instance(h)
+        _open_stbc_host.set_world_transform(iid, [
+            1.0, 0.0, 0.0, 0.0,
+            0.0, 1.0, 0.0, 0.0,
+            0.0, 0.0, 1.0, 0.0,
+            0.0, 0.0, 0.0, 1.0,
+        ])
+        _open_stbc_host.set_camera(
+            eye=(0.0, 0.0, 1500.0),
+            target=(0.0, 0.0, 0.0),
+            up=(0.0, 1.0, 0.0),
+            fov_y_rad=1.0472, near=1.0, far=100000.0,
+        )
+
+        fw, fh = _open_stbc_host.framebuffer_size()
+        cx, cy = fw // 2, fh // 2
+
+        # Bright red ambient, no directionals.
+        _open_stbc_host.set_lighting((1.0, 0.0, 0.0), [])
+        _open_stbc_host.frame()
+        red_r, red_g, red_b, _ = _open_stbc_host.read_pixel(cx, cy)
+
+        # Black: no ambient, no directionals → fully unlit Galaxy.
+        _open_stbc_host.set_lighting((0.0, 0.0, 0.0), [])
+        _open_stbc_host.frame()
+        dark_r, _, _, _ = _open_stbc_host.read_pixel(cx, cy)
+
+        assert red_r > dark_r + 50, (
+            f"Expected red ambient to brighten pixel: red_r={red_r}, "
+            f"dark_r={dark_r}")
+    finally:
+        _open_stbc_host.destroy_instance(iid)
+        _open_stbc_host.shutdown()
