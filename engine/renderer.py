@@ -10,8 +10,8 @@ import _open_stbc_host as _h
 InstanceId = _h.InstanceId
 
 
-def init(width: int, height: int, title: str) -> None:
-    _h.init(width, height, title)
+def init(width: int, height: int, title: str, ui_assets_root: str = "") -> None:
+    _h.init(width, height, title, ui_assets_root)
 
 
 def shutdown() -> None:
@@ -87,3 +87,11 @@ def set_backdrops(backdrops: list) -> None:
         }
     """
     _h.set_backdrops(backdrops)
+
+
+def set_hud_state(state: dict) -> None:
+    """Push per-tick HUD data (pos, yaw/pitch/roll deg, system, ship) to the overlay.
+
+    No-op if the UI system was not initialized (headless runs, empty ui_assets_root).
+    """
+    _h.set_hud_state(state)
