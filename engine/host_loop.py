@@ -603,6 +603,68 @@ def _astro_world_matrix(obj) -> list:
     ]
 
 
+from dataclasses import dataclass, field
+from typing import Any
+
+
+@dataclass
+class MissionSession:
+    """Per-mission scene state owned by HostController.
+
+    Tracks the renderer instances created for the current mission so a
+    swap can destroy them without re-deriving them from the SDK's set
+    manager (which is itself about to be cleared).
+    """
+    mission_name: str
+    ship_instances:   dict[Any, int] = field(default_factory=dict)
+    planet_instances: dict[Any, int] = field(default_factory=dict)
+    player: Optional[Any] = None
+
+    def teardown(self, renderer) -> None:
+        for iid in list(self.ship_instances.values()):
+            renderer.destroy_instance(iid)
+        for iid in list(self.planet_instances.values()):
+            renderer.destroy_instance(iid)
+        self.ship_instances.clear()
+        self.planet_instances.clear()
+        self.player = None
+
+
+class HostController:
+    """Per-process state for the running renderer + a single mission.
+
+    The nif_to_handle cache lives here (not in MissionSession) so the
+    same NIF doesn't re-upload when the next mission reuses it.
+    """
+    def __init__(self) -> None:
+        self.renderer: Any = None
+        self.loader: Any = None
+        self.nif_to_handle: dict[str, int] = {}
+        self.session: Optional[MissionSession] = None
+        self.pending_swap: Optional[str] = None
+
+    def swap_mission(self, mission_name: str) -> None:
+        self.pending_swap = mission_name
+
+    def _drain_pending_swap(self) -> None:
+        if self.pending_swap is None:
+            return
+        name = self.pending_swap
+        self.pending_swap = None
+        if self.session is not None:
+            self.session.teardown(self.renderer)
+        reset_sdk_globals()
+        assert self.loader is not None, "HostController.loader must be set"
+        try:
+            self.session = self.loader.load(name)
+        except Exception as e:
+            import traceback
+            print(f"[host] mission swap to {name!r} failed: "
+                  f"{type(e).__name__}: {e}", flush=True)
+            traceback.print_exc()
+            self.session = None
+
+
 def run(mission_name: str = SHIP_GATE_MISSION,
         max_ticks: Optional[int] = None) -> int:
     """Boot the renderer, init the named mission, run until the window closes
