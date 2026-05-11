@@ -387,6 +387,7 @@ PYBIND11_MODULE(_open_stbc_host, m) {
     keys.attr("KEY_F7")    = GLFW_KEY_F7;
     keys.attr("KEY_F8")    = GLFW_KEY_F8;
     keys.attr("KEY_F9")    = GLFW_KEY_F9;
+    keys.attr("KEY_SPACE") = GLFW_KEY_SPACE;
     keys.attr("KEY_ESCAPE") = GLFW_KEY_ESCAPE;
 
     m.def("key_state",
