@@ -9,12 +9,45 @@
 #include <RmlUi_Platform_GLFW.h>
 #include <RmlUi_Renderer_GL3.h>
 #include <RmlUi/Core.h>
+#include <RmlUi/Debugger.h>
 #include <GLFW/glfw3.h>
 
 #include <cstdio>
 #include <stdexcept>
 
 namespace ui {
+
+namespace {
+// Single UiSystem at a time — the input callbacks reference this directly.
+// GLFW callbacks are C function pointers (no captures), so the context has
+// to live somewhere addressable. The host has exactly one UI system, so a
+// translation-unit-scope pointer is the cleanest fit.
+Rml::Context* g_input_ctx = nullptr;
+
+void cursor_pos_cb(GLFWwindow* w, double xpos, double ypos) {
+    if (g_input_ctx) {
+        RmlGLFW::ProcessCursorPosCallback(g_input_ctx, w, xpos, ypos, /*mods=*/0);
+    }
+}
+
+void mouse_button_cb(GLFWwindow*, int button, int action, int mods) {
+    if (g_input_ctx) {
+        RmlGLFW::ProcessMouseButtonCallback(g_input_ctx, button, action, mods);
+    }
+}
+
+void key_cb(GLFWwindow*, int key, int /*scancode*/, int action, int mods) {
+    if (g_input_ctx) {
+        RmlGLFW::ProcessKeyCallback(g_input_ctx, key, action, mods);
+    }
+}
+
+void char_cb(GLFWwindow*, unsigned int codepoint) {
+    if (g_input_ctx) {
+        RmlGLFW::ProcessCharCallback(g_input_ctx, codepoint);
+    }
+}
+}  // namespace
 
 UiSystem::UiSystem(GLFWwindow* window,
                    const std::filesystem::path& assets_root)
@@ -65,9 +98,24 @@ UiSystem::UiSystem(GLFWwindow* window,
 
     hud_ = std::make_unique<HudDocument>(context_, assets_root / "hud.rml");
     assets_root_ = assets_root;
+
+    // RmlUi debug overlay — open on demand via the F8 key (handled in
+    // host_loop). Initialise unconditionally; SetVisible toggles display.
+    Rml::Debugger::Initialise(context_);
+
+    // Wire GLFW input → RmlUi context. The scroll callback is owned by
+    // renderer::Window (orbit camera zoom) and is intentionally not touched
+    // here. Mouse-wheel forwarding into RmlUi can be added later when a
+    // scrollable panel needs it.
+    g_input_ctx = context_;
+    glfwSetCursorPosCallback(window, cursor_pos_cb);
+    glfwSetMouseButtonCallback(window, mouse_button_cb);
+    glfwSetKeyCallback(window, key_cb);
+    glfwSetCharCallback(window, char_cb);
 }
 
 UiSystem::~UiSystem() {
+    g_input_ctx = nullptr;
     panels_.clear();      // destroy panel documents before RmlUi shuts down
     hud_.reset();
     context_ = nullptr;   // owned by RmlUi core; Shutdown destroys it
@@ -95,6 +143,12 @@ PanelDocument* UiSystem::get_panel(int panel_id) {
 
 void UiSystem::set_ui_scale(float scale) {
     if (context_) context_->SetDensityIndependentPixelRatio(scale);
+}
+
+void UiSystem::toggle_debugger() {
+    static bool visible = false;
+    visible = !visible;
+    Rml::Debugger::SetVisible(visible);
 }
 
 void UiSystem::update_hud(const HudState& state) {

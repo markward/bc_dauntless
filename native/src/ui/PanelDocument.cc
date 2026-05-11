@@ -51,8 +51,11 @@ PanelDocument::PanelDocument(Rml::Context* context,
     doc_->SetProperty("position", "absolute");
     doc_->SetProperty("width",  std::to_string(width_vw)  + "vw");
     doc_->SetProperty("height", std::to_string(height_vh) + "vh");
-    if      (anchor == "top-left")     { doc_->SetProperty("left",  "0dp"); doc_->SetProperty("top",    "0dp"); }
-    else if (anchor == "top-right")    { doc_->SetProperty("right", "0dp"); doc_->SetProperty("top",    "0dp"); }
+    // 30dp top offset is applied uniformly across all top-anchored UI so
+    // panels and the HUD don't sit flush against the very top of the
+    // viewport. Bottom-anchored panels are unaffected.
+    if      (anchor == "top-left")     { doc_->SetProperty("left",  "0dp"); doc_->SetProperty("top",    "30dp"); }
+    else if (anchor == "top-right")    { doc_->SetProperty("right", "0dp"); doc_->SetProperty("top",    "30dp"); }
     else if (anchor == "bottom-left")  { doc_->SetProperty("left",  "0dp"); doc_->SetProperty("bottom", "0dp"); }
     else if (anchor == "bottom-right") { doc_->SetProperty("right", "0dp"); doc_->SetProperty("bottom", "0dp"); }
 

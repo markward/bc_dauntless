@@ -17,15 +17,29 @@ Anchor = Literal["top-left", "top-right", "bottom-left", "bottom-right"]
 
 
 class UiPanel:
+    # Toggle glyphs — Noto Sans Symbols 2 fallback supplies these when Antonio
+    # doesn't cover them. User-spec: arrow-up when collapsed, arrow-down when
+    # expanded (the arrow always points the direction expansion would go).
+    _GLYPH_EXPANDED  = "▼"
+    _GLYPH_COLLAPSED = "▲"
+
     def __init__(self, *,
                  id: str,
                  anchor: Anchor = "top-right",
                  width_vw: float = 20.0,
-                 height_vh: float = 60.0):
+                 height_vh: float = 60.0,
+                 title: Optional[str] = None,
+                 collapsible: bool = False):
         self._id = id
         self._anchor = anchor
         self._width_vw = width_vw
         self._height_vh = height_vh
+        self._title = title
+        self._collapsible = collapsible
+        self._collapsed = False
+        self._title_element_id: Optional[int] = None
+        self._toggle_element_id: Optional[int] = None
+        self._header_element_id: Optional[int] = None
         self._children: list[object] = []
         self._radio_group = _RadioGroup()
         self._destroyed = False
@@ -33,9 +47,70 @@ class UiPanel:
         self.panel_id = bindings.create_panel(id, anchor, width_vw, height_vh)
         self.refresh_theme()
 
+        panel_root_id = bindings.panel_root(self.panel_id)
+
+        # Optional header (title text on the left, collapse toggle on the right).
+        # Header is only emitted when at least one of (title, collapsible) is
+        # requested. Otherwise content attaches directly to #root, preserving
+        # the old single-div layout used in the lightweight tests.
+        has_header = title is not None or collapsible
+        if has_header:
+            self._header_element_id = bindings.append_div(
+                panel_root_id, "bc-panel-header")
+            self._title_element_id = bindings.append_div(
+                self._header_element_id, "bc-panel-title")
+            if title is not None:
+                bindings.set_text(self._title_element_id, title)
+            if collapsible:
+                self._toggle_element_id = bindings.append_div(
+                    self._header_element_id, "bc-panel-toggle")
+                bindings.set_text(self._toggle_element_id, self._GLYPH_EXPANDED)
+                bindings.on_click(self._toggle_element_id, self._handle_toggle_click)
+            self._content_element_id = bindings.append_div(
+                panel_root_id, "bc-panel-body")
+        else:
+            self._content_element_id = panel_root_id
+
+    # ── Public state ─────────────────────────────────────────────────────────
+
     @property
     def root(self) -> int:
-        return bindings.panel_root(self.panel_id)
+        """Element id that child components attach to.
+
+        With a header, this is the bc-panel-body div inside #root; without
+        a header it's #root itself.
+        """
+        return self._content_element_id
+
+    @property
+    def collapsed(self) -> bool:
+        return self._collapsed
+
+    @property
+    def title(self) -> Optional[str]:
+        return self._title
+
+    def set_collapsed(self, collapsed: bool) -> None:
+        if not self._collapsible:
+            raise RuntimeError(
+                "Panel is not collapsible; construct with collapsible=True")
+        if self._collapsed == collapsed:
+            return
+        self._collapsed = collapsed
+        bindings.set_visible(self._content_element_id, not collapsed)
+        bindings.set_text(
+            self._toggle_element_id,
+            self._GLYPH_COLLAPSED if collapsed else self._GLYPH_EXPANDED)
+
+    def set_title(self, title: str) -> None:
+        if self._title_element_id is None:
+            raise RuntimeError(
+                "Panel has no header; construct with title=... to enable")
+        self._title = title
+        bindings.set_text(self._title_element_id, title)
+
+    def _handle_toggle_click(self) -> None:
+        self.set_collapsed(not self._collapsed)
 
     def button(self, label: str, *,
                menu_level: int = 3,

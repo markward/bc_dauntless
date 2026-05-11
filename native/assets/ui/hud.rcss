@@ -11,7 +11,7 @@ body {
 #hud {
     position: absolute;
     right: 10dp;
-    top: 10dp;
+    top: 40dp;            /* 30dp UI top offset + the original 10dp inset */
     width: 460dp;
     background-color: #00000074;
     padding: 12dp;

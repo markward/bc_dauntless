@@ -56,6 +56,11 @@ public:
     /// documents in the context (HUD + panels).
     void set_ui_scale(float scale);
 
+    /// Toggle the RmlUi debugger overlay. Shows the live element tree,
+    /// computed styles, layout boxes — exactly what we need to see when
+    /// "the panel only renders at top and bottom" without theorising.
+    void toggle_debugger();
+
 private:
     std::unique_ptr<SystemInterface_GLFW> sys_iface_;
     std::unique_ptr<RenderInterface_GL3>  render_iface_;

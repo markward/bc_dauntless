@@ -624,7 +624,8 @@ def run(mission_name: str = SHIP_GATE_MISSION,
         from engine import ui
         ui.init()
         demo_panel = ui.UiPanel(id="demo", anchor="top-left",
-                                width_vw=18.0, height_vh=55.0)
+                                width_vw=18.0, height_vh=55.0,
+                                title="Targets", collapsible=True)
         bop = demo_panel.collapsible("Bird of Prey-1", affiliation="enemy",
                                      expanded=True)
         bop.button("Shield Generator")
@@ -752,6 +753,10 @@ def run(mission_name: str = SHIP_GATE_MISSION,
         ticks = 0
         while not r.should_close():
             loop.tick()
+
+            # F8 toggles the RmlUi debugger overlay.
+            if _h is not None and _h.key_pressed(_h.keys.KEY_F8):
+                _h.toggle_ui_debugger()
 
             # Apply keyboard input to the player ship's transform and to the
             # orbit camera. Scroll delta is consumed once per tick; old
