@@ -393,6 +393,37 @@ class _CameraControl:
         return self._smoothed_rot
 
 
+class _ViewModeController:
+    """Bridge/exterior view modality.
+
+    Edge-triggered on KEY_SPACE. Owns the single mode flag that input,
+    camera, and HUD dispatch off — see _apply_input and _compute_camera.
+
+    Bridge mode is currently a stub: the camera anchors at the ship
+    origin looking along ship-Y forward, ship input is suppressed (the
+    ship coasts on existing velocity), and a "BRIDGE VIEW" HUD panel
+    becomes visible. No bridge geometry yet.
+    """
+    EXTERIOR = 0
+    BRIDGE   = 1
+
+    def __init__(self):
+        self._mode = self.EXTERIOR
+
+    @property
+    def is_exterior(self) -> bool: return self._mode == self.EXTERIOR
+    @property
+    def is_bridge(self)   -> bool: return self._mode == self.BRIDGE
+
+    def toggle(self) -> None:
+        self._mode = self.BRIDGE if self.is_exterior else self.EXTERIOR
+
+    def apply(self, h) -> None:
+        """Poll space-pressed and toggle on edge."""
+        if h.key_pressed(h.keys.KEY_SPACE):
+            self.toggle()
+
+
 def _setup_sdk() -> None:
     """Install SDK finder + AST transforms so SDK script imports work."""
     if str(PROJECT_ROOT) not in sys.path:
