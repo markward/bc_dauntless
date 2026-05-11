@@ -40,9 +40,13 @@ viewscreen overlay, mouse-look) plugs into it without restructuring.
 4. Render a small "BRIDGE VIEW" UI panel via [engine/ui](../../../engine/ui)
    that is visible only in bridge mode, mirroring how `F7` toggles the
    dust pass.
-5. Cover the seam with unit tests in
-   [tests/host/test_host_loop_unit.py](../../../tests/host/test_host_loop_unit.py):
-   toggle behaviour, input-skip behaviour, and bridge-camera math.
+5. Cover the seam with unit tests in a new
+   [tests/host/test_view_mode.py](../../../tests/host/test_view_mode.py)
+   (mirroring the sibling pattern of `test_camera_control.py` and
+   `test_player_control.py`): toggle behaviour, input-skip behaviour,
+   and bridge-camera math. The integration-style
+   `test_host_loop_unit.py` continues to cover the booted-renderer
+   path.
 
 ## Non-goals (PoC)
 
@@ -149,9 +153,10 @@ harmless when bridge mode is active.
 
 ## Testing
 
-All tests in [tests/host/test_host_loop_unit.py](../../../tests/host/test_host_loop_unit.py),
-following the existing fake-bindings pattern used by `_PlayerControl`
-and `_CameraControl` tests:
+All tests in a new file
+[tests/host/test_view_mode.py](../../../tests/host/test_view_mode.py),
+following the existing fake-bindings pattern used by the
+`_PlayerControl` and `_CameraControl` test modules:
 
 1. **`test_view_mode_starts_exterior`** — fresh controller is in
    exterior mode; `is_exterior` is True, `is_bridge` is False.
@@ -181,8 +186,8 @@ expressible without `r.init`.
 - [engine/host_loop.py](../../../engine/host_loop.py) — add
   `_ViewModeController`, integrate into `run()`, extract the dispatch
   block enough that tests can hit it directly.
-- [tests/host/test_host_loop_unit.py](../../../tests/host/test_host_loop_unit.py) —
-  five new tests as listed above.
+- [tests/host/test_view_mode.py](../../../tests/host/test_view_mode.py) —
+  new file with the five tests listed above.
 - [engine/ui/panel.py](../../../engine/ui/panel.py) — add a one-line
   `UiPanel.set_visible(visible: bool)` wrapping
   `bindings.set_panel_visible(self._panel_id, visible)`.
