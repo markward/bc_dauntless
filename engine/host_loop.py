@@ -938,7 +938,7 @@ def run(mission_name: str = SHIP_GATE_MISSION,
         target_list = TargetListController(
             target_panel,
             player_provider=lambda: App.Game_GetCurrentPlayer(),
-            show_subsystems=False,
+            show_subsystems=True,
         )
 
         # Debug stat panel, top-right. Replaces the old hud.rml document.
