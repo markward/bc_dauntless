@@ -189,3 +189,13 @@ body {
 /* Positioning is applied as inline properties in the C++ binding;     */
 /* this class is reserved for any per-modal styling we add later.      */
 .bc-panel-center { }
+
+/* Footer container for a single right-aligned panel button (e.g. Cancel). */
+.bc-panel-footer {
+    display: flex;
+    justify-content: flex-end;
+    padding-top: 8dp;
+    padding-right: 8dp;
+    padding-bottom: 8dp;
+    padding-left: 8dp;
+}

@@ -44,6 +44,8 @@ class UiPanel:
         self._children: list[object] = []
         self._radio_group = _RadioGroup()
         self._destroyed = False
+        self._footer_element_id: Optional[int] = None
+        self._footer_button: Optional[UiButton] = None
 
         self.panel_id = bindings.create_panel(id, anchor, width_vw, height_vh)
         self.refresh_theme()
@@ -117,6 +119,28 @@ class UiPanel:
 
     def _handle_toggle_click(self) -> None:
         self.set_collapsed(not self._collapsed)
+
+    def set_footer_button(self, label: str,
+                          on_click: Optional[Callable[[], None]] = None,
+    ) -> UiButton:
+        """Create or re-bind the panel's single footer button.
+
+        The footer container is created lazily on first call. Subsequent
+        calls update the label and on_click on the same button.
+        """
+        if self._footer_element_id is None:
+            self._footer_element_id = bindings.append_div(
+                bindings.panel_root(self.panel_id), "bc-panel-footer")
+            self._footer_button = UiButton(
+                parent_element=self._footer_element_id,
+                label=label, menu_level=3, selected=False,
+                on_click=on_click,
+            )
+        else:
+            assert self._footer_button is not None
+            self._footer_button.set_label(label)
+            self._footer_button._on_click = on_click
+        return self._footer_button
 
     def button(self, label: str, *,
                menu_level: int = 3,
