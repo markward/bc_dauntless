@@ -5,6 +5,7 @@ add_executable(renderer_tests
     frame_test.cc
     backdrop_pass_test.cc
     sun_pass_test.cc
+    dust_pass_test.cc
 )
 
 target_link_libraries(renderer_tests

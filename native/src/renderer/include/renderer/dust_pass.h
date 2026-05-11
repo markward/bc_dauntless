@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <vector>
 
 namespace assets { class Texture; }
 namespace scenegraph { struct Camera; }
@@ -12,6 +13,23 @@ namespace scenegraph { struct Camera; }
 namespace renderer {
 
 class Pipeline;
+
+/// Generate `count` particle records uniformly distributed inside a
+/// sphere of radius `radius`, with deterministic per-particle jitter in
+/// the w channel. Pure CPU; testable without a GL context.
+///
+/// Output layout: vec4(x, y, z, jitter) where jitter in [0, 1).
+std::vector<glm::vec4> generate_dust_particles(std::uint32_t seed,
+                                               int count,
+                                               float radius);
+
+/// C++ mirror of the GLSL toroidal-wrap formula in dust.vert. Kept here
+/// as a regression guard; the shader is the source of truth for
+/// rendering. If the two ever drift, visual tuning will catch it before
+/// this test does.
+glm::vec3 wrap_local_for_test(glm::vec3 particle_pos,
+                              glm::vec3 camera_pos,
+                              float radius);
 
 class DustPass {
 public:
