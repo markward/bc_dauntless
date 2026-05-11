@@ -117,12 +117,8 @@ def test_picking_a_mission_closes_panel_and_invokes_callback(
     picker.drain()
     assert chosen == ["Custom.Tutorial.Episode.M1.M1"]
     assert not picker.is_open()
-    # Panel is hidden (still alive) immediately after drain; gets
-    # destroyed a few drains later via the destroy-countdown.
+    # Panel is hidden (kept alive across opens), not destroyed.
     assert fake_dom._panels
-    for _ in range(5):
-        picker.drain()
-    assert not fake_dom._panels
 
 
 def test_cancel_button_closes_and_invokes_on_cancel(

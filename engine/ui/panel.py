@@ -146,14 +146,26 @@ class UiPanel:
                menu_level: int = 3,
                selected: bool = False,
                on_click: Optional[Callable[[], None]] = None,
+               radio: bool = True,
     ) -> UiButton:
+        """Create a button as a direct child of this panel.
+
+        With ``radio=True`` (the default) the button joins the panel's
+        radio group: only one of those buttons can be selected at a
+        time, and clicking the already-selected one is a no-op.
+
+        For action buttons whose handler should fire on EVERY click
+        (e.g., "Load Mission"), pass ``radio=False``. Such buttons are
+        not selectable and never block their own re-firing.
+        """
         btn = UiButton(parent_element=self.root, label=label,
                        menu_level=menu_level, selected=selected,
                        on_click=on_click)
-        self._radio_group.adopt(btn)
+        if radio:
+            self._radio_group.adopt(btn)
+            if selected:
+                self._radio_group.select(btn)
         self._children.append(btn)
-        if selected:
-            self._radio_group.select(btn)
         return btn
 
     def collapsible(self, label: str, *,

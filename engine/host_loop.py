@@ -818,7 +818,7 @@ def run(mission_name: str = SHIP_GATE_MISSION,
             on_load=controller.swap_mission,
             on_cancel=lambda: None,
         )
-        debug_panel.button("Load Mission", on_click=picker.open)
+        debug_panel.button("Load Mission", on_click=picker.open, radio=False)
 
         # Per-tick player input → ship-transform integrator.
         player_control = _PlayerControl()

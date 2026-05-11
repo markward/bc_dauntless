@@ -1,5 +1,34 @@
-"""UiPanel.set_footer_button creates one right-aligned button at the bottom."""
+"""UiPanel.set_footer_button creates one right-aligned button at the bottom.
+Also covers panel.button(radio=False) action-button semantics."""
 from engine.ui import UiPanel
+
+
+def test_non_radio_button_refires_on_repeat_click(fake_dom):
+    """Action buttons (radio=False) must fire on every click — radio-group
+    'already selected → no-op' semantics would break a Load Mission /
+    Run / Apply button after its first click."""
+    panel = UiPanel(id="p", width_vw=20, height_vh=20, title="T")
+    fired: list[int] = []
+    btn = panel.button(
+        "Load Mission",
+        on_click=lambda: fired.append(1),
+        radio=False,
+    )
+    fake_dom.fire_click(btn.element_id)
+    fake_dom.fire_click(btn.element_id)
+    fake_dom.fire_click(btn.element_id)
+    assert fired == [1, 1, 1]
+
+
+def test_radio_button_default_blocks_repeat_click(fake_dom):
+    """Confirms the default radio=True behavior: second click on the
+    already-selected button is a no-op."""
+    panel = UiPanel(id="p", width_vw=20, height_vh=20, title="T")
+    fired: list[int] = []
+    btn = panel.button("Target X", on_click=lambda: fired.append(1))
+    fake_dom.fire_click(btn.element_id)
+    fake_dom.fire_click(btn.element_id)
+    assert fired == [1]
 
 
 def test_footer_creates_one_container_and_button(fake_dom):
