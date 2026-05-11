@@ -431,6 +431,21 @@ class _ViewModeController:
             self.toggle()
 
 
+def _apply_view_mode_side_effects(view_mode: "_ViewModeController", h) -> None:
+    """Mirror the view-mode flag into renderer-side state. Idempotent —
+    only fires when the mode has changed since the last call. `h` is
+    the bindings module (or fake) exposing bridge_pass_set_enabled and
+    set_cursor_locked.
+    """
+    target = view_mode.is_bridge
+    last = getattr(view_mode, "_last_synced_is_bridge", None)
+    if last == target:
+        return
+    h.bridge_pass_set_enabled(target)
+    h.set_cursor_locked(target)
+    view_mode._last_synced_is_bridge = target
+
+
 class _BridgeCamera:
     """First-person bridge camera with mouse-look.
 
@@ -1135,6 +1150,7 @@ def run(mission_name: str = SHIP_GATE_MISSION,
         player_control = _PlayerControl()
         cam_control    = _CameraControl()
         view_mode      = _ViewModeController()
+        bridge_camera  = _BridgeCamera()
         try:
             import _open_stbc_host as _h
         except ImportError:
@@ -1165,9 +1181,12 @@ def run(mission_name: str = SHIP_GATE_MISSION,
 
             # SPACE toggles bridge/exterior view modality. Polled before
             # the F-key handlers so the modality switch happens first in
-            # the tick.
+            # the tick. _apply_view_mode_side_effects mirrors the flag
+            # into renderer state (bridge pass enable + cursor lock) and
+            # is idempotent — only fires when the mode changed.
             if _h is not None:
                 view_mode.apply(_h)
+                _apply_view_mode_side_effects(view_mode, _h)
             # F7 toggles space dust; F8 toggles the RmlUi debugger
             # overlay; F9 toggles whole-UI visibility; ESC dismisses the
             # mission picker (no-op when it isn't open).
@@ -1206,6 +1225,17 @@ def run(mission_name: str = SHIP_GATE_MISSION,
                 eye, target, up_vec = _compute_camera(
                     view_mode, cam_control,
                     player=player, dt=TICK_DT)
+                if view_mode.is_bridge:
+                    mouse_dx, mouse_dy = _h.consume_mouse_delta() if _h else (0.0, 0.0)
+                    bridge_camera.apply(mouse_dx, mouse_dy)
+                    b_eye, b_target, b_up = bridge_camera.compute_camera(
+                        player.GetWorldLocation(), player.GetWorldRotation())
+                    r.set_bridge_camera(
+                        eye=b_eye, target=b_target, up=b_up,
+                        fov_y_rad=_BridgeCamera.FOV_Y_RAD,
+                        near=_BridgeCamera.NEAR,
+                        far=_BridgeCamera.FAR,
+                    )
             else:
                 eye = (0.0, 30.0, 200.0)
                 target = (0.0, 0.0, 0.0)

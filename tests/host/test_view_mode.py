@@ -169,6 +169,60 @@ def test_apply_input_in_bridge_keeps_ship_moving_under_real_player_control():
     assert pc.impulse_level == 5
 
 
+class _RecordingRenderer:
+    """Stand-in for the _open_stbc_host bindings module. Records calls
+    to bridge-pass-related functions so toggle wiring can be asserted
+    without booting the real renderer."""
+    def __init__(self):
+        self.bridge_pass_calls = []   # list of bool
+        self.cursor_lock_calls = []   # list of bool
+
+    def bridge_pass_set_enabled(self, enabled):
+        self.bridge_pass_calls.append(enabled)
+
+    def set_cursor_locked(self, locked):
+        self.cursor_lock_calls.append(locked)
+
+
+def test_toggle_to_bridge_enables_pass_and_locks_cursor():
+    """Toggling exterior → bridge fires bridge_pass_set_enabled(True)
+    and set_cursor_locked(True) exactly once each."""
+    from engine.host_loop import _ViewModeController, _apply_view_mode_side_effects
+    vm = _ViewModeController()  # exterior
+    rr = _RecordingRenderer()
+    vm.toggle()  # exterior → bridge
+    _apply_view_mode_side_effects(vm, rr)
+    assert rr.bridge_pass_calls == [True]
+    assert rr.cursor_lock_calls == [True]
+
+
+def test_toggle_to_exterior_disables_pass_and_releases_cursor():
+    from engine.host_loop import _ViewModeController, _apply_view_mode_side_effects
+    vm = _ViewModeController()
+    vm.toggle()  # bridge
+    rr = _RecordingRenderer()
+    _apply_view_mode_side_effects(vm, rr)  # one true call
+    vm.toggle()  # back to exterior
+    _apply_view_mode_side_effects(vm, rr)
+    assert rr.bridge_pass_calls == [True, False]
+    assert rr.cursor_lock_calls == [True, False]
+
+
+def test_apply_view_mode_side_effects_idempotent_within_a_mode():
+    """Calling _apply_view_mode_side_effects twice without toggling
+    must not re-fire the renderer calls — bridge_pass_set_enabled is a
+    cheap setter but cursor lock has visible side-effects we don't want
+    to spam."""
+    from engine.host_loop import _ViewModeController, _apply_view_mode_side_effects
+    vm = _ViewModeController()
+    rr = _RecordingRenderer()
+    _apply_view_mode_side_effects(vm, rr)
+    _apply_view_mode_side_effects(vm, rr)  # no toggle in between
+    # Both lists should have at most 1 entry (the initial-sync call).
+    assert len(rr.bridge_pass_calls) <= 1
+    assert len(rr.cursor_lock_calls) <= 1
+
+
 def test_bridge_camera_anchors_at_ship_origin_looking_forward():
     """Spec test 4: bridge camera eye = ship loc, target along ship
     forward (row 1), up along ship up (row 2)."""
