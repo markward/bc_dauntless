@@ -3,6 +3,7 @@ add_executable(renderer_tests
     shader_test.cc
     pipeline_test.cc
     frame_test.cc
+    lighting_test.cc
     backdrop_pass_test.cc
     sun_pass_test.cc
     dust_pass_test.cc
