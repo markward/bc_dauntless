@@ -84,15 +84,37 @@ PanelDocument::~PanelDocument() {
 
 void PanelDocument::set_visible(bool visible) {
     if (!doc_) return;
-    // Two-pronged hide:
-    //   display: none       — drops the document from layout/rendering
-    //   pointer-events: none — RmlUi's hit-test (Context::GetElementAtPoint)
-    //                          short-circuits on this so the hidden 42vw×72vh
-    //                          centered document doesn't keep stealing
-    //                          clicks from UI behind it.
-    // Show inverts both.
-    doc_->SetProperty("display",        visible ? "block" : "none");
-    doc_->SetProperty("pointer-events", visible ? "auto"  : "none");
+    // We tried display:none and pointer-events:none on the document
+    // body — RmlUi documents still appear in the context's hit-test
+    // tree regardless. The reliable workaround is to move the document
+    // off-screen: it's still loaded and its on_click handlers are
+    // intact, but no in-viewport click can possibly hit it.
+    //
+    // For "visible" we drop the off-screen overrides; the anchor's
+    // existing left/top/transform inline properties (set in the
+    // constructor) re-take effect.
+    if (visible) {
+        doc_->RemoveProperty("display");
+        doc_->RemoveProperty("pointer-events");
+        doc_->RemoveProperty("left");
+        doc_->RemoveProperty("top");
+        doc_->RemoveProperty("transform");
+        // Re-apply the original anchor (only "center" is currently used
+        // by code that toggles visibility, but mirror all four corners
+        // for symmetry with the constructor).
+        doc_->SetProperty("left",      "50%");
+        doc_->SetProperty("top",       "50%");
+        doc_->SetProperty("transform", "translate(-50%, -50%)");
+    } else {
+        doc_->SetProperty("display",        "none");
+        doc_->SetProperty("pointer-events", "none");
+        // Belt-and-braces: even if RmlUi's hit-test still iterates
+        // display:none documents (it apparently does), put the panel
+        // far off-screen so nothing can intersect it.
+        doc_->SetProperty("left",      "-99999dp");
+        doc_->SetProperty("top",       "-99999dp");
+        doc_->SetProperty("transform", "none");
+    }
 }
 
 int PanelDocument::append_div(int parent_id, const std::string& class_names) {
