@@ -133,4 +133,69 @@ TEST_F(FrameTest, GlowContributesWithZeroAmbient) {
            "ambient lighting; all sampled pixels were black.";
 }
 
+TEST_F(FrameTest, SpecularShipRendersWithDirectionalLight) {
+    // Render a ship known to ship with _specular textures (Keldon).
+    // Asserts:
+    //   1) The opaque pass completes without GL errors after binding
+    //      the spec uniforms.
+    //   2) A directional light + non-zero specular term produce at
+    //      least one non-black pixel near screen center.
+    // Smoke test only — does not isolate the specular contribution
+    // numerically; the binding test in material_build_test.cc and the
+    // mapping test in lighting_test.cc cover those layers.
+    const std::filesystem::path keldon_nif =
+        kProjectRoot / "game" / "data" / "Models" / "Ships" / "Keldon" / "Keldon.nif";
+    const std::filesystem::path keldon_tex =
+        kProjectRoot / "game" / "data" / "Models" / "SharedTextures" / "CardShips" / "High";
+    if (!std::filesystem::is_regular_file(keldon_nif)) {
+        GTEST_SKIP() << "BC asset not available at " << keldon_nif;
+    }
+    if (!std::filesystem::is_directory(keldon_tex)) {
+        GTEST_SKIP() << "BC texture dir not available at " << keldon_tex;
+    }
+
+    auto model_h = cache->load(keldon_nif, keldon_tex);
+
+    scenegraph::World world;
+    auto iid = world.create_instance(
+        reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
+    world.set_world_transform(iid, glm::mat4(1.0f));
+
+    scenegraph::Camera cam;
+    cam.eye    = glm::vec3(0.0f, 0.0f, 800.0f);
+    cam.target = glm::vec3(0.0f, 0.0f, 0.0f);
+    cam.aspect = 1.0f;
+
+    glViewport(0, 0, 256, 256);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    renderer::FrameSubmitter submitter;
+    renderer::Lighting lighting;
+    lighting.ambient            = glm::vec3(0.1f, 0.1f, 0.1f);
+    lighting.directional_count  = 1;
+    lighting.directional_dir_ws[0] = glm::vec3(0.0f, 0.0f, 1.0f);
+    lighting.directional_color[0]  = glm::vec3(1.0f, 1.0f, 1.0f);
+    submitter.submit_opaque(world, cam, *p,
+        [model_h](scenegraph::ModelHandle h) -> const assets::Model* {
+            return reinterpret_cast<const assets::Model*>(h);
+        }, lighting);
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+
+    int max_total = 0;
+    for (int dx = -40; dx <= 40; dx += 20) {
+        for (int dy = -40; dy <= 40; dy += 20) {
+            unsigned char px[4] = {0};
+            glReadPixels(128 + dx, 128 + dy, 1, 1,
+                         GL_RGBA, GL_UNSIGNED_BYTE, px);
+            int t = px[0] + px[1] + px[2];
+            if (t > max_total) max_total = t;
+        }
+    }
+    EXPECT_GT(max_total, 0)
+        << "Expected the Keldon to render with non-zero pixels under a "
+           "directional light.";
+}
+
 }  // namespace
