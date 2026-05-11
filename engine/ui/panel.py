@@ -14,7 +14,7 @@ from .collapsible import UiCollapsibleList
 from .stat_row import UiStatRow
 
 
-Anchor = Literal["top-left", "top-right", "bottom-left", "bottom-right"]
+Anchor = Literal["top-left", "top-right", "bottom-left", "bottom-right", "center"]
 
 
 class UiPanel:

@@ -184,3 +184,8 @@ body {
 .bc-button.menu-2.selected { background-color: #56427fa6; border-left-color: #ad84ff; }
 .bc-button.menu-3.selected { background-color: #67304fa6; border-left-color: #f693cc; }
 .bc-button.menu-4.selected { background-color: #483348b3; border-left-color: #af90af; }
+
+/* Centered modal panels — anchor="center" via PanelDocument.cc. */
+/* Positioning is applied as inline properties in the C++ binding;     */
+/* this class is reserved for any per-modal styling we add later.      */
+.bc-panel-center { }
