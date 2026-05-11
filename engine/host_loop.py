@@ -763,8 +763,11 @@ def run(mission_name: str = SHIP_GATE_MISSION,
                                 title="Targets")
 
         # Debug stat panel, top-right. Replaces the old hud.rml document.
+        # Height accommodates the title + 4 stat rows + the "Load Mission"
+        # button at the bottom without clipping (the panel has overflow:
+        # hidden so under-tall heights silently cut the button off).
         debug_panel = ui.UiPanel(id="debug", anchor="top-right",
-                                 width_vw=18.0, height_vh=18.0,
+                                 width_vw=18.0, height_vh=26.0,
                                  title="Debug", collapsible=True)
         stat_ship   = debug_panel.stat("Ship",   "---")
         stat_system = debug_panel.stat("System", "---")
@@ -836,9 +839,11 @@ def run(mission_name: str = SHIP_GATE_MISSION,
         while not r.should_close():
             loop.tick()
 
-            # Drain any pending mission swap from the picker before doing
-            # per-tick scene work. If the swap failed, session is None;
-            # still pump the renderer + UI so the picker stays usable.
+            # Drain deferred picker actions (close + on_load/on_cancel)
+            # first — picker click handlers fire inside RmlUi's dispatch
+            # so they queue rather than tear panels down synchronously.
+            # Then drain any queued mission swap before scene work.
+            picker.drain()
             controller._drain_pending_swap()
             session = controller.session
             player = session.player if session is not None else None

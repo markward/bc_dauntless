@@ -24,6 +24,11 @@ class MissionPicker:
         self._on_load = on_load
         self._on_cancel = on_cancel
         self._panel: Optional[UiPanel] = None
+        # Click handlers fire from inside RmlUi's event dispatch — tearing
+        # the panel down synchronously crashes the renderer. Instead, the
+        # callback stashes a deferred action here and drain() does the
+        # actual close + on_load/on_cancel at a tick boundary.
+        self._pending: Optional[tuple[str, Optional[str]]] = None
 
     def is_open(self) -> bool:
         return self._panel is not None
@@ -53,7 +58,7 @@ class MissionPicker:
                         mission.display_name,
                         on_click=self._make_pick_callback(mission),
                     )
-        panel.set_footer_button("Cancel", on_click=self._cancel)
+        panel.set_footer_button("Cancel", on_click=self._queue_cancel)
         self._panel = panel
 
     def close(self) -> None:
@@ -63,15 +68,33 @@ class MissionPicker:
         self._panel = None
 
     def handle_key_esc(self) -> None:
+        # ESC is polled from the host loop, not from an RmlUi callback,
+        # so it's safe to close synchronously here.
         if self.is_open():
-            self._cancel()
+            self.close()
+            self._on_cancel()
+
+    def drain(self) -> None:
+        """Process any deferred pick/cancel queued by a UI click.
+
+        Call once per host tick. Closing the panel + invoking callbacks
+        happens here, outside the RmlUi event dispatch, so the renderer
+        can safely tear the document down.
+        """
+        if self._pending is None:
+            return
+        action, arg = self._pending
+        self._pending = None
+        self.close()
+        if action == "load" and arg is not None:
+            self._on_load(arg)
+        elif action == "cancel":
+            self._on_cancel()
 
     def _make_pick_callback(self, mission: MissionEntry):
         def _pick():
-            self.close()
-            self._on_load(mission.module_name)
+            self._pending = ("load", mission.module_name)
         return _pick
 
-    def _cancel(self) -> None:
-        self.close()
-        self._on_cancel()
+    def _queue_cancel(self) -> None:
+        self._pending = ("cancel", None)

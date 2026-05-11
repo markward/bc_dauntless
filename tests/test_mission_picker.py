@@ -111,6 +111,10 @@ def test_picking_a_mission_closes_panel_and_invokes_callback(
     btn_ids = _buttons_with_text(fake_dom, "Basic Maneuvers")
     assert len(btn_ids) == 1
     fake_dom.fire_click(btn_ids[0])
+    # Click only queues the action — close + callback fire on drain.
+    assert picker.is_open()
+    assert chosen == []
+    picker.drain()
     assert chosen == ["Custom.Tutorial.Episode.M1.M1"]
     assert not picker.is_open()
     assert not fake_dom._panels   # panel destroyed
@@ -128,6 +132,10 @@ def test_cancel_button_closes_and_invokes_on_cancel(
     cancel_ids = _buttons_with_text(fake_dom, "Cancel")
     assert len(cancel_ids) == 1
     fake_dom.fire_click(cancel_ids[0])
+    # Click only queues — drain runs the close + callback.
+    assert picker.is_open()
+    assert cancelled == []
+    picker.drain()
     assert cancelled == [1]
     assert not picker.is_open()
 
