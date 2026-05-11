@@ -1,6 +1,7 @@
 // native/src/ui/UiSystem.cc
 #include "ui/UiSystem.h"
 #include "ui/HudDocument.h"
+#include "ui/PanelDocument.h"
 
 // glad must be included before any GL headers.
 #include <glad/glad.h>
@@ -51,12 +52,33 @@ UiSystem::UiSystem(GLFWwindow* window,
     }
 
     hud_ = std::make_unique<HudDocument>(context_, assets_root / "hud.rml");
+    assets_root_ = assets_root;
 }
 
 UiSystem::~UiSystem() {
+    panels_.clear();      // destroy panel documents before RmlUi shuts down
     hud_.reset();
-    context_ = nullptr;  // owned by RmlUi core; Shutdown destroys it
+    context_ = nullptr;   // owned by RmlUi core; Shutdown destroys it
     Rml::Shutdown();
+}
+
+int UiSystem::create_panel(const std::string& anchor,
+                           float width_vw, float height_vh) {
+    int id = next_panel_id_++;
+    panels_[id] = std::make_unique<PanelDocument>(
+        context_,
+        assets_root_ / "panel.rml",
+        anchor, width_vw, height_vh);
+    return id;
+}
+
+void UiSystem::destroy_panel(int panel_id) {
+    panels_.erase(panel_id);
+}
+
+PanelDocument* UiSystem::get_panel(int panel_id) {
+    auto it = panels_.find(panel_id);
+    return it == panels_.end() ? nullptr : it->second.get();
 }
 
 void UiSystem::update_hud(const HudState& state) {

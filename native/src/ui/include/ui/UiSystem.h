@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <unordered_map>
 
 struct GLFWwindow;
 namespace Rml { class Context; }
@@ -13,6 +14,7 @@ class RenderInterface_GL3;
 namespace ui {
 
 class HudDocument;
+class PanelDocument;
 
 struct HudState {
     float pos_x = 0.f, pos_y = 0.f, pos_z = 0.f;
@@ -37,11 +39,26 @@ public:
     /// Render the UI context at the given framebuffer size.
     void render(int fb_width, int fb_height);
 
+    /// Create a new PanelDocument from panel.rml. Returns an integer handle
+    /// the bindings use to reference it later. Ownership stays with this
+    /// UiSystem.
+    int create_panel(const std::string& anchor, float width_vw, float height_vh);
+    void destroy_panel(int panel_id);
+    PanelDocument* get_panel(int panel_id);
+
+    /// Iterator access for the binding layer — used to resolve which panel
+    /// owns a given element id when callers pass element ids directly.
+    auto& panels_for_bindings() { return panels_; }
+
 private:
     std::unique_ptr<SystemInterface_GLFW> sys_iface_;
     std::unique_ptr<RenderInterface_GL3>  render_iface_;
     Rml::Context*                         context_ = nullptr;
     std::unique_ptr<HudDocument>          hud_;
+
+    std::filesystem::path                 assets_root_;
+    std::unordered_map<int, std::unique_ptr<PanelDocument>> panels_;
+    int                                   next_panel_id_ = 1;
 };
 
 }  // namespace ui
