@@ -143,7 +143,12 @@ class ShipClass(DamageableObject):
     def IsDead(self) -> int:      return 1 if self._dead else 0
     def SetDead(self, v=True) -> None:
         # Single-arg form (truthy) and zero-arg form (sets dead) both used.
-        self._dead = bool(v) if v is not True else True
+        new_dead = bool(v) if v is not True else True
+        was_dead = self._dead
+        self._dead = new_dead
+        if new_dead and not was_dead:
+            from engine.appc import ship_lifecycle
+            ship_lifecycle.publish_destroyed(self)
 
     # ── Subsystem iteration ───────────────────────────────────────────────────
     # Phase 1 ships have no subsystems registered for matching; these stubs
