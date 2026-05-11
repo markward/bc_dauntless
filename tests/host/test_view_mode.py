@@ -57,10 +57,11 @@ def test_view_mode_toggle_on_space_pressed():
 
 class _RecordingInputs:
     """Stand-ins for _PlayerControl / _CameraControl that record whether
-    apply() was called, without doing any work."""
+    apply() was called and what reader it was handed, without doing any
+    work."""
     class _Player:
-        def __init__(self): self.calls = 0
-        def apply(self, player, dt, h): self.calls += 1
+        def __init__(self): self.calls = []
+        def apply(self, player, dt, h): self.calls.append(h)
     class _Camera:
         def __init__(self): self.calls = 0
         def apply(self, dt, h, scroll_y): self.calls += 1
@@ -77,19 +78,25 @@ def test_apply_input_calls_both_in_exterior_mode():
     reader = _FakeKeyReader()
     _apply_input(vm, inputs.player, inputs.camera,
                  player=object(), dt=1.0/60, h=reader, scroll_y=0.0)
-    assert inputs.player.calls == 1
+    assert len(inputs.player.calls) == 1
+    assert inputs.player.calls[0] is reader  # exterior forwards live keys
     assert inputs.camera.calls == 1
 
 
-def test_apply_input_skips_both_in_bridge_mode():
-    from engine.host_loop import _ViewModeController, _apply_input
+def test_apply_input_in_bridge_keeps_player_integrating_with_no_input():
+    """Bridge mode calls player_control.apply with a no-input reader so
+    ship physics keep integrating (engines coast) while live keys are
+    ignored. The orbit camera is not stepped at all."""
+    from engine.host_loop import _ViewModeController, _apply_input, _NO_INPUT
     vm = _ViewModeController()
     vm.toggle()  # bridge
     inputs = _RecordingInputs()
     reader = _FakeKeyReader()
+    reader.held.add(reader.keys.KEY_SPACE)  # held key must not reach player
     _apply_input(vm, inputs.player, inputs.camera,
                  player=object(), dt=1.0/60, h=reader, scroll_y=0.0)
-    assert inputs.player.calls == 0
+    assert len(inputs.player.calls) == 1
+    assert inputs.player.calls[0] is _NO_INPUT
     assert inputs.camera.calls == 0
 
 
@@ -115,6 +122,51 @@ def test_apply_input_preserves_orbit_state_across_bridge_toggle():
     _apply_input(vm, _NoopPlayer(), cc, player=object(),
                  dt=1.0/60, h=reader, scroll_y=99.0)
     assert (cc.orbit_yaw_rad, cc.orbit_pitch_rad, cc.distance) == saved
+
+
+def test_apply_input_in_bridge_keeps_ship_moving_under_real_player_control():
+    """Regression: pressing space while engines are engaged must NOT
+    freeze the ship — it should keep coasting forward at its current
+    speed. Drives the real _PlayerControl against a fake ship to prove
+    that the integration step still runs in bridge mode."""
+    from engine.host_loop import _ViewModeController, _PlayerControl, _apply_input
+    from engine.appc.math import TGPoint3, TGMatrix3
+
+    class _FakeShip:
+        def __init__(self):
+            self._loc = TGPoint3(0.0, 0.0, 0.0)
+            self._rot = TGMatrix3()
+        def GetWorldRotation(self): return self._rot
+        def GetTranslate(self):     return self._loc
+        def SetMatrixRotation(self, R): self._rot = R
+        def SetTranslateXYZ(self, x, y, z):
+            self._loc = TGPoint3(x, y, z)
+        # No ImpulseEngineSubsystem → _PlayerControl falls back to legacy
+        # IMPULSE_UNIT * level for target speed.
+        GetImpulseEngineSubsystem = None
+
+    pc = _PlayerControl()
+    pc.impulse_level = 5
+    pc._current_speed = 5 * _PlayerControl.IMPULSE_UNIT  # already at target
+    ship = _FakeShip()
+
+    vm = _ViewModeController()
+    vm.toggle()  # bridge
+
+    class _NoopCam:
+        def apply(self, *a, **k): pass
+
+    reader = _FakeKeyReader()
+    # Tick a few times in bridge mode. The ship must move forward.
+    for _ in range(10):
+        _apply_input(vm, pc, _NoopCam(),
+                     player=ship, dt=1.0/60, h=reader, scroll_y=0.0)
+
+    # Ship-Y is forward in body frame. Identity rotation → world +Y.
+    # 10 ticks × (1/60 s) × 250 units/s ≈ 41.67 units along Y.
+    assert ship._loc.y > 40.0
+    # Throttle setting is preserved across bridge toggle.
+    assert pc.impulse_level == 5
 
 
 def test_bridge_camera_anchors_at_ship_origin_looking_forward():

@@ -823,18 +823,49 @@ class _MissionLoader:
         return sess
 
 
+class _NoInputReader:
+    """Bindings stub used for _PlayerControl in bridge view.
+
+    _PlayerControl.apply() reads input AND integrates ship state in one
+    body. Bridge mode wants the integration to keep running (so engines
+    keep coasting and the ship continues moving) but the input keys to
+    have no effect. Passing this stub satisfies both: every key check
+    returns False, so impulse_level stays put and angular targets are
+    zero, while the ramp + integration steps still execute.
+
+    Mirrors the surface of _open_stbc_host that _PlayerControl touches.
+    Singleton — see _NO_INPUT below — to avoid per-tick allocation.
+    """
+    class _Keys:
+        KEY_R = KEY_0 = KEY_1 = KEY_2 = KEY_3 = KEY_4 = 0
+        KEY_5 = KEY_6 = KEY_7 = KEY_8 = KEY_9 = 0
+        KEY_W = KEY_S = KEY_A = KEY_D = KEY_Q = KEY_E = 0
+    keys = _Keys()
+    @staticmethod
+    def key_pressed(_): return False
+    @staticmethod
+    def key_state(_):   return False
+
+
+_NO_INPUT = _NoInputReader()
+
+
 def _apply_input(view_mode, player_control, cam_control,
                  *, player, dt, h, scroll_y) -> None:
     """Per-tick input dispatch.
 
     Exterior mode drives both ship and camera from the keyboard. Bridge
-    mode skips both — the ship coasts on its existing velocity / angular
-    rates, and the orbit camera state is preserved untouched so toggling
-    back returns to the same framing.
+    mode keeps the ship-physics integration running (engines keep
+    coasting; angular rates ramp toward zero since no input is held)
+    by calling player_control.apply() with a no-input reader, but does
+    not advance the orbit camera so its state is preserved for when we
+    toggle back to exterior.
     """
     if view_mode.is_exterior:
         player_control.apply(player, dt, h)
         cam_control.apply(dt, h, scroll_y)
+    else:
+        player_control.apply(player, dt, _NO_INPUT)
 
 
 def _compute_camera(view_mode, cam_control, *, player, dt) -> tuple:

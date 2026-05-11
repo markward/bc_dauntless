@@ -34,8 +34,11 @@ viewscreen overlay, mouse-look) plugs into it without restructuring.
    `toggle()` plus `is_bridge` / `is_exterior` accessors.
 2. Bind **space** (edge-triggered via `key_pressed`) to `toggle()`,
    polled in the same block as `F7`/`F8`/`F9`.
-3. In `BRIDGE` mode: skip `_PlayerControl.apply()` and
-   `_CameraControl.apply()`, and compute the camera as a forward-facing
+3. In `BRIDGE` mode: still call `_PlayerControl.apply()` so ship
+   physics keep integrating (engines coast, position/rotation update
+   each tick) but pass it a no-input reader stub so live keys have no
+   effect; skip `_CameraControl.apply()` so the orbit camera state is
+   preserved untouched. Compute the camera as a forward-facing
    "viewscreen" anchored to the player ship's origin.
 4. Render a small "BRIDGE VIEW" UI panel via [engine/ui](../../../engine/ui)
    that is visible only in bridge mode, mirroring how `F7` toggles the
@@ -100,9 +103,13 @@ In `host_loop.run()`'s tick body:
 2. Branch the input block:
    - **Exterior** (default, unchanged): `player_control.apply(...)`,
      `cam_control.apply(...)`.
-   - **Bridge**: skip both. Ship coasts on its existing
-     `_current_speed` / `_current_*_rate` state; orbit camera state is
-     preserved untouched for when we toggle back.
+   - **Bridge**: call `player_control.apply(player, dt, _NO_INPUT)` so
+     ship physics keep integrating each tick (engines coast, position
+     and rotation update, throttle setting preserved) but live keys
+     are ignored; skip `cam_control.apply()` so orbit state is
+     preserved untouched for when we toggle back. Angular rates ramp
+     toward zero in bridge (no input held → target rates are 0), so an
+     active turn straightens out — matching "let go of the helm".
 3. Branch the camera block:
    - **Exterior**: existing `cam_control.compute_camera(...)`.
    - **Bridge**: derive directly from the player ship transform —
@@ -163,9 +170,14 @@ following the existing fake-bindings pattern used by the
 2. **`test_view_mode_toggle_on_space`** — fake bindings with
    `key_pressed(SPACE) → True` flips the mode; calling `apply` again
    with `False` leaves it unchanged (edge-triggered, not held).
-3. **`test_bridge_mode_skips_player_input`** — given a recording fake
-   `_PlayerControl` and a controller in `BRIDGE`, the per-tick dispatch
-   does not call `apply` on it.
+3. **`test_bridge_mode_passes_no_input_reader_to_player_control`** —
+   given a recording fake `_PlayerControl` and a controller in
+   `BRIDGE`, the per-tick dispatch calls `apply` once with
+   `_NO_INPUT` (not the live reader), and does not call `apply` on
+   `_CameraControl`. A second test drives the real `_PlayerControl`
+   against a fake ship and asserts that engines keep coasting (ship
+   position advances) across multiple bridge-mode ticks — the
+   regression that the original "skip both" implementation broke.
 4. **`test_bridge_camera_anchors_at_ship_origin`** — given a fake ship
    with known location and rotation, the bridge-mode camera math
    produces eye = ship loc, target along ship forward, up along ship
