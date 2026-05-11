@@ -54,9 +54,9 @@ def _ship_affiliation(ship) -> str:
     mission = episode.GetCurrentMission()
     if mission is None: return "unknown"
     name = ship.GetName()
-    if mission.GetFriendlyGroup().HasName(name): return "friendly"
-    if mission.GetEnemyGroup().HasName(name):    return "enemy"
-    if mission.GetNeutralGroup().HasName(name):  return "neutral"
+    if mission.GetFriendlyGroup().IsNameInGroup(name): return "friendly"
+    if mission.GetEnemyGroup().IsNameInGroup(name):    return "enemy"
+    if mission.GetNeutralGroup().IsNameInGroup(name):  return "neutral"
     return "unknown"
 
 

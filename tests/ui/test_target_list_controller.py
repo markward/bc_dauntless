@@ -20,7 +20,7 @@ class _FakeMission:
     class _Group:
         def __init__(self, names):
             self._names = set(names)
-        def HasName(self, name):
+        def IsNameInGroup(self, name):
             return 1 if name in self._names else 0
     def __init__(self, friendly=(), enemy=(), neutral=()):
         self._f = self._Group(friendly)
