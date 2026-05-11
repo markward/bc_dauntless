@@ -34,6 +34,9 @@ def destroy_panel(panel_id: int) -> None:
 def clear_panel(panel_id: int) -> None:
     dom().clear_panel(panel_id)
 
+def set_panel_visible(panel_id: int, visible: bool) -> None:
+    dom().set_panel_visible(panel_id, visible)
+
 def panel_root(panel_id: int) -> int:
     return dom().panel_root(panel_id)
 
@@ -84,6 +87,7 @@ class _RealDom:
     def destroy_panel(self, pid):           self._m.destroy_panel(pid)
     def clear_panel(self, pid):             self._m.clear_panel(pid)
     def panel_root(self, pid):              return self._m.panel_root(pid)
+    def set_panel_visible(self, pid, vis):  self._m.set_panel_visible(pid, vis)
 
     def set_panel_css_var(self, pid, n, v):
         # RmlUi's RCSS does not consume CSS custom properties; pushing them

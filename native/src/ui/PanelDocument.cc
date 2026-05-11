@@ -82,6 +82,15 @@ PanelDocument::~PanelDocument() {
     }
 }
 
+void PanelDocument::set_visible(bool visible) {
+    if (!doc_) return;
+    if (visible) {
+        doc_->Show();
+    } else {
+        doc_->Hide();
+    }
+}
+
 int PanelDocument::append_div(int parent_id, const std::string& class_names) {
     auto parent_it = elements_.find(parent_id);
     if (parent_it == elements_.end()) {

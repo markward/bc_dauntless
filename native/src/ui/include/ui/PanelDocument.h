@@ -58,6 +58,11 @@ public:
     /// Clear all body children. The root element itself stays.
     void clear();
 
+    /// Toggle whole-document visibility. When hidden, the document is
+    /// removed from layout and does NOT receive pointer events — clicks
+    /// pass through to whatever's behind it.
+    void set_visible(bool visible);
+
 private:
     Rml::ElementDocument* doc_       = nullptr;
     Rml::Element*         root_       = nullptr;

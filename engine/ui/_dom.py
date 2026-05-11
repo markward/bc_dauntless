@@ -30,6 +30,7 @@ class _Panel:
     height_vh: float
     root: int
     css_vars: dict[str, str] = field(default_factory=dict)
+    visible: bool = True
 
 
 class FakeDom:
@@ -70,6 +71,9 @@ class FakeDom:
 
     def set_panel_css_var(self, panel_id: int, name: str, value: str) -> None:
         self._panels[panel_id].css_vars[name] = value
+
+    def set_panel_visible(self, panel_id: int, visible: bool) -> None:
+        self._panels[panel_id].visible = visible
 
     # ── Element mutation ─────────────────────────────────────────────────────
 

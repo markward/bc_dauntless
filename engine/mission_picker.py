@@ -40,9 +40,10 @@ class MissionPicker:
             # Re-show the existing panel rather than rebuilding — destroying
             # RmlUi documents that just dispatched a click is the classic
             # source of segfaults, so we keep the picker panel alive across
-            # opens and just toggle visibility.
-            _ui_bindings.set_visible(
-                _ui_bindings.panel_root(self._panel.panel_id), True)
+            # opens and toggle whole-document visibility (Show/Hide). This
+            # removes the document from layout and from hit-testing when
+            # hidden so the Load Mission button stays clickable.
+            _ui_bindings.set_panel_visible(self._panel.panel_id, True)
             self._open = True
             return
         panel = UiPanel(id="mission-picker", anchor="center",
@@ -72,12 +73,12 @@ class MissionPicker:
         self._open = True
 
     def close(self) -> None:
-        # Hide rather than destroy. The panel is kept alive across opens
-        # to avoid the RmlUi-document-teardown-mid-event-dispatch hazard.
+        # Hide the whole document (not just #root) so the panel stops
+        # capturing clicks. Keeping the panel alive avoids the
+        # destroy-mid-event-dispatch hazard.
         if self._panel is None or not self._open:
             return
-        _ui_bindings.set_visible(
-            _ui_bindings.panel_root(self._panel.panel_id), False)
+        _ui_bindings.set_panel_visible(self._panel.panel_id, False)
         self._open = False
 
     def destroy(self) -> None:

@@ -502,6 +502,11 @@ PYBIND11_MODULE(_open_stbc_host, m) {
         if (auto* p = g_ui_system->get_panel(panel_id)) p->clear();
     });
 
+    m.def("set_panel_visible", [](int panel_id, bool visible) {
+        if (!g_ui_system) return;
+        if (auto* p = g_ui_system->get_panel(panel_id)) p->set_visible(visible);
+    });
+
     m.def("panel_root", [](int panel_id) -> int {
         if (!g_ui_system) return 0;
         auto* p = g_ui_system->get_panel(panel_id);
