@@ -44,3 +44,33 @@ def get_affiliation(name: str) -> RGB:
 
 def get_menu_palette(level: int) -> MenuPalette:
     return _menu_levels[level]
+
+
+def set_affiliation(name: str, rgb: RGB) -> None:
+    if name not in _AFFILIATION_DEFAULTS:
+        raise KeyError(name)
+    _affiliation[name] = rgb
+
+
+def set_menu_palette(level: int, palette: MenuPalette) -> None:
+    if level not in _MENU_LEVEL_DEFAULTS:
+        raise KeyError(level)
+    _menu_levels[level] = palette
+
+
+def reset_affiliations() -> None:
+    _affiliation.clear()
+    _affiliation.update(_AFFILIATION_DEFAULTS)
+
+
+def reset_menu_palettes() -> None:
+    _menu_levels.clear()
+    _menu_levels.update(_MENU_LEVEL_DEFAULTS)
+
+
+def known_affiliations() -> tuple[str, ...]:
+    return tuple(_AFFILIATION_DEFAULTS)
+
+
+def known_menu_levels() -> tuple[int, ...]:
+    return tuple(_MENU_LEVEL_DEFAULTS)
