@@ -11,6 +11,7 @@ from typing import Callable, Optional
 
 from engine.missions import MissionEntry, MissionRegistry
 from engine.ui import UiPanel
+from engine.ui import bindings as _ui_bindings
 
 _SKIP_EPISODE_LEVEL = {"Episode", "."}
 
@@ -24,6 +25,7 @@ class MissionPicker:
         self._on_load = on_load
         self._on_cancel = on_cancel
         self._panel: Optional[UiPanel] = None
+        self._open: bool = False
         # Click handlers fire from inside RmlUi's event dispatch — tearing
         # the panel down synchronously crashes the renderer. Instead, the
         # callback stashes a deferred action here and drain() does the
@@ -31,10 +33,17 @@ class MissionPicker:
         self._pending: Optional[tuple[str, Optional[str]]] = None
 
     def is_open(self) -> bool:
-        return self._panel is not None
+        return self._open
 
     def open(self) -> None:
         if self._panel is not None:
+            # Re-show the existing panel rather than rebuilding — destroying
+            # RmlUi documents that just dispatched a click is the classic
+            # source of segfaults, so we keep the picker panel alive across
+            # opens and just toggle visibility.
+            _ui_bindings.set_visible(
+                _ui_bindings.panel_root(self._panel.panel_id), True)
+            self._open = True
             return
         panel = UiPanel(id="mission-picker", anchor="center",
                         width_vw=42.0, height_vh=72.0,
@@ -60,12 +69,23 @@ class MissionPicker:
                     )
         panel.set_footer_button("Cancel", on_click=self._queue_cancel)
         self._panel = panel
+        self._open = True
 
     def close(self) -> None:
-        if self._panel is None:
+        # Hide rather than destroy. The panel is kept alive across opens
+        # to avoid the RmlUi-document-teardown-mid-event-dispatch hazard.
+        if self._panel is None or not self._open:
             return
-        self._panel.destroy()
-        self._panel = None
+        _ui_bindings.set_visible(
+            _ui_bindings.panel_root(self._panel.panel_id), False)
+        self._open = False
+
+    def destroy(self) -> None:
+        """Tear down the picker entirely. Only called at host shutdown."""
+        if self._panel is not None:
+            self._panel.destroy()
+            self._panel = None
+        self._open = False
 
     def handle_key_esc(self) -> None:
         # ESC is polled from the host loop, not from an RmlUi callback,
