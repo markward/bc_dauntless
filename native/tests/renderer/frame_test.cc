@@ -194,8 +194,9 @@ TEST_F(FrameTest, SpecularShipRendersWithDirectionalLight) {
         }
     }
     EXPECT_GT(max_total, 0)
-        << "Expected the Keldon to render with non-zero pixels under a "
-           "directional light.";
+        << "Expected the Keldon to render at all (non-zero pixels under a "
+           "directional light) — this is a pipeline smoke test, not a proof "
+           "that the specular term contributes. See test docstring.";
 }
 
 }  // namespace

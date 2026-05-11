@@ -74,6 +74,15 @@ void draw_model(const assets::Model& model,
 
             // Opaque-pass texture-unit convention: 0 = base, 1 = glow,
             // 2 = specular mask. Each unit owns one sampler uniform.
+            //
+            // Spec contribution is gated on presence of a _specular/_spec
+            // texture: missing -> black_fallback -> spec term multiplies
+            // to zero -> ship renders identically to today. This is
+            // intentional (see specular-rendering-design.md "Scope
+            // decision"). Stock BC ships all author non-zero
+            // NiMaterialProperty.specular/glossiness; flipping the
+            // fallback to white_fallback would shift the visual baseline
+            // of every existing ship in one change.
             const int spec_tex = mat.stages[
                 static_cast<std::size_t>(assets::Material::StageSlot::Gloss)
             ].texture_index;
