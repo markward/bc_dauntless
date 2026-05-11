@@ -424,6 +424,117 @@ class _ViewModeController:
             self.toggle()
 
 
+class _BridgeCamera:
+    """First-person bridge camera with mouse-look.
+
+    Anchored at the MissionLib-pinned DBridge captain's-chair pose
+    (sdk/Build/scripts/MissionLib.py:1475-1483) in ship-local frame.
+    Mouse motion accumulates yaw (around bridge-up = +Z) and pitch
+    (around bridge-right = +X). Yaw wraps freely; pitch clamps at ±85°
+    to avoid pole flip.
+
+    Camera world pose = ship_world_rot * (bridge_local_offset rotated
+    by base pitch * mouse yaw * mouse pitch) + ship_world_loc, so the
+    bridge banks and pitches with the ship as it manoeuvres.
+    """
+
+    # MissionLib.py:1475-1483 — DBridge maincamera pose.
+    BRIDGE_LOCAL_OFFSET   = (0.0, 50.0, 47.0)
+    # Axis-angle (-1.55, 0, 0, 1): -1.55 rad ≈ -88.8° around X axis.
+    # Treated as a base pitch rotation; convention iterated visually.
+    BRIDGE_BASE_PITCH_RAD = -1.55
+
+    # PoC starting values; tuned by feel during visual verification.
+    NEAR              = 1.0
+    FAR               = 800.0
+    FOV_Y_RAD         = _math.radians(60.0)
+    MOUSE_SENSITIVITY = 0.005           # rad per pixel
+    PITCH_LIMIT_RAD   = _math.radians(85)
+
+    def __init__(self):
+        self.yaw_rad   = 0.0
+        self.pitch_rad = 0.0
+
+    def apply(self, mouse_dx: float, mouse_dy: float) -> None:
+        """Accumulate mouse delta into yaw/pitch with sign conventions:
+        right-mouse (+dx) → look-right (-yaw); up-mouse (-dy in screen
+        coords) → look-up (+pitch). Pitch clamps; yaw wraps freely."""
+        self.yaw_rad   -= mouse_dx * self.MOUSE_SENSITIVITY
+        self.pitch_rad -= mouse_dy * self.MOUSE_SENSITIVITY
+        if self.pitch_rad >  self.PITCH_LIMIT_RAD: self.pitch_rad =  self.PITCH_LIMIT_RAD
+        if self.pitch_rad < -self.PITCH_LIMIT_RAD: self.pitch_rad = -self.PITCH_LIMIT_RAD
+
+    def compute_camera(self, ship_loc, ship_rot) -> tuple:
+        """Return (eye, target, up) as 3-tuples in world space, matching
+        the shape r.set_bridge_camera consumes."""
+        ox, oy, oz = self.BRIDGE_LOCAL_OFFSET
+        local_fwd = (0.0, 1.0, 0.0)   # bridge-local +Y
+        local_up  = (0.0, 0.0, 1.0)   # bridge-local +Z
+
+        local_fwd = _rot_around(local_fwd, (1.0, 0.0, 0.0), self.BRIDGE_BASE_PITCH_RAD)
+        local_up  = _rot_around(local_up,  (1.0, 0.0, 0.0), self.BRIDGE_BASE_PITCH_RAD)
+
+        local_fwd = _rot_around(local_fwd, (0.0, 0.0, 1.0), self.yaw_rad)
+        local_up  = _rot_around(local_up,  (0.0, 0.0, 1.0), self.yaw_rad)
+
+        # Pitch is around the local right axis (forward × up).
+        right = (
+            local_fwd[1]*local_up[2] - local_fwd[2]*local_up[1],
+            local_fwd[2]*local_up[0] - local_fwd[0]*local_up[2],
+            local_fwd[0]*local_up[1] - local_fwd[1]*local_up[0],
+        )
+        rlen = _math.sqrt(right[0]**2 + right[1]**2 + right[2]**2)
+        right = (right[0]/rlen, right[1]/rlen, right[2]/rlen)
+
+        local_fwd = _rot_around(local_fwd, right, self.pitch_rad)
+        local_up  = _rot_around(local_up,  right, self.pitch_rad)
+
+        # Transform local offset / forward / up into world frame using
+        # the ship's row-vector basis (rows = body axes in world).
+        rgt_world = ship_rot.GetRow(0)
+        fwd_world = ship_rot.GetRow(1)
+        up_world  = ship_rot.GetRow(2)
+
+        def _to_world(v):
+            x, y, z = v
+            return (
+                x*rgt_world.x + y*fwd_world.x + z*up_world.x,
+                x*rgt_world.y + y*fwd_world.y + z*up_world.y,
+                x*rgt_world.z + y*fwd_world.z + z*up_world.z,
+            )
+
+        offset_world = _to_world((ox, oy, oz))
+        fwd_w        = _to_world(local_fwd)
+        up_w         = _to_world(local_up)
+
+        eye = (
+            ship_loc.x + offset_world[0],
+            ship_loc.y + offset_world[1],
+            ship_loc.z + offset_world[2],
+        )
+        target = (
+            eye[0] + fwd_w[0],
+            eye[1] + fwd_w[1],
+            eye[2] + fwd_w[2],
+        )
+        return eye, target, up_w
+
+
+def _rot_around(v, axis_xyz, angle_rad):
+    """Rotate v=(x,y,z) around the given unit axis using Rodrigues' formula."""
+    ax, ay, az = axis_xyz
+    ca = _math.cos(angle_rad)
+    sa = _math.sin(angle_rad)
+    vx, vy, vz = v
+    dot = vx*ax + vy*ay + vz*az
+    cross = (ay*vz - az*vy, az*vx - ax*vz, ax*vy - ay*vx)
+    return (
+        vx*ca + cross[0]*sa + ax*dot*(1.0 - ca),
+        vy*ca + cross[1]*sa + ay*dot*(1.0 - ca),
+        vz*ca + cross[2]*sa + az*dot*(1.0 - ca),
+    )
+
+
 def _setup_sdk() -> None:
     """Install SDK finder + AST transforms so SDK script imports work."""
     if str(PROJECT_ROOT) not in sys.path:
