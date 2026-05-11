@@ -76,3 +76,21 @@ TEST_F(PathResolverTest, NotFoundCarriesBasenameAndDir) {
         EXPECT_EQ(e.searched_dir(), tmp_dir);
     }
 }
+
+// BC bridge NIFs (e.g. DBridge) reference some textures with a leading
+// subpath like "DBridge/floor lm.tga" while others in the same NIF use
+// bare names. The actual files live flat in the configured search_dir.
+// The resolver strips any leading directory component from the basename
+// before doing the case-insensitive filename lookup.
+TEST_F(PathResolverTest, StripsLeadingSubpathFromBasename) {
+    create_file(tmp_dir / "floor lm.tga");
+    assets::PathResolver r;
+    EXPECT_EQ(r.resolve("DBridge/floor lm.tga", tmp_dir),
+              tmp_dir / "floor lm.tga");
+}
+
+TEST_F(PathResolverTest, StripsSubpathAndAppendsTga) {
+    create_file(tmp_dir / "hull.tga");
+    assets::PathResolver r;
+    EXPECT_EQ(r.resolve("DBridge/hull", tmp_dir), tmp_dir / "hull.tga");
+}

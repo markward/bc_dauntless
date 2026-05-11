@@ -49,8 +49,19 @@ PathResolver::cache_for(const fs::path& dir, bool force_rebuild) {
 fs::path PathResolver::resolve(std::string basename, const fs::path& search_dir) {
     if (!has_extension(basename)) basename += ".tga";
 
+    // BC bridge NIFs (e.g. DBridge.NIF) embed mixed conventions — some
+    // texture references are bare ("Map 20.tga") and others carry a
+    // leading subpath ("DBridge/floor lm.tga") even though the actual
+    // files live flat in the configured search_dir. Strip any leading
+    // directory component before lookup. Bare names pass through
+    // unchanged; ship NIFs (which always use bare names) are unaffected.
+    fs::path basename_path(basename);
+    std::string filename = basename_path.has_parent_path()
+        ? basename_path.filename().string()
+        : basename;
+
     auto& dir_map = cache_for(search_dir, /*force_rebuild=*/false);
-    auto lower = to_lower(basename);
+    auto lower = to_lower(filename);
 
     if (auto it = dir_map.find(lower); it != dir_map.end()) {
         return search_dir / it->second;
