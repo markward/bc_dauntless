@@ -68,6 +68,10 @@ class SetClass(TGEventHandlerObject):
         if hasattr(obj, "_containing_set"):
             obj._containing_set = self
         self._objects[identifier] = obj
+        from engine.appc.ships import ShipClass
+        from engine.appc import ship_lifecycle
+        if isinstance(obj, ShipClass):
+            ship_lifecycle.publish_added(obj)
         return True
 
     def GetObject(self, name: str):
