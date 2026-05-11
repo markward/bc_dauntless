@@ -619,6 +619,29 @@ def run(mission_name: str = SHIP_GATE_MISSION,
     r.init(1280, 720, "open_stbc",
            str(PROJECT_ROOT / "native" / "assets" / "ui"))
     try:
+        # Demo UI panel — proves the components render. Remove once a real
+        # consumer (mission picker, targets panel) replaces it.
+        from engine import ui
+        ui.init()
+        demo_panel = ui.UiPanel(id="demo", anchor="top-right",
+                                width_vw=18.0, height_vh=55.0)
+        bop = demo_panel.collapsible("Bird of Prey-1", affiliation="enemy",
+                                     expanded=True)
+        bop.button("Shield Generator")
+        bop.button("Warp Core", selected=True)
+        bop.collapsible("Disruptor Cannons", menu_level=3, expanded=False)
+        bop.button("Torpedoes")
+        bop.button("Impulse Engines")
+        bop.collapsible("Warp Engines", menu_level=3, expanded=False)
+        bop.button("Cloaking Device")
+        bop.button("Sensor Array")
+        demo_panel.collapsible("USS Yamato", affiliation="friendly",
+                               expanded=False)
+        demo_panel.collapsible("Tellarite Caravan", affiliation="neutral",
+                               expanded=False)
+        demo_panel.collapsible("Subspace Echo 47", affiliation="unknown",
+                               expanded=False)
+
         # Per-NIF cache so the same mesh isn't reloaded once per ship.
         nif_to_handle: dict[str, int] = {}
         ship_instances: dict[object, object] = {}    # ship   -> InstanceId
