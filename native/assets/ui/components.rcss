@@ -93,6 +93,13 @@ body {
     white-space: nowrap;
 }
 
+/* Action button that follows a stat row (e.g., "Load Mission" at the
+   bottom of the Debug panel): give it a 5dp top gap so it doesn't sit
+   flush against the last stat row. */
+.bc-stat-row + .bc-button {
+    margin-top: 5dp;
+}
+
 .bc-stat-label {
     display: inline-block;
     width: 80dp;
