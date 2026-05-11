@@ -191,13 +191,16 @@ void frame() {
 
     // ── Bridge pass ──────────────────────────────────────────────────────
     // Renders bridge-tagged instances with the bridge camera, after a
-    // depth clear so the bridge geometry overlays the space scene
-    // regardless of world-space coordinates. The space pass + special
-    // passes above are wasted work in bridge mode but are kept so the
-    // future viewscreen RTT can swap the space pass's target without
-    // adding a "render space here" path that didn't exist before.
+    // color + depth clear so the bridge geometry overlays the space
+    // scene cleanly (without the space pass's color leaking through any
+    // gaps in the bridge interior). The space pass + special passes
+    // above are wasted GPU work in bridge mode today, but are kept so
+    // the future viewscreen RTT can swap the space pass's target from
+    // "main framebuffer" to "viewscreen texture" without adding a
+    // "render space here" path that didn't exist before.
     if (g_bridge_pass_enabled) {
-        glClear(GL_DEPTH_BUFFER_BIT);
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         if (fh > 0) g_bridge_camera.aspect = static_cast<float>(fw) / static_cast<float>(fh);
         g_submitter->submit_opaque_in_pass(
             g_world, g_bridge_camera, *g_pipeline, lookup, g_lighting,
