@@ -64,7 +64,41 @@ class UiButton:
         return " ".join(parts)
 
     def _handle_click(self) -> None:
-        # Filled in by the parent when it adopts this button into a radio
-        # group (Task 7). For now: fire the consumer callback directly.
+        # Replaced by _RadioGroup.adopt() when the button joins a group.
+        # Standalone: fire the consumer callback directly.
         if self._on_click is not None:
             self._on_click()
+
+
+class _RadioGroup:
+    """Coordinates exclusive selection across sibling UiButtons.
+
+    Owners (UiPanel, UiCollapsibleList) construct one of these and call
+    `adopt(button)` for each direct-child button they create. The group
+    rewires each button's click handler so that selecting one deselects
+    the others; callbacks fire only for the newly-selected button.
+    """
+
+    def __init__(self) -> None:
+        self._members: list["UiButton"] = []
+
+    def adopt(self, button: "UiButton") -> None:
+        self._members.append(button)
+        # Rewire the button's _handle_click through the group.
+        consumer_cb = button._on_click
+        button._handle_click = lambda b=button, cb=consumer_cb: self._on_click(b, cb)
+        bindings.on_click(button.element_id, button._handle_click)
+
+    def select(self, target: "UiButton") -> None:
+        """Programmatic selection: same exclusivity, no callback fired."""
+        for m in self._members:
+            m.set_selected(m is target)
+
+    def _on_click(self, clicked: "UiButton",
+                  consumer_cb: Optional[Callable[[], None]]) -> None:
+        if clicked.selected:
+            return  # already selected — no state change, no refire
+        for m in self._members:
+            m.set_selected(m is clicked)
+        if consumer_cb is not None:
+            consumer_cb()

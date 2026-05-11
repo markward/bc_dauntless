@@ -49,3 +49,65 @@ def test_button_no_callback_does_not_explode(fake_dom):
     pid = bindings.create_panel("p", "top-right", 20.0, 60.0)
     btn = UiButton(parent_element=bindings.panel_root(pid), label="X")
     fake_dom.fire_click(btn.element_id)  # must not raise
+
+
+from engine.ui.button import _RadioGroup
+
+
+def test_radio_group_selects_one_at_a_time(fake_dom):
+    pid = bindings.create_panel("p", "top-right", 20.0, 60.0)
+    root = bindings.panel_root(pid)
+    group = _RadioGroup()
+    a = UiButton(parent_element=root, label="A"); group.adopt(a)
+    b = UiButton(parent_element=root, label="B"); group.adopt(b)
+    c = UiButton(parent_element=root, label="C"); group.adopt(c)
+    # Click A → only A selected
+    fake_dom.fire_click(a.element_id)
+    assert a.selected and not b.selected and not c.selected
+    # Click B → only B
+    fake_dom.fire_click(b.element_id)
+    assert b.selected and not a.selected and not c.selected
+    # Click B again → still only B; no toggle to unselected
+    fake_dom.fire_click(b.element_id)
+    assert b.selected
+
+
+def test_radio_group_does_not_refire_when_clicking_selected(fake_dom):
+    pid = bindings.create_panel("p", "top-right", 20.0, 60.0)
+    root = bindings.panel_root(pid)
+    group = _RadioGroup()
+    fires: list[str] = []
+    a = UiButton(parent_element=root, label="A",
+                 on_click=lambda: fires.append("a"))
+    group.adopt(a)
+    fake_dom.fire_click(a.element_id)        # selects → fires
+    fake_dom.fire_click(a.element_id)        # already selected → no fire
+    assert fires == ["a"]
+
+
+def test_radio_group_previously_selected_does_not_fire_on_deselect(fake_dom):
+    pid = bindings.create_panel("p", "top-right", 20.0, 60.0)
+    root = bindings.panel_root(pid)
+    group = _RadioGroup()
+    fires: list[str] = []
+    a = UiButton(parent_element=root, label="A",
+                 on_click=lambda: fires.append("a"))
+    b = UiButton(parent_element=root, label="B",
+                 on_click=lambda: fires.append("b"))
+    group.adopt(a); group.adopt(b)
+    fake_dom.fire_click(a.element_id)        # a fires
+    fake_dom.fire_click(b.element_id)        # b fires; a's callback must NOT fire
+    assert fires == ["a", "b"]
+
+
+def test_radio_group_set_selected_programmatic_also_exclusive(fake_dom):
+    pid = bindings.create_panel("p", "top-right", 20.0, 60.0)
+    root = bindings.panel_root(pid)
+    group = _RadioGroup()
+    a = UiButton(parent_element=root, label="A")
+    b = UiButton(parent_element=root, label="B")
+    group.adopt(a); group.adopt(b)
+    group.select(a)
+    assert a.selected and not b.selected
+    group.select(b)
+    assert b.selected and not a.selected
