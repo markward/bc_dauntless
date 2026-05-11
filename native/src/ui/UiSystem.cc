@@ -81,6 +81,10 @@ PanelDocument* UiSystem::get_panel(int panel_id) {
     return it == panels_.end() ? nullptr : it->second.get();
 }
 
+void UiSystem::set_ui_scale(float scale) {
+    if (context_) context_->SetDensityIndependentPixelRatio(scale);
+}
+
 void UiSystem::update_hud(const HudState& state) {
     if (hud_) hud_->update(state);
     if (context_) context_->Update();

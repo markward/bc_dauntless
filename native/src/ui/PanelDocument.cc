@@ -44,17 +44,17 @@ PanelDocument::PanelDocument(Rml::Context* context,
         throw std::runtime_error("PanelDocument: failed to load " + rml_path.string());
     }
 
-    // Apply anchor + size as inline properties on the document body.
-    Rml::Element* body = doc_->GetFirstChild();
-    if (body) {
-        body->SetProperty("position", "absolute");
-        body->SetProperty("width",  std::to_string(width_vw)  + "vw");
-        body->SetProperty("height", std::to_string(height_vh) + "vh");
-        if      (anchor == "top-left")     { body->SetProperty("left",  "0dp"); body->SetProperty("top",    "0dp"); }
-        else if (anchor == "top-right")    { body->SetProperty("right", "0dp"); body->SetProperty("top",    "0dp"); }
-        else if (anchor == "bottom-left")  { body->SetProperty("left",  "0dp"); body->SetProperty("bottom", "0dp"); }
-        else if (anchor == "bottom-right") { body->SetProperty("right", "0dp"); body->SetProperty("bottom", "0dp"); }
-    }
+    // In RmlUi, the <body> tag in the RML maps to the ElementDocument itself
+    // (doc_), NOT to doc_->GetFirstChild(). Apply anchor + size as inline
+    // properties directly on doc_ so the document occupies only the panel's
+    // viewport region instead of stretching to fill the entire context.
+    doc_->SetProperty("position", "absolute");
+    doc_->SetProperty("width",  std::to_string(width_vw)  + "vw");
+    doc_->SetProperty("height", std::to_string(height_vh) + "vh");
+    if      (anchor == "top-left")     { doc_->SetProperty("left",  "0dp"); doc_->SetProperty("top",    "0dp"); }
+    else if (anchor == "top-right")    { doc_->SetProperty("right", "0dp"); doc_->SetProperty("top",    "0dp"); }
+    else if (anchor == "bottom-left")  { doc_->SetProperty("left",  "0dp"); doc_->SetProperty("bottom", "0dp"); }
+    else if (anchor == "bottom-right") { doc_->SetProperty("right", "0dp"); doc_->SetProperty("bottom", "0dp"); }
 
     root_ = doc_->GetElementById("root");
     if (!root_) {

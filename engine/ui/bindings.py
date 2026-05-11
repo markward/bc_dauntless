@@ -92,6 +92,8 @@ class _RealDom:
         # for dynamic tinting or (b) generate RCSS sources at runtime. Tests
         # against FakeDom still record the calls via the FakeDom backend.
         pass
+
+    def set_ui_scale(self, scale):          self._m.set_ui_scale(scale)
     def append_div(self, parent, cls):      return self._m.append_div(parent, cls)
     def remove_element(self, eid):          self._m.remove_element(eid)
     def set_class(self, eid, cls):          self._m.set_class(eid, cls)

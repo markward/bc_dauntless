@@ -428,6 +428,13 @@ PYBIND11_MODULE(_open_stbc_host, m) {
               return std::make_tuple(fw, fh);
           });
 
+    // ── UI scale ─────────────────────────────────────────────────────────
+    m.def("set_ui_scale",
+          [](float scale) {
+              if (!g_ui_system) return;
+              g_ui_system->set_ui_scale(scale);
+          });
+
     // ── UI panel + element primitives ───────────────────────────────────
     //
     // Panel ids are unique across the UiSystem. Element ids are unique

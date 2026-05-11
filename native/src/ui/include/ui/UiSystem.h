@@ -50,6 +50,12 @@ public:
     /// owns a given element id when callers pass element ids directly.
     auto& panels_for_bindings() { return panels_; }
 
+    /// Set the density-independent-pixel ratio for the UI context. Every
+    /// `dp` value in RCSS / inline style is multiplied by this — a setting
+    /// of 2.0 doubles the visual size of every UI element. Affects all
+    /// documents in the context (HUD + panels).
+    void set_ui_scale(float scale);
+
 private:
     std::unique_ptr<SystemInterface_GLFW> sys_iface_;
     std::unique_ptr<RenderInterface_GL3>  render_iface_;
