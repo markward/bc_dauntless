@@ -71,3 +71,66 @@ TEST(DustPassWrap, ZeroCameraOffsetIsIdentityInsideSphere) {
     EXPECT_FLOAT_EQ(local.y, inside.y);
     EXPECT_FLOAT_EQ(local.z, inside.z);
 }
+
+// --- GL-context smoke tests below ----------------------------------------
+
+#include <renderer/pipeline.h>
+#include <renderer/window.h>
+#include <scenegraph/camera.h>
+
+#include <glad/glad.h>
+
+namespace {
+
+class DustPassGLTest : public ::testing::Test {
+protected:
+    std::unique_ptr<renderer::Window> window;
+    std::unique_ptr<renderer::Pipeline> pipeline;
+
+    void SetUp() override {
+        window = std::make_unique<renderer::Window>(256, 256, "dust_test", false);
+        pipeline = std::make_unique<renderer::Pipeline>();
+    }
+    void TearDown() override {
+        pipeline.reset();
+        window.reset();
+    }
+};
+
+TEST_F(DustPassGLTest, RenderProducesNoGLError) {
+    renderer::DustPass pass;
+    scenegraph::Camera cam;
+    cam.eye = {0, 0, 100};
+    cam.target = {0, 0, 0};
+    cam.aspect = 1.0f;
+    // First call: have_prev_ false, velocity = 0; no streaks.
+    pass.render(cam, 1.0f / 60.0f, *pipeline);
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+    // Second call: real dt, velocity = 0 (eye unchanged).
+    pass.render(cam, 1.0f / 60.0f, *pipeline);
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+TEST_F(DustPassGLTest, DisabledPassDoesNothing) {
+    renderer::DustPass pass;
+    pass.set_enabled(false);
+    scenegraph::Camera cam;
+    cam.eye = {0, 0, 100};
+    cam.target = {0, 0, 0};
+    cam.aspect = 1.0f;
+    pass.render(cam, 1.0f / 60.0f, *pipeline);
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+TEST_F(DustPassGLTest, SetDensityZeroIsSafe) {
+    renderer::DustPass pass;
+    pass.set_density(0);
+    scenegraph::Camera cam;
+    cam.eye = {0, 0, 100};
+    cam.target = {0, 0, 0};
+    cam.aspect = 1.0f;
+    pass.render(cam, 1.0f / 60.0f, *pipeline);
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+}  // namespace

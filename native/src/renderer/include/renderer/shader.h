@@ -23,6 +23,7 @@ public:
     void set_vec3(const std::string& name, const glm::vec3& v) const;
     void set_vec2(const std::string& name, const glm::vec2& v) const;
     void set_int(const std::string& name, int v) const;
+    void set_float(const std::string& name, float v) const;
 
     /// Set a `vec3[]` uniform with `count` consecutive elements. The data
     /// pointer must reference at least `count` glm::vec3 values. Pass the
