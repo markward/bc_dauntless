@@ -85,6 +85,17 @@ def discover(scripts_root: Path | str) -> MissionRegistry:
         fam.episodes.sort(key=lambda e: e.dir_name)
         reg.families.append(fam)
     reg.families.sort(key=lambda f: f.dir_name)
+
+    # Backfill display names. Imported lazily so tests that exercise tree
+    # shape only don't have to pay for TGL loading.
+    from engine.missions import name_resolver as nr
+    for fam in reg.families:
+        fam.display_name = nr.resolve_family(fam.dir_name)
+        for ep in fam.episodes:
+            ep.display_name = nr.resolve_episode(fam.dir_name, ep.dir_name)
+            for m in ep.missions:
+                m.display_name = nr.resolve_mission(
+                    fam.dir_name, ep.dir_name, m.dir_name, m.module_name)
     return reg
 
 
