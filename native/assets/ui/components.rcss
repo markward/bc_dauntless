@@ -1,0 +1,166 @@
+/* native/assets/ui/components.rcss
+ * Styles for UiPanel, UiButton, UiCollapsibleList.
+ * Color values are populated per-panel via CSS custom properties pushed
+ * from engine.ui.theme.css_var_pairs().
+ */
+
+:root {
+    /* Fallback values — real values pushed at runtime per panel. */
+    --aff-enemy-color:    rgb(216,  43,  43);
+    --aff-friendly-color: rgb( 80, 112, 230);
+    --aff-neutral-color:  rgb(255, 255, 175);
+    --aff-unknown-color:  rgb(127, 127, 127);
+
+    --menu-1-normal:      rgb(216,  94,  86);
+    --menu-1-highlighted: rgb(254, 120,  86);
+    --menu-1-selected:    rgb(127,  60,  43);
+    --menu-2-normal:      rgb(147, 103, 255);
+    --menu-2-highlighted: rgb(173, 132, 255);
+    --menu-2-selected:    rgb( 86,  66, 127);
+    --menu-3-normal:      rgb(207,  96, 159);
+    --menu-3-highlighted: rgb(246, 147, 204);
+    --menu-3-selected:    rgb(103,  48,  79);
+    --menu-4-normal:      rgb(144, 103, 144);
+    --menu-4-highlighted: rgb(175, 144, 175);
+    --menu-4-selected:    rgb( 72,  51,  72);
+
+    --row-height: 4.5vh;
+}
+
+body {
+    margin: 0dp;
+    padding: 0dp;
+    width: 100%;
+    height: 100%;
+    font-family: antonio;
+    color: #e8e8d0;
+}
+
+.bc-panel {
+    background-color: #2c2c2c;
+    padding: 8dp;
+    border-radius: 4dp;
+}
+
+/* ── Collapsible header ─────────────────────────────────────────────────── */
+
+.bc-collapsible {
+    display: block;
+}
+
+.bc-collapsible-header {
+    height: var(--row-height);
+    display: flex;
+    align-items: center;
+    color: #e8e8d0;
+    font-size: 14dp;
+    font-weight: 600;
+    letter-spacing: 2dp;
+    text-transform: uppercase;
+    padding-right: 12dp;
+    border-left-width: 3dp;
+    border-left-style: solid;
+    cursor: pointer;
+}
+
+/* Affiliation variants drive bg + border color */
+.bc-collapsible-header.aff-enemy {
+    background-color: rgba(216, 43, 43, 0.2);
+    border-left-color: var(--aff-enemy-color);
+}
+.bc-collapsible-header.aff-friendly {
+    background-color: rgba(80, 112, 230, 0.2);
+    border-left-color: var(--aff-friendly-color);
+}
+.bc-collapsible-header.aff-neutral {
+    background-color: rgba(255, 255, 175, 0.2);
+    border-left-color: var(--aff-neutral-color);
+}
+.bc-collapsible-header.aff-unknown {
+    background-color: rgba(127, 127, 127, 0.2);
+    border-left-color: var(--aff-unknown-color);
+}
+
+/* Menu-level variants for non-affiliated collapsibles */
+.bc-collapsible-header.menu-1 {
+    background-color: rgba(216, 94, 86, 0.2);
+    border-left-color: var(--menu-1-normal);
+}
+.bc-collapsible-header.menu-2 {
+    background-color: rgba(147, 103, 255, 0.2);
+    border-left-color: var(--menu-2-normal);
+}
+.bc-collapsible-header.menu-3 {
+    background-color: rgba(207, 96, 159, 0.2);
+    border-left-color: var(--menu-3-normal);
+}
+.bc-collapsible-header.menu-4 {
+    background-color: rgba(144, 103, 144, 0.2);
+    border-left-color: var(--menu-4-normal);
+}
+
+.bc-arrow {
+    width: 28dp;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: inherit;
+}
+
+.bc-title {
+    flex: 1;
+}
+
+.bc-collapsible-children {
+    display: block;
+}
+
+/* ── Button ─────────────────────────────────────────────────────────────── */
+
+.bc-button {
+    height: var(--row-height);
+    display: flex;
+    align-items: center;
+    background-color: #3a3a3a;
+    color: #e0e0d8;
+    font-size: 14dp;
+    border-left-width: 6dp;
+    border-left-style: solid;
+    padding-left: 31dp;
+    padding-right: 12dp;
+    cursor: pointer;
+    transition: border-left-width 0.18s ease-out,
+                padding-left      0.18s ease-out,
+                background-color  0.18s ease-out,
+                color             0.18s ease-out,
+                border-left-color 0.18s ease-out;
+}
+
+.bc-button.menu-1 { border-left-color: var(--menu-1-normal); }
+.bc-button.menu-2 { border-left-color: var(--menu-2-normal); }
+.bc-button.menu-3 { border-left-color: var(--menu-3-normal); }
+.bc-button.menu-4 { border-left-color: var(--menu-4-normal); }
+
+.bc-button.selected {
+    color: #ffffff;
+    border-left-width: 9dp;
+    padding-left: 28dp;
+}
+
+.bc-button.menu-1.selected {
+    background-color: rgba(127, 60, 43, 0.55);
+    border-left-color: var(--menu-1-highlighted);
+}
+.bc-button.menu-2.selected {
+    background-color: rgba(86, 66, 127, 0.65);
+    border-left-color: var(--menu-2-highlighted);
+}
+.bc-button.menu-3.selected {
+    background-color: rgba(103, 48, 79, 0.65);
+    border-left-color: var(--menu-3-highlighted);
+}
+.bc-button.menu-4.selected {
+    background-color: rgba(72, 51, 72, 0.70);
+    border-left-color: var(--menu-4-highlighted);
+}
