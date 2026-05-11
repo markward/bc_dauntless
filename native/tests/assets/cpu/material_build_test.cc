@@ -133,3 +133,44 @@ TEST(MaterialBuild, DefaultsWhenNoPropertiesPresent) {
     EXPECT_TRUE(m.depth_test_enabled);
     EXPECT_TRUE(m.depth_write_enabled);
 }
+
+TEST(MaterialBuild, SpecularImageBindsToGlossSlotOnly) {
+    // _specular images are standalone masks; unlike _glow, they do NOT
+    // dual-bind to Base. Base must remain empty.
+    nif::NiTextureProperty tex;
+    tex.image_link = 42;
+
+    std::unordered_map<std::uint32_t, int> img_to_tex = {{42, 7}};
+    std::unordered_set<std::uint32_t> spec_links = {42};
+
+    auto in = basic_inputs();
+    in.texture = &tex;
+    in.image_to_texture = &img_to_tex;
+    in.specular_image_links = &spec_links;
+
+    auto m = assets::detail::build_material(in);
+    using S = assets::Material::StageSlot;
+    EXPECT_EQ(m.stages[static_cast<std::size_t>(S::Gloss)].texture_index, 7);
+    EXPECT_LT(m.stages[static_cast<std::size_t>(S::Base)].texture_index, 0)
+        << "_specular images must not dual-bind to Base";
+}
+
+TEST(MaterialBuild, NonSpecularImageStillBindsToBase) {
+    // Sanity: when specular_image_links is provided but the image_link
+    // is NOT in it, behavior is unchanged from before this feature.
+    nif::NiTextureProperty tex;
+    tex.image_link = 100;
+
+    std::unordered_map<std::uint32_t, int> img_to_tex = {{100, 3}};
+    std::unordered_set<std::uint32_t> spec_links = {99};  // a different image
+
+    auto in = basic_inputs();
+    in.texture = &tex;
+    in.image_to_texture = &img_to_tex;
+    in.specular_image_links = &spec_links;
+
+    auto m = assets::detail::build_material(in);
+    using S = assets::Material::StageSlot;
+    EXPECT_EQ(m.stages[static_cast<std::size_t>(S::Base)].texture_index, 3);
+    EXPECT_LT(m.stages[static_cast<std::size_t>(S::Gloss)].texture_index, 0);
+}

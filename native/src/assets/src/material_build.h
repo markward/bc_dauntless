@@ -26,6 +26,12 @@ struct MaterialInputs {
     /// suffix convention. When a property's base-stage image is in this
     /// set, the texture is routed to StageSlot::Glow instead of Base.
     const std::unordered_set<std::uint32_t>* glow_image_links = nullptr;
+    /// Link IDs of NiImages whose filename matches BC's AddLOD
+    /// "_specular" / "_spec" suffix convention. When a property's base-
+    /// stage image is in this set, the texture is routed to
+    /// StageSlot::Gloss (specular mask). Unlike glow, specular images
+    /// do NOT dual-bind to Base — they are standalone masks.
+    const std::unordered_set<std::uint32_t>* specular_image_links = nullptr;
 };
 
 Material build_material(const MaterialInputs&);

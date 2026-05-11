@@ -17,6 +17,15 @@ struct Material {
     float glossiness = 0.0f;
     float alpha = 1.0f;
 
+    /// Texture stages. Most slots are populated by NiTexturingProperty
+    /// blocks. Two slots have runtime-attached conventions driven by
+    /// AddLOD filename suffixes on NiImages (see model_build.cc):
+    ///
+    ///   Glow  — populated when a NiImage filename ends in "_glow".
+    ///           Dual-binds with Base; alpha is the emissive mask.
+    ///   Gloss — populated when a NiImage filename ends in "_specular"
+    ///           or "_spec". Standalone per-texel specular mask; does
+    ///           NOT dual-bind with Base.
     enum class StageSlot {
         Base = 0, Dark, Detail, Gloss, Glow, Bump, Decal0, Decal1, Decal2,
         Count

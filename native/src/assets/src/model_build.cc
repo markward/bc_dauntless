@@ -48,9 +48,29 @@ bool filename_is_glow(std::string_view fname) {
     return tail == "_glow";
 }
 
+/// True if `fname`'s extension-less basename ends in "_specular" or
+/// "_spec" (case-insensitive). Matches BC's AddLOD suffix convention
+/// for the 9th positional arg. Stock BC ships only ever use the long
+/// form; "_spec" support exists for mod packs.
+bool filename_is_specular(std::string_view fname) {
+    auto dot = fname.find_last_of('.');
+    auto stem = (dot == std::string_view::npos) ? fname : fname.substr(0, dot);
+    auto lower_ends_with = [](std::string_view s, std::string_view suffix) {
+        if (s.size() < suffix.size()) return false;
+        for (std::size_t i = 0; i < suffix.size(); ++i) {
+            char c = s[s.size() - suffix.size() + i];
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            if (c != suffix[i]) return false;
+        }
+        return true;
+    };
+    return lower_ends_with(stem, "_specular") || lower_ends_with(stem, "_spec");
+}
+
 struct TextureLoadResult {
     std::unordered_map<std::uint32_t, int> image_to_texture;
     std::unordered_set<std::uint32_t>      glow_image_links;
+    std::unordered_set<std::uint32_t>      specular_image_links;
 };
 
 /// Walk all NiImage blocks; load + decode + upload referenced TGAs (or
@@ -100,6 +120,9 @@ TextureLoadResult load_all_textures(
         out.image_to_texture[link_id] = static_cast<int>(model.textures.size());
         if (img->use_external != 0 && filename_is_glow(img->file_name)) {
             out.glow_image_links.insert(link_id);
+        }
+        if (img->use_external != 0 && filename_is_specular(img->file_name)) {
+            out.specular_image_links.insert(link_id);
         }
         model.textures.push_back(std::move(tex));
     }
@@ -183,11 +206,13 @@ MaterialInputs gather_material_inputs(
     const nif::NiTriShape& shape,
     const std::unordered_map<std::uint32_t, int>& image_to_texture,
     const std::unordered_set<std::uint32_t>& glow_image_links,
+    const std::unordered_set<std::uint32_t>& specular_image_links,
     const LinkResolver& resolver)
 {
     MaterialInputs in;
     in.image_to_texture = &image_to_texture;
     in.glow_image_links = &glow_image_links;
+    in.specular_image_links = &specular_image_links;
     for (auto link : shape.av.property_links) {
         auto idx = resolver.resolve(link);
         if (idx == LinkResolver::kInvalidIndex) continue;
@@ -263,7 +288,8 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
         if (!data) continue;  // shape with no data block — skip silently
 
         auto mat_inputs = gather_material_inputs(
-            f, *shape, tex_result.image_to_texture, tex_result.glow_image_links, resolver);
+            f, *shape, tex_result.image_to_texture, tex_result.glow_image_links,
+            tex_result.specular_image_links, resolver);
         Material mat = build_material(mat_inputs);
         int mat_index = static_cast<int>(model.materials.size());
         model.materials.push_back(std::move(mat));

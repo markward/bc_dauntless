@@ -67,22 +67,39 @@ void apply_texture_property(
     Material& m,
     const nif::NiTextureProperty& src,
     const std::unordered_map<std::uint32_t, int>* image_to_texture,
-    const std::unordered_set<std::uint32_t>* glow_image_links)
+    const std::unordered_set<std::uint32_t>* glow_image_links,
+    const std::unordered_set<std::uint32_t>* specular_image_links)
 {
-    // Single-texture v3.x property — populates the Base stage. BC's AddLOD
-    // "_glow" convention encodes both the hull's base color (RGB) and its
-    // self-illumination mask (alpha) in the same TGA; we bind it to both
-    // Base and Glow so the lit term uses the hull color naturally and the
-    // glow term adds emissive contribution gated by alpha.
+    // Single-texture v3.x property — usually populates the Base stage.
+    //
+    // BC's AddLOD suffix conventions reinterpret this binding at runtime:
+    //
+    //   "_glow"     — image is the hull's diffuse (RGB) AND its self-
+    //                 illumination mask (alpha). Bind to BOTH Base and
+    //                 Glow so the lit term uses hull color and the glow
+    //                 term adds emissive contribution.
+    //
+    //   "_specular" / "_spec" — image is a standalone per-texel specular
+    //                 mask. Bind ONLY to Gloss. Do NOT dual-bind to Base
+    //                 (that would replace the hull texture with the mask).
     int tex_idx = -1;
     if (image_to_texture) {
-        if (auto it = image_to_texture->find(src.image_link); it != image_to_texture->end()) {
+        if (auto it = image_to_texture->find(src.image_link);
+            it != image_to_texture->end()) {
             tex_idx = it->second;
         }
     }
+    const bool is_specular = specular_image_links &&
+        specular_image_links->find(src.image_link) != specular_image_links->end();
+    if (is_specular) {
+        auto& gloss = m.stages[static_cast<std::size_t>(Material::StageSlot::Gloss)];
+        gloss.texture_index = tex_idx;
+        gloss.apply_mode    = 2;  // APPLY_MODULATE
+        return;
+    }
     auto& base = m.stages[static_cast<std::size_t>(Material::StageSlot::Base)];
     base.texture_index = tex_idx;
-    base.apply_mode    = 2;  // APPLY_MODULATE
+    base.apply_mode    = 2;
     const bool is_glow = glow_image_links &&
         glow_image_links->find(src.image_link) != glow_image_links->end();
     if (is_glow) {
@@ -147,7 +164,8 @@ Material build_material(const MaterialInputs& in) {
     if (in.alpha)         apply_alpha_property(m, *in.alpha);
     if (in.zbuffer)       apply_zbuffer_property(m, *in.zbuffer);
     if (in.vertex_color)  apply_vertex_color_property(m, *in.vertex_color);
-    if (in.texture)       apply_texture_property(m, *in.texture, in.image_to_texture, in.glow_image_links);
+    if (in.texture) apply_texture_property(m, *in.texture,
+        in.image_to_texture, in.glow_image_links, in.specular_image_links);
     if (in.texturing)     apply_texturing_property(m, *in.texturing, in.image_to_texture);
     if (in.multi_texture) apply_multi_texture_property(m, *in.multi_texture, in.image_to_texture);
     return m;
