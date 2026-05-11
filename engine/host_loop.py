@@ -925,13 +925,21 @@ def run(mission_name: str = SHIP_GATE_MISSION,
     r.init(1280, 720, "open_stbc",
            str(PROJECT_ROOT / "native" / "assets" / "ui"))
     try:
-        # Demo UI panel — proves the components render. Remove once a real
-        # consumer (mission picker, targets panel) replaces it.
         from engine import ui
+        from engine.ui.target_list import TargetListController
         ui.init()
-        demo_panel = ui.UiPanel(id="demo", anchor="top-left",
-                                width_vw=18.0, height_vh=55.0,
-                                title="Targets")
+
+        # Target list panel — mirrors live ships from ship_lifecycle.
+        # Stage 1: ship names + affiliation only. Flip show_subsystems=True
+        # to add populated subsystem buttons per row (stage 2).
+        target_panel = ui.UiPanel(id="targets", anchor="top-left",
+                                  width_vw=18.0, height_vh=55.0,
+                                  title="Targets")
+        target_list = TargetListController(
+            target_panel,
+            player_provider=lambda: App.Game_GetCurrentPlayer(),
+            show_subsystems=False,
+        )
 
         # Debug stat panel, top-right. Replaces the old hud.rml document.
         # Height accommodates the title + 4 stat rows + the "Load Mission"
@@ -944,22 +952,6 @@ def run(mission_name: str = SHIP_GATE_MISSION,
         stat_system = debug_panel.stat("System", "---")
         stat_pos    = debug_panel.stat("Pos",    "0 0 0")
         stat_rot    = debug_panel.stat("Rot",    "Y0\xb0 P0\xb0 R0\xb0")
-        bop = demo_panel.collapsible("Bird of Prey-1", affiliation="enemy",
-                                     expanded=True)
-        bop.button("Shield Generator")
-        bop.button("Warp Core", selected=True)
-        bop.collapsible("Disruptor Cannons", menu_level=3, expanded=False)
-        bop.button("Torpedoes")
-        bop.button("Impulse Engines")
-        bop.collapsible("Warp Engines", menu_level=3, expanded=False)
-        bop.button("Cloaking Device")
-        bop.button("Sensor Array")
-        demo_panel.collapsible("USS Yamato", affiliation="friendly",
-                               expanded=False)
-        demo_panel.collapsible("Tellarite Caravan", affiliation="neutral",
-                               expanded=False)
-        demo_panel.collapsible("Subspace Echo 47", affiliation="unknown",
-                               expanded=False)
 
         # Bridge view marker — visible only when KEY_SPACE has toggled
         # _ViewModeController into bridge mode. PoC: text-only, no
@@ -976,7 +968,9 @@ def run(mission_name: str = SHIP_GATE_MISSION,
         controller = HostController()
         controller.renderer = r
         controller.loader = _MissionLoader(controller, verbose=verbose)
+        controller.post_load_hook = target_list.rebuild_from_snapshot
         controller.session = controller.loader.load(mission_name)
+        target_list.rebuild_from_snapshot()    # filter player after Game.SetPlayer
 
         if verbose:
             ss = controller.session
