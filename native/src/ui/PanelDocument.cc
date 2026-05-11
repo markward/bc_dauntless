@@ -84,11 +84,15 @@ PanelDocument::~PanelDocument() {
 
 void PanelDocument::set_visible(bool visible) {
     if (!doc_) return;
-    // Use display: none / block rather than RmlUi's Show()/Hide() (which
-    // use `visibility: hidden`) — visibility:hidden keeps the element in
-    // layout and still captures pointer events, so a hidden 42vw×72vh
-    // centered document would steal clicks from any UI behind it.
-    doc_->SetProperty("display", visible ? "block" : "none");
+    // Two-pronged hide:
+    //   display: none       — drops the document from layout/rendering
+    //   pointer-events: none — RmlUi's hit-test (Context::GetElementAtPoint)
+    //                          short-circuits on this so the hidden 42vw×72vh
+    //                          centered document doesn't keep stealing
+    //                          clicks from UI behind it.
+    // Show inverts both.
+    doc_->SetProperty("display",        visible ? "block" : "none");
+    doc_->SetProperty("pointer-events", visible ? "auto"  : "none");
 }
 
 int PanelDocument::append_div(int parent_id, const std::string& class_names) {
