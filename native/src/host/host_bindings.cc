@@ -52,6 +52,12 @@ std::unique_ptr<renderer::SunPass> g_sun_pass;
 std::unique_ptr<renderer::DustPass> g_dust_pass;
 double g_prev_frame_time_seconds = 0.0;
 
+// Bridge pass state. Camera is set from Python via set_bridge_camera each
+// tick when bridge mode is active. The pass renders after the dust pass and
+// before the UI overlay; see frame().
+scenegraph::Camera g_bridge_camera;
+bool g_bridge_pass_enabled = false;
+
 struct LoadedModel {
     std::filesystem::path nif_path;
     assets::ModelHandle handle;
@@ -181,6 +187,21 @@ void frame() {
     g_prev_frame_time_seconds = now;
     if (g_dust_pass) g_dust_pass->render(g_camera, dt, *g_pipeline);
 
+    // ── Bridge pass ──────────────────────────────────────────────────────
+    // Renders bridge-tagged instances with the bridge camera, after a
+    // depth clear so the bridge geometry overlays the space scene
+    // regardless of world-space coordinates. The space pass + special
+    // passes above are wasted work in bridge mode but are kept so the
+    // future viewscreen RTT can swap the space pass's target without
+    // adding a "render space here" path that didn't exist before.
+    if (g_bridge_pass_enabled) {
+        glClear(GL_DEPTH_BUFFER_BIT);
+        if (fh > 0) g_bridge_camera.aspect = static_cast<float>(fw) / static_cast<float>(fh);
+        g_submitter->submit_opaque_in_pass(
+            g_world, g_bridge_camera, *g_pipeline, lookup, g_lighting,
+            scenegraph::Pass::Bridge);
+    }
+
     if (g_ui_system) {
         g_ui_system->update_hud(g_hud_state);
         g_ui_system->render(fw, fh);
@@ -239,6 +260,42 @@ PYBIND11_MODULE(_open_stbc_host, m) {
     m.def("set_visible",
           [](scenegraph::InstanceId id, bool v) { g_world.set_visible(id, v); },
           py::arg("id"), py::arg("visible"));
+
+    m.def("create_bridge_instance",
+          [](scenegraph::ModelHandle h) {
+              auto id = g_world.create_instance(h);
+              g_world.set_pass(id, scenegraph::Pass::Bridge);
+              return id;
+          },
+          py::arg("model"),
+          "Like create_instance but tags the new instance for the bridge pass.");
+
+    m.def("set_bridge_camera",
+          [](std::tuple<float,float,float> eye,
+             std::tuple<float,float,float> target,
+             std::tuple<float,float,float> up,
+             float fov_y_rad, float near, float far) {
+              g_bridge_camera.eye    = {std::get<0>(eye),    std::get<1>(eye),    std::get<2>(eye)};
+              g_bridge_camera.target = {std::get<0>(target), std::get<1>(target), std::get<2>(target)};
+              g_bridge_camera.up     = {std::get<0>(up),     std::get<1>(up),     std::get<2>(up)};
+              g_bridge_camera.fov_y_rad = fov_y_rad;
+              g_bridge_camera.near = near;
+              g_bridge_camera.far  = far;
+              if (g_window) {
+                  int fw = 0, fh = 0;
+                  g_window->framebuffer_size(&fw, &fh);
+                  if (fh > 0) g_bridge_camera.aspect = static_cast<float>(fw) / static_cast<float>(fh);
+              }
+          },
+          py::arg("eye"), py::arg("target"), py::arg("up"),
+          py::arg("fov_y_rad"), py::arg("near"), py::arg("far"),
+          "Set the bridge pass camera. No-op until bridge_pass_set_enabled(True).");
+
+    m.def("bridge_pass_set_enabled",
+          [](bool enabled) { g_bridge_pass_enabled = enabled; },
+          py::arg("enabled"),
+          "Enable or disable the bridge render pass.");
+
     m.def("set_camera",
           [](std::tuple<float,float,float> eye,
              std::tuple<float,float,float> target,

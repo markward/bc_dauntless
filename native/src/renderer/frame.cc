@@ -183,4 +183,39 @@ void FrameSubmitter::submit_opaque(const scenegraph::World& world,
     });
 }
 
+void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
+                                           const scenegraph::Camera& camera,
+                                           Pipeline& pipeline,
+                                           const ModelLookup& lookup,
+                                           const Lighting& lighting,
+                                           scenegraph::Pass pass) {
+    auto& shader = pipeline.opaque_shader();
+    shader.use();
+    shader.set_mat4("u_view", camera.view_matrix());
+    shader.set_mat4("u_proj", camera.proj_matrix());
+
+    const glm::vec3 cam_pos_ws =
+        glm::vec3(glm::inverse(camera.view_matrix())[3]);
+    shader.set_vec3("u_camera_pos_ws", cam_pos_ws);
+
+    shader.set_vec3("u_ambient_light", lighting.ambient);
+    shader.set_int("u_dir_light_count", lighting.directional_count);
+    if (lighting.directional_count > 0) {
+        shader.set_vec3_array("u_dir_light_dir_ws",
+                              lighting.directional_dir_ws,
+                              lighting.directional_count);
+        shader.set_vec3_array("u_dir_light_color",
+                              lighting.directional_color,
+                              lighting.directional_count);
+    }
+
+    const GLuint white = ensure_white_texture();
+    const GLuint black = ensure_black_texture();
+
+    world.for_each_visible_in_pass(pass, [&](const scenegraph::Instance& inst) {
+        const assets::Model* m = lookup(inst.model_handle);
+        if (m) draw_model(*m, inst.world, shader, white, black);
+    });
+}
+
 }  // namespace renderer

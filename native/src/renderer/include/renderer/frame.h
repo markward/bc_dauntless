@@ -8,7 +8,7 @@
 #include <glm/glm.hpp>
 
 namespace assets { struct Model; }
-namespace scenegraph { class World; struct Camera; }
+namespace scenegraph { class World; struct Camera; enum class Pass : std::uint8_t; }
 namespace renderer { class Pipeline; }
 
 namespace renderer {
@@ -66,6 +66,16 @@ public:
                        Pipeline& pipeline,
                        const ModelLookup& lookup,
                        const Lighting& lighting);
+
+    /// Like submit_opaque but only iterates instances tagged with `pass`.
+    /// Used by the bridge pass after a depth clear so bridge-tagged
+    /// geometry overlays the space scene regardless of world coords.
+    void submit_opaque_in_pass(const scenegraph::World& world,
+                               const scenegraph::Camera& camera,
+                               Pipeline& pipeline,
+                               const ModelLookup& lookup,
+                               const Lighting& lighting,
+                               scenegraph::Pass pass);
 
 private:
     /// Lazily-allocated 1x1 white texture used as a fallback when a material
