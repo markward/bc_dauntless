@@ -259,16 +259,24 @@ class _CameraControl:
     DEFAULT_DISTANCE       = _math.sqrt(600.0**2 + 200.0**2) * SHIP_SCALE
     DISTANCE_MIN           =  100.0 * SHIP_SCALE
     DISTANCE_MAX           = 5000.0 * SHIP_SCALE
+    SPRING_TAU_S           = 0.50                               # ~95% catch-up in 1.5s
 
     def __init__(self):
         self.orbit_yaw_rad   = self.DEFAULT_YAW_RAD
         self.orbit_pitch_rad = self.DEFAULT_PITCH_RAD
         self.distance        = self.DEFAULT_DISTANCE
+        self._smoothed_rot   = None  # seeded on first compute_camera(..., dt=...)
 
     def _reset(self) -> None:
         self.orbit_yaw_rad   = self.DEFAULT_YAW_RAD
         self.orbit_pitch_rad = self.DEFAULT_PITCH_RAD
         self.distance        = self.DEFAULT_DISTANCE
+
+    def snap(self) -> None:
+        """Drop smoothed rotation so the next compute_camera(..., dt=...) call
+        aligns the camera immediately with the live ship rotation. Use on hard
+        cuts (mission swap, teleport, warp exit)."""
+        self._smoothed_rot = None
 
     def apply(self, dt: float, h, scroll_y: float) -> None:
         """Read arrow keys + C reset + accumulated scroll, update orbit state.
@@ -294,15 +302,24 @@ class _CameraControl:
             if self.distance < self.DISTANCE_MIN: self.distance = self.DISTANCE_MIN
             if self.distance > self.DISTANCE_MAX: self.distance = self.DISTANCE_MAX
 
-    def compute_camera(self, ship_loc, ship_rot) -> tuple:
+    def compute_camera(self, ship_loc, ship_rot, dt=None) -> tuple:
         """Return (eye, target, up) as 3-tuples in world space.
 
         Offset is built in ship body frame (X=right, Y=forward, Z=up):
             offset_body = (sin(y)*cos(p), -cos(y)*cos(p), sin(p)) * distance
         At y=0, p=0 the camera sits directly behind on the body-Y axis.
         Mapping body→world uses BC's row-vector convention: world_axis_j =
-        ship_rot.GetRow(j).
+        basis.GetRow(j).
+
+        When `dt` is given, the basis used here is a smoothed copy of the
+        ship's rotation that lags the live value with time constant
+        SPRING_TAU_S. This produces the "spring" feel where the ship visibly
+        rotates against the camera during a manoeuvre, then settles. When
+        `dt` is None the live rotation is used directly and no smoothing
+        state is touched (legacy / pure-projection path used by tests).
         """
+        basis = self._advance_smoothing(ship_rot, dt) if dt is not None else ship_rot
+
         cy = _math.cos(self.orbit_yaw_rad)
         sy = _math.sin(self.orbit_yaw_rad)
         cp = _math.cos(self.orbit_pitch_rad)
@@ -313,9 +330,9 @@ class _CameraControl:
         oy = -cy * cp * d
         oz =       sp * d
 
-        rgt = ship_rot.GetRow(0)
-        fwd = ship_rot.GetRow(1)
-        up  = ship_rot.GetRow(2)
+        rgt = basis.GetRow(0)
+        fwd = basis.GetRow(1)
+        up  = basis.GetRow(2)
 
         eye = (
             ship_loc.x + ox * rgt.x + oy * fwd.x + oz * up.x,
@@ -325,6 +342,55 @@ class _CameraControl:
         target = (ship_loc.x, ship_loc.y, ship_loc.z)
         up_vec = (up.x, up.y, up.z)
         return eye, target, up_vec
+
+    def _advance_smoothing(self, ship_rot, dt: float):
+        """Blend self._smoothed_rot toward ship_rot, renormalize, and return
+        the smoothed basis. Seeds from ship_rot on the first call."""
+        from engine.appc.math import TGMatrix3, TGPoint3
+
+        if self._smoothed_rot is None:
+            seed = TGMatrix3()
+            for i in range(3):
+                seed.SetRow(i, ship_rot.GetRow(i))
+            self._smoothed_rot = seed
+            return self._smoothed_rot
+
+        alpha = 1.0 - _math.exp(-dt / self.SPRING_TAU_S) if dt > 0.0 else 0.0
+        blended = [None, None, None]
+        for i in range(3):
+            s = self._smoothed_rot.GetRow(i)
+            l = ship_rot.GetRow(i)
+            blended[i] = TGPoint3(
+                s.x + alpha * (l.x - s.x),
+                s.y + alpha * (l.y - s.y),
+                s.z + alpha * (l.z - s.z),
+            )
+
+        # Gram-Schmidt re-orthonormalize: keep forward (row 1) as primary
+        # axis, project up (row 2) perpendicular to it, derive right via
+        # cross product. Body axes are right-handed: forward × up = right.
+        def _norm(v):
+            m = _math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z)
+            return TGPoint3(v.x/m, v.y/m, v.z/m)
+
+        f = _norm(blended[1])
+        u_in = blended[2]
+        dot_uf = u_in.x*f.x + u_in.y*f.y + u_in.z*f.z
+        u = _norm(TGPoint3(
+            u_in.x - dot_uf * f.x,
+            u_in.y - dot_uf * f.y,
+            u_in.z - dot_uf * f.z,
+        ))
+        r = TGPoint3(
+            f.y * u.z - f.z * u.y,
+            f.z * u.x - f.x * u.z,
+            f.x * u.y - f.y * u.x,
+        )
+
+        self._smoothed_rot.SetRow(0, r)
+        self._smoothed_rot.SetRow(1, f)
+        self._smoothed_rot.SetRow(2, u)
+        return self._smoothed_rot
 
 
 def _setup_sdk() -> None:
@@ -841,7 +907,10 @@ def run(mission_name: str = SHIP_GATE_MISSION,
             # so they queue rather than tear panels down synchronously.
             # Then drain any queued mission swap before scene work.
             picker.drain()
+            had_pending_swap = controller.pending_swap is not None
             controller._drain_pending_swap()
+            if had_pending_swap:
+                cam_control.snap()
             session = controller.session
             player = session.player if session is not None else None
 
@@ -880,7 +949,8 @@ def run(mission_name: str = SHIP_GATE_MISSION,
                 up_vec = (0.0, 1.0, 0.0)
             elif player is not None:
                 eye, target, up_vec = cam_control.compute_camera(
-                    player.GetWorldLocation(), player.GetWorldRotation())
+                    player.GetWorldLocation(), player.GetWorldRotation(),
+                    dt=TICK_DT)
             else:
                 eye = (0.0, 30.0, 200.0)
                 target = (0.0, 0.0, 0.0)

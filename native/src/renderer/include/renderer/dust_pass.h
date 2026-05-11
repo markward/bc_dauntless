@@ -43,10 +43,13 @@ public:
     // tuning. Changing these does not break correctness; it only changes
     // how the effect looks.
     // Sphere is ~52% of the cube the particles are seeded in; the rest
-    // are discarded by the fragment shader. 1024 seeded → ~535 visible.
-    static constexpr int   kParticleCount        = 1024;
+    // are discarded by the fragment shader. 512 seeded → ~265 visible.
+    static constexpr int   kParticleCount        = 512;
     static constexpr float kVolumeRadius         = 40.0f;       // BC units
     static constexpr float kSmearSeconds         = 1.0f / 30.0f;
+    // Hard cap on streak length so high-velocity camera motion (warp
+    // exits, fast chase) doesn't stretch dust into screen-spanning lines.
+    static constexpr float kMaxSmearLength       = 1.5f;        // BC units
     static constexpr float kSizeMin              = 0.04f;       // BC units
     static constexpr float kSizeMax              = 0.07f;
     static constexpr float kBrightnessMin        = 0.5f;

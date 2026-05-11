@@ -13,10 +13,12 @@ uniform mat4 u_proj;
 
 out vec3 v_normal_ws;
 out vec2 v_uv;
+out vec3 v_position_ws;
 
 void main() {
     vec4 ws = u_model * vec4(a_position, 1.0);
     v_normal_ws = mat3(u_model) * a_normal;
     v_uv = a_uv;
+    v_position_ws = ws.xyz;
     gl_Position = u_proj * u_view * ws;
 }

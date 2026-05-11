@@ -223,6 +223,119 @@ def test_compute_camera_up_is_ship_up():
     assert up[2] == pytest.approx(expected.z)
 
 
+# ── Spring/lag smoothing ─────────────────────────────────────────────────────
+
+
+def _roll_90_rot():
+    """Ship rotated 90° around body Y (roll). Row 2 (body-up) = (-1, 0, 0)."""
+    from engine.appc.math import TGMatrix3
+    r = TGMatrix3()
+    r.MakeYRotation(math.radians(90))
+    return r
+
+
+def test_spring_first_call_with_dt_seeds_to_live_rotation():
+    """First compute_camera with dt should produce the same up vector as the
+    no-spring path, because there is no prior smoothed state to lag against."""
+    from engine.host_loop import _CameraControl
+    cc = _CameraControl()
+    loc, rot = _make_ship_pose(0.0, 0.0, 0.0)
+    rot.MakeYRotation(math.radians(30))
+    eye_dt,  _, up_dt  = cc.compute_camera(loc, rot, dt=1.0/60)
+    cc2 = _CameraControl()
+    eye_no, _, up_no = cc2.compute_camera(loc, rot)
+    assert up_dt  == pytest.approx(up_no,  abs=1e-9)
+    assert eye_dt == pytest.approx(eye_no, abs=1e-9)
+
+
+def test_spring_lags_after_sudden_ship_rotation_jump():
+    """Seed smoothing at identity, then snap the ship to a 90° roll. After
+    one short tick the camera up should still be near world-up, not the new
+    ship-up."""
+    from engine.host_loop import _CameraControl
+    cc = _CameraControl()
+    loc, ident = _make_ship_pose(0.0, 0.0, 0.0)
+    # Seed: many ticks at identity so smoothed_rot ≈ identity.
+    for _ in range(60):
+        cc.compute_camera(loc, ident, dt=1.0/60)
+    rolled = _roll_90_rot()
+    _, _, up = cc.compute_camera(loc, rolled, dt=1.0/60)
+    # Live ship-up is (-1, 0, 0). After ~16ms with τ=0.25s, blend α ≈ 0.064.
+    # Up should still be very close to world +Z, not anywhere near body +X.
+    assert up[2] > 0.99
+    assert abs(up[0]) < 0.10
+
+
+def test_spring_converges_to_live_after_long_settle():
+    """Hold the rotation steady for ≫ τ; smoothed rotation should reach the
+    live rotation within float tolerance."""
+    from engine.host_loop import _CameraControl
+    cc = _CameraControl()
+    loc, ident = _make_ship_pose(0.0, 0.0, 0.0)
+    cc.compute_camera(loc, ident, dt=1.0/60)   # seed at identity
+    rolled = _roll_90_rot()
+    # 6 seconds → ≥ 12 × τ regardless of τ ≤ 0.5s → residual ≲ e^-12.
+    for _ in range(int(6.0 * 60)):
+        cc.compute_camera(loc, rolled, dt=1.0/60)
+    _, _, up = cc.compute_camera(loc, rolled, dt=1.0/60)
+    expected = rolled.GetRow(2)
+    assert up[0] == pytest.approx(expected.x, abs=1e-4)
+    assert up[1] == pytest.approx(expected.y, abs=1e-4)
+    assert up[2] == pytest.approx(expected.z, abs=1e-4)
+
+
+def test_spring_snap_clears_smoothing():
+    """After snap(), the next compute_camera with dt should align to live
+    immediately rather than blending from the prior smoothed state."""
+    from engine.host_loop import _CameraControl
+    cc = _CameraControl()
+    loc, ident = _make_ship_pose(0.0, 0.0, 0.0)
+    for _ in range(60):
+        cc.compute_camera(loc, ident, dt=1.0/60)
+    cc.snap()
+    rolled = _roll_90_rot()
+    _, _, up = cc.compute_camera(loc, rolled, dt=1.0/60)
+    expected = rolled.GetRow(2)
+    assert up[0] == pytest.approx(expected.x, abs=1e-9)
+    assert up[1] == pytest.approx(expected.y, abs=1e-9)
+    assert up[2] == pytest.approx(expected.z, abs=1e-9)
+
+
+def test_spring_keeps_basis_orthonormal_under_continual_rotation():
+    """Continually update with a non-trivial rotation; the smoothed basis
+    used for the camera must remain orthonormal (no drift / non-unit)."""
+    from engine.host_loop import _CameraControl
+    from engine.appc.math import TGMatrix3
+    cc = _CameraControl()
+    cc.orbit_yaw_rad = math.radians(45)        # so eye depends on all three rows
+    loc, _ = _make_ship_pose(0.0, 0.0, 0.0)
+    angle = 0.0
+    for _ in range(600):
+        r = TGMatrix3()
+        r.MakeZRotation(angle)
+        angle += math.radians(1.0)             # slow continuous yaw
+        cc.compute_camera(loc, r, dt=1.0/60)
+    rot_used = cc._smoothed_rot                # internal smoothed basis
+    rows = [rot_used.GetRow(i) for i in range(3)]
+    for v in rows:
+        assert math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z) == pytest.approx(1.0, abs=1e-6)
+    def dot(a, b): return a.x*b.x + a.y*b.y + a.z*b.z
+    assert dot(rows[0], rows[1]) == pytest.approx(0.0, abs=1e-6)
+    assert dot(rows[1], rows[2]) == pytest.approx(0.0, abs=1e-6)
+    assert dot(rows[0], rows[2]) == pytest.approx(0.0, abs=1e-6)
+
+
+def test_compute_camera_dt_none_does_not_mutate_smoothed_state():
+    """Legacy call (no dt) must remain a pure projection — no smoothing
+    state should accumulate, so existing single-shot tests stay valid."""
+    from engine.host_loop import _CameraControl
+    cc = _CameraControl()
+    loc, rot = _make_ship_pose(0.0, 0.0, 0.0)
+    rot.MakeZRotation(math.radians(30))
+    cc.compute_camera(loc, rot)
+    assert cc._smoothed_rot is None
+
+
 def test_orbit_yaw_90_puts_camera_on_ship_right():
     """orbit_yaw=+90° at default pitch ≈ 18.4°: camera should sit to the
     ship's right (body +X) and slightly above. Identity ship rotation."""

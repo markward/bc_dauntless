@@ -48,9 +48,56 @@ bool filename_is_glow(std::string_view fname) {
     return tail == "_glow";
 }
 
+/// True if `fname`'s extension-less basename ends in "_specular" or
+/// "_spec" (case-insensitive). Matches BC's AddLOD suffix convention
+/// for the 9th positional arg. Stock BC ships only ever use the long
+/// form; "_spec" support exists for mod packs.
+bool filename_is_specular(std::string_view fname) {
+    auto dot = fname.find_last_of('.');
+    auto stem = (dot == std::string_view::npos) ? fname : fname.substr(0, dot);
+    auto lower_ends_with = [](std::string_view s, std::string_view suffix) {
+        if (s.size() < suffix.size()) return false;
+        for (std::size_t i = 0; i < suffix.size(); ++i) {
+            char c = s[s.size() - suffix.size() + i];
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            if (c != suffix[i]) return false;
+        }
+        return true;
+    };
+    return lower_ends_with(stem, "_specular") || lower_ends_with(stem, "_spec");
+}
+
+/// Given a texture filename like "CardGalor01_glow.tga" or "Hull.tga",
+/// produce the AddLOD-style sibling spec filename ("CardGalor01_specular.tga"
+/// or "Hull_specular.tga"). Strips a trailing `_glow` (case-insensitive)
+/// from the stem before appending `_specular`, so a _glow texture and
+/// its hull-diffuse sibling resolve to the same spec map.
+std::string sibling_specular_filename(std::string_view fname) {
+    auto dot = fname.find_last_of('.');
+    std::string stem(dot == std::string_view::npos ? fname : fname.substr(0, dot));
+    std::string ext (dot == std::string_view::npos ? std::string{} : std::string(fname.substr(dot)));
+    // Strip trailing "_glow" (case-insensitive, length 5).
+    if (stem.size() >= 5) {
+        std::string tail = stem.substr(stem.size() - 5);
+        std::transform(tail.begin(), tail.end(), tail.begin(),
+            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (tail == "_glow") stem.resize(stem.size() - 5);
+    }
+    return stem + "_specular" + ext;
+}
+
 struct TextureLoadResult {
     std::unordered_map<std::uint32_t, int> image_to_texture;
     std::unordered_set<std::uint32_t>      glow_image_links;
+    std::unordered_set<std::uint32_t>      specular_image_links;
+    /// NIF link_id of a non-_specular NiImage -> Model::textures index
+    /// of a sibling "<basename>_specular.tga" file discovered on disk
+    /// next to the loaded image. Phase 1 stand-in for BC's AddLOD
+    /// runtime injection of a `_specular` suffix: the actual NIFs
+    /// reference only the diffuse/glow image, but BC's engine pairs
+    /// each one with a sibling spec map at load time. We replicate that
+    /// here so the spec pass has something to bind on stock assets.
+    std::unordered_map<std::uint32_t, int> sibling_specular_for_image;
 };
 
 /// Walk all NiImage blocks; load + decode + upload referenced TGAs (or
@@ -101,7 +148,39 @@ TextureLoadResult load_all_textures(
         if (img->use_external != 0 && filename_is_glow(img->file_name)) {
             out.glow_image_links.insert(link_id);
         }
+        if (img->use_external != 0 && filename_is_specular(img->file_name)) {
+            out.specular_image_links.insert(link_id);
+        }
         model.textures.push_back(std::move(tex));
+
+        // Phase 1 AddLOD-shim: BC's engine, given an AddLOD `_specular`
+        // suffix arg, loads a sibling texture for each NiImage by
+        // substituting `_specular` for the existing suffix (or appending
+        // it). Our load path bypasses AddLOD entirely, so we replicate
+        // the behavior here: for every external NiImage that isn't
+        // itself a `_specular` file, probe the texture search path for
+        // its sibling. Found ones are registered as additional textures
+        // and matched back to the original image's link_id so
+        // apply_texture_property can bind them to StageSlot::Gloss.
+        if (img->use_external != 0 && !filename_is_specular(img->file_name)) {
+            const std::string sibling_name =
+                sibling_specular_filename(img->file_name);
+            try {
+                auto sibling_path =
+                    ctx.resolver->resolve(sibling_name, ctx.texture_search_path);
+                auto sibling_bytes = read_file(sibling_path);
+                Image sibling_decoded = decode_tga(sibling_bytes);
+                Texture sibling_tex = upload(sibling_decoded, true);
+                const int sibling_idx =
+                    static_cast<int>(model.textures.size());
+                out.sibling_specular_for_image[link_id] = sibling_idx;
+                model.textures.push_back(std::move(sibling_tex));
+            } catch (const std::exception&) {
+                // No sibling on disk — silently skip. Most ships don't
+                // ship spec masks. The spec contribution then falls
+                // through to black_fallback in the renderer.
+            }
+        }
     }
     return out;
 }
@@ -183,11 +262,15 @@ MaterialInputs gather_material_inputs(
     const nif::NiTriShape& shape,
     const std::unordered_map<std::uint32_t, int>& image_to_texture,
     const std::unordered_set<std::uint32_t>& glow_image_links,
+    const std::unordered_set<std::uint32_t>& specular_image_links,
+    const std::unordered_map<std::uint32_t, int>& sibling_specular_for_image,
     const LinkResolver& resolver)
 {
     MaterialInputs in;
     in.image_to_texture = &image_to_texture;
     in.glow_image_links = &glow_image_links;
+    in.specular_image_links = &specular_image_links;
+    in.sibling_specular_for_image = &sibling_specular_for_image;
     for (auto link : shape.av.property_links) {
         auto idx = resolver.resolve(link);
         if (idx == LinkResolver::kInvalidIndex) continue;
@@ -263,7 +346,9 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
         if (!data) continue;  // shape with no data block — skip silently
 
         auto mat_inputs = gather_material_inputs(
-            f, *shape, tex_result.image_to_texture, tex_result.glow_image_links, resolver);
+            f, *shape, tex_result.image_to_texture, tex_result.glow_image_links,
+            tex_result.specular_image_links,
+            tex_result.sibling_specular_for_image, resolver);
         Material mat = build_material(mat_inputs);
         int mat_index = static_cast<int>(model.materials.size());
         model.materials.push_back(std::move(mat));

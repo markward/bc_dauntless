@@ -110,7 +110,11 @@ void DustPass::render(const scenegraph::Camera& camera,
     prev_eye_ = camera.eye;
     have_prev_ = true;
 
-    const glm::vec3 smear = -velocity * kSmearSeconds;
+    glm::vec3 smear = -velocity * kSmearSeconds;
+    const float smear_len = glm::length(smear);
+    if (smear_len > kMaxSmearLength) {
+        smear *= (kMaxSmearLength / smear_len);
+    }
 
     auto& shader = pipeline.dust_shader();
     shader.use();

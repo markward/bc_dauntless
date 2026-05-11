@@ -1,5 +1,6 @@
 // native/src/renderer/frame.cc
 #include "renderer/frame.h"
+#include "renderer/lighting.h"
 #include "renderer/pipeline.h"
 
 #include <glad/glad.h>
@@ -71,6 +72,31 @@ void draw_model(const assets::Model& model,
             }
             shader.set_int("u_glow_map", 1);
 
+            // Opaque-pass texture-unit convention: 0 = base, 1 = glow,
+            // 2 = specular mask. Each unit owns one sampler uniform.
+            //
+            // Spec contribution is gated on presence of a _specular/_spec
+            // texture: missing -> black_fallback -> spec term multiplies
+            // to zero -> ship renders identically to today. This is
+            // intentional (see specular-rendering-design.md "Scope
+            // decision"). Stock BC ships all author non-zero
+            // NiMaterialProperty.specular/glossiness; flipping the
+            // fallback to white_fallback would shift the visual baseline
+            // of every existing ship in one change.
+            const int spec_tex = mat.stages[
+                static_cast<std::size_t>(assets::Material::StageSlot::Gloss)
+            ].texture_index;
+            glActiveTexture(GL_TEXTURE2);
+            if (spec_tex >= 0) {
+                glBindTexture(GL_TEXTURE_2D, model.textures[spec_tex].id());
+            } else {
+                glBindTexture(GL_TEXTURE_2D, black_fallback);
+            }
+            shader.set_int  ("u_specular_map",   2);
+            shader.set_vec3 ("u_specular_color", mat.specular);
+            shader.set_float("u_specular_power",
+                renderer::glossiness_to_specular_power(mat.glossiness));
+
             glBindVertexArray(mesh.vao());
             glDrawElements(GL_TRIANGLES, mesh.index_count(), GL_UNSIGNED_INT, nullptr);
         }
@@ -132,6 +158,10 @@ void FrameSubmitter::submit_opaque(const scenegraph::World& world,
     shader.use();
     shader.set_mat4("u_view", camera.view_matrix());
     shader.set_mat4("u_proj", camera.proj_matrix());
+
+    const glm::vec3 cam_pos_ws =
+        glm::vec3(glm::inverse(camera.view_matrix())[3]);
+    shader.set_vec3("u_camera_pos_ws", cam_pos_ws);
 
     shader.set_vec3("u_ambient_light", lighting.ambient);
     shader.set_int("u_dir_light_count", lighting.directional_count);
