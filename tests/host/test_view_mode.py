@@ -115,3 +115,53 @@ def test_apply_input_preserves_orbit_state_across_bridge_toggle():
     _apply_input(vm, _NoopPlayer(), cc, player=object(),
                  dt=1.0/60, h=reader, scroll_y=99.0)
     assert (cc.orbit_yaw_rad, cc.orbit_pitch_rad, cc.distance) == saved
+
+
+def test_bridge_camera_anchors_at_ship_origin_looking_forward():
+    """Spec test 4: bridge camera eye = ship loc, target along ship
+    forward (row 1), up along ship up (row 2)."""
+    from engine.host_loop import _ViewModeController, _compute_camera
+    from engine.appc.math import TGPoint3, TGMatrix3
+
+    class _FakePlayer:
+        def __init__(self, loc, rot):
+            self._loc, self._rot = loc, rot
+        def GetWorldLocation(self): return self._loc
+        def GetWorldRotation(self): return self._rot
+
+    loc = TGPoint3(100.0, 200.0, 300.0)
+    rot = TGMatrix3()  # identity — forward = (0,1,0), up = (0,0,1)
+    player = _FakePlayer(loc, rot)
+
+    vm = _ViewModeController()
+    vm.toggle()  # bridge
+
+    eye, target, up_vec = _compute_camera(
+        vm, cam_control=None, player=player, dt=1.0/60)
+
+    assert eye    == (100.0, 200.0, 300.0)
+    assert target == (100.0, 201.0, 300.0)  # +1 along world-Y (= ship forward)
+    assert up_vec == (0.0,   0.0,   1.0)
+
+
+def test_exterior_camera_delegates_to_cam_control():
+    """Sanity check: exterior mode still routes through _CameraControl."""
+    from engine.host_loop import _ViewModeController, _compute_camera
+    from engine.appc.math import TGPoint3, TGMatrix3
+
+    class _FakePlayer:
+        def GetWorldLocation(self): return TGPoint3(0.0, 0.0, 0.0)
+        def GetWorldRotation(self): return TGMatrix3()
+
+    class _RecordingCam:
+        def __init__(self): self.calls = []
+        def compute_camera(self, loc, rot, dt):
+            self.calls.append((loc, rot, dt))
+            return ((1, 2, 3), (4, 5, 6), (0, 0, 1))
+
+    cam = _RecordingCam()
+    eye, target, up_vec = _compute_camera(
+        _ViewModeController(), cam_control=cam,
+        player=_FakePlayer(), dt=1.0/60)
+    assert len(cam.calls) == 1
+    assert (eye, target, up_vec) == ((1, 2, 3), (4, 5, 6), (0, 0, 1))

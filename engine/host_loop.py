@@ -837,6 +837,27 @@ def _apply_input(view_mode, player_control, cam_control,
         cam_control.apply(dt, h, scroll_y)
 
 
+def _compute_camera(view_mode, cam_control, *, player, dt) -> tuple:
+    """Per-tick camera dispatch.
+
+    Exterior mode delegates to _CameraControl.compute_camera (orbit +
+    spring-lag). Bridge mode anchors at the ship origin looking along
+    ship-Y forward (row 1 of the rotation matrix) with ship-Z as up
+    (row 2). Returns (eye, target, up) as 3-tuples in world space, the
+    same shape r.set_camera consumes.
+    """
+    loc = player.GetWorldLocation()
+    rot = player.GetWorldRotation()
+    if view_mode.is_bridge:
+        fwd = rot.GetRow(1)
+        up  = rot.GetRow(2)
+        eye    = (loc.x, loc.y, loc.z)
+        target = (loc.x + fwd.x, loc.y + fwd.y, loc.z + fwd.z)
+        up_vec = (up.x, up.y, up.z)
+        return eye, target, up_vec
+    return cam_control.compute_camera(loc, rot, dt=dt)
+
+
 def run(mission_name: str = SHIP_GATE_MISSION,
         max_ticks: Optional[int] = None) -> int:
     """Boot the renderer, init the named mission, run until the window closes
