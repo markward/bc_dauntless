@@ -51,6 +51,18 @@ class TGModelProperty:
         raise AttributeError(attr)
 
 
+def _copy_point(p):
+    """Fresh TGPoint3 copy, or None if the source is None.
+
+    Matches SDK semantics where Get*() returns a copy callers can mutate
+    (e.g. via MultMatrixLeft) without affecting the template.
+    """
+    if p is None:
+        return None
+    from engine.appc.math import TGPoint3
+    return TGPoint3(p.x, p.y, p.z)
+
+
 def _hashable_key(args: tuple) -> tuple:
     """Convert a tuple of args into a hashable key.
 
@@ -86,13 +98,52 @@ class PositionOrientationProperty(TGModelProperty):
 
 
 class ObjectEmitterProperty(PositionOrientationProperty):
-    """Emitter point on a station hull (shuttle / probe / decoy launch).
+    """Emitter point on a hull (shuttle / probe / decoy launch position).
 
     SDK hierarchy: ObjectEmitterProperty extends PositionOrientationProperty.
-    No instances are produced by Phase 1 setup-properties passes yet — the
-    class exists so ``GetPropertiesByType(App.CT_OBJECT_EMITTER_PROPERTY)``
-    has a real type to feed isinstance() and returns an empty list cleanly.
+    Hardpoint scripts populate position, orientation, and emitted object type
+    via SetPosition / SetOrientation / SetEmittedObjectType; the LaunchObject
+    action reads them back to compute world-frame launch transforms.
     """
+
+    OEP_UNKNOWN = 0
+    OEP_SHUTTLE = 1
+    OEP_PROBE   = 2
+    OEP_DECOY   = 3
+
+    def __init__(self, name: str = ""):
+        super().__init__(name)
+        self._forward = None
+        self._up = None
+        self._right = None
+        self._position = None
+        self._emitted_type = self.OEP_UNKNOWN
+
+    def SetOrientation(self, fwd, up, right):
+        self._forward = _copy_point(fwd)
+        self._up = _copy_point(up)
+        self._right = _copy_point(right)
+
+    def GetForward(self):
+        return _copy_point(self._forward)
+
+    def GetUp(self):
+        return _copy_point(self._up)
+
+    def GetRight(self):
+        return _copy_point(self._right)
+
+    def SetPosition(self, p):
+        self._position = _copy_point(p)
+
+    def GetPosition(self):
+        return _copy_point(self._position)
+
+    def SetEmittedObjectType(self, t):
+        self._emitted_type = int(t)
+
+    def GetEmittedObjectType(self):
+        return self._emitted_type
 
 
 class EngineGlowProperty(TGModelProperty):
