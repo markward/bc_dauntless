@@ -58,3 +58,21 @@ TEST(Reader, ReadsLine) {
     EXPECT_EQ(r.read_line(), "line");
     EXPECT_EQ(r.offset(), 5u);
 }
+
+// NIF stores quaternions on disk in WXYZ order (W first). The Quat struct
+// exposes named x/y/z/w fields, so the on-disk-first float must land in .w.
+// Verified empirically against BC v3.1 NiKeyframeData; documented in the
+// clean-room SDK answers (Q112). Identity quat on disk = [1, 0, 0, 0].
+TEST(Reader, ReadsQuatInDiskWXYZOrder) {
+    auto r = make_reader({
+        0x00, 0x00, 0x80, 0x3F,  // 1.0  -> on-disk W
+        0x00, 0x00, 0x00, 0x40,  // 2.0  -> on-disk X
+        0x00, 0x00, 0x40, 0x40,  // 3.0  -> on-disk Y
+        0x00, 0x00, 0x80, 0x40,  // 4.0  -> on-disk Z
+    });
+    auto q = r.read_quat();
+    EXPECT_FLOAT_EQ(q.w, 1.0f);
+    EXPECT_FLOAT_EQ(q.x, 2.0f);
+    EXPECT_FLOAT_EQ(q.y, 3.0f);
+    EXPECT_FLOAT_EQ(q.z, 4.0f);
+}
