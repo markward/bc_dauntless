@@ -101,6 +101,7 @@ from engine.appc.subsystems import (
     TorpedoSystem, PhaserSystem, PulseWeaponSystem, TractorBeamSystem,
     SensorSubsystem, ImpulseEngineSubsystem, WarpEngineSubsystem,
     WarpEngineSubsystem_GetWarpEffectTime, WarpEngineSubsystem_SetWarpEffectTime,
+    ShieldSubsystem,
 )
 from engine.appc.properties import (
     TGModelProperty,
@@ -198,6 +199,33 @@ CT_PLACEMENT         = Placement
 CT_MULTIPLAYER_GAME  = MultiplayerGame
 CT_ST_MENU           = STMenu
 CT_SORTED_REGION_MENU = SortedRegionMenu
+
+# ── Shield SDK surface ────────────────────────────────────────────────────────
+# SDK calls App.ShieldClass.NUM_SHIELDS / .FRONT_SHIELDS etc.  Map the class
+# name onto the engine's ShieldSubsystem.
+ShieldClass = ShieldSubsystem
+
+
+def ShieldClass_Cast(obj):
+    """Lenient pass-through: returns obj if it's a ShieldSubsystem, else None.
+
+    Rejects _NamedStub explicitly so undefined-attribute chains don't slip
+    through and keep producing stub-tracker hits."""
+    if isinstance(obj, _NamedStub):
+        return None
+    if isinstance(obj, ShieldSubsystem):
+        return obj
+    return None
+
+
+def ShieldProperty_Cast(obj):
+    """Lenient pass-through: returns obj if it's a ShieldProperty, else None."""
+    if isinstance(obj, _NamedStub):
+        return None
+    if isinstance(obj, ShieldProperty):
+        return obj
+    return None
+
 
 # ── App.AT_* ammo-type constants ─────────────────────────────────────────────
 # SDK code treats these as TorpedoAmmoType instances (objects with GetAmmoName)
