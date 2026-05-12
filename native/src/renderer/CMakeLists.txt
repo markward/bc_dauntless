@@ -19,6 +19,8 @@ embed_shader(SHADER_SUN_VS shaders/sun.vert sun_vs)
 embed_shader(SHADER_SUN_FS shaders/sun.frag sun_fs)
 embed_shader(SHADER_DUST_VS shaders/dust.vert dust_vs)
 embed_shader(SHADER_DUST_FS shaders/dust.frag dust_fs)
+embed_shader(SHADER_SHIELD_VS shaders/shield.vert shield_vs)
+embed_shader(SHADER_SHIELD_FS shaders/shield.frag shield_fs)
 
 add_library(renderer STATIC
     window.cc
