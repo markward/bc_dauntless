@@ -196,6 +196,24 @@ class WeaponSystem(PoweredSubsystem):
     def SetWeaponSystemType(self, v) -> None:       self._weapon_system_type = int(v)
 
 
+class TorpedoAmmoType:
+    """A loaded torpedo ammo type — exposes the SDK GetAmmoName surface.
+
+    Real BC Appc has a TorpedoAmmoType class with per-instance ammo properties
+    (damage, blast radius, etc.); Phase 1 only needs the name for the
+    MissionLib.SetTotalTorpsAtStarbase / LoadTorpedoes lookup pattern, which
+    compares ``pTorpType.GetAmmoName() == "Photon"``.
+    """
+    def __init__(self, name: str):
+        self._name = name
+
+    def GetAmmoName(self) -> str:
+        return self._name
+
+    def __repr__(self) -> str:
+        return f"<TorpedoAmmoType {self._name!r}>"
+
+
 class TorpedoSystem(WeaponSystem):
     def __init__(self, name: str = ""):
         super().__init__(name)
