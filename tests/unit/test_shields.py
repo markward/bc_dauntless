@@ -76,6 +76,31 @@ def test_register_ship_shield_reads_skin_flag_and_color():
     )
 
 
+def test_register_ship_shield_finds_property_via_property_set():
+    """Phase-1 ships expose properties via GetPropertySet().GetPropertyList(),
+    not via .subsystems. The glue should reach into either."""
+    import engine.shields as s
+    host = MagicMock()
+
+    shield_prop = ShieldProperty("Shield Generator")
+    shield_prop.SetShieldGlowColor(_color(0.5, 0.5, 0.5, 1.0))
+    shield_prop.SetSkinShielding(1)
+
+    class FakePropertySet:
+        def GetPropertyList(self):
+            return [shield_prop]
+
+    class FakeShip:
+        def GetPropertySet(self):
+            return FakePropertySet()
+
+    s.register_ship_shield(host, instance_id=99, ship=FakeShip(),
+                           aabb_center=(0, 0, 0),
+                           aabb_half_extents=(1, 1, 1))
+    host.shield_register.assert_called_once()
+    assert host.shield_register.call_args.kwargs["mode"] == 1
+
+
 def test_register_ship_shield_defaults_when_keys_absent():
     """No SetSkinShielding → ellipsoid. No decay → 1.0. No color → white."""
     import engine.shields as s

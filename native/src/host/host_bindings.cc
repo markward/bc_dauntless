@@ -23,6 +23,7 @@
 #include <renderer/sun_pass.h>
 #include <renderer/dust_pass.h>
 #include <renderer/shield_pass.h>
+#include <renderer/aabb.h>
 #include <ui/UiSystem.h>
 #include <ui/PanelDocument.h>
 #include <scenegraph/world.h>
@@ -431,6 +432,36 @@ PYBIND11_MODULE(_open_stbc_host, m) {
           py::arg("count"),
           "Reseed the dust particle buffer with `count` particles "
           "(clamped to [0, 50000]).");
+
+    m.def("model_aabb",
+          [](scenegraph::ModelHandle h)
+              -> std::tuple<std::tuple<float, float, float>,
+                            std::tuple<float, float, float>> {
+              if (h == 0 || h > g_loaded_models.size()) {
+                  return {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}};
+              }
+              const assets::Model* model = g_loaded_models[h - 1].handle.get();
+              if (!model) return {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}};
+
+              // Aggregate every CPU-side vertex across all model meshes.
+              // BC ship meshes are mostly flat-hierarchy near the NIF
+              // root, so the union AABB without node transforms is close
+              // enough for the shield bubble silhouette. Refine later if
+              // ellipsoid misalignment shows up on long-armed ships.
+              std::vector<glm::vec3> pts;
+              for (const auto& mesh : model->meshes) {
+                  const auto& cpu = mesh.cpu_data();
+                  if (!cpu) continue;
+                  for (const auto& v : cpu->vertices) pts.push_back(v.position);
+              }
+              const renderer::Aabb box = renderer::compute_aabb(pts);
+              return {{box.center.x, box.center.y, box.center.z},
+                      {box.half_extents.x, box.half_extents.y, box.half_extents.z}};
+          },
+          py::arg("model"),
+          "Returns ((center_x,y,z), (half_extents_x,y,z)) computed from the "
+          "union of every CPU-side mesh vertex position in the model. (0,0,0) "
+          "tuples on invalid handle or model with no retained CPU data.");
 
     m.def("shield_register",
           [](scenegraph::InstanceId id,

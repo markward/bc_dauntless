@@ -957,6 +957,21 @@ class _MissionLoader:
             r_.set_world_transform(iid, _ship_world_matrix(ship))
             sess.ship_instances[ship] = iid
 
+            # Register shield render state. Reads ShieldProperty data-bag
+            # for glow color, decay, and skin-mode flag. No-op for ships
+            # without a ShieldProperty (asteroids, debris).
+            try:
+                from engine.shields import register_ship_shield
+                center, half_extents = r_.model_aabb(handle)
+                register_ship_shield(
+                    r_, instance_id=iid, ship=ship,
+                    aabb_center=center, aabb_half_extents=half_extents,
+                )
+            except Exception as e:
+                if self._verbose:
+                    print(f"[host_loop]   shield register skipped for ship: "
+                          f"{type(e).__name__}: {e}", flush=True)
+
         planet_tex_search = str(PROJECT_ROOT / "game" / DEFAULT_PLANET_TEXTURE_SEARCH)
         for planet in _iter_planets(verbose=self._verbose):
             nif_path = _planet_nif_path(planet, verbose=self._verbose)

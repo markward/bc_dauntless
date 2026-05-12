@@ -19,12 +19,23 @@ SHIELD_MODE_SKIN = 1
 def _find_shield_property(ship):
     """Returns the ship's ShieldProperty, or None if none exists.
 
-    A real PhysicsObjectClass exposes its subsystem-properties via
-    `subsystems`; the Phase-1 shim uses the same name. Tests pass in fakes
-    that match this surface."""
+    Phase 1 ships store properties on the ModelPropertySet they hold a
+    reference to (populated by hardpoint imports via RegisterLocalTemplate
+    + ShipClass.LoadPropertySet). Tests can also pass fakes with a
+    flat `subsystems` list."""
     for sub in getattr(ship, "subsystems", []):
         if isinstance(sub, ShieldProperty):
             return sub
+    get_set = getattr(ship, "GetPropertySet", None)
+    if get_set is None:
+        return None
+    try:
+        prop_set = get_set()
+        for prop in prop_set.GetPropertyList():
+            if isinstance(prop, ShieldProperty):
+                return prop
+    except Exception:
+        return None
     return None
 
 
