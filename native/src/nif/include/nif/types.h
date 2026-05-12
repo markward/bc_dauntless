@@ -7,7 +7,6 @@
 namespace nif {
 
 struct Vec3 { float x, y, z; };
-struct Vec4 { float x, y, z, w; };
 // NIF stores quaternions on disk in WXYZ order (W first); Reader::read_quat
 // unpacks them into named fields here, so .w holds the first on-disk float.
 // Composition convention: right-handed, column-vector math (v' = M*v).

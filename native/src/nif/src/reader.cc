@@ -54,7 +54,6 @@ float Reader::read_float() {
 }
 
 Vec3 Reader::read_vec3() { return {read_float(), read_float(), read_float()}; }
-Vec4 Reader::read_vec4() { return {read_float(), read_float(), read_float(), read_float()}; }
 Quat Reader::read_quat() {
     // NIF stores quaternions on disk in WXYZ order (W first); confirmed
     // empirically against BC v3.1 NiKeyframeData blocks. Our Quat struct

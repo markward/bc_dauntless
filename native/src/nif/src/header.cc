@@ -17,10 +17,15 @@ bool is_printable_text(unsigned char c) {
 std::uint32_t parse_version_from_magic_line(const std::string& magic_line) {
     // The stock NetImmerse/Gamebryo loader detects the file family by the
     // substring "File Format" in this line — which covers NIF, KF, KFM,
-    // and any vendor-custom extension routed through the same stream. We
-    // anchor on "Version " here because every BC asset includes it on the
-    // same line; broaden to "File Format" if/when we start ingesting KF /
-    // KFM files (Phase 2 animation).
+    // and any vendor-custom extension routed through the same stream.
+    // We require that substring as the family gate so a non-NIF file
+    // that happens to contain "Version " can't sneak through, then
+    // anchor on "Version " to extract the four-part version integer.
+    if (magic_line.find("File Format") == std::string::npos) {
+        throw VersionMismatch(
+            "magic line does not contain 'File Format' "
+            "(not a NetImmerse/Gamebryo-family file): " + magic_line);
+    }
     auto pos = magic_line.find("Version ");
     if (pos == std::string::npos) {
         throw VersionMismatch("magic line does not contain 'Version ': " + magic_line);

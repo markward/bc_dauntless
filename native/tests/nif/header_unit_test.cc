@@ -32,6 +32,21 @@ TEST(VersionFromMagicLine, ThrowsOnNoVersionWord) {
                  nif::VersionMismatch);
 }
 
+// The stock NetImmerse/Gamebryo loader uses the substring "File Format"
+// as the file-family signature, covering NIF / KF / KFM / vendor-custom
+// extensions. Anything without that substring is rejected as the wrong
+// family even if it happens to contain "Version ".
+TEST(VersionFromMagicLine, ThrowsWithoutFileFormatSubstring) {
+    EXPECT_THROW(nif::parse_version_from_magic_line("Version 3.1"),
+                 nif::VersionMismatch);
+}
+
+TEST(VersionFromMagicLine, AcceptsGamebryoFormatPrefix) {
+    EXPECT_EQ(nif::parse_version_from_magic_line(
+                  "Gamebryo File Format, Version 1.2.0.0"),
+              0x01020000u);
+}
+
 TEST(ParseHeader, ReadsMultipleTextLinesUntilBinary) {
     std::vector<unsigned char> bytes;
     auto add_line = [&](const std::string& s) {

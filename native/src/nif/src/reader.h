@@ -27,7 +27,6 @@ public:
     std::int32_t  read_int32();
     float         read_float();
     Vec3          read_vec3();
-    Vec4          read_vec4();
     Quat          read_quat();
     Mat3x3        read_mat3x3();
     Color3        read_color3();

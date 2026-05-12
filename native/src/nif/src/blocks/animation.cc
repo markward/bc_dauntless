@@ -22,6 +22,7 @@
 #include "../reader.h"
 
 #include <nif/block.h>
+#include <nif/error.h>
 
 namespace nif {
 
@@ -144,7 +145,20 @@ NiKeyframeData parse_NiKeyframeData_body(Reader& r) {
     }
     // unknown_float is read for v3.1 (version <= 0x0A010000) only when
     // rotation_type == 4.
+    //
+    // EULERKEY (rotation_type == 4) is a container, not a key: it carries
+    // exactly one logical "key" that holds three independent float-key
+    // arrays for X, Y, Z axes. The SDK enforces num_rotation_keys == 1
+    // at save and equality-test time (per round 2 NI2-Q17); any other
+    // value would mean either corrupt content or a parser misread.
     if (d.rotation_type == 4) {
+        if (d.num_rotation_keys != 1) {
+            ParseError e("NiKeyframeData with EULER rotation type must have "
+                         "exactly one rotation key, got " +
+                         std::to_string(d.num_rotation_keys));
+            e.byte_offset = r.offset();
+            throw e;
+        }
         d.unknown_float = r.read_float();
         for (auto& xyz : d.xyz_rotations) {
             xyz.num_keys = r.read_uint32();
