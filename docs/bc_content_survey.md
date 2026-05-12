@@ -146,36 +146,88 @@ class identity. Round 2's per-particle hybrid SoA/AoS architecture
 
 ## #9 — Custom block-type enumeration
 
-Run: `./build/native/tools/scan_nifs/scan_nifs game/data`
+Run: `./build/native/tools/scan_nifs/scan_nifs game/data` then
+`./build/native/tools/probe_block_inventory/probe_block_inventory game/data`
 
-Result:
-
-```
-=== scanned 805 .nif files under game/data ===
-  reached End Of File: 805
-  walker stuck on unknown block type: 0
-  threw exception during load: 0
-```
-
-**Our parser handles every block type BC ships in NIFs.** No
-BC-custom RTTI names exist in the NIF asset stream — BC's customization
+`scan_nifs` confirms 805/805 files reach EOF with zero unknowns and zero
+load failures — **our parser handles every block type BC ships in NIFs.**
+No BC-custom RTTI names exist in the NIF asset stream; BC's customization
 lives at the Appc runtime layer (per #8), not in NIFs.
 
-The 31 currently-registered block types in our parser (per
-`grep NIF_REGISTER_BLOCK native/src/nif/src/blocks/`):
+`probe_block_inventory` walks each loaded `nif::File` and tallies the
+actual usage of every block type across the corpus. Across 805 files and
+92,770 blocks:
 
-```
-NiAlphaProperty, NiAmbientLight, NiBinaryVoxelData, NiBinaryVoxelExtraData,
-NiBone, NiCamera, NiDirectionalLight, NiFlipController, NiFloatData,
-NiImage, NiKeyframeController, NiKeyframeData, NiLookAtController,
-NiMaterialProperty, NiMultiTextureProperty, NiNode, NiPointLight,
-NiRawImageData, NiRollController, NiSpotLight, NiStringExtraData,
-NiTextureModeProperty, NiTextureProperty, NiTexturingProperty,
-NiTriShape, NiTriShapeData, NiTriShapeSkinController,
-NiVertexColorProperty, NiVisController, NiVisData, NiZBufferProperty
-```
+| Type | Blocks | Files | Coverage |
+|---|---:|---:|---:|
+| `NiNode` | 24,159 | 805 | 100.0% |
+| `NiKeyframeController` | 20,151 | 580 | 72.0% |
+| `NiTriShape` | 11,285 | 456 | 56.6% |
+| `NiTriShapeData` | 11,283 | 456 | 56.6% |
+| `NiMaterialProperty` | 11,099 | 455 | 56.5% |
+| `NiKeyframeData` | 7,806 | 545 | 67.7% |
+| `NiTextureModeProperty` | 2,041 | 461 | 57.3% |
+| `NiVisData` | 1,130 | 46 | 5.7% |
+| `NiVisController` | 1,130 | 46 | 5.7% |
+| `NiVertexColorProperty` | 671 | 461 | 57.3% |
+| `NiImage` | 530 | 171 | 21.2% |
+| `NiTextureProperty` | 491 | 171 | 21.2% |
+| `NiZBufferProperty` | 461 | 461 | 57.3% |
+| `NiMultiTextureProperty` | 89 | 9 | 1.1% |
+| `NiBinaryVoxelExtraData` | 84 | 84 | 10.4% |
+| `NiBinaryVoxelData` | 84 | 84 | 10.4% |
+| `NiAlphaProperty` | 64 | 5 | 0.6% |
+| `NiLookAtController` | 47 | 22 | 2.7% |
+| `NiTriShapeSkinController` | 39 | 27 | 3.4% |
+| `NiSpotLight` | 25 | 13 | 1.6% |
+| `NiCamera` | 21 | 21 | 2.6% |
+| `NiAmbientLight` | 20 | 20 | 2.5% |
+| `NiDirectionalLight` | 18 | 7 | 0.9% |
+| `NiRawImageData` | 17 | 10 | 1.2% |
+| `NiStringExtraData` | 12 | 8 | 1.0% |
+| `NiPointLight` | 10 | 8 | 1.0% |
+| `NiRollController` | 1 | 1 | 0.1% |
+| `NiFloatData` | 1 | 1 | 0.1% |
+| `NiFlipController` | 1 | 1 | 0.1% |
 
-This is the complete BC-content NIF vocabulary.
+### Surprises
+
+- **`NiTextureProperty` (singular, older), not `NiTexturingProperty`
+  (newer, multi-stage), is what BC uses.** 491 blocks of the singular
+  form vs **zero** of the multi-stage form. The texturing-stage features
+  cleanroom round 1 described (glow slot, detail map, gloss map, bump
+  map, decal stages) are not the BC texture model — BC ships one
+  texture per property, period. Glow / multi-texture features must be
+  handled elsewhere (per memory `project_glow_via_addlod.md`: BC attaches
+  glow via runtime `AddLOD`, not via NIF texture stages).
+- **Alpha-blending is rare.** Only 64 `NiAlphaProperty` blocks across 5
+  files. Most BC content is opaque + Z-test.
+- **`NiFlipController` is a single block in the entire corpus.** Texture
+  flipbook animation is essentially absent. The 0.01 fudge constant we
+  catalogued is for a corner case so rare it's almost not worth
+  implementing.
+- **`NiBinaryVoxelData/ExtraData` appears in 84 files (10.4%).** Voxel
+  collision data is more common than animation-rare types. Worth knowing
+  when collision implementation starts.
+- **Skinning is rare.** Only 39 `NiTriShapeSkinController` blocks across
+  27 files — likely bridge-crew character animations.
+
+### Registered-but-unused (dead-code candidates)
+
+One of our 31 registered types never appears in BC content:
+
+- **`NiTexturingProperty`** — see above. Safe to remove the registration,
+  the parser body, and the variant alternative; we will never see this
+  block in BC.
+
+The 31st registration — **`NiBone`** — is intentionally a class-name
+alias that reuses the `NiNode` body parser, the same pattern round 2
+documented for `NiKeyframeController` → `NiTransformController`. Any
+`NiBone` block on disk deserializes to an `NiNode` variant value, so
+this probe can't distinguish bones from regular nodes after parsing.
+The 39 `NiTriShapeSkinController` blocks across 27 files imply bones
+ARE present in BC's skinned character animations; they're just counted
+under `NiNode`.
 
 ---
 
