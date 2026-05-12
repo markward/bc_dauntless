@@ -118,7 +118,7 @@ class ShipClass(DamageableObject):
     def SetupProperties(self) -> None:
         from engine.appc.properties import (
             ShipProperty, ImpulseEngineProperty, WarpEngineProperty,
-            HullProperty, SensorProperty,
+            HullProperty, SensorProperty, ShieldProperty,
         )
         from engine.appc.subsystems import HullSubsystem
 
@@ -179,6 +179,15 @@ class ShipClass(DamageableObject):
                     ):
                         v = src()
                         if v is not None: setter(v)
+            elif isinstance(prop, ShieldProperty):
+                self._copy_powered_subsystem_fields(prop, self._shield_subsystem)
+                ss = self._shield_subsystem
+                if ss is not None:
+                    for face in range(ShieldProperty.NUM_SHIELDS):
+                        mx = prop.GetMaxShields(face)
+                        if mx is not None: ss.SetMaxShields(face, mx)
+                        cr = prop.GetShieldChargePerSecond(face)
+                        if cr is not None: ss.SetShieldChargePerSecond(face, cr)
 
     @staticmethod
     def _copy_powered_subsystem_fields(prop, subsystem) -> None:
