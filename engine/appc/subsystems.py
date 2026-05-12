@@ -226,12 +226,22 @@ class PhaserSystem(WeaponSystem):
     def __init__(self, name: str = ""):
         super().__init__(name)
         self._power_level = self.PP_HIGH
+        self._weapon_system_type: int = 0
+        self._single_fire: int = 0
+        self._aimed_weapon: int = 0
 
     def SetPowerLevel(self, level) -> None:
         self._power_level = int(level)
 
     def GetPowerLevel(self) -> int:
         return self._power_level
+
+    def GetWeaponSystemType(self) -> int:           return self._weapon_system_type
+    def SetWeaponSystemType(self, v) -> None:       self._weapon_system_type = int(v)
+    def GetSingleFire(self) -> int:                 return self._single_fire
+    def SetSingleFire(self, v) -> None:             self._single_fire = int(v)
+    def GetAimedWeapon(self) -> int:                return self._aimed_weapon
+    def SetAimedWeapon(self, v) -> None:            self._aimed_weapon = int(v)
 
 
 class PulseWeaponSystem(WeaponSystem):
