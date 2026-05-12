@@ -253,3 +253,37 @@ def test_app_model_directions_are_unit_and_distinct():
     assert (dirs[0] + dirs[1]) == TGPoint3(0.0, 0.0, 0.0)
     assert (dirs[2] + dirs[3]) == TGPoint3(0.0, 0.0, 0.0)
     assert (dirs[4] + dirs[5]) == TGPoint3(0.0, 0.0, 0.0)
+
+
+# ── TGPoint3.MultMatrixLeft ────────────────────────────────────────────────────
+
+def test_tgpoint3_mult_matrix_left_in_place():
+    p = TGPoint3(1.0, 2.0, 3.0)
+    R = TGMatrix3()
+    # Identity → no change
+    p.MultMatrixLeft(R)
+    assert (p.x, p.y, p.z) == (1.0, 2.0, 3.0)
+
+
+def test_tgpoint3_mult_matrix_left_matches_mult_point():
+    """vec.MultMatrixLeft(R) must equal R.MultPoint(vec)."""
+    p = TGPoint3(1.0, 2.0, 3.0)
+    R = TGMatrix3()
+    # Build a non-identity rotation: 90° about z so x→y, y→-x
+    R.SetRow(0, TGPoint3(0.0, -1.0, 0.0))
+    R.SetRow(1, TGPoint3(1.0,  0.0, 0.0))
+    R.SetRow(2, TGPoint3(0.0,  0.0, 1.0))
+
+    expected = R.MultPoint(p)
+    p.MultMatrixLeft(R)
+    assert abs(p.x - expected.x) < 1e-9
+    assert abs(p.y - expected.y) < 1e-9
+    assert abs(p.z - expected.z) < 1e-9
+
+
+def test_tgpoint3_mult_matrix_left_returns_self_for_chaining_optional():
+    """Either returns self or returns None; both are fine. Document choice."""
+    p = TGPoint3(1.0, 2.0, 3.0)
+    R = TGMatrix3()
+    result = p.MultMatrixLeft(R)
+    assert result is None or result is p

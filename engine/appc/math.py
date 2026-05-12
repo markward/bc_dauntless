@@ -77,6 +77,18 @@ class TGPoint3:
         self.y = other.y
         self.z = other.z
 
+    def MultMatrixLeft(self, matrix: "TGMatrix3") -> None:
+        """In-place transform by matrix: self = matrix · self (column-vector).
+
+        Matches SDK NiPoint3.MultMatrixLeft semantics. Returns None.
+        """
+        x = matrix._m[0][0] * self.x + matrix._m[0][1] * self.y + matrix._m[0][2] * self.z
+        y = matrix._m[1][0] * self.x + matrix._m[1][1] * self.y + matrix._m[1][2] * self.z
+        z = matrix._m[2][0] * self.x + matrix._m[2][1] * self.y + matrix._m[2][2] * self.z
+        self.x = x
+        self.y = y
+        self.z = z
+
     def Unitize(self) -> "TGPoint3":
         n = self.Length()
         if n > 1e-12:
