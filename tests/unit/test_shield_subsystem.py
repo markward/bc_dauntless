@@ -43,3 +43,22 @@ def test_faces_are_independent():
     assert s.GetMaxShields(ShieldProperty.FRONT_SHIELDS) == 8000.0
     assert s.GetMaxShields(ShieldProperty.REAR_SHIELDS) == 4000.0
     assert s.GetMaxShields(ShieldProperty.TOP_SHIELDS) == 0.0
+
+
+def test_face_constants_on_subsystem():
+    """SDK reads App.ShieldClass.FRONT_SHIELDS / NUM_SHIELDS — the class
+    itself must carry them, not just ShieldProperty."""
+    assert ShieldSubsystem.NUM_SHIELDS == 6
+    assert ShieldSubsystem.FRONT_SHIELDS == 0
+    assert ShieldSubsystem.REAR_SHIELDS == 1
+    assert ShieldSubsystem.TOP_SHIELDS == 2
+    assert ShieldSubsystem.BOTTOM_SHIELDS == 3
+    assert ShieldSubsystem.LEFT_SHIELDS == 4
+    assert ShieldSubsystem.RIGHT_SHIELDS == 5
+
+
+def test_set_cur_shields_aliases_set_current_shields():
+    s = ShieldSubsystem("Shield Generator")
+    s.SetMaxShields(ShieldProperty.FRONT_SHIELDS, 8000.0)
+    s.SetCurShields(ShieldProperty.FRONT_SHIELDS, 3000.0)
+    assert s.GetCurrentShields(ShieldProperty.FRONT_SHIELDS) == 3000.0

@@ -379,13 +379,19 @@ class ShieldSubsystem(PoweredSubsystem):
     SetMaxShields seeds current to that max when current was 0 — mirrors
     HullSubsystem.SetMaxCondition so freshly-loaded ships start fully shielded.
     """
-    NUM_FACES = 6
+    FRONT_SHIELDS  = 0
+    REAR_SHIELDS   = 1
+    TOP_SHIELDS    = 2
+    BOTTOM_SHIELDS = 3
+    LEFT_SHIELDS   = 4
+    RIGHT_SHIELDS  = 5
+    NUM_SHIELDS    = 6
 
     def __init__(self, name: str = ""):
         super().__init__(name)
-        self._max_shields:       list[float] = [0.0] * self.NUM_FACES
-        self._current_shields:   list[float] = [0.0] * self.NUM_FACES
-        self._charge_per_second: list[float] = [0.0] * self.NUM_FACES
+        self._max_shields:       list[float] = [0.0] * self.NUM_SHIELDS
+        self._current_shields:   list[float] = [0.0] * self.NUM_SHIELDS
+        self._charge_per_second: list[float] = [0.0] * self.NUM_SHIELDS
 
     def GetMaxShields(self, face: int) -> float:
         return self._max_shields[int(face)]
@@ -402,6 +408,10 @@ class ShieldSubsystem(PoweredSubsystem):
 
     def SetCurrentShields(self, face: int, value: float) -> None:
         self._current_shields[int(face)] = float(value)
+
+    def SetCurShields(self, face: int, value: float) -> None:
+        """SDK-facing alias of SetCurrentShields (matches Appc method name)."""
+        self.SetCurrentShields(face, value)
 
     def GetShieldChargePerSecond(self, face: int) -> float:
         return self._charge_per_second[int(face)]
