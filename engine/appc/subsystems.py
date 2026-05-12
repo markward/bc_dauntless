@@ -161,8 +161,13 @@ class PoweredSubsystem(ShipSubsystem):
         self._current_power = float(value)
 
 
-class WeaponSystem(ShipSubsystem):
-    """Weapon system — has firing state and an optional target."""
+class WeaponSystem(PoweredSubsystem):
+    """Weapon system — has firing state and an optional target.
+
+    Reparented under PoweredSubsystem because every weapon system in BC
+    has a power line.  See sdk/.../App.py:6361 (WeaponSystem inherits
+    PoweredSubsystem there).
+    """
     def __init__(self, name: str = ""):
         super().__init__(name)
         self._firing = False
