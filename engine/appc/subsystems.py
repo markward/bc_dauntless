@@ -446,6 +446,21 @@ class ShieldSubsystem(PoweredSubsystem):
                 new = mx
             self._current_shields[f] = new
 
+    def ApplyDamage(self, face: int, amount: float) -> float:
+        """Drain current shields on the face; return damage overflow.
+
+        Caller routes the returned overflow to hull. Does not trigger
+        regen, fire events, or mutate any other face.
+        """
+        f = int(face)
+        amt = float(amount)
+        cur = self._current_shields[f]
+        if amt <= cur:
+            self._current_shields[f] = cur - amt
+            return 0.0
+        self._current_shields[f] = 0.0
+        return amt - cur
+
 
 # ── Module-level WarpEngineSubsystem helpers ─────────────────────────────────
 # SDK callers (WarpSequence.py:95-282) reach for a class-level / engine-default

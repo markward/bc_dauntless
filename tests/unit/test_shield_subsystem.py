@@ -138,3 +138,49 @@ def test_update_independent_per_face():
     s.Update(2.0)
     assert s.GetCurrentShields(ShieldProperty.FRONT_SHIELDS) == 20.0
     assert s.GetCurrentShields(ShieldProperty.REAR_SHIELDS) == 40.0
+
+
+def test_apply_damage_partial():
+    s = ShieldSubsystem("Shield Generator")
+    s.SetMaxShields(ShieldProperty.FRONT_SHIELDS, 100.0)
+    s.SetCurShields(ShieldProperty.FRONT_SHIELDS, 100.0)
+    overflow = s.ApplyDamage(ShieldProperty.FRONT_SHIELDS, 30.0)
+    assert overflow == 0.0
+    assert s.GetCurrentShields(ShieldProperty.FRONT_SHIELDS) == 70.0
+
+
+def test_apply_damage_exact():
+    s = ShieldSubsystem("Shield Generator")
+    s.SetMaxShields(ShieldProperty.FRONT_SHIELDS, 100.0)
+    s.SetCurShields(ShieldProperty.FRONT_SHIELDS, 50.0)
+    overflow = s.ApplyDamage(ShieldProperty.FRONT_SHIELDS, 50.0)
+    assert overflow == 0.0
+    assert s.GetCurrentShields(ShieldProperty.FRONT_SHIELDS) == 0.0
+
+
+def test_apply_damage_overflow():
+    s = ShieldSubsystem("Shield Generator")
+    s.SetMaxShields(ShieldProperty.FRONT_SHIELDS, 100.0)
+    s.SetCurShields(ShieldProperty.FRONT_SHIELDS, 20.0)
+    overflow = s.ApplyDamage(ShieldProperty.FRONT_SHIELDS, 50.0)
+    assert overflow == 30.0
+    assert s.GetCurrentShields(ShieldProperty.FRONT_SHIELDS) == 0.0
+
+
+def test_apply_damage_other_faces_untouched():
+    s = ShieldSubsystem("Shield Generator")
+    s.SetMaxShields(ShieldProperty.FRONT_SHIELDS, 100.0)
+    s.SetMaxShields(ShieldProperty.REAR_SHIELDS, 100.0)
+    s.SetCurShields(ShieldProperty.FRONT_SHIELDS, 100.0)
+    s.SetCurShields(ShieldProperty.REAR_SHIELDS, 100.0)
+    s.ApplyDamage(ShieldProperty.FRONT_SHIELDS, 40.0)
+    assert s.GetCurrentShields(ShieldProperty.REAR_SHIELDS) == 100.0
+
+
+def test_apply_damage_zero_amount_noop():
+    s = ShieldSubsystem("Shield Generator")
+    s.SetMaxShields(ShieldProperty.FRONT_SHIELDS, 100.0)
+    s.SetCurShields(ShieldProperty.FRONT_SHIELDS, 75.0)
+    overflow = s.ApplyDamage(ShieldProperty.FRONT_SHIELDS, 0.0)
+    assert overflow == 0.0
+    assert s.GetCurrentShields(ShieldProperty.FRONT_SHIELDS) == 75.0
