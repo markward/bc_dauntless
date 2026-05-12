@@ -324,6 +324,23 @@ def ImpulseEngineProperty_Create(name):       return ImpulseEngineProperty(name)
 def WarpEngineProperty_Create(name):          return WarpEngineProperty(name)
 def WeaponSystemProperty_Create(name):        return WeaponSystemProperty(name)
 def CloakingSubsystemProperty_Create(name):   return CloakingSubsystemProperty(name)
+def ObjectEmitterProperty_Create(name):       return ObjectEmitterProperty(name)
+
+
+def ObjectEmitterProperty_Cast(obj):
+    """Lenient pass-through: returns obj if it's an ObjectEmitterProperty, else None.
+
+    Rejects _NamedStub explicitly so undefined-attribute chains don't slip
+    through and keep producing stub-tracker hits.
+    """
+    if obj is None:
+        return None
+    import App
+    if isinstance(obj, App._NamedStub):
+        return None
+    if isinstance(obj, ObjectEmitterProperty):
+        return obj
+    return None
 
 
 # ── TGModelPropertyManager ────────────────────────────────────────────────────

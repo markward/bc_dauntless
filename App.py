@@ -130,6 +130,7 @@ from engine.appc.properties import (
     EngineProperty_Create, ImpulseEngineProperty_Create, WarpEngineProperty_Create,
     WeaponSystemProperty_Create,
     CloakingSubsystemProperty_Create,
+    ObjectEmitterProperty_Create, ObjectEmitterProperty_Cast,
 )
 
 # ── App.CT_* class-type constants ─────────────────────────────────────────────

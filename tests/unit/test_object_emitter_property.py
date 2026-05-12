@@ -60,3 +60,36 @@ def test_set_orientation_round_trip_and_copy_semantics():
     got = p.GetForward()
     got.SetXYZ(5.0, 5.0, 5.0)
     assert (p.GetForward().x, p.GetForward().y, p.GetForward().z) == (0.0, 1.0, 0.0)
+
+
+import App
+from engine.appc.properties import ObjectEmitterProperty_Create, ObjectEmitterProperty_Cast
+from engine.appc.properties import ShieldProperty
+
+
+def test_factory_returns_real_instance():
+    p = ObjectEmitterProperty_Create("Probe Launcher")
+    assert isinstance(p, ObjectEmitterProperty)
+    assert p.GetName() == "Probe Launcher"
+
+
+def test_app_exposes_factory_and_cast():
+    p = App.ObjectEmitterProperty_Create("Decoy launcher")
+    assert isinstance(p, ObjectEmitterProperty)
+    cast_back = App.ObjectEmitterProperty_Cast(p)
+    assert cast_back is p
+
+
+def test_cast_rejects_named_stub():
+    stub = App._NamedStub("not-an-emitter")
+    assert ObjectEmitterProperty_Cast(stub) is None
+    assert App.ObjectEmitterProperty_Cast(stub) is None
+
+
+def test_cast_rejects_unrelated_property():
+    shield = ShieldProperty("Shield")
+    assert ObjectEmitterProperty_Cast(shield) is None
+
+
+def test_cast_passes_none_through():
+    assert ObjectEmitterProperty_Cast(None) is None
