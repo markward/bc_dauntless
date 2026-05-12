@@ -118,7 +118,7 @@ class ShipClass(DamageableObject):
     def SetupProperties(self) -> None:
         from engine.appc.properties import (
             ShipProperty, ImpulseEngineProperty, WarpEngineProperty,
-            HullProperty,
+            HullProperty, SensorProperty,
         )
         from engine.appc.subsystems import HullSubsystem
 
@@ -166,6 +166,16 @@ class ShipClass(DamageableObject):
                         (prop.GetPrimary,             self._hull.SetPrimary),
                         (prop.GetRadius,              self._hull.SetRadius),
                         (prop.GetDisabledPercentage,  self._hull.SetDisabledPercentage),
+                    ):
+                        v = src()
+                        if v is not None: setter(v)
+            elif isinstance(prop, SensorProperty):
+                self._copy_powered_subsystem_fields(prop, self._sensor_subsystem)
+                sens = self._sensor_subsystem
+                if sens is not None:
+                    for src, setter in (
+                        (prop.GetBaseSensorRange, sens.SetBaseSensorRange),
+                        (prop.GetMaxProbes,       sens.SetMaxProbes),
                     ):
                         v = src()
                         if v is not None: setter(v)
