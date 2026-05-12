@@ -25,13 +25,17 @@ def iter_set_objects(pSet) -> Iterable:
 
 def iter_ships(*, verbose: bool = False) -> Iterable:
     """Walk every ShipClass-like object in every active set."""
+    from engine.appc.ships import ShipClass
     for set_name, pSet in App.g_kSetManager._sets.items():
         if verbose:
             count = len(getattr(pSet, "_objects", {}))
             obj_keys = list(getattr(pSet, "_objects", {}).keys())
             print(f"[ship_iter] set {set_name!r}: {count} object(s), keys={obj_keys}", flush=True)
         for obj in iter_set_objects(pSet):
-            # ShipClass exposes GetScript; non-ship objects (waypoints,
-            # characters) typically don't have a non-empty script string.
-            if hasattr(obj, "GetScript"):
+            # Reject _NamedStub and any other non-ship members — set objects
+            # include grids, waypoints, characters, and SDK stubs for engine
+            # classes we don't model yet (GridClass etc.). hasattr() can't
+            # discriminate against _NamedStub because its __getattr__ returns
+            # a stub for any name.
+            if isinstance(obj, ShipClass):
                 yield obj
