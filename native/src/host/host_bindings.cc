@@ -211,7 +211,8 @@ void frame() {
     // so dust specks appear in front of fading shields (both are additive
     // blends, so order is mostly cosmetic, but dust drawn last keeps it
     // visually on top of any lingering shield fade).
-    if (g_shield_pass) g_shield_pass->submit(g_world, g_camera, *g_pipeline, now);
+    if (g_shield_pass) g_shield_pass->submit(g_world, g_camera, *g_pipeline,
+                                              now, lookup);
 
     if (g_dust_pass) g_dust_pass->render(g_camera, dt, *g_pipeline);
 

@@ -2,8 +2,10 @@
 #include "renderer/shield_pass.h"
 
 #include "renderer/pipeline.h"
+#include "renderer/skin_shield.h"
 #include "sphere_mesh.h"
 
+#include <assets/model.h>
 #include <assets/texture.h>
 #include <scenegraph/camera.h>
 #include <scenegraph/world.h>
@@ -49,6 +51,24 @@ assets::Mesh* ShieldPass::ensure_sphere() {
     return sphere_.get();
 }
 
+assets::Mesh* ShieldPass::ensure_skin_mesh(scenegraph::ModelHandle handle,
+                                            const assets::Model& model,
+                                            float inflate_distance) {
+    auto it = skin_cache_.find(handle);
+    if (it != skin_cache_.end()) return it->second.get();
+    assets::MeshCpu cpu = build_skin_shield_meshcpu(model, inflate_distance);
+    if (cpu.vertices.empty() || cpu.indices.empty()) {
+        // Cache an empty placeholder so we don't retry every frame for a
+        // model that has no CPU-side data.
+        skin_cache_[handle] = std::make_unique<assets::Mesh>();
+        return nullptr;
+    }
+    auto owned = std::make_unique<assets::Mesh>(assets::upload_mesh(cpu));
+    auto* raw = owned.get();
+    skin_cache_[handle] = std::move(owned);
+    return raw;
+}
+
 void ShieldPass::ensure_textures_loaded() {
     if (tex_loaded_) return;
     for (int i = 0; i < 4; ++i) {
@@ -82,10 +102,10 @@ void ShieldPass::ensure_textures_loaded() {
 void ShieldPass::submit(const scenegraph::World& world,
                          const scenegraph::Camera& camera,
                          Pipeline& pipeline,
-                         double now_seconds) {
+                         double now_seconds,
+                         const ModelLookup& model_lookup) {
     registry_.tick_all(now_seconds);
 
-    // Early-out before any GL state setup if nothing to draw.
     bool any_active = false;
     for (const auto& [id, state] : registry_) {
         if (state.active_count() > 0) { any_active = true; break; }
@@ -101,14 +121,10 @@ void ShieldPass::submit(const scenegraph::World& world,
     shader.set_mat4("u_proj", camera.proj_matrix());
     shader.set_mat4("u_view", camera.view_matrix());
 
-    // Alpha-weighted additive: src*src_alpha + dest. Depth test on, depth
-    // write off — fading flashes shouldn't occlude later passes.
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE);
     glDepthMask(GL_FALSE);
 
-    // Bind four shieldhit textures to units 0..3 once; sampler uniforms set
-    // once per submit. The shader picks via u_hit_tex_index per slot.
     for (int i = 0; i < 4; ++i) {
         glActiveTexture(GL_TEXTURE0 + i);
         glBindTexture(GL_TEXTURE_2D, tex_[i] ? tex_[i]->id() : 0);
@@ -117,20 +133,38 @@ void ShieldPass::submit(const scenegraph::World& world,
     shader.set_int("u_shieldhit_1", 1);
     shader.set_int("u_shieldhit_2", 2);
     shader.set_int("u_shieldhit_3", 3);
-    shader.set_float("u_hex_tile_rate", 1.0f / 5.0f);  // 1 hex per 5 m
-
-    glBindVertexArray(sphere->vao());
+    shader.set_float("u_hex_tile_rate", 1.0f / 5.0f);
 
     for (const auto& [id, state] : registry_) {
         if (state.active_count() == 0) continue;
-        if (state.mode != ShieldMode::Ellipsoid) continue;  // skin = Task 15
 
         const auto* inst = world.get(id);
         if (!inst || !inst->visible) continue;
 
-        const glm::mat4 ship_local =
-            glm::translate(glm::mat4(1.0f), state.aabb_center)
-            * glm::scale(glm::mat4(1.0f), state.aabb_half_extents * 1.1f);
+        // Pick mesh + ship_local matrix per mode.
+        assets::Mesh* mesh = nullptr;
+        glm::mat4 ship_local{1.0f};
+        if (state.mode == ShieldMode::Skin && model_lookup) {
+            const assets::Model* model = model_lookup(inst->model_handle);
+            if (model) {
+                const float largest_axis =
+                    std::max({state.aabb_half_extents.x,
+                              state.aabb_half_extents.y,
+                              state.aabb_half_extents.z});
+                mesh = ensure_skin_mesh(inst->model_handle, *model,
+                                         largest_axis * 0.05f);
+            }
+            // ship_local stays identity: skin verts already in ship-local
+            // (post-inflate) coordinates.
+        }
+        if (mesh == nullptr) {
+            // Ellipsoid path: either mode=Ellipsoid, or skin build failed.
+            mesh = sphere;
+            ship_local = glm::translate(glm::mat4(1.0f), state.aabb_center)
+                       * glm::scale(glm::mat4(1.0f),
+                                     state.aabb_half_extents * 1.1f);
+        }
+
         shader.set_mat4("u_world", inst->world);
         shader.set_mat4("u_ship_local", ship_local);
 
@@ -152,8 +186,9 @@ void ShieldPass::submit(const scenegraph::World& world,
                                               state.aabb_half_extents.z});
         shader.set_float("u_hit_radius", largest_axis * 0.25f);
 
+        glBindVertexArray(mesh->vao());
         glDrawElements(GL_TRIANGLES,
-                       static_cast<GLsizei>(sphere->index_count()),
+                       static_cast<GLsizei>(mesh->index_count()),
                        GL_UNSIGNED_INT, nullptr);
     }
 
