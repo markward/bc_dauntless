@@ -25,6 +25,7 @@ class ShipSubsystem(TGEventHandlerObject):
         self._parent_ship = None
         self._parent_subsystem = None
         self._child_subsystem = None
+        self._children: list["ShipSubsystem"] = []
         self._condition = 1.0
         self._max_condition = 1.0
         self._radius = 0.0
@@ -138,13 +139,30 @@ class ShipSubsystem(TGEventHandlerObject):
     # ── Child-subsystem walking ──────────────────────────────────────────────
     # SDK consumers iterate child subsystems via GetNumChildSubsystems +
     # GetChildSubsystem(i) (e.g. E2M2 PrepMarauder, E5M2 CreateGeronimo).
-    # Phase 1 ships have no decomposition, so the iteration empties cleanly.
+    # Hardpoints register TractorBeamProperty etc. as children of the parent
+    # WeaponSystemProperty; SetupProperties Pass 4 materialises live children
+    # from those property templates.
 
     def GetNumChildSubsystems(self) -> int:
-        return 0
+        return len(self._children)
 
-    def GetChildSubsystem(self, index_or_name=None):
+    def GetChildSubsystem(self, arg=None):
+        if arg is None:
+            return None
+        if isinstance(arg, int):
+            if 0 <= arg < len(self._children):
+                return self._children[arg]
+            return None
+        if isinstance(arg, str):
+            for c in self._children:
+                if c.GetName() == arg:
+                    return c
+            return None
         return None
+
+    def AddChildSubsystem(self, sub: "ShipSubsystem") -> None:
+        sub._parent_subsystem = self
+        self._children.append(sub)
 
     def GetCritical(self) -> int:                       return self._critical
     def SetCritical(self, v) -> None:                   self._critical = int(v)
