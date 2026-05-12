@@ -105,6 +105,13 @@ def test_register_local_template_findable_by_name():
     )
     assert found is emitter
     assert found.GetEmittedObjectType() == ObjectEmitterProperty.OEP_PROBE
+    # Goal 2 from spec — typed lookup must also resolve to the same template.
+    found_typed = App.g_kModelPropertyManager.FindByNameAndType(
+        "Probe Launcher",
+        ObjectEmitterProperty,
+        App.TGModelPropertyManager.LOCAL_TEMPLATES,
+    )
+    assert found_typed is emitter
     App.g_kModelPropertyManager.ClearLocalTemplates()
 
 

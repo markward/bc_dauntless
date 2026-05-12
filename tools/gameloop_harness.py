@@ -60,6 +60,7 @@ def run_mission_with_loop(
     App._next_event_type_id = 200
     if profile:
         App._stub_tracker.set_mission(module_name)
+        App._emission_recorder.set_mission(module_name)
 
     ticks_done = 0
 
@@ -95,6 +96,7 @@ def run_mission_with_loop(
         signal.signal(signal.SIGALRM, old_handler)
         if profile:
             App._stub_tracker.reset_mission()
+            App._emission_recorder.reset_mission()
         _set_current_game(None)
         for key in [k for k in sys.modules if k not in _mh._BASELINE_MODULES]:
             del sys.modules[key]

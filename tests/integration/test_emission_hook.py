@@ -19,9 +19,19 @@ from engine.appc.properties import (
 
 @pytest.fixture(autouse=True)
 def reset_recorder():
+    from engine.core.ids import _registry as _ID_REGISTRY
+
     App._emission_recorder.disable()
     App._emission_recorder.clear()
+    snapshot = set(_ID_REGISTRY.keys())
+
     yield
+
+    # Clean up any synthetic-ship IDs inserted during the test.
+    for k in list(_ID_REGISTRY):
+        if k not in snapshot:
+            del _ID_REGISTRY[k]
+
     App._emission_recorder.disable()
     App._emission_recorder.clear()
 
