@@ -10,6 +10,19 @@ import App
 from engine.appc.properties import ShieldProperty
 
 
+def test_engine_renderer_exposes_shield_surface():
+    """engine.renderer must re-export the shield binding functions —
+    application code (engine.host_loop, engine.shields callers) goes
+    through this wrapper, not _open_stbc_host directly. MagicMock-based
+    tests below won't catch a missing wrapper, so this smoke check is
+    load-bearing."""
+    import engine.renderer as r
+    for name in ("model_aabb", "shield_register",
+                 "shield_unregister", "shield_hit"):
+        assert hasattr(r, name), f"engine.renderer missing {name}"
+        assert callable(getattr(r, name))
+
+
 def _color(r, g, b, a):
     c = App.TGColorA()
     c.SetRGBA(r, g, b, a)

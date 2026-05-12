@@ -108,6 +108,40 @@ def set_dust_density(count: int) -> None:
     _h.dust_set_density(count)
 
 
+# ── Shield pass ─────────────────────────────────────────────────────────────
+
+def model_aabb(model: int) -> Tuple[Tuple[float, float, float],
+                                     Tuple[float, float, float]]:
+    """Return (center, half_extents) of a loaded model's CPU-side vertex
+    union. Used by engine.shields to size the shield bubble."""
+    return _h.model_aabb(model)
+
+
+def shield_register(instance_id: InstanceId, mode: int, decay_seconds: float,
+                    default_color: Tuple[float, float, float, float],
+                    aabb_center: Tuple[float, float, float],
+                    aabb_half_extents: Tuple[float, float, float]) -> None:
+    """Register a ship's shield state with the render pass. mode=0 ellipsoid,
+    mode=1 skin. default_color is the ShieldGlowColor RGBA the renderer
+    substitutes when shield_hit is called with rgba=(0,0,0,0)."""
+    _h.shield_register(instance_id, mode, decay_seconds, default_color,
+                       aabb_center, aabb_half_extents)
+
+
+def shield_unregister(instance_id: InstanceId) -> None:
+    """Remove a ship's shield state. No-op if unregistered."""
+    _h.shield_unregister(instance_id)
+
+
+def shield_hit(instance_id: InstanceId,
+               point: Tuple[float, float, float],
+               rgba: Tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0),
+               intensity: float = 1.0) -> None:
+    """Push a shield-hit flash for the given ship at a world-space point.
+    rgba=(0,0,0,0) substitutes the ship's default ShieldGlowColor."""
+    _h.shield_hit(instance_id, point, rgba, intensity)
+
+
 # ── Bridge view ─────────────────────────────────────────────────────────────
 
 def create_bridge_instance(model: int) -> InstanceId:

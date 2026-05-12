@@ -1228,9 +1228,13 @@ def run(mission_name: str = SHIP_GATE_MISSION,
                 _h.toggle_ui_debugger()
             if _h is not None and _h.key_pressed(_h.keys.KEY_F9):
                 _h.toggle_ui_visibility()
-            # F10: debug shield-hit at the player's center. Verifies the
-            # shield render pass end-to-end without needing the damage
-            # system. No-op if no player ship is loaded.
+            # F10: debug shield-hit on the shield surface. Real BC weapons
+            # impact the bubble at a surface point; firing at the ship
+            # center would put the hit too far inside the bubble for the
+            # distance falloff to ever exceed zero on the visible shell.
+            # Offset along the ship's forward axis by ~30 world units —
+            # near the bubble surface for typical SHIP_SCALE=0.1 ships
+            # whose NIF half-extent is in the 200-400 range.
             if (_h is not None
                     and _h.key_pressed(_h.keys.KEY_F10)
                     and player is not None
@@ -1238,8 +1242,17 @@ def run(mission_name: str = SHIP_GATE_MISSION,
                 iid = session.ship_instances.get(player)
                 if iid is not None:
                     from engine.shields import fire_debug_hit
+                    wp = player.GetWorldLocation()
+                    try:
+                        fwd = player.GetWorldRotation().GetRow(1)
+                        fx, fy, fz = float(fwd.x), float(fwd.y), float(fwd.z)
+                    except Exception:
+                        fx, fy, fz = 1.0, 0.0, 0.0
+                    offset = 30.0
                     fire_debug_hit(_h, instance_id=iid,
-                                   world_point=player.GetWorldLocation())
+                                   world_point=(wp.x + fx * offset,
+                                                wp.y + fy * offset,
+                                                wp.z + fz * offset))
             if _h is not None and _h.key_pressed(_h.keys.KEY_ESCAPE):
                 # Order: exit bridge mode first, then dismiss any open
                 # picker. If both apply, ESC handles both.

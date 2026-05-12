@@ -111,7 +111,14 @@ scenegraph::ModelHandle load_model_impl(const std::string& nif_path,
             return static_cast<scenegraph::ModelHandle>(i + 1);
         }
     }
-    if (!g_cache) g_cache = std::make_unique<assets::AssetCache>();
+    if (!g_cache) {
+        assets::AssetCache::Config cfg;
+        // Shield pass (model_aabb + skin-mesh build) walks mesh.cpu_data().
+        // Without retention every Mesh::cpu_data() returns nullopt and the
+        // shield bubble collapses to zero size.
+        cfg.keep_cpu_data = true;
+        g_cache = std::make_unique<assets::AssetCache>(std::move(cfg));
+    }
     auto handle = g_cache->load(nif_path, search_paths);
     g_loaded_models.push_back({std::move(canonical), std::move(handle)});
     return static_cast<scenegraph::ModelHandle>(g_loaded_models.size());
@@ -444,18 +451,7 @@ PYBIND11_MODULE(_open_stbc_host, m) {
               const assets::Model* model = g_loaded_models[h - 1].handle.get();
               if (!model) return {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}};
 
-              // Aggregate every CPU-side vertex across all model meshes.
-              // BC ship meshes are mostly flat-hierarchy near the NIF
-              // root, so the union AABB without node transforms is close
-              // enough for the shield bubble silhouette. Refine later if
-              // ellipsoid misalignment shows up on long-armed ships.
-              std::vector<glm::vec3> pts;
-              for (const auto& mesh : model->meshes) {
-                  const auto& cpu = mesh.cpu_data();
-                  if (!cpu) continue;
-                  for (const auto& v : cpu->vertices) pts.push_back(v.position);
-              }
-              const renderer::Aabb box = renderer::compute_aabb(pts);
+              const renderer::Aabb box = renderer::compute_model_aabb(*model);
               return {{box.center.x, box.center.y, box.center.z},
                       {box.half_extents.x, box.half_extents.y, box.half_extents.z}};
           },

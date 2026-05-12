@@ -46,7 +46,10 @@ void ShieldPass::shield_hit(scenegraph::InstanceId id,
 
 assets::Mesh* ShieldPass::ensure_sphere() {
     if (sphere_) return sphere_.get();
-    assets::MeshCpu cpu = build_uv_sphere(256);
+    // 4096 tris (32 lat × 64 lon) — smooth silhouette at typical
+    // bubble screen sizes; the sphere is reused across every
+    // ellipsoid-mode ship so the one-time build cost is amortized.
+    assets::MeshCpu cpu = build_uv_sphere(4096);
     sphere_ = std::make_unique<assets::Mesh>(assets::upload_mesh(cpu));
     return sphere_.get();
 }
@@ -133,7 +136,6 @@ void ShieldPass::submit(const scenegraph::World& world,
     shader.set_int("u_shieldhit_1", 1);
     shader.set_int("u_shieldhit_2", 2);
     shader.set_int("u_shieldhit_3", 3);
-    shader.set_float("u_hex_tile_rate", 1.0f / 5.0f);
 
     for (const auto& [id, state] : registry_) {
         if (state.active_count() == 0) continue;
@@ -159,14 +161,21 @@ void ShieldPass::submit(const scenegraph::World& world,
         }
         if (mesh == nullptr) {
             // Ellipsoid path: either mode=Ellipsoid, or skin build failed.
+            // 1.32× padding (1.1 base × 1.2 user-requested bump) so the
+            // bubble clears the hull on ships whose AABB walks miss
+            // orphan meshes or whose NIF geometry sits asymmetric to its
+            // pivot point.
             mesh = sphere;
             ship_local = glm::translate(glm::mat4(1.0f), state.aabb_center)
                        * glm::scale(glm::mat4(1.0f),
-                                     state.aabb_half_extents * 1.1f);
+                                     state.aabb_half_extents * 1.32f);
         }
 
         shader.set_mat4("u_world", inst->world);
         shader.set_mat4("u_ship_local", ship_local);
+        // World-space ship center for the impact-centered splash UV in
+        // the fragment shader. inst->world's column 3 holds translation.
+        shader.set_vec3("u_ship_center", glm::vec3(inst->world[3]));
 
         glm::vec4 pts[ShieldState::MaxHits];
         glm::vec4 col[ShieldState::MaxHits];
@@ -184,7 +193,18 @@ void ShieldPass::submit(const scenegraph::World& world,
         const float largest_axis = std::max({state.aabb_half_extents.x,
                                               state.aabb_half_extents.y,
                                               state.aabb_half_extents.z});
-        shader.set_float("u_hit_radius", largest_axis * 0.25f);
+        // aabb_half_extents is in NIF units; the ship's world matrix
+        // applies a uniform scale (SHIP_SCALE on the host side). Recover
+        // it from the column length so hit_radius lands in world units
+        // (matching v_world_pos and hit_point.xyz the shader compares
+        // against). Without this the radius is ~10× too large and the
+        // hex pattern bleeds across the entire ellipsoid.
+        const float scale_factor = glm::length(glm::vec3(inst->world[0]));
+        // 0.6 = larger splash for visual debug; tune down later once the
+        // bubble silhouette is verified to clear the hull. With 0.25 the
+        // flash only covered ~quarter of the bubble surface and made it
+        // hard to see whether the ship was clipping out.
+        shader.set_float("u_hit_radius", largest_axis * scale_factor * 0.6f);
 
         glBindVertexArray(mesh->vao());
         glDrawElements(GL_TRIANGLES,
