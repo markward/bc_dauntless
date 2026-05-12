@@ -45,7 +45,7 @@ Six edits across three files plus a small `properties.py` ordering touch.
 |---|---|---|
 | `ShipSubsystem._children` *(edit)* | `engine/appc/subsystems.py` | Replace the always-`None`/`0` child stubs with a real list. Add `AddChildSubsystem(sub)`. |
 | `PhaserBank`, `PulseWeapon`, `TractorBeam`, `TorpedoTube` *(new)* | `engine/appc/subsystems.py` | Thin live-subsystem classes — one per hardpoint child property type. Subclass `WeaponSystem` (firing state + power line). |
-| `PowerSubsystem`, `RepairSubsystem` *(new)* | `engine/appc/subsystems.py` | Power plant and engineering. Subclass `PoweredSubsystem`. |
+| `PowerSubsystem`, `RepairSubsystem` *(new)* | `engine/appc/subsystems.py` | Power plant and engineering. `PowerSubsystem` subclasses `ShipSubsystem` (matches `PowerProperty: SubsystemProperty`); `RepairSubsystem` subclasses `PoweredSubsystem` (matches `RepairSubsystemProperty: PoweredSubsystemProperty`). Confirmed against [sdk App.py:5710, 6639](../../../sdk/Build/scripts/App.py). |
 | `ShipClass._power_subsystem`, `_repair_subsystem` slots *(edit)* | `engine/appc/ships.py` | New slots with the same Get/Set pattern as the existing eight. Pre-allocated in `ShipClass_Create`. |
 | `SetupProperties` Pass 4 + label propagation + new slot handlers *(edit)* | `engine/appc/ships.py` | Walk the property set once more after the existing dispatch to instantiate children. Each existing `SetProperty(prop)` branch also calls `receiver.SetName(prop.GetName())`. Add branches for `PowerProperty` and `RepairSubsystemProperty`. |
 | `populated_subsystems` + controller *(edit)* | `engine/ui/target_list.py` | Add `Power Plant` and `Engineering` to `_SUBSYSTEM_GETTERS`. Controller's `_add_row` checks `GetNumChildSubsystems()`; if non-zero, renders the subsystem as a nested collapsible inside the ship row instead of a flat button. |
@@ -199,12 +199,16 @@ for prop in self.GetPropertySet().GetPropertyList():
 ### New `PowerSubsystem` / `RepairSubsystem`
 
 ```python
-class PowerSubsystem(PoweredSubsystem):
-    """Power plant — drives the ship's energy budget. SDK App.py:6240+."""
+class PowerSubsystem(ShipSubsystem):
+    """Power plant — drives the ship's energy budget.
+
+    Inherits from ShipSubsystem (not PoweredSubsystem) to match SDK
+    App.py:5710 where PowerSubsystem inherits ShipSubsystem directly.
+    """
     pass
 
 class RepairSubsystem(PoweredSubsystem):
-    """Engineering / damage-control subsystem. SDK App.py:6285+."""
+    """Engineering / damage-control subsystem. SDK App.py:6639."""
     pass
 ```
 
