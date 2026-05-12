@@ -59,6 +59,7 @@ enable_testing()
 # Diagnostic tools that consume the public library.
 add_subdirectory(tools/scan_nifs)
 add_subdirectory(tools/probe_shape_transforms)
+add_subdirectory(tools/probe_animation_keys)
 
 # GLFW is a runtime dep for the renderer host; tests reuse the same build.
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
