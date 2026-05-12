@@ -47,6 +47,18 @@ class ShipSubsystem(TGEventHandlerObject):
     def SetProperty(self, prop) -> None:
         self._property = prop
 
+    def IsTypeOf(self, cls) -> int:
+        """SDK class-id check. Returns 1 when this subsystem's source
+        property is an instance of `cls`, else 0.
+
+        `cls` may be a fall-through stub (e.g. App.CT_UNKNOWN_THING
+        returns an App._NamedStub instance), so guard with
+        isinstance(cls, type) before testing.
+        """
+        if self._property is None or not isinstance(cls, type):
+            return 0
+        return 1 if isinstance(self._property, cls) else 0
+
     def GetParentShip(self):
         return self._parent_ship
 
