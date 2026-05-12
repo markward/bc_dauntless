@@ -269,7 +269,15 @@ class HullSubsystem(ShipSubsystem):
 
 
 class SensorSubsystem(PoweredSubsystem):
-    pass
+    def __init__(self, name: str = ""):
+        super().__init__(name)
+        self._base_sensor_range: float = 0.0
+        self._max_probes: int = 0
+
+    def GetBaseSensorRange(self) -> float:           return self._base_sensor_range
+    def SetBaseSensorRange(self, v) -> None:         self._base_sensor_range = float(v)
+    def GetMaxProbes(self) -> int:                   return self._max_probes
+    def SetMaxProbes(self, v) -> None:               self._max_probes = int(v)
 
 
 class ImpulseEngineSubsystem(PoweredSubsystem):
