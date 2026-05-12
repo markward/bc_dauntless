@@ -22,6 +22,7 @@
 #include <renderer/backdrop_pass.h>
 #include <renderer/sun_pass.h>
 #include <renderer/dust_pass.h>
+#include <renderer/shield_pass.h>
 #include <ui/UiSystem.h>
 #include <ui/PanelDocument.h>
 #include <scenegraph/world.h>
@@ -50,6 +51,7 @@ std::unique_ptr<renderer::BackdropPass> g_backdrop_pass;
 std::vector<renderer::SunDescriptor> g_suns;
 std::unique_ptr<renderer::SunPass> g_sun_pass;
 std::unique_ptr<renderer::DustPass> g_dust_pass;
+std::unique_ptr<renderer::ShieldPass> g_shield_pass;
 double g_prev_frame_time_seconds = 0.0;
 
 // Bridge pass state. Camera is set from Python via set_bridge_camera each
@@ -132,6 +134,7 @@ void init(int width, int height, const std::string& title,
     g_suns.clear();
     g_sun_pass = std::make_unique<renderer::SunPass>();
     g_dust_pass = std::make_unique<renderer::DustPass>();
+    g_shield_pass = std::make_unique<renderer::ShieldPass>();
     g_prev_frame_time_seconds = glfwGetTime();
 
     if (!ui_assets_root.empty()) {
@@ -160,6 +163,7 @@ void shutdown() {
     g_suns.clear();
     g_sun_pass.reset();
     g_dust_pass.reset();
+    g_shield_pass.reset();
     g_window.reset();
     g_prev_key_state.clear();
     // Mirror init()'s lighting reset for symmetry and defense-in-depth:
@@ -201,6 +205,13 @@ void frame() {
     const double now = glfwGetTime();
     const float  dt  = static_cast<float>(now - g_prev_frame_time_seconds);
     g_prev_frame_time_seconds = now;
+
+    // Shield pass: additive flash on top of opaque ships. Runs before dust
+    // so dust specks appear in front of fading shields (both are additive
+    // blends, so order is mostly cosmetic, but dust drawn last keeps it
+    // visually on top of any lingering shield fade).
+    if (g_shield_pass) g_shield_pass->submit(g_world, g_camera, *g_pipeline, now);
+
     if (g_dust_pass) g_dust_pass->render(g_camera, dt, *g_pipeline);
 
     // ── Bridge pass ──────────────────────────────────────────────────────
