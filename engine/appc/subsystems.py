@@ -431,6 +431,21 @@ class ShieldSubsystem(PoweredSubsystem):
     def SetShieldChargePerSecond(self, face: int, value: float) -> None:
         self._charge_per_second[int(face)] = float(value)
 
+    def Update(self, dt: float) -> None:
+        """Per-tick regen: current += charge_per_second * dt, clamped to max.
+
+        Faces with max==0 are skipped so unshielded faces never accumulate.
+        """
+        dt = float(dt)
+        for f in range(self.NUM_SHIELDS):
+            mx = self._max_shields[f]
+            if mx == 0.0:
+                continue
+            new = self._current_shields[f] + self._charge_per_second[f] * dt
+            if new > mx:
+                new = mx
+            self._current_shields[f] = new
+
 
 # ── Module-level WarpEngineSubsystem helpers ─────────────────────────────────
 # SDK callers (WarpSequence.py:95-282) reach for a class-level / engine-default

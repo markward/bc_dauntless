@@ -89,3 +89,52 @@ def test_single_shield_percentage_zero_current():
     s.SetMaxShields(ShieldProperty.FRONT_SHIELDS, 100.0)
     s.SetCurShields(ShieldProperty.FRONT_SHIELDS, 0.0)
     assert s.GetSingleShieldPercentage(ShieldProperty.FRONT_SHIELDS) == 0.0
+
+
+def test_update_regenerates_face():
+    s = ShieldSubsystem("Shield Generator")
+    s.SetMaxShields(ShieldProperty.FRONT_SHIELDS, 100.0)
+    s.SetCurShields(ShieldProperty.FRONT_SHIELDS, 50.0)
+    s.SetShieldChargePerSecond(ShieldProperty.FRONT_SHIELDS, 10.0)
+    s.Update(1.0)
+    assert s.GetCurrentShields(ShieldProperty.FRONT_SHIELDS) == 60.0
+
+
+def test_update_clamps_at_max():
+    s = ShieldSubsystem("Shield Generator")
+    s.SetMaxShields(ShieldProperty.FRONT_SHIELDS, 100.0)
+    s.SetCurShields(ShieldProperty.FRONT_SHIELDS, 95.0)
+    s.SetShieldChargePerSecond(ShieldProperty.FRONT_SHIELDS, 100.0)
+    s.Update(1.0)
+    assert s.GetCurrentShields(ShieldProperty.FRONT_SHIELDS) == 100.0
+
+
+def test_update_zero_charge_rate_noop():
+    s = ShieldSubsystem("Shield Generator")
+    s.SetMaxShields(ShieldProperty.FRONT_SHIELDS, 100.0)
+    s.SetCurShields(ShieldProperty.FRONT_SHIELDS, 50.0)
+    # charge_per_second defaults to 0
+    s.Update(1.0)
+    assert s.GetCurrentShields(ShieldProperty.FRONT_SHIELDS) == 50.0
+
+
+def test_update_skips_unshielded_face():
+    """A face with max=0 (e.g. asteroid-like object) stays at 0 even if
+    something erroneously set its charge_per_second."""
+    s = ShieldSubsystem("Shield Generator")
+    s.SetShieldChargePerSecond(ShieldProperty.FRONT_SHIELDS, 100.0)
+    s.Update(1.0)
+    assert s.GetCurrentShields(ShieldProperty.FRONT_SHIELDS) == 0.0
+
+
+def test_update_independent_per_face():
+    s = ShieldSubsystem("Shield Generator")
+    s.SetMaxShields(ShieldProperty.FRONT_SHIELDS, 100.0)
+    s.SetMaxShields(ShieldProperty.REAR_SHIELDS, 200.0)
+    s.SetCurShields(ShieldProperty.FRONT_SHIELDS, 0.0)
+    s.SetCurShields(ShieldProperty.REAR_SHIELDS, 0.0)
+    s.SetShieldChargePerSecond(ShieldProperty.FRONT_SHIELDS, 10.0)
+    s.SetShieldChargePerSecond(ShieldProperty.REAR_SHIELDS, 20.0)
+    s.Update(2.0)
+    assert s.GetCurrentShields(ShieldProperty.FRONT_SHIELDS) == 20.0
+    assert s.GetCurrentShields(ShieldProperty.REAR_SHIELDS) == 40.0
