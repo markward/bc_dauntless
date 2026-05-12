@@ -68,7 +68,7 @@ protected:
     assets::detail::ModelBuildContext make_ctx() {
         assets::detail::ModelBuildContext ctx;
         ctx.resolver = &resolver;
-        ctx.texture_search_path = tmp_dir;
+        ctx.texture_search_paths = {tmp_dir};
         ctx.texture_uploader = stub_texture;
         ctx.mesh_uploader = stub_mesh;
         return ctx;

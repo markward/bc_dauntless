@@ -47,6 +47,13 @@ PathResolver::cache_for(const fs::path& dir, bool force_rebuild) {
 }
 
 fs::path PathResolver::resolve(std::string basename, const fs::path& search_dir) {
+    std::vector<fs::path> dirs{search_dir};
+    return resolve(std::move(basename), dirs);
+}
+
+fs::path PathResolver::resolve(
+    std::string basename, const std::vector<fs::path>& search_dirs)
+{
     if (!has_extension(basename)) basename += ".tga";
 
     // BC bridge NIFs (e.g. DBridge.NIF) embed mixed conventions — some
@@ -60,20 +67,28 @@ fs::path PathResolver::resolve(std::string basename, const fs::path& search_dir)
         ? basename_path.filename().string()
         : basename;
 
-    auto& dir_map = cache_for(search_dir, /*force_rebuild=*/false);
     auto lower = to_lower(filename);
 
-    if (auto it = dir_map.find(lower); it != dir_map.end()) {
-        return search_dir / it->second;
+    // First pass: cached maps only.
+    for (const auto& dir : search_dirs) {
+        auto& dir_map = cache_for(dir, /*force_rebuild=*/false);
+        if (auto it = dir_map.find(lower); it != dir_map.end()) {
+            return dir / it->second;
+        }
+    }
+    // Second pass: rebuild each dir's map once and retry. Handles files
+    // dropped at runtime; matches the single-dir overload's behavior.
+    for (const auto& dir : search_dirs) {
+        auto& fresh = cache_for(dir, /*force_rebuild=*/true);
+        if (auto it = fresh.find(lower); it != fresh.end()) {
+            return dir / it->second;
+        }
     }
 
-    // Miss — rebuild map once and retry. Handles new files dropped at runtime.
-    auto& fresh = cache_for(search_dir, /*force_rebuild=*/true);
-    if (auto it = fresh.find(lower); it != fresh.end()) {
-        return search_dir / it->second;
-    }
-
-    throw TextureNotFound(std::move(basename), search_dir);
+    // Report the first dir for diagnostics — the legacy single-dir
+    // contract still holds for callers passing a 1-element list.
+    fs::path reported = search_dirs.empty() ? fs::path{} : search_dirs.front();
+    throw TextureNotFound(std::move(basename), std::move(reported));
 }
 
 }  // namespace assets

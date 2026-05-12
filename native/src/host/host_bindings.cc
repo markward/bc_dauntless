@@ -81,10 +81,24 @@ std::unique_ptr<renderer::Pipeline> g_pipeline;
 std::unique_ptr<renderer::FrameSubmitter> g_submitter;
 
 scenegraph::ModelHandle load_model_impl(const std::string& nif_path,
-                                        const std::string& texture_search_path) {
+                                        const py::object& texture_search_path) {
     if (!g_window) {
         throw std::runtime_error("load_model: init must be called first (asset upload needs a GL context)");
     }
+
+    // Accept either a single str or a sequence of strs. Ship NIFs whose
+    // textures live in their own per-ship directory plus a shared
+    // SharedTextures/<class>/<LOD> fallback need the multi-dir form;
+    // legacy single-path callers stay unchanged.
+    std::vector<std::filesystem::path> search_paths;
+    if (py::isinstance<py::str>(texture_search_path)) {
+        search_paths.emplace_back(texture_search_path.cast<std::string>());
+    } else {
+        for (auto item : texture_search_path) {
+            search_paths.emplace_back(item.cast<std::string>());
+        }
+    }
+
     // Dedupe by nif_path: callers that load the same NIF for multiple ships
     // get the same handle and the underlying assets::AssetCache::load isn't
     // even called a second time.
@@ -95,7 +109,7 @@ scenegraph::ModelHandle load_model_impl(const std::string& nif_path,
         }
     }
     if (!g_cache) g_cache = std::make_unique<assets::AssetCache>();
-    auto handle = g_cache->load(nif_path, texture_search_path);
+    auto handle = g_cache->load(nif_path, search_paths);
     g_loaded_models.push_back({std::move(canonical), std::move(handle)});
     return static_cast<scenegraph::ModelHandle>(g_loaded_models.size());
 }

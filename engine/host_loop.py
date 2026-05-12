@@ -931,11 +931,18 @@ class _MissionLoader:
         sess = MissionSession(mission_name=mission_name)
         r_ = self._c.renderer
 
-        tex_search = str(PROJECT_ROOT / "game" / DEFAULT_TEXTURE_SEARCH)
+        shared_search = [
+            str(PROJECT_ROOT / "game" / DEFAULT_TEXTURE_SEARCH),
+            str(PROJECT_ROOT / "game" / "data" / "Models" / "SharedTextures" / "FedBases" / "High"),
+        ]
         for ship in _iter_ships(verbose=self._verbose):
             nif_path = _ship_nif_path(ship, verbose=self._verbose)
             if nif_path is None:
                 continue
+            # BC ships split textures: a per-ship High/ dir for hull-specific
+            # assets (Sovereign, FedStarbase) plus the shared FedShips/FedBases
+            # directories (Galaxy and many others ship nothing locally).
+            tex_search = [str(Path(nif_path).parent / "High"), *shared_search]
             handle = self._c.nif_to_handle.get(nif_path)
             if handle is None:
                 try:

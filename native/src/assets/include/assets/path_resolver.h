@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace assets {
 
@@ -19,14 +20,22 @@ private:
     std::filesystem::path      searched_dir_;
 };
 
-/// Case-insensitive basename → on-disk-path lookup against a single directory.
-/// Caches a lowercase→actual-name map per searched directory; rebuilds on miss
-/// so files dropped at runtime are still found after one cache invalidation.
+/// Case-insensitive basename → on-disk-path lookup against a directory (or
+/// an ordered list of directories — first match wins). BC ships split their
+/// textures across a per-ship directory (e.g. Ships/Sovereign/High) and one
+/// or more shared directories (e.g. SharedTextures/FedShips/High); callers
+/// pass both. Caches a lowercase→actual-name map per searched directory;
+/// rebuilds on miss so files dropped at runtime are still found after one
+/// cache invalidation.
 class PathResolver {
 public:
     std::filesystem::path resolve(
         std::string basename,
         const std::filesystem::path& search_dir);
+
+    std::filesystem::path resolve(
+        std::string basename,
+        const std::vector<std::filesystem::path>& search_dirs);
 
 private:
     using LowerToActual = std::unordered_map<std::string, std::string>;

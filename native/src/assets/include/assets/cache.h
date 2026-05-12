@@ -15,6 +15,7 @@
 #include <functional>
 #include <memory>
 #include <stdexcept>
+#include <vector>
 
 namespace assets {
 
@@ -39,11 +40,16 @@ public:
     AssetCache(const AssetCache&) = delete;
     AssetCache& operator=(const AssetCache&) = delete;
 
-    /// Synchronous load. Identical (nif_path, texture_search_path) returns
-    /// the same handle. Different texture_search_path with the same nif_path
-    /// throws AssetError.
+    /// Synchronous load. Identical (nif_path, texture_search_paths) returns
+    /// the same handle. Different texture_search_paths with the same nif_path
+    /// throws AssetError. The list is searched first-match-wins, mirroring
+    /// BC's per-ship-dir + shared-dir lookup. The single-path overload is a
+    /// convenience wrapper that wraps `texture_search_path` in a 1-element
+    /// vector.
     ModelHandle load(const std::filesystem::path& nif_path,
                      const std::filesystem::path& texture_search_path);
+    ModelHandle load(const std::filesystem::path& nif_path,
+                     const std::vector<std::filesystem::path>& texture_search_paths);
 
     void evict(const std::filesystem::path& nif_path);
     void evict_unused();

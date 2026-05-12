@@ -118,7 +118,7 @@ TextureLoadResult load_all_textures(
         if (!img) continue;
         Image decoded;
         if (img->use_external != 0) {
-            auto path = ctx.resolver->resolve(img->file_name, ctx.texture_search_path);
+            auto path = ctx.resolver->resolve(img->file_name, ctx.texture_search_paths);
             auto bytes = read_file(path);
             decoded = decode_tga(bytes);
         } else {
@@ -167,7 +167,7 @@ TextureLoadResult load_all_textures(
                 sibling_specular_filename(img->file_name);
             try {
                 auto sibling_path =
-                    ctx.resolver->resolve(sibling_name, ctx.texture_search_path);
+                    ctx.resolver->resolve(sibling_name, ctx.texture_search_paths);
                 auto sibling_bytes = read_file(sibling_path);
                 Image sibling_decoded = decode_tga(sibling_bytes);
                 Texture sibling_tex = upload(sibling_decoded, true);

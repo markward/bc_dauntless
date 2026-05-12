@@ -18,7 +18,7 @@ struct AssetCache::Impl {
     struct Entry {
         std::weak_ptr<const Model>   live;
         std::shared_ptr<const Model> pinned;
-        fs::path                     search_path;
+        std::vector<fs::path>        search_paths;
     };
     std::unordered_map<std::string, Entry> entries;
 };
@@ -37,13 +37,19 @@ AssetCache::~AssetCache() {
 
 ModelHandle AssetCache::load(const fs::path& nif_path,
                              const fs::path& search_path) {
+    std::vector<fs::path> paths{search_path};
+    return load(nif_path, paths);
+}
+
+ModelHandle AssetCache::load(const fs::path& nif_path,
+                             const std::vector<fs::path>& search_paths) {
     auto canon = fs::weakly_canonical(nif_path).string();
     auto it = impl_->entries.find(canon);
     if (it != impl_->entries.end()) {
         if (auto live = it->second.live.lock()) {
-            if (it->second.search_path != search_path) {
+            if (it->second.search_paths != search_paths) {
                 throw AssetError(
-                    "asset already loaded with different texture_search_path: "
+                    "asset already loaded with different texture_search_paths: "
                     + canon);
             }
             return live;
@@ -53,18 +59,18 @@ ModelHandle AssetCache::load(const fs::path& nif_path,
     auto file = nif::load(nif_path);
 
     detail::ModelBuildContext ctx;
-    ctx.resolver            = &impl_->resolver;
-    ctx.texture_search_path = search_path;
-    ctx.texture_uploader    = impl_->config.texture_uploader;
-    ctx.mesh_uploader       = impl_->config.mesh_uploader;
-    ctx.keep_cpu_data       = impl_->config.keep_cpu_data;
+    ctx.resolver              = &impl_->resolver;
+    ctx.texture_search_paths  = search_paths;
+    ctx.texture_uploader      = impl_->config.texture_uploader;
+    ctx.mesh_uploader         = impl_->config.mesh_uploader;
+    ctx.keep_cpu_data         = impl_->config.keep_cpu_data;
 
     auto model = std::make_shared<const Model>(detail::build_model(file, ctx));
 
     Impl::Entry entry;
-    entry.live        = model;
-    entry.pinned      = model;
-    entry.search_path = search_path;
+    entry.live         = model;
+    entry.pinned       = model;
+    entry.search_paths = search_paths;
     impl_->entries[canon] = std::move(entry);
     return model;
 }
