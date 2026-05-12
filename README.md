@@ -17,7 +17,7 @@ uv sync
 uv run pytest
 ```
 
-See `docs/gap_analysis.md` for the engine gap analysis and implementation phases.
+See `docs/project/gap_analysis.md` for the engine gap analysis and implementation phases.
 
 ## Running the renderer
 

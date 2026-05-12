@@ -7,8 +7,9 @@
 // SDK and must be matched by any reimplementation that wants visual /
 // behavioral parity with original Bridge Commander effects.
 //
-// Sources: docs/cleanroom_netimmerse_answers_round2.md (NI2-Q34, NI2-Q59,
-// NI2-Q27). Cross-reference docs/nif_conventions.md "Magic constants"
+// Sources: docs/project/cleanroom_netimmerse_answers_round2.md (NI2-Q34,
+// NI2-Q59, NI2-Q27). Cross-reference docs/project/nif_conventions.md "Magic
+// constants"
 // table.
 //
 // These constants currently have no consumer in the codebase — they live

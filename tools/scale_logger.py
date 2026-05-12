@@ -3,7 +3,7 @@
 #
 # Appended to game/scripts/App.py by tools/setup.py — this is the alternative
 # instrumentation snippet for the system-scale investigation (see
-# docs/instrumented_experiments/2026-05-12-system-scale-investigation.md).
+# docs/project/instrumented_experiments/2026-05-12-system-scale-investigation.md).
 #
 # Hooks UtopiaModule.GetGameTime (per-tick heartbeat). Every DUMP_INTERVAL
 # seconds of wall time, walks the currently-rendered SetClass and writes each
