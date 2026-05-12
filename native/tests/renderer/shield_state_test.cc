@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include <cmath>
 #include "renderer/shield_state.h"
+#include "scenegraph/instance.h"
 
 using namespace renderer;
 
@@ -80,6 +81,54 @@ TEST(ShieldState, FullBufferEvictsDimmestHit) {
     }
     EXPECT_FALSE(found_zero);
     EXPECT_TRUE(found_99);
+}
+
+TEST(ShieldRegistry, RegisterCreatesStateForInstance) {
+    ShieldRegistry reg;
+    scenegraph::InstanceId id{42, 1};
+    reg.register_instance(id, ShieldMode::Skin, 2.0f,
+                          glm::vec4(0.1f, 0.2f, 0.3f, 1.0f),
+                          glm::vec3(0.0f), glm::vec3(5.0f));
+    auto* s = reg.find(id);
+    ASSERT_NE(s, nullptr);
+    EXPECT_EQ(s->mode, ShieldMode::Skin);
+    EXPECT_FLOAT_EQ(s->decay_seconds, 2.0f);
+}
+
+TEST(ShieldRegistry, FindReturnsNullForUnknownInstance) {
+    ShieldRegistry reg;
+    EXPECT_EQ(reg.find(scenegraph::InstanceId{999, 0}), nullptr);
+}
+
+TEST(ShieldRegistry, PushHitDropsSilentlyForUnknownInstance) {
+    ShieldRegistry reg;
+    // Must not crash, must not throw.
+    reg.push_hit(scenegraph::InstanceId{999, 0}, {0, 0, 0}, {1, 1, 1, 1}, 1.0f, 0.0);
+    SUCCEED();
+}
+
+TEST(ShieldRegistry, PushHitRoutesToCorrectInstance) {
+    ShieldRegistry reg;
+    scenegraph::InstanceId a{1, 0}, b{2, 0};
+    reg.register_instance(a, ShieldMode::Ellipsoid, 1.0f, glm::vec4(1, 0, 0, 1), {}, glm::vec3(1));
+    reg.register_instance(b, ShieldMode::Ellipsoid, 1.0f, glm::vec4(0, 1, 0, 1), {}, glm::vec3(1));
+    reg.push_hit(a, {1, 1, 1}, {0, 0, 0, 0}, 1.0f, 0.0);  // 0-rgba → default for A = red
+    // A should have an active hit colored red.
+    int found_a = -1;
+    for (std::size_t i = 0; i < ShieldState::MaxHits; ++i) {
+        if (reg.find(a)->slot(i).current_intensity > 0.0f) { found_a = static_cast<int>(i); break; }
+    }
+    ASSERT_NE(found_a, -1);
+    EXPECT_EQ(reg.find(a)->slot(found_a).color_rgba, glm::vec4(1, 0, 0, 1));
+    EXPECT_EQ(reg.find(b)->active_count(), 0u);
+}
+
+TEST(ShieldRegistry, UnregisterRemovesState) {
+    ShieldRegistry reg;
+    scenegraph::InstanceId id{7, 3};
+    reg.register_instance(id, ShieldMode::Ellipsoid, 1.0f, glm::vec4(1), {}, glm::vec3(1));
+    reg.unregister_instance(id);
+    EXPECT_EQ(reg.find(id), nullptr);
 }
 
 TEST(ShieldState, TextureIndexStableAcrossTicks) {

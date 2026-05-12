@@ -60,4 +60,53 @@ std::size_t ShieldState::active_count() const noexcept {
     return n;
 }
 
+// ── ShieldRegistry ─────────────────────────────────────────────────────────
+
+void ShieldRegistry::register_instance(scenegraph::InstanceId id,
+                                        ShieldMode mode,
+                                        float decay_seconds,
+                                        const glm::vec4& default_color,
+                                        const glm::vec3& aabb_center,
+                                        const glm::vec3& aabb_half_extents) {
+    auto& s = states_[id];
+    s.mode = mode;
+    s.decay_seconds = decay_seconds;
+    s.default_color = default_color;
+    s.aabb_center = aabb_center;
+    s.aabb_half_extents = aabb_half_extents;
+}
+
+void ShieldRegistry::unregister_instance(scenegraph::InstanceId id) {
+    states_.erase(id);
+}
+
+ShieldState* ShieldRegistry::find(scenegraph::InstanceId id) {
+    auto it = states_.find(id);
+    return it == states_.end() ? nullptr : &it->second;
+}
+
+const ShieldState* ShieldRegistry::find(scenegraph::InstanceId id) const {
+    auto it = states_.find(id);
+    return it == states_.end() ? nullptr : &it->second;
+}
+
+void ShieldRegistry::push_hit(scenegraph::InstanceId id,
+                               const glm::vec3& point_world,
+                               const glm::vec4& rgba,
+                               float intensity,
+                               double now_seconds) {
+    auto* s = find(id);
+    if (!s) return;
+    // texture_index from a thread-local LCG. Stateless across registry calls
+    // but ticks remain deterministic (no per-frame randomization).
+    static thread_local std::uint32_t rng = 0x12345678u;
+    rng = rng * 1664525u + 1013904223u;
+    int tex = static_cast<int>(rng >> 30);  // 0..3
+    s->push_hit(point_world, rgba, intensity, now_seconds, tex);
+}
+
+void ShieldRegistry::tick_all(double now_seconds) {
+    for (auto& [id, s] : states_) s.tick(now_seconds);
+}
+
 }  // namespace renderer
