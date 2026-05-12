@@ -29,6 +29,7 @@ add_library(renderer STATIC
     backdrop_pass.cc
     sun_pass.cc
     dust_pass.cc
+    aabb.cc
 )
 target_include_directories(renderer
     PUBLIC include
