@@ -26,6 +26,23 @@ def test_hull_property_propagation():
     assert hull.GetDisabledPercentage() == 0.0
 
 
+def test_hull_property_back_reference():
+    """SDK mission code (E1M2 CreateDebris, E2M2 likewise) does
+    ``pHull.GetProperty().SetMaxCondition(300.0)`` to override a
+    pre-built asteroid's hull max at runtime.  SetupProperties must
+    wire the back-reference so GetProperty() returns the source
+    HullProperty, not None."""
+    ship = ShipClass_Create("Asteroid")
+    h = HullProperty("Asteroid")
+    h.SetMaxCondition(2500.0)
+    ship.GetPropertySet().AddToSet("Scene Root", h)
+    ship.SetupProperties()
+
+    hull = ship.GetHull()
+    assert hull is not None
+    assert hull.GetProperty() is h
+
+
 def test_first_hull_wins():
     """Galaxy registers Hull then Bridge (both HullProperty). Primary hull
     should remain the first one."""

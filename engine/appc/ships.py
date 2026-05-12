@@ -186,6 +186,7 @@ class ShipClass(DamageableObject):
                 # GetHull() must return the primary hull (SDK App.py:5382).
                 if self._hull is None:
                     self._hull = HullSubsystem(prop.GetName() or "Hull")
+                    self._hull.SetProperty(prop)
                     for src, setter in (
                         (prop.GetMaxCondition,        self._hull.SetMaxCondition),
                         (prop.GetCritical,            self._hull.SetCritical),
