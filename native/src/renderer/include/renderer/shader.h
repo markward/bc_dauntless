@@ -32,6 +32,14 @@ public:
                         const glm::vec3* data,
                         int count) const;
 
+    void set_vec4_array(const std::string& name,
+                        const glm::vec4* data,
+                        int count) const;
+
+    void set_int_array(const std::string& name,
+                       const int* data,
+                       int count) const;
+
 private:
     unsigned program_ = 0;
 };

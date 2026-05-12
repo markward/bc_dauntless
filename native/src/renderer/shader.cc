@@ -121,4 +121,24 @@ void Shader::set_vec3_array(const std::string& name,
     }
 }
 
+void Shader::set_vec4_array(const std::string& name,
+                            const glm::vec4* data,
+                            int count) const {
+    if (count <= 0) return;
+    GLint loc = glGetUniformLocation(program_, name.c_str());
+    if (loc >= 0) {
+        glUniform4fv(loc, count, glm::value_ptr(*data));
+    }
+}
+
+void Shader::set_int_array(const std::string& name,
+                            const int* data,
+                            int count) const {
+    if (count <= 0) return;
+    GLint loc = glGetUniformLocation(program_, name.c_str());
+    if (loc >= 0) {
+        glUniform1iv(loc, count, data);
+    }
+}
+
 }  // namespace renderer
