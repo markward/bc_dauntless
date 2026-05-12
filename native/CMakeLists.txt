@@ -61,6 +61,7 @@ add_subdirectory(tools/scan_nifs)
 add_subdirectory(tools/probe_shape_transforms)
 add_subdirectory(tools/probe_animation_keys)
 add_subdirectory(tools/probe_block_inventory)
+add_subdirectory(tools/probe_bound_radius)
 
 # GLFW is a runtime dep for the renderer host; tests reuse the same build.
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
