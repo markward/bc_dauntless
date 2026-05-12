@@ -350,6 +350,44 @@ class WarpEngineSubsystem(PoweredSubsystem):
         self._warp_state = int(state)
 
 
+class ShieldSubsystem(PoweredSubsystem):
+    """Six-face shield generator.
+
+    Faces indexed by ShieldProperty.FRONT_SHIELDS..RIGHT_SHIELDS (0..5).
+    SetMaxShields seeds current to that max when current was 0 — mirrors
+    HullSubsystem.SetMaxCondition so freshly-loaded ships start fully shielded.
+    """
+    NUM_FACES = 6
+
+    def __init__(self, name: str = ""):
+        super().__init__(name)
+        self._max_shields:       list[float] = [0.0] * self.NUM_FACES
+        self._current_shields:   list[float] = [0.0] * self.NUM_FACES
+        self._charge_per_second: list[float] = [0.0] * self.NUM_FACES
+
+    def GetMaxShields(self, face: int) -> float:
+        return self._max_shields[int(face)]
+
+    def SetMaxShields(self, face: int, value: float) -> None:
+        f = int(face)
+        v = float(value)
+        if self._current_shields[f] == 0.0:
+            self._current_shields[f] = v
+        self._max_shields[f] = v
+
+    def GetCurrentShields(self, face: int) -> float:
+        return self._current_shields[int(face)]
+
+    def SetCurrentShields(self, face: int, value: float) -> None:
+        self._current_shields[int(face)] = float(value)
+
+    def GetShieldChargePerSecond(self, face: int) -> float:
+        return self._charge_per_second[int(face)]
+
+    def SetShieldChargePerSecond(self, face: int, value: float) -> None:
+        self._charge_per_second[int(face)] = float(value)
+
+
 # ── Module-level WarpEngineSubsystem helpers ─────────────────────────────────
 # SDK callers (WarpSequence.py:95-282) reach for a class-level / engine-default
 # warp effect time when sequencing the warp begin / end / flash actions:
