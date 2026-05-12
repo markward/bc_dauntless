@@ -227,6 +227,38 @@ def ShieldProperty_Cast(obj):
     return None
 
 
+def SubsystemProperty_Cast(obj):
+    if isinstance(obj, _NamedStub):
+        return None
+    if isinstance(obj, SubsystemProperty):
+        return obj
+    return None
+
+
+def PoweredSubsystemProperty_Cast(obj):
+    if isinstance(obj, _NamedStub):
+        return None
+    if isinstance(obj, PoweredSubsystemProperty):
+        return obj
+    return None
+
+
+def CloakingSubsystemProperty_Cast(obj):
+    if isinstance(obj, _NamedStub):
+        return None
+    if isinstance(obj, CloakingSubsystemProperty):
+        return obj
+    return None
+
+
+def RepairSubsystemProperty_Cast(obj):
+    if isinstance(obj, _NamedStub):
+        return None
+    if isinstance(obj, RepairSubsystemProperty):
+        return obj
+    return None
+
+
 # ── App.AT_* ammo-type constants ─────────────────────────────────────────────
 # SDK code treats these as TorpedoAmmoType instances (objects with GetAmmoName)
 # rather than plain ints — MissionLib.SetTotalTorpsAtStarbase iterates the
