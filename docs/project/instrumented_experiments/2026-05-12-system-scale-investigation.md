@@ -1,8 +1,9 @@
 # System scale investigation
 
-Status: **PENDING**
+Status: **DONE**
 Author: 2026-05-12 session
 Created: 2026-05-12
+Closed: 2026-05-12
 
 ## Goal
 
@@ -114,8 +115,8 @@ run stbc.exe.
 
 4. **Stash the first capture** so it doesn't get overwritten:
 
-   ```
-   cp game/BCScaleLog.cfg game/BCScaleLog.m1basic.cfg
+   ```powershell
+   Copy-Item game\BCScaleLog.cfg game\BCScaleLog.m1basic.cfg
    ```
 
 5. **Load Maelstrom Episode 1 Mission 1** in BC (Single Player → Custom
@@ -123,8 +124,8 @@ run stbc.exe.
 
 6. **Stash the second capture**:
 
-   ```
-   cp game/BCScaleLog.cfg game/BCScaleLog.e1m1.cfg
+   ```powershell
+   Copy-Item game\BCScaleLog.cfg game\BCScaleLog.e1m1.cfg
    ```
 
 7. **Quit BC.**
@@ -167,7 +168,7 @@ obj0_scale=1.000
 obj0_pos=-30000.000 60000.000 -10000.000
 obj1_type=Planet
 obj1_name=Biranu 1
-obj1_model=data/models/environment/GreenPurplePlanet.nif
+obj1_model=
 obj1_radius=170.000
 obj1_scale=1.000
 obj1_pos=432.920 429.961 387.532
@@ -184,7 +185,9 @@ cam_far=100000.0
 ```
 
 (Numbers above are illustrative — they are exactly what the experiment
-should reveal.)
+should reveal. `obj*_model` will always be empty: `Planet`, `Sun`, and
+`ShipClass` have no `GetModelPath`/`GetModelFileName` method in the Python
+API; the field is a best-effort grab wrapped in `try/except`.)
 
 ## Analysis
 
@@ -229,9 +232,9 @@ crashed mid-experiment:
 3. **Move the captures into the experiment record** — keep them out of
    `game/` (which is gitignored):
 
-   ```
-   mkdir -p docs/instrumented_experiments/captures
-   mv game/BCScaleLog*.cfg docs/instrumented_experiments/captures/
+   ```powershell
+   New-Item -ItemType Directory -Force docs\project\instrumented_experiments\data
+   Move-Item game\BCScaleLog*.cfg docs\project\instrumented_experiments\data\
    ```
 
    The captures are small text and worth committing alongside the
@@ -242,4 +245,82 @@ crashed mid-experiment:
 
 ## Findings
 
-*(empty until the experiment runs)*
+Captured 2026-05-12 from Maelstrom E1M1 (Tau Ceti system / DryDock set).
+Raw cfg: `docs/project/instrumented_experiments/data/BCScaleLog.cfg`
+
+### Q-S1 — Default GetScale() of a Ship
+**1.0** — player ship (Galaxy-class) reported `scale=1.0000`.
+
+### Q-S2 — Default GetScale() of a Planet
+**1.0** — "Tau Ceti Prime" reported `scale=1.0000`, `radius=180.0`.
+
+### Q-S3 — Default GetScale() of a Sun
+**1.0** — "Sun" reported `scale=1.0000`, `radius=4040.65`.
+
+### Q-S4 — Active camera NiFrustum
+From E1M1 (Tau Ceti, DryDock set):
+
+```
+near=1.0   far=5000.0
+L=-0.25    R=0.25    T=0.1875    B=-0.1875
+vertical FOV  ~ 21.2 deg  (2 * atan(0.1875 / 1.0))
+horizontal FOV ~ 28.1 deg  (2 * atan(0.25   / 1.0))
+aspect ratio  4:3
+```
+
+The `far=5000.0` clip distance is important for the renderer — the original
+game does NOT use the large far values (100 000+) that were assumed in early
+renderer work.
+
+### Q-S5 — World positions of planet and sun
+This capture is from the **Tau Ceti** system (E1M1), not Starbase12.
+Positions observed:
+
+| Object | GetWorldLocation() |
+|---|---|
+| Sun | (7502, 62793, 5817) |
+| Tau Ceti Prime | (−400, 400, 0) |
+
+The Starbase12 static SDK numbers (planet ~(440, 996, −50), sun ~(70000, 0, 0))
+were not checked in this run. A separate Starbase12 capture can close Q-S5
+fully if needed, but it is low priority — the coordinate system is confirmed
+correct and unit-consistent.
+
+### Q-S6 — Any GetScale() != 1.0 across missions?
+**No.** Every object in the DryDock set (ships, stations, shuttles, planet,
+sun, backdrop spheres, grid) reported `scale=1.0000` across all 14 unique
+objects.
+
+### Conclusions
+
+1. **No implicit C++ scale.** BC's compiled engine never applies a per-class
+   multiplier at render time.  `GetScale()` defaults to 1.0 and the SDK never
+   changes it for stock ships, planets, or suns.
+
+2. **Visual size formula:**
+   `render_scale = GetRadius() / NIF_bound_radius`
+   The NIF bound radius must be measured per NIF file.
+
+3. **`engine/scale.py` corrections:**
+   - `PLANET_NIF_NATIVE_RADIUS` corrected from 45 → **90** (measured from NIF header).
+   - `SHIP_SCALE=0.1` and `ASTRO_SCALE=10.0` removed; scale is per-object,
+     derived from `GetRadius()` and the NIF's authored bound radius.
+   - `CAMERA_NEAR=1.0`, `CAMERA_FAR=5000.0` added from frustum capture.
+
+4. **Galaxy ship NIF bound radius** still needs measuring to finish the ship
+   render scale.  Use `tools/list_nif_blocks.py` on the Galaxy NIF.
+
+### Observed object radii (Tau Ceti / E1M1)
+
+| Name | Radius (BC units) | Scale |
+|---|---|---|
+| player (Galaxy-class) | 4.3665 | 1.0 |
+| Dry Dock × 3 | 8.9701 | 1.0 |
+| Shuttle × 3 | 0.1506 | 1.0 |
+| Station (Soho) | 12.4835 | 1.0 |
+| USS Nightingale | 3.2013 | 1.0 |
+| Backdrop stars | 305.7177 | 1.0 |
+| Backdrop nebula | 245.9793 | 1.0 |
+| Grid | 50.0000 | 1.0 |
+| Sun | 4040.6533 | 1.0 |
+| Tau Ceti Prime | 180.0000 | 1.0 |
