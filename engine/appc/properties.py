@@ -148,6 +148,31 @@ class ShieldProperty(PoweredSubsystemProperty):
     RIGHT_SHIELDS  = 5
     NUM_SHIELDS    = 6
 
+    def __init__(self, name: str = ""):
+        super().__init__(name)
+        self._max_shields = [0.0] * self.NUM_SHIELDS
+        self._charge_per_second = [0.0] * self.NUM_SHIELDS
+
+    def GetMaxShields(self, face):
+        return self._max_shields[int(face)]
+
+    def SetMaxShields(self, face, value):
+        f = int(face)
+        v = float(value)
+        self._max_shields[f] = v
+        # Transition dual-write: existing data-bag readers keep working
+        # until Task 11 removes this line.
+        self._data[("MaxShields", (f,))] = v
+
+    def GetShieldChargePerSecond(self, face):
+        return self._charge_per_second[int(face)]
+
+    def SetShieldChargePerSecond(self, face, value):
+        f = int(face)
+        v = float(value)
+        self._charge_per_second[f] = v
+        self._data[("ShieldChargePerSecond", (f,))] = v
+
 
 class SensorProperty(PoweredSubsystemProperty):
     pass
