@@ -152,6 +152,9 @@ class ShieldProperty(PoweredSubsystemProperty):
         super().__init__(name)
         self._max_shields = [0.0] * self.NUM_SHIELDS
         self._charge_per_second = [0.0] * self.NUM_SHIELDS
+        self._skin_shielding: int = 0
+        self._shield_glow_decay: float = 1.0
+        self._shield_glow_color = None
 
     def GetMaxShields(self, face):
         return self._max_shields[int(face)]
@@ -168,6 +171,42 @@ class ShieldProperty(PoweredSubsystemProperty):
         f = int(face)
         v = float(value)
         self._charge_per_second[f] = v
+
+    def GetSkinShielding(self):
+        return self._skin_shielding
+
+    def SetSkinShielding(self, value):
+        v = int(value)
+        self._skin_shielding = v
+        # Transition dual-write: existing data-bag readers keep working
+        # until Task 4 removes this line.
+        self._data[("SkinShielding", ())] = v
+
+    def GetShieldGlowDecay(self):
+        return self._shield_glow_decay
+
+    def SetShieldGlowDecay(self, value):
+        v = float(value)
+        self._shield_glow_decay = v
+        self._data[("ShieldGlowDecay", ())] = v
+
+    def GetShieldGlowColor(self):
+        return self._shield_glow_color
+
+    def SetShieldGlowColor(self, color):
+        self._shield_glow_color = color
+        self._data[("ShieldGlowColor", ())] = color
+        # Preserve the color-consumer tracker hook that TGModelProperty's
+        # auto-synthesized setter used to provide.  Matches the shim's
+        # _getframe(1) caller-attribution behavior in properties.py:32-43.
+        import App as _App
+        if _App._color_consumer_tracker.is_enabled():
+            import sys as _sys
+            frame = _sys._getframe(1)
+            _App._color_consumer_tracker.record(
+                "ShieldProperty.SetShieldGlowColor", color,
+                frame.f_code.co_filename, frame.f_lineno,
+            )
 
 
 class SensorProperty(PoweredSubsystemProperty):
