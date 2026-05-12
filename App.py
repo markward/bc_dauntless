@@ -616,6 +616,55 @@ class _ColorConsumerTracker:
 _color_consumer_tracker = _ColorConsumerTracker()
 
 
+# ── Emission recorder ─────────────────────────────────────────────────────────
+# Captures shuttle / probe / decoy launch events when the
+# Actions.ShipScriptActions.LaunchObject hook (engine/appc/emission.py) is
+# installed. Off by default; tests and the harness opt in.
+class _EmissionRecorder:
+    def __init__(self):
+        self._enabled = False
+        self._mission = None
+        self._events = []
+
+    def enable(self):
+        self._enabled = True
+
+    def disable(self):
+        self._enabled = False
+
+    def is_enabled(self):
+        return self._enabled
+
+    def set_mission(self, name):
+        self._mission = name
+
+    def reset_mission(self):
+        self._mission = None
+
+    def record(self, ship_id, emitter_name, emitter_type,
+               world_position, world_forward, world_up):
+        if not self._enabled:
+            return
+        self._events.append({
+            "mission": self._mission,
+            "ship_id": ship_id,
+            "emitter_name": emitter_name,
+            "emitter_type": emitter_type,
+            "world_position": (world_position.x, world_position.y, world_position.z),
+            "world_forward":  (world_forward.x,  world_forward.y,  world_forward.z),
+            "world_up":       (world_up.x,       world_up.y,       world_up.z),
+        })
+
+    def events(self):
+        return list(self._events)
+
+    def clear(self):
+        self._events = []
+
+
+_emission_recorder = _EmissionRecorder()
+
+
 # ── Fallback stub ──────────────────────────────────────────────────────────────
 class _Stub:
     """Returned for any App attribute not yet implemented.
