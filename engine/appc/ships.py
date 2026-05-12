@@ -103,6 +103,8 @@ class ShipClass(DamageableObject):
     def SetTractorBeamSystem(self, s) -> None:    self._tractor_beam_system = s
     def GetShieldSubsystem(self):                 return self._shield_subsystem
     def SetShieldSubsystem(self, s) -> None:      self._shield_subsystem = s
+    # SDK-facing alias — pShip.GetShields() in mission scripts and SDK helpers.
+    def GetShields(self):                         return self._shield_subsystem
     def GetHull(self):                            return self._hull
     def SetHull(self, h) -> None:                 self._hull = h
 
@@ -185,6 +187,7 @@ class ShipClass(DamageableObject):
                 self._copy_powered_subsystem_fields(prop, self._shield_subsystem)
                 ss = self._shield_subsystem
                 if ss is not None:
+                    ss.SetProperty(prop)
                     for face in range(ShieldProperty.NUM_SHIELDS):
                         mx = prop.GetMaxShields(face)
                         if mx is not None: ss.SetMaxShields(face, mx)

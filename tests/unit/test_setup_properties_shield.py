@@ -30,3 +30,23 @@ def test_shield_property_propagation():
     for face in range(ShieldProperty.NUM_SHIELDS):
         assert shield.GetCurrentShields(face) == shield.GetMaxShields(face)
         assert shield.GetShieldChargePerSecond(face) == 11.0
+
+
+def test_get_shields_aliases_get_shield_subsystem():
+    """SDK uses pShip.GetShields(); engine has GetShieldSubsystem.
+    Both names must return the same object."""
+    ship = ShipClass_Create("Galaxy")
+    assert ship.GetShields() is ship.GetShieldSubsystem()
+
+
+def test_setup_properties_sets_shield_property_back_ref():
+    """After SetupProperties copies a ShieldProperty onto the subsystem,
+    the subsystem's GetProperty() returns the source property.
+    loadspacehelper.py:246 reads pShields.GetProperty()."""
+    ship = ShipClass_Create("Galaxy")
+    sp = ShieldProperty("Shield Generator")
+    sp.SetMaxShields(ShieldProperty.FRONT_SHIELDS, 8000.0)
+    ship.GetPropertySet().AddToSet("Scene Root", sp)
+    ship.SetupProperties()
+
+    assert ship.GetShields().GetProperty() is sp
