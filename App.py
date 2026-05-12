@@ -160,6 +160,16 @@ CT_WEAPON                        = WeaponProperty
 CT_ENERGY_WEAPON                 = EnergyWeaponProperty
 CT_SHIP                          = ShipProperty
 
+# ── App.AT_* ammo-type constants ─────────────────────────────────────────────
+# SDK code uses these as ints in TorpedoSystem.SetAmmoType / AddAmmoType
+# (e.g. E2M0.py: pTorps.SetAmmoType(App.AT_TWO, 0)).  Values are arbitrary
+# distinct ints — Phase 1 never round-trips them to a real engine.
+AT_ONE   = 0
+AT_TWO   = 1
+AT_THREE = 2
+AT_FOUR  = 3
+AT_FIVE  = 4
+
 # ── Numeric constants ──────────────────────────────────────────────────────────
 NULL_ID = 0
 PI = math.pi
