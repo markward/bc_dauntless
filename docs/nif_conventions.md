@@ -2,9 +2,10 @@
 
 One-page lookup for the math, format, and runtime conventions BC NIFs use.
 Derived from clean-room NetImmerse/Gamebryo SDK reading
-([answers](cleanroom_netimmerse_answers.md),
-[supplementary](cleanroom_netimmerse_supplementary.md)), cross-checked
-against our own reverse-engineering of BC v3.1 assets.
+([round 1](cleanroom_netimmerse_answers.md),
+[supplementary](cleanroom_netimmerse_supplementary.md),
+[round 2 — most accurate on BC legacy specifics](cleanroom_netimmerse_answers_round2.md)),
+cross-checked against our own reverse-engineering of BC v3.1 assets.
 
 > **Use this when** you're touching the NIF parser, renderer math,
 > skinning, lighting, or animation evaluation. For the full reasoning
@@ -59,12 +60,102 @@ Cycle types: `LOOP` (wrap), `REVERSE` (ping-pong), `CLAMP` (hold endpoints).
 Animation time = `((appTime - startMoment) * frequency + phase)` mapped into
 `[start, stop]`.
 
-Text-key tag strings (`NiTextKeyExtraData`) are **application-defined** —
-the SDK reserves no vocabulary. `"start"` and `"end"` appear as community
-convention. BC may have its own (e.g., `"sound:..."`); round-2 cleanroom
-question targets this.
+Text-key tag strings (`NiTextKeyExtraData`) are **100% application-defined**
+— **the SDK matches zero literal strings** (verified by round 2). BC's
+runtime is the sole interpreter; any `"start"` / `"end"` / `"sound:..."`
+convention exists in BC's Python or C++ above the NIF layer, not in the
+engine.
 
 ---
+
+## Legacy animation handling (BC-specific)
+
+BC's NIFs at v3.1 fall under the legacy paths. **No `NiKeyframeController`
+or `NiKeyframeData` exists as a runtime class** — they're aliased on
+load to `NiTransformController` and `NiTransformData`. The cutoff version
+for legacy-vs-modern field layouts in the SDK is **NIF 10.1.0.104**;
+everything below uses the legacy layout.
+
+`NiTransformData` (née `NiKeyframeData`) carries three fully **independent**
+channels on disk:
+
+```
+[rotation: count, type, key[]]  // type ∈ LIN/BEZ/TCB/STEP/EULER
+[position: count, type, key[]]  // type ∈ LIN/BEZ/TCB/STEP
+[scale:    count, type, key[]]  // type ∈ LIN/BEZ/TCB/STEP
+```
+
+Each channel can independently:
+- have a different key type from the others
+- be empty (zero keys → that channel preserves bind-pose value)
+
+`EULER` rotation type is a special container: `count == 1`, and that single
+key holds three independent float-key arrays for X, Y, Z axes (radians,
+composed XYZ). Each axis float-array can independently have zero keys.
+
+Three converter classes need topology fixup post-load (single SDK function):
+- `NiLookAtController` → `NiTransformController` + `NiLookAtInterpolator`
+- `NiRollController` → folded into the look-at as a roll sub-interpolator
+  (silently dropped if no look-at on the same target)
+- `NiPathController` → `NiTransformController` + `NiPathInterpolator`
+
+Other legacy controllers (`NiAlphaController`, `NiVisController`,
+`NiUVController`, `NiFlipController`, `NiMaterialColorController`,
+`NiLightColorController`) keep their names but version-gate their body
+layouts.
+
+`NiSequence` in BC's pre-4.1.0.3 KF files uses the `NiSequenceStreamHelper`
+container path with parallel string-extra-data entries. Per-controller
+timing (NOT per-sequence). Target resolution by `GetObjectByName` at
+activation.
+
+## Old particle system (BC's `NiOldParticle`)
+
+Architecture:
+- One `NiParticleSystemController` per system, derives from `NiTimeController`.
+- Three parallel singly-linked modifier chains: emitter modifiers,
+  particle modifiers, particle colliders.
+- Modifiers are **prepended on attach** → iteration order is reverse-of-attach.
+- Per-particle state is split: 7 fields per particle on the controller
+  (`NiPerParticleData`: velocity, rotation axis, age, lifespan, last-update,
+  generation, slot-index), but position/color/normal/radius/size live in
+  `NiParticlesData`'s parallel SoA arrays. The renderer iterates
+  `NiParticlesData` directly.
+- **Capacity is fixed at NIF-author time** = vertex count of the underlying
+  `NiParticles` geometry. **Structural** cap — cannot grow at runtime.
+- Death triggers swap-and-pop: dying slot is overwritten with the last
+  active particle's state, active count decrements.
+
+Modifier set (8 concrete + 3 abstract bases): `NiGravity`, `NiParticleBomb`,
+`NiPlanarCollider`, `NiSphericalCollider`, `NiParticleColorModifier`,
+`NiParticleGrowFade`, `NiParticleMeshModifier`, `NiParticleRotation`.
+
+**Emitter shape is hardcoded box** (width/height/depth on the controller).
+BC's non-box effects must use custom emitter modifiers or post-spawn
+relocation.
+
+**`NiParticleRotation` is silently stripped at load for non-mesh particles**
+(`REMOVE_UNUSED_ROTATIONS`). BC billboard particles never rotate via this
+modifier — rotation in BC billboards must come from flip-controller textures
+or BC-custom logic above the NIF.
+
+## Magic constants (match for visual/behavioral parity)
+
+| Constant | Used by | Purpose |
+|---|---|---|
+| **`1.6`** | `NiGravity` strength multiplier | Units-conversion fudge — multiplied into every gravity application |
+| **`0.01`** | `NiFlipController` | Index fudge before integer truncation |
+| **`0.0001`** | `NiParticleSystemController`, `NiParticleGrowFade` | Size-clamp / time-comparison epsilon |
+| **`0.0333…`** | Particle controller | 30 fps run-up sample rate on first update |
+| **`0.10`** | Particle controller | Static-bound sampling step |
+| **`1.05`** | Particle controller | Bound oversizing factor |
+| **`1024`** | `NiFlipController` | `SHADER_MAP_OFFSET` — shader-map vs standard-map index discriminator |
+
+`NiUVController` mutates the vertex buffer **in place** (unlike modern
+`NiTextureTransformController` which is a per-stage matrix). Composition
+is `T·S` per axis centered at UV (0.5, 0.5); U-offset is subtracted,
+V-offset is added "to match Max behavior." Stateful delta accumulation
+— `NiUVData` remembers its last computed values frame-to-frame.
 
 ## File format conventions
 
