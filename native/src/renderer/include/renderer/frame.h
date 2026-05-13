@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <vector>
 
 #include <glm/glm.hpp>
 
@@ -47,6 +48,21 @@ struct SunDescriptor {
     float       radius        = 1.0f;      // body sphere radius (BC units)
     std::string base_texture_path;
     float       corona_radius = 0.0f;      // 0 = no corona; draw when > radius
+};
+
+struct LensFlareElement {
+    int         wedges       = 8;
+    std::string texture_path;
+    float       position     = 0.0f;   // 0=at source, 1=screen center, 2=opposite
+    float       size         = 0.1f;   // fraction of viewport height
+    float       freq         = 0.0f;   // Hz wobble
+    float       amp          = 0.0f;   // wobble amplitude (size multiplier delta)
+};
+
+struct LensFlareDescriptor {
+    glm::vec3                       source_world_pos;
+    float                           source_radius = 0.0f;
+    std::vector<LensFlareElement>   elements;
 };
 
 class FrameSubmitter {
