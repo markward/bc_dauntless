@@ -81,6 +81,8 @@ body {
 
 .bc-panel-body {
     display: block;
+    overflow-y: auto;
+    max-height: 600dp;
 }
 
 /* ── Stat row (read-only label/value pair) ──────────────────────────────── */
@@ -205,4 +207,28 @@ body {
     padding-right: 8dp;
     padding-bottom: 8dp;
     padding-left: 8dp;
+}
+
+/* ── Scrollbar styling ─────────────────────────────────────────────────
+   Used by .bc-panel-body when its content overflows max-height.  RmlUi
+   styles scrollbars via the special scrollbar-vertical / slidertrack /
+   sliderbar element selectors.  We use flat hex literals — this file's
+   header notes RCSS doesn't support var() or rgba(). */
+
+scrollbar-vertical {
+    width: 12dp;
+}
+
+slidertrack {
+    background-color: #14141ea0;
+}
+
+sliderbar {
+    background-color: #66c2ff;
+    min-height: 24dp;
+    border-radius: 4dp;
+}
+
+sliderbar:hover {
+    background-color: #99e0ff;
 }
