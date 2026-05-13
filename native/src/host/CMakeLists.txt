@@ -9,7 +9,7 @@ set(HOST_BINDINGS_SOURCES
 # Python extension module (.so / .pyd / .dylib) for pytest.
 pybind11_add_module(_open_stbc_host MODULE ${HOST_BINDINGS_SOURCES})
 target_compile_features(_open_stbc_host PRIVATE cxx_std_20)
-target_link_libraries(_open_stbc_host PRIVATE renderer ui scenegraph assets)
+target_link_libraries(_open_stbc_host PRIVATE renderer ui scenegraph assets open_stbc_audio)
 set_target_properties(_open_stbc_host PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/python"
 )
@@ -31,6 +31,7 @@ target_link_libraries(open_stbc
         ui
         scenegraph
         assets
+        open_stbc_audio
 )
 
 target_compile_features(open_stbc PRIVATE cxx_std_20)

@@ -13,6 +13,7 @@
 
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
+#include <audio/python_binding.h>
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -879,4 +880,6 @@ PYBIND11_MODULE(_open_stbc_host, m) {
                   }
               }
           });
+
+    open_stbc::audio::register_python_bindings(m);
 }
