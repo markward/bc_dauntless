@@ -48,6 +48,8 @@ set(RMLUI_TESTS         OFF   CACHE BOOL   "" FORCE)
 set(RMLUI_LOTTIE_PLUGIN OFF   CACHE BOOL   "" FORCE)
 FetchContent_MakeAvailable(RmlUi)
 
+option(OPEN_STBC_BUILD_TESTS "Build native tests for open_stbc" ON)
+
 # Public libraries.
 add_subdirectory(src/nif)
 add_subdirectory(src/assets)
@@ -83,7 +85,6 @@ add_subdirectory(src/scenegraph)
 # Renderer host subtree.
 add_subdirectory(src/host)
 
-option(OPEN_STBC_BUILD_TESTS "Build native tests for open_stbc" ON)
 if(OPEN_STBC_BUILD_TESTS)
   add_subdirectory(tests)
 endif()
