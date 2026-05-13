@@ -302,6 +302,50 @@ class ShipClass(DamageableObject):
             if sub is not None and sub.GetProperty() is None:
                 setattr(self, attr, None)
 
+        # Pass 4 — child weapons.  For each child WeaponProperty in the set,
+        # instantiate the matching live subsystem and attach it under the
+        # parent WeaponSystem slot via AddChildSubsystem.  Skip when the
+        # parent slot was scrubbed in Pass 3 (orphan hardpoint).
+        #
+        # Idempotent — if the parent already has children, this pass is a
+        # no-op for the corresponding property type.
+        from engine.appc.properties import (
+            PhaserProperty, PulseWeaponProperty,
+            TractorBeamProperty as _TBP, TorpedoTubeProperty as _TTP,
+        )
+        from engine.appc.subsystems import (
+            PhaserBank, PulseWeapon, TractorBeam, TorpedoTube,
+        )
+        _CHILD_DISPATCH = (
+            (PhaserProperty,      "_phaser_system",        PhaserBank),
+            (PulseWeaponProperty, "_pulse_weapon_system",  PulseWeapon),
+            (_TBP,                "_tractor_beam_system",  TractorBeam),
+            (_TTP,                "_torpedo_system",       TorpedoTube),
+        )
+        # Build a "parent already populated" guard so re-runs are no-ops.
+        _parents_with_children = set()
+        for _, attr, _ in _CHILD_DISPATCH:
+            p = getattr(self, attr)
+            if p is not None and p.GetNumChildSubsystems() > 0:
+                _parents_with_children.add(attr)
+
+        for prop in self.GetPropertySet().GetPropertyList():
+            # Use type(prop) not isinstance — we want the leaf classes only.
+            for prop_cls, parent_attr, child_cls in _CHILD_DISPATCH:
+                if type(prop) is not prop_cls:
+                    continue
+                if parent_attr in _parents_with_children:
+                    break
+                parent = getattr(self, parent_attr)
+                if parent is None:
+                    break  # parent scrubbed; orphan property
+                child = child_cls(prop.GetName() or "")
+                child.SetProperty(prop)
+                mc = prop.GetMaxCondition()
+                if mc is not None: child.SetMaxCondition(mc)
+                parent.AddChildSubsystem(child)
+                break
+
     @staticmethod
     def _copy_powered_subsystem_fields(prop, subsystem) -> None:
         if subsystem is None:
