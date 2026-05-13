@@ -65,6 +65,11 @@ void LensFlarePass::render(const std::vector<LensFlareDescriptor>& flares,
         static_cast<float>(viewport_w) / static_cast<float>(viewport_h);
     const glm::mat4 vp = camera.proj_matrix() * camera.view_matrix();
 
+    shader.set_float("u_aspect", aspect);
+    shader.set_int("u_texture", 0);
+    shader.set_float("u_brightness", 1.0f);
+    glActiveTexture(GL_TEXTURE0);
+
     bool gl_state_active = false;
     auto activate_gl_state = [&]() {
         if (gl_state_active) return;
@@ -99,10 +104,6 @@ void LensFlarePass::render(const std::vector<LensFlareDescriptor>& flares,
         if (sampled_depth + kDepthEps < source_depth01) continue;
 
         activate_gl_state();
-        shader.set_float("u_aspect", aspect);
-        shader.set_int("u_texture", 0);
-        shader.set_float("u_brightness", 1.0f);
-        glActiveTexture(GL_TEXTURE0);
 
         for (const auto& e : f.elements) {
             assets::Texture* tex = ensure_texture(e.texture_path);

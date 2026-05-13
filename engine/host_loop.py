@@ -679,8 +679,7 @@ def _aggregate_lens_flares() -> list:
                 f["source_world_pos"][1] * ASTRO_SCALE,
                 f["source_world_pos"][2] * ASTRO_SCALE,
             ),
-            "source_radius": f["source_radius"] * ASTRO_SCALE,
-            "elements":      f["elements"],
+            "elements": f["elements"],
         }
         for f in raw
     ]

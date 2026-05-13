@@ -77,7 +77,6 @@ def set_lens_flares(flares: list) -> None:
     """Configure the renderer's lens-flare list. Each entry is a dict:
         {
             "source_world_pos": (x, y, z),
-            "source_radius":    float,
             "elements": [
                 {
                     "wedges":       int,    # 3..64

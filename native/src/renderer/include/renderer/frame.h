@@ -61,7 +61,6 @@ struct LensFlareElement {
 
 struct LensFlareDescriptor {
     glm::vec3                       source_world_pos;
-    float                           source_radius = 0.0f;
     std::vector<LensFlareElement>   elements;
 };
 

@@ -87,7 +87,11 @@ class ObjectClass(TGEventHandlerObject):
         self._position = TGPoint3(point.x, point.y, point.z)
 
     def SetWorldLocation(self, pos) -> None:
-        """Accept a (x, y, z) tuple or a TGPoint3 and set the world position."""
+        """Test/host-side helper to position an object via (x, y, z) tuple
+        or TGPoint3. Not part of the SDK API surface — SDK scripts use
+        SetTranslate(TGPoint3) or SetTranslateXYZ. Do not call from
+        engine code that simulates SDK behavior.
+        """
         if hasattr(pos, 'x'):
             self._position = TGPoint3(float(pos.x), float(pos.y), float(pos.z))
         else:

@@ -447,7 +447,6 @@ PYBIND11_MODULE(_open_stbc_host, m) {
                   f.source_world_pos = {std::get<0>(pos),
                                         std::get<1>(pos),
                                         std::get<2>(pos)};
-                  f.source_radius    = d["source_radius"].cast<float>();
                   auto elements      = d["elements"].cast<std::vector<py::dict>>();
                   f.elements.reserve(elements.size());
                   for (const auto& ed : elements) {
