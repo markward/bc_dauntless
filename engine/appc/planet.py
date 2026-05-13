@@ -153,6 +153,14 @@ def aggregate_suns_for_renderer(project_root, pSets):
             radius = obj.GetRadius()
             if radius <= 0:
                 continue
+            # SDK scripts may resize a sun mid-mission via SetScale (no stock
+            # script does this for suns today, but the contract matches ships
+            # and planets). Apply it to both the body and the corona so the
+            # ratio stays constant.
+            try:
+                scale = float(obj.GetScale())
+            except Exception:
+                scale = 1.0
             loc = obj.GetWorldLocation()
             tex_rel = obj.GetModelPath() or _SUN_DEFAULT_TEXTURE
             abs_path = (project_root / "game" / tex_rel).resolve()
@@ -166,9 +174,9 @@ def aggregate_suns_for_renderer(project_root, pSets):
                 continue
             out.append({
                 "position":          (loc.x, loc.y, loc.z),
-                "radius":            radius,
+                "radius":            radius * scale,
                 "base_texture_path": str(abs_path),
-                "corona_radius":     radius + obj.GetAtmosphereRadius(),
+                "corona_radius":     (radius + obj.GetAtmosphereRadius()) * scale,
             })
     return out
 
