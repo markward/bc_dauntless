@@ -23,6 +23,7 @@
 #include <renderer/sun_pass.h>
 #include <renderer/dust_pass.h>
 #include <renderer/shield_pass.h>
+#include <renderer/lens_flare_pass.h>
 #include <renderer/aabb.h>
 #include <ui/UiSystem.h>
 #include <ui/PanelDocument.h>
@@ -53,6 +54,8 @@ std::vector<renderer::SunDescriptor> g_suns;
 std::unique_ptr<renderer::SunPass> g_sun_pass;
 std::unique_ptr<renderer::DustPass> g_dust_pass;
 std::unique_ptr<renderer::ShieldPass> g_shield_pass;
+std::vector<renderer::LensFlareDescriptor> g_lens_flares;
+std::unique_ptr<renderer::LensFlarePass>   g_lens_flare_pass;
 double g_prev_frame_time_seconds = 0.0;
 
 // Bridge pass state. Camera is set from Python via set_bridge_camera each
@@ -143,6 +146,7 @@ void init(int width, int height, const std::string& title,
     g_sun_pass = std::make_unique<renderer::SunPass>();
     g_dust_pass = std::make_unique<renderer::DustPass>();
     g_shield_pass = std::make_unique<renderer::ShieldPass>();
+    g_lens_flare_pass = std::make_unique<renderer::LensFlarePass>();
     g_prev_frame_time_seconds = glfwGetTime();
 
     if (!ui_assets_root.empty()) {
@@ -172,6 +176,8 @@ void shutdown() {
     g_sun_pass.reset();
     g_dust_pass.reset();
     g_shield_pass.reset();
+    g_lens_flares.clear();
+    g_lens_flare_pass.reset();
     g_window.reset();
     g_prev_key_state.clear();
     // Mirror init()'s lighting reset for symmetry and defense-in-depth:
@@ -222,6 +228,13 @@ void frame() {
                                               now, lookup);
 
     if (g_dust_pass) g_dust_pass->render(g_camera, dt, *g_pipeline);
+
+    if (g_lens_flare_pass) {
+        int fw2 = 0, fh2 = 0;
+        g_window->framebuffer_size(&fw2, &fh2);
+        g_lens_flare_pass->render(g_lens_flares, g_camera, *g_pipeline,
+                                  fw2, fh2, now);
+    }
 
     // ── Bridge pass ──────────────────────────────────────────────────────
     // Renders bridge-tagged instances with the bridge camera, after a
@@ -425,6 +438,35 @@ PYBIND11_MODULE(_open_stbc_host, m) {
           },
           py::arg("suns"),
           "Set the active sun list, applied each frame().");
+
+    m.def("set_lens_flares",
+          [](const std::vector<py::dict>& descs) {
+              g_lens_flares.clear();
+              g_lens_flares.reserve(descs.size());
+              for (const auto& d : descs) {
+                  renderer::LensFlareDescriptor f;
+                  auto pos = d["source_world_pos"].cast<std::tuple<float,float,float>>();
+                  f.source_world_pos = {std::get<0>(pos),
+                                        std::get<1>(pos),
+                                        std::get<2>(pos)};
+                  f.source_radius    = d["source_radius"].cast<float>();
+                  auto elements      = d["elements"].cast<std::vector<py::dict>>();
+                  f.elements.reserve(elements.size());
+                  for (const auto& ed : elements) {
+                      renderer::LensFlareElement e;
+                      e.wedges       = ed["wedges"].cast<int>();
+                      e.texture_path = ed["texture_path"].cast<std::string>();
+                      e.position     = ed["position"].cast<float>();
+                      e.size         = ed["size"].cast<float>();
+                      e.freq         = ed["freq"].cast<float>();
+                      e.amp          = ed["amp"].cast<float>();
+                      f.elements.push_back(std::move(e));
+                  }
+                  g_lens_flares.push_back(std::move(f));
+              }
+          },
+          py::arg("flares"),
+          "Set the active lens-flare list, applied each frame().");
 
     m.def("dust_set_enabled",
           [](bool enabled) {
