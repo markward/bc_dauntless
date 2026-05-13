@@ -26,6 +26,8 @@ class ShipClass(DamageableObject):
         self._pulse_weapon_system = None
         self._tractor_beam_system = None
         self._shield_subsystem = None
+        self._power_subsystem = None
+        self._repair_subsystem = None
         # Hull is created lazily by SetupProperties() when a HullProperty is
         # found in the property set (SDK App.py:5382-5383).  Stays None for
         # ships with no hardpoint applied.
@@ -105,6 +107,10 @@ class ShipClass(DamageableObject):
     def SetShieldSubsystem(self, s) -> None:      self._shield_subsystem = s
     # SDK-facing alias — pShip.GetShields() in mission scripts and SDK helpers.
     def GetShields(self):                         return self._shield_subsystem
+    def GetPowerSubsystem(self):                  return self._power_subsystem
+    def SetPowerSubsystem(self, s) -> None:       self._power_subsystem = s
+    def GetRepairSubsystem(self):                 return self._repair_subsystem
+    def SetRepairSubsystem(self, s) -> None:      self._repair_subsystem = s
     def GetHull(self):                            return self._hull
     def SetHull(self, h) -> None:                 self._hull = h
 
@@ -125,6 +131,8 @@ class ShipClass(DamageableObject):
             self._pulse_weapon_system,
             self._tractor_beam_system,
             self._shield_subsystem,
+            self._power_subsystem,
+            self._repair_subsystem,
             self._hull,
         ):
             if sub is not None and sub.GetProperty() is prop:
@@ -264,6 +272,7 @@ class ShipClass(DamageableObject):
             "_warp_engine_subsystem", "_torpedo_system",
             "_phaser_system", "_pulse_weapon_system",
             "_tractor_beam_system", "_shield_subsystem",
+            "_power_subsystem", "_repair_subsystem",
         ):
             sub = getattr(self, attr)
             if sub is not None and sub.GetProperty() is None:
@@ -331,7 +340,7 @@ def ShipClass_Create(class_name: str = "") -> ShipClass:
     from engine.appc.subsystems import (
         TorpedoSystem, PhaserSystem, PulseWeaponSystem, TractorBeamSystem,
         SensorSubsystem, ImpulseEngineSubsystem, WarpEngineSubsystem,
-        ShieldSubsystem,
+        ShieldSubsystem, PowerSubsystem, RepairSubsystem,
     )
     ship = ShipClass()
     ship.SetName(class_name)
@@ -343,6 +352,8 @@ def ShipClass_Create(class_name: str = "") -> ShipClass:
     ship.SetImpulseEngineSubsystem(ImpulseEngineSubsystem("Impulse Engines"))
     ship.SetWarpEngineSubsystem(WarpEngineSubsystem("Warp Engines"))
     ship.SetShieldSubsystem(ShieldSubsystem("Shield Generator"))
+    ship.SetPowerSubsystem(PowerSubsystem("Power Plant"))
+    ship.SetRepairSubsystem(RepairSubsystem("Engineering"))
     return ship
 
 

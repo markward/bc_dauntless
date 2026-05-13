@@ -178,6 +178,8 @@ def test_setup_properties_no_op_when_property_set_empty():
     assert ship.GetTorpedoSystem() is None
     assert ship.GetPulseWeaponSystem() is None
     assert ship.GetTractorBeamSystem() is None
+    assert ship.GetPowerSubsystem() is None
+    assert ship.GetRepairSubsystem() is None
 
 
 # ── Cycle D: SDK reload() must re-execute module top-level ────────────────────
