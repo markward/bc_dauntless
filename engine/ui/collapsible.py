@@ -21,7 +21,8 @@ class UiCollapsibleList:
                  menu_level: int = 3,
                  expanded: bool = True,
                  selected: bool = False,
-                 on_click: Optional[Callable[[], None]] = None):
+                 on_click: Optional[Callable[[], None]] = None,
+                 on_toggle: Optional[Callable[[bool], None]] = None):
         self._parent_element = parent_element
         self._label = label
         self._affiliation = affiliation
@@ -29,6 +30,11 @@ class UiCollapsibleList:
         self._expanded = expanded
         self._selected = selected
         self._on_click = on_click
+        # Fires AFTER expansion changes (arrow click or title click).
+        # Receives the new expanded state.  Used by the targets-panel
+        # controller to persist expansion across rebuild_from_snapshot
+        # (e.g. when scroll triggers a re-render).
+        self._on_toggle = on_toggle
         self._destroyed = False
         self._children: list[object] = []
         self._radio_group = _RadioGroup()
@@ -117,11 +123,12 @@ class UiCollapsibleList:
                     menu_level: int = 3,
                     expanded: bool = True,
                     on_click: Optional[Callable[[], None]] = None,
+                    on_toggle: Optional[Callable[[bool], None]] = None,
     ) -> "UiCollapsibleList":
         child = UiCollapsibleList(parent_element=self._children_container_id,
                                   label=label, affiliation=affiliation,
                                   menu_level=menu_level, expanded=expanded,
-                                  on_click=on_click)
+                                  on_click=on_click, on_toggle=on_toggle)
         self._children.append(child)
         return child
 
@@ -152,6 +159,8 @@ class UiCollapsibleList:
 
     def _toggle_expanded(self) -> None:
         self.set_expanded(not self._expanded)
+        if self._on_toggle is not None:
+            self._on_toggle(self._expanded)
 
     def _handle_title_click(self) -> None:
         # Title click toggles expansion AND fires on_click (selection).
@@ -160,5 +169,7 @@ class UiCollapsibleList:
         # who explicitly want to collapse without changing the target
         # selection still have that option.
         self.set_expanded(not self._expanded)
+        if self._on_toggle is not None:
+            self._on_toggle(self._expanded)
         if self._on_click is not None:
             self._on_click()

@@ -78,6 +78,12 @@ class TargetListController:
         self._get_player = player_provider
         self._show_subsystems = show_subsystems
         self._scroll_offset: int = 0
+        # Expansion state survives rebuild_from_snapshot so scroll +
+        # ship-lifecycle events don't collapse the user's open rows.
+        # Ship rows are keyed by ship name; nested subsystem rows are
+        # keyed by (ship_name, subsystem_label).
+        self._expanded_ships: set[str] = set()
+        self._expanded_subs: set[tuple[str, str]] = set()
         self._unsub = ship_lifecycle.subscribe(self._on_event)
         self.rebuild_from_snapshot()
 
@@ -116,11 +122,13 @@ class TargetListController:
 
     def _add_row_for_target(self, ship) -> None:
         affiliation = _ship_affiliation(ship)
+        ship_name = ship.GetName()
         row = self._panel.collapsible(
-            label=ship.GetName(),
+            label=ship_name,
             affiliation=affiliation,
-            expanded=False,
+            expanded=ship_name in self._expanded_ships,
             on_click=lambda s=ship: self._select(s),
+            on_toggle=lambda exp, n=ship_name: self._track_ship_expanded(n, exp),
         )
         if not self._show_subsystems:
             return
@@ -131,10 +139,12 @@ class TargetListController:
             if num_children == 0:
                 row.button(label, on_click=lambda s=sub: self._select_subsystem(s))
             else:
+                key = (ship_name, label)
                 child_collapsible = row.collapsible(
                     label=label,
-                    expanded=False,
+                    expanded=key in self._expanded_subs,
                     on_click=lambda s=sub: self._select_subsystem(s),
+                    on_toggle=lambda exp, k=key: self._track_sub_expanded(k, exp),
                 )
                 for i in range(num_children):
                     child = sub.GetChildSubsystem(i)
@@ -145,6 +155,18 @@ class TargetListController:
                         cl,
                         on_click=lambda s=child: self._select_subsystem(s),
                     )
+
+    def _track_ship_expanded(self, ship_name: str, expanded: bool) -> None:
+        if expanded:
+            self._expanded_ships.add(ship_name)
+        else:
+            self._expanded_ships.discard(ship_name)
+
+    def _track_sub_expanded(self, key: tuple[str, str], expanded: bool) -> None:
+        if expanded:
+            self._expanded_subs.add(key)
+        else:
+            self._expanded_subs.discard(key)
 
     def _select(self, ship) -> None:
         player = self._get_player()

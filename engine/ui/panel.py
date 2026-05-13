@@ -177,10 +177,12 @@ class UiPanel:
                     menu_level: int = 3,
                     expanded: bool = True,
                     on_click: Optional[Callable[[], None]] = None,
+                    on_toggle: Optional[Callable[[bool], None]] = None,
     ) -> UiCollapsibleList:
         c = UiCollapsibleList(parent_element=self.root, label=label,
                               affiliation=affiliation, menu_level=menu_level,
-                              expanded=expanded, on_click=on_click)
+                              expanded=expanded, on_click=on_click,
+                              on_toggle=on_toggle)
         self._children.append(c)
         return c
 
