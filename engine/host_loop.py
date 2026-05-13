@@ -666,6 +666,26 @@ def _aggregate_suns() -> list:
     ]
 
 
+def _aggregate_lens_flares() -> list:
+    """Collect lens-flare descriptors with ASTRO_SCALE applied to source pos."""
+    from engine.appc.lens_flare import aggregate_lens_flares_for_renderer
+    import App
+    raw = aggregate_lens_flares_for_renderer(
+        PROJECT_ROOT, list(App.g_kSetManager._sets.values()))
+    return [
+        {
+            "source_world_pos": (
+                f["source_world_pos"][0] * ASTRO_SCALE,
+                f["source_world_pos"][1] * ASTRO_SCALE,
+                f["source_world_pos"][2] * ASTRO_SCALE,
+            ),
+            "source_radius": f["source_radius"] * ASTRO_SCALE,
+            "elements":      f["elements"],
+        }
+        for f in raw
+    ]
+
+
 def _planet_nif_path(planet, *, verbose: bool = False) -> Optional[str]:
     """Return absolute path to the planet's NIF, or None if unavailable."""
     rel = planet.GetModelPath()
@@ -1328,6 +1348,9 @@ def run(mission_name: str = SHIP_GATE_MISSION,
             suns = _aggregate_suns()
             r.set_suns(suns)
 
+            lens_flares = _aggregate_lens_flares()
+            r.set_lens_flares(lens_flares)
+
             if verbose and ticks == 0:
                 print(f"[host_loop] tick 0 camera eye={eye} target={target}", flush=True)
                 print(f"[host_loop] tick 0 lighting ambient={ambient} "
@@ -1335,6 +1358,8 @@ def run(mission_name: str = SHIP_GATE_MISSION,
                 print(f"[host_loop] tick 0 backdrops: "
                       f"{len(backdrops)} layer(s)", flush=True)
                 print(f"[host_loop] tick 0 suns: {len(suns)} sun(s)", flush=True)
+                print(f"[host_loop] tick 0 lens flares: "
+                      f"{len(lens_flares)} flare(s)", flush=True)
 
             r.frame()
             ticks += 1
