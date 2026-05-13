@@ -97,6 +97,12 @@ body {
     overflow: hidden;
 }
 
+/* Top-level rows in the targets panel (ships) get a uniform bottom gap.
+   Nested rows inside an expanded ship use the per-element defaults. */
+.bc-target-scroll > * {
+    margin-bottom: 5dp;
+}
+
 /* Scroll wrapper used by TargetListController.  Apply -margin-top here
    instead of on .bc-panel-body so the body's layout box stays put —
    only the wrapper's contents shift, and .bc-panel-body's overflow
@@ -115,13 +121,6 @@ body {
     white-space: nowrap;
 }
 
-/* Action button that follows a stat row (e.g., "Load Mission" at the
-   bottom of the Debug panel): give it a 20dp top gap so it stands
-   apart from the last stat row. */
-.bc-stat-row + .bc-button {
-    margin-top: 20dp;
-}
-
 .bc-stat-label {
     display: inline-block;
     width: 80dp;
@@ -137,15 +136,6 @@ body {
 
 .bc-collapsible {
     display: block;
-    margin-bottom: 4dp;
-}
-
-/* Top-level rows in the targets panel — i.e. ships, direct children of
-   the .bc-target-scroll wrapper — get extra breathing room between them.
-   Nested collapsibles (subsystem groups inside an expanded ship) stay
-   at the tight 4dp default so the in-ship list reads as one unit. */
-.bc-target-scroll > .bc-collapsible {
-    margin-bottom: 12dp;
 }
 
 .bc-collapsible-header {
