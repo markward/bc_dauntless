@@ -48,14 +48,10 @@ Window::Window(int width, int height, const std::string& title, bool visible) {
 
     glfwMakeContextCurrent(handle_);
 
-    // Wire mouse-wheel events into scroll_y_accum_. The user pointer lets
-    // the static callback dispatch back to this Window instance.
+    // UiSystem installs the scroll callback so it can filter through RmlUi
+    // before the camera sees the event; the user pointer lets per-window
+    // callbacks (cursor, etc.) dispatch back to this Window instance.
     glfwSetWindowUserPointer(handle_, this);
-    glfwSetScrollCallback(handle_, [](GLFWwindow* w, double, double yoffset) {
-        if (auto* self = static_cast<Window*>(glfwGetWindowUserPointer(w))) {
-            self->scroll_y_accum_ += yoffset;
-        }
-    });
 
     glfwSetCursorPosCallback(handle_, [](GLFWwindow* w, double x, double y) {
         if (auto* self = static_cast<Window*>(glfwGetWindowUserPointer(w))) {
