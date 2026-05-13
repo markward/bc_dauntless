@@ -145,3 +145,15 @@ def test_aggregator_clamps_wedges_to_valid_range():
     out = aggregate_lens_flares_for_renderer(PROJECT_ROOT, [pSet])
     assert out[0]["elements"][0]["wedges"] == 3   # min clamp
     assert out[0]["elements"][1]["wedges"] == 64  # max clamp
+
+
+def test_app_lens_flare_create_is_real_function():
+    """App.LensFlare_Create must be the real factory, not a _NamedStub."""
+    import App
+    from engine.appc.lens_flare import LensFlare_Create as expected
+    assert App.LensFlare_Create is expected
+    # And the returned object must not be a _NamedStub.
+    pSet = SetClass()
+    flare = App.LensFlare_Create(pSet)
+    assert not isinstance(flare, App._NamedStub)
+    assert isinstance(flare, LensFlare)

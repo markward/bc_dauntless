@@ -74,6 +74,7 @@ from engine.appc.planet import (
     Planet_Create, Sun_Create, Planet_GetObject, Planet_Cast,
     ProximityManager,
 )
+from engine.appc.lens_flare import LensFlare, LensFlare_Create
 from engine.appc.characters import (
     CharacterClass, CharacterClass_Create, CharacterClass_CreateNull,
     CharacterClass_Cast, CharacterClass_GetObject,
