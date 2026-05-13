@@ -41,7 +41,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SHIP_GATE_MISSION = "Custom.Tutorial.Episode.M2Objects.M2Objects"
 DEFAULT_TEXTURE_SEARCH = "data/Models/SharedTextures/FedShips/High"
 DEFAULT_PLANET_TEXTURE_SEARCH = "data/Models/Environment"
-DEFAULT_PLAYER_SET = "Biranu1"  # shared by M1Basic and M2Objects tutorials
 
 # Bridge geometry (PoC: hardcoded DBridge for all ships).
 # On-disk casing is "Dbridge.NIF" — MissionLib references it as
@@ -980,8 +979,12 @@ class _MissionLoader:
             r_.set_world_transform(iid, _astro_world_matrix(planet))
             sess.planet_instances[planet] = iid
 
-        player_set = App.g_kSetManager.GetSet(DEFAULT_PLAYER_SET)
-        player = player_set.GetObject("player") if player_set is not None else None
+        player = None
+        for pSet in App.g_kSetManager._sets.values():
+            cand = pSet.GetObject("player")
+            if cand is not None:
+                player = cand
+                break
         if player is None and sess.ship_instances:
             player = next(iter(sess.ship_instances.keys()))
         sess.player = player
