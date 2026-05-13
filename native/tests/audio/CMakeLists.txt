@@ -1,5 +1,6 @@
 add_executable(audio_tests
     wav_test.cc
+    null_backend_test.cc
 )
 target_link_libraries(audio_tests
     PRIVATE
