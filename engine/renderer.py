@@ -73,6 +73,26 @@ def set_suns(suns: list) -> None:
     _h.set_suns(suns)
 
 
+def set_lens_flares(flares: list) -> None:
+    """Configure the renderer's lens-flare list. Each entry is a dict:
+        {
+            "source_world_pos": (x, y, z),
+            "source_radius":    float,
+            "elements": [
+                {
+                    "wedges":       int,    # 3..64
+                    "texture_path": str,    # absolute
+                    "position":     float,  # 0=at source, 1=screen center, 2=opposite
+                    "size":         float,  # fraction of viewport height
+                    "freq":         float,  # Hz wobble (0 = off)
+                    "amp":          float,  # wobble amplitude (0 = off)
+                }, ...
+            ],
+        }
+    """
+    _h.set_lens_flares(flares)
+
+
 def set_backdrops(backdrops: list) -> None:
     """Configure the renderer's ordered backdrop list. Each entry is a
     dict matching engine.appc.backdrops.aggregate_for_renderer's output:
