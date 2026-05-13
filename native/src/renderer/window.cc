@@ -160,19 +160,28 @@ void Window::add_scroll_y(double dy) noexcept {
 
 void Window::cursor_pos(double* out_x, double* out_y) const noexcept {
     if (!out_x || !out_y) return;
+    double x = 0.0, y = 0.0;
     if (cursor_seeded_) {
-        *out_x = last_cursor_x_;
-        *out_y = last_cursor_y_;
-        return;
+        x = last_cursor_x_;
+        y = last_cursor_y_;
+    } else if (handle_) {
+        // No callback has fired yet (window just created, cursor outside
+        // viewport).  Query GLFW directly so callers don't see NaN/garbage.
+        glfwGetCursorPos(handle_, &x, &y);
     }
-    // No callback has fired yet (window just created, cursor outside
-    // viewport).  Query GLFW directly so callers don't see NaN/garbage.
+    // Convert GLFW screen coords (logical pixels) to framebuffer coords
+    // (physical pixels).  This matches PanelDocument::bounds() (which
+    // returns RmlUi's framebuffer-space rect) so callers can do straight
+    // inside-rect comparisons on Retina/high-DPI displays.
     if (handle_) {
-        glfwGetCursorPos(handle_, out_x, out_y);
-    } else {
-        *out_x = 0.0;
-        *out_y = 0.0;
+        int win_w = 0, win_h = 0, fb_w = 0, fb_h = 0;
+        glfwGetWindowSize(handle_, &win_w, &win_h);
+        glfwGetFramebufferSize(handle_, &fb_w, &fb_h);
+        if (win_w > 0) x *= static_cast<double>(fb_w) / static_cast<double>(win_w);
+        if (win_h > 0) y *= static_cast<double>(fb_h) / static_cast<double>(win_h);
     }
+    *out_x = x;
+    *out_y = y;
 }
 
 void Window::consume_mouse_delta(double* dx, double* dy) noexcept {

@@ -50,16 +50,23 @@ void char_cb(GLFWwindow*, unsigned int codepoint) {
 }
 
 void scroll_cb(GLFWwindow* w, double /*xoffset*/, double yoffset) {
-    bool consumed = false;
+    // Always forward scroll to the Window accumulator.  The Python host
+    // loop decides whether the wheel goes to the camera or to a panel
+    // based on a cursor-vs-panel-bounds check (see _cursor_over_panel in
+    // engine/host_loop.py).
+    //
+    // RmlUi's ProcessScrollCallback return value reports "propagation
+    // still active" — true is the common case when no element cancelled
+    // the event, and tells us nothing useful about whether a scrollable
+    // panel actually consumed the wheel.  We still call it so any future
+    // scrollable RmlUi elements get a chance to process the event.
     if (g_input_ctx) {
-        consumed = RmlGLFW::ProcessScrollCallback(
+        RmlGLFW::ProcessScrollCallback(
             g_input_ctx, yoffset, /*key_modifier_state=*/0);
     }
-    if (!consumed) {
-        if (auto* win = static_cast<renderer::Window*>(
-                glfwGetWindowUserPointer(w))) {
-            win->add_scroll_y(yoffset);
-        }
+    if (auto* win = static_cast<renderer::Window*>(
+            glfwGetWindowUserPointer(w))) {
+        win->add_scroll_y(yoffset);
     }
 }
 }  // namespace
