@@ -140,6 +140,14 @@ body {
     margin-bottom: 4dp;
 }
 
+/* Top-level rows in the targets panel — i.e. ships, direct children of
+   the .bc-target-scroll wrapper — get extra breathing room between them.
+   Nested collapsibles (subsystem groups inside an expanded ship) stay
+   at the tight 4dp default so the in-ship list reads as one unit. */
+.bc-target-scroll > .bc-collapsible {
+    margin-bottom: 12dp;
+}
+
 .bc-collapsible-header {
     display: block;
     padding-top: 6dp;
