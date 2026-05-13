@@ -81,8 +81,6 @@ body {
 
 .bc-panel-body {
     display: block;
-    overflow-y: auto;
-    max-height: 600dp;
 }
 
 /* ── Stat row (read-only label/value pair) ──────────────────────────────── */
