@@ -1,6 +1,6 @@
 #pragma once
+#include <cstddef>
 #include <cstdint>
-#include <vector>
 
 namespace open_stbc::audio {
 

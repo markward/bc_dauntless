@@ -2,13 +2,13 @@
 #include <audio/audio_backend.h>
 #include <string>
 #include <vector>
-#include <variant>
 
 namespace open_stbc::audio {
 
 struct LoggedCall {
     std::string op;
-    // Tagged-union args. We keep this loose because tests only inspect a handful.
+    // POD arg slots. Each op writes the fields relevant to it; the rest stay zero.
+    // Looser than std::variant, but tests only inspect a handful per call.
     float f[9] = {0,0,0,0,0,0,0,0,0};
     uint32_t u[4] = {0,0,0,0};
     bool b[2] = {false,false};

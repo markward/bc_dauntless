@@ -24,10 +24,27 @@ TEST(NullBackend, RecordsLifecycleAndPlayback) {
     const auto& log = b.command_log();
     ASSERT_EQ(log.size(), 5u);
     EXPECT_EQ(log[0].op, "init");
+
     EXPECT_EQ(log[1].op, "create_buffer");
+    EXPECT_EQ(log[1].u[0], 1u);                                   // channels
+    EXPECT_EQ(log[1].u[1], 16u);                                  // bits_per_sample
+    EXPECT_EQ(log[1].u[2], 22050u);                               // sample_rate
+    EXPECT_EQ(log[1].u[3], pcm.size());                           // byte length
+
     EXPECT_EQ(log[2].op, "play");
+    EXPECT_EQ(log[2].u[0], buf);                                  // buffer handle
+    EXPECT_EQ(log[2].u[1],
+              static_cast<uint32_t>(open_stbc::audio::Category::SFX));
+    EXPECT_TRUE(log[2].b[0]);                                     // looping
+    EXPECT_TRUE(log[2].b[1]);                                     // positional
+    EXPECT_FLOAT_EQ(log[2].f[0], 1.0f);                           // gain
+
     EXPECT_EQ(log[3].op, "set_position");
+    EXPECT_EQ(log[3].u[0], s);
+    EXPECT_FLOAT_EQ(log[3].f[0], 10.0f);
+
     EXPECT_EQ(log[4].op, "stop");
+    EXPECT_EQ(log[4].u[0], s);
 }
 
 }  // namespace

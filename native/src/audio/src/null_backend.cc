@@ -8,7 +8,7 @@ void NullBackend::shutdown() { log_.push_back({"shutdown"}); }
 BufferHandle NullBackend::create_buffer(const PcmDesc& d, const uint8_t*, size_t n) {
     LoggedCall c{"create_buffer"};
     c.u[0] = d.channels; c.u[1] = d.bits_per_sample;
-    c.u[2] = d.sample_rate; c.u[3] = (uint32_t)n;
+    c.u[2] = d.sample_rate; c.u[3] = static_cast<uint32_t>(n);
     log_.push_back(c);
     return next_buf_++;
 }
@@ -21,7 +21,7 @@ SourceHandle NullBackend::play(BufferHandle buf, bool looping, float gain,
                                Category cat, bool positional,
                                float x, float y, float z) {
     LoggedCall c{"play"};
-    c.u[0] = buf; c.u[1] = (uint32_t)cat;
+    c.u[0] = buf; c.u[1] = static_cast<uint32_t>(cat);
     c.b[0] = looping; c.b[1] = positional;
     c.f[0] = gain; c.f[1] = x; c.f[2] = y; c.f[3] = z;
     log_.push_back(c);
@@ -63,7 +63,7 @@ void NullBackend::set_listener(float px, float py, float pz,
 
 void NullBackend::set_category_gain(Category cat, float g) {
     LoggedCall c{"set_category_gain"};
-    c.u[0] = (uint32_t)cat; c.f[0] = g; log_.push_back(c);
+    c.u[0] = static_cast<uint32_t>(cat); c.f[0] = g; log_.push_back(c);
 }
 
 bool NullBackend::source_finished(SourceHandle) { return false; }
