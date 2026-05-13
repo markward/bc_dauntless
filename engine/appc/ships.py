@@ -158,6 +158,11 @@ class ShipClass(DamageableObject):
         from engine.appc.subsystems import HullSubsystem
         import App
 
+        def _copy_name(prop, receiver):
+            if receiver is None: return
+            n = prop.GetName()
+            if n: receiver.SetName(n)
+
         for prop in self.GetPropertySet().GetPropertyList():
             if isinstance(prop, ShipProperty):
                 for src, setter in (
@@ -179,6 +184,7 @@ class ShipClass(DamageableObject):
                 self._copy_powered_subsystem_fields(prop, self._impulse_engine_subsystem)
                 ies = self._impulse_engine_subsystem
                 if ies is not None:
+                    _copy_name(prop, ies)
                     ies.SetProperty(prop)
                     for src, setter in (
                         (prop.GetMaxSpeed,           ies.SetMaxSpeed),
@@ -191,6 +197,7 @@ class ShipClass(DamageableObject):
             elif isinstance(prop, WarpEngineProperty):
                 self._copy_powered_subsystem_fields(prop, self._warp_engine_subsystem)
                 if self._warp_engine_subsystem is not None:
+                    _copy_name(prop, self._warp_engine_subsystem)
                     self._warp_engine_subsystem.SetProperty(prop)
             elif isinstance(prop, HullProperty):
                 # Only the FIRST HullProperty is the main hull — galaxy.py
@@ -213,6 +220,7 @@ class ShipClass(DamageableObject):
                 self._copy_powered_subsystem_fields(prop, self._sensor_subsystem)
                 sens = self._sensor_subsystem
                 if sens is not None:
+                    _copy_name(prop, sens)
                     sens.SetProperty(prop)
                     for src, setter in (
                         (prop.GetBaseSensorRange, sens.SetBaseSensorRange),
@@ -224,6 +232,7 @@ class ShipClass(DamageableObject):
                 self._copy_powered_subsystem_fields(prop, self._shield_subsystem)
                 ss = self._shield_subsystem
                 if ss is not None:
+                    _copy_name(prop, ss)
                     ss.SetProperty(prop)
                     for face in range(ShieldProperty.NUM_SHIELDS):
                         mx = prop.GetMaxShields(face)
@@ -239,6 +248,7 @@ class ShipClass(DamageableObject):
                     WeaponSystemProperty.WST_TRACTOR: self._tractor_beam_system,
                 }.get(wst)
                 if receiver is not None:
+                    _copy_name(prop, receiver)
                     self._copy_powered_subsystem_fields(prop, receiver)
                     receiver.SetProperty(prop)
                     if wst is not None: receiver.SetWeaponSystemType(wst)
@@ -251,12 +261,14 @@ class ShipClass(DamageableObject):
             elif isinstance(prop, PowerProperty):
                 ps = self._power_subsystem
                 if ps is not None:
+                    _copy_name(prop, ps)
                     ps.SetProperty(prop)
                     mc = prop.GetMaxCondition()
                     if mc is not None: ps.SetMaxCondition(mc)
             elif isinstance(prop, RepairSubsystemProperty):
                 rs = self._repair_subsystem
                 if rs is not None:
+                    _copy_name(prop, rs)
                     self._copy_powered_subsystem_fields(prop, rs)
                     rs.SetProperty(prop)
 
