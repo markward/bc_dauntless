@@ -8,7 +8,9 @@
 
 #include <glad/glad.h>
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <fstream>
@@ -49,11 +51,89 @@ LensFlarePass::~LensFlarePass() {
     }
 }
 
-void LensFlarePass::render(const std::vector<LensFlareDescriptor>&,
-                           const scenegraph::Camera&,
-                           Pipeline&,
-                           int, int, double) {
-    // Implemented in Task 10.
+void LensFlarePass::render(const std::vector<LensFlareDescriptor>& flares,
+                           const scenegraph::Camera& camera,
+                           Pipeline& pipeline,
+                           int viewport_w, int viewport_h,
+                           double now_seconds) {
+    if (flares.empty() || viewport_w <= 0 || viewport_h <= 0) return;
+
+    auto& shader = pipeline.lens_flare_shader();
+    shader.use();
+
+    const float aspect =
+        static_cast<float>(viewport_w) / static_cast<float>(viewport_h);
+    const glm::mat4 vp = camera.proj_matrix() * camera.view_matrix();
+
+    bool gl_state_active = false;
+    auto activate_gl_state = [&]() {
+        if (gl_state_active) return;
+        glDisable(GL_DEPTH_TEST);
+        glDepthMask(GL_FALSE);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+        glDisable(GL_CULL_FACE);
+        gl_state_active = true;
+    };
+
+    for (const auto& f : flares) {
+        const glm::vec4 clip = vp * glm::vec4(f.source_world_pos, 1.0f);
+        if (clip.w <= 0.0f) continue;
+        const glm::vec3 ndc = glm::vec3(clip) / clip.w;
+        if (std::abs(ndc.x) > 1.2f || std::abs(ndc.y) > 1.2f) continue;
+        if (ndc.z < -1.0f || ndc.z > 1.0f) continue;
+
+        // Depth occlusion: sample the depth buffer at the source's pixel.
+        // The sun sphere itself was drawn into the depth buffer earlier in
+        // the frame; eps lifts the test off the sphere's own surface.
+        const float u01 = (ndc.x * 0.5f + 0.5f);
+        const float v01 = (ndc.y * 0.5f + 0.5f);
+        const int px = std::min(viewport_w - 1, std::max(0,
+                          static_cast<int>(u01 * static_cast<float>(viewport_w))));
+        const int py = std::min(viewport_h - 1, std::max(0,
+                          static_cast<int>(v01 * static_cast<float>(viewport_h))));
+        float sampled_depth = 1.0f;
+        glReadPixels(px, py, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &sampled_depth);
+        const float source_depth01 = ndc.z * 0.5f + 0.5f;
+        constexpr float kDepthEps = 1e-4f;
+        if (sampled_depth + kDepthEps < source_depth01) continue;
+
+        activate_gl_state();
+        shader.set_float("u_aspect", aspect);
+        shader.set_int("u_texture", 0);
+        glActiveTexture(GL_TEXTURE0);
+
+        for (const auto& e : f.elements) {
+            assets::Texture* tex = ensure_texture(e.texture_path);
+            if (!tex) continue;
+            const WedgeMesh& mesh = ensure_wedge_mesh(e.wedges);
+            if (mesh.index_count == 0) continue;
+
+            const glm::vec2 src_ndc(ndc.x, ndc.y);
+            const glm::vec2 center =
+                glm::mix(src_ndc, glm::vec2(0.0f, 0.0f), e.position);
+            const float kTwoPi = 6.28318530717958647692f;
+            const float wobble = (e.amp != 0.0f && e.freq != 0.0f)
+                ? e.amp * std::sin(kTwoPi * e.freq * static_cast<float>(now_seconds))
+                : 0.0f;
+            const float scale = e.size * (1.0f + wobble);
+
+            shader.set_vec2("u_screen_center", center);
+            shader.set_float("u_scale", scale);
+            shader.set_float("u_brightness", 1.0f);
+            glBindTexture(GL_TEXTURE_2D, tex->id());
+            glBindVertexArray(mesh.vao);
+            glDrawElements(GL_TRIANGLES, mesh.index_count, GL_UNSIGNED_INT, nullptr);
+        }
+    }
+
+    if (gl_state_active) {
+        glBindVertexArray(0);
+        glEnable(GL_CULL_FACE);
+        glDepthMask(GL_TRUE);
+        glEnable(GL_DEPTH_TEST);
+        glDisable(GL_BLEND);
+    }
 }
 
 LensFlarePass::WedgeMesh& LensFlarePass::ensure_wedge_mesh(int n) {
