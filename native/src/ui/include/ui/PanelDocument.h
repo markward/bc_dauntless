@@ -63,6 +63,12 @@ public:
     /// pass through to whatever's behind it.
     void set_visible(bool visible);
 
+    /// Write the panel document's screen-pixel rect to the out params.
+    /// (x, y) is the top-left corner; (w, h) is the panel's outer size.
+    /// Returns false if the panel isn't loaded yet (writes zeros).
+    bool bounds(float* out_x, float* out_y,
+                float* out_w, float* out_h) const noexcept;
+
 private:
     Rml::ElementDocument* doc_       = nullptr;
     Rml::Element*         root_       = nullptr;

@@ -722,6 +722,18 @@ PYBIND11_MODULE(_open_stbc_host, m) {
         return p ? p->root_element_id() : 0;
     });
 
+    m.def("panel_bounds", [](int panel_id) -> py::tuple {
+        if (!g_ui_system) return py::make_tuple(0.0f, 0.0f, 0.0f, 0.0f);
+        auto* p = g_ui_system->get_panel(panel_id);
+        if (!p) return py::make_tuple(0.0f, 0.0f, 0.0f, 0.0f);
+        float x = 0.0f, y = 0.0f, w = 0.0f, h = 0.0f;
+        p->bounds(&x, &y, &w, &h);
+        return py::make_tuple(x, y, w, h);
+    },
+    "Return (x, y, w, h) screen-pixel rect of the panel.  (x, y) is "
+    "top-left, (w, h) is outer size.  Returns (0,0,0,0) if the panel "
+    "doesn't exist or hasn't been laid out yet.");
+
     m.def("set_panel_css_var",
           [](int panel_id, const std::string& name, const std::string& value) {
               if (!g_ui_system) return;

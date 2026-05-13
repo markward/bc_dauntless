@@ -219,6 +219,23 @@ void PanelDocument::set_css_var(const std::string& name, const std::string& valu
     doc_->SetProperty(name.c_str(), value.c_str());
 }
 
+bool PanelDocument::bounds(float* out_x, float* out_y,
+                           float* out_w, float* out_h) const noexcept {
+    if (!out_x || !out_y || !out_w || !out_h) return false;
+    *out_x = 0.0f; *out_y = 0.0f; *out_w = 0.0f; *out_h = 0.0f;
+    if (!doc_) return false;
+    // RmlUi: GetAbsoluteOffset returns the document's top-left in screen
+    // pixels.  GetClientWidth/Height returns the inner content box size.
+    // For a fixed-positioned panel sized in vw/vh, these are the screen
+    // rect the cursor compares against.
+    Rml::Vector2f offset = doc_->GetAbsoluteOffset(Rml::BoxArea::Border);
+    *out_x = offset.x;
+    *out_y = offset.y;
+    *out_w = doc_->GetClientWidth();
+    *out_h = doc_->GetClientHeight();
+    return true;
+}
+
 void PanelDocument::clear() {
     if (!root_) return;
     while (root_->GetNumChildren() > 0) {
