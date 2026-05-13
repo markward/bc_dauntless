@@ -45,11 +45,12 @@ def test_subsystem_buttons_render_for_each_ship(fake_dom):
     for wrapper in wrappers:
         children_container = fake_dom.children(wrapper)[1]
         button_ids = fake_dom.children(children_container)
-        # Galaxy hardpoint registers 7 subsystem-bearing templates: hull,
-        # sensors, impulse, warp, phaser, torpedo, tractor (no pulse).
-        # Pass 3 of SetupProperties scrubs slots the hardpoint never claimed,
-        # so the button count equals the hardpoint contribution exactly.
-        assert len(button_ids) == 7
+        # Galaxy hardpoint registers 10 subsystem-bearing templates: hull,
+        # shield, sensors, power, repair, impulse, warp, phaser, torpedo,
+        # tractor (no pulse). Pass 3 of SetupProperties scrubs slots the
+        # hardpoint never claimed, so the button count equals the hardpoint
+        # contribution exactly.
+        assert len(button_ids) == 10
 
 
 def test_subsystem_click_routes_to_set_target_subsystem(fake_dom):

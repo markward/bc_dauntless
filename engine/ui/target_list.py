@@ -12,7 +12,10 @@ from engine.ui.panel import UiPanel
 
 _SUBSYSTEM_GETTERS = (
     ("Hull",                "GetHull"),
+    ("Shield Generator",    "GetShieldSubsystem"),
     ("Sensor Subsystem",    "GetSensorSubsystem"),
+    ("Power Plant",         "GetPowerSubsystem"),
+    ("Engineering",         "GetRepairSubsystem"),
     ("Impulse Engines",     "GetImpulseEngineSubsystem"),
     ("Warp Engines",        "GetWarpEngineSubsystem"),
     ("Phaser System",       "GetPhaserSystem"),
