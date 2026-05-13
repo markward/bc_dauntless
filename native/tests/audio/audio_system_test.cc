@@ -53,4 +53,39 @@ TEST(AudioSystem, LoadGetPlayStop) {
     EXPECT_TRUE(saw_listener);
 }
 
+TEST(AudioSystem, UpdatePushesAttachedNodePosition) {
+    using namespace open_stbc::audio;
+    auto backend = std::make_unique<NullBackend>();
+    NullBackend* raw = backend.get();
+    AudioSystem sys(std::move(backend));
+    ASSERT_TRUE(sys.init());
+
+    auto wav = tiny_wav();
+    ASSERT_TRUE(sys.load_sound("sfx/test.wav", "Engine",
+                               wav.data(), wav.size(), /*positional*/ true));
+
+    // Stub node-position resolver: node 42 lives at (5, 6, 7).
+    sys.set_node_position_fn([](NodeId nid, float& x, float& y, float& z) {
+        if (nid == 42u) { x = 5.f; y = 6.f; z = 7.f; return true; }
+        return false;
+    });
+
+    PlayingId pid = sys.play_sound("Engine", /*looping*/ true, /*gain*/ 1.0f,
+                                   Category::SFX, /*attach_node*/ 42u,
+                                   /*pos_provided*/ false, 0.f, 0.f, 0.f);
+    ASSERT_NE(pid, 0u);
+
+    raw->clear_command_log();
+    sys.update(0.f,0.f,0.f, 0.f,0.f,-1.f, 0.f,1.f,0.f, 0.016f);
+
+    bool saw_set_position_at_node = false;
+    for (const auto& c : raw->command_log()) {
+        if (c.op == "set_position" &&
+            c.f[0] == 5.f && c.f[1] == 6.f && c.f[2] == 7.f) {
+            saw_set_position_at_node = true;
+        }
+    }
+    EXPECT_TRUE(saw_set_position_at_node);
+}
+
 }  // namespace
