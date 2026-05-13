@@ -88,13 +88,34 @@ void SunPass::render(const std::vector<SunDescriptor>& suns,
     }
     glBindVertexArray(sphere->vao());
 
+    // Suns in BC sit tens of km from the origin (e.g. 63km), but BC's
+    // captured frustum has far=5000. Match that by remapping each sun
+    // along its camera-direction to sit just inside the far plane,
+    // shrinking the radius by the same factor so the angular size is
+    // preserved.
+    const float virtual_distance = camera.far * 0.95f;
+    // Visual fudge factors: our procedural sun under-reads the BC look —
+    // BC's compiled engine appears to render a substantially larger
+    // visible disc than GetRadius() alone implies. Tuned empirically.
+    constexpr float kBodyVisualScale   = 2.0f;
+    constexpr float kCoronaVisualScale = 2.0f;
+
     for (const auto& s : suns) {
         assets::Texture* tex = ensure_texture(s.base_texture_path);
         if (!tex) continue;
 
-        // Body: opaque sphere scaled to radius, translated to world position
-        glm::mat4 model = glm::translate(glm::mat4(1.0f), s.position)
-                        * glm::scale(glm::mat4(1.0f), glm::vec3(s.radius));
+        const glm::vec3 cam_to_sun = s.position - camera.eye;
+        const float true_distance = glm::length(cam_to_sun);
+        if (true_distance < 1e-3f) continue;
+        const float scale_factor = virtual_distance / true_distance;
+        const glm::vec3 virtual_pos =
+            camera.eye + (cam_to_sun / true_distance) * virtual_distance;
+        const float virtual_radius = s.radius        * scale_factor * kBodyVisualScale;
+        const float virtual_corona = s.corona_radius * scale_factor * kCoronaVisualScale;
+
+        // Body: opaque sphere scaled to virtual_radius at virtual_pos
+        glm::mat4 model = glm::translate(glm::mat4(1.0f), virtual_pos)
+                        * glm::scale(glm::mat4(1.0f), glm::vec3(virtual_radius));
         shader.set_mat4("u_model", model);
         shader.set_int("u_corona", 0);
         glActiveTexture(GL_TEXTURE0);
@@ -106,13 +127,13 @@ void SunPass::render(const std::vector<SunDescriptor>& suns,
 
         // Corona: additive semi-transparent shell — depth writes off so the
         // halo doesn't occlude opaque geometry behind it.
-        if (s.corona_radius > s.radius) {
+        if (virtual_corona > virtual_radius) {
             glEnable(GL_BLEND);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE);
             glDepthMask(GL_FALSE);
             glm::mat4 corona_model =
-                glm::translate(glm::mat4(1.0f), s.position)
-                * glm::scale(glm::mat4(1.0f), glm::vec3(s.corona_radius));
+                glm::translate(glm::mat4(1.0f), virtual_pos)
+                * glm::scale(glm::mat4(1.0f), glm::vec3(virtual_corona));
             shader.set_mat4("u_model", corona_model);
             shader.set_int("u_corona", 1);
             glDrawElements(GL_TRIANGLES,

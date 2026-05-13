@@ -86,8 +86,20 @@ void LensFlarePass::render(const std::vector<LensFlareDescriptor>& flares,
         gl_state_active = true;
     };
 
+    // Remap the source position to sit just inside the far plane along
+    // the camera-to-source ray. Matches SunPass so the flare projects
+    // from the same screen position as the rendered sun disc and the
+    // depth-buffer occlusion sample lands on it correctly.
+    const float virtual_distance = camera.far * 0.95f;
+
     for (const auto& f : flares) {
-        const glm::vec4 clip = vp * glm::vec4(f.source_world_pos, 1.0f);
+        const glm::vec3 cam_to_src = f.source_world_pos - camera.eye;
+        const float true_distance = glm::length(cam_to_src);
+        if (true_distance < 1e-3f) continue;
+        const glm::vec3 virtual_src =
+            camera.eye + (cam_to_src / true_distance) * virtual_distance;
+
+        const glm::vec4 clip = vp * glm::vec4(virtual_src, 1.0f);
         if (clip.w <= 0.0f) continue;
         const glm::vec3 ndc = glm::vec3(clip) / clip.w;
         if (std::abs(ndc.x) > 1.2f || std::abs(ndc.y) > 1.2f) continue;

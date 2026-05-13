@@ -1384,7 +1384,7 @@ def run(mission_name: str = SHIP_GATE_MISSION,
                 target = (0.0, 0.0, 0.0)
                 up_vec = (0.0, 1.0, 0.0)
             r.set_camera(eye=eye, target=target, up=up_vec,
-                         fov_y_rad=1.0472, near=1.0, far=2_000_000.0)
+                         fov_y_rad=1.0472, near=1.0, far=5000.0)
 
             bridge_hud.set_visible(view_mode.is_bridge)
 
