@@ -42,6 +42,12 @@ public:
     /// the camera-zoom path unchanged.
     void add_scroll_y(double dy) noexcept;
 
+    /// Write the most recently observed cursor position (in screen pixels)
+    /// to *out_x, *out_y.  Updated by GLFW's cursor-position callback.
+    /// Before the first cursor event, returns the initial cursor pos
+    /// queried from GLFW.
+    void cursor_pos(double* out_x, double* out_y) const noexcept;
+
     /// Return the accumulated mouse cursor delta since the last call (in
     /// pixels) and reset the accumulator. Updated from the GLFW cursor
     /// callback during poll_events(). Deltas accumulate even when the

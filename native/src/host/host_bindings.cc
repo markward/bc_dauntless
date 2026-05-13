@@ -595,6 +595,19 @@ PYBIND11_MODULE(_open_stbc_host, m) {
           "Return (dx, dy) accumulated cursor motion in pixels since the last call. "
           "Reset on each call. GLFW raw mode while cursor is locked.");
 
+    m.def("cursor_pos",
+          []() {
+              if (!g_window) {
+                  throw std::runtime_error("cursor_pos: init must be called first");
+              }
+              double x = 0.0, y = 0.0;
+              g_window->cursor_pos(&x, &y);
+              return std::make_tuple(x, y);
+          },
+          "Return (x, y) cursor position in screen pixels.  Updated by "
+          "GLFW cursor callbacks; returns the most recent value.  Origin "
+          "is top-left of the window.");
+
     m.def("set_cursor_locked",
           [](bool locked) {
               if (!g_window) {

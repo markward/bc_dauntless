@@ -158,6 +158,23 @@ void Window::add_scroll_y(double dy) noexcept {
     scroll_y_accum_ += dy;
 }
 
+void Window::cursor_pos(double* out_x, double* out_y) const noexcept {
+    if (!out_x || !out_y) return;
+    if (cursor_seeded_) {
+        *out_x = last_cursor_x_;
+        *out_y = last_cursor_y_;
+        return;
+    }
+    // No callback has fired yet (window just created, cursor outside
+    // viewport).  Query GLFW directly so callers don't see NaN/garbage.
+    if (handle_) {
+        glfwGetCursorPos(handle_, out_x, out_y);
+    } else {
+        *out_x = 0.0;
+        *out_y = 0.0;
+    }
+}
+
 void Window::consume_mouse_delta(double* dx, double* dy) noexcept {
     *dx = mouse_dx_accum_;
     *dy = mouse_dy_accum_;

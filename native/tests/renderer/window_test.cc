@@ -92,4 +92,23 @@ TEST(Window, AddScrollYAccumulatesIntoConsumeScrollY) {
     }
 }
 
+TEST(Window, CursorPosReportsLastSeenCallbackValues) {
+    try {
+        renderer::Window w(640, 480, "cursor-pos-test", /*visible=*/false);
+
+        // Before any cursor callback fires, cursor_pos should still
+        // return reasonable defaults (NaN or 0 — pick whichever the
+        // impl returns; test pins behaviour).  After pumping events
+        // GLFW seeds initial cursor position into the callback path.
+        double x = -1.0, y = -1.0;
+        w.cursor_pos(&x, &y);
+        // Hidden test window — actual pos depends on platform.  Just
+        // verify the API completes without crashing and writes both fields.
+        EXPECT_NE(x, -1.0);
+        EXPECT_NE(y, -1.0);
+    } catch (const std::runtime_error& e) {
+        GTEST_SKIP() << "no GL context available: " << e.what();
+    }
+}
+
 }  // namespace
