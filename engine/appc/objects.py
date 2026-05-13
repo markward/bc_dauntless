@@ -86,6 +86,13 @@ class ObjectClass(TGEventHandlerObject):
     def SetTranslate(self, point: TGPoint3) -> None:
         self._position = TGPoint3(point.x, point.y, point.z)
 
+    def SetWorldLocation(self, pos) -> None:
+        """Accept a (x, y, z) tuple or a TGPoint3 and set the world position."""
+        if hasattr(pos, 'x'):
+            self._position = TGPoint3(float(pos.x), float(pos.y), float(pos.z))
+        else:
+            self._position = TGPoint3(float(pos[0]), float(pos[1]), float(pos[2]))
+
     def GetTranslate(self) -> TGPoint3:
         return TGPoint3(self._position.x, self._position.y, self._position.z)
 
