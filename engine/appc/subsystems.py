@@ -324,6 +324,35 @@ class TractorBeamSystem(WeaponSystem):
         return self.IsFiring()
 
 
+class PhaserBank(WeaponSystem):
+    """Individual phaser emitter.  Hangs under a parent PhaserSystem
+    (WeaponSystemProperty WST_PHASER).  SDK App.py: EnergyWeapon subclass.
+
+    Fields are inherited from WeaponSystem; per-bank specialisation is
+    added when SDK callers prove they need it.
+    """
+    pass
+
+
+class PulseWeapon(WeaponSystem):
+    """Individual pulse-weapon emitter under a parent PulseWeaponSystem
+    (WeaponSystemProperty WST_PULSE)."""
+    pass
+
+
+class TractorBeam(WeaponSystem):
+    """Individual tractor-beam emitter under a parent TractorBeamSystem
+    (WeaponSystemProperty WST_TRACTOR)."""
+    pass
+
+
+class TorpedoTube(WeaponSystem):
+    """Individual launcher under a parent TorpedoSystem.  Ammo tracking
+    lives on the parent's slot table (SDK-compatible: SetAmmoType(slot, type)
+    indexes by integer, not by tube reference)."""
+    pass
+
+
 class HullSubsystem(ShipSubsystem):
     """Live hull state.  Hull isn't a powered subsystem — it just tracks
     condition (max + current) so damage logic can read GetMaxCondition()."""
