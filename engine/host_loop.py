@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
 
 from engine import renderer as r
-from engine.scale import SHIP_SCALE, ASTRO_SCALE, PLANET_NIF_NATIVE_RADIUS
 from engine.appc.ship_iter import iter_set_objects as _iter_set_objects, iter_ships as _iter_ships
 
 import math as _math
@@ -673,43 +672,19 @@ def _iter_suns() -> Iterable:
 
 
 def _aggregate_suns() -> list:
-    """Collect sun render descriptors with ASTRO_SCALE applied to position and radii."""
+    """Collect sun render descriptors in BC native world units."""
     from engine.appc.planet import aggregate_suns_for_renderer
     import App
-    raw = aggregate_suns_for_renderer(
+    return aggregate_suns_for_renderer(
         PROJECT_ROOT, list(App.g_kSetManager._sets.values()))
-    return [
-        {
-            "position": (
-                d["position"][0] * ASTRO_SCALE,
-                d["position"][1] * ASTRO_SCALE,
-                d["position"][2] * ASTRO_SCALE,
-            ),
-            "radius":            d["radius"]        * ASTRO_SCALE,
-            "base_texture_path": d["base_texture_path"],
-            "corona_radius":     d["corona_radius"] * ASTRO_SCALE,
-        }
-        for d in raw
-    ]
 
 
 def _aggregate_lens_flares() -> list:
-    """Collect lens-flare descriptors with ASTRO_SCALE applied to source pos."""
+    """Collect lens-flare descriptors in BC native world units."""
     from engine.appc.lens_flare import aggregate_lens_flares_for_renderer
     import App
-    raw = aggregate_lens_flares_for_renderer(
+    return aggregate_lens_flares_for_renderer(
         PROJECT_ROOT, list(App.g_kSetManager._sets.values()))
-    return [
-        {
-            "source_world_pos": (
-                f["source_world_pos"][0] * ASTRO_SCALE,
-                f["source_world_pos"][1] * ASTRO_SCALE,
-                f["source_world_pos"][2] * ASTRO_SCALE,
-            ),
-            "elements": f["elements"],
-        }
-        for f in raw
-    ]
 
 
 def _planet_nif_path(planet, *, verbose: bool = False) -> Optional[str]:
@@ -1331,9 +1306,8 @@ def run(mission_name: str = SHIP_GATE_MISSION,
             # impact the bubble at a surface point; firing at the ship
             # center would put the hit too far inside the bubble for the
             # distance falloff to ever exceed zero on the visible shell.
-            # Offset along the ship's forward axis by ~30 world units —
-            # near the bubble surface for typical SHIP_SCALE=0.1 ships
-            # whose NIF half-extent is in the 200-400 range.
+            # Offset along the ship's forward axis by ~1.5 × the ship's
+            # GetRadius() so the hit lands near the bubble surface.
             if (_h is not None
                     and _h.key_pressed(_h.keys.KEY_F10)
                     and player is not None
@@ -1347,7 +1321,7 @@ def run(mission_name: str = SHIP_GATE_MISSION,
                         fx, fy, fz = float(fwd.x), float(fwd.y), float(fwd.z)
                     except Exception:
                         fx, fy, fz = 1.0, 0.0, 0.0
-                    offset = 30.0
+                    offset = 1.5 * player.GetRadius()
                     fire_debug_hit(_h, instance_id=iid,
                                    world_point=(wp.x + fx * offset,
                                                 wp.y + fy * offset,
@@ -1386,7 +1360,8 @@ def run(mission_name: str = SHIP_GATE_MISSION,
 
             # Camera: orbit + zoom around the player ship (or origin fallback).
             if fixed_camera:
-                eye = (0.0, 0.0, 1500.0 * SHIP_SCALE)
+                fixed_radius = player.GetRadius() if player is not None else 1.0
+                eye = (0.0, 0.0, CAM_MAX_RADII * fixed_radius)
                 target = (0.0, 0.0, 0.0)
                 up_vec = (0.0, 1.0, 0.0)
             elif player is not None:
