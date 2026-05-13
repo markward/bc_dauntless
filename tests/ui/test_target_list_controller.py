@@ -63,7 +63,7 @@ def test_controller_adds_row_when_ship_published(fake_dom, install_game):
     ship_lifecycle.publish_added(s)
     root = fake_dom.panel_root(panel.panel_id)
     body_id = fake_dom.children(root)[-1]
-    wrappers = fake_dom.children(body_id)
+    wrappers = fake_dom.children(fake_dom.children(body_id)[0])
     assert len(wrappers) == 1
     assert "bc-collapsible" in fake_dom.element(wrappers[0]).classes
 
@@ -77,7 +77,7 @@ def test_controller_removes_row_when_ship_destroyed(fake_dom, install_game):
     ship_lifecycle.publish_destroyed(s)
     root = fake_dom.panel_root(panel.panel_id)
     body_id = fake_dom.children(root)[-1]
-    assert fake_dom.children(body_id) == []
+    assert fake_dom.children(fake_dom.children(body_id)[0]) == []
 
 
 def test_controller_excludes_player(fake_dom, install_game):
@@ -90,7 +90,7 @@ def test_controller_excludes_player(fake_dom, install_game):
     ship_lifecycle.publish_added(galaxy1)
     root = fake_dom.panel_root(panel.panel_id)
     body_id = fake_dom.children(root)[-1]
-    wrappers = fake_dom.children(body_id)
+    wrappers = fake_dom.children(fake_dom.children(body_id)[0])
     assert len(wrappers) == 1
     title_id = fake_dom.children(fake_dom.children(wrappers[0])[0])[1]
     assert fake_dom.element(title_id).text == "Galaxy 1"
@@ -106,7 +106,7 @@ def test_controller_assigns_affiliation_class(fake_dom, install_game):
     ship_lifecycle.publish_added(_make_ship("U"))
     root = fake_dom.panel_root(panel.panel_id)
     body_id = fake_dom.children(root)[-1]
-    wrappers = fake_dom.children(body_id)
+    wrappers = fake_dom.children(fake_dom.children(body_id)[0])
     headers = [fake_dom.children(w)[0] for w in wrappers]
     classes_per_header = [fake_dom.element(h).classes for h in headers]
     found = set()
@@ -126,7 +126,7 @@ def test_controller_routes_row_click_to_set_target(fake_dom, install_game):
     ship_lifecycle.publish_added(enemy)
     root = fake_dom.panel_root(panel.panel_id)
     body_id = fake_dom.children(root)[-1]
-    wrapper = fake_dom.children(body_id)[0]
+    wrapper = fake_dom.children(fake_dom.children(body_id)[0])[0]
     header = fake_dom.children(wrapper)[0]
     title_id = fake_dom.children(header)[1]
     fake_dom.fire_click(title_id)
@@ -146,7 +146,7 @@ def test_controller_does_not_render_subsystems_in_stage_1(fake_dom, install_game
     ship_lifecycle.publish_added(ship)
     root = fake_dom.panel_root(panel.panel_id)
     body_id = fake_dom.children(root)[-1]
-    wrapper = fake_dom.children(body_id)[0]
+    wrapper = fake_dom.children(fake_dom.children(body_id)[0])[0]
     children_container = fake_dom.children(wrapper)[1]
     assert fake_dom.children(children_container) == []
 
@@ -181,7 +181,7 @@ def test_rebuild_from_snapshot_filters_player_added_before_player_provider_resol
     ctrl.rebuild_from_snapshot()
     root = fake_dom.panel_root(panel.panel_id)
     body_id = fake_dom.children(root)[-1]
-    wrappers = fake_dom.children(body_id)
+    wrappers = fake_dom.children(fake_dom.children(body_id)[0])
     title_ids = [fake_dom.children(fake_dom.children(w)[0])[1] for w in wrappers]
     titles = [fake_dom.element(t).text for t in title_ids]
     assert titles == ["Galaxy 1"]

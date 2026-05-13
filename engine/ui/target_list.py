@@ -8,6 +8,7 @@ from typing import Callable, Optional
 
 from engine.appc import ship_lifecycle
 from engine.ui import bindings
+from engine.ui.collapsible import UiCollapsibleList
 from engine.ui.panel import UiPanel
 
 
@@ -103,6 +104,15 @@ class TargetListController:
         # the current rebuild.  Used to flip set_selected on the previous
         # and new widgets without a full rebuild on every click.
         self._widget_by_target: dict[int, object] = {}
+        # Scroll wrapper inside the panel body.  All top-level ship rows
+        # attach here, NOT directly to panel.root.  margin-top is applied
+        # to the wrapper so the body's layout box stays put and its
+        # overflow:hidden clips rows that scroll above the body's top.
+        self._wrapper_id = bindings.append_div(panel.root, "bc-target-scroll")
+        # Top-level ship rows we own (so we can destroy them on rebuild —
+        # they're NOT in panel._children because we bypass the panel
+        # factory to attach into self._wrapper_id).
+        self._top_widgets: list = []
         self._unsub = ship_lifecycle.subscribe(self._on_event)
         self.rebuild_from_snapshot()
 
@@ -117,17 +127,22 @@ class TargetListController:
 
     def _apply_scroll_offset(self) -> None:
         """Push the current scroll offset as a negative margin-top on the
-        panel body element.  No-op if the renderer backend doesn't expose
-        set_element_property (older builds)."""
+        scroll wrapper inside the panel body.  Body has overflow:hidden so
+        rows shifted above its top get clipped.  No-op if the renderer
+        backend doesn't expose set_element_property (older builds)."""
         try:
             bindings.set_element_property(
-                self._panel.root, "margin-top",
+                self._wrapper_id, "margin-top",
                 f"-{self._scroll_pixels:.1f}dp")
         except AttributeError:
             pass  # older backend without set_element_property
 
     def rebuild_from_snapshot(self) -> None:
-        self._panel.clear()
+        # Tear down our wrapper subtree (panel.clear doesn't know about it
+        # because the wrapper sits outside panel._children).
+        for w in self._top_widgets:
+            w.destroy()
+        self._top_widgets.clear()
         self._widget_by_target.clear()
         # Filter out the player.  Sort by name for a stable, user-meaningful
         # order across rebuilds (snapshot() returns a set).
@@ -138,12 +153,14 @@ class TargetListController:
         )
         for ship in non_player:
             self._add_row_for_target(ship)
-        # Re-apply scroll offset after re-creating the body — the new body
-        # element has its own SetProperty state, starting at 0.
         self._apply_scroll_offset()
 
     def destroy(self) -> None:
         self._unsub()
+        for w in self._top_widgets:
+            w.destroy()
+        self._top_widgets.clear()
+        bindings.remove_element(self._wrapper_id)
         self._panel.clear()
 
     def _on_event(self, event: str, ship) -> None:
@@ -152,7 +169,10 @@ class TargetListController:
     def _add_row_for_target(self, ship) -> None:
         affiliation = _ship_affiliation(ship)
         ship_name = ship.GetName()
-        row = self._panel.collapsible(
+        # Attach to our scroll wrapper (NOT panel.root) so margin-top scroll
+        # affects only our rows and the body can clip them.
+        row = UiCollapsibleList(
+            parent_element=self._wrapper_id,
             label=ship_name,
             affiliation=affiliation,
             expanded=ship_name in self._expanded_ships,
@@ -160,6 +180,7 @@ class TargetListController:
             on_click=lambda s=ship: self._select(s),
             on_toggle=lambda exp, n=ship_name: self._track_ship_expanded(n, exp),
         )
+        self._top_widgets.append(row)
         self._widget_by_target[id(ship)] = row
         if not self._show_subsystems:
             return

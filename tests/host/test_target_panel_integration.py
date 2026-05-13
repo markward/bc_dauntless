@@ -27,7 +27,7 @@ def _reset_hub():
 def _row_titles(fake_dom, panel) -> list[str]:
     root = fake_dom.panel_root(panel.panel_id)
     body_id = fake_dom.children(root)[-1]
-    wrappers = fake_dom.children(body_id)
+    wrappers = fake_dom.children(fake_dom.children(body_id)[0])
     titles = []
     for w in wrappers:
         header = fake_dom.children(w)[0]
@@ -71,7 +71,7 @@ def test_m2objects_affiliations(fake_dom):
     root = fake_dom.panel_root(panel.panel_id)
     body_id = fake_dom.children(root)[-1]
     title_to_aff = {}
-    for wrapper in fake_dom.children(body_id):
+    for wrapper in fake_dom.children(fake_dom.children(body_id)[0]):
         header = fake_dom.children(wrapper)[0]
         title_id = fake_dom.children(header)[1]
         title = fake_dom.element(title_id).text

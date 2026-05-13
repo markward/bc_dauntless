@@ -49,7 +49,7 @@ class _Ship:
 def _ship_titles(fake_dom, panel) -> list[str]:
     root = fake_dom.panel_root(panel.panel_id)
     body_id = fake_dom.children(root)[-1]
-    wrappers = fake_dom.children(body_id)
+    wrappers = fake_dom.children(fake_dom.children(body_id)[0])
     titles = []
     for w in wrappers:
         header = fake_dom.children(w)[0]
@@ -59,9 +59,14 @@ def _ship_titles(fake_dom, panel) -> list[str]:
 
 
 def _body_margin_top(fake_dom, panel) -> str | None:
+    """Scroll offset is applied as margin-top on the bc-target-scroll
+    wrapper (first child of the panel body), NOT on the body itself.
+    This keeps the body's layout box fixed so its overflow:hidden can
+    clip rows scrolled above the body's top edge into the header area."""
     root = fake_dom.panel_root(panel.panel_id)
     body_id = fake_dom.children(root)[-1]
-    el = fake_dom.element(body_id)
+    wrapper_id = fake_dom.children(body_id)[0]
+    el = fake_dom.element(wrapper_id)
     return getattr(el, "_props", {}).get("margin-top")
 
 

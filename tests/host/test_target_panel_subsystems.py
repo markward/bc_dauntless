@@ -39,7 +39,7 @@ def test_subsystem_buttons_render_for_each_ship(fake_dom):
 
     root = fake_dom.panel_root(panel.panel_id)
     body_id = fake_dom.children(root)[-1]
-    wrappers = fake_dom.children(body_id)
+    wrappers = fake_dom.children(fake_dom.children(body_id)[0])
     assert len(wrappers) == 2
 
     for wrapper in wrappers:
@@ -83,7 +83,7 @@ def test_subsystem_click_routes_to_set_target_subsystem(fake_dom):
 
     root = fake_dom.panel_root(panel.panel_id)
     body_id = fake_dom.children(root)[-1]
-    first_wrapper = fake_dom.children(body_id)[0]
+    first_wrapper = fake_dom.children(fake_dom.children(body_id)[0])[0]
     children_container = fake_dom.children(first_wrapper)[1]
     first_button_id = fake_dom.children(children_container)[0]
     # UiButton is a single div whose on_click handler IS the click target —

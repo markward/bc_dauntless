@@ -78,7 +78,7 @@ def test_parent_with_children_renders_as_nested_collapsible(fake_dom):
 
     root = fake_dom.panel_root(panel.panel_id)
     body_id = fake_dom.children(root)[-1]
-    ship_wrapper = fake_dom.children(body_id)[0]
+    ship_wrapper = fake_dom.children(fake_dom.children(body_id)[0])[0]
     ship_children_container = fake_dom.children(ship_wrapper)[1]
 
     # The ship row's body should contain a nested collapsible (the
@@ -114,7 +114,7 @@ def test_click_on_child_subsystem_button_routes_to_set_target(fake_dom):
 
     root = fake_dom.panel_root(panel.panel_id)
     body_id = fake_dom.children(root)[-1]
-    ship_wrapper = fake_dom.children(body_id)[0]
+    ship_wrapper = fake_dom.children(fake_dom.children(body_id)[0])[0]
     ship_children_container = fake_dom.children(ship_wrapper)[1]
     nested_wrapper = fake_dom.children(ship_children_container)[0]
     nested_children_container = fake_dom.children(nested_wrapper)[1]

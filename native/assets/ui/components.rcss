@@ -84,6 +84,18 @@ body {
 
 .bc-panel-body {
     display: block;
+    /* Clip child content (TargetListController inserts a scroll wrapper
+       inside the body whose negative margin-top would otherwise bleed
+       above the body's top edge into the header / panel padding). */
+    overflow: hidden;
+}
+
+/* Scroll wrapper used by TargetListController.  Apply -margin-top here
+   instead of on .bc-panel-body so the body's layout box stays put —
+   only the wrapper's contents shift, and .bc-panel-body's overflow
+   clips anything above the body's top. */
+.bc-target-scroll {
+    display: block;
 }
 
 /* ── Stat row (read-only label/value pair) ──────────────────────────────── */
