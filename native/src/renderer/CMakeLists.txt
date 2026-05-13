@@ -35,6 +35,7 @@ add_library(renderer STATIC
     shield_state.cc
     skin_shield.cc
     shield_pass.cc
+    lens_flare_pass.cc
 )
 target_include_directories(renderer
     PUBLIC include
