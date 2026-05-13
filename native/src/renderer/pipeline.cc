@@ -13,6 +13,8 @@
 #include "embedded_dust_fs.h"
 #include "embedded_shield_vs.h"
 #include "embedded_shield_fs.h"
+#include "embedded_lens_flare_vs.h"
+#include "embedded_lens_flare_fs.h"
 
 namespace renderer {
 
@@ -22,6 +24,7 @@ Pipeline::Pipeline() {
     sun_ = std::make_unique<Shader>(shader_src::sun_vs, shader_src::sun_fs);
     dust_ = std::make_unique<Shader>(shader_src::dust_vs, shader_src::dust_fs);
     shield_ = std::make_unique<Shader>(shader_src::shield_vs, shader_src::shield_fs);
+    lens_flare_ = std::make_unique<Shader>(shader_src::lens_flare_vs, shader_src::lens_flare_fs);
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
     glEnable(GL_CULL_FACE);
