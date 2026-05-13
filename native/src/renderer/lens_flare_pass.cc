@@ -18,6 +18,11 @@ namespace renderer {
 
 constexpr float kTwoPi = 6.28318530717958647692f;
 
+// SDK size values (0.001..0.4 typical) are calibrated for BC's original
+// projection/viewport; in our renderer they read about 3× too small.
+// Applied at render time so the aggregator stays a faithful SDK pass-through.
+constexpr float kSizeCalibration = 3.0f;
+
 NgonMeshData build_ngon_mesh(int wedges) {
     if (wedges < 3)  wedges = 3;
     if (wedges > 64) wedges = 64;
@@ -117,7 +122,7 @@ void LensFlarePass::render(const std::vector<LensFlareDescriptor>& flares,
             const float wobble = (e.amp != 0.0f && e.freq != 0.0f)
                 ? e.amp * std::sin(kTwoPi * e.freq * static_cast<float>(now_seconds))
                 : 0.0f;
-            const float scale = e.size * (1.0f + wobble);
+            const float scale = e.size * kSizeCalibration * (1.0f + wobble);
 
             shader.set_vec2("u_screen_center", center);
             shader.set_float("u_scale", scale);
