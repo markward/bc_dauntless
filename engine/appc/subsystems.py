@@ -521,6 +521,24 @@ class ShieldSubsystem(PoweredSubsystem):
         return amt - cur
 
 
+class PowerSubsystem(ShipSubsystem):
+    """Power plant — drives the ship's energy budget.
+
+    Inherits ShipSubsystem (not PoweredSubsystem) to match SDK
+    App.py:5710 where PowerSubsystem inherits ShipSubsystem directly.
+    It generates power rather than consuming it.
+    """
+    pass
+
+
+class RepairSubsystem(PoweredSubsystem):
+    """Engineering / damage-control subsystem.  SDK App.py:6639 has
+    RepairSubsystem(PoweredSubsystem) with internal repair-allocation
+    state; Phase 1 ships only need the slot + property back-ref so the
+    targets panel reflects the hardpoint."""
+    pass
+
+
 # ── Module-level WarpEngineSubsystem helpers ─────────────────────────────────
 # SDK callers (WarpSequence.py:95-282) reach for a class-level / engine-default
 # warp effect time when sequencing the warp begin / end / flash actions:
