@@ -14,15 +14,15 @@
 
 ## File Map
 
-**Create:**
+**Create:** Per-library layout follows the project convention (`include/<libname>/` for public headers, `src/` for sources). Tests live under `native/tests/audio/` as GTest cases registered via `gtest_discover_tests`.
 - `native/src/audio/CMakeLists.txt` — audio library target
-- `native/src/audio/audio_backend.h` — `IAudioBackend` interface
-- `native/src/audio/wav.h`, `native/src/audio/wav.cc` — PCM WAV decoder
-- `native/src/audio/null_backend.h`, `native/src/audio/null_backend.cc` — recording backend
-- `native/src/audio/openal_backend.h`, `native/src/audio/openal_backend.cc` — OpenAL Soft backend
-- `native/src/audio/audio_system.h`, `native/src/audio/audio_system.cc` — facade + handle registries
-- `native/src/audio/python_binding.cc` — pybind11 submodule `_open_stbc_host.audio`
-- `native/src/audio/tests/test_wav.cc` — WAV decoder unit test (Catch2 or gtest — match what's already in `native/`; if neither, plain `int main` returning nonzero on fail)
+- `native/src/audio/include/audio/audio_backend.h` — `IAudioBackend` interface
+- `native/src/audio/include/audio/wav.h`, `native/src/audio/src/wav.cc` — PCM WAV decoder
+- `native/src/audio/include/audio/null_backend.h`, `native/src/audio/src/null_backend.cc` — recording backend
+- `native/src/audio/include/audio/openal_backend.h`, `native/src/audio/src/openal_backend.cc` — OpenAL Soft backend
+- `native/src/audio/include/audio/audio_system.h`, `native/src/audio/src/audio_system.cc` — facade + handle registries
+- `native/src/audio/include/audio/python_binding.h`, `native/src/audio/src/python_binding.cc` — pybind11 submodule `_open_stbc_host.audio`
+- `native/tests/audio/CMakeLists.txt`, `native/tests/audio/wav_test.cc`, `native/tests/audio/null_backend_test.cc`, `native/tests/audio/audio_system_test.cc` — GTest cases for the C++ side (registered via `gtest_discover_tests`)
 - `engine/audio/__init__.py` — empty package marker
 - `engine/audio/tg_sound.py` — `TGSound` / `TGSoundManager` / `TGSoundAction`
 - `engine/audio/alert_audio.py` — alert-level listener
@@ -248,58 +248,63 @@ missing and continue. Unit-tested via synthesized in-memory WAV.
 ## Task 2: IAudioBackend interface + NullBackend
 
 **Files:**
-- Create: `native/src/audio/audio_backend.h`, `native/src/audio/null_backend.h`, `native/src/audio/null_backend.cc`, `native/src/audio/tests/test_null_backend.cc`
-- Modify: `native/src/audio/CMakeLists.txt`
+- Create: `native/src/audio/include/audio/audio_backend.h`, `native/src/audio/include/audio/null_backend.h`, `native/src/audio/src/null_backend.cc`, `native/tests/audio/null_backend_test.cc`
+- Modify: `native/src/audio/CMakeLists.txt`, `native/tests/audio/CMakeLists.txt`
+
+Convention reminder (established in Task 1): public headers under `include/audio/`, sources under `src/`, tests under `native/tests/audio/` as GTest cases registered via `gtest_discover_tests`. The audio library target is `open_stbc_audio`; the test executable is `audio_tests`.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `native/src/audio/tests/test_null_backend.cc`:
+Create `native/tests/audio/null_backend_test.cc`:
 
 ```cpp
-#include "audio/null_backend.h"
-#include <cassert>
-#include <string>
+#include <gtest/gtest.h>
+#include <audio/null_backend.h>
+#include <cstdint>
 #include <vector>
 
-using namespace open_stbc::audio;
+namespace {
 
-int main() {
-    NullBackend b;
+TEST(NullBackend, RecordsLifecycleAndPlayback) {
+    open_stbc::audio::NullBackend b;
     b.init();
 
-    PcmDesc desc{1, 16, 22050};
+    open_stbc::audio::PcmDesc desc{1, 16, 22050};
     std::vector<uint8_t> pcm = {0, 0, 1, 0};
-    BufferHandle buf = b.create_buffer(desc, pcm.data(), pcm.size());
-    assert(buf != 0);
+    auto buf = b.create_buffer(desc, pcm.data(), pcm.size());
+    ASSERT_NE(buf, 0u);
 
-    SourceHandle s = b.play(buf, true /*looping*/, 1.0f /*gain*/, Category::SFX,
-                            true /*positional*/, 0.0f, 0.0f, 0.0f);
-    assert(s != 0);
+    auto s = b.play(buf, /*looping*/ true, /*gain*/ 1.0f,
+                    open_stbc::audio::Category::SFX,
+                    /*positional*/ true, 0.0f, 0.0f, 0.0f);
+    ASSERT_NE(s, 0u);
     b.set_position(s, 10.0f, 0.0f, 0.0f);
     b.stop(s);
 
     const auto& log = b.command_log();
-    assert(log.size() == 4);
-    assert(log[0].op == "init");
-    assert(log[1].op == "create_buffer");
-    assert(log[2].op == "play");
-    assert(log[3].op == "stop");
-    return 0;
+    ASSERT_EQ(log.size(), 5u);
+    EXPECT_EQ(log[0].op, "init");
+    EXPECT_EQ(log[1].op, "create_buffer");
+    EXPECT_EQ(log[2].op, "play");
+    EXPECT_EQ(log[3].op, "set_position");
+    EXPECT_EQ(log[4].op, "stop");
 }
+
+}  // namespace
 ```
 
-- [ ] **Step 2: Add test target**
+- [ ] **Step 2: Wire the test source and library source**
 
 Append to `native/src/audio/CMakeLists.txt`:
 
 ```cmake
-target_sources(open_stbc_audio PRIVATE null_backend.cc)
+target_sources(open_stbc_audio PRIVATE src/null_backend.cc)
+```
 
-if(OPEN_STBC_BUILD_TESTS)
-    add_executable(test_null_backend tests/test_null_backend.cc)
-    target_link_libraries(test_null_backend PRIVATE open_stbc_audio)
-    add_test(NAME test_null_backend COMMAND test_null_backend)
-endif()
+Append to `native/tests/audio/CMakeLists.txt` — add the new test source to the existing `audio_tests` executable:
+
+```cmake
+target_sources(audio_tests PRIVATE null_backend_test.cc)
 ```
 
 - [ ] **Step 3: Run to verify failure**
@@ -308,11 +313,11 @@ endif()
 cmake --build build -j 2>&1 | tail -10
 ```
 
-Expected: build fails — `audio_backend.h` and `null_backend.h` missing.
+Expected: build fails — `audio/audio_backend.h` and `audio/null_backend.h` missing.
 
 - [ ] **Step 4: Implement the interface and null backend**
 
-Create `native/src/audio/audio_backend.h`:
+Create `native/src/audio/include/audio/audio_backend.h`:
 
 ```cpp
 #pragma once
@@ -364,14 +369,14 @@ public:
     virtual bool source_finished(SourceHandle) = 0;
 };
 
-}
+}  // namespace open_stbc::audio
 ```
 
-Create `native/src/audio/null_backend.h`:
+Create `native/src/audio/include/audio/null_backend.h`:
 
 ```cpp
 #pragma once
-#include "audio/audio_backend.h"
+#include <audio/audio_backend.h>
 #include <string>
 #include <vector>
 #include <variant>
@@ -413,13 +418,13 @@ private:
     std::vector<LoggedCall> log_;
 };
 
-}
+}  // namespace open_stbc::audio
 ```
 
-Create `native/src/audio/null_backend.cc`:
+Create `native/src/audio/src/null_backend.cc`:
 
 ```cpp
-#include "audio/null_backend.h"
+#include <audio/null_backend.h>
 
 namespace open_stbc::audio {
 
@@ -489,24 +494,26 @@ void NullBackend::set_category_gain(Category cat, float g) {
 
 bool NullBackend::source_finished(SourceHandle) { return false; }
 
-}
+}  // namespace open_stbc::audio
 ```
 
 - [ ] **Step 5: Run to verify passes**
 
 ```bash
-cmake --build build -j && ctest --test-dir build --output-on-failure -R "test_wav|test_null_backend"
+cmake --build build -j && ctest --test-dir build --output-on-failure -R "Wav\.|NullBackend\."
 ```
 
-Expected: both tests pass.
+Expected: both `Wav.DecodesMono16` and `NullBackend.RecordsLifecycleAndPlayback` pass.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add native/src/audio/audio_backend.h \
-        native/src/audio/null_backend.h native/src/audio/null_backend.cc \
+git add native/src/audio/include/audio/audio_backend.h \
+        native/src/audio/include/audio/null_backend.h \
+        native/src/audio/src/null_backend.cc \
         native/src/audio/CMakeLists.txt \
-        native/src/audio/tests/test_null_backend.cc
+        native/tests/audio/null_backend_test.cc \
+        native/tests/audio/CMakeLists.txt
 git commit -m "feat(audio): IAudioBackend interface + recording NullBackend
 
 NullBackend records every call into a vector so tests can assert on
@@ -519,86 +526,86 @@ the command stream without opening an audio device.
 ## Task 3: AudioSystem facade
 
 **Files:**
-- Create: `native/src/audio/audio_system.h`, `native/src/audio/audio_system.cc`, `native/src/audio/tests/test_audio_system.cc`
-- Modify: `native/src/audio/CMakeLists.txt`
+- Create: `native/src/audio/include/audio/audio_system.h`, `native/src/audio/src/audio_system.cc`, `native/tests/audio/audio_system_test.cc`
+- Modify: `native/src/audio/CMakeLists.txt`, `native/tests/audio/CMakeLists.txt`
 
-`AudioSystem` owns the chosen backend, the name→buffer registry, and live source bookkeeping. Per-frame `update()` pushes positions for attached sources.
+`AudioSystem` owns the chosen backend, the name→buffer registry, and live source bookkeeping. Per-frame `update()` pushes positions for attached sources. Same per-library layout as Tasks 1 and 2.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `native/src/audio/tests/test_audio_system.cc`:
+Create `native/tests/audio/audio_system_test.cc`:
 
 ```cpp
-#include "audio/audio_system.h"
-#include "audio/null_backend.h"
-#include "audio/wav.h"
-#include <cassert>
+#include <gtest/gtest.h>
+#include <audio/audio_system.h>
+#include <audio/null_backend.h>
+#include <cstdint>
 #include <cstring>
 #include <memory>
 #include <vector>
 
-using namespace open_stbc::audio;
+namespace {
 
-static std::vector<uint8_t> tiny_wav() {
+std::vector<uint8_t> tiny_wav() {
     std::vector<uint8_t> b;
-    auto p32=[&](uint32_t v){for(int i=0;i<4;i++)b.push_back((v>>(i*8))&0xff);};
-    auto p16=[&](uint16_t v){for(int i=0;i<2;i++)b.push_back((v>>(i*8))&0xff);};
-    auto pn =[&](const char*s,size_t n){for(size_t i=0;i<n;i++)b.push_back((uint8_t)s[i]);};
+    auto p32=[&](uint32_t v){for(int i=0;i<4;i++)b.push_back(static_cast<uint8_t>((v>>(i*8))&0xff));};
+    auto p16=[&](uint16_t v){for(int i=0;i<2;i++)b.push_back(static_cast<uint8_t>((v>>(i*8))&0xff));};
+    auto pn =[&](const char*s,size_t n){for(size_t i=0;i<n;i++)b.push_back(static_cast<uint8_t>(s[i]));};
     pn("RIFF",4); p32(36+4); pn("WAVE",4);
     pn("fmt ",4); p32(16); p16(1); p16(1); p32(22050); p32(44100); p16(2); p16(16);
     pn("data",4); p32(4); p16(0); p16(0);
     return b;
 }
 
-int main() {
+TEST(AudioSystem, LoadGetPlayStop) {
+    using namespace open_stbc::audio;
     auto backend = std::make_unique<NullBackend>();
     NullBackend* raw = backend.get();
     AudioSystem sys(std::move(backend));
-    sys.init();
+    ASSERT_TRUE(sys.init());
 
     auto wav = tiny_wav();
-    bool loaded = sys.load_sound("sfx/test.wav", "TestSound", wav.data(), wav.size(),
-                                 /*positional*/ true);
-    assert(loaded);
+    ASSERT_TRUE(sys.load_sound("sfx/test.wav", "TestSound",
+                               wav.data(), wav.size(), /*positional*/ true));
 
     SoundId id = sys.get_sound("TestSound");
-    assert(id != 0);
-    assert(sys.get_sound("NotThere") == 0);
+    EXPECT_NE(id, 0u);
+    EXPECT_EQ(sys.get_sound("NotThere"), 0u);
 
     PlayingId pid = sys.play_sound("TestSound", /*looping*/ true, /*gain*/ 0.8f,
                                    Category::SFX, /*attach_node*/ 0,
-                                   /*pos provided*/ true, 1.f, 2.f, 3.f);
-    assert(pid != 0);
+                                   /*pos_provided*/ true, 1.f, 2.f, 3.f);
+    ASSERT_NE(pid, 0u);
 
-    // update() with no attached node shouldn't touch position.
     sys.update(0.f,0.f,0.f, 0.f,0.f,-1.f, 0.f,1.f,0.f, 0.016f);
-
     sys.stop(pid);
 
-    const auto& log = raw->command_log();
     bool saw_play=false, saw_stop=false, saw_listener=false;
-    for (auto& c : log) {
+    for (const auto& c : raw->command_log()) {
         if (c.op == "play") saw_play = true;
         if (c.op == "stop") saw_stop = true;
         if (c.op == "set_listener") saw_listener = true;
     }
-    assert(saw_play); assert(saw_stop); assert(saw_listener);
-    return 0;
+    EXPECT_TRUE(saw_play);
+    EXPECT_TRUE(saw_stop);
+    EXPECT_TRUE(saw_listener);
 }
+
+}  // namespace
 ```
 
-- [ ] **Step 2: Add test target**
+- [ ] **Step 2: Wire the new sources**
 
 Append to `native/src/audio/CMakeLists.txt`:
 
 ```cmake
-target_sources(open_stbc_audio PRIVATE audio_system.cc)
+target_sources(open_stbc_audio PRIVATE src/audio_system.cc)
+```
 
-if(OPEN_STBC_BUILD_TESTS)
-    add_executable(test_audio_system tests/test_audio_system.cc)
-    target_link_libraries(test_audio_system PRIVATE open_stbc_audio)
-    add_test(NAME test_audio_system COMMAND test_audio_system)
-endif()
+Append to `native/tests/audio/CMakeLists.txt`:
+
+```cmake
+target_sources(audio_tests PRIVATE audio_system_test.cc)
 ```
 
 - [ ] **Step 3: Run to verify failure**
@@ -607,15 +614,15 @@ endif()
 cmake --build build -j 2>&1 | tail -10
 ```
 
-Expected: build error, `audio_system.h` missing.
+Expected: build error, `audio/audio_system.h` missing.
 
 - [ ] **Step 4: Implement AudioSystem**
 
-Create `native/src/audio/audio_system.h`:
+Create `native/src/audio/include/audio/audio_system.h`:
 
 ```cpp
 #pragma once
-#include "audio/audio_backend.h"
+#include <audio/audio_backend.h>
 #include <functional>
 #include <memory>
 #include <string>
@@ -691,14 +698,14 @@ private:
     NodePositionFn node_pos_fn_;
 };
 
-}
+}  // namespace open_stbc::audio
 ```
 
-Create `native/src/audio/audio_system.cc`:
+Create `native/src/audio/src/audio_system.cc`:
 
 ```cpp
-#include "audio/audio_system.h"
-#include "audio/wav.h"
+#include <audio/audio_system.h>
+#include <audio/wav.h>
 
 namespace open_stbc::audio {
 
@@ -814,23 +821,25 @@ void AudioSystem::update(float lx, float ly, float lz,
     }
 }
 
-}
+}  // namespace open_stbc::audio
 ```
 
 - [ ] **Step 5: Run to verify passes**
 
 ```bash
-cmake --build build -j && ctest --test-dir build --output-on-failure -R test_audio_system
+cmake --build build -j && ctest --test-dir build --output-on-failure -R "AudioSystem\."
 ```
 
-Expected: pass.
+Expected: `AudioSystem.LoadGetPlayStop` passes.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add native/src/audio/audio_system.h native/src/audio/audio_system.cc \
+git add native/src/audio/include/audio/audio_system.h \
+        native/src/audio/src/audio_system.cc \
         native/src/audio/CMakeLists.txt \
-        native/src/audio/tests/test_audio_system.cc
+        native/tests/audio/audio_system_test.cc \
+        native/tests/audio/CMakeLists.txt
 git commit -m "feat(audio): AudioSystem facade owning backend + handle registries
 
 Issues opaque SoundId/PlayingId handles to callers, maps named sounds
@@ -844,7 +853,7 @@ an injected NodePositionFn callback.
 ## Task 4: pybind11 binding — `_open_stbc_host.audio` submodule
 
 **Files:**
-- Create: `native/src/audio/python_binding.h`, `native/src/audio/python_binding.cc`
+- Create: `native/src/audio/include/audio/python_binding.h`, `native/src/audio/src/python_binding.cc`
 - Modify: `native/src/audio/CMakeLists.txt`, `native/src/host/host_bindings.cc`, `native/src/host/CMakeLists.txt`
 
 - [ ] **Step 1: Write the failing test**
@@ -900,7 +909,7 @@ Expected: `assert hasattr(_open_stbc_host, "audio")` fails — submodule not reg
 
 - [ ] **Step 3: Implement the binding**
 
-Create `native/src/audio/python_binding.h`:
+Create `native/src/audio/include/audio/python_binding.h`:
 
 ```cpp
 #pragma once
@@ -913,16 +922,16 @@ void register_python_bindings(pybind11::module_& parent);
 // Test/host accessor — the singleton AudioSystem after init().
 class AudioSystem;
 AudioSystem* system();
-}
+}  // namespace open_stbc::audio
 ```
 
-Create `native/src/audio/python_binding.cc`:
+Create `native/src/audio/src/python_binding.cc`:
 
 ```cpp
-#include "audio/python_binding.h"
-#include "audio/audio_system.h"
-#include "audio/null_backend.h"
-#include "audio/openal_backend.h"   // forward-declared; real impl lands in Task 5
+#include <audio/python_binding.h>
+#include <audio/audio_system.h>
+#include <audio/null_backend.h>
+#include <audio/openal_backend.h>   // forward-declared; real impl lands in Task 5
 #include <pybind11/stl.h>
 #include <memory>
 #include <optional>
@@ -1073,41 +1082,41 @@ void register_python_bindings(py::module_& parent) {
 Append to `native/src/audio/CMakeLists.txt`:
 
 ```cmake
-target_sources(open_stbc_audio PRIVATE python_binding.cc)
+target_sources(open_stbc_audio PRIVATE src/python_binding.cc)
 target_link_libraries(open_stbc_audio PUBLIC pybind11::headers)
 ```
 
-Add a temporary stub for `openal_backend.h` so the binding compiles before Task 5. Create `native/src/audio/openal_backend.h`:
+Add a temporary stub for `openal_backend.h` so the binding compiles before Task 5. Create `native/src/audio/include/audio/openal_backend.h`:
 
 ```cpp
 #pragma once
-#include "audio/audio_backend.h"
+#include <audio/audio_backend.h>
 #include <memory>
 namespace open_stbc::audio {
 // Returns nullptr if OpenAL is unavailable or stubbed (replaced in Task 5).
 std::unique_ptr<IAudioBackend> make_openal_backend();
-}
+}  // namespace open_stbc::audio
 ```
 
-Create `native/src/audio/openal_backend.cc` (stub):
+Create `native/src/audio/src/openal_backend.cc` (stub):
 
 ```cpp
-#include "audio/openal_backend.h"
+#include <audio/openal_backend.h>
 namespace open_stbc::audio {
 std::unique_ptr<IAudioBackend> make_openal_backend() { return nullptr; }
-}
+}  // namespace open_stbc::audio
 ```
 
 Add it to `native/src/audio/CMakeLists.txt`:
 
 ```cmake
-target_sources(open_stbc_audio PRIVATE openal_backend.cc)
+target_sources(open_stbc_audio PRIVATE src/openal_backend.cc)
 ```
 
-Modify `native/src/host/host_bindings.cc` at line 274 — add inside the existing `PYBIND11_MODULE` block, right after the existing `keys` submodule registration around line 575:
+Modify `native/src/host/host_bindings.cc` — add inside the existing `PYBIND11_MODULE` block, right after the existing `keys` submodule registration:
 
 ```cpp
-#include "audio/python_binding.h"
+#include <audio/python_binding.h>
 // ...
 PYBIND11_MODULE(_open_stbc_host, m) {
     // ... existing entries ...
@@ -1133,8 +1142,10 @@ Expected: build succeeds; both tests pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add native/src/audio/python_binding.h native/src/audio/python_binding.cc \
-        native/src/audio/openal_backend.h native/src/audio/openal_backend.cc \
+git add native/src/audio/include/audio/python_binding.h \
+        native/src/audio/src/python_binding.cc \
+        native/src/audio/include/audio/openal_backend.h \
+        native/src/audio/src/openal_backend.cc \
         native/src/audio/CMakeLists.txt \
         native/src/host/host_bindings.cc native/src/host/CMakeLists.txt \
         tests/audio/test_binding.py
@@ -1150,7 +1161,7 @@ stubbed; the binding defaults to null and tests drive the command log.
 ## Task 5: OpenAL Soft backend (real audio output)
 
 **Files:**
-- Modify: `native/CMakeLists.txt` (FetchContent OpenAL Soft), `native/src/audio/CMakeLists.txt` (link al), `native/src/audio/openal_backend.cc` (replace stub), add `native/src/audio/openal_backend_impl.h` if helpful.
+- Modify: `native/CMakeLists.txt` (FetchContent OpenAL Soft), `native/src/audio/CMakeLists.txt` (link al), `native/src/audio/src/openal_backend.cc` (replace stub from Task 4).
 - No new tests — this backend is exercised by the end-to-end gameplay test in Task 11 and by running `./build/open_stbc` manually.
 
 - [ ] **Step 1: Add OpenAL Soft via FetchContent**
@@ -1182,10 +1193,10 @@ target_include_directories(open_stbc_audio PUBLIC
 
 - [ ] **Step 2: Replace the stub `openal_backend.cc`**
 
-Overwrite `native/src/audio/openal_backend.cc`:
+Overwrite `native/src/audio/src/openal_backend.cc`:
 
 ```cpp
-#include "audio/openal_backend.h"
+#include <audio/openal_backend.h>
 #include <AL/al.h>
 #include <AL/alc.h>
 #include <cstdio>
@@ -1334,14 +1345,14 @@ private:
     float category_gain_[3] = {1.f, 1.f, 1.f};
 };
 
-}
+}  // namespace
 
 std::unique_ptr<IAudioBackend> make_openal_backend() {
     auto b = std::make_unique<OpenALBackend>();
     return b;
 }
 
-}
+}  // namespace open_stbc::audio
 ```
 
 - [ ] **Step 3: Build and run an end-to-end smoke**
@@ -1357,7 +1368,7 @@ Expected: builds, prior tests still pass (binding tests use `backend="null"` so 
 
 ```bash
 git add native/CMakeLists.txt native/src/audio/CMakeLists.txt \
-        native/src/audio/openal_backend.cc
+        native/src/audio/src/openal_backend.cc
 git commit -m "feat(audio): OpenAL Soft backend
 
 Real audio output. Static link from openal-soft 1.23.1 via FetchContent.
