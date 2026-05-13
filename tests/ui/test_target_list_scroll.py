@@ -59,15 +59,16 @@ def _ship_titles(fake_dom, panel) -> list[str]:
 
 
 def _body_margin_top(fake_dom, panel) -> str | None:
-    """Scroll offset is applied as margin-top on the bc-target-scroll
-    wrapper (first child of the panel body), NOT on the body itself.
-    This keeps the body's layout box fixed so its overflow:hidden can
-    clip rows scrolled above the body's top edge into the header area."""
+    """Scroll offset is applied as transform: translateY on the
+    bc-target-scroll wrapper (first child of the panel body), NOT on
+    the body itself.  Keeps body's layout box fixed so its overflow:hidden
+    clips rows scrolled above the body's top edge.  Margin-top was tried
+    first but RmlUi didn't reliably clip negative-margin children."""
     root = fake_dom.panel_root(panel.panel_id)
     body_id = fake_dom.children(root)[-1]
     wrapper_id = fake_dom.children(body_id)[0]
     el = fake_dom.element(wrapper_id)
-    return getattr(el, "_props", {}).get("margin-top")
+    return getattr(el, "_props", {}).get("transform")
 
 
 def test_initial_scroll_pixels_is_zero(fake_dom):
@@ -89,16 +90,16 @@ def test_scroll_down_increases_pixels_by_one_row_per_notch(fake_dom):
     assert ctrl._scroll_pixels == 3 * _ROW_HEIGHT_DP
 
 
-def test_scroll_applies_negative_margin_top_on_panel_body(fake_dom):
+def test_scroll_applies_negative_translate_on_scroll_wrapper(fake_dom):
     for n in ("A", "B"):
         ship_lifecycle.publish_added(_Ship(n))
     panel = UiPanel(id="t", title="T")
     ctrl = TargetListController(panel, player_provider=lambda: None)
 
     ctrl.scroll(2)
-    margin = _body_margin_top(fake_dom, panel)
-    expected = f"-{2 * _ROW_HEIGHT_DP:.1f}dp"
-    assert margin == expected
+    transform = _body_margin_top(fake_dom, panel)
+    expected = f"translateY(-{2 * _ROW_HEIGHT_DP:.1f}dp)"
+    assert transform == expected
 
 
 def test_scroll_up_clamps_at_zero(fake_dom):
@@ -153,5 +154,5 @@ def test_ship_added_event_preserves_scroll_state(fake_dom):
     ship_lifecycle.publish_added(_Ship("D"))  # triggers rebuild
     assert ctrl._scroll_pixels == before
     assert _ship_titles(fake_dom, panel) == ["A", "B", "C", "D"]
-    # Margin-top still applied after rebuild.
-    assert _body_margin_top(fake_dom, panel) == f"-{before:.1f}dp"
+    # Transform still applied after rebuild.
+    assert _body_margin_top(fake_dom, panel) == f"translateY(-{before:.1f}dp)"

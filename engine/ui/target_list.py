@@ -126,14 +126,16 @@ class TargetListController:
         self._apply_scroll_offset()
 
     def _apply_scroll_offset(self) -> None:
-        """Push the current scroll offset as a negative margin-top on the
-        scroll wrapper inside the panel body.  Body has overflow:hidden so
-        rows shifted above its top get clipped.  No-op if the renderer
-        backend doesn't expose set_element_property (older builds)."""
+        """Translate the scroll wrapper upward by the current pixel offset.
+        Uses transform instead of margin-top because RmlUi's overflow:hidden
+        on the body element doesn't reliably clip negative-margin children
+        (rows bled into the panel padding area above the header).  Transform
+        keeps the wrapper's layout box in place and only shifts its render,
+        which body's overflow:hidden then clips correctly."""
         try:
             bindings.set_element_property(
-                self._wrapper_id, "margin-top",
-                f"-{self._scroll_pixels:.1f}dp")
+                self._wrapper_id, "transform",
+                f"translateY(-{self._scroll_pixels:.1f}dp)")
         except AttributeError:
             pass  # older backend without set_element_property
 
