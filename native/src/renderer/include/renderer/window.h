@@ -37,6 +37,11 @@ public:
     /// scroll callback during poll_events().
     double consume_scroll_y() noexcept;
 
+    /// Add `dy` to the internal scroll accumulator.  Used by UiSystem
+    /// to re-emit scroll deltas that RmlUi declined to consume — keeps
+    /// the camera-zoom path unchanged.
+    void add_scroll_y(double dy) noexcept;
+
     /// Return the accumulated mouse cursor delta since the last call (in
     /// pixels) and reset the accumulator. Updated from the GLFW cursor
     /// callback during poll_events(). Deltas accumulate even when the

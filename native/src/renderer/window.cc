@@ -158,6 +158,10 @@ double Window::consume_scroll_y() noexcept {
     return v;
 }
 
+void Window::add_scroll_y(double dy) noexcept {
+    scroll_y_accum_ += dy;
+}
+
 void Window::consume_mouse_delta(double* dx, double* dy) noexcept {
     *dx = mouse_dx_accum_;
     *dy = mouse_dy_accum_;

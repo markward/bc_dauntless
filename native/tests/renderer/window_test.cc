@@ -74,4 +74,22 @@ TEST(Window, MoveAssignDoesNotLeak) {
     }
 }
 
+TEST(Window, AddScrollYAccumulatesIntoConsumeScrollY) {
+    try {
+        renderer::Window w(640, 480, "add-scroll-test", /*visible=*/false);
+
+        // No scroll yet — accumulator starts at 0.
+        EXPECT_DOUBLE_EQ(w.consume_scroll_y(), 0.0);
+
+        w.add_scroll_y(1.5);
+        w.add_scroll_y(-0.5);
+        // Cumulative read drains.
+        EXPECT_DOUBLE_EQ(w.consume_scroll_y(), 1.0);
+        // Second read is zero (consume drained the accumulator).
+        EXPECT_DOUBLE_EQ(w.consume_scroll_y(), 0.0);
+    } catch (const std::runtime_error& e) {
+        GTEST_SKIP() << "no GL context available: " << e.what();
+    }
+}
+
 }  // namespace
