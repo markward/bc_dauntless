@@ -164,6 +164,11 @@ CAM_MAX_RADII  = 30.0
 # downward on screen (because target shifts upward in world). Expressed
 # as multiples of ship radius so framing is scale-invariant across ships.
 CAM_LOOK_UP_RADII = 0.20
+# Target-lock only: lift the chase eye along world-Z by this multiple
+# of the player ship's GetRadius(), in addition to the line-extension
+# placement. Pushes the ship lower in frame when the camera sits on
+# the target→ship line (where there is otherwise no vertical offset).
+CAM_TARGET_LOCK_LIFT_RADII = 1.0
 
 
 class _PlayerControl:
@@ -390,10 +395,11 @@ class _CameraControl:
         user zoom that has occurred since the last reset."""
         radius = max(radius, 1e-6)
         prev_default = getattr(self, "default_distance", None)
-        self.default_distance = _math.sqrt(CAM_BACK_RADII**2 + CAM_UP_RADII**2) * radius
-        self.distance_min     = CAM_MIN_RADII * radius
-        self.distance_max     = CAM_MAX_RADII * radius
-        self.look_up_offset   = CAM_LOOK_UP_RADII * radius
+        self.default_distance    = _math.sqrt(CAM_BACK_RADII**2 + CAM_UP_RADII**2) * radius
+        self.distance_min        = CAM_MIN_RADII * radius
+        self.distance_max        = CAM_MAX_RADII * radius
+        self.look_up_offset      = CAM_LOOK_UP_RADII * radius
+        self.target_lock_z_lift  = CAM_TARGET_LOCK_LIFT_RADII * radius
         if prev_default is None or getattr(self, "distance", prev_default) == prev_default:
             self.distance = self.default_distance
 
@@ -1238,12 +1244,17 @@ def _compute_camera(view_mode, cam_control, *, player, dt) -> tuple:
     same shape r.set_camera consumes.
 
     Target lock: in exterior mode, if cam_control.target_lock_enabled is
-    True and the player has a non-self target via GetTarget(), set the
-    look-at to the target's world location shifted DOWN along image-up
-    by cam_control.target_lock_bias × |eye→target|. The shift moves the
-    optical centre below the target, so the target itself projects into
-    the upper portion of the frame (away from the player, which sits
-    low). bias ≈ sin(angular offset), so 0.15 ≈ 9° (~30% above centre
+    True and the player has a non-self target via GetTarget(), the eye is
+    rebuilt in a frame aligned with the ship→target axis. The chase
+    distance (|eye - ship|) and the vertical lift (component along
+    up_vec) from the body-frame chase camera are preserved; any sideways
+    body-frame offset is folded into the chase distance. The result: as
+    the target orbits around the ship, the camera smoothly orbits in the
+    opposite direction, always keeping the ship between camera and
+    target with a constant zoom and lift. Look-at is then placed on the
+    target, shifted DOWN along image-up by cam_control.target_lock_bias
+    × |eye→target| so the target projects into the upper portion of the
+    frame. bias ≈ sin(angular offset), so 0.15 ≈ 9° (~30% above centre
     in a 60° vertical FOV). C toggles the lock flag.
     """
     loc = player.GetWorldLocation()
@@ -1261,6 +1272,11 @@ def _compute_camera(view_mode, cam_control, *, player, dt) -> tuple:
         if tgt is not None and tgt is not player:
             try:
                 tloc = tgt.GetWorldLocation()
+                eye, up_vec = _relocate_eye_for_target_lock(
+                    eye, up_vec, loc, tloc)
+                z_lift = getattr(cam_control, "target_lock_z_lift", 0.0)
+                if z_lift != 0.0:
+                    eye = (eye[0], eye[1], eye[2] + z_lift)
                 bias = getattr(cam_control, "target_lock_bias", 0.15)
                 dx = tloc.x - eye[0]
                 dy = tloc.y - eye[1]
@@ -1275,6 +1291,62 @@ def _compute_camera(view_mode, cam_control, *, player, dt) -> tuple:
             except AttributeError:
                 pass
     return eye, target, up_vec
+
+
+def _relocate_eye_for_target_lock(eye, up_vec, ship_loc, target_loc):
+    """Place the eye on the line target→ship extended past the ship.
+
+    Direction b_hat = (ship - target) / |ship - target| points from the
+    target through the ship and out the far side. The camera sits at
+    ship + b_hat × |original eye - ship|, so camera, ship, and target
+    are exactly collinear with the ship between camera and target. The
+    chase distance (|eye - ship|) is preserved so zoom carries over.
+
+    up_vec is reprojected perpendicular to b_hat so the camera up stays
+    orthogonal to the view axis. Falls back to world-Z, then world-X,
+    when the original up_vec is parallel to the view axis (looking
+    straight up/down at the target).
+
+    Degenerate case: target ≈ ship — return inputs unchanged.
+    """
+    bx = ship_loc.x - target_loc.x
+    by = ship_loc.y - target_loc.y
+    bz = ship_loc.z - target_loc.z
+    bm = _math.sqrt(bx*bx + by*by + bz*bz)
+    if bm < 1e-6:
+        return eye, up_vec
+    bx, by, bz = bx/bm, by/bm, bz/bm
+
+    ex = eye[0] - ship_loc.x
+    ey = eye[1] - ship_loc.y
+    ez = eye[2] - ship_loc.z
+    chase_dist = _math.sqrt(ex*ex + ey*ey + ez*ez)
+
+    new_eye = (
+        ship_loc.x + bx * chase_dist,
+        ship_loc.y + by * chase_dist,
+        ship_loc.z + bz * chase_dist,
+    )
+
+    ux, uy, uz = up_vec
+    u_dot_b = ux*bx + uy*by + uz*bz
+    upx = ux - u_dot_b * bx
+    upy = uy - u_dot_b * by
+    upz = uz - u_dot_b * bz
+    upm = _math.sqrt(upx*upx + upy*upy + upz*upz)
+    if upm < 1e-6:
+        upx = -bz * bx
+        upy = -bz * by
+        upz = 1.0 - bz * bz
+        upm = _math.sqrt(upx*upx + upy*upy + upz*upz)
+        if upm < 1e-6:
+            upx = 1.0 - bx * bx
+            upy = -bx * by
+            upz = -bx * bz
+            upm = _math.sqrt(upx*upx + upy*upy + upz*upz)
+            if upm < 1e-6:
+                return new_eye, up_vec
+    return new_eye, (upx/upm, upy/upm, upz/upm)
 
 
 def run(mission_name: str = SHIP_GATE_MISSION,
