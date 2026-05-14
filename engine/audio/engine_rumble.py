@@ -13,6 +13,7 @@ from engine.audio.tg_sound import TGSoundManager
 
 
 _installed = False
+_unsubscribe = None
 _active: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
 
@@ -53,14 +54,17 @@ def _on_ship_event(event: str, ship) -> None:
 
 def install_engine_rumble_listener() -> None:
     """Idempotent install — safe to call from host_loop boot."""
-    global _installed
+    global _installed, _unsubscribe
     if _installed:
         return
-    ship_lifecycle.subscribe(_on_ship_event)
+    _unsubscribe = ship_lifecycle.subscribe(_on_ship_event)
     _installed = True
 
 
 def reset_for_tests() -> None:
-    global _installed
+    global _installed, _unsubscribe
     _installed = False
     _active.clear()
+    if _unsubscribe is not None:
+        _unsubscribe()
+        _unsubscribe = None
