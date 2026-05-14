@@ -11,10 +11,54 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
 
+import os as _os_mod
+
 from engine import renderer as r
 from engine.appc.ship_iter import iter_set_objects as _iter_set_objects, iter_ships as _iter_ships
 
 import math as _math
+
+# ── Audio integration ────────────────────────────────────────────────────────
+try:
+    import _open_stbc_host as _host_mod
+    _audio_mod = _host_mod.audio
+except (ImportError, AttributeError):
+    _audio_mod = None
+
+from engine.audio.alert_audio import AlertAudioListener
+from engine.audio.engine_rumble import install_engine_rumble_listener
+# tg_sound import — no functional need here, but importing eagerly forces the
+# manager singleton to be constructed at host_loop import time so SDK code
+# that imports App and uses App.g_kSoundManager is well-defined from frame 0.
+from engine.audio.tg_sound import TGSoundManager  # noqa: F401
+
+_alert_listener: "AlertAudioListener" = AlertAudioListener()
+
+
+def init_audio() -> None:
+    """Boot the audio subsystem. Null backend if OPEN_STBC_AUDIO=0."""
+    if _audio_mod is None:
+        return
+    backend = "null" if _os_mod.environ.get("OPEN_STBC_AUDIO") == "0" else "openal"
+    _audio_mod.init(backend=backend)
+    install_engine_rumble_listener()
+    _alert_listener.reset()
+
+
+def shutdown_audio() -> None:
+    if _audio_mod is None:
+        return
+    _audio_mod.shutdown()
+
+
+def tick_audio(*, camera_position, camera_forward, camera_up, dt, player) -> None:
+    if _audio_mod is None:
+        return
+    px, py, pz = camera_position
+    fx, fy, fz = camera_forward
+    ux, uy, uz = camera_up
+    _audio_mod.update(px, py, pz, fx, fy, fz, ux, uy, uz, dt)
+    _alert_listener.tick(player)
 
 
 def _extract_ypr(R) -> tuple:
@@ -1364,6 +1408,7 @@ def run(mission_name: str = SHIP_GATE_MISSION,
         loop = GameLoop()
         ticks = 0
         _dust_enabled = True   # mirrors DustPass default
+        init_audio()
         while not r.should_close():
             loop.tick()
 
@@ -1487,6 +1532,19 @@ def run(mission_name: str = SHIP_GATE_MISSION,
             r.set_camera(eye=eye, target=target, up=up_vec,
                          fov_y_rad=1.0472, near=1.0, far=5000.0)
 
+            # Compute audio listener forward from (eye → target).
+            _fx0 = target[0] - eye[0]
+            _fy0 = target[1] - eye[1]
+            _fz0 = target[2] - eye[2]
+            _flen = _math.sqrt(_fx0*_fx0 + _fy0*_fy0 + _fz0*_fz0) or 1.0
+            tick_audio(
+                camera_position=eye,
+                camera_forward=(_fx0/_flen, _fy0/_flen, _fz0/_flen),
+                camera_up=up_vec,
+                dt=TICK_DT,
+                player=player,
+            )
+
             bridge_hud.set_visible(view_mode.is_bridge)
 
             active_set = _resolve_active_set(player)
@@ -1539,6 +1597,7 @@ def run(mission_name: str = SHIP_GATE_MISSION,
             if max_ticks is not None and ticks >= max_ticks:
                 break
 
+        shutdown_audio()
         if controller.session is not None:
             controller.session.teardown(r)
     finally:

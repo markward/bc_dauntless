@@ -1,11 +1,15 @@
 import ast
 import importlib.abc
 import importlib.machinery
+import os
 import re
 import sys
 import types
 import warnings
 from pathlib import Path
+
+# Default audio to the null backend during tests so no device is opened.
+os.environ.setdefault("OPEN_STBC_AUDIO", "0")
 
 PROJECT_ROOT = Path(__file__).parent.parent
 SDK_SCRIPTS = PROJECT_ROOT / "sdk" / "Build" / "scripts"
