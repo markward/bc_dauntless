@@ -294,7 +294,7 @@ class ImpulseEngineProperty(PoweredSubsystemProperty):
         self._engine_sound_name: str = ""
 
     def SetEngineSound(self, name: str) -> None:
-        self._engine_sound_name = name or ""
+        self._engine_sound_name = name
 
     def GetEngineSound(self) -> str:
         return self._engine_sound_name

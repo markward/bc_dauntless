@@ -1,4 +1,4 @@
-"""Phase-1 shim implementation of BC's TGSound / TGSoundManager / TGSoundAction.
+"""Phase-1 shim implementation of BC's TGSound / TGSoundManager.
 
 Delegates to the C++ audio subsystem exposed as _open_stbc_host.audio. Surface
 matches sdk/Build/scripts/App.py wherever LoadTacticalSounds.py, LoadBridge.py,
@@ -159,24 +159,10 @@ class TGSoundManager:
         return None if snd is None else snd.Play()
 
 
-class TGSoundAction:
-    """SDK-style action object: Play() fires the named sound."""
-
-    def __init__(self, name: str) -> None:
-        self._name = name
-
-    def Play(self) -> None:
-        TGSoundManager.instance().PlaySound(self._name)
-
-    def Stop(self): pass
-    def SetName(self, n): self._name = n
-
-
-def TGSoundAction_Create(name: str) -> TGSoundAction:
-    return TGSoundAction(name)
-
-
-# Module-level singleton, exported as App.g_kSoundManager
+# Module-level singleton. App.py imports this name directly, which binds it
+# at App's import time — any future production code path that resets
+# TGSoundManager._instance must also rebind App.g_kSoundManager (see the
+# test helpers below for the pattern).
 g_kSoundManager = TGSoundManager.instance()
 
 
@@ -206,5 +192,7 @@ def shutdown_audio_for_tests() -> None:
     TGSoundManager._instance = None
     global g_kSoundManager
     g_kSoundManager = None
+    # Mirror init_audio_for_tests: push None into App's namespace so the
+    # module-level binding doesn't silently keep a stale manager alive.
     if "App" in sys.modules:
         sys.modules["App"].g_kSoundManager = None

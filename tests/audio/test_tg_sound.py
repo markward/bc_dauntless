@@ -7,9 +7,10 @@ os.environ.setdefault("OPEN_STBC_AUDIO", "0")
 _open_stbc_host = pytest.importorskip("_open_stbc_host")
 
 from engine.audio.tg_sound import (
-    TGSound, TGSoundManager, TGSoundAction, TGSoundAction_Create,
+    TGSound, TGSoundManager,
     init_audio_for_tests, shutdown_audio_for_tests,
 )
+from engine.appc.actions import TGSoundAction, TGSoundAction_Create
 
 
 def _wav(rate, samples):

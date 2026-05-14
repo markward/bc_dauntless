@@ -184,7 +184,8 @@ class TGSoundAction(TGTimedAction):
         return self._sound_name
 
     def Play(self) -> None:
-        # Late import to avoid circular dep at module init.
+        # Late import: tg_sound pulls in the native audio extension; keep this
+        # module light at startup since actions is loaded very early via App.py.
         from engine.audio.tg_sound import TGSoundManager
         TGSoundManager.instance().PlaySound(self._sound_name)
 
