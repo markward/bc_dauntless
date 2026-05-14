@@ -163,7 +163,32 @@ class PowerProperty(SubsystemProperty):
 
 
 class WeaponProperty(SubsystemProperty):
-    pass
+    """Base for every emitter template.  Stores per-emitter mounting axes
+    (Direction = firing forward, Right = side axis) so SetDirection /
+    SetRight from hardpoints land in typed slots rather than the TGObject
+    catch-all (which would silently swallow the value and return a Stub).
+    """
+    def __init__(self, name: str = ""):
+        super().__init__(name)
+        from engine.appc.math import TGPoint3
+        self._direction = TGPoint3(0.0, 1.0, 0.0)
+        self._right     = TGPoint3(1.0, 0.0, 0.0)
+
+    def GetDirection(self):
+        return self._direction
+
+    def SetDirection(self, v) -> None:
+        from engine.appc.math import TGPoint3
+        if isinstance(v, TGPoint3):
+            self._direction = TGPoint3(v.x, v.y, v.z)
+
+    def GetRight(self):
+        return self._right
+
+    def SetRight(self, v) -> None:
+        from engine.appc.math import TGPoint3
+        if isinstance(v, TGPoint3):
+            self._right = TGPoint3(v.x, v.y, v.z)
 
 
 class EnergyWeaponProperty(WeaponProperty):

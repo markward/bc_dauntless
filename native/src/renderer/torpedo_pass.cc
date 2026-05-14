@@ -9,6 +9,7 @@
 #include <glad/glad.h>
 #include <glm/glm.hpp>
 
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 
@@ -31,8 +32,8 @@ constexpr float kQuadCorners[] = {
 //   glow_a=3.0  glow_b=0.3  glow_c=0.6   ⇒ larger soft halo
 //   flares_a=0.7  flares_b=0.4  num_flares=8   ⇒ rotating star
 // We interpret size_a as the renderer half-size in world units; size_b/c
-// (when present) modulate intensity / aspect.  Tunable by feel.
-constexpr float kSizeScale = 1.0f;
+// (when present) modulate intensity / aspect.
+constexpr float kSizeScale = 0.5f;
 
 }  // namespace
 
@@ -68,6 +69,7 @@ assets::Texture* TorpedoPass::ensure_texture(const std::string& path) {
         texture_cache_.emplace(path, std::make_unique<assets::Texture>());
         return nullptr;
     }
+    std::fprintf(stderr, "[torpedo_pass] loaded '%s'\n", path.c_str());
     in.seekg(0, std::ios::end);
     auto size = static_cast<std::size_t>(in.tellg());
     in.seekg(0, std::ios::beg);
@@ -123,7 +125,9 @@ void TorpedoPass::render(const std::vector<TorpedoDescriptor>& torpedoes,
     auto draw_layer = [&](const std::string& path,
                           const glm::vec4& color,
                           float size,
-                          const glm::vec3& world_pos) {
+                          const glm::vec3& world_pos,
+                          float rotation,
+                          float alpha) {
         if (path.empty() || size <= 0.0f) return;
         assets::Texture* tex = ensure_texture(path);
         if (!tex) return;
@@ -131,17 +135,30 @@ void TorpedoPass::render(const std::vector<TorpedoDescriptor>& torpedoes,
         shader.set_vec3 ("u_world_position", world_pos);
         shader.set_float("u_size",           size * kSizeScale);
         shader.set_vec4 ("u_tint",           color);
+        shader.set_float("u_rotation",       rotation);
+        shader.set_float("u_alpha",          alpha);
         glDrawArrays(GL_TRIANGLES, 0, 6);
     };
 
     for (const auto& t : torpedoes) {
+        // Animation: flares spin slowly around billboard centre; glow
+        // pulses subtly in brightness; core stays steady.
+        constexpr float kFlaresSpinRate = 1.2f;   // radians per second
+        constexpr float kGlowPulseRate  = 6.0f;   // radians per second
+        constexpr float kGlowPulseDepth = 0.15f;  // ±15% brightness swing
+        const float flares_rot  = t.age * kFlaresSpinRate;
+        const float glow_alpha  = 1.0f - kGlowPulseDepth
+                                  + kGlowPulseDepth * std::sin(t.age * kGlowPulseRate);
         // Draw order: glow (largest, dimmest), then flares, then core
         // (smallest, brightest) — additive so order is mostly cosmetic.
-        draw_layer(t.glow_texture,   t.glow_color,   t.glow_size_a,   t.world_pos);
-        draw_layer(t.flares_texture, t.flares_color, t.flares_size_a, t.world_pos);
+        draw_layer(t.glow_texture,   t.glow_color,   t.glow_size_a,   t.world_pos,
+                   0.0f, glow_alpha);
+        draw_layer(t.flares_texture, t.flares_color, t.flares_size_a, t.world_pos,
+                   flares_rot, 1.0f);
         // Core size is the product of size_a (~0.2) × size_b (~1.2) = ~0.24.
         draw_layer(t.core_texture,   t.core_color,
-                    t.core_size_a * t.core_size_b, t.world_pos);
+                    t.core_size_a * t.core_size_b, t.world_pos,
+                    0.0f, 1.0f);
     }
 
     glBindVertexArray(0);

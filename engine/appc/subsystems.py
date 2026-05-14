@@ -14,7 +14,52 @@ expected method surface rather than a NamedStub.
 """
 
 from engine.appc.events import TGEventHandlerObject
-from engine.appc.math import TGPoint3
+from engine.appc.math import TGPoint3, TGMatrix3
+
+
+def _resolve_aim_world(ship, target):
+    """Unit vector in world space from ship → target, or ship-forward if no target."""
+    if (ship is not None and target is not None
+            and hasattr(target, "GetWorldLocation")
+            and hasattr(ship, "GetWorldLocation")):
+        ship_pos   = ship.GetWorldLocation()
+        target_pos = target.GetWorldLocation()
+        dx = target_pos.x - ship_pos.x
+        dy = target_pos.y - ship_pos.y
+        dz = target_pos.z - ship_pos.z
+        length = (dx * dx + dy * dy + dz * dz) ** 0.5
+        if length > 1e-6:
+            return TGPoint3(dx / length, dy / length, dz / length)
+    # Fallback: ship's body +Y axis rotated into world.
+    fwd = TGPoint3(0.0, 1.0, 0.0)
+    if ship is not None and hasattr(ship, "GetWorldRotation"):
+        rot = ship.GetWorldRotation()
+        if isinstance(rot, TGMatrix3):
+            fwd.MultMatrixLeft(rot)
+    length = (fwd.x * fwd.x + fwd.y * fwd.y + fwd.z * fwd.z) ** 0.5
+    if length > 1e-6:
+        return TGPoint3(fwd.x / length, fwd.y / length, fwd.z / length)
+    return TGPoint3(0.0, 1.0, 0.0)
+
+
+def _emitter_faces(emitter, ship, aim_world):
+    """True if the emitter's SetDirection rotated to world space points toward aim_world."""
+    if not hasattr(emitter, "GetDirection"):
+        return True
+    try:
+        local = emitter.GetDirection()
+    except Exception:
+        return True
+    if not isinstance(local, TGPoint3):
+        return True
+    world_dir = TGPoint3(local.x, local.y, local.z)
+    if ship is not None and hasattr(ship, "GetWorldRotation"):
+        rot = ship.GetWorldRotation()
+        if isinstance(rot, TGMatrix3):
+            world_dir.MultMatrixLeft(rot)
+    return (world_dir.x * aim_world.x
+          + world_dir.y * aim_world.y
+          + world_dir.z * aim_world.z) > 0.0
 
 
 def _init_energy_weapon_state(self):
@@ -108,6 +153,11 @@ class ShipSubsystem(TGEventHandlerObject):
         self._max_condition = 1.0
         self._radius = 0.0
         self._position = TGPoint3(0.0, 0.0, 0.0)
+        # Body-space mounting axes — defaults match the SDK convention
+        # (firing along +Y, right side along +X).  SetProperty mirrors the
+        # hardpoint values across when a property is bound.
+        self._direction = TGPoint3(0.0, 1.0, 0.0)
+        self._right     = TGPoint3(1.0, 0.0, 0.0)
         # Shared identity fields populated by SetupProperties.
         self._critical: int = 0
         self._targetable: int = 0
@@ -125,6 +175,23 @@ class ShipSubsystem(TGEventHandlerObject):
 
     def SetProperty(self, prop) -> None:
         self._property = prop
+        # Mirror mounting axes + position onto the subsystem so per-emitter
+        # spawn position and direction-gating consult the hardpoint values
+        # rather than falling through to TGObject's stub catch-all.
+        if prop is None:
+            return
+        if hasattr(prop, "GetPosition"):
+            p = prop.GetPosition()
+            if isinstance(p, TGPoint3):
+                self._position = TGPoint3(p.x, p.y, p.z)
+        if hasattr(prop, "GetDirection"):
+            d = prop.GetDirection()
+            if isinstance(d, TGPoint3):
+                self._direction = TGPoint3(d.x, d.y, d.z)
+        if hasattr(prop, "GetRight"):
+            r = prop.GetRight()
+            if isinstance(r, TGPoint3):
+                self._right = TGPoint3(r.x, r.y, r.z)
 
     def IsTypeOf(self, cls) -> int:
         """SDK class-id check. Returns 1 when this subsystem's source
@@ -195,6 +262,20 @@ class ShipSubsystem(TGEventHandlerObject):
 
     def GetPosition(self) -> TGPoint3:
         return self.GetPositionTG()
+
+    def GetDirection(self) -> TGPoint3:
+        return TGPoint3(self._direction.x, self._direction.y, self._direction.z)
+
+    def SetDirection(self, v) -> None:
+        if isinstance(v, TGPoint3):
+            self._direction = TGPoint3(v.x, v.y, v.z)
+
+    def GetRight(self) -> TGPoint3:
+        return TGPoint3(self._right.x, self._right.y, self._right.z)
+
+    def SetRight(self, v) -> None:
+        if isinstance(v, TGPoint3):
+            self._right = TGPoint3(v.x, v.y, v.z)
 
     def GetWorldLocation(self) -> TGPoint3:
         if self._parent_ship is not None:
@@ -310,17 +391,24 @@ class WeaponSystem(PoweredSubsystem):
         self._currently_firing: list = []
 
     def StartFiring(self, target=None, offset=None) -> None:
-        print(f"[FIRE-CHAIN] StartFiring on {type(self).__name__}({self._name}) IsOn={self.IsOn()} n={self.GetNumWeapons()}", flush=True)
         if not self.IsOn():
             return
         n = self.GetNumWeapons()
         if n == 0:
             return
+        # Resolve the aim direction in world space.  If the ship has a
+        # target, point at it; otherwise assume "straight ahead" using
+        # the ship's body +Y axis rotated into world.
+        ship = self.GetParentShip()
+        aim_world = _resolve_aim_world(ship, target)
+
         start = self._next_emitter_index % n
         for delta in range(n):
             idx = (start + delta) % n
             emitter = self.GetWeapon(idx)
             if emitter is None:
+                continue
+            if not _emitter_faces(emitter, ship, aim_world):
                 continue
             if hasattr(emitter, "CanFire") and emitter.CanFire():
                 emitter.Fire(target, offset)
@@ -608,17 +696,13 @@ class TorpedoTube(WeaponSystem):
         """
         parent = self.GetParentSubsystem()
         if parent is None:
-            print(f"[FIRE-CHAIN] _spawn_torpedo: tube={self._name} parent=None", flush=True)
             return
         parent_prop = parent.GetProperty() if hasattr(parent, "GetProperty") else None
         if parent_prop is None or not hasattr(parent_prop, "GetTorpedoScript"):
-            print(f"[FIRE-CHAIN] _spawn_torpedo: tube={self._name} parent_prop={parent_prop} (no GetTorpedoScript)", flush=True)
             return
         script_name = parent_prop.GetTorpedoScript(0)
         if not script_name:
-            print(f"[FIRE-CHAIN] _spawn_torpedo: tube={self._name} no script bound for slot 0", flush=True)
             return
-        print(f"[FIRE-CHAIN] _spawn_torpedo: tube={self._name} script={script_name}", flush=True)
 
         import importlib
         try:
@@ -702,7 +786,12 @@ class TorpedoTube(WeaponSystem):
         return None
 
     def _emitter_world_position(self):
-        """Ship world location + emitter local position rotated into world frame."""
+        """Ship world location + emitter local position scaled and rotated into world frame.
+
+        SDK SetPosition values are normalized to the ship's extent (roughly
+        [-1, +1]).  We scale them by ship.GetRadius() to recover a meaningful
+        world-space offset, then rotate by the ship's world rotation.
+        """
         from engine.appc.math import TGPoint3
         ship = self._climb_to_ship()
         if ship is None:
@@ -716,7 +805,8 @@ class TorpedoTube(WeaponSystem):
                 local = None
         if local is None:
             return TGPoint3(ship_pos.x, ship_pos.y, ship_pos.z)
-        offset = TGPoint3(local.x, local.y, local.z)
+        scale = float(ship.GetRadius()) if hasattr(ship, "GetRadius") else 1.0
+        offset = TGPoint3(local.x * scale, local.y * scale, local.z * scale)
         if hasattr(ship, "GetWorldRotation"):
             offset.MultMatrixLeft(ship.GetWorldRotation())
         return TGPoint3(ship_pos.x + offset.x,

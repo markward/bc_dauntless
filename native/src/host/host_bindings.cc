@@ -515,6 +515,7 @@ PYBIND11_MODULE(_open_stbc_host, m) {
                   t.num_flares     = d["num_flares"].cast<int>();
                   t.flares_size_a  = d["flares_size_a"].cast<float>();
                   t.flares_size_b  = d["flares_size_b"].cast<float>();
+                  t.age            = d["age"].cast<float>();
                   g_torpedoes.push_back(std::move(t));
               }
           },

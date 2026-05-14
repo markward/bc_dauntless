@@ -143,20 +143,18 @@ def _poll_mouse_buttons(host) -> None:
     test setup that imports host_loop without a window).
     """
     if host is None or not hasattr(host, "mouse_button_pressed"):
-        print("[FIRE-CHAIN] _poll_mouse_buttons: host=None or no mouse_button_pressed", flush=True)
         return
     import App
-    for glfw_btn, wc in (
-        (host.keys.MOUSE_BUTTON_LEFT,   App.WC_LBUTTON),
-        (host.keys.MOUSE_BUTTON_RIGHT,  App.WC_RBUTTON),
-        (host.keys.MOUSE_BUTTON_MIDDLE, App.WC_MBUTTON),
-    ):
-        if host.mouse_button_pressed(glfw_btn):
-            print(f"[FIRE-CHAIN] mouse_button_pressed glfw={glfw_btn} wc={hex(wc)} → OnKeyDown", flush=True)
-            App.g_kInputManager.OnKeyDown(wc)
-        if host.mouse_button_released(glfw_btn):
-            print(f"[FIRE-CHAIN] mouse_button_released glfw={glfw_btn} wc={hex(wc)} → OnKeyUp", flush=True)
-            App.g_kInputManager.OnKeyUp(wc)
+    # PR 2b is torpedo-only.  Left-click (phasers) and middle-click
+    # (tractor/etc.) are deferred to PR 2c — forwarding them now just
+    # plays SFX with no visuals, which is noise.  Only right-click is
+    # wired up.
+    glfw_btn = host.keys.MOUSE_BUTTON_RIGHT
+    wc = App.WC_RBUTTON
+    if host.mouse_button_pressed(glfw_btn):
+        App.g_kInputManager.OnKeyDown(wc)
+    if host.mouse_button_released(glfw_btn):
+        App.g_kInputManager.OnKeyUp(wc)
 
 
 def _advance_weapons(ships, dt: float) -> None:
@@ -187,7 +185,7 @@ def _advance_weapons(ships, dt: float) -> None:
                     emitter.UpdateReload(dt)
 
 
-def _advance_combat(ships, dt: float, host=None) -> None:
+def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
     """Per-frame torpedo motion + collision + damage + renderer push.
 
     Walks the active torpedo registry, advances motion, routes hits
@@ -198,6 +196,10 @@ def _advance_combat(ships, dt: float, host=None) -> None:
     `host` is the _open_stbc_host module (the binding from
     host_bindings.cc).  When None (headless tests), the renderer pushes
     are skipped — combat logic still runs.
+
+    `ship_instances` maps ship → renderer instance id; when provided we
+    also fire host.shield_hit on the target's bubble so the shield-impact
+    pass can splash at the strike point.
     """
     from engine.appc import projectiles, hit_vfx
     from engine.appc.combat import apply_hit
@@ -208,6 +210,20 @@ def _advance_combat(ships, dt: float, host=None) -> None:
         apply_hit(ship, torpedo._damage, torpedo._position,
                   source=torpedo._source_ship, subsystem=subsystem)
         hit_vfx.spawn(torpedo._position)
+        if (host is not None
+                and ship_instances is not None
+                and hasattr(host, "shield_hit")):
+            iid = ship_instances.get(ship)
+            if iid is not None:
+                # Use the torpedo's collision point directly — it lies on
+                # or just inside the bubble shell, where the shield-pass
+                # splash falloff produces a visible splash.
+                host.shield_hit(
+                    instance_id=iid,
+                    point=(torpedo._position.x, torpedo._position.y, torpedo._position.z),
+                    rgba=(0.0, 0.0, 0.0, 0.0),
+                    intensity=1.0,
+                )
 
     hit_vfx.update_ages(dt)
 
@@ -266,6 +282,7 @@ def _build_torpedo_render_data():
             "num_flares":    t._num_flares,
             "flares_size_a": t._flares_size_a,
             "flares_size_b": t._flares_size_b,
+            "age":           t._age,
         })
     return out
 
@@ -1806,7 +1823,7 @@ def run(mission_name: str = SHIP_GATE_MISSION,
                         fx, fy, fz = float(fwd.x), float(fwd.y), float(fwd.z)
                     except Exception:
                         fx, fy, fz = 1.0, 0.0, 0.0
-                    offset = 1.5 * player.GetRadius()
+                    offset = 1.0 * player.GetRadius()
                     fire_debug_hit(_h, instance_id=iid,
                                    world_point=(wp.x + fx * offset,
                                                 wp.y + fy * offset,
@@ -1847,7 +1864,10 @@ def run(mission_name: str = SHIP_GATE_MISSION,
             # loop is single-threaded and Python AI runs in the gameloop
             # tick above) so emitters are ready when AI fire calls land.
             _advance_weapons(_all_ships_for_tick(), TICK_DT)
-            _advance_combat(_all_ships_for_tick(), TICK_DT, host=_h)
+            _advance_combat(
+                _all_ships_for_tick(), TICK_DT, host=_h,
+                ship_instances=(session.ship_instances if session is not None else None),
+            )
 
             # Sync transforms for known instances.
             if session is not None:

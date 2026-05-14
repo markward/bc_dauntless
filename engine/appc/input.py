@@ -59,9 +59,7 @@ class TGInputManager(TGObject):
 
     def _emit(self, wc_code: int, key_state: int) -> None:
         if wc_code not in self._registered:
-            print(f"[FIRE-CHAIN] InputManager._emit: wc={hex(wc_code)} ks={key_state} NOT REGISTERED — registered={list(map(hex, self._registered))}", flush=True)
             return
-        print(f"[FIRE-CHAIN] InputManager._emit: wc={hex(wc_code)} ks={key_state} → TGKeyboardEvent", flush=True)
         evt = TGKeyboardEvent()
         evt.SetUnicodeKey(wc_code)
         evt.SetKeyState(key_state)
@@ -112,10 +110,8 @@ class KeyboardBinding(TGObject):
         key = (evt.GetUnicodeKey(), evt.GetKeyState())
         binding = self._bindings.get(key)
         if binding is None:
-            print(f"[FIRE-CHAIN] KeyboardBinding.OnKeyboardEvent: wc={hex(key[0])} ks={key[1]} NO BINDING — {len(self._bindings)} bindings registered", flush=True)
             return
         event_type, flags, value = binding
-        print(f"[FIRE-CHAIN] KeyboardBinding: wc={hex(key[0])} ks={key[1]} → et={event_type} dest={self._default_destination}", flush=True)
         out = self._build_event(event_type, flags, value)
         if self._default_destination is not None:
             out.SetDestination(self._default_destination)

@@ -127,6 +127,12 @@ void ShieldPass::submit(const scenegraph::World& world,
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE);
     glDepthMask(GL_FALSE);
+    // Ship world matrices negate the X column to satisfy glFrontFace(GL_CW)
+    // for hull rendering (see d1ac130). That flip inverts our sphere/skin
+    // winding, so back-face culling would kill every fragment. Disable
+    // culling for the additive bubble — both faces should be visible
+    // through each other anyway.
+    glDisable(GL_CULL_FACE);
 
     for (int i = 0; i < 4; ++i) {
         glActiveTexture(GL_TEXTURE0 + i);
@@ -204,7 +210,7 @@ void ShieldPass::submit(const scenegraph::World& world,
         // bubble silhouette is verified to clear the hull. With 0.25 the
         // flash only covered ~quarter of the bubble surface and made it
         // hard to see whether the ship was clipping out.
-        shader.set_float("u_hit_radius", largest_axis * scale_factor * 0.6f);
+        shader.set_float("u_hit_radius", largest_axis * scale_factor * 1.5f);
 
         glBindVertexArray(mesh->vao());
         glDrawElements(GL_TRIANGLES,
@@ -213,6 +219,7 @@ void ShieldPass::submit(const scenegraph::World& world,
     }
 
     glBindVertexArray(0);
+    glEnable(GL_CULL_FACE);
     glDepthMask(GL_TRUE);
     glDisable(GL_BLEND);
 }

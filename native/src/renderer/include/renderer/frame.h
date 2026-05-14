@@ -84,6 +84,7 @@ struct TorpedoDescriptor {
     int         num_flares   = 0;
     float       flares_size_a = 0.0f;
     float       flares_size_b = 0.0f;
+    float       age           = 0.0f;
 };
 
 /// Hit-VFX render descriptor.  Engine ages each entry up to 0.5s lifetime;
