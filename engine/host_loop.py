@@ -933,6 +933,14 @@ def _model_extent_from_aabb(center: tuple, half_extents: tuple) -> float:
     return _math.sqrt(cx*cx + cy*cy + cz*cz) + _math.sqrt(hx*hx + hy*hy + hz*hz)
 
 
+def _rot_determinant(rot) -> float:
+    """3x3 determinant of a row-major BC TGMatrix3 stored as nested lists."""
+    m = rot._m
+    return (m[0][0] * (m[1][1]*m[2][2] - m[1][2]*m[2][1])
+          - m[0][1] * (m[1][0]*m[2][2] - m[1][2]*m[2][0])
+          + m[0][2] * (m[1][0]*m[2][1] - m[1][1]*m[2][0]))
+
+
 def _ship_world_matrix(ship, natural_scale: float) -> list:
     """Row-major TRS mat4 for a ship.
 
@@ -945,6 +953,19 @@ def _ship_world_matrix(ship, natural_scale: float) -> list:
     BC's TGMatrix3 is row-vector (rows = body axes in world). The OpenGL shader
     consumes u_model column-vector (columns = body axes), so the rotation is
     transposed on the way out.
+
+    Determinant normalization (workaround): the renderer is configured with
+    glFrontFace(GL_CW) and assumes the world matrix has det < 0 — which holds
+    for ships whose rotation came from AlignToVectors (it builds right = up ×
+    forward, giving det = -1). Ships placed by other paths (e.g. Akira at the
+    "Docking Exit" hardpoint, or any ship with identity rotation) arrive with
+    a proper rotation (det = +1), and render inside-out because their world
+    matrix flips screen-space winding the wrong way under GL_CW. Until the
+    coupled fix lands (AlignToVectors → proper rotation, pipeline.cc →
+    glFrontFace(GL_CCW), backdrop/sun cull state → GL_BACK), we negate the X
+    body axis here when det > 0 so every rendered ship reaches the GPU with
+    det < 0. ship.GetWorldRotation() is left untouched — camera-follow,
+    physics, and AI continue to see the original rotation.
     """
     loc = ship.GetWorldLocation()
     rot = ship.GetWorldRotation()
@@ -953,11 +974,13 @@ def _ship_world_matrix(ship, natural_scale: float) -> list:
     except Exception:
         py_scale = 1.0
     s = natural_scale * py_scale
+    flip = -1.0 if _rot_determinant(rot) > 0.0 else 1.0
+    sx = s * flip
     return [
-        rot._m[0][0]*s, rot._m[1][0]*s, rot._m[2][0]*s, loc.x,
-        rot._m[0][1]*s, rot._m[1][1]*s, rot._m[2][1]*s, loc.y,
-        rot._m[0][2]*s, rot._m[1][2]*s, rot._m[2][2]*s, loc.z,
-        0.0,            0.0,            0.0,            1.0,
+        rot._m[0][0]*sx, rot._m[1][0]*s, rot._m[2][0]*s, loc.x,
+        rot._m[0][1]*sx, rot._m[1][1]*s, rot._m[2][1]*s, loc.y,
+        rot._m[0][2]*sx, rot._m[1][2]*s, rot._m[2][2]*s, loc.z,
+        0.0,             0.0,            0.0,            1.0,
     ]
 
 
@@ -965,6 +988,8 @@ def _astro_world_matrix(obj, natural_scale: float) -> list:
     """Row-major TRS mat4 for a planet/moon. Same two-layer formula as ships:
     natural_scale (load-time GetRadius/NIF_extent) × GetScale() (per-frame).
     Position is BC world-native (no global multiplier).
+
+    See `_ship_world_matrix` for the determinant-normalization rationale.
     """
     loc = obj.GetWorldLocation()
     rot = obj.GetWorldRotation()
@@ -973,11 +998,13 @@ def _astro_world_matrix(obj, natural_scale: float) -> list:
     except Exception:
         py_scale = 1.0
     s = natural_scale * py_scale
+    flip = -1.0 if _rot_determinant(rot) > 0.0 else 1.0
+    sx = s * flip
     return [
-        rot._m[0][0]*s, rot._m[1][0]*s, rot._m[2][0]*s, loc.x,
-        rot._m[0][1]*s, rot._m[1][1]*s, rot._m[2][1]*s, loc.y,
-        rot._m[0][2]*s, rot._m[1][2]*s, rot._m[2][2]*s, loc.z,
-        0.0,            0.0,            0.0,            1.0,
+        rot._m[0][0]*sx, rot._m[1][0]*s, rot._m[2][0]*s, loc.x,
+        rot._m[0][1]*sx, rot._m[1][1]*s, rot._m[2][1]*s, loc.y,
+        rot._m[0][2]*sx, rot._m[1][2]*s, rot._m[2][2]*s, loc.z,
+        0.0,             0.0,            0.0,            1.0,
     ]
 
 
