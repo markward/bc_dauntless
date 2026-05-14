@@ -554,6 +554,9 @@ class TorpedoTube(WeaponSystem):
         self._immediate_delay: float = 0.0
         self._reload_delay: float = 0.0
         self._max_ready: int = 0
+        self._firing: bool = False
+        self._target = None
+        self._target_offset = None
 
     def GetNumReady(self) -> int:                   return self._num_ready
     def SetNumReady(self, v) -> None:               self._num_ready = int(v)
@@ -564,6 +567,38 @@ class TorpedoTube(WeaponSystem):
     def GetImmediateDelay(self) -> float:           return self._immediate_delay
     def GetReloadDelay(self) -> float:              return self._reload_delay
     def GetMaxReady(self) -> int:                   return self._max_ready
+
+    def CanFire(self) -> int:
+        parent = self.GetParentSubsystem()
+        on = parent is not None and parent.IsOn()
+        return 1 if (on and self._num_ready > 0) else 0
+
+    def Fire(self, target=None, offset=None) -> None:
+        if not self.CanFire():
+            return
+        self._firing = True
+        self._target = target
+        self._target_offset = offset
+        self._num_ready -= 1
+        import time as _time
+        self._last_fire_time = _time.monotonic()
+        # Discrete-shot — auto-stop after launch.  WeaponSystem's
+        # _currently_firing list still tracks us until StopFiring is called.
+        self._firing = False
+
+    def StopFiring(self) -> None:
+        self._firing = False
+
+    def IsFiring(self) -> int:
+        return 1 if self._firing else 0
+
+    def UpdateReload(self, dt: float) -> None:
+        if self._num_ready >= self._max_ready:
+            return
+        import time as _time
+        if _time.monotonic() - self._last_fire_time >= self._reload_delay:
+            self._num_ready += 1
+            self._last_fire_time = _time.monotonic()
 
 
 class HullSubsystem(ShipSubsystem):
