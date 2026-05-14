@@ -349,6 +349,20 @@ class WeaponSystemProperty(PoweredSubsystemProperty):
     WST_PULSE   = 3
     WST_TRACTOR = 4
 
+    def __init__(self, name: str = ""):
+        super().__init__(name)
+        # {slot: "Tactical.Projectiles.<Name>"} — populated by hardpoint
+        # SetTorpedoScript calls; read at fire time to dispatch to the SDK
+        # projectile script (galaxy.py, akira.py, vorcha.py etc. all set
+        # slot 0 to PhotonTorpedo / KlingonTorpedo / etc.).
+        self._torpedo_scripts: dict[int, str] = {}
+
+    def SetTorpedoScript(self, slot, module_name) -> None:
+        self._torpedo_scripts[int(slot)] = str(module_name)
+
+    def GetTorpedoScript(self, slot):
+        return self._torpedo_scripts.get(int(slot))
+
 
 class TorpedoSystemProperty(WeaponSystemProperty):
     pass
