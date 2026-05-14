@@ -24,9 +24,12 @@ void ensure_glfw() {
 }
 
 void release_glfw() {
-    if (g_glfw_users.fetch_sub(1) == 1) {
-        glfwTerminate();
-    }
+    // glfwTerminate() intentionally omitted: re-initialising GLFW on macOS
+    // deadlocks in [NSApp run] because applicationDidFinishLaunching: only
+    // fires once per process, so the second glfwInit has no event to stop
+    // its run-loop on (see third_party/glfw/src/cocoa_init.m:634). The OS
+    // reclaims GLFW state at process exit.
+    g_glfw_users.fetch_sub(1);
 }
 
 }  // namespace
