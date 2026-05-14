@@ -226,38 +226,59 @@ class WeaponSystem(PoweredSubsystem):
     Reparented under PoweredSubsystem because every weapon system in BC
     has a power line.  See sdk/.../App.py:6361 (WeaponSystem inherits
     PoweredSubsystem there).
+
+    Sequential firing (PR 2a): StartFiring picks the next eligible
+    emitter in round-robin order, fires it, and advances the cursor.
+    Matches Galaxy's SetSingleFire(1) loadout.  Multi-fire / firing-chain
+    modes are future work (FiringChainString hardpoint field).
     """
     def __init__(self, name: str = ""):
         super().__init__(name)
-        self._firing = False
         self._target = None
         self._weapon_system_type: int = 0
+        # Round-robin cursor into child emitters and the set of indices
+        # currently firing (for StopFiring to halt the right ones).
+        self._next_emitter_index: int = 0
+        self._currently_firing: list = []
 
-    def IsFiring(self) -> int:
-        return 1 if self._firing else 0
-
-    def StartFiring(self, *args) -> None:
-        self._firing = True
+    def StartFiring(self, target=None, offset=None) -> None:
+        if not self.IsOn():
+            return
+        n = self.GetNumWeapons()
+        if n == 0:
+            return
+        start = self._next_emitter_index % n
+        for delta in range(n):
+            idx = (start + delta) % n
+            emitter = self.GetWeapon(idx)
+            if emitter is None:
+                continue
+            if hasattr(emitter, "CanFire") and emitter.CanFire():
+                emitter.Fire(target, offset)
+                self._currently_firing.append(idx)
+                self._next_emitter_index = (idx + 1) % n
+                return
+        # No eligible emitter — silent no-op.
 
     def StopFiring(self, *args) -> None:
-        self._firing = False
+        for idx in self._currently_firing:
+            emitter = self.GetWeapon(idx)
+            if emitter is not None and hasattr(emitter, "StopFiring"):
+                emitter.StopFiring()
+        self._currently_firing = []
 
-    def GetTarget(self):
-        return self._target
+    def IsFiring(self) -> int:
+        return 1 if self._currently_firing else 0
 
-    def SetTarget(self, target) -> None:
-        self._target = target
-
-    def GetWeaponSystemType(self) -> int:           return self._weapon_system_type
-    def SetWeaponSystemType(self, v) -> None:       self._weapon_system_type = int(v)
+    def GetTarget(self):                          return self._target
+    def SetTarget(self, target) -> None:          self._target = target
+    def GetWeaponSystemType(self) -> int:         return self._weapon_system_type
+    def SetWeaponSystemType(self, v) -> None:     self._weapon_system_type = int(v)
 
     # SDK-faithful aliases over the child-subsystem API.
     # TacticalInterfaceHandlers.FireWeapons (PR 2) reads these.
-    def GetNumWeapons(self) -> int:
-        return self.GetNumChildSubsystems()
-
-    def GetWeapon(self, i: int):
-        return self.GetChildSubsystem(i)
+    def GetNumWeapons(self) -> int:               return self.GetNumChildSubsystems()
+    def GetWeapon(self, i: int):                  return self.GetChildSubsystem(i)
 
 
 class TorpedoAmmoType:
