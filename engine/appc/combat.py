@@ -26,9 +26,23 @@ def pick_target_subsystem(ship, hit_point):
     n = ship.GetNumChildSubsystems() if hasattr(ship, "GetNumChildSubsystems") else 0
     for i in range(n):
         sub = ship.GetChildSubsystem(i)
-        if sub is None or not hasattr(sub, "GetPosition"):
+        if sub is None:
             continue
-        pos = sub.GetPosition()
+        # Prefer world location (production path: subsystem._parent_ship is
+        # set, GetWorldLocation returns ship_world + subsystem_local).  Fall
+        # back to GetPosition when the test stub doesn't have it (some fake
+        # subsystem classes in unit tests expose only GetPosition).
+        pos = None
+        if hasattr(sub, "GetWorldLocation"):
+            try:
+                pos = sub.GetWorldLocation()
+            except Exception:
+                pos = None
+        if pos is None and hasattr(sub, "GetPosition"):
+            try:
+                pos = sub.GetPosition()
+            except Exception:
+                pos = None
         if pos is None:
             continue
         r = sub.GetRadius() if hasattr(sub, "GetRadius") else 0.0

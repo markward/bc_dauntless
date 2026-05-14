@@ -650,6 +650,7 @@ class TorpedoTube(WeaponSystem):
                     direction.z / length * launch_speed,
                 )
             torp._target_ship = target_ship
+            torp._target_subsystem = target_sub
         else:
             # The catch-all __getattr__ on TGObject returns a _Stub for any
             # missing attribute, so hasattr is misleading.  Probe for a valid

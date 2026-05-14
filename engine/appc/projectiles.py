@@ -23,7 +23,8 @@ class Torpedo(TGObject):
     __slots__ = (
         "_position", "_velocity", "_age", "_ttl",
         "_damage", "_damage_radius_factor",
-        "_target_ship", "_guidance_lifetime", "_max_angular_accel",
+        "_target_ship", "_target_subsystem",
+        "_guidance_lifetime", "_max_angular_accel",
         "_source_ship", "_id",
         "_core_texture", "_core_color", "_core_size_a", "_core_size_b",
         "_glow_texture", "_glow_color", "_glow_size_a", "_glow_size_b", "_glow_size_c",
@@ -40,6 +41,7 @@ class Torpedo(TGObject):
         self._damage = 0.0
         self._damage_radius_factor = 0.0
         self._target_ship = None
+        self._target_subsystem = None
         self._guidance_lifetime = 0.0
         self._max_angular_accel = 0.0
         self._source_ship = None
@@ -131,7 +133,14 @@ def update_all(dt: float, all_ships) -> list[tuple]:
             if ship.IsDead():
                 continue
             if sphere_hit(t._position, ship.GetWorldLocation(), ship.GetRadius()):
-                subsystem = pick_target_subsystem(ship, t._position)
+                # If the player locked a specific subsystem on this target,
+                # route damage there directly; otherwise pick the nearest
+                # hardpoint to the hit point.
+                if (t._target_subsystem is not None
+                        and t._target_ship is ship):
+                    subsystem = t._target_subsystem
+                else:
+                    subsystem = pick_target_subsystem(ship, t._position)
                 hits.append((t, ship, subsystem))
                 expired.append(t)
                 break

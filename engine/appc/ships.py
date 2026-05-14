@@ -123,20 +123,27 @@ class ShipClass(DamageableObject):
     # Mirror sdk/.../App.py:5394-5455.  Loaders that need to populate these
     # call the matching Set*Subsystem method (Phase 2 hardpoint integration).
 
+    def _attach_subsystem(self, s):
+        """Wire a freshly-attached subsystem back to this ship so emitters
+        can climb the parent chain to reach the ShipClass at fire-time."""
+        if s is not None and hasattr(s, "SetParentShip"):
+            s.SetParentShip(self)
+        return s
+
     def GetSensorSubsystem(self):                 return self._sensor_subsystem
-    def SetSensorSubsystem(self, s) -> None:      self._sensor_subsystem = s
+    def SetSensorSubsystem(self, s) -> None:      self._sensor_subsystem = self._attach_subsystem(s)
     def GetImpulseEngineSubsystem(self):          return self._impulse_engine_subsystem
-    def SetImpulseEngineSubsystem(self, s) -> None: self._impulse_engine_subsystem = s
+    def SetImpulseEngineSubsystem(self, s) -> None: self._impulse_engine_subsystem = self._attach_subsystem(s)
     def GetWarpEngineSubsystem(self):             return self._warp_engine_subsystem
-    def SetWarpEngineSubsystem(self, s) -> None:  self._warp_engine_subsystem = s
+    def SetWarpEngineSubsystem(self, s) -> None:  self._warp_engine_subsystem = self._attach_subsystem(s)
     def GetTorpedoSystem(self):                   return self._torpedo_system
-    def SetTorpedoSystem(self, s) -> None:        self._torpedo_system = s
+    def SetTorpedoSystem(self, s) -> None:        self._torpedo_system = self._attach_subsystem(s)
     def GetPhaserSystem(self):                    return self._phaser_system
-    def SetPhaserSystem(self, s) -> None:         self._phaser_system = s
+    def SetPhaserSystem(self, s) -> None:         self._phaser_system = self._attach_subsystem(s)
     def GetPulseWeaponSystem(self):               return self._pulse_weapon_system
-    def SetPulseWeaponSystem(self, s) -> None:    self._pulse_weapon_system = s
+    def SetPulseWeaponSystem(self, s) -> None:    self._pulse_weapon_system = self._attach_subsystem(s)
     def GetTractorBeamSystem(self):               return self._tractor_beam_system
-    def SetTractorBeamSystem(self, s) -> None:    self._tractor_beam_system = s
+    def SetTractorBeamSystem(self, s) -> None:    self._tractor_beam_system = self._attach_subsystem(s)
 
     # ── Weapon-group lookup by WG_* enum ─────────────────────────────────────
     # Matches sdk/.../TacticalInterfaceHandlers.py:387-405 dispatch.  PR 2's
