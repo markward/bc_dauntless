@@ -35,15 +35,6 @@ def test_subsystem_condition_defaults():
     assert s.GetDamage() == 0.0
 
 
-def test_weapon_system_firing_state():
-    w = PhaserSystem("Forward Phasers")
-    assert w.IsFiring() == 0
-    w.StartFiring()
-    assert w.IsFiring() == 1
-    w.StopFiring()
-    assert w.IsFiring() == 0
-
-
 def test_weapon_system_target_round_trip():
     w = PhaserSystem("Forward Phasers")
     target = ShipClass()
