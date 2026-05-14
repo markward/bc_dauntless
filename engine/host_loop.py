@@ -125,17 +125,14 @@ def _bootstrap_firing_pipeline() -> None:
         print(f"[host_loop] WARNING: LoadTacticalSounds.LoadSounds() failed: {_e}",
               flush=True)
 
-    # Wire MissionLib.FriendlyFireHandler so player-damages-friendly NPC
-    # triggers XO dialogue (existing SDK script).  Broadcast handler reads
-    # the current mission via g_kUtopiaModule each time ET_WEAPON_HIT
-    # fires, so registration here covers all subsequent missions.
-    try:
-        import App as _App
-        _App.g_kEventManager.AddBroadcastPythonFuncHandler(
-            _App.ET_WEAPON_HIT, None, "MissionLib.FriendlyFireHandler")
-    except Exception as _e:
-        print(f"[host_loop] WARNING: FriendlyFireHandler registration failed: {_e}",
-              flush=True)
+    # NOTE: MissionLib.FriendlyFireHandler registration is deliberately
+    # NOT done here.  The SDK script (sdk/.../MissionLib.py:3699) calls
+    # pObject.CallNextHandler(pEvent) — pObject is the broadcast `dest`
+    # field, which mission setup populates with the running mission via
+    # AddBroadcastPythonFuncHandler(ET_WEAPON_HIT, pMission, ...).  We
+    # don't have a mission to bind at bootstrap time, so we leave the
+    # registration to whatever mission script wants it.  Per-ship hit
+    # events still flow via SetDestination(target) in combat.apply_hit.
 
 
 def _poll_mouse_buttons(host) -> None:
@@ -238,6 +235,16 @@ def _color_tuple(color):
     return (1.0, 1.0, 1.0, 1.0)
 
 
+def _resolve_game_texture(path: str) -> str:
+    """SDK projectile scripts reference textures by 'data/Textures/...' which
+    in BC means relative-to-game-root.  Our binary's CWD is the project
+    root; prepend 'game/' so the renderer's ifstream resolves."""
+    if not path:
+        return ""
+    abs_path = PROJECT_ROOT / "game" / path
+    return str(abs_path)
+
+
 def _build_torpedo_render_data():
     """Convert projectiles._active into the dict shape set_torpedoes expects."""
     from engine.appc import projectiles
@@ -245,16 +252,16 @@ def _build_torpedo_render_data():
     for t in projectiles._active:
         out.append({
             "position":      (t._position.x, t._position.y, t._position.z),
-            "core_texture":  t._core_texture,
+            "core_texture":  _resolve_game_texture(t._core_texture),
             "core_color":    _color_tuple(t._core_color),
             "core_size_a":   t._core_size_a,
             "core_size_b":   t._core_size_b,
-            "glow_texture":  t._glow_texture,
+            "glow_texture":  _resolve_game_texture(t._glow_texture),
             "glow_color":    _color_tuple(t._glow_color),
             "glow_size_a":   t._glow_size_a,
             "glow_size_b":   t._glow_size_b,
             "glow_size_c":   t._glow_size_c,
-            "flares_texture": t._flares_texture,
+            "flares_texture": _resolve_game_texture(t._flares_texture),
             "flares_color":  _color_tuple(t._flares_color),
             "num_flares":    t._num_flares,
             "flares_size_a": t._flares_size_a,
