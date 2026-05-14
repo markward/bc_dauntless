@@ -57,9 +57,17 @@ class KeyboardBinding(TGObject):
     registered bindings.  Posts the resulting event to the event manager
     with destination = the default destination (TacticalControlWindow)."""
 
+    GET_EVENT       = 0
     GET_BOOL_EVENT  = 1
     GET_INT_EVENT   = 2
     GET_FLOAT_EVENT = 3
+
+    # Binding type flags — DefaultKeyboardBinding.Initialize passes
+    # KBT_LOCKOUT_CHANGE as a 6th argument to some BindKey calls.
+    KBT_MANY_TO_MANY        = 0
+    KBT_SINGLE_EVENT_TO_KEY = 1
+    KBT_SINGLE_KEY_TO_EVENT = 2
+    KBT_LOCKOUT_CHANGE      = 3
 
     def __init__(self, event_manager: TGEventManager):
         super().__init__()
@@ -71,7 +79,17 @@ class KeyboardBinding(TGObject):
     def SetDefaultDestination(self, dest) -> None:
         self._default_destination = dest
 
-    def BindKey(self, wc_code, key_state, event_type, flags, value) -> None:
+    def BindKey(self, wc_code, key_state, event_type, flags=GET_EVENT,
+                value=None, kbt_type=KBT_MANY_TO_MANY) -> None:
+        """Register a (wc_code, key_state) → event_type mapping.
+
+        Accepts 3–6 positional arguments to match the range of call
+        signatures in DefaultKeyboardBinding and other SDK scripts:
+          BindKey(wc, ks, et)                       — no flags/value
+          BindKey(wc, ks, et, flags)                — value defaults to None
+          BindKey(wc, ks, et, flags, value)         — standard 5-arg form
+          BindKey(wc, ks, et, flags, value, kbt)    — 6-arg form with KBT type
+        """
         self._bindings[(int(wc_code), int(key_state))] = (int(event_type), int(flags), value)
 
     def OnKeyboardEvent(self, _obj, evt: TGKeyboardEvent) -> None:

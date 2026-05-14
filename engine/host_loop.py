@@ -67,6 +67,116 @@ def tick_audio(*, camera_position, camera_forward, camera_up, dt, player) -> Non
     _alert_listener.tick(player)
 
 
+def _bootstrap_firing_pipeline() -> None:
+    """Bring up the SDK-faithful input chain + tactical-control window
+    after audio is alive.  Registers default keybindings, installs
+    TacticalInterfaceHandlers on the TCW, loads weapon SFX names.
+
+    Idempotent against re-entry — DefaultKeyboardBinding ends up
+    registering the same WC entries / bindings each call, which is fine
+    because the registration tables are dicts keyed by (WC, KS).
+
+    All SDK imports are guarded: any missing shim surface is logged as a
+    warning but never crashes the host loop.
+    """
+    import App
+
+    # Default destination for fire events.
+    tcw = App.TacticalControlWindow_GetTacticalControlWindow()
+    App.g_kKeyboardBinding.SetDefaultDestination(tcw)
+
+    # Register the canonical key + binding tables (SDK script).
+    try:
+        import DefaultKeyboardBinding
+        DefaultKeyboardBinding.Initialize()
+    except Exception as _e:
+        print(f"[host_loop] WARNING: DefaultKeyboardBinding.Initialize() failed: {_e}",
+              flush=True)
+
+    # Wire TacticalInterfaceHandlers' fire-event handlers onto the TCW so
+    # ET_INPUT_FIRE_PRIMARY/SECONDARY/TERTIARY route to FireWeapons.
+    try:
+        import TacticalInterfaceHandlers
+        TacticalInterfaceHandlers.Initialize(tcw)
+    except Exception as _e:
+        print(f"[host_loop] WARNING: TacticalInterfaceHandlers.Initialize() failed: {_e}",
+              flush=True)
+
+    # Load weapon SFX via the SDK's canonical sound script — no hard-coded
+    # names anywhere in the engine.  "Galaxy Phaser Start"/"Loop", "Photon
+    # Torpedo", "Tractor Beam", etc. get registered with file paths the
+    # SDK script encodes.
+    try:
+        import LoadTacticalSounds
+        LoadTacticalSounds.LoadSounds()
+    except Exception as _e:
+        print(f"[host_loop] WARNING: LoadTacticalSounds.LoadSounds() failed: {_e}",
+              flush=True)
+
+
+def _poll_mouse_buttons(host) -> None:
+    """Forward host-side mouse rising/falling edges into g_kInputManager.
+
+    `host` is the _open_stbc_host module (the binding from host_bindings.cc).
+    No-op when host doesn't expose the button-poll methods (e.g. headless
+    test setup that imports host_loop without a window).
+    """
+    if host is None or not hasattr(host, "mouse_button_pressed"):
+        return
+    import App
+    for glfw_btn, wc in (
+        (host.keys.MOUSE_BUTTON_LEFT,   App.WC_LBUTTON),
+        (host.keys.MOUSE_BUTTON_RIGHT,  App.WC_RBUTTON),
+        (host.keys.MOUSE_BUTTON_MIDDLE, App.WC_MBUTTON),
+    ):
+        if host.mouse_button_pressed(glfw_btn):
+            App.g_kInputManager.OnKeyDown(wc)
+        if host.mouse_button_released(glfw_btn):
+            App.g_kInputManager.OnKeyUp(wc)
+
+
+def _advance_weapons(ships, dt: float) -> None:
+    """Per-frame charge / reload advancement for every weapon emitter.
+
+    Walks all ships × all four weapon groups × all child emitters and
+    calls UpdateCharge (energy) or UpdateReload (torpedo).  AI ships are
+    included — their AI scripts call StartFiring expecting charged
+    emitters.
+    """
+    from engine.appc.subsystems import TorpedoTube
+    for ship in ships:
+        for group in (
+            ship.GetPhaserSystem(),
+            ship.GetPulseWeaponSystem(),
+            ship.GetTractorBeamSystem(),
+            ship.GetTorpedoSystem(),
+        ):
+            if group is None:
+                continue
+            for i in range(group.GetNumWeapons()):
+                emitter = group.GetWeapon(i)
+                if emitter is None:
+                    continue
+                if hasattr(emitter, "UpdateCharge"):
+                    emitter.UpdateCharge(dt)
+                if isinstance(emitter, TorpedoTube):
+                    emitter.UpdateReload(dt)
+
+
+def _all_ships_for_tick():
+    """Iterator over every ship the per-frame weapon tick should advance.
+
+    Uses iter_ships() from engine.appc.ship_iter — the same pattern
+    engine_rumble uses — which walks App.g_kSetManager._sets and yields
+    ShipClass instances only.
+    """
+    try:
+        from engine.appc.ship_iter import iter_ships
+        return iter_ships()
+    except Exception:
+        return iter(())
+
+
 def _extract_ypr(R) -> tuple:
     """Yaw/pitch/roll in degrees from a BC row-vector TGMatrix3.
 
@@ -1514,6 +1624,7 @@ def run(mission_name: str = SHIP_GATE_MISSION,
         ticks = 0
         _dust_enabled = True   # mirrors DustPass default
         init_audio()
+        _bootstrap_firing_pipeline()
         while not r.should_close():
             loop.tick()
 
@@ -1599,6 +1710,16 @@ def run(mission_name: str = SHIP_GATE_MISSION,
                 _apply_input(view_mode, player_control, cam_control,
                              player=player, dt=TICK_DT, h=_h,
                              scroll_y=scroll_y)
+
+            # Forward mouse button edges into the input manager (fire
+            # events route via g_kKeyboardBinding → TCW handlers).
+            _poll_mouse_buttons(_h)
+
+            # Advance weapon charge / reload for every ship in every
+            # active set.  Runs after AI/physics (approximate — the host
+            # loop is single-threaded and Python AI runs in the gameloop
+            # tick above) so emitters are ready when AI fire calls land.
+            _advance_weapons(_all_ships_for_tick(), TICK_DT)
 
             # Sync transforms for known instances.
             if session is not None:
