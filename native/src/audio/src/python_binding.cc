@@ -2,10 +2,7 @@
 #include <audio/audio_system.h>
 #include <audio/null_backend.h>
 #include <audio/openal_backend.h>
-#include <pybind11/stl.h>
 #include <memory>
-#include <optional>
-#include <string>
 
 namespace py = pybind11;
 
@@ -22,6 +19,7 @@ static Category parse_category(const std::string& s) {
 }
 
 static bool init_impl(const std::string& backend_kind) {
+    if (g_system) { g_system->shutdown(); g_system.reset(); }
     std::unique_ptr<IAudioBackend> b;
     if (backend_kind == "null") {
         b = std::make_unique<NullBackend>();

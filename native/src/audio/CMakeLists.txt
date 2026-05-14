@@ -7,4 +7,4 @@ add_library(open_stbc_audio STATIC
 )
 target_include_directories(open_stbc_audio PUBLIC include)
 target_compile_features(open_stbc_audio PUBLIC cxx_std_20)
-target_link_libraries(open_stbc_audio PUBLIC pybind11::headers Python3::Python)
+target_link_libraries(open_stbc_audio PRIVATE pybind11::headers Python3::Python)

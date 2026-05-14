@@ -2,7 +2,7 @@ import os
 import struct
 import pytest
 
-os.environ.setdefault("OPEN_STBC_AUDIO", "0")  # force NullBackend
+os.environ.setdefault("OPEN_STBC_AUDIO", "0")  # prep for Task 6 init_audio helper
 
 # These imports will succeed only after the binding lands.
 _open_stbc_host = pytest.importorskip("_open_stbc_host")
