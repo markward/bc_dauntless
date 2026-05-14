@@ -18,7 +18,13 @@ _active: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
 
 def _engine_sound_name_for(ship) -> str:
-    prop_getter = getattr(ship, "GetImpulseEngineProperty", None)
+    sub_getter = getattr(ship, "GetImpulseEngineSubsystem", None)
+    if sub_getter is None:
+        return ""
+    sub = sub_getter()
+    if sub is None:
+        return ""
+    prop_getter = getattr(sub, "GetProperty", None)
     if prop_getter is None:
         return ""
     prop = prop_getter()

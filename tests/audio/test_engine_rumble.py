@@ -19,18 +19,21 @@ def _wav():
             + b"data" + struct.pack("<I", len(data)) + data)
 
 
-class _FakeImpulse:
+class _FakeProperty:
     def __init__(self, name): self._name = name
     def GetEngineSound(self): return self._name
 
 
+class _FakeSubsystem:
+    def __init__(self, prop): self._prop = prop
+    def GetProperty(self): return self._prop
+
+
 class _FakeShip:
     def __init__(self, sound_name, scene_node=42):
-        self._impulse = _FakeImpulse(sound_name)
+        self._impulse = _FakeSubsystem(_FakeProperty(sound_name))
         self._scene_node = scene_node
     def GetImpulseEngineSubsystem(self):
-        return None  # not used in this path
-    def GetImpulseEngineProperty(self):
         return self._impulse
     def GetSceneNodeId(self):
         return self._scene_node
