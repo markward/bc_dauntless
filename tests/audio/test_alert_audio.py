@@ -73,13 +73,34 @@ def test_each_named_level_maps_to_its_sound(boot):
         (_FakeShip.YELLOW_ALERT, "YellowAlertSound"),
         (_FakeShip.GREEN_ALERT,  "GreenAlertSound"),
     ]
-    for lvl, _expected_name in cases:
+    for lvl, expected_name in cases:
         ship.SetAlertLevel(lvl)
         _open_stbc_host.audio.clear_command_log()
         listener.tick(ship)
         play_entries = [e for e in _open_stbc_host.audio.debug_command_log()
                         if e["op"] == "play"]
         assert len(play_entries) == 1
+        expected_buf = _open_stbc_host.audio.get_sound(expected_name)
+        assert play_entries[0]["u"][0] == expected_buf, (
+            f"Expected {expected_name} (buf {expected_buf}), "
+            f"got buf {play_entries[0]['u'][0]}"
+        )
+
+
+def test_reset_rebaselines_so_next_tick_is_silent(boot):
+    listener = AlertAudioListener()
+    ship = _FakeShip(level=_FakeShip.GREEN_ALERT)
+    listener.tick(ship)
+    ship.SetAlertLevel(_FakeShip.RED_ALERT)
+    listener.tick(ship)            # would fire RedAlertSound
+
+    listener.reset()
+    _open_stbc_host.audio.clear_command_log()
+    listener.tick(ship)            # still RED; reset cleared the baseline → silent
+
+    play_entries = [e for e in _open_stbc_host.audio.debug_command_log()
+                    if e["op"] == "play"]
+    assert play_entries == []
 
 
 def test_handles_missing_player(boot):
