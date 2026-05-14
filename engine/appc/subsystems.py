@@ -153,6 +153,10 @@ class ShipSubsystem(TGEventHandlerObject):
     def GetCondition(self) -> float:
         return self._condition
 
+    def SetCondition(self, value: float) -> None:
+        """Floor at zero. DamageSystem (Task 4) routes hits through here."""
+        self._condition = max(0.0, float(value))
+
     def GetMaxCondition(self) -> float:
         return self._max_condition
 

@@ -322,6 +322,24 @@ class DamageableObject(PhysicsObjectClass):
     def GetPropertySet(self):
         return self._property_set
 
+    def DamageSystem(self, subsystem, amount: float) -> None:
+        """Apply damage to a subsystem.  Decrement its condition floored
+        at zero.  If the subsystem is this object's hull and condition
+        reaches zero, mark the object as dying — mission scripts trigger
+        the destruction sequence via the existing SetDying/SetDead path.
+        """
+        if subsystem is None:
+            return
+        amt = float(amount)
+        if amt <= 0.0:
+            return
+        cur = subsystem.GetCondition()
+        new_cond = max(0.0, cur - amt)
+        subsystem.SetCondition(new_cond)
+        hull = self.GetHull() if hasattr(self, "GetHull") else None
+        if subsystem is hull and new_cond <= 0.0 and hasattr(self, "SetDying"):
+            self.SetDying(True)
+
 
 class ObjectGroup(TGEventHandlerObject):
     GROUP_CHANGED = 1
