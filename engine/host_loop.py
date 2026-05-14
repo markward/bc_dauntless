@@ -113,6 +113,18 @@ def _bootstrap_firing_pipeline() -> None:
         print(f"[host_loop] WARNING: LoadTacticalSounds.LoadSounds() failed: {_e}",
               flush=True)
 
+    # Wire MissionLib.FriendlyFireHandler so player-damages-friendly NPC
+    # triggers XO dialogue (existing SDK script).  Broadcast handler reads
+    # the current mission via g_kUtopiaModule each time ET_WEAPON_HIT
+    # fires, so registration here covers all subsequent missions.
+    try:
+        import App as _App
+        _App.g_kEventManager.AddBroadcastPythonFuncHandler(
+            _App.ET_WEAPON_HIT, None, "MissionLib.FriendlyFireHandler")
+    except Exception as _e:
+        print(f"[host_loop] WARNING: FriendlyFireHandler registration failed: {_e}",
+              flush=True)
+
 
 def _poll_mouse_buttons(host) -> None:
     """Forward host-side mouse rising/falling edges into g_kInputManager.
@@ -161,6 +173,91 @@ def _advance_weapons(ships, dt: float) -> None:
                     emitter.UpdateCharge(dt)
                 if isinstance(emitter, TorpedoTube):
                     emitter.UpdateReload(dt)
+
+
+def _advance_combat(ships, dt: float, host=None) -> None:
+    """Per-frame torpedo motion + collision + damage + renderer push.
+
+    Walks the active torpedo registry, advances motion, routes hits
+    through combat.apply_hit (which broadcasts WeaponHitEvent), spawns
+    hit VFX, ages out expired VFX, and pushes current torpedo + hit-VFX
+    lists to the renderer.
+
+    `host` is the _open_stbc_host module (the binding from
+    host_bindings.cc).  When None (headless tests), the renderer pushes
+    are skipped — combat logic still runs.
+    """
+    from engine.appc import projectiles, hit_vfx
+    from engine.appc.combat import apply_hit
+
+    ships_list = list(ships)
+    hits = projectiles.update_all(dt, ships_list)
+    for torpedo, ship, subsystem in hits:
+        apply_hit(ship, torpedo._damage, torpedo._position,
+                  source=torpedo._source_ship, subsystem=subsystem)
+        hit_vfx.spawn(torpedo._position)
+
+    hit_vfx.update_ages(dt)
+
+    if host is not None and hasattr(host, "set_torpedoes"):
+        host.set_torpedoes(_build_torpedo_render_data())
+    if host is not None and hasattr(host, "set_hit_vfx"):
+        host.set_hit_vfx(_build_hit_vfx_render_data())
+
+
+def _color_tuple(color):
+    """TGColorA → (r, g, b, a) tuple, or white when None."""
+    if color is None:
+        return (1.0, 1.0, 1.0, 1.0)
+    # TGColorA in our shim has GetRed/Green/Blue/Alpha or r/g/b/a attrs.
+    for attr_set in (("r", "g", "b", "a"),
+                     ("GetRed", "GetGreen", "GetBlue", "GetAlpha")):
+        try:
+            vals = []
+            for a in attr_set:
+                v = getattr(color, a)
+                vals.append(v() if callable(v) else v)
+            return tuple(float(v) for v in vals)
+        except Exception:
+            continue
+    return (1.0, 1.0, 1.0, 1.0)
+
+
+def _build_torpedo_render_data():
+    """Convert projectiles._active into the dict shape set_torpedoes expects."""
+    from engine.appc import projectiles
+    out = []
+    for t in projectiles._active:
+        out.append({
+            "position":      (t._position.x, t._position.y, t._position.z),
+            "core_texture":  t._core_texture,
+            "core_color":    _color_tuple(t._core_color),
+            "core_size_a":   t._core_size_a,
+            "core_size_b":   t._core_size_b,
+            "glow_texture":  t._glow_texture,
+            "glow_color":    _color_tuple(t._glow_color),
+            "glow_size_a":   t._glow_size_a,
+            "glow_size_b":   t._glow_size_b,
+            "glow_size_c":   t._glow_size_c,
+            "flares_texture": t._flares_texture,
+            "flares_color":  _color_tuple(t._flares_color),
+            "num_flares":    t._num_flares,
+            "flares_size_a": t._flares_size_a,
+            "flares_size_b": t._flares_size_b,
+        })
+    return out
+
+
+def _build_hit_vfx_render_data():
+    from engine.appc import hit_vfx
+    out = []
+    for entry in hit_vfx.snapshot():
+        pos = entry["position"]
+        out.append({
+            "position": (pos.x, pos.y, pos.z),
+            "age":      entry["age"],
+        })
+    return out
 
 
 def _all_ships_for_tick():
@@ -1728,6 +1825,7 @@ def run(mission_name: str = SHIP_GATE_MISSION,
             # loop is single-threaded and Python AI runs in the gameloop
             # tick above) so emitters are ready when AI fire calls land.
             _advance_weapons(_all_ships_for_tick(), TICK_DT)
+            _advance_combat(_all_ships_for_tick(), TICK_DT, host=_h)
 
             # Sync transforms for known instances.
             if session is not None:
