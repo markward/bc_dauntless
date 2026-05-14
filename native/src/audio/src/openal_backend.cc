@@ -3,7 +3,6 @@
 #include <AL/alc.h>
 #include <cstdio>
 #include <unordered_map>
-#include <vector>
 
 namespace open_stbc::audio {
 
@@ -80,8 +79,13 @@ public:
             alSourcef(al, AL_REFERENCE_DISTANCE, 100.0f);
             alSourcef(al, AL_ROLLOFF_FACTOR, 1.0f);
         } else {
+            // Non-positional source: place 1 unit in front of the listener
+            // (RELATIVE -Z) rather than exactly at origin so HRTF/panning
+            // has a real direction. Disable distance attenuation entirely.
             alSourcei(al, AL_SOURCE_RELATIVE, AL_TRUE);
-            alSource3f(al, AL_POSITION, 0, 0, 0);
+            alSource3f(al, AL_POSITION, 0.0f, 0.0f, -1.0f);
+            alSourcef(al, AL_REFERENCE_DISTANCE, 1.0f);
+            alSourcef(al, AL_ROLLOFF_FACTOR, 0.0f);
         }
         alSourcePlay(al);
         SourceHandle h = ++next_src_;

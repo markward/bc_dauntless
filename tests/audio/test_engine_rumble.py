@@ -119,3 +119,28 @@ def test_update_positions_pushes_ship_world_location(boot):
     # test object so later tests that iterate ships (e.g. target_list) don't
     # see a ship without GetName and crash.
     ship_lifecycle.reset()
+
+
+def test_install_listener_replays_existing_live_ships(boot):
+    """Mission load fires publish_added BEFORE init_audio in host_loop, so
+    install_engine_rumble_listener must replay the current live set so rumble
+    starts for ships that are already on stage by the time we subscribe.
+    """
+    from engine.appc import ship_lifecycle
+    reset_for_tests()
+    ship_lifecycle.reset()
+
+    # Ship is added BEFORE the listener subscribes — typical of the host_loop
+    # boot ordering (mission load → init_audio → install_engine_rumble_listener).
+    ship = _FakeShip("Federation Engines")
+    ship_lifecycle.publish_added(ship)
+
+    _open_stbc_host.audio.clear_command_log()
+    install_engine_rumble_listener()
+
+    play_entries = [e for e in _open_stbc_host.audio.debug_command_log()
+                    if e["op"] == "play"]
+    assert len(play_entries) == 1
+    assert play_entries[0]["b"][0] is True  # looping
+
+    ship_lifecycle.reset()

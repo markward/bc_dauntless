@@ -59,12 +59,23 @@ def _on_ship_event(event: str, ship) -> None:
 
 
 def install_engine_rumble_listener() -> None:
-    """Idempotent install — safe to call from host_loop boot."""
+    """Idempotent install — safe to call from host_loop boot.
+
+    Mission loading happens before init_audio() in host_loop, so by the time we
+    subscribe, the `added` events for the player and AI ships have already
+    fired with no listeners. Replay them from ship_lifecycle.snapshot() so
+    rumble starts for everything currently live.
+    """
     global _installed, _unsubscribe
     if _installed:
         return
     _unsubscribe = ship_lifecycle.subscribe(_on_ship_event)
     _installed = True
+    # host_loop's mission load fires publish_added before init_audio
+    # subscribes, so replay the current live set so rumble starts for
+    # ships that are already on stage.
+    for ship in ship_lifecycle.snapshot():
+        _on_ship_event("added", ship)
 
 
 def update_positions() -> None:

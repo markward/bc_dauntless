@@ -29,7 +29,15 @@ def _resolve_sfx_path(rel: str) -> str:
 
 
 class _PlayingSound:
-    """Lightweight handle returned by TGSound.Play(); supports Stop()."""
+    """Lightweight handle returned by TGSound.Play(); supports Stop().
+
+    Note on lifetime: callers do NOT need to hold the handle alive. One-shot
+    sounds (PlaySound) are fire-and-forget — the C++ AudioSystem reaps them
+    after they finish. Looping sources are held alive by the subscriber that
+    owns them (e.g. engine_rumble._active[ship]). Do not add __del__ → Stop:
+    one-shots are typically returned to locals that go out of scope before
+    any audio plays, and a __del__ stop would silently mute every PlaySound.
+    """
 
     __slots__ = ("_pid",)
 
@@ -40,15 +48,6 @@ class _PlayingSound:
         if _audio and self._pid:
             _audio.stop(self._pid)
         self._pid = 0
-
-    def __del__(self) -> None:
-        # GC safety net: if the wrapping object is discarded without an
-        # explicit Stop, release the C++ source so a looping rumble doesn't
-        # play forever.
-        try:
-            self.Stop()
-        except Exception:
-            pass
 
     def SetPosition(self, x: float, y: float, z: float) -> None:
         if _audio and self._pid:
@@ -194,7 +193,7 @@ _DEFAULT_2D_SOUNDS: tuple[tuple[str, str], ...] = (
 def register_default_sounds() -> None:
     """Register engine + alert sounds with TGSoundManager.
 
-    Idempotent: missing WAV files or duplicate names are silently skipped.
+    Idempotent: existing names and missing WAV files are silently skipped.
     Called from host_loop.init_audio() so the SDK names resolve before the
     first ship spawn / alert transition.
     """
@@ -204,7 +203,7 @@ def register_default_sounds() -> None:
             mgr.LoadSound(path, name, TGSound.LS_3D)
     for path, name in _DEFAULT_2D_SOUNDS:
         if mgr.GetSound(name) is None:
-            mgr.LoadSound(path, name, TGSound.LS_STREAMED)  # non-positional
+            mgr.LoadSound(path, name, TGSound.LS_STREAMED)
 
 
 # Module-level singleton. App.py imports this name directly, which binds it
