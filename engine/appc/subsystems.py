@@ -586,9 +586,136 @@ class TorpedoTube(WeaponSystem):
         self._num_ready -= 1
         import time as _time
         self._last_fire_time = _time.monotonic()
+
+        # PR 2b: spawn the projectile via the bound SDK script.
+        self._spawn_torpedo()
+
         # Discrete-shot — auto-stop after launch.  WeaponSystem's
         # _currently_firing list still tracks us until StopFiring is called.
         self._firing = False
+
+    def _spawn_torpedo(self) -> None:
+        """Look up the parent system's GetTorpedoScript(0), import the SDK
+        projectile module, instantiate a Torpedo, call <module>.Create(t)
+        to populate visuals + behaviour, compute initial velocity (homing
+        if ship has a target lock, dumbfire from emitter direction
+        otherwise), and play the launch sound.
+
+        Silent no-op when no script is bound (matches BC for unconfigured
+        tubes).  Per-tube slot routing is a future polish item — PR 2b
+        always pulls from slot 0.
+        """
+        parent = self.GetParentSubsystem()
+        if parent is None:
+            return
+        parent_prop = parent.GetProperty() if hasattr(parent, "GetProperty") else None
+        if parent_prop is None or not hasattr(parent_prop, "GetTorpedoScript"):
+            return
+        script_name = parent_prop.GetTorpedoScript(0)
+        if not script_name:
+            return
+
+        import importlib
+        try:
+            mod = importlib.import_module(script_name)
+        except ImportError:
+            return
+
+        from engine.appc.projectiles import Torpedo, register
+        from engine.appc.math import TGPoint3
+        from engine.audio.tg_sound import TGSoundManager
+
+        torp = Torpedo()
+        source_ship = self._climb_to_ship()
+        torp._source_ship = source_ship
+        torp._position = self._emitter_world_position()
+
+        mod.Create(torp)
+
+        launch_speed = float(mod.GetLaunchSpeed()) if hasattr(mod, "GetLaunchSpeed") else 0.0
+
+        target_ship = source_ship.GetTarget() if source_ship is not None else None
+        if (target_ship is not None
+                and hasattr(target_ship, "IsDead") and not target_ship.IsDead()):
+            target_sub = (source_ship.GetTargetSubsystem()
+                          if hasattr(source_ship, "GetTargetSubsystem") else None)
+            aim_target = target_sub if target_sub is not None else target_ship
+            aim_pt = aim_target.GetWorldLocation()
+            direction = aim_pt - torp._position
+            length = direction.Length()
+            if length > 1e-6:
+                torp._velocity = TGPoint3(
+                    direction.x / length * launch_speed,
+                    direction.y / length * launch_speed,
+                    direction.z / length * launch_speed,
+                )
+            torp._target_ship = target_ship
+        else:
+            # The catch-all __getattr__ on TGObject returns a _Stub for any
+            # missing attribute, so hasattr is misleading.  Probe for a valid
+            # TGPoint3 explicitly via the type — defensive against the shim.
+            forward = None
+            try:
+                got = self.GetDirection()
+                if isinstance(got, TGPoint3):
+                    forward = got
+            except Exception:
+                forward = None
+            if forward is None:
+                forward = TGPoint3(0.0, 1.0, 0.0)
+            world_fwd = TGPoint3(forward.x, forward.y, forward.z)
+            if source_ship is not None and hasattr(source_ship, "GetWorldRotation"):
+                rot = source_ship.GetWorldRotation()
+                # Same shim caveat — only use if it's a real TGMatrix3.
+                from engine.appc.math import TGMatrix3
+                if isinstance(rot, TGMatrix3):
+                    world_fwd.MultMatrixLeft(rot)
+            length = world_fwd.Length()
+            if length > 1e-6:
+                torp._velocity = TGPoint3(
+                    world_fwd.x / length * launch_speed,
+                    world_fwd.y / length * launch_speed,
+                    world_fwd.z / length * launch_speed,
+                )
+            torp._target_ship = None
+
+        register(torp)
+
+        if hasattr(mod, "GetLaunchSound"):
+            sound_name = mod.GetLaunchSound()
+            if sound_name:
+                TGSoundManager.instance().PlaySound(sound_name)
+
+    def _climb_to_ship(self):
+        """Walk parent-subsystem chain until a ShipClass is found."""
+        node = self.GetParentSubsystem()
+        while node is not None:
+            if hasattr(node, "GetParentShip") and node.GetParentShip() is not None:
+                return node.GetParentShip()
+            node = node.GetParentSubsystem() if hasattr(node, "GetParentSubsystem") else None
+        return None
+
+    def _emitter_world_position(self):
+        """Ship world location + emitter local position rotated into world frame."""
+        from engine.appc.math import TGPoint3
+        ship = self._climb_to_ship()
+        if ship is None:
+            return TGPoint3(0.0, 0.0, 0.0)
+        ship_pos = ship.GetWorldLocation()
+        local = None
+        if hasattr(self, "GetPosition"):
+            try:
+                local = self.GetPosition()
+            except Exception:
+                local = None
+        if local is None:
+            return TGPoint3(ship_pos.x, ship_pos.y, ship_pos.z)
+        offset = TGPoint3(local.x, local.y, local.z)
+        if hasattr(ship, "GetWorldRotation"):
+            offset.MultMatrixLeft(ship.GetWorldRotation())
+        return TGPoint3(ship_pos.x + offset.x,
+                        ship_pos.y + offset.y,
+                        ship_pos.z + offset.z)
 
     def StopFiring(self) -> None:
         self._firing = False

@@ -81,3 +81,101 @@ def test_fire_no_sfx_in_pr2a():
     tube = _loaded_tube()
     tube.Fire(target=None, offset=None)  # must not raise
     assert tube.GetNumReady() == 0
+
+
+# ── PR 2b: spawn-path tests ────────────────────────────────────────────────
+from unittest.mock import patch  # noqa: E402
+
+import App  # noqa: E402
+from engine.appc.projectiles import _active  # noqa: E402
+from engine.appc.properties import WeaponSystemProperty  # noqa: E402
+
+
+def _galaxy_tube_with_photon_script():
+    """Set up a TorpedoTube parented to a TorpedoSystem with a PhotonTorpedo
+    script bound at slot 0.  Returns (tube, parent_system, parent_ship)."""
+    from engine.appc.ships import ShipClass_Create
+    from engine.appc.subsystems import TorpedoSystem, TorpedoTube as _TT
+    from engine.appc.math import TGPoint3
+    ship = ShipClass_Create("Test")
+    parent = TorpedoSystem("Torpedoes")
+    parent.TurnOn()
+    parent_prop = WeaponSystemProperty("Torpedoes")
+    parent_prop.SetTorpedoScript(0, "Tactical.Projectiles.PhotonTorpedo")
+    parent.SetProperty(parent_prop)
+    ship._torpedo_system = parent
+    # Wire parent_ship back-reference so _climb_to_ship works.
+    parent._parent_ship = ship
+    ship.SetWorldLocation(TGPoint3(0, 0, 0))
+    tube = _TT("Forward Torpedo 1")
+    tube._max_ready = 1
+    tube._num_ready = 1
+    tube._reload_delay = 40.0
+    parent.AddChildSubsystem(tube)
+    return tube, parent, ship
+
+
+def test_fire_spawns_torpedo_with_script_visuals():
+    _active.clear()
+    tube, _, _ = _galaxy_tube_with_photon_script()
+    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
+        tube.Fire(target=None, offset=None)
+    assert len(_active) == 1
+    torp = _active[-1]
+    assert torp._core_texture.endswith("TorpedoCore.tga")
+    assert torp._core_size_a == 0.2
+    assert torp._damage == 500.0
+    assert torp._guidance_lifetime == 6.0
+    _active.clear()
+
+
+def test_fire_dumbfires_when_no_target_lock():
+    _active.clear()
+    tube, _, ship = _galaxy_tube_with_photon_script()
+    ship._target = None
+    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
+        tube.Fire(target=None, offset=None)
+    torp = _active[-1]
+    assert torp._target_ship is None
+    assert torp._velocity.Length() > 0.0
+    _active.clear()
+
+
+def test_fire_homes_when_target_locked():
+    _active.clear()
+    tube, _, ship = _galaxy_tube_with_photon_script()
+    from engine.appc.math import TGPoint3
+    class _Tgt:
+        def GetWorldLocation(self): return TGPoint3(100, 0, 0)
+        def IsDead(self): return 0
+    ship._target = _Tgt()
+    ship._target_subsystem = None
+    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
+        tube.Fire(target=None, offset=None)
+    torp = _active[-1]
+    assert torp._target_ship is ship._target
+    assert torp._velocity.x > 0.0
+    _active.clear()
+
+
+def test_fire_no_script_bound_silent_no_op():
+    _active.clear()
+    tube, parent, _ = _galaxy_tube_with_photon_script()
+    parent.GetProperty()._torpedo_scripts.clear()
+    initial_ready = tube.GetNumReady()
+    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
+        tube.Fire(target=None, offset=None)
+    # PR 2a behaviour: NumReady decremented.
+    assert tube.GetNumReady() == initial_ready - 1
+    # No torpedo spawned.
+    assert len(_active) == 0
+    _active.clear()
+
+
+def test_fire_plays_launch_sound():
+    _active.clear()
+    tube, _, _ = _galaxy_tube_with_photon_script()
+    with patch("engine.audio.tg_sound.TGSoundManager.instance") as mock_mgr:
+        tube.Fire(target=None, offset=None)
+        mock_mgr.return_value.PlaySound.assert_called_with("Photon Torpedo")
+    _active.clear()
