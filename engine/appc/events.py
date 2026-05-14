@@ -64,6 +64,7 @@ class TGKeyboardEvent(TGEvent):
     KS_KEYDOWN   = 0
     KS_KEYUP     = 1
     KS_KEYREPEAT = 2
+    KS_NORMAL    = 3   # character-input event (e.g. printable keys)
 
     def __init__(self):
         super().__init__()

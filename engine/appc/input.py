@@ -21,6 +21,7 @@ KY_MBUTTON: int = 0x04
 KS_KEYDOWN   = TGKeyboardEvent.KS_KEYDOWN
 KS_KEYUP     = TGKeyboardEvent.KS_KEYUP
 KS_KEYREPEAT = TGKeyboardEvent.KS_KEYREPEAT
+KS_NORMAL    = TGKeyboardEvent.KS_NORMAL
 
 
 class TGInputManager(TGObject):

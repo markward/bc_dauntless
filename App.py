@@ -9,7 +9,7 @@ from engine.appc.input import (
     TGInputManager, KeyboardBinding,
     WC_LBUTTON, WC_RBUTTON, WC_MBUTTON,
     KY_LBUTTON, KY_RBUTTON, KY_MBUTTON,
-    KS_KEYDOWN, KS_KEYUP, KS_KEYREPEAT,
+    KS_KEYDOWN, KS_KEYUP, KS_KEYREPEAT, KS_NORMAL,
     init_input_pipeline, register_input_handlers,
 )
 from engine.appc.windows import TacticalControlWindow
@@ -352,7 +352,67 @@ ET_OBJECT_DELETED = 104
 ET_ENTERED_SET = 105
 ET_OBJECT_EXPLODING = 106
 
-_next_event_type_id = 200
+# ── Input event types — used by DefaultKeyboardBinding + TacticalInterfaceHandlers
+# Values are stable arbitrary integers well above the Phase-1 event range.
+# The SDK allocates these via Appc.ET_*; we pick our own stable IDs since the
+# only requirement is consistency between BindKey registration and handler lookup.
+ET_INPUT_FIRE_PRIMARY           = 1001
+ET_INPUT_FIRE_SECONDARY         = 1002
+ET_INPUT_FIRE_TERTIARY          = 1003
+ET_INPUT_ZOOM                   = 1004
+ET_INPUT_TOGGLE_MAP_MODE        = 1005
+ET_INPUT_TOGGLE_CINEMATIC_MODE  = 1006
+ET_INPUT_CYCLE_CAMERA           = 1007
+ET_INPUT_CHASE_PLAYER           = 1008
+ET_INPUT_REVERSE_CHASE          = 1009
+ET_INPUT_ZOOM_TARGET            = 1010
+ET_INPUT_CLEAR_TARGET           = 1011
+ET_INPUT_TARGET_NEXT            = 1012
+ET_INPUT_TARGET_PREV            = 1013
+ET_INPUT_TARGET_NEAREST         = 1014
+ET_INPUT_TARGET_NEXT_ENEMY      = 1015
+ET_INPUT_TARGET_TARGETS_ATTACKER = 1016
+ET_INPUT_TARGET_NEXT_NAVPOINT   = 1017
+ET_INPUT_TARGET_NEXT_PLANET     = 1018
+ET_INPUT_ALLOW_CAMERA_ROTATION  = 1019
+ET_INPUT_SET_IMPULSE            = 1020
+ET_INPUT_INCREASE_SPEED         = 1021
+ET_INPUT_DECREASE_SPEED         = 1022
+ET_INPUT_TURN_LEFT              = 1023
+ET_INPUT_TURN_RIGHT             = 1024
+ET_INPUT_TURN_UP                = 1025
+ET_INPUT_TURN_DOWN              = 1026
+ET_INPUT_ROLL_LEFT              = 1027
+ET_INPUT_ROLL_RIGHT             = 1028
+ET_INPUT_SKIP_EVENTS            = 1029
+ET_INPUT_SELECT_X               = 1030
+ET_INPUT_SELECT_OPTION          = 1031
+ET_INPUT_PRE_SELECT_OPTION      = 1032
+ET_INPUT_CLOSE_MENU             = 1033
+ET_INPUT_INTERCEPT              = 1034
+ET_INPUT_TOGGLE_CONSOLE         = 1035
+ET_INPUT_TOGGLE_OPTIONS         = 1036
+ET_INPUT_DEBUG_KILL_TARGET      = 1037
+ET_INPUT_DEBUG_QUICK_REPAIR     = 1038
+ET_INPUT_DEBUG_GOD_MODE         = 1039
+ET_INPUT_DEBUG_LOAD_QUANTUMS    = 1040
+ET_INPUT_TALK_TO_TACTICAL       = 1041
+ET_INPUT_TALK_TO_HELM           = 1042
+ET_INPUT_TALK_TO_XO             = 1043
+ET_INPUT_TALK_TO_SCIENCE        = 1044
+ET_INPUT_TALK_TO_ENGINEERING    = 1045
+ET_INPUT_TALK_TO_GUEST          = 1046
+ET_INPUT_TOGGLE_SCORE_WINDOW    = 1047
+ET_INPUT_TOGGLE_CHAT_WINDOW     = 1048
+ET_OTHER_BEAM_TOGGLE_CLICKED    = 1049
+ET_OTHER_CLOAK_TOGGLE_CLICKED   = 1050
+ET_SET_ALERT_LEVEL              = 1051
+ET_QUICK_SAVE                   = 1052
+ET_QUICK_LOAD                   = 1053
+ET_INPUT_PRINT_SCREEN             = 1054
+ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL = 1055
+
+_next_event_type_id = 1200
 
 
 def Game_GetNextEventType() -> int:

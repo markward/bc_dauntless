@@ -836,18 +836,26 @@ def reset_sdk_globals() -> None:
 
     Called once at start-of-mission and again on every in-process swap.
     Keep this list in lockstep with what the SDK actually mutates.
+
+    After clearing _broadcast_handlers the engine's own keyboard-dispatch
+    handler is immediately re-registered so that the input pipeline stays
+    functional across mission swaps.  _next_event_type_id is reset to 1200
+    — just above the stable ET_INPUT_* block (1001–1053) — so dynamic
+    event-type allocations restart from a predictable value.
     """
     import App
     from engine.appc.placement import _waypoint_registry
+    from engine.appc.input import register_input_handlers
 
     App.g_kTimerManager._time = 0.0
     App.g_kTimerManager._timers.clear()
     App.g_kRealtimeTimerManager._time = 0.0
     App.g_kRealtimeTimerManager._timers.clear()
     App.g_kEventManager._broadcast_handlers.clear()
+    register_input_handlers(App.g_kEventManager)
     App.g_kSetManager._sets.clear()
     _waypoint_registry.clear()
-    App._next_event_type_id = 200
+    App._next_event_type_id = 1200
 
 
 def _init_mission(mission_module_name: str):

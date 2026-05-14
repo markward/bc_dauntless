@@ -244,6 +244,13 @@ class CharacterClass(ObjectClass):
     CS_UI_ENABLED       = 12
     CS_STOP_INITIATIVE  = 13
 
+    # Alert-state constants — used by DefaultKeyboardBinding.Initialize to
+    # pass the desired alert level as an int value to ET_SET_ALERT_LEVEL.
+    # Values mirror ShipClass.GREEN/YELLOW/RED_ALERT (sdk/.../App.py:4657-4659).
+    EST_ALERT_GREEN  = 0
+    EST_ALERT_YELLOW = 1
+    EST_ALERT_RED    = 2
+
     # Animation-type bitmask constants.
     CAT_BREATHE             = 1
     CAT_INTERRUPTABLE       = 2

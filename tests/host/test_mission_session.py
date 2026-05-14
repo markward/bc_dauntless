@@ -6,12 +6,20 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 
 def test_reset_sdk_globals_clears_state():
-    """After reset, the five SDK globals listed in the spec are empty."""
+    """After reset, SDK-mutable globals are cleared/reset to engine defaults.
+
+    reset_sdk_globals() clears all broadcast handlers and then immediately
+    re-registers the engine's own keyboard-dispatch handler, so after reset
+    exactly one broadcast entry exists (ET_KEYBOARD_EVENT → keyboard binding).
+    _next_event_type_id resets to 1200, just above the stable ET_INPUT_*
+    block (1001–1053) defined in App.py.
+    """
     sys.path.insert(0, str(PROJECT_ROOT))
     from tools import mission_harness
     mission_harness.setup_sdk()
 
     import App
+    from engine.appc.events import ET_KEYBOARD_EVENT
     from engine.appc.placement import _waypoint_registry
     from engine.host_loop import reset_sdk_globals
 
@@ -28,10 +36,11 @@ def test_reset_sdk_globals_clears_state():
     assert App.g_kTimerManager._timers == {}
     assert App.g_kRealtimeTimerManager._time == 0.0
     assert App.g_kRealtimeTimerManager._timers == {}
-    assert App.g_kEventManager._broadcast_handlers == {}
+    # SDK-owned handlers are cleared; the engine re-registers one entry.
+    assert list(App.g_kEventManager._broadcast_handlers.keys()) == [ET_KEYBOARD_EVENT]
     assert App.g_kSetManager._sets == {}
     assert _waypoint_registry == {}
-    assert App._next_event_type_id == 200
+    assert App._next_event_type_id == 1200
 
 
 def test_mission_session_teardown_drops_instances():
