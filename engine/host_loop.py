@@ -27,10 +27,11 @@ except (ImportError, AttributeError):
 
 from engine.audio.alert_audio import AlertAudioListener
 from engine.audio.engine_rumble import install_engine_rumble_listener
-# tg_sound import — no functional need here, but importing eagerly forces the
-# manager singleton to be constructed at host_loop import time so SDK code
-# that imports App and uses App.g_kSoundManager is well-defined from frame 0.
-from engine.audio.tg_sound import TGSoundManager  # noqa: F401
+# tg_sound import — eagerly constructs the manager singleton at host_loop
+# import time so SDK code that imports App and uses App.g_kSoundManager is
+# well-defined from frame 0. register_default_sounds is called from
+# init_audio so engine rumble + alert names resolve before first spawn.
+from engine.audio.tg_sound import TGSoundManager, register_default_sounds  # noqa: F401
 
 _alert_listener: "AlertAudioListener" = AlertAudioListener()
 
@@ -41,6 +42,7 @@ def init_audio() -> None:
         return
     backend = "null" if _os_mod.environ.get("OPEN_STBC_AUDIO") == "0" else "openal"
     _audio_mod.init(backend=backend)
+    register_default_sounds()
     install_engine_rumble_listener()
     _alert_listener.reset()
 

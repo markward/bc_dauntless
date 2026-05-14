@@ -172,6 +172,41 @@ class TGSoundManager:
         return None if snd is None else snd.Play()
 
 
+# Subset of sdk/Build/scripts/LoadTacticalSounds.py + LoadBridge.py LoadSounds()
+# that we need on first hearing. Quickbattle's full sound boot is not yet
+# wired into our headless host, so init_audio() registers these directly
+# until LoadTacticalSounds is properly invoked.
+_DEFAULT_3D_SOUNDS: tuple[tuple[str, str], ...] = (
+    ("sfx/engine1.wav", "Federation Engines"),
+    ("sfx/engine2.wav", "Klingon Engines"),
+    ("sfx/engine2.wav", "Romulan Engines"),
+    ("sfx/engine2.wav", "Ferengi Engines"),
+    ("sfx/engine2.wav", "Cardassian Engines"),
+    ("sfx/engine1.wav", "Kessok Engines"),
+)
+_DEFAULT_2D_SOUNDS: tuple[tuple[str, str], ...] = (
+    ("sfx/redalert.wav",    "RedAlertSound"),
+    ("sfx/yellowalert.wav", "YellowAlertSound"),
+    ("sfx/greenalert.wav",  "GreenAlertSound"),
+)
+
+
+def register_default_sounds() -> None:
+    """Register engine + alert sounds with TGSoundManager.
+
+    Idempotent: missing WAV files or duplicate names are silently skipped.
+    Called from host_loop.init_audio() so the SDK names resolve before the
+    first ship spawn / alert transition.
+    """
+    mgr = TGSoundManager.instance()
+    for path, name in _DEFAULT_3D_SOUNDS:
+        if mgr.GetSound(name) is None:
+            mgr.LoadSound(path, name, TGSound.LS_3D)
+    for path, name in _DEFAULT_2D_SOUNDS:
+        if mgr.GetSound(name) is None:
+            mgr.LoadSound(path, name, TGSound.LS_STREAMED)  # non-positional
+
+
 # Module-level singleton. App.py imports this name directly, which binds it
 # at App's import time — any future production code path that resets
 # TGSoundManager._instance must also rebind App.g_kSoundManager (see the
