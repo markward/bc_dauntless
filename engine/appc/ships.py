@@ -115,6 +115,22 @@ class ShipClass(DamageableObject):
     def SetPulseWeaponSystem(self, s) -> None:    self._pulse_weapon_system = s
     def GetTractorBeamSystem(self):               return self._tractor_beam_system
     def SetTractorBeamSystem(self, s) -> None:    self._tractor_beam_system = s
+
+    # ── Weapon-group lookup by WG_* enum ─────────────────────────────────────
+    # Matches sdk/.../TacticalInterfaceHandlers.py:387-405 dispatch.  PR 2's
+    # FireWeapons event handler calls this; included now so the surface is
+    # ready when that wiring lands.
+    def GetWeaponSystemGroup(self, eGroup: int):
+        if eGroup == ShipClass.WG_PRIMARY:
+            return self._phaser_system
+        if eGroup == ShipClass.WG_SECONDARY:
+            return self._torpedo_system
+        if eGroup == ShipClass.WG_TERTIARY:
+            return self._pulse_weapon_system
+        if eGroup == ShipClass.WG_TRACTOR:
+            return self._tractor_beam_system
+        return None
+
     def GetShieldSubsystem(self):                 return self._shield_subsystem
     def SetShieldSubsystem(self, s) -> None:      self._shield_subsystem = s
     # SDK-facing alias — pShip.GetShields() in mission scripts and SDK helpers.
@@ -328,6 +344,35 @@ class ShipClass(DamageableObject):
         from engine.appc.subsystems import (
             PhaserBank, PulseWeapon, TractorBeam, TorpedoTube,
         )
+
+        def _copy_energy_weapon_fields(child, prop):
+            """Copy MaxCharge/MinFiringCharge/Normal-Discharge/Recharge from
+            property to runtime emitter.  Seeds charge to full on init."""
+            v = prop.GetMaxCharge()
+            if v is not None: child._max_charge = float(v)
+            v = prop.GetMinFiringCharge()
+            if v is not None: child._min_firing_charge = float(v)
+            v = prop.GetNormalDischargeRate()
+            if v is not None: child._normal_discharge_rate = float(v)
+            v = prop.GetRechargeRate()
+            if v is not None: child._recharge_rate = float(v)
+            # Fresh ships spawn with phasers/pulse/tractors fully charged.
+            child._charge_level = child._max_charge
+
+        def _copy_pulse_weapon_fields(child, prop):
+            v = prop.GetCooldownTime()
+            if v is not None: child._cooldown_time = float(v)
+
+        def _copy_torpedo_tube_fields(tube, prop):
+            """Copy reload constants, then preload tubes to MaxReady."""
+            v = prop.GetImmediateDelay()
+            if v is not None: tube._immediate_delay = float(v)
+            v = prop.GetReloadDelay()
+            if v is not None: tube._reload_delay = float(v)
+            v = prop.GetMaxReady()
+            if v is not None: tube._max_ready = int(v)
+            tube._num_ready = tube._max_ready
+
         _CHILD_DISPATCH = (
             (PhaserProperty,      "_phaser_system",        PhaserBank),
             (PulseWeaponProperty, "_pulse_weapon_system",  PulseWeapon),
@@ -355,6 +400,17 @@ class ShipClass(DamageableObject):
                 child.SetProperty(prop)
                 mc = prop.GetMaxCondition()
                 if mc is not None: child.SetMaxCondition(mc)
+
+                if isinstance(child, PhaserBank):
+                    _copy_energy_weapon_fields(child, prop)
+                elif isinstance(child, PulseWeapon):
+                    _copy_energy_weapon_fields(child, prop)
+                    _copy_pulse_weapon_fields(child, prop)
+                elif isinstance(child, TractorBeam):
+                    _copy_energy_weapon_fields(child, prop)
+                elif isinstance(child, TorpedoTube):
+                    _copy_torpedo_tube_fields(child, prop)
+
                 parent.AddChildSubsystem(child)
                 break
 
