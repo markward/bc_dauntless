@@ -1,8 +1,18 @@
 import math
 from engine.appc.events import (
     TGEvent, TGEvent_Create,
+    TGBoolEvent, TGBoolEvent_Create,
+    TGKeyboardEvent, ET_KEYBOARD_EVENT,
     TGEventHandlerObject, TGEventManager,
 )
+from engine.appc.input import (
+    TGInputManager, KeyboardBinding,
+    WC_LBUTTON, WC_RBUTTON, WC_MBUTTON,
+    KY_LBUTTON, KY_RBUTTON, KY_MBUTTON,
+    KS_KEYDOWN, KS_KEYUP, KS_KEYREPEAT,
+    init_input_pipeline, register_input_handlers,
+)
+from engine.appc.windows import TacticalControlWindow
 from engine.appc.timers import TGTimer, TGTimer_Create, TGTimerManager
 from engine.appc.math import (
     TGPoint3, TGMatrix3,
@@ -287,6 +297,12 @@ TWO_PI = math.pi * 2.0
 g_kEventManager = TGEventManager()
 g_kTimerManager = TGTimerManager(g_kEventManager)
 g_kRealtimeTimerManager = TGTimerManager(g_kEventManager)
+g_kInputManager, g_kKeyboardBinding = init_input_pipeline(g_kEventManager)
+register_input_handlers(g_kEventManager)
+
+
+def TacticalControlWindow_GetTacticalControlWindow():
+    return TacticalControlWindow.GetInstance()
 g_kSetManager = SetManager()
 g_kTGActionManager = TGActionManager()
 g_kModelPropertyManager = TGModelPropertyManager()
