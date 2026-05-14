@@ -35,8 +35,21 @@ class TGInputManager(TGObject):
         # {WC_code: (KY_code, database_ref, name)}
         self._registered: dict[int, tuple[int, object, str]] = {}
 
-    def RegisterUnicodeKey(self, wc_code, ky_code, database, name) -> None:
-        self._registered[int(wc_code)] = (int(ky_code), database, str(name))
+    def RegisterUnicodeKey(self, wc_code, ky_code, database, name,
+                            modifier=None) -> None:
+        """Register a unicode-key entry.  Accepts optional 5th arg `modifier`
+        — KeyConfig.py uses it to register modifier-augmented variants
+        (App.KY_ALTGR/KY_CTRL/KY_ALT) alongside the base key.  PR 2b only
+        cares about the bare-key path; modifier variants register under
+        a (wc_code, modifier) key so they don't shadow the base.
+        """
+        if modifier is None:
+            self._registered[int(wc_code)] = (int(ky_code), database, str(name))
+        else:
+            # Keep modifier-augmented entries separate; the base unicode key
+            # stays addressable via OnKeyDown(WC_*).
+            self._registered[(int(wc_code), int(modifier))] = (
+                int(ky_code), database, str(name))
 
     def OnKeyDown(self, wc_code: int) -> None:
         self._emit(int(wc_code), KS_KEYDOWN)
