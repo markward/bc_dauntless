@@ -51,6 +51,9 @@ from engine.appc.actions import (
     TGObjPtrEvent, TGObjPtrEvent_Create,
     TGObject_GetTGObjectPtr,
 )
+from engine.audio.tg_sound import (
+    TGSound, TGSoundManager, g_kSoundManager,
+)
 from engine.core.game import (
     Game, Episode, Mission, Game_GetCurrentGame, _set_current_game,
     Game_GetDifficulty,

@@ -183,6 +183,7 @@ g_kSoundManager = TGSoundManager.instance()
 # Test helpers (NOT for production code).
 def init_audio_for_tests() -> None:
     """Init the C++ audio subsystem with the null backend."""
+    import sys
     if _audio is None:
         return
     _audio.init(backend="null")
@@ -190,12 +191,20 @@ def init_audio_for_tests() -> None:
     TGSoundManager._instance = TGSoundManager()
     global g_kSoundManager
     g_kSoundManager = TGSoundManager._instance
+    # Keep App.g_kSoundManager in sync — it was bound at import time via
+    # `from engine.audio.tg_sound import g_kSoundManager` so we must push
+    # the new reference into the App module's namespace directly.
+    if "App" in sys.modules:
+        sys.modules["App"].g_kSoundManager = g_kSoundManager
 
 
 def shutdown_audio_for_tests() -> None:
+    import sys
     if _audio is None:
         return
     _audio.shutdown()
     TGSoundManager._instance = None
     global g_kSoundManager
     g_kSoundManager = None
+    if "App" in sys.modules:
+        sys.modules["App"].g_kSoundManager = None

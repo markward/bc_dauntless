@@ -289,7 +289,15 @@ class EngineProperty(SubsystemProperty):
 
 
 class ImpulseEngineProperty(PoweredSubsystemProperty):
-    pass
+    def __init__(self, name: str = "") -> None:
+        super().__init__(name)
+        self._engine_sound_name: str = ""
+
+    def SetEngineSound(self, name: str) -> None:
+        self._engine_sound_name = name or ""
+
+    def GetEngineSound(self) -> str:
+        return self._engine_sound_name
 
 
 class WarpEngineProperty(PoweredSubsystemProperty):

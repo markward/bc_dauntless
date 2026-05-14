@@ -173,9 +173,20 @@ class TGTimedAction(TGAction):
 
 
 class TGSoundAction(TGTimedAction):
-    def __init__(self, sound_name: str = ""):
+    def __init__(self, sound_name: str = "") -> None:
         super().__init__()
         self._sound_name = sound_name
+
+    def SetName(self, name: str) -> None:
+        self._sound_name = name
+
+    def GetName(self) -> str:
+        return self._sound_name
+
+    def Play(self) -> None:
+        # Late import to avoid circular dep at module init.
+        from engine.audio.tg_sound import TGSoundManager
+        TGSoundManager.instance().PlaySound(self._sound_name)
 
 
 def TGSoundAction_Create(*args) -> TGSoundAction:
