@@ -80,6 +80,8 @@ ui::HudState                  g_hud_state;
 // rising edges. Only keys that have been queried via key_pressed appear
 // here; lookup misses (key never queried) are treated as "previously up".
 std::unordered_map<int, bool> g_prev_key_state;
+// Mouse-button rising/falling-edge detection. Mirrors g_prev_key_state.
+std::unordered_map<int, bool> g_prev_mouse_state;
 std::unique_ptr<renderer::Pipeline> g_pipeline;
 // FrameSubmitter is a unique_ptr (not a static instance) so its destructor —
 // which calls glDeleteTextures on the white-fallback texture — runs from
@@ -181,6 +183,7 @@ void shutdown() {
     g_lens_flare_pass.reset();
     g_window.reset();
     g_prev_key_state.clear();
+    g_prev_mouse_state.clear();
     // Mirror init()'s lighting reset for symmetry and defense-in-depth:
     // any future code path that reads g_lighting between shutdown() and a
     // subsequent init() will see the documented default, not stale state
@@ -265,6 +268,9 @@ void frame() {
     // every Python call, silently breaking key_pressed.)
     for (auto& [k, prev] : g_prev_key_state) {
         prev = (glfwGetKey(g_window->native_handle(), k) == GLFW_PRESS);
+    }
+    for (auto& [b, prev] : g_prev_mouse_state) {
+        prev = (glfwGetMouseButton(g_window->native_handle(), b) == GLFW_PRESS);
     }
     g_window->poll_events();
     g_window->swap_buffers();
@@ -604,6 +610,9 @@ PYBIND11_MODULE(_open_stbc_host, m) {
     keys.attr("KEY_ESCAPE") = GLFW_KEY_ESCAPE;
     keys.attr("KEY_LEFT_SHIFT")  = GLFW_KEY_LEFT_SHIFT;
     keys.attr("KEY_RIGHT_SHIFT") = GLFW_KEY_RIGHT_SHIFT;
+    keys.attr("MOUSE_BUTTON_LEFT")   = GLFW_MOUSE_BUTTON_LEFT;
+    keys.attr("MOUSE_BUTTON_RIGHT")  = GLFW_MOUSE_BUTTON_RIGHT;
+    keys.attr("MOUSE_BUTTON_MIDDLE") = GLFW_MOUSE_BUTTON_MIDDLE;
 
     m.def("key_state",
           [](int key) {
@@ -678,6 +687,38 @@ PYBIND11_MODULE(_open_stbc_host, m) {
           },
           py::arg("key"),
           "Returns true on the first frame the key is pressed (rising edge).");
+
+    m.def("mouse_button_pressed",
+          [](int button) {
+              if (!g_window) {
+                  throw std::runtime_error("mouse_button_pressed: init must be called first");
+              }
+              const bool now = g_window->mouse_button_state(button);
+              auto it = g_prev_mouse_state.find(button);
+              const bool prev = (it != g_prev_mouse_state.end()) && it->second;
+              if (it == g_prev_mouse_state.end()) {
+                  g_prev_mouse_state[button] = now;
+              }
+              return now && !prev;
+          },
+          py::arg("button"),
+          "Returns true on the first frame the mouse button is pressed (rising edge).");
+
+    m.def("mouse_button_released",
+          [](int button) {
+              if (!g_window) {
+                  throw std::runtime_error("mouse_button_released: init must be called first");
+              }
+              const bool now = g_window->mouse_button_state(button);
+              auto it = g_prev_mouse_state.find(button);
+              const bool prev = (it != g_prev_mouse_state.end()) && it->second;
+              if (it == g_prev_mouse_state.end()) {
+                  g_prev_mouse_state[button] = now;
+              }
+              return prev && !now;
+          },
+          py::arg("button"),
+          "Returns true on the first frame the mouse button is released (falling edge).");
 
     // Test/debug helper: read one RGBA8 pixel from the most recently
     // presented frame. Reads GL_FRONT (the buffer that swap_buffers

@@ -32,6 +32,10 @@ public:
     /// held. State is updated by glfwPollEvents() (called by poll_events()).
     bool key_state(int glfw_key) const noexcept;
 
+    /// Cached state of a GLFW mouse button (GLFW_MOUSE_BUTTON_*). Returns
+    /// true while the button is held. State is updated by poll_events().
+    bool mouse_button_state(int glfw_button) const noexcept;
+
     /// Return the accumulated mouse-wheel Y delta since the last call and
     /// reset the accumulator. Positive = scroll up. Updated from the GLFW
     /// scroll callback during poll_events().

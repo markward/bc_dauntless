@@ -151,6 +151,11 @@ bool Window::key_state(int glfw_key) const noexcept {
     return glfwGetKey(handle_, glfw_key) == GLFW_PRESS;
 }
 
+bool Window::mouse_button_state(int glfw_button) const noexcept {
+    if (!handle_) return false;
+    return glfwGetMouseButton(handle_, glfw_button) == GLFW_PRESS;
+}
+
 double Window::consume_scroll_y() noexcept {
     double v = scroll_y_accum_;
     scroll_y_accum_ = 0.0;
