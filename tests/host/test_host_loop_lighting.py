@@ -408,3 +408,25 @@ def test_set_lighting_changes_rendered_pixel():
     finally:
         _open_stbc_host.destroy_instance(iid)
         _open_stbc_host.shutdown()
+
+
+def test_host_loop_pushes_bridge_lighting_each_tick():
+    """When a 'bridge' SetClass exists with CreateAmbientLight, the host
+    loop's per-tick lighting push targets set_bridge_lighting in addition
+    to set_lighting. The bridge ambient is independent of the space
+    scene's ambient."""
+    import App
+    from engine.host_loop import _aggregate_bridge_lights
+    if App.g_kSetManager.GetSet("bridge") is not None:
+        App.g_kSetManager.DeleteSet("bridge")
+    pSet = App.SetClass_Create()
+    App.g_kSetManager.AddSet(pSet, "bridge")
+    try:
+        pSet.CreateAmbientLight(1.0, 1.0, 1.0, 0.7, "ambientlight1")
+        ambient, directionals = _aggregate_bridge_lights()
+        # 4th arg (dimmer) is 0.7; treated as dimmer × color today.
+        # See engine/appc/sets.py for chosen interpretation.
+        assert ambient == pytest.approx((0.7, 0.7, 0.7))
+        assert directionals == []
+    finally:
+        App.g_kSetManager.DeleteSet("bridge")

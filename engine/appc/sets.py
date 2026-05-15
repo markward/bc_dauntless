@@ -161,13 +161,20 @@ class SetClass(TGEventHandlerObject):
         """SDK signature: pSet.CreateAmbientLight(r, g, b, range_or_dimmer, name).
 
         The 4th arg is "range" in some calls (MissionLib bridge: 19.0) and
-        "dimmer" in others (LoadBridge: 0.7). For ambient light range is
-        meaningless (no falloff), so we treat it as dimmer uniformly.
-        Bridge-rendering follow-up (deferred-work) will revisit the
-        high-dimmer bridge case once bridge interiors actually render.
+        "dimmer" in others (LoadBridge: 0.7). For ambient light, range is
+        meaningless (no falloff), so we treat it as dimmer uniformly,
+        clamped to [0, 1]. The clamp protects against MissionLib's
+        outlier 19.0 — a literal 19× color multiply would blow the bridge
+        out to pure white; saturating at 1× is the most visually sensible
+        interpretation absent better evidence. (Decision documented during
+        the 2026-05-15 bridge-lighting work; see
+        docs/superpowers/specs/2026-05-15-bridge-lighting-materials-design.md
+        deferred-work item #9 — the true semantics of the 4th arg are
+        still unconfirmed.)
         """
         from engine.appc.lights import Light
-        light = Light(Light.KIND_AMBIENT, name, r, g, b, dimmer)
+        clamped_dimmer = min(max(float(dimmer), 0.0), 1.0)
+        light = Light(Light.KIND_AMBIENT, name, r, g, b, clamped_dimmer)
         self._lights.append(light)
         self._lights_by_name[name] = light
         return light

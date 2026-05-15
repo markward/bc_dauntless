@@ -1281,6 +1281,15 @@ def _aggregate_lights(pSet):
     return aggregate_for_renderer(pSet, DEFAULT_AMBIENT, DEFAULT_DIRECTIONALS)
 
 
+def _aggregate_bridge_lights():
+    """Wrapper over aggregate_bridge_for_renderer plugging in this
+    module's DEFAULT_AMBIENT / DEFAULT_DIRECTIONALS as the no-bridge-set
+    fallback. Mirrors _aggregate_lights's relationship with the space
+    aggregator."""
+    from engine.appc.lights import aggregate_bridge_for_renderer
+    return aggregate_bridge_for_renderer(DEFAULT_AMBIENT, DEFAULT_DIRECTIONALS)
+
+
 def _aggregate_backdrops(pSet):
     """Thin wrapper over engine.appc.backdrops.aggregate_for_renderer
     that supplies PROJECT_ROOT, mirroring _aggregate_lights's wrapping
@@ -2064,6 +2073,9 @@ def run(mission_name: str = SHIP_GATE_MISSION,
 
             ambient, directionals = _aggregate_lights(active_set)
             r.set_lighting(ambient, directionals)
+
+            bridge_ambient, bridge_directionals = _aggregate_bridge_lights()
+            r.set_bridge_lighting(bridge_ambient, bridge_directionals)
 
             backdrops = _aggregate_backdrops(active_set)
             r.set_backdrops(backdrops)
