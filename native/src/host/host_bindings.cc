@@ -63,6 +63,7 @@ std::vector<renderer::TorpedoDescriptor>   g_torpedoes;
 std::unique_ptr<renderer::TorpedoPass>     g_torpedo_pass;
 std::vector<renderer::HitVfxDescriptor>    g_hit_vfx;
 std::unique_ptr<renderer::HitVfxPass>      g_hit_vfx_pass;
+std::vector<renderer::PhaserBeamDescriptor> g_phaser_beams;
 double g_prev_frame_time_seconds = 0.0;
 
 // Bridge pass state. Camera is set from Python via set_bridge_camera each
@@ -193,6 +194,7 @@ void shutdown() {
     g_torpedo_pass.reset();
     g_hit_vfx.clear();
     g_hit_vfx_pass.reset();
+    g_phaser_beams.clear();
     g_window.reset();
     g_prev_key_state.clear();
     g_prev_mouse_state.clear();
@@ -536,6 +538,25 @@ PYBIND11_MODULE(_open_stbc_host, m) {
           },
           py::arg("vfx"),
           "Set the active hit-VFX list (position + age), applied each frame().");
+
+    m.def("set_phaser_beams",
+          [](const std::vector<py::dict>& descs) {
+              g_phaser_beams.clear();
+              g_phaser_beams.reserve(descs.size());
+              for (const auto& d : descs) {
+                  renderer::PhaserBeamDescriptor b;
+                  auto e = d["emitter"].cast<std::tuple<float, float, float>>();
+                  auto t = d["target"].cast<std::tuple<float, float, float>>();
+                  auto c = d["color"].cast<std::tuple<float, float, float, float>>();
+                  b.emitter_world = {std::get<0>(e), std::get<1>(e), std::get<2>(e)};
+                  b.target_world  = {std::get<0>(t), std::get<1>(t), std::get<2>(t)};
+                  b.color         = {std::get<0>(c), std::get<1>(c), std::get<2>(c), std::get<3>(c)};
+                  b.width         = d["width"].cast<float>();
+                  g_phaser_beams.push_back(std::move(b));
+              }
+          },
+          py::arg("beams"),
+          "Set the active phaser-beam list, applied each frame().");
 
     m.def("dust_set_enabled",
           [](bool enabled) {

@@ -95,6 +95,16 @@ struct HitVfxDescriptor {
     float     age = 0.0f;
 };
 
+/// Phaser-beam render descriptor.  One entry per actively firing
+/// PhaserBank: a line segment from emitter_world to target_world,
+/// drawn as an additive camera-aligned billboard quad.
+struct PhaserBeamDescriptor {
+    glm::vec3 emitter_world;
+    glm::vec3 target_world;
+    glm::vec4 color;     // RGBA additive tint
+    float     width;     // world-units half-width of the beam quad
+};
+
 class FrameSubmitter {
 public:
     using ModelLookup = std::function<const assets::Model*(unsigned long long)>;

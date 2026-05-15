@@ -301,6 +301,8 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
         host.set_torpedoes(_build_torpedo_render_data())
     if host is not None and hasattr(host, "set_hit_vfx"):
         host.set_hit_vfx(_build_hit_vfx_render_data())
+    if host is not None and hasattr(host, "set_phaser_beams"):
+        host.set_phaser_beams(_build_phaser_beam_render_data(ships_list))
 
 
 def _color_tuple(color):
@@ -366,6 +368,43 @@ def _build_hit_vfx_render_data():
             "position": (pos.x, pos.y, pos.z),
             "age":      entry["age"],
         })
+    return out
+
+
+def _build_phaser_beam_render_data(ships):
+    """Snapshot active phaser beams for the renderer.
+
+    Walks every ship's PhaserSystem; for each bank IsFiring()=1, yields
+    {emitter, target, color, width}.  Color is Federation amber (default
+    until per-faction beam color is wired); width is a small constant.
+    """
+    out = []
+    for ship in ships:
+        sys_ = ship.GetPhaserSystem() if hasattr(ship, "GetPhaserSystem") else None
+        if sys_ is None:
+            continue
+        for i in range(sys_.GetNumWeapons()):
+            bank = sys_.GetWeapon(i)
+            if bank is None or not bank.IsFiring():
+                continue
+            target = bank._target
+            if target is None:
+                continue
+            target_sub = (ship.GetTargetSubsystem()
+                          if hasattr(ship, "GetTargetSubsystem") else None)
+            if target_sub is not None and hasattr(target_sub, "GetWorldLocation"):
+                target_pos = target_sub.GetWorldLocation()
+            else:
+                target_pos = target.GetWorldLocation()
+            emitter_pos = bank._emitter_world_position()
+            out.append({
+                "emitter": (emitter_pos.x, emitter_pos.y, emitter_pos.z),
+                "target":  (target_pos.x,  target_pos.y,  target_pos.z),
+                # Federation amber, additive.  Per-faction colors are a
+                # follow-up — PR 2c only ships the player Galaxy.
+                "color":   (1.0, 0.6, 0.2, 1.0),
+                "width":   0.05,
+            })
     return out
 
 
