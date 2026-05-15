@@ -63,6 +63,14 @@ public:
     /// normal cursor visible inside the window.
     void set_cursor_locked(bool locked) noexcept;
 
+    /// Public entry point for GLFW cursor-pos events. Subsystems that
+    /// register their own GLFW cursor-pos callback (e.g. UiSystem
+    /// forwarding to RmlUi) MUST also call this so the Window's mouse-
+    /// delta accumulator stays current. Without this forward, a
+    /// downstream subscriber overwriting the callback silently breaks
+    /// mouse-look.
+    void on_cursor_pos(double x, double y) noexcept;
+
     GLFWwindow* native_handle() noexcept { return handle_; }
 
 private:
