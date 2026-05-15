@@ -779,6 +779,13 @@ PYBIND11_MODULE(_open_stbc_host, m) {
           py::arg("key"),
           "Returns true on the first frame the key is pressed (rising edge).");
 
+    // Edge detection is split across mouse_button_pressed (read-only) and
+    // mouse_button_released (which also writes the new prev). The host
+    // loop's _poll_mouse_buttons calls pressed first, then released — so
+    // both observe the same prev within a frame and prev advances exactly
+    // once per frame.  Prior to this split prev was only ever initialised,
+    // never updated, so mouse_button_pressed returned true every frame the
+    // button stayed down — the cause of the "staccato fire" symptom.
     m.def("mouse_button_pressed",
           [](int button) {
               if (!g_window) {
@@ -787,9 +794,6 @@ PYBIND11_MODULE(_open_stbc_host, m) {
               const bool now = g_window->mouse_button_state(button);
               auto it = g_prev_mouse_state.find(button);
               const bool prev = (it != g_prev_mouse_state.end()) && it->second;
-              if (it == g_prev_mouse_state.end()) {
-                  g_prev_mouse_state[button] = now;
-              }
               return now && !prev;
           },
           py::arg("button"),
@@ -803,9 +807,7 @@ PYBIND11_MODULE(_open_stbc_host, m) {
               const bool now = g_window->mouse_button_state(button);
               auto it = g_prev_mouse_state.find(button);
               const bool prev = (it != g_prev_mouse_state.end()) && it->second;
-              if (it == g_prev_mouse_state.end()) {
-                  g_prev_mouse_state[button] = now;
-              }
+              g_prev_mouse_state[button] = now;
               return prev && !now;
           },
           py::arg("button"),
