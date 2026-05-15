@@ -28,6 +28,7 @@
 #include <renderer/torpedo_pass.h>
 #include <renderer/hit_vfx_pass.h>
 #include <renderer/phaser_pass.h>
+#include <renderer/bridge_pass.h>
 #include <renderer/aabb.h>
 #include <ui/UiSystem.h>
 #include <ui/PanelDocument.h>
@@ -66,6 +67,7 @@ std::vector<renderer::HitVfxDescriptor>    g_hit_vfx;
 std::unique_ptr<renderer::HitVfxPass>      g_hit_vfx_pass;
 std::vector<renderer::PhaserBeamDescriptor> g_phaser_beams;
 std::unique_ptr<renderer::PhaserPass>      g_phaser_pass;
+std::unique_ptr<renderer::BridgePass>      g_bridge_pass;
 double g_prev_frame_time_seconds = 0.0;
 
 // Bridge pass state. Camera is set from Python via set_bridge_camera each
@@ -162,6 +164,7 @@ void init(int width, int height, const std::string& title,
     g_torpedo_pass = std::make_unique<renderer::TorpedoPass>();
     g_hit_vfx_pass = std::make_unique<renderer::HitVfxPass>();
     g_phaser_pass  = std::make_unique<renderer::PhaserPass>();
+    g_bridge_pass  = std::make_unique<renderer::BridgePass>();
     g_prev_frame_time_seconds = glfwGetTime();
 
     if (!ui_assets_root.empty()) {
@@ -199,6 +202,7 @@ void shutdown() {
     g_hit_vfx_pass.reset();
     g_phaser_beams.clear();
     g_phaser_pass.reset();
+    g_bridge_pass.reset();
     g_window.reset();
     g_prev_key_state.clear();
     g_prev_mouse_state.clear();
@@ -269,13 +273,12 @@ void frame() {
     // the future viewscreen RTT can swap the space pass's target from
     // "main framebuffer" to "viewscreen texture" without adding a
     // "render space here" path that didn't exist before.
-    if (g_bridge_pass_enabled) {
+    if (g_bridge_pass_enabled && g_bridge_pass) {
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         if (fh > 0) g_bridge_camera.aspect = static_cast<float>(fw) / static_cast<float>(fh);
-        g_submitter->submit_opaque_in_pass(
-            g_world, g_bridge_camera, *g_pipeline, lookup, g_lighting,
-            scenegraph::Pass::Bridge);
+        g_bridge_pass->render(g_world, g_bridge_camera, *g_pipeline,
+                              lookup, g_lighting);
     }
 
     if (g_ui_system) {
