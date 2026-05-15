@@ -66,6 +66,9 @@ void NullBackend::set_category_gain(Category cat, float g) {
     c.u[0] = static_cast<uint32_t>(cat); c.f[0] = g; log_.push_back(c);
 }
 
-bool NullBackend::source_finished(SourceHandle) { return false; }
+bool NullBackend::source_finished(SourceHandle h) {
+    for (SourceHandle f : finished_) if (f == h) return true;
+    return false;
+}
 
 }  // namespace open_stbc::audio

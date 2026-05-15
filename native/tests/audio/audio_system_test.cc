@@ -88,4 +88,38 @@ TEST(AudioSystem, UpdatePushesAttachedNodePosition) {
     EXPECT_TRUE(saw_set_position_at_node);
 }
 
+TEST(AudioSystem, UpdateReapsFinishedOneShotsViaBackendStop) {
+    using namespace open_stbc::audio;
+    auto backend = std::make_unique<NullBackend>();
+    NullBackend* raw = backend.get();
+    AudioSystem sys(std::move(backend));
+    ASSERT_TRUE(sys.init());
+
+    auto wav = tiny_wav();
+    ASSERT_TRUE(sys.load_sound("sfx/test.wav", "OneShot",
+                               wav.data(), wav.size(), /*positional*/ false));
+
+    PlayingId pid = sys.play_sound("OneShot", /*looping*/ false, /*gain*/ 1.0f,
+                                   Category::SFX, /*attach_node*/ 0,
+                                   /*pos_provided*/ false, 0.f, 0.f, 0.f);
+    ASSERT_NE(pid, 0u);
+
+    // NullBackend hands out SourceHandles starting at 1, so the only one we
+    // allocated above has handle 1.
+    const SourceHandle backend_handle = 1u;
+
+    raw->mark_finished(backend_handle);
+    raw->clear_command_log();
+    sys.update(0.f,0.f,0.f, 0.f,0.f,-1.f, 0.f,1.f,0.f, 0.016f);
+
+    // The reap path must call backend_->stop() so the underlying ALuint is
+    // released. Without this, finished one-shots leak OpenAL sources and the
+    // engine eventually trips OpenAL Soft's 256-source limit.
+    bool saw_stop_for_handle = false;
+    for (const auto& c : raw->command_log()) {
+        if (c.op == "stop" && c.u[0] == backend_handle) saw_stop_for_handle = true;
+    }
+    EXPECT_TRUE(saw_stop_for_handle);
+}
+
 }  // namespace

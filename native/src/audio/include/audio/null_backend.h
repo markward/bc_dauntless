@@ -35,10 +35,14 @@ public:
     const std::vector<LoggedCall>& command_log() const { return log_; }
     void clear_command_log() { log_.clear(); }
 
+    // Test hook: mark a source as finished so AudioSystem::update() reaps it.
+    void mark_finished(SourceHandle h) { finished_.push_back(h); }
+
 private:
     uint32_t next_buf_ = 1;
     uint32_t next_src_ = 1;
     std::vector<LoggedCall> log_;
+    std::vector<SourceHandle> finished_;
 };
 
 }  // namespace open_stbc::audio

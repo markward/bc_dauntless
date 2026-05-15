@@ -105,9 +105,12 @@ void AudioSystem::update(float lx, float ly, float lz,
         }
     }
 
-    // Reap finished one-shots.
+    // Reap finished one-shots. Must call backend_->stop() so the underlying
+    // ALuint is released — otherwise finished sources accumulate until OpenAL
+    // Soft trips its 256-source-per-context limit.
     for (auto it = sources_.begin(); it != sources_.end(); ) {
         if (!it->second.looping && backend_->source_finished(it->second.backend)) {
+            backend_->stop(it->second.backend);
             it = sources_.erase(it);
         } else {
             ++it;
