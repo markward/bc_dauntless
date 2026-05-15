@@ -252,6 +252,11 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
         sys_ = ship.GetPhaserSystem() if hasattr(ship, "GetPhaserSystem") else None
         if sys_ is None:
             continue
+        # While LBUTTON is held, re-fire banks that recharged above the
+        # minimum threshold (BC behavior: continuous fire keeps re-firing
+        # individual banks as they cycle through their charge curves).
+        if hasattr(sys_, "retry_held_fire"):
+            sys_.retry_held_fire()
         for i in range(sys_.GetNumWeapons()):
             bank = sys_.GetWeapon(i)
             if bank is None or not bank.IsFiring():
@@ -267,7 +272,7 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
             else:
                 target_pos = target.GetWorldLocation()
                 target_sub = None
-            emitter_pos = bank._emitter_world_position()
+            emitter_pos = bank._strip_emit_position(target_pos)
             dx = target_pos.x - emitter_pos.x
             dy = target_pos.y - emitter_pos.y
             dz = target_pos.z - emitter_pos.z
@@ -397,14 +402,17 @@ def _build_phaser_beam_render_data(ships):
                 target_pos = target_sub.GetWorldLocation()
             else:
                 target_pos = target.GetWorldLocation()
-            emitter_pos = bank._emitter_world_position()
+            emitter_pos = bank._strip_emit_position(target_pos)
             out.append({
                 "emitter": (emitter_pos.x, emitter_pos.y, emitter_pos.z),
                 "target":  (target_pos.x,  target_pos.y,  target_pos.z),
                 # Federation amber, additive.  Per-faction colors are a
                 # follow-up — PR 2c only ships the player Galaxy.
                 "color":   (1.0, 0.6, 0.2, 1.0),
-                "width":   0.05,
+                # Width in world units.  Galaxy GetRadius() ≈ 4.4 wu;
+                # ~0.4 reads as a clean beam line without dominating the
+                # silhouette.
+                "width":   0.4,
             })
     return out
 

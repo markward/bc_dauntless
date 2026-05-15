@@ -131,6 +131,8 @@ def _init_energy_weapon_state(self):
     self._normal_discharge_rate: float = 0.0
     self._recharge_rate: float = 0.0
     self._charge_level: float = 0.0
+    # Looped SFX handle started by Fire(), stopped by StopFiring().
+    self._loop_handle = None
 
 
 def _resolve_fire_sound(prop) -> str:
@@ -168,11 +170,9 @@ class _EnergyWeaponFireMixin:
     def StopFiring(self) -> None:
         was_firing = self._firing
         self._firing = False
-        if was_firing:
-            name = _resolve_fire_sound(self.GetProperty())
-            if name:
-                from engine.audio.tg_sound import TGSoundManager
-                TGSoundManager.instance().PlaySound(name + " Stop")
+        if was_firing and self._loop_handle is not None:
+            self._loop_handle.Stop()
+            self._loop_handle = None
 
     def IsFiring(self) -> int:
         return 1 if self._firing else 0
@@ -183,7 +183,8 @@ class _EnergyWeaponFireMixin:
                 0.0, self._charge_level - self._normal_discharge_rate * dt
             )
             if self._charge_level < self._min_firing_charge:
-                self._firing = False
+                # Route via StopFiring so the looped SFX handle is silenced.
+                self.StopFiring()
         else:
             parent = self.GetParentSubsystem()
             if parent is not None and parent.IsOn():
@@ -201,6 +202,13 @@ class _EnergyWeaponFireMixin:
         played = mgr.PlaySound(name + " Start")
         if played is None:
             mgr.PlaySound(name)
+        # Start the looped beam sound (Galaxy Phaser Loop etc.) and keep
+        # the handle so StopFiring can silence it.  PlaySound with a
+        # name that doesn't exist returns None — silent fallback.
+        loop_snd = mgr.GetSound(name + " Loop")
+        if loop_snd is not None:
+            loop_snd.SetLooping(True)
+            self._loop_handle = loop_snd.Play()
 
 
 class ShipSubsystem(TGEventHandlerObject):
@@ -231,6 +239,8 @@ class ShipSubsystem(TGEventHandlerObject):
         self._arc_height_hi: float =  _math.pi / 2
         self._max_damage:          float = 0.0
         self._max_damage_distance: float = 0.0
+        # Phaser-strip length along the Right axis (0 = point emitter).
+        self._length:              float = 0.0
         # Flag set True only when a property actually supplied typed arc
         # data (EnergyWeaponProperty hierarchy).  Emitters without it
         # (torpedo tubes) fall back to a 90° dot-product cone.
@@ -291,6 +301,10 @@ class ShipSubsystem(TGEventHandlerObject):
             val = prop.GetMaxDamageDistance()
             if isinstance(val, (int, float)):
                 self._max_damage_distance = float(val)
+        if hasattr(prop, "GetLength"):
+            val = prop.GetLength()
+            if isinstance(val, (int, float)):
+                self._length = float(val)
 
     def IsTypeOf(self, cls) -> int:
         """SDK class-id check. Returns 1 when this subsystem's source
@@ -388,6 +402,9 @@ class ShipSubsystem(TGEventHandlerObject):
     def GetMaxDamageDistance(self) -> float:
         return self._max_damage_distance
 
+    def GetLength(self) -> float:
+        return self._length
+
     def GetWorldLocation(self) -> TGPoint3:
         if self._parent_ship is not None:
             base = self._parent_ship.GetWorldLocation()
@@ -439,6 +456,44 @@ class ShipSubsystem(TGEventHandlerObject):
         return TGPoint3(ship_pos.x + offset.x,
                         ship_pos.y + offset.y,
                         ship_pos.z + offset.z)
+
+    def _strip_emit_position(self, target_world) -> TGPoint3:
+        """Closest point on a phaser-strip emitter to `target_world`.
+
+        BC phaser banks expose a strip (e.g. Galaxy dorsal/ventral arrays)
+        whose center is SetPosition, lateral axis is SetRight, and total
+        length is SetLength.  The beam emerges from whichever point on
+        the strip is closest to the target.
+
+        For point emitters (Length == 0) this collapses to
+        _emitter_world_position().
+        """
+        center = self._emitter_world_position()
+        length = self.GetLength() if hasattr(self, "GetLength") else 0.0
+        if length <= 0.0:
+            return center
+        ship = self._climb_to_ship()
+        if ship is None:
+            return center
+        # Strip's lateral axis in world space.
+        right_local = self.GetRight() if hasattr(self, "GetRight") else TGPoint3(1.0, 0.0, 0.0)
+        world_right = TGPoint3(right_local.x, right_local.y, right_local.z)
+        if hasattr(ship, "GetWorldRotation"):
+            rot = ship.GetWorldRotation()
+            if isinstance(rot, TGMatrix3):
+                world_right.MultMatrixLeft(rot)
+        # Strip total length in world units — same scaling SetPosition gets.
+        scale = float(ship.GetRadius()) if hasattr(ship, "GetRadius") else 1.0
+        half_length = 0.5 * length * scale
+        # Project target onto the strip line, clamp to ±half_length.
+        dx = target_world.x - center.x
+        dy = target_world.y - center.y
+        dz = target_world.z - center.z
+        t = (dx * world_right.x + dy * world_right.y + dz * world_right.z)
+        t = max(-half_length, min(half_length, t))
+        return TGPoint3(center.x + world_right.x * t,
+                        center.y + world_right.y * t,
+                        center.z + world_right.z * t)
 
     def GetNextTargetableChildSubsystem(self):
         return None
@@ -645,6 +700,12 @@ class PhaserSystem(WeaponSystem):
         self._power_level = self.PP_HIGH
         self._single_fire: int = 0
         self._aimed_weapon: int = 0
+        # True while the player is holding LBUTTON.  Set by StartFiring,
+        # cleared by StopFiring.  The per-frame combat tick retries banks
+        # that have re-charged above MinFiringCharge while held.
+        self._fire_held: bool = False
+        self._held_target = None
+        self._held_offset = None
 
     def SetPowerLevel(self, level) -> None:
         self._power_level = int(level)
@@ -660,9 +721,16 @@ class PhaserSystem(WeaponSystem):
     def StartFiring(self, target=None, offset=None) -> None:
         """Multi-bank dispatch — fire every PhaserBank whose alert + arc +
         charge gates all pass.  Differs from torpedo round-robin: phasers
-        engage simultaneously."""
+        engage simultaneously.
+
+        Sets _fire_held so retry_held_fire() can re-fire banks as they
+        recharge while the trigger stays down.
+        """
         if not self.IsOn() or target is None:
             return
+        self._fire_held = True
+        self._held_target = target
+        self._held_offset = offset
         ship = self.GetParentShip()
         aim_world = _resolve_aim_world(ship, target)
         self._currently_firing = []
@@ -675,6 +743,36 @@ class PhaserSystem(WeaponSystem):
             if hasattr(bank, "CanFire") and bank.CanFire():
                 bank.Fire(target, offset)
                 self._currently_firing.append(i)
+
+    def StopFiring(self, *args) -> None:
+        self._fire_held = False
+        self._held_target = None
+        self._held_offset = None
+        super().StopFiring(*args)
+
+    def retry_held_fire(self) -> None:
+        """Re-attempt firing on banks that are eligible but not currently
+        firing.  Called each tick from _advance_combat while LBUTTON is
+        held; allows banks to re-engage the moment they re-charge past
+        MinFiringCharge.  No-op when the trigger isn't held."""
+        if not self._fire_held or self._held_target is None:
+            return
+        if not self.IsOn():
+            return
+        ship = self.GetParentShip()
+        target = self._held_target
+        if hasattr(target, "IsDead") and target.IsDead():
+            self.StopFiring()
+            return
+        aim_world = _resolve_aim_world(ship, target)
+        for i in range(self.GetNumWeapons()):
+            bank = self.GetWeapon(i)
+            if bank is None or bank.IsFiring():
+                continue
+            if not _emitter_in_arc(bank, ship, aim_world):
+                continue
+            if hasattr(bank, "CanFire") and bank.CanFire():
+                bank.Fire(target, self._held_offset)
 
 
 class PulseWeaponSystem(WeaponSystem):

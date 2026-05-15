@@ -58,19 +58,37 @@ def test_firing_continues_above_min(galaxy_red):
     assert bank.IsFiring() == 1, "Bank above MinFiringCharge keeps firing"
 
 
-def test_stop_firing_triggers_stop_sound(galaxy_red):
-    """StopFiring() should attempt to play '<FireSound> Stop'."""
+def test_fire_starts_loop_sound_and_stop_silences_it(galaxy_red):
+    """Fire() plays '<FireSound> Start' + starts '<FireSound> Loop'.
+    StopFiring() stops the looped handle (no separate 'Stop' sound is
+    used — BC's convention, see LoadTacticalSounds.py:32-33)."""
+    from unittest.mock import MagicMock
     ship = galaxy_red
     bank = ship.GetPhaserSystem().GetWeapon(0)
     bank._charge_level = bank._max_charge
     with patch("engine.audio.tg_sound.TGSoundManager.instance") as inst:
         mgr = inst.return_value
+        loop_sound = MagicMock()
+        loop_handle = MagicMock()
+        loop_sound.Play.return_value = loop_handle
+        mgr.GetSound.return_value = loop_sound
+
         bank.Fire()
-        bank.StopFiring()
-        called_names = [c.args[0] for c in mgr.PlaySound.call_args_list]
-        assert any(name.endswith(" Stop") for name in called_names), (
-            f"Expected a '... Stop' sound, got: {called_names}"
+        # Start one-shot was attempted.
+        start_calls = [c.args[0] for c in mgr.PlaySound.call_args_list]
+        assert any(name.endswith(" Start") for name in start_calls), (
+            f"Expected a '... Start' sound, got: {start_calls}"
         )
+        # Loop sound was fetched, set looping, and Play()ed.
+        loop_lookup = [c.args[0] for c in mgr.GetSound.call_args_list]
+        assert any(name.endswith(" Loop") for name in loop_lookup), (
+            f"Expected a GetSound('... Loop') lookup, got: {loop_lookup}"
+        )
+        loop_sound.SetLooping.assert_called_with(True)
+        loop_sound.Play.assert_called()
+        # StopFiring silences the loop handle.
+        bank.StopFiring()
+        loop_handle.Stop.assert_called()
 
 
 def test_idle_recharges_only_when_alert_powers_system(galaxy_red):

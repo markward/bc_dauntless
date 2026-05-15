@@ -216,6 +216,15 @@ class EnergyWeaponProperty(WeaponProperty):
         self._arc_height_hi: float =  _math.pi / 2
         self._max_damage:           float = 0.0
         self._max_damage_distance:  float = 0.0
+        # Phaser-strip length along the Right axis (galaxy.py: 1.5–1.7).
+        # 0.0 = treat the emitter as a point.
+        self._length:               float = 0.0
+
+    def GetLength(self) -> float:
+        return self._length
+
+    def SetLength(self, v) -> None:
+        self._length = float(v)
 
     def GetArcWidthAngles(self) -> tuple:
         return (self._arc_width_lo, self._arc_width_hi)
