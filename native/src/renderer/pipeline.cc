@@ -19,6 +19,8 @@
 #include "embedded_torpedo_fs.h"
 #include "embedded_hit_vfx_vs.h"
 #include "embedded_hit_vfx_fs.h"
+#include "embedded_phaser_vs.h"
+#include "embedded_phaser_fs.h"
 
 namespace renderer {
 
@@ -31,6 +33,7 @@ Pipeline::Pipeline() {
     lens_flare_ = std::make_unique<Shader>(shader_src::lens_flare_vs, shader_src::lens_flare_fs);
     torpedo_    = std::make_unique<Shader>(shader_src::torpedo_vs,    shader_src::torpedo_fs);
     hit_vfx_    = std::make_unique<Shader>(shader_src::hit_vfx_vs,    shader_src::hit_vfx_fs);
+    phaser_     = std::make_unique<Shader>(shader_src::phaser_vs,     shader_src::phaser_fs);
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
     glEnable(GL_CULL_FACE);

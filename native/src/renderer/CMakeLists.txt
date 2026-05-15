@@ -27,6 +27,8 @@ embed_shader(SHADER_TORPEDO_VS shaders/torpedo.vert torpedo_vs)
 embed_shader(SHADER_TORPEDO_FS shaders/torpedo.frag torpedo_fs)
 embed_shader(SHADER_HIT_VFX_VS shaders/hit_vfx.vert hit_vfx_vs)
 embed_shader(SHADER_HIT_VFX_FS shaders/hit_vfx.frag hit_vfx_fs)
+embed_shader(SHADER_PHASER_VS shaders/phaser.vert phaser_vs)
+embed_shader(SHADER_PHASER_FS shaders/phaser.frag phaser_fs)
 
 add_library(renderer STATIC
     window.cc
@@ -44,6 +46,7 @@ add_library(renderer STATIC
     lens_flare_pass.cc
     torpedo_pass.cc
     hit_vfx_pass.cc
+    phaser_pass.cc
 )
 target_include_directories(renderer
     PUBLIC include

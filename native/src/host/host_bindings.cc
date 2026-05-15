@@ -27,6 +27,7 @@
 #include <renderer/lens_flare_pass.h>
 #include <renderer/torpedo_pass.h>
 #include <renderer/hit_vfx_pass.h>
+#include <renderer/phaser_pass.h>
 #include <renderer/aabb.h>
 #include <ui/UiSystem.h>
 #include <ui/PanelDocument.h>
@@ -64,6 +65,7 @@ std::unique_ptr<renderer::TorpedoPass>     g_torpedo_pass;
 std::vector<renderer::HitVfxDescriptor>    g_hit_vfx;
 std::unique_ptr<renderer::HitVfxPass>      g_hit_vfx_pass;
 std::vector<renderer::PhaserBeamDescriptor> g_phaser_beams;
+std::unique_ptr<renderer::PhaserPass>      g_phaser_pass;
 double g_prev_frame_time_seconds = 0.0;
 
 // Bridge pass state. Camera is set from Python via set_bridge_camera each
@@ -159,6 +161,7 @@ void init(int width, int height, const std::string& title,
     g_lens_flare_pass = std::make_unique<renderer::LensFlarePass>();
     g_torpedo_pass = std::make_unique<renderer::TorpedoPass>();
     g_hit_vfx_pass = std::make_unique<renderer::HitVfxPass>();
+    g_phaser_pass  = std::make_unique<renderer::PhaserPass>();
     g_prev_frame_time_seconds = glfwGetTime();
 
     if (!ui_assets_root.empty()) {
@@ -195,6 +198,7 @@ void shutdown() {
     g_hit_vfx.clear();
     g_hit_vfx_pass.reset();
     g_phaser_beams.clear();
+    g_phaser_pass.reset();
     g_window.reset();
     g_prev_key_state.clear();
     g_prev_mouse_state.clear();
@@ -252,8 +256,9 @@ void frame() {
                                   fw, fh, now);
     }
 
-    if (g_torpedo_pass) g_torpedo_pass->render(g_torpedoes, g_camera, *g_pipeline);
-    if (g_hit_vfx_pass) g_hit_vfx_pass->render(g_hit_vfx,    g_camera, *g_pipeline);
+    if (g_torpedo_pass) g_torpedo_pass->render(g_torpedoes,    g_camera, *g_pipeline);
+    if (g_phaser_pass)  g_phaser_pass ->render(g_phaser_beams, g_camera, *g_pipeline);
+    if (g_hit_vfx_pass) g_hit_vfx_pass->render(g_hit_vfx,      g_camera, *g_pipeline);
 
     // ── Bridge pass ──────────────────────────────────────────────────────
     // Renders bridge-tagged instances with the bridge camera, after a

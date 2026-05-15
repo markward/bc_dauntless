@@ -19,6 +19,7 @@ public:
     Shader& lens_flare_shader() noexcept { return *lens_flare_; }
     Shader& torpedo_shader() noexcept    { return *torpedo_; }
     Shader& hit_vfx_shader() noexcept    { return *hit_vfx_; }
+    Shader& phaser_shader() noexcept     { return *phaser_; }
 
 private:
     std::unique_ptr<Shader> opaque_;
@@ -29,6 +30,7 @@ private:
     std::unique_ptr<Shader> lens_flare_;
     std::unique_ptr<Shader> torpedo_;
     std::unique_ptr<Shader> hit_vfx_;
+    std::unique_ptr<Shader> phaser_;
 };
 
 }  // namespace renderer
