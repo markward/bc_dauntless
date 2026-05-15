@@ -185,6 +185,18 @@ def _advance_weapons(ships, dt: float) -> None:
                     emitter.UpdateReload(dt)
 
 
+def _phaser_damage_for_tick(max_damage: float,
+                             max_damage_distance: float,
+                             dist: float,
+                             dt: float) -> float:
+    """Phaser damage falloff: linear from MaxDamage at dist=0 to 0 at
+    dist=MaxDamageDistance.  Returns 0 if MaxDamageDistance is 0 or
+    dist >= MaxDamageDistance."""
+    if max_damage_distance <= 0.0 or dist >= max_damage_distance:
+        return 0.0
+    return max_damage * (1.0 - dist / max_damage_distance) * dt
+
+
 def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
     """Per-frame torpedo motion + collision + damage + renderer push.
 
@@ -226,6 +238,64 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
                 )
 
     hit_vfx.update_ages(dt)
+
+    # Continuous phaser damage tick.  Each ship's PhaserSystem has banks
+    # set firing by StartFiring; advance them here: re-check arc (auto-
+    # stop drifters), compute distance falloff, and route damage through
+    # apply_hit (which already routes shields → subsystem → hull and
+    # broadcasts WeaponHitEvent).  Shield-impact splash piggybacks on the
+    # same host.shield_hit call torpedoes use.
+    from engine.appc.subsystems import _emitter_in_arc
+    from engine.appc.math import TGPoint3
+    for ship in ships_list:
+        sys_ = ship.GetPhaserSystem() if hasattr(ship, "GetPhaserSystem") else None
+        if sys_ is None:
+            continue
+        for i in range(sys_.GetNumWeapons()):
+            bank = sys_.GetWeapon(i)
+            if bank is None or not bank.IsFiring():
+                continue
+            target = bank._target
+            if target is None or (hasattr(target, "IsDead") and target.IsDead()):
+                bank.StopFiring()
+                continue
+            target_sub = (ship.GetTargetSubsystem()
+                          if hasattr(ship, "GetTargetSubsystem") else None)
+            if target_sub is not None and hasattr(target_sub, "GetWorldLocation"):
+                target_pos = target_sub.GetWorldLocation()
+            else:
+                target_pos = target.GetWorldLocation()
+                target_sub = None
+            emitter_pos = bank._emitter_world_position()
+            dx = target_pos.x - emitter_pos.x
+            dy = target_pos.y - emitter_pos.y
+            dz = target_pos.z - emitter_pos.z
+            dist = (dx * dx + dy * dy + dz * dz) ** 0.5
+            if dist > 1e-6:
+                aim_unit = TGPoint3(dx / dist, dy / dist, dz / dist)
+                if not _emitter_in_arc(bank, ship, aim_unit):
+                    bank.StopFiring()
+                    continue
+            damage = _phaser_damage_for_tick(
+                max_damage=bank.GetMaxDamage(),
+                max_damage_distance=bank.GetMaxDamageDistance(),
+                dist=dist,
+                dt=dt,
+            )
+            if damage > 0:
+                apply_hit(target, damage, target_pos,
+                          source=ship, subsystem=target_sub)
+                if (host is not None
+                        and ship_instances is not None
+                        and hasattr(host, "shield_hit")):
+                    iid = ship_instances.get(target)
+                    if iid is not None:
+                        host.shield_hit(
+                            instance_id=iid,
+                            point=(target_pos.x, target_pos.y, target_pos.z),
+                            rgba=(0.0, 0.0, 0.0, 0.0),
+                            intensity=1.0,
+                        )
 
     if host is not None and hasattr(host, "set_torpedoes"):
         host.set_torpedoes(_build_torpedo_render_data())

@@ -395,6 +395,45 @@ class ShipSubsystem(TGEventHandlerObject):
     def GetDamagePoint(self) -> TGPoint3:
         return self.GetPositionTG()
 
+    def _climb_to_ship(self):
+        """Walk parent-subsystem chain until a ShipClass is found.  Used
+        by emitters that need their owning ship for world-space math."""
+        # Direct attachment: ShipClass._attach_subsystem set _parent_ship.
+        if self._parent_ship is not None:
+            return self._parent_ship
+        node = self.GetParentSubsystem()
+        while node is not None:
+            if hasattr(node, "GetParentShip") and node.GetParentShip() is not None:
+                return node.GetParentShip()
+            node = node.GetParentSubsystem() if hasattr(node, "GetParentSubsystem") else None
+        return None
+
+    def _emitter_world_position(self) -> TGPoint3:
+        """Ship world location + emitter local position scaled and rotated
+        into world frame.
+
+        SDK SetPosition values are normalized to the ship's extent (roughly
+        [-1, +1]).  We scale them by ship.GetRadius() to recover a
+        meaningful world-space offset, then rotate by the ship's world
+        rotation.
+        """
+        ship = self._climb_to_ship()
+        if ship is None:
+            return TGPoint3(0.0, 0.0, 0.0)
+        ship_pos = ship.GetWorldLocation()
+        local = self.GetPosition() if hasattr(self, "GetPosition") else None
+        if not isinstance(local, TGPoint3):
+            return TGPoint3(ship_pos.x, ship_pos.y, ship_pos.z)
+        scale = float(ship.GetRadius()) if hasattr(ship, "GetRadius") else 1.0
+        offset = TGPoint3(local.x * scale, local.y * scale, local.z * scale)
+        if hasattr(ship, "GetWorldRotation"):
+            rot = ship.GetWorldRotation()
+            if isinstance(rot, TGMatrix3):
+                offset.MultMatrixLeft(rot)
+        return TGPoint3(ship_pos.x + offset.x,
+                        ship_pos.y + offset.y,
+                        ship_pos.z + offset.z)
+
     def GetNextTargetableChildSubsystem(self):
         return None
 
@@ -899,43 +938,6 @@ class TorpedoTube(WeaponSystem):
             sound_name = mod.GetLaunchSound()
             if sound_name:
                 TGSoundManager.instance().PlaySound(sound_name)
-
-    def _climb_to_ship(self):
-        """Walk parent-subsystem chain until a ShipClass is found."""
-        node = self.GetParentSubsystem()
-        while node is not None:
-            if hasattr(node, "GetParentShip") and node.GetParentShip() is not None:
-                return node.GetParentShip()
-            node = node.GetParentSubsystem() if hasattr(node, "GetParentSubsystem") else None
-        return None
-
-    def _emitter_world_position(self):
-        """Ship world location + emitter local position scaled and rotated into world frame.
-
-        SDK SetPosition values are normalized to the ship's extent (roughly
-        [-1, +1]).  We scale them by ship.GetRadius() to recover a meaningful
-        world-space offset, then rotate by the ship's world rotation.
-        """
-        from engine.appc.math import TGPoint3
-        ship = self._climb_to_ship()
-        if ship is None:
-            return TGPoint3(0.0, 0.0, 0.0)
-        ship_pos = ship.GetWorldLocation()
-        local = None
-        if hasattr(self, "GetPosition"):
-            try:
-                local = self.GetPosition()
-            except Exception:
-                local = None
-        if local is None:
-            return TGPoint3(ship_pos.x, ship_pos.y, ship_pos.z)
-        scale = float(ship.GetRadius()) if hasattr(ship, "GetRadius") else 1.0
-        offset = TGPoint3(local.x * scale, local.y * scale, local.z * scale)
-        if hasattr(ship, "GetWorldRotation"):
-            offset.MultMatrixLeft(ship.GetWorldRotation())
-        return TGPoint3(ship_pos.x + offset.x,
-                        ship_pos.y + offset.y,
-                        ship_pos.z + offset.z)
 
     def StopFiring(self) -> None:
         self._firing = False
