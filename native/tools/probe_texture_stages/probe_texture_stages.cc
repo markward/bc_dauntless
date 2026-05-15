@@ -81,26 +81,35 @@ int main(int argc, char** argv) {
         }
     }
 
-    auto inherited_property_links =
-        [&](std::size_t shape_block_index) -> std::vector<std::uint32_t> {
-        std::vector<std::uint32_t> out;
+    struct TaggedLink {
+        std::uint32_t link;
+        int depth;  // 0 = direct on shape, 1 = on parent NiNode, 2 = grandparent...
+    };
+
+    auto inherited_property_links_tagged =
+        [&](std::size_t shape_block_index) -> std::vector<TaggedLink> {
+        std::vector<TaggedLink> out;
         const auto* shape = std::get_if<nif::NiTriShape>(&f.blocks[shape_block_index]);
         if (shape) {
-            for (auto l : shape->av.property_links) out.push_back(l);
+            for (auto l : shape->av.property_links) out.push_back({l, 0});
         }
         std::uint32_t cur_id = f.block_ids[shape_block_index];
+        int depth = 1;
         while (true) {
             auto it = child_id_to_parent_index.find(cur_id);
             if (it == child_id_to_parent_index.end()) break;
             const auto* n = std::get_if<nif::NiNode>(&f.blocks[it->second]);
             if (!n) break;
-            for (auto l : n->av.property_links) out.push_back(l);
+            for (auto l : n->av.property_links) out.push_back({l, depth});
             cur_id = f.block_ids[it->second];
+            ++depth;
         }
         return out;
     };
 
     int multi_count = 0, single_count = 0, no_tex_count = 0;
+    int multi_direct = 0, multi_inherited = 0;
+    int single_direct = 0, single_inherited = 0;
     int multi_with_dark = 0, multi_with_detail = 0, multi_with_glow = 0, multi_with_gloss = 0;
 
     for (std::size_t i = 0; i < f.blocks.size(); ++i) {
@@ -109,26 +118,38 @@ int main(int argc, char** argv) {
         if (!shape) continue;
 
         const std::string& name = shape->av.obj.name;
-        auto prop_links = inherited_property_links(i);
+        auto prop_links = inherited_property_links_tagged(i);
 
         const nif::NiTextureProperty*      single = nullptr;
         const nif::NiMultiTextureProperty* multi  = nullptr;
         const nif::NiAlphaProperty*        alpha  = nullptr;
         const nif::NiMaterialProperty*     mat    = nullptr;
+        int single_depth = -1, multi_depth = -1;
 
-        for (std::uint32_t link : prop_links) {
-            auto* pb = block_at(link);
+        for (const auto& tagged : prop_links) {
+            auto* pb = block_at(tagged.link);
             if (!pb) continue;
-            if (auto* p = std::get_if<nif::NiTextureProperty>(pb))      single = p;
-            else if (auto* p = std::get_if<nif::NiMultiTextureProperty>(pb)) multi  = p;
-            else if (auto* p = std::get_if<nif::NiAlphaProperty>(pb))        alpha  = p;
-            else if (auto* p = std::get_if<nif::NiMaterialProperty>(pb))     mat    = p;
+            if (auto* p = std::get_if<nif::NiTextureProperty>(pb)) {
+                if (!single) { single = p; single_depth = tagged.depth; }
+            }
+            else if (auto* p = std::get_if<nif::NiMultiTextureProperty>(pb)) {
+                if (!multi) { multi = p; multi_depth = tagged.depth; }
+            }
+            else if (auto* p = std::get_if<nif::NiAlphaProperty>(pb))        { if (!alpha) alpha = p; }
+            else if (auto* p = std::get_if<nif::NiMaterialProperty>(pb))     { if (!mat)   mat   = p; }
         }
+
+        auto provenance_tag = [](int depth) -> std::string {
+            if (depth == 0) return "[direct]";
+            return "[inherited@" + std::to_string(depth) + "]";
+        };
 
         if (multi) {
             ++multi_count;
-            std::printf("shape #%zu \"%s\"  (NiMultiTextureProperty%s%s)\n",
+            if (multi_depth == 0) ++multi_direct; else ++multi_inherited;
+            std::printf("shape #%zu \"%s\"  (NiMultiTextureProperty %s%s%s)\n",
                         i, name.c_str(),
+                        provenance_tag(multi_depth).c_str(),
                         alpha ? " +Alpha" : "",
                         mat ? " +Material" : "");
             for (std::size_t s = 0; s < 5; ++s) {
@@ -148,10 +169,12 @@ int main(int argc, char** argv) {
             }
         } else if (single) {
             ++single_count;
+            if (single_depth == 0) ++single_direct; else ++single_inherited;
             const auto* img = block_at(single->image_link);
             std::string imgs = img ? image_name(*img) : "<unresolved>";
-            std::printf("shape #%zu \"%s\"  (NiTextureProperty%s%s): image=%s\n",
+            std::printf("shape #%zu \"%s\"  (NiTextureProperty %s%s%s): image=%s\n",
                         i, name.c_str(),
+                        provenance_tag(single_depth).c_str(),
                         alpha ? " +Alpha" : "",
                         mat ? " +Material" : "",
                         imgs.c_str());
@@ -165,12 +188,14 @@ int main(int argc, char** argv) {
     }
 
     std::printf("\n--- summary ---\n");
-    std::printf("shapes with NiMultiTextureProperty: %d\n", multi_count);
+    std::printf("shapes with NiMultiTextureProperty: %d (direct=%d, inherited=%d)\n",
+                multi_count, multi_direct, multi_inherited);
     std::printf("  of which populate stage Dark   : %d\n", multi_with_dark);
     std::printf("  of which populate stage Detail : %d\n", multi_with_detail);
     std::printf("  of which populate stage Glow   : %d\n", multi_with_glow);
     std::printf("  of which populate stage Gloss  : %d\n", multi_with_gloss);
-    std::printf("shapes with NiTextureProperty   : %d\n", single_count);
+    std::printf("shapes with NiTextureProperty   : %d (direct=%d, inherited=%d)\n",
+                single_count, single_direct, single_inherited);
     std::printf("shapes with no texture property : %d\n", no_tex_count);
     return 0;
 }

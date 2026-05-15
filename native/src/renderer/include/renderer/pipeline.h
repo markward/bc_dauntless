@@ -20,6 +20,8 @@ public:
     Shader& torpedo_shader() noexcept    { return *torpedo_; }
     Shader& hit_vfx_shader() noexcept    { return *hit_vfx_; }
     Shader& phaser_shader() noexcept     { return *phaser_; }
+    Shader& bridge_shader() noexcept     { return *bridge_; }
+    Shader& lightmap_shader() noexcept   { return *lightmap_; }
 
 private:
     std::unique_ptr<Shader> opaque_;
@@ -31,6 +33,8 @@ private:
     std::unique_ptr<Shader> torpedo_;
     std::unique_ptr<Shader> hit_vfx_;
     std::unique_ptr<Shader> phaser_;
+    std::unique_ptr<Shader> bridge_;
+    std::unique_ptr<Shader> lightmap_;
 };
 
 }  // namespace renderer

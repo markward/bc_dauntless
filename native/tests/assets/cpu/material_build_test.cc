@@ -146,3 +146,48 @@ TEST(MaterialBuild, NonSpecularImageStillBindsToBase) {
     EXPECT_EQ(m.stages[static_cast<std::size_t>(S::Base)].texture_index, 3);
     EXPECT_LT(m.stages[static_cast<std::size_t>(S::Gloss)].texture_index, 0);
 }
+
+TEST(MaterialBuild, LightmapPassFlagSetForLmFilename) {
+    nif::NiTextureProperty tex;
+    tex.image_link = 7;
+    std::unordered_map<std::uint32_t, int> image_to_texture = {{7, 0}};
+    std::unordered_map<std::uint32_t, std::string> filenames = {
+        {7, "DBridge/door 04a lm.tga"}};
+
+    auto in = basic_inputs();
+    in.texture = &tex;
+    in.image_to_texture = &image_to_texture;
+    in.image_filename_for_link = &filenames;
+    auto m = assets::detail::build_material(in);
+    EXPECT_TRUE(m.lightmap_pass);
+}
+
+TEST(MaterialBuild, LightmapPassFlagFalseForRegularBase) {
+    nif::NiTextureProperty tex;
+    tex.image_link = 5;
+    std::unordered_map<std::uint32_t, int> image_to_texture = {{5, 0}};
+    std::unordered_map<std::uint32_t, std::string> filenames = {
+        {5, "Map 19.tga"}};
+
+    auto in = basic_inputs();
+    in.texture = &tex;
+    in.image_to_texture = &image_to_texture;
+    in.image_filename_for_link = &filenames;
+    auto m = assets::detail::build_material(in);
+    EXPECT_FALSE(m.lightmap_pass);
+}
+
+TEST(MaterialBuild, LightmapPassFlagSetForUnderscoreLmFilename) {
+    nif::NiTextureProperty tex;
+    tex.image_link = 8;
+    std::unordered_map<std::uint32_t, int> image_to_texture = {{8, 0}};
+    std::unordered_map<std::uint32_t, std::string> filenames = {
+        {8, "modder_panel_lm.tga"}};
+
+    auto in = basic_inputs();
+    in.texture = &tex;
+    in.image_to_texture = &image_to_texture;
+    in.image_filename_for_link = &filenames;
+    auto m = assets::detail::build_material(in);
+    EXPECT_TRUE(m.lightmap_pass);
+}

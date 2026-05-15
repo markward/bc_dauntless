@@ -954,6 +954,10 @@ def _apply_view_mode_side_effects(view_mode: "_ViewModeController", h) -> None:
         return
     h.bridge_pass_set_enabled(target)
     h.set_cursor_locked(target)
+    # Engine rumble is direct radiation from each ship — silenced when
+    # the player is inside the bridge.
+    from engine.audio.engine_rumble import set_muted as _rumble_set_muted
+    _rumble_set_muted(target)
     view_mode._last_synced_is_bridge = target
 
 
@@ -969,22 +973,28 @@ def _handle_esc_for_view_mode(view_mode: "_ViewModeController") -> None:
 class _BridgeCamera:
     """First-person bridge camera with mouse-look.
 
-    Anchored at the MissionLib-pinned DBridge captain's-chair pose
-    (sdk/Build/scripts/MissionLib.py:1475-1483) in ship-local frame.
-    Mouse motion accumulates yaw (around bridge-up = +Z) and pitch
-    (around bridge-right = +X). Yaw wraps freely; pitch clamps at ±85°
-    to avoid pole flip.
+    The bridge interior is rendered as a standalone scene at world
+    origin — its scene is independent of the space scene's world frame
+    while the viewscreen-as-RTT path (deferred work item #26) is off.
+    So the camera lives in bridge-local space, with no coupling to the
+    player ship's world transform.
 
-    Camera world pose = ship_world_rot * (bridge_local_offset rotated
-    by base pitch * mouse yaw * mouse pitch) + ship_world_loc, so the
-    bridge banks and pitches with the ship as it manoeuvres.
+    Eye sits at the MissionLib-pinned DBridge captain's-chair offset
+    (sdk/Build/scripts/MissionLib.py:1475-1483). Default forward is
+    +Y (into bridge interior, toward the viewscreen); default up is
+    +Z. Mouse motion accumulates yaw (around bridge-up = +Z) and pitch
+    (around the local right axis). Yaw wraps freely; pitch clamps at
+    ±85° to avoid pole flip.
+
+    The MissionLib pose also specifies a rotation (axis-angle
+    -1.55 rad around +Z). The Gamebryo-side default forward and what
+    that rotation actually composes with isn't pinned down in this
+    cleanroom yet, so we leave the initial pose at "forward = +Y" and
+    let mouse-look + visual iteration discover the right default.
     """
 
-    # MissionLib.py:1475-1483 — DBridge maincamera pose.
+    # MissionLib.py:1475-1483 — DBridge captain's-chair offset.
     BRIDGE_LOCAL_OFFSET   = (0.0, 50.0, 47.0)
-    # Axis-angle (-1.55, 0, 0, 1): -1.55 rad ≈ -88.8° around X axis.
-    # Treated as a base pitch rotation; convention iterated visually.
-    BRIDGE_BASE_PITCH_RAD = -1.55
 
     # PoC starting values; tuned by feel during visual verification.
     NEAR              = 1.0
@@ -993,8 +1003,14 @@ class _BridgeCamera:
     MOUSE_SENSITIVITY = 0.005           # rad per pixel
     PITCH_LIMIT_RAD   = _math.radians(85)
 
+    # Initial yaw flips the default +Y forward to -Y, which visually
+    # corresponds to "looking into the bridge interior" with the
+    # DBridge mesh as authored — the +Y direction lands the camera
+    # facing the rear wall.
+    INITIAL_YAW_RAD = _math.pi
+
     def __init__(self):
-        self.yaw_rad   = 0.0
+        self.yaw_rad   = self.INITIAL_YAW_RAD
         self.pitch_rad = 0.0
 
     def apply(self, mouse_dx: float, mouse_dy: float) -> None:
@@ -1006,60 +1022,37 @@ class _BridgeCamera:
         if self.pitch_rad >  self.PITCH_LIMIT_RAD: self.pitch_rad =  self.PITCH_LIMIT_RAD
         if self.pitch_rad < -self.PITCH_LIMIT_RAD: self.pitch_rad = -self.PITCH_LIMIT_RAD
 
-    def compute_camera(self, ship_loc, ship_rot) -> tuple:
-        """Return (eye, target, up) as 3-tuples in world space, matching
-        the shape r.set_bridge_camera consumes."""
-        ox, oy, oz = self.BRIDGE_LOCAL_OFFSET
+    def compute_camera(self) -> tuple:
+        """Return (eye, target, up) as 3-tuples in bridge-local space.
+
+        Bridge geometry is at world identity; the camera is too. No
+        ship_loc / ship_rot coupling — see class docstring.
+        """
         local_fwd = (0.0, 1.0, 0.0)   # bridge-local +Y
         local_up  = (0.0, 0.0, 1.0)   # bridge-local +Z
 
-        local_fwd = _rot_around(local_fwd, (1.0, 0.0, 0.0), self.BRIDGE_BASE_PITCH_RAD)
-        local_up  = _rot_around(local_up,  (1.0, 0.0, 0.0), self.BRIDGE_BASE_PITCH_RAD)
-
+        # Yaw around the world-up axis (Z).
         local_fwd = _rot_around(local_fwd, (0.0, 0.0, 1.0), self.yaw_rad)
-        local_up  = _rot_around(local_up,  (0.0, 0.0, 1.0), self.yaw_rad)
 
-        # Pitch is around the local right axis (forward × up).
+        # Pitch around the local right axis (forward × up).
         right = (
             local_fwd[1]*local_up[2] - local_fwd[2]*local_up[1],
             local_fwd[2]*local_up[0] - local_fwd[0]*local_up[2],
             local_fwd[0]*local_up[1] - local_fwd[1]*local_up[0],
         )
         rlen = _math.sqrt(right[0]**2 + right[1]**2 + right[2]**2)
-        right = (right[0]/rlen, right[1]/rlen, right[2]/rlen)
+        if rlen > 1e-6:
+            right = (right[0]/rlen, right[1]/rlen, right[2]/rlen)
+            local_fwd = _rot_around(local_fwd, right, self.pitch_rad)
+            local_up  = _rot_around(local_up,  right, self.pitch_rad)
 
-        local_fwd = _rot_around(local_fwd, right, self.pitch_rad)
-        local_up  = _rot_around(local_up,  right, self.pitch_rad)
-
-        # Transform local offset / forward / up into world frame using
-        # the ship's row-vector basis (rows = body axes in world).
-        rgt_world = ship_rot.GetRow(0)
-        fwd_world = ship_rot.GetRow(1)
-        up_world  = ship_rot.GetRow(2)
-
-        def _to_world(v):
-            x, y, z = v
-            return (
-                x*rgt_world.x + y*fwd_world.x + z*up_world.x,
-                x*rgt_world.y + y*fwd_world.y + z*up_world.y,
-                x*rgt_world.z + y*fwd_world.z + z*up_world.z,
-            )
-
-        offset_world = _to_world((ox, oy, oz))
-        fwd_w        = _to_world(local_fwd)
-        up_w         = _to_world(local_up)
-
-        eye = (
-            ship_loc.x + offset_world[0],
-            ship_loc.y + offset_world[1],
-            ship_loc.z + offset_world[2],
-        )
+        eye = self.BRIDGE_LOCAL_OFFSET
         target = (
-            eye[0] + fwd_w[0],
-            eye[1] + fwd_w[1],
-            eye[2] + fwd_w[2],
+            eye[0] + local_fwd[0],
+            eye[1] + local_fwd[1],
+            eye[2] + local_fwd[2],
         )
-        return eye, target, up_w
+        return eye, target, local_up
 
 
 def _rot_around(v, axis_xyz, angle_rad):
@@ -1279,6 +1272,15 @@ def _aggregate_lights(pSet):
     juggle the defaults at every call site."""
     from engine.appc.lights import aggregate_for_renderer
     return aggregate_for_renderer(pSet, DEFAULT_AMBIENT, DEFAULT_DIRECTIONALS)
+
+
+def _aggregate_bridge_lights():
+    """Wrapper over aggregate_bridge_for_renderer plugging in this
+    module's DEFAULT_AMBIENT / DEFAULT_DIRECTIONALS as the no-bridge-set
+    fallback. Mirrors _aggregate_lights's relationship with the space
+    aggregator."""
+    from engine.appc.lights import aggregate_bridge_for_renderer
+    return aggregate_bridge_for_renderer(DEFAULT_AMBIENT, DEFAULT_DIRECTIONALS)
 
 
 def _aggregate_backdrops(pSet):
@@ -1827,6 +1829,13 @@ def run(mission_name: str = SHIP_GATE_MISSION,
         bridge_handle  = r.load_model(bridge_nif_abs, bridge_tex_abs)
         controller.nif_to_handle[bridge_nif_abs] = bridge_handle
         controller.bridge_instance = r.create_bridge_instance(bridge_handle)
+        # Eagerly register the "bridge" SetClass so its CreateAmbientLight
+        # value reaches the renderer via aggregate_bridge_for_renderer.
+        # Stock missions only call LoadBridge.Load() when they need it,
+        # but our bridge mesh is always loaded — the lighting needs to
+        # match.
+        import LoadBridge as _LoadBridge
+        _LoadBridge.Load()
         # Identity transform — the bridge pass camera works in
         # bridge-local frame, so the bridge's world position is irrelevant.
         IDENTITY_MAT4 = [
@@ -2009,8 +2018,7 @@ def run(mission_name: str = SHIP_GATE_MISSION,
                 if view_mode.is_bridge:
                     mouse_dx, mouse_dy = _h.consume_mouse_delta() if _h else (0.0, 0.0)
                     bridge_camera.apply(mouse_dx, mouse_dy)
-                    b_eye, b_target, b_up = bridge_camera.compute_camera(
-                        player.GetWorldLocation(), player.GetWorldRotation())
+                    b_eye, b_target, b_up = bridge_camera.compute_camera()
                     r.set_bridge_camera(
                         eye=b_eye, target=b_target, up=b_up,
                         fov_y_rad=_BridgeCamera.FOV_Y_RAD,
@@ -2064,6 +2072,9 @@ def run(mission_name: str = SHIP_GATE_MISSION,
 
             ambient, directionals = _aggregate_lights(active_set)
             r.set_lighting(ambient, directionals)
+
+            bridge_ambient, bridge_directionals = _aggregate_bridge_lights()
+            r.set_bridge_lighting(bridge_ambient, bridge_directionals)
 
             backdrops = _aggregate_backdrops(active_set)
             r.set_backdrops(backdrops)

@@ -11,6 +11,7 @@ add_executable(renderer_tests
     shield_state_test.cc
     skin_shield_test.cc
     lens_flare_pass_test.cc
+    bridge_pass_test.cc
 )
 
 target_link_libraries(renderer_tests

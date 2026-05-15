@@ -111,3 +111,58 @@ def test_config_directional_light_captures_forward_direction():
     assert dy == pytest.approx(-0.962789, abs=1e-5)
     assert dz == pytest.approx(0.251243, abs=1e-5)
     App.g_kSetManager.DeleteSet("TestSet")
+
+
+def test_resolve_bridge_set_returns_set_named_bridge():
+    """Locate the bridge SetClass by the conventional name 'bridge'."""
+    import App
+    from engine.appc.lights import _resolve_bridge_set
+    pSet = App.SetClass_Create()
+    App.g_kSetManager.AddSet(pSet, "bridge")
+    try:
+        assert _resolve_bridge_set() is pSet
+    finally:
+        App.g_kSetManager.DeleteSet("bridge")
+
+
+def test_resolve_bridge_set_returns_none_when_no_bridge():
+    """No 'bridge' set registered → resolver returns None."""
+    import App
+    from engine.appc.lights import _resolve_bridge_set
+    if App.g_kSetManager.GetSet("bridge") is not None:
+        App.g_kSetManager.DeleteSet("bridge")
+    assert _resolve_bridge_set() is None
+
+
+def test_aggregate_bridge_for_renderer_uses_bridge_set_ambient():
+    """aggregate_bridge_for_renderer reads the bridge set's
+    CreateAmbientLight, NOT the space scene's lighting."""
+    import App
+    from engine.appc.lights import aggregate_bridge_for_renderer
+    if App.g_kSetManager.GetSet("bridge") is not None:
+        App.g_kSetManager.DeleteSet("bridge")
+    pSet = App.SetClass_Create()
+    App.g_kSetManager.AddSet(pSet, "bridge")
+    try:
+        pSet.CreateAmbientLight(1.0, 0.5, 0.25, 0.8, "ambientlight1")
+        default_ambient = (0.01, 0.01, 0.01)
+        ambient, directionals = aggregate_bridge_for_renderer(
+            default_ambient, [])
+        assert ambient == pytest.approx((0.8, 0.4, 0.2))
+        assert directionals == []
+    finally:
+        App.g_kSetManager.DeleteSet("bridge")
+
+
+def test_aggregate_bridge_for_renderer_returns_defaults_when_no_bridge():
+    """No 'bridge' set → defaults flow through."""
+    import App
+    from engine.appc.lights import aggregate_bridge_for_renderer
+    if App.g_kSetManager.GetSet("bridge") is not None:
+        App.g_kSetManager.DeleteSet("bridge")
+    default_ambient = (0.7, 0.7, 0.7)
+    default_directionals = []
+    ambient, directionals = aggregate_bridge_for_renderer(
+        default_ambient, default_directionals)
+    assert ambient == default_ambient
+    assert directionals == default_directionals

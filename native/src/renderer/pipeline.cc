@@ -21,6 +21,10 @@
 #include "embedded_hit_vfx_fs.h"
 #include "embedded_phaser_vs.h"
 #include "embedded_phaser_fs.h"
+#include "embedded_bridge_vs.h"
+#include "embedded_bridge_fs.h"
+#include "embedded_lightmap_vs.h"
+#include "embedded_lightmap_fs.h"
 
 namespace renderer {
 
@@ -34,6 +38,8 @@ Pipeline::Pipeline() {
     torpedo_    = std::make_unique<Shader>(shader_src::torpedo_vs,    shader_src::torpedo_fs);
     hit_vfx_    = std::make_unique<Shader>(shader_src::hit_vfx_vs,    shader_src::hit_vfx_fs);
     phaser_     = std::make_unique<Shader>(shader_src::phaser_vs,     shader_src::phaser_fs);
+    bridge_     = std::make_unique<Shader>(shader_src::bridge_vs,     shader_src::bridge_fs);
+    lightmap_   = std::make_unique<Shader>(shader_src::lightmap_vs,   shader_src::lightmap_fs);
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
     glEnable(GL_CULL_FACE);

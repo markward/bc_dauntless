@@ -53,6 +53,10 @@ class _PlayingSound:
         if _audio and self._pid:
             _audio.set_position(self._pid, x, y, z)
 
+    def SetGain(self, gain: float) -> None:
+        if _audio and self._pid:
+            _audio.set_gain(self._pid, float(gain))
+
 
 class TGSound:
     # Loadspec constants (match App.py).

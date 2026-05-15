@@ -65,6 +65,16 @@ def set_lighting(ambient: Tuple[float, float, float],
     _h.set_lighting(ambient, directionals)
 
 
+def set_bridge_lighting(ambient: Tuple[float, float, float],
+                        directionals: list) -> None:
+    """Configure the bridge pass's lighting for subsequent frame()s.
+
+    Same shape as set_lighting, but feeds the bridge pass exclusively.
+    Stock BC bridges author only ambient (directionals empty).
+    """
+    _h.set_bridge_lighting(ambient, directionals)
+
+
 def set_suns(suns: list) -> None:
     """Configure the renderer's sun list. Each entry is a dict:
         {"position": (x,y,z), "radius": float,

@@ -29,6 +29,14 @@ void cursor_pos_cb(GLFWwindow* w, double xpos, double ypos) {
     if (g_input_ctx) {
         RmlGLFW::ProcessCursorPosCallback(g_input_ctx, w, xpos, ypos, /*mods=*/0);
     }
+    // UiSystem owns the GLFW cursor-pos callback (the registration at
+    // the bottom of the ctor overwrites Window's). Forward the event to
+    // the Window stored in glfwSetWindowUserPointer so its mouse-delta
+    // accumulator stays current — without this, consume_mouse_delta()
+    // returns zero forever and mouse-look does nothing.
+    if (auto* win = static_cast<renderer::Window*>(glfwGetWindowUserPointer(w))) {
+        win->on_cursor_pos(xpos, ypos);
+    }
 }
 
 void mouse_button_cb(GLFWwindow*, int button, int action, int mods) {

@@ -29,6 +29,10 @@ embed_shader(SHADER_HIT_VFX_VS shaders/hit_vfx.vert hit_vfx_vs)
 embed_shader(SHADER_HIT_VFX_FS shaders/hit_vfx.frag hit_vfx_fs)
 embed_shader(SHADER_PHASER_VS shaders/phaser.vert phaser_vs)
 embed_shader(SHADER_PHASER_FS shaders/phaser.frag phaser_fs)
+embed_shader(SHADER_BRIDGE_VS shaders/bridge.vert bridge_vs)
+embed_shader(SHADER_BRIDGE_FS shaders/bridge.frag bridge_fs)
+embed_shader(SHADER_LIGHTMAP_VS shaders/lightmap.vert lightmap_vs)
+embed_shader(SHADER_LIGHTMAP_FS shaders/lightmap.frag lightmap_fs)
 
 add_library(renderer STATIC
     window.cc
@@ -47,6 +51,7 @@ add_library(renderer STATIC
     torpedo_pass.cc
     hit_vfx_pass.cc
     phaser_pass.cc
+    bridge_pass.cc
 )
 target_include_directories(renderer
     PUBLIC include

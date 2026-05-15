@@ -28,6 +28,7 @@
 #include <renderer/torpedo_pass.h>
 #include <renderer/hit_vfx_pass.h>
 #include <renderer/phaser_pass.h>
+#include <renderer/bridge_pass.h>
 #include <renderer/aabb.h>
 #include <ui/UiSystem.h>
 #include <ui/PanelDocument.h>
@@ -52,6 +53,12 @@ std::unique_ptr<renderer::Window> g_window;
 scenegraph::World g_world;
 scenegraph::Camera g_camera;
 renderer::Lighting g_lighting;
+// Separate lighting state for the bridge pass. Populated by the Python
+// host loop via set_bridge_lighting() each tick, mirroring the space
+// pass's set_lighting() flow. Decoupled because the bridge interior's
+// ambient is authored on its own SetClass and is typically much
+// brighter than the space scene's.
+renderer::Lighting g_bridge_lighting;
 std::vector<renderer::Backdrop> g_backdrops;
 std::unique_ptr<renderer::BackdropPass> g_backdrop_pass;
 std::vector<renderer::SunDescriptor> g_suns;
@@ -66,6 +73,7 @@ std::vector<renderer::HitVfxDescriptor>    g_hit_vfx;
 std::unique_ptr<renderer::HitVfxPass>      g_hit_vfx_pass;
 std::vector<renderer::PhaserBeamDescriptor> g_phaser_beams;
 std::unique_ptr<renderer::PhaserPass>      g_phaser_pass;
+std::unique_ptr<renderer::BridgePass>      g_bridge_pass;
 double g_prev_frame_time_seconds = 0.0;
 
 // Bridge pass state. Camera is set from Python via set_bridge_camera each
@@ -152,6 +160,7 @@ void init(int width, int height, const std::string& title,
     g_world = scenegraph::World{};
     g_loaded_models.clear();
     g_lighting = renderer::Lighting{};
+    g_bridge_lighting = renderer::Lighting{};
     g_backdrops.clear();
     g_backdrop_pass = std::make_unique<renderer::BackdropPass>();
     g_suns.clear();
@@ -162,6 +171,7 @@ void init(int width, int height, const std::string& title,
     g_torpedo_pass = std::make_unique<renderer::TorpedoPass>();
     g_hit_vfx_pass = std::make_unique<renderer::HitVfxPass>();
     g_phaser_pass  = std::make_unique<renderer::PhaserPass>();
+    g_bridge_pass  = std::make_unique<renderer::BridgePass>();
     g_prev_frame_time_seconds = glfwGetTime();
 
     if (!ui_assets_root.empty()) {
@@ -199,6 +209,7 @@ void shutdown() {
     g_hit_vfx_pass.reset();
     g_phaser_beams.clear();
     g_phaser_pass.reset();
+    g_bridge_pass.reset();
     g_window.reset();
     g_prev_key_state.clear();
     g_prev_mouse_state.clear();
@@ -207,6 +218,7 @@ void shutdown() {
     // subsequent init() will see the documented default, not stale state
     // from the previous session.
     g_lighting = renderer::Lighting{};
+    g_bridge_lighting = renderer::Lighting{};
     g_hud_state = ui::HudState{};
 }
 
@@ -269,13 +281,12 @@ void frame() {
     // the future viewscreen RTT can swap the space pass's target from
     // "main framebuffer" to "viewscreen texture" without adding a
     // "render space here" path that didn't exist before.
-    if (g_bridge_pass_enabled) {
+    if (g_bridge_pass_enabled && g_bridge_pass) {
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         if (fh > 0) g_bridge_camera.aspect = static_cast<float>(fw) / static_cast<float>(fh);
-        g_submitter->submit_opaque_in_pass(
-            g_world, g_bridge_camera, *g_pipeline, lookup, g_lighting,
-            scenegraph::Pass::Bridge);
+        g_bridge_pass->render(g_world, g_bridge_camera, *g_pipeline,
+                              lookup, g_bridge_lighting);
     }
 
     if (g_ui_system) {
@@ -418,6 +429,32 @@ PYBIND11_MODULE(_open_stbc_host, m) {
           },
           py::arg("ambient"), py::arg("directionals"),
           "Set the global lighting state used by the next frame()'s opaque pass.");
+
+    m.def("set_bridge_lighting",
+          [](std::tuple<float,float,float> ambient,
+             const std::vector<std::tuple<
+                 std::tuple<float,float,float>,
+                 std::tuple<float,float,float>>>& directionals) {
+              g_bridge_lighting.ambient = {std::get<0>(ambient),
+                                           std::get<1>(ambient),
+                                           std::get<2>(ambient)};
+              int n = std::min(static_cast<int>(directionals.size()),
+                               renderer::Lighting::MaxDirectionals);
+              g_bridge_lighting.directional_count = n;
+              for (int i = 0; i < n; ++i) {
+                  const auto& [dir, col] = directionals[i];
+                  glm::vec3 d{std::get<0>(dir), std::get<1>(dir), std::get<2>(dir)};
+                  float len = glm::length(d);
+                  g_bridge_lighting.directional_dir_ws[i] =
+                      (len > 1e-6f) ? d / len : glm::vec3(0.0f, 1.0f, 0.0f);
+                  g_bridge_lighting.directional_color[i] = {
+                      std::get<0>(col), std::get<1>(col), std::get<2>(col)};
+              }
+          },
+          py::arg("ambient"), py::arg("directionals"),
+          "Set the bridge pass's lighting state, applied each frame() when "
+          "the bridge pass is enabled. Separate from set_lighting (which "
+          "feeds the space scene).");
 
     m.def("set_backdrops",
           [](const std::vector<py::dict>& descriptors) {

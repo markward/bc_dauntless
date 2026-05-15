@@ -58,13 +58,7 @@ Window::Window(int width, int height, const std::string& title, bool visible) {
 
     glfwSetCursorPosCallback(handle_, [](GLFWwindow* w, double x, double y) {
         if (auto* self = static_cast<Window*>(glfwGetWindowUserPointer(w))) {
-            if (self->cursor_seeded_) {
-                self->mouse_dx_accum_ += x - self->last_cursor_x_;
-                self->mouse_dy_accum_ += y - self->last_cursor_y_;
-            }
-            self->last_cursor_x_ = x;
-            self->last_cursor_y_ = y;
-            self->cursor_seeded_ = true;
+            self->on_cursor_pos(x, y);
         }
     });
 
@@ -192,6 +186,16 @@ void Window::cursor_pos(double* out_x, double* out_y) const noexcept {
     *out_y = y;
 }
 
+void Window::on_cursor_pos(double x, double y) noexcept {
+    if (cursor_seeded_) {
+        mouse_dx_accum_ += x - last_cursor_x_;
+        mouse_dy_accum_ += y - last_cursor_y_;
+    }
+    last_cursor_x_ = x;
+    last_cursor_y_ = y;
+    cursor_seeded_ = true;
+}
+
 void Window::consume_mouse_delta(double* dx, double* dy) noexcept {
     *dx = mouse_dx_accum_;
     *dy = mouse_dy_accum_;
@@ -203,6 +207,16 @@ void Window::set_cursor_locked(bool locked) noexcept {
     if (!handle_) return;
     glfwSetInputMode(handle_, GLFW_CURSOR,
                      locked ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+    // Enable raw, unaccelerated mouse motion when the platform supports
+    // it. macOS in particular benefits — without raw motion, GLFW's
+    // virtual cursor in disabled mode can produce zero deltas in some
+    // window-focus states. glfwRawMouseMotionSupported() returns false
+    // on platforms where the call would be a no-op, so this is safe to
+    // call unconditionally.
+    if (glfwRawMouseMotionSupported()) {
+        glfwSetInputMode(handle_, GLFW_RAW_MOUSE_MOTION,
+                         locked ? GLFW_TRUE : GLFW_FALSE);
+    }
     // Drop the seed so the next cursor-pos event re-anchors and we don't
     // see a giant warp delta on lock-state change.
     cursor_seeded_ = false;

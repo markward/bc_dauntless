@@ -124,8 +124,8 @@ public:
                        const Lighting& lighting);
 
     /// Like submit_opaque but only iterates instances tagged with `pass`.
-    /// Used by the bridge pass after a depth clear so bridge-tagged
-    /// geometry overlays the space scene regardless of world coords.
+    /// Used by the space pass to exclude bridge-tagged geometry, which
+    /// is drawn by BridgePass with its own camera and shaders.
     void submit_opaque_in_pass(const scenegraph::World& world,
                                const scenegraph::Camera& camera,
                                Pipeline& pipeline,

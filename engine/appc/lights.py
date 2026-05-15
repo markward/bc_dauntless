@@ -165,3 +165,33 @@ def aggregate_for_renderer(pSet, default_ambient, default_directionals):
         return default_ambient, default_directionals
 
     return ambient, directionals
+
+
+def _resolve_bridge_set():
+    """Return the bridge SetClass, or None.
+
+    BC's convention (sdk/Build/scripts/LoadBridge.py:64): the bridge set
+    is registered under the literal name "bridge" via
+    g_kSetManager.AddSet(pBridgeSet, "bridge"). LoadBridge.py is the
+    only producer; the Phase 1 LoadBridge shim mirrors this. There is no
+    per-ship-class disambiguation at this layer — bridge variants
+    (DBridge, FBridge, ...) are selected upstream when LoadBridge runs.
+    """
+    import App
+    return App.g_kSetManager.GetSet("bridge")
+
+
+def aggregate_bridge_for_renderer(default_ambient, default_directionals):
+    """Bridge-pass counterpart of aggregate_for_renderer.
+
+    Pulls lighting from the bridge SetClass (resolved by name) so the
+    bridge interior renders against its own authored ambient, not the
+    space scene's. Returns (ambient, directionals) in the same shape as
+    aggregate_for_renderer, so the binding signature is identical.
+
+    Stock BC bridges author only CreateAmbientLight (no directionals);
+    aggregate_for_renderer's directional handling is mechanically
+    correct for the bridge case too, so we reuse it without modification.
+    """
+    pSet = _resolve_bridge_set()
+    return aggregate_for_renderer(pSet, default_ambient, default_directionals)

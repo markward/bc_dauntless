@@ -19,6 +19,11 @@ def Load(bridge_name: str = ""):
     # a real ObjectClass with GetAnimNode() rather than None.
     bridge_obj = App.ObjectClass()
     pSet.AddObjectToSet(bridge_obj, "bridge")
+    # Match sdk/Build/scripts/LoadBridge.py:183 — every bridge variant
+    # registers a baseline ambient so the bridge pass has something to
+    # render against. Without this the renderer falls back to its
+    # DEFAULT_AMBIENT (typically 0.1) and the interior looks ~black.
+    pSet.CreateAmbientLight(1.0, 1.0, 1.0, 1.0, "ambientlight1")
     return pSet
 
 
