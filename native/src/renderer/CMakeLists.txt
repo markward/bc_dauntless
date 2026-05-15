@@ -51,6 +51,7 @@ add_library(renderer STATIC
     torpedo_pass.cc
     hit_vfx_pass.cc
     phaser_pass.cc
+    bridge_pass.cc
 )
 target_include_directories(renderer
     PUBLIC include
