@@ -58,10 +58,13 @@ the list.
 
    Follow-up backlog:
 
-   - **Bridge & cinematic light rendering.** When bridge rendering
-     arrives, revisit `SetClass.CreateAmbientLight`'s 4th-arg semantics
-     (range vs dimmer) — bridges call it with values up to 19.0, treated
-     as dimmer today.
+   - **Bridge & cinematic light rendering.** ✅ Resolved 2026-05-15 by
+     the [bridge-lighting-materials work](../../../../docs/superpowers/specs/2026-05-15-bridge-lighting-materials-design.md).
+     `BridgePass` + `bridge.{vert,frag}` / `lightmap.{vert,frag}` ship
+     the visual; `engine/appc/lights.py:aggregate_bridge_for_renderer`
+     plumbs bridge-set ambient through `r.set_bridge_lighting`. The
+     `CreateAmbientLight` 4th-arg was decided as a dimmer **clamped to
+     [0, 1]** — see new follow-up item below.
    - **`AddIlluminatedObject` per-object filtering.** Phase 1 ignores
      it; lights affect every object in the set. Becomes relevant when
      characters render.
@@ -162,6 +165,57 @@ the list.
     FBOs, (c) composite back to the backbuffer. Most of the FBO ping-
     pong scaffolding was prototyped for the sun corona before being
     reverted (commit `72d91aa`); recoverable. Depends on item 9.
+
+25. **Strip the space pass when bridge view is active.** The space
+    render path (backdrops, sun, opaque-in-Space, shield, dust, lens
+    flares, torpedoes, phasers, hit VFX) currently runs every frame
+    even when the bridge pass is the only thing the user sees
+    (`host_bindings.cc::frame` lines ~263-271 explain why). Deferred
+    until the viewscreen-as-RTT work (item 26) lands — that work needs
+    the space pass running so it can target the viewscreen surface;
+    stripping it now would force adding a "render space here" path
+    that doesn't otherwise exist.
+
+26. **Viewscreen-as-render-target.** Render the space scene into the
+    `DbridgeViewScreen.NIF` surface so the bridge's main screen shows a
+    live view of the outside world. Pulls in framebuffer / render-
+    target plumbing. Unblocks item 25.
+
+27. **Animated bridge state.** Red-alert tint on the bridge ambient,
+    viewscreen flicker, station-screen content updates. Mechanically
+    fits as either per-tick mutations of `g_bridge_lighting` or new
+    bridge-pass uniforms.
+
+28. **Per-ship-class bridge variants.** DBridge is hardcoded in
+    `host_loop.py:502`; other classes (FBridge, EBridge, KBridge,
+    BBridge, RBridge) have their own NIFs that should swap based on
+    the player ship's class.
+
+29. **Bridge characters / skinned animation.** Crew at stations.
+    Depends on item 5 (skinned-mesh rendering).
+
+30. **Specular / glow on bridge geometry.** Not authored in stock
+    content; relevant if mods add it. Would need `bridge.frag`
+    extensions and a glow-stage pass over `Material::stages[Glow]`.
+
+31. **Per-LCARS-panel alpha-test threshold tuning.** Currently 0.5
+    hardcoded in `bridge.frag`. Surface as a per-material override
+    (e.g. `Material::alpha_test_threshold` is already populated from
+    `NiAlphaProperty`; wire it into the shader) if specific panels
+    need tuning.
+
+32. **NIF `Dark`-stage lightmap support.** Modern authoring tools can
+    put a lightmap in stage 1 (`Dark`) of `NiMultiTextureProperty`;
+    stock BC content doesn't use this path, but adding a second
+    predicate in `material_build.cc` would extend `lightmap_pass`
+    tagging to non-stock bridges.
+
+33. **`CreateAmbientLight` 4th-arg true semantics.** The chosen Phase 1
+    interpretation (clamp dimmer to [0, 1]) matches visual expectations
+    for stock content; the ground truth (range vs dimmer vs something
+    else) is still unconfirmed and may matter for non-stock content.
+    See `engine/appc/sets.py:CreateAmbientLight` for the chosen
+    behaviour and rationale.
 
 ## v1 deviations from the original plan
 
