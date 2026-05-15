@@ -145,16 +145,17 @@ def _poll_mouse_buttons(host) -> None:
     if host is None or not hasattr(host, "mouse_button_pressed"):
         return
     import App
-    # PR 2b is torpedo-only.  Left-click (phasers) and middle-click
-    # (tractor/etc.) are deferred to PR 2c — forwarding them now just
-    # plays SFX with no visuals, which is noise.  Only right-click is
-    # wired up.
-    glfw_btn = host.keys.MOUSE_BUTTON_RIGHT
-    wc = App.WC_RBUTTON
-    if host.mouse_button_pressed(glfw_btn):
-        App.g_kInputManager.OnKeyDown(wc)
-    if host.mouse_button_released(glfw_btn):
-        App.g_kInputManager.OnKeyUp(wc)
+    # PR 2c re-enables left-click (phasers) alongside right-click
+    # (torpedoes).  Middle-click is still out of scope — tractor beam is
+    # deferred to a future PR.
+    for glfw_btn, wc in (
+        (host.keys.MOUSE_BUTTON_LEFT,  App.WC_LBUTTON),
+        (host.keys.MOUSE_BUTTON_RIGHT, App.WC_RBUTTON),
+    ):
+        if host.mouse_button_pressed(glfw_btn):
+            App.g_kInputManager.OnKeyDown(wc)
+        if host.mouse_button_released(glfw_btn):
+            App.g_kInputManager.OnKeyUp(wc)
 
 
 def _advance_weapons(ships, dt: float) -> None:
