@@ -1,8 +1,30 @@
 #include "material_build.h"
 
+#include <cctype>
+#include <string_view>
+
 namespace assets::detail {
 
 namespace {
+
+/// True when `fname`'s basename (case-insensitive) ends in either
+/// " lm.tga" (space-separated, as in stock BC content like
+/// "door 04a lm.tga") or "_lm.tga" (underscore-separated, as a future
+/// authoring-tool convention). Matches BC's baked-lightmap filename
+/// rule for bridge geometry.
+bool filename_is_lightmap(std::string_view fname) {
+    auto lower_ends_with = [](std::string_view s, std::string_view suffix) {
+        if (s.size() < suffix.size()) return false;
+        for (std::size_t i = 0; i < suffix.size(); ++i) {
+            char c = s[s.size() - suffix.size() + i];
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            if (c != suffix[i]) return false;
+        }
+        return true;
+    };
+    return lower_ends_with(fname, " lm.tga") ||
+           lower_ends_with(fname, "_lm.tga");
+}
 
 void apply_material_property(Material& m, const nif::NiMaterialProperty& src) {
     m.ambient    = {src.ambient.r, src.ambient.g, src.ambient.b};
@@ -141,6 +163,34 @@ Material build_material(const MaterialInputs& in) {
         in.image_to_texture, in.glow_image_links, in.specular_image_links,
         in.sibling_specular_for_image);
     if (in.multi_texture) apply_multi_texture_property(m, *in.multi_texture, in.image_to_texture);
+
+    // Apply BC's lightmap-filename convention. Looks up the source
+    // filename for whichever NiImage actually landed in the resolved
+    // Base stage of the final Material (i.e. after both
+    // NiTextureProperty and NiMultiTextureProperty have run — DBridge
+    // shapes inherit BOTH from different ancestor NiNodes, with the
+    // multi-texture's lightmap correctly overwriting the texture
+    // property's base). Sets m.lightmap_pass if that filename matches
+    // "* lm.tga" / "*_lm.tga".
+    if (in.image_filename_for_link && in.image_to_texture) {
+        const int base_tex_idx = m.stages[
+            static_cast<std::size_t>(Material::StageSlot::Base)].texture_index;
+        if (base_tex_idx >= 0) {
+            // Reverse-lookup: which NiImage link_id maps to this
+            // texture_index? Image count is typically tens; linear scan
+            // is fine.
+            for (const auto& [link_id, tex_idx] : *in.image_to_texture) {
+                if (tex_idx != base_tex_idx) continue;
+                auto fn_it = in.image_filename_for_link->find(link_id);
+                if (fn_it == in.image_filename_for_link->end()) continue;
+                if (filename_is_lightmap(fn_it->second)) {
+                    m.lightmap_pass = true;
+                }
+                break;
+            }
+        }
+    }
+
     return m;
 }
 

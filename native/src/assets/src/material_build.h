@@ -4,6 +4,7 @@
 #include <assets/material.h>
 #include <nif/block.h>
 
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -40,6 +41,14 @@ struct MaterialInputs {
     /// Base/Glow binding. Stand-in for BC's runtime AddLOD `_specular`
     /// suffix arg until full AddLOD threading lands.
     const std::unordered_map<std::uint32_t, int>* sibling_specular_for_image = nullptr;
+
+    /// Maps NIF link ID of a NiImage → its source filename
+    /// (NiImage::file_name). Used by build_material to apply BC's
+    /// `_lm.tga` lightmap-pass filename predicate without having to
+    /// chase the NiImage block through nif::File from the predicate
+    /// site. Populated by load_all_textures for `use_external != 0`
+    /// images; embedded images (NiRawImageData) leave no entry.
+    const std::unordered_map<std::uint32_t, std::string>* image_filename_for_link = nullptr;
 };
 
 Material build_material(const MaterialInputs&);

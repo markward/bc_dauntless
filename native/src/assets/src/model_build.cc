@@ -98,6 +98,9 @@ struct TextureLoadResult {
     /// each one with a sibling spec map at load time. We replicate that
     /// here so the spec pass has something to bind on stock assets.
     std::unordered_map<std::uint32_t, int> sibling_specular_for_image;
+    /// NIF link ID -> source filename (NiImage::file_name) for external
+    /// images. Used by material_build's lightmap-pass predicate.
+    std::unordered_map<std::uint32_t, std::string> image_filename_for_link;
 };
 
 /// Walk all NiImage blocks; load + decode + upload referenced TGAs (or
@@ -145,6 +148,9 @@ TextureLoadResult load_all_textures(
         const std::uint32_t link_id =
             (i < f.block_ids.size()) ? f.block_ids[i] : i;
         out.image_to_texture[link_id] = static_cast<int>(model.textures.size());
+        if (img->use_external != 0) {
+            out.image_filename_for_link[link_id] = img->file_name;
+        }
         if (img->use_external != 0 && filename_is_glow(img->file_name)) {
             out.glow_image_links.insert(link_id);
         }
@@ -398,6 +404,7 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
             tex_result.image_to_texture, tex_result.glow_image_links,
             tex_result.specular_image_links,
             tex_result.sibling_specular_for_image, resolver);
+        mat_inputs.image_filename_for_link = &tex_result.image_filename_for_link;
         Material mat = build_material(mat_inputs);
         int mat_index = static_cast<int>(model.materials.size());
         model.materials.push_back(std::move(mat));

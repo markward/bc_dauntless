@@ -42,6 +42,14 @@ struct Material {
 
     std::array<TextureStage, static_cast<std::size_t>(StageSlot::Count)> stages{};
 
+    /// True when the Base-stage source texture's filename matches BC's
+    /// baked-lightmap authoring convention (" lm.tga" or "_lm.tga",
+    /// case-insensitive). Bridge geometry has duplicate meshes whose
+    /// only material is a lightmap texture; those meshes need a
+    /// multiply-blend draw over the regular base-textured geometry.
+    /// Renderer's BridgePass reads this to partition bridge sub-passes.
+    bool lightmap_pass = false;
+
     // From NiAlphaProperty (decoded bitfield, values verbatim)
     bool          blend_enabled = false;
     std::uint32_t blend_src_factor = 0;

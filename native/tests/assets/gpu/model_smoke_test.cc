@@ -98,3 +98,33 @@ TEST_F(GalaxyRegressionFixture, MaterialCountAndBaseTextureIdentity) {
     const std::vector<int> expected_bases = {0, 2, 4, 5, 6, 7, 8, 9, 10, 11};
     EXPECT_EQ(base_indices, expected_bases);
 }
+
+// End-to-end integration: DBridge.NIF should produce 145 materials, of
+// which 17 are tagged Material::lightmap_pass=true and 128 are not.
+// This exercises both the property-link inheritance walk (Task 3) and
+// the lightmap-pass filename predicate (Task 4) against real assets.
+class DBridgeIntegration : public assets_test::GLContext {};
+
+TEST_F(DBridgeIntegration, MaterialLightmapPassDistribution) {
+    fs::path root = OPEN_STBC_PROJECT_ROOT;
+    fs::path nif = root / "game/data/Models/Sets/DBridge/Dbridge.NIF";
+    fs::path tex = root / "game/data/Models/Sets/DBridge/High";
+    if (!fs::is_regular_file(nif) || !fs::is_directory(tex)) {
+        GTEST_SKIP() << "BC bridge asset not available";
+    }
+    assets::AssetCache cache;
+    auto model = cache.load(nif, tex);
+    ASSERT_NE(model, nullptr);
+
+    int lm = 0, base_only = 0;
+    for (const auto& m : model->materials) {
+        if (m.lightmap_pass) ++lm;
+        else                 ++base_only;
+    }
+    std::fprintf(stderr,
+                 "DBridge: %d lightmap_pass materials, %d base-only\n",
+                 lm, base_only);
+    EXPECT_EQ(model->materials.size(), 145u);
+    EXPECT_EQ(lm, 17);
+    EXPECT_EQ(base_only, 128);
+}
