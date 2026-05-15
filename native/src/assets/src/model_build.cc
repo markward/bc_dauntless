@@ -257,9 +257,30 @@ NodeBuildResult build_nodes(
     return r;
 }
 
+/// child_link → parent NiNode block index. Built once per build_model
+/// invocation and reused for every shape's inheritance walk. Keys are
+/// NIF link IDs (the values stored in cross-block references), not block
+/// array indices, to match every other cross-ref site in this file.
+using ChildToParentMap = std::unordered_map<std::uint32_t, std::size_t>;
+
+ChildToParentMap build_child_to_parent_map(const nif::File& f) {
+    ChildToParentMap out;
+    out.reserve(f.blocks.size());
+    for (std::size_t i = 0; i < f.blocks.size(); ++i) {
+        const auto* n = std::get_if<nif::NiNode>(&f.blocks[i]);
+        if (!n) continue;
+        for (std::uint32_t c : n->child_links) {
+            out[c] = i;
+        }
+    }
+    return out;
+}
+
 MaterialInputs gather_material_inputs(
     const nif::File& f,
+    std::uint32_t shape_block_index,
     const nif::NiTriShape& shape,
+    const ChildToParentMap& child_to_parent,
     const std::unordered_map<std::uint32_t, int>& image_to_texture,
     const std::unordered_set<std::uint32_t>& glow_image_links,
     const std::unordered_set<std::uint32_t>& specular_image_links,
@@ -271,18 +292,44 @@ MaterialInputs gather_material_inputs(
     in.glow_image_links = &glow_image_links;
     in.specular_image_links = &specular_image_links;
     in.sibling_specular_for_image = &sibling_specular_for_image;
-    for (auto link : shape.av.property_links) {
+
+    auto consider = [&](std::uint32_t link) {
         auto idx = resolver.resolve(link);
-        if (idx == LinkResolver::kInvalidIndex) continue;
-        if (idx >= f.blocks.size()) continue;
+        if (idx == LinkResolver::kInvalidIndex) return;
+        if (idx >= f.blocks.size()) return;
         const auto& b = f.blocks[idx];
-        if (auto* p = std::get_if<nif::NiMaterialProperty>(&b))      in.material      = p;
-        else if (auto* p = std::get_if<nif::NiTextureProperty>(&b))      in.texture       = p;
-        else if (auto* p = std::get_if<nif::NiMultiTextureProperty>(&b)) in.multi_texture = p;
-        else if (auto* p = std::get_if<nif::NiAlphaProperty>(&b))        in.alpha         = p;
-        else if (auto* p = std::get_if<nif::NiZBufferProperty>(&b))      in.zbuffer       = p;
-        else if (auto* p = std::get_if<nif::NiVertexColorProperty>(&b))  in.vertex_color  = p;
+        // Child overrides parent: only fill each per-type slot if it's
+        // still empty. The walk visits the shape's own links first
+        // (depth 0), then each ancestor NiNode in turn.
+        if (auto* p = std::get_if<nif::NiMaterialProperty>(&b)) {
+            if (!in.material) in.material = p;
+        } else if (auto* p = std::get_if<nif::NiTextureProperty>(&b)) {
+            if (!in.texture) in.texture = p;
+        } else if (auto* p = std::get_if<nif::NiMultiTextureProperty>(&b)) {
+            if (!in.multi_texture) in.multi_texture = p;
+        } else if (auto* p = std::get_if<nif::NiAlphaProperty>(&b)) {
+            if (!in.alpha) in.alpha = p;
+        } else if (auto* p = std::get_if<nif::NiZBufferProperty>(&b)) {
+            if (!in.zbuffer) in.zbuffer = p;
+        } else if (auto* p = std::get_if<nif::NiVertexColorProperty>(&b)) {
+            if (!in.vertex_color) in.vertex_color = p;
+        }
+    };
+
+    for (auto link : shape.av.property_links) consider(link);
+
+    if (shape_block_index >= f.block_ids.size()) return in;
+    std::uint32_t cur_id = f.block_ids[shape_block_index];
+    while (true) {
+        auto it = child_to_parent.find(cur_id);
+        if (it == child_to_parent.end()) break;
+        const std::size_t parent_idx = it->second;
+        const auto* parent = std::get_if<nif::NiNode>(&f.blocks[parent_idx]);
+        if (!parent) break;
+        for (auto link : parent->av.property_links) consider(link);
+        cur_id = f.block_ids[parent_idx];
     }
+
     return in;
 }
 
@@ -332,6 +379,8 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
         ? ctx.mesh_uploader
         : MeshUploaderFn([](MeshCpu cpu) { return upload_mesh(cpu); });
 
+    auto child_to_parent = build_child_to_parent_map(f);
+
     bool any_trishape = false;
     for (std::uint32_t i = 0; i < f.blocks.size(); ++i) {
         const auto* shape = std::get_if<nif::NiTriShape>(&f.blocks[i]);
@@ -345,7 +394,8 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
         if (!data) continue;  // shape with no data block — skip silently
 
         auto mat_inputs = gather_material_inputs(
-            f, *shape, tex_result.image_to_texture, tex_result.glow_image_links,
+            f, /*shape_block_index=*/i, *shape, child_to_parent,
+            tex_result.image_to_texture, tex_result.glow_image_links,
             tex_result.specular_image_links,
             tex_result.sibling_specular_for_image, resolver);
         Material mat = build_material(mat_inputs);
