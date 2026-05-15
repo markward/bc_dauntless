@@ -127,7 +127,44 @@ void BridgePass::render(const scenegraph::World& world,
             draw_mesh(m, mesh, mat, base_shader, w, white);
         });
 
-    // Sub-pass B (lightmap multiply) lands in Task 7.
+    // ── Sub-pass B: lightmap geometry, multiply blend over framebuffer ──
+    // GL state for fixed-function-style multiply lightmaps:
+    //   LEQUAL  — lightmap mesh is coplanar with the base mesh under it
+    //             in most stock content; LESS would reject every fragment
+    //             on exact-coplanar duplicates.
+    //   depth-write OFF — sub-pass B does not contribute to the depth
+    //             buffer; only A's opaque pass owns depth.
+    //   blend DST_COLOR/ZERO — `framebuffer *= lightmap`, the canonical
+    //             multiply-blend lightmap composite.
+    //   polygon offset (-1, -1) — handles floating-point drift between
+    //             the base and lightmap copies even when nominally
+    //             coplanar; cheap and standard for this pattern.
+    auto& lm_shader = pipeline.lightmap_shader();
+    lm_shader.use();
+    lm_shader.set_mat4("u_view", camera.view_matrix());
+    lm_shader.set_mat4("u_proj", camera.proj_matrix());
+    lm_shader.set_int("u_lightmap", 0);
+
+    glDepthFunc(GL_LEQUAL);
+    glDepthMask(GL_FALSE);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_DST_COLOR, GL_ZERO);
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(-1.0f, -1.0f);
+
+    walk_bridge_meshes(world, lookup, /*want_lightmap_pass=*/true,
+        [&](const assets::Model& m, const assets::Mesh& mesh,
+            const assets::Material& mat, const glm::mat4& w) {
+            draw_mesh(m, mesh, mat, lm_shader, w, white);
+        });
+
+    // Restore GL state so subsequent passes don't inherit our changes.
+    glDisable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(0.0f, 0.0f);
+    glDisable(GL_BLEND);
+    glDepthMask(GL_TRUE);
+    glDepthFunc(GL_LESS);
+
     glBindVertexArray(0);
 }
 
