@@ -107,9 +107,30 @@ def update_positions() -> None:
         playing.SetPosition(float(x), float(y), float(z))
 
 
+_muted = False
+
+
+def set_muted(muted: bool) -> None:
+    """Mute (gain 0) or unmute (gain 1) every tracked engine-rumble source.
+
+    Idempotent — repeat calls with the same value are no-ops. Used by the
+    bridge-view mode: from inside the bridge, the player wouldn't hear
+    their own engine humming directly.
+    """
+    global _muted
+    if _muted == muted:
+        return
+    _muted = muted
+    gain = 0.0 if muted else 1.0
+    for ship, playing in list(_active.items()):
+        if playing is not None:
+            playing.SetGain(gain)
+
+
 def reset_for_tests() -> None:
-    global _installed, _unsubscribe
+    global _installed, _unsubscribe, _muted
     _installed = False
+    _muted = False
     _active.clear()
     if _unsubscribe is not None:
         _unsubscribe()

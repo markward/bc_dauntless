@@ -6,10 +6,12 @@ import math
 import pytest
 
 
-def test_bridge_camera_starts_at_zero_yaw_pitch():
+def test_bridge_camera_starts_at_initial_yaw():
+    """Initial yaw is INITIAL_YAW_RAD (π), so the default forward
+    points -Y (into the bridge interior as authored)."""
     from engine.host_loop import _BridgeCamera
     bc = _BridgeCamera()
-    assert bc.yaw_rad   == pytest.approx(0.0)
+    assert bc.yaw_rad   == pytest.approx(_BridgeCamera.INITIAL_YAW_RAD)
     assert bc.pitch_rad == pytest.approx(0.0)
 
 
@@ -19,8 +21,9 @@ def test_mouse_delta_accumulates_yaw_and_pitch():
     can't silently flip it."""
     from engine.host_loop import _BridgeCamera
     bc = _BridgeCamera()
+    initial_yaw = bc.yaw_rad
     bc.apply(mouse_dx=100.0, mouse_dy=-50.0)
-    expected_yaw   = -100.0 * _BridgeCamera.MOUSE_SENSITIVITY
+    expected_yaw   = initial_yaw + (-100.0 * _BridgeCamera.MOUSE_SENSITIVITY)
     expected_pitch = -(-50.0)  * _BridgeCamera.MOUSE_SENSITIVITY  # -dy → +pitch
     assert bc.yaw_rad   == pytest.approx(expected_yaw)
     assert bc.pitch_rad == pytest.approx(expected_pitch)
@@ -46,17 +49,16 @@ def test_pitch_clamps_at_negative_limit():
 def test_yaw_wraps_freely_no_clamp():
     from engine.host_loop import _BridgeCamera
     bc = _BridgeCamera()
+    initial_yaw = bc.yaw_rad
     # Drive yaw past 2π with one big delta.
     bc.apply(mouse_dx=100000.0, mouse_dy=0.0)
-    expected = -100000.0 * _BridgeCamera.MOUSE_SENSITIVITY
+    expected = initial_yaw + (-100000.0 * _BridgeCamera.MOUSE_SENSITIVITY)
     assert bc.yaw_rad == pytest.approx(expected)
 
 
 def test_camera_anchored_at_bridge_local_offset():
-    """At zero yaw/pitch, eye sits at BRIDGE_LOCAL_OFFSET in bridge-
-    local space. Default forward is +Y (into bridge interior). Up is a
-    unit vector. Target differs from eye so the view direction is
-    well-defined."""
+    """Initial yaw (π) makes the default forward -Y. Eye sits at
+    BRIDGE_LOCAL_OFFSET. Up is unit length. Target differs from eye."""
     from engine.host_loop import _BridgeCamera
     bc = _BridgeCamera()
     eye, target, up = bc.compute_camera()
@@ -64,24 +66,22 @@ def test_camera_anchored_at_bridge_local_offset():
     assert eye[0] == pytest.approx(ox)
     assert eye[1] == pytest.approx(oy)
     assert eye[2] == pytest.approx(oz)
-    # Default forward is +Y → target = eye + (0, 1, 0)
-    assert target[0] == pytest.approx(ox)
-    assert target[1] == pytest.approx(oy + 1.0)
-    assert target[2] == pytest.approx(oz)
+    # Default forward is +Y rotated π around +Z = -Y → target = eye + (0, -1, 0)
+    assert target[0] == pytest.approx(ox, abs=1e-6)
+    assert target[1] == pytest.approx(oy - 1.0, abs=1e-6)
+    assert target[2] == pytest.approx(oz, abs=1e-6)
     up_len_sq = up[0]*up[0] + up[1]*up[1] + up[2]*up[2]
     assert up_len_sq == pytest.approx(1.0, abs=1e-6)
 
 
 def test_yaw_rotates_forward_in_xy_plane():
-    """Positive yaw (look LEFT from default +Y) turns the forward
-    vector toward -X under right-handed Z-up convention. Confirms the
-    yaw axis is the world up (+Z) and the rotation direction matches
-    the sign convention."""
+    """At yaw = π/2 (90°), forward = +Y rotated 90° around +Z = -X.
+    Confirms yaw axis is world-up (+Z) and rotation direction matches
+    the sign convention, independent of the runtime initial yaw."""
     from engine.host_loop import _BridgeCamera
     bc = _BridgeCamera()
     bc.yaw_rad = math.radians(90.0)
     eye, target, _ = bc.compute_camera()
-    # Forward was +Y; after +90° around +Z it's -X.
     fx = target[0] - eye[0]
     fy = target[1] - eye[1]
     assert fx == pytest.approx(-1.0, abs=1e-6)

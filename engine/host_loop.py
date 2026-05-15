@@ -954,6 +954,10 @@ def _apply_view_mode_side_effects(view_mode: "_ViewModeController", h) -> None:
         return
     h.bridge_pass_set_enabled(target)
     h.set_cursor_locked(target)
+    # Engine rumble is direct radiation from each ship — silenced when
+    # the player is inside the bridge.
+    from engine.audio.engine_rumble import set_muted as _rumble_set_muted
+    _rumble_set_muted(target)
     view_mode._last_synced_is_bridge = target
 
 
@@ -999,8 +1003,14 @@ class _BridgeCamera:
     MOUSE_SENSITIVITY = 0.005           # rad per pixel
     PITCH_LIMIT_RAD   = _math.radians(85)
 
+    # Initial yaw flips the default +Y forward to -Y, which visually
+    # corresponds to "looking into the bridge interior" with the
+    # DBridge mesh as authored — the +Y direction lands the camera
+    # facing the rear wall.
+    INITIAL_YAW_RAD = _math.pi
+
     def __init__(self):
-        self.yaw_rad   = 0.0
+        self.yaw_rad   = self.INITIAL_YAW_RAD
         self.pitch_rad = 0.0
 
     def apply(self, mouse_dx: float, mouse_dy: float) -> None:

@@ -203,6 +203,16 @@ void Window::set_cursor_locked(bool locked) noexcept {
     if (!handle_) return;
     glfwSetInputMode(handle_, GLFW_CURSOR,
                      locked ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+    // Enable raw, unaccelerated mouse motion when the platform supports
+    // it. macOS in particular benefits — without raw motion, GLFW's
+    // virtual cursor in disabled mode can produce zero deltas in some
+    // window-focus states. glfwRawMouseMotionSupported() returns false
+    // on platforms where the call would be a no-op, so this is safe to
+    // call unconditionally.
+    if (glfwRawMouseMotionSupported()) {
+        glfwSetInputMode(handle_, GLFW_RAW_MOUSE_MOTION,
+                         locked ? GLFW_TRUE : GLFW_FALSE);
+    }
     // Drop the seed so the next cursor-pos event re-anchors and we don't
     // see a giant warp delta on lock-state change.
     cursor_seeded_ = false;
