@@ -1,4 +1,4 @@
-# Phaser charge dynamics investigation
+# Phaser charge dynamics + multi-bank fire timing investigation
 
 Status: **PENDING**
 Author: 2026-05-15 session
@@ -7,13 +7,21 @@ Closed:  —
 
 ## Goal
 
-Determine how `EnergyWeapon.GetChargeLevel()` evolves tick-by-tick in
-live BC. Specifically: what is the per-second drain rate while firing,
-the per-second recharge rate while idle, the actual threshold for
-`CanFire()` returning true, and the auto-stop / restart hysteresis. The
-goal is to pin down the unit semantics of `SetNormalDischargeRate(1.0)`
-and `SetRechargeRate(0.08)` — currently a guess in PR 2c that produces
-~2-second bursts (much shorter than BC feel).
+Two related captures, run from the same snippet:
+
+1. **Charge dynamics** — how does `EnergyWeapon.GetChargeLevel()` evolve
+   tick-by-tick in live BC? Per-second drain rate while firing, recharge
+   rate while idle, the actual `CanFire()` threshold, the auto-stop
+   condition while firing, and the restart hysteresis. The goal is to
+   pin down the unit semantics of `SetNormalDischargeRate(1.0)` and
+   `SetRechargeRate(0.08)` — currently a guess in PR 2c that produces
+   ~2-second bursts (shorter than BC feel).
+
+2. **Multi-bank fire timing** — when the player holds the trigger with
+   a target locked, does BC fire all eligible phaser banks
+   *simultaneously* (frame 0 = all banks on), or stagger them over a
+   small number of ticks for visual+audio rhythm? Our PR 2c assumes
+   simultaneous dispatch; instrumentation confirms or refutes.
 
 ## Background
 
@@ -70,6 +78,16 @@ Each must end with a numeric answer in the **Findings** section.
 - **Q-C6** Does the rate scale with `WeaponSystemProperty.SetPowerLevel`
   (PP_LOW vs PP_HIGH) or with alert level (yellow vs red)? Bonus —
   helps explain whether engineers shifting power to weapons matters.
+- **Q-C7** When the trigger is first pulled with several eligible banks
+  ready, do they all flip `IsFiring=1` on the **same tick**, or over a
+  few consecutive ticks (round-robin'd by the engine)? Look at the
+  per-bank `firing` flag in the multi-bank sample row — count the
+  number of ticks between the earliest 0→1 transition and the latest
+  among the 8 banks.
+- **Q-C8** Once one bank auto-stops mid-burst (charge depleted) and
+  later re-fires after recharging, does its re-fire **wait for any
+  other bank's state**, or fire independently? Each bank's
+  `firing`/`charge` time series should be independent if so.
 
 ## Snippet
 
@@ -83,19 +101,22 @@ of *How to run*).
 # charge_logger.py
 #
 # Appended to game/scripts/App.py by tools/setup.py — captures per-tick
-# charge dynamics for the player's first phaser bank. See
-# docs/instrumented_experiments/2026-05-15-phaser-charge-dynamics.md.
+# charge dynamics for ALL of the player's phaser banks (typically 8 on a
+# Galaxy). See docs/instrumented_experiments/2026-05-15-phaser-charge-dynamics.md.
 #
 # Hooks UtopiaModule.GetGameTime (per-tick heartbeat). On every Nth tick
-# (downsampled to keep the cfg manageable) we sample:
-#   - wall time, frame, game_time
-#   - first phaser bank: charge_level, is_firing, can_fire
-#   - parent PhaserSystem: power_level, is_on
-#   - ship alert level
+# (downsampled to keep the cfg manageable) we sample, per phaser bank:
+#   - charge_level, is_firing, can_fire
+# Plus ship-level context once per row:
+#   - wall time, frame, game_time, power_level, alert, is_on
 # A ring of up to MAX_SAMPLES rows is written to BCChargeLog.cfg.
 # Once the ring fills, oldest samples are evicted (we want trailing data,
 # not the boot).  The user can quit when they've covered the scenarios
 # in the runbook.
+#
+# The per-bank columns enable two analyses:
+#   - single-bank discharge/recharge curves (use bank 0 columns) → Q-C1..6
+#   - cross-bank timing (compare firing flags across banks) → Q-C7, Q-C8
 #
 # Python 1.5 constraints (see CLAUDE.md "Critical constraints"):
 #   - no f-strings, no True/False literals, no "import X as Y"
@@ -104,13 +125,13 @@ of *How to run*).
 #   - os module is not available; only sys is reliably present
 ###############################################################################
 try:
-    _samples = []          # ring buffer of (wall, game_t, frame, charge, firing,
-                            #                can_fire, power_level, alert, is_on)
-    _MAX_SAMPLES = 600     # 10 minutes at 1 Hz, or 60 seconds at 10 Hz
+    _samples = []          # ring buffer of column-tuples (see _sample())
+    _MAX_SAMPLES = 600     # ~60 seconds at 10 Hz
     _SAMPLE_EVERY_N_TICKS = 6   # ~10 Hz at 60-tick fixed step
     _save_every = 0
     _SAVE_EVERY_N_SAMPLES = 30  # write cfg ~3x/sec so a crash keeps tail
     _tick_counter = 0
+    _MAX_BANKS = 8         # Galaxy has 8 — pad shorter ships, truncate longer
     _orig_GetGameTime = UtopiaModule.GetGameTime
 
     def _alert_str(a):
@@ -124,6 +145,16 @@ try:
             return getattr(obj, attr)()
         except:
             return None
+
+    def _bank_triple(bank):
+        if bank is None:
+            return ("-1.0", "-1", "-1")
+        charge   = _safe_call(bank, "GetChargeLevel")
+        firing   = _safe_call(bank, "IsFiring")
+        can_fire = _safe_call(bank, "CanFire")
+        return ("%.6f" % (charge if charge is not None else -1.0),
+                "%d"   % (firing if firing is not None else -1),
+                "%d"   % (can_fire if can_fire is not None else -1))
 
     def _sample(game_t):
         try:
@@ -139,50 +170,48 @@ try:
             player = Game_GetCurrentPlayer()
         except:
             player = None
+        head = ("%.4f" % wall, "%.4f" % game_t, "%d" % frame)
         if player is None:
-            return ("%.4f" % wall, "%.4f" % game_t, "%d" % frame,
-                    "no_player", "", "", "", "", "")
+            empty = ("-1", "?", "-1")  # power_level alert is_on
+            bank_cols = ()
+            for i in range(_MAX_BANKS):
+                bank_cols = bank_cols + ("-1.0", "-1", "-1")
+            return head + empty + bank_cols
         try:
             phasers = player.GetPhaserSystem()
         except:
             phasers = None
-        if phasers is None or phasers.GetNumWeapons() == 0:
-            return ("%.4f" % wall, "%.4f" % game_t, "%d" % frame,
-                    "no_phasers", "", "", "", "", "")
-        bank = phasers.GetWeapon(0)
-        charge = _safe_call(bank, "GetChargeLevel")
-        firing = _safe_call(bank, "IsFiring")
-        can_fire = _safe_call(bank, "CanFire")
-        power_level = _safe_call(phasers, "GetPowerLevel")
-        is_on = _safe_call(phasers, "IsOn")
-        alert = _safe_call(player, "GetAlertLevel")
-        return ("%.4f" % wall,
-                "%.4f" % game_t,
-                "%d" % frame,
-                "%.6f" % (charge if charge is not None else -1.0),
-                "%d" % (firing if firing is not None else -1),
-                "%d" % (can_fire if can_fire is not None else -1),
-                "%d" % (power_level if power_level is not None else -1),
-                _alert_str(alert),
-                "%d" % (is_on if is_on is not None else -1))
+        power_level = _safe_call(phasers, "GetPowerLevel") if phasers is not None else None
+        is_on       = _safe_call(phasers, "IsOn") if phasers is not None else None
+        alert       = _safe_call(player, "GetAlertLevel")
+        ctx = ("%d" % (power_level if power_level is not None else -1),
+               _alert_str(alert),
+               "%d" % (is_on if is_on is not None else -1))
+        bank_cols = ()
+        n = phasers.GetNumWeapons() if phasers is not None else 0
+        for i in range(_MAX_BANKS):
+            bank = phasers.GetWeapon(i) if (phasers is not None and i < n) else None
+            bank_cols = bank_cols + _bank_triple(bank)
+        return head + ctx + bank_cols
+
+    def _column_legend():
+        cols = ["wall", "game_t", "frame", "power_level", "alert", "is_on"]
+        for i in range(_MAX_BANKS):
+            cols.append("charge%d" % i)
+            cols.append("firing%d" % i)
+            cols.append("can_fire%d" % i)
+        return " ".join(cols)
 
     def _flush(cfg):
         cfg.SetIntValue("BCChargeLog", "n_samples", len(_samples))
-        # First / last sample summary (cheap sanity-check rows).
         if _samples:
-            first = _samples[0]
-            last  = _samples[-1]
             cfg.SetStringValue("BCChargeLog", "first_sample",
-                                " ".join(first))
+                                " ".join(_samples[0]))
             cfg.SetStringValue("BCChargeLog", "last_sample",
-                                " ".join(last))
-        # Each sample row gets its own key — analyzer parses them by index.
+                                " ".join(_samples[-1]))
         for i in range(len(_samples)):
-            row = _samples[i]
-            cfg.SetStringValue("BCChargeLog", "s%d" % i, " ".join(row))
-        # Column legend for the analyzer.
-        cfg.SetStringValue("BCChargeLog", "columns",
-                            "wall game_t frame charge firing can_fire power_level alert is_on")
+            cfg.SetStringValue("BCChargeLog", "s%d" % i, " ".join(_samples[i]))
+        cfg.SetStringValue("BCChargeLog", "columns", _column_legend())
         try:
             cfg.SaveConfigFile("BCChargeLog.cfg")
         except:
@@ -197,7 +226,6 @@ try:
         row = _sample(result)
         _samples.append(row)
         if len(_samples) > _MAX_SAMPLES:
-            # Drop the oldest — keep trailing window.
             del _samples[0]
         _save_every = _save_every + 1
         if _save_every >= _SAVE_EVERY_N_SAMPLES:
@@ -222,9 +250,14 @@ except Exception, _instr_err:
 Sample row format (space-separated, one per `s<index>` key):
 
 ```
-wall game_t frame charge firing can_fire power_level alert is_on
-1731.4321 12.3456 740 4.527319 1 1 1 2 1
+wall game_t frame power_level alert is_on charge0 firing0 can_fire0 charge1 firing1 can_fire1 … charge7 firing7 can_fire7
+1731.4321 12.3456 740 1 2 1 4.527319 1 1 4.527319 1 1 … 4.527319 1 1
 ```
+
+Bank columns appear in `phasers.GetWeapon(i)` order. For Galaxy, that's
+DorsalPhaser1, DorsalPhaser2, DorsalPhaser3, DorsalPhaser4, VentralPhaser1,
+VentralPhaser2, VentralPhaser3, VentralPhaser4 — confirm against the cfg's
+`s0` first-sample row if uncertain.
 
 ## How to run
 
@@ -297,21 +330,34 @@ run stbc.exe.
     ```python
     # Parse [BCChargeLog] section out of game/BCChargeLog.cfg.
     # Read the column legend, then each s0, s1, s2... row.
-    # Build a time series: (game_t, charge, firing, can_fire).
+    # Build per-bank time series: (game_t, charge[i], firing[i], can_fire[i])
+    # for i in 0..7.
     #
-    # Q-C1: Find the firing windows (firing transitions 0→1 then 1→0).
-    #       Within each, fit charge(t) = charge_0 - rate * (t - t_0).
+    # Single-bank questions (use bank 0):
+    # Q-C1: Find the firing windows (firing0 transitions 0→1 then 1→0).
+    #       Within each, fit charge0(t) = c0 - rate * (t - t0).
     #       The slope IS the per-second discharge rate.
-    # Q-C2: Find idle windows where charge < MaxCharge and not firing.
-    #       Slope of charge(t) IS the per-second recharge rate.
-    # Q-C3: At the moment can_fire flips 0→1 during recharge, what's
-    #       the charge_level? Compare with SDK MinFiringCharge=3.0.
-    # Q-C4: At the moment firing flips 1→0 mid-burst, what's the
-    #       charge_level? Compare with SDK MinFiringCharge=3.0 and 0.0.
-    # Q-C5: After auto-stop, when the player clicks again (firing
-    #       transitions 0→1), what was the charge_level at click-time?
+    # Q-C2: Find idle windows where charge0 < MaxCharge and firing0=0.
+    #       Slope of charge0(t) IS the per-second recharge rate.
+    # Q-C3: At the moment can_fire0 flips 0→1 during recharge, what's
+    #       the charge0? Compare with SDK MinFiringCharge=3.0.
+    # Q-C4: At the moment firing0 flips 1→0 mid-burst, what's the
+    #       charge0? Compare with SDK MinFiringCharge=3.0 and 0.0.
+    # Q-C5: After auto-stop, when the player clicks again (firing0
+    #       transitions 0→1), what was charge0 at click-time?
     # Q-C6: Did power_level or alert change during the run? Compare
     #       discharge slopes across windows where they differ.
+    #
+    # Multi-bank questions (compare firing[0..7] across the same tick):
+    # Q-C7: At the trigger-pull tick (first row where ANY firing flag
+    #       is 1 after a long idle), how many banks have firing=1?
+    #       Inspect the next 5 rows to count when the rest come on.
+    #       If all banks flip 0→1 on the same row → simultaneous.
+    #       Otherwise the row index of each bank's transition relative
+    #       to the first reveals the stagger (in tick units).
+    # Q-C8: After bank 0 auto-stops mid-burst and re-fires later, is
+    #       its re-fire timestamp correlated with another bank? Compute
+    #       per-bank re-fire times; if independent → no shared gating.
     ```
 
 13. **Update this doc.** Move Status to **DONE**, fill in Findings,
@@ -373,6 +419,11 @@ crashed mid-experiment:
 - **Q-C4** — Auto-stop threshold while firing: _TBD_
 - **Q-C5** — Restart-after-depletion threshold: _TBD_
 - **Q-C6** — Rate dependence on power_level / alert: _TBD_
+- **Q-C7** — Simultaneous vs. staggered initial fire (tick offsets per bank): _TBD_
+- **Q-C8** — Independence of re-fire timing after auto-stop: _TBD_
 
-Once filled in, retune `_EnergyWeaponFireMixin.UpdateCharge` to match
-BC's actual semantics and drop the assumed-per-second interpretation.
+Once filled in:
+- Retune `_EnergyWeaponFireMixin.UpdateCharge` to match BC's actual
+  semantics; drop the assumed-per-second interpretation.
+- If Q-C7 reveals BC staggers banks, add a per-bank fire delay queue
+  to `PhaserSystem.StartFiring` so our visuals match.
