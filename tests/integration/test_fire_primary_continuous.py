@@ -78,11 +78,10 @@ def _target_ahead_of(ship, distance=100.0):
     return _Target(TGPoint3(p.x, p.y + distance, p.z))
 
 
-def test_holding_left_button_drains_phaser_charge(galaxy_in_red_alert):
-    """Holding LBUTTON with a target locked at RED alert dispatches every
-    eligible PhaserBank simultaneously (PR 2c multi-bank dispatch).
-    After 10 ticks at dt=0.1 every forward-firing bank has drained while
-    aft-facing banks (none on Galaxy) remain full."""
+def test_holding_left_button_drains_one_phaser_bank(galaxy_in_red_alert):
+    """Galaxy phasers are SingleFire(1): holding LBUTTON drains exactly
+    one bank at a time.  After 10 ticks at dt=0.1 the active bank has
+    lost ~1.0 charge; all other banks stay full."""
     ship = galaxy_in_red_alert
     phasers = ship.GetPhaserSystem()
     ship.SetTarget(_target_ahead_of(ship))
@@ -97,20 +96,15 @@ def test_holding_left_button_drains_phaser_charge(galaxy_in_red_alert):
 
     after = [phasers.GetWeapon(i).GetChargeLevel() for i in range(phasers.GetNumWeapons())]
     drained = [i for i, c in enumerate(after) if c < 5.0]
-    # Galaxy's forward arcs cover multiple banks (dorsal + ventral).
-    # All of them should have drained; assert at least 2.
-    assert len(drained) >= 2, f"Expected ≥2 draining banks, got: {drained} levels={after}"
-    # Each drained bank should sit between 3.5 and 5.0 — 10 ticks of
-    # discharge at 1.0/s × 0.1s/tick = 1.0 total, leaving 4.0; the
-    # MinFiringCharge auto-stop is 3.0 so we shouldn't have hit it.
-    for i in drained:
-        assert 3.5 < after[i] < 5.0, (
-            f"Bank {i} charge outside expected range: {after[i]}"
-        )
+    assert len(drained) == 1, f"SingleFire expected 1 draining bank, got: {drained} levels={after}"
+    # 10 ticks × 0.1s × 1.0 discharge/s = 1.0 charge → 5.0 - 1.0 = 4.0
+    assert 3.5 < after[drained[0]] < 5.0, (
+        f"Bank {drained[0]} charge outside expected range: {after[drained[0]]}"
+    )
 
 
 def test_release_left_button_stops_phaser(galaxy_in_red_alert):
-    """After key-up, every firing phaser bank stops discharging."""
+    """SingleFire: after key-up the one active bank stops discharging."""
     ship = galaxy_in_red_alert
     phasers = ship.GetPhaserSystem()
     ship.SetTarget(_target_ahead_of(ship))
@@ -120,25 +114,23 @@ def test_release_left_button_stops_phaser(galaxy_in_red_alert):
             _advance_weapons([ship], dt=0.1)
         mid = [phasers.GetWeapon(i).GetChargeLevel() for i in range(phasers.GetNumWeapons())]
         firing_idxs = [i for i in range(phasers.GetNumWeapons()) if mid[i] < 5.0]
-        assert len(firing_idxs) >= 2, (
-            f"Expected ≥2 banks draining after 5 held ticks, got: {firing_idxs}"
+        assert len(firing_idxs) == 1, (
+            f"SingleFire expected 1 bank draining after 5 held ticks, got: {firing_idxs}"
         )
-        for i in firing_idxs:
-            assert phasers.GetWeapon(i)._firing is True
+        active = firing_idxs[0]
+        assert phasers.GetWeapon(active)._firing is True
 
         App.g_kInputManager.OnKeyUp(App.WC_LBUTTON)
-        for i in firing_idxs:
-            assert phasers.GetWeapon(i)._firing is False, (
-                f"Bank {i} should stop on key-up"
-            )
+        assert phasers.GetWeapon(active)._firing is False, (
+            f"Bank {active} should stop on key-up"
+        )
 
         for _ in range(5):
             _advance_weapons([ship], dt=0.1)
         after = [phasers.GetWeapon(i).GetChargeLevel() for i in range(phasers.GetNumWeapons())]
 
-    # After key-up every previously firing bank recharges (RechargeRate=0.08)
-    # rather than continuing to drain.  Each must be >= its mid-point level.
-    for i in firing_idxs:
-        assert after[i] >= mid[i], (
-            f"Bank {i} kept draining after key-up: mid={mid[i]:.3f} after={after[i]:.3f}"
-        )
+    # After key-up the previously firing bank recharges (RechargeRate=0.08)
+    # rather than continuing to drain.
+    assert after[active] >= mid[active], (
+        f"Bank {active} kept draining after key-up: mid={mid[active]:.3f} after={after[active]:.3f}"
+    )

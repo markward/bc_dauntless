@@ -133,6 +133,14 @@ def _init_energy_weapon_state(self):
     self._charge_level: float = 0.0
     # Looped SFX handle started by Fire(), stopped by StopFiring().
     self._loop_handle = None
+    # Refire hysteresis.  Cleared the moment the bank auto-stops because
+    # of depletion; restored once charge climbs past
+    # _min_firing_charge + REFIRE_HEADROOM_FRACTION × _max_charge.
+    # Without this the bank "blinks" — drops below min for one tick,
+    # back above min the next, fires for one frame, repeats.
+    # SDK has no setter for this threshold (confirmed against
+    # EnergyWeaponProperty); 20% of MaxCharge is a feel-tuned nominal.
+    self._armed: bool = True
 
 
 def _resolve_fire_sound(prop) -> str:
@@ -153,11 +161,20 @@ class _EnergyWeaponFireMixin:
     sdk/Build/scripts/LoadTacticalSounds.py invoked at audio init.
     """
 
+    # Refire hysteresis headroom (fraction of MaxCharge).  Once a bank
+    # auto-stops via depletion, it must recharge MinFiringCharge + this
+    # fraction × MaxCharge before CanFire returns true again.
+    REFIRE_HEADROOM_FRACTION = 0.20
+
     def CanFire(self) -> int:
         parent = self.GetParentSubsystem()
         on = parent is not None and parent.IsOn()
+        if not on:
+            return 0
+        if not self._armed:
+            return 0
         charged = self._charge_level >= self._min_firing_charge
-        return 1 if (on and charged) else 0
+        return 1 if charged else 0
 
     def Fire(self, target=None, offset=None) -> None:
         if not self.CanFire():
@@ -183,6 +200,9 @@ class _EnergyWeaponFireMixin:
                 0.0, self._charge_level - self._normal_discharge_rate * dt
             )
             if self._charge_level < self._min_firing_charge:
+                # Depletion auto-stop.  Clear _armed — bank stays cold
+                # until it recharges past the hysteresis threshold below.
+                self._armed = False
                 # Route via StopFiring so the looped SFX handle is silenced.
                 self.StopFiring()
         else:
@@ -192,6 +212,12 @@ class _EnergyWeaponFireMixin:
                     self._max_charge,
                     self._charge_level + self._recharge_rate * dt,
                 )
+            # Re-arm once we cleared the headroom threshold.
+            if not self._armed:
+                refire_threshold = (self._min_firing_charge
+                                    + self.REFIRE_HEADROOM_FRACTION * self._max_charge)
+                if self._charge_level >= refire_threshold:
+                    self._armed = True
 
     def _play_fire_sfx(self) -> None:
         name = _resolve_fire_sound(self.GetProperty())
@@ -719,9 +745,12 @@ class PhaserSystem(WeaponSystem):
     def SetAimedWeapon(self, v) -> None:            self._aimed_weapon = int(v)
 
     def StartFiring(self, target=None, offset=None) -> None:
-        """Multi-bank dispatch — fire every PhaserBank whose alert + arc +
-        charge gates all pass.  Differs from torpedo round-robin: phasers
-        engage simultaneously.
+        """Dispatch — fires the next eligible PhaserBank.
+
+        Galaxy and most stock BC ships set SetSingleFire(1) on their
+        phaser system, meaning only one bank is firing at any given
+        moment; depletion cycles to the next ready bank.  When
+        SetSingleFire(0) every eligible bank fires simultaneously.
 
         Sets _fire_held so retry_held_fire() can re-fire banks as they
         recharge while the trigger stays down.
@@ -734,15 +763,7 @@ class PhaserSystem(WeaponSystem):
         ship = self.GetParentShip()
         aim_world = _resolve_aim_world(ship, target)
         self._currently_firing = []
-        for i in range(self.GetNumWeapons()):
-            bank = self.GetWeapon(i)
-            if bank is None:
-                continue
-            if not _emitter_in_arc(bank, ship, aim_world):
-                continue
-            if hasattr(bank, "CanFire") and bank.CanFire():
-                bank.Fire(target, offset)
-                self._currently_firing.append(i)
+        self._dispatch_one_or_all(target, offset, ship, aim_world)
 
     def StopFiring(self, *args) -> None:
         self._fire_held = False
@@ -751,10 +772,10 @@ class PhaserSystem(WeaponSystem):
         super().StopFiring(*args)
 
     def retry_held_fire(self) -> None:
-        """Re-attempt firing on banks that are eligible but not currently
-        firing.  Called each tick from _advance_combat while LBUTTON is
-        held; allows banks to re-engage the moment they re-charge past
-        MinFiringCharge.  No-op when the trigger isn't held."""
+        """Re-attempt firing while LBUTTON is held.  In SingleFire mode
+        only re-fires when no bank is currently firing — preserving the
+        one-bank-at-a-time cadence.  In multi-fire mode tops up any
+        bank that climbed back past its CanFire threshold."""
         if not self._fire_held or self._held_target is None:
             return
         if not self.IsOn():
@@ -764,15 +785,48 @@ class PhaserSystem(WeaponSystem):
         if hasattr(target, "IsDead") and target.IsDead():
             self.StopFiring()
             return
+        if self._single_fire:
+            # If any bank is still firing, don't dispatch another — wait
+            # for the active bank to deplete before round-robin advances.
+            for i in range(self.GetNumWeapons()):
+                bank = self.GetWeapon(i)
+                if bank is not None and bank.IsFiring():
+                    return
         aim_world = _resolve_aim_world(ship, target)
-        for i in range(self.GetNumWeapons()):
+        self._dispatch_one_or_all(target, self._held_offset, ship, aim_world)
+
+    def _dispatch_one_or_all(self, target, offset, ship, aim_world) -> None:
+        """SingleFire: fire one eligible bank starting from the round-robin
+        cursor, then advance the cursor.  Otherwise fire every eligible
+        bank simultaneously."""
+        n = self.GetNumWeapons()
+        if n == 0:
+            return
+        if self._single_fire:
+            start = self._next_emitter_index % n
+            for delta in range(n):
+                idx = (start + delta) % n
+                bank = self.GetWeapon(idx)
+                if bank is None:
+                    continue
+                if not _emitter_in_arc(bank, ship, aim_world):
+                    continue
+                if hasattr(bank, "CanFire") and bank.CanFire():
+                    bank.Fire(target, offset)
+                    self._currently_firing.append(idx)
+                    self._next_emitter_index = (idx + 1) % n
+                    return
+            return
+        # Multi-bank — every eligible bank engages.
+        for i in range(n):
             bank = self.GetWeapon(i)
-            if bank is None or bank.IsFiring():
+            if bank is None:
                 continue
             if not _emitter_in_arc(bank, ship, aim_world):
                 continue
             if hasattr(bank, "CanFire") and bank.CanFire():
-                bank.Fire(target, self._held_offset)
+                bank.Fire(target, offset)
+                self._currently_firing.append(i)
 
 
 class PulseWeaponSystem(WeaponSystem):

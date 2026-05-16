@@ -60,7 +60,8 @@ def test_target_drifts_out_of_arc_bank_auto_stops(galaxy_red):
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
         sys_.StartFiring(target)
     firing_before = sum(sys_.GetWeapon(i).IsFiring() for i in range(sys_.GetNumWeapons()))
-    assert firing_before >= 2
+    # Galaxy SingleFire(1) → exactly one bank fires.
+    assert firing_before == 1
 
     # Move target directly astern of the player.
     target.SetWorldLocation(TGPoint3(p.x, p.y - 50.0, p.z))

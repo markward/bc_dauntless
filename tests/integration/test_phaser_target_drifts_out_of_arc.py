@@ -42,7 +42,8 @@ def test_drift_astern_auto_stops_all_forward_banks(galaxy_red):
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
         sys_.StartFiring(target)
     firing_before = sum(sys_.GetWeapon(i).IsFiring() for i in range(sys_.GetNumWeapons()))
-    assert firing_before >= 2, f"Expected ≥2 banks firing ahead, got {firing_before}"
+    # Galaxy SingleFire(1) → exactly one bank fires.
+    assert firing_before == 1, f"Expected 1 bank firing ahead (SingleFire), got {firing_before}"
 
     # Yank target astern.
     target.SetWorldLocation(TGPoint3(0, -50.0, 0))
@@ -51,6 +52,6 @@ def test_drift_astern_auto_stops_all_forward_banks(galaxy_red):
         _advance_combat([ship, target], dt=0.1, host=None, ship_instances=None)
     firing_after = sum(sys_.GetWeapon(i).IsFiring() for i in range(sys_.GetNumWeapons()))
     assert firing_after == 0, (
-        f"All forward banks should auto-stop on aft drift; "
+        f"Bank should auto-stop on aft drift; "
         f"before={firing_before}, after={firing_after}"
     )
