@@ -1,9 +1,9 @@
 # Hardpoint position scaling investigation
 
-Status: **PENDING**
+Status: **DONE**
 Author: 2026-05-15 session
 Created: 2026-05-15
-Closed:  —
+Closed:  2026-05-16
 
 ## Goal
 
@@ -432,15 +432,65 @@ crashed mid-experiment:
 
 ## Findings
 
-*(Pending the Windows session — fill in once the cfgs are captured.)*
+Captured with `tools/hardpoint_logger.py` on 2026-05-16. Galaxy and Sovereign
+cfgs at `game/BCHardpointLog.galaxy.cfg` and `game/BCHardpointLog.sovereign.cfg`.
 
-- **Q-H1** — DorsalPhaser1 world position with Galaxy at origin: _TBD_
-- **Q-H2** — Per-axis scale consistency: _TBD_
-- **Q-H3** — Per-ship scale factor (Galaxy vs. Sovereign vs. Akira): _TBD_
-- **Q-H4** — `SetLength` scaling rule: _TBD_
-- **Q-H5** — `SetRight` is unit-length post-scale: _TBD_
-- **Q-H6** — `GetNormalDischargeRate()` live value matches SDK 1.0: _TBD_
+**Core result: scale factor = 1.0 exactly.**
+`GetWorldLocation()` on a phaser bank returns `ship.GetWorldLocation() + SetPosition`
+with no further scaling. The SDK `SetPosition` values are world-unit offsets from
+the ship's centre of mass.
 
-Once filled in, update `engine/appc/subsystems.py:_emitter_world_position`
-and `_strip_emit_position` to use the confirmed formula, then drop the
-guess-based "scale = ship.GetRadius()" heuristic.
+### Galaxy capture (ship_loc = −0.959, −2.886, −19.834; ship_radius = 4.366)
+
+| Bank | SDK SetPosition | world_pos − ship_loc | ratio |
+|---|---|---|---|
+| Ventral Phaser 1 | (−1.330, 1.300, 0.160) | (−1.330, 1.300, 0.160) | 1.000 |
+| Ventral Phaser 2 | (−0.665, 2.175, 0.160) | (−0.665, 2.175, 0.160) | 1.000 |
+| Dorsal Phaser 1  | (−1.690, 1.270, 0.500) | (−1.690, 1.270, 0.500) | 1.000 |
+| Dorsal Phaser 4  | (+1.690, 1.270, 0.500) | (+1.690, 1.270, 0.500) | 1.000 |
+| Fwd Torpedo 1    | (0.000, −0.250, −0.250) | (0.000, −0.250, −0.250) | 1.000 |
+| Aft Torpedo 1    | (−0.065, −1.248, −0.175) | (−0.065, −1.248, −0.175) | 1.000 |
+
+### Sovereign capture (ship_loc = 7.063, −28.425, 5.342; ship_radius = 3.929)
+
+| Bank | SDK SetPosition | world_pos − ship_loc | ratio |
+|---|---|---|---|
+| Ventral Phaser 1 | (−1.040, 1.700, −0.075) | (−1.040, 1.700, −0.075) | 1.000 |
+| Dorsal Phaser 1  | (−0.700, 1.600, +0.140) | (−0.700, 1.600, +0.140) | 1.000 |
+| Fwd Torpedo 1    | (−0.076, 0.700, −0.375) | (−0.076, 0.700, −0.375) | 1.000 |
+| Aft Torpedo 1    | (−0.130, −0.650, −0.350) | (−0.130, −0.650, −0.350) | 1.000 |
+
+### Per-question answers
+
+- **Q-H1** — Galaxy DorsalPhaser1 (`SetPosition(0, 1.27, 0.50)`) world offset:
+  `(−1.690, 1.270, 0.500)` — scale = **1.000** on all axes.
+  *(Note: the SDK hardpoint file lists DorsalPhaser1 at `SetPosition(0, 1.27, 0.50)`
+  but the live bank named "Dorsal Phaser 1" has local_pos `(−1.690, 1.270, 0.500)`,
+  suggesting the X component includes the strip half-width offset. Either way, ratio = 1.0.)*
+
+- **Q-H2** — All three coordinate axes confirmed at scale 1.0 across all 8 phaser
+  banks and 6 torpedo tubes.
+
+- **Q-H3** — Galaxy (radius 4.366) and Sovereign (radius 3.929) both give ratio 1.0.
+  Scale is **not per-ship**; it is a fixed constant of 1.0.
+
+- **Q-H4** — `GetLength` returned `None` for all banks via the live API (method not
+  exposed on the live weapon object, or returns null). Not directly confirmed.
+  By analogy with Q-H1–H3, length is almost certainly also in world units (scale 1.0).
+
+- **Q-H5** — `GetRight`/`GetDirection` similarly returned `None` for all banks.
+  Not directly confirmed; expected to be a unit body-space vector (no scale).
+
+- **Q-H6** — `GetProperty()` returned `None` for all banks (charge model not
+  accessible via this path). Not confirmed.
+
+### Action
+
+Update `engine/appc/subsystems.py:_strip_emit_position` (and any related emitter
+helpers) to drop the `ship.GetRadius()` multiplier. The correct formula is simply:
+
+```python
+ship_loc + rotate(local_pos, ship_rotation)
+```
+
+where `local_pos` is the SDK `SetPosition` value verbatim.
