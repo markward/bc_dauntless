@@ -75,6 +75,12 @@ MeshCpu build_mesh_cpu(
         for (std::size_t i = 0; i < primary.size(); ++i) {
             mesh.vertices[i].uv = {primary[i].u, primary[i].v};
         }
+        if (data.uv_sets.size() > 1) {
+            const auto& secondary = data.uv_sets[1];
+            for (std::size_t i = 0; i < secondary.size() && i < mesh.vertices.size(); ++i) {
+                mesh.vertices[i].uv1 = {secondary[i].u, secondary[i].v};
+            }
+        }
         for (std::size_t set = 1; set < data.uv_sets.size(); ++set) {
             std::vector<glm::vec2> extra;
             extra.reserve(data.uv_sets[set].size());

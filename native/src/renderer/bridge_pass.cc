@@ -95,6 +95,18 @@ void draw_mesh(const assets::Model& model,
     } else {
         glBindTexture(GL_TEXTURE_2D, white_fallback);
     }
+    // Dark-slot lightmap (BC bridge floor/door/inset lm.tga). When
+    // absent, the white fallback returns (1,1,1) so the multiply in
+    // the fragment shader has no visual effect.
+    const int dark_tex = mat.stages[
+        static_cast<std::size_t>(assets::Material::StageSlot::Dark)
+    ].texture_index;
+    glActiveTexture(GL_TEXTURE1);
+    if (dark_tex >= 0) {
+        glBindTexture(GL_TEXTURE_2D, model.textures[dark_tex].id());
+    } else {
+        glBindTexture(GL_TEXTURE_2D, white_fallback);
+    }
     glBindVertexArray(mesh.vao());
     glDrawElements(GL_TRIANGLES, mesh.index_count(), GL_UNSIGNED_INT, nullptr);
 }
@@ -113,6 +125,7 @@ void BridgePass::render(const scenegraph::World& world,
     base_shader.set_mat4("u_proj", camera.proj_matrix());
     base_shader.set_vec3("u_ambient", lighting.ambient);
     base_shader.set_int("u_base_color", 0);
+    base_shader.set_int("u_dark_map", 1);
     base_shader.set_float("u_alpha_test_threshold", 0.5f);
 
     glEnable(GL_DEPTH_TEST);

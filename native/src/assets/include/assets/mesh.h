@@ -18,6 +18,11 @@ struct MeshCpu {
         glm::u8vec4 color{255, 255, 255, 255};
         glm::u8vec4 bone_indices{0, 0, 0, 0};
         glm::u8vec4 bone_weights{0, 0, 0, 0};
+        /// Optional second UV channel. Populated for shapes whose
+        /// material binds a Dark-slot lightmap texture at uv_set=1 (BC
+        /// bridge floors, doors, wall insets). Zero for everything else;
+        /// shaders that don't sample uv1 ignore it.
+        glm::vec2   uv1{};
     };
 
     std::vector<Vertex> vertices;
