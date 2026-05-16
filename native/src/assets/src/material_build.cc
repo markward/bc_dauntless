@@ -129,14 +129,35 @@ void apply_multi_texture_property(
     const nif::NiMultiTextureProperty& src,
     const std::unordered_map<std::uint32_t, int>* image_to_texture)
 {
-    // Mapping per material_translation.md (subject to revision once we observe
-    // real BC NIFs that use NiMultiTextureProperty).
+    // Stage→slot mapping per material_translation.md, with a UV-set-aware
+    // override: BC's bridge authoring puts the floor lightmap in stage 0
+    // of NiMultiTextureProperty but with `uv_set=1` to sample the
+    // lightmap atlas instead of the underlying carpet tile coords. These
+    // shapes ALSO inherit a separate NiTextureProperty (the carpet
+    // diffuse) on UV set 0, which apply_texture_property writes into
+    // StageSlot::Base FIRST. If we naively routed multi-tex stage 0 to
+    // Base, the lightmap would clobber the carpet diffuse and the
+    // renderer would lose the actual surface texture.
+    //
+    // Workaround: when a stage 0 entry has uv_set != 0 AND Base is
+    // already populated, route it to StageSlot::Dark (the conventional
+    // NetImmerse lightmap slot). The diffuse stays in Base; the
+    // lightmap goes to Dark; both can be sampled at draw time.
     using S = Material::StageSlot;
     static constexpr S slot_map[5] = {S::Base, S::Dark, S::Detail, S::Glow, S::Gloss};
     for (std::size_t i = 0; i < 5; ++i) {
         const auto& el = src.elements[i];
         if (!el.has_image) continue;
-        auto& stage = m.stages[static_cast<std::size_t>(slot_map[i])];
+
+        S target = slot_map[i];
+        if (i == 0 && el.uv_set != 0) {
+            auto& base = m.stages[static_cast<std::size_t>(S::Base)];
+            if (base.texture_index >= 0) {
+                target = S::Dark;
+            }
+        }
+
+        auto& stage = m.stages[static_cast<std::size_t>(target)];
         int tex_idx = -1;
         if (image_to_texture) {
             if (auto it = image_to_texture->find(el.image_link); it != image_to_texture->end()) {

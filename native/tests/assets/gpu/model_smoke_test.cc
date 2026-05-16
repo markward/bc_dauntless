@@ -117,16 +117,28 @@ TEST_F(DBridgeIntegration, MaterialLightmapPassDistribution) {
     ASSERT_NE(model, nullptr);
 
     int lm = 0, base_only = 0;
+    int materials_with_dark = 0;
     for (const auto& m : model->materials) {
         if (m.lightmap_pass) ++lm;
         else                 ++base_only;
+        const int dark_idx = m.stages[
+            static_cast<std::size_t>(assets::Material::StageSlot::Dark)
+        ].texture_index;
+        if (dark_idx >= 0) ++materials_with_dark;
     }
     std::fprintf(stderr,
-                 "DBridge: %d lightmap_pass materials, %d base-only\n",
-                 lm, base_only);
+                 "DBridge: %d lightmap_pass materials, %d base-only, "
+                 "%d with Dark-slot lightmap\n",
+                 lm, base_only, materials_with_dark);
     EXPECT_EQ(model->materials.size(), 145u);
-    EXPECT_EQ(lm, 17);
-    EXPECT_EQ(base_only, 128);
+    // All 17 NiMultiTextureProperty shapes also inherit a diffuse via
+    // NiTextureProperty; the multi-texture's lm.tga is now routed to
+    // the Dark slot to preserve the diffuse in Base. lightmap_pass is
+    // therefore 0 for the current asset; the renderer's two-texture
+    // composite (base × dark) will handle lighting when implemented.
+    EXPECT_EQ(lm, 0);
+    EXPECT_EQ(base_only, 145);
+    EXPECT_EQ(materials_with_dark, 17);
 
     // Every mesh must be attached to some node, otherwise the renderer
     // (which iterates nodes to find meshes to draw) silently drops it.

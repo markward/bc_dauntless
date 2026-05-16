@@ -413,23 +413,6 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
 
         MeshCpu cpu = build_mesh_cpu(*shape, *data, mat_index, node_index);
 
-        // BC's lightmap shapes (Material::lightmap_pass=true) reference a
-        // SECOND UV channel for the lightmap atlas — for example a floor
-        // lightmap shape with `uv_set=1` is meant to sample lm.tga across
-        // its atlas coords, NOT the carpet tile coords stored in UV set 0.
-        // The renderer only consumes one UV per vertex; swap UV set 1
-        // into the primary slot so the lightmap shader samples the right
-        // coords without needing a second vertex attribute. Drops the
-        // unused UV0 from extra_uvs is fine — the lightmap mesh has no
-        // base-texture binding that would need UV0.
-        if (model.materials[mat_index].lightmap_pass && !cpu.extra_uvs.empty()) {
-            const auto& uv1 = cpu.extra_uvs[0];
-            const std::size_t n = std::min(cpu.vertices.size(), uv1.size());
-            for (std::size_t v = 0; v < n; ++v) {
-                cpu.vertices[v].uv = uv1[v];
-            }
-        }
-
         if (node_index >= 0) {
             int mesh_idx = static_cast<int>(model.meshes.size());
             model.nodes[node_index].meshes.push_back(mesh_idx);

@@ -125,52 +125,27 @@ void BridgePass::render(const scenegraph::World& world,
     // enclosed with ~145 small meshes, fillrate impact is negligible.
     glDisable(GL_CULL_FACE);
 
-    // Sub-pass A: base-textured shapes (Map N.tga). Opaque, depth-write
-    // on. These cover most of the bridge: walls, ceiling, chairs, the
-    // colored carpet tile shapes (Map 23, Map 25).
+    // Diffuse pass: render all 145 bridge shapes opaque with their Base
+    // texture. The Material::lightmap_pass tag is no longer consulted —
+    // it controlled a legacy multiply pass and an asset-pipeline UV swap
+    // for shapes whose Base texture is an lm.tga, both of which proved
+    // to be the wrong model. Per the user's clarification: BC's floor
+    // surfaces inherit BOTH a NiTextureProperty (carpet diffuse, UV0)
+    // AND a NiMultiTextureProperty (lightmap, UV1). With the material-
+    // build fix that stops the multi-tex from overwriting Base, all
+    // shapes now have their correct diffuse in Base.
     const GLuint white = ensure_white_texture();
     walk_bridge_meshes(world, lookup, /*want_lightmap_pass=*/false,
         [&](const assets::Model& m, const assets::Mesh& mesh,
             const assets::Material& mat, const glm::mat4& w) {
             draw_mesh(m, mesh, mat, base_shader, w, white);
         });
-
-    // Sub-pass B: lightmap shapes (*_lm.tga). Coplanar with base shapes
-    // — same world geometry, different UVs (UV set 1, swapped into the
-    // primary UV slot at mesh-build time). Multiply-blend so the
-    // lightmap's per-texel lighting modulates the underlying base
-    // color: framebuffer.rgb *= lightmap.rgb.
-    //
-    //   LEQUAL    — coplanar with the base mesh.
-    //   depth-write OFF — sub-pass B doesn't contribute depth.
-    //   blend DST_COLOR/ZERO — `framebuffer *= lightmap`.
-    //   polygon offset (-1, -1) — handle floating-point drift between
-    //                             coplanar copies.
-    auto& lm_shader = pipeline.lightmap_shader();
-    lm_shader.use();
-    lm_shader.set_mat4("u_view", camera.view_matrix());
-    lm_shader.set_mat4("u_proj", camera.proj_matrix());
-    lm_shader.set_int("u_lightmap", 0);
-
-    glDepthFunc(GL_LEQUAL);
-    glDepthMask(GL_FALSE);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_DST_COLOR, GL_ZERO);
-    glEnable(GL_POLYGON_OFFSET_FILL);
-    glPolygonOffset(-1.0f, -1.0f);
-
     walk_bridge_meshes(world, lookup, /*want_lightmap_pass=*/true,
         [&](const assets::Model& m, const assets::Mesh& mesh,
             const assets::Material& mat, const glm::mat4& w) {
-            draw_mesh(m, mesh, mat, lm_shader, w, white);
+            draw_mesh(m, mesh, mat, base_shader, w, white);
         });
 
-    // Restore GL state for downstream passes.
-    glDisable(GL_POLYGON_OFFSET_FILL);
-    glPolygonOffset(0.0f, 0.0f);
-    glDisable(GL_BLEND);
-    glDepthMask(GL_TRUE);
-    glDepthFunc(GL_LESS);
     glEnable(GL_CULL_FACE);
 
     glBindVertexArray(0);
