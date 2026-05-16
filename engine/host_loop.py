@@ -1000,7 +1000,7 @@ class _BridgeCamera:
     NEAR              = 1.0
     FAR               = 800.0
     FOV_Y_RAD         = _math.radians(60.0)
-    MOUSE_SENSITIVITY = 0.005           # rad per pixel
+    MOUSE_SENSITIVITY = 0.0015          # rad per pixel
     PITCH_LIMIT_RAD   = _math.radians(85)
 
     # Initial yaw flips the default +Y forward to -Y, which visually

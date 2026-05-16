@@ -220,6 +220,14 @@ void Window::set_cursor_locked(bool locked) noexcept {
     // Drop the seed so the next cursor-pos event re-anchors and we don't
     // see a giant warp delta on lock-state change.
     cursor_seeded_ = false;
+    // Flush any pre-existing accumulator content. While the cursor is
+    // unlocked nothing consumes the deltas, so they accumulate across
+    // every cursor movement in the space scene. Without this flush, the
+    // first tick after entering bridge mode would apply the entire
+    // pre-bridge cursor history as one giant delta and slam the camera
+    // pitch into its clamp.
+    mouse_dx_accum_ = 0.0;
+    mouse_dy_accum_ = 0.0;
 }
 
 }  // namespace renderer
