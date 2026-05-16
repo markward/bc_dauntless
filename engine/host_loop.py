@@ -2074,6 +2074,16 @@ def run(mission_name: str = SHIP_GATE_MISSION,
             r.set_lighting(ambient, directionals)
 
             bridge_ambient, bridge_directionals = _aggregate_bridge_lights()
+            # Red-alert dim: bridge ambient scales to 50% when the
+            # player ship is at red alert. Matches BC's red-alert
+            # bridge lighting (dimmer overall while the red emergency
+            # strip lights pulse — that pulse is deferred work).
+            if player is not None:
+                try:
+                    if player.GetAlertLevel() == 2:  # ShipClass.RED_ALERT
+                        bridge_ambient = tuple(c * 0.5 for c in bridge_ambient)
+                except Exception:
+                    pass
             r.set_bridge_lighting(bridge_ambient, bridge_directionals)
 
             backdrops = _aggregate_backdrops(active_set)
