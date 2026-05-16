@@ -261,6 +261,51 @@ the list.
     state different from the rest of the pipeline" question has an
     answer.
 
+37. **Red Alpha Glow / red-alert strip lights.** BC modding lore
+    references a "Red Alpha Glow" convention for the pulsing red
+    emergency-strip-lights effect during red alert
+    (https://www.bc-central.net/forums/index.php?action=printpage;topic=8210.0,
+    listed under future tutorial topics). The naming hints at a
+    red-channel-+-alpha texture overlay rather than per-material
+    emissive pulsing. Mechanism not fully documented in the excerpt
+    we have; would need a NIF-data survey + visual reference from
+    the original game to confirm. Part of deferred item 27.
+
+38. **Bridge door animations.** DBridge.NIF contains 12
+    NiKeyframeController + 12 NiKeyframeData blocks — almost
+    certainly the door open/close animations (5 doors × 2 leaves =
+    10, plus a couple more). Our asset pipeline already builds
+    AnimationClips into `Model::animations` but the renderer ignores
+    them. Wiring this is animation-playback general work (deferred
+    item 4 from the renderer-host spec) — once that lands, bridge
+    doors and ship engine flares (which use the same controller
+    type) come along for free. Also a prerequisite for crew
+    animations (item 29) since the crew walks need synchronised door
+    state.
+
+## Conventions worth recording
+
+(Sourced from `BRIDGE MODDING 101` tutorial — useful invariants for
+future asset-pipeline / renderer work.)
+
+- **Bridges are authored around world origin (0, 0, 0).** Our
+  bridge-local frame in `_BridgeCamera` matches this.
+- **Lightmap UV is 3ds Max "Channel 2"**, which is UV set 1 (0-indexed)
+  in NIF / GL. `Vertex.uv1` consumes this.
+- **Lightmap textures use the `_lm` or ` lm` suffix** and ride in
+  the 3ds Max Self-Illumination map slot during authoring; the BC
+  exporter funnels these into NiMultiTextureProperty stage 0 with
+  uv_set=1. Our `apply_multi_texture_property` routes that to
+  `Material::stages[Dark]`.
+- **Texture dimensions must be powers of 2.** Common sizes: 256×256,
+  512×512, 1024×1024. Lightmaps for large surfaces (floors, walls,
+  ceilings) typically 1024+. Smaller textures (8×8 minimum) keep
+  load times down for plain-color regions.
+- **Lightmap rendering convention in Max**: usually a single omni
+  light at default level (1.0) with Adv Ray Traced shadows. Bake
+  produces the `_lm.tga` files. This matches the visual we see —
+  baked shadows from a single overhead source.
+
 ## v1 deviations from the original plan
 
 These are things the implementation found that the plan didn't anticipate;
