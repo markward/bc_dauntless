@@ -432,13 +432,13 @@ class ShipSubsystem(TGEventHandlerObject):
         return None
 
     def _emitter_world_position(self) -> TGPoint3:
-        """Ship world location + emitter local position scaled and rotated
-        into world frame.
+        """Ship world location + emitter local position rotated into world frame.
 
-        SDK SetPosition values are normalized to the ship's extent (roughly
-        [-1, +1]).  We scale them by ship.GetRadius() to recover a
-        meaningful world-space offset, then rotate by the ship's world
-        rotation.
+        SDK SetPosition values are already in world units relative to the
+        ship's centre of mass — confirmed via the 2026-05-16 hardpoint-
+        scale instrumentation (see
+        docs/instrumented_experiments/2026-05-15-hardpoint-scale-investigation.md).
+        BC applies no scale factor; `world = ship_loc + rotate(local_pos)`.
         """
         ship = self._climb_to_ship()
         if ship is None:
@@ -447,8 +447,7 @@ class ShipSubsystem(TGEventHandlerObject):
         local = self.GetPosition() if hasattr(self, "GetPosition") else None
         if not isinstance(local, TGPoint3):
             return TGPoint3(ship_pos.x, ship_pos.y, ship_pos.z)
-        scale = float(ship.GetRadius()) if hasattr(ship, "GetRadius") else 1.0
-        offset = TGPoint3(local.x * scale, local.y * scale, local.z * scale)
+        offset = TGPoint3(local.x, local.y, local.z)
         if hasattr(ship, "GetWorldRotation"):
             rot = ship.GetWorldRotation()
             if isinstance(rot, TGMatrix3):
@@ -464,6 +463,9 @@ class ShipSubsystem(TGEventHandlerObject):
         whose center is SetPosition, lateral axis is SetRight, and total
         length is SetLength.  The beam emerges from whichever point on
         the strip is closest to the target.
+
+        SetLength is in world units, same convention as SetPosition (see
+        the 2026-05-16 hardpoint-scale instrumentation findings).
 
         For point emitters (Length == 0) this collapses to
         _emitter_world_position().
@@ -482,9 +484,7 @@ class ShipSubsystem(TGEventHandlerObject):
             rot = ship.GetWorldRotation()
             if isinstance(rot, TGMatrix3):
                 world_right.MultMatrixLeft(rot)
-        # Strip total length in world units — same scaling SetPosition gets.
-        scale = float(ship.GetRadius()) if hasattr(ship, "GetRadius") else 1.0
-        half_length = 0.5 * length * scale
+        half_length = 0.5 * length
         # Project target onto the strip line, clamp to ±half_length.
         dx = target_world.x - center.x
         dy = target_world.y - center.y
