@@ -595,6 +595,13 @@ PYBIND11_MODULE(_open_stbc_host, m) {
                   b.color         = {std::get<0>(c), std::get<1>(c), std::get<2>(c), std::get<3>(c)};
                   b.width         = d["width"].cast<float>();
                   b.u_tiles       = d.contains("u_tiles") ? d["u_tiles"].cast<float>() : 1.0f;
+                  b.num_sides        = d.contains("num_sides")        ? d["num_sides"].cast<int>()          : 6;
+                  b.taper_radius     = d.contains("taper_radius")     ? d["taper_radius"].cast<float>()     : 0.01f;
+                  b.taper_ratio      = d.contains("taper_ratio")      ? d["taper_ratio"].cast<float>()      : 0.25f;
+                  b.taper_min_length = d.contains("taper_min_length") ? d["taper_min_length"].cast<float>() : 5.0f;
+                  b.taper_max_length = d.contains("taper_max_length") ? d["taper_max_length"].cast<float>() : 30.0f;
+                  b.perimeter_tile   = d.contains("perimeter_tile")   ? d["perimeter_tile"].cast<float>()   : 1.0f;
+                  b.texture_speed    = d.contains("texture_speed")    ? d["texture_speed"].cast<float>()    : 0.0f;
                   g_phaser_beams.push_back(std::move(b));
               }
           },

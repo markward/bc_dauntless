@@ -515,6 +515,11 @@
   }
   .latest .narrative p { font-size: 14px; }
 
+  .latest .shots {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
   .latest .shot {
     border: 1px solid var(--hairline-2);
     border-radius: var(--radius);
@@ -809,7 +814,7 @@
 <header class="topbar">
   <span class="brand">DAUNTLESS</span>
   <span class="sep">/</span>
-  <span class="hide-sm">Star Trek: Bridge Commander — open rebuild</span>
+  <span class="hide-sm">Modernised remake for Star Trek: Bridge Commander</span>
   <span class="spacer"></span>
   <span class="phase-tag">Phase 03 · Active</span>
   <span class="sep hide-sm">·</span>
@@ -904,29 +909,33 @@
       </div>
       <h2>What we're building</h2>
       <p style="margin-top:12px;">
-        The original game ships as a Windows binary containing with every screen,
-        every mission, every ship and weapon definition written in Python. Roughly 1,200 Python files
-        were ambitiously released by the original development team as an SDK, fully readable, fully unchanged since 2002. 
-        What's missing is anything to actually drive them.
+        We're building a modernised version of the <em>Bridge Commander</em> game engine, with Claude Code
+        as our pair-programmer. The aim is simple: take a beloved 2002 game that only ever ran on Windows,
+        and bring it back to life on the machines people actually use today — without losing what made it special.
       </p>
-      <p>The plan is to replace <code>Appc.dll</code> with an open C++ engine that:</p>
+      <p>
+        The original team left behind a remarkable gift. Every mission, every ship, every line of dialogue
+        lives in plain, readable scripts they released as an SDK. The game logic still works. What's missing
+        is the engine underneath — the part that draws the ships, plays the sounds, and ties it all together.
+        That's what we're rebuilding.
+      </p>
 
       <div class="cards">
         <div class="card">
-          <h4>Runs the original scripts</h4>
-          <p>Embeds CPython 3 and drives BC's existing Python game loop. No forking the SDK, no rewriting missions — the goal is bit-for-bit script compatibility.</p>
+          <h4>Faithful to the original</h4>
+          <p>The original missions, ships, and scripts run as-is. We're rebuilding the engine, not the game — every mission you remember should play the way you remember it.</p>
         </div>
         <div class="card peach">
-          <h4>Renders natively</h4>
-          <p>An in-house C++ renderer parses BC's NIF asset blocks directly, with passes for opaque hull, shields, glow, and space-dust particles.</p>
+          <h4>Modern visuals</h4>
+          <p>A brand-new graphics engine, built from scratch, drawing the same ships and effects but with the headroom to look great on today's displays.</p>
         </div>
         <div class="card violet">
-          <h4>Crosses platforms</h4>
-          <p>macOS first, Linux next, Windows at 1.0. Single codebase, no Wine, no DirectX. The first time BC will be playable natively outside Windows.</p>
+          <h4>Runs everywhere</h4>
+          <p>macOS first, Linux next, Windows for the 1.0 release. No emulators, no compatibility layers — for the first time, <em>Bridge Commander</em> will run natively beyond Windows.</p>
         </div>
         <div class="card blue">
-          <h4>Stays open</h4>
-          <p>Open-source engine, every commit public. The community that kept BC alive for two decades is the natural audience — mod support is on the roadmap.</p>
+          <h4>Open and community-friendly</h4>
+          <p>Every commit is public. The fans who kept <em>Bridge Commander</em> alive for two decades are the natural home for this — and mod support is firmly on the roadmap.</p>
         </div>
       </div>
     </section>
@@ -942,47 +951,50 @@
 
       <div class="latest">
         <div class="narrative">
-          <div class="stamp">Stardate 2026-05-11 · Engineering Log</div>
+          <div class="stamp">Stardate 2026-05-18 · Where we are</div>
           <p>
-            <strong>Yesterday was a big one.</strong> The target-list panel in the screenshot is brand new
-            — driven by a <code>TargetListController</code> that subscribes to a fresh ship-lifecycle
-            pub/sub (<em>ship-added</em> on <code>SetClass.AddObjectToSet</code>, <em>ship-destroyed</em>
-            on <code>SetDead</code>). It replaces a hard-coded demo panel, populates subsystem buttons
-            from the actual scene, and resets cleanly when the host swaps missions.
+            <strong>The core blocks of the game are coming together.</strong> The original SDK loads.
+            Star systems and the things inside them — ships, planets, stations — populate a working
+            scene. Ships load with their subsystems intact. You can fly the player ship around, and
+            there's early support for weapons fire and shield impacts. First steps toward the bridge
+            interior are in too.
           </p>
           <p>
-            Underneath it sits a new <strong>reusable UI component library</strong> — <code>UiPanel</code>,
-            <code>UiButton</code>, <code>UiCollapsibleList</code>, <code>UiStatRow</code> — with a theme
-            registry pulling defaults from the original <code>LoadInterface.py</code>. RmlUi backs the rendering,
-            pybind11 exposes the C++ panel/element primitives to Python, and a <code>FakeDom</code> shim
-            lets the whole thing unit-test without a window. <code>F9</code> toggles the live UI debugger.
+            One of the surprises has been just how much the original SDK gives us. Every script is
+            a hint about how the 2002 team handled a problem — a quiet expert sitting in the repo.
+            Claude is good at reading those hints once you point it at them, though it sometimes
+            needs a nudge to go and look first rather than guessing.
           </p>
           <p>
-            Two other features landed the same day. The <strong>mission picker</strong> is a modal
-            (cancel + <code>ESC</code>) wired into a <code>MissionSession</code> + <code>HostController.swap_mission</code>
-            path, with an SDK script discovery walker and a binary <code>TGL</code> reader feeding the
-            <code>MissionRegistry</code>. And a <strong>bridge-view PoC</strong>: pressing space toggles
-            a <code>_BridgeCamera</code> with mouse-look anchored to the ship frame, an eager-loaded
-            <code>DBridge.NIF</code>, cursor lock + mouse-delta bindings on the host, and a dedicated
-            bridge render pass with scenegraph tagging so space and bridge geometry don't bleed into each other.
-            <code>ESC</code> exits bridge mode.
+            <strong>Two things keep biting us.</strong> The first is testing against the original
+            Windows game. We can run it, but the only way to get data <em>out</em> is by abusing the
+            config-file system the game uses for its options menu — a narrow, fragile channel that
+            often crashes the game before we get our answer.
           </p>
           <p>
-            Supporting wins, same day: a <strong>Blinn-Phong specular pass</strong> driven by <code>_spec</code> /
-            <code>_specular</code> mask textures (auto-bound via an <code>AddLOD</code> sibling-spec shim),
-            the <strong>space-dust pass</strong> tuned down to half particle count with capped streak length,
-            and spring-lag on the ship-follow camera so rotation no longer snaps.
+            The second is units and scale. The original engine assumed everything had been exported
+            to a consistent size, and quietly fixed up anything that wasn't. So when we load the
+            same assets fresh, planets come out smaller than ships, and weapon hardpoints sit slightly
+            off the hulls they're meant to bolt onto. Each one is a small puzzle in what convention
+            the original code was silently relying on.
           </p>
           <p>
-            Phase 03 (UI Framework) is properly in motion. Next: aligning more of BC's original interface
-            screens — Quick Battle setup, options — to the new component library.
+            Next up: We'll be starting work to restore <em>Bridge Commander</em>'s NPC ship AI
+            systems, enabling non player ships to move and even attack.
           </p>
         </div>
 
-        <div class="shot">
-          <img src="img/latest.png" alt="Sovereign-class ship rendered in the Dauntless engine, with the new in-game target-list UI showing Galaxy-class subsystems and two Galaxy-class ships in the background"
-               onerror="this.style.display='none';this.parentElement.classList.add('placeholder');this.parentElement.innerHTML='<div>img/latest.png</div><div style=&quot;font-size:9px;&quot;>Drop screenshot here</div>';">
-          <div class="caption">Live target list · UI component library landed · 2026-05-11</div>
+        <div class="shots">
+          <div class="shot">
+            <img src="img/latest_1.png" alt="Star system loaded in the Dauntless engine with the player ship in flight and a new in-game target list showing nearby ships"
+                 onerror="this.style.display='none';this.parentElement.classList.add('placeholder');this.parentElement.innerHTML='<div>img/latest_1.png</div><div style=&quot;font-size:9px;&quot;>Drop screenshot here</div>';">
+            <div class="caption">Star system loading and player controls are now in place, with a new UI listing targets.</div>
+          </div>
+          <div class="shot">
+            <img src="img/latest_2.png" alt="Early bridge interior rendering inside the Dauntless engine — the player's bridge with crew stations beginning to take shape"
+                 onerror="this.style.display='none';this.parentElement.classList.add('placeholder');this.parentElement.innerHTML='<div>img/latest_2.png</div><div style=&quot;font-size:9px;&quot;>Drop screenshot here</div>';">
+            <div class="caption">Initial work to load and render bridges goes some way to restoring the original game's dynamic.</div>
+          </div>
         </div>
       </div>
     </section>
