@@ -95,15 +95,24 @@ struct HitVfxDescriptor {
     float     age = 0.0f;
 };
 
-/// Phaser-beam render descriptor.  One entry per actively firing
-/// PhaserBank: a line segment from emitter_world to target_world,
-/// drawn as an additive camera-aligned billboard quad.
+/// Phaser-beam render descriptor.  One entry per concentric beam layer
+/// emitted by an actively-firing PhaserBank: rendered as an additive
+/// N-sided prism extruded from emitter_world to target_world with
+/// endpoint taper.
 struct PhaserBeamDescriptor {
     glm::vec3 emitter_world;
     glm::vec3 target_world;
     glm::vec4 color;     // RGBA additive tint
-    float     width;     // world-units half-width of the beam quad
-    float     u_tiles;   // texture repeats along beam length (0 = stretch once)
+    float     width;     // mid-beam half-width (= SDK MainRadius)
+    float     u_tiles;   // texture repeats along beam length
+    // BC-faithful geometry (SDK names retained):
+    int       num_sides;        // SetNumSides — prism side count
+    float     taper_radius;     // SetTaperRadius — half-width at endpoints
+    float     taper_ratio;      // SetTaperRatio — fraction of length used for taper
+    float     taper_min_length; // SetTaperMinLength
+    float     taper_max_length; // SetTaperMaxLength
+    float     perimeter_tile;   // SetPerimeterTile — V-axis texture repeats around prism
+    float     texture_speed;    // SetTextureSpeed — U-axis scroll wu/sec
 };
 
 class FrameSubmitter {

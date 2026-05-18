@@ -325,6 +325,14 @@ class PhaserProperty(EnergyWeaponProperty):
         self._inner_core_color:  tuple = (1.0, 1.0, 1.0, 1.0)
         # Beam texture (relative path under game/).
         self._texture_name: str = ""
+        # Beam geometry — full BC-faithful set.
+        self._num_sides: int = 6              # prism side count
+        self._taper_radius: float = 0.01      # half-width at endpoints
+        self._taper_ratio: float = 0.25       # fraction of beam length used for taper
+        self._taper_min_length: float = 5.0   # taper length floor
+        self._taper_max_length: float = 30.0  # taper length ceiling
+        self._perimeter_tile: float = 1.0     # texture repeats around circumference
+        self._texture_speed: float = 0.0      # U-axis scroll (texels/sec)
 
     def GetPhaserWidth(self) -> float:      return self._phaser_width
     def SetPhaserWidth(self, v) -> None:    self._phaser_width = float(v)
@@ -332,6 +340,20 @@ class PhaserProperty(EnergyWeaponProperty):
     def SetMainRadius(self, v) -> None:     self._main_radius = float(v)
     def GetCoreScale(self) -> float:        return self._core_scale
     def SetCoreScale(self, v) -> None:      self._core_scale = float(v)
+    def GetNumSides(self) -> int:           return self._num_sides
+    def SetNumSides(self, v) -> None:       self._num_sides = int(v)
+    def GetTaperRadius(self) -> float:      return self._taper_radius
+    def SetTaperRadius(self, v) -> None:    self._taper_radius = float(v)
+    def GetTaperRatio(self) -> float:       return self._taper_ratio
+    def SetTaperRatio(self, v) -> None:     self._taper_ratio = float(v)
+    def GetTaperMinLength(self) -> float:   return self._taper_min_length
+    def SetTaperMinLength(self, v) -> None: self._taper_min_length = float(v)
+    def GetTaperMaxLength(self) -> float:   return self._taper_max_length
+    def SetTaperMaxLength(self, v) -> None: self._taper_max_length = float(v)
+    def GetPerimeterTile(self) -> float:    return self._perimeter_tile
+    def SetPerimeterTile(self, v) -> None:  self._perimeter_tile = float(v)
+    def GetTextureSpeed(self) -> float:     return self._texture_speed
+    def SetTextureSpeed(self, v) -> None:   self._texture_speed = float(v)
 
     @staticmethod
     def _coerce_color(c) -> tuple:

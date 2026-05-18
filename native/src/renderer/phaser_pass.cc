@@ -5,6 +5,7 @@
 #include <assets/texture.h>
 #include <scenegraph/camera.h>
 
+#include <GLFW/glfw3.h>
 #include <glad/glad.h>
 #include <glm/glm.hpp>
 
@@ -53,36 +54,57 @@ void PhaserPass::ensure_texture() {
     }
 }
 
+struct PrismVertex {
+    glm::vec3 emitter;
+    glm::vec3 target;
+    float     t;
+    float     side_angle;  // radians around beam axis
+};
+
+constexpr float kTau = 6.28318530717958647692f;
+
 void PhaserPass::ensure_mesh(const std::vector<PhaserBeamDescriptor>& beams) {
     if (beam_vao_ == 0) {
         glGenVertexArrays(1, &beam_vao_);
         glGenBuffers(1, &beam_vbo_);
     }
-    // Pack per-vertex: emitter.xyz, target.xyz, corner.
-    // Six vertices per beam.
-    struct Vertex { glm::vec3 emitter; glm::vec3 target; float corner; };
-    std::vector<Vertex> verts;
-    verts.reserve(beams.size() * 6);
+    std::vector<PrismVertex> verts;
+    std::size_t total = 0;
     for (const auto& b : beams) {
-        for (int c = 0; c < 6; ++c) {
-            verts.push_back({b.emitter_world, b.target_world,
-                             static_cast<float>(c)});
+        const int n = (b.num_sides > 0) ? b.num_sides : 6;
+        total += static_cast<std::size_t>(n) * 6u;
+    }
+    verts.reserve(total);
+    for (const auto& b : beams) {
+        const int n = (b.num_sides > 0) ? b.num_sides : 6;
+        for (int s = 0; s < n; ++s) {
+            const float a0 = (kTau * static_cast<float>(s))     / static_cast<float>(n);
+            const float a1 = (kTau * static_cast<float>(s + 1)) / static_cast<float>(n);
+            verts.push_back({b.emitter_world, b.target_world, 0.0f, a0});
+            verts.push_back({b.emitter_world, b.target_world, 1.0f, a0});
+            verts.push_back({b.emitter_world, b.target_world, 1.0f, a1});
+            verts.push_back({b.emitter_world, b.target_world, 0.0f, a0});
+            verts.push_back({b.emitter_world, b.target_world, 1.0f, a1});
+            verts.push_back({b.emitter_world, b.target_world, 0.0f, a1});
         }
     }
     glBindVertexArray(beam_vao_);
     glBindBuffer(GL_ARRAY_BUFFER, beam_vbo_);
     glBufferData(GL_ARRAY_BUFFER,
-                 static_cast<GLsizeiptr>(verts.size() * sizeof(Vertex)),
+                 static_cast<GLsizeiptr>(verts.size() * sizeof(PrismVertex)),
                  verts.data(), GL_DYNAMIC_DRAW);
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex),
-                          reinterpret_cast<void*>(offsetof(Vertex, emitter)));
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(PrismVertex),
+                          reinterpret_cast<void*>(offsetof(PrismVertex, emitter)));
     glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex),
-                          reinterpret_cast<void*>(offsetof(Vertex, target)));
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(PrismVertex),
+                          reinterpret_cast<void*>(offsetof(PrismVertex, target)));
     glEnableVertexAttribArray(2);
-    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(Vertex),
-                          reinterpret_cast<void*>(offsetof(Vertex, corner)));
+    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(PrismVertex),
+                          reinterpret_cast<void*>(offsetof(PrismVertex, t)));
+    glEnableVertexAttribArray(3);
+    glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, sizeof(PrismVertex),
+                          reinterpret_cast<void*>(offsetof(PrismVertex, side_angle)));
     glBindVertexArray(0);
 }
 
@@ -98,8 +120,9 @@ void PhaserPass::render(const std::vector<PhaserBeamDescriptor>& beams,
     shader.use();
     const glm::mat4 vp = camera.proj_matrix() * camera.view_matrix();
     shader.set_mat4("u_view_proj", vp);
-    shader.set_vec3("u_camera_pos", camera.eye);
-    shader.set_int ("u_texture",   0);
+    shader.set_int ("u_texture",    0);
+    const float time = static_cast<float>(glfwGetTime());
+    shader.set_float("u_time", time);
 
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE);
@@ -111,12 +134,20 @@ void PhaserPass::render(const std::vector<PhaserBeamDescriptor>& beams,
     glBindTexture(GL_TEXTURE_2D, texture_->id());
 
     glBindVertexArray(beam_vao_);
-    // Each beam has its own color + width; issue one draw call per beam.
-    for (std::size_t i = 0; i < beams.size(); ++i) {
-        shader.set_vec4 ("u_color", beams[i].color);
-        shader.set_float("u_width", beams[i].width);
-        shader.set_float("u_tiles", beams[i].u_tiles > 0.0f ? beams[i].u_tiles : 1.0f);
-        glDrawArrays(GL_TRIANGLES, static_cast<GLint>(i * 6), 6);
+    GLint vert_offset = 0;
+    for (const auto& b : beams) {
+        const int n = (b.num_sides > 0) ? b.num_sides : 6;
+        shader.set_vec4 ("u_color",            b.color);
+        shader.set_float("u_main_radius",      b.width);
+        shader.set_float("u_taper_radius",     b.taper_radius);
+        shader.set_float("u_taper_ratio",      b.taper_ratio);
+        shader.set_float("u_taper_min_length", b.taper_min_length);
+        shader.set_float("u_taper_max_length", b.taper_max_length);
+        shader.set_float("u_perimeter_tile",   b.perimeter_tile);
+        shader.set_float("u_texture_speed",    b.texture_speed);
+        shader.set_float("u_tiles",            b.u_tiles > 0.0f ? b.u_tiles : 1.0f);
+        glDrawArrays(GL_TRIANGLES, vert_offset, n * 6);
+        vert_offset += n * 6;
     }
     glBindVertexArray(0);
 

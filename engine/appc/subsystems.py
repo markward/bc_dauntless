@@ -282,6 +282,14 @@ class ShipSubsystem(TGEventHandlerObject):
         self._outer_core_color:  tuple = (1.0, 1.0, 1.0, 1.0)
         self._inner_core_color:  tuple = (1.0, 1.0, 1.0, 1.0)
         self._texture_name: str = ""
+        # Prism geometry + taper + scroll — full BC-faithful set.
+        self._num_sides: int = 6
+        self._taper_radius: float = 0.01
+        self._taper_ratio: float = 0.25
+        self._taper_min_length: float = 5.0
+        self._taper_max_length: float = 30.0
+        self._perimeter_tile: float = 1.0
+        self._texture_speed: float = 0.0
         # Flag set True only when a property actually supplied typed arc
         # data (EnergyWeaponProperty hierarchy).  Emitters without it
         # (torpedo tubes) fall back to a 90° dot-product cone.
@@ -377,6 +385,20 @@ class ShipSubsystem(TGEventHandlerObject):
             v = prop.GetTextureName()
             if isinstance(v, str):
                 self._texture_name = v
+        for getter, attr in (
+            ("GetNumSides",       "_num_sides"),
+            ("GetTaperRadius",    "_taper_radius"),
+            ("GetTaperRatio",     "_taper_ratio"),
+            ("GetTaperMinLength", "_taper_min_length"),
+            ("GetTaperMaxLength", "_taper_max_length"),
+            ("GetPerimeterTile",  "_perimeter_tile"),
+            ("GetTextureSpeed",   "_texture_speed"),
+        ):
+            if hasattr(prop, getter):
+                v = getattr(prop, getter)()
+                if isinstance(v, (int, float)):
+                    setattr(self, attr,
+                             int(v) if attr == "_num_sides" else float(v))
 
     def IsTypeOf(self, cls) -> int:
         """SDK class-id check. Returns 1 when this subsystem's source
@@ -489,6 +511,13 @@ class ShipSubsystem(TGEventHandlerObject):
     def GetOuterCoreColor(self) -> tuple:     return self._outer_core_color
     def GetInnerCoreColor(self) -> tuple:     return self._inner_core_color
     def GetTextureName(self) -> str:          return self._texture_name
+    def GetNumSides(self) -> int:             return self._num_sides
+    def GetTaperRadius(self) -> float:        return self._taper_radius
+    def GetTaperRatio(self) -> float:         return self._taper_ratio
+    def GetTaperMinLength(self) -> float:     return self._taper_min_length
+    def GetTaperMaxLength(self) -> float:     return self._taper_max_length
+    def GetPerimeterTile(self) -> float:      return self._perimeter_tile
+    def GetTextureSpeed(self) -> float:       return self._texture_speed
 
     def GetWorldLocation(self) -> TGPoint3:
         if self._parent_ship is not None:

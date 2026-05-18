@@ -377,6 +377,16 @@ def _build_hit_vfx_render_data():
     return out
 
 
+# Tunable scale applied to SDK-declared beam radii (PhaserWidth /
+# MainRadius / TaperRadius).  The instrumentation pass confirmed
+# SetPosition is in world units, but the beam-radius family was never
+# directly verified — the SDK's 0.30 / 0.15 read as much smaller than
+# BC's visible beam at typical Galaxy framing.  4× is a feel-tuned
+# nominal; the right long-term fix is a focused instrumentation pass
+# that reads back beam render geometry from the live engine.
+PHASER_BEAM_WIDTH_MUTATOR = 4.0
+
+
 def _build_phaser_beam_render_data(ships):
     """Snapshot active phaser beams for the renderer.
 
@@ -403,33 +413,56 @@ def _build_phaser_beam_render_data(ships):
             else:
                 target_pos = target.GetWorldLocation()
             emitter_pos = bank._strip_emit_position(target_pos)
-            # Compute beam length so the renderer can tile the texture
-            # at the SDK-prescribed rate.  Galaxy phasers tile every
-            # 2 world units (SetLengthTextureTilePerUnit=0.5).
+            # Clip the *rendered* beam to MaxDamageDistance so very
+            # distant targets still produce a sensibly proportioned
+            # beam (not a sub-pixel hairline 400 wu long).  Damage
+            # falloff already drops to zero past this distance.
+            # DEFERRED: phasers shouldn't *fire* at out-of-range
+            # targets at all — see
+            # docs/superpowers/deferred/2026-05-18-phaser-fire-range-gate.md.
             dx = target_pos.x - emitter_pos.x
             dy = target_pos.y - emitter_pos.y
             dz = target_pos.z - emitter_pos.z
-            beam_length = (dx * dx + dy * dy + dz * dz) ** 0.5
+            raw_length = (dx * dx + dy * dy + dz * dz) ** 0.5
+            max_range = bank.GetMaxDamageDistance() or 0.0
+            beam_length = raw_length
+            beam_end = target_pos
+            if max_range > 0.0 and raw_length > max_range:
+                from engine.appc.math import TGPoint3
+                scale = max_range / raw_length
+                beam_end = TGPoint3(emitter_pos.x + dx * scale,
+                                    emitter_pos.y + dy * scale,
+                                    emitter_pos.z + dz * scale)
+                beam_length = max_range
             tile_per_unit = bank.GetLengthTextureTilePerUnit()
             u_tiles = max(1.0, beam_length * tile_per_unit) if tile_per_unit > 0 else 1.0
-            # SDK-faithful per-bank colours + width.  PhaserWidth is the
-            # beam diameter and MainRadius is the half-width (== width/2
-            # on Galaxy: 0.30 vs 0.15).  Our shader's u_width is a
-            # half-width (vertices at ±perp × u_width), so MainRadius is
-            # the value we want — passing PhaserWidth would render at
-            # 2× the intended size.
-            outer_half = bank.GetMainRadius() or 0.15
-            core_scale = bank.GetCoreScale()  or 0.50
-            inner_half = outer_half * core_scale
-            outer_color = bank.GetOuterShellColor()
-            inner_color = bank.GetInnerCoreColor()
-            # Two concentric beams per bank — outer shell first, then
-            # the brighter inner core overlaid on top.  Additive blend
-            # combines them into the layered look.
+            # SDK four-channel-colour layout (per galaxy.py:418-431) is
+            # OuterShell / InnerShell / OuterCore / InnerCore.  We
+            # approximate with two concentric beams: the outer shell
+            # (orange halo) and a thinner inner-core sheen (white-hot
+            # streak).  The inner uses reduced alpha (0.35) so its
+            # additive contribution is a subtle highlight rather than
+            # a saturating wash — the outer's orange remains the
+            # dominant tint.
+            mut = PHASER_BEAM_WIDTH_MUTATOR
+            core_scale   = bank.GetCoreScale() or 0.50
+            outer_half   = (bank.GetPhaserWidth() or 0.30) * mut
+            inner_half   = (bank.GetMainRadius() or 0.15) * core_scale * mut
+            taper_radius = (bank.GetTaperRadius() or 0.01) * mut
+            outer_color  = bank.GetOuterShellColor()
+            ic = bank.GetInnerCoreColor()
+            inner_color = (ic[0], ic[1], ic[2], 0.35)
             common = {
-                "emitter": (emitter_pos.x, emitter_pos.y, emitter_pos.z),
-                "target":  (target_pos.x,  target_pos.y,  target_pos.z),
-                "u_tiles": float(u_tiles),
+                "emitter":          (emitter_pos.x, emitter_pos.y, emitter_pos.z),
+                "target":           (beam_end.x,    beam_end.y,    beam_end.z),
+                "u_tiles":          float(u_tiles),
+                "num_sides":        int(bank.GetNumSides() or 6),
+                "taper_radius":     float(taper_radius),
+                "taper_ratio":      float(bank.GetTaperRatio() or 0.25),
+                "taper_min_length": float(bank.GetTaperMinLength() or 5.0),
+                "taper_max_length": float(bank.GetTaperMaxLength() or 30.0),
+                "perimeter_tile":   float(bank.GetPerimeterTile() or 1.0),
+                "texture_speed":    float(bank.GetTextureSpeed() or 0.0),
             }
             out.append({**common,
                          "color": outer_color,
