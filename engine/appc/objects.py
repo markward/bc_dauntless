@@ -507,9 +507,18 @@ def ObjectGroup_ForceToGroup(arg) -> ObjectGroup:
     SDK call sites (E1M2.py:3363, AI/Compound/CloakAttack.py:16, AI/PlainAI/
     Flee.py:33, etc.) pass either a list of object names or an already-built
     ObjectGroup; the helper hands back a usable ObjectGroup either way.
+
+    Also unwrap a single-element tuple/list whose only element is already an
+    ObjectGroup — `AI.Preprocessors.SelectTarget.__init__` collects its arg
+    via `*pTargetGroup` and then forwards the resulting tuple here. The real
+    SDK helper unwraps that tuple so the ObjectGroupWithInfo identity (and
+    its priority dict) is preserved. Without this unwrap the priority/info
+    factor in `GetTargetRating` always reads as 0.
     """
     if isinstance(arg, ObjectGroup):
         return arg
+    if isinstance(arg, (tuple, list)) and len(arg) == 1 and isinstance(arg[0], ObjectGroup):
+        return arg[0]
     group = ObjectGroup()
     if isinstance(arg, str):
         group.AddName(arg)
