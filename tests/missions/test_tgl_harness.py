@@ -124,3 +124,42 @@ def test_error_key_for_empty_failure():
     """Empty TGLs share a single literal grouping key."""
     key = error_key("fail", ("empty", None))
     assert key == "empty TGL (0 strings, 0 sounds)"
+
+
+from tools.tgl_harness import format_line
+
+
+def test_format_line_pass_single_line():
+    """Pass renders as one line with (strings=N sounds=M) suffix."""
+    path = PROJECT_ROOT / "game" / "data" / "TGL" / "Foo.tgl"
+    out = format_line(path, "pass", ("counts", (42, 17)))
+    assert out == "  PASS  game/data/TGL/Foo.tgl  (strings=42 sounds=17)"
+
+
+def test_format_line_empty_single_line():
+    """Empty failure renders as one line with 'empty: ...' suffix."""
+    path = PROJECT_ROOT / "sdk" / "Build" / "Data" / "TGL" / "Tutorial" / "Episode" / "Episode.tgl"
+    out = format_line(path, "fail", ("empty", None))
+    assert out == (
+        "  FAIL  sdk/Build/Data/TGL/Tutorial/Episode/Episode.tgl"
+        "  empty: 0 strings, 0 sounds"
+    )
+
+
+def test_format_line_parse_two_lines():
+    """Parse failure renders as two lines: path, then indented exception."""
+    path = PROJECT_ROOT / "game" / "data" / "TGL" / "Bad.tgl"
+    exc = TGLParseError("keys section truncated")
+    out = format_line(path, "fail", ("parse", exc))
+    assert out == (
+        "  FAIL  game/data/TGL/Bad.tgl\n"
+        "         TGLParseError: keys section truncated"
+    )
+
+
+def test_format_line_handles_path_outside_project_root(tmp_path):
+    """Paths outside PROJECT_ROOT fall back to the absolute path."""
+    path = tmp_path / "x.tgl"
+    out = format_line(path, "pass", ("counts", (1, 1)))
+    assert str(path) in out
+    assert out.startswith("  PASS  ")

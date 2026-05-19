@@ -72,3 +72,27 @@ def error_key(status: str, reason: tuple) -> str:
     exc = payload
     msg = (str(exc).splitlines() or [""])[0]
     return f"{type(exc).__name__}: {msg[:80]}"
+
+
+def format_line(path: Path, status: str, reason: tuple) -> str:
+    """Render one per-file result line (or two lines for parse errors).
+
+    Paths inside PROJECT_ROOT render relative; paths outside render absolute
+    (e.g. tmp_path in tests).
+    """
+    try:
+        rel = path.relative_to(PROJECT_ROOT)
+        display = str(rel)
+    except ValueError:
+        display = str(path)
+
+    marker = "PASS" if status == "pass" else "FAIL"
+    kind, payload = reason
+    if kind == "counts":
+        strings_n, sounds_n = payload
+        return f"  {marker}  {display}  (strings={strings_n} sounds={sounds_n})"
+    if kind == "empty":
+        return f"  {marker}  {display}  empty: 0 strings, 0 sounds"
+    exc = payload
+    exc_msg = (str(exc).splitlines() or [""])[0]
+    return f"  {marker}  {display}\n         {type(exc).__name__}: {exc_msg}"
