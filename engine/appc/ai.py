@@ -268,6 +268,16 @@ class ArtificialIntelligence:
     def SetInterruptable(self, v) -> None: self._interruptable = bool(v)
     def IsInterruptable(self) -> int:     return 1 if self._interruptable else 0
 
+    # ── External-function dispatch (base no-op) ─────────────────────────────
+    # SDK SelectTarget.CallSetTargetFunctions iterates every AI in the tree
+    # via GetAllAIsInTree() and unconditionally calls CallExternalFunction
+    # (sdk/.../AI/Preprocessors.py:1407). Only PlainAI registers SetTarget
+    # hooks, so interior nodes (PriorityListAI, SequenceAI, PreprocessingAI,
+    # ConditionalAI) need a tolerant no-op so the dispatch loop doesn't
+    # AttributeError on them.
+    def CallExternalFunction(self, name: str, *args) -> None:
+        pass
+
 
 # ── PlainAI ──────────────────────────────────────────────────────────────────
 
