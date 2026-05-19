@@ -89,15 +89,23 @@ class TGConditionHandler:
         pass
 
 
+def _import_dotted(qualified: str):
+    """`__import__('Conditions.ConditionInRange')` returns the top-level
+    `Conditions` package. Walk the dotted path to get the leaf module."""
+    mod = __import__(qualified)
+    for part in qualified.split(".")[1:]:
+        mod = getattr(mod, part)
+    return mod
+
+
 class ConditionScript(TGCondition):
     """Python-script-backed condition (sdk/.../Conditions/*).
 
-    SDK pattern: ``ConditionScript_Create("Conditions.ConditionInRange",
-    "ConditionInRange", *args)`` loads the named module, instantiates the
-    named class with ``*args``, and uses the resulting object's evaluate
-    method to drive SetStatus.  Phase 1 stores the spec for reflection but
-    doesn't drive evaluation — mission scripts wire conditions during init,
-    they're evaluated against ship state in the Phase 2 simulation loop.
+    Eager-instantiation pattern: on construction, try to __import__ the
+    named module, walk dotted parts, getattr the class, and instantiate
+    it with (self, *args). Fall back to a data-bag if anything fails;
+    SDK call sites guard with `if pCondition.IsActive():` so a quiet
+    fallback is safe.
     """
     def __init__(self, module_name: str = "", class_name: str = "", *args):
         super().__init__()
@@ -105,6 +113,15 @@ class ConditionScript(TGCondition):
         self._class_name = class_name
         self._args = args
         self._instance = None
+        self._init_error: tuple[str, str] | None = None
+        if module_name and class_name:
+            try:
+                mod = _import_dotted(module_name)
+                cls = getattr(mod, class_name)
+                self._instance = cls(self, *args)
+            except Exception as e:
+                self._instance = None
+                self._init_error = (type(e).__name__, str(e))
 
     def GetModuleName(self) -> str:
         return self._module_name
