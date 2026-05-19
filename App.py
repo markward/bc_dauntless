@@ -111,6 +111,9 @@ from engine.appc.ai import (
     CharacterAction, CharacterAction_Create, CharacterAction_CreateByName,
     CSP_LOW, CSP_NORMAL, CSP_HIGH,
 )
+from engine.appc.time_slice import (
+    TimeSliceProcess, PythonMethodProcess, g_kAIManager,
+)
 from engine.appc.subsystems import (
     ShipSubsystem, PoweredSubsystem, WeaponSystem,
     TorpedoSystem, PhaserSystem, PulseWeaponSystem, TractorBeamSystem,
