@@ -58,6 +58,14 @@ uv run python tools/gameloop_harness.py --ticks 600  # shorter run
 uv run python tools/gameloop_harness.py --profile    # adds a ranked stub-call profile
 ```
 
+## TGL harness
+
+`tools/tgl_harness.py` walks every `.tgl` file under `game/data/TGL/` and `sdk/Build/Data/TGL/`, parses each via `engine.missions.tgl_reader.read_tgl`, and reports per-file pass/fail plus a grouped error summary. A file passes if it decodes to at least one string or sound; it fails on a parse exception or if it parses to an empty TGL. Missing roots are skipped silently so checkouts without a `game/` install still work.
+
+```bash
+uv run python tools/tgl_harness.py
+```
+
 ## References & acknowledgements
 
 The Phase 2 NIF parser draws on two open-source projects:
