@@ -54,13 +54,23 @@ def _tick_plain(ai: PlainAI, game_time: float) -> int:
     if game_time < ai._next_update_time:
         return ai._status
     inst = ai.GetScriptInstance()
-    status = inst.Update()
+    # Script-instance Update is the per-AI heartbeat. Leaves registered
+    # purely for external-function dispatch (SetTarget callbacks under a
+    # SelectTarget preprocessor, e.g.) may legitimately omit it; treat a
+    # missing Update as "no work this tick" so the dispatch tree still
+    # ticks past them without error. Matches _AIScriptInstance's
+    # everything-is-a-lambda fallback.
+    update_fn = getattr(inst, "Update", None)
+    if update_fn is None or not callable(update_fn):
+        return ai._status
+    status = update_fn()
     if status is None:
         status = US_ACTIVE
     ai._status = int(status)
     # Reschedule based on the script's reported interval. Fallback
     # _AIScriptInstance returns None for unknown Get*; treat as 1 sec.
-    next_update = inst.GetNextUpdateTime()
+    next_update_fn = getattr(inst, "GetNextUpdateTime", None)
+    next_update = next_update_fn() if callable(next_update_fn) else None
     interval = float(next_update) if next_update is not None else 1.0
     ai._next_update_time = game_time + interval
     return ai._status
