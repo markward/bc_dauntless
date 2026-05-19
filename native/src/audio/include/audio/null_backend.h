@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 
-namespace open_stbc::audio {
+namespace dauntless::audio {
 
 struct LoggedCall {
     std::string op;
@@ -45,4 +45,4 @@ private:
     std::vector<SourceHandle> finished_;
 };
 
-}  // namespace open_stbc::audio
+}  // namespace dauntless::audio

@@ -6,8 +6,8 @@ import pytest
 
 def test_set_lighting_binding_smoke():
     """Calling set_lighting on the bindings module does not raise."""
-    import _open_stbc_host
-    _open_stbc_host.set_lighting(
+    import _dauntless_host
+    _dauntless_host.set_lighting(
         (0.2, 0.3, 0.4),
         [
             ((0.0, -1.0, 0.0), (1.0, 0.9, 0.8)),
@@ -17,14 +17,14 @@ def test_set_lighting_binding_smoke():
 
 
 def test_set_lighting_accepts_empty_directionals():
-    import _open_stbc_host
-    _open_stbc_host.set_lighting((0.5, 0.5, 0.5), [])
+    import _dauntless_host
+    _dauntless_host.set_lighting((0.5, 0.5, 0.5), [])
 
 
 def test_set_lighting_clamps_to_max_directionals():
     """Passing more than 4 directionals must not raise (truncation in C++)."""
-    import _open_stbc_host
-    _open_stbc_host.set_lighting(
+    import _dauntless_host
+    _dauntless_host.set_lighting(
         (0.1, 0.1, 0.1),
         [((0.0, 1.0, 0.0), (1.0, 1.0, 1.0))] * 8,
     )
@@ -255,44 +255,44 @@ def test_g_lighting_persists_across_frames():
         pytest.skip("BC assets not available")
 
     os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
-    import _open_stbc_host
+    import _dauntless_host
 
-    _open_stbc_host.init(640, 360, "test_lighting_persistence")
+    _dauntless_host.init(640, 360, "test_lighting_persistence")
     try:
         tex_search = str(PROJECT_ROOT / "game" / "data" / "Models" /
                          "SharedTextures" / "FedShips" / "High")
-        h = _open_stbc_host.load_model(str(GALAXY_NIF), tex_search)
-        iid = _open_stbc_host.create_instance(h)
-        _open_stbc_host.set_world_transform(iid, [
+        h = _dauntless_host.load_model(str(GALAXY_NIF), tex_search)
+        iid = _dauntless_host.create_instance(h)
+        _dauntless_host.set_world_transform(iid, [
             1.0, 0.0, 0.0, 0.0,
             0.0, 1.0, 0.0, 0.0,
             0.0, 0.0, 1.0, 0.0,
             0.0, 0.0, 0.0, 1.0,
         ])
-        _open_stbc_host.set_camera(
+        _dauntless_host.set_camera(
             eye=(0.0, 0.0, 1500.0),
             target=(0.0, 0.0, 0.0),
             up=(0.0, 1.0, 0.0),
             fov_y_rad=1.0472, near=1.0, far=100000.0,
         )
 
-        fw, fh = _open_stbc_host.framebuffer_size()
+        fw, fh = _dauntless_host.framebuffer_size()
         cx, cy = fw // 2, fh // 2
 
-        _open_stbc_host.set_lighting((1.0, 0.0, 0.0), [])
-        _open_stbc_host.frame()
-        r1 = _open_stbc_host.read_pixel(cx, cy)[0]
+        _dauntless_host.set_lighting((1.0, 0.0, 0.0), [])
+        _dauntless_host.frame()
+        r1 = _dauntless_host.read_pixel(cx, cy)[0]
 
         # Deliberately no second set_lighting — second frame should
         # use the same g_lighting state.
-        _open_stbc_host.frame()
-        r2 = _open_stbc_host.read_pixel(cx, cy)[0]
+        _dauntless_host.frame()
+        r2 = _dauntless_host.read_pixel(cx, cy)[0]
 
         assert r1 == r2, f"lighting did not persist: r1={r1}, r2={r2}"
         assert r1 > 100, f"first frame should have been brightly red-lit, got r={r1}"
     finally:
-        _open_stbc_host.destroy_instance(iid)
-        _open_stbc_host.shutdown()
+        _dauntless_host.destroy_instance(iid)
+        _dauntless_host.shutdown()
 
 
 def test_g_lighting_resets_on_shutdown():
@@ -308,41 +308,41 @@ def test_g_lighting_resets_on_shutdown():
         pytest.skip("BC assets not available")
     os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
 
-    import _open_stbc_host
+    import _dauntless_host
 
     def _render_one_frame(set_lighting_call):
-        _open_stbc_host.init(640, 360, "test_lighting_reset")
+        _dauntless_host.init(640, 360, "test_lighting_reset")
         try:
             tex_search = str(PROJECT_ROOT / "game" / "data" / "Models" /
                              "SharedTextures" / "FedShips" / "High")
-            h = _open_stbc_host.load_model(str(GALAXY_NIF), tex_search)
-            iid = _open_stbc_host.create_instance(h)
-            _open_stbc_host.set_world_transform(iid, [
+            h = _dauntless_host.load_model(str(GALAXY_NIF), tex_search)
+            iid = _dauntless_host.create_instance(h)
+            _dauntless_host.set_world_transform(iid, [
                 1.0, 0.0, 0.0, 0.0,
                 0.0, 1.0, 0.0, 0.0,
                 0.0, 0.0, 1.0, 0.0,
                 0.0, 0.0, 0.0, 1.0,
             ])
-            _open_stbc_host.set_camera(
+            _dauntless_host.set_camera(
                 eye=(0.0, 0.0, 1500.0),
                 target=(0.0, 0.0, 0.0),
                 up=(0.0, 1.0, 0.0),
                 fov_y_rad=1.0472, near=1.0, far=100000.0,
             )
-            fw, fh = _open_stbc_host.framebuffer_size()
+            fw, fh = _dauntless_host.framebuffer_size()
             cx, cy = fw // 2, fh // 2
 
             if set_lighting_call is not None:
                 set_lighting_call()
-            _open_stbc_host.frame()
-            return _open_stbc_host.read_pixel(cx, cy)
+            _dauntless_host.frame()
+            return _dauntless_host.read_pixel(cx, cy)
         finally:
-            _open_stbc_host.destroy_instance(iid)
-            _open_stbc_host.shutdown()
+            _dauntless_host.destroy_instance(iid)
+            _dauntless_host.shutdown()
 
     # Session A: bright red ambient.
     rA, gA, bA, _ = _render_one_frame(
-        lambda: _open_stbc_host.set_lighting((1.0, 0.0, 0.0), [])
+        lambda: _dauntless_host.set_lighting((1.0, 0.0, 0.0), [])
     )
     assert rA > 100, "session A should have been red-lit"
     assert rA > gA + 50, "session A red should dominate green"
@@ -368,46 +368,46 @@ def test_set_lighting_changes_rendered_pixel():
         pytest.skip("BC assets not available")
 
     os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
-    import _open_stbc_host
+    import _dauntless_host
 
-    _open_stbc_host.init(640, 360, "test_set_lighting_changes_pixel")
+    _dauntless_host.init(640, 360, "test_set_lighting_changes_pixel")
     try:
         tex_search = str(PROJECT_ROOT / "game" / "data" / "Models" /
                          "SharedTextures" / "FedShips" / "High")
-        h = _open_stbc_host.load_model(str(GALAXY_NIF), tex_search)
-        iid = _open_stbc_host.create_instance(h)
-        _open_stbc_host.set_world_transform(iid, [
+        h = _dauntless_host.load_model(str(GALAXY_NIF), tex_search)
+        iid = _dauntless_host.create_instance(h)
+        _dauntless_host.set_world_transform(iid, [
             1.0, 0.0, 0.0, 0.0,
             0.0, 1.0, 0.0, 0.0,
             0.0, 0.0, 1.0, 0.0,
             0.0, 0.0, 0.0, 1.0,
         ])
-        _open_stbc_host.set_camera(
+        _dauntless_host.set_camera(
             eye=(0.0, 0.0, 1500.0),
             target=(0.0, 0.0, 0.0),
             up=(0.0, 1.0, 0.0),
             fov_y_rad=1.0472, near=1.0, far=100000.0,
         )
 
-        fw, fh = _open_stbc_host.framebuffer_size()
+        fw, fh = _dauntless_host.framebuffer_size()
         cx, cy = fw // 2, fh // 2
 
         # Bright red ambient, no directionals.
-        _open_stbc_host.set_lighting((1.0, 0.0, 0.0), [])
-        _open_stbc_host.frame()
-        red_r, red_g, red_b, _ = _open_stbc_host.read_pixel(cx, cy)
+        _dauntless_host.set_lighting((1.0, 0.0, 0.0), [])
+        _dauntless_host.frame()
+        red_r, red_g, red_b, _ = _dauntless_host.read_pixel(cx, cy)
 
         # Black: no ambient, no directionals → fully unlit Galaxy.
-        _open_stbc_host.set_lighting((0.0, 0.0, 0.0), [])
-        _open_stbc_host.frame()
-        dark_r, _, _, _ = _open_stbc_host.read_pixel(cx, cy)
+        _dauntless_host.set_lighting((0.0, 0.0, 0.0), [])
+        _dauntless_host.frame()
+        dark_r, _, _, _ = _dauntless_host.read_pixel(cx, cy)
 
         assert red_r > dark_r + 50, (
             f"Expected red ambient to brighten pixel: red_r={red_r}, "
             f"dark_r={dark_r}")
     finally:
-        _open_stbc_host.destroy_instance(iid)
-        _open_stbc_host.shutdown()
+        _dauntless_host.destroy_instance(iid)
+        _dauntless_host.shutdown()
 
 
 def test_host_loop_pushes_bridge_lighting_each_tick():

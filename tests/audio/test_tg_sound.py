@@ -4,7 +4,7 @@ import pytest
 
 os.environ.setdefault("OPEN_STBC_AUDIO", "0")
 
-_open_stbc_host = pytest.importorskip("_open_stbc_host")
+_dauntless_host = pytest.importorskip("_dauntless_host")
 
 from engine.audio.tg_sound import (
     TGSound, TGSoundManager,
@@ -41,9 +41,9 @@ def test_play_sound_via_manager(audio, tmp_path):
     wav = tmp_path / "x.wav"
     wav.write_bytes(_wav(22050, [0, 0]))
     audio.LoadSound(str(wav), "OneShot", TGSound.LS_3D)
-    _open_stbc_host.audio.clear_command_log()
+    _dauntless_host.audio.clear_command_log()
     audio.PlaySound("OneShot")
-    ops = [e["op"] for e in _open_stbc_host.audio.debug_command_log()]
+    ops = [e["op"] for e in _dauntless_host.audio.debug_command_log()]
     assert "play" in ops
 
 
@@ -51,10 +51,10 @@ def test_sound_action_play_routes_to_manager(audio, tmp_path):
     wav = tmp_path / "x.wav"
     wav.write_bytes(_wav(22050, [0, 0]))
     audio.LoadSound(str(wav), "AlertSnd", TGSound.LS_3D)
-    _open_stbc_host.audio.clear_command_log()
+    _dauntless_host.audio.clear_command_log()
     action = TGSoundAction_Create("AlertSnd")
     action.Play()
-    ops = [e["op"] for e in _open_stbc_host.audio.debug_command_log()]
+    ops = [e["op"] for e in _dauntless_host.audio.debug_command_log()]
     assert "play" in ops
 
 
@@ -65,7 +65,7 @@ def test_play_returns_handle_we_can_stop(audio, tmp_path):
     snd.SetLooping(1)
     playing = snd.Play()
     assert playing is not None
-    _open_stbc_host.audio.clear_command_log()
+    _dauntless_host.audio.clear_command_log()
     playing.Stop()
-    ops = [e["op"] for e in _open_stbc_host.audio.debug_command_log()]
+    ops = [e["op"] for e in _dauntless_host.audio.debug_command_log()]
     assert "stop" in ops

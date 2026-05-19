@@ -1,6 +1,6 @@
 """Phase-1 shim implementation of BC's TGSound / TGSoundManager.
 
-Delegates to the C++ audio subsystem exposed as _open_stbc_host.audio. Surface
+Delegates to the C++ audio subsystem exposed as _dauntless_host.audio. Surface
 matches sdk/Build/scripts/App.py wherever LoadTacticalSounds.py, LoadBridge.py,
 or hardpoint files touch it; the rest of the SDK surface stays stubbed.
 """
@@ -11,8 +11,8 @@ from pathlib import Path
 from typing import Optional
 
 try:
-    import _open_stbc_host
-    _audio = _open_stbc_host.audio
+    import _dauntless_host
+    _audio = _dauntless_host.audio
 except (ImportError, AttributeError):
     _audio = None  # tests can still import the module shape
 

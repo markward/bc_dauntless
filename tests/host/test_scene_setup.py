@@ -15,19 +15,19 @@ def test_scene_setup_round_trip():
     if not GALAXY_TEX.is_dir():
         pytest.skip(f"BC texture dir not available at {GALAXY_TEX}")
     os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
-    import _open_stbc_host
+    import _dauntless_host
     try:
-        _open_stbc_host.init(800, 600, "scene-setup")
+        _dauntless_host.init(800, 600, "scene-setup")
     except RuntimeError as e:
         pytest.skip(f"no GL context available: {e}")
 
     try:
-        ship = _open_stbc_host.load_model(str(GALAXY_NIF), str(GALAXY_TEX))
+        ship = _dauntless_host.load_model(str(GALAXY_NIF), str(GALAXY_TEX))
 
         ids = []
         for x in (-50.0, 0.0, 50.0):
-            iid = _open_stbc_host.create_instance(ship)
-            _open_stbc_host.set_world_transform(iid, [
+            iid = _dauntless_host.create_instance(ship)
+            _dauntless_host.set_world_transform(iid, [
                 1.0, 0.0, 0.0, x,
                 0.0, 1.0, 0.0, 0.0,
                 0.0, 0.0, 1.0, 0.0,
@@ -35,7 +35,7 @@ def test_scene_setup_round_trip():
             ])
             ids.append(iid)
 
-        _open_stbc_host.set_camera(
+        _dauntless_host.set_camera(
             eye=(0.0, 30.0, 200.0),
             target=(0.0, 0.0, 0.0),
             up=(0.0, 1.0, 0.0),
@@ -46,12 +46,12 @@ def test_scene_setup_round_trip():
 
         # Phase C: no drawing yet. Exercise the frame() path to confirm
         # everything still teardowns cleanly.
-        _open_stbc_host.frame()
+        _dauntless_host.frame()
 
         for iid in ids:
-            _open_stbc_host.destroy_instance(iid)
+            _dauntless_host.destroy_instance(iid)
     finally:
-        _open_stbc_host.shutdown()
+        _dauntless_host.shutdown()
 
 
 def test_set_backdrops_does_not_crash_in_frame():
@@ -59,17 +59,17 @@ def test_set_backdrops_does_not_crash_in_frame():
     end-to-end through frame() to ensure the pass renders without GL
     errors when fed an empty descriptor list."""
     os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
-    import _open_stbc_host
+    import _dauntless_host
     try:
-        _open_stbc_host.init(256, 256, "backdrops-test")
+        _dauntless_host.init(256, 256, "backdrops-test")
     except RuntimeError as e:
         pytest.skip(f"no GL: {e}")
     try:
-        _open_stbc_host.set_backdrops([])
-        _open_stbc_host.set_camera(
+        _dauntless_host.set_backdrops([])
+        _dauntless_host.set_camera(
             eye=(0, 0, 1500), target=(0, 0, 0), up=(0, 1, 0),
             fov_y_rad=1.0472, near=1.0, far=10000.0,
         )
-        _open_stbc_host.frame()  # must not raise
+        _dauntless_host.frame()  # must not raise
     finally:
-        _open_stbc_host.shutdown()
+        _dauntless_host.shutdown()

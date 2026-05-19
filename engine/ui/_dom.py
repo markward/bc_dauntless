@@ -1,7 +1,7 @@
 """In-memory DOM that mirrors the C++ binding contract for unit tests.
 
 The real binding layer in engine.ui.bindings forwards the same calls to the
-_open_stbc_host extension; tests substitute this class in its place so the
+_dauntless_host extension; tests substitute this class in its place so the
 component logic can be exercised without a native build, a window, or RmlUi.
 """
 from __future__ import annotations

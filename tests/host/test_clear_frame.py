@@ -15,25 +15,25 @@ def test_frame_runs_opaque_pass():
     if not GALAXY_TEX.is_dir():
         pytest.skip("BC texture dir not available")
     os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
-    import _open_stbc_host
+    import _dauntless_host
     try:
-        _open_stbc_host.init(256, 256, "opaque-pass")
+        _dauntless_host.init(256, 256, "opaque-pass")
     except RuntimeError as e:
         pytest.skip(f"no GL context: {e}")
     try:
-        h = _open_stbc_host.load_model(str(GALAXY_NIF), str(GALAXY_TEX))
-        iid = _open_stbc_host.create_instance(h)
-        _open_stbc_host.set_world_transform(iid, [
+        h = _dauntless_host.load_model(str(GALAXY_NIF), str(GALAXY_TEX))
+        iid = _dauntless_host.create_instance(h)
+        _dauntless_host.set_world_transform(iid, [
             1.0, 0.0, 0.0, 0.0,
             0.0, 1.0, 0.0, 0.0,
             0.0, 0.0, 1.0, 0.0,
             0.0, 0.0, 0.0, 1.0,
         ])
-        _open_stbc_host.set_camera(
+        _dauntless_host.set_camera(
             eye=(0.0, 0.0, 1500.0), target=(0.0, 0.0, 0.0), up=(0.0, 1.0, 0.0),
             fov_y_rad=1.0472, near=1.0, far=10000.0,
         )
         for _ in range(3):
-            _open_stbc_host.frame()
+            _dauntless_host.frame()
     finally:
-        _open_stbc_host.shutdown()
+        _dauntless_host.shutdown()

@@ -3,7 +3,7 @@ import struct
 import pytest
 
 os.environ.setdefault("OPEN_STBC_AUDIO", "0")
-pytest.importorskip("_open_stbc_host")
+pytest.importorskip("_dauntless_host")
 
 from engine.audio.tg_sound import (
     TGSound, init_audio_for_tests, shutdown_audio_for_tests,

@@ -19,7 +19,7 @@ _PROJECT_ROOT = Path(__file__).parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-# Make the C++-built _open_stbc_host extension importable (mirrors tests/conftest.py).
+# Make the C++-built _dauntless_host extension importable (mirrors tests/conftest.py).
 _BUILD_PYTHON = _PROJECT_ROOT / "build" / "python"
 if _BUILD_PYTHON.is_dir() and str(_BUILD_PYTHON) not in sys.path:
     sys.path.insert(0, str(_BUILD_PYTHON))

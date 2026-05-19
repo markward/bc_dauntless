@@ -1,7 +1,7 @@
 #include "audio/wav.h"
 #include <cstring>
 
-namespace open_stbc::audio {
+namespace dauntless::audio {
 
 static bool read_u32(const uint8_t* p, size_t off, size_t len, uint32_t& v) {
     if (off + 4 > len) return false;
@@ -56,4 +56,4 @@ bool decode_wav(const uint8_t* p, size_t len, WavData& out) {
     return false;
 }
 
-}  // namespace open_stbc::audio
+}  // namespace dauntless::audio

@@ -20,19 +20,19 @@ def test_frame_works_at_multiple_sizes():
     glViewport / aspect-update path is robust across dimensions including
     very small (64x64), square (256x256), and 16:9 (1280x720)."""
     _headless()
-    import _open_stbc_host
+    import _dauntless_host
     for w, h in [(64, 64), (256, 256), (800, 600), (1280, 720)]:
         try:
-            _open_stbc_host.init(w, h, f"size-{w}x{h}")
+            _dauntless_host.init(w, h, f"size-{w}x{h}")
         except RuntimeError as e:
             pytest.skip(f"no GL context available: {e}")
         try:
-            fw, fh = _open_stbc_host.framebuffer_size()
+            fw, fh = _dauntless_host.framebuffer_size()
             assert fw > 0 and fh > 0, f"framebuffer_size returned ({fw}, {fh}) at requested ({w}, {h})"
             for _ in range(3):
-                _open_stbc_host.frame()
+                _dauntless_host.frame()
         finally:
-            _open_stbc_host.shutdown()
+            _dauntless_host.shutdown()
 
 
 def test_zero_height_aspect_guard():
@@ -42,21 +42,21 @@ def test_zero_height_aspect_guard():
     binding path runs cleanly at the smallest non-zero size and that
     framebuffer_size is consistent with set_camera being safe to call."""
     _headless()
-    import _open_stbc_host
+    import _dauntless_host
     try:
-        _open_stbc_host.init(8, 8, "tiny")
+        _dauntless_host.init(8, 8, "tiny")
     except RuntimeError as e:
         pytest.skip(f"no GL context: {e}")
     try:
-        fw, fh = _open_stbc_host.framebuffer_size()
+        fw, fh = _dauntless_host.framebuffer_size()
         assert fw > 0 and fh > 0
-        _open_stbc_host.set_camera(
+        _dauntless_host.set_camera(
             eye=(0, 0, 1), target=(0, 0, 0), up=(0, 1, 0),
             fov_y_rad=1.0472, near=0.1, far=100.0,
         )
-        _open_stbc_host.frame()
+        _dauntless_host.frame()
     finally:
-        _open_stbc_host.shutdown()
+        _dauntless_host.shutdown()
 
 
 def test_clear_color_visible_in_back_buffer():
@@ -64,23 +64,23 @@ def test_clear_color_visible_in_back_buffer():
     buffer at the documented dark-blue clear color (0.05, 0.07, 0.10).
     Reads the center pixel via the read_pixel binding."""
     _headless()
-    import _open_stbc_host
+    import _dauntless_host
     try:
-        _open_stbc_host.init(64, 64, "clear-readback")
+        _dauntless_host.init(64, 64, "clear-readback")
     except RuntimeError as e:
         pytest.skip(f"no GL context: {e}")
     try:
-        _open_stbc_host.frame()
+        _dauntless_host.frame()
         # The clear color is (0.05, 0.07, 0.10, 1.0) — converted to
         # 8-bit unsigned that's roughly (12, 17, 25, 255). Allow some
         # driver-side dithering / gamma slack.
-        r, g, b, a = _open_stbc_host.read_pixel(32, 32)
+        r, g, b, a = _dauntless_host.read_pixel(32, 32)
         assert a == 255, f"alpha should be opaque, got {a}"
         assert 5 < r < 25, f"red channel outside expected clear-color range: {r}"
         assert 8 < g < 30, f"green channel outside expected clear-color range: {g}"
         assert 15 < b < 40, f"blue channel outside expected clear-color range: {b}"
     finally:
-        _open_stbc_host.shutdown()
+        _dauntless_host.shutdown()
 
 
 def test_m1_basic_ship_gate_renders_non_black():
@@ -93,25 +93,25 @@ def test_m1_basic_ship_gate_renders_non_black():
     if not GALAXY_TEX.is_dir():
         pytest.skip(f"BC texture dir not available at {GALAXY_TEX}")
     _headless()
-    import _open_stbc_host
+    import _dauntless_host
     try:
-        _open_stbc_host.init(256, 256, "ship-gate-readback")
+        _dauntless_host.init(256, 256, "ship-gate-readback")
     except RuntimeError as e:
         pytest.skip(f"no GL context: {e}")
     try:
-        h = _open_stbc_host.load_model(str(GALAXY_NIF), str(GALAXY_TEX))
-        iid = _open_stbc_host.create_instance(h)
-        _open_stbc_host.set_world_transform(iid, [
+        h = _dauntless_host.load_model(str(GALAXY_NIF), str(GALAXY_TEX))
+        iid = _dauntless_host.create_instance(h)
+        _dauntless_host.set_world_transform(iid, [
             1.0, 0.0, 0.0, 0.0,
             0.0, 1.0, 0.0, 0.0,
             0.0, 0.0, 1.0, 0.0,
             0.0, 0.0, 0.0, 1.0,
         ])
-        _open_stbc_host.set_camera(
+        _dauntless_host.set_camera(
             eye=(0.0, 0.0, 1500.0), target=(0.0, 0.0, 0.0), up=(0.0, 1.0, 0.0),
             fov_y_rad=1.0472, near=1.0, far=10000.0,
         )
-        _open_stbc_host.frame()
+        _dauntless_host.frame()
 
         # Sample a 5x5 grid around the center. The Galaxy should occupy
         # roughly the center of the viewport; at least one sample should
@@ -121,12 +121,12 @@ def test_m1_basic_ship_gate_renders_non_black():
         # all much higher.
         ship_pixels = 0
         textured_pixels = 0
-        fw, fh = _open_stbc_host.framebuffer_size()
+        fw, fh = _dauntless_host.framebuffer_size()
         cx, cy = fw // 2, fh // 2
         step = max(1, min(fw, fh) // 20)
         for dx in (-2 * step, -step, 0, step, 2 * step):
             for dy in (-2 * step, -step, 0, step, 2 * step):
-                r, g, b, _ = _open_stbc_host.read_pixel(cx + dx, cy + dy)
+                r, g, b, _ = _dauntless_host.read_pixel(cx + dx, cy + dy)
                 # Anything brighter than the clear color counts as ship.
                 if r > 60 or g > 60 or b > 80:
                     ship_pixels += 1
@@ -150,4 +150,4 @@ def test_m1_basic_ship_gate_renders_non_black():
             f"assets::material_build."
         )
     finally:
-        _open_stbc_host.shutdown()
+        _dauntless_host.shutdown()

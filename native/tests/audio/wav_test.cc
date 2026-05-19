@@ -25,8 +25,8 @@ std::vector<uint8_t> make_pcm16_mono_wav(uint32_t sample_rate,
 
 TEST(Wav, DecodesMono16) {
     auto bytes = make_pcm16_mono_wav(22050, {0, 1, -1, 32767, -32768});
-    open_stbc::audio::WavData wav;
-    ASSERT_TRUE(open_stbc::audio::decode_wav(bytes.data(), bytes.size(), wav));
+    dauntless::audio::WavData wav;
+    ASSERT_TRUE(dauntless::audio::decode_wav(bytes.data(), bytes.size(), wav));
     EXPECT_EQ(wav.channels, 1);
     EXPECT_EQ(wav.bits_per_sample, 16);
     EXPECT_EQ(wav.sample_rate, 22050u);

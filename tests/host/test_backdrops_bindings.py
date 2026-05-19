@@ -1,15 +1,15 @@
-"""Tests for the _open_stbc_host.set_backdrops binding."""
+"""Tests for the _dauntless_host.set_backdrops binding."""
 import os
 
 
 def test_set_backdrops_empty_list_does_not_raise():
-    import _open_stbc_host
-    _open_stbc_host.set_backdrops([])
+    import _dauntless_host
+    _dauntless_host.set_backdrops([])
 
 
 def test_set_backdrops_single_star_descriptor_does_not_raise():
-    import _open_stbc_host
-    _open_stbc_host.set_backdrops([{
+    import _dauntless_host
+    _dauntless_host.set_backdrops([{
         "texture_path": "/dev/null",  # no init() yet → texture load deferred
         "kind": "star",
         "h_tile": 22.0, "v_tile": 11.0,
@@ -20,7 +20,7 @@ def test_set_backdrops_single_star_descriptor_does_not_raise():
 
 
 def test_set_backdrops_many_descriptors_does_not_raise():
-    import _open_stbc_host
+    import _dauntless_host
     descriptor = {
         "texture_path": "/dev/null",
         "kind": "backdrop",
@@ -29,7 +29,7 @@ def test_set_backdrops_many_descriptors_does_not_raise():
         "world_rotation": [1, 0, 0, 0, 1, 0, 0, 0, 1],
         "target_poly_count": 256,
     }
-    _open_stbc_host.set_backdrops([descriptor] * 10)
+    _dauntless_host.set_backdrops([descriptor] * 10)
 
 
 def test_renderer_module_set_backdrops_wrapper_exists():

@@ -20,7 +20,7 @@ std::vector<uint8_t> tiny_wav() {
 }
 
 TEST(AudioSystem, LoadGetPlayStop) {
-    using namespace open_stbc::audio;
+    using namespace dauntless::audio;
     auto backend = std::make_unique<NullBackend>();
     NullBackend* raw = backend.get();
     AudioSystem sys(std::move(backend));
@@ -54,7 +54,7 @@ TEST(AudioSystem, LoadGetPlayStop) {
 }
 
 TEST(AudioSystem, UpdatePushesAttachedNodePosition) {
-    using namespace open_stbc::audio;
+    using namespace dauntless::audio;
     auto backend = std::make_unique<NullBackend>();
     NullBackend* raw = backend.get();
     AudioSystem sys(std::move(backend));
@@ -89,7 +89,7 @@ TEST(AudioSystem, UpdatePushesAttachedNodePosition) {
 }
 
 TEST(AudioSystem, UpdateReapsFinishedOneShotsViaBackendStop) {
-    using namespace open_stbc::audio;
+    using namespace dauntless::audio;
     auto backend = std::make_unique<NullBackend>();
     NullBackend* raw = backend.get();
     AudioSystem sys(std::move(backend));

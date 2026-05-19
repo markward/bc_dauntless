@@ -6,16 +6,16 @@
 namespace {
 
 TEST(NullBackend, RecordsLifecycleAndPlayback) {
-    open_stbc::audio::NullBackend b;
+    dauntless::audio::NullBackend b;
     b.init();
 
-    open_stbc::audio::PcmDesc desc{1, 16, 22050};
+    dauntless::audio::PcmDesc desc{1, 16, 22050};
     std::vector<uint8_t> pcm = {0, 0, 1, 0};
     auto buf = b.create_buffer(desc, pcm.data(), pcm.size());
     ASSERT_NE(buf, 0u);
 
     auto s = b.play(buf, /*looping*/ true, /*gain*/ 1.0f,
-                    open_stbc::audio::Category::SFX,
+                    dauntless::audio::Category::SFX,
                     /*positional*/ true, 0.0f, 0.0f, 0.0f);
     ASSERT_NE(s, 0u);
     b.set_position(s, 10.0f, 0.0f, 0.0f);
@@ -34,7 +34,7 @@ TEST(NullBackend, RecordsLifecycleAndPlayback) {
     EXPECT_EQ(log[2].op, "play");
     EXPECT_EQ(log[2].u[0], buf);                                  // buffer handle
     EXPECT_EQ(log[2].u[1],
-              static_cast<uint32_t>(open_stbc::audio::Category::SFX));
+              static_cast<uint32_t>(dauntless::audio::Category::SFX));
     EXPECT_TRUE(log[2].b[0]);                                     // looping
     EXPECT_TRUE(log[2].b[1]);                                     // positional
     EXPECT_FLOAT_EQ(log[2].f[0], 1.0f);                           // gain

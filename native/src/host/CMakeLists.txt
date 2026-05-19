@@ -1,16 +1,16 @@
 # native/src/host/CMakeLists.txt — renderer host binary + pybind11 module.
 
 # Shared source — both targets compile this file. The PYBIND11_MODULE macro
-# generates PyInit__open_stbc_host, used by both consumers.
+# generates PyInit__dauntless_host, used by both consumers.
 set(HOST_BINDINGS_SOURCES
     host_bindings.cc
 )
 
 # Python extension module (.so / .pyd / .dylib) for pytest.
-pybind11_add_module(_open_stbc_host MODULE ${HOST_BINDINGS_SOURCES})
-target_compile_features(_open_stbc_host PRIVATE cxx_std_20)
-target_link_libraries(_open_stbc_host PRIVATE renderer ui scenegraph assets open_stbc_audio)
-set_target_properties(_open_stbc_host PROPERTIES
+pybind11_add_module(_dauntless_host MODULE ${HOST_BINDINGS_SOURCES})
+target_compile_features(_dauntless_host PRIVATE cxx_std_20)
+target_link_libraries(_dauntless_host PRIVATE renderer ui scenegraph assets open_stbc_audio)
+set_target_properties(_dauntless_host PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/python"
 )
 
@@ -48,12 +48,12 @@ set_target_properties(dauntless PROPERTIES
 # Mirrors the pattern in native/tests/{,assets/}CMakeLists.txt for the test
 # targets.
 if(APPLE)
-    target_link_options(_open_stbc_host PRIVATE
+    target_link_options(_dauntless_host PRIVATE
         "LINKER:-force_load,$<TARGET_FILE:nif>")
     target_link_options(dauntless PRIVATE
         "LINKER:-force_load,$<TARGET_FILE:nif>")
 elseif(UNIX)
-    target_link_options(_open_stbc_host PRIVATE
+    target_link_options(_dauntless_host PRIVATE
         "LINKER:--whole-archive"
         "$<TARGET_FILE:nif>"
         "LINKER:--no-whole-archive")

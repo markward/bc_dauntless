@@ -88,7 +88,7 @@ int main(int argc, char* argv[]) {
     auto project_root = discover_project_root(argv[0]);
     configure_python_path(project_root);
 
-    if (PyImport_AppendInittab("_open_stbc_host", PyInit__open_stbc_host) != 0) {
+    if (PyImport_AppendInittab("_dauntless_host", PyInit__dauntless_host) != 0) {
         std::fprintf(stderr, "open_stbc: PyImport_AppendInittab failed\n");
         return 1;
     }

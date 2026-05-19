@@ -5,7 +5,7 @@ import pytest
 os.environ.setdefault("OPEN_STBC_AUDIO", "0")  # prep for Task 6 init_audio helper
 
 # These imports will succeed only after the binding lands.
-_open_stbc_host = pytest.importorskip("_open_stbc_host")
+_dauntless_host = pytest.importorskip("_dauntless_host")
 
 
 def _make_pcm16_mono_wav(rate, samples):
@@ -17,11 +17,11 @@ def _make_pcm16_mono_wav(rate, samples):
 
 
 def test_audio_submodule_exists():
-    assert hasattr(_open_stbc_host, "audio")
+    assert hasattr(_dauntless_host, "audio")
 
 
 def test_audio_load_and_play_via_null_backend():
-    audio = _open_stbc_host.audio
+    audio = _dauntless_host.audio
     audio.init(backend="null")
     wav = _make_pcm16_mono_wav(22050, [0, 1, -1, 2, -2])
     assert audio.load_sound("sfx/test.wav", "TestSound", wav, positional=False)

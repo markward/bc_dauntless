@@ -1,6 +1,6 @@
 #include <audio/null_backend.h>
 
-namespace open_stbc::audio {
+namespace dauntless::audio {
 
 bool NullBackend::init() { log_.push_back({"init"}); return true; }
 void NullBackend::shutdown() { log_.push_back({"shutdown"}); }
@@ -71,4 +71,4 @@ bool NullBackend::source_finished(SourceHandle h) {
     return false;
 }
 
-}  // namespace open_stbc::audio
+}  // namespace dauntless::audio

@@ -22,19 +22,19 @@ def test_glow_contributes_to_unlit_frame():
         pytest.skip(f"BC texture dir not available at {GALAXY_TEX}")
 
     os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
-    import _open_stbc_host
+    import _dauntless_host
 
-    _open_stbc_host.init(640, 360, "test_glow_unlit")
+    _dauntless_host.init(640, 360, "test_glow_unlit")
     try:
-        h = _open_stbc_host.load_model(str(GALAXY_NIF), str(GALAXY_TEX))
-        iid = _open_stbc_host.create_instance(h)
-        _open_stbc_host.set_world_transform(iid, [
+        h = _dauntless_host.load_model(str(GALAXY_NIF), str(GALAXY_TEX))
+        iid = _dauntless_host.create_instance(h)
+        _dauntless_host.set_world_transform(iid, [
             1.0, 0.0, 0.0, 0.0,
             0.0, 1.0, 0.0, 0.0,
             0.0, 0.0, 1.0, 0.0,
             0.0, 0.0, 0.0, 1.0,
         ])
-        _open_stbc_host.set_camera(
+        _dauntless_host.set_camera(
             eye=(0.0, 0.0, 1500.0),
             target=(0.0, 0.0, 0.0),
             up=(0.0, 1.0, 0.0),
@@ -43,16 +43,16 @@ def test_glow_contributes_to_unlit_frame():
             far=100000.0,
         )
 
-        _open_stbc_host.set_lighting((0.0, 0.0, 0.0), [])
-        _open_stbc_host.frame()
+        _dauntless_host.set_lighting((0.0, 0.0, 0.0), [])
+        _dauntless_host.frame()
 
-        fw, fh = _open_stbc_host.framebuffer_size()
+        fw, fh = _dauntless_host.framebuffer_size()
         cx, cy = fw // 2, fh // 2
 
         max_brightness = 0
         for dx in range(-60, 61, 20):
             for dy in range(-40, 41, 20):
-                r, g, b, _ = _open_stbc_host.read_pixel(cx + dx, cy + dy)
+                r, g, b, _ = _dauntless_host.read_pixel(cx + dx, cy + dy)
                 max_brightness = max(max_brightness, r + g + b)
 
         assert max_brightness > 80, (
@@ -61,6 +61,6 @@ def test_glow_contributes_to_unlit_frame():
             f"max r+g+b across saucer region = {max_brightness}."
         )
     finally:
-        _open_stbc_host.destroy_instance(iid)
-        _open_stbc_host.shutdown()
+        _dauntless_host.destroy_instance(iid)
+        _dauntless_host.shutdown()
         os.environ.pop("OPEN_STBC_HOST_HEADLESS", None)

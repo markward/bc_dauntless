@@ -20,17 +20,17 @@ def test_load_model_dedupes_by_nif_path():
     if not GALAXY_TEX.is_dir():
         pytest.skip(f"BC texture dir not available at {GALAXY_TEX}")
     os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
-    import _open_stbc_host
+    import _dauntless_host
     try:
-        _open_stbc_host.init(640, 480, "dedupe-test")
+        _dauntless_host.init(640, 480, "dedupe-test")
     except RuntimeError as e:
         pytest.skip(f"no GL context available: {e}")
     try:
-        h1 = _open_stbc_host.load_model(str(GALAXY_NIF), str(GALAXY_TEX))
-        h2 = _open_stbc_host.load_model(str(GALAXY_NIF), str(GALAXY_TEX))
+        h1 = _dauntless_host.load_model(str(GALAXY_NIF), str(GALAXY_TEX))
+        h2 = _dauntless_host.load_model(str(GALAXY_NIF), str(GALAXY_TEX))
         assert h1 == h2, f"load_model didn't dedupe: got {h1} and {h2}"
     finally:
-        _open_stbc_host.shutdown()
+        _dauntless_host.shutdown()
 
 
 def test_load_galaxy_and_create_instance():
@@ -39,16 +39,16 @@ def test_load_galaxy_and_create_instance():
     if not GALAXY_TEX.is_dir():
         pytest.skip(f"BC texture dir not available at {GALAXY_TEX}")
     os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
-    import _open_stbc_host
+    import _dauntless_host
     try:
-        _open_stbc_host.init(640, 480, "test")
+        _dauntless_host.init(640, 480, "test")
     except RuntimeError as e:
         pytest.skip(f"no GL context available: {e}")
     try:
-        h = _open_stbc_host.load_model(str(GALAXY_NIF), str(GALAXY_TEX))
+        h = _dauntless_host.load_model(str(GALAXY_NIF), str(GALAXY_TEX))
         assert h > 0
-        iid = _open_stbc_host.create_instance(h)
+        iid = _dauntless_host.create_instance(h)
         assert iid.generation > 0
-        _open_stbc_host.destroy_instance(iid)
+        _dauntless_host.destroy_instance(iid)
     finally:
-        _open_stbc_host.shutdown()
+        _dauntless_host.shutdown()

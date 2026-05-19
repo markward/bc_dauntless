@@ -1,7 +1,7 @@
 """Facade over the panel-DOM bindings.
 
 In production, `_active_dom` is set during init() to a wrapper around the
-_open_stbc_host extension. In tests, the fake_dom fixture swaps in an
+_dauntless_host extension. In tests, the fake_dom fixture swaps in an
 engine.ui._dom.FakeDom. Component code calls these module-level helpers and
 remains ignorant of which backing implementation is in use.
 """
@@ -71,18 +71,18 @@ def on_dblclick(element_id: int, callback: Callable[[], None]) -> None:
 # ── Production initialization ───────────────────────────────────────────────
 
 def init() -> None:
-    """Bind to the real _open_stbc_host extension.
+    """Bind to the real _dauntless_host extension.
 
     Must be called after engine.renderer.init() (the C++ host_bindings::init
     creates the UiSystem). Idempotent — re-calling rebinds to the same module.
     """
     global _active_dom
-    import _open_stbc_host as _h
+    import _dauntless_host as _h
     _active_dom = _RealDom(_h)
 
 
 class _RealDom:
-    """Wrapper exposing the FakeDom-compatible surface over _open_stbc_host."""
+    """Wrapper exposing the FakeDom-compatible surface over _dauntless_host."""
 
     def __init__(self, mod) -> None:
         self._m = mod

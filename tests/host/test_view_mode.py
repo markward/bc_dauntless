@@ -171,7 +171,7 @@ def test_apply_input_in_bridge_keeps_ship_moving_under_real_player_control():
 
 
 class _RecordingRenderer:
-    """Stand-in for the _open_stbc_host bindings module. Records calls
+    """Stand-in for the _dauntless_host bindings module. Records calls
     to bridge-pass-related functions so toggle wiring can be asserted
     without booting the real renderer."""
     def __init__(self):

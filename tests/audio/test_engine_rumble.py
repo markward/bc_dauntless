@@ -3,7 +3,7 @@ import struct
 import pytest
 
 os.environ.setdefault("OPEN_STBC_AUDIO", "0")
-_open_stbc_host = pytest.importorskip("_open_stbc_host")
+_dauntless_host = pytest.importorskip("_dauntless_host")
 
 from engine.audio.tg_sound import (
     TGSound, TGSoundManager, init_audio_for_tests, shutdown_audio_for_tests,
@@ -55,11 +55,11 @@ def test_engine_rumble_plays_on_publish_added(boot):
     ship_lifecycle.reset()
     install_engine_rumble_listener()
 
-    _open_stbc_host.audio.clear_command_log()
+    _dauntless_host.audio.clear_command_log()
     ship = _FakeShip("Federation Engines")
     ship_lifecycle.publish_added(ship)
 
-    entries = _open_stbc_host.audio.debug_command_log()
+    entries = _dauntless_host.audio.debug_command_log()
     play_entries = [e for e in entries if e["op"] == "play"]
     assert len(play_entries) == 1
     assert play_entries[0]["b"][0] is True       # looping
@@ -73,9 +73,9 @@ def test_engine_rumble_stops_on_destroy(boot):
     ship = _FakeShip("Federation Engines")
     ship_lifecycle.publish_added(ship)
 
-    _open_stbc_host.audio.clear_command_log()
+    _dauntless_host.audio.clear_command_log()
     ship_lifecycle.publish_destroyed(ship)
-    ops = [e["op"] for e in _open_stbc_host.audio.debug_command_log()]
+    ops = [e["op"] for e in _dauntless_host.audio.debug_command_log()]
     assert "stop" in ops
 
 
@@ -105,10 +105,10 @@ def test_update_positions_pushes_ship_world_location(boot):
     ship = _PositionedShip("Federation Engines")
     ship_lifecycle.publish_added(ship)
 
-    _open_stbc_host.audio.clear_command_log()
+    _dauntless_host.audio.clear_command_log()
     update_positions()
 
-    pos_entries = [e for e in _open_stbc_host.audio.debug_command_log()
+    pos_entries = [e for e in _dauntless_host.audio.debug_command_log()
                    if e["op"] == "set_position"]
     assert len(pos_entries) == 1
     assert pos_entries[0]["f"][0] == 100.0
@@ -135,10 +135,10 @@ def test_install_listener_replays_existing_live_ships(boot):
     ship = _FakeShip("Federation Engines")
     ship_lifecycle.publish_added(ship)
 
-    _open_stbc_host.audio.clear_command_log()
+    _dauntless_host.audio.clear_command_log()
     install_engine_rumble_listener()
 
-    play_entries = [e for e in _open_stbc_host.audio.debug_command_log()
+    play_entries = [e for e in _dauntless_host.audio.debug_command_log()
                     if e["op"] == "play"]
     assert len(play_entries) == 1
     assert play_entries[0]["b"][0] is True  # looping

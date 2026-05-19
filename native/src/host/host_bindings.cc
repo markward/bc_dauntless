@@ -1,7 +1,7 @@
 // native/src/host/host_bindings.cc
 //
 // pybind11 module exposing the renderer host API to Python. Built as both:
-//   1. A standalone Python extension module (_open_stbc_host.so) for pytest.
+//   1. A standalone Python extension module (_dauntless_host.so) for pytest.
 //   2. Statically linked into open_stbc (registered via
 //      PyImport_AppendInittab before Py_InitializeEx).
 //
@@ -150,7 +150,7 @@ scenegraph::ModelHandle load_model_impl(const std::string& nif_path,
 void init(int width, int height, const std::string& title,
           const std::string& ui_assets_root = "") {
     if (g_window) {
-        throw std::runtime_error("_open_stbc_host: init called while host already initialized");
+        throw std::runtime_error("_dauntless_host: init called while host already initialized");
     }
     // Visible by default. Tests that need offscreen can set OPEN_STBC_HOST_HEADLESS=1.
     bool visible = std::getenv("OPEN_STBC_HOST_HEADLESS") == nullptr;
@@ -228,7 +228,7 @@ bool should_close() {
 
 void frame() {
     if (!g_window || !g_pipeline || !g_submitter) {
-        throw std::runtime_error("_open_stbc_host: frame called before init");
+        throw std::runtime_error("_dauntless_host: frame called before init");
     }
     int fw = 0, fh = 0;
     g_window->framebuffer_size(&fw, &fh);
@@ -311,7 +311,7 @@ void frame() {
 
 }  // namespace
 
-PYBIND11_MODULE(_open_stbc_host, m) {
+PYBIND11_MODULE(_dauntless_host, m) {
     m.doc() = "open_stbc renderer host bindings (Phase B: window + frame stub)";
     m.def("init", &init,
           py::arg("width"), py::arg("height"), py::arg("title"),
@@ -1060,5 +1060,5 @@ PYBIND11_MODULE(_open_stbc_host, m) {
               }
           });
 
-    open_stbc::audio::register_python_bindings(m);
+    dauntless::audio::register_python_bindings(m);
 }

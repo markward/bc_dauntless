@@ -1,11 +1,11 @@
-"""Pythonic wrapper around the _open_stbc_host extension module.
+"""Pythonic wrapper around the _dauntless_host extension module.
 
 Re-exports the binding functions with type hints. Application code should
-import from here, not from _open_stbc_host directly.
+import from here, not from _dauntless_host directly.
 """
 from typing import Tuple
 
-import _open_stbc_host as _h
+import _dauntless_host as _h
 
 InstanceId = _h.InstanceId
 

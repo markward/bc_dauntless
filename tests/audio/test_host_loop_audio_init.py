@@ -18,20 +18,20 @@ def test_host_loop_exposes_audio_helpers():
 
 def test_init_audio_uses_null_backend_when_env_set(monkeypatch):
     monkeypatch.setenv("OPEN_STBC_AUDIO", "0")
-    _open_stbc_host = pytest.importorskip("_open_stbc_host")
+    _dauntless_host = pytest.importorskip("_dauntless_host")
     from engine import host_loop
     host_loop.init_audio()
-    log_ops = [e["op"] for e in _open_stbc_host.audio.debug_command_log()]
+    log_ops = [e["op"] for e in _dauntless_host.audio.debug_command_log()]
     assert "init" in log_ops
     host_loop.shutdown_audio()
 
 
 def test_tick_audio_pushes_listener_pose(monkeypatch):
     monkeypatch.setenv("OPEN_STBC_AUDIO", "0")
-    _open_stbc_host = pytest.importorskip("_open_stbc_host")
+    _dauntless_host = pytest.importorskip("_dauntless_host")
     from engine import host_loop
     host_loop.init_audio()
-    _open_stbc_host.audio.clear_command_log()
+    _dauntless_host.audio.clear_command_log()
     host_loop.tick_audio(
         camera_position=(0.0, 0.0, 0.0),
         camera_forward=(0.0, 0.0, -1.0),
@@ -40,5 +40,5 @@ def test_tick_audio_pushes_listener_pose(monkeypatch):
         player=None,
     )
     assert any(e["op"] == "set_listener"
-               for e in _open_stbc_host.audio.debug_command_log())
+               for e in _dauntless_host.audio.debug_command_log())
     host_loop.shutdown_audio()

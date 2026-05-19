@@ -1,32 +1,32 @@
-"""Tests for the _open_stbc_host.dust_set_enabled / dust_set_density bindings."""
+"""Tests for the _dauntless_host.dust_set_enabled / dust_set_density bindings."""
 import os
 
 
 def test_dust_set_enabled_before_init_is_silent():
-    import _open_stbc_host
+    import _dauntless_host
     # No init() yet — call should be a no-op, not a crash.
-    _open_stbc_host.dust_set_enabled(True)
-    _open_stbc_host.dust_set_enabled(False)
+    _dauntless_host.dust_set_enabled(True)
+    _dauntless_host.dust_set_enabled(False)
 
 
 def test_dust_set_density_before_init_is_silent():
-    import _open_stbc_host
-    _open_stbc_host.dust_set_density(100)
+    import _dauntless_host
+    _dauntless_host.dust_set_density(100)
 
 
 def test_dust_toggle_after_init_does_not_crash():
     os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
-    import _open_stbc_host
-    _open_stbc_host.init(64, 64, "test_dust_bindings")
+    import _dauntless_host
+    _dauntless_host.init(64, 64, "test_dust_bindings")
     try:
-        _open_stbc_host.dust_set_enabled(False)
-        _open_stbc_host.dust_set_enabled(True)
-        _open_stbc_host.dust_set_density(1024)
-        _open_stbc_host.dust_set_density(0)
-        _open_stbc_host.dust_set_density(-5)        # clamped to 0 internally
-        _open_stbc_host.dust_set_density(10_000_000)  # clamped to 50000
+        _dauntless_host.dust_set_enabled(False)
+        _dauntless_host.dust_set_enabled(True)
+        _dauntless_host.dust_set_density(1024)
+        _dauntless_host.dust_set_density(0)
+        _dauntless_host.dust_set_density(-5)        # clamped to 0 internally
+        _dauntless_host.dust_set_density(10_000_000)  # clamped to 50000
     finally:
-        _open_stbc_host.shutdown()
+        _dauntless_host.shutdown()
 
 
 def test_renderer_facade_exposes_dust_helpers():
@@ -49,11 +49,11 @@ def test_renderer_facade_callable_after_init():
 
 def test_frame_with_dust_disabled_does_not_crash():
     os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
-    import _open_stbc_host
-    _open_stbc_host.init(64, 64, "test_dust_frame")
+    import _dauntless_host
+    _dauntless_host.init(64, 64, "test_dust_frame")
     try:
-        _open_stbc_host.dust_set_enabled(False)
-        _open_stbc_host.set_camera(
+        _dauntless_host.dust_set_enabled(False)
+        _dauntless_host.set_camera(
             eye=(0.0, 0.0, 100.0),
             target=(0.0, 0.0, 0.0),
             up=(0.0, 1.0, 0.0),
@@ -61,11 +61,11 @@ def test_frame_with_dust_disabled_does_not_crash():
             near=1.0,
             far=200000.0,
         )
-        _open_stbc_host.frame()
+        _dauntless_host.frame()
     finally:
-        _open_stbc_host.shutdown()
+        _dauntless_host.shutdown()
 
 
 def test_key_f7_exposed():
-    import _open_stbc_host
-    assert hasattr(_open_stbc_host.keys, "KEY_F7")
+    import _dauntless_host
+    assert hasattr(_dauntless_host.keys, "KEY_F7")

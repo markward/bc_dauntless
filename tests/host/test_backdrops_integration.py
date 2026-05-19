@@ -38,15 +38,15 @@ def _setup_for_pixel_test():
     if not STARS_TGA.is_file():
         pytest.skip("BC assets not available")
     os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
-    import _open_stbc_host
-    _open_stbc_host.init(640, 360, "test_backdrops_integration")
-    _open_stbc_host.set_camera(
+    import _dauntless_host
+    _dauntless_host.init(640, 360, "test_backdrops_integration")
+    _dauntless_host.set_camera(
         eye=(0.0, 0.0, 1500.0),
         target=(0.0, 0.0, 0.0),
         up=(0.0, 1.0, 0.0),
         fov_y_rad=1.0472, near=1.0, far=100000.0,
     )
-    return _open_stbc_host
+    return _dauntless_host
 
 
 @pytest.mark.skipif(not _PIXEL_TESTS_RELIABLE,

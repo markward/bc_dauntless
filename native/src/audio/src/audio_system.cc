@@ -1,7 +1,7 @@
 #include <audio/audio_system.h>
 #include <audio/wav.h>
 
-namespace open_stbc::audio {
+namespace dauntless::audio {
 
 AudioSystem::AudioSystem(std::unique_ptr<IAudioBackend> b)
     : backend_(std::move(b)) {}
@@ -118,4 +118,4 @@ void AudioSystem::update(float lx, float ly, float lz,
     }
 }
 
-}  // namespace open_stbc::audio
+}  // namespace dauntless::audio

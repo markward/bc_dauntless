@@ -13,7 +13,7 @@ from engine.appc.properties import ShieldProperty
 def test_engine_renderer_exposes_shield_surface():
     """engine.renderer must re-export the shield binding functions —
     application code (engine.host_loop, engine.shields callers) goes
-    through this wrapper, not _open_stbc_host directly. MagicMock-based
+    through this wrapper, not _dauntless_host directly. MagicMock-based
     tests below won't catch a missing wrapper, so this smoke check is
     load-bearing."""
     import engine.renderer as r

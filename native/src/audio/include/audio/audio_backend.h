@@ -2,7 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace open_stbc::audio {
+namespace dauntless::audio {
 
 using BufferHandle = uint32_t;  // 0 == invalid
 using SourceHandle = uint32_t;  // 0 == invalid
@@ -47,4 +47,4 @@ public:
     virtual bool source_finished(SourceHandle) = 0;
 };
 
-}  // namespace open_stbc::audio
+}  // namespace dauntless::audio

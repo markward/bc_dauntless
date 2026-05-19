@@ -1,15 +1,15 @@
-"""Tests for the _open_stbc_host.set_suns binding."""
+"""Tests for the _dauntless_host.set_suns binding."""
 import os
 
 
 def test_set_suns_empty_list_does_not_raise():
-    import _open_stbc_host
-    _open_stbc_host.set_suns([])
+    import _dauntless_host
+    _dauntless_host.set_suns([])
 
 
 def test_set_suns_single_descriptor_does_not_raise():
-    import _open_stbc_host
-    _open_stbc_host.set_suns([{
+    import _dauntless_host
+    _dauntless_host.set_suns([{
         "position":          (0.0, 0.0, 0.0),
         "radius":            4000.0,
         "base_texture_path": "/dev/null",
@@ -18,14 +18,14 @@ def test_set_suns_single_descriptor_does_not_raise():
 
 
 def test_set_suns_many_descriptors_does_not_raise():
-    import _open_stbc_host
+    import _dauntless_host
     descriptor = {
         "position":          (100.0, 200.0, 300.0),
         "radius":            1000.0,
         "base_texture_path": "/dev/null",
         "corona_radius":     2000.0,
     }
-    _open_stbc_host.set_suns([descriptor] * 5)
+    _dauntless_host.set_suns([descriptor] * 5)
 
 
 def test_renderer_module_set_suns_wrapper_exists():
@@ -36,16 +36,16 @@ def test_renderer_module_set_suns_wrapper_exists():
 
 def test_frame_after_set_suns_does_not_crash():
     os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
-    import _open_stbc_host
-    _open_stbc_host.init(64, 64, "test_sun_bindings")
+    import _dauntless_host
+    _dauntless_host.init(64, 64, "test_sun_bindings")
     try:
-        _open_stbc_host.set_suns([{
+        _dauntless_host.set_suns([{
             "position":          (0.0, 0.0, 0.0),
             "radius":            4000.0,
             "base_texture_path": "/dev/null",
             "corona_radius":     8000.0,
         }])
-        _open_stbc_host.set_camera(
+        _dauntless_host.set_camera(
             eye=(0.0, 0.0, 10000.0),
             target=(0.0, 0.0, 0.0),
             up=(0.0, 1.0, 0.0),
@@ -53,6 +53,6 @@ def test_frame_after_set_suns_does_not_crash():
             near=1.0,
             far=200000.0,
         )
-        _open_stbc_host.frame()   # must not crash or raise
+        _dauntless_host.frame()   # must not crash or raise
     finally:
-        _open_stbc_host.shutdown()
+        _dauntless_host.shutdown()

@@ -14,7 +14,7 @@ os.environ.setdefault("OPEN_STBC_AUDIO", "0")
 PROJECT_ROOT = Path(__file__).parent.parent
 SDK_SCRIPTS = PROJECT_ROOT / "sdk" / "Build" / "scripts"
 
-# Make the C++-built _open_stbc_host extension importable. CMake outputs it
+# Make the C++-built _dauntless_host extension importable. CMake outputs it
 # under build/python/ relative to the project root.
 _BUILD_PYTHON = PROJECT_ROOT / "build" / "python"
 if _BUILD_PYTHON.is_dir() and str(_BUILD_PYTHON) not in sys.path:

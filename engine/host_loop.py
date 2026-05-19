@@ -20,7 +20,7 @@ import math as _math
 
 # ── Audio integration ────────────────────────────────────────────────────────
 try:
-    import _open_stbc_host as _host_mod
+    import _dauntless_host as _host_mod
     _audio_mod = _host_mod.audio
 except (ImportError, AttributeError):
     _audio_mod = None
@@ -138,7 +138,7 @@ def _bootstrap_firing_pipeline() -> None:
 def _poll_mouse_buttons(host) -> None:
     """Forward host-side mouse rising/falling edges into g_kInputManager.
 
-    `host` is the _open_stbc_host module (the binding from host_bindings.cc).
+    `host` is the _dauntless_host module (the binding from host_bindings.cc).
     No-op when host doesn't expose the button-poll methods (e.g. headless
     test setup that imports host_loop without a window).
     """
@@ -206,7 +206,7 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
     hit VFX, ages out expired VFX, and pushes current torpedo + hit-VFX
     lists to the renderer.
 
-    `host` is the _open_stbc_host module (the binding from
+    `host` is the _dauntless_host module (the binding from
     host_bindings.cc).  When None (headless tests), the renderer pushes
     are skipped — combat logic still runs.
 
@@ -685,7 +685,7 @@ class _PlayerControl:
     def apply(self, player, dt: float, h) -> None:
         """Read keys, update player transform.
 
-        `h` is the _open_stbc_host bindings module (or any object with
+        `h` is the _dauntless_host bindings module (or any object with
         key_state, key_pressed, and `keys.KEY_*` attributes).
         """
         # 1. Throttle (one-shot edges).  R is checked before digits.
@@ -1647,7 +1647,7 @@ class _NoInputReader:
     returns False, so impulse_level stays put and angular targets are
     zero, while the ramp + integration steps still execute.
 
-    Mirrors the surface of _open_stbc_host that _PlayerControl touches.
+    Mirrors the surface of _dauntless_host that _PlayerControl touches.
     Singleton — see _NO_INPUT below — to avoid per-tick allocation.
     """
     class _Keys:
@@ -1944,12 +1944,12 @@ def run(mission_name: str = SHIP_GATE_MISSION,
         # orbit the player had set. C key reverses (resets + unlocks).
         target_list.on_target_change = lambda _ship: cam_control.lock_to_target()
         try:
-            import _open_stbc_host as _h
+            import _dauntless_host as _h
         except ImportError:
             _h = None  # bindings module not built; skip input handling.
         # Bindings older than the orbit-camera change won't expose
         # consume_scroll_y; fall back to a zero-delta lambda so host_loop
-        # still runs against an old _open_stbc_host.so without rebuilding.
+        # still runs against an old _dauntless_host.so without rebuilding.
         _consume_scroll = getattr(_h, "consume_scroll_y", None) if _h else None
         TICK_DT = 1.0 / 60.0
 

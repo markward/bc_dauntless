@@ -6,7 +6,7 @@
 
 namespace py = pybind11;
 
-namespace open_stbc::audio {
+namespace dauntless::audio {
 
 static std::unique_ptr<AudioSystem> g_system;
 
@@ -136,4 +136,4 @@ void register_python_bindings(py::module_& parent) {
     m.def("clear_command_log", &clear_command_log_impl);
 }
 
-}  // namespace open_stbc::audio
+}  // namespace dauntless::audio

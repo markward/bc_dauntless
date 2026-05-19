@@ -69,7 +69,7 @@ def test_run_M1_Basic_in_clean_subprocess():
     if not (project_root / "game" / "data" / "Models" / "Ships" / "Galaxy" / "Galaxy.nif").is_file():
         pytest.skip("BC assets not available")
     if not (project_root / "build" / "python").is_dir():
-        pytest.skip("native _open_stbc_host module not built")
+        pytest.skip("native _dauntless_host module not built")
 
     env = dict(os.environ)
     env["OPEN_STBC_HOST_HEADLESS"] = "1"

@@ -3,7 +3,7 @@ import struct
 import pytest
 
 os.environ.setdefault("OPEN_STBC_AUDIO", "0")
-_open_stbc_host = pytest.importorskip("_open_stbc_host")
+_dauntless_host = pytest.importorskip("_dauntless_host")
 
 from engine.audio.tg_sound import (
     TGSound, TGSoundManager, init_audio_for_tests, shutdown_audio_for_tests,
@@ -44,10 +44,10 @@ def test_transition_to_red_fires_red_sound(boot):
     listener = AlertAudioListener()
     ship = _FakeShip(level=_FakeShip.GREEN_ALERT)
     listener.tick(ship)            # baseline; no transition
-    _open_stbc_host.audio.clear_command_log()
+    _dauntless_host.audio.clear_command_log()
     ship.SetAlertLevel(_FakeShip.RED_ALERT)
     listener.tick(ship)
-    play_entries = [e for e in _open_stbc_host.audio.debug_command_log()
+    play_entries = [e for e in _dauntless_host.audio.debug_command_log()
                     if e["op"] == "play"]
     assert len(play_entries) == 1
 
@@ -56,9 +56,9 @@ def test_no_transition_no_sound(boot):
     listener = AlertAudioListener()
     ship = _FakeShip(level=_FakeShip.YELLOW_ALERT)
     listener.tick(ship)
-    _open_stbc_host.audio.clear_command_log()
+    _dauntless_host.audio.clear_command_log()
     listener.tick(ship)
-    play_entries = [e for e in _open_stbc_host.audio.debug_command_log()
+    play_entries = [e for e in _dauntless_host.audio.debug_command_log()
                     if e["op"] == "play"]
     assert play_entries == []
 
@@ -75,12 +75,12 @@ def test_each_named_level_maps_to_its_sound(boot):
     ]
     for lvl, expected_name in cases:
         ship.SetAlertLevel(lvl)
-        _open_stbc_host.audio.clear_command_log()
+        _dauntless_host.audio.clear_command_log()
         listener.tick(ship)
-        play_entries = [e for e in _open_stbc_host.audio.debug_command_log()
+        play_entries = [e for e in _dauntless_host.audio.debug_command_log()
                         if e["op"] == "play"]
         assert len(play_entries) == 1
-        expected_buf = _open_stbc_host.audio.get_sound(expected_name)
+        expected_buf = _dauntless_host.audio.get_sound(expected_name)
         assert play_entries[0]["u"][0] == expected_buf, (
             f"Expected {expected_name} (buf {expected_buf}), "
             f"got buf {play_entries[0]['u'][0]}"
@@ -95,10 +95,10 @@ def test_reset_rebaselines_so_next_tick_is_silent(boot):
     listener.tick(ship)            # would fire RedAlertSound
 
     listener.reset()
-    _open_stbc_host.audio.clear_command_log()
+    _dauntless_host.audio.clear_command_log()
     listener.tick(ship)            # still RED; reset cleared the baseline → silent
 
-    play_entries = [e for e in _open_stbc_host.audio.debug_command_log()
+    play_entries = [e for e in _dauntless_host.audio.debug_command_log()
                     if e["op"] == "play"]
     assert play_entries == []
 

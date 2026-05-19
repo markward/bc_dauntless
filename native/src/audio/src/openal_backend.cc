@@ -4,7 +4,7 @@
 #include <cstdio>
 #include <unordered_map>
 
-namespace open_stbc::audio {
+namespace dauntless::audio {
 
 namespace {
 
@@ -160,4 +160,4 @@ std::unique_ptr<IAudioBackend> make_openal_backend() {
     return std::make_unique<OpenALBackend>();
 }
 
-}  // namespace open_stbc::audio
+}  // namespace dauntless::audio

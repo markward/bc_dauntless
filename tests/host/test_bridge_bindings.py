@@ -7,10 +7,10 @@ import pytest
 
 @pytest.fixture
 def host_module():
-    """The compiled _open_stbc_host module; xfail-cleanly if the build
+    """The compiled _dauntless_host module; xfail-cleanly if the build
     is stale and the bindings haven't been refreshed."""
-    pytest.importorskip("_open_stbc_host")
-    import _open_stbc_host as h
+    pytest.importorskip("_dauntless_host")
+    import _dauntless_host as h
     return h
 
 

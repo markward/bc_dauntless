@@ -5,7 +5,7 @@
 #include <string>
 #include <unordered_map>
 
-namespace open_stbc::audio {
+namespace dauntless::audio {
 
 using SoundId = uint32_t;    // logical buffer id, returned to Python
 using PlayingId = uint32_t;  // logical source id, returned to Python
@@ -74,4 +74,4 @@ private:
     NodePositionFn node_pos_fn_;
 };
 
-}  // namespace open_stbc::audio
+}  // namespace dauntless::audio
