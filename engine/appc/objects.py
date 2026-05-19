@@ -411,9 +411,35 @@ class ObjectGroup(TGEventHandlerObject):
                 result.append(obj)
         return tuple(result)
 
+    def GetActiveObjectTuple(self) -> tuple:
+        """No-arg variant: walk every live set in g_kSetManager looking for
+        any object whose name matches one of our watched names. SDK
+        conditions use this when they don't know which set their target
+        lives in yet."""
+        import App
+        result = []
+        for pSet in App.g_kSetManager._sets.values():
+            for name in self._names:
+                obj = pSet.GetObject(name) if hasattr(pSet, "GetObject") else None
+                if obj is not None and obj not in result:
+                    result.append(obj)
+        return tuple(result)
+
     # ── Event flags ──────────────────────────────────────────────────────────
-    def SetEventFlag(self, name: str, flag: int) -> None:
-        self._event_flags.setdefault(name, set()).add(int(flag))
+    def SetEventFlag(self, *args) -> None:
+        """Two forms:
+            SetEventFlag(name, flag)  → per-name flag (legacy callers)
+            SetEventFlag(flag)        → group-level: apply to all watched names
+        SDK conditions use the single-arg form to mark "I want enter/exit
+        events for everything in my group."
+        """
+        if len(args) == 1:
+            flag = int(args[0])
+            for name in self._names:
+                self._event_flags.setdefault(name, set()).add(flag)
+        elif len(args) == 2:
+            name, flag = args
+            self._event_flags.setdefault(name, set()).add(int(flag))
 
     def ClearEventFlag(self, name: str, flag: int) -> None:
         flags = self._event_flags.get(name)
