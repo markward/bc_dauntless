@@ -186,6 +186,24 @@ def test_set_class_proximity_manager_accumulates():
     assert pSet.GetProximityManager().GetNumObjects() == 1
 
 
+def test_get_next_object_returns_none_for_no_op_iteration():
+    """SDK iterator pattern: while pObject: pObject = pProx.GetNextObject(pIter).
+    GetLineIntersectObjects returns () in the stub model, so GetNextObject
+    must return None on first call to terminate the loop without entering."""
+    pm = ProximityManager()
+    it = pm.GetLineIntersectObjects(None, None, 1.0, 1)
+    assert pm.GetNextObject(it) is None
+
+
+def test_get_next_object_accepts_arbitrary_iterator_arg():
+    """The iterator handle is opaque — accept (), None, and arbitrary
+    objects without AttributeError."""
+    pm = ProximityManager()
+    assert pm.GetNextObject(()) is None
+    assert pm.GetNextObject(None) is None
+    assert pm.GetNextObject("anything") is None
+
+
 # ── App namespace ────────────────────────────────────────────────────────────
 
 def test_app_exposes_planet_factories():
