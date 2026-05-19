@@ -6,8 +6,12 @@ MaxAccel (with FALLBACK_MAX_ACCEL for ships without a populated
 ImpulseEngineSubsystem). Position advances along the world-space
 direction each tick.
 
-Angular integration is not yet implemented — `_target_angular_velocity_setpoint`
-is read but not consumed yet.
+Reads each ship's `_target_angular_velocity_setpoint` and ramps
+`_current_angular_velocity` per axis toward it at the ship's
+MaxAngularAccel (same fallback rule). The per-tick rotation delta
+is built as pitch/yaw/roll matrices and pre-multiplied into the
+existing world rotation — matches the `_PlayerControl.apply`
+body-frame-delta convention.
 
 Ships whose setpoints are still None are skipped entirely so the
 player ship (driven by `engine/host_loop.py:_PlayerControl` directly
@@ -97,4 +101,29 @@ def _step_ship_motion(ship, dt: float) -> None:
             p.z + world_dir.z * ship._current_speed * dt,
         )
 
-    # Angular integration: not yet implemented.
+    # ── Resolve target angular velocity ──────────────────────────────
+    if av is None:
+        target_av_x = target_av_y = target_av_z = 0.0
+    else:
+        target_av_x, target_av_y, target_av_z = av.x, av.y, av.z
+
+    # ── Ramp each axis of _current_angular_velocity toward target ────
+    ang_step = _max_angular_accel(ship) * dt
+    cav = ship._current_angular_velocity
+    cav.x = _ramp_toward(cav.x, target_av_x, ang_step)
+    cav.y = _ramp_toward(cav.y, target_av_y, ang_step)
+    cav.z = _ramp_toward(cav.z, target_av_z, ang_step)
+
+    # ── Integrate rotation ───────────────────────────────────────────
+    # Same convention as _PlayerControl.apply step 4 (host_loop.py:741):
+    # row-vector matrices, body-frame delta pre-multiplies. Pitch (X) →
+    # yaw (Z) → roll (Y) Euler order. Body axes map: X=right, Y=forward,
+    # Z=up; cav components are per-axis rates around those body axes.
+    if cav.x or cav.y or cav.z:
+        R = ship.GetWorldRotation()
+        R_pitch = TGMatrix3(); R_pitch.MakeRotation(cav.x * dt, _X_AXIS)
+        R_yaw   = TGMatrix3(); R_yaw.MakeRotation(cav.z * dt, _Z_AXIS)
+        R_roll  = TGMatrix3(); R_roll.MakeRotation(cav.y * dt, _Y_AXIS)
+        delta = R_pitch.MultMatrix(R_yaw).MultMatrix(R_roll)
+        R = delta.MultMatrix(R)
+        ship.SetMatrixRotation(R)

@@ -153,3 +153,88 @@ def test_direction_world_space_ignores_rotation():
     p = ship.GetTranslate()
     assert p.y == pytest.approx(20.0 * dt)
     assert p.x == pytest.approx(0.0, abs=1e-9)
+
+
+def test_angular_ramp_snaps_with_fallback_accel():
+    """Test ship has no IES populated; the angular ramp snaps to
+    target in one tick under FALLBACK_MAX_ACCEL."""
+    ship = ShipClass()
+    _place(ship)
+    ship.SetSpeed(0.0, TGPoint3_GetModelForward(),
+                  App.PhysicsObjectClass.DIRECTION_MODEL_SPACE)
+    target_av = TGPoint3(0.0, 0.0, 1.0)  # yaw at 1 rad/s
+    ship.SetTargetAngularVelocityDirect(target_av)
+
+    tick_all_ship_motion(1.0 / 60.0)
+    assert ship._current_angular_velocity.x == pytest.approx(0.0)
+    assert ship._current_angular_velocity.y == pytest.approx(0.0)
+    assert ship._current_angular_velocity.z == pytest.approx(1.0)
+
+
+def test_angular_zero_setpoint_stops_rotation():
+    """A ship rotating at _current_angular_velocity != 0 ramps to
+    zero when the target is zero."""
+    ship = ShipClass()
+    _place(ship)
+    ship._current_angular_velocity = TGPoint3(0.5, 0.5, 0.5)
+    ship.SetSpeed(0.0, TGPoint3_GetModelForward(),
+                  App.PhysicsObjectClass.DIRECTION_MODEL_SPACE)
+    ship.SetTargetAngularVelocityDirect(TGPoint3(0.0, 0.0, 0.0))
+
+    tick_all_ship_motion(1.0 / 60.0)
+    assert ship._current_angular_velocity.x == pytest.approx(0.0)
+    assert ship._current_angular_velocity.y == pytest.approx(0.0)
+    assert ship._current_angular_velocity.z == pytest.approx(0.0)
+
+
+def test_angular_rotation_advances_world_rotation():
+    """After one tick at yaw=1 rad/s for dt=1/60, the ship's world
+    rotation has advanced by ~1/60 rad around Z (model-up axis).
+    Easiest check: model-forward (+Y) now has a small +X (or -X)
+    component, no longer pure +Y."""
+    ship = ShipClass()
+    _place(ship)
+    ship.SetSpeed(0.0, TGPoint3_GetModelForward(),
+                  App.PhysicsObjectClass.DIRECTION_MODEL_SPACE)
+    ship.SetTargetAngularVelocityDirect(TGPoint3(0.0, 0.0, 1.0))
+
+    dt = 1.0 / 60.0
+    tick_all_ship_motion(dt)
+
+    R = ship.GetWorldRotation()
+    fwd_world = R.GetRow(1)  # model-Y mapped into world
+    # After yaw of ~dt rad, |x| ≈ sin(dt), |y| ≈ cos(dt).
+    assert abs(fwd_world.x) == pytest.approx(math.sin(dt), abs=1e-6)
+    assert fwd_world.y == pytest.approx(math.cos(dt), abs=1e-6)
+    assert fwd_world.z == pytest.approx(0.0, abs=1e-9)
+
+
+def test_angular_per_axis_ramp_is_independent():
+    """When the target has nonzero pitch but zero yaw, only pitch
+    rate ramps up — yaw and roll stay at zero."""
+    ship = ShipClass()
+    _place(ship)
+    ship._current_angular_velocity = TGPoint3(0.0, 0.0, 0.0)
+    ship.SetSpeed(0.0, TGPoint3_GetModelForward(),
+                  App.PhysicsObjectClass.DIRECTION_MODEL_SPACE)
+    ship.SetTargetAngularVelocityDirect(TGPoint3(0.7, 0.0, 0.0))
+
+    tick_all_ship_motion(1.0 / 60.0)
+    assert ship._current_angular_velocity.x == pytest.approx(0.7)
+    assert ship._current_angular_velocity.y == pytest.approx(0.0)
+    assert ship._current_angular_velocity.z == pytest.approx(0.0)
+
+
+def test_motion_integrator_runs_after_ai_setpoints():
+    """Sanity: when the integrator runs, GetSpeedSetpoint must already
+    reflect the AI's intent — order-of-ops is locked by the GameLoop
+    test in Task 6. This duplicates that contract at the integrator
+    boundary so a bug in either side fails locally."""
+    ship = ShipClass()
+    _place(ship)
+    ship.SetImpulse(7.0, TGPoint3_GetModelForward(),
+                    App.PhysicsObjectClass.DIRECTION_MODEL_SPACE)
+    ship.SetTargetAngularVelocityDirect(TGPoint3(0.0, 0.0, 0.0))
+
+    tick_all_ship_motion(1.0 / 60.0)
+    assert ship._current_speed == pytest.approx(7.0)
