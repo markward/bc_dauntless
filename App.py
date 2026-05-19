@@ -305,6 +305,36 @@ def RepairSubsystemProperty_Cast(obj):
     return None
 
 
+def PhaserSystem_Cast(obj):
+    """SDK Preprocessors.py:493 — `pPhaserSystem = App.PhaserSystem_Cast(pWeaponSystem)`."""
+    from engine.appc.subsystems import PhaserSystem
+    return obj if isinstance(obj, PhaserSystem) else None
+
+
+def TorpedoSystem_Cast(obj):
+    """SDK Preprocessors.py:506, 445."""
+    from engine.appc.subsystems import TorpedoSystem
+    return obj if isinstance(obj, TorpedoSystem) else None
+
+
+def TractorBeamSystem_Cast(obj):
+    """SDK Preprocessors.py:479."""
+    from engine.appc.subsystems import TractorBeamSystem
+    return obj if isinstance(obj, TractorBeamSystem) else None
+
+
+def ShipSubsystem_Cast(obj):
+    """SDK Preprocessors.py:326 — round-trip via TGObject_GetTGObjectPtr."""
+    from engine.appc.subsystems import ShipSubsystem
+    return obj if isinstance(obj, ShipSubsystem) else None
+
+
+def TorpedoTube_Cast(obj):
+    """SDK Preprocessors.py:455 — used in dumb-fire torpedo iteration."""
+    from engine.appc.subsystems import TorpedoTube
+    return obj if isinstance(obj, TorpedoTube) else None
+
+
 # ── App.AT_* ammo-type constants ─────────────────────────────────────────────
 # SDK code treats these as TorpedoAmmoType instances (objects with GetAmmoName)
 # rather than plain ints — MissionLib.SetTotalTorpsAtStarbase iterates the
