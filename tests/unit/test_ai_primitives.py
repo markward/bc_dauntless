@@ -95,9 +95,14 @@ def test_plain_ai_get_script_instance_persists():
 
 
 def test_plain_ai_script_instance_set_get_round_trip():
-    """SDK pattern: pScript.SetCircleSpeed(30); pScript.GetCircleSpeed()."""
+    """SDK pattern: pScript.SetCircleSpeed(30); pScript.GetCircleSpeed().
+
+    Uses a non-existent module name so SetScriptModule falls back to the
+    _AIScriptInstance data-bag — the path exercised here is the legacy
+    Phase-1 stub for scripts we haven't validated yet.
+    """
     ai = PlainAI_Create(None, "X")
-    ai.SetScriptModule("CircleObject")
+    ai.SetScriptModule("NoSuchAIScript_DataBag")
     s = ai.GetScriptInstance()
     s.SetCircleSpeed(30)
     s.SetTargetObjectName("Enterprise")
@@ -108,9 +113,12 @@ def test_plain_ai_script_instance_set_get_round_trip():
 
 
 def test_plain_ai_script_instance_unknown_method_no_op():
-    """Methods like WarpBlindly, PrepareToWarp absorb without raising."""
+    """Methods like WarpBlindly, PrepareToWarp absorb without raising.
+
+    Uses a non-existent module name to exercise the data-bag fallback.
+    """
     ai = PlainAI_Create(None, "X")
-    ai.SetScriptModule("Warp")
+    ai.SetScriptModule("NoSuchAIScript_DataBag")
     s = ai.GetScriptInstance()
     s.WarpBlindly()  # must not raise
     s.PrepareToWarp("DestSet", "DestPlacement")

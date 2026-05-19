@@ -220,21 +220,57 @@ class PlainAI(ArtificialIntelligence):
     def __init__(self, pShip=None, name: str = ""):
         super().__init__(pShip, name)
         self._script_module: str = ""
-        self._script_instance: "_AIScriptInstance | None" = None
+        self._script_instance = None
+        self._external_functions: dict = {}
+        # Driver bookkeeping — first Update fires when game_time >= 0.0,
+        # i.e. on the very first AI tick. Updated by ai_driver after each
+        # Update() call using the script's GetNextUpdateTime().
+        self._next_update_time: float = 0.0
 
     def SetScriptModule(self, module_name: str) -> None:
+        """Import AI.PlainAI.<module_name> and instantiate <module_name>(pCodeAI=self).
+
+        SDK pattern (BaseAI.py:14): the loaded class's __init__ takes pCodeAI
+        as a positional arg and stores it on self. The script reaches back
+        through self.pCodeAI.GetShip() for all motion + weapon calls.
+
+        Falls back to the _AIScriptInstance data-bag if the module can't be
+        imported or doesn't define the expected class — keeps Phase-1 mission
+        init working for scripts we haven't validated yet.
+        """
         self._script_module = module_name
-        # Fresh script instance per module assignment — SDK behaviour swaps
-        # the underlying Appc script object when SetScriptModule is called.
+        try:
+            mod = __import__("AI.PlainAI." + module_name, None, None, [module_name])
+            cls = getattr(mod, module_name, None)
+            if cls is not None:
+                self._script_instance = cls(self)
+                return
+        except Exception:
+            pass
+        # Fallback: data-bag for unimplemented scripts.
         self._script_instance = _AIScriptInstance(self)
 
     def GetScriptModule(self) -> str:
         return self._script_module
 
-    def GetScriptInstance(self) -> "_AIScriptInstance":
+    def GetScriptInstance(self):
         if self._script_instance is None:
             self._script_instance = _AIScriptInstance(self)
         return self._script_instance
+
+    def RegisterExternalFunction(self, name: str, mapping) -> None:
+        """Record an externally-registered function name -> info dict.
+
+        Called by BaseAI.SetExternalFunctions (sdk/.../AI/PlainAI/BaseAI.py:54)
+        and by various Conditions/Preprocessors that want to expose a method
+        to the AI driver. The mapping is opaque metadata — we store it
+        verbatim so future reflection (target selection, weapon firing) can
+        pull values back out.
+        """
+        self._external_functions[name] = mapping
+
+    def GetExternalFunctions(self) -> dict:
+        return dict(self._external_functions)
 
     def StopCallingActivate(self) -> None:
         pass
