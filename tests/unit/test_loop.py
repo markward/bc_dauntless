@@ -96,3 +96,65 @@ def test_gameloop_ticks_ai_driver_for_ships_with_ai():
         assert pai.GetScriptInstance().calls == 1
     finally:
         App.g_kSetManager._sets.pop("aitest", None)
+
+
+def test_gameloop_runs_ai_before_motion_integrator():
+    """Within one tick: AI scripts write setpoints, THEN the motion
+    integrator reads them. If the order is reversed, the setpoint
+    from this tick wouldn't move the ship until next tick.
+
+    Three asserts:
+      1. AI script Update fires (proves tick_all_ai ran).
+      2. _speed_setpoint is non-None when the integrator reads it
+         (proves AI ran first).
+      3. _current_speed advanced from 0 -> target on this very tick
+         (proves the integrator ran after AI, not before).
+    """
+    import App
+    from engine.appc.ai import PlainAI
+    from engine.appc.math import TGPoint3, TGPoint3_GetModelForward
+    from engine.appc.ships import ShipClass
+
+    setpoint_seen_during_update = []
+
+    class _Leaf:
+        def __init__(self):
+            self.calls = 0
+        def GetNextUpdateTime(self): return 1.0
+        def Update(self):
+            self.calls += 1
+            # When this fires, the integrator has NOT yet run for
+            # this tick — _current_speed should still be its prior
+            # value (0 on first tick).
+            setpoint_seen_during_update.append(ship._current_speed)
+            ship.SetImpulse(50.0, TGPoint3_GetModelForward(),
+                            App.PhysicsObjectClass.DIRECTION_MODEL_SPACE)
+            ship.SetTargetAngularVelocityDirect(TGPoint3(0.0, 0.0, 0.0))
+            return 0  # US_ACTIVE
+
+    ship = ShipClass()
+    pai = PlainAI(ship, "T")
+    pai._script_instance = _Leaf()
+    ship.SetAI(pai)
+
+    pSet = App.SetClass_Create()
+    pSet.SetName("orderoftest")
+    pSet.AddObjectToSet(ship, "testship")
+    App.g_kSetManager._sets["orderoftest"] = pSet
+    try:
+        loop = GameLoop()
+        loop.tick()
+
+        # Assert 1: AI fired.
+        assert pai.GetScriptInstance().calls == 1
+
+        # Assert 2: At the moment AI ran, _current_speed was still 0
+        # (integrator hadn't touched it yet on this tick).
+        assert setpoint_seen_during_update == [0.0]
+
+        # Assert 3: After tick() returned, the integrator HAS run and
+        # ramped _current_speed up — FALLBACK_MAX_ACCEL snaps to 50.0
+        # in one tick.
+        assert ship._current_speed == 50.0
+    finally:
+        App.g_kSetManager._sets.pop("orderoftest", None)
