@@ -327,6 +327,33 @@ class PlainAI(ArtificialIntelligence):
     def GetExternalFunctions(self) -> dict:
         return dict(self._external_functions)
 
+    def CallExternalFunction(self, name: str, *args) -> None:
+        """Invoke the script-instance method registered for `name`.
+
+        SDK pattern: BaseAI.SetExternalFunctions stores ``{"Name": method}``;
+        some scripts (e.g. ones built ad-hoc by mission code) use
+        ``{"FunctionName": method}`` instead. Both keys are recognized.
+
+        Called by SelectTarget.CallSetTargetFunctions to dispatch the
+        chosen target name onto every leaf AI that registered a
+        "SetTarget" hook. Silent no-op if the function isn't registered,
+        the lookup key is missing, or the named method doesn't exist on
+        the script instance — mirrors Appc's tolerant Python dispatch.
+        """
+        info = self._external_functions.get(name)
+        if not info:
+            return
+        fn_name = info.get("FunctionName") or info.get("Name")
+        if not fn_name:
+            return
+        inst = self.GetScriptInstance()
+        if inst is None:
+            return
+        method = getattr(inst, fn_name, None)
+        if method is None:
+            return
+        method(*args)
+
     def StopCallingActivate(self) -> None:
         pass
 
