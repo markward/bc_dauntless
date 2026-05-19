@@ -1,4 +1,5 @@
 from engine.appc.objects import DamageableObject
+from engine.appc.math import TGPoint3
 
 
 class ShipClass(DamageableObject):
@@ -58,6 +59,16 @@ class ShipClass(DamageableObject):
         # XO menu (see sdk/.../BridgeHandlers.py:194); shield/weapon
         # side-effects happen downstream of XO, not here.
         self._alert_level: int = ShipClass.GREEN_ALERT
+        # Setpoints are AI-written; _current_* are integrator-owned and
+        # ramp toward those setpoints each tick.
+        # Setpoints default to None (no AI input yet) — explicitly stored
+        # as real instance attrs so getattr() returns None instead of the
+        # TGObject __getattr__ _Stub fallback. The integrator's
+        # no-setpoint early-out depends on this.
+        self._speed_setpoint = None
+        self._target_angular_velocity_setpoint = None
+        self._current_speed: float = 0.0
+        self._current_angular_velocity: TGPoint3 = TGPoint3(0.0, 0.0, 0.0)
 
     def SetAI(self, ai) -> None:
         self._ai = ai
@@ -73,7 +84,25 @@ class ShipClass(DamageableObject):
     # runtime plan.
 
     def SetSpeed(self, speed, direction, frame) -> None:
-        self._speed_setpoint = (float(speed), direction, int(frame))
+        # Defensively copy the direction vec — many SDK call sites pass
+        # App.TGPoint3_GetModelForward() (a fresh constant per call,
+        # safe) but others reuse a stack-local TGPoint3 and mutate it
+        # after the call. Copying here makes SetSpeed's contract
+        # independent of caller hygiene. Mirrors the existing copy in
+        # SetTargetAngularVelocityDirect.
+        self._speed_setpoint = (
+            float(speed),
+            TGPoint3(direction.x, direction.y, direction.z),
+            int(frame),
+        )
+
+    def SetImpulse(self, speed, direction, frame) -> None:
+        """SDK alias used by AI.PlainAI.GoForward.Update (sdk/.../GoForward.py).
+
+        Records into the same _speed_setpoint tuple as SetSpeed —
+        downstream the integrator can't tell which entry point the AI
+        used."""
+        self.SetSpeed(speed, direction, frame)
 
     def GetSpeedSetpoint(self):
         return getattr(self, "_speed_setpoint", None)
@@ -85,6 +114,168 @@ class ShipClass(DamageableObject):
 
     def GetTargetAngularVelocitySetpoint(self):
         return getattr(self, "_target_angular_velocity_setpoint", None)
+
+    # ── Pure-math kinematic helpers ──────────────────────────────────────────
+    # No state read/written beyond the explicit arg list (GetPredictedPosition)
+    # or the ship's world transform (GetRelativePositionInfo).  SDK signatures
+    # live on PhysicsObjectClass; canonical callers are AI.PlainAI.TurnToOrientation
+    # and the Intercept family.
+    def GetPredictedPosition(self, p, v, a, t):
+        """Kinematic forecast: p + v*t + 0.5*a*t²."""
+        t2_half = 0.5 * t * t
+        return TGPoint3(
+            p.x + v.x * t + a.x * t2_half,
+            p.y + v.y * t + a.y * t2_half,
+            p.z + v.z * t + a.z * t2_half,
+        )
+
+    def GetRelativePositionInfo(self, target_vec):
+        """Geometry of a world-space point relative to this ship.
+
+        Returns (diff_vec, distance, unit_dir, angle_off_forward_rad)
+        where diff_vec = target - ship_world_location,
+        distance = |diff_vec|, unit_dir = diff_vec / distance
+        (zero vec if distance ≈ 0), and angle_off_forward is the angle
+        between unit_dir and the ship's world-forward (model-Y mapped
+        through GetWorldRotation()).
+        """
+        import math as _math
+        loc = self.GetWorldLocation()
+        diff = TGPoint3(
+            target_vec.x - loc.x,
+            target_vec.y - loc.y,
+            target_vec.z - loc.z,
+        )
+        distance = diff.Length()
+        if distance < 1e-9:
+            return diff, 0.0, TGPoint3(0.0, 0.0, 0.0), 0.0
+        unit = TGPoint3(diff.x / distance, diff.y / distance, diff.z / distance)
+        forward = self.GetWorldRotation().GetRow(1)
+        # Clamp to acos domain to guard against FP drift outside [-1, 1].
+        cos_a = unit.x * forward.x + unit.y * forward.y + unit.z * forward.z
+        if cos_a > 1.0: cos_a = 1.0
+        elif cos_a < -1.0: cos_a = -1.0
+        angle = _math.acos(cos_a)
+        return diff, distance, unit, angle
+
+    def TurnDirectionsToDirections(self, primary_from, primary_to,
+                                   secondary_from, secondary_to) -> float:
+        """Compute the angular velocity needed to rotate primary_from
+        onto primary_to (and secondary_from onto secondary_to around
+        the primary axis), call SetTargetAngularVelocityDirect, return
+        an estimate of seconds until alignment completes.
+
+        Called by AI.PlainAI.TurnToOrientation.Update (sdk/.../
+        TurnToOrientation.py) each tick (0.5 s cadence).
+
+        Algorithm:
+          1. Primary alignment: axis = pf × pt; angle = acos(pf · pt).
+             Degenerate case (vectors collinear, angle ≈ π): pick an
+             arbitrary perpendicular axis (cross with world up; if
+             still collinear, cross with world right).
+          2. Secondary constraint (skipped when secondary_from or
+             secondary_to has magnitude 0): compute signed roll angle
+             between projections of sf and st onto the plane
+             perpendicular to primary_to. Add roll * primary_to to
+             the angular velocity.
+          3. Clamp per-axis magnitude to GetMaxAngularVelocity()
+             (FALLBACK_MAX_ACCEL when the IES isn't populated).
+          4. SetTargetAngularVelocityDirect(angular_velocity).
+          5. Return total_angle / max_angular_velocity (loose
+             estimate; TurnToOrientation uses it only when
+             bDoneOnLineup=1, and that's gated separately).
+        """
+        import math as _math
+
+        # Normalised copies — avoid mutating caller vecs.
+        pf = TGPoint3(primary_from.x, primary_from.y, primary_from.z); pf.Unitize()
+        pt = TGPoint3(primary_to.x, primary_to.y, primary_to.z); pt.Unitize()
+
+        # 1. Primary alignment.
+        cos_a = pf.Dot(pt)
+        if cos_a > 1.0: cos_a = 1.0
+        elif cos_a < -1.0: cos_a = -1.0
+        primary_angle = _math.acos(cos_a)
+
+        axis = pf.Cross(pt)
+        axis_len = axis.Length()
+        if axis_len < 1e-9:
+            # Collinear: either aligned (angle 0, return zero AV) or
+            # opposite (angle π, need a perpendicular axis).
+            if primary_angle < 1e-6:
+                axis = TGPoint3(0.0, 0.0, 0.0)
+            else:
+                # Pick an arbitrary perpendicular.
+                world_up = TGPoint3(0.0, 0.0, 1.0)
+                candidate = pf.Cross(world_up)
+                if candidate.Length() < 1e-6:
+                    world_right = TGPoint3(1.0, 0.0, 0.0)
+                    candidate = pf.Cross(world_right)
+                candidate.Unitize()
+                axis = candidate
+        else:
+            axis.Scale(1.0 / axis_len)  # unit primary rotation axis
+
+        # Angular velocity contribution from primary: magnitude = angle.
+        av_x = axis.x * primary_angle
+        av_y = axis.y * primary_angle
+        av_z = axis.z * primary_angle
+
+        # 2. Secondary constraint.
+        sf_len = (secondary_from.x ** 2 + secondary_from.y ** 2 + secondary_from.z ** 2) ** 0.5
+        st_len = (secondary_to.x ** 2 + secondary_to.y ** 2 + secondary_to.z ** 2) ** 0.5
+        roll_angle = 0.0
+        if sf_len > 1e-9 and st_len > 1e-9:
+            # Project sf and st onto the plane perpendicular to pt.
+            sf = TGPoint3(secondary_from.x, secondary_from.y, secondary_from.z)
+            st = TGPoint3(secondary_to.x, secondary_to.y, secondary_to.z)
+            sf_proj = TGPoint3(
+                sf.x - pt.x * sf.Dot(pt),
+                sf.y - pt.y * sf.Dot(pt),
+                sf.z - pt.z * sf.Dot(pt),
+            )
+            st_proj = TGPoint3(
+                st.x - pt.x * st.Dot(pt),
+                st.y - pt.y * st.Dot(pt),
+                st.z - pt.z * st.Dot(pt),
+            )
+            sf_proj.Unitize(); st_proj.Unitize()
+            cos_roll = sf_proj.Dot(st_proj)
+            if cos_roll > 1.0: cos_roll = 1.0
+            elif cos_roll < -1.0: cos_roll = -1.0
+            roll_angle = _math.acos(cos_roll)
+            # Sign: positive if (sf_proj × st_proj) is along +pt.
+            sign_axis = sf_proj.Cross(st_proj)
+            if sign_axis.Dot(pt) < 0.0:
+                roll_angle = -roll_angle
+            av_x += pt.x * roll_angle
+            av_y += pt.y * roll_angle
+            av_z += pt.z * roll_angle
+
+        # 3. Clamp per-axis to MaxAngularVelocity. Uses the same
+        # IES-populated guard as ship_motion._max_angular_accel.
+        ies = self.GetImpulseEngineSubsystem()
+        if ies is not None and ies.GetMaxAngularVelocity() > 0.0:
+            max_av = ies.GetMaxAngularVelocity()
+        else:
+            max_av = 1.0e9  # ship_motion.FALLBACK_MAX_ACCEL parallel
+        def _clamp(v, m):
+            if v > m: return m
+            if v < -m: return -m
+            return v
+        av_x = _clamp(av_x, max_av)
+        av_y = _clamp(av_y, max_av)
+        av_z = _clamp(av_z, max_av)
+
+        # 4. Write the setpoint.
+        result = TGPoint3(av_x, av_y, av_z)
+        self.SetTargetAngularVelocityDirect(result)
+
+        # 5. ETA estimate.
+        total_angle = abs(primary_angle) + abs(roll_angle)
+        if max_av > 1e-9:
+            return float(total_angle / max_av)
+        return 0.0
 
     def SetNetType(self, net_type: int) -> None:
         self._net_type = net_type

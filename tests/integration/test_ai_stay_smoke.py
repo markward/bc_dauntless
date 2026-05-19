@@ -73,3 +73,28 @@ def test_stay_ai_remains_active():
     loop = GameLoop()
     loop.advance(TICK_RATE * 11)
     assert pai.IsActive() == 1
+
+
+def test_stay_ship_does_not_move():
+    """After the integrator runs, a Stay ship's transform is byte-identical
+    to its starting transform — Stay's zero setpoints must survive the
+    integrator round-trip with no drift."""
+    ship, pai = _setup_ship_with_stay()
+    ship.SetTranslateXYZ(100.0, 200.0, 300.0)
+    start_pos = ship.GetTranslate()
+    start_rot = ship.GetWorldRotation()
+
+    loop = GameLoop()
+    loop.advance(TICK_RATE * 11)  # 11 seconds — multiple Update cycles
+
+    end_pos = ship.GetTranslate()
+    assert (end_pos.x, end_pos.y, end_pos.z) == (100.0, 200.0, 300.0)
+    end_rot = ship.GetWorldRotation()
+    # Identity rotation is preserved bit-exact since the integrator must
+    # be a no-op when setpoints are zero.
+    for i in range(3):
+        for j in range(3):
+            assert end_rot.GetEntry(i, j) == start_rot.GetEntry(i, j), (
+                f"rotation drifted at ({i},{j}): "
+                f"{start_rot.GetEntry(i, j)} -> {end_rot.GetEntry(i, j)}"
+            )

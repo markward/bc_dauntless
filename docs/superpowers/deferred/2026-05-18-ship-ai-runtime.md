@@ -82,25 +82,23 @@ Driver runs from the same 60 Hz tick used elsewhere — CLAUDE.md notes Q1 close
 
 Bind to PyBullet rigid bodies (Phase 1 harness) and the C++ engine later:
 
-- `TurnTowardLocation(vec)` — PD-style solver: compute axis-angle from current forward to target direction, set target angular velocity.
-- `SetTargetAngularVelocityDirect(vec)` — direct angular setpoint (no solver).
-- `SetSpeed(speed, direction, frame)` — linear setpoint. `frame ∈ {DIRECTION_MODEL_SPACE, DIRECTION_WORLD_SPACE}`; `direction = App.TGPoint3_GetModelForward()` is overwhelmingly the common case.
-- `GetPredictedPosition(p, v, a, t)` — kinematic: `p + v*t + 0.5*a*t²`. Already trivial.
-- `GetRelativePositionInfo(vec)` — returns `(diff_vec, distance, unit_dir, angle_off_forward)`. Used heavily by `Intercept`.
-- `InSystemWarp(target, distance)` — fast sub-light travel toward a target object. Start with "teleport to within `distance` of target, decel"; refine when chase camera + sub-light warp visuals land.
-- `StopInSystemWarp()` — abort. `Intercept.LostFocus` calls it ([`Intercept.py:73`](../../../sdk/Build/scripts/AI/PlainAI/Intercept.py)).
-- `GetImpulseEngineSubsystem().GetMaxSpeed()` / `GetMaxAccel()` already exist on the subsystem.
+- `TurnTowardLocation(vec)` — still open. PD-style solver: compute axis-angle from current forward to target direction, set target angular velocity. Largely the same math as `TurnDirectionsToDirections` (done) — should be a thin wrapper.
+- `SetTargetAngularVelocityDirect(vec)` — ✅ done in Steps 1-3 plan; defensive copy in [Ship AI Motion plan](../plans/2026-05-18-ship-ai-motion.md).
+- `SetSpeed(speed, direction, frame)` — ✅ done; defensive copy added in motion slice. `SetImpulse` alias added.
+- `GetPredictedPosition(p, v, a, t)` — ✅ done in motion slice.
+- `GetRelativePositionInfo(vec)` — ✅ done in motion slice.
+- `InSystemWarp(target, distance)` — still open. Start with "teleport to within `distance` of target, decel"; refine when chase camera + sub-light warp visuals land.
+- `StopInSystemWarp()` — still open. `Intercept.LostFocus` calls it ([`Intercept.py:73`](../../../sdk/Build/scripts/AI/PlainAI/Intercept.py)).
+- `GetImpulseEngineSubsystem().GetMaxSpeed()` / `GetMaxAccel()` — ✅ already exist on the subsystem; the motion integrator + `TurnDirectionsToDirections` solver use them.
 
 ### Step 5 — End-to-end smoke trail, one leaf at a time
 
-Each new leaf isolates one capability and stops the previous from being where the bug is:
-
-1. **`PlainAI.Stay`** ([`Stay.py`](../../../sdk/Build/scripts/AI/PlainAI/Stay.py)) — 5 s tick, sets speed=0, angular velocity=0, returns US_ACTIVE. Proves Steps 1-3 fire at all.
-2. **`PlainAI.GoForward`** — linear setpoint. Proves Step 4's `SetSpeed`.
-3. **`PlainAI.TurnToOrientation`** — angular setpoint. Proves `SetTargetAngularVelocityDirect`.
-4. **`PlainAI.Intercept`** ([`Intercept.py`](../../../sdk/Build/scripts/AI/PlainAI/Intercept.py)) — turn + thrust + prediction + obstacle-avoidance + optional in-system warp. The canonical hard case; if this works, the motion API is solid.
-5. **`PlainAI.FollowObject` + `CircleObject`** — exercise distance/angle math under continuously-moving targets.
-6. **`AI.Compound.BasicAttack`** — composes leaves under `PriorityListAI` + `OptimizedFireScript` + `OptimizedSelectTarget`. First test of the full tree with preprocessors firing weapons.
+1. **`PlainAI.Stay`** ([`Stay.py`](../../../sdk/Build/scripts/AI/PlainAI/Stay.py)) — ✅ done in [Steps 1-3 plan](../plans/2026-05-18-ship-ai-runtime-step1-3.md).
+2. **`PlainAI.GoForward`** — ✅ done in [Ship AI Motion plan](../plans/2026-05-18-ship-ai-motion.md). `SetImpulse` aliased to `SetSpeed`; linear ramp + position integration land in `engine/appc/ship_motion.py`.
+3. **`PlainAI.TurnToOrientation`** — ✅ done in [Ship AI Motion plan](../plans/2026-05-18-ship-ai-motion.md). `TurnDirectionsToDirections` solver in `engine/appc/ships.py`; angular ramp + rotation integration in `engine/appc/ship_motion.py`.
+4. **`PlainAI.Intercept`** ([`Intercept.py`](../../../sdk/Build/scripts/AI/PlainAI/Intercept.py)) — still open; needs `TurnTowardLocation`, `InSystemWarp`/`StopInSystemWarp`, obstacle-avoidance.
+5. **`PlainAI.FollowObject` + `CircleObject`** — still open; `GetRelativePositionInfo` is now available (landed in the motion slice).
+6. **`AI.Compound.BasicAttack`** — still open.
 
 ### Step 6 — `ConditionScript` actually evaluates
 

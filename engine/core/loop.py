@@ -26,10 +26,12 @@ class GameLoop:
 
         from engine.appc.time_slice import g_kAIManager
         from engine.appc.ai_driver import tick_all_ai
+        from engine.appc.ship_motion import tick_all_ship_motion
         game_time = App.g_kTimerManager.get_time()
         real_time = App.g_kRealtimeTimerManager.get_time()
         g_kAIManager.tick(game_time=game_time, real_time=real_time)
         tick_all_ai(game_time=game_time)
+        tick_all_ship_motion(TICK_DELTA)
 
         for ship in iter_ships():
             ss = ship.GetShieldSubsystem()
