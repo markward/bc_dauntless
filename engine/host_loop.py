@@ -716,10 +716,14 @@ class _PlayerControl:
 
         # 3. Angular rates: held keys set a per-axis target rate; current rate
         #    ramps toward target at MaxAngularAccel.
-        # Sign convention (row-vector matrices, Y=forward, Z=up):
-        #   +X rotation tilts forward (row 1) toward -Z = nose DOWN.
-        #   +Z rotation tilts forward toward +X = yaw RIGHT.
-        #   +Y rotation tilts up (row 2) toward -X = roll LEFT.
+        # Key → observed on-screen effect (calibrated against the running game,
+        # not derived from the body-frame matrix math — a naive derivation gets
+        # the yaw and roll signs backwards because it doesn't account for the
+        # row-vector / column-vector convention swap on the way to the renderer
+        # and the X-flip in _ship_world_matrix):
+        #   W = nose DOWN,  S = nose UP
+        #   A = yaw LEFT,   D = yaw RIGHT
+        #   Q = roll LEFT,  E = roll RIGHT
         ang_rate    = self._angular_rate(player)
         ang_step    = self._angular_accel(player) * dt
         pitch_target = 0.0
