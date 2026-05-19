@@ -183,8 +183,14 @@ class ObjectClass(TGEventHandlerObject):
         return _NodeStub()
 
     def GetWorldForwardTG(self) -> TGPoint3:
-        """Return forward vector (row 1 of rotation matrix, BC uses Y-forward)."""
-        return self._rotation.GetRow(1)
+        """World-forward = R · model_forward = column 1 of R.
+
+        Column-vector convention matches the integrator
+        (engine/appc/ship_motion.py uses MultMatrixLeft) and the SDK's
+        TurnToOrientation.Update. Same fix shape as commit 68f6220
+        which closed the equivalent bug in GetRelativePositionInfo.
+        """
+        return self._rotation.GetCol(1)
 
     def GetContainingSetName(self) -> str:
         if self._containing_set is not None:
@@ -215,6 +221,15 @@ class PhysicsObjectClass(ObjectClass):
 
     def GetVelocityTG(self) -> TGPoint3:
         return TGPoint3(self._velocity.x, self._velocity.y, self._velocity.z)
+
+    def GetAccelerationTG(self) -> TGPoint3:
+        """Phase 1: kinematic model stores no acceleration on the object —
+        acceleration is the integrator's per-tick ramp. Returns a fresh
+        zero vec so callers can mutate without leaking state. SDK Intercept
+        uses this as the `a` arg to GetPredictedPosition; with a = 0 the
+        prediction degenerates to p + v·t, correct at near-constant
+        velocity."""
+        return TGPoint3(0.0, 0.0, 0.0)
 
     def SetAngularVelocity(self, v: TGPoint3, space: int = DIRECTION_WORLD_SPACE) -> None:
         self._angular_velocity = TGPoint3(v.x, v.y, v.z)
@@ -494,6 +509,17 @@ def ObjectClass_Cast(obj) -> "ObjectClass | None":
     correctly.
     """
     return obj if isinstance(obj, ObjectClass) else None
+
+
+def PhysicsObjectClass_Cast(obj) -> "PhysicsObjectClass | None":
+    """Return obj if it is a PhysicsObjectClass, else None.
+
+    SDK pattern (AI/PlainAI/Intercept.py): cast a generic target to its
+    physics-object form before reading velocity/acceleration. Targets
+    that are bare ObjectClass / PlacementObject have no velocity, so
+    callers fall back to current position when this returns None.
+    """
+    return obj if isinstance(obj, PhysicsObjectClass) else None
 
 
 def ObjectClass_GetObject(pSet, name) -> "ObjectClass | None":

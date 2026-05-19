@@ -302,3 +302,18 @@ def test_get_relative_position_info_forward_after_yaw_uses_column_convention():
     target = TGPoint3(100.0, 0.0, 0.0)
     _, _, _, angle = ship.GetRelativePositionInfo(target)
     assert angle == pytest.approx(math.pi, abs=1e-6)
+
+
+def test_get_world_forward_tg_uses_column_convention():
+    """After yaw +π/2 around Z, GetWorldForwardTG() must return world -X
+    under the column-vector convention used by the integrator + SDK.
+    Same shape as the regression test that pinned GetRelativePositionInfo
+    (commit 68f6220) — closes the matching latent bug in
+    engine/appc/objects.py."""
+    ship = ShipClass()
+    R = TGMatrix3(); R.MakeZRotation(math.pi / 2.0)
+    ship.SetMatrixRotation(R)
+    fwd = ship.GetWorldForwardTG()
+    assert fwd.x == pytest.approx(-1.0, abs=1e-6)
+    assert fwd.y == pytest.approx(0.0, abs=1e-6)
+    assert fwd.z == pytest.approx(0.0, abs=1e-9)
