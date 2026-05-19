@@ -245,7 +245,7 @@ class PlainAI(ArtificialIntelligence):
             if cls is not None:
                 self._script_instance = cls(self)
                 return
-        except Exception:
+        except (ImportError, AttributeError):
             pass
         # Fallback: data-bag for unimplemented scripts.
         self._script_instance = _AIScriptInstance(self)
