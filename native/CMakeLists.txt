@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-# Native subtree of open_stbc: Phase 2 C++ engine.
+# Native subtree of dauntless: Phase 2 C++ engine.
 
 # C++20 across the whole subtree.
 set(CMAKE_CXX_STANDARD 20)
@@ -65,7 +65,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(openal_soft)
 
-option(OPEN_STBC_BUILD_TESTS "Build native tests for open_stbc" ON)
+option(DAUNTLESS_BUILD_TESTS "Build native tests for dauntless" ON)
 
 # Public libraries.
 add_subdirectory(src/nif)
@@ -103,6 +103,6 @@ add_subdirectory(src/scenegraph)
 # Renderer host subtree.
 add_subdirectory(src/host)
 
-if(OPEN_STBC_BUILD_TESTS)
+if(DAUNTLESS_BUILD_TESTS)
   add_subdirectory(tests)
 endif()
