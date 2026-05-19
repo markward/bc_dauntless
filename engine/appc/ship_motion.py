@@ -1,12 +1,17 @@
-"""Per-tick kinematic integrator scaffold for AI-controlled ships.
+"""Per-tick kinematic integrator for AI-controlled ships.
 
-This is the no-op scaffold (Task 1). Tasks 2 (linear motion) and 3
-(angular motion) fill in the integrator body. The public surface
-(`tick_all_ship_motion`) and the helpers (`_ramp_toward`, `_max_accel`,
-`_max_angular_accel`) are in place so the per-tick wiring in
-`engine/core/loop.py` is exercised end-to-end, and the
-no-setpoint guard at the top of `_step_ship_motion` keeps the player
-ship (driven by `engine/host_loop.py:_PlayerControl`) untouched.
+Reads each ship's `_speed_setpoint` (written via SetSpeed / SetImpulse)
+and ramps `_current_speed` toward the target speed at the ship's
+MaxAccel (with FALLBACK_MAX_ACCEL for ships without a populated
+ImpulseEngineSubsystem). Position advances along the world-space
+direction each tick.
+
+Angular integration is not yet implemented — `_target_angular_velocity_setpoint`
+is read but not consumed yet.
+
+Ships whose setpoints are still None are skipped entirely so the
+player ship (driven by `engine/host_loop.py:_PlayerControl` directly
+on the transform) is left alone.
 """
 from engine.appc.math import TGMatrix3, TGPoint3
 from engine.appc.objects import PhysicsObjectClass
@@ -92,6 +97,4 @@ def _step_ship_motion(ship, dt: float) -> None:
             p.z + world_dir.z * ship._current_speed * dt,
         )
 
-    # ── Angular integration — Task 3 fills this in ───────────────────
-    # (placeholder: no-op so test_no_setpoints_is_noop + the linear
-    # tests still pass; angular tests land in Task 3)
+    # Angular integration: not yet implemented.

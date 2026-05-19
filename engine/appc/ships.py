@@ -97,7 +97,7 @@ class ShipClass(DamageableObject):
         )
 
     def SetImpulse(self, speed, direction, frame) -> None:
-        """SDK alias used by AI.PlainAI.GoForward.Update (sdk/.../GoForward.py:47).
+        """SDK alias used by AI.PlainAI.GoForward.Update (sdk/.../GoForward.py).
 
         Records into the same _speed_setpoint tuple as SetSpeed —
         downstream the integrator can't tell which entry point the AI

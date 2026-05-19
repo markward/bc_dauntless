@@ -126,8 +126,10 @@ def test_direction_model_space_follows_rotation():
     tick_all_ship_motion(dt)
 
     p = ship.GetTranslate()
-    # Forward is now world +X (within the rotation convention's sign).
-    assert abs(p.x) == pytest.approx(10.0 * dt, abs=1e-9)
+    # World-forward after MakeZRotation(-π/2) applied via MultMatrixLeft
+    # to model (+Y) is world (+X). See ship_motion._step_ship_motion:
+    # world_dir = TGPoint3(direction) then MultMatrixLeft(GetWorldRotation()).
+    assert p.x == pytest.approx(10.0 * dt, abs=1e-9)
     assert p.y == pytest.approx(0.0, abs=1e-9)
     assert p.z == pytest.approx(0.0, abs=1e-9)
 
