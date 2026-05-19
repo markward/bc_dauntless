@@ -743,6 +743,11 @@ class WeaponSystem(PoweredSubsystem):
                 emitter.StopFiring()
         self._currently_firing = []
 
+    def StopFiringAtTarget(self, pTarget) -> None:
+        """SDK Preprocessors.py:274/469 — alias for StopFiring() since
+        headless doesn't model multi-target firing state."""
+        self.StopFiring()
+
     def IsFiring(self) -> int:
         return 1 if self._currently_firing else 0
 
@@ -1187,6 +1192,24 @@ class TorpedoTube(WeaponSystem):
 
     def StopFiring(self) -> None:
         self._firing = False
+
+    def FireDumb(self, iReserved=0, iForce=1) -> None:
+        """SDK Preprocessors.py:458 — `pTube.FireDumb(0, 1)` in the
+        dumb-fire path. Routes through the regular Fire() so the
+        ET_WEAPON_HIT combat broadcast still fires.
+
+        iReserved/iForce kept for SDK signature compatibility; the
+        target/offset come from upstream FireScript state in Phase 1.
+        """
+        self.Fire(target=None, offset=None)
+
+    def CalculateRoughDirection(self):
+        """SDK Preprocessors.py:456 — returns the tube's local forward
+        vector. Per-tube arcs are deferred to Slice D; until then, all
+        tubes share the parent ship's forward vector. Orphaned tubes
+        (no parent ship) return the model's +Y axis as a safe default."""
+        import App
+        return App.TGPoint3_GetModelForward()
 
     def IsFiring(self) -> int:
         return 1 if self._firing else 0
