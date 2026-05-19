@@ -780,12 +780,54 @@ class ShipClass(DamageableObject):
     #   while (pSub != None): ...
 
     def StartGetSubsystemMatch(self, match_type=None):
-        return None
+        """Return an iterator over subsystems matching `match_type`.
+
+        `match_type` is one of the CT_* class constants from App.py
+        (e.g. CT_WEAPON_SYSTEM = WeaponSystemProperty). Match by
+        isinstance check against the subsystem's class hierarchy —
+        WeaponSystem and its subclasses (PhaserSystem, TorpedoSystem,
+        PulseWeaponSystem, TractorBeamSystem) match CT_WEAPON_SYSTEM.
+
+        Returns an opaque iterator handle. `None` filter terminates
+        immediately (SDK pattern: callers expect either matches or a
+        clean exit; mid-walk None is undefined)."""
+        # Function-local imports — App imports ships at module level,
+        # so a top-level `import App` here would loop. Same for
+        # WeaponSystem (sibling module also imported by App).
+        import App
+        from engine.appc.subsystems import WeaponSystem
+        if match_type is None:
+            return iter(())
+        candidates = [
+            self._sensor_subsystem, self._impulse_engine_subsystem,
+            self._warp_engine_subsystem, self._torpedo_system,
+            self._phaser_system, self._pulse_weapon_system,
+            self._tractor_beam_system, self._shield_subsystem,
+            self._power_subsystem, self._repair_subsystem, self._hull,
+        ]
+        if match_type is App.CT_WEAPON_SYSTEM:
+            target_class = WeaponSystem
+        else:
+            # Future match types land here. For now, no other filter
+            # is implemented — return an empty iter so SDK while-loops
+            # terminate cleanly.
+            return iter(())
+        return iter([s for s in candidates if s is not None and isinstance(s, target_class)])
 
     def GetNextSubsystemMatch(self, iterator=None):
-        return None
+        """Pull the next subsystem from an iterator returned by
+        StartGetSubsystemMatch. Returns None when exhausted (SDK
+        while-loop termination contract)."""
+        if iterator is None:
+            return None
+        try:
+            return next(iterator)
+        except StopIteration:
+            return None
 
     def EndGetSubsystemMatch(self, iterator=None):
+        """No-op cleanup hook. Python iterators are GC'd; SDK callers
+        invoke this for symmetry with the native Appc iterator API."""
         pass
 
 
