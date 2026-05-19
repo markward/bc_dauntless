@@ -134,6 +134,15 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
             tick_ai(ai._contained_ai, game_time)
         return ai._status
 
+    # First-tick CodeAISet analog: SDK SelectTarget defers its
+    # dDamageReceived dict + ET_WEAPON_HIT broadcast-handler wiring
+    # to a CodeAISet method that the C++-optimized engine calls when
+    # pCodeAI is bound (see AI/Preprocessors.py:1133-1148 comment).
+    # Phase-1 has no C++ optimization, so the driver does it here on
+    # first tick — duck-typed so only instances with a DamageEvent
+    # method get the wiring.
+    _ensure_select_target_initialized(inst)
+
     # Introspect once per PreprocessingAI instance whether the method
     # takes a positional dEndTime arg (SDK SelectTarget/FireScript) or
     # is 0-arg (synthetic test fixtures and simpler preprocessors).
@@ -180,6 +189,43 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
     if ai._contained_ai is not None:
         tick_ai(ai._contained_ai, game_time)
     return ai._status
+
+
+def _ensure_select_target_initialized(inst) -> None:
+    """Phase-1 substitute for the C++ CodeAISet path on SelectTarget.
+
+    The SDK's SelectTarget.__init__ leaves three pieces of state to be
+    set up by the engine after pCodeAI is bound: a TGPythonInstanceWrapper
+    to receive events, the dDamageReceived accounting dict, and a broadcast
+    handler for ET_WEAPON_HIT routed to its DamageEvent method (see the
+    block comment in AI/Preprocessors.py:1133-1148).
+
+    Duck-typed on having a DamageEvent method + a bound pCodeAI so we
+    don't accidentally instrument unrelated preprocessors. Guarded by a
+    sentinel attribute so re-ticks are no-ops.
+    """
+    if getattr(inst, "_dauntless_codeaiset_done", False):
+        return
+    if not callable(getattr(inst, "DamageEvent", None)):
+        return
+    pCodeAI = getattr(inst, "pCodeAI", None)
+    if pCodeAI is None:
+        return
+    pShip = pCodeAI.GetShip() if hasattr(pCodeAI, "GetShip") else None
+    if pShip is None:
+        return
+
+    import App
+    if not hasattr(inst, "pEventHandler") or inst.pEventHandler is None:
+        wrapper = App.TGPythonInstanceWrapper()
+        wrapper.SetPyWrapper(inst)
+        inst.pEventHandler = wrapper
+    if not hasattr(inst, "dDamageReceived") or inst.dDamageReceived is None:
+        inst.dDamageReceived = {}
+    App.g_kEventManager.AddBroadcastPythonMethodHandler(
+        App.ET_WEAPON_HIT, inst.pEventHandler, "DamageEvent", pShip,
+    )
+    inst._dauntless_codeaiset_done = True
 
 
 def _tick_builder(ai: BuilderAI, game_time: float) -> int:
