@@ -93,3 +93,34 @@ def test_classify_parse_error_on_truncated_file(tmp_path):
     kind, payload = reason
     assert kind == "parse"
     assert isinstance(payload, TGLParseError)
+
+
+from tools.tgl_harness import error_key
+
+
+def test_error_key_for_parse_exception():
+    """Parse failures key on '<ExcType>: <first-line-of-message[:80]>'."""
+    exc = TGLParseError("keys section truncated")
+    key = error_key("fail", ("parse", exc))
+    assert key == "TGLParseError: keys section truncated"
+
+
+def test_error_key_truncates_long_messages():
+    """Messages longer than 80 chars are truncated."""
+    long_msg = "x" * 200
+    exc = TGLParseError(long_msg)
+    key = error_key("fail", ("parse", exc))
+    assert key == "TGLParseError: " + "x" * 80
+
+
+def test_error_key_takes_first_line_only():
+    """Multi-line exception messages get truncated to the first line."""
+    exc = TGLParseError("first line\nsecond line\nthird line")
+    key = error_key("fail", ("parse", exc))
+    assert key == "TGLParseError: first line"
+
+
+def test_error_key_for_empty_failure():
+    """Empty TGLs share a single literal grouping key."""
+    key = error_key("fail", ("empty", None))
+    assert key == "empty TGL (0 strings, 0 sounds)"

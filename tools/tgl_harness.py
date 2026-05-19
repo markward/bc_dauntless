@@ -59,3 +59,16 @@ def classify(path: Path) -> tuple[str, tuple]:
     if len(tgl.strings) == 0 and len(tgl.sounds) == 0:
         return ("fail", ("empty", None))
     return ("pass", ("counts", (len(tgl.strings), len(tgl.sounds))))
+
+
+def error_key(status: str, reason: tuple) -> str:
+    """Build the Counter grouping key for a failure.
+
+    Only called on failures (status == "fail").
+    """
+    kind, payload = reason
+    if kind == "empty":
+        return "empty TGL (0 strings, 0 sounds)"
+    exc = payload
+    msg = (str(exc).splitlines() or [""])[0]
+    return f"{type(exc).__name__}: {msg[:80]}"
