@@ -39,3 +39,23 @@ def discover_tgl_files() -> list[Path]:
             sorted(p for p in root.rglob("*") if p.is_file() and p.suffix.lower() == ".tgl")
         )
     return found
+
+
+from engine.missions.tgl_reader import read_tgl
+
+
+def classify(path: Path) -> tuple[str, tuple]:
+    """Parse path and classify the result.
+
+    Returns:
+        ("pass", ("counts", (strings_n, sounds_n))) on successful, non-empty parse.
+        ("fail", ("empty", None)) on successful parse with zero strings AND zero sounds.
+        ("fail", ("parse", exc))  on any exception from read_tgl.
+    """
+    try:
+        tgl = read_tgl(path)
+    except Exception as exc:
+        return ("fail", ("parse", exc))
+    if len(tgl.strings) == 0 and len(tgl.sounds) == 0:
+        return ("fail", ("empty", None))
+    return ("pass", ("counts", (len(tgl.strings), len(tgl.sounds))))
