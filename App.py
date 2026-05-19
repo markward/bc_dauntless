@@ -76,6 +76,7 @@ from engine.appc.localization import TGLocalizationManager, TGLocalizationDataba
 from engine.appc.var_manager import TGVarManager
 from engine.appc.save_load import SaveLoadManager
 from engine.appc.config_mapping import TGConfigMapping
+from engine.appc.lod_models import LODModelManager
 from engine.appc.debug import (
     CPyDebug, TGProfilingInfo,
     TGProfilingInfo_EnableProfiling, TGProfilingInfo_DisableProfiling,
@@ -307,6 +308,7 @@ def TacticalControlWindow_GetTacticalControlWindow():
 g_kSetManager = SetManager()
 g_kTGActionManager = TGActionManager()
 g_kModelPropertyManager = TGModelPropertyManager()
+g_kLODModelManager = LODModelManager()
 g_kLocalizationManager = TGLocalizationManager()
 g_kConfigMapping = TGConfigMapping()
 # VarManager shares the event-type allocator with Game_GetNextEventType so
