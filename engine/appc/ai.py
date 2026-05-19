@@ -526,10 +526,10 @@ class BuilderAI(PreprocessingAI):
         self._dependencies: list = []          # (block_name, dep_block_name)
         self._dep_objects: list = []           # (block_name, attr, value)
         # Activation state — set by ai_driver._tick_builder on first tick.
-        # Note: eager init, NOT getattr-fallback, because TGObject's
-        # __getattr__ in engine/core/ids.py returns a _Stub for missing
-        # attrs (not None). This is the same _Stub-shadowing pattern that
-        # bit us in Tasks 1 and 4 — initialize eagerly here too.
+        # Eager init, not getattr-fallback: TGObject.__getattr__ in
+        # engine/core/ids.py returns a _Stub for missing attrs (not None),
+        # so the usual `getattr(self, "_field", None) is None` idiom is
+        # broken in this codebase.
         self._activated: bool = False
         self._activation_failed: bool = False
         self._activation_error: tuple[str, str] | None = None  # (exc_type, msg)
@@ -766,7 +766,9 @@ class ProximityCheck(ObjectClass):
         evt._object = obj
         # When a per-condition event handler is attached, route the
         # event through it (SDK ConditionInRange flow). Otherwise fall
-        # back to the watched object as destination (Task 4 contract).
+        # back to the watched object as destination — matches the
+        # original per-tick evaluator contract that fires events
+        # addressed to the watched object itself.
         if self._event_handler is not None:
             evt.SetDestination(self._event_handler)
         else:
@@ -777,10 +779,12 @@ class ProximityCheck(ObjectClass):
         """Per-tick: for each watched object, test whether it's crossed
         its per-object trigger boundary against ``anchor_obj``.
 
-        When called from ``evaluate_proximity_checks`` the anchor is
-        passed explicitly (back-compat with Task 4); when called from
-        the SDK condition flow the anchor was recorded via
-        ``ObjectClass.AttachObject(self)`` and stored as ``self._anchor``.
+        Two anchor-resolution paths:
+          - ``evaluate_proximity_checks`` passes the anchor explicitly
+            (the original per-tick-evaluator contract).
+          - SDK condition flow records the anchor via
+            ``ObjectClass.AttachObject(self)`` and stores it as
+            ``self._anchor``; this method reads it when no arg is given.
         Either path resolves to the same anchor.
 
         Called by GameLoop.tick between tick_all_ai and tick_all_ship_motion.
