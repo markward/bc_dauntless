@@ -764,9 +764,8 @@ class ShipClass(DamageableObject):
         unresolvable strings null the target out.
         """
         if isinstance(target, str):
-            pSet = self.GetContainingSet() if hasattr(self, "GetContainingSet") else None
-            resolved = pSet.GetObject(target) if pSet is not None else None
-            self._target = resolved
+            pSet = self.GetContainingSet()
+            self._target = pSet.GetObject(target) if pSet is not None else None
         else:
             self._target = target
     def GetTargetSubsystem(self):                 return self._target_subsystem

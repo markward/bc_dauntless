@@ -34,6 +34,8 @@ Class hierarchy (mirrors SDK):
     CharacterAction                     (TGAction subclass for crew animations)
 """
 
+import weakref
+
 from engine.appc.objects import ObjectClass
 from engine.appc.actions import TGAction
 from engine.appc.events import TGEvent
@@ -203,8 +205,7 @@ class ArtificialIntelligence:
     # id -> AI registry for ArtificialIntelligence_GetAIByID. Weak refs so
     # AIs that go out of scope don't pin the registry; SDK look-ups against
     # a stale ID return None, matching Appc's "AI was destroyed" semantics.
-    import weakref as _weakref
-    _registry: "dict[int, _weakref.ref[ArtificialIntelligence]]" = {}
+    _registry: "dict[int, weakref.ref[ArtificialIntelligence]]" = {}
 
     def __init__(self, pShip=None, name: str = ""):
         self._ship = pShip
@@ -219,8 +220,7 @@ class ArtificialIntelligence:
     def _allocate_id(cls, ai) -> None:
         ai._id = ArtificialIntelligence._next_id
         ArtificialIntelligence._next_id += 1
-        ArtificialIntelligence._registry[ai._id] = (
-            ArtificialIntelligence._weakref.ref(ai))
+        ArtificialIntelligence._registry[ai._id] = weakref.ref(ai)
 
     # ── Identity ─────────────────────────────────────────────────────────────
     def GetID(self) -> int:               return self._id
