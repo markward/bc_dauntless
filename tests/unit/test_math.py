@@ -68,6 +68,29 @@ def test_tgpoint3_unitize():
     assert abs(v.Length() - 1.0) < 1e-10
 
 
+def test_unitize_returns_pre_normalization_length():
+    """SDK contract (NiPoint3.Unitize): returns the length before
+    normalization as a float. SDK call sites rely on this:
+        fDistance = vDiff.Unitize()  # vDiff is now unit-length; we know
+                                     # how far it was."""
+    v = TGPoint3(3.0, 4.0, 0.0)
+    length = v.Unitize()
+    assert length == pytest.approx(5.0)
+    # And the vector is normalized in place.
+    assert v.x == pytest.approx(0.6)
+    assert v.y == pytest.approx(0.8)
+    assert v.z == pytest.approx(0.0)
+
+
+def test_unitize_zero_vector_returns_zero():
+    """Edge case: unitizing a zero vector leaves it as zero and
+    returns 0 (avoid divide-by-zero)."""
+    v = TGPoint3(0.0, 0.0, 0.0)
+    length = v.Unitize()
+    assert length == 0.0
+    assert (v.x, v.y, v.z) == (0.0, 0.0, 0.0)
+
+
 def test_tgpoint3_unit_cross_is_normalized():
     a = TGPoint3(1.0, 0.0, 0.0)
     b = TGPoint3(0.0, 1.0, 0.0)

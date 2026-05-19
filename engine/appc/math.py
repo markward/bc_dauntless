@@ -95,13 +95,19 @@ class TGPoint3:
         self.y = y
         self.z = z
 
-    def Unitize(self) -> "TGPoint3":
+    def Unitize(self) -> float:
+        """In-place normalize; return the length BEFORE normalization.
+
+        Matches NiPoint3.Unitize() in the native Appc interface — SDK
+        callers rely on `fLen = vDir.Unitize()` to extract distance while
+        also unitizing the vector. Returns 0.0 for the zero-vector case
+        (vector left unchanged)."""
         n = self.Length()
         if n > 1e-12:
             self.x /= n
             self.y /= n
             self.z /= n
-        return self
+        return n
 
     # ── Arithmetic ────────────────────────────────────────────────────────────
 
