@@ -104,6 +104,7 @@ Bind to PyBullet rigid bodies (Phase 1 harness) and the C++ engine later:
 
 - **Renderer warp visuals.** `InSystemWarp` currently teleports kinematically with no visual treatment. When the chase-camera / particle / motion-blur subsystems land, hook them in via a renderer-side pass; the engine-side teleport stays correct.
 - **Obstacle avoidance.** `Intercept.AdjustDestinationForLargeObstacles` runs but is a no-op because `ProximityManager.GetLineIntersectObjects` returns `()`. Real avoidance lands when the proximity subsystem itself gets real work (planet avoidance, large-ship avoidance, line-sphere geometry helper).
+- **Integrator publishes `_velocity`.** The motion integrator advances position via `_current_speed * forward * dt` but never writes back to `PhysicsObjectClass._velocity`. SDK `Intercept.Update` reads `pShip.GetVelocityTG().Length()` as `fCurrentSpeed` to decide whether to brake or coast — under Phase 1 this always reads 0, so the SDK takes the `fCurrentSpeed < fMaxVel` branch unconditionally. The Intercept smoke still converges deterministically because `fMaxVel` shrinks as distance shrinks, but brake-aware tuning will be off for any caller that needs real velocity reads. Fix: have `ship_motion._step_ship_motion` call `ship.SetVelocity(world_forward * _current_speed)` each tick (after the position update). Defer until a consumer actually depends on it.
 
 ### Step 6 — `ConditionScript` actually evaluates
 
