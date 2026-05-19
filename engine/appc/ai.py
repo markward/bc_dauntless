@@ -214,6 +214,14 @@ class ArtificialIntelligence:
         self._paused = False
         self._has_focus = False
         self._status = self.US_ACTIVE
+        # External-function registry (SDK RegisterExternalFunction): every
+        # Appc AI exposes this surface so preprocessors like FireScript can
+        # do ``self.pCodeAI.RegisterExternalFunction("SetTarget", ...)``
+        # against the PreprocessingAI wrapping them. PlainAI overrides
+        # CallExternalFunction to actually dispatch; interior nodes inherit
+        # the base no-op (see below) — registration storage lives here so
+        # the call site doesn't care about node type.
+        self._external_functions: dict = {}
         type(self)._allocate_id(self)
 
     @classmethod
@@ -278,6 +286,21 @@ class ArtificialIntelligence:
     def CallExternalFunction(self, name: str, *args) -> None:
         pass
 
+    def RegisterExternalFunction(self, name: str, mapping) -> None:
+        """Record name -> mapping in the AI's external-function registry.
+
+        SDK FireScript.CodeAISet (AI/Preprocessors.py:137-145) calls this
+        on its wrapping ``pCodeAI`` (a PreprocessingAI) so SelectTarget's
+        ``CallExternalFunction("SetTarget", name)`` dispatch can reach the
+        FireScript preprocessor. PlainAI overrides ``CallExternalFunction``
+        to actually invoke registered methods; interior nodes just keep the
+        registration as data.
+        """
+        self._external_functions[name] = mapping
+
+    def GetExternalFunctions(self) -> dict:
+        return dict(self._external_functions)
+
 
 # ── PlainAI ──────────────────────────────────────────────────────────────────
 
@@ -286,7 +309,7 @@ class PlainAI(ArtificialIntelligence):
         super().__init__(pShip, name)
         self._script_module: str = ""
         self._script_instance = None
-        self._external_functions: dict = {}
+        # _external_functions inherited from ArtificialIntelligence base.
         # Driver bookkeeping — first Update fires when game_time >= 0.0,
         # i.e. on the very first AI tick. Updated by ai_driver after each
         # Update() call using the script's GetNextUpdateTime().
@@ -323,19 +346,9 @@ class PlainAI(ArtificialIntelligence):
             self._script_instance = _AIScriptInstance(self)
         return self._script_instance
 
-    def RegisterExternalFunction(self, name: str, mapping) -> None:
-        """Record an externally-registered function name -> info dict.
-
-        Called by BaseAI.SetExternalFunctions (sdk/.../AI/PlainAI/BaseAI.py:54)
-        and by various Conditions/Preprocessors that want to expose a method
-        to the AI driver. The mapping is opaque metadata — we store it
-        verbatim so future reflection (target selection, weapon firing) can
-        pull values back out.
-        """
-        self._external_functions[name] = mapping
-
-    def GetExternalFunctions(self) -> dict:
-        return dict(self._external_functions)
+    # RegisterExternalFunction / GetExternalFunctions inherited from base.
+    # PlainAI overrides CallExternalFunction below to actually dispatch the
+    # registered mapping to a script-instance method.
 
     def CallExternalFunction(self, name: str, *args) -> None:
         """Invoke the script-instance method registered for `name`.
