@@ -507,6 +507,14 @@ class BuilderAI(PreprocessingAI):
         self._blocks: dict = {}                # name -> AI
         self._dependencies: list = []          # (block_name, dep_block_name)
         self._dep_objects: list = []           # (block_name, attr, value)
+        # Activation state — set by ai_driver._tick_builder on first tick.
+        # Note: eager init, NOT getattr-fallback, because TGObject's
+        # __getattr__ in engine/core/ids.py returns a _Stub for missing
+        # attrs (not None). This is the same _Stub-shadowing pattern that
+        # bit us in Tasks 1 and 4 — initialize eagerly here too.
+        self._activated: bool = False
+        self._activation_failed: bool = False
+        self._activation_error: tuple[str, str] | None = None  # (exc_type, msg)
 
     def GetModuleName(self) -> str:
         return self._module_name
