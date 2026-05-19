@@ -149,32 +149,122 @@ class TGEventHandlerObject(TGObject):
                 fn(self, event)
 
 
+class TGPythonInstanceWrapper(TGEventHandlerObject):
+    """Bridge between TGEventHandlerObject (the event-manager's destination
+    type) and a Python instance's named methods. SDK conditions use this to
+    receive events at a wrapper and dispatch to a method on the wrapped
+    Python instance.
+
+    Pattern (from sdk/.../Conditions/ConditionExists.py):
+        self.pEventHandler = App.TGPythonInstanceWrapper()
+        self.pEventHandler.SetPyWrapper(self)
+        App.g_kEventManager.AddBroadcastPythonMethodHandler(
+            App.ET_DELETE_OBJECT_PUBLIC, self.pEventHandler, "Deleted", obj)
+    """
+    def __init__(self):
+        super().__init__()
+        self._py_wrapper = None
+        # Dict initialized eagerly because TGObject.__getattr__ returns a
+        # _Stub (not None) for missing attrs, so the lazy `getattr(..., None)`
+        # idiom would silently mis-route registrations into a throwaway Stub.
+        self._method_handlers: dict[int, list[str]] = {}
+
+    def SetPyWrapper(self, instance) -> None:
+        self._py_wrapper = instance
+
+    def GetPyWrapper(self):
+        return self._py_wrapper
+
+    def AddPythonMethodHandlerForInstance(self, event_type: int, method_name: str) -> None:
+        """Register a self-targeted method handler. Used by SDK conditions
+        that listen for events sent directly to the wrapper (e.g. timer
+        events) rather than broadcast across the bus."""
+        self._method_handlers.setdefault(event_type, []).append(method_name)
+
+    def ProcessEvent(self, event):
+        """Dispatch a direct-to-wrapper event to the registered method on
+        the wrapped Python instance. Overrides the parent's qualified-
+        function dispatch since this wrapper uses instance methods."""
+        names = self._method_handlers.get(event.GetEventType(), [])
+        py = self._py_wrapper
+        if py is None:
+            return
+        for name in names:
+            fn = getattr(py, name, None)
+            if fn is not None:
+                fn(event)
+
+
 class TGEventManager(TGObject):
     def __init__(self):
         super().__init__()
         # {event_type: [(dest_obj, qualified_name), ...]}
         self._broadcast_handlers: dict[int, list[tuple["TGEventHandlerObject", str]]] = {}
+        # {event_type: [(wrapper, method_name, target), ...]}; eager init —
+        # see TGPythonInstanceWrapper note about TGObject.__getattr__ stubs.
+        self._method_handlers: dict[
+            int, list[tuple["TGPythonInstanceWrapper", str, object]]
+        ] = {}
 
     def AddBroadcastPythonFuncHandler(
         self, event_type: int, dest: "TGEventHandlerObject", qualified_name: str, *extra
     ) -> None:
         self._broadcast_handlers.setdefault(event_type, []).append((dest, qualified_name))
 
-    def RemoveBroadcastHandler(
-        self, event_type: int, dest: "TGEventHandlerObject", qualified_name: str
+    def AddBroadcastPythonMethodHandler(
+        self, event_type: int, wrapper: "TGPythonInstanceWrapper",
+        method_name: str, target=None,
     ) -> None:
-        handlers = self._broadcast_handlers.get(event_type, [])
-        entry = (dest, qualified_name)
-        if entry in handlers:
-            handlers.remove(entry)
+        """Method-based broadcast handler. Mirrors AddBroadcastPythonFuncHandler
+        but dispatches `getattr(wrapper.GetPyWrapper(), method_name)(evt)`
+        instead of a module-qualified function. `target` (if given) restricts
+        dispatch to events whose destination matches `target` by identity;
+        None matches all events of `event_type`."""
+        self._method_handlers.setdefault(event_type, []).append(
+            (wrapper, method_name, target)
+        )
+
+    def RemoveBroadcastHandler(
+        self, event_type: int, dest_or_wrapper, qualified_name_or_method: str,
+        target=None,
+    ) -> None:
+        """Remove a previously-added broadcast handler.
+
+        Supports both `(eType, dest, qualified_name)` (func handler, legacy)
+        and `(eType, wrapper, method_name[, target])` (method handler, new).
+        Falls through to the func-handler list first; if not found there,
+        tries the method-handler list."""
+        # Func handlers: (dest, qualified_name) tuples.
+        func_handlers = self._broadcast_handlers.get(event_type, [])
+        entry = (dest_or_wrapper, qualified_name_or_method)
+        if entry in func_handlers:
+            func_handlers.remove(entry)
+            return
+        # Method handlers: (wrapper, method_name, target) tuples.
+        method_handlers = self._method_handlers.get(event_type, [])
+        entry_m = (dest_or_wrapper, qualified_name_or_method, target)
+        if entry_m in method_handlers:
+            method_handlers.remove(entry_m)
 
     RemoveBroadcastHandlerForInstance = RemoveBroadcastHandler
 
     def AddEvent(self, event: TGEvent) -> None:
         dest = event.GetDestination()
-        if dest is not None:
+        if dest is not None and isinstance(dest, TGEventHandlerObject):
             dest.ProcessEvent(event)
+        # Func-broadcast handlers (existing).
         for bd, name in self._broadcast_handlers.get(event.GetEventType(), []):
             fn = _resolve_handler(name)
             if fn is not None:
                 fn(bd, event)
+        # Method-broadcast handlers (new).
+        for wrapper, method_name, target in self._method_handlers.get(
+            event.GetEventType(), []
+        ):
+            if target is not None and event.GetDestination() is not target:
+                continue
+            py = wrapper.GetPyWrapper()
+            if py is not None:
+                method = getattr(py, method_name, None)
+                if method is not None:
+                    method(event)
