@@ -200,6 +200,11 @@ class ArtificialIntelligence:
     US_NUM_STATUSES = 4
 
     _next_id = 1
+    # id -> AI registry for ArtificialIntelligence_GetAIByID. Weak refs so
+    # AIs that go out of scope don't pin the registry; SDK look-ups against
+    # a stale ID return None, matching Appc's "AI was destroyed" semantics.
+    import weakref as _weakref
+    _registry: "dict[int, _weakref.ref[ArtificialIntelligence]]" = {}
 
     def __init__(self, pShip=None, name: str = ""):
         self._ship = pShip
@@ -214,6 +219,8 @@ class ArtificialIntelligence:
     def _allocate_id(cls, ai) -> None:
         ai._id = ArtificialIntelligence._next_id
         ArtificialIntelligence._next_id += 1
+        ArtificialIntelligence._registry[ai._id] = (
+            ArtificialIntelligence._weakref.ref(ai))
 
     # ── Identity ─────────────────────────────────────────────────────────────
     def GetID(self) -> int:               return self._id
@@ -1034,3 +1041,19 @@ def iter_ais_with_external_function(root_ai, fname: str):
         return
     # Unknown AI subclass: silently terminate. Subclasses that contain
     # other AIs should be added here as the project grows.
+
+
+# ── Module-level helpers (SDK `App.*` surface) ───────────────────────────────
+def ArtificialIntelligence_GetAIByID(ai_id: int):
+    """Return the AI with the given integer ID, or None if absent.
+
+    SDK pattern (AI/Preprocessors.py:1386 — SelectTarget.CallSetTargetFunctions
+    + AI/Preprocessors.py:1405): an AI tree records leaf IDs via GetID() and
+    later resolves them back through App.ArtificialIntelligence_GetAIByID for
+    cross-tick dispatch (the tree may have been re-entrant-edited in
+    between, so a stale ID must safely return None).
+    """
+    ref = ArtificialIntelligence._registry.get(int(ai_id))
+    if ref is None:
+        return None
+    return ref()

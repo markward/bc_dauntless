@@ -115,6 +115,7 @@ from engine.appc.ai import (
     ProximityCheck, ProximityCheck_Create, ProximityCheck_CreateWithEvent,
     CharacterAction, CharacterAction_Create, CharacterAction_CreateByName,
     CSP_LOW, CSP_NORMAL, CSP_HIGH,
+    ArtificialIntelligence_GetAIByID,
 )
 from engine.appc.time_slice import (
     TimeSliceProcess, PythonMethodProcess, g_kAIManager,
