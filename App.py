@@ -86,6 +86,8 @@ from engine.appc.debug import (
     TGProfilingInfo_StartTiming, TGProfilingInfo_StopTiming,
     TGProfilingInfo_GetTotalTime, TGProfilingInfo_ResetTimings,
 )
+# SDK callers use TGProfilingInfo_EndTiming; we already have _StopTiming.
+TGProfilingInfo_EndTiming = TGProfilingInfo_StopTiming
 from engine.appc.planet import (
     Planet, Sun,
     Planet_Create, Sun_Create, Planet_GetObject, Planet_Cast,
@@ -365,6 +367,13 @@ class _SystemWrapper:
     def SetRandomSeed(self, seed) -> None:
         self._rng.seed(seed)
 
+    def GetTimeSinceFrameStart(self) -> float:
+        """Seconds since the current frame started. Phase 1 doesn't
+        run a frame timer, so this returns 0.0 — SDK preprocessors
+        (SelectTarget) compare this against a `dEndTime` budget; with a
+        generous deadline the always-zero return keeps work in-budget."""
+        return 0.0
+
     def __getattr__(self, name):
         return _NamedStub(name)
 
@@ -397,6 +406,10 @@ ET_OBJECT_GROUP_CHANGED = 204
 # fires a ProximityCheck with this event type so its ProximityEvent
 # method runs when watched ships cross the radius boundary.
 ET_AI_INTERNAL_PROX_EVENT = 205
+# Decloak event used by SelectTarget to re-rate targets when a hostile
+# uncloaks. Value picked outside the Slice A 200-203 range; 204/205 are
+# taken by ET_OBJECT_GROUP_CHANGED / ET_AI_INTERNAL_PROX_EVENT.
+ET_DECLOAK_BEGINNING = 206
 
 # ── Input event types — used by DefaultKeyboardBinding + TacticalInterfaceHandlers
 # Values are stable arbitrary integers well above the Phase-1 event range.

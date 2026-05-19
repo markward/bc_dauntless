@@ -460,6 +460,11 @@ class ShipClass(DamageableObject):
     def SetPowerSubsystem(self, s) -> None:       self._power_subsystem = s
     def GetRepairSubsystem(self):                 return self._repair_subsystem
     def SetRepairSubsystem(self, s) -> None:      self._repair_subsystem = s
+    def GetCloakingSubsystem(self):
+        """Returns None — Phase 1 ships have no cloaking subsystem.
+        SDK FedAttack/NonFedAttack gate cloak usage on this being
+        truthy; None keeps the non-cloak path active."""
+        return None
     def GetHull(self):                            return self._hull
     def SetHull(self, h) -> None:                 self._hull = h
 
