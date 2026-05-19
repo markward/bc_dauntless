@@ -6,7 +6,6 @@ import pytest
 
 import App
 from engine.appc.ai import PreprocessingAI_Create
-from engine.appc.ships import ShipClass
 from engine.appc.subsystems import PhaserSystem, TorpedoSystem
 
 
