@@ -64,4 +64,34 @@ def _step_ship_motion(ship, dt: float) -> None:
     av = getattr(ship, "_target_angular_velocity_setpoint", None)
     if sp is None and av is None:
         return
-    return
+
+    # ── Resolve target speed + world-space direction ─────────────────
+    if sp is None:
+        target_speed = 0.0
+        world_dir = TGPoint3(0.0, 1.0, 0.0)  # arbitrary; magnitude is 0
+    else:
+        target_speed_signed, direction, frame = sp
+        if frame == PhysicsObjectClass.DIRECTION_MODEL_SPACE:
+            world_dir = TGPoint3(direction.x, direction.y, direction.z)
+            world_dir.MultMatrixLeft(ship.GetWorldRotation())
+        else:
+            world_dir = TGPoint3(direction.x, direction.y, direction.z)
+        world_dir.Unitize()
+        target_speed = target_speed_signed
+
+    # ── Ramp current speed toward target ─────────────────────────────
+    step = _max_accel(ship) * dt
+    ship._current_speed = _ramp_toward(ship._current_speed, target_speed, step)
+
+    # ── Integrate position ───────────────────────────────────────────
+    if ship._current_speed != 0.0:
+        p = ship.GetTranslate()
+        ship.SetTranslateXYZ(
+            p.x + world_dir.x * ship._current_speed * dt,
+            p.y + world_dir.y * ship._current_speed * dt,
+            p.z + world_dir.z * ship._current_speed * dt,
+        )
+
+    # ── Angular integration — Task 3 fills this in ───────────────────
+    # (placeholder: no-op so test_no_setpoints_is_noop + the linear
+    # tests still pass; angular tests land in Task 3)

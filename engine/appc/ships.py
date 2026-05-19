@@ -61,6 +61,12 @@ class ShipClass(DamageableObject):
         self._alert_level: int = ShipClass.GREEN_ALERT
         # Setpoints are AI-written; _current_* are integrator-owned and
         # ramp toward those setpoints each tick.
+        # Setpoints default to None (no AI input yet) — explicitly stored
+        # as real instance attrs so getattr() returns None instead of the
+        # TGObject __getattr__ _Stub fallback. The integrator's
+        # no-setpoint early-out depends on this.
+        self._speed_setpoint = None
+        self._target_angular_velocity_setpoint = None
         self._current_speed: float = 0.0
         self._current_angular_velocity: TGPoint3 = TGPoint3(0.0, 0.0, 0.0)
 
@@ -78,7 +84,25 @@ class ShipClass(DamageableObject):
     # runtime plan.
 
     def SetSpeed(self, speed, direction, frame) -> None:
-        self._speed_setpoint = (float(speed), direction, int(frame))
+        # Defensively copy the direction vec — many SDK call sites pass
+        # App.TGPoint3_GetModelForward() (a fresh constant per call,
+        # safe) but others reuse a stack-local TGPoint3 and mutate it
+        # after the call. Copying here makes SetSpeed's contract
+        # independent of caller hygiene. Mirrors the existing copy in
+        # SetTargetAngularVelocityDirect.
+        self._speed_setpoint = (
+            float(speed),
+            TGPoint3(direction.x, direction.y, direction.z),
+            int(frame),
+        )
+
+    def SetImpulse(self, speed, direction, frame) -> None:
+        """SDK alias used by AI.PlainAI.GoForward.Update (sdk/.../GoForward.py:47).
+
+        Records into the same _speed_setpoint tuple as SetSpeed —
+        downstream the integrator can't tell which entry point the AI
+        used."""
+        self.SetSpeed(speed, direction, frame)
 
     def GetSpeedSetpoint(self):
         return getattr(self, "_speed_setpoint", None)
