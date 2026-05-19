@@ -66,3 +66,16 @@ def test_set_event_flag_single_arg_marks_all_names():
     # Both names should see the flag set.
     assert g.IsEventFlagSet("A", ObjectGroup.ENTERED_SET) == 1
     assert g.IsEventFlagSet("B", ObjectGroup.ENTERED_SET) == 1
+
+
+def test_object_group_with_info_supports_getitem_for_per_name_info():
+    """SDK SelectTarget rating reads pGroupWithInfo[sTarget]["Priority"].
+    The __getitem__ accessor must return the per-name info dict, or
+    empty dict for unknown names (so callers can still .get on it
+    without crashing)."""
+    from engine.appc.objects import ObjectGroupWithInfo
+    g = ObjectGroupWithInfo()
+    g.AddNameAndInfo("Bart", {"Priority": 5.0})
+    assert g["Bart"] == {"Priority": 5.0}
+    # Unknown name → empty dict (SDK callers do `.has_key("Priority")`).
+    assert g["Unknown"] == {}

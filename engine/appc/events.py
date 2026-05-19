@@ -112,6 +112,11 @@ class WeaponHitEvent(TGEvent):
     def GetSubsystem(self):           return self._subsystem
     def SetSubsystem(self, s) -> None: self._subsystem = s
 
+    def GetFiringObject(self):
+        """SDK alias for GetSource() — SelectTarget's DamageEvent
+        handler reads via GetFiringObject."""
+        return self.GetSource()
+
 
 def _resolve_handler(qualified_name: str):
     """Resolve 'module.func' to the callable, or None if not found."""

@@ -34,6 +34,8 @@ Class hierarchy (mirrors SDK):
     CharacterAction                     (TGAction subclass for crew animations)
 """
 
+import weakref
+
 from engine.appc.objects import ObjectClass
 from engine.appc.actions import TGAction
 from engine.appc.events import TGEvent
@@ -200,6 +202,10 @@ class ArtificialIntelligence:
     US_NUM_STATUSES = 4
 
     _next_id = 1
+    # id -> AI registry for ArtificialIntelligence_GetAIByID. Weak refs so
+    # AIs that go out of scope don't pin the registry; SDK look-ups against
+    # a stale ID return None, matching Appc's "AI was destroyed" semantics.
+    _registry: "dict[int, weakref.ref[ArtificialIntelligence]]" = {}
 
     def __init__(self, pShip=None, name: str = ""):
         self._ship = pShip
@@ -214,12 +220,43 @@ class ArtificialIntelligence:
     def _allocate_id(cls, ai) -> None:
         ai._id = ArtificialIntelligence._next_id
         ArtificialIntelligence._next_id += 1
+        ArtificialIntelligence._registry[ai._id] = weakref.ref(ai)
 
     # ── Identity ─────────────────────────────────────────────────────────────
     def GetID(self) -> int:               return self._id
     def GetName(self) -> str:             return self._name
     def GetShip(self):                    return self._ship
     def GetObject(self):                  return self._ship   # SDK alias
+
+    # ── Tree walking ─────────────────────────────────────────────────────────
+    def GetAllAIsInTree(self) -> list:
+        """Return self followed by every AI reachable beneath this node.
+
+        SDK pattern (AI/Preprocessors.py:1384 — SelectTarget.CallSetTargetFunctions):
+        ``lAIs = self.pCodeAI.GetAllAIsInTree()[1:]`` then iterates calling
+        ``CallExternalFunction`` on each leaf. The list-with-self ordering
+        matches the C++ Appc semantics so that `[1:]` skips the caller.
+
+        Subclasses with child AIs are handled here via duck-typed attribute
+        probes — keeps the tree-walking logic in one place instead of an
+        override per AI type. Order: PriorityListAI / SequenceAI children
+        in insertion order, then ConditionalAI / PreprocessingAI contained
+        AI.
+        """
+        out: list = [self]
+        # PriorityListAI / SequenceAI / PlainAI: ._ais is a list of either
+        # plain AIs (Sequence) or (priority, ai) tuples (PriorityList).
+        children = getattr(self, "_ais", None)
+        if isinstance(children, list):
+            for child in children:
+                ai = child[1] if isinstance(child, tuple) else child
+                if ai is not None:
+                    out.extend(ai.GetAllAIsInTree())
+        # ConditionalAI / PreprocessingAI: ._contained_ai is a single AI.
+        contained = getattr(self, "_contained_ai", None)
+        if contained is not None:
+            out.extend(contained.GetAllAIsInTree())
+        return out
 
     # ── Status ───────────────────────────────────────────────────────────────
     def IsActive(self) -> int:            return 1 if self._status == self.US_ACTIVE else 0
@@ -230,6 +267,16 @@ class ArtificialIntelligence:
     def Reset(self) -> None:              self._status = self.US_ACTIVE
     def SetInterruptable(self, v) -> None: self._interruptable = bool(v)
     def IsInterruptable(self) -> int:     return 1 if self._interruptable else 0
+
+    # ── External-function dispatch (base no-op) ─────────────────────────────
+    # SDK SelectTarget.CallSetTargetFunctions iterates every AI in the tree
+    # via GetAllAIsInTree() and unconditionally calls CallExternalFunction
+    # (sdk/.../AI/Preprocessors.py:1407). Only PlainAI registers SetTarget
+    # hooks, so interior nodes (PriorityListAI, SequenceAI, PreprocessingAI,
+    # ConditionalAI) need a tolerant no-op so the dispatch loop doesn't
+    # AttributeError on them.
+    def CallExternalFunction(self, name: str, *args) -> None:
+        pass
 
 
 # ── PlainAI ──────────────────────────────────────────────────────────────────
@@ -289,6 +336,33 @@ class PlainAI(ArtificialIntelligence):
 
     def GetExternalFunctions(self) -> dict:
         return dict(self._external_functions)
+
+    def CallExternalFunction(self, name: str, *args) -> None:
+        """Invoke the script-instance method registered for `name`.
+
+        SDK pattern: BaseAI.SetExternalFunctions stores ``{"Name": method}``;
+        some scripts (e.g. ones built ad-hoc by mission code) use
+        ``{"FunctionName": method}`` instead. Both keys are recognized.
+
+        Called by SelectTarget.CallSetTargetFunctions to dispatch the
+        chosen target name onto every leaf AI that registered a
+        "SetTarget" hook. Silent no-op if the function isn't registered,
+        the lookup key is missing, or the named method doesn't exist on
+        the script instance — mirrors Appc's tolerant Python dispatch.
+        """
+        info = self._external_functions.get(name)
+        if not info:
+            return
+        fn_name = info.get("FunctionName") or info.get("Name")
+        if not fn_name:
+            return
+        inst = self.GetScriptInstance()
+        if inst is None:
+            return
+        method = getattr(inst, fn_name, None)
+        if method is None:
+            return
+        method(*args)
 
     def StopCallingActivate(self) -> None:
         pass
@@ -959,3 +1033,19 @@ def CharacterAction_CreateByName(name: str, *args) -> CharacterAction:
 CSP_LOW    = 0
 CSP_NORMAL = 1
 CSP_HIGH   = 2
+
+
+# ── Module-level helpers (SDK `App.*` surface) ───────────────────────────────
+def ArtificialIntelligence_GetAIByID(ai_id: int):
+    """Return the AI with the given integer ID, or None if absent.
+
+    SDK pattern (AI/Preprocessors.py:1386 — SelectTarget.CallSetTargetFunctions
+    + AI/Preprocessors.py:1405): an AI tree records leaf IDs via GetID() and
+    later resolves them back through App.ArtificialIntelligence_GetAIByID for
+    cross-tick dispatch (the tree may have been re-entrant-edited in
+    between, so a stale ID must safely return None).
+    """
+    ref = ArtificialIntelligence._registry.get(int(ai_id))
+    if ref is None:
+        return None
+    return ref()

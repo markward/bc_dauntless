@@ -13,6 +13,8 @@ The driver is *not* TimeSliceProcess-based. PlainAI carries its own
 _next_update_time field; the driver consults it each tick. This keeps
 Step 3 testable independently of the TimeSliceProcess scheduler (Step 2).
 """
+import inspect
+
 from engine.appc.ai import (
     ArtificialIntelligence, PlainAI, PriorityListAI, SequenceAI,
     ConditionalAI, PreprocessingAI, BuilderAI,
@@ -52,13 +54,23 @@ def _tick_plain(ai: PlainAI, game_time: float) -> int:
     if game_time < ai._next_update_time:
         return ai._status
     inst = ai.GetScriptInstance()
-    status = inst.Update()
+    # Script-instance Update is the per-AI heartbeat. Leaves registered
+    # purely for external-function dispatch (SetTarget callbacks under a
+    # SelectTarget preprocessor, e.g.) may legitimately omit it; treat a
+    # missing Update as "no work this tick" so the dispatch tree still
+    # ticks past them without error. Matches _AIScriptInstance's
+    # everything-is-a-lambda fallback.
+    update_fn = getattr(inst, "Update", None)
+    if update_fn is None or not callable(update_fn):
+        return ai._status
+    status = update_fn()
     if status is None:
         status = US_ACTIVE
     ai._status = int(status)
     # Reschedule based on the script's reported interval. Fallback
     # _AIScriptInstance returns None for unknown Get*; treat as 1 sec.
-    next_update = inst.GetNextUpdateTime()
+    next_update_fn = getattr(inst, "GetNextUpdateTime", None)
+    next_update = next_update_fn() if callable(next_update_fn) else None
     interval = float(next_update) if next_update is not None else 1.0
     ai._next_update_time = game_time + interval
     return ai._status
@@ -121,7 +133,46 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
         if ai._contained_ai is not None:
             tick_ai(ai._contained_ai, game_time)
         return ai._status
-    result = getattr(inst, method)()
+
+    # First-tick CodeAISet analog: SDK SelectTarget defers its
+    # dDamageReceived dict + ET_WEAPON_HIT broadcast-handler wiring
+    # to a CodeAISet method that the C++-optimized engine calls when
+    # pCodeAI is bound (see AI/Preprocessors.py:1133-1148 comment).
+    # Phase-1 has no C++ optimization, so the driver does it here on
+    # first tick — duck-typed so only instances with a DamageEvent
+    # method get the wiring.
+    _ensure_select_target_initialized(inst)
+
+    # Introspect once per PreprocessingAI instance whether the method
+    # takes a positional dEndTime arg (SDK SelectTarget/FireScript) or
+    # is 0-arg (synthetic test fixtures and simpler preprocessors).
+    # Use __dict__.get to bypass TGObject.__getattr__ returning a _Stub
+    # for missing attrs.
+    cache = ai.__dict__.get("_preprocess_arity_cache")
+    if cache is None or cache[0] is not inst or cache[1] != method:
+        bound = getattr(inst, method)
+        try:
+            sig = inspect.signature(bound)
+            arity = sum(
+                1 for p in sig.parameters.values()
+                if p.kind in (
+                    inspect.Parameter.POSITIONAL_ONLY,
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                )
+            )
+        except (TypeError, ValueError):
+            # Builtin / no inspectable signature → assume 0-arg.
+            arity = 0
+        ai._preprocess_arity_cache = (inst, method, arity)
+        cache = ai._preprocess_arity_cache
+
+    arity = cache[2]
+    bound = getattr(inst, method)
+    if arity >= 1:
+        result = bound(game_time + 1.0)
+    else:
+        result = bound()
+
     if result is None:
         result = PS_NORMAL
     if result == PS_DONE:
@@ -138,6 +189,43 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
     if ai._contained_ai is not None:
         tick_ai(ai._contained_ai, game_time)
     return ai._status
+
+
+def _ensure_select_target_initialized(inst) -> None:
+    """Phase-1 substitute for the C++ CodeAISet path on SelectTarget.
+
+    The SDK's SelectTarget.__init__ leaves three pieces of state to be
+    set up by the engine after pCodeAI is bound: a TGPythonInstanceWrapper
+    to receive events, the dDamageReceived accounting dict, and a broadcast
+    handler for ET_WEAPON_HIT routed to its DamageEvent method (see the
+    block comment in AI/Preprocessors.py:1133-1148).
+
+    Duck-typed on having a DamageEvent method + a bound pCodeAI so we
+    don't accidentally instrument unrelated preprocessors. Guarded by a
+    sentinel attribute so re-ticks are no-ops.
+    """
+    if getattr(inst, "_dauntless_codeaiset_done", False):
+        return
+    if not callable(getattr(inst, "DamageEvent", None)):
+        return
+    pCodeAI = getattr(inst, "pCodeAI", None)
+    if pCodeAI is None:
+        return
+    pShip = pCodeAI.GetShip() if hasattr(pCodeAI, "GetShip") else None
+    if pShip is None:
+        return
+
+    import App
+    if not hasattr(inst, "pEventHandler") or inst.pEventHandler is None:
+        wrapper = App.TGPythonInstanceWrapper()
+        wrapper.SetPyWrapper(inst)
+        inst.pEventHandler = wrapper
+    if not hasattr(inst, "dDamageReceived") or inst.dDamageReceived is None:
+        inst.dDamageReceived = {}
+    App.g_kEventManager.AddBroadcastPythonMethodHandler(
+        App.ET_WEAPON_HIT, inst.pEventHandler, "DamageEvent", pShip,
+    )
+    inst._dauntless_codeaiset_done = True
 
 
 def _tick_builder(ai: BuilderAI, game_time: float) -> int:

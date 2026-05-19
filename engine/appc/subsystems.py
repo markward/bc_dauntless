@@ -1331,6 +1331,17 @@ class ShieldSubsystem(PoweredSubsystem):
             return 0.0
         return self._current_shields[f] / mx
 
+    def GetShieldPercentage(self) -> float:
+        """Aggregate ratio of total current shields to total max,
+        across all 6 faces. Returns 1.0 when no face has max set
+        (unshielded ship) so SelectTarget rating treats them as
+        "shields not a factor" rather than "shields critically low."""
+        total_max = sum(self._max_shields)
+        if total_max <= 0:
+            return 1.0
+        total_cur = sum(self._current_shields)
+        return total_cur / total_max
+
     def GetShieldChargePerSecond(self, face: int) -> float:
         return self._charge_per_second[int(face)]
 

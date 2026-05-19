@@ -483,8 +483,14 @@ class ObjectGroupWithInfo(ObjectGroup):
         super().RemoveName(name)
         self._info.pop(name, None)
 
-    def __getitem__(self, name: str):
-        return self.GetInfo(name)
+    def __getitem__(self, name: str) -> dict:
+        """Per-name info dict, or empty dict for unknown names.
+
+        SDK SelectTarget rating reads pGroupWithInfo[sTarget]["Priority"]
+        then chains `.has_key("Priority")` — the empty-dict fallback
+        keeps that pattern safe for targets without recorded info.
+        """
+        return self._info.get(name, {})
 
     def __setitem__(self, name: str, info) -> None:
         self.AddNameAndInfo(name, info)
@@ -501,9 +507,18 @@ def ObjectGroup_ForceToGroup(arg) -> ObjectGroup:
     SDK call sites (E1M2.py:3363, AI/Compound/CloakAttack.py:16, AI/PlainAI/
     Flee.py:33, etc.) pass either a list of object names or an already-built
     ObjectGroup; the helper hands back a usable ObjectGroup either way.
+
+    Also unwrap a single-element tuple/list whose only element is already an
+    ObjectGroup — `AI.Preprocessors.SelectTarget.__init__` collects its arg
+    via `*pTargetGroup` and then forwards the resulting tuple here. The real
+    SDK helper unwraps that tuple so the ObjectGroupWithInfo identity (and
+    its priority dict) is preserved. Without this unwrap the priority/info
+    factor in `GetTargetRating` always reads as 0.
     """
     if isinstance(arg, ObjectGroup):
         return arg
+    if isinstance(arg, (tuple, list)) and len(arg) == 1 and isinstance(arg[0], ObjectGroup):
+        return arg[0]
     group = ObjectGroup()
     if isinstance(arg, str):
         group.AddName(arg)
@@ -556,6 +571,18 @@ def PhysicsObjectClass_Cast(obj) -> "PhysicsObjectClass | None":
     callers fall back to current position when this returns None.
     """
     return obj if isinstance(obj, PhysicsObjectClass) else None
+
+
+def DamageableObject_Cast(obj) -> "DamageableObject | None":
+    """Return obj if it is a DamageableObject, else None.
+
+    SDK pattern (AI/Preprocessors.py:1438 — SelectTarget.FindGoodTarget):
+    ``pDam = App.DamageableObject_Cast(pOldTarget)`` then guard with
+    ``if pDam:`` before checking ``pDam.IsDead()`` / ``pDam.IsDying()``.
+    None for non-damageable targets keeps the SDK's truthiness guards
+    correct (the dead/dying skip only applies when the cast succeeds).
+    """
+    return obj if isinstance(obj, DamageableObject) else None
 
 
 def ObjectClass_GetObject(pSet, name) -> "ObjectClass | None":

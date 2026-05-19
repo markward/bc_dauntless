@@ -103,8 +103,8 @@ Bind to PyBullet rigid bodies (Phase 1 harness) and the C++ engine later:
 ### Follow-up after BuilderAI + ConditionScript (Slice A complete)
 
 The BasicAttack roadmap now has its foundation. Next slices, in order:
-- **Slice B**: `SelectTarget` preprocessor port (~600 LOC from `sdk/.../AI/Preprocessors.py`).
-- **Slice C**: `FireScript` preprocessor port (~1000 LOC).
+- **Slice B**: ✅ done in [SelectTarget plan](../plans/2026-05-19-select-target-preprocessor.md). SelectTarget loads via `_SDKFinder`, picks targets via weighted-factor rating, propagates the chosen target through the external-`SetTarget`-dispatch chain. AI-driver preprocess dispatch now widens to pass `dEndTime` to 1-arg methods.
+- **Slice C**: `FireScript` preprocessor port (~1000 LOC). Sits on the SelectTarget infrastructure; consumes the propagated target.
 - **Slice D**: PlainAI sub-graphs that FedAttack/NonFedAttack splice in (`TorpRun`, `StationaryAttack`, `TurnToAttack`, `SweepPhasers`, `ICOMove`, `WarpBeforeDeath`, `EvadeTorps`).
 - **Slice E**: `NonFedAttack`/`FedAttack` `CreateAI` assembly + visible mission where a hostile flies in and opens fire.
 
