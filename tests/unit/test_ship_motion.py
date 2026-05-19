@@ -238,3 +238,53 @@ def test_motion_integrator_runs_after_ai_setpoints():
 
     tick_all_ship_motion(1.0 / 60.0)
     assert ship._current_speed == pytest.approx(7.0)
+
+
+def test_get_predicted_position_returns_p_v_t_half_a_t_squared():
+    """GetPredictedPosition(p, v, a, t) = p + v*t + 0.5*a*t²"""
+    ship = ShipClass()
+    p = TGPoint3(10.0, 20.0, 30.0)
+    v = TGPoint3(1.0, 2.0, 3.0)
+    a = TGPoint3(0.4, 0.0, -0.2)
+    t = 5.0
+    result = ship.GetPredictedPosition(p, v, a, t)
+    # p + v*t = (15, 30, 45); 0.5*a*t² = (5, 0, -2.5) → (20, 30, 42.5)
+    assert result.x == pytest.approx(20.0)
+    assert result.y == pytest.approx(30.0)
+    assert result.z == pytest.approx(42.5)
+
+
+def test_get_relative_position_info_basic():
+    """Ship at origin, target at (0, 100, 0): diff=(0,100,0),
+    distance=100, unit=(0,1,0), angle_off_forward=0 (aligned with +Y
+    model-forward in identity rotation)."""
+    ship = ShipClass()
+    ship.SetTranslateXYZ(0.0, 0.0, 0.0)
+    target = TGPoint3(0.0, 100.0, 0.0)
+    diff, dist, unit, angle = ship.GetRelativePositionInfo(target)
+    assert (diff.x, diff.y, diff.z) == (0.0, 100.0, 0.0)
+    assert dist == pytest.approx(100.0)
+    assert (unit.x, unit.y, unit.z) == pytest.approx((0.0, 1.0, 0.0))
+    assert angle == pytest.approx(0.0, abs=1e-9)
+
+
+def test_get_relative_position_info_angle_off_forward():
+    """Target perpendicular to model-forward → 90° angle."""
+    ship = ShipClass()
+    ship.SetTranslateXYZ(0.0, 0.0, 0.0)
+    target = TGPoint3(100.0, 0.0, 0.0)  # world +X; identity rotation,
+                                        # model-forward is world +Y
+    _, _, _, angle = ship.GetRelativePositionInfo(target)
+    assert angle == pytest.approx(math.pi / 2.0, abs=1e-9)
+
+
+def test_get_relative_position_info_zero_distance():
+    """Target at ship's location: distance == 0, unit_dir is (0,0,0),
+    angle is 0 (defined by convention — avoid divide-by-zero)."""
+    ship = ShipClass()
+    ship.SetTranslateXYZ(5.0, 5.0, 5.0)
+    target = TGPoint3(5.0, 5.0, 5.0)
+    diff, dist, unit, angle = ship.GetRelativePositionInfo(target)
+    assert dist == pytest.approx(0.0)
+    assert (unit.x, unit.y, unit.z) == (0.0, 0.0, 0.0)
+    assert angle == pytest.approx(0.0)

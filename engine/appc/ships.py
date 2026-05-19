@@ -115,6 +115,49 @@ class ShipClass(DamageableObject):
     def GetTargetAngularVelocitySetpoint(self):
         return getattr(self, "_target_angular_velocity_setpoint", None)
 
+    # ── Pure-math kinematic helpers ──────────────────────────────────────────
+    # No state read/written beyond the explicit arg list (GetPredictedPosition)
+    # or the ship's world transform (GetRelativePositionInfo).  SDK signatures
+    # live on PhysicsObjectClass; canonical callers are AI.PlainAI.TurnToOrientation
+    # and the Intercept family.
+    def GetPredictedPosition(self, p, v, a, t):
+        """Kinematic forecast: p + v*t + 0.5*a*t²."""
+        t2_half = 0.5 * t * t
+        return TGPoint3(
+            p.x + v.x * t + a.x * t2_half,
+            p.y + v.y * t + a.y * t2_half,
+            p.z + v.z * t + a.z * t2_half,
+        )
+
+    def GetRelativePositionInfo(self, target_vec):
+        """Geometry of a world-space point relative to this ship.
+
+        Returns (diff_vec, distance, unit_dir, angle_off_forward_rad)
+        where diff_vec = target - ship_world_location,
+        distance = |diff_vec|, unit_dir = diff_vec / distance
+        (zero vec if distance ≈ 0), and angle_off_forward is the angle
+        between unit_dir and the ship's world-forward (model-Y mapped
+        through GetWorldRotation()).
+        """
+        import math as _math
+        loc = self.GetWorldLocation()
+        diff = TGPoint3(
+            target_vec.x - loc.x,
+            target_vec.y - loc.y,
+            target_vec.z - loc.z,
+        )
+        distance = diff.Length()
+        if distance < 1e-9:
+            return diff, 0.0, TGPoint3(0.0, 0.0, 0.0), 0.0
+        unit = TGPoint3(diff.x / distance, diff.y / distance, diff.z / distance)
+        forward = self.GetWorldRotation().GetRow(1)
+        # Clamp to acos domain to guard against FP drift outside [-1, 1].
+        cos_a = unit.x * forward.x + unit.y * forward.y + unit.z * forward.z
+        if cos_a > 1.0: cos_a = 1.0
+        elif cos_a < -1.0: cos_a = -1.0
+        angle = _math.acos(cos_a)
+        return diff, distance, unit, angle
+
     def SetNetType(self, net_type: int) -> None:
         self._net_type = net_type
 
