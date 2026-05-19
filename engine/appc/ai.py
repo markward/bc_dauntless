@@ -241,7 +241,7 @@ class ArtificialIntelligence:
         probes — keeps the tree-walking logic in one place instead of an
         override per AI type. Order: PriorityListAI / SequenceAI children
         in insertion order, then ConditionalAI / PreprocessingAI contained
-        AI. Mirrors the recursion order in iter_ais_with_external_function.
+        AI.
         """
         out: list = [self]
         # PriorityListAI / SequenceAI / PlainAI: ._ais is a list of either
@@ -1033,51 +1033,6 @@ def CharacterAction_CreateByName(name: str, *args) -> CharacterAction:
 CSP_LOW    = 0
 CSP_NORMAL = 1
 CSP_HIGH   = 2
-
-
-# ── External-function tree walker ─────────────────────────────────────────────
-def iter_ais_with_external_function(root_ai, fname: str):
-    """Yield every PlainAI in the subtree rooted at `root_ai` whose
-    GetExternalFunctions() dict contains `fname` as a key.
-
-    SDK pattern: SelectTarget walks the contained AI tree, finds leaves
-    that registered `"SetTarget"` via `RegisterExternalFunction` in
-    BaseAI.SetExternalFunctions, and dispatches the picked target name
-    through the leaf's `info["FunctionName"]` method on the script
-    instance.
-
-    Tree shape:
-      PlainAI                 — leaf; yielded if its _external_functions
-                                contains fname.
-      PriorityListAI          — recurse into each child AI in
-                                self._ais (list of (priority, ai)).
-      SequenceAI              — recurse into self._ais (list of ai).
-      ConditionalAI           — recurse into self._contained_ai.
-      PreprocessingAI         — recurse into self._contained_ai.
-      BuilderAI (extends PP)  — handled by the PreprocessingAI case
-                                after activation; before activation,
-                                _contained_ai is None and no leaves yield.
-    """
-    if root_ai is None:
-        return
-    if isinstance(root_ai, PlainAI):
-        if fname in root_ai._external_functions:
-            yield root_ai
-        return
-    if isinstance(root_ai, PriorityListAI):
-        for _prio, child in root_ai._ais:
-            yield from iter_ais_with_external_function(child, fname)
-        return
-    if isinstance(root_ai, SequenceAI):
-        for child in root_ai._ais:
-            yield from iter_ais_with_external_function(child, fname)
-        return
-    if isinstance(root_ai, (ConditionalAI, PreprocessingAI)):
-        yield from iter_ais_with_external_function(
-            root_ai._contained_ai, fname)
-        return
-    # Unknown AI subclass: silently terminate. Subclasses that contain
-    # other AIs should be added here as the project grows.
 
 
 # ── Module-level helpers (SDK `App.*` surface) ───────────────────────────────
