@@ -86,12 +86,15 @@ Three outcomes:
 | FAIL | `parse` | `read_tgl` raised any exception (typically `TGLParseError`) |
 | FAIL | `empty` | parsed cleanly but yielded zero strings AND zero sounds |
 
-The `empty` mode is expected to fire on
-`sdk/Build/Data/TGL/Tutorial/Episode/Episode.tgl` — that file is a
-documented placeholder containing a single "Unused" filler entry whose
-key/value sections are empty. Its existence as a known FAIL is the
-signal: the harness is correctly identifying TGLs that contain no
-usable data.
+No real TGL in the project decodes to empty — the original engine
+asserts on empty TGLs, so the game ships none. (The tutorial
+placeholder `Episode.tgl` looks empty by intent, but actually contains
+a single self-documenting `Unused` entry, so it parses as a normal
+1-string/1-sound TGL.) The empty classification is therefore a
+defensive guard against future parser regressions or hand-authored
+TGLs: it's exercised by the unit test (via a synthetic `count=0`
+file) but expected to produce zero hits when run against the
+shipped data.
 
 Catching bare `Exception` (not just `TGLParseError`) is deliberate —
 the harness is the place where unexpected parser failures should
@@ -161,9 +164,10 @@ Add `tests/missions/test_tgl_harness.py` covering:
 2. **Classification — pass.** Pass a real valid TGL
    (`sdk/Build/Data/TGL/Tutorial/Tutorial.tgl`); expect `("pass", ...)`
    with string/sound counts.
-3. **Classification — empty.** Pass the placeholder
-   `sdk/Build/Data/TGL/Tutorial/Episode/Episode.tgl`; expect
-   `("fail", ("empty", None))`.
+3. **Classification — empty.** Write a synthetic TGL with `count=0`
+   into `tmp_path` (20-byte header, no TOC, no body); expect
+   `("fail", ("empty", None))`. No shipped TGL decodes to empty, so
+   this path must be exercised with a constructed file.
 4. **Classification — parse error.** Write a 4-byte file in `tmp_path`;
    expect `("fail", ("parse", TGLParseError))`.
 5. **Error-key generation** for both failure modes — verifies the
@@ -194,8 +198,8 @@ can import them directly without invoking `main()`.
 
 - `uv run python tools/tgl_harness.py` runs to completion on a checkout
   with both `game/` and `sdk/` present.
-- Exactly one FAIL line is expected today
-  (`Tutorial/Episode/Episode.tgl`, empty).
+- Zero FAIL lines are expected today (all 60 shipped TGLs parse with
+  at least one string and one sound).
 - The unit tests pass under `uv run pytest tests/missions/test_tgl_harness.py`.
 - The harness has no dependency on the SDK module-loading machinery in
   `tools/mission_harness.py`.
