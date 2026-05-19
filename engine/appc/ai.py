@@ -221,6 +221,36 @@ class ArtificialIntelligence:
     def GetShip(self):                    return self._ship
     def GetObject(self):                  return self._ship   # SDK alias
 
+    # ── Tree walking ─────────────────────────────────────────────────────────
+    def GetAllAIsInTree(self) -> list:
+        """Return self followed by every AI reachable beneath this node.
+
+        SDK pattern (AI/Preprocessors.py:1384 — SelectTarget.CallSetTargetFunctions):
+        ``lAIs = self.pCodeAI.GetAllAIsInTree()[1:]`` then iterates calling
+        ``CallExternalFunction`` on each leaf. The list-with-self ordering
+        matches the C++ Appc semantics so that `[1:]` skips the caller.
+
+        Subclasses with child AIs are handled here via duck-typed attribute
+        probes — keeps the tree-walking logic in one place instead of an
+        override per AI type. Order: PriorityListAI / SequenceAI children
+        in insertion order, then ConditionalAI / PreprocessingAI contained
+        AI. Mirrors the recursion order in iter_ais_with_external_function.
+        """
+        out: list = [self]
+        # PriorityListAI / SequenceAI / PlainAI: ._ais is a list of either
+        # plain AIs (Sequence) or (priority, ai) tuples (PriorityList).
+        children = getattr(self, "_ais", None)
+        if isinstance(children, list):
+            for child in children:
+                ai = child[1] if isinstance(child, tuple) else child
+                if ai is not None:
+                    out.extend(ai.GetAllAIsInTree())
+        # ConditionalAI / PreprocessingAI: ._contained_ai is a single AI.
+        contained = getattr(self, "_contained_ai", None)
+        if contained is not None:
+            out.extend(contained.GetAllAIsInTree())
+        return out
+
     # ── Status ───────────────────────────────────────────────────────────────
     def IsActive(self) -> int:            return 1 if self._status == self.US_ACTIVE else 0
     def HasFocus(self) -> int:            return 1 if self._has_focus else 0
