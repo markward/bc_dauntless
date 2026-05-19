@@ -70,12 +70,16 @@ def test_add_name_and_info_round_trip():
 
 
 def test_dict_syntax_aliases():
-    """FixApp.py wires __getitem__/__setitem__ — we expose them directly."""
+    """FixApp.py wires __getitem__/__setitem__ — we expose them directly.
+
+    Unknown keys return `{}` (not None) so SDK SelectTarget rating can
+    chain `pGroup[name]["Priority"]`-style lookups without crashing on
+    targets that have no recorded info dict."""
     g = ObjectGroupWithInfo()
     g["Enterprise"] = "Federation"
     assert g["Enterprise"] == "Federation"
     del g["Enterprise"]
-    assert g["Enterprise"] is None
+    assert g["Enterprise"] == {}
     assert g.IsNameInGroup("Enterprise") == 0
 
 
