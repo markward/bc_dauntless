@@ -6,7 +6,9 @@ Mirrors the SDK ArtificialIntelligence dispatch semantics
 * PlainAI         — call script_instance.Update() at GetNextUpdateTime() cadence
 * PriorityListAI  — run highest-priority non-DORMANT child (lower int == higher priority)
 * SequenceAI      — run current child; on US_DONE advance, loop per _loop_count
-* ConditionalAI   — if any condition is non-zero, run contained AI; else US_DORMANT
+* ConditionalAI   — if SetEvaluationFunction is wired, call it with each condition's
+                    status; fall back to "any condition non-zero -> ACTIVE" for callers
+                    that AddCondition without registering an EvalFunc
 * PreprocessingAI — invoke preprocess method, dispatch contained per PS_*
 
 The driver is *not* TimeSliceProcess-based. PlainAI carries its own
