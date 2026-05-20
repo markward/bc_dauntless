@@ -855,6 +855,18 @@ class TorpedoSystem(WeaponSystem):
     def GetAmmoType(self, slot: int):
         return self._ammo_by_slot.get(int(slot))
 
+    def GetCurrentAmmoType(self):
+        """SDK TorpedoRun.py:130 / StationaryAttack.py:78 — returns the
+        currently-selected ammo type, or None if no ammo configured.
+
+        Phase 1 semantics: returns the lowest-numbered loaded slot's ammo.
+        Real BC tracks a separate "selected" slot via UI cycling; until a
+        body needs that distinction, lowest-slot is a faithful default."""
+        if not self._ammo_by_slot:
+            return None
+        lowest_slot = min(self._ammo_by_slot.keys())
+        return self._ammo_by_slot[lowest_slot]
+
 
 class PhaserSystem(WeaponSystem):
     # Power-level constants from sdk/.../App.py:6444-6446.
