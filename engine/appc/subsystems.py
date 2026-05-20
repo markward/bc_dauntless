@@ -809,11 +809,19 @@ class TorpedoAmmoType:
     MissionLib.SetTotalTorpsAtStarbase / LoadTorpedoes lookup pattern, which
     compares ``pTorpType.GetAmmoName() == "Photon"``.
     """
-    def __init__(self, name: str):
+    def __init__(self, name: str, launch_speed: float = 0.0):
         self._name = name
+        # SDK TorpedoRun.py:130 / StationaryAttack.py:78 use launch speed to
+        # predict the torpedo's intercept point.  Real BC tunes this per ammo
+        # type via the hardpoint scripts; Phase 1 keeps a single scalar.
+        self._launch_speed = float(launch_speed)
 
     def GetAmmoName(self) -> str:
         return self._name
+
+    def GetLaunchSpeed(self) -> float:
+        """SDK TorpedoRun.py:130 — used to predict torpedo intercept points."""
+        return float(self._launch_speed)
 
     def __repr__(self) -> str:
         return f"<TorpedoAmmoType {self._name!r}>"
