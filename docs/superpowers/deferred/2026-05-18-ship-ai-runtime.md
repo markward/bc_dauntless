@@ -117,6 +117,52 @@ The BasicAttack roadmap is complete. Future BC-AI work (richer tactical brain, w
 
 All 26 PlainAI scripts in `sdk/Build/scripts/AI/PlainAI/` now have engine-side activation guarantees (8 with full behaviour tests from Slices A/D2, 17 with activation smokes from Slice F, 1 helper class `BaseAI`).
 
+### Proposed — AvoidObstacles preprocessor port (Slice G)
+
+- **Slice G** (proposed): port the `AvoidObstacles` preprocessor in `sdk/Build/scripts/AI/Preprocessors.py:1621`. Highest-leverage remaining preprocessor — referenced by most Compound trees (NonFedAttack, FedAttack, CallDamageAI, etc.) but currently a silent no-op because the engine has no obstacle-avoidance machinery. Today, ships under BasicAttack fly directly through planets/asteroids when their target sits behind one.
+
+**Scope:** Follow the Slice B/C shape (one preprocessor port + integration smoke). End state: a ship under SelectTarget+FireScript+AvoidObstacles, given a planet between attacker and target, writes setpoints that route around the obstacle instead of through it.
+
+**Anticipated engine surface gaps:**
+- `ProximityManager.GetLineIntersectObjects` currently returns `()` (per the "Follow-up after Intercept" note below). AvoidObstacles needs a real line-segment vs. sphere intersection query for planets + asteroids.
+- `AvoidObstacles.Update` likely calls subsystem accessors for the ship's current course + speed prediction.
+- First-tick CodeAISet analog in `ai_driver` (mirrors SelectTarget Slice B Task 9 + FireScript Slice C Task 5 — same idempotent-wiring pattern, gated on a unique AvoidObstacles marker attribute).
+
+**Task shape:** ~7-10 tasks following Slice C's recipe. End-to-end integration test runs a 4-tick scenario (ship + target + 1 planet between them), asserts the ship's setpoint vector deviates from the direct-to-target line.
+
+**Deferred:** Multi-obstacle avoidance optimization (cluster handling), avoidance during warp transitions (Warp PlainAI handles its own obstacle grab separately), avoidance of dynamic obstacles (other ships).
+
+### Proposed — Behaviourally-important Conditions (Slice H)
+
+- **Slice H** (proposed): port 6 high-impact SDK Conditions end-to-end so Compound trees gate on real state instead of the lazy-fallback default. Today, 31 of 33 SDK Conditions fall through Slice A's lazy fallback — the Compound trees activate cleanly (Slice D1's smokes prove this) but their gating logic mostly evaluates to default-status constants, so dynamic behaviour is muted.
+
+**6 Conditions to port** (chosen by Compound-graph impact):
+- `ConditionFlagSet` — gates almost every sub-Compound (`AvoidTorps`, `WarpOutBeforeDying`, `UseSideArcs`, `SmartShields`, `FollowToSB12`, etc.). Currently the most-load-bearing missing Condition.
+- `ConditionIncomingTorps` — EvadeTorps sub-Compound would actually evade. Pairs with Slice F's `AIScriptAssist_GetIncomingTorpIDsInSet` stub (currently returns empty; would need a real torp tracker for this Condition to be meaningful).
+- `ConditionInPhaserFiringArc` — FireScript would gate phaser fire on actual arc geometry.
+- `ConditionFacingToward` — used by NonFedAttack's "torps ready and facing" gating.
+- `ConditionPulseReady` + `ConditionTorpsReady` — weapon-readiness gates in FireScript subtrees; currently both default to "ready" via lazy fallback (which is why FireScript fires every tick instead of waiting for cooldown).
+
+**Scope:** Each Condition needs:
+1. Engine-side state the Condition reads (mission-flag dict for `ConditionFlagSet`; torp tracker for `ConditionIncomingTorps`; weapon-state predicates for the *Ready conditions; arc-geometry math for the firing-arc/facing conditions).
+2. SDK Condition class loads via `_SDKFinder` and instantiates without crash.
+3. Broadcast handlers wired so the Condition's status updates when the underlying state changes (`SetStatus` pattern from Slice A's `ConditionInRange`).
+4. End-to-end test: set up the trigger state, evaluate, assert status flips.
+
+**Task shape:** ~9 tasks — engine surface task (per Condition) + behaviour test (per Condition) + a final task that re-runs the existing Slice D1 sub-Compound smokes with mission flags set and asserts the gated behaviour now activates. Roughly Slice D2 size.
+
+**Anticipated engine surface:**
+- `Mission.SetFlag(name, value=1)` / `GetFlag(name)` — already partly present? Verify. `ConditionFlagSet` reads via the mission/keywords dict on construction.
+- `g_kIncomingTorpTracker` or equivalent — a registry of in-flight torpedoes per ship. Either lift from the existing combat code or stub-and-defer.
+- `ShipClass.IsInPhaserFiringArc(other)` — arc geometry; uses the per-weapon arc data already loaded into `PhaserBank._arc_*` fields.
+- `WeaponSystem.IsReadyToFire()` — already a small accessor; verify and wire.
+
+**Deferred to a later slice:** the remaining 25 Conditions (most are situational and lazy-fallback works for the typical case); event-driven Condition broadcasts beyond the SDK's pre-existing `ET_*` event types; condition-script hot-reload.
+
+### Proposed — Remaining 9 Compounds (future)
+
+After Slices G and H land, the remaining unported Compounds (`CloakAttack`, `CloakAttackWrapper`, `Defend`, `DockWithStarbase`, `UndockFromStarbase`, `TractorDockTargets`, `StarbaseAttack`, `ChainFollow`, `ChainFollowThroughWarp`) each follow Slice D1's per-Compound activation-smoke recipe. Group by behaviour (combat/docking/follow) or by mission-need (port what an upcoming campaign mission requires).
+
 ### Follow-up after Intercept
 
 - **Renderer warp visuals.** `InSystemWarp` currently teleports kinematically with no visual treatment. When the chase-camera / particle / motion-blur subsystems land, hook them in via a renderer-side pass; the engine-side teleport stays correct.
