@@ -468,6 +468,28 @@ class ShipClass(DamageableObject):
     def GetHull(self):                            return self._hull
     def SetHull(self, h) -> None:                 self._hull = h
 
+    def GetSubsystems(self) -> list:
+        """Return every populated top-level subsystem on this ship.
+
+        SDK Preprocessors.py:865 — `for pSubsystem in pShipTarget.GetSubsystems():`
+        is how AI walks a ship's subsystems when rating which one to target.
+        Order matches GetSubsystemByProperty's slot inventory; callers that
+        rely on a specific traversal order pass through GetTargetableSubsystems
+        anyway, which flattens out non-targetable shells into children."""
+        return [s for s in (
+            self._sensor_subsystem,
+            self._impulse_engine_subsystem,
+            self._warp_engine_subsystem,
+            self._torpedo_system,
+            self._phaser_system,
+            self._pulse_weapon_system,
+            self._tractor_beam_system,
+            self._shield_subsystem,
+            self._power_subsystem,
+            self._repair_subsystem,
+            self._hull,
+        ) if s is not None]
+
     def GetSubsystemByProperty(self, prop):
         """Find the live subsystem whose source property is `prop`.
 
