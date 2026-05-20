@@ -224,9 +224,13 @@ class ProximityManager:
     def GetNumObjects(self) -> int:
         return len(self._objects)
 
-    def GetNearObjects(self, point, radius) -> tuple:
+    def GetNearObjects(self, point, radius, eType=None) -> tuple:
         """Return objects within `radius` world-space units of `point`.
-        Used by SDK conditions (ConditionInRange) to gate on proximity."""
+        Used by SDK conditions (ConditionInRange) to gate on proximity.
+
+        SDK call sites pass an optional third arg (MissionLib.py:5035 passes
+        ``1`` — a type filter / encompassing-volume flag in the real engine);
+        Phase 1 accepts and ignores it so SDK call sites round-trip."""
         r2 = float(radius) * float(radius)
         result = []
         for obj in self._objects:
