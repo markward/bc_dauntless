@@ -524,7 +524,19 @@ def ObjectGroup_ForceToGroup(arg) -> ObjectGroup:
         group.AddName(arg)
     elif arg is not None:
         for name in arg:
-            group.AddName(str(name))
+            # SDK mission scripts (M3Gameflow EnemyAI/FriendlyAI) pass a
+            # single list literal as the targets positional arg, e.g.
+            # ``BasicAttack.CreateAI(pShip, ["Galaxy 2"])``. Compound.
+            # BasicAttack splats that into ``*lpTargets`` and forwards
+            # to FedAttack/NonFedAttack as ``lpTargets = (["Galaxy 2"],)``.
+            # Flatten one level so the nested list becomes individual
+            # names instead of ``"['Galaxy 2']"`` (a string the AI never
+            # resolves to a real object).
+            if isinstance(name, (tuple, list)):
+                for inner in name:
+                    group.AddName(str(inner))
+            else:
+                group.AddName(str(name))
     return group
 
 

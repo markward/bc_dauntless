@@ -1821,10 +1821,16 @@ def _relocate_eye_for_target_lock(eye, up_vec, ship_loc, target_loc):
     return new_eye, (upx/upm, upy/upm, upz/upm)
 
 
-def run(mission_name: str = SHIP_GATE_MISSION,
+def run(mission_name: Optional[str] = None,
         max_ticks: Optional[int] = None) -> int:
     """Boot the renderer, init the named mission, run until the window closes
     or max_ticks is reached. Returns 0 on clean exit.
+
+    Mission resolution: ``mission_name`` argument wins; otherwise the
+    ``OPEN_STBC_HOST_MISSION`` env var; otherwise ``SHIP_GATE_MISSION`` (the
+    default M2Objects ship-gate mission). The env-var path lets
+    ``./build/dauntless`` swap missions without recompiling, while
+    preserving the existing default for the ship-gate tests.
 
     Debug knobs (env vars):
       OPEN_STBC_HOST_HEADLESS=1     — hide the window (used by tests).
@@ -1833,10 +1839,14 @@ def run(mission_name: str = SHIP_GATE_MISSION,
       OPEN_STBC_HOST_FIXED_CAMERA=1 — ignore third-person follow; use a
                                       fixed camera at (0, 0, 150) looking
                                       at the world origin.
+      OPEN_STBC_HOST_MISSION=<dotted> — override the loaded mission.
     """
     import os as _os
     verbose = _os.environ.get("OPEN_STBC_HOST_VERBOSE") == "1"
     fixed_camera = _os.environ.get("OPEN_STBC_HOST_FIXED_CAMERA") == "1"
+    if mission_name is None:
+        mission_name = _os.environ.get(
+            "OPEN_STBC_HOST_MISSION", SHIP_GATE_MISSION)
 
     _setup_sdk()
 

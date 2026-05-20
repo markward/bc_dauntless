@@ -31,9 +31,23 @@ _LOOP_TIMEOUT = 30  # seconds — longer than initialize-only (15 s)
 _DEFAULT_TICKS = 36000  # ~10 minutes at 60 Hz
 
 
+def _return(status, exc, ticks_done, state=None, return_state=False):
+    """Return a 3-tuple by default, 4-tuple when return_state=True.
+
+    state is None for init_fail (mission never built); populated for
+    pass/loop_fail paths so callers can inspect post-run mission state.
+    """
+    if return_state:
+        return (status, exc, ticks_done, state)
+    return (status, exc, ticks_done)
+
+
 def run_mission_with_loop(
-    module_name: str, n_ticks: int = _DEFAULT_TICKS, profile: bool = False
-) -> "tuple[str, Exception | None, int]":
+    module_name: str,
+    n_ticks: int = _DEFAULT_TICKS,
+    profile: bool = False,
+    return_state: bool = False,
+):
     """Initialize mission, fire ET_MISSION_START, advance GameLoop for n_ticks.
 
     Caller must invoke _mh.setup_sdk() before calling this function.
@@ -42,6 +56,12 @@ def run_mission_with_loop(
       "pass"      — all n_ticks completed without exception
       "init_fail" — Initialize() or import raised; ticks_completed is 0
       "loop_fail" — exception during loop; ticks_completed < n_ticks
+
+    When ``return_state=True``, returns a 4-tuple
+    (status, exc, ticks_completed, state) where ``state`` is a dict
+    captured INSIDE the try block (before the finally cleanup tears down
+    sys.modules and the current-game pointer). For init_fail, state is
+    None — the mission was never built.
     """
     from engine.core.game import Game, Episode, Mission, _set_current_game
     from engine.appc.events import TGEvent
@@ -70,6 +90,16 @@ def run_mission_with_loop(
     def _alarm_handler(signum, frame):
         raise TimeoutError(f"timed out after {_LOOP_TIMEOUT}s")
 
+    def _capture_state():
+        if not return_state:
+            return None
+        return {
+            "mission": mission,
+            "episode": episode,
+            "game": game,
+            "set_manager": App.g_kSetManager,
+        }
+
     old_handler = signal.signal(signal.SIGALRM, _alarm_handler)
     signal.alarm(_LOOP_TIMEOUT)
     try:
@@ -77,7 +107,7 @@ def run_mission_with_loop(
             mod = importlib.import_module(module_name)
             mod.Initialize(mission)
         except Exception as exc:
-            return ("init_fail", exc, 0)
+            return _return("init_fail", exc, 0, None, return_state)
 
         # Fire ET_MISSION_START — episode is destination, broadcast handlers also fire
         start_evt = TGEvent()
@@ -91,9 +121,9 @@ def run_mission_with_loop(
             loop.tick()
             ticks_done = i + 1
 
-        return ("pass", None, ticks_done)
+        return _return("pass", None, ticks_done, _capture_state(), return_state)
     except Exception as exc:
-        return ("loop_fail", exc, ticks_done)
+        return _return("loop_fail", exc, ticks_done, _capture_state(), return_state)
     finally:
         signal.alarm(0)
         signal.signal(signal.SIGALRM, old_handler)
