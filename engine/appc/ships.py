@@ -840,7 +840,10 @@ class ShipClass(DamageableObject):
         # so a top-level `import App` here would loop. Same for
         # WeaponSystem (sibling module also imported by App).
         import App
-        from engine.appc.subsystems import WeaponSystem
+        from engine.appc.subsystems import (
+            WeaponSystem, SensorSubsystem, ImpulseEngineSubsystem,
+            WarpEngineSubsystem, ShieldSubsystem, HullSubsystem,
+        )
         if match_type is None:
             return iter(())
         candidates = [
@@ -850,11 +853,26 @@ class ShipClass(DamageableObject):
             self._tractor_beam_system, self._shield_subsystem,
             self._power_subsystem, self._repair_subsystem, self._hull,
         ]
+        # SDK CT_* constants → subsystem class. SDK callers commonly pass
+        # one of CT_WEAPON_SYSTEM (FireScript), CT_SENSOR_SUBSYSTEM
+        # (NoSensorsEvasive's ConditionSystemDisabled),
+        # CT_WARP_ENGINE_SUBSYSTEM (WarpBeforeDeath), CT_HULL_SUBSYSTEM /
+        # CT_SHIELD_SUBSYSTEM / CT_IMPULSE_ENGINE_SUBSYSTEM
+        # (SelectTarget.RateSubsystemForTargeting).
         if match_type is App.CT_WEAPON_SYSTEM:
             target_class = WeaponSystem
+        elif match_type is App.CT_SENSOR_SUBSYSTEM:
+            target_class = SensorSubsystem
+        elif match_type is App.CT_IMPULSE_ENGINE_SUBSYSTEM:
+            target_class = ImpulseEngineSubsystem
+        elif match_type is App.CT_WARP_ENGINE_SUBSYSTEM:
+            target_class = WarpEngineSubsystem
+        elif match_type is App.CT_SHIELD_SUBSYSTEM:
+            target_class = ShieldSubsystem
+        elif match_type is App.CT_HULL_SUBSYSTEM:
+            target_class = HullSubsystem
         else:
-            # Future match types land here. For now, no other filter
-            # is implemented — return an empty iter so SDK while-loops
+            # Unknown match type — return empty iter so SDK while-loops
             # terminate cleanly.
             return iter(())
         return iter([s for s in candidates if s is not None and isinstance(s, target_class)])

@@ -529,6 +529,18 @@ class PreprocessingAI(ArtificialIntelligence):
             # GetPreprocessingInstance returns what they constructed.
             self._preprocessing_instance = args[0]
             self._preprocessing_method = args[1]
+            # SDK preprocessor classes (SelectTarget, FireScript) call
+            # self.pCodeAI.GetShip()/GetAllAIsInTree() throughout their
+            # Update bodies. The C++ optimized engine wires pCodeAI when
+            # SetPreprocessingMethod runs; Phase 1 has no optimization,
+            # so we wire it here. Slice B test fixtures set this
+            # explicitly; NonFedAttack/FedAttack SDK CreateAI doesn't.
+            try:
+                args[0].pCodeAI = self
+            except (AttributeError, TypeError):
+                # Instance refuses attribute assignment (e.g. slotted
+                # class); skip — caller is responsible.
+                pass
 
     def GetPreprocessingInstance(self):
         if self._preprocessing_instance is None:
