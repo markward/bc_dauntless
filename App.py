@@ -425,6 +425,30 @@ class FuzzyLogic:
         return out
 
 
+# ── AIScriptAssist helpers ───────────────────────────────────────────────────
+# C++-side helpers exposed to PlainAI scripts for torpedo-evasion logic.
+# SDK App.py binds these directly to Appc symbols (see sdk/.../App.py:10162,
+# 11200). The PlainAI EvadeTorps body calls
+# ``AIScriptAssist_GetIncomingTorpIDsInSet`` every 0.15s to poll for incoming
+# torpedo IDs in the current set.
+#
+# Phase 1 has no torpedo tracker, so this stub returns an empty tuple — the
+# caller's ``if not lIncomingTorpIDs: return US_ACTIVE`` short-circuit then
+# fires, which is the correct behaviour when nothing's incoming.
+#
+# Returning a real tuple (rather than the fallback _Stub) is required: the
+# SDK script next does ``for idTorp in lIncomingTorpIDs`` — iterating a _Stub
+# loops forever via __getitem__.
+
+def AIScriptAssist_GetIncomingTorpIDsInSet(pShip, pSet, fDangerTimeThreshold,
+                                            idToIgnore, iFlags):
+    return ()
+
+
+def AIScriptAssist_TorpIsIncoming(pShip, pTorp, fDangerTimeThreshold):
+    return 0
+
+
 # ── App.AT_* ammo-type constants ─────────────────────────────────────────────
 # SDK code treats these as TorpedoAmmoType instances (objects with GetAmmoName)
 # rather than plain ints — MissionLib.SetTotalTorpsAtStarbase iterates the
