@@ -493,6 +493,14 @@ class PreprocessingAI(ArtificialIntelligence):
         self._contained_ai = None
         self._preprocessing_method: str = ""
         self._preprocessing_instance: "_AIScriptInstance | None" = None
+        # Set to True when the preprocessor's Update returns PS_DONE.
+        # SDK semantics: "this preprocessor's job is finished" — stop
+        # calling Update on it, but the wrapper PreprocessingAI is NOT
+        # done; the contained_ai continues to dispatch normally. Without
+        # this gate, an "Unused"-style preprocessor (e.g. ManagePower
+        # which returns PS_DONE unconditionally) would kill the whole
+        # subtree on the first tick.
+        self._preprocess_done: bool = False
 
     def SetContainedAI(self, ai) -> None:
         self._contained_ai = ai
