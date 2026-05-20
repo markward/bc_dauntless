@@ -509,6 +509,36 @@ class PreprocessingAI(ArtificialIntelligence):
     def ForceDormantStatus(self, *args) -> None:    pass
     def ForceStatusChange(self, *args) -> None:     pass
 
+    def CallExternalFunction(self, name: str, *args) -> None:
+        """Dispatch a registered external function to the preprocessing
+        instance — mirror of PlainAI.CallExternalFunction.
+
+        SDK FireScript.CodeAISet (AI/Preprocessors.py:137-145) registers
+        ``SetTarget`` on its wrapping ``pCodeAI`` (a PreprocessingAI), not
+        on a child PlainAI. SelectTarget.CallSetTargetFunctions
+        (AI/Preprocessors.py:1407) walks every AI in the tree and calls
+        ``pAI.CallExternalFunction("SetTarget", name)`` unconditionally,
+        so the wrapping PreprocessingAI must actually route the call to
+        ``self._preprocessing_instance.<method>`` rather than no-op.
+
+        Silent no-op if the function isn't registered, the lookup key is
+        missing, the instance is unset, or the named method doesn't exist —
+        mirrors PlainAI's tolerant dispatch.
+        """
+        info = self._external_functions.get(name)
+        if not info:
+            return
+        fn_name = info.get("FunctionName") or info.get("Name")
+        if not fn_name:
+            return
+        inst = self._preprocessing_instance
+        if inst is None:
+            return
+        method = getattr(inst, fn_name, None)
+        if method is None:
+            return
+        method(*args)
+
 
 def PreprocessingAI_Create(pShip=None, name: str = "") -> PreprocessingAI:
     return PreprocessingAI(pShip, name)
