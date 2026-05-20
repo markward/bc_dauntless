@@ -115,6 +115,25 @@ def _tick_sequence(ai: SequenceAI, game_time: float) -> int:
 
 
 def _tick_conditional(ai: ConditionalAI, game_time: float) -> int:
+    # SDK semantics: if an EvaluationFunction is set, the conditions act as
+    # arguments to it and the function returns the desired US_* status.
+    # SDK Parts/*.py defines EvalFunc(bCond0, bCond1, ...) → ACTIVE/DORMANT/
+    # DONE. Without an EvalFunc, fall back to "any condition non-zero ⇒
+    # ACTIVE" as a coarse default (kept for synthetic tests that wire
+    # AddCondition without SetEvaluationFunction).
+    eval_fn = ai._evaluation_function
+    if eval_fn is not None:
+        args = [c.GetStatus() for c in ai._conditions]
+        try:
+            status = eval_fn(*args)
+        except Exception:
+            status = US_DORMANT
+        if status is None:
+            status = US_DORMANT
+        ai._status = int(status)
+        if ai._status == US_ACTIVE and ai._contained_ai is not None:
+            tick_ai(ai._contained_ai, game_time)
+        return ai._status
     active = any(c.GetStatus() != 0 for c in ai._conditions) if ai._conditions else False
     if not active:
         ai._status = US_DORMANT
