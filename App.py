@@ -333,6 +333,98 @@ def TorpedoTube_Cast(obj):
     return obj if isinstance(obj, TorpedoTube) else None
 
 
+# ── FuzzyLogic ───────────────────────────────────────────────────────────────
+# Used by SDK PlainAI scripts (TorpedoRun, FollowObject, etc.) for
+# behaviour smoothing. Two forms:
+#   - FuzzyLogic_BreakIntoSets: pure function, triangular memberships
+#     in N bands defined by N threshold peaks.
+#   - FuzzyLogic class: rule-based Mamdani inference engine.
+#
+# Phase 1 implementation favours plausible behaviour over pixel-perfect SDK
+# fidelity (the SDK C++ implementation is unavailable; semantics inferred
+# from PlainAI callers).
+
+def FuzzyLogic_BreakIntoSets(value, thresholds):
+    """Return tuple of N floats summing to 1.0, representing triangular
+    memberships in N bands whose peaks are at the N thresholds.
+
+    For 3 thresholds (lo, mid, hi):
+      - value <= lo                       → (1.0, 0.0, 0.0)
+      - lo < value < mid                  → linear interp: (1-t, t, 0.0)
+      - value == mid                      → (0.0, 1.0, 0.0)
+      - mid < value < hi                  → linear interp: (0.0, 1-t, t)
+      - value >= hi                       → (0.0, 0.0, 1.0)
+
+    Generalises to N thresholds: peak of band i is at threshold[i];
+    the value's position between adjacent thresholds gives a 2-element
+    ramp; all other bands are 0.0. SDK callers (TorpedoRun.py:156,159,233,
+    FollowObject.py:110) consistently unpack N values from N thresholds.
+    """
+    t = list(thresholds)
+    n_bands = len(t)
+    result = [0.0] * n_bands
+    if value <= t[0]:
+        result[0] = 1.0
+        return tuple(result)
+    if value >= t[-1]:
+        result[-1] = 1.0
+        return tuple(result)
+    for i in range(len(t) - 1):
+        if t[i] <= value <= t[i + 1]:
+            span = t[i + 1] - t[i]
+            if span <= 0.0:
+                result[i + 1] = 1.0
+                return tuple(result)
+            frac = (value - t[i]) / span
+            result[i] = 1.0 - frac
+            result[i + 1] = frac
+            return tuple(result)
+    result[-1] = 1.0
+    return tuple(result)
+
+
+class FuzzyLogic:
+    """Rule-based Mamdani-style fuzzy inference.
+
+    SDK callers (sdk/Build/scripts/AI/PlainAI/FollowObject.py:54-62)
+    use this shape:
+
+        pFuzzy = App.FuzzyLogic()
+        pFuzzy.SetMaxRules(6)
+        pFuzzy.AddRule(input_set_id, output_set_id)
+        pFuzzy.SetPercentageInSet(input_set_id, value)
+        result = pFuzzy.GetResultBySet(output_set_id)
+
+    Phase 1 semantics: GetResultBySet(o) = max over all rules whose
+    output_id == o of the rule's input membership. Matches Mamdani max-
+    aggregation for single-antecedent rules, which is what every SDK
+    caller uses."""
+
+    def __init__(self):
+        self._max_rules: int = 0
+        self._rules: list = []
+        self._percentages: dict = {}
+
+    def SetMaxRules(self, n) -> None:
+        self._max_rules = int(n)
+
+    def AddRule(self, input_set_id, output_set_id) -> None:
+        self._rules.append((int(input_set_id), int(output_set_id)))
+
+    def SetPercentageInSet(self, set_id, value) -> None:
+        self._percentages[int(set_id)] = float(value)
+
+    def GetResultBySet(self, output_set_id) -> float:
+        out = 0.0
+        for in_id, out_id in self._rules:
+            if out_id != output_set_id:
+                continue
+            v = self._percentages.get(in_id, 0.0)
+            if v > out:
+                out = v
+        return out
+
+
 # ── App.AT_* ammo-type constants ─────────────────────────────────────────────
 # SDK code treats these as TorpedoAmmoType instances (objects with GetAmmoName)
 # rather than plain ints — MissionLib.SetTotalTorpsAtStarbase iterates the
