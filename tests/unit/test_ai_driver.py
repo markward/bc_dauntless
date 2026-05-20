@@ -170,10 +170,28 @@ def test_preprocessing_skip_dormant_marks_dormant():
     assert pp._status == ArtificialIntelligence.US_DORMANT
 
 
-def test_preprocessing_done_completes_pp():
-    leaf = _FakeLeaf()
+def test_preprocessing_done_marks_preprocess_done_but_keeps_dispatching():
+    """SDK semantics: PS_DONE means 'this preprocessor's job is finished',
+    not 'the whole subtree is done'. The wrapper PreprocessingAI continues
+    to dispatch its contained AI; the preprocessor's Update just stops
+    being called.
+
+    NonFedAttack's ManagePower preprocessor returns PS_DONE unconditionally
+    as an 'Unused' marker (sdk/.../AI/Preprocessors.py:2148); without this
+    behaviour an entire combat subtree dies on tick 1."""
+    # next_update=0 so the contained PlainAI dispatches every tick.
+    leaf = _FakeLeaf(next_update=0.0)
     child = _make_plain(ShipClass(), leaf)
     pp, inst = _make_pp(PreprocessingAI.PS_DONE, child)
     tick_ai(pp, game_time=0.01)
-    assert leaf.calls == 0
-    assert pp._status == ArtificialIntelligence.US_DONE
+    # Contained AI still dispatched on the tick PS_DONE was returned.
+    assert leaf.calls == 1
+    # Preprocessor flagged done; wrapper status is US_ACTIVE.
+    assert pp._preprocess_done is True
+    assert pp._status == ArtificialIntelligence.US_ACTIVE
+    # Second tick: preprocessor's Update is NOT called again; contained
+    # AI continues to dispatch.
+    preprocess_calls_after_first_tick = inst.calls
+    tick_ai(pp, game_time=1.0)
+    assert inst.calls == preprocess_calls_after_first_tick  # not re-called
+    assert leaf.calls == 2  # but contained AI is dispatched again

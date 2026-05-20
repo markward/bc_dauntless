@@ -197,24 +197,32 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
         cache = ai._preprocess_arity_cache
 
     arity = cache[2]
-    bound = getattr(inst, method)
-    if arity >= 1:
-        result = bound(game_time + 1.0)
-    else:
-        result = bound()
+    # Skip calling the preprocessor's Update once it has reported PS_DONE.
+    # SDK semantics: PS_DONE means "this preprocessor's job is finished",
+    # not "the whole subtree is done". An "Unused"-style preprocessor like
+    # ManagePower returns PS_DONE unconditionally (AI/Preprocessors.py:2148)
+    # and would otherwise kill the wrapper subtree on tick 1.
+    if not ai._preprocess_done:
+        bound = getattr(inst, method)
+        if arity >= 1:
+            result = bound(game_time + 1.0)
+        else:
+            result = bound()
 
-    if result is None:
-        result = PS_NORMAL
-    if result == PS_DONE:
-        ai._status = US_DONE
-        return ai._status
-    if result == PS_SKIP_DORMANT:
-        ai._status = US_DORMANT
-        return ai._status
-    if result == PS_SKIP_ACTIVE:
-        ai._status = US_ACTIVE
-        return ai._status
-    # PS_NORMAL
+        if result is None:
+            result = PS_NORMAL
+        if result == PS_DONE:
+            # Remember not to call Update again; do NOT mark the wrapper
+            # US_DONE. Fall through to contained_ai dispatch.
+            ai._preprocess_done = True
+        elif result == PS_SKIP_DORMANT:
+            ai._status = US_DORMANT
+            return ai._status
+        elif result == PS_SKIP_ACTIVE:
+            ai._status = US_ACTIVE
+            return ai._status
+        # PS_NORMAL falls through to contained_ai dispatch below.
+
     ai._status = US_ACTIVE
     if ai._contained_ai is not None:
         tick_ai(ai._contained_ai, game_time)

@@ -16,7 +16,7 @@ from engine.appc.ai import (
 from engine.appc.ai_driver import tick_ai
 from engine.appc.objects import ObjectGroup
 from engine.appc.ships import ShipClass
-from engine.appc.subsystems import HullSubsystem, PhaserSystem, TorpedoSystem
+from engine.appc.subsystems import HullSubsystem, PhaserSystem, TorpedoSystem, TorpedoAmmoType
 
 
 def _reset_app_state():
@@ -50,6 +50,9 @@ def _kitted_attacker_with_weapons():
     ours._hull = HullSubsystem("H"); ours._hull.SetMaxCondition(1000.0)
     phaser = PhaserSystem("P"); phaser._parent_ship = ours; phaser.TurnOn()
     torp   = TorpedoSystem("T"); torp._parent_ship = ours;   torp.TurnOn()
+    # FireScript.GetWeaponInfo reads GetCurrentAmmoType().GetLaunchSpeed();
+    # seed slot 0 with photon ammo (matches Task 2 TorpedoRun fixture).
+    torp._ammo_by_slot = {0: TorpedoAmmoType("Photon", launch_speed=19.0)}
     return ours, phaser, torp
 
 
@@ -138,8 +141,10 @@ def test_fire_script_receives_set_target_dispatch_from_select_target():
     target = _kitted_target()
     pSet.AddObjectToSet(target, "Target")
 
+    bare_torp = TorpedoSystem("T")
+    bare_torp._ammo_by_slot = {0: TorpedoAmmoType("Photon", launch_speed=19.0)}
     st, pp_select, fs = _wire_select_target_and_fire_script(
-        ours, phaser, TorpedoSystem("T"), "Target")
+        ours, phaser, bare_torp, "Target")
 
     # Tick 1: pp_select runs Update -> SelectTarget picks "Target",
     # CallSetTargetFunctions walks the tree but pp_fire hasn't run its

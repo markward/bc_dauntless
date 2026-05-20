@@ -809,11 +809,19 @@ class TorpedoAmmoType:
     MissionLib.SetTotalTorpsAtStarbase / LoadTorpedoes lookup pattern, which
     compares ``pTorpType.GetAmmoName() == "Photon"``.
     """
-    def __init__(self, name: str):
+    def __init__(self, name: str, launch_speed: float = 0.0):
         self._name = name
+        # SDK TorpedoRun.py:130 / StationaryAttack.py:78 use launch speed to
+        # predict the torpedo's intercept point.  Real BC tunes this per ammo
+        # type via the hardpoint scripts; Phase 1 keeps a single scalar.
+        self._launch_speed = float(launch_speed)
 
     def GetAmmoName(self) -> str:
         return self._name
+
+    def GetLaunchSpeed(self) -> float:
+        """SDK TorpedoRun.py:130 — used to predict torpedo intercept points."""
+        return float(self._launch_speed)
 
     def __repr__(self) -> str:
         return f"<TorpedoAmmoType {self._name!r}>"
@@ -846,6 +854,18 @@ class TorpedoSystem(WeaponSystem):
 
     def GetAmmoType(self, slot: int):
         return self._ammo_by_slot.get(int(slot))
+
+    def GetCurrentAmmoType(self):
+        """SDK TorpedoRun.py:130 / StationaryAttack.py:78 — returns the
+        currently-selected ammo type, or None if no ammo configured.
+
+        Phase 1 semantics: returns the lowest-numbered loaded slot's ammo.
+        Real BC tracks a separate "selected" slot via UI cycling; until a
+        body needs that distinction, lowest-slot is a faithful default."""
+        if not self._ammo_by_slot:
+            return None
+        lowest_slot = min(self._ammo_by_slot.keys())
+        return self._ammo_by_slot[lowest_slot]
 
 
 class PhaserSystem(WeaponSystem):
@@ -1380,6 +1400,13 @@ class ShieldSubsystem(PoweredSubsystem):
     def SetCurShields(self, face: int, value: float) -> None:
         """SDK-facing alias of SetCurrentShields (matches Appc method name)."""
         self.SetCurrentShields(face, value)
+
+    def GetCurShields(self, face: int) -> float:
+        """SDK-facing alias of GetCurrentShields (matches Appc method name).
+
+        Used by SDK PlainAI/IntelligentCircleObject.py:176-179 for
+        shield-bias orbit positioning."""
+        return self.GetCurrentShields(face)
 
     def GetSingleShieldPercentage(self, face: int) -> float:
         """current/max for the face; 0.0 when max==0 (unshielded face).
