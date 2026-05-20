@@ -111,6 +111,12 @@ The BasicAttack roadmap now has its foundation. Next slices, in order:
 
 The BasicAttack roadmap is complete. Future BC-AI work (richer tactical brain, weapon VFX rendering, mission objectives, audio mixing) lives in separate streams.
 
+### Follow-up after BasicAttack — PlainAI activation coverage
+
+- **Slice F**: ✅ done in [PlainAI activation smokes plan](../plans/2026-05-20-plainai-activation-smokes.md). 17 unported PlainAI bodies now have per-script activation smoke tests verifying their `Update()` returns a valid `US_*` integer status (catches both genuine exceptions AND silent `_Stub` absorption). Engine fixes surfaced + landed: `App.AIScriptAssist_GetIncomingTorpIDsInSet` returns empty tuple (EvadeTorps polled this every 0.15s; `_Stub` iteration hung the test process); `ProximityManager.GetNearObjects` accepts an optional 3rd type-filter arg (Warp's obstacle-grab path uses the 3-arg form via MissionLib). Fixture corrections in the test layer: RunScript points at `MissionLib.GetPlayer` (LogString doesn't exist); RunAction passes a real `TGNullAction` not an int; Defensive seeds a ShieldSubsystem. Kinematic correctness for these 17 scripts remains explicitly deferred — they activate but their motion/combat output isn't asserted. Future per-script behaviour tests land when a mission needs the specific PlainAI to drive a particular behaviour.
+
+All 26 PlainAI scripts in `sdk/Build/scripts/AI/PlainAI/` now have engine-side activation guarantees (8 with full behaviour tests from Slices A/D2, 17 with activation smokes from Slice F, 1 helper class `BaseAI`).
+
 ### Follow-up after Intercept
 
 - **Renderer warp visuals.** `InSystemWarp` currently teleports kinematically with no visual treatment. When the chase-camera / particle / motion-blur subsystems land, hook them in via a renderer-side pass; the engine-side teleport stays correct.
