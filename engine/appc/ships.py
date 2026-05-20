@@ -163,7 +163,7 @@ class ShipClass(DamageableObject):
         return diff, distance, unit, angle
 
     def TurnDirectionsToDirections(self, primary_from, primary_to,
-                                   secondary_from, secondary_to) -> float:
+                                   secondary_from=None, secondary_to=None) -> float:
         """Compute the angular velocity needed to rotate primary_from
         onto primary_to (and secondary_from onto secondary_to around
         the primary axis), call SetTargetAngularVelocityDirect, return
@@ -226,8 +226,15 @@ class ShipClass(DamageableObject):
         av_z = axis.z * primary_angle
 
         # 2. Secondary constraint.
-        sf_len = (secondary_from.x ** 2 + secondary_from.y ** 2 + secondary_from.z ** 2) ** 0.5
-        st_len = (secondary_to.x ** 2 + secondary_to.y ** 2 + secondary_to.z ** 2) ** 0.5
+        # SDK callers (AI/PlainAI/Defensive.py:125, AI/PlainAI/TorpedoRun.py:207)
+        # invoke the 2-arg form — no secondary alignment.  Treat that as the
+        # zero-magnitude case the algorithm already handles.
+        if secondary_from is None or secondary_to is None:
+            sf_len = 0.0
+            st_len = 0.0
+        else:
+            sf_len = (secondary_from.x ** 2 + secondary_from.y ** 2 + secondary_from.z ** 2) ** 0.5
+            st_len = (secondary_to.x ** 2 + secondary_to.y ** 2 + secondary_to.z ** 2) ** 0.5
         roll_angle = 0.0
         if sf_len > 1e-9 and st_len > 1e-9:
             # Project sf and st onto the plane perpendicular to pt.
