@@ -40,6 +40,7 @@ The original engine is a compiled C++ binary exposed to Python via a SWIG-genera
 | Live game | `game/` | BC installation (gitignored) — needed for instrumentation |
 | UI components | `engine/ui/`, `docs/project/superpowers/specs/2026-05-11-ui-components-design.md` | Reusable Button + CollapsibleList; theme registries mirror LoadInterface.py |
 | Space dust pass | `native/src/renderer/dust_pass.cc`, `docs/project/superpowers/specs/2026-05-11-space-dust-particles-design.md` | Camera-anchored dust particles with motion smear; F7 toggles |
+| BCS save format | `docs/original_game_reference/engine/bcs-save-format.md`, `tools/bcs_inspect.py` | Real binary save format; preamble + object table + TGL + pickle-memo decoded; 93.6% object-state region remains as parking-lot RE work |
 
 ## Open questions status
 
