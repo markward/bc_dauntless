@@ -1401,6 +1401,13 @@ class ShieldSubsystem(PoweredSubsystem):
         """SDK-facing alias of SetCurrentShields (matches Appc method name)."""
         self.SetCurrentShields(face, value)
 
+    def GetCurShields(self, face: int) -> float:
+        """SDK-facing alias of GetCurrentShields (matches Appc method name).
+
+        Used by SDK PlainAI/IntelligentCircleObject.py:176-179 for
+        shield-bias orbit positioning."""
+        return self.GetCurrentShields(face)
+
     def GetSingleShieldPercentage(self, face: int) -> float:
         """current/max for the face; 0.0 when max==0 (unshielded face).
 
