@@ -108,6 +108,7 @@ from engine.appc.ai import (
     PlainAI, PlainAI_Create,
     PriorityListAI, PriorityListAI_Create,
     SequenceAI, SequenceAI_Create,
+    RandomAI, RandomAI_Create,
     PreprocessingAI, PreprocessingAI_Create, PreprocessingAI_Cast,
     ConditionalAI, ConditionalAI_Create,
     ConditionEventCreator,
