@@ -685,6 +685,15 @@ class ShipSubsystem(TGEventHandlerObject):
         threshold = self._disabled_percentage * self._max_condition
         return 1 if self._condition <= threshold else 0
 
+    def IsHittableFromLocation(self, vWorldLoc) -> float:
+        """SDK Preprocessors.py:980 — `fHittable = pSubsystem.IsHittableFromLocation(pOurShip.GetWorldLocation())`.
+        Native Appc returns a scalar (0.0..1.0) reflecting LOS / occlusion
+        from the firing ship's location to the subsystem position. Phase 1
+        treats every subsystem as fully hittable (no occlusion model);
+        real geometry support lands when the renderer carries collision
+        meshes."""
+        return 1.0
+
 
 class PoweredSubsystem(ShipSubsystem):
     """Powered subsystem — consumes power, has a target power level."""
