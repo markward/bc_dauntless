@@ -675,6 +675,16 @@ class ShipSubsystem(TGEventHandlerObject):
         un-targetable internals (e.g. crew quarters)."""
         return 1
 
+    def IsDisabled(self) -> int:
+        """SDK Preprocessors.py:823, 974 — condition has fallen at or below
+        DisabledPercentage × MaxCondition. Mirrors the same heuristic the
+        rating loop applies via GetDisabledPercentage() / GetMaxCondition()
+        / GetCondition(); kept consistent so callers and raters agree."""
+        if self._max_condition <= 0.0:
+            return 0
+        threshold = self._disabled_percentage * self._max_condition
+        return 1 if self._condition <= threshold else 0
+
 
 class PoweredSubsystem(ShipSubsystem):
     """Powered subsystem — consumes power, has a target power level."""
