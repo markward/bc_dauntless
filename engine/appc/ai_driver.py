@@ -80,12 +80,18 @@ def _tick_plain(ai: PlainAI, game_time: float) -> int:
 
 def _tick_priority_list(ai: PriorityListAI, game_time: float) -> int:
     # ai._ais is sorted lowest priority-int first (highest priority).
+    # Skip both DORMANT and DONE children: DORMANT means "not eligible
+    # right now" and DONE means "already finished" — neither should
+    # gate lower-priority entries. Without the DONE skip, a high-prio
+    # child that latches DONE on tick 1 (e.g. NonFedAttack's
+    # CheckWarpBeforeDeath / WarpOutBeforeDeath, which reports DONE when
+    # the ship is healthy) starves the SelectTarget combat subtree.
     for _prio, child in ai._ais:
-        if child._status == US_DORMANT:
+        if child._status == US_DORMANT or child._status == US_DONE:
             continue
         tick_ai(child, game_time)
         return ai._status  # one child per tick (SDK semantics)
-    # All children dormant or list empty.
+    # All children dormant/done or list empty.
     if ai._ais and all(c._status == US_DONE for _p, c in ai._ais):
         ai._status = US_DONE
     return ai._status
