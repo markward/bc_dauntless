@@ -453,6 +453,28 @@ def SequenceAI_Create(pShip=None, name: str = "") -> SequenceAI:
     return SequenceAI(pShip, name)
 
 
+# ── RandomAI ─────────────────────────────────────────────────────────────────
+
+class RandomAI(ArtificialIntelligence):
+    """SDK App.py:5019 — sibling of PriorityListAI/SequenceAI.
+
+    Phase 1 behavior: deterministic — picks `_ais[0]` for Update. Real
+    random selection is deferred to D2 / behavior-layer slices."""
+
+    def __init__(self, pShip=None, name: str = ""):
+        super().__init__(pShip, name)
+        self._ais: list = []
+
+    def AddAI(self, ai) -> None:
+        """SDK Appc.RandomAI_AddAI — append a child AI."""
+        self._ais.append(ai)
+
+
+def RandomAI_Create(pShip, name: str = "") -> RandomAI:
+    """SDK App.py:Appc.RandomAI_Create — factory."""
+    return RandomAI(pShip, name)
+
+
 # ── PreprocessingAI ──────────────────────────────────────────────────────────
 
 class PreprocessingAI(ArtificialIntelligence):
