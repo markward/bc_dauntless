@@ -655,6 +655,45 @@ class ShipSubsystem(TGEventHandlerObject):
     def GetDisabledPercentage(self) -> float:           return self._disabled_percentage
     def SetDisabledPercentage(self, v) -> None:         self._disabled_percentage = float(v)
 
+    # ── Runtime predicates consumed by AI/Preprocessors.py ───────────────────
+    # SDK App.py:5652-5657 — native methods on ShipSubsystem.  Phase 1 stubs
+    # return SDK-faithful defaults; richer hooks (per-subsystem criticality
+    # flags, LOS to subsystem position) land alongside the consumers that
+    # need them.
+
+    def IsCritical(self) -> int:
+        """SDK Preprocessors.py:963 — rating heuristic. Phase 1 default 0
+        (no subsystem is flagged critical until SubsystemProperty data
+        flows into _critical via SetCritical)."""
+        return 0
+
+    def IsTargetable(self) -> int:
+        """SDK Preprocessors.py:953-954, 829 — AI iterates subsystems and
+        only adds those reporting IsTargetable()=1 to the rating list.
+        Phase 1 treats every ShipSubsystem as targetable; subclasses /
+        property-driven overrides can return 0 once they need to model
+        un-targetable internals (e.g. crew quarters)."""
+        return 1
+
+    def IsDisabled(self) -> int:
+        """SDK Preprocessors.py:823, 974 — condition has fallen at or below
+        DisabledPercentage × MaxCondition. Mirrors the same heuristic the
+        rating loop applies via GetDisabledPercentage() / GetMaxCondition()
+        / GetCondition(); kept consistent so callers and raters agree."""
+        if self._max_condition <= 0.0:
+            return 0
+        threshold = self._disabled_percentage * self._max_condition
+        return 1 if self._condition <= threshold else 0
+
+    def IsHittableFromLocation(self, vWorldLoc) -> float:
+        """SDK Preprocessors.py:980 — `fHittable = pSubsystem.IsHittableFromLocation(pOurShip.GetWorldLocation())`.
+        Native Appc returns a scalar (0.0..1.0) reflecting LOS / occlusion
+        from the firing ship's location to the subsystem position. Phase 1
+        treats every subsystem as fully hittable (no occlusion model);
+        real geometry support lands when the renderer carries collision
+        meshes."""
+        return 1.0
+
 
 class PoweredSubsystem(ShipSubsystem):
     """Powered subsystem — consumes power, has a target power level."""
@@ -742,6 +781,11 @@ class WeaponSystem(PoweredSubsystem):
             if emitter is not None and hasattr(emitter, "StopFiring"):
                 emitter.StopFiring()
         self._currently_firing = []
+
+    def StopFiringAtTarget(self, pTarget) -> None:
+        """SDK Preprocessors.py:274/469 — alias for StopFiring() since
+        headless doesn't model multi-target firing state."""
+        self.StopFiring()
 
     def IsFiring(self) -> int:
         return 1 if self._currently_firing else 0
@@ -1187,6 +1231,24 @@ class TorpedoTube(WeaponSystem):
 
     def StopFiring(self) -> None:
         self._firing = False
+
+    def FireDumb(self, iReserved=0, iForce=1) -> None:
+        """SDK Preprocessors.py:458 — `pTube.FireDumb(0, 1)` in the
+        dumb-fire path. Routes through the regular Fire() so the
+        ET_WEAPON_HIT combat broadcast still fires.
+
+        iReserved/iForce kept for SDK signature compatibility; the
+        target/offset come from upstream FireScript state in Phase 1.
+        """
+        self.Fire(target=None, offset=None)
+
+    def CalculateRoughDirection(self):
+        """SDK Preprocessors.py:456 — returns the tube's local forward
+        vector. Per-tube arcs are deferred to Slice D; until then, all
+        tubes share the parent ship's forward vector. Orphaned tubes
+        (no parent ship) return the model's +Y axis as a safe default."""
+        import App
+        return App.TGPoint3_GetModelForward()
 
     def IsFiring(self) -> int:
         return 1 if self._firing else 0

@@ -123,6 +123,7 @@ from engine.appc.time_slice import (
 from engine.appc.subsystems import (
     ShipSubsystem, PoweredSubsystem, WeaponSystem,
     TorpedoSystem, PhaserSystem, PulseWeaponSystem, TractorBeamSystem,
+    TorpedoTube,
     SensorSubsystem, ImpulseEngineSubsystem, WarpEngineSubsystem,
     WarpEngineSubsystem_GetWarpEffectTime, WarpEngineSubsystem_SetWarpEffectTime,
     ShieldSubsystem,
@@ -303,6 +304,32 @@ def RepairSubsystemProperty_Cast(obj):
     if isinstance(obj, RepairSubsystemProperty):
         return obj
     return None
+
+
+def PhaserSystem_Cast(obj):
+    """SDK Preprocessors.py:493 — `pPhaserSystem = App.PhaserSystem_Cast(pWeaponSystem)`."""
+    return obj if isinstance(obj, PhaserSystem) else None
+
+
+def TorpedoSystem_Cast(obj):
+    """SDK Preprocessors.py:506 — `pTorpSystem = App.TorpedoSystem_Cast(pWeaponSystem)`.
+    Also Preprocessors.py:445 (dumb-fire guard)."""
+    return obj if isinstance(obj, TorpedoSystem) else None
+
+
+def TractorBeamSystem_Cast(obj):
+    """SDK Preprocessors.py:479 — `pTractor = App.TractorBeamSystem_Cast(pWeaponSystem)`."""
+    return obj if isinstance(obj, TractorBeamSystem) else None
+
+
+def ShipSubsystem_Cast(obj):
+    """SDK Preprocessors.py:326 — `pSubsystem = App.ShipSubsystem_Cast(App.TGObject_GetTGObjectPtr(id))`."""
+    return obj if isinstance(obj, ShipSubsystem) else None
+
+
+def TorpedoTube_Cast(obj):
+    """SDK Preprocessors.py:455 — `pTube = App.TorpedoTube_Cast(pWeaponSystem.GetChildSubsystem(iChild))`."""
+    return obj if isinstance(obj, TorpedoTube) else None
 
 
 # ── App.AT_* ammo-type constants ─────────────────────────────────────────────

@@ -139,9 +139,18 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
     # to a CodeAISet method that the C++-optimized engine calls when
     # pCodeAI is bound (see AI/Preprocessors.py:1133-1148 comment).
     # Phase-1 has no C++ optimization, so the driver does it here on
-    # first tick — duck-typed so only instances with a DamageEvent
-    # method get the wiring.
-    _ensure_select_target_initialized(inst)
+    # first tick.
+    #
+    # SelectTarget init (Slice B Task 9): instances with callable
+    # DamageEvent + pCodeAI; SelectTarget has no lWeapons.
+    if callable(getattr(inst, "DamageEvent", None)) and getattr(inst, "pCodeAI", None) is not None:
+        _ensure_select_target_initialized(inst)
+
+    # FireScript init (Slice C Task 5): instances with lWeapons +
+    # pCodeAI; FireScript has no DamageEvent. The two gates are
+    # independent — no SDK preprocessor has both markers.
+    if hasattr(inst, "lWeapons") and getattr(inst, "pCodeAI", None) is not None:
+        _ensure_fire_script_initialized(inst)
 
     # Introspect once per PreprocessingAI instance whether the method
     # takes a positional dEndTime arg (SDK SelectTarget/FireScript) or
@@ -226,6 +235,30 @@ def _ensure_select_target_initialized(inst) -> None:
         App.ET_WEAPON_HIT, inst.pEventHandler, "DamageEvent", pShip,
     )
     inst._dauntless_codeaiset_done = True
+
+
+def _ensure_fire_script_initialized(inst) -> None:
+    """First-tick CodeAISet analog for FireScript instances.
+
+    SDK Preprocessors.py:137-145 — FireScript.CodeAISet registers the
+    SetTarget external function on its pCodeAI so SelectTarget's
+    `CallExternalFunction("SetTarget", name)` dispatch reaches us.
+
+    Duck-typed gate: instance must have an lWeapons attribute (the
+    FireScript-specific marker — SelectTarget has neither lWeapons
+    nor needs SetTarget registered). FireScript does NOT define
+    DamageEvent, unlike SelectTarget — keep the two init paths
+    independent.
+
+    Idempotent via _dauntless_fs_init_done sentinel on the instance.
+    """
+    if getattr(inst, "_dauntless_fs_init_done", False):
+        return
+    code_ai = getattr(inst, "pCodeAI", None)
+    if code_ai is None:
+        return
+    code_ai.RegisterExternalFunction("SetTarget", {"Name": "SetTarget"})
+    inst._dauntless_fs_init_done = True
 
 
 def _tick_builder(ai: BuilderAI, game_time: float) -> int:
