@@ -121,6 +121,44 @@ class _FixPy2Sort(ast.NodeTransformer):
         return node
 
 
+class _FixDictKeysIter(ast.NodeTransformer):
+    """Wrap dict.keys()/items()/values() in list() when used as a for-loop iter.
+
+    Python 2 `dict.keys()` returned a list — safe to iterate while
+    mutating the dict via `del d[key]`. Python 3 returns a view that
+    raises RuntimeError on mutation during iteration. SDK code uses the
+    Py2 idiom in several modules (e.g. FireScript.ChooseTargetSubsystem,
+    OutputEventTypes, TimingGraph). Wrap the call in list() so the
+    iteration takes a snapshot before any mutation.
+
+    Only rewrites argument-free .keys()/.items()/.values() calls that
+    appear directly as the iter of a `for` loop — leaves all other
+    contexts untouched.
+    """
+
+    _DICT_VIEW_METHODS = frozenset({"keys", "items", "values"})
+
+    def visit_For(self, node):
+        self.generic_visit(node)
+        iter_node = node.iter
+        if (
+            isinstance(iter_node, ast.Call)
+            and isinstance(iter_node.func, ast.Attribute)
+            and iter_node.func.attr in self._DICT_VIEW_METHODS
+            and not iter_node.args
+            and not iter_node.keywords
+        ):
+            wrapped = ast.Call(
+                func=ast.Name(id="list", ctx=ast.Load()),
+                args=[iter_node],
+                keywords=[],
+            )
+            ast.copy_location(wrapped, iter_node)
+            ast.fix_missing_locations(wrapped)
+            node.iter = wrapped
+        return node
+
+
 class _FixDottedImport(ast.NodeTransformer):
     """Rewrite bare __import__(x) → importlib.import_module(x).
 
@@ -266,6 +304,7 @@ class _SDKLoader(importlib.abc.Loader):
         tree = _MoveGlobalsToTop().visit(tree)
         tree = _FixDottedImport().visit(tree)
         tree = _FixPy2Sort().visit(tree)
+        tree = _FixDictKeysIter().visit(tree)
         ast.fix_missing_locations(tree)
         code = compile(tree, self.path, "exec")
         module.__dict__.setdefault('apply', lambda f, a=(), kw={}: f(*a, **kw))
