@@ -655,6 +655,18 @@ class ShipSubsystem(TGEventHandlerObject):
     def GetDisabledPercentage(self) -> float:           return self._disabled_percentage
     def SetDisabledPercentage(self, v) -> None:         self._disabled_percentage = float(v)
 
+    # ── Runtime predicates consumed by AI/Preprocessors.py ───────────────────
+    # SDK App.py:5652-5657 — native methods on ShipSubsystem.  Phase 1 stubs
+    # return SDK-faithful defaults; richer hooks (per-subsystem criticality
+    # flags, LOS to subsystem position) land alongside the consumers that
+    # need them.
+
+    def IsCritical(self) -> int:
+        """SDK Preprocessors.py:963 — rating heuristic. Phase 1 default 0
+        (no subsystem is flagged critical until SubsystemProperty data
+        flows into _critical via SetCritical)."""
+        return 0
+
 
 class PoweredSubsystem(ShipSubsystem):
     """Powered subsystem — consumes power, has a target power level."""
