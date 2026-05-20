@@ -667,6 +667,14 @@ class ShipSubsystem(TGEventHandlerObject):
         flows into _critical via SetCritical)."""
         return 0
 
+    def IsTargetable(self) -> int:
+        """SDK Preprocessors.py:953-954, 829 — AI iterates subsystems and
+        only adds those reporting IsTargetable()=1 to the rating list.
+        Phase 1 treats every ShipSubsystem as targetable; subclasses /
+        property-driven overrides can return 0 once they need to model
+        un-targetable internals (e.g. crew quarters)."""
+        return 1
+
 
 class PoweredSubsystem(ShipSubsystem):
     """Powered subsystem — consumes power, has a target power level."""
