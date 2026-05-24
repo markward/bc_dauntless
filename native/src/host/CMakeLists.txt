@@ -33,6 +33,11 @@ target_link_libraries(dauntless
         dauntless_audio
 )
 
+if(DAUNTLESS_ENABLE_CEF)
+    target_link_libraries(_dauntless_host PRIVATE ui_cef)
+    target_link_libraries(dauntless       PRIVATE ui_cef)
+endif()
+
 target_compile_features(dauntless PRIVATE cxx_std_20)
 target_include_directories(dauntless PRIVATE .)
 
@@ -60,4 +65,40 @@ elseif(UNIX)
         "LINKER:--whole-archive"
         "$<TARGET_FILE:nif>"
         "LINKER:--no-whole-archive")
+endif()
+
+if(DAUNTLESS_ENABLE_CEF)
+    if(APPLE)
+        # CefScopedLibraryLoader::LoadInMain() resolves the framework at
+        # <exec-dir>/Frameworks/Chromium Embedded Framework.framework.
+        # Create that path via symlink for fast incremental rebuilds.
+        add_custom_command(TARGET dauntless POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory
+                "${CMAKE_BINARY_DIR}/Frameworks"
+            COMMAND ${CMAKE_COMMAND} -E create_symlink
+                "${CEF_ROOT}/Release/Chromium Embedded Framework.framework"
+                "${CMAKE_BINARY_DIR}/Frameworks/Chromium Embedded Framework.framework"
+            COMMENT "Symlinking CEF framework into build/Frameworks/"
+            VERBATIM
+        )
+    elseif(WIN32)
+        # Windows: CEF ships .dll files in Release/. Copy alongside the
+        # executable so LoadLibrary finds them at runtime.
+        add_custom_command(TARGET dauntless POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CEF_ROOT}/Release"
+                "${CMAKE_BINARY_DIR}"
+            COMMENT "Copying CEF runtime DLLs alongside dauntless.exe"
+            VERBATIM
+        )
+    elseif(UNIX)
+        # Linux: CEF ships libcef.so + ICU + locale paks in Release/. Copy.
+        add_custom_command(TARGET dauntless POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CEF_ROOT}/Release"
+                "${CMAKE_BINARY_DIR}"
+            COMMENT "Copying CEF runtime files alongside dauntless"
+            VERBATIM
+        )
+    endif()
 endif()
