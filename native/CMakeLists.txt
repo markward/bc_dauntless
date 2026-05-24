@@ -162,6 +162,10 @@ add_subdirectory(src/scenegraph)
 # Renderer host subtree.
 add_subdirectory(src/host)
 
+if(DAUNTLESS_ENABLE_CEF)
+    add_subdirectory(src/ui_cef)
+endif()
+
 if(DAUNTLESS_BUILD_TESTS)
   add_subdirectory(tests)
 endif()
