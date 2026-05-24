@@ -99,8 +99,7 @@ bool initialize(int view_width, int view_height,
     CefString(&settings.main_bundle_path)       = main_bundle_dir(exec_dir);
     CefString(&settings.resources_dir_path)     = resources_dir(exec_dir);
     CefString(&settings.locales_dir_path)       = locales_dir(exec_dir);
-    CefString(&settings.browser_subprocess_path) =
-        g_saved_argc > 0 ? std::filesystem::canonical(g_saved_argv[0]).string() : "";
+    CefString(&settings.browser_subprocess_path) = exec_path.string();
 #endif
 
     if (!CefInitialize(main_args, settings, g_app, nullptr)) {
