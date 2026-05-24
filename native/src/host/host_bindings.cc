@@ -30,8 +30,6 @@
 #include <renderer/phaser_pass.h>
 #include <renderer/bridge_pass.h>
 #include <renderer/aabb.h>
-#include <ui/UiSystem.h>
-#include <ui/PanelDocument.h>
 #include <scenegraph/world.h>
 #include <scenegraph/camera.h>
 #include <assets/cache.h>
@@ -90,9 +88,6 @@ struct LoadedModel {
 std::unique_ptr<assets::AssetCache> g_cache;
 std::vector<LoadedModel> g_loaded_models;  // index = our public ModelHandle - 1
 
-std::unique_ptr<ui::UiSystem> g_ui_system;
-ui::HudState                  g_hud_state;
-
 // Tracks key state from the previous frame() so key_pressed can detect
 // rising edges. Only keys that have been queried via key_pressed appear
 // here; lookup misses (key never queried) are treated as "previously up".
@@ -147,8 +142,7 @@ scenegraph::ModelHandle load_model_impl(const std::string& nif_path,
     return static_cast<scenegraph::ModelHandle>(g_loaded_models.size());
 }
 
-void init(int width, int height, const std::string& title,
-          const std::string& ui_assets_root = "") {
+void init(int width, int height, const std::string& title) {
     if (g_window) {
         throw std::runtime_error("_dauntless_host: init called while host already initialized");
     }
@@ -173,18 +167,9 @@ void init(int width, int height, const std::string& title,
     g_phaser_pass  = std::make_unique<renderer::PhaserPass>();
     g_bridge_pass  = std::make_unique<renderer::BridgePass>();
     g_prev_frame_time_seconds = glfwGetTime();
-
-    if (!ui_assets_root.empty()) {
-        g_ui_system = std::make_unique<ui::UiSystem>(
-            g_window->native_handle(),
-            std::filesystem::path(ui_assets_root));
-    }
 }
 
 void shutdown() {
-    // UI system must be destroyed before g_window — RmlUi shutdown calls into
-    // the GL render interface, which needs a valid GL context.
-    g_ui_system.reset();
     // Destroy GL-handle owners BEFORE the GL context (g_window) goes away.
     // Order matters: pipeline shaders and the submitter's white-fallback
     // texture are GL objects that must be released while the context is
@@ -219,7 +204,6 @@ void shutdown() {
     // from the previous session.
     g_lighting = renderer::Lighting{};
     g_bridge_lighting = renderer::Lighting{};
-    g_hud_state = ui::HudState{};
 }
 
 bool should_close() {
@@ -289,11 +273,6 @@ void frame() {
                               lookup, g_bridge_lighting);
     }
 
-    if (g_ui_system) {
-        g_ui_system->update_hud(g_hud_state);
-        g_ui_system->render(fw, fh);
-    }
-
     // Snapshot tracked keys' current state BEFORE poll_events. The next
     // tick's Python sees the post-poll state as `now` and this pre-poll
     // state as `prev`, so any change made by this poll surfaces as a
@@ -315,9 +294,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.doc() = "open_stbc renderer host bindings (Phase B: window + frame stub)";
     m.def("init", &init,
           py::arg("width"), py::arg("height"), py::arg("title"),
-          py::arg("ui_assets_root") = "",
-          "Open a window and initialise the renderer. ui_assets_root points to "
-          "native/assets/ui/; leave empty to skip UI initialisation.");
+          "Open a window and initialise the renderer.");
     m.def("shutdown", &shutdown);
     m.def("should_close", &should_close);
     m.def("frame", &frame);
@@ -699,22 +676,6 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Push a shield-hit flash for the given ship at a world-space point. "
           "rgba=(0,0,0,0) substitutes the ship's default ShieldGlowColor.");
 
-    m.def("set_hud_state",
-          [](const py::dict& d) {
-              if (!g_ui_system) return;
-              auto pos = d["pos"].cast<std::tuple<float,float,float>>();
-              g_hud_state.pos_x       = std::get<0>(pos);
-              g_hud_state.pos_y       = std::get<1>(pos);
-              g_hud_state.pos_z       = std::get<2>(pos);
-              g_hud_state.yaw_deg     = d["yaw"].cast<float>();
-              g_hud_state.pitch_deg   = d["pitch"].cast<float>();
-              g_hud_state.roll_deg    = d["roll"].cast<float>();
-              g_hud_state.system_name = d["system"].cast<std::string>();
-              g_hud_state.ship_name   = d["ship"].cast<std::string>();
-          },
-          py::arg("state"),
-          "Update HUD overlay state. No-op when UI is not initialized.");
-
     auto keys = m.def_submodule("keys", "GLFW key-code constants for input bindings.");
     keys.attr("KEY_W") = GLFW_KEY_W;
     keys.attr("KEY_S") = GLFW_KEY_S;
@@ -886,178 +847,6 @@ PYBIND11_MODULE(_dauntless_host, m) {
               int fw = 0, fh = 0;
               g_window->framebuffer_size(&fw, &fh);
               return std::make_tuple(fw, fh);
-          });
-
-    // ── UI scale ─────────────────────────────────────────────────────────
-    m.def("set_ui_scale",
-          [](float scale) {
-              if (!g_ui_system) return;
-              g_ui_system->set_ui_scale(scale);
-          });
-
-    m.def("toggle_ui_debugger",
-          []() {
-              if (!g_ui_system) return;
-              g_ui_system->toggle_debugger();
-          });
-
-    m.def("toggle_ui_visibility",
-          []() {
-              if (!g_ui_system) return;
-              g_ui_system->toggle_visibility();
-          });
-
-    // ── UI panel + element primitives ───────────────────────────────────
-    //
-    // Panel ids are unique across the UiSystem. Element ids are unique
-    // within a panel and the binding layer resolves which panel owns a
-    // given element id by linear scan — fine for our small number of
-    // panels (typically 1-4).
-    m.def("create_panel",
-          [](const std::string& /*name*/, const std::string& anchor,
-             float width_vw, float height_vh) -> int {
-              if (!g_ui_system) {
-                  throw std::runtime_error("create_panel: ui system not initialized");
-              }
-              return g_ui_system->create_panel(anchor, width_vw, height_vh);
-          });
-
-    m.def("destroy_panel", [](int panel_id) {
-        if (!g_ui_system) return;
-        g_ui_system->destroy_panel(panel_id);
-    });
-
-    m.def("clear_panel", [](int panel_id) {
-        if (!g_ui_system) return;
-        if (auto* p = g_ui_system->get_panel(panel_id)) p->clear();
-    });
-
-    m.def("set_panel_visible", [](int panel_id, bool visible) {
-        if (!g_ui_system) return;
-        if (auto* p = g_ui_system->get_panel(panel_id)) p->set_visible(visible);
-    });
-
-    m.def("panel_root", [](int panel_id) -> int {
-        if (!g_ui_system) return 0;
-        auto* p = g_ui_system->get_panel(panel_id);
-        return p ? p->root_element_id() : 0;
-    });
-
-    m.def("panel_bounds", [](int panel_id) -> py::tuple {
-        if (!g_ui_system) return py::make_tuple(0.0f, 0.0f, 0.0f, 0.0f);
-        auto* p = g_ui_system->get_panel(panel_id);
-        if (!p) return py::make_tuple(0.0f, 0.0f, 0.0f, 0.0f);
-        float x = 0.0f, y = 0.0f, w = 0.0f, h = 0.0f;
-        p->bounds(&x, &y, &w, &h);
-        return py::make_tuple(x, y, w, h);
-    },
-    "Return (x, y, w, h) screen-pixel rect of the panel.  (x, y) is "
-    "top-left, (w, h) is outer size.  Returns (0,0,0,0) if the panel "
-    "doesn't exist or hasn't been laid out yet.");
-
-    m.def("set_panel_css_var",
-          [](int panel_id, const std::string& name, const std::string& value) {
-              if (!g_ui_system) return;
-              if (auto* p = g_ui_system->get_panel(panel_id))
-                  p->set_css_var(name, value);
-          });
-
-    m.def("append_div",
-          [](int parent_id, const std::string& class_names) -> int {
-              if (!g_ui_system) return 0;
-              for (auto& kv : g_ui_system->panels_for_bindings()) {
-                  if (kv.second->has_element(parent_id)) {
-                      return kv.second->append_div(parent_id, class_names);
-                  }
-              }
-              throw std::runtime_error("append_div: parent_id not found in any panel");
-          });
-
-    m.def("remove_element", [](int element_id) {
-        if (!g_ui_system) return;
-        for (auto& kv : g_ui_system->panels_for_bindings()) {
-            if (kv.second->has_element(element_id)) {
-                kv.second->remove_element(element_id); return;
-            }
-        }
-    });
-
-    m.def("set_class",
-          [](int element_id, const std::string& class_names) {
-              if (!g_ui_system) return;
-              for (auto& kv : g_ui_system->panels_for_bindings()) {
-                  if (kv.second->has_element(element_id)) {
-                      kv.second->set_class(element_id, class_names); return;
-                  }
-              }
-          });
-
-    m.def("set_text",
-          [](int element_id, const std::string& text) {
-              if (!g_ui_system) return;
-              for (auto& kv : g_ui_system->panels_for_bindings()) {
-                  if (kv.second->has_element(element_id)) {
-                      kv.second->set_text(element_id, text); return;
-                  }
-              }
-          });
-
-    m.def("set_visible",
-          [](int element_id, bool visible) {
-              if (!g_ui_system) return;
-              for (auto& kv : g_ui_system->panels_for_bindings()) {
-                  if (kv.second->has_element(element_id)) {
-                      kv.second->set_visible(element_id, visible); return;
-                  }
-              }
-          });
-
-    m.def("set_element_property",
-          [](int element_id, const std::string& name, const std::string& value) {
-              if (!g_ui_system) return;
-              for (auto& kv : g_ui_system->panels_for_bindings()) {
-                  if (kv.second->has_element(element_id)) {
-                      kv.second->set_property(element_id, name, value); return;
-                  }
-              }
-          },
-          "Set an arbitrary RCSS property on a UI element (e.g. "
-          "set_element_property(body_id, 'margin-top', '-30dp')).");
-
-    m.def("on_click",
-          [](int element_id, py::object callback) {
-              if (!g_ui_system) return;
-              for (auto& kv : g_ui_system->panels_for_bindings()) {
-                  if (kv.second->has_element(element_id)) {
-                      if (callback.is_none()) {
-                          kv.second->on_click(element_id, nullptr);
-                      } else {
-                          kv.second->on_click(element_id, [callback]() {
-                              py::gil_scoped_acquire gil;
-                              callback();
-                          });
-                      }
-                      return;
-                  }
-              }
-          });
-
-    m.def("on_dblclick",
-          [](int element_id, py::object callback) {
-              if (!g_ui_system) return;
-              for (auto& kv : g_ui_system->panels_for_bindings()) {
-                  if (kv.second->has_element(element_id)) {
-                      if (callback.is_none()) {
-                          kv.second->on_dblclick(element_id, nullptr);
-                      } else {
-                          kv.second->on_dblclick(element_id, [callback]() {
-                              py::gil_scoped_acquire gil;
-                              callback();
-                          });
-                      }
-                      return;
-                  }
-              }
           });
 
     dauntless::audio::register_python_bindings(m);
