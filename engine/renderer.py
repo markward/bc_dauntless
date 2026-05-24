@@ -192,3 +192,35 @@ def consume_mouse_delta() -> Tuple[float, float]:
 def set_cursor_locked(locked: bool) -> None:
     """Lock the cursor (hidden + raw deltas) or release it."""
     _h.set_cursor_locked(locked)
+
+
+# ── CEF overlay ─────────────────────────────────────────────────────────────
+
+def cef_initialize(view_width: int, view_height: int, html_path: str) -> bool:
+    """Initialise the CEF overlay browser. Idempotent; returns True on success."""
+    return _h.cef_initialize(view_width, view_height, html_path)
+
+
+def cef_pump() -> None:
+    """Run one iteration of CEF's message loop. Call once per frame."""
+    _h.cef_pump()
+
+
+def cef_composite() -> None:
+    """Blit the latest CEF bitmap over the current framebuffer."""
+    _h.cef_composite()
+
+
+def cef_shutdown() -> None:
+    """Tear down CEF. Call before the GL context is destroyed."""
+    _h.cef_shutdown()
+
+
+def cef_toggle_devtools() -> None:
+    """Open or close the DevTools window for the overlay browser."""
+    _h.cef_toggle_devtools()
+
+
+def cef_reload() -> None:
+    """Reload the overlay browser's current document."""
+    _h.cef_reload()
