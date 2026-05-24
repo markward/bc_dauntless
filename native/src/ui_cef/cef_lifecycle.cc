@@ -54,14 +54,29 @@ int dispatch_subprocess(int argc, char* argv[]) {
     g_saved_argc = argc;
     g_saved_argv = argv;
 
+#ifdef __APPLE__
+    // On macOS the default LoadInMain() looks at <exec-dir>/../Frameworks/,
+    // which assumes an .app bundle layout we don't use. Compute the
+    // explicit path that matches Task 8's symlink at build/Frameworks/.
+    const std::filesystem::path exec_path = std::filesystem::canonical(argv[0]);
+    const std::string framework_lib =
+        exec_path.parent_path().string() +
+        "/Frameworks/Chromium Embedded Framework.framework/"
+        "Chromium Embedded Framework";
+    if (!cef_load_library(framework_lib.c_str())) {
+        std::fprintf(stderr,
+                     "dauntless: cef_load_library failed for %s\n",
+                     framework_lib.c_str());
+        return 1;
+    }
+#else
     g_library_loader = std::make_unique<CefScopedLibraryLoader>();
     if (!g_library_loader->LoadInMain()) {
         std::fprintf(stderr,
-                     "dauntless: failed to load CEF framework. Ensure "
-                     "'Frameworks/Chromium Embedded Framework.framework' "
-                     "exists alongside the binary.\n");
+                     "dauntless: failed to load CEF framework.\n");
         return 1;
     }
+#endif
 
     CefMainArgs main_args(argc, argv);
     g_app = new DauntlessCefApp();
@@ -172,6 +187,9 @@ void shutdown() {
     CefShutdown();
     g_app = nullptr;
     g_initialized = false;
+#ifdef __APPLE__
+    cef_unload_library();
+#endif
 }
 
 }  // namespace dauntless::ui_cef
