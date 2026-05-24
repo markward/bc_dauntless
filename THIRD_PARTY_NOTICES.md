@@ -73,3 +73,24 @@ library to create offscreen GL contexts in GPU tests.
 - Upstream: https://github.com/glfw/glfw
 - Pinned release: 3.4
 - License: zlib/libpng (see `LICENSE.md` in vendor dir)
+
+## Chromium Embedded Framework (CEF)
+
+Off-screen browser used as the dauntless UI overlay (transparent layer
+composited over the 3D scene; loaded at startup via `CefScopedLibraryLoader`).
+
+- Pinned version: `cef_binary_144.0.25+g27ce504+chromium-144.0.7559.250`
+- Distribution: Minimal binary from https://cef-builds.spotifycdn.com/
+- Upstream: https://bitbucket.org/chromiumembedded/cef
+- License: BSD 3-Clause (CEF) + various open-source licenses for bundled Chromium
+  components. Full text reproduced in `build/_deps/cef-src/LICENSE.txt` after
+  the first CMake configure.
+
+## Antonio font (native/assets/ui-cef/fonts)
+
+Sans-serif typeface by Vernon Adams (Open Window). Used for the bridge UI
+overlay text in `native/assets/ui-cef/hello.html`.
+
+- Upstream: https://github.com/google/fonts/tree/main/ofl/antonio
+- License: SIL Open Font License 1.1 (OFL). The licence text is shipped at
+  `native/assets/ui-cef/THIRD_PARTY/Antonio-OFL.txt`.
