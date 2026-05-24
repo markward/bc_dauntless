@@ -41,9 +41,9 @@ public:
     /// scroll callback during poll_events().
     double consume_scroll_y() noexcept;
 
-    /// Add `dy` to the internal scroll accumulator.  Used by UiSystem
-    /// to re-emit scroll deltas that RmlUi declined to consume — keeps
-    /// the camera-zoom path unchanged.
+    /// Add `dy` to the internal scroll accumulator. Kept as a separate
+    /// entry point so an overlay layer that consumed a scroll event can
+    /// re-emit the unconsumed portion without bypassing the accumulator.
     void add_scroll_y(double dy) noexcept;
 
     /// Write the most recently observed cursor position (in screen pixels)
@@ -64,11 +64,10 @@ public:
     void set_cursor_locked(bool locked) noexcept;
 
     /// Public entry point for GLFW cursor-pos events. Subsystems that
-    /// register their own GLFW cursor-pos callback (e.g. UiSystem
-    /// forwarding to RmlUi) MUST also call this so the Window's mouse-
-    /// delta accumulator stays current. Without this forward, a
-    /// downstream subscriber overwriting the callback silently breaks
-    /// mouse-look.
+    /// register their own GLFW cursor-pos callback MUST also call this
+    /// so the Window's mouse-delta accumulator stays current. Without
+    /// this forward, a downstream subscriber overwriting the callback
+    /// silently breaks mouse-look.
     void on_cursor_pos(double x, double y) noexcept;
 
     GLFWwindow* native_handle() noexcept { return handle_; }

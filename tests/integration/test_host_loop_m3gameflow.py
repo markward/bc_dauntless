@@ -1,8 +1,8 @@
 """Renderer host-loop smoke for M3Gameflow.
 
-Runs engine.host_loop.run() with OPEN_STBC_HOST_HEADLESS=1 and an
-OPEN_STBC_HOST_MISSION pointing at M3Gameflow. Asserts the run
-completes the configured tick budget without raising.
+Runs engine.host_loop.run() with OPEN_STBC_HOST_HEADLESS=1 and the
+M3Gameflow mission passed via the `mission_name` argument. Asserts the
+run completes the configured tick budget without raising.
 
 Two preconditions must hold:
   - The `_dauntless_host` native extension is built (importorskip).
@@ -39,12 +39,11 @@ def test_host_loop_runs_m3gameflow_120_ticks(monkeypatch):
     """120 ticks ≈ 2 seconds at 60Hz. Smallest viable smoke for the
     renderer + M3Gameflow integration. Headless mode hides the window."""
     monkeypatch.setenv("OPEN_STBC_HOST_HEADLESS", "1")
-    monkeypatch.setenv(
-        "OPEN_STBC_HOST_MISSION",
-        "Custom.Tutorial.Episode.M3Gameflow.M3Gameflow",
-    )
     from engine.host_loop import run
-    rc = run(max_ticks=120)
+    rc = run(
+        mission_name="Custom.Tutorial.Episode.M3Gameflow.M3Gameflow",
+        max_ticks=120,
+    )
     assert rc == 0
 
 
@@ -58,12 +57,11 @@ def test_host_loop_m3gameflow_30_second_combat(monkeypatch):
     PlainAI scripts), so this test asserts "at least some combat
     effect" rather than a specific damage value."""
     monkeypatch.setenv("OPEN_STBC_HOST_HEADLESS", "1")
-    monkeypatch.setenv(
-        "OPEN_STBC_HOST_MISSION",
-        "Custom.Tutorial.Episode.M3Gameflow.M3Gameflow",
-    )
     from engine.host_loop import run
-    rc = run(max_ticks=1800)
+    rc = run(
+        mission_name="Custom.Tutorial.Episode.M3Gameflow.M3Gameflow",
+        max_ticks=1800,
+    )
     assert rc == 0
     # After the host loop completes, query the global set manager to
     # check for combat-relevant state. The host loop's reset_sdk_globals
