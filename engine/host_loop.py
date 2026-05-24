@@ -1672,7 +1672,6 @@ class _NoInputReader:
 _NO_INPUT = _NoInputReader()
 
 
-
 def _apply_input(view_mode, player_control, cam_control,
                  *, player, dt, h, scroll_y) -> None:
     """Per-tick input dispatch.
@@ -1923,8 +1922,6 @@ def run(mission_name: Optional[str] = None,
             if _h is not None:
                 view_mode.apply(_h)
                 _apply_view_mode_side_effects(view_mode, _h)
-            # F10 (debug shield hit) is handled below. ESC exits
-            # bridge view, handled below.
             # F10: debug shield-hit on the shield surface. Real BC weapons
             # impact the bubble at a surface point; firing at the ship
             # center would put the hit too far inside the bubble for the
