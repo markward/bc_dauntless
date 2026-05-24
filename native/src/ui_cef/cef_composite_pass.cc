@@ -123,9 +123,12 @@ void CefCompositePass::draw_fullscreen(const std::uint8_t* pixels,
     const GLboolean prev_scissor    = glIsEnabled(GL_SCISSOR_TEST);
     const GLboolean prev_depth_test = glIsEnabled(GL_DEPTH_TEST);
     const GLboolean prev_blend      = glIsEnabled(GL_BLEND);
-    GLint prev_blend_src = 0, prev_blend_dst = 0;
-    glGetIntegerv(GL_BLEND_SRC_ALPHA, &prev_blend_src);
-    glGetIntegerv(GL_BLEND_DST_ALPHA, &prev_blend_dst);
+    GLint prev_blend_src_rgb = 0, prev_blend_dst_rgb = 0;
+    GLint prev_blend_src_alpha = 0, prev_blend_dst_alpha = 0;
+    glGetIntegerv(GL_BLEND_SRC_RGB,   &prev_blend_src_rgb);
+    glGetIntegerv(GL_BLEND_DST_RGB,   &prev_blend_dst_rgb);
+    glGetIntegerv(GL_BLEND_SRC_ALPHA, &prev_blend_src_alpha);
+    glGetIntegerv(GL_BLEND_DST_ALPHA, &prev_blend_dst_alpha);
 
     glDisable(GL_CULL_FACE);
     glDisable(GL_SCISSOR_TEST);
@@ -148,8 +151,10 @@ void CefCompositePass::draw_fullscreen(const std::uint8_t* pixels,
     if (prev_scissor)    glEnable(GL_SCISSOR_TEST);
     if (prev_depth_test) glEnable(GL_DEPTH_TEST);
     if (!prev_blend)     glDisable(GL_BLEND);
-    glBlendFunc(static_cast<GLenum>(prev_blend_src),
-                static_cast<GLenum>(prev_blend_dst));
+    glBlendFuncSeparate(static_cast<GLenum>(prev_blend_src_rgb),
+                        static_cast<GLenum>(prev_blend_dst_rgb),
+                        static_cast<GLenum>(prev_blend_src_alpha),
+                        static_cast<GLenum>(prev_blend_dst_alpha));
 }
 
 }  // namespace dauntless::ui_cef
