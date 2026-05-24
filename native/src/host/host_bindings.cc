@@ -277,6 +277,14 @@ void frame() {
                               lookup, g_bridge_lighting);
     }
 
+#ifdef DAUNTLESS_ENABLE_CEF
+    // Pump CEF's message loop (may deliver OnPaint synchronously into
+    // g_client). Then composite the latest bitmap over the 3D scene with
+    // premultiplied-alpha blend. Runs before poll_events / swap_buffers.
+    dauntless::ui_cef::pump();
+    dauntless::ui_cef::composite();
+#endif
+
     // Snapshot tracked keys' current state BEFORE poll_events. The next
     // tick's Python sees the post-poll state as `now` and this pre-poll
     // state as `prev`, so any change made by this poll surfaces as a
