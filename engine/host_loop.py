@@ -698,7 +698,11 @@ class _PlayerControl:
         # Shift+digit is reserved for alert-level binding (Shift+1/2/3 →
         # SetAlertLevel); suppress digit throttle while shift is held so
         # the two bindings don't fire together.
-        if h.key_pressed(h.keys.KEY_R):
+        # Cmd+R / Ctrl+R is the CEF reload hotkey and must not also
+        # trigger reverse-thrust; suppress when either modifier is held.
+        _super_held = h.key_state(h.keys.KEY_LEFT_SUPER) if hasattr(h.keys, "KEY_LEFT_SUPER") else False
+        _ctrl_held = h.key_state(h.keys.KEY_LEFT_CONTROL) if hasattr(h.keys, "KEY_LEFT_CONTROL") else False
+        if h.key_pressed(h.keys.KEY_R) and not (_super_held or _ctrl_held):
             self.impulse_level = self.REVERSE_LEVEL
         elif h.key_pressed(h.keys.KEY_0):
             self.impulse_level = 0
