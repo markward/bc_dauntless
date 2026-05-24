@@ -1,9 +1,0 @@
-<rml>
-<head>
-    <title>Panel</title>
-    <link type="text/rcss" href="components.rcss"/>
-</head>
-<body>
-    <div id="root" class="bc-panel"></div>
-</body>
-</rml>
