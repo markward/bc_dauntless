@@ -1,0 +1,170 @@
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Antonio:wght@100;300;400;500;600;700&display=swap');
+  .antonio { font-family: 'Antonio', sans-serif; font-weight:400; }
+
+  .panel-header {
+    background:linear-gradient(90deg, rgb(216,94,86) 0%, rgb(216,132,80) 100%);
+    color:#ffd; font-size:14px; padding:6px 16px; font-weight:600;
+    border-radius:0 14px 0 0; letter-spacing:2px; text-transform:uppercase;
+    display:flex; justify-content:space-between; align-items:center;
+  }
+  .panel-body {
+    background:rgba(10,10,16,0.85);
+    border-left:4px solid rgb(216,94,86);
+    padding:10px 18px 12px 14px;
+  }
+
+  /* Section header (re-used from engineer / tactical) */
+  .section-head {
+    display:flex; justify-content:space-between; align-items:center;
+    color:rgb(216,132,80); font-size:11px; font-weight:600;
+    text-transform:uppercase; letter-spacing:1px;
+    padding:6px 0 4px 0;
+  }
+  .section-rule { height:1px; background:rgb(216,94,86); opacity:0.4; margin:0 0 5px 0; }
+
+  /* Row — flex split: label on left, value right-aligned. No caret, no bullet.
+     Row text uses neutral lavender-white (Menu2 lighter variant) — same text colour
+     used by every other menu row across the design. */
+  .row {
+    display:flex; align-items:center;
+    color:rgb(235,225,255);
+    font-size:13px; padding:5px 12px; margin:2px 0;
+    letter-spacing:0.5px;
+  }
+  /* Cycle row inside a section = g_kSTMenu3HighlightedBase rgb(246,147,204) at 35% α (pink) */
+  .row-cycle {
+    background:rgba(246,147,204,0.35);
+    border-left:3px solid rgb(207,96,159);
+  }
+  /* Toggle row standalone = g_kSTMenu1NormalBase rgb(216,94,86) at 45% α (salmon) */
+  .row-toggle {
+    background:rgba(216,94,86,0.45);
+    border-left:3px solid rgb(216,94,86);
+  }
+  .row .label { flex:1; }
+  .row .value { letter-spacing:0.8px; }
+  .value-off  { color:rgb(153,153,153); }
+</style>
+
+<h2>Weapons panel + Speed/Phaser Arc placeholder</h2>
+<p class="subtitle">Weapons composes the existing locked vocabulary: panel chrome + section headers + menu rows + on/off bullets. No new components needed. Speed/Phaser Arc is descoped like Shields — just a label until Phase 2 brings the per-tube readiness + arc renderer.</p>
+
+<div class="mockup">
+  <div class="mockup-header">Weapons (full layout) · Speed (placeholder)</div>
+  <div class="mockup-body" style="background:#000; padding:32px; display:flex; gap:24px; justify-content:center; align-items:flex-start; flex-wrap:wrap;">
+
+    <!-- ============ WEAPONS ============ -->
+    <div class="antonio" style="width:260px;">
+      <div class="panel-header">
+        <span>Weapons</span>
+        <span style="font-size:11px; opacity:0.85;">▼</span>
+      </div>
+      <div class="panel-body">
+
+        <!-- Torpedoes section -->
+        <div class="section-head">
+          <span>Torpedoes</span>
+          <!-- Torpedo count uses g_kTitleColor — same emphasis as cycle values -->
+          <span style="color:rgb(255,154,2); font-weight:400; letter-spacing:0.5px;">250</span>
+        </div>
+        <div class="section-rule"></div>
+
+        <div class="row row-cycle"><span class="label">Type</span><span class="value">Photon</span></div>
+        <div class="row row-cycle"><span class="label">Spread</span><span class="value">Single</span></div>
+
+        <!-- Phasers section -->
+        <div class="section-head" style="padding-top:10px;">
+          <span>Phasers</span>
+        </div>
+        <div class="section-rule"></div>
+
+        <div class="row row-cycle"><span class="label">Intensity</span><span class="value">Full</span></div>
+
+        <!-- Toggles (standalone, no section header — Menu1 salmon distinguishes them) -->
+        <div style="height:8px;"></div>
+
+        <div class="row row-toggle"><span class="label">Tractor</span><span class="value">On</span></div>
+        <div class="row row-toggle"><span class="label">Cloak</span><span class="value value-off">Off</span></div>
+
+      </div>
+    </div>
+
+    <!-- ============ SPEED / PHASER ARC (placeholder) ============ -->
+    <div class="antonio" style="width:240px;">
+      <div class="panel-header">
+        <span>Speed</span>
+        <span style="font-size:11px; opacity:0.85;">▼</span>
+      </div>
+      <div class="panel-body" style="padding:18px 18px 14px 14px;">
+        <div style="color:rgb(220,210,255); font-size:14px; text-align:center; text-transform:uppercase; letter-spacing:2px; padding:6px 0;">Speed 0 : 0 kph</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="section">
+  <h3>Colour mapping (all SDK globals)</h3>
+  <ul>
+    <li><strong>Panel chrome</strong> (header, border): <code>g_kSTMenu1NormalBase</code> rgb(216,94,86) — Menu1, because Weapons is a top-level HUD panel.</li>
+    <li><strong>Section subheaders</strong> ("Torpedoes", "Phasers", torpedo count "250"): <code>g_kTitleColor</code> rgb(255,154,2) — yellow-gold.</li>
+    <li><strong>Cycle rows (Type / Spread / Intensity)</strong> — sit inside a section. Use <strong>Menu3 pink</strong>:
+      <ul>
+        <li>Background: <code>g_kSTMenu3HighlightedBase</code> rgb(246,147,204) at 35% α</li>
+        <li>Left accent: <code>g_kSTMenu3NormalBase</code> rgb(207,96,159)</li>
+      </ul>
+    </li>
+    <li><strong>Toggle rows (Tractor / Cloak)</strong> — standalone, not inside a section. Use <strong>Menu1 salmon</strong> (same colour family as the panel chrome — distinguishes them visually from in-section controls):
+      <ul>
+        <li>Background: <code>g_kSTMenu1NormalBase</code> rgb(216,94,86) at 45% α</li>
+        <li>Left accent: <code>g_kSTMenu1NormalBase</code> rgb(216,94,86) solid</li>
+      </ul>
+    </li>
+    <li><strong>All row text</strong>: <code>g_kTitleColor</code> rgb(255,154,2). Value rendered in <em>italic</em> to differentiate from the label while staying in one colour.</li>
+    <li><strong>"Off" state value</strong> (Cloak Off): <code>g_kSubsystemDisabledColor</code> rgb(153,153,153).</li>
+  </ul>
+
+  <h3>Layer rule (panel-relative)</h3>
+  <p>Rows pick their colour layer based on their position within the panel:</p>
+  <ul>
+    <li>Rows <strong>inside a labelled section</strong> (Torpedoes / Phasers) drop one layer down → Menu3 pink.</li>
+    <li>Rows <strong>standalone</strong> (not inside any subsection) stay at the panel's level → Menu1 salmon.</li>
+  </ul>
+  <p>This gives a visual hierarchy without needing extra chrome — the row colour itself reads as "this is a section sub-control" vs "this is a top-level control".</p>
+
+  <h3>Row behaviour (corrected — none are dropdowns)</h3>
+  <ul>
+    <li><strong>Type</strong> — click cycles through torpedo types carried on the hull (Photon, Quantum, etc. — list comes from the hardpoint).</li>
+    <li><strong>Spread</strong> — click cycles through spread options offered by the loadout (Single, 2, 3, …).</li>
+    <li><strong>Intensity</strong> — click cycles between hardcoded Full / Low (same on every ship).</li>
+    <li><strong>Tractor</strong> — click toggles On / Off. Draws from Main Battery while On.</li>
+    <li><strong>Cloak</strong> — click toggles On / Off (row only renders on hulls with cloak equipped). Draws from Reserve Battery while On.</li>
+    <li>No expand chevrons. Clicking the row cycles or toggles in place; no popout menu.</li>
+  </ul>
+</div>
+
+<div class="section">
+  <h3>Three row behaviours</h3>
+  <ul>
+    <li><strong>Cycle rows</strong> (Type, Spread, Intensity): clicking cycles the value to the next option in <code>g_lTorpedoTypes</code> / <code>g_lTorpedoSpreads</code> / <code>g_lPhaserIntensities</code>. Bullet is a purple-outlined cell with a small gold chevron indicating "more values available".</li>
+    <li><strong>Toggle on</strong> (Tractor): filled gold bullet with soft glow. Value <em>"On"</em> in gold. Draws continuously from Main Battery.</li>
+    <li><strong>Toggle off</strong> (Cloak): hollow purple-outline bullet. Value <em>"Off"</em> in dim grey. Row only renders if the hull has a cloak system equipped (per <code>tactical-spec.md</code>).</li>
+  </ul>
+</div>
+
+<div class="section">
+  <h3>SDK alignment</h3>
+  <ul>
+    <li><code>App.WeaponsDisplay_Create(w, h)</code> at <code>App.py:8468</code>. Inherits <code>STStylizedWindow</code>, panel chrome applies automatically.</li>
+    <li>Created by <code>CreateWeaponsDisplay(pTacticalWindow)</code> at <code>TacticalMenuHandlers.py:775</code>, registered via <code>pTacticalWindow.SetWeaponsDisplay(...)</code>.</li>
+    <li>Companion widget <code>CreateWeaponsControl</code> at line 830 handles the click-to-cycle event wiring.</li>
+    <li>Cycle values come from the loaded campaign's torpedo/phaser definitions — the panel reads them, doesn't define them.</li>
+    <li>Cloak row visibility is determined per-hardpoint at ship-spawn time.</li>
+  </ul>
+</div>
+
+<div class="section">
+  <h3>Speed / Phaser Arc — placeholder (descoped)</h3>
+  <p>Like Shields, the Speed / Phaser-Arc panel needs a custom renderer: per-tube torpedo readiness indicators (visible in the original game's screenshot 1 as a row of glowing tube blocks) plus a horizontal phaser-arc readout showing where the phasers will hit. Phase 1 keeps only the panel chrome + a centred numeric speed label. Phase 2 brings in the tube/arc renderer.</p>
+</div>

@@ -1,0 +1,165 @@
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Antonio:wght@100;300;400;500;600;700&display=swap');
+  .antonio { font-family: 'Antonio', sans-serif; }
+  .panel-body { background:rgba(10,10,16,0.85); padding:8px 6px; }
+  .row-base { display:flex; align-items:center; font-size:12px; padding:5px 10px; margin:2px 0; letter-spacing:0.5px; }
+  /* Toggles use Menu1 salmon (standalone, not inside a labelled section).
+     ON = brighter salmon, OFF = dimmer salmon — state also shown by bullet. */
+  .row-toggle-on  { color:rgb(235,225,255); background:rgba(216,94,86,0.45); border-left:3px solid rgb(216,94,86); }
+  .row-toggle-off { color:rgb(220,210,225); background:rgba(216,94,86,0.25); border-left:3px solid rgba(216,94,86,0.6); }
+  /* Action row (chosen menu item like Report or Destroy) stays Menu2 purple — chosen-row indicator. */
+  .row-action     { color:rgb(235,225,255); background:rgba(147,103,255,0.22); border-left:3px solid rgb(173,132,255); }
+  .bullet         { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:8px; }
+  .bullet-on      { background:rgb(255,210,90); box-shadow:0 0 4px rgba(255,210,90,0.6); }
+  .bullet-off     { background:transparent; border:1px solid rgb(120,90,160); }
+  .caret-chosen   { color:rgb(255,210,90); margin-right:6px; }
+  .chev-expand    { color:rgb(255,210,90); margin-left:auto; padding-left:8px; }
+</style>
+
+<h2>Tactical menu — four-panel cluster (corrected)</h2>
+<p class="subtitle">Honours the SDK's actual <code>STStylizedWindow_CreateW</code> calls: Tactical panel at top-left; Orders + Manoeuvres + Tactics cluster wrapped in one outer <code>TGPane</code> at top-right. Modernised LCARS chrome applied to each. STMenu1 red for the parent menu (Tactical) and its primary sub-display (Orders); STMenu3 pink for the sub-menu panels (Manoeuvres, Tactics).</p>
+
+<div class="mockup">
+  <div class="mockup-header">Closed state — what the player sees when Tactical menu opens</div>
+  <div class="mockup-body" style="background:#000; padding:32px;">
+
+    <!-- Simulated viewport: top-row layout (Tactical left, cluster right) -->
+    <div class="antonio" style="display:flex; justify-content:space-between; gap:32px; align-items:flex-start; width:100%; max-width:880px; margin:0 auto;">
+
+      <!-- ============ Tactical panel (top-left) ============ -->
+      <div style="width:220px;">
+        <div style="background:linear-gradient(90deg, rgb(216,94,86) 0%, rgb(216,132,80) 100%); color:#ffd; font-size:14px; padding:6px 16px; font-weight:600; border-radius:0 14px 0 0; letter-spacing:2px; text-transform:uppercase; display:flex; justify-content:space-between; align-items:center;">
+          <span>Tactical</span>
+          <span style="font-size:11px; opacity:0.85;">▼</span>
+        </div>
+        <div class="panel-body" style="border-left:4px solid rgb(216,94,86);">
+          <!-- Report (action, currently highlighted) -->
+          <div class="row-base row-action">
+            <span class="caret-chosen">▸</span>Report
+          </div>
+          <!-- Toggles -->
+          <div class="row-base row-toggle-off">
+            <span class="bullet bullet-off"></span>Manual Fire
+          </div>
+          <div class="row-base row-toggle-off">
+            <span class="bullet bullet-off"></span>Phasers Only
+          </div>
+          <div class="row-base row-toggle-on">
+            <span class="bullet bullet-on"></span>Target At Will
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ Cluster (top-right) — outer TGPane wraps three STStylizedWindows ============ -->
+      <div style="display:flex; gap:6px; align-items:flex-start;">
+
+        <!-- Orders panel — STMenu1 red, 2x2 grid (Python explicitly positions buttons) -->
+        <div style="width:220px;">
+          <div style="background:linear-gradient(90deg, rgb(216,94,86) 0%, rgb(216,132,80) 100%); color:#ffd; font-size:14px; padding:6px 16px; font-weight:600; border-radius:0 14px 0 0; letter-spacing:2px; text-transform:uppercase; display:flex; justify-content:space-between; align-items:center;">
+            <span>Orders</span>
+            <span style="font-size:11px; opacity:0.85;">▼</span>
+          </div>
+          <div class="panel-body" style="border-left:4px solid rgb(216,94,86); padding:10px 10px;">
+            <!-- 2x2 grid mirrors Python's explicit AddChild(x,y) layout at TacticalMenuHandlers.py:611 -->
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:5px;">
+              <!-- Destroy: chosen (mutual-exclusion among Destroy/Disable/Stop) -->
+              <div class="row-base row-action" style="margin:0; padding:6px 10px;">
+                <span class="caret-chosen">▸</span>Destroy
+              </div>
+              <div class="row-base row-toggle-off" style="margin:0; padding:6px 10px;">
+                <span class="bullet bullet-off"></span>Disable
+              </div>
+              <div class="row-base row-toggle-off" style="margin:0; padding:6px 10px;">
+                <span class="bullet bullet-off"></span>Stop
+              </div>
+              <!-- Evade: independent toggle -->
+              <div class="row-base row-toggle-off" style="margin:0; padding:6px 10px;">
+                <span class="bullet bullet-off"></span>Evade
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Manoeuvres panel — STMenu3 pink, closed STCharacterMenu. Width fits longest entry "Separate Distance". -->
+        <div style="width:170px;">
+          <div style="background:linear-gradient(90deg, rgb(207,96,159) 0%, rgb(220,132,107) 100%); color:#ffd; font-size:14px; padding:6px 14px; font-weight:600; border-radius:0 14px 0 0; letter-spacing:1.5px; text-transform:uppercase; display:flex; justify-content:space-between; align-items:center;">
+            <span>Manoeuvres</span>
+            <span style="font-size:11px; opacity:0.85;">▼</span>
+          </div>
+          <div class="panel-body" style="border-left:4px solid rgb(207,96,159);">
+            <div class="row-base row-action" style="margin:0;">
+              <span class="caret-chosen">▸</span>At Will
+            </div>
+          </div>
+        </div>
+
+        <!-- Tactics panel — STMenu3 pink, closed STCharacterMenu. Width fits longest entry "Left Phaser Attack". -->
+        <div style="width:190px;">
+          <div style="background:linear-gradient(90deg, rgb(207,96,159) 0%, rgb(220,132,107) 100%); color:#ffd; font-size:14px; padding:6px 14px; font-weight:600; border-radius:0 14px 0 0; letter-spacing:1.5px; text-transform:uppercase; display:flex; justify-content:space-between; align-items:center;">
+            <span>Tactics</span>
+            <span style="font-size:11px; opacity:0.85;">▼</span>
+          </div>
+          <div class="panel-body" style="border-left:4px solid rgb(207,96,159);">
+            <div class="row-base row-action" style="margin:0;">
+              <span class="caret-chosen">▸</span>At Will
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="mockup" style="margin-top:24px;">
+  <div class="mockup-header">Open state — Tactics expanded into the compass</div>
+  <div class="mockup-body" style="background:#000; padding:32px;">
+    <div class="antonio" style="display:flex; justify-content:flex-end; width:100%; max-width:880px; margin:0 auto;">
+      <!-- Tactics panel opened — vertical stack of all 7 SDK options. -->
+      <div style="width:230px;">
+        <div style="background:linear-gradient(90deg, rgb(207,96,159) 0%, rgb(220,132,107) 100%); color:#ffd; font-size:14px; padding:6px 14px; font-weight:600; border-radius:0 14px 0 0; letter-spacing:1.5px; text-transform:uppercase; display:flex; justify-content:space-between; align-items:center;">
+          <span>Tactics</span>
+          <span style="font-size:11px; opacity:0.85;">▲</span>
+        </div>
+        <div class="panel-body" style="border-left:4px solid rgb(207,96,159);">
+          <div class="row-base row-toggle-off">At Will</div>
+          <div class="row-base row-action">
+            <span class="caret-chosen">▸</span>Left Phaser Attack
+          </div>
+          <div class="row-base row-toggle-off">Right Phaser Attack</div>
+          <div class="row-base row-toggle-off">Fore Attack</div>
+          <div class="row-base row-toggle-off">Aft Attack</div>
+          <div class="row-base row-toggle-off">Top Shields</div>
+          <div class="row-base row-toggle-off">Bottom Shields</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>What's locked here</h3>
+  <ul>
+    <li><strong>Topology</strong>: 1 panel at top-left (Tactical), 3-panel cluster at top-right (Orders, Manoeuvres, Tactics). Matches the four <code>STStylizedWindow_CreateW</code> calls at <code>TacticalMenuHandlers.py:346, 592, 668, 681</code>.</li>
+    <li><strong>Orders 2×2</strong>: Destroy / Disable / Stop / Evade arranged in two rows of two — matches Python's explicit <code>AddChild(pButton, fXPos, fYPos, 0)</code> positioning at lines 607–619.</li>
+    <li><strong>Manoeuvres / Tactics compact state</strong>: single-row "▸ &lt;chosen&gt;" with a <code>▼</code> expand affordance. This is the <code>STCharacterMenu</code> in its <code>Close()</code>'d state — same widget that, when opened, expands into the full option list.</li>
+    <li><strong>Tactics open layout</strong>: 3×3 compass with Top/Bottom on a paired vertical axis. Inside an <code>STMenu</code>, Python only calls <code>AddChild(pButton)</code> with no position (<code>CreateOrderMenu</code> at line 452), so layout is ours to choose.</li>
+  </ul>
+</div>
+
+<div class="section">
+  <h3>Visual vocabulary recap</h3>
+  <ul>
+    <li><strong>Header gradients</strong>: panel's primary SDK colour → +20° hue. Tactical & Orders use <code>g_kSTMenu1NormalBase</code> rgb(216,94,86); Manoeuvres & Tactics use <code>g_kSTMenu3NormalBase</code> rgb(207,96,159).</li>
+    <li><strong>Chosen / action rows</strong>: <code>g_kSTMenu2NormalBase</code> purple at 22% alpha bg + lighter rgb(173,132,255) left accent + bright text.</li>
+    <li><strong>Off / inactive rows</strong>: dim grey rgba(40,40,55,0.5) bg + rgb(120,120,140,0.5) accent + text rgb(180,180,200).</li>
+    <li><strong>Toggle bullet</strong>: filled gold rgb(255,210,90) with soft glow when ON; hollow purple-edged when OFF.</li>
+    <li><strong>Chosen caret <code>▸</code> + expand chevron <code>▼</code></strong>: gold rgb(255,210,90), drawing the eye to current value + clickable affordance.</li>
+  </ul>
+</div>
+
+<div class="section">
+  <h3>Open question</h3>
+  <p>Manoeuvres has 4 options. When opened, should it use the same 2×2 grid as Orders (consistency with the other STMenu1 panel) or a vertical stack (consistency with how dropdowns usually expand)? I lean toward <strong>vertical stack</strong> — Manoeuvres is semantically a list of "how to engage" not a grid of distinct choices, and the 2×2 only makes sense in Orders because Python forces it there. Easy to swap if you disagree.</p>
+</div>

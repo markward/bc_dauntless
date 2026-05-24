@@ -1028,9 +1028,8 @@ def _apply_view_mode_side_effects(view_mode: "_ViewModeController", h) -> None:
 
 
 def _handle_esc_for_view_mode(view_mode: "_ViewModeController") -> None:
-    """ESC in bridge mode returns to exterior. ESC in exterior mode does
-    nothing here (the mission-picker handler still gets its turn — see
-    run()). The side-effect sync runs on the next tick and releases the
+    """ESC in bridge mode returns to exterior. ESC in exterior mode is a
+    no-op. The side-effect sync runs on the next tick and releases the
     cursor / disables the bridge pass."""
     if view_mode.is_bridge:
         view_mode.toggle()
@@ -1499,8 +1498,8 @@ class HostController:
         self.session: Optional[MissionSession] = None
         self.pending_swap: Optional[str] = None
         self.bridge_instance: Optional[Any] = None  # InstanceId from create_bridge_instance
-        # Invoked once after each successful loader.load(). host_loop wires
-        # this to TargetListController.rebuild_from_snapshot so the panel
+        # Invoked once after each successful loader.load(). Stage 2 CEF
+        # integration will wire this to rebuild UI state so the panel
         # filters the player ship (Game.SetPlayer runs during loader.load
         # AFTER the ship is added to the set, so the initial publish_added
         # for the player can't filter itself out).
@@ -1673,21 +1672,6 @@ class _NoInputReader:
 _NO_INPUT = _NoInputReader()
 
 
-def _cursor_over_panel(h, panel_id: int) -> bool:
-    """True when the cursor's framebuffer-pixel position falls inside
-    the panel's screen rect.  Returns False when bindings are missing
-    or the panel hasn't been laid out yet."""
-    cursor_pos = getattr(h, "cursor_pos", None)
-    panel_bounds = getattr(h, "panel_bounds", None)
-    if cursor_pos is None or panel_bounds is None:
-        return False
-    cx, cy = cursor_pos()
-    px, py, pw, ph = panel_bounds(panel_id)
-    if pw <= 0.0 or ph <= 0.0:
-        return False
-    return (px <= cx < px + pw) and (py <= cy < py + ph)
-
-
 def _apply_input(view_mode, player_control, cam_control,
                  *, player, dt, h, scroll_y) -> None:
     """Per-tick input dispatch.
@@ -1821,16 +1805,18 @@ def _relocate_eye_for_target_lock(eye, up_vec, ship_loc, target_loc):
     return new_eye, (upx/upm, upy/upm, upz/upm)
 
 
+def _update_ui_for_tick(player, view_mode, session, active_set) -> None:
+    """CEF integration hook — Stage 2 wires this up. Currently a no-op."""
+    return
+
+
 def run(mission_name: Optional[str] = None,
         max_ticks: Optional[int] = None) -> int:
     """Boot the renderer, init the named mission, run until the window closes
     or max_ticks is reached. Returns 0 on clean exit.
 
-    Mission resolution: ``mission_name`` argument wins; otherwise the
-    ``OPEN_STBC_HOST_MISSION`` env var; otherwise ``SHIP_GATE_MISSION`` (the
-    default M2Objects ship-gate mission). The env-var path lets
-    ``./build/dauntless`` swap missions without recompiling, while
-    preserving the existing default for the ship-gate tests.
+    Mission resolution: ``mission_name`` argument wins; otherwise
+    ``SHIP_GATE_MISSION`` (the default M2Objects ship-gate mission).
 
     Debug knobs (env vars):
       OPEN_STBC_HOST_HEADLESS=1     — hide the window (used by tests).
@@ -1839,60 +1825,20 @@ def run(mission_name: Optional[str] = None,
       OPEN_STBC_HOST_FIXED_CAMERA=1 — ignore third-person follow; use a
                                       fixed camera at (0, 0, 150) looking
                                       at the world origin.
-      OPEN_STBC_HOST_MISSION=<dotted> — override the loaded mission.
     """
     import os as _os
     verbose = _os.environ.get("OPEN_STBC_HOST_VERBOSE") == "1"
     fixed_camera = _os.environ.get("OPEN_STBC_HOST_FIXED_CAMERA") == "1"
     if mission_name is None:
-        mission_name = _os.environ.get(
-            "OPEN_STBC_HOST_MISSION", SHIP_GATE_MISSION)
+        mission_name = SHIP_GATE_MISSION
 
     _setup_sdk()
 
     import App
     from engine.core.loop import GameLoop
 
-    r.init(1280, 720, "open_stbc",
-           str(PROJECT_ROOT / "native" / "assets" / "ui"))
+    r.init(1280, 720, "open_stbc")
     try:
-        from engine import ui
-        from engine.ui.target_list import TargetListController
-        ui.init()
-
-        # Target list panel — mirrors live ships from ship_lifecycle.
-        # Stage 1: ship names + affiliation only. Flip show_subsystems=True
-        # to add populated subsystem buttons per row (stage 2).
-        target_panel = ui.UiPanel(id="targets", anchor="top-left",
-                                  width_vw=18.0, height_vh=55.0,
-                                  title="Targets")
-        target_list = TargetListController(
-            target_panel,
-            player_provider=lambda: App.Game_GetCurrentPlayer(),
-            show_subsystems=True,
-        )
-
-        # Debug stat panel, top-right. Replaces the old hud.rml document.
-        # Height accommodates the title + 5 stat rows + the "Load Mission"
-        # button at the bottom without clipping (the panel has overflow:
-        # hidden so under-tall heights silently cut the button off).
-        debug_panel = ui.UiPanel(id="debug", anchor="top-right",
-                                 width_vw=18.0, height_vh=28.0,
-                                 title="Debug", collapsible=True)
-        stat_ship   = debug_panel.stat("Ship",   "---")
-        stat_system = debug_panel.stat("System", "---")
-        stat_pos    = debug_panel.stat("Pos",    "0 0 0")
-        stat_rot    = debug_panel.stat("Rot",    "Y0\xb0 P0\xb0 R0\xb0")
-        stat_alert  = debug_panel.stat("Alert",  "---")
-
-        # Bridge view marker — visible only when KEY_SPACE has toggled
-        # _ViewModeController into bridge mode. PoC: text-only, no
-        # bridge geometry yet.
-        bridge_hud = ui.UiPanel(id="bridge_hud", anchor="top",
-                                width_vw=20.0, height_vh=6.0,
-                                title="BRIDGE VIEW")
-        bridge_hud.set_visible(False)
-
         # Controller owns the renderer, the nif-handle cache, and the
         # current mission session. _MissionLoader.load() runs the
         # mission init + scene build; HostController.swap_mission()
@@ -1900,7 +1846,6 @@ def run(mission_name: Optional[str] = None,
         controller = HostController()
         controller.renderer = r
         controller.loader = _MissionLoader(controller, verbose=verbose)
-        controller.post_load_hook = target_list.rebuild_from_snapshot
 
         # Bridge interior — eagerly loaded once and reused across mission
         # swaps. Instance lives on the controller, not the per-mission
@@ -1928,8 +1873,6 @@ def run(mission_name: Optional[str] = None,
         r.set_world_transform(controller.bridge_instance, IDENTITY_MAT4)
 
         controller.session = controller.loader.load(mission_name)
-        target_list.rebuild_from_snapshot()    # filter player after Game.SetPlayer
-
         if verbose:
             ss = controller.session
             print(f"[host_loop] mission={mission_name}", flush=True)
@@ -1938,19 +1881,6 @@ def run(mission_name: Optional[str] = None,
                   f"({len(ss.ship_instances)} ships, "
                   f"{len(ss.planet_instances)} planets)", flush=True)
 
-        # Mission picker — scans the SDK script tree and offers an
-        # in-process swap via controller.swap_mission().
-        from engine.missions import discover as discover_missions
-        from engine.mission_picker import MissionPicker
-
-        registry = discover_missions(PROJECT_ROOT / "sdk" / "Build" / "scripts")
-        picker = MissionPicker(
-            registry=registry,
-            on_load=controller.swap_mission,
-            on_cancel=lambda: None,
-        )
-        debug_panel.button("Load Mission", on_click=picker.open, radio=False)
-
         # Per-tick player input → ship-transform integrator.
         player_control = _PlayerControl()
         cam_control    = _CameraControl()
@@ -1958,10 +1888,6 @@ def run(mission_name: Optional[str] = None,
             cam_control.set_ship_radius(controller.session.player.GetRadius())
         view_mode      = _ViewModeController()
         bridge_camera  = _BridgeCamera()
-        # Selecting a ship in the target panel snaps the chase orbit back
-        # to defaults and engages target lock — overrides any manual
-        # orbit the player had set. C key reverses (resets + unlocks).
-        target_list.on_target_change = lambda _ship: cam_control.lock_to_target()
         try:
             import _dauntless_host as _h
         except ImportError:
@@ -1974,17 +1900,11 @@ def run(mission_name: Optional[str] = None,
 
         loop = GameLoop()
         ticks = 0
-        _dust_enabled = True   # mirrors DustPass default
         init_audio()
         _bootstrap_firing_pipeline()
         while not r.should_close():
             loop.tick()
 
-            # Drain deferred picker actions (close + on_load/on_cancel)
-            # first — picker click handlers fire inside RmlUi's dispatch
-            # so they queue rather than tear panels down synchronously.
-            # Then drain any queued mission swap before scene work.
-            picker.drain()
             had_pending_swap = controller.pending_swap is not None
             controller._drain_pending_swap()
             if had_pending_swap:
@@ -2002,16 +1922,6 @@ def run(mission_name: Optional[str] = None,
             if _h is not None:
                 view_mode.apply(_h)
                 _apply_view_mode_side_effects(view_mode, _h)
-            # F7 toggles space dust; F8 toggles the RmlUi debugger
-            # overlay; F9 toggles whole-UI visibility; ESC dismisses the
-            # mission picker (no-op when it isn't open).
-            if _h is not None and _h.key_pressed(_h.keys.KEY_F7):
-                _dust_enabled = not _dust_enabled
-                _h.dust_set_enabled(_dust_enabled)
-            if _h is not None and _h.key_pressed(_h.keys.KEY_F8):
-                _h.toggle_ui_debugger()
-            if _h is not None and _h.key_pressed(_h.keys.KEY_F9):
-                _h.toggle_ui_visibility()
             # F10: debug shield-hit on the shield surface. Real BC weapons
             # impact the bubble at a surface point; firing at the ship
             # center would put the hit too far inside the bubble for the
@@ -2037,22 +1947,12 @@ def run(mission_name: Optional[str] = None,
                                                 wp.y + fy * offset,
                                                 wp.z + fz * offset))
             if _h is not None and _h.key_pressed(_h.keys.KEY_ESCAPE):
-                # Order: exit bridge mode first, then dismiss any open
-                # picker. If both apply, ESC handles both.
                 _handle_esc_for_view_mode(view_mode)
-                picker.handle_key_esc()
 
             # Apply keyboard input to the player ship's transform and to the
             # orbit camera. Scroll delta is consumed once per tick; old
             # bindings without the binding return 0.0 via the fallback.
             scroll_y = _consume_scroll() if _consume_scroll is not None else 0.0
-
-            # Route scroll: cursor over the targets panel -> list scroll.
-            # Otherwise camera zoom (the existing path).
-            if scroll_y != 0.0 and _h is not None:
-                if _cursor_over_panel(_h, target_panel.panel_id):
-                    target_list.scroll(-int(round(scroll_y)))
-                    scroll_y = 0.0  # consumed by panel; camera gets nothing
 
             if player is not None and _h is not None:
                 # Alert keys (Shift+1/2/3) run before the throttle handler;
@@ -2126,30 +2026,9 @@ def run(mission_name: Optional[str] = None,
                 player=player,
             )
 
-            bridge_hud.set_visible(view_mode.is_bridge)
-
             active_set = _resolve_active_set(player)
 
-            if player is not None:
-                _R = player.GetWorldRotation()
-                _p = player.GetWorldLocation()
-                _yaw, _pitch, _roll = _extract_ypr(_R)
-                _set_name = next(
-                    (n for n, s in App.g_kSetManager._sets.items()
-                     if s is active_set),
-                    ""
-                ) if active_set is not None else ""
-                try:
-                    _raw_script = player.GetScript() or ""
-                except Exception:
-                    _raw_script = ""
-                _ship_display = _raw_script.split(".")[-1] if _raw_script else "---"
-                stat_ship.set_value(_ship_display)
-                stat_system.set_value(_set_name or "---")
-                stat_pos.set_value("%.1f %.1f %.1f" % (_p.x, _p.y, _p.z))
-                stat_rot.set_value(
-                    "Y%.0f\xb0 P%.0f\xb0 R%.0f\xb0" % (_yaw, _pitch, _roll))
-                stat_alert.set_value(_format_alert_level(player.GetAlertLevel()))
+            _update_ui_for_tick(player, view_mode, session, active_set)
 
             ambient, directionals = _aggregate_lights(active_set)
             r.set_lighting(ambient, directionals)

@@ -1,0 +1,177 @@
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Antonio:wght@100;300;400;500;600;700&display=swap');
+  .antonio { font-family: 'Antonio', sans-serif; }
+  .anno { color:#79c4ff; font-size:11px; font-family:'Open Sans',sans-serif; padding:4px 8px; }
+</style>
+
+<h2>Power Used — no empty concept</h2>
+<p class="subtitle">Main and Reserve always render at their nominal widths. They provide consistent capacity until they hit zero charge; depletion is read off the gauges, not the bar. Only the Warp Core zone changes width (Offline takes the lost capacity).</p>
+
+<div class="mockup">
+  <div class="mockup-header">Three states — bar zones for Main and Reserve never shrink</div>
+  <div class="mockup-body" style="background:#000; padding:32px; display:flex; flex-direction:column; gap:32px;">
+
+    <!-- STATE 1: HEALTHY -->
+    <div class="antonio" style="max-width:640px; margin:0 auto; width:100%;">
+      <div style="color:rgb(120,200,120); font-size:13px; padding:2px 0 8px 0; text-transform:uppercase; letter-spacing:1.2px;">Healthy</div>
+
+      <div style="color:rgb(180,180,200); font-size:11px; padding:2px 0 4px 0; text-transform:uppercase; letter-spacing:1px;">Power Used — 60% demand</div>
+      <div style="position:relative; height:20px;">
+        <div style="position:absolute; inset:0; display:flex;">
+          <div style="flex:55; background:rgba(22,105,207,0.18);"></div>
+          <div style="flex:27; background:rgba(180,157,64,0.18);"></div>
+          <div style="flex:18; background:rgba(208,87,42,0.18);"></div>
+        </div>
+        <div style="position:absolute; left:55%; top:0; bottom:0; width:1px; background:rgba(255,255,255,0.15);"></div>
+        <div style="position:absolute; left:82%; top:0; bottom:0; width:1px; background:rgba(255,255,255,0.15);"></div>
+        <div style="position:absolute; inset:0; display:flex;">
+          <div style="width:18%; background:rgb(207,139,76);"></div>
+          <div style="width:15%; background:rgb(199,76,200);"></div>
+          <div style="width:12%; background:rgb(201,203,76);"></div>
+          <div style="width:15%; background:rgb(150,129,222);"></div>
+        </div>
+      </div>
+      <div style="display:flex; height:3px; margin-top:1px;">
+        <div style="flex:55; background:rgb(22,105,207);"></div>
+        <div style="flex:27; background:rgb(180,157,64);"></div>
+        <div style="flex:18; background:rgb(208,87,42);"></div>
+      </div>
+      <div style="display:flex; font-size:9px; text-transform:uppercase; letter-spacing:0.6px; margin-top:4px;">
+        <div style="flex:55; text-align:center; color:rgb(22,105,207);">Warp Core</div>
+        <div style="flex:27; text-align:center; color:rgb(180,157,64);">Main</div>
+        <div style="flex:18; text-align:center; color:rgb(208,87,42);">Reserve</div>
+      </div>
+    </div>
+
+    <div style="height:1px; background:rgba(255,255,255,0.1); max-width:640px; margin:0 auto; width:100%;"></div>
+
+    <!-- STATE 2: WARP CORE DAMAGED 50% -->
+    <div class="antonio" style="max-width:640px; margin:0 auto; width:100%;">
+      <div style="color:rgb(255,180,80); font-size:13px; padding:2px 0 8px 0; text-transform:uppercase; letter-spacing:1.2px;">Warp Core damaged to 50%</div>
+
+      <div style="color:rgb(180,180,200); font-size:11px; padding:2px 0 4px 0; text-transform:uppercase; letter-spacing:1px;">Power Used — 60% demand</div>
+      <div style="position:relative; height:20px;">
+        <div style="position:absolute; inset:0; display:flex;">
+          <div style="width:27.5%; background:rgba(60,20,20,0.6); background-image:repeating-linear-gradient(45deg, transparent, transparent 4px, rgba(100,30,30,0.4) 4px, rgba(100,30,30,0.4) 8px);"></div>
+          <div style="width:27.5%; background:rgba(22,105,207,0.18);"></div>
+          <div style="width:27%; background:rgba(180,157,64,0.18);"></div>
+          <div style="width:18%; background:rgba(208,87,42,0.18);"></div>
+        </div>
+        <div style="position:absolute; left:27.5%; top:0; bottom:0; width:1px; background:rgba(255,80,80,0.5);"></div>
+        <div style="position:absolute; left:55%; top:0; bottom:0; width:1px; background:rgba(255,255,255,0.15);"></div>
+        <div style="position:absolute; left:82%; top:0; bottom:0; width:1px; background:rgba(255,255,255,0.15);"></div>
+        <div style="position:absolute; left:27.5%; right:0; top:0; bottom:0; display:flex;">
+          <div style="width:24.78%; background:rgb(207,139,76);"></div>
+          <div style="width:20.66%; background:rgb(199,76,200);"></div>
+          <div style="width:16.52%; background:rgb(201,203,76);"></div>
+          <div style="width:20.66%; background:rgb(150,129,222);"></div>
+        </div>
+      </div>
+      <div style="display:flex; height:3px; margin-top:1px;">
+        <div style="width:27.5%; background:rgb(150,40,40);"></div>
+        <div style="width:27.5%; background:rgb(22,105,207);"></div>
+        <div style="width:27%; background:rgb(180,157,64);"></div>
+        <div style="width:18%; background:rgb(208,87,42);"></div>
+      </div>
+      <div style="display:flex; font-size:9px; text-transform:uppercase; letter-spacing:0.6px; margin-top:4px;">
+        <div style="width:27.5%; text-align:center; color:rgb(150,60,60);">Offline</div>
+        <div style="width:27.5%; text-align:center; color:rgb(22,105,207);">Warp Core</div>
+        <div style="width:27%; text-align:center; color:rgb(180,157,64);">Main</div>
+        <div style="width:18%; text-align:center; color:rgb(208,87,42);">Reserve</div>
+      </div>
+    </div>
+
+    <div style="height:1px; background:rgba(255,255,255,0.1); max-width:640px; margin:0 auto; width:100%;"></div>
+
+    <!-- STATE 3: WARP CORE BADLY DAMAGED + Main/Reserve drained — but zones same width -->
+    <div class="antonio" style="max-width:640px; margin:0 auto; width:100%;">
+      <div style="color:rgb(255,100,100); font-size:13px; padding:2px 0 8px 0; text-transform:uppercase; letter-spacing:1.2px;">Warp Core damaged to 25% · Main 30% · Reserve 40% (read off the gauges, not the bar)</div>
+
+      <div style="color:rgb(180,180,200); font-size:11px; padding:2px 0 4px 0; text-transform:uppercase; letter-spacing:1px;">Power Used — 70% demand</div>
+      <div style="position:relative; height:20px;">
+        <div style="position:absolute; inset:0; display:flex;">
+          <!-- Offline 41.25% (warp 75% damaged) -->
+          <div style="width:41.25%; background:rgba(60,20,20,0.6); background-image:repeating-linear-gradient(45deg, transparent, transparent 4px, rgba(100,30,30,0.4) 4px, rgba(100,30,30,0.4) 8px);"></div>
+          <!-- WC active 13.75% -->
+          <div style="width:13.75%; background:rgba(22,105,207,0.18);"></div>
+          <!-- Main 27% (nominal, charge level read off gauge) -->
+          <div style="width:27%; background:rgba(180,157,64,0.18);"></div>
+          <!-- Reserve 18% (nominal, charge level read off gauge) -->
+          <div style="width:18%; background:rgba(208,87,42,0.18);"></div>
+        </div>
+        <div style="position:absolute; left:41.25%; top:0; bottom:0; width:1px; background:rgba(255,80,80,0.5);"></div>
+        <div style="position:absolute; left:55%; top:0; bottom:0; width:1px; background:rgba(255,255,255,0.15);"></div>
+        <div style="position:absolute; left:82%; top:0; bottom:0; width:1px; background:rgba(255,255,255,0.15);"></div>
+        <!-- Stack origin = right edge of offline (41.25%) — 70% demand fills 58.75% of bar -->
+        <div style="position:absolute; left:41.25%; width:58.75%; top:0; bottom:0; display:flex;">
+          <div style="width:35.7%; background:rgb(207,139,76);"></div>
+          <div style="width:25.5%; background:rgb(199,76,200);"></div>
+          <div style="width:17%; background:rgb(201,203,76);"></div>
+          <div style="width:21.8%; background:rgb(150,129,222);"></div>
+        </div>
+      </div>
+      <div style="display:flex; height:3px; margin-top:1px;">
+        <div style="width:41.25%; background:rgb(150,40,40);"></div>
+        <div style="width:13.75%; background:rgb(22,105,207);"></div>
+        <div style="width:27%; background:rgb(180,157,64);"></div>
+        <div style="width:18%; background:rgb(208,87,42);"></div>
+      </div>
+      <div style="display:flex; font-size:9px; text-transform:uppercase; letter-spacing:0.6px; margin-top:4px;">
+        <div style="width:41.25%; text-align:center; color:rgb(150,60,60);">Offline</div>
+        <div style="width:13.75%; text-align:center; color:rgb(22,105,207);">Warp Core</div>
+        <div style="width:27%; text-align:center; color:rgb(180,157,64);">Main</div>
+        <div style="width:18%; text-align:center; color:rgb(208,87,42);">Reserve</div>
+      </div>
+
+      <!-- Gauges below to show depletion -->
+      <div style="display:flex; gap:32px; margin-top:14px; justify-content:flex-end;">
+        <div style="text-align:center;">
+          <div style="width:24px; height:60px; position:relative; border:1.5px solid rgb(22,105,207); background:rgba(22,105,207,0.15); margin:0 auto;">
+            <div style="position:absolute; top:0; left:0; right:0; height:75%; background:rgba(150,40,40,0.45); background-image:repeating-linear-gradient(45deg, transparent, transparent 3px, rgba(200,60,60,0.5) 3px, rgba(200,60,60,0.5) 6px);"></div>
+            <div style="position:absolute; top:75%; left:-2px; right:-2px; height:2px; background:rgb(255,80,80);"></div>
+            <div style="position:absolute; bottom:0; left:0; right:0; height:25%; background:rgb(22,105,207);"></div>
+          </div>
+          <div style="color:rgb(220,210,255); font-size:10px; text-transform:uppercase; letter-spacing:0.6px; margin-top:4px;">Warp Core</div>
+          <div style="color:rgb(255,120,120); font-size:12px;">25% (max)</div>
+        </div>
+        <div style="text-align:center;">
+          <div style="width:24px; height:60px; position:relative; border:1.5px solid rgb(180,157,64); background:rgba(180,157,64,0.15); margin:0 auto;">
+            <div style="position:absolute; bottom:0; left:0; right:0; height:30%; background:rgb(180,157,64);"></div>
+            <div style="position:absolute; bottom:-12px; left:50%; transform:translateX(-50%); color:rgb(255,180,80); font-size:11px;">▼</div>
+          </div>
+          <div style="color:rgb(220,210,255); font-size:10px; text-transform:uppercase; letter-spacing:0.6px; margin-top:4px;">Main</div>
+          <div style="color:rgb(255,120,120); font-size:12px;">30% ↓</div>
+        </div>
+        <div style="text-align:center;">
+          <div style="width:24px; height:60px; position:relative; border:1.5px solid rgb(208,87,42); background:rgba(208,87,42,0.15); margin:0 auto;">
+            <div style="position:absolute; bottom:0; left:0; right:0; height:40%; background:rgb(208,87,42);"></div>
+          </div>
+          <div style="color:rgb(220,210,255); font-size:10px; text-transform:uppercase; letter-spacing:0.6px; margin-top:4px;">Reserve</div>
+          <div style="color:rgb(255,120,120); font-size:12px;">40%</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="section">
+  <h3>Final mental model</h3>
+  <ul>
+    <li><strong>Bar zone widths</strong>:
+      <ul>
+        <li>Warp Core zone shrinks when the core is damaged.</li>
+        <li>Offline zone takes the lost portion (on the left).</li>
+        <li>Main and Reserve zones are <strong>fixed at their nominal widths</strong> regardless of charge level.</li>
+      </ul>
+    </li>
+    <li><strong>Vertical source gauges</strong> show what's actually <em>left</em>:
+      <ul>
+        <li>Warp Core gauge: red-hatched cap when damaged.</li>
+        <li>Main / Reserve gauges: fill level = current charge.</li>
+        <li>▲ when charging, ▼ when draining.</li>
+      </ul>
+    </li>
+    <li><strong>Reading flow</strong>: bar tells you what zone you're drawing from right now; gauges tell you how much fuel each source has left. Two complementary views.</li>
+  </ul>
+</div>

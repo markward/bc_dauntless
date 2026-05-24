@@ -1,0 +1,73 @@
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Antonio:wght@100;300;400;500;600;700&display=swap');
+  .antonio { font-family: 'Antonio', sans-serif; }
+</style>
+
+<h2>Crew menu — Antonio throughout, single weight on rows</h2>
+<p class="subtitle">Header Antonio 600 uppercase. Body rows Antonio 400 (no weight variation between states). State differentiation is purely colour — text colour, accent-bar colour, background tint.</p>
+
+<div class="mockup">
+  <div class="mockup-header">Helm menu — locked</div>
+  <div class="mockup-body" style="background:#000; padding:48px; display:flex; justify-content:center;">
+    <div class="antonio" style="width:240px;">
+
+      <!-- Header: Antonio 600 uppercase -->
+      <div style="background:linear-gradient(90deg, rgb(216,94,86) 0%, rgb(216,132,80) 100%); color:#ffd; font-size:14px; padding:6px 16px; font-weight:600; border-radius:0 14px 0 0; letter-spacing:2px; text-transform:uppercase;">
+        Helm
+      </div>
+
+      <!-- Body: Antonio 400, all rows same weight -->
+      <div style="background:rgba(10,10,16,0.85); border-left:4px solid rgb(216,94,86); padding:8px 6px;">
+
+        <!-- Available -->
+        <div style="display:flex;align-items:center;color:rgb(220,210,255);font-size:13px;padding:6px 12px;margin:2px 0;border-left:3px solid rgb(147,103,255);background:rgb(37,26,64);font-weight:400;">
+          <span style="margin-right:10px;color:rgb(147,103,255);">▸</span>Report
+        </div>
+        <div style="display:flex;align-items:center;color:rgb(220,210,255);font-size:13px;padding:6px 12px;margin:2px 0;border-left:3px solid rgb(147,103,255);background:rgb(37,26,64);font-weight:400;">
+          <span style="margin-right:10px;color:rgb(147,103,255);">▸</span>Hail
+        </div>
+
+        <!-- Highlighted: brighter text + brighter accent -->
+        <div style="display:flex;align-items:center;color:rgb(235,225,255);font-size:13px;padding:6px 12px;margin:2px 0;border-left:3px solid rgb(173,132,255);background:rgb(43,33,64);font-weight:400;">
+          <span style="margin-right:10px;color:rgb(173,132,255);">▸</span>Set Course
+        </div>
+
+        <!-- Disabled: muted text + muted accent, same weight -->
+        <div style="display:flex;align-items:center;color:rgb(110,110,110);font-size:13px;padding:6px 12px;margin:2px 0;border-left:3px solid rgb(64,64,64);background:rgb(16,16,16);font-weight:400;">
+          <span style="margin-right:10px;color:rgb(80,80,80);">▸</span>Warp
+        </div>
+        <div style="display:flex;align-items:center;color:rgb(110,110,110);font-size:13px;padding:6px 12px;margin:2px 0;border-left:3px solid rgb(64,64,64);background:rgb(16,16,16);font-weight:400;">
+          <span style="margin-right:10px;color:rgb(80,80,80);">▸</span>Orbit Planet
+        </div>
+
+        <!-- Available -->
+        <div style="display:flex;align-items:center;color:rgb(220,210,255);font-size:13px;padding:6px 12px;margin:2px 0;border-left:3px solid rgb(147,103,255);background:rgb(37,26,64);font-weight:400;">
+          <span style="margin-right:10px;color:rgb(147,103,255);">▸</span>Intercept
+        </div>
+        <div style="display:flex;align-items:center;color:rgb(110,110,110);font-size:13px;padding:6px 12px;margin:2px 0;border-left:3px solid rgb(64,64,64);background:rgb(16,16,16);font-weight:400;">
+          <span style="margin-right:10px;color:rgb(80,80,80);">▸</span>All Stop
+        </div>
+        <div style="display:flex;align-items:center;color:rgb(110,110,110);font-size:13px;padding:6px 12px;margin:2px 0;border-left:3px solid rgb(64,64,64);background:rgb(16,16,16);font-weight:400;">
+          <span style="margin-right:10px;color:rgb(80,80,80);">▸</span>Dock
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>Locked spec</h3>
+  <ul>
+    <li><strong>Font</strong>: Antonio throughout</li>
+    <li><strong>Header</strong>: 14dp / 600 weight / uppercase / 2dp letter-spacing</li>
+    <li><strong>Header gradient</strong>: <code>linear-gradient(90deg, MENU1_BASE 0%, hue_shift(MENU1_BASE, +20°) 100%)</code></li>
+    <li><strong>Header corner</strong>: top-right rounded 14dp</li>
+    <li><strong>Body left-edge</strong>: 4dp solid MENU1_BASE</li>
+    <li><strong>Body fill</strong>: <code>rgba(10,10,16,0.85)</code></li>
+    <li><strong>Rows</strong>: 13dp / 400 weight (same on all states)</li>
+    <li><strong>Row accent-bar</strong>: 3dp solid in row's state colour (MENU2_BASE / HIGHLIGHTED / DISABLED)</li>
+    <li><strong>Row background</strong>: row's state colour × 0.25</li>
+    <li><strong>Row text colour</strong>: light purple for available/highlighted, muted grey for disabled</li>
+    <li><strong>Row arrow ▸</strong>: same colour as row's accent-bar, 10dp margin-right</li>
+  </ul>
+</div>

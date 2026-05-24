@@ -1,0 +1,191 @@
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Antonio:wght@100;300;400;500;600;700&display=swap');
+  .antonio { font-family: 'Antonio', sans-serif; font-weight:400; }
+
+  /* U-frame: red on left + right + bottom; header caps the top */
+  .modal-frame {
+    background:rgba(10,10,16,0.92);
+    border-left:3px solid rgb(216,94,86);
+    border-right:3px solid rgb(216,94,86);
+    border-bottom:3px solid rgb(216,94,86);
+  }
+  .modal-header {
+    background:linear-gradient(90deg, rgb(216,94,86) 0%, rgb(216,132,80) 100%);
+    color:#ffd; font-size:14px; padding:6px 16px; letter-spacing:2px; text-transform:uppercase;
+    border-radius:0 14px 0 0;
+    display:flex; justify-content:space-between; align-items:center;
+  }
+
+  /* LCARS button row = [L-cap][gap][btn]...[btn][gap][R-cap].
+     End-caps live at the row's outer edges only (matching SDK pattern:
+     leftmost btn SetUseEndCaps(1,0), rightmost SetUseEndCaps(0,1),
+     middle buttons SetUseEndCaps(0,0)). */
+  .btn-row {
+    display:inline-flex; align-items:stretch; gap:6px;
+  }
+  .btn-cap-l, .btn-cap-r { width:16px; background:rgb(216,94,86); }
+  .btn-cap-l { border-radius:12px 0 0 12px; }
+  .btn-cap-r { border-radius:0 12px 12px 0; }
+
+  .btn {
+    display:flex; align-items:center;
+    font-family:'Antonio', sans-serif; font-weight:400;
+    font-size:12px; padding:6px 20px;
+    letter-spacing:1.5px; text-transform:uppercase;
+    cursor:pointer;
+  }
+  .btn-primary   { background:rgb(147,103,255); color:#fff; }
+  .btn-secondary {
+    background:transparent; color:rgb(220,210,255);
+    border-top:1px solid rgb(120,90,160); border-bottom:1px solid rgb(120,90,160);
+  }
+  .btn-disabled  { background:rgba(64,64,64,0.7); color:rgb(110,110,110); }
+
+  /* Backdrop dim simulation */
+  .backdrop {
+    background:
+      radial-gradient(ellipse at center, rgba(0,0,0,0.4) 0%, rgba(0,0,0,0.85) 70%),
+      url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600"><rect width="800" height="600" fill="%23111"/></svg>');
+    background-size:cover;
+  }
+</style>
+
+<h2>Modal dialog — Antonio re-render, U-frame, LCARS pill buttons</h2>
+<p class="subtitle">Two examples — a simple confirmation (small body, two buttons) and the complex Quick Battle Setup (three-column body, tabs, two buttons). Both honour the SDK shape: a centered <code>STStylizedWindow</code> with title bar + 1–2 action buttons baked in by <code>ModalDialogWindow.Run()</code>. Backdrop dimming + 3-sided red border-frame announce modality.</p>
+
+<!-- ============================================================ -->
+<div class="mockup">
+  <div class="mockup-header">Simple modal — confirmation</div>
+  <div class="mockup-body backdrop" style="padding:64px;">
+
+    <div class="antonio" style="width:380px; margin:0 auto;">
+      <div class="modal-header">
+        <span>Return To Main Menu</span>
+      </div>
+      <div class="modal-frame" style="padding:18px 22px;">
+        <p style="color:rgb(220,210,225); font-size:13px; line-height:1.55; margin:0 0 22px 0; letter-spacing:0.4px;">
+          Returning to the main menu will end the current mission. Any progress since the last save will be lost.
+        </p>
+        <div style="display:flex; justify-content:flex-end;">
+          <div class="btn-row">
+            <div class="btn-cap-l"></div>
+            <div class="btn btn-secondary">Cancel</div>
+            <div class="btn btn-primary">Quit Mission</div>
+            <div class="btn-cap-r"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<div class="mockup" style="margin-top:24px;">
+  <div class="mockup-header">Complex modal — Quick Battle Setup</div>
+  <div class="mockup-body backdrop" style="padding:40px;">
+
+    <div class="antonio" style="width:620px; margin:0 auto;">
+      <div class="modal-header">
+        <span>Quick Battle Setup</span>
+      </div>
+
+      <!-- Body: tab strip + 3-column content + action footer -->
+      <div class="modal-frame" style="padding:0;">
+
+        <!-- Tab strip (uses our locked menu-row vocabulary for navigation) -->
+        <div style="display:flex; gap:6px; padding:8px 10px; border-bottom:1px solid rgba(216,94,86,0.4);">
+          <div style="display:flex; align-items:center; color:rgb(180,180,200); font-size:11px; padding:5px 12px; border-left:3px solid rgba(120,120,140,0.5); background:rgba(40,40,55,0.5); letter-spacing:1px; text-transform:uppercase;">
+            <span style="margin-right:6px; color:rgba(120,120,140,0.8);">▸</span>Ships
+          </div>
+          <div style="display:flex; align-items:center; color:rgb(235,225,255); font-size:11px; padding:5px 12px; border-left:3px solid rgb(173,132,255); background:rgba(147,103,255,0.22); letter-spacing:1px; text-transform:uppercase;">
+            <span style="margin-right:6px; color:rgb(173,132,255);">▸</span>Player and Region
+          </div>
+        </div>
+
+        <!-- 3-column body -->
+        <div style="display:flex; gap:10px; padding:14px;">
+
+          <!-- Left: faction list -->
+          <div style="flex:1;">
+            <div style="color:rgb(216,132,80); font-size:10px; font-weight:400; text-transform:uppercase; letter-spacing:1px; padding:2px 0 6px 0;">Player Faction</div>
+            <div style="height:1px; background:rgb(216,94,86); opacity:0.4; margin:0 0 6px 0;"></div>
+            <div style="display:flex; align-items:center; color:rgb(180,180,200); font-size:11px; padding:5px 10px; margin:2px 0; border-left:3px solid rgba(120,120,140,0.5); background:rgba(40,40,55,0.5); letter-spacing:0.5px;"><span style="margin-right:6px; color:rgba(120,120,140,0.8);">▸</span>Federation</div>
+            <div style="display:flex; align-items:center; color:rgb(180,180,200); font-size:11px; padding:5px 10px; margin:2px 0; border-left:3px solid rgba(120,120,140,0.5); background:rgba(40,40,55,0.5); letter-spacing:0.5px;"><span style="margin-right:6px; color:rgba(120,120,140,0.8);">▸</span>Klingon</div>
+            <div style="display:flex; align-items:center; color:rgb(235,225,255); font-size:11px; padding:5px 10px; margin:2px 0; border-left:3px solid rgb(173,132,255); background:rgba(147,103,255,0.22); letter-spacing:0.5px;"><span style="margin-right:6px; color:rgb(255,210,90);">▾</span>Cardassian</div>
+            <div style="display:flex; align-items:center; color:rgb(220,210,255); font-size:11px; padding:4px 10px 4px 26px; margin:1px 0; border-left:3px solid rgba(173,132,255,0.5); background:rgba(60,40,90,0.35); letter-spacing:0.5px;">Galor</div>
+            <div style="display:flex; align-items:center; color:rgb(180,180,200); font-size:11px; padding:4px 10px 4px 26px; margin:1px 0; border-left:3px solid rgba(120,120,140,0.5); background:rgba(40,40,55,0.5); letter-spacing:0.5px;">Keldon</div>
+            <div style="display:flex; align-items:center; color:rgb(180,180,200); font-size:11px; padding:5px 10px; margin:2px 0; border-left:3px solid rgba(120,120,140,0.5); background:rgba(40,40,55,0.5); letter-spacing:0.5px;"><span style="margin-right:6px; color:rgba(120,120,140,0.8);">▸</span>Romulan</div>
+          </div>
+
+          <!-- Centre: ship preview + description -->
+          <div style="flex:1; display:flex; flex-direction:column; gap:10px;">
+            <div style="background:rgba(0,0,0,0.5); border-left:3px solid rgb(216,94,86); height:88px; display:flex; align-items:center; justify-content:center; color:rgb(80,80,90); font-size:10px; letter-spacing:1px; text-transform:uppercase;">Ship preview</div>
+            <div>
+              <div style="color:rgb(216,132,80); font-size:10px; text-transform:uppercase; letter-spacing:1px; padding:2px 0 6px 0;">Galor — Description</div>
+              <div style="height:1px; background:rgb(216,94,86); opacity:0.4; margin:0 0 6px 0;"></div>
+              <p style="color:rgb(190,180,200); font-size:11px; line-height:1.5; margin:0; letter-spacing:0.3px;">
+                Cardassian heavy cruiser. Spiral-wave disruptors, photon torpedoes, moderate shields. Slower than the Galaxy class but turns more sharply.
+              </p>
+            </div>
+          </div>
+
+          <!-- Right: region list -->
+          <div style="flex:1;">
+            <div style="color:rgb(216,132,80); font-size:10px; text-transform:uppercase; letter-spacing:1px; padding:2px 0 6px 0;">Combat Region</div>
+            <div style="height:1px; background:rgb(216,94,86); opacity:0.4; margin:0 0 6px 0;"></div>
+            <div style="display:flex; align-items:center; color:rgb(180,180,200); font-size:11px; padding:5px 10px; margin:2px 0; border-left:3px solid rgba(120,120,140,0.5); background:rgba(40,40,55,0.5); letter-spacing:0.5px;">Albirea</div>
+            <div style="display:flex; align-items:center; color:rgb(180,180,200); font-size:11px; padding:5px 10px; margin:2px 0; border-left:3px solid rgba(120,120,140,0.5); background:rgba(40,40,55,0.5); letter-spacing:0.5px;">Alioth</div>
+            <div style="display:flex; align-items:center; color:rgb(180,180,200); font-size:11px; padding:5px 10px; margin:2px 0; border-left:3px solid rgba(120,120,140,0.5); background:rgba(40,40,55,0.5); letter-spacing:0.5px;">Beol</div>
+            <div style="display:flex; align-items:center; color:rgb(235,225,255); font-size:11px; padding:5px 10px; margin:2px 0; border-left:3px solid rgb(173,132,255); background:rgba(147,103,255,0.22); letter-spacing:0.5px;"><span style="margin-right:6px; color:rgb(255,210,90);">▸</span>Deep Space</div>
+            <div style="display:flex; align-items:center; color:rgb(180,180,200); font-size:11px; padding:5px 10px; margin:2px 0; border-left:3px solid rgba(120,120,140,0.5); background:rgba(40,40,55,0.5); letter-spacing:0.5px;">Geble</div>
+            <div style="display:flex; align-items:center; color:rgb(180,180,200); font-size:11px; padding:5px 10px; margin:2px 0; border-left:3px solid rgba(120,120,140,0.5); background:rgba(40,40,55,0.5); letter-spacing:0.5px;">Riha</div>
+          </div>
+        </div>
+
+        <!-- Footer with action buttons -->
+        <div style="display:flex; justify-content:flex-end; padding:12px 14px; border-top:1px solid rgba(216,94,86,0.4);">
+          <div class="btn-row">
+            <div class="btn-cap-l"></div>
+            <div class="btn btn-secondary">Cancel</div>
+            <div class="btn btn-primary">Start Battle</div>
+            <div class="btn-cap-r"></div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="section">
+  <h3>Vocabulary recap</h3>
+  <ul>
+    <li><strong>Modal frame</strong>: red header (top-right corner rounded as locked) + dark body + 3-sided red border (left, right, bottom) — visually a U-frame that closes at the header. Differentiates a modal from persistent panels (which use left-bar only).</li>
+    <li><strong>Backdrop</strong>: radial dim from centre to edges; the scene behind continues to render but is darkened. Modal blocks input.</li>
+    <li><strong>Action buttons (LCARS end-cap pattern)</strong>: hard-cornered buttons sit between two rounded end-caps that bookend the row. Caps appear only at the row's outer edges — never between buttons. Maps to <code>STButton.SetUseEndCaps(left, right)</code> per-button: leftmost gets <code>(1,0)</code>, rightmost gets <code>(0,1)</code>, anything in between gets <code>(0,0)</code>. Small gap (6px) between cap and the first/last button gives breathing room. Caps inherit the panel's primary colour (red); button body reflects state (filled <code>g_kSTMenu2NormalBase</code> purple primary, transparent with horizontal outlines secondary, grey disabled).</li>
+    <li><strong>Single Antonio weight (400)</strong> throughout — header, body, buttons. State is colour-only (no 600 weight for emphasis, no italic except the rare disabled-row case).</li>
+    <li><strong>Tabs</strong> (when present): reuse the menu-row vocabulary with <code>▸</code> chosen caret. Tabs are navigation, buttons are commit-actions — kept visually distinct via the pill shape.</li>
+  </ul>
+</div>
+
+<div class="section">
+  <h3>SDK alignment</h3>
+  <ul>
+    <li>Maps to <code>ModalDialogWindow.Run(title, _, btn1Text, btn1Event, btn2Text, btn2Event)</code> at <code>App.py:7538</code>. Title comes from arg 1; up to two buttons baked in by the call.</li>
+    <li>Inner stylized window accessible via <code>pModalDialogWindow.GetFirstChild()</code> as an <code>STStylizedWindow</code> — content code adds children to it (paragraphs, sub-panes, lists) using <code>AddChild(child, x, y, layer)</code>.</li>
+    <li>The simple-modal example mirrors the only SDK use site (<code>KeyboardConfig.py:545</code>): title + body paragraph + 1–2 action buttons.</li>
+    <li>The complex-modal example demonstrates that the same chrome scales to the Quick Battle Setup (mentioned in <code>bridge-mode.md</code> §115). The body's three-column structure would be assembled by Python via positioned child panes — chrome unchanged.</li>
+  </ul>
+</div>
+
+<div class="section">
+  <h3>RmlUi compatibility</h3>
+  <ul>
+    <li><code>border-left</code> / <code>border-right</code> / <code>border-bottom</code> individually — all supported.</li>
+    <li>End-cap rounding: <code>border-radius: 12px 0 0 12px</code> / <code>0 12px 12px 0</code> on the cap children — per-corner shorthand, supported.</li>
+    <li>Backdrop dim — implemented at runtime as a full-screen <code>linear-gradient</code> decorator at low alpha behind the modal element. The radial dimming shown in the mockup is for visual demonstration; RmlUi supports <code>radial-gradient</code> too if we want the focal centre.</li>
+    <li>No CSS variables, no grid — only flexbox and explicit colours, matching the rest of the locked vocabulary.</li>
+  </ul>
+</div>

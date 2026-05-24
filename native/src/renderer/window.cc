@@ -51,9 +51,8 @@ Window::Window(int width, int height, const std::string& title, bool visible) {
 
     glfwMakeContextCurrent(handle_);
 
-    // UiSystem installs the scroll callback so it can filter through RmlUi
-    // before the camera sees the event; the user pointer lets per-window
-    // callbacks (cursor, etc.) dispatch back to this Window instance.
+    // The user pointer lets per-window callbacks (cursor, etc.) dispatch
+    // back to this Window instance.
     glfwSetWindowUserPointer(handle_, this);
 
     glfwSetCursorPosCallback(handle_, [](GLFWwindow* w, double x, double y) {
@@ -172,9 +171,8 @@ void Window::cursor_pos(double* out_x, double* out_y) const noexcept {
         glfwGetCursorPos(handle_, &x, &y);
     }
     // Convert GLFW screen coords (logical pixels) to framebuffer coords
-    // (physical pixels).  This matches PanelDocument::bounds() (which
-    // returns RmlUi's framebuffer-space rect) so callers can do straight
-    // inside-rect comparisons on Retina/high-DPI displays.
+    // (physical pixels) so callers comparing against framebuffer-space
+    // rects get consistent results on Retina/high-DPI displays.
     if (handle_) {
         int win_w = 0, win_h = 0, fb_w = 0, fb_h = 0;
         glfwGetWindowSize(handle_, &win_w, &win_h);
