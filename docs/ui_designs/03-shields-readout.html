@@ -1,0 +1,88 @@
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Antonio:wght@100;300;400;500;600;700&display=swap');
+  .antonio { font-family: 'Antonio', sans-serif; font-weight:400; }
+
+  /* Hull bar */
+  .hull-fill-healthy  { background:rgb(50,210,80); }
+  .hull-fill-damaged  { background:rgb(255,200,60); }
+  .hull-fill-critical { background:rgb(255,80,40); }
+</style>
+
+<h2>Shields panels — placeholder (descoped)</h2>
+<p class="subtitle">Rich visualization (ship sprite, six-face ring/cross, damage icons) pinned for later. Phase 1 cut: just the locked panel chrome + a label (target name or "PLAYER") + the hull integrity bar. <code>App.ShipDisplay_Create()</code> still wires the widget into the tactical window so the data plumbing is in place; the visual will evolve in Phase 2.</p>
+
+<div class="mockup">
+  <div class="mockup-header">Player Shields · Target Shields (engaged) · Target Shields (no target)</div>
+  <div class="mockup-body" style="background:#000; padding:32px; display:flex; gap:24px; justify-content:center; align-items:flex-start; flex-wrap:wrap;">
+
+    <!-- ============ PLAYER SHIELDS ============ -->
+    <div class="antonio" style="width:240px;">
+      <div style="background:linear-gradient(90deg, rgb(216,94,86) 0%, rgb(216,132,80) 100%); color:#ffd; font-size:14px; padding:6px 16px; font-weight:600; border-radius:0 14px 0 0; letter-spacing:2px; text-transform:uppercase; display:flex; justify-content:space-between; align-items:center;">
+        <span>Shields</span>
+        <span style="font-size:11px; opacity:0.85;">▼</span>
+      </div>
+      <div style="background:rgba(10,10,16,0.85); border-left:4px solid rgb(216,94,86); padding:18px 18px 14px 14px;">
+
+        <div style="color:rgb(220,210,255); font-size:14px; text-align:center; text-transform:uppercase; letter-spacing:2px; padding:6px 0 18px 0;">Player</div>
+
+        <div style="background:rgb(40,40,40); height:6px; border-radius:3px; overflow:hidden;">
+          <div class="hull-fill-healthy" style="width:100%; height:100%;"></div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ============ TARGET SHIELDS (engaged) ============ -->
+    <div class="antonio" style="width:240px;">
+      <div style="background:linear-gradient(90deg, rgb(216,94,86) 0%, rgb(216,132,80) 100%); color:#ffd; font-size:14px; padding:6px 16px; font-weight:600; border-radius:0 14px 0 0; letter-spacing:2px; text-transform:uppercase; display:flex; justify-content:space-between; align-items:center;">
+        <span>Target Shields</span>
+        <span style="font-size:11px; opacity:0.85;">▼</span>
+      </div>
+      <div style="background:rgba(10,10,16,0.85); border-left:4px solid rgb(216,94,86); padding:18px 18px 14px 14px;">
+
+        <div style="color:rgb(220,60,60); font-size:14px; text-align:center; text-transform:uppercase; letter-spacing:2px; padding:6px 0 18px 0;">Warbird-2</div>
+
+        <div style="background:rgb(40,40,40); height:6px; border-radius:3px; overflow:hidden;">
+          <div class="hull-fill-damaged" style="width:55%; height:100%;"></div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ============ TARGET SHIELDS (no target) ============ -->
+    <div class="antonio" style="width:240px;">
+      <div style="background:linear-gradient(90deg, rgb(216,94,86) 0%, rgb(216,132,80) 100%); color:#ffd; font-size:14px; padding:6px 16px; font-weight:600; border-radius:0 14px 0 0; letter-spacing:2px; text-transform:uppercase; display:flex; justify-content:space-between; align-items:center;">
+        <span>Target Shields</span>
+        <span style="font-size:11px; opacity:0.85;">▼</span>
+      </div>
+      <div style="background:rgba(10,10,16,0.85); border-left:4px solid rgb(216,94,86); padding:18px 18px 14px 14px;">
+
+        <div style="color:rgb(140,140,160); font-size:14px; text-align:center; text-transform:uppercase; letter-spacing:2px; padding:6px 0 18px 0;">No Target</div>
+
+        <div style="background:rgb(40,40,40); height:6px; border-radius:3px; overflow:hidden; opacity:0.4;"></div>
+
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="section">
+  <h3>What's in / what's deferred</h3>
+  <ul>
+    <li><strong>Phase 1 (now)</strong>: locked panel chrome + label + hull integrity bar. Label shows the target's name when a target is selected, the literal string <strong>PLAYER</strong> for the player panel, or <strong>NO TARGET</strong> when nothing is selected.</li>
+    <li><strong>Deferred (Phase 2)</strong>: ship sprite from <code>game/data/icons/Ships/&lt;HullClass&gt;.tga</code>, six-face shield visualization (ring or cross treatment), damage-icon overlays from the engineering glyph set. Rendering scope sits with the C++ engine.</li>
+    <li><strong>SDK plumbing stays unchanged</strong>: <code>App.ShipDisplay_Create()</code> still wraps both panels; <code>SetShipDisplay()</code> / <code>SetEnemyShipDisplay()</code> still register them with the tactical window. The data feed and event handling are wired; only the painted visual is reduced.</li>
+  </ul>
+</div>
+
+<div class="section">
+  <h3>Hull bar colour states (kept)</h3>
+  <ul>
+    <li><strong>Healthy</strong> rgb(50, 210, 80) — green fill, full width</li>
+    <li><strong>Damaged</strong> rgb(255, 200, 60) — yellow fill below 75%</li>
+    <li><strong>Critical</strong> rgb(255, 80, 40) — red fill below 25%</li>
+    <li><strong>Empty track</strong> rgb(40, 40, 40) — base bar background</li>
+    <li><strong>No target</strong> — track at reduced opacity, no fill</li>
+  </ul>
+</div>

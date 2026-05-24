@@ -1,0 +1,104 @@
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Antonio:wght@100;300;400;500;600;700&display=swap');
+  .antonio { font-family: 'Antonio', sans-serif; }
+</style>
+
+<h2>Persistent panel chrome — Antonio throughout</h2>
+<p class="subtitle">Same visual language as the locked crew menu, applied to the tactical-view HUD panels. Headers 600 uppercase, body content 400 single weight.</p>
+
+<div class="mockup">
+  <div class="mockup-header">Tactical-view HUD panels at the scale they appear in-game</div>
+  <div class="mockup-body" style="background:#000; padding:40px; display:flex; gap:24px; flex-wrap:wrap; justify-content:center;">
+
+    <!-- Target Shields -->
+    <div class="antonio" style="width:200px;">
+      <div style="background:linear-gradient(90deg, rgb(216,94,86) 0%, rgb(216,132,80) 100%); color:#ffd; font-size:12px; padding:4px 12px; font-weight:600; border-radius:0 12px 0 0; letter-spacing:1.5px; text-transform:uppercase; display:flex; justify-content:space-between; align-items:center;">
+        <span>Target Shields</span>
+        <span style="font-size:9px; opacity:0.85;">▼</span>
+      </div>
+      <div style="background:rgba(10,10,16,0.85); border-left:3px solid rgb(216,94,86); padding:10px; min-height:64px; display:flex; align-items:center; justify-content:center; color:#666; font-size:11px; font-weight:400;">
+        [target shield diagram]
+      </div>
+    </div>
+
+    <!-- Targets list -->
+    <div class="antonio" style="width:200px;">
+      <div style="background:linear-gradient(90deg, rgb(216,94,86) 0%, rgb(216,132,80) 100%); color:#ffd; font-size:12px; padding:4px 12px; font-weight:600; border-radius:0 12px 0 0; letter-spacing:1.5px; text-transform:uppercase; display:flex; justify-content:space-between; align-items:center;">
+        <span>Targets</span>
+        <span style="font-size:9px; opacity:0.85;">▼</span>
+      </div>
+      <div style="background:rgba(10,10,16,0.85); border-left:3px solid rgb(216,94,86); padding:4px;">
+        <!-- Enemy row -->
+        <div style="display:flex;align-items:center;color:rgb(255,200,200);font-size:12px;padding:5px 10px;margin:1px 0;border-left:3px solid rgb(225,80,70);background:rgb(40,16,14);font-weight:400;">
+          <span style="margin-right:8px;color:rgb(225,80,70);">▸</span>Comm Array-1
+        </div>
+        <div style="display:flex;align-items:center;color:rgb(220,230,255);font-size:12px;padding:5px 10px;margin:1px 0;border-left:3px solid rgb(120,160,255);background:rgb(20,30,55);font-weight:400;">
+          <span style="margin-right:8px;color:rgb(120,160,255);">▸</span>Warbird-2
+        </div>
+      </div>
+    </div>
+
+    <!-- Sensors / radar -->
+    <div class="antonio" style="width:200px;">
+      <div style="background:linear-gradient(90deg, rgb(216,94,86) 0%, rgb(216,132,80) 100%); color:#ffd; font-size:12px; padding:4px 12px; font-weight:600; border-radius:0 12px 0 0; letter-spacing:1.5px; text-transform:uppercase; display:flex; justify-content:space-between; align-items:center;">
+        <span>Sensors</span>
+        <span style="font-size:9px; opacity:0.85;">▼</span>
+      </div>
+      <div style="background:rgba(10,10,16,0.85); border-left:3px solid rgb(216,94,86); padding:8px; height:88px; display:flex; align-items:center; justify-content:center;">
+        <div style="width:72px; height:72px; border:1px solid rgba(120,160,255,0.4); border-radius:50%; position:relative; background:rgba(20,30,50,0.5);">
+          <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:4px; height:4px; background:#ffd; border-radius:50%;"></div>
+          <div style="position:absolute; top:30%; left:65%; width:3px; height:3px; background:rgb(225,80,70); border-radius:50%;"></div>
+          <div style="position:absolute; top:60%; left:30%; width:3px; height:3px; background:rgb(120,160,255); border-radius:50%;"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Speed -->
+    <div class="antonio" style="width:140px;">
+      <div style="background:linear-gradient(90deg, rgb(216,94,86) 0%, rgb(216,132,80) 100%); color:#ffd; font-size:12px; padding:4px 12px; font-weight:600; border-radius:0 12px 0 0; letter-spacing:1.5px; text-transform:uppercase;">
+        Speed
+      </div>
+      <div style="background:rgba(10,10,16,0.85); border-left:3px solid rgb(216,94,86); padding:10px; color:#ffd; font-size:16px; font-weight:400; text-align:center; letter-spacing:1px;">
+        0 / 0 kph
+      </div>
+    </div>
+
+    <!-- Shields -->
+    <div class="antonio" style="width:200px;">
+      <div style="background:linear-gradient(90deg, rgb(216,94,86) 0%, rgb(216,132,80) 100%); color:#ffd; font-size:12px; padding:4px 12px; font-weight:600; border-radius:0 12px 0 0; letter-spacing:1.5px; text-transform:uppercase; display:flex; justify-content:space-between; align-items:center;">
+        <span>Shields</span>
+        <span style="font-size:9px; opacity:0.85;">▼</span>
+      </div>
+      <div style="background:rgba(10,10,16,0.85); border-left:3px solid rgb(216,94,86); padding:10px; min-height:80px; display:flex; align-items:center; justify-content:center; color:#666; font-size:11px; font-weight:400;">
+        [shields graphic + bar]
+      </div>
+    </div>
+
+    <!-- Weapons -->
+    <div class="antonio" style="width:200px;">
+      <div style="background:linear-gradient(90deg, rgb(216,94,86) 0%, rgb(216,132,80) 100%); color:#ffd; font-size:12px; padding:4px 12px; font-weight:600; border-radius:0 12px 0 0; letter-spacing:1.5px; text-transform:uppercase; display:flex; justify-content:space-between; align-items:center;">
+        <span>Weapons</span>
+        <span style="font-size:9px; opacity:0.85;">▼</span>
+      </div>
+      <div style="background:rgba(10,10,16,0.85); border-left:3px solid rgb(216,94,86); padding:8px 12px; font-weight:400;">
+        <div style="display:flex; justify-content:space-between; color:#ffd; font-size:12px; padding:2px 0;"><span>Torpedoes</span><span>250</span></div>
+        <div style="display:flex; justify-content:space-between; color:#ffd; font-size:12px; padding:2px 0;"><span>Type</span><span>Photon</span></div>
+        <div style="display:flex; justify-content:space-between; color:#ffd; font-size:12px; padding:2px 0;"><span>Spread</span><span>Single</span></div>
+        <div style="display:flex; justify-content:space-between; color:rgb(220,210,255); font-size:12px; padding:2px 0; border-left:3px solid rgb(147,103,255); background:rgb(37,26,64); margin:2px -12px 2px -12px; padding:2px 12px;"><span>Phasers</span><span></span></div>
+        <div style="display:flex; justify-content:space-between; color:#ffd; font-size:12px; padding:2px 0;"><span>Intensity</span><span>Full</span></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="section">
+  <h3>Notes</h3>
+  <ul>
+    <li>All headers use the same gradient + Antonio 600 uppercase + 14dp corner. Same visual signature across every panel and the crew menu.</li>
+    <li>Body text Antonio 400 throughout. Stat-style panels (Speed, Weapons) get the same font but use a larger size for the value (16dp for Speed's big readout).</li>
+    <li>List rows (Targets) reuse the crew-menu row vocabulary; the only difference is the accent-bar colour comes from <code>g_kRadarFriendlyColor</code> / <code>EnemyColor</code> / <code>NeutralColor</code> instead of <code>MENU2_*</code>.</li>
+    <li>Collapse ▼ in headers that support it; absent on always-on panels like Speed.</li>
+    <li>Weapons shows a label/value table layout — same row spacing, with one row "selected" to demonstrate the highlight pattern.</li>
+  </ul>
+</div>

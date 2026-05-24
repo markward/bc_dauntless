@@ -1,0 +1,174 @@
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Antonio:wght@100;300;400;500;600;700&display=swap');
+  .antonio { font-family: 'Antonio', sans-serif; font-weight:400; }
+</style>
+
+<h2>Sensors panel — perspective radar, engine-rendered</h2>
+<p class="subtitle"><code>RadarDisplay</code> extends <code>STStylizedWindow</code> (App.py:8513), so our locked panel chrome wraps it. The disc and blips are <strong>engine-rendered</strong> — the Python shim creates the widget, registers it with the tactical window, and exposes the colour palette; the C++ renderer paints the perspective disc and animates blips per frame. The visual shifts from flat-top-down to a horizontal disc viewed at perspective, so blip altitude reads as literal screen height.</p>
+
+<div class="mockup">
+  <div class="mockup-header">Expanded — combat with mixed contacts</div>
+  <div class="mockup-body" style="background:#000; padding:32px; display:flex; gap:48px; justify-content:center; align-items:flex-start;">
+
+    <!-- Sensors panel -->
+    <div class="antonio" style="width:240px;">
+      <div style="background:linear-gradient(90deg, rgb(216,94,86) 0%, rgb(216,132,80) 100%); color:#ffd; font-size:14px; padding:6px 16px; font-weight:600; border-radius:0 14px 0 0; letter-spacing:2px; text-transform:uppercase; display:flex; justify-content:space-between; align-items:center;">
+        <span>Sensors</span>
+        <span style="font-size:11px; opacity:0.85;">▼</span>
+      </div>
+      <div style="background:rgba(10,10,16,0.85); border-left:4px solid rgb(216,94,86); padding:14px 18px 14px 14px;">
+
+        <!-- Perspective radar disc — tilted horizontal plane.
+             Outer container fills the body content area (so the disc inside doesn't overflow padding).
+             Stems rise vertically in screen space from disc points; triangle blips at stem ends. -->
+        <div style="position:relative; width:100%; height:180px; background:radial-gradient(ellipse at center, rgb(8,12,32) 0%, rgb(2,4,16) 80%);">
+
+          <!-- The tilted disc ellipse, filling the body horizontally and centred vertically.
+               Disc fills full content width; height is 75px (perspective squash ratio ~0.4 → ~67° tilt). -->
+          <div style="position:absolute; left:0; right:0; top:50%; height:75px; transform:translateY(-50%);">
+            <!-- Outer range ring (= the disc boundary itself) -->
+            <div style="position:absolute; inset:0; border:1px solid rgba(220,60,60,0.35); border-radius:50%;"></div>
+            <!-- Mid range ring (65% of disc) -->
+            <div style="position:absolute; left:50%; top:50%; width:65%; height:65%; transform:translate(-50%,-50%); border:1px dashed rgba(220,60,60,0.22); border-radius:50%;"></div>
+            <!-- Inner range ring (35% of disc) -->
+            <div style="position:absolute; left:50%; top:50%; width:35%; height:35%; transform:translate(-50%,-50%); border:1px dashed rgba(220,60,60,0.18); border-radius:50%;"></div>
+            <!-- Cardinal lines (fore/aft and port/stbd, drawn on the disc plane) -->
+            <div style="position:absolute; left:50%; top:0; bottom:0; width:1px; background:rgba(220,60,60,0.22); transform:translateX(-50%);"></div>
+            <div style="position:absolute; top:50%; left:0; right:0; height:1px; background:rgba(220,60,60,0.22); transform:translateY(-50%);"></div>
+
+            <!-- Player ship at disc centre (small silhouette pointing fore=up) -->
+            <div style="position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:0; height:0; border-left:5px solid transparent; border-right:5px solid transparent; border-bottom:8px solid #fff; filter:drop-shadow(0 0 3px rgba(255,255,255,0.6));"></div>
+          </div>
+
+          <!-- Each blip: anchor point on the disc + vertical stem + triangle at the stem end.
+               anchor = blip's projection on the disc plane (small ring marker)
+               stem = vertical line in screen space (length encodes altitude)
+               triangle = at top of stem if above plane / bottom if below
+                          rotated to indicate heading -->
+
+          <!-- 1. Friendly, NE on disc, above plane (stem up) -->
+          <div style="position:absolute; left:62%; top:47%;">
+            <!-- disc anchor: small filled circle -->
+            <div style="position:absolute; left:0; top:0; transform:translate(-50%,-50%); width:4px; height:4px; background:rgb(80,170,255); border-radius:50%; opacity:0.6;"></div>
+            <!-- stem going up -->
+            <div style="position:absolute; left:0; top:0; transform:translate(-50%,-100%); width:1px; height:18px; background:linear-gradient(to top, rgba(80,170,255,0.3), rgba(80,170,255,0.95));"></div>
+            <!-- triangle at stem top, rotated to heading SW (225°) -->
+            <div style="position:absolute; left:0; top:0; transform:translate(-50%,-380%) rotate(225deg); width:0; height:0; border-left:4px solid transparent; border-right:4px solid transparent; border-bottom:7px solid rgb(80,170,255); filter:drop-shadow(0 0 3px rgba(80,170,255,0.6));"></div>
+          </div>
+
+          <!-- 2. Hostile, SW on disc, in-plane (no stem), heading NE (45°), TARGETED (bracket) -->
+          <div style="position:absolute; left:33%; top:57%;">
+            <div style="position:absolute; left:0; top:0; transform:translate(-50%,-50%) rotate(45deg); width:0; height:0; border-left:4px solid transparent; border-right:4px solid transparent; border-bottom:7px solid rgb(220,60,60); filter:drop-shadow(0 0 3px rgba(220,60,60,0.6));"></div>
+            <!-- target bracket -->
+            <div style="position:absolute; left:0; top:0; transform:translate(-50%,-50%); width:18px; height:18px;">
+              <div style="position:absolute; left:0; top:0; width:4px; height:4px; border-left:1.5px solid rgb(255,210,90); border-top:1.5px solid rgb(255,210,90);"></div>
+              <div style="position:absolute; right:0; top:0; width:4px; height:4px; border-right:1.5px solid rgb(255,210,90); border-top:1.5px solid rgb(255,210,90);"></div>
+              <div style="position:absolute; left:0; bottom:0; width:4px; height:4px; border-left:1.5px solid rgb(255,210,90); border-bottom:1.5px solid rgb(255,210,90);"></div>
+              <div style="position:absolute; right:0; bottom:0; width:4px; height:4px; border-right:1.5px solid rgb(255,210,90); border-bottom:1.5px solid rgb(255,210,90);"></div>
+            </div>
+          </div>
+
+          <!-- 3. Hostile, E on disc, far above plane (long stem up), heading W (270°) -->
+          <div style="position:absolute; left:78%; top:53%;">
+            <div style="position:absolute; left:0; top:0; transform:translate(-50%,-50%); width:4px; height:4px; background:rgb(220,60,60); border-radius:50%; opacity:0.6;"></div>
+            <div style="position:absolute; left:0; top:0; transform:translate(-50%,-100%); width:1px; height:42px; background:linear-gradient(to top, rgba(220,60,60,0.3), rgba(220,60,60,0.95));"></div>
+            <div style="position:absolute; left:0; top:0; transform:translate(-50%,-870%) rotate(270deg); width:0; height:0; border-left:4px solid transparent; border-right:4px solid transparent; border-bottom:7px solid rgb(220,60,60); filter:drop-shadow(0 0 3px rgba(220,60,60,0.6));"></div>
+          </div>
+
+          <!-- 4. Friendly, W on disc, below plane (stem down), heading N (0°) -->
+          <div style="position:absolute; left:18%; top:47%;">
+            <div style="position:absolute; left:0; top:0; transform:translate(-50%,-50%); width:4px; height:4px; background:rgb(80,170,255); border-radius:50%; opacity:0.6;"></div>
+            <div style="position:absolute; left:0; top:0; transform:translate(-50%,0); width:1px; height:24px; background:linear-gradient(to bottom, rgba(80,170,255,0.3), rgba(80,170,255,0.95));"></div>
+            <div style="position:absolute; left:0; top:0; transform:translate(-50%,470%); width:0; height:0; border-left:4px solid transparent; border-right:4px solid transparent; border-top:7px solid rgb(80,170,255); filter:drop-shadow(0 0 3px rgba(80,170,255,0.6));"></div>
+          </div>
+
+          <!-- 5. Neutral, fore on disc, slightly above plane, heading E (90°) -->
+          <div style="position:absolute; left:50%; top:41%;">
+            <div style="position:absolute; left:0; top:0; transform:translate(-50%,-50%); width:4px; height:4px; background:rgb(255,210,90); border-radius:50%; opacity:0.6;"></div>
+            <div style="position:absolute; left:0; top:0; transform:translate(-50%,-100%); width:1px; height:10px; background:linear-gradient(to top, rgba(255,210,90,0.3), rgba(255,210,90,0.95));"></div>
+            <div style="position:absolute; left:0; top:0; transform:translate(-50%,-220%) rotate(90deg); width:0; height:0; border-left:4px solid transparent; border-right:4px solid transparent; border-bottom:7px solid rgb(255,210,90); filter:drop-shadow(0 0 3px rgba(255,210,90,0.6));"></div>
+          </div>
+
+          <!-- 6. Inbound torpedo, SE on disc, low altitude, small square (no heading triangle) -->
+          <div style="position:absolute; left:68%; top:61%;">
+            <div style="position:absolute; left:0; top:0; transform:translate(-50%,-50%); width:3px; height:3px; background:rgb(255,210,90); border-radius:50%; opacity:0.6;"></div>
+            <div style="position:absolute; left:0; top:0; transform:translate(-50%,-100%); width:1px; height:6px; background:rgba(255,210,90,0.7);"></div>
+            <div style="position:absolute; left:0; top:0; transform:translate(-50%,-340%); width:4px; height:4px; background:rgb(255,210,90); filter:drop-shadow(0 0 3px rgba(255,210,90,0.8));"></div>
+          </div>
+
+      </div>
+    </div>
+
+    <!-- Annotation panel -->
+    <div class="antonio" style="width:300px; color:rgb(200,200,210); font-size:12px; line-height:1.7;">
+      <div style="color:rgb(216,132,80); font-size:11px; text-transform:uppercase; letter-spacing:1px; padding:2px 0 6px 0;">Reading this snapshot</div>
+      <div style="height:1px; background:rgb(216,94,86); opacity:0.4; margin:0 0 10px 0;"></div>
+      <ul style="margin:0; padding-left:18px;">
+        <li><span style="color:#fff;">▲</span> Player ship — on the disc plane, fore=up</li>
+        <li><span style="color:rgb(80,170,255);">▲</span> Friendly to NE, above plane (short stem), heading SW</li>
+        <li><span style="color:rgb(80,170,255);">▼</span> Friendly to W, below plane (downward stem), heading N</li>
+        <li><span style="color:rgb(220,60,60);">▲</span> Hostile to SW, in-plane (no stem), heading NE — TARGETED (bracket)</li>
+        <li><span style="color:rgb(220,60,60);">▲</span> Hostile to E, far above plane (long stem), heading W</li>
+        <li><span style="color:rgb(255,210,90);">▲</span> Neutral ahead, slightly above plane, heading E</li>
+        <li><span style="color:rgb(255,210,90);">■</span> Inbound torpedo SE (square glyph, no heading triangle)</li>
+      </ul>
+      <div style="color:rgb(216,132,80); font-size:11px; text-transform:uppercase; letter-spacing:1px; padding:14px 0 6px 0;">Encoding (perspective disc)</div>
+      <div style="height:1px; background:rgb(216,94,86); opacity:0.4; margin:0 0 10px 0;"></div>
+      <p style="margin:0; color:rgb(180,180,200); font-size:11px; line-height:1.55;"><strong>Disc anchor</strong> (small dot on disc) = horizontal-plane position.<br><strong>Vertical stem</strong> = altitude — up from disc = above, down = below, length = magnitude.<br><strong>Triangle</strong> = the contact itself, at the stem's far end, rotated to indicate horizontal heading.<br>Colour = affiliation (blue friendly, red hostile, gold neutral). The disc itself shows non-linear range falloff via concentric range rings.</p>
+    </div>
+
+  </div>
+</div>
+
+<div class="mockup" style="margin-top:24px;">
+  <div class="mockup-header">Collapsed — minimised to title bar only</div>
+  <div class="mockup-body" style="background:#000; padding:32px; display:flex; justify-content:center;">
+    <div class="antonio" style="width:240px;">
+      <div style="background:linear-gradient(90deg, rgb(216,94,86) 0%, rgb(216,132,80) 100%); color:#ffd; font-size:14px; padding:6px 16px; font-weight:600; border-radius:0 14px 0 0; letter-spacing:2px; text-transform:uppercase; display:flex; justify-content:space-between; align-items:center;">
+        <span>Sensors</span>
+        <span style="font-size:11px; opacity:0.85;">▲</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>Colour palette (engine reads these — single source of truth)</h3>
+  <table style="border-collapse:collapse; font-size:13px;">
+    <tr style="background:rgba(255,255,255,0.05)">
+      <td style="padding:6px 12px;"><strong>Element</strong></td>
+      <td style="padding:6px 12px;"><strong>Colour</strong></td>
+      <td style="padding:6px 12px;"><strong>Source</strong></td>
+    </tr>
+    <tr><td style="padding:6px 12px;">Friendly contact</td><td style="padding:6px 12px; color:rgb(80,170,255);">rgb(80, 170, 255)</td><td style="padding:6px 12px;">Spec eyedropper <code>#3399FF</code> — needs an SDK global; <code>g_kSensorsBlipFriendlyColor</code> or similar candidate</td></tr>
+    <tr><td style="padding:6px 12px;">Hostile contact</td><td style="padding:6px 12px; color:rgb(220,60,60);">rgb(220, 60, 60)</td><td style="padding:6px 12px;">Spec eyedropper <code>#CC3333</code></td></tr>
+    <tr><td style="padding:6px 12px;">Neutral / unknown</td><td style="padding:6px 12px; color:rgb(255,210,90);">rgb(255, 210, 90)</td><td style="padding:6px 12px;">Spec eyedropper <code>#FFCC00</code></td></tr>
+    <tr><td style="padding:6px 12px;">Target bracket</td><td style="padding:6px 12px; color:rgb(255,210,90);">rgb(255, 210, 90)</td><td style="padding:6px 12px;">Same gold as chosen-state indicators across the design</td></tr>
+    <tr><td style="padding:6px 12px;">Player centre</td><td style="padding:6px 12px; color:#fff;">rgb(255, 255, 255)</td><td style="padding:6px 12px;">Shim-defined</td></tr>
+    <tr><td style="padding:6px 12px;">Disc background</td><td style="padding:6px 12px; color:rgb(80,80,180);">rgb(2, 4, 16) → rgb(8, 12, 32)</td><td style="padding:6px 12px;">Shim-defined radial gradient (deeper at edge)</td></tr>
+    <tr><td style="padding:6px 12px;">Disc outline</td><td style="padding:6px 12px; color:rgb(220,60,60);">rgba(220, 60, 60, 0.35)</td><td style="padding:6px 12px;">Derived from <code>g_kSubsystemEmptyColor</code> (panel-primary family, dimmed)</td></tr>
+  </table>
+  <p style="font-size:12px; color:rgb(140,140,160); margin-top:10px;">If <code>LoadInterface</code> doesn't already export blip colours, the shim will define <code>g_kSensorsFriendlyColor / HostileColor / NeutralColor</code> at theme-load and the C++ renderer reads from them — mod overrides flow through.</p>
+</div>
+
+<div class="section">
+  <h3>SDK alignment</h3>
+  <ul>
+    <li><code>RadarDisplay_Create(w, h)</code> at <code>App.py:8513</code> — Python factory call. Inherits <code>STStylizedWindow</code>, so panel chrome is automatic.</li>
+    <li><code>SetUseScrolling(0)</code> — radar disc never scrolls (called at <code>TacticalMenuHandlers.py:474</code>).</li>
+    <li><code>pTacticalWindow.SetRadarDisplay(pRadarDisplay)</code> — registers the widget so the C++ TacticalControlWindow updates blip data every frame.</li>
+    <li><code>RadarBlip</code> extends <code>TGIcon</code> (App.py:8535) — each contact is its own positioned icon child managed by the C++ renderer.</li>
+    <li><strong>Python's role</strong>: create the widget, wire it into the tactical window, expose the colour palette. <strong>C++ engine's role</strong>: query contacts, project them onto the tilted disc plane, compute stem heights from world Z-offset, paint each blip per frame.</li>
+    <li>The perspective tilt is a pure renderer choice — no SDK signature changes. A future option/preference toggle could swap between flat-top-down and perspective views without touching the Python side.</li>
+  </ul>
+</div>
+
+<div class="section">
+  <h3>Open question</h3>
+  <p>The spec mentions a torpedo type-specific icon ("differentiated by torpedo <em>type</em> so threats can be assessed"). For now I'm using a small <code>▶</code> chevron in neutral gold. We have two practical options when we get to the C++ renderer:</p>
+  <ol>
+    <li>Per-type small textures (photon / quantum / plasma / etc.) — most authentic, requires asset work.</li>
+    <li>Single chevron, with type indicated by colour (photon = blue-ish, quantum = purple, plasma = orange). Requires no assets, less informative.</li>
+  </ol>
+  <p>Decision can wait until the C++ renderer is up; the visual chrome doesn't need to lock the per-type icons today.</p>
+</div>
