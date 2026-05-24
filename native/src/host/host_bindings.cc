@@ -34,6 +34,10 @@
 #include <scenegraph/camera.h>
 #include <assets/cache.h>
 
+#ifdef DAUNTLESS_ENABLE_CEF
+#include "ui_cef/cef_lifecycle.h"
+#endif
+
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
@@ -848,6 +852,46 @@ PYBIND11_MODULE(_dauntless_host, m) {
               g_window->framebuffer_size(&fw, &fh);
               return std::make_tuple(fw, fh);
           });
+
+#ifdef DAUNTLESS_ENABLE_CEF
+    m.def("cef_initialize",
+          [](int view_width, int view_height, const std::string& html_path) {
+              return dauntless::ui_cef::initialize(view_width, view_height, html_path);
+          },
+          py::arg("view_width"), py::arg("view_height"), py::arg("html_path"),
+          "Initialise CEF and create the OSR overlay browser. Returns true on success.");
+
+    m.def("cef_pump",
+          []() { dauntless::ui_cef::pump(); },
+          "Run one iteration of CEF's message loop. Call once per frame.");
+
+    m.def("cef_composite",
+          []() { dauntless::ui_cef::composite(); },
+          "Blit the latest CEF bitmap over the current framebuffer.");
+
+    m.def("cef_shutdown",
+          []() { dauntless::ui_cef::shutdown(); },
+          "Tear down CEF. Call before the GL context is destroyed.");
+
+    m.def("cef_toggle_devtools",
+          []() { dauntless::ui_cef::toggle_devtools(); },
+          "Open or close the DevTools window for the overlay browser.");
+
+    m.def("cef_reload",
+          []() { dauntless::ui_cef::reload(); },
+          "Reload the overlay browser's current document.");
+#else
+    // Stub the bindings out so engine.host_loop can call them
+    // unconditionally regardless of build config.
+    m.def("cef_initialize",
+          [](int, int, const std::string&) { return false; },
+          py::arg("view_width"), py::arg("view_height"), py::arg("html_path"));
+    m.def("cef_pump",            []() {});
+    m.def("cef_composite",       []() {});
+    m.def("cef_shutdown",        []() {});
+    m.def("cef_toggle_devtools", []() {});
+    m.def("cef_reload",          []() {});
+#endif
 
     dauntless::audio::register_python_bindings(m);
 }
