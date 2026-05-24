@@ -36,6 +36,12 @@ from engine.audio.tg_sound import TGSoundManager, register_default_sounds  # noq
 _alert_listener: "AlertAudioListener" = AlertAudioListener()
 
 
+def _project_root_for_cef():
+    """Return the project root path for resolving native/assets/ui-cef/ files."""
+    from pathlib import Path
+    return Path(__file__).resolve().parent.parent
+
+
 def init_audio() -> None:
     """Boot the audio subsystem. Null backend if OPEN_STBC_AUDIO=0."""
     if _audio_mod is None:
@@ -1838,6 +1844,17 @@ def run(mission_name: Optional[str] = None,
     from engine.core.loop import GameLoop
 
     r.init(1280, 720, "open_stbc")
+    # Initialise the CEF UI overlay. Resolves hello.html relative to the
+    # project root (two parents up from this file).
+    _cef_html = _project_root_for_cef() / "native" / "assets" / "ui-cef" / "hello.html"
+    if not r.cef_initialize(1280, 720, str(_cef_html)):
+        # Non-fatal in builds where CEF is disabled (the stub returns False).
+        # If CEF is enabled and initialize failed, the binary will print the
+        # framework-load error to stderr — surface it but keep running so the
+        # 3D scene still renders.
+        import sys as _sys
+        print("[host_loop] cef_initialize returned False — overlay disabled",
+              file=_sys.stderr)
     try:
         # Controller owns the renderer, the nif-handle cache, and the
         # current mission session. _MissionLoader.load() runs the
@@ -1946,6 +1963,19 @@ def run(mission_name: Optional[str] = None,
                                    world_point=(wp.x + fx * offset,
                                                 wp.y + fy * offset,
                                                 wp.z + fz * offset))
+            # F12: toggle CEF DevTools for the UI overlay.
+            if _h is not None and _h.key_pressed(_h.keys.KEY_F12):
+                _h.cef_toggle_devtools()
+
+            # Cmd+R / Ctrl+R: hot-reload the CEF overlay's HTML.
+            if _h is not None and _h.key_pressed(_h.keys.KEY_R):
+                # Reload only when Cmd (macOS) or Ctrl (Linux/Windows) is held;
+                # bare R is reverse-thrust and must not be intercepted.
+                _cmd_held = _h.key_state(_h.keys.KEY_LEFT_SUPER) if hasattr(_h.keys, "KEY_LEFT_SUPER") else False
+                _ctrl_held = _h.key_state(_h.keys.KEY_LEFT_CONTROL) if hasattr(_h.keys, "KEY_LEFT_CONTROL") else False
+                if _cmd_held or _ctrl_held:
+                    _h.cef_reload()
+
             if _h is not None and _h.key_pressed(_h.keys.KEY_ESCAPE):
                 _handle_esc_for_view_mode(view_mode)
 
@@ -2074,6 +2104,7 @@ def run(mission_name: Optional[str] = None,
             controller.session.teardown(r)
     finally:
         shutdown_audio()
+        r.cef_shutdown()  # tear down CEF while GL context still alive
         r.shutdown()
 
     return 0
