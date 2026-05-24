@@ -55,6 +55,57 @@ FetchContent_MakeAvailable(openal_soft)
 
 option(DAUNTLESS_BUILD_TESTS "Build native tests for dauntless" ON)
 
+option(DAUNTLESS_ENABLE_CEF "Build with CEF-backed UI overlay" ON)
+
+if(DAUNTLESS_ENABLE_CEF)
+    include(FetchContent)
+
+    # Per-platform CEF tarball selection. Spotify's CDN hosts the Minimal
+    # distribution. Version pinned: bumping is a deliberate, separate task.
+    # Only macosarm64's SHA256 is filled in — Windows/Linux SHA256s must be
+    # added when those platforms are first validated (see spec §11).
+    set(CEF_VERSION "144.0.25+g27ce504+chromium-144.0.7559.250")
+    if(APPLE AND CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "arm64")
+        set(CEF_PLATFORM "macosarm64")
+        set(CEF_SHA256 "541a2e38234ef0c99e40e7f6fc8e895be6dde8293b84c7d0490897eb54062ece")
+    elseif(APPLE)
+        set(CEF_PLATFORM "macosx64")
+        set(CEF_SHA256 "")  # TODO(plan-followup): fill when validating on Intel macOS
+    elseif(WIN32)
+        set(CEF_PLATFORM "windows64")
+        set(CEF_SHA256 "")  # TODO(plan-followup): fill when validating on Windows
+    elseif(UNIX)
+        set(CEF_PLATFORM "linux64")
+        set(CEF_SHA256 "")  # TODO(plan-followup): fill when validating on Linux
+    else()
+        message(FATAL_ERROR "DAUNTLESS_ENABLE_CEF: unsupported platform")
+    endif()
+
+    # URL-encode the '+' characters in the version string (Spotify CDN serves
+    # the file by its literal name on disk, which uses '+').
+    string(REPLACE "+" "%2B" CEF_VERSION_URL "${CEF_VERSION}")
+    set(CEF_URL "https://cef-builds.spotifycdn.com/cef_binary_${CEF_VERSION_URL}_${CEF_PLATFORM}_minimal.tar.bz2")
+
+    if(CEF_SHA256)
+        FetchContent_Declare(cef
+            URL "${CEF_URL}"
+            URL_HASH SHA256=${CEF_SHA256}
+            SOURCE_SUBDIR cmake  # skip the CEF SDK's sample-driver CMakeLists
+        )
+    else()
+        message(WARNING "DAUNTLESS_ENABLE_CEF: no SHA256 pinned for ${CEF_PLATFORM} — integrity check skipped")
+        FetchContent_Declare(cef
+            URL "${CEF_URL}"
+            SOURCE_SUBDIR cmake
+        )
+    endif()
+    FetchContent_MakeAvailable(cef)
+
+    set(CEF_ROOT "${cef_SOURCE_DIR}" CACHE INTERNAL "")
+    list(APPEND CMAKE_MODULE_PATH "${CEF_ROOT}/cmake")
+    find_package(CEF REQUIRED)
+endif()
+
 # Public libraries.
 add_subdirectory(src/nif)
 add_subdirectory(src/assets)
