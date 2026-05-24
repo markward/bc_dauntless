@@ -7,6 +7,7 @@ endif()
 
 add_library(ui_cef STATIC
     cef_app.cc
+    cef_client.cc
     cef_lifecycle.cc
 )
 
