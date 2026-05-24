@@ -36,6 +36,8 @@ target_link_libraries(dauntless
 if(DAUNTLESS_ENABLE_CEF)
     target_link_libraries(_dauntless_host PRIVATE ui_cef)
     target_link_libraries(dauntless       PRIVATE ui_cef)
+    target_compile_definitions(_dauntless_host PRIVATE DAUNTLESS_ENABLE_CEF=1)
+    target_compile_definitions(dauntless       PRIVATE DAUNTLESS_ENABLE_CEF=1)
 endif()
 
 target_compile_features(dauntless PRIVATE cxx_std_20)

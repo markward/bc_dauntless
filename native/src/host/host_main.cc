@@ -6,6 +6,10 @@
 
 #include "host_bindings.h"
 
+#ifdef DAUNTLESS_ENABLE_CEF
+#include "ui_cef/cef_lifecycle.h"
+#endif
+
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -84,6 +88,18 @@ int run_host_loop() {
 
 int main(int argc, char* argv[]) {
     if (argc < 1) return 1;
+
+#ifdef DAUNTLESS_ENABLE_CEF
+    // CEF spawns helper subprocesses by re-running this binary. The
+    // subprocess role is encoded in argv; CefExecuteProcess detects it
+    // and runs the appropriate event loop, returning the exit code we
+    // must propagate. A return value of -1 means "main browser process,
+    // keep going with normal startup."
+    {
+        const int subprocess_rc = dauntless::ui_cef::dispatch_subprocess(argc, argv);
+        if (subprocess_rc >= 0) return subprocess_rc;
+    }
+#endif
 
     auto project_root = discover_project_root(argv[0]);
     configure_python_path(project_root);
