@@ -104,6 +104,28 @@ if(DAUNTLESS_ENABLE_CEF)
     set(CEF_ROOT "${cef_SOURCE_DIR}" CACHE INTERNAL "")
     list(APPEND CMAKE_MODULE_PATH "${CEF_ROOT}/cmake")
     find_package(CEF REQUIRED)
+
+    # CEF ships libcef_dll/ as source; consumers must compile it into their
+    # project. Force STATIC: CEF's add_library() honors BUILD_SHARED_LIBS,
+    # which openal-soft turns ON globally. Combined with CEF's
+    # -fvisibility=hidden flags that would hide every wrapper symbol
+    # (CefExecuteProcess, CefInitialize, ...) and downstream linking fails
+    # with "undefined symbol". Static sidesteps visibility entirely.
+    set(_dauntless_saved_BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS})
+    set(BUILD_SHARED_LIBS OFF)
+    add_subdirectory("${CEF_ROOT}/libcef_dll" libcef_dll_wrapper)
+    set(BUILD_SHARED_LIBS ${_dauntless_saved_BUILD_SHARED_LIBS})
+
+    # Project-wide -Wpedantic collides with CEF's -Werror inside
+    # libcef_dll_wrapper (CEF's logging headers use GNU token-pasting via
+    # `, ##__VA_ARGS__`). Suppress only that warning on the wrapper.
+    if(TARGET libcef_dll_wrapper)
+        target_compile_options(libcef_dll_wrapper PRIVATE
+            -Wno-gnu-zero-variadic-macro-arguments)
+    endif()
+
+    message(STATUS "CEF SDK at: ${CEF_ROOT}")
+    message(STATUS "CEF version: ${CEF_VERSION}")
 endif()
 
 # Public libraries.
