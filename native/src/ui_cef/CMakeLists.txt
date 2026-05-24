@@ -6,6 +6,7 @@ if(NOT DAUNTLESS_ENABLE_CEF)
 endif()
 
 add_library(ui_cef STATIC
+    cef_app.cc
     cef_lifecycle.cc
 )
 
