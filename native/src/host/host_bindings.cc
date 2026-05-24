@@ -75,8 +75,8 @@ std::unique_ptr<renderer::BridgePass>      g_bridge_pass;
 double g_prev_frame_time_seconds = 0.0;
 
 // Bridge pass state. Camera is set from Python via set_bridge_camera each
-// tick when bridge mode is active. The pass renders after the dust pass and
-// before the UI overlay; see frame().
+// tick when bridge mode is active. The pass renders after the dust pass;
+// see frame().
 scenegraph::Camera g_bridge_camera;
 bool g_bridge_pass_enabled = false;
 
