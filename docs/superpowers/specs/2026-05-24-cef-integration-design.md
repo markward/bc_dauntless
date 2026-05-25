@@ -216,3 +216,44 @@ This integration is intentionally minimal: prove CEF embedded in the canonical `
 - **Eventually:** Linux + Windows validation, locale-pak stripping, zero-copy GPU surface if perf demands it.
 
 Each is its own brainstorm + spec + plan cycle.
+
+## 16. Platform findings discovered during implementation
+
+Three macOS-specific interactions surfaced during integration that weren't anticipated in the original design. They're load-bearing for future work and should be carried forward into the next stage's spec.
+
+### 16.1 GLFW poll must precede `CefDoMessageLoopWork()`
+
+`CefDoMessageLoopWork()` drains the macOS `NSApp` event queue when it runs. The original frame order (CEF pump → snapshot → GLFW poll) caused keyboard events to be consumed by CEF before GLFW could see them — SPACE / digit / R presses were intermittently lost while WASD (which uses `key_state`, not `key_pressed`) appeared to work because GLFW would eventually see *some* state in subsequent polls. The fix is to reorder the per-tick sequence:
+
+```
+1. render passes
+2. snapshot prev = current GLFW state (pre-poll)
+3. glfwPollEvents()       ← GLFW grabs the OS event queue first
+4. CefDoMessageLoopWork() ← CEF processes whatever AppKit work is left
+5. composite (CEF bitmap)
+6. swapBuffers
+```
+
+This pattern likely applies to any GLFW+CEF coexistence on macOS, not just our integration. Reference: [host_bindings.cc:288-307](native/src/host/host_bindings.cc#L288-L307).
+
+### 16.2 `CefScopedLibraryLoader::LoadInMain()` assumes the `.app/Contents/MacOS/binary` layout
+
+`LoadInMain()` hardcodes `<exec-dir>/../Frameworks/Chromium Embedded Framework.framework`. In a flat-directory build (no `.app` bundle), the framework lives at `<exec-dir>/Frameworks/...`, which the loader cannot find. Symptom: `dauntless: failed to load CEF framework`.
+
+The fix is to bypass the convenience method and call the lower-level `cef_load_library(path)` with an explicit path computed from `argv[0]`. On non-macOS, `LoadInMain()` works as expected. Reference: [cef_lifecycle.cc:57-79](native/src/ui_cef/cef_lifecycle.cc#L57-L79). When the macOS `.app` bundle work eventually lands (see §15), this can revert to `LoadInMain()` and the explicit-path code can be deleted.
+
+### 16.3 macOS requires an `NSApplication` subclass conforming to `CrAppProtocol`
+
+When CEF's AppKit code closes a window (e.g. the DevTools red-X), it calls `-[NSApp isHandlingSendEvent]`, which is a selector declared by Chromium's `CrAppProtocol` and implemented by `CrApplication`. Stock `NSApplication` doesn't respond, producing:
+
+```
+*** Terminating app due to uncaught exception 'NSInvalidArgumentException',
+    reason: '-[NSApplication isHandlingSendEvent]: unrecognized selector ...'
+```
+
+CEF does not expose `CrApplication` publicly; the fix is a minimal Objective-C++ shim that subclasses `NSApplication`, adds a `handlingSendEvent` BOOL property, and overrides `sendEvent:` to set/restore the flag. The subclass is installed by touching `[MyApp sharedApplication]` before any other AppKit usage. Reference: [cef_macos_app.mm](native/src/ui_cef/cef_macos_app.mm), wired in [host_main.cc:92-99](native/src/host/host_main.cc#L92-L99).
+
+### 16.4 Other deviations from the original §13 risks
+
+- **`-fno-exceptions` / `-fno-rtti` propagation.** §13 anticipated `-fno-exceptions` as the worry. The actual blocker was `-fno-rtti` — applied by CEF's `SET_EXECUTABLE_TARGET_PROPERTIES` macro, breaks pybind11's `typeid` usage. Resolution: do NOT apply that macro to `dauntless`; compile only `ui_cef` (which has no pybind11 contact) with CEF's flags via its own CMakeLists. `dauntless` compiles with project-default flags.
+- **`disable-notifications` alone is insufficient.** Chromium's native `NSUserNotificationCenter` path is separate from the HTML5 Notification API. Need both `--disable-notifications` and `--disable-features=NativeNotifications,SystemNotifications,UNNotifications` to fully suppress the macOS permission prompt. Already encoded in [cef_app.cc:25-32](native/src/ui_cef/cef_app.cc).
