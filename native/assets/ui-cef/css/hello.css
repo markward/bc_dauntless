@@ -23,3 +23,18 @@ html, body {
        backdrops without needing a panel chrome behind it. */
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
 }
+
+#pause-menu {
+    /* Hidden by default; Python sets style.display = 'flex' on ESC. */
+    display: none;
+    position: fixed;
+    inset: 0;
+    align-items: center;
+    justify-content: center;
+    font-family: "Antonio", sans-serif;
+    font-size: 48px;
+    color: #ffffff;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 100;
+}
