@@ -46,3 +46,46 @@ class STComponentMenu(STMenu):
     checks if they ever appear in code we load.
     """
     pass
+
+
+class STTargetMenu(STTopLevelMenu):
+    """The whole target list — children are STSubsystemMenu rows."""
+
+    def __init__(self, label: str = ""):
+        super().__init__(label)
+        # The last ship the player manually selected. Survives across
+        # mission saves so a reload restores the selection. SDK callers
+        # mutate via ClearPersistentTarget; engine sets it on real clicks.
+        self._persistent_target_name: str | None = None
+
+    # ── Sibling traversal required by CycleTarget ──
+    def GetFirstChild(self):
+        return self._children[0] if self._children else None
+
+    def GetLastChild(self):
+        return self._children[-1] if self._children else None
+
+    def GetNextChild(self, child):
+        try:
+            i = self._children.index(child)
+        except ValueError:
+            return None
+        return self._children[i + 1] if i + 1 < len(self._children) else None
+
+    def GetPrevChild(self, child):
+        try:
+            i = self._children.index(child)
+        except ValueError:
+            return None
+        return self._children[i - 1] if i > 0 else None
+
+    def GetObjectEntry(self, ship):
+        """Return the STSubsystemMenu whose GetShip() is ``ship``.
+
+        SDK: TacticalInterfaceHandlers.py:711 (CycleTarget). Identity
+        comparison — the SDK passes the actual ShipClass object.
+        """
+        for child in self._children:
+            if isinstance(child, STSubsystemMenu) and child.GetShip() is ship:
+                return child
+        return None

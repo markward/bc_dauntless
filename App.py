@@ -104,6 +104,7 @@ from engine.appc.characters import (
 from engine.appc.target_menu import (
     STSubsystemMenu,
     STComponentMenu,
+    STTargetMenu,
 )
 from engine.appc.ai import (
     ArtificialIntelligence,
