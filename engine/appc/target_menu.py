@@ -89,3 +89,62 @@ class STTargetMenu(STTopLevelMenu):
             if isinstance(child, STSubsystemMenu) and child.GetShip() is ship:
                 return child
         return None
+
+    # ── Mutators SDK scripts actually call ──
+
+    def ClearTargetList(self) -> None:
+        """SDK: Multiplayer/MissionShared.py:353."""
+        self.KillChildren()
+
+    def ClearPersistentTarget(self) -> None:
+        """SDK: TacticalInterfaceHandlers.py:656, HelmMenuHandlers.py:947,
+        MissionShared.py:354."""
+        self._persistent_target_name = None
+
+    def SetPersistentTarget(self, name) -> None:
+        self._persistent_target_name = str(name) if name else None
+
+    def GetPersistentTarget(self) -> "str | None":
+        return self._persistent_target_name
+
+
+# ── Module-level singleton + factory ─────────────────────────────────────────
+
+_target_menu_singleton: STTargetMenu | None = None
+
+
+def STTargetMenu_CreateW(label: str = "") -> STTargetMenu:
+    """SDK factory — Bridge/TacticalMenuHandlers.py:492."""
+    global _target_menu_singleton
+    _target_menu_singleton = STTargetMenu(str(label))
+    return _target_menu_singleton
+
+
+def STTargetMenu_GetTargetMenu() -> "STTargetMenu | None":
+    """SDK accessor — TacticalInterfaceHandlers + MissionLib + others."""
+    return _target_menu_singleton
+
+
+def _reset_target_menu_singleton() -> None:
+    """Test-only — clear singleton between tests."""
+    global _target_menu_singleton
+    _target_menu_singleton = None
+
+
+# ── Lenient cast helpers ─────────────────────────────────────────────────────
+
+def STSubsystemMenu_Cast(obj):
+    """Mirrors STMenu_Cast lenient pass-through in characters.py."""
+    if isinstance(obj, STSubsystemMenu):
+        return obj
+    if obj is None:
+        return None
+    return obj
+
+
+def STComponentMenu_Cast(obj):
+    if isinstance(obj, STComponentMenu):
+        return obj
+    if obj is None:
+        return None
+    return obj

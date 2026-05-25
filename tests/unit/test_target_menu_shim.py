@@ -65,3 +65,39 @@ def test_st_target_menu_get_object_entry_by_ship_identity():
     assert target_menu.GetObjectEntry(ship_b) is sub_b
     stranger = ShipClass(); stranger.SetName("?")
     assert target_menu.GetObjectEntry(stranger) is None
+
+
+def test_create_w_installs_singleton():
+    App._reset_target_menu_singleton()
+    assert App.STTargetMenu_GetTargetMenu() is None
+
+    menu = App.STTargetMenu_CreateW("Targets")
+    assert isinstance(menu, App.STTargetMenu)
+    assert menu.GetLabel() == "Targets"
+    assert App.STTargetMenu_GetTargetMenu() is menu
+
+
+def test_subsystem_menu_cast_lenient_passthrough():
+    """Mirrors STMenu_Cast — real instance → self; None → None; other → pass through."""
+    ship = ShipClass()
+    menu = App.STSubsystemMenu(ship)
+    assert App.STSubsystemMenu_Cast(menu) is menu
+    assert App.STSubsystemMenu_Cast(None) is None
+    sentinel = object()
+    assert App.STSubsystemMenu_Cast(sentinel) is sentinel
+
+
+def test_clear_target_list_removes_all_rows():
+    target_menu = App.STTargetMenu("Targets")
+    target_menu.AddChild(App.STSubsystemMenu(ShipClass()))
+    target_menu.AddChild(App.STSubsystemMenu(ShipClass()))
+    target_menu.ClearTargetList()
+    assert target_menu.GetFirstChild() is None
+
+
+def test_clear_persistent_target_drops_hint():
+    target_menu = App.STTargetMenu("Targets")
+    target_menu.SetPersistentTarget("USS Enterprise")
+    assert target_menu.GetPersistentTarget() == "USS Enterprise"
+    target_menu.ClearPersistentTarget()
+    assert target_menu.GetPersistentTarget() is None
