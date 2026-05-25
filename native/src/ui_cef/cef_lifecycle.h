@@ -33,6 +33,11 @@ void composite();
 void toggle_devtools();
 void reload();
 
+// Execute a JavaScript string in the main frame of the overlay browser.
+// No-op if no browser is alive. Used to drive DOM mutation from Python
+// (e.g. toggling visibility of pause-menu HTML).
+void execute_javascript(const std::string& script);
+
 // Called before window/GL teardown. Releases the browser and CEF.
 void shutdown();
 
