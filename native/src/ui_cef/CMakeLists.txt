@@ -5,12 +5,17 @@ if(NOT DAUNTLESS_ENABLE_CEF)
     return()
 endif()
 
-add_library(ui_cef STATIC
+set(UI_CEF_SOURCES
     cef_app.cc
     cef_client.cc
     cef_composite_pass.cc
     cef_lifecycle.cc
 )
+if(APPLE)
+    list(APPEND UI_CEF_SOURCES cef_macos_app.mm)
+endif()
+
+add_library(ui_cef STATIC ${UI_CEF_SOURCES})
 
 target_include_directories(ui_cef PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}

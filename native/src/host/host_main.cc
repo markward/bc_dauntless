@@ -8,6 +8,7 @@
 
 #ifdef DAUNTLESS_ENABLE_CEF
 #include "ui_cef/cef_lifecycle.h"
+#include "ui_cef/cef_macos_app.h"
 #endif
 
 #include <cstdio>
@@ -90,6 +91,14 @@ int main(int argc, char* argv[]) {
     if (argc < 1) return 1;
 
 #ifdef DAUNTLESS_ENABLE_CEF
+    // Install an NSApplication subclass that conforms to Chromium's
+    // CrAppProtocol (provides isHandlingSendEvent). Must run before any
+    // other AppKit access so [NSApplication sharedApplication] returns
+    // our subclass — Chromium's AppKit cleanup paths (e.g. closing the
+    // DevTools window) would otherwise crash with an unrecognized-selector
+    // exception. No-op on non-macOS.
+    dauntless::ui_cef::install_macos_app();
+
     // CEF spawns helper subprocesses by re-running this binary. The
     // subprocess role is encoded in argv; CefExecuteProcess detects it
     // and runs the appropriate event loop, returning the exit code we
