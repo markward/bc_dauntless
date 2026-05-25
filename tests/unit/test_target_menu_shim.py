@@ -7,10 +7,20 @@ from engine.appc.ships import ShipClass
 
 @pytest.fixture(autouse=True)
 def _reset_singletons():
-    """Reset module-level singletons between tests so ordering doesn't matter."""
+    """Reset module-level singletons between tests so ordering doesn't matter.
+
+    Also ensures the "bridge" set exists in g_kSetManager — required by
+    RebuildShipMenus — and is cleaned up afterwards so tests that add ships
+    don't bleed across.
+    """
+    from engine.appc.sets import SetClass
     App._reset_target_menu_singleton()
+    # Register a fresh bridge set for every test that needs it.
+    bridge_set = SetClass()
+    App.g_kSetManager.AddSet(bridge_set, "bridge")
     yield
     App._reset_target_menu_singleton()
+    App.g_kSetManager.DeleteSet("bridge")
 
 
 def test_st_subsystem_menu_records_ship_and_defaults_visible():
@@ -165,3 +175,37 @@ def test_reset_affiliation_colors_recomputes_each_row():
         assert sub_b.GetAffiliation() == "FRIENDLY"
     finally:
         _set_current_game(None)
+
+
+def test_rebuild_ship_menu_creates_row_for_new_ship():
+    target_menu = App.STTargetMenu("Targets")
+    ship = ShipClass(); ship.SetName("Dauntless")
+    assert target_menu.GetObjectEntry(ship) is None
+
+    target_menu.RebuildShipMenu(ship)
+
+    row = target_menu.GetObjectEntry(ship)
+    assert isinstance(row, App.STSubsystemMenu)
+    assert row.GetShip() is ship
+
+
+def test_rebuild_ship_menu_reuses_existing_row():
+    target_menu = App.STTargetMenu("Targets")
+    ship = ShipClass(); ship.SetName("Dauntless")
+    target_menu.RebuildShipMenu(ship)
+    first = target_menu.GetObjectEntry(ship)
+    target_menu.RebuildShipMenu(ship)
+    second = target_menu.GetObjectEntry(ship)
+    assert first is second
+
+
+def test_rebuild_ship_menus_walks_bridge_set():
+    target_menu = App.STTargetMenu("Targets")
+    bridge_set = App.g_kSetManager.GetSet("bridge")
+    a = ShipClass(); a.SetName("A"); bridge_set.AddObjectToSet(a, "A")
+    b = ShipClass(); b.SetName("B"); bridge_set.AddObjectToSet(b, "B")
+
+    target_menu.RebuildShipMenus()
+
+    assert target_menu.GetObjectEntry(a) is not None
+    assert target_menu.GetObjectEntry(b) is not None

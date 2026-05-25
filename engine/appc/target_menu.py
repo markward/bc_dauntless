@@ -127,6 +127,40 @@ class STTargetMenu(STTopLevelMenu):
         """
         return self._persistent_target_name
 
+    def RebuildShipMenu(self, ship) -> None:
+        """Add or refresh the row for ``ship``. SDK callsites:
+        MissionLib.py:2200, MissionLib.py:2225.
+
+        Phase 1: include every subsystem regardless of IsTargetable —
+        the per-subsystem targetable filter arrives with the engine
+        integration phase.
+        """
+        if ship is None:
+            return
+        row = self.GetObjectEntry(ship)
+        if row is None:
+            row = STSubsystemMenu(ship, ship.GetName())
+            self.AddChild(row)
+        row.KillChildren()
+        kIter = ship.StartGetSubsystemMatch()
+        sub = ship.GetNextSubsystemMatch(kIter)
+        while sub is not None:
+            label = sub.GetName() if hasattr(sub, "GetName") else ""
+            row.AddChild(STMenu(label))
+            sub = ship.GetNextSubsystemMatch(kIter)
+        ship.EndGetSubsystemMatch(kIter)
+
+    def RebuildShipMenus(self) -> None:
+        """Bulk rebuild. Never called from SDK Python; included so the
+        engine auto-population hook has a single entry point."""
+        import App as _App
+        bridge = _App.g_kSetManager.GetSet("bridge")
+        if bridge is None:
+            return
+        for obj in list(bridge.GetObjectList()):
+            if hasattr(obj, "StartGetSubsystemMatch"):
+                self.RebuildShipMenu(obj)
+
     def ResetAffiliationColors(self) -> None:
         """Recompute every row's affiliation token. SDK callsites:
         Maelstrom/Episode2/E2M2.py:789, E2M6.py:1066 — invoked after
