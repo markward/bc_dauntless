@@ -1063,11 +1063,18 @@ def _apply_view_mode_side_effects(view_mode: "_ViewModeController", h) -> None:
     view_mode._last_synced_is_bridge = target
 
 
-def _apply_pause_menu_side_effects(pause: "_PauseMenuController", h) -> None:
-    """Mirror the pause flag into the CEF overlay (show/hide the
-    pause-menu div). Idempotent — only fires when the state has changed
-    since the last call. `h` is the bindings module (or fake) exposing
-    cef_execute_javascript.
+def _apply_pause_menu_side_effects(pause: "_PauseMenuController",
+                                   view_mode: "_ViewModeController",
+                                   h) -> None:
+    """Mirror the pause flag into renderer state: show/hide the CEF
+    pause-menu div and unlock the cursor while paused so the player can
+    interact with the overlay. Idempotent — only fires when the state
+    has changed since the last call. `h` is the bindings module (or
+    fake) exposing cef_execute_javascript and set_cursor_locked.
+
+    On close, the view-mode sync latch is invalidated so the next
+    _apply_view_mode_side_effects call re-applies cursor lock + bridge
+    pass state from whatever view mode is current.
     """
     target = pause.is_open
     last = getattr(pause, "_last_synced_is_open", None)
@@ -1077,6 +1084,10 @@ def _apply_pause_menu_side_effects(pause: "_PauseMenuController", h) -> None:
     h.cef_execute_javascript(
         "document.getElementById('pause-menu').style.display = " + display + ";"
     )
+    if target:
+        h.set_cursor_locked(False)
+    else:
+        view_mode._last_synced_is_bridge = None
     pause._last_synced_is_open = target
 
 
@@ -1966,7 +1977,7 @@ def run(mission_name: Optional[str] = None,
             # idempotent — only fires when the mode changed.
             if _h is not None:
                 pause.apply(_h)
-                _apply_pause_menu_side_effects(pause, _h)
+                _apply_pause_menu_side_effects(pause, view_mode, _h)
                 if not pause.is_open:
                     view_mode.apply(_h)
                     _apply_view_mode_side_effects(view_mode, _h)

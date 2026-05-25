@@ -64,25 +64,31 @@ def test_pause_menu_held_escape_does_not_re_toggle():
     assert p.is_open is False
 
 
-class _RecordingCef:
-    """Records cef_execute_javascript calls for assertion."""
+class _RecordingHost:
+    """Records cef_execute_javascript and set_cursor_locked calls."""
 
     def __init__(self):
-        self.scripts = []  # list of script strings
+        self.scripts = []          # list of script strings
+        self.cursor_lock_calls = []  # list of bool
 
     def cef_execute_javascript(self, script):
         self.scripts.append(script)
+
+    def set_cursor_locked(self, locked):
+        self.cursor_lock_calls.append(locked)
 
 
 def test_pause_menu_side_effects_show_uses_flex():
     """Opening the menu fires a single execute_javascript call whose
     script targets the pause-menu element and sets display to 'flex'."""
     from engine.host_loop import (_PauseMenuController,
+                                  _ViewModeController,
                                   _apply_pause_menu_side_effects)
     p = _PauseMenuController()
     p.toggle()  # closed → open
-    rc = _RecordingCef()
-    _apply_pause_menu_side_effects(p, rc)
+    vm = _ViewModeController()
+    rc = _RecordingHost()
+    _apply_pause_menu_side_effects(p, vm, rc)
     assert len(rc.scripts) == 1
     assert "pause-menu" in rc.scripts[0]
     assert "'flex'" in rc.scripts[0]
@@ -92,13 +98,15 @@ def test_pause_menu_side_effects_hide_uses_none():
     """Closing the menu fires a single execute_javascript call whose
     script sets display to 'none'."""
     from engine.host_loop import (_PauseMenuController,
+                                  _ViewModeController,
                                   _apply_pause_menu_side_effects)
     p = _PauseMenuController()
     p.toggle()  # closed → open
-    rc = _RecordingCef()
-    _apply_pause_menu_side_effects(p, rc)   # initial sync (open)
+    vm = _ViewModeController()
+    rc = _RecordingHost()
+    _apply_pause_menu_side_effects(p, vm, rc)   # initial sync (open)
     p.toggle()  # open → closed
-    _apply_pause_menu_side_effects(p, rc)   # second sync (closed)
+    _apply_pause_menu_side_effects(p, vm, rc)   # second sync (closed)
     assert len(rc.scripts) == 2
     assert "'none'" in rc.scripts[1]
 
@@ -107,9 +115,46 @@ def test_pause_menu_side_effects_idempotent_within_a_state():
     """Calling the sync helper twice without toggling must not re-fire
     the JS execution — only state changes should trigger it."""
     from engine.host_loop import (_PauseMenuController,
+                                  _ViewModeController,
                                   _apply_pause_menu_side_effects)
     p = _PauseMenuController()
-    rc = _RecordingCef()
-    _apply_pause_menu_side_effects(p, rc)   # initial sync (closed)
-    _apply_pause_menu_side_effects(p, rc)   # no toggle in between
+    vm = _ViewModeController()
+    rc = _RecordingHost()
+    _apply_pause_menu_side_effects(p, vm, rc)   # initial sync (closed)
+    _apply_pause_menu_side_effects(p, vm, rc)   # no toggle in between
     assert len(rc.scripts) <= 1
+
+
+def test_pause_menu_open_unlocks_cursor():
+    """While paused the cursor must be unlocked so the player can
+    interact with the overlay, even from a bridge-locked starting
+    state."""
+    from engine.host_loop import (_PauseMenuController,
+                                  _ViewModeController,
+                                  _apply_pause_menu_side_effects)
+    p = _PauseMenuController()
+    p.toggle()  # closed → open
+    vm = _ViewModeController()  # bridge by default — cursor would be locked
+    rc = _RecordingHost()
+    _apply_pause_menu_side_effects(p, vm, rc)
+    assert rc.cursor_lock_calls == [False]
+
+
+def test_pause_menu_close_invalidates_view_mode_latch():
+    """Closing the menu must clear view_mode._last_synced_is_bridge so
+    the next _apply_view_mode_side_effects call re-applies cursor lock
+    and bridge-pass state. Without this, a player who paused while on
+    the bridge would resume with the cursor still unlocked because the
+    view-mode latch still reads True."""
+    from engine.host_loop import (_PauseMenuController,
+                                  _ViewModeController,
+                                  _apply_pause_menu_side_effects)
+    p = _PauseMenuController()
+    vm = _ViewModeController()
+    vm._last_synced_is_bridge = True  # simulate prior sync into bridge
+    rc = _RecordingHost()
+    p.toggle()  # closed → open
+    _apply_pause_menu_side_effects(p, vm, rc)
+    p.toggle()  # open → closed
+    _apply_pause_menu_side_effects(p, vm, rc)
+    assert vm._last_synced_is_bridge is None
