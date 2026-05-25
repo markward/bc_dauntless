@@ -7,6 +7,21 @@
 </head>
 <body>
     <div class="hello">Hello world</div>
-    <div id="pause-menu">placeholder - pause menu</div>
+
+    <!-- Pause menu overlay.
+         Python toggles visibility via cef_execute_javascript on the
+         #pause-menu container, and pushes the row list + focused index
+         via setPauseMenu({items:[...], focused:N}). Row clicks call
+         dauntlessEvent(action), which navigates to dauntless://event/<a>;
+         OnBeforeBrowse on the C++ side intercepts and dispatches.
+         Spec: docs/ui_designs/10-pause-menu.md -->
+    <div id="pause-menu">
+        <div class="pause-panel">
+            <div class="pause-header">Game Paused</div>
+            <div class="pause-body" id="pause-menu-list"></div>
+        </div>
+    </div>
+
+    <script src="js/pause_menu.js"></script>
 </body>
 </html>
