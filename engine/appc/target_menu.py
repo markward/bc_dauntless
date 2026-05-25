@@ -23,9 +23,16 @@ class STSubsystemMenu(STMenu):
     def __init__(self, ship, label: str = ""):
         super().__init__(label or (ship.GetName() if ship else ""))
         self._ship = ship
+        self._affiliation: str = "UNKNOWN"
 
     def GetShip(self):
         return self._ship
+
+    def GetAffiliation(self) -> str:
+        return self._affiliation
+
+    def SetAffiliation(self, token: str) -> None:
+        self._affiliation = token
 
     def IsVisible(self) -> int:
         return 1 if self._visible else 0
@@ -120,6 +127,21 @@ class STTargetMenu(STTopLevelMenu):
         """
         return self._persistent_target_name
 
+    def ResetAffiliationColors(self) -> None:
+        """Recompute every row's affiliation token. SDK callsites:
+        Maelstrom/Episode2/E2M2.py:789, E2M6.py:1066 — invoked after
+        a mission reassigns ships between groups."""
+        from engine.core.game import Game_GetCurrentGame
+        game = Game_GetCurrentGame()
+        mission = None
+        if game is not None:
+            ep = game.GetCurrentEpisode()
+            if ep is not None:
+                mission = ep.GetCurrentMission()
+        for child in self._children:
+            if isinstance(child, STSubsystemMenu):
+                child.SetAffiliation(resolve_affiliation(child.GetShip(), mission))
+
 
 # ── Module-level singleton + factory ─────────────────────────────────────────
 
@@ -169,3 +191,22 @@ def STComponentMenu_Cast(obj):
     if obj is None:
         return None
     return obj
+
+
+def resolve_affiliation(ship, mission) -> str:
+    """Mission groups override static ship-property affiliation.
+
+    Returns one of "FRIENDLY", "ENEMY", "NEUTRAL", "UNKNOWN" — the
+    engine layer maps these to the radar colour palette from
+    docs/ui_designs/SDK_UI_API.md §1.4.
+    """
+    if mission is None or ship is None:
+        return "UNKNOWN"
+    name = ship.GetName()
+    if mission.GetFriendlyGroup().IsNameInGroup(name):
+        return "FRIENDLY"
+    if mission.GetEnemyGroup().IsNameInGroup(name):
+        return "ENEMY"
+    if mission.GetNeutralGroup().IsNameInGroup(name):
+        return "NEUTRAL"
+    return "UNKNOWN"

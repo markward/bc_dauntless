@@ -111,3 +111,57 @@ def test_clear_persistent_target_drops_hint():
     assert target_menu.GetPersistentTarget() == "USS Enterprise"
     target_menu.ClearPersistentTarget()
     assert target_menu.GetPersistentTarget() is None
+
+
+def _make_mission_with_groups(friendly=(), enemy=(), neutral=()):
+    from engine.core.game import Mission
+    m = Mission()
+    for name in friendly:
+        m.GetFriendlyGroup().AddName(name)
+    for name in enemy:
+        m.GetEnemyGroup().AddName(name)
+    for name in neutral:
+        m.GetNeutralGroup().AddName(name)
+    return m
+
+
+def test_resolve_affiliation_uses_mission_groups():
+    from engine.appc.target_menu import resolve_affiliation
+    mission = _make_mission_with_groups(
+        friendly=["F"], enemy=["E"], neutral=["N"]
+    )
+    f = ShipClass(); f.SetName("F")
+    e = ShipClass(); e.SetName("E")
+    n = ShipClass(); n.SetName("N")
+    u = ShipClass(); u.SetName("U")
+    assert resolve_affiliation(f, mission) == "FRIENDLY"
+    assert resolve_affiliation(e, mission) == "ENEMY"
+    assert resolve_affiliation(n, mission) == "NEUTRAL"
+    assert resolve_affiliation(u, mission) == "UNKNOWN"
+
+
+def test_reset_affiliation_colors_recomputes_each_row():
+    from engine.core.game import Game, Episode, _set_current_game
+
+    mission = _make_mission_with_groups(friendly=["Dauntless"], enemy=["Kor"])
+    episode = Episode(); episode.SetCurrentMission(mission)
+    game = Game(); game.SetCurrentEpisode(episode)
+    _set_current_game(game)
+    try:
+        a = ShipClass(); a.SetName("Dauntless")
+        b = ShipClass(); b.SetName("Kor")
+        target_menu = App.STTargetMenu("Targets")
+        sub_a, sub_b = App.STSubsystemMenu(a), App.STSubsystemMenu(b)
+        target_menu.AddChild(sub_a); target_menu.AddChild(sub_b)
+
+        target_menu.ResetAffiliationColors()
+        assert sub_a.GetAffiliation() == "FRIENDLY"
+        assert sub_b.GetAffiliation() == "ENEMY"
+
+        # Defection: Kor changes sides mid-mission.
+        mission.GetEnemyGroup().RemoveName("Kor")
+        mission.GetFriendlyGroup().AddName("Kor")
+        target_menu.ResetAffiliationColors()
+        assert sub_b.GetAffiliation() == "FRIENDLY"
+    finally:
+        _set_current_game(None)
