@@ -209,3 +209,16 @@ def test_rebuild_ship_menus_walks_bridge_set():
 
     assert target_menu.GetObjectEntry(a) is not None
     assert target_menu.GetObjectEntry(b) is not None
+
+
+def test_rebuild_ship_menu_leaves_subsystem_children_empty_in_phase1():
+    """Phase 1 deferral: subsystem children are not populated until a
+    future plan passes App.CT_SHIP_SUBSYSTEM to StartGetSubsystemMatch.
+    Locking the current behaviour so the deferral is visible."""
+    target_menu = App.STTargetMenu("Targets")
+    ship = ShipClass(); ship.SetName("Dauntless")
+    target_menu.RebuildShipMenu(ship)
+    row = target_menu.GetObjectEntry(ship)
+    # Should exist but have no subsystem rows yet.
+    assert row is not None
+    assert len(row._children) == 0

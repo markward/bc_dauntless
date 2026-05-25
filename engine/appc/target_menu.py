@@ -131,9 +131,15 @@ class STTargetMenu(STTopLevelMenu):
         """Add or refresh the row for ``ship``. SDK callsites:
         MissionLib.py:2200, MissionLib.py:2225.
 
-        Phase 1: include every subsystem regardless of IsTargetable —
-        the per-subsystem targetable filter arrives with the engine
-        integration phase.
+        Phase 1 deferral: the call ``ship.StartGetSubsystemMatch()``
+        with no match-type argument returns an empty iterator from the
+        current `engine/appc/ships.py` shim, so this method creates the
+        STSubsystemMenu row but leaves its subsystem children empty.
+        That matches the Phase 1 deliverable — the visible target list
+        only shows ship rows, not subsystem children. A future plan
+        will pass App.CT_SHIP_SUBSYSTEM and populate per-subsystem
+        rows; the iteration loop below is kept as scaffolding for
+        that integration.
         """
         if ship is None:
             return
@@ -157,7 +163,7 @@ class STTargetMenu(STTopLevelMenu):
         bridge = _App.g_kSetManager.GetSet("bridge")
         if bridge is None:
             return
-        for obj in list(bridge.GetObjectList()):
+        for obj in bridge.GetObjectList():
             if hasattr(obj, "StartGetSubsystemMatch"):
                 self.RebuildShipMenu(obj)
 
