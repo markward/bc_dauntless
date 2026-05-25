@@ -1037,14 +1037,6 @@ def _apply_view_mode_side_effects(view_mode: "_ViewModeController", h) -> None:
     view_mode._last_synced_is_bridge = target
 
 
-def _handle_esc_for_view_mode(view_mode: "_ViewModeController") -> None:
-    """ESC in bridge mode returns to exterior. ESC in exterior mode is a
-    no-op. The side-effect sync runs on the next tick and releases the
-    cursor / disables the bridge pass."""
-    if view_mode.is_bridge:
-        view_mode.toggle()
-
-
 class _BridgeCamera:
     """First-person bridge camera with mouse-look.
 
@@ -1979,9 +1971,6 @@ def run(mission_name: Optional[str] = None,
                 _ctrl_held = _h.key_state(_h.keys.KEY_LEFT_CONTROL) if hasattr(_h.keys, "KEY_LEFT_CONTROL") else False
                 if _cmd_held or _ctrl_held:
                     _h.cef_reload()
-
-            if _h is not None and _h.key_pressed(_h.keys.KEY_ESCAPE):
-                _handle_esc_for_view_mode(view_mode)
 
             # Apply keyboard input to the player ship's transform and to the
             # orbit camera. Scroll delta is consumed once per tick; old

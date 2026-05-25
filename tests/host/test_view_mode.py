@@ -229,29 +229,6 @@ def test_apply_view_mode_side_effects_idempotent_within_a_mode():
     assert len(rr.cursor_lock_calls) <= 1
 
 
-def test_esc_in_bridge_mode_returns_to_exterior():
-    """ESC handler: when in bridge mode, ESC toggles back to exterior
-    and the side-effect sync releases the cursor + disables the pass."""
-    from engine.host_loop import (_handle_esc_for_view_mode,
-                                  _apply_view_mode_side_effects)
-    vm = _exterior_vm()
-    vm.toggle()  # bridge
-    rr = _RecordingRenderer()
-    _apply_view_mode_side_effects(vm, rr)  # initial sync to bridge
-    _handle_esc_for_view_mode(vm)
-    _apply_view_mode_side_effects(vm, rr)  # next-tick sync after esc
-    assert vm.is_exterior is True
-    assert rr.bridge_pass_calls == [True, False]
-    assert rr.cursor_lock_calls == [True, False]
-
-
-def test_esc_in_exterior_mode_is_a_noop():
-    from engine.host_loop import _handle_esc_for_view_mode
-    vm = _exterior_vm()
-    _handle_esc_for_view_mode(vm)
-    assert vm.is_exterior is True
-
-
 def test_bridge_camera_anchors_at_ship_origin_looking_forward():
     """Spec test 4: bridge camera eye = ship loc, target along ship
     forward (row 1), up along ship up (row 2)."""
