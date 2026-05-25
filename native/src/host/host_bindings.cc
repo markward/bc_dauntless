@@ -277,14 +277,6 @@ void frame() {
                               lookup, g_bridge_lighting);
     }
 
-#ifdef DAUNTLESS_ENABLE_CEF
-    // Pump CEF's message loop (may deliver OnPaint synchronously into
-    // g_client). Then composite the latest bitmap over the 3D scene with
-    // premultiplied-alpha blend. Runs before poll_events / swap_buffers.
-    dauntless::ui_cef::pump();
-    dauntless::ui_cef::composite();
-#endif
-
     // Snapshot tracked keys' current state BEFORE poll_events. The next
     // tick's Python sees the post-poll state as `now` and this pre-poll
     // state as `prev`, so any change made by this poll surfaces as a
@@ -296,7 +288,23 @@ void frame() {
     for (auto& [b, prev] : g_prev_mouse_state) {
         prev = (glfwGetMouseButton(g_window->native_handle(), b) == GLFW_PRESS);
     }
+    // GLFW poll BEFORE CEF pump: on macOS both drain from the same NSApp
+    // event queue, and CefDoMessageLoopWork() consumes keyboard events
+    // (we observed SPACE / digit / R presses being lost when CEF pumped
+    // first). Polling GLFW first guarantees the GL window's window owner
+    // gets first crack at the OS event queue; CEF then drains whatever
+    // it needs for its own internal work afterward.
     g_window->poll_events();
+
+#ifdef DAUNTLESS_ENABLE_CEF
+    // Pump CEF's message loop (may deliver OnPaint synchronously into
+    // g_client), then composite the latest bitmap over the 3D scene with
+    // premultiplied-alpha blend. Runs AFTER poll_events to avoid stealing
+    // keyboard events from GLFW (see comment above poll_events).
+    dauntless::ui_cef::pump();
+    dauntless::ui_cef::composite();
+#endif
+
     g_window->swap_buffers();
 }
 
