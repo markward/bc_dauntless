@@ -1063,6 +1063,23 @@ def _apply_view_mode_side_effects(view_mode: "_ViewModeController", h) -> None:
     view_mode._last_synced_is_bridge = target
 
 
+def _apply_pause_menu_side_effects(pause: "_PauseMenuController", h) -> None:
+    """Mirror the pause flag into the CEF overlay (show/hide the
+    pause-menu div). Idempotent — only fires when the state has changed
+    since the last call. `h` is the bindings module (or fake) exposing
+    cef_execute_javascript.
+    """
+    target = pause.is_open
+    last = getattr(pause, "_last_synced_is_open", None)
+    if last == target:
+        return
+    display = "'flex'" if target else "'none'"
+    h.cef_execute_javascript(
+        "document.getElementById('pause-menu').style.display = " + display + ";"
+    )
+    pause._last_synced_is_open = target
+
+
 class _BridgeCamera:
     """First-person bridge camera with mouse-look.
 

@@ -62,3 +62,54 @@ def test_pause_menu_held_escape_does_not_re_toggle():
     for _ in range(10):
         p.apply(reader)
     assert p.is_open is False
+
+
+class _RecordingCef:
+    """Records cef_execute_javascript calls for assertion."""
+
+    def __init__(self):
+        self.scripts = []  # list of script strings
+
+    def cef_execute_javascript(self, script):
+        self.scripts.append(script)
+
+
+def test_pause_menu_side_effects_show_uses_flex():
+    """Opening the menu fires a single execute_javascript call whose
+    script targets the pause-menu element and sets display to 'flex'."""
+    from engine.host_loop import (_PauseMenuController,
+                                  _apply_pause_menu_side_effects)
+    p = _PauseMenuController()
+    p.toggle()  # closed → open
+    rc = _RecordingCef()
+    _apply_pause_menu_side_effects(p, rc)
+    assert len(rc.scripts) == 1
+    assert "pause-menu" in rc.scripts[0]
+    assert "'flex'" in rc.scripts[0]
+
+
+def test_pause_menu_side_effects_hide_uses_none():
+    """Closing the menu fires a single execute_javascript call whose
+    script sets display to 'none'."""
+    from engine.host_loop import (_PauseMenuController,
+                                  _apply_pause_menu_side_effects)
+    p = _PauseMenuController()
+    p.toggle()  # closed → open
+    rc = _RecordingCef()
+    _apply_pause_menu_side_effects(p, rc)   # initial sync (open)
+    p.toggle()  # open → closed
+    _apply_pause_menu_side_effects(p, rc)   # second sync (closed)
+    assert len(rc.scripts) == 2
+    assert "'none'" in rc.scripts[1]
+
+
+def test_pause_menu_side_effects_idempotent_within_a_state():
+    """Calling the sync helper twice without toggling must not re-fire
+    the JS execution — only state changes should trigger it."""
+    from engine.host_loop import (_PauseMenuController,
+                                  _apply_pause_menu_side_effects)
+    p = _PauseMenuController()
+    rc = _RecordingCef()
+    _apply_pause_menu_side_effects(p, rc)   # initial sync (closed)
+    _apply_pause_menu_side_effects(p, rc)   # no toggle in between
+    assert len(rc.scripts) <= 1
