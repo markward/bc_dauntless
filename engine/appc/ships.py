@@ -807,17 +807,17 @@ class ShipClass(DamageableObject):
                 # No containing set — fall back to the target menu's ship rows.
                 resolved = None
                 try:
-                    from engine.appc.target_menu import (
-                        STTargetMenu_GetTargetMenu, STSubsystemMenu,
-                    )
+                    from engine.appc.target_menu import STTargetMenu_GetTargetMenu
                     menu = STTargetMenu_GetTargetMenu()
                     if menu is not None:
-                        for child in menu._children:
-                            if (isinstance(child, STSubsystemMenu)
-                                    and child.GetShip() is not None
-                                    and child.GetShip().GetName() == target):
-                                resolved = child.GetShip()
-                                break
+                        child = menu.GetFirstChild()
+                        while child is not None:
+                            if hasattr(child, "GetShip"):
+                                candidate = child.GetShip()
+                                if candidate is not None and candidate.GetName() == target:
+                                    resolved = candidate
+                                    break
+                            child = menu.GetNextChild(child)
                 except Exception:
                     pass
                 self._target = resolved
