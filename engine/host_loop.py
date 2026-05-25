@@ -1025,12 +1025,25 @@ class _PauseMenuController:
 
     def __init__(self):
         self._open = False
+        self._quit_requested = False
 
     @property
     def is_open(self) -> bool: return self._open
 
+    @property
+    def quit_requested(self) -> bool: return self._quit_requested
+
     def toggle(self) -> None:
         self._open = not self._open
+
+    def close(self) -> None:
+        self._open = False
+
+    def request_quit(self) -> None:
+        """Pause-menu handler for 'Exit Program'. Sets a flag the host
+        loop checks once per tick to break out of the main loop and
+        fall through into the existing GL/CEF teardown."""
+        self._quit_requested = True
 
     def apply(self, h) -> None:
         """Poll escape-pressed and toggle on edge."""
@@ -1895,9 +1908,13 @@ def run(mission_name: Optional[str] = None,
 
     r.init(1280, 720, "open_stbc")
     # Initialise the CEF UI overlay. Resolves hello.html relative to the
-    # project root (two parents up from this file).
+    # project root (two parents up from this file). _CEF_VIEW_W/H are
+    # reused by the pause-menu mouse-forwarding path to scale
+    # framebuffer-pixel cursor coords back into the OSR view's logical
+    # pixel space on Retina.
+    _CEF_VIEW_W, _CEF_VIEW_H = 1280, 720
     _cef_html = _project_root_for_cef() / "native" / "assets" / "ui-cef" / "hello.html"
-    if not r.cef_initialize(1280, 720, str(_cef_html)):
+    if not r.cef_initialize(_CEF_VIEW_W, _CEF_VIEW_H, str(_cef_html)):
         # Non-fatal in builds where CEF is disabled (the stub returns False).
         # If CEF is enabled and initialize failed, the binary will print the
         # framework-load error to stderr — surface it but keep running so the
@@ -1955,6 +1972,11 @@ def run(mission_name: Optional[str] = None,
             cam_control.set_ship_radius(controller.session.player.GetRadius())
         view_mode      = _ViewModeController()
         pause          = _PauseMenuController()
+        from engine.ui.pause_menu import default_pause_menu
+        pause_menu = default_pause_menu(
+            on_exit=pause.request_quit,
+            on_cancel=pause.close,
+        )
         bridge_camera  = _BridgeCamera()
         try:
             import _dauntless_host as _h
@@ -1964,6 +1986,14 @@ def run(mission_name: Optional[str] = None,
         # consume_scroll_y; fall back to a zero-delta lambda so host_loop
         # still runs against an old _dauntless_host.so without rebuilding.
         _consume_scroll = getattr(_h, "consume_scroll_y", None) if _h else None
+        # Newer bindings expose CEF mouse-forwarding + a JS→Python event
+        # channel; older builds fall back to no-ops so the pause menu
+        # still navigates by keyboard.
+        _cef_send_mouse_move  = getattr(_h, "cef_send_mouse_move",  None) if _h else None
+        _cef_send_mouse_click = getattr(_h, "cef_send_mouse_click", None) if _h else None
+        _cef_set_event_handler = getattr(_h, "cef_set_event_handler", None) if _h else None
+        if _cef_set_event_handler is not None:
+            _cef_set_event_handler(pause_menu.dispatch_event)
         TICK_DT = 1.0 / 60.0
 
         loop = GameLoop()
@@ -1978,7 +2008,45 @@ def run(mission_name: Optional[str] = None,
             if _h is not None:
                 pause.apply(_h)
                 _apply_pause_menu_side_effects(pause, view_mode, _h)
-                if not pause.is_open:
+                if pause.is_open:
+                    pause_menu.handle_input(_h)
+                    _script = pause_menu.render_payload()
+                    if _script is not None:
+                        _h.cef_execute_javascript(_script)
+                    # Forward mouse to CEF only while paused — keeps
+                    # normal-gameplay input out of the overlay. The
+                    # event-handler callback installed at startup turns
+                    # JS clicks into pause_menu.dispatch_event(name).
+                    #
+                    # cursor_pos() returns FRAMEBUFFER (physical) pixels —
+                    # see renderer/window.cc:173-182 — but the CEF OSR
+                    # view was initialised in logical pixels (1280x720).
+                    # On Retina the two spaces differ by the device-pixel
+                    # ratio, so we scale framebuffer → view-space here.
+                    # _CEF_VIEW_W/H mirror the dims passed to
+                    # cef_initialize above.
+                    if _cef_send_mouse_move is not None:
+                        _mx_fb, _my_fb = _h.cursor_pos()
+                        _fb_w, _fb_h = _h.framebuffer_size()
+                        _sx = (_CEF_VIEW_W / _fb_w) if _fb_w > 0 else 1.0
+                        _sy = (_CEF_VIEW_H / _fb_h) if _fb_h > 0 else 1.0
+                        _mx = int(_mx_fb * _sx)
+                        _my = int(_my_fb * _sy)
+                        _cef_send_mouse_move(_mx, _my)
+                    if _cef_send_mouse_click is not None:
+                        if _h.mouse_button_pressed(_h.keys.MOUSE_BUTTON_LEFT):
+                            _cef_send_mouse_click(_mx, _my, 0, True)
+                        if _h.mouse_button_released(_h.keys.MOUSE_BUTTON_LEFT):
+                            _cef_send_mouse_click(_mx, _my, 0, False)
+                    if pause.quit_requested:
+                        break
+                else:
+                    # Re-emit the menu's row list on the next open so the
+                    # DOM picks it up after the visibility flip (the
+                    # contents survive across opens, but a hot-reload of
+                    # the page resets them — invalidate every close to be
+                    # safe).
+                    pause_menu.invalidate()
                     view_mode.apply(_h)
                     _apply_view_mode_side_effects(view_mode, _h)
 

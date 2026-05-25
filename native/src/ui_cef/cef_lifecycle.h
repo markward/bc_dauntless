@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <functional>
 #include <string>
 
 namespace dauntless::ui_cef {
@@ -37,6 +38,24 @@ void reload();
 // No-op if no browser is alive. Used to drive DOM mutation from Python
 // (e.g. toggling visibility of pause-menu HTML).
 void execute_javascript(const std::string& script);
+
+// Mouse-event forwarding to the OSR browser. Coordinates are in CEF
+// view-space (matches GLFW window coords on non-Retina; on Retina the
+// caller must convert if the framebuffer is scaled). No-op if no
+// browser is alive.
+//
+//   send_mouse_move:  hover / cursor tracking (e.g. for CSS :hover)
+//   send_mouse_click: left/middle/right click edge.
+//                     button: 0=left, 1=middle, 2=right.
+void send_mouse_move(int x, int y);
+void send_mouse_click(int x, int y, int button, bool is_down);
+
+// JS→C++ event channel. The handler is invoked with the event name
+// when JS navigates to dauntless://event/<name>. The intercept lives
+// in CefRequestHandler::OnBeforeBrowse — fire-and-forget, no return
+// value, no response payload back to JS. Pass an empty function to
+// disable.
+void set_event_handler(std::function<void(const std::string&)> handler);
 
 // Called before window/GL teardown. Releases the browser and CEF.
 void shutdown();

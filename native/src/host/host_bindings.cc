@@ -908,6 +908,43 @@ PYBIND11_MODULE(_dauntless_host, m) {
           },
           py::arg("script"),
           "Execute JavaScript in the main frame of the overlay browser.");
+
+    m.def("cef_send_mouse_move",
+          [](int x, int y) {
+              dauntless::ui_cef::send_mouse_move(x, y);
+          },
+          py::arg("x"), py::arg("y"),
+          "Forward a mouse-move event to the CEF overlay (drives :hover).");
+
+    m.def("cef_send_mouse_click",
+          [](int x, int y, int button, bool is_down) {
+              dauntless::ui_cef::send_mouse_click(x, y, button, is_down);
+          },
+          py::arg("x"), py::arg("y"), py::arg("button"), py::arg("is_down"),
+          "Forward a mouse button edge to the CEF overlay. "
+          "button: 0=left, 1=middle, 2=right. is_down: True for press, False for release.");
+
+    m.def("cef_set_event_handler",
+          [](py::function callback) {
+              // pybind11 manages the function's lifetime; ensure the
+              // captured callable holds a strong ref so it survives
+              // until the next set_event_handler call replaces it.
+              dauntless::ui_cef::set_event_handler(
+                  [cb = std::move(callback)](const std::string& name) {
+                      py::gil_scoped_acquire gil;
+                      try {
+                          cb(name);
+                      } catch (const py::error_already_set& e) {
+                          std::fprintf(stderr,
+                              "cef_set_event_handler: python callback raised: %s\n",
+                              e.what());
+                      }
+                  });
+          },
+          py::arg("callback"),
+          "Register a Python callback (str)->None invoked when JS "
+          "navigates to dauntless://event/<name>. The handler runs on "
+          "the main thread (single-threaded CEF message loop).");
 #else
     // Stub the bindings out so engine.host_loop can call them
     // unconditionally regardless of build config.
@@ -920,6 +957,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("cef_toggle_devtools", []() {});
     m.def("cef_reload",          []() {});
     m.def("cef_execute_javascript", [](const std::string&) {});
+    m.def("cef_send_mouse_move",  [](int, int) {});
+    m.def("cef_send_mouse_click", [](int, int, int, bool) {});
+    m.def("cef_set_event_handler",[](py::function) {});
 #endif
 
     dauntless::audio::register_python_bindings(m);

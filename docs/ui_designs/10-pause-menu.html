@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>10 — Pause menu</title>
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Antonio:wght@400;500;600;700&display=swap');
+
+    body {
+        margin: 0;
+        font-family: 'Antonio', sans-serif;
+        /* Faux starfield + nebula so the dim backdrop has something to
+           sit on top of. */
+        background:
+            radial-gradient(ellipse at 30% 40%, rgba(60, 40, 90, 0.5), transparent 60%),
+            radial-gradient(ellipse at 70% 70%, rgba(120, 60, 60, 0.4), transparent 60%),
+            #04030a;
+        min-height: 100vh;
+        display: flex; align-items: center; justify-content: center;
+    }
+
+    /* Full-viewport dim — modality. */
+    .pause-backdrop {
+        position: fixed; inset: 0;
+        background: rgba(0, 0, 0, 0.55);
+        z-index: 100;
+        display: flex; align-items: center; justify-content: center;
+    }
+
+    /* Shared panel chrome — see 00-panel-chrome.md. Repeated inline for
+       standalone preview; runtime sources these from chrome.css. */
+    .pause-panel {
+        width: 360px;
+        font-family: 'Antonio', sans-serif;
+    }
+
+    .pause-header {
+        background: linear-gradient(90deg, rgb(216, 94, 86) 0%, rgb(216, 132, 80) 100%);
+        color: #ffd;
+        font-size: 14px;
+        font-weight: 600;
+        letter-spacing: 1.5px;
+        text-transform: uppercase;
+        padding: 6px 16px;
+        border-radius: 0 14px 0 0;
+        height: 28px;
+        box-sizing: border-box;
+        display: flex; align-items: center;
+    }
+
+    .pause-body {
+        background: rgba(10, 10, 16, 0.85);
+        border-left: 3px solid rgb(216, 94, 86);
+        padding: 12px 10px;
+    }
+
+    /* Officer-menu row primitive — see 01-officer-menu.md. The pause
+       menu uses a HIGHER-CONTRAST focused/hover variant than the
+       officer menu: this is a modal navigation surface, so the player
+       must be able to distinguish target row from neighbours at a
+       glance. */
+    .pause-row {
+        display: flex; align-items: center;
+        padding: 6px 12px;
+        margin: 2px 0;
+        font-size: 13px;
+        font-weight: 400;
+        cursor: pointer;
+        background: rgb(37, 26, 64);
+        color: rgb(220, 210, 255);
+        border-left: 3px solid rgb(147, 103, 255);
+        user-select: none;
+        transition: background-color 80ms linear, color 80ms linear,
+                    border-left-color 80ms linear;
+    }
+    .pause-row__caret {
+        margin-right: 10px;
+        color: rgb(147, 103, 255);
+        transition: color 80ms linear;
+    }
+
+    /* Chosen (= keyboard focused) and hover share the highlighted look:
+       filled Menu2 highlight + gold caret + white text. */
+    .pause-row--focused,
+    .pause-row:hover {
+        background: rgb(173, 132, 255);
+        color: #ffffff;
+        border-left-color: rgb(255, 210, 90);
+    }
+    .pause-row--focused .pause-row__caret,
+    .pause-row:hover .pause-row__caret {
+        color: rgb(255, 210, 90);
+    }
+
+    .pause-row:active {
+        background: rgb(147, 103, 255);
+    }
+</style>
+</head>
+<body>
+
+<div class="pause-backdrop">
+    <div class="pause-panel">
+        <div class="pause-header">Game Paused</div>
+        <div class="pause-body">
+            <div class="pause-row pause-row--focused" data-action="exit">
+                <span class="pause-row__caret">▸</span>Exit Program
+            </div>
+            <div class="pause-row" data-action="cancel">
+                <span class="pause-row__caret">▸</span>Cancel
+            </div>
+        </div>
+    </div>
+</div>
+
+</body>
+</html>

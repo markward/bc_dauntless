@@ -18,6 +18,7 @@ The HTML files are direct copies of the brainstormed mockups under `.superpowers
 | 07 | [power-transmission-grid](07-power-transmission-grid.md) | Sub-component of engineer panel: stacked power-used bar | Engineer panel internal; updates per tick |
 | 08 | [modal-dialog](08-modal-dialog.md) | Centred modal with U-frame border + LCARS pill buttons | `ModalDialogWindow_Cast` (quit, save, confirm prompts) |
 | 09 | [welcome-screen](09-welcome-screen.md) | Pre-game / between-mission welcome panel | Mission picker; loads on startup before a session |
+| 10 | [pause-menu](10-pause-menu.md) | ESC-opened in-game pause menu — vertical row list (Exit Program / Cancel; extensible) | Dauntless-native (no SDK Python); `ESC` keybind from `DefaultKeyboardBinding.py:25` |
 
 ## Design language
 
