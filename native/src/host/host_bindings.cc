@@ -159,6 +159,7 @@ void init(int width, int height, const std::string& title) {
     g_loaded_models.clear();
     g_lighting = renderer::Lighting{};
     g_bridge_lighting = renderer::Lighting{};
+    g_bridge_pass_enabled = false;
     g_backdrops.clear();
     g_backdrop_pass = std::make_unique<renderer::BackdropPass>();
     g_suns.clear();
@@ -208,6 +209,7 @@ void shutdown() {
     // from the previous session.
     g_lighting = renderer::Lighting{};
     g_bridge_lighting = renderer::Lighting{};
+    g_bridge_pass_enabled = false;
 }
 
 bool should_close() {
@@ -899,6 +901,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("cef_reload",
           []() { dauntless::ui_cef::reload(); },
           "Reload the overlay browser's current document.");
+
+    m.def("cef_execute_javascript",
+          [](const std::string& script) {
+              dauntless::ui_cef::execute_javascript(script);
+          },
+          py::arg("script"),
+          "Execute JavaScript in the main frame of the overlay browser.");
 #else
     // Stub the bindings out so engine.host_loop can call them
     // unconditionally regardless of build config.
@@ -910,6 +919,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("cef_shutdown",        []() {});
     m.def("cef_toggle_devtools", []() {});
     m.def("cef_reload",          []() {});
+    m.def("cef_execute_javascript", [](const std::string&) {});
 #endif
 
     dauntless::audio::register_python_bindings(m);

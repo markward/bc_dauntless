@@ -180,6 +180,13 @@ void reload() {
     if (g_client && g_client->browser()) g_client->browser()->Reload();
 }
 
+void execute_javascript(const std::string& script) {
+    if (!g_client || !g_client->browser()) return;
+    auto frame = g_client->browser()->GetMainFrame();
+    if (!frame) return;
+    frame->ExecuteJavaScript(script, frame->GetURL(), 0);
+}
+
 void shutdown() {
     if (!g_initialized) return;
     g_composite.reset();  // releases GL handles while GL context is alive

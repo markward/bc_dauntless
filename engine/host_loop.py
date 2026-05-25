@@ -996,7 +996,7 @@ class _ViewModeController:
     BRIDGE   = 1
 
     def __init__(self):
-        self._mode = self.EXTERIOR
+        self._mode = self.BRIDGE
 
     @property
     def is_exterior(self) -> bool: return self._mode == self.EXTERIOR
@@ -1009,6 +1009,32 @@ class _ViewModeController:
     def apply(self, h) -> None:
         """Poll space-pressed and toggle on edge."""
         if h.key_pressed(h.keys.KEY_SPACE):
+            self.toggle()
+
+
+class _PauseMenuController:
+    """ESC-toggled pause-menu overlay.
+
+    Edge-triggered on KEY_ESCAPE. Owns the single boolean that the host
+    loop reads to decide whether to advance the simulation this tick —
+    see the tick body in host_loop.run(). When open, the world keeps
+    rendering (frozen) and the CEF overlay paints a placeholder; AI,
+    physics, weapons, combat, ship/camera input, and audio tick all
+    skip.
+    """
+
+    def __init__(self):
+        self._open = False
+
+    @property
+    def is_open(self) -> bool: return self._open
+
+    def toggle(self) -> None:
+        self._open = not self._open
+
+    def apply(self, h) -> None:
+        """Poll escape-pressed and toggle on edge."""
+        if h.key_pressed(h.keys.KEY_ESCAPE):
             self.toggle()
 
 
@@ -1037,12 +1063,32 @@ def _apply_view_mode_side_effects(view_mode: "_ViewModeController", h) -> None:
     view_mode._last_synced_is_bridge = target
 
 
-def _handle_esc_for_view_mode(view_mode: "_ViewModeController") -> None:
-    """ESC in bridge mode returns to exterior. ESC in exterior mode is a
-    no-op. The side-effect sync runs on the next tick and releases the
-    cursor / disables the bridge pass."""
-    if view_mode.is_bridge:
-        view_mode.toggle()
+def _apply_pause_menu_side_effects(pause: "_PauseMenuController",
+                                   view_mode: "_ViewModeController",
+                                   h) -> None:
+    """Mirror the pause flag into renderer state: show/hide the CEF
+    pause-menu div and unlock the cursor while paused so the player can
+    interact with the overlay. Idempotent — only fires when the state
+    has changed since the last call. `h` is the bindings module (or
+    fake) exposing cef_execute_javascript and set_cursor_locked.
+
+    On close, the view-mode sync latch is invalidated so the next
+    _apply_view_mode_side_effects call re-applies cursor lock + bridge
+    pass state from whatever view mode is current.
+    """
+    target = pause.is_open
+    last = getattr(pause, "_last_synced_is_open", None)
+    if last == target:
+        return
+    display = "'flex'" if target else "'none'"
+    h.cef_execute_javascript(
+        "document.getElementById('pause-menu').style.display = " + display + ";"
+    )
+    if target:
+        h.set_cursor_locked(False)
+    else:
+        view_mode._last_synced_is_bridge = None
+    pause._last_synced_is_open = target
 
 
 class _BridgeCamera:
@@ -1908,6 +1954,7 @@ def run(mission_name: Optional[str] = None,
         if controller.session is not None and controller.session.player is not None:
             cam_control.set_ship_radius(controller.session.player.GetRadius())
         view_mode      = _ViewModeController()
+        pause          = _PauseMenuController()
         bridge_camera  = _BridgeCamera()
         try:
             import _dauntless_host as _h
@@ -1924,102 +1971,109 @@ def run(mission_name: Optional[str] = None,
         init_audio()
         _bootstrap_firing_pipeline()
         while not r.should_close():
-            loop.tick()
+            # --- Input dispatch + modality (ESC always live; SPACE only when unpaused) ---
+            # _apply_view_mode_side_effects mirrors the SPACE flag into
+            # renderer state (bridge pass enable + cursor lock) and is
+            # idempotent — only fires when the mode changed.
+            if _h is not None:
+                pause.apply(_h)
+                _apply_pause_menu_side_effects(pause, view_mode, _h)
+                if not pause.is_open:
+                    view_mode.apply(_h)
+                    _apply_view_mode_side_effects(view_mode, _h)
 
-            had_pending_swap = controller.pending_swap is not None
-            controller._drain_pending_swap()
-            if had_pending_swap:
-                cam_control.snap()
+            # --- Sim advance (skipped while paused) ---
+            if not pause.is_open:
+                loop.tick()
+
+                had_pending_swap = controller.pending_swap is not None
+                controller._drain_pending_swap()
+                if had_pending_swap:
+                    cam_control.snap()
+            else:
+                had_pending_swap = False
+
             session = controller.session
             player = session.player if session is not None else None
             if had_pending_swap and player is not None:
                 cam_control.set_ship_radius(player.GetRadius())
 
-            # SPACE toggles bridge/exterior view modality. Polled before
-            # the F-key handlers so the modality switch happens first in
-            # the tick. _apply_view_mode_side_effects mirrors the flag
-            # into renderer state (bridge pass enable + cursor lock) and
-            # is idempotent — only fires when the mode changed.
-            if _h is not None:
-                view_mode.apply(_h)
-                _apply_view_mode_side_effects(view_mode, _h)
-            # F10: debug shield-hit on the shield surface. Real BC weapons
-            # impact the bubble at a surface point; firing at the ship
-            # center would put the hit too far inside the bubble for the
-            # distance falloff to ever exceed zero on the visible shell.
-            # Offset along the ship's forward axis by ~1.5 × the ship's
-            # GetRadius() so the hit lands near the bubble surface.
-            if (_h is not None
-                    and _h.key_pressed(_h.keys.KEY_F10)
-                    and player is not None
-                    and session is not None):
-                iid = session.ship_instances.get(player)
-                if iid is not None:
-                    from engine.shields import fire_debug_hit
-                    wp = player.GetWorldLocation()
-                    try:
-                        fwd = player.GetWorldRotation().GetRow(1)
-                        fx, fy, fz = float(fwd.x), float(fwd.y), float(fwd.z)
-                    except Exception:
-                        fx, fy, fz = 1.0, 0.0, 0.0
-                    offset = 1.0 * player.GetRadius()
-                    fire_debug_hit(_h, instance_id=iid,
-                                   world_point=(wp.x + fx * offset,
-                                                wp.y + fy * offset,
-                                                wp.z + fz * offset))
-            # F12: toggle CEF DevTools for the UI overlay.
-            if _h is not None and _h.key_pressed(_h.keys.KEY_F12):
-                _h.cef_toggle_devtools()
+            if not pause.is_open:
+                # F10: debug shield-hit on the shield surface. Real BC weapons
+                # impact the bubble at a surface point; firing at the ship
+                # center would put the hit too far inside the bubble for the
+                # distance falloff to ever exceed zero on the visible shell.
+                # Offset along the ship's forward axis by ~1.5 × the ship's
+                # GetRadius() so the hit lands near the bubble surface.
+                if (_h is not None
+                        and _h.key_pressed(_h.keys.KEY_F10)
+                        and player is not None
+                        and session is not None):
+                    iid = session.ship_instances.get(player)
+                    if iid is not None:
+                        from engine.shields import fire_debug_hit
+                        wp = player.GetWorldLocation()
+                        try:
+                            fwd = player.GetWorldRotation().GetRow(1)
+                            fx, fy, fz = float(fwd.x), float(fwd.y), float(fwd.z)
+                        except Exception:
+                            fx, fy, fz = 1.0, 0.0, 0.0
+                        offset = 1.0 * player.GetRadius()
+                        fire_debug_hit(_h, instance_id=iid,
+                                       world_point=(wp.x + fx * offset,
+                                                    wp.y + fy * offset,
+                                                    wp.z + fz * offset))
+                # F12: toggle CEF DevTools for the UI overlay.
+                if _h is not None and _h.key_pressed(_h.keys.KEY_F12):
+                    _h.cef_toggle_devtools()
 
-            # Cmd+R / Ctrl+R: hot-reload the CEF overlay's HTML.
-            if _h is not None and _h.key_pressed(_h.keys.KEY_R):
+                # Cmd+R / Ctrl+R: hot-reload the CEF overlay's HTML.
                 # Reload only when Cmd (macOS) or Ctrl (Linux/Windows) is held;
                 # bare R is reverse-thrust and must not be intercepted.
-                _cmd_held = _h.key_state(_h.keys.KEY_LEFT_SUPER) if hasattr(_h.keys, "KEY_LEFT_SUPER") else False
-                _ctrl_held = _h.key_state(_h.keys.KEY_LEFT_CONTROL) if hasattr(_h.keys, "KEY_LEFT_CONTROL") else False
-                if _cmd_held or _ctrl_held:
-                    _h.cef_reload()
+                if _h is not None and _h.key_pressed(_h.keys.KEY_R):
+                    _cmd_held = _h.key_state(_h.keys.KEY_LEFT_SUPER) if hasattr(_h.keys, "KEY_LEFT_SUPER") else False
+                    _ctrl_held = _h.key_state(_h.keys.KEY_LEFT_CONTROL) if hasattr(_h.keys, "KEY_LEFT_CONTROL") else False
+                    if _cmd_held or _ctrl_held:
+                        _h.cef_reload()
 
-            if _h is not None and _h.key_pressed(_h.keys.KEY_ESCAPE):
-                _handle_esc_for_view_mode(view_mode)
+                # Apply keyboard input to the player ship's transform and to the
+                # orbit camera. Scroll delta is consumed once per tick; old
+                # bindings without the binding return 0.0 via the fallback.
+                scroll_y = _consume_scroll() if _consume_scroll is not None else 0.0
 
-            # Apply keyboard input to the player ship's transform and to the
-            # orbit camera. Scroll delta is consumed once per tick; old
-            # bindings without the binding return 0.0 via the fallback.
-            scroll_y = _consume_scroll() if _consume_scroll is not None else 0.0
+                if player is not None and _h is not None:
+                    # Alert keys (Shift+1/2/3) run before the throttle handler;
+                    # _PlayerControl.apply checks _shift_held() to skip digit
+                    # throttling on the same press.
+                    _apply_alert_keys(_h, player)
+                    _apply_input(view_mode, player_control, cam_control,
+                                 player=player, dt=TICK_DT, h=_h,
+                                 scroll_y=scroll_y)
 
-            if player is not None and _h is not None:
-                # Alert keys (Shift+1/2/3) run before the throttle handler;
-                # _PlayerControl.apply checks _shift_held() to skip digit
-                # throttling on the same press.
-                _apply_alert_keys(_h, player)
-                _apply_input(view_mode, player_control, cam_control,
-                             player=player, dt=TICK_DT, h=_h,
-                             scroll_y=scroll_y)
+                # Forward mouse button edges into the input manager (fire
+                # events route via g_kKeyboardBinding → TCW handlers).
+                _poll_mouse_buttons(_h)
 
-            # Forward mouse button edges into the input manager (fire
-            # events route via g_kKeyboardBinding → TCW handlers).
-            _poll_mouse_buttons(_h)
+                # Advance weapon charge / reload for every ship in every
+                # active set.  Runs after AI/physics (approximate — the host
+                # loop is single-threaded and Python AI runs in the gameloop
+                # tick above) so emitters are ready when AI fire calls land.
+                _advance_weapons(_all_ships_for_tick(), TICK_DT)
+                _advance_combat(
+                    _all_ships_for_tick(), TICK_DT, host=_h,
+                    ship_instances=(session.ship_instances if session is not None else None),
+                )
 
-            # Advance weapon charge / reload for every ship in every
-            # active set.  Runs after AI/physics (approximate — the host
-            # loop is single-threaded and Python AI runs in the gameloop
-            # tick above) so emitters are ready when AI fire calls land.
-            _advance_weapons(_all_ships_for_tick(), TICK_DT)
-            _advance_combat(
-                _all_ships_for_tick(), TICK_DT, host=_h,
-                ship_instances=(session.ship_instances if session is not None else None),
-            )
+                # Sync transforms for known instances.
+                if session is not None:
+                    for ship, iid in session.ship_instances.items():
+                        ns = session.ship_natural_scale.get(ship, 1.0)
+                        r.set_world_transform(iid, _ship_world_matrix(ship, ns))
+                    for planet, iid in session.planet_instances.items():
+                        ns = session.planet_natural_scale.get(planet, 1.0)
+                        r.set_world_transform(iid, _astro_world_matrix(planet, ns))
 
-            # Sync transforms for known instances.
-            if session is not None:
-                for ship, iid in session.ship_instances.items():
-                    ns = session.ship_natural_scale.get(ship, 1.0)
-                    r.set_world_transform(iid, _ship_world_matrix(ship, ns))
-                for planet, iid in session.planet_instances.items():
-                    ns = session.planet_natural_scale.get(planet, 1.0)
-                    r.set_world_transform(iid, _astro_world_matrix(planet, ns))
-
+            # --- Render (always runs, including while paused) ---
             # Camera: orbit + zoom around the player ship (or origin fallback).
             if fixed_camera:
                 fixed_radius = player.GetRadius() if player is not None else 1.0
@@ -2032,7 +2086,12 @@ def run(mission_name: Optional[str] = None,
                     player=player, dt=TICK_DT)
                 if view_mode.is_bridge:
                     mouse_dx, mouse_dy = _h.consume_mouse_delta() if _h else (0.0, 0.0)
-                    bridge_camera.apply(mouse_dx, mouse_dy)
+                    # While paused we still drain the accumulated mouse
+                    # delta (so it doesn't snap the look on resume) but
+                    # skip the yaw/pitch advance so the bridge camera
+                    # stays frozen alongside the rest of the world.
+                    if not pause.is_open:
+                        bridge_camera.apply(mouse_dx, mouse_dy)
                     b_eye, b_target, b_up = bridge_camera.compute_camera()
                     r.set_bridge_camera(
                         eye=b_eye, target=b_target, up=b_up,
@@ -2047,22 +2106,25 @@ def run(mission_name: Optional[str] = None,
             r.set_camera(eye=eye, target=target, up=up_vec,
                          fov_y_rad=1.0472, near=1.0, far=5000.0)
 
-            # Compute audio listener forward from (eye → target).
-            _fx0 = target[0] - eye[0]
-            _fy0 = target[1] - eye[1]
-            _fz0 = target[2] - eye[2]
-            _flen = _math.sqrt(_fx0*_fx0 + _fy0*_fy0 + _fz0*_fz0) or 1.0
-            tick_audio(
-                camera_position=eye,
-                camera_forward=(_fx0/_flen, _fy0/_flen, _fz0/_flen),
-                camera_up=up_vec,
-                dt=TICK_DT,
-                player=player,
-            )
+            # Audio listener (skipped while paused — silence the rumble).
+            if not pause.is_open:
+                # Compute audio listener forward from (eye → target).
+                _fx0 = target[0] - eye[0]
+                _fy0 = target[1] - eye[1]
+                _fz0 = target[2] - eye[2]
+                _flen = _math.sqrt(_fx0*_fx0 + _fy0*_fy0 + _fz0*_fz0) or 1.0
+                tick_audio(
+                    camera_position=eye,
+                    camera_forward=(_fx0/_flen, _fy0/_flen, _fz0/_flen),
+                    camera_up=up_vec,
+                    dt=TICK_DT,
+                    player=player,
+                )
 
             active_set = _resolve_active_set(player)
 
-            _update_ui_for_tick(player, view_mode, session, active_set)
+            if not pause.is_open:
+                _update_ui_for_tick(player, view_mode, session, active_set)
 
             ambient, directionals = _aggregate_lights(active_set)
             r.set_lighting(ambient, directionals)
