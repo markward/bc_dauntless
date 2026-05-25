@@ -2086,7 +2086,12 @@ def run(mission_name: Optional[str] = None,
                     player=player, dt=TICK_DT)
                 if view_mode.is_bridge:
                     mouse_dx, mouse_dy = _h.consume_mouse_delta() if _h else (0.0, 0.0)
-                    bridge_camera.apply(mouse_dx, mouse_dy)
+                    # While paused we still drain the accumulated mouse
+                    # delta (so it doesn't snap the look on resume) but
+                    # skip the yaw/pitch advance so the bridge camera
+                    # stays frozen alongside the rest of the world.
+                    if not pause.is_open:
+                        bridge_camera.apply(mouse_dx, mouse_dy)
                     b_eye, b_target, b_up = bridge_camera.compute_camera()
                     r.set_bridge_camera(
                         eye=b_eye, target=b_target, up=b_up,
