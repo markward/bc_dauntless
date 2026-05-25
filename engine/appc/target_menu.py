@@ -102,9 +102,22 @@ class STTargetMenu(STTopLevelMenu):
         self._persistent_target_name = None
 
     def SetPersistentTarget(self, name) -> None:
+        """Engine-internal — NOT in the SDK SWIG surface.
+
+        The original BC engine sets the persistent-target hint
+        automatically when the player manually selects a target.
+        We expose it as a Python method so our engine layer (which
+        also handles click events) can drive it the same way. SDK
+        scripts only ever call ClearPersistentTarget.
+        """
         self._persistent_target_name = str(name) if name else None
 
     def GetPersistentTarget(self) -> "str | None":
+        """Engine-internal — NOT in the SDK SWIG surface.
+
+        Read by the save/load path so a reloaded game can re-fire
+        ET_RESTORE_PERSISTENT_TARGET and SetTarget on the same ship.
+        """
         return self._persistent_target_name
 
 
@@ -143,6 +156,14 @@ def STSubsystemMenu_Cast(obj):
 
 
 def STComponentMenu_Cast(obj):
+    """Mirrors STMenu_Cast lenient pass-through in characters.py.
+
+    Although STComponentMenu is never invoked from SDK Python
+    scripts (engine-internal in original BC), the cast helper is
+    exported by App.py and may be hit by tooling that catches
+    every public symbol. Same three-branch semantics as
+    STSubsystemMenu_Cast.
+    """
     if isinstance(obj, STComponentMenu):
         return obj
     if obj is None:

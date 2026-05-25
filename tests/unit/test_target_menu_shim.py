@@ -1,6 +1,16 @@
 """Unit tests for the target-list SDK shim (engine/appc/target_menu.py)."""
+import pytest
+
 import App
 from engine.appc.ships import ShipClass
+
+
+@pytest.fixture(autouse=True)
+def _reset_singletons():
+    """Reset module-level singletons between tests so ordering doesn't matter."""
+    App._reset_target_menu_singleton()
+    yield
+    App._reset_target_menu_singleton()
 
 
 def test_st_subsystem_menu_records_ship_and_defaults_visible():
