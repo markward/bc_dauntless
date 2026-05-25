@@ -187,6 +187,39 @@ void execute_javascript(const std::string& script) {
     frame->ExecuteJavaScript(script, frame->GetURL(), 0);
 }
 
+void send_mouse_move(int x, int y) {
+    if (!g_client || !g_client->browser()) return;
+    auto host = g_client->browser()->GetHost();
+    if (!host) return;
+    CefMouseEvent ev;
+    ev.x = x;
+    ev.y = y;
+    ev.modifiers = 0;
+    host->SendMouseMoveEvent(ev, /*mouseLeave=*/false);
+}
+
+void send_mouse_click(int x, int y, int button, bool is_down) {
+    if (!g_client || !g_client->browser()) return;
+    auto host = g_client->browser()->GetHost();
+    if (!host) return;
+    CefMouseEvent ev;
+    ev.x = x;
+    ev.y = y;
+    ev.modifiers = 0;
+    cef_mouse_button_type_t btn = MBT_LEFT;
+    if (button == 1) btn = MBT_MIDDLE;
+    else if (button == 2) btn = MBT_RIGHT;
+    // Single click — CEF wants click_count=1 on press and on the
+    // matching release. Double-clicks would pass 2; we never generate
+    // those from Python's edge-only mouse helpers.
+    host->SendMouseClickEvent(ev, btn, /*mouseUp=*/!is_down, /*clickCount=*/1);
+}
+
+void set_event_handler(std::function<void(const std::string&)> handler) {
+    if (!g_client) return;
+    g_client->set_event_handler(std::move(handler));
+}
+
 void shutdown() {
     if (!g_initialized) return;
     g_composite.reset();  // releases GL handles while GL context is alive
