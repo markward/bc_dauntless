@@ -25,11 +25,18 @@ class _FakeKeyReader:
         return False
 
 
-def test_view_mode_starts_exterior():
+def _exterior_vm():
     from engine.host_loop import _ViewModeController
     vm = _ViewModeController()
-    assert vm.is_exterior is True
-    assert vm.is_bridge is False
+    vm.toggle()  # bridge → exterior
+    return vm
+
+
+def test_view_mode_starts_in_bridge():
+    from engine.host_loop import _ViewModeController
+    vm = _ViewModeController()
+    assert vm.is_bridge is True
+    assert vm.is_exterior is False
 
 
 def test_view_mode_toggle_on_space_pressed():
@@ -39,21 +46,21 @@ def test_view_mode_toggle_on_space_pressed():
 
     # No space → no change.
     vm.apply(reader)
-    assert vm.is_exterior is True
-
-    # Space pressed once → bridge.
-    reader.pressed_once.add(reader.keys.KEY_SPACE)
-    vm.apply(reader)
     assert vm.is_bridge is True
 
-    # No space → still bridge (edge-triggered, not held).
-    vm.apply(reader)
-    assert vm.is_bridge is True
-
-    # Space pressed again → back to exterior.
+    # Space pressed once → exterior.
     reader.pressed_once.add(reader.keys.KEY_SPACE)
     vm.apply(reader)
     assert vm.is_exterior is True
+
+    # No space → still exterior (edge-triggered, not held).
+    vm.apply(reader)
+    assert vm.is_exterior is True
+
+    # Space pressed again → back to bridge.
+    reader.pressed_once.add(reader.keys.KEY_SPACE)
+    vm.apply(reader)
+    assert vm.is_bridge is True
 
 
 class _RecordingInputs:
@@ -74,7 +81,8 @@ class _RecordingInputs:
 
 def test_apply_input_calls_both_in_exterior_mode():
     from engine.host_loop import _ViewModeController, _apply_input
-    vm = _ViewModeController()  # exterior
+    vm = _ViewModeController()
+    vm.toggle()  # bridge → exterior
     inputs = _RecordingInputs()
     reader = _FakeKeyReader()
     _apply_input(vm, inputs.player, inputs.camera,
@@ -90,7 +98,6 @@ def test_apply_input_in_bridge_keeps_player_integrating_with_no_input():
     ignored. The orbit camera is not stepped at all."""
     from engine.host_loop import _ViewModeController, _apply_input, _NO_INPUT
     vm = _ViewModeController()
-    vm.toggle()  # bridge
     inputs = _RecordingInputs()
     reader = _FakeKeyReader()
     reader.held.add(reader.keys.KEY_SPACE)  # held key must not reach player
@@ -112,7 +119,6 @@ def test_apply_input_preserves_orbit_state_across_bridge_toggle():
     saved = (cc.orbit_yaw_rad, cc.orbit_pitch_rad, cc.distance)
 
     vm = _ViewModeController()
-    vm.toggle()  # bridge
     reader = _FakeKeyReader()
 
     # Drive a "tick" with a non-zero scroll delta. In exterior mode that
@@ -152,7 +158,6 @@ def test_apply_input_in_bridge_keeps_ship_moving_under_real_player_control():
     ship = _FakeShip()
 
     vm = _ViewModeController()
-    vm.toggle()  # bridge
 
     class _NoopCam:
         def apply(self, *a, **k): pass
@@ -188,8 +193,8 @@ class _RecordingRenderer:
 def test_toggle_to_bridge_enables_pass_and_locks_cursor():
     """Toggling exterior → bridge fires bridge_pass_set_enabled(True)
     and set_cursor_locked(True) exactly once each."""
-    from engine.host_loop import _ViewModeController, _apply_view_mode_side_effects
-    vm = _ViewModeController()  # exterior
+    from engine.host_loop import _apply_view_mode_side_effects
+    vm = _exterior_vm()
     rr = _RecordingRenderer()
     vm.toggle()  # exterior → bridge
     _apply_view_mode_side_effects(vm, rr)
@@ -198,8 +203,8 @@ def test_toggle_to_bridge_enables_pass_and_locks_cursor():
 
 
 def test_toggle_to_exterior_disables_pass_and_releases_cursor():
-    from engine.host_loop import _ViewModeController, _apply_view_mode_side_effects
-    vm = _ViewModeController()
+    from engine.host_loop import _apply_view_mode_side_effects
+    vm = _exterior_vm()
     vm.toggle()  # bridge
     rr = _RecordingRenderer()
     _apply_view_mode_side_effects(vm, rr)  # one true call
@@ -227,10 +232,9 @@ def test_apply_view_mode_side_effects_idempotent_within_a_mode():
 def test_esc_in_bridge_mode_returns_to_exterior():
     """ESC handler: when in bridge mode, ESC toggles back to exterior
     and the side-effect sync releases the cursor + disables the pass."""
-    from engine.host_loop import (_ViewModeController,
-                                  _handle_esc_for_view_mode,
+    from engine.host_loop import (_handle_esc_for_view_mode,
                                   _apply_view_mode_side_effects)
-    vm = _ViewModeController()
+    vm = _exterior_vm()
     vm.toggle()  # bridge
     rr = _RecordingRenderer()
     _apply_view_mode_side_effects(vm, rr)  # initial sync to bridge
@@ -242,8 +246,8 @@ def test_esc_in_bridge_mode_returns_to_exterior():
 
 
 def test_esc_in_exterior_mode_is_a_noop():
-    from engine.host_loop import _ViewModeController, _handle_esc_for_view_mode
-    vm = _ViewModeController()  # exterior
+    from engine.host_loop import _handle_esc_for_view_mode
+    vm = _exterior_vm()
     _handle_esc_for_view_mode(vm)
     assert vm.is_exterior is True
 
@@ -265,7 +269,6 @@ def test_bridge_camera_anchors_at_ship_origin_looking_forward():
     player = _FakePlayer(loc, rot)
 
     vm = _ViewModeController()
-    vm.toggle()  # bridge
 
     eye, target, up_vec = _compute_camera(
         vm, cam_control=None, player=player, dt=1.0/60)
@@ -292,7 +295,7 @@ def test_exterior_camera_delegates_to_cam_control():
 
     cam = _RecordingCam()
     eye, target, up_vec = _compute_camera(
-        _ViewModeController(), cam_control=cam,
+        _exterior_vm(), cam_control=cam,
         player=_FakePlayer(), dt=1.0/60)
     assert len(cam.calls) == 1
     assert (eye, target, up_vec) == ((1, 2, 3), (4, 5, 6), (0, 0, 1))
@@ -321,7 +324,7 @@ def test_exterior_camera_lock_bias_zero_aims_at_target():
 
     tgt = _Target()
     eye, target, up_vec = _compute_camera(
-        _ViewModeController(), cam_control=_StubCam(),
+        _exterior_vm(), cam_control=_StubCam(),
         player=_FakePlayer(tgt), dt=1.0/60)
     # With bias=0 the look-at sits directly on the target.
     assert target == (50.0, 60.0, 70.0)
@@ -368,7 +371,7 @@ def test_exterior_camera_lock_shifts_look_at_down_along_image_up():
             return ((0.0, -150.0, 50.0), (0.0, 0.0, 20.0), (0.0, 0.0, 1.0))
 
     eye, target, _ = _compute_camera(
-        _ViewModeController(), cam_control=_StubCam(),
+        _exterior_vm(), cam_control=_StubCam(),
         player=_FakePlayer(), dt=1.0/60)
     # Target lock relocates the eye onto the line target→ship extended;
     # compute the bias shift from the relocated eye, not the stub's.
@@ -400,7 +403,7 @@ def test_exterior_camera_lock_disabled_keeps_chase_target():
             return ((1, 2, 3), (4, 5, 6), (0, 0, 1))
 
     eye, target, up_vec = _compute_camera(
-        _ViewModeController(), cam_control=_StubCam(),
+        _exterior_vm(), cam_control=_StubCam(),
         player=_FakePlayer(), dt=1.0/60)
     assert (eye, target, up_vec) == ((1, 2, 3), (4, 5, 6), (0, 0, 1))
 
@@ -420,7 +423,7 @@ def test_exterior_camera_unchanged_when_no_target():
             return ((1, 2, 3), (4, 5, 6), (0, 0, 1))
 
     eye, target, up_vec = _compute_camera(
-        _ViewModeController(), cam_control=_StubCam(),
+        _exterior_vm(), cam_control=_StubCam(),
         player=_FakePlayer(), dt=1.0/60)
     assert (eye, target, up_vec) == ((1, 2, 3), (4, 5, 6), (0, 0, 1))
 
@@ -457,7 +460,7 @@ def test_target_lock_places_ship_between_eye_and_target_when_target_behind_ship(
             return ((0.0, -150.0, 50.0), (0.0, 0.0, 20.0), (0.0, 0.0, 1.0))
 
     eye, target, _ = _compute_camera(
-        _ViewModeController(), cam_control=_StubCam(),
+        _exterior_vm(), cam_control=_StubCam(),
         player=_FakePlayer(), dt=1.0/60)
 
     # Ship at origin must project onto the eye→target segment with
@@ -502,7 +505,7 @@ def test_target_lock_eye_trajectory_is_smooth_as_target_orbits():
 
     player = _FakePlayer()
     cam = _StubCam()
-    vm = _ViewModeController()
+    vm = _exterior_vm()
 
     # Sample target position at small angular steps around the ship in
     # the XY plane and verify successive eye positions are close.
@@ -556,7 +559,7 @@ def test_target_lock_places_eye_on_target_ship_line_extended():
 
     player = _FakePlayer()
     cam = _StubCam()
-    vm = _ViewModeController()
+    vm = _exterior_vm()
     chase_dist = math.sqrt(75.0**2 + 22.5**2)
 
     for tx, ty, tz in [(0.0, 1000.0, 0.0),     # target in front
@@ -614,7 +617,7 @@ def test_target_lock_z_lift_raises_eye_in_world_z():
 
     cam = _StubCam()
     player = _FakePlayer()
-    vm = _ViewModeController()
+    vm = _exterior_vm()
 
     cam.target_lock_z_lift = 0.0
     eye_no_lift, _, _ = _compute_camera(vm, cam_control=cam, player=player, dt=1.0/60)
@@ -649,7 +652,7 @@ def test_target_lock_keeps_eye_behind_ship_when_target_in_front():
             return ((0.0, -150.0, 50.0), (0.0, 0.0, 20.0), (0.0, 0.0, 1.0))
 
     eye, target, _ = _compute_camera(
-        _ViewModeController(), cam_control=_StubCam(),
+        _exterior_vm(), cam_control=_StubCam(),
         player=_FakePlayer(), dt=1.0/60)
 
     # Eye should remain behind ship (negative Y), target-side component

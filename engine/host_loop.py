@@ -996,7 +996,7 @@ class _ViewModeController:
     BRIDGE   = 1
 
     def __init__(self):
-        self._mode = self.EXTERIOR
+        self._mode = self.BRIDGE
 
     @property
     def is_exterior(self) -> bool: return self._mode == self.EXTERIOR
