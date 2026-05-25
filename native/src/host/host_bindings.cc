@@ -159,6 +159,7 @@ void init(int width, int height, const std::string& title) {
     g_loaded_models.clear();
     g_lighting = renderer::Lighting{};
     g_bridge_lighting = renderer::Lighting{};
+    g_bridge_pass_enabled = false;
     g_backdrops.clear();
     g_backdrop_pass = std::make_unique<renderer::BackdropPass>();
     g_suns.clear();
@@ -208,6 +209,7 @@ void shutdown() {
     // from the previous session.
     g_lighting = renderer::Lighting{};
     g_bridge_lighting = renderer::Lighting{};
+    g_bridge_pass_enabled = false;
 }
 
 bool should_close() {
