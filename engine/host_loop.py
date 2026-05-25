@@ -1012,6 +1012,32 @@ class _ViewModeController:
             self.toggle()
 
 
+class _PauseMenuController:
+    """ESC-toggled pause-menu overlay.
+
+    Edge-triggered on KEY_ESCAPE. Owns the single boolean that the host
+    loop reads to decide whether to advance the simulation this tick —
+    see the tick body in host_loop.run(). When open, the world keeps
+    rendering (frozen) and the CEF overlay paints a placeholder; AI,
+    physics, weapons, combat, ship/camera input, and audio tick all
+    skip.
+    """
+
+    def __init__(self):
+        self._open = False
+
+    @property
+    def is_open(self) -> bool: return self._open
+
+    def toggle(self) -> None:
+        self._open = not self._open
+
+    def apply(self, h) -> None:
+        """Poll escape-pressed and toggle on edge."""
+        if h.key_pressed(h.keys.KEY_ESCAPE):
+            self.toggle()
+
+
 def _apply_view_mode_side_effects(view_mode: "_ViewModeController", h) -> None:
     """Mirror the view-mode flag into renderer-side state. Idempotent —
     only fires when the mode has changed since the last call. `h` is
