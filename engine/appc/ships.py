@@ -791,10 +791,36 @@ class ShipClass(DamageableObject):
 
         String inputs resolve via the containing set's name table; None or
         unresolvable strings null the target out.
+
+        Fallback: when no containing set is available (common in headless
+        tests and headless Phase-1 missions that build ships outside a
+        SetClass), resolve against the active STTargetMenu's ship entries.
+        This mirrors CycleTarget's SetTarget(name) usage in
+        sdk/.../TacticalInterfaceHandlers.py:709,733 which resolves against
+        whatever object pool the target-menu rows were built from.
         """
         if isinstance(target, str):
             pSet = self.GetContainingSet()
-            self._target = pSet.GetObject(target) if pSet is not None else None
+            if pSet is not None:
+                self._target = pSet.GetObject(target)
+            else:
+                # No containing set — fall back to the target menu's ship rows.
+                resolved = None
+                try:
+                    from engine.appc.target_menu import (
+                        STTargetMenu_GetTargetMenu, STSubsystemMenu,
+                    )
+                    menu = STTargetMenu_GetTargetMenu()
+                    if menu is not None:
+                        for child in menu._children:
+                            if (isinstance(child, STSubsystemMenu)
+                                    and child.GetShip() is not None
+                                    and child.GetShip().GetName() == target):
+                                resolved = child.GetShip()
+                                break
+                except Exception:
+                    pass
+                self._target = resolved
         else:
             self._target = target
     def GetTargetSubsystem(self):                 return self._target_subsystem

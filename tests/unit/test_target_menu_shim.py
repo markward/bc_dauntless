@@ -222,3 +222,56 @@ def test_rebuild_ship_menu_leaves_subsystem_children_empty_in_phase1():
     # Should exist but have no subsystem rows yet.
     assert row is not None
     assert len(row._children) == 0
+
+
+# ── SetTarget fallback via target menu ──────────────────────────────────────
+
+def test_set_target_by_name_resolves_via_target_menu_when_no_containing_set():
+    """ShipClass.SetTarget(name) must resolve against the active target menu
+    when the caller has no containing set.
+
+    Gap fixed in engine/appc/ships.py: CycleTarget (sdk/TacticalInterfaceHandlers.py:709,733)
+    passes GetShip().GetName() to SetTarget; if the player ship is not in a
+    SetClass the original code returned None. The fix adds a fallback scan of
+    STTargetMenu_GetTargetMenu() rows."""
+    target_menu = App.STTargetMenu_CreateW("Targets")
+    ship_a = ShipClass(); ship_a.SetName("Alpha")
+    ship_b = ShipClass(); ship_b.SetName("Bravo")
+    target_menu.AddChild(App.STSubsystemMenu(ship_a, "Alpha"))
+    target_menu.AddChild(App.STSubsystemMenu(ship_b, "Bravo"))
+
+    player = ShipClass(); player.SetName("Player")
+    # Deliberately NOT added to any set.
+    assert player.GetContainingSet() is None
+
+    player.SetTarget("Alpha")
+    assert player.GetTarget() is ship_a
+
+    player.SetTarget("Bravo")
+    assert player.GetTarget() is ship_b
+
+    player.SetTarget("NoSuchShip")
+    assert player.GetTarget() is None
+
+
+def test_set_target_by_name_prefers_containing_set_over_target_menu():
+    """When the player IS in a set, resolution uses the set (original path);
+    the target-menu fallback must NOT run even when a same-named ship is
+    in the menu but a different object is in the set."""
+    from engine.appc.sets import SetClass
+
+    target_menu = App.STTargetMenu_CreateW("Targets")
+    menu_ship = ShipClass(); menu_ship.SetName("Target")
+    target_menu.AddChild(App.STSubsystemMenu(menu_ship, "Target"))
+
+    # A different object with the same name lives in a set.
+    pSet = SetClass(); pSet.SetName("battle")
+    set_ship = ShipClass()
+    pSet.AddObjectToSet(set_ship, "Target")  # SetName + _containing_set set here
+
+    player = ShipClass(); player.SetName("Player")
+    pSet.AddObjectToSet(player, "Player")
+
+    player.SetTarget("Target")
+    assert player.GetTarget() is set_ship
+    assert player.GetTarget() is not menu_ship
