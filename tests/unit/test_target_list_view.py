@@ -134,3 +134,73 @@ def test_view_payload_includes_subsystems_and_health():
     finally:
         from engine.core.game import _set_current_game
         _set_current_game(None)
+
+
+def test_dispatch_event_subsystem_click_sets_both_target_and_subsystem():
+    from engine.ui.target_list_view import TargetListView
+    from engine.appc.ships import ShipClass_Create
+
+    App._reset_target_menu_singleton()
+    target_menu = App.STTargetMenu_CreateW("Targets")
+    game, player, mission = _setup_game_with_player()
+    try:
+        ship = ShipClass_Create("Galaxy")
+        ship.SetName("USS Galaxy")
+        target_menu.RebuildShipMenu(ship)
+        bridge = App.g_kSetManager.GetSet("bridge")
+        if bridge is None:
+            from engine.appc.sets import SetClass
+            bridge = SetClass()
+            App.g_kSetManager.AddSet(bridge, "bridge")
+        bridge.AddObjectToSet(ship, "USS Galaxy")
+        # Find a real subsystem name to click.
+        it = ship.StartGetSubsystemMatch(App.CT_SHIP_SUBSYSTEM)
+        sub = ship.GetNextSubsystemMatch(it)
+        ship.EndGetSubsystemMatch(it)
+        assert sub is not None
+        sub_name = sub.GetName()
+
+        view = TargetListView()
+        handled = view.dispatch_event(f"USS Galaxy/{sub_name}")
+
+        assert handled is True
+        assert player.GetTarget() is ship
+        assert player.GetTargetSubsystem() is sub
+    finally:
+        from engine.core.game import _set_current_game
+        _set_current_game(None)
+
+
+def test_dispatch_event_ship_only_click_clears_subsystem():
+    """Clicking the ship row (no subsystem) sets the target ship and
+    clears any previously selected subsystem."""
+    from engine.ui.target_list_view import TargetListView
+    from engine.appc.ships import ShipClass_Create
+
+    App._reset_target_menu_singleton()
+    target_menu = App.STTargetMenu_CreateW("Targets")
+    game, player, mission = _setup_game_with_player()
+    try:
+        ship = ShipClass_Create("Galaxy")
+        ship.SetName("USS Galaxy")
+        target_menu.RebuildShipMenu(ship)
+        bridge = App.g_kSetManager.GetSet("bridge")
+        if bridge is None:
+            from engine.appc.sets import SetClass
+            bridge = SetClass()
+            App.g_kSetManager.AddSet(bridge, "bridge")
+        bridge.AddObjectToSet(ship, "USS Galaxy")
+        it = ship.StartGetSubsystemMatch(App.CT_SHIP_SUBSYSTEM)
+        sub = ship.GetNextSubsystemMatch(it)
+        ship.EndGetSubsystemMatch(it)
+        player.SetTargetSubsystem(sub)
+        assert player.GetTargetSubsystem() is sub
+
+        view = TargetListView()
+        view.dispatch_event("USS Galaxy")
+
+        assert player.GetTarget() is ship
+        assert player.GetTargetSubsystem() is None
+    finally:
+        from engine.core.game import _set_current_game
+        _set_current_game(None)

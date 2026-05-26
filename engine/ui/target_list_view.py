@@ -42,6 +42,23 @@ def _query_hull_percentage(ship) -> int:
         return 100
 
 
+def _resolve_subsystem_by_name(ship, name: str):
+    """Walk the ship's subsystems and return the first whose GetName()
+    matches. Returns None if no match — caller treats that as "clear
+    subsystem lock"."""
+    import App
+    it = ship.StartGetSubsystemMatch(App.CT_SHIP_SUBSYSTEM)
+    try:
+        sub = ship.GetNextSubsystemMatch(it)
+        while sub is not None:
+            if hasattr(sub, "GetName") and sub.GetName() == name:
+                return sub
+            sub = ship.GetNextSubsystemMatch(it)
+    finally:
+        ship.EndGetSubsystemMatch(it)
+    return None
+
+
 def _query_shield_percentage(ship) -> int:
     """Return shield strength as an integer percentage 0-100."""
     if ship is None or not hasattr(ship, "GetShields"):
@@ -132,7 +149,12 @@ class TargetListView(Panel):
         return "setTargetList(" + json.dumps(payload) + ");"
 
     def dispatch_event(self, action: str) -> bool:
-        """Action is the ship name (verbatim from the JS row data attr)."""
+        """Action format: ``<ship>`` or ``<ship>/<subsystem>``.
+
+        Ship-only clicks set the target and clear any previously-selected
+        subsystem. Subsystem clicks set both the target and the
+        subsystem in one go.
+        """
         from engine.core.game import Game_GetCurrentGame
         game = Game_GetCurrentGame()
         if game is None:
@@ -140,7 +162,26 @@ class TargetListView(Panel):
         player = game.GetPlayer()
         if player is None:
             return False
-        player.SetTarget(action)
+
+        if "/" in action:
+            ship_name, subsystem_name = action.split("/", 1)
+        else:
+            ship_name, subsystem_name = action, None
+
+        player.SetTarget(ship_name)
+
+        if subsystem_name is None:
+            # Ship-only click — clear any subsystem lock.
+            player.SetTargetSubsystem(None)
+            return True
+
+        # Subsystem click — find the subsystem instance on the now-targeted
+        # ship and lock it.
+        target_ship = player.GetTarget()
+        if target_ship is None:
+            return True  # ship resolution failed, but the SetTarget call already happened
+        sub = _resolve_subsystem_by_name(target_ship, subsystem_name)
+        player.SetTargetSubsystem(sub)
         return True
 
     def invalidate(self) -> None:
