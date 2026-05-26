@@ -22,7 +22,14 @@ int dispatch_subprocess(int argc, char* argv[]);
 // runs CefInitialize, and creates an OSR browser pointed at html_path
 // (file:// URL synthesised from this absolute path). view_width/height
 // determine the OSR viewport; resize handling is a follow-up task.
-bool initialize(int view_width, int view_height, const std::string& html_path);
+// device_scale_factor — DPR for the GL framebuffer the composite pass
+// writes to (1.0 on non-Retina; 2.0 on Retina). Pass framebuffer_w /
+// window_w from the host. CEF renders the OSR bitmap at
+// view_width*dsf × view_height*dsf so the composite blits 1:1 to a
+// high-DPI framebuffer without bilinear upscaling.
+bool initialize(int view_width, int view_height,
+                const std::string& html_path,
+                float device_scale_factor);
 
 // Call once per frame after the 3D scene renders.
 //   pump()      runs CEF's message loop (may invoke OnPaint synchronously);
@@ -56,6 +63,12 @@ void send_mouse_click(int x, int y, int button, bool is_down);
 // value, no response payload back to JS. Pass an empty function to
 // disable.
 void set_event_handler(std::function<void(const std::string&)> handler);
+
+// Load-end handler injection. Invoked once when the main frame finishes
+// loading hello.html (or after Cmd+R reload). Used by the panel layer
+// to invalidate per-tick snapshot caches so the first post-load tick
+// re-emits state. Pass an empty function to disable.
+void set_load_end_handler(std::function<void()> handler);
 
 // Called before window/GL teardown. Releases the browser and CEF.
 void shutdown();

@@ -45,6 +45,40 @@ class SetClass(TGEventHandlerObject):
         # Lens flares — populated by App.LensFlare_Create(pSet). Stored in
         # insertion order; the renderer aggregator walks this list.
         self._lens_flares: 'list["LensFlare"]' = []
+        # Subscriber list for add/remove notifications. See subscribe().
+        self._subscribers: list = []
+
+    def subscribe(self, callback) -> None:
+        """Register a callback notified on every AddObjectToSet /
+        RemoveObjectFromSet / DeleteObjectFromSet. Callback signature:
+        ``callback(event: str, obj, identifier: str)`` where event is
+        ``"added"`` or ``"removed"``.
+
+        Used by the target-menu layer to track ship comings-and-goings
+        without polling.
+        """
+        if callback not in self._subscribers:
+            self._subscribers.append(callback)
+
+    def unsubscribe(self, callback) -> None:
+        """Remove a previously-subscribed callback.
+
+        Silent if the callback isn't currently subscribed.
+        """
+        if callback in self._subscribers:
+            self._subscribers.remove(callback)
+
+    def _fire(self, event: str, obj, identifier: str) -> None:
+        # Snapshot the subscriber list so a callback that unsubscribes
+        # during dispatch doesn't disturb the iteration.
+        for cb in list(self._subscribers):
+            try:
+                cb(event, obj, identifier)
+            except Exception:
+                # One broken subscriber must not break the chain. Real
+                # production reporting could log this; for the headless
+                # shim we swallow and continue.
+                pass
 
     def __getattr__(self, name: str):
         """Return a chainable stub for renderer-specific methods not needed in Phase 1
@@ -75,15 +109,22 @@ class SetClass(TGEventHandlerObject):
         from engine.appc import ship_lifecycle
         if isinstance(obj, ShipClass):
             ship_lifecycle.publish_added(obj)
+        self._fire("added", obj, identifier)
         return True
 
     def GetObject(self, name: str):
         return self._objects.get(name)
 
     def RemoveObjectFromSet(self, name: str):
+        obj = self._objects.get(name)
+        if obj is not None:
+            self._fire("removed", obj, name)
         return self._objects.pop(name, None)
 
     def DeleteObjectFromSet(self, name: str) -> None:
+        obj = self._objects.get(name)
+        if obj is not None:
+            self._fire("removed", obj, name)
         self._objects.pop(name, None)
 
     def IsLocationEmptyTG(self, point, radius: float, flag: int = 1) -> int:

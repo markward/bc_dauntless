@@ -1239,6 +1239,21 @@ def reset_sdk_globals() -> None:
     if hasattr(App.g_kEventManager, "_method_handlers"):
         App.g_kEventManager._method_handlers.clear()
     register_input_handlers(App.g_kEventManager)
+    # Unhook the target-menu subscriber from the live bridge set so a
+    # mission swap doesn't leave a dangling subscription on a recreated
+    # set. unwire_from_bridge_set is idempotent — safe to call even when
+    # no subscription is active.
+    try:
+        import App as _App
+        from engine.appc.target_menu import unwire_from_bridge_set
+        _bridge = _App.g_kSetManager.GetSet("bridge")
+        if _bridge is not None:
+            unwire_from_bridge_set(_bridge)
+    except Exception:
+        # Defensive: subscriber-cleanup failure must not block the rest
+        # of the reset. Matches the broader reset_sdk_globals discipline
+        # (each step is independently best-effort).
+        pass
     App.g_kSetManager._sets.clear()
     _waypoint_registry.clear()
     App._next_event_type_id = 1200
@@ -1880,6 +1895,35 @@ def _update_ui_for_tick(player, view_mode, session, active_set) -> None:
     return
 
 
+def _wire_target_menu_to_player_set(controller) -> None:
+    """Subscribe the target-menu singleton to the player's containing
+    spatial set, then bulk-rebuild rows for ships already there.
+
+    Idempotent. Called once at startup AND from controller.post_load_hook
+    after every mission swap (reset_sdk_globals clears the singleton and
+    unwires the previous subscription, so a fresh wire is required).
+
+    The player's _containing_set is the spatial set the mission added
+    them to (e.g. "Biranu1") — NOT the "bridge" set, which in this
+    codebase holds the bridge-interior ObjectClass and is enumerated
+    by the renderer's bridge pass.
+    """
+    import App as _App
+    if _App.STTargetMenu_GetTargetMenu() is None:
+        _App.STTargetMenu_CreateW("Targets")
+    spatial_set = None
+    if controller.session is not None and controller.session.player is not None:
+        spatial_set = getattr(controller.session.player, "_containing_set", None)
+    if spatial_set is None:
+        return
+    from engine.appc.target_menu import wire_to_bridge_set
+    wire_to_bridge_set(spatial_set)
+    menu = _App.STTargetMenu_GetTargetMenu()
+    if menu is not None:
+        menu.RebuildShipMenus(spatial_set)
+        menu.ResetAffiliationColors()
+
+
 def run(mission_name: Optional[str] = None,
         max_ticks: Optional[int] = None) -> int:
     """Boot the renderer, init the named mission, run until the window closes
@@ -1915,7 +1959,21 @@ def run(mission_name: Optional[str] = None,
     # pixel space on Retina.
     _CEF_VIEW_W, _CEF_VIEW_H = 1280, 720
     _cef_html = _project_root_for_cef() / "native" / "assets" / "ui-cef" / "hello.html"
-    if not r.cef_initialize(_CEF_VIEW_W, _CEF_VIEW_H, str(_cef_html)):
+    # Detect the framebuffer's device-pixel ratio so CEF renders at
+    # high-DPI density on Retina. Without this, the composite pass
+    # bilinear-upscales a 1280x720 bitmap to the 2560x1440 framebuffer
+    # and text reads as soft/blurry.
+    _cef_dsf = 1.0
+    try:
+        import _dauntless_host as _h_init
+        _fb_w, _fb_h = _h_init.framebuffer_size()
+        _win_w, _win_h = _h_init.window_size()
+        if _win_w > 0:
+            _cef_dsf = float(_fb_w) / float(_win_w)
+    except Exception:
+        pass
+    if not r.cef_initialize(_CEF_VIEW_W, _CEF_VIEW_H, str(_cef_html),
+                            device_scale_factor=_cef_dsf):
         # Non-fatal in builds where CEF is disabled (the stub returns False).
         # If CEF is enabled and initialize failed, the binary will print the
         # framework-load error to stderr — surface it but keep running so the
@@ -1984,55 +2042,13 @@ def run(mission_name: Optional[str] = None,
         target_list_view = TargetListView()
         registry.register(target_list_view)
 
-        # ── Demo ships for Phase 1 of the target list ─────────────────
-        # Engine auto-population (bridge-set add/remove hooks) is a
-        # Phase 2 follow-up. Until then, seed the target list with
-        # three named ships across affiliations so the panel is
-        # populated at launch and we can verify the rendering pipe.
-        # Remove this block once the engine drives the list directly.
-        #
-        # Gate: only inject demo state when the mission didn't already
-        # set a real player. MissionLib.CreatePlayerShip always calls
-        # game.SetPlayer() during Initialize(), so GetPlayer() is
-        # non-None whenever a real mission ran. Default dev launches
-        # (SHIP_GATE_MISSION / no CLI arg) may not call SetPlayer for
-        # ship-gate missions, leaving GetPlayer() as None — that is the
-        # signal to populate demo rows.
-        from engine.core.game import Game_GetCurrentGame as _GetGame
-        # Forced ON for Phase 1 visibility: the original gate
-        # (_GetGame().GetPlayer() is None) skips for M2Objects because
-        # MissionLib.CreatePlayerShip sets the player during Initialize.
-        # Until engine auto-population from the bridge set lands, keep
-        # the demo block firing unconditionally so the panel is visible
-        # for ongoing UI work. Will be removed entirely when bridge-set
-        # event hooks drive the menu directly.
-        _run_demo = True
-        if _run_demo:
-            import App as _App
-            _App._reset_target_menu_singleton()
-            _target_menu = _App.STTargetMenu_CreateW("Targets")
-            from engine.core.game import Mission, Episode, Game, _set_current_game
-            from engine.appc.ships import ShipClass as _ShipClass
-            _demo_mission = Mission()
-            _demo_episode = Episode(); _demo_episode.SetCurrentMission(_demo_mission)
-            _demo_game = Game(); _demo_game.SetCurrentEpisode(_demo_episode)
-            _set_current_game(_demo_game)
-            _demo_mission.GetFriendlyGroup().AddName("USS Dauntless")
-            _demo_mission.GetEnemyGroup().AddName("IKS Kor")
-            _demo_mission.GetNeutralGroup().AddName("Trader")
-            _demo_bridge = _App.g_kSetManager.GetSet("bridge")
-            if _demo_bridge is None:
-                from engine.appc.sets import SetClass as _SetClass
-                _demo_bridge = _SetClass()
-                _App.g_kSetManager.AddSet(_demo_bridge, "bridge")
-            for _name in ("USS Dauntless", "IKS Kor", "Trader"):
-                _s = _ShipClass(); _s.SetName(_name)
-                _demo_bridge.AddObjectToSet(_s, _name)
-                _target_menu.RebuildShipMenu(_s)
-            _target_menu.ResetAffiliationColors()
-            # Player ship — referenced by TargetListView.dispatch_event.
-            _demo_player = _ShipClass(); _demo_player.SetName("Player")
-            _demo_game.SetPlayer(_demo_player)
+        # Wire (and re-wire on mission swap) the target-menu singleton
+        # to the player's spatial set. controller.post_load_hook fires
+        # after every successful loader.load() — both the initial load
+        # and any pending_swap drain — so this hook keeps the target
+        # list pointed at the current mission's ship roster.
+        controller.post_load_hook = lambda: _wire_target_menu_to_player_set(controller)
+        _wire_target_menu_to_player_set(controller)
 
         bridge_camera  = _BridgeCamera()
         try:
@@ -2051,6 +2067,12 @@ def run(mission_name: Optional[str] = None,
         _cef_set_event_handler = getattr(_h, "cef_set_event_handler", None) if _h else None
         if _cef_set_event_handler is not None:
             _cef_set_event_handler(registry.dispatch)
+        _cef_set_load_end = getattr(_h, "cef_set_load_end_handler", None) if _h else None
+        if _cef_set_load_end is not None:
+            # Drop snapshot caches when CEF finishes loading hello.html
+            # so the next tick re-emits state. Handles both initial load
+            # and Cmd+R reloads.
+            _cef_set_load_end(registry.invalidate_all)
         TICK_DT = 1.0 / 60.0
 
         loop = GameLoop()
@@ -2111,22 +2133,34 @@ def run(mission_name: Optional[str] = None,
             # registry returns only payloads whose state changed since
             # the last call, so this is cheap when nothing's moving.
             #
-            # Startup race: the first ~few seconds of pushes happen
-            # before CEF finishes loading hello.html, so setTargetList()
-            # is undefined and the call is silently dropped. Invalidate
-            # the view periodically during the startup window so the
-            # push retries until the page is ready. After STARTUP_FRAMES
-            # we trust idempotency. (A proper fix would hook CEF's
-            # OnLoadEnd in cef_lifecycle.h and invalidate once on real
-            # page-ready; this is the no-C++ workaround.)
+            # CEF's OnLoadEnd hook (set up at startup via
+            # cef_set_load_end_handler) calls registry.invalidate_all
+            # once when the page is ready, so the next render_all
+            # re-emits even though state hasn't changed since the
+            # previous tick. No per-tick retry needed.
             if _h is not None:
                 # Target list only renders in the exterior tactical view.
                 # SPACE toggles view_mode.is_exterior ↔ view_mode.is_bridge.
                 # The setter is idempotent so writing every tick is cheap.
                 target_list_view.visible = view_mode.is_exterior
 
-                if ticks < 240:  # ~4 sec at 60 Hz
-                    target_list_view.invalidate()
+                # Sensor-visibility update — flip per-row IsVisible
+                # based on range from the player. TargetListView
+                # filters rows where IsVisible() == 0. We walk the
+                # player's spatial set (e.g. "Biranu1"), not the
+                # bridge set (which holds bridge-interior objects).
+                import App as _App_sv
+                _menu = _App_sv.STTargetMenu_GetTargetMenu()
+                from engine.core.game import Game_GetCurrentGame
+                _game = Game_GetCurrentGame()
+                _player = _game.GetPlayer() if _game is not None else None
+                _player_set = getattr(_player, "_containing_set", None) if _player is not None else None
+                if _menu is not None and _player is not None and _player_set is not None:
+                    from engine.appc.subsystems import update_target_list_visibility
+                    update_target_list_visibility(
+                        _menu, _player_set.GetObjectList(), _player
+                    )
+
                 _scripts = registry.render_all()
                 for _panel_script in _scripts:
                     _h.cef_execute_javascript(_panel_script)
@@ -2138,6 +2172,18 @@ def run(mission_name: Optional[str] = None,
                 # unpaused path. cursor_pos returns framebuffer pixels;
                 # convert to CEF view space (same scaling as the paused
                 # branch).
+                #
+                # Click forwarding consumes the mouse-button edge state
+                # (mouse_button_released advances g_prev_mouse_state in
+                # the bindings), so if we forward unconditionally the
+                # _poll_mouse_buttons call below never sees the LEFT
+                # edge — phasers stop firing. Gate click forwarding on
+                # the cursor being inside the target-list panel's
+                # bounding box: cursor over panel → CEF gets the click
+                # (and firing doesn't); cursor anywhere else → firing
+                # gets the click. mouse_move forwarding stays
+                # unconditional because it doesn't touch button state
+                # and the panel needs it for CSS :hover.
                 if not pause.is_open and _cef_send_mouse_move is not None:
                     _mx_fb, _my_fb = _h.cursor_pos()
                     _fb_w, _fb_h = _h.framebuffer_size()
@@ -2146,7 +2192,17 @@ def run(mission_name: Optional[str] = None,
                     _mx = int(_mx_fb * _sx)
                     _my = int(_my_fb * _sy)
                     _cef_send_mouse_move(_mx, _my)
-                    if _cef_send_mouse_click is not None:
+                    # Panel bbox in CEF view space — matches the CSS
+                    # rect in target_list.css (top:24px left:24px
+                    # width:280px). Height is generous to cover an
+                    # expanded ship with several subsystem rows.
+                    _PANEL_X, _PANEL_Y, _PANEL_W, _PANEL_H = 24, 24, 280, 400
+                    _cursor_in_panel = (
+                        target_list_view.visible
+                        and _PANEL_X <= _mx < _PANEL_X + _PANEL_W
+                        and _PANEL_Y <= _my < _PANEL_Y + _PANEL_H
+                    )
+                    if _cef_send_mouse_click is not None and _cursor_in_panel:
                         if _h.mouse_button_pressed(_h.keys.MOUSE_BUTTON_LEFT):
                             _cef_send_mouse_click(_mx, _my, 0, True)
                         if _h.mouse_button_released(_h.keys.MOUSE_BUTTON_LEFT):

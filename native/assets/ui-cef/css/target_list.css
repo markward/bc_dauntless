@@ -17,7 +17,12 @@
     --bc-radar-neutral: rgb(255, 255, 175);
     --bc-radar-unknown: rgb(128, 128, 128);
     --bc-label-text: rgb(235, 225, 255);
-    --bc-body-bg: rgba(10, 10, 16, 0.85);
+    /* Body background — bumped from 0.85 → 0.97 because text rendered
+     * on a semi-transparent background falls back to grayscale
+     * antialiasing in CEF/Chromium (subpixel AA is disabled there),
+     * which reads as "slightly blurry". Near-opaque gives subpixel
+     * AA back while keeping just enough see-through for the LCARS feel. */
+    --bc-body-bg: rgba(10, 10, 16, 0.97);
 }
 
 #target-list-panel {
@@ -29,6 +34,15 @@
     font-weight: 600;
     color: var(--bc-label-text);
     pointer-events: auto;
+    /* macOS convention at 2× device-pixel density: grayscale
+     * antialiasing produces cleaner edges than subpixel AA, which
+     * was designed for sub-pixel R/G/B channel ordering on 1×
+     * displays. Subpixel-AA at Retina density tends to look
+     * "fringy". The DPR fix in cef_client::GetScreenInfo (device
+     * scale factor reported as the framebuffer/window ratio)
+     * makes the panel render at native resolution; this declaration
+     * picks the right AA path for that density. */
+    -webkit-font-smoothing: antialiased;
 }
 
 #target-list-panel.target-list--hidden {
@@ -65,7 +79,19 @@
     /* White across the board — affiliation is already conveyed by
      * the row's background tint, so the caret can stay neutral. */
     color: white;
+    /* Independent click target for the accordion toggle. No
+     * transitions, opacity, or transforms here — those promote the
+     * caret to its own compositor layer in CEF and bleed into the
+     * row's text rasterisation. The collapsed/expanded glyph swap
+     * is driven by content replacement (see below) instead. */
+    cursor: pointer;
+    padding: 0 4px;
 }
+
+/* Caret swaps glyph based on expansion state. We rely on the JS to
+ * insert the glyph as text content; the CSS just doesn't touch it.
+ * (Previous implementation used transform: rotate(90deg) here, but
+ * GPU layer promotion from the transform reduced text crispness.) */
 
 .target-list__name {
     font-size: 13px;
@@ -90,3 +116,72 @@
 .target-list__row--ENEMY.target-list__row--chosen    { background: rgba(216,  43,  43, 0.35); }
 .target-list__row--NEUTRAL.target-list__row--chosen  { background: rgba(255, 255, 175, 0.30); }
 .target-list__row--UNKNOWN.target-list__row--chosen  { background: rgba(128, 128, 128, 0.35); }
+
+/* ── Health bars ─────────────────────────────────────────────────── */
+.target-list__row {
+    /* Make the bars block sit at the right edge of each ship row. */
+    justify-content: flex-start;
+}
+
+.target-list__name {
+    flex: 1 1 auto;
+}
+
+.target-list__bars {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+}
+
+.target-list__bar {
+    --bar-pct: 0%;
+    width: 32px;
+    height: 8px;
+    background: rgba(40, 40, 40, 0.6);
+    position: relative;
+}
+
+.target-list__bar::after {
+    content: "";
+    display: block;
+    height: 100%;
+    width: var(--bar-pct);
+    background: var(--bar-fill, white);
+    transition: width 120ms linear;
+}
+
+.target-list__bar--hull    { --bar-fill: rgb(255, 200, 60); }
+.target-list__bar--shields { --bar-fill: rgb(150, 129, 222); }
+
+/* ── Nested subsystem rows ────────────────────────────────────────── */
+.target-list__sub {
+    display: flex;
+    align-items: center;
+    padding: 3px 12px 3px 28px;   /* indent past the ship row caret */
+    cursor: pointer;
+    font-size: 13px;              /* match ship row name */
+    color: rgba(235, 225, 255, 0.75);
+}
+
+.target-list__sub-bullet {
+    margin-right: 8px;
+    color: white;
+}
+
+.target-list__sub-name {
+    flex: 1 1 auto;
+}
+
+/* Subsystem hover: same affiliation tint as the parent row, lower
+ * baseline alpha. */
+.target-list__sub--FRIENDLY:hover { background: rgba( 80, 112, 230, 0.15); }
+.target-list__sub--ENEMY:hover    { background: rgba(216,  43,  43, 0.15); }
+.target-list__sub--NEUTRAL:hover  { background: rgba(255, 255, 175, 0.10); }
+.target-list__sub--UNKNOWN:hover  { background: rgba(128, 128, 128, 0.15); }
+
+/* Chosen subsystem: a tick brighter than hover so the locked subsystem
+ * reads clearly. */
+.target-list__sub--FRIENDLY.target-list__sub--chosen { background: rgba( 80, 112, 230, 0.30); color: rgb(235, 225, 255); }
+.target-list__sub--ENEMY.target-list__sub--chosen    { background: rgba(216,  43,  43, 0.30); color: rgb(235, 225, 255); }
+.target-list__sub--NEUTRAL.target-list__sub--chosen  { background: rgba(255, 255, 175, 0.25); color: rgb(235, 225, 255); }
+.target-list__sub--UNKNOWN.target-list__sub--chosen  { background: rgba(128, 128, 128, 0.30); color: rgb(235, 225, 255); }

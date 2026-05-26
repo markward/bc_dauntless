@@ -76,3 +76,32 @@ def test_registry_dispatch_falls_through_to_legacy_handler():
 def test_registry_dispatch_returns_false_when_unknown_and_no_legacy():
     reg = PanelRegistry()
     assert reg.dispatch("nobody/action") is False
+
+
+def test_registry_invalidate_all_calls_invalidate_on_every_panel():
+    """invalidate_all is the CEF page-load hook entry point — every
+    panel's snapshot cache gets cleared so the next render_all
+    re-emits even if state didn't change."""
+    invalidated = []
+
+    class _Recording(Panel):
+        def __init__(self, name):
+            super().__init__()
+            self._name = name
+        @property
+        def name(self):
+            return self._name
+        def render_payload(self):
+            return None
+        def dispatch_event(self, action):
+            return False
+        def invalidate(self):
+            invalidated.append(self._name)
+
+    reg = PanelRegistry()
+    reg.register(_Recording("a"))
+    reg.register(_Recording("b"))
+
+    reg.invalidate_all()
+
+    assert invalidated == ["a", "b"]

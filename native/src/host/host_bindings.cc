@@ -874,13 +874,33 @@ PYBIND11_MODULE(_dauntless_host, m) {
               return std::make_tuple(fw, fh);
           });
 
+    // Logical window size in screen coordinates. framebuffer_size /
+    // window_size gives the device-pixel ratio, used by CEF init to
+    // render at native resolution on Retina.
+    m.def("window_size",
+          []() {
+              if (!g_window) {
+                  throw std::runtime_error("window_size: init must be called first");
+              }
+              int ww = 0, wh = 0;
+              g_window->window_size(&ww, &wh);
+              return std::make_tuple(ww, wh);
+          });
+
 #ifdef DAUNTLESS_ENABLE_CEF
     m.def("cef_initialize",
-          [](int view_width, int view_height, const std::string& html_path) {
-              return dauntless::ui_cef::initialize(view_width, view_height, html_path);
+          [](int view_width, int view_height, const std::string& html_path,
+             float device_scale_factor) {
+              return dauntless::ui_cef::initialize(view_width, view_height, html_path,
+                                                   device_scale_factor);
           },
           py::arg("view_width"), py::arg("view_height"), py::arg("html_path"),
-          "Initialise CEF and create the OSR overlay browser. Returns true on success.");
+          py::arg("device_scale_factor") = 1.0f,
+          "Initialise CEF and create the OSR overlay browser. "
+          "device_scale_factor (default 1.0) tells CEF to render at "
+          "view_width*dsf × view_height*dsf so the composite pass can "
+          "blit 1:1 to a high-DPI framebuffer instead of bilinear-"
+          "upscaling a low-resolution bitmap. Returns true on success.");
 
     m.def("cef_pump",
           []() { dauntless::ui_cef::pump(); },
@@ -945,12 +965,33 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Register a Python callback (str)->None invoked when JS "
           "navigates to dauntless://event/<name>. The handler runs on "
           "the main thread (single-threaded CEF message loop).");
+
+    m.def("cef_set_load_end_handler",
+          [](py::function callback) {
+              dauntless::ui_cef::set_load_end_handler(
+                  [cb = std::move(callback)]() {
+                      py::gil_scoped_acquire gil;
+                      try {
+                          cb();
+                      } catch (const py::error_already_set& e) {
+                          std::fprintf(stderr,
+                              "cef_set_load_end_handler: python callback raised: %s\n",
+                              e.what());
+                      }
+                  });
+          },
+          py::arg("callback"),
+          "Register a Python callback ()->None invoked once when the CEF "
+          "main frame finishes loading (initial load and Cmd+R reload). "
+          "The handler runs on the main thread (single-threaded CEF "
+          "message loop).");
 #else
     // Stub the bindings out so engine.host_loop can call them
     // unconditionally regardless of build config.
     m.def("cef_initialize",
-          [](int, int, const std::string&) { return false; },
-          py::arg("view_width"), py::arg("view_height"), py::arg("html_path"));
+          [](int, int, const std::string&, float) { return false; },
+          py::arg("view_width"), py::arg("view_height"), py::arg("html_path"),
+          py::arg("device_scale_factor") = 1.0f);
     m.def("cef_pump",            []() {});
     m.def("cef_composite",       []() {});
     m.def("cef_shutdown",        []() {});
@@ -960,6 +1001,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("cef_send_mouse_move",  [](int, int) {});
     m.def("cef_send_mouse_click", [](int, int, int, bool) {});
     m.def("cef_set_event_handler",[](py::function) {});
+    m.def("cef_set_load_end_handler", [](py::function) {});
 #endif
 
     dauntless::audio::register_python_bindings(m);

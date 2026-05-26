@@ -131,24 +131,29 @@ class STTargetMenu(STTopLevelMenu):
         """Add or refresh the row for ``ship``. SDK callsites:
         MissionLib.py:2200, MissionLib.py:2225.
 
-        Phase 1 deferral: the call ``ship.StartGetSubsystemMatch()``
-        with no match-type argument returns an empty iterator from the
-        current `engine/appc/ships.py` shim, so this method creates the
-        STSubsystemMenu row but leaves its subsystem children empty.
-        That matches the Phase 1 deliverable — the visible target list
-        only shows ship rows, not subsystem children. A future plan
-        will pass App.CT_SHIP_SUBSYSTEM and populate per-subsystem
-        rows; the iteration loop below is kept as scaffolding for
-        that integration.
+        Passes ``App.CT_SHIP_SUBSYSTEM`` to ``StartGetSubsystemMatch`` so
+        all subsystems (sensor, impulse, warp, weapons, shields, hull, etc.)
+        are iterated and each gets a child STMenu row under the ship row.
+
+        Silently no-ops when ``ship`` is not a ``ShipClass`` instance.
+        Reason: ``TGObject.__getattr__`` returns ``_Stub()`` for any
+        missing attribute, so ``hasattr(obj, "StartGetSubsystemMatch")``
+        is True for every TGObject subclass — including the bridge
+        interior ObjectClass in the "bridge" set on this codebase.
+        Iterating subsystems on such a stub leads to an infinite loop
+        (``_Stub() is not None`` is True). The isinstance check rejects
+        non-ships at the API boundary.
         """
-        if ship is None:
+        import App as _App
+        from engine.appc.ships import ShipClass
+        if ship is None or not isinstance(ship, ShipClass):
             return
         row = self.GetObjectEntry(ship)
         if row is None:
             row = STSubsystemMenu(ship, ship.GetName())
             self.AddChild(row)
         row.KillChildren()
-        kIter = ship.StartGetSubsystemMatch()
+        kIter = ship.StartGetSubsystemMatch(_App.CT_SHIP_SUBSYSTEM)
         sub = ship.GetNextSubsystemMatch(kIter)
         while sub is not None:
             label = sub.GetName() if hasattr(sub, "GetName") else ""
@@ -156,15 +161,28 @@ class STTargetMenu(STTopLevelMenu):
             sub = ship.GetNextSubsystemMatch(kIter)
         ship.EndGetSubsystemMatch(kIter)
 
-    def RebuildShipMenus(self) -> None:
+    def RebuildShipMenus(self, source_set=None) -> None:
         """Bulk rebuild. Never called from SDK Python; included so the
-        engine auto-population hook has a single entry point."""
+        engine auto-population hook has a single entry point.
+
+        Walks ``source_set`` (or the "bridge" set when ``None``, for
+        backward compatibility with existing tests) and rebuilds rows
+        for every ShipClass member. Non-ship members are skipped —
+        see RebuildShipMenu for the underlying reason.
+
+        In this codebase the "bridge" set holds the bridge interior
+        only; spawned ships live in mission-named spatial sets like
+        "Biranu1". Pass that spatial set explicitly to populate the
+        target list from real ships.
+        """
         import App as _App
-        bridge = _App.g_kSetManager.GetSet("bridge")
-        if bridge is None:
+        from engine.appc.ships import ShipClass
+        if source_set is None:
+            source_set = _App.g_kSetManager.GetSet("bridge")
+        if source_set is None:
             return
-        for obj in bridge.GetObjectList():
-            if hasattr(obj, "StartGetSubsystemMatch"):
+        for obj in source_set.GetObjectList():
+            if isinstance(obj, ShipClass):
                 self.RebuildShipMenu(obj)
 
     def ResetAffiliationColors(self) -> None:
@@ -231,6 +249,42 @@ def STComponentMenu_Cast(obj):
     if obj is None:
         return None
     return obj
+
+
+# ── Bridge-set integration ───────────────────────────────────────────────────
+
+def _on_bridge_set_event(event: str, obj, identifier: str) -> None:
+    """SetClass subscriber callback — drives target-menu rows from
+    bridge-set add/remove events."""
+    menu = STTargetMenu_GetTargetMenu()
+    if menu is None:
+        return
+    if event == "added":
+        if hasattr(obj, "StartGetSubsystemMatch"):
+            menu.RebuildShipMenu(obj)
+            menu.ResetAffiliationColors()
+    elif event == "removed":
+        row = menu.GetObjectEntry(obj)
+        if row is not None:
+            menu.DeleteChild(row)
+
+
+def wire_to_bridge_set(bridge_set) -> None:
+    """Subscribe the target-menu singleton to a bridge set.
+
+    Idempotent — subscribing the same callback twice is a no-op (the
+    SetClass.subscribe API enforces uniqueness).
+    """
+    bridge_set.subscribe(_on_bridge_set_event)
+
+
+def unwire_from_bridge_set(bridge_set) -> None:
+    """Counterpart to wire_to_bridge_set — removes the target-menu
+    callback from this bridge set's subscriber list. Called by
+    ``reset_sdk_globals`` on mission swap so the subscription doesn't
+    leak across missions.
+    """
+    bridge_set.unsubscribe(_on_bridge_set_event)
 
 
 def resolve_affiliation(ship, mission) -> str:

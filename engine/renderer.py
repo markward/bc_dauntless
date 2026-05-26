@@ -196,9 +196,17 @@ def set_cursor_locked(locked: bool) -> None:
 
 # ── CEF overlay ─────────────────────────────────────────────────────────────
 
-def cef_initialize(view_width: int, view_height: int, html_path: str) -> bool:
-    """Initialise the CEF overlay browser. Idempotent; returns True on success."""
-    return _h.cef_initialize(view_width, view_height, html_path)
+def cef_initialize(view_width: int, view_height: int, html_path: str,
+                   device_scale_factor: float = 1.0) -> bool:
+    """Initialise the CEF overlay browser. Idempotent; returns True on success.
+
+    ``device_scale_factor`` should match the GL framebuffer's DPR
+    (framebuffer_size / window_size). On Retina that's typically 2.0;
+    on non-Retina it's 1.0. CEF then renders the bitmap at view_size *
+    dsf so the composite pass can blit 1:1 without bilinear upscaling.
+    """
+    return _h.cef_initialize(view_width, view_height, html_path,
+                             device_scale_factor=device_scale_factor)
 
 
 def cef_pump() -> None:

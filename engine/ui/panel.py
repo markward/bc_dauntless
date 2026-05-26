@@ -46,3 +46,13 @@ class Panel(ABC):
     @abstractmethod
     def dispatch_event(self, action: str) -> bool:
         """Handle a JS-originated event. Return True if handled."""
+
+    def invalidate(self) -> None:
+        """Drop any cached state so the next render_payload re-emits.
+
+        Default no-op — subclasses with snapshot caches (e.g.
+        TargetListView) override this. Wired by PanelRegistry.invalidate_all,
+        which the host loop calls when the CEF page finishes loading
+        so the first post-load emit is guaranteed to land.
+        """
+        pass

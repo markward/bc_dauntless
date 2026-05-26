@@ -51,3 +51,14 @@ class PanelRegistry:
             self._legacy(event_name)
             return True
         return False
+
+    def invalidate_all(self) -> None:
+        """Call ``panel.invalidate()`` on every registered panel.
+
+        Used by the host loop as a CEF load-end callback so that all
+        panel snapshot caches drop their last-pushed state. The next
+        ``render_all()`` then re-emits regardless of whether Python-side
+        state has changed since the last tick.
+        """
+        for p in self._panels:
+            p.invalidate()

@@ -1507,3 +1507,71 @@ def WarpEngineSubsystem_SetWarpEffectTime(seconds: float) -> None:
     """Override the engine-default warp effect time (used by tests)."""
     global _warp_effect_time_default
     _warp_effect_time_default = float(seconds)
+
+
+# ── Sensor-visibility update ──────────────────────────────────────────────────
+
+def update_target_list_visibility(target_menu, ships, player, range_units: float = 30000.0) -> None:
+    """Flip STSubsystemMenu.SetVisible/SetNotVisible on each row based
+    on the ship's distance from the player.
+
+    Args:
+        target_menu: the STTargetMenu singleton (or any object exposing
+            GetObjectEntry).
+        ships: iterable of ship objects expected to be in the menu.
+        player: the player ship (for distance computation).
+        range_units: maximum range to consider visible. Default 30000
+            game units; replace with SensorProperty.GetMaxRange once
+            the sensor data is plumbed.
+
+    Real Appc filters by sensor subsystem state (charged, undamaged,
+    not jammed). Phase-2 takes only range into account; the property
+    chain will be wired in a later iteration.
+    """
+    from engine.appc.target_menu import STSubsystemMenu
+    if player is None:
+        return
+    px, py, pz = _get_xyz(player)
+    range_sq = range_units * range_units
+    for ship in ships:
+        row = target_menu.GetObjectEntry(ship)
+        if row is None or not isinstance(row, STSubsystemMenu):
+            continue
+        sx, sy, sz = _get_xyz(ship)
+        dx, dy, dz = sx - px, sy - py, sz - pz
+        if dx * dx + dy * dy + dz * dz <= range_sq:
+            row.SetVisible()
+        else:
+            row.SetNotVisible()
+
+
+def _get_xyz(ship) -> tuple:
+    """Read a ship's world-space position as a tuple of floats. Adapts
+    to whichever accessor the shim exposes. Falls back to (0, 0, 0) so
+    the helper is safe to call against a ship that hasn't been
+    positioned yet (e.g. just spawned)."""
+    # GetTranslate() returns a TGPoint3 with .x, .y, .z attributes.
+    for name in ("GetTranslate", "GetWorldLocation", "GetTranslation", "GetPosition",
+                 "GetTranslateXYZ"):
+        if hasattr(ship, name):
+            try:
+                t = getattr(ship, name)()
+                # TGPoint3 / any object with .x .y .z
+                if hasattr(t, "x") and hasattr(t, "y") and hasattr(t, "z"):
+                    return (float(t.x), float(t.y), float(t.z))
+                # plain tuple or list
+                if isinstance(t, (tuple, list)) and len(t) == 3:
+                    return (float(t[0]), float(t[1]), float(t[2]))
+            except Exception:
+                pass
+    # Last resort — direct attribute access for the simplest possible shim.
+    if hasattr(ship, "_position"):
+        try:
+            p = ship._position
+            if hasattr(p, "x") and hasattr(p, "y") and hasattr(p, "z"):
+                return (float(p.x), float(p.y), float(p.z))
+            if isinstance(p, (tuple, list)) and len(p) == 3:
+                return (float(p[0]), float(p[1]), float(p[2]))
+        except Exception:
+            pass
+    return (0.0, 0.0, 0.0)

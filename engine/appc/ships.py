@@ -867,7 +867,7 @@ class ShipClass(DamageableObject):
         # WeaponSystem (sibling module also imported by App).
         import App
         from engine.appc.subsystems import (
-            WeaponSystem, SensorSubsystem, ImpulseEngineSubsystem,
+            ShipSubsystem, WeaponSystem, SensorSubsystem, ImpulseEngineSubsystem,
             WarpEngineSubsystem, ShieldSubsystem, HullSubsystem,
         )
         if match_type is None:
@@ -897,6 +897,9 @@ class ShipClass(DamageableObject):
             target_class = ShieldSubsystem
         elif match_type is App.CT_HULL_SUBSYSTEM:
             target_class = HullSubsystem
+        elif match_type is App.CT_SHIP_SUBSYSTEM:
+            # ShipSubsystem is the base class — every subsystem matches.
+            target_class = ShipSubsystem
         else:
             # Unknown match type — return empty iter so SDK while-loops
             # terminate cleanly.
