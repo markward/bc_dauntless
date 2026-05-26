@@ -1895,6 +1895,35 @@ def _update_ui_for_tick(player, view_mode, session, active_set) -> None:
     return
 
 
+def _wire_target_menu_to_player_set(controller) -> None:
+    """Subscribe the target-menu singleton to the player's containing
+    spatial set, then bulk-rebuild rows for ships already there.
+
+    Idempotent. Called once at startup AND from controller.post_load_hook
+    after every mission swap (reset_sdk_globals clears the singleton and
+    unwires the previous subscription, so a fresh wire is required).
+
+    The player's _containing_set is the spatial set the mission added
+    them to (e.g. "Biranu1") — NOT the "bridge" set, which in this
+    codebase holds the bridge-interior ObjectClass and is enumerated
+    by the renderer's bridge pass.
+    """
+    import App as _App
+    if _App.STTargetMenu_GetTargetMenu() is None:
+        _App.STTargetMenu_CreateW("Targets")
+    spatial_set = None
+    if controller.session is not None and controller.session.player is not None:
+        spatial_set = getattr(controller.session.player, "_containing_set", None)
+    if spatial_set is None:
+        return
+    from engine.appc.target_menu import wire_to_bridge_set
+    wire_to_bridge_set(spatial_set)
+    menu = _App.STTargetMenu_GetTargetMenu()
+    if menu is not None:
+        menu.RebuildShipMenus(spatial_set)
+        menu.ResetAffiliationColors()
+
+
 def run(mission_name: Optional[str] = None,
         max_ticks: Optional[int] = None) -> int:
     """Boot the renderer, init the named mission, run until the window closes
@@ -1999,29 +2028,13 @@ def run(mission_name: Optional[str] = None,
         target_list_view = TargetListView()
         registry.register(target_list_view)
 
-        # Wire the target-menu singleton to the player's CONTAINING
-        # SPATIAL SET (e.g. "Biranu1"), not the "bridge" set. The
-        # "bridge" set in this codebase holds the bridge interior
-        # ObjectClass + UI/lighting — adding ships to it would corrupt
-        # the renderer's bridge-pass enumeration. Mission scripts add
-        # ships to mission-named spatial sets via loadspacehelper, so
-        # the player's containing set is the right subscription target.
-        import App as _App
-        if _App.STTargetMenu_GetTargetMenu() is None:
-            _App.STTargetMenu_CreateW("Targets")
-        _spatial_set = None
-        if controller.session is not None and controller.session.player is not None:
-            _spatial_set = getattr(controller.session.player, "_containing_set", None)
-        if _spatial_set is not None:
-            from engine.appc.target_menu import wire_to_bridge_set
-            wire_to_bridge_set(_spatial_set)
-            # Rebuild rows for ships the mission added before we
-            # subscribed (loader.load above ran the mission Initialize).
-            # Non-ship members in the spatial set (planets, lights,
-            # navpoints) are skipped inside RebuildShipMenu via the
-            # isinstance(ship, ShipClass) guard.
-            _App.STTargetMenu_GetTargetMenu().RebuildShipMenus(_spatial_set)
-            _App.STTargetMenu_GetTargetMenu().ResetAffiliationColors()
+        # Wire (and re-wire on mission swap) the target-menu singleton
+        # to the player's spatial set. controller.post_load_hook fires
+        # after every successful loader.load() — both the initial load
+        # and any pending_swap drain — so this hook keeps the target
+        # list pointed at the current mission's ship roster.
+        controller.post_load_hook = lambda: _wire_target_menu_to_player_set(controller)
+        _wire_target_menu_to_player_set(controller)
 
         bridge_camera  = _BridgeCamera()
         try:

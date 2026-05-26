@@ -13,6 +13,40 @@
 //
 // Spec: docs/ui_designs/02-tactical-cluster.md
 
+// ── Escape helpers ───────────────────────────────────────────────────────────
+// Ship and subsystem names land here unsanitised — stock BC names are
+// safe alphanumerics + space, but mods or localised strings could carry
+// any character. We HTML-escape for text content and attribute values,
+// and JS-escape for embedded single-quote string literals (the onclick
+// attribute holds a JS expression like dauntlessEvent('NAME')).
+const _HTML_ESCAPES = {
+    '&': '&amp;', '<': '&lt;', '>': '&gt;',
+    '"': '&quot;', "'": '&#39;'
+};
+function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) {
+        return _HTML_ESCAPES[c];
+    });
+}
+
+// Escape for placement inside a single-quote JS string literal. Order
+// matters: replace backslashes first so the subsequent escapes don't
+// see their own escape sequences.
+function escapeJsString(s) {
+    return String(s == null ? '' : s)
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'");
+}
+
+// Build the `onclick="..."` attribute body. The attribute boundary uses
+// double-quotes; inside, the JS expression uses single-quote string
+// literals. So the JS string first gets JS-escaped, then the whole
+// attribute value gets HTML-escaped for the attribute boundary.
+function clickAttr(action) {
+    const jsLiteral = "'" + escapeJsString(action) + "'";
+    return escapeHtml('dauntlessEvent(' + jsLiteral + ')');
+}
+
 function setTargetList(state) {
     const panel = document.getElementById('target-list-panel');
     if (!panel) return;
@@ -39,19 +73,22 @@ function setTargetList(state) {
         const expandedCls = expanded ? ' target-list__row--expanded' : '';
         const hull = (typeof row.hull === 'number') ? row.hull : 100;
         const shields = (typeof row.shields === 'number') ? row.shields : 0;
-        const safe = name.replace(/'/g, "\\'");
+        const nameHtml = escapeHtml(name);
+        const toggleAttr = clickAttr('target/' + name + '/__toggle__');
+        const targetAttr = clickAttr('target/' + name);
 
         // Ship row — caret (its own click target for accordion),
         // then the rest of the row body which dispatches the
         // set-target event. event.stopPropagation in the caret
         // handler prevents the parent row's onclick from firing too.
+        // Note: clickAttr already HTML-escapes its output, so the
+        // onclick value here goes in unencoded.
         html += '<div class="target-list__row target-list__row--' + aff + chosen + expandedCls + '">'
               +   '<span class="target-list__caret"'
-              +   ' onclick="event.stopPropagation();'
-              +   ' dauntlessEvent(\'target/' + safe + '/__toggle__\')">&#9656;</span>'
+              +   ' onclick="event.stopPropagation();' + toggleAttr + '">&#9656;</span>'
               +   '<span class="target-list__row-body"'
-              +   ' onclick="dauntlessEvent(\'target/' + safe + '\')">'
-              +     '<span class="target-list__name">' + name + '</span>'
+              +   ' onclick="' + targetAttr + '">'
+              +     '<span class="target-list__name">' + nameHtml + '</span>'
               +     '<span class="target-list__bars">'
               +       '<span class="target-list__bar target-list__bar--hull"'
               +       ' style="--bar-pct:' + hull + '%"></span>'
@@ -68,13 +105,13 @@ function setTargetList(state) {
             for (let j = 0; j < subs.length; j++) {
                 const sub = subs[j];
                 const subName = String(sub.name || '');
-                const subSafe = subName.replace(/'/g, "\\'");
                 const subChosen = (selected === name && selectedSub === subName)
                     ? ' target-list__sub--chosen' : '';
+                const subAttr = clickAttr('target/' + name + '/' + subName);
                 html += '<div class="target-list__sub target-list__sub--' + aff + subChosen + '"'
-                      +   ' onclick="dauntlessEvent(\'target/' + safe + '/' + subSafe + '\')">'
+                      +   ' onclick="' + subAttr + '">'
                       +   '<span class="target-list__sub-bullet">&#8226;</span>'
-                      +   '<span class="target-list__sub-name">' + subName + '</span>'
+                      +   '<span class="target-list__sub-name">' + escapeHtml(subName) + '</span>'
                       + '</div>';
             }
         }
