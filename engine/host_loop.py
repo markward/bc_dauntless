@@ -1999,7 +1999,14 @@ def run(mission_name: Optional[str] = None,
         # ship-gate missions, leaving GetPlayer() as None — that is the
         # signal to populate demo rows.
         from engine.core.game import Game_GetCurrentGame as _GetGame
-        _run_demo = (_GetGame() is None or _GetGame().GetPlayer() is None)
+        # Forced ON for Phase 1 visibility: the original gate
+        # (_GetGame().GetPlayer() is None) skips for M2Objects because
+        # MissionLib.CreatePlayerShip sets the player during Initialize.
+        # Until engine auto-population from the bridge set lands, keep
+        # the demo block firing unconditionally so the panel is visible
+        # for ongoing UI work. Will be removed entirely when bridge-set
+        # event hooks drive the menu directly.
+        _run_demo = True
         if _run_demo:
             import App as _App
             _App._reset_target_menu_singleton()
@@ -2103,8 +2110,25 @@ def run(mission_name: Optional[str] = None,
             # Pump all CEF panels (target list, etc.) every tick. The
             # registry returns only payloads whose state changed since
             # the last call, so this is cheap when nothing's moving.
+            #
+            # Startup race: the first ~few seconds of pushes happen
+            # before CEF finishes loading hello.html, so setTargetList()
+            # is undefined and the call is silently dropped. Invalidate
+            # the view periodically during the startup window so the
+            # push retries until the page is ready. After STARTUP_FRAMES
+            # we trust idempotency. (A proper fix would hook CEF's
+            # OnLoadEnd in cef_lifecycle.h and invalidate once on real
+            # page-ready; this is the no-C++ workaround.)
             if _h is not None:
-                for _panel_script in registry.render_all():
+                # Target list only renders in the exterior tactical view.
+                # SPACE toggles view_mode.is_exterior ↔ view_mode.is_bridge.
+                # The setter is idempotent so writing every tick is cheap.
+                target_list_view.visible = view_mode.is_exterior
+
+                if ticks < 240:  # ~4 sec at 60 Hz
+                    target_list_view.invalidate()
+                _scripts = registry.render_all()
+                for _panel_script in _scripts:
                     _h.cef_execute_javascript(_panel_script)
 
                 # Forward mouse to CEF outside the pause overlay so
