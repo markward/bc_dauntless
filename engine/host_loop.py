@@ -1959,7 +1959,21 @@ def run(mission_name: Optional[str] = None,
     # pixel space on Retina.
     _CEF_VIEW_W, _CEF_VIEW_H = 1280, 720
     _cef_html = _project_root_for_cef() / "native" / "assets" / "ui-cef" / "hello.html"
-    if not r.cef_initialize(_CEF_VIEW_W, _CEF_VIEW_H, str(_cef_html)):
+    # Detect the framebuffer's device-pixel ratio so CEF renders at
+    # high-DPI density on Retina. Without this, the composite pass
+    # bilinear-upscales a 1280x720 bitmap to the 2560x1440 framebuffer
+    # and text reads as soft/blurry.
+    _cef_dsf = 1.0
+    try:
+        import _dauntless_host as _h_init
+        _fb_w, _fb_h = _h_init.framebuffer_size()
+        _win_w, _win_h = _h_init.window_size()
+        if _win_w > 0:
+            _cef_dsf = float(_fb_w) / float(_win_w)
+    except Exception:
+        pass
+    if not r.cef_initialize(_CEF_VIEW_W, _CEF_VIEW_H, str(_cef_html),
+                            device_scale_factor=_cef_dsf):
         # Non-fatal in builds where CEF is disabled (the stub returns False).
         # If CEF is enabled and initialize failed, the binary will print the
         # framework-load error to stderr — surface it but keep running so the

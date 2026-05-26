@@ -50,11 +50,19 @@ public:
 
     // CefRenderHandler
     void GetViewRect(CefRefPtr<CefBrowser> browser, CefRect& rect) override;
+    bool GetScreenInfo(CefRefPtr<CefBrowser> browser, CefScreenInfo& info) override;
     void OnPaint(CefRefPtr<CefBrowser> browser,
                  PaintElementType type,
                  const RectList& dirtyRects,
                  const void* buffer,
                  int width, int height) override;
+
+    // Tell CEF the device-pixel ratio (1.0 on non-Retina, 2.0 on Retina).
+    // Must be set BEFORE the browser is created. With a non-1.0 value
+    // CEF renders fonts and graphics at width*dsf × height*dsf so the
+    // composite pass can blit 1:1 to a high-DPI framebuffer instead of
+    // bilinear-upscaling a low-resolution bitmap.
+    void set_device_scale_factor(float dsf) { device_scale_factor_ = dsf; }
 
     // CefLifeSpanHandler — stores the browser handle for toggle_devtools / reload.
     void OnAfterCreated(CefRefPtr<CefBrowser> browser) override;
@@ -103,6 +111,11 @@ private:
 
     std::function<void(const std::string&)> event_handler_;
     std::function<void()> load_end_handler_;
+
+    // Device-pixel ratio reported via GetScreenInfo. Default 1.0
+    // (logical pixels = device pixels); set to >1.0 on Retina so
+    // CEF renders at full device resolution.
+    float device_scale_factor_ = 1.0f;
 
     IMPLEMENT_REFCOUNTING(DauntlessCefClient);
     DISALLOW_COPY_AND_ASSIGN(DauntlessCefClient);

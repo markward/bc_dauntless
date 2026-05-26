@@ -34,11 +34,15 @@
     font-weight: 600;
     color: var(--bc-label-text);
     pointer-events: auto;
-    /* Force subpixel antialiasing on all text within the panel — the
-     * 0.97 body alpha already keeps CEF in subpixel mode, but stating
-     * it explicitly defends against future background-alpha tweaks
-     * accidentally regressing text crispness. */
-    -webkit-font-smoothing: subpixel-antialiased;
+    /* macOS convention at 2× device-pixel density: grayscale
+     * antialiasing produces cleaner edges than subpixel AA, which
+     * was designed for sub-pixel R/G/B channel ordering on 1×
+     * displays. Subpixel-AA at Retina density tends to look
+     * "fringy". The DPR fix in cef_client::GetScreenInfo (device
+     * scale factor reported as the framebuffer/window ratio)
+     * makes the panel render at native resolution; this declaration
+     * picks the right AA path for that density. */
+    -webkit-font-smoothing: antialiased;
 }
 
 #target-list-panel.target-list--hidden {

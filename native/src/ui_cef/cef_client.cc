@@ -24,6 +24,18 @@ void DauntlessCefClient::GetViewRect(CefRefPtr<CefBrowser> /*browser*/,
     rect = CefRect(0, 0, view_width_, view_height_);
 }
 
+bool DauntlessCefClient::GetScreenInfo(CefRefPtr<CefBrowser> /*browser*/,
+                                        CefScreenInfo& info) {
+    // Report the device-pixel ratio so CEF renders fonts/graphics at
+    // device resolution rather than at logical resolution that would
+    // need bilinear upscaling. Layout (HTML/CSS) still uses the
+    // logical view rect — only the rasterisation density changes.
+    info.device_scale_factor = device_scale_factor_;
+    info.rect = CefRect(0, 0, view_width_, view_height_);
+    info.available_rect = info.rect;
+    return true;
+}
+
 void DauntlessCefClient::OnPaint(CefRefPtr<CefBrowser> /*browser*/,
                                   PaintElementType type,
                                   const RectList& /*dirtyRects*/,

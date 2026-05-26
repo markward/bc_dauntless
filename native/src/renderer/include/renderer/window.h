@@ -28,6 +28,11 @@ public:
     /// HiDPI displays).
     void framebuffer_size(int* w, int* h) const noexcept;
 
+    /// Current logical window size in screen coordinates. On HiDPI
+    /// displays the framebuffer size is window_size × DPR — divide to
+    /// recover the device-pixel ratio.
+    void window_size(int* w, int* h) const noexcept;
+
     /// Cached state of a GLFW keyboard key. Returns true while the key is
     /// held. State is updated by glfwPollEvents() (called by poll_events()).
     bool key_state(int glfw_key) const noexcept;

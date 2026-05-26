@@ -87,7 +87,8 @@ int dispatch_subprocess(int argc, char* argv[]) {
 }
 
 bool initialize(int view_width, int view_height,
-                const std::string& html_path) {
+                const std::string& html_path,
+                float device_scale_factor) {
     if (g_initialized) return true;
     if (!g_app) {
         std::fprintf(stderr, "ui_cef: dispatch_subprocess must run first\n");
@@ -123,6 +124,7 @@ bool initialize(int view_width, int view_height,
     }
 
     g_client = new DauntlessCefClient(view_width, view_height);
+    g_client->set_device_scale_factor(device_scale_factor);
 
     CefWindowInfo window_info;
     window_info.SetAsWindowless(0);  // OSR; no parent

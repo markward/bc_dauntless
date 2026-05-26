@@ -22,7 +22,14 @@ int dispatch_subprocess(int argc, char* argv[]);
 // runs CefInitialize, and creates an OSR browser pointed at html_path
 // (file:// URL synthesised from this absolute path). view_width/height
 // determine the OSR viewport; resize handling is a follow-up task.
-bool initialize(int view_width, int view_height, const std::string& html_path);
+// device_scale_factor — DPR for the GL framebuffer the composite pass
+// writes to (1.0 on non-Retina; 2.0 on Retina). Pass framebuffer_w /
+// window_w from the host. CEF renders the OSR bitmap at
+// view_width*dsf × view_height*dsf so the composite blits 1:1 to a
+// high-DPI framebuffer without bilinear upscaling.
+bool initialize(int view_width, int view_height,
+                const std::string& html_path,
+                float device_scale_factor);
 
 // Call once per frame after the 3D scene renders.
 //   pump()      runs CEF's message loop (may invoke OnPaint synchronously);
