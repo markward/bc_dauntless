@@ -84,15 +84,6 @@
     opacity: 1.0;
 }
 
-/* The clickable row-body sits next to the caret and dispatches the
- * set-target event; the caret's own onclick stops propagation so it
- * doesn't also trigger target selection. */
-.target-list__row-body {
-    display: flex;
-    align-items: center;
-    flex: 1 1 auto;
-}
-
 .target-list__name {
     font-size: 13px;
     letter-spacing: 0.04em;

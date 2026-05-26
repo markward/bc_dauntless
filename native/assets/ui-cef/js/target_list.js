@@ -77,24 +77,25 @@ function setTargetList(state) {
         const toggleAttr = clickAttr('target/' + name + '/__toggle__');
         const targetAttr = clickAttr('target/' + name);
 
-        // Ship row — caret (its own click target for accordion),
-        // then the rest of the row body which dispatches the
-        // set-target event. event.stopPropagation in the caret
-        // handler prevents the parent row's onclick from firing too.
-        // Note: clickAttr already HTML-escapes its output, so the
-        // onclick value here goes in unencoded.
-        html += '<div class="target-list__row target-list__row--' + aff + chosen + expandedCls + '">'
+        // Ship row — flat structure: caret with its own onclick
+        // (event.stopPropagation prevents the row's onclick from
+        // firing too); name + bars sit as direct flex children of
+        // the row and inherit the row's set-target onclick.
+        //
+        // Flat (vs wrapping name+bars in an inner flex span) avoids
+        // CEF's text renderer falling back to grayscale antialiasing
+        // when a nested flex container produces fractional widths —
+        // the symptom is slightly blurry text.
+        html += '<div class="target-list__row target-list__row--' + aff + chosen + expandedCls + '"'
+              +   ' onclick="' + targetAttr + '">'
               +   '<span class="target-list__caret"'
               +   ' onclick="event.stopPropagation();' + toggleAttr + '">&#9656;</span>'
-              +   '<span class="target-list__row-body"'
-              +   ' onclick="' + targetAttr + '">'
-              +     '<span class="target-list__name">' + nameHtml + '</span>'
-              +     '<span class="target-list__bars">'
-              +       '<span class="target-list__bar target-list__bar--hull"'
-              +       ' style="--bar-pct:' + hull + '%"></span>'
-              +       '<span class="target-list__bar target-list__bar--shields"'
-              +       ' style="--bar-pct:' + shields + '%"></span>'
-              +     '</span>'
+              +   '<span class="target-list__name">' + nameHtml + '</span>'
+              +   '<span class="target-list__bars">'
+              +     '<span class="target-list__bar target-list__bar--hull"'
+              +     ' style="--bar-pct:' + hull + '%"></span>'
+              +     '<span class="target-list__bar target-list__bar--shields"'
+              +     ' style="--bar-pct:' + shields + '%"></span>'
               +   '</span>'
               + '</div>';
 
