@@ -101,6 +101,13 @@ from engine.appc.characters import (
     STButton, STMenu, STTopLevelMenu,
     STButton_CreateW, STMenu_Cast, STTopLevelMenu_CreateW, STTopLevelMenu_Cast,
 )
+from engine.appc.target_menu import (
+    STSubsystemMenu, STSubsystemMenu_Cast,
+    STComponentMenu, STComponentMenu_Cast,
+    STTargetMenu,
+    STTargetMenu_CreateW, STTargetMenu_GetTargetMenu,
+    _reset_target_menu_singleton,
+)
 from engine.appc.ai import (
     ArtificialIntelligence,
     TGCondition, TGConditionHandler,

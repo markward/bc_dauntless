@@ -4,10 +4,9 @@
     <meta charset="UTF-8">
     <title>dauntless</title>
     <link rel="stylesheet" href="css/hello.css">
+    <link rel="stylesheet" href="css/target_list.css">
 </head>
 <body>
-    <div class="hello">Hello world</div>
-
     <!-- Pause menu overlay.
          Python toggles visibility via cef_execute_javascript on the
          #pause-menu container, and pushes the row list + focused index
@@ -22,6 +21,17 @@
         </div>
     </div>
 
+    <!-- Target list panel.
+         State pushed via setTargetList({visible, selected, rows});
+         row clicks fire dauntlessEvent('target/<ship>'); PanelRegistry
+         routes to TargetListView.dispatch_event in Python.
+         Spec: docs/ui_designs/02-tactical-cluster.md -->
+    <div id="target-list-panel" class="target-list--hidden">
+        <div class="target-list__header">Targets</div>
+        <div class="target-list__body" id="target-list-body"></div>
+    </div>
+
     <script src="js/pause_menu.js"></script>
+    <script src="js/target_list.js"></script>
 </body>
 </html>

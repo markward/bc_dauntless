@@ -272,13 +272,19 @@ The UI fires events back to the SDK via `App.g_kEventManager`. Event types are i
 | `ET_NEW_GAME` | 2 | User chose "New Game" |
 | `ET_CANCEL` | 3 | User cancelled a modal / picker |
 | `ET_BUTTON_CLICKED` | 4 | Generic button click |
-| `ET_TARGET_SELECTED` | 5 | Target list selection change |
+| `ET_SET_TARGET` | (C++ enum) | Player chose a target — destination event sent to the player ship. Target-list row clicks call `pPlayer.SetTarget(name)` which fires this. |
+| `ET_TARGET_WAS_CHANGED` | (C++ enum) | Broadcast — fires after `ET_SET_TARGET` so UI panels (TacticalMenuHandlers.TargetChanged et al.) can react. |
 | `ET_MENU_OPEN` | 6 | A menu was opened |
 | `ET_MENU_CLOSE` | 7 | A menu was closed |
 | `ET_OPTION_CHANGED` | 8 | A toggle/cycle widget changed value |
 | `ET_RESUME_GAME` | 9 | User resumed (e.g. from pause menu) |
 | `ET_QUIT_TO_MAIN_MENU` | 10 | User quit to main menu |
 | `ET_GAME_OVER` | 11 | Game-over state reached |
+
+> The SDK does NOT define `ET_TARGET_SELECTED`. Target-list row clicks
+> route through `pPlayer.SetTarget(ship_name)` which fires the two
+> events above. Earlier drafts of this document listed
+> `ET_TARGET_SELECTED = 5`; this has been corrected.
 
 Events are created via:
 

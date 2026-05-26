@@ -1,0 +1,92 @@
+/* native/assets/ui-cef/css/target_list.css
+ *
+ * LCARS chrome for the target list panel.
+ * Spec: docs/ui_designs/02-tactical-cluster.html + SDK_UI_API.md §1.
+ *
+ * Row hover and chosen states reuse the row's own affiliation colour
+ * — no new tokens. Hover bumps the alpha by +0.10 over the default
+ * tint; chosen bumps by +0.20 so the locked target reads more solidly
+ * than a passing hover. Palette tied to SDK_UI_API.md §1.4.
+ */
+
+:root {
+    --bc-menu1-base: rgb(216, 94, 86);
+    --bc-menu1-accent: rgb(216, 132, 80);
+    --bc-radar-friendly: rgb(80, 112, 230);
+    --bc-radar-enemy: rgb(216, 43, 43);
+    --bc-radar-neutral: rgb(255, 255, 175);
+    --bc-radar-unknown: rgb(128, 128, 128);
+    --bc-label-text: rgb(235, 225, 255);
+    --bc-body-bg: rgba(10, 10, 16, 0.85);
+}
+
+#target-list-panel {
+    position: absolute;
+    top: 24px;
+    left: 24px;
+    width: 280px;
+    font-family: "Antonio", "Antonio-Regular", sans-serif;
+    font-weight: 600;
+    color: var(--bc-label-text);
+    pointer-events: auto;
+}
+
+#target-list-panel.target-list--hidden {
+    display: none;
+}
+
+.target-list__header {
+    background: linear-gradient(90deg, var(--bc-menu1-base), var(--bc-menu1-accent));
+    color: rgb(0, 0, 0);
+    padding: 6px 14px 6px 18px;
+    border-top-right-radius: 14px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 14px;
+}
+
+.target-list__body {
+    background: var(--bc-body-bg);
+    border-left: 4px solid var(--bc-menu1-base);
+    padding: 8px 0;
+}
+
+.target-list__row {
+    display: flex;
+    align-items: center;
+    padding: 6px 12px;
+    cursor: pointer;
+}
+
+.target-list__caret {
+    margin-right: 8px;
+    font-size: 14px;
+    line-height: 1;
+    /* White across the board — affiliation is already conveyed by
+     * the row's background tint, so the caret can stay neutral. */
+    color: white;
+}
+
+.target-list__name {
+    font-size: 13px;
+    letter-spacing: 0.04em;
+}
+
+/* Row background: subtle translucent tint of the affiliation colour. */
+.target-list__row--FRIENDLY { background: rgba( 80, 112, 230, 0.15); }
+.target-list__row--ENEMY    { background: rgba(216,  43,  43, 0.15); }
+.target-list__row--NEUTRAL  { background: rgba(255, 255, 175, 0.10); }
+.target-list__row--UNKNOWN  { background: rgba(128, 128, 128, 0.15); }
+
+/* Hover: alpha bumped by +0.10 over default. */
+.target-list__row--FRIENDLY:hover { background: rgba( 80, 112, 230, 0.25); }
+.target-list__row--ENEMY:hover    { background: rgba(216,  43,  43, 0.25); }
+.target-list__row--NEUTRAL:hover  { background: rgba(255, 255, 175, 0.20); }
+.target-list__row--UNKNOWN:hover  { background: rgba(128, 128, 128, 0.25); }
+
+/* Chosen: alpha bumped by +0.20 over default. Overrides :hover via
+ * specificity (two classes vs one pseudo-class). */
+.target-list__row--FRIENDLY.target-list__row--chosen { background: rgba( 80, 112, 230, 0.35); }
+.target-list__row--ENEMY.target-list__row--chosen    { background: rgba(216,  43,  43, 0.35); }
+.target-list__row--NEUTRAL.target-list__row--chosen  { background: rgba(255, 255, 175, 0.30); }
+.target-list__row--UNKNOWN.target-list__row--chosen  { background: rgba(128, 128, 128, 0.35); }

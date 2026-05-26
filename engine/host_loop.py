@@ -1242,6 +1242,7 @@ def reset_sdk_globals() -> None:
     App.g_kSetManager._sets.clear()
     _waypoint_registry.clear()
     App._next_event_type_id = 1200
+    App._reset_target_menu_singleton()
 
 
 def _init_mission(mission_module_name: str):
@@ -1977,6 +1978,62 @@ def run(mission_name: Optional[str] = None,
             on_exit=pause.request_quit,
             on_cancel=pause.close,
         )
+        from engine.ui.panel_registry import PanelRegistry
+        from engine.ui.target_list_view import TargetListView
+        registry = PanelRegistry(legacy_handler=pause_menu.dispatch_event)
+        target_list_view = TargetListView()
+        registry.register(target_list_view)
+
+        # ── Demo ships for Phase 1 of the target list ─────────────────
+        # Engine auto-population (bridge-set add/remove hooks) is a
+        # Phase 2 follow-up. Until then, seed the target list with
+        # three named ships across affiliations so the panel is
+        # populated at launch and we can verify the rendering pipe.
+        # Remove this block once the engine drives the list directly.
+        #
+        # Gate: only inject demo state when the mission didn't already
+        # set a real player. MissionLib.CreatePlayerShip always calls
+        # game.SetPlayer() during Initialize(), so GetPlayer() is
+        # non-None whenever a real mission ran. Default dev launches
+        # (SHIP_GATE_MISSION / no CLI arg) may not call SetPlayer for
+        # ship-gate missions, leaving GetPlayer() as None — that is the
+        # signal to populate demo rows.
+        from engine.core.game import Game_GetCurrentGame as _GetGame
+        # Forced ON for Phase 1 visibility: the original gate
+        # (_GetGame().GetPlayer() is None) skips for M2Objects because
+        # MissionLib.CreatePlayerShip sets the player during Initialize.
+        # Until engine auto-population from the bridge set lands, keep
+        # the demo block firing unconditionally so the panel is visible
+        # for ongoing UI work. Will be removed entirely when bridge-set
+        # event hooks drive the menu directly.
+        _run_demo = True
+        if _run_demo:
+            import App as _App
+            _App._reset_target_menu_singleton()
+            _target_menu = _App.STTargetMenu_CreateW("Targets")
+            from engine.core.game import Mission, Episode, Game, _set_current_game
+            from engine.appc.ships import ShipClass as _ShipClass
+            _demo_mission = Mission()
+            _demo_episode = Episode(); _demo_episode.SetCurrentMission(_demo_mission)
+            _demo_game = Game(); _demo_game.SetCurrentEpisode(_demo_episode)
+            _set_current_game(_demo_game)
+            _demo_mission.GetFriendlyGroup().AddName("USS Dauntless")
+            _demo_mission.GetEnemyGroup().AddName("IKS Kor")
+            _demo_mission.GetNeutralGroup().AddName("Trader")
+            _demo_bridge = _App.g_kSetManager.GetSet("bridge")
+            if _demo_bridge is None:
+                from engine.appc.sets import SetClass as _SetClass
+                _demo_bridge = _SetClass()
+                _App.g_kSetManager.AddSet(_demo_bridge, "bridge")
+            for _name in ("USS Dauntless", "IKS Kor", "Trader"):
+                _s = _ShipClass(); _s.SetName(_name)
+                _demo_bridge.AddObjectToSet(_s, _name)
+                _target_menu.RebuildShipMenu(_s)
+            _target_menu.ResetAffiliationColors()
+            # Player ship — referenced by TargetListView.dispatch_event.
+            _demo_player = _ShipClass(); _demo_player.SetName("Player")
+            _demo_game.SetPlayer(_demo_player)
+
         bridge_camera  = _BridgeCamera()
         try:
             import _dauntless_host as _h
@@ -1993,7 +2050,7 @@ def run(mission_name: Optional[str] = None,
         _cef_send_mouse_click = getattr(_h, "cef_send_mouse_click", None) if _h else None
         _cef_set_event_handler = getattr(_h, "cef_set_event_handler", None) if _h else None
         if _cef_set_event_handler is not None:
-            _cef_set_event_handler(pause_menu.dispatch_event)
+            _cef_set_event_handler(registry.dispatch)
         TICK_DT = 1.0 / 60.0
 
         loop = GameLoop()
@@ -2049,6 +2106,51 @@ def run(mission_name: Optional[str] = None,
                     pause_menu.invalidate()
                     view_mode.apply(_h)
                     _apply_view_mode_side_effects(view_mode, _h)
+
+            # Pump all CEF panels (target list, etc.) every tick. The
+            # registry returns only payloads whose state changed since
+            # the last call, so this is cheap when nothing's moving.
+            #
+            # Startup race: the first ~few seconds of pushes happen
+            # before CEF finishes loading hello.html, so setTargetList()
+            # is undefined and the call is silently dropped. Invalidate
+            # the view periodically during the startup window so the
+            # push retries until the page is ready. After STARTUP_FRAMES
+            # we trust idempotency. (A proper fix would hook CEF's
+            # OnLoadEnd in cef_lifecycle.h and invalidate once on real
+            # page-ready; this is the no-C++ workaround.)
+            if _h is not None:
+                # Target list only renders in the exterior tactical view.
+                # SPACE toggles view_mode.is_exterior ↔ view_mode.is_bridge.
+                # The setter is idempotent so writing every tick is cheap.
+                target_list_view.visible = view_mode.is_exterior
+
+                if ticks < 240:  # ~4 sec at 60 Hz
+                    target_list_view.invalidate()
+                _scripts = registry.render_all()
+                for _panel_script in _scripts:
+                    _h.cef_execute_javascript(_panel_script)
+
+                # Forward mouse to CEF outside the pause overlay so
+                # non-pause panels (target list) are clickable. The
+                # pause-open branch above already forwards mouse for
+                # the pause menu's own clicks; here we cover the
+                # unpaused path. cursor_pos returns framebuffer pixels;
+                # convert to CEF view space (same scaling as the paused
+                # branch).
+                if not pause.is_open and _cef_send_mouse_move is not None:
+                    _mx_fb, _my_fb = _h.cursor_pos()
+                    _fb_w, _fb_h = _h.framebuffer_size()
+                    _sx = (_CEF_VIEW_W / _fb_w) if _fb_w > 0 else 1.0
+                    _sy = (_CEF_VIEW_H / _fb_h) if _fb_h > 0 else 1.0
+                    _mx = int(_mx_fb * _sx)
+                    _my = int(_my_fb * _sy)
+                    _cef_send_mouse_move(_mx, _my)
+                    if _cef_send_mouse_click is not None:
+                        if _h.mouse_button_pressed(_h.keys.MOUSE_BUTTON_LEFT):
+                            _cef_send_mouse_click(_mx, _my, 0, True)
+                        if _h.mouse_button_released(_h.keys.MOUSE_BUTTON_LEFT):
+                            _cef_send_mouse_click(_mx, _my, 0, False)
 
             # --- Sim advance (skipped while paused) ---
             if not pause.is_open:

@@ -229,6 +229,16 @@ class SetClass(TGEventHandlerObject):
             return []
         return [obj for obj in self._objects.values() if isinstance(obj, class_type)]
 
+    def GetObjectList(self):
+        """Return all objects in this set as a list.
+
+        Engine-internal helper used by bulk-rebuild paths (e.g.
+        STTargetMenu.RebuildShipMenus). The SDK does not expose this on the
+        SWIG surface; use GetFirstObject/GetNextObject for SDK-visible
+        iteration.
+        """
+        return list(self._objects.values())
+
 
 class SetManager:
     def __init__(self):
