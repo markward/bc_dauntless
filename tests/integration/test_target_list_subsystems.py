@@ -9,7 +9,7 @@ from engine.appc.sets import SetClass
 
 def test_full_pipeline_real_sdk_real_ship_real_subsystems():
     from engine.core.game import Game, Episode, Mission, _set_current_game
-    from engine.appc.target_menu import wire_to_bridge_set
+    from engine.appc.target_menu import wire_to_bridge_set, unwire_from_bridge_set
     from engine.ui.target_list_view import TargetListView
 
     App._reset_target_menu_singleton()
@@ -28,13 +28,12 @@ def test_full_pipeline_real_sdk_real_ship_real_subsystems():
     player.SetName("Player")
     game.SetPlayer(player)
     _set_current_game(game)
+    bridge = App.g_kSetManager.GetSet("bridge")
+    if bridge is None:
+        bridge = SetClass()
+        App.g_kSetManager.AddSet(bridge, "bridge")
+    wire_to_bridge_set(bridge)
     try:
-        bridge = App.g_kSetManager.GetSet("bridge")
-        if bridge is None:
-            bridge = SetClass()
-            App.g_kSetManager.AddSet(bridge, "bridge")
-        wire_to_bridge_set(bridge)
-
         # Spawn a real ship with default subsystems.
         kor = ShipClass_Create("Kor")
         kor.SetName("Kor")
@@ -63,4 +62,5 @@ def test_full_pipeline_real_sdk_real_ship_real_subsystems():
         for n in subsystem_names:
             assert isinstance(n, str) and n
     finally:
+        unwire_from_bridge_set(bridge)
         _set_current_game(None)
