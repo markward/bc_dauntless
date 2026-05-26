@@ -101,7 +101,10 @@ class _RadarDisplay:
         self._minimized: bool = False
         self._minimizable: bool = True
         self._visible: bool = True
-        self._range_m: float = 8000.0  # docs/ui_designs/05-sensors-radar.md default
+        # Range chosen by feel; original BC value is opaque (closed
+        # Appc.dll). See docs/instrumented_experiments/2026-05-26-radar-range-calibration.md
+        # for the planned measurement experiment.
+        self._range_m: float = 3000.0
 
     # STStylizedWindow / window-shaped surface.
     def SetName(self, name) -> None:    self._name = str(name)

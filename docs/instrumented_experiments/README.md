@@ -59,6 +59,7 @@ Status meanings:
 | File | Status | Topic |
 |------|--------|-------|
 | [2026-05-12-system-scale-investigation.md](2026-05-12-system-scale-investigation.md) | PENDING | What unit/scale convention does BC's C++ engine use for ships vs planets vs suns? |
+| [2026-05-26-radar-range-calibration.md](2026-05-26-radar-range-calibration.md) | PENDING | What world-space radius does the bottom-left radar disc represent in stock BC? |
 
 ## Constraints inherited from `CLAUDE.md`
 

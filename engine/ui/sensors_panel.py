@@ -20,13 +20,15 @@ from engine.ui.panel import Panel
 from engine.ui.radar_projection import project_contact
 
 
-# The disc's default world-space radius. Spec value
-# (docs/ui_designs/05-sensors-radar.md "SDK runtime contract"). Real
-# SDK code calls pRadar.SetRange(8000); for now the panel defaults to
-# the spec value when no SetRange has been issued. SDK scripts that
-# need a different range call _RadarDisplay.SetRange and we re-read it
-# each snapshot.
-DEFAULT_RANGE_M = 8000.0
+# The disc's default world-space radius, in metres. The original BC
+# Appc.dll hardcodes its own value internally and never exposes it to
+# the SDK (sdk/Build/scripts/App.py:8513-8533 — RadarDisplay has no
+# SetRange method). 3000 was chosen by feel after a first-pass smoke
+# test at 8000 felt too tight; tracked for measurement in
+# docs/instrumented_experiments/2026-05-26-radar-range-calibration.md.
+# SDK scripts that need a different range can call SetRange on the
+# RadarDisplay instance; the panel re-reads it each snapshot.
+DEFAULT_RANGE_M = 3000.0
 
 _AFFILIATION_TO_KIND = {
     "FRIENDLY": "ship",
