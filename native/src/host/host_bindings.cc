@@ -955,10 +955,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
                       py::gil_scoped_acquire gil;
                       try {
                           (*fn_ptr)();
-                      } catch (const std::exception& e) {
-                          fprintf(stderr,
-                                  "cef_set_load_end_handler: python callback raised: %s\n",
-                                  e.what());
+                      } catch (const py::error_already_set& e) {
+                          std::fprintf(stderr,
+                                       "cef_set_load_end_handler: python callback raised: %s\n",
+                                       e.what());
                       }
                   });
           });
