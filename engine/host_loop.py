@@ -2016,6 +2016,8 @@ def run(mission_name: Optional[str] = None,
             wire_to_bridge_set(_bridge_set)
             # Rebuild rows for any ships the mission already added before
             # we subscribed (mission Initialize runs above this line).
+            # Non-ship members (e.g. the bridge interior ObjectClass)
+            # are skipped inside RebuildShipMenu via isinstance.
             _App.STTargetMenu_GetTargetMenu().RebuildShipMenus()
             _App.STTargetMenu_GetTargetMenu().ResetAffiliationColors()
 

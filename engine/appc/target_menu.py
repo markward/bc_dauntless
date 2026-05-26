@@ -134,9 +134,19 @@ class STTargetMenu(STTopLevelMenu):
         Passes ``App.CT_SHIP_SUBSYSTEM`` to ``StartGetSubsystemMatch`` so
         all subsystems (sensor, impulse, warp, weapons, shields, hull, etc.)
         are iterated and each gets a child STMenu row under the ship row.
+
+        Silently no-ops when ``ship`` is not a ``ShipClass`` instance.
+        Reason: ``TGObject.__getattr__`` returns ``_Stub()`` for any
+        missing attribute, so ``hasattr(obj, "StartGetSubsystemMatch")``
+        is True for every TGObject subclass — including the bridge
+        interior ObjectClass in the "bridge" set on this codebase.
+        Iterating subsystems on such a stub leads to an infinite loop
+        (``_Stub() is not None`` is True). The isinstance check rejects
+        non-ships at the API boundary.
         """
         import App as _App
-        if ship is None:
+        from engine.appc.ships import ShipClass
+        if ship is None or not isinstance(ship, ShipClass):
             return
         row = self.GetObjectEntry(ship)
         if row is None:
@@ -153,13 +163,20 @@ class STTargetMenu(STTopLevelMenu):
 
     def RebuildShipMenus(self) -> None:
         """Bulk rebuild. Never called from SDK Python; included so the
-        engine auto-population hook has a single entry point."""
+        engine auto-population hook has a single entry point.
+
+        Walks the "bridge" set and rebuilds rows for every ShipClass
+        member. Non-ship members (e.g. the bridge interior ObjectClass
+        on this codebase) are skipped — see RebuildShipMenu for the
+        underlying reason.
+        """
         import App as _App
+        from engine.appc.ships import ShipClass
         bridge = _App.g_kSetManager.GetSet("bridge")
         if bridge is None:
             return
         for obj in bridge.GetObjectList():
-            if hasattr(obj, "StartGetSubsystemMatch"):
+            if isinstance(obj, ShipClass):
                 self.RebuildShipMenu(obj)
 
     def ResetAffiliationColors(self) -> None:
