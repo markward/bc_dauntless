@@ -261,8 +261,13 @@ def wire_to_bridge_set(bridge_set) -> None:
 
 
 def unwire_from_bridge_set(bridge_set) -> None:
-    """Counterpart to wire_to_bridge_set. Used by reset_sdk_globals
-    so mission swaps don't leak the subscription."""
+    """Counterpart to wire_to_bridge_set — removes the target-menu
+    callback from this bridge set's subscriber list.
+
+    Intended for mission-swap cleanup so subscriptions don't leak
+    across missions. The wiring into ``reset_sdk_globals`` lands in
+    the next task.
+    """
     bridge_set.unsubscribe(_on_bridge_set_event)
 
 

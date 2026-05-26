@@ -83,3 +83,26 @@ def test_wire_to_bridge_set_is_idempotent_for_singleton():
     finally:
         from engine.core.game import _set_current_game
         _set_current_game(None)
+
+
+def test_unwire_stops_subsequent_events():
+    """After unwire_from_bridge_set, add/remove on the same set
+    must no longer drive the target menu."""
+    from engine.appc.target_menu import wire_to_bridge_set, unwire_from_bridge_set
+
+    App._reset_target_menu_singleton()
+    target_menu = App.STTargetMenu_CreateW("Targets")
+    bridge = SetClass()
+    _setup_game_with_groups(friendly=["A"])
+    try:
+        wire_to_bridge_set(bridge)
+        unwire_from_bridge_set(bridge)
+
+        ship = _ship("A")
+        bridge.AddObjectToSet(ship, "A")
+
+        # Subscriber removed — no row should have been added.
+        assert target_menu.GetObjectEntry(ship) is None
+    finally:
+        from engine.core.game import _set_current_game
+        _set_current_game(None)
