@@ -1977,6 +1977,11 @@ def run(mission_name: Optional[str] = None,
             on_exit=pause.request_quit,
             on_cancel=pause.close,
         )
+        from engine.ui.panel_registry import PanelRegistry
+        from engine.ui.target_list_view import TargetListView
+        registry = PanelRegistry(legacy_handler=pause_menu.dispatch_event)
+        target_list_view = TargetListView()
+        registry.register(target_list_view)
         bridge_camera  = _BridgeCamera()
         try:
             import _dauntless_host as _h
@@ -1993,7 +1998,7 @@ def run(mission_name: Optional[str] = None,
         _cef_send_mouse_click = getattr(_h, "cef_send_mouse_click", None) if _h else None
         _cef_set_event_handler = getattr(_h, "cef_set_event_handler", None) if _h else None
         if _cef_set_event_handler is not None:
-            _cef_set_event_handler(pause_menu.dispatch_event)
+            _cef_set_event_handler(registry.dispatch)
         TICK_DT = 1.0 / 60.0
 
         loop = GameLoop()
@@ -2049,6 +2054,34 @@ def run(mission_name: Optional[str] = None,
                     pause_menu.invalidate()
                     view_mode.apply(_h)
                     _apply_view_mode_side_effects(view_mode, _h)
+
+            # Pump all CEF panels (target list, etc.) every tick. The
+            # registry returns only payloads whose state changed since
+            # the last call, so this is cheap when nothing's moving.
+            if _h is not None:
+                for _panel_script in registry.render_all():
+                    _h.cef_execute_javascript(_panel_script)
+
+                # Forward mouse to CEF outside the pause overlay so
+                # non-pause panels (target list) are clickable. The
+                # pause-open branch above already forwards mouse for
+                # the pause menu's own clicks; here we cover the
+                # unpaused path. cursor_pos returns framebuffer pixels;
+                # convert to CEF view space (same scaling as the paused
+                # branch).
+                if not pause.is_open and _cef_send_mouse_move is not None:
+                    _mx_fb, _my_fb = _h.cursor_pos()
+                    _fb_w, _fb_h = _h.framebuffer_size()
+                    _sx = (_CEF_VIEW_W / _fb_w) if _fb_w > 0 else 1.0
+                    _sy = (_CEF_VIEW_H / _fb_h) if _fb_h > 0 else 1.0
+                    _mx = int(_mx_fb * _sx)
+                    _my = int(_my_fb * _sy)
+                    _cef_send_mouse_move(_mx, _my)
+                    if _cef_send_mouse_click is not None:
+                        if _h.mouse_button_pressed(_h.keys.MOUSE_BUTTON_LEFT):
+                            _cef_send_mouse_click(_mx, _my, 0, True)
+                        if _h.mouse_button_released(_h.keys.MOUSE_BUTTON_LEFT):
+                            _cef_send_mouse_click(_mx, _my, 0, False)
 
             # --- Sim advance (skipped while paused) ---
             if not pause.is_open:
