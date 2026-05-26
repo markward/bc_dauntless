@@ -1242,6 +1242,7 @@ def reset_sdk_globals() -> None:
     App.g_kSetManager._sets.clear()
     _waypoint_registry.clear()
     App._next_event_type_id = 1200
+    App._reset_target_menu_singleton()
 
 
 def _init_mission(mission_module_name: str):
