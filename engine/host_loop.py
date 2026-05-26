@@ -1999,55 +1999,25 @@ def run(mission_name: Optional[str] = None,
         target_list_view = TargetListView()
         registry.register(target_list_view)
 
-        # ── Demo ships for Phase 1 of the target list ─────────────────
-        # Engine auto-population (bridge-set add/remove hooks) is a
-        # Phase 2 follow-up. Until then, seed the target list with
-        # three named ships across affiliations so the panel is
-        # populated at launch and we can verify the rendering pipe.
-        # Remove this block once the engine drives the list directly.
-        #
-        # Gate: only inject demo state when the mission didn't already
-        # set a real player. MissionLib.CreatePlayerShip always calls
-        # game.SetPlayer() during Initialize(), so GetPlayer() is
-        # non-None whenever a real mission ran. Default dev launches
-        # (SHIP_GATE_MISSION / no CLI arg) may not call SetPlayer for
-        # ship-gate missions, leaving GetPlayer() as None — that is the
-        # signal to populate demo rows.
-        from engine.core.game import Game_GetCurrentGame as _GetGame
-        # Forced ON for Phase 1 visibility: the original gate
-        # (_GetGame().GetPlayer() is None) skips for M2Objects because
-        # MissionLib.CreatePlayerShip sets the player during Initialize.
-        # Until engine auto-population from the bridge set lands, keep
-        # the demo block firing unconditionally so the panel is visible
-        # for ongoing UI work. Will be removed entirely when bridge-set
-        # event hooks drive the menu directly.
-        _run_demo = True
-        if _run_demo:
-            import App as _App
-            _App._reset_target_menu_singleton()
-            _target_menu = _App.STTargetMenu_CreateW("Targets")
-            from engine.core.game import Mission, Episode, Game, _set_current_game
-            from engine.appc.ships import ShipClass as _ShipClass
-            _demo_mission = Mission()
-            _demo_episode = Episode(); _demo_episode.SetCurrentMission(_demo_mission)
-            _demo_game = Game(); _demo_game.SetCurrentEpisode(_demo_episode)
-            _set_current_game(_demo_game)
-            _demo_mission.GetFriendlyGroup().AddName("USS Dauntless")
-            _demo_mission.GetEnemyGroup().AddName("IKS Kor")
-            _demo_mission.GetNeutralGroup().AddName("Trader")
-            _demo_bridge = _App.g_kSetManager.GetSet("bridge")
-            if _demo_bridge is None:
-                from engine.appc.sets import SetClass as _SetClass
-                _demo_bridge = _SetClass()
-                _App.g_kSetManager.AddSet(_demo_bridge, "bridge")
-            for _name in ("USS Dauntless", "IKS Kor", "Trader"):
-                _s = _ShipClass(); _s.SetName(_name)
-                _demo_bridge.AddObjectToSet(_s, _name)
-                _target_menu.RebuildShipMenu(_s)
-            _target_menu.ResetAffiliationColors()
-            # Player ship — referenced by TargetListView.dispatch_event.
-            _demo_player = _ShipClass(); _demo_player.SetName("Player")
-            _demo_game.SetPlayer(_demo_player)
+        # Wire the target-menu singleton to the bridge set so real
+        # ships flow into the panel as the mission loads them. The
+        # SDK's CreateTargetList is the one that constructs the
+        # singleton — but Bridge/TacticalMenuHandlers is not yet
+        # loaded by the host loop, so we construct it ourselves and
+        # subscribe. Once a Bridge.Initialize equivalent runs in this
+        # codepath, the explicit construction here can drop and the
+        # SDK call site will own it.
+        import App as _App
+        if _App.STTargetMenu_GetTargetMenu() is None:
+            _App.STTargetMenu_CreateW("Targets")
+        _bridge_set = _App.g_kSetManager.GetSet("bridge")
+        if _bridge_set is not None:
+            from engine.appc.target_menu import wire_to_bridge_set
+            wire_to_bridge_set(_bridge_set)
+            # Rebuild rows for any ships the mission already added before
+            # we subscribed (mission Initialize runs above this line).
+            _App.STTargetMenu_GetTargetMenu().RebuildShipMenus()
+            _App.STTargetMenu_GetTargetMenu().ResetAffiliationColors()
 
         bridge_camera  = _BridgeCamera()
         try:
