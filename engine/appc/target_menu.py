@@ -233,6 +233,39 @@ def STComponentMenu_Cast(obj):
     return obj
 
 
+# ── Bridge-set integration ───────────────────────────────────────────────────
+
+def _on_bridge_set_event(event: str, obj, identifier: str) -> None:
+    """SetClass subscriber callback — drives target-menu rows from
+    bridge-set add/remove events."""
+    menu = STTargetMenu_GetTargetMenu()
+    if menu is None:
+        return
+    if event == "added":
+        if hasattr(obj, "StartGetSubsystemMatch"):
+            menu.RebuildShipMenu(obj)
+            menu.ResetAffiliationColors()
+    elif event == "removed":
+        row = menu.GetObjectEntry(obj)
+        if row is not None:
+            menu.DeleteChild(row)
+
+
+def wire_to_bridge_set(bridge_set) -> None:
+    """Subscribe the target-menu singleton to a bridge set.
+
+    Idempotent — subscribing the same callback twice is a no-op (the
+    SetClass.subscribe API enforces uniqueness).
+    """
+    bridge_set.subscribe(_on_bridge_set_event)
+
+
+def unwire_from_bridge_set(bridge_set) -> None:
+    """Counterpart to wire_to_bridge_set. Used by reset_sdk_globals
+    so mission swaps don't leak the subscription."""
+    bridge_set.unsubscribe(_on_bridge_set_event)
+
+
 def resolve_affiliation(ship, mission) -> str:
     """Mission groups override static ship-property affiliation.
 
