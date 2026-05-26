@@ -78,4 +78,16 @@ void DauntlessCefClient::set_event_handler(
     event_handler_ = std::move(handler);
 }
 
+void DauntlessCefClient::set_load_end_handler(std::function<void()> handler) {
+    load_end_handler_ = std::move(handler);
+}
+
+void DauntlessCefClient::OnLoadEnd(CefRefPtr<CefBrowser> /*browser*/,
+                                   CefRefPtr<CefFrame> frame,
+                                   int /*httpStatusCode*/) {
+    if (frame && frame->IsMain() && load_end_handler_) {
+        load_end_handler_();
+    }
+}
+
 }  // namespace dauntless::ui_cef
