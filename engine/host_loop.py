@@ -2051,6 +2051,12 @@ def run(mission_name: Optional[str] = None,
         _cef_set_event_handler = getattr(_h, "cef_set_event_handler", None) if _h else None
         if _cef_set_event_handler is not None:
             _cef_set_event_handler(registry.dispatch)
+        _cef_set_load_end = getattr(_h, "cef_set_load_end_handler", None) if _h else None
+        if _cef_set_load_end is not None:
+            # Drop snapshot caches when CEF finishes loading hello.html
+            # so the next tick re-emits state. Handles both initial load
+            # and Cmd+R reloads.
+            _cef_set_load_end(registry.invalidate_all)
         TICK_DT = 1.0 / 60.0
 
         loop = GameLoop()
@@ -2125,8 +2131,6 @@ def run(mission_name: Optional[str] = None,
                 # The setter is idempotent so writing every tick is cheap.
                 target_list_view.visible = view_mode.is_exterior
 
-                if ticks < 240:  # ~4 sec at 60 Hz
-                    target_list_view.invalidate()
                 _scripts = registry.render_all()
                 for _panel_script in _scripts:
                     _h.cef_execute_javascript(_panel_script)
