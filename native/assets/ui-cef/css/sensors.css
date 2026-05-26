@@ -1,0 +1,243 @@
+/* native/assets/ui-cef/css/sensors.css
+ *
+ * Sensors / radar panel — bottom-left corner of the tactical view.
+ * Spec: docs/ui_designs/05-sensors-radar.html
+ *
+ * Static elements (panel chrome, disc background, range rings, cardinal
+ * cross, player triangle) are pure CSS. The contacts overlay
+ * (#sensors-contacts) is the layer JS rebuilds per state push.
+ */
+
+:root {
+    /* Inherited from target_list.css; redeclared here in case sensors.css
+     * loads first. Browsers de-duplicate identical :root entries. */
+    --bc-menu1-base: rgb(216, 94, 86);
+    --bc-menu1-accent: rgb(216, 132, 80);
+    --bc-radar-friendly: rgb(80, 112, 230);
+    --bc-radar-enemy: rgb(216, 43, 43);
+    --bc-radar-neutral: rgb(255, 255, 175);
+    --bc-radar-unknown: rgb(128, 128, 128);
+    --bc-radar-target-bracket: rgb(255, 210, 90);
+    --bc-radar-disc-inner: rgb(8, 12, 32);
+    --bc-radar-disc-outer: rgb(2, 4, 16);
+    --bc-radar-ring: rgba(216, 94, 86, 0.7);
+    --bc-radar-ring-mid: rgba(216, 94, 86, 0.4);
+    --bc-radar-ring-inner: rgba(216, 94, 86, 0.25);
+    --bc-radar-cardinal: rgba(255, 255, 255, 0.08);
+    --bc-label-text: rgb(235, 225, 255);
+    --bc-body-bg: rgba(10, 10, 16, 0.97);
+}
+
+#sensors-panel {
+    position: absolute;
+    bottom: 24px;
+    left: 24px;
+    width: 240px;
+    font-family: "Antonio", "Antonio-Regular", sans-serif;
+    font-weight: 600;
+    color: var(--bc-label-text);
+    pointer-events: auto;
+    -webkit-font-smoothing: antialiased;
+}
+
+#sensors-panel.sensors--hidden { display: none; }
+
+.sensors__header {
+    background: linear-gradient(90deg, var(--bc-menu1-base), var(--bc-menu1-accent));
+    color: rgb(0, 0, 0);
+    padding: 6px 14px 6px 18px;
+    border-top-right-radius: 14px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 14px;
+}
+
+.sensors__body {
+    background: var(--bc-body-bg);
+    border-left: 4px solid var(--bc-menu1-base);
+    padding: 14px 18px 14px 14px;
+    position: relative;
+}
+
+/* Disc container — fills body content area. The perspective tilt is
+ * applied by transforming a child wrapper, NOT the disc itself, because
+ * we need the contacts overlay to live in untransformed screen space
+ * (so stems are vertical regardless of disc tilt). */
+.sensors__disc {
+    position: relative;
+    width: 100%;
+    height: 180px;
+    background: radial-gradient(ellipse at center,
+                                 var(--bc-radar-disc-inner) 0%,
+                                 var(--bc-radar-disc-outer) 80%);
+    overflow: hidden;
+}
+
+/* The tilted ellipse. Spec gives 75 px height for the 240 px-wide
+ * panel — ratio ~0.4 → ~67° tilt. */
+.sensors__disc-plane {
+    position: absolute;
+    left: 0; right: 0; top: 50%;
+    height: 75px;
+    transform: translateY(-50%);
+}
+
+.sensors__ring-outer,
+.sensors__ring-mid,
+.sensors__ring-inner {
+    position: absolute;
+    border-radius: 50%;
+}
+
+.sensors__ring-outer {
+    inset: 0;
+    border: 1px solid var(--bc-radar-ring);
+}
+.sensors__ring-mid {
+    left: 50%; top: 50%;
+    width: 65%; height: 65%;
+    transform: translate(-50%, -50%);
+    border: 1px dashed var(--bc-radar-ring-mid);
+}
+.sensors__ring-inner {
+    left: 50%; top: 50%;
+    width: 35%; height: 35%;
+    transform: translate(-50%, -50%);
+    border: 1px dashed var(--bc-radar-ring-inner);
+}
+
+.sensors__cardinal-v,
+.sensors__cardinal-h {
+    position: absolute;
+    background: var(--bc-radar-cardinal);
+}
+.sensors__cardinal-v {
+    left: 50%; top: 0; bottom: 0; width: 1px;
+    transform: translateX(-50%);
+}
+.sensors__cardinal-h {
+    top: 50%; left: 0; right: 0; height: 1px;
+    transform: translateY(-50%);
+}
+
+/* Player triangle — fixed at the disc plane centre, fore=up. */
+.sensors__player {
+    position: absolute;
+    left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    width: 0; height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-bottom: 8px solid white;
+    filter: drop-shadow(0 0 3px rgba(255, 255, 255, 0.6));
+    pointer-events: none;
+}
+
+/* Contacts overlay — covers the disc; JS rebuilds children on each
+ * setRadar() call. Contacts live in untransformed screen space so
+ * altitude stems are vertical regardless of disc-plane tilt. */
+.sensors__contacts {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+
+/* Each contact: positioned absolute via inline style left/top. JS sets
+ * --heading-deg via a CSS custom property so triangles rotate without
+ * the JS having to know about transform syntax. */
+.sensors__contact {
+    position: absolute;
+    width: 0; height: 0;
+    transform: translate(-50%, -50%);
+}
+
+.sensors__triangle {
+    position: absolute;
+    left: 0; top: 0;
+    transform: translate(-50%, -50%) rotate(var(--heading-deg, 0deg));
+    width: 0; height: 0;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-bottom: 7px solid currentColor;
+    filter: drop-shadow(0 0 3px currentColor);
+}
+
+.sensors__square {
+    /* Torpedoes — no heading triangle. */
+    position: absolute;
+    left: 0; top: 0;
+    transform: translate(-50%, -50%);
+    width: 4px; height: 4px;
+    background: currentColor;
+    filter: drop-shadow(0 0 3px currentColor);
+}
+
+/* Stem — drawn via a thin vertical bar. JS sets --stem-px (px) and
+ * --stem-sign (1 or -1) to pick up vs down. Stem origin is the disc
+ * anchor; the triangle/square is offset along the stem by --stem-px. */
+.sensors__stem {
+    position: absolute;
+    left: 0; top: 0;
+    width: 1px;
+    height: calc(abs(var(--stem-px, 0)) * 1px);
+    transform: translateX(-50%)
+               translateY(calc(var(--stem-sign, 1) * -50%));
+    background: linear-gradient(
+        to top,
+        color-mix(in srgb, currentColor 30%, transparent),
+        currentColor
+    );
+}
+
+/* Affiliation colours — applied to the container, inherited by triangle
+ * (via currentColor) and stem. */
+.sensors__contact--FRIENDLY { color: var(--bc-radar-friendly); }
+.sensors__contact--ENEMY    { color: var(--bc-radar-enemy); }
+.sensors__contact--NEUTRAL  { color: var(--bc-radar-neutral); }
+.sensors__contact--UNKNOWN  { color: var(--bc-radar-unknown); }
+
+/* Disc anchor dot at the projection point — opacity 0.6 so it stays
+ * subtle next to the bigger triangle glyph. */
+.sensors__anchor {
+    position: absolute;
+    left: 0; top: 0;
+    transform: translate(-50%, -50%);
+    width: 4px; height: 4px;
+    border-radius: 50%;
+    background: currentColor;
+    opacity: 0.6;
+}
+
+/* Gold corner bracket on the targeted contact. Four absolutely-
+ * positioned L-corners surrounding the anchor point. */
+.sensors__bracket {
+    position: absolute;
+    left: 0; top: 0;
+    transform: translate(-50%, -50%);
+    width: 18px; height: 18px;
+    pointer-events: none;
+}
+.sensors__bracket-corner {
+    position: absolute;
+    width: 4px; height: 4px;
+}
+.sensors__bracket-corner--tl {
+    left: 0; top: 0;
+    border-left: 1.5px solid var(--bc-radar-target-bracket);
+    border-top:  1.5px solid var(--bc-radar-target-bracket);
+}
+.sensors__bracket-corner--tr {
+    right: 0; top: 0;
+    border-right: 1.5px solid var(--bc-radar-target-bracket);
+    border-top:   1.5px solid var(--bc-radar-target-bracket);
+}
+.sensors__bracket-corner--bl {
+    left: 0; bottom: 0;
+    border-left:   1.5px solid var(--bc-radar-target-bracket);
+    border-bottom: 1.5px solid var(--bc-radar-target-bracket);
+}
+.sensors__bracket-corner--br {
+    right: 0; bottom: 0;
+    border-right:  1.5px solid var(--bc-radar-target-bracket);
+    border-bottom: 1.5px solid var(--bc-radar-target-bracket);
+}

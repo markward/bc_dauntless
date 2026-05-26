@@ -5,6 +5,7 @@
     <title>dauntless</title>
     <link rel="stylesheet" href="css/hello.css">
     <link rel="stylesheet" href="css/target_list.css">
+    <link rel="stylesheet" href="css/sensors.css">
 </head>
 <body>
     <!-- Pause menu overlay.
@@ -31,7 +32,30 @@
         <div class="target-list__body" id="target-list-body"></div>
     </div>
 
+    <!-- Sensors / radar panel.
+         Static disc + range rings rendered in HTML/CSS; per-tick contacts
+         pushed via setRadar({visible, range_m, contacts:[...]}).
+         No click events — radar is read-only in v1.
+         Spec: docs/ui_designs/05-sensors-radar.md -->
+    <div id="sensors-panel" class="sensors--hidden">
+        <div class="sensors__header">Sensors</div>
+        <div class="sensors__body">
+            <div class="sensors__disc">
+                <div class="sensors__disc-plane">
+                    <div class="sensors__ring-outer"></div>
+                    <div class="sensors__ring-mid"></div>
+                    <div class="sensors__ring-inner"></div>
+                    <div class="sensors__cardinal-v"></div>
+                    <div class="sensors__cardinal-h"></div>
+                    <div class="sensors__player"></div>
+                </div>
+                <div class="sensors__contacts" id="sensors-contacts"></div>
+            </div>
+        </div>
+    </div>
+
     <script src="js/pause_menu.js"></script>
     <script src="js/target_list.js"></script>
+    <script src="js/sensors.js"></script>
 </body>
 </html>
