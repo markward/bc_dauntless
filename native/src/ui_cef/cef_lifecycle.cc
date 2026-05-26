@@ -220,6 +220,12 @@ void set_event_handler(std::function<void(const std::string&)> handler) {
     g_client->set_event_handler(std::move(handler));
 }
 
+void set_load_end_handler(std::function<void()> handler) {
+    if (g_client) {
+        g_client->set_load_end_handler(std::move(handler));
+    }
+}
+
 void shutdown() {
     if (!g_initialized) return;
     g_composite.reset();  // releases GL handles while GL context is alive
