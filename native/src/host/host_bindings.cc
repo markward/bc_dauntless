@@ -945,6 +945,23 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Register a Python callback (str)->None invoked when JS "
           "navigates to dauntless://event/<name>. The handler runs on "
           "the main thread (single-threaded CEF message loop).");
+
+    m.def("cef_set_load_end_handler",
+          [](py::function fn) {
+              // Hold a strong ref so the callback survives across CEF callbacks.
+              auto fn_ptr = std::make_shared<py::function>(std::move(fn));
+              dauntless::ui_cef::set_load_end_handler(
+                  [fn_ptr]() {
+                      py::gil_scoped_acquire gil;
+                      try {
+                          (*fn_ptr)();
+                      } catch (const std::exception& e) {
+                          fprintf(stderr,
+                                  "cef_set_load_end_handler: python callback raised: %s\n",
+                                  e.what());
+                      }
+                  });
+          });
 #else
     // Stub the bindings out so engine.host_loop can call them
     // unconditionally regardless of build config.
@@ -960,6 +977,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("cef_send_mouse_move",  [](int, int) {});
     m.def("cef_send_mouse_click", [](int, int, int, bool) {});
     m.def("cef_set_event_handler",[](py::function) {});
+    m.def("cef_set_load_end_handler", [](py::function) {});
 #endif
 
     dauntless::audio::register_python_bindings(m);
