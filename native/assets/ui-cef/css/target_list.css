@@ -1,0 +1,85 @@
+/* native/assets/ui-cef/css/target_list.css
+ *
+ * LCARS chrome for the target list panel.
+ * Spec: docs/ui_designs/02-tactical-cluster.html + SDK_UI_API.md §1.
+ */
+
+:root {
+    --bc-menu1-base: rgb(216, 94, 86);
+    --bc-menu1-accent: rgb(216, 132, 80);
+    --bc-radar-friendly: rgb(80, 112, 230);
+    --bc-radar-enemy: rgb(216, 43, 43);
+    --bc-radar-neutral: rgb(255, 255, 175);
+    --bc-radar-unknown: rgb(128, 128, 128);
+    --bc-chosen-gold: rgb(255, 210, 90);
+    --bc-label-text: rgb(235, 225, 255);
+    --bc-body-bg: rgba(10, 10, 16, 0.85);
+}
+
+#target-list-panel {
+    position: absolute;
+    top: 24px;
+    left: 24px;
+    width: 280px;
+    font-family: "Antonio", "Antonio-Regular", sans-serif;
+    font-weight: 600;
+    color: var(--bc-label-text);
+    pointer-events: auto;
+}
+
+#target-list-panel.target-list--hidden {
+    display: none;
+}
+
+.target-list__header {
+    background: linear-gradient(90deg, var(--bc-menu1-base), var(--bc-menu1-accent));
+    color: rgb(0, 0, 0);
+    padding: 6px 14px 6px 18px;
+    border-top-right-radius: 14px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 14px;
+}
+
+.target-list__body {
+    background: var(--bc-body-bg);
+    border-left: 4px solid var(--bc-menu1-base);
+    padding: 8px 0;
+}
+
+.target-list__row {
+    display: flex;
+    align-items: center;
+    padding: 6px 12px;
+    cursor: pointer;
+    border-left: 3px solid transparent;
+}
+
+.target-list__row:hover {
+    background: rgba(216, 94, 86, 0.15);
+}
+
+.target-list__row--chosen {
+    background: rgba(255, 210, 90, 0.18);
+    border-left-color: var(--bc-chosen-gold);
+}
+
+.target-list__row--chosen .target-list__caret {
+    color: var(--bc-chosen-gold);
+}
+
+.target-list__caret {
+    margin-right: 8px;
+    font-size: 14px;
+    line-height: 1;
+}
+
+.target-list__row--FRIENDLY .target-list__caret { color: var(--bc-radar-friendly); }
+.target-list__row--ENEMY    .target-list__caret { color: var(--bc-radar-enemy); }
+.target-list__row--NEUTRAL  .target-list__caret { color: var(--bc-radar-neutral); }
+.target-list__row--UNKNOWN  .target-list__caret { color: var(--bc-radar-unknown); }
+
+.target-list__name {
+    font-size: 13px;
+    letter-spacing: 0.04em;
+}
