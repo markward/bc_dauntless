@@ -36,8 +36,10 @@ def test_payload_lists_visible_contacts_with_affiliations():
         mission.GetFriendlyGroup().AddName("Ally")
         mission.GetEnemyGroup().AddName("Foe")
 
-        ally = _make_ship("Ally", x=0.0, y=2000.0, z=0.0)
-        foe  = _make_ship("Foe",  x=3000.0, y=0.0, z=500.0)
+        # Distances kept well inside DEFAULT_RANGE_M (1 km) so the test
+        # doesn't drift if the default range changes again.
+        ally = _make_ship("Ally", x=0.0, y=500.0, z=0.0)
+        foe  = _make_ship("Foe",  x=300.0, y=0.0, z=50.0)
         far  = _make_ship("Far",  x=0.0, y=99999.0, z=0.0)  # off-disc
 
         spatial = SetClass()
@@ -82,7 +84,7 @@ def test_payload_is_idempotent_until_state_changes():
     menu = App.STTargetMenu_CreateW("Targets")
     game, player, mission = _setup_game()
     try:
-        ship = _make_ship("X", x=0.0, y=1000.0, z=0.0)
+        ship = _make_ship("X", x=0.0, y=400.0, z=0.0)
         spatial = SetClass()
         App.g_kSetManager.AddSet(spatial, "test_set")
         spatial.AddObjectToSet(ship, "X")
@@ -97,7 +99,7 @@ def test_payload_is_idempotent_until_state_changes():
         assert panel.render_payload() is None
 
         # Ship moves → next call re-emits.
-        ship.SetTranslate(TGPoint3(0.0, 2000.0, 0.0))
+        ship.SetTranslate(TGPoint3(0.0, 600.0, 0.0))
         assert panel.render_payload() is not None
     finally:
         App.g_kSetManager.DeleteSet("test_set")
@@ -113,7 +115,7 @@ def test_payload_marks_targeted_contact():
     menu = App.STTargetMenu_CreateW("Targets")
     game, player, mission = _setup_game()
     try:
-        ship = _make_ship("Galaxy", x=0.0, y=1500.0, z=0.0)
+        ship = _make_ship("Galaxy", x=0.0, y=500.0, z=0.0)
         spatial = SetClass()
         App.g_kSetManager.AddSet(spatial, "test_set")
         spatial.AddObjectToSet(ship, "Galaxy")
@@ -149,7 +151,7 @@ def test_payload_skips_invisible_rows():
     menu = App.STTargetMenu_CreateW("Targets")
     game, player, mission = _setup_game()
     try:
-        ship = _make_ship("Cloaked", x=0.0, y=1000.0, z=0.0)
+        ship = _make_ship("Cloaked", x=0.0, y=400.0, z=0.0)
         spatial = SetClass()
         App.g_kSetManager.AddSet(spatial, "test_set")
         spatial.AddObjectToSet(ship, "Cloaked")

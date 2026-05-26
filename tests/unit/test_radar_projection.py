@@ -13,15 +13,19 @@ def _identity():
 
 
 def _yaw(theta):
-    """Yaw matrix — rotates forward (Y) toward right (X) by +theta rad
-    looking down (+Z). Columns are model right / forward / up."""
+    """Yaw matrix using the same row convention as AlignToVectors at
+    engine/appc/objects.py:144-146 — rows are world-space basis vectors
+    (right, forward, up) of the rotated frame. Positive theta yaws the
+    ship LEFT (forward rotates from +Y toward -X).
+
+    For theta = +π/2: forward in world = (-1, 0, 0); right = (0, 1, 0).
+    """
     m = TGMatrix3()
     c, s = math.cos(theta), math.sin(theta)
-    # right = (cos, -sin, 0); forward = (sin, cos, 0); up = (0, 0, 1)
     m._m = [
-        [ c,  s,  0.0],
-        [-s,  c,  0.0],
-        [0.0, 0.0, 1.0],
+        [ c,  s,  0.0],   # row 0 = right in world = (cos θ, sin θ, 0)
+        [-s,  c,  0.0],   # row 1 = forward in world = (-sin θ, cos θ, 0)
+        [0.0, 0.0, 1.0],  # row 2 = up in world = (0, 0, 1)
     ]
     return m
 
@@ -81,13 +85,13 @@ def test_off_disc_contact_returns_none():
 
 
 def test_disc_coords_are_player_relative():
-    """Player rotated 90° (yaw +π/2 — forward now along +X). A contact
-    along world +X is "ahead" of the player, so y should be positive,
-    x near zero."""
+    """Player yawed +π/2 — forward now along world -X (yaw left). A
+    contact at world -X is "ahead" of the player, so y should be
+    positive, x near zero."""
     c = project_contact(
         player_pos=TGPoint3(0.0, 0.0, 0.0),
         player_rot=_yaw(math.pi / 2.0),
-        target_pos=TGPoint3(4000.0, 0.0, 0.0),
+        target_pos=TGPoint3(-4000.0, 0.0, 0.0),
         target_rot=_identity(),
         range_m=8000.0,
     )
