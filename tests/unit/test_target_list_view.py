@@ -89,3 +89,48 @@ def test_view_dispatch_event_sets_player_target():
         App.g_kSetManager.DeleteSet("bridge")
         from engine.core.game import _set_current_game
         _set_current_game(None)
+
+
+def test_view_payload_includes_subsystems_and_health():
+    """Each row carries hull%, shield%, and a flat list of subsystem
+    names. selected_subsystem mirrors player.GetTargetSubsystem()."""
+    import json
+    from engine.ui.target_list_view import TargetListView
+    from engine.appc.ships import ShipClass_Create
+
+    App._reset_target_menu_singleton()
+    target_menu = App.STTargetMenu_CreateW("Targets")
+    game, player, mission = _setup_game_with_player()
+    try:
+        ship = ShipClass_Create("Galaxy")
+        ship.SetName("USS Galaxy")
+        target_menu.RebuildShipMenu(ship)
+        bridge = App.g_kSetManager.GetSet("bridge")
+        if bridge is None:
+            from engine.appc.sets import SetClass
+            bridge = SetClass()
+            App.g_kSetManager.AddSet(bridge, "bridge")
+        bridge.AddObjectToSet(ship, "USS Galaxy")
+        player.SetTarget("USS Galaxy")
+        # Pick the first subsystem as the targeted subsystem.
+        first_sub = ship.StartGetSubsystemMatch(App.CT_SHIP_SUBSYSTEM)
+        first_sub_obj = ship.GetNextSubsystemMatch(first_sub)
+        ship.EndGetSubsystemMatch(first_sub)
+        player.SetTargetSubsystem(first_sub_obj)
+
+        view = TargetListView()
+        script = view.render_payload()
+        body = script[len("setTargetList("):-2]
+        state = json.loads(body)
+
+        assert state["selected"] == "USS Galaxy"
+        assert state["selected_subsystem"] == first_sub_obj.GetName()
+        row = state["rows"][0]
+        assert "hull" in row and 0 <= row["hull"] <= 100
+        assert "shields" in row and 0 <= row["shields"] <= 100
+        assert isinstance(row["subsystems"], list)
+        assert len(row["subsystems"]) > 0
+        assert row["subsystems"][0]["name"]  # non-empty string
+    finally:
+        from engine.core.game import _set_current_game
+        _set_current_game(None)
