@@ -9,6 +9,9 @@
 game/
 sdk/
 
+# Local git worktrees created for parallel feature work
+.worktrees/
+
 # Specific file types that may contain copyrighted content if placed
 # outside the above directories
 *.nif
