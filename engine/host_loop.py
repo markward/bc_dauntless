@@ -1999,26 +1999,28 @@ def run(mission_name: Optional[str] = None,
         target_list_view = TargetListView()
         registry.register(target_list_view)
 
-        # Wire the target-menu singleton to the bridge set so real
-        # ships flow into the panel as the mission loads them. The
-        # SDK's CreateTargetList is the one that constructs the
-        # singleton — but Bridge/TacticalMenuHandlers is not yet
-        # loaded by the host loop, so we construct it ourselves and
-        # subscribe. Once a Bridge.Initialize equivalent runs in this
-        # codepath, the explicit construction here can drop and the
-        # SDK call site will own it.
+        # Wire the target-menu singleton to the player's CONTAINING
+        # SPATIAL SET (e.g. "Biranu1"), not the "bridge" set. The
+        # "bridge" set in this codebase holds the bridge interior
+        # ObjectClass + UI/lighting — adding ships to it would corrupt
+        # the renderer's bridge-pass enumeration. Mission scripts add
+        # ships to mission-named spatial sets via loadspacehelper, so
+        # the player's containing set is the right subscription target.
         import App as _App
         if _App.STTargetMenu_GetTargetMenu() is None:
             _App.STTargetMenu_CreateW("Targets")
-        _bridge_set = _App.g_kSetManager.GetSet("bridge")
-        if _bridge_set is not None:
+        _spatial_set = None
+        if controller.session is not None and controller.session.player is not None:
+            _spatial_set = getattr(controller.session.player, "_containing_set", None)
+        if _spatial_set is not None:
             from engine.appc.target_menu import wire_to_bridge_set
-            wire_to_bridge_set(_bridge_set)
-            # Rebuild rows for any ships the mission already added before
-            # we subscribed (mission Initialize runs above this line).
-            # Non-ship members (e.g. the bridge interior ObjectClass)
-            # are skipped inside RebuildShipMenu via isinstance.
-            _App.STTargetMenu_GetTargetMenu().RebuildShipMenus()
+            wire_to_bridge_set(_spatial_set)
+            # Rebuild rows for ships the mission added before we
+            # subscribed (loader.load above ran the mission Initialize).
+            # Non-ship members in the spatial set (planets, lights,
+            # navpoints) are skipped inside RebuildShipMenu via the
+            # isinstance(ship, ShipClass) guard.
+            _App.STTargetMenu_GetTargetMenu().RebuildShipMenus(_spatial_set)
             _App.STTargetMenu_GetTargetMenu().ResetAffiliationColors()
 
         bridge_camera  = _BridgeCamera()
@@ -2117,19 +2119,20 @@ def run(mission_name: Optional[str] = None,
 
                 # Sensor-visibility update — flip per-row IsVisible
                 # based on range from the player. TargetListView
-                # filters rows where IsVisible() == 0.
+                # filters rows where IsVisible() == 0. We walk the
+                # player's spatial set (e.g. "Biranu1"), not the
+                # bridge set (which holds bridge-interior objects).
                 import App as _App_sv
                 _menu = _App_sv.STTargetMenu_GetTargetMenu()
-                _bridge = _App_sv.g_kSetManager.GetSet("bridge")
-                if _menu is not None and _bridge is not None:
+                from engine.core.game import Game_GetCurrentGame
+                _game = Game_GetCurrentGame()
+                _player = _game.GetPlayer() if _game is not None else None
+                _player_set = getattr(_player, "_containing_set", None) if _player is not None else None
+                if _menu is not None and _player is not None and _player_set is not None:
                     from engine.appc.subsystems import update_target_list_visibility
-                    from engine.core.game import Game_GetCurrentGame
-                    _game = Game_GetCurrentGame()
-                    _player = _game.GetPlayer() if _game is not None else None
-                    if _player is not None:
-                        update_target_list_visibility(
-                            _menu, _bridge.GetObjectList(), _player
-                        )
+                    update_target_list_visibility(
+                        _menu, _player_set.GetObjectList(), _player
+                    )
 
                 _scripts = registry.render_all()
                 for _panel_script in _scripts:

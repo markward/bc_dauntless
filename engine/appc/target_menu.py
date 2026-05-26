@@ -161,21 +161,27 @@ class STTargetMenu(STTopLevelMenu):
             sub = ship.GetNextSubsystemMatch(kIter)
         ship.EndGetSubsystemMatch(kIter)
 
-    def RebuildShipMenus(self) -> None:
+    def RebuildShipMenus(self, source_set=None) -> None:
         """Bulk rebuild. Never called from SDK Python; included so the
         engine auto-population hook has a single entry point.
 
-        Walks the "bridge" set and rebuilds rows for every ShipClass
-        member. Non-ship members (e.g. the bridge interior ObjectClass
-        on this codebase) are skipped — see RebuildShipMenu for the
-        underlying reason.
+        Walks ``source_set`` (or the "bridge" set when ``None``, for
+        backward compatibility with existing tests) and rebuilds rows
+        for every ShipClass member. Non-ship members are skipped —
+        see RebuildShipMenu for the underlying reason.
+
+        In this codebase the "bridge" set holds the bridge interior
+        only; spawned ships live in mission-named spatial sets like
+        "Biranu1". Pass that spatial set explicitly to populate the
+        target list from real ships.
         """
         import App as _App
         from engine.appc.ships import ShipClass
-        bridge = _App.g_kSetManager.GetSet("bridge")
-        if bridge is None:
+        if source_set is None:
+            source_set = _App.g_kSetManager.GetSet("bridge")
+        if source_set is None:
             return
-        for obj in bridge.GetObjectList():
+        for obj in source_set.GetObjectList():
             if isinstance(obj, ShipClass):
                 self.RebuildShipMenu(obj)
 
