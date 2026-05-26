@@ -35,10 +35,12 @@ class TargetListView(Panel):
             return (self._visible, None, ())
         from engine.appc.target_menu import STSubsystemMenu
         rows = []
-        for child in target_menu._children:
+        child = target_menu.GetFirstChild()
+        while child is not None:
             if isinstance(child, STSubsystemMenu):
                 ship = child.GetShip()
                 rows.append((ship.GetName(), child.GetAffiliation(), child.IsVisible()))
+            child = target_menu.GetNextChild(child)
         from engine.core.game import Game_GetCurrentGame
         game = Game_GetCurrentGame()
         selected = None
