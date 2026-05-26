@@ -2145,6 +2145,18 @@ def run(mission_name: Optional[str] = None,
                 # unpaused path. cursor_pos returns framebuffer pixels;
                 # convert to CEF view space (same scaling as the paused
                 # branch).
+                #
+                # Click forwarding consumes the mouse-button edge state
+                # (mouse_button_released advances g_prev_mouse_state in
+                # the bindings), so if we forward unconditionally the
+                # _poll_mouse_buttons call below never sees the LEFT
+                # edge — phasers stop firing. Gate click forwarding on
+                # the cursor being inside the target-list panel's
+                # bounding box: cursor over panel → CEF gets the click
+                # (and firing doesn't); cursor anywhere else → firing
+                # gets the click. mouse_move forwarding stays
+                # unconditional because it doesn't touch button state
+                # and the panel needs it for CSS :hover.
                 if not pause.is_open and _cef_send_mouse_move is not None:
                     _mx_fb, _my_fb = _h.cursor_pos()
                     _fb_w, _fb_h = _h.framebuffer_size()
@@ -2153,7 +2165,17 @@ def run(mission_name: Optional[str] = None,
                     _mx = int(_mx_fb * _sx)
                     _my = int(_my_fb * _sy)
                     _cef_send_mouse_move(_mx, _my)
-                    if _cef_send_mouse_click is not None:
+                    # Panel bbox in CEF view space — matches the CSS
+                    # rect in target_list.css (top:24px left:24px
+                    # width:280px). Height is generous to cover an
+                    # expanded ship with several subsystem rows.
+                    _PANEL_X, _PANEL_Y, _PANEL_W, _PANEL_H = 24, 24, 280, 400
+                    _cursor_in_panel = (
+                        target_list_view.visible
+                        and _PANEL_X <= _mx < _PANEL_X + _PANEL_W
+                        and _PANEL_Y <= _my < _PANEL_Y + _PANEL_H
+                    )
+                    if _cef_send_mouse_click is not None and _cursor_in_panel:
                         if _h.mouse_button_pressed(_h.keys.MOUSE_BUTTON_LEFT):
                             _cef_send_mouse_click(_mx, _my, 0, True)
                         if _h.mouse_button_released(_h.keys.MOUSE_BUTTON_LEFT):
