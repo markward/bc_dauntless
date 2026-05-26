@@ -2113,6 +2113,22 @@ def run(mission_name: Optional[str] = None,
                 # The setter is idempotent so writing every tick is cheap.
                 target_list_view.visible = view_mode.is_exterior
 
+                # Sensor-visibility update — flip per-row IsVisible
+                # based on range from the player. TargetListView
+                # filters rows where IsVisible() == 0.
+                import App as _App_sv
+                _menu = _App_sv.STTargetMenu_GetTargetMenu()
+                _bridge = _App_sv.g_kSetManager.GetSet("bridge")
+                if _menu is not None and _bridge is not None:
+                    from engine.appc.subsystems import update_target_list_visibility
+                    from engine.core.game import Game_GetCurrentGame
+                    _game = Game_GetCurrentGame()
+                    _player = _game.GetPlayer() if _game is not None else None
+                    if _player is not None:
+                        update_target_list_visibility(
+                            _menu, _bridge.GetObjectList(), _player
+                        )
+
                 _scripts = registry.render_all()
                 for _panel_script in _scripts:
                     _h.cef_execute_javascript(_panel_script)
