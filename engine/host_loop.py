@@ -2038,9 +2038,12 @@ def run(mission_name: Optional[str] = None,
         )
         from engine.ui.panel_registry import PanelRegistry
         from engine.ui.target_list_view import TargetListView
+        from engine.ui.sensors_panel import SensorsPanel
         registry = PanelRegistry(legacy_handler=pause_menu.dispatch_event)
         target_list_view = TargetListView()
+        sensors_panel = SensorsPanel()
         registry.register(target_list_view)
+        registry.register(sensors_panel)
 
         # Wire (and re-wire on mission swap) the target-menu singleton
         # to the player's spatial set. controller.post_load_hook fires
@@ -2143,6 +2146,7 @@ def run(mission_name: Optional[str] = None,
                 # SPACE toggles view_mode.is_exterior ↔ view_mode.is_bridge.
                 # The setter is idempotent so writing every tick is cheap.
                 target_list_view.visible = view_mode.is_exterior
+                sensors_panel.visible    = view_mode.is_exterior
 
                 # Sensor-visibility update — flip per-row IsVisible
                 # based on range from the player. TargetListView
