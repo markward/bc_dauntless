@@ -17,7 +17,12 @@
     --bc-radar-neutral: rgb(255, 255, 175);
     --bc-radar-unknown: rgb(128, 128, 128);
     --bc-label-text: rgb(235, 225, 255);
-    --bc-body-bg: rgba(10, 10, 16, 0.85);
+    /* Body background — bumped from 0.85 → 0.97 because text rendered
+     * on a semi-transparent background falls back to grayscale
+     * antialiasing in CEF/Chromium (subpixel AA is disabled there),
+     * which reads as "slightly blurry". Near-opaque gives subpixel
+     * AA back while keeping just enough see-through for the LCARS feel. */
+    --bc-body-bg: rgba(10, 10, 16, 0.97);
 }
 
 #target-list-panel {
@@ -65,24 +70,19 @@
     /* White across the board — affiliation is already conveyed by
      * the row's background tint, so the caret can stay neutral. */
     color: white;
-    /* Independent click target for the accordion toggle. Slightly
-     * larger hit area + visual feedback so users learn it as
-     * separate from the row body. */
+    /* Independent click target for the accordion toggle. No
+     * transitions, opacity, or transforms here — those promote the
+     * caret to its own compositor layer in CEF and bleed into the
+     * row's text rasterisation. The collapsed/expanded glyph swap
+     * is driven by content replacement (see below) instead. */
     cursor: pointer;
     padding: 0 4px;
-    transition: transform 120ms ease, opacity 120ms ease;
-    opacity: 0.7;
 }
 
-.target-list__caret:hover {
-    opacity: 1.0;
-}
-
-/* Caret rotates 90° when its row is expanded so ▸ visually becomes ▼. */
-.target-list__row--expanded .target-list__caret {
-    transform: rotate(90deg);
-    opacity: 1.0;
-}
+/* Caret swaps glyph based on expansion state. We rely on the JS to
+ * insert the glyph as text content; the CSS just doesn't touch it.
+ * (Previous implementation used transform: rotate(90deg) here, but
+ * GPU layer promotion from the transform reduced text crispness.) */
 
 .target-list__name {
     font-size: 13px;

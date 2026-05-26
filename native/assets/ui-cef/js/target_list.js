@@ -82,14 +82,15 @@ function setTargetList(state) {
         // firing too); name + bars sit as direct flex children of
         // the row and inherit the row's set-target onclick.
         //
-        // Flat (vs wrapping name+bars in an inner flex span) avoids
-        // CEF's text renderer falling back to grayscale antialiasing
-        // when a nested flex container produces fractional widths —
-        // the symptom is slightly blurry text.
+        // Caret glyph swaps between ▸ (collapsed) and ▾ (expanded)
+        // instead of CSS-rotating. CSS rotation promotes the caret
+        // to its own GPU layer in CEF, which reduces text crispness
+        // of the surrounding row.
+        const caretGlyph = expanded ? '&#9662;' : '&#9656;';  // ▾ / ▸
         html += '<div class="target-list__row target-list__row--' + aff + chosen + expandedCls + '"'
               +   ' onclick="' + targetAttr + '">'
               +   '<span class="target-list__caret"'
-              +   ' onclick="event.stopPropagation();' + toggleAttr + '">&#9656;</span>'
+              +   ' onclick="event.stopPropagation();' + toggleAttr + '">' + caretGlyph + '</span>'
               +   '<span class="target-list__name">' + nameHtml + '</span>'
               +   '<span class="target-list__bars">'
               +     '<span class="target-list__bar target-list__bar--hull"'
