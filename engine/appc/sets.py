@@ -110,7 +110,6 @@ class SetClass(TGEventHandlerObject):
         if isinstance(obj, ShipClass):
             ship_lifecycle.publish_added(obj)
         self._fire("added", obj, identifier)
-        self._mirror_ship_to_bridge("added", obj, identifier)
         return True
 
     def GetObject(self, name: str):
@@ -120,49 +119,13 @@ class SetClass(TGEventHandlerObject):
         obj = self._objects.get(name)
         if obj is not None:
             self._fire("removed", obj, name)
-            self._mirror_ship_to_bridge("removed", obj, name)
         return self._objects.pop(name, None)
 
     def DeleteObjectFromSet(self, name: str) -> None:
         obj = self._objects.get(name)
         if obj is not None:
             self._fire("removed", obj, name)
-            self._mirror_ship_to_bridge("removed", obj, name)
         self._objects.pop(name, None)
-
-    def _mirror_ship_to_bridge(self, event: str, obj, identifier: str) -> None:
-        """Auto-mirror a ShipClass add/remove into the global "bridge" set
-        so the target list picks up ships from any spatial mission set.
-
-        Matches BC's convention where ships in play are reachable via
-        the bridge set. The mirror touches ``bridge._objects`` and fires
-        bridge subscribers; it does NOT call ``bridge.AddObjectToSet``
-        (which would overwrite ``obj._containing_set`` and re-enter
-        this mirror loop).
-
-        No-ops when:
-          - obj isn't a ShipClass
-          - self is the bridge set itself (no self-mirror)
-          - self is an unmanaged test set (empty ``_name``)
-          - g_kSetManager has no "bridge" registered
-        """
-        from engine.appc.ships import ShipClass
-        if not isinstance(obj, ShipClass):
-            return
-        if not self._name or self._name == "bridge":
-            return
-        try:
-            import App as _App
-            bridge = _App.g_kSetManager.GetSet("bridge")
-        except Exception:
-            return
-        if bridge is None or bridge is self:
-            return
-        if event == "added":
-            bridge._objects[identifier] = obj
-        elif event == "removed":
-            bridge._objects.pop(identifier, None)
-        bridge._fire(event, obj, identifier)
 
     def IsLocationEmptyTG(self, point, radius: float, flag: int = 1) -> int:
         """Phase 1 stub — always reports the location as empty."""
