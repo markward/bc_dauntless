@@ -131,16 +131,11 @@ class STTargetMenu(STTopLevelMenu):
         """Add or refresh the row for ``ship``. SDK callsites:
         MissionLib.py:2200, MissionLib.py:2225.
 
-        Phase 1 deferral: the call ``ship.StartGetSubsystemMatch()``
-        with no match-type argument returns an empty iterator from the
-        current `engine/appc/ships.py` shim, so this method creates the
-        STSubsystemMenu row but leaves its subsystem children empty.
-        That matches the Phase 1 deliverable — the visible target list
-        only shows ship rows, not subsystem children. A future plan
-        will pass App.CT_SHIP_SUBSYSTEM and populate per-subsystem
-        rows; the iteration loop below is kept as scaffolding for
-        that integration.
+        Passes ``App.CT_SHIP_SUBSYSTEM`` to ``StartGetSubsystemMatch`` so
+        all subsystems (sensor, impulse, warp, weapons, shields, hull, etc.)
+        are iterated and each gets a child STMenu row under the ship row.
         """
+        import App as _App
         if ship is None:
             return
         row = self.GetObjectEntry(ship)
@@ -148,7 +143,7 @@ class STTargetMenu(STTopLevelMenu):
             row = STSubsystemMenu(ship, ship.GetName())
             self.AddChild(row)
         row.KillChildren()
-        kIter = ship.StartGetSubsystemMatch()
+        kIter = ship.StartGetSubsystemMatch(_App.CT_SHIP_SUBSYSTEM)
         sub = ship.GetNextSubsystemMatch(kIter)
         while sub is not None:
             label = sub.GetName() if hasattr(sub, "GetName") else ""

@@ -211,17 +211,40 @@ def test_rebuild_ship_menus_walks_bridge_set():
     assert target_menu.GetObjectEntry(b) is not None
 
 
-def test_rebuild_ship_menu_leaves_subsystem_children_empty_in_phase1():
-    """Phase 1 deferral: subsystem children are not populated until a
-    future plan passes App.CT_SHIP_SUBSYSTEM to StartGetSubsystemMatch.
-    Locking the current behaviour so the deferral is visible."""
+def test_rebuild_ship_menu_populates_subsystem_children_in_phase2():
+    """Phase-2 update: previously this test asserted empty children
+    (Phase 1 deferral). With CT_SHIP_SUBSYSTEM dispatch added,
+    subsystem rows now populate."""
+    from engine.appc.ships import ShipClass_Create
     target_menu = App.STTargetMenu("Targets")
-    ship = ShipClass(); ship.SetName("Dauntless")
+    ship = ShipClass_Create("Test")
+    ship.SetName("Dauntless")
     target_menu.RebuildShipMenu(ship)
     row = target_menu.GetObjectEntry(ship)
-    # Should exist but have no subsystem rows yet.
     assert row is not None
-    assert len(row._children) == 0
+    assert len(row._children) > 0
+
+
+def test_rebuild_ship_menu_populates_subsystem_rows():
+    """RebuildShipMenu walks all targetable subsystems and creates a
+    child row per subsystem under the ship's STSubsystemMenu.
+
+    A ShipClass_Create()'d ship has the default subsystem set installed,
+    so the row should now have several children (sensor, impulse,
+    weapons, shields, hull etc.)."""
+    from engine.appc.ships import ShipClass_Create
+
+    target_menu = App.STTargetMenu("Targets")
+    ship = ShipClass_Create("Test")
+    ship.SetName("Test Ship")
+
+    target_menu.RebuildShipMenu(ship)
+    row = target_menu.GetObjectEntry(ship)
+
+    assert len(row._children) > 0, (
+        f"Expected subsystem rows, got {len(row._children)} children. "
+        "Did CT_SHIP_SUBSYSTEM dispatch get added to StartGetSubsystemMatch?"
+    )
 
 
 # ── SetTarget fallback via target menu ──────────────────────────────────────
