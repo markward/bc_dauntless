@@ -1239,6 +1239,21 @@ def reset_sdk_globals() -> None:
     if hasattr(App.g_kEventManager, "_method_handlers"):
         App.g_kEventManager._method_handlers.clear()
     register_input_handlers(App.g_kEventManager)
+    # Unhook the target-menu subscriber from the live bridge set so a
+    # mission swap doesn't leave a dangling subscription on a recreated
+    # set. unwire_from_bridge_set is idempotent — safe to call even when
+    # no subscription is active.
+    try:
+        import App as _App
+        from engine.appc.target_menu import unwire_from_bridge_set
+        _bridge = _App.g_kSetManager.GetSet("bridge")
+        if _bridge is not None:
+            unwire_from_bridge_set(_bridge)
+    except Exception:
+        # Defensive: subscriber-cleanup failure must not block the rest
+        # of the reset. Matches the broader reset_sdk_globals discipline
+        # (each step is independently best-effort).
+        pass
     App.g_kSetManager._sets.clear()
     _waypoint_registry.clear()
     App._next_event_type_id = 1200
