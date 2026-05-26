@@ -61,6 +61,10 @@ class SetClass(TGEventHandlerObject):
             self._subscribers.append(callback)
 
     def unsubscribe(self, callback) -> None:
+        """Remove a previously-subscribed callback.
+
+        Silent if the callback isn't currently subscribed.
+        """
         if callback in self._subscribers:
             self._subscribers.remove(callback)
 
