@@ -34,6 +34,11 @@
     font-weight: 600;
     color: var(--bc-label-text);
     pointer-events: auto;
+    /* Force subpixel antialiasing on all text within the panel — the
+     * 0.97 body alpha already keeps CEF in subpixel mode, but stating
+     * it explicitly defends against future background-alpha tweaks
+     * accidentally regressing text crispness. */
+    -webkit-font-smoothing: subpixel-antialiased;
 }
 
 #target-list-panel.target-list--hidden {
@@ -150,7 +155,7 @@
     align-items: center;
     padding: 3px 12px 3px 28px;   /* indent past the ship row caret */
     cursor: pointer;
-    font-size: 12px;
+    font-size: 13px;              /* match ship row name */
     color: rgba(235, 225, 255, 0.75);
 }
 
