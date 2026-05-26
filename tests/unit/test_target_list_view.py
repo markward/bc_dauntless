@@ -204,3 +204,113 @@ def test_dispatch_event_ship_only_click_clears_subsystem():
     finally:
         from engine.core.game import _set_current_game
         _set_current_game(None)
+
+
+# ── Player exclusion ─────────────────────────────────────────────────────────
+
+def test_view_payload_excludes_player_ship():
+    """The player's own ship must not appear in the target list — it
+    doesn't make sense to target yourself."""
+    from engine.ui.target_list_view import TargetListView
+    App._reset_target_menu_singleton()
+    target_menu = App.STTargetMenu_CreateW("Targets")
+    game, player, mission = _setup_game_with_player()
+    try:
+        # Add both the player and an enemy to the menu.
+        target_menu.AddChild(App.STSubsystemMenu(player, "Player"))
+        enemy = ShipClass(); enemy.SetName("Kor")
+        target_menu.AddChild(App.STSubsystemMenu(enemy, "Kor"))
+
+        view = TargetListView()
+        script = view.render_payload()
+        body = script[len("setTargetList("):-2]
+        state = json.loads(body)
+
+        names = [r["name"] for r in state["rows"]]
+        assert "Player" not in names
+        assert "Kor" in names
+    finally:
+        from engine.core.game import _set_current_game
+        _set_current_game(None)
+
+
+# ── Accordion expansion ──────────────────────────────────────────────────────
+
+def test_view_payload_rows_collapsed_by_default():
+    """Fresh ship rows default to expanded=False so the panel renders
+    compactly — the user opens the accordion explicitly."""
+    from engine.ui.target_list_view import TargetListView
+    App._reset_target_menu_singleton()
+    target_menu = App.STTargetMenu_CreateW("Targets")
+    game, player, mission = _setup_game_with_player()
+    try:
+        kor = ShipClass(); kor.SetName("Kor")
+        target_menu.AddChild(App.STSubsystemMenu(kor, "Kor"))
+
+        view = TargetListView()
+        script = view.render_payload()
+        body = script[len("setTargetList("):-2]
+        state = json.loads(body)
+
+        assert state["rows"][0]["expanded"] is False
+    finally:
+        from engine.core.game import _set_current_game
+        _set_current_game(None)
+
+
+def test_dispatch_event_toggle_expands_row():
+    """The __toggle__ pseudo-subsystem flips a row's expansion state."""
+    from engine.ui.target_list_view import TargetListView
+    App._reset_target_menu_singleton()
+    target_menu = App.STTargetMenu_CreateW("Targets")
+    game, player, mission = _setup_game_with_player()
+    try:
+        kor = ShipClass(); kor.SetName("Kor")
+        target_menu.AddChild(App.STSubsystemMenu(kor, "Kor"))
+
+        view = TargetListView()
+        # First emit captures the collapsed state in the snapshot cache.
+        view.render_payload()
+
+        # Toggle the row.
+        handled = view.dispatch_event("Kor/__toggle__")
+        assert handled is True
+
+        # Next render shows the row expanded.
+        script = view.render_payload()
+        body = script[len("setTargetList("):-2]
+        state = json.loads(body)
+        assert state["rows"][0]["expanded"] is True
+
+        # Toggle again to collapse.
+        view.dispatch_event("Kor/__toggle__")
+        script = view.render_payload()
+        body = script[len("setTargetList("):-2]
+        state = json.loads(body)
+        assert state["rows"][0]["expanded"] is False
+    finally:
+        from engine.core.game import _set_current_game
+        _set_current_game(None)
+
+
+def test_dispatch_event_toggle_does_not_change_player_target():
+    """A caret-click toggle is pure UI state — it must NOT set the
+    target ship (that's the row-body click's job)."""
+    from engine.ui.target_list_view import TargetListView
+    App._reset_target_menu_singleton()
+    target_menu = App.STTargetMenu_CreateW("Targets")
+    game, player, mission = _setup_game_with_player()
+    try:
+        kor = ShipClass(); kor.SetName("Kor")
+        target_menu.AddChild(App.STSubsystemMenu(kor, "Kor"))
+
+        view = TargetListView()
+        assert player.GetTarget() is None
+
+        view.dispatch_event("Kor/__toggle__")
+
+        # Target unchanged by the toggle action.
+        assert player.GetTarget() is None
+    finally:
+        from engine.core.game import _set_current_game
+        _set_current_game(None)

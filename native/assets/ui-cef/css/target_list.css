@@ -65,6 +65,32 @@
     /* White across the board — affiliation is already conveyed by
      * the row's background tint, so the caret can stay neutral. */
     color: white;
+    /* Independent click target for the accordion toggle. Slightly
+     * larger hit area + visual feedback so users learn it as
+     * separate from the row body. */
+    cursor: pointer;
+    padding: 0 4px;
+    transition: transform 120ms ease, opacity 120ms ease;
+    opacity: 0.7;
+}
+
+.target-list__caret:hover {
+    opacity: 1.0;
+}
+
+/* Caret rotates 90° when its row is expanded so ▸ visually becomes ▼. */
+.target-list__row--expanded .target-list__caret {
+    transform: rotate(90deg);
+    opacity: 1.0;
+}
+
+/* The clickable row-body sits next to the caret and dispatches the
+ * set-target event; the caret's own onclick stops propagation so it
+ * doesn't also trigger target selection. */
+.target-list__row-body {
+    display: flex;
+    align-items: center;
+    flex: 1 1 auto;
 }
 
 .target-list__name {

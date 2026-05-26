@@ -77,9 +77,18 @@ class TargetListView(Panel):
     def name(self) -> str:
         return "target"
 
+    # Special subsystem-name sentinel for "toggle this row's expansion".
+    # Real subsystem names never start with __, so this can't collide.
+    _TOGGLE_ACTION = "__toggle__"
+
     def __init__(self):
         super().__init__()
         self._last_snapshot: Optional[tuple] = None
+        # Names of ships whose subsystem children are currently expanded
+        # in the panel. Persists across re-renders so a Cmd+R reload
+        # preserves the user's open accordions until something
+        # invalidates explicitly.
+        self._expanded_ships: set = set()
 
     def _snapshot(self):
         """Build a hashable snapshot of the rendered state."""
@@ -88,40 +97,45 @@ class TargetListView(Panel):
         if target_menu is None:
             return (self._visible, None, None, ())
         from engine.appc.target_menu import STSubsystemMenu
+        # Resolve the player ship so we can exclude it from the panel —
+        # the player's own ship shouldn't be a target.
+        from engine.core.game import Game_GetCurrentGame
+        game = Game_GetCurrentGame()
+        player = game.GetPlayer() if game is not None else None
+
         rows = []
         child = target_menu.GetFirstChild()
         while child is not None:
             if isinstance(child, STSubsystemMenu):
                 ship = child.GetShip()
-                hull_pct = _query_hull_percentage(ship)
-                shield_pct = _query_shield_percentage(ship)
-                subsystems = tuple(
-                    sub_child.GetLabel()
-                    for sub_child in child._children
-                )
-                rows.append((
-                    ship.GetName(),
-                    child.GetAffiliation(),
-                    child.IsVisible(),
-                    hull_pct,
-                    shield_pct,
-                    subsystems,
-                ))
+                if ship is not None and ship is not player:
+                    hull_pct = _query_hull_percentage(ship)
+                    shield_pct = _query_shield_percentage(ship)
+                    subsystems = tuple(
+                        sub_child.GetLabel()
+                        for sub_child in child._children
+                    )
+                    name = ship.GetName()
+                    rows.append((
+                        name,
+                        child.GetAffiliation(),
+                        child.IsVisible(),
+                        hull_pct,
+                        shield_pct,
+                        subsystems,
+                        name in self._expanded_ships,
+                    ))
             child = target_menu.GetNextChild(child)
 
-        from engine.core.game import Game_GetCurrentGame
-        game = Game_GetCurrentGame()
         selected = None
         selected_subsystem = None
-        if game is not None:
-            player = game.GetPlayer()
-            if player is not None:
-                target = player.GetTarget()
-                if target is not None:
-                    selected = target.GetName()
-                target_sub = player.GetTargetSubsystem()
-                if target_sub is not None and hasattr(target_sub, "GetName"):
-                    selected_subsystem = target_sub.GetName()
+        if player is not None:
+            target = player.GetTarget()
+            if target is not None:
+                selected = target.GetName()
+            target_sub = player.GetTargetSubsystem()
+            if target_sub is not None and hasattr(target_sub, "GetName"):
+                selected_subsystem = target_sub.GetName()
         return (self._visible, selected, selected_subsystem, tuple(rows))
 
     def render_payload(self) -> Optional[str]:
@@ -141,19 +155,19 @@ class TargetListView(Panel):
                     "hull": hull,
                     "shields": shields,
                     "subsystems": [{"name": s} for s in subs],
+                    "expanded": expanded,
                 }
-                for (name, aff, is_vis, hull, shields, subs) in rows
+                for (name, aff, is_vis, hull, shields, subs, expanded) in rows
                 if is_vis
             ],
         }
         return "setTargetList(" + json.dumps(payload) + ");"
 
     def dispatch_event(self, action: str) -> bool:
-        """Action format: ``<ship>`` or ``<ship>/<subsystem>``.
-
-        Ship-only clicks set the target and clear any previously-selected
-        subsystem. Subsystem clicks set both the target and the
-        subsystem in one go.
+        """Action format:
+          - ``<ship>``                      — set target ship, clear sub lock
+          - ``<ship>/<subsystem>``          — set target + subsystem
+          - ``<ship>/__toggle__``           — toggle row expansion (accordion)
         """
         from engine.core.game import Game_GetCurrentGame
         game = Game_GetCurrentGame()
@@ -164,13 +178,21 @@ class TargetListView(Panel):
             return False
 
         if "/" in action:
-            ship_name, subsystem_name = action.split("/", 1)
+            ship_name, suffix = action.split("/", 1)
         else:
-            ship_name, subsystem_name = action, None
+            ship_name, suffix = action, None
+
+        # Accordion toggle — pure UI state, no target change.
+        if suffix == self._TOGGLE_ACTION:
+            if ship_name in self._expanded_ships:
+                self._expanded_ships.discard(ship_name)
+            else:
+                self._expanded_ships.add(ship_name)
+            return True
 
         player.SetTarget(ship_name)
 
-        if subsystem_name is None:
+        if suffix is None:
             # Ship-only click — clear any subsystem lock.
             player.SetTargetSubsystem(None)
             return True
@@ -180,7 +202,7 @@ class TargetListView(Panel):
         target_ship = player.GetTarget()
         if target_ship is None:
             return True  # ship resolution failed, but the SetTarget call already happened
-        sub = _resolve_subsystem_by_name(target_ship, subsystem_name)
+        sub = _resolve_subsystem_by_name(target_ship, suffix)
         player.SetTargetSubsystem(sub)
         return True
 
