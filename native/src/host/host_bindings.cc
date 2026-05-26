@@ -947,21 +947,24 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "the main thread (single-threaded CEF message loop).");
 
     m.def("cef_set_load_end_handler",
-          [](py::function fn) {
-              // Hold a strong ref so the callback survives across CEF callbacks.
-              auto fn_ptr = std::make_shared<py::function>(std::move(fn));
+          [](py::function callback) {
               dauntless::ui_cef::set_load_end_handler(
-                  [fn_ptr]() {
+                  [cb = std::move(callback)]() {
                       py::gil_scoped_acquire gil;
                       try {
-                          (*fn_ptr)();
+                          cb();
                       } catch (const py::error_already_set& e) {
                           std::fprintf(stderr,
-                                       "cef_set_load_end_handler: python callback raised: %s\n",
-                                       e.what());
+                              "cef_set_load_end_handler: python callback raised: %s\n",
+                              e.what());
                       }
                   });
-          });
+          },
+          py::arg("callback"),
+          "Register a Python callback ()->None invoked once when the CEF "
+          "main frame finishes loading (initial load and Cmd+R reload). "
+          "The handler runs on the main thread (single-threaded CEF "
+          "message loop).");
 #else
     // Stub the bindings out so engine.host_loop can call them
     // unconditionally regardless of build config.
