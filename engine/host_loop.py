@@ -2117,14 +2117,11 @@ def run(mission_name: Optional[str] = None,
             # registry returns only payloads whose state changed since
             # the last call, so this is cheap when nothing's moving.
             #
-            # Startup race: the first ~few seconds of pushes happen
-            # before CEF finishes loading hello.html, so setTargetList()
-            # is undefined and the call is silently dropped. Invalidate
-            # the view periodically during the startup window so the
-            # push retries until the page is ready. After STARTUP_FRAMES
-            # we trust idempotency. (A proper fix would hook CEF's
-            # OnLoadEnd in cef_lifecycle.h and invalidate once on real
-            # page-ready; this is the no-C++ workaround.)
+            # CEF's OnLoadEnd hook (set up at startup via
+            # cef_set_load_end_handler) calls registry.invalidate_all
+            # once when the page is ready, so the next render_all
+            # re-emits even though state hasn't changed since the
+            # previous tick. No per-tick retry needed.
             if _h is not None:
                 # Target list only renders in the exterior tactical view.
                 # SPACE toggles view_mode.is_exterior ↔ view_mode.is_bridge.
