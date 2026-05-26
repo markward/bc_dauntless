@@ -1989,31 +1989,42 @@ def run(mission_name: Optional[str] = None,
         # three named ships across affiliations so the panel is
         # populated at launch and we can verify the rendering pipe.
         # Remove this block once the engine drives the list directly.
-        import App as _App
-        _App._reset_target_menu_singleton()
-        _target_menu = _App.STTargetMenu_CreateW("Targets")
-        from engine.core.game import Mission, Episode, Game, _set_current_game
-        from engine.appc.ships import ShipClass as _ShipClass
-        _demo_mission = Mission()
-        _demo_episode = Episode(); _demo_episode.SetCurrentMission(_demo_mission)
-        _demo_game = Game(); _demo_game.SetCurrentEpisode(_demo_episode)
-        _set_current_game(_demo_game)
-        _demo_mission.GetFriendlyGroup().AddName("USS Dauntless")
-        _demo_mission.GetEnemyGroup().AddName("IKS Kor")
-        _demo_mission.GetNeutralGroup().AddName("Trader")
-        _demo_bridge = _App.g_kSetManager.GetSet("bridge")
-        if _demo_bridge is None:
-            from engine.appc.sets import SetClass as _SetClass
-            _demo_bridge = _SetClass()
-            _App.g_kSetManager.AddSet(_demo_bridge, "bridge")
-        for _name in ("USS Dauntless", "IKS Kor", "Trader"):
-            _s = _ShipClass(); _s.SetName(_name)
-            _demo_bridge.AddObjectToSet(_s, _name)
-            _target_menu.RebuildShipMenu(_s)
-        _target_menu.ResetAffiliationColors()
-        # Player ship — referenced by TargetListView.dispatch_event.
-        _demo_player = _ShipClass(); _demo_player.SetName("Player")
-        _demo_game.SetPlayer(_demo_player)
+        #
+        # Gate: only inject demo state when the mission didn't already
+        # set a real player. MissionLib.CreatePlayerShip always calls
+        # game.SetPlayer() during Initialize(), so GetPlayer() is
+        # non-None whenever a real mission ran. Default dev launches
+        # (SHIP_GATE_MISSION / no CLI arg) may not call SetPlayer for
+        # ship-gate missions, leaving GetPlayer() as None — that is the
+        # signal to populate demo rows.
+        from engine.core.game import Game_GetCurrentGame as _GetGame
+        _run_demo = (_GetGame() is None or _GetGame().GetPlayer() is None)
+        if _run_demo:
+            import App as _App
+            _App._reset_target_menu_singleton()
+            _target_menu = _App.STTargetMenu_CreateW("Targets")
+            from engine.core.game import Mission, Episode, Game, _set_current_game
+            from engine.appc.ships import ShipClass as _ShipClass
+            _demo_mission = Mission()
+            _demo_episode = Episode(); _demo_episode.SetCurrentMission(_demo_mission)
+            _demo_game = Game(); _demo_game.SetCurrentEpisode(_demo_episode)
+            _set_current_game(_demo_game)
+            _demo_mission.GetFriendlyGroup().AddName("USS Dauntless")
+            _demo_mission.GetEnemyGroup().AddName("IKS Kor")
+            _demo_mission.GetNeutralGroup().AddName("Trader")
+            _demo_bridge = _App.g_kSetManager.GetSet("bridge")
+            if _demo_bridge is None:
+                from engine.appc.sets import SetClass as _SetClass
+                _demo_bridge = _SetClass()
+                _App.g_kSetManager.AddSet(_demo_bridge, "bridge")
+            for _name in ("USS Dauntless", "IKS Kor", "Trader"):
+                _s = _ShipClass(); _s.SetName(_name)
+                _demo_bridge.AddObjectToSet(_s, _name)
+                _target_menu.RebuildShipMenu(_s)
+            _target_menu.ResetAffiliationColors()
+            # Player ship — referenced by TargetListView.dispatch_event.
+            _demo_player = _ShipClass(); _demo_player.SetName("Player")
+            _demo_game.SetPlayer(_demo_player)
 
         bridge_camera  = _BridgeCamera()
         try:
