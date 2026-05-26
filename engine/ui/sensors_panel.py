@@ -28,7 +28,7 @@ from engine.ui.radar_projection import project_contact
 # docs/instrumented_experiments/2026-05-26-radar-range-calibration.md.
 # SDK scripts that need a different range can call SetRange on the
 # RadarDisplay instance; the panel re-reads it each snapshot.
-DEFAULT_RANGE_M = 3000.0
+DEFAULT_RANGE_M = 1000.0
 
 _AFFILIATION_TO_KIND = {
     "FRIENDLY": "ship",

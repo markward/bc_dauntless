@@ -104,7 +104,7 @@ class _RadarDisplay:
         # Range chosen by feel; original BC value is opaque (closed
         # Appc.dll). See docs/instrumented_experiments/2026-05-26-radar-range-calibration.md
         # for the planned measurement experiment.
-        self._range_m: float = 3000.0
+        self._range_m: float = 1000.0
 
     # STStylizedWindow / window-shaped surface.
     def SetName(self, name) -> None:    self._name = str(name)
