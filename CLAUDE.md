@@ -129,6 +129,60 @@ Current shims:
 
 Add new SDK-name shadows at the root only when needed; keep application code in `engine/`. If a third shim shows up, consider grouping them into a `shims/` directory and updating `_SDKFinder` accordingly.
 
+## Rotation matrix convention — column-vector, always
+
+`TGMatrix3` stores **basis vectors as columns**. For a ship's world rotation `R`:
+
+- `R.GetCol(0)` = ship-right axis in world space
+- `R.GetCol(1)` = ship-forward axis in world space (model-Y mapped through R)
+- `R.GetCol(2)` = ship-up axis in world space (model-Z mapped through R)
+
+Transforming a body-frame vector to world: `v_world = R · v_body`. The
+SDK's `NiPoint3.MultMatrixLeft(R)` mutates `self` in place to that result;
+our `engine/appc/math.py:TGPoint3.MultMatrixLeft` matches. `MakeXRotation`,
+`MakeYRotation`, `MakeZRotation`, and `MakeRotation` all produce
+standard column-vector rotation matrices.
+
+Why column: the original Appc.dll wraps Gamebryo `NiMatrix3`, which is
+column-vector internally, and the SDK only ever touches matrices through
+`MultMatrixLeft` and `AlignToVectors` (it never reads rows or columns
+directly — grep the 1228 SDK files). The SDK's *only* enforced constraint
+is `MultMatrixLeft(R) ⇒ v_world = R · v_body`, which is column-vec. The
+column choice is the one historically-faithful option, not an arbitrary
+coin flip.
+
+### Hard rules when reading rotations
+
+- World-forward of any object: **`obj.GetWorldRotation().GetCol(1)`**.
+  Never `GetRow(1)`. There is a helper `ObjectClass.GetWorldForwardTG()`
+  that already does the right thing — prefer it.
+- World-up: **`GetCol(2)`**. World-right: **`GetCol(0)`**.
+- Body-frame angular velocity integration: `R_new = R · Δ_body`
+  (**post**-multiply the body-frame delta). See
+  `engine/host_loop.py:_PlayerControl` and
+  `engine/appc/ship_motion.py:_step_ship_motion`.
+- Body→world direction transform: `v.MultMatrixLeft(R)` — already does
+  `R · v` correctly.
+- Renderer hands `R` to the GL shader **directly** (no transpose); the
+  shader's `u_model` is column-vector and `R`'s columns are body axes.
+  The X-axis flip in `_ship_world_matrix` / `_astro_world_matrix` is a
+  *separate* concern compensating for `AlignToVectors` producing a
+  left-handed (det = -1) basis; it stays.
+
+### When this convention was unified
+
+Pre-refactor the codebase had a row/column split: `AlignToVectors`, the
+renderer transpose, `_PlayerControl`, the camera spring, the Euler
+extractor, and `radar_projection.py` used **rows**; `ships.py`,
+`ship_motion.py`, `subsystems.py`, `emission.py`, the SDK callers (via
+`MultMatrixLeft`), and the AI smoke tests used **columns**. Both
+pipelines were internally consistent and the split survived only because
+tests rarely exercised pitched orientations. The radar branch
+(`9e79b7d`) and `68f6220` were skirmishes in opposite directions.
+Branch `worktree-matrix-convention-unify` consolidated everything onto
+column. If you see `GetRow(1)` in code that's reading a ship's world
+forward, it is a regression — fix it.
+
 ## Build layout — single source of truth
 
 There is **one** build tree at `<project-root>/build/`. The renderer host binary is at **`build/dauntless`** and the Python extension module is at **`build/python/_open_stbc_host.cpython-*.so`**. Do not introduce alternate output locations.

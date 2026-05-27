@@ -125,15 +125,16 @@ def _step_ship_motion(ship, dt: float) -> None:
     cav.z = _ramp_toward(cav.z, target_av_z, ang_step)
 
     # ── Integrate rotation ───────────────────────────────────────────
-    # Same convention as _PlayerControl.apply step 4 (host_loop.py:741):
-    # row-vector matrices, body-frame delta pre-multiplies. Pitch (X) →
-    # yaw (Z) → roll (Y) Euler order. Body axes map: X=right, Y=forward,
-    # Z=up; cav components are per-axis rates around those body axes.
+    # Same convention as _PlayerControl.apply step 4: column-vector
+    # matrices, body-frame delta POST-multiplies (R · D); see
+    # CLAUDE.md ↦ "Rotation matrix convention". Pitch (X) → yaw (Z) →
+    # roll (Y) Euler order. Body axes map: X=right, Y=forward, Z=up;
+    # cav components are per-axis rates around those body axes.
     if cav.x or cav.y or cav.z:
         R = ship.GetWorldRotation()
         R_pitch = TGMatrix3(); R_pitch.MakeRotation(cav.x * dt, _X_AXIS)
         R_yaw   = TGMatrix3(); R_yaw.MakeRotation(cav.z * dt, _Z_AXIS)
         R_roll  = TGMatrix3(); R_roll.MakeRotation(cav.y * dt, _Y_AXIS)
         delta = R_pitch.MultMatrix(R_yaw).MultMatrix(R_roll)
-        R = delta.MultMatrix(R)
+        R = R.MultMatrix(delta)
         ship.SetMatrixRotation(R)

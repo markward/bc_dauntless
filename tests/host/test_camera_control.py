@@ -223,10 +223,11 @@ def test_compute_camera_offset_is_in_ship_body_frame():
     rot.MakeZRotation(math.radians(90))
     eye, target, _ = cc.compute_camera(loc, rot)
 
-    # Ship's body-Y after a +90° yaw points along R.GetRow(1) = (1, 0, 0).
-    # Body-Z is unchanged (0, 0, 1). The camera sits at
+    # Ship's body-Y after a +90° yaw points along R.GetCol(1) = (-1, 0, 0)
+    # under column-vector convention (see CLAUDE.md). Body-Z is unchanged
+    # (0, 0, 1). The camera sits at
     #   -CAM_BACK_RADII*body_Y + CAM_UP_RADII*body_Z + look_up_offset*body_Z.
-    expected_eye_x = -CAM_BACK_RADII
+    expected_eye_x =  CAM_BACK_RADII
     expected_eye_y =  0.0
     expected_eye_z =  CAM_UP_RADII + cc.look_up_offset
     assert eye[0] == pytest.approx(expected_eye_x, abs=1e-3)
@@ -241,8 +242,8 @@ def test_compute_camera_up_is_ship_up():
     loc, rot = _make_ship_pose(0.0, 0.0, 0.0)
     rot.MakeYRotation(math.radians(30))   # roll
     _, _, up = cc.compute_camera(loc, rot)
-    # Ship-up after Y rotation: row 2 of R.
-    expected = rot.GetRow(2)
+    # Ship-up after Y rotation: col 2 of R (column-vector convention; see CLAUDE.md).
+    expected = rot.GetCol(2)
     assert up[0] == pytest.approx(expected.x)
     assert up[1] == pytest.approx(expected.y)
     assert up[2] == pytest.approx(expected.z)
@@ -252,7 +253,8 @@ def test_compute_camera_up_is_ship_up():
 
 
 def _roll_90_rot():
-    """Ship rotated 90° around body Y (roll). Row 2 (body-up) = (-1, 0, 0)."""
+    """Ship rotated 90° around body Y (roll). Col 2 (body-up) = (1, 0, 0)
+    under column-vector convention (see CLAUDE.md)."""
     from engine.appc.math import TGMatrix3
     r = TGMatrix3()
     r.MakeYRotation(math.radians(90))
@@ -303,7 +305,7 @@ def test_spring_converges_to_live_after_long_settle():
     for _ in range(int(6.0 * 60)):
         cc.compute_camera(loc, rolled, dt=1.0/60)
     _, _, up = cc.compute_camera(loc, rolled, dt=1.0/60)
-    expected = rolled.GetRow(2)
+    expected = rolled.GetCol(2)
     assert up[0] == pytest.approx(expected.x, abs=1e-4)
     assert up[1] == pytest.approx(expected.y, abs=1e-4)
     assert up[2] == pytest.approx(expected.z, abs=1e-4)
@@ -320,7 +322,7 @@ def test_spring_snap_clears_smoothing():
     cc.snap()
     rolled = _roll_90_rot()
     _, _, up = cc.compute_camera(loc, rolled, dt=1.0/60)
-    expected = rolled.GetRow(2)
+    expected = rolled.GetCol(2)
     assert up[0] == pytest.approx(expected.x, abs=1e-9)
     assert up[1] == pytest.approx(expected.y, abs=1e-9)
     assert up[2] == pytest.approx(expected.z, abs=1e-9)

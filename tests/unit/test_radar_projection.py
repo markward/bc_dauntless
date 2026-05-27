@@ -13,20 +13,16 @@ def _identity():
 
 
 def _yaw(theta):
-    """Yaw matrix using the same row convention as AlignToVectors at
-    engine/appc/objects.py:144-146 — rows are world-space basis vectors
-    (right, forward, up) of the rotated frame. Positive theta yaws the
-    ship LEFT (forward rotates from +Y toward -X).
+    """Yaw matrix under the column-vector convention used project-wide
+    (see CLAUDE.md ↦ "Rotation matrix convention"). Columns are
+    world-space basis vectors of the rotated frame. Positive theta yaws
+    the ship LEFT (forward rotates from +Y toward -X).
 
-    For theta = +π/2: forward in world = (-1, 0, 0); right = (0, 1, 0).
+    For theta = +π/2: col 1 (forward in world) = (-1, 0, 0);
+    col 0 (right in world) = (0, 1, 0).
     """
     m = TGMatrix3()
-    c, s = math.cos(theta), math.sin(theta)
-    m._m = [
-        [ c,  s,  0.0],   # row 0 = right in world = (cos θ, sin θ, 0)
-        [-s,  c,  0.0],   # row 1 = forward in world = (-sin θ, cos θ, 0)
-        [0.0, 0.0, 1.0],  # row 2 = up in world = (0, 0, 1)
-    ]
+    m.MakeZRotation(theta)
     return m
 
 

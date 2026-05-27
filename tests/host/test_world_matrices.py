@@ -62,14 +62,11 @@ def test_ship_world_matrix_scales_mesh_not_position():
 
 
 def test_ship_world_matrix_columns_are_body_axes_in_world():
-    """BC's TGMatrix3 is row-vector (rows = body axes in world). The OpenGL
-    shader expects column-vector u_model (columns = body axes in world). The
-    matrix sent to the renderer must therefore be the transpose of the BC
-    rotation so the rendered ship's body axes match what the camera and
-    physics-motion code (which read R.GetRow(j)) think they are.
-
-    Regression test for the bug where pitch/roll/yaw made the camera drift
-    off the rendered ship's actual rear because of this row/column mismatch."""
+    """BC's TGMatrix3 is column-vector (cols = body axes in world; see
+    CLAUDE.md ↦ "Rotation matrix convention"). The OpenGL shader also
+    expects column-vector u_model, so the matrix is sent to the renderer
+    *directly*, no transpose. Each output column must equal the matching
+    BC column (X axis negated due to the d1ac130 X-flip)."""
     import math
     from engine import host_loop
 
@@ -80,11 +77,11 @@ def test_ship_world_matrix_columns_are_body_axes_in_world():
     m = host_loop._ship_world_matrix(pose, natural_scale)
 
     # Column j of the row-major mat4 lives at positions j, 4+j, 8+j.
-    # It must equal R.GetRow(j) * natural_scale (BC body axis j in world),
+    # It must equal R.GetCol(j) * natural_scale (BC body axis j in world),
     # with column 0 (X axis) negated under d1ac130 because det(rot) = +1.
-    rgt = pose._rot.GetRow(0)
-    fwd = pose._rot.GetRow(1)
-    up  = pose._rot.GetRow(2)
+    rgt = pose._rot.GetCol(0)
+    fwd = pose._rot.GetCol(1)
+    up  = pose._rot.GetCol(2)
     s = natural_scale
 
     assert m[0]  == pytest.approx(-rgt.x * s)
@@ -113,9 +110,9 @@ def test_astro_world_matrix_columns_are_body_axes_in_world():
     natural_scale = 170.0 / PLANET_NIF_NATIVE_RADIUS
     m = host_loop._astro_world_matrix(pose, natural_scale)
 
-    rgt = pose._rot.GetRow(0)
-    fwd = pose._rot.GetRow(1)
-    up  = pose._rot.GetRow(2)
+    rgt = pose._rot.GetCol(0)
+    fwd = pose._rot.GetCol(1)
+    up  = pose._rot.GetCol(2)
     s = natural_scale
 
     # Column 0 (X axis) negated under d1ac130 because det(rot) = +1.

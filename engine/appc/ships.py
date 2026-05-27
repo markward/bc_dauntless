@@ -150,10 +150,8 @@ class ShipClass(DamageableObject):
         if distance < 1e-9:
             return diff, 0.0, TGPoint3(0.0, 0.0, 0.0), 0.0
         unit = TGPoint3(diff.x / distance, diff.y / distance, diff.z / distance)
-        # World-forward = R · model_forward = column 1 of R. Matches the
-        # column-vector convention the integrator (ship_motion) and the
-        # SDK's TurnToOrientation.Update use; GetRow(1) would be wrong
-        # for non-identity rotations.
+        # World-forward = R · model_forward = column 1 of R; see
+        # CLAUDE.md ↦ "Rotation matrix convention".
         forward = self.GetWorldRotation().GetCol(1)
         # Clamp to acos domain to guard against FP drift outside [-1, 1].
         cos_a = unit.x * forward.x + unit.y * forward.y + unit.z * forward.z
@@ -294,8 +292,8 @@ class ShipClass(DamageableObject):
 
         Thin wrapper on TurnDirectionsToDirections: compute the unit
         direction from ship to target, read current world-forward from
-        column 1 of the world rotation (column-vector convention; matches
-        the integrator + SDK), call the solver with (forward, target_dir,
+        column 1 of the world rotation (see CLAUDE.md ↦ "Rotation matrix
+        convention"), call the solver with (forward, target_dir,
         zero, zero) so primary alignment runs but no secondary roll
         constraint applies. If the ship is already at the target (zero
         distance) this is a no-op so any prior setpoint is preserved

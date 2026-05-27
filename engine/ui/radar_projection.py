@@ -4,14 +4,12 @@ Reads player + contact world-space pose, returns the disc-relative
 (x, y, alt, heading) tuple, or None if the contact is outside disc
 range. Lives separate from the panel so it's testable in isolation.
 
-Convention (matches engine/appc/objects.py:AlignToVectors + the renderer
-at engine/host_loop.py:1804-1805):
+Convention (see CLAUDE.md ↦ "Rotation matrix convention" — column-vector
+is the project-wide rule):
   - World axes: X = right, Y = forward, Z = up.
-  - Rotation matrix stores world-space basis vectors as ROWS:
-    R.GetRow(0) = world-right, R.GetRow(1) = world-forward,
-    R.GetRow(2) = world-up. (engine/appc/ships.py uses GetCol(1) instead
-    and claims that's correct — that's a latent bug that happens to
-    work for pure yaw but inverts altitude for any pitched orientation.)
+  - Rotation matrix stores world-space basis vectors as COLUMNS:
+    R.GetCol(0) = world-right, R.GetCol(1) = world-forward,
+    R.GetCol(2) = world-up.
   - Disc coords normalised to [-1, +1]: +y = player forward,
     +x = player right.
   - Altitude normalised by range_m, clipped to [-1, +1]; positive = above
@@ -51,16 +49,11 @@ def project_contact(
     dy = target_pos.y - player_pos.y
     dz = target_pos.z - player_pos.z
 
-    # Player basis vectors in world space (rows of the rotation matrix).
-    # engine/appc/objects.py:144-146 (AlignToVectors) stores right/forward/up
-    # as ROWS, and the renderer reads them as rows too
-    # (engine/host_loop.py:1804-1805). engine/appc/ships.py:153-157 reads
-    # GetCol(1) and claims that's the convention — that's a latent bug
-    # which happens to work for pure-yaw rotations but inverts altitude
-    # for any pitched orientation. Don't propagate it here.
-    right   = player_rot.GetRow(0)
-    forward = player_rot.GetRow(1)
-    up      = player_rot.GetRow(2)
+    # Player basis vectors in world space (columns of the rotation matrix).
+    # See CLAUDE.md ↦ "Rotation matrix convention".
+    right   = player_rot.GetCol(0)
+    forward = player_rot.GetCol(1)
+    up      = player_rot.GetCol(2)
 
     # Decompose the delta into the player frame.
     proj_right   = dx * right.x   + dy * right.y   + dz * right.z
@@ -83,9 +76,9 @@ def project_contact(
     alt = max(-1.0, min(1.0, proj_up * inv_range))
 
     # Heading — target forward projected onto the player's (right, forward)
-    # plane, expressed as an angle from player forward. Same row convention
-    # as the player basis above.
-    tgt_fwd = target_rot.GetRow(1)
+    # plane, expressed as an angle from player forward. Column convention
+    # as above.
+    tgt_fwd = target_rot.GetCol(1)
     tgt_in_right   = tgt_fwd.x * right.x   + tgt_fwd.y * right.y   + tgt_fwd.z * right.z
     tgt_in_forward = tgt_fwd.x * forward.x + tgt_fwd.y * forward.y + tgt_fwd.z * forward.z
     heading = math.atan2(tgt_in_right, tgt_in_forward)

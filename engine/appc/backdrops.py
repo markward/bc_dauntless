@@ -91,7 +91,9 @@ def aggregate_for_renderer(pSet, project_root):
             "kind": "star" | "backdrop",
             "h_tile": float,   "v_tile": float,
             "h_span": float,   "v_span": float,
-            "world_rotation": list[9] (column-major flatten of mat3),
+            "world_rotation": list[9] column-major flatten of the BC mat3
+                              (so the C++ glm::mat3 constructor reads each
+                              BC column as a GL column directly),
             "target_poly_count": int (>= 64),
         }
 
@@ -127,10 +129,14 @@ def aggregate_for_renderer(pSet, project_root):
                 missing_paths.append(b._texture_path)
                 continue
         rot = b.GetWorldRotation()
+        # Column-major flatten. The C++ side reads m9 into glm::mat3(...)
+        # which is column-major, and our BC matrix is column-vector (see
+        # CLAUDE.md ↦ "Rotation matrix convention"), so m9[j*3 + i] =
+        # rot._m[i][j] sends BC column j as GL column j.
         m9 = [
-            rot._m[0][0], rot._m[0][1], rot._m[0][2],
-            rot._m[1][0], rot._m[1][1], rot._m[1][2],
-            rot._m[2][0], rot._m[2][1], rot._m[2][2],
+            rot._m[0][0], rot._m[1][0], rot._m[2][0],  # col 0 (right)
+            rot._m[0][1], rot._m[1][1], rot._m[2][1],  # col 1 (forward)
+            rot._m[0][2], rot._m[1][2], rot._m[2][2],  # col 2 (up)
         ]
         out.append({
             "texture_path": str(abs_path),
