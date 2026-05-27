@@ -286,6 +286,31 @@ class ShipClass(DamageableObject):
             return float(total_angle / max_av)
         return 0.0
 
+    def TurnTowardDirection(self, direction_vec) -> float:
+        """Set the angular-velocity setpoint to rotate world-forward
+        onto a world-space direction vector.
+
+        Distinct from TurnTowardLocation: this entry point takes a
+        direction (the caller has already done the
+        target − ship_location subtraction, or is passing an
+        arbitrary world-space heading). SDK callers:
+        AI/PlainAI/FollowObject.py:148, EvadeTorps.py:137,
+        Flee.py:142, MoveToObjectSide.py, Warp.py:388,
+        AI/Preprocessors.py:1705 (Defensive override direction).
+
+        Returns the ETA estimate from TurnDirectionsToDirections (a
+        non-negative float in seconds); Flee/Warp capture it to
+        schedule their next AI update. Zero-length direction is a
+        no-op — any prior setpoint is preserved.
+        """
+        d = TGPoint3(direction_vec.x, direction_vec.y, direction_vec.z)
+        if d.Length() < 1e-9:
+            return 0.0
+        d.Unitize()
+        forward = self.GetWorldRotation().GetCol(1)
+        zero = TGPoint3(0.0, 0.0, 0.0)
+        return self.TurnDirectionsToDirections(forward, d, zero, zero)
+
     def TurnTowardLocation(self, target_vec) -> None:
         """Set the angular velocity setpoint to rotate this ship to face
         a world-space point.
