@@ -97,11 +97,32 @@ class ShipClass(DamageableObject):
         )
 
     def SetImpulse(self, speed, direction, frame) -> None:
-        """SDK alias used by AI.PlainAI.GoForward.Update (sdk/.../GoForward.py).
+        """SDK semantic: ``speed`` is a *fraction* of the ship's
+        ImpulseEngine max speed (0.0..1.0, or negative for reverse).
 
-        Records into the same _speed_setpoint tuple as SetSpeed —
-        downstream the integrator can't tell which entry point the AI
-        used."""
+        Evidence in sdk/.../AI/PlainAI/: Flee.py:38 names the argument
+        ``fSpeedFraction``; PhaserSweep.py:92 is ``SetSpeedFraction``;
+        FollowObject.py:67 defaults ``fGoFastSpeed = 1.0`` and
+        multiplies by fuzzy weights in [0, 1] before passing through
+        SetImpulse. By contrast SetSpeed takes an absolute m/s value
+        (Intercept.py:243 passes ``fSpeed = fMaxSpeed``).
+
+        We multiply by MaxSpeed here so the integrator can keep
+        treating ``_speed_setpoint`` as absolute m/s — that keeps the
+        single integration path simple and matches the way the
+        player-control code on the live path already produces
+        absolute m/s.
+
+        Fallback for ships without an IES (or with MaxSpeed == 0):
+        store as-is. Many headless tests construct bare ShipClass
+        instances and rely on the literal-pass-through behaviour;
+        this guard avoids breaking them and matches the pattern in
+        _PlayerControl._max_accel.
+        """
+        ies = self.GetImpulseEngineSubsystem()
+        max_speed = ies.GetMaxSpeed() if ies is not None else 0.0
+        if max_speed > 0.0:
+            speed = float(speed) * max_speed
         self.SetSpeed(speed, direction, frame)
 
     def GetSpeedSetpoint(self):
