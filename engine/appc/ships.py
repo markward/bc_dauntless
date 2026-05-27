@@ -367,10 +367,20 @@ class ShipClass(DamageableObject):
         Stateless model: if target is None or the ship is already within
         `distance` of the target, return 0 without moving. Otherwise
         compute unit dir = (target - ship).normalize(), translate the
-        ship to (target − unit_dir · distance), zero the integrator's
-        current speed (so brake-aware control resumes cleanly on the
-        next AI tick rather than overshooting under leftover velocity),
-        and return 1.
+        ship to (target − unit_dir · distance), and return 1.
+
+        ``_current_speed`` is left untouched. Intercept.Update calls
+        this every AI tick when ``fMaximumSpeed == 1e20`` (BasicAttack's
+        default), and once a ship is rotating (Slice H wired
+        TurnTowardDirection), it routinely drifts a few cm across the
+        warp threshold from one tick to the next. Resetting speed on
+        each crossing would clobber the integrator's acceleration ramp
+        — the symptom user reported as "ships barely move, no firing"
+        even after the speed/scale fix landed in Slice I.
+        Semantically the teleport is "instant transit," not "stop"; if
+        the AI body wants the ship to slow down, the speed setpoint it
+        writes on the next tick will pull current_speed down through
+        the normal ramp.
 
         SDK callers (Intercept.Update) invoke this each AI tick. The
         stateless model converges: one teleport per warp request,
@@ -382,6 +392,12 @@ class ShipClass(DamageableObject):
         """
         if target is None:
             return 0
+        if self.__dict__.get("_warp_consumed", False):
+            # Already warped at least once since the last
+            # StopInSystemWarp — return 0 so the AI body drives normal
+            # motion instead of re-teleporting (even if target switches
+            # or distance drifts outside the threshold).
+            return 0
         ship_loc = self.GetWorldLocation()
         target_loc = target.GetWorldLocation()
         diff = TGPoint3(
@@ -391,6 +407,9 @@ class ShipClass(DamageableObject):
         )
         d = diff.Length()
         if d <= distance:
+            # Already inside the threshold — record convergence so future
+            # boundary drifts don't bounce the ship back to the surface.
+            self._warp_consumed = True
             return 0
         # Unit dir ship → target, then arrival = target − unit · distance.
         diff.Scale(1.0 / d)
@@ -399,14 +418,17 @@ class ShipClass(DamageableObject):
             target_loc.y - diff.y * distance,
             target_loc.z - diff.z * distance,
         )
-        self._current_speed = 0.0
+        self._warp_consumed = True
         return 1
 
     def StopInSystemWarp(self) -> None:
-        """No-op in the stateless teleport model. Required only so
-        AI.PlainAI.Intercept.LostFocus doesn't AttributeError when our
-        AI driver eventually models focus loss."""
-        pass
+        """Clear the consumed-warp flag so a fresh warp can fire.
+
+        SDK Intercept.LostFocus calls this; in stock Appc it cancels
+        the multi-tick warp animation. We model it as "drop the lock,"
+        letting the next InSystemWarp call retrigger normally.
+        """
+        self.__dict__.pop("_warp_consumed", None)
 
     def SetNetType(self, net_type: int) -> None:
         self._net_type = net_type

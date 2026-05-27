@@ -71,17 +71,22 @@ def test_in_system_warp_far_call_works_diagonally():
     assert p.z == pytest.approx(0.0, abs=1e-9)
 
 
-def test_in_system_warp_zeros_current_speed():
-    """After teleport, _current_speed is reset so the integrator's
-    brake-aware control resumes from rest on the next AI tick. Without
-    this, leftover speed would advance the ship past the warp endpoint."""
+def test_in_system_warp_preserves_current_speed():
+    """The teleport changes position only; _current_speed is left
+    intact. The integrator's setpoint-driven ramp on the next AI tick
+    pulls the ship to whatever speed the AI body wrote — there is no
+    physical reason to discard the kinematic velocity state. Earlier
+    behaviour (zeroing it) caused repeated boundary crossings under
+    Intercept-driven combat to clobber the acceleration ramp; see
+    tests/unit/test_in_system_warp_preserves_speed.py for the full
+    motivation."""
     ship = ShipClass()
     ship.SetTranslateXYZ(0.0, 0.0, 0.0)
     ship._current_speed = 80.0
     target = ShipClass()
     target.SetTranslateXYZ(0.0, 1000.0, 0.0)
     ship.InSystemWarp(target, 295.0)
-    assert ship._current_speed == 0.0
+    assert ship._current_speed == 80.0
 
 
 def test_in_system_warp_does_not_change_speed_when_no_teleport():
