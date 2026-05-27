@@ -518,12 +518,62 @@ class WeaponSystemProperty(PoweredSubsystemProperty):
         # projectile script (galaxy.py, akira.py, vorcha.py etc. all set
         # slot 0 to PhotonTorpedo / KlingonTorpedo / etc.).
         self._torpedo_scripts: dict[int, str] = {}
+        # Parsed firing chains: list of (label, [tube_indices]). Populated
+        # by SetFiringChainString. Empty on most ships — only Galaxy and
+        # Sovereign use a non-empty chain string in stock BC.
+        self._firing_chains: list[tuple[str, list[int]]] = []
 
     def SetTorpedoScript(self, slot, module_name) -> None:
         self._torpedo_scripts[int(slot)] = str(module_name)
 
     def GetTorpedoScript(self, slot):
         return self._torpedo_scripts.get(int(slot))
+
+    def SetFiringChainString(self, tg_string_or_str) -> None:
+        """Parse a SDK-format firing-chain string into structured chains.
+
+        Format (observed in galaxy.py:1006-1008 and sovereign.py):
+        ``"<indices>;<label>;<indices>;<label>;..."`` where each
+        ``<indices>`` segment is a sequence of single-digit tube-index
+        characters and each ``<label>`` is an opaque chain name
+        (Single/Dual/Quad on stock BC; the parser doesn't interpret
+        them — player UI / AI selects chains by index).
+
+        Accepts either a ``TGString`` handle (SDK pattern) or a bare
+        Python ``str`` (engine call sites). The raw string is preserved
+        on ``self._firing_chain_string`` for round-trip getters.
+        """
+        if hasattr(tg_string_or_str, "GetCString"):
+            raw = str(tg_string_or_str.GetCString())
+        else:
+            raw = str(tg_string_or_str)
+        self._firing_chain_string = raw
+        chains: list[tuple[str, list[int]]] = []
+        if raw:
+            parts = raw.split(";")
+            # Pair each indices segment with the following label; drop a
+            # trailing unpaired indices segment rather than raising.
+            i = 0
+            while i + 1 < len(parts):
+                indices_str = parts[i]
+                label = parts[i + 1]
+                indices = [int(ch) for ch in indices_str if ch.isdigit()]
+                if indices:
+                    chains.append((label, indices))
+                i += 2
+        self._firing_chains = chains
+
+    def GetFiringChainString(self):
+        """Return the raw chain string. The return type is _TGString —
+        a ``str`` subclass that also satisfies the SDK ``.GetString()``
+        / ``.GetCString()`` API — so equality against a plain ``str``
+        and the SDK call-chain idiom both work."""
+        raw = getattr(self, "_firing_chain_string", "")
+        from engine.appc.localization import _TGString
+        return _TGString(raw)
+
+    def GetFiringChains(self) -> list[tuple[str, list[int]]]:
+        return list(self._firing_chains)
 
 
 class TorpedoSystemProperty(WeaponSystemProperty):
