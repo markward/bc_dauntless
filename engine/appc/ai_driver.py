@@ -179,6 +179,21 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
     if hasattr(inst, "lWeapons") and getattr(inst, "pCodeAI", None) is not None:
         _ensure_fire_script_initialized(inst)
 
+    # GotFocus dispatch — SDK preprocessors put side-effecting init in
+    # GotFocus (sdk/.../AI/Preprocessors.py:2047 AlertLevel,
+    # CloakShip, Defensive, …) rather than Update. The optimized
+    # C++ engine calls it when an AI gains focus in the tree
+    # dispatcher; Phase 1's driver has no focus model, so the
+    # closest faithful surrogate is "once, the first time this
+    # PreprocessingAI ticks". Guarded by a sentinel so subsequent
+    # ticks don't re-fire. Duck-typed — no-op for preprocessors
+    # without GotFocus.
+    if not ai.__dict__.get("_got_focus_called", False):
+        got_focus = getattr(inst, "GotFocus", None)
+        if callable(got_focus):
+            got_focus()
+        ai._got_focus_called = True
+
     # Introspect once per PreprocessingAI instance whether the method
     # takes a positional dEndTime arg (SDK SelectTarget/FireScript) or
     # is 0-arg (synthetic test fixtures and simpler preprocessors).
