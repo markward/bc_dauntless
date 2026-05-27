@@ -2038,9 +2038,12 @@ def run(mission_name: Optional[str] = None,
         )
         from engine.ui.panel_registry import PanelRegistry
         from engine.ui.target_list_view import TargetListView
+        from engine.ui.sensors_panel import SensorsPanel
         registry = PanelRegistry(legacy_handler=pause_menu.dispatch_event)
         target_list_view = TargetListView()
+        sensors_panel = SensorsPanel()
         registry.register(target_list_view)
+        registry.register(sensors_panel)
 
         # Wire (and re-wire on mission swap) the target-menu singleton
         # to the player's spatial set. controller.post_load_hook fires
@@ -2143,6 +2146,7 @@ def run(mission_name: Optional[str] = None,
                 # SPACE toggles view_mode.is_exterior ↔ view_mode.is_bridge.
                 # The setter is idempotent so writing every tick is cheap.
                 target_list_view.visible = view_mode.is_exterior
+                sensors_panel.visible    = view_mode.is_exterior
 
                 # Sensor-visibility update — flip per-row IsVisible
                 # based on range from the player. TargetListView
@@ -2196,12 +2200,26 @@ def run(mission_name: Optional[str] = None,
                     # rect in target_list.css (top:24px left:24px
                     # width:280px). Height is generous to cover an
                     # expanded ship with several subsystem rows.
-                    _PANEL_X, _PANEL_Y, _PANEL_W, _PANEL_H = 24, 24, 280, 400
-                    _cursor_in_panel = (
+                    _TL_X, _TL_Y, _TL_W, _TL_H = 24, 24, 280, 400
+                    _cursor_in_target_list = (
                         target_list_view.visible
-                        and _PANEL_X <= _mx < _PANEL_X + _PANEL_W
-                        and _PANEL_Y <= _my < _PANEL_Y + _PANEL_H
+                        and _TL_X <= _mx < _TL_X + _TL_W
+                        and _TL_Y <= _my < _TL_Y + _TL_H
                     )
+                    # Sensors panel bbox — bottom-left, mirroring the
+                    # target list. Width matches sensors.css (240px);
+                    # height generous enough to cover header + disc body.
+                    # CSS positions via `bottom:24px`, so the panel's
+                    # top-y in CEF view space is (view_h - 24 - height).
+                    _SN_W, _SN_H = 240, 240
+                    _SN_X = 24
+                    _SN_Y = _CEF_VIEW_H - 24 - _SN_H
+                    _cursor_in_sensors = (
+                        sensors_panel.visible
+                        and _SN_X <= _mx < _SN_X + _SN_W
+                        and _SN_Y <= _my < _SN_Y + _SN_H
+                    )
+                    _cursor_in_panel = _cursor_in_target_list or _cursor_in_sensors
                     if _cef_send_mouse_click is not None and _cursor_in_panel:
                         if _h.mouse_button_pressed(_h.keys.MOUSE_BUTTON_LEFT):
                             _cef_send_mouse_click(_mx, _my, 0, True)

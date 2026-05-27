@@ -15,6 +15,13 @@ from engine.appc.input import (
     init_input_pipeline, register_input_handlers,
 )
 from engine.appc.windows import TacticalControlWindow
+from engine.appc.radar import (
+    RadarDisplay_Create, RadarDisplay_Cast,
+    RadarScope_Create, RadarBlip_Create,
+    _RadarDisplay as RadarDisplay,
+    _RadarScope as RadarScope,
+    _RadarBlip as RadarBlip,
+)
 from engine.appc.timers import TGTimer, TGTimer_Create, TGTimerManager
 from engine.appc.math import (
     TGPoint3, TGMatrix3,
