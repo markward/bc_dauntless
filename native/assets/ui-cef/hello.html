@@ -34,11 +34,16 @@
 
     <!-- Sensors / radar panel.
          Static disc + range rings rendered in HTML/CSS; per-tick contacts
-         pushed via setRadar({visible, range_m, contacts:[...]}).
-         No click events — radar is read-only in v1.
+         pushed via setRadar({visible, minimizable, minimized, range_m,
+         contacts:[...]}). The header caret is the one clickable element
+         (collapse/expand); the disc itself is read-only.
          Spec: docs/ui_designs/05-sensors-radar.md -->
     <div id="sensors-panel" class="sensors--hidden">
-        <div class="sensors__header">Sensors</div>
+        <div class="sensors__header">
+            <span>Sensors</span>
+            <span class="sensors__caret" id="sensors-caret"
+                  onclick="dauntlessEvent('sensors/toggle')">&#9662;</span>
+        </div>
         <div class="sensors__body">
             <div class="sensors__disc">
                 <div class="sensors__disc-plane">

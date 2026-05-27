@@ -50,7 +50,29 @@
     text-transform: uppercase;
     letter-spacing: 0.12em;
     font-size: 14px;
+    /* Flex so the caret can sit at the right edge of the header. */
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
 }
+
+/* Header caret — collapse/expand toggle. The glyph itself is swapped
+ * by JS (▾ when expanded, ▸ when collapsed) instead of CSS-rotating,
+ * matching the discipline target_list.css uses to keep header text
+ * crisp in CEF. Hidden when the SDK marks the panel non-minimizable
+ * via .sensors--no-minimize. */
+.sensors__caret {
+    font-size: 11px;
+    opacity: 0.85;
+    cursor: pointer;
+    padding: 0 4px;
+    user-select: none;
+}
+
+.sensors--no-minimize .sensors__caret { display: none; }
+
+/* Minimized state — hide the body, leave the header alone. */
+.sensors--minimized .sensors__body { display: none; }
 
 .sensors__body {
     background: var(--bc-body-bg);

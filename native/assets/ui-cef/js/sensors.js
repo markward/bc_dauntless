@@ -88,6 +88,24 @@ function setRadar(state) {
     }
     panel.classList.remove('sensors--hidden');
 
+    // Minimize state — driven by the SDK's IsMinimizable/IsMinimized
+    // flags (or the panel's own state when no RadarDisplay is
+    // registered). The caret glyph swaps ▾ ↔ ▸ to mirror the
+    // target-list caret discipline (no CSS rotate, to keep header text
+    // crisp in CEF).
+    const minimizable = !!state.minimizable;
+    const minimized   = !!state.minimized;
+    panel.classList.toggle('sensors--no-minimize', !minimizable);
+    panel.classList.toggle('sensors--minimized',    minimized);
+    const caret = document.getElementById('sensors-caret');
+    if (caret) {
+        caret.innerHTML = minimized ? '&#9656;' : '&#9662;';  // ▸ / ▾
+    }
+    // When minimized the body is hidden, so don't bother rebuilding
+    // the contacts overlay — it's not visible and rebuilding would
+    // thrash the DOM for nothing.
+    if (minimized) return;
+
     const overlay = document.getElementById('sensors-contacts');
     if (!overlay) return;
 
