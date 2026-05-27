@@ -148,8 +148,9 @@ def test_no_input_no_rotation():
 
 def test_pitch_down_rotates_forward_below_horizontal():
     """Hold W (pitch down) for one second of dt at 60Hz. The ship's
-    forward vector (row 1 of the rotation matrix) should pitch down from
-    +Y toward -Z by 1.5 radians (one second × 1.5 rad/s)."""
+    forward vector (col 1 of the column-vector rotation matrix; see
+    CLAUDE.md) should pitch down from +Y toward -Z by 1.5 radians
+    (one second × 1.5 rad/s)."""
     import math
     pc = _PlayerControl()
     ship = _FakeShip()
@@ -157,7 +158,7 @@ def test_pitch_down_rotates_forward_below_horizontal():
     reader.held.add(reader.keys.KEY_W)
     for _ in range(60):
         pc.apply(ship, dt=1.0/60, h=reader)
-    forward = ship.GetWorldRotation().GetRow(1)
+    forward = ship.GetWorldRotation().GetCol(1)
     # After pitching down 1.5 rad: forward.y = cos(1.5), forward.z = -sin(1.5)
     expected_y = math.cos(1.5)
     expected_z = -math.sin(1.5)
@@ -176,7 +177,7 @@ def test_pitch_up_rotates_forward_above_horizontal():
     reader.held.add(reader.keys.KEY_S)
     for _ in range(60):
         pc.apply(ship, dt=1.0/60, h=reader)
-    forward = ship.GetWorldRotation().GetRow(1)
+    forward = ship.GetWorldRotation().GetCol(1)
     expected_y = math.cos(1.5)
     expected_z = math.sin(1.5)
     assert abs(forward.y - expected_y) < 1e-3
@@ -185,7 +186,7 @@ def test_pitch_up_rotates_forward_above_horizontal():
 
 def test_yaw_left_rotates_forward_toward_minus_x():
     """Hold D (yaw left) for one second. Forward rotates around world Z
-    (which is also ship-Z at identity start) by -1.5 rad: from +Y toward -X."""
+    (which is also ship-Z at identity start) by 1.5 rad: from +Y toward -X."""
     import math
     pc = _PlayerControl()
     ship = _FakeShip()
@@ -193,7 +194,7 @@ def test_yaw_left_rotates_forward_toward_minus_x():
     reader.held.add(reader.keys.KEY_D)
     for _ in range(60):
         pc.apply(ship, dt=1.0/60, h=reader)
-    forward = ship.GetWorldRotation().GetRow(1)
+    forward = ship.GetWorldRotation().GetCol(1)
     expected_x = -math.sin(1.5)
     expected_y = math.cos(1.5)
     assert abs(forward.x - expected_x) < 1e-3, f"forward.x={forward.x}, expected {expected_x}"
@@ -260,8 +261,8 @@ def test_full_stop_after_movement_stops_advancement():
 
 def test_roll_left_rotates_up_toward_minus_x():
     """Hold E (roll left) for one second at identity start. Roll is
-    around ship-Y (forward axis). Ship's up (row 2) starts at +Z, rolls
-    -1.5 rad around +Y: up goes from +Z toward -X."""
+    around ship-Y (forward axis). Ship's up (col 2 under column-vector
+    convention) starts at +Z and rolls toward -X."""
     import math
     pc = _PlayerControl()
     ship = _FakeShip()
@@ -269,7 +270,7 @@ def test_roll_left_rotates_up_toward_minus_x():
     reader.held.add(reader.keys.KEY_E)
     for _ in range(60):
         pc.apply(ship, dt=1.0/60, h=reader)
-    up = ship.GetWorldRotation().GetRow(2)
+    up = ship.GetWorldRotation().GetCol(2)
     expected_x = -math.sin(1.5)
     expected_z = math.cos(1.5)
     assert abs(up.x - expected_x) < 1e-3, f"up.x={up.x}, expected {expected_x}"
@@ -292,11 +293,13 @@ def test_roll_after_yaw_is_body_frame_not_world():
     ship = _FakeShip()
     reader = _FakeKeyReader()
 
-    # Pre-yaw the ship 90° left (rotation about +Z by -π/2).
+    # Pre-yaw the ship 90° left so forward = -X. Under col-vector
+    # convention (see CLAUDE.md) MakeRotation(+π/2, +Z) maps body-Y to
+    # world-(-X) — that's a left yaw.
     R_yaw90 = TGMatrix3()
-    R_yaw90.MakeRotation(-math.pi / 2, TGPoint3(0.0, 0.0, 1.0))
+    R_yaw90.MakeRotation(math.pi / 2, TGPoint3(0.0, 0.0, 1.0))
     ship.SetMatrixRotation(R_yaw90)
-    fwd0 = ship.GetWorldRotation().GetRow(1)
+    fwd0 = ship.GetWorldRotation().GetCol(1)
     assert abs(fwd0.x - (-1.0)) < 1e-9, "precondition: forward should be -X after 90° left yaw"
     assert abs(fwd0.y) < 1e-9
     assert abs(fwd0.z) < 1e-9
@@ -307,12 +310,12 @@ def test_roll_after_yaw_is_body_frame_not_world():
         pc.apply(ship, dt=1.0/60, h=reader)
 
     # Roll about ship-forward leaves the forward axis invariant.
-    fwd = ship.GetWorldRotation().GetRow(1)
+    fwd = ship.GetWorldRotation().GetCol(1)
     assert abs(fwd.x - (-1.0)) < 1e-3, f"forward.x={fwd.x}, expected -1.0 (roll must not change forward)"
     assert abs(fwd.y) < 1e-3, f"forward.y={fwd.y}, expected 0"
     assert abs(fwd.z) < 1e-3, f"forward.z={fwd.z}, expected 0 (this is the bug: world-frame roll tilts forward toward -Z)"
 
     # And the up vector must rotate in the world Y-Z plane (around -X),
     # not in the X-Z plane (which would be world-frame roll around +Y).
-    up = ship.GetWorldRotation().GetRow(2)
+    up = ship.GetWorldRotation().GetCol(2)
     assert abs(up.x) < 1e-3, f"up.x={up.x}, expected 0 (up should stay in Y-Z plane under body roll about -X)"

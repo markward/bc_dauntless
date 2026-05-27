@@ -54,7 +54,7 @@ class Light(ObjectClass):
         """
         if self._placement is not None:
             rot = self._placement.GetWorldRotation()
-            fwd = rot.GetRow(1)
+            fwd = rot.GetCol(1)
             return (fwd.x, fwd.y, fwd.z)
         return self._direction_world
 
@@ -73,10 +73,11 @@ class LightPlacement(PlacementObject):
     def ConfigDirectionalLight(self, r, g, b, dimmer):
         # No need to snapshot the forward at this moment: Light._placement
         # points back at us, and Light.direction_world() re-reads
-        # GetWorldRotation().GetRow(1) on every call. This means later
-        # AlignToVectors invocations or animation controllers attached to
-        # the placement flow through to the renderer without any extra
-        # bookkeeping at the call sites.
+        # GetWorldRotation().GetCol(1) on every call (column-vector
+        # convention; see CLAUDE.md). This means later AlignToVectors
+        # invocations or animation controllers attached to the placement
+        # flow through to the renderer without any extra bookkeeping at
+        # the call sites.
         self._make_light(Light.KIND_DIRECTIONAL, r, g, b, dimmer)
 
     def _make_light(self, kind, r, g, b, dimmer):

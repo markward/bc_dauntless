@@ -494,19 +494,24 @@ def _all_ships_for_tick():
 
 
 def _extract_ypr(R) -> tuple:
-    """Yaw/pitch/roll in degrees from a BC row-vector TGMatrix3.
+    """Yaw/pitch/roll in degrees from a BC column-vector TGMatrix3
+    (see CLAUDE.md ↦ "Rotation matrix convention").
 
-    BC convention: Row 0 = right, Row 1 = forward (Y), Row 2 = up (Z).
-    Yaw:   atan2(forward.x, forward.y) - heading around world Z
-    Pitch: asin(forward.z)             - elevation (+ = nose up)
-    Roll:  atan2(-right.z, up.z)       - bank (+ = right wing down)
+    BC convention: Col 0 = right, Col 1 = forward (Y), Col 2 = up (Z).
+
+    Sign convention for the displayed numbers (chosen to preserve the
+    HUD readings the user had before the row/column unification):
+      Yaw +θ = MakeZRotation(+θ).  Pitch +θ = MakeXRotation(-θ).
+      Roll +θ = MakeYRotation(-θ).
+    Under right-hand rule with col-vector matrices these are the
+    "inverse" rotations, so the formulas negate the relevant signs.
     """
-    fwd = R.GetRow(1)
-    up  = R.GetRow(2)
-    rgt = R.GetRow(0)
-    yaw_deg   = _math.degrees(_math.atan2(fwd.x, fwd.y))
-    pitch_deg = _math.degrees(_math.asin(max(-1.0, min(1.0, fwd.z))))
-    roll_deg  = _math.degrees(_math.atan2(-rgt.z, up.z))
+    fwd = R.GetCol(1)
+    up  = R.GetCol(2)
+    rgt = R.GetCol(0)
+    yaw_deg   = _math.degrees(_math.atan2(-fwd.x, fwd.y))
+    pitch_deg = _math.degrees(_math.asin(max(-1.0, min(1.0, -fwd.z))))
+    roll_deg  = _math.degrees(_math.atan2(rgt.z, up.z))
     return yaw_deg, pitch_deg, roll_deg
 
 
@@ -726,25 +731,24 @@ class _PlayerControl:
 
         # 3. Angular rates: held keys set a per-axis target rate; current rate
         #    ramps toward target at MaxAngularAccel.
-        # Key → observed on-screen effect (calibrated against the running game,
-        # not derived from the body-frame matrix math — a naive derivation gets
-        # the yaw and roll signs backwards because it doesn't account for the
-        # row-vector / column-vector convention swap on the way to the renderer
-        # and the X-flip in _ship_world_matrix):
+        # Key → on-screen effect:
         #   W = nose DOWN,  S = nose UP
         #   A = yaw LEFT,   D = yaw RIGHT
         #   Q = roll LEFT,  E = roll RIGHT
+        # Sign convention: under right-hand rule with col-vector matrices
+        # (see CLAUDE.md), +ω_x = nose UP, +ω_z = yaw LEFT, +ω_y = roll LEFT.
+        # The key→sign mapping below produces the documented visual effect.
         ang_rate    = self._angular_rate(player)
         ang_step    = self._angular_accel(player) * dt
         pitch_target = 0.0
         yaw_target   = 0.0
         roll_target  = 0.0
-        if h.key_state(h.keys.KEY_W): pitch_target += ang_rate
-        if h.key_state(h.keys.KEY_S): pitch_target -= ang_rate
-        if h.key_state(h.keys.KEY_A): yaw_target   += ang_rate
-        if h.key_state(h.keys.KEY_D): yaw_target   -= ang_rate
-        if h.key_state(h.keys.KEY_Q): roll_target  -= ang_rate
-        if h.key_state(h.keys.KEY_E): roll_target  += ang_rate
+        if h.key_state(h.keys.KEY_W): pitch_target -= ang_rate
+        if h.key_state(h.keys.KEY_S): pitch_target += ang_rate
+        if h.key_state(h.keys.KEY_A): yaw_target   -= ang_rate
+        if h.key_state(h.keys.KEY_D): yaw_target   += ang_rate
+        if h.key_state(h.keys.KEY_Q): roll_target  += ang_rate
+        if h.key_state(h.keys.KEY_E): roll_target  -= ang_rate
         self._current_pitch_rate = self._ramp_toward(self._current_pitch_rate, pitch_target, ang_step)
         self._current_yaw_rate   = self._ramp_toward(self._current_yaw_rate,   yaw_target,   ang_step)
         self._current_roll_rate  = self._ramp_toward(self._current_roll_rate,  roll_target,  ang_step)
@@ -752,12 +756,12 @@ class _PlayerControl:
         yaw_rate   = self._current_yaw_rate
         roll_rate  = self._current_roll_rate
 
-        # 4. Rotation integration.  BC uses row-vector matrices where
-        #    v_world = v_body * R, so the rows of R are the body axes in
-        #    world space.  Composing a body-frame delta D means D acts on
-        #    the body vector first: v_world = (v_body * D) * R = v_body *
-        #    (D * R).  So body-frame rotation is PRE-multiply (D * R), not
-        #    post-multiply.  Pitch → yaw → roll Euler order.
+        # 4. Rotation integration.  BC uses column-vector matrices where
+        #    v_world = R · v_body (see CLAUDE.md ↦ "Rotation matrix
+        #    convention").  A body-frame delta D acts on v_body first:
+        #    v_world = R · (D · v_body) = (R · D) · v_body.  So body-frame
+        #    rotation is POST-multiply (R · D).  Pitch → yaw → roll Euler
+        #    order.
         from engine.appc.math import TGMatrix3, TGPoint3
         X_AXIS = TGPoint3(1.0, 0.0, 0.0)
         Y_AXIS = TGPoint3(0.0, 1.0, 0.0)
@@ -769,12 +773,12 @@ class _PlayerControl:
             R_yaw   = TGMatrix3(); R_yaw.MakeRotation(yaw_rate   * dt, Z_AXIS)
             R_roll  = TGMatrix3(); R_roll.MakeRotation(roll_rate  * dt, Y_AXIS)
             delta = R_pitch.MultMatrix(R_yaw).MultMatrix(R_roll)
-            R = delta.MultMatrix(R)
+            R = R.MultMatrix(delta)
             player.SetMatrixRotation(R)
 
         # 5. Position integration (forward = ship-local Y axis in world).
         if self._current_speed != 0.0:
-            forward = R.GetRow(1)
+            forward = R.GetCol(1)
             p = player.GetTranslate()
             player.SetTranslateXYZ(
                 p.x + forward.x * self._current_speed * dt,
@@ -888,8 +892,9 @@ class _CameraControl:
         Offset is built in ship body frame (X=right, Y=forward, Z=up):
             offset_body = (sin(y)*cos(p), -cos(y)*cos(p), sin(p)) * distance
         At y=0, p=0 the camera sits directly behind on the body-Y axis.
-        Mapping body→world uses BC's row-vector convention: world_axis_j =
-        basis.GetRow(j).
+        Mapping body→world uses BC's column-vector convention
+        (see CLAUDE.md ↦ "Rotation matrix convention"):
+        world_axis_j = basis.GetCol(j).
 
         When `dt` is given, the basis used here is a smoothed copy of the
         ship's rotation that lags the live value with time constant
@@ -910,9 +915,9 @@ class _CameraControl:
         oy = -cy * cp * d
         oz =       sp * d
 
-        rgt = basis.GetRow(0)
-        fwd = basis.GetRow(1)
-        up  = basis.GetRow(2)
+        rgt = basis.GetCol(0)
+        fwd = basis.GetCol(1)
+        up  = basis.GetCol(2)
 
         # Shift look-target up along ship body-Z so the ship sits below
         # screen center. Eye is also shifted by the same amount so the
@@ -939,24 +944,25 @@ class _CameraControl:
         if self._smoothed_rot is None:
             seed = TGMatrix3()
             for i in range(3):
-                seed.SetRow(i, ship_rot.GetRow(i))
+                seed.SetCol(i, ship_rot.GetCol(i))
             self._smoothed_rot = seed
             return self._smoothed_rot
 
         alpha = 1.0 - _math.exp(-dt / self.SPRING_TAU_S) if dt > 0.0 else 0.0
         blended = [None, None, None]
         for i in range(3):
-            s = self._smoothed_rot.GetRow(i)
-            l = ship_rot.GetRow(i)
+            s = self._smoothed_rot.GetCol(i)
+            l = ship_rot.GetCol(i)
             blended[i] = TGPoint3(
                 s.x + alpha * (l.x - s.x),
                 s.y + alpha * (l.y - s.y),
                 s.z + alpha * (l.z - s.z),
             )
 
-        # Gram-Schmidt re-orthonormalize: keep forward (row 1) as primary
-        # axis, project up (row 2) perpendicular to it, derive right via
+        # Gram-Schmidt re-orthonormalize: keep forward (col 1) as primary
+        # axis, project up (col 2) perpendicular to it, derive right via
         # cross product. Body axes are right-handed: forward × up = right.
+        # (See CLAUDE.md ↦ "Rotation matrix convention".)
         def _norm(v):
             m = _math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z)
             return TGPoint3(v.x/m, v.y/m, v.z/m)
@@ -975,9 +981,9 @@ class _CameraControl:
             f.x * u.y - f.y * u.x,
         )
 
-        self._smoothed_rot.SetRow(0, r)
-        self._smoothed_rot.SetRow(1, f)
-        self._smoothed_rot.SetRow(2, u)
+        self._smoothed_rot.SetCol(0, r)
+        self._smoothed_rot.SetCol(1, f)
+        self._smoothed_rot.SetCol(2, u)
         return self._smoothed_rot
 
 
@@ -1479,22 +1485,25 @@ def _ship_world_matrix(ship, natural_scale: float) -> list:
       ship.GetScale()— per-frame multiplier applied by SDK scripts
                        (DockWithStarbase, asteroid systems, etc.).
 
-    BC's TGMatrix3 is row-vector (rows = body axes in world). The OpenGL shader
-    consumes u_model column-vector (columns = body axes), so the rotation is
-    transposed on the way out.
+    BC's TGMatrix3 is column-vector (cols = body axes in world; see
+    CLAUDE.md ↦ "Rotation matrix convention"). The OpenGL shader's
+    u_model is also column-vector, so the rotation is sent directly —
+    no transpose.
 
-    Determinant normalization (workaround): the renderer is configured with
-    glFrontFace(GL_CW) and assumes the world matrix has det < 0 — which holds
-    for ships whose rotation came from AlignToVectors (it builds right = up ×
-    forward, giving det = -1). Ships placed by other paths (e.g. Akira at the
-    "Docking Exit" hardpoint, or any ship with identity rotation) arrive with
-    a proper rotation (det = +1), and render inside-out because their world
-    matrix flips screen-space winding the wrong way under GL_CW. Until the
-    coupled fix lands (AlignToVectors → proper rotation, pipeline.cc →
-    glFrontFace(GL_CCW), backdrop/sun cull state → GL_BACK), we negate the X
-    body axis here when det > 0 so every rendered ship reaches the GPU with
-    det < 0. ship.GetWorldRotation() is left untouched — camera-follow,
-    physics, and AI continue to see the original rotation.
+    Determinant normalization (workaround): the renderer is configured
+    with glFrontFace(GL_CW) and assumes the world matrix has det < 0 —
+    which holds for ships whose rotation came from AlignToVectors (it
+    builds right = up × forward, giving det = -1). Ships placed by
+    other paths (e.g. Akira at the "Docking Exit" hardpoint, or any
+    ship with identity rotation) arrive with a proper rotation
+    (det = +1), and render inside-out because their world matrix flips
+    screen-space winding the wrong way under GL_CW. Until the coupled
+    fix lands (AlignToVectors → proper rotation, pipeline.cc →
+    glFrontFace(GL_CCW), backdrop/sun cull state → GL_BACK), we negate
+    the X body axis here when det > 0 so every rendered ship reaches
+    the GPU with det < 0. ship.GetWorldRotation() is left untouched —
+    camera-follow, physics, and AI continue to see the original
+    rotation.
     """
     loc = ship.GetWorldLocation()
     rot = ship.GetWorldRotation()
@@ -1506,9 +1515,9 @@ def _ship_world_matrix(ship, natural_scale: float) -> list:
     flip = -1.0 if _rot_determinant(rot) > 0.0 else 1.0
     sx = s * flip
     return [
-        rot._m[0][0]*sx, rot._m[1][0]*s, rot._m[2][0]*s, loc.x,
-        rot._m[0][1]*sx, rot._m[1][1]*s, rot._m[2][1]*s, loc.y,
-        rot._m[0][2]*sx, rot._m[1][2]*s, rot._m[2][2]*s, loc.z,
+        rot._m[0][0]*sx, rot._m[0][1]*s, rot._m[0][2]*s, loc.x,
+        rot._m[1][0]*sx, rot._m[1][1]*s, rot._m[1][2]*s, loc.y,
+        rot._m[2][0]*sx, rot._m[2][1]*s, rot._m[2][2]*s, loc.z,
         0.0,             0.0,            0.0,            1.0,
     ]
 
@@ -1530,9 +1539,9 @@ def _astro_world_matrix(obj, natural_scale: float) -> list:
     flip = -1.0 if _rot_determinant(rot) > 0.0 else 1.0
     sx = s * flip
     return [
-        rot._m[0][0]*sx, rot._m[1][0]*s, rot._m[2][0]*s, loc.x,
-        rot._m[0][1]*sx, rot._m[1][1]*s, rot._m[2][1]*s, loc.y,
-        rot._m[0][2]*sx, rot._m[1][2]*s, rot._m[2][2]*s, loc.z,
+        rot._m[0][0]*sx, rot._m[0][1]*s, rot._m[0][2]*s, loc.x,
+        rot._m[1][0]*sx, rot._m[1][1]*s, rot._m[1][2]*s, loc.y,
+        rot._m[2][0]*sx, rot._m[2][1]*s, rot._m[2][2]*s, loc.z,
         0.0,             0.0,            0.0,            1.0,
     ]
 
@@ -1780,8 +1789,8 @@ def _compute_camera(view_mode, cam_control, *, player, dt) -> tuple:
 
     Exterior mode delegates to _CameraControl.compute_camera (orbit +
     spring-lag). Bridge mode anchors at the ship origin looking along
-    ship-Y forward (row 1 of the rotation matrix) with ship-Z as up
-    (row 2). Returns (eye, target, up) as 3-tuples in world space, the
+    ship-Y forward (col 1 of the rotation matrix) with ship-Z as up
+    (col 2). Returns (eye, target, up) as 3-tuples in world space, the
     same shape r.set_camera consumes.
 
     Target lock: in exterior mode, if cam_control.target_lock_enabled is
@@ -1801,8 +1810,8 @@ def _compute_camera(view_mode, cam_control, *, player, dt) -> tuple:
     loc = player.GetWorldLocation()
     rot = player.GetWorldRotation()
     if view_mode.is_bridge:
-        fwd = rot.GetRow(1)
-        up  = rot.GetRow(2)
+        fwd = rot.GetCol(1)
+        up  = rot.GetCol(2)
         eye    = (loc.x, loc.y, loc.z)
         target = (loc.x + fwd.x, loc.y + fwd.y, loc.z + fwd.z)
         up_vec = (up.x, up.y, up.z)
@@ -2258,7 +2267,7 @@ def run(mission_name: Optional[str] = None,
                         from engine.shields import fire_debug_hit
                         wp = player.GetWorldLocation()
                         try:
-                            fwd = player.GetWorldRotation().GetRow(1)
+                            fwd = player.GetWorldRotation().GetCol(1)
                             fx, fy, fz = float(fwd.x), float(fwd.y), float(fwd.z)
                         except Exception:
                             fx, fy, fz = 1.0, 0.0, 0.0

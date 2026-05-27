@@ -126,9 +126,18 @@ class ObjectClass(TGEventHandlerObject):
     def AlignToVectors(self, forward: TGPoint3, up: TGPoint3) -> None:
         """Build an orthonormal rotation matrix from forward and up vectors.
 
-        Convention (matching BC/Gamebryo NiMatrix3 column-vector form):
-          row 0 = right  = normalize(forward × up) ... nope: up × forward
-          Actually we use: right = up.Cross(forward), then re-derive up.
+        Column-vector convention (see CLAUDE.md ↦ "Rotation matrix
+        convention"): col 0 = right, col 1 = forward, col 2 = up. A
+        body vector v_body maps to world via R · v_body; e.g.
+        v_body = model_forward = (0, 1, 0) selects column 1, the
+        world-forward axis.
+
+        `right = up × forward` produces a left-handed basis (det = -1)
+        in BC's Z-up / Y-forward coordinate system. The renderer
+        compensates with an X-axis flip in
+        `engine/host_loop.py:_ship_world_matrix`; do not reorder the
+        cross here without also dropping that flip and updating the GL
+        front-face state.
         """
         fwd = TGPoint3(forward.x, forward.y, forward.z)
         fwd.Unitize()
@@ -137,13 +146,12 @@ class ObjectClass(TGEventHandlerObject):
         dot = fwd.Dot(u)
         u = TGPoint3(u.x - dot * fwd.x, u.y - dot * fwd.y, u.z - dot * fwd.z)
         u.Unitize()
-        # right = up × forward (right-handed, Z-up Y-forward)
         right = u.Cross(fwd)
         right.Unitize()
         m = TGMatrix3()
-        m.SetRow(0, right)
-        m.SetRow(1, fwd)
-        m.SetRow(2, u)
+        m.SetCol(0, right)
+        m.SetCol(1, fwd)
+        m.SetCol(2, u)
         self._rotation = m
 
     def Rotate(self, *args) -> None:
@@ -195,10 +203,9 @@ class ObjectClass(TGEventHandlerObject):
     def GetWorldForwardTG(self) -> TGPoint3:
         """World-forward = R · model_forward = column 1 of R.
 
-        Column-vector convention matches the integrator
-        (engine/appc/ship_motion.py uses MultMatrixLeft) and the SDK's
-        TurnToOrientation.Update. Same fix shape as commit 68f6220
-        which closed the equivalent bug in GetRelativePositionInfo.
+        See CLAUDE.md ↦ "Rotation matrix convention" — column-vector is
+        the project-wide convention. Prefer this helper over reading
+        `GetWorldRotation().GetCol(1)` at the call site.
         """
         return self._rotation.GetCol(1)
 
