@@ -127,9 +127,17 @@ def test_two_hostile_ships_close_distance_over_time(game_context):
     print(f"Target   speed setpoint: {target.GetSpeedSetpoint()}")
     print(f"Attacker _current_speed: {attacker._current_speed}")
     print(f"Target   _current_speed: {target._current_speed}")
-    end_dist = distances[-1]
-
-    assert end_dist < start_dist, (
-        f"after 5 s of GameLoop.tick the ships should have closed range; "
-        f"start={start_dist:.1f}m end={end_dist:.1f}m"
+    # The minimum-observed distance should drop well below the
+    # starting distance — that proves the ships actually flew at each
+    # other and entered combat range. Post-engagement they may drift
+    # apart again as they circle (the IntelligentCircleObject body
+    # picked up by CloseRangePriorities), so we can't assert the FINAL
+    # distance is smaller — just that they came together at some
+    # point during the engagement window.
+    min_dist = min(distances)
+    assert min_dist < start_dist * 0.6, (
+        f"after 10 s of GameLoop.tick the ships should have closed "
+        f"significantly at some point; "
+        f"start={start_dist:.1f}m  min_observed={min_dist:.1f}m  "
+        f"trajectory={distances}"
     )

@@ -87,6 +87,19 @@ def _tick_priority_list(ai: PriorityListAI, game_time: float) -> int:
     # CheckWarpBeforeDeath / WarpOutBeforeDeath, which reports DONE when
     # the ship is healthy) starves the SelectTarget combat subtree.
     for _prio, child in ai._ais:
+        # Re-evaluate each ConditionalAI child's status against its
+        # current condition values *before* deciding eligibility.
+        # Condition scripts (ConditionInRange, etc.) update their own
+        # status asynchronously from events fired by
+        # evaluate_proximity_checks(); without this refresh the
+        # ConditionalAI's cached _status drifts out of sync with the
+        # condition, and a high-priority branch that "should now be
+        # active" stays starved by a lower-priority sibling that
+        # latched ACTIVE earlier. Live-game symptom: M2Objects enemy
+        # entered MidRange but kept ticking LongRange, so FireAll2
+        # never dispatched and no phasers fired.
+        if isinstance(child, ConditionalAI):
+            _refresh_conditional_status(child)
         if child._status == US_DORMANT or child._status == US_DONE:
             continue
         tick_ai(child, game_time)
@@ -95,6 +108,32 @@ def _tick_priority_list(ai: PriorityListAI, game_time: float) -> int:
     if ai._ais and all(c._status == US_DONE for _p, c in ai._ais):
         ai._status = US_DONE
     return ai._status
+
+
+def _refresh_conditional_status(ai: ConditionalAI) -> None:
+    """Re-run a ConditionalAI's EvalFunc against its conditions and
+    cache the result on ``ai._status`` without dispatching contained
+    AI. Used by ``_tick_priority_list`` to keep conditional status
+    in sync with asynchronously-updated condition values.
+
+    Mirrors the status-derivation logic in ``_tick_conditional`` but
+    stops short of recursing into the contained subtree — that recursion
+    is the priority list's job once the eligible child has been picked.
+    """
+    eval_fn = ai._evaluation_function
+    if eval_fn is not None:
+        args = [c.GetStatus() for c in ai._conditions]
+        try:
+            status = eval_fn(*args)
+        except Exception:
+            status = US_DORMANT
+        if status is None:
+            status = US_DORMANT
+        ai._status = int(status)
+        return
+    if not ai._conditions:
+        return
+    ai._status = US_ACTIVE if any(c.GetStatus() != 0 for c in ai._conditions) else US_DORMANT
 
 
 def _tick_sequence(ai: SequenceAI, game_time: float) -> int:
