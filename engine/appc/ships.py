@@ -707,8 +707,25 @@ class ShipClass(DamageableObject):
                 for prop in self.GetPropertySet().GetPropertyList()
                 if isinstance(prop, TorpedoTubeProperty)
             )
-            for _ in range(tube_count):
-                ts.AddAmmoType(App.AT_ONE)
+            # Look up each slot's torpedo script from the bound
+            # TorpedoSystemProperty (galaxy.py:1010 sets slot 0 to
+            # "Tactical.Projectiles.PhotonTorpedo"), import it, and
+            # read GetLaunchSpeed() — so GetCurrentAmmoType() exposes
+            # the real launch speed.
+            #
+            # Why this matters: FireScript.GetWeaponInfo reads
+            # GetCurrentAmmoType().GetLaunchSpeed() and feeds the
+            # result into PredictTargetLocation, which divides
+            # distance by speed. The previous code seeded every slot
+            # with the shared App.AT_ONE stub (launch_speed=0),
+            # triggering ZeroDivisionError mid-tick the moment a
+            # FireScript dispatched at a torp system — silently
+            # killing all enemy weapons fire.
+            from engine.appc.subsystems import TorpedoAmmoType
+            ts_prop = ts.GetProperty()
+            for slot in range(tube_count):
+                ammo = _resolve_torpedo_ammo(ts_prop, slot)
+                ts.AddAmmoType(ammo)
 
         # Pass 3 — drop slots the hardpoint never claimed.  ShipClass_Create
         # pre-allocates every subsystem so SDK callers can chain
@@ -965,6 +982,36 @@ class ShipClass(DamageableObject):
         """No-op cleanup hook. Python iterators are GC'd; SDK callers
         invoke this for symmetry with the native Appc iterator API."""
         pass
+
+
+def _resolve_torpedo_ammo(ts_prop, slot: int):
+    """Build a TorpedoAmmoType for ``slot`` with launch_speed read from
+    the configured projectile script.
+
+    The TorpedoSystemProperty stores ``{slot: "Tactical.Projectiles.<Name>"}``
+    populated by hardpoint setup (galaxy.py:1010,
+    galor.py:168, etc.). Each projectile module exposes a
+    ``GetLaunchSpeed()`` function. We import lazily and call it.
+
+    Falls back to ``("Photon", 19.0)`` — the most common ammo — if the
+    property has no script registered for this slot or the lookup
+    fails. Photon's 19 m/s is what stock BC uses for any ship that
+    hasn't overridden the slot, so it's a safer default than 0 (which
+    causes a divide-by-zero in FireScript.PredictTargetLocation).
+    """
+    from engine.appc.subsystems import TorpedoAmmoType
+    script_name = None
+    if ts_prop is not None and hasattr(ts_prop, "GetTorpedoScript"):
+        script_name = ts_prop.GetTorpedoScript(slot)
+    if not script_name:
+        return TorpedoAmmoType("Photon", launch_speed=19.0)
+    try:
+        leaf = script_name.split(".")[-1]
+        mod = __import__(script_name, None, None, [leaf])
+        launch_speed = float(mod.GetLaunchSpeed()) if hasattr(mod, "GetLaunchSpeed") else 19.0
+        return TorpedoAmmoType(leaf, launch_speed=launch_speed)
+    except Exception:
+        return TorpedoAmmoType("Photon", launch_speed=19.0)
 
 
 def ShipClass_Create(class_name: str = "") -> ShipClass:

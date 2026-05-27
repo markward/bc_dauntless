@@ -1,5 +1,5 @@
-"""SetupProperties Pass 2: count TorpedoTubeProperty + seed AT_ONE per tube."""
-import App
+"""SetupProperties Pass 2: count TorpedoTubeProperty + seed a per-slot
+TorpedoAmmoType with the projectile script's launch speed."""
 from engine.appc.ships import ShipClass_Create
 from engine.appc.properties import TorpedoTubeProperty, WeaponSystemProperty
 
@@ -24,8 +24,15 @@ def test_six_tubes_seed_six_ammo_slots():
 
     ts = ship.GetTorpedoSystem()
     assert ts.GetNumAmmoTypes() == 6
+    # No script registered on this synthetic property → falls back to
+    # Photon (19 m/s). What matters is that the launch speed is
+    # non-zero so FireScript.PredictTargetLocation doesn't divide by
+    # zero; the previous "AT_ONE-with-launch_speed=0" stub used to
+    # trigger that crash mid-tick.
     for i in range(6):
-        assert ts.GetAmmoType(i) == App.AT_ONE
+        ammo = ts.GetAmmoType(i)
+        assert ammo is not None
+        assert ammo.GetLaunchSpeed() > 0.0
 
 
 def test_no_tubes_no_seeding():

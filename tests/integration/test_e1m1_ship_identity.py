@@ -264,7 +264,15 @@ def test_e1m1_ship_identity(sdk_setup, clean_state, expected):
         ts = ship.GetTorpedoSystem()
         assert ts.GetNumAmmoTypes() == expected["torpedo_tube_count"]
         for i in range(expected["torpedo_tube_count"]):
-            assert ts.GetAmmoType(i) == App.AT_ONE
+            ammo = ts.GetAmmoType(i)
+            assert ammo is not None
+            # Real hardpoints (galaxy.py:1010 etc.) register a
+            # TorpedoSystemProperty.SetTorpedoScript; the per-slot
+            # TorpedoAmmoType reads launch_speed from that script.
+            # The contract we lock here is "non-zero launch speed" —
+            # the specific value belongs in projectile-specific tests
+            # (see tests/integration/test_torpedo_ammo_launch_speed.py).
+            assert ammo.GetLaunchSpeed() > 0.0
     else:
         # Ships without a WeaponSystemProperty(WST_TORPEDO) in their
         # hardpoint don't carry a TorpedoSystem at all — SetupProperties
