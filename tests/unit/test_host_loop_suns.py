@@ -123,3 +123,72 @@ def test_aggregate_suns_applies_astro_scale(tmp_path):
     assert d["radius"]             == pytest.approx(4000.0 * ASTRO_SCALE)
     assert d["corona_radius"]      == pytest.approx(4000.0 * 1.1 * ASTRO_SCALE)
     assert d["flare_texture_path"] == expected_flare
+
+
+def test_aggregate_suns_empty_flare_path_when_no_flare_texture(tmp_path):
+    """A Sun created without flare_texture emits flare_texture_path == ''."""
+    import App
+    from engine.appc.planet import Sun_Create
+    from engine import host_loop
+    import engine.host_loop as hl
+
+    tex_rel = "data/Textures/SunNoFlare.tga"
+    tex_abs = tmp_path / "game" / tex_rel
+    tex_abs.parent.mkdir(parents=True)
+    tex_abs.write_bytes(b"FAKE")
+
+    pSet = App.SetClass_Create()
+    pSun = Sun_Create(1000.0, 1000.0, 0.0, tex_rel)  # 4 args — no flare
+    pSet.AddObjectToSet(pSun, "Sun")
+    App.g_kSetManager.AddSet(pSet, "_test_agg_suns_no_flare")
+
+    original_root = hl.PROJECT_ROOT
+    hl.PROJECT_ROOT = tmp_path
+    try:
+        result = host_loop._aggregate_suns()
+    finally:
+        hl.PROJECT_ROOT = original_root
+        App.g_kSetManager.DeleteSet("_test_agg_suns_no_flare")
+
+    expected_tex = str(tex_abs.resolve())
+    matches = [d for d in result if d["base_texture_path"] == expected_tex]
+    assert len(matches) == 1
+    assert matches[0]["flare_texture_path"] == ""
+
+
+def test_aggregate_suns_empty_flare_path_when_flare_texture_missing(tmp_path, capsys):
+    """A Sun whose flare_texture file is absent emits flare_texture_path == ''
+    and warns once. Body and corona still emit normally."""
+    import App
+    from engine.appc.planet import Sun_Create
+    from engine import host_loop
+    import engine.host_loop as hl
+
+    tex_rel = "data/Textures/SunMissingFlare.tga"
+    tex_abs = tmp_path / "game" / tex_rel
+    tex_abs.parent.mkdir(parents=True)
+    tex_abs.write_bytes(b"FAKE")
+
+    pSet = App.SetClass_Create()
+    pSun = Sun_Create(1000.0, 1000.0, 0.0, tex_rel,
+                      "data/Textures/Effects/Nonexistent.tga")
+    pSet.AddObjectToSet(pSun, "Sun")
+    App.g_kSetManager.AddSet(pSet, "_test_agg_suns_missing_flare")
+
+    original_root = hl.PROJECT_ROOT
+    hl.PROJECT_ROOT = tmp_path
+    try:
+        result = host_loop._aggregate_suns()
+        # Call twice; the warning must only fire once.
+        host_loop._aggregate_suns()
+    finally:
+        hl.PROJECT_ROOT = original_root
+        App.g_kSetManager.DeleteSet("_test_agg_suns_missing_flare")
+
+    expected_tex = str(tex_abs.resolve())
+    matches = [d for d in result if d["base_texture_path"] == expected_tex]
+    assert len(matches) == 1
+    assert matches[0]["flare_texture_path"] == ""
+    captured = capsys.readouterr()
+    # Warning appears exactly once across two aggregator runs.
+    assert captured.out.count("flare texture not found") == 1
