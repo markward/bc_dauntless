@@ -174,8 +174,9 @@ def _teardown_game():
 
 def test_player_snapshot_with_full_hull_and_shields():
     from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_PLAYER
-    _, player, _ = _setup_game_with_player()
+    _, player, mission = _setup_game_with_player()
     try:
+        mission.GetFriendlyGroup().AddName("Player")
         sh = player.GetShieldSubsystem()
         for face in range(sh.NUM_SHIELDS):
             sh.SetMaxShields(face, 100.0)
@@ -188,10 +189,35 @@ def test_player_snapshot_with_full_hull_and_shields():
         snap = panel._snapshot()
 
         assert snap[1] == "Player"        # ship_name
-        assert snap[2] in ("FRIENDLY", "NEUTRAL", "UNKNOWN")  # affiliation
+        assert snap[2] == "FRIENDLY"      # affiliation — player is in friendly group
         assert snap[4] == 1.0             # hull_pct
         assert snap[5] == (1.0,) * 6      # shields_pct
         assert snap[10] is True           # visible
+    finally:
+        _teardown_game()
+
+
+def test_target_snapshot_with_enemy_affiliation():
+    """Hostile target should render in the ENEMY affiliation colour."""
+    from engine.appc.ships import ShipClass
+    from engine.appc.subsystems import (
+        ShieldSubsystem, HullSubsystem, SensorSubsystem,
+    )
+    from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_TARGET
+    _, player, mission = _setup_game_with_player()
+    try:
+        foe = ShipClass(); foe.SetName("Foe")
+        # attach minimal subsystems so the snapshot helpers don't bail
+        foe.SetShieldSubsystem(ShieldSubsystem())
+        foe.SetHull(HullSubsystem())
+        mission.GetEnemyGroup().AddName("Foe")
+        player.SetTarget(foe)
+        # Mark target as known so the sensor gate passes
+        player.GetSensorSubsystem().AddKnownObject(foe)
+        panel = ShipDisplayPanel(ROLE_TARGET)
+        snap = panel._snapshot()
+        assert snap[10] is True, "expected visible target"
+        assert snap[2] == "ENEMY"
     finally:
         _teardown_game()
 
@@ -254,18 +280,19 @@ def test_shield_face_indices_match_subsystem_constants():
 
 
 def test_damage_states_filter_to_named_subsystems_only():
-    """Only Engines, Weapons, Sensors, Shield Generator appear, sorted."""
+    """Only Engines, Weapons, Sensors, Shield Generator appear in the
+    damage list; healthy subsystems are omitted."""
     from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_PLAYER
     _, player, _ = _setup_game_with_player()
     try:
-        # Damage two subsystems via the ship's subsystem refs.
         eng = player.GetImpulseEngineSubsystem()
-        if eng is not None:
-            eng.SetDamaged(1) if hasattr(eng, "SetDamaged") else None
+        eng.SetDamaged(1)
         panel = ShipDisplayPanel(ROLE_PLAYER)
         snap = panel._snapshot()
-        # damage_states is a tuple of (name, state) — no healthy entries.
-        for name, state in snap[6]:
+        damage = snap[6]
+        # Engines should appear; everything else healthy → omitted.
+        assert ("Engines", "damaged") in damage
+        for name, state in damage:
             assert state in ("damaged", "disabled", "destroyed")
             assert name in ("Engines", "Weapons", "Sensors", "Shield Generator")
     finally:

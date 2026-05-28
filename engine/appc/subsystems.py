@@ -328,6 +328,13 @@ class ShipSubsystem(TGEventHandlerObject):
         self._targetable: int = 0
         self._primary: int = 0
         self._disabled_percentage: float = 0.25
+        # Explicit damage/destroyed flags.  SetDamaged/SetDestroyed let tests
+        # and the damage system force these states independently of _condition;
+        # the predicate methods also fall back to condition-based derivation so
+        # both paths stay consistent (e.g. applying condition damage will also
+        # make IsDestroyed() true when condition hits zero).
+        self._damaged: bool = False
+        self._destroyed: bool = False
 
     def GetName(self) -> str:
         return self._name
@@ -713,6 +720,36 @@ class ShipSubsystem(TGEventHandlerObject):
             return 0
         threshold = self._disabled_percentage * self._max_condition
         return 1 if self._condition <= threshold else 0
+
+    def IsDamaged(self) -> int:
+        """Returns 1 if the subsystem has taken any damage (condition below
+        max) or the explicit _damaged flag is set, 0 when fully healthy.
+
+        Condition-based derivation: damaged = 0 < condition < max_condition.
+        The explicit SetDamaged flag lets tests and the damage system
+        force the state without touching condition fields."""
+        if self._damaged:
+            return 1
+        if self._max_condition > 0.0 and 0.0 < self._condition < self._max_condition:
+            return 1
+        return 0
+
+    def SetDamaged(self, value) -> None:
+        """Explicitly mark this subsystem as damaged (or clear the flag)."""
+        self._damaged = bool(value)
+
+    def IsDestroyed(self) -> int:
+        """Returns 1 if the subsystem is permanently destroyed (condition == 0)
+        or the explicit _destroyed flag is set, 0 otherwise."""
+        if self._destroyed:
+            return 1
+        if self._max_condition > 0.0 and self._condition <= 0.0:
+            return 1
+        return 0
+
+    def SetDestroyed(self, value) -> None:
+        """Explicitly mark this subsystem as destroyed (or clear the flag)."""
+        self._destroyed = bool(value)
 
     def IsHittableFromLocation(self, vWorldLoc) -> float:
         """SDK Preprocessors.py:980 — `fHittable = pSubsystem.IsHittableFromLocation(pOurShip.GetWorldLocation())`.

@@ -178,16 +178,17 @@ class ShipDisplayPanel(Panel):
         if ship is None:
             return (None, "", "NONE", "", 0.0, (0.0,) * 6, (),
                     None, None, self._minimized, False)
+        player       = _get_player()
         ship_id      = ship.GetObjID() if hasattr(ship, "GetObjID") else 0
         name         = ship.GetName() if hasattr(ship, "GetName") else ""
-        affiliation  = _affiliation_for(ship)
+        affiliation  = _affiliation_for(ship, player)
         species_key  = _species_key_for(ship)
         hull_pct     = _hull_pct(ship)
         shields_pct  = _shields_tuple(ship)
         damage       = _damage_states(ship)
         range_m, speed_kph = (None, None)
         if self._role == ROLE_TARGET:
-            range_m, speed_kph = _range_and_speed_to(ship)
+            range_m, speed_kph = _range_and_speed_to(ship, player)
         return (ship_id, name, affiliation, species_key, hull_pct,
                 shields_pct, damage, range_m, speed_kph,
                 self._minimized, True)
@@ -207,7 +208,12 @@ class ShipDisplayPanel(Panel):
 # Snapshot generation helpers
 # ---------------------------------------------------------------------
 
-_DAMAGE_SUBSYSTEM_ORDER = ("Engines", "Weapons", "Sensors", "Shield Generator")
+_DAMAGE_SUBSYSTEMS = (
+    ("Engines",          "GetImpulseEngineSubsystem"),
+    ("Weapons",          "GetPhaserSystem"),
+    ("Sensors",          "GetSensorSubsystem"),
+    ("Shield Generator", "GetShieldSubsystem"),
+)
 
 
 def _get_player():
@@ -244,19 +250,15 @@ def _resolve_ship_for_role(role: str):
         return None
     # Sensor-knowledge gate (matches SDK ShieldsDisplay.SetShipIcon at
     # sdk/Build/scripts/Tactical/Interface/ShieldsDisplay.py:329-338).
-    try:
-        sensors = player.GetSensorSubsystem()
-        if sensors is not None and sensors.IsObjectKnown(target) == 0:
-            return None
-    except Exception:
-        pass
+    sensors = getattr(player, "GetSensorSubsystem", lambda: None)()
+    if sensors is not None and sensors.IsObjectKnown(target) == 0:
+        return None
     return target
 
 
-def _affiliation_for(ship) -> str:
+def _affiliation_for(ship, player) -> str:
     """Map ship affiliation to the snapshot string used by the CSS layer."""
     try:
-        player = _get_player()
         if player is None or ship is None:
             return "NONE"
         if ship is player:
@@ -270,7 +272,7 @@ def _affiliation_for(ship) -> str:
                 ("NEUTRAL",  "GetNeutralGroup"),
             ):
                 group = getattr(mission, group_getter, lambda: None)()
-                if group is not None and group.HasName(ship.GetName()):
+                if group is not None and group.IsNameInGroup(ship.GetName()):
                     return kind
     except Exception:
         pass
@@ -299,7 +301,7 @@ def _hull_pct(ship) -> float:
         return 0.0
 
 
-def _shields_tuple(ship):
+def _shields_tuple(ship) -> tuple[float, ...]:
     try:
         sh = ship.GetShieldSubsystem()
         if sh is None:
@@ -312,13 +314,7 @@ def _shields_tuple(ship):
 def _damage_states(ship):
     """Walks Engines, Weapons, Sensors, Shield Generator. Healthy = omitted."""
     out = []
-    getters = (
-        ("Engines",          "GetImpulseEngineSubsystem"),
-        ("Weapons",          "GetPhaserSystem"),
-        ("Sensors",          "GetSensorSubsystem"),
-        ("Shield Generator", "GetShieldSubsystem"),
-    )
-    for label, getter_name in getters:
+    for label, getter_name in _DAMAGE_SUBSYSTEMS:
         getter = getattr(ship, getter_name, None)
         if getter is None:
             continue
@@ -347,17 +343,16 @@ def _subsystem_state(sub):
     return None
 
 
-def _range_and_speed_to(ship):
+def _range_and_speed_to(ship, player):
     """Returns (range_m, speed_kph) for the target panel; None,None on error."""
     try:
-        player = _get_player()
         if player is None or ship is None:
             return None, None
         p1 = player.GetTranslate(); p2 = ship.GetTranslate()
         dx = p1.x - p2.x; dy = p1.y - p2.y; dz = p1.z - p2.z
         rng_m = (dx*dx + dy*dy + dz*dz) ** 0.5
         # Speed: |velocity| in metres/sec → km/h
-        vel = ship.GetLinearVelocity() if hasattr(ship, "GetLinearVelocity") else None
+        vel = ship.GetVelocityTG() if hasattr(ship, "GetVelocityTG") else None
         if vel is None:
             speed_kph = 0.0
         else:
