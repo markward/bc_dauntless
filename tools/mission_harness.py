@@ -142,6 +142,37 @@ class _FixPy2Sort(ast.NodeTransformer):
         return node
 
 
+class _FixPy2DictIterMutation(ast.NodeTransformer):
+    """Wrap ``for X in someDict.keys():`` (and ``.values()`` / ``.items()``)
+    in ``list(...)``.
+
+    Python 1.5 and 2.x returned a list from these methods, so SDK code that
+    ``del``-s entries mid-loop worked. Python 3 returns a view and raises
+    ``RuntimeError: dictionary changed size during iteration``. Wrapping
+    the call in ``list(...)`` makes the SDK pattern compatible without
+    forking SDK files. Observed bite site: AI/Preprocessors.py:871
+    (FireScript.ChooseTargetSubsystem prunes stale subsystem ratings).
+    """
+
+    _DICT_METHODS = ("keys", "values", "items")
+
+    def visit_For(self, node):
+        self.generic_visit(node)
+        if (
+            isinstance(node.iter, ast.Call)
+            and isinstance(node.iter.func, ast.Attribute)
+            and node.iter.func.attr in self._DICT_METHODS
+            and not node.iter.args
+            and not node.iter.keywords
+        ):
+            node.iter = ast.Call(
+                func=ast.Name(id="list", ctx=ast.Load()),
+                args=[node.iter],
+                keywords=[],
+            )
+        return node
+
+
 class _FixDottedImport(ast.NodeTransformer):
     def visit_Module(self, node):
         self.generic_visit(node)
@@ -268,6 +299,7 @@ class _SDKLoader(importlib.abc.Loader):
             tree = _MoveGlobalsToTop().visit(tree)
             tree = _FixDottedImport().visit(tree)
             tree = _FixPy2Sort().visit(tree)
+            tree = _FixPy2DictIterMutation().visit(tree)
             ast.fix_missing_locations(tree)
             code = compile(tree, self.path, "exec")
         module.__dict__.setdefault('apply', lambda f, a=(), kw={}: f(*a, **kw))

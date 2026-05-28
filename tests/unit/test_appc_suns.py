@@ -115,10 +115,15 @@ def test_aggregate_returns_correct_descriptor(tmp_path):
     assert d["position"] == (0.0, 0.0, 0.0)
     assert d["radius"] == 4000.0
     assert d["base_texture_path"] == str(tex.resolve())
-    assert d["corona_radius"] == pytest.approx(8000.0)
+    assert d["corona_radius"] == pytest.approx(4400.0)   # radius * 1.1
 
 
-def test_aggregate_corona_radius_is_radius_plus_atmosphere(tmp_path):
+def test_aggregate_corona_radius_is_1_1x_radius(tmp_path):
+    """corona_radius is body_radius * 1.1, independent of atmosphere_thickness.
+
+    atmosphere_thickness is a gameplay parameter (AI keep-out radius) — not
+    a visual size. See docs/project/superpowers/specs/2026-05-28-sun-render-fidelity-design.md.
+    """
     import App
     from engine.appc.planet import aggregate_suns_for_renderer, Sun_Create
     tex = tmp_path / "game" / "data" / "Textures" / "SunBase.tga"
@@ -126,11 +131,13 @@ def test_aggregate_corona_radius_is_radius_plus_atmosphere(tmp_path):
     tex.write_bytes(b"FAKE")
 
     pSet = App.SetClass_Create()
+    # atmosphere_thickness=2500.0 is intentionally != radius to prove it has
+    # no effect on the corona size.
     pSun = Sun_Create(1000.0, 2500.0, 0.0, "data/Textures/SunBase.tga", "")
     pSet.AddObjectToSet(pSun, "Sun")
 
     result = aggregate_suns_for_renderer(tmp_path, [pSet])
-    assert result[0]["corona_radius"] == pytest.approx(3500.0)
+    assert result[0]["corona_radius"] == pytest.approx(1100.0)   # 1000 * 1.1
 
 
 def test_aggregate_collects_suns_from_multiple_sets(tmp_path):

@@ -19,9 +19,9 @@ namespace renderer {
 constexpr float kTwoPi = 6.28318530717958647692f;
 
 // SDK size values (0.001..0.4 typical) are calibrated for BC's original
-// projection/viewport; in our renderer they read about 3× too small.
+// projection/viewport; in our renderer they read significantly too small.
 // Applied at render time so the aggregator stays a faithful SDK pass-through.
-constexpr float kSizeCalibration = 3.0f;
+constexpr float kSizeCalibration = 6.0f;
 
 NgonMeshData build_ngon_mesh(int wedges) {
     if (wedges < 3)  wedges = 3;
