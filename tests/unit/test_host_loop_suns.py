@@ -76,7 +76,10 @@ def test_aggregate_suns_returns_empty_for_sun_with_no_texture():
 
 
 def test_aggregate_suns_applies_astro_scale(tmp_path):
-    """Sun position, radius, and corona_radius are all multiplied by ASTRO_SCALE."""
+    """Sun position, radius, corona_radius, and flare_texture_path are all
+    derived correctly. corona_radius is a fixed 1.1x of body radius (the
+    SDK atmosphere_thickness is gameplay-only and does not reach the
+    renderer)."""
     import App
     from engine.appc.planet import Sun_Create
     from engine import host_loop
@@ -84,15 +87,19 @@ def test_aggregate_suns_applies_astro_scale(tmp_path):
     import engine.host_loop as hl
     import pytest
 
-    # Use a uniquely-named texture so we can filter out leftover suns from
-    # other tests that may still be sitting in g_kSetManager.
     tex_rel = "data/Textures/UniqueSunForAstroScaleTest.tga"
+    flare_rel = "data/Textures/Effects/UniqueFlareForAstroScaleTest.tga"
     tex_abs = tmp_path / "game" / tex_rel
+    flare_abs = tmp_path / "game" / flare_rel
     tex_abs.parent.mkdir(parents=True)
+    flare_abs.parent.mkdir(parents=True, exist_ok=True)
     tex_abs.write_bytes(b"FAKE")
+    flare_abs.write_bytes(b"FAKE")
 
     pSet = App.SetClass_Create()
-    pSun = Sun_Create(4000.0, 2000.0, 0.0, tex_rel, "")
+    # atmosphere_thickness=2000.0 is intentionally != radius to prove it
+    # does NOT influence corona_radius any more.
+    pSun = Sun_Create(4000.0, 2000.0, 0.0, tex_rel, flare_rel)
     pSun.SetTranslateXYZ(10.0, 20.0, 30.0)
     pSet.AddObjectToSet(pSun, "Sun")
     App.g_kSetManager.AddSet(pSet, "_test_agg_suns_astro_scale")
@@ -106,11 +113,13 @@ def test_aggregate_suns_applies_astro_scale(tmp_path):
         App.g_kSetManager.DeleteSet("_test_agg_suns_astro_scale")
 
     expected_tex = str(tex_abs.resolve())
+    expected_flare = str(flare_abs.resolve())
     matches = [d for d in result if d["base_texture_path"] == expected_tex]
     assert len(matches) == 1
     d = matches[0]
     assert d["position"] == pytest.approx((10.0 * ASTRO_SCALE,
                                            20.0 * ASTRO_SCALE,
                                            30.0 * ASTRO_SCALE))
-    assert d["radius"]        == pytest.approx(4000.0 * ASTRO_SCALE)
-    assert d["corona_radius"] == pytest.approx((4000.0 + 2000.0) * ASTRO_SCALE)
+    assert d["radius"]             == pytest.approx(4000.0 * ASTRO_SCALE)
+    assert d["corona_radius"]      == pytest.approx(4000.0 * 1.1 * ASTRO_SCALE)
+    assert d["flare_texture_path"] == expected_flare
