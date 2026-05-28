@@ -110,6 +110,7 @@
 .ship-display[data-affiliation="ENEMY"]    { --title-color: var(--bc-target-name); }
 .ship-display[data-affiliation="NEUTRAL"]  { --title-color: var(--bc-sensor-neutral); }
 .ship-display[data-affiliation="NONE"]     { --title-color: var(--bc-no-target); }
+.ship-display[data-affiliation="UNKNOWN"]  { --title-color: var(--bc-no-target); }
 
 /* ── Silhouette + shield quadrants ──────────────────────────────────── */
 

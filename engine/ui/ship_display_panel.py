@@ -45,6 +45,8 @@ class _SubviewBase:
     def GetHeight(self) -> float: return 0.0
     def GetWidth(self) -> float: return 0.0
     def SetPosition(self, *args, **kwargs) -> None: pass
+    def GetConceptualParent(self):
+        return self.parent
 
 
 class _ShieldsSubview(_SubviewBase):
@@ -80,6 +82,7 @@ class ShipDisplayPanel(Panel):
         self._last_snapshot: Optional[tuple] = None
         self._minimizable: bool = (role == ROLE_TARGET)
         self._minimized: bool = False
+        self._visible: bool = True
         self._shields = _ShieldsSubview(parent=self)
         self._damage  = _DamageSubview(parent=self)
         self._gauge   = _HullGaugeSubview(parent=self)
@@ -116,6 +119,25 @@ class ShipDisplayPanel(Panel):
 
     def IsMinimizable(self) -> int:
         return 1 if self._minimizable else 0
+
+    # SDK visibility API — mirrors what TacticalControlWindow.py:441
+    # calls on pEnemyShipDisplay. Tracks a Python-side _visible flag
+    # separate from CSS hidden so SDK queries get a sensible answer.
+    def SetVisible(self, *args, **kwargs) -> None:
+        self._visible = True
+        self._last_snapshot = None
+
+    def SetNotVisible(self, *args, **kwargs) -> None:
+        self._visible = False
+        self._last_snapshot = None
+
+    def IsVisible(self) -> int:
+        return 1 if self._visible else 0
+
+    def GetObjID(self) -> int:
+        """SDK identity. Stable for the panel's lifetime; not a real
+        TGObject ID but distinct per instance."""
+        return id(self) & 0x7FFFFFFF  # positive 31-bit int for SDK compat
 
     # Sub-view getters/adopters -----------------------------------------
     def GetShieldsDisplay(self) -> "_ShieldsSubview": return self._shields
@@ -157,6 +179,12 @@ class ShipDisplayPanel(Panel):
     def SetNoFocus(self, *args, **kwargs) -> None: pass
     def SetAlwaysHandleEvents(self, *args, **kwargs) -> None: pass
     def AddChild(self, *args, **kwargs) -> None: pass
+    def SetUseScrolling(self, *args, **kwargs) -> None: pass
+    def SetName(self, name: str = "") -> None: pass
+    def GetConceptualParent(self):
+        """SDK uses this for sub-views to walk back to the owning panel.
+        On the panel itself, return None — there is no parent panel."""
+        return None
 
     # Dimension getters return per-role constants so SDK chained math
     # (e.g. RepositionUI's "anchor to corner, chain by widths") resolves

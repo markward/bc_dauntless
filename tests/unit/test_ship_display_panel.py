@@ -415,3 +415,57 @@ def test_render_payload_includes_silhouette_url_when_species_resolvable(monkeypa
         assert state["silhouette_url"] is None or isinstance(state["silhouette_url"], str)
     finally:
         _teardown_game()
+
+
+def test_panel_visibility_methods():
+    from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_PLAYER
+    panel = ShipDisplayPanel(ROLE_PLAYER)
+    assert panel.IsVisible() == 1  # default visible
+    panel.SetNotVisible()
+    assert panel.IsVisible() == 0
+    panel.SetVisible()
+    assert panel.IsVisible() == 1
+
+
+def test_panel_setvisible_invalidates_cache():
+    from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_PLAYER
+    panel = ShipDisplayPanel(ROLE_PLAYER)
+    panel._last_snapshot = ("cached",)
+    panel.SetNotVisible()
+    assert panel._last_snapshot is None
+
+
+def test_panel_getobjid_is_stable_and_unique():
+    from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_PLAYER, ROLE_TARGET
+    p1 = ShipDisplayPanel(ROLE_PLAYER)
+    p2 = ShipDisplayPanel(ROLE_TARGET)
+    assert p1.GetObjID() == p1.GetObjID()  # stable
+    assert p1.GetObjID() != p2.GetObjID()  # unique per instance
+    assert p1.GetObjID() > 0  # positive (SDK expects this)
+
+
+def test_panel_setname_and_setusescrolling_are_noops():
+    """SDK TacticalMenuHandlers calls these after construction;
+    they exist solely to avoid AttributeError."""
+    from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_PLAYER
+    panel = ShipDisplayPanel(ROLE_PLAYER)
+    panel.SetName("Player Ship Display")
+    panel.SetUseScrolling(0)
+    # No assertion needed — these are no-ops. Test passes if no exception.
+
+
+def test_panel_getconceptualparent_returns_none():
+    """The panel itself has no parent panel; only sub-views do."""
+    from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_PLAYER
+    panel = ShipDisplayPanel(ROLE_PLAYER)
+    assert panel.GetConceptualParent() is None
+
+
+def test_subview_getconceptualparent_returns_panel():
+    """Sub-views walk back to the owning panel via GetConceptualParent.
+    Matches SDK ShieldsDisplay.py:303."""
+    from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_PLAYER
+    panel = ShipDisplayPanel(ROLE_PLAYER)
+    assert panel.GetShieldsDisplay().GetConceptualParent() is panel
+    assert panel.GetDamageDisplay().GetConceptualParent() is panel
+    assert panel.GetHealthGauge().GetConceptualParent() is panel
