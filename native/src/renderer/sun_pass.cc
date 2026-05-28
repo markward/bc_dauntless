@@ -94,11 +94,11 @@ void SunPass::render(const std::vector<SunDescriptor>& suns,
     // shrinking the radius by the same factor so the angular size is
     // preserved.
     const float virtual_distance = camera.far * 0.95f;
-    // Visual fudge factors: our procedural sun under-reads the BC look —
-    // BC's compiled engine appears to render a substantially larger
-    // visible disc than GetRadius() alone implies. Tuned empirically.
-    constexpr float kBodyVisualScale   = 2.0f;
-    constexpr float kCoronaVisualScale = 2.0f;
+    // The aggregator passes corona_radius = body_radius * 1.1, so the
+    // sphere shell sits as a thin halo just outside the body. The flare
+    // overlay billboard (drawn below) provides the wider visible bulk
+    // that BC's SunEffect node renders.
+    [[maybe_unused]] constexpr float kFlareOverlayRatio = 1.5f;  // half-size relative to body radius
 
     for (const auto& s : suns) {
         assets::Texture* tex = ensure_texture(s.base_texture_path);
@@ -110,8 +110,8 @@ void SunPass::render(const std::vector<SunDescriptor>& suns,
         const float scale_factor = virtual_distance / true_distance;
         const glm::vec3 virtual_pos =
             camera.eye + (cam_to_sun / true_distance) * virtual_distance;
-        const float virtual_radius = s.radius        * scale_factor * kBodyVisualScale;
-        const float virtual_corona = s.corona_radius * scale_factor * kCoronaVisualScale;
+        const float virtual_radius = s.radius        * scale_factor;
+        const float virtual_corona = s.corona_radius * scale_factor;
 
         // Body: opaque sphere scaled to virtual_radius at virtual_pos
         glm::mat4 model = glm::translate(glm::mat4(1.0f), virtual_pos)
