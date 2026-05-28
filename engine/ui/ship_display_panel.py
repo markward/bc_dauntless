@@ -5,7 +5,7 @@ Spec: docs/superpowers/specs/2026-05-28-ship-display-panel-design.md
 """
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import Optional
 
 from engine.ui.panel import Panel
 
@@ -21,7 +21,7 @@ class ShipDisplayPanel(Panel):
         assert role in _VALID_ROLES, "role must be 'player' or 'target'"
         self._role: str = role
         self._ship_id: int = 0  # App.NULL_ID — bound in Task 4
-        self._last_snapshot: Optional[Tuple] = None
+        self._last_snapshot: Optional[tuple] = None
         self._minimizable: bool = (role == ROLE_TARGET)
         self._minimized: bool = False
 
@@ -37,6 +37,7 @@ class ShipDisplayPanel(Panel):
     def SetShipIDVar(self, ship_id) -> None:
         """SDK alias used by ShipDisplay.SetShipID at line 148."""
         self._ship_id = int(ship_id)
+        self._last_snapshot = None
 
     def GetShipID(self) -> int:
         return self._ship_id
@@ -44,6 +45,7 @@ class ShipDisplayPanel(Panel):
     def SetMinimizable(self, value) -> None:
         if self._role == ROLE_TARGET:
             self._minimizable = bool(value)
+            self._last_snapshot = None
 
     def SetMinimized(self, value) -> None:
         if self._role == ROLE_TARGET:

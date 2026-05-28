@@ -21,7 +21,7 @@ def test_invalid_role_raises():
         ShipDisplayPanel("middle")
 
 
-def test_player_panel_not_minimizable_by_default():
+def test_player_panel_not_minimized_by_default():
     from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_PLAYER
     panel = ShipDisplayPanel(ROLE_PLAYER)
     assert panel.IsMinimized() == 0
@@ -41,3 +41,15 @@ def test_player_panel_setminimized_is_noop():
     panel = ShipDisplayPanel(ROLE_PLAYER)
     panel.SetMinimized(1)
     assert panel.IsMinimized() == 0
+
+
+def test_player_panel_is_not_minimizable():
+    from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_PLAYER
+    panel = ShipDisplayPanel(ROLE_PLAYER)
+    assert panel.IsMinimizable() == 0
+
+
+def test_target_panel_is_minimizable_by_default():
+    from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_TARGET
+    panel = ShipDisplayPanel(ROLE_TARGET)
+    assert panel.IsMinimizable() == 1
