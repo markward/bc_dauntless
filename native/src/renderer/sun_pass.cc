@@ -222,15 +222,19 @@ void SunPass::render(const std::vector<SunDescriptor>& suns,
                         static_cast<std::uint32_t>(std::floor(local_t));
                     const float t_within = local_t - std::floor(local_t);
 
-                    // Each epoch reseeds the particle: new position, cell,
-                    // size.  Visually: the puff "appears" at a new spot
-                    // every kFlareLifetimeSec.
+                    // Each epoch reseeds position + size only; cell index
+                    // is a linear function of t_within so the puff plays
+                    // through frames 0..63 of the atlas in sequence over
+                    // its lifetime.  Respawns at a new spot with a new
+                    // size at every epoch boundary.
                     const float u01    = rand01(0u, epoch);
                     const float v01    = rand01(1u, epoch);
                     const float size01 = rand01(2u, epoch);
                     const int cell_total = kFlareGridSize * kFlareGridSize;
-                    const int cell = static_cast<int>(
-                        rand01(3u, epoch) * static_cast<float>(cell_total)) % cell_total;
+                    int cell = static_cast<int>(
+                        t_within * static_cast<float>(cell_total));
+                    if (cell < 0)            cell = 0;
+                    if (cell >= cell_total)  cell = cell_total - 1;
 
                     // Uniform on unit sphere.
                     const float z   = 2.0f * v01 - 1.0f;
@@ -251,8 +255,11 @@ void SunPass::render(const std::vector<SunDescriptor>& suns,
                            + (kFlareParticleMaxScale - kFlareParticleMinScale)
                              * size01);
 
-                    // sin(π·t) envelope: 0 at birth, peak at mid-life, 0 at death.
-                    const float alpha = std::sin(3.14159265f * t_within);
+                    // Every frame plays at full alpha; the atlas's own
+                    // per-cell alpha (sparse at row 0 and row 7, dense
+                    // in the middle rows) supplies the natural fade-in
+                    // and dissipation.
+                    const float alpha = 1.0f;
 
                     flare_shader.set_vec3("u_world_center", particle_pos);
                     flare_shader.set_float("u_half_size", particle_half_size);
