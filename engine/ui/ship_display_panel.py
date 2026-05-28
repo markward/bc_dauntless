@@ -10,6 +10,7 @@ from typing import Optional
 
 from engine.ui.panel import Panel
 from engine.ui import ship_icons
+from engine.ui.species_icons import stem_for_species
 
 
 ROLE_PLAYER = "player"
@@ -341,13 +342,22 @@ def _affiliation_for(ship, player) -> str:
 
 
 def _species_key_for(ship) -> str:
-    """Returns the species short name (e.g. 'Galaxy') for silhouette lookup."""
+    """Returns the TGA filename stem (e.g. 'Galaxy', 'BirdOfPrey') for
+    the ship's species, or '' when no icon is registered.
+
+    Phase 1 ships expose `GetSpecies()` returning the integer enum
+    from sdk/Build/scripts/Multiplayer/SpeciesToShip.py; we map that
+    to the filename stem from sdk/Build/scripts/Icons/ShipIcons.py via
+    species_icons.stem_for_species.
+    """
     try:
-        prop = ship.GetShipProperty()
-        if not prop:
+        if not hasattr(ship, "GetSpecies"):
             return ""
-        name = prop.GetSpeciesName()
-        return name if isinstance(name, str) else ""
+        species_int = ship.GetSpecies()
+        if not isinstance(species_int, int):
+            return ""
+        stem = stem_for_species(species_int)
+        return stem if stem else ""
     except Exception:
         return ""
 
