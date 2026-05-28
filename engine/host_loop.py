@@ -2096,8 +2096,8 @@ def run(mission_name: Optional[str] = None,
         )
         _reset_for_bridge_teardown()  # belt-and-braces: clear any stale state
         set_panel_registry(registry)  # inject the live registry
-        ShipDisplay_Create()           # first call → ROLE_PLAYER, registers
-        ShipDisplay_Create()           # second call → ROLE_TARGET, registers
+        ship_display_player = ShipDisplay_Create()  # ROLE_PLAYER, registers
+        ship_display_target = ShipDisplay_Create()  # ROLE_TARGET, registers
 
         # Wire (and re-wire on mission swap) the target-menu singleton
         # to the player's spatial set. controller.post_load_hook fires
@@ -2199,8 +2199,10 @@ def run(mission_name: Optional[str] = None,
                 # Target list only renders in the exterior tactical view.
                 # SPACE toggles view_mode.is_exterior ↔ view_mode.is_bridge.
                 # The setter is idempotent so writing every tick is cheap.
-                target_list_view.visible = view_mode.is_exterior
-                sensors_panel.visible    = view_mode.is_exterior
+                target_list_view.visible    = view_mode.is_exterior
+                sensors_panel.visible       = view_mode.is_exterior
+                ship_display_player.visible = view_mode.is_exterior
+                ship_display_target.visible = view_mode.is_exterior
 
                 # Sensor-visibility update — flip per-row IsVisible
                 # based on range from the player. TargetListView

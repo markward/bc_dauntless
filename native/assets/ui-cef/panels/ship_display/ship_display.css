@@ -106,11 +106,16 @@
 
 /* ── Affiliation drives title colour ─────────────────────────────────── */
 
-.ship-display[data-affiliation="FRIENDLY"] { --title-color: var(--bc-target-friendly); }
-.ship-display[data-affiliation="ENEMY"]    { --title-color: var(--bc-target-name); }
-.ship-display[data-affiliation="NEUTRAL"]  { --title-color: var(--bc-sensor-neutral); }
-.ship-display[data-affiliation="NONE"]     { --title-color: var(--bc-no-target); }
-.ship-display[data-affiliation="UNKNOWN"]  { --title-color: var(--bc-no-target); }
+/* Affiliation tinting applies to the TARGET panel only — the player's
+   own ship doesn't get coloured by its own faction. Player title stays
+   pure white per the spec (03-shields-readout.md). */
+.ship-display[data-role="target"][data-affiliation="FRIENDLY"] { --title-color: var(--bc-target-friendly); }
+.ship-display[data-role="target"][data-affiliation="ENEMY"]    { --title-color: var(--bc-target-name); }
+.ship-display[data-role="target"][data-affiliation="NEUTRAL"]  { --title-color: var(--bc-sensor-neutral); }
+.ship-display[data-role="target"][data-affiliation="NONE"]     { --title-color: var(--bc-no-target); }
+.ship-display[data-role="target"][data-affiliation="UNKNOWN"]  { --title-color: var(--bc-no-target); }
+
+.ship-display[data-role="player"] .bc-panel__title { color: rgb(255, 255, 255); }
 
 /* ── Silhouette + shield quadrants ──────────────────────────────────── */
 

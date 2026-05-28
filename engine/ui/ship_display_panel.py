@@ -80,7 +80,10 @@ class ShipDisplayPanel(Panel):
         self._role: str = role
         self._ship_id: int = 0  # App.NULL_ID — bound in Task 4
         self._last_snapshot: Optional[tuple] = None
-        self._minimizable: bool = (role == ROLE_TARGET)
+        # Both roles can minimize (user-driven UX; the SDK's role gate
+        # on SetMinimized predates our CEF UI). Player honours
+        # SetMinimizable so SDK scripts can still hard-disable if needed.
+        self._minimizable: bool = True
         self._minimized: bool = False
         self._visible: bool = True
         self._shields = _ShieldsSubview(parent=self)
@@ -105,14 +108,12 @@ class ShipDisplayPanel(Panel):
         return self._ship_id
 
     def SetMinimizable(self, value) -> None:
-        if self._role == ROLE_TARGET:
-            self._minimizable = bool(value)
-            self._last_snapshot = None
+        self._minimizable = bool(value)
+        self._last_snapshot = None
 
     def SetMinimized(self, value) -> None:
-        if self._role == ROLE_TARGET:
-            self._minimized = bool(value)
-            self._last_snapshot = None
+        self._minimized = bool(value)
+        self._last_snapshot = None
 
     def IsMinimized(self) -> int:
         return 1 if self._minimized else 0
@@ -204,6 +205,12 @@ class ShipDisplayPanel(Panel):
         return self._gauge  # any _SubviewBase instance will accept Resize
 
     def _snapshot(self) -> tuple:
+        # self._visible is driven by the host loop's view-mode wiring —
+        # False while in bridge view, True in exterior/tactical. When
+        # False, the JS payload's visible=False hides the panel entirely.
+        if not self._visible:
+            return (None, "", "NONE", "", 0.0, (0.0,) * 6, (),
+                    None, None, self._minimized, False)
         ship = _resolve_ship_for_role(self._role)
         if ship is None:
             return (None, "", "NONE", "", 0.0, (0.0,) * 6, (),
@@ -248,7 +255,7 @@ class ShipDisplayPanel(Panel):
                 json.dumps(payload) + ");")
 
     def dispatch_event(self, action: str) -> bool:
-        if action == "minimize-toggle" and self._role == ROLE_TARGET:
+        if action == "minimize-toggle":
             self._minimized = not self._minimized
             self._last_snapshot = None
             return True

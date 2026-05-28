@@ -69,6 +69,8 @@
     <section class="bc-panel ship-display" id="ship-display-player" data-role="player" hidden>
       <header class="bc-panel__header">
         <span class="bc-panel__title" data-bind="title">PLAYER</span>
+        <button class="bc-panel__minimize" data-event="ship-player/minimize-toggle"
+                onclick="dauntlessEvent('ship-player/minimize-toggle')">&#9660;</button>
       </header>
       <div class="bc-panel__body">
         <div class="ship-display__silhouette-stack">

@@ -35,18 +35,19 @@ def test_target_panel_minimizable_by_default():
     assert panel.IsMinimized() == 1
 
 
-def test_player_panel_setminimized_is_noop():
-    """Player ShipDisplay can't minimize in stock BC."""
+def test_player_panel_setminimized_works():
+    """Player ShipDisplay can minimize in our CEF UI (user-driven UX,
+    overrides stock BC's role-locked behaviour)."""
     from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_PLAYER
     panel = ShipDisplayPanel(ROLE_PLAYER)
     panel.SetMinimized(1)
-    assert panel.IsMinimized() == 0
+    assert panel.IsMinimized() == 1
 
 
-def test_player_panel_is_not_minimizable():
+def test_player_panel_is_minimizable_by_default():
     from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_PLAYER
     panel = ShipDisplayPanel(ROLE_PLAYER)
-    assert panel.IsMinimizable() == 0
+    assert panel.IsMinimizable() == 1
 
 
 def test_target_panel_is_minimizable_by_default():
@@ -374,14 +375,29 @@ def test_target_minimize_toggle_flips_state_and_invalidates_cache():
         _teardown_game()
 
 
-def test_player_panel_ignores_minimize_event():
+def test_player_panel_handles_minimize_event():
+    """Player panel collapses on minimize-toggle in our CEF UI."""
     from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_PLAYER
     _setup_game_with_player()
     try:
         panel = ShipDisplayPanel(ROLE_PLAYER)
         handled = panel.dispatch_event("minimize-toggle")
-        assert handled is False
-        assert panel.IsMinimized() == 0
+        assert handled is True
+        assert panel.IsMinimized() == 1
+    finally:
+        _teardown_game()
+
+
+def test_invisible_panel_emits_visible_false():
+    """View-mode hides the panel via Panel.visible — snapshot must
+    propagate this even when a ship is resolvable."""
+    from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_PLAYER
+    _setup_game_with_player()
+    try:
+        panel = ShipDisplayPanel(ROLE_PLAYER)
+        panel.visible = False
+        snap = panel._snapshot()
+        assert snap[10] is False  # visible position
     finally:
         _teardown_game()
 
