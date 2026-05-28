@@ -2054,6 +2054,16 @@ def run(mission_name: Optional[str] = None,
         registry.register(target_list_view)
         registry.register(sensors_panel)
 
+        # SDK ShipDisplay factories register against this same registry.
+        # The factory is invoked by sdk/Build/scripts/Tactical/Interface/
+        # ShipDisplay.py:Create which runs during bridge load.
+        from engine.sdk_ui.widgets.ship_display import (
+            set_panel_registry,
+            _reset_for_bridge_teardown,
+        )
+        _reset_for_bridge_teardown()  # belt-and-braces: clear any stale state
+        set_panel_registry(registry)  # inject the live registry
+
         # Wire (and re-wire on mission swap) the target-menu singleton
         # to the player's spatial set. controller.post_load_hook fires
         # after every successful loader.load() — both the initial load

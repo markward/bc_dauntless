@@ -42,13 +42,36 @@ def _active_registry() -> Optional[PanelRegistry]:
 
 
 def _reset_create_count() -> None:
-    """Called on bridge teardown so the next bridge load starts clean."""
+    """Called on bridge teardown so the next bridge load starts clean.
+
+    Kept for backwards-compatibility with existing tests.
+    Prefer _reset_for_bridge_teardown() for host-loop-facing calls,
+    as that also clears the registry reference."""
     global _create_count
     _create_count = 0
 
 
+def _reset_for_bridge_teardown() -> None:
+    """Called on bridge teardown so the next bridge load starts clean.
+
+    Clears BOTH the create-count and the active registry reference.
+    The next bridge load must call set_panel_registry(new_registry)
+    before any ShipDisplay_Create call — otherwise registration is
+    silently skipped, which is the desired loud-failure mode for
+    misordered initialisation."""
+    global _create_count, _registry
+    _create_count = 0
+    _registry = None
+
+
 def ShipDisplay_Create(*args, **kwargs) -> ShipDisplayPanel:
     global _create_count
+    if _create_count >= 2:
+        raise RuntimeError(
+            "ShipDisplay_Create called more than twice per bridge load; "
+            "expected exactly two (player + target). "
+            "Call _reset_for_bridge_teardown() on bridge unload to reset."
+        )
     role = ROLE_PLAYER if _create_count == 0 else ROLE_TARGET
     _create_count += 1
     panel = ShipDisplayPanel(role)
