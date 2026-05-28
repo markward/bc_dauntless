@@ -136,6 +136,11 @@ def Planet_Cast(obj) -> "Planet | None":
 
 _SUN_DEFAULT_TEXTURE = "data/Textures/SunBase.tga"
 
+# Thin halo around the body sphere. The renderer's sun_pass draws the
+# corona at this ratio of body radius; the wider visible glow is the
+# separate flare-overlay billboard plus the lens flare.
+_CORONA_SHELL_RATIO = 1.1
+
 
 def aggregate_suns_for_renderer(project_root, pSets):
     """Return list[dict] for all Sun objects across pSets.
@@ -197,7 +202,7 @@ def aggregate_suns_for_renderer(project_root, pSets):
                 "position":           (loc.x, loc.y, loc.z),
                 "radius":             radius * scale,
                 "base_texture_path":  str(abs_path),
-                "corona_radius":      radius * 1.1 * scale,
+                "corona_radius":      radius * _CORONA_SHELL_RATIO * scale,
                 "flare_texture_path": flare_abs_str,
             })
     return out
