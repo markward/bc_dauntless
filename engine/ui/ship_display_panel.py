@@ -5,6 +5,7 @@ Spec: docs/superpowers/specs/2026-05-28-ship-display-panel-design.md
 """
 from __future__ import annotations
 
+import json
 from typing import Optional
 
 from engine.ui.panel import Panel
@@ -195,7 +196,26 @@ class ShipDisplayPanel(Panel):
 
     # Panel framework ---------------------------------------------------
     def render_payload(self) -> Optional[str]:
-        return None  # filled in Task 5
+        snap = self._snapshot()
+        if snap == self._last_snapshot:
+            return None
+        self._last_snapshot = snap
+        (ship_id, name, affiliation, species, hull_pct,
+         shields, damage, range_m, speed_kph, minimized, visible) = snap
+        payload = {
+            "visible":     visible,
+            "ship_name":   name,
+            "affiliation": affiliation,
+            "species":     species,
+            "hull_pct":    hull_pct,
+            "shields_pct": list(shields),
+            "damage":      [{"name": n, "state": s} for (n, s) in damage],
+            "range_m":     range_m,
+            "speed_kph":   speed_kph,
+            "minimized":   minimized,
+        }
+        return ("setShipDisplay(" + json.dumps(self._role) + ", " +
+                json.dumps(payload) + ");")
 
     def dispatch_event(self, action: str) -> bool:
         return False  # filled in Task 6
@@ -283,7 +303,10 @@ def _species_key_for(ship) -> str:
     """Returns the species short name (e.g. 'Galaxy') for silhouette lookup."""
     try:
         prop = ship.GetShipProperty()
-        return prop.GetSpeciesName() if prop else ""
+        if not prop:
+            return ""
+        name = prop.GetSpeciesName()
+        return name if isinstance(name, str) else ""
     except Exception:
         return ""
 

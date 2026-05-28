@@ -297,3 +297,60 @@ def test_damage_states_filter_to_named_subsystems_only():
             assert name in ("Engines", "Weapons", "Sensors", "Shield Generator")
     finally:
         _teardown_game()
+
+
+def test_render_payload_emits_setshipdisplay_call():
+    import json
+    from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_PLAYER
+    _, player, _ = _setup_game_with_player()
+    try:
+        sh = player.GetShieldSubsystem()
+        for face in range(sh.NUM_SHIELDS):
+            sh.SetMaxShields(face, 100.0)
+            sh.SetCurrentShields(face, 100.0)
+        hull = player.GetHull()
+        hull.SetMaxCondition(1000.0); hull.SetCondition(750.0)
+
+        panel = ShipDisplayPanel(ROLE_PLAYER)
+        script = panel.render_payload()
+        assert script is not None
+        assert script.startswith("setShipDisplay(\"player\", ")
+        body = script[len("setShipDisplay(\"player\", "):-2]
+        state = json.loads(body)
+        assert state["visible"] is True
+        assert state["ship_name"] == "Player"
+        assert state["hull_pct"] == 0.75
+        assert state["shields_pct"] == [1.0] * 6
+    finally:
+        _teardown_game()
+
+
+def test_render_payload_is_idempotent_until_state_changes():
+    from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_PLAYER
+    _, player, _ = _setup_game_with_player()
+    try:
+        panel = ShipDisplayPanel(ROLE_PLAYER)
+        first = panel.render_payload()
+        second = panel.render_payload()
+        assert first is not None
+        assert second is None  # nothing changed → no re-emit
+
+        # Damage the ship; next render should re-emit.
+        player.GetHull().SetCondition(player.GetHull().GetCondition() * 0.5)
+        third = panel.render_payload()
+        assert third is not None
+    finally:
+        _teardown_game()
+
+
+def test_setshipid_forces_reemit():
+    from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_PLAYER
+    _setup_game_with_player()
+    try:
+        panel = ShipDisplayPanel(ROLE_PLAYER)
+        assert panel.render_payload() is not None
+        assert panel.render_payload() is None
+        panel.SetShipID(42)
+        assert panel.render_payload() is not None
+    finally:
+        _teardown_game()
