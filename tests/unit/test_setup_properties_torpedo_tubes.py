@@ -53,6 +53,34 @@ def _torpedo_system_property():
     return sys_prop
 
 
+def test_photon_torpedo_ammo_stamps_power_cost():
+    """Each TorpedoAmmoType seeded via _resolve_torpedo_ammo must carry
+    the projectile script's GetPowerCost() — the per-shot cost the
+    PowerSubsystem will bill in the per-fire gate (slice 5).
+
+    PhotonTorpedo.py:65 returns 20.0; Galaxy slot 0 binds PhotonTorpedo
+    so the resulting ammo's GetPowerCost() should be 20.0.
+    """
+    from engine.appc.ships import _resolve_torpedo_ammo
+    from engine.appc.properties import TorpedoSystemProperty
+    ts_prop = TorpedoSystemProperty("Torpedoes")
+    ts_prop.SetTorpedoScript(0, "Tactical.Projectiles.PhotonTorpedo")
+    ammo = _resolve_torpedo_ammo(ts_prop, 0)
+    assert ammo.GetPowerCost() == 20.0
+
+
+def test_unresolved_script_defaults_to_photon_cost():
+    """Resolver fallback ammo (Photon) also exposes the Photon power
+    cost — keeps the per-fire gate from short-circuiting on the
+    safety-net branch."""
+    from engine.appc.ships import _resolve_torpedo_ammo
+    from engine.appc.properties import TorpedoSystemProperty
+    ts_prop = TorpedoSystemProperty("Torpedoes")
+    # No SetTorpedoScript — resolver hits the safety net.
+    ammo = _resolve_torpedo_ammo(ts_prop, 0)
+    assert ammo.GetPowerCost() == 20.0
+
+
 def test_idempotent_against_re_run():
     ship = ShipClass_Create("Galaxy")
     ship.GetPropertySet().AddToSet("Scene Root", _torpedo_system_property())

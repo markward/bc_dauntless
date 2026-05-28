@@ -42,6 +42,9 @@ class GameLoop:
             ss = ship.GetShieldSubsystem()
             if ss is not None:
                 ss.Update(TICK_DELTA)
+            ps = ship.GetPowerSubsystem()
+            if ps is not None:
+                ps.Update(TICK_DELTA)
 
     def advance(self, n: int) -> None:
         for _ in range(n):

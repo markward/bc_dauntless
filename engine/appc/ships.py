@@ -526,13 +526,13 @@ class ShipClass(DamageableObject):
         return None
 
     def GetShieldSubsystem(self):                 return self._shield_subsystem
-    def SetShieldSubsystem(self, s) -> None:      self._shield_subsystem = s
+    def SetShieldSubsystem(self, s) -> None:      self._shield_subsystem = self._attach_subsystem(s)
     # SDK-facing alias — pShip.GetShields() in mission scripts and SDK helpers.
     def GetShields(self):                         return self._shield_subsystem
     def GetPowerSubsystem(self):                  return self._power_subsystem
-    def SetPowerSubsystem(self, s) -> None:       self._power_subsystem = s
+    def SetPowerSubsystem(self, s) -> None:       self._power_subsystem = self._attach_subsystem(s)
     def GetRepairSubsystem(self):                 return self._repair_subsystem
-    def SetRepairSubsystem(self, s) -> None:      self._repair_subsystem = s
+    def SetRepairSubsystem(self, s) -> None:      self._repair_subsystem = self._attach_subsystem(s)
     def GetCloakingSubsystem(self):
         """Returns None — Phase 1 ships have no cloaking subsystem.
         SDK FedAttack/NonFedAttack gate cloak usage on this being
@@ -714,6 +714,14 @@ class ShipClass(DamageableObject):
                     ps.SetProperty(prop)
                     mc = prop.GetMaxCondition()
                     if mc is not None: ps.SetMaxCondition(mc)
+                    # Seed battery pools to full so a fresh ship can fire
+                    # before the first per-tick refill (matches the SDK
+                    # WarpCore which the C++ side initialises at full
+                    # charge during ship construction).
+                    mbl = prop.GetMainBatteryLimit()
+                    if mbl is not None: ps.SetMainBatteryPower(float(mbl))
+                    bbl = prop.GetBackupBatteryLimit()
+                    if bbl is not None: ps.SetBackupBatteryPower(float(bbl))
             elif isinstance(prop, RepairSubsystemProperty):
                 rs = self._repair_subsystem
                 if rs is not None:
@@ -1022,18 +1030,27 @@ def _resolve_torpedo_ammo(ts_prop, slot: int):
     causes a divide-by-zero in FireScript.PredictTargetLocation).
     """
     from engine.appc.subsystems import TorpedoAmmoType
+    # Photon defaults — used both for the unbound-slot path and any
+    # import failure.  PowerCost 20.0 matches PhotonTorpedo.py:65.
+    PHOTON_LAUNCH_SPEED = 19.0
+    PHOTON_POWER_COST = 20.0
     script_name = None
     if ts_prop is not None and hasattr(ts_prop, "GetTorpedoScript"):
         script_name = ts_prop.GetTorpedoScript(slot)
     if not script_name:
-        return TorpedoAmmoType("Photon", launch_speed=19.0)
+        return TorpedoAmmoType("Photon",
+                               launch_speed=PHOTON_LAUNCH_SPEED,
+                               power_cost=PHOTON_POWER_COST)
     try:
         leaf = script_name.split(".")[-1]
         mod = __import__(script_name, None, None, [leaf])
-        launch_speed = float(mod.GetLaunchSpeed()) if hasattr(mod, "GetLaunchSpeed") else 19.0
-        return TorpedoAmmoType(leaf, launch_speed=launch_speed)
+        launch_speed = float(mod.GetLaunchSpeed()) if hasattr(mod, "GetLaunchSpeed") else PHOTON_LAUNCH_SPEED
+        power_cost = float(mod.GetPowerCost()) if hasattr(mod, "GetPowerCost") else 0.0
+        return TorpedoAmmoType(leaf, launch_speed=launch_speed, power_cost=power_cost)
     except Exception:
-        return TorpedoAmmoType("Photon", launch_speed=19.0)
+        return TorpedoAmmoType("Photon",
+                               launch_speed=PHOTON_LAUNCH_SPEED,
+                               power_cost=PHOTON_POWER_COST)
 
 
 def ShipClass_Create(class_name: str = "") -> ShipClass:

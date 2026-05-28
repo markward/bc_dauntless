@@ -166,6 +166,15 @@ class _EnergyWeaponFireMixin:
     # fraction × MaxCharge before CanFire returns true again.
     REFIRE_HEADROOM_FRACTION = 0.20
 
+    # Power debited per charge unit recovered during UpdateCharge.  BC's
+    # SDK has no per-charge cost field on EnergyWeaponProperty — this is
+    # engine-side, tunable.  1.0 means 1 power unit per 1 charge unit;
+    # Galaxy's 8 phaser banks × 0.08/s recharge × 1.0 = 0.64 power/s
+    # while all eight refill in parallel, vs the warp core's 1000/s
+    # output — negligible while the grid is healthy, but enough to
+    # halt recharge once the main battery bottoms out.
+    POWER_COST_PER_CHARGE = 1.0
+
     def CanFire(self) -> int:
         parent = self.GetParentSubsystem()
         on = parent is not None and parent.IsOn()
@@ -208,10 +217,11 @@ class _EnergyWeaponFireMixin:
         else:
             parent = self.GetParentSubsystem()
             if parent is not None and parent.IsOn():
-                self._charge_level = min(
-                    self._max_charge,
-                    self._charge_level + self._recharge_rate * dt,
-                )
+                headroom = self._max_charge - self._charge_level
+                if headroom > 0.0:
+                    want = min(self._recharge_rate * dt, headroom)
+                    if self._bill_recharge(want):
+                        self._charge_level += want
             # Re-arm once we cleared the headroom threshold.
             if not self._armed:
                 refire_threshold = (self._min_firing_charge
@@ -235,6 +245,25 @@ class _EnergyWeaponFireMixin:
         if loop_snd is not None:
             loop_snd.SetLooping(True)
             self._loop_handle = loop_snd.Play()
+
+    def _bill_recharge(self, charge_amount: float) -> int:
+        """Charge POWER_COST_PER_CHARGE × charge_amount against the firing
+        ship's PowerSubsystem.  Returns 1 if billed (or if the gate
+        doesn't apply — ship has no PowerSubsystem, or its
+        PowerSubsystem has no bound PowerProperty meaning a Phase-1
+        test stub without a power plant).  Returns 0 if the gate
+        engaged and the grid couldn't cover it — UpdateCharge skips
+        the refill that tick."""
+        if charge_amount <= 0.0:
+            return 1
+        ship = self._climb_to_ship()
+        if ship is None:
+            return 1
+        ps = ship.GetPowerSubsystem() if hasattr(ship, "GetPowerSubsystem") else None
+        if ps is None or ps.GetProperty() is None:
+            return 1
+        cost = float(charge_amount) * self.POWER_COST_PER_CHARGE
+        return ps.StealPower(cost)
 
 
 class ShipSubsystem(TGEventHandlerObject):
@@ -809,12 +838,16 @@ class TorpedoAmmoType:
     MissionLib.SetTotalTorpsAtStarbase / LoadTorpedoes lookup pattern, which
     compares ``pTorpType.GetAmmoName() == "Photon"``.
     """
-    def __init__(self, name: str, launch_speed: float = 0.0):
+    def __init__(self, name: str, launch_speed: float = 0.0, power_cost: float = 0.0):
         self._name = name
         # SDK TorpedoRun.py:130 / StationaryAttack.py:78 use launch speed to
         # predict the torpedo's intercept point.  Real BC tunes this per ammo
         # type via the hardpoint scripts; Phase 1 keeps a single scalar.
         self._launch_speed = float(launch_speed)
+        # SDK Preprocessors.py:563 reads GetPowerCost() to *rate* ammo types;
+        # the C++ Appc engine also bills it from PowerSubsystem each shot.
+        # Sourced from the projectile script's GetPowerCost() at seed time.
+        self._power_cost = float(power_cost)
 
     def GetAmmoName(self) -> str:
         return self._name
@@ -822,6 +855,14 @@ class TorpedoAmmoType:
     def GetLaunchSpeed(self) -> float:
         """SDK TorpedoRun.py:130 — used to predict torpedo intercept points."""
         return float(self._launch_speed)
+
+    def GetPowerCost(self) -> float:
+        """SDK App.py:9570 — per-shot power debit billed against the firing
+        ship's PowerSubsystem.  Stock values: Photon=20, Quantum=30,
+        Klingon=40, PhasedPlasma=40, Cardassian=10, FusionBolt=10,
+        PositronTorpedo=10, KessokDisruptor=30 — see
+        sdk/Build/scripts/Tactical/Projectiles/*.py."""
+        return float(self._power_cost)
 
     def __repr__(self) -> str:
         return f"<TorpedoAmmoType {self._name!r}>"
@@ -1142,6 +1183,12 @@ class TorpedoTube(WeaponSystem):
     def Fire(self, target=None, offset=None) -> None:
         if not self.CanFire():
             return
+        if not self._debit_power():
+            # Insufficient power: silent no-op (matches BC — UI never
+            # pops a "low power" dialog mid-combat, the tube just
+            # doesn't fire).  Tube stays loaded; higher-level dispatch
+            # may round-robin to a different tube or AI may retry.
+            return
         self._firing = True
         self._target = target
         self._target_offset = offset
@@ -1155,6 +1202,33 @@ class TorpedoTube(WeaponSystem):
         # Discrete-shot — auto-stop after launch.  WeaponSystem's
         # _currently_firing list still tracks us until StopFiring is called.
         self._firing = False
+
+    def _debit_power(self) -> int:
+        """Bill the firing ship's PowerSubsystem for this shot's cost.
+
+        Returns 1 if billed in full (or if the gate doesn't apply —
+        ship has no PowerSubsystem, or its PowerSubsystem has no bound
+        PowerProperty meaning this is a Phase-1 test stub without a
+        power plant).  Returns 0 if the gate engaged and combined
+        available + main battery couldn't cover the cost — caller
+        treats that as a silent no-op.
+        """
+        ship = self._climb_to_ship()
+        if ship is None:
+            return 1
+        ps = ship.GetPowerSubsystem() if hasattr(ship, "GetPowerSubsystem") else None
+        if ps is None or ps.GetProperty() is None:
+            return 1
+        parent = self.GetParentSubsystem()
+        ammo = parent.GetCurrentAmmoType() if (
+            parent is not None and hasattr(parent, "GetCurrentAmmoType")
+        ) else None
+        cost = float(ammo.GetPowerCost()) if (
+            ammo is not None and hasattr(ammo, "GetPowerCost")
+        ) else 0.0
+        if cost <= 0.0:
+            return 1
+        return ps.StealPower(cost)
 
     def _spawn_torpedo(self) -> None:
         """Look up the parent system's GetTorpedoScript(0), import the SDK
@@ -1474,8 +1548,126 @@ class PowerSubsystem(ShipSubsystem):
     Inherits ShipSubsystem (not PoweredSubsystem) to match SDK
     App.py:5710 where PowerSubsystem inherits ShipSubsystem directly.
     It generates power rather than consuming it.
+
+    Three pools mirror Appc (App.py:5739-5754):
+
+    * **available** — instantaneous surplus from generation, refilled
+      each tick.  Weapons drain this first.
+    * **main battery** — capped reserve (PowerProperty.MainBatteryLimit)
+      that absorbs surplus and surrenders it when available runs out.
+    * **backup battery** — emergency reserve.  Reserved for the per-tick
+      flow implementation; the runtime arithmetic ops here treat it as
+      passive storage only.
+
+    Arithmetic ops do NOT partial-drain: callers (TorpedoTube.Fire,
+    PhaserBank power debit, etc.) treat a return of 0 as "did not have
+    enough power, do nothing" and a return of 1 as "billed in full".
     """
-    pass
+    def __init__(self, name: str = ""):
+        super().__init__(name)
+        self._available_power: float = 0.0
+        self._main_battery_power: float = 0.0
+        self._backup_battery_power: float = 0.0
+
+    def GetAvailablePower(self) -> float:           return self._available_power
+    def SetAvailablePower(self, v) -> None:         self._available_power = float(v)
+    def GetMainBatteryPower(self) -> float:         return self._main_battery_power
+    def SetMainBatteryPower(self, v) -> None:       self._main_battery_power = float(v)
+    def GetBackupBatteryPower(self) -> float:       return self._backup_battery_power
+    def SetBackupBatteryPower(self, v) -> None:     self._backup_battery_power = float(v)
+
+    def AddPower(self, amount) -> None:
+        self._available_power += float(amount)
+
+    def DeductPower(self, amount) -> int:
+        amt = float(amount)
+        if amt > self._available_power:
+            return 0
+        self._available_power -= amt
+        return 1
+
+    def StealPower(self, amount) -> int:
+        amt = float(amount)
+        if amt > self._available_power + self._main_battery_power:
+            return 0
+        from_avail = min(amt, self._available_power)
+        self._available_power -= from_avail
+        self._main_battery_power -= (amt - from_avail)
+        return 1
+
+    def StealPowerFromReserve(self, amount) -> int:
+        amt = float(amount)
+        if amt > self._available_power + self._main_battery_power:
+            return 0
+        from_main = min(amt, self._main_battery_power)
+        self._main_battery_power -= from_main
+        self._available_power -= (amt - from_main)
+        return 1
+
+    # ── Per-tick flow ─────────────────────────────────────────────────────
+    # Walked from GameLoop.tick. Sums idle drain across the parent ship's
+    # powered subsystems, applies generation, and routes surplus / deficit
+    # through the battery pools. The available pool is refilled to the
+    # tick's surplus so weapons can spend it via DeductPower / StealPower
+    # within the same tick.
+
+    _IDLE_DRAIN_SLOTS = (
+        "GetSensorSubsystem", "GetImpulseEngineSubsystem",
+        "GetWarpEngineSubsystem", "GetShieldSubsystem",
+        "GetPhaserSystem", "GetTorpedoSystem",
+        "GetPulseWeaponSystem", "GetTractorBeamSystem",
+        "GetRepairSubsystem",
+    )
+
+    def _compute_idle_drain(self) -> float:
+        ship = self.GetParentShip()
+        if ship is None:
+            return 0.0
+        total = 0.0
+        for getter_name in self._IDLE_DRAIN_SLOTS:
+            getter = getattr(ship, getter_name, None)
+            if getter is None:
+                continue
+            sub = getter()
+            if sub is None:
+                continue
+            if not hasattr(sub, "IsOn") or not sub.IsOn():
+                continue
+            if not hasattr(sub, "GetNormalPowerPerSecond"):
+                continue
+            total += float(sub.GetNormalPowerPerSecond() or 0.0)
+        return total
+
+    def Update(self, dt: float) -> None:
+        prop = self.GetProperty()
+        if prop is None:
+            return
+        output = float(prop.GetPowerOutput() or 0.0)
+        main_cap = float(prop.GetMainBatteryLimit() or 0.0)
+        idle_drain = self._compute_idle_drain()
+
+        gen = output * dt
+        drain = idle_drain * dt
+        net = gen - drain
+
+        if net >= 0.0:
+            self._main_battery_power = min(
+                main_cap, self._main_battery_power + net
+            )
+            self._available_power = net
+            return
+
+        # Deficit — pull from main, then backup.  Subsystems still
+        # "run" (we don't simulate brown-out yet); the only observable
+        # is a drained reserve.
+        deficit = -net
+        from_main = min(deficit, self._main_battery_power)
+        self._main_battery_power -= from_main
+        remaining = deficit - from_main
+        if remaining > 0.0:
+            from_backup = min(remaining, self._backup_battery_power)
+            self._backup_battery_power -= from_backup
+        self._available_power = 0.0
 
 
 class RepairSubsystem(PoweredSubsystem):

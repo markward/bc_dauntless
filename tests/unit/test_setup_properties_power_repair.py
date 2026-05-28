@@ -34,6 +34,26 @@ def test_setup_properties_wires_engineering():
     assert repair.GetNormalPowerPerSecond() == 40.0
 
 
+def test_setup_properties_initializes_battery_pools_from_property_limits():
+    """The PowerProperty carries the hardpoint-declared MainBatteryLimit
+    + BackupBatteryLimit (Galaxy WarpCore: 250000 / 80000).  After
+    SetupProperties the PowerSubsystem should start with batteries full
+    so a fresh ship can fire / shield before the first per-tick refill."""
+    ship = ShipClass_Create("DryDock")
+    p = PowerProperty("Power Plant")
+    p.SetPowerOutput(1000.0)
+    p.SetMainBatteryLimit(250000.0)
+    p.SetBackupBatteryLimit(80000.0)
+    p.SetMainConduitCapacity(1200.0)
+    p.SetBackupConduitCapacity(200.0)
+    ship.GetPropertySet().AddToSet("Scene Root", p)
+    ship.SetupProperties()
+
+    power = ship.GetPowerSubsystem()
+    assert power.GetMainBatteryPower() == 250000.0
+    assert power.GetBackupBatteryPower() == 80000.0
+
+
 def test_setup_properties_power_repair_survive_scrub_only_when_property_set():
     """Pass 3 only scrubs slots whose GetProperty() is None.  When
     PowerProperty is in the set, the slot survives."""
