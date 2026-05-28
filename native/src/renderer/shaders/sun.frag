@@ -15,6 +15,6 @@ void main() {
         // v_uv.y in [0,1]: poles at 0 and 1, equator near 0.5.
         // sin maps to 0 at poles and 1 at equator for atmospheric taper.
         float fade = sin(v_uv.y * 3.14159265);
-        frag_color = vec4(tex.rgb, tex.a * fade * 0.6);
+        frag_color = vec4(tex.rgb, tex.a * fade * 0.54);
     }
 }
