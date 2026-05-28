@@ -490,12 +490,16 @@ PYBIND11_MODULE(_dauntless_host, m) {
               for (const auto& d : descs) {
                   renderer::SunDescriptor s;
                   auto pos = d["position"].cast<std::tuple<float,float,float>>();
-                  s.position          = {std::get<0>(pos),
-                                         std::get<1>(pos),
-                                         std::get<2>(pos)};
-                  s.radius            = d["radius"].cast<float>();
-                  s.base_texture_path = d["base_texture_path"].cast<std::string>();
-                  s.corona_radius     = d["corona_radius"].cast<float>();
+                  s.position           = {std::get<0>(pos),
+                                          std::get<1>(pos),
+                                          std::get<2>(pos)};
+                  s.radius             = d["radius"].cast<float>();
+                  s.base_texture_path  = d["base_texture_path"].cast<std::string>();
+                  s.corona_radius      = d["corona_radius"].cast<float>();
+                  s.flare_texture_path =
+                      d.contains("flare_texture_path")
+                          ? d["flare_texture_path"].cast<std::string>()
+                          : std::string{};
                   g_suns.push_back(std::move(s));
               }
           },

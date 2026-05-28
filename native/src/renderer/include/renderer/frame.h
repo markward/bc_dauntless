@@ -48,6 +48,7 @@ struct SunDescriptor {
     float       radius        = 1.0f;      // body sphere radius (BC units)
     std::string base_texture_path;
     float       corona_radius = 0.0f;      // 0 = no corona; draw when > radius
+    std::string flare_texture_path;        // optional lens-flare sprite; empty = none
 };
 
 struct LensFlareElement {
