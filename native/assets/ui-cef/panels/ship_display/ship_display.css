@@ -1,0 +1,217 @@
+/* native/assets/ui-cef/panels/ship_display/ship_display.css
+ *
+ * ShipDisplay panel — palette tokens only. No literal RGB values.
+ * Spec: docs/superpowers/specs/2026-05-28-ship-display-panel-design.md
+ *
+ * Tokens shared with sensors.css / target_list.css are redeclared here
+ * following the same pattern those files use (browsers de-duplicate
+ * identical :root entries). New tokens are defined once here.
+ */
+
+:root {
+    /* ── Shared chrome tokens (also in sensors.css, target_list.css) ── */
+    --bc-menu1-base:      rgb(216, 94, 86);
+    --bc-menu1-accent:    rgb(216, 132, 80);
+    --bc-label-text:      rgb(235, 225, 255);
+    --bc-body-bg:         rgba(10, 10, 16, 0.97);
+
+    /* ── Row text variants ─────────────────────────────────────────── */
+    --bc-row-text-bright: rgb(235, 225, 255);
+    --bc-row-text-dim:    rgb(220, 210, 225);
+
+    /* ── Target/affiliation title colours ──────────────────────────── */
+    --bc-target-friendly: rgb(80, 170, 255);     /* Federation / friendly */
+    --bc-target-name:     rgb(220, 60, 60);      /* Hostile target name */
+    --bc-sensor-neutral:  rgb(255, 210, 90);     /* Neutral — same as --bc-gold */
+    --bc-no-target:       rgb(140, 140, 160);    /* No target / unknown */
+
+    /* ── Shield / subsystem identity (g_kEngineeringShieldsColor) ──── */
+    --bc-shields:         rgb(150, 129, 222);
+
+    /* ── Hull integrity bar ────────────────────────────────────────── */
+    --bc-hull-healthy:    rgb(50, 210, 80);      /* >= 70% */
+    --bc-hull-damaged:    rgb(255, 200, 60);     /* 25–70% */
+    --bc-hull-critical:   rgb(255, 80, 40);      /* < 25% */
+    --bc-hull-track:      rgb(40, 40, 40);       /* empty track */
+
+    /* ── Subsystem damage state colours ────────────────────────────── */
+    --bc-damage-damaged:  rgb(184, 255, 0);      /* g_kDamageDisplayDamagedColor */
+    --bc-damage-disabled: rgb(153, 153, 153);    /* g_kDamageDisplayDisabledColor */
+    --bc-damage-destroyed:rgb(255, 64, 0);       /* g_kDamageDisplayDestroyedColor */
+}
+
+/* ── Panel chrome ────────────────────────────────────────────────────── */
+
+.ship-display {
+    position: fixed;
+    width: 18vw;
+    min-width: 220px;
+    background: var(--bc-body-bg);
+    border: 1px solid var(--bc-menu1-base);
+    font-family: "Antonio", "Antonio-Regular", sans-serif;
+    color: var(--bc-label-text);
+    -webkit-font-smoothing: antialiased;
+    /* Default title colour — overridden by data-affiliation below. */
+    --title-color: var(--bc-row-text-bright);
+}
+
+#ship-display-player {
+    right: 36vw;   /* leaves room for Weapons Settings + Weapons Display */
+    bottom: 0;
+}
+
+#ship-display-target {
+    left: 1.5vw;
+    top: 4vh;
+}
+
+.ship-display[hidden] { display: none; }
+.ship-display[data-minimized="true"] .bc-panel__body { display: none; }
+
+/* ── Header ──────────────────────────────────────────────────────────── */
+
+.bc-panel__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: linear-gradient(90deg, var(--bc-menu1-base), var(--bc-menu1-accent));
+    padding: 4px 8px;
+    color: var(--title-color);
+    font-weight: 600;
+    font-size: 13px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+}
+
+.bc-panel__minimize {
+    background: transparent;
+    border: 0;
+    color: inherit;
+    cursor: pointer;
+    font-size: 14px;
+    padding: 0 2px;
+    line-height: 1;
+    user-select: none;
+}
+
+/* ── Body ────────────────────────────────────────────────────────────── */
+
+.bc-panel__body {
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    border-left: 4px solid var(--bc-menu1-base);
+}
+
+/* ── Affiliation drives title colour ─────────────────────────────────── */
+
+.ship-display[data-affiliation="FRIENDLY"] { --title-color: var(--bc-target-friendly); }
+.ship-display[data-affiliation="ENEMY"]    { --title-color: var(--bc-target-name); }
+.ship-display[data-affiliation="NEUTRAL"]  { --title-color: var(--bc-sensor-neutral); }
+.ship-display[data-affiliation="NONE"]     { --title-color: var(--bc-no-target); }
+
+/* ── Silhouette + shield quadrants ──────────────────────────────────── */
+
+.ship-display__silhouette-stack {
+    position: relative;
+    width: 100%;
+    height: 120px;
+}
+
+.ship-display__silhouette {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--bc-shields);
+}
+
+/* Target silhouette echoes the affiliation title colour so the icon
+ * tints friendly=blue, hostile=red, etc. Player silhouette stays
+ * the shield-identity purple. */
+.ship-display[data-role="target"] .ship-display__silhouette {
+    color: var(--title-color);
+}
+
+.ship-display__shield {
+    position: absolute;
+    border-radius: 50%;
+    transition: opacity 120ms ease, background 120ms ease;
+    pointer-events: none;
+}
+
+/* Shield quadrant geometry — compass quadrants over a top-down hull view. */
+.shield--top    { top: 0;    left: 25%; width: 50%; height: 20%; }
+.shield--bottom { bottom: 0; left: 25%; width: 50%; height: 20%; }
+.shield--front  { top: 15%;  left: 35%; width: 30%; height: 15%; }
+.shield--rear   { bottom: 15%; left: 35%; width: 30%; height: 15%; }
+.shield--left   { top: 30%;  left: 5%;  width: 20%; height: 40%; }
+.shield--right  { top: 30%;  right: 5%; width: 20%; height: 40%; }
+
+.ship-display__shield[data-integrity="full"]    { opacity: 1.0; background: var(--bc-shields); }
+.ship-display__shield[data-integrity="damaged"] { opacity: 0.6; background: var(--bc-hull-damaged); }
+.ship-display__shield[data-integrity="down"]    { opacity: 0.0; }
+
+/* ── Damage list ─────────────────────────────────────────────────────── */
+
+.ship-display__damage {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    font-size: 11px;
+}
+
+.damage-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 2px 0;
+    color: var(--bc-row-text-dim);
+}
+
+.damage-row[data-state="damaged"]   { color: var(--bc-damage-damaged); }
+.damage-row[data-state="disabled"]  { color: var(--bc-damage-disabled); }
+.damage-row[data-state="destroyed"] { color: var(--bc-damage-destroyed); }
+
+/* ── Hull bar ────────────────────────────────────────────────────────── */
+
+.ship-display__hull-bar {
+    position: relative;
+    height: 10px;
+    background: var(--bc-hull-track);
+    border: 1px solid var(--bc-hull-track);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.ship-display__hull-fill {
+    height: 100%;
+    width: 100%;
+    transition: width 200ms ease;
+}
+
+.ship-display[data-hull="healthy"]  .ship-display__hull-fill { background: var(--bc-hull-healthy); }
+.ship-display[data-hull="damaged"]  .ship-display__hull-fill { background: var(--bc-hull-damaged); }
+.ship-display[data-hull="critical"] .ship-display__hull-fill { background: var(--bc-hull-critical); }
+
+.ship-display__hull-pct {
+    position: absolute;
+    right: 4px;
+    top: -2px;
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    color: var(--bc-row-text-bright);
+}
+
+/* ── Target extras (range / speed) ──────────────────────────────────── */
+
+.ship-display__target-extras {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--bc-row-text-dim);
+}
+
+/* Target extras are meaningless on the player panel — always hide. */
+.ship-display[data-role="player"] .ship-display__target-extras { display: none; }
