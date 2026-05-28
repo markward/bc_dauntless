@@ -218,7 +218,11 @@ class ShipDisplayPanel(Panel):
                 json.dumps(payload) + ");")
 
     def dispatch_event(self, action: str) -> bool:
-        return False  # filled in Task 6
+        if action == "minimize-toggle" and self._role == ROLE_TARGET:
+            self._minimized = not self._minimized
+            self._last_snapshot = None
+            return True
+        return False
 
     def invalidate(self) -> None:
         self._last_snapshot = None

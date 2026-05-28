@@ -354,3 +354,43 @@ def test_setshipid_forces_reemit():
         assert panel.render_payload() is not None
     finally:
         _teardown_game()
+
+
+def test_target_minimize_toggle_flips_state_and_invalidates_cache():
+    from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_TARGET
+    _setup_game_with_player()
+    try:
+        panel = ShipDisplayPanel(ROLE_TARGET)
+        panel.render_payload()  # prime cache
+        handled = panel.dispatch_event("minimize-toggle")
+        assert handled is True
+        assert panel.IsMinimized() == 1
+        # next render should re-emit
+        assert panel.render_payload() is not None
+        # toggling again flips back
+        panel.dispatch_event("minimize-toggle")
+        assert panel.IsMinimized() == 0
+    finally:
+        _teardown_game()
+
+
+def test_player_panel_ignores_minimize_event():
+    from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_PLAYER
+    _setup_game_with_player()
+    try:
+        panel = ShipDisplayPanel(ROLE_PLAYER)
+        handled = panel.dispatch_event("minimize-toggle")
+        assert handled is False
+        assert panel.IsMinimized() == 0
+    finally:
+        _teardown_game()
+
+
+def test_unknown_action_returns_false():
+    from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_TARGET
+    _setup_game_with_player()
+    try:
+        panel = ShipDisplayPanel(ROLE_TARGET)
+        assert panel.dispatch_event("explode") is False
+    finally:
+        _teardown_game()
