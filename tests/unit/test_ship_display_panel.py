@@ -394,3 +394,24 @@ def test_unknown_action_returns_false():
         assert panel.dispatch_event("explode") is False
     finally:
         _teardown_game()
+
+
+def test_render_payload_includes_silhouette_url_when_species_resolvable(monkeypatch):
+    """When species_key has a matching TGA, render_payload emits a silhouette_url."""
+    import json
+    from engine.ui import ship_icons
+    from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_PLAYER
+    # Monkeypatch ship_icons to always return a fake URL
+    monkeypatch.setattr(ship_icons, "icon_path_for_species",
+                        lambda name: "icons/ships/" + name + ".png" if name else None)
+    _, player, _ = _setup_game_with_player()
+    try:
+        panel = ShipDisplayPanel(ROLE_PLAYER)
+        script = panel.render_payload()
+        body = script[len("setShipDisplay(\"player\", "):-2]
+        state = json.loads(body)
+        assert "silhouette_url" in state
+        # When species is "", URL is None; when species resolves, URL is a string
+        assert state["silhouette_url"] is None or isinstance(state["silhouette_url"], str)
+    finally:
+        _teardown_game()

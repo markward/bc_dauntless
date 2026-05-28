@@ -63,14 +63,14 @@
         }
     }
 
-    function setSilhouette(el, speciesKey) {
-        // Phase 1: species stamped as a class hook; Task 9 will replace
-        // this with an <img> driven by silhouette_url.
-        if (!speciesKey) {
-            el.className = "ship-display__silhouette";
+    function setSilhouette(el, url) {
+        if (!url) {
+            el.removeAttribute("src");
+            el.hidden = true;
             return;
         }
-        el.className = "ship-display__silhouette silhouette--" + speciesKey.toLowerCase();
+        el.src = url;
+        el.hidden = false;
     }
 
     window.setShipDisplay = function (role, state) {
@@ -107,7 +107,7 @@
         if (ul) { rebuildDamageList(ul, state.damage); }
 
         var sil = root.querySelector('[data-bind="silhouette"]');
-        if (sil) { setSilhouette(sil, state.species || null); }
+        if (sil) { setSilhouette(sil, state.silhouette_url || null); }
 
         if (role === "target") {
             var rng = root.querySelector('[data-bind="range"]');

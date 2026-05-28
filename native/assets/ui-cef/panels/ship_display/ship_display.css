@@ -120,19 +120,10 @@
 }
 
 .ship-display__silhouette {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--bc-shields);
-}
-
-/* Target silhouette echoes the affiliation title colour so the icon
- * tints friendly=blue, hostile=red, etc. Player silhouette stays
- * the shield-identity purple. */
-.ship-display[data-role="target"] .ship-display__silhouette {
-    color: var(--title-color);
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: contain;
+    opacity: 0.85;
 }
 
 .ship-display__shield {

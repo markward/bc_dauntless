@@ -9,6 +9,7 @@ import json
 from typing import Optional
 
 from engine.ui.panel import Panel
+from engine.ui import ship_icons
 
 
 ROLE_PLAYER = "player"
@@ -214,6 +215,7 @@ class ShipDisplayPanel(Panel):
             "speed_kph":   speed_kph,
             "minimized":   minimized,
         }
+        payload["silhouette_url"] = ship_icons.icon_path_for_species(payload["species"])
         return ("setShipDisplay(" + json.dumps(self._role) + ", " +
                 json.dumps(payload) + ");")
 
