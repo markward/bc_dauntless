@@ -20,8 +20,10 @@ class _SubviewBase:
 
     The SDK constructs sub-views via factory calls BEFORE adoption
     (parent=None), then the parent ShipDisplay adopts them via
-    SetXxxDisplay. Until adoption, mutations are buffered locally and
-    take effect when the parent is wired in.
+    SetXxxDisplay. Before adoption, the parent ref is None and
+    invalidation signals are silently dropped. Adoption (via
+    `ShipDisplayPanel.SetXxxDisplay`) wires the parent ref and
+    subsequent mutations propagate.
     """
     def __init__(self, parent: Optional["ShipDisplayPanel"]):
         self.parent: Optional["ShipDisplayPanel"] = parent
@@ -38,6 +40,9 @@ class _SubviewBase:
     def SetNotVisible(self, *args, **kwargs) -> None: pass
     def SetBatchChildPolys(self, *args, **kwargs) -> None: pass
     def RemoveEvents(self, *args, **kwargs) -> None: pass
+    def GetHeight(self) -> float: return 0.0
+    def GetWidth(self) -> float: return 0.0
+    def SetPosition(self, *args, **kwargs) -> None: pass
 
 
 class _ShieldsSubview(_SubviewBase):
@@ -111,21 +116,24 @@ class ShipDisplayPanel(Panel):
         return 1 if self._minimizable else 0
 
     # Sub-view getters/adopters -----------------------------------------
-    def GetShieldsDisplay(self): return self._shields
-    def GetDamageDisplay(self):  return self._damage
-    def GetHealthGauge(self):    return self._gauge
+    def GetShieldsDisplay(self) -> "_ShieldsSubview": return self._shields
+    def GetDamageDisplay(self)  -> "_DamageSubview":  return self._damage
+    def GetHealthGauge(self)    -> "_HullGaugeSubview": return self._gauge
 
     def SetShieldsDisplay(self, subview: "_ShieldsSubview") -> None:
+        self._shields.parent = None
         subview.parent = self
         self._shields = subview
         self._last_snapshot = None
 
     def SetDamageDisplay(self, subview: "_DamageSubview") -> None:
+        self._damage.parent = None
         subview.parent = self
         self._damage = subview
         self._last_snapshot = None
 
     def SetHealthGauge(self, subview: "_HullGaugeSubview") -> None:
+        self._gauge.parent = None
         subview.parent = self
         self._gauge = subview
         self._last_snapshot = None
@@ -146,6 +154,7 @@ class ShipDisplayPanel(Panel):
     def SetUseFocusGlass(self, *args, **kwargs) -> None: pass
     def SetNoFocus(self, *args, **kwargs) -> None: pass
     def SetAlwaysHandleEvents(self, *args, **kwargs) -> None: pass
+    def AddChild(self, *args, **kwargs) -> None: pass
 
     # Dimension getters return per-role constants so SDK chained math
     # (e.g. RepositionUI's "anchor to corner, chain by widths") resolves
