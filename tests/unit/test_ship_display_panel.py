@@ -53,3 +53,68 @@ def test_target_panel_is_minimizable_by_default():
     from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_TARGET
     panel = ShipDisplayPanel(ROLE_TARGET)
     assert panel.IsMinimizable() == 1
+
+
+def test_get_subviews_returns_orphans_until_set():
+    from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_PLAYER
+    panel = ShipDisplayPanel(ROLE_PLAYER)
+    # The SDK construction path is: create sub-views via factory THEN
+    # SetXxxDisplay them. Before SetXxxDisplay the panel has empty
+    # default sub-views (so calls don't crash); after, the passed
+    # sub-view replaces them and gets its parent ref wired.
+    sh = panel.GetShieldsDisplay()
+    dm = panel.GetDamageDisplay()
+    hg = panel.GetHealthGauge()
+    assert sh is not None and dm is not None and hg is not None
+
+
+def test_setshieldsdisplay_adopts_orphan_and_wires_parent():
+    from engine.ui.ship_display_panel import (
+        ShipDisplayPanel, ROLE_PLAYER, _ShieldsSubview,
+    )
+    panel = ShipDisplayPanel(ROLE_PLAYER)
+    orphan = _ShieldsSubview(parent=None)
+    panel.SetShieldsDisplay(orphan)
+    assert panel.GetShieldsDisplay() is orphan
+    assert orphan.parent is panel
+
+
+def test_subview_update_for_new_ship_invalidates_parent_cache():
+    from engine.ui.ship_display_panel import (
+        ShipDisplayPanel, ROLE_PLAYER, _ShieldsSubview,
+    )
+    panel = ShipDisplayPanel(ROLE_PLAYER)
+    panel._last_snapshot = ("cached",)
+    orphan = _ShieldsSubview(parent=None)
+    panel.SetShieldsDisplay(orphan)
+    orphan.UpdateForNewShip()
+    assert panel._last_snapshot is None
+
+
+def test_setdamagedisplay_and_sethealthgauge_adopt_orphans():
+    from engine.ui.ship_display_panel import (
+        ShipDisplayPanel, ROLE_PLAYER,
+        _DamageSubview, _HullGaugeSubview,
+    )
+    panel = ShipDisplayPanel(ROLE_PLAYER)
+    d = _DamageSubview(parent=None)
+    h = _HullGaugeSubview(parent=None)
+    panel.SetDamageDisplay(d)
+    panel.SetHealthGauge(h)
+    assert panel.GetDamageDisplay() is d
+    assert panel.GetHealthGauge() is h
+    assert d.parent is panel
+    assert h.parent is panel
+
+
+def test_sdk_layout_calls_are_noops():
+    """SDK ShipDisplay.Create at lines 79-100 calls these on the parent."""
+    from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_PLAYER
+    panel = ShipDisplayPanel(ROLE_PLAYER)
+    panel.SetFixedSize(0.2, 0.2, 0)
+    panel.InteriorChangedSize()
+    panel.Layout()
+    panel.SetPosition(0.5, 0.5, 0)
+    assert panel.GetInteriorPane() is not None
+    assert panel.GetMaximumInteriorWidth() > 0
+    assert panel.GetMaximumInteriorHeight() > 0
