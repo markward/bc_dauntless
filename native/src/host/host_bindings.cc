@@ -235,14 +235,15 @@ void frame() {
 
     g_world.propagate();
     g_backdrop_pass->render(g_backdrops, g_camera, *g_pipeline);
-    g_sun_pass->render(g_suns, g_camera, *g_pipeline);
-    g_submitter->submit_opaque_in_pass(
-        g_world, g_camera, *g_pipeline, lookup, g_lighting,
-        scenegraph::Pass::Space);
 
     const double now = glfwGetTime();
     const float  dt  = static_cast<float>(now - g_prev_frame_time_seconds);
     g_prev_frame_time_seconds = now;
+
+    g_sun_pass->render(g_suns, g_camera, *g_pipeline, now);
+    g_submitter->submit_opaque_in_pass(
+        g_world, g_camera, *g_pipeline, lookup, g_lighting,
+        scenegraph::Pass::Space);
 
     // Shield pass: additive flash on top of opaque ships. Runs before dust
     // so dust specks appear in front of fading shields (both are additive
@@ -490,12 +491,16 @@ PYBIND11_MODULE(_dauntless_host, m) {
               for (const auto& d : descs) {
                   renderer::SunDescriptor s;
                   auto pos = d["position"].cast<std::tuple<float,float,float>>();
-                  s.position          = {std::get<0>(pos),
-                                         std::get<1>(pos),
-                                         std::get<2>(pos)};
-                  s.radius            = d["radius"].cast<float>();
-                  s.base_texture_path = d["base_texture_path"].cast<std::string>();
-                  s.corona_radius     = d["corona_radius"].cast<float>();
+                  s.position           = {std::get<0>(pos),
+                                          std::get<1>(pos),
+                                          std::get<2>(pos)};
+                  s.radius             = d["radius"].cast<float>();
+                  s.base_texture_path  = d["base_texture_path"].cast<std::string>();
+                  s.corona_radius      = d["corona_radius"].cast<float>();
+                  s.flare_texture_path =
+                      d.contains("flare_texture_path")
+                          ? d["flare_texture_path"].cast<std::string>()
+                          : std::string{};
                   g_suns.push_back(std::move(s));
               }
           },
@@ -706,6 +711,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
     keys.attr("KEY_Q") = GLFW_KEY_Q;
     keys.attr("KEY_E") = GLFW_KEY_E;
     keys.attr("KEY_R") = GLFW_KEY_R;
+    keys.attr("KEY_I") = GLFW_KEY_I;
     keys.attr("KEY_0") = GLFW_KEY_0;
     keys.attr("KEY_1") = GLFW_KEY_1;
     keys.attr("KEY_2") = GLFW_KEY_2;
