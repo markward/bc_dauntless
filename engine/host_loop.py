@@ -627,12 +627,19 @@ class _PlayerControl:
     # Reverse magnitude as a fraction of MaxSpeed (BC convention: ¼ impulse).
     REVERSE_FRACTION = 0.25
 
+    # Ctrl+I "in-system warp" boost: forward target speed is multiplied by
+    # this factor while the toggle is on. Lets us reach distant astro
+    # objects (suns ~63 km out) in seconds without piping through BC's
+    # full WarpSequence machinery. Forward only — no reverse boost.
+    WARP_BOOST_FACTOR = 100.0
+
     def __init__(self):
         self.impulse_level = 0  # signed: -2..9; 0 = stop
         self._current_speed = 0.0
         self._current_pitch_rate = 0.0
         self._current_yaw_rate   = 0.0
         self._current_roll_rate  = 0.0
+        self._warp_boost = False
 
     # ── Hardpoint accessors ──────────────────────────────────────────────────
 
@@ -644,13 +651,20 @@ class _PlayerControl:
     def GetTargetSpeed(self, player) -> float:
         """Convert impulse_level into a target speed using the ship's
         ImpulseEngineProperty.MaxSpeed when present, or the legacy
-        per-level placeholder otherwise."""
+        per-level placeholder otherwise.
+
+        Forward speed is multiplied by WARP_BOOST_FACTOR when the
+        in-system warp toggle is on (Ctrl+I); reverse is unaffected.
+        """
         ies = self._get_ies(player)
         max_speed = ies.GetMaxSpeed() if ies is not None else 0.0
+        boost = self.WARP_BOOST_FACTOR if self._warp_boost else 1.0
         if max_speed > 0.0:
             if self.impulse_level >= 0:
-                return (self.impulse_level / 9.0) * max_speed
+                return (self.impulse_level / 9.0) * max_speed * boost
             return -self.REVERSE_FRACTION * max_speed
+        if self.impulse_level >= 0:
+            return self.impulse_level * self.IMPULSE_UNIT * boost
         return self.impulse_level * self.IMPULSE_UNIT
 
     def GetCurrentSpeed(self) -> float:
@@ -707,6 +721,20 @@ class _PlayerControl:
         # trigger reverse-thrust; suppress when either modifier is held.
         _super_held = h.key_state(h.keys.KEY_LEFT_SUPER) if hasattr(h.keys, "KEY_LEFT_SUPER") else False
         _ctrl_held = h.key_state(h.keys.KEY_LEFT_CONTROL) if hasattr(h.keys, "KEY_LEFT_CONTROL") else False
+        # Ctrl+I → toggle in-system warp boost. Snap _current_speed to the
+        # new target so the boost engages instantly rather than ramping
+        # over many seconds at the IES's normal MaxAccel.
+        if (
+            _ctrl_held
+            and hasattr(h.keys, "KEY_I")
+            and h.key_pressed(h.keys.KEY_I)
+        ):
+            self._warp_boost = not self._warp_boost
+            self._current_speed = self.GetTargetSpeed(player)
+            print(
+                f"[host_loop] in-system warp {'ON' if self._warp_boost else 'OFF'}",
+                flush=True,
+            )
         if h.key_pressed(h.keys.KEY_R) and not (_super_held or _ctrl_held):
             self.impulse_level = self.REVERSE_LEVEL
         elif h.key_pressed(h.keys.KEY_0):
