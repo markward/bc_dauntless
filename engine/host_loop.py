@@ -2083,14 +2083,21 @@ def run(mission_name: Optional[str] = None,
         registry.register(sensors_panel)
 
         # SDK ShipDisplay factories register against this same registry.
-        # The factory is invoked by sdk/Build/scripts/Tactical/Interface/
-        # ShipDisplay.py:Create which runs during bridge load.
+        # In stock BC, Bridge/TacticalMenuHandlers.py:517,714 invokes
+        # App.ShipDisplay_Create twice during tactical-UI construction.
+        # That path doesn't yet run in our host loop, so we construct
+        # the two panels eagerly here. Each panel resolves its bound
+        # ship via MissionLib.GetPlayer / player.GetTarget on every
+        # render — no SetShipID is needed.
         from engine.sdk_ui.widgets.ship_display import (
             set_panel_registry,
             _reset_for_bridge_teardown,
+            ShipDisplay_Create,
         )
         _reset_for_bridge_teardown()  # belt-and-braces: clear any stale state
         set_panel_registry(registry)  # inject the live registry
+        ShipDisplay_Create()           # first call → ROLE_PLAYER, registers
+        ShipDisplay_Create()           # second call → ROLE_TARGET, registers
 
         # Wire (and re-wire on mission swap) the target-menu singleton
         # to the player's spatial set. controller.post_load_hook fires
