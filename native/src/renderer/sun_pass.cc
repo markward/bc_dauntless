@@ -12,6 +12,8 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <fstream>
 
@@ -117,9 +119,13 @@ void SunPass::render(const std::vector<SunDescriptor>& suns,
     const float virtual_distance = camera.far * 0.95f;
     // The aggregator passes corona_radius = body_radius * 1.1, so the
     // sphere shell sits as a thin halo just outside the body. The flare
-    // overlay billboard (drawn below) provides the wider visible bulk
-    // that BC's SunEffect node renders.
-    constexpr float kFlareOverlayRatio = 1.5f;  // half-size relative to body radius
+    // particle system (drawn below) provides the wispy arcing-plasma
+    // detail that BC's SunEffect node renders.
+    constexpr int   kFlareGridSize         = 8;       // sprite atlas grid
+    constexpr int   kFlareParticleCount    = 16;      // puffs per sun per frame
+    constexpr float kFlareLifetimeSec      = 1.2f;    // per-puff birth-to-death
+    constexpr float kFlareParticleMinScale = 0.15f;   // ×body_radius
+    constexpr float kFlareParticleMaxScale = 0.30f;   // ×body_radius
 
     for (const auto& s : suns) {
         assets::Texture* tex = ensure_texture(s.base_texture_path);
@@ -164,8 +170,15 @@ void SunPass::render(const std::vector<SunDescriptor>& suns,
             glDisable(GL_BLEND);
         }
 
-        // Flare overlay: camera-facing additive billboard, slow UV rotation.
-        // Skipped when flare_texture_path is empty or the texture fails to load.
+        // Flare overlay: BC SunEffect-style plasma-puff particle system.
+        // The SunFlares*.tga textures are 8x8 grids of distinct plasma
+        // puffs (NOT sequential frames of one animation). We render N
+        // short-lived camera-facing billboards anchored to random points
+        // on the sphere's surface; each particle picks a sprite cell at
+        // birth and fades through a sin() envelope over its lifetime,
+        // then respawns at a new sphere position with a new cell.
+        // Determinism comes from hashing (sun_i, particle_i, epoch); no
+        // persistent state needed across frames.
         if (!s.flare_texture_path.empty()) {
             assets::Texture* flare_tex = ensure_texture(s.flare_texture_path);
             if (flare_tex) {
@@ -174,12 +187,8 @@ void SunPass::render(const std::vector<SunDescriptor>& suns,
                 flare_shader.use();
                 flare_shader.set_mat4("u_proj", camera.proj_matrix());
                 flare_shader.set_mat4("u_view", camera.view_matrix());
-                flare_shader.set_vec3("u_world_center", virtual_pos);
-                flare_shader.set_float("u_half_size",
-                    s.radius * scale_factor * kFlareOverlayRatio);
-                flare_shader.set_float("u_now_seconds",
-                    static_cast<float>(now_seconds));
                 flare_shader.set_int("u_texture", 0);
+                flare_shader.set_int("u_grid_size", kFlareGridSize);
 
                 glEnable(GL_BLEND);
                 glBlendFunc(GL_SRC_ALPHA, GL_ONE);
@@ -188,7 +197,69 @@ void SunPass::render(const std::vector<SunDescriptor>& suns,
                 glActiveTexture(GL_TEXTURE0);
                 glBindTexture(GL_TEXTURE_2D, flare_tex->id());
                 glBindVertexArray(flare_quad_vao_);
-                glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+                const std::uint32_t sun_i = static_cast<std::uint32_t>(
+                    &s - suns.data());
+
+                for (int p_i = 0; p_i < kFlareParticleCount; ++p_i) {
+                    auto rand01 = [&](std::uint32_t salt, std::uint32_t epoch) {
+                        std::uint32_t h = sun_i   * 73856093u
+                                        ^ static_cast<std::uint32_t>(p_i) * 19349663u
+                                        ^ salt    * 83492791u
+                                        ^ epoch   * 2246822519u;
+                        h = (h ^ (h >> 13)) * 2654435761u;
+                        h ^= h >> 16;
+                        return float(h & 0xFFFFFFu) / float(0x1000000u);
+                    };
+
+                    // Birth phase keeps particles desynchronised; constant
+                    // per (sun, particle) across all epochs.
+                    const float phase01 = rand01(99u, 0u);
+                    const float local_t =
+                        static_cast<float>(now_seconds) / kFlareLifetimeSec
+                        + phase01;
+                    const std::uint32_t epoch =
+                        static_cast<std::uint32_t>(std::floor(local_t));
+                    const float t_within = local_t - std::floor(local_t);
+
+                    // Each epoch reseeds the particle: new position, cell,
+                    // size.  Visually: the puff "appears" at a new spot
+                    // every kFlareLifetimeSec.
+                    const float u01    = rand01(0u, epoch);
+                    const float v01    = rand01(1u, epoch);
+                    const float size01 = rand01(2u, epoch);
+                    const int cell_total = kFlareGridSize * kFlareGridSize;
+                    const int cell = static_cast<int>(
+                        rand01(3u, epoch) * static_cast<float>(cell_total)) % cell_total;
+
+                    // Uniform on unit sphere.
+                    const float z   = 2.0f * v01 - 1.0f;
+                    const float r   = std::sqrt(std::max(0.0f, 1.0f - z * z));
+                    const float phi = 6.2831853f * u01;
+                    const glm::vec3 dir(r * std::cos(phi), r * std::sin(phi), z);
+
+                    // Anchor slightly outside the body so the puff reads
+                    // as sitting "on" the surface, not embedded in it.
+                    const float anchor_radius =
+                        s.radius * scale_factor * 1.05f;
+                    const glm::vec3 particle_pos =
+                        virtual_pos + dir * anchor_radius;
+
+                    const float particle_half_size =
+                        s.radius * scale_factor
+                        * (kFlareParticleMinScale
+                           + (kFlareParticleMaxScale - kFlareParticleMinScale)
+                             * size01);
+
+                    // sin(π·t) envelope: 0 at birth, peak at mid-life, 0 at death.
+                    const float alpha = std::sin(3.14159265f * t_within);
+
+                    flare_shader.set_vec3("u_world_center", particle_pos);
+                    flare_shader.set_float("u_half_size", particle_half_size);
+                    flare_shader.set_int("u_frame", cell);
+                    flare_shader.set_float("u_alpha", alpha);
+                    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+                }
 
                 // Restore the sphere pass's state for the next iteration
                 // of the suns loop. The outer cleanup at the end of
