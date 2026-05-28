@@ -71,13 +71,14 @@ def test_galaxy_vs_galaxy_fire_trace(game_context):
     pSet = App.SetClass_Create(); pSet.SetName("S")
     App.g_kSetManager._sets["S"] = pSet
 
-    # Both Galaxy ships, 200 m apart on Y. CreateShip applies the
-    # Galaxy hardpoint (galaxy.py) which populates PhaserSystem with
-    # ForwardBeam / Port / Star / AftBeam banks and full charge.
+    # Both Galaxy ships, 150 m apart on Y (inside MidRange threshold
+    # of 200 m so FireScript dispatches phaser/torp). CreateShip
+    # applies the Galaxy hardpoint (galaxy.py) which populates
+    # PhaserSystem with the 8 bank banks and full charge.
     attacker = loadspacehelper.CreateShip("Galaxy", pSet, "Galaxy 2", None, 0, 0)
     attacker.SetTranslateXYZ(0.0, 0.0, 0.0)
     target = loadspacehelper.CreateShip("Galaxy", pSet, "Galaxy 1", None, 0, 0)
-    target.SetTranslateXYZ(0.0, 200.0, 0.0)
+    target.SetTranslateXYZ(0.0, 150.0, 0.0)
 
     attacker.SetAI(basic_attack.CreateAI(attacker, "Galaxy 1"))
     target.SetAI(basic_attack.CreateAI(target, "Galaxy 2"))
