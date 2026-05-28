@@ -30,6 +30,15 @@ void DauntlessCefApp::OnBeforeCommandLineProcessing(
     command_line->AppendSwitchWithValue(
         "disable-features",
         "NativeNotifications,SystemNotifications,UNNotifications");
+
+    // Allow file:// hello.html to load sibling assets (panel CSS/JS,
+    // ship-icon PNGs under icons/ships/, fonts, etc.). Chromium treats
+    // each file:// URL as a unique origin by default, so without this
+    // switch <img src="icons/ships/Galaxy.png"> requests are silently
+    // blocked as cross-origin even though the file lives next to the
+    // host page. Safe here because we never load remote content into
+    // this browser instance.
+    command_line->AppendSwitch("allow-file-access-from-files");
 }
 
 }  // namespace dauntless::ui_cef
