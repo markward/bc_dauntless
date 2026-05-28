@@ -20,6 +20,8 @@ namespace renderer {
 SunPass::~SunPass() {
     // assets::Mesh / assets::Texture destructors release GL handles.
     // Caller must ensure the GL context is still alive when this dtor runs.
+    if (flare_quad_vbo_) glDeleteBuffers(1, &flare_quad_vbo_);
+    if (flare_quad_vao_) glDeleteVertexArrays(1, &flare_quad_vao_);
 }
 
 assets::Mesh* SunPass::ensure_sphere(int target_tris) {
@@ -66,11 +68,28 @@ assets::Texture* SunPass::ensure_texture(const std::string& path) {
     }
 }
 
+void SunPass::ensure_flare_quad() {
+    if (flare_quad_vao_ != 0) return;
+    constexpr float kCorners[8] = {
+        -1.0f, -1.0f,
+         1.0f, -1.0f,
+        -1.0f,  1.0f,
+         1.0f,  1.0f,
+    };
+    glGenVertexArrays(1, &flare_quad_vao_);
+    glBindVertexArray(flare_quad_vao_);
+    glGenBuffers(1, &flare_quad_vbo_);
+    glBindBuffer(GL_ARRAY_BUFFER, flare_quad_vbo_);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(kCorners), kCorners, GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(float) * 2, nullptr);
+    glEnableVertexAttribArray(0);
+    glBindVertexArray(0);
+}
+
 void SunPass::render(const std::vector<SunDescriptor>& suns,
                      const scenegraph::Camera& camera,
                      Pipeline& pipeline,
                      double now_seconds) {
-    (void)now_seconds;  // consumed by the flare-overlay draw in Task 12
     if (suns.empty()) return;
 
     auto& shader = pipeline.sun_shader();
@@ -100,7 +119,7 @@ void SunPass::render(const std::vector<SunDescriptor>& suns,
     // sphere shell sits as a thin halo just outside the body. The flare
     // overlay billboard (drawn below) provides the wider visible bulk
     // that BC's SunEffect node renders.
-    [[maybe_unused]] constexpr float kFlareOverlayRatio = 1.5f;  // half-size relative to body radius
+    constexpr float kFlareOverlayRatio = 1.5f;  // half-size relative to body radius
 
     for (const auto& s : suns) {
         assets::Texture* tex = ensure_texture(s.base_texture_path);
@@ -143,6 +162,44 @@ void SunPass::render(const std::vector<SunDescriptor>& suns,
                            GL_UNSIGNED_INT, nullptr);
             glDepthMask(GL_TRUE);
             glDisable(GL_BLEND);
+        }
+
+        // Flare overlay: camera-facing additive billboard, slow UV rotation.
+        // Skipped when flare_texture_path is empty or the texture fails to load.
+        if (!s.flare_texture_path.empty()) {
+            assets::Texture* flare_tex = ensure_texture(s.flare_texture_path);
+            if (flare_tex) {
+                ensure_flare_quad();
+                auto& flare_shader = pipeline.sun_flare_shader();
+                flare_shader.use();
+                flare_shader.set_mat4("u_proj", camera.proj_matrix());
+                flare_shader.set_mat4("u_view", camera.view_matrix());
+                flare_shader.set_vec3("u_world_center", virtual_pos);
+                flare_shader.set_float("u_half_size",
+                    s.radius * scale_factor * kFlareOverlayRatio);
+                flare_shader.set_float("u_now_seconds",
+                    static_cast<float>(now_seconds));
+                flare_shader.set_int("u_texture", 0);
+
+                glEnable(GL_BLEND);
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+                glDepthMask(GL_FALSE);
+                glDisable(GL_CULL_FACE);
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, flare_tex->id());
+                glBindVertexArray(flare_quad_vao_);
+                glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+                // Restore the sphere pass's state for the next iteration
+                // of the suns loop. The outer cleanup at the end of
+                // render() handles the final restore.
+                glEnable(GL_CULL_FACE);
+                glCullFace(GL_FRONT);
+                glDepthMask(GL_TRUE);
+                glDisable(GL_BLEND);
+                glBindVertexArray(sphere->vao());
+                shader.use();   // rebind sun shader for next iteration's body draw
+            }
         }
     }
 

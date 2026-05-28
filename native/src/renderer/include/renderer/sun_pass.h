@@ -5,6 +5,7 @@
 #include <assets/mesh.h>
 #include <assets/texture.h>
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -34,6 +35,14 @@ private:
 
     assets::Mesh*    ensure_sphere(int target_tris = 256);
     assets::Texture* ensure_texture(const std::string& path);
+
+    // Lazily-created unit-quad mesh for the flare-overlay billboard.
+    // Layout: 4 vec2 corners ((-1,-1),(1,-1),(-1,1),(1,1)), drawn as a
+    // GL_TRIANGLE_STRIP. The shader expands corners to world-space using
+    // the camera view matrix and a uniform world center + half-size.
+    std::uint32_t flare_quad_vao_ = 0;
+    std::uint32_t flare_quad_vbo_ = 0;
+    void ensure_flare_quad();
 };
 
 }  // namespace renderer
