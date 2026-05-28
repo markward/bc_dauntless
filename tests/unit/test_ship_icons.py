@@ -12,7 +12,11 @@ def test_returns_none_for_unknown_species(tmp_path, monkeypatch):
     assert ship_icons.icon_path_for_species("NoSuchShip") is None
 
 
-def test_converts_tga_and_caches_png(tmp_path, monkeypatch):
+def test_converts_tga_and_returns_data_url(tmp_path, monkeypatch):
+    """First call decodes the TGA, encodes a PNG, and returns a
+    data:image/png;base64,... URL. The disk-cache PNG is also written
+    for debugging."""
+    import base64
     import struct
     from engine.ui import ship_icons
     icons_dir = tmp_path / "icons"
@@ -27,10 +31,14 @@ def test_converts_tga_and_caches_png(tmp_path, monkeypatch):
     ship_icons.reset_cache()
 
     url = ship_icons.icon_path_for_species("Galaxy")
-    assert url == "icons/ships/Galaxy.png"
+    assert url is not None
+    assert url.startswith("data:image/png;base64,")
+    # The base64 body decodes to a PNG byte stream.
+    body = url[len("data:image/png;base64,"):]
+    png_bytes = base64.b64decode(body)
+    assert png_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+    # Disk cache copy was also written.
     assert (cache_dir / "Galaxy.png").is_file()
 
-    first_mtime = (cache_dir / "Galaxy.png").stat().st_mtime
-    url2 = ship_icons.icon_path_for_species("Galaxy")
-    assert url2 == url
-    assert (cache_dir / "Galaxy.png").stat().st_mtime == first_mtime
+    # Second call hits the in-memory cache and returns the same URL.
+    assert ship_icons.icon_path_for_species("Galaxy") == url
