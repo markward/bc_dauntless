@@ -101,4 +101,40 @@ TEST_F(SunPassTest, CoronaDrawnWhenCoronaRadiusGreaterThanRadius) {
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 
+TEST_F(SunPassTest, FlareTexturePathMissingFileProducesNoGLError) {
+    renderer::SunPass pass;
+    scenegraph::Camera cam;
+    cam.eye    = {0, 0, 10000};
+    cam.target = {0, 0, 0};
+    cam.aspect = 1.0f;
+
+    renderer::SunDescriptor s;
+    s.position           = {0.0f, 0.0f, 0.0f};
+    s.radius             = 4000.0f;
+    s.base_texture_path  = "/dev/null";
+    s.corona_radius      = 4400.0f;
+    s.flare_texture_path = "/dev/null/definitely/not-a-tga";
+
+    pass.render({s}, cam, *pipeline, 0.0);
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+TEST_F(SunPassTest, EmptyFlareTexturePathSkipsOverlayWithoutError) {
+    renderer::SunPass pass;
+    scenegraph::Camera cam;
+    cam.eye    = {0, 0, 10000};
+    cam.target = {0, 0, 0};
+    cam.aspect = 1.0f;
+
+    renderer::SunDescriptor s;
+    s.position           = {0.0f, 0.0f, 0.0f};
+    s.radius             = 4000.0f;
+    s.base_texture_path  = "/dev/null";
+    s.corona_radius      = 4400.0f;
+    s.flare_texture_path = "";  // explicit: no overlay
+
+    pass.render({s}, cam, *pipeline, 0.0);
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
 }  // namespace
