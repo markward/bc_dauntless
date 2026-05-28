@@ -25,7 +25,8 @@ public:
 
     void render(const std::vector<SunDescriptor>& suns,
                 const scenegraph::Camera& camera,
-                Pipeline& pipeline);
+                Pipeline& pipeline,
+                double now_seconds);
 
 private:
     std::unordered_map<int, std::unique_ptr<assets::Mesh>>           sphere_cache_;

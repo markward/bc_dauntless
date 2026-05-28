@@ -68,7 +68,9 @@ assets::Texture* SunPass::ensure_texture(const std::string& path) {
 
 void SunPass::render(const std::vector<SunDescriptor>& suns,
                      const scenegraph::Camera& camera,
-                     Pipeline& pipeline) {
+                     Pipeline& pipeline,
+                     double now_seconds) {
+    (void)now_seconds;  // consumed by the flare-overlay draw in Task 12
     if (suns.empty()) return;
 
     auto& shader = pipeline.sun_shader();
