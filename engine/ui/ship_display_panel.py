@@ -173,6 +173,25 @@ class ShipDisplayPanel(Panel):
     def GetInteriorPane(self):
         return self._gauge  # any _SubviewBase instance will accept Resize
 
+    def _snapshot(self) -> tuple:
+        ship = _resolve_ship_for_role(self._role)
+        if ship is None:
+            return (None, "", "NONE", "", 0.0, (0.0,) * 6, (),
+                    None, None, self._minimized, False)
+        ship_id      = ship.GetObjID() if hasattr(ship, "GetObjID") else 0
+        name         = ship.GetName() if hasattr(ship, "GetName") else ""
+        affiliation  = _affiliation_for(ship)
+        species_key  = _species_key_for(ship)
+        hull_pct     = _hull_pct(ship)
+        shields_pct  = _shields_tuple(ship)
+        damage       = _damage_states(ship)
+        range_m, speed_kph = (None, None)
+        if self._role == ROLE_TARGET:
+            range_m, speed_kph = _range_and_speed_to(ship)
+        return (ship_id, name, affiliation, species_key, hull_pct,
+                shields_pct, damage, range_m, speed_kph,
+                self._minimized, True)
+
     # Panel framework ---------------------------------------------------
     def render_payload(self) -> Optional[str]:
         return None  # filled in Task 5
@@ -182,3 +201,160 @@ class ShipDisplayPanel(Panel):
 
     def invalidate(self) -> None:
         self._last_snapshot = None
+
+
+# ---------------------------------------------------------------------
+# Snapshot generation helpers
+# ---------------------------------------------------------------------
+
+_DAMAGE_SUBSYSTEM_ORDER = ("Engines", "Weapons", "Sensors", "Shield Generator")
+
+
+def _get_player():
+    """Returns the current player ship, or None."""
+    try:
+        from engine.core.game import Game_GetCurrentGame
+        game = Game_GetCurrentGame()
+        return game.GetPlayer() if game is not None else None
+    except Exception:
+        return None
+
+
+def _resolve_ship_for_role(role: str):
+    """Returns the ship the panel renders for, or None for the no-target /
+    unknown-target empty state."""
+    player = _get_player()
+    if player is None:
+        return None
+    if role == ROLE_PLAYER:
+        return player
+    # target role
+    target = player.GetTarget() if hasattr(player, "GetTarget") else None
+    if target is None:
+        return None
+    # Sensor-knowledge gate (matches SDK ShieldsDisplay.SetShipIcon at
+    # sdk/Build/scripts/Tactical/Interface/ShieldsDisplay.py:329-338).
+    try:
+        sensors = player.GetSensorSubsystem()
+        if sensors is not None and sensors.IsObjectKnown(target) == 0:
+            return None
+    except Exception:
+        pass
+    return target
+
+
+def _affiliation_for(ship) -> str:
+    """Map ship affiliation to the snapshot string used by the CSS layer."""
+    try:
+        player = _get_player()
+        if player is None or ship is None:
+            return "NONE"
+        if ship is player:
+            return "FRIENDLY"
+        from engine.core.game import Game_GetCurrentGame
+        game = Game_GetCurrentGame()
+        episode = game.GetCurrentEpisode() if game else None
+        mission = episode.GetCurrentMission() if episode else None
+        if mission is not None:
+            for kind, group_getter in (
+                ("FRIENDLY", "GetFriendlyGroup"),
+                ("ENEMY",    "GetEnemyGroup"),
+                ("NEUTRAL",  "GetNeutralGroup"),
+            ):
+                group = getattr(mission, group_getter, lambda: None)()
+                if group is not None and group.HasName(ship.GetName()):
+                    return kind
+    except Exception:
+        pass
+    return "UNKNOWN"
+
+
+def _species_key_for(ship) -> str:
+    """Returns the species short name (e.g. 'Galaxy') for silhouette lookup."""
+    try:
+        prop = ship.GetShipProperty()
+        return prop.GetSpeciesName() if prop else ""
+    except Exception:
+        return ""
+
+
+def _hull_pct(ship) -> float:
+    try:
+        hull = ship.GetHull()
+        if hull is None:
+            return 0.0
+        mx = hull.GetMaxCondition()
+        if mx <= 0:
+            return 0.0
+        return float(hull.GetCondition()) / float(mx)
+    except Exception:
+        return 0.0
+
+
+def _shields_tuple(ship):
+    try:
+        sh = ship.GetShieldSubsystem()
+        if sh is None:
+            return (0.0,) * 6
+        return tuple(sh.GetSingleShieldPercentage(f) for f in range(sh.NUM_SHIELDS))
+    except Exception:
+        return (0.0,) * 6
+
+
+def _damage_states(ship):
+    """Walks Engines, Weapons, Sensors, Shield Generator. Healthy = omitted."""
+    out = []
+    getters = (
+        ("Engines",          "GetImpulseEngineSubsystem"),
+        ("Weapons",          "GetPhaserSystem"),
+        ("Sensors",          "GetSensorSubsystem"),
+        ("Shield Generator", "GetShieldSubsystem"),
+    )
+    for label, getter_name in getters:
+        getter = getattr(ship, getter_name, None)
+        if getter is None:
+            continue
+        try:
+            sub = getter()
+        except Exception:
+            continue
+        if sub is None:
+            continue
+        state = _subsystem_state(sub)
+        if state is not None:
+            out.append((label, state))
+    return tuple(out)
+
+
+def _subsystem_state(sub):
+    try:
+        if hasattr(sub, "IsDestroyed") and sub.IsDestroyed():
+            return "destroyed"
+        if hasattr(sub, "IsDisabled") and sub.IsDisabled():
+            return "disabled"
+        if hasattr(sub, "IsDamaged") and sub.IsDamaged():
+            return "damaged"
+    except Exception:
+        pass
+    return None
+
+
+def _range_and_speed_to(ship):
+    """Returns (range_m, speed_kph) for the target panel; None,None on error."""
+    try:
+        player = _get_player()
+        if player is None or ship is None:
+            return None, None
+        p1 = player.GetTranslate(); p2 = ship.GetTranslate()
+        dx = p1.x - p2.x; dy = p1.y - p2.y; dz = p1.z - p2.z
+        rng_m = (dx*dx + dy*dy + dz*dz) ** 0.5
+        # Speed: |velocity| in metres/sec → km/h
+        vel = ship.GetLinearVelocity() if hasattr(ship, "GetLinearVelocity") else None
+        if vel is None:
+            speed_kph = 0.0
+        else:
+            speed_ms = (vel.x*vel.x + vel.y*vel.y + vel.z*vel.z) ** 0.5
+            speed_kph = speed_ms * 3.6
+        return rng_m, speed_kph
+    except Exception:
+        return None, None

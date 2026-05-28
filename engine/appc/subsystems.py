@@ -1367,11 +1367,40 @@ class SensorSubsystem(PoweredSubsystem):
         super().__init__(name)
         self._base_sensor_range: float = 0.0
         self._max_probes: int = 0
+        # Objects whose existence is known to the sensor system.
+        # Populated by the game loop / radar sweep logic.  Default is
+        # empty (nothing known), matching the initial unscanned state.
+        self._known_objects: set = set()
 
     def GetBaseSensorRange(self) -> float:           return self._base_sensor_range
     def SetBaseSensorRange(self, v) -> None:         self._base_sensor_range = float(v)
     def GetMaxProbes(self) -> int:                   return self._max_probes
     def SetMaxProbes(self, v) -> None:               self._max_probes = int(v)
+
+    def IsObjectKnown(self, obj) -> int:
+        """Returns 1 if *obj* is in the known-contacts set, 0 otherwise.
+
+        The SDK ShieldsDisplay.SetShipIcon gate (line 329-338) checks this
+        before showing a target panel — unknown contacts render no data.
+        """
+        try:
+            return 1 if obj.GetObjID() in self._known_objects else 0
+        except Exception:
+            return 0
+
+    def AddKnownObject(self, obj) -> None:
+        """Register *obj* as a known sensor contact."""
+        try:
+            self._known_objects.add(obj.GetObjID())
+        except Exception:
+            pass
+
+    def RemoveKnownObject(self, obj) -> None:
+        """Remove *obj* from known contacts."""
+        try:
+            self._known_objects.discard(obj.GetObjID())
+        except Exception:
+            pass
 
 
 class ImpulseEngineSubsystem(PoweredSubsystem):
