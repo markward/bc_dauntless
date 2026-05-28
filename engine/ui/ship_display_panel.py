@@ -220,6 +220,16 @@ def _get_player():
         return None
 
 
+def _current_episode():
+    """Returns the current episode, or None if no game is loaded."""
+    try:
+        from engine.core.game import Game_GetCurrentGame
+        game = Game_GetCurrentGame()
+        return game.GetCurrentEpisode() if game else None
+    except Exception:
+        return None
+
+
 def _resolve_ship_for_role(role: str):
     """Returns the ship the panel renders for, or None for the no-target /
     unknown-target empty state."""
@@ -251,9 +261,7 @@ def _affiliation_for(ship) -> str:
             return "NONE"
         if ship is player:
             return "FRIENDLY"
-        from engine.core.game import Game_GetCurrentGame
-        game = Game_GetCurrentGame()
-        episode = game.GetCurrentEpisode() if game else None
+        episode = _current_episode()
         mission = episode.GetCurrentMission() if episode else None
         if mission is not None:
             for kind, group_getter in (
