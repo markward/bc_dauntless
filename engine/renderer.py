@@ -78,7 +78,10 @@ def set_bridge_lighting(ambient: Tuple[float, float, float],
 def set_suns(suns: list) -> None:
     """Configure the renderer's sun list. Each entry is a dict:
         {"position": (x,y,z), "radius": float,
-         "base_texture_path": str, "corona_radius": float}
+         "base_texture_path": str, "corona_radius": float,
+         "flare_texture_path": str}
+    flare_texture_path == "" disables the flare-overlay layer for that sun
+    (body + corona still draw).
     """
     _h.set_suns(suns)
 
