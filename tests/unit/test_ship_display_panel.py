@@ -488,13 +488,22 @@ def test_subview_getconceptualparent_returns_panel():
 
 
 def test_species_key_resolves_galaxy_from_int():
-    """ShipClass.GetSpecies() returns 3 (GALAXY); _species_key_for
-    must map that to 'Galaxy' so the icon cache can find Galaxy.tga."""
+    """Galaxy.SetSpecies(101) in ships/Hardpoints/galaxy.py; _species_key_for
+    must map 101 → 'Galaxy' so the icon cache finds Galaxy.tga."""
     from engine.appc.ships import ShipClass
     from engine.ui.ship_display_panel import _species_key_for
     ship = ShipClass()
-    ship.SetSpecies(3)
+    ship.SetSpecies(101)
     assert _species_key_for(ship) == "Galaxy"
+
+
+def test_species_key_resolves_warbird_from_int():
+    """Warbird.SetSpecies(301) in ships/Hardpoints/warbird.py."""
+    from engine.appc.ships import ShipClass
+    from engine.ui.ship_display_panel import _species_key_for
+    ship = ShipClass()
+    ship.SetSpecies(301)
+    assert _species_key_for(ship) == "Warbird"
 
 
 def test_species_key_unknown_int_returns_empty():
