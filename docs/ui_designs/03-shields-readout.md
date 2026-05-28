@@ -1,20 +1,14 @@
 # 03 — Shields readout
 
-Visual reference: [03-shields-readout.html](03-shields-readout.html)
+Visual reference: [03-shields-readout.html](03-shields-readout.html) (the side-by-side mockup shows the *palette and per-state visuals*; the actual placement follows the original BC layout — see below).
 
-Three separate panels showing hull/shield integrity for the player and any target. Lives in the tactical area of the bridge UI (left side).
+The SDK `ShipDisplay` widget is instantiated twice per game:
+- **Player ShipDisplay** — anchored in the bottom-right tactical cluster, left of the Weapons Settings panel
+- **Target ShipDisplay** — anchored at the top-left of the viewport as the "Warbird-2"-style overlay, with a minimize chevron
 
-## Structure
+Both render the full SDK composite: a ship silhouette image (loaded from `game/data/Icons/Ships/<species>.tga` via the runtime TGA→PNG cache at `engine/ui/ship_icons.py`) with six shield-quadrant icons overlaid (top/bottom/front/rear/left/right), a damage list (Engines / Weapons / Sensors / Shield Generator), and a hull-integrity bar.
 
-```
-┌─ SHIELDS ─────────▼┐ ┌─ TARGET SHIELDS ──▼┐ ┌─ TARGET SHIELDS ──▼┐
-║ PLAYER             │ ║ WARBIRD-2          │ ║ NO TARGET          │   ← right header colours target name
-║ ████████████ 100%  │ ║ ████░░░░░░░░  55%  │ ║ ░░░░░░░░░░░░       │
-└────────────────────┘ └────────────────────┘ └────────────────────┘
-        green                yellow (damaged)        grey (no target)
-```
-
-The shape repeats: a title line (player or target name) and a single integrity bar below.
+See `docs/superpowers/specs/2026-05-28-ship-display-panel-design.md` for the engine implementation and `docs/superpowers/plans/2026-05-28-ship-display-panel.md` for the task breakdown.
 
 ## Title line states
 
