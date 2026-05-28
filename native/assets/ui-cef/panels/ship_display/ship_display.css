@@ -13,7 +13,7 @@
     --bc-menu1-base:      rgb(216, 94, 86);
     --bc-menu1-accent:    rgb(216, 132, 80);
     --bc-label-text:      rgb(235, 225, 255);
-    --bc-body-bg:         rgba(10, 10, 16, 0.97);
+    --bc-body-bg:         rgba(10, 10, 16, 0.85);
 
     /* ── Row text variants ─────────────────────────────────────────── */
     --bc-row-text-bright: rgb(235, 225, 255);
@@ -182,12 +182,12 @@
     background: var(--bc-hull-track);
     border: 1px solid var(--bc-hull-track);
     border-radius: 2px;
-    overflow: hidden;
 }
 
 .ship-display__hull-fill {
     height: 100%;
     width: 100%;
+    border-radius: 2px;
     transition: width 200ms ease;
 }
 
