@@ -122,10 +122,10 @@ void SunPass::render(const std::vector<SunDescriptor>& suns,
     // particle system (drawn below) provides the wispy arcing-plasma
     // detail that BC's SunEffect node renders.
     constexpr int   kFlareGridSize         = 8;       // sprite atlas grid
-    constexpr int   kFlareParticleCount    = 16;      // puffs per sun per frame
+    constexpr int   kFlareParticleCount    = 48;      // puffs per sun per frame
     constexpr float kFlareLifetimeSec      = 12.0f;   // per-puff birth-to-death (~5 fps over 64 frames)
-    constexpr float kFlareParticleMinScale = 0.15f;   // ×body_radius
-    constexpr float kFlareParticleMaxScale = 0.30f;   // ×body_radius
+    constexpr float kFlareParticleMinScale = 0.06f;   // ×body_radius
+    constexpr float kFlareParticleMaxScale = 0.14f;   // ×body_radius
 
     for (const auto& s : suns) {
         assets::Texture* tex = ensure_texture(s.base_texture_path);
