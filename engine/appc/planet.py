@@ -141,9 +141,19 @@ def aggregate_suns_for_renderer(project_root, pSets):
     """Return list[dict] for all Sun objects across pSets.
 
     Suns with no base_texture fall back to SunBase.tga (the BC engine default).
-    Suns whose resolved texture path does not exist are dropped with a
+    Suns whose resolved base_texture path does not exist are dropped with a
     once-per-object warning (suppressed after first fire via _sun_warned).
     Suns with radius <= 0 are dropped silently.
+
+    The corona is rendered as a thin 1.1x halo around the body. SDK
+    atmosphere_thickness is gameplay-only (Planet.AtmosphereRadius is the
+    AI keep-out / damage zone) and is NOT used for visual sizing. See
+    docs/project/superpowers/specs/2026-05-28-sun-render-fidelity-design.md.
+
+    flare_texture_path resolves the Sun's _flare_texture (5th arg to
+    Sun_Create). Empty string when unset OR when the file is missing on
+    disk (warned once via _flare_warned). Renderer treats empty as
+    "skip the overlay layer" — body and corona still draw.
     """
     out = []
     for pSet in pSets:
@@ -153,10 +163,6 @@ def aggregate_suns_for_renderer(project_root, pSets):
             radius = obj.GetRadius()
             if radius <= 0:
                 continue
-            # SDK scripts may resize a sun mid-mission via SetScale (no stock
-            # script does this for suns today, but the contract matches ships
-            # and planets). Apply it to both the body and the corona so the
-            # ratio stays constant.
             try:
                 scale = float(obj.GetScale())
             except Exception:
@@ -172,11 +178,27 @@ def aggregate_suns_for_renderer(project_root, pSets):
                     )
                     obj.__dict__["_sun_warned"] = True
                 continue
+
+            flare_rel = getattr(obj, "_flare_texture", "") or ""
+            flare_abs_str = ""
+            if flare_rel:
+                flare_abs = (project_root / "game" / flare_rel).resolve()
+                if flare_abs.is_file():
+                    flare_abs_str = str(flare_abs)
+                elif not obj.__dict__.get("_flare_warned", False):
+                    print(
+                        f"[suns] flare texture not found: {flare_rel!r}; "
+                        f"sun will render without overlay",
+                        flush=True,
+                    )
+                    obj.__dict__["_flare_warned"] = True
+
             out.append({
-                "position":          (loc.x, loc.y, loc.z),
-                "radius":            radius * scale,
-                "base_texture_path": str(abs_path),
-                "corona_radius":     (radius + obj.GetAtmosphereRadius()) * scale,
+                "position":           (loc.x, loc.y, loc.z),
+                "radius":             radius * scale,
+                "base_texture_path":  str(abs_path),
+                "corona_radius":      radius * 1.1 * scale,
+                "flare_texture_path": flare_abs_str,
             })
     return out
 
