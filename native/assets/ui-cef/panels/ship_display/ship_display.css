@@ -117,12 +117,15 @@
 
 .ship-display[data-role="player"] .bc-panel__title { color: rgb(255, 255, 255); }
 
-/* ── Silhouette + shield quadrants ──────────────────────────────────── */
+/* ── Silhouette + shield bubbles ────────────────────────────────────── */
 
 .ship-display__silhouette-stack {
     position: relative;
     width: 100%;
     height: 120px;
+    /* Establish a local stacking context so the z-index values below
+       resolve against the stack itself, not the wider panel chrome. */
+    isolation: isolate;
 }
 
 .ship-display__silhouette {
@@ -130,26 +133,78 @@
     width: 100%; height: 100%;
     object-fit: contain;
     opacity: 0.85;
+    z-index: 2; /* above ventral bubble, below dorsal + cardinal bubbles */
 }
 
 .ship-display__shield {
     position: absolute;
-    border-radius: 50%;
-    transition: opacity 120ms ease, background 120ms ease;
     pointer-events: none;
+    opacity: 0.5; /* 50% translucent baseline so the silhouette shows through */
+    transition: opacity 120ms ease, background 120ms ease;
 }
 
-/* Shield quadrant geometry — compass quadrants over a top-down hull view. */
-.shield--top    { top: 0;    left: 25%; width: 50%; height: 20%; }
-.shield--bottom { bottom: 0; left: 25%; width: 50%; height: 20%; }
-.shield--front  { top: 15%;  left: 35%; width: 30%; height: 15%; }
-.shield--rear   { bottom: 15%; left: 35%; width: 30%; height: 15%; }
-.shield--left   { top: 30%;  left: 5%;  width: 20%; height: 40%; }
-.shield--right  { top: 30%;  right: 5%; width: 20%; height: 40%; }
+/* Cardinal-facing bubbles — half-ellipses hugging the ship outline at
+   the four compass points. The flat edge faces the ship, the curved
+   edge faces outward, giving the "shield bubble" silhouette familiar
+   from stock BC.
 
-.ship-display__shield[data-integrity="full"]    { opacity: 1.0; background: var(--bc-shields); }
-.ship-display__shield[data-integrity="damaged"] { opacity: 0.6; background: var(--bc-hull-damaged); }
-.ship-display__shield[data-integrity="down"]    { opacity: 0.0; }
+   FRONT/REAR are the bow/stern arcs (top/bottom of the top-down view).
+   LEFT/RIGHT are the port/starboard arcs.
+   TOP/BOTTOM are the dorsal/ventral hemispheres, drawn as full
+   ellipses covering the silhouette — TOP overlays from above, BOTTOM
+   sits behind so the ship floats over its ventral shield. */
+
+.shield--front {
+    top: 0; left: 10%;
+    width: 80%; height: 30%;
+    border-radius: 50% 50% 0 0; /* upper half-ellipse curving up */
+    z-index: 4;
+}
+
+.shield--rear {
+    bottom: 0; left: 10%;
+    width: 80%; height: 30%;
+    border-radius: 0 0 50% 50%; /* lower half-ellipse curving down */
+    z-index: 4;
+}
+
+.shield--left {
+    top: 10%; left: 0;
+    width: 25%; height: 80%;
+    border-radius: 50% 0 0 50%; /* left half-ellipse curving left */
+    z-index: 4;
+}
+
+.shield--right {
+    top: 10%; right: 0;
+    width: 25%; height: 80%;
+    border-radius: 0 50% 50% 0; /* right half-ellipse curving right */
+    z-index: 4;
+}
+
+.shield--top {
+    /* Dorsal hemisphere — full ellipse over the silhouette */
+    top: 12%; left: 18%;
+    width: 64%; height: 76%;
+    border-radius: 50%;
+    z-index: 3; /* over silhouette */
+}
+
+.shield--bottom {
+    /* Ventral hemisphere — full ellipse BEHIND the silhouette so the
+       ship "floats" above its under-shield. */
+    top: 12%; left: 18%;
+    width: 64%; height: 76%;
+    border-radius: 50%;
+    z-index: 1; /* below silhouette */
+}
+
+/* Integrity colour driven by the bucket bound from Python. Opacity
+   baseline (0.5) is on the base rule above; damaged and down states
+   adjust it as visual cues. */
+.ship-display__shield[data-integrity="full"]    { background: var(--bc-shields); }
+.ship-display__shield[data-integrity="damaged"] { background: var(--bc-hull-damaged); opacity: 0.35; }
+.ship-display__shield[data-integrity="down"]    { opacity: 0; }
 
 /* ── Damage list ─────────────────────────────────────────────────────── */
 
