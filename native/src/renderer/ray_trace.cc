@@ -16,12 +16,13 @@ std::optional<float> intersect_triangle(
     glm::vec3 origin, glm::vec3 direction, float max_dist,
     glm::vec3 v0, glm::vec3 v1, glm::vec3 v2)
 {
-    constexpr float kEps = 1e-7f;
+    constexpr float kDetEps = 1e-7f;  // |det| reject for parallel / degenerate triangles.
+    constexpr float kTMin   = 1e-5f;  // t reject for self-hits at the origin.
     const glm::vec3 e1 = v1 - v0;
     const glm::vec3 e2 = v2 - v0;
     const glm::vec3 p  = glm::cross(direction, e2);
     const float det = glm::dot(e1, p);
-    if (std::abs(det) < kEps) return std::nullopt;
+    if (std::abs(det) < kDetEps) return std::nullopt;
     const float inv_det = 1.0f / det;
     const glm::vec3 s = origin - v0;
     const float u = glm::dot(s, p) * inv_det;
@@ -30,7 +31,7 @@ std::optional<float> intersect_triangle(
     const float v = glm::dot(direction, q) * inv_det;
     if (v < 0.0f || u + v > 1.0f) return std::nullopt;
     const float t = glm::dot(e2, q) * inv_det;
-    if (t < kEps || t > max_dist) return std::nullopt;
+    if (t < kTMin || t > max_dist) return std::nullopt;
     return t;
 }
 
@@ -38,6 +39,9 @@ namespace {
 
 struct WorldSphere { glm::vec3 center; float radius; };
 
+// PERF: recomputes compute_model_aabb on every call. Acceleration is
+// parked per docs/superpowers/specs/2026-06-01-combat-damage-pipeline-design.md
+// §6 (BVH + cached AABB); revisit if profiler flags this loop.
 WorldSphere compute_world_sphere(const assets::Model& model,
                                  const glm::mat4& instance_world) {
     Aabb local = compute_model_aabb(model);
@@ -65,6 +69,7 @@ bool segment_hits_sphere(glm::vec3 origin, glm::vec3 direction, float max_dist,
     return t_enter <= max_dist;
 }
 
+// Mirrors aabb.cc's node-world walk; keep in sync.
 std::vector<glm::mat4> build_node_world(const assets::Model& model) {
     std::vector<glm::mat4> nw(model.nodes.size(), glm::mat4(1.0f));
     if (model.nodes.empty()) return nw;
