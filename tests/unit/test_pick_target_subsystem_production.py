@@ -7,7 +7,6 @@ The legacy _FakeShip-based tests live in test_pick_target_subsystem.py
 and verify the fallback branch.
 """
 import math
-import pytest
 
 from engine.appc.combat import pick_target_subsystem
 from engine.appc.math import TGMatrix3, TGPoint3
