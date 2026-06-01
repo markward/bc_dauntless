@@ -1,7 +1,8 @@
 """hit_vfx.spawn / update_ages / snapshot — transient impact sprites."""
 import pytest
 from engine.appc.math import TGPoint3
-from engine.appc.hit_vfx import spawn, update_ages, snapshot, _active
+from engine.appc.hit_vfx import spawn, update_ages, snapshot, _active, Severity
+from engine.appc import hit_vfx
 
 
 @pytest.fixture(autouse=True)
@@ -54,10 +55,6 @@ def test_multiple_spawns_independent():
 # ── extended spawn signature: normal + severity ────────────────────────────
 
 def test_spawn_with_normal_and_severity_records_both():
-    from engine.appc import hit_vfx
-    from engine.appc.hit_vfx import Severity
-    from engine.appc.math import TGPoint3
-
     hit_vfx._active.clear()
 
     pos = TGPoint3(1.0, 2.0, 3.0)
@@ -75,10 +72,6 @@ def test_spawn_with_normal_and_severity_records_both():
 def test_spawn_shield_severity_is_noop():
     """SHIELD severity is filtered at the Python side — the shield_hit
     pass on the renderer handles the bubble splash separately."""
-    from engine.appc import hit_vfx
-    from engine.appc.hit_vfx import Severity
-    from engine.appc.math import TGPoint3
-
     hit_vfx._active.clear()
     hit_vfx.spawn(TGPoint3(0, 0, 0), severity=Severity.SHIELD)
     assert hit_vfx.snapshot() == []
@@ -87,10 +80,6 @@ def test_spawn_shield_severity_is_noop():
 def test_spawn_legacy_call_defaults_to_hull():
     """Old call sites that pass only the point still work; severity
     defaults to HULL and normal defaults to None."""
-    from engine.appc import hit_vfx
-    from engine.appc.hit_vfx import Severity
-    from engine.appc.math import TGPoint3
-
     hit_vfx._active.clear()
     hit_vfx.spawn(TGPoint3(0, 0, 0))
     snap = hit_vfx.snapshot()

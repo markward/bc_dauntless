@@ -7,6 +7,9 @@ should not also appear as a hit_vfx descriptor.
 
 _LIFETIME is widened from 0.5s to 0.7s to cover the CRITICAL spark burst
 tail. Renderer-side fade timing is per-tier (see native/.../hit_vfx_pass.cc).
+
+``Severity`` is re-exported here so call sites that already import from
+``hit_vfx`` don't need to learn the new module name.
 """
 from engine.appc.hit_feedback import Severity
 from engine.appc.math import TGPoint3
