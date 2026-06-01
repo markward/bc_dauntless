@@ -45,6 +45,9 @@ WEAPONS = _Sub()
         # (10) Shield absorbed everything but subsystem is non-hull — still SHIELD.
         #      (Subsystem identity doesn't matter when nothing leaked past shields.)
         (100.0, 0.0, 0.0, None, SENSORS, Severity.SHIELD),
+        # (11) sub_transition set but subsystem is None — must NOT promote
+        # to CRITICAL; the CRITICAL branch requires a non-None non-hull subsystem.
+        (0.0, 0.0, 50.0, "damaged", None, Severity.HULL),
     ],
 )
 def test_classify_severity_table(absorbed_shields, absorbed_sub,

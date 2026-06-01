@@ -126,10 +126,11 @@ def _body_frame_delta(ship, hit_point):
 
 
 def _subsystem_state_flags(sub) -> tuple:
-    """Snapshot (IsDamaged, IsDisabled, IsDestroyed). Missing methods → False.
+    """Snapshot (IsDamaged, IsDisabled, IsDestroyed) as a 3-tuple of bools,
+    diffable against a later snapshot via :func:`_diff_state`.
 
-    Returned as a 3-tuple of bools so it can be diffed against a later
-    snapshot via :func:`_diff_state`.
+    Missing methods default to False so legacy test fixtures
+    (pre-dating the full ShipSubsystem interface) keep working.
     """
     return (
         bool(sub.IsDamaged())   if hasattr(sub, "IsDamaged")   else False,
