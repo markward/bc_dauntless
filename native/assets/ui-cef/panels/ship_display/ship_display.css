@@ -140,70 +140,99 @@
     position: absolute;
     pointer-events: none;
     opacity: 0.5; /* 50% translucent baseline so the silhouette shows through */
-    transition: opacity 120ms ease, background 120ms ease;
+    color: var(--bc-shields);  /* drives currentColor in the gradients below */
+    transition: opacity 120ms ease, color 120ms ease;
 }
 
-/* Cardinal-facing bubbles — half-ellipses hugging the ship outline at
-   the four compass points. The flat edge faces the ship, the curved
-   edge faces outward, giving the "shield bubble" silhouette familiar
-   from stock BC.
+/* Cardinal-facing bubbles — crescent arcs whose INNER and OUTER edges
+   both follow the same elliptical curve, so the band hugs the ship's
+   outline like a true shield bubble (matches stock BC).
 
-   FRONT/REAR are the bow/stern arcs (top/bottom of the top-down view).
-   LEFT/RIGHT are the port/starboard arcs.
-   TOP/BOTTOM are the dorsal/ventral hemispheres, drawn as full
-   ellipses covering the silhouette — TOP overlays from above, BOTTOM
-   sits behind so the ship floats over its ventral shield. */
+   Each cardinal shield's bounding box is positioned at one compass
+   point, and the visible arc is drawn via a radial-gradient whose
+   centre sits at the INNER edge of the box (i.e. right at the
+   silhouette's perimeter). The gradient is transparent inside ~70% of
+   the local radius and solid `currentColor` from 70%→100%, producing
+   a curved band whose thickness is set by the 30% gap.
+
+   FRONT/REAR are bow/stern arcs.
+   LEFT/RIGHT are port/starboard arcs.
+   TOP/BOTTOM are dorsal/ventral hemispheres, drawn as solid ellipses
+   that overlay (TOP, z-index 3) or sit behind (BOTTOM, z-index 1)
+   the silhouette. */
 
 .shield--front {
-    top: 4%; left: 30%;
-    width: 40%; height: 14%;
-    border-radius: 50% 50% 0 0; /* upper half-ellipse curving up */
+    top: 0; left: 15%;
+    width: 70%; height: 32%;
+    /* centre at bottom of box = silhouette perimeter; gradient radiates upward */
+    background: radial-gradient(
+        ellipse 100% 240% at 50% 100%,
+        transparent 70%,
+        currentColor 70.5%,
+        currentColor 100%
+    );
     z-index: 4;
 }
 
 .shield--rear {
-    bottom: 4%; left: 30%;
-    width: 40%; height: 14%;
-    border-radius: 0 0 50% 50%; /* lower half-ellipse curving down */
+    bottom: 0; left: 15%;
+    width: 70%; height: 32%;
+    background: radial-gradient(
+        ellipse 100% 240% at 50% 0%,
+        transparent 70%,
+        currentColor 70.5%,
+        currentColor 100%
+    );
     z-index: 4;
 }
 
 .shield--left {
-    top: 30%; left: 4%;
-    width: 14%; height: 40%;
-    border-radius: 50% 0 0 50%; /* left half-ellipse curving left */
+    top: 15%; left: 0;
+    width: 32%; height: 70%;
+    background: radial-gradient(
+        ellipse 240% 100% at 100% 50%,
+        transparent 70%,
+        currentColor 70.5%,
+        currentColor 100%
+    );
     z-index: 4;
 }
 
 .shield--right {
-    top: 30%; right: 4%;
-    width: 14%; height: 40%;
-    border-radius: 0 50% 50% 0; /* right half-ellipse curving right */
+    top: 15%; right: 0;
+    width: 32%; height: 70%;
+    background: radial-gradient(
+        ellipse 240% 100% at 0% 50%,
+        transparent 70%,
+        currentColor 70.5%,
+        currentColor 100%
+    );
     z-index: 4;
 }
 
 .shield--top {
-    /* Dorsal hemisphere — modest ellipse hugging the silhouette */
+    /* Dorsal hemisphere — solid ellipse over the silhouette */
     top: 25%; left: 30%;
     width: 40%; height: 50%;
+    background: currentColor;
     border-radius: 50%;
-    z-index: 3; /* over silhouette */
+    z-index: 3;
 }
 
 .shield--bottom {
-    /* Ventral hemisphere — same footprint but BEHIND the silhouette so
-       the ship "floats" above its under-shield. */
+    /* Ventral hemisphere — solid ellipse BEHIND the silhouette. */
     top: 25%; left: 30%;
     width: 40%; height: 50%;
+    background: currentColor;
     border-radius: 50%;
-    z-index: 1; /* below silhouette */
+    z-index: 1;
 }
 
-/* Integrity colour driven by the bucket bound from Python. Opacity
-   baseline (0.5) is on the base rule above; damaged and down states
-   adjust it as visual cues. */
-.ship-display__shield[data-integrity="full"]    { background: var(--bc-shields); }
-.ship-display__shield[data-integrity="damaged"] { background: var(--bc-hull-damaged); opacity: 0.35; }
+/* Integrity drives `color`, which the gradients above pick up via
+   `currentColor`. Opacity baseline (0.5) is on the base rule; damaged
+   and down states adjust it as visual cues. */
+.ship-display__shield[data-integrity="full"]    { color: var(--bc-shields); }
+.ship-display__shield[data-integrity="damaged"] { color: var(--bc-hull-damaged); opacity: 0.35; }
 .ship-display__shield[data-integrity="down"]    { opacity: 0; }
 
 /* ── Damage list ─────────────────────────────────────────────────────── */
