@@ -17,6 +17,80 @@ def sphere_hit(point, center, radius: float) -> bool:
     return (dx * dx + dy * dy + dz * dz) <= r * r
 
 
+def ray_sphere_entry(origin, direction, max_dist: float,
+                     center, radius: float):
+    """Return the entry point of the ray (origin, unit `direction`) into
+    the sphere (`center`, `radius`), or `None` if the ray's segment of
+    length `max_dist` misses the sphere.
+
+    If `origin` is already inside the sphere, returns `origin` (the
+    "entry" degenerates to the start of the ray).
+    """
+    if radius <= 0.0:
+        return None
+    ox = origin.x - center.x
+    oy = origin.y - center.y
+    oz = origin.z - center.z
+    b = ox * direction.x + oy * direction.y + oz * direction.z
+    c = ox * ox + oy * oy + oz * oz - radius * radius
+    if c <= 0.0:
+        return origin
+    if b >= 0.0:
+        return None
+    disc = b * b - c
+    if disc < 0.0:
+        return None
+    t_enter = -b - disc ** 0.5
+    if t_enter < 0.0 or t_enter > max_dist:
+        return None
+    return TGPoint3(
+        origin.x + direction.x * t_enter,
+        origin.y + direction.y * t_enter,
+        origin.z + direction.z * t_enter,
+    )
+
+
+def _resolve_hit_point(host, ship_instances, ship,
+                       ray_origin, ray_direction,
+                       max_dist: float, fallback_point):
+    """Three-tier hit-point fallback:
+
+    1. If `host` is wired with `ray_trace_mesh` and `ship` has a renderer
+       `InstanceId` in `ship_instances`, run the mesh trace and return the
+       returned surface point on hit.
+    2. Otherwise (or on mesh miss), if the ray segment intersects the
+       ship's bounding sphere, return the sphere-entry point.
+    3. Otherwise return `fallback_point` — each caller's pre-project
+       legacy point (`torpedo._position` for projectiles; `target_pos`
+       for phasers). Preserves headless and broken-binding behaviour.
+    """
+    if host is None or ray_direction is None:
+        return fallback_point
+    iid = ship_instances.get(ship) if ship_instances is not None else None
+    if iid is None:
+        return fallback_point
+    if hasattr(host, "ray_trace_mesh"):
+        try:
+            result = host.ray_trace_mesh(
+                iid,
+                (ray_origin.x, ray_origin.y, ray_origin.z),
+                (ray_direction.x, ray_direction.y, ray_direction.z),
+                max_dist,
+            )
+        except Exception:
+            result = None
+        if result is not None:
+            (px, py, pz), _normal, _t = result
+            return TGPoint3(px, py, pz)
+    center = ship.GetWorldLocation()
+    radius = ship.GetRadius() if hasattr(ship, "GetRadius") else 0.0
+    entry = ray_sphere_entry(ray_origin, ray_direction, max_dist,
+                             center, radius)
+    if entry is not None:
+        return entry
+    return fallback_point
+
+
 def pick_target_subsystem(ship, hit_point):
     """Return the subsystem whose hardpoint position is closest to
     hit_point AND within ~2× its radius.  Falls back to ship.GetHull().
