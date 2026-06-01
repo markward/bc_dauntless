@@ -84,7 +84,6 @@ def test_resolve_returns_mesh_hit_when_trace_succeeds():
     assert p.x == pytest.approx(1.0)
     assert p.y == pytest.approx(2.0)
     assert p.z == pytest.approx(3.0)
-    # NEW: normal threaded through from the mesh trace.
     assert n is not None
     assert n.x == pytest.approx(0.0)
     assert n.y == pytest.approx(0.0)
@@ -104,7 +103,6 @@ def test_resolve_falls_back_to_sphere_entry_when_trace_misses():
     )
     # Sphere of radius 2 at origin; ray enters at z=-2.
     assert p.z == pytest.approx(-2.0)
-    # NEW: sphere-entry path has no surface normal.
     assert n is None
 
 
