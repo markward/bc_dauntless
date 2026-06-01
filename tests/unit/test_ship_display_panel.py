@@ -213,8 +213,6 @@ def test_target_snapshot_with_enemy_affiliation():
         foe.SetHull(HullSubsystem())
         mission.GetEnemyGroup().AddName("Foe")
         player.SetTarget(foe)
-        # Mark target as known so the sensor gate passes
-        player.GetSensorSubsystem().AddKnownObject(foe)
         panel = ShipDisplayPanel(ROLE_TARGET)
         snap = panel._snapshot()
         assert snap[10] is True, "expected visible target"
@@ -236,20 +234,13 @@ def test_target_role_returns_invisible_when_no_target():
         _teardown_game()
 
 
-def test_target_role_unknown_target_returns_invisible():
-    """Sensor knowledge gate: unknown target = no panel data."""
-    from engine.appc.ships import ShipClass
+def test_target_role_no_target_returns_invisible():
+    """No SetTarget call → target panel hidden."""
     from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_TARGET
     _, player, _ = _setup_game_with_player()
     try:
-        foe = ShipClass(); foe.SetName("Foe")
-        player.SetTarget(foe)
-        # Sensor subsystem returns IsObjectKnown==0 by default; if not,
-        # force it via the subsystem's known-objects set.
-        try:
-            player.GetSensorSubsystem()._known_objects.discard(foe.GetObjID())
-        except Exception:
-            pass
+        # Player has no target — _snapshot returns visible=False.
+        assert player.GetTarget() is None
         panel = ShipDisplayPanel(ROLE_TARGET)
         snap = panel._snapshot()
         assert snap[10] is False

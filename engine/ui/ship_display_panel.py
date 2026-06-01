@@ -299,22 +299,22 @@ def _current_episode():
 
 
 def _resolve_ship_for_role(role: str):
-    """Returns the ship the panel renders for, or None for the no-target /
-    unknown-target empty state."""
+    """Returns the ship the panel renders for, or None for the no-target
+    empty state.
+
+    The SDK gates target display behind SensorSubsystem.IsObjectKnown()
+    (ShieldsDisplay.SetShipIcon at sdk/Build/scripts/Tactical/Interface/
+    ShieldsDisplay.py:329-338). Our Phase 1 sensor subsystem doesn't
+    populate the known-objects set yet — nothing scans for contacts —
+    so applying the gate would silently block every target. Trust
+    SetTarget for now; revisit when sensor scanning lands.
+    """
     player = _get_player()
     if player is None:
         return None
     if role == ROLE_PLAYER:
         return player
-    # target role
     target = player.GetTarget() if hasattr(player, "GetTarget") else None
-    if target is None:
-        return None
-    # Sensor-knowledge gate (matches SDK ShieldsDisplay.SetShipIcon at
-    # sdk/Build/scripts/Tactical/Interface/ShieldsDisplay.py:329-338).
-    sensors = getattr(player, "GetSensorSubsystem", lambda: None)()
-    if sensors is not None and sensors.IsObjectKnown(target) == 0:
-        return None
     return target
 
 
