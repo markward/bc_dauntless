@@ -67,6 +67,11 @@ def test_torpedo_collides_with_ship_sphere():
     assert len(hits) == 1
     assert hits[0][0] is t
     assert hits[0][1] is target
+    # New: 4-tuple emits the hit point. Headless (no host) → torpedo._position.
+    assert len(hits[0]) == 4
+    assert hits[0][3].x == pytest.approx(t._position.x)
+    assert hits[0][3].y == pytest.approx(t._position.y)
+    assert hits[0][3].z == pytest.approx(t._position.z)
     assert _active == []
 
 
@@ -118,3 +123,28 @@ def test_homing_past_guidance_lifetime_stops_steering():
     initial_vx = t._velocity.x
     update_all(dt=0.1, all_ships=[src, target])
     assert t._velocity.x == initial_vx
+
+
+def test_torpedo_uses_host_ray_trace_mesh_when_supplied():
+    """When host + ship_instances are supplied, hit_point comes from the
+    mesh trace, not the post-advance position."""
+    src = _FakeShip(-100, 0, 0)
+    target = _FakeShip(5, 0, 0, radius=10.0)
+    t = _torp_at(0, 0, 0, 10, 0, 0, src=src)
+
+    class FakeHost:
+        def ray_trace_mesh(self, iid, origin, direction, max_dist):
+            return ((7.0, 7.0, 7.0), (0.0, 0.0, -1.0), 1.0)
+
+    instance_sentinel = object()
+    hits = update_all(
+        dt=0.1, all_ships=[src, target],
+        host=FakeHost(),
+        ship_instances={target: instance_sentinel},
+    )
+    assert len(hits) == 1
+    _, ship, _, hit_point = hits[0]
+    assert ship is target
+    assert hit_point.x == pytest.approx(7.0)
+    assert hit_point.y == pytest.approx(7.0)
+    assert hit_point.z == pytest.approx(7.0)

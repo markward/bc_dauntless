@@ -106,12 +106,19 @@ def expire(torpedo: Torpedo) -> None:
         pass
 
 
-def update_all(dt: float, all_ships) -> list[tuple]:
+def update_all(dt: float, all_ships, *, host=None, ship_instances=None) -> list[tuple]:
     """Advance every active torpedo by dt.  Returns list of
-    (torpedo, hit_ship, hit_subsystem) tuples that connected this tick.
-    Expired torpedoes (TTL or impact) are removed from _active.
+    (torpedo, hit_ship, hit_subsystem, hit_point) tuples that connected
+    this tick. Expired torpedoes (TTL or impact) are removed from
+    _active.
+
+    `host` and `ship_instances` are forwarded to combat._resolve_hit_point;
+    when omitted (headless tests, no renderer), hit_point degrades to the
+    torpedo's post-advance position — matching the pre-project behaviour.
     """
-    from engine.appc.combat import pick_target_subsystem, sphere_hit
+    from engine.appc.combat import (pick_target_subsystem, sphere_hit,
+                                    _resolve_hit_point)
+    from engine.appc.math import TGPoint3
 
     hits: list[tuple] = []
     expired: list[Torpedo] = []
@@ -121,6 +128,7 @@ def update_all(dt: float, all_ships) -> list[tuple]:
         if t._target_ship is not None and t._age < t._guidance_lifetime:
             _steer_toward(t, t._target_ship, dt)
         # 2. Advance position + age.
+        prev_pos = TGPoint3(t._position.x, t._position.y, t._position.z)
         t._position = t._position + t._velocity * dt
         t._age += dt
         if t._age >= t._ttl:
@@ -133,15 +141,32 @@ def update_all(dt: float, all_ships) -> list[tuple]:
             if ship.IsDead():
                 continue
             if sphere_hit(t._position, ship.GetWorldLocation(), ship.GetRadius()):
-                # If the player locked a specific subsystem on this target,
-                # route damage there directly; otherwise pick the nearest
-                # hardpoint to the hit point.
+                # Build the per-tick ray and resolve the hit point through
+                # the three-tier fallback (mesh trace / sphere entry /
+                # post-advance position).
+                seg = t._position - prev_pos
+                seg_len = seg.Length()
+                if seg_len > 1e-9:
+                    aim_unit = TGPoint3(
+                        seg.x / seg_len, seg.y / seg_len, seg.z / seg_len)
+                else:
+                    aim_unit = None
+                hit_point = _resolve_hit_point(
+                    host=host, ship_instances=ship_instances, ship=ship,
+                    ray_origin=prev_pos,
+                    ray_direction=aim_unit,
+                    max_dist=seg_len,
+                    fallback_point=t._position,
+                )
+                # If the player locked a specific subsystem on this
+                # target, route damage there directly; otherwise pick the
+                # nearest hardpoint to the resolved hit point.
                 if (t._target_subsystem is not None
                         and t._target_ship is ship):
                     subsystem = t._target_subsystem
                 else:
-                    subsystem = pick_target_subsystem(ship, t._position)
-                hits.append((t, ship, subsystem))
+                    subsystem = pick_target_subsystem(ship, hit_point)
+                hits.append((t, ship, subsystem, hit_point))
                 expired.append(t)
                 break
 
