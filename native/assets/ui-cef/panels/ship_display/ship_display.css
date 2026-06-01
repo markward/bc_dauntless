@@ -144,59 +144,69 @@
     transition: opacity 120ms ease, color 120ms ease;
 }
 
-/* Cardinal-facing bubbles — crescent arcs whose INNER and OUTER edges
-   both follow the same elliptical curve.
+/* Six distinct shield segments arranged around the silhouette:
 
-   All four cardinal shields share one elliptical ring centred on the
-   silhouette: same position, same size, same thick border. What makes
-   them visually distinct is `clip-path`, which keeps only that
-   shield's 90° wedge of the ring visible. The result: the inner edge
-   is the inside of the border (curved) and the outer edge is the
-   outside of the border (also curved, concentric) — a true crescent
-   that hugs the ship outline at the bow, stern, or sides.
+     ┌─────── TOP ────────┐    ← dorsal hemisphere indicator (top edge)
+     │       FORE         │    ← bow arc, 60° wedge
+     │  PORT   🚢  STAR   │    ← port + starboard arcs, 60° wedges
+     │       REAR         │    ← stern arc, 60° wedge
+     └────── BOTTOM ──────┘    ← ventral hemisphere indicator (bottom edge)
 
-   FRONT/REAR are bow/stern arcs.
-   LEFT/RIGHT are port/starboard arcs.
-   TOP/BOTTOM are dorsal/ventral hemispheres, drawn as solid ellipses
-   that overlay (TOP, z-index 3) or sit behind (BOTTOM, z-index 1)
-   the silhouette. */
+   The four cardinal shields share one elliptical ring centred on the
+   silhouette. Each shield's clip-path keeps only a 60° wedge of the
+   ring visible, leaving 30° gaps at the diagonals so the four arcs
+   read as separate segments. Both inner and outer edges of every arc
+   are curved (they're the inside / outside of the same ring border).
+
+   TOP and BOTTOM are drawn as wide, thin curved bands hugging the
+   very top and bottom edges of the silhouette stack — visually
+   distinct from the bow/stern arcs, indicating dorsal/ventral
+   coverage. */
 
 .shield--front,
 .shield--rear,
 .shield--left,
 .shield--right {
-    /* The shared ring covers most of the silhouette stack so the ring
-       perimeter aligns with the ship outline. */
-    top: 10%; left: 12%;
-    width: 76%; height: 80%;
-    border: 10px solid currentColor;
+    /* Shared elliptical ring centred on the silhouette. Sized so the
+       ring perimeter clears the ship outline. */
+    top: 12%; left: 8%;
+    width: 84%; height: 76%;
+    border: 8px solid currentColor;
     border-radius: 50%;
     background: transparent;
     box-sizing: border-box;
     z-index: 4;
 }
 
-/* Each clip-path is a triangular wedge from the centre out through two
-   corners of the element. The triangle, intersected with the ring,
-   keeps only the 90° arc segment for that compass direction. */
-.shield--front { clip-path: polygon(50% 50%, 0 0, 100% 0); }
-.shield--rear  { clip-path: polygon(50% 50%, 100% 100%, 0 100%); }
-.shield--left  { clip-path: polygon(50% 50%, 0 100%, 0 0); }
-.shield--right { clip-path: polygon(50% 50%, 100% 0, 100% 100%); }
+/* 60° wedges from the centre — corners chosen so the wedge spans ±30°
+   of the compass direction. The ~30° gaps between adjacent wedges
+   leave clear diagonals so the four arcs read as separate segments.
 
+   Polygon math: a 60° wedge centred on the cardinal direction needs
+   rays at ±30° off that axis. cot(30°) ≈ 1.732, so the ray hits the
+   far edge at 50% ± (50%/1.732) ≈ 50% ± 28.9% → 21% and 79%. */
+.shield--front { clip-path: polygon(50% 50%, 21% 0,   79% 0  ); }
+.shield--rear  { clip-path: polygon(50% 50%, 79% 100%, 21% 100%); }
+.shield--left  { clip-path: polygon(50% 50%, 0   79%, 0   21%); }
+.shield--right { clip-path: polygon(50% 50%, 100% 21%, 100% 79%); }
+
+/* TOP — dorsal indicator. Wide, very thin curved band at the top of
+   the stack, just above the FORE arc. The radial gradient makes
+   the band's inner edge curve down toward the ship. */
 .shield--top {
-    /* Dorsal hemisphere — solid ellipse over the silhouette */
-    top: 25%; left: 30%;
-    width: 40%; height: 50%;
+    top: 0; left: 20%;
+    width: 60%; height: 10%;
     background: currentColor;
     border-radius: 50%;
     z-index: 3;
 }
 
+/* BOTTOM — ventral indicator. Mirror of TOP at the bottom of the
+   stack. z-index 1 so the silhouette can overlap it (the ship
+   "covers" its ventral shield from a top-down view). */
 .shield--bottom {
-    /* Ventral hemisphere — solid ellipse BEHIND the silhouette. */
-    top: 25%; left: 30%;
-    width: 40%; height: 50%;
+    bottom: 0; left: 20%;
+    width: 60%; height: 10%;
     background: currentColor;
     border-radius: 50%;
     z-index: 1;
