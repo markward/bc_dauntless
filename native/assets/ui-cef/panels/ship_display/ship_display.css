@@ -145,15 +145,15 @@
 }
 
 /* Cardinal-facing bubbles — crescent arcs whose INNER and OUTER edges
-   both follow the same elliptical curve, so the band hugs the ship's
-   outline like a true shield bubble (matches stock BC).
+   both follow the same elliptical curve.
 
-   Each cardinal shield's bounding box is positioned at one compass
-   point, and the visible arc is drawn via a radial-gradient whose
-   centre sits at the INNER edge of the box (i.e. right at the
-   silhouette's perimeter). The gradient is transparent inside ~70% of
-   the local radius and solid `currentColor` from 70%→100%, producing
-   a curved band whose thickness is set by the 30% gap.
+   All four cardinal shields share one elliptical ring centred on the
+   silhouette: same position, same size, same thick border. What makes
+   them visually distinct is `clip-path`, which keeps only that
+   shield's 90° wedge of the ring visible. The result: the inner edge
+   is the inside of the border (curved) and the outer edge is the
+   outside of the border (also curved, concentric) — a true crescent
+   that hugs the ship outline at the bow, stern, or sides.
 
    FRONT/REAR are bow/stern arcs.
    LEFT/RIGHT are port/starboard arcs.
@@ -161,54 +161,28 @@
    that overlay (TOP, z-index 3) or sit behind (BOTTOM, z-index 1)
    the silhouette. */
 
-.shield--front {
-    top: 0; left: 15%;
-    width: 70%; height: 32%;
-    /* centre at bottom of box = silhouette perimeter; gradient radiates upward */
-    background: radial-gradient(
-        ellipse 100% 240% at 50% 100%,
-        transparent 70%,
-        currentColor 70.5%,
-        currentColor 100%
-    );
-    z-index: 4;
-}
-
-.shield--rear {
-    bottom: 0; left: 15%;
-    width: 70%; height: 32%;
-    background: radial-gradient(
-        ellipse 100% 240% at 50% 0%,
-        transparent 70%,
-        currentColor 70.5%,
-        currentColor 100%
-    );
-    z-index: 4;
-}
-
-.shield--left {
-    top: 15%; left: 0;
-    width: 32%; height: 70%;
-    background: radial-gradient(
-        ellipse 240% 100% at 100% 50%,
-        transparent 70%,
-        currentColor 70.5%,
-        currentColor 100%
-    );
-    z-index: 4;
-}
-
+.shield--front,
+.shield--rear,
+.shield--left,
 .shield--right {
-    top: 15%; right: 0;
-    width: 32%; height: 70%;
-    background: radial-gradient(
-        ellipse 240% 100% at 0% 50%,
-        transparent 70%,
-        currentColor 70.5%,
-        currentColor 100%
-    );
+    /* The shared ring covers most of the silhouette stack so the ring
+       perimeter aligns with the ship outline. */
+    top: 10%; left: 12%;
+    width: 76%; height: 80%;
+    border: 10px solid currentColor;
+    border-radius: 50%;
+    background: transparent;
+    box-sizing: border-box;
     z-index: 4;
 }
+
+/* Each clip-path is a triangular wedge from the centre out through two
+   corners of the element. The triangle, intersected with the ring,
+   keeps only the 90° arc segment for that compass direction. */
+.shield--front { clip-path: polygon(50% 50%, 0 0, 100% 0); }
+.shield--rear  { clip-path: polygon(50% 50%, 100% 100%, 0 100%); }
+.shield--left  { clip-path: polygon(50% 50%, 0 100%, 0 0); }
+.shield--right { clip-path: polygon(50% 50%, 100% 0, 100% 100%); }
 
 .shield--top {
     /* Dorsal hemisphere — solid ellipse over the silhouette */
