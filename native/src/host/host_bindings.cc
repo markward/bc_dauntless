@@ -39,6 +39,7 @@
 #include "ui_cef/cef_lifecycle.h"
 #endif
 
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
@@ -728,7 +729,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
                           std::get<2>(direction));
               const float dlen = glm::length(d);
               if (dlen < 1e-9f) return py::none();
-              d /= dlen;  // Tolerate non-unit input.
+              d /= dlen;
+              if (!std::isfinite(max_dist) || max_dist <= 0.0f) return py::none();
 
               auto hit = renderer::ray_trace_instance(
                   *model, inst->world, o, d, max_dist);
@@ -742,9 +744,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("origin"),
           py::arg("direction"),
           py::arg("max_dist"),
-          "Ray-cast against an instance's loaded mesh. Returns "
-          "((point), (normal), t) on hit or None on miss. Direction is "
-          "auto-normalised; t is world-space distance from origin.");
+          "Ray-cast a world-space ray against an instance's loaded mesh. "
+          "origin and direction are in world coordinates; direction is "
+          "auto-normalised. Returns ((point), (normal), t) on hit or None "
+          "on miss. t is world-space distance from origin.");
 
     auto keys = m.def_submodule("keys", "GLFW key-code constants for input bindings.");
     keys.attr("KEY_W") = GLFW_KEY_W;
