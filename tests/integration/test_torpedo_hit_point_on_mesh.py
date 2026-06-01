@@ -3,7 +3,6 @@ wired, not the torpedo's post-advance position."""
 import pytest
 from unittest.mock import patch
 
-from engine.appc.events import WeaponHitEvent
 from engine.appc.math import TGPoint3
 from engine.appc import projectiles
 from engine.appc.projectiles import Torpedo, register
@@ -69,3 +68,8 @@ def test_torpedo_hit_uses_mesh_trace_point():
     assert p.x == pytest.approx(_CapturingHost.SURFACE_POINT[0])
     assert p.y == pytest.approx(_CapturingHost.SURFACE_POINT[1])
     assert p.z == pytest.approx(_CapturingHost.SURFACE_POINT[2])
+
+    # shield_hit must receive the same resolved point so the shield-pass
+    # splash lands on the hull, not the post-advance bounding-sphere fall-through.
+    assert len(host.shield_hits) == 1
+    assert host.shield_hits[0] == _CapturingHost.SURFACE_POINT

@@ -238,7 +238,8 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
             iid = ship_instances.get(ship)
             if iid is not None:
                 # Resolved hit point — on the hull when the mesh trace
-                # succeeded; on the bounding-sphere shell otherwise.
+                # succeeded; on the bounding-sphere entry point or on
+                # the torpedo's post-advance position otherwise.
                 host.shield_hit(
                     instance_id=iid,
                     point=(hit_point.x, hit_point.y, hit_point.z),
