@@ -221,7 +221,7 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
     pass can splash at the strike point.
     """
     from engine.appc import projectiles, hit_vfx
-    from engine.appc.combat import apply_hit
+    from engine.appc.combat import apply_hit, _resolve_hit_point
 
     ships_list = list(ships)
     hits = projectiles.update_all(
@@ -298,7 +298,6 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
                 dt=dt,
             )
             if damage > 0:
-                from engine.appc.combat import _resolve_hit_point
                 impact_point = _resolve_hit_point(
                     host=host, ship_instances=ship_instances, ship=target,
                     ray_origin=emitter_pos,

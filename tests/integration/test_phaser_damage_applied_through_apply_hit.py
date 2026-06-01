@@ -93,10 +93,12 @@ def test_phaser_hit_point_comes_from_host_ray_trace_mesh(galaxy_red):
     SURFACE_POINT = (1.5, 47.25, -2.0)  # Distinct from target_pos.
 
     class FakeHost:
+        def __init__(self):
+            self.shield_hits = []
         def ray_trace_mesh(self, iid, origin, direction, max_dist):
             return (SURFACE_POINT, (0.0, -1.0, 0.0), 1.0)
         def shield_hit(self, instance_id, point, rgba, intensity):
-            pass
+            self.shield_hits.append(point)
         def __getattr__(self, name):
             return lambda *a, **kw: None
 
@@ -107,11 +109,12 @@ def test_phaser_hit_point_comes_from_host_ray_trace_mesh(galaxy_red):
         captured["hit_point"] = hit_point
 
     sentinel = object()
+    host = FakeHost()
     with patch.object(combat, "apply_hit", spy), \
          patch("engine.audio.tg_sound.TGSoundManager.instance"):
         sys_.StartFiring(target)
         _advance_combat([ship, target], dt=0.1,
-                        host=FakeHost(),
+                        host=host,
                         ship_instances={target: sentinel})
 
     assert "hit_point" in captured, "apply_hit was never called"
@@ -119,3 +122,7 @@ def test_phaser_hit_point_comes_from_host_ray_trace_mesh(galaxy_red):
     assert hp.x == pytest.approx(SURFACE_POINT[0])
     assert hp.y == pytest.approx(SURFACE_POINT[1])
     assert hp.z == pytest.approx(SURFACE_POINT[2])
+    # shield_hit must receive the same resolved point so the shield-pass
+    # splash lands on the hull, not the target's center.
+    assert len(host.shield_hits) == 1
+    assert host.shield_hits[0] == SURFACE_POINT
