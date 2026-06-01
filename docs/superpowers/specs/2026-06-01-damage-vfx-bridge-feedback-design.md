@@ -145,7 +145,7 @@ def dispatch(ship, source, point, normal, damage, subsystem,
 
 `dispatch` reads `App.Game_GetCurrentGame().GetPlayer()` once per call (guarded by `try/except` for headless contexts where `App.Game_GetCurrentGame()` returns a stub without a player). Camera shake fires iff `ship is player`.
 
-Audio playback is via:
+Audio playback uses the existing `TGSoundManager` + `TGSound.Play(position=...)` path (same surface `engine/audio/engine_rumble.py` uses):
 
 ```python
 import App, LoadDamageHitSounds, LoadTacticalSounds
@@ -154,12 +154,13 @@ name = {
     Severity.HULL:     LoadTacticalSounds.GetRandomSound(LoadTacticalSounds.g_lsWeaponExplosions),
     Severity.CRITICAL: LoadDamageHitSounds.GetRandomSound(LoadDamageHitSounds.g_lsSubsystemCriticals),
 }[severity]
-game = App.Game_GetCurrentGame()
-if hasattr(game, "PlaySoundAt"):
-    game.PlaySoundAt(name, point)
+mgr = getattr(App, "g_kSoundManager", None)
+snd = mgr.GetSound(name) if mgr is not None else None
+if snd is not None:
+    snd.Play(position=(point.x, point.y, point.z))
 ```
 
-The `hasattr` check covers the case where the App shim has not yet been extended; in that case the audio side falls silent for now. **Implementation step zero** (§9.1) is to confirm `PlaySoundAt` exists in the shim, and if not, add the stub or escalate.
+Headless tests where `App.g_kSoundManager is None` (the post-`shutdown_audio_for_tests` state) fall through silently. The `snd is None` branch covers a missing sound name (e.g. `LoadDamageHitSounds.LoadSounds()` not yet called).
 
 ### 5.2 `engine/appc/camera_shake.py`
 
@@ -473,14 +474,9 @@ Mirroring roadmap §5 and §6 — re-stated here so they're not re-litigated mid
 
 ## 9. Risks + open implementation items
 
-### 9.1 `PlaySoundAt` shim audit (implementation step zero)
+### 9.1 Audio API confirmed: `TGSound.Play(position=...)`
 
-The brainstorm did not confirm that `App.Game_GetCurrentGame().PlaySoundAt(name, point)` exists in the current Python shim. If it does not, two options:
-
-- Add a small stub that routes through whatever audio surface the shim already exposes.
-- If the audio backend itself isn't wired up yet, the audio side of this project lands as no-ops behind the `hasattr(game, "PlaySoundAt")` guard, and we re-open audio as a Project 4.1 follow-up.
-
-Either way, the implementation plan must include "audit the shim, decide" as the very first task before any other audio work.
+A post-brainstorm shim audit (`engine/audio/tg_sound.py`) confirmed there is **no** `Game_GetCurrentGame().PlaySoundAt(...)` method. The actual positional-playback path is `App.g_kSoundManager.GetSound(name).Play(position=(x,y,z))`, the same one [`engine/audio/engine_rumble.py:52-57`](../../../engine/audio/engine_rumble.py#L52-L57) uses for ship-attached rumbles. Spec §5.1's audio call uses this confirmed API. No shim work needed.
 
 ### 9.2 `normal=None` is the common case for torpedoes
 
@@ -502,7 +498,7 @@ Camera shake's perturbation is applied *after* the chase camera's spring-lag and
 
 - All three severity tiers fire correctly from `apply_hit`. Mutual exclusivity invariant holds in the integration test.
 - Surface normal threaded from `ray_trace_mesh` through to the renderer for HULL + CRITICAL descriptors.
-- Per-tier audio plays via `App.PlaySoundAt` (or falls silent behind the shim guard if §9.1 lands in the "audio not yet wired" branch).
+- Per-tier audio plays via `App.g_kSoundManager.GetSound(name).Play(position=...)`.
 - Player camera shake fires on player-targeted hits in both exterior and bridge views, decays smoothly within ~0.5s.
 - All §7.5 existing tests still pass.
 - New §7.1–7.4 tests pass.
