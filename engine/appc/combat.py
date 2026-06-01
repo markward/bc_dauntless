@@ -125,6 +125,36 @@ def _body_frame_delta(ship, hit_point):
     )
 
 
+def _subsystem_state_flags(sub) -> tuple:
+    """Snapshot (IsDamaged, IsDisabled, IsDestroyed). Missing methods → False.
+
+    Returned as a 3-tuple of bools so it can be diffed against a later
+    snapshot via :func:`_diff_state`.
+    """
+    return (
+        bool(sub.IsDamaged())   if hasattr(sub, "IsDamaged")   else False,
+        bool(sub.IsDisabled())  if hasattr(sub, "IsDisabled")  else False,
+        bool(sub.IsDestroyed()) if hasattr(sub, "IsDestroyed") else False,
+    )
+
+
+def _diff_state(before: tuple, after: tuple):
+    """Worst NEW state-flag, or None if no flag flipped False→True.
+
+    Priority: destroyed > disabled > damaged > None. Pre-existing True
+    flags are ignored — only False→True transitions count.
+    """
+    b_dmg, b_dis, b_des = before
+    a_dmg, a_dis, a_des = after
+    if a_des and not b_des:
+        return "destroyed"
+    if a_dis and not b_dis:
+        return "disabled"
+    if a_dmg and not b_dmg:
+        return "damaged"
+    return None
+
+
 def pick_target_subsystem(ship, hit_point):
     """Return the subsystem closest to ``hit_point`` in the ship's body
     frame, gated by ``d <= 2 * sub.GetRadius()``. Walks every top-level
