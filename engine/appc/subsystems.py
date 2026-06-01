@@ -814,6 +814,56 @@ class WeaponSystem(PoweredSubsystem):
         self._next_emitter_index: int = 0
         self._currently_firing: list = []
 
+    # ── Parent-aggregator predicates ───────────────────────────────────
+    # WeaponSystem parents own their hardpoint emitters (PhaserBank,
+    # TorpedoTube, PulseWeapon, TractorBeam) as _children. Damage lands
+    # on the children via apply_hit -> pick_target_subsystem -> ship.
+    # DamageSystem(child); the parent surfaces aggregated state to
+    # SDK/UI consumers without storing its own condition pool.
+    #
+    # Locked semantics from the combat damage pipeline roadmap:
+    #   IsDamaged   = self._damaged or any(c.IsDamaged() or c.IsDestroyed() for c in children)
+    #   IsDisabled  = children and all(c.IsDisabled()  for c in children)
+    #   IsDestroyed = self._destroyed or (children and all(c.IsDestroyed() for c in children))
+    #
+    # Empty-children edge: a weapon system with no hardpoints falls
+    # through to the condition-based ShipSubsystem predicates. A default-
+    # constructed parent (condition == max_condition) still reports zero;
+    # leaf emitters with damaged condition report the damage themselves.
+
+    def IsDamaged(self) -> int:
+        if not self._children:
+            # Leaf emitter (no sub-hardpoints): use condition-based predicate.
+            return ShipSubsystem.IsDamaged(self)
+        if self._damaged:
+            # Honour the explicit flag set by ShipSubsystem.SetDamaged.
+            return 1
+        for c in self._children:
+            if c.IsDamaged() or c.IsDestroyed():
+                return 1
+        return 0
+
+    def IsDisabled(self) -> int:
+        if not self._children:
+            # Leaf emitter: use condition-based predicate.
+            return ShipSubsystem.IsDisabled(self)
+        for c in self._children:
+            if not c.IsDisabled():
+                return 0
+        return 1
+
+    def IsDestroyed(self) -> int:
+        if not self._children:
+            # Leaf emitter: use condition-based predicate.
+            return ShipSubsystem.IsDestroyed(self)
+        if self._destroyed:
+            # Honour the explicit flag set by ShipSubsystem.SetDestroyed.
+            return 1
+        for c in self._children:
+            if not c.IsDestroyed():
+                return 0
+        return 1
+
     def StartFiring(self, target=None, offset=None) -> None:
         if not self.IsOn():
             return

@@ -95,38 +95,83 @@ def _resolve_hit_point(host, ship_instances, ship,
     return fallback_point
 
 
-def pick_target_subsystem(ship, hit_point):
-    """Return the subsystem whose hardpoint position is closest to
-    hit_point AND within ~2× its radius.  Falls back to ship.GetHull().
+def _body_frame_delta(ship, hit_point):
+    """Convert ``hit_point - ship.GetWorldLocation()`` into the ship's
+    body frame using the column-vector convention from CLAUDE.md.
+
+    ``R = ship.GetWorldRotation()`` stores body axes as columns. To
+    express ``delta_world`` in body coordinates we project onto each
+    column: ``dx_body = dot(delta_world, R.GetCol(i))``. Equivalent to
+    ``R.transpose() * delta_world`` for orthonormal R.
+
+    Returns ``(dx, dy, dz)`` floats. If ``ship`` has no
+    ``GetWorldRotation`` method (legacy test fakes), treats R as
+    identity so body == world.
     """
+    ship_pos = ship.GetWorldLocation()
+    dx_w = hit_point.x - ship_pos.x
+    dy_w = hit_point.y - ship_pos.y
+    dz_w = hit_point.z - ship_pos.z
+    if not hasattr(ship, "GetWorldRotation"):
+        return (dx_w, dy_w, dz_w)
+    R = ship.GetWorldRotation()
+    cx = R.GetCol(0)
+    cy = R.GetCol(1)
+    cz = R.GetCol(2)
+    return (
+        dx_w * cx.x + dy_w * cx.y + dz_w * cx.z,
+        dx_w * cy.x + dy_w * cy.y + dz_w * cy.z,
+        dx_w * cz.x + dy_w * cz.y + dz_w * cz.z,
+    )
+
+
+def pick_target_subsystem(ship, hit_point):
+    """Return the subsystem closest to ``hit_point`` in the ship's body
+    frame, gated by ``d <= 2 * sub.GetRadius()``. Walks every top-level
+    subsystem in ``ship.GetSubsystems()`` plus the ``_children`` of each
+    weapon-system parent. Hull is excluded from the walk and only
+    returned as the fallback when no candidate passes the gate.
+
+    Falls back to ``ship.GetHull()`` if no subsystem is in range, or
+    ``None`` if there is no hull either.
+
+    Legacy fixture support: if ``ship`` lacks ``GetSubsystems``, walks
+    ``GetChildSubsystem(i)`` for ``i in range(GetNumChildSubsystems())``
+    so the pre-existing ``_FakeShip`` tests stay green.
+    """
+    hull = ship.GetHull() if hasattr(ship, "GetHull") else None
+
+    # Build the candidate list. Hull is never iterated.
+    candidates: list = []
+    if hasattr(ship, "GetSubsystems"):
+        for s in ship.GetSubsystems():
+            if s is None or s is hull:
+                continue
+            candidates.append(s)
+            # Hardpoint children mounted under weapon-system parents.
+            children = getattr(s, "_children", None)
+            if children:
+                candidates.extend(children)
+    else:
+        # Legacy fallback for _FakeShip-style stubs.
+        n = ship.GetNumChildSubsystems() if hasattr(ship, "GetNumChildSubsystems") else 0
+        for i in range(n):
+            s = ship.GetChildSubsystem(i)
+            if s is not None and s is not hull:
+                candidates.append(s)
+
+    bx, by, bz = _body_frame_delta(ship, hit_point)
+
     best = None
     best_dist_sq = float("inf")
-    n = ship.GetNumChildSubsystems() if hasattr(ship, "GetNumChildSubsystems") else 0
-    for i in range(n):
-        sub = ship.GetChildSubsystem(i)
-        if sub is None:
-            continue
-        # Prefer world location (production path: subsystem._parent_ship is
-        # set, GetWorldLocation returns ship_world + subsystem_local).  Fall
-        # back to GetPosition when the test stub doesn't have it (some fake
-        # subsystem classes in unit tests expose only GetPosition).
-        pos = None
-        if hasattr(sub, "GetWorldLocation"):
-            try:
-                pos = sub.GetWorldLocation()
-            except Exception:
-                pos = None
-        if pos is None and hasattr(sub, "GetPosition"):
-            try:
-                pos = sub.GetPosition()
-            except Exception:
-                pos = None
+    for sub in candidates:
+        pos = sub.GetPosition() if hasattr(sub, "GetPosition") else None
         if pos is None:
             continue
         r = sub.GetRadius() if hasattr(sub, "GetRadius") else 0.0
-        dx = hit_point.x - pos.x
-        dy = hit_point.y - pos.y
-        dz = hit_point.z - pos.z
+        dx = bx - pos.x
+        dy = by - pos.y
+        dz = bz - pos.z
         d_sq = dx * dx + dy * dy + dz * dz
         if d_sq > (2.0 * r) ** 2:
             continue
@@ -135,7 +180,7 @@ def pick_target_subsystem(ship, hit_point):
             best_dist_sq = d_sq
     if best is not None:
         return best
-    return ship.GetHull() if hasattr(ship, "GetHull") else None
+    return hull
 
 
 def _shield_face_from_hit_point(ship, hit_point) -> int:
