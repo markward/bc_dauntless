@@ -105,7 +105,8 @@ def test_phaser_hit_point_comes_from_host_ray_trace_mesh(galaxy_red):
     captured = {}
     import engine.appc.combat as combat
 
-    def spy(ship_, damage, hit_point, source, subsystem=None):
+    def spy(ship_, damage, hit_point, source, subsystem=None,
+            *, normal=None, host=None, ship_instances=None):
         captured["hit_point"] = hit_point
 
     sentinel = object()
@@ -122,10 +123,6 @@ def test_phaser_hit_point_comes_from_host_ray_trace_mesh(galaxy_red):
     assert hp.x == pytest.approx(SURFACE_POINT[0])
     assert hp.y == pytest.approx(SURFACE_POINT[1])
     assert hp.z == pytest.approx(SURFACE_POINT[2])
-    # shield_hit must receive the same resolved point so the shield-pass
-    # splash lands on the hull, not the target's center.
-    assert len(host.shield_hits) == 1
-    assert host.shield_hits[0] == SURFACE_POINT
 
 
 def test_phaser_beam_render_endpoint_clipped_to_mesh(galaxy_red):

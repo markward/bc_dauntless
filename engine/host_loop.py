@@ -208,17 +208,17 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
     """Per-frame torpedo motion + collision + damage + renderer push.
 
     Walks the active torpedo registry, advances motion, routes hits
-    through combat.apply_hit (which broadcasts WeaponHitEvent), spawns
-    hit VFX, ages out expired VFX, and pushes current torpedo + hit-VFX
-    lists to the renderer.
+    through combat.apply_hit (which calls hit_feedback.dispatch and
+    broadcasts WeaponHitEvent), ages out expired VFX, and pushes current
+    torpedo + hit-VFX lists to the renderer.
 
     `host` is the _dauntless_host module (the binding from
     host_bindings.cc).  When None (headless tests), the renderer pushes
     are skipped — combat logic still runs.
 
-    `ship_instances` maps ship → renderer instance id; when provided we
-    also fire host.shield_hit on the target's bubble so the shield-impact
-    pass can splash at the strike point.
+    `ship_instances` maps ship → renderer instance id; passed through to
+    apply_hit so hit_feedback.dispatch can fire host.shield_hit on the
+    SHIELD severity path.
     """
     from engine.appc import projectiles, hit_vfx
     from engine.appc.combat import apply_hit, _resolve_hit_point
@@ -231,31 +231,16 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
     )
     for torpedo, ship, subsystem, hit_point in hits:
         apply_hit(ship, torpedo._damage, hit_point,
-                  source=torpedo._source_ship, subsystem=subsystem)
-        hit_vfx.spawn(hit_point)
-        if (host is not None
-                and ship_instances is not None
-                and hasattr(host, "shield_hit")):
-            iid = ship_instances.get(ship)
-            if iid is not None:
-                # Resolved hit point — on the hull when the mesh trace
-                # succeeded; on the bounding-sphere entry point or on
-                # the torpedo's post-advance position otherwise.
-                host.shield_hit(
-                    instance_id=iid,
-                    point=(hit_point.x, hit_point.y, hit_point.z),
-                    rgba=(0.0, 0.0, 0.0, 0.0),
-                    intensity=1.0,
-                )
+                  source=torpedo._source_ship, subsystem=subsystem,
+                  normal=None, host=host, ship_instances=ship_instances)
 
     hit_vfx.update_ages(dt)
 
     # Continuous phaser damage tick.  Each ship's PhaserSystem has banks
     # set firing by StartFiring; advance them here: re-check arc (auto-
     # stop drifters), compute distance falloff, and route damage through
-    # apply_hit (which already routes shields → subsystem → hull and
-    # broadcasts WeaponHitEvent).  Shield-impact splash piggybacks on the
-    # same host.shield_hit call torpedoes use.
+    # apply_hit (which routes shields → subsystem → hull, calls
+    # hit_feedback.dispatch, and broadcasts WeaponHitEvent).
     from engine.appc.subsystems import _emitter_in_arc
     from engine.appc.math import TGPoint3
     for ship in ships_list:
@@ -307,18 +292,9 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
                     fallback_point=target_pos,
                 )
                 apply_hit(target, damage, impact_point,
-                          source=ship, subsystem=target_sub)
-                if (host is not None
-                        and ship_instances is not None
-                        and hasattr(host, "shield_hit")):
-                    iid = ship_instances.get(target)
-                    if iid is not None:
-                        host.shield_hit(
-                            instance_id=iid,
-                            point=(impact_point.x, impact_point.y, impact_point.z),
-                            rgba=(0.0, 0.0, 0.0, 0.0),
-                            intensity=1.0,
-                        )
+                          source=ship, subsystem=target_sub,
+                          normal=impact_normal,
+                          host=host, ship_instances=ship_instances)
 
     if host is not None and hasattr(host, "set_torpedoes"):
         host.set_torpedoes(_build_torpedo_render_data())

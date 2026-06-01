@@ -233,41 +233,81 @@ def _shield_face_from_hit_point(ship, hit_point) -> int:
     return 4 if bx <= 0 else 5
 
 
-def apply_hit(ship, damage: float, hit_point, source, subsystem=None) -> None:
+def apply_hit(ship, damage: float, hit_point, source, subsystem=None,
+              *, normal=None, host=None, ship_instances=None) -> None:
     """Route `damage` to `ship`: shields face first → picked subsystem
-    → hull bleed.  Broadcast WeaponHitEvent at the end so per-ship and
-    broadcast handlers (MissionLib.FriendlyFireHandler) react.
+    → hull bleed.  Then call hit_feedback.dispatch with the per-stage
+    absorbed breakdown + subsystem state transition + surface normal,
+    then broadcast WeaponHitEvent so per-ship and broadcast handlers
+    (MissionLib.FriendlyFireHandler) react.
+
+    normal — TGPoint3 surface normal at hit_point, or None if the
+             mesh trace missed. Threaded to hit_feedback.dispatch.
+    host, ship_instances — passed through to dispatch so it can
+             fire host.shield_hit (the shield-bubble splash on
+             SHIELD severity).
+
+    Dispatch is wrapped in try/except so a renderer or audio crash
+    cannot suppress the WeaponHitEvent broadcast.
     """
     from engine.appc.events import WeaponHitEvent
+    from engine.appc import hit_feedback
     import App
 
     if subsystem is None:
         subsystem = pick_target_subsystem(ship, hit_point)
 
     remaining = float(damage)
+    absorbed_shields = 0.0
+    absorbed_subsystem = 0.0
+    absorbed_hull = 0.0
+    sub_transition = None
+    hull = ship.GetHull() if hasattr(ship, "GetHull") else None
 
     # 1. Shields take it first.
     shields = ship.GetShields() if hasattr(ship, "GetShields") else None
     if shields is not None and hasattr(shields, "ApplyDamage"):
         face = _shield_face_from_hit_point(ship, hit_point)
+        before_shields = remaining
         remaining = shields.ApplyDamage(face, remaining)
+        absorbed_shields = before_shields - remaining
 
     # 2. Bleed remainder to picked subsystem (skip if subsystem is the hull —
     #    the hull-bleed branch below handles that).
-    hull = ship.GetHull() if hasattr(ship, "GetHull") else None
-    if remaining > 0.0 and subsystem is not None and subsystem is not hull:
-        if hasattr(ship, "DamageSystem"):
-            current = subsystem.GetCondition() if hasattr(subsystem, "GetCondition") else remaining
-            absorb = min(remaining, current)
-            ship.DamageSystem(subsystem, absorb)
-            remaining -= absorb
+    if remaining > 0.0 and subsystem is not None and subsystem is not hull \
+            and hasattr(ship, "DamageSystem"):
+        before_flags = _subsystem_state_flags(subsystem)
+        current = subsystem.GetCondition() if hasattr(subsystem, "GetCondition") else remaining
+        absorb = min(remaining, current)
+        ship.DamageSystem(subsystem, absorb)
+        absorbed_subsystem = absorb
+        remaining -= absorb
+        after_flags = _subsystem_state_flags(subsystem)
+        sub_transition = _diff_state(before_flags, after_flags)
 
     # 3. Bleed final remainder to hull.
     if remaining > 0.0 and hull is not None and hasattr(ship, "DamageSystem"):
         ship.DamageSystem(hull, remaining)
+        absorbed_hull = remaining
+        remaining = 0.0
 
-    # 4. Broadcast WeaponHitEvent.  Setting destination = ship so per-ship
-    #    instance handlers fire alongside broadcast handlers.
+    # 4. Fan out VFX + audio + camera shake. Errors swallowed so the
+    #    downstream WeaponHitEvent broadcast always runs.
+    try:
+        hit_feedback.dispatch(
+            ship=ship, source=source, point=hit_point, normal=normal,
+            damage=damage, subsystem=subsystem,
+            absorbed_shields=absorbed_shields,
+            absorbed_subsystem=absorbed_subsystem,
+            absorbed_hull=absorbed_hull,
+            sub_transition=sub_transition,
+            host=host, ship_instances=ship_instances,
+        )
+    except Exception:
+        # Dispatch failures must not suppress mission handlers below.
+        pass
+
+    # 5. Broadcast WeaponHitEvent.
     evt = WeaponHitEvent()
     evt.SetSource(source)
     evt.SetTarget(ship)
