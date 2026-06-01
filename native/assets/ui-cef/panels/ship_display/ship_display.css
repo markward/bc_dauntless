@@ -43,11 +43,8 @@
 /* ── Panel chrome ────────────────────────────────────────────────────── */
 
 .ship-display {
-    position: fixed;
-    width: 18vw;
+    width: 16vw;
     min-width: 220px;
-    background: var(--bc-body-bg);
-    border: 1px solid var(--bc-menu1-base);
     font-family: "Antonio", "Antonio-Regular", sans-serif;
     color: var(--bc-label-text);
     -webkit-font-smoothing: antialiased;
@@ -55,14 +52,32 @@
     --title-color: var(--bc-row-text-bright);
 }
 
+/* Player panel anchors to the bottom-right tactical cluster. */
 #ship-display-player {
+    position: fixed;
     right: 36vw;   /* leaves room for Weapons Settings + Weapons Display */
     bottom: 0;
+    margin: 1vw;
 }
 
-#ship-display-target {
-    left: 1.5vw;
-    top: 4vh;
+/* Top-left stack: target ship status + target list, stacked vertically
+   inside a shared wrapper. The target ship-display has no fixed
+   positioning of its own — it flows in the parent's flex column. */
+#left-panel-stack {
+    position: absolute;
+    top: 24px;
+    left: 24px;
+    width: 280px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+#left-panel-stack #ship-display-target {
+    /* Inherit width from the wrapper; flex layout handles vertical
+       stacking next to the target list. */
+    width: 100%;
+    min-width: 0;
 }
 
 .ship-display[hidden] { display: none; }
@@ -75,11 +90,12 @@
     justify-content: space-between;
     align-items: center;
     background: linear-gradient(90deg, var(--bc-menu1-base), var(--bc-menu1-accent));
-    padding: 4px 8px;
+    border-top-right-radius: 14px;  /* matches target-list/sensors chrome */
+    padding: 6px 14px 6px 18px;     /* matches target-list spacing */
     color: var(--title-color);
     font-weight: 600;
-    font-size: 13px;
-    letter-spacing: 2px;
+    font-size: 14px;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
 }
 
@@ -101,6 +117,7 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
+    background: var(--bc-body-bg);             /* matches target-list body */
     border-left: 4px solid var(--bc-menu1-base);
 }
 
@@ -169,8 +186,8 @@
 .shield--right {
     /* Shared elliptical ring centred on the silhouette. Sized so the
        ring perimeter clears the ship outline. */
-    top: 12%; left: 8%;
-    width: 84%; height: 76%;
+    top: 0%; left: 8%;
+    width: 84%; height: 100%;
     border: 8px solid currentColor;
     border-radius: 50%;
     background: transparent;
@@ -194,8 +211,8 @@
    the stack, just above the FORE arc. The radial gradient makes
    the band's inner edge curve down toward the ship. */
 .shield--top {
-    top: 0; left: 20%;
-    width: 60%; height: 10%;
+    top: 15%; left: 30%;
+    width: 40%; height: 40%;
     background: currentColor;
     border-radius: 50%;
     z-index: 3;
@@ -205,8 +222,8 @@
    stack. z-index 1 so the silhouette can overlap it (the ship
    "covers" its ventral shield from a top-down view). */
 .shield--bottom {
-    bottom: 0; left: 20%;
-    width: 60%; height: 10%;
+    bottom: 15%; left: 30%;
+    width: 40%; height: 40%;
     background: currentColor;
     border-radius: 50%;
     z-index: 1;
