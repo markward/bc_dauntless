@@ -308,6 +308,9 @@ docs/_build/
 docs/site/
 site/
 
+# Runtime TGA→PNG cache for ship-class icons
+native/assets/ui-cef/icons/ships/
+
 # =============================================================================
 # EXCEPTIONS — force-include these even if caught by rules above
 # =============================================================================

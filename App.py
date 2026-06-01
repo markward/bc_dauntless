@@ -116,6 +116,10 @@ from engine.appc.target_menu import (
     _reset_target_menu_singleton,
     wire_to_bridge_set, unwire_from_bridge_set,
 )
+from engine.sdk_ui.widgets.ship_display import (
+    ShipDisplay_Create, ShipDisplay_Cast,
+    ShieldsDisplay_Create, DamageDisplay_Create, STFillGauge_Create,
+)
 from engine.appc.ai import (
     ArtificialIntelligence,
     TGCondition, TGConditionHandler,

@@ -1,0 +1,318 @@
+/* native/assets/ui-cef/panels/ship_display/ship_display.css
+ *
+ * ShipDisplay panel — palette tokens only. No literal RGB values.
+ * Spec: docs/superpowers/specs/2026-05-28-ship-display-panel-design.md
+ *
+ * Tokens shared with sensors.css / target_list.css are redeclared here
+ * following the same pattern those files use (browsers de-duplicate
+ * identical :root entries). New tokens are defined once here.
+ */
+
+:root {
+    /* ── Shared chrome tokens (also in sensors.css, target_list.css) ── */
+    --bc-menu1-base:      rgb(216, 94, 86);
+    --bc-menu1-accent:    rgb(216, 132, 80);
+    --bc-label-text:      rgb(235, 225, 255);
+    --bc-body-bg:         rgba(10, 10, 16, 0.85);
+
+    /* ── Row text variants ─────────────────────────────────────────── */
+    --bc-row-text-bright: rgb(235, 225, 255);
+    --bc-row-text-dim:    rgb(220, 210, 225);
+
+    /* ── Target/affiliation title colours ──────────────────────────── */
+    --bc-target-friendly: rgb(80, 170, 255);     /* Federation / friendly */
+    --bc-target-name:     rgb(220, 60, 60);      /* Hostile target name */
+    --bc-sensor-neutral:  rgb(255, 210, 90);     /* Neutral — same as --bc-gold */
+    --bc-no-target:       rgb(140, 140, 160);    /* No target / unknown */
+
+    /* ── Shield / subsystem identity (g_kEngineeringShieldsColor) ──── */
+    --bc-shields:         rgb(150, 129, 222);
+
+    /* ── Hull integrity bar ────────────────────────────────────────── */
+    --bc-hull-healthy:    rgb(50, 210, 80);      /* >= 70% */
+    --bc-hull-damaged:    rgb(255, 200, 60);     /* 25–70% */
+    --bc-hull-critical:   rgb(255, 80, 40);      /* < 25% */
+    --bc-hull-track:      rgb(40, 40, 40);       /* empty track */
+
+    /* ── Subsystem damage state colours ────────────────────────────── */
+    --bc-damage-damaged:  rgb(184, 255, 0);      /* g_kDamageDisplayDamagedColor */
+    --bc-damage-disabled: rgb(153, 153, 153);    /* g_kDamageDisplayDisabledColor */
+    --bc-damage-destroyed:rgb(255, 64, 0);       /* g_kDamageDisplayDestroyedColor */
+}
+
+/* ── Panel chrome ────────────────────────────────────────────────────── */
+
+.ship-display {
+    width: 16vw;
+    min-width: 220px;
+    font-family: "Antonio", "Antonio-Regular", sans-serif;
+    color: var(--bc-label-text);
+    -webkit-font-smoothing: antialiased;
+    /* Default title colour — overridden by data-affiliation below. */
+    --title-color: var(--bc-row-text-bright);
+}
+
+/* Player panel anchors to the bottom-right tactical cluster. */
+#ship-display-player {
+    position: fixed;
+    right: 36vw;   /* leaves room for Weapons Settings + Weapons Display */
+    bottom: 0;
+    margin: 1vw;
+}
+
+/* Top-left stack: target ship status + target list, stacked vertically
+   inside a shared wrapper. The target ship-display has no fixed
+   positioning of its own — it flows in the parent's flex column. */
+#left-panel-stack {
+    position: absolute;
+    top: 24px;
+    left: 24px;
+    width: 280px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+#left-panel-stack #ship-display-target {
+    /* Inherit width from the wrapper; flex layout handles vertical
+       stacking next to the target list. */
+    width: 100%;
+    min-width: 0;
+}
+
+/* The target-list-panel rule in target_list.css uses position: absolute
+   with its own top/left/width. Inside our flex wrapper we need it to
+   flow with the parent's column layout instead, so the target ship
+   status above can push it down when a target is selected. */
+#left-panel-stack #target-list-panel {
+    position: static;
+    top: auto;
+    left: auto;
+    width: 100%;
+}
+
+.ship-display[hidden] { display: none; }
+.ship-display[data-minimized="true"] .bc-panel__body { display: none; }
+
+/* ── Header ──────────────────────────────────────────────────────────── */
+
+.bc-panel__header {
+    /* Matches target_list.css:.target-list__header and
+       sensors.css:.sensors__header — same gradient, padding, font,
+       and BLACK text on the orange chrome so all three panels share
+       a unified look. */
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: linear-gradient(90deg, var(--bc-menu1-base), var(--bc-menu1-accent));
+    border-top-right-radius: 14px;
+    padding: 6px 14px 6px 18px;
+    color: rgb(0, 0, 0);
+    font-weight: 600;
+    font-size: 14px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+}
+
+/* Minimize chevron — matches sensors__caret styling. Inherits the
+   black header colour so it's visible against the orange chrome. */
+.bc-panel__minimize {
+    background: transparent;
+    border: 0;
+    color: inherit;
+    cursor: pointer;
+    font-size: 11px;
+    opacity: 0.85;
+    padding: 0 4px;
+    line-height: 1;
+    user-select: none;
+}
+
+/* ── Body ────────────────────────────────────────────────────────────── */
+
+.bc-panel__body {
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    background: var(--bc-body-bg);             /* matches target-list body */
+    border-left: 4px solid var(--bc-menu1-base);
+}
+
+/* ── Affiliation indicator ───────────────────────────────────────────── */
+
+/* Header chrome stays uniform across both ship-display panels and the
+   sensors / target-list panels (black text on the salmon gradient).
+   Affiliation is conveyed instead by the body's border-left colour
+   on the target panel, so an ENEMY target gets a red left edge,
+   NEUTRAL gold, etc. The player panel always uses the default
+   --bc-menu1-base border (matches the other tactical panels). */
+.ship-display[data-role="target"][data-affiliation="FRIENDLY"] .bc-panel__body { border-left-color: var(--bc-target-friendly); }
+.ship-display[data-role="target"][data-affiliation="ENEMY"]    .bc-panel__body { border-left-color: var(--bc-target-name); }
+.ship-display[data-role="target"][data-affiliation="NEUTRAL"]  .bc-panel__body { border-left-color: var(--bc-sensor-neutral); }
+.ship-display[data-role="target"][data-affiliation="NONE"]     .bc-panel__body { border-left-color: var(--bc-no-target); }
+.ship-display[data-role="target"][data-affiliation="UNKNOWN"]  .bc-panel__body { border-left-color: var(--bc-no-target); }
+
+/* ── Silhouette + shield bubbles ────────────────────────────────────── */
+
+.ship-display__silhouette-stack {
+    position: relative;
+    width: 100%;
+    height: 120px;
+    /* Establish a local stacking context so the z-index values below
+       resolve against the stack itself, not the wider panel chrome. */
+    isolation: isolate;
+}
+
+.ship-display__silhouette {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: contain;
+    opacity: 0.85;
+    z-index: 2; /* above ventral bubble, below dorsal + cardinal bubbles */
+}
+
+.ship-display__shield {
+    position: absolute;
+    pointer-events: none;
+    opacity: 0.5; /* 50% translucent baseline so the silhouette shows through */
+    color: var(--bc-shields);  /* drives currentColor in the gradients below */
+    transition: opacity 120ms ease, color 120ms ease;
+}
+
+/* Six distinct shield segments arranged around the silhouette:
+
+     ┌─────── TOP ────────┐    ← dorsal hemisphere indicator (top edge)
+     │       FORE         │    ← bow arc, 60° wedge
+     │  PORT   🚢  STAR   │    ← port + starboard arcs, 60° wedges
+     │       REAR         │    ← stern arc, 60° wedge
+     └────── BOTTOM ──────┘    ← ventral hemisphere indicator (bottom edge)
+
+   The four cardinal shields share one elliptical ring centred on the
+   silhouette. Each shield's clip-path keeps only a 60° wedge of the
+   ring visible, leaving 30° gaps at the diagonals so the four arcs
+   read as separate segments. Both inner and outer edges of every arc
+   are curved (they're the inside / outside of the same ring border).
+
+   TOP and BOTTOM are drawn as wide, thin curved bands hugging the
+   very top and bottom edges of the silhouette stack — visually
+   distinct from the bow/stern arcs, indicating dorsal/ventral
+   coverage. */
+
+.shield--front,
+.shield--rear,
+.shield--left,
+.shield--right {
+    /* Shared elliptical ring centred on the silhouette. Sized so the
+       ring perimeter clears the ship outline. */
+    top: 0%; left: 8%;
+    width: 84%; height: 100%;
+    border: 8px solid currentColor;
+    border-radius: 50%;
+    background: transparent;
+    box-sizing: border-box;
+    z-index: 4;
+}
+
+/* 60° wedges from the centre — corners chosen so the wedge spans ±30°
+   of the compass direction. The ~30° gaps between adjacent wedges
+   leave clear diagonals so the four arcs read as separate segments.
+
+   Polygon math: a 60° wedge centred on the cardinal direction needs
+   rays at ±30° off that axis. cot(30°) ≈ 1.732, so the ray hits the
+   far edge at 50% ± (50%/1.732) ≈ 50% ± 28.9% → 21% and 79%. */
+.shield--front { clip-path: polygon(50% 50%, 21% 0,   79% 0  ); }
+.shield--rear  { clip-path: polygon(50% 50%, 79% 100%, 21% 100%); }
+.shield--left  { clip-path: polygon(50% 50%, 0   79%, 0   21%); }
+.shield--right { clip-path: polygon(50% 50%, 100% 21%, 100% 79%); }
+
+/* TOP — dorsal indicator. Wide, very thin curved band at the top of
+   the stack, just above the FORE arc. The radial gradient makes
+   the band's inner edge curve down toward the ship. */
+.shield--top {
+    top: 15%; left: 30%;
+    width: 40%; height: 40%;
+    background: currentColor;
+    border-radius: 50%;
+    z-index: 3;
+}
+
+/* BOTTOM — ventral indicator. Mirror of TOP at the bottom of the
+   stack. z-index 1 so the silhouette can overlap it (the ship
+   "covers" its ventral shield from a top-down view). */
+.shield--bottom {
+    bottom: 15%; left: 30%;
+    width: 40%; height: 40%;
+    background: currentColor;
+    border-radius: 50%;
+    z-index: 1;
+}
+
+/* Integrity drives `color`, which the gradients above pick up via
+   `currentColor`. Opacity baseline (0.5) is on the base rule; damaged
+   and down states adjust it as visual cues. */
+.ship-display__shield[data-integrity="full"]    { color: var(--bc-shields); }
+.ship-display__shield[data-integrity="damaged"] { color: var(--bc-hull-damaged); opacity: 0.35; }
+.ship-display__shield[data-integrity="down"]    { opacity: 0; }
+
+/* ── Damage list ─────────────────────────────────────────────────────── */
+
+.ship-display__damage {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    font-size: 11px;
+}
+
+.damage-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 2px 0;
+    color: var(--bc-row-text-dim);
+}
+
+.damage-row[data-state="damaged"]   { color: var(--bc-damage-damaged); }
+.damage-row[data-state="disabled"]  { color: var(--bc-damage-disabled); }
+.damage-row[data-state="destroyed"] { color: var(--bc-damage-destroyed); }
+
+/* ── Hull bar ────────────────────────────────────────────────────────── */
+
+.ship-display__hull-bar {
+    position: relative;
+    height: 10px;
+    background: var(--bc-hull-track);
+    border: 1px solid var(--bc-hull-track);
+    border-radius: 2px;
+}
+
+.ship-display__hull-fill {
+    height: 100%;
+    width: 100%;
+    border-radius: 2px;
+    transition: width 200ms ease;
+}
+
+.ship-display[data-hull="healthy"]  .ship-display__hull-fill { background: var(--bc-hull-healthy); }
+.ship-display[data-hull="damaged"]  .ship-display__hull-fill { background: var(--bc-hull-damaged); }
+.ship-display[data-hull="critical"] .ship-display__hull-fill { background: var(--bc-hull-critical); }
+
+.ship-display__hull-pct {
+    position: absolute;
+    right: 4px;
+    top: -2px;
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    color: var(--bc-row-text-bright);
+}
+
+/* ── Target extras (range / speed) ──────────────────────────────────── */
+
+.ship-display__target-extras {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--bc-row-text-dim);
+}
+
+/* Target extras are meaningless on the player panel — always hide. */
+.ship-display[data-role="player"] .ship-display__target-extras { display: none; }

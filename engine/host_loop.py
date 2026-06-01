@@ -2082,6 +2082,23 @@ def run(mission_name: Optional[str] = None,
         registry.register(target_list_view)
         registry.register(sensors_panel)
 
+        # SDK ShipDisplay factories register against this same registry.
+        # In stock BC, Bridge/TacticalMenuHandlers.py:517,714 invokes
+        # App.ShipDisplay_Create twice during tactical-UI construction.
+        # That path doesn't yet run in our host loop, so we construct
+        # the two panels eagerly here. Each panel resolves its bound
+        # ship via MissionLib.GetPlayer / player.GetTarget on every
+        # render — no SetShipID is needed.
+        from engine.sdk_ui.widgets.ship_display import (
+            set_panel_registry,
+            _reset_for_bridge_teardown,
+            ShipDisplay_Create,
+        )
+        _reset_for_bridge_teardown()  # belt-and-braces: clear any stale state
+        set_panel_registry(registry)  # inject the live registry
+        ship_display_player = ShipDisplay_Create()  # ROLE_PLAYER, registers
+        ship_display_target = ShipDisplay_Create()  # ROLE_TARGET, registers
+
         # Wire (and re-wire on mission swap) the target-menu singleton
         # to the player's spatial set. controller.post_load_hook fires
         # after every successful loader.load() — both the initial load
@@ -2182,8 +2199,10 @@ def run(mission_name: Optional[str] = None,
                 # Target list only renders in the exterior tactical view.
                 # SPACE toggles view_mode.is_exterior ↔ view_mode.is_bridge.
                 # The setter is idempotent so writing every tick is cheap.
-                target_list_view.visible = view_mode.is_exterior
-                sensors_panel.visible    = view_mode.is_exterior
+                target_list_view.visible    = view_mode.is_exterior
+                sensors_panel.visible       = view_mode.is_exterior
+                ship_display_player.visible = view_mode.is_exterior
+                ship_display_target.visible = view_mode.is_exterior
 
                 # Sensor-visibility update — flip per-row IsVisible
                 # based on range from the player. TargetListView

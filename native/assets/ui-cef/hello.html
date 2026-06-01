@@ -6,6 +6,7 @@
     <link rel="stylesheet" href="css/hello.css">
     <link rel="stylesheet" href="css/target_list.css">
     <link rel="stylesheet" href="css/sensors.css">
+    <link rel="stylesheet" href="panels/ship_display/ship_display.css">
 </head>
 <body>
     <!-- Pause menu overlay.
@@ -22,14 +23,51 @@
         </div>
     </div>
 
-    <!-- Target list panel.
-         State pushed via setTargetList({visible, selected, rows});
-         row clicks fire dauntlessEvent('target/<ship>'); PanelRegistry
-         routes to TargetListView.dispatch_event in Python.
-         Spec: docs/ui_designs/02-tactical-cluster.md -->
-    <div id="target-list-panel" class="target-list--hidden">
-        <div class="target-list__header">Targets</div>
-        <div class="target-list__body" id="target-list-body"></div>
+    <!-- Top-left panel stack: target ship status (when a target is
+         selected) sits above the target list, both inside one wrapper
+         so they share a parent and stack via flex column instead of
+         overlapping each other. -->
+    <div id="left-panel-stack">
+        <!-- Target ship status — visible only when the player has
+             selected a target ship. Renders the same composite
+             (silhouette + shields + hull bar) as the player panel. -->
+        <section class="bc-panel ship-display" id="ship-display-target" data-role="target" hidden>
+          <header class="bc-panel__header">
+            <span class="bc-panel__title" data-bind="title">NO TARGET</span>
+            <button class="bc-panel__minimize" data-event="ship-target/minimize-toggle"
+                    onclick="dauntlessEvent('ship-target/minimize-toggle')">&#9660;</button>
+          </header>
+          <div class="bc-panel__body">
+            <div class="ship-display__silhouette-stack">
+              <img class="ship-display__silhouette" data-bind="silhouette" alt="" hidden>
+              <div class="ship-display__shield shield--top"    data-bind="shield-top"    data-integrity="down"></div>
+              <div class="ship-display__shield shield--bottom" data-bind="shield-bottom" data-integrity="down"></div>
+              <div class="ship-display__shield shield--front"  data-bind="shield-front"  data-integrity="down"></div>
+              <div class="ship-display__shield shield--rear"   data-bind="shield-rear"   data-integrity="down"></div>
+              <div class="ship-display__shield shield--left"   data-bind="shield-left"   data-integrity="down"></div>
+              <div class="ship-display__shield shield--right"  data-bind="shield-right"  data-integrity="down"></div>
+            </div>
+            <ul class="ship-display__damage" data-bind="damage-list"></ul>
+            <div class="ship-display__hull-bar">
+              <div class="ship-display__hull-fill" data-bind="hull-fill"></div>
+              <span class="ship-display__hull-pct" data-bind="hull-pct">0%</span>
+            </div>
+            <div class="ship-display__target-extras" data-bind="target-extras">
+              <span data-bind="range">&#8212; km</span>
+              <span data-bind="speed">&#8212; kph</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- Target list panel.
+             State pushed via setTargetList({visible, selected, rows});
+             row clicks fire dauntlessEvent('target/<ship>'); PanelRegistry
+             routes to TargetListView.dispatch_event in Python.
+             Spec: docs/ui_designs/02-tactical-cluster.md -->
+        <div id="target-list-panel" class="target-list--hidden">
+            <div class="target-list__header">Targets</div>
+            <div class="target-list__body" id="target-list-body"></div>
+        </div>
     </div>
 
     <!-- Sensors / radar panel.
@@ -59,8 +97,39 @@
         </div>
     </div>
 
+    <!-- ShipDisplay panels: player (bottom-right cluster) + target (top-left overlay).
+         Player state pushed via setShipDisplay("player", {visible, ship_name,
+         affiliation, species, hull_pct, shields_pct, damage, range_m, speed_kph,
+         minimized, silhouette_url}); target state via setShipDisplay("target", ...).
+         Target minimize chevron fires dauntlessEvent('ship-target/minimize-toggle').
+         Spec: docs/superpowers/specs/2026-05-28-ship-display-panel-design.md -->
+    <section class="bc-panel ship-display" id="ship-display-player" data-role="player" hidden>
+      <header class="bc-panel__header">
+        <span class="bc-panel__title" data-bind="title">PLAYER</span>
+        <button class="bc-panel__minimize" data-event="ship-player/minimize-toggle"
+                onclick="dauntlessEvent('ship-player/minimize-toggle')">&#9660;</button>
+      </header>
+      <div class="bc-panel__body">
+        <div class="ship-display__silhouette-stack">
+          <img class="ship-display__silhouette" data-bind="silhouette" alt="" hidden>
+          <div class="ship-display__shield shield--top"    data-bind="shield-top"    data-integrity="full"></div>
+          <div class="ship-display__shield shield--bottom" data-bind="shield-bottom" data-integrity="full"></div>
+          <div class="ship-display__shield shield--front"  data-bind="shield-front"  data-integrity="full"></div>
+          <div class="ship-display__shield shield--rear"   data-bind="shield-rear"   data-integrity="full"></div>
+          <div class="ship-display__shield shield--left"   data-bind="shield-left"   data-integrity="full"></div>
+          <div class="ship-display__shield shield--right"  data-bind="shield-right"  data-integrity="full"></div>
+        </div>
+        <ul class="ship-display__damage" data-bind="damage-list"></ul>
+        <div class="ship-display__hull-bar">
+          <div class="ship-display__hull-fill" data-bind="hull-fill"></div>
+          <span class="ship-display__hull-pct" data-bind="hull-pct">100%</span>
+        </div>
+      </div>
+    </section>
+
     <script src="js/pause_menu.js"></script>
     <script src="js/target_list.js"></script>
     <script src="js/sensors.js"></script>
+    <script src="panels/ship_display/ship_display.js"></script>
 </body>
 </html>

@@ -328,6 +328,13 @@ class ShipSubsystem(TGEventHandlerObject):
         self._targetable: int = 0
         self._primary: int = 0
         self._disabled_percentage: float = 0.25
+        # Explicit damage/destroyed flags.  SetDamaged/SetDestroyed let tests
+        # and the damage system force these states independently of _condition;
+        # the predicate methods also fall back to condition-based derivation so
+        # both paths stay consistent (e.g. applying condition damage will also
+        # make IsDestroyed() true when condition hits zero).
+        self._damaged: bool = False
+        self._destroyed: bool = False
 
     def GetName(self) -> str:
         return self._name
@@ -713,6 +720,36 @@ class ShipSubsystem(TGEventHandlerObject):
             return 0
         threshold = self._disabled_percentage * self._max_condition
         return 1 if self._condition <= threshold else 0
+
+    def IsDamaged(self) -> int:
+        """Returns 1 if the subsystem has taken any damage (condition below
+        max) or the explicit _damaged flag is set, 0 when fully healthy.
+
+        Condition-based derivation: damaged = 0 < condition < max_condition.
+        The explicit SetDamaged flag lets tests and the damage system
+        force the state without touching condition fields."""
+        if self._damaged:
+            return 1
+        if self._max_condition > 0.0 and 0.0 < self._condition < self._max_condition:
+            return 1
+        return 0
+
+    def SetDamaged(self, value) -> None:
+        """Explicitly mark this subsystem as damaged (or clear the flag)."""
+        self._damaged = bool(value)
+
+    def IsDestroyed(self) -> int:
+        """Returns 1 if the subsystem is permanently destroyed (condition == 0)
+        or the explicit _destroyed flag is set, 0 otherwise."""
+        if self._destroyed:
+            return 1
+        if self._max_condition > 0.0 and self._condition <= 0.0:
+            return 1
+        return 0
+
+    def SetDestroyed(self, value) -> None:
+        """Explicitly mark this subsystem as destroyed (or clear the flag)."""
+        self._destroyed = bool(value)
 
     def IsHittableFromLocation(self, vWorldLoc) -> float:
         """SDK Preprocessors.py:980 — `fHittable = pSubsystem.IsHittableFromLocation(pOurShip.GetWorldLocation())`.
@@ -1367,11 +1404,40 @@ class SensorSubsystem(PoweredSubsystem):
         super().__init__(name)
         self._base_sensor_range: float = 0.0
         self._max_probes: int = 0
+        # Objects whose existence is known to the sensor system.
+        # Populated by the game loop / radar sweep logic.  Default is
+        # empty (nothing known), matching the initial unscanned state.
+        self._known_objects: set = set()
 
     def GetBaseSensorRange(self) -> float:           return self._base_sensor_range
     def SetBaseSensorRange(self, v) -> None:         self._base_sensor_range = float(v)
     def GetMaxProbes(self) -> int:                   return self._max_probes
     def SetMaxProbes(self, v) -> None:               self._max_probes = int(v)
+
+    def IsObjectKnown(self, obj) -> int:
+        """Returns 1 if *obj* is in the known-contacts set, 0 otherwise.
+
+        The SDK ShieldsDisplay.SetShipIcon gate (line 329-338) checks this
+        before showing a target panel — unknown contacts render no data.
+        """
+        try:
+            return 1 if obj.GetObjID() in self._known_objects else 0
+        except Exception:
+            return 0
+
+    def AddKnownObject(self, obj) -> None:
+        """Register *obj* as a known sensor contact."""
+        try:
+            self._known_objects.add(obj.GetObjID())
+        except Exception:
+            pass
+
+    def RemoveKnownObject(self, obj) -> None:
+        """Remove *obj* from known contacts."""
+        try:
+            self._known_objects.discard(obj.GetObjID())
+        except Exception:
+            pass
 
 
 class ImpulseEngineSubsystem(PoweredSubsystem):

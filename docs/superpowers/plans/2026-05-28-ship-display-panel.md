@@ -1453,76 +1453,419 @@ git commit -m "feat(ui): ShipDisplay HTML/CSS/JS bundle with palette tokens"
 
 ---
 
-## Task 9: SVG silhouettes for Galaxy and Warbird
+## Task 9: Wire the game's ship icon TGAs to the panel via a runtime TGA→PNG cache
+
+The game ships its ship-class icons as 128×128 TGAs at `game/data/Icons/Ships/*.tga` (Galaxy.tga, Warbird.tga, Akira.tga, Sovereign.tga, etc.). The SDK loads them via `sdk/Build/scripts/Icons/ShipIcons.py:LoadShipIcons()` which registers each by species integer (`App.SPECIES_GALAXY = 0`, `App.SPECIES_WARBIRD = 18`, …) in `g_kIconManager` under the group name `"ShipIcons"`.
+
+CEF can't display TGA natively. We add a tiny pure-Python TGA decoder + PNG encoder so the engine can convert each requested icon on first access and cache the PNG on disk. JS then loads the PNG via a normal `<img src>`.
 
 **Files:**
-- Create: `native/assets/ui-cef/panels/ship_display/silhouettes/galaxy.svg`
-- Create: `native/assets/ui-cef/panels/ship_display/silhouettes/warbird.svg`
-- Modify: `native/assets/ui-cef/panels/ship_display/ship_display.css` (background-image rules)
-- Modify: `native/assets/ui-cef/panels/ship_display/ship_display.js` (already references species class)
+- Create: `engine/ui/tga.py` — TGA decoder (uncompressed RGB / RGBA + RLE for completeness)
+- Create: `engine/ui/png_encoder.py` — minimal PNG encoder using stdlib `zlib`
+- Create: `engine/ui/ship_icons.py` — `icon_path_for_species(name) -> str | None`. Looks up the TGA at `game/data/Icons/Ships/<name>.tga`, converts on first call, writes the PNG into `native/assets/ui-cef/icons/ships/<name>.png`, returns the relative URL `icons/ships/<name>.png` for JS use. Subsequent calls return the cached path.
+- Modify: `engine/ui/ship_display_panel.py` — `_species_key_for(ship)` already returns the species short name (e.g. `"Galaxy"`). In `_snapshot` (or `render_payload`), call `icon_path_for_species(species_key)` and include the resulting URL in the JS payload as `state.silhouette_url` (None when missing).
+- Modify: `native/assets/ui-cef/panels/ship_display/ship_display.js` — replace the species-class hack with an `<img>` element whose `src` is `state.silhouette_url`. Hide the img when None.
+- Modify: `native/assets/ui-cef/panels/ship_display/ship_display.html` — change the silhouette container from `<div>` to `<img class="ship-display__silhouette" data-bind="silhouette">`.
+- Modify: `native/assets/ui-cef/panels/ship_display/ship_display.css` — drop the `silhouette--galaxy` etc. background-image rules; instead style the `<img>` to fit the silhouette stack (`width: 100%; height: 100%; object-fit: contain; opacity: 0.8;`). Affiliation tinting via CSS filter (`filter: hue-rotate(...)` or similar) — or accept that the icon renders in its native colour (the original BC also shows the icon in its native colour with shield overlays on top).
+- Add to `.gitignore`: `native/assets/ui-cef/icons/ships/` (so the generated PNG cache isn't committed)
+- Test: `tests/unit/test_tga.py`, `tests/unit/test_png_encoder.py`, `tests/unit/test_ship_icons.py`
 
-- [ ] **Step 1: Create Galaxy silhouette SVG**
+- [ ] **Step 1: Write the failing TGA decoder tests**
 
-Create `native/assets/ui-cef/panels/ship_display/silhouettes/galaxy.svg`:
+```python
+# tests/unit/test_tga.py
+"""TGA decoder. Only covers the cases the BC game icons use:
+uncompressed 24/32-bit BGR/BGRA (Targa Type 2)."""
+import struct
 
-```xml
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 120" width="100%" height="100%">
-  <!-- Top-down Galaxy-class silhouette, tinted via fill=currentColor.
-       Saucer (ellipse) + neck + engineering hull + two nacelles.
-       Coordinates are approximate but recognisable at panel size. -->
-  <g fill="currentColor" stroke="none">
-    <ellipse cx="100" cy="50" rx="55" ry="22"/>
-    <rect x="92" y="60" width="16" height="22"/>
-    <rect x="80" y="78" width="40" height="20" rx="4"/>
-    <rect x="40" y="64" width="50" height="8" rx="3"/>
-    <rect x="110" y="64" width="50" height="8" rx="3"/>
-    <rect x="35" y="58" width="55" height="16" rx="6"/>
-    <rect x="110" y="58" width="55" height="16" rx="6"/>
-  </g>
-</svg>
+
+def _make_tga(width: int, height: int, pixels_bgra: bytes) -> bytes:
+    """Build a minimal uncompressed 32-bit BGRA TGA. Y-flipped per
+    typical authoring (origin at top-left)."""
+    header = struct.pack(
+        "<BBBHHBHHHHBB",
+        0,          # id length
+        0,          # color map type (none)
+        2,          # image type (uncompressed true-color)
+        0, 0, 0,    # color map spec
+        0, 0,       # x origin, y origin
+        width, height,
+        32,         # bits per pixel
+        0x20,       # image descriptor (0x20 = origin top-left, 8 alpha bits)
+    )
+    return header + pixels_bgra
+
+
+def test_decodes_uncompressed_bgra():
+    from engine.ui.tga import decode_tga
+    # 2x1 image: red pixel + blue pixel (in BGRA order).
+    pixels = bytes([0, 0, 255, 255,   # red
+                    255, 0, 0, 255])  # blue
+    blob = _make_tga(2, 1, pixels)
+    width, height, rgba = decode_tga(blob)
+    assert width == 2 and height == 1
+    # rgba is RGBA (not BGRA)
+    assert rgba == bytes([255, 0, 0, 255,  0, 0, 255, 255])
+
+
+def test_decodes_uncompressed_bgr():
+    from engine.ui.tga import decode_tga
+    # 1x1 image, 24-bit BGR.
+    header = struct.pack("<BBBHHBHHHHBB", 0,0,2, 0,0,0, 0,0, 1,1, 24, 0x20)
+    pixels = bytes([0, 255, 0])  # green
+    width, height, rgba = decode_tga(header + pixels)
+    assert (width, height) == (1, 1)
+    assert rgba == bytes([0, 255, 0, 255])
 ```
 
-- [ ] **Step 2: Create Warbird silhouette SVG**
+- [ ] **Step 2: Implement the TGA decoder**
 
-Create `native/assets/ui-cef/panels/ship_display/silhouettes/warbird.svg`:
+```python
+# engine/ui/tga.py
+"""Minimal TGA decoder for the game's ship-icon assets.
 
-```xml
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 120" width="100%" height="100%">
-  <!-- Top-down Romulan Warbird silhouette — distinctive twin-curve hull.
-       Simplified geometry; tinted via fill=currentColor. -->
-  <g fill="currentColor" stroke="none">
-    <path d="M 100 20
-             Q 30 30 30 60
-             Q 30 90 100 100
-             Q 170 90 170 60
-             Q 170 30 100 20 Z"/>
-    <rect x="92" y="55" width="16" height="10"/>
-  </g>
-</svg>
+The BC ship icons under game/data/Icons/Ships/ are uncompressed 32-bit
+BGRA Targa Type 2 images (128x128). This decoder targets that case
+plus uncompressed 24-bit BGR; RLE (Type 10) is not used by these
+assets and is unsupported.
+
+Returns (width, height, rgba_bytes) — rgba_bytes is RGBA (not BGRA),
+suitable for direct PNG encoding.
+"""
+from __future__ import annotations
+
+import struct
+
+
+def decode_tga(blob: bytes) -> tuple[int, int, bytes]:
+    if len(blob) < 18:
+        raise ValueError("TGA header truncated")
+    (id_length, cmap_type, image_type,
+     _cmap_first, _cmap_len, _cmap_size,
+     _x_origin, _y_origin,
+     width, height,
+     bpp, descriptor) = struct.unpack("<BBBHHBHHHHBB", blob[:18])
+
+    if image_type != 2:
+        raise ValueError(f"unsupported TGA image type {image_type}; "
+                         "only uncompressed true-colour (2) is implemented")
+    if bpp not in (24, 32):
+        raise ValueError(f"unsupported bpp {bpp}")
+    if cmap_type != 0:
+        raise ValueError("colour-mapped TGAs not supported")
+
+    pixel_start = 18 + id_length
+    bytes_per_pixel = bpp // 8
+    expected = width * height * bytes_per_pixel
+    pixels = blob[pixel_start:pixel_start + expected]
+    if len(pixels) < expected:
+        raise ValueError("TGA pixel data truncated")
+
+    # Convert BGR(A) → RGBA
+    rgba = bytearray(width * height * 4)
+    for i in range(width * height):
+        src = i * bytes_per_pixel
+        dst = i * 4
+        rgba[dst]     = pixels[src + 2]  # R
+        rgba[dst + 1] = pixels[src + 1]  # G
+        rgba[dst + 2] = pixels[src]      # B
+        rgba[dst + 3] = pixels[src + 3] if bytes_per_pixel == 4 else 255
+
+    # Bit 5 of descriptor: 1 = origin at top-left, 0 = origin at bottom-left.
+    top_left = bool(descriptor & 0x20)
+    if not top_left:
+        # Flip rows so the output is always top-down.
+        row = width * 4
+        flipped = bytearray(len(rgba))
+        for y in range(height):
+            src_off = (height - 1 - y) * row
+            flipped[y * row:(y + 1) * row] = rgba[src_off:src_off + row]
+        rgba = flipped
+
+    return width, height, bytes(rgba)
 ```
 
-- [ ] **Step 3: Add background-image rules to CSS**
+- [ ] **Step 3: Run TGA tests**
 
-Append to `native/assets/ui-cef/panels/ship_display/ship_display.css`:
+Run: `uv run pytest tests/unit/test_tga.py -v`
+Expected: 2 passed.
+
+- [ ] **Step 4: Write the failing PNG encoder tests**
+
+```python
+# tests/unit/test_png_encoder.py
+import struct
+import zlib
+
+
+def test_emits_valid_png_signature():
+    from engine.ui.png_encoder import encode_png_rgba
+    rgba = bytes([255, 0, 0, 255])
+    blob = encode_png_rgba(1, 1, rgba)
+    assert blob.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_emits_ihdr_with_correct_dimensions():
+    from engine.ui.png_encoder import encode_png_rgba
+    rgba = bytes([0, 0, 0, 255] * 4)  # 2x2
+    blob = encode_png_rgba(2, 2, rgba)
+    # IHDR starts at byte 8, length=13, type=IHDR
+    assert blob[12:16] == b"IHDR"
+    width, height = struct.unpack(">II", blob[16:24])
+    assert (width, height) == (2, 2)
+
+
+def test_round_trips_through_pillow_when_available():
+    """If Pillow happens to be installed in the dev env, confirm we
+    produced a valid PNG. Skipped otherwise — PNG encoder is unit
+    tested by structural checks above."""
+    try:
+        from PIL import Image
+        import io
+    except ImportError:
+        return
+    from engine.ui.png_encoder import encode_png_rgba
+    rgba = bytes([200, 100, 50, 255,  10, 20, 30, 255]) * 2  # 2x2
+    blob = encode_png_rgba(2, 2, rgba)
+    img = Image.open(io.BytesIO(blob))
+    assert img.size == (2, 2)
+    assert img.mode == "RGBA"
+```
+
+- [ ] **Step 5: Implement the PNG encoder**
+
+```python
+# engine/ui/png_encoder.py
+"""Minimal PNG encoder using only the standard library.
+
+Encodes RGBA pixel data into a valid PNG byte stream. No interlacing,
+no palette, no compression-level tuning — just enough for the ship-icon
+cache. Each scanline gets a filter byte of 0 (None) followed by the
+raw RGBA bytes; the concatenated stream is deflated as one IDAT chunk.
+"""
+from __future__ import annotations
+
+import struct
+import zlib
+
+_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+
+def _chunk(chunk_type: bytes, data: bytes) -> bytes:
+    length = struct.pack(">I", len(data))
+    crc = struct.pack(">I", zlib.crc32(chunk_type + data) & 0xFFFFFFFF)
+    return length + chunk_type + data + crc
+
+
+def encode_png_rgba(width: int, height: int, rgba: bytes) -> bytes:
+    if len(rgba) != width * height * 4:
+        raise ValueError("rgba length does not match width*height*4")
+    # IHDR: width, height, bit depth=8, color type=6 (RGBA), compression=0,
+    # filter=0, interlace=0.
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
+    # IDAT: each scanline prefixed with filter byte 0 (no filter).
+    row = width * 4
+    raw = bytearray()
+    for y in range(height):
+        raw.append(0)
+        raw.extend(rgba[y * row:(y + 1) * row])
+    idat = zlib.compress(bytes(raw), 6)
+    return (_SIGNATURE
+            + _chunk(b"IHDR", ihdr)
+            + _chunk(b"IDAT", idat)
+            + _chunk(b"IEND", b""))
+```
+
+- [ ] **Step 6: Run PNG tests**
+
+Run: `uv run pytest tests/unit/test_png_encoder.py -v`
+Expected: 3 passed (the round-trip test is skipped without Pillow).
+
+- [ ] **Step 7: Write the failing ship-icon cache tests**
+
+```python
+# tests/unit/test_ship_icons.py
+"""ship_icons.icon_path_for_species converts the game's TGA on first
+access and serves the cached PNG thereafter."""
+import os
+import shutil
+
+
+def test_returns_none_for_unknown_species(tmp_path, monkeypatch):
+    from engine.ui import ship_icons
+    monkeypatch.setattr(ship_icons, "_GAME_ICONS_DIR", str(tmp_path / "missing"))
+    monkeypatch.setattr(ship_icons, "_CACHE_DIR", str(tmp_path / "cache"))
+    assert ship_icons.icon_path_for_species("NoSuchShip") is None
+
+
+def test_converts_tga_and_caches_png(tmp_path, monkeypatch):
+    import struct
+    from engine.ui import ship_icons
+    # Build a 2x1 BGRA TGA in tmp dir
+    icons_dir = tmp_path / "icons"
+    icons_dir.mkdir()
+    pixels = bytes([0,0,255,255,  255,0,0,255])
+    header = struct.pack("<BBBHHBHHHHBB", 0,0,2, 0,0,0, 0,0, 2,1, 32, 0x20)
+    (icons_dir / "Galaxy.tga").write_bytes(header + pixels)
+    cache_dir = tmp_path / "cache"
+
+    monkeypatch.setattr(ship_icons, "_GAME_ICONS_DIR", str(icons_dir))
+    monkeypatch.setattr(ship_icons, "_CACHE_DIR",      str(cache_dir))
+    ship_icons.reset_cache()
+
+    url = ship_icons.icon_path_for_species("Galaxy")
+    assert url == "icons/ships/Galaxy.png"
+    assert (cache_dir / "Galaxy.png").is_file()
+
+    # Second call should not re-encode (mtime stays the same).
+    first_mtime = (cache_dir / "Galaxy.png").stat().st_mtime
+    url2 = ship_icons.icon_path_for_species("Galaxy")
+    assert url2 == url
+    assert (cache_dir / "Galaxy.png").stat().st_mtime == first_mtime
+```
+
+- [ ] **Step 8: Implement ship_icons.py**
+
+```python
+# engine/ui/ship_icons.py
+"""On-demand TGA→PNG conversion + disk cache for ship-class icons.
+
+Looks up `<game>/data/Icons/Ships/<name>.tga` (per the SDK loader at
+sdk/Build/scripts/Icons/ShipIcons.py), decodes the TGA, encodes a PNG,
+writes it to a cache directory, and returns the CEF-relative URL.
+Subsequent calls return the cached URL without re-encoding.
+
+The species name passed in must match the TGA filename stem (e.g.
+"Galaxy", "Warbird", "BirdOfPrey"). The SDK exposes these via
+App.SPECIES_GALAXY etc.; engine/appc/properties.py:ShipProperty
+exposes the corresponding string via GetSpeciesName.
+"""
+from __future__ import annotations
+
+import os
+from typing import Optional
+
+from engine.ui.tga import decode_tga
+from engine.ui.png_encoder import encode_png_rgba
+
+
+_GAME_ICONS_DIR = "game/data/Icons/Ships"
+_CACHE_DIR      = "native/assets/ui-cef/icons/ships"
+_URL_PREFIX     = "icons/ships"
+
+# species name → cached URL (None = known-missing).
+_resolved: dict[str, Optional[str]] = {}
+
+
+def reset_cache() -> None:
+    _resolved.clear()
+
+
+def icon_path_for_species(name: str) -> Optional[str]:
+    if not name:
+        return None
+    if name in _resolved:
+        return _resolved[name]
+
+    tga_path = os.path.join(_GAME_ICONS_DIR, name + ".tga")
+    if not os.path.isfile(tga_path):
+        _resolved[name] = None
+        return None
+
+    cache_path = os.path.join(_CACHE_DIR, name + ".png")
+    if not os.path.isfile(cache_path):
+        with open(tga_path, "rb") as fp:
+            blob = fp.read()
+        width, height, rgba = decode_tga(blob)
+        png = encode_png_rgba(width, height, rgba)
+        os.makedirs(_CACHE_DIR, exist_ok=True)
+        with open(cache_path, "wb") as fp:
+            fp.write(png)
+
+    url = f"{_URL_PREFIX}/{name}.png"
+    _resolved[name] = url
+    return url
+```
+
+- [ ] **Step 9: Run ship-icon tests**
+
+Run: `uv run pytest tests/unit/test_ship_icons.py -v`
+Expected: 2 passed.
+
+- [ ] **Step 10: Add cache directory to .gitignore**
+
+Append to `.gitignore`:
+```
+native/assets/ui-cef/icons/ships/
+```
+
+- [ ] **Step 11: Wire the icon URL into the panel's JS payload**
+
+In `engine/ui/ship_display_panel.py`, update `render_payload` (or `_snapshot` + `render_payload`) so the JS payload includes `silhouette_url`. Reuse the existing `species_key` from the snapshot:
+
+```python
+from engine.ui.ship_icons import icon_path_for_species
+
+# Inside render_payload, after constructing payload dict:
+payload["silhouette_url"] = icon_path_for_species(payload["species"])
+```
+
+This is a render-layer concern, not a snapshot concern (no need to bloat the cache key). The URL is derived deterministically from `species_key` so cache invalidation is unaffected.
+
+- [ ] **Step 12: Update the HTML + JS to use an `<img>` for the silhouette**
+
+In `native/assets/ui-cef/panels/ship_display/ship_display.html`, change the silhouette element from a div to an img:
+
+```html
+<img class="ship-display__silhouette" data-bind="silhouette" alt="">
+```
+
+In `native/assets/ui-cef/panels/ship_display/ship_display.js`, replace `setSilhouette` with:
+
+```js
+function setSilhouette(el, url) {
+  if (!url) {
+    el.removeAttribute("src");
+    el.hidden = true;
+    return;
+  }
+  el.src = url;
+  el.hidden = false;
+}
+```
+
+And in `setShipDisplay`:
+```js
+setSilhouette(root.querySelector('[data-bind="silhouette"]'), state.silhouette_url);
+```
+
+In `native/assets/ui-cef/panels/ship_display/ship_display.css`, drop the `silhouette--galaxy` / `silhouette--warbird` class rules and add:
 
 ```css
-.silhouette--galaxy   { background: url("silhouettes/galaxy.svg")  center/contain no-repeat; }
-.silhouette--warbird  { background: url("silhouettes/warbird.svg") center/contain no-repeat; }
+.ship-display__silhouette {
+  width: 100%; height: 100%;
+  object-fit: contain;
+  opacity: 0.85;
+}
 ```
 
-Tint via `currentColor` in the SVG already; CSS `background` doesn't pick up `color`, so for v1 the silhouettes render in the SVG's literal `currentColor` (which the browser resolves against the containing element's `color`). The CSS-defined `.ship-display__silhouette { color: var(--bc-shields); }` rule means Galaxy renders in the shields token, and the target's `color: var(--title-color)` override gives it the affiliation tint. If the SVG-as-background tinting proves unreliable, swap to inline SVG injection (defer to a follow-up).
+The icon renders in its native colour (the BC icons already have ship-on-transparent-background palette). Shield quadrants overlay on top.
 
-- [ ] **Step 4: Verify SVG files parse**
+- [ ] **Step 13: Run the full ShipDisplay unit + integration test suite**
 
-Run: `xmllint --noout native/assets/ui-cef/panels/ship_display/silhouettes/*.svg`
-Expected: no output (well-formed).
-If `xmllint` isn't available, open the SVG in any browser; it should render a recognisable silhouette.
+Run: `uv run pytest tests/unit/test_ship_display_panel.py tests/unit/test_tga.py tests/unit/test_png_encoder.py tests/unit/test_ship_icons.py tests/integration/test_ship_display_sdk_integration.py -v`
+Expected: all pass.
+**Do NOT run the full pytest suite.**
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 14: Commit**
 
 ```bash
-git add native/assets/ui-cef/panels/ship_display/silhouettes/ native/assets/ui-cef/panels/ship_display/ship_display.css
-git commit -m "feat(ui): Galaxy + Warbird SVG silhouettes for ShipDisplay"
+git add engine/ui/tga.py engine/ui/png_encoder.py engine/ui/ship_icons.py
+git add engine/ui/ship_display_panel.py
+git add tests/unit/test_tga.py tests/unit/test_png_encoder.py tests/unit/test_ship_icons.py
+git add .gitignore
+git add native/assets/ui-cef/panels/ship_display/
+git commit -m "feat(ui): runtime TGA→PNG cache for ship-class icons"
 ```
 
 ---
