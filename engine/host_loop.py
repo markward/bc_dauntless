@@ -298,7 +298,15 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
                 dt=dt,
             )
             if damage > 0:
-                apply_hit(target, damage, target_pos,
+                from engine.appc.combat import _resolve_hit_point
+                impact_point = _resolve_hit_point(
+                    host=host, ship_instances=ship_instances, ship=target,
+                    ray_origin=emitter_pos,
+                    ray_direction=(aim_unit if dist > 1e-6 else None),
+                    max_dist=(dist * 1.5 if dist > 1e-6 else 0.0),
+                    fallback_point=target_pos,
+                )
+                apply_hit(target, damage, impact_point,
                           source=ship, subsystem=target_sub)
                 if (host is not None
                         and ship_instances is not None
@@ -307,7 +315,7 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
                     if iid is not None:
                         host.shield_hit(
                             instance_id=iid,
-                            point=(target_pos.x, target_pos.y, target_pos.z),
+                            point=(impact_point.x, impact_point.y, impact_point.z),
                             rgba=(0.0, 0.0, 0.0, 0.0),
                             intensity=1.0,
                         )

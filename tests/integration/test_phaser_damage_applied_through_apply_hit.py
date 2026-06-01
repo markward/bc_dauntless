@@ -2,6 +2,8 @@
 each tick (so shield/hull condition decreases)."""
 from unittest.mock import patch
 
+import pytest
+
 from engine.appc.math import TGPoint3
 from engine.host_loop import _advance_combat
 
@@ -72,3 +74,48 @@ def test_target_drifts_out_of_arc_bank_auto_stops(galaxy_red):
     assert firing_after == 0, (
         f"Out-of-arc auto-stop; before={firing_before}, after={firing_after}"
     )
+
+
+def test_phaser_hit_point_comes_from_host_ray_trace_mesh(galaxy_red):
+    """When a host is supplied with ray_trace_mesh, apply_hit receives
+    the surface point, not target.GetWorldLocation()."""
+    ship = galaxy_red
+    sys_ = ship.GetPhaserSystem()
+    for i in range(sys_.GetNumWeapons()):
+        bank = sys_.GetWeapon(i)
+        bank._charge_level = bank._max_charge
+
+    target = _target_with_shields()
+    p = ship.GetWorldLocation()
+    target.SetWorldLocation(TGPoint3(p.x, p.y + 50.0, p.z))
+    ship.SetTarget(target)
+
+    SURFACE_POINT = (1.5, 47.25, -2.0)  # Distinct from target_pos.
+
+    class FakeHost:
+        def ray_trace_mesh(self, iid, origin, direction, max_dist):
+            return (SURFACE_POINT, (0.0, -1.0, 0.0), 1.0)
+        def shield_hit(self, instance_id, point, rgba, intensity):
+            pass
+        def __getattr__(self, name):
+            return lambda *a, **kw: None
+
+    captured = {}
+    import engine.appc.combat as combat
+
+    def spy(ship_, damage, hit_point, source, subsystem=None):
+        captured["hit_point"] = hit_point
+
+    sentinel = object()
+    with patch.object(combat, "apply_hit", spy), \
+         patch("engine.audio.tg_sound.TGSoundManager.instance"):
+        sys_.StartFiring(target)
+        _advance_combat([ship, target], dt=0.1,
+                        host=FakeHost(),
+                        ship_instances={target: sentinel})
+
+    assert "hit_point" in captured, "apply_hit was never called"
+    hp = captured["hit_point"]
+    assert hp.x == pytest.approx(SURFACE_POINT[0])
+    assert hp.y == pytest.approx(SURFACE_POINT[1])
+    assert hp.z == pytest.approx(SURFACE_POINT[2])
