@@ -155,46 +155,46 @@
    sits behind so the ship floats over its ventral shield. */
 
 .shield--front {
-    top: 0; left: 10%;
-    width: 80%; height: 30%;
+    top: 4%; left: 30%;
+    width: 40%; height: 14%;
     border-radius: 50% 50% 0 0; /* upper half-ellipse curving up */
     z-index: 4;
 }
 
 .shield--rear {
-    bottom: 0; left: 10%;
-    width: 80%; height: 30%;
+    bottom: 4%; left: 30%;
+    width: 40%; height: 14%;
     border-radius: 0 0 50% 50%; /* lower half-ellipse curving down */
     z-index: 4;
 }
 
 .shield--left {
-    top: 10%; left: 0;
-    width: 25%; height: 80%;
+    top: 30%; left: 4%;
+    width: 14%; height: 40%;
     border-radius: 50% 0 0 50%; /* left half-ellipse curving left */
     z-index: 4;
 }
 
 .shield--right {
-    top: 10%; right: 0;
-    width: 25%; height: 80%;
+    top: 30%; right: 4%;
+    width: 14%; height: 40%;
     border-radius: 0 50% 50% 0; /* right half-ellipse curving right */
     z-index: 4;
 }
 
 .shield--top {
-    /* Dorsal hemisphere — full ellipse over the silhouette */
-    top: 12%; left: 18%;
-    width: 64%; height: 76%;
+    /* Dorsal hemisphere — modest ellipse hugging the silhouette */
+    top: 25%; left: 30%;
+    width: 40%; height: 50%;
     border-radius: 50%;
     z-index: 3; /* over silhouette */
 }
 
 .shield--bottom {
-    /* Ventral hemisphere — full ellipse BEHIND the silhouette so the
-       ship "floats" above its under-shield. */
-    top: 12%; left: 18%;
-    width: 64%; height: 76%;
+    /* Ventral hemisphere — same footprint but BEHIND the silhouette so
+       the ship "floats" above its under-shield. */
+    top: 25%; left: 30%;
+    width: 40%; height: 50%;
     border-radius: 50%;
     z-index: 1; /* below silhouette */
 }
