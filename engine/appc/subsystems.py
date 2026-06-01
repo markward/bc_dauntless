@@ -822,17 +822,22 @@ class WeaponSystem(PoweredSubsystem):
     # SDK/UI consumers without storing its own condition pool.
     #
     # Locked semantics from the combat damage pipeline roadmap:
-    #   IsDamaged   = any(child.IsDamaged()  for child in children)
-    #   IsDisabled  = children and all(child.IsDisabled()  for child in children)
-    #   IsDestroyed = children and all(child.IsDestroyed() for child in children)
+    #   IsDamaged   = self._damaged or any(c.IsDamaged() or c.IsDestroyed() for c in children)
+    #   IsDisabled  = children and all(c.IsDisabled()  for c in children)
+    #   IsDestroyed = self._destroyed or (children and all(c.IsDestroyed() for c in children))
     #
-    # Empty-children edge: a weapon system with no hardpoints reports
-    # all zeros (ShipDisplay omits the row).
+    # Empty-children edge: a weapon system with no hardpoints falls
+    # through to the condition-based ShipSubsystem predicates. A default-
+    # constructed parent (condition == max_condition) still reports zero;
+    # leaf emitters with damaged condition report the damage themselves.
 
     def IsDamaged(self) -> int:
         if not self._children:
             # Leaf emitter (no sub-hardpoints): use condition-based predicate.
             return ShipSubsystem.IsDamaged(self)
+        if self._damaged:
+            # Honour the explicit flag set by ShipSubsystem.SetDamaged.
+            return 1
         for c in self._children:
             if c.IsDamaged() or c.IsDestroyed():
                 return 1
@@ -851,6 +856,9 @@ class WeaponSystem(PoweredSubsystem):
         if not self._children:
             # Leaf emitter: use condition-based predicate.
             return ShipSubsystem.IsDestroyed(self)
+        if self._destroyed:
+            # Honour the explicit flag set by ShipSubsystem.SetDestroyed.
+            return 1
         for c in self._children:
             if not c.IsDestroyed():
                 return 0
