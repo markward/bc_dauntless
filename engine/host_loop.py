@@ -131,6 +131,16 @@ def _bootstrap_firing_pipeline() -> None:
         print(f"[host_loop] WARNING: LoadTacticalSounds.LoadSounds() failed: {_e}",
               flush=True)
 
+    # Damage-impact sounds — Shield Hit + Subsystem Critical pool.
+    # Depends on LoadTacticalSounds having loaded first (rebinds
+    # GetRandomSound from there).
+    try:
+        import LoadDamageHitSounds
+        LoadDamageHitSounds.LoadSounds()
+    except Exception as _e:
+        print(f"[host_loop] WARNING: LoadDamageHitSounds.LoadSounds() failed: {_e}",
+              flush=True)
+
     # NOTE: MissionLib.FriendlyFireHandler registration is deliberately
     # NOT done here.  The SDK script (sdk/.../MissionLib.py:3699) calls
     # pObject.CallNextHandler(pEvent) — pObject is the broadcast `dest`
