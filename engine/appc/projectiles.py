@@ -128,7 +128,7 @@ def update_all(dt: float, all_ships, *, host=None, ship_instances=None) -> list[
         if t._target_ship is not None and t._age < t._guidance_lifetime:
             _steer_toward(t, t._target_ship, dt)
         # 2. Advance position + age.
-        prev_pos = TGPoint3(t._position.x, t._position.y, t._position.z)
+        prev_pos = t._position
         t._position = t._position + t._velocity * dt
         t._age += dt
         if t._age >= t._ttl:
@@ -146,11 +146,11 @@ def update_all(dt: float, all_ships, *, host=None, ship_instances=None) -> list[
                 # post-advance position).
                 seg = t._position - prev_pos
                 seg_len = seg.Length()
-                if seg_len > 1e-9:
-                    aim_unit = TGPoint3(
-                        seg.x / seg_len, seg.y / seg_len, seg.z / seg_len)
-                else:
-                    aim_unit = None
+                # seg_len ~= 0 only if dt or velocity was zero this tick;
+                # _resolve_hit_point treats `ray_direction=None` as "degrade
+                # to fallback", which is what we want for a stationary tick.
+                aim_unit = (TGPoint3(seg.x / seg_len, seg.y / seg_len, seg.z / seg_len)
+                            if seg_len > 1e-9 else None)
                 hit_point = _resolve_hit_point(
                     host=host, ship_instances=ship_instances, ship=ship,
                     ray_origin=prev_pos,
