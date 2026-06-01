@@ -126,3 +126,51 @@ def test_phaser_hit_point_comes_from_host_ray_trace_mesh(galaxy_red):
     # splash lands on the hull, not the target's center.
     assert len(host.shield_hits) == 1
     assert host.shield_hits[0] == SURFACE_POINT
+
+
+def test_phaser_beam_render_endpoint_clipped_to_mesh(galaxy_red):
+    """The rendered phaser beam endpoint is clipped to the mesh-trace
+    surface point so the visible beam ends on the hull, not at the
+    target's bounding-sphere centre."""
+    ship = galaxy_red
+    sys_ = ship.GetPhaserSystem()
+    for i in range(sys_.GetNumWeapons()):
+        bank = sys_.GetWeapon(i)
+        bank._charge_level = bank._max_charge
+
+    target = _target_with_shields()
+    p = ship.GetWorldLocation()
+    target.SetWorldLocation(TGPoint3(p.x, p.y + 50.0, p.z))
+    ship.SetTarget(target)
+
+    SURFACE_POINT = (1.5, 47.25, -2.0)  # Distinct from target centre.
+
+    class FakeHost:
+        def __init__(self):
+            self.beam_data = None
+        def ray_trace_mesh(self, iid, origin, direction, max_dist):
+            return (SURFACE_POINT, (0.0, -1.0, 0.0), 1.0)
+        def shield_hit(self, instance_id, point, rgba, intensity):
+            pass
+        def set_phaser_beams(self, data):
+            self.beam_data = list(data)
+        def __getattr__(self, name):
+            return lambda *a, **kw: None
+
+    sentinel = object()
+    host = FakeHost()
+    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
+        sys_.StartFiring(target)
+        _advance_combat([ship, target], dt=0.1,
+                        host=host,
+                        ship_instances={target: sentinel})
+
+    # set_phaser_beams should have been called with at least one entry.
+    assert host.beam_data is not None
+    assert len(host.beam_data) >= 1
+    # Every entry's target must equal SURFACE_POINT (the clipped endpoint).
+    for entry in host.beam_data:
+        end = entry["target"]
+        assert end[0] == pytest.approx(SURFACE_POINT[0])
+        assert end[1] == pytest.approx(SURFACE_POINT[1])
+        assert end[2] == pytest.approx(SURFACE_POINT[2])
