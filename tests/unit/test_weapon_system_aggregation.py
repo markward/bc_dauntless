@@ -1,9 +1,15 @@
 """WeaponSystem parents aggregate their children's damage state.
 
 Locked semantics (combat damage pipeline roadmap):
-  IsDamaged   = any(child.IsDamaged()   for child in children)
+  IsDamaged   = self._damaged or any(c.IsDamaged() or c.IsDestroyed() for c in children)
   IsDisabled  = bool(children) and all(child.IsDisabled()  for child in children)
-  IsDestroyed = bool(children) and all(child.IsDestroyed() for child in children)
+  IsDestroyed = self._destroyed or (bool(children) and all(c.IsDestroyed() for c in children))
+
+The destroyed-implies-damaged term is required because
+ShipSubsystem.IsDamaged returns 0 at condition=0 (its check is
+0 < condition < max). The explicit-flag overrides on _damaged /
+_destroyed preserve the ShipSubsystem.SetDamaged/SetDestroyed
+contract.
 
 Empty-children parents report all zeros (no hardpoints == no row).
 Run for all four WeaponSystem subclasses to confirm the override on the

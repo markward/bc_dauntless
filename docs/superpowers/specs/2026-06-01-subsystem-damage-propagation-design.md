@@ -62,16 +62,28 @@ Locked semantics (from the roadmap):
 
 ```python
 def IsDamaged(self) -> int:
-    return 1 if any(c.IsDamaged() for c in self._children) else 0
+    if self._damaged:
+        return 1
+    return 1 if any(c.IsDamaged() or c.IsDestroyed() for c in self._children) else 0
 
 def IsDisabled(self) -> int:
     return 1 if self._children and all(c.IsDisabled() for c in self._children) else 0
 
 def IsDestroyed(self) -> int:
+    if self._destroyed:
+        return 1
     return 1 if self._children and all(c.IsDestroyed() for c in self._children) else 0
 ```
 
 Empty-children edge: a weapon system with no hardpoints reports all zeros. That matches the desired ShipDisplay behaviour (no row for a system that doesn't exist on this hull).
+
+The `or c.IsDestroyed()` term in `IsDamaged` and the `self._damaged` /
+`self._destroyed` early returns are corrections to the literal pseudocode
+above: `ShipSubsystem.IsDamaged` returns 0 at condition=0, and the
+explicit-flag escape hatches inherited from `ShipSubsystem.SetDamaged` /
+`SetDestroyed` must still take effect on a parent with children. These
+adjustments were discovered during TDD; see the test file at
+`tests/unit/test_weapon_system_aggregation.py`.
 
 The parent retains its inherited `_condition`/`_max_condition` storage — we don't remove the fields. That keeps pickling, save/load, and any property-copy code untouched. The overrides simply ignore the parent's own pool in favour of the children's.
 
