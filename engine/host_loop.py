@@ -224,22 +224,24 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
     from engine.appc.combat import apply_hit
 
     ships_list = list(ships)
-    hits = projectiles.update_all(dt, ships_list)
-    for torpedo, ship, subsystem in hits:
-        apply_hit(ship, torpedo._damage, torpedo._position,
+    hits = projectiles.update_all(
+        dt, ships_list,
+        host=host, ship_instances=ship_instances,
+    )
+    for torpedo, ship, subsystem, hit_point in hits:
+        apply_hit(ship, torpedo._damage, hit_point,
                   source=torpedo._source_ship, subsystem=subsystem)
-        hit_vfx.spawn(torpedo._position)
+        hit_vfx.spawn(hit_point)
         if (host is not None
                 and ship_instances is not None
                 and hasattr(host, "shield_hit")):
             iid = ship_instances.get(ship)
             if iid is not None:
-                # Use the torpedo's collision point directly — it lies on
-                # or just inside the bubble shell, where the shield-pass
-                # splash falloff produces a visible splash.
+                # Resolved hit point — on the hull when the mesh trace
+                # succeeded; on the bounding-sphere shell otherwise.
                 host.shield_hit(
                     instance_id=iid,
-                    point=(torpedo._position.x, torpedo._position.y, torpedo._position.z),
+                    point=(hit_point.x, hit_point.y, hit_point.z),
                     rgba=(0.0, 0.0, 0.0, 0.0),
                     intensity=1.0,
                 )
