@@ -53,25 +53,24 @@ def ray_sphere_entry(origin, direction, max_dist: float,
 def _resolve_hit_point(host, ship_instances, ship,
                        ray_origin, ray_direction,
                        max_dist: float, fallback_point):
-    """Three-tier hit-point fallback:
+    """Three-tier hit-point fallback. Returns ``(point, normal)``.
 
-    1. If `host` exposes `ray_trace_mesh` AND `ship` has a renderer
-       `InstanceId` in `ship_instances`, run the mesh trace; on hit,
-       return the returned surface point.
-    2. Else, if both `host` and `iid` were present (so the mesh trace
-       ran and missed, or the binding wasn't available), fall back to
-       the bounding-sphere entry point when the ray segment intersects
-       it.
-    3. Otherwise — no host, no iid, or the sphere also missed — return
-       `fallback_point` (the caller's pre-project legacy point:
-       `torpedo._position` for projectiles, `target_pos` for phasers).
-       Preserves headless and broken-binding behaviour.
+    ``normal`` is a unit ``TGPoint3`` only when the mesh trace
+    succeeded; sphere-entry and fallback paths return ``normal=None``.
+
+    Tiers:
+    1. Mesh trace via ``host.ray_trace_mesh`` (requires both host and
+       a renderer InstanceId for this ship). Returns the surface point
+       and the surface normal.
+    2. Bounding-sphere entry. No normal available.
+    3. ``fallback_point`` passed by the caller (torpedo position or
+       phaser target_pos). No normal.
     """
     if host is None or ray_direction is None:
-        return fallback_point
+        return fallback_point, None
     iid = ship_instances.get(ship) if ship_instances is not None else None
     if iid is None:
-        return fallback_point
+        return fallback_point, None
     if hasattr(host, "ray_trace_mesh"):
         try:
             result = host.ray_trace_mesh(
@@ -84,15 +83,15 @@ def _resolve_hit_point(host, ship_instances, ship,
             # Native trace errors must not kill a combat tick; degrade to sphere entry.
             result = None
         if result is not None:
-            (px, py, pz), _normal, _t = result
-            return TGPoint3(px, py, pz)
+            (px, py, pz), (nx, ny, nz), _t = result
+            return TGPoint3(px, py, pz), TGPoint3(nx, ny, nz)
     center = ship.GetWorldLocation()
     radius = ship.GetRadius() if hasattr(ship, "GetRadius") else 0.0
     entry = ray_sphere_entry(ray_origin, ray_direction, max_dist,
                              center, radius)
     if entry is not None:
-        return entry
-    return fallback_point
+        return entry, None
+    return fallback_point, None
 
 
 def _body_frame_delta(ship, hit_point):

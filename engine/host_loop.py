@@ -299,7 +299,7 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
                 dt=dt,
             )
             if damage > 0:
-                impact_point = _resolve_hit_point(
+                impact_point, impact_normal = _resolve_hit_point(
                     host=host, ship_instances=ship_instances, ship=target,
                     ray_origin=emitter_pos,
                     ray_direction=(aim_unit if dist > 1e-6 else None),
@@ -466,7 +466,7 @@ def _build_phaser_beam_render_data(ships, host=None, ship_instances=None):
                 aim_unit = TGPoint3(dx / raw_length,
                                     dy / raw_length,
                                     dz / raw_length)
-                clipped = _resolve_hit_point(
+                clipped, _clipped_normal = _resolve_hit_point(
                     host=host, ship_instances=ship_instances, ship=target,
                     ray_origin=emitter_pos,
                     ray_direction=aim_unit,
