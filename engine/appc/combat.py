@@ -55,14 +55,17 @@ def _resolve_hit_point(host, ship_instances, ship,
                        max_dist: float, fallback_point):
     """Three-tier hit-point fallback:
 
-    1. If `host` is wired with `ray_trace_mesh` and `ship` has a renderer
-       `InstanceId` in `ship_instances`, run the mesh trace and return the
-       returned surface point on hit.
-    2. Otherwise (or on mesh miss), if the ray segment intersects the
-       ship's bounding sphere, return the sphere-entry point.
-    3. Otherwise return `fallback_point` — each caller's pre-project
-       legacy point (`torpedo._position` for projectiles; `target_pos`
-       for phasers). Preserves headless and broken-binding behaviour.
+    1. If `host` exposes `ray_trace_mesh` AND `ship` has a renderer
+       `InstanceId` in `ship_instances`, run the mesh trace; on hit,
+       return the returned surface point.
+    2. Else, if both `host` and `iid` were present (so the mesh trace
+       ran and missed, or the binding wasn't available), fall back to
+       the bounding-sphere entry point when the ray segment intersects
+       it.
+    3. Otherwise — no host, no iid, or the sphere also missed — return
+       `fallback_point` (the caller's pre-project legacy point:
+       `torpedo._position` for projectiles, `target_pos` for phasers).
+       Preserves headless and broken-binding behaviour.
     """
     if host is None or ray_direction is None:
         return fallback_point
@@ -78,6 +81,7 @@ def _resolve_hit_point(host, ship_instances, ship,
                 max_dist,
             )
         except Exception:
+            # Native trace errors must not kill a combat tick; degrade to sphere entry.
             result = None
         if result is not None:
             (px, py, pz), _normal, _t = result
