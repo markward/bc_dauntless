@@ -80,32 +80,50 @@
     min-width: 0;
 }
 
+/* The target-list-panel rule in target_list.css uses position: absolute
+   with its own top/left/width. Inside our flex wrapper we need it to
+   flow with the parent's column layout instead, so the target ship
+   status above can push it down when a target is selected. */
+#left-panel-stack #target-list-panel {
+    position: static;
+    top: auto;
+    left: auto;
+    width: 100%;
+}
+
 .ship-display[hidden] { display: none; }
 .ship-display[data-minimized="true"] .bc-panel__body { display: none; }
 
 /* ── Header ──────────────────────────────────────────────────────────── */
 
 .bc-panel__header {
+    /* Matches target_list.css:.target-list__header and
+       sensors.css:.sensors__header — same gradient, padding, font,
+       and BLACK text on the orange chrome so all three panels share
+       a unified look. */
     display: flex;
     justify-content: space-between;
     align-items: center;
     background: linear-gradient(90deg, var(--bc-menu1-base), var(--bc-menu1-accent));
-    border-top-right-radius: 14px;  /* matches target-list/sensors chrome */
-    padding: 6px 14px 6px 18px;     /* matches target-list spacing */
-    color: var(--title-color);
+    border-top-right-radius: 14px;
+    padding: 6px 14px 6px 18px;
+    color: rgb(0, 0, 0);
     font-weight: 600;
     font-size: 14px;
     letter-spacing: 0.12em;
     text-transform: uppercase;
 }
 
+/* Minimize chevron — matches sensors__caret styling. Inherits the
+   black header colour so it's visible against the orange chrome. */
 .bc-panel__minimize {
     background: transparent;
     border: 0;
     color: inherit;
     cursor: pointer;
-    font-size: 14px;
-    padding: 0 2px;
+    font-size: 11px;
+    opacity: 0.85;
+    padding: 0 4px;
     line-height: 1;
     user-select: none;
 }
@@ -121,18 +139,19 @@
     border-left: 4px solid var(--bc-menu1-base);
 }
 
-/* ── Affiliation drives title colour ─────────────────────────────────── */
+/* ── Affiliation indicator ───────────────────────────────────────────── */
 
-/* Affiliation tinting applies to the TARGET panel only — the player's
-   own ship doesn't get coloured by its own faction. Player title stays
-   pure white per the spec (03-shields-readout.md). */
-.ship-display[data-role="target"][data-affiliation="FRIENDLY"] { --title-color: var(--bc-target-friendly); }
-.ship-display[data-role="target"][data-affiliation="ENEMY"]    { --title-color: var(--bc-target-name); }
-.ship-display[data-role="target"][data-affiliation="NEUTRAL"]  { --title-color: var(--bc-sensor-neutral); }
-.ship-display[data-role="target"][data-affiliation="NONE"]     { --title-color: var(--bc-no-target); }
-.ship-display[data-role="target"][data-affiliation="UNKNOWN"]  { --title-color: var(--bc-no-target); }
-
-.ship-display[data-role="player"] .bc-panel__title { color: rgb(255, 255, 255); }
+/* Header chrome stays uniform across both ship-display panels and the
+   sensors / target-list panels (black text on the salmon gradient).
+   Affiliation is conveyed instead by the body's border-left colour
+   on the target panel, so an ENEMY target gets a red left edge,
+   NEUTRAL gold, etc. The player panel always uses the default
+   --bc-menu1-base border (matches the other tactical panels). */
+.ship-display[data-role="target"][data-affiliation="FRIENDLY"] .bc-panel__body { border-left-color: var(--bc-target-friendly); }
+.ship-display[data-role="target"][data-affiliation="ENEMY"]    .bc-panel__body { border-left-color: var(--bc-target-name); }
+.ship-display[data-role="target"][data-affiliation="NEUTRAL"]  .bc-panel__body { border-left-color: var(--bc-sensor-neutral); }
+.ship-display[data-role="target"][data-affiliation="NONE"]     .bc-panel__body { border-left-color: var(--bc-no-target); }
+.ship-display[data-role="target"][data-affiliation="UNKNOWN"]  .bc-panel__body { border-left-color: var(--bc-no-target); }
 
 /* ── Silhouette + shield bubbles ────────────────────────────────────── */
 
