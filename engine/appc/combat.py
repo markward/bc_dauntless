@@ -184,24 +184,23 @@ def pick_target_subsystem(ship, hit_point):
 
 
 def _shield_face_from_hit_point(ship, hit_point) -> int:
-    """Map a world hit-point to a shield-face index (0-5 per
-    ShieldProperty.NUM_SHIELDS).  Front/Rear/Top/Bottom/Left/Right by
-    dominant axis of (hit_point - ship_pos) in world frame.
+    """Body-frame dominant-axis selection via :func:`_body_frame_delta`.
 
-    Proper transform through ship.GetWorldRotation() is a future
-    polish item — for PR 2b the world-axis approximation is fine
-    while ships in test setups are placed without rotation.
+    Face indices follow the ``ShieldSubsystem`` class constants:
+    FRONT/REAR ↔ ±body-Y, TOP/BOTTOM ↔ ±body-Z, LEFT/RIGHT ↔ ∓body-X,
+    per CLAUDE.md's column-vector rotation convention
+    (``R.GetCol(0)`` = ship-right, ``R.GetCol(1)`` = ship-forward,
+    ``R.GetCol(2)`` = ship-up). Ships lacking ``GetWorldRotation``
+    receive identity R from :func:`_body_frame_delta`, so legacy
+    fixtures keep their pre-rotation behaviour.
     """
-    ship_pos = ship.GetWorldLocation()
-    dx = hit_point.x - ship_pos.x
-    dy = hit_point.y - ship_pos.y
-    dz = hit_point.z - ship_pos.z
-    abs_x, abs_y, abs_z = abs(dx), abs(dy), abs(dz)
+    bx, by, bz = _body_frame_delta(ship, hit_point)
+    abs_x, abs_y, abs_z = abs(bx), abs(by), abs(bz)
     if abs_y >= abs_x and abs_y >= abs_z:
-        return 0 if dy >= 0 else 1
+        return 0 if by >= 0 else 1
     if abs_z >= abs_x:
-        return 2 if dz >= 0 else 3
-    return 4 if dx <= 0 else 5
+        return 2 if bz >= 0 else 3
+    return 4 if bx <= 0 else 5
 
 
 def apply_hit(ship, damage: float, hit_point, source, subsystem=None) -> None:

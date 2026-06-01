@@ -601,7 +601,7 @@ def _apply_alert_keys(h, player) -> None:
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # v1 ship-gate selections — Task 25 pins these from the pick_*.py scan results.
-SHIP_GATE_MISSION = "Maelstrom.Episode1.E1M1.E1M1"
+SHIP_GATE_MISSION = "Custom.Tutorial.Episode.M2Objects.M2Objects"
 DEFAULT_TEXTURE_SEARCH = "data/Models/SharedTextures/FedShips/High"
 DEFAULT_PLANET_TEXTURE_SEARCH = "data/Models/Environment"
 
