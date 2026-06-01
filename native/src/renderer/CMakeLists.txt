@@ -46,6 +46,7 @@ add_library(renderer STATIC
     sun_pass.cc
     dust_pass.cc
     aabb.cc
+    ray_trace.cc
     shield_state.cc
     skin_shield.cc
     shield_pass.cc

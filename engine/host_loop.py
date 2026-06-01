@@ -221,25 +221,29 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
     pass can splash at the strike point.
     """
     from engine.appc import projectiles, hit_vfx
-    from engine.appc.combat import apply_hit
+    from engine.appc.combat import apply_hit, _resolve_hit_point
 
     ships_list = list(ships)
-    hits = projectiles.update_all(dt, ships_list)
-    for torpedo, ship, subsystem in hits:
-        apply_hit(ship, torpedo._damage, torpedo._position,
+
+    hits = projectiles.update_all(
+        dt, ships_list,
+        host=host, ship_instances=ship_instances,
+    )
+    for torpedo, ship, subsystem, hit_point in hits:
+        apply_hit(ship, torpedo._damage, hit_point,
                   source=torpedo._source_ship, subsystem=subsystem)
-        hit_vfx.spawn(torpedo._position)
+        hit_vfx.spawn(hit_point)
         if (host is not None
                 and ship_instances is not None
                 and hasattr(host, "shield_hit")):
             iid = ship_instances.get(ship)
             if iid is not None:
-                # Use the torpedo's collision point directly — it lies on
-                # or just inside the bubble shell, where the shield-pass
-                # splash falloff produces a visible splash.
+                # Resolved hit point — on the hull when the mesh trace
+                # succeeded; on the bounding-sphere entry point or on
+                # the torpedo's post-advance position otherwise.
                 host.shield_hit(
                     instance_id=iid,
-                    point=(torpedo._position.x, torpedo._position.y, torpedo._position.z),
+                    point=(hit_point.x, hit_point.y, hit_point.z),
                     rgba=(0.0, 0.0, 0.0, 0.0),
                     intensity=1.0,
                 )
@@ -295,7 +299,14 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
                 dt=dt,
             )
             if damage > 0:
-                apply_hit(target, damage, target_pos,
+                impact_point = _resolve_hit_point(
+                    host=host, ship_instances=ship_instances, ship=target,
+                    ray_origin=emitter_pos,
+                    ray_direction=(aim_unit if dist > 1e-6 else None),
+                    max_dist=(dist * 1.5 if dist > 1e-6 else 0.0),
+                    fallback_point=target_pos,
+                )
+                apply_hit(target, damage, impact_point,
                           source=ship, subsystem=target_sub)
                 if (host is not None
                         and ship_instances is not None
@@ -304,7 +315,7 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
                     if iid is not None:
                         host.shield_hit(
                             instance_id=iid,
-                            point=(target_pos.x, target_pos.y, target_pos.z),
+                            point=(impact_point.x, impact_point.y, impact_point.z),
                             rgba=(0.0, 0.0, 0.0, 0.0),
                             intensity=1.0,
                         )
@@ -314,7 +325,8 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
     if host is not None and hasattr(host, "set_hit_vfx"):
         host.set_hit_vfx(_build_hit_vfx_render_data())
     if host is not None and hasattr(host, "set_phaser_beams"):
-        host.set_phaser_beams(_build_phaser_beam_render_data(ships_list))
+        host.set_phaser_beams(_build_phaser_beam_render_data(
+            ships_list, host=host, ship_instances=ship_instances))
 
 
 def _color_tuple(color):
@@ -393,13 +405,18 @@ def _build_hit_vfx_render_data():
 PHASER_BEAM_WIDTH_MUTATOR = 4.0
 
 
-def _build_phaser_beam_render_data(ships):
+def _build_phaser_beam_render_data(ships, host=None, ship_instances=None):
     """Snapshot active phaser beams for the renderer.
 
     Walks every ship's PhaserSystem; for each bank IsFiring()=1, yields
     {emitter, target, color, width}.  Color is Federation amber (default
     until per-faction beam color is wired); width is a small constant.
+
+    When `host` + `ship_instances` are supplied, each beam's endpoint is
+    clipped to the mesh-trace surface point so the visible beam ends on
+    the target's hull rather than at its bounding-sphere centre.
     """
+    from engine.appc.combat import _resolve_hit_point
     out = []
     for ship in ships:
         sys_ = ship.GetPhaserSystem() if hasattr(ship, "GetPhaserSystem") else None
@@ -440,6 +457,28 @@ def _build_phaser_beam_render_data(ships):
                                     emitter_pos.y + dy * scale,
                                     emitter_pos.z + dz * scale)
                 beam_length = max_range
+            # Clip the visible beam to the same mesh-trace point that
+            # _advance_combat feeds into apply_hit / shield_hit, so the
+            # rendered beam terminates on the hull surface (not at the
+            # bounding-sphere centre).
+            if raw_length > 1e-6 and host is not None and ship_instances is not None:
+                from engine.appc.math import TGPoint3
+                aim_unit = TGPoint3(dx / raw_length,
+                                    dy / raw_length,
+                                    dz / raw_length)
+                clipped = _resolve_hit_point(
+                    host=host, ship_instances=ship_instances, ship=target,
+                    ray_origin=emitter_pos,
+                    ray_direction=aim_unit,
+                    max_dist=raw_length * 1.5,
+                    fallback_point=beam_end,
+                )
+                if clipped is not None:
+                    beam_end = clipped
+                    cdx = beam_end.x - emitter_pos.x
+                    cdy = beam_end.y - emitter_pos.y
+                    cdz = beam_end.z - emitter_pos.z
+                    beam_length = (cdx * cdx + cdy * cdy + cdz * cdz) ** 0.5
             tile_per_unit = bank.GetLengthTextureTilePerUnit()
             u_tiles = max(1.0, beam_length * tile_per_unit) if tile_per_unit > 0 else 1.0
             # SDK four-channel-colour layout (per galaxy.py:418-431) is

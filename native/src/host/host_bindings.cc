@@ -30,6 +30,7 @@
 #include <renderer/phaser_pass.h>
 #include <renderer/bridge_pass.h>
 #include <renderer/aabb.h>
+#include <renderer/ray_trace.h>
 #include <scenegraph/world.h>
 #include <scenegraph/camera.h>
 #include <assets/cache.h>
@@ -38,6 +39,7 @@
 #include "ui_cef/cef_lifecycle.h"
 #endif
 
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
@@ -702,6 +704,50 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("intensity") = 1.0f,
           "Push a shield-hit flash for the given ship at a world-space point. "
           "rgba=(0,0,0,0) substitutes the ship's default ShieldGlowColor.");
+
+    m.def("ray_trace_mesh",
+          [](scenegraph::InstanceId id,
+             std::tuple<float, float, float> origin,
+             std::tuple<float, float, float> direction,
+             float max_dist) -> py::object {
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) {
+                  throw std::runtime_error("ray_trace_mesh: invalid InstanceId");
+              }
+              const auto h = inst->model_handle;
+              if (h == 0 || h > g_loaded_models.size()) {
+                  throw std::runtime_error("ray_trace_mesh: instance has no model");
+              }
+              const assets::Model* model = g_loaded_models[h - 1].handle.get();
+              if (model == nullptr) return py::none();
+
+              const glm::vec3 o(std::get<0>(origin),
+                                std::get<1>(origin),
+                                std::get<2>(origin));
+              glm::vec3 d(std::get<0>(direction),
+                          std::get<1>(direction),
+                          std::get<2>(direction));
+              const float dlen = glm::length(d);
+              if (dlen < 1e-9f) return py::none();
+              d /= dlen;
+              if (!std::isfinite(max_dist) || max_dist <= 0.0f) return py::none();
+
+              auto hit = renderer::ray_trace_instance(
+                  *model, inst->world, o, d, max_dist);
+              if (!hit) return py::none();
+              return py::make_tuple(
+                  py::make_tuple(hit->point.x, hit->point.y, hit->point.z),
+                  py::make_tuple(hit->normal.x, hit->normal.y, hit->normal.z),
+                  hit->t);
+          },
+          py::arg("instance_id"),
+          py::arg("origin"),
+          py::arg("direction"),
+          py::arg("max_dist"),
+          "Ray-cast a world-space ray against an instance's loaded mesh. "
+          "origin and direction are in world coordinates; direction is "
+          "auto-normalised. Returns ((point), (normal), t) on hit or None "
+          "on miss. t is world-space distance from origin.");
 
     auto keys = m.def_submodule("keys", "GLFW key-code constants for input bindings.");
     keys.attr("KEY_W") = GLFW_KEY_W;

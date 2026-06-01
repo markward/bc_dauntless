@@ -8,6 +8,7 @@ add_executable(renderer_tests
     sun_pass_test.cc
     dust_pass_test.cc
     aabb_test.cc
+    ray_trace_test.cc
     shield_state_test.cc
     skin_shield_test.cc
     lens_flare_pass_test.cc
