@@ -72,11 +72,13 @@ engine/dev_mode.py                 (modified)
 engine/ui/pause_menu.py            (modified)
     default_pause_menu reads dev_pause_menu_entries() instead of
     keybinding_descriptions(); the auto-listed keybinding rows and the
-    "— DEVELOPER —" separator row are removed. Dev rows use unprefixed
-    action IDs (e.g. "load-mission") so they fall through PanelRegistry
-    to the pause menu's legacy dispatch_event handler — consistent with
-    the existing "exit" / "cancel" rows. Slashed action IDs would
-    misroute via the panel prefix machinery.
+    "— DEVELOPER —" separator row are removed. No replacement separator
+    is rendered — dev entries are appended directly after the normal
+    rows (i.e. after "Cancel"). Dev rows use unprefixed action IDs
+    (e.g. "load-mission") so they fall through PanelRegistry to the
+    pause menu's legacy dispatch_event handler — consistent with the
+    existing "exit" / "cancel" rows. Slashed action IDs would misroute
+    via the panel prefix machinery.
 
 engine/dev_mission_picker.py       (new)
     MissionPicker(Panel) — subclass of engine.ui.panel.Panel. Builds
