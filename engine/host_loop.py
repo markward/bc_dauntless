@@ -2207,11 +2207,25 @@ def run(mission_name: Optional[str] = None,
             # and Cmd+R reloads.
             _cef_set_load_end(registry.invalidate_all)
         TICK_DT = 1.0 / 60.0
+        MAX_FRAME_DT = 0.25  # Fiedler spiral-of-death cap; only matters on stalled frames
 
         loop = GameLoop()
         ticks = 0
         init_audio()
         _bootstrap_firing_pipeline()
+
+        # Fixed-timestep accumulator state. Sim runs at TICK_DT (60 Hz)
+        # regardless of render refresh rate. See
+        # engine/core/timestep.py and the spec at
+        # docs/superpowers/specs/2026-06-02-fixed-timestep-sim-design.md.
+        import time as _time_dbg
+        from engine.core.timestep import step_accumulator
+        _previous_real_time = _time_dbg.monotonic()
+        _accumulator = 0.0
+
+        # Diagnostic HUD: measure sim ticks per real second. Once the
+        # accumulator is wired correctly, this reads ~60 on any display.
+        _hud_tick_count = 0
         while not r.should_close():
             # --- Input dispatch + modality (ESC always live; SPACE only when unpaused) ---
             # _apply_view_mode_side_effects mirrors the SPACE flag into
@@ -2375,10 +2389,27 @@ def run(mission_name: Optional[str] = None,
                         if _h.mouse_button_released(_h.keys.MOUSE_BUTTON_LEFT):
                             _cef_send_mouse_click(_mx, _my, 0, False)
 
-            # --- Sim advance (skipped while paused) ---
-            if not pause.is_open:
+            # --- Sim advance: fixed-timestep accumulator ---
+            # frame_dt is the real wall-clock since the previous frame.
+            # During pause we force it to 0 so the accumulator cannot
+            # grow and there is no catch-up burst on resume. The cap
+            # bounds the inner while-loop after a stalled render frame.
+            _now = _time_dbg.monotonic()
+            _frame_dt = _now - _previous_real_time
+            _previous_real_time = _now
+            if pause.is_open:
+                _frame_dt = 0.0
+            _accumulator, _sim_ticks_this_frame = step_accumulator(
+                _accumulator, _frame_dt, TICK_DT, MAX_FRAME_DT
+            )
+            for _ in range(_sim_ticks_this_frame):
                 loop.tick()
+                _hud_tick_count += 1
 
+            # Camera follow-up runs whenever at least one sim tick fired
+            # this frame (previously gated on `not pause.is_open`,
+            # equivalent because tick-per-frame meant tick == not paused).
+            if _sim_ticks_this_frame > 0:
                 had_pending_swap = controller.pending_swap is not None
                 controller._drain_pending_swap()
                 if had_pending_swap:
