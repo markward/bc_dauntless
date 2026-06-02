@@ -245,6 +245,8 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
                   normal=None, host=host, ship_instances=ship_instances)
 
     hit_vfx.update_ages(dt)
+    from engine.appc import camera_shake
+    camera_shake.update(dt)
 
     # Continuous phaser damage tick.  Each ship's PhaserSystem has banks
     # set firing by StartFiring; advance them here: re-check arc (auto-
@@ -1135,6 +1137,10 @@ def _apply_view_mode_side_effects(view_mode: "_ViewModeController", h) -> None:
     # actually on the bridge.
     from engine.audio.bridge_ambient import set_active as _bridge_ambient_set
     _bridge_ambient_set(target)
+    # View-mode change — drop any leftover camera-shake energy so
+    # the new view doesn't inherit a rumble from the old one.
+    from engine.appc import camera_shake
+    camera_shake.reset()
     view_mode._last_synced_is_bridge = target
 
 
@@ -2412,6 +2418,9 @@ def run(mission_name: Optional[str] = None,
                 eye, target, up_vec = _compute_camera(
                     view_mode, cam_control,
                     player=player, dt=TICK_DT)
+                # Camera shake — perturbs both exterior and bridge views uniformly.
+                from engine.appc import camera_shake
+                eye, target, up_vec = camera_shake.perturb(eye, target, up_vec)
                 if view_mode.is_bridge:
                     mouse_dx, mouse_dy = _h.consume_mouse_delta() if _h else (0.0, 0.0)
                     # While paused we still drain the accumulated mouse
@@ -2421,6 +2430,7 @@ def run(mission_name: Optional[str] = None,
                     if not pause.is_open:
                         bridge_camera.apply(mouse_dx, mouse_dy)
                     b_eye, b_target, b_up = bridge_camera.compute_camera()
+                    b_eye, b_target, b_up = camera_shake.perturb(b_eye, b_target, b_up)
                     r.set_bridge_camera(
                         eye=b_eye, target=b_target, up=b_up,
                         fov_y_rad=_BridgeCamera.FOV_Y_RAD,
