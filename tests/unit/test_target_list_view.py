@@ -314,3 +314,50 @@ def test_dispatch_event_toggle_does_not_change_player_target():
     finally:
         from engine.core.game import _set_current_game
         _set_current_game(None)
+
+
+# ── Health-bar percent encoding (Issue 1) ────────────────────────────────────
+
+def _make_targeted_ship(name="USS Galaxy"):
+    """Build a ShipClass via ShipClass_Create, register it as the player's
+    target, and return it. Caller is responsible for tearing the game
+    down via _set_current_game(None)."""
+    from engine.appc.ships import ShipClass_Create
+    from engine.appc.sets import SetClass
+    ship = ShipClass_Create("Galaxy")
+    ship.SetName(name)
+    bridge = App.g_kSetManager.GetSet("bridge")
+    if bridge is None:
+        bridge = SetClass()
+        App.g_kSetManager.AddSet(bridge, "bridge")
+    bridge.AddObjectToSet(ship, name)
+    return ship
+
+
+def test_view_payload_hull_pct_is_integer_percent_not_ratio():
+    """A hull at 50% condition must report hull == 50 (not 0 or 1).
+    Regression test for the missing * 100 — GetConditionPercentage
+    returns [0.0, 1.0]."""
+    from engine.ui.target_list_view import TargetListView
+    from engine.appc.subsystems import HullSubsystem
+
+    App._reset_target_menu_singleton()
+    target_menu = App.STTargetMenu_CreateW("Targets")
+    game, player, mission = _setup_game_with_player()
+    try:
+        ship = _make_targeted_ship("Half-hull")
+        hull = HullSubsystem("Hull")
+        hull.SetMaxCondition(1000.0)
+        hull.SetCondition(500.0)
+        ship.SetHull(hull)
+        target_menu.RebuildShipMenu(ship)
+
+        view = TargetListView()
+        script = view.render_payload()
+        body = script[len("setTargetList("):-2]
+        state = json.loads(body)
+        row = next(r for r in state["rows"] if r["name"] == "Half-hull")
+        assert row["hull"] == 50
+    finally:
+        from engine.core.game import _set_current_game
+        _set_current_game(None)

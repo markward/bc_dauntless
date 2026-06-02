@@ -37,7 +37,7 @@ def _query_hull_percentage(ship) -> int:
     if hull is None or not hasattr(hull, "GetConditionPercentage"):
         return 100
     try:
-        return int(round(hull.GetConditionPercentage()))
+        return int(round(hull.GetConditionPercentage() * 100))
     except Exception:
         return 100
 
