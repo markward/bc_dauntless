@@ -67,6 +67,9 @@ while not r.should_close():
     if pause.is_open:
         frame_dt = 0.0  # freeze game time during pause (see Pause semantics)
 
+    if frame_dt < 0.0:
+        frame_dt = 0.0  # defensive: monotonic clock shouldn't go backward
+
     if frame_dt > MAX_FRAME_DT:
         frame_dt = MAX_FRAME_DT  # bound catch-up after a render stall
 
@@ -138,6 +141,8 @@ step backward.
 ```python
 def step_accumulator(accumulator, frame_dt, tick_dt, max_frame_dt):
     """Pure function. Returns (new_accumulator, n_ticks)."""
+    if frame_dt < 0.0:
+        frame_dt = 0.0  # defensive: monotonic clock shouldn't go backward
     if frame_dt > max_frame_dt:
         frame_dt = max_frame_dt
     accumulator += frame_dt

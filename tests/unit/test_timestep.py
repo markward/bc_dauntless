@@ -78,13 +78,10 @@ def test_pause_zero_dt_no_ticks():
 
 def test_negative_dt_treated_as_zero():
     """Defensive: a clock that steps backward (shouldn't happen with
-    monotonic but be safe) does not produce negative ticks or shrink
-    the accumulator."""
+    monotonic but be safe) does not produce ticks or shrink the
+    accumulator below zero."""
     accumulator, n = step_accumulator(
-        0.5, -0.1, TICK_DT, MAX_FRAME_DT
+        0.0, -0.1, TICK_DT, MAX_FRAME_DT
     )
-    # No new ticks should arise from the negative delta; accumulator
-    # shouldn't grow beyond its pre-call value plus a clamped frame_dt.
-    # The simplest acceptable behavior is: clamp frame_dt to 0.
-    assert n >= 0
-    assert accumulator <= 0.5 + 1e-9
+    assert n == 0
+    assert accumulator == 0.0
