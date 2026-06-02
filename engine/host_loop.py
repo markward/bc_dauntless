@@ -2204,10 +2204,20 @@ def run(mission_name: Optional[str] = None,
             _cef_set_event_handler(registry.dispatch)
         _cef_set_load_end = getattr(_h, "cef_set_load_end_handler", None) if _h else None
         if _cef_set_load_end is not None:
-            # Drop snapshot caches when CEF finishes loading hello.html
-            # so the next tick re-emits state. Handles both initial load
-            # and Cmd+R reloads.
-            _cef_set_load_end(registry.invalidate_all)
+            def _on_cef_load_end():
+                # Drop snapshot caches so next tick re-emits state. Handles
+                # both initial load and Cmd+R reloads.
+                registry.invalidate_all()
+                # Publish the dev flag to JS/HTML on every document load.
+                # When off we leave window.__DAUNTLESS_DEV__ undefined and
+                # body[data-dev] unset so CSS hides .dev-only elements by
+                # default (fails closed if this push is ever missed).
+                if dev_mode.is_enabled() and _h is not None:
+                    _h.cef_execute_javascript(
+                        "window.__DAUNTLESS_DEV__ = true;"
+                        " document.body.dataset.dev = '1';"
+                    )
+            _cef_set_load_end(_on_cef_load_end)
         TICK_DT = 1.0 / 60.0
         MAX_FRAME_DT = 0.25  # Fiedler spiral-of-death cap
 
