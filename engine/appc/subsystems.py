@@ -912,6 +912,10 @@ class WeaponSystem(PoweredSubsystem):
     def StartFiring(self, target=None, offset=None) -> None:
         if not self.IsOn():
             return
+        # Disabled-weapons gate: when every child reports disabled (Project 2
+        # aggregation), the parent IsDisabled is 1 — block fire. Spec §4.2.
+        if _is_offline(self):
+            return
         n = self.GetNumWeapons()
         if n == 0:
             return
@@ -1118,6 +1122,11 @@ class PhaserSystem(WeaponSystem):
         recharge while the trigger stays down.
         """
         if not self.IsOn() or target is None:
+            return
+        # Disabled-weapons gate: parent aggregates child IsDisabled (Project 2).
+        # When all banks are disabled the parent flips disabled and we bail.
+        # Spec §4.2.
+        if _is_offline(self):
             return
         ship = self.GetParentShip()
         if not self._target_in_system_range(ship, target):
