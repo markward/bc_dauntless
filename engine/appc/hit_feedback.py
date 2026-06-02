@@ -137,14 +137,17 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
     if _audio_should_play(ship, severity):
         _play_audio(severity, point, weapon_type)
 
-    # 3. Camera shake — player only.
+    # 3. Camera shake — player only, and only for hits the shields
+    # didn't fully absorb. Shields-up impacts deflect the energy by
+    # design; the bubble splash visual is the player cue.
     try:
         import App
         game = App.Game_GetCurrentGame() if hasattr(App, "Game_GetCurrentGame") else None
         player = game.GetPlayer() if game is not None and hasattr(game, "GetPlayer") else None
     except Exception:
         player = None
-    if player is not None and ship is player:
+    if (player is not None and ship is player
+            and severity != Severity.SHIELD):
         camera_shake.apply_kick(float(damage))
 
 

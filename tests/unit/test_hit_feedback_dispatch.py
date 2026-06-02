@@ -263,6 +263,34 @@ def test_camera_shake_does_not_fire_for_non_player_target(spy, monkeypatch):
     assert spy["kicks"] == []
 
 
+def test_shield_severity_does_not_kick_camera_shake_even_for_player(spy, monkeypatch):
+    """Shields-up is by design a deflection; no camera shake should
+    fire even when the player is the recipient. Camera shake is
+    reserved for HULL and CRITICAL severities."""
+    hull = _HullMarker()
+    ship = _Ship(hull)
+    host = _FakeHost()
+    ship_instances = {ship: 42}
+
+    import App
+    class _Game:
+        def GetPlayer(self): return ship
+    monkeypatch.setattr(App, "Game_GetCurrentGame", lambda: _Game(), raising=False)
+
+    hit_feedback.dispatch(
+        ship=ship, source=None, point=TGPoint3(0, 0, 0), normal=None,
+        damage=50.0, subsystem=hull,
+        absorbed_shields=50.0, absorbed_subsystem=0.0, absorbed_hull=0.0,
+        sub_transition=None,
+        host=host, ship_instances=ship_instances,
+        weapon_type="torpedo",
+    )
+
+    # SHIELD severity → no camera-shake kick, even though the player
+    # is the recipient.
+    assert spy["kicks"] == []
+
+
 # ── Headless robustness ───────────────────────────────────────────────────
 
 def test_dispatch_with_none_host_does_not_call_shield_hit(spy):
