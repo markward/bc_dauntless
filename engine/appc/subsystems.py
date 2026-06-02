@@ -298,6 +298,19 @@ class _EnergyWeaponFireMixin:
         return ps.StealPower(cost)
 
 
+def _is_offline(sub) -> bool:
+    """True when a subsystem is disabled OR destroyed.
+
+    Project 5 single source of truth for the five capability gates
+    (engines, weapons, sensors, shield generator, repair-verify).
+    Reads predicates at use-time so repair lifting condition releases
+    the gate automatically on the next call.
+    """
+    if sub is None:
+        return False
+    return bool(sub.IsDisabled()) or bool(sub.IsDestroyed())
+
+
 class ShipSubsystem(TGEventHandlerObject):
     def __init__(self, name: str = ""):
         super().__init__()
