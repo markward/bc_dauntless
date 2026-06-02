@@ -15,6 +15,8 @@ import os as _os_mod
 
 from engine import renderer as r
 from engine.appc.ship_iter import iter_set_objects as _iter_set_objects, iter_ships as _iter_ships
+import engine.dev_keybindings as dev_keybindings
+import engine.dev_mode as dev_mode
 
 import math as _math
 
@@ -2416,6 +2418,17 @@ def run(mission_name: Optional[str] = None,
                 cam_control.set_ship_radius(player.GetRadius())
 
             if not pause.is_open:
+                # Dev-mode keybindings (no-op when --developer is not set).
+                # register_for_frame re-binds handlers that close over the
+                # current player/session each tick; dispatch_dev_key reads
+                # _h.key_pressed for every registered key and fires matching
+                # handlers. Skipped silently when dev_mode.is_enabled() is False.
+                if _h is not None and dev_mode.is_enabled():
+                    dev_keybindings.register_for_frame(_h, session, player)
+                    for key, _desc in dev_mode.keybinding_descriptions():
+                        if _h.key_pressed(key):
+                            dev_mode.dispatch_dev_key(key)
+
                 # F12: toggle CEF DevTools for the UI overlay.
                 if _h is not None and _h.key_pressed(_h.keys.KEY_F12):
                     _h.cef_toggle_devtools()
