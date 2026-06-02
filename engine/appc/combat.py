@@ -53,25 +53,24 @@ def ray_sphere_entry(origin, direction, max_dist: float,
 def _resolve_hit_point(host, ship_instances, ship,
                        ray_origin, ray_direction,
                        max_dist: float, fallback_point):
-    """Three-tier hit-point fallback:
+    """Three-tier hit-point fallback. Returns ``(point, normal)``.
 
-    1. If `host` exposes `ray_trace_mesh` AND `ship` has a renderer
-       `InstanceId` in `ship_instances`, run the mesh trace; on hit,
-       return the returned surface point.
-    2. Else, if both `host` and `iid` were present (so the mesh trace
-       ran and missed, or the binding wasn't available), fall back to
-       the bounding-sphere entry point when the ray segment intersects
-       it.
-    3. Otherwise — no host, no iid, or the sphere also missed — return
-       `fallback_point` (the caller's pre-project legacy point:
-       `torpedo._position` for projectiles, `target_pos` for phasers).
-       Preserves headless and broken-binding behaviour.
+    ``normal`` is a unit ``TGPoint3`` only when the mesh trace
+    succeeded; sphere-entry and fallback paths return ``normal=None``.
+
+    Tiers:
+    1. Mesh trace via ``host.ray_trace_mesh`` (requires both host and
+       a renderer InstanceId for this ship). Returns the surface point
+       and the surface normal.
+    2. Bounding-sphere entry. No normal available.
+    3. ``fallback_point`` passed by the caller (torpedo position or
+       phaser target_pos). No normal.
     """
     if host is None or ray_direction is None:
-        return fallback_point
+        return fallback_point, None
     iid = ship_instances.get(ship) if ship_instances is not None else None
     if iid is None:
-        return fallback_point
+        return fallback_point, None
     if hasattr(host, "ray_trace_mesh"):
         try:
             result = host.ray_trace_mesh(
@@ -84,15 +83,15 @@ def _resolve_hit_point(host, ship_instances, ship,
             # Native trace errors must not kill a combat tick; degrade to sphere entry.
             result = None
         if result is not None:
-            (px, py, pz), _normal, _t = result
-            return TGPoint3(px, py, pz)
+            (px, py, pz), (nx, ny, nz), _t = result
+            return TGPoint3(px, py, pz), TGPoint3(nx, ny, nz)
     center = ship.GetWorldLocation()
     radius = ship.GetRadius() if hasattr(ship, "GetRadius") else 0.0
     entry = ray_sphere_entry(ray_origin, ray_direction, max_dist,
                              center, radius)
     if entry is not None:
-        return entry
-    return fallback_point
+        return entry, None
+    return fallback_point, None
 
 
 def _body_frame_delta(ship, hit_point):
@@ -123,6 +122,43 @@ def _body_frame_delta(ship, hit_point):
         dx_w * cy.x + dy_w * cy.y + dz_w * cy.z,
         dx_w * cz.x + dy_w * cz.y + dz_w * cz.z,
     )
+
+
+def _subsystem_state_flags(sub) -> tuple:
+    """Snapshot (IsDamaged, IsDisabled, IsDestroyed) as a 3-tuple of bools,
+    diffable against a later snapshot via :func:`_diff_state`.
+
+    Missing methods default to False so legacy test fixtures
+    (pre-dating the full ShipSubsystem interface) keep working.
+    """
+    return (
+        bool(sub.IsDamaged())   if hasattr(sub, "IsDamaged")   else False,
+        bool(sub.IsDisabled())  if hasattr(sub, "IsDisabled")  else False,
+        bool(sub.IsDestroyed()) if hasattr(sub, "IsDestroyed") else False,
+    )
+
+
+def _diff_state(before: tuple, after: tuple):
+    """Worst NEW state-flag, or None if no flag flipped False→True.
+
+    Priority: destroyed > disabled > None. Pre-existing True flags are
+    ignored — only False→True transitions count.
+
+    The `damaged` flag is deliberately excluded from the CRITICAL trigger
+    semantics: IsDamaged() typically returns condition < max_condition,
+    so it flips True on every subsystem's first damage tick, which would
+    promote every first hit to CRITICAL — too noisy. CRITICAL is reserved
+    for "this subsystem stopped working" (disabled or destroyed).
+    `_subsystem_state_flags` still snapshots all three flags so future
+    consumers can read them, but `_diff_state` ignores the damaged one.
+    """
+    _b_dmg, b_dis, b_des = before
+    _a_dmg, a_dis, a_des = after
+    if a_des and not b_des:
+        return "destroyed"
+    if a_dis and not b_dis:
+        return "disabled"
+    return None
 
 
 def pick_target_subsystem(ship, hit_point):
@@ -203,41 +239,88 @@ def _shield_face_from_hit_point(ship, hit_point) -> int:
     return 4 if bx <= 0 else 5
 
 
-def apply_hit(ship, damage: float, hit_point, source, subsystem=None) -> None:
+def apply_hit(ship, damage: float, hit_point, source, subsystem=None,
+              *, normal=None, host=None, ship_instances=None,
+              weapon_type: str | None = None) -> None:
     """Route `damage` to `ship`: shields face first → picked subsystem
-    → hull bleed.  Broadcast WeaponHitEvent at the end so per-ship and
-    broadcast handlers (MissionLib.FriendlyFireHandler) react.
+    → hull bleed.  Then call hit_feedback.dispatch with the per-stage
+    absorbed breakdown + subsystem state transition + surface normal,
+    then broadcast WeaponHitEvent so per-ship and broadcast handlers
+    (MissionLib.FriendlyFireHandler) react.
+
+    normal — TGPoint3 surface normal at hit_point, or None if the
+             mesh trace missed. Threaded to hit_feedback.dispatch.
+    host, ship_instances — passed through to dispatch so it can
+             fire host.shield_hit (the shield-bubble splash on
+             SHIELD severity).
+    weapon_type — "phaser" / "torpedo" / None. Consumed by dispatch
+             to match SDK Effects.py audio semantics: phaser-on-shields
+             is silent (stock BC has no PhaserShieldHit handler);
+             torpedo-on-shields plays from g_lsWeaponExplosions
+             (matching Effects.TorpedoShieldHit).
+
+    Dispatch is wrapped in try/except so a renderer or audio crash
+    cannot suppress the WeaponHitEvent broadcast.
     """
     from engine.appc.events import WeaponHitEvent
+    from engine.appc import hit_feedback
     import App
 
     if subsystem is None:
         subsystem = pick_target_subsystem(ship, hit_point)
 
     remaining = float(damage)
+    absorbed_shields = 0.0
+    absorbed_subsystem = 0.0
+    absorbed_hull = 0.0
+    sub_transition = None
+    hull = ship.GetHull() if hasattr(ship, "GetHull") else None
 
     # 1. Shields take it first.
     shields = ship.GetShields() if hasattr(ship, "GetShields") else None
     if shields is not None and hasattr(shields, "ApplyDamage"):
         face = _shield_face_from_hit_point(ship, hit_point)
+        before_shields = remaining
         remaining = shields.ApplyDamage(face, remaining)
+        absorbed_shields = before_shields - remaining
 
     # 2. Bleed remainder to picked subsystem (skip if subsystem is the hull —
     #    the hull-bleed branch below handles that).
-    hull = ship.GetHull() if hasattr(ship, "GetHull") else None
-    if remaining > 0.0 and subsystem is not None and subsystem is not hull:
-        if hasattr(ship, "DamageSystem"):
-            current = subsystem.GetCondition() if hasattr(subsystem, "GetCondition") else remaining
-            absorb = min(remaining, current)
-            ship.DamageSystem(subsystem, absorb)
-            remaining -= absorb
+    if remaining > 0.0 and subsystem is not None and subsystem is not hull \
+            and hasattr(ship, "DamageSystem"):
+        before_flags = _subsystem_state_flags(subsystem)
+        current = subsystem.GetCondition() if hasattr(subsystem, "GetCondition") else remaining
+        absorb = min(remaining, current)
+        ship.DamageSystem(subsystem, absorb)
+        absorbed_subsystem = absorb
+        remaining -= absorb
+        after_flags = _subsystem_state_flags(subsystem)
+        sub_transition = _diff_state(before_flags, after_flags)
 
     # 3. Bleed final remainder to hull.
     if remaining > 0.0 and hull is not None and hasattr(ship, "DamageSystem"):
         ship.DamageSystem(hull, remaining)
+        absorbed_hull = remaining
+        remaining = 0.0
 
-    # 4. Broadcast WeaponHitEvent.  Setting destination = ship so per-ship
-    #    instance handlers fire alongside broadcast handlers.
+    # 4. Fan out VFX + audio + camera shake. Errors swallowed so the
+    #    downstream WeaponHitEvent broadcast always runs.
+    try:
+        hit_feedback.dispatch(
+            ship=ship, source=source, point=hit_point, normal=normal,
+            damage=damage, subsystem=subsystem,
+            absorbed_shields=absorbed_shields,
+            absorbed_subsystem=absorbed_subsystem,
+            absorbed_hull=absorbed_hull,
+            sub_transition=sub_transition,
+            host=host, ship_instances=ship_instances,
+            weapon_type=weapon_type,
+        )
+    except Exception:
+        # Dispatch failures must not suppress mission handlers below.
+        pass
+
+    # 5. Broadcast WeaponHitEvent.
     evt = WeaponHitEvent()
     evt.SetSource(source)
     evt.SetTarget(ship)

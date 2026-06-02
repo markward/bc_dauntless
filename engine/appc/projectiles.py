@@ -151,7 +151,7 @@ def update_all(dt: float, all_ships, *, host=None, ship_instances=None) -> list[
                 # to fallback", which is what we want for a stationary tick.
                 aim_unit = (TGPoint3(seg.x / seg_len, seg.y / seg_len, seg.z / seg_len)
                             if seg_len > 1e-9 else None)
-                hit_point = _resolve_hit_point(
+                hit_point, _hit_normal = _resolve_hit_point(
                     host=host, ship_instances=ship_instances, ship=ship,
                     ray_origin=prev_pos,
                     ray_direction=aim_unit,

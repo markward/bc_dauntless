@@ -74,10 +74,12 @@ def test_fire_starts_loop_sound_and_stop_silences_it(galaxy_red):
         mgr.GetSound.return_value = loop_sound
 
         bank.Fire()
-        # Start one-shot was attempted.
-        start_calls = [c.args[0] for c in mgr.PlaySound.call_args_list]
-        assert any(name.endswith(" Start") for name in start_calls), (
-            f"Expected a '... Start' sound, got: {start_calls}"
+        # Start one-shot was fetched via GetSound and Play()ed.
+        # (PlaySound is no longer used — _play_fire_sfx now calls
+        # GetSound+Play so the attach_node can be forwarded.)
+        get_sound_calls = [c.args[0] for c in mgr.GetSound.call_args_list]
+        assert any(name.endswith(" Start") for name in get_sound_calls), (
+            f"Expected a GetSound('... Start') lookup, got: {get_sound_calls}"
         )
         # Loop sound was fetched, set looping, and Play()ed.
         loop_lookup = [c.args[0] for c in mgr.GetSound.call_args_list]

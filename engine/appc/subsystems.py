@@ -188,10 +188,18 @@ class _EnergyWeaponFireMixin:
     def Fire(self, target=None, offset=None) -> None:
         if not self.CanFire():
             return
+        # Edge-trigger the SFX. AI scripts call StartFiring on every
+        # evaluation tick; without this gate, each call would spawn a
+        # fresh "Phaser Loop" _PlayingSound handle and overwrite
+        # self._loop_handle, orphaning every prior handle so they loop
+        # forever (no Stop reference). Symptom: continuous phaser SFX
+        # during NPC-vs-NPC fights even after all banks deplete.
+        was_firing = self._firing
         self._firing = True
         self._target = target
         self._target_offset = offset
-        self._play_fire_sfx()
+        if not was_firing:
+            self._play_fire_sfx()
 
     def StopFiring(self) -> None:
         was_firing = self._firing
@@ -230,21 +238,45 @@ class _EnergyWeaponFireMixin:
                     self._armed = True
 
     def _play_fire_sfx(self) -> None:
+        """Play the firing bank's Start one-shot + Loop sustained tone.
+
+        Both are attached to the firing ship's scene node so they
+        position correctly in 3D space — the WAVs are LS_3D, but a bare
+        Play() with no attach_node lands the source at world origin.
+        Matches the pattern engine/audio/engine_rumble.py uses for ship-
+        attached looping sounds.
+        """
         name = _resolve_fire_sound(self.GetProperty())
         if not name:
             return
         from engine.audio.tg_sound import TGSoundManager
         mgr = TGSoundManager.instance()
-        played = mgr.PlaySound(name + " Start")
-        if played is None:
-            mgr.PlaySound(name)
-        # Start the looped beam sound (Galaxy Phaser Loop etc.) and keep
-        # the handle so StopFiring can silence it.  PlaySound with a
-        # name that doesn't exist returns None — silent fallback.
+        attach_node = self._firing_ship_node_id()
+
+        start_snd = mgr.GetSound(name + " Start")
+        if start_snd is None:
+            # Tractor convention: bare name has no " Start"/" Loop" pair.
+            start_snd = mgr.GetSound(name)
+        if start_snd is not None:
+            start_snd.Play(attach_node=attach_node)
+
         loop_snd = mgr.GetSound(name + " Loop")
         if loop_snd is not None:
             loop_snd.SetLooping(True)
-            self._loop_handle = loop_snd.Play()
+            self._loop_handle = loop_snd.Play(attach_node=attach_node)
+
+    def _firing_ship_node_id(self) -> int:
+        """Walk parent_subsystem → parent_ship → GetSceneNodeId. Returns
+        0 (no attachment) when any link is missing — playback degrades
+        to world-origin rather than crashing on legacy fixtures."""
+        parent_sys = self.GetParentSubsystem() if hasattr(self, "GetParentSubsystem") else None
+        if parent_sys is None:
+            return 0
+        parent_ship = parent_sys.GetParentShip() if hasattr(parent_sys, "GetParentShip") else None
+        if parent_ship is None:
+            return 0
+        getter = getattr(parent_ship, "GetSceneNodeId", None)
+        return int(getter()) if getter else 0
 
     def _bill_recharge(self, charge_amount: float) -> int:
         """Charge POWER_COST_PER_CHARGE × charge_amount against the firing
@@ -1024,6 +1056,43 @@ class PhaserSystem(WeaponSystem):
     def GetAimedWeapon(self) -> int:                return self._aimed_weapon
     def SetAimedWeapon(self, v) -> None:            self._aimed_weapon = int(v)
 
+    def _target_in_system_range(self, ship, target) -> bool:
+        """True iff `target` is within the system's effective range
+        (max of MaxDamageDistance across all banks).
+
+        Option 1 gate from docs/superpowers/deferred/2026-05-18-phaser-
+        fire-range-gate.md: a system-wide cutoff at the longest-reach
+        bank's MaxDamageDistance. Banks with shorter reach still
+        contribute the full distance check at fire time
+        (_phaser_damage_for_tick falloff), but every bank is gated
+        together at the system level — no charge drain, no beam, no
+        SFX when nothing on this ship can damage the target.
+
+        Legacy fixture support: if either ship or target lacks
+        GetWorldLocation, or if no bank declares MaxDamageDistance,
+        returns True so pre-range-gate tests keep their previous
+        behaviour.
+        """
+        if ship is None or target is None:
+            return False
+        if not hasattr(ship, "GetWorldLocation") or not hasattr(target, "GetWorldLocation"):
+            return True
+        sp = ship.GetWorldLocation()
+        tp = target.GetWorldLocation()
+        dx, dy, dz = tp.x - sp.x, tp.y - sp.y, tp.z - sp.z
+        dist_sq = dx*dx + dy*dy + dz*dz
+        max_range = 0.0
+        for i in range(self.GetNumWeapons()):
+            bank = self.GetWeapon(i)
+            if bank is None:
+                continue
+            r = bank.GetMaxDamageDistance() if hasattr(bank, "GetMaxDamageDistance") else 0.0
+            if r > max_range:
+                max_range = r
+        if max_range <= 0.0:
+            return True
+        return dist_sq <= max_range * max_range
+
     def StartFiring(self, target=None, offset=None) -> None:
         """Dispatch — fires the next eligible PhaserBank.
 
@@ -1037,10 +1106,12 @@ class PhaserSystem(WeaponSystem):
         """
         if not self.IsOn() or target is None:
             return
+        ship = self.GetParentShip()
+        if not self._target_in_system_range(ship, target):
+            return
         self._fire_held = True
         self._held_target = target
         self._held_offset = offset
-        ship = self.GetParentShip()
         aim_world = _resolve_aim_world(ship, target)
         self._currently_firing = []
         self._dispatch_one_or_all(target, offset, ship, aim_world)
@@ -1063,6 +1134,11 @@ class PhaserSystem(WeaponSystem):
         ship = self.GetParentShip()
         target = self._held_target
         if hasattr(target, "IsDead") and target.IsDead():
+            self.StopFiring()
+            return
+        if not self._target_in_system_range(ship, target):
+            # Target has drifted out of range during a held-fire burst.
+            # Stop the held state entirely — re-engaging requires a fresh trigger.
             self.StopFiring()
             return
         if self._single_fire:

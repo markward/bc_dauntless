@@ -74,7 +74,7 @@ def test_resolve_returns_mesh_hit_when_trace_succeeds():
     ship = _FakeShip(0, 0, 0)
     fallback = TGPoint3(99, 99, 99)
     host = _FakeHost(result=((1.0, 2.0, 3.0), (0.0, 0.0, -1.0), 5.0))
-    p = _resolve_hit_point(
+    p, n = _resolve_hit_point(
         host=host, ship_instances={ship: object()}, ship=ship,
         ray_origin=TGPoint3(0, 0, -10),
         ray_direction=TGPoint3(0, 0, 1),
@@ -84,13 +84,17 @@ def test_resolve_returns_mesh_hit_when_trace_succeeds():
     assert p.x == pytest.approx(1.0)
     assert p.y == pytest.approx(2.0)
     assert p.z == pytest.approx(3.0)
+    assert n is not None
+    assert n.x == pytest.approx(0.0)
+    assert n.y == pytest.approx(0.0)
+    assert n.z == pytest.approx(-1.0)
 
 
 def test_resolve_falls_back_to_sphere_entry_when_trace_misses():
     ship = _FakeShip(0, 0, 0, r=2.0)
     fallback = TGPoint3(99, 99, 99)
     host = _FakeHost(result=None)
-    p = _resolve_hit_point(
+    p, n = _resolve_hit_point(
         host=host, ship_instances={ship: object()}, ship=ship,
         ray_origin=TGPoint3(0, 0, -10),
         ray_direction=TGPoint3(0, 0, 1),
@@ -99,12 +103,13 @@ def test_resolve_falls_back_to_sphere_entry_when_trace_misses():
     )
     # Sphere of radius 2 at origin; ray enters at z=-2.
     assert p.z == pytest.approx(-2.0)
+    assert n is None
 
 
 def test_resolve_returns_fallback_when_host_is_none():
     ship = _FakeShip(0, 0, 0)
     fallback = TGPoint3(99, 99, 99)
-    p = _resolve_hit_point(
+    p, n = _resolve_hit_point(
         host=None, ship_instances=None, ship=ship,
         ray_origin=TGPoint3(0, 0, -10),
         ray_direction=TGPoint3(0, 0, 1),
@@ -112,13 +117,14 @@ def test_resolve_returns_fallback_when_host_is_none():
         fallback_point=fallback,
     )
     assert p is fallback
+    assert n is None
 
 
 def test_resolve_returns_fallback_when_ship_instances_missing():
     ship = _FakeShip(0, 0, 0)
     fallback = TGPoint3(99, 99, 99)
     host = _FakeHost(result=((1.0, 2.0, 3.0), (0.0, 0.0, -1.0), 5.0))
-    p = _resolve_hit_point(
+    p, n = _resolve_hit_point(
         host=host, ship_instances={}, ship=ship,  # ship not in map
         ray_origin=TGPoint3(0, 0, -10),
         ray_direction=TGPoint3(0, 0, 1),
@@ -126,6 +132,7 @@ def test_resolve_returns_fallback_when_ship_instances_missing():
         fallback_point=fallback,
     )
     assert p is fallback
+    assert n is None
     assert host.calls == []  # binding must not be called without an iid
 
 
@@ -135,23 +142,23 @@ def test_resolve_returns_fallback_when_binding_missing():
         pass
     ship = _FakeShip(0, 0, 0, r=2.0)
     fallback = TGPoint3(99, 99, 99)
-    p = _resolve_hit_point(
+    p, n = _resolve_hit_point(
         host=HostWithoutTrace(), ship_instances={ship: object()}, ship=ship,
         ray_origin=TGPoint3(0, 0, -10),
         ray_direction=TGPoint3(0, 0, 1),
         max_dist=20.0,
         fallback_point=fallback,
     )
-    # Sphere entry preferred when ray clearly intersects sphere; otherwise
-    # fallback.
+    # Sphere entry preferred when ray clearly intersects sphere.
     assert p.z == pytest.approx(-2.0)
+    assert n is None
 
 
 def test_resolve_falls_back_to_caller_point_when_sphere_also_misses():
     ship = _FakeShip(0, 0, 0, r=2.0)
     fallback = TGPoint3(99, 99, 99)
     host = _FakeHost(result=None)
-    p = _resolve_hit_point(
+    p, n = _resolve_hit_point(
         host=host, ship_instances={ship: object()}, ship=ship,
         # Ray that misses the bounding sphere entirely.
         ray_origin=TGPoint3(100, 100, -10),
@@ -160,3 +167,4 @@ def test_resolve_falls_back_to_caller_point_when_sphere_also_misses():
         fallback_point=fallback,
     )
     assert p is fallback
+    assert n is None

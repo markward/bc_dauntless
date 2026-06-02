@@ -580,12 +580,16 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   renderer::HitVfxDescriptor v;
                   auto pos = d["position"].cast<std::tuple<float, float, float>>();
                   v.world_pos = {std::get<0>(pos), std::get<1>(pos), std::get<2>(pos)};
+                  auto n = d["normal"].cast<std::tuple<float, float, float>>();
+                  v.surface_normal = {std::get<0>(n), std::get<1>(n), std::get<2>(n)};
+                  v.severity = d["severity"].cast<int>();
                   v.age = d["age"].cast<float>();
                   g_hit_vfx.push_back(std::move(v));
               }
           },
           py::arg("vfx"),
-          "Set the active hit-VFX list (position + age), applied each frame().");
+          "Set the active hit-VFX list (position + normal + severity + age), "
+          "applied each frame().");
 
     m.def("set_phaser_beams",
           [](const std::vector<py::dict>& descs) {

@@ -3,6 +3,7 @@ Broadcasts WeaponHitEvent at the end.
 """
 import sys
 import types
+import pytest
 
 from engine.appc.math import TGPoint3
 from engine.appc.combat import apply_hit
@@ -126,3 +127,124 @@ def test_apply_hit_broadcasts_weapon_hit_event():
         App.g_kEventManager.RemoveBroadcastHandler(
             ET_WEAPON_HIT, None, "_test_apply_hit_broadcast.handler")
         del sys.modules["_test_apply_hit_broadcast"]
+
+
+# ── apply_hit calls hit_feedback.dispatch with per-stage breakdown ─────────
+
+class _SpyDispatch:
+    """Capture dispatch calls for assertion."""
+    def __init__(self):
+        self.calls = []
+    def __call__(self, *args, **kwargs):
+        self.calls.append(kwargs)
+
+
+def test_apply_hit_calls_dispatch_with_absorbed_shields(monkeypatch):
+    """Shield absorbs the entire hit; absorbed_shields=damage, others=0."""
+    from engine.appc import combat, hit_feedback
+    from engine.appc.math import TGPoint3
+
+    spy = _SpyDispatch()
+    monkeypatch.setattr(hit_feedback, "dispatch", spy)
+
+    ship = _make_ship_with_full_shield(face_charge=100.0)
+    combat.apply_hit(ship, damage=30.0, hit_point=TGPoint3(0, 1, 0),
+                     source=None, subsystem=None,
+                     normal=TGPoint3(0, -1, 0))
+
+    assert len(spy.calls) == 1
+    kw = spy.calls[0]
+    assert kw["absorbed_shields"] == pytest.approx(30.0)
+    assert kw["absorbed_subsystem"] == pytest.approx(0.0)
+    assert kw["absorbed_hull"] == pytest.approx(0.0)
+    assert kw["sub_transition"] is None
+    assert kw["normal"].y == pytest.approx(-1.0)
+
+
+def test_apply_hit_calls_dispatch_with_hull_bleed(monkeypatch):
+    """Shields drained, hull absorbs the overflow."""
+    from engine.appc import combat, hit_feedback
+    from engine.appc.math import TGPoint3
+
+    spy = _SpyDispatch()
+    monkeypatch.setattr(hit_feedback, "dispatch", spy)
+
+    ship = _make_ship_with_full_shield(face_charge=10.0)
+    combat.apply_hit(ship, damage=30.0, hit_point=TGPoint3(0, 1, 0),
+                     source=None, subsystem=None,
+                     normal=None)
+
+    kw = spy.calls[0]
+    assert kw["absorbed_shields"] == pytest.approx(10.0)
+    # subsystem=None → pick_target_subsystem returns hull; absorbed_subsystem
+    # stays 0; the 20 spills to hull.
+    assert kw["absorbed_subsystem"] == pytest.approx(0.0)
+    assert kw["absorbed_hull"] == pytest.approx(20.0)
+
+
+def test_apply_hit_dispatch_captures_subsystem_transition(monkeypatch):
+    """A subsystem that flips disabled this tick produces sub_transition='disabled'."""
+    from engine.appc import combat, hit_feedback
+    from engine.appc.math import TGPoint3
+
+    spy = _SpyDispatch()
+    monkeypatch.setattr(hit_feedback, "dispatch", spy)
+
+    ship = _make_ship_with_flipping_sub(initial_dmg=False,
+                                          initial_dis=False,
+                                          final_dmg=True,
+                                          final_dis=True)
+    combat.apply_hit(ship, damage=50.0, hit_point=TGPoint3(0, 1, 0),
+                     source=None, subsystem=ship._flipping_sub,
+                     normal=None)
+
+    kw = spy.calls[0]
+    assert kw["sub_transition"] == "disabled"
+
+
+def _make_ship_with_full_shield(*, face_charge):
+    """Ship with FRONT shield charged to `face_charge`, no children.
+    pick_target_subsystem returns hull (no candidate children pass the
+    proximity gate)."""
+    shields = _FakeShields(current=face_charge)
+    hull = _FakeSubsystem("Hull", max_cond=1000.0)
+    return _FakeShip(shields=shields, hull=hull, children=[])
+
+
+class _FlippingSub(_FakeSubsystem):
+    """Subsystem whose IsDamaged/IsDisabled return initial_* until
+    DamageSystem is called once, then final_*."""
+    def __init__(self, *, initial_dmg, initial_dis,
+                 final_dmg, final_dis,
+                 position=None, radius=2.0):
+        super().__init__("Flipping", max_cond=100.0,
+                         position=position or TGPoint3(0, 5, 0),
+                         radius=radius)
+        self._initial = (initial_dmg, initial_dis, False)
+        self._final = (final_dmg, final_dis, False)
+        self._damaged_called = False
+    def IsDamaged(self):
+        return (self._final if self._damaged_called else self._initial)[0]
+    def IsDisabled(self):
+        return (self._final if self._damaged_called else self._initial)[1]
+    def IsDestroyed(self):
+        return False
+    def SetCondition(self, v):
+        super().SetCondition(v)
+        self._damaged_called = True
+
+
+def _make_ship_with_flipping_sub(*, initial_dmg, initial_dis,
+                                   final_dmg, final_dis):
+    """Ship with one _FlippingSub as a child, no shields. Caller passes
+    ship._flipping_sub explicitly to apply_hit's `subsystem` kwarg."""
+    shields = _FakeShields(current=0.0)
+    hull = _FakeSubsystem("Hull", max_cond=1000.0)
+    flipping = _FlippingSub(
+        initial_dmg=initial_dmg, initial_dis=initial_dis,
+        final_dmg=final_dmg, final_dis=final_dis,
+        position=TGPoint3(0, 1, 0), radius=10.0,
+    )
+    ship = _FakeShip(shields=shields, hull=hull, children=[flipping])
+    ship._flipping_sub = flipping
+    return ship

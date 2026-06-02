@@ -131,6 +131,16 @@ def _bootstrap_firing_pipeline() -> None:
         print(f"[host_loop] WARNING: LoadTacticalSounds.LoadSounds() failed: {_e}",
               flush=True)
 
+    # Damage-impact sounds — Shield Hit + Subsystem Critical pool.
+    # Depends on LoadTacticalSounds having loaded first (rebinds
+    # GetRandomSound from there).
+    try:
+        import LoadDamageHitSounds
+        LoadDamageHitSounds.LoadSounds()
+    except Exception as _e:
+        print(f"[host_loop] WARNING: LoadDamageHitSounds.LoadSounds() failed: {_e}",
+              flush=True)
+
     # NOTE: MissionLib.FriendlyFireHandler registration is deliberately
     # NOT done here.  The SDK script (sdk/.../MissionLib.py:3699) calls
     # pObject.CallNextHandler(pEvent) — pObject is the broadcast `dest`
@@ -208,17 +218,17 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
     """Per-frame torpedo motion + collision + damage + renderer push.
 
     Walks the active torpedo registry, advances motion, routes hits
-    through combat.apply_hit (which broadcasts WeaponHitEvent), spawns
-    hit VFX, ages out expired VFX, and pushes current torpedo + hit-VFX
-    lists to the renderer.
+    through combat.apply_hit (which calls hit_feedback.dispatch and
+    broadcasts WeaponHitEvent), ages out expired VFX, and pushes current
+    torpedo + hit-VFX lists to the renderer.
 
     `host` is the _dauntless_host module (the binding from
     host_bindings.cc).  When None (headless tests), the renderer pushes
     are skipped — combat logic still runs.
 
-    `ship_instances` maps ship → renderer instance id; when provided we
-    also fire host.shield_hit on the target's bubble so the shield-impact
-    pass can splash at the strike point.
+    `ship_instances` maps ship → renderer instance id; passed through to
+    apply_hit so hit_feedback.dispatch can fire host.shield_hit on the
+    SHIELD severity path.
     """
     from engine.appc import projectiles, hit_vfx
     from engine.appc.combat import apply_hit, _resolve_hit_point
@@ -231,31 +241,19 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
     )
     for torpedo, ship, subsystem, hit_point in hits:
         apply_hit(ship, torpedo._damage, hit_point,
-                  source=torpedo._source_ship, subsystem=subsystem)
-        hit_vfx.spawn(hit_point)
-        if (host is not None
-                and ship_instances is not None
-                and hasattr(host, "shield_hit")):
-            iid = ship_instances.get(ship)
-            if iid is not None:
-                # Resolved hit point — on the hull when the mesh trace
-                # succeeded; on the bounding-sphere entry point or on
-                # the torpedo's post-advance position otherwise.
-                host.shield_hit(
-                    instance_id=iid,
-                    point=(hit_point.x, hit_point.y, hit_point.z),
-                    rgba=(0.0, 0.0, 0.0, 0.0),
-                    intensity=1.0,
-                )
+                  source=torpedo._source_ship, subsystem=subsystem,
+                  normal=None, host=host, ship_instances=ship_instances,
+                  weapon_type="torpedo")
 
     hit_vfx.update_ages(dt)
+    from engine.appc import camera_shake
+    camera_shake.update(dt)
 
     # Continuous phaser damage tick.  Each ship's PhaserSystem has banks
     # set firing by StartFiring; advance them here: re-check arc (auto-
     # stop drifters), compute distance falloff, and route damage through
-    # apply_hit (which already routes shields → subsystem → hull and
-    # broadcasts WeaponHitEvent).  Shield-impact splash piggybacks on the
-    # same host.shield_hit call torpedoes use.
+    # apply_hit (which routes shields → subsystem → hull, calls
+    # hit_feedback.dispatch, and broadcasts WeaponHitEvent).
     from engine.appc.subsystems import _emitter_in_arc
     from engine.appc.math import TGPoint3
     for ship in ships_list:
@@ -299,7 +297,7 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
                 dt=dt,
             )
             if damage > 0:
-                impact_point = _resolve_hit_point(
+                impact_point, impact_normal = _resolve_hit_point(
                     host=host, ship_instances=ship_instances, ship=target,
                     ray_origin=emitter_pos,
                     ray_direction=(aim_unit if dist > 1e-6 else None),
@@ -307,18 +305,10 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
                     fallback_point=target_pos,
                 )
                 apply_hit(target, damage, impact_point,
-                          source=ship, subsystem=target_sub)
-                if (host is not None
-                        and ship_instances is not None
-                        and hasattr(host, "shield_hit")):
-                    iid = ship_instances.get(target)
-                    if iid is not None:
-                        host.shield_hit(
-                            instance_id=iid,
-                            point=(impact_point.x, impact_point.y, impact_point.z),
-                            rgba=(0.0, 0.0, 0.0, 0.0),
-                            intensity=1.0,
-                        )
+                          source=ship, subsystem=target_sub,
+                          normal=impact_normal,
+                          host=host, ship_instances=ship_instances,
+                          weapon_type="phaser")
 
     if host is not None and hasattr(host, "set_torpedoes"):
         host.set_torpedoes(_build_torpedo_render_data())
@@ -388,8 +378,11 @@ def _build_hit_vfx_render_data():
     out = []
     for entry in hit_vfx.snapshot():
         pos = entry["position"]
+        n = entry["normal"]
         out.append({
             "position": (pos.x, pos.y, pos.z),
+            "normal":   (n.x, n.y, n.z) if n is not None else (0.0, 0.0, 0.0),
+            "severity": entry["severity"],
             "age":      entry["age"],
         })
     return out
@@ -466,7 +459,7 @@ def _build_phaser_beam_render_data(ships, host=None, ship_instances=None):
                 aim_unit = TGPoint3(dx / raw_length,
                                     dy / raw_length,
                                     dz / raw_length)
-                clipped = _resolve_hit_point(
+                clipped, _clipped_normal = _resolve_hit_point(
                     host=host, ship_instances=ship_instances, ship=target,
                     ray_origin=emitter_pos,
                     ray_direction=aim_unit,
@@ -1146,6 +1139,12 @@ def _apply_view_mode_side_effects(view_mode: "_ViewModeController", h) -> None:
     # actually on the bridge.
     from engine.audio.bridge_ambient import set_active as _bridge_ambient_set
     _bridge_ambient_set(target)
+    # View-mode change — drop any leftover camera-shake energy so
+    # the new view doesn't inherit a rumble from the old one.
+    from engine.appc import camera_shake
+    camera_shake.reset()
+    from engine.appc import hit_feedback
+    hit_feedback.reset_audio_throttle()
     view_mode._last_synced_is_bridge = target
 
 
@@ -2423,6 +2422,11 @@ def run(mission_name: Optional[str] = None,
                 eye, target, up_vec = _compute_camera(
                     view_mode, cam_control,
                     player=player, dt=TICK_DT)
+                # Camera shake — apply to the exterior view. The bridge
+                # first-person camera below gets its own perturb call
+                # against the shared shake state.
+                from engine.appc import camera_shake
+                eye, target, up_vec = camera_shake.perturb(eye, target, up_vec)
                 if view_mode.is_bridge:
                     mouse_dx, mouse_dy = _h.consume_mouse_delta() if _h else (0.0, 0.0)
                     # While paused we still drain the accumulated mouse
@@ -2432,6 +2436,12 @@ def run(mission_name: Optional[str] = None,
                     if not pause.is_open:
                         bridge_camera.apply(mouse_dx, mouse_dy)
                     b_eye, b_target, b_up = bridge_camera.compute_camera()
+                    # Bridge first-person camera uses separate (eye, target,
+                    # up) vectors from the exterior view, so it needs its own
+                    # perturb call. The camera_shake module is global state,
+                    # so the shake energy / phase is shared with the
+                    # exterior perturb above.
+                    b_eye, b_target, b_up = camera_shake.perturb(b_eye, b_target, b_up)
                     r.set_bridge_camera(
                         eye=b_eye, target=b_target, up=b_up,
                         fov_y_rad=_BridgeCamera.FOV_Y_RAD,
