@@ -1954,7 +1954,6 @@ def update_target_list_visibility(target_menu, ships, player, range_units: float
     from engine.appc.target_menu import STSubsystemMenu
     if player is None:
         return
-    # Player-sensors-offline gate: blank every row, then return.
     sensors = (player.GetSensorSubsystem()
                if hasattr(player, "GetSensorSubsystem") else None)
     if _is_offline(sensors):

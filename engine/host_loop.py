@@ -254,7 +254,7 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
     # stop drifters), compute distance falloff, and route damage through
     # apply_hit (which routes shields → subsystem → hull, calls
     # hit_feedback.dispatch, and broadcasts WeaponHitEvent).
-    from engine.appc.subsystems import _emitter_in_arc
+    from engine.appc.subsystems import _emitter_in_arc, _is_offline
     from engine.appc.math import TGPoint3
     for ship in ships_list:
         sys_ = ship.GetPhaserSystem() if hasattr(ship, "GetPhaserSystem") else None
@@ -264,7 +264,6 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
         # the system flips disabled mid-tick (incoming hit during the
         # previous frame's damage routing), stop any active banks and
         # skip the damage loop for this ship. Spec §4.2.
-        from engine.appc.subsystems import _is_offline
         if _is_offline(sys_):
             sys_.StopFiring()
             continue

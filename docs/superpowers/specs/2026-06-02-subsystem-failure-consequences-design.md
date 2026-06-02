@@ -160,28 +160,28 @@ Recorded as an open question in §6: how the production repair flow will exercis
 
 ### 5.1 Unit tests (one per gate, TDD)
 
-- **`tests/test_engines_disabled_clamps_throttle.py`**
+- **`tests/unit/test_engines_disabled_clamps_throttle.py`**
   - Player ship with disabled IES → `GetTargetSpeed` returns 0 regardless of `impulse_level`.
   - Player ship with destroyed IES (condition = 0) → same.
   - AI ship with disabled IES + non-zero `_speed_setpoint` → `_step_ship_motion` decays `_current_speed` at drag-fraction rate.
   - AI ship with disabled IES + non-zero `_target_angular_velocity_setpoint` → angular components decay at drag-fraction rate.
   - Repair (`SetCondition(max_condition)`) → throttle response restored on next call; ramp returns to full rate.
 
-- **`tests/test_weapons_disabled_blocks_fire.py`**
+- **`tests/unit/test_weapons_disabled_blocks_fire.py`**
   - PhaserSystem with all four children disabled → `StartFiring` is a no-op (no `bank.Fire` calls).
   - PhaserSystem with one healthy + three disabled → `StartFiring` fires the healthy bank.
   - Mid-fire: a bank is firing, then all children flip disabled, then `_advance_combat` runs → `bank.StopFiring` called, no `apply_hit` invocations.
   - `retry_held_fire` with `_fire_held=True` then system flips disabled → next call calls `StopFiring`, clears `_fire_held`.
   - Repair one child → next `StartFiring` fires that child.
 
-- **`tests/test_sensors_disabled_blanks_target_ui.py`**
+- **`tests/unit/test_sensors_disabled_blanks_target_ui.py`**
   - Player sensors disabled → `_resolve_ship_for_role(ROLE_TARGET)` returns None; `_resolve_ship_for_role(ROLE_PLAYER)` still returns the player.
   - `_affiliation_for(enemy_ship, player)` returns `"UNKNOWN"` when player sensors disabled, even though `enemy_ship` is in `EnemyGroup`.
   - `_affiliation_for(player, player)` still returns `"FRIENDLY"` (self short-circuit).
   - `update_target_list_visibility` flips every row to invisible when player sensors disabled.
   - Repair → next call restores affiliation and visibility.
 
-- **`tests/test_shield_generator_disabled_stops_regen.py`**
+- **`tests/unit/test_shield_generator_disabled_stops_regen.py`**
   - Generator disabled, face below max → `Update(dt)` leaves `_current_shields[f]` unchanged.
   - Generator at max condition → regen runs normally and clamps at `_max_shields`.
   - Repair → regen resumes at the original `_charge_per_second`; the stored values were never mutated.
