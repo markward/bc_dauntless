@@ -2416,30 +2416,6 @@ def run(mission_name: Optional[str] = None,
                 cam_control.set_ship_radius(player.GetRadius())
 
             if not pause.is_open:
-                # F10: debug shield-hit on the shield surface. Real BC weapons
-                # impact the bubble at a surface point; firing at the ship
-                # center would put the hit too far inside the bubble for the
-                # distance falloff to ever exceed zero on the visible shell.
-                # Offset along the ship's forward axis by ~1.5 × the ship's
-                # GetRadius() so the hit lands near the bubble surface.
-                if (_h is not None
-                        and _h.key_pressed(_h.keys.KEY_F10)
-                        and player is not None
-                        and session is not None):
-                    iid = session.ship_instances.get(player)
-                    if iid is not None:
-                        from engine.shields import fire_debug_hit
-                        wp = player.GetWorldLocation()
-                        try:
-                            fwd = player.GetWorldRotation().GetCol(1)
-                            fx, fy, fz = float(fwd.x), float(fwd.y), float(fwd.z)
-                        except Exception:
-                            fx, fy, fz = 1.0, 0.0, 0.0
-                        offset = 1.0 * player.GetRadius()
-                        fire_debug_hit(_h, instance_id=iid,
-                                       world_point=(wp.x + fx * offset,
-                                                    wp.y + fy * offset,
-                                                    wp.z + fz * offset))
                 # F12: toggle CEF DevTools for the UI overlay.
                 if _h is not None and _h.key_pressed(_h.keys.KEY_F12):
                     _h.cef_toggle_devtools()
