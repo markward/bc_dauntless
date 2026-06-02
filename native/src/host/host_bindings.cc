@@ -782,6 +782,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
     keys.attr("KEY_F9")    = GLFW_KEY_F9;
     keys.attr("KEY_F10")   = GLFW_KEY_F10;
     keys.attr("KEY_F12")          = GLFW_KEY_F12;
+    keys.attr("KEY_LEFT_BRACKET")  = GLFW_KEY_LEFT_BRACKET;
+    keys.attr("KEY_RIGHT_BRACKET") = GLFW_KEY_RIGHT_BRACKET;
     keys.attr("KEY_LEFT_SUPER")   = GLFW_KEY_LEFT_SUPER;
     keys.attr("KEY_LEFT_CONTROL") = GLFW_KEY_LEFT_CONTROL;
     keys.attr("KEY_SPACE") = GLFW_KEY_SPACE;

@@ -2396,6 +2396,23 @@ def run(mission_name: Optional[str] = None,
                 if _h is not None and _h.key_pressed(_h.keys.KEY_F12):
                     _h.cef_toggle_devtools()
 
+                # [ : debug — zero all six shield faces on the player's
+                # current target (or the player ship if no target). Used to
+                # time shield regen against SDK values; remove once the
+                # regen-rate diagnosis is closed.
+                if (_h is not None
+                        and _h.key_pressed(_h.keys.KEY_LEFT_BRACKET)
+                        and player is not None):
+                    victim = player.GetTarget() if hasattr(player, "GetTarget") else None
+                    if victim is None:
+                        victim = player
+                    sh = victim.GetShieldSubsystem() if hasattr(victim, "GetShieldSubsystem") else None
+                    if sh is not None:
+                        for _face in range(sh.NUM_SHIELDS):
+                            sh.SetCurrentShields(_face, 0.0)
+                        print(f"[debug] zeroed shields on {victim.GetName()!r}",
+                              flush=True)
+
                 # Cmd+R / Ctrl+R: hot-reload the CEF overlay's HTML.
                 # Reload only when Cmd (macOS) or Ctrl (Linux/Windows) is held;
                 # bare R is reverse-thrust and must not be intercepted.
