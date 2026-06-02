@@ -188,10 +188,18 @@ class _EnergyWeaponFireMixin:
     def Fire(self, target=None, offset=None) -> None:
         if not self.CanFire():
             return
+        # Edge-trigger the SFX. AI scripts call StartFiring on every
+        # evaluation tick; without this gate, each call would spawn a
+        # fresh "Phaser Loop" _PlayingSound handle and overwrite
+        # self._loop_handle, orphaning every prior handle so they loop
+        # forever (no Stop reference). Symptom: continuous phaser SFX
+        # during NPC-vs-NPC fights even after all banks deplete.
+        was_firing = self._firing
         self._firing = True
         self._target = target
         self._target_offset = offset
-        self._play_fire_sfx()
+        if not was_firing:
+            self._play_fire_sfx()
 
     def StopFiring(self) -> None:
         was_firing = self._firing
