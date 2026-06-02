@@ -314,3 +314,171 @@ def test_dispatch_event_toggle_does_not_change_player_target():
     finally:
         from engine.core.game import _set_current_game
         _set_current_game(None)
+
+
+# ── Health-bar percent encoding (Issue 1) ────────────────────────────────────
+
+def _make_targeted_ship(name="USS Galaxy"):
+    """Build a ShipClass via ShipClass_Create and register it in the
+    bridge set so `SetTarget(name)` can resolve it. Caller must still
+    add the ship to the target menu (e.g., via
+    `target_menu.RebuildShipMenu(ship)`) for it to appear in render
+    output. Caller is responsible for game + bridge-set teardown."""
+    from engine.appc.ships import ShipClass_Create
+    from engine.appc.sets import SetClass
+    ship = ShipClass_Create("Galaxy")
+    ship.SetName(name)
+    bridge = App.g_kSetManager.GetSet("bridge")
+    if bridge is None:
+        bridge = SetClass()
+        App.g_kSetManager.AddSet(bridge, "bridge")
+    bridge.AddObjectToSet(ship, name)
+    return ship
+
+
+def test_view_payload_hull_pct_is_integer_percent_not_ratio():
+    """A hull at 50% condition must report hull == 50 (not 0 or 1).
+    Regression test for the missing * 100 — GetConditionPercentage
+    returns [0.0, 1.0]."""
+    from engine.ui.target_list_view import TargetListView
+    from engine.appc.subsystems import HullSubsystem
+
+    App._reset_target_menu_singleton()
+    target_menu = App.STTargetMenu_CreateW("Targets")
+    game, player, mission = _setup_game_with_player()
+    try:
+        ship = _make_targeted_ship("Half-hull")
+        hull = HullSubsystem("Hull")
+        hull.SetMaxCondition(1000.0)
+        hull.SetCondition(500.0)
+        ship.SetHull(hull)
+        target_menu.RebuildShipMenu(ship)
+
+        view = TargetListView()
+        script = view.render_payload()
+        body = script[len("setTargetList("):-2]
+        state = json.loads(body)
+        row = next(r for r in state["rows"] if r["name"] == "Half-hull")
+        assert row["hull"] == 50
+    finally:
+        App.g_kSetManager.DeleteSet("bridge")
+        from engine.core.game import _set_current_game
+        _set_current_game(None)
+
+
+def test_view_payload_shield_pct_is_integer_percent_not_ratio():
+    """A fully-shielded ship must report shields == 100 (not 1).
+    Regression test for the missing * 100."""
+    from engine.ui.target_list_view import TargetListView
+    from engine.appc.subsystems import ShieldSubsystem
+
+    App._reset_target_menu_singleton()
+    target_menu = App.STTargetMenu_CreateW("Targets")
+    game, player, mission = _setup_game_with_player()
+    try:
+        ship = _make_targeted_ship("Full-shields")
+        shields = ship.GetShields()
+        # Seed all six faces; SetMaxShields seeds current when current==0.
+        for face in range(ShieldSubsystem.NUM_SHIELDS):
+            shields.SetMaxShields(face, 1000.0)
+        target_menu.RebuildShipMenu(ship)
+
+        view = TargetListView()
+        script = view.render_payload()
+        body = script[len("setTargetList("):-2]
+        state = json.loads(body)
+        row = next(r for r in state["rows"] if r["name"] == "Full-shields")
+        assert row["shields"] == 100
+    finally:
+        App.g_kSetManager.DeleteSet("bridge")
+        from engine.core.game import _set_current_game
+        _set_current_game(None)
+
+
+# ── Per-subsystem condition (Issue 2) ────────────────────────────────────────
+
+def test_view_payload_subsystems_carry_condition_pct():
+    """Each subsystem entry in the snapshot includes a `condition`
+    integer percent reflecting its live condition."""
+    from engine.ui.target_list_view import TargetListView
+
+    App._reset_target_menu_singleton()
+    target_menu = App.STTargetMenu_CreateW("Targets")
+    game, player, mission = _setup_game_with_player()
+    try:
+        ship = _make_targeted_ship("USS Galaxy")
+        # Drop the first subsystem on the ship to 75% condition.
+        it = ship.StartGetSubsystemMatch(App.CT_SHIP_SUBSYSTEM)
+        first_sub = ship.GetNextSubsystemMatch(it)
+        ship.EndGetSubsystemMatch(it)
+        first_sub.SetMaxCondition(400.0)
+        first_sub.SetCondition(300.0)
+        damaged_name = first_sub.GetName()
+
+        target_menu.RebuildShipMenu(ship)
+        view = TargetListView()
+        script = view.render_payload()
+        body = script[len("setTargetList("):-2]
+        state = json.loads(body)
+
+        row = next(r for r in state["rows"] if r["name"] == "USS Galaxy")
+        damaged_entry = next(s for s in row["subsystems"] if s["name"] == damaged_name)
+        assert damaged_entry["condition"] == 75
+        # Untouched subsystems stay at 100%.
+        for entry in row["subsystems"]:
+            assert "condition" in entry
+            assert 0 <= entry["condition"] <= 100
+            if entry["name"] != damaged_name:
+                assert entry["condition"] == 100
+    finally:
+        App.g_kSetManager.DeleteSet("bridge")
+        from engine.core.game import _set_current_game
+        _set_current_game(None)
+
+
+def test_query_subsystem_condition_prefers_combined_over_individual():
+    """When a subsystem exposes GetCombinedConditionPercentage, the
+    helper uses it (so future parent-weapon aggregation surfaces in
+    the panel). When only GetConditionPercentage exists, it falls back."""
+    from engine.ui.target_list_view import _query_subsystem_condition
+
+    class FakeWeapons:
+        def GetName(self): return "Weapons"
+        def GetConditionPercentage(self): return 1.0
+        def GetCombinedConditionPercentage(self): return 0.4  # aggregate with damaged children
+
+    class FakeShip:
+        def __init__(self, sub): self._sub = sub
+        def StartGetSubsystemMatch(self, _ct): return iter([self._sub])
+        def GetNextSubsystemMatch(self, it):
+            try: return next(it)
+            except StopIteration: return None
+        def EndGetSubsystemMatch(self, _it): pass
+
+    aggregated = FakeWeapons()
+    assert _query_subsystem_condition(FakeShip(aggregated), "Weapons") == 40
+
+    class FakeImpulse:
+        def GetName(self): return "Impulse"
+        def GetConditionPercentage(self): return 0.6
+        # no GetCombinedConditionPercentage
+
+    flat = FakeImpulse()
+    assert _query_subsystem_condition(FakeShip(flat), "Impulse") == 60
+
+
+def test_query_subsystem_condition_defaults_to_100_when_resolution_misses():
+    """If the subsystem can't be found on the ship, default to 100 so
+    the bar renders full rather than misleadingly empty."""
+    from engine.ui.target_list_view import _query_subsystem_condition
+
+    class EmptyShip:
+        def StartGetSubsystemMatch(self, _ct): return iter([])
+        def GetNextSubsystemMatch(self, it):
+            try: return next(it)
+            except StopIteration: return None
+        def EndGetSubsystemMatch(self, _it): pass
+
+    assert _query_subsystem_condition(EmptyShip(), "Phantom") == 100
+    assert _query_subsystem_condition(None, "Anything") == 100
+    assert _query_subsystem_condition(EmptyShip(), "") == 100

@@ -107,6 +107,7 @@ function setTargetList(state) {
             for (let j = 0; j < subs.length; j++) {
                 const sub = subs[j];
                 const subName = String(sub.name || '');
+                const subCondition = (typeof sub.condition === 'number') ? sub.condition : 100;
                 const subChosen = (selected === name && selectedSub === subName)
                     ? ' target-list__sub--chosen' : '';
                 const subAttr = clickAttr('target/' + name + '/' + subName);
@@ -114,6 +115,8 @@ function setTargetList(state) {
                       +   ' onclick="' + subAttr + '">'
                       +   '<span class="target-list__sub-bullet">&#8226;</span>'
                       +   '<span class="target-list__sub-name">' + escapeHtml(subName) + '</span>'
+                      +   '<span class="target-list__sub-bar"'
+                      +   ' style="--bar-pct:' + subCondition + '%"></span>'
                       + '</div>';
             }
         }
