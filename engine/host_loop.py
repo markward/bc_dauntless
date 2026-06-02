@@ -2139,17 +2139,38 @@ def run(mission_name: Optional[str] = None,
             cam_control.set_ship_radius(controller.session.player.GetRadius())
         view_mode      = _ViewModeController()
         pause          = _PauseMenuController()
+        from engine.ui.target_list_view import TargetListView
+        from engine.ui.sensors_panel import SensorsPanel
+        target_list_view = TargetListView()
+        sensors_panel = SensorsPanel()
+
+        # Wire (and re-wire on mission swap) the target-menu singleton
+        # to the player's spatial set. controller.post_load_hook fires
+        # after every successful loader.load() — both the initial load
+        # and any pending_swap drain — so this hook keeps the target
+        # list pointed at the current mission's ship roster.
+        controller.post_load_hook = lambda: _wire_target_menu_to_player_set(controller)
+        _wire_target_menu_to_player_set(controller)
+
+        bridge_camera  = _BridgeCamera()
+        try:
+            import _dauntless_host as _h
+        except ImportError:
+            _h = None  # bindings module not built; skip input handling.
+
+        # Pre-register dev keybindings once so default_pause_menu can list
+        # them. register_for_frame is also called every tick (see input
+        # dispatch) to rebind handlers with the current player/session.
+        if _h is not None and dev_mode.is_enabled():
+            dev_keybindings.register_for_frame(_h, controller.session, None)
+
         from engine.ui.pause_menu import default_pause_menu
+        from engine.ui.panel_registry import PanelRegistry
         pause_menu = default_pause_menu(
             on_exit=pause.request_quit,
             on_cancel=pause.close,
         )
-        from engine.ui.panel_registry import PanelRegistry
-        from engine.ui.target_list_view import TargetListView
-        from engine.ui.sensors_panel import SensorsPanel
         registry = PanelRegistry(legacy_handler=pause_menu.dispatch_event)
-        target_list_view = TargetListView()
-        sensors_panel = SensorsPanel()
         registry.register(target_list_view)
         registry.register(sensors_panel)
 
@@ -2177,19 +2198,6 @@ def run(mission_name: Optional[str] = None,
         speed_display = SpeedDisplay(player_control=player_control)
         registry.register(speed_display)
 
-        # Wire (and re-wire on mission swap) the target-menu singleton
-        # to the player's spatial set. controller.post_load_hook fires
-        # after every successful loader.load() — both the initial load
-        # and any pending_swap drain — so this hook keeps the target
-        # list pointed at the current mission's ship roster.
-        controller.post_load_hook = lambda: _wire_target_menu_to_player_set(controller)
-        _wire_target_menu_to_player_set(controller)
-
-        bridge_camera  = _BridgeCamera()
-        try:
-            import _dauntless_host as _h
-        except ImportError:
-            _h = None  # bindings module not built; skip input handling.
         # Bindings older than the orbit-camera change won't expose
         # consume_scroll_y; fall back to a zero-delta lambda so host_loop
         # still runs against an old _dauntless_host.so without rebuilding.

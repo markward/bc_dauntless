@@ -19,6 +19,8 @@ from __future__ import annotations
 import json
 from typing import Callable, List, Optional
 
+import engine.dev_mode as dev_mode
+
 
 _Handler = Callable[[], None]
 
@@ -169,8 +171,20 @@ def default_pause_menu(*, on_exit: _Handler, on_cancel: _Handler) -> PauseMenuMo
     Handlers are injected so the model has no compile-time dependency
     on the host loop. The host loop wires `on_exit` to a quit flag and
     `on_cancel` to the pause-controller toggle.
+
+    When dev_mode.is_enabled(), appends a "— DEVELOPER —" separator and
+    one informational row per registered dev keybinding. These rows are
+    non-actionable; the actual keybindings fire globally via
+    dev_mode.dispatch_dev_key while the menu is closed.
     """
     m = PauseMenuModel()
     m.add_item("Exit Program", "exit",   on_exit)
     m.add_item("Cancel",       "cancel", on_cancel)
+
+    if dev_mode.is_enabled():
+        _noop = lambda: None  # noqa: E731 — small inline no-op
+        m.add_item("— DEVELOPER —", "dev/_header", _noop)
+        for key_code, description in dev_mode.keybinding_descriptions():
+            m.add_item(description, "dev/info/" + str(key_code), _noop)
+
     return m

@@ -165,3 +165,17 @@ html, body {
 .pause-row:active {
     background: rgb(147, 103, 255);
 }
+
+/* ============================================================
+   Developer-mode visibility.
+   Elements carrying .dev-only are hidden by default; the host
+   loop sets body[data-dev="1"] on CEF load end when --developer
+   is set, revealing them. See engine/host_loop.py and
+   docs/superpowers/specs/2026-06-02-developer-flag-design.md.
+   ============================================================ */
+.dev-only {
+    display: none;
+}
+body[data-dev="1"] .dev-only {
+    display: revert;
+}
