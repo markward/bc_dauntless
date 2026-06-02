@@ -136,6 +136,10 @@ class TargetListView(Panel):
                 if ship is not None and ship is not player:
                     hull_pct = _query_hull_percentage(ship)
                     shield_pct = _query_shield_percentage(ship)
+                    # sub_child.GetLabel() equals the subsystem's GetName()
+                    # by construction in STSubsystemMenu.RebuildShipMenu, so
+                    # the label is a valid lookup key for the name-based
+                    # _resolve_subsystem_by_name path inside _query_subsystem_condition.
                     subsystems = tuple(
                         (sub_child.GetLabel(),
                          _query_subsystem_condition(ship, sub_child.GetLabel()))
