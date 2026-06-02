@@ -97,3 +97,42 @@ def test_affiliation_restored_after_repair():
     assert _affiliation_for(enemy, player) == "UNKNOWN"
     sensors.SetCondition(100.0)
     assert _affiliation_for(enemy, player) == "ENEMY"
+
+
+def test_update_visibility_hides_all_rows_when_sensors_offline():
+    """When player sensors offline, every row in the target menu goes
+    invisible — radar and target-list views read this via row.IsVisible()."""
+    from engine.appc.subsystems import update_target_list_visibility
+
+    _, player, enemy, sensors, _ = _setup()
+    target_menu = App.STTargetMenu_CreateW("Targets")
+    enemy.SetTranslateXYZ(1000.0, 0.0, 0.0)  # well within 30000 range
+    target_menu.RebuildShipMenu(enemy)
+    update_target_list_visibility(target_menu, [enemy], player,
+                                  range_units=30000.0)
+    assert target_menu.GetObjectEntry(enemy).IsVisible() == 1
+
+    # Disable sensors; next update flips visibility to 0.
+    sensors.SetCondition(10.0)
+    update_target_list_visibility(target_menu, [enemy], player,
+                                  range_units=30000.0)
+    assert target_menu.GetObjectEntry(enemy).IsVisible() == 0
+
+
+def test_update_visibility_restores_after_sensor_repair():
+    from engine.appc.subsystems import update_target_list_visibility
+
+    _, player, enemy, sensors, _ = _setup()
+    target_menu = App.STTargetMenu_CreateW("Targets")
+    enemy.SetTranslateXYZ(1000.0, 0.0, 0.0)
+    target_menu.RebuildShipMenu(enemy)
+
+    sensors.SetCondition(10.0)
+    update_target_list_visibility(target_menu, [enemy], player,
+                                  range_units=30000.0)
+    assert target_menu.GetObjectEntry(enemy).IsVisible() == 0
+
+    sensors.SetCondition(100.0)
+    update_target_list_visibility(target_menu, [enemy], player,
+                                  range_units=30000.0)
+    assert target_menu.GetObjectEntry(enemy).IsVisible() == 1

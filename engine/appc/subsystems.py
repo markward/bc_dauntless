@@ -1945,9 +1945,24 @@ def update_target_list_visibility(target_menu, ships, player, range_units: float
     Real Appc filters by sensor subsystem state (charged, undamaged,
     not jammed). Phase-2 takes only range into account; the property
     chain will be wired in a later iteration.
+
+    Project 5 sensor gate (§4.3): when the player's own SensorSubsystem
+    reports _is_offline, every row in the menu goes invisible regardless
+    of range. The radar panel and target-list view both filter on
+    row.IsVisible(), so contacts disappear automatically.
     """
     from engine.appc.target_menu import STSubsystemMenu
     if player is None:
+        return
+    # Player-sensors-offline gate: blank every row, then return.
+    sensors = (player.GetSensorSubsystem()
+               if hasattr(player, "GetSensorSubsystem") else None)
+    if _is_offline(sensors):
+        for ship in ships:
+            row = target_menu.GetObjectEntry(ship)
+            if row is None or not isinstance(row, STSubsystemMenu):
+                continue
+            row.SetNotVisible()
         return
     px, py, pz = _get_xyz(player)
     range_sq = range_units * range_units
