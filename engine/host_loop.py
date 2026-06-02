@@ -2205,6 +2205,17 @@ def run(mission_name: Optional[str] = None,
         ticks = 0
         init_audio()
         _bootstrap_firing_pipeline()
+
+        # Diagnostic HUD: measure sim ticks per real second to confirm
+        # whether the loop runs faster than 60 Hz (which would scale
+        # shield-regen and every other dt-driven system proportionally).
+        # Refresh rate is read once; tick rate is sampled every wall second.
+        import time as _time_dbg
+        _hud_monitor_hz = (_h.get_monitor_refresh_rate()
+                           if _h is not None and hasattr(_h, "get_monitor_refresh_rate")
+                           else 0)
+        _hud_last_emit = _time_dbg.time()
+        _hud_tick_count = 0
         while not r.should_close():
             # --- Input dispatch + modality (ESC always live; SPACE only when unpaused) ---
             # _apply_view_mode_side_effects mirrors the SPACE flag into
@@ -2293,6 +2304,20 @@ def run(mission_name: Optional[str] = None,
                 _scripts = registry.render_all()
                 for _panel_script in _scripts:
                     _h.cef_execute_javascript(_panel_script)
+
+                # Debug HUD push — once per real second, derive the actual
+                # tick rate from the wall-clock delta between samples.
+                _hud_tick_count += 1
+                _hud_now = _time_dbg.time()
+                _hud_dt = _hud_now - _hud_last_emit
+                if _hud_dt >= 1.0:
+                    _hud_fps = _hud_tick_count / _hud_dt
+                    _h.cef_execute_javascript(
+                        "setDebugHud(" + repr(_hud_fps) + ", " +
+                        repr(_hud_monitor_hz) + ");"
+                    )
+                    _hud_last_emit = _hud_now
+                    _hud_tick_count = 0
 
                 # Forward mouse to CEF outside the pause overlay so
                 # non-pause panels (target list) are clickable. The

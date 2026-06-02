@@ -127,6 +127,30 @@
       </div>
     </section>
 
+    <!-- Diagnostic HUD: shows tick rate (effective FPS of the sim loop)
+         + monitor refresh rate. Used to confirm whether the sim is
+         vsync-coupled at >60 Hz (which would explain shield regen running
+         faster than the SDK-specified rate). Remove once the diagnosis
+         is closed. -->
+    <div id="debug-hud" style="position:fixed; top:8px; right:8px;
+         font:11px/1.4 monospace; color:#0f0; background:rgba(0,0,0,0.55);
+         padding:4px 8px; border:1px solid #0a0; border-radius:3px;
+         z-index:9999; pointer-events:none;">
+      <div>tick rate: <span id="debug-fps">—</span> /s</div>
+      <div>monitor: <span id="debug-hz">—</span> Hz</div>
+      <div>sim ratio: <span id="debug-ratio">—</span> ×</div>
+    </div>
+    <script>
+      window.setDebugHud = function (fps, hz) {
+        var el = document.getElementById('debug-fps');
+        if (el) el.textContent = (fps).toFixed(1);
+        el = document.getElementById('debug-hz');
+        if (el) el.textContent = (hz | 0);
+        el = document.getElementById('debug-ratio');
+        if (el) el.textContent = (fps / 60).toFixed(2);
+      };
+    </script>
+
     <script src="js/pause_menu.js"></script>
     <script src="js/target_list.js"></script>
     <script src="js/sensors.js"></script>

@@ -218,6 +218,17 @@ bool should_close() {
     return !g_window || g_window->should_close();
 }
 
+// Returns the primary monitor's refresh rate in Hz, or 0 if the query
+// fails. Diagnostic surface only — used by the temporary FPS HUD to
+// confirm whether the sim runs at vsync rate.
+int get_monitor_refresh_rate() {
+    GLFWmonitor* mon = glfwGetPrimaryMonitor();
+    if (!mon) return 0;
+    const GLFWvidmode* mode = glfwGetVideoMode(mon);
+    if (!mode) return 0;
+    return mode->refreshRate;
+}
+
 void frame() {
     if (!g_window || !g_pipeline || !g_submitter) {
         throw std::runtime_error("_dauntless_host: frame called before init");
@@ -323,6 +334,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("shutdown", &shutdown);
     m.def("should_close", &should_close);
     m.def("frame", &frame);
+    m.def("get_monitor_refresh_rate", &get_monitor_refresh_rate,
+          "Primary monitor's refresh rate in Hz (0 if unavailable).");
     m.def("load_model", &load_model_impl,
           py::arg("nif_path"), py::arg("texture_search_path"));
 
