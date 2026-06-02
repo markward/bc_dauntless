@@ -67,6 +67,9 @@ while not r.should_close():
     if pause.is_open:
         frame_dt = 0.0  # freeze game time during pause (see Pause semantics)
 
+    if frame_dt < 0.0:
+        frame_dt = 0.0  # defensive: monotonic clock shouldn't go backward
+
     if frame_dt > MAX_FRAME_DT:
         frame_dt = MAX_FRAME_DT  # bound catch-up after a render stall
 
@@ -138,6 +141,8 @@ step backward.
 ```python
 def step_accumulator(accumulator, frame_dt, tick_dt, max_frame_dt):
     """Pure function. Returns (new_accumulator, n_ticks)."""
+    if frame_dt < 0.0:
+        frame_dt = 0.0  # defensive: monotonic clock shouldn't go backward
     if frame_dt > max_frame_dt:
         frame_dt = max_frame_dt
     accumulator += frame_dt
@@ -162,26 +167,32 @@ the math in a pure function makes the unit tests trivial.
 
 ## Testing
 
-### New unit tests (`tests/engine/test_host_loop_accumulator.py`)
+### New unit tests (`tests/unit/test_timestep.py`)
 
 The accumulator math is a pure function and can be tested without spinning up
 the renderer or the game loop.
 
-1. **`test_steady_state_60hz`** — feed deltas `[1/60] * 600` (10 wall-clock
-   seconds at 60 Hz render). Total ticks emitted = 600; final accumulator
-   close to zero.
-2. **`test_120hz_render`** — feed deltas `[1/120] * 1200` (10 seconds at
-   120 Hz render). Total ticks emitted = 600 — sim still runs at 60 Hz. About
-   half the frames produce 1 tick, half produce 0.
-3. **`test_variable_deltas`** — mix of `[1/60, 1/120, 1/30, 1/240, ...]`.
-   Total ticks emitted matches `floor(sum(deltas) / TICK_DT)` within ±1.
+1. **`test_steady_state_60hz_emits_one_tick_per_frame`** — feed deltas
+   `[1/60] * 600` (10 wall-clock seconds at 60 Hz render). Total ticks
+   emitted = 600; final accumulator close to zero.
+2. **`test_120hz_render_emits_60hz_sim`** — feed deltas `[1/120] * 1200`
+   (10 seconds at 120 Hz render). Total ticks emitted ≈ 600 (599 ≤ n ≤ 600
+   for FP tolerance) — sim still runs at 60 Hz. About half the frames
+   produce 1 tick, half produce 0.
+3. **`test_variable_deltas_emit_correct_tick_count`** — mix of
+   `[1/60, 1/120, 1/30, 1/240, ...]`. Total ticks emitted matches
+   `floor(sum(deltas) / TICK_DT)` within ±1.
 4. **`test_stall_clamped_to_cap`** — feed `[1.0]` (a one-second stall) with
-   `MAX_FRAME_DT=0.25`. Assert ticks emitted is ≤ 15 (not the 60 a naive
-   implementation without the cap would emit). The exact count is 15 in
-   exact arithmetic; floating-point residual drift may produce 14 or 15,
-   both of which satisfy the safety property the test is checking.
+   `MAX_FRAME_DT=0.25`. Assert ticks emitted is bounded by 15 (not the 60
+   a naive implementation without the cap would emit). Tightened to
+   `14 ≤ n ≤ 15` so the test catches both "cap not applied" and off-by-one
+   regressions.
 5. **`test_pause_zero_dt_no_ticks`** — feed many `0.0` frame_dts (simulating
    paused state); zero ticks emitted; accumulator stays at zero.
+6. **`test_negative_dt_treated_as_zero`** — call with `accumulator=0.0`,
+   `frame_dt=-0.1`. Assert `n == 0, accumulator == 0.0` exactly — the only
+   way both hold is if the negative-clamp branch fired. Defensive against
+   a backward-stepping clock (shouldn't happen with `monotonic()`).
 
 ### Regression
 

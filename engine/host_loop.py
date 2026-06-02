@@ -2207,11 +2207,20 @@ def run(mission_name: Optional[str] = None,
             # and Cmd+R reloads.
             _cef_set_load_end(registry.invalidate_all)
         TICK_DT = 1.0 / 60.0
+        MAX_FRAME_DT = 0.25  # Fiedler spiral-of-death cap
 
         loop = GameLoop()
         ticks = 0
         init_audio()
         _bootstrap_firing_pipeline()
+
+        # Fixed-timestep accumulator state — sim runs at TICK_DT (60 Hz)
+        # regardless of render refresh rate. See engine/core/timestep.py.
+        import time
+        from engine.core.timestep import step_accumulator
+        _previous_real_time = time.monotonic()
+        _accumulator = 0.0
+
         while not r.should_close():
             # --- Input dispatch + modality (ESC always live; SPACE only when unpaused) ---
             # _apply_view_mode_side_effects mirrors the SPACE flag into
@@ -2375,10 +2384,25 @@ def run(mission_name: Optional[str] = None,
                         if _h.mouse_button_released(_h.keys.MOUSE_BUTTON_LEFT):
                             _cef_send_mouse_click(_mx, _my, 0, False)
 
-            # --- Sim advance (skipped while paused) ---
-            if not pause.is_open:
+            # --- Sim advance: fixed-timestep accumulator ---
+            # frame_dt is the real wall-clock since the previous frame.
+            # During pause we force it to 0 so the accumulator cannot
+            # grow and there is no catch-up burst on resume. The cap
+            # bounds the inner while-loop after a stalled render frame.
+            _now = time.monotonic()
+            _frame_dt = _now - _previous_real_time
+            _previous_real_time = _now
+            if pause.is_open:
+                _frame_dt = 0.0
+            _accumulator, _sim_ticks_this_frame = step_accumulator(
+                _accumulator, _frame_dt, TICK_DT, MAX_FRAME_DT
+            )
+            for _ in range(_sim_ticks_this_frame):
                 loop.tick()
 
+            # Only snap the camera when a sim tick actually fired —
+            # no tick means no state change to follow.
+            if _sim_ticks_this_frame > 0:
                 had_pending_swap = controller.pending_swap is not None
                 controller._drain_pending_swap()
                 if had_pending_swap:
@@ -2419,23 +2443,6 @@ def run(mission_name: Optional[str] = None,
                 # F12: toggle CEF DevTools for the UI overlay.
                 if _h is not None and _h.key_pressed(_h.keys.KEY_F12):
                     _h.cef_toggle_devtools()
-
-                # [ : debug — zero all six shield faces on the player's
-                # current target (or the player ship if no target). Used to
-                # time shield regen against SDK values; remove once the
-                # regen-rate diagnosis is closed.
-                if (_h is not None
-                        and _h.key_pressed(_h.keys.KEY_LEFT_BRACKET)
-                        and player is not None):
-                    victim = player.GetTarget() if hasattr(player, "GetTarget") else None
-                    if victim is None:
-                        victim = player
-                    sh = victim.GetShieldSubsystem() if hasattr(victim, "GetShieldSubsystem") else None
-                    if sh is not None:
-                        for _face in range(sh.NUM_SHIELDS):
-                            sh.SetCurrentShields(_face, 0.0)
-                        print(f"[debug] zeroed shields on {victim.GetName()!r}",
-                              flush=True)
 
                 # Cmd+R / Ctrl+R: hot-reload the CEF overlay's HTML.
                 # Reload only when Cmd (macOS) or Ctrl (Linux/Windows) is held;
