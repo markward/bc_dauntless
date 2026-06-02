@@ -434,3 +434,51 @@ def test_view_payload_subsystems_carry_condition_pct():
         App.g_kSetManager.DeleteSet("bridge")
         from engine.core.game import _set_current_game
         _set_current_game(None)
+
+
+def test_query_subsystem_condition_prefers_combined_over_individual():
+    """When a subsystem exposes GetCombinedConditionPercentage, the
+    helper uses it (so future parent-weapon aggregation surfaces in
+    the panel). When only GetConditionPercentage exists, it falls back."""
+    from engine.ui.target_list_view import _query_subsystem_condition
+
+    class FakeWeapons:
+        def GetName(self): return "Weapons"
+        def GetConditionPercentage(self): return 1.0
+        def GetCombinedConditionPercentage(self): return 0.4  # aggregate with damaged children
+
+    class FakeShip:
+        def __init__(self, sub): self._sub = sub
+        def StartGetSubsystemMatch(self, _ct): return iter([self._sub])
+        def GetNextSubsystemMatch(self, it):
+            try: return next(it)
+            except StopIteration: return None
+        def EndGetSubsystemMatch(self, _it): pass
+
+    aggregated = FakeWeapons()
+    assert _query_subsystem_condition(FakeShip(aggregated), "Weapons") == 40
+
+    class FakeImpulse:
+        def GetName(self): return "Impulse"
+        def GetConditionPercentage(self): return 0.6
+        # no GetCombinedConditionPercentage
+
+    flat = FakeImpulse()
+    assert _query_subsystem_condition(FakeShip(flat), "Impulse") == 60
+
+
+def test_query_subsystem_condition_defaults_to_100_when_resolution_misses():
+    """If the subsystem can't be found on the ship, default to 100 so
+    the bar renders full rather than misleadingly empty."""
+    from engine.ui.target_list_view import _query_subsystem_condition
+
+    class EmptyShip:
+        def StartGetSubsystemMatch(self, _ct): return iter([])
+        def GetNextSubsystemMatch(self, it):
+            try: return next(it)
+            except StopIteration: return None
+        def EndGetSubsystemMatch(self, _it): pass
+
+    assert _query_subsystem_condition(EmptyShip(), "Phantom") == 100
+    assert _query_subsystem_condition(None, "Anything") == 100
+    assert _query_subsystem_condition(EmptyShip(), "") == 100
