@@ -2418,7 +2418,9 @@ def run(mission_name: Optional[str] = None,
                 eye, target, up_vec = _compute_camera(
                     view_mode, cam_control,
                     player=player, dt=TICK_DT)
-                # Camera shake — perturbs both exterior and bridge views uniformly.
+                # Camera shake — apply to the exterior view. The bridge
+                # first-person camera below gets its own perturb call
+                # against the shared shake state.
                 from engine.appc import camera_shake
                 eye, target, up_vec = camera_shake.perturb(eye, target, up_vec)
                 if view_mode.is_bridge:
@@ -2430,6 +2432,11 @@ def run(mission_name: Optional[str] = None,
                     if not pause.is_open:
                         bridge_camera.apply(mouse_dx, mouse_dy)
                     b_eye, b_target, b_up = bridge_camera.compute_camera()
+                    # Bridge first-person camera uses separate (eye, target,
+                    # up) vectors from the exterior view, so it needs its own
+                    # perturb call. The camera_shake module is global state,
+                    # so the shake energy / phase is shared with the
+                    # exterior perturb above.
                     b_eye, b_target, b_up = camera_shake.perturb(b_eye, b_target, b_up)
                     r.set_bridge_camera(
                         eye=b_eye, target=b_target, up=b_up,
