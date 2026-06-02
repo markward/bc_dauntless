@@ -161,3 +161,39 @@ def test_player_throttle_restored_after_repair():
     assert pc.GetTargetSpeed(ship) == 0.0
     ies.SetCondition(100.0)
     assert abs(pc.GetTargetSpeed(ship) - 6.3) < 1e-6
+
+
+def test_player_angular_clamped_when_ies_disabled():
+    """Holding D (yaw right) with disabled engines: angular target
+    forced to 0 and current rate decays at drag fraction × MaxAngularAccel.
+    """
+    pc = _PlayerControl()
+    ship = _galaxy_like_ship()
+    pc._current_yaw_rate = 0.28  # already yawing at full rate
+    ies = ship.GetImpulseEngineSubsystem()
+    ies.SetCondition(10.0)
+
+    reader = _Reader()
+    reader.held.add(reader.keys.KEY_D)  # request yaw right (which sets a nonzero target)
+    for _ in range(60):
+        pc.apply(ship, dt=1.0/60, h=reader)
+    # MaxAngularAccel 0.12 * 0.1 drag = 0.012 rad/s² decay; after 1 s: 0.28 - 0.012 ≈ 0.268.
+    expected = 0.28 - 0.12 * DISABLED_ENGINE_DRAG_FRACTION
+    assert abs(pc._current_yaw_rate - expected) < 1e-3
+
+
+def test_player_angular_recovers_after_repair():
+    pc = _PlayerControl()
+    ship = _galaxy_like_ship()
+    pc._current_yaw_rate = 0.28
+    ies = ship.GetImpulseEngineSubsystem()
+    ies.SetCondition(10.0)
+    reader = _Reader()
+    for _ in range(60):
+        pc.apply(ship, dt=1.0/60, h=reader)
+    rate_disabled = pc._current_yaw_rate
+
+    ies.SetCondition(100.0)  # repaired
+    for _ in range(60):  # no keys held -> target is 0, full-rate decay back to 0
+        pc.apply(ship, dt=1.0/60, h=reader)
+    assert pc._current_yaw_rate < rate_disabled - 0.05

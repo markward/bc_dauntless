@@ -789,11 +789,22 @@ class _PlayerControl:
                     self.impulse_level = level
                     break
 
+        # Disabled-engines gate: read once, applied to both linear and
+        # angular ramps. Spec §4.1.
+        from engine.appc.subsystems import _is_offline
+        from engine.appc.ship_motion import DISABLED_ENGINE_DRAG_FRACTION
+        engines_offline = _is_offline(self._get_ies(player))
+
         # 2. Linear speed ramp toward target at MaxAccel rate.
+        #    Disabled engines: scale ramp by drag fraction so velocity
+        #    decays gradually rather than at full MaxAccel. Spec §4.1.
+        linear_step = self._max_accel(player) * dt
+        if engines_offline:
+            linear_step *= DISABLED_ENGINE_DRAG_FRACTION
         self._current_speed = self._ramp_toward(
             self._current_speed,
             self.GetTargetSpeed(player),
-            self._max_accel(player) * dt,
+            linear_step,
         )
 
         # 3. Angular rates: held keys set a per-axis target rate; current rate
@@ -807,6 +818,8 @@ class _PlayerControl:
         # The key→sign mapping below produces the documented visual effect.
         ang_rate    = self._angular_rate(player)
         ang_step    = self._angular_accel(player) * dt
+        if engines_offline:
+            ang_step *= DISABLED_ENGINE_DRAG_FRACTION
         pitch_target = 0.0
         yaw_target   = 0.0
         roll_target  = 0.0
@@ -816,6 +829,10 @@ class _PlayerControl:
         if h.key_state(h.keys.KEY_D): yaw_target   += ang_rate
         if h.key_state(h.keys.KEY_Q): roll_target  += ang_rate
         if h.key_state(h.keys.KEY_E): roll_target  -= ang_rate
+        if engines_offline:
+            pitch_target = 0.0
+            yaw_target = 0.0
+            roll_target = 0.0
         self._current_pitch_rate = self._ramp_toward(self._current_pitch_rate, pitch_target, ang_step)
         self._current_yaw_rate   = self._ramp_toward(self._current_yaw_rate,   yaw_target,   ang_step)
         self._current_roll_rate  = self._ramp_toward(self._current_roll_rate,  roll_target,  ang_step)
