@@ -257,9 +257,9 @@ def test_dispatch_with_no_sound_manager_is_silent(spy, monkeypatch):
 # ── Audio throttle ─────────────────────────────────────────────────────────
 
 def test_audio_throttle_drops_rapid_repeats_on_same_ship(spy):
-    """Two HULL hits on the same ship within 100ms produce only one
-    audio play (the second is throttled). The visual + camera-shake
-    paths still fire on both."""
+    """Two HULL hits on the same ship within the contact-gap window
+    produce only one audio play (the second is part of the same contact
+    burst). The visual + camera-shake paths still fire on both."""
     hull = _HullMarker()
     ship = _Ship(hull)
     host = _FakeHost()
@@ -325,3 +325,77 @@ def test_audio_throttle_separate_severities_not_throttled(spy):
     )
 
     assert len(spy["audio"]) == 2
+
+
+def test_audio_edge_trigger_fires_again_after_contact_gap(spy, monkeypatch):
+    """After a gap exceeding _AUDIO_CONTACT_GAP_S, a fresh hit on the
+    same (ship, severity) plays audio again — this is what
+    distinguishes edge-trigger from rate-limit semantics."""
+    import time
+    from engine.appc import hit_feedback as hf
+
+    # Mock time.monotonic so we can control "now" deterministically.
+    fake_now = [0.0]
+    monkeypatch.setattr(hf.time, "monotonic", lambda: fake_now[0])
+
+    hull = _HullMarker()
+    ship = _Ship(hull)
+    host = _FakeHost()
+    ship_instances = {ship: 42}
+
+    kwargs = dict(
+        ship=ship, source=None, point=TGPoint3(0.0, 0.0, 0.0),
+        normal=None, damage=30.0, subsystem=hull,
+        absorbed_shields=0.0, absorbed_subsystem=0.0, absorbed_hull=30.0,
+        sub_transition=None, host=host, ship_instances=ship_instances,
+    )
+
+    # First contact — plays.
+    fake_now[0] = 0.0
+    hit_feedback.dispatch(**kwargs)
+    assert len(spy["audio"]) == 1
+
+    # Same contact, one tick later (16.7ms) — silent.
+    fake_now[0] = 0.017
+    hit_feedback.dispatch(**kwargs)
+    assert len(spy["audio"]) == 1
+
+    # Still the same contact (50ms in) — silent.
+    fake_now[0] = 0.050
+    hit_feedback.dispatch(**kwargs)
+    assert len(spy["audio"]) == 1
+
+    # Gap exceeds the threshold — fresh contact, plays again.
+    fake_now[0] = 0.050 + 0.20  # 200ms gap from the last dispatch
+    hit_feedback.dispatch(**kwargs)
+    assert len(spy["audio"]) == 2
+
+
+def test_audio_continuous_dispatch_at_60hz_plays_once(spy, monkeypatch):
+    """60 dispatches at 60Hz (1 second of continuous fire) produce
+    exactly one audio play — the first."""
+    import time
+    from engine.appc import hit_feedback as hf
+
+    fake_now = [0.0]
+    monkeypatch.setattr(hf.time, "monotonic", lambda: fake_now[0])
+
+    hull = _HullMarker()
+    ship = _Ship(hull)
+    host = _FakeHost()
+    ship_instances = {ship: 42}
+
+    kwargs = dict(
+        ship=ship, source=None, point=TGPoint3(0.0, 0.0, 0.0),
+        normal=None, damage=30.0, subsystem=hull,
+        absorbed_shields=0.0, absorbed_subsystem=0.0, absorbed_hull=30.0,
+        sub_transition=None, host=host, ship_instances=ship_instances,
+    )
+
+    dt = 1.0 / 60.0
+    for tick in range(60):
+        fake_now[0] = tick * dt
+        hit_feedback.dispatch(**kwargs)
+
+    assert len(spy["audio"]) == 1, \
+        f"continuous fire should play once, got {len(spy['audio'])}"

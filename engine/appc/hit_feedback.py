@@ -36,32 +36,44 @@ def classify(*, absorbed_shields: float, absorbed_subsystem: float,
     return Severity.HULL
 
 
-# Per-(ship_id, severity) audio throttle.
+# Per-(ship_id, severity) audio edge-trigger.
 # Reason: dispatch fires every weapon-impact tick (60Hz × N beams during
-# continuous phaser fire). Without a throttle, OpenAL's 256-source cap is
-# exhausted within seconds and new sounds drop silently. 100ms throttle
-# keeps the per-tier audio cadence audible without spam.
-_AUDIO_THROTTLE_S = 0.1
+# continuous phaser fire). Without gating, each tick spawns a new
+# positional source and OpenAL's 256-source cap is exhausted within
+# seconds — plus a 60Hz impact loop reads as noise, not as feedback.
+# Audio fires on the first tick of a contiguous burst: a gap exceeding
+# _AUDIO_CONTACT_GAP_S since the previous dispatch on this (ship,
+# severity) marks a fresh contact. Continuous fire updates the timestamp
+# each tick but only plays once at the start of the burst.
+_AUDIO_CONTACT_GAP_S = 0.15
 
-_last_play_time: dict[tuple[int, "Severity"], float] = {}
+_last_dispatch_time: dict[tuple[int, "Severity"], float] = {}
 
 
 def reset_audio_throttle() -> None:
-    """Clear the per-(ship, severity) audio throttle state. Called by
-    tests and by view-mode transitions."""
-    _last_play_time.clear()
+    """Clear the per-(ship, severity) edge-trigger state. Called by
+    tests and by view-mode transitions.
+
+    Name kept for callers that already imported it; semantics shifted
+    from rate-limit to edge-trigger but the reset contract is unchanged.
+    """
+    _last_dispatch_time.clear()
 
 
 def _audio_should_play(ship, severity: Severity) -> bool:
-    """True iff the (ship, severity) pair hasn't played within the
-    throttle window."""
+    """True iff this dispatch is the first tick of a fresh contact on
+    (ship, severity). Every call updates the last-dispatch timestamp;
+    audio fires only when the gap since the previous dispatch exceeded
+    _AUDIO_CONTACT_GAP_S (continuous fire → silent ticks, burst-start
+    → fresh play).
+    """
     key = (id(ship), severity)
     now = time.monotonic()
-    last = _last_play_time.get(key, 0.0)
-    if now - last < _AUDIO_THROTTLE_S:
-        return False
-    _last_play_time[key] = now
-    return True
+    last = _last_dispatch_time.get(key)
+    _last_dispatch_time[key] = now
+    if last is None:
+        return True   # first contact ever for this (ship, severity)
+    return (now - last) >= _AUDIO_CONTACT_GAP_S
 
 
 def dispatch(*, ship, source, point, normal, damage, subsystem,
@@ -111,8 +123,10 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
         # HULL or CRITICAL — hit_vfx.spawn handles both, filtered by severity.
         hit_vfx.spawn(point, normal=normal, severity=severity)
 
-    # 2. Audio — debounced per (ship, severity) to avoid exhausting
-    # OpenAL's 256-source cap during continuous phaser fire.
+    # 2. Audio — edge-triggered per (ship, severity). Plays once at
+    # the start of a contiguous burst; subsequent ticks while the same
+    # beam is hitting are silent. A fresh contact (gap exceeding
+    # _AUDIO_CONTACT_GAP_S since the previous tick) re-arms the play.
     if _audio_should_play(ship, severity):
         _play_audio(severity, point)
 
