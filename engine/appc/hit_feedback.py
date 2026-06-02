@@ -49,6 +49,8 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
     Headless-safe: host=None silently skips shield_hit;
     App.g_kSoundManager=None silently skips audio.
     """
+    # Deferred — engine.appc.hit_vfx imports Severity from this module,
+    # so a module-level import here would be circular.
     from engine.appc import hit_vfx, camera_shake
 
     hull = ship.GetHull() if hasattr(ship, "GetHull") else None
@@ -67,6 +69,9 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
                 and hasattr(host, "shield_hit"):
             iid = ship_instances.get(ship)
             if iid is not None:
+                # rgba=(0,0,0,0) is the documented sentinel that tells the
+                # shield_pass to substitute the ship's registered
+                # ShieldGlowColor — see host.shield_register's default_color.
                 host.shield_hit(
                     instance_id=iid,
                     point=(point.x, point.y, point.z),
@@ -94,6 +99,8 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
 def _play_audio(severity: Severity, point) -> None:
     """Look up the tier's sound name and play positionally. Silent on
     missing sound manager or missing sound name."""
+    # Deferred so test imports of hit_feedback don't require App to be
+    # loaded yet (matches the App shim's lazy-load pattern elsewhere).
     import App
     mgr = getattr(App, "g_kSoundManager", None)
     if mgr is None:
