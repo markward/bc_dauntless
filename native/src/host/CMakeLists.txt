@@ -4,6 +4,7 @@
 # generates PyInit__dauntless_host, used by both consumers.
 set(HOST_BINDINGS_SOURCES
     host_bindings.cc
+    developer_mode.cc
 )
 
 # Python extension module (.so / .pyd / .dylib) for pytest.
