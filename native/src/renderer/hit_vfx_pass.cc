@@ -8,7 +8,6 @@
 
 #include <glad/glad.h>
 #include <glm/glm.hpp>
-#include <glm/gtc/type_ptr.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -53,7 +52,10 @@ constexpr float kQuadCorners[] = {
 };
 
 // Deterministic 2-float hash from (world_pos, i). xorshift on float bit
-// reinterprets — cheap, no allocation, repeatable for a given descriptor.
+// reinterprets — cheap, no allocation. Same descriptor produces the same
+// directions across frames so sparks travel continuously instead of
+// teleporting; different descriptors at identical world positions still
+// produce different spark patterns.
 inline glm::vec2 hash3(const glm::vec3& p, int i) {
     auto bits = [](float f) -> std::uint32_t {
         std::uint32_t u;
@@ -73,7 +75,9 @@ inline glm::vec2 hash3(const glm::vec3& p, int i) {
 }
 
 // Rotate `base` toward `+kSparkConeDeg` along two perpendicular axes,
-// jittered by `jitter` ∈ [-1, 1]^2.
+// jittered by `jitter` ∈ [-1, 1]^2. Approximation of a true 30° cone
+// rotation (Rodrigues would be exact); error is negligible at this
+// half-angle.
 glm::vec3 rotate_jitter(const glm::vec3& base, const glm::vec3& cam_up,
                           const glm::vec3& cam_right, glm::vec2 jitter) {
     const float ang_h = jitter.x * (kSparkConeDeg * 3.14159265f / 180.0f);
@@ -188,6 +192,8 @@ void HitVfxPass::render(const std::vector<HitVfxDescriptor>& vfx,
 
         // ── CRITICAL spark burst ──
         if (sev == 2) {
+            // u_tint stays set from the main billboard above — sparks share
+            // the CRITICAL tier tint.
             const bool has_normal = glm::length(v.surface_normal) > 1e-3f;
             const glm::vec3 base = has_normal ? glm::normalize(v.surface_normal)
                                               : cam_right;
