@@ -75,6 +75,9 @@ class _Ship:
 
 
 class _FakeHost:
+    """Captures only what mutual-exclusivity needs (instance_id + point).
+    rgba and intensity are accepted to satisfy the kwarg signature but
+    not stored — this test doesn't assert against them."""
     def __init__(self):
         self.shield_hit_calls = []
     def shield_hit(self, *, instance_id, point, rgba, intensity):
@@ -83,7 +86,7 @@ class _FakeHost:
 
 @pytest.fixture
 def setup(monkeypatch):
-    """Build ship + host + capture audio + camera-shake calls."""
+    """Build ship + host + camera-shake calls."""
     hit_vfx._active.clear()
     camera_shake.reset()
 
@@ -94,10 +97,8 @@ def setup(monkeypatch):
     host = _FakeHost()
     ship_instances = {ship: 42}
 
-    audio = []
     class _StubSnd:
         def Play(self, position=None):
-            audio.append({"position": position})
             return None
     class _StubMgr:
         def GetSound(self, _name):
@@ -117,7 +118,7 @@ def setup(monkeypatch):
                           lambda pool: pool[0])
 
     return {"ship": ship, "host": host, "ship_instances": ship_instances,
-            "sensors": sensors, "shields": shields, "audio": audio}
+            "sensors": sensors, "shields": shields}
 
 
 # ── helpers ────────────────────────────────────────────────────────────────
