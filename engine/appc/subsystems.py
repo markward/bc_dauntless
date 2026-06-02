@@ -230,21 +230,45 @@ class _EnergyWeaponFireMixin:
                     self._armed = True
 
     def _play_fire_sfx(self) -> None:
+        """Play the firing bank's Start one-shot + Loop sustained tone.
+
+        Both are attached to the firing ship's scene node so they
+        position correctly in 3D space — the WAVs are LS_3D, but a bare
+        Play() with no attach_node lands the source at world origin.
+        Matches the pattern engine/audio/engine_rumble.py uses for ship-
+        attached looping sounds.
+        """
         name = _resolve_fire_sound(self.GetProperty())
         if not name:
             return
         from engine.audio.tg_sound import TGSoundManager
         mgr = TGSoundManager.instance()
-        played = mgr.PlaySound(name + " Start")
-        if played is None:
-            mgr.PlaySound(name)
-        # Start the looped beam sound (Galaxy Phaser Loop etc.) and keep
-        # the handle so StopFiring can silence it.  PlaySound with a
-        # name that doesn't exist returns None — silent fallback.
+        attach_node = self._firing_ship_node_id()
+
+        start_snd = mgr.GetSound(name + " Start")
+        if start_snd is None:
+            # Tractor convention: bare name has no " Start"/" Loop" pair.
+            start_snd = mgr.GetSound(name)
+        if start_snd is not None:
+            start_snd.Play(attach_node=attach_node)
+
         loop_snd = mgr.GetSound(name + " Loop")
         if loop_snd is not None:
             loop_snd.SetLooping(True)
-            self._loop_handle = loop_snd.Play()
+            self._loop_handle = loop_snd.Play(attach_node=attach_node)
+
+    def _firing_ship_node_id(self) -> int:
+        """Walk parent_subsystem → parent_ship → GetSceneNodeId. Returns
+        0 (no attachment) when any link is missing — playback degrades
+        to world-origin rather than crashing on legacy fixtures."""
+        parent_sys = self.GetParentSubsystem() if hasattr(self, "GetParentSubsystem") else None
+        if parent_sys is None:
+            return 0
+        parent_ship = parent_sys.GetParentShip() if hasattr(parent_sys, "GetParentShip") else None
+        if parent_ship is None:
+            return 0
+        getter = getattr(parent_ship, "GetSceneNodeId", None)
+        return int(getter()) if getter else 0
 
     def _bill_recharge(self, charge_amount: float) -> int:
         """Charge POWER_COST_PER_CHARGE × charge_amount against the firing
