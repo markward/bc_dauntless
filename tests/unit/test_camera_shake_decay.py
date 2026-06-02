@@ -62,7 +62,7 @@ def test_energy_decays_to_one_percent_in_half_a_second():
     while camera_shake.get_energy() > one_pct and t < 1.0:
         camera_shake.update(dt)
         t += dt
-    assert 0.45 <= t <= 0.80
+    assert 0.60 <= t <= 0.80
 
 
 def test_sustained_fire_clamped_to_max_energy():

@@ -101,11 +101,14 @@ def perturb(eye, target, up):
     cy, sy = math.cos(yaw), math.sin(yaw)
     cp, sp = math.cos(pitch), math.sin(pitch)
 
-    # Yaw rotation around up axis.
-    f2x = fx * cy + rx * sy
-    f2y = fy * cy + ry * sy
-    f2z = fz * cy + rz * sy
-    # Pitch: forward' = forward * cos(pitch) + up * sin(pitch)
+    # Yaw rotation around `up` axis. r = forward × up, so up × forward = -r;
+    # Rodrigues' formula gives v' = v cos + (axis × v) sin, hence the -r term.
+    f2x = fx * cy - rx * sy
+    f2y = fy * cy - ry * sy
+    f2z = fz * cy - rz * sy
+    # Pitch around the pre-yaw right axis. For sub-3° shakes the
+    # O(yaw²) error from not recomputing right post-yaw is negligible.
+    # forward' = forward * cos(pitch) + up * sin(pitch)
     f3x = f2x * cp + up[0] * sp
     f3y = f2y * cp + up[1] * sp
     f3z = f2z * cp + up[2] * sp
