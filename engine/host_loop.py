@@ -1141,6 +1141,8 @@ def _apply_view_mode_side_effects(view_mode: "_ViewModeController", h) -> None:
     # the new view doesn't inherit a rumble from the old one.
     from engine.appc import camera_shake
     camera_shake.reset()
+    from engine.appc import hit_feedback
+    hit_feedback.reset_audio_throttle()
     view_mode._last_synced_is_bridge = target
 
 

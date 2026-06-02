@@ -41,6 +41,7 @@ class _FakeHost:
 def _reset_state(monkeypatch):
     hit_vfx._active.clear()
     camera_shake.reset()
+    hit_feedback.reset_audio_throttle()
 
 
 @pytest.fixture
@@ -251,3 +252,76 @@ def test_dispatch_with_no_sound_manager_is_silent(spy, monkeypatch):
     # Audio silently dropped — no exception.
     # hit_vfx still pushed.
     assert len(hit_vfx.snapshot()) == 1
+
+
+# ── Audio throttle ─────────────────────────────────────────────────────────
+
+def test_audio_throttle_drops_rapid_repeats_on_same_ship(spy):
+    """Two HULL hits on the same ship within 100ms produce only one
+    audio play (the second is throttled). The visual + camera-shake
+    paths still fire on both."""
+    hull = _HullMarker()
+    ship = _Ship(hull)
+    host = _FakeHost()
+    ship_instances = {ship: 42}
+
+    kwargs = dict(
+        ship=ship, source=None, point=TGPoint3(0.0, 0.0, 0.0),
+        normal=None, damage=30.0, subsystem=hull,
+        absorbed_shields=0.0, absorbed_subsystem=0.0, absorbed_hull=30.0,
+        sub_transition=None, host=host, ship_instances=ship_instances,
+    )
+    hit_feedback.dispatch(**kwargs)
+    hit_feedback.dispatch(**kwargs)
+
+    # Two impacts → two hit_vfx descriptors (visual fires both times).
+    assert len(hit_vfx.snapshot()) == 2
+    # But only one audio play.
+    assert len(spy["audio"]) == 1
+
+
+def test_audio_throttle_separate_ships_not_throttled(spy):
+    """Two different ships taking HULL hits within 100ms BOTH play."""
+    hull = _HullMarker()
+    ship_a = _Ship(hull)
+    ship_b = _Ship(hull)
+    host = _FakeHost()
+    ship_instances = {ship_a: 1, ship_b: 2}
+
+    base = dict(
+        source=None, point=TGPoint3(0.0, 0.0, 0.0), normal=None,
+        damage=30.0, subsystem=hull,
+        absorbed_shields=0.0, absorbed_subsystem=0.0, absorbed_hull=30.0,
+        sub_transition=None, host=host, ship_instances=ship_instances,
+    )
+    hit_feedback.dispatch(ship=ship_a, **base)
+    hit_feedback.dispatch(ship=ship_b, **base)
+
+    assert len(spy["audio"]) == 2
+
+
+def test_audio_throttle_separate_severities_not_throttled(spy):
+    """Same ship, SHIELD then HULL in quick succession — different keys,
+    both play."""
+    hull = _HullMarker()
+    ship = _Ship(hull)
+    host = _FakeHost()
+    ship_instances = {ship: 42}
+
+    base = dict(
+        ship=ship, source=None, point=TGPoint3(0.0, 0.0, 0.0),
+        normal=None, damage=30.0, subsystem=hull,
+        host=host, ship_instances=ship_instances,
+    )
+    # SHIELD hit.
+    hit_feedback.dispatch(
+        absorbed_shields=30.0, absorbed_subsystem=0.0, absorbed_hull=0.0,
+        sub_transition=None, **base,
+    )
+    # HULL hit.
+    hit_feedback.dispatch(
+        absorbed_shields=0.0, absorbed_subsystem=0.0, absorbed_hull=30.0,
+        sub_transition=None, **base,
+    )
+
+    assert len(spy["audio"]) == 2

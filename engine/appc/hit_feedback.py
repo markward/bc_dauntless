@@ -15,6 +15,7 @@ The WeaponHitEvent broadcast in apply_hit is unchanged; dispatch runs
 before it, and dispatch failures are swallowed so a renderer-binding
 crash never suppresses mission-side event handlers.
 """
+import time
 from enum import IntEnum
 
 
@@ -33,6 +34,34 @@ def classify(*, absorbed_shields: float, absorbed_subsystem: float,
     if absorbed_shields > 0.0 and absorbed_subsystem == 0.0 and absorbed_hull == 0.0:
         return Severity.SHIELD
     return Severity.HULL
+
+
+# Per-(ship_id, severity) audio throttle.
+# Reason: dispatch fires every weapon-impact tick (60Hz × N beams during
+# continuous phaser fire). Without a throttle, OpenAL's 256-source cap is
+# exhausted within seconds and new sounds drop silently. 100ms throttle
+# keeps the per-tier audio cadence audible without spam.
+_AUDIO_THROTTLE_S = 0.1
+
+_last_play_time: dict[tuple[int, "Severity"], float] = {}
+
+
+def reset_audio_throttle() -> None:
+    """Clear the per-(ship, severity) audio throttle state. Called by
+    tests and by view-mode transitions."""
+    _last_play_time.clear()
+
+
+def _audio_should_play(ship, severity: Severity) -> bool:
+    """True iff the (ship, severity) pair hasn't played within the
+    throttle window."""
+    key = (id(ship), severity)
+    now = time.monotonic()
+    last = _last_play_time.get(key, 0.0)
+    if now - last < _AUDIO_THROTTLE_S:
+        return False
+    _last_play_time[key] = now
+    return True
 
 
 def dispatch(*, ship, source, point, normal, damage, subsystem,
@@ -82,8 +111,10 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
         # HULL or CRITICAL — hit_vfx.spawn handles both, filtered by severity.
         hit_vfx.spawn(point, normal=normal, severity=severity)
 
-    # 2. Audio.
-    _play_audio(severity, point)
+    # 2. Audio — debounced per (ship, severity) to avoid exhausting
+    # OpenAL's 256-source cap during continuous phaser fire.
+    if _audio_should_play(ship, severity):
+        _play_audio(severity, point)
 
     # 3. Camera shake — player only.
     try:
