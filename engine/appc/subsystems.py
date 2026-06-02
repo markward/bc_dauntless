@@ -1153,6 +1153,12 @@ class PhaserSystem(WeaponSystem):
             return
         if not self.IsOn():
             return
+        # Disabled-weapons gate: system flipped disabled mid-burst —
+        # stop firing cleanly (clears _fire_held + walks _currently_firing
+        # to call bank.StopFiring on each). Spec §4.2.
+        if _is_offline(self):
+            self.StopFiring()
+            return
         ship = self.GetParentShip()
         target = self._held_target
         if hasattr(target, "IsDead") and target.IsDead():

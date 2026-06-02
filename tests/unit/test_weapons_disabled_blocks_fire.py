@@ -123,3 +123,23 @@ def test_weapon_system_base_startfiring_gates_on_offline():
     # StartFiring should be a no-op.
     sys_.StartFiring()
     assert sys_._currently_firing == []
+
+
+def test_retry_held_fire_stops_on_offline_mid_burst():
+    """LBUTTON held, system fires, then all children flip disabled
+    mid-burst: retry_held_fire calls StopFiring (clears _fire_held)."""
+    ship, sys_ = _firing_phaser_system()
+    target = _target()
+    sys_.StartFiring(target=target)
+    assert sys_._fire_held is True
+
+    # All children flip disabled mid-burst.
+    for i in range(4):
+        sys_.GetWeapon(i)._condition = 10.0
+    assert sys_.IsDisabled() == 1
+
+    sys_.retry_held_fire()
+    # Held state cleared, no banks firing.
+    assert sys_._fire_held is False
+    for i in range(4):
+        assert sys_.GetWeapon(i).IsFiring() == 0
