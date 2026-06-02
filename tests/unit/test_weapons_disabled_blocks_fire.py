@@ -143,3 +143,39 @@ def test_retry_held_fire_stops_on_offline_mid_burst():
     assert sys_._fire_held is False
     for i in range(4):
         assert sys_.GetWeapon(i).IsFiring() == 0
+
+
+def test_advance_combat_stops_disabled_system_mid_tick():
+    """_advance_combat called against a ship whose PhaserSystem flipped
+    disabled mid-frame — must call StopFiring on any active banks and
+    skip the damage loop. No apply_hit invocations."""
+    from engine.host_loop import _advance_combat
+    import engine.appc.combat as combat_mod
+
+    ship, sys_ = _firing_phaser_system()
+    from engine.appc.ships import ShipClass_Create
+    target = ShipClass_Create("Galaxy")
+    target.SetTranslateXYZ(0.0, 100.0, 0.0)  # straight ahead (model-Y forward)
+    sys_.StartFiring(target=target)
+    # At least one bank firing.
+    assert any(sys_.GetWeapon(i).IsFiring() == 1 for i in range(4))
+
+    # Disable mid-burst.
+    for i in range(4):
+        sys_.GetWeapon(i)._condition = 10.0
+    assert sys_.IsDisabled() == 1
+
+    # Spy on apply_hit so we can prove it's not called.
+    calls = []
+    original = combat_mod.apply_hit
+    combat_mod.apply_hit = lambda *a, **kw: calls.append((a, kw))
+    try:
+        _advance_combat([ship, target], dt=1.0/60, host=None,
+                        ship_instances=None)
+    finally:
+        combat_mod.apply_hit = original
+
+    assert calls == []
+    # All banks stopped.
+    for i in range(4):
+        assert sys_.GetWeapon(i).IsFiring() == 0

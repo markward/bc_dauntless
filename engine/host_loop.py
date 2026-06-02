@@ -260,6 +260,14 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
         sys_ = ship.GetPhaserSystem() if hasattr(ship, "GetPhaserSystem") else None
         if sys_ is None:
             continue
+        # Disabled-weapons gate: parent aggregates child IsDisabled. When
+        # the system flips disabled mid-tick (incoming hit during the
+        # previous frame's damage routing), stop any active banks and
+        # skip the damage loop for this ship. Spec §4.2.
+        from engine.appc.subsystems import _is_offline
+        if _is_offline(sys_):
+            sys_.StopFiring()
+            continue
         # While LBUTTON is held, re-fire banks that recharged above the
         # minimum threshold (BC behavior: continuous fire keeps re-firing
         # individual banks as they cycle through their charge curves).
