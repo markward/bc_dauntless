@@ -319,9 +319,11 @@ def test_dispatch_event_toggle_does_not_change_player_target():
 # ── Health-bar percent encoding (Issue 1) ────────────────────────────────────
 
 def _make_targeted_ship(name="USS Galaxy"):
-    """Build a ShipClass via ShipClass_Create, register it as the player's
-    target, and return it. Caller is responsible for tearing the game
-    down via _set_current_game(None)."""
+    """Build a ShipClass via ShipClass_Create and register it in the
+    bridge set so `SetTarget(name)` can resolve it. Caller must still
+    add the ship to the target menu (e.g., via
+    `target_menu.RebuildShipMenu(ship)`) for it to appear in render
+    output. Caller is responsible for game + bridge-set teardown."""
     from engine.appc.ships import ShipClass_Create
     from engine.appc.sets import SetClass
     ship = ShipClass_Create("Galaxy")
@@ -359,5 +361,6 @@ def test_view_payload_hull_pct_is_integer_percent_not_ratio():
         row = next(r for r in state["rows"] if r["name"] == "Half-hull")
         assert row["hull"] == 50
     finally:
+        App.g_kSetManager.DeleteSet("bridge")
         from engine.core.game import _set_current_game
         _set_current_game(None)
