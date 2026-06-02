@@ -2223,9 +2223,6 @@ def run(mission_name: Optional[str] = None,
         _previous_real_time = _time_dbg.monotonic()
         _accumulator = 0.0
 
-        # Diagnostic HUD: measure sim ticks per real second. Once the
-        # accumulator is wired correctly, this reads ~60 on any display.
-        _hud_tick_count = 0
         while not r.should_close():
             # --- Input dispatch + modality (ESC always live; SPACE only when unpaused) ---
             # _apply_view_mode_side_effects mirrors the SPACE flag into
@@ -2404,7 +2401,6 @@ def run(mission_name: Optional[str] = None,
             )
             for _ in range(_sim_ticks_this_frame):
                 loop.tick()
-                _hud_tick_count += 1
 
             # Camera follow-up runs whenever at least one sim tick fired
             # this frame (previously gated on `not pause.is_open`,
