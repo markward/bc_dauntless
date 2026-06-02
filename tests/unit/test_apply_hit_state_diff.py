@@ -1,7 +1,8 @@
 """_subsystem_state_flags + _diff_state.
 
-Worst-new-flag priority: destroyed > disabled > damaged > None.
+Worst-new-flag priority: destroyed > disabled > None.
 A flag transitioning False→True counts; True→True does not.
+IsDamaged transitions are excluded from _diff_state — see combat.py for WHY.
 """
 import pytest
 
@@ -35,8 +36,8 @@ def test_flags_missing_methods_default_false():
         # No change.
         ((False, False, False), (False, False, False), None),
         ((True,  False, False), (True,  False, False), None),
-        # Healthy → damaged.
-        ((False, False, False), (True,  False, False), "damaged"),
+        # Healthy → damaged. Now None — IsDamaged is no longer a CRITICAL trigger.
+        ((False, False, False), (True,  False, False), None),
         # Damaged → disabled (damaged stays True).
         ((True,  False, False), (True,  True,  False), "disabled"),
         # Disabled → destroyed.

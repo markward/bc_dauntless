@@ -35,25 +35,24 @@ class _Shield:
 class _Sensors:
     """Subsystem with MaxCondition=100, DisabledPercentage=0.5.
 
-    IsDamaged is intentionally NOT exposed: a plain hull-bleed hit that
-    reduces condition from 100→80 is not a "state transition" in the
-    CRITICAL sense — only the IsDisabled and IsDestroyed thresholds
-    trigger a CRITICAL severity.
-
-    IsDisabled flips True once condition <= 50.
-    IsDestroyed flips True once condition <= 0.
+    IsDamaged flips True on the first tick condition drops below max
+    (realistic SDK semantics). IsDisabled flips True once condition
+    drops to 50% of max. IsDestroyed flips True once condition reaches
+    zero. The narrowed CRITICAL rule excludes IsDamaged transitions,
+    so this stub now matches what a real ShipSubsystem would look like.
     """
     def __init__(self):
         self.condition = 100.0
         self._max = 100.0
     def GetCondition(self): return self.condition
     def GetMaxCondition(self): return self._max
+    def IsDamaged(self): return self.condition < self._max
     def IsDisabled(self): return self.condition <= 0.5 * self._max
     def IsDestroyed(self): return self.condition <= 0.0
     def GetPosition(self):
         return TGPoint3(0.0, 0.0, 0.0)
     def GetRadius(self):
-        return 1000.0   # huge so pick_target_subsystem always picks it
+        return 1000.0
 
 
 class _Ship:

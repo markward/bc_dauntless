@@ -141,17 +141,23 @@ def _subsystem_state_flags(sub) -> tuple:
 def _diff_state(before: tuple, after: tuple):
     """Worst NEW state-flag, or None if no flag flipped False→True.
 
-    Priority: destroyed > disabled > damaged > None. Pre-existing True
-    flags are ignored — only False→True transitions count.
+    Priority: destroyed > disabled > None. Pre-existing True flags are
+    ignored — only False→True transitions count.
+
+    The `damaged` flag is deliberately excluded from the CRITICAL trigger
+    semantics: IsDamaged() typically returns condition < max_condition,
+    so it flips True on every subsystem's first damage tick, which would
+    promote every first hit to CRITICAL — too noisy. CRITICAL is reserved
+    for "this subsystem stopped working" (disabled or destroyed).
+    `_subsystem_state_flags` still snapshots all three flags so future
+    consumers can read them, but `_diff_state` ignores the damaged one.
     """
-    b_dmg, b_dis, b_des = before
-    a_dmg, a_dis, a_des = after
+    _b_dmg, b_dis, b_des = before
+    _a_dmg, a_dis, a_des = after
     if a_des and not b_des:
         return "destroyed"
     if a_dis and not b_dis:
         return "disabled"
-    if a_dmg and not b_dmg:
-        return "damaged"
     return None
 
 
