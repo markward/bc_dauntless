@@ -35,8 +35,92 @@ def classify(*, absorbed_shields: float, absorbed_subsystem: float,
     return Severity.HULL
 
 
-# dispatch(...) is implemented in Task 7. Until then a no-op stub keeps
-# apply_hit's call site importable.
-def dispatch(*args, **kwargs) -> None:
-    """Stub — replaced in Task 7."""
-    return None
+def dispatch(*, ship, source, point, normal, damage, subsystem,
+             absorbed_shields: float, absorbed_subsystem: float,
+             absorbed_hull: float, sub_transition,
+             host=None, ship_instances=None) -> None:
+    """Per-impact fan-out: VFX + audio + camera shake.
+
+    Severity is computed via classify(...). Exactly one visual fires per
+    impact (shield_hit for SHIELD, hit_vfx.spawn for HULL/CRITICAL).
+    Audio fires for every severity. Camera shake fires only when
+    ship == Game_GetCurrentGame().GetPlayer().
+
+    Headless-safe: host=None silently skips shield_hit;
+    App.g_kSoundManager=None silently skips audio.
+    """
+    from engine.appc import hit_vfx, camera_shake
+
+    hull = ship.GetHull() if hasattr(ship, "GetHull") else None
+    severity = classify(
+        absorbed_shields=absorbed_shields,
+        absorbed_subsystem=absorbed_subsystem,
+        absorbed_hull=absorbed_hull,
+        sub_transition=sub_transition,
+        subsystem=subsystem,
+        hull=hull,
+    )
+
+    # 1. Visual — mutually exclusive.
+    if severity == Severity.SHIELD:
+        if host is not None and ship_instances is not None \
+                and hasattr(host, "shield_hit"):
+            iid = ship_instances.get(ship)
+            if iid is not None:
+                host.shield_hit(
+                    instance_id=iid,
+                    point=(point.x, point.y, point.z),
+                    rgba=(0.0, 0.0, 0.0, 0.0),
+                    intensity=1.0,
+                )
+    else:
+        # HULL or CRITICAL — hit_vfx.spawn handles both, filtered by severity.
+        hit_vfx.spawn(point, normal=normal, severity=severity)
+
+    # 2. Audio.
+    _play_audio(severity, point)
+
+    # 3. Camera shake — player only.
+    try:
+        import App
+        game = App.Game_GetCurrentGame() if hasattr(App, "Game_GetCurrentGame") else None
+        player = game.GetPlayer() if game is not None and hasattr(game, "GetPlayer") else None
+    except Exception:
+        player = None
+    if player is not None and ship is player:
+        camera_shake.apply_kick(float(damage))
+
+
+def _play_audio(severity: Severity, point) -> None:
+    """Look up the tier's sound name and play positionally. Silent on
+    missing sound manager or missing sound name."""
+    import App
+    mgr = getattr(App, "g_kSoundManager", None)
+    if mgr is None:
+        return
+
+    if severity == Severity.SHIELD:
+        name = "Shield Hit"
+    elif severity == Severity.HULL:
+        try:
+            import LoadTacticalSounds
+            name = LoadTacticalSounds.GetRandomSound(
+                LoadTacticalSounds.g_lsWeaponExplosions)
+        except Exception:
+            return
+    else:  # CRITICAL
+        try:
+            import LoadDamageHitSounds
+            picker = LoadDamageHitSounds.GetRandomSound
+            if picker is None:
+                # LoadSounds() hasn't run yet — fall back to first entry.
+                name = LoadDamageHitSounds.g_lsSubsystemCriticals[0]
+            else:
+                name = picker(LoadDamageHitSounds.g_lsSubsystemCriticals)
+        except Exception:
+            return
+
+    snd = mgr.GetSound(name)
+    if snd is None:
+        return
+    snd.Play(position=(point.x, point.y, point.z))
