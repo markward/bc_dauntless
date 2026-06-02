@@ -88,12 +88,14 @@ struct TorpedoDescriptor {
     float       age           = 0.0f;
 };
 
-/// Hit-VFX render descriptor.  Engine ages each entry up to 0.5s lifetime;
-/// renderer eases size 0→1 over first 100ms then fades alpha 1→0 over next
-/// 400ms based on `age`.
+/// Hit-VFX render descriptor.  Engine ages each entry; renderer dispatches
+/// per-tier constants (HULL / CRITICAL) based on `severity`.  `surface_normal`
+/// is (0,0,0) when no mesh trace was available (sentinel = no normal).
 struct HitVfxDescriptor {
     glm::vec3 world_pos;
-    float     age = 0.0f;
+    glm::vec3 surface_normal{0.0f};   // (0,0,0) sentinel = no normal
+    float     age      = 0.0f;
+    int       severity = 1;           // 1=HULL, 2=CRITICAL; SHIELD never reaches here
 };
 
 /// Phaser-beam render descriptor.  One entry per concentric beam layer

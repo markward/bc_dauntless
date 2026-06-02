@@ -8,18 +8,39 @@
 
 #include <glad/glad.h>
 #include <glm/glm.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <fstream>
 
 namespace renderer {
 
 namespace {
 
-constexpr float kPeakSize  = 5.0f;   // world-units half-size at full expansion
-constexpr float kSpawnDur  = 0.1f;
-constexpr float kFadeDur   = 0.4f;
+// Per-tier visual constants (spec §6.1).
+struct TierConfig {
+    float peak_size;     // world-units half-size at peak expansion
+    float spawn_dur;     // seconds, size eases 0→peak
+    float fade_dur;      // seconds, alpha fades 1→0
+    float total_life;    // seconds, descriptor pruned at this age (renderer side)
+    glm::vec4 tint;
+};
+
+// Indexed by severity: 0=SHIELD (unused — never reaches renderer), 1=HULL, 2=CRITICAL.
+constexpr TierConfig kTiers[3] = {
+    {0.0f, 0.0f, 0.0f, 0.0f, {1.0f, 1.0f, 1.0f, 1.0f}},   // SHIELD — never used.
+    {3.0f, 0.08f, 0.25f, 0.33f, {1.00f, 0.55f, 0.20f, 1.0f}},  // HULL
+    {7.0f, 0.10f, 0.55f, 0.65f, {1.00f, 0.92f, 0.80f, 1.0f}},  // CRITICAL
+};
+
+constexpr int   kSparkCount     = 6;
+constexpr float kSparkSpeed     = 4.0f;    // wu/s
+constexpr float kSparkSizeMult  = 0.6f;    // multiplier on tier peak_size
+constexpr float kSparkConeDeg   = 30.0f;   // half-angle of spark cone around the normal
+
 constexpr const char* kImpactTexturePath = "data/Textures/Tactical/TorpedoFlares.tga";
 
 constexpr float kQuadCorners[] = {
@@ -30,6 +51,38 @@ constexpr float kQuadCorners[] = {
     +1.0f, +1.0f,
     -1.0f, +1.0f,
 };
+
+// Deterministic 2-float hash from (world_pos, i). xorshift on float bit
+// reinterprets — cheap, no allocation, repeatable for a given descriptor.
+inline glm::vec2 hash3(const glm::vec3& p, int i) {
+    auto bits = [](float f) -> std::uint32_t {
+        std::uint32_t u;
+        std::memcpy(&u, &f, sizeof(u));
+        return u;
+    };
+    std::uint32_t h = bits(p.x) ^ (bits(p.y) * 0x9E3779B9u)
+                    ^ (bits(p.z) * 0x85EBCA6Bu) ^ (std::uint32_t(i) * 0xC2B2AE35u);
+    h ^= h << 13; h ^= h >> 17; h ^= h << 5;
+    std::uint32_t h2 = h * 0x1B873593u;
+    h2 ^= h2 << 13; h2 ^= h2 >> 17; h2 ^= h2 << 5;
+    // Map to [-1, 1] floats.
+    auto to_unit = [](std::uint32_t x) {
+        return (float(x & 0xFFFFFF) / float(0xFFFFFF)) * 2.0f - 1.0f;
+    };
+    return glm::vec2{to_unit(h), to_unit(h2)};
+}
+
+// Rotate `base` toward `+kSparkConeDeg` along two perpendicular axes,
+// jittered by `jitter` ∈ [-1, 1]^2.
+glm::vec3 rotate_jitter(const glm::vec3& base, const glm::vec3& cam_up,
+                          const glm::vec3& cam_right, glm::vec2 jitter) {
+    const float ang_h = jitter.x * (kSparkConeDeg * 3.14159265f / 180.0f);
+    const float ang_v = jitter.y * (kSparkConeDeg * 3.14159265f / 180.0f);
+    glm::vec3 v = base + cam_right * std::sin(ang_h) + cam_up * std::sin(ang_v);
+    float len = glm::length(v);
+    if (len > 1e-6f) v /= len;
+    return v;
+}
 
 }  // namespace
 
@@ -112,16 +165,45 @@ void HitVfxPass::render(const std::vector<HitVfxDescriptor>& vfx,
     glBindTexture(GL_TEXTURE_2D, texture_->id());
 
     for (const auto& v : vfx) {
+        // Clamp severity to [1, 2]; index 0 (SHIELD) should never reach
+        // the renderer but guard regardless.
+        const int sev = std::max(1, std::min(2, v.severity));
+        const TierConfig& tier = kTiers[sev];
+
         const float age = std::max(0.0f, v.age);
-        const float size_t  = std::min(1.0f, age / kSpawnDur);
+        if (age >= tier.total_life) continue;
+
+        // ── Main billboard ──
+        const float size_t  = std::min(1.0f, age / tier.spawn_dur);
         const float fade_t  = std::max(0.0f, std::min(1.0f,
-                                  (age - kSpawnDur) / kFadeDur));
-        const float size    = kPeakSize * size_t;
+                                  (age - tier.spawn_dur) / tier.fade_dur));
+        const float size    = tier.peak_size * size_t;
         const float alpha   = 1.0f - fade_t;
+
+        shader.set_vec4 ("u_tint",           tier.tint);
         shader.set_vec3 ("u_world_position", v.world_pos);
         shader.set_float("u_size",           size);
         shader.set_float("u_alpha",          alpha);
         glDrawArrays(GL_TRIANGLES, 0, 6);
+
+        // ── CRITICAL spark burst ──
+        if (sev == 2) {
+            const bool has_normal = glm::length(v.surface_normal) > 1e-3f;
+            const glm::vec3 base = has_normal ? glm::normalize(v.surface_normal)
+                                              : cam_right;
+            for (int i = 0; i < kSparkCount; ++i) {
+                const glm::vec2 jitter = hash3(v.world_pos, i);
+                const glm::vec3 dir = rotate_jitter(base, cam_up, cam_right, jitter);
+                const glm::vec3 pos = v.world_pos + dir * (kSparkSpeed * age);
+                const float life_t = age / tier.total_life;
+                const float spark_size = kSparkSizeMult * tier.peak_size * (1.0f - life_t);
+                const float spark_alpha = 1.0f - life_t;
+                shader.set_vec3 ("u_world_position", pos);
+                shader.set_float("u_size",           spark_size);
+                shader.set_float("u_alpha",          spark_alpha);
+                glDrawArrays(GL_TRIANGLES, 0, 6);
+            }
+        }
     }
 
     glBindVertexArray(0);

@@ -4,8 +4,9 @@ out vec4 frag_color;
 
 uniform sampler2D u_texture;
 uniform float     u_alpha;
+uniform vec4      u_tint;
 
 void main() {
     vec4 t = texture(u_texture, v_uv);
-    frag_color = vec4(t.rgb, t.a * u_alpha);
+    frag_color = t * u_tint * vec4(1.0, 1.0, 1.0, u_alpha);
 }

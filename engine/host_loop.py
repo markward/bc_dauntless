@@ -374,8 +374,11 @@ def _build_hit_vfx_render_data():
     out = []
     for entry in hit_vfx.snapshot():
         pos = entry["position"]
+        n = entry["normal"]
         out.append({
             "position": (pos.x, pos.y, pos.z),
+            "normal":   (n.x, n.y, n.z) if n is not None else (0.0, 0.0, 0.0),
+            "severity": entry["severity"],
             "age":      entry["age"],
         })
     return out
