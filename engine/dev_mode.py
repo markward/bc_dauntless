@@ -51,3 +51,18 @@ def keybinding_descriptions() -> list[tuple[int, str]]:
     Used by the pause menu to render the developer section.
     """
     return sorted((k, desc) for k, (_, desc) in _dev_keybindings.items())
+
+
+def dev_only(fn: Callable) -> Callable:
+    """Wrap `fn` so it executes only in dev mode (else returns None).
+
+    Intended for temporary behaviour overrides — e.g. forcing invulnerability
+    while testing AI, bypassing a damage gate while iterating on a script.
+    Wrapping with @dev_only keeps the override callable from leaking into
+    production play without per-call `if dev_mode.is_enabled()` boilerplate.
+    """
+    def wrapper(*args, **kwargs):
+        if not is_enabled():
+            return None
+        return fn(*args, **kwargs)
+    return wrapper

@@ -86,3 +86,39 @@ def test_keybinding_descriptions_returns_sorted_pairs(reset_dev_mode):
     dev_mode.register_dev_keybinding(5, lambda: None, "A handler")
     descriptions = dev_mode.keybinding_descriptions()
     assert descriptions == [(5, "A handler"), (10, "B handler")]
+
+
+def test_dev_only_runs_when_enabled(reset_dev_mode):
+    import _dauntless_host
+    import engine.dev_mode as dev_mode
+    _dauntless_host.developer_mode = True
+
+    @dev_mode.dev_only
+    def f(x):
+        return x * 2
+
+    assert f(3) == 6
+
+
+def test_dev_only_returns_none_when_disabled(reset_dev_mode):
+    import _dauntless_host
+    import engine.dev_mode as dev_mode
+    _dauntless_host.developer_mode = False
+
+    @dev_mode.dev_only
+    def f(x):
+        return x * 2
+
+    assert f(3) is None
+
+
+def test_dev_only_preserves_kwargs(reset_dev_mode):
+    import _dauntless_host
+    import engine.dev_mode as dev_mode
+    _dauntless_host.developer_mode = True
+
+    @dev_mode.dev_only
+    def f(a, b=10):
+        return a + b
+
+    assert f(1, b=2) == 3
