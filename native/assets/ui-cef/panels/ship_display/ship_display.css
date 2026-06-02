@@ -251,9 +251,10 @@
 /* Integrity drives `color`, which the gradients above pick up via
    `currentColor`. Opacity baseline (0.5) is on the base rule; damaged
    and down states adjust it as visual cues. */
-.ship-display__shield[data-integrity="full"]    { color: var(--bc-shields); }
-.ship-display__shield[data-integrity="damaged"] { color: var(--bc-hull-damaged); opacity: 0.35; }
-.ship-display__shield[data-integrity="down"]    { opacity: 0; }
+.ship-display__shield[data-integrity="healthy"]  { color: var(--bc-hull-healthy); }
+.ship-display__shield[data-integrity="damaged"]  { color: var(--bc-hull-damaged); }
+.ship-display__shield[data-integrity="critical"] { color: var(--bc-hull-critical); }
+.ship-display__shield[data-integrity="down"]     { opacity: 0; }
 
 /* ── Damage list ─────────────────────────────────────────────────────── */
 

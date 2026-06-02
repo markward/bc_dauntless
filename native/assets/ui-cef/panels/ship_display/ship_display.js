@@ -42,11 +42,18 @@
         return "critical";
     }
 
-    // Shield face bucket — 75% / 0% thresholds per spec §5.
+    // Shield face bucket — four tiers driving the arc colour:
+    //   down     ≤ 1%   → hidden (≤1% epsilon so the per-tick regen
+    //                     trickle doesn't flicker the arc back on for
+    //                     a fraction of a second after shields drop)
+    //   critical 1-33%  → red
+    //   damaged  34-66% → amber
+    //   healthy  ≥ 67%  → green
     function bucketForShield(pct) {
-        if (pct >= 0.75) { return "full"; }
-        if (pct > 0.0)   { return "damaged"; }
-        return "down";
+        if (pct <= 0.01) { return "down"; }
+        if (pct < 0.34)  { return "critical"; }
+        if (pct < 0.67)  { return "damaged"; }
+        return "healthy";
     }
 
     function rebuildDamageList(ul, damage) {
