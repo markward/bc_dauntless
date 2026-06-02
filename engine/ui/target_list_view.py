@@ -72,6 +72,31 @@ def _query_shield_percentage(ship) -> int:
         return 0
 
 
+def _query_subsystem_condition(ship, name: str) -> int:
+    """Return the named subsystem's condition as an integer percentage
+    0-100. Prefers GetCombinedConditionPercentage so parent weapon
+    systems reflect aggregated child condition; falls back to
+    GetConditionPercentage when the combined variant is absent.
+
+    Defaults to 100 on any failure (subsystem missing, getter raises)
+    so a transient resolution miss draws a full bar rather than an
+    empty one."""
+    if ship is None or not name:
+        return 100
+    sub = _resolve_subsystem_by_name(ship, name)
+    if sub is None:
+        return 100
+    getter = getattr(sub, "GetCombinedConditionPercentage", None)
+    if getter is None:
+        getter = getattr(sub, "GetConditionPercentage", None)
+    if getter is None:
+        return 100
+    try:
+        return int(round(getter() * 100))
+    except Exception:
+        return 100
+
+
 class TargetListView(Panel):
     @property
     def name(self) -> str:
@@ -112,7 +137,8 @@ class TargetListView(Panel):
                     hull_pct = _query_hull_percentage(ship)
                     shield_pct = _query_shield_percentage(ship)
                     subsystems = tuple(
-                        sub_child.GetLabel()
+                        (sub_child.GetLabel(),
+                         _query_subsystem_condition(ship, sub_child.GetLabel()))
                         for sub_child in child._children
                     )
                     name = ship.GetName()
@@ -154,7 +180,8 @@ class TargetListView(Panel):
                     "affiliation": aff,
                     "hull": hull,
                     "shields": shields,
-                    "subsystems": [{"name": s} for s in subs],
+                    "subsystems": [{"name": s_name, "condition": s_cond}
+                                   for (s_name, s_cond) in subs],
                     "expanded": expanded,
                 }
                 for (name, aff, is_vis, hull, shields, subs, expanded) in rows

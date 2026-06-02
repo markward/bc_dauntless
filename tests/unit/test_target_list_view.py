@@ -393,3 +393,44 @@ def test_view_payload_shield_pct_is_integer_percent_not_ratio():
         App.g_kSetManager.DeleteSet("bridge")
         from engine.core.game import _set_current_game
         _set_current_game(None)
+
+
+# ── Per-subsystem condition (Issue 2) ────────────────────────────────────────
+
+def test_view_payload_subsystems_carry_condition_pct():
+    """Each subsystem entry in the snapshot includes a `condition`
+    integer percent reflecting its live condition."""
+    from engine.ui.target_list_view import TargetListView
+
+    App._reset_target_menu_singleton()
+    target_menu = App.STTargetMenu_CreateW("Targets")
+    game, player, mission = _setup_game_with_player()
+    try:
+        ship = _make_targeted_ship("USS Galaxy")
+        # Drop the first subsystem on the ship to 75% condition.
+        it = ship.StartGetSubsystemMatch(App.CT_SHIP_SUBSYSTEM)
+        first_sub = ship.GetNextSubsystemMatch(it)
+        ship.EndGetSubsystemMatch(it)
+        first_sub.SetMaxCondition(400.0)
+        first_sub.SetCondition(300.0)
+        damaged_name = first_sub.GetName()
+
+        target_menu.RebuildShipMenu(ship)
+        view = TargetListView()
+        script = view.render_payload()
+        body = script[len("setTargetList("):-2]
+        state = json.loads(body)
+
+        row = next(r for r in state["rows"] if r["name"] == "USS Galaxy")
+        damaged_entry = next(s for s in row["subsystems"] if s["name"] == damaged_name)
+        assert damaged_entry["condition"] == 75
+        # Untouched subsystems stay at 100%.
+        for entry in row["subsystems"]:
+            assert "condition" in entry
+            assert 0 <= entry["condition"] <= 100
+            if entry["name"] != damaged_name:
+                assert entry["condition"] == 100
+    finally:
+        App.g_kSetManager.DeleteSet("bridge")
+        from engine.core.game import _set_current_game
+        _set_current_game(None)
