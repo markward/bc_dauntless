@@ -2207,20 +2207,18 @@ def run(mission_name: Optional[str] = None,
             # and Cmd+R reloads.
             _cef_set_load_end(registry.invalidate_all)
         TICK_DT = 1.0 / 60.0
-        MAX_FRAME_DT = 0.25  # Fiedler spiral-of-death cap; only matters on stalled frames
+        MAX_FRAME_DT = 0.25  # Fiedler spiral-of-death cap
 
         loop = GameLoop()
         ticks = 0
         init_audio()
         _bootstrap_firing_pipeline()
 
-        # Fixed-timestep accumulator state. Sim runs at TICK_DT (60 Hz)
-        # regardless of render refresh rate. See
-        # engine/core/timestep.py and the spec at
-        # docs/superpowers/specs/2026-06-02-fixed-timestep-sim-design.md.
-        import time as _time_dbg
+        # Fixed-timestep accumulator state — sim runs at TICK_DT (60 Hz)
+        # regardless of render refresh rate. See engine/core/timestep.py.
+        import time
         from engine.core.timestep import step_accumulator
-        _previous_real_time = _time_dbg.monotonic()
+        _previous_real_time = time.monotonic()
         _accumulator = 0.0
 
         while not r.should_close():
@@ -2391,7 +2389,7 @@ def run(mission_name: Optional[str] = None,
             # During pause we force it to 0 so the accumulator cannot
             # grow and there is no catch-up burst on resume. The cap
             # bounds the inner while-loop after a stalled render frame.
-            _now = _time_dbg.monotonic()
+            _now = time.monotonic()
             _frame_dt = _now - _previous_real_time
             _previous_real_time = _now
             if pause.is_open:
@@ -2402,9 +2400,8 @@ def run(mission_name: Optional[str] = None,
             for _ in range(_sim_ticks_this_frame):
                 loop.tick()
 
-            # Camera follow-up runs whenever at least one sim tick fired
-            # this frame (previously gated on `not pause.is_open`,
-            # equivalent because tick-per-frame meant tick == not paused).
+            # Only snap the camera when a sim tick actually fired —
+            # no tick means no state change to follow.
             if _sim_ticks_this_frame > 0:
                 had_pending_swap = controller.pending_swap is not None
                 controller._drain_pending_swap()
