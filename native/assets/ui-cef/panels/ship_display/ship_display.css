@@ -43,8 +43,6 @@
 /* ── Panel chrome ────────────────────────────────────────────────────── */
 
 .ship-display {
-    width: 16vw;
-    min-width: 220px;
     font-family: "Antonio", "Antonio-Regular", sans-serif;
     color: var(--bc-label-text);
     -webkit-font-smoothing: antialiased;
@@ -52,43 +50,19 @@
     --title-color: var(--bc-row-text-bright);
 }
 
-/* Player panel anchors to the bottom-right tactical cluster. */
+/* Player panel — flex child of #tactical-bottom-row (see hello.css).
+   Width sized by content + a viewport floor; positioning owned by the
+   bottom-row container. */
 #ship-display-player {
-    position: fixed;
-    right: 36vw;   /* leaves room for Weapons Settings + Weapons Display */
-    bottom: 0;
-    margin: 1vw;
+    width: 16vw;
+    min-width: 220px;
 }
 
-/* Top-left stack: target ship status + target list, stacked vertically
-   inside a shared wrapper. The target ship-display has no fixed
-   positioning of its own — it flows in the parent's flex column. */
-#left-panel-stack {
-    position: absolute;
-    top: 24px;
-    left: 24px;
-    width: 280px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-
-#left-panel-stack #ship-display-target {
-    /* Inherit width from the wrapper; flex layout handles vertical
-       stacking next to the target list. */
+/* Target panel — flex child of #tactical-target-stack (left column).
+   Fills the column width. */
+#ship-display-target {
     width: 100%;
     min-width: 0;
-}
-
-/* The target-list-panel rule in target_list.css uses position: absolute
-   with its own top/left/width. Inside our flex wrapper we need it to
-   flow with the parent's column layout instead, so the target ship
-   status above can push it down when a target is selected. */
-#left-panel-stack #target-list-panel {
-    position: static;
-    top: auto;
-    left: auto;
-    width: 100%;
 }
 
 .ship-display[hidden] { display: none; }

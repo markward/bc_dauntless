@@ -26,10 +26,10 @@
 }
 
 #target-list-panel {
-    position: absolute;
-    top: 24px;
-    left: 24px;
-    width: 280px;
+    /* Positioning owned by the parent layout zone (#tactical-target-stack
+       in hello.css). The panel fills the zone's width and flows in its
+       flex column. */
+    width: 100%;
     font-family: "Antonio", "Antonio-Regular", sans-serif;
     font-weight: 600;
     color: var(--bc-label-text);

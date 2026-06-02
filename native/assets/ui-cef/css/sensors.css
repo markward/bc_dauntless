@@ -29,10 +29,9 @@
 }
 
 #sensors-panel {
-    position: absolute;
-    bottom: 24px;
-    left: 24px;
-    width: 240px;
+    /* Positioning owned by the parent layout zone (#tactical-radar in
+       hello.css). Fills the column width (~280px). */
+    width: 100%;
     font-family: "Antonio", "Antonio-Regular", sans-serif;
     font-weight: 600;
     color: var(--bc-label-text);

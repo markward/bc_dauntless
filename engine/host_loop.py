@@ -2321,30 +2321,44 @@ def run(mission_name: Optional[str] = None,
                     _mx = int(_mx_fb * _sx)
                     _my = int(_my_fb * _sy)
                     _cef_send_mouse_move(_mx, _my)
-                    # Panel bbox in CEF view space — matches the CSS
-                    # rect in target_list.css (top:24px left:24px
-                    # width:280px). Height is generous to cover an
-                    # expanded ship with several subsystem rows.
-                    _TL_X, _TL_Y, _TL_W, _TL_H = 24, 24, 280, 400
-                    _cursor_in_target_list = (
-                        target_list_view.visible
-                        and _TL_X <= _mx < _TL_X + _TL_W
-                        and _TL_Y <= _my < _TL_Y + _TL_H
+                    # Panel bboxes in CEF view space. Click forwarding is
+                    # gated on these because forwarding consumes the
+                    # mouse-button edge state — see the rationale comment
+                    # above. Bboxes track the layout zones defined in
+                    # hello.css; new panels need a bbox here or their
+                    # buttons will silently swallow clicks.
+                    #
+                    # Left column (#tactical-left-column): position:fixed;
+                    # top:24px; left:24px; bottom:24px; width:280px.
+                    # Hosts target ship-display, target list, and radar
+                    # — one bbox covers all three.
+                    _LC_X, _LC_Y = 24, 24
+                    _LC_W = 280
+                    _LC_H = _CEF_VIEW_H - 24 - _LC_Y  # to bottom:24
+                    _cursor_in_left_column = (
+                        (target_list_view.visible or sensors_panel.visible
+                         or ship_display_target.visible)
+                        and _LC_X <= _mx < _LC_X + _LC_W
+                        and _LC_Y <= _my < _LC_Y + _LC_H
                     )
-                    # Sensors panel bbox — bottom-left, mirroring the
-                    # target list. Width matches sensors.css (240px);
-                    # height generous enough to cover header + disc body.
-                    # CSS positions via `bottom:24px`, so the panel's
-                    # top-y in CEF view space is (view_h - 24 - height).
-                    _SN_W, _SN_H = 240, 240
-                    _SN_X = 24
-                    _SN_Y = _CEF_VIEW_H - 24 - _SN_H
-                    _cursor_in_sensors = (
-                        sensors_panel.visible
-                        and _SN_X <= _mx < _SN_X + _SN_W
-                        and _SN_Y <= _my < _SN_Y + _SN_H
+                    # Bottom row (#tactical-bottom-row): position:fixed;
+                    # right:0; bottom:0; padding:0 12px 12px 0;
+                    # justify-content:flex-end. Player ship-display sits
+                    # at the right edge with width:16vw (min 220px).
+                    # Bbox right-edge = view_w - 12 (padding). For now
+                    # the bottom row only holds the player ship-display;
+                    # widen when speed/weapons join.
+                    _BR_W, _BR_H = 240, 360  # room for the right-side panel
+                    _BR_X = _CEF_VIEW_W - 12 - _BR_W
+                    _BR_Y = _CEF_VIEW_H - 12 - _BR_H
+                    _cursor_in_bottom_row = (
+                        ship_display_player.visible
+                        and _BR_X <= _mx < _BR_X + _BR_W
+                        and _BR_Y <= _my < _BR_Y + _BR_H
                     )
-                    _cursor_in_panel = _cursor_in_target_list or _cursor_in_sensors
+                    _cursor_in_panel = (
+                        _cursor_in_left_column or _cursor_in_bottom_row
+                    )
                     if _cef_send_mouse_click is not None and _cursor_in_panel:
                         if _h.mouse_button_pressed(_h.keys.MOUSE_BUTTON_LEFT):
                             _cef_send_mouse_click(_mx, _my, 0, True)

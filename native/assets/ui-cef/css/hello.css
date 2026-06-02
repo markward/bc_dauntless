@@ -25,6 +25,60 @@ html, body {
 }
 
 /* ============================================================
+   Tactical-view layout zones — see docs/ui_designs/tactical_ui_state.md.
+   Two top-level containers host every tactical-view panel. Panels
+   themselves render as flex children with `width: 100%` and no
+   position/top/left of their own; the zones own placement.
+       pointer-events on the zone is `none` so the empty gutter
+       doesn't swallow mouse input; each direct child re-enables it.
+   ============================================================ */
+
+#tactical-left-column {
+    position: fixed;
+    top: 24px;
+    left: 24px;
+    bottom: 24px;
+    width: 280px;
+    display: flex;
+    flex-direction: column;
+    pointer-events: none;
+}
+
+#tactical-target-stack {
+    /* Grows to fill the column; pushes #tactical-radar to the bottom. */
+    flex: 1 1 auto;
+    min-height: 0;            /* allow inner content to shrink with overflow */
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    overflow: hidden;
+    pointer-events: auto;
+}
+
+#tactical-radar {
+    /* Sized by its child (sensors panel); sits at the bottom. */
+    flex: 0 0 auto;
+    margin-top: 12px;
+    pointer-events: auto;
+}
+
+#tactical-bottom-row {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    /* Clear the left column (24px gutter + 280px column) plus a small
+       breathing margin so panels don't touch the column edge. */
+    max-width: calc(100vw - 280px - 24px);
+    display: flex;
+    justify-content: flex-end;
+    align-items: flex-end;
+    gap: 12px;
+    padding: 0 12px 12px 0;
+    pointer-events: none;
+}
+#tactical-bottom-row > * { pointer-events: auto; }
+
+/* ============================================================
    Pause menu — see docs/ui_designs/10-pause-menu.md
    Composes the shared panel chrome (00) + officer-menu row
    primitive (01). Tokens kept local until chrome.css / row.css
