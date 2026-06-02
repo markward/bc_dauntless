@@ -298,6 +298,21 @@ def _current_episode():
         return None
 
 
+def player_sensors_offline() -> bool:
+    """True iff the player's own SensorSubsystem reports IsDisabled or
+    IsDestroyed. Used to gate target-list visibility, IFF colouring, and
+    target-panel resolution. Spec §4.3."""
+    from engine.appc.subsystems import _is_offline
+    from engine.core.game import Game_GetCurrentGame
+    game = Game_GetCurrentGame()
+    player = game.GetPlayer() if game else None
+    if player is None:
+        return False
+    sensors = (player.GetSensorSubsystem()
+               if hasattr(player, "GetSensorSubsystem") else None)
+    return _is_offline(sensors)
+
+
 def _resolve_ship_for_role(role: str):
     """Returns the ship the panel renders for, or None for the no-target
     empty state.
@@ -308,23 +323,37 @@ def _resolve_ship_for_role(role: str):
     populate the known-objects set yet — nothing scans for contacts —
     so applying the gate would silently block every target. Trust
     SetTarget for now; revisit when sensor scanning lands.
+
+    Project 5 sensor gate (§4.3): when the player's sensors are offline,
+    target-role resolves to None (panel goes to empty state). Player
+    role is unaffected — you always know who you are.
     """
     player = _get_player()
     if player is None:
         return None
     if role == ROLE_PLAYER:
         return player
+    if player_sensors_offline():
+        return None
     target = player.GetTarget() if hasattr(player, "GetTarget") else None
     return target
 
 
 def _affiliation_for(ship, player) -> str:
-    """Map ship affiliation to the snapshot string used by the CSS layer."""
+    """Map ship affiliation to the snapshot string used by the CSS layer.
+
+    Project 5 sensor gate (§4.3): when the player's own sensors are
+    offline, every non-player ship maps to UNKNOWN. Player-self
+    short-circuits FRIENDLY above this check so you can always see who
+    you are.
+    """
     try:
         if player is None or ship is None:
             return "NONE"
         if ship is player:
             return "FRIENDLY"
+        if player_sensors_offline():
+            return "UNKNOWN"
         episode = _current_episode()
         mission = episode.GetCurrentMission() if episode else None
         if mission is not None:
