@@ -108,3 +108,56 @@ def test_repair_restores_full_ramp_rate():
         _step_ship_motion(ship, 1.0 / 60)
     # 1 s of healthy ramp at MaxAccel 1.5: gain ~1.5 (capped at MaxSpeed 6.3).
     assert ship._current_speed > speed_disabled + 1.0
+
+
+# ── Player-side gate (host_loop._PlayerControl) ───────────────────────────────
+
+from engine.host_loop import _PlayerControl
+
+
+class _Keys:
+    KEY_W = 1; KEY_S = 2; KEY_A = 3; KEY_D = 4; KEY_Q = 5; KEY_E = 6
+    KEY_R = 7; KEY_I = 8
+    KEY_0 = 10; KEY_1 = 11; KEY_2 = 12; KEY_3 = 13; KEY_4 = 14
+    KEY_5 = 15; KEY_6 = 16; KEY_7 = 17; KEY_8 = 18; KEY_9 = 19
+    KEY_LEFT_SHIFT = 20; KEY_LEFT_CONTROL = 21; KEY_LEFT_SUPER = 22
+
+
+class _Reader:
+    keys = _Keys()
+    def __init__(self):
+        self.held = set(); self.pressed_once = set()
+    def key_state(self, key): return key in self.held
+    def key_pressed(self, key):
+        if key in self.pressed_once:
+            self.pressed_once.discard(key); return True
+        return False
+
+
+def test_player_throttle_clamped_when_ies_disabled():
+    pc = _PlayerControl()
+    pc.impulse_level = 9
+    ship = _galaxy_like_ship()
+    ies = ship.GetImpulseEngineSubsystem()
+    ies.SetCondition(10.0)  # disabled
+    assert pc.GetTargetSpeed(ship) == 0.0
+
+
+def test_player_throttle_clamped_when_ies_destroyed():
+    pc = _PlayerControl()
+    pc.impulse_level = 9
+    ship = _galaxy_like_ship()
+    ies = ship.GetImpulseEngineSubsystem()
+    ies.SetCondition(0.0)
+    assert pc.GetTargetSpeed(ship) == 0.0
+
+
+def test_player_throttle_restored_after_repair():
+    pc = _PlayerControl()
+    pc.impulse_level = 9
+    ship = _galaxy_like_ship()
+    ies = ship.GetImpulseEngineSubsystem()
+    ies.SetCondition(10.0)
+    assert pc.GetTargetSpeed(ship) == 0.0
+    ies.SetCondition(100.0)
+    assert abs(pc.GetTargetSpeed(ship) - 6.3) < 1e-6

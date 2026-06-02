@@ -687,8 +687,15 @@ class _PlayerControl:
 
         Forward speed is multiplied by WARP_BOOST_FACTOR when the
         in-system warp toggle is on (Ctrl+I); reverse is unaffected.
+
+        Disabled-engines gate (Project 5 §4.1): when the IES reports
+        IsDisabled or IsDestroyed, target is unconditionally 0 — the
+        ship coasts under the ship_motion drag fraction.
         """
+        from engine.appc.subsystems import _is_offline
         ies = self._get_ies(player)
+        if _is_offline(ies):
+            return 0.0
         max_speed = ies.GetMaxSpeed() if ies is not None else 0.0
         boost = self.WARP_BOOST_FACTOR if self._warp_boost else 1.0
         if max_speed > 0.0:
