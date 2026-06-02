@@ -1,15 +1,18 @@
 """LoadDamageHitSounds — companion to LoadTacticalSounds.
 
-Registers damage-impact audio names not in stock BC:
-- "Shield Hit"               — single name, softer existing WAV.
-- "Subsystem Critical 1-8"   — pool re-pointing the existing
+Project-4-only addition: registers a CRITICAL-tier sound pool that
+doesn't exist in stock BC. Hull-tier audio uses the orphaned
+g_lsWeaponExplosions pool already declared in LoadTacticalSounds (this
+matches stock BC's Effects.TorpedoHullHit / PhaserHullHit semantics).
+Shield-tier audio also reuses g_lsWeaponExplosions for torpedo impacts
+(matching Effects.TorpedoShieldHit); phaser-on-shields is silent
+(stock BC has no PhaserShieldHit handler).
+
+- "Subsystem Critical 1-8"   — new pool re-pointing the existing
                                explo_large_NN.WAV files under new names
                                so the existing g_lsBigDeathExplosions
                                registrations (used for station deaths)
                                are not overloaded.
-
-Hull-tier audio uses the orphaned g_lsWeaponExplosions pool already
-declared in LoadTacticalSounds; no entries needed here for HULL.
 
 Called once at host bootstrap alongside LoadTacticalSounds.LoadSounds().
 """
@@ -39,12 +42,6 @@ def LoadSounds():
     """Register the new sound names with TGSoundManager."""
     global GetRandomSound
     pGame = App.Game_GetCurrentGame()
-
-    # SHIELD tier — softer existing WAV, volume reduced.
-    snd = pGame.LoadSound("sfx/Explosions/explo15.WAV",
-                           "Shield Hit", App.TGSound.LS_3D)
-    if snd is not None:
-        snd.SetVolume(0.6)
 
     # CRITICAL tier pool — explo_large_NN.WAV under new names.
     pGame.LoadSound("sfx/Explosions/explo_large_01.WAV",

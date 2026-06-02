@@ -85,7 +85,10 @@ def spy(monkeypatch):
 
 # ── SHIELD ──────────────────────────────────────────────────────────────────
 
-def test_shield_severity_fires_shield_hit_not_hit_vfx(spy):
+def test_shield_severity_torpedo_plays_weapon_explosion(spy):
+    """Torpedo-on-shields plays g_lsWeaponExplosions (matching SDK
+    Effects.TorpedoShieldHit). host.shield_hit also fires for the
+    bubble splash."""
     hull = _HullMarker()
     ship = _Ship(hull)
     host = _FakeHost()
@@ -98,6 +101,7 @@ def test_shield_severity_fires_shield_hit_not_hit_vfx(spy):
         absorbed_shields=30.0, absorbed_subsystem=0.0, absorbed_hull=0.0,
         sub_transition=None,
         host=host, ship_instances=ship_instances,
+        weapon_type="torpedo",
     )
 
     assert len(host.shield_hit_calls) == 1
@@ -106,9 +110,52 @@ def test_shield_severity_fires_shield_hit_not_hit_vfx(spy):
     assert call["point"] == (1.0, 2.0, 3.0)
     # No hit_vfx descriptor pushed.
     assert hit_vfx.snapshot() == []
-    # Audio: Shield Hit name picked.
-    assert spy["mgr"].last_lookup == "Shield Hit"
+    import LoadTacticalSounds
+    assert spy["mgr"].last_lookup == LoadTacticalSounds.g_lsWeaponExplosions[0]
     assert spy["audio"][0]["position"] == (1.0, 2.0, 3.0)
+
+
+def test_shield_severity_phaser_is_silent(spy):
+    """Phaser-on-shields plays no audio (stock BC has no
+    PhaserShieldHit handler). host.shield_hit still fires for the
+    visual bubble splash."""
+    hull = _HullMarker()
+    ship = _Ship(hull)
+    host = _FakeHost()
+    ship_instances = {ship: 42}
+    point = TGPoint3(0.0, 0.0, 0.0)
+
+    hit_feedback.dispatch(
+        ship=ship, source=None, point=point, normal=None,
+        damage=30.0, subsystem=hull,
+        absorbed_shields=30.0, absorbed_subsystem=0.0, absorbed_hull=0.0,
+        sub_transition=None,
+        host=host, ship_instances=ship_instances,
+        weapon_type="phaser",
+    )
+
+    assert len(host.shield_hit_calls) == 1   # visual still fires
+    assert spy["audio"] == []                # no audio
+    assert spy["mgr"].last_lookup is None    # GetSound not called
+
+
+def test_shield_severity_unknown_weapon_is_silent(spy):
+    """weapon_type=None falls into the safe-default path: no audio."""
+    hull = _HullMarker()
+    ship = _Ship(hull)
+    host = _FakeHost()
+    ship_instances = {ship: 42}
+
+    hit_feedback.dispatch(
+        ship=ship, source=None, point=TGPoint3(0.0, 0.0, 0.0),
+        normal=None, damage=30.0, subsystem=hull,
+        absorbed_shields=30.0, absorbed_subsystem=0.0, absorbed_hull=0.0,
+        sub_transition=None,
+        host=host, ship_instances=ship_instances,
+    )
+
+    assert len(host.shield_hit_calls) == 1
+    assert spy["audio"] == []
 
 
 # ── HULL ────────────────────────────────────────────────────────────────────
@@ -301,8 +348,9 @@ def test_audio_throttle_separate_ships_not_throttled(spy):
 
 
 def test_audio_throttle_separate_severities_not_throttled(spy):
-    """Same ship, SHIELD then HULL in quick succession — different keys,
-    both play."""
+    """Same ship, SHIELD (torpedo) then HULL in quick succession — different
+    keys, both play. weapon_type="torpedo" is needed for SHIELD audio; HULL
+    fires regardless of weapon_type."""
     hull = _HullMarker()
     ship = _Ship(hull)
     host = _FakeHost()
@@ -313,10 +361,10 @@ def test_audio_throttle_separate_severities_not_throttled(spy):
         normal=None, damage=30.0, subsystem=hull,
         host=host, ship_instances=ship_instances,
     )
-    # SHIELD hit.
+    # SHIELD hit — torpedo so audio fires.
     hit_feedback.dispatch(
         absorbed_shields=30.0, absorbed_subsystem=0.0, absorbed_hull=0.0,
-        sub_transition=None, **base,
+        sub_transition=None, weapon_type="torpedo", **base,
     )
     # HULL hit.
     hit_feedback.dispatch(

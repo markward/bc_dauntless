@@ -106,7 +106,7 @@ def test_phaser_hit_point_comes_from_host_ray_trace_mesh(galaxy_red):
     import engine.appc.combat as combat
 
     def spy(ship_, damage, hit_point, source, subsystem=None,
-            *, normal=None, host=None, ship_instances=None):
+            *, normal=None, host=None, ship_instances=None, **kwargs):
         captured["hit_point"] = hit_point
 
     sentinel = object()

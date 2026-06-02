@@ -79,7 +79,8 @@ def _audio_should_play(ship, severity: Severity) -> bool:
 def dispatch(*, ship, source, point, normal, damage, subsystem,
              absorbed_shields: float, absorbed_subsystem: float,
              absorbed_hull: float, sub_transition,
-             host=None, ship_instances=None) -> None:
+             host=None, ship_instances=None,
+             weapon_type: str | None = None) -> None:
     """Per-impact fan-out: VFX + audio + camera shake.
 
     Severity is computed via classify(...). Exactly one visual fires per
@@ -89,6 +90,12 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
 
     Headless-safe: host=None silently skips shield_hit;
     App.g_kSoundManager=None silently skips audio.
+
+    `weapon_type` is "phaser" / "torpedo" / None. Used by _play_audio to
+    match SDK Effects.py semantics: phaser-on-shields is silent (stock BC
+    has no PhaserShieldHit handler); torpedo-on-shields plays from
+    g_lsWeaponExplosions (matching Effects.TorpedoShieldHit). HULL and
+    CRITICAL fire regardless of weapon_type.
     """
     # Deferred — engine.appc.hit_vfx imports Severity from this module,
     # so a module-level import here would be circular.
@@ -128,7 +135,7 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
     # beam is hitting are silent. A fresh contact (gap exceeding
     # _AUDIO_CONTACT_GAP_S since the previous tick) re-arms the play.
     if _audio_should_play(ship, severity):
-        _play_audio(severity, point)
+        _play_audio(severity, point, weapon_type)
 
     # 3. Camera shake — player only.
     try:
@@ -141,9 +148,17 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
         camera_shake.apply_kick(float(damage))
 
 
-def _play_audio(severity: Severity, point) -> None:
+def _play_audio(severity: Severity, point, weapon_type: str | None = None) -> None:
     """Look up the tier's sound name and play positionally. Silent on
-    missing sound manager or missing sound name."""
+    missing sound manager or missing sound name.
+
+    SDK semantics (Effects.py):
+        SHIELD + phaser  → silent (no PhaserShieldHit handler exists)
+        SHIELD + torpedo → g_lsWeaponExplosions (TorpedoShieldHit)
+        SHIELD + None    → silent (safe default for unknown sources)
+        HULL              → g_lsWeaponExplosions
+        CRITICAL          → g_lsSubsystemCriticals (Project 4 extension)
+    """
     # Deferred so test imports of hit_feedback don't require App to be
     # loaded yet (matches the App shim's lazy-load pattern elsewhere).
     import App
@@ -152,7 +167,14 @@ def _play_audio(severity: Severity, point) -> None:
         return
 
     if severity == Severity.SHIELD:
-        name = "Shield Hit"
+        if weapon_type != "torpedo":
+            return
+        try:
+            import LoadTacticalSounds
+            name = LoadTacticalSounds.GetRandomSound(
+                LoadTacticalSounds.g_lsWeaponExplosions)
+        except Exception:
+            return
     elif severity == Severity.HULL:
         try:
             import LoadTacticalSounds

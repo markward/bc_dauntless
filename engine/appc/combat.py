@@ -240,7 +240,8 @@ def _shield_face_from_hit_point(ship, hit_point) -> int:
 
 
 def apply_hit(ship, damage: float, hit_point, source, subsystem=None,
-              *, normal=None, host=None, ship_instances=None) -> None:
+              *, normal=None, host=None, ship_instances=None,
+              weapon_type: str | None = None) -> None:
     """Route `damage` to `ship`: shields face first → picked subsystem
     → hull bleed.  Then call hit_feedback.dispatch with the per-stage
     absorbed breakdown + subsystem state transition + surface normal,
@@ -252,6 +253,11 @@ def apply_hit(ship, damage: float, hit_point, source, subsystem=None,
     host, ship_instances — passed through to dispatch so it can
              fire host.shield_hit (the shield-bubble splash on
              SHIELD severity).
+    weapon_type — "phaser" / "torpedo" / None. Consumed by dispatch
+             to match SDK Effects.py audio semantics: phaser-on-shields
+             is silent (stock BC has no PhaserShieldHit handler);
+             torpedo-on-shields plays from g_lsWeaponExplosions
+             (matching Effects.TorpedoShieldHit).
 
     Dispatch is wrapped in try/except so a renderer or audio crash
     cannot suppress the WeaponHitEvent broadcast.
@@ -308,6 +314,7 @@ def apply_hit(ship, damage: float, hit_point, source, subsystem=None,
             absorbed_hull=absorbed_hull,
             sub_transition=sub_transition,
             host=host, ship_instances=ship_instances,
+            weapon_type=weapon_type,
         )
     except Exception:
         # Dispatch failures must not suppress mission handlers below.
