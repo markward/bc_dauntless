@@ -298,6 +298,19 @@ class _EnergyWeaponFireMixin:
         return ps.StealPower(cost)
 
 
+def _is_offline(sub) -> bool:
+    """True when a subsystem is disabled OR destroyed.
+
+    Project 5 single source of truth for the five capability gates
+    (engines, weapons, sensors, shield generator, repair-verify).
+    Reads predicates at use-time so repair lifting condition releases
+    the gate automatically on the next call.
+    """
+    if sub is None:
+        return False
+    return bool(sub.IsDisabled()) or bool(sub.IsDestroyed())
+
+
 class ShipSubsystem(TGEventHandlerObject):
     def __init__(self, name: str = ""):
         super().__init__()
@@ -899,6 +912,10 @@ class WeaponSystem(PoweredSubsystem):
     def StartFiring(self, target=None, offset=None) -> None:
         if not self.IsOn():
             return
+        # Disabled-weapons gate: when every child reports disabled (Project 2
+        # aggregation), the parent IsDisabled is 1 — block fire. Spec §4.2.
+        if _is_offline(self):
+            return
         n = self.GetNumWeapons()
         if n == 0:
             return
@@ -1106,6 +1123,11 @@ class PhaserSystem(WeaponSystem):
         """
         if not self.IsOn() or target is None:
             return
+        # Disabled-weapons gate: parent aggregates child IsDisabled (Project 2).
+        # When all banks are disabled the parent flips disabled and we bail.
+        # Spec §4.2.
+        if _is_offline(self):
+            return
         ship = self.GetParentShip()
         if not self._target_in_system_range(ship, target):
             return
@@ -1130,6 +1152,12 @@ class PhaserSystem(WeaponSystem):
         if not self._fire_held or self._held_target is None:
             return
         if not self.IsOn():
+            return
+        # Disabled-weapons gate: system flipped disabled mid-burst —
+        # stop firing cleanly (clears _fire_held + walks _currently_firing
+        # to call bank.StopFiring on each). Spec §4.2.
+        if _is_offline(self):
+            self.StopFiring()
             return
         ship = self.GetParentShip()
         target = self._held_target
@@ -1707,7 +1735,13 @@ class ShieldSubsystem(PoweredSubsystem):
         """Per-tick regen: current += charge_per_second * dt, clamped to max.
 
         Faces with max==0 are skipped so unshielded faces never accumulate.
+
+        Disabled-generator gate (Project 5 §4.4): when _is_offline(self),
+        skip the whole loop. _charge_per_second values are NOT mutated;
+        repair restores regen at the original rates on the next call.
         """
+        if _is_offline(self):
+            return
         dt = float(dt)
         for f in range(self.NUM_SHIELDS):
             mx = self._max_shields[f]
@@ -1911,9 +1945,23 @@ def update_target_list_visibility(target_menu, ships, player, range_units: float
     Real Appc filters by sensor subsystem state (charged, undamaged,
     not jammed). Phase-2 takes only range into account; the property
     chain will be wired in a later iteration.
+
+    Project 5 sensor gate (§4.3): when the player's own SensorSubsystem
+    reports _is_offline, every row in the menu goes invisible regardless
+    of range. The radar panel and target-list view both filter on
+    row.IsVisible(), so contacts disappear automatically.
     """
     from engine.appc.target_menu import STSubsystemMenu
     if player is None:
+        return
+    sensors = (player.GetSensorSubsystem()
+               if hasattr(player, "GetSensorSubsystem") else None)
+    if _is_offline(sensors):
+        for ship in ships:
+            row = target_menu.GetObjectEntry(ship)
+            if row is None or not isinstance(row, STSubsystemMenu):
+                continue
+            row.SetNotVisible()
         return
     px, py, pz = _get_xyz(player)
     range_sq = range_units * range_units

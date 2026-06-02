@@ -25,6 +25,13 @@ from engine.appc.objects import PhysicsObjectClass
 # (i.e. test ships built with ShipClass() directly, before SetupProperties).
 FALLBACK_MAX_ACCEL = 1.0e9
 
+# When the impulse engine subsystem is disabled or destroyed,
+# _step_ship_motion clamps target speed and angular targets to zero
+# and scales the ramp step by this fraction so velocity decays
+# gracefully instead of instantly. 0.1 = ~10× the normal stop time.
+# Spec: docs/superpowers/specs/2026-06-02-subsystem-failure-consequences-design.md §2.
+DISABLED_ENGINE_DRAG_FRACTION = 0.1
+
 # Body-frame axes — matches _PlayerControl convention.
 _X_AXIS = TGPoint3(1.0, 0.0, 0.0)
 _Y_AXIS = TGPoint3(0.0, 1.0, 0.0)
@@ -88,8 +95,18 @@ def _step_ship_motion(ship, dt: float) -> None:
         world_dir.Unitize()
         target_speed = target_speed_signed
 
+    # ── Engines-disabled gate: clamp target + scale ramp by drag fraction.
+    # Reads predicate at use-time so repair lifting condition releases
+    # the gate on the next call. Spec §4.1.
+    from engine.appc.subsystems import _is_offline
+    engines_offline = _is_offline(ship.GetImpulseEngineSubsystem())
+    if engines_offline:
+        target_speed = 0.0
+
     # ── Ramp current speed toward target ─────────────────────────────
     step = _max_accel(ship) * dt
+    if engines_offline:
+        step *= DISABLED_ENGINE_DRAG_FRACTION
     ship._current_speed = _ramp_toward(ship._current_speed, target_speed, step)
 
     # ── Integrate position ───────────────────────────────────────────
@@ -117,8 +134,16 @@ def _step_ship_motion(ship, dt: float) -> None:
     else:
         target_av_x, target_av_y, target_av_z = av.x, av.y, av.z
 
+    # Engines-disabled gate also kills angular thrust (SDK puts
+    # MaxAngularVelocity / MaxAngularAccel directly on ImpulseEngines;
+    # no separate RCS subsystem). Spec §4.1.
+    if engines_offline:
+        target_av_x = target_av_y = target_av_z = 0.0
+
     # ── Ramp each axis of _current_angular_velocity toward target ────
     ang_step = _max_angular_accel(ship) * dt
+    if engines_offline:
+        ang_step *= DISABLED_ENGINE_DRAG_FRACTION
     cav = ship._current_angular_velocity
     cav.x = _ramp_toward(cav.x, target_av_x, ang_step)
     cav.y = _ramp_toward(cav.y, target_av_y, ang_step)
