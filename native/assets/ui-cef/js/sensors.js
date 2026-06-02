@@ -18,9 +18,9 @@ function _sensorsEscapeHtml(s) {
 }
 
 // Disc-plane vertical squash, matches .sensors__disc-plane height (75)
-// over .sensors__disc height (180) in sensors.css. If those values
+// over .sensors__disc height (130) in sensors.css. If those values
 // change, update this in lockstep.
-const _SENSORS_PLANE_SQUASH = 75.0 / 180.0;
+const _SENSORS_PLANE_SQUASH = 75.0 / 130.0;
 // Max stem length in pixels for |alt| == 1.0. Tuned to match the
 // mockup's longest stem (~42 px) without overshooting the disc.
 const _SENSORS_MAX_STEM_PX = 28.0;

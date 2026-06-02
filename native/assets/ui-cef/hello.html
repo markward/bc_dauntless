@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="css/target_list.css">
     <link rel="stylesheet" href="css/sensors.css">
     <link rel="stylesheet" href="panels/ship_display/ship_display.css">
+    <link rel="stylesheet" href="panels/speed_display/speed_display.css">
 </head>
 <body>
     <!-- Pause menu overlay.
@@ -112,6 +113,22 @@
          Player state pushed via setShipDisplay("player", {...}).
          Spec: docs/superpowers/specs/2026-05-28-ship-display-panel-design.md -->
     <div id="tactical-bottom-row">
+        <!-- Speed readout. State pushed via setSpeedDisplay({visible,
+             current_kph, max_kph, warp}). Read-only; no clicks.
+             Spec: docs/ui_designs/04-weapons-and-speed.md -->
+        <section id="speed-display" data-warp="false" hidden>
+          <div class="speed-display__header">Speed</div>
+          <div class="speed-display__body">
+            <div class="speed-display__readout">
+              <span class="speed-display__current" data-bind="current">0</span>
+              <span class="speed-display__sep"> / </span>
+              <span class="speed-display__max" data-bind="max">0</span>
+              <span class="speed-display__unit"> KPH</span>
+            </div>
+            <div class="speed-display__warp">WARP</div>
+          </div>
+        </section>
+
         <section class="bc-panel ship-display" id="ship-display-player" data-role="player" hidden>
           <header class="bc-panel__header">
             <span class="bc-panel__title" data-bind="title">PLAYER</span>
@@ -141,5 +158,6 @@
     <script src="js/target_list.js"></script>
     <script src="js/sensors.js"></script>
     <script src="panels/ship_display/ship_display.js"></script>
+    <script src="panels/speed_display/speed_display.js"></script>
 </body>
 </html>

@@ -44,7 +44,7 @@
 .sensors__header {
     background: linear-gradient(90deg, var(--bc-menu1-base), var(--bc-menu1-accent));
     color: rgb(0, 0, 0);
-    padding: 6px 14px 6px 18px;
+    padding: 3px 14px 3px 18px;
     border-top-right-radius: 14px;
     text-transform: uppercase;
     letter-spacing: 0.12em;
@@ -87,7 +87,7 @@
 .sensors__disc {
     position: relative;
     width: 100%;
-    height: 180px;
+    height: 130px;
     background: radial-gradient(ellipse at center,
                                  var(--bc-radar-disc-inner) 0%,
                                  var(--bc-radar-disc-outer) 80%);

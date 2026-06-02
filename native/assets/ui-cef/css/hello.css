@@ -38,7 +38,7 @@ html, body {
     top: 24px;
     left: 24px;
     bottom: 24px;
-    width: 280px;
+    width: 224px;
     display: flex;
     flex-direction: column;
     pointer-events: none;
@@ -66,9 +66,9 @@ html, body {
     position: fixed;
     right: 0;
     bottom: 0;
-    /* Clear the left column (24px gutter + 280px column) plus a small
+    /* Clear the left column (24px gutter + 224px column) plus a small
        breathing margin so panels don't touch the column edge. */
-    max-width: calc(100vw - 280px - 24px);
+    max-width: calc(100vw - 224px - 24px);
     display: flex;
     justify-content: flex-end;
     align-items: flex-end;

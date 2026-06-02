@@ -1,0 +1,88 @@
+/* native/assets/ui-cef/panels/speed_display/speed_display.css
+ *
+ * Bottom-row Speed readout. Chrome matches the sensors/target_list
+ * convention (orange gradient header, dark translucent body, salmon
+ * left border). Read-only — no caret, no interactivity.
+ *
+ * Spec: docs/ui_designs/04-weapons-and-speed.md
+ */
+
+:root {
+    /* Tokens shared with neighbouring panels; redeclared per the same
+     * pattern target_list.css / sensors.css use. */
+    --bc-menu1-base:      rgb(216, 94, 86);
+    --bc-menu1-accent:    rgb(216, 132, 80);
+    --bc-row-text-bright: rgb(235, 225, 255);
+    --bc-row-text-dim:    rgb(180, 170, 220);
+    --bc-gold:            rgb(255, 210, 90);
+    --bc-body-bg:         rgba(10, 10, 16, 0.97);
+}
+
+#speed-display {
+    /* Flex child of #tactical-bottom-row. Width sized by content with
+     * a viewport floor so the panel feels balanced next to the player
+     * ship-display. */
+    width: 12vw;
+    min-width: 160px;
+    font-family: "Antonio", "Antonio-Regular", sans-serif;
+    color: var(--bc-row-text-bright);
+    -webkit-font-smoothing: antialiased;
+}
+
+#speed-display[hidden] { display: none; }
+
+.speed-display__header {
+    background: linear-gradient(90deg, var(--bc-menu1-base), var(--bc-menu1-accent));
+    color: rgb(0, 0, 0);
+    padding: 3px 14px 3px 18px;
+    border-top-right-radius: 14px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.speed-display__body {
+    background: var(--bc-body-bg);
+    border-left: 4px solid var(--bc-menu1-base);
+    padding: 12px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    align-items: center;
+    /* Tabular numerals so the current/max values don't reflow as digits
+     * change width (otherwise the "/" anchor drifts). */
+    font-variant-numeric: tabular-nums;
+}
+
+/* Main readout: "<current> / <max> KPH". Current is brighter (live
+ * value); max is dim (reference). KPH suffix in the dim colour too. */
+.speed-display__readout {
+    font-size: 18px;
+    line-height: 1.1;
+}
+
+.speed-display__current {
+    color: var(--bc-gold);
+    font-weight: 600;
+}
+
+.speed-display__sep,
+.speed-display__max,
+.speed-display__unit {
+    color: var(--bc-row-text-dim);
+}
+
+/* WARP badge — only painted when data-warp="true". Sized so the panel
+ * doesn't reflow when it appears/disappears (reserve the line height). */
+.speed-display__warp {
+    font-size: 12px;
+    letter-spacing: 0.18em;
+    color: var(--bc-menu1-accent);
+    min-height: 14px;  /* reserve the row even when WARP is hidden */
+    visibility: hidden;
+}
+
+#speed-display[data-warp="true"] .speed-display__warp {
+    visibility: visible;
+}

@@ -2168,6 +2168,13 @@ def run(mission_name: Optional[str] = None,
         ship_display_player = ShipDisplay_Create()  # ROLE_PLAYER, registers
         ship_display_target = ShipDisplay_Create()  # ROLE_TARGET, registers
 
+        # Speed readout (bottom-row, left of the player ship-display).
+        # Read-only — reads current_speed + warp_boost off the local
+        # _PlayerControl instance via dependency injection.
+        from engine.ui.speed_display import SpeedDisplay
+        speed_display = SpeedDisplay(player_control=player_control)
+        registry.register(speed_display)
+
         # Wire (and re-wire on mission swap) the target-menu singleton
         # to the player's spatial set. controller.post_load_hook fires
         # after every successful loader.load() — both the initial load
@@ -2272,6 +2279,7 @@ def run(mission_name: Optional[str] = None,
                 sensors_panel.visible       = view_mode.is_exterior
                 ship_display_player.visible = view_mode.is_exterior
                 ship_display_target.visible = view_mode.is_exterior
+                speed_display.visible       = view_mode.is_exterior
 
                 # Sensor-visibility update — flip per-row IsVisible
                 # based on range from the player. TargetListView
@@ -2329,11 +2337,11 @@ def run(mission_name: Optional[str] = None,
                     # buttons will silently swallow clicks.
                     #
                     # Left column (#tactical-left-column): position:fixed;
-                    # top:24px; left:24px; bottom:24px; width:280px.
+                    # top:24px; left:24px; bottom:24px; width:224px.
                     # Hosts target ship-display, target list, and radar
                     # — one bbox covers all three.
                     _LC_X, _LC_Y = 24, 24
-                    _LC_W = 280
+                    _LC_W = 224
                     _LC_H = _CEF_VIEW_H - 24 - _LC_Y  # to bottom:24
                     _cursor_in_left_column = (
                         (target_list_view.visible or sensors_panel.visible
@@ -2343,16 +2351,18 @@ def run(mission_name: Optional[str] = None,
                     )
                     # Bottom row (#tactical-bottom-row): position:fixed;
                     # right:0; bottom:0; padding:0 12px 12px 0;
-                    # justify-content:flex-end. Player ship-display sits
-                    # at the right edge with width:16vw (min 220px).
-                    # Bbox right-edge = view_w - 12 (padding). For now
-                    # the bottom row only holds the player ship-display;
-                    # widen when speed/weapons join.
-                    _BR_W, _BR_H = 240, 360  # room for the right-side panel
+                    # justify-content:flex-end. Panels stack right→left;
+                    # bbox right-edge = view_w - 12 (padding). Width
+                    # covers speed (12vw min 160) + 12px gap + player
+                    # ship-display (16vw min 220) + a little slack.
+                    # Speed itself isn't clickable but the cursor passing
+                    # over it shouldn't fire phasers; widen the bbox to
+                    # silently swallow those clicks.
+                    _BR_W, _BR_H = 420, 360
                     _BR_X = _CEF_VIEW_W - 12 - _BR_W
                     _BR_Y = _CEF_VIEW_H - 12 - _BR_H
                     _cursor_in_bottom_row = (
-                        ship_display_player.visible
+                        (ship_display_player.visible or speed_display.visible)
                         and _BR_X <= _mx < _BR_X + _BR_W
                         and _BR_Y <= _my < _BR_Y + _BR_H
                     )
