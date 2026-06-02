@@ -364,3 +364,32 @@ def test_view_payload_hull_pct_is_integer_percent_not_ratio():
         App.g_kSetManager.DeleteSet("bridge")
         from engine.core.game import _set_current_game
         _set_current_game(None)
+
+
+def test_view_payload_shield_pct_is_integer_percent_not_ratio():
+    """A fully-shielded ship must report shields == 100 (not 1).
+    Regression test for the missing * 100."""
+    from engine.ui.target_list_view import TargetListView
+    from engine.appc.subsystems import ShieldSubsystem
+
+    App._reset_target_menu_singleton()
+    target_menu = App.STTargetMenu_CreateW("Targets")
+    game, player, mission = _setup_game_with_player()
+    try:
+        ship = _make_targeted_ship("Full-shields")
+        shields = ship.GetShields()
+        # Seed all six faces; SetMaxShields seeds current when current==0.
+        for face in range(ShieldSubsystem.NUM_SHIELDS):
+            shields.SetMaxShields(face, 1000.0)
+        target_menu.RebuildShipMenu(ship)
+
+        view = TargetListView()
+        script = view.render_payload()
+        body = script[len("setTargetList("):-2]
+        state = json.loads(body)
+        row = next(r for r in state["rows"] if r["name"] == "Full-shields")
+        assert row["shields"] == 100
+    finally:
+        App.g_kSetManager.DeleteSet("bridge")
+        from engine.core.game import _set_current_game
+        _set_current_game(None)

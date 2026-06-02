@@ -67,7 +67,7 @@ def _query_shield_percentage(ship) -> int:
     if shields is None or not hasattr(shields, "GetShieldPercentage"):
         return 0
     try:
-        return int(round(shields.GetShieldPercentage()))
+        return int(round(shields.GetShieldPercentage() * 100))
     except Exception:
         return 0
 
