@@ -1,6 +1,8 @@
 # Deferred: don't fire phasers at out-of-range targets
 
-**Status:** deferred 2026-05-18.  PR 2c lets the player fire phasers at
+**Status:** RESOLVED 2026-06-02 on `feature/damage-vfx-bridge-feedback`. Implemented Option 1 (system-wide gate at max MaxDamageDistance across banks) — see commit history. Prior text retained for reference.
+
+**Original status:** deferred 2026-05-18.  PR 2c lets the player fire phasers at
 any target the lock accepts, regardless of distance.  We render the
 beam but `_phaser_damage_for_tick` returns 0 once `dist >= MaxDamageDistance`,
 so the bank just discharges its capacitor for no effect.  As a stopgap

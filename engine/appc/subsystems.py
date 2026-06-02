@@ -1024,6 +1024,43 @@ class PhaserSystem(WeaponSystem):
     def GetAimedWeapon(self) -> int:                return self._aimed_weapon
     def SetAimedWeapon(self, v) -> None:            self._aimed_weapon = int(v)
 
+    def _target_in_system_range(self, ship, target) -> bool:
+        """True iff `target` is within the system's effective range
+        (max of MaxDamageDistance across all banks).
+
+        Option 1 gate from docs/superpowers/deferred/2026-05-18-phaser-
+        fire-range-gate.md: a system-wide cutoff at the longest-reach
+        bank's MaxDamageDistance. Banks with shorter reach still
+        contribute the full distance check at fire time
+        (_phaser_damage_for_tick falloff), but every bank is gated
+        together at the system level — no charge drain, no beam, no
+        SFX when nothing on this ship can damage the target.
+
+        Legacy fixture support: if either ship or target lacks
+        GetWorldLocation, or if no bank declares MaxDamageDistance,
+        returns True so pre-range-gate tests keep their previous
+        behaviour.
+        """
+        if ship is None or target is None:
+            return False
+        if not hasattr(ship, "GetWorldLocation") or not hasattr(target, "GetWorldLocation"):
+            return True
+        sp = ship.GetWorldLocation()
+        tp = target.GetWorldLocation()
+        dx, dy, dz = tp.x - sp.x, tp.y - sp.y, tp.z - sp.z
+        dist_sq = dx*dx + dy*dy + dz*dz
+        max_range = 0.0
+        for i in range(self.GetNumWeapons()):
+            bank = self.GetWeapon(i)
+            if bank is None:
+                continue
+            r = bank.GetMaxDamageDistance() if hasattr(bank, "GetMaxDamageDistance") else 0.0
+            if r > max_range:
+                max_range = r
+        if max_range <= 0.0:
+            return True
+        return dist_sq <= max_range * max_range
+
     def StartFiring(self, target=None, offset=None) -> None:
         """Dispatch — fires the next eligible PhaserBank.
 
@@ -1037,10 +1074,12 @@ class PhaserSystem(WeaponSystem):
         """
         if not self.IsOn() or target is None:
             return
+        ship = self.GetParentShip()
+        if not self._target_in_system_range(ship, target):
+            return
         self._fire_held = True
         self._held_target = target
         self._held_offset = offset
-        ship = self.GetParentShip()
         aim_world = _resolve_aim_world(ship, target)
         self._currently_firing = []
         self._dispatch_one_or_all(target, offset, ship, aim_world)
@@ -1063,6 +1102,11 @@ class PhaserSystem(WeaponSystem):
         ship = self.GetParentShip()
         target = self._held_target
         if hasattr(target, "IsDead") and target.IsDead():
+            self.StopFiring()
+            return
+        if not self._target_in_system_range(ship, target):
+            # Target has drifted out of range during a held-fire burst.
+            # Stop the held state entirely — re-engaging requires a fresh trigger.
             self.StopFiring()
             return
         if self._single_fire:
