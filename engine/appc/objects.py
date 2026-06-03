@@ -433,7 +433,10 @@ class ObjectGroup(TGEventHandlerObject):
         any object whose name matches one of our watched names. SDK
         conditions use this when they don't know which set their target
         lives in yet."""
-        import App
+        try:
+            import App
+        except ImportError:
+            return ()
         result = []
         for pSet in App.g_kSetManager._sets.values():
             for name in self._names:

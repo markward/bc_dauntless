@@ -151,7 +151,18 @@ class EngineGlowProperty(TGModelProperty):
 
 
 class SubsystemProperty(TGModelProperty):
-    pass
+    def __init__(self, name: str = ""):
+        super().__init__(name)
+        self._targetable = 1
+
+    def IsTargetable(self) -> int:
+        return self._targetable
+
+    def GetTargetable(self) -> int:
+        return self._targetable
+
+    def SetTargetable(self, value) -> None:
+        self._targetable = int(value)
 
 
 class HullProperty(SubsystemProperty):

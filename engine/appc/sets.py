@@ -325,7 +325,6 @@ class _NullSet(SetClass):
     is a global search handle, not a real set with objects in it.
     """
     def GetObject(self, name: str):
-        from engine.appc.sets import _get_set_manager
         sm = _get_set_manager()
         if sm is None:
             return None
