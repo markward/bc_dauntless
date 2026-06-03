@@ -276,9 +276,13 @@ def apply_hit(ship, damage: float, hit_point, source, subsystem=None,
     sub_transition = None
     hull = ship.GetHull() if hasattr(ship, "GetHull") else None
 
-    # 1. Shields take it first.
+    # 1. Shields take it first — but only if the generator is powered
+    #    (IsOn). At green alert the generator is down and damage flows
+    #    straight to the picked subsystem / hull bleed. Fakes that don't
+    #    implement IsOn default to on, so legacy unit tests keep working.
     shields = ship.GetShields() if hasattr(ship, "GetShields") else None
-    if shields is not None and hasattr(shields, "ApplyDamage"):
+    shields_on = bool(getattr(shields, "IsOn", lambda: 1)()) if shields is not None else False
+    if shields is not None and shields_on and hasattr(shields, "ApplyDamage"):
         face = _shield_face_from_hit_point(ship, hit_point)
         before_shields = remaining
         remaining = shields.ApplyDamage(face, remaining)

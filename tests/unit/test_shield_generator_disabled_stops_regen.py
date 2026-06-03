@@ -5,8 +5,14 @@ from engine.appc.subsystems import ShieldSubsystem
 
 
 def _generator(condition=100.0, max_condition=100.0, disabled_percentage=0.75):
-    """A six-face shield generator with all faces at max."""
+    """A six-face shield generator with all faces at max.
+
+    Powered on (IsOn=True) by default — these tests exercise the
+    damaged-vs-functional gate; alert-level gating is covered separately
+    in test_shield_subsystem.test_update_powered_down_skips_regen.
+    """
     s = ShieldSubsystem("ShieldGen")
+    s.TurnOn()
     s._max_condition = max_condition
     s._condition = condition
     s._disabled_percentage = disabled_percentage

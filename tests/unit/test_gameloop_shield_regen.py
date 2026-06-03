@@ -2,7 +2,7 @@
 import App
 from engine.appc.properties import ShieldProperty
 from engine.appc.sets import SetClass
-from engine.appc.ships import ShipClass_Create
+from engine.appc.ships import ShipClass, ShipClass_Create
 from engine.core.loop import GameLoop, TICK_RATE
 
 
@@ -18,6 +18,8 @@ def test_tick_regens_shields_on_set_managed_ship():
     sp.SetShieldChargePerSecond(ShieldProperty.FRONT_SHIELDS, 60.0)
     ship.GetPropertySet().AddToSet("Scene Root", sp)
     ship.SetupProperties()
+    # Raise shields — regen requires the generator to be powered.
+    ship.SetAlertLevel(ShipClass.YELLOW_ALERT)
     # Drain so regen has somewhere to go
     ship.GetShields().SetCurShields(ShieldProperty.FRONT_SHIELDS, 0.0)
 

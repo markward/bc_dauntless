@@ -9,10 +9,13 @@ from engine.host_loop import _advance_combat
 
 
 def _target_with_shields(at_y=50.0, hull_max=10000.0, shields_strength=5000.0):
-    """Stand-in target ship with hull + full shields at ship_pos+Y*at_y."""
+    """Stand-in target ship with hull + full shields at ship_pos+Y*at_y.
+
+    Raises shields by going to YELLOW alert — combat.apply_hit gates
+    shield absorption on the generator being powered (IsOn)."""
     from engine.appc.subsystems import HullSubsystem, ShieldSubsystem
     from engine.appc.properties import ShieldProperty
-    from engine.appc.ships import ShipClass_Create
+    from engine.appc.ships import ShipClass, ShipClass_Create
     tgt = ShipClass_Create("Target")
     hull = HullSubsystem("Hull")
     hull.SetMaxCondition(hull_max)
@@ -22,6 +25,7 @@ def _target_with_shields(at_y=50.0, hull_max=10000.0, shields_strength=5000.0):
         shields.SetMaxShields(f, shields_strength)
     tgt._shield_subsystem = shields
     tgt._radius = 20.0
+    tgt.SetAlertLevel(ShipClass.YELLOW_ALERT)
     return tgt
 
 

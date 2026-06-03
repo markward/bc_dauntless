@@ -1739,8 +1739,16 @@ class ShieldSubsystem(PoweredSubsystem):
         Disabled-generator gate (Project 5 §4.4): when _is_offline(self),
         skip the whole loop. _charge_per_second values are NOT mutated;
         repair restores regen at the original rates on the next call.
+
+        Powered-down gate: when the generator is not IsOn (alert level
+        is GREEN, or nothing has raised shields yet), regen is suppressed.
+        ShipClass.SetAlertLevel drains the face values to zero on the same
+        transition; this gate just prevents Update from leaking charge
+        back in.
         """
         if _is_offline(self):
+            return
+        if not self.IsOn():
             return
         dt = float(dt)
         for f in range(self.NUM_SHIELDS):
