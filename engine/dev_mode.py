@@ -53,6 +53,33 @@ def keybinding_descriptions() -> list[tuple[int, str]]:
     return sorted((k, desc) for k, (_, desc) in _dev_keybindings.items())
 
 
+# Ordered list of dev-mode pause-menu entries. Distinct from
+# _dev_keybindings — a keybinding fires on key press and is not
+# inherently a menu row; a menu entry has a clickable label and a
+# handler. Caller-controlled order; duplicates not de-duped.
+_dev_pause_menu_entries: list[tuple[str, Callable]] = []
+
+
+def register_dev_pause_menu_entry(label: str, handler: Callable) -> None:
+    """Register a dev-only pause-menu row.
+
+    Rows added here appear in default_pause_menu when dev_mode is on.
+    They appear in registration order, after the normal Exit / Cancel
+    rows, with no visible separator between sections.
+    """
+    _dev_pause_menu_entries.append((label, handler))
+
+
+def dev_pause_menu_entries() -> list[tuple[str, Callable]]:
+    """Return registered (label, handler) pairs in registration order.
+
+    Read by default_pause_menu when dev mode is enabled. Callers must
+    not mutate the returned list — it is a live reference to the
+    registry.
+    """
+    return _dev_pause_menu_entries
+
+
 def dev_only(fn: Callable) -> Callable:
     """Wrap `fn` so it executes only in dev mode (else returns None).
 

@@ -9,17 +9,20 @@ import pytest
 
 @pytest.fixture
 def reset_dev_mode():
-    """Reset the developer_mode attribute and registry around each test."""
+    """Reset the developer_mode attribute and registries around each test."""
     import _dauntless_host
     import engine.dev_mode as dev_mode
     original = getattr(_dauntless_host, "developer_mode", False)
-    original_registry = dict(dev_mode._dev_keybindings)
+    original_keybindings = dict(dev_mode._dev_keybindings)
+    original_menu_entries = list(dev_mode._dev_pause_menu_entries)
     try:
         yield
     finally:
         _dauntless_host.developer_mode = original
         dev_mode._dev_keybindings.clear()
-        dev_mode._dev_keybindings.update(original_registry)
+        dev_mode._dev_keybindings.update(original_keybindings)
+        dev_mode._dev_pause_menu_entries.clear()
+        dev_mode._dev_pause_menu_entries.extend(original_menu_entries)
 
 
 def test_is_enabled_returns_false_when_attribute_false(reset_dev_mode):
@@ -122,3 +125,33 @@ def test_dev_only_preserves_kwargs(reset_dev_mode):
         return a + b
 
     assert f(1, b=2) == 3
+
+
+def test_dev_pause_menu_entries_empty_by_default(reset_dev_mode):
+    import engine.dev_mode as dev_mode
+    assert dev_mode.dev_pause_menu_entries() == []
+
+
+def test_register_dev_pause_menu_entry_appends(reset_dev_mode):
+    import engine.dev_mode as dev_mode
+    handler_a = lambda: None
+    handler_b = lambda: None
+    dev_mode.register_dev_pause_menu_entry("Foo", handler_a)
+    dev_mode.register_dev_pause_menu_entry("Bar", handler_b)
+    assert dev_mode.dev_pause_menu_entries() == [
+        ("Foo", handler_a),
+        ("Bar", handler_b),
+    ]
+
+
+def test_register_dev_pause_menu_entry_allows_duplicate_labels(reset_dev_mode):
+    """Caller-controlled list; we do not de-dup on label."""
+    import engine.dev_mode as dev_mode
+    h1 = lambda: None
+    h2 = lambda: None
+    dev_mode.register_dev_pause_menu_entry("Same", h1)
+    dev_mode.register_dev_pause_menu_entry("Same", h2)
+    entries = dev_mode.dev_pause_menu_entries()
+    assert len(entries) == 2
+    assert entries[0] == ("Same", h1)
+    assert entries[1] == ("Same", h2)
