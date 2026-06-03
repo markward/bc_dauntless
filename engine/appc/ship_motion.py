@@ -25,6 +25,14 @@ from engine.appc.objects import PhysicsObjectClass
 # (i.e. test ships built with ShipClass() directly, before SetupProperties).
 FALLBACK_MAX_ACCEL = 1.0e9
 
+# Reverse-engineered from original BC ground-truth measurements
+# (Galaxy + Shuttle at impulse 9 from rest, 2026-06-03): the impulse
+# ramp is dv/dt = min(MaxAccel, (target − v) / τ) with τ = 1 s,
+# ship-independent. Below the crossover gap (= MaxAccel·τ) the step is
+# the SDK MaxAccel; above, the closure rate dominates and the velocity
+# gap to target decays exponentially with τ.
+BC_IMPULSE_TAU = 1.0
+
 # When the impulse engine subsystem is disabled or destroyed,
 # _step_ship_motion clamps target speed and angular targets to zero
 # and scales the ramp step by this fraction so velocity decays
@@ -59,6 +67,24 @@ def _max_accel(ship) -> float:
         a = ies.GetMaxAccel()
         return a if a > 0.0 else FALLBACK_MAX_ACCEL
     return FALLBACK_MAX_ACCEL
+
+
+def _linear_step_magnitude(ship, gap: float, dt: float) -> float:
+    """Per-tick speed step magnitude for the rate-limited asymptote
+    impulse ramp — min(MaxAccel, |gap|/τ) · dt with τ = BC_IMPULSE_TAU.
+
+    Test/fallback ships (no IES MaxSpeed, or duck-typed objects without
+    GetImpulseEngineSubsystem) bypass the τ cap so existing snap-to-
+    target tests keep their semantics.
+    """
+    getter = getattr(ship, "GetImpulseEngineSubsystem", None)
+    ies = getter() if getter is not None else None
+    if ies is not None and ies.GetMaxSpeed() > 0.0:
+        a = ies.GetMaxAccel()
+        if a <= 0.0:
+            a = FALLBACK_MAX_ACCEL
+        return min(a, abs(gap) / BC_IMPULSE_TAU) * dt
+    return FALLBACK_MAX_ACCEL * dt
 
 
 def _max_angular_accel(ship) -> float:
@@ -104,7 +130,7 @@ def _step_ship_motion(ship, dt: float) -> None:
         target_speed = 0.0
 
     # ── Ramp current speed toward target ─────────────────────────────
-    step = _max_accel(ship) * dt
+    step = _linear_step_magnitude(ship, target_speed - ship._current_speed, dt)
     if engines_offline:
         step *= DISABLED_ENGINE_DRAG_FRACTION
     ship._current_speed = _ramp_toward(ship._current_speed, target_speed, step)

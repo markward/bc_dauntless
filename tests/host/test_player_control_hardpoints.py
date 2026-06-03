@@ -121,7 +121,10 @@ def test_speed_decelerates_toward_zero_on_full_stop():
     for _ in range(60 * 10):
         pc.apply(ship, dt=1.0/60, h=reader)
     speed_before = pc.GetCurrentSpeed()
-    assert abs(speed_before - 6.3) < 1e-3
+    # 10 s = ~6.8τ after the linear-phase crossover (BC_IMPULSE_TAU = 1 s
+    # asymptotic approach), so the residual gap is exp(-6.8)·MaxAccel·τ
+    # ≈ 0.0017 GU/s. Tolerance accounts for the asymptotic tail.
+    assert abs(speed_before - 6.3) < 5e-3
     reader.pressed_once.add(reader.keys.KEY_0)
     pc.apply(ship, dt=1.0/60, h=reader)  # one tick into deceleration
     for _ in range(30):
@@ -239,6 +242,45 @@ def test_angular_rate_decelerates_on_key_release():
         pc.apply(ship, dt=1.0/60, h=reader)
     rate_after = pc.GetCurrentYawRate()
     assert abs(rate_after - (-0.16)) < 1e-3, f"rate_after={rate_after}"
+
+
+def test_speed_ramp_matches_bc_shuttle_curve():
+    """Ground-truth from the original BC: holding impulse 9 on a Shuttle
+    from rest, instrumented speeds at each whole second (measured 2026-06-03).
+
+    Implies dv/dt = min(MaxAccel, (MaxSpeed - v) / τ) with τ = 1 s — see
+    docs/gap_analysis.md (impulse curve fit). For Shuttle (MaxSpeed=4.0,
+    MaxAccel=2.5) the crossover is at v* = 1.5 GU/s reached at t=0.6 s;
+    after that the velocity gap to MaxSpeed decays with τ=1 s.
+
+    Speeds are stored as kph (what the helm tooltip shows) so the
+    assertion failure message matches the measured-value table.
+    """
+    pc = _PlayerControl()
+    ship = ShipClass_Create("Shuttle")
+    ies = ship.GetImpulseEngineSubsystem()
+    ies.SetMaxSpeed(4.0)
+    ies.SetMaxAccel(2.5)
+    reader = _Reader()
+    reader.pressed_once.add(reader.keys.KEY_9)
+
+    expected_kph = {1: 1463, 2: 2137, 3: 2379, 4: 2469,
+                    5: 2501, 6: 2513, 7: 2517, 8: 2519}
+
+    seen_kph = {}
+    for tick in range(1, 60 * 8 + 1):
+        pc.apply(ship, dt=1.0 / 60.0, h=reader)
+        if tick % 60 == 0:
+            seen_kph[tick // 60] = pc.GetCurrentSpeed() * 630.0
+
+    for sec, want in expected_kph.items():
+        got = seen_kph[sec]
+        # 1% relative tolerance, 15 kph floor for the early samples where
+        # a single tick of timing drift dominates.
+        tol = max(15.0, want * 0.01)
+        assert abs(got - want) <= tol, (
+            f"t={sec}s: BC measured {want} kph, integrator gave {got:.1f} kph"
+        )
 
 
 def test_rotation_integrates_ramped_angular_rate():

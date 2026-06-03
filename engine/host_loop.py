@@ -803,18 +803,26 @@ class _PlayerControl:
         # Disabled-engines gate: read once, applied to both linear and
         # angular ramps. Spec §4.1.
         from engine.appc.subsystems import _is_offline
-        from engine.appc.ship_motion import DISABLED_ENGINE_DRAG_FRACTION
+        from engine.appc.ship_motion import (
+            DISABLED_ENGINE_DRAG_FRACTION,
+            _linear_step_magnitude,
+        )
         engines_offline = _is_offline(self._get_ies(player))
 
-        # 2. Linear speed ramp toward target at MaxAccel rate.
-        #    Disabled engines: scale ramp by drag fraction so velocity
-        #    decays gradually rather than at full MaxAccel. Spec §4.1.
-        linear_step = self._max_accel(player) * dt
+        # 2. Linear speed ramp toward target — BC's rate-limited asymptote
+        #    (linear at MaxAccel until the gap drops below MaxAccel·τ,
+        #    then exponential closure with τ=1 s). Disabled engines: scale
+        #    ramp by drag fraction so velocity decays gradually rather
+        #    than at full MaxAccel. Spec §4.1.
+        target_speed = self.GetTargetSpeed(player)
+        linear_step = _linear_step_magnitude(
+            player, target_speed - self._current_speed, dt,
+        )
         if engines_offline:
             linear_step *= DISABLED_ENGINE_DRAG_FRACTION
         self._current_speed = self._ramp_toward(
             self._current_speed,
-            self.GetTargetSpeed(player),
+            target_speed,
             linear_step,
         )
 
