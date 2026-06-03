@@ -214,3 +214,84 @@ def test_dispatch_event_unknown_action_is_noop():
     m.add_item("A", "a", lambda: fired.append("a"))
     assert m.dispatch_event("ghost") is False
     assert fired == []
+
+
+# ---- dev-mode aware rows -------------------------------------------------
+
+@pytest.fixture
+def reset_dev_mode_for_pause_menu():
+    """Local fixture so test_pause_menu_model doesn't depend on the
+    one in test_dev_mode.py (different test files; pytest does not
+    cross-import fixtures unless declared in conftest)."""
+    import _dauntless_host
+    import engine.dev_mode as dev_mode
+    original_attr = getattr(_dauntless_host, "developer_mode", False)
+    original_entries = list(dev_mode._dev_pause_menu_entries)
+    try:
+        yield
+    finally:
+        _dauntless_host.developer_mode = original_attr
+        dev_mode._dev_pause_menu_entries.clear()
+        dev_mode._dev_pause_menu_entries.extend(original_entries)
+
+
+def test_default_pause_menu_dev_off_has_only_exit_and_cancel(reset_dev_mode_for_pause_menu):
+    import _dauntless_host
+    import engine.dev_mode as dev_mode
+    _dauntless_host.developer_mode = False
+    dev_mode._dev_pause_menu_entries.clear()
+    dev_mode.register_dev_pause_menu_entry("Should Not Appear", lambda: None)
+    m = default_pause_menu(on_exit=lambda: None, on_cancel=lambda: None)
+    assert [it.action_id for it in m.items] == ["exit", "cancel"]
+
+
+def test_default_pause_menu_dev_on_appends_registered_entries(reset_dev_mode_for_pause_menu):
+    import _dauntless_host
+    import engine.dev_mode as dev_mode
+    _dauntless_host.developer_mode = True
+    dev_mode._dev_pause_menu_entries.clear()
+    dev_mode.register_dev_pause_menu_entry("Load Mission…", lambda: None)
+    dev_mode.register_dev_pause_menu_entry("Other Dev Thing", lambda: None)
+    m = default_pause_menu(on_exit=lambda: None, on_cancel=lambda: None)
+    labels = [it.label for it in m.items]
+    assert labels == ["Exit Program", "Cancel", "Load Mission…", "Other Dev Thing"]
+
+
+def test_default_pause_menu_dev_on_with_empty_registry_omits_dev_rows(reset_dev_mode_for_pause_menu):
+    import _dauntless_host
+    import engine.dev_mode as dev_mode
+    _dauntless_host.developer_mode = True
+    dev_mode._dev_pause_menu_entries.clear()
+    m = default_pause_menu(on_exit=lambda: None, on_cancel=lambda: None)
+    assert [it.action_id for it in m.items] == ["exit", "cancel"]
+
+
+def test_default_pause_menu_dev_on_no_separator_row(reset_dev_mode_for_pause_menu):
+    """Regression: no auto-inserted '— DEVELOPER —' header row."""
+    import _dauntless_host
+    import engine.dev_mode as dev_mode
+    _dauntless_host.developer_mode = True
+    dev_mode._dev_pause_menu_entries.clear()
+    dev_mode.register_dev_pause_menu_entry("Foo", lambda: None)
+    m = default_pause_menu(on_exit=lambda: None, on_cancel=lambda: None)
+    labels = [it.label for it in m.items]
+    assert "— DEVELOPER —" not in labels
+    assert all("DEVELOPER" not in lab for lab in labels)
+
+
+def test_default_pause_menu_dev_on_entry_handler_invoked_via_dispatch(reset_dev_mode_for_pause_menu):
+    """Action IDs for dev entries are unprefixed so PanelRegistry's
+    legacy fallback routes them to PauseMenuModel.dispatch_event."""
+    import _dauntless_host
+    import engine.dev_mode as dev_mode
+    _dauntless_host.developer_mode = True
+    dev_mode._dev_pause_menu_entries.clear()
+    fired = []
+    dev_mode.register_dev_pause_menu_entry("Load Mission…", lambda: fired.append(1))
+    m = default_pause_menu(on_exit=lambda: None, on_cancel=lambda: None)
+    # action_ids for dev rows are slugified labels — no slashes.
+    dev_row = m.items[-1]
+    assert "/" not in dev_row.action_id
+    handled = m.dispatch_event(dev_row.action_id)
+    assert handled is True
+    assert fired == [1]

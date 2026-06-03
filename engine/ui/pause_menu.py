@@ -172,19 +172,37 @@ def default_pause_menu(*, on_exit: _Handler, on_cancel: _Handler) -> PauseMenuMo
     on the host loop. The host loop wires `on_exit` to a quit flag and
     `on_cancel` to the pause-controller toggle.
 
-    When dev_mode.is_enabled(), appends a "— DEVELOPER —" separator and
-    one informational row per registered dev keybinding. These rows are
-    non-actionable; the actual keybindings fire globally via
-    dev_mode.dispatch_dev_key while the menu is closed.
+    When dev_mode.is_enabled(), appends one row per entry in
+    dev_pause_menu_entries() — in registration order, no separator.
+    Dev row action_ids are slugified from the label and remain
+    unprefixed so PanelRegistry's legacy-handler fallback routes the
+    click back to this model's dispatch_event.
     """
     m = PauseMenuModel()
     m.add_item("Exit Program", "exit",   on_exit)
     m.add_item("Cancel",       "cancel", on_cancel)
 
     if dev_mode.is_enabled():
-        _noop = lambda: None  # noqa: E731 — small inline no-op
-        m.add_item("— DEVELOPER —", "dev/_header", _noop)
-        for key_code, description in dev_mode.keybinding_descriptions():
-            m.add_item(description, "dev/info/" + str(key_code), _noop)
+        used: set[str] = {"exit", "cancel"}
+        for label, handler in dev_mode.dev_pause_menu_entries():
+            action_id = _slugify_action_id(label, used)
+            used.add(action_id)
+            m.add_item(label, action_id, handler)
 
     return m
+
+
+def _slugify_action_id(label: str, used: set[str]) -> str:
+    """Convert a label to a lowercase, hyphenated, no-slash action ID
+    suitable for PanelRegistry's legacy-handler fallback. Disambiguates
+    collisions by appending a numeric suffix."""
+    import re
+    base = re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-")
+    if not base:
+        base = "dev-entry"
+    candidate = base
+    n = 2
+    while candidate in used:
+        candidate = base + "-" + str(n)
+        n += 1
+    return candidate
