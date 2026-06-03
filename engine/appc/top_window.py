@@ -102,6 +102,19 @@ class _TopWindow:
     def FindMainWindow(self, mwt):
         return self._main_windows.get(int(mwt))
 
+    # ── Children (tracked but not rendered — see CEF mirror follow-up) ──
+    def AddChild(self, child, x: float = 0.0, y: float = 0.0, *_extra) -> None:
+        self._children.append((child, float(x), float(y)))
+
+    def RemoveChild(self, child) -> None:
+        self._children = [(c, x, y) for (c, x, y) in self._children if c is not child]
+
+    def GetNumChildren(self) -> int:
+        return len(self._children)
+
+    def GetChildren(self) -> list:
+        return [c for (c, _, _) in self._children]
+
 
 _the_top_window = _TopWindow()
 

@@ -261,3 +261,52 @@ def test_find_main_window_returns_registered_window():
     sentinel = object()
     tw._main_windows[top_window.MWT_CINEMATIC] = sentinel
     assert tw.FindMainWindow(top_window.MWT_CINEMATIC) is sentinel
+
+
+def test_children_empty_by_default():
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    assert tw.GetNumChildren() == 0
+    assert tw.GetChildren() == []
+
+
+def test_add_child_records_tuple():
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    label = object()
+    tw.AddChild(label, 100, 200)
+    assert tw.GetNumChildren() == 1
+    assert tw.GetChildren() == [label]
+    # Internal storage retains the position for the future CEF mirror.
+    assert tw._children == [(label, 100.0, 200.0)]
+
+
+def test_add_child_accepts_no_position():
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.AddChild(object())
+    assert tw.GetNumChildren() == 1
+
+
+def test_add_child_accepts_extra_args():
+    """Some SDK callers pass extra trailing args (e.g. z-order).
+    The shim must accept them without raising."""
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.AddChild(object(), 1.0, 2.0, 0)   # 4th arg used by MissionMenusShared.py
+    assert tw.GetNumChildren() == 1
+
+
+def test_remove_child_drops_matching_entries():
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    a, b = object(), object()
+    tw.AddChild(a, 0, 0)
+    tw.AddChild(b, 0, 0)
+    tw.RemoveChild(a)
+    assert tw.GetChildren() == [b]
