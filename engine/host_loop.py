@@ -15,6 +15,10 @@ import os as _os_mod
 
 from engine import renderer as r
 from engine.appc.ship_iter import iter_set_objects as _iter_set_objects, iter_ships as _iter_ships
+import engine.dev_keybindings as dev_keybindings
+import engine.dev_mode as dev_mode
+from engine.dev_mission_picker import MissionPicker
+import engine.missions as _missions
 
 import math as _math
 
@@ -1179,20 +1183,36 @@ def _apply_view_mode_side_effects(view_mode: "_ViewModeController", h) -> None:
     view_mode._last_synced_is_bridge = target
 
 
+class _NullPicker:
+    """Stand-in used when dev_mode is disabled (no MissionPicker
+    constructed). Always reports closed so the pause-menu side-effects
+    predicate degrades to its original behaviour."""
+    def is_open(self) -> bool:
+        return False
+
+
+_NULL_PICKER = _NullPicker()
+
+
 def _apply_pause_menu_side_effects(pause: "_PauseMenuController",
                                    view_mode: "_ViewModeController",
-                                   h) -> None:
+                                   h,
+                                   picker) -> None:
     """Mirror the pause flag into renderer state: show/hide the CEF
     pause-menu div and unlock the cursor while paused so the player can
-    interact with the overlay. Idempotent — only fires when the state
-    has changed since the last call. `h` is the bindings module (or
-    fake) exposing cef_execute_javascript and set_cursor_locked.
+    interact with the overlay. Idempotent — only fires when the
+    effective visibility has changed since the last call. `h` is the
+    bindings module (or fake) exposing cef_execute_javascript and
+    set_cursor_locked. `picker` is the MissionPicker (or any object
+    with an is_open() method); when the picker is open the pause-menu
+    must hide regardless of pause.is_open so the picker isn't
+    occluded.
 
     On close, the view-mode sync latch is invalidated so the next
     _apply_view_mode_side_effects call re-applies cursor lock + bridge
     pass state from whatever view mode is current.
     """
-    target = pause.is_open
+    target = pause.is_open and not picker.is_open()
     last = getattr(pause, "_last_synced_is_open", None)
     if last == target:
         return
@@ -2137,19 +2157,65 @@ def run(mission_name: Optional[str] = None,
             cam_control.set_ship_radius(controller.session.player.GetRadius())
         view_mode      = _ViewModeController()
         pause          = _PauseMenuController()
+        from engine.ui.target_list_view import TargetListView
+        from engine.ui.sensors_panel import SensorsPanel
+        target_list_view = TargetListView()
+        sensors_panel = SensorsPanel()
+
+        # Wire (and re-wire on mission swap) the target-menu singleton
+        # to the player's spatial set. controller.post_load_hook fires
+        # after every successful loader.load() — both the initial load
+        # and any pending_swap drain — so this hook keeps the target
+        # list pointed at the current mission's ship roster.
+        controller.post_load_hook = lambda: _wire_target_menu_to_player_set(controller)
+        _wire_target_menu_to_player_set(controller)
+
+        bridge_camera  = _BridgeCamera()
+        try:
+            import _dauntless_host as _h
+        except ImportError:
+            _h = None  # bindings module not built; skip input handling.
+
+        # Dev-only mission picker construction. Done BEFORE
+        # default_pause_menu(...) so register_dev_pause_menu_entry
+        # adds the "Load Mission…" row before the menu is built.
+        # PanelRegistry registration happens further down, after
+        # PanelRegistry itself exists.
+        # See docs/superpowers/specs/2026-06-02-dev-mission-loader-design.md.
+        mission_picker = _NULL_PICKER  # noop until we know dev mode is on
+        if dev_mode.is_enabled():
+            _picker_registry_cache: list = [None]
+            def _get_mission_registry():
+                if _picker_registry_cache[0] is None:
+                    from pathlib import Path
+                    project_root = Path(__file__).resolve().parent.parent
+                    sdk_scripts = project_root / "sdk" / "Build" / "scripts"
+                    _picker_registry_cache[0] = _missions.discover(sdk_scripts)
+                return _picker_registry_cache[0]
+
+            def _on_pick_mission(module_name: str) -> None:
+                controller.swap_mission(module_name)
+                pause.close()
+
+            mission_picker = MissionPicker(
+                registry_getter=_get_mission_registry,
+                on_pick=_on_pick_mission,
+            )
+            dev_mode.register_dev_pause_menu_entry(
+                "Load Mission…", mission_picker.open,
+            )
+
         from engine.ui.pause_menu import default_pause_menu
+        from engine.ui.panel_registry import PanelRegistry
         pause_menu = default_pause_menu(
             on_exit=pause.request_quit,
             on_cancel=pause.close,
         )
-        from engine.ui.panel_registry import PanelRegistry
-        from engine.ui.target_list_view import TargetListView
-        from engine.ui.sensors_panel import SensorsPanel
         registry = PanelRegistry(legacy_handler=pause_menu.dispatch_event)
-        target_list_view = TargetListView()
-        sensors_panel = SensorsPanel()
         registry.register(target_list_view)
         registry.register(sensors_panel)
+        if dev_mode.is_enabled():
+            registry.register(mission_picker)
 
         # SDK ShipDisplay factories register against this same registry.
         # In stock BC, Bridge/TacticalMenuHandlers.py:517,714 invokes
@@ -2175,19 +2241,6 @@ def run(mission_name: Optional[str] = None,
         speed_display = SpeedDisplay(player_control=player_control)
         registry.register(speed_display)
 
-        # Wire (and re-wire on mission swap) the target-menu singleton
-        # to the player's spatial set. controller.post_load_hook fires
-        # after every successful loader.load() — both the initial load
-        # and any pending_swap drain — so this hook keeps the target
-        # list pointed at the current mission's ship roster.
-        controller.post_load_hook = lambda: _wire_target_menu_to_player_set(controller)
-        _wire_target_menu_to_player_set(controller)
-
-        bridge_camera  = _BridgeCamera()
-        try:
-            import _dauntless_host as _h
-        except ImportError:
-            _h = None  # bindings module not built; skip input handling.
         # Bindings older than the orbit-camera change won't expose
         # consume_scroll_y; fall back to a zero-delta lambda so host_loop
         # still runs against an old _dauntless_host.so without rebuilding.
@@ -2202,10 +2255,20 @@ def run(mission_name: Optional[str] = None,
             _cef_set_event_handler(registry.dispatch)
         _cef_set_load_end = getattr(_h, "cef_set_load_end_handler", None) if _h else None
         if _cef_set_load_end is not None:
-            # Drop snapshot caches when CEF finishes loading hello.html
-            # so the next tick re-emits state. Handles both initial load
-            # and Cmd+R reloads.
-            _cef_set_load_end(registry.invalidate_all)
+            def _on_cef_load_end():
+                # Drop snapshot caches so next tick re-emits state. Handles
+                # both initial load and Cmd+R reloads.
+                registry.invalidate_all()
+                # Publish the dev flag to JS/HTML on every document load.
+                # When off we leave window.__DAUNTLESS_DEV__ undefined and
+                # body[data-dev] unset so CSS hides .dev-only elements by
+                # default (fails closed if this push is ever missed).
+                if dev_mode.is_enabled() and _h is not None:
+                    _h.cef_execute_javascript(
+                        "window.__DAUNTLESS_DEV__ = true;"
+                        " document.body.dataset.dev = '1';"
+                    )
+            _cef_set_load_end(_on_cef_load_end)
         TICK_DT = 1.0 / 60.0
         MAX_FRAME_DT = 0.25  # Fiedler spiral-of-death cap
 
@@ -2227,13 +2290,26 @@ def run(mission_name: Optional[str] = None,
             # renderer state (bridge pass enable + cursor lock) and is
             # idempotent — only fires when the mode changed.
             if _h is not None:
-                pause.apply(_h)
-                _apply_pause_menu_side_effects(pause, view_mode, _h)
+                # ESC priority: when the mission picker is open it
+                # consumes ESC (closes the picker, returns to the
+                # pause menu). Otherwise ESC toggles the pause menu
+                # as before.
+                if mission_picker.is_open():
+                    if _h.key_pressed(_h.keys.KEY_ESCAPE):
+                        mission_picker.handle_key_esc()
+                else:
+                    pause.apply(_h)
+                _apply_pause_menu_side_effects(pause, view_mode, _h, mission_picker)
                 if pause.is_open:
-                    pause_menu.handle_input(_h)
-                    _script = pause_menu.render_payload()
-                    if _script is not None:
-                        _h.cef_execute_javascript(_script)
+                    # Suppress pause-menu keyboard input when the
+                    # mission picker is open — pause menu is hidden
+                    # behind the picker, so navigation/Enter on it
+                    # would activate invisible rows.
+                    if not mission_picker.is_open():
+                        pause_menu.handle_input(_h)
+                        _script = pause_menu.render_payload()
+                        if _script is not None:
+                            _h.cef_execute_javascript(_script)
                     # Forward mouse to CEF only while paused — keeps
                     # normal-gameplay input out of the overlay. The
                     # event-handler callback installed at startup turns
@@ -2416,30 +2492,17 @@ def run(mission_name: Optional[str] = None,
                 cam_control.set_ship_radius(player.GetRadius())
 
             if not pause.is_open:
-                # F10: debug shield-hit on the shield surface. Real BC weapons
-                # impact the bubble at a surface point; firing at the ship
-                # center would put the hit too far inside the bubble for the
-                # distance falloff to ever exceed zero on the visible shell.
-                # Offset along the ship's forward axis by ~1.5 × the ship's
-                # GetRadius() so the hit lands near the bubble surface.
-                if (_h is not None
-                        and _h.key_pressed(_h.keys.KEY_F10)
-                        and player is not None
-                        and session is not None):
-                    iid = session.ship_instances.get(player)
-                    if iid is not None:
-                        from engine.shields import fire_debug_hit
-                        wp = player.GetWorldLocation()
-                        try:
-                            fwd = player.GetWorldRotation().GetCol(1)
-                            fx, fy, fz = float(fwd.x), float(fwd.y), float(fwd.z)
-                        except Exception:
-                            fx, fy, fz = 1.0, 0.0, 0.0
-                        offset = 1.0 * player.GetRadius()
-                        fire_debug_hit(_h, instance_id=iid,
-                                       world_point=(wp.x + fx * offset,
-                                                    wp.y + fy * offset,
-                                                    wp.z + fz * offset))
+                # Dev-mode keybindings (no-op when --developer is not set).
+                # register_for_frame re-binds handlers that close over the
+                # current player/session each tick; dispatch_dev_key reads
+                # _h.key_pressed for every registered key and fires matching
+                # handlers. Skipped silently when dev_mode.is_enabled() is False.
+                if _h is not None and dev_mode.is_enabled():
+                    dev_keybindings.register_for_frame(_h, session, player)
+                    for key, _desc in dev_mode.keybinding_descriptions():
+                        if _h.key_pressed(key):
+                            dev_mode.dispatch_dev_key(key)
+
                 # F12: toggle CEF DevTools for the UI overlay.
                 if _h is not None and _h.key_pressed(_h.keys.KEY_F12):
                     _h.cef_toggle_devtools()

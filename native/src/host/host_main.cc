@@ -4,6 +4,7 @@
 
 #include <Python.h>
 
+#include "developer_mode.h"
 #include "host_bindings.h"
 
 #ifdef DAUNTLESS_ENABLE_CEF
@@ -116,6 +117,17 @@ int main(int argc, char* argv[]) {
     if (PyImport_AppendInittab("_dauntless_host", PyInit__dauntless_host) != 0) {
         std::fprintf(stderr, "open_stbc: PyImport_AppendInittab failed\n");
         return 1;
+    }
+
+    // Scan all argv tokens for --developer. Positional-agnostic so it composes
+    // with the existing positional --smoke-check / --banner modes (which only
+    // read argv[1]). Setting must happen before Py_InitializeEx so the
+    // attribute set at PYBIND11_MODULE init reads the final value.
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) == "--developer") {
+            dauntless::set_developer_mode(true);
+            break;
+        }
     }
 
     Py_InitializeEx(/*initsigs=*/1);

@@ -34,6 +34,7 @@
 #include <scenegraph/world.h>
 #include <scenegraph/camera.h>
 #include <assets/cache.h>
+#include "developer_mode.h"
 
 #ifdef DAUNTLESS_ENABLE_CEF
 #include "ui_cef/cef_lifecycle.h"
@@ -317,6 +318,12 @@ void frame() {
 
 PYBIND11_MODULE(_dauntless_host, m) {
     m.doc() = "open_stbc renderer host bindings (Phase B: window + frame stub)";
+
+    // Process-global developer-mode flag. Set in host_main.cc from --developer.
+    // When loaded standalone (e.g. pytest), defaults to False; tests can
+    // monkey-patch this attribute to exercise enabled code paths.
+    m.attr("developer_mode") = dauntless::is_developer_mode();
+
     m.def("init", &init,
           py::arg("width"), py::arg("height"), py::arg("title"),
           "Open a window and initialise the renderer.");

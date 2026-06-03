@@ -24,6 +24,23 @@
         </div>
     </div>
 
+    <!-- Mission picker overlay (developer-only).
+         Visibility controlled by JS via setMissionPicker({tree, visible}).
+         Container is gated by .dev-only so production builds never see it.
+         Spec: docs/superpowers/specs/2026-06-02-dev-mission-loader-design.md -->
+    <section id="mission-picker" class="dev-only">
+        <div class="mp-panel">
+            <div class="mp-header">Load Mission</div>
+            <div class="mp-body" id="mission-picker-body"></div>
+            <div class="mp-footer">
+                <button class="mp-cancel-button"
+                        onclick="dauntlessEvent('mission-picker/cancel')">
+                    Cancel
+                </button>
+            </div>
+        </div>
+    </section>
+
     <!-- Tactical-view layout zones. All panels are flex children of one
          of these two containers; no panel uses absolute/fixed positioning
          of its own. Order in DOM is also visual order.
@@ -154,6 +171,7 @@
         </section>
     </div>
 
+    <script src="js/mission_picker.js"></script>
     <script src="js/pause_menu.js"></script>
     <script src="js/target_list.js"></script>
     <script src="js/sensors.js"></script>

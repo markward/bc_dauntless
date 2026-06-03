@@ -165,3 +165,111 @@ html, body {
 .pause-row:active {
     background: rgb(147, 103, 255);
 }
+
+/* ============================================================
+   Developer-mode visibility.
+   Elements carrying .dev-only are hidden by default; the host
+   loop sets body[data-dev="1"] on CEF load end when --developer
+   is set, revealing them. See engine/host_loop.py and
+   docs/superpowers/specs/2026-06-02-developer-flag-design.md.
+   ============================================================ */
+.dev-only {
+    display: none;
+}
+body[data-dev="1"] .dev-only {
+    display: revert;
+}
+
+/* ============================================================
+   Mission picker — centred modal that lists every discoverable SDK
+   mission. Visibility is JS-controlled (display: flex / none); the
+   .dev-only class on the root <section> keeps it hidden outside
+   --developer mode regardless of JS state.
+   ============================================================ */
+#mission-picker {
+    display: none;
+    position: fixed;
+    inset: 0;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.65);
+    z-index: 200;  /* above #pause-menu (z-index 100) */
+    font-family: "Antonio", sans-serif;
+    color: #ffd;
+}
+
+.mp-panel {
+    width: 42vw;
+    max-height: 72vh;
+    background: rgb(20, 22, 28);
+    border: 1px solid rgb(80, 88, 100);
+    display: flex;
+    flex-direction: column;
+}
+
+.mp-header {
+    background: linear-gradient(90deg, rgb(216, 94, 86) 0%, rgb(216, 132, 80) 100%);
+    color: #ffd;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    padding: 6px 16px;
+}
+
+.mp-body {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: 8px 0;
+}
+
+.mp-footer {
+    padding: 8px 16px;
+    border-top: 1px solid rgb(60, 64, 72);
+    text-align: right;
+}
+
+.mp-cancel-button {
+    background: rgb(40, 44, 52);
+    border: 1px solid rgb(80, 88, 100);
+    color: #ffd;
+    font: inherit;
+    padding: 6px 18px;
+    cursor: pointer;
+}
+.mp-cancel-button:hover {
+    background: rgb(60, 64, 72);
+}
+
+.mp-row {
+    padding: 4px 12px;
+    cursor: pointer;
+    user-select: none;
+}
+.mp-row:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
+.mp-caret {
+    display: inline-block;
+    width: 1em;
+    transition: transform 0.1s;
+}
+.mp-row.mp-family,
+.mp-row.mp-episode {
+    font-weight: 600;
+}
+.mp-mission {
+    font-weight: 400;
+}
+
+.mp-children {
+    /* visible by default; the .mp-collapsed class hides the children
+       container, mirroring the caret state via JS. */
+}
+.mp-children.mp-collapsed {
+    display: none;
+}
+
+.mp-indent-0 { padding-left: 12px; }
+.mp-indent-1 { padding-left: 28px; }
+.mp-indent-2 { padding-left: 44px; }
