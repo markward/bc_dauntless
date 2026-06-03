@@ -8,6 +8,22 @@ See docs/superpowers/specs/2026-06-03-top-window-shim-design.md.
 """
 
 
+# ── Main-window-type enums ────────────────────────────────────
+# Real Appc exposes these via SWIG; the integer values are arbitrary
+# but must be distinct so dict lookups in _main_windows don't collapse.
+MWT_BRIDGE        = 0
+MWT_TACTICAL      = 1
+MWT_CONSOLE       = 2
+MWT_EDITOR        = 3
+MWT_OPTIONS       = 4
+MWT_SUBTITLE      = 5
+MWT_TACTICAL_MAP  = 6
+MWT_CINEMATIC     = 7
+MWT_MULTIPLAYER   = 8
+MWT_CD_CHECK      = 9
+MWT_MODAL_DIALOG  = 10
+
+
 class _TopWindow:
     def __init__(self):
         self._keyboard_input_enabled: bool = True
@@ -81,6 +97,10 @@ class _TopWindow:
         self._bridge_visible, self._tactical_visible = (
             self._tactical_visible, self._bridge_visible,
         )
+
+    # ── Main windows ───────────────────────────────────────────
+    def FindMainWindow(self, mwt):
+        return self._main_windows.get(int(mwt))
 
 
 _the_top_window = _TopWindow()

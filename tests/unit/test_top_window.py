@@ -220,3 +220,44 @@ def test_toggle_bridge_and_tactical_swaps_both():
     tw.ToggleBridgeAndTactical()
     assert tw.IsBridgeVisible() is False
     assert tw.IsTacticalVisible() is True
+
+
+def test_mwt_enums_are_distinct_integers():
+    """The constants previously fell through to _NamedStub, whose __eq__
+    returned isinstance(o, _Stub) — making MWT_CINEMATIC == MWT_BRIDGE
+    nondeterministically truthy. Real ints fix that."""
+    from engine.appc import top_window
+    enums = [
+        top_window.MWT_BRIDGE,
+        top_window.MWT_TACTICAL,
+        top_window.MWT_CONSOLE,
+        top_window.MWT_EDITOR,
+        top_window.MWT_OPTIONS,
+        top_window.MWT_SUBTITLE,
+        top_window.MWT_TACTICAL_MAP,
+        top_window.MWT_CINEMATIC,
+        top_window.MWT_MULTIPLAYER,
+        top_window.MWT_CD_CHECK,
+        top_window.MWT_MODAL_DIALOG,
+    ]
+    assert all(isinstance(v, int) for v in enums)
+    assert len(set(enums)) == len(enums)   # all distinct
+
+
+def test_find_main_window_returns_none_when_unregistered():
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    assert tw.FindMainWindow(top_window.MWT_CINEMATIC) is None
+    assert tw.FindMainWindow(top_window.MWT_SUBTITLE) is None
+
+
+def test_find_main_window_returns_registered_window():
+    """Verify the lookup path — a future spec will land real backing
+    windows; today no one registers, but the path must work."""
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    sentinel = object()
+    tw._main_windows[top_window.MWT_CINEMATIC] = sentinel
+    assert tw.FindMainWindow(top_window.MWT_CINEMATIC) is sentinel
