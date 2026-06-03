@@ -1,5 +1,4 @@
 """Unit tests for the TopWindow shim (engine/appc/top_window.py)."""
-import pytest
 
 
 def test_singleton_exists():
