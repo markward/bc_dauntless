@@ -338,3 +338,64 @@ def test_window_size_uses_host_when_available(monkeypatch):
     monkeypatch.setitem(sys.modules, "_dauntless_host", FakeHost)
     assert tw.GetWidth() == 800
     assert tw.GetHeight() == 600
+
+
+def test_initialize_and_update_are_callable():
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    # Must not raise; have no observable side-effects yet.
+    tw.Initialize()
+    tw.Update()
+
+
+def test_edit_mode_toggles():
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    assert tw.IsEditModeEnabled() is False
+    tw.SetEditMode(1)
+    assert tw.IsEditModeEnabled() is True
+    tw.ToggleEditMode()
+    assert tw.IsEditModeEnabled() is False
+    tw.ToggleEditMode()
+    assert tw.IsEditModeEnabled() is True
+
+
+def test_disable_options_menu_sets_flag():
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    assert tw._options_disabled is False
+    tw.DisableOptionsMenu()
+    assert tw._options_disabled is True
+
+
+def test_toggle_methods_are_callable():
+    """Every Toggle*() method must accept zero args and not raise."""
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.ToggleOptionsMenu()
+    tw.ToggleConsole()
+    tw.ToggleMapWindow()
+    tw.ToggleCinematicWindow()
+    tw.ToggleWireframe()
+
+
+def test_show_bad_connection_text_callable():
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.ShowBadConnectionText(1)
+    tw.ShowBadConnectionText(0)
+
+
+def test_last_rendered_set_round_trips():
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    assert tw.GetLastRenderedSet() is None
+    sentinel = object()
+    tw.SetLastRenderedSet(sentinel)
+    assert tw.GetLastRenderedSet() is sentinel

@@ -132,6 +132,52 @@ class _TopWindow:
     def GetHeight(self) -> int:
         return self._window_size()[1]
 
+    # ── Lifecycle (engine hooks — no-op for the Python shim) ───
+    def Initialize(self) -> None:
+        pass
+
+    def Update(self) -> None:
+        pass
+
+    # ── Edit mode ──────────────────────────────────────────────
+    def SetEditMode(self, enabled) -> None:
+        self._edit_mode = bool(enabled)
+
+    def IsEditModeEnabled(self) -> bool:
+        return self._edit_mode
+
+    def ToggleEditMode(self) -> None:
+        self._edit_mode = not self._edit_mode
+
+    # ── UI toggles (no UI to drive — record-only) ──────────────
+    def ToggleOptionsMenu(self) -> None:
+        pass
+
+    def ToggleConsole(self) -> None:
+        pass
+
+    def ToggleMapWindow(self) -> None:
+        pass
+
+    def ToggleCinematicWindow(self) -> None:
+        pass
+
+    def ToggleWireframe(self) -> None:
+        pass
+
+    def DisableOptionsMenu(self) -> None:
+        self._options_disabled = True
+
+    def ShowBadConnectionText(self, show) -> None:
+        pass
+
+    # ── Active render set tracking ─────────────────────────────
+    def SetLastRenderedSet(self, pSet) -> None:
+        self._last_rendered_set = pSet
+
+    def GetLastRenderedSet(self):
+        return self._last_rendered_set
+
 
 _the_top_window = _TopWindow()
 
