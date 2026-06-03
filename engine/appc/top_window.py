@@ -49,6 +49,19 @@ class _TopWindow:
     def IsCutsceneMode(self) -> bool:
         return self._cutscene_active
 
+    # ── Fade ───────────────────────────────────────────────────
+    def FadeOut(self, fTime: float = 0.0) -> None:
+        self._fade_active = True
+
+    def FadeIn(self, fTime: float = 0.0) -> None:
+        self._fade_active = False
+
+    def AbortFade(self) -> None:
+        self._fade_active = False
+
+    def IsFading(self) -> bool:
+        return self._fade_active
+
 
 _the_top_window = _TopWindow()
 

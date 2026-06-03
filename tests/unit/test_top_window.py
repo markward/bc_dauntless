@@ -146,3 +146,36 @@ def test_cutscene_does_not_touch_input_flags():
     assert tw.IsKeyboardInputAllowed() is True   # unchanged
     tw.EndCutscene()
     assert tw.IsKeyboardInputAllowed() is True   # unchanged
+
+
+def test_fade_default_off():
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    assert tw.IsFading() is False
+
+
+def test_fade_out_sets_flag():
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.FadeOut(1.5)
+    assert tw.IsFading() is True
+
+
+def test_fade_in_clears_flag():
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.FadeOut(1.5)
+    tw.FadeIn(1.5)
+    assert tw.IsFading() is False
+
+
+def test_abort_fade_clears_flag():
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.FadeOut(1.5)
+    tw.AbortFade()
+    assert tw.IsFading() is False
