@@ -441,3 +441,42 @@ def test_reset_sdk_globals_resets_top_window_state():
     assert fresh.IsKeyboardInputAllowed() is True
     assert fresh.IsBridgeVisible() is False
     assert fresh.IsTacticalVisible() is True
+
+
+def test_start_cutscene_accepts_positional_args():
+    """SDK code calls StartCutscene(fTimeToComeIn, fCoveredArea, bHideReticle)
+    via MissionLib.StartCutscene (sdk/Build/scripts/MissionLib.py:751).
+    We accept and ignore the args — we don't render fade-ins or reticles."""
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.StartCutscene(2.0, 0.5, 1)
+    assert tw.IsCutsceneMode() is True
+
+
+def test_add_python_func_handler_for_instance_records_registration():
+    """SDK Initialize() routines call pTop.AddPythonFuncHandlerForInstance(...)
+    to register per-instance event handlers. We record the registrations
+    but don't dispatch through them today — when an SDK event flow needs
+    these handlers, a follow-up will wire them into g_kEventManager."""
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.AddPythonFuncHandlerForInstance(1001, "some.module.handler")
+    tw.AddPythonFuncHandlerForInstance(1002, "another.handler")
+    assert tw._handler_registrations == [
+        (1001, "some.module.handler"),
+        (1002, "another.handler"),
+    ]
+
+
+def test_add_python_func_handler_accepts_extra_args():
+    """The underlying TGEventManager.AddBroadcastPythonFuncHandler has a
+    *extra trailing varargs; mirror that on the shim so any SDK caller
+    passing trailing args doesn't TypeError."""
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    # Should not raise even with extra trailing args
+    tw.AddPythonFuncHandlerForInstance(1001, "x.y", "extra", 42)
+    assert len(tw._handler_registrations) == 1

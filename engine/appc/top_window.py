@@ -37,6 +37,7 @@ class _TopWindow:
         self._last_rendered_set = None
         self._children: list[tuple[object, float, float]] = []
         self._main_windows: dict[int, object] = {}
+        self._handler_registrations: list[tuple[int, str]] = []
 
     # ── Input gate ─────────────────────────────────────────────
     def AllowKeyboardInput(self, enabled) -> None:
@@ -52,7 +53,10 @@ class _TopWindow:
         return self._mouse_input_enabled
 
     # ── Cutscene ───────────────────────────────────────────────
-    def StartCutscene(self) -> None:
+    def StartCutscene(self, *args) -> None:
+        # SDK passes (fTimeToComeIn, fCoveredArea, bHideReticle) via
+        # MissionLib.StartCutscene; we don't render fades or reticles
+        # so accept and ignore.
         self._cutscene_active = True
 
     def EndCutscene(self, fTime: float = 0.0) -> None:
@@ -101,6 +105,17 @@ class _TopWindow:
     # ── Main windows ───────────────────────────────────────────
     def FindMainWindow(self, mwt):
         return self._main_windows.get(int(mwt))
+
+    # ── Event handler registration ─────────────────────────────
+    # SDK code calls pTop.AddPythonFuncHandlerForInstance(event_type, "qualified.name")
+    # to register per-instance handlers (inherited from TGEventHandlerObject
+    # in BC). We record the registrations but don't dispatch through them
+    # yet — a future spec will route them into g_kEventManager when an
+    # SDK event flow actually needs them.
+    def AddPythonFuncHandlerForInstance(
+        self, event_type, qualified_name, *_extra
+    ) -> None:
+        self._handler_registrations.append((int(event_type), str(qualified_name)))
 
     # ── Children (tracked but not rendered — see CEF mirror follow-up) ──
     def AddChild(self, child, x: float = 0.0, y: float = 0.0, *_extra) -> None:
