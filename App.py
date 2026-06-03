@@ -494,6 +494,18 @@ g_kRealtimeTimerManager = TGTimerManager(g_kEventManager)
 g_kInputManager, g_kKeyboardBinding = init_input_pipeline(g_kEventManager)
 register_input_handlers(g_kEventManager)
 
+# ── TopWindow shim ─────────────────────────────────────────────────────────────
+# See engine/appc/top_window.py and
+# docs/superpowers/specs/2026-06-03-top-window-shim-design.md.
+# TopWindow_GetTopWindow() must precede any SDK import that might call it
+# at module-load time — keep this block at the singleton initialisation site.
+from engine.appc.top_window import (
+    TopWindow_GetTopWindow,
+    MWT_BRIDGE, MWT_TACTICAL, MWT_CONSOLE, MWT_EDITOR, MWT_OPTIONS,
+    MWT_SUBTITLE, MWT_TACTICAL_MAP, MWT_CINEMATIC, MWT_MULTIPLAYER,
+    MWT_CD_CHECK, MWT_MODAL_DIALOG,
+)
+
 
 def TacticalControlWindow_GetTacticalControlWindow():
     return TacticalControlWindow.GetInstance()

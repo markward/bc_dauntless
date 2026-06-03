@@ -399,3 +399,24 @@ def test_last_rendered_set_round_trips():
     sentinel = object()
     tw.SetLastRenderedSet(sentinel)
     assert tw.GetLastRenderedSet() is sentinel
+
+
+def test_app_top_window_get_top_window_returns_real_singleton():
+    """SDK code calls App.TopWindow_GetTopWindow() — that path must
+    reach the real _TopWindow, not fall through to _NamedStub."""
+    import App
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = App.TopWindow_GetTopWindow()
+    assert tw is top_window._the_top_window
+
+
+def test_app_mwt_enums_are_real_ints():
+    """Previously these fell through to _NamedStub and compared
+    equal to each other via _Stub.__eq__. Real ints fix that."""
+    import App
+    from engine.appc import top_window
+    assert App.MWT_BRIDGE == top_window.MWT_BRIDGE
+    assert App.MWT_CINEMATIC == top_window.MWT_CINEMATIC
+    assert isinstance(App.MWT_BRIDGE, int)
+    assert App.MWT_BRIDGE != App.MWT_CINEMATIC
