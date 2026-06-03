@@ -2176,6 +2176,35 @@ def run(mission_name: Optional[str] = None,
         except ImportError:
             _h = None  # bindings module not built; skip input handling.
 
+        # Dev-only mission picker construction. Done BEFORE
+        # default_pause_menu(...) so register_dev_pause_menu_entry
+        # adds the "Load Mission…" row before the menu is built.
+        # PanelRegistry registration happens further down, after
+        # PanelRegistry itself exists.
+        # See docs/superpowers/specs/2026-06-02-dev-mission-loader-design.md.
+        mission_picker = _NULL_PICKER  # noop until we know dev mode is on
+        if dev_mode.is_enabled():
+            _picker_registry_cache: list = [None]
+            def _get_mission_registry():
+                if _picker_registry_cache[0] is None:
+                    from pathlib import Path
+                    project_root = Path(__file__).resolve().parent.parent
+                    sdk_scripts = project_root / "sdk" / "Build" / "scripts"
+                    _picker_registry_cache[0] = _missions.discover(sdk_scripts)
+                return _picker_registry_cache[0]
+
+            def _on_pick_mission(module_name: str) -> None:
+                controller.swap_mission(module_name)
+                pause.close()
+
+            mission_picker = MissionPicker(
+                registry_getter=_get_mission_registry,
+                on_pick=_on_pick_mission,
+            )
+            dev_mode.register_dev_pause_menu_entry(
+                "Load Mission…", mission_picker.open,
+            )
+
         from engine.ui.pause_menu import default_pause_menu
         from engine.ui.panel_registry import PanelRegistry
         pause_menu = default_pause_menu(
@@ -2185,6 +2214,8 @@ def run(mission_name: Optional[str] = None,
         registry = PanelRegistry(legacy_handler=pause_menu.dispatch_event)
         registry.register(target_list_view)
         registry.register(sensors_panel)
+        if dev_mode.is_enabled():
+            registry.register(mission_picker)
 
         # SDK ShipDisplay factories register against this same registry.
         # In stock BC, Bridge/TacticalMenuHandlers.py:517,714 invokes
@@ -2209,34 +2240,6 @@ def run(mission_name: Optional[str] = None,
         from engine.ui.speed_display import SpeedDisplay
         speed_display = SpeedDisplay(player_control=player_control)
         registry.register(speed_display)
-
-        # Dev-only mission picker. Lazily walks sdk/Build/scripts the
-        # first time the picker opens — costs ~1s but only after the
-        # user clicks "Load Mission…" with the game already paused.
-        # See docs/superpowers/specs/2026-06-02-dev-mission-loader-design.md.
-        mission_picker = _NULL_PICKER  # noop until we know dev mode is on
-        if dev_mode.is_enabled():
-            _picker_registry_cache: list = [None]
-            def _get_mission_registry():
-                if _picker_registry_cache[0] is None:
-                    from pathlib import Path
-                    project_root = Path(__file__).resolve().parent.parent
-                    sdk_scripts = project_root / "sdk" / "Build" / "scripts"
-                    _picker_registry_cache[0] = _missions.discover(sdk_scripts)
-                return _picker_registry_cache[0]
-
-            def _on_pick_mission(module_name: str) -> None:
-                controller.swap_mission(module_name)
-                pause.close()
-
-            mission_picker = MissionPicker(
-                registry_getter=_get_mission_registry,
-                on_pick=_on_pick_mission,
-            )
-            registry.register(mission_picker)
-            dev_mode.register_dev_pause_menu_entry(
-                "Load Mission…", mission_picker.open,
-            )
 
         # Bindings older than the orbit-camera change won't expose
         # consume_scroll_y; fall back to a zero-delta lambda so host_loop
