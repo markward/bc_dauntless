@@ -2176,12 +2176,6 @@ def run(mission_name: Optional[str] = None,
         except ImportError:
             _h = None  # bindings module not built; skip input handling.
 
-        # Pre-register dev keybindings once so default_pause_menu can list
-        # them. register_for_frame is also called every tick (see input
-        # dispatch) to rebind handlers with the current player/session.
-        if _h is not None and dev_mode.is_enabled():
-            dev_keybindings.register_for_frame(_h, controller.session, None)
-
         from engine.ui.pause_menu import default_pause_menu
         from engine.ui.panel_registry import PanelRegistry
         pause_menu = default_pause_menu(
@@ -2293,13 +2287,26 @@ def run(mission_name: Optional[str] = None,
             # renderer state (bridge pass enable + cursor lock) and is
             # idempotent — only fires when the mode changed.
             if _h is not None:
-                pause.apply(_h)
+                # ESC priority: when the mission picker is open it
+                # consumes ESC (closes the picker, returns to the
+                # pause menu). Otherwise ESC toggles the pause menu
+                # as before.
+                if mission_picker.is_open():
+                    if _h.key_pressed(_h.keys.KEY_ESCAPE):
+                        mission_picker.handle_key_esc()
+                else:
+                    pause.apply(_h)
                 _apply_pause_menu_side_effects(pause, view_mode, _h, mission_picker)
                 if pause.is_open:
-                    pause_menu.handle_input(_h)
-                    _script = pause_menu.render_payload()
-                    if _script is not None:
-                        _h.cef_execute_javascript(_script)
+                    # Suppress pause-menu keyboard input when the
+                    # mission picker is open — pause menu is hidden
+                    # behind the picker, so navigation/Enter on it
+                    # would activate invisible rows.
+                    if not mission_picker.is_open():
+                        pause_menu.handle_input(_h)
+                        _script = pause_menu.render_payload()
+                        if _script is not None:
+                            _h.cef_execute_javascript(_script)
                     # Forward mouse to CEF only while paused — keeps
                     # normal-gameplay input out of the overlay. The
                     # event-handler callback installed at startup turns
