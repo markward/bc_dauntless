@@ -35,6 +35,20 @@ class _TopWindow:
     def IsMouseInputAllowed(self) -> bool:
         return self._mouse_input_enabled
 
+    # ── Cutscene ───────────────────────────────────────────────
+    def StartCutscene(self) -> None:
+        self._cutscene_active = True
+
+    def EndCutscene(self, fTime: float = 0.0) -> None:
+        # fTime is the fade-out duration; we don't render fades.
+        self._cutscene_active = False
+
+    def AbortCutscene(self) -> None:
+        self._cutscene_active = False
+
+    def IsCutsceneMode(self) -> bool:
+        return self._cutscene_active
+
 
 _the_top_window = _TopWindow()
 

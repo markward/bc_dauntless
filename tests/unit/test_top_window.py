@@ -90,3 +90,59 @@ def test_input_dispatch_drops_event_when_gated_off():
         assert len(received) == 2
     finally:
         appc_input.g_kKeyboardBinding = saved
+
+
+def test_cutscene_default_off():
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    assert tw.IsCutsceneMode() is False
+
+
+def test_start_cutscene_flips_flag():
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.StartCutscene()
+    assert tw.IsCutsceneMode() is True
+
+
+def test_end_cutscene_clears_flag():
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.StartCutscene()
+    tw.EndCutscene()
+    assert tw.IsCutsceneMode() is False
+
+
+def test_end_cutscene_accepts_fade_time():
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.StartCutscene()
+    tw.EndCutscene(2.5)   # SDK passes a fade-out duration
+    assert tw.IsCutsceneMode() is False
+
+
+def test_abort_cutscene_clears_flag():
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.StartCutscene()
+    tw.AbortCutscene()
+    assert tw.IsCutsceneMode() is False
+
+
+def test_cutscene_does_not_touch_input_flags():
+    """MissionLib calls AllowKeyboardInput(0) explicitly around
+    StartCutscene/EndCutscene; the cutscene methods must NOT
+    auto-toggle the input gate or we'd double-gate."""
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    assert tw.IsKeyboardInputAllowed() is True
+    tw.StartCutscene()
+    assert tw.IsKeyboardInputAllowed() is True   # unchanged
+    tw.EndCutscene()
+    assert tw.IsKeyboardInputAllowed() is True   # unchanged
