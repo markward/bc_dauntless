@@ -22,6 +22,19 @@ class _TopWindow:
         self._children: list[tuple[object, float, float]] = []
         self._main_windows: dict[int, object] = {}
 
+    # ── Input gate ─────────────────────────────────────────────
+    def AllowKeyboardInput(self, enabled) -> None:
+        self._keyboard_input_enabled = bool(enabled)
+
+    def IsKeyboardInputAllowed(self) -> bool:
+        return self._keyboard_input_enabled
+
+    def AllowMouseInput(self, enabled) -> None:
+        self._mouse_input_enabled = bool(enabled)
+
+    def IsMouseInputAllowed(self) -> bool:
+        return self._mouse_input_enabled
+
 
 _the_top_window = _TopWindow()
 
@@ -36,3 +49,15 @@ def reset_for_tests() -> None:
     engine/host_loop.reset_sdk_globals."""
     global _the_top_window
     _the_top_window = _TopWindow()
+
+
+def keyboard_input_enabled() -> bool:
+    """Module-level helper consulted by engine/appc/input.py's keyboard
+    dispatch trampoline. Defined as a function (not a constant) so the
+    flag is read at event-dispatch time, not at import time."""
+    return _the_top_window._keyboard_input_enabled
+
+
+def mouse_input_enabled() -> bool:
+    """Reserved for a future mouse-event trampoline. No consumer today."""
+    return _the_top_window._mouse_input_enabled

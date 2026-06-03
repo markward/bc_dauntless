@@ -22,3 +22,33 @@ def test_reset_for_tests_replaces_singleton_with_default_state():
     new_tw = top_window._the_top_window
     assert new_tw is not tw
     assert new_tw._cutscene_active is False
+
+
+def test_keyboard_input_default_enabled():
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    assert top_window.keyboard_input_enabled() is True
+
+
+def test_allow_keyboard_input_flips_flag():
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.AllowKeyboardInput(0)
+    assert top_window.keyboard_input_enabled() is False
+    assert tw.IsKeyboardInputAllowed() is False
+    tw.AllowKeyboardInput(1)
+    assert top_window.keyboard_input_enabled() is True
+    assert tw.IsKeyboardInputAllowed() is True
+
+
+def test_allow_mouse_input_flips_flag():
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.AllowMouseInput(0)
+    assert top_window.mouse_input_enabled() is False
+    assert tw.IsMouseInputAllowed() is False
+    tw.AllowMouseInput(1)
+    assert top_window.mouse_input_enabled() is True
+    assert tw.IsMouseInputAllowed() is True
