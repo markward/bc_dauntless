@@ -52,3 +52,41 @@ def test_allow_mouse_input_flips_flag():
     tw.AllowMouseInput(1)
     assert top_window.mouse_input_enabled() is True
     assert tw.IsMouseInputAllowed() is True
+
+
+def test_input_dispatch_drops_event_when_gated_off():
+    """The trampoline must consult keyboard_input_enabled() and skip
+    KeyboardBinding.OnKeyboardEvent when gated off."""
+    from engine.appc import top_window
+    from engine.appc import input as appc_input
+    from engine.appc.events import TGKeyboardEvent
+
+    top_window.reset_for_tests()
+
+    # Stand up a recording binding in place of the singleton so we can
+    # observe whether the trampoline forwarded the event.
+    received = []
+
+    class RecordingBinding:
+        def OnKeyboardEvent(self, obj, evt):
+            received.append(evt)
+
+    saved = appc_input.g_kKeyboardBinding
+    appc_input.g_kKeyboardBinding = RecordingBinding()
+    try:
+        evt = TGKeyboardEvent()
+        # Gate ON (default) — event should reach the binding.
+        appc_input._OnKeyboardEvent_Dispatch(None, evt)
+        assert len(received) == 1
+
+        # Gate OFF — event should be dropped.
+        top_window.TopWindow_GetTopWindow().AllowKeyboardInput(0)
+        appc_input._OnKeyboardEvent_Dispatch(None, evt)
+        assert len(received) == 1  # unchanged
+
+        # Gate back ON — event flows again.
+        top_window.TopWindow_GetTopWindow().AllowKeyboardInput(1)
+        appc_input._OnKeyboardEvent_Dispatch(None, evt)
+        assert len(received) == 2
+    finally:
+        appc_input.g_kKeyboardBinding = saved

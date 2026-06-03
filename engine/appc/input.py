@@ -160,6 +160,17 @@ def register_input_handlers(event_manager: TGEventManager) -> None:
 
 def _OnKeyboardEvent_Dispatch(obj, evt):
     """Trampoline so AddBroadcastPythonFuncHandler can resolve a qualified
-    name and reach the singleton's bound method."""
+    name and reach the singleton's bound method.
+
+    Consults engine.appc.top_window.keyboard_input_enabled() so SDK code
+    that calls TopWindow.AllowKeyboardInput(0) during a cutscene actually
+    suppresses keyboard events instead of being a silent no-op."""
+    # Local import — top_window depends on nothing in input, and
+    # input is imported by App.py before top_window is registered as
+    # a TopWindow_GetTopWindow factory; the symbol is module-level so
+    # the lookup is one attribute read per event (cheap).
+    from engine.appc.top_window import keyboard_input_enabled
+    if not keyboard_input_enabled():
+        return
     if g_kKeyboardBinding is not None:
         g_kKeyboardBinding.OnKeyboardEvent(obj, evt)
