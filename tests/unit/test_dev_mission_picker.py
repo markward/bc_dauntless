@@ -225,3 +225,20 @@ def test_render_payload_does_not_flatten_when_multiple_episodes():
     # Both children are episode-kind, not flattened to mission rows.
     assert all(c["kind"] == "episode" for c in family_children)
     assert len(family_children) == 2
+
+
+def test_invalidate_clears_last_pushed_snapshot():
+    """A CEF document reload triggers PanelRegistry.invalidate_all,
+    which calls each panel's invalidate(). The picker must clear its
+    snapshot so the next render_payload() re-emits regardless of
+    whether internal state changed since the previous emit."""
+    p = MissionPicker(registry_getter=lambda: _empty_registry(), on_pick=Mock())
+    p.open()
+    first = p.render_payload()      # emit setMissionPicker({tree, visible:true})
+    second = p.render_payload()     # state unchanged → None
+    assert first is not None
+    assert second is None
+    p.invalidate()
+    third = p.render_payload()      # after invalidate, must re-emit
+    assert third is not None
+    assert third == first           # same payload as before

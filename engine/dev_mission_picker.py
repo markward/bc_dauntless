@@ -79,6 +79,14 @@ class MissionPicker(Panel):
         if self._visible:
             self.close()
 
+    def invalidate(self) -> None:
+        """Drop the render_payload snapshot so the next call re-emits
+        regardless of state changes since the last emit. Called by
+        PanelRegistry.invalidate_all() on CEF document load — required
+        so a Cmd+R reload while the picker is open re-paints it on
+        the fresh page."""
+        self._last_pushed = None
+
 
 def _build_tree(registry: MissionRegistry) -> list:
     """Convert a MissionRegistry to the JSON-serialisable tree the JS
