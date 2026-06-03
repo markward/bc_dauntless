@@ -310,3 +310,31 @@ def test_remove_child_drops_matching_entries():
     tw.AddChild(b, 0, 0)
     tw.RemoveChild(a)
     assert tw.GetChildren() == [b]
+
+
+def test_window_size_falls_back_when_host_not_initialised():
+    """In pytest contexts _dauntless_host either isn't importable or
+    raises RuntimeError because init() hasn't been called. The shim
+    must fall back to a sensible default."""
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    # Default fallback per spec: 1920x1080
+    assert tw.GetWidth() == 1920
+    assert tw.GetHeight() == 1080
+
+
+def test_window_size_uses_host_when_available(monkeypatch):
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+
+    class FakeHost:
+        @staticmethod
+        def window_size():
+            return (800, 600)
+
+    import sys
+    monkeypatch.setitem(sys.modules, "_dauntless_host", FakeHost)
+    assert tw.GetWidth() == 800
+    assert tw.GetHeight() == 600

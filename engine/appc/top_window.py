@@ -115,6 +115,23 @@ class _TopWindow:
     def GetChildren(self) -> list:
         return [c for (c, _, _) in self._children]
 
+    # ── Geometry ───────────────────────────────────────────────
+    def _window_size(self) -> tuple[int, int]:
+        """Live window size from the C++ host. Falls back to 1920x1080
+        when the host extension isn't loaded (pytest, harness) or
+        hasn't initialised the window yet (very-early call)."""
+        try:
+            import _dauntless_host
+            return _dauntless_host.window_size()
+        except (ImportError, RuntimeError):
+            return (1920, 1080)
+
+    def GetWidth(self) -> int:
+        return self._window_size()[0]
+
+    def GetHeight(self) -> int:
+        return self._window_size()[1]
+
 
 _the_top_window = _TopWindow()
 
