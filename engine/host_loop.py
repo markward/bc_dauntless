@@ -1181,20 +1181,36 @@ def _apply_view_mode_side_effects(view_mode: "_ViewModeController", h) -> None:
     view_mode._last_synced_is_bridge = target
 
 
+class _NullPicker:
+    """Stand-in used when dev_mode is disabled (no MissionPicker
+    constructed). Always reports closed so the pause-menu side-effects
+    predicate degrades to its original behaviour."""
+    def is_open(self) -> bool:
+        return False
+
+
+_NULL_PICKER = _NullPicker()
+
+
 def _apply_pause_menu_side_effects(pause: "_PauseMenuController",
                                    view_mode: "_ViewModeController",
-                                   h) -> None:
+                                   h,
+                                   picker) -> None:
     """Mirror the pause flag into renderer state: show/hide the CEF
     pause-menu div and unlock the cursor while paused so the player can
-    interact with the overlay. Idempotent — only fires when the state
-    has changed since the last call. `h` is the bindings module (or
-    fake) exposing cef_execute_javascript and set_cursor_locked.
+    interact with the overlay. Idempotent — only fires when the
+    effective visibility has changed since the last call. `h` is the
+    bindings module (or fake) exposing cef_execute_javascript and
+    set_cursor_locked. `picker` is the MissionPicker (or any object
+    with an is_open() method); when the picker is open the pause-menu
+    must hide regardless of pause.is_open so the picker isn't
+    occluded.
 
     On close, the view-mode sync latch is invalidated so the next
     _apply_view_mode_side_effects call re-applies cursor lock + bridge
     pass state from whatever view mode is current.
     """
-    target = pause.is_open
+    target = pause.is_open and not picker.is_open()
     last = getattr(pause, "_last_synced_is_open", None)
     if last == target:
         return
@@ -2248,7 +2264,7 @@ def run(mission_name: Optional[str] = None,
             # idempotent — only fires when the mode changed.
             if _h is not None:
                 pause.apply(_h)
-                _apply_pause_menu_side_effects(pause, view_mode, _h)
+                _apply_pause_menu_side_effects(pause, view_mode, _h, _NULL_PICKER)
                 if pause.is_open:
                     pause_menu.handle_input(_h)
                     _script = pause_menu.render_payload()
