@@ -1,7 +1,7 @@
 // native/assets/ui-cef/js/sensors.js
 //
 // Radar / sensors render fn. Driven by Python via cef_execute_javascript:
-//   setRadar({visible, range_m, contacts: [
+//   setRadar({visible, range_gu, contacts: [
 //     {name, affiliation, kind, x, y, alt, heading, targeted}, ...
 //   ]});
 //

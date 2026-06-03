@@ -25,7 +25,7 @@ def test_six_tubes_seed_six_ammo_slots():
     ts = ship.GetTorpedoSystem()
     assert ts.GetNumAmmoTypes() == 6
     # No script registered on this synthetic property → falls back to
-    # Photon (19 m/s). What matters is that the launch speed is
+    # Photon (19 GU/s). What matters is that the launch speed is
     # non-zero so FireScript.PredictTargetLocation doesn't divide by
     # zero; the previous "AT_ONE-with-launch_speed=0" stub used to
     # trigger that crash mid-tick.

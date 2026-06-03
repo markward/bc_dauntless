@@ -36,8 +36,8 @@ def test_payload_lists_visible_contacts_with_affiliations():
         mission.GetFriendlyGroup().AddName("Ally")
         mission.GetEnemyGroup().AddName("Foe")
 
-        # Distances kept well inside DEFAULT_RANGE_M (1 km) so the test
-        # doesn't drift if the default range changes again.
+        # Distances kept well inside DEFAULT_RANGE_GU (1000 GU ≈ 175 km)
+        # so the test doesn't drift if the default range changes again.
         ally = _make_ship("Ally", x=0.0, y=500.0, z=0.0)
         foe  = _make_ship("Foe",  x=300.0, y=0.0, z=50.0)
         far  = _make_ship("Far",  x=0.0, y=99999.0, z=0.0)  # off-disc

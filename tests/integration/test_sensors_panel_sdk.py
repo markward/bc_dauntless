@@ -49,7 +49,7 @@ def test_sensors_panel_renders_for_empty_world():
         state = json.loads(script[len("setRadar("):-2])
         assert state["visible"] is True
         assert state["contacts"] == []
-        assert state["range_m"] > 0.0
+        assert state["range_gu"] > 0.0
     finally:
         App.g_kSetManager.DeleteSet("smoke_set")
         _set_current_game(None)

@@ -1,9 +1,14 @@
 """SpeedDisplay panel snapshot + payload tests.
 
 The panel reads two pieces of state:
-  - current_speed (m/s) and _warp_boost from the injected
-    _PlayerControl-shaped object
-  - max_speed from player.GetImpulseEngineSubsystem().GetMaxSpeed()
+  - current_speed (GU/s, BC's internal unit) and _warp_boost from the
+    injected _PlayerControl-shaped object
+  - max_speed (GU/s) from player.GetImpulseEngineSubsystem().GetMaxSpeed()
+
+Reference numbers anchor on Galaxy class: SetMaxSpeed(6.3) GU/s →
+3969 kph in stock BC's helm tooltip (see
+sdk/Build/scripts/BridgeHandlers.py:1389). Conversion factor lives in
+engine.units (GUPS_TO_KPH = 630).
 
 These tests use a stub player_control + a real ShipClass with a
 populated ImpulseEngineSubsystem.
@@ -24,7 +29,7 @@ class _FakePlayerControl:
         self._warp_boost = bool(warp_boost)
 
 
-def _setup_game(max_speed_mps=200.0):
+def _setup_game(max_speed_gups=6.3):
     from engine.core.game import Game, Episode, Mission, _set_current_game
     mission = Mission()
     episode = Episode(); episode.SetCurrentMission(mission)
@@ -32,8 +37,9 @@ def _setup_game(max_speed_mps=200.0):
     player = ShipClass(); player.SetName("Player")
     # Attach a populated ImpulseEngineSubsystem so GetMaxSpeed returns
     # something meaningful — by default ShipClass has no subsystems.
+    # Default 6.3 GU/s = Galaxy's SetMaxSpeed → 3969 kph.
     ies = ImpulseEngineSubsystem("ImpulseEngines")
-    ies.SetMaxSpeed(max_speed_mps)
+    ies.SetMaxSpeed(max_speed_gups)
     player.SetImpulseEngineSubsystem(ies)
     game.SetPlayer(player)
     _set_current_game(game)
@@ -51,18 +57,19 @@ def _decode(script):
     return json.loads(script[len("setSpeedDisplay("):-2])
 
 
-def test_payload_emits_kph_rounded_from_mps():
+def test_payload_emits_kph_rounded_from_gups():
     from engine.ui.speed_display import SpeedDisplay
 
-    _setup_game(max_speed_mps=200.0)
+    # Galaxy max speed: 6.3 GU/s → 3969 kph (matches BC helm tooltip).
+    _setup_game(max_speed_gups=6.3)
     try:
-        # 50 m/s = 180.0 km/h
-        pc = _FakePlayerControl(current_speed=50.0, warp_boost=False)
+        # 4.2 GU/s ≈ impulse 6 on Galaxy → 2646 kph.
+        pc = _FakePlayerControl(current_speed=4.2, warp_boost=False)
         panel = SpeedDisplay(player_control=pc)
         state = _decode(panel.render_payload())
         assert state["visible"] is True
-        assert state["current_kph"] == 180  # 50 * 3.6 = 180.0
-        assert state["max_kph"] == 720      # 200 * 3.6 = 720.0
+        assert state["current_kph"] == 2646  # 4.2 * 630 = 2646.0
+        assert state["max_kph"] == 3969      # 6.3 * 630 = 3969.0
         assert state["warp"] is False
     finally:
         _teardown_game()
@@ -87,22 +94,23 @@ def test_payload_is_idempotent_until_state_changes():
     host loop can call render_all() each tick without churning the DOM."""
     from engine.ui.speed_display import SpeedDisplay
 
-    _setup_game(max_speed_mps=200.0)
+    _setup_game(max_speed_gups=6.3)
     try:
-        pc = _FakePlayerControl(current_speed=50.0)
+        pc = _FakePlayerControl(current_speed=4.2)  # 4.2 GU/s → 2646 kph
         panel = SpeedDisplay(player_control=pc)
         first = panel.render_payload()
         assert first is not None
         # No state change → no re-emit.
         assert panel.render_payload() is None
         # Sub-km/h jitter rounds to the same KPH bucket → still no emit.
-        pc._current_speed = 50.05  # +0.18 km/h, rounds to 180 → no diff
+        # +0.0005 GU/s = +0.315 km/h, rounds back to 2646 → no diff
+        pc._current_speed = 4.2005
         assert panel.render_payload() is None
         # A real change crosses the rounding boundary → re-emit.
-        pc._current_speed = 51.0  # 183.6 → rounds to 184
+        pc._current_speed = 4.21  # 2652.3 → rounds to 2652
         second = panel.render_payload()
         assert second is not None
-        assert _decode(second)["current_kph"] == 184
+        assert _decode(second)["current_kph"] == 2652
     finally:
         _teardown_game()
 

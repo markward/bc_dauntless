@@ -224,11 +224,11 @@ class ShipDisplayPanel(Panel):
         hull_pct     = _hull_pct(ship)
         shields_pct  = _shields_tuple(ship)
         damage       = _damage_states(ship)
-        range_m, speed_kph = (None, None)
+        range_km, speed_kph = (None, None)
         if self._role == ROLE_TARGET:
-            range_m, speed_kph = _range_and_speed_to(ship, player)
+            range_km, speed_kph = _range_and_speed_to(ship, player)
         return (ship_id, name, affiliation, species_key, hull_pct,
-                shields_pct, damage, range_m, speed_kph,
+                shields_pct, damage, range_km, speed_kph,
                 self._minimized, True)
 
     # Panel framework ---------------------------------------------------
@@ -238,7 +238,7 @@ class ShipDisplayPanel(Panel):
             return None
         self._last_snapshot = snap
         (ship_id, name, affiliation, species, hull_pct,
-         shields, damage, range_m, speed_kph, minimized, visible) = snap
+         shields, damage, range_km, speed_kph, minimized, visible) = snap
         payload = {
             "visible":     visible,
             "ship_name":   name,
@@ -247,7 +247,7 @@ class ShipDisplayPanel(Panel):
             "hull_pct":    hull_pct,
             "shields_pct": list(shields),
             "damage":      [{"name": n, "state": s} for (n, s) in damage],
-            "range_m":     range_m,
+            "range_km":    range_km,
             "speed_kph":   speed_kph,
             "minimized":   minimized,
         }
@@ -447,20 +447,25 @@ def _subsystem_state(sub):
 
 
 def _range_and_speed_to(ship, player):
-    """Returns (range_m, speed_kph) for the target panel; None,None on error."""
+    """Returns (range_km, speed_kph) for the target panel; None,None on error.
+
+    Positions and velocities are read in BC's internal game units (GU);
+    convert to km / kph at this display boundary via engine.units.
+    """
+    from engine.units import GU_TO_KM, GUPS_TO_KPH
     try:
         if player is None or ship is None:
             return None, None
         p1 = player.GetTranslate(); p2 = ship.GetTranslate()
         dx = p1.x - p2.x; dy = p1.y - p2.y; dz = p1.z - p2.z
-        rng_m = (dx*dx + dy*dy + dz*dz) ** 0.5
-        # Speed: |velocity| in metres/sec → km/h
+        rng_gu = (dx*dx + dy*dy + dz*dz) ** 0.5
+        range_km = rng_gu * GU_TO_KM
         vel = ship.GetVelocityTG() if hasattr(ship, "GetVelocityTG") else None
         if vel is None:
             speed_kph = 0.0
         else:
-            speed_ms = (vel.x*vel.x + vel.y*vel.y + vel.z*vel.z) ** 0.5
-            speed_kph = speed_ms * 3.6
-        return rng_m, speed_kph
+            speed_gups = (vel.x*vel.x + vel.y*vel.y + vel.z*vel.z) ** 0.5
+            speed_kph = speed_gups * GUPS_TO_KPH
+        return range_km, speed_kph
     except Exception:
         return None, None

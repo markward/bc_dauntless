@@ -33,7 +33,7 @@ def test_contact_at_player_forward_within_range():
         player_rot=_identity(),
         target_pos=TGPoint3(0.0, 4000.0, 0.0),
         target_rot=_identity(),
-        range_m=8000.0,
+        range_gu=8000.0,
     )
     assert c is not None
     assert abs(c.x) < 1e-6
@@ -48,7 +48,7 @@ def test_contact_to_player_right_within_range():
         player_rot=_identity(),
         target_pos=TGPoint3(2000.0, 0.0, 0.0),
         target_rot=_identity(),
-        range_m=8000.0,
+        range_gu=8000.0,
     )
     assert c.x == pytest.approx(0.25, abs=1e-6)
     assert abs(c.y) < 1e-6
@@ -60,7 +60,7 @@ def test_contact_above_player_uses_alt():
         player_rot=_identity(),
         target_pos=TGPoint3(0.0, 0.0, 4000.0),
         target_rot=_identity(),
-        range_m=8000.0,
+        range_gu=8000.0,
     )
     # In-plane projection is the origin; altitude carries the offset.
     assert abs(c.x) < 1e-6
@@ -69,13 +69,13 @@ def test_contact_above_player_uses_alt():
 
 
 def test_off_disc_contact_returns_none():
-    """Contact 10 km ahead with range = 8 km → outside disc → None."""
+    """Contact 10000 GU ahead with range = 8000 GU → outside disc → None."""
     c = project_contact(
         player_pos=TGPoint3(0.0, 0.0, 0.0),
         player_rot=_identity(),
         target_pos=TGPoint3(0.0, 10000.0, 0.0),
         target_rot=_identity(),
-        range_m=8000.0,
+        range_gu=8000.0,
     )
     assert c is None
 
@@ -89,7 +89,7 @@ def test_disc_coords_are_player_relative():
         player_rot=_yaw(math.pi / 2.0),
         target_pos=TGPoint3(-4000.0, 0.0, 0.0),
         target_rot=_identity(),
-        range_m=8000.0,
+        range_gu=8000.0,
     )
     assert abs(c.x) < 1e-6
     assert c.y == pytest.approx(0.5, abs=1e-6)
@@ -103,6 +103,6 @@ def test_heading_is_target_forward_relative_to_player_forward():
         player_rot=_identity(),
         target_pos=TGPoint3(0.0, 2000.0, 0.0),
         target_rot=_yaw(math.pi),
-        range_m=8000.0,
+        range_gu=8000.0,
     )
     assert abs(abs(c.heading) - math.pi) < 1e-6

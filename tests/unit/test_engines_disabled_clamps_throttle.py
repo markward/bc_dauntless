@@ -60,7 +60,7 @@ def test_disabled_ies_clamps_target_and_decays_at_drag_fraction():
 
     for _ in range(60):  # 1 second
         _step_ship_motion(ship, 1.0 / 60)
-    # Drag-fraction decel: 1.5 * 0.1 = 0.15 m/s^2; after 1s: 6.3 - 0.15 = 6.15.
+    # Drag-fraction decel: 1.5 * 0.1 = 0.15 GU/s²; after 1s: 6.3 - 0.15 = 6.15.
     expected = 6.3 - 1.5 * DISABLED_ENGINE_DRAG_FRACTION
     assert abs(ship._current_speed - expected) < 1e-3
 

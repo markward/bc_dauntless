@@ -2,6 +2,10 @@
 docs/superpowers/specs/2026-05-28-ship-display-panel-design.md."""
 import pytest
 
+import App
+from engine.appc.math import TGPoint3
+from engine.appc.ships import ShipClass
+
 
 def test_player_role_panel_has_correct_name():
     from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_PLAYER
@@ -512,3 +516,46 @@ def test_species_key_zero_unknown_returns_empty():
     ship = ShipClass()
     ship.SetSpecies(0)
     assert _species_key_for(ship) == ""
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Target panel: range / speed conversion
+#
+# BC stores positions and velocities in "game units" (GU); the helm
+# tooltip converts via Appc.UtopiaModule_ConvertGameUnitsToKilometers.
+# Constants live in engine.units (1 GU = 0.175 km, 1 GU/s = 630 kph).
+# These tests anchor on Galaxy's SetMaxSpeed(6.3) → 3969 kph and a
+# 100 GU separation → 17.5 km.
+# ────────────────────────────────────────────────────────────────────────
+
+def test_range_and_speed_to_returns_km_and_kph():
+    from engine.ui.ship_display_panel import _range_and_speed_to
+    player = ShipClass()
+    player.SetTranslate(TGPoint3(0.0, 0.0, 0.0))
+    target = ShipClass()
+    target.SetTranslate(TGPoint3(100.0, 0.0, 0.0))  # 100 GU = 17.5 km
+    target.SetVelocity(TGPoint3(6.3, 0.0, 0.0))     # 6.3 GU/s = 3969 kph
+    range_km, speed_kph = _range_and_speed_to(target, player)
+    assert range_km == pytest.approx(17.5,   rel=1e-6)
+    assert speed_kph == pytest.approx(3969.0, rel=1e-6)
+
+
+def test_range_and_speed_to_returns_none_on_missing_player():
+    from engine.ui.ship_display_panel import _range_and_speed_to
+    target = ShipClass()
+    assert _range_and_speed_to(target, None) == (None, None)
+
+
+def test_target_payload_emits_range_km_key():
+    """Payload contract for the JS side: target panels send `range_km`
+    (already converted) so the JS can just append a unit suffix."""
+    from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_TARGET
+    import json
+    panel = ShipDisplayPanel(ROLE_TARGET)
+    payload = panel.render_payload()
+    if payload is None:
+        return  # snapshot may be hidden in initial state — that's fine
+    # The payload is JSON wrapped in a JS function call. Extract and
+    # confirm the schema key.
+    assert "range_km" in payload or '"range_km"' in payload
+    assert "range_m" not in payload

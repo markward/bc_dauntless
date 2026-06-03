@@ -12,7 +12,7 @@ is the project-wide rule):
     R.GetCol(2) = world-up.
   - Disc coords normalised to [-1, +1]: +y = player forward,
     +x = player right.
-  - Altitude normalised by range_m, clipped to [-1, +1]; positive = above
+  - Altitude normalised by range_gu, clipped to [-1, +1]; positive = above
     player's local up plane.
   - Heading in radians: 0 = same heading as player; positive = clockwise
     looking down (toward player's right).
@@ -39,9 +39,9 @@ def project_contact(
     player_rot: TGMatrix3,
     target_pos: TGPoint3,
     target_rot: TGMatrix3,
-    range_m: float,
+    range_gu: float,
 ) -> Optional[Contact]:
-    if range_m <= 0.0:
+    if range_gu <= 0.0:
         return None
 
     # Delta in world space.
@@ -62,16 +62,16 @@ def project_contact(
 
     # Disc-plane distance (ignores altitude — altitude is the stem).
     plane_sq = proj_right * proj_right + proj_forward * proj_forward
-    if plane_sq > range_m * range_m:
+    if plane_sq > range_gu * range_gu:
         return None  # outside disc → contact hidden, matches stock BC
 
-    inv_range = 1.0 / range_m
+    inv_range = 1.0 / range_gu
     x = proj_right   * inv_range
     y = proj_forward * inv_range
 
     # Altitude — clip to [-1, +1] so very high/low contacts don't fly
     # off the panel. The disc filter above only gates the planar
-    # distance; a contact directly above the player at range_m * 2
+    # distance; a contact directly above the player at range_gu * 2
     # should still render at the disc centre with a max-length stem.
     alt = max(-1.0, min(1.0, proj_up * inv_range))
 

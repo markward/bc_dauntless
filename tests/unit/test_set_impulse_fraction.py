@@ -1,6 +1,6 @@
 """SetImpulse semantics: the SDK convention is that the first
 argument is a *fraction of max speed* (0.0..1.0), while SetSpeed
-takes an absolute m/s value.
+takes an absolute GU/s value (BC's internal unit; see engine.units).
 
 Evidence:
 * sdk/.../AI/PlainAI/Flee.py:38 — ``def SetSpeed(self, fSpeedFraction = 1.0)``
@@ -11,14 +11,14 @@ Evidence:
   this fSpeed is used as ``fFastSpeed`` and multiplied by fuzzy weights
   in [0,1] before passing through SetImpulse.
 * sdk/.../AI/PlainAI/Intercept.py:243 — ``fSpeed = fMaxSpeed`` then
-  ``pShip.SetSpeed(fSpeed, ...)``; the literal m/s path.
+  ``pShip.SetSpeed(fSpeed, ...)``; the literal GU/s path.
 * engine/host_loop.py:651 — _PlayerControl converts impulse_level
-  to absolute m/s via ``(impulse_level / 9) * max_speed`` and writes
+  to absolute GU/s via ``(impulse_level / 9) * max_speed`` and writes
   it as the player's _current_speed directly (no setpoint).
 
 Before this fix our engine aliased SetImpulse to SetSpeed, storing
-the fraction as if it were m/s. NonFedAttack's FollowObject body
-therefore moved enemy ships at ~1 m/s instead of ~6 m/s (Galaxy's
+the fraction as if it were GU/s. NonFedAttack's FollowObject body
+therefore moved enemy ships at ~1 GU/s instead of ~6 GU/s (Galaxy's
 hardpoint MaxSpeed), making them feel stationary in-game.
 
 Contract:
@@ -81,7 +81,7 @@ def test_set_impulse_without_ies_treats_value_as_literal():
     """Test fallback: no IES (or MaxSpeed == 0) ⇒ value is stored as-is.
     This preserves backwards compatibility with the many ship_motion
     tests that construct bare ShipClass instances without an IES and
-    pass literal m/s values to SetImpulse."""
+    pass literal GU/s values to SetImpulse."""
     ship = ShipClass()
     ship.SetImpulse(50.0, _fwd(), MODEL_SPACE)
     sp = ship.GetSpeedSetpoint()

@@ -38,7 +38,7 @@ def test_disabled_engines_decay_velocity_then_repair_recovers():
     for _ in range(60):
         _step_ship_motion(ship, 1.0 / 60)
     decay = 6.3 - ship._current_speed
-    expected_decay = 1.5 * DISABLED_ENGINE_DRAG_FRACTION  # 0.15 m/s
+    expected_decay = 1.5 * DISABLED_ENGINE_DRAG_FRACTION  # 0.15 GU/s
     assert abs(decay - expected_decay) < 1e-3, \
         f"expected ~{expected_decay} decay, got {decay}"
 

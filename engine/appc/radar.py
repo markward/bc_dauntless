@@ -104,7 +104,7 @@ class _RadarDisplay:
         # Range chosen by feel; original BC value is opaque (closed
         # Appc.dll). See docs/instrumented_experiments/2026-05-26-radar-range-calibration.md
         # for the planned measurement experiment.
-        self._range_m: float = 1000.0
+        self._range_gu: float = 1000.0
 
     # STStylizedWindow / window-shaped surface.
     def SetName(self, name) -> None:    self._name = str(name)
@@ -140,11 +140,11 @@ class _RadarDisplay:
 
     # Engine-side accessor the SensorsPanel reads (not an SDK call —
     # SetRange lets mission scripts override the default if they want).
-    def SetRange(self, range_m: float) -> None:
-        self._range_m = float(range_m)
+    def SetRange(self, range_gu: float) -> None:
+        self._range_gu = float(range_gu)
 
     def GetRange(self) -> float:
-        return self._range_m
+        return self._range_gu
 
 
 # ── Module-level factories (re-exported by App.py) ──

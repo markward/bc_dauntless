@@ -13,7 +13,7 @@
 //     shields_pct:  [float x 6],      // FRONT, REAR, TOP, BOTTOM, LEFT, RIGHT
 //     damage:       [{name, state}],  // state: "damaged" | "disabled" | "destroyed"
 //     minimized:    bool,
-//     range_m:      float | null,     // target role only
+//     range_km:     float | null,     // target role only — already km
 //     speed_kph:    float | null,     // target role only
 //   }
 //
@@ -120,9 +120,9 @@
             var rng = root.querySelector('[data-bind="range"]');
             var spd = root.querySelector('[data-bind="speed"]');
             if (rng) {
-                rng.textContent = (state.range_m == null)
+                rng.textContent = (state.range_km == null)
                     ? "— km"
-                    : (state.range_m / 1000).toFixed(2) + " km";
+                    : state.range_km.toFixed(2) + " km";
             }
             if (spd) {
                 spd.textContent = (state.speed_kph == null)

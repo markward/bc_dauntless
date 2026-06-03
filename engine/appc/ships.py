@@ -104,14 +104,16 @@ class ShipClass(DamageableObject):
         ``fSpeedFraction``; PhaserSweep.py:92 is ``SetSpeedFraction``;
         FollowObject.py:67 defaults ``fGoFastSpeed = 1.0`` and
         multiplies by fuzzy weights in [0, 1] before passing through
-        SetImpulse. By contrast SetSpeed takes an absolute m/s value
-        (Intercept.py:243 passes ``fSpeed = fMaxSpeed``).
+        SetImpulse. By contrast SetSpeed takes an absolute GU/s value
+        (Intercept.py:243 passes ``fSpeed = fMaxSpeed``). BC's internal
+        unit is "game units per second"; the helm tooltip displays via
+        ConvertGameUnitsToKilometers (see engine.units).
 
         We multiply by MaxSpeed here so the integrator can keep
-        treating ``_speed_setpoint`` as absolute m/s — that keeps the
+        treating ``_speed_setpoint`` as absolute GU/s — that keeps the
         single integration path simple and matches the way the
         player-control code on the live path already produces
-        absolute m/s.
+        absolute GU/s.
 
         Fallback for ships without an IES (or with MaxSpeed == 0):
         store as-is. Many headless tests construct bare ShipClass
@@ -1046,7 +1048,7 @@ def _resolve_torpedo_ammo(ts_prop, slot: int):
 
     Falls back to ``("Photon", 19.0)`` — the most common ammo — if the
     property has no script registered for this slot or the lookup
-    fails. Photon's 19 m/s is what stock BC uses for any ship that
+    fails. Photon's 19 GU/s is what stock BC uses for any ship that
     hasn't overridden the slot, so it's a safer default than 0 (which
     causes a divide-by-zero in FireScript.PredictTargetLocation).
     """

@@ -57,7 +57,7 @@ def _make_combatant(pSet, name: str, x: float, y: float, z: float) -> ShipClass:
     s._hull = HullSubsystem("H"); s._hull.SetMaxCondition(1000.0)
     ies = ImpulseEngineSubsystem("IES")
     ies.SetMaxSpeed(120.0)
-    # Galaxy-class IES values: max accel ~10 m/s², angular limits modest.
+    # Galaxy-class IES values: max accel ~10 GU/s², angular limits modest.
     # Without these, FALLBACK_MAX_ACCEL = 1e9 means the integrator hits
     # setpoint in one tick — fine for unit tests but unrealistic.
     ies.SetMaxAccel(10.0)

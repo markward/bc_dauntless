@@ -20,15 +20,14 @@ from engine.ui.panel import Panel
 from engine.ui.radar_projection import project_contact
 
 
-# The disc's default world-space radius, in metres. The original BC
+# The disc's default world-space radius, in BC game units (GU). 1 GU
+# = 0.175 km, so 1000 GU ≈ 175 km of radar reach. The original BC
 # Appc.dll hardcodes its own value internally and never exposes it to
 # the SDK (sdk/Build/scripts/App.py:8513-8533 — RadarDisplay has no
-# SetRange method). 3000 was chosen by feel after a first-pass smoke
+# SetRange method). 1000 was chosen by feel after a first-pass smoke
 # test at 8000 felt too tight; tracked for measurement in
 # docs/instrumented_experiments/2026-05-26-radar-range-calibration.md.
-# SDK scripts that need a different range can call SetRange on the
-# RadarDisplay instance; the panel re-reads it each snapshot.
-DEFAULT_RANGE_M = 1000.0
+DEFAULT_RANGE_GU = 1000.0
 
 _AFFILIATION_TO_KIND = {
     "FRIENDLY": "ship",
@@ -58,17 +57,17 @@ class SensorsPanel(Panel):
         tcw = App.TacticalControlWindow_GetTacticalControlWindow()
         return tcw.GetRadarDisplay() if tcw is not None else None
 
-    def _resolve_range_m(self) -> float:
-        """Read the range from the SDK RadarDisplay if one's been
-        registered with the TacticalControlWindow; else use the spec
-        default. Lets SDK scripts override per-mission via SetRange."""
+    def _resolve_range_gu(self) -> float:
+        """Read the range (in game units) from the SDK RadarDisplay if
+        one's been registered with the TacticalControlWindow; else use
+        the spec default."""
         radar = self._radar_display()
         if radar is not None and hasattr(radar, "GetRange"):
             try:
                 return float(radar.GetRange())
             except Exception:
                 pass
-        return DEFAULT_RANGE_M
+        return DEFAULT_RANGE_GU
 
     def _resolve_minimize_state(self) -> tuple:
         """Return (minimizable, minimized) as bools, reading from the
@@ -102,7 +101,7 @@ class SensorsPanel(Panel):
             return (True, minimize_state, ())
 
         target_ship = player.GetTarget() if hasattr(player, "GetTarget") else None
-        range_m = self._resolve_range_m()
+        range_gu = self._resolve_range_gu()
         player_pos = player.GetWorldLocation()
         player_rot = player.GetWorldRotation()
 
@@ -120,7 +119,7 @@ class SensorsPanel(Panel):
                 player_rot=player_rot,
                 target_pos=ship.GetWorldLocation(),
                 target_rot=ship.GetWorldRotation(),
-                range_m=range_m,
+                range_gu=range_gu,
             )
             if contact is None:
                 continue
@@ -150,7 +149,7 @@ class SensorsPanel(Panel):
             "visible": visible,
             "minimizable": minimizable,
             "minimized": minimized,
-            "range_m": self._resolve_range_m() if visible else 0.0,
+            "range_gu": self._resolve_range_gu() if visible else 0.0,
             "contacts": [
                 {
                     "name": name,

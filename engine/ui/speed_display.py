@@ -19,11 +19,7 @@ import json
 from typing import Optional
 
 from engine.ui.panel import Panel
-
-
-# m/s → km/h. KPH is the unit shown in the mockup; the engine integrates
-# in m/s, so we convert at the render boundary.
-_MPS_TO_KPH = 3.6
+from engine.units import GUPS_TO_KPH
 
 
 class SpeedDisplay(Panel):
@@ -34,7 +30,7 @@ class SpeedDisplay(Panel):
     def __init__(self, player_control):
         super().__init__()
         # The _PlayerControl singleton from host_loop owns the integrated
-        # _current_speed (m/s) and the _warp_boost toggle.
+        # _current_speed (GU/s) and the _warp_boost toggle.
         self._player_control = player_control
         self._last_snapshot: Optional[tuple] = None
 
@@ -48,14 +44,14 @@ class SpeedDisplay(Panel):
         if player is None:
             return (True, 0, 0, False)
 
-        current_mps = self._player_control._current_speed
+        current_gups = self._player_control._current_speed
         ies = player.GetImpulseEngineSubsystem() if hasattr(player, "GetImpulseEngineSubsystem") else None
-        max_mps = ies.GetMaxSpeed() if ies is not None else 0.0
+        max_gups = ies.GetMaxSpeed() if ies is not None else 0.0
 
         # Round to whole KPH — sub-km/h jitter from the integrator is
         # not interesting to a pilot reading the panel.
-        current_kph = int(round(current_mps * _MPS_TO_KPH))
-        max_kph = int(round(max_mps * _MPS_TO_KPH))
+        current_kph = int(round(current_gups * GUPS_TO_KPH))
+        max_kph = int(round(max_gups * GUPS_TO_KPH))
         warp = bool(self._player_control._warp_boost)
         return (True, current_kph, max_kph, warp)
 
