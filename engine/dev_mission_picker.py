@@ -82,5 +82,44 @@ class MissionPicker(Panel):
 
 def _build_tree(registry: MissionRegistry) -> list:
     """Convert a MissionRegistry to the JSON-serialisable tree the JS
-    side renders. Implementation in sub-task 3C."""
-    return []  # placeholder; will be filled in next sub-task
+    side renders. Applies the skip-episode-level heuristic: when a
+    family has exactly one episode whose dir_name is in
+    _SKIP_EPISODE_LEVEL, the episode wrapper is dropped and the
+    family's children list contains mission rows directly. Display
+    names come from the registry's resolved display_name (with the
+    name_resolver's dir-name fallback already applied)."""
+    out: list = []
+    for family in registry.families:
+        family_node = {
+            "kind": "family",
+            "label": family.display_name or family.dir_name,
+            "children": [],
+        }
+        skip = (
+            len(family.episodes) == 1
+            and family.episodes[0].dir_name in _SKIP_EPISODE_LEVEL
+        )
+        if skip:
+            ep = family.episodes[0]
+            for mission in ep.missions:
+                family_node["children"].append({
+                    "kind": "mission",
+                    "label": mission.display_name or mission.dir_name,
+                    "module": mission.module_name,
+                })
+        else:
+            for episode in family.episodes:
+                ep_node = {
+                    "kind": "episode",
+                    "label": episode.display_name or episode.dir_name,
+                    "children": [],
+                }
+                for mission in episode.missions:
+                    ep_node["children"].append({
+                        "kind": "mission",
+                        "label": mission.display_name or mission.dir_name,
+                        "module": mission.module_name,
+                    })
+                family_node["children"].append(ep_node)
+        out.append(family_node)
+    return out
