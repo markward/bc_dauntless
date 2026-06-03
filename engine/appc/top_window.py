@@ -62,6 +62,26 @@ class _TopWindow:
     def IsFading(self) -> bool:
         return self._fade_active
 
+    # ── View state (bridge vs tactical) ────────────────────────
+    def IsBridgeVisible(self) -> bool:
+        return self._bridge_visible
+
+    def IsTacticalVisible(self) -> bool:
+        return self._tactical_visible
+
+    def ForceBridgeVisible(self) -> None:
+        self._bridge_visible = True
+        self._tactical_visible = False
+
+    def ForceTacticalVisible(self) -> None:
+        self._bridge_visible = False
+        self._tactical_visible = True
+
+    def ToggleBridgeAndTactical(self) -> None:
+        self._bridge_visible, self._tactical_visible = (
+            self._tactical_visible, self._bridge_visible,
+        )
+
 
 _the_top_window = _TopWindow()
 

@@ -179,3 +179,44 @@ def test_abort_fade_clears_flag():
     tw.FadeOut(1.5)
     tw.AbortFade()
     assert tw.IsFading() is False
+
+
+def test_view_state_defaults():
+    """Dauntless has no bridge view and renders the tactical scene by default."""
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    assert tw.IsBridgeVisible() is False
+    assert tw.IsTacticalVisible() is True
+
+
+def test_force_bridge_visible_swaps_state():
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.ForceBridgeVisible()
+    assert tw.IsBridgeVisible() is True
+    assert tw.IsTacticalVisible() is False
+
+
+def test_force_tactical_visible_swaps_state():
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.ForceBridgeVisible()
+    tw.ForceTacticalVisible()
+    assert tw.IsBridgeVisible() is False
+    assert tw.IsTacticalVisible() is True
+
+
+def test_toggle_bridge_and_tactical_swaps_both():
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    # Default: bridge=False, tactical=True
+    tw.ToggleBridgeAndTactical()
+    assert tw.IsBridgeVisible() is True
+    assert tw.IsTacticalVisible() is False
+    tw.ToggleBridgeAndTactical()
+    assert tw.IsBridgeVisible() is False
+    assert tw.IsTacticalVisible() is True
