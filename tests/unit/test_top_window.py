@@ -420,3 +420,24 @@ def test_app_mwt_enums_are_real_ints():
     assert App.MWT_CINEMATIC == top_window.MWT_CINEMATIC
     assert isinstance(App.MWT_BRIDGE, int)
     assert App.MWT_BRIDGE != App.MWT_CINEMATIC
+
+
+def test_reset_sdk_globals_resets_top_window_state():
+    """A previous mission's cutscene/view/input flags must not bleed
+    into the next mission. reset_sdk_globals() owns that contract."""
+    from engine.host_loop import reset_sdk_globals
+    from engine.appc import top_window
+
+    # Dirty the state as if a prior mission had run.
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.StartCutscene()
+    tw.AllowKeyboardInput(0)
+    tw.ForceBridgeVisible()
+
+    reset_sdk_globals()
+
+    fresh = top_window.TopWindow_GetTopWindow()
+    assert fresh.IsCutsceneMode() is False
+    assert fresh.IsKeyboardInputAllowed() is True
+    assert fresh.IsBridgeVisible() is False
+    assert fresh.IsTacticalVisible() is True

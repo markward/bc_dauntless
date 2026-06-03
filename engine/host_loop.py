@@ -1350,6 +1350,7 @@ def reset_sdk_globals() -> None:
     import App
     from engine.appc.placement import _waypoint_registry
     from engine.appc.input import register_input_handlers
+    from engine.appc import top_window
 
     App.g_kTimerManager._time = 0.0
     App.g_kTimerManager._timers.clear()
@@ -1362,6 +1363,10 @@ def reset_sdk_globals() -> None:
     if hasattr(App.g_kEventManager, "_method_handlers"):
         App.g_kEventManager._method_handlers.clear()
     register_input_handlers(App.g_kEventManager)
+    # Reset the TopWindow shim so cutscene/fade/view/input flags don't
+    # bleed across missions or in-process swaps. See
+    # docs/superpowers/specs/2026-06-03-top-window-shim-design.md.
+    top_window.reset_for_tests()
     # Unhook the target-menu subscriber from the live bridge set so a
     # mission swap doesn't leave a dangling subscription on a recreated
     # set. unwire_from_bridge_set is idempotent — safe to call even when
