@@ -49,9 +49,12 @@ def test_glow_contributes_to_unlit_frame():
         fw, fh = _dauntless_host.framebuffer_size()
         cx, cy = fw // 2, fh // 2
 
+        # Glow contributions on the Galaxy are tiny window-strip / engine
+        # highlights — 1–2 px clusters. A coarse stride misses them between
+        # samples; step 2 reliably catches at least one.
         max_brightness = 0
-        for dx in range(-60, 61, 20):
-            for dy in range(-40, 41, 20):
+        for dx in range(-60, 61, 2):
+            for dy in range(-40, 41, 2):
                 r, g, b, _ = _dauntless_host.read_pixel(cx + dx, cy + dy)
                 max_brightness = max(max_brightness, r + g + b)
 
