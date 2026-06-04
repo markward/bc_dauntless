@@ -542,3 +542,17 @@ def test_chase_mouse_and_arrow_compose():
     cc.apply_mouse_delta(100.0, 0.0)            # +100 × SENSITIVITY to yaw
     expected = seed + cc.TURN_RATE_RAD_PER_S + 100.0 * cc.MOUSE_SENSITIVITY
     assert cc.orbit_yaw_rad == pytest.approx(expected)
+
+
+def test_chase_snap_resets_distance_and_reverse():
+    from engine.cameras.chase import _ChaseCamera
+    cc = _ChaseCamera()
+    cc.set_ship_radius(1.0)
+    # Mutate everything.
+    cc.distance = 12345.0
+    cc.reverse_active = True
+    cc._smoothed_rot = "non-None placeholder"
+    cc.snap()
+    assert cc.distance == pytest.approx(cc.default_distance)
+    assert cc.reverse_active is False
+    assert cc._smoothed_rot is None

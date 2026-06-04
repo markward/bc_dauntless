@@ -62,10 +62,12 @@ class _ChaseCamera:
         self.distance        = self.default_distance
 
     def snap(self) -> None:
-        """Drop smoothed rotation so the next compute_camera(..., dt=...) call
-        aligns the camera immediately with the live ship rotation. Use on hard
-        cuts (mission swap, teleport, warp exit)."""
-        self._smoothed_rot = None
+        """Drop smoothed rotation, reset distance to default, and clear the
+        reverse-active flag. Use on hard cuts (mission swap, teleport,
+        warp exit)."""
+        self._smoothed_rot  = None
+        self.distance       = self.default_distance
+        self.reverse_active = False
 
     def enter_reverse(self) -> None:
         """V-key down: flip camera to in-front-of-ship perspective."""
