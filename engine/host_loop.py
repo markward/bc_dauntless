@@ -1709,28 +1709,13 @@ def _apply_input(view_mode, player_control, cam_control,
         player_control.apply(player, dt, _NO_INPUT)
 
 
-def _compute_camera(view_mode, cam_control, *, player, dt) -> tuple:
+def _compute_camera(view_mode, director, *, player, dt) -> tuple:
     """Per-tick camera dispatch.
 
-    Exterior mode delegates to _CameraControl.compute_camera (orbit +
-    spring-lag). Bridge mode anchors at the ship origin looking along
-    ship-Y forward (col 1 of the rotation matrix) with ship-Z as up
-    (col 2). Returns (eye, target, up) as 3-tuples in world space, the
-    same shape r.set_camera consumes.
-
-    Target lock: in exterior mode, if cam_control.target_lock_enabled is
-    True and the player has a non-self target via GetTarget(), the eye is
-    rebuilt in a frame aligned with the ship→target axis. The chase
-    distance (|eye - ship|) and the vertical lift (component along
-    up_vec) from the body-frame chase camera are preserved; any sideways
-    body-frame offset is folded into the chase distance. The result: as
-    the target orbits around the ship, the camera smoothly orbits in the
-    opposite direction, always keeping the ship between camera and
-    target with a constant zoom and lift. Look-at is then placed on the
-    target, shifted DOWN along image-up by cam_control.target_lock_bias
-    × |eye→target| so the target projects into the upper portion of the
-    frame. bias ≈ sin(angular offset), so 0.15 ≈ 9° (~30% above centre
-    in a 60° vertical FOV). C toggles the lock flag.
+    Bridge mode anchors at the ship origin looking along ship-Y
+    forward. Exterior mode delegates to the director, which chooses
+    between Chase Mode (free orbit) and Tracking Mode (two-angle
+    solver). Returns (eye, look_at, up) as 3-tuples in world space.
     """
     loc = player.GetWorldLocation()
     rot = player.GetWorldRotation()
@@ -1741,87 +1726,10 @@ def _compute_camera(view_mode, cam_control, *, player, dt) -> tuple:
         target = (loc.x + fwd.x, loc.y + fwd.y, loc.z + fwd.z)
         up_vec = (up.x, up.y, up.z)
         return eye, target, up_vec
-    eye, target, up_vec = cam_control.compute_camera(loc, rot, dt=dt)
-    if getattr(cam_control, "target_lock_enabled", False):
-        tgt = player.GetTarget() if hasattr(player, "GetTarget") else None
-        if tgt is not None and tgt is not player:
-            try:
-                tloc = tgt.GetWorldLocation()
-                eye, up_vec = _relocate_eye_for_target_lock(
-                    eye, up_vec, loc, tloc)
-                z_lift = getattr(cam_control, "target_lock_z_lift", 0.0)
-                if z_lift != 0.0:
-                    eye = (eye[0], eye[1], eye[2] + z_lift)
-                bias = getattr(cam_control, "target_lock_bias", 0.15)
-                dx = tloc.x - eye[0]
-                dy = tloc.y - eye[1]
-                dz = tloc.z - eye[2]
-                dist = _math.sqrt(dx*dx + dy*dy + dz*dz)
-                s = bias * dist
-                target = (
-                    tloc.x - s * up_vec[0],
-                    tloc.y - s * up_vec[1],
-                    tloc.z - s * up_vec[2],
-                )
-            except AttributeError:
-                pass
-    return eye, target, up_vec
+    return director.compute(player=player, dt=dt)
 
 
-def _relocate_eye_for_target_lock(eye, up_vec, ship_loc, target_loc):
-    """Place the eye on the line target→ship extended past the ship.
 
-    Direction b_hat = (ship - target) / |ship - target| points from the
-    target through the ship and out the far side. The camera sits at
-    ship + b_hat × |original eye - ship|, so camera, ship, and target
-    are exactly collinear with the ship between camera and target. The
-    chase distance (|eye - ship|) is preserved so zoom carries over.
-
-    up_vec is reprojected perpendicular to b_hat so the camera up stays
-    orthogonal to the view axis. Falls back to world-Z, then world-X,
-    when the original up_vec is parallel to the view axis (looking
-    straight up/down at the target).
-
-    Degenerate case: target ≈ ship — return inputs unchanged.
-    """
-    bx = ship_loc.x - target_loc.x
-    by = ship_loc.y - target_loc.y
-    bz = ship_loc.z - target_loc.z
-    bm = _math.sqrt(bx*bx + by*by + bz*bz)
-    if bm < 1e-6:
-        return eye, up_vec
-    bx, by, bz = bx/bm, by/bm, bz/bm
-
-    ex = eye[0] - ship_loc.x
-    ey = eye[1] - ship_loc.y
-    ez = eye[2] - ship_loc.z
-    chase_dist = _math.sqrt(ex*ex + ey*ey + ez*ez)
-
-    new_eye = (
-        ship_loc.x + bx * chase_dist,
-        ship_loc.y + by * chase_dist,
-        ship_loc.z + bz * chase_dist,
-    )
-
-    ux, uy, uz = up_vec
-    u_dot_b = ux*bx + uy*by + uz*bz
-    upx = ux - u_dot_b * bx
-    upy = uy - u_dot_b * by
-    upz = uz - u_dot_b * bz
-    upm = _math.sqrt(upx*upx + upy*upy + upz*upz)
-    if upm < 1e-6:
-        upx = -bz * bx
-        upy = -bz * by
-        upz = 1.0 - bz * bz
-        upm = _math.sqrt(upx*upx + upy*upy + upz*upz)
-        if upm < 1e-6:
-            upx = 1.0 - bx * bx
-            upy = -bx * by
-            upz = -bx * bz
-            upm = _math.sqrt(upx*upx + upy*upy + upz*upz)
-            if upm < 1e-6:
-                return new_eye, up_vec
-    return new_eye, (upx/upm, upy/upm, upz/upm)
 
 
 def _update_ui_for_tick(player, view_mode, session, active_set) -> None:
@@ -1960,7 +1868,9 @@ def run(mission_name: Optional[str] = None,
 
         # Per-tick player input → ship-transform integrator.
         player_control = _PlayerControl()
-        cam_control    = _CameraControl()
+        from engine.cameras import _CameraDirector
+        director       = _CameraDirector()
+        cam_control    = director.chase   # back-compat alias for downstream sites
         if controller.session is not None and controller.session.player is not None:
             cam_control.set_ship_radius(controller.session.player.GetRadius())
         view_mode      = _ViewModeController()
@@ -2386,7 +2296,7 @@ def run(mission_name: Optional[str] = None,
                 up_vec = (0.0, 1.0, 0.0)
             elif player is not None:
                 eye, target, up_vec = _compute_camera(
-                    view_mode, cam_control,
+                    view_mode, director,
                     player=player, dt=TICK_DT)
                 # Camera shake — apply to the exterior view. The bridge
                 # first-person camera below gets its own perturb call
