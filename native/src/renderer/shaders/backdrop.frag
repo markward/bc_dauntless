@@ -32,15 +32,25 @@ void main() {
     if (abs(offset.x) > u_span.x * 0.25 || abs(offset.y) > u_span.y * 0.25) {
         if (u_use_alpha == 1) discard;
     }
-    // Flip U: from inside the sphere looking at kForward, increasing
-    // mesh longitude rotates toward -kRight, so we invert it to get the
-    // texture's +U pointing to the viewer's right.
-    vec2 uv = vec2(0.5 - 2.0 * offset.x / u_span.x,
-                   0.5 + 2.0 * offset.y / u_span.y) * u_tile;
+    vec2 uv;
+    if (u_use_alpha == 1) {
+        // Centred partial-coverage patch (nebulae). Flip U: from inside the
+        // sphere looking at kForward, increasing mesh longitude rotates
+        // toward -kRight, so we invert it to get the texture's +U pointing
+        // to the viewer's right.
+        uv = vec2(0.5 - 2.0 * offset.x / u_span.x,
+                  0.5 + 2.0 * offset.y / u_span.y) * u_tile;
+    } else {
+        // StarSphere: tile across the whole sphere. The centred-patch
+        // remap above doubles the tile frequency, which shrinks each star
+        // to sub-pixel size and lets mipmap minification average them
+        // toward black — visibly dim starfield.
+        uv = v_uv * u_tile;
+    }
     vec4 tex = texture(u_texture, uv);
     if (u_use_alpha == 1) {
         frag_color = vec4(tex.rgb, tex.a);
     } else {
-        frag_color = vec4(tex.rgb, 1.0);
+        frag_color = vec4(tex.rgb * 2.0, 1.0);
     }
 }
