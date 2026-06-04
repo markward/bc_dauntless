@@ -47,3 +47,13 @@ def test_play_no_op_when_host_lacks_add_text():
     class _Bare: pass
     ca = TGCreditAction_Create("x", _Bare(), 0.0, 0.0, 1.0)
     ca.Play()  # must not raise
+
+
+def test_play_after_restart_delivers_text_again():
+    host = _SubtitleWindow()
+    ca = TGCreditAction_Create("again", host, 0.0, 0.0, 2.0)
+    ca.Play()
+    assert len(host._active_texts) == 1
+    ca.Restart()
+    ca.Play()
+    assert len(host._active_texts) == 2

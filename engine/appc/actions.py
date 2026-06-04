@@ -302,6 +302,12 @@ class TGCreditAction(TGTimedAction):
         if adder is None: return
         adder(self._text, self._duration_s)
 
+    def Restart(self) -> None:
+        # TGSequence.Restart() re-fires Play on every child. Reset the
+        # idempotency flag so the credit action delivers its text again.
+        self._played = False
+        super().Restart()
+
 
 def TGCreditAction_Create(*args) -> TGCreditAction:
     return TGCreditAction(*args)
