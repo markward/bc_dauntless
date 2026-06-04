@@ -267,7 +267,7 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
     # stop drifters), compute distance falloff, and route damage through
     # apply_hit (which routes shields → subsystem → hull, calls
     # hit_feedback.dispatch, and broadcasts WeaponHitEvent).
-    from engine.appc.subsystems import _emitter_in_arc, _is_offline
+    from engine.appc.subsystems import _emitter_in_arc, _is_offline, _resolve_bank_aim_world
     from engine.appc.math import TGPoint3
     for ship in ships_list:
         sys_ = ship.GetPhaserSystem() if hasattr(ship, "GetPhaserSystem") else None
@@ -301,15 +301,22 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
                 target_pos = target.GetWorldLocation()
                 target_sub = None
             emitter_pos = bank._strip_emit_position(target_pos)
+            # Distance: emit point → target (drives damage falloff).
             dx = target_pos.x - emitter_pos.x
             dy = target_pos.y - emitter_pos.y
             dz = target_pos.z - emitter_pos.z
             dist = (dx * dx + dy * dy + dz * dz) ** 0.5
-            if dist > 1e-6:
-                aim_unit = TGPoint3(dx / dist, dy / dist, dz / dist)
-                if not _emitter_in_arc(bank, ship, aim_unit):
-                    bank.StopFiring()
-                    continue
+            aim_unit = TGPoint3(dx / dist, dy / dist, dz / dist) if dist > 1e-6 else None
+            # Arc check: aim from bank Position → target (NOT emit_pos →
+            # target). The firing cone originates at the mount, not at
+            # the emit point. Mismatch between this site and StartFiring
+            # was Bug F — a bank could pass arc at fire-time and fail
+            # on the next tick because its emit point sat past the
+            # target on the strip. See research doc § Bug F.
+            arc_aim = _resolve_bank_aim_world(bank, target_sub or target)
+            if not _emitter_in_arc(bank, ship, arc_aim):
+                bank.StopFiring()
+                continue
             damage = _phaser_damage_for_tick(
                 max_damage=bank.GetMaxDamage(),
                 max_damage_distance=bank.GetMaxDamageDistance(),

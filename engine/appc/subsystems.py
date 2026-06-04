@@ -44,6 +44,39 @@ def _resolve_aim_world(ship, target):
     return TGPoint3(0.0, 1.0, 0.0)
 
 
+def _resolve_bank_aim_world(bank, target):
+    """Unit vector from a bank's mount Position (world) → target.
+
+    The firing arc originates at the bank's mount point on the ship's
+    hull, NOT at the ship's centre of mass and NOT at the strip emit
+    point.  Galaxy DorsalPhaser1's Position = (0, 1.27, 0.5) sits a
+    full GU forward of ship centre; at close range the two aims
+    disagree by tens of degrees, causing arcs to gate inconsistently
+    between the fire-time check and the per-tick re-check.  See
+    research doc § "Bug F".
+
+    Falls back to ship-pos based aim when the bank has no parent ship
+    (legacy fixtures, unit tests).
+    """
+    if bank is None or target is None or not hasattr(target, "GetWorldLocation"):
+        return _resolve_aim_world(None, target)
+    if not hasattr(bank, "_emitter_world_position"):
+        ship = bank._climb_to_ship() if hasattr(bank, "_climb_to_ship") else None
+        return _resolve_aim_world(ship, target)
+    origin = bank._emitter_world_position()
+    target_pos = target.GetWorldLocation()
+    dx = target_pos.x - origin.x
+    dy = target_pos.y - origin.y
+    dz = target_pos.z - origin.z
+    length = (dx * dx + dy * dy + dz * dz) ** 0.5
+    if length > 1e-6:
+        return TGPoint3(dx / length, dy / length, dz / length)
+    # Degenerate: bank Position coincides with target — fall back to
+    # ship-forward so the arc gate has a sensible direction to test.
+    ship = bank._climb_to_ship() if hasattr(bank, "_climb_to_ship") else None
+    return _resolve_aim_world(ship, None)
+
+
 def _emitter_in_arc(emitter, ship, aim_world):
     """Returns True if `aim_world` (unit vector) lies inside the emitter's
     firing arc, rotated into world space via the ship's rotation.
@@ -1000,11 +1033,9 @@ class WeaponSystem(PoweredSubsystem):
         n = self.GetNumWeapons()
         if n == 0:
             return
-        # Resolve the aim direction in world space.  If the ship has a
-        # target, point at it; otherwise assume "straight ahead" using
-        # the ship's body +Y axis rotated into world.
+        # Resolve aim per-bank: the firing arc originates at each bank's
+        # mount Position, not the ship centre. See research doc § Bug F.
         ship = self.GetParentShip()
-        aim_world = _resolve_aim_world(ship, target)
 
         start = self._next_emitter_index % n
         for delta in range(n):
@@ -1012,6 +1043,9 @@ class WeaponSystem(PoweredSubsystem):
             emitter = self.GetWeapon(idx)
             if emitter is None:
                 continue
+            aim_world = (_resolve_bank_aim_world(emitter, target)
+                         if target is not None
+                         else _resolve_aim_world(ship, None))
             if not _emitter_in_arc(emitter, ship, aim_world):
                 continue
             if hasattr(emitter, "CanFire") and emitter.CanFire():
@@ -1212,9 +1246,8 @@ class PhaserSystem(WeaponSystem):
         self._fire_held = True
         self._held_target = target
         self._held_offset = offset
-        aim_world = _resolve_aim_world(ship, target)
         self._currently_firing = []
-        self._dispatch_one_or_all(target, offset, ship, aim_world)
+        self._dispatch_one_or_all(target, offset, ship)
 
     def StopFiring(self, *args) -> None:
         self._fire_held = False
@@ -1254,13 +1287,17 @@ class PhaserSystem(WeaponSystem):
                 bank = self.GetWeapon(i)
                 if bank is not None and bank.IsFiring():
                     return
-        aim_world = _resolve_aim_world(ship, target)
-        self._dispatch_one_or_all(target, self._held_offset, ship, aim_world)
+        self._dispatch_one_or_all(target, self._held_offset, ship)
 
-    def _dispatch_one_or_all(self, target, offset, ship, aim_world) -> None:
+    def _dispatch_one_or_all(self, target, offset, ship) -> None:
         """SingleFire: fire one eligible bank starting from the round-robin
         cursor, then advance the cursor.  Otherwise fire every eligible
-        bank simultaneously."""
+        bank simultaneously.
+
+        Aim is resolved per-bank via _resolve_bank_aim_world so each
+        bank's arc gate sees the direction from its own mount Position
+        to the target — see research doc § Bug F.
+        """
         n = self.GetNumWeapons()
         if n == 0:
             return
@@ -1271,6 +1308,7 @@ class PhaserSystem(WeaponSystem):
                 bank = self.GetWeapon(idx)
                 if bank is None:
                     continue
+                aim_world = _resolve_bank_aim_world(bank, target)
                 if not _emitter_in_arc(bank, ship, aim_world):
                     continue
                 if hasattr(bank, "CanFire") and bank.CanFire():
@@ -1284,6 +1322,7 @@ class PhaserSystem(WeaponSystem):
             bank = self.GetWeapon(i)
             if bank is None:
                 continue
+            aim_world = _resolve_bank_aim_world(bank, target)
             if not _emitter_in_arc(bank, ship, aim_world):
                 continue
             if hasattr(bank, "CanFire") and bank.CanFire():
