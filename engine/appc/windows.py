@@ -106,3 +106,44 @@ def SubtitleWindow_Cast(obj):
     if obj is None: return None
     if isinstance(obj, _SubtitleWindow): return obj
     return None
+
+
+# ── STStylizedWindow ────────────────────────────────────────────────────────
+# Centred LCARS-framed content panel in BC; dauntless re-styles as a centred
+# modal panel via #sdk-stylized-stack. SDK pixel coords (parent/x/y/w/h) are
+# accepted at the factory but ignored at render time — slot CSS decides layout.
+
+class _STStylizedWindow:
+    _counter = 0  # class-level; reset by top_window.reset_for_tests()
+
+    def __init__(self, title: str = ""):
+        type(self)._counter += 1
+        self._id = f"stylized-{type(self)._counter}"
+        self._title = str(title)
+        self._visible = True
+        self._children: list = []
+
+    def AddChild(self, child, x: float = 0.0, y: float = 0.0, *_extra) -> None:
+        self._children.append(child)
+
+    def SetVisible(self) -> None:    self._visible = True
+    def SetNotVisible(self) -> None: self._visible = False
+
+    def GetObjID(self) -> int:
+        # SDK identity hook used in profile (3 missions × 108 calls).
+        return id(self)
+
+    def _snapshot(self) -> dict:
+        return {
+            "type": "stylized",
+            "id": self._id,
+            "visible": self._visible,
+            "title": self._title,
+        }
+
+
+def STStylizedWindow_CreateW(title="", *_extra) -> _STStylizedWindow:
+    """SDK signature: STStylizedWindow_CreateW(title, parent, x, y, w, h, …).
+    All args after the title are accepted and ignored — dauntless re-styles
+    via slot CSS rather than SDK pixel coords."""
+    return _STStylizedWindow(title)
