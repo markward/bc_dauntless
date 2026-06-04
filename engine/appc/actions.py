@@ -275,19 +275,32 @@ class TGCreditAction(TGTimedAction):
     JUSTIFY_BOTTOM = 3
     JUSTIFY_CENTER = 4
 
+    _DEFAULT_DURATION_S = 3.0  # matches MissionLib.TextBanner default (fDuration=3.0)
+
     def __init__(self, *args):
         super().__init__()
         # SDK constructor is variadic — common forms:
-        #   (text, subtitle_window, x, y, time, fade_in, fade_out, font_size)
+        #   (text, subtitle_window, x, y, duration, fade_in, fade_out, font_size, jx, jy)
         #   (text, subtitle_window) — for short banners
-        # Stash everything for round-trip + Phase 2 rendering.
         self._args = args
         self._text = args[0] if args else ""
         self._subtitle = args[1] if len(args) > 1 else None
-        self._color = _credit_default_color  # tuple (r, g, b, a)
+        self._duration_s = float(args[4]) if len(args) > 4 else self._DEFAULT_DURATION_S
+        self._color = _credit_default_color
+        self._played = False
 
     def SetColor(self, r: float, g: float, b: float, a: float = 1.0) -> None:
         self._color = (float(r), float(g), float(b), float(a))
+
+    def Play(self) -> None:
+        # Idempotent: SDK sometimes chains Play through a TGSequence that
+        # re-fires Play on the same action. Match TGSoundAction's discipline.
+        if self._played: return
+        self._played = True
+        host = self._subtitle
+        adder = getattr(host, "_add_text", None)
+        if adder is None: return
+        adder(self._text, self._duration_s)
 
 
 def TGCreditAction_Create(*args) -> TGCreditAction:
