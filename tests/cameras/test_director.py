@@ -344,3 +344,44 @@ def test_director_zoom_out_in_tracking_delegates():
     d.zoom_out()
     assert d.tracking.d_chase_tracking == pytest.approx(
         seed / d.tracking.ZOOM_FACTOR_PER_PRESS)
+
+
+# ── Task 5: ZoomTarget cleanup on Tracking → Chase transitions ───────────────
+
+
+def test_target_lost_in_tracking_with_zoom_target_active_clears_both():
+    """Durable target-loss fallback must clear ZoomTarget sub-mode
+    in addition to flipping mode to CHASE."""
+    from engine.cameras.director import _CameraDirector, CameraMode
+    d = _CameraDirector()
+    d.chase.set_ship_radius(1.0); d.tracking.set_ship_radius(1.0)
+
+    p_with = _FakeShipWithTarget(target=_make_target_at())
+    p_without = _FakeShipWithTarget(target=None)
+
+    d.toggle_mode(player=p_with)
+    assert d.mode is CameraMode.TRACKING
+    d.start_zoom_target(player=p_with)
+    assert d.tracking.zoom_target_active is True
+
+    # Target lost.
+    d.compute(player=p_without, dt=1.0/60)
+    assert d.mode is CameraMode.CHASE
+    assert d.tracking.zoom_target_active is False
+
+
+def test_c_toggle_tracking_to_chase_clears_zoom_target():
+    """C-key explicit Tracking → Chase must also clear ZoomTarget."""
+    from engine.cameras.director import _CameraDirector, CameraMode
+    d = _CameraDirector()
+    d.chase.set_ship_radius(1.0); d.tracking.set_ship_radius(1.0)
+
+    p = _FakeShipWithTarget(target=_make_target_at())
+    d.toggle_mode(player=p)
+    d.start_zoom_target(player=p)
+    assert d.tracking.zoom_target_active is True
+
+    # C pressed.
+    d.toggle_mode(player=p)
+    assert d.mode is CameraMode.CHASE
+    assert d.tracking.zoom_target_active is False

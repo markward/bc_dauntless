@@ -42,6 +42,7 @@ class _CameraDirector:
             tgt = self._valid_target(player)
             self._opted_out_target = tgt  # None if no target (defensive)
             self.mode = CameraMode.CHASE
+            self.tracking.exit_zoom_target()
 
     def snap(self) -> None:
         """Propagate snap() to both cameras. Use on mission swap /
@@ -87,8 +88,11 @@ class _CameraDirector:
             if tgt is None:
                 # Target lost → durable fallback to Chase; clear opt-out so
                 # re-acquiring any target (including the old one) auto-engages.
+                # Also clear the ZoomTarget sub-mode so a future Tracking
+                # entry doesn't inherit a stale flag.
                 self.mode = CameraMode.CHASE
                 self._opted_out_target = None
+                self.tracking.exit_zoom_target()
             else:
                 return self.tracking.compute(player=player, target=tgt, dt=dt)
         else:
