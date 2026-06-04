@@ -1,8 +1,10 @@
-"""Window shims for App.py — TacticalControlWindow and SubtitleWindow.
+"""Window shims for App.py — TacticalControlWindow, SubtitleWindow, STStylizedWindow.
 
 TacticalControlWindow: event-handler stub until the full menu system lands.
 SubtitleWindow: singleton state machine for mission-objective / cinematic
   banner text; snapshotted by SDKMirrorPanel once per tick.
+STStylizedWindow: per-instance centred panel (LCARS-framed in BC; dauntless
+  re-styles as a modal stack); title + visibility + recorded children.
 """
 import time
 
