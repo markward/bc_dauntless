@@ -14,7 +14,11 @@ from engine.appc.input import (
     KS_KEYDOWN, KS_KEYUP, KS_KEYREPEAT, KS_NORMAL,
     init_input_pipeline, register_input_handlers,
 )
-from engine.appc.windows import TacticalControlWindow
+from engine.appc.windows import (
+    TacticalControlWindow,
+    SubtitleWindow, SubtitleWindow_Cast,
+    STStylizedWindow_CreateW,
+)
 from engine.appc.radar import (
     RadarDisplay_Create, RadarDisplay_Cast,
     RadarScope_Create, RadarBlip_Create,
