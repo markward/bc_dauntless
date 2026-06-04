@@ -50,6 +50,33 @@ class _CameraDirector:
         self.tracking.snap()
         self._opted_out_target = None
 
+    # ── zoom controls ────────────────────────────────────────────────
+
+    def start_zoom_target(self, *, player) -> None:
+        """Z-key down. Enter ZoomTarget if currently in Tracking with a
+        valid target. Otherwise no-op."""
+        if self.mode is not CameraMode.TRACKING:
+            return
+        if self._valid_target(player) is None:
+            return
+        self.tracking.enter_zoom_target()
+
+    def end_zoom_target(self) -> None:
+        """Z-key up. Unconditionally exit ZoomTarget (safe to call when
+        not active — idempotent)."""
+        self.tracking.exit_zoom_target()
+
+    def zoom_in(self) -> None:
+        """=-key press. Delegate to tracking when in Tracking mode.
+        No-op in Chase (Chase sticky zoom is deferred)."""
+        if self.mode is CameraMode.TRACKING:
+            self.tracking.zoom_in()
+
+    def zoom_out(self) -> None:
+        """-key press. Symmetric to zoom_in."""
+        if self.mode is CameraMode.TRACKING:
+            self.tracking.zoom_out()
+
     # ── per-frame dispatch ───────────────────────────────────────────
 
     def compute(self, *, player, dt):
