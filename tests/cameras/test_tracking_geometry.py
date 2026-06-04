@@ -56,7 +56,7 @@ def test_solver_places_player_at_minus_quarter_screen_y():
     from engine.cameras.tracking import _TrackingCamera
 
     tc = _TrackingCamera()
-    tc.d_chase = 10.0
+    tc.d_chase_tracking = 10.0
 
     s_loc, s_rot = _ship((0.0, 0.0, 0.0))  # identity rot → body-up = +z
     t_loc, _     = _ship((0.0, 20.0, 0.0))  # 20 GU along +y (ship-forward)
@@ -78,7 +78,7 @@ def test_solver_places_target_at_plus_quarter_screen_y():
     from engine.cameras.tracking import _TrackingCamera
 
     tc = _TrackingCamera()
-    tc.d_chase = 10.0
+    tc.d_chase_tracking = 10.0
 
     s_loc, s_rot = _ship((0.0, 0.0, 0.0))
     t_loc, _     = _ship((0.0, 20.0, 0.0))
@@ -102,7 +102,7 @@ def test_solver_framing_is_invariant_across_range():
     s_loc, s_rot = _ship((0.0, 0.0, 0.0))
     for d in (5.0, 50.0, 500.0):
         tc = _TrackingCamera()
-        tc.d_chase = 10.0
+        tc.d_chase_tracking = 10.0
         t_loc, _ = _ship((0.0, d, 0.0))
 
         eye, look_at, up = tc.compute(
@@ -125,7 +125,7 @@ def test_solver_up_vector_lies_in_ship_target_body_up_plane():
     from engine.cameras.tracking import _TrackingCamera
     from engine.appc.math         import TGPoint3, TGMatrix3
 
-    tc = _TrackingCamera(); tc.d_chase = 10.0
+    tc = _TrackingCamera(); tc.d_chase_tracking = 10.0
     s_loc = TGPoint3(0.0, 0.0, 0.0); s_rot = TGMatrix3()
     t_loc = TGPoint3(0.0, 20.0, 0.0)
 
@@ -141,7 +141,7 @@ def test_solver_camera_basis_is_orthonormal():
     from engine.cameras.tracking import _TrackingCamera
     from engine.appc.math         import TGPoint3, TGMatrix3
 
-    tc = _TrackingCamera(); tc.d_chase = 10.0
+    tc = _TrackingCamera(); tc.d_chase_tracking = 10.0
     s_loc = TGPoint3(0.0, 0.0, 0.0); s_rot = TGMatrix3()
     t_loc = TGPoint3(0.0, 20.0, 0.0)
 
@@ -167,7 +167,7 @@ def test_solver_player_roll_inherited_into_camera_up():
     from engine.cameras.tracking import _TrackingCamera
     from engine.appc.math         import TGPoint3, TGMatrix3
 
-    tc = _TrackingCamera(); tc.d_chase = 10.0
+    tc = _TrackingCamera(); tc.d_chase_tracking = 10.0
     s_loc = TGPoint3(0.0, 0.0, 0.0)
     s_rot = TGMatrix3(); s_rot.MakeYRotation(math.radians(30))  # roll 30° about body-Y
     t_loc = TGPoint3(0.0, 20.0, 0.0)
@@ -211,7 +211,7 @@ def test_solver_close_target_falls_back_gracefully():
     from engine.cameras.tracking import _TrackingCamera
     from engine.appc.math         import TGPoint3, TGMatrix3
 
-    tc = _TrackingCamera(); tc.d_chase = 10.0
+    tc = _TrackingCamera(); tc.d_chase_tracking = 10.0
     s_loc = TGPoint3(0.0, 0.0, 0.0); s_rot = TGMatrix3()
     # D = 5 GU, d_chase = 10: threshold for fallback is D/tan(β) ≈ 17.
     # This case takes the happy path; the dedicated fallback-coverage
@@ -241,7 +241,7 @@ def test_solver_close_target_fallback_code_path():
     from engine.cameras.tracking import _TrackingCamera
     from engine.appc.math         import TGPoint3, TGMatrix3
 
-    tc = _TrackingCamera(); tc.d_chase = 100.0
+    tc = _TrackingCamera(); tc.d_chase_tracking = 100.0
     s_loc = TGPoint3(0.0, 0.0, 0.0); s_rot = TGMatrix3()
     t_loc = TGPoint3(0.0, 5.0, 0.0)  # D = 5, d_chase = 100 >> D cot β ≈ 17
 
@@ -267,7 +267,7 @@ def test_solver_body_up_parallel_to_ship_target_does_not_crash():
     from engine.cameras.tracking import _TrackingCamera
     from engine.appc.math         import TGPoint3, TGMatrix3
 
-    tc = _TrackingCamera(); tc.d_chase = 10.0
+    tc = _TrackingCamera(); tc.d_chase_tracking = 10.0
     s_loc = TGPoint3(0.0, 0.0, 0.0); s_rot = TGMatrix3()  # body-up = +z
     # Target directly above ship in body frame:
     t_loc = TGPoint3(0.0, 0.0, 20.0)

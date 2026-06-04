@@ -15,21 +15,36 @@ from engine.cameras import (
 
 
 class _TrackingCamera:
-    """Two-angle solver + eye/basis springs."""
+    """Two-angle solver + ZoomTarget sub-mode + eye/basis springs."""
 
     # Default screen-Y fractions of the half-image, signed:
     #   negative = below centre, positive = above centre.
     y_p: float = -0.25   # player
     y_t: float = +0.25   # target
 
-    # Spring time constants — see spec §4.
+    # Spring time constants — see tracking-camera-rework spec §4.
     POS_SPRING_TAU_S: float = 0.25
     ROT_SPRING_TAU_S: float = 0.50
 
+    # Sticky zoom — see tracking-zoom-and-zoom-target spec §2.
+    ZOOM_FACTOR_PER_PRESS: float = 0.9     # one =/- press = ×0.9 / ÷0.9
+    ZOOM_MIN_RADII:        float = 0.6     # reuse CAM_MIN_RADII semantics
+    ZOOM_MAX_RADII:        float = 30.0    # reuse CAM_MAX_RADII semantics
+    ZOOM_DEFAULT_RADII:    float = 0.6     # ZoomTarget seed = ZOOM_MIN_RADII
+
     def __init__(self):
-        self.v_fov_rad      = EXTERIOR_FOV_Y_RAD
-        self.d_chase        = 1.0  # set via set_ship_radius (Task 9)
-        self._smoothed_eye  = None
+        self.v_fov_rad        = EXTERIOR_FOV_Y_RAD
+        # Two persistent distance slots. d_chase_tracking is the chase
+        # distance from the player in normal Tracking framing.
+        # d_chase_zoom is the eye-to-target distance in ZoomTarget mode.
+        self.d_chase_tracking = 1.0   # seeded by set_ship_radius()
+        self.d_chase_zoom     = 1.0   # seeded by set_ship_radius()
+        self.zoom_min         = 1.0   # seeded by set_ship_radius()
+        self.zoom_max         = 1.0   # seeded by set_ship_radius()
+        # ZoomTarget sub-mode flag — toggled by enter/exit_zoom_target.
+        self.zoom_target_active = False
+        # Spring state (unchanged).
+        self._smoothed_eye   = None
         self._smoothed_basis = None
 
     # ── small helpers ────────────────────────────────────────────────
@@ -43,7 +58,12 @@ class _TrackingCamera:
 
     def set_ship_radius(self, radius: float) -> None:
         radius = max(radius, 1e-6)
-        self.d_chase = _math.sqrt(CAM_BACK_RADII**2 + CAM_UP_RADII**2) * radius
+        self.d_chase_tracking = _math.sqrt(CAM_BACK_RADII**2 + CAM_UP_RADII**2) * radius
+        self.zoom_min         = self.ZOOM_MIN_RADII * radius
+        self.zoom_max         = self.ZOOM_MAX_RADII * radius
+        # ZoomTarget seeds at minimum so the first `=` press is a no-op
+        # (matches BC behaviour observed in playtest).
+        self.d_chase_zoom     = self.ZOOM_DEFAULT_RADII * radius
 
     def snap(self) -> None:
         """Drop both smoothing states. Next compute() will seed from
@@ -57,7 +77,7 @@ class _TrackingCamera:
 
         Builds a 2D solver plane spanned by (T−S) and ship-body-up,
         places the eye on the inscribed-angle locus arc above and
-        behind the player at distance d_chase, and constructs the
+        behind the player at distance d_chase_tracking, and constructs the
         camera basis so player projects to y_p and target to y_t.
 
         When dt is None, returns the solver output directly (no springs).
@@ -80,7 +100,7 @@ class _TrackingCamera:
         a_t  = self._screen_y_to_angle(self.y_t)
         beta = a_t - a_p
 
-        e_x, e_y = self._solve_eye_2d(D, self.d_chase, beta)
+        e_x, e_y = self._solve_eye_2d(D, self.d_chase_tracking, beta)
 
         # Lift back to 3D: E = S + e_x * e1 + e_y * e3.
         eye_solver = (S.x + e_x * e1.x + e_y * e3.x,

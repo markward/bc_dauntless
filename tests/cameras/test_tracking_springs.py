@@ -20,7 +20,7 @@ def _identity_setup():
 def test_first_call_with_dt_seeds_springs_to_solver_output():
     from engine.cameras.tracking import _TrackingCamera
 
-    tc = _TrackingCamera(); tc.d_chase = 10.0
+    tc = _TrackingCamera(); tc.d_chase_tracking = 10.0
     player, target = _identity_setup()
 
     eye_seeded, _, up_seeded = tc.compute(player=player, target=target, dt=1.0/60)
@@ -37,7 +37,7 @@ def test_position_spring_lags_after_target_jump_then_converges():
     from engine.cameras.tracking import _TrackingCamera
     from engine.appc.math         import TGPoint3, TGMatrix3
 
-    tc = _TrackingCamera(); tc.d_chase = 10.0
+    tc = _TrackingCamera(); tc.d_chase_tracking = 10.0
 
     # Seed at one target position.
     s_loc = TGPoint3(0.0, 0.0, 0.0); s_rot = TGMatrix3()
@@ -56,7 +56,7 @@ def test_position_spring_lags_after_target_jump_then_converges():
     eye_pre, _, _ = tc.compute(player=player, target=target_a, dt=None)
     eye_one_frame, _, _ = tc.compute(player=player, target=target_b, dt=1.0/60)
     # Solver output for target_b directly:
-    fresh = _TrackingCamera(); fresh.d_chase = 10.0
+    fresh = _TrackingCamera(); fresh.d_chase_tracking = 10.0
     eye_solver_b, _, _ = fresh.compute(player=player, target=target_b, dt=None)
 
     # Lag check: smoothed eye much closer to pre-jump than to solver_b.
@@ -76,7 +76,7 @@ def test_position_spring_lags_after_target_jump_then_converges():
 def test_snap_clears_spring_state():
     from engine.cameras.tracking import _TrackingCamera
 
-    tc = _TrackingCamera(); tc.d_chase = 10.0
+    tc = _TrackingCamera(); tc.d_chase_tracking = 10.0
     player, target = _identity_setup()
     for _ in range(5):
         tc.compute(player=player, target=target, dt=1.0/60)
@@ -91,4 +91,4 @@ def test_set_ship_radius_updates_d_chase():
     tc = _TrackingCamera()
     tc.set_ship_radius(2.0)
     expected = math.sqrt(CAM_BACK_RADII**2 + CAM_UP_RADII**2) * 2.0
-    assert tc.d_chase == pytest.approx(expected)
+    assert tc.d_chase_tracking == pytest.approx(expected)
