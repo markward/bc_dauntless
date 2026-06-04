@@ -80,6 +80,10 @@ class _TrackingCamera:
         behind the player at distance d_chase_tracking, and constructs the
         camera basis so player projects to y_p and target to y_t.
 
+        When zoom_target_active is True, delegates to _compute_zoom_target
+        which places the eye on the player→target axis at d_chase_zoom
+        behind the target instead of the inscribed-angle solver.
+
         When dt is None, returns the solver output directly (no springs).
         When dt is a float, applies position + rotation springs.
         """

@@ -352,6 +352,7 @@ def test_zoom_target_framing_invariant_across_range():
         tc.zoom_target_active = True
 
         s_loc = TGPoint3(0.0, 0.0, 0.0); s_rot = TGMatrix3()
+        # d=5.0 exercises the d_chase_zoom == D boundary (clamp not triggered).
         t_loc = TGPoint3(0.0, d, 0.0)
 
         eye, look_at, up = tc.compute(
