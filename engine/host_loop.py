@@ -1728,6 +1728,9 @@ class HostController:
         # AFTER the ship is added to the set, so the initial publish_added
         # for the player can't filter itself out).
         self.post_load_hook: Optional[Callable[[], None]] = None
+        # Set by the host loop after PanelRegistry is constructed so that
+        # _drain_pending_swap can invalidate all panel caches on swap.
+        self.panel_registry: Any = None
 
     def swap_mission(self, mission_name: str) -> None:
         self.pending_swap = mission_name
@@ -1742,6 +1745,8 @@ class HostController:
         from engine.appc import ship_lifecycle
         ship_lifecycle.reset()
         reset_sdk_globals()
+        if self.panel_registry is not None:
+            self.panel_registry.invalidate_all()
         assert self.loader is not None, "HostController.loader must be set"
         try:
             self.session = self.loader.load(name)
@@ -2225,6 +2230,7 @@ def run(mission_name: Optional[str] = None,
             on_cancel=pause.close,
         )
         registry = PanelRegistry(legacy_handler=pause_menu.dispatch_event)
+        controller.panel_registry = registry  # expose to _drain_pending_swap
         registry.register(target_list_view)
         registry.register(sensors_panel)
         from engine.appc.sdk_mirror_panel import SDKMirrorPanel
