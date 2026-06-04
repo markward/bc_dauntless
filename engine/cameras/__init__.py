@@ -16,11 +16,9 @@ import math
 EXTERIOR_FOV_Y_RAD: float = math.radians(60.0)
 
 # Camera-follow distances as multiples of the player ship's GetRadius().
-CAM_BACK_RADII             =  1.5
-CAM_UP_RADII               =  0.25
-CAM_MIN_RADII              =  0.6
-CAM_MAX_RADII              = 30.0
-CAM_LOOK_UP_RADII          =  0.20
-CAM_TARGET_LOCK_LIFT_RADII =  1.0
+CAM_BACK_RADII  =  1.5
+CAM_UP_RADII    =  0.25
+CAM_MIN_RADII   =  0.6
+CAM_MAX_RADII   = 30.0
 
 from engine.cameras.director import CameraMode, _CameraDirector  # noqa: E402

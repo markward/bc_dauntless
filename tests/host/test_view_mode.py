@@ -61,15 +61,28 @@ def test_view_mode_toggle_on_space_pressed():
 
 
 class _RecordingInputs:
-    """Stand-ins for _PlayerControl / _CameraControl that record whether
+    """Stand-ins for _PlayerControl / director that record whether
     apply() was called and what reader it was handed, without doing any
     work."""
     class _Player:
         def __init__(self): self.calls = []
         def apply(self, player, dt, h): self.calls.append(h)
-    class _Camera:
+    class _FakeChase:
         def __init__(self): self.calls = 0
         def apply(self, dt, h, scroll_y): self.calls += 1
+    class _FakeDirector:
+        def __init__(self, chase): self.chase = chase
+    class _Camera:
+        """Back-compat wrapper: .calls delegates to the inner chase.calls."""
+        def __init__(self):
+            _chase = _RecordingInputs._FakeChase()
+            self._director = _RecordingInputs._FakeDirector(_chase)
+            self._chase = _chase
+        @property
+        def calls(self): return self._chase.calls
+        # Make this object pass as director to _apply_input.
+        @property
+        def chase(self): return self._chase
 
     def __init__(self):
         self.player = self._Player()
@@ -109,6 +122,10 @@ def test_apply_input_preserves_orbit_state_across_bridge_toggle():
     """Spec test 5: entering bridge mode must not mutate _CameraControl
     orbit state, so toggling back restores the same exterior framing."""
     from engine.host_loop import _ViewModeController, _CameraControl, _apply_input
+
+    class _FakeDirectorWithChase:
+        def __init__(self, chase): self.chase = chase
+
     cc = _CameraControl()
     cc.orbit_yaw_rad = 1.234
     cc.orbit_pitch_rad = -0.5
@@ -123,8 +140,8 @@ def test_apply_input_preserves_orbit_state_across_bridge_toggle():
     # must not call cc.apply() at all, so the orbit state stays frozen.
     class _NoopPlayer:
         def apply(self, *a, **k): pass
-    _apply_input(vm, _NoopPlayer(), cc, player=object(),
-                 dt=1.0/60, h=reader, scroll_y=99.0)
+    _apply_input(vm, _NoopPlayer(), _FakeDirectorWithChase(cc),
+                 player=object(), dt=1.0/60, h=reader, scroll_y=99.0)
     assert (cc.orbit_yaw_rad, cc.orbit_pitch_rad, cc.distance) == saved
 
 
@@ -156,13 +173,15 @@ def test_apply_input_in_bridge_keeps_ship_moving_under_real_player_control():
 
     vm = _ViewModeController()
 
-    class _NoopCam:
+    class _NoopChase:
         def apply(self, *a, **k): pass
+    class _NoopDirector:
+        chase = _NoopChase()
 
     reader = _FakeKeyReader()
     # Tick a few times in bridge mode. The ship must move forward.
     for _ in range(10):
-        _apply_input(vm, pc, _NoopCam(),
+        _apply_input(vm, pc, _NoopDirector(),
                      player=ship, dt=1.0/60, h=reader, scroll_y=0.0)
 
     # Ship-Y is forward in body frame. Identity rotation → world +Y.

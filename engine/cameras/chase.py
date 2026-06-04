@@ -21,7 +21,6 @@ import math as _math
 
 from engine.cameras import (
     CAM_BACK_RADII, CAM_UP_RADII, CAM_MIN_RADII, CAM_MAX_RADII,
-    CAM_LOOK_UP_RADII, CAM_TARGET_LOCK_LIFT_RADII,
 )
 
 
@@ -39,14 +38,6 @@ class _ChaseCamera:
         self.orbit_yaw_rad      = self.DEFAULT_YAW_RAD
         self.orbit_pitch_rad    = self.DEFAULT_PITCH_RAD
         self._smoothed_rot      = None  # seeded on first compute_camera(..., dt=...)
-        self.look_up_offset     = 0.0
-        self.target_lock_enabled = True
-        # Vertical shift of the look-at below the target as a fraction of
-        # the eye→target distance — pushes the target up in the frame so
-        # the player ship and target sit on opposite sides of screen
-        # centre. ~sin(angular offset): 0.15 ≈ 9° ≈ 30% above centre at
-        # 60° vertical FOV. 0 = target dead centre.
-        self.target_lock_bias    = 0.15
         self.set_ship_radius(1.0)
 
     def set_ship_radius(self, radius: float) -> None:
@@ -58,8 +49,6 @@ class _ChaseCamera:
         self.default_distance    = _math.sqrt(CAM_BACK_RADII**2 + CAM_UP_RADII**2) * radius
         self.distance_min        = CAM_MIN_RADII * radius
         self.distance_max        = CAM_MAX_RADII * radius
-        self.look_up_offset      = CAM_LOOK_UP_RADII * radius
-        self.target_lock_z_lift  = CAM_TARGET_LOCK_LIFT_RADII * radius
         if prev_default is None or getattr(self, "distance", prev_default) == prev_default:
             self.distance = self.default_distance
 
@@ -69,13 +58,6 @@ class _ChaseCamera:
         self.orbit_yaw_rad   = self.DEFAULT_YAW_RAD
         self.orbit_pitch_rad = self.DEFAULT_PITCH_RAD
         self.distance        = self.default_distance
-
-    def lock_to_target(self) -> None:
-        """Snap orbit to defaults and enable target lock. Use on fresh
-        target selection to give a clean 'over-the-shoulder, look at
-        target' framing regardless of any manual orbit the user had set."""
-        self.reset_orbit()
-        self.target_lock_enabled = True
 
     def snap(self) -> None:
         """Drop smoothed rotation so the next compute_camera(..., dt=...) call
@@ -90,10 +72,10 @@ class _ChaseCamera:
         `keys` namespace containing KEY_LEFT/RIGHT/UP/DOWN/C.
         `scroll_y` is the total wheel delta accumulated since the last call.
         """
-        if h.key_pressed(h.keys.KEY_C):
-            self.reset_orbit()
-            self.target_lock_enabled = False
-            return
+        # C-key is now handled by _CameraDirector.toggle_mode; the
+        # chase camera only owns orbit reset on its own dedicated
+        # binding (none today — kept as a no-op until a future spec
+        # rewires it).
 
         if h.key_state(h.keys.KEY_RIGHT): self.orbit_yaw_rad   += self.TURN_RATE_RAD_PER_S * dt
         if h.key_state(h.keys.KEY_LEFT):  self.orbit_yaw_rad   -= self.TURN_RATE_RAD_PER_S * dt
@@ -141,20 +123,12 @@ class _ChaseCamera:
         fwd = basis.GetCol(1)
         up  = basis.GetCol(2)
 
-        # Shift look-target up along ship body-Z so the ship sits below
-        # screen center. Eye is also shifted by the same amount so the
-        # pitch angle (eye→target) stays unchanged — pure pan.
-        lu = self.look_up_offset
         eye = (
-            ship_loc.x + ox * rgt.x + oy * fwd.x + oz * up.x + lu * up.x,
-            ship_loc.y + ox * rgt.y + oy * fwd.y + oz * up.y + lu * up.y,
-            ship_loc.z + ox * rgt.z + oy * fwd.z + oz * up.z + lu * up.z,
+            ship_loc.x + ox * rgt.x + oy * fwd.x + oz * up.x,
+            ship_loc.y + ox * rgt.y + oy * fwd.y + oz * up.y,
+            ship_loc.z + ox * rgt.z + oy * fwd.z + oz * up.z,
         )
-        target = (
-            ship_loc.x + lu * up.x,
-            ship_loc.y + lu * up.y,
-            ship_loc.z + lu * up.z,
-        )
+        target = (ship_loc.x, ship_loc.y, ship_loc.z)
         up_vec = (up.x, up.y, up.z)
         return eye, target, up_vec
 

@@ -628,7 +628,6 @@ DEFAULT_DIRECTIONALS: list = [
 
 from engine.cameras import (
     CAM_BACK_RADII, CAM_UP_RADII, CAM_MIN_RADII, CAM_MAX_RADII,
-    CAM_LOOK_UP_RADII, CAM_TARGET_LOCK_LIFT_RADII,
 )
 
 
@@ -1691,7 +1690,7 @@ class _NoInputReader:
 _NO_INPUT = _NoInputReader()
 
 
-def _apply_input(view_mode, player_control, cam_control,
+def _apply_input(view_mode, player_control, director,
                  *, player, dt, h, scroll_y) -> None:
     """Per-tick input dispatch.
 
@@ -1704,7 +1703,7 @@ def _apply_input(view_mode, player_control, cam_control,
     """
     if view_mode.is_exterior:
         player_control.apply(player, dt, h)
-        cam_control.apply(dt, h, scroll_y)
+        director.chase.apply(dt, h, scroll_y)
     else:
         player_control.apply(player, dt, _NO_INPUT)
 
@@ -1870,9 +1869,10 @@ def run(mission_name: Optional[str] = None,
         player_control = _PlayerControl()
         from engine.cameras import _CameraDirector
         director       = _CameraDirector()
-        cam_control    = director.chase   # back-compat alias for downstream sites
         if controller.session is not None and controller.session.player is not None:
-            cam_control.set_ship_radius(controller.session.player.GetRadius())
+            _r = controller.session.player.GetRadius()
+            director.chase.set_ship_radius(_r)
+            director.tracking.set_ship_radius(_r)
         view_mode      = _ViewModeController()
         pause          = _PauseMenuController()
         from engine.ui.target_list_view import TargetListView
@@ -2213,14 +2213,16 @@ def run(mission_name: Optional[str] = None,
                 had_pending_swap = controller.pending_swap is not None
                 controller._drain_pending_swap()
                 if had_pending_swap:
-                    cam_control.snap()
+                    director.snap()
             else:
                 had_pending_swap = False
 
             session = controller.session
             player = session.player if session is not None else None
             if had_pending_swap and player is not None:
-                cam_control.set_ship_radius(player.GetRadius())
+                _r = player.GetRadius()
+                director.chase.set_ship_radius(_r)
+                director.tracking.set_ship_radius(_r)
 
             if not pause.is_open:
                 # Dev-mode keybindings (no-op when --developer is not set).
@@ -2257,10 +2259,15 @@ def run(mission_name: Optional[str] = None,
                     # _PlayerControl.apply checks _shift_held() to skip digit
                     # throttling on the same press.
                     _apply_alert_keys(_h, player)
+                    # C-key: toggle Chase ↔ Tracking (only enters Tracking if
+                    # the player has a valid target). key_pressed fires once per
+                    # key-down event (not while held).
+                    if _h.key_pressed(_h.keys.KEY_C):
+                        director.toggle_mode(player=player)
                     # dt = _player_dt (wall-clock frame delta), not TICK_DT —
                     # see comment at the accumulator step. _apply_input fires
                     # once per render frame, so its dt is the wall delta.
-                    _apply_input(view_mode, player_control, cam_control,
+                    _apply_input(view_mode, player_control, director,
                                  player=player, dt=_player_dt, h=_h,
                                  scroll_y=scroll_y)
 

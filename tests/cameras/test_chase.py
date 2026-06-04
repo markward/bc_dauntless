@@ -155,52 +155,9 @@ def test_distance_clamps_at_max():
     assert cc.distance == pytest.approx(cc.distance_max)
 
 
-def test_target_lock_enabled_by_default():
-    from engine.cameras.chase import _ChaseCamera as _CameraControl
-    assert _CameraControl().target_lock_enabled is True
-
-
-def test_C_resets_orbit_and_disables_target_lock():
-    """C is the 'default chase' reset: snap orbit angles and distance
-    back to defaults AND drop target lock so gaze returns to own ship."""
-    from engine.cameras.chase import _ChaseCamera as _CameraControl
-    cc = _CameraControl()
-    cc.orbit_yaw_rad   = 1.2
-    cc.orbit_pitch_rad = -0.4
-    cc.distance        = 12345.0
-    cc.target_lock_enabled = True
-    reader = _FakeKeyReader()
-    reader.pressed_once.add(reader.keys.KEY_C)
-    cc.apply(dt=1.0/60, h=reader, scroll_y=0.0)
-    fresh = _CameraControl()
-    assert cc.orbit_yaw_rad   == pytest.approx(fresh.orbit_yaw_rad)
-    assert cc.orbit_pitch_rad == pytest.approx(fresh.orbit_pitch_rad)
-    assert cc.distance        == pytest.approx(fresh.distance)
-    assert cc.target_lock_enabled is False
-
-
-def test_lock_to_target_resets_orbit_and_enables_lock():
-    """Selecting a new target should snap orbit back to defaults so the
-    chase eye returns behind the ship, and enable target lock so gaze
-    redirects to the target. Overrides any manual orbit the user had."""
-    from engine.cameras.chase import _ChaseCamera as _CameraControl
-    cc = _CameraControl()
-    cc.orbit_yaw_rad   = 1.2
-    cc.orbit_pitch_rad = -0.4
-    cc.distance        = 12345.0
-    cc.target_lock_enabled = False
-    cc.lock_to_target()
-    fresh = _CameraControl()
-    assert cc.orbit_yaw_rad   == pytest.approx(fresh.orbit_yaw_rad)
-    assert cc.orbit_pitch_rad == pytest.approx(fresh.orbit_pitch_rad)
-    assert cc.distance        == pytest.approx(fresh.distance)
-    assert cc.target_lock_enabled is True
-
-
 def test_compute_camera_at_defaults_at_origin_identity_rotation():
     """Default orbit + identity ship rotation places the eye at
-    (0, -CAM_BACK_RADII*r, CAM_UP_RADII*r) relative to a unit-radius ship.
-    The target is panned up by look_up_offset along ship-Z."""
+    (0, -CAM_BACK_RADII*r, CAM_UP_RADII*r) relative to a unit-radius ship."""
     from engine.cameras.chase import _ChaseCamera as _CameraControl
     from engine.host_loop import CAM_BACK_RADII, CAM_UP_RADII
 
@@ -210,8 +167,8 @@ def test_compute_camera_at_defaults_at_origin_identity_rotation():
 
     assert eye[0] == pytest.approx(0.0,             abs=1e-3)
     assert eye[1] == pytest.approx(-CAM_BACK_RADII, abs=1e-3)
-    assert eye[2] == pytest.approx( CAM_UP_RADII + cc.look_up_offset, abs=1e-3)
-    assert target == pytest.approx((0.0, 0.0, cc.look_up_offset))
+    assert eye[2] == pytest.approx( CAM_UP_RADII,   abs=1e-3)
+    assert target == pytest.approx((0.0, 0.0, 0.0))
     assert up     == pytest.approx((0.0, 0.0, 1.0))
 
 
@@ -229,10 +186,10 @@ def test_compute_camera_offset_is_in_ship_body_frame():
     # Ship's body-Y after a +90° yaw points along R.GetCol(1) = (-1, 0, 0)
     # under column-vector convention (see CLAUDE.md). Body-Z is unchanged
     # (0, 0, 1). The camera sits at
-    #   -CAM_BACK_RADII*body_Y + CAM_UP_RADII*body_Z + look_up_offset*body_Z.
+    #   -CAM_BACK_RADII*body_Y + CAM_UP_RADII*body_Z.
     expected_eye_x =  CAM_BACK_RADII
     expected_eye_y =  0.0
-    expected_eye_z =  CAM_UP_RADII + cc.look_up_offset
+    expected_eye_z =  CAM_UP_RADII
     assert eye[0] == pytest.approx(expected_eye_x, abs=1e-3)
     assert eye[1] == pytest.approx(expected_eye_y, abs=1e-3)
     assert eye[2] == pytest.approx(expected_eye_z, abs=1e-3)
@@ -378,7 +335,7 @@ def test_orbit_yaw_90_puts_camera_on_ship_right():
 
     expected_x =  CAM_BACK_RADII                       # cos(default_pitch)*dist along +X
     expected_y =  0.0
-    expected_z =  CAM_UP_RADII + cc.look_up_offset
+    expected_z =  CAM_UP_RADII
     assert eye[0] == pytest.approx(expected_x, abs=1e-3)
     assert eye[1] == pytest.approx(expected_y, abs=1e-3)
     assert eye[2] == pytest.approx(expected_z, abs=1e-3)
