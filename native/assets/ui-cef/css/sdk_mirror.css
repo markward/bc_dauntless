@@ -1,0 +1,54 @@
+/* SDK UI mirror slots — receives JSON payloads from SDKMirrorPanel.
+   #sdk-subtitle is a centred bottom-anchored strip for SubtitleWindow text.
+   #sdk-stylized-stack is a centred column of dauntless modals for
+   STStylizedWindow instances. SDK pixel coords are ignored; layout is
+   dictated by these slot rules.
+   Spec: docs/superpowers/specs/2026-06-03-cef-sdk-ui-mirror-design.md */
+
+#sdk-subtitle {
+  position: absolute;
+  left: 50%;
+  bottom: 12vh;
+  transform: translateX(-50%);
+  max-width: 60vw;
+  padding: 12px 20px;
+  background: rgba(20, 40, 80, 0.85);
+  border: 1px solid #3a6bb8;
+  border-radius: 4px;
+  color: #e8f0ff;
+  font-family: sans-serif;
+  font-size: 14px;
+  text-align: center;
+  z-index: 50;
+  pointer-events: none;
+}
+
+#sdk-stylized-stack {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 16px;
+  pointer-events: none;
+  z-index: 40;
+}
+
+#sdk-stylized-stack .sdk-stylized-window {
+  pointer-events: auto;
+  min-width: 360px;
+  max-width: 60vw;
+  background: rgba(10, 20, 40, 0.92);
+  border: 1px solid #3a6bb8;
+  border-radius: 6px;
+}
+
+#sdk-stylized-stack .sdk-stylized-window__header {
+  padding: 10px 16px;
+  color: #7fa8d8;
+  font-size: 11px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  border-bottom: 1px solid #2a4a80;
+}

@@ -6,6 +6,7 @@
     <link rel="stylesheet" href="css/hello.css">
     <link rel="stylesheet" href="css/target_list.css">
     <link rel="stylesheet" href="css/sensors.css">
+    <link rel="stylesheet" href="css/sdk_mirror.css">
     <link rel="stylesheet" href="panels/ship_display/ship_display.css">
     <link rel="stylesheet" href="panels/speed_display/speed_display.css">
 </head>
@@ -171,11 +172,19 @@
         </section>
     </div>
 
+    <!-- SDK UI mirror slots — receive payloads from SDKMirrorPanel.
+         #sdk-subtitle: bottom-anchored mission-objective/banner strip.
+         #sdk-stylized-stack: centred dauntless-styled modal stack.
+         Spec: docs/superpowers/specs/2026-06-03-cef-sdk-ui-mirror-design.md -->
+    <div id="sdk-subtitle" class="sdk-mirror" hidden></div>
+    <div id="sdk-stylized-stack" class="sdk-mirror"></div>
+
     <script src="js/mission_picker.js"></script>
     <script src="js/pause_menu.js"></script>
     <script src="js/target_list.js"></script>
     <script src="js/sensors.js"></script>
     <script src="panels/ship_display/ship_display.js"></script>
     <script src="panels/speed_display/speed_display.js"></script>
+    <script src="js/sdk_mirror.js"></script>
 </body>
 </html>
