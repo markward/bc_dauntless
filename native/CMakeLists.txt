@@ -144,6 +144,10 @@ add_subdirectory(tools/probe_animation_keys)
 add_subdirectory(tools/probe_block_inventory)
 add_subdirectory(tools/probe_bound_radius)
 add_subdirectory(tools/probe_texture_stages)
+add_subdirectory(tools/dump_bridge_assets)
+add_subdirectory(tools/dump_nif_tree)
+add_subdirectory(tools/inspect_flip)
+add_subdirectory(tools/inspect_tex_props)
 
 # GLFW is a runtime dep for the renderer host; tests reuse the same build.
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
