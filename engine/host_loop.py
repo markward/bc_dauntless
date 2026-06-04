@@ -619,6 +619,17 @@ _BRIDGE_NIF_MAP: dict[str, tuple[str, str]] = {
     "SovereignBridge": (EBRIDGE_NIF_REL, EBRIDGE_TEX_REL),
 }
 
+# Captain's-chair camera position in bridge-local NIF space, per
+# Bridge.<X>.GetBaseCameraPosition() in the SDK scripts. Mirrors
+# sdk/Build/scripts/Bridge/GalaxyBridge.py:84 and SovereignBridge.py:80.
+# Used by _BridgeCamera at compute time; resolved per frame against
+# LoadBridge.LAST_REQUESTED so a bridge swap is picked up without
+# rebuilding the camera.
+_BRIDGE_CAMERA_OFFSETS: dict[str, tuple[float, float, float]] = {
+    "GalaxyBridge":    (0.683736, 86.978439, 50.0),
+    "SovereignBridge": (0.683736, 129.585,   70.678),
+}
+
 # Lighting defaults — used by both the per-tick fallback (when no active set
 # has lights) and as the conceptual source of truth that the C++
 # host_bindings.cc default-constructed Lighting struct mirrors.
@@ -1050,8 +1061,10 @@ class _BridgeCamera:
     let mouse-look + visual iteration discover the right default.
     """
 
-    # MissionLib.py:1475-1483 — DBridge captain's-chair offset.
-    BRIDGE_LOCAL_OFFSET   = (0.0, 50.0, 47.0)
+    # Captain's-chair offset used when LoadBridge.LAST_REQUESTED isn't in
+    # the per-bridge table. Mirrors GalaxyBridge.GetBaseCameraPosition()
+    # — sdk/Build/scripts/Bridge/GalaxyBridge.py:84.
+    DEFAULT_BRIDGE_OFFSET = (0.683736, 86.978439, 50.0)
 
     # PoC starting values; tuned by feel during visual verification.
     NEAR              = 1.0
@@ -1069,6 +1082,17 @@ class _BridgeCamera:
     def __init__(self):
         self.yaw_rad   = self.INITIAL_YAW_RAD
         self.pitch_rad = 0.0
+
+    def _eye_offset(self) -> tuple:
+        """Resolve the per-bridge captain's-chair offset from
+        LoadBridge.LAST_REQUESTED. Called every frame so a mid-session
+        bridge swap is picked up without re-constructing the camera."""
+        try:
+            import LoadBridge as _LB
+            name = getattr(_LB, "LAST_REQUESTED", "")
+        except Exception:
+            name = ""
+        return _BRIDGE_CAMERA_OFFSETS.get(name, self.DEFAULT_BRIDGE_OFFSET)
 
     def apply(self, mouse_dx: float, mouse_dy: float) -> None:
         """Accumulate mouse delta into yaw/pitch with sign conventions:
@@ -1103,7 +1127,7 @@ class _BridgeCamera:
             local_fwd = _rot_around(local_fwd, right, self.pitch_rad)
             local_up  = _rot_around(local_up,  right, self.pitch_rad)
 
-        eye = self.BRIDGE_LOCAL_OFFSET
+        eye = self._eye_offset()
         target = (
             eye[0] + local_fwd[0],
             eye[1] + local_fwd[1],

@@ -57,12 +57,13 @@ def test_yaw_wraps_freely_no_clamp():
 
 
 def test_camera_anchored_at_bridge_local_offset():
-    """Initial yaw (π) makes the default forward -Y. Eye sits at
-    BRIDGE_LOCAL_OFFSET. Up is unit length. Target differs from eye."""
+    """Initial yaw (π) makes the default forward -Y. Eye sits at the
+    per-bridge captain's-chair offset resolved against
+    LoadBridge.LAST_REQUESTED. Up is unit length. Target differs from eye."""
     from engine.host_loop import _BridgeCamera
     bc = _BridgeCamera()
     eye, target, up = bc.compute_camera()
-    ox, oy, oz = _BridgeCamera.BRIDGE_LOCAL_OFFSET
+    ox, oy, oz = bc._eye_offset()
     assert eye[0] == pytest.approx(ox)
     assert eye[1] == pytest.approx(oy)
     assert eye[2] == pytest.approx(oz)
