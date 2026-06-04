@@ -42,6 +42,7 @@ class _CameraDirector:
             tgt = self._valid_target(player)
             self._opted_out_target = tgt  # None if no target (defensive)
             self.mode = CameraMode.CHASE
+            self.tracking.exit_zoom_target()
 
     def snap(self) -> None:
         """Propagate snap() to both cameras. Use on mission swap /
@@ -49,6 +50,33 @@ class _CameraDirector:
         self.chase.snap()
         self.tracking.snap()
         self._opted_out_target = None
+
+    # ── zoom controls ────────────────────────────────────────────────
+
+    def start_zoom_target(self, *, player) -> None:
+        """Z-key down. Enter ZoomTarget if currently in Tracking with a
+        valid target. Otherwise no-op."""
+        if self.mode is not CameraMode.TRACKING:
+            return
+        if self._valid_target(player) is None:
+            return
+        self.tracking.enter_zoom_target()
+
+    def end_zoom_target(self) -> None:
+        """Z-key up. Unconditionally exit ZoomTarget (safe to call when
+        not active — idempotent)."""
+        self.tracking.exit_zoom_target()
+
+    def zoom_in(self) -> None:
+        """=-key press. Delegate to tracking when in Tracking mode.
+        No-op in Chase (Chase sticky zoom is deferred)."""
+        if self.mode is CameraMode.TRACKING:
+            self.tracking.zoom_in()
+
+    def zoom_out(self) -> None:
+        """-key press. Symmetric to zoom_in."""
+        if self.mode is CameraMode.TRACKING:
+            self.tracking.zoom_out()
 
     # ── per-frame dispatch ───────────────────────────────────────────
 
@@ -60,8 +88,11 @@ class _CameraDirector:
             if tgt is None:
                 # Target lost → durable fallback to Chase; clear opt-out so
                 # re-acquiring any target (including the old one) auto-engages.
+                # Also clear the ZoomTarget sub-mode so a future Tracking
+                # entry doesn't inherit a stale flag.
                 self.mode = CameraMode.CHASE
                 self._opted_out_target = None
+                self.tracking.exit_zoom_target()
             else:
                 return self.tracking.compute(player=player, target=tgt, dt=dt)
         else:

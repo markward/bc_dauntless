@@ -1863,6 +1863,7 @@ def run(mission_name: Optional[str] = None,
         player_control = _PlayerControl()
         from engine.cameras import _CameraDirector
         director       = _CameraDirector()
+        z_held_prev = False
         if controller.session is not None and controller.session.player is not None:
             _r = controller.session.player.GetRadius()
             director.chase.set_ship_radius(_r)
@@ -2259,6 +2260,22 @@ def run(mission_name: Optional[str] = None,
                     # the mode cannot flip silently while the bridge is active.
                     if view_mode.is_exterior and _h.key_pressed(_h.keys.KEY_C):
                         director.toggle_mode(player=player)
+                    # Z-key: ZoomTarget framing while held. Held-state (not
+                    # press-edge) so the camera enters/exits as the key state
+                    # changes. The `not director.tracking.zoom_target_active`
+                    # retry guard lets a Z-held-during-target-acquisition
+                    # succeed on whichever frame the target appears.
+                    z_held_now = view_mode.is_exterior and _h.key_state(_h.keys.KEY_Z)
+                    if z_held_now and not director.tracking.zoom_target_active:
+                        director.start_zoom_target(player=player)
+                    elif z_held_prev and not z_held_now:
+                        director.end_zoom_target()
+                    z_held_prev = z_held_now
+                    # =/- sticky zoom: press-edge (OS auto-repeat for hold).
+                    if view_mode.is_exterior and _h.key_pressed(_h.keys.KEY_EQUAL):
+                        director.zoom_in()
+                    if view_mode.is_exterior and _h.key_pressed(_h.keys.KEY_MINUS):
+                        director.zoom_out()
                     # dt = _player_dt (wall-clock frame delta), not TICK_DT —
                     # see comment at the accumulator step. _apply_input fires
                     # once per render frame, so its dt is the wall delta.

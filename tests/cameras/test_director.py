@@ -263,3 +263,125 @@ def test_snap_clears_opt_out():
     # Next compute auto-engages because opt-out is cleared.
     d.compute(player=p, dt=1.0/60)
     assert d.mode is CameraMode.TRACKING
+
+
+# ── Task 4: zoom controls ────────────────────────────────────────────────────
+
+
+def test_start_zoom_target_in_chase_is_noop():
+    from engine.cameras.director import _CameraDirector
+    d = _CameraDirector()
+    d.tracking.set_ship_radius(1.0)
+    # mode is CHASE by default
+    d.start_zoom_target(player=_FakeShipWithTarget(target=_make_target_at()))
+    assert d.tracking.zoom_target_active is False
+
+
+def test_start_zoom_target_in_tracking_with_target_activates():
+    from engine.cameras.director import _CameraDirector, CameraMode
+    d = _CameraDirector()
+    d.chase.set_ship_radius(1.0); d.tracking.set_ship_radius(1.0)
+    # Enter Tracking first (via toggle).
+    p = _FakeShipWithTarget(target=_make_target_at())
+    d.toggle_mode(player=p)
+    assert d.mode is CameraMode.TRACKING
+    d.start_zoom_target(player=p)
+    assert d.tracking.zoom_target_active is True
+
+
+def test_start_zoom_target_in_tracking_with_no_target_is_noop():
+    from engine.cameras.director import _CameraDirector, CameraMode
+    d = _CameraDirector()
+    d.chase.set_ship_radius(1.0); d.tracking.set_ship_radius(1.0)
+    # Force Tracking even though there's no target (test scaffold).
+    d.mode = CameraMode.TRACKING
+    p = _FakeShipWithTarget(target=None)
+    d.start_zoom_target(player=p)
+    assert d.tracking.zoom_target_active is False
+
+
+def test_end_zoom_target_clears_unconditionally():
+    from engine.cameras.director import _CameraDirector
+    d = _CameraDirector()
+    d.tracking.set_ship_radius(1.0)
+    d.tracking.zoom_target_active = True
+    d.end_zoom_target()
+    assert d.tracking.zoom_target_active is False
+    # Called again — still False (idempotent).
+    d.end_zoom_target()
+    assert d.tracking.zoom_target_active is False
+
+
+def test_director_zoom_in_in_chase_is_noop():
+    from engine.cameras.director import _CameraDirector
+    d = _CameraDirector()
+    d.chase.set_ship_radius(1.0); d.tracking.set_ship_radius(1.0)
+    seed_tracking = d.tracking.d_chase_tracking
+    seed_zoom = d.tracking.d_chase_zoom
+    d.zoom_in()
+    d.zoom_out()
+    assert d.tracking.d_chase_tracking == pytest.approx(seed_tracking)
+    assert d.tracking.d_chase_zoom == pytest.approx(seed_zoom)
+
+
+def test_director_zoom_in_in_tracking_delegates():
+    from engine.cameras.director import _CameraDirector, CameraMode
+    d = _CameraDirector()
+    d.chase.set_ship_radius(1.0); d.tracking.set_ship_radius(1.0)
+    d.mode = CameraMode.TRACKING
+    seed = d.tracking.d_chase_tracking
+    d.zoom_in()
+    assert d.tracking.d_chase_tracking == pytest.approx(
+        seed * d.tracking.ZOOM_FACTOR_PER_PRESS)
+
+
+def test_director_zoom_out_in_tracking_delegates():
+    from engine.cameras.director import _CameraDirector, CameraMode
+    d = _CameraDirector()
+    d.chase.set_ship_radius(1.0); d.tracking.set_ship_radius(1.0)
+    d.mode = CameraMode.TRACKING
+    seed = d.tracking.d_chase_tracking
+    d.zoom_out()
+    assert d.tracking.d_chase_tracking == pytest.approx(
+        seed / d.tracking.ZOOM_FACTOR_PER_PRESS)
+
+
+# ── Task 5: ZoomTarget cleanup on Tracking → Chase transitions ───────────────
+
+
+def test_target_lost_in_tracking_with_zoom_target_active_clears_both():
+    """Durable target-loss fallback must clear ZoomTarget sub-mode
+    in addition to flipping mode to CHASE."""
+    from engine.cameras.director import _CameraDirector, CameraMode
+    d = _CameraDirector()
+    d.chase.set_ship_radius(1.0); d.tracking.set_ship_radius(1.0)
+
+    p_with = _FakeShipWithTarget(target=_make_target_at())
+    p_without = _FakeShipWithTarget(target=None)
+
+    d.toggle_mode(player=p_with)
+    assert d.mode is CameraMode.TRACKING
+    d.start_zoom_target(player=p_with)
+    assert d.tracking.zoom_target_active is True
+
+    # Target lost.
+    d.compute(player=p_without, dt=1.0/60)
+    assert d.mode is CameraMode.CHASE
+    assert d.tracking.zoom_target_active is False
+
+
+def test_c_toggle_tracking_to_chase_clears_zoom_target():
+    """C-key explicit Tracking → Chase must also clear ZoomTarget."""
+    from engine.cameras.director import _CameraDirector, CameraMode
+    d = _CameraDirector()
+    d.chase.set_ship_radius(1.0); d.tracking.set_ship_radius(1.0)
+
+    p = _FakeShipWithTarget(target=_make_target_at())
+    d.toggle_mode(player=p)
+    d.start_zoom_target(player=p)
+    assert d.tracking.zoom_target_active is True
+
+    # C pressed.
+    d.toggle_mode(player=p)
+    assert d.mode is CameraMode.CHASE
+    assert d.tracking.zoom_target_active is False
