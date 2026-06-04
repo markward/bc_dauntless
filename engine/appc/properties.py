@@ -336,6 +336,13 @@ class EnergyWeaponProperty(WeaponProperty):
         # Phaser-strip length along the Right axis (galaxy.py: 1.5–1.7).
         # 0.0 = treat the emitter as a point.
         self._length:               float = 0.0
+        # Phaser-strip width -- the strip's lateral dimension perpendicular
+        # to Length. Distinct from PhaserWidth (the beam thickness on
+        # PhaserProperty). Galaxy banks use 1.01-1.69 GU; the value is the
+        # second axis of the strip's surface patch.  Without this typed
+        # setter the SDK ``SetWidth(1.35)`` calls fall through to the
+        # data-bag and are silently dropped. See research doc Bug C.
+        self._width:                float = 0.0
         # Texture tiling along the beam.  SDK convention: tiles per
         # world unit of beam length.  Galaxy phasers use 0.5 (one full
         # texture every 2 world units).  PhaserLights.tga is 32x32 so
@@ -348,6 +355,12 @@ class EnergyWeaponProperty(WeaponProperty):
 
     def SetLength(self, v) -> None:
         self._length = float(v)
+
+    def GetWidth(self) -> float:
+        return self._width
+
+    def SetWidth(self, v) -> None:
+        self._width = float(v)
 
     def GetLengthTextureTilePerUnit(self) -> float:
         return self._length_texture_tile_per_unit
