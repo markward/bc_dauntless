@@ -28,9 +28,13 @@ class _TrackingCamera:
 
     # Sticky zoom — see tracking-zoom-and-zoom-target spec §2.
     ZOOM_FACTOR_PER_PRESS: float = 0.9     # one =/- press = ×0.9 / ÷0.9
-    ZOOM_MIN_RADII:        float = 0.6     # reuse CAM_MIN_RADII semantics
+    ZOOM_MIN_RADII:        float = 0.74    # = 0.6 / 0.9² — pull the floor back
+                                            # 2 zoom-out clicks from the
+                                            # CAM_MIN_RADII baseline so the
+                                            # closest framing is less oppressive
+                                            # (post-playtest tuning).
     ZOOM_MAX_RADII:        float = 30.0    # reuse CAM_MAX_RADII semantics
-    ZOOM_DEFAULT_RADII:    float = 0.6     # ZoomTarget seed = ZOOM_MIN_RADII
+    ZOOM_DEFAULT_RADII:    float = 0.74    # ZoomTarget seed = ZOOM_MIN_RADII
 
     def __init__(self):
         self.v_fov_rad        = EXTERIOR_FOV_Y_RAD
