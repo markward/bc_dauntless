@@ -37,6 +37,7 @@ class _ChaseCamera:
     def __init__(self):
         self.orbit_yaw_rad      = self.DEFAULT_YAW_RAD
         self.orbit_pitch_rad    = self.DEFAULT_PITCH_RAD
+        self.reverse_active     = False
         self._smoothed_rot      = None  # seeded on first compute_camera(..., dt=...)
         self.set_ship_radius(1.0)
 
@@ -64,6 +65,14 @@ class _ChaseCamera:
         aligns the camera immediately with the live ship rotation. Use on hard
         cuts (mission swap, teleport, warp exit)."""
         self._smoothed_rot = None
+
+    def enter_reverse(self) -> None:
+        """V-key down: flip camera to in-front-of-ship perspective."""
+        self.reverse_active = True
+
+    def exit_reverse(self) -> None:
+        """V-key up: return to behind-ship perspective."""
+        self.reverse_active = False
 
     def apply(self, dt: float, h, scroll_y: float) -> None:
         """Read arrow keys + C reset + accumulated scroll, update orbit state.
@@ -109,8 +118,9 @@ class _ChaseCamera:
         """
         basis = self._advance_smoothing(ship_rot, dt) if dt is not None else ship_rot
 
-        cy = _math.cos(self.orbit_yaw_rad)
-        sy = _math.sin(self.orbit_yaw_rad)
+        yaw_effective = self.orbit_yaw_rad + (_math.pi if self.reverse_active else 0.0)
+        cy = _math.cos(yaw_effective)
+        sy = _math.sin(yaw_effective)
         cp = _math.cos(self.orbit_pitch_rad)
         sp = _math.sin(self.orbit_pitch_rad)
         d  = self.distance
