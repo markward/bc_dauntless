@@ -36,6 +36,7 @@ class _CameraDirector:
             self.mode = CameraMode.TRACKING
             self.tracking.snap()
             self._opted_out_target = None
+            self.chase.exit_reverse()
         else:
             # Leaving Tracking manually: record the current target so
             # auto-engage doesn't immediately re-fire next frame.
@@ -67,16 +68,29 @@ class _CameraDirector:
         not active — idempotent)."""
         self.tracking.exit_zoom_target()
 
+    def start_reverse(self) -> None:
+        """V-key down. Enter Reverse Chase if currently in CHASE mode.
+        No-op in Tracking (V is Chase-only per spec §1)."""
+        if self.mode is CameraMode.CHASE:
+            self.chase.enter_reverse()
+
+    def end_reverse(self) -> None:
+        """V-key up. Idempotent."""
+        self.chase.exit_reverse()
+
     def zoom_in(self) -> None:
-        """=-key press. Delegate to tracking when in Tracking mode.
-        No-op in Chase (Chase sticky zoom is deferred)."""
+        """=-key press. Delegate to the active mode's camera."""
         if self.mode is CameraMode.TRACKING:
             self.tracking.zoom_in()
+        else:  # CHASE
+            self.chase.zoom_in()
 
     def zoom_out(self) -> None:
         """-key press. Symmetric to zoom_in."""
         if self.mode is CameraMode.TRACKING:
             self.tracking.zoom_out()
+        else:  # CHASE
+            self.chase.zoom_out()
 
     # ── per-frame dispatch ───────────────────────────────────────────
 
@@ -107,6 +121,7 @@ class _CameraDirector:
                 self.mode = CameraMode.TRACKING
                 self.tracking.snap()
                 self._opted_out_target = None
+                self.chase.exit_reverse()
                 return self.tracking.compute(player=player, target=tgt, dt=dt)
         return self.chase.compute_camera(loc, rot, dt=dt)
 

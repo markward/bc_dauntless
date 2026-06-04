@@ -33,10 +33,12 @@ class _ChaseCamera:
     DEFAULT_YAW_RAD        = 0.0
     DEFAULT_PITCH_RAD      = _math.atan2(CAM_UP_RADII, CAM_BACK_RADII)
     SPRING_TAU_S           = 0.50                               # ~95% catch-up in 1.5s
+    MOUSE_SENSITIVITY      = 0.005                              # radians per pixel
 
     def __init__(self):
         self.orbit_yaw_rad      = self.DEFAULT_YAW_RAD
         self.orbit_pitch_rad    = self.DEFAULT_PITCH_RAD
+        self.reverse_active     = False
         self._smoothed_rot      = None  # seeded on first compute_camera(..., dt=...)
         self.set_ship_radius(1.0)
 
@@ -60,10 +62,40 @@ class _ChaseCamera:
         self.distance        = self.default_distance
 
     def snap(self) -> None:
-        """Drop smoothed rotation so the next compute_camera(..., dt=...) call
-        aligns the camera immediately with the live ship rotation. Use on hard
-        cuts (mission swap, teleport, warp exit)."""
-        self._smoothed_rot = None
+        """Drop smoothed rotation, reset distance to default, and clear the
+        reverse-active flag. Use on hard cuts (mission swap, teleport,
+        warp exit)."""
+        self._smoothed_rot  = None
+        self.distance       = self.default_distance
+        self.reverse_active = False
+
+    def enter_reverse(self) -> None:
+        """V-key down: flip camera to in-front-of-ship perspective."""
+        self.reverse_active = True
+
+    def exit_reverse(self) -> None:
+        """V-key up: return to behind-ship perspective."""
+        self.reverse_active = False
+
+    def zoom_in(self) -> None:
+        """=-key press. Decrease distance, clamped at distance_min."""
+        self.distance = max(self.distance * self.ZOOM_FACTOR_PER_NOTCH,
+                            self.distance_min)
+
+    def zoom_out(self) -> None:
+        """-key press. Increase distance, clamped at distance_max."""
+        self.distance = min(self.distance / self.ZOOM_FACTOR_PER_NOTCH,
+                            self.distance_max)
+
+    def apply_mouse_delta(self, dx: float, dy: float) -> None:
+        """Shift+mouse: additive orbit input alongside arrow keys.
+        Pitch clamped to the same ±PITCH_LIMIT_RAD as arrow input."""
+        self.orbit_yaw_rad   += dx * self.MOUSE_SENSITIVITY
+        self.orbit_pitch_rad -= dy * self.MOUSE_SENSITIVITY
+        if self.orbit_pitch_rad >  self.PITCH_LIMIT_RAD:
+            self.orbit_pitch_rad =  self.PITCH_LIMIT_RAD
+        if self.orbit_pitch_rad < -self.PITCH_LIMIT_RAD:
+            self.orbit_pitch_rad = -self.PITCH_LIMIT_RAD
 
     def apply(self, dt: float, h, scroll_y: float) -> None:
         """Read arrow keys + C reset + accumulated scroll, update orbit state.
@@ -109,8 +141,9 @@ class _ChaseCamera:
         """
         basis = self._advance_smoothing(ship_rot, dt) if dt is not None else ship_rot
 
-        cy = _math.cos(self.orbit_yaw_rad)
-        sy = _math.sin(self.orbit_yaw_rad)
+        yaw_effective = self.orbit_yaw_rad + (_math.pi if self.reverse_active else 0.0)
+        cy = _math.cos(yaw_effective)
+        sy = _math.sin(yaw_effective)
         cp = _math.cos(self.orbit_pitch_rad)
         sp = _math.sin(self.orbit_pitch_rad)
         d  = self.distance

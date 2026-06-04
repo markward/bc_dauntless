@@ -312,18 +312,6 @@ def test_end_zoom_target_clears_unconditionally():
     assert d.tracking.zoom_target_active is False
 
 
-def test_director_zoom_in_in_chase_is_noop():
-    from engine.cameras.director import _CameraDirector
-    d = _CameraDirector()
-    d.chase.set_ship_radius(1.0); d.tracking.set_ship_radius(1.0)
-    seed_tracking = d.tracking.d_chase_tracking
-    seed_zoom = d.tracking.d_chase_zoom
-    d.zoom_in()
-    d.zoom_out()
-    assert d.tracking.d_chase_tracking == pytest.approx(seed_tracking)
-    assert d.tracking.d_chase_zoom == pytest.approx(seed_zoom)
-
-
 def test_director_zoom_in_in_tracking_delegates():
     from engine.cameras.director import _CameraDirector, CameraMode
     d = _CameraDirector()
@@ -385,3 +373,95 @@ def test_c_toggle_tracking_to_chase_clears_zoom_target():
     d.toggle_mode(player=p)
     assert d.mode is CameraMode.CHASE
     assert d.tracking.zoom_target_active is False
+
+
+def test_director_zoom_in_in_chase_delegates_to_chase():
+    from engine.cameras.director import _CameraDirector
+    d = _CameraDirector()
+    d.chase.set_ship_radius(1.0); d.tracking.set_ship_radius(1.0)
+    seed_chase = d.chase.distance
+    seed_tracking = d.tracking.d_chase_tracking
+    d.zoom_in()
+    assert d.chase.distance == pytest.approx(
+        seed_chase * d.chase.ZOOM_FACTOR_PER_NOTCH)
+    assert d.tracking.d_chase_tracking == pytest.approx(seed_tracking)
+
+
+def test_director_zoom_out_in_chase_delegates_to_chase():
+    from engine.cameras.director import _CameraDirector
+    d = _CameraDirector()
+    d.chase.set_ship_radius(1.0); d.tracking.set_ship_radius(1.0)
+    seed_chase = d.chase.distance
+    seed_tracking = d.tracking.d_chase_tracking
+    d.zoom_out()
+    assert d.chase.distance == pytest.approx(
+        seed_chase / d.chase.ZOOM_FACTOR_PER_NOTCH)
+    assert d.tracking.d_chase_tracking == pytest.approx(seed_tracking)
+
+
+# ── Task 6: start/end_reverse + Tracking-entry cleanup ──────────────────────
+
+
+def test_director_start_reverse_in_chase_sets_flag():
+    from engine.cameras.director import _CameraDirector
+    d = _CameraDirector()
+    d.chase.set_ship_radius(1.0); d.tracking.set_ship_radius(1.0)
+    d.start_reverse()
+    assert d.chase.reverse_active is True
+
+
+def test_director_start_reverse_in_tracking_is_noop():
+    from engine.cameras.director import _CameraDirector, CameraMode
+    d = _CameraDirector()
+    d.chase.set_ship_radius(1.0); d.tracking.set_ship_radius(1.0)
+    d.mode = CameraMode.TRACKING
+    d.start_reverse()
+    assert d.chase.reverse_active is False
+
+
+def test_director_end_reverse_clears_unconditionally():
+    from engine.cameras.director import _CameraDirector
+    d = _CameraDirector()
+    d.chase.set_ship_radius(1.0); d.tracking.set_ship_radius(1.0)
+    d.chase.reverse_active = True
+    d.end_reverse()
+    assert d.chase.reverse_active is False
+    # Idempotent.
+    d.end_reverse()
+    assert d.chase.reverse_active is False
+
+
+def test_c_toggle_chase_to_tracking_clears_reverse():
+    """C-key explicit CHASE → TRACKING must clear reverse_active."""
+    from engine.cameras.director import _CameraDirector, CameraMode
+    d = _CameraDirector()
+    d.chase.set_ship_radius(1.0); d.tracking.set_ship_radius(1.0)
+    p = _FakeShipWithTarget(target=_make_target_at())
+    d.chase.reverse_active = True
+    d.toggle_mode(player=p)
+    assert d.mode is CameraMode.TRACKING
+    assert d.chase.reverse_active is False
+
+
+def test_target_auto_engage_clears_reverse():
+    """Auto-engage Tracking on target acquisition must clear
+    reverse_active so a future return to Chase doesn't surprise the
+    user with leftover flip."""
+    from engine.cameras.director import _CameraDirector, CameraMode
+    d = _CameraDirector()
+    d.chase.set_ship_radius(1.0); d.tracking.set_ship_radius(1.0)
+    d.chase.reverse_active = True
+
+    p_with_target = _FakeShipWithTarget(target=_make_target_at())
+    d.compute(player=p_with_target, dt=1.0/60)  # auto-engage
+    assert d.mode is CameraMode.TRACKING
+    assert d.chase.reverse_active is False
+
+
+def test_director_snap_resets_chase_reverse():
+    from engine.cameras.director import _CameraDirector
+    d = _CameraDirector()
+    d.chase.set_ship_radius(1.0); d.tracking.set_ship_radius(1.0)
+    d.chase.reverse_active = True
+    d.snap()
+    assert d.chase.reverse_active is False

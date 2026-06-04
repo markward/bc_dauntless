@@ -642,6 +642,7 @@ DEFAULT_DIRECTIONALS: list = [
 
 from engine.cameras import (
     CAM_BACK_RADII, CAM_UP_RADII, CAM_MIN_RADII, CAM_MAX_RADII,
+    CameraMode,
 )
 
 
@@ -1942,6 +1943,7 @@ def run(mission_name: Optional[str] = None,
         from engine.cameras import _CameraDirector
         director       = _CameraDirector()
         z_held_prev = False
+        v_held_prev = False
         if controller.session is not None and controller.session.player is not None:
             _r = controller.session.player.GetRadius()
             director.chase.set_ship_radius(_r)
@@ -2357,6 +2359,31 @@ def run(mission_name: Optional[str] = None,
                         director.zoom_in()
                     if view_mode.is_exterior and _h.key_pressed(_h.keys.KEY_MINUS):
                         director.zoom_out()
+                    # V-key: Reverse Chase while held. Same hold-state
+                    # edge detection as Z, with a retry guard so a
+                    # V-held-during-mode-transition succeeds on the
+                    # next eligible frame.
+                    v_held_now = view_mode.is_exterior and _h.key_state(_h.keys.KEY_V)
+                    if v_held_now and not director.chase.reverse_active:
+                        director.start_reverse()
+                    elif v_held_prev and not v_held_now:
+                        director.end_reverse()
+                    v_held_prev = v_held_now
+                    # Shift+mouse: orbit yaw/pitch additive on top of
+                    # arrow keys. Drain the mouse delta unconditionally
+                    # in exterior view so non-Shift mouse motion doesn't
+                    # accumulate and snap the camera on the next Shift
+                    # press.
+                    mouse_dx_exterior, mouse_dy_exterior = 0.0, 0.0
+                    if view_mode.is_exterior:
+                        mouse_dx_exterior, mouse_dy_exterior = _h.consume_mouse_delta()
+                    shift_held = view_mode.is_exterior and (
+                        _h.key_state(_h.keys.KEY_LEFT_SHIFT) or
+                        _h.key_state(_h.keys.KEY_RIGHT_SHIFT)
+                    )
+                    if shift_held and director.mode is CameraMode.CHASE:
+                        director.chase.apply_mouse_delta(
+                            mouse_dx_exterior, mouse_dy_exterior)
                     # dt = _player_dt (wall-clock frame delta), not TICK_DT —
                     # see comment at the accumulator step. _apply_input fires
                     # once per render frame, so its dt is the wall delta.
