@@ -87,6 +87,9 @@ def test_invalidate_forces_reemit():
 
 
 def test_dispatch_event_logs_click_and_returns_true(caplog):
+    # The `/close` suffix is forward-looking: Task 8 JS will emit
+    # `click:<id>` only. This richer input verifies the handler
+    # tolerates sub-actions for future close-button work.
     p = SDKMirrorPanel()
     with caplog.at_level(logging.INFO, logger="engine.appc.sdk_mirror_panel"):
         handled = p.dispatch_event("click:stylized-3/close")

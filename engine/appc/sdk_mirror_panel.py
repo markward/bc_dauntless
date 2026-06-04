@@ -62,6 +62,10 @@ class SDKMirrorPanel(Panel):
         return False
 
     def invalidate(self) -> None:
+        # Reset to None, NOT the empty-entries sentinel. PanelRegistry
+        # calls invalidate() after a CEF page reload, when the DOM is
+        # blank — even a quiescent (empty) payload must fire once to
+        # confirm the empty state to the freshly loaded JS.
         self._last_pushed = None
 
     def _log_unrecognised_once(self, type_name: str) -> None:
