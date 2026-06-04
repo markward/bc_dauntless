@@ -65,12 +65,54 @@ class _TrackingCamera:
         # (matches BC behaviour observed in playtest).
         self.d_chase_zoom     = self.ZOOM_DEFAULT_RADII * radius
 
+    def zoom_in(self) -> None:
+        """Sticky zoom (= key): bring the camera closer to its anchor.
+        Modifies whichever distance is active based on zoom_target_active."""
+        if self.zoom_target_active:
+            self.d_chase_zoom = max(
+                self.d_chase_zoom * self.ZOOM_FACTOR_PER_PRESS,
+                self.zoom_min,
+            )
+        else:
+            self.d_chase_tracking = max(
+                self.d_chase_tracking * self.ZOOM_FACTOR_PER_PRESS,
+                self.zoom_min,
+            )
+
+    def zoom_out(self) -> None:
+        """Sticky zoom (- key): push the camera farther from its anchor."""
+        if self.zoom_target_active:
+            self.d_chase_zoom = min(
+                self.d_chase_zoom / self.ZOOM_FACTOR_PER_PRESS,
+                self.zoom_max,
+            )
+        else:
+            self.d_chase_tracking = min(
+                self.d_chase_tracking / self.ZOOM_FACTOR_PER_PRESS,
+                self.zoom_max,
+            )
+
+    def enter_zoom_target(self) -> None:
+        """Activate the ZoomTarget sub-mode. Does NOT reset
+        d_chase_zoom — preserves it across press/release."""
+        self.zoom_target_active = True
+
+    def exit_zoom_target(self) -> None:
+        """Deactivate the ZoomTarget sub-mode."""
+        self.zoom_target_active = False
+
     def snap(self) -> None:
-        """Drop both smoothing states. Next compute() will seed from
-        the solver output directly. Use on mode-enter, mission swap,
-        teleport / warp exit."""
+        """Drop both smoothing states and reset zoom to defaults.
+        Used on mission swap / hard cut."""
         self._smoothed_eye   = None
         self._smoothed_basis = None
+        # Reset zoom by re-seeding from the current ship radius.
+        # Recover the radius from zoom_max / ZOOM_MAX_RADII.
+        if self.zoom_max > 0.0:
+            radius = self.zoom_max / self.ZOOM_MAX_RADII
+            self.d_chase_tracking = _math.sqrt(CAM_BACK_RADII**2 + CAM_UP_RADII**2) * radius
+            self.d_chase_zoom     = self.ZOOM_DEFAULT_RADII * radius
+        self.zoom_target_active = False
 
     def compute(self, player, target, dt):
         """Return (eye, look_at, up) in world space.
