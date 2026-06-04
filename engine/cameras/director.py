@@ -6,7 +6,8 @@ flag. compute(...) forwards to the active camera. Mode transitions
 """
 from enum import Enum
 
-from engine.cameras.chase import _ChaseCamera
+from engine.cameras.chase    import _ChaseCamera
+from engine.cameras.tracking import _TrackingCamera
 
 
 class CameraMode(Enum):
@@ -18,9 +19,9 @@ class _CameraDirector:
     """Mode flag + per-mode camera objects + dispatch."""
 
     def __init__(self):
-        self.mode  = CameraMode.CHASE
-        self.chase = _ChaseCamera()
-        # self.tracking added in Task 5.
+        self.mode     = CameraMode.CHASE
+        self.chase    = _ChaseCamera()
+        self.tracking = _TrackingCamera()
 
     def compute(self, *, player, dt):
         """Return (eye, look_at, up) in world space for the active mode."""
