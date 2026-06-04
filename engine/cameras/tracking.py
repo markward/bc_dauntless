@@ -42,8 +42,96 @@ class _TrackingCamera:
     def compute(self, player, target, dt):
         """Return (eye, look_at, up) in world space.
 
-        Implementation arrives over Tasks 6–9. For now raises so
-        callers fail loudly if they reach Tracking before the solver
-        exists.
+        Builds a 2D solver plane spanned by (T−S) and ship-body-up,
+        places the eye on the inscribed-angle locus arc above and
+        behind the player at distance d_chase, and constructs the
+        camera basis so player projects to y_p and target to y_t.
+
+        dt is currently unused; springs land in Task 9.
         """
-        raise NotImplementedError("tracking solver lands in Tasks 6–9")
+        from engine.appc.math import TGPoint3
+
+        S = player.GetWorldLocation()
+        T = target.GetWorldLocation()
+        R = player.GetWorldRotation()
+        B = R.GetCol(2)  # ship body-up in world space
+
+        # Plane basis (e1, e3): e1 along ship→target, e3 = body-up
+        # projected perpendicular to e1, normalised.
+        e1, e3 = self._plane_basis(S, T, B)
+
+        # 2D coords: S = (0,0), T = (D,0). Solve for eye (e_x, e_y).
+        D    = TGPoint3(T.x-S.x, T.y-S.y, T.z-S.z).Length()
+        a_p  = self._screen_y_to_angle(self.y_p)
+        a_t  = self._screen_y_to_angle(self.y_t)
+        beta = a_t - a_p
+
+        e_x, e_y = self._solve_eye_2d(D, self.d_chase, beta)
+
+        # Lift back to 3D: E = S + e_x * e1 + e_y * e3.
+        eye = (S.x + e_x * e1.x + e_y * e3.x,
+               S.y + e_x * e1.y + e_y * e3.y,
+               S.z + e_x * e1.z + e_y * e3.z)
+
+        # Forward, up — Task 7.
+        # Placeholder so subsequent tests can exercise eye placement:
+        # forward = (S − E).normalised, up = e3.
+        fx, fy, fz = S.x - eye[0], S.y - eye[1], S.z - eye[2]
+        flen = _math.sqrt(fx*fx + fy*fy + fz*fz)
+        forward = (fx/flen, fy/flen, fz/flen)
+        look_at = (eye[0] + forward[0], eye[1] + forward[1], eye[2] + forward[2])
+        up = (e3.x, e3.y, e3.z)
+        return eye, look_at, up
+
+    # ── solver internals ─────────────────────────────────────────────
+
+    @staticmethod
+    def _plane_basis(S, T, B):
+        """Return (e1, e3) as TGPoint3 unit vectors in world space.
+
+        e1 = (T − S).normalised
+        e3 = (B − (B·e1) e1).normalised — body-up perpendicularised
+        """
+        from engine.appc.math import TGPoint3
+        dx, dy, dz = T.x - S.x, T.y - S.y, T.z - S.z
+        D = _math.sqrt(dx*dx + dy*dy + dz*dz)
+        e1 = TGPoint3(dx/D, dy/D, dz/D)
+        dot_b_e1 = B.x*e1.x + B.y*e1.y + B.z*e1.z
+        ux = B.x - dot_b_e1 * e1.x
+        uy = B.y - dot_b_e1 * e1.y
+        uz = B.z - dot_b_e1 * e1.z
+        ulen = _math.sqrt(ux*ux + uy*uy + uz*uz)
+        if ulen < 1e-9:
+            # Body-up parallel to (T − S); pick any perpendicular.
+            # Task 8 strengthens this; for now use world-z as a stopgap.
+            return e1, TGPoint3(0.0, 0.0, 1.0)
+        return e1, TGPoint3(ux/ulen, uy/ulen, uz/ulen)
+
+    @staticmethod
+    def _solve_eye_2d(D, d_chase, beta):
+        """Return (e_x, e_y) of camera in 2D (e1, e3) coords.
+
+        Locus circle: centre (D/2, +D/(2 tan β)) on the +e3 side,
+        radius r = D / (2 sin β). S lies on this circle, so the
+        distance between centres equals r, and the two intersection
+        points lie on the line through S perpendicular to the
+        centre-to-centre direction. The "behind-player" intersection
+        (e_x < 0) is the camera position.
+        """
+        sin_b = _math.sin(beta)
+        cos_b = _math.cos(beta)
+        r     = D / (2.0 * sin_b)
+
+        # Centre-to-centre unit vector: (D/(2r), +h/r) = (sin β, +cos β).
+        # Perpendicular pointing toward "behind player": (-cos β, +sin β).
+        a     = (d_chase * d_chase) / (2.0 * r)
+        disc  = d_chase * d_chase - a * a
+        if disc < 0.0:
+            # Numeric guard — Task 8 supplies the proper fallback.
+            disc = 0.0
+        h_chord = _math.sqrt(disc)
+
+        # P_1 = midpoint − h_chord × perp.  (Spec §3 step 4.)
+        e_x = a * sin_b - h_chord * cos_b
+        e_y = a * cos_b + h_chord * sin_b
+        return e_x, e_y
