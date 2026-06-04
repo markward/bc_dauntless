@@ -33,6 +33,7 @@ class _ChaseCamera:
     DEFAULT_YAW_RAD        = 0.0
     DEFAULT_PITCH_RAD      = _math.atan2(CAM_UP_RADII, CAM_BACK_RADII)
     SPRING_TAU_S           = 0.50                               # ~95% catch-up in 1.5s
+    MOUSE_SENSITIVITY      = 0.005                              # radians per pixel
 
     def __init__(self):
         self.orbit_yaw_rad      = self.DEFAULT_YAW_RAD
@@ -83,6 +84,16 @@ class _ChaseCamera:
         """-key press. Increase distance, clamped at distance_max."""
         self.distance = min(self.distance / self.ZOOM_FACTOR_PER_NOTCH,
                             self.distance_max)
+
+    def apply_mouse_delta(self, dx: float, dy: float) -> None:
+        """Shift+mouse: additive orbit input alongside arrow keys.
+        Pitch clamped to the same ±PITCH_LIMIT_RAD as arrow input."""
+        self.orbit_yaw_rad   += dx * self.MOUSE_SENSITIVITY
+        self.orbit_pitch_rad -= dy * self.MOUSE_SENSITIVITY
+        if self.orbit_pitch_rad >  self.PITCH_LIMIT_RAD:
+            self.orbit_pitch_rad =  self.PITCH_LIMIT_RAD
+        if self.orbit_pitch_rad < -self.PITCH_LIMIT_RAD:
+            self.orbit_pitch_rad = -self.PITCH_LIMIT_RAD
 
     def apply(self, dt: float, h, scroll_y: float) -> None:
         """Read arrow keys + C reset + accumulated scroll, update orbit state.

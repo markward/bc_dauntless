@@ -468,3 +468,77 @@ def test_chase_zoom_round_trip_returns_to_original():
     cc.zoom_in()
     cc.zoom_out()
     assert cc.distance == pytest.approx(seed, abs=1e-9)
+
+
+def test_chase_mouse_delta_yaw_additive():
+    from engine.cameras.chase import _ChaseCamera
+    cc = _ChaseCamera()
+    cc.set_ship_radius(1.0)
+    seed = cc.orbit_yaw_rad
+    cc.apply_mouse_delta(100.0, 0.0)
+    assert cc.orbit_yaw_rad == pytest.approx(
+        seed + 100.0 * cc.MOUSE_SENSITIVITY)
+
+
+def test_chase_mouse_delta_pitch_subtractive_sign():
+    """Convention: pitch -= dy × sensitivity. So +dy (mouse-down)
+    decreases pitch; -dy (mouse-up) increases pitch."""
+    from engine.cameras.chase import _ChaseCamera
+    cc = _ChaseCamera()
+    cc.set_ship_radius(1.0)
+    seed = cc.orbit_pitch_rad
+    cc.apply_mouse_delta(0.0, 100.0)
+    assert cc.orbit_pitch_rad == pytest.approx(
+        seed - 100.0 * cc.MOUSE_SENSITIVITY)
+
+
+def test_chase_mouse_delta_pitch_clamps_upper():
+    """Sustained mouse-up (negative dy → +pitch) clamps at +PITCH_LIMIT_RAD."""
+    from engine.cameras.chase import _ChaseCamera
+    cc = _ChaseCamera()
+    cc.set_ship_radius(1.0)
+    cc.apply_mouse_delta(0.0, -1.0e9)
+    assert cc.orbit_pitch_rad == pytest.approx(cc.PITCH_LIMIT_RAD)
+
+
+def test_chase_mouse_delta_pitch_clamps_lower():
+    """Sustained mouse-down (positive dy → -pitch) clamps at -PITCH_LIMIT_RAD."""
+    from engine.cameras.chase import _ChaseCamera
+    cc = _ChaseCamera()
+    cc.set_ship_radius(1.0)
+    cc.apply_mouse_delta(0.0, 1.0e9)
+    assert cc.orbit_pitch_rad == pytest.approx(-cc.PITCH_LIMIT_RAD)
+
+
+def test_chase_mouse_delta_zero_is_noop():
+    from engine.cameras.chase import _ChaseCamera
+    cc = _ChaseCamera()
+    cc.set_ship_radius(1.0)
+    seed_yaw = cc.orbit_yaw_rad
+    seed_pitch = cc.orbit_pitch_rad
+    cc.apply_mouse_delta(0.0, 0.0)
+    assert cc.orbit_yaw_rad == pytest.approx(seed_yaw)
+    assert cc.orbit_pitch_rad == pytest.approx(seed_pitch)
+
+
+def test_chase_mouse_and_arrow_compose():
+    """Mouse delta + held arrow key advance the same orbit angles."""
+    from engine.cameras.chase import _ChaseCamera
+
+    class _FakeKeys:
+        KEY_UP = 100; KEY_DOWN = 101; KEY_LEFT = 102; KEY_RIGHT = 103; KEY_C = 104
+    class _FakeKeyReader:
+        keys = _FakeKeys()
+        def __init__(self): self.held = set()
+        def key_state(self, key): return key in self.held
+        def key_pressed(self, key): return False
+
+    cc = _ChaseCamera()
+    cc.set_ship_radius(1.0)
+    reader = _FakeKeyReader()
+    reader.held.add(reader.keys.KEY_RIGHT)
+    seed = cc.orbit_yaw_rad
+    cc.apply(dt=1.0, h=reader, scroll_y=0.0)   # +TURN_RATE × 1.0 to yaw
+    cc.apply_mouse_delta(100.0, 0.0)            # +100 × SENSITIVITY to yaw
+    expected = seed + cc.TURN_RATE_RAD_PER_S + 100.0 * cc.MOUSE_SENSITIVITY
+    assert cc.orbit_yaw_rad == pytest.approx(expected)
