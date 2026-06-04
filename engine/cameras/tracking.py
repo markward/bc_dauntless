@@ -94,52 +94,14 @@ class _TrackingCamera:
         # projected perpendicular to e1, normalised.
         e1, e3 = self._plane_basis(S, T, B)
 
-        # 2D coords: S = (0,0), T = (D,0). Solve for eye (e_x, e_y).
-        D    = TGPoint3(T.x-S.x, T.y-S.y, T.z-S.z).Length()
-        a_p  = self._screen_y_to_angle(self.y_p)
-        a_t  = self._screen_y_to_angle(self.y_t)
-        beta = a_t - a_p
-
-        e_x, e_y = self._solve_eye_2d(D, self.d_chase_tracking, beta)
-
-        # Lift back to 3D: E = S + e_x * e1 + e_y * e3.
-        eye_solver = (S.x + e_x * e1.x + e_y * e3.x,
-                      S.y + e_x * e1.y + e_y * e3.y,
-                      S.z + e_x * e1.z + e_y * e3.z)
-
-        # Project (S − E) onto the solver plane (e1, e3), then rotate
-        # that 2D direction by −α_p so the player appears at screen-Y y_p
-        # exactly.  Working in the 2D plane avoids the wrong-axis rotation
-        # result that rotating around e3 would produce: with (S − E) tilted
-        # off the e1 axis, an axis-e3 rotation leaves the e3 component intact
-        # and mis-aims forward.
-        s_minus_e = (S.x - eye_solver[0], S.y - eye_solver[1], S.z - eye_solver[2])
-        es_e1 = s_minus_e[0]*e1.x + s_minus_e[1]*e1.y + s_minus_e[2]*e1.z
-        es_e3 = s_minus_e[0]*e3.x + s_minus_e[1]*e3.y + s_minus_e[2]*e3.z
-        # Rotate (es_e1, es_e3) by −α_p in the plane:
-        #   angle_forward = atan2(es_e3, es_e1) − α_p
-        # atan2 is scale-invariant, so no normalisation is needed.
-        angle_es  = _math.atan2(es_e3, es_e1)
-        angle_fwd = angle_es - a_p
-        f_2d = (_math.cos(angle_fwd), _math.sin(angle_fwd))
-
-        # Lift forward from 2D plane coords to 3D world space.
-        forward_solver = (
-            f_2d[0]*e1.x + f_2d[1]*e3.x,
-            f_2d[0]*e1.y + f_2d[1]*e3.y,
-            f_2d[0]*e1.z + f_2d[1]*e3.z,
-        )
-
-        # Up = e3 with the forward-parallel component projected out
-        # (Gram-Schmidt). Forward lies in the (e1, e3) plane, so up stays
-        # in-plane. Magnitude before normalising is |cos(angle(e3, forward))|;
-        # the divide below is load-bearing, not defensive.
-        dot_u_f = e3.x*forward_solver[0] + e3.y*forward_solver[1] + e3.z*forward_solver[2]
-        ux = e3.x - dot_u_f * forward_solver[0]
-        uy = e3.y - dot_u_f * forward_solver[1]
-        uz = e3.z - dot_u_f * forward_solver[2]
-        ulen = _math.sqrt(ux*ux + uy*uy + uz*uz)
-        up_solver = (ux/ulen, uy/ulen, uz/ulen)
+        if self.zoom_target_active:
+            eye_solver, forward_solver, up_solver = self._compute_zoom_target(
+                S=S, T=T, e1=e1, e3=e3,
+            )
+        else:
+            eye_solver, forward_solver, up_solver = self._compute_tracking(
+                S=S, T=T, e1=e1, e3=e3,
+            )
 
         # Build the solver basis matrix (columns: right, forward, up).
         right_solver = (
@@ -227,6 +189,75 @@ class _TrackingCamera:
         self._smoothed_basis.SetCol(1, f)
         self._smoothed_basis.SetCol(2, u)
         return tuple(self._smoothed_eye), self._smoothed_basis
+
+    # ── per-branch solver ────────────────────────────────────────────
+
+    def _compute_tracking(self, *, S, T, e1, e3):
+        """Two-angle inscribed-angle solver against the player anchor.
+        See tracking-camera-rework spec §3."""
+        from engine.appc.math import TGPoint3
+
+        D    = TGPoint3(T.x-S.x, T.y-S.y, T.z-S.z).Length()
+        a_p  = self._screen_y_to_angle(self.y_p)
+        a_t  = self._screen_y_to_angle(self.y_t)
+        beta = a_t - a_p
+
+        e_x, e_y = self._solve_eye_2d(D, self.d_chase_tracking, beta)
+        eye_solver = (S.x + e_x * e1.x + e_y * e3.x,
+                      S.y + e_x * e1.y + e_y * e3.y,
+                      S.z + e_x * e1.z + e_y * e3.z)
+
+        # Project (S − E) onto the solver plane, rotate by −α_p so the
+        # player projects at y_p, then perpendicularise e3 against forward.
+        s_minus_e = (S.x - eye_solver[0], S.y - eye_solver[1], S.z - eye_solver[2])
+        es_e1 = s_minus_e[0]*e1.x + s_minus_e[1]*e1.y + s_minus_e[2]*e1.z
+        es_e3 = s_minus_e[0]*e3.x + s_minus_e[1]*e3.y + s_minus_e[2]*e3.z
+        angle_fwd = _math.atan2(es_e3, es_e1) - a_p
+        f_2d = (_math.cos(angle_fwd), _math.sin(angle_fwd))
+
+        forward_solver = (
+            f_2d[0]*e1.x + f_2d[1]*e3.x,
+            f_2d[0]*e1.y + f_2d[1]*e3.y,
+            f_2d[0]*e1.z + f_2d[1]*e3.z,
+        )
+        dot_u_f = e3.x*forward_solver[0] + e3.y*forward_solver[1] + e3.z*forward_solver[2]
+        ux = e3.x - dot_u_f * forward_solver[0]
+        uy = e3.y - dot_u_f * forward_solver[1]
+        uz = e3.z - dot_u_f * forward_solver[2]
+        ulen = _math.sqrt(ux*ux + uy*uy + uz*uz)
+        up_solver = (ux/ulen, uy/ulen, uz/ulen)
+
+        return eye_solver, forward_solver, up_solver
+
+    def _compute_zoom_target(self, *, S, T, e1, e3):
+        """ZoomTarget framing: eye on the ship→target axis at
+        effective_distance behind target, look-at = target.
+        See tracking-zoom-and-zoom-target spec §3.
+        """
+        D = _math.sqrt((T.x-S.x)**2 + (T.y-S.y)**2 + (T.z-S.z)**2)
+        # Clamp the *effective* distance to 0.9 × D only when target is
+        # strictly closer than d_chase_zoom. Stored field unchanged
+        # (preserves user's zoom setting for when D grows back).
+        if self.d_chase_zoom <= D:
+            effective = self.d_chase_zoom
+        else:
+            effective = 0.9 * D
+
+        eye_solver = (T.x - effective * e1.x,
+                      T.y - effective * e1.y,
+                      T.z - effective * e1.z)
+        # Forward = (T − eye) / |T − eye| = e1 (eye lies on the e1 line).
+        forward_solver = (e1.x, e1.y, e1.z)
+        # Up = e3 perpendicularised against forward. Identical pattern
+        # to the Tracking solver's up step.
+        dot_u_f = e3.x*forward_solver[0] + e3.y*forward_solver[1] + e3.z*forward_solver[2]
+        ux = e3.x - dot_u_f * forward_solver[0]
+        uy = e3.y - dot_u_f * forward_solver[1]
+        uz = e3.z - dot_u_f * forward_solver[2]
+        ulen = _math.sqrt(ux*ux + uy*uy + uz*uz)
+        up_solver = (ux/ulen, uy/ulen, uz/ulen)
+
+        return eye_solver, forward_solver, up_solver
 
     # ── solver internals ─────────────────────────────────────────────
 

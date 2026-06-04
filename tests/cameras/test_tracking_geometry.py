@@ -285,3 +285,137 @@ class _FakeShip:
         self._loc, self._rot = loc, rot
     def GetWorldLocation(self): return self._loc
     def GetWorldRotation(self): return self._rot
+
+
+def test_zoom_target_eye_on_player_target_axis_at_d_chase_zoom_from_target():
+    """ZoomTarget eye sits d_chase_zoom behind the target along the
+    ship→target axis (between player and target)."""
+    from engine.cameras.tracking import _TrackingCamera
+    from engine.appc.math         import TGPoint3, TGMatrix3
+
+    tc = _TrackingCamera()
+    tc.set_ship_radius(1.0)
+    tc.d_chase_zoom = 5.0
+    tc.zoom_target_active = True
+
+    s_loc = TGPoint3(0.0, 0.0, 0.0); s_rot = TGMatrix3()
+    t_loc = TGPoint3(0.0, 20.0, 0.0)  # +y forward
+
+    eye, look_at, up = tc.compute(
+        player=_FakeShip(s_loc, s_rot), target=_FakeShip(t_loc, s_rot), dt=None)
+
+    # e1 = +y in this setup. Eye = T - 5 * e1 = (0, 15, 0).
+    assert eye[0] == pytest.approx(0.0,  abs=1e-9)
+    assert eye[1] == pytest.approx(15.0, abs=1e-9)
+    assert eye[2] == pytest.approx(0.0,  abs=1e-9)
+    # Forward should be e1 itself (camera looks straight at target).
+    fx = look_at[0] - eye[0]; fy = look_at[1] - eye[1]; fz = look_at[2] - eye[2]
+    flen = math.sqrt(fx*fx + fy*fy + fz*fz)
+    assert (fx/flen, fy/flen, fz/flen) == pytest.approx((0.0, 1.0, 0.0), abs=1e-9)
+
+
+def test_zoom_target_target_projects_to_screen_centre():
+    """With eye on the target→player ray and look-at = target, target
+    must land at screen-Y = 0."""
+    from engine.cameras.tracking import _TrackingCamera
+    from engine.appc.math         import TGPoint3, TGMatrix3
+
+    tc = _TrackingCamera()
+    tc.set_ship_radius(1.0)
+    tc.d_chase_zoom = 5.0
+    tc.zoom_target_active = True
+
+    s_loc = TGPoint3(0.0, 0.0, 0.0); s_rot = TGMatrix3()
+    t_loc = TGPoint3(0.0, 20.0, 0.0)
+
+    eye, look_at, up = tc.compute(
+        player=_FakeShip(s_loc, s_rot), target=_FakeShip(t_loc, s_rot), dt=None)
+
+    fx = look_at[0] - eye[0]; fy = look_at[1] - eye[1]; fz = look_at[2] - eye[2]
+    flen = math.sqrt(fx*fx + fy*fy + fz*fz)
+    forward = (fx/flen, fy/flen, fz/flen)
+
+    y_t = _project_to_screen_y((0.0, 20.0, 0.0), eye, forward, up)
+    assert y_t == pytest.approx(0.0, abs=1e-9)
+
+
+def test_zoom_target_framing_invariant_across_range():
+    """Across target ranges 5, 50, 500 GU with fixed d_chase_zoom = 5,
+    target stays centred and eye is exactly d_chase_zoom from target."""
+    from engine.cameras.tracking import _TrackingCamera
+    from engine.appc.math         import TGPoint3, TGMatrix3
+
+    for d in (5.0, 50.0, 500.0):
+        tc = _TrackingCamera()
+        tc.set_ship_radius(1.0)
+        tc.d_chase_zoom = 5.0
+        tc.zoom_target_active = True
+
+        s_loc = TGPoint3(0.0, 0.0, 0.0); s_rot = TGMatrix3()
+        t_loc = TGPoint3(0.0, d, 0.0)
+
+        eye, look_at, up = tc.compute(
+            player=_FakeShip(s_loc, s_rot), target=_FakeShip(t_loc, s_rot), dt=None)
+
+        # Distance from eye to target should be exactly d_chase_zoom = 5.
+        dx = t_loc.x - eye[0]; dy = t_loc.y - eye[1]; dz = t_loc.z - eye[2]
+        assert math.sqrt(dx*dx + dy*dy + dz*dz) == pytest.approx(5.0, abs=1e-6), \
+            f"range {d}: eye→target = {math.sqrt(dx*dx + dy*dy + dz*dz)}"
+
+        # Target screen-Y ≈ 0.
+        fx = look_at[0] - eye[0]; fy = look_at[1] - eye[1]; fz = look_at[2] - eye[2]
+        flen = math.sqrt(fx*fx + fy*fy + fz*fz)
+        forward = (fx/flen, fy/flen, fz/flen)
+        y_t = _project_to_screen_y((0.0, d, 0.0), eye, forward, up)
+        assert y_t == pytest.approx(0.0, abs=1e-6), f"range {d}: y_t={y_t}"
+
+
+def test_zoom_target_inherits_player_roll_into_up():
+    """Ship rolled 30° around body-Y; ZoomTarget up follows ship body-up
+    perpendicularised against forward."""
+    from engine.cameras.tracking import _TrackingCamera
+    from engine.appc.math         import TGPoint3, TGMatrix3
+
+    tc = _TrackingCamera()
+    tc.set_ship_radius(1.0)
+    tc.d_chase_zoom = 5.0
+    tc.zoom_target_active = True
+
+    s_loc = TGPoint3(0.0, 0.0, 0.0)
+    s_rot = TGMatrix3(); s_rot.MakeYRotation(math.radians(30))
+    t_loc = TGPoint3(0.0, 20.0, 0.0)
+
+    _, _, up = tc.compute(
+        player=_FakeShip(s_loc, s_rot), target=_FakeShip(t_loc, s_rot), dt=None)
+
+    # Body-up after Y-roll 30° = (sin 30°, 0, cos 30°). e1 = (0,1,0).
+    # body-up already perpendicular to e1, so e3 = body-up exactly.
+    # Forward = e1 = (0,1,0), so up perpendicularised against forward = e3.
+    assert up[0] == pytest.approx(math.sin(math.radians(30)), abs=1e-6)
+    assert up[1] == pytest.approx(0.0,                          abs=1e-6)
+    assert up[2] == pytest.approx(math.cos(math.radians(30)), abs=1e-6)
+
+
+def test_zoom_target_clamp_when_target_inside_d_chase_zoom():
+    """If D < d_chase_zoom, the eye placement must clamp to 0.9 × D so
+    the camera stays in front of the target (not past it). Stored
+    d_chase_zoom is NOT mutated (preserve user's zoom setting)."""
+    from engine.cameras.tracking import _TrackingCamera
+    from engine.appc.math         import TGPoint3, TGMatrix3
+
+    tc = _TrackingCamera()
+    tc.set_ship_radius(1.0)
+    tc.d_chase_zoom = 10.0  # user-set zoom: 10 GU
+    tc.zoom_target_active = True
+
+    s_loc = TGPoint3(0.0, 0.0, 0.0); s_rot = TGMatrix3()
+    t_loc = TGPoint3(0.0, 3.0, 0.0)  # D = 3, d_chase_zoom = 10 → clamp
+
+    eye, _, _ = tc.compute(
+        player=_FakeShip(s_loc, s_rot), target=_FakeShip(t_loc, s_rot), dt=None)
+
+    # Eye should be at T - effective × e1 where effective = 0.9 × D = 2.7.
+    # So eye_y = 3.0 - 2.7 = 0.3.
+    assert eye[1] == pytest.approx(0.3, abs=1e-6)
+    # Stored d_chase_zoom unchanged.
+    assert tc.d_chase_zoom == pytest.approx(10.0, abs=1e-9)
