@@ -73,14 +73,40 @@ class _TrackingCamera:
                S.y + e_x * e1.y + e_y * e3.y,
                S.z + e_x * e1.z + e_y * e3.z)
 
-        # Forward, up — Task 7.
-        # Placeholder so subsequent tests can exercise eye placement:
-        # forward = (S − E).normalised, up = e3.
-        fx, fy, fz = S.x - eye[0], S.y - eye[1], S.z - eye[2]
-        flen = _math.sqrt(fx*fx + fy*fy + fz*fz)
-        forward = (fx/flen, fy/flen, fz/flen)
+        # Project (S − E) onto the solver plane (e1, e3), then rotate
+        # that 2D direction by −α_p so the player appears at screen-Y y_p
+        # exactly.  Working in the 2D plane avoids the Rodrigues
+        # singularity that arises when (S − E) is not perpendicular to e3.
+        s_minus_e = (S.x - eye[0], S.y - eye[1], S.z - eye[2])
+        es_e1 = s_minus_e[0]*e1.x + s_minus_e[1]*e1.y + s_minus_e[2]*e1.z
+        es_e3 = s_minus_e[0]*e3.x + s_minus_e[1]*e3.y + s_minus_e[2]*e3.z
+        es_2d_len = _math.sqrt(es_e1*es_e1 + es_e3*es_e3)
+        es_2d = (es_e1/es_2d_len, es_e3/es_2d_len)
+
+        # Rotate es_2d by −α_p in the plane:
+        #   angle_forward = atan2(es_e3, es_e1) − α_p
+        angle_es  = _math.atan2(es_2d[1], es_2d[0])
+        angle_fwd = angle_es - a_p
+        f_2d = (_math.cos(angle_fwd), _math.sin(angle_fwd))
+
+        # Lift forward from 2D plane coords to 3D world space.
+        forward = (
+            f_2d[0]*e1.x + f_2d[1]*e3.x,
+            f_2d[0]*e1.y + f_2d[1]*e3.y,
+            f_2d[0]*e1.z + f_2d[1]*e3.z,
+        )
+
+        # Up = e3 with the forward-parallel component projected out
+        # (Gram-Schmidt).  Because forward lies in the e1-e3 plane this
+        # stays in-plane and remains a unit vector by construction.
+        dot_u_f = e3.x*forward[0] + e3.y*forward[1] + e3.z*forward[2]
+        ux = e3.x - dot_u_f * forward[0]
+        uy = e3.y - dot_u_f * forward[1]
+        uz = e3.z - dot_u_f * forward[2]
+        ulen = _math.sqrt(ux*ux + uy*uy + uz*uz)
+        up = (ux/ulen, uy/ulen, uz/ulen)
+
         look_at = (eye[0] + forward[0], eye[1] + forward[1], eye[2] + forward[2])
-        up = (e3.x, e3.y, e3.z)
         return eye, look_at, up
 
     # ── solver internals ─────────────────────────────────────────────

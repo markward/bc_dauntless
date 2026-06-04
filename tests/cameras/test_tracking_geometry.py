@@ -118,6 +118,92 @@ def test_solver_framing_is_invariant_across_range():
         assert y_t == pytest.approx(+0.25, abs=1e-3), f"range {d}: y_t={y_t}"
 
 
+def test_solver_up_vector_lies_in_ship_target_body_up_plane():
+    """The returned up vector must lie in the plane spanned by
+    (T − S) and the ship body-up axis — equivalently, up must be a
+    linear combination of e1 and e3."""
+    from engine.cameras.tracking import _TrackingCamera
+    from engine.appc.math         import TGPoint3, TGMatrix3
+
+    tc = _TrackingCamera(); tc.d_chase = 10.0
+    s_loc = TGPoint3(0.0, 0.0, 0.0); s_rot = TGMatrix3()
+    t_loc = TGPoint3(0.0, 20.0, 0.0)
+
+    _, _, up = tc.compute(
+        player=_FakeShip(s_loc, s_rot), target=_FakeShip(t_loc, s_rot), dt=None)
+
+    # e1 is +y world, e3 is +z world for identity rotation. up should
+    # have no x component.
+    assert up[0] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_solver_camera_basis_is_orthonormal():
+    from engine.cameras.tracking import _TrackingCamera
+    from engine.appc.math         import TGPoint3, TGMatrix3
+
+    tc = _TrackingCamera(); tc.d_chase = 10.0
+    s_loc = TGPoint3(0.0, 0.0, 0.0); s_rot = TGMatrix3()
+    t_loc = TGPoint3(0.0, 20.0, 0.0)
+
+    eye, look_at, up = tc.compute(
+        player=_FakeShip(s_loc, s_rot), target=_FakeShip(t_loc, s_rot), dt=None)
+
+    fx = look_at[0] - eye[0]; fy = look_at[1] - eye[1]; fz = look_at[2] - eye[2]
+    flen = math.sqrt(fx*fx + fy*fy + fz*fz)
+    forward = (fx/flen, fy/flen, fz/flen)
+
+    dot_fu = forward[0]*up[0] + forward[1]*up[1] + forward[2]*up[2]
+    ulen   = math.sqrt(up[0]**2 + up[1]**2 + up[2]**2)
+    assert dot_fu == pytest.approx(0.0, abs=1e-9)
+    assert flen   == pytest.approx(1.0, abs=1e-9)
+    assert ulen   == pytest.approx(1.0, abs=1e-9)
+
+
+def test_solver_player_roll_inherited_into_camera_up():
+    """Roll the ship 30° around its forward axis (body-Y). The camera
+    up should rotate with it — it is e3 = body-up Gram-Schmidt projected
+    against forward, so it inherits the roll and stays in the solver
+    plane."""
+    from engine.cameras.tracking import _TrackingCamera
+    from engine.appc.math         import TGPoint3, TGMatrix3
+
+    tc = _TrackingCamera(); tc.d_chase = 10.0
+    s_loc = TGPoint3(0.0, 0.0, 0.0)
+    s_rot = TGMatrix3(); s_rot.MakeYRotation(math.radians(30))  # roll 30° about body-Y
+    t_loc = TGPoint3(0.0, 20.0, 0.0)
+
+    eye, look_at, up = tc.compute(
+        player=_FakeShip(s_loc, s_rot), target=_FakeShip(t_loc, s_rot), dt=None)
+
+    # Derive what the correct up must be: e3 (body-up perp to e1) projected
+    # perpendicular to forward. Compute it independently here.
+    # MakeYRotation(30): body-up = Col(2) = (sin30, 0, cos30).
+    # e1 = (0, 1, 0); e3 = body-up (already perp to e1).
+    e1 = (0.0, 1.0, 0.0)
+    e3 = (math.sin(math.radians(30)), 0.0, math.cos(math.radians(30)))
+    fx = look_at[0] - eye[0]; fy = look_at[1] - eye[1]; fz = look_at[2] - eye[2]
+    flen = math.sqrt(fx*fx + fy*fy + fz*fz)
+    forward = (fx/flen, fy/flen, fz/flen)
+    dot_e3_f = e3[0]*forward[0] + e3[1]*forward[1] + e3[2]*forward[2]
+    ux = e3[0] - dot_e3_f*forward[0]
+    uy = e3[1] - dot_e3_f*forward[1]
+    uz = e3[2] - dot_e3_f*forward[2]
+    ulen = math.sqrt(ux*ux + uy*uy + uz*uz)
+    expected_up = (ux/ulen, uy/ulen, uz/ulen)
+
+    # The up vector must lie in the (e1, e3) plane, inherit the roll, and
+    # be perpendicular to forward.
+    assert up[0] == pytest.approx(expected_up[0], abs=1e-6)
+    assert up[1] == pytest.approx(expected_up[1], abs=1e-6)
+    assert up[2] == pytest.approx(expected_up[2], abs=1e-6)
+
+    # Also confirm no x-component in the plan-orthogonal direction
+    # (up must lie in the e1-e3 plane, i.e. have no e2 = e1×e3 component).
+    e2 = (e1[1]*e3[2] - e1[2]*e3[1], e1[2]*e3[0] - e1[0]*e3[2], e1[0]*e3[1] - e1[1]*e3[0])
+    dot_up_e2 = up[0]*e2[0] + up[1]*e2[1] + up[2]*e2[2]
+    assert dot_up_e2 == pytest.approx(0.0, abs=1e-6)
+
+
 class _FakeShip:
     """Minimal player/target stub: just the world transform getters."""
     def __init__(self, loc, rot):
