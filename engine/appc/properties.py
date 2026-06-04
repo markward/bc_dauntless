@@ -8,6 +8,13 @@ class TGModelProperty:
     def __init__(self, name: str):
         self._name = name
         self._data: dict = {}
+        # Mount point in model-local coordinates. None until SetPosition
+        # populates it. Stored at the root because two different SDK
+        # base classes use the same slot with different signatures:
+        # SubsystemProperty.SetPosition(x, y, z)   (sdk App.py:9149) and
+        # PositionOrientationProperty.SetPosition(TGPoint3) (App.py:9107).
+        # Both fell through to __getattr__'s data-bag before this fix.
+        self._position = None
 
     def GetName(self) -> str:
         return self._name
@@ -20,6 +27,42 @@ class TGModelProperty:
 
     def __repr__(self) -> str:
         return f"<{type(self).__name__} {self._name!r}>"
+
+    def SetPosition(self, *args) -> None:
+        """Mount position in model-local coordinates.
+
+        Accepts both SDK overloads in one dispatch so neither form
+        leaks to the data-bag catch-all:
+
+        - ``SetPosition(x, y, z)`` — SubsystemProperty form
+          (galaxy.py: ``DorsalPhaser1.SetPosition(0, 1.27, 0.5)``).
+        - ``SetPosition(TGPoint3)`` — PositionOrientationProperty form
+          (galaxy.py: ``Viewscreen.SetPosition(ViewscreenPosition)``).
+        """
+        from engine.appc.math import TGPoint3
+        if len(args) == 3:
+            self._position = TGPoint3(
+                float(args[0]), float(args[1]), float(args[2])
+            )
+        elif len(args) == 1 and args[0] is not None:
+            p = args[0]
+            self._position = TGPoint3(float(p.x), float(p.y), float(p.z))
+
+    def GetPosition(self):
+        """Return a fresh TGPoint3 copy of the stored position, or None
+        if SetPosition was never called. SDK semantics: callers may
+        mutate the returned value (e.g. via MultMatrixLeft) without
+        affecting the template.
+        """
+        if self._position is None:
+            return None
+        from engine.appc.math import TGPoint3
+        return TGPoint3(self._position.x, self._position.y, self._position.z)
+
+    def GetPositionTG(self):
+        # SDK exposes both GetPosition (NiPoint3) and GetPositionTG
+        # (TGPoint3). Our shim doesn't distinguish; both return TGPoint3.
+        return self.GetPosition()
 
     def __getattr__(self, attr: str):
         if attr.startswith("Set"):
@@ -116,8 +159,9 @@ class ObjectEmitterProperty(PositionOrientationProperty):
         self._forward = None
         self._up = None
         self._right = None
-        self._position = None
         self._emitted_type = self.OEP_UNKNOWN
+        # _position is hoisted to TGModelProperty; SetPosition / GetPosition
+        # also inherited.
 
     def SetOrientation(self, fwd, up, right):
         self._forward = _copy_point(fwd)
@@ -132,12 +176,6 @@ class ObjectEmitterProperty(PositionOrientationProperty):
 
     def GetRight(self):
         return _copy_point(self._right)
-
-    def SetPosition(self, p):
-        self._position = _copy_point(p)
-
-    def GetPosition(self):
-        return _copy_point(self._position)
 
     def SetEmittedObjectType(self, t):
         self._emitted_type = int(t)
@@ -154,6 +192,10 @@ class SubsystemProperty(TGModelProperty):
     def __init__(self, name: str = ""):
         super().__init__(name)
         self._targetable = 1
+        # SDK App.py:9148-9150 exposes SetPosition2D / GetPosition2D
+        # on SubsystemProperty for the 2D damage-display panel layout.
+        # Distinct from the 3D mount Position hoisted on TGModelProperty.
+        self._position_2d: tuple = (0.0, 0.0)
 
     def IsTargetable(self) -> int:
         return self._targetable
@@ -163,6 +205,12 @@ class SubsystemProperty(TGModelProperty):
 
     def SetTargetable(self, value) -> None:
         self._targetable = int(value)
+
+    def SetPosition2D(self, x, y) -> None:
+        self._position_2d = (float(x), float(y))
+
+    def GetPosition2D(self) -> tuple:
+        return self._position_2d
 
 
 class HullProperty(SubsystemProperty):
