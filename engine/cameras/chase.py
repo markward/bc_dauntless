@@ -74,6 +74,16 @@ class _ChaseCamera:
         """V-key up: return to behind-ship perspective."""
         self.reverse_active = False
 
+    def zoom_in(self) -> None:
+        """=-key press. Decrease distance, clamped at distance_min."""
+        self.distance = max(self.distance * self.ZOOM_FACTOR_PER_NOTCH,
+                            self.distance_min)
+
+    def zoom_out(self) -> None:
+        """-key press. Increase distance, clamped at distance_max."""
+        self.distance = min(self.distance / self.ZOOM_FACTOR_PER_NOTCH,
+                            self.distance_max)
+
     def apply(self, dt: float, h, scroll_y: float) -> None:
         """Read arrow keys + C reset + accumulated scroll, update orbit state.
 

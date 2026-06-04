@@ -422,3 +422,49 @@ def test_reverse_composes_with_orbit_yaw():
     eye_y, _, _ = cc_yaw_only.compute_camera(loc, rot)
 
     assert eye_c == pytest.approx(eye_y, abs=1e-12)
+
+
+def test_chase_zoom_in_decreases_distance_by_factor():
+    from engine.cameras.chase import _ChaseCamera
+    cc = _ChaseCamera()
+    cc.set_ship_radius(1.0)
+    seed = cc.distance
+    cc.zoom_in()
+    assert cc.distance == pytest.approx(seed * cc.ZOOM_FACTOR_PER_NOTCH)
+
+
+def test_chase_zoom_out_increases_distance_by_factor():
+    from engine.cameras.chase import _ChaseCamera
+    cc = _ChaseCamera()
+    cc.set_ship_radius(1.0)
+    seed = cc.distance
+    cc.zoom_out()
+    assert cc.distance == pytest.approx(seed / cc.ZOOM_FACTOR_PER_NOTCH)
+
+
+def test_chase_zoom_in_clamps_at_distance_min():
+    from engine.cameras.chase import _ChaseCamera
+    cc = _ChaseCamera()
+    cc.set_ship_radius(1.0)
+    cc.distance = cc.distance_min
+    cc.zoom_in()
+    assert cc.distance == pytest.approx(cc.distance_min)
+
+
+def test_chase_zoom_out_clamps_at_distance_max():
+    from engine.cameras.chase import _ChaseCamera
+    cc = _ChaseCamera()
+    cc.set_ship_radius(1.0)
+    cc.distance = cc.distance_max
+    cc.zoom_out()
+    assert cc.distance == pytest.approx(cc.distance_max)
+
+
+def test_chase_zoom_round_trip_returns_to_original():
+    from engine.cameras.chase import _ChaseCamera
+    cc = _ChaseCamera()
+    cc.set_ship_radius(1.0)
+    seed = cc.distance
+    cc.zoom_in()
+    cc.zoom_out()
+    assert cc.distance == pytest.approx(seed, abs=1e-9)
