@@ -19,9 +19,10 @@ class CameraMode(Enum):
 
 class _CameraDirector:
     def __init__(self):
-        self.mode     = CameraMode.CHASE
-        self.chase    = _ChaseCamera()
-        self.tracking = _TrackingCamera()
+        self.mode              = CameraMode.CHASE
+        self.chase             = _ChaseCamera()
+        self.tracking          = _TrackingCamera()
+        self._opted_out_target = None  # target the user manually toggled OUT of Tracking
 
     # ── mode transitions ─────────────────────────────────────────────
 
@@ -34,7 +35,12 @@ class _CameraDirector:
                 return  # no target → stay in Chase
             self.mode = CameraMode.TRACKING
             self.tracking.snap()
+            self._opted_out_target = None
         else:
+            # Leaving Tracking manually: record the current target so
+            # auto-engage doesn't immediately re-fire next frame.
+            tgt = self._valid_target(player)
+            self._opted_out_target = tgt  # None if no target (defensive)
             self.mode = CameraMode.CHASE
 
     def snap(self) -> None:
@@ -42,6 +48,7 @@ class _CameraDirector:
         hard cut."""
         self.chase.snap()
         self.tracking.snap()
+        self._opted_out_target = None
 
     # ── per-frame dispatch ───────────────────────────────────────────
 
@@ -51,9 +58,24 @@ class _CameraDirector:
         if self.mode is CameraMode.TRACKING:
             tgt = self._valid_target(player)
             if tgt is None:
-                # Target lost → durable fallback to Chase.
+                # Target lost → durable fallback to Chase; clear opt-out so
+                # re-acquiring any target (including the old one) auto-engages.
                 self.mode = CameraMode.CHASE
+                self._opted_out_target = None
             else:
+                return self.tracking.compute(player=player, target=tgt, dt=dt)
+        else:
+            # CHASE: auto-engage Tracking if a target is present and the user
+            # hasn't manually opted out of Tracking for this specific target.
+            tgt = self._valid_target(player)
+            if tgt is None:
+                # No target at all — clear any stale opt-out so a future
+                # target acquisition (even the same object) auto-engages.
+                self._opted_out_target = None
+            elif tgt is not self._opted_out_target:
+                self.mode = CameraMode.TRACKING
+                self.tracking.snap()
+                self._opted_out_target = None
                 return self.tracking.compute(player=player, target=tgt, dt=dt)
         return self.chase.compute_camera(loc, rot, dt=dt)
 

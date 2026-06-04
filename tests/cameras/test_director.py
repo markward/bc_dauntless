@@ -137,3 +137,129 @@ def test_tracking_dispatch_returns_solver_output_when_target_present():
     # Just check finiteness — geometry covered in Task 6–8.
     for v in (*eye, *look_at, *up):
         assert math.isfinite(v)
+
+
+# ── Auto-engage Tracking on target select ───────────────────────────────────
+
+
+def test_auto_engage_tracking_when_target_appears_in_chase():
+    from engine.cameras.director import _CameraDirector, CameraMode
+    d = _CameraDirector()
+    d.chase.set_ship_radius(1.0); d.tracking.set_ship_radius(1.0)
+    # Frame 1: no target → stays Chase.
+    d.compute(player=_FakeShipWithTarget(target=None), dt=1.0/60)
+    assert d.mode is CameraMode.CHASE
+    # Frame 2: target appears → auto-engage Tracking.
+    p_with = _FakeShipWithTarget(target=_make_target_at())
+    d.compute(player=p_with, dt=1.0/60)
+    assert d.mode is CameraMode.TRACKING
+
+
+def test_auto_engage_on_target_change_after_durable_fallback():
+    """After target loss drops us to Chase, acquiring a new target
+    auto-engages Tracking again."""
+    from engine.cameras.director import _CameraDirector, CameraMode
+    d = _CameraDirector()
+    d.chase.set_ship_radius(1.0); d.tracking.set_ship_radius(1.0)
+
+    p_a = _FakeShipWithTarget(target=_make_target_at())
+    p_no = _FakeShipWithTarget(target=None)
+
+    d.compute(player=p_a, dt=1.0/60)
+    assert d.mode is CameraMode.TRACKING
+
+    # Target lost.
+    d.compute(player=p_no, dt=1.0/60)
+    assert d.mode is CameraMode.CHASE
+
+    # New target acquired.
+    p_b = _FakeShipWithTarget(target=_make_target_at(x=5.0))
+    d.compute(player=p_b, dt=1.0/60)
+    assert d.mode is CameraMode.TRACKING
+
+
+def test_manual_c_out_of_tracking_persists_against_same_target():
+    """If the user presses C to leave Tracking while target is still
+    selected, auto-engage must NOT re-fire on the next frame."""
+    from engine.cameras.director import _CameraDirector, CameraMode
+    d = _CameraDirector()
+    d.chase.set_ship_radius(1.0); d.tracking.set_ship_radius(1.0)
+    tgt = _make_target_at()
+    p = _FakeShipWithTarget(target=tgt)
+
+    # Auto-engages.
+    d.compute(player=p, dt=1.0/60)
+    assert d.mode is CameraMode.TRACKING
+
+    # User presses C → back to Chase.
+    d.toggle_mode(player=p)
+    assert d.mode is CameraMode.CHASE
+
+    # Next frame: same target, stays in Chase (opted out).
+    d.compute(player=p, dt=1.0/60)
+    assert d.mode is CameraMode.CHASE
+    d.compute(player=p, dt=1.0/60)
+    assert d.mode is CameraMode.CHASE
+
+
+def test_manual_c_out_is_defeated_when_target_changes():
+    """Opt-out is scoped to one target. Switching targets re-engages."""
+    from engine.cameras.director import _CameraDirector, CameraMode
+    d = _CameraDirector()
+    d.chase.set_ship_radius(1.0); d.tracking.set_ship_radius(1.0)
+
+    tgt_a = _make_target_at()
+    p_a = _FakeShipWithTarget(target=tgt_a)
+
+    d.compute(player=p_a, dt=1.0/60)
+    assert d.mode is CameraMode.TRACKING
+    d.toggle_mode(player=p_a)   # opt out
+    assert d.mode is CameraMode.CHASE
+
+    # Switch target.
+    p_b = _FakeShipWithTarget(target=_make_target_at(x=5.0))
+    d.compute(player=p_b, dt=1.0/60)
+    assert d.mode is CameraMode.TRACKING
+
+
+def test_manual_c_out_is_defeated_after_target_loss():
+    """Opt-out is also cleared when target is lost and re-acquired."""
+    from engine.cameras.director import _CameraDirector, CameraMode
+    d = _CameraDirector()
+    d.chase.set_ship_radius(1.0); d.tracking.set_ship_radius(1.0)
+
+    tgt = _make_target_at()
+    p_with    = _FakeShipWithTarget(target=tgt)
+    p_without = _FakeShipWithTarget(target=None)
+
+    d.compute(player=p_with, dt=1.0/60)
+    d.toggle_mode(player=p_with)
+    assert d.mode is CameraMode.CHASE
+
+    # Lose target.
+    d.compute(player=p_without, dt=1.0/60)
+    assert d.mode is CameraMode.CHASE
+
+    # Re-acquire the same target — opt-out should be cleared by the
+    # target-loss path, so auto-engage fires again.
+    d.compute(player=p_with, dt=1.0/60)
+    assert d.mode is CameraMode.TRACKING
+
+
+def test_snap_clears_opt_out():
+    from engine.cameras.director import _CameraDirector, CameraMode
+    d = _CameraDirector()
+    d.chase.set_ship_radius(1.0); d.tracking.set_ship_radius(1.0)
+    tgt = _make_target_at()
+    p = _FakeShipWithTarget(target=tgt)
+
+    d.compute(player=p, dt=1.0/60)
+    d.toggle_mode(player=p)
+    assert d._opted_out_target is tgt   # implementation detail check
+
+    d.snap()
+    assert d._opted_out_target is None
+
+    # Next compute auto-engages because opt-out is cleared.
+    d.compute(player=p, dt=1.0/60)
+    assert d.mode is CameraMode.TRACKING
