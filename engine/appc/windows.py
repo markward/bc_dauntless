@@ -67,7 +67,9 @@ class _SubtitleWindow:
         self._visible = True
     def IsOn(self) -> bool:     return self._visible
 
-    def SetPositionForMode(self, mode: int) -> None:
+    def SetPositionForMode(self, mode: int, *_extra) -> None:
+        # Second positional arg (a "reposition" flag) is used in some Maelstrom
+        # missions (e.g. E1M1:2298, E1M2:4916) but has no meaning in dauntless.
         self._mode = int(mode)
 
     def _add_text(self, text: str, duration_s: float) -> None:
@@ -124,6 +126,7 @@ class _STStylizedWindow:
         self._title = str(title)
         self._visible = True
         self._children: list = []
+        self._handler_registrations: list[tuple[int, str]] = []
 
     def AddChild(self, child, x: float = 0.0, y: float = 0.0, *_extra) -> None:
         self._children.append(child)
@@ -134,6 +137,24 @@ class _STStylizedWindow:
     def GetObjID(self) -> int:
         # SDK identity hook used in profile (3 missions × 108 calls).
         return id(self)
+
+    def AddPythonFuncHandlerForInstance(self, event_type, qualified_name, *_extra) -> None:
+        # Inherited from TGEventHandlerObject; SDK records per-instance
+        # handlers (e.g. menu button → mission-init callback). v1 does
+        # not dispatch through these — the future SDK→Python click spec
+        # will consume _handler_registrations like _TopWindow does.
+        self._handler_registrations.append((int(event_type), str(qualified_name)))
+
+    def InteriorChangedSize(self, *_args) -> None:
+        # Inherited from TGPane; SDK fires this after AddChild in some
+        # layout flows. Dauntless re-styles via slot CSS so no layout
+        # propagation is needed — accept and ignore.
+        pass
+
+    def SetNoFocus(self) -> None:
+        # Inherited from TGUIObject; disables keyboard focus traversal for
+        # this pane. Dauntless has no focus system yet — accept and ignore.
+        pass
 
     def _snapshot(self) -> dict:
         return {

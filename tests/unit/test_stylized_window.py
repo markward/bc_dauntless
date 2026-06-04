@@ -75,3 +75,23 @@ def test_factory_accepts_extra_args_silently():
     # SDK signature is STStylizedWindow_CreateW(title, parent, x, y, w, h, ...).
     w = STStylizedWindow_CreateW("Title", None, 0.0, 0.0, 400, 300, 0)
     assert w._title == "Title"
+
+
+def test_add_python_func_handler_for_instance_records():
+    w = STStylizedWindow_CreateW("X")
+    w.AddPythonFuncHandlerForInstance(7, "module.handler")
+    assert w._handler_registrations == [(7, "module.handler")]
+
+
+def test_add_python_func_handler_accepts_extra_args():
+    w = STStylizedWindow_CreateW("X")
+    # SDK chains additional positional args (priority, flags) in some forms.
+    w.AddPythonFuncHandlerForInstance(7, "module.handler", "extra1", 99)
+    assert len(w._handler_registrations) == 1
+
+
+def test_interior_changed_size_accepts_any_args():
+    w = STStylizedWindow_CreateW("X")
+    w.InteriorChangedSize()         # no args
+    w.InteriorChangedSize(10, 20)   # SDK sometimes passes new bounds
+    # No assertion needed — must not raise.
