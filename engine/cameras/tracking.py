@@ -148,8 +148,9 @@ class _TrackingCamera:
 
         Standard case: closed-form via inscribed-angle / chase-circle
         intersection (spec §3 step 4).
-        Fallback (d_chase ≥ D cot β): place E on the locus arc
-        directly behind the player (spec §3 step 5).
+        Fallback (d_chase ≥ D cot β): place E at the leftmost point of
+        the locus arc (furthest in −e1 direction), at e3 = h above the
+        ship→target line (spec §3 step 5).
         """
         sin_b = _math.sin(beta)
         cos_b = _math.cos(beta)
@@ -165,10 +166,8 @@ class _TrackingCamera:
             e_y = a * cos_b + h_chord * sin_b
             return e_x, e_y
 
-        # Fallback: closest point on locus arc to the −e1 ray (the ray
-        # behind the player along the ship→target axis).
-        # The locus circle centred at (D/2, h) intersects the e1 axis
-        # at S = (0,0) and T = (D, 0). Going "left" along the major
-        # arc from S puts the camera at the leftmost point of the
-        # circle: (D/2 − r, h). That's the fallback eye.
+        # Fallback: the leftmost point of the locus circle — the point
+        # on the arc furthest in the −e1 direction (behind the player
+        # along the ship→target axis). The locus circle centred at
+        # (D/2, h) with radius r has its leftmost point at (D/2 − r, h).
         return (D / 2.0 - r, h)

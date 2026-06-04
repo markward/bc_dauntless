@@ -213,7 +213,9 @@ def test_solver_close_target_falls_back_gracefully():
 
     tc = _TrackingCamera(); tc.d_chase = 10.0
     s_loc = TGPoint3(0.0, 0.0, 0.0); s_rot = TGMatrix3()
-    # D = 5 GU < d_chase × tan(β), forces fallback.
+    # D = 5 GU, d_chase = 10: threshold for fallback is D/tan(β) ≈ 17.
+    # This case takes the happy path; the dedicated fallback-coverage
+    # test below uses d_chase = 100 to actually exercise the fallback.
     t_loc = TGPoint3(0.0, 5.0, 0.0)
 
     eye, look_at, up = tc.compute(
