@@ -9,7 +9,9 @@ See:
 """
 import math as _math
 
-from engine.cameras import EXTERIOR_FOV_Y_RAD
+from engine.cameras import (
+    EXTERIOR_FOV_Y_RAD, CAM_BACK_RADII, CAM_UP_RADII,
+)
 
 
 class _TrackingCamera:
@@ -39,6 +41,17 @@ class _TrackingCamera:
 
     # ── public surface ───────────────────────────────────────────────
 
+    def set_ship_radius(self, radius: float) -> None:
+        radius = max(radius, 1e-6)
+        self.d_chase = _math.sqrt(CAM_BACK_RADII**2 + CAM_UP_RADII**2) * radius
+
+    def snap(self) -> None:
+        """Drop both smoothing states. Next compute() will seed from
+        the solver output directly. Use on mode-enter, mission swap,
+        teleport / warp exit."""
+        self._smoothed_eye   = None
+        self._smoothed_basis = None
+
     def compute(self, player, target, dt):
         """Return (eye, look_at, up) in world space.
 
@@ -47,9 +60,10 @@ class _TrackingCamera:
         behind the player at distance d_chase, and constructs the
         camera basis so player projects to y_p and target to y_t.
 
-        dt is currently unused; springs land in Task 9.
+        When dt is None, returns the solver output directly (no springs).
+        When dt is a float, applies position + rotation springs.
         """
-        from engine.appc.math import TGPoint3
+        from engine.appc.math import TGPoint3, TGMatrix3
 
         S = player.GetWorldLocation()
         T = target.GetWorldLocation()
@@ -69,9 +83,9 @@ class _TrackingCamera:
         e_x, e_y = self._solve_eye_2d(D, self.d_chase, beta)
 
         # Lift back to 3D: E = S + e_x * e1 + e_y * e3.
-        eye = (S.x + e_x * e1.x + e_y * e3.x,
-               S.y + e_x * e1.y + e_y * e3.y,
-               S.z + e_x * e1.z + e_y * e3.z)
+        eye_solver = (S.x + e_x * e1.x + e_y * e3.x,
+                      S.y + e_x * e1.y + e_y * e3.y,
+                      S.z + e_x * e1.z + e_y * e3.z)
 
         # Project (S − E) onto the solver plane (e1, e3), then rotate
         # that 2D direction by −α_p so the player appears at screen-Y y_p
@@ -79,7 +93,7 @@ class _TrackingCamera:
         # result that rotating around e3 would produce: with (S − E) tilted
         # off the e1 axis, an axis-e3 rotation leaves the e3 component intact
         # and mis-aims forward.
-        s_minus_e = (S.x - eye[0], S.y - eye[1], S.z - eye[2])
+        s_minus_e = (S.x - eye_solver[0], S.y - eye_solver[1], S.z - eye_solver[2])
         es_e1 = s_minus_e[0]*e1.x + s_minus_e[1]*e1.y + s_minus_e[2]*e1.z
         es_e3 = s_minus_e[0]*e3.x + s_minus_e[1]*e3.y + s_minus_e[2]*e3.z
         # Rotate (es_e1, es_e3) by −α_p in the plane:
@@ -90,7 +104,7 @@ class _TrackingCamera:
         f_2d = (_math.cos(angle_fwd), _math.sin(angle_fwd))
 
         # Lift forward from 2D plane coords to 3D world space.
-        forward = (
+        forward_solver = (
             f_2d[0]*e1.x + f_2d[1]*e3.x,
             f_2d[0]*e1.y + f_2d[1]*e3.y,
             f_2d[0]*e1.z + f_2d[1]*e3.z,
@@ -100,15 +114,99 @@ class _TrackingCamera:
         # (Gram-Schmidt). Forward lies in the (e1, e3) plane, so up stays
         # in-plane. Magnitude before normalising is |cos(angle(e3, forward))|;
         # the divide below is load-bearing, not defensive.
-        dot_u_f = e3.x*forward[0] + e3.y*forward[1] + e3.z*forward[2]
-        ux = e3.x - dot_u_f * forward[0]
-        uy = e3.y - dot_u_f * forward[1]
-        uz = e3.z - dot_u_f * forward[2]
+        dot_u_f = e3.x*forward_solver[0] + e3.y*forward_solver[1] + e3.z*forward_solver[2]
+        ux = e3.x - dot_u_f * forward_solver[0]
+        uy = e3.y - dot_u_f * forward_solver[1]
+        uz = e3.z - dot_u_f * forward_solver[2]
         ulen = _math.sqrt(ux*ux + uy*uy + uz*uz)
-        up = (ux/ulen, uy/ulen, uz/ulen)
+        up_solver = (ux/ulen, uy/ulen, uz/ulen)
 
-        look_at = (eye[0] + forward[0], eye[1] + forward[1], eye[2] + forward[2])
-        return eye, look_at, up
+        # Build the solver basis matrix (columns: right, forward, up).
+        right_solver = (
+            up_solver[1]*forward_solver[2] - up_solver[2]*forward_solver[1],
+            up_solver[2]*forward_solver[0] - up_solver[0]*forward_solver[2],
+            up_solver[0]*forward_solver[1] - up_solver[1]*forward_solver[0],
+        )
+        basis_solver = TGMatrix3()
+        basis_solver.SetCol(0, TGPoint3(*right_solver))
+        basis_solver.SetCol(1, TGPoint3(*forward_solver))
+        basis_solver.SetCol(2, TGPoint3(*up_solver))
+
+        if dt is None:
+            # No springs — return solver output directly. (Used by
+            # geometry tests in Tasks 6–8.)
+            eye_out   = eye_solver
+            forward_o = forward_solver
+            up_o      = up_solver
+        else:
+            eye_out, basis_out = self._advance_springs(
+                eye_solver=eye_solver, basis_solver=basis_solver, dt=dt,
+            )
+            f = basis_out.GetCol(1); u = basis_out.GetCol(2)
+            forward_o = (f.x, f.y, f.z)
+            up_o      = (u.x, u.y, u.z)
+
+        look_at = (
+            eye_out[0] + forward_o[0],
+            eye_out[1] + forward_o[1],
+            eye_out[2] + forward_o[2],
+        )
+        return eye_out, look_at, up_o
+
+    # ── spring engine ────────────────────────────────────────────────
+
+    def _advance_springs(self, *, eye_solver, basis_solver, dt):
+        """Apply position + rotation springs. Seeds on first call.
+
+        Returns (eye_smoothed_tuple, basis_smoothed_TGMatrix3).
+        """
+        from engine.appc.math import TGPoint3, TGMatrix3
+
+        if self._smoothed_eye is None:
+            self._smoothed_eye = list(eye_solver)
+        if self._smoothed_basis is None:
+            self._smoothed_basis = TGMatrix3()
+            for i in range(3):
+                self._smoothed_basis.SetCol(i, basis_solver.GetCol(i))
+
+        # Position spring.
+        alpha_p = 1.0 - _math.exp(-dt / self.POS_SPRING_TAU_S) if dt > 0.0 else 0.0
+        for i in range(3):
+            self._smoothed_eye[i] += alpha_p * (eye_solver[i] - self._smoothed_eye[i])
+
+        # Rotation spring — Gram-Schmidt re-orthonormalisation.
+        alpha_r = 1.0 - _math.exp(-dt / self.ROT_SPRING_TAU_S) if dt > 0.0 else 0.0
+        blended = [None, None, None]
+        for i in range(3):
+            s = self._smoothed_basis.GetCol(i)
+            l = basis_solver.GetCol(i)
+            blended[i] = TGPoint3(
+                s.x + alpha_r * (l.x - s.x),
+                s.y + alpha_r * (l.y - s.y),
+                s.z + alpha_r * (l.z - s.z),
+            )
+
+        def _norm(v):
+            m = _math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z)
+            return TGPoint3(v.x/m, v.y/m, v.z/m)
+
+        f = _norm(blended[1])
+        u_in = blended[2]
+        dot_uf = u_in.x*f.x + u_in.y*f.y + u_in.z*f.z
+        u = _norm(TGPoint3(
+            u_in.x - dot_uf * f.x,
+            u_in.y - dot_uf * f.y,
+            u_in.z - dot_uf * f.z,
+        ))
+        r = TGPoint3(
+            f.y*u.z - f.z*u.y,
+            f.z*u.x - f.x*u.z,
+            f.x*u.y - f.y*u.x,
+        )
+        self._smoothed_basis.SetCol(0, r)
+        self._smoothed_basis.SetCol(1, f)
+        self._smoothed_basis.SetCol(2, u)
+        return tuple(self._smoothed_eye), self._smoothed_basis
 
     # ── solver internals ─────────────────────────────────────────────
 
