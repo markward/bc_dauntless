@@ -1,10 +1,11 @@
-"""TacticalControlWindow placeholder.
+"""Window shims for App.py — TacticalControlWindow and SubtitleWindow.
 
-Real BC TCW is a full window with menus / layout / focus.  PR 2a only
-needs the event-handler-object surface so TacticalInterfaceHandlers.
-RegisterHandlers(pTCW) can install fire-event handlers on it.  Future
-PRs will replace this with the real window when the menu system lands.
+TacticalControlWindow: event-handler stub until the full menu system lands.
+SubtitleWindow: singleton state machine for mission-objective / cinematic
+  banner text; snapshotted by SDKMirrorPanel once per tick.
 """
+import time
+
 from engine.appc.events import TGEventHandlerObject
 
 
@@ -37,8 +38,6 @@ class TacticalControlWindow(TGEventHandlerObject):
         return self._radar_display
 
 
-import time
-
 
 # ── SubtitleWindow ──────────────────────────────────────────────────────────
 # Singleton main window that hosts mission-objective / cinematic banner text.
@@ -60,7 +59,10 @@ class _SubtitleWindow:
 
     def SetOn(self) -> None:    self._visible = True
     def SetOff(self) -> None:   self._visible = False
-    def SetVisible(self) -> None: self._visible = True  # SDK alias (MissionLib.TextBanner)
+    def SetVisible(self) -> None:
+        # Inherited from TGUIObject in the SDK; we flip the same _visible
+        # flag used by the BC-specific SetOn. Called by MissionLib.TextBanner.
+        self._visible = True
     def IsOn(self) -> bool:     return self._visible
 
     def SetPositionForMode(self, mode: int) -> None:

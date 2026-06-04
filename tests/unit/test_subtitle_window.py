@@ -88,3 +88,9 @@ def test_cast_returns_argument_if_subtitle_window():
 
 def test_cast_returns_none_for_none():
     assert SubtitleWindow_Cast(None) is None
+
+
+def test_cast_returns_none_for_non_subtitle_window():
+    assert SubtitleWindow_Cast("not-a-window") is None
+    assert SubtitleWindow_Cast(object()) is None
+    assert SubtitleWindow_Cast(42) is None
