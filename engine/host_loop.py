@@ -2227,6 +2227,9 @@ def run(mission_name: Optional[str] = None,
         registry = PanelRegistry(legacy_handler=pause_menu.dispatch_event)
         registry.register(target_list_view)
         registry.register(sensors_panel)
+        from engine.appc.sdk_mirror_panel import SDKMirrorPanel
+        sdk_mirror = SDKMirrorPanel()
+        registry.register(sdk_mirror)
         if dev_mode.is_enabled():
             registry.register(mission_picker)
 
