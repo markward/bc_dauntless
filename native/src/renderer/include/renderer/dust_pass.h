@@ -50,8 +50,8 @@ public:
     // Hard cap on streak length so high-velocity camera motion (warp
     // exits, fast chase) doesn't stretch dust into screen-spanning lines.
     static constexpr float kMaxSmearLength       = 1.5f;        // BC units
-    static constexpr float kSizeMin              = 0.04f;       // BC units
-    static constexpr float kSizeMax              = 0.07f;
+    static constexpr float kSizeMin              = 0.02f;       // BC units
+    static constexpr float kSizeMax              = 0.035f;
     static constexpr float kBrightnessMin        = 0.5f;
     static constexpr float kBrightnessMax        = 1.0f;
     static constexpr float kVelocityClampSeconds = 0.1f;        // dt guard
