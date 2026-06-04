@@ -75,17 +75,17 @@ class _TrackingCamera:
 
         # Project (S − E) onto the solver plane (e1, e3), then rotate
         # that 2D direction by −α_p so the player appears at screen-Y y_p
-        # exactly.  Working in the 2D plane avoids the Rodrigues
-        # singularity that arises when (S − E) is not perpendicular to e3.
+        # exactly.  Working in the 2D plane avoids the wrong-axis rotation
+        # result that rotating around e3 would produce: with (S − E) tilted
+        # off the e1 axis, an axis-e3 rotation leaves the e3 component intact
+        # and mis-aims forward.
         s_minus_e = (S.x - eye[0], S.y - eye[1], S.z - eye[2])
         es_e1 = s_minus_e[0]*e1.x + s_minus_e[1]*e1.y + s_minus_e[2]*e1.z
         es_e3 = s_minus_e[0]*e3.x + s_minus_e[1]*e3.y + s_minus_e[2]*e3.z
-        es_2d_len = _math.sqrt(es_e1*es_e1 + es_e3*es_e3)
-        es_2d = (es_e1/es_2d_len, es_e3/es_2d_len)
-
-        # Rotate es_2d by −α_p in the plane:
+        # Rotate (es_e1, es_e3) by −α_p in the plane:
         #   angle_forward = atan2(es_e3, es_e1) − α_p
-        angle_es  = _math.atan2(es_2d[1], es_2d[0])
+        # atan2 is scale-invariant, so no normalisation is needed.
+        angle_es  = _math.atan2(es_e3, es_e1)
         angle_fwd = angle_es - a_p
         f_2d = (_math.cos(angle_fwd), _math.sin(angle_fwd))
 
@@ -97,8 +97,9 @@ class _TrackingCamera:
         )
 
         # Up = e3 with the forward-parallel component projected out
-        # (Gram-Schmidt).  Because forward lies in the e1-e3 plane this
-        # stays in-plane and remains a unit vector by construction.
+        # (Gram-Schmidt). Forward lies in the (e1, e3) plane, so up stays
+        # in-plane. Magnitude before normalising is |cos(angle(e3, forward))|;
+        # the divide below is load-bearing, not defensive.
         dot_u_f = e3.x*forward[0] + e3.y*forward[1] + e3.z*forward[2]
         ux = e3.x - dot_u_f * forward[0]
         uy = e3.y - dot_u_f * forward[1]
