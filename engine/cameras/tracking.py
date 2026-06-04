@@ -103,7 +103,12 @@ class _TrackingCamera:
 
     def snap(self) -> None:
         """Drop both smoothing states and reset zoom to defaults.
-        Used on mission swap / hard cut."""
+
+        Use on mode-enter (Chase → Tracking transitions), mission swap,
+        and hard cuts (teleport / warp exit). All three sites are valid
+        because snap() re-seeds the distance slots from the current
+        ship radius (recovered via zoom_max / ZOOM_MAX_RADII).
+        """
         self._smoothed_eye   = None
         self._smoothed_basis = None
         # Reset zoom by re-seeding from the current ship radius.
@@ -112,6 +117,8 @@ class _TrackingCamera:
             radius = self.zoom_max / self.ZOOM_MAX_RADII
             self.d_chase_tracking = _math.sqrt(CAM_BACK_RADII**2 + CAM_UP_RADII**2) * radius
             self.d_chase_zoom     = self.ZOOM_DEFAULT_RADII * radius
+        # Flag reset is unconditional — runs even when zoom_max == 0
+        # (i.e. snap() called before set_ship_radius).
         self.zoom_target_active = False
 
     def compute(self, player, target, dt):
