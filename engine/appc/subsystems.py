@@ -1045,6 +1045,17 @@ class TorpedoSystem(WeaponSystem):
         return self._ammo_by_slot[lowest_slot]
 
 
+# Global phaser fire-range gate. Reconstructed from disassembly:
+# Appc.dll exposes PhaserBank_GetMaxPhaserRange (sdk/.../App.py:11511) as
+# a per-bank getter that nothing in the SDK ever sets — the engine fills
+# it in internally from a single global ("phaser beam range normalisation"
+# at 0x008E53DC). Player observation in stock BC (Galaxy class, HUD reading
+# ~123 km when phasers still engaged) gives 700 GU = 122.5 km. Per-bank
+# MaxDamageDistance (60.0 for Galaxy, 70.0 for Sovereign, etc.) controls
+# damage falloff shape, not the firing gate.
+PHASER_MAX_RANGE_GU = 700.0
+
+
 class PhaserSystem(WeaponSystem):
     # Power-level constants from sdk/.../App.py:6444-6446.
     PP_LOW = 0
@@ -1074,21 +1085,17 @@ class PhaserSystem(WeaponSystem):
     def SetAimedWeapon(self, v) -> None:            self._aimed_weapon = int(v)
 
     def _target_in_system_range(self, ship, target) -> bool:
-        """True iff `target` is within the system's effective range
-        (max of MaxDamageDistance across all banks).
+        """True iff `target` is within global phaser fire range
+        (PHASER_MAX_RANGE_GU, ≈122.5 km — see module-level comment).
 
-        Option 1 gate from docs/superpowers/deferred/2026-05-18-phaser-
-        fire-range-gate.md: a system-wide cutoff at the longest-reach
-        bank's MaxDamageDistance. Banks with shorter reach still
-        contribute the full distance check at fire time
-        (_phaser_damage_for_tick falloff), but every bank is gated
-        together at the system level — no charge drain, no beam, no
-        SFX when nothing on this ship can damage the target.
+        BC's phaser fire-range gate is a single engine-wide constant,
+        not per-bank: MaxDamageDistance scales damage falloff only.
+        No charge drain, no beam, no SFX when the target is beyond
+        the global range.
 
         Legacy fixture support: if either ship or target lacks
-        GetWorldLocation, or if no bank declares MaxDamageDistance,
-        returns True so pre-range-gate tests keep their previous
-        behaviour.
+        GetWorldLocation, returns True so non-positional tests keep
+        their previous behaviour.
         """
         if ship is None or target is None:
             return False
@@ -1098,17 +1105,7 @@ class PhaserSystem(WeaponSystem):
         tp = target.GetWorldLocation()
         dx, dy, dz = tp.x - sp.x, tp.y - sp.y, tp.z - sp.z
         dist_sq = dx*dx + dy*dy + dz*dz
-        max_range = 0.0
-        for i in range(self.GetNumWeapons()):
-            bank = self.GetWeapon(i)
-            if bank is None:
-                continue
-            r = bank.GetMaxDamageDistance() if hasattr(bank, "GetMaxDamageDistance") else 0.0
-            if r > max_range:
-                max_range = r
-        if max_range <= 0.0:
-            return True
-        return dist_sq <= max_range * max_range
+        return dist_sq <= PHASER_MAX_RANGE_GU * PHASER_MAX_RANGE_GU
 
     def StartFiring(self, target=None, offset=None) -> None:
         """Dispatch — fires the next eligible PhaserBank.

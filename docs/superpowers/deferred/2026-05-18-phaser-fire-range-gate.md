@@ -1,6 +1,6 @@
 # Deferred: don't fire phasers at out-of-range targets
 
-**Status:** RESOLVED 2026-06-02 on `feature/damage-vfx-bridge-feedback`. Implemented Option 1 (system-wide gate at max MaxDamageDistance across banks) — see commit history. Prior text retained for reference.
+**Status:** RESOLVED 2026-06-02 on `feature/damage-vfx-bridge-feedback`, then **revised 2026-06-04**. Neither Option 1 nor Option 2 turned out to match BC. The stock game uses a **single engine-wide constant** for the fire gate (`PHASER_MAX_RANGE_GU = 700 GU ≈ 122.5 km`), independent of any bank's `MaxDamageDistance`. `MaxDamageDistance` controls inverse-square damage falloff shape only. See [`docs/original_game_reference/gameplay/combat-and-damage.md`](../../original_game_reference/gameplay/combat-and-damage.md#phaser-fire-range-vs-damage-falloff) and [`engine/appc/subsystems.py:PHASER_MAX_RANGE_GU`](../../../engine/appc/subsystems.py). Prior text below kept for archaeology.
 
 **Original status:** deferred 2026-05-18.  PR 2c lets the player fire phasers at
 any target the lock accepts, regardless of distance.  We render the

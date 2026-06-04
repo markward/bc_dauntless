@@ -210,12 +210,21 @@ def _phaser_damage_for_tick(max_damage: float,
                              max_damage_distance: float,
                              dist: float,
                              dt: float) -> float:
-    """Phaser damage falloff: linear from MaxDamage at dist=0 to 0 at
-    dist=MaxDamageDistance.  Returns 0 if MaxDamageDistance is 0 or
-    dist >= MaxDamageDistance."""
-    if max_damage_distance <= 0.0 or dist >= max_damage_distance:
+    """Phaser damage with inverse-square falloff scaled by MaxDamageDistance.
+
+    `damage = MaxDamage / (1 + (dist / MaxDamageDistance)**2) * dt`. At
+    dist=MaxDamageDistance the damage is half MaxDamage; falls off as
+    1/dist² in the far field. Returns 0 if MaxDamageDistance is 0
+    (uninitialized property).
+
+    No hard distance cutoff here — the system-level fire gate
+    (PhaserSystem at PHASER_MAX_RANGE_GU = 700 GU ≈ 122.5 km) prevents
+    fire on out-of-range targets, so this function only runs for shots
+    the engine already decided to take."""
+    if max_damage_distance <= 0.0:
         return 0.0
-    return max_damage * (1.0 - dist / max_damage_distance) * dt
+    k = dist / max_damage_distance
+    return max_damage / (1.0 + k * k) * dt
 
 
 def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
@@ -440,27 +449,12 @@ def _build_phaser_beam_render_data(ships, host=None, ship_instances=None):
             else:
                 target_pos = target.GetWorldLocation()
             emitter_pos = bank._strip_emit_position(target_pos)
-            # Clip the *rendered* beam to MaxDamageDistance so very
-            # distant targets still produce a sensibly proportioned
-            # beam (not a sub-pixel hairline 400 wu long).  Damage
-            # falloff already drops to zero past this distance.
-            # DEFERRED: phasers shouldn't *fire* at out-of-range
-            # targets at all — see
-            # docs/superpowers/deferred/2026-05-18-phaser-fire-range-gate.md.
             dx = target_pos.x - emitter_pos.x
             dy = target_pos.y - emitter_pos.y
             dz = target_pos.z - emitter_pos.z
             raw_length = (dx * dx + dy * dy + dz * dz) ** 0.5
-            max_range = bank.GetMaxDamageDistance() or 0.0
             beam_length = raw_length
             beam_end = target_pos
-            if max_range > 0.0 and raw_length > max_range:
-                from engine.appc.math import TGPoint3
-                scale = max_range / raw_length
-                beam_end = TGPoint3(emitter_pos.x + dx * scale,
-                                    emitter_pos.y + dy * scale,
-                                    emitter_pos.z + dz * scale)
-                beam_length = max_range
             # Clip the visible beam to the same mesh-trace point that
             # _advance_combat feeds into apply_hit / shield_hit, so the
             # rendered beam terminates on the hull surface (not at the

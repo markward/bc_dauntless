@@ -593,6 +593,38 @@ WeaponSystem
 | `+0x78` | `MaxDamage`            | 300.0             |
 | `+0x7C` | `MaxDamageDistance`    | 70.0              |
 
+### Phaser fire range vs damage falloff
+
+Two distinct quantities, frequently conflated:
+
+- **Fire range** (the engagement gate) — a **single engine-wide
+  constant**, exposed via `PhaserBank_GetMaxPhaserRange`
+  ([`App.py:11511`](../../../sdk/Build/scripts/App.py#L11511)) but
+  never `Set` by any SDK script; filled in by `Appc.dll` from
+  `RANGE_SCALE` at `0x008E53DC`. Observed in stock BC (Galaxy class,
+  HUD readout at ~123 km while phasers still engaged): **≈700 GU =
+  122.5 km**. Beyond this range the system refuses to fire: no charge
+  drain, no beam, no SFX.
+
+- **Damage falloff scale** — per-bank `MaxDamageDistance` (60.0 for
+  Galaxy, 70.0 for Sovereign, 30.0 for Keldon forward, etc.). Does
+  **not** gate firing; controls the shape of the damage curve. Modelled
+  in [`engine/host_loop.py:_phaser_damage_for_tick`](../../../engine/host_loop.py)
+  as inverse-square with `MaxDamageDistance` as the half-power radius:
+
+  ```
+  damage = MaxDamage / (1 + (dist / MaxDamageDistance)**2) * dt
+  ```
+
+  So at `dist = MaxDamageDistance` damage is half MaxDamage; at
+  `2 × MaxDamageDistance` it's a fifth; far-field falls as 1/dist².
+  This reproduces the in-game "phasers do significantly more damage at
+  close range, taper off rapidly past ~25 km" feel without a hard cutoff
+  inside the fire range. The reconstructed C++ per-tick formula
+  (below) has no explicit distance term — the falloff is applied
+  elsewhere in the damage pipeline and reconstructed here from
+  observed gameplay.
+
 ### Phaser charge formula (`FUN_00572B80`)
 
 `PhaserBank::UpdateCharge(float dt, float power_multiplier)`. Two

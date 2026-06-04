@@ -1,12 +1,13 @@
-"""PhaserSystem.StartFiring + retry_held_fire honour MaxDamageDistance.
+"""PhaserSystem.StartFiring + retry_held_fire honour the global phaser
+fire-range gate (PHASER_MAX_RANGE_GU = 700 GU ≈ 122.5 km).
 
-Option 1 gate (per docs/superpowers/deferred/2026-05-18-phaser-fire-range-gate.md):
-system-wide range cutoff at the max MaxDamageDistance across banks.
+In stock BC the gate is a single engine-wide constant, not per-bank —
+MaxDamageDistance controls damage falloff shape, not firing range.
 """
 import pytest
 
 from engine.appc.math import TGPoint3
-from engine.appc.subsystems import PhaserSystem
+from engine.appc.subsystems import PhaserSystem, PHASER_MAX_RANGE_GU
 
 
 class _Target:
@@ -76,43 +77,49 @@ def _build_system(banks, ship):
 
 # ── target_in_system_range ────────────────────────────────────────────────
 
-def test_target_within_max_range_returns_true():
+def test_global_constant_matches_observed_bc_range():
+    """Sanity: PHASER_MAX_RANGE_GU = 700 GU = 122.5 km (HUD-observed in
+    stock BC, Galaxy class)."""
+    assert PHASER_MAX_RANGE_GU == 700.0
+
+
+def test_target_well_within_global_range_returns_true():
     ship = _Ship(0, 0, 0)
-    target = _Target(50, 0, 0)
-    banks = [_FakeBank(max_damage_distance=100.0)]
+    target = _Target(500, 0, 0)
+    banks = [_FakeBank(max_damage_distance=60.0)]  # Galaxy-like
     sys = _build_system(banks, ship)
     assert sys._target_in_system_range(ship, target) is True
 
 
-def test_target_beyond_max_range_returns_false():
+def test_target_at_global_range_boundary_returns_true():
     ship = _Ship(0, 0, 0)
-    target = _Target(200, 0, 0)
-    banks = [_FakeBank(max_damage_distance=100.0)]
+    target = _Target(PHASER_MAX_RANGE_GU, 0, 0)
+    banks = [_FakeBank(max_damage_distance=60.0)]
+    sys = _build_system(banks, ship)
+    assert sys._target_in_system_range(ship, target) is True
+
+
+def test_target_beyond_global_range_returns_false():
+    ship = _Ship(0, 0, 0)
+    target = _Target(PHASER_MAX_RANGE_GU + 1.0, 0, 0)
+    banks = [_FakeBank(max_damage_distance=60.0)]
     sys = _build_system(banks, ship)
     assert sys._target_in_system_range(ship, target) is False
 
 
-def test_max_range_is_system_wide_max_across_banks():
-    """Mixed-range banks: gate at the longest reach (Option 1)."""
+def test_gate_ignores_per_bank_max_damage_distance():
+    """A target far beyond any bank's MaxDamageDistance but within the
+    global range should still pass the gate — MaxDamageDistance only
+    shapes damage, not range."""
     ship = _Ship(0, 0, 0)
-    target = _Target(150, 0, 0)
-    banks = [_FakeBank(max_damage_distance=100.0),
-             _FakeBank(max_damage_distance=200.0)]
-    sys = _build_system(banks, ship)
-    assert sys._target_in_system_range(ship, target) is True
-
-
-def test_no_bank_declares_range_falls_through():
-    """Legacy fixture without MaxDamageDistance — don't block."""
-    ship = _Ship(0, 0, 0)
-    target = _Target(1e6, 0, 0)
-    banks = [_FakeBank(max_damage_distance=0.0)]
+    target = _Target(500, 0, 0)  # well beyond bank's 60 GU MDD
+    banks = [_FakeBank(max_damage_distance=60.0)]
     sys = _build_system(banks, ship)
     assert sys._target_in_system_range(ship, target) is True
 
 
 def test_legacy_no_world_location_falls_through():
-    """Ship without GetWorldLocation — pre-range-gate tests still pass."""
+    """Ship without GetWorldLocation — non-positional tests still pass."""
     class _BareShip: pass
     class _BareTarget: pass
     banks = [_FakeBank(max_damage_distance=100.0)]
@@ -124,8 +131,8 @@ def test_legacy_no_world_location_falls_through():
 
 def test_start_firing_no_op_when_target_out_of_range():
     ship = _Ship(0, 0, 0)
-    target = _Target(500, 0, 0)
-    bank = _FakeBank(max_damage_distance=100.0)
+    target = _Target(PHASER_MAX_RANGE_GU + 100.0, 0, 0)
+    bank = _FakeBank(max_damage_distance=60.0)
     sys = _build_system([bank], ship)
 
     sys.StartFiring(target=target)
@@ -138,8 +145,8 @@ def test_start_firing_no_op_when_target_out_of_range():
 
 def test_start_firing_dispatches_when_target_in_range():
     ship = _Ship(0, 0, 0)
-    target = _Target(50, 0, 0)
-    bank = _FakeBank(max_damage_distance=100.0)
+    target = _Target(500, 0, 0)
+    bank = _FakeBank(max_damage_distance=60.0)
     sys = _build_system([bank], ship)
 
     sys.StartFiring(target=target)
@@ -152,7 +159,7 @@ def test_start_firing_dispatches_when_target_in_range():
 
 def test_retry_held_fire_stops_when_target_drifts_out_of_range():
     ship = _Ship(0, 0, 0)
-    bank = _FakeBank(max_damage_distance=100.0, can_fire=False)
+    bank = _FakeBank(max_damage_distance=60.0, can_fire=False)
     sys = _build_system([bank], ship)
 
     # Simulate trigger held with target initially in range.
@@ -161,7 +168,7 @@ def test_retry_held_fire_stops_when_target_drifts_out_of_range():
     assert sys._fire_held is True
 
     # Now move the target out of range.
-    sys._held_target = _Target(500, 0, 0)
+    sys._held_target = _Target(PHASER_MAX_RANGE_GU + 100.0, 0, 0)
 
     bank.fire_calls.clear()
     sys.retry_held_fire()
@@ -175,7 +182,7 @@ def test_retry_held_fire_stops_when_target_drifts_out_of_range():
 def test_retry_held_fire_continues_when_target_in_range():
     ship = _Ship(0, 0, 0)
     target = _Target(50, 0, 0)
-    bank = _FakeBank(max_damage_distance=100.0, can_fire=True)
+    bank = _FakeBank(max_damage_distance=60.0, can_fire=True)
     sys = _build_system([bank], ship)
 
     sys.StartFiring(target=target)
