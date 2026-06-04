@@ -41,7 +41,8 @@ def _make_ship_pose(x=0.0, y=0.0, z=0.0):
 
 def test_default_state_matches_radius_framing():
     """Defaults frame a unit-radius ship at -CAM_BACK_RADII forward + CAM_UP_RADII up."""
-    from engine.host_loop import _CameraControl, CAM_BACK_RADII, CAM_UP_RADII
+    from engine.cameras.chase import _ChaseCamera as _CameraControl
+    from engine.host_loop import CAM_BACK_RADII, CAM_UP_RADII
 
     cc = _CameraControl()
     expected_dist  = math.sqrt(CAM_BACK_RADII**2 + CAM_UP_RADII**2)
@@ -53,7 +54,7 @@ def test_default_state_matches_radius_framing():
 
 
 def test_right_arrow_increases_yaw():
-    from engine.host_loop import _CameraControl
+    from engine.cameras.chase import _ChaseCamera as _CameraControl
     cc = _CameraControl()
     reader = _FakeKeyReader()
     reader.held.add(reader.keys.KEY_RIGHT)
@@ -63,7 +64,7 @@ def test_right_arrow_increases_yaw():
 
 
 def test_left_arrow_decreases_yaw():
-    from engine.host_loop import _CameraControl
+    from engine.cameras.chase import _ChaseCamera as _CameraControl
     cc = _CameraControl()
     reader = _FakeKeyReader()
     reader.held.add(reader.keys.KEY_LEFT)
@@ -73,7 +74,7 @@ def test_left_arrow_decreases_yaw():
 
 
 def test_up_arrow_increases_pitch():
-    from engine.host_loop import _CameraControl
+    from engine.cameras.chase import _ChaseCamera as _CameraControl
     cc = _CameraControl()
     reader = _FakeKeyReader()
     start_pitch = cc.orbit_pitch_rad
@@ -85,7 +86,7 @@ def test_up_arrow_increases_pitch():
 
 
 def test_down_arrow_decreases_pitch():
-    from engine.host_loop import _CameraControl
+    from engine.cameras.chase import _ChaseCamera as _CameraControl
     cc = _CameraControl()
     reader = _FakeKeyReader()
     start_pitch = cc.orbit_pitch_rad
@@ -98,7 +99,7 @@ def test_down_arrow_decreases_pitch():
 
 def test_pitch_clamps_at_upper_limit():
     """Hold UP indefinitely → orbit_pitch saturates at PITCH_LIMIT_RAD."""
-    from engine.host_loop import _CameraControl
+    from engine.cameras.chase import _ChaseCamera as _CameraControl
     cc = _CameraControl()
     reader = _FakeKeyReader()
     reader.held.add(reader.keys.KEY_UP)
@@ -108,7 +109,7 @@ def test_pitch_clamps_at_upper_limit():
 
 
 def test_pitch_clamps_at_lower_limit():
-    from engine.host_loop import _CameraControl
+    from engine.cameras.chase import _ChaseCamera as _CameraControl
     cc = _CameraControl()
     reader = _FakeKeyReader()
     reader.held.add(reader.keys.KEY_DOWN)
@@ -119,7 +120,7 @@ def test_pitch_clamps_at_lower_limit():
 
 def test_scroll_up_zooms_in():
     """Positive scroll_y reduces distance by 0.9^n per notch."""
-    from engine.host_loop import _CameraControl
+    from engine.cameras.chase import _ChaseCamera as _CameraControl
     cc = _CameraControl()
     reader = _FakeKeyReader()
     initial = cc.distance
@@ -129,7 +130,7 @@ def test_scroll_up_zooms_in():
 
 
 def test_scroll_down_zooms_out():
-    from engine.host_loop import _CameraControl
+    from engine.cameras.chase import _ChaseCamera as _CameraControl
     cc = _CameraControl()
     reader = _FakeKeyReader()
     initial = cc.distance
@@ -139,7 +140,7 @@ def test_scroll_down_zooms_out():
 
 
 def test_distance_clamps_at_min():
-    from engine.host_loop import _CameraControl
+    from engine.cameras.chase import _ChaseCamera as _CameraControl
     cc = _CameraControl()
     reader = _FakeKeyReader()
     cc.apply(dt=1.0/60, h=reader, scroll_y=1000.0)  # absurd zoom in
@@ -147,60 +148,18 @@ def test_distance_clamps_at_min():
 
 
 def test_distance_clamps_at_max():
-    from engine.host_loop import _CameraControl
+    from engine.cameras.chase import _ChaseCamera as _CameraControl
     cc = _CameraControl()
     reader = _FakeKeyReader()
     cc.apply(dt=1.0/60, h=reader, scroll_y=-1000.0)
     assert cc.distance == pytest.approx(cc.distance_max)
 
 
-def test_target_lock_enabled_by_default():
-    from engine.host_loop import _CameraControl
-    assert _CameraControl().target_lock_enabled is True
-
-
-def test_C_resets_orbit_and_disables_target_lock():
-    """C is the 'default chase' reset: snap orbit angles and distance
-    back to defaults AND drop target lock so gaze returns to own ship."""
-    from engine.host_loop import _CameraControl
-    cc = _CameraControl()
-    cc.orbit_yaw_rad   = 1.2
-    cc.orbit_pitch_rad = -0.4
-    cc.distance        = 12345.0
-    cc.target_lock_enabled = True
-    reader = _FakeKeyReader()
-    reader.pressed_once.add(reader.keys.KEY_C)
-    cc.apply(dt=1.0/60, h=reader, scroll_y=0.0)
-    fresh = _CameraControl()
-    assert cc.orbit_yaw_rad   == pytest.approx(fresh.orbit_yaw_rad)
-    assert cc.orbit_pitch_rad == pytest.approx(fresh.orbit_pitch_rad)
-    assert cc.distance        == pytest.approx(fresh.distance)
-    assert cc.target_lock_enabled is False
-
-
-def test_lock_to_target_resets_orbit_and_enables_lock():
-    """Selecting a new target should snap orbit back to defaults so the
-    chase eye returns behind the ship, and enable target lock so gaze
-    redirects to the target. Overrides any manual orbit the user had."""
-    from engine.host_loop import _CameraControl
-    cc = _CameraControl()
-    cc.orbit_yaw_rad   = 1.2
-    cc.orbit_pitch_rad = -0.4
-    cc.distance        = 12345.0
-    cc.target_lock_enabled = False
-    cc.lock_to_target()
-    fresh = _CameraControl()
-    assert cc.orbit_yaw_rad   == pytest.approx(fresh.orbit_yaw_rad)
-    assert cc.orbit_pitch_rad == pytest.approx(fresh.orbit_pitch_rad)
-    assert cc.distance        == pytest.approx(fresh.distance)
-    assert cc.target_lock_enabled is True
-
-
 def test_compute_camera_at_defaults_at_origin_identity_rotation():
     """Default orbit + identity ship rotation places the eye at
-    (0, -CAM_BACK_RADII*r, CAM_UP_RADII*r) relative to a unit-radius ship.
-    The target is panned up by look_up_offset along ship-Z."""
-    from engine.host_loop import _CameraControl, CAM_BACK_RADII, CAM_UP_RADII
+    (0, -CAM_BACK_RADII*r, CAM_UP_RADII*r) relative to a unit-radius ship."""
+    from engine.cameras.chase import _ChaseCamera as _CameraControl
+    from engine.host_loop import CAM_BACK_RADII, CAM_UP_RADII
 
     cc = _CameraControl()
     loc, rot = _make_ship_pose(0.0, 0.0, 0.0)
@@ -208,15 +167,16 @@ def test_compute_camera_at_defaults_at_origin_identity_rotation():
 
     assert eye[0] == pytest.approx(0.0,             abs=1e-3)
     assert eye[1] == pytest.approx(-CAM_BACK_RADII, abs=1e-3)
-    assert eye[2] == pytest.approx( CAM_UP_RADII + cc.look_up_offset, abs=1e-3)
-    assert target == pytest.approx((0.0, 0.0, cc.look_up_offset))
+    assert eye[2] == pytest.approx( CAM_UP_RADII,   abs=1e-3)
+    assert target == pytest.approx((0.0, 0.0, 0.0))
     assert up     == pytest.approx((0.0, 0.0, 1.0))
 
 
 def test_compute_camera_offset_is_in_ship_body_frame():
     """Yaw the ship 90° around world Z. The camera-to-ship vector should
     rotate with the ship so the camera stays 'behind' the new heading."""
-    from engine.host_loop import _CameraControl, CAM_BACK_RADII, CAM_UP_RADII
+    from engine.cameras.chase import _ChaseCamera as _CameraControl
+    from engine.host_loop import CAM_BACK_RADII, CAM_UP_RADII
 
     cc = _CameraControl()
     loc, rot = _make_ship_pose(0.0, 0.0, 0.0)
@@ -226,10 +186,10 @@ def test_compute_camera_offset_is_in_ship_body_frame():
     # Ship's body-Y after a +90° yaw points along R.GetCol(1) = (-1, 0, 0)
     # under column-vector convention (see CLAUDE.md). Body-Z is unchanged
     # (0, 0, 1). The camera sits at
-    #   -CAM_BACK_RADII*body_Y + CAM_UP_RADII*body_Z + look_up_offset*body_Z.
+    #   -CAM_BACK_RADII*body_Y + CAM_UP_RADII*body_Z.
     expected_eye_x =  CAM_BACK_RADII
     expected_eye_y =  0.0
-    expected_eye_z =  CAM_UP_RADII + cc.look_up_offset
+    expected_eye_z =  CAM_UP_RADII
     assert eye[0] == pytest.approx(expected_eye_x, abs=1e-3)
     assert eye[1] == pytest.approx(expected_eye_y, abs=1e-3)
     assert eye[2] == pytest.approx(expected_eye_z, abs=1e-3)
@@ -237,7 +197,7 @@ def test_compute_camera_offset_is_in_ship_body_frame():
 
 def test_compute_camera_up_is_ship_up():
     """Roll the ship; camera up should track ship-up (banking visible)."""
-    from engine.host_loop import _CameraControl
+    from engine.cameras.chase import _ChaseCamera as _CameraControl
     cc = _CameraControl()
     loc, rot = _make_ship_pose(0.0, 0.0, 0.0)
     rot.MakeYRotation(math.radians(30))   # roll
@@ -264,7 +224,7 @@ def _roll_90_rot():
 def test_spring_first_call_with_dt_seeds_to_live_rotation():
     """First compute_camera with dt should produce the same up vector as the
     no-spring path, because there is no prior smoothed state to lag against."""
-    from engine.host_loop import _CameraControl
+    from engine.cameras.chase import _ChaseCamera as _CameraControl
     cc = _CameraControl()
     loc, rot = _make_ship_pose(0.0, 0.0, 0.0)
     rot.MakeYRotation(math.radians(30))
@@ -279,7 +239,7 @@ def test_spring_lags_after_sudden_ship_rotation_jump():
     """Seed smoothing at identity, then snap the ship to a 90° roll. After
     one short tick the camera up should still be near world-up, not the new
     ship-up."""
-    from engine.host_loop import _CameraControl
+    from engine.cameras.chase import _ChaseCamera as _CameraControl
     cc = _CameraControl()
     loc, ident = _make_ship_pose(0.0, 0.0, 0.0)
     # Seed: many ticks at identity so smoothed_rot ≈ identity.
@@ -296,7 +256,7 @@ def test_spring_lags_after_sudden_ship_rotation_jump():
 def test_spring_converges_to_live_after_long_settle():
     """Hold the rotation steady for ≫ τ; smoothed rotation should reach the
     live rotation within float tolerance."""
-    from engine.host_loop import _CameraControl
+    from engine.cameras.chase import _ChaseCamera as _CameraControl
     cc = _CameraControl()
     loc, ident = _make_ship_pose(0.0, 0.0, 0.0)
     cc.compute_camera(loc, ident, dt=1.0/60)   # seed at identity
@@ -314,7 +274,7 @@ def test_spring_converges_to_live_after_long_settle():
 def test_spring_snap_clears_smoothing():
     """After snap(), the next compute_camera with dt should align to live
     immediately rather than blending from the prior smoothed state."""
-    from engine.host_loop import _CameraControl
+    from engine.cameras.chase import _ChaseCamera as _CameraControl
     cc = _CameraControl()
     loc, ident = _make_ship_pose(0.0, 0.0, 0.0)
     for _ in range(60):
@@ -331,7 +291,7 @@ def test_spring_snap_clears_smoothing():
 def test_spring_keeps_basis_orthonormal_under_continual_rotation():
     """Continually update with a non-trivial rotation; the smoothed basis
     used for the camera must remain orthonormal (no drift / non-unit)."""
-    from engine.host_loop import _CameraControl
+    from engine.cameras.chase import _ChaseCamera as _CameraControl
     from engine.appc.math import TGMatrix3
     cc = _CameraControl()
     cc.orbit_yaw_rad = math.radians(45)        # so eye depends on all three rows
@@ -355,7 +315,7 @@ def test_spring_keeps_basis_orthonormal_under_continual_rotation():
 def test_compute_camera_dt_none_does_not_mutate_smoothed_state():
     """Legacy call (no dt) must remain a pure projection — no smoothing
     state should accumulate, so existing single-shot tests stay valid."""
-    from engine.host_loop import _CameraControl
+    from engine.cameras.chase import _ChaseCamera as _CameraControl
     cc = _CameraControl()
     loc, rot = _make_ship_pose(0.0, 0.0, 0.0)
     rot.MakeZRotation(math.radians(30))
@@ -366,7 +326,8 @@ def test_compute_camera_dt_none_does_not_mutate_smoothed_state():
 def test_orbit_yaw_90_puts_camera_on_ship_right():
     """orbit_yaw=+90° at default pitch: camera should sit to the ship's right
     (body +X) and slightly above. Identity ship rotation."""
-    from engine.host_loop import _CameraControl, CAM_BACK_RADII, CAM_UP_RADII
+    from engine.cameras.chase import _ChaseCamera as _CameraControl
+    from engine.host_loop import CAM_BACK_RADII, CAM_UP_RADII
     cc = _CameraControl()
     cc.orbit_yaw_rad = math.radians(90)
     loc, rot = _make_ship_pose(0.0, 0.0, 0.0)
@@ -374,7 +335,7 @@ def test_orbit_yaw_90_puts_camera_on_ship_right():
 
     expected_x =  CAM_BACK_RADII                       # cos(default_pitch)*dist along +X
     expected_y =  0.0
-    expected_z =  CAM_UP_RADII + cc.look_up_offset
+    expected_z =  CAM_UP_RADII
     assert eye[0] == pytest.approx(expected_x, abs=1e-3)
     assert eye[1] == pytest.approx(expected_y, abs=1e-3)
     assert eye[2] == pytest.approx(expected_z, abs=1e-3)

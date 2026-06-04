@@ -626,23 +626,9 @@ DEFAULT_DIRECTIONALS: list = [
     ((0.3, 1.0, 0.2), (1.0, 1.0, 1.0)),
 ]
 
-# Camera-follow distances as multiples of the player ship's GetRadius().
-# BC's stock framing ratio is ~1.2× the ship's mesh diameter, which in our
-# convention is ~2.4 × GetRadius (GetRadius corresponds to the AABB outer-
-# corner sphere, larger than any single half-extent).
-CAM_BACK_RADII =  1.5
-CAM_UP_RADII   =  0.25
-CAM_MIN_RADII  =  0.6
-CAM_MAX_RADII  = 30.0
-# Look-at offset along ship's body-up. Positive values move the ship
-# downward on screen (because target shifts upward in world). Expressed
-# as multiples of ship radius so framing is scale-invariant across ships.
-CAM_LOOK_UP_RADII = 0.20
-# Target-lock only: lift the chase eye along world-Z by this multiple
-# of the player ship's GetRadius(), in addition to the line-extension
-# placement. Pushes the ship lower in frame when the camera sits on
-# the target→ship line (where there is otherwise no vertical offset).
-CAM_TARGET_LOCK_LIFT_RADII = 1.0
+from engine.cameras import (
+    CAM_BACK_RADII, CAM_UP_RADII, CAM_MIN_RADII, CAM_MAX_RADII,
+)
 
 
 class _PlayerControl:
@@ -890,204 +876,7 @@ class _PlayerControl:
             )
 
 
-class _CameraControl:
-    """Arrow-key orbit + scroll-wheel zoom around the player ship.
-
-    The orbit angles and distance are stored in the ship's body frame, so
-    the camera "rotates with" the ship: when the ship banks/pitches/yaws,
-    the relative camera position is preserved.
-
-    Conventions:
-      orbit_yaw_rad   — rotation around ship-Z. 0 = directly behind, +ve =
-                        camera moves to ship-right, -ve = ship-left.
-                        Wraps freely; not clamped.
-      orbit_pitch_rad — elevation above the ship's XY plane. 0 = level with
-                        the ship; +ve = camera above. Clamped to ±PITCH_LIMIT.
-      distance        — eye-to-ship distance, multiplicative on scroll.
-
-    Defaults reproduce the pre-orbit (-forward*600 + up*200) framing so
-    existing setups look unchanged until the user touches arrows or scroll.
-    """
-
-    TURN_RATE_RAD_PER_S    = 1.5                                # ~86°/s
-    ZOOM_FACTOR_PER_NOTCH  = 0.9                                # one scroll click ≈ 10%
-    PITCH_LIMIT_RAD        = _math.radians(85)                  # avoid pole flip
-    DEFAULT_YAW_RAD        = 0.0
-    DEFAULT_PITCH_RAD      = _math.atan2(CAM_UP_RADII, CAM_BACK_RADII)
-    SPRING_TAU_S           = 0.50                               # ~95% catch-up in 1.5s
-
-    def __init__(self):
-        self.orbit_yaw_rad      = self.DEFAULT_YAW_RAD
-        self.orbit_pitch_rad    = self.DEFAULT_PITCH_RAD
-        self._smoothed_rot      = None  # seeded on first compute_camera(..., dt=...)
-        self.look_up_offset     = 0.0
-        self.target_lock_enabled = True
-        # Vertical shift of the look-at below the target as a fraction of
-        # the eye→target distance — pushes the target up in the frame so
-        # the player ship and target sit on opposite sides of screen
-        # centre. ~sin(angular offset): 0.15 ≈ 9° ≈ 30% above centre at
-        # 60° vertical FOV. 0 = target dead centre.
-        self.target_lock_bias    = 0.15
-        self.set_ship_radius(1.0)
-
-    def set_ship_radius(self, radius: float) -> None:
-        """Bind chase distances to the player ship's GetRadius(). Re-seeds
-        self.distance if it was sitting at the prior default; preserves any
-        user zoom that has occurred since the last reset."""
-        radius = max(radius, 1e-6)
-        prev_default = getattr(self, "default_distance", None)
-        self.default_distance    = _math.sqrt(CAM_BACK_RADII**2 + CAM_UP_RADII**2) * radius
-        self.distance_min        = CAM_MIN_RADII * radius
-        self.distance_max        = CAM_MAX_RADII * radius
-        self.look_up_offset      = CAM_LOOK_UP_RADII * radius
-        self.target_lock_z_lift  = CAM_TARGET_LOCK_LIFT_RADII * radius
-        if prev_default is None or getattr(self, "distance", prev_default) == prev_default:
-            self.distance = self.default_distance
-
-    def reset_orbit(self) -> None:
-        """Snap orbit angles and distance back to defaults. Does not change
-        target_lock_enabled or the rotation-smoothing state."""
-        self.orbit_yaw_rad   = self.DEFAULT_YAW_RAD
-        self.orbit_pitch_rad = self.DEFAULT_PITCH_RAD
-        self.distance        = self.default_distance
-
-    def lock_to_target(self) -> None:
-        """Snap orbit to defaults and enable target lock. Use on fresh
-        target selection to give a clean 'over-the-shoulder, look at
-        target' framing regardless of any manual orbit the user had set."""
-        self.reset_orbit()
-        self.target_lock_enabled = True
-
-    def snap(self) -> None:
-        """Drop smoothed rotation so the next compute_camera(..., dt=...) call
-        aligns the camera immediately with the live ship rotation. Use on hard
-        cuts (mission swap, teleport, warp exit)."""
-        self._smoothed_rot = None
-
-    def apply(self, dt: float, h, scroll_y: float) -> None:
-        """Read arrow keys + C reset + accumulated scroll, update orbit state.
-
-        `h` is the bindings module (or fake) with key_state/key_pressed and a
-        `keys` namespace containing KEY_LEFT/RIGHT/UP/DOWN/C.
-        `scroll_y` is the total wheel delta accumulated since the last call.
-        """
-        if h.key_pressed(h.keys.KEY_C):
-            self.reset_orbit()
-            self.target_lock_enabled = False
-            return
-
-        if h.key_state(h.keys.KEY_RIGHT): self.orbit_yaw_rad   += self.TURN_RATE_RAD_PER_S * dt
-        if h.key_state(h.keys.KEY_LEFT):  self.orbit_yaw_rad   -= self.TURN_RATE_RAD_PER_S * dt
-        if h.key_state(h.keys.KEY_UP):    self.orbit_pitch_rad += self.TURN_RATE_RAD_PER_S * dt
-        if h.key_state(h.keys.KEY_DOWN):  self.orbit_pitch_rad -= self.TURN_RATE_RAD_PER_S * dt
-
-        if self.orbit_pitch_rad >  self.PITCH_LIMIT_RAD: self.orbit_pitch_rad =  self.PITCH_LIMIT_RAD
-        if self.orbit_pitch_rad < -self.PITCH_LIMIT_RAD: self.orbit_pitch_rad = -self.PITCH_LIMIT_RAD
-
-        if scroll_y != 0.0:
-            self.distance *= self.ZOOM_FACTOR_PER_NOTCH ** scroll_y
-            if self.distance < self.distance_min: self.distance = self.distance_min
-            if self.distance > self.distance_max: self.distance = self.distance_max
-
-    def compute_camera(self, ship_loc, ship_rot, dt=None) -> tuple:
-        """Return (eye, target, up) as 3-tuples in world space.
-
-        Offset is built in ship body frame (X=right, Y=forward, Z=up):
-            offset_body = (sin(y)*cos(p), -cos(y)*cos(p), sin(p)) * distance
-        At y=0, p=0 the camera sits directly behind on the body-Y axis.
-        Mapping body→world uses BC's column-vector convention
-        (see CLAUDE.md ↦ "Rotation matrix convention"):
-        world_axis_j = basis.GetCol(j).
-
-        When `dt` is given, the basis used here is a smoothed copy of the
-        ship's rotation that lags the live value with time constant
-        SPRING_TAU_S. This produces the "spring" feel where the ship visibly
-        rotates against the camera during a manoeuvre, then settles. When
-        `dt` is None the live rotation is used directly and no smoothing
-        state is touched (legacy / pure-projection path used by tests).
-        """
-        basis = self._advance_smoothing(ship_rot, dt) if dt is not None else ship_rot
-
-        cy = _math.cos(self.orbit_yaw_rad)
-        sy = _math.sin(self.orbit_yaw_rad)
-        cp = _math.cos(self.orbit_pitch_rad)
-        sp = _math.sin(self.orbit_pitch_rad)
-        d  = self.distance
-
-        ox =  sy * cp * d
-        oy = -cy * cp * d
-        oz =       sp * d
-
-        rgt = basis.GetCol(0)
-        fwd = basis.GetCol(1)
-        up  = basis.GetCol(2)
-
-        # Shift look-target up along ship body-Z so the ship sits below
-        # screen center. Eye is also shifted by the same amount so the
-        # pitch angle (eye→target) stays unchanged — pure pan.
-        lu = self.look_up_offset
-        eye = (
-            ship_loc.x + ox * rgt.x + oy * fwd.x + oz * up.x + lu * up.x,
-            ship_loc.y + ox * rgt.y + oy * fwd.y + oz * up.y + lu * up.y,
-            ship_loc.z + ox * rgt.z + oy * fwd.z + oz * up.z + lu * up.z,
-        )
-        target = (
-            ship_loc.x + lu * up.x,
-            ship_loc.y + lu * up.y,
-            ship_loc.z + lu * up.z,
-        )
-        up_vec = (up.x, up.y, up.z)
-        return eye, target, up_vec
-
-    def _advance_smoothing(self, ship_rot, dt: float):
-        """Blend self._smoothed_rot toward ship_rot, renormalize, and return
-        the smoothed basis. Seeds from ship_rot on the first call."""
-        from engine.appc.math import TGMatrix3, TGPoint3
-
-        if self._smoothed_rot is None:
-            seed = TGMatrix3()
-            for i in range(3):
-                seed.SetCol(i, ship_rot.GetCol(i))
-            self._smoothed_rot = seed
-            return self._smoothed_rot
-
-        alpha = 1.0 - _math.exp(-dt / self.SPRING_TAU_S) if dt > 0.0 else 0.0
-        blended = [None, None, None]
-        for i in range(3):
-            s = self._smoothed_rot.GetCol(i)
-            l = ship_rot.GetCol(i)
-            blended[i] = TGPoint3(
-                s.x + alpha * (l.x - s.x),
-                s.y + alpha * (l.y - s.y),
-                s.z + alpha * (l.z - s.z),
-            )
-
-        # Gram-Schmidt re-orthonormalize: keep forward (col 1) as primary
-        # axis, project up (col 2) perpendicular to it, derive right via
-        # cross product. Body axes are right-handed: forward × up = right.
-        # (See CLAUDE.md ↦ "Rotation matrix convention".)
-        def _norm(v):
-            m = _math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z)
-            return TGPoint3(v.x/m, v.y/m, v.z/m)
-
-        f = _norm(blended[1])
-        u_in = blended[2]
-        dot_uf = u_in.x*f.x + u_in.y*f.y + u_in.z*f.z
-        u = _norm(TGPoint3(
-            u_in.x - dot_uf * f.x,
-            u_in.y - dot_uf * f.y,
-            u_in.z - dot_uf * f.z,
-        ))
-        r = TGPoint3(
-            f.y * u.z - f.z * u.y,
-            f.z * u.x - f.x * u.z,
-            f.x * u.y - f.y * u.x,
-        )
-
-        self._smoothed_rot.SetCol(0, r)
-        self._smoothed_rot.SetCol(1, f)
-        self._smoothed_rot.SetCol(2, u)
-        return self._smoothed_rot
+from engine.cameras.chase import _ChaseCamera as _CameraControl
 
 
 class _ViewModeController:
@@ -1901,7 +1690,7 @@ class _NoInputReader:
 _NO_INPUT = _NoInputReader()
 
 
-def _apply_input(view_mode, player_control, cam_control,
+def _apply_input(view_mode, player_control, director,
                  *, player, dt, h, scroll_y) -> None:
     """Per-tick input dispatch.
 
@@ -1914,33 +1703,18 @@ def _apply_input(view_mode, player_control, cam_control,
     """
     if view_mode.is_exterior:
         player_control.apply(player, dt, h)
-        cam_control.apply(dt, h, scroll_y)
+        director.chase.apply(dt, h, scroll_y)
     else:
         player_control.apply(player, dt, _NO_INPUT)
 
 
-def _compute_camera(view_mode, cam_control, *, player, dt) -> tuple:
+def _compute_camera(view_mode, director, *, player, dt) -> tuple:
     """Per-tick camera dispatch.
 
-    Exterior mode delegates to _CameraControl.compute_camera (orbit +
-    spring-lag). Bridge mode anchors at the ship origin looking along
-    ship-Y forward (col 1 of the rotation matrix) with ship-Z as up
-    (col 2). Returns (eye, target, up) as 3-tuples in world space, the
-    same shape r.set_camera consumes.
-
-    Target lock: in exterior mode, if cam_control.target_lock_enabled is
-    True and the player has a non-self target via GetTarget(), the eye is
-    rebuilt in a frame aligned with the ship→target axis. The chase
-    distance (|eye - ship|) and the vertical lift (component along
-    up_vec) from the body-frame chase camera are preserved; any sideways
-    body-frame offset is folded into the chase distance. The result: as
-    the target orbits around the ship, the camera smoothly orbits in the
-    opposite direction, always keeping the ship between camera and
-    target with a constant zoom and lift. Look-at is then placed on the
-    target, shifted DOWN along image-up by cam_control.target_lock_bias
-    × |eye→target| so the target projects into the upper portion of the
-    frame. bias ≈ sin(angular offset), so 0.15 ≈ 9° (~30% above centre
-    in a 60° vertical FOV). C toggles the lock flag.
+    Bridge mode anchors at the ship origin looking along ship-Y
+    forward. Exterior mode delegates to the director, which chooses
+    between Chase Mode (free orbit) and Tracking Mode (two-angle
+    solver). Returns (eye, look_at, up) as 3-tuples in world space.
     """
     loc = player.GetWorldLocation()
     rot = player.GetWorldRotation()
@@ -1951,87 +1725,10 @@ def _compute_camera(view_mode, cam_control, *, player, dt) -> tuple:
         target = (loc.x + fwd.x, loc.y + fwd.y, loc.z + fwd.z)
         up_vec = (up.x, up.y, up.z)
         return eye, target, up_vec
-    eye, target, up_vec = cam_control.compute_camera(loc, rot, dt=dt)
-    if getattr(cam_control, "target_lock_enabled", False):
-        tgt = player.GetTarget() if hasattr(player, "GetTarget") else None
-        if tgt is not None and tgt is not player:
-            try:
-                tloc = tgt.GetWorldLocation()
-                eye, up_vec = _relocate_eye_for_target_lock(
-                    eye, up_vec, loc, tloc)
-                z_lift = getattr(cam_control, "target_lock_z_lift", 0.0)
-                if z_lift != 0.0:
-                    eye = (eye[0], eye[1], eye[2] + z_lift)
-                bias = getattr(cam_control, "target_lock_bias", 0.15)
-                dx = tloc.x - eye[0]
-                dy = tloc.y - eye[1]
-                dz = tloc.z - eye[2]
-                dist = _math.sqrt(dx*dx + dy*dy + dz*dz)
-                s = bias * dist
-                target = (
-                    tloc.x - s * up_vec[0],
-                    tloc.y - s * up_vec[1],
-                    tloc.z - s * up_vec[2],
-                )
-            except AttributeError:
-                pass
-    return eye, target, up_vec
+    return director.compute(player=player, dt=dt)
 
 
-def _relocate_eye_for_target_lock(eye, up_vec, ship_loc, target_loc):
-    """Place the eye on the line target→ship extended past the ship.
 
-    Direction b_hat = (ship - target) / |ship - target| points from the
-    target through the ship and out the far side. The camera sits at
-    ship + b_hat × |original eye - ship|, so camera, ship, and target
-    are exactly collinear with the ship between camera and target. The
-    chase distance (|eye - ship|) is preserved so zoom carries over.
-
-    up_vec is reprojected perpendicular to b_hat so the camera up stays
-    orthogonal to the view axis. Falls back to world-Z, then world-X,
-    when the original up_vec is parallel to the view axis (looking
-    straight up/down at the target).
-
-    Degenerate case: target ≈ ship — return inputs unchanged.
-    """
-    bx = ship_loc.x - target_loc.x
-    by = ship_loc.y - target_loc.y
-    bz = ship_loc.z - target_loc.z
-    bm = _math.sqrt(bx*bx + by*by + bz*bz)
-    if bm < 1e-6:
-        return eye, up_vec
-    bx, by, bz = bx/bm, by/bm, bz/bm
-
-    ex = eye[0] - ship_loc.x
-    ey = eye[1] - ship_loc.y
-    ez = eye[2] - ship_loc.z
-    chase_dist = _math.sqrt(ex*ex + ey*ey + ez*ez)
-
-    new_eye = (
-        ship_loc.x + bx * chase_dist,
-        ship_loc.y + by * chase_dist,
-        ship_loc.z + bz * chase_dist,
-    )
-
-    ux, uy, uz = up_vec
-    u_dot_b = ux*bx + uy*by + uz*bz
-    upx = ux - u_dot_b * bx
-    upy = uy - u_dot_b * by
-    upz = uz - u_dot_b * bz
-    upm = _math.sqrt(upx*upx + upy*upy + upz*upz)
-    if upm < 1e-6:
-        upx = -bz * bx
-        upy = -bz * by
-        upz = 1.0 - bz * bz
-        upm = _math.sqrt(upx*upx + upy*upy + upz*upz)
-        if upm < 1e-6:
-            upx = 1.0 - bx * bx
-            upy = -bx * by
-            upz = -bx * bz
-            upm = _math.sqrt(upx*upx + upy*upy + upz*upz)
-            if upm < 1e-6:
-                return new_eye, up_vec
-    return new_eye, (upx/upm, upy/upm, upz/upm)
 
 
 def _update_ui_for_tick(player, view_mode, session, active_set) -> None:
@@ -2170,9 +1867,12 @@ def run(mission_name: Optional[str] = None,
 
         # Per-tick player input → ship-transform integrator.
         player_control = _PlayerControl()
-        cam_control    = _CameraControl()
+        from engine.cameras import _CameraDirector
+        director       = _CameraDirector()
         if controller.session is not None and controller.session.player is not None:
-            cam_control.set_ship_radius(controller.session.player.GetRadius())
+            _r = controller.session.player.GetRadius()
+            director.chase.set_ship_radius(_r)
+            director.tracking.set_ship_radius(_r)
         view_mode      = _ViewModeController()
         pause          = _PauseMenuController()
         from engine.ui.target_list_view import TargetListView
@@ -2513,14 +2213,16 @@ def run(mission_name: Optional[str] = None,
                 had_pending_swap = controller.pending_swap is not None
                 controller._drain_pending_swap()
                 if had_pending_swap:
-                    cam_control.snap()
+                    director.snap()
             else:
                 had_pending_swap = False
 
             session = controller.session
             player = session.player if session is not None else None
             if had_pending_swap and player is not None:
-                cam_control.set_ship_radius(player.GetRadius())
+                _r = player.GetRadius()
+                director.chase.set_ship_radius(_r)
+                director.tracking.set_ship_radius(_r)
 
             if not pause.is_open:
                 # Dev-mode keybindings (no-op when --developer is not set).
@@ -2557,10 +2259,16 @@ def run(mission_name: Optional[str] = None,
                     # _PlayerControl.apply checks _shift_held() to skip digit
                     # throttling on the same press.
                     _apply_alert_keys(_h, player)
+                    # C-key: toggle Chase ↔ Tracking (only enters Tracking if
+                    # the player has a valid target). key_pressed fires once per
+                    # key-down event (not while held). Gate on exterior view so
+                    # the mode cannot flip silently while the bridge is active.
+                    if view_mode.is_exterior and _h.key_pressed(_h.keys.KEY_C):
+                        director.toggle_mode(player=player)
                     # dt = _player_dt (wall-clock frame delta), not TICK_DT —
                     # see comment at the accumulator step. _apply_input fires
                     # once per render frame, so its dt is the wall delta.
-                    _apply_input(view_mode, player_control, cam_control,
+                    _apply_input(view_mode, player_control, director,
                                  player=player, dt=_player_dt, h=_h,
                                  scroll_y=scroll_y)
 
@@ -2596,7 +2304,7 @@ def run(mission_name: Optional[str] = None,
                 up_vec = (0.0, 1.0, 0.0)
             elif player is not None:
                 eye, target, up_vec = _compute_camera(
-                    view_mode, cam_control,
+                    view_mode, director,
                     player=player, dt=TICK_DT)
                 # Camera shake — apply to the exterior view. The bridge
                 # first-person camera below gets its own perturb call
