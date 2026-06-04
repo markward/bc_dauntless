@@ -89,6 +89,17 @@ void draw_mesh(const assets::Model& model,
                double wall_time) {
     shader.set_mat4("u_model", world);
     shader.set_vec3("u_emissive", mat.emissive);
+    // Alpha test only fires when the material carries an NiAlphaProperty;
+    // otherwise the shape is fully opaque regardless of the base
+    // texture's alpha channel. EBridge's floorlight.tga (and similar
+    // glow-mask textures) store alpha as a brightness mask, not as
+    // transparency — without this we'd carve the dark fixture body out
+    // of every wall-light shape. Sentinel threshold -1 disables the
+    // discard in the shader.
+    const float thresh = mat.alpha_test_enabled
+        ? static_cast<float>(mat.alpha_test_threshold) / 255.0f
+        : -1.0f;
+    shader.set_float("u_alpha_test_threshold", thresh);
     int base_tex = mat.stages[
         static_cast<std::size_t>(assets::Material::StageSlot::Base)
     ].texture_index;

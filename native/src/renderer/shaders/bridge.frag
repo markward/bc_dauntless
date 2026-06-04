@@ -7,6 +7,8 @@ uniform sampler2D u_base_color;
 uniform sampler2D u_dark_map;  // lightmap on UV set 1; white where absent
 uniform vec3 u_ambient;
 uniform vec3 u_emissive;       // per-material self-illumination floor
+// Sentinel < 0 disables the discard — see BridgePass::draw_mesh, which
+// sets this from Material::alpha_test_enabled / alpha_test_threshold.
 uniform float u_alpha_test_threshold;
 
 out vec4 FragColor;

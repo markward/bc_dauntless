@@ -75,8 +75,11 @@ void dump_model(const assets::Model& m) {
             ].texture_index : -1;
             const bool will_render_white = (base_tex < 0);
             if (will_render_white) ++shapes_white;
-            std::printf("node[%3zu] '%s'  mesh[%d]  mat=%d  base_tex=%d%s\n",
-                        ni, node.name.c_str(), mesh_idx, matidx, base_tex,
+            const std::uint32_t base_uv = matp ? matp->stages[
+                static_cast<std::size_t>(assets::Material::StageSlot::Base)
+            ].uv_set : 0;
+            std::printf("node[%3zu] '%s'  mesh[%d]  mat=%d  base_tex=%d  base_uv=%u%s\n",
+                        ni, node.name.c_str(), mesh_idx, matidx, base_tex, base_uv,
                         will_render_white ? "  *** WHITE ***" : "");
             if (matp) {
                 // Dump every non-empty stage so we can see whether the
