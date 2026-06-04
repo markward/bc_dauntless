@@ -2495,6 +2495,15 @@ def run(mission_name: Optional[str] = None,
             _accumulator, _sim_ticks_this_frame = step_accumulator(
                 _accumulator, _frame_dt, TICK_DT, MAX_FRAME_DT
             )
+            # Per-render-frame delta for the player input integrator.
+            # _apply_input runs once per render frame, so its dt must
+            # be the wall-clock delta since the last frame — not the
+            # fixed sim TICK_DT. Otherwise at 120 Hz monitor refresh
+            # the player ship rotates / accelerates 2× too fast (BC
+            # Galaxy 360° yaw collapses from 24 s to 12 s). Clamp
+            # matches step_accumulator's spiral-of-death cap so a
+            # stalled frame doesn't teleport the player.
+            _player_dt = 0.0 if pause.is_open else min(max(_frame_dt, 0.0), MAX_FRAME_DT)
             for _ in range(_sim_ticks_this_frame):
                 loop.tick()
 
@@ -2548,8 +2557,11 @@ def run(mission_name: Optional[str] = None,
                     # _PlayerControl.apply checks _shift_held() to skip digit
                     # throttling on the same press.
                     _apply_alert_keys(_h, player)
+                    # dt = _player_dt (wall-clock frame delta), not TICK_DT —
+                    # see comment at the accumulator step. _apply_input fires
+                    # once per render frame, so its dt is the wall delta.
                     _apply_input(view_mode, player_control, cam_control,
-                                 player=player, dt=TICK_DT, h=_h,
+                                 player=player, dt=_player_dt, h=_h,
                                  scroll_y=scroll_y)
 
                 # Forward mouse button edges into the input manager (fire
