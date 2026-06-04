@@ -780,6 +780,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
     keys.attr("KEY_8") = GLFW_KEY_8;
     keys.attr("KEY_9") = GLFW_KEY_9;
     keys.attr("KEY_C")     = GLFW_KEY_C;
+    keys.attr("KEY_V")     = GLFW_KEY_V;
     keys.attr("KEY_Z")     = GLFW_KEY_Z;
     keys.attr("KEY_EQUAL") = GLFW_KEY_EQUAL;
     keys.attr("KEY_MINUS") = GLFW_KEY_MINUS;
