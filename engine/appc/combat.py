@@ -277,12 +277,22 @@ def apply_hit(ship, damage: float, hit_point, source, subsystem=None,
     hull = ship.GetHull() if hasattr(ship, "GetHull") else None
 
     # 1. Shields take it first — but only if the generator is powered
-    #    (IsOn). At green alert the generator is down and damage flows
-    #    straight to the picked subsystem / hull bleed. Fakes that don't
-    #    implement IsOn default to on, so legacy unit tests keep working.
+    #    (IsOn) AND not offline (disabled / destroyed via subsystem
+    #    damage). At green alert the generator is down; once condition
+    #    drops below DisabledPercentage the subsystem is offline. Either
+    #    way damage flows straight to the picked subsystem / hull bleed.
+    #    BC's bypass set: see combat-and-damage.md "Shield bypass paths".
+    #    Fakes that don't implement IsOn default to on, so legacy unit
+    #    tests keep working.
     shields = ship.GetShields() if hasattr(ship, "GetShields") else None
     shields_on = bool(getattr(shields, "IsOn", lambda: 1)()) if shields is not None else False
-    if shields is not None and shields_on and hasattr(shields, "ApplyDamage"):
+    # Disabled/destroyed defaults to 0 so fakes without these predicates
+    # behave as before (online when IsOn).
+    shields_disabled = bool(getattr(shields, "IsDisabled", lambda: 0)()) if shields is not None else False
+    shields_destroyed = bool(getattr(shields, "IsDestroyed", lambda: 0)()) if shields is not None else False
+    shields_online = (shields is not None and shields_on
+                      and not shields_disabled and not shields_destroyed)
+    if shields_online and hasattr(shields, "ApplyDamage"):
         face = _shield_face_from_hit_point(ship, hit_point)
         before_shields = remaining
         remaining = shields.ApplyDamage(face, remaining)
