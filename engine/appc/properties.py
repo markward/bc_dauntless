@@ -137,7 +137,31 @@ def _is_hashable(value) -> bool:
 # inherited from the data-bag base.
 
 class PositionOrientationProperty(TGModelProperty):
-    pass
+    """Bare-position / orientation property — viewscreen anchors,
+    first-person camera mounts, etc. SDK App.py:9106-9107 binds typed
+    SetOrientation(forward, up, right) and SetPosition(TGPoint3); both
+    landed in the data-bag prior to typed setters.
+    """
+
+    def __init__(self, name: str = ""):
+        super().__init__(name)
+        self._forward = None
+        self._up = None
+        self._right = None
+
+    def SetOrientation(self, forward, up, right) -> None:
+        self._forward = _copy_point(forward)
+        self._up = _copy_point(up)
+        self._right = _copy_point(right)
+
+    def GetForward(self):
+        return _copy_point(self._forward)
+
+    def GetUp(self):
+        return _copy_point(self._up)
+
+    def GetRight(self):
+        return _copy_point(self._right)
 
 
 class ObjectEmitterProperty(PositionOrientationProperty):
@@ -156,26 +180,9 @@ class ObjectEmitterProperty(PositionOrientationProperty):
 
     def __init__(self, name: str = ""):
         super().__init__(name)
-        self._forward = None
-        self._up = None
-        self._right = None
         self._emitted_type = self.OEP_UNKNOWN
-        # _position is hoisted to TGModelProperty; SetPosition / GetPosition
-        # also inherited.
-
-    def SetOrientation(self, fwd, up, right):
-        self._forward = _copy_point(fwd)
-        self._up = _copy_point(up)
-        self._right = _copy_point(right)
-
-    def GetForward(self):
-        return _copy_point(self._forward)
-
-    def GetUp(self):
-        return _copy_point(self._up)
-
-    def GetRight(self):
-        return _copy_point(self._right)
+        # _position / _forward / _up / _right + their setters/getters
+        # come from PositionOrientationProperty / TGModelProperty.
 
     def SetEmittedObjectType(self, t):
         self._emitted_type = int(t)
@@ -222,19 +229,24 @@ class PowerProperty(SubsystemProperty):
 
 
 class WeaponProperty(SubsystemProperty):
-    """Base for every emitter template.  Stores per-emitter mounting axes
-    (Direction = firing forward, Right = side axis) so SetDirection /
-    SetRight from hardpoints land in typed slots rather than the TGObject
-    catch-all (which would silently swallow the value and return a Stub).
+    """Base for every emitter template. Stores the per-emitter body-frame
+    basis (Direction = forward / firing axis, Up = arc-plane normal,
+    Right = side axis) so SetDirection / SetRight / SetOrientation calls
+    from hardpoints land in typed slots rather than TGObject's catch-all.
     """
     def __init__(self, name: str = ""):
         super().__init__(name)
         from engine.appc.math import TGPoint3
+        # SDK convention: firing along body +Y, right along body +X,
+        # up along body +Z. Holds until a hardpoint overrides via
+        # SetOrientation / SetDirection / SetRight.
         self._direction = TGPoint3(0.0, 1.0, 0.0)
         self._right     = TGPoint3(1.0, 0.0, 0.0)
+        self._up        = TGPoint3(0.0, 0.0, 1.0)
 
     def GetDirection(self):
-        return self._direction
+        from engine.appc.math import TGPoint3
+        return TGPoint3(self._direction.x, self._direction.y, self._direction.z)
 
     def SetDirection(self, v) -> None:
         from engine.appc.math import TGPoint3
@@ -242,12 +254,58 @@ class WeaponProperty(SubsystemProperty):
             self._direction = TGPoint3(v.x, v.y, v.z)
 
     def GetRight(self):
-        return self._right
+        from engine.appc.math import TGPoint3
+        return TGPoint3(self._right.x, self._right.y, self._right.z)
 
     def SetRight(self, v) -> None:
         from engine.appc.math import TGPoint3
         if isinstance(v, TGPoint3):
             self._right = TGPoint3(v.x, v.y, v.z)
+
+    def GetUp(self):
+        from engine.appc.math import TGPoint3
+        return TGPoint3(self._up.x, self._up.y, self._up.z)
+
+    def SetUp(self, v) -> None:
+        from engine.appc.math import TGPoint3
+        if isinstance(v, TGPoint3):
+            self._up = TGPoint3(v.x, v.y, v.z)
+
+    # Mirror BC's PhaserBank / PhaserProperty accessor names —
+    # sdk App.py:6478-6489 (PhaserBank) and App.py:9287-9292
+    # (PhaserProperty). Callers use either spelling interchangeably.
+    def GetOrientationForward(self):
+        return self.GetDirection()
+
+    def GetOrientationUp(self):
+        return self.GetUp()
+
+    def GetOrientationRight(self):
+        return self.GetRight()
+
+    def SetOrientation(self, forward, up) -> None:
+        """Set the body-frame orientation from a (forward, up) pair.
+
+        SDK signature: ``PhaserProperty.SetOrientation(forward, up)``
+        (App.py:9320). The C++ side derives Right = Up × Forward so
+        ``world_up = direction × right`` recovers the up vector cleanly
+        inside the arc gate. Without this typed setter the call falls
+        through TGModelProperty's data-bag and every bank stays at the
+        default (firing +Y) — i.e. every phaser arc is centred on the
+        ship's nose. See research doc Bug B.
+        """
+        from engine.appc.math import TGPoint3
+        if not (isinstance(forward, TGPoint3) and isinstance(up, TGPoint3)):
+            return
+        self._direction = TGPoint3(forward.x, forward.y, forward.z)
+        self._up        = TGPoint3(up.x, up.y, up.z)
+        # Right-handed basis: Right = Up × Forward. Matches the arc
+        # check's reconstruction up = direction × right.
+        self._right = TGPoint3(
+            up.y * forward.z - up.z * forward.y,
+            up.z * forward.x - up.x * forward.z,
+            up.x * forward.y - up.y * forward.x,
+        )
 
 
 class EnergyWeaponProperty(WeaponProperty):
