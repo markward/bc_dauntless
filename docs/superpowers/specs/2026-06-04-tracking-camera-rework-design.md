@@ -126,27 +126,34 @@ Working in `(e1, e3)` with `S = (0, 0)` and `T = (D, 0)`, `D = |T − S|`:
 1. **Total angular spread.** β = α_t − α_p. β is the angle ∠SET that
    the camera E must subtend.
 2. **Locus arc.** All E with ∠SET = β lie on an arc through S and T.
-   Two arcs satisfy the inscribed-angle constraint (one on each side of
-   ST). The matching arc is the major arc on the **+e3 side** of ST
-   (camera sits *above* the ship→target line in the plane and tilts
-   downward to put the target in the upper image-half and the player in
-   the lower half — consistent with all reference screenshots). Its
-   centre is on the −e3 side at `(D/2, −D/(2 tan β))` with radius
-   `r = D / (2 sin β)`.
+   Two arcs (one per side of ST) satisfy the inscribed-angle
+   constraint; the matching arc is the major arc on the **+e3 side**
+   of ST (camera sits *above* the ship→target line in the plane and
+   tilts downward to put the target in the upper image-half and the
+   player in the lower half — consistent with all reference
+   screenshots). The locus circle has centre at `(D/2, +D/(2 tan β))`
+   on the **+e3 side** (same side as the camera) and radius
+   `r = D / (2 sin β)`. For β < 90° the major arc is the longer
+   portion of the circle, looping above and behind both S and T —
+   so a point on the arc behind the player (`e1 < 0`) exists, which is
+   the camera placement we want.
 3. **Chase-distance circle.** E lies on a circle of radius `D_chase`
    around S.
-4. **Pick E.** Intersect the two circles. From the up-to-two
-   intersection points, select the one with `e3 > 0` (above ST) and
-   `e1 ≤ 0` (behind the player). When both criteria match a single
-   point, that is E; when they conflict (chase circle too large to land
-   above ST at the required β), apply the fallback below.
-5. **Fallback — chase-distance unsatisfiable.** When step 4 has no
-   above-line behind-player solution, discard the `D_chase` constraint
-   and choose E as the closest point on the locus arc to the −e1 axis
-   (i.e. the point on the arc directly behind the player). Player is
-   still framed at `α_p` and the spread is still β; only the
-   eye→player distance relaxes. This case fires for very close targets;
-   "pull back as needed" per playtest direction, revisit after.
+4. **Pick E.** Intersect the two circles. The two centres are at
+   distance `r` apart (because S lies on the locus circle by
+   construction), so the intersection chord passes through S and
+   exists for any `0 < D_chase ≤ 2r = D/sin β`. Of the two
+   intersection points, the one with `e1 < 0` (behind the player) is
+   E — explicitly: the intersection that lies on the perpendicular to
+   the centre-to-centre direction on the "back of player" side.
+   Condition for that point to exist with `e1 < 0`: `D_chase < D cot β`.
+5. **Fallback — chase-distance unsatisfiable.** When `D_chase ≥ D cot β`
+   (target so close that no behind-player intersection exists), discard
+   the `D_chase` constraint and choose E as the closest point on the
+   locus arc to the −e1 axis (the point on the arc directly behind the
+   player). Player is still framed at `α_p` and the spread is still β;
+   only the eye→player distance relaxes. "Pull back as needed" per
+   playtest direction, revisit after.
 
 A closed-form expression for the two intersection points falls out of
 standard two-circle intersection and is left to the implementation
@@ -175,7 +182,7 @@ return eye=E, look_at=E + f̂, up=û
 | No target / target is self | Director falls back to Chase; Tracking is not entered |
 | `|T − S| < ε` | Same — Chase fallback for that frame |
 | `B` parallel to `(T − S)` (target along ship body-up) | `e3` undefined; choose any unit perpendicular to `e1`; spring smoothing carries the camera through the singularity |
-| Two-circle intersection empty (target so close `D_chase > 2r`, or both intersections sit below ST) | Per §3 step 5 fallback: discard `D_chase`, place E at the point on the locus arc closest to the −e1 ray. Player still at `α_p`, target still spread by β above |
+| `D_chase ≥ D cot β` (target too close for the back-of-player intersection to exist) | Per §3 step 5 fallback: discard `D_chase`, place E at the point on the locus arc closest to the −e1 ray. Player still at `α_p`, target still spread by β above |
 | β = 0 (`α_t == α_p`) | Configuration error; assert in dev mode. Not reachable with the shipped defaults |
 
 ## §4 Springs
@@ -283,7 +290,7 @@ host loop, no PyBullet.
 | Target = self | Director called | Tracking solver not invoked; Chase output returned |
 | `|T−S| < ε` | Tracking entered, then target moved onto player | Director falls back to Chase for that frame |
 | Body-up parallel to ship→target | `B = e1` | Solver returns finite, non-NaN output; up is some perpendicular to forward; no crash |
-| Two-circle empty (target too close) | `|T−S| < D_chase × sin β` (e.g. `D_chase = 10`, `|T−S| = 1`, default β) | Solver returns locus-arc fallback; player still at `α_p`; spread still β; eye→player distance smaller than `D_chase` |
+| Close-target fallback | `D_chase ≥ D cot β` (e.g. `D_chase = 10`, `|T−S| = 5`, default β where cot β ≈ 1.73) | Solver returns locus-arc fallback; player still at `α_p`; spread still β; eye→player distance smaller than `D_chase` |
 
 ### Springs
 
