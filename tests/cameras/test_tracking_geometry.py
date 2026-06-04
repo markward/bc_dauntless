@@ -204,6 +204,79 @@ def test_solver_player_roll_inherited_into_camera_up():
     assert dot_up_e2 == pytest.approx(0.0, abs=1e-6)
 
 
+def test_solver_close_target_falls_back_gracefully():
+    """When d_chase ≥ D cot β, the back-of-player intersection
+    doesn't exist. Solver must pull the eye onto the locus arc behind
+    the player rather than emit NaN."""
+    from engine.cameras.tracking import _TrackingCamera
+    from engine.appc.math         import TGPoint3, TGMatrix3
+
+    tc = _TrackingCamera(); tc.d_chase = 10.0
+    s_loc = TGPoint3(0.0, 0.0, 0.0); s_rot = TGMatrix3()
+    # D = 5 GU < d_chase × tan(β), forces fallback.
+    t_loc = TGPoint3(0.0, 5.0, 0.0)
+
+    eye, look_at, up = tc.compute(
+        player=_FakeShip(s_loc, s_rot), target=_FakeShip(t_loc, s_rot), dt=None)
+
+    # Finite output:
+    for v in (*eye, *look_at, *up):
+        assert math.isfinite(v)
+    # Eye behind player (negative y in this setup since e1 = +y):
+    assert eye[1] < 0.0
+    # Player still framed at y_p ≈ −0.25:
+    fx = look_at[0] - eye[0]; fy = look_at[1] - eye[1]; fz = look_at[2] - eye[2]
+    flen = math.sqrt(fx*fx + fy*fy + fz*fz)
+    forward = (fx/flen, fy/flen, fz/flen)
+    y_p = _project_to_screen_y((0.0, 0.0, 0.0), eye, forward, up)
+    assert y_p == pytest.approx(-0.25, abs=1e-3)
+
+
+def test_solver_close_target_fallback_code_path():
+    """Explicitly exercise the fallback branch: d_chase=100, D=5.
+    d_chase=100 >> D cot β ≈ 17, so the fallback must be taken.
+    Eye lands at the leftmost point of the locus arc (D/2 − r, h)."""
+    from engine.cameras.tracking import _TrackingCamera
+    from engine.appc.math         import TGPoint3, TGMatrix3
+
+    tc = _TrackingCamera(); tc.d_chase = 100.0
+    s_loc = TGPoint3(0.0, 0.0, 0.0); s_rot = TGMatrix3()
+    t_loc = TGPoint3(0.0, 5.0, 0.0)  # D = 5, d_chase = 100 >> D cot β ≈ 17
+
+    eye, look_at, up = tc.compute(
+        player=_FakeShip(s_loc, s_rot), target=_FakeShip(t_loc, s_rot), dt=None)
+
+    # Finite output:
+    for v in (*eye, *look_at, *up):
+        assert math.isfinite(v)
+    # Eye must be behind player (eye[1] < 0 since e1 = +y):
+    assert eye[1] < 0.0
+    # Player still framed at y_p ≈ −0.25:
+    fx = look_at[0] - eye[0]; fy = look_at[1] - eye[1]; fz = look_at[2] - eye[2]
+    flen = math.sqrt(fx*fx + fy*fy + fz*fz)
+    forward = (fx/flen, fy/flen, fz/flen)
+    y_p = _project_to_screen_y((0.0, 0.0, 0.0), eye, forward, up)
+    assert y_p == pytest.approx(-0.25, abs=1e-3)
+
+
+def test_solver_body_up_parallel_to_ship_target_does_not_crash():
+    """When body-up is parallel to (T − S), the projection that
+    builds e3 degenerates. Solver must return finite output."""
+    from engine.cameras.tracking import _TrackingCamera
+    from engine.appc.math         import TGPoint3, TGMatrix3
+
+    tc = _TrackingCamera(); tc.d_chase = 10.0
+    s_loc = TGPoint3(0.0, 0.0, 0.0); s_rot = TGMatrix3()  # body-up = +z
+    # Target directly above ship in body frame:
+    t_loc = TGPoint3(0.0, 0.0, 20.0)
+
+    eye, look_at, up = tc.compute(
+        player=_FakeShip(s_loc, s_rot), target=_FakeShip(t_loc, s_rot), dt=None)
+
+    for v in (*eye, *look_at, *up):
+        assert math.isfinite(v)
+
+
 class _FakeShip:
     """Minimal player/target stub: just the world transform getters."""
     def __init__(self, loc, rot):

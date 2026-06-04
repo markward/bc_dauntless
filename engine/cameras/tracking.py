@@ -129,36 +129,46 @@ class _TrackingCamera:
         uz = B.z - dot_b_e1 * e1.z
         ulen = _math.sqrt(ux*ux + uy*uy + uz*uz)
         if ulen < 1e-9:
-            # Body-up parallel to (T − S); pick any perpendicular.
-            # Task 8 strengthens this; for now use world-z as a stopgap.
-            return e1, TGPoint3(0.0, 0.0, 1.0)
+            # Body-up parallel to (T − S). Pick any unit vector
+            # perpendicular to e1. Use the world-X axis unless e1 is
+            # already aligned with it; then fall back to world-Y.
+            if abs(e1.x) < 0.9:
+                ax, ay, az = 1.0, 0.0, 0.0
+            else:
+                ax, ay, az = 0.0, 1.0, 0.0
+            dot = ax*e1.x + ay*e1.y + az*e1.z
+            px, py, pz = ax - dot*e1.x, ay - dot*e1.y, az - dot*e1.z
+            plen = _math.sqrt(px*px + py*py + pz*pz)
+            return e1, TGPoint3(px/plen, py/plen, pz/plen)
         return e1, TGPoint3(ux/ulen, uy/ulen, uz/ulen)
 
     @staticmethod
     def _solve_eye_2d(D, d_chase, beta):
         """Return (e_x, e_y) of camera in 2D (e1, e3) coords.
 
-        Locus circle: centre (D/2, +D/(2 tan β)) on the +e3 side,
-        radius r = D / (2 sin β). S lies on this circle, so the
-        distance between centres equals r, and the two intersection
-        points lie on the line through S perpendicular to the
-        centre-to-centre direction. The "behind-player" intersection
-        (e_x < 0) is the camera position.
+        Standard case: closed-form via inscribed-angle / chase-circle
+        intersection (spec §3 step 4).
+        Fallback (d_chase ≥ D cot β): place E on the locus arc
+        directly behind the player (spec §3 step 5).
         """
         sin_b = _math.sin(beta)
         cos_b = _math.cos(beta)
         r     = D / (2.0 * sin_b)
+        h     = D / (2.0 * _math.tan(beta))    # locus centre e3-coord
 
-        # Centre-to-centre unit vector: (D/(2r), +h/r) = (sin β, +cos β).
-        # Perpendicular pointing toward "behind player": (-cos β, +sin β).
-        a     = (d_chase * d_chase) / (2.0 * r)
-        disc  = d_chase * d_chase - a * a
-        if disc < 0.0:
-            # Numeric guard — Task 8 supplies the proper fallback.
-            disc = 0.0
-        h_chord = _math.sqrt(disc)
+        # Condition: d_chase < D / tan β  ↔  back-of-player solution exists.
+        if d_chase < D / _math.tan(beta):
+            a       = (d_chase * d_chase) / (2.0 * r)
+            disc    = d_chase * d_chase - a * a
+            h_chord = _math.sqrt(max(disc, 0.0))
+            e_x = a * sin_b - h_chord * cos_b
+            e_y = a * cos_b + h_chord * sin_b
+            return e_x, e_y
 
-        # P_1 = midpoint − h_chord × perp.  (Spec §3 step 4.)
-        e_x = a * sin_b - h_chord * cos_b
-        e_y = a * cos_b + h_chord * sin_b
-        return e_x, e_y
+        # Fallback: closest point on locus arc to the −e1 ray (the ray
+        # behind the player along the ship→target axis).
+        # The locus circle centred at (D/2, h) intersects the e1 axis
+        # at S = (0,0) and T = (D, 0). Going "left" along the major
+        # arc from S puts the camera at the leftmost point of the
+        # circle: (D/2 − r, h). That's the fallback eye.
+        return (D / 2.0 - r, h)
