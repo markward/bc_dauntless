@@ -22,3 +22,5 @@ CAM_MIN_RADII              =  0.6
 CAM_MAX_RADII              = 30.0
 CAM_LOOK_UP_RADII          =  0.20
 CAM_TARGET_LOCK_LIFT_RADII =  1.0
+
+from engine.cameras.director import CameraMode, _CameraDirector  # noqa: E402
