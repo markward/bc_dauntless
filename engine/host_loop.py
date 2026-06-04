@@ -2261,8 +2261,9 @@ def run(mission_name: Optional[str] = None,
                     _apply_alert_keys(_h, player)
                     # C-key: toggle Chase ↔ Tracking (only enters Tracking if
                     # the player has a valid target). key_pressed fires once per
-                    # key-down event (not while held).
-                    if _h.key_pressed(_h.keys.KEY_C):
+                    # key-down event (not while held). Gate on exterior view so
+                    # the mode cannot flip silently while the bridge is active.
+                    if view_mode.is_exterior and _h.key_pressed(_h.keys.KEY_C):
                         director.toggle_mode(player=player)
                     # dt = _player_dt (wall-clock frame delta), not TICK_DT —
                     # see comment at the accumulator step. _apply_input fires

@@ -54,7 +54,7 @@ class _ChaseCamera:
 
     def reset_orbit(self) -> None:
         """Snap orbit angles and distance back to defaults. Does not change
-        target_lock_enabled or the rotation-smoothing state."""
+        the rotation-smoothing state."""
         self.orbit_yaw_rad   = self.DEFAULT_YAW_RAD
         self.orbit_pitch_rad = self.DEFAULT_PITCH_RAD
         self.distance        = self.default_distance
