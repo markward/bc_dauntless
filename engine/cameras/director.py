@@ -68,15 +68,18 @@ class _CameraDirector:
         self.tracking.exit_zoom_target()
 
     def zoom_in(self) -> None:
-        """=-key press. Delegate to tracking when in Tracking mode.
-        No-op in Chase (Chase sticky zoom is deferred)."""
+        """=-key press. Delegate to the active mode's camera."""
         if self.mode is CameraMode.TRACKING:
             self.tracking.zoom_in()
+        else:  # CHASE
+            self.chase.zoom_in()
 
     def zoom_out(self) -> None:
         """-key press. Symmetric to zoom_in."""
         if self.mode is CameraMode.TRACKING:
             self.tracking.zoom_out()
+        else:  # CHASE
+            self.chase.zoom_out()
 
     # ── per-frame dispatch ───────────────────────────────────────────
 

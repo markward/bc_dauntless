@@ -312,18 +312,6 @@ def test_end_zoom_target_clears_unconditionally():
     assert d.tracking.zoom_target_active is False
 
 
-def test_director_zoom_in_in_chase_is_noop():
-    from engine.cameras.director import _CameraDirector
-    d = _CameraDirector()
-    d.chase.set_ship_radius(1.0); d.tracking.set_ship_radius(1.0)
-    seed_tracking = d.tracking.d_chase_tracking
-    seed_zoom = d.tracking.d_chase_zoom
-    d.zoom_in()
-    d.zoom_out()
-    assert d.tracking.d_chase_tracking == pytest.approx(seed_tracking)
-    assert d.tracking.d_chase_zoom == pytest.approx(seed_zoom)
-
-
 def test_director_zoom_in_in_tracking_delegates():
     from engine.cameras.director import _CameraDirector, CameraMode
     d = _CameraDirector()
@@ -385,3 +373,27 @@ def test_c_toggle_tracking_to_chase_clears_zoom_target():
     d.toggle_mode(player=p)
     assert d.mode is CameraMode.CHASE
     assert d.tracking.zoom_target_active is False
+
+
+def test_director_zoom_in_in_chase_delegates_to_chase():
+    from engine.cameras.director import _CameraDirector
+    d = _CameraDirector()
+    d.chase.set_ship_radius(1.0); d.tracking.set_ship_radius(1.0)
+    seed_chase = d.chase.distance
+    seed_tracking = d.tracking.d_chase_tracking
+    d.zoom_in()
+    assert d.chase.distance == pytest.approx(
+        seed_chase * d.chase.ZOOM_FACTOR_PER_NOTCH)
+    assert d.tracking.d_chase_tracking == pytest.approx(seed_tracking)
+
+
+def test_director_zoom_out_in_chase_delegates_to_chase():
+    from engine.cameras.director import _CameraDirector
+    d = _CameraDirector()
+    d.chase.set_ship_radius(1.0); d.tracking.set_ship_radius(1.0)
+    seed_chase = d.chase.distance
+    seed_tracking = d.tracking.d_chase_tracking
+    d.zoom_out()
+    assert d.chase.distance == pytest.approx(
+        seed_chase / d.chase.ZOOM_FACTOR_PER_NOTCH)
+    assert d.tracking.d_chase_tracking == pytest.approx(seed_tracking)
