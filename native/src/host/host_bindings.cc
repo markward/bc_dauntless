@@ -465,6 +465,14 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "the bridge pass is enabled. Separate from set_lighting (which "
           "feeds the space scene).");
 
+    m.def("set_bridge_wall_time",
+          [](double t) { if (g_bridge_pass) g_bridge_pass->set_wall_time(t); },
+          py::arg("t"),
+          "Wall-clock seconds used to advance NiFlipController-driven "
+          "texture animations on bridge materials (e.g. EBridge's LCARS "
+          "Schematic Right panel). Host loop pushes time.monotonic() each "
+          "tick.");
+
     m.def("set_backdrops",
           [](const std::vector<py::dict>& descriptors) {
               g_backdrops.clear();

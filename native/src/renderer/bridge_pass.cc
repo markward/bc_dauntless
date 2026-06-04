@@ -8,6 +8,7 @@
 #include <scenegraph/camera.h>
 #include <scenegraph/instance.h>
 
+#include <assets/flip_frame.h>
 #include <assets/model.h>
 #include <assets/mesh.h>
 #include <assets/texture.h>
@@ -84,12 +85,28 @@ void draw_mesh(const assets::Model& model,
                const assets::Material& mat,
                Shader& shader,
                const glm::mat4& world,
-               GLuint white_fallback) {
+               GLuint white_fallback,
+               double wall_time) {
     shader.set_mat4("u_model", world);
     shader.set_vec3("u_emissive", mat.emissive);
-    const int base_tex = mat.stages[
+    int base_tex = mat.stages[
         static_cast<std::size_t>(assets::Material::StageSlot::Base)
     ].texture_index;
+    // NiFlipController-driven animation: replace base_tex with the
+    // current frame's texture index. Falls through to the static
+    // base_tex if the animation index is missing or its frame list
+    // failed to resolve.
+    if (mat.animation_index >= 0 &&
+        mat.animation_index < static_cast<int>(model.texture_animations.size()))
+    {
+        const auto& anim = model.texture_animations[mat.animation_index];
+        if (!anim.texture_indices.empty()) {
+            const int frame = assets::compute_flip_frame_index(
+                wall_time, anim.start_time, anim.frequency, anim.phase,
+                anim.delta, static_cast<int>(anim.texture_indices.size()));
+            base_tex = anim.texture_indices[frame];
+        }
+    }
     glActiveTexture(GL_TEXTURE0);
     if (base_tex >= 0) {
         glBindTexture(GL_TEXTURE_2D, model.textures[base_tex].id());
@@ -149,15 +166,16 @@ void BridgePass::render(const scenegraph::World& world,
     // build fix that stops the multi-tex from overwriting Base, all
     // shapes now have their correct diffuse in Base.
     const GLuint white = ensure_white_texture();
+    const double t = wall_time_;
     walk_bridge_meshes(world, lookup, /*want_lightmap_pass=*/false,
         [&](const assets::Model& m, const assets::Mesh& mesh,
             const assets::Material& mat, const glm::mat4& w) {
-            draw_mesh(m, mesh, mat, base_shader, w, white);
+            draw_mesh(m, mesh, mat, base_shader, w, white, t);
         });
     walk_bridge_meshes(world, lookup, /*want_lightmap_pass=*/true,
         [&](const assets::Model& m, const assets::Mesh& mesh,
             const assets::Material& mat, const glm::mat4& w) {
-            draw_mesh(m, mesh, mat, base_shader, w, white);
+            draw_mesh(m, mesh, mat, base_shader, w, white, t);
         });
 
     glEnable(GL_CULL_FACE);

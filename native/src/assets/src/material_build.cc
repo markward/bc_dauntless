@@ -68,6 +68,8 @@ void apply_vertex_color_property(Material& m, const nif::NiVertexColorProperty& 
 void apply_texture_property(
     Material& m,
     const nif::NiTextureProperty& src,
+    std::uint32_t texture_link_id,
+    const std::unordered_map<std::uint32_t, std::uint32_t>* flip_image_override_for_prop,
     const std::unordered_map<std::uint32_t, int>* image_to_texture,
     const std::unordered_set<std::uint32_t>* glow_image_links,
     const std::unordered_set<std::uint32_t>* specular_image_links,
@@ -85,15 +87,28 @@ void apply_texture_property(
     //   "_specular" / "_spec" — image is a standalone per-texel specular
     //                 mask. Bind ONLY to Gloss. Do NOT dual-bind to Base
     //                 (that would replace the hull texture with the mask).
+    //
+    // NiFlipController override: when src.image_link is 0, the property's
+    // texture is supplied by a NiFlipController hung off its
+    // controller_link. flip_image_override_for_prop maps this property's
+    // link_id to the controller's frame-0 NiImage link — a static
+    // stand-in until per-frame animation lands.
+    std::uint32_t effective_image_link = src.image_link;
+    if (effective_image_link == 0 && flip_image_override_for_prop) {
+        auto it = flip_image_override_for_prop->find(texture_link_id);
+        if (it != flip_image_override_for_prop->end()) {
+            effective_image_link = it->second;
+        }
+    }
     int tex_idx = -1;
     if (image_to_texture) {
-        if (auto it = image_to_texture->find(src.image_link);
+        if (auto it = image_to_texture->find(effective_image_link);
             it != image_to_texture->end()) {
             tex_idx = it->second;
         }
     }
     const bool is_specular = specular_image_links &&
-        specular_image_links->find(src.image_link) != specular_image_links->end();
+        specular_image_links->find(effective_image_link) != specular_image_links->end();
     if (is_specular) {
         auto& gloss = m.stages[static_cast<std::size_t>(Material::StageSlot::Gloss)];
         gloss.texture_index = tex_idx;
@@ -104,7 +119,7 @@ void apply_texture_property(
     base.texture_index = tex_idx;
     base.apply_mode    = 2;
     const bool is_glow = glow_image_links &&
-        glow_image_links->find(src.image_link) != glow_image_links->end();
+        glow_image_links->find(effective_image_link) != glow_image_links->end();
     if (is_glow) {
         auto& glow = m.stages[static_cast<std::size_t>(Material::StageSlot::Glow)];
         glow.texture_index = tex_idx;
@@ -115,7 +130,7 @@ void apply_texture_property(
     // the Gloss slot. The hull texture stays in Base / Glow as above;
     // only the spec mask comes from the sibling lookup.
     if (sibling_specular_for_image) {
-        auto it = sibling_specular_for_image->find(src.image_link);
+        auto it = sibling_specular_for_image->find(effective_image_link);
         if (it != sibling_specular_for_image->end()) {
             auto& gloss = m.stages[static_cast<std::size_t>(Material::StageSlot::Gloss)];
             gloss.texture_index = it->second;
@@ -181,6 +196,7 @@ Material build_material(const MaterialInputs& in) {
     if (in.zbuffer)       apply_zbuffer_property(m, *in.zbuffer);
     if (in.vertex_color)  apply_vertex_color_property(m, *in.vertex_color);
     if (in.texture) apply_texture_property(m, *in.texture,
+        in.texture_link_id, in.flip_image_override_for_prop,
         in.image_to_texture, in.glow_image_links, in.specular_image_links,
         in.sibling_specular_for_image);
     if (in.multi_texture) apply_multi_texture_property(m, *in.multi_texture, in.image_to_texture);

@@ -67,6 +67,12 @@ struct Material {
     // From NiVertexColorProperty
     std::uint32_t vc_lighting_mode = 0;
     std::uint32_t vc_source = 0;
+
+    /// Index into Model::texture_animations when this material's Base
+    /// stage is driven by a NiFlipController, -1 otherwise. The
+    /// renderer reads animation_index at draw time and substitutes the
+    /// current frame's texture for stages[Base].texture_index.
+    int animation_index = -1;
 };
 
 }  // namespace assets

@@ -609,6 +609,15 @@ DEFAULT_PLANET_TEXTURE_SEARCH = "data/Models/Environment"
 # match the on-disk casing so this works on case-sensitive volumes too.
 DBRIDGE_NIF_REL = "data/Models/Sets/DBridge/Dbridge.NIF"
 DBRIDGE_TEX_REL = "data/Models/Sets/DBridge/High"
+EBRIDGE_NIF_REL = "data/Models/Sets/EBridge/EBridge.nif"
+EBRIDGE_TEX_REL = "data/Models/Sets/EBridge/High"
+
+# Maps the BC LoadBridge.Load(name) argument to (nif_rel, tex_rel).
+# Mirrors sdk/Build/scripts/Bridge/GalaxyBridge.py and SovereignBridge.py.
+_BRIDGE_NIF_MAP: dict[str, tuple[str, str]] = {
+    "GalaxyBridge":    (DBRIDGE_NIF_REL, DBRIDGE_TEX_REL),
+    "SovereignBridge": (EBRIDGE_NIF_REL, EBRIDGE_TEX_REL),
+}
 
 # Lighting defaults — used by both the per-tick fallback (when no active set
 # has lights) and as the conceptual source of truth that the C++
@@ -1505,6 +1514,9 @@ class HostController:
         self.session: Optional[MissionSession] = None
         self.pending_swap: Optional[str] = None
         self.bridge_instance: Optional[Any] = None  # InstanceId from create_bridge_instance
+        # NIF path currently bound to bridge_instance. _ensure_bridge_for_session
+        # compares against the BC bridge_name → NIF map to decide whether to swap.
+        self.current_bridge_nif_abs: Optional[str] = None
         # Invoked once after each successful loader.load(). Stage 2 CEF
         # integration will wire this to rebuild UI state so the panel
         # filters the player ship (Game.SetPlayer runs during loader.load
@@ -1730,6 +1742,47 @@ def _update_ui_for_tick(player, view_mode, session, active_set) -> None:
     return
 
 
+_BRIDGE_IDENTITY_MAT4 = [
+    1.0, 0.0, 0.0, 0.0,
+    0.0, 1.0, 0.0, 0.0,
+    0.0, 0.0, 1.0, 0.0,
+    0.0, 0.0, 0.0, 1.0,
+]
+
+
+def _ensure_bridge_for_session(controller) -> None:
+    """Swap the renderer's bridge model to whatever the last mission
+    requested via LoadBridge.Load(name).
+
+    Mission scripts call LoadBridge.Load("SovereignBridge" |
+    "GalaxyBridge") during StartMission; the shim records the value as
+    LoadBridge.LAST_REQUESTED. This helper reads it back, maps it to a
+    NIF path via _BRIDGE_NIF_MAP, and replaces controller.bridge_instance
+    if the path differs from what's currently loaded. Model handles are
+    cached in controller.nif_to_handle so repeated swaps don't re-upload.
+    """
+    import LoadBridge as _LoadBridge
+    bridge_name = getattr(_LoadBridge, "LAST_REQUESTED", "GalaxyBridge")
+    mapping = _BRIDGE_NIF_MAP.get(bridge_name)
+    if mapping is None:
+        return
+    nif_rel, tex_rel = mapping
+    nif_abs = str(PROJECT_ROOT / "game" / nif_rel)
+    if nif_abs == controller.current_bridge_nif_abs:
+        return
+    r_ = controller.renderer
+    tex_abs = str(PROJECT_ROOT / "game" / tex_rel)
+    handle = controller.nif_to_handle.get(nif_abs)
+    if handle is None:
+        handle = r_.load_model(nif_abs, tex_abs)
+        controller.nif_to_handle[nif_abs] = handle
+    if controller.bridge_instance is not None:
+        r_.destroy_instance(controller.bridge_instance)
+    controller.bridge_instance = r_.create_bridge_instance(handle)
+    r_.set_world_transform(controller.bridge_instance, _BRIDGE_IDENTITY_MAT4)
+    controller.current_bridge_nif_abs = nif_abs
+
+
 def _wire_target_menu_to_player_set(controller) -> None:
     """Subscribe the target-menu singleton to the player's containing
     spatial set, then bulk-rebuild rows for ships already there.
@@ -1833,6 +1886,7 @@ def run(mission_name: Optional[str] = None,
         bridge_handle  = r.load_model(bridge_nif_abs, bridge_tex_abs)
         controller.nif_to_handle[bridge_nif_abs] = bridge_handle
         controller.bridge_instance = r.create_bridge_instance(bridge_handle)
+        controller.current_bridge_nif_abs = bridge_nif_abs
         # Eagerly register the "bridge" SetClass so its CreateAmbientLight
         # value reaches the renderer via aggregate_bridge_for_renderer.
         # Stock missions only call LoadBridge.Load() when they need it,
@@ -1880,8 +1934,11 @@ def run(mission_name: Optional[str] = None,
         # after every successful loader.load() — both the initial load
         # and any pending_swap drain — so this hook keeps the target
         # list pointed at the current mission's ship roster.
-        controller.post_load_hook = lambda: _wire_target_menu_to_player_set(controller)
-        _wire_target_menu_to_player_set(controller)
+        def _after_mission_loaded():
+            _ensure_bridge_for_session(controller)
+            _wire_target_menu_to_player_set(controller)
+        controller.post_load_hook = _after_mission_loaded
+        _after_mission_loaded()
 
         bridge_camera  = _BridgeCamera()
         try:
@@ -2385,6 +2442,13 @@ def run(mission_name: Optional[str] = None,
                 except Exception:
                     pass
             r.set_bridge_lighting(bridge_ambient, bridge_directionals)
+            # BC's NiFlipController observes *game time*, not wall time
+            # — controllers advance with g_kTimerManager (which the
+            # original engine scaled, instrumentation Q3). Feeding wall
+            # time made the LCARS animation play noticeably faster than
+            # in stock BC; game time matches the original cadence.
+            import App as _App
+            r.set_bridge_wall_time(_App.g_kUtopiaModule.GetGameTime())
 
             backdrops = _aggregate_backdrops(active_set)
             r.set_backdrops(backdrops)

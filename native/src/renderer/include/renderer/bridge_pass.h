@@ -35,6 +35,11 @@ public:
                 const ModelLookup& lookup,
                 const Lighting& lighting);
 
+    /// Set the wall time used to advance NiFlipController-driven
+    /// texture animations on bridge materials. Host loop calls this
+    /// once per tick with time.monotonic().
+    void set_wall_time(double t) { wall_time_ = t; }
+
 private:
     /// Lazily-allocated 1x1 white texture, used as a fallback for any
     /// bridge mesh whose Base-stage texture failed to load. Same role
@@ -42,6 +47,7 @@ private:
     /// GL handle lifetime tracks BridgePass.
     std::uint32_t white_texture_ = 0;
     std::uint32_t ensure_white_texture();
+    double wall_time_ = 0.0;
 };
 
 }  // namespace renderer

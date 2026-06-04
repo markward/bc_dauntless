@@ -5,10 +5,21 @@ In the real game, LoadBridge.Load(bridge_name) loads a bridge NIF model and
 registers the resulting SetClass under the name "bridge" in g_kSetManager.
 In Phase 1 headless mode we just create an empty SetClass so that
 g_kSetManager.GetSet("bridge") returns a valid object rather than None.
+
+We also record the most recent bridge_name argument so the host loop can
+swap the renderer's bridge model to match the active mission. Stock BC
+mission scripts call LoadBridge.Load("SovereignBridge") or
+LoadBridge.Load("GalaxyBridge") during StartMission.
 """
+
+# Default mirrors the host loop's eagerly-loaded DBridge.
+LAST_REQUESTED: str = "GalaxyBridge"
 
 
 def Load(bridge_name: str = ""):
+    global LAST_REQUESTED
+    if bridge_name:
+        LAST_REQUESTED = bridge_name
     import App
     existing = App.g_kSetManager.GetSet("bridge")
     if existing:

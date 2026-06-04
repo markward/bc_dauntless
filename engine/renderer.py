@@ -75,6 +75,15 @@ def set_bridge_lighting(ambient: Tuple[float, float, float],
     _h.set_bridge_lighting(ambient, directionals)
 
 
+def set_bridge_wall_time(t: float) -> None:
+    """Advance NiFlipController-driven texture animations on the bridge.
+
+    Called each tick with a monotonic wall clock; the bridge pass uses
+    this to compute the current animation frame per material.
+    """
+    _h.set_bridge_wall_time(t)
+
+
 def set_suns(suns: list) -> None:
     """Configure the renderer's sun list. Each entry is a dict:
         {"position": (x,y,z), "radius": float,

@@ -49,6 +49,20 @@ struct MaterialInputs {
     /// site. Populated by load_all_textures for `use_external != 0`
     /// images; embedded images (NiRawImageData) leave no entry.
     const std::unordered_map<std::uint32_t, std::string>* image_filename_for_link = nullptr;
+
+    /// Link ID of the NiTextureProperty currently in `texture` (0 if
+    /// none). Looked up against flip_image_override_for_prop below.
+    std::uint32_t texture_link_id = 0;
+
+    /// NiTextureProperty link_id → NiImage link_id for animated texture
+    /// properties (image_link=0 with a NiFlipController on
+    /// controller_link). Static stand-in for animation: the override
+    /// resolves to the controller's frame-0 image_link. EBridge.nif's
+    /// "Lcars Schematic right" panels are the driving case — without
+    /// this they have no resolvable base texture and render as the
+    /// white-fallback quad.
+    const std::unordered_map<std::uint32_t, std::uint32_t>*
+        flip_image_override_for_prop = nullptr;
 };
 
 Material build_material(const MaterialInputs&);

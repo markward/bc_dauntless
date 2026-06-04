@@ -310,7 +310,10 @@ MaterialInputs gather_material_inputs(
         if (auto* p = std::get_if<nif::NiMaterialProperty>(&b)) {
             if (!in.material) in.material = p;
         } else if (auto* p = std::get_if<nif::NiTextureProperty>(&b)) {
-            if (!in.texture) in.texture = p;
+            if (!in.texture) {
+                in.texture = p;
+                in.texture_link_id = link;
+            }
         } else if (auto* p = std::get_if<nif::NiMultiTextureProperty>(&b)) {
             if (!in.multi_texture) in.multi_texture = p;
         } else if (auto* p = std::get_if<nif::NiAlphaProperty>(&b)) {
@@ -387,6 +390,61 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
 
     auto child_to_parent = build_child_to_parent_map(f);
 
+    // NiFlipController plumbing. For every NiTextureProperty whose own
+    // image_link is 0 but whose controller_link resolves to a
+    // NiFlipController, build:
+    //   (a) flip_image_override_for_prop: (property link_id → frame-0
+    //       NiImage link_id) so apply_texture_property assigns the
+    //       first frame to stages[Base].texture_index;
+    //   (b) flip_animation_index_for_prop: (property link_id →
+    //       Model::texture_animations index) so the renderer can pick
+    //       per-frame textures at draw time;
+    //   (c) Model::texture_animations entry: full timing + per-frame
+    //       texture indices (resolved via tex_result.image_to_texture).
+    std::unordered_map<std::uint32_t, std::uint32_t> flip_image_override_for_prop;
+    std::unordered_map<std::uint32_t, int>           flip_animation_index_for_prop;
+    for (std::size_t i = 0; i < f.blocks.size(); ++i) {
+        const auto* prop = std::get_if<nif::NiTextureProperty>(&f.blocks[i]);
+        if (!prop) continue;
+        if (prop->image_link != 0) continue;
+        auto ctrl_idx = resolver.resolve(prop->obj.controller_link);
+        if (ctrl_idx == LinkResolver::kInvalidIndex) continue;
+        if (ctrl_idx >= f.blocks.size()) continue;
+        const auto* ctrl = std::get_if<nif::NiFlipController>(&f.blocks[ctrl_idx]);
+        if (!ctrl || ctrl->image_links.empty()) continue;
+        const std::uint32_t prop_link_id =
+            (i < f.block_ids.size()) ? f.block_ids[i] : static_cast<std::uint32_t>(i);
+        flip_image_override_for_prop[prop_link_id] = ctrl->image_links[0];
+
+        TextureAnimation anim;
+        anim.delta      = static_cast<double>(ctrl->delta);
+        anim.start_time = static_cast<double>(ctrl->start_time);
+        anim.frequency  = static_cast<double>(ctrl->frequency);
+        anim.phase      = static_cast<double>(ctrl->phase);
+        // Skip image_links[0]: BC's NiFlipController treats element 0
+        // as the property's static base texture (the one BC would show
+        // if the controller weren't running), and cycles only elements
+        // 1..N. EBridge's LCarsSchematicRight is the base; LCarsAnim1
+        // ..LCarsAnim7 are the actual animation frames.
+        if (ctrl->image_links.size() >= 2) {
+            anim.texture_indices.reserve(ctrl->image_links.size() - 1);
+            for (std::size_t fi = 1; fi < ctrl->image_links.size(); ++fi) {
+                auto it = tex_result.image_to_texture.find(ctrl->image_links[fi]);
+                if (it == tex_result.image_to_texture.end()) {
+                    // Frame's NiImage didn't load — drop the whole anim
+                    // to avoid binding an invalid index later.
+                    anim.texture_indices.clear();
+                    break;
+                }
+                anim.texture_indices.push_back(it->second);
+            }
+        }
+        if (anim.texture_indices.empty()) continue;
+        const int anim_idx = static_cast<int>(model.texture_animations.size());
+        model.texture_animations.push_back(std::move(anim));
+        flip_animation_index_for_prop[prop_link_id] = anim_idx;
+    }
+
     bool any_trishape = false;
     for (std::uint32_t i = 0; i < f.blocks.size(); ++i) {
         const auto* shape = std::get_if<nif::NiTriShape>(&f.blocks[i]);
@@ -405,7 +463,14 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
             tex_result.specular_image_links,
             tex_result.sibling_specular_for_image, resolver);
         mat_inputs.image_filename_for_link = &tex_result.image_filename_for_link;
+        mat_inputs.flip_image_override_for_prop = &flip_image_override_for_prop;
         Material mat = build_material(mat_inputs);
+        if (mat_inputs.texture_link_id != 0) {
+            auto it = flip_animation_index_for_prop.find(mat_inputs.texture_link_id);
+            if (it != flip_animation_index_for_prop.end()) {
+                mat.animation_index = it->second;
+            }
+        }
         int mat_index = static_cast<int>(model.materials.size());
         model.materials.push_back(std::move(mat));
 
