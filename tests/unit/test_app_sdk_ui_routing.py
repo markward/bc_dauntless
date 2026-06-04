@@ -1,9 +1,10 @@
 """App.py re-exports for the SDK UI shims."""
 import App
-from engine.appc.windows import _SubtitleWindow, _STStylizedWindow
+from engine.appc.windows import _SubtitleWindow, _STStylizedWindow, SubtitleWindow
 
 
-def test_app_subtitle_window_class_exposes_sm_tactical():
+def test_app_subtitle_window_is_re_export_with_sm_tactical():
+    assert App.SubtitleWindow is SubtitleWindow
     assert App.SubtitleWindow.SM_TACTICAL == 1
 
 
