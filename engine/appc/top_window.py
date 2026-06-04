@@ -36,7 +36,10 @@ class _TopWindow:
         self._options_disabled: bool = False
         self._last_rendered_set = None
         self._children: list[tuple[object, float, float]] = []
-        self._main_windows: dict[int, object] = {}
+        from engine.appc.windows import _SubtitleWindow
+        self._main_windows: dict[int, object] = {
+            MWT_SUBTITLE: _SubtitleWindow(),
+        }
         self._handler_registrations: list[tuple[int, str]] = []
 
     # ── Input gate ─────────────────────────────────────────────
@@ -206,6 +209,8 @@ def reset_for_tests() -> None:
     bleed across missions or pytest runs. Called from
     engine/host_loop.reset_sdk_globals."""
     global _the_top_window
+    from engine.appc.windows import _STStylizedWindow
+    _STStylizedWindow._counter = 0
     _the_top_window = _TopWindow()
 
 

@@ -248,8 +248,10 @@ def test_find_main_window_returns_none_when_unregistered():
     from engine.appc import top_window
     top_window.reset_for_tests()
     tw = top_window.TopWindow_GetTopWindow()
+    # MWT_CINEMATIC and MWT_MODAL_DIALOG are never seeded; only MWT_SUBTITLE
+    # is pre-seeded by _TopWindow.__init__ (Task 5).
     assert tw.FindMainWindow(top_window.MWT_CINEMATIC) is None
-    assert tw.FindMainWindow(top_window.MWT_SUBTITLE) is None
+    assert tw.FindMainWindow(top_window.MWT_MODAL_DIALOG) is None
 
 
 def test_find_main_window_returns_registered_window():
@@ -480,3 +482,29 @@ def test_add_python_func_handler_accepts_extra_args():
     # Should not raise even with extra trailing args
     tw.AddPythonFuncHandlerForInstance(1001, "x.y", "extra", 42)
     assert len(tw._handler_registrations) == 1
+
+
+def test_subtitle_window_seeded_after_init():
+    from engine.appc import top_window
+    from engine.appc.windows import _SubtitleWindow
+    top_window.reset_for_tests()
+    sub = top_window._the_top_window.FindMainWindow(top_window.MWT_SUBTITLE)
+    assert isinstance(sub, _SubtitleWindow)
+
+
+def test_reset_for_tests_replaces_subtitle_singleton():
+    from engine.appc import top_window
+    sub_before = top_window._the_top_window.FindMainWindow(top_window.MWT_SUBTITLE)
+    top_window.reset_for_tests()
+    sub_after = top_window._the_top_window.FindMainWindow(top_window.MWT_SUBTITLE)
+    assert sub_after is not sub_before
+
+
+def test_reset_for_tests_resets_stylized_counter():
+    from engine.appc import top_window
+    from engine.appc.windows import _STStylizedWindow, STStylizedWindow_CreateW
+    STStylizedWindow_CreateW("A")
+    STStylizedWindow_CreateW("B")
+    assert _STStylizedWindow._counter == 2
+    top_window.reset_for_tests()
+    assert _STStylizedWindow._counter == 0
