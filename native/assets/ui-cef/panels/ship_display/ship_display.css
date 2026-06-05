@@ -50,7 +50,7 @@
     --title-color: var(--bc-row-text-bright);
 }
 
-/* Player panel — flex child of #tactical-bottom-row (see hello.css).
+/* Player panel — flex child of #tactical-bottom-row (see ship_status.css).
    Width sized by content + a viewport floor; positioning owned by the
    bottom-row container. */
 #ship-display-player {

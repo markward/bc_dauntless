@@ -2233,7 +2233,7 @@ def run(mission_name: Optional[str] = None,
                     # gated on these because forwarding consumes the
                     # mouse-button edge state — see the rationale comment
                     # above. Bboxes track the layout zones defined in
-                    # hello.css; new panels need a bbox here or their
+                    # ship_status.css; new panels need a bbox here or their
                     # buttons will silently swallow clicks.
                     #
                     # Left column (#tactical-left-column): position:fixed;

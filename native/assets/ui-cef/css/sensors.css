@@ -30,7 +30,7 @@
 
 #sensors-panel {
     /* Positioning owned by the parent layout zone (#tactical-radar in
-       hello.css). Fills the column width (~280px). */
+       ship_status.css). Fills the column width (~280px). */
     width: 100%;
     font-family: "Antonio", "Antonio-Regular", sans-serif;
     font-weight: 600;
