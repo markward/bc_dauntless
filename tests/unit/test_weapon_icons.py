@@ -23,7 +23,7 @@ import time
 
 import pytest
 
-from engine.ui import weapon_icons
+from engine.ui import icon_tracer, weapon_icons
 
 
 
@@ -40,7 +40,7 @@ STOCK_ICON_REFS = (
 
 
 potrace_required = pytest.mark.skipif(
-    not weapon_icons._potrace_available(),
+    not icon_tracer._potrace_available(),
     reason="potrace binary not installed (brew install potrace)",
 )
 
@@ -182,7 +182,7 @@ def test_rgba_to_pgm_inverts_alpha_for_mkbitmap():
         rgba.extend((255, 0, 0, 255))  # row 0, opaque → black
     for _ in range(4):
         rgba.extend((255, 0, 0, 0))    # row 1, transparent → white
-    pgm = weapon_icons._rgba_to_pgm(bytes(rgba), 4, 2)
+    pgm = icon_tracer._rgba_to_pgm(bytes(rgba), 4, 2)
     assert pgm.startswith(b"P5\n4 2\n255\n")
     payload = pgm[len(b"P5\n4 2\n255\n"):]
     assert payload == bytes([0, 0, 0, 0, 255, 255, 255, 255])
@@ -226,7 +226,7 @@ def test_rgba_to_pgm_preserves_partial_alpha():
     """Mod TGAs with AA edges will produce partial alpha; mkbitmap's
     cubic interpolation needs the grey midtones to do its job."""
     rgba = bytes((255, 0, 0, 64) + (255, 0, 0, 192))
-    pgm = weapon_icons._rgba_to_pgm(rgba, 2, 1)
+    pgm = icon_tracer._rgba_to_pgm(rgba, 2, 1)
     payload = pgm.split(b"\n", 3)[3]
     assert payload == bytes([255 - 64, 255 - 192])
 
@@ -269,7 +269,7 @@ def test_trace_to_svg_raises_when_potrace_missing(monkeypatch):
     and returns ``None`` from ``icon_url_for_num``; the explicit
     helper raises so callers can disambiguate "binary missing" from
     a corrupt sprite."""
-    monkeypatch.setattr(weapon_icons, "_potrace_available", lambda: False)
+    monkeypatch.setattr(icon_tracer, "_potrace_available", lambda: False)
     with pytest.raises(weapon_icons.PotraceMissingError):
         weapon_icons._trace_to_svg(_solid_rgba(4, 4, (255, 0, 0, 255)), 4, 4)
 
@@ -391,7 +391,7 @@ def test_icon_svg_for_num_returns_none_when_potrace_missing(monkeypatch, tmp_pat
     continues to render."""
     monkeypatch.setattr(weapon_icons, "_CURATED_DIR", str(tmp_path / "curated"))
     monkeypatch.setattr(weapon_icons, "_SVG_CACHE_DIR", str(tmp_path / "empty"))
-    monkeypatch.setattr(weapon_icons, "_potrace_available", lambda: False)
+    monkeypatch.setattr(icon_tracer, "_potrace_available", lambda: False)
     weapon_icons.reset_cache()
     assert weapon_icons.icon_svg_for_num(350) is None
 

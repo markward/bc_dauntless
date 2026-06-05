@@ -1,16 +1,32 @@
-"""End-to-end: damage a PhaserBank on a Galaxy, confirm the ShipDisplay
-panel's _damage_states tuple includes the Weapons row.
+"""End-to-end: damage a PhaserBank on a Galaxy, confirm the
+ShipDisplay panel's damage descriptor list surfaces the per-bank
+Phaser row with the right state.
 
-Uses direct DamageSystem calls to seed the bank's condition rather than
-running _advance_combat ticks. This isolates the project's actual
-change (parent aggregation + picker) from shield-charge tuning and
-weapon-timing variance. Visual confirmation of the full firing pipeline
-is a manual smoke step documented in the spec.
+In BC the parent PhaserSystem AND each individual bank can carry a
+Position2D. The Galaxy hardpoint sets a Position2D on both
+``Phasers`` (the parent system, at 64,94) and every individual bank
+(DorsalPhaser1..4, VentralPhaser1..4). So the panel renders:
+
+    * one icon_num=2 (Phaser) row per individual PhaserBank child,
+      at each bank's own hardpoint coord, and
+    * one icon_num=6 (System fallback) row for the parent
+      PhaserSystem at (64, 94) — the parent is not in the icon
+      class table so it falls through to "System".
+
+Damaging a single bank flips that bank's row to "damaged" and the
+parent system's IsDamaged() predicate true. Disabling/destroying
+every bank flips every bank row AND the parent row to
+"disabled" / "destroyed".
+
+Spec: docs/superpowers/plans/2026-06-05-ship-display-damage-hardpoint.md
 """
 import App
 import loadspacehelper
 
-from engine.ui.ship_display_panel import _damage_states
+from engine.ui.ship_display_panel import _damage_icon_descriptors
+
+PHASER_ICON_NUM = 2   # DamageIcons enum: Phaser (individual bank)
+SYSTEM_ICON_NUM = 6   # DamageIcons enum: System (PhaserSystem parent fallback)
 
 
 def _build_galaxy():
@@ -28,7 +44,22 @@ def _phaser_banks(ship):
     return banks
 
 
-def test_damaging_one_phaser_bank_surfaces_weapons_damaged_row():
+def _phaser_rows(ship):
+    return [r for r in _damage_icon_descriptors(ship)
+            if r["icon_num"] == PHASER_ICON_NUM]
+
+
+def _parent_phaser_row(ship):
+    """Locate the parent PhaserSystem row by matching the Galaxy
+    hardpoint's Position2D for ``Phasers`` (64, 94). Returns None if
+    no such row is present."""
+    for r in _damage_icon_descriptors(ship):
+        if r["icon_num"] == SYSTEM_ICON_NUM and r["x_px"] == 64.0 and r["y_px"] == 94.0:
+            return r
+    return None
+
+
+def test_damaging_one_phaser_bank_surfaces_damaged_phaser_row():
     ship = _build_galaxy()
     banks = _phaser_banks(ship)
     target_bank = banks[0]
@@ -42,21 +73,32 @@ def test_damaging_one_phaser_bank_surfaces_weapons_damaged_row():
     # below needs to be revisited (max_condition * 0.5 would land
     # below a 0.75 threshold, flipping IsDisabled() to 1).
     assert target_bank.GetDisabledPercentage() == 0.25
-    # Drop the bank into the damaged band: half of MaxCondition, comfortably
-    # above the disabled threshold (default DisabledPercentage 0.25).
+    # Drop the bank into the damaged band: half of MaxCondition,
+    # comfortably above the disabled threshold (default
+    # DisabledPercentage 0.25).
     seed = target_bank.GetMaxCondition() * 0.5
     ship.DamageSystem(target_bank, seed)
 
-    phasers = ship.GetPhaserSystem()
-    assert phasers.IsDamaged() == 1
-    assert phasers.IsDisabled() == 0
-    assert phasers.IsDestroyed() == 0
+    rows = _phaser_rows(ship)
+    damaged = [r for r in rows if r["state"] == "damaged"]
+    assert len(damaged) >= 1, (
+        "Damaging a bank must surface at least one damaged Phaser row"
+    )
 
-    rows = _damage_states(ship)
-    assert ("Weapons", "damaged") in rows
+    # Parent PhaserSystem row reflects aggregate IsDamaged().
+    parent = ship.GetPhaserSystem()
+    assert parent.IsDamaged() == 1
+    assert parent.IsDisabled() == 0
+    assert parent.IsDestroyed() == 0
+    parent_row = _parent_phaser_row(ship)
+    assert parent_row is not None, (
+        "Galaxy hardpoint sets Phasers.SetPosition2D(64, 94); "
+        "parent row must surface"
+    )
+    assert parent_row["state"] == "damaged"
 
 
-def test_disabling_all_phaser_banks_surfaces_weapons_disabled_row():
+def test_disabling_all_phaser_banks_surfaces_disabled_phaser_rows():
     ship = _build_galaxy()
     banks = _phaser_banks(ship)
     # Drive every bank below its disabled threshold.
@@ -68,24 +110,36 @@ def test_disabling_all_phaser_banks_surfaces_weapons_disabled_row():
         damage = bank.GetCondition() - target_condition
         ship.DamageSystem(bank, damage)
 
-    phasers = ship.GetPhaserSystem()
-    assert phasers.IsDisabled() == 1
-    assert phasers.IsDestroyed() == 0
+    rows = _phaser_rows(ship)
+    assert rows, "Galaxy must surface per-bank Phaser rows"
+    assert all(r["state"] == "disabled" for r in rows), (
+        "Every Phaser row must be disabled when every bank is below threshold"
+    )
 
-    rows = _damage_states(ship)
-    assert ("Weapons", "disabled") in rows
+    # Parent PhaserSystem row reflects aggregate IsDisabled().
+    parent = ship.GetPhaserSystem()
+    assert parent.IsDisabled() == 1
+    assert parent.IsDestroyed() == 0
+    parent_row = _parent_phaser_row(ship)
+    assert parent_row is not None
+    assert parent_row["state"] == "disabled"
 
 
-def test_destroying_all_phaser_banks_surfaces_weapons_destroyed_row():
+def test_destroying_all_phaser_banks_surfaces_destroyed_phaser_rows():
     ship = _build_galaxy()
     banks = _phaser_banks(ship)
     for bank in banks:
         ship.DamageSystem(bank, bank.GetCondition())
 
-    phasers = ship.GetPhaserSystem()
-    assert phasers.IsDestroyed() == 1
-    assert phasers.IsDisabled() == 1   # destroyed children are also disabled
-    assert phasers.IsDamaged() == 1    # destroyed children also mark damaged
+    rows = _phaser_rows(ship)
+    assert rows
+    assert all(r["state"] == "destroyed" for r in rows)
 
-    rows = _damage_states(ship)
-    assert ("Weapons", "destroyed") in rows
+    # Parent PhaserSystem row reflects aggregate IsDestroyed().
+    parent = ship.GetPhaserSystem()
+    assert parent.IsDestroyed() == 1
+    assert parent.IsDisabled() == 1   # destroyed children are also disabled
+    assert parent.IsDamaged() == 1    # destroyed children also mark damaged
+    parent_row = _parent_phaser_row(ship)
+    assert parent_row is not None
+    assert parent_row["state"] == "destroyed"

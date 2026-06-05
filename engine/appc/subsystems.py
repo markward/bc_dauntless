@@ -442,6 +442,9 @@ class ShipSubsystem(TGEventHandlerObject):
         self._indicator_icon_num: int = 0
         self._indicator_icon_position_x_px: float = 0.0
         self._indicator_icon_position_y_px: float = 0.0
+        # DamageDisplay panel coord (pixel-space against SDK's 640x480
+        # reference). Mirrored from SubsystemProperty.SetPosition2D.
+        self._position_2d: tuple = (0.0, 0.0)
 
     def GetName(self) -> str:
         return self._name
@@ -566,6 +569,14 @@ class ShipSubsystem(TGEventHandlerObject):
                 v = getattr(prop, getter)()
                 if isinstance(v, (int, float)):
                     setattr(self, attr, coerce(v))
+        # DamageDisplay placement — typed on SubsystemProperty,
+        # returned as a (x, y) tuple. Same defensive isinstance gate as
+        # the icon mirror above so data-bag stubs don't poison the value.
+        if hasattr(prop, "GetPosition2D"):
+            v = prop.GetPosition2D()
+            if (isinstance(v, tuple) and len(v) == 2
+                and all(isinstance(c, (int, float)) for c in v)):
+                self._position_2d = (float(v[0]), float(v[1]))
 
     def IsTypeOf(self, cls) -> int:
         """SDK class-id check. Returns 1 when this subsystem's source
@@ -694,6 +705,9 @@ class ShipSubsystem(TGEventHandlerObject):
     def GetIndicatorIconNum(self) -> int:                 return self._indicator_icon_num
     def GetIndicatorIconPositionX(self) -> float:         return self._indicator_icon_position_x_px
     def GetIndicatorIconPositionY(self) -> float:         return self._indicator_icon_position_y_px
+
+    def GetPosition2D(self) -> tuple:
+        return self._position_2d
 
     # Phaser-specific accessors (return defaults on non-phaser subsystems).
     def GetPhaserWidth(self) -> float:        return self._phaser_width

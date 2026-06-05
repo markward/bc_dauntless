@@ -215,6 +215,14 @@ class SubsystemProperty(TGModelProperty):
         # are pixel-space against the SDK's 640x480 reference; the panel
         # divides by 640/480 to obtain fractions. icon_num=0 mirrors the
         # SDK's Destroyed-slot fallback in Icons/WeaponIcons.py:55-56.
+        #
+        # NOTE: _icon_num here is the WeaponsDisplay arc-icon number
+        # (e.g. 330/340/350/360 for phaser arc shapes, 370 for torpedo
+        # glyphs). It is unrelated to the DamageDisplay glyph number,
+        # which is derived from the runtime subsystem CLASS via
+        # engine.ui.damage_icons.icon_num_for_subsystem() and is NOT
+        # stored as a property field. Do not wire SetIconNum(0..9) on
+        # damage hardpoints expecting it to set the damage glyph.
         self._icon_num: int = 0
         self._icon_position_x_px: float = 0.0
         self._icon_position_y_px: float = 0.0

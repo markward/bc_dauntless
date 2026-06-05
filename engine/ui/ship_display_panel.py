@@ -223,12 +223,19 @@ class ShipDisplayPanel(Panel):
         species_key  = _species_key_for(ship)
         hull_pct     = _hull_pct(ship)
         shields_pct  = _shields_tuple(ship)
-        damage       = _damage_states(ship)
+        damage_icons_list = _damage_icon_descriptors(ship)
+        # Frozen form for snapshot equality. Position2D / icon_num
+        # don't change at runtime, so bucket state only — that's the
+        # field that actually flips frame-to-frame.
+        damage_frozen = tuple(
+            (d["icon_num"], d["x_px"], d["y_px"], d["state"])
+            for d in damage_icons_list
+        )
         range_km, speed_kph = (None, None)
         if self._role == ROLE_TARGET:
             range_km, speed_kph = _range_and_speed_to(ship, player)
         return (ship_id, name, affiliation, species_key, hull_pct,
-                shields_pct, damage, range_km, speed_kph,
+                shields_pct, damage_frozen, range_km, speed_kph,
                 self._minimized, True)
 
     # Panel framework ---------------------------------------------------
@@ -238,18 +245,21 @@ class ShipDisplayPanel(Panel):
             return None
         self._last_snapshot = snap
         (ship_id, name, affiliation, species, hull_pct,
-         shields, damage, range_km, speed_kph, minimized, visible) = snap
+         shields, damage_frozen, range_km, speed_kph,
+         minimized, visible) = snap
+        ship_now = _resolve_ship_for_role(self._role) if visible else None
+        damage_icons_list = _damage_icon_descriptors(ship_now) if ship_now else []
         payload = {
-            "visible":     visible,
-            "ship_name":   name,
-            "affiliation": affiliation,
-            "species":     species,
-            "hull_pct":    hull_pct,
-            "shields_pct": list(shields),
-            "damage":      [{"name": n, "state": s} for (n, s) in damage],
-            "range_km":    range_km,
-            "speed_kph":   speed_kph,
-            "minimized":   minimized,
+            "visible":      visible,
+            "ship_name":    name,
+            "affiliation":  affiliation,
+            "species":      species,
+            "hull_pct":     hull_pct,
+            "shields_pct":  list(shields),
+            "damage_icons": damage_icons_list,
+            "range_km":     range_km,
+            "speed_kph":    speed_kph,
+            "minimized":    minimized,
         }
         payload["silhouette_url"] = ship_icons.icon_path_for_species(payload["species"])
         return ("setShipDisplay(" + json.dumps(self._role) + ", " +
@@ -269,14 +279,6 @@ class ShipDisplayPanel(Panel):
 # ---------------------------------------------------------------------
 # Snapshot generation helpers
 # ---------------------------------------------------------------------
-
-_DAMAGE_SUBSYSTEMS = (
-    ("Engines",          "GetImpulseEngineSubsystem"),
-    ("Weapons",          "GetPhaserSystem"),
-    ("Sensors",          "GetSensorSubsystem"),
-    ("Shield Generator", "GetShieldSubsystem"),
-)
-
 
 def _get_player():
     """Returns the current player ship, or None."""
@@ -414,10 +416,35 @@ def _shields_tuple(ship) -> tuple[float, ...]:
         return (0.0,) * 6
 
 
-def _damage_states(ship):
-    """Walks Engines, Weapons, Sensors, Shield Generator. Healthy = omitted."""
-    out = []
-    for label, getter_name in _DAMAGE_SUBSYSTEMS:
+# Source getters for the hardpoint walk. Each getter returns either
+# a single subsystem or None. We recurse into children to pick up
+# per-bank phasers, per-tube torpedoes, etc. — those carry their own
+# Position2D from the hardpoint.
+_DAMAGE_SOURCE_GETTERS = (
+    "GetHull",
+    "GetSensorSubsystem",
+    "GetShieldSubsystem",
+    "GetImpulseEngineSubsystem",
+    "GetWarpEngineSubsystem",
+    "GetPowerSubsystem",
+    "GetRepairSubsystem",
+    "GetCloakingSubsystem",
+    "GetPhaserSystem",
+    "GetTorpedoSystem",
+    "GetPulseWeaponSystem",
+)
+
+
+def _iter_damage_subsystems(ship):
+    """Yield every ShipSubsystem reachable from ``ship`` via the
+    standard damage source getters, recursing into child subsystems
+    so per-bank phasers and per-tube torpedoes surface alongside
+    their parent weapon systems. No filtering here — the caller
+    decides which rows to render."""
+    if ship is None:
+        return
+    seen = set()
+    for getter_name in _DAMAGE_SOURCE_GETTERS:
         getter = getattr(ship, getter_name, None)
         if getter is None:
             continue
@@ -425,15 +452,65 @@ def _damage_states(ship):
             sub = getter()
         except Exception:
             continue
-        if sub is None:
+        if sub is None or id(sub) in seen:
             continue
-        state = _subsystem_state(sub)
-        if state is not None:
-            out.append((label, state))
-    return tuple(out)
+        seen.add(id(sub))
+        yield sub
+        try:
+            n = sub.GetNumChildSubsystems()
+        except Exception:
+            continue
+        for i in range(n):
+            try:
+                child = sub.GetChildSubsystem(i)
+            except Exception:
+                continue
+            if child is None or id(child) in seen:
+                continue
+            seen.add(id(child))
+            yield child
 
 
-def _subsystem_state(sub):
+def _damage_icon_descriptors(ship):
+    """Per-row descriptors for the damage overlay. Filters to
+    subsystems with a non-zero Position2D — the SDK uses (0, 0) to
+    mean "don't display." Each descriptor:
+
+        {
+          "icon_num": int,        # DamageIcons enum value
+          "icon_svg": str | None, # inline SVG, or None if no glyph available
+          "x_px":    float,       # hardpoint pixel coord, SDK 640x480 frame
+          "y_px":    float,
+          "state":   "healthy" | "damaged" | "disabled" | "destroyed",
+        }
+    """
+    from engine.ui import damage_icons
+    out: list[dict] = []
+    for sub in _iter_damage_subsystems(ship):
+        try:
+            pos = sub.GetPosition2D()
+        except Exception:
+            continue
+        if not isinstance(pos, tuple) or len(pos) != 2:
+            continue
+        x_px, y_px = float(pos[0]), float(pos[1])
+        if x_px == 0.0 and y_px == 0.0:
+            continue
+        icon_num = damage_icons.icon_num_for_subsystem(sub)
+        out.append({
+            "icon_num": icon_num,
+            "icon_svg": damage_icons.icon_svg_for_num(icon_num),
+            "x_px":     x_px,
+            "y_px":     y_px,
+            "state":    _row_state(sub),
+        })
+    return out
+
+
+def _row_state(sub) -> str:
+    """Predicate ladder — "healthy" instead of None so the panel always
+    has a class to apply. Healthy → default colour; damaged/disabled/
+    destroyed → --bc-damage-* CSS tokens."""
     try:
         if hasattr(sub, "IsDestroyed") and sub.IsDestroyed():
             return "destroyed"
@@ -443,7 +520,7 @@ def _subsystem_state(sub):
             return "damaged"
     except Exception:
         pass
-    return None
+    return "healthy"
 
 
 def _range_and_speed_to(ship, player):
