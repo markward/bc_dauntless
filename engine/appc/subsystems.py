@@ -251,9 +251,13 @@ class _EnergyWeaponFireMixin:
             self._charge_level = max(
                 0.0, self._charge_level - self._normal_discharge_rate * dt
             )
-            if self._charge_level < self._min_firing_charge:
-                # Depletion auto-stop.  Clear _armed — bank stays cold
-                # until it recharges past the hysteresis threshold below.
+            if self._charge_level <= 0.0:
+                # Depletion auto-stop. BC's banks discharge all the way
+                # to 0 while firing (visible on the WeaponsDisplay as the
+                # full black → red → yellow → green sweep during recharge)
+                # — MinFiringCharge gates fire-start only, not the
+                # continuous discharge. _armed stays cleared until the
+                # bank recharges past the hysteresis threshold below.
                 self._armed = False
                 # Route via StopFiring so the looped SFX handle is silenced.
                 self.StopFiring()
@@ -423,6 +427,21 @@ class ShipSubsystem(TGEventHandlerObject):
         # make IsDestroyed() true when condition hits zero).
         self._damaged: bool = False
         self._destroyed: bool = False
+        # WeaponsDisplay icon descriptor mirrored from SubsystemProperty.
+        # The ShipDisplay panel snapshot reads these without walking back
+        # to the property template. Coordinates are pixel-space against
+        # the SDK's 640x480 reference; the panel divides at the display
+        # boundary. _icon_num == 0 is the "no icon" sentinel (matches the
+        # SDK Destroyed-slot fallback in Icons/WeaponIcons.py:55-56) —
+        # tractor beams and GenericTemplate emitters set it explicitly so
+        # the panel can skip them cleanly.
+        self._icon_num: int = 0
+        self._icon_position_x_px: float = 0.0
+        self._icon_position_y_px: float = 0.0
+        self._icon_above_ship: int = 0
+        self._indicator_icon_num: int = 0
+        self._indicator_icon_position_x_px: float = 0.0
+        self._indicator_icon_position_y_px: float = 0.0
 
     def GetName(self) -> str:
         return self._name
@@ -531,6 +550,22 @@ class ShipSubsystem(TGEventHandlerObject):
                 if isinstance(v, (int, float)):
                     setattr(self, attr,
                              int(v) if attr == "_num_sides" else float(v))
+        # WeaponsDisplay icon descriptor — typed on SubsystemProperty;
+        # the data-bag stubs on bare TGObject return non-int garbage so
+        # gate on isinstance to keep stubs from poisoning the mirror.
+        for getter, attr, coerce in (
+            ("GetIconNum",                  "_icon_num",                       int),
+            ("GetIconPositionX",            "_icon_position_x_px",             float),
+            ("GetIconPositionY",            "_icon_position_y_px",             float),
+            ("IsIconAboveShip",             "_icon_above_ship",                int),
+            ("GetIndicatorIconNum",         "_indicator_icon_num",             int),
+            ("GetIndicatorIconPositionX",   "_indicator_icon_position_x_px",   float),
+            ("GetIndicatorIconPositionY",   "_indicator_icon_position_y_px",   float),
+        ):
+            if hasattr(prop, getter):
+                v = getattr(prop, getter)()
+                if isinstance(v, (int, float)):
+                    setattr(self, attr, coerce(v))
 
     def IsTypeOf(self, cls) -> int:
         """SDK class-id check. Returns 1 when this subsystem's source
@@ -648,6 +683,17 @@ class ShipSubsystem(TGEventHandlerObject):
 
     def GetLengthTextureTilePerUnit(self) -> float:
         return self._length_texture_tile_per_unit
+
+    # WeaponsDisplay icon descriptor — mirrored from SubsystemProperty.
+    # Returns the SDK-faithful zero/0 defaults on subsystems without a
+    # bound property so callers don't need to None-check before reading.
+    def GetIconNum(self) -> int:                          return self._icon_num
+    def GetIconPositionX(self) -> float:                  return self._icon_position_x_px
+    def GetIconPositionY(self) -> float:                  return self._icon_position_y_px
+    def IsIconAboveShip(self) -> int:                     return self._icon_above_ship
+    def GetIndicatorIconNum(self) -> int:                 return self._indicator_icon_num
+    def GetIndicatorIconPositionX(self) -> float:         return self._indicator_icon_position_x_px
+    def GetIndicatorIconPositionY(self) -> float:         return self._indicator_icon_position_y_px
 
     # Phaser-specific accessors (return defaults on non-phaser subsystems).
     def GetPhaserWidth(self) -> float:        return self._phaser_width

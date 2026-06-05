@@ -33,3 +33,22 @@ def encode_png_rgba(width: int, height: int, rgba: bytes) -> bytes:
             + _chunk(b"IHDR", ihdr)
             + _chunk(b"IDAT", idat)
             + _chunk(b"IEND", b""))
+
+
+def encode_png_rgb(width: int, height: int, rgb: bytes) -> bytes:
+    """Encode RGB pixels (24-bit, no alpha) as a truecolour PNG. Same
+    minimal pipeline as ``encode_png_rgba``; only the IHDR colour-type
+    byte changes (2 = truecolour, vs 6 = truecolour + alpha)."""
+    if len(rgb) != width * height * 3:
+        raise ValueError("rgb length does not match width*height*3")
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    row = width * 3
+    raw = bytearray()
+    for y in range(height):
+        raw.append(0)
+        raw.extend(rgb[y * row:(y + 1) * row])
+    idat = zlib.compress(bytes(raw), 6)
+    return (_SIGNATURE
+            + _chunk(b"IHDR", ihdr)
+            + _chunk(b"IDAT", idat)
+            + _chunk(b"IEND", b""))

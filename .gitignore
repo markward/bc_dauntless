@@ -311,6 +311,11 @@ site/
 # Runtime TGA→PNG cache for ship-class icons
 native/assets/ui-cef/icons/ships/
 
+# Runtime trace cache (TGA → SVG via potrace) for weapon icons.
+# Regenerates on first host start; gitignored so mod-driven TGA swaps
+# don't leave stale entries from a prior install.
+cache/
+
 # =============================================================================
 # EXCEPTIONS — force-include these even if caught by rules above
 # =============================================================================

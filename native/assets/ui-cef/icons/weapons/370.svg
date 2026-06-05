@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   version="1.0"
+   width="4"
+   height="6"
+   viewBox="0 0 16.000000 24.000000"
+   preserveAspectRatio="xMidYMid meet"
+   id="svg1"
+   sodipodi:docname="370.svg"
+   inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs1">
+    <inkscape:path-effect
+       effect="fillet_chamfer"
+       id="path-effect1"
+       nodesatellites_param="F,0,0,1,0,5.5274449,0,1 @ F,0,1,1,0,5.5274449,0,1 @ F,0,1,1,0,5.5274449,0,1 @ F,0,1,1,0,5.5274449,0,1"
+       is_visible="true"
+       lpeversion="1"
+       radius="0"
+       unit="px"
+       method="auto"
+       mode="F"
+       chamfer_steps="1"
+       flexible="false"
+       use_knot_distance="true"
+       apply_no_radius="true"
+       apply_with_radius="true"
+       only_selected="false"
+       hide_knots="false" />
+  </defs>
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="52.031274"
+     inkscape:cx="1.3645639"
+     inkscape:cy="5.0258235"
+     inkscape:window-width="1171"
+     inkscape:window-height="1032"
+     inkscape:window-x="948"
+     inkscape:window-y="30"
+     inkscape:window-maximized="0"
+     inkscape:current-layer="svg1" />
+  <metadata
+     id="metadata1">
+Created by potrace 1.16, written by Peter Selinger 2001-2019
+</metadata>
+  <path
+     id="rect1"
+     style="stroke-width:8.4;fill:#000000;fill-opacity:1"
+     d="M 6.6484375 1.4296875 A 5.5274449 5.5274449 0 0 0 1.1171875 6.953125 L 1.1171875 13.453125 A 1.0378374 0.65345317 0 0 1 1.1953125 13.453125 A 1.0378374 0.65345317 0 0 1 2.2265625 14.109375 A 1.0378374 0.65345317 0 0 1 1.1953125 14.757812 A 1.0378374 0.65345317 0 0 1 1.1171875 14.757812 L 1.1171875 15.375 A 1.0378374 0.65345317 0 0 1 1.1953125 15.375 A 1.0378374 0.65345317 0 0 1 2.2265625 16.03125 A 1.0378374 0.65345317 0 0 1 1.1953125 16.679688 A 1.0378374 0.65345317 0 0 1 1.1171875 16.679688 L 1.1171875 17.046875 A 5.5274449 5.5274449 0 0 0 6.6484375 22.570312 L 9.3515625 22.570312 A 5.5274449 5.5274449 0 0 0 14.882812 17.046875 L 14.882812 16.835938 A 1.0378374 0.65345317 0 0 0 14.875 16.835938 A 1.0378374 0.65345317 0 0 1 13.835938 16.179688 A 1.0378374 0.65345317 0 0 1 14.742188 15.53125 A 1.0378374 0.65345317 0 0 1 14.875 15.53125 A 1.0378374 0.65345317 0 0 0 14.882812 15.53125 L 14.882812 14.914062 A 1.0378374 0.65345317 0 0 0 14.875 14.914062 A 1.0378374 0.65345317 0 0 1 13.835938 14.257812 A 1.0378374 0.65345317 0 0 1 14.742188 13.609375 A 1.0378374 0.65345317 0 0 1 14.875 13.609375 A 1.0378374 0.65345317 0 0 0 14.882812 13.609375 L 14.882812 6.953125 A 5.5274449 5.5274449 0 0 0 9.3515625 1.4296875 L 6.6484375 1.4296875 z " />
+</svg>

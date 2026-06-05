@@ -2045,12 +2045,16 @@ def run(mission_name: Optional[str] = None,
         ship_display_player = ShipDisplay_Create()  # ROLE_PLAYER, registers
         ship_display_target = ShipDisplay_Create()  # ROLE_TARGET, registers
 
-        # Speed readout (bottom-row, left of the player ship-display).
-        # Read-only — reads current_speed + warp_boost off the local
-        # _PlayerControl instance via dependency injection.
-        from engine.ui.speed_display import SpeedDisplay
-        speed_display = SpeedDisplay(player_control=player_control)
-        registry.register(speed_display)
+        # WeaponsDisplay — player-only panel rendering the per-bank
+        # phaser arc icons + indicators over a small centred silhouette
+        # (SDK's Tactical/Interface/WeaponsDisplay.py reproduction).
+        # Its header doubles as BC's speed readout, replacing the
+        # standalone SpeedDisplay panel — the original game used the
+        # WeaponsDisplay title for the "Speed {imp} : {vel} kph"
+        # text (see BridgeHandlers.HelmUpdateToolTip in the SDK).
+        from engine.ui.weapons_display_panel import WeaponsDisplayPanel
+        weapons_display = WeaponsDisplayPanel(player_control=player_control)
+        registry.register(weapons_display)
 
         # Bindings older than the orbit-camera change won't expose
         # consume_scroll_y; fall back to a zero-delta lambda so host_loop
@@ -2175,7 +2179,7 @@ def run(mission_name: Optional[str] = None,
                 sensors_panel.visible       = view_mode.is_exterior
                 ship_display_player.visible = view_mode.is_exterior
                 ship_display_target.visible = view_mode.is_exterior
-                speed_display.visible       = view_mode.is_exterior
+                weapons_display.visible     = view_mode.is_exterior
 
                 # Sensor-visibility update — flip per-row IsVisible
                 # based on range from the player. TargetListView
@@ -2258,7 +2262,8 @@ def run(mission_name: Optional[str] = None,
                     _BR_X = _CEF_VIEW_W - 12 - _BR_W
                     _BR_Y = _CEF_VIEW_H - 12 - _BR_H
                     _cursor_in_bottom_row = (
-                        (ship_display_player.visible or speed_display.visible)
+                        (ship_display_player.visible
+                         or weapons_display.visible)
                         and _BR_X <= _mx < _BR_X + _BR_W
                         and _BR_Y <= _my < _BR_Y + _BR_H
                     )

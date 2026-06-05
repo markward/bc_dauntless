@@ -30,10 +30,12 @@ def galaxy_red():
             del sys.modules[k]
 
 
-def test_firing_stops_when_charge_drops_below_min(galaxy_red):
-    """Galaxy phaser: MaxCharge=5, Min=3, Discharge=1/s.  Starting at
-    charge=3.5, sustained fire for 1s drains to 2.5, which is below
-    Min — bank should auto-stop."""
+def test_firing_continues_below_min_charge(galaxy_red):
+    """Galaxy phaser: MaxCharge=5, Min=3, Discharge=1/s. MinFiringCharge
+    is the gate to *start* firing, not to stop — once firing, BC's
+    banks discharge all the way to 0 before auto-stopping. Sustained
+    fire from charge=3.5 for 1 s drains to 2.5, well below Min, but
+    the bank is still firing because charge > 0."""
     ship = galaxy_red
     bank = ship.GetPhaserSystem().GetWeapon(0)
     bank._charge_level = 3.5
@@ -42,7 +44,25 @@ def test_firing_stops_when_charge_drops_below_min(galaxy_red):
     bank.UpdateCharge(1.0)  # drains 1.0/s × 1.0s = 1.0 → 2.5
 
     assert bank._charge_level == pytest.approx(2.5)
-    assert bank.IsFiring() == 0, "Bank should auto-stop below MinFiringCharge"
+    assert bank.IsFiring() == 1, (
+        "Bank should keep firing below MinFiringCharge — that gate "
+        "only blocks fire-start, not continuous discharge"
+    )
+
+
+def test_firing_auto_stops_when_charge_reaches_zero(galaxy_red):
+    """The depletion gate kicks in only when charge actually hits 0 —
+    matches BC's WeaponsDisplay sweep through the full palette during
+    a recharge cycle from depleted."""
+    ship = galaxy_red
+    bank = ship.GetPhaserSystem().GetWeapon(0)
+    bank._charge_level = 0.5
+    bank._firing = True
+
+    bank.UpdateCharge(1.0)  # drains 1.0/s × 1.0s = 1.0 → clamped to 0
+
+    assert bank._charge_level == 0.0
+    assert bank.IsFiring() == 0
 
 
 def test_firing_continues_above_min(galaxy_red):

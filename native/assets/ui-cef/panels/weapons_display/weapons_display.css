@@ -1,0 +1,238 @@
+/* native/assets/ui-cef/panels/weapons_display/weapons_display.css
+ *
+ * WeaponsDisplay panel — player's per-mount phaser-arc + indicator
+ * overlay over a small centred ship silhouette. Mirrors the visual
+ * layout from sdk/.../Tactical/Interface/WeaponsDisplay.py.
+ *
+ * Tokens shared with ship_display.css are redeclared (browsers
+ * de-duplicate identical :root entries).
+ */
+
+:root {
+    --bc-menu1-base:    rgb(216, 94, 86);
+    --bc-menu1-accent:  rgb(216, 132, 80);
+    --bc-label-text:    rgb(235, 225, 255);
+    --bc-body-bg:       rgba(10, 10, 16, 0.85);
+    --bc-shields:       rgb(150, 129, 222);
+}
+
+/* Flex child of #tactical-bottom-row. The parent uses
+   align-items: flex-end so children naturally sit at their content
+   height; our shorter body (header + silhouette only — no damage
+   list / hull bar) would leave the panel visually stub-shorter
+   than its neighbours. align-self: stretch overrides the parent's
+   flex-end alignment for this child only and matches the row's
+   tallest sibling (the player ShipDisplay). */
+#weapons-display {
+    width: 16vw;
+    min-width: 220px;
+    align-self: stretch;
+    display: flex;
+    flex-direction: column;
+    font-family: "Antonio", "Antonio-Regular", sans-serif;
+    color: var(--bc-label-text);
+    -webkit-font-smoothing: antialiased;
+}
+
+/* Match the ID selector below so our display: flex doesn't override
+   the user-agent's default [hidden] → display: none behaviour. */
+#weapons-display[hidden] { display: none; }
+
+/* ── Header — matches the shared bc-panel chrome ───────────────────── */
+.weapons-display .bc-panel__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: linear-gradient(90deg, var(--bc-menu1-base), var(--bc-menu1-accent));
+    border-top-right-radius: 14px;
+    padding: 3px 14px 3px 18px;
+    color: rgb(0, 0, 0);
+    font-weight: 600;
+    font-size: 14px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+}
+
+.weapons-display .bc-panel__body {
+    padding: 8px;
+    background: var(--bc-body-bg);
+    border-left: 4px solid var(--bc-menu1-base);
+    display: flex;
+    flex-direction: column;
+    /* Fill the stretched panel height — the silhouette stack inside
+       grows to consume the remaining space (flex: 1 below), so the
+       panel matches the tallest sibling. */
+    flex: 1;
+    min-height: 0;
+}
+
+/* ── Silhouette + weapon overlays ──────────────────────────────────── */
+/* SDK's WEAPONS_PANE is ~130x110 px at the 640x480 reference mode.
+   Icons land at (x_px, y_px) inside it as top-left offsets; we keep
+   the inner pane at that exact pixel size so the (12, 21) → (111, 82)
+   icon spread reproduces BC's layout. A CSS transform on the inner
+   pane scales the whole composition up to fill the panel body — one
+   knob (--weapons-scale) governs the visual size, the pixel-space
+   icon coords stay authoritative. */
+.weapons-display {
+    /* Visual scale of the 130x110 SDK pane. 1.3 lines the panel's
+       natural height up with the player ShipDisplay sibling's
+       healthy-state baseline (~186px), so the panels match when
+       no damage rows are visible. Bump if you widen the panel
+       itself; drop further if it starts spilling. */
+    --weapons-scale: 1.3;
+    /* Weapon-icon colour palette. Offline = BC's canonical disabled
+       grey from sdk/Build/scripts/LoadInterface.py:145. Online state
+       walks an 11-stop discrete palette keyed by charge bucket
+       (0 % – 100 % in 10 % steps), reproducing BC's ~10-band
+       black → red → yellow → green sweep visible on the original
+       game's WeaponsDisplay during a recharge cycle. The two
+       endpoints match BC's g_kSubsystemEmptyColor (30 % stop) and
+       g_kSubsystemFillColor (100 % stop) so the panel reads as a
+       superset of the SDK subsystem gauge palette. */
+    --weapons-icon-offline:        rgb(153, 153, 153); /* g_kSubsystemDisabledColor */
+    --weapons-icon-charge-0:       rgb(  0,   0,   0);
+    --weapons-icon-charge-10:      rgb( 50,   5,   5);
+    --weapons-icon-charge-20:      rgb(110,  15,  15);
+    --weapons-icon-charge-30:      rgb(171,  25,  25); /* g_kSubsystemEmptyColor */
+    --weapons-icon-charge-40:      rgb(210,  60,  10);
+    --weapons-icon-charge-50:      rgb(232, 100,   0);
+    --weapons-icon-charge-60:      rgb(240, 145,   0);
+    --weapons-icon-charge-70:      rgb(240, 185,   0);
+    --weapons-icon-charge-80:      rgb(232, 220,   0);
+    --weapons-icon-charge-90:      rgb(208, 240,   0);
+    --weapons-icon-charge-100:     rgb(184, 255,   0); /* g_kSubsystemFillColor */
+    /* Galaxy's icons span x=12 to x=142 — a 130-wide envelope
+       offset 12 to the right of the SDK pane centre. Shift the
+       overlay containers left by that amount so the icon cluster
+       centres on the silhouette. */
+    --weapons-overlay-x-offset: -12px;
+    /* Galaxy's icons start at y=21 (top arcs) in the 110-tall pane,
+       so there's a natural 21-px top-of-pane buffer baked into the
+       SDK authoring. Shift the overlay up by that amount so the
+       cluster begins at the top of the stack — eliminates the
+       visible top gap inside the body. The +2px-visual nudge keeps
+       the very top edge from kissing the panel chrome. */
+    --weapons-overlay-y-offset: calc(-21px + 2px / var(--weapons-scale));
+}
+
+.weapons-display__silhouette-stack {
+    position: relative;
+    /* Reserve the scaled bounding box so the layout flows correctly
+       (transform: scale alone doesn't change the box, so we must
+       size the outer box explicitly to match the scaled inner pane). */
+    width: calc(130px * var(--weapons-scale));
+    height: calc(110px * var(--weapons-scale));
+    margin: auto;
+    isolation: isolate;
+}
+
+.weapons-display__pane {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 130px;
+    height: 110px;
+    transform: scale(var(--weapons-scale));
+    transform-origin: top left;
+}
+
+.weapons-display__silhouette {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    /* SDK shrinks the ship icon to 60% of its native artwork
+       (WeaponsDisplay.py:578) so the wrapping arc icons have room
+       to render around it. Nudged down 5 visual px to settle the
+       silhouette inside the arc cluster — translate applied
+       before scale so it lives in pane-local pixels and the
+       outer --weapons-scale auto-compensates. */
+    transform: translateY(calc(5px / var(--weapons-scale))) scale(0.6);
+    opacity: 0.85;
+    z-index: 2;
+}
+
+/* Two overlay containers spanning the pane — one drawn below the
+   silhouette (ventral mounts) and one above (dorsal). The overlay
+   layer is shifted (--weapons-overlay-x-offset) so the asymmetric
+   x=12..142 icon span centres on the silhouette without moving
+   the silhouette itself. */
+.weapons-display__weapons {
+    position: absolute;
+    top: var(--weapons-overlay-y-offset);
+    left: var(--weapons-overlay-x-offset);
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    /* Allow icons whose right/bottom edges run past the 130x110
+       pane (e.g. Aft Torpedoes at y=116 with sprite extending
+       past 110) to still render — overflow:visible keeps them
+       visible while preserving the parent's hit region. */
+    overflow: visible;
+}
+
+.weapons-display .weapons--below { z-index: 1; }
+.weapons-display .weapons--above { z-index: 5; }
+
+.weapons-display .weapon-icon {
+    position: absolute;
+    /* SDK positions icons by top-left corner — no centre translate. */
+    /* The JS injects inline SVG via innerHTML; the path uses
+       fill="currentColor" so the colour declared here cascades down
+       into the rendered shape. */
+    line-height: 0;
+    color: var(--weapons-icon-offline);
+}
+
+.weapons-display .weapon-icon.is-destroyed {
+    opacity: 0.35;
+    filter: saturate(0.2);
+}
+
+/* Strip the surrounding inline box so SVGs sit at their natural
+   pixel dimensions. */
+.weapons-display .weapon-icon svg {
+    display: block;
+    /* Render the in-arc stroke at a constant device-pixel width
+       regardless of the parent transform: scale(). Without this the
+       stroke would scale with the rest of the SVG and we'd need to
+       hand-tune width per --weapons-scale value. */
+    overflow: visible;
+}
+
+/* Theming guard — force every fill inside the icon SVGs to follow
+   the parent's CSS color regardless of what the file declares.
+   Vector editors don't preserve fill="currentColor" round-trip; when
+   you duplicate a path they freeze the path's currently-rendered
+   colour as a literal on the new object (#000000 by default, because
+   currentColor evaluates to black with no parent context inside the
+   editor). Editors commonly write that as an inline ``style="fill:..."``,
+   which has higher specificity than a plain class selector — !important
+   is required to win against inline styles. The selector also covers
+   the SVG root itself so a top-level <svg fill="..."> attribute (which
+   Figma exports) doesn't sneak through. */
+.weapons-display .weapon-icon svg,
+.weapons-display .weapon-icon svg * {
+    fill: currentColor !important;
+}
+
+/* In-arc indicator — replaces the SDK's separate field-overlay icons
+   (500-515) with a translucent blue stroke around the arc shape.
+   Activated by the .is-in-arc class added in the JS when the target
+   is in the bank's firing arc + range. vector-effect keeps the
+   stroke at a constant device-pixel width through the parent's
+   transform: scale(), and paint-order draws the stroke under the
+   fill so it reads as a clean outline rather than overpainting the
+   shape interior. */
+.weapons-display .weapon-icon.is-in-arc svg * {
+    stroke: rgba(80, 170, 255, 0.5) !important;
+    stroke-width: 6 !important;
+    vector-effect: non-scaling-stroke;
+    /* Default paint-order (fill then stroke) — needed so the inset
+       stroke renders OVER the fill. The earlier ``paint-order:
+       stroke fill`` was the trick for an outer-only stroke (fill
+       covers the inner stroke half), but with clip-path now hiding
+       the outer half, that combination leaves no stroke visible. */
+}

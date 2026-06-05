@@ -203,6 +203,25 @@ class SubsystemProperty(TGModelProperty):
         # on SubsystemProperty for the 2D damage-display panel layout.
         # Distinct from the 3D mount Position hoisted on TGModelProperty.
         self._position_2d: tuple = (0.0, 0.0)
+        # WeaponsDisplay icon descriptors. SDK App.py:9232-9239 declares
+        # SetIconNum / SetIconPositionX / SetIconPositionY /
+        # SetIconAboveShip on WeaponProperty, and 9265-9278 adds the
+        # IndicatorIcon triplet on EnergyWeaponProperty. We hoist all
+        # seven onto the subsystem base so torpedo, phaser, tractor, and
+        # pulse hardpoints share one typed path — single setters
+        # round-tripped through the data-bag, but IsIconAboveShip (the
+        # SDK's canonical predicate accessor — see WeaponsDisplay.py:412)
+        # has no Get/Set spelling and crashed the consumer. Coordinates
+        # are pixel-space against the SDK's 640x480 reference; the panel
+        # divides by 640/480 to obtain fractions. icon_num=0 mirrors the
+        # SDK's Destroyed-slot fallback in Icons/WeaponIcons.py:55-56.
+        self._icon_num: int = 0
+        self._icon_position_x_px: float = 0.0
+        self._icon_position_y_px: float = 0.0
+        self._icon_above_ship: int = 0
+        self._indicator_icon_num: int = 0
+        self._indicator_icon_position_x_px: float = 0.0
+        self._indicator_icon_position_y_px: float = 0.0
 
     def IsTargetable(self) -> int:
         return self._targetable
@@ -218,6 +237,49 @@ class SubsystemProperty(TGModelProperty):
 
     def GetPosition2D(self) -> tuple:
         return self._position_2d
+
+    # ── WeaponsDisplay icon setters/getters ──────────────────────────────
+    def SetIconNum(self, n) -> None:
+        self._icon_num = int(n)
+
+    def GetIconNum(self) -> int:
+        return self._icon_num
+
+    def SetIconPositionX(self, x) -> None:
+        self._icon_position_x_px = float(x)
+
+    def GetIconPositionX(self) -> float:
+        return self._icon_position_x_px
+
+    def SetIconPositionY(self, y) -> None:
+        self._icon_position_y_px = float(y)
+
+    def GetIconPositionY(self) -> float:
+        return self._icon_position_y_px
+
+    def SetIconAboveShip(self, v) -> None:
+        self._icon_above_ship = int(v)
+
+    def IsIconAboveShip(self) -> int:
+        return self._icon_above_ship
+
+    def SetIndicatorIconNum(self, n) -> None:
+        self._indicator_icon_num = int(n)
+
+    def GetIndicatorIconNum(self) -> int:
+        return self._indicator_icon_num
+
+    def SetIndicatorIconPositionX(self, x) -> None:
+        self._indicator_icon_position_x_px = float(x)
+
+    def GetIndicatorIconPositionX(self) -> float:
+        return self._indicator_icon_position_x_px
+
+    def SetIndicatorIconPositionY(self, y) -> None:
+        self._indicator_icon_position_y_px = float(y)
+
+    def GetIndicatorIconPositionY(self) -> float:
+        return self._indicator_icon_position_y_px
 
 
 class HullProperty(SubsystemProperty):
