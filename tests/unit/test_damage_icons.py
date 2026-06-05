@@ -40,3 +40,27 @@ def test_registry_covers_all_10_enum_values():
     full DamageIcons enum, so every mapped subsystem has a traceable
     glyph available."""
     assert set(damage_icons.ICON_REGISTRY.keys()) == set(range(10))
+
+
+def test_icon_svg_for_num_returns_none_for_unknown(tmp_path, monkeypatch):
+    # Force an empty curated dir + empty cache so the resolver has nothing
+    # to find; for an unknown enum value it should return None without
+    # raising.
+    damage_icons.reset_cache()
+    assert damage_icons.icon_svg_for_num(99) is None
+
+
+def test_icon_svg_for_num_prefers_curated_when_present(tmp_path, monkeypatch):
+    """Curated SVG under native/assets/ui-cef/icons/damage/{num}.svg
+    wins over the trace cache. Verifies the lookup order matches
+    weapon_icons.icon_svg_for_num."""
+    curated_dir = tmp_path / "curated"
+    curated_dir.mkdir()
+    (curated_dir / "0.svg").write_text(
+        '<svg><path d="M0,0 L1,1" fill="currentColor"/></svg>'
+    )
+    monkeypatch.setattr(damage_icons, "_CURATED_DIR", str(curated_dir))
+    damage_icons.reset_cache()
+    svg = damage_icons.icon_svg_for_num(0)
+    assert svg is not None
+    assert "clipPath" in svg  # _wrap_with_inset_clip applied
