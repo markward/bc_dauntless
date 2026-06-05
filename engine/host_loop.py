@@ -1013,25 +1013,32 @@ class _NullPicker:
 _NULL_PICKER = _NullPicker()
 
 
+def _any_blocker_open(blockers) -> bool:
+    """True if any of the supplied panel-like objects (each exposing
+    is_open()) is currently visible. Used to gate the pause-menu
+    visibility — the menu must hide whenever a modal overlays it."""
+    return any(b.is_open() for b in blockers)
+
+
 def _apply_pause_menu_side_effects(pause: "_PauseMenuController",
                                    view_mode: "_ViewModeController",
                                    h,
-                                   picker) -> None:
+                                   blockers) -> None:
     """Mirror the pause flag into renderer state: show/hide the CEF
     pause-menu div and unlock the cursor while paused so the player can
     interact with the overlay. Idempotent — only fires when the
     effective visibility has changed since the last call. `h` is the
     bindings module (or fake) exposing cef_execute_javascript and
-    set_cursor_locked. `picker` is the MissionPicker (or any object
-    with an is_open() method); when the picker is open the pause-menu
-    must hide regardless of pause.is_open so the picker isn't
-    occluded.
+    set_cursor_locked. `blockers` is an iterable of objects with an
+    is_open() method (today: mission picker + configuration panel);
+    when any is open, the pause-menu must hide regardless of
+    pause.is_open so the blocker isn't occluded.
 
     On close, the view-mode sync latch is invalidated so the next
     _apply_view_mode_side_effects call re-applies cursor lock + bridge
     pass state from whatever view mode is current.
     """
-    target = pause.is_open and not picker.is_open()
+    target = pause.is_open and not _any_blocker_open(blockers)
     last = getattr(pause, "_last_synced_is_open", None)
     if last == target:
         return
@@ -2012,10 +2019,34 @@ def run(mission_name: Optional[str] = None,
                 "Load Mission…", mission_picker.open,
             )
 
+        # Configuration panel — production-visible pause-menu modal
+        # exposing the Graphics tab (dust, specular, FOV). Settings
+        # apply live; no persistence in this iteration. Construction
+        # uses the live director FOV so opening the panel doesn't lie
+        # about the current value.
+        from engine.ui.configuration_panel import (
+            ConfigurationPanel, SettingsSnapshot,
+        )
+        import math as _cp_math
+        configuration_panel = ConfigurationPanel(
+            tabs=[("graphics", "Graphics")],
+            initial_settings=SettingsSnapshot(
+                dust_on=True,
+                specular_on=True,
+                fov_deg=int(round(_cp_math.degrees(
+                    director.fov_y_rad
+                ))),
+            ),
+            set_dust=r.set_dust_enabled,
+            set_specular=r.set_specular_enabled,
+            set_fov_rad=director.set_fov,
+        )
+
         from engine.ui.pause_menu import default_pause_menu
         from engine.ui.panel_registry import PanelRegistry
         pause_menu = default_pause_menu(
             on_exit=pause.request_quit,
+            on_configuration=configuration_panel.open,
             on_cancel=pause.close,
         )
         registry = PanelRegistry(legacy_handler=pause_menu.dispatch_event)
@@ -2025,6 +2056,7 @@ def run(mission_name: Optional[str] = None,
         from engine.appc.sdk_mirror_panel import SDKMirrorPanel
         sdk_mirror = SDKMirrorPanel()
         registry.register(sdk_mirror)
+        registry.register(configuration_panel)
         if dev_mode.is_enabled():
             registry.register(mission_picker)
 
@@ -2105,22 +2137,29 @@ def run(mission_name: Optional[str] = None,
             # renderer state (bridge pass enable + cursor lock) and is
             # idempotent — only fires when the mode changed.
             if _h is not None:
-                # ESC priority: when the mission picker is open it
-                # consumes ESC (closes the picker, returns to the
-                # pause menu). Otherwise ESC toggles the pause menu
-                # as before.
+                # ESC priority: mission picker (when open) first, then
+                # configuration panel (when open), otherwise the pause
+                # menu toggle. Both modal blockers close on ESC and
+                # return the user to the pause menu.
                 if mission_picker.is_open():
                     if _h.key_pressed(_h.keys.KEY_ESCAPE):
                         mission_picker.handle_key_esc()
+                elif configuration_panel.is_open():
+                    if _h.key_pressed(_h.keys.KEY_ESCAPE):
+                        configuration_panel.handle_key_esc()
                 else:
                     pause.apply(_h)
-                _apply_pause_menu_side_effects(pause, view_mode, _h, mission_picker)
+                _apply_pause_menu_side_effects(
+                    pause, view_mode, _h,
+                    [mission_picker, configuration_panel],
+                )
                 if pause.is_open:
-                    # Suppress pause-menu keyboard input when the
-                    # mission picker is open — pause menu is hidden
-                    # behind the picker, so navigation/Enter on it
-                    # would activate invisible rows.
-                    if not mission_picker.is_open():
+                    # When the configuration panel is open it consumes
+                    # keyboard input — pause-menu navigation would
+                    # otherwise activate rows hidden behind the modal.
+                    if configuration_panel.is_open():
+                        configuration_panel.handle_input(_h)
+                    elif not mission_picker.is_open():
                         pause_menu.handle_input(_h)
                         _script = pause_menu.render_payload()
                         if _script is not None:
