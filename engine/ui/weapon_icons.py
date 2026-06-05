@@ -55,9 +55,8 @@ from engine.ui.icon_tracer import (
     ROTATE_0, ROTATE_180,
     MIRROR_NONE, MIRROR_HORIZONTAL, MIRROR_VERTICAL,
     PotraceMissingError,
-    _crop_rgba, _mirror_horizontal, _mirror_vertical, _rotate_180,
-    _apply_transform, _extract_region_from_tga, _rgba_to_pgm,
-    _potrace_available, _trace_to_svg, _normalize_svg,
+    _extract_region_from_tga,
+    _trace_to_svg,
     _wrap_with_inset_clip, _needs_rebuild,
 )
 

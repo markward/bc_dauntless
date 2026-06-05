@@ -40,7 +40,7 @@ STOCK_ICON_REFS = (
 
 
 potrace_required = pytest.mark.skipif(
-    not weapon_icons._potrace_available(),
+    not icon_tracer._potrace_available(),
     reason="potrace binary not installed (brew install potrace)",
 )
 
@@ -182,7 +182,7 @@ def test_rgba_to_pgm_inverts_alpha_for_mkbitmap():
         rgba.extend((255, 0, 0, 255))  # row 0, opaque → black
     for _ in range(4):
         rgba.extend((255, 0, 0, 0))    # row 1, transparent → white
-    pgm = weapon_icons._rgba_to_pgm(bytes(rgba), 4, 2)
+    pgm = icon_tracer._rgba_to_pgm(bytes(rgba), 4, 2)
     assert pgm.startswith(b"P5\n4 2\n255\n")
     payload = pgm[len(b"P5\n4 2\n255\n"):]
     assert payload == bytes([0, 0, 0, 0, 255, 255, 255, 255])
@@ -226,7 +226,7 @@ def test_rgba_to_pgm_preserves_partial_alpha():
     """Mod TGAs with AA edges will produce partial alpha; mkbitmap's
     cubic interpolation needs the grey midtones to do its job."""
     rgba = bytes((255, 0, 0, 64) + (255, 0, 0, 192))
-    pgm = weapon_icons._rgba_to_pgm(rgba, 2, 1)
+    pgm = icon_tracer._rgba_to_pgm(rgba, 2, 1)
     payload = pgm.split(b"\n", 3)[3]
     assert payload == bytes([255 - 64, 255 - 192])
 
