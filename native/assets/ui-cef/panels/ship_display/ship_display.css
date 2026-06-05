@@ -249,8 +249,12 @@
     width: 14px;
     height: 14px;
     transform: translate(-50%, -50%);  /* hardpoint coord is the centre */
-    color: var(--bc-row-text-bright);  /* drives currentColor in the SVG */
-    transition: color 120ms ease;
+    /* Hidden by default — only damaged / disabled / destroyed states
+       light up. Matches BC's DamageDisplay which leaves healthy slots
+       blank and paints the glyph only once SetDamaged/SetDisabled/
+       SetDestroyed fires. */
+    opacity: 0;
+    transition: color 120ms ease, opacity 120ms ease;
 }
 
 .damage-icon svg {
@@ -259,10 +263,10 @@
     display: block;
 }
 
-.damage-icon[data-state="healthy"]   { color: var(--bc-row-text-bright); opacity: 0.55; }
-.damage-icon[data-state="damaged"]   { color: var(--bc-damage-damaged); }
-.damage-icon[data-state="disabled"]  { color: var(--bc-damage-disabled); }
-.damage-icon[data-state="destroyed"] { color: var(--bc-damage-destroyed); }
+.damage-icon[data-state="healthy"]   { opacity: 0; }
+.damage-icon[data-state="damaged"]   { opacity: 1; color: var(--bc-damage-damaged); }
+.damage-icon[data-state="disabled"]  { opacity: 1; color: var(--bc-damage-disabled); }
+.damage-icon[data-state="destroyed"] { opacity: 1; color: var(--bc-damage-destroyed); }
 
 /* ── Hull bar ────────────────────────────────────────────────────────── */
 
