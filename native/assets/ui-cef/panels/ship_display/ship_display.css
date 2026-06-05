@@ -230,25 +230,39 @@
 .ship-display__shield[data-integrity="critical"] { color: var(--bc-hull-critical); }
 .ship-display__shield[data-integrity="down"]     { opacity: 0; }
 
-/* ── Damage list ─────────────────────────────────────────────────────── */
+/* ── Damage icon overlay ───────────────────────────────────────────── */
 
-.ship-display__damage {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    font-size: 11px;
+/* Overlay covers the silhouette stack; per-icon left/top use the
+   SDK 640x480 hardpoint pixel coords expressed as percentages of
+   the canonical SHIELDS_DISPLAY pane (128 × 120 px at 640×480 mode):
+   x_pct = x_px / 128 * 100, y_pct = y_px / 120 * 100. The JS does
+   the conversion when setting style.left / style.top. */
+.ship-display__damage-overlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 5; /* above cardinal shields (z=4); above silhouette (z=2) */
 }
 
-.damage-row {
-    display: flex;
-    justify-content: space-between;
-    padding: 2px 0;
-    color: var(--bc-row-text-dim);
+.damage-icon {
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    transform: translate(-50%, -50%);  /* hardpoint coord is the centre */
+    color: var(--bc-row-text-bright);  /* drives currentColor in the SVG */
+    transition: color 120ms ease;
 }
 
-.damage-row[data-state="damaged"]   { color: var(--bc-damage-damaged); }
-.damage-row[data-state="disabled"]  { color: var(--bc-damage-disabled); }
-.damage-row[data-state="destroyed"] { color: var(--bc-damage-destroyed); }
+.damage-icon svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+.damage-icon[data-state="healthy"]   { color: var(--bc-row-text-bright); opacity: 0.55; }
+.damage-icon[data-state="damaged"]   { color: var(--bc-damage-damaged); }
+.damage-icon[data-state="disabled"]  { color: var(--bc-damage-disabled); }
+.damage-icon[data-state="destroyed"] { color: var(--bc-damage-destroyed); }
 
 /* ── Hull bar ────────────────────────────────────────────────────────── */
 
