@@ -12,14 +12,12 @@ later, parametrise then.
 """
 from __future__ import annotations
 
-import base64
 import hashlib
 import os
 import re
 import shutil
 import subprocess
 from dataclasses import dataclass
-from typing import Optional
 
 from engine.ui.tga import decode_tga
 
@@ -250,7 +248,6 @@ def _normalize_svg(svg: str, w: int, h: int) -> str:
     document-wide, so plain ``id="s"`` would let multiple panel
     icons race for the same clip shape — hash suffix sidesteps it.
     """
-    import re
     svg = re.sub(
         r'width="[^"]+"\s+height="[^"]+"',
         f'width="{w}" height="{h}"',
@@ -285,7 +282,6 @@ def _wrap_with_inset_clip(svg: str) -> str:
     before the inset feature landed still get inset strokes without
     requiring the author to re-copy from cache.
     """
-    import re
     # Strip the XML declaration + SVG DTD DOCTYPE. The panel injects
     # SVGs via ``element.innerHTML``, which routes through Chromium's
     # HTML parser (not XML), and the HTML parser handles ``<?xml ?>``
