@@ -2027,13 +2027,12 @@ def run(mission_name: Optional[str] = None,
         from engine.ui.configuration_panel import (
             ConfigurationPanel, SettingsSnapshot,
         )
-        import math as _cp_math
         configuration_panel = ConfigurationPanel(
             tabs=[("graphics", "Graphics")],
             initial_settings=SettingsSnapshot(
                 dust_on=True,
                 specular_on=True,
-                fov_deg=int(round(_cp_math.degrees(
+                fov_deg=int(round(_math.degrees(
                     director.fov_y_rad
                 ))),
             ),
