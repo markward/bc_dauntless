@@ -8,6 +8,13 @@ class TGModelProperty:
     def __init__(self, name: str):
         self._name = name
         self._data: dict = {}
+        # Mount point in model-local coordinates. None until SetPosition
+        # populates it. Stored at the root because two different SDK
+        # base classes use the same slot with different signatures:
+        # SubsystemProperty.SetPosition(x, y, z)   (sdk App.py:9149) and
+        # PositionOrientationProperty.SetPosition(TGPoint3) (App.py:9107).
+        # Both fell through to __getattr__'s data-bag before this fix.
+        self._position = None
 
     def GetName(self) -> str:
         return self._name
@@ -20,6 +27,42 @@ class TGModelProperty:
 
     def __repr__(self) -> str:
         return f"<{type(self).__name__} {self._name!r}>"
+
+    def SetPosition(self, *args) -> None:
+        """Mount position in model-local coordinates.
+
+        Accepts both SDK overloads in one dispatch so neither form
+        leaks to the data-bag catch-all:
+
+        - ``SetPosition(x, y, z)`` — SubsystemProperty form
+          (galaxy.py: ``DorsalPhaser1.SetPosition(0, 1.27, 0.5)``).
+        - ``SetPosition(TGPoint3)`` — PositionOrientationProperty form
+          (galaxy.py: ``Viewscreen.SetPosition(ViewscreenPosition)``).
+        """
+        from engine.appc.math import TGPoint3
+        if len(args) == 3:
+            self._position = TGPoint3(
+                float(args[0]), float(args[1]), float(args[2])
+            )
+        elif len(args) == 1 and args[0] is not None:
+            p = args[0]
+            self._position = TGPoint3(float(p.x), float(p.y), float(p.z))
+
+    def GetPosition(self):
+        """Return a fresh TGPoint3 copy of the stored position, or None
+        if SetPosition was never called. SDK semantics: callers may
+        mutate the returned value (e.g. via MultMatrixLeft) without
+        affecting the template.
+        """
+        if self._position is None:
+            return None
+        from engine.appc.math import TGPoint3
+        return TGPoint3(self._position.x, self._position.y, self._position.z)
+
+    def GetPositionTG(self):
+        # SDK exposes both GetPosition (NiPoint3) and GetPositionTG
+        # (TGPoint3). Our shim doesn't distinguish; both return TGPoint3.
+        return self.GetPosition()
 
     def __getattr__(self, attr: str):
         if attr.startswith("Set"):
@@ -94,7 +137,31 @@ def _is_hashable(value) -> bool:
 # inherited from the data-bag base.
 
 class PositionOrientationProperty(TGModelProperty):
-    pass
+    """Bare-position / orientation property — viewscreen anchors,
+    first-person camera mounts, etc. SDK App.py:9106-9107 binds typed
+    SetOrientation(forward, up, right) and SetPosition(TGPoint3); both
+    landed in the data-bag prior to typed setters.
+    """
+
+    def __init__(self, name: str = ""):
+        super().__init__(name)
+        self._forward = None
+        self._up = None
+        self._right = None
+
+    def SetOrientation(self, forward, up, right) -> None:
+        self._forward = _copy_point(forward)
+        self._up = _copy_point(up)
+        self._right = _copy_point(right)
+
+    def GetForward(self):
+        return _copy_point(self._forward)
+
+    def GetUp(self):
+        return _copy_point(self._up)
+
+    def GetRight(self):
+        return _copy_point(self._right)
 
 
 class ObjectEmitterProperty(PositionOrientationProperty):
@@ -113,31 +180,9 @@ class ObjectEmitterProperty(PositionOrientationProperty):
 
     def __init__(self, name: str = ""):
         super().__init__(name)
-        self._forward = None
-        self._up = None
-        self._right = None
-        self._position = None
         self._emitted_type = self.OEP_UNKNOWN
-
-    def SetOrientation(self, fwd, up, right):
-        self._forward = _copy_point(fwd)
-        self._up = _copy_point(up)
-        self._right = _copy_point(right)
-
-    def GetForward(self):
-        return _copy_point(self._forward)
-
-    def GetUp(self):
-        return _copy_point(self._up)
-
-    def GetRight(self):
-        return _copy_point(self._right)
-
-    def SetPosition(self, p):
-        self._position = _copy_point(p)
-
-    def GetPosition(self):
-        return _copy_point(self._position)
+        # _position / _forward / _up / _right + their setters/getters
+        # come from PositionOrientationProperty / TGModelProperty.
 
     def SetEmittedObjectType(self, t):
         self._emitted_type = int(t)
@@ -154,6 +199,10 @@ class SubsystemProperty(TGModelProperty):
     def __init__(self, name: str = ""):
         super().__init__(name)
         self._targetable = 1
+        # SDK App.py:9148-9150 exposes SetPosition2D / GetPosition2D
+        # on SubsystemProperty for the 2D damage-display panel layout.
+        # Distinct from the 3D mount Position hoisted on TGModelProperty.
+        self._position_2d: tuple = (0.0, 0.0)
 
     def IsTargetable(self) -> int:
         return self._targetable
@@ -163,6 +212,12 @@ class SubsystemProperty(TGModelProperty):
 
     def SetTargetable(self, value) -> None:
         self._targetable = int(value)
+
+    def SetPosition2D(self, x, y) -> None:
+        self._position_2d = (float(x), float(y))
+
+    def GetPosition2D(self) -> tuple:
+        return self._position_2d
 
 
 class HullProperty(SubsystemProperty):
@@ -174,19 +229,24 @@ class PowerProperty(SubsystemProperty):
 
 
 class WeaponProperty(SubsystemProperty):
-    """Base for every emitter template.  Stores per-emitter mounting axes
-    (Direction = firing forward, Right = side axis) so SetDirection /
-    SetRight from hardpoints land in typed slots rather than the TGObject
-    catch-all (which would silently swallow the value and return a Stub).
+    """Base for every emitter template. Stores the per-emitter body-frame
+    basis (Direction = forward / firing axis, Up = arc-plane normal,
+    Right = side axis) so SetDirection / SetRight / SetOrientation calls
+    from hardpoints land in typed slots rather than TGObject's catch-all.
     """
     def __init__(self, name: str = ""):
         super().__init__(name)
         from engine.appc.math import TGPoint3
+        # SDK convention: firing along body +Y, right along body +X,
+        # up along body +Z. Holds until a hardpoint overrides via
+        # SetOrientation / SetDirection / SetRight.
         self._direction = TGPoint3(0.0, 1.0, 0.0)
         self._right     = TGPoint3(1.0, 0.0, 0.0)
+        self._up        = TGPoint3(0.0, 0.0, 1.0)
 
     def GetDirection(self):
-        return self._direction
+        from engine.appc.math import TGPoint3
+        return TGPoint3(self._direction.x, self._direction.y, self._direction.z)
 
     def SetDirection(self, v) -> None:
         from engine.appc.math import TGPoint3
@@ -194,12 +254,58 @@ class WeaponProperty(SubsystemProperty):
             self._direction = TGPoint3(v.x, v.y, v.z)
 
     def GetRight(self):
-        return self._right
+        from engine.appc.math import TGPoint3
+        return TGPoint3(self._right.x, self._right.y, self._right.z)
 
     def SetRight(self, v) -> None:
         from engine.appc.math import TGPoint3
         if isinstance(v, TGPoint3):
             self._right = TGPoint3(v.x, v.y, v.z)
+
+    def GetUp(self):
+        from engine.appc.math import TGPoint3
+        return TGPoint3(self._up.x, self._up.y, self._up.z)
+
+    def SetUp(self, v) -> None:
+        from engine.appc.math import TGPoint3
+        if isinstance(v, TGPoint3):
+            self._up = TGPoint3(v.x, v.y, v.z)
+
+    # Mirror BC's PhaserBank / PhaserProperty accessor names —
+    # sdk App.py:6478-6489 (PhaserBank) and App.py:9287-9292
+    # (PhaserProperty). Callers use either spelling interchangeably.
+    def GetOrientationForward(self):
+        return self.GetDirection()
+
+    def GetOrientationUp(self):
+        return self.GetUp()
+
+    def GetOrientationRight(self):
+        return self.GetRight()
+
+    def SetOrientation(self, forward, up) -> None:
+        """Set the body-frame orientation from a (forward, up) pair.
+
+        SDK signature: ``PhaserProperty.SetOrientation(forward, up)``
+        (App.py:9320). The C++ side derives Right = Up × Forward so
+        ``world_up = direction × right`` recovers the up vector cleanly
+        inside the arc gate. Without this typed setter the call falls
+        through TGModelProperty's data-bag and every bank stays at the
+        default (firing +Y) — i.e. every phaser arc is centred on the
+        ship's nose. See research doc Bug B.
+        """
+        from engine.appc.math import TGPoint3
+        if not (isinstance(forward, TGPoint3) and isinstance(up, TGPoint3)):
+            return
+        self._direction = TGPoint3(forward.x, forward.y, forward.z)
+        self._up        = TGPoint3(up.x, up.y, up.z)
+        # Right-handed basis: Right = Up × Forward. Matches the arc
+        # check's reconstruction up = direction × right.
+        self._right = TGPoint3(
+            up.y * forward.z - up.z * forward.y,
+            up.z * forward.x - up.x * forward.z,
+            up.x * forward.y - up.y * forward.x,
+        )
 
 
 class EnergyWeaponProperty(WeaponProperty):
@@ -230,6 +336,13 @@ class EnergyWeaponProperty(WeaponProperty):
         # Phaser-strip length along the Right axis (galaxy.py: 1.5–1.7).
         # 0.0 = treat the emitter as a point.
         self._length:               float = 0.0
+        # Phaser-strip width -- the strip's lateral dimension perpendicular
+        # to Length. Distinct from PhaserWidth (the beam thickness on
+        # PhaserProperty). Galaxy banks use 1.01-1.69 GU; the value is the
+        # second axis of the strip's surface patch.  Without this typed
+        # setter the SDK ``SetWidth(1.35)`` calls fall through to the
+        # data-bag and are silently dropped. See research doc Bug C.
+        self._width:                float = 0.0
         # Texture tiling along the beam.  SDK convention: tiles per
         # world unit of beam length.  Galaxy phasers use 0.5 (one full
         # texture every 2 world units).  PhaserLights.tga is 32x32 so
@@ -242,6 +355,12 @@ class EnergyWeaponProperty(WeaponProperty):
 
     def SetLength(self, v) -> None:
         self._length = float(v)
+
+    def GetWidth(self) -> float:
+        return self._width
+
+    def SetWidth(self, v) -> None:
+        self._width = float(v)
 
     def GetLengthTextureTilePerUnit(self) -> float:
         return self._length_texture_tile_per_unit

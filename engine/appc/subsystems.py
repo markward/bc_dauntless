@@ -13,6 +13,8 @@ mission scripts wiring weapon-fire events) get a real object with the
 expected method surface rather than a NamedStub.
 """
 
+import math as _math
+
 from engine.appc.events import TGEventHandlerObject
 from engine.appc.math import TGPoint3, TGMatrix3
 
@@ -40,6 +42,39 @@ def _resolve_aim_world(ship, target):
     if length > 1e-6:
         return TGPoint3(fwd.x / length, fwd.y / length, fwd.z / length)
     return TGPoint3(0.0, 1.0, 0.0)
+
+
+def _resolve_bank_aim_world(bank, target):
+    """Unit vector from a bank's mount Position (world) → target.
+
+    The firing arc originates at the bank's mount point on the ship's
+    hull, NOT at the ship's centre of mass and NOT at the strip emit
+    point.  Galaxy DorsalPhaser1's Position = (0, 1.27, 0.5) sits a
+    full GU forward of ship centre; at close range the two aims
+    disagree by tens of degrees, causing arcs to gate inconsistently
+    between the fire-time check and the per-tick re-check.  See
+    research doc § "Bug F".
+
+    Falls back to ship-pos based aim when the bank has no parent ship
+    (legacy fixtures, unit tests).
+    """
+    if bank is None or target is None or not hasattr(target, "GetWorldLocation"):
+        return _resolve_aim_world(None, target)
+    if not hasattr(bank, "_emitter_world_position"):
+        ship = bank._climb_to_ship() if hasattr(bank, "_climb_to_ship") else None
+        return _resolve_aim_world(ship, target)
+    origin = bank._emitter_world_position()
+    target_pos = target.GetWorldLocation()
+    dx = target_pos.x - origin.x
+    dy = target_pos.y - origin.y
+    dz = target_pos.z - origin.z
+    length = (dx * dx + dy * dy + dz * dz) ** 0.5
+    if length > 1e-6:
+        return TGPoint3(dx / length, dy / length, dz / length)
+    # Degenerate: bank Position coincides with target — fall back to
+    # ship-forward so the arc gate has a sensible direction to test.
+    ship = bank._climb_to_ship() if hasattr(bank, "_climb_to_ship") else None
+    return _resolve_aim_world(ship, None)
 
 
 def _emitter_in_arc(emitter, ship, aim_world):
@@ -325,10 +360,12 @@ class ShipSubsystem(TGEventHandlerObject):
         self._radius = 0.0
         self._position = TGPoint3(0.0, 0.0, 0.0)
         # Body-space mounting axes — defaults match the SDK convention
-        # (firing along +Y, right side along +X).  SetProperty mirrors the
-        # hardpoint values across when a property is bound.
+        # (firing along +Y, right side along +X, up along +Z).
+        # SetProperty mirrors the hardpoint values across when a property
+        # is bound (forward=Direction, up=Up, right=up×forward).
         self._direction = TGPoint3(0.0, 1.0, 0.0)
         self._right     = TGPoint3(1.0, 0.0, 0.0)
+        self._up        = TGPoint3(0.0, 0.0, 1.0)
         # Arc/damage data mirrored from EnergyWeaponProperty.  Defaults
         # leave the gate fully open so non-arc emitters (torpedo tubes)
         # don't get accidentally restricted.
@@ -339,8 +376,14 @@ class ShipSubsystem(TGEventHandlerObject):
         self._arc_height_hi: float =  _math.pi / 2
         self._max_damage:          float = 0.0
         self._max_damage_distance: float = 0.0
-        # Phaser-strip length along the Right axis (0 = point emitter).
+        # Phaser-strip arc radius from Position (0 = point emitter).
+        # SDK SetLength: distance from the strip's curvature centre to
+        # the rim along the firing direction. See research doc § Bug D.
         self._length:              float = 0.0
+        # Phaser-strip lateral dimension perpendicular to Length.
+        # Mirrored from EnergyWeaponProperty.SetWidth; distinct from
+        # _phaser_width (the beam thickness).
+        self._width:               float = 0.0
         # Texture tiles per world unit along the beam (0 = stretch once).
         self._length_texture_tile_per_unit: float = 0.0
         # Phaser-specific beam geometry — mirrored from PhaserProperty.
@@ -409,6 +452,10 @@ class ShipSubsystem(TGEventHandlerObject):
             r = prop.GetRight()
             if isinstance(r, TGPoint3):
                 self._right = TGPoint3(r.x, r.y, r.z)
+        if hasattr(prop, "GetUp"):
+            u = prop.GetUp()
+            if isinstance(u, TGPoint3):
+                self._up = TGPoint3(u.x, u.y, u.z)
         # hasattr is misleading on TGObject subclasses (fallback __getattr__
         # synthesizes Get* / Set* for any name and the synthesized getter
         # returns None when the key isn't set).  Only mirror when the return
@@ -435,6 +482,10 @@ class ShipSubsystem(TGEventHandlerObject):
             val = prop.GetLength()
             if isinstance(val, (int, float)):
                 self._length = float(val)
+        if hasattr(prop, "GetWidth"):
+            val = prop.GetWidth()
+            if isinstance(val, (int, float)):
+                self._width = float(val)
         if hasattr(prop, "GetLengthTextureTilePerUnit"):
             val = prop.GetLengthTextureTilePerUnit()
             if isinstance(val, (int, float)):
@@ -565,6 +616,18 @@ class ShipSubsystem(TGEventHandlerObject):
         if isinstance(v, TGPoint3):
             self._right = TGPoint3(v.x, v.y, v.z)
 
+    def GetUp(self) -> TGPoint3:
+        return TGPoint3(self._up.x, self._up.y, self._up.z)
+
+    def SetUp(self, v) -> None:
+        if isinstance(v, TGPoint3):
+            self._up = TGPoint3(v.x, v.y, v.z)
+
+    # Mirror BC's PhaserBank API names — sdk App.py:6478-6489.
+    def GetOrientationForward(self) -> TGPoint3: return self.GetDirection()
+    def GetOrientationUp(self)      -> TGPoint3: return self.GetUp()
+    def GetOrientationRight(self)   -> TGPoint3: return self.GetRight()
+
     def GetArcWidthAngles(self) -> tuple:
         return (self._arc_width_lo, self._arc_width_hi)
 
@@ -579,6 +642,9 @@ class ShipSubsystem(TGEventHandlerObject):
 
     def GetLength(self) -> float:
         return self._length
+
+    def GetWidth(self) -> float:
+        return self._width
 
     def GetLengthTextureTilePerUnit(self) -> float:
         return self._length_texture_tile_per_unit
@@ -652,18 +718,29 @@ class ShipSubsystem(TGEventHandlerObject):
                         ship_pos.z + offset.z)
 
     def _strip_emit_position(self, target_world) -> TGPoint3:
-        """Closest point on a phaser-strip emitter to `target_world`.
+        """Closest point on a phaser-strip arc to ``target_world``.
 
-        BC phaser banks expose a strip (e.g. Galaxy dorsal/ventral arrays)
-        whose center is SetPosition, lateral axis is SetRight, and total
-        length is SetLength.  The beam emerges from whichever point on
-        the strip is closest to the target.
+        Galaxy / Sovereign / etc. phaser banks describe a curved strip,
+        not a straight line: the rim lies on a sphere of radius
+        ``Length`` around ``Position``, swept across ``ArcWidthAngles``
+        around the ``Up`` axis. The beam emerges from whichever point on
+        the arc is closest (in angular yaw) to the target.
 
-        SetLength is in world units, same convention as SetPosition (see
-        the 2026-05-16 hardpoint-scale instrumentation findings).
+        Algorithm (see research doc § "Strip emit point algorithm"):
 
-        For point emitters (Length == 0) this collapses to
-        _emitter_world_position().
+        1. Rotate Position + Forward + Up into world space via the
+           ship's body→world rotation.
+        2. world_right = world_up × world_forward (right-handed; closes
+           the basis used by the arc gate).
+        3. Project (target - world_position) onto (forward, right).
+        4. yaw = atan2(right_proj, fwd_proj).
+        5. Clamp yaw to ``ArcWidthAngles``.
+        6. Rodrigues-rotate ``world_forward`` around ``world_up`` by the
+           clamped yaw to get the emit direction.
+        7. emit = world_position + Length × emit_direction.
+
+        Point emitters (``Length == 0``) collapse to
+        ``_emitter_world_position()``.
         """
         center = self._emitter_world_position()
         length = self.GetLength() if hasattr(self, "GetLength") else 0.0
@@ -672,23 +749,60 @@ class ShipSubsystem(TGEventHandlerObject):
         ship = self._climb_to_ship()
         if ship is None:
             return center
-        # Strip's lateral axis in world space.
-        right_local = self.GetRight() if hasattr(self, "GetRight") else TGPoint3(1.0, 0.0, 0.0)
-        world_right = TGPoint3(right_local.x, right_local.y, right_local.z)
-        if hasattr(ship, "GetWorldRotation"):
-            rot = ship.GetWorldRotation()
-            if isinstance(rot, TGMatrix3):
-                world_right.MultMatrixLeft(rot)
-        half_length = 0.5 * length
-        # Project target onto the strip line, clamp to ±half_length.
+        rot = ship.GetWorldRotation() if hasattr(ship, "GetWorldRotation") else None
+        if not isinstance(rot, TGMatrix3):
+            return center
+
+        # Body-frame basis rotated into world space.
+        world_forward = TGPoint3(self._direction.x, self._direction.y, self._direction.z)
+        world_forward.MultMatrixLeft(rot)
+        world_up = TGPoint3(self._up.x, self._up.y, self._up.z)
+        world_up.MultMatrixLeft(rot)
+        # Right = up × forward (matches WeaponProperty.SetOrientation
+        # derivation; the arc gate's up = direction × right reconstructs
+        # this same up vector).
+        world_right = TGPoint3(
+            world_up.y * world_forward.z - world_up.z * world_forward.y,
+            world_up.z * world_forward.x - world_up.x * world_forward.z,
+            world_up.x * world_forward.y - world_up.y * world_forward.x,
+        )
+
+        # Project target offset onto the (forward, right) plane.
         dx = target_world.x - center.x
         dy = target_world.y - center.y
         dz = target_world.z - center.z
-        t = (dx * world_right.x + dy * world_right.y + dz * world_right.z)
-        t = max(-half_length, min(half_length, t))
-        return TGPoint3(center.x + world_right.x * t,
-                        center.y + world_right.y * t,
-                        center.z + world_right.z * t)
+        fwd_proj   = dx * world_forward.x + dy * world_forward.y + dz * world_forward.z
+        right_proj = dx * world_right.x   + dy * world_right.y   + dz * world_right.z
+
+        # Yaw, clamped to the bank's horizontal arc.
+        if fwd_proj == 0.0 and right_proj == 0.0:
+            yaw = 0.0
+        else:
+            yaw = _math.atan2(right_proj, fwd_proj)
+        yaw_lo = getattr(self, "_arc_width_lo", -_math.pi)
+        yaw_hi = getattr(self, "_arc_width_hi",  _math.pi)
+        yaw = max(yaw_lo, min(yaw_hi, yaw))
+
+        # Rodrigues: rotate world_forward around world_up by yaw.
+        c, s = _math.cos(yaw), _math.sin(yaw)
+        u_dot_f = (world_up.x * world_forward.x
+                 + world_up.y * world_forward.y
+                 + world_up.z * world_forward.z)
+        # u × f
+        ux_fx_y = world_up.y * world_forward.z - world_up.z * world_forward.y
+        ux_fx_z = world_up.z * world_forward.x - world_up.x * world_forward.z
+        ux_fx_w = world_up.x * world_forward.y - world_up.y * world_forward.x
+        emit_dir = TGPoint3(
+            world_forward.x * c + ux_fx_y * s + world_up.x * u_dot_f * (1.0 - c),
+            world_forward.y * c + ux_fx_z * s + world_up.y * u_dot_f * (1.0 - c),
+            world_forward.z * c + ux_fx_w * s + world_up.z * u_dot_f * (1.0 - c),
+        )
+
+        return TGPoint3(
+            center.x + emit_dir.x * length,
+            center.y + emit_dir.y * length,
+            center.z + emit_dir.z * length,
+        )
 
     def GetNextTargetableChildSubsystem(self):
         return None
@@ -919,11 +1033,9 @@ class WeaponSystem(PoweredSubsystem):
         n = self.GetNumWeapons()
         if n == 0:
             return
-        # Resolve the aim direction in world space.  If the ship has a
-        # target, point at it; otherwise assume "straight ahead" using
-        # the ship's body +Y axis rotated into world.
+        # Resolve aim per-bank: the firing arc originates at each bank's
+        # mount Position, not the ship centre. See research doc § Bug F.
         ship = self.GetParentShip()
-        aim_world = _resolve_aim_world(ship, target)
 
         start = self._next_emitter_index % n
         for delta in range(n):
@@ -931,6 +1043,9 @@ class WeaponSystem(PoweredSubsystem):
             emitter = self.GetWeapon(idx)
             if emitter is None:
                 continue
+            aim_world = (_resolve_bank_aim_world(emitter, target)
+                         if target is not None
+                         else _resolve_aim_world(ship, None))
             if not _emitter_in_arc(emitter, ship, aim_world):
                 continue
             if hasattr(emitter, "CanFire") and emitter.CanFire():
@@ -1131,9 +1246,8 @@ class PhaserSystem(WeaponSystem):
         self._fire_held = True
         self._held_target = target
         self._held_offset = offset
-        aim_world = _resolve_aim_world(ship, target)
         self._currently_firing = []
-        self._dispatch_one_or_all(target, offset, ship, aim_world)
+        self._dispatch_one_or_all(target, offset, ship)
 
     def StopFiring(self, *args) -> None:
         self._fire_held = False
@@ -1173,13 +1287,17 @@ class PhaserSystem(WeaponSystem):
                 bank = self.GetWeapon(i)
                 if bank is not None and bank.IsFiring():
                     return
-        aim_world = _resolve_aim_world(ship, target)
-        self._dispatch_one_or_all(target, self._held_offset, ship, aim_world)
+        self._dispatch_one_or_all(target, self._held_offset, ship)
 
-    def _dispatch_one_or_all(self, target, offset, ship, aim_world) -> None:
+    def _dispatch_one_or_all(self, target, offset, ship) -> None:
         """SingleFire: fire one eligible bank starting from the round-robin
         cursor, then advance the cursor.  Otherwise fire every eligible
-        bank simultaneously."""
+        bank simultaneously.
+
+        Aim is resolved per-bank via _resolve_bank_aim_world so each
+        bank's arc gate sees the direction from its own mount Position
+        to the target — see research doc § Bug F.
+        """
         n = self.GetNumWeapons()
         if n == 0:
             return
@@ -1190,6 +1308,7 @@ class PhaserSystem(WeaponSystem):
                 bank = self.GetWeapon(idx)
                 if bank is None:
                     continue
+                aim_world = _resolve_bank_aim_world(bank, target)
                 if not _emitter_in_arc(bank, ship, aim_world):
                     continue
                 if hasattr(bank, "CanFire") and bank.CanFire():
@@ -1203,6 +1322,7 @@ class PhaserSystem(WeaponSystem):
             bank = self.GetWeapon(i)
             if bank is None:
                 continue
+            aim_world = _resolve_bank_aim_world(bank, target)
             if not _emitter_in_arc(bank, ship, aim_world):
                 continue
             if hasattr(bank, "CanFire") and bank.CanFire():

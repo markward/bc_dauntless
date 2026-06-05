@@ -267,7 +267,7 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
     # stop drifters), compute distance falloff, and route damage through
     # apply_hit (which routes shields → subsystem → hull, calls
     # hit_feedback.dispatch, and broadcasts WeaponHitEvent).
-    from engine.appc.subsystems import _emitter_in_arc, _is_offline
+    from engine.appc.subsystems import _emitter_in_arc, _is_offline, _resolve_bank_aim_world
     from engine.appc.math import TGPoint3
     for ship in ships_list:
         sys_ = ship.GetPhaserSystem() if hasattr(ship, "GetPhaserSystem") else None
@@ -301,15 +301,22 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
                 target_pos = target.GetWorldLocation()
                 target_sub = None
             emitter_pos = bank._strip_emit_position(target_pos)
+            # Distance: emit point → target (drives damage falloff).
             dx = target_pos.x - emitter_pos.x
             dy = target_pos.y - emitter_pos.y
             dz = target_pos.z - emitter_pos.z
             dist = (dx * dx + dy * dy + dz * dz) ** 0.5
-            if dist > 1e-6:
-                aim_unit = TGPoint3(dx / dist, dy / dist, dz / dist)
-                if not _emitter_in_arc(bank, ship, aim_unit):
-                    bank.StopFiring()
-                    continue
+            aim_unit = TGPoint3(dx / dist, dy / dist, dz / dist) if dist > 1e-6 else None
+            # Arc check: aim from bank Position → target (NOT emit_pos →
+            # target). The firing cone originates at the mount, not at
+            # the emit point. Mismatch between this site and StartFiring
+            # was Bug F — a bank could pass arc at fire-time and fail
+            # on the next tick because its emit point sat past the
+            # target on the strip. See research doc § Bug F.
+            arc_aim = _resolve_bank_aim_world(bank, target_sub or target)
+            if not _emitter_in_arc(bank, ship, arc_aim):
+                bank.StopFiring()
+                continue
             damage = _phaser_damage_for_tick(
                 max_damage=bank.GetMaxDamage(),
                 max_damage_distance=bank.GetMaxDamageDistance(),
@@ -412,10 +419,10 @@ def _build_hit_vfx_render_data():
 # MainRadius / TaperRadius).  The instrumentation pass confirmed
 # SetPosition is in world units, but the beam-radius family was never
 # directly verified — the SDK's 0.30 / 0.15 read as much smaller than
-# BC's visible beam at typical Galaxy framing.  4× is a feel-tuned
+# BC's visible beam at typical Galaxy framing.  3× is a feel-tuned
 # nominal; the right long-term fix is a focused instrumentation pass
 # that reads back beam render geometry from the live engine.
-PHASER_BEAM_WIDTH_MUTATOR = 4.0
+PHASER_BEAM_WIDTH_MUTATOR = 3.0
 
 
 def _build_phaser_beam_render_data(ships, host=None, ship_instances=None):
@@ -1399,11 +1406,16 @@ def _aggregate_backdrops(pSet):
     return aggregate_for_renderer(pSet, PROJECT_ROOT)
 
 
-# Universal NIF→world conversion. Calibrated from BC's Galaxy reading
-# (GetRadius=4.3665, model_aabb outer extent=403.258). Used to derive a
-# meaningful GetRadius() for Phase-1 shim ships that don't have one set,
-# so downstream code (camera-follow, shield bubble) reads sensible numbers.
-NIF_TO_WORLD = 4.3665 / 403.258  # ≈ 0.01083
+# BC's universal NIF→world scale.  Sourced from BC's ModelPropertyEditor
+# preview default (sdk/Tools/ModelPropertyEditor/modelpropertyeditor.reg →
+# HKCU\Software\Totally Games\ModelPropertyEditor\Options\ModelScale =
+# 0x3C23D70A = 0.01).  Empirical calibration against the Galaxy lands at
+# ~0.0102 -- within ~2% of the MPE preview scale, treated as authoring
+# noise.  The constant is flat across ship classes: GetRadius() is a
+# *gameplay* value (splash damage, AI threat range) and is NOT a
+# rendering input.  See research doc Bug E for the prior incorrect
+# derivation that this replaces.
+BC_MODEL_SCALE = 0.01
 
 
 def _model_extent_from_aabb(center: tuple, half_extents: tuple) -> float:
@@ -1504,10 +1516,10 @@ class MissionSession:
     mission_name: str
     ship_instances:   dict[Any, int] = field(default_factory=dict)
     planet_instances: dict[Any, int] = field(default_factory=dict)
-    # Per-object natural_scale = GetRadius() / NIF_extent, cached at load.
-    # Read by _ship_world_matrix / _astro_world_matrix; multiplied by
-    # GetScale() at draw time.
-    ship_natural_scale:   dict[Any, float] = field(default_factory=dict)
+    # Per-planet natural_scale = GetRadius() / NIF_extent, cached at load.
+    # Ships share a single flat NIF→world scale (BC_MODEL_SCALE) so they
+    # need no per-object cache; planets vary in size class and still use
+    # the GetRadius-derived per-object scale.
     planet_natural_scale: dict[Any, float] = field(default_factory=dict)
     player: Optional[Any] = None
 
@@ -1518,7 +1530,6 @@ class MissionSession:
             renderer.destroy_instance(iid)
         self.ship_instances.clear()
         self.planet_instances.clear()
-        self.ship_natural_scale.clear()
         self.planet_natural_scale.clear()
         self.player = None
 
@@ -1624,18 +1635,18 @@ class _MissionLoader:
                 center, half_extents = r_.model_aabb(handle)
                 self._c.nif_to_extent[nif_path] = _model_extent_from_aabb(center, half_extents)
             extent = self._c.nif_to_extent.get(nif_path, 1.0)
-            # BC's compiled engine populates GetRadius() from the loaded NIF.
-            # Phase-1's shim skips that, so derive it here when missing.
+            # Seed a gameplay GetRadius() for shim ships that lack one
+            # (camera-follow distance, AI threat range, splash damage).
+            # Use the same flat NIF→world scale we render with so the
+            # gameplay radius matches the visible mesh bound.
             if ship.GetRadius() <= 0.0:
                 try:
-                    ship.SetRadius(extent * NIF_TO_WORLD)
+                    ship.SetRadius(extent * BC_MODEL_SCALE)
                 except Exception:
                     pass
-            natural_scale = (ship.GetRadius() / extent) if extent > 0.0 else 1.0
             iid = r_.create_instance(handle)
-            r_.set_world_transform(iid, _ship_world_matrix(ship, natural_scale))
+            r_.set_world_transform(iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
             sess.ship_instances[ship] = iid
-            sess.ship_natural_scale[ship] = natural_scale
 
             # Register shield render state. Reads ShieldProperty data-bag
             # for glow color, decay, and skin-mode flag. No-op for ships
@@ -1672,7 +1683,7 @@ class _MissionLoader:
             extent = self._c.nif_to_extent.get(nif_path, 1.0)
             if planet.GetRadius() <= 0.0:
                 try:
-                    planet.SetRadius(extent * NIF_TO_WORLD)
+                    planet.SetRadius(extent * BC_MODEL_SCALE)
                 except Exception:
                     pass
             radius = planet.GetRadius()
@@ -2408,8 +2419,7 @@ def run(mission_name: Optional[str] = None,
                 # Sync transforms for known instances.
                 if session is not None:
                     for ship, iid in session.ship_instances.items():
-                        ns = session.ship_natural_scale.get(ship, 1.0)
-                        r.set_world_transform(iid, _ship_world_matrix(ship, ns))
+                        r.set_world_transform(iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
                     for planet, iid in session.planet_instances.items():
                         ns = session.planet_natural_scale.get(planet, 1.0)
                         r.set_world_transform(iid, _astro_world_matrix(planet, ns))
