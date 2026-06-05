@@ -94,6 +94,11 @@ class ConfigurationPanel(Panel):
         return "setConfigurationPanel(" + json.dumps(payload) + ");"
 
     def dispatch_event(self, action: str) -> bool:
+        # Applier is invoked before the local state write — if the
+        # applier raises, _settings stays on the previous value and the
+        # renderer state is whatever the applier left behind. For the
+        # no-persistence first pass that's acceptable (panel reflects
+        # engine state, exception propagates to the caller).
         if action == "cancel":
             self.close()
             return True
@@ -126,6 +131,8 @@ class ConfigurationPanel(Panel):
         return False
 
     def invalidate(self) -> None:
+        # Focus reset is handled by close(); invalidate() is only the
+        # CEF document-reload hook for re-emitting the last payload.
         self._last_pushed = None
 
     def handle_key_esc(self) -> None:
