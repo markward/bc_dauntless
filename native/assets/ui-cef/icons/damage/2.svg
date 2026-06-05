@@ -1,0 +1,18 @@
+<svg version="1.0" xmlns="http://www.w3.org/2000/svg"
+ width="16" height="16" viewBox="0 0 64.000000 64.000000"
+ preserveAspectRatio="xMidYMid meet">
+<metadata>
+Created by potrace 1.16, written by Peter Selinger 2001-2019
+</metadata>
+<g transform="translate(0.000000,64.000000) scale(0.100000,-0.100000)"
+fill="currentColor" stroke="none">
+<defs><clipPath id="cf55d26c044"><path d="M252 543 c-51 -43 -5 -138 56 -119 49 16 29 136 -23 136 -7 0 -22 -8
+-33 -17z"/></clipPath></defs><path d="M252 543 c-51 -43 -5 -138 56 -119 49 16 29 136 -23 136 -7 0 -22 -8
+-33 -17z" clip-path="url(#cf55d26c044)"/>
+<path d="M259 378 c-1 -7 -3 -20 -4 -28 -1 -8 -3 -21 -4 -27 0 -7 -8 -13 -16
+-13 -16 0 -18 -11 -15 -72 1 -28 -3 -38 -18 -42 -27 -9 -35 -33 -16 -48 39
+-33 74 -70 74 -79 0 -5 11 -9 25 -9 14 0 25 4 25 9 0 9 35 46 74 79 19 15 11
+39 -16 48 -15 4 -19 14 -18 42 3 61 1 72 -15 72 -8 0 -16 6 -16 13 -1 6 -3 19
+-4 27 -1 8 -3 21 -4 28 0 6 -12 12 -26 12 -14 0 -26 -6 -26 -12z"/>
+</g>
+</svg>
