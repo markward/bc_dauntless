@@ -446,6 +446,113 @@ def _subsystem_state(sub):
     return None
 
 
+# Source getters for the hardpoint walk. Each getter returns either
+# a single subsystem or None. We recurse into children to pick up
+# per-bank phasers, per-tube torpedoes, etc. — those carry their own
+# Position2D from the hardpoint.
+_DAMAGE_SOURCE_GETTERS = (
+    "GetHull",
+    "GetSensorSubsystem",
+    "GetShieldSubsystem",
+    "GetImpulseEngineSubsystem",
+    "GetWarpEngineSubsystem",
+    "GetPowerSubsystem",
+    "GetRepairSubsystem",
+    "GetCloakingSubsystem",
+    "GetPhaserSystem",
+    "GetTorpedoSystem",
+    "GetPulseWeaponSystem",
+)
+
+
+def _iter_damage_subsystems(ship):
+    """Yield every ShipSubsystem reachable from ``ship`` via the
+    standard damage source getters, recursing into child subsystems
+    so per-bank phasers and per-tube torpedoes surface alongside
+    their parent weapon systems. No filtering here — the caller
+    decides which rows to render."""
+    if ship is None:
+        return
+    seen = set()
+    for getter_name in _DAMAGE_SOURCE_GETTERS:
+        getter = getattr(ship, getter_name, None)
+        if getter is None:
+            continue
+        try:
+            sub = getter()
+        except Exception:
+            continue
+        if sub is None or id(sub) in seen:
+            continue
+        seen.add(id(sub))
+        yield sub
+        try:
+            n = sub.GetNumChildSubsystems()
+        except Exception:
+            continue
+        for i in range(n):
+            try:
+                child = sub.GetChildSubsystem(i)
+            except Exception:
+                continue
+            if child is None or id(child) in seen:
+                continue
+            seen.add(id(child))
+            yield child
+
+
+def _damage_icon_descriptors(ship):
+    """Per-row descriptors for the damage overlay. Filters to
+    subsystems with a non-zero Position2D — the SDK uses (0, 0) to
+    mean "don't display." Each descriptor:
+
+        {
+          "icon_num": int,        # DamageIcons enum value
+          "icon_svg": str | None, # inline SVG, or None if no glyph available
+          "x_px":    float,       # hardpoint pixel coord, SDK 640x480 frame
+          "y_px":    float,
+          "state":   "healthy" | "damaged" | "disabled" | "destroyed",
+        }
+    """
+    from engine.ui import damage_icons
+    out: list[dict] = []
+    for sub in _iter_damage_subsystems(ship):
+        try:
+            pos = sub.GetPosition2D()
+        except Exception:
+            continue
+        if not isinstance(pos, tuple) or len(pos) != 2:
+            continue
+        x_px, y_px = float(pos[0]), float(pos[1])
+        if x_px == 0.0 and y_px == 0.0:
+            continue
+        icon_num = damage_icons.icon_num_for_subsystem(sub)
+        out.append({
+            "icon_num": icon_num,
+            "icon_svg": damage_icons.icon_svg_for_num(icon_num),
+            "x_px":     x_px,
+            "y_px":     y_px,
+            "state":    _row_state(sub),
+        })
+    return out
+
+
+def _row_state(sub) -> str:
+    """Predicate ladder — "healthy" instead of None so the panel always
+    has a class to apply. Healthy → default colour; damaged/disabled/
+    destroyed → --bc-damage-* CSS tokens."""
+    try:
+        if hasattr(sub, "IsDestroyed") and sub.IsDestroyed():
+            return "destroyed"
+        if hasattr(sub, "IsDisabled") and sub.IsDisabled():
+            return "disabled"
+        if hasattr(sub, "IsDamaged") and sub.IsDamaged():
+            return "damaged"
+    except Exception:
+        pass
+    return "healthy"
+
+
 def _range_and_speed_to(ship, player):
     """Returns (range_km, speed_kph) for the target panel; None,None on error.
 
