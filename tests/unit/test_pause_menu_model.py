@@ -35,7 +35,7 @@ class _FakeReader:
 
 # ---- item management ----------------------------------------------------
 
-def test_default_pause_menu_has_exit_and_cancel():
+def test_default_pause_menu_has_expected_rows():
     exited = []
     cancelled = []
     m = default_pause_menu(on_exit=lambda: exited.append(1),
