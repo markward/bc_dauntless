@@ -139,3 +139,27 @@ def test_subsystem_icon_fields_default_zero_without_property():
     assert sub.GetIndicatorIconNum() == 0
     assert sub.GetIndicatorIconPositionX() == 0.0
     assert sub.GetIndicatorIconPositionY() == 0.0
+
+
+def test_subsystem_mirrors_position_2d_from_property():
+    """SubsystemProperty.SetPosition2D values must round-trip onto the
+    runtime ShipSubsystem so the ship-display panel can read x/y_px
+    without re-walking the property tree. Matches the existing
+    IconNum / IconPosition mirror pattern."""
+    from engine.appc import properties as p, subsystems as s
+    prop = p.HullProperty("Hull")
+    prop.SetPosition2D(64.0, 40.0)
+    sub = s.HullSubsystem("Hull")
+    sub.SetProperty(prop)
+    assert sub.GetPosition2D() == (64.0, 40.0)
+
+
+def test_subsystem_position_2d_defaults_to_origin():
+    """Subsystems without a Position2D set must report (0.0, 0.0).
+    The damage descriptor builder treats (0,0) as "hide from panel" so
+    Phase 1 ships without hardpoint coords stay invisible by default."""
+    from engine.appc import properties as p, subsystems as s
+    prop = p.HullProperty("Hull")
+    sub = s.HullSubsystem("Hull")
+    sub.SetProperty(prop)
+    assert sub.GetPosition2D() == (0.0, 0.0)
