@@ -1876,13 +1876,13 @@ def run(mission_name: Optional[str] = None,
     from engine.core.loop import GameLoop
 
     r.init(1280, 720, "open_stbc")
-    # Initialise the CEF UI overlay. Resolves hello.html relative to the
-    # project root (two parents up from this file). _CEF_VIEW_W/H are
-    # reused by the pause-menu mouse-forwarding path to scale
+    # Initialise the CEF UI overlay. Resolves ship_status.html relative
+    # to the project root (two parents up from this file). _CEF_VIEW_W/H
+    # are reused by the pause-menu mouse-forwarding path to scale
     # framebuffer-pixel cursor coords back into the OSR view's logical
     # pixel space on Retina.
     _CEF_VIEW_W, _CEF_VIEW_H = 1280, 720
-    _cef_html = _project_root_for_cef() / "native" / "assets" / "ui-cef" / "hello.html"
+    _cef_html = _project_root_for_cef() / "native" / "assets" / "ui-cef" / "ship_status.html"
     # Detect the framebuffer's device-pixel ratio so CEF renders at
     # high-DPI density on Retina. Without this, the composite pass
     # bilinear-upscales a 1280x720 bitmap to the 2560x1440 framebuffer

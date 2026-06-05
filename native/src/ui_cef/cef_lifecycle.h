@@ -65,7 +65,7 @@ void send_mouse_click(int x, int y, int button, bool is_down);
 void set_event_handler(std::function<void(const std::string&)> handler);
 
 // Load-end handler injection. Invoked once when the main frame finishes
-// loading hello.html (or after Cmd+R reload). Used by the panel layer
+// loading ship_status.html (or after Cmd+R reload). Used by the panel layer
 // to invalidate per-tick snapshot caches so the first post-load tick
 // re-emits state. Pass an empty function to disable.
 void set_load_end_handler(std::function<void()> handler);
