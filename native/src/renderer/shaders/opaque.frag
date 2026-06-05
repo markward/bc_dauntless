@@ -13,6 +13,7 @@ uniform vec3 u_emissive_color;
 uniform sampler2D u_specular_map;
 uniform vec3 u_specular_color;
 uniform float u_specular_power;
+uniform int u_specular_enabled;
 
 uniform vec3 u_ambient_light;
 uniform vec3 u_camera_pos_ws;
@@ -35,15 +36,19 @@ void main() {
         float nl = max(dot(n, L), 0.0);
         lit_dir += nl * u_dir_light_color[i];
 
-        vec3 H = normalize(L + V);
-        float s = pow(max(dot(n, H), 0.0), u_specular_power) * step(0.0, nl);
-        spec_acc += s * u_dir_light_color[i];
+        if (u_specular_enabled != 0) {
+            vec3 H = normalize(L + V);
+            float s = pow(max(dot(n, H), 0.0), u_specular_power) * step(0.0, nl);
+            spec_acc += s * u_dir_light_color[i];
+        }
     }
 
     vec4 base = texture(u_base_color, v_uv);
     vec3 lit  = (u_ambient_light + lit_dir) * u_diffuse_color * base.rgb;
     vec4 glow = texture(u_glow_map, v_uv);
-    vec3 spec = spec_acc * u_specular_color * texture(u_specular_map, v_uv).rgb;
+    vec3 spec = (u_specular_enabled != 0)
+        ? spec_acc * u_specular_color * texture(u_specular_map, v_uv).rgb
+        : vec3(0.0);
 
     frag_color = vec4(lit + u_emissive_color + glow.rgb * glow.a + spec, 1.0);
 }

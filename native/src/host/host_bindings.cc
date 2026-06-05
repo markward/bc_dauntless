@@ -316,6 +316,13 @@ void frame() {
 
 }  // namespace
 
+// Toggle for the opaque-pass specular term.
+// Defined in frame.cc (librenderer), forward-declared here so
+// host_bindings can expose it to Python without a circular dependency.
+namespace dauntless_specular {
+    void set_enabled(bool v);  // defined in frame.cc
+}
+
 PYBIND11_MODULE(_dauntless_host, m) {
     m.doc() = "open_stbc renderer host bindings (Phase B: window + frame stub)";
 
@@ -639,6 +646,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
           },
           py::arg("enabled"),
           "Toggle the space-dust pass at runtime. Default: on.");
+
+    m.def("specular_set_enabled",
+          [](bool enabled) { dauntless_specular::set_enabled(enabled); },
+          py::arg("enabled"),
+          "Toggle the opaque-pass specular term. Default: on.");
 
     m.def("dust_set_density",
           [](int count) {
