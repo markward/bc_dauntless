@@ -223,12 +223,19 @@ class ShipDisplayPanel(Panel):
         species_key  = _species_key_for(ship)
         hull_pct     = _hull_pct(ship)
         shields_pct  = _shields_tuple(ship)
-        damage       = _damage_states(ship)
+        damage_icons_list = _damage_icon_descriptors(ship)
+        # Frozen form for snapshot equality. Position2D / icon_num
+        # don't change at runtime, so bucket state only — that's the
+        # field that actually flips frame-to-frame.
+        damage_frozen = tuple(
+            (d["icon_num"], d["x_px"], d["y_px"], d["state"])
+            for d in damage_icons_list
+        )
         range_km, speed_kph = (None, None)
         if self._role == ROLE_TARGET:
             range_km, speed_kph = _range_and_speed_to(ship, player)
         return (ship_id, name, affiliation, species_key, hull_pct,
-                shields_pct, damage, range_km, speed_kph,
+                shields_pct, damage_frozen, range_km, speed_kph,
                 self._minimized, True)
 
     # Panel framework ---------------------------------------------------
@@ -238,18 +245,21 @@ class ShipDisplayPanel(Panel):
             return None
         self._last_snapshot = snap
         (ship_id, name, affiliation, species, hull_pct,
-         shields, damage, range_km, speed_kph, minimized, visible) = snap
+         shields, damage_frozen, range_km, speed_kph,
+         minimized, visible) = snap
+        ship_now = _resolve_ship_for_role(self._role) if visible else None
+        damage_icons_list = _damage_icon_descriptors(ship_now) if ship_now else []
         payload = {
-            "visible":     visible,
-            "ship_name":   name,
-            "affiliation": affiliation,
-            "species":     species,
-            "hull_pct":    hull_pct,
-            "shields_pct": list(shields),
-            "damage":      [{"name": n, "state": s} for (n, s) in damage],
-            "range_km":    range_km,
-            "speed_kph":   speed_kph,
-            "minimized":   minimized,
+            "visible":      visible,
+            "ship_name":    name,
+            "affiliation":  affiliation,
+            "species":      species,
+            "hull_pct":     hull_pct,
+            "shields_pct":  list(shields),
+            "damage_icons": damage_icons_list,
+            "range_km":     range_km,
+            "speed_kph":    speed_kph,
+            "minimized":    minimized,
         }
         payload["silhouette_url"] = ship_icons.icon_path_for_species(payload["species"])
         return ("setShipDisplay(" + json.dumps(self._role) + ", " +
@@ -269,14 +279,6 @@ class ShipDisplayPanel(Panel):
 # ---------------------------------------------------------------------
 # Snapshot generation helpers
 # ---------------------------------------------------------------------
-
-_DAMAGE_SUBSYSTEMS = (
-    ("Engines",          "GetImpulseEngineSubsystem"),
-    ("Weapons",          "GetPhaserSystem"),
-    ("Sensors",          "GetSensorSubsystem"),
-    ("Shield Generator", "GetShieldSubsystem"),
-)
-
 
 def _get_player():
     """Returns the current player ship, or None."""
@@ -412,38 +414,6 @@ def _shields_tuple(ship) -> tuple[float, ...]:
         return tuple(sh.GetSingleShieldPercentage(f) for f in range(sh.NUM_SHIELDS))
     except Exception:
         return (0.0,) * 6
-
-
-def _damage_states(ship):
-    """Walks Engines, Weapons, Sensors, Shield Generator. Healthy = omitted."""
-    out = []
-    for label, getter_name in _DAMAGE_SUBSYSTEMS:
-        getter = getattr(ship, getter_name, None)
-        if getter is None:
-            continue
-        try:
-            sub = getter()
-        except Exception:
-            continue
-        if sub is None:
-            continue
-        state = _subsystem_state(sub)
-        if state is not None:
-            out.append((label, state))
-    return tuple(out)
-
-
-def _subsystem_state(sub):
-    try:
-        if hasattr(sub, "IsDestroyed") and sub.IsDestroyed():
-            return "destroyed"
-        if hasattr(sub, "IsDisabled") and sub.IsDisabled():
-            return "disabled"
-        if hasattr(sub, "IsDamaged") and sub.IsDamaged():
-            return "damaged"
-    except Exception:
-        pass
-    return None
 
 
 # Source getters for the hardpoint walk. Each getter returns either

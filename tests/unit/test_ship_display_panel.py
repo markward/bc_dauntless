@@ -275,22 +275,25 @@ def test_shield_face_indices_match_subsystem_constants():
         _teardown_game()
 
 
-def test_damage_states_filter_to_named_subsystems_only():
-    """Only Engines, Weapons, Sensors, Shield Generator appear in the
-    damage list; healthy subsystems are omitted."""
+def test_damage_states_filter_to_positioned_subsystems_only():
+    """Damage rows only surface for subsystems with a non-zero
+    Position2D; the descriptor tuple is (icon_num, x_px, y_px, state).
+    Impulse = icon_num 1; damaging it should flip state to 'damaged'."""
     from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_PLAYER
     _, player, _ = _setup_game_with_player()
     try:
         eng = player.GetImpulseEngineSubsystem()
+        # Stamp a fake hardpoint coord so the descriptor walk picks it up
+        # — _damage_icon_descriptors filters out (0, 0).
+        eng._position_2d = (50.0, 30.0)
         eng.SetDamaged(1)
         panel = ShipDisplayPanel(ROLE_PLAYER)
         snap = panel._snapshot()
-        damage = snap[6]
-        # Engines should appear; everything else healthy → omitted.
-        assert ("Engines", "damaged") in damage
-        for name, state in damage:
-            assert state in ("damaged", "disabled", "destroyed")
-            assert name in ("Engines", "Weapons", "Sensors", "Shield Generator")
+        damage_frozen = snap[6]
+        # Tuple shape: (icon_num, x_px, y_px, state)
+        impulse_rows = [r for r in damage_frozen if r[0] == 1]
+        assert len(impulse_rows) == 1
+        assert impulse_rows[0] == (1, 50.0, 30.0, "damaged")
     finally:
         _teardown_game()
 
@@ -317,6 +320,40 @@ def test_render_payload_emits_setshipdisplay_call():
         assert state["ship_name"] == "Player"
         assert state["hull_pct"] == 0.75
         assert state["shields_pct"] == [1.0] * 6
+        # Task 5: payload emits damage_icons (hardpoint-driven), not the
+        # legacy "damage" name/state list. Even with no positioned
+        # subsystems on the test ship, the key must exist and be a list.
+        assert "damage_icons" in state
+        assert isinstance(state["damage_icons"], list)
+        assert "damage" not in state
+    finally:
+        _teardown_game()
+
+
+def test_render_payload_damage_icons_descriptor_shape():
+    """damage_icons rows expose icon_num/icon_svg/x_px/y_px/state. Sensor
+    icon_num is 4 (per damage_icons.ICON_REGISTRY)."""
+    import json
+    from engine.ui.ship_display_panel import ShipDisplayPanel, ROLE_PLAYER
+    _, player, _ = _setup_game_with_player()
+    try:
+        sensors = player.GetSensorSubsystem()
+        sensors._position_2d = (64.0, 10.0)
+        sensors.SetDamaged(1)
+
+        panel = ShipDisplayPanel(ROLE_PLAYER)
+        script = panel.render_payload()
+        body = script[len("setShipDisplay(\"player\", "):-2]
+        state = json.loads(body)
+        icons = state["damage_icons"]
+        sensor_rows = [r for r in icons if r["icon_num"] == 4]
+        assert len(sensor_rows) == 1
+        row = sensor_rows[0]
+        assert row["x_px"] == 64.0
+        assert row["y_px"] == 10.0
+        assert row["state"] == "damaged"
+        # icon_svg is optional (None when no glyph cached); presence required.
+        assert "icon_svg" in row
     finally:
         _teardown_game()
 
