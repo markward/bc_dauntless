@@ -419,10 +419,10 @@ def _build_hit_vfx_render_data():
 # MainRadius / TaperRadius).  The instrumentation pass confirmed
 # SetPosition is in world units, but the beam-radius family was never
 # directly verified — the SDK's 0.30 / 0.15 read as much smaller than
-# BC's visible beam at typical Galaxy framing.  4× is a feel-tuned
+# BC's visible beam at typical Galaxy framing.  3× is a feel-tuned
 # nominal; the right long-term fix is a focused instrumentation pass
 # that reads back beam render geometry from the live engine.
-PHASER_BEAM_WIDTH_MUTATOR = 4.0
+PHASER_BEAM_WIDTH_MUTATOR = 3.0
 
 
 def _build_phaser_beam_render_data(ships, host=None, ship_instances=None):
