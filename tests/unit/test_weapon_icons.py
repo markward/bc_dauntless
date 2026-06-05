@@ -269,7 +269,8 @@ def test_trace_to_svg_raises_when_potrace_missing(monkeypatch):
     and returns ``None`` from ``icon_url_for_num``; the explicit
     helper raises so callers can disambiguate "binary missing" from
     a corrupt sprite."""
-    monkeypatch.setattr(weapon_icons, "_potrace_available", lambda: False)
+    from engine.ui import icon_tracer
+    monkeypatch.setattr(icon_tracer, "_potrace_available", lambda: False)
     with pytest.raises(weapon_icons.PotraceMissingError):
         weapon_icons._trace_to_svg(_solid_rgba(4, 4, (255, 0, 0, 255)), 4, 4)
 
@@ -389,9 +390,10 @@ def test_icon_svg_for_num_returns_none_when_potrace_missing(monkeypatch, tmp_pat
     """The panel must not crash the host when potrace is uninstalled.
     Returning None drops the icon silently — the rest of the UI
     continues to render."""
+    from engine.ui import icon_tracer
     monkeypatch.setattr(weapon_icons, "_CURATED_DIR", str(tmp_path / "curated"))
     monkeypatch.setattr(weapon_icons, "_SVG_CACHE_DIR", str(tmp_path / "empty"))
-    monkeypatch.setattr(weapon_icons, "_potrace_available", lambda: False)
+    monkeypatch.setattr(icon_tracer, "_potrace_available", lambda: False)
     weapon_icons.reset_cache()
     assert weapon_icons.icon_svg_for_num(350) is None
 
