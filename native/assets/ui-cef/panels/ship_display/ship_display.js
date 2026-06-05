@@ -11,7 +11,7 @@
 //     species:      str | null,       // e.g. "galaxy", "warbird"
 //     hull_pct:     float,            // 0.0 – 1.0
 //     shields_pct:  [float x 6],      // FRONT, REAR, TOP, BOTTOM, LEFT, RIGHT
-//     damage:       [{name, state}],  // state: "damaged" | "disabled" | "destroyed"
+//     damage_icons: [{icon_num, icon_svg, x_px, y_px, state}],
 //     minimized:    bool,
 //     range_km:     float | null,     // target role only — already km
 //     speed_kph:    float | null,     // target role only
@@ -56,17 +56,27 @@
         return "healthy";
     }
 
-    function rebuildDamageList(ul, damage) {
-        ul.innerHTML = "";
-        var rows = damage || [];
-        for (var i = 0; i < rows.length; i++) {
-            var row = rows[i];
-            var li = document.createElement("li");
-            li.className = "damage-row";
-            li.dataset.state = row.state || "";
-            // e.g. "Engines — DISABLED"
-            li.textContent = row.name + " — " + (row.state || "").toUpperCase();
-            ul.appendChild(li);
+    // SDK reference panel size at 640x480: 128 wide x 120 tall.
+    // Hardpoint Position2D coords are pixel-space against this frame;
+    // the overlay covers the silhouette stack at 100% / 100%, so we
+    // map x_px → percent by dividing by these constants.
+    var SDK_PANE_WIDTH_PX  = 128;
+    var SDK_PANE_HEIGHT_PX = 120;
+
+    function rebuildDamageOverlay(overlay, rows) {
+        overlay.innerHTML = "";
+        var entries = rows || [];
+        for (var i = 0; i < entries.length; i++) {
+            var row = entries[i];
+            if (!row || !row.icon_svg) { continue; }
+            var el = document.createElement("div");
+            el.className = "damage-icon";
+            el.dataset.state = row.state || "healthy";
+            el.dataset.iconNum = String(row.icon_num);
+            el.style.left = (row.x_px / SDK_PANE_WIDTH_PX  * 100).toFixed(2) + "%";
+            el.style.top  = (row.y_px / SDK_PANE_HEIGHT_PX * 100).toFixed(2) + "%";
+            el.innerHTML = row.icon_svg;  // potrace-traced, deterministic; safe
+            overlay.appendChild(el);
         }
     }
 
@@ -110,8 +120,8 @@
             }
         }
 
-        var ul = root.querySelector('[data-bind="damage-list"]');
-        if (ul) { rebuildDamageList(ul, state.damage); }
+        var overlay = root.querySelector('[data-bind="damage-overlay"]');
+        if (overlay) { rebuildDamageOverlay(overlay, state.damage_icons); }
 
         var sil = root.querySelector('[data-bind="silhouette"]');
         if (sil) { setSilhouette(sil, state.silhouette_url || null); }
