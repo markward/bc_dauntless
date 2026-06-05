@@ -465,3 +465,36 @@ def test_director_snap_resets_chase_reverse():
     d.chase.reverse_active = True
     d.snap()
     assert d.chase.reverse_active is False
+
+
+# ── FOV mutator ────────────────────────────────────────────────────────
+
+
+def test_director_fov_seeded_from_constant():
+    from engine.cameras.director import _CameraDirector
+    from engine.cameras           import EXTERIOR_FOV_Y_RAD
+    d = _CameraDirector()
+    assert d.fov_y_rad == pytest.approx(EXTERIOR_FOV_Y_RAD)
+    assert d.tracking.v_fov_rad == pytest.approx(EXTERIOR_FOV_Y_RAD)
+
+
+def test_director_set_fov_updates_self_and_tracking():
+    import math
+    from engine.cameras.director import _CameraDirector
+    d = _CameraDirector()
+    new_fov = math.radians(75.0)
+    d.set_fov(new_fov)
+    assert d.fov_y_rad == pytest.approx(new_fov)
+    assert d.tracking.v_fov_rad == pytest.approx(new_fov)
+
+
+def test_director_set_fov_changes_tracking_projection():
+    """After set_fov, the tracking solver's screen-Y → angle conversion
+    must use the new FOV."""
+    import math
+    from engine.cameras.director import _CameraDirector
+    d = _CameraDirector()
+    d.set_fov(math.radians(90.0))
+    # _screen_y_to_angle(y) = atan(y × tan(v_fov/2))
+    expected = math.atan(0.5 * math.tan(math.radians(45.0)))
+    assert d.tracking._screen_y_to_angle(0.5) == pytest.approx(expected, abs=1e-12)

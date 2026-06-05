@@ -8,6 +8,7 @@ stale state.
 """
 from enum import Enum
 
+from engine.cameras          import EXTERIOR_FOV_Y_RAD
 from engine.cameras.chase    import _ChaseCamera
 from engine.cameras.tracking import _TrackingCamera
 
@@ -23,6 +24,16 @@ class _CameraDirector:
         self.chase             = _ChaseCamera()
         self.tracking          = _TrackingCamera()
         self._opted_out_target = None  # target the user manually toggled OUT of Tracking
+        # Vertical FOV used for r.set_camera and Tracking's projection math.
+        # Seeded from EXTERIOR_FOV_Y_RAD; runtime changes via set_fov().
+        self.fov_y_rad         = EXTERIOR_FOV_Y_RAD
+
+    def set_fov(self, rad: float) -> None:
+        """Update the exterior vertical FOV. Propagates to the Tracking
+        solver so screen-Y / angle conversions stay in sync. host_loop
+        reads self.fov_y_rad each frame for r.set_camera."""
+        self.fov_y_rad           = rad
+        self.tracking.v_fov_rad  = rad
 
     # ── mode transitions ─────────────────────────────────────────────
 

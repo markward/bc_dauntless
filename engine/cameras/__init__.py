@@ -8,12 +8,13 @@ enum + one branch in the director. No edits to existing modes.
 """
 import math
 
-# Vertical field of view for the exterior camera, used by the
-# Tracking solver to convert screen-Y fractions to angles via
-#     α = atan(y × tan(v_fov / 2))
-# Must stay in sync with the value passed to r.set_camera in
-# host_loop.py (see Task 4).
-EXTERIOR_FOV_Y_RAD: float = math.radians(60.0)
+# Default vertical field of view for the exterior camera. Seeds
+# _CameraDirector.fov_y_rad and _TrackingCamera.v_fov_rad at
+# construction; runtime changes go through _CameraDirector.set_fov,
+# which also re-syncs the tracking solver's projection math.
+# host_loop.py reads director.fov_y_rad when calling r.set_camera,
+# so the constant is the source of truth at startup only.
+EXTERIOR_FOV_Y_RAD: float = math.radians(65.0)
 
 # Camera-follow distances as multiples of the player ship's GetRadius().
 CAM_BACK_RADII  =  1.5

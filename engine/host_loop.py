@@ -2456,7 +2456,8 @@ def run(mission_name: Optional[str] = None,
                 target = (0.0, 0.0, 0.0)
                 up_vec = (0.0, 1.0, 0.0)
             r.set_camera(eye=eye, target=target, up=up_vec,
-                         fov_y_rad=1.0472, near=1.0, far=5000.0)
+                         fov_y_rad=director.fov_y_rad,
+                         near=1.0, far=5000.0)
 
             # Audio listener (skipped while paused — silence the rumble).
             if not pause.is_open:
