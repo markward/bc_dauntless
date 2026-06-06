@@ -16,6 +16,9 @@ uniform float u_size_min;
 uniform float u_size_max;
 uniform float u_brightness_min;
 uniform float u_brightness_max;
+uniform vec3  u_sun_pos;      // nearest sun centre (world)
+uniform float u_sun_radius;   // nearest sun radius
+uniform float u_sun_push;     // max push (GU); 0 = no sun in range
 
 out vec2  v_uv;
 out float v_brightness;
@@ -28,6 +31,20 @@ void main() {
     vec3 local = a_particle.xyz - u_camera_pos;
     local = mod(local + u_radius, 2.0 * u_radius) - u_radius;
     vec3 world_pos = u_camera_pos + local;
+
+    // Solar-wind push: shove particles radially away from the nearest sun
+    // when within kSunPushRange (100 GU) of its SURFACE. Falloff is linear
+    // from full push at the surface to zero at 100 GU beyond it.
+    if (u_sun_push > 0.0) {
+        vec3  to_part   = world_pos - u_sun_pos;
+        float dist      = length(to_part);
+        float surf_dist = dist - u_sun_radius;
+        const float kSunPushRange = 100.0;   // GU (matches dust_pass.h)
+        if (surf_dist < kSunPushRange && dist > 1e-4) {
+            float falloff = 1.0 - clamp(surf_dist / kSunPushRange, 0.0, 1.0);
+            world_pos += (to_part / dist) * u_sun_push * falloff;
+        }
+    }
 
     // Billboard basis from the inverse rotation of the view matrix.
     // For an orthonormal view rotation, inverse == transpose, so the
