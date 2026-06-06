@@ -204,6 +204,26 @@ def _splash_weight(r_sub: float, r_hit: float, d: float) -> float:
     return raw
 
 
+def _pick_primary_subsystem_for_dispatch(allocations):
+    """Return the subsystem with the highest splash weight in
+    `allocations`, ties broken by first appearance, or None if the list
+    is empty or every weight is zero.
+
+    `allocations` is an iterable of `(subsystem, weight)` tuples
+    produced by the apply_hit resolver loop. The hit_feedback.dispatch
+    consumer wants a single subsystem so the per-stage severity
+    classifier (shield-only / hull-pen / critical-fail) can decide
+    which subsystem's state transition to report.
+    """
+    primary = None
+    best = 0.0
+    for sub, w in allocations:
+        if w > best:
+            best = w
+            primary = sub
+    return primary
+
+
 def _subsystem_state_flags(sub) -> tuple:
     """Snapshot (IsDamaged, IsDisabled, IsDestroyed) as a 3-tuple of bools,
     diffable against a later snapshot via :func:`_diff_state`.
