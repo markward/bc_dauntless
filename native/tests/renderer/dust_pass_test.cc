@@ -78,6 +78,28 @@ TEST(DustPassWrap, ZeroCameraOffsetIsIdentityInsideSphere) {
     EXPECT_FLOAT_EQ(local.z, inside.z);
 }
 
+TEST(DustInfluence, NoBodiesIsBaseline) {
+    const auto inf = renderer::compute_dust_influence(
+        glm::vec3(0.0f), {}, {});
+    EXPECT_FLOAT_EQ(inf.density_mult, 1.0f);
+    EXPECT_FLOAT_EQ(inf.sun_push, 0.0f);
+    EXPECT_FLOAT_EQ(inf.sun_tint, 0.0f);
+}
+
+TEST(DustInfluence, FarBodiesAreBaseline) {
+    renderer::SunDescriptor sun;
+    sun.position = glm::vec3(10000.0f, 0.0f, 0.0f);
+    sun.radius   = 50.0f;
+    std::vector<glm::vec4> planets = {
+        glm::vec4(0.0f, 9000.0f, 0.0f, 30.0f)  // far planet
+    };
+    const auto inf = renderer::compute_dust_influence(
+        glm::vec3(0.0f), {sun}, planets);
+    EXPECT_FLOAT_EQ(inf.density_mult, 1.0f);
+    EXPECT_FLOAT_EQ(inf.sun_push, 0.0f);
+    EXPECT_FLOAT_EQ(inf.sun_tint, 0.0f);
+}
+
 // --- GL-context smoke tests below ----------------------------------------
 
 #include <renderer/pipeline.h>
