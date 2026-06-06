@@ -185,10 +185,10 @@ TEST_F(DustPassGLTest, RenderProducesNoGLError) {
     cam.target = {0, 0, 0};
     cam.aspect = 1.0f;
     // First call: have_prev_ false, velocity = 0; no streaks.
-    pass.render(cam, 1.0f / 60.0f, *pipeline);
+    pass.render(cam, 1.0f / 60.0f, *pipeline, {}, {});
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
     // Second call: real dt, velocity = 0 (eye unchanged).
-    pass.render(cam, 1.0f / 60.0f, *pipeline);
+    pass.render(cam, 1.0f / 60.0f, *pipeline, {}, {});
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 
@@ -199,7 +199,7 @@ TEST_F(DustPassGLTest, DisabledPassDoesNothing) {
     cam.eye = {0, 0, 100};
     cam.target = {0, 0, 0};
     cam.aspect = 1.0f;
-    pass.render(cam, 1.0f / 60.0f, *pipeline);
+    pass.render(cam, 1.0f / 60.0f, *pipeline, {}, {});
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 
@@ -210,7 +210,7 @@ TEST_F(DustPassGLTest, SetDensityZeroIsSafe) {
     cam.eye = {0, 0, 100};
     cam.target = {0, 0, 0};
     cam.aspect = 1.0f;
-    pass.render(cam, 1.0f / 60.0f, *pipeline);
+    pass.render(cam, 1.0f / 60.0f, *pipeline, {}, {});
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 

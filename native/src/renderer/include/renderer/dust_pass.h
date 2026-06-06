@@ -110,7 +110,9 @@ public:
     /// `dt_seconds` is the host-loop frame delta used for velocity.
     void render(const scenegraph::Camera& camera,
                 float dt_seconds,
-                Pipeline& pipeline);
+                Pipeline& pipeline,
+                const std::vector<SunDescriptor>& suns,
+                const std::vector<glm::vec4>& planets);
 
     void set_enabled(bool enabled) { enabled_ = enabled; }
     bool enabled() const { return enabled_; }

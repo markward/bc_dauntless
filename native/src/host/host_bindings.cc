@@ -67,6 +67,7 @@ renderer::Lighting g_bridge_lighting;
 std::vector<renderer::Backdrop> g_backdrops;
 std::unique_ptr<renderer::BackdropPass> g_backdrop_pass;
 std::vector<renderer::SunDescriptor> g_suns;
+std::vector<glm::vec4> g_dust_planets;   // xyz = world pos, w = radius
 std::unique_ptr<renderer::SunPass> g_sun_pass;
 std::unique_ptr<renderer::DustPass> g_dust_pass;
 std::unique_ptr<renderer::ShieldPass> g_shield_pass;
@@ -166,6 +167,7 @@ void init(int width, int height, const std::string& title) {
     g_backdrops.clear();
     g_backdrop_pass = std::make_unique<renderer::BackdropPass>();
     g_suns.clear();
+    g_dust_planets.clear();
     g_sun_pass = std::make_unique<renderer::SunPass>();
     g_dust_pass = std::make_unique<renderer::DustPass>();
     g_shield_pass = std::make_unique<renderer::ShieldPass>();
@@ -191,6 +193,7 @@ void shutdown() {
     g_backdrop_pass.reset();  // releases sphere + texture caches while the
                               // GL context is still alive.
     g_suns.clear();
+    g_dust_planets.clear();
     g_sun_pass.reset();
     g_dust_pass.reset();
     g_shield_pass.reset();
@@ -255,7 +258,8 @@ void frame() {
     if (g_shield_pass) g_shield_pass->submit(g_world, g_camera, *g_pipeline,
                                               now, lookup);
 
-    if (g_dust_pass) g_dust_pass->render(g_camera, dt, *g_pipeline);
+    if (g_dust_pass) g_dust_pass->render(g_camera, dt, *g_pipeline,
+                                         g_suns, g_dust_planets);
 
     if (g_lens_flare_pass) {
         g_lens_flare_pass->render(g_lens_flares, g_camera, *g_pipeline,
@@ -530,6 +534,23 @@ PYBIND11_MODULE(_dauntless_host, m) {
           },
           py::arg("suns"),
           "Set the active sun list, applied each frame().");
+
+    m.def("set_dust_planets",
+          [](const std::vector<py::dict>& descs) {
+              g_dust_planets.clear();
+              g_dust_planets.reserve(descs.size());
+              for (const auto& d : descs) {
+                  auto pos = d["position"].cast<std::tuple<float,float,float>>();
+                  const float radius = d["radius"].cast<float>();
+                  g_dust_planets.emplace_back(std::get<0>(pos),
+                                              std::get<1>(pos),
+                                              std::get<2>(pos),
+                                              radius);
+              }
+          },
+          py::arg("planets"),
+          "Set planet centres+radii used by the dust pass for proximity "
+          "density scaling, applied each frame().");
 
     m.def("set_lens_flares",
           [](const std::vector<py::dict>& descs) {

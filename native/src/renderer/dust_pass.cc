@@ -155,7 +155,9 @@ void DustPass::set_density(int count) {
 
 void DustPass::render(const scenegraph::Camera& camera,
                       float dt_seconds,
-                      Pipeline& pipeline) {
+                      Pipeline& pipeline,
+                      const std::vector<SunDescriptor>& suns,
+                      const std::vector<glm::vec4>& planets) {
     if (!enabled_ || particle_count_ <= 0) {
         // Still update prev_eye_ tracking so we don't get a phantom huge
         // velocity on the frame after re-enabling.
@@ -203,9 +205,7 @@ void DustPass::render(const scenegraph::Camera& camera,
     glDepthMask(GL_FALSE);
     glDisable(GL_CULL_FACE);                    // billboards face the camera
 
-    // Proximity response. Suns/planets are empty until the host wires
-    // them in (later task); empty lists => baseline density, no push/tint.
-    const DustInfluence inf = compute_dust_influence(camera.eye, {}, {});
+    const DustInfluence inf = compute_dust_influence(camera.eye, suns, planets);
 
     shader.set_vec3 ("u_sun_pos",    inf.sun_pos);
     shader.set_float("u_sun_radius", inf.sun_radius);
