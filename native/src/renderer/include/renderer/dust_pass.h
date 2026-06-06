@@ -3,6 +3,8 @@
 
 #include <glm/glm.hpp>
 
+#include <renderer/frame.h>   // renderer::SunDescriptor
+
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -11,6 +13,27 @@ namespace assets { class Texture; }
 namespace scenegraph { struct Camera; }
 
 namespace renderer {
+
+/// Result of evaluating dust proximity to nearby bodies for one frame.
+/// Pure data; produced by compute_dust_influence (no GL).
+struct DustInfluence {
+    float     density_mult = 1.0f;           // [1, kMaxDensityMult]
+    glm::vec3 sun_pos      = glm::vec3(0.0f);// nearest sun centre (world)
+    float     sun_radius   = 0.0f;           // nearest sun radius
+    float     sun_push     = 0.0f;           // GU; 0 when no sun in range
+    float     sun_tint     = 0.0f;           // [0,1] orange-mix factor
+};
+
+/// Evaluate density/push/tint response for the camera against the active
+/// suns and planets. Pure function — no GL, fully unit-testable.
+///
+/// `planets` are packed as vec4(x, y, z, radius). Density uses the
+/// strongest body: a sun in range wins over any planet (spec §2-3 "sun
+/// precedence"). Push and tint use the nearest (greatest-closeness) sun.
+DustInfluence compute_dust_influence(
+    const glm::vec3& camera_pos,
+    const std::vector<SunDescriptor>& suns,
+    const std::vector<glm::vec4>& planets);
 
 class Pipeline;
 
