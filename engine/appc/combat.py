@@ -5,7 +5,7 @@ update_all reports a torpedo hit.  Routes damage shields-face → picked
 subsystem → hull bleed, then broadcasts WeaponHitEvent so mission
 handlers (FriendlyFireHandler etc.) see the hit.
 """
-from engine.appc.math import TGMatrix3, TGPoint3
+from engine.appc.math import TGPoint3
 
 
 def sphere_hit(point, center, radius: float) -> bool:
