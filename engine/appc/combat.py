@@ -50,6 +50,36 @@ def ray_sphere_entry(origin, direction, max_dist: float,
     )
 
 
+PHASER_DEFAULT_DAMAGE_RADIUS = 0.15
+"""Fallback splash radius (game units) used only when neither hardpoint nor
+payload defines a SetDamageRadiusFactor. Phaser hardpoints in stock SDK
+always write 0.15 explicitly, so this default is reached only by
+hand-authored weapons that forget to declare a radius.
+"""
+
+
+def weapon_splash_radius(hardpoint_weapon, payload_template) -> float:
+    """Resolve R_hit per spec §3.2.
+
+    hardpoint_weapon: WeaponProperty on the firing ship's hardpoint, or None.
+    payload_template: projectile-type template (e.g. PhotonTorpedo), or None
+                      for phasers / non-projectile weapons.
+
+    Returns the splash radius in game units. Hardpoint DRF overrides payload
+    DRF when both are set and non-zero; falls back to the phaser default
+    (0.15 GU) when neither is available.
+    """
+    if hardpoint_weapon is not None and hasattr(hardpoint_weapon, "GetDamageRadiusFactor"):
+        drf = hardpoint_weapon.GetDamageRadiusFactor()
+        if drf > 0.0:
+            return float(drf)
+    if payload_template is not None and hasattr(payload_template, "GetDamageRadiusFactor"):
+        drf = payload_template.GetDamageRadiusFactor()
+        if drf > 0.0:
+            return float(drf)
+    return PHASER_DEFAULT_DAMAGE_RADIUS
+
+
 def _resolve_hit_point(host, ship_instances, ship,
                        ray_origin, ray_direction,
                        max_dist: float, fallback_point):
