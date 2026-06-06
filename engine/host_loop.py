@@ -1286,6 +1286,27 @@ def _aggregate_suns() -> list:
         PROJECT_ROOT, list(App.g_kSetManager._sets.values()))
 
 
+def _aggregate_planets(pSets):
+    """Return list[dict] {position, radius} for Planet objects across pSets,
+    feeding the dust pass's proximity density scaling. Planets with
+    radius <= 0 are dropped (they cannot define an influence sphere)."""
+    from engine.appc.planet import Planet
+    out = []
+    for pSet in pSets:
+        for obj in getattr(pSet, "_objects", {}).values():
+            if not isinstance(obj, Planet):
+                continue
+            radius = obj.GetRadius()
+            if radius <= 0:
+                continue
+            loc = obj.GetWorldLocation()
+            out.append({
+                "position": (loc.x, loc.y, loc.z),
+                "radius": float(radius),
+            })
+    return out
+
+
 def _aggregate_lens_flares() -> list:
     """Collect lens-flare descriptors in BC native world units."""
     from engine.appc.lens_flare import aggregate_lens_flares_for_renderer
