@@ -165,6 +165,8 @@ DustPass::~DustPass() {
 void DustPass::set_density(int count) {
     if (count < 0) count = 0;
     if (count > 50000) count = 50000;
+    // Note: setting count below kSeededCount caps the proximity density boost,
+    // since draw_count in render() is clamped to particle_count_.
     particle_count_ = count;
     if (initialized_) rebuild_instance_buffer(kSeed, particle_count_);
 }

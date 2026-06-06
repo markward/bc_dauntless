@@ -2584,9 +2584,8 @@ def run(mission_name: Optional[str] = None,
             suns = _aggregate_suns()
             r.set_suns(suns)
 
-            import App
             planets = _aggregate_planets(
-                list(App.g_kSetManager._sets.values()))
+                list(_App.g_kSetManager._sets.values()))
             r.set_dust_planets(planets)
 
             lens_flares = _aggregate_lens_flares()
