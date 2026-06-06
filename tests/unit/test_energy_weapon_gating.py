@@ -140,7 +140,7 @@ def test_fire_with_empty_fire_sound_no_sfx():
 
     with patch("engine.audio.tg_sound.TGSoundManager.instance") as mock_mgr:
         bank.Fire(target=None, offset=None)
-        mock_mgr.return_value.PlaySound.assert_not_called()
+        mock_mgr.return_value.GetSound.assert_not_called()
 
 
 def test_pulse_weapon_has_fire_surface():
