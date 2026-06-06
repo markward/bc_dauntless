@@ -1290,11 +1290,13 @@ def _aggregate_planets(pSets):
     """Return list[dict] {position, radius} for Planet objects across pSets,
     feeding the dust pass's proximity density scaling. Planets with
     radius <= 0 are dropped (they cannot define an influence sphere)."""
-    from engine.appc.planet import Planet
+    from engine.appc.planet import Planet, Sun
     out = []
     for pSet in pSets:
         for obj in getattr(pSet, "_objects", {}).values():
-            if not isinstance(obj, Planet):
+            # Sun subclasses Planet; suns are fed via the separate sun list,
+            # so exclude them here (planets are density-only).
+            if not isinstance(obj, Planet) or isinstance(obj, Sun):
                 continue
             radius = obj.GetRadius()
             if radius <= 0:

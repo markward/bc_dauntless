@@ -1,5 +1,5 @@
 """Unit test for _aggregate_planets in the host loop."""
-from engine.appc.planet import Planet
+from engine.appc.planet import Planet, Sun
 from engine.appc.math import TGPoint3
 from engine import host_loop
 
@@ -26,4 +26,13 @@ def test_aggregate_planets_emits_position_and_radius():
 def test_aggregate_planets_drops_zero_radius():
     p = _planet_at(0.0, 0.0, 0.0, 0.0)
     out = host_loop._aggregate_planets([_FakeSet([p])])
+    assert out == []
+
+
+def test_aggregate_planets_excludes_suns():
+    # Sun subclasses Planet; it must not be double-counted as a planet
+    # (suns are fed to the renderer via the separate sun list).
+    sun = Sun(50.0, "")
+    sun.SetWorldLocation(TGPoint3(0.0, 0.0, 0.0))
+    out = host_loop._aggregate_planets([_FakeSet([sun])])
     assert out == []
