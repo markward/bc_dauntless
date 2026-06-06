@@ -25,8 +25,8 @@ uniform int u_specular_enabled;
 // and glossiness≈0, giving a near-constant rim_strength≈0.225 — so the
 // gain, not the material term, governs how visible the rim reads.
 uniform float u_rim_strength;
-const float RIM_POWER = 2.0;
-const float RIM_GAIN  = 3.0;
+const float RIM_POWER = 24.0;  // sharp, edge-only falloff (higher = thinner)
+const float RIM_GAIN  = 26.0;  // peak edge brightness (tuned by eye on Galaxy)
 
 uniform vec3 u_ambient_light;
 uniform vec3 u_camera_pos_ws;
