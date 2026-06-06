@@ -95,7 +95,7 @@ class WeaponHitEvent(TGEvent):
     Inherits TGEvent's _source / Set/GetSource for the firing ship; the
     weapon-specific surface adds target, damage, hit-point, subsystem,
     surface normal, and splash radius (the radius the attribution
-    resolver used for this hit, per damage-attribution spec §3.2).
+    resolver used for this hit).
     """
     def __init__(self):
         super().__init__()
