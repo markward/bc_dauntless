@@ -62,7 +62,9 @@ For each subsystem `i` on the target ship with body-frame position `H_i^body` an
 - World-space hardpoint position: `H_i^world = ship_pos + R_world · H_i^body` where `R_world = ship.GetWorldRotation()` (column-vector convention per CLAUDE.md).
 - Candidate iff `|P − H_i^world| < R_i + R_hit`.
 
-The hull is **always** a candidate (the impact landed on its surface). Hull radius comes from the SDK call `Hull.SetRadius(...)` in the ship's hardpoint file. For ships whose hardpoint defines `Hull.SetRadius(1.0)` the hull catches every hit; for the sunbuster (`Hull.SetRadius(4.0)`) the hull sphere is larger than the model and every hit is well inside it.
+The hull is **always** a candidate with weight `w_hull = 1.0` — not subject to the sphere-overlap test, not subject to the falloff in §3.4. Every post-shield hit applies the full post-shield damage `D` to the hull. The user's framing makes this explicit: stock BC "converts those arbitrary hits to both general hull damage and subsystem damage," with hull damage attached to *every* hit regardless of where on the ship it landed.
+
+The SDK call `Hull.SetRadius(...)` in hardpoint files (e.g. Galaxy `1.0`, sunbuster `4.0`) is retained on the hull subsystem for legacy / AI / camera consumers but is **not** consumed by this resolver. (Treating it as a catchment radius produces wrong results: a phaser hit at the Galaxy nacelle is ~3.5 GU from ship center, well outside `R_hull + R_hit = 1.15` GU, which would incorrectly exclude the hull from candidates.)
 
 ### 3.4 Per-candidate weight via linear falloff
 
@@ -122,20 +124,21 @@ def attribute_damage(victim_ship, impact_world, impact_normal, raw_damage,
     R = victim_ship.GetWorldRotation()
     ship_pos = victim_ship.GetWorldLocation()
 
-    # Always include hull
+    # Hull always takes full damage (no sphere test, no falloff).
     hull = victim_ship.GetHull()
-    candidates = [(hull, hull_world_position(victim_ship, R, ship_pos),
-                   hull.GetRadius())]
+    if hull is not None:
+        victim_ship.DamageSystem(hull, post_shield_damage)
 
+    # Subsystems take a weighted share based on splash sphere overlap.
     for subsystem in iter_all_subsystems(victim_ship):
+        if subsystem is hull:
+            continue
         h_body = subsystem.GetPosition()
         h_world = ship_pos + R.MultMatrixLeft_world_from_body(h_body)
         r_sub = subsystem.GetRadius()
-        if (impact_world - h_world).Magnitude() < (r_sub + r_hit):
-            candidates.append((subsystem, h_world, r_sub))
-
-    for subsystem, h_world, r_sub in candidates:
         d = (impact_world - h_world).Magnitude()
+        if d >= r_sub + r_hit:
+            continue  # outside splash, no contribution
         w = max(0.0, min(1.0, (r_sub + r_hit - d) / r_hit))
         if w > 0.0:
             victim_ship.DamageSystem(subsystem, post_shield_damage * w)
@@ -153,7 +156,7 @@ Notes:
 
 ### 4.1 Edge cases
 
-- **No subsystem candidates.** Hull is always in the set, so the candidate list is never empty. Hull takes its weighted share and the hit is unremarkable.
+- **No subsystem candidates within splash.** Hull still takes full damage (unconditional). No subsystem damage occurs. Common on hits that land far from any interior subsystem.
 - **All hits absorbed by shields.** No subsystem or hull damage; the broadcast hit event still fires so VFX render the shield flash.
 - **Impact point inside multiple subsystems.** Common for tight ships (Rankuf). Each gets a high weight independently; nothing prevents one hit from disabling a subsystem cluster.
 - **Weapon with no payload and no hardpoint DRF.** Falls back to the phaser default (0.15). This is a safety net for hand-authored weapons that forget to declare radius; not an intended configuration.
