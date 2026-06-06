@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="css/sdk_mirror.css">
     <link rel="stylesheet" href="panels/ship_display/ship_display.css">
     <link rel="stylesheet" href="panels/weapons_display/weapons_display.css">
+    <link rel="stylesheet" href="css/configuration_panel.css">
 </head>
 <body>
     <!-- Pause menu overlay.
@@ -40,6 +41,27 @@
                 </button>
             </div>
         </div>
+    </section>
+
+    <!-- Configuration overlay (production).
+         setConfigurationPanel({...}) drives state; clicks fire
+         dauntlessEvent('configuration/<verb>:<arg>'). ESC and the Done
+         button both fire 'configuration/cancel'.
+         Spec: docs/superpowers/specs/2026-06-05-configuration-panel-design.md -->
+    <section id="configuration-panel">
+      <div class="cp-modal">
+        <div class="cp-header">Configuration</div>
+        <div class="cp-content">
+          <nav class="cp-tabstrip" id="cp-tabstrip"></nav>
+          <div class="cp-body" id="cp-body"></div>
+        </div>
+        <div class="cp-footer">
+          <button class="cp-done-button"
+                  onclick="dauntlessEvent('configuration/cancel')">
+            Done
+          </button>
+        </div>
+      </div>
     </section>
 
     <!-- Tactical-view layout zones. All panels are flex children of one
@@ -196,5 +218,6 @@
     <script src="panels/ship_display/ship_display.js"></script>
     <script src="panels/weapons_display/weapons_display.js"></script>
     <script src="js/sdk_mirror.js"></script>
+    <script src="js/configuration_panel.js"></script>
 </body>
 </html>

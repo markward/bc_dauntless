@@ -137,9 +137,12 @@ or `cameras` inside the panel module, mirroring the existing pattern in
 
 - Opening seeds nothing extra (settings already current). Initial
   `_focused` is `-1`.
-- Each setting mutation immediately calls its applier; if the applier
-  raises, the mutation is reverted and the exception propagates (so
-  tests can assert wiring).
+- Each setting mutation calls its applier first, then writes the new
+  value into `_settings`. If the applier raises the local state stays
+  on the previous value and the exception propagates; for the
+  no-persistence first pass this leaves the panel consistent with the
+  renderer (the engine state was never flipped) without needing an
+  explicit try/except wrapper.
 - `dispatch_event` accepts:
   - `"cancel"` → close
   - `"tab:<id>"` → select tab (also rebuilds the focusable list)
@@ -326,8 +329,9 @@ matching the mission-picker pattern but production-visible:
 
 ## Error / edge cases
 
-- **Applier raises:** mutation is reverted to the previous value; the
-  exception propagates (so a misconfigured wiring shows up in tests).
+- **Applier raises:** the mutation never lands (applier is invoked
+  before the local state write); the exception propagates so a
+  misconfigured wiring is visible at test time.
 - **Unknown event name:** `dispatch_event` returns `False`; the
   `PanelRegistry` logs and ignores (existing pattern).
 - **Pause menu opened while panel is open** (paranoia — host loop
@@ -362,7 +366,6 @@ matching the mission-picker pattern but production-visible:
   clamps; Space on tab row selects.
 - `render_payload` returns a script on first emit; returns `None` when
   state hasn't changed; re-emits after `invalidate()`.
-- Applier raising propagates and reverts the mutation.
 
 **Unit — extend `tests/unit/test_pause_menu_model.py`:**
 

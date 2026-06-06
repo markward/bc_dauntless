@@ -18,6 +18,18 @@
 
 #include <vector>
 
+// Toggle for the opaque-pass specular term. Default on so existing
+// renders look identical until the user flips the Configuration row.
+// host_bindings.cc calls set_enabled(); frame.cc reads enabled() when
+// binding the opaque shader and writes u_specular_enabled.
+namespace dauntless_specular {
+namespace {
+    bool g_specular_enabled = true;
+}
+    bool enabled() { return g_specular_enabled; }
+    void set_enabled(bool v) { g_specular_enabled = v; }
+}
+
 namespace renderer {
 
 namespace {
@@ -96,6 +108,8 @@ void draw_model(const assets::Model& model,
             shader.set_vec3 ("u_specular_color", mat.specular);
             shader.set_float("u_specular_power",
                 renderer::glossiness_to_specular_power(mat.glossiness));
+            shader.set_int("u_specular_enabled",
+                           dauntless_specular::enabled() ? 1 : 0);
 
             glBindVertexArray(mesh.vao());
             glDrawElements(GL_TRIANGLES, mesh.index_count(), GL_UNSIGNED_INT, nullptr);

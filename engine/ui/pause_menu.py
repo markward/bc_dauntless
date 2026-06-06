@@ -165,25 +165,30 @@ class PauseMenuModel:
         self._focused = -1
 
 
-def default_pause_menu(*, on_exit: _Handler, on_cancel: _Handler) -> PauseMenuModel:
-    """Build the dauntless default pause menu: Exit Program + Cancel.
+def default_pause_menu(*,
+                      on_exit: _Handler,
+                      on_configuration: _Handler,
+                      on_cancel: _Handler) -> PauseMenuModel:
+    """Build the dauntless default pause menu: Exit Program +
+    Configuration + Cancel.
 
     Handlers are injected so the model has no compile-time dependency
-    on the host loop. The host loop wires `on_exit` to a quit flag and
-    `on_cancel` to the pause-controller toggle.
+    on the host loop. The host loop wires on_exit to a quit flag,
+    on_configuration to ConfigurationPanel.open + pause-menu-hide
+    arbitration, and on_cancel to the pause-controller toggle.
 
     When dev_mode.is_enabled(), appends one row per entry in
     dev_pause_menu_entries() — in registration order, no separator.
-    Dev row action_ids are slugified from the label and remain
-    unprefixed so PanelRegistry's legacy-handler fallback routes the
-    click back to this model's dispatch_event.
+    Dev row action_ids are slugified from the label and disambiguated
+    against the production seed {"exit", "configuration", "cancel"}.
     """
     m = PauseMenuModel()
-    m.add_item("Exit Program", "exit",   on_exit)
-    m.add_item("Cancel",       "cancel", on_cancel)
+    m.add_item("Exit Program",  "exit",          on_exit)
+    m.add_item("Configuration", "configuration", on_configuration)
+    m.add_item("Cancel",        "cancel",        on_cancel)
 
     if dev_mode.is_enabled():
-        used: set[str] = {"exit", "cancel"}
+        used: set[str] = {"exit", "configuration", "cancel"}
         for label, handler in dev_mode.dev_pause_menu_entries():
             action_id = _slugify_action_id(label, used)
             used.add(action_id)

@@ -89,7 +89,7 @@ def test_pause_menu_side_effects_show_uses_flex():
     p.toggle()  # closed → open
     vm = _ViewModeController()
     rc = _RecordingHost()
-    _apply_pause_menu_side_effects(p, vm, rc, _NULL_PICKER)
+    _apply_pause_menu_side_effects(p, vm, rc, [_NULL_PICKER])
     assert len(rc.scripts) == 1
     assert "pause-menu" in rc.scripts[0]
     assert "'flex'" in rc.scripts[0]
@@ -106,9 +106,9 @@ def test_pause_menu_side_effects_hide_uses_none():
     p.toggle()  # closed → open
     vm = _ViewModeController()
     rc = _RecordingHost()
-    _apply_pause_menu_side_effects(p, vm, rc, _NULL_PICKER)   # initial sync (open)
+    _apply_pause_menu_side_effects(p, vm, rc, [_NULL_PICKER])   # initial sync (open)
     p.toggle()  # open → closed
-    _apply_pause_menu_side_effects(p, vm, rc, _NULL_PICKER)   # second sync (closed)
+    _apply_pause_menu_side_effects(p, vm, rc, [_NULL_PICKER])   # second sync (closed)
     assert len(rc.scripts) == 2
     assert "'none'" in rc.scripts[1]
 
@@ -123,8 +123,8 @@ def test_pause_menu_side_effects_idempotent_within_a_state():
     p = _PauseMenuController()
     vm = _ViewModeController()
     rc = _RecordingHost()
-    _apply_pause_menu_side_effects(p, vm, rc, _NULL_PICKER)   # initial sync (closed)
-    _apply_pause_menu_side_effects(p, vm, rc, _NULL_PICKER)   # no toggle in between
+    _apply_pause_menu_side_effects(p, vm, rc, [_NULL_PICKER])   # initial sync (closed)
+    _apply_pause_menu_side_effects(p, vm, rc, [_NULL_PICKER])   # no toggle in between
     assert len(rc.scripts) <= 1
 
 
@@ -140,7 +140,7 @@ def test_pause_menu_open_unlocks_cursor():
     p.toggle()  # closed → open
     vm = _ViewModeController()  # bridge by default — cursor would be locked
     rc = _RecordingHost()
-    _apply_pause_menu_side_effects(p, vm, rc, _NULL_PICKER)
+    _apply_pause_menu_side_effects(p, vm, rc, [_NULL_PICKER])
     assert rc.cursor_lock_calls == [False]
 
 
@@ -159,7 +159,7 @@ def test_pause_menu_close_invalidates_view_mode_latch():
     vm._last_synced_is_bridge = True  # simulate prior sync into bridge
     rc = _RecordingHost()
     p.toggle()  # closed → open
-    _apply_pause_menu_side_effects(p, vm, rc, _NULL_PICKER)
+    _apply_pause_menu_side_effects(p, vm, rc, [_NULL_PICKER])
     p.toggle()  # open → closed
-    _apply_pause_menu_side_effects(p, vm, rc, _NULL_PICKER)
+    _apply_pause_menu_side_effects(p, vm, rc, [_NULL_PICKER])
     assert vm._last_synced_is_bridge is None

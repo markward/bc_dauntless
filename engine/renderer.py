@@ -141,6 +141,11 @@ def set_dust_density(count: int) -> None:
     _h.dust_set_density(count)
 
 
+def set_specular_enabled(enabled: bool) -> None:
+    """Toggle the opaque-pass specular term. Default: on after init()."""
+    _h.specular_set_enabled(enabled)
+
+
 # ── Shield pass ─────────────────────────────────────────────────────────────
 
 def model_aabb(model: int) -> Tuple[Tuple[float, float, float],
