@@ -141,6 +141,13 @@ def set_dust_density(count: int) -> None:
     _h.dust_set_density(count)
 
 
+def set_dust_planets(planets: list) -> None:
+    """Configure planet centres+radii used by the dust pass for proximity
+    density scaling. Each entry is a dict {position: (x,y,z), radius: r}
+    in game units. Applied each frame()."""
+    _h.set_dust_planets(planets)
+
+
 def set_specular_enabled(enabled: bool) -> None:
     """Toggle the opaque-pass specular term. Default: on after init()."""
     _h.specular_set_enabled(enabled)
