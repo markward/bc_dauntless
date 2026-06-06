@@ -85,6 +85,9 @@ public:
     // seeded with kParticleCount * kMaxDensityMult particles and the
     // per-frame draw count scales between the two.
     static constexpr int   kMaxDensityMult       = 10;
+    // Buffer is overseeded to the density ceiling; the per-frame draw
+    // count scales between kParticleCount and this.
+    static constexpr int   kSeededCount          = kParticleCount * kMaxDensityMult;
     static constexpr float kPlanetPeakMult       = 5.0f;   // density near planets
     static constexpr float kSunPeakMult          = 10.0f;  // density near suns
     // Closeness ramps from 1 at a body's surface to 0 at this multiple of
@@ -122,7 +125,7 @@ private:
     bool       initialized_  = false;   // GL objects created lazily on first render
     glm::vec3  prev_eye_     = glm::vec3(0.0f);
     bool       have_prev_    = false;
-    int        particle_count_ = kParticleCount;
+    int        particle_count_ = kSeededCount;
 
     // GL objects, populated in initialize_gl(). 0 means "not yet created".
     unsigned int vao_              = 0;

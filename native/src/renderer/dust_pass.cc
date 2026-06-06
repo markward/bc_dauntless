@@ -203,9 +203,23 @@ void DustPass::render(const scenegraph::Camera& camera,
     glDepthMask(GL_FALSE);
     glDisable(GL_CULL_FACE);                    // billboards face the camera
 
+    // Proximity response. Suns/planets are empty until the host wires
+    // them in (later task); empty lists => baseline density, no push/tint.
+    const DustInfluence inf = compute_dust_influence(camera.eye, {}, {});
+
+    shader.set_vec3 ("u_sun_pos",    inf.sun_pos);
+    shader.set_float("u_sun_radius", inf.sun_radius);
+    shader.set_float("u_sun_push",   inf.sun_push);
+    shader.set_float("u_sun_tint",   inf.sun_tint);
+
+    int draw_count = static_cast<int>(
+        std::lround(static_cast<float>(kParticleCount) * inf.density_mult));
+    if (draw_count < 0) draw_count = 0;
+    if (draw_count > particle_count_) draw_count = particle_count_;
+
     glBindVertexArray(vao_);
     glDrawElementsInstanced(GL_TRIANGLES, 6, GL_UNSIGNED_INT, nullptr,
-                            particle_count_);
+                            draw_count);
     glBindVertexArray(0);
 
     // Restore defaults so later passes don't inherit our state.
