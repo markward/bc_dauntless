@@ -175,7 +175,7 @@ def test_severity_sequence_shield_then_hull_then_critical(setup):
         host_before = len(host.shield_hit_calls)
         snap_before = hit_vfx.snapshot()
         combat.apply_hit(ship, damage=30.0, hit_point=point,
-                          source=None, subsystem=setup["sensors"],
+                          source=None,
                           normal=TGPoint3(0.0, 1.0, 0.0),
                           host=host, ship_instances=ship_instances)
         snap_after = hit_vfx.snapshot()
@@ -194,7 +194,7 @@ def test_camera_shake_fires_only_when_target_is_player(setup, monkeypatch):
     camera_shake.reset()
     for _ in range(5):
         combat.apply_hit(ship, damage=30.0, hit_point=TGPoint3(0, 1, 0),
-                          source=None, subsystem=setup["sensors"],
+                          source=None,
                           normal=None,
                           host=host, ship_instances=ship_instances)
     energy_when_player = camera_shake.get_energy()
@@ -213,7 +213,7 @@ def test_camera_shake_fires_only_when_target_is_player(setup, monkeypatch):
     camera_shake.reset()
     for _ in range(5):
         combat.apply_hit(ship, damage=30.0, hit_point=TGPoint3(0, 1, 0),
-                          source=None, subsystem=setup["sensors"],
+                          source=None,
                           normal=None,
                           host=host, ship_instances=ship_instances)
     assert camera_shake.get_energy() == 0.0

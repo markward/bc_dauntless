@@ -313,6 +313,11 @@ class WeaponProperty(SubsystemProperty):
         self._direction = TGPoint3(0.0, 1.0, 0.0)
         self._right     = TGPoint3(1.0, 0.0, 0.0)
         self._up        = TGPoint3(0.0, 0.0, 1.0)
+        # SDK App.py:9230 — WeaponProperty.GetDamageRadiusFactor.
+        # Hardpoint scripts call SetDamageRadiusFactor on each emitter
+        # template (e.g. peregrine.py:153, keldon.py:252); the live
+        # ShipSubsystem mirrors this via SetProperty.
+        self._damage_radius_factor: float = 0.0
 
     def GetDirection(self):
         from engine.appc.math import TGPoint3
@@ -376,6 +381,12 @@ class WeaponProperty(SubsystemProperty):
             up.z * forward.x - up.x * forward.z,
             up.x * forward.y - up.y * forward.x,
         )
+
+    def GetDamageRadiusFactor(self) -> float:
+        return self._damage_radius_factor
+
+    def SetDamageRadiusFactor(self, v) -> None:
+        self._damage_radius_factor = float(v)
 
 
 class EnergyWeaponProperty(WeaponProperty):

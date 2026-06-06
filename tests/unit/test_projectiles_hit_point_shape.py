@@ -1,6 +1,9 @@
 """Regression: projectiles.update_all unpacks _resolve_hit_point's
 (point, normal) return shape — previously it stored the whole tuple
-as hit_point and crashed downstream in pick_target_subsystem.
+as hit_point and crashed downstream on `.x` attribute access.
+
+Since pick_target_subsystem was removed (splash attribution), update_all
+now returns 3-tuples: (torpedo, ship, hit_point).
 """
 import pytest
 from engine.appc.math import TGPoint3
@@ -48,9 +51,12 @@ def test_update_all_hit_point_is_tgpoint_not_tuple():
     """Regression for Task 2's missed projectiles.py call site.
 
     When _resolve_hit_point changed to return (point, normal), the
-    projectiles.update_all call at line 154 was not updated to unpack.
-    This caused pick_target_subsystem to receive a tuple instead of
-    TGPoint3, crashing on ".x" attribute access.
+    projectiles.update_all call was not updated to unpack, causing
+    hit_point to be a tuple instead of TGPoint3.
+
+    update_all now returns 3-tuples: (torpedo, ship, hit_point).
+    pick_target_subsystem has been removed; subsystem selection is
+    handled inside apply_hit via spherical-splash attribution.
     """
     src = _FakeShip(-100, 0, 0)
     target = _FakeShip(5, 0, 0, radius=10.0)
@@ -59,7 +65,7 @@ def test_update_all_hit_point_is_tgpoint_not_tuple():
     hits = update_all(dt=0.1, all_ships=[src, target])
 
     assert len(hits) == 1
-    _torpedo, ship, _subsystem, hit_point = hits[0]
+    _torpedo, ship, hit_point = hits[0]
     assert ship is target
     assert hasattr(hit_point, "x"), \
         f"hit_point must be a TGPoint3, got {type(hit_point).__name__}"

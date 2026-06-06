@@ -6,6 +6,8 @@
 **Project:** 2 of 5 in the [Combat Damage Pipeline roadmap](./2026-06-01-combat-damage-pipeline-design.md).
 **Upstream dependency:** [Project 1 — Mesh-accurate hit resolution](./2026-06-01-mesh-accurate-hit-resolution-design.md) (complete, merged).
 
+> **Attribution-decision section superseded by [2026-06-06-damage-attribution-design.md](./2026-06-06-damage-attribution-design.md).** The "closest within 2× radius" rule described in this doc is no longer authoritative — spherical-splash with multi-subsystem weighted allocation replaces it. The parent-aggregator predicates (`IsDamaged`, `IsDisabled`, `IsDestroyed` derived from children) defined here remain valid and continue to apply.
+
 ## 1. Goal
 
 Make weapon hits actually damage subsystems, so the ShipDisplay panel's Engines / Weapons / Sensors / Shield Generator damage list populates after sustained fire on a target.

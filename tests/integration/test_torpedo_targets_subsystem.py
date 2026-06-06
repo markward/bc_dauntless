@@ -1,5 +1,10 @@
-"""End-to-end: target lock + target-subsystem cycled to a specific
-subsystem.  Fire → damage applied to that subsystem specifically.
+"""End-to-end: torpedo hits a ship; under the splash attribution model,
+a subsystem whose splash sphere overlaps the impact point takes damage.
+
+With pick_target_subsystem removed, subsystem damage is driven purely by
+proximity.  The bridge is positioned at the ship centroid with a radius
+large enough to guarantee the torpedo impact point falls within its splash
+sphere regardless of where on the ship hull the torpedo detonates.
 """
 from unittest.mock import patch
 
@@ -10,19 +15,27 @@ from engine.appc.subsystems import SensorSubsystem
 from engine.host_loop import _advance_combat
 
 
-def test_targeted_subsystem_takes_damage(galaxy_red, target_ship_at):
+def test_subsystem_in_splash_range_takes_damage(galaxy_red, target_ship_at):
+    """A subsystem centred on the ship and large enough to cover the hull
+    radius will be hit by any torpedo impact on that ship.
+
+    Target ship radius = 20.  Bridge centred at body (0,0,0) with
+    r_sub = 25 → splash threshold r_sub + r_hit >= 25.15.  The torpedo
+    hit point is always on or inside the bounding sphere (distance ≤ 20
+    from centre), so it falls well within the threshold.
+    """
     ship = galaxy_red
     target = target_ship_at(0, 200, 0, hull_max=10000.0)
 
     bridge = SensorSubsystem("Bridge")
     bridge.SetMaxCondition(500.0)
     bridge._parent_ship = target
-    bridge._position = TGPoint3(0, 5, 0)
-    bridge._radius = 5.0
-    target._children = [bridge]
+    bridge._position = TGPoint3(0, 0, 0)   # centroid
+    bridge._radius = 25.0                   # covers full bounding sphere
+    # Attach via the named slot that GetSubsystems() walks.
+    target._sensor_subsystem = bridge
 
     ship._target = target
-    ship._target_subsystem = bridge
 
     initial_bridge = bridge.GetCondition()
 

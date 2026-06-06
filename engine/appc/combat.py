@@ -50,6 +50,36 @@ def ray_sphere_entry(origin, direction, max_dist: float,
     )
 
 
+PHASER_DEFAULT_DAMAGE_RADIUS = 0.15
+"""Fallback splash radius (game units) used only when neither hardpoint nor
+payload defines a SetDamageRadiusFactor. Phaser hardpoints in stock SDK
+always write 0.15 explicitly, so this default is reached only by
+hand-authored weapons that forget to declare a radius.
+"""
+
+
+def weapon_splash_radius(hardpoint_weapon, payload_template) -> float:
+    """Resolve R_hit per spec §3.2.
+
+    hardpoint_weapon: WeaponProperty on the firing ship's hardpoint, or None.
+    payload_template: projectile-type template (e.g. PhotonTorpedo), or None
+                      for phasers / non-projectile weapons.
+
+    Returns the splash radius in game units. Hardpoint DRF overrides payload
+    DRF when both are set and non-zero; falls back to the phaser default
+    (0.15 GU) when neither is available.
+    """
+    if hardpoint_weapon is not None and hasattr(hardpoint_weapon, "GetDamageRadiusFactor"):
+        drf = hardpoint_weapon.GetDamageRadiusFactor()
+        if drf > 0.0:
+            return float(drf)
+    if payload_template is not None and hasattr(payload_template, "GetDamageRadiusFactor"):
+        drf = payload_template.GetDamageRadiusFactor()
+        if drf > 0.0:
+            return float(drf)
+    return PHASER_DEFAULT_DAMAGE_RADIUS
+
+
 def _resolve_hit_point(host, ship_instances, ship,
                        ray_origin, ray_direction,
                        max_dist: float, fallback_point):
@@ -124,6 +154,76 @@ def _body_frame_delta(ship, hit_point):
     )
 
 
+def _subsystem_world_position(ship, subsystem):
+    """Return the world-space position of `subsystem` on `ship`.
+
+    Per CLAUDE.md's column-vector convention, body->world is
+    `v_world = R · v_body`. SDK `TGPoint3.MultMatrixLeft(R)` already
+    computes that in place. We construct a fresh point to avoid
+    mutating the subsystem's stored position.
+
+    Legacy fakes without `GetWorldRotation` get identity R, so
+    `world_pos = ship_pos + body_pos`.
+    """
+    ship_pos = ship.GetWorldLocation()
+    body_pos = subsystem.GetPosition()
+    if not hasattr(ship, "GetWorldRotation"):
+        return TGPoint3(
+            ship_pos.x + body_pos.x,
+            ship_pos.y + body_pos.y,
+            ship_pos.z + body_pos.z,
+        )
+    R = ship.GetWorldRotation()
+    p = TGPoint3(body_pos.x, body_pos.y, body_pos.z)
+    p.MultMatrixLeft(R)
+    p.x += ship_pos.x
+    p.y += ship_pos.y
+    p.z += ship_pos.z
+    return p
+
+
+def _splash_weight(r_sub: float, r_hit: float, d: float) -> float:
+    """Linear falloff weight for splash damage attribution.
+
+    `r_sub`  — subsystem catchment radius
+    `r_hit`  — weapon splash radius
+    `d`      — distance from impact point to subsystem world position
+
+    Returns 1.0 when the impact is inside (or on the surface of) the
+    subsystem sphere, decays linearly to 0 at the combined-sphere edge,
+    and is exactly 0 at or beyond. A zero `r_hit` degenerate weapon
+    returns 0.0 with no division by zero.
+    """
+    if r_hit <= 0.0:
+        return 0.0
+    raw = (r_sub + r_hit - d) / r_hit
+    if raw <= 0.0:
+        return 0.0
+    if raw >= 1.0:
+        return 1.0
+    return raw
+
+
+def _pick_primary_subsystem_for_dispatch(allocations):
+    """Return the subsystem with the highest splash weight in
+    `allocations`, ties broken by first appearance, or None if the list
+    is empty or every weight is zero.
+
+    `allocations` is an iterable of `(subsystem, weight)` tuples
+    produced by the apply_hit resolver loop. The hit_feedback.dispatch
+    consumer wants a single subsystem so the per-stage severity
+    classifier (shield-only / hull-pen / critical-fail) can decide
+    which subsystem's state transition to report.
+    """
+    primary = None
+    best = 0.0
+    for sub, w in allocations:
+        if w > best:
+            best = w
+            primary = sub
+    return primary
+
+
 def _subsystem_state_flags(sub) -> tuple:
     """Snapshot (IsDamaged, IsDisabled, IsDestroyed) as a 3-tuple of bools,
     diffable against a later snapshot via :func:`_diff_state`.
@@ -161,62 +261,37 @@ def _diff_state(before: tuple, after: tuple):
     return None
 
 
-def pick_target_subsystem(ship, hit_point):
-    """Return the subsystem closest to ``hit_point`` in the ship's body
-    frame, gated by ``d <= 2 * sub.GetRadius()``. Walks every top-level
-    subsystem in ``ship.GetSubsystems()`` plus the ``_children`` of each
-    weapon-system parent. Hull is excluded from the walk and only
-    returned as the fallback when no candidate passes the gate.
+def _iter_subsystems(ship):
+    """Yield every leaf subsystem on `ship`, excluding the hull.
 
-    Falls back to ``ship.GetHull()`` if no subsystem is in range, or
-    ``None`` if there is no hull either.
+    Walks `ship.GetSubsystems()` and for each top-level subsystem also
+    yields the entries of its `_children` list (weapon-system parents
+    expose hardpoint children there). Falls back to the legacy
+    `GetNumChildSubsystems` / `GetChildSubsystem(i)` API for stub ships
+    that predate `GetSubsystems`.
 
-    Legacy fixture support: if ``ship`` lacks ``GetSubsystems``, walks
-    ``GetChildSubsystem(i)`` for ``i in range(GetNumChildSubsystems())``
-    so the pre-existing ``_FakeShip`` tests stay green.
+    Hull is excluded because the attribution resolver damages it
+    unconditionally outside the iteration loop.
     """
-    hull = ship.GetHull() if hasattr(ship, "GetHull") else None
+    hull = ship.GetHull()
 
-    # Build the candidate list. Hull is never iterated.
-    candidates: list = []
     if hasattr(ship, "GetSubsystems"):
         for s in ship.GetSubsystems():
             if s is None or s is hull:
                 continue
-            candidates.append(s)
-            # Hardpoint children mounted under weapon-system parents.
+            yield s
             children = getattr(s, "_children", None)
             if children:
-                candidates.extend(children)
-    else:
-        # Legacy fallback for _FakeShip-style stubs.
-        n = ship.GetNumChildSubsystems() if hasattr(ship, "GetNumChildSubsystems") else 0
-        for i in range(n):
-            s = ship.GetChildSubsystem(i)
-            if s is not None and s is not hull:
-                candidates.append(s)
+                for c in children:
+                    if c is not None and c is not hull:
+                        yield c
+        return
 
-    bx, by, bz = _body_frame_delta(ship, hit_point)
-
-    best = None
-    best_dist_sq = float("inf")
-    for sub in candidates:
-        pos = sub.GetPosition() if hasattr(sub, "GetPosition") else None
-        if pos is None:
-            continue
-        r = sub.GetRadius() if hasattr(sub, "GetRadius") else 0.0
-        dx = bx - pos.x
-        dy = by - pos.y
-        dz = bz - pos.z
-        d_sq = dx * dx + dy * dy + dz * dz
-        if d_sq > (2.0 * r) ** 2:
-            continue
-        if d_sq < best_dist_sq:
-            best = sub
-            best_dist_sq = d_sq
-    if best is not None:
-        return best
-    return hull
+    n = ship.GetNumChildSubsystems()
+    for i in range(n):
+        s = ship.GetChildSubsystem(i)
+        if s is not None and s is not hull:
+            yield s
 
 
 def _shield_face_from_hit_point(ship, hit_point) -> int:
@@ -239,99 +314,114 @@ def _shield_face_from_hit_point(ship, hit_point) -> int:
     return 4 if bx <= 0 else 5
 
 
-def apply_hit(ship, damage: float, hit_point, source, subsystem=None,
-              *, normal=None, host=None, ship_instances=None,
-              weapon_type: str | None = None) -> None:
-    """Route `damage` to `ship`: shields face first → picked subsystem
-    → hull bleed.  Then call hit_feedback.dispatch with the per-stage
-    absorbed breakdown + subsystem state transition + surface normal,
-    then broadcast WeaponHitEvent so per-ship and broadcast handlers
-    (MissionLib.FriendlyFireHandler) react.
+def apply_hit(ship, damage: float, hit_point, source, *,
+              normal=None, host=None, ship_instances=None,
+              weapon_type: str | None = None,
+              hardpoint_weapon=None, payload_template=None) -> None:
+    """Apply `damage` to `ship` per the spherical-splash attribution model.
 
-    normal — TGPoint3 surface normal at hit_point, or None if the
-             mesh trace missed. Threaded to hit_feedback.dispatch.
-    host, ship_instances — passed through to dispatch so it can
-             fire host.shield_hit (the shield-bubble splash on
-             SHIELD severity).
-    weapon_type — "phaser" / "torpedo" / None. Consumed by dispatch
-             to match SDK Effects.py audio semantics: phaser-on-shields
-             is silent (stock BC has no PhaserShieldHit handler);
-             torpedo-on-shields plays from g_lsWeaponExplosions
-             (matching Effects.TorpedoShieldHit).
+    Flow:
+    1. Resolve splash radius `R_hit` from (hardpoint_weapon, payload_template).
+    2. Apply shield attenuation on the impact-direction face.
+    3. Damage the hull at full post-shield damage (unconditional).
+    4. Walk every non-hull subsystem; for each whose damage sphere
+       intersects the splash sphere, apply `D · w_i` independently.
+    5. Dispatch hit_feedback with shield / subsystem / hull totals and
+       the highest-weight subsystem as the "primary" for severity
+       classification.
+    6. Broadcast WeaponHitEvent carrying hit point, normal, splash
+       radius, and primary subsystem.
 
-    Dispatch is wrapped in try/except so a renderer or audio crash
-    cannot suppress the WeaponHitEvent broadcast.
+    Kwargs:
+        normal              — TGPoint3 surface normal at hit_point (mesh
+                              trace), or None.
+        host, ship_instances — passed to hit_feedback.dispatch.
+        weapon_type         — "phaser" / "torpedo" / None. Used by dispatch
+                              for audio routing.
+        hardpoint_weapon    — WeaponProperty on the firing ship's hardpoint
+                              (used to resolve R_hit). None for legacy callers.
+        payload_template    — projectile-type template (used to resolve R_hit
+                              when hardpoint DRF is not set). None for phasers.
     """
     from engine.appc.events import WeaponHitEvent
     from engine.appc import hit_feedback
     import App
 
-    if subsystem is None:
-        subsystem = pick_target_subsystem(ship, hit_point)
+    r_hit = weapon_splash_radius(hardpoint_weapon, payload_template)
 
+    # 1. Shields take the first bite. Identical to the pre-splash flow.
     remaining = float(damage)
     absorbed_shields = 0.0
-    absorbed_subsystem = 0.0
-    absorbed_hull = 0.0
-    sub_transition = None
-    hull = ship.GetHull() if hasattr(ship, "GetHull") else None
-
-    # 1. Shields take it first — but only if the generator is powered
-    #    (IsOn) AND not offline (disabled / destroyed via subsystem
-    #    damage). At green alert the generator is down; once condition
-    #    drops below DisabledPercentage the subsystem is offline. Either
-    #    way damage flows straight to the picked subsystem / hull bleed.
-    #    BC's bypass set: see combat-and-damage.md "Shield bypass paths".
-    #    Fakes that don't implement IsOn default to on, so legacy unit
-    #    tests keep working.
     shields = ship.GetShields() if hasattr(ship, "GetShields") else None
     shields_on = bool(getattr(shields, "IsOn", lambda: 1)()) if shields is not None else False
-    # Disabled/destroyed defaults to 0 so fakes without these predicates
-    # behave as before (online when IsOn).
     shields_disabled = bool(getattr(shields, "IsDisabled", lambda: 0)()) if shields is not None else False
     shields_destroyed = bool(getattr(shields, "IsDestroyed", lambda: 0)()) if shields is not None else False
     shields_online = (shields is not None and shields_on
                       and not shields_disabled and not shields_destroyed)
     if shields_online and hasattr(shields, "ApplyDamage"):
         face = _shield_face_from_hit_point(ship, hit_point)
-        before_shields = remaining
+        before = remaining
         remaining = shields.ApplyDamage(face, remaining)
-        absorbed_shields = before_shields - remaining
+        absorbed_shields = before - remaining
 
-    # 2. Bleed remainder to picked subsystem (skip if subsystem is the hull —
-    #    the hull-bleed branch below handles that).
-    if remaining > 0.0 and subsystem is not None and subsystem is not hull \
-            and hasattr(ship, "DamageSystem"):
-        before_flags = _subsystem_state_flags(subsystem)
-        current = subsystem.GetCondition() if hasattr(subsystem, "GetCondition") else remaining
-        absorb = min(remaining, current)
-        ship.DamageSystem(subsystem, absorb)
-        absorbed_subsystem = absorb
-        remaining -= absorb
-        after_flags = _subsystem_state_flags(subsystem)
-        sub_transition = _diff_state(before_flags, after_flags)
+    post_shield = remaining
+    absorbed_hull = 0.0
+    absorbed_subsystem_total = 0.0
+    allocations: list = []  # (subsystem, weight) for primary picking
+    primary_transition = None
 
-    # 3. Bleed final remainder to hull.
-    if remaining > 0.0 and hull is not None and hasattr(ship, "DamageSystem"):
-        ship.DamageSystem(hull, remaining)
-        absorbed_hull = remaining
-        remaining = 0.0
+    hull = ship.GetHull() if hasattr(ship, "GetHull") else None
+
+    if post_shield > 0.0:
+        # 2. Hull always takes full post-shield damage.
+        if hull is not None and hasattr(ship, "DamageSystem"):
+            ship.DamageSystem(hull, post_shield)
+            absorbed_hull = post_shield
+
+        # 3. Each non-hull subsystem within the splash sphere takes a
+        #    weighted share independently. Total can exceed post_shield.
+        for sub in _iter_subsystems(ship):
+            pos = sub.GetPosition() if hasattr(sub, "GetPosition") else None
+            if pos is None:
+                continue
+            r_sub = sub.GetRadius() if hasattr(sub, "GetRadius") else 0.0
+            h_world = _subsystem_world_position(ship, sub)
+            dx = hit_point.x - h_world.x
+            dy = hit_point.y - h_world.y
+            dz = hit_point.z - h_world.z
+            d = (dx * dx + dy * dy + dz * dz) ** 0.5
+            if d >= r_sub + r_hit:
+                continue
+            w = _splash_weight(r_sub, r_hit, d)
+            if w <= 0.0:
+                continue
+            allocations.append((sub, w))
+            amount = post_shield * w
+            if hasattr(ship, "DamageSystem"):
+                before_flags = _subsystem_state_flags(sub)
+                ship.DamageSystem(sub, amount)
+                absorbed_subsystem_total += amount
+                after_flags = _subsystem_state_flags(sub)
+                transition = _diff_state(before_flags, after_flags)
+                if transition is not None and primary_transition is None:
+                    primary_transition = transition
+
+    primary_subsystem = _pick_primary_subsystem_for_dispatch(allocations)
 
     # 4. Fan out VFX + audio + camera shake. Errors swallowed so the
     #    downstream WeaponHitEvent broadcast always runs.
     try:
         hit_feedback.dispatch(
             ship=ship, source=source, point=hit_point, normal=normal,
-            damage=damage, subsystem=subsystem,
+            damage=damage, subsystem=primary_subsystem,
             absorbed_shields=absorbed_shields,
-            absorbed_subsystem=absorbed_subsystem,
+            absorbed_subsystem=absorbed_subsystem_total,
             absorbed_hull=absorbed_hull,
-            sub_transition=sub_transition,
+            sub_transition=primary_transition,
             host=host, ship_instances=ship_instances,
             weapon_type=weapon_type,
         )
     except Exception:
-        # Dispatch failures must not suppress mission handlers below.
         pass
 
     # 5. Broadcast WeaponHitEvent.
@@ -340,7 +430,9 @@ def apply_hit(ship, damage: float, hit_point, source, subsystem=None,
     evt.SetTarget(ship)
     evt.SetDamage(damage)
     evt.SetHitPoint(hit_point)
-    evt.SetSubsystem(subsystem)
+    evt.SetNormal(normal)
+    evt.SetRadius(r_hit)
+    evt.SetSubsystem(primary_subsystem)
     if isinstance(ship, App.TGEventHandlerObject):
         evt.SetDestination(ship)
     App.g_kEventManager.AddEvent(evt)

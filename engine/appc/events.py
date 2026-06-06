@@ -93,7 +93,9 @@ class WeaponHitEvent(TGEvent):
     triggers XO dialogue when the player damages a friendly NPC.
 
     Inherits TGEvent's _source / Set/GetSource for the firing ship; the
-    weapon-specific surface adds target, damage, hit-point, subsystem.
+    weapon-specific surface adds target, damage, hit-point, subsystem,
+    surface normal, and splash radius (the radius the attribution
+    resolver used for this hit).
     """
     def __init__(self):
         super().__init__()
@@ -102,6 +104,8 @@ class WeaponHitEvent(TGEvent):
         self._damage: float = 0.0
         self._hit_point = None
         self._subsystem = None
+        self._normal = None
+        self._radius: float = 0.0
 
     def GetTarget(self):              return self._target
     def SetTarget(self, tgt) -> None: self._target = tgt
@@ -111,6 +115,10 @@ class WeaponHitEvent(TGEvent):
     def SetHitPoint(self, p) -> None: self._hit_point = p
     def GetSubsystem(self):           return self._subsystem
     def SetSubsystem(self, s) -> None: self._subsystem = s
+    def GetNormal(self):              return self._normal
+    def SetNormal(self, n) -> None:   self._normal = n
+    def GetRadius(self) -> float:     return self._radius
+    def SetRadius(self, r) -> None:   self._radius = float(r)
 
     def GetFiringObject(self):
         """SDK alias for GetSource() — SelectTarget's DamageEvent

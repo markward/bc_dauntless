@@ -14,12 +14,8 @@ class _CapturingHost:
     test can prove it propagated through to apply_hit's hit_point."""
     SURFACE_POINT = (12.5, -3.0, 7.25)
 
-    def __init__(self):
-        self.shield_hits = []
     def ray_trace_mesh(self, iid, origin, direction, max_dist):
         return (self.SURFACE_POINT, (0.0, 0.0, -1.0), 1.0)
-    def shield_hit(self, instance_id, point, rgba, intensity):
-        self.shield_hits.append(point)
     def __getattr__(self, name):
         # set_torpedoes / set_hit_vfx / set_phaser_beams are touched by
         # _advance_combat; provide silent no-op accessors so the call
@@ -55,7 +51,7 @@ def test_torpedo_hit_uses_mesh_trace_point():
     # Patch apply_hit to capture the hit_point it receives.
     import engine.appc.combat as combat
 
-    def spy(ship, damage, hit_point, source, subsystem=None):
+    def spy(ship, damage, hit_point, source, **kwargs):
         captured["hit_point"] = hit_point
 
     with patch.object(combat, "apply_hit", spy):
@@ -68,8 +64,3 @@ def test_torpedo_hit_uses_mesh_trace_point():
     assert p.x == pytest.approx(_CapturingHost.SURFACE_POINT[0])
     assert p.y == pytest.approx(_CapturingHost.SURFACE_POINT[1])
     assert p.z == pytest.approx(_CapturingHost.SURFACE_POINT[2])
-
-    # shield_hit must receive the same resolved point so the shield-pass
-    # splash lands on the hull, not the post-advance bounding-sphere fall-through.
-    assert len(host.shield_hits) == 1
-    assert host.shield_hits[0] == _CapturingHost.SURFACE_POINT
