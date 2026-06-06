@@ -191,6 +191,39 @@ def _diff_state(before: tuple, after: tuple):
     return None
 
 
+def _iter_subsystems(ship):
+    """Yield every leaf subsystem on `ship`, excluding the hull.
+
+    Walks `ship.GetSubsystems()` and for each top-level subsystem also
+    yields the entries of its `_children` list (weapon-system parents
+    expose hardpoint children there). Falls back to the legacy
+    `GetNumChildSubsystems` / `GetChildSubsystem(i)` API for stub ships
+    that predate `GetSubsystems`.
+
+    Hull is excluded because the attribution resolver damages it
+    unconditionally outside the iteration loop.
+    """
+    hull = ship.GetHull() if hasattr(ship, "GetHull") else None
+
+    if hasattr(ship, "GetSubsystems"):
+        for s in ship.GetSubsystems():
+            if s is None or s is hull:
+                continue
+            yield s
+            children = getattr(s, "_children", None)
+            if children:
+                for c in children:
+                    if c is not None and c is not hull:
+                        yield c
+        return
+
+    n = ship.GetNumChildSubsystems() if hasattr(ship, "GetNumChildSubsystems") else 0
+    for i in range(n):
+        s = ship.GetChildSubsystem(i)
+        if s is not None and s is not hull:
+            yield s
+
+
 def pick_target_subsystem(ship, hit_point):
     """Return the subsystem closest to ``hit_point`` in the ship's body
     frame, gated by ``d <= 2 * sub.GetRadius()``. Walks every top-level
