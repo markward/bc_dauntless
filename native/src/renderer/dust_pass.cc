@@ -72,22 +72,6 @@ glm::vec3 wrap_local_for_test(glm::vec3 particle_pos,
     return local;
 }
 
-glm::vec3 sun_push_offset_for_test(glm::vec3 world_pos,
-                                   glm::vec3 sun_pos,
-                                   float sun_radius,
-                                   float sun_push) {
-    if (sun_push <= 0.0f) return glm::vec3(0.0f);
-    glm::vec3 to_part = world_pos - sun_pos;
-    float dist = glm::length(to_part);
-    float surf_dist = dist - sun_radius;
-    const float kSunPushRange = 100.0f;   // matches dust.vert literal
-    if (surf_dist < kSunPushRange && dist > 1e-4f) {
-        float falloff = 1.0f - glm::clamp(surf_dist / kSunPushRange, 0.0f, 1.0f);
-        return (to_part / dist) * sun_push * falloff;
-    }
-    return glm::vec3(0.0f);
-}
-
 namespace {
 
 // Closeness ramp: 1 at/inside the body surface, smoothly 0 by
@@ -114,14 +98,14 @@ DustInfluence compute_dust_influence(
     const std::vector<glm::vec4>& planets) {
     DustInfluence out;
 
-    // Nearest (greatest-closeness) sun drives push + tint + sun density.
+    // Nearest (greatest-closeness) sun drives drift + tint + sun density.
     float best_sun_close = 0.0f;
+    glm::vec3 best_sun_pos(0.0f);
     for (const auto& s : suns) {
         const float c = body_closeness(camera_pos, s.position, s.radius);
         if (c > best_sun_close) {
             best_sun_close = c;
-            out.sun_pos    = s.position;
-            out.sun_radius = s.radius;
+            best_sun_pos   = s.position;
         }
     }
 
@@ -142,13 +126,20 @@ DustInfluence compute_dust_influence(
             1.0f + best_planet_close * (DustPass::kPlanetPeakMult - 1.0f);
     }
 
-    // Tint scales with nearest-sun closeness.
+    // Tint scales with nearest-sun closeness; sun_tint doubles as the
+    // solar-wind drift rate (both are "how close are we to the sun").
     out.sun_tint = best_sun_close;
 
-    // Push strength: enabled (kSunPushMax) only when a sun is in range;
-    // the per-particle falloff vs the 100 GU surface range is in the
-    // vertex shader. 0 here means "no push".
-    out.sun_push = (best_sun_close > 0.0f) ? DustPass::kSunPushMax : 0.0f;
+    // Outward drift direction: radially away from the nearest sun
+    // (sun → camera). Unit-length when a sun is in range, else zero.
+    // A single direction for the whole 40 GU dust volume is exact at
+    // sun scale (radii are thousands of GU) and keeps the drift a clean
+    // translation that the toroidal wrap recycles seamlessly.
+    if (best_sun_close > 0.0f) {
+        const glm::vec3 outward = camera_pos - best_sun_pos;
+        const float len = glm::length(outward);
+        if (len > 1e-4f) out.sun_dir = outward / len;
+    }
 
     return out;
 }
@@ -225,10 +216,21 @@ void DustPass::render(const scenegraph::Camera& camera,
 
     const DustInfluence inf = compute_dust_influence(camera.eye, suns, planets);
 
-    shader.set_vec3 ("u_sun_pos",    inf.sun_pos);
-    shader.set_float("u_sun_radius", inf.sun_radius);
-    shader.set_float("u_sun_push",   inf.sun_push);
-    shader.set_float("u_sun_tint",   inf.sun_tint);
+    // Solar-wind drift: advance the accumulated drift distance by the
+    // proximity-scaled speed, wrapped to the 2R period so it stays precise
+    // over long sessions. Folded into the toroidal wrap in the shader as a
+    // world-space translation, so dust streams away from the sun and
+    // recycles seamlessly. dt is guarded against the same abnormal-frame
+    // window the velocity streak uses.
+    if (dt_seconds > 0.0f && dt_seconds < kVelocityClampSeconds) {
+        sun_drift_phase_ += kSunDriftSpeed * inf.sun_tint * dt_seconds;
+        const float period = 2.0f * kVolumeRadius;
+        sun_drift_phase_ = std::fmod(sun_drift_phase_, period);
+    }
+    const glm::vec3 sun_drift = inf.sun_dir * sun_drift_phase_;
+
+    shader.set_vec3 ("u_sun_drift", sun_drift);
+    shader.set_float("u_sun_tint",  inf.sun_tint);
 
     int draw_count = static_cast<int>(
         std::lround(static_cast<float>(kParticleCount) * inf.density_mult));

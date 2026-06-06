@@ -112,32 +112,48 @@ multiplier is used and the planet multiplier is ignored; otherwise the
 planet multiplier is used. (Matches the "the sun" combine rule — the sun
 dominates when both apply.)
 
-### 4. Push away from suns (absolute 100 GU)
+### 4. Push away from suns — animated solar-wind drift
 
-The **nearest sun** (greatest camera closeness) supplies `u_sun_pos` and
-`u_sun_radius` to the vertex shader. For each particle at world position
-`p`:
+> **Revised 2026-06-06 after in-game testing.** The original design used a
+> static radial displacement gated to within 100 GU of the sun *surface*.
+> That was a dead effect: BC sun radii are **1000–7000 GU**, so the camera
+> only enters a 100 GU surface band by flying into the lethal corona — in
+> normal flight the push never fired. And even when it did, a one-time
+> constant offset of a uniform, camera-anchored, toroidally-wrapped dust
+> field is imperceptible (no clearing, no motion). Replaced with an
+> **animated outward drift** over the same radius-relative ramp as density
+> and tint (which *were* visibly working).
 
-```
-to_part   = p - u_sun_pos
-dir       = normalize(to_part)
-surf_dist = length(to_part) - u_sun_radius        // distance from sun surface
-if (surf_dist < kSunPushRange) {                   // kSunPushRange = 100 GU
-    falloff = 1 - clamp(surf_dist / kSunPushRange, 0, 1)
-    p += dir * kSunPushMax * falloff               // kSunPushMax = 8 GU
-}
-```
+The dust field already recycles seamlessly via the camera-relative
+toroidal wrap in `dust.vert` — that is why flying through it reads as
+motion. The drift reuses that exact mechanism: a time-accumulated outward
+translation folded **inside** the wrap, so the whole local field streams
+away from the sun and recycles with no pop and no fade.
 
-Push is applied to the wrapped world position **before** the billboard
-corner/smear offset. Distance is measured from the sun **surface** (per
-approval). The "is a sun in range" gate is folded into the `u_sun_push`
-uniform: it carries `kSunPushMax` when a sun is in range and `0`
-otherwise, so the shader needs no separate flag (in the pseudocode above,
-`kSunPushMax` is `u_sun_push`).
+- **Direction.** `compute_dust_influence` emits `sun_dir` = the unit vector
+  from the nearest sun toward the camera (radially outward), or zero when
+  no sun is in range. A *single* direction for the whole 40 GU dust volume
+  is exact at sun scale (radii are thousands of GU, so the radial direction
+  is constant across the field to <1°) and keeps the drift a clean
+  translation that the wrap recycles perfectly. (A per-particle radial
+  direction would make particles converge/diverge and break the wrap.)
+- **Speed / ramp.** Drift speed = `kSunDriftSpeed` (GU/s) × `sun_tint`,
+  where `sun_tint` is the nearest-sun closeness — the same radius-relative
+  ramp (1 at the surface, 0 by `kInfluenceRadii × radius`) used by density
+  and tint. So the drift ramps in over a reachable zone and is fastest near
+  the surface.
+- **Accumulation (CPU).** `DustPass` keeps `sun_drift_phase_` (GU), advanced
+  each frame by `kSunDriftSpeed × sun_tint × dt` and wrapped to
+  `[0, 2·kVolumeRadius)` for long-session precision (and gated by the same
+  abnormal-`dt` guard the velocity streak uses). The per-frame
+  `u_sun_drift = sun_dir × sun_drift_phase_` is sent to the shader.
+- **Shader.** The wrap line becomes
+  `local = mod(a_particle.xyz − u_camera_pos + u_sun_drift + R, 2R) − R`.
+  When no sun is in range `u_sun_drift = 0`, reproducing the original
+  behaviour exactly (no regression away from suns).
 
-`kSunPushMax = 8 GU` sits inside the 40 GU volume radius so pushed
-particles stay within the field. `kSunPushRange = 100 GU` is absolute
-(not radius-relative), per the requirement.
+`kSunDriftSpeed = 25 GU/s` at the surface — a speck crosses the ~80 GU
+field in a few seconds, reading as a steady solar-wind stream. Tunable.
 
 ### 5. Orange tint near suns
 
@@ -158,15 +174,12 @@ and stays consistent with the global density ramp. Planets do not tint.
 
 | Uniform | Stage | Meaning |
 |---|---|---|
-| `u_sun_pos` | vert | nearest sun centre (world) |
-| `u_sun_radius` | vert | nearest sun radius |
-| `u_sun_push` | vert | push strength (GU), 0 when no sun in range |
+| `u_sun_drift` | vert | accumulated outward drift translation (GU), folded into the wrap; zero when no sun in range |
 | `u_sun_tint` | frag | orange-mix factor ∈ [0,1] |
 
-(Density needs no uniform — it is the per-frame `instancecount`.)
-
-(`u_sun_push` folds `kSunPushMax` and the "is a sun in range" gate into
-one value so the shader needs no separate flag.)
+(Density needs no uniform — it is the per-frame `instancecount`. `u_sun_drift`
+carries both direction and accumulated distance, and being zero off-sun also
+serves as the "no sun in range" gate, so the shader needs no separate flag.)
 
 ### New tunable constants (`dust_pass.h`)
 
@@ -174,8 +187,7 @@ one value so the shader needs no separate flag.)
 kMaxDensityMult  = 10     // overseed factor + sun density ceiling
 kPlanetPeakMult  = 5
 kInfluenceRadii  = 5.0f   // body-radius multiples for closeness ramp
-kSunPushRange    = 100.0f // GU, absolute
-kSunPushMax      = 8.0f   // GU
+kSunDriftSpeed   = 25.0f  // GU/s outward drift at the sun surface (closeness 1)
 ```
 
 `kParticleCount` stays 512 as the *base* visible target; the seeded count
@@ -187,19 +199,22 @@ becomes `kParticleCount * kMaxDensityMult`.
   overseeded count produces the expected number of records.
 - Factor the CPU proximity math into a **pure free function** (e.g.
   `compute_dust_influence(camera_pos, suns, planets) ->
-  {density_mult, sun_pos, sun_radius, sun_push, sun_tint}`) so it is
-  unit-testable without a GL context. Cover:
+  {density_mult, sun_dir, sun_tint}`) so it is unit-testable without a GL
+  context. Cover:
   - planet ramp: 1× far, 5× at surface, monotonic in between;
   - sun ramp: 1× far, 10× at surface;
   - sun precedence: sun wins when both bodies are in range;
-  - push falloff: 0 beyond 100 GU of the surface, max near the surface,
-    `u_sun_push = 0` when no sun in range;
-  - tint: 0 far, → 1 at a sun surface.
-- The existing `wrap_local_for_test` regression guard stays.
+  - drift direction: `sun_dir` is the unit outward (sun → camera) vector
+    when a sun is in range, zero when none is; planets never set it;
+  - drift rate / tint: `sun_tint` is 1 at the surface, decreasing with
+    distance, 0 beyond the influence zone.
+- The animated drift itself (time accumulation + wrap fold) is visual and
+  not unit-tested; the existing `wrap_local_for_test` regression guard
+  stays as the wrap reference.
 
 ## Out of scope
 
-- Planet tint / planet push (per requirement, planets affect density
+- Planet tint / planet drift (per requirement, planets affect density
   only).
 - Per-particle density or tint gradients across the field (global scalar
   is intentional).

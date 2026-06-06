@@ -82,7 +82,7 @@ TEST(DustInfluence, NoBodiesIsBaseline) {
     const auto inf = renderer::compute_dust_influence(
         glm::vec3(0.0f), {}, {});
     EXPECT_FLOAT_EQ(inf.density_mult, 1.0f);
-    EXPECT_FLOAT_EQ(inf.sun_push, 0.0f);
+    EXPECT_FLOAT_EQ(glm::length(inf.sun_dir), 0.0f);  // no drift
     EXPECT_FLOAT_EQ(inf.sun_tint, 0.0f);
 }
 
@@ -96,7 +96,7 @@ TEST(DustInfluence, FarBodiesAreBaseline) {
     const auto inf = renderer::compute_dust_influence(
         glm::vec3(0.0f), {sun}, planets);
     EXPECT_FLOAT_EQ(inf.density_mult, 1.0f);
-    EXPECT_FLOAT_EQ(inf.sun_push, 0.0f);
+    EXPECT_FLOAT_EQ(glm::length(inf.sun_dir), 0.0f);  // no drift
     EXPECT_FLOAT_EQ(inf.sun_tint, 0.0f);
 }
 
@@ -108,8 +108,8 @@ TEST(DustInfluence, PlanetSurfaceHitsPeakDensity) {
     const auto inf = renderer::compute_dust_influence(
         glm::vec3(30.0f, 0.0f, 0.0f), {}, planets);
     EXPECT_FLOAT_EQ(inf.density_mult, renderer::DustPass::kPlanetPeakMult);
-    EXPECT_FLOAT_EQ(inf.sun_tint, 0.0f);   // planets never tint
-    EXPECT_FLOAT_EQ(inf.sun_push, 0.0f);   // planets never push
+    EXPECT_FLOAT_EQ(inf.sun_tint, 0.0f);              // planets never tint
+    EXPECT_FLOAT_EQ(glm::length(inf.sun_dir), 0.0f);  // planets never drift
 }
 
 TEST(DustInfluence, SunSurfaceHitsPeakDensityAndTint) {
@@ -120,8 +120,11 @@ TEST(DustInfluence, SunSurfaceHitsPeakDensityAndTint) {
         glm::vec3(0.0f, 50.0f, 0.0f), {sun}, {});
     EXPECT_FLOAT_EQ(inf.density_mult, renderer::DustPass::kSunPeakMult);
     EXPECT_FLOAT_EQ(inf.sun_tint, 1.0f);
-    EXPECT_FLOAT_EQ(inf.sun_push, renderer::DustPass::kSunPushMax);
-    EXPECT_FLOAT_EQ(inf.sun_radius, 50.0f);
+    // Drift direction is the unit vector pointing outward (sun -> camera = +Y).
+    EXPECT_NEAR(inf.sun_dir.x, 0.0f, 1e-5f);
+    EXPECT_NEAR(inf.sun_dir.y, 1.0f, 1e-5f);
+    EXPECT_NEAR(inf.sun_dir.z, 0.0f, 1e-5f);
+    EXPECT_NEAR(glm::length(inf.sun_dir), 1.0f, 1e-5f);
 }
 
 TEST(DustInfluence, DensityIsMonotonicWithDistance) {
@@ -153,46 +156,44 @@ TEST(DustInfluence, SunWinsOverPlanetWhenBothInRange) {
     EXPECT_FLOAT_EQ(inf.density_mult, renderer::DustPass::kSunPeakMult);
 }
 
-TEST(DustPushMirror, ZeroPushGivesNoOffset) {
-    const auto off = renderer::sun_push_offset_for_test(
-        glm::vec3(0.0f, 60.0f, 0.0f), glm::vec3(0.0f), 50.0f, 0.0f);
-    EXPECT_FLOAT_EQ(glm::length(off), 0.0f);
+TEST(DustDrift, OutwardDirectionPointsAwayFromSun) {
+    // Camera offset from the sun along an arbitrary axis; sun_dir must be
+    // the unit vector from sun toward camera (radially outward).
+    renderer::SunDescriptor sun;
+    sun.position = glm::vec3(100.0f, 200.0f, -50.0f);
+    sun.radius   = 50.0f;
+    const glm::vec3 cam(100.0f, 230.0f, -50.0f);   // 30 GU along +Y of sun
+    const auto inf = renderer::compute_dust_influence(cam, {sun}, {});
+    EXPECT_NEAR(glm::length(inf.sun_dir), 1.0f, 1e-5f);
+    // Outward (sun -> camera) is +Y here.
+    EXPECT_NEAR(inf.sun_dir.x, 0.0f, 1e-5f);
+    EXPECT_NEAR(inf.sun_dir.y, 1.0f, 1e-5f);
+    EXPECT_NEAR(inf.sun_dir.z, 0.0f, 1e-5f);
 }
 
-TEST(DustPushMirror, MaxPushAtSurfacePointsOutward) {
-    // Particle just at the sun surface along +Y; push should be ~kSunPushMax
-    // and point radially outward (+Y).
-    const float r = 50.0f;
-    const float push = renderer::DustPass::kSunPushMax;
-    const auto off = renderer::sun_push_offset_for_test(
-        glm::vec3(0.0f, r, 0.0f), glm::vec3(0.0f), r, push);
-    EXPECT_NEAR(off.x, 0.0f, 1e-4f);
-    EXPECT_GT(off.y, 0.0f);                       // outward
-    EXPECT_NEAR(glm::length(off), push, 1e-3f);   // full falloff at surface
+TEST(DustDrift, NoSunMeansNoDriftDirection) {
+    // Sun present but far out of range => no drift direction.
+    renderer::SunDescriptor sun;
+    sun.position = glm::vec3(0.0f, 50000.0f, 0.0f);
+    sun.radius   = 50.0f;
+    const auto inf = renderer::compute_dust_influence(
+        glm::vec3(0.0f), {sun}, {});
+    EXPECT_FLOAT_EQ(glm::length(inf.sun_dir), 0.0f);
 }
 
-TEST(DustPushMirror, ZeroBeyond100GUFromSurface) {
-    const float r = 50.0f;
-    // 150 GU from centre => 100 GU from surface => exactly at the edge,
-    // falloff 0; 200 GU from centre => well beyond => 0.
-    const auto edge = renderer::sun_push_offset_for_test(
-        glm::vec3(0.0f, r + 100.0f, 0.0f), glm::vec3(0.0f), r,
-        renderer::DustPass::kSunPushMax);
-    EXPECT_NEAR(glm::length(edge), 0.0f, 1e-4f);
-    const auto beyond = renderer::sun_push_offset_for_test(
-        glm::vec3(0.0f, r + 200.0f, 0.0f), glm::vec3(0.0f), r,
-        renderer::DustPass::kSunPushMax);
-    EXPECT_FLOAT_EQ(glm::length(beyond), 0.0f);
-}
-
-TEST(DustPushMirror, FalloffDecreasesWithDistance) {
-    const float r = 50.0f;
-    const float push = renderer::DustPass::kSunPushMax;
-    const float at_surface = glm::length(renderer::sun_push_offset_for_test(
-        glm::vec3(0.0f, r + 10.0f, 0.0f), glm::vec3(0.0f), r, push));
-    const float farther = glm::length(renderer::sun_push_offset_for_test(
-        glm::vec3(0.0f, r + 60.0f, 0.0f), glm::vec3(0.0f), r, push));
+TEST(DustDrift, DriftRateMatchesClosenessRamp) {
+    // sun_tint doubles as the drift rate: 1 at the surface, decreasing
+    // with distance, 0 beyond the influence zone.
+    renderer::SunDescriptor sun;
+    sun.position = glm::vec3(0.0f);
+    sun.radius   = 50.0f;
+    const float at_surface = renderer::compute_dust_influence(
+        glm::vec3(0.0f, 50.0f, 0.0f), {sun}, {}).sun_tint;
+    const float farther = renderer::compute_dust_influence(
+        glm::vec3(0.0f, 150.0f, 0.0f), {sun}, {}).sun_tint;
+    EXPECT_FLOAT_EQ(at_surface, 1.0f);
     EXPECT_GT(at_surface, farther);
+    EXPECT_GT(farther, 0.0f);
 }
 
 TEST(DustInfluence, TintRampIsBoundedAndMonotonic) {

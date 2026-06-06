@@ -18,18 +18,20 @@ namespace renderer {
 /// Pure data; produced by compute_dust_influence (no GL).
 struct DustInfluence {
     float     density_mult = 1.0f;           // [1, kMaxDensityMult]
-    glm::vec3 sun_pos      = glm::vec3(0.0f);// nearest sun centre (world)
-    float     sun_radius   = 0.0f;           // nearest sun radius
-    float     sun_push     = 0.0f;           // GU; 0 when no sun in range
-    float     sun_tint     = 0.0f;           // [0,1] orange-mix factor
+    // Unit world-space direction pointing radially OUTWARD from the
+    // nearest sun (sun → camera). Zero when no sun is in range. Drives the
+    // animated solar-wind drift; the drift rate is sun_tint (closeness).
+    glm::vec3 sun_dir      = glm::vec3(0.0f);
+    float     sun_tint     = 0.0f;           // [0,1] sun closeness: orange-mix factor AND drift rate
 };
 
-/// Evaluate density/push/tint response for the camera against the active
+/// Evaluate density/tint/drift response for the camera against the active
 /// suns and planets. Pure function — no GL, fully unit-testable.
 ///
 /// `planets` are packed as vec4(x, y, z, radius). Density uses the
 /// strongest body: a sun in range wins over any planet (spec §2-3 "sun
-/// precedence"). Push and tint use the nearest (greatest-closeness) sun.
+/// precedence"). Tint and the outward drift direction use the nearest
+/// (greatest-closeness) sun.
 DustInfluence compute_dust_influence(
     const glm::vec3& camera_pos,
     const std::vector<SunDescriptor>& suns,
@@ -59,15 +61,6 @@ std::vector<glm::vec4> generate_dust_particles(std::uint32_t seed,
 glm::vec3 wrap_local_for_test(glm::vec3 particle_pos,
                               glm::vec3 camera_pos,
                               float radius);
-
-/// C++ mirror of the GLSL sun-push formula in dust.vert. Returns the
-/// radial offset added to a particle's world position. Regression guard;
-/// the shader is the source of truth. push_range matches kSunPushRange
-/// (100 GU) in the shader's hardcoded literal.
-glm::vec3 sun_push_offset_for_test(glm::vec3 world_pos,
-                                   glm::vec3 sun_pos,
-                                   float sun_radius,
-                                   float sun_push);
 
 class DustPass {
 public:
@@ -100,12 +93,13 @@ public:
     static constexpr float kPlanetPeakMult       = 5.0f;   // density near planets
     static constexpr float kSunPeakMult          = 10.0f;  // density near suns
     // Closeness ramps from 1 at a body's surface to 0 at this multiple of
-    // its radius.
+    // its radius. Used by density, tint, AND the solar-wind drift.
     static constexpr float kInfluenceRadii       = 5.0f;
-    // Sun push: absolute 100 GU from the sun SURFACE, max displacement 8 GU
-    // (inside the 40 GU volume so pushed specks stay in-field).
-    static constexpr float kSunPushRange         = 100.0f; // GU, absolute
-    static constexpr float kSunPushMax           = 8.0f;   // GU
+    // Solar-wind drift: dust streams radially away from the nearest sun.
+    // Speed (GU/s) at the surface (closeness 1); scales down by closeness
+    // so it ramps in over the radius-relative influence zone. Folded into
+    // the toroidal wrap, so the field recycles seamlessly at any speed.
+    static constexpr float kSunDriftSpeed        = 25.0f;  // GU/s at closeness 1
     static constexpr float kVelocityClampSeconds = 0.1f;        // dt guard
     static constexpr std::uint32_t kSeed         = 0xD057C0DEu;
 
@@ -137,6 +131,10 @@ private:
     glm::vec3  prev_eye_     = glm::vec3(0.0f);
     bool       have_prev_    = false;
     int        particle_count_ = kSeededCount;
+    // Accumulated solar-wind drift distance (GU), wrapped to [0, 2*kVolumeRadius)
+    // so it stays precise over long sessions. Multiplied by the outward
+    // direction and folded into the toroidal wrap each frame.
+    float      sun_drift_phase_ = 0.0f;
 
     // GL objects, populated in initialize_gl(). 0 means "not yet created".
     unsigned int vao_              = 0;
