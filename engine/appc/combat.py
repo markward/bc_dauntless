@@ -5,7 +5,7 @@ update_all reports a torpedo hit.  Routes damage shields-face → picked
 subsystem → hull bleed, then broadcasts WeaponHitEvent so mission
 handlers (FriendlyFireHandler etc.) see the hit.
 """
-from engine.appc.math import TGPoint3
+from engine.appc.math import TGMatrix3, TGPoint3
 
 
 def sphere_hit(point, center, radius: float) -> bool:
@@ -152,6 +152,34 @@ def _body_frame_delta(ship, hit_point):
         dx_w * cy.x + dy_w * cy.y + dz_w * cy.z,
         dx_w * cz.x + dy_w * cz.y + dz_w * cz.z,
     )
+
+
+def _subsystem_world_position(ship, subsystem):
+    """Return the world-space position of `subsystem` on `ship`.
+
+    Per CLAUDE.md's column-vector convention, body->world is
+    `v_world = R · v_body`. SDK `TGPoint3.MultMatrixLeft(R)` already
+    computes that in place. We construct a fresh point to avoid
+    mutating the subsystem's stored position.
+
+    Legacy fakes without `GetWorldRotation` get identity R, so
+    `world_pos = ship_pos + body_pos`.
+    """
+    ship_pos = ship.GetWorldLocation()
+    body_pos = subsystem.GetPosition()
+    if not hasattr(ship, "GetWorldRotation"):
+        return TGPoint3(
+            ship_pos.x + body_pos.x,
+            ship_pos.y + body_pos.y,
+            ship_pos.z + body_pos.z,
+        )
+    R = ship.GetWorldRotation()
+    p = TGPoint3(body_pos.x, body_pos.y, body_pos.z)
+    p.MultMatrixLeft(R)
+    p.x += ship_pos.x
+    p.y += ship_pos.y
+    p.z += ship_pos.z
+    return p
 
 
 def _subsystem_state_flags(sub) -> tuple:
