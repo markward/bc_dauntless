@@ -72,6 +72,71 @@ glm::vec3 wrap_local_for_test(glm::vec3 particle_pos,
     return local;
 }
 
+namespace {
+
+// Closeness ramp: 1 at/inside the body surface, smoothly 0 by
+// kInfluenceRadii * radius. Returns 0 for non-positive radius.
+float body_closeness(const glm::vec3& camera_pos,
+                     const glm::vec3& center,
+                     float radius) {
+    if (radius <= 0.0f) return 0.0f;
+    const float d = glm::length(camera_pos - center);
+    const float far = DustPass::kInfluenceRadii * radius;
+    if (d <= radius) return 1.0f;
+    if (d >= far)    return 0.0f;
+    // Smoothstep from surface->far, then invert so surface=1, far=0.
+    const float t = (d - radius) / (far - radius);   // 0..1
+    const float s = t * t * (3.0f - 2.0f * t);       // smoothstep
+    return 1.0f - s;
+}
+
+}  // namespace
+
+DustInfluence compute_dust_influence(
+    const glm::vec3& camera_pos,
+    const std::vector<SunDescriptor>& suns,
+    const std::vector<glm::vec4>& planets) {
+    DustInfluence out;
+
+    // Nearest (greatest-closeness) sun drives push + tint + sun density.
+    float best_sun_close = 0.0f;
+    for (const auto& s : suns) {
+        const float c = body_closeness(camera_pos, s.position, s.radius);
+        if (c > best_sun_close) {
+            best_sun_close = c;
+            out.sun_pos    = s.position;
+            out.sun_radius = s.radius;
+        }
+    }
+
+    // Strongest planet closeness (density only).
+    float best_planet_close = 0.0f;
+    for (const auto& p : planets) {
+        const float c = body_closeness(camera_pos,
+                                       glm::vec3(p.x, p.y, p.z), p.w);
+        if (c > best_planet_close) best_planet_close = c;
+    }
+
+    // Density: sun precedence. A sun in range wins over any planet.
+    if (best_sun_close > 0.0f) {
+        out.density_mult =
+            1.0f + best_sun_close * (DustPass::kSunPeakMult - 1.0f);
+    } else {
+        out.density_mult =
+            1.0f + best_planet_close * (DustPass::kPlanetPeakMult - 1.0f);
+    }
+
+    // Tint scales with nearest-sun closeness.
+    out.sun_tint = best_sun_close;
+
+    // Push strength: enabled (kSunPushMax) only when a sun is in range;
+    // the per-particle falloff vs the 100 GU surface range is in the
+    // vertex shader. 0 here means "no push".
+    out.sun_push = (best_sun_close > 0.0f) ? DustPass::kSunPushMax : 0.0f;
+
+    return out;
+}
+
 DustPass::DustPass() = default;
 
 DustPass::~DustPass() {
