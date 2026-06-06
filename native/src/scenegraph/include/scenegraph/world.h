@@ -14,6 +14,7 @@ public:
     void set_world_transform(InstanceId id, const glm::mat4& world);
     void set_visible(InstanceId id, bool visible);
     void set_pass(InstanceId id, Pass pass);
+    void set_rim_eligible(InstanceId id, bool eligible);
 
     bool is_valid(InstanceId id) const noexcept;
     Instance* get(InstanceId id) noexcept;

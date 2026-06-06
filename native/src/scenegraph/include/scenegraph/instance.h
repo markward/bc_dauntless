@@ -24,6 +24,12 @@ struct Instance {
     glm::mat4 world{1.0f};
     bool visible = true;
     Pass pass = Pass::Space;
+
+    /// True for ship hulls; gates the opaque-pass Fresnel rim term so it
+    /// applies to hulls only. Planets share the opaque shader but must
+    /// not receive a metallic rim — they default false. The future
+    /// planet-atmosphere effect will add its own per-instance params.
+    bool rim_eligible = false;
 };
 
 }  // namespace scenegraph
