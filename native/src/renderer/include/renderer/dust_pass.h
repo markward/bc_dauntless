@@ -52,8 +52,25 @@ public:
     static constexpr float kMaxSmearLength       = 1.5f;        // BC units
     static constexpr float kSizeMin              = 0.02f;       // BC units
     static constexpr float kSizeMax              = 0.035f;
-    static constexpr float kBrightnessMin        = 0.5f;
-    static constexpr float kBrightnessMax        = 1.0f;
+    // Brightness boosted ~1.6x (spec §1, "moderate").
+    static constexpr float kBrightnessMin        = 0.8f;
+    static constexpr float kBrightnessMax        = 1.6f;
+
+    // ── Proximity response (spec §2-5) ───────────────────────────────
+    // Density ceiling near suns AND the overseed factor for the instance
+    // buffer. Base visible target stays kParticleCount; the buffer is
+    // seeded with kParticleCount * kMaxDensityMult particles and the
+    // per-frame draw count scales between the two.
+    static constexpr int   kMaxDensityMult       = 10;
+    static constexpr float kPlanetPeakMult       = 5.0f;   // density near planets
+    static constexpr float kSunPeakMult          = 10.0f;  // density near suns
+    // Closeness ramps from 1 at a body's surface to 0 at this multiple of
+    // its radius.
+    static constexpr float kInfluenceRadii       = 5.0f;
+    // Sun push: absolute 100 GU from the sun SURFACE, max displacement 8 GU
+    // (inside the 40 GU volume so pushed specks stay in-field).
+    static constexpr float kSunPushRange         = 100.0f; // GU, absolute
+    static constexpr float kSunPushMax           = 8.0f;   // GU
     static constexpr float kVelocityClampSeconds = 0.1f;        // dt guard
     static constexpr std::uint32_t kSeed         = 0xD057C0DEu;
 
