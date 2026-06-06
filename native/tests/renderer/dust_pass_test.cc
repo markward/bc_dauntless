@@ -153,6 +153,61 @@ TEST(DustInfluence, SunWinsOverPlanetWhenBothInRange) {
     EXPECT_FLOAT_EQ(inf.density_mult, renderer::DustPass::kSunPeakMult);
 }
 
+TEST(DustPushMirror, ZeroPushGivesNoOffset) {
+    const auto off = renderer::sun_push_offset_for_test(
+        glm::vec3(0.0f, 60.0f, 0.0f), glm::vec3(0.0f), 50.0f, 0.0f);
+    EXPECT_FLOAT_EQ(glm::length(off), 0.0f);
+}
+
+TEST(DustPushMirror, MaxPushAtSurfacePointsOutward) {
+    // Particle just at the sun surface along +Y; push should be ~kSunPushMax
+    // and point radially outward (+Y).
+    const float r = 50.0f;
+    const float push = renderer::DustPass::kSunPushMax;
+    const auto off = renderer::sun_push_offset_for_test(
+        glm::vec3(0.0f, r, 0.0f), glm::vec3(0.0f), r, push);
+    EXPECT_NEAR(off.x, 0.0f, 1e-4f);
+    EXPECT_GT(off.y, 0.0f);                       // outward
+    EXPECT_NEAR(glm::length(off), push, 1e-3f);   // full falloff at surface
+}
+
+TEST(DustPushMirror, ZeroBeyond100GUFromSurface) {
+    const float r = 50.0f;
+    // 150 GU from centre => 100 GU from surface => exactly at the edge,
+    // falloff 0; 200 GU from centre => well beyond => 0.
+    const auto edge = renderer::sun_push_offset_for_test(
+        glm::vec3(0.0f, r + 100.0f, 0.0f), glm::vec3(0.0f), r,
+        renderer::DustPass::kSunPushMax);
+    EXPECT_NEAR(glm::length(edge), 0.0f, 1e-4f);
+    const auto beyond = renderer::sun_push_offset_for_test(
+        glm::vec3(0.0f, r + 200.0f, 0.0f), glm::vec3(0.0f), r,
+        renderer::DustPass::kSunPushMax);
+    EXPECT_FLOAT_EQ(glm::length(beyond), 0.0f);
+}
+
+TEST(DustPushMirror, FalloffDecreasesWithDistance) {
+    const float r = 50.0f;
+    const float push = renderer::DustPass::kSunPushMax;
+    const float at_surface = glm::length(renderer::sun_push_offset_for_test(
+        glm::vec3(0.0f, r + 10.0f, 0.0f), glm::vec3(0.0f), r, push));
+    const float farther = glm::length(renderer::sun_push_offset_for_test(
+        glm::vec3(0.0f, r + 60.0f, 0.0f), glm::vec3(0.0f), r, push));
+    EXPECT_GT(at_surface, farther);
+}
+
+TEST(DustInfluence, TintRampIsBoundedAndMonotonic) {
+    renderer::SunDescriptor sun;
+    sun.position = glm::vec3(0.0f);
+    sun.radius   = 50.0f;
+    const float near = renderer::compute_dust_influence(
+        glm::vec3(0.0f, 80.0f, 0.0f), {sun}, {}).sun_tint;
+    const float mid = renderer::compute_dust_influence(
+        glm::vec3(0.0f, 150.0f, 0.0f), {sun}, {}).sun_tint;
+    EXPECT_GT(near, mid);
+    EXPECT_GT(near, 0.0f); EXPECT_LT(near, 1.0f);
+    EXPECT_GT(mid, 0.0f);  EXPECT_LT(mid, 1.0f);
+}
+
 // --- GL-context smoke tests below ----------------------------------------
 
 #include <renderer/pipeline.h>

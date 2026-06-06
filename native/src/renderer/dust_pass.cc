@@ -72,6 +72,22 @@ glm::vec3 wrap_local_for_test(glm::vec3 particle_pos,
     return local;
 }
 
+glm::vec3 sun_push_offset_for_test(glm::vec3 world_pos,
+                                   glm::vec3 sun_pos,
+                                   float sun_radius,
+                                   float sun_push) {
+    if (sun_push <= 0.0f) return glm::vec3(0.0f);
+    glm::vec3 to_part = world_pos - sun_pos;
+    float dist = glm::length(to_part);
+    float surf_dist = dist - sun_radius;
+    const float kSunPushRange = 100.0f;   // matches dust.vert literal
+    if (surf_dist < kSunPushRange && dist > 1e-4f) {
+        float falloff = 1.0f - glm::clamp(surf_dist / kSunPushRange, 0.0f, 1.0f);
+        return (to_part / dist) * sun_push * falloff;
+    }
+    return glm::vec3(0.0f);
+}
+
 namespace {
 
 // Closeness ramp: 1 at/inside the body surface, smoothly 0 by

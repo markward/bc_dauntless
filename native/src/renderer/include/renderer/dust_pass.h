@@ -60,6 +60,15 @@ glm::vec3 wrap_local_for_test(glm::vec3 particle_pos,
                               glm::vec3 camera_pos,
                               float radius);
 
+/// C++ mirror of the GLSL sun-push formula in dust.vert. Returns the
+/// radial offset added to a particle's world position. Regression guard;
+/// the shader is the source of truth. push_range matches kSunPushRange
+/// (100 GU) in the shader's hardcoded literal.
+glm::vec3 sun_push_offset_for_test(glm::vec3 world_pos,
+                                   glm::vec3 sun_pos,
+                                   float sun_radius,
+                                   float sun_push);
+
 class DustPass {
 public:
     // Tunable constants. Documented in the spec as the dials for visual
