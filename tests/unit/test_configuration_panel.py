@@ -331,6 +331,7 @@ def test_handle_key_esc_when_closed_is_noop():
 
 def test_toggle_rim_fires_applier_and_flips_state():
     p, kw = _make()
+    p.open()
     assert p._settings.rim_on is True
     handled = p.dispatch_event("toggle:rim")
     assert handled is True

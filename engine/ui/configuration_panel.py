@@ -1,8 +1,8 @@
 """Configuration panel — pause-menu modal with tabbed settings.
 
 Subclasses engine.ui.panel.Panel; pumped by PanelRegistry like the
-mission picker. Owns a SettingsSnapshot and three injected appliers
-(dust, specular, fov). Every state mutation immediately fires the
+mission picker. Owns a SettingsSnapshot and four injected appliers
+(dust, specular, rim, fov). Every state mutation immediately fires the
 matching applier — there is no Apply/Cancel; closing the panel does
 not revert. Settings are not persisted across launches.
 
@@ -201,7 +201,7 @@ class ConfigurationPanel(Panel):
         """Ordered focusable list: tab rows then controls in the
         currently selected tab. For the only tab today (graphics):
         [('tab','graphics'), ('ctrl','dust'), ('ctrl','specular'),
-         ('ctrl','fov')]."""
+         ('ctrl','fov'), ('ctrl','rim')]."""
         out: list = [("tab", tid) for tid, _ in self._tabs]
         if self._selected_tab == "graphics":
             out += [("ctrl", "dust"), ("ctrl", "specular"), ("ctrl", "fov"), ("ctrl", "rim")]
