@@ -203,7 +203,7 @@ def _iter_subsystems(ship):
     Hull is excluded because the attribution resolver damages it
     unconditionally outside the iteration loop.
     """
-    hull = ship.GetHull() if hasattr(ship, "GetHull") else None
+    hull = ship.GetHull()
 
     if hasattr(ship, "GetSubsystems"):
         for s in ship.GetSubsystems():
@@ -217,7 +217,7 @@ def _iter_subsystems(ship):
                         yield c
         return
 
-    n = ship.GetNumChildSubsystems() if hasattr(ship, "GetNumChildSubsystems") else 0
+    n = ship.GetNumChildSubsystems()
     for i in range(n):
         s = ship.GetChildSubsystem(i)
         if s is not None and s is not hull:
