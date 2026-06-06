@@ -26,6 +26,7 @@ FOV_MAX = 75
 class SettingsSnapshot:
     dust_on: bool
     specular_on: bool
+    rim_on: bool
     fov_deg: int
 
 
@@ -35,6 +36,7 @@ class ConfigurationPanel(Panel):
                  initial_settings: SettingsSnapshot,
                  set_dust: Callable[[bool], None],
                  set_specular: Callable[[bool], None],
+                 set_rim: Callable[[bool], None],
                  set_fov_rad: Callable[[float], None]):
         super().__init__()
         self._tabs = list(tabs)
@@ -42,10 +44,12 @@ class ConfigurationPanel(Panel):
         self._settings = SettingsSnapshot(
             dust_on=initial_settings.dust_on,
             specular_on=initial_settings.specular_on,
+            rim_on=initial_settings.rim_on,
             fov_deg=int(initial_settings.fov_deg),
         )
         self._set_dust = set_dust
         self._set_specular = set_specular
+        self._set_rim = set_rim
         self._set_fov_rad = set_fov_rad
         self._visible: bool = False
         self._focused: int = -1
@@ -73,6 +77,7 @@ class ConfigurationPanel(Panel):
             self._focused,
             self._settings.dust_on,
             self._settings.specular_on,
+            self._settings.rim_on,
             self._settings.fov_deg,
         )
         if snapshot == self._last_pushed:
@@ -88,6 +93,7 @@ class ConfigurationPanel(Panel):
             "settings": {
                 "dust_on": self._settings.dust_on,
                 "specular_on": self._settings.specular_on,
+                "rim_on": self._settings.rim_on,
                 "fov_deg": self._settings.fov_deg,
             },
         }
@@ -111,6 +117,11 @@ class ConfigurationPanel(Panel):
             new_val = not self._settings.specular_on
             self._set_specular(new_val)
             self._settings.specular_on = new_val
+            return True
+        if action == "toggle:rim":
+            new_val = not self._settings.rim_on
+            self._set_rim(new_val)
+            self._settings.rim_on = new_val
             return True
         if action.startswith("fov:"):
             raw = action[len("fov:"):]
@@ -175,6 +186,8 @@ class ConfigurationPanel(Panel):
             self.dispatch_event("toggle:dust")
         elif activate and kind == "ctrl" and target == "specular":
             self.dispatch_event("toggle:specular")
+        elif activate and kind == "ctrl" and target == "rim":
+            self.dispatch_event("toggle:rim")
         elif activate and kind == "tab":
             self.dispatch_event("tab:" + target)
 
@@ -191,5 +204,5 @@ class ConfigurationPanel(Panel):
          ('ctrl','fov')]."""
         out: list = [("tab", tid) for tid, _ in self._tabs]
         if self._selected_tab == "graphics":
-            out += [("ctrl", "dust"), ("ctrl", "specular"), ("ctrl", "fov")]
+            out += [("ctrl", "dust"), ("ctrl", "specular"), ("ctrl", "fov"), ("ctrl", "rim")]
         return out
