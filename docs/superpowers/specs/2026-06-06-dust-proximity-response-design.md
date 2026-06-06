@@ -69,28 +69,31 @@ Raise the brightness constants in `dust_pass.h` by ~1.6×:
 paths; purely a constant change wired through the existing
 `u_brightness_min/max` uniforms.
 
-### 2 & 3. Density via overseed + GPU cull
+### 2 & 3. Density via overseed + variable draw count
 
 Seed the instance buffer **once** at the 10× ceiling:
 `kParticleCount × kMaxDensityMult = 512 × 10 = 5120` particles
 (`generate_dust_particles` called with the overseeded count; the existing
-seeding/wrap logic is unchanged). The GPU always processes ~5120 cheap
-additive billboards — acceptable cost.
+seeding/wrap logic is unchanged).
 
-A per-particle **stable cull rank** in `[0, 1)` is derived in the vertex
-shader as a hash of the particle's seed position (`a_particle.xyz`,
-constant per instance, independent of the toroidal wrap). The shader
-draws a particle only when `rank < u_density_fraction`, with a narrow
-smoothstep fade just below the threshold so particles fade in/out rather
-than pop as the fraction changes.
+`generate_dust_particles` emits particles in **independent random order**
+(each is an iid uniform sample), so the first `N` of the 5120 is itself a
+uniform random subset of the field. Density is therefore controlled by
+**varying the instance draw count per frame** — the `instancecount`
+argument to `glDrawElementsInstanced` — with **no shader cull and no
+extra uniform**. The buffer is seeded once; only the draw count changes.
 
-`u_density_fraction = multiplier / kMaxDensityMult`, where `multiplier`
-∈ `[1, 10]`:
+`draw_count = clamp(round(kParticleCount × multiplier), 0, seeded_count)`,
+where `multiplier` ∈ `[1, 10]`:
 
-- Far from all bodies → `multiplier = 1` → `density_fraction = 0.1` →
-  ~512 drawn (the original look reproduced as a random subset).
+- Far from all bodies → `multiplier = 1` → 512 drawn (the original look,
+  reproduced as a random subset).
 - Near a sun → up to `multiplier = 10` → all 5120 drawn (10×).
 - Near a planet (no sun in range) → up to `multiplier = 5`.
+
+A single faint additive speck appearing/disappearing as `draw_count`
+changes by ±1 per frame is imperceptible, so no fade ramp is needed. GPU
+cost scales with the drawn count (512–5120 cheap additive billboards).
 
 **Radius-relative closeness.** For each body with centre `c` and radius
 `rad`, let `d = distance(camera, c)`. Closeness ramps from 1 at the
@@ -155,11 +158,12 @@ and stays consistent with the global density ramp. Planets do not tint.
 
 | Uniform | Stage | Meaning |
 |---|---|---|
-| `u_density_fraction` | vert | cull threshold ∈ [0,1] |
 | `u_sun_pos` | vert | nearest sun centre (world) |
 | `u_sun_radius` | vert | nearest sun radius |
 | `u_sun_push` | vert | push strength (GU), 0 when no sun in range |
 | `u_sun_tint` | frag | orange-mix factor ∈ [0,1] |
+
+(Density needs no uniform — it is the per-frame `instancecount`.)
 
 (`u_sun_push` folds `kSunPushMax` and the "is a sun in range" gate into
 one value so the shader needs no separate flag.)
@@ -183,7 +187,7 @@ becomes `kParticleCount * kMaxDensityMult`.
   overseeded count produces the expected number of records.
 - Factor the CPU proximity math into a **pure free function** (e.g.
   `compute_dust_influence(camera_pos, suns, planets) ->
-  {density_fraction, sun_pos, sun_radius, sun_push, sun_tint}`) so it is
+  {density_mult, sun_pos, sun_radius, sun_push, sun_tint}`) so it is
   unit-testable without a GL context. Cover:
   - planet ramp: 1× far, 5× at surface, monotonic in between;
   - sun ramp: 1× far, 10× at surface;
