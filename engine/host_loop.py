@@ -1679,6 +1679,9 @@ class _MissionLoader:
             iid = r_.create_instance(handle)
             r_.set_world_transform(iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
             sess.ship_instances[ship] = iid
+            # Fresnel rim applies to ship hulls only — planets share the
+            # opaque shader and must stay rim-free (default ineligible).
+            r_.set_rim_eligible(iid, True)
 
             # Register shield render state. Reads ShieldProperty data-bag
             # for glow color, decay, and skin-mode flag. No-op for ships
@@ -2057,12 +2060,14 @@ def run(mission_name: Optional[str] = None,
             initial_settings=SettingsSnapshot(
                 dust_on=True,
                 specular_on=True,
+                rim_on=True,
                 fov_deg=int(round(_math.degrees(
                     director.fov_y_rad
                 ))),
             ),
             set_dust=r.set_dust_enabled,
             set_specular=r.set_specular_enabled,
+            set_rim=r.set_rim_enabled,
             set_fov_rad=director.set_fov,
         )
 
