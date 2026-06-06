@@ -326,6 +326,7 @@ void frame() {
 namespace dauntless_specular {
     void set_enabled(bool v);  // defined in frame.cc
 }
+// Toggle for the opaque-pass Fresnel rim term. Defined in frame.cc.
 namespace dauntless_rim {
     void set_enabled(bool v);  // defined in frame.cc
 }
@@ -377,7 +378,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](scenegraph::InstanceId id, bool eligible) {
               g_world.set_rim_eligible(id, eligible);
           },
-          py::arg("instance"), py::arg("eligible"),
+          py::arg("id"), py::arg("eligible"),
           "Mark an instance as a ship hull eligible for the Fresnel rim "
           "term. Default false (planets stay rim-free).");
 
