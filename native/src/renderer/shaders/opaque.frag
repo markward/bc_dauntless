@@ -16,7 +16,7 @@ uniform float u_specular_power;
 uniform int u_specular_enabled;
 
 // Fresnel rim light. u_rim_strength == 0.0 disables the term (set per
-// draw by frame.cc: global RenderFresnelRim toggle AND per-instance
+// draw by frame.cc: the global dauntless_rim toggle AND per-instance
 // rim_eligible AND material specular). Tinted by the accumulated
 // directional light so the rim only shows where a star hits.
 uniform float u_rim_strength;
