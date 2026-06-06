@@ -1650,6 +1650,16 @@ class TorpedoTube(WeaponSystem):
 
         mod.Create(torp)
 
+        # §3.2 DRF override: if the launching tube has a non-zero
+        # DamageRadiusFactor (set by the hardpoint script, e.g.
+        # galaxy.py ForwardTorpedo1.SetDamageRadiusFactor(0.20)),
+        # it overrides the payload value set by mod.Create above.
+        # host_loop passes the torpedo as hardpoint_weapon to apply_hit,
+        # so torp._damage_radius_factor must carry the launcher value.
+        tube_drf = self.GetDamageRadiusFactor()
+        if tube_drf > 0.0:
+            torp._damage_radius_factor = tube_drf
+
         launch_speed = float(mod.GetLaunchSpeed()) if hasattr(mod, "GetLaunchSpeed") else 0.0
 
         target_ship = source_ship.GetTarget() if source_ship is not None else None
