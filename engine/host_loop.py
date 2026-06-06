@@ -252,11 +252,12 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
         dt, ships_list,
         host=host, ship_instances=ship_instances,
     )
-    for torpedo, ship, subsystem, hit_point in hits:
+    for torpedo, ship, hit_point in hits:
         apply_hit(ship, torpedo._damage, hit_point,
-                  source=torpedo._source_ship, subsystem=subsystem,
+                  source=torpedo._source_ship,
                   normal=None, host=host, ship_instances=ship_instances,
-                  weapon_type="torpedo")
+                  weapon_type="torpedo",
+                  hardpoint_weapon=torpedo)
 
     hit_vfx.update_ages(dt)
     from engine.appc import camera_shake
@@ -332,10 +333,11 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
                     fallback_point=target_pos,
                 )
                 apply_hit(target, damage, impact_point,
-                          source=ship, subsystem=target_sub,
+                          source=ship,
                           normal=impact_normal,
                           host=host, ship_instances=ship_instances,
-                          weapon_type="phaser")
+                          weapon_type="phaser",
+                          hardpoint_weapon=bank)
 
     if host is not None and hasattr(host, "set_torpedoes"):
         host.set_torpedoes(_build_torpedo_render_data())

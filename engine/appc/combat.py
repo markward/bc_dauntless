@@ -294,64 +294,6 @@ def _iter_subsystems(ship):
             yield s
 
 
-def pick_target_subsystem(ship, hit_point):
-    """Return the subsystem closest to ``hit_point`` in the ship's body
-    frame, gated by ``d <= 2 * sub.GetRadius()``. Walks every top-level
-    subsystem in ``ship.GetSubsystems()`` plus the ``_children`` of each
-    weapon-system parent. Hull is excluded from the walk and only
-    returned as the fallback when no candidate passes the gate.
-
-    Falls back to ``ship.GetHull()`` if no subsystem is in range, or
-    ``None`` if there is no hull either.
-
-    Legacy fixture support: if ``ship`` lacks ``GetSubsystems``, walks
-    ``GetChildSubsystem(i)`` for ``i in range(GetNumChildSubsystems())``
-    so the pre-existing ``_FakeShip`` tests stay green.
-    """
-    hull = ship.GetHull() if hasattr(ship, "GetHull") else None
-
-    # Build the candidate list. Hull is never iterated.
-    candidates: list = []
-    if hasattr(ship, "GetSubsystems"):
-        for s in ship.GetSubsystems():
-            if s is None or s is hull:
-                continue
-            candidates.append(s)
-            # Hardpoint children mounted under weapon-system parents.
-            children = getattr(s, "_children", None)
-            if children:
-                candidates.extend(children)
-    else:
-        # Legacy fallback for _FakeShip-style stubs.
-        n = ship.GetNumChildSubsystems() if hasattr(ship, "GetNumChildSubsystems") else 0
-        for i in range(n):
-            s = ship.GetChildSubsystem(i)
-            if s is not None and s is not hull:
-                candidates.append(s)
-
-    bx, by, bz = _body_frame_delta(ship, hit_point)
-
-    best = None
-    best_dist_sq = float("inf")
-    for sub in candidates:
-        pos = sub.GetPosition() if hasattr(sub, "GetPosition") else None
-        if pos is None:
-            continue
-        r = sub.GetRadius() if hasattr(sub, "GetRadius") else 0.0
-        dx = bx - pos.x
-        dy = by - pos.y
-        dz = bz - pos.z
-        d_sq = dx * dx + dy * dy + dz * dz
-        if d_sq > (2.0 * r) ** 2:
-            continue
-        if d_sq < best_dist_sq:
-            best = sub
-            best_dist_sq = d_sq
-    if best is not None:
-        return best
-    return hull
-
-
 def _shield_face_from_hit_point(ship, hit_point) -> int:
     """Body-frame dominant-axis selection via :func:`_body_frame_delta`.
 

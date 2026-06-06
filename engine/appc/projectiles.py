@@ -8,7 +8,7 @@ it always reads from the bound script per shot.
 
 Module-level _active registry holds in-flight torpedoes; update_all
 advances motion, runs collision, returns the list of (torpedo, hit_ship,
-hit_subsystem) tuples for host_loop to route through combat.apply_hit.
+hit_point) tuples for host_loop to route through combat.apply_hit.
 """
 import math
 
@@ -82,6 +82,7 @@ class Torpedo(TGObject):
 
     def SetDamage(self, v) -> None:               self._damage = float(v)
     def SetDamageRadiusFactor(self, v) -> None:   self._damage_radius_factor = float(v)
+    def GetDamageRadiusFactor(self) -> float:     return self._damage_radius_factor
     def SetGuidanceLifetime(self, v) -> None:     self._guidance_lifetime = float(v)
     def SetMaxAngularAccel(self, v) -> None:      self._max_angular_accel = float(v)
     def SetNetType(self, v) -> None:              pass  # multiplayer; ignored in PR 2b
@@ -108,16 +109,14 @@ def expire(torpedo: Torpedo) -> None:
 
 def update_all(dt: float, all_ships, *, host=None, ship_instances=None) -> list[tuple]:
     """Advance every active torpedo by dt.  Returns list of
-    (torpedo, hit_ship, hit_subsystem, hit_point) tuples that connected
-    this tick. Expired torpedoes (TTL or impact) are removed from
-    _active.
+    (torpedo, hit_ship, hit_point) tuples that connected this tick.
+    Expired torpedoes (TTL or impact) are removed from _active.
 
     `host` and `ship_instances` are forwarded to combat._resolve_hit_point;
     when omitted (headless tests, no renderer), hit_point degrades to the
     torpedo's post-advance position — matching the pre-project behaviour.
     """
-    from engine.appc.combat import (pick_target_subsystem, sphere_hit,
-                                    _resolve_hit_point)
+    from engine.appc.combat import (sphere_hit, _resolve_hit_point)
     from engine.appc.math import TGPoint3
 
     hits: list[tuple] = []
@@ -158,15 +157,7 @@ def update_all(dt: float, all_ships, *, host=None, ship_instances=None) -> list[
                     max_dist=seg_len,
                     fallback_point=t._position,
                 )
-                # If the player locked a specific subsystem on this
-                # target, route damage there directly; otherwise pick the
-                # nearest hardpoint to the resolved hit point.
-                if (t._target_subsystem is not None
-                        and t._target_ship is ship):
-                    subsystem = t._target_subsystem
-                else:
-                    subsystem = pick_target_subsystem(ship, hit_point)
-                hits.append((t, ship, subsystem, hit_point))
+                hits.append((t, ship, hit_point))
                 expired.append(t)
                 break
 

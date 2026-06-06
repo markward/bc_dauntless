@@ -380,6 +380,10 @@ class ShipSubsystem(TGEventHandlerObject):
         self._arc_height_hi: float =  _math.pi / 2
         self._max_damage:          float = 0.0
         self._max_damage_distance: float = 0.0
+        # Mirrored from WeaponProperty.SetDamageRadiusFactor.  Used by
+        # weapon_splash_radius() to resolve the hit sphere.  0.0 = not set
+        # (caller falls back to payload DRF or phaser default 0.15).
+        self._damage_radius_factor: float = 0.0
         # Phaser-strip arc radius from Position (0 = point emitter).
         # SDK SetLength: distance from the strip's curvature centre to
         # the rim along the firing direction. See research doc § Bug D.
@@ -500,6 +504,10 @@ class ShipSubsystem(TGEventHandlerObject):
             val = prop.GetMaxDamageDistance()
             if isinstance(val, (int, float)):
                 self._max_damage_distance = float(val)
+        if hasattr(prop, "GetDamageRadiusFactor"):
+            val = prop.GetDamageRadiusFactor()
+            if isinstance(val, (int, float)):
+                self._damage_radius_factor = float(val)
         if hasattr(prop, "GetLength"):
             val = prop.GetLength()
             if isinstance(val, (int, float)):
@@ -685,6 +693,12 @@ class ShipSubsystem(TGEventHandlerObject):
 
     def GetMaxDamageDistance(self) -> float:
         return self._max_damage_distance
+
+    def GetDamageRadiusFactor(self) -> float:
+        return self._damage_radius_factor
+
+    def SetDamageRadiusFactor(self, v) -> None:
+        self._damage_radius_factor = float(v)
 
     def GetLength(self) -> float:
         return self._length
