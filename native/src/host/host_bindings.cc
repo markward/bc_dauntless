@@ -326,6 +326,9 @@ void frame() {
 namespace dauntless_specular {
     void set_enabled(bool v);  // defined in frame.cc
 }
+namespace dauntless_rim {
+    void set_enabled(bool v);  // defined in frame.cc
+}
 
 PYBIND11_MODULE(_dauntless_host, m) {
     m.doc() = "open_stbc renderer host bindings (Phase B: window + frame stub)";
@@ -370,6 +373,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("set_visible",
           [](scenegraph::InstanceId id, bool v) { g_world.set_visible(id, v); },
           py::arg("id"), py::arg("visible"));
+    m.def("set_rim_eligible",
+          [](scenegraph::InstanceId id, bool eligible) {
+              g_world.set_rim_eligible(id, eligible);
+          },
+          py::arg("instance"), py::arg("eligible"),
+          "Mark an instance as a ship hull eligible for the Fresnel rim "
+          "term. Default false (planets stay rim-free).");
 
     m.def("create_bridge_instance",
           [](scenegraph::ModelHandle h) {
@@ -672,6 +682,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](bool enabled) { dauntless_specular::set_enabled(enabled); },
           py::arg("enabled"),
           "Toggle the opaque-pass specular term. Default: on.");
+    m.def("rim_set_enabled",
+          [](bool enabled) { dauntless_rim::set_enabled(enabled); },
+          py::arg("enabled"),
+          "Toggle the opaque-pass Fresnel rim term. Default: on.");
 
     m.def("dust_set_density",
           [](int count) {
