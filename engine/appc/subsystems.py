@@ -1050,9 +1050,10 @@ class WeaponSystem(PoweredSubsystem):
     # ── Parent-aggregator predicates ───────────────────────────────────
     # WeaponSystem parents own their hardpoint emitters (PhaserBank,
     # TorpedoTube, PulseWeapon, TractorBeam) as _children. Damage lands
-    # on the children via apply_hit -> pick_target_subsystem -> ship.
-    # DamageSystem(child); the parent surfaces aggregated state to
-    # SDK/UI consumers without storing its own condition pool.
+    # on the children via apply_hit's spherical-splash loop, which walks
+    # every non-hull subsystem and weights damage by proximity to the
+    # impact point; the parent surfaces aggregated state to SDK/UI
+    # consumers without storing its own condition pool.
     #
     # Locked semantics from the combat damage pipeline roadmap:
     #   IsDamaged   = self._damaged or any(c.IsDamaged() or c.IsDestroyed() for c in children)
