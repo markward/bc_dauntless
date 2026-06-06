@@ -22,6 +22,7 @@ function _cpFocusableList(state) {
         out.push({kind: 'ctrl', target: 'dust'});
         out.push({kind: 'ctrl', target: 'specular'});
         out.push({kind: 'ctrl', target: 'fov'});
+        out.push({kind: 'ctrl', target: 'rim'});
     }
     return out;
 }
@@ -82,6 +83,21 @@ function _cpRenderGraphicsBody(state, focusables) {
           +        ' value="' + s.fov_deg + '"'
           +        ' onchange="dauntlessEvent(\'configuration/fov:\' + this.value)">'
           +     '<span class="cp-slider-value">' + s.fov_deg + '°</span>'
+          +   '</div>'
+          + '</div>';
+
+    // ── Modern VFX group ─────────────────────────────────────────────
+    html += '<hr class="cp-divider">';
+    html += '<div class="cp-group-header">Modern VFX</div>';
+
+    // Fresnel Rim Light toggle
+    html += '<div class="cp-row' + (isFoc('rim') ? ' cp-focused' : '') + '">'
+          +   '<div class="cp-row__label">Fresnel Rim Light</div>'
+          +   '<div class="cp-row__control">'
+          +     '<button class="cp-toggle' + (s.rim_on ? ' cp-toggle--on' : '') + '"'
+          +        ' onclick="dauntlessEvent(\'configuration/toggle:rim\')">'
+          +       (s.rim_on ? 'On' : 'Off')
+          +     '</button>'
           +   '</div>'
           + '</div>';
 
