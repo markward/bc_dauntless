@@ -182,6 +182,28 @@ def _subsystem_world_position(ship, subsystem):
     return p
 
 
+def _splash_weight(r_sub: float, r_hit: float, d: float) -> float:
+    """Linear falloff weight for splash damage attribution.
+
+    `r_sub`  — subsystem catchment radius
+    `r_hit`  — weapon splash radius
+    `d`      — distance from impact point to subsystem world position
+
+    Returns 1.0 when the impact is inside (or on the surface of) the
+    subsystem sphere, decays linearly to 0 at the combined-sphere edge,
+    and is exactly 0 at or beyond. A zero `r_hit` degenerate weapon
+    returns 0.0 with no division by zero.
+    """
+    if r_hit <= 0.0:
+        return 0.0
+    raw = (r_sub + r_hit - d) / r_hit
+    if raw <= 0.0:
+        return 0.0
+    if raw >= 1.0:
+        return 1.0
+    return raw
+
+
 def _subsystem_state_flags(sub) -> tuple:
     """Snapshot (IsDamaged, IsDisabled, IsDestroyed) as a 3-tuple of bools,
     diffable against a later snapshot via :func:`_diff_state`.
