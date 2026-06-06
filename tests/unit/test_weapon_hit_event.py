@@ -71,3 +71,22 @@ def test_weapon_hit_event_broadcast_handler_fires():
     em.AddEvent(e)
     assert received == [99.0]
     del sys.modules["_test_weapon_hit_handler"]
+
+
+def test_weapon_hit_event_radius_round_trip():
+    from engine.appc.events import WeaponHitEvent
+    evt = WeaponHitEvent()
+    assert evt.GetRadius() == 0.0
+    evt.SetRadius(0.15)
+    assert evt.GetRadius() == 0.15
+
+
+def test_weapon_hit_event_normal_round_trip():
+    from engine.appc.events import WeaponHitEvent
+    from engine.appc.math import TGPoint3
+    evt = WeaponHitEvent()
+    assert evt.GetNormal() is None
+    n = TGPoint3(0.0, 0.0, 1.0)
+    evt.SetNormal(n)
+    out = evt.GetNormal()
+    assert out is n  # identity, not a copy
