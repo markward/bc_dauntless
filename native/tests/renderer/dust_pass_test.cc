@@ -100,6 +100,59 @@ TEST(DustInfluence, FarBodiesAreBaseline) {
     EXPECT_FLOAT_EQ(inf.sun_tint, 0.0f);
 }
 
+TEST(DustInfluence, PlanetSurfaceHitsPeakDensity) {
+    std::vector<glm::vec4> planets = {
+        glm::vec4(0.0f, 0.0f, 0.0f, 30.0f)
+    };
+    // Camera exactly at the surface (distance == radius) => closeness 1.
+    const auto inf = renderer::compute_dust_influence(
+        glm::vec3(30.0f, 0.0f, 0.0f), {}, planets);
+    EXPECT_FLOAT_EQ(inf.density_mult, renderer::DustPass::kPlanetPeakMult);
+    EXPECT_FLOAT_EQ(inf.sun_tint, 0.0f);   // planets never tint
+    EXPECT_FLOAT_EQ(inf.sun_push, 0.0f);   // planets never push
+}
+
+TEST(DustInfluence, SunSurfaceHitsPeakDensityAndTint) {
+    renderer::SunDescriptor sun;
+    sun.position = glm::vec3(0.0f);
+    sun.radius   = 50.0f;
+    const auto inf = renderer::compute_dust_influence(
+        glm::vec3(0.0f, 50.0f, 0.0f), {sun}, {});
+    EXPECT_FLOAT_EQ(inf.density_mult, renderer::DustPass::kSunPeakMult);
+    EXPECT_FLOAT_EQ(inf.sun_tint, 1.0f);
+    EXPECT_FLOAT_EQ(inf.sun_push, renderer::DustPass::kSunPushMax);
+    EXPECT_FLOAT_EQ(inf.sun_radius, 50.0f);
+}
+
+TEST(DustInfluence, DensityIsMonotonicWithDistance) {
+    renderer::SunDescriptor sun;
+    sun.position = glm::vec3(0.0f);
+    sun.radius   = 50.0f;
+    const float near = renderer::compute_dust_influence(
+        glm::vec3(0.0f, 80.0f, 0.0f), {sun}, {}).density_mult;
+    const float mid = renderer::compute_dust_influence(
+        glm::vec3(0.0f, 150.0f, 0.0f), {sun}, {}).density_mult;
+    const float far = renderer::compute_dust_influence(
+        glm::vec3(0.0f, 260.0f, 0.0f), {sun}, {}).density_mult; // > 5*r
+    EXPECT_GT(near, mid);
+    EXPECT_GT(mid, far);
+    EXPECT_FLOAT_EQ(far, 1.0f);
+}
+
+TEST(DustInfluence, SunWinsOverPlanetWhenBothInRange) {
+    renderer::SunDescriptor sun;
+    sun.position = glm::vec3(0.0f);
+    sun.radius   = 50.0f;
+    std::vector<glm::vec4> planets = {
+        glm::vec4(0.0f, 60.0f, 0.0f, 30.0f)  // planet also near camera
+    };
+    // Camera at the sun surface: sun closeness 1 => sun density (10x),
+    // not the planet's 5x.
+    const auto inf = renderer::compute_dust_influence(
+        glm::vec3(0.0f, 50.0f, 0.0f), {sun}, planets);
+    EXPECT_FLOAT_EQ(inf.density_mult, renderer::DustPass::kSunPeakMult);
+}
+
 // --- GL-context smoke tests below ----------------------------------------
 
 #include <renderer/pipeline.h>
