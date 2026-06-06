@@ -30,6 +30,18 @@ namespace {
     void set_enabled(bool v) { g_specular_enabled = v; }
 }
 
+// Toggle for the opaque-pass Fresnel rim term. Default on so the
+// "Modern VFX" group ships enabled. host_bindings.cc forward-declares
+// set_enabled; frame.cc reads enabled() per draw when binding the
+// opaque shader's u_rim_strength.
+namespace dauntless_rim {
+namespace {
+    bool g_rim_enabled = true;
+}
+    bool enabled() { return g_rim_enabled; }
+    void set_enabled(bool v) { g_rim_enabled = v; }
+}
+
 namespace renderer {
 
 namespace {
@@ -38,7 +50,8 @@ void draw_model(const assets::Model& model,
                 const glm::mat4& world,
                 Shader& shader,
                 GLuint white_fallback,
-                GLuint black_fallback) {
+                GLuint black_fallback,
+                bool rim_active) {
     // Walk nodes; each node may reference one or more meshes by index. The
     // node's local_transform is composed with parent transforms here. The
     // asset pipeline already orders nodes such that parents precede children,
@@ -110,6 +123,10 @@ void draw_model(const assets::Model& model,
                 renderer::glossiness_to_specular_power(mat.glossiness));
             shader.set_int("u_specular_enabled",
                            dauntless_specular::enabled() ? 1 : 0);
+            const float rim = rim_active
+                ? renderer::rim_strength_from_material(mat.specular, mat.glossiness)
+                : 0.0f;
+            shader.set_float("u_rim_strength", rim);
 
             glBindVertexArray(mesh.vao());
             glDrawElements(GL_TRIANGLES, mesh.index_count(), GL_UNSIGNED_INT, nullptr);
@@ -193,7 +210,8 @@ void FrameSubmitter::submit_opaque(const scenegraph::World& world,
 
     world.for_each_visible([&](const scenegraph::Instance& inst) {
         const assets::Model* m = lookup(inst.model_handle);
-        if (m) draw_model(*m, inst.world, shader, white, black);
+        const bool rim_active = dauntless_rim::enabled() && inst.rim_eligible;
+        if (m) draw_model(*m, inst.world, shader, white, black, rim_active);
     });
 }
 
@@ -228,7 +246,8 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
 
     world.for_each_visible_in_pass(pass, [&](const scenegraph::Instance& inst) {
         const assets::Model* m = lookup(inst.model_handle);
-        if (m) draw_model(*m, inst.world, shader, white, black);
+        const bool rim_active = dauntless_rim::enabled() && inst.rim_eligible;
+        if (m) draw_model(*m, inst.world, shader, white, black, rim_active);
     });
 }
 

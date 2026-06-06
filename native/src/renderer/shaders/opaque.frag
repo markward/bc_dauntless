@@ -15,6 +15,19 @@ uniform vec3 u_specular_color;
 uniform float u_specular_power;
 uniform int u_specular_enabled;
 
+// Fresnel rim light. u_rim_strength == 0.0 disables the term (set per
+// draw by frame.cc: the global dauntless_rim toggle AND per-instance
+// rim_eligible AND material specular). Tinted by the accumulated
+// directional light so the rim only shows where a star hits.
+//
+// RIM_POWER controls falloff width (lower = wider band); RIM_GAIN scales
+// the peak. Tuned against the Galaxy, whose materials author specular≈0.9
+// and glossiness≈0, giving a near-constant rim_strength≈0.225 — so the
+// gain, not the material term, governs how visible the rim reads.
+uniform float u_rim_strength;
+const float RIM_POWER = 24.0;  // sharp, edge-only falloff (higher = thinner)
+const float RIM_GAIN  = 26.0;  // peak edge brightness (tuned by eye on Galaxy)
+
 uniform vec3 u_ambient_light;
 uniform vec3 u_camera_pos_ws;
 
@@ -50,5 +63,11 @@ void main() {
         ? spec_acc * u_specular_color * texture(u_specular_map, v_uv).rgb
         : vec3(0.0);
 
-    frag_color = vec4(lit + u_emissive_color + glow.rgb * glow.a + spec, 1.0);
+    vec3 rim = vec3(0.0);
+    if (u_rim_strength > 0.0) {
+        float f = pow(1.0 - max(dot(n, V), 0.0), RIM_POWER);
+        rim = RIM_GAIN * f * lit_dir * u_rim_strength;
+    }
+
+    frag_color = vec4(lit + u_emissive_color + glow.rgb * glow.a + spec + rim, 1.0);
 }

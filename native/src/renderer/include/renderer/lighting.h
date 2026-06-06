@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <cmath>
 
+#include <glm/glm.hpp>
+
 namespace renderer {
 
 /// Map BC's normalized glossiness [0,1] to a Blinn-Phong exponent.
@@ -32,6 +34,23 @@ namespace renderer {
 inline float glossiness_to_specular_power(float g) {
     g = std::clamp(g, 0.0f, 1.0f);
     return 48.0f + 1488.0f * g;
+}
+
+/// Derive a Fresnel rim-light strength scalar [0,1] from a material's
+/// existing specular color + glossiness. Shiny hulls rim harder; matte
+/// hulls barely rim; specular-less materials (e.g. most planet NIFs) get
+/// zero rim. Reuses authored material data so no new per-ship field is
+/// needed (we deliberately do NOT gate on the SDK `SpecularCoef` key,
+/// which only 2 of 51 ships set and which already means SetSpecularKs).
+///
+///   strength = max(specular.rgb) * (0.25 + 0.75 * glossiness)
+///
+/// Both inputs are clamped to [0,1] first (BC authors a gloss=4.0 outlier).
+inline float rim_strength_from_material(const glm::vec3& specular, float glossiness) {
+    float s = std::max({specular.r, specular.g, specular.b});
+    s = std::clamp(s, 0.0f, 1.0f);
+    float g = std::clamp(glossiness, 0.0f, 1.0f);
+    return s * (0.25f + 0.75f * g);
 }
 
 }  // namespace renderer

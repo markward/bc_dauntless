@@ -84,6 +84,34 @@ TEST_F(FrameTest, OpaquePassRunsWithoutGLError) {
     EXPECT_GT(total, 0) << "center pixel was black; opaque pass produced nothing";
 }
 
+TEST_F(FrameTest, OpaquePassWithRimEnabledRunsWithoutGLError) {
+    auto model_h = cache->load(kGalaxyNif, kGalaxyTex);
+
+    scenegraph::World world;
+    auto iid = world.create_instance(reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
+    world.set_rim_eligible(iid, true);
+    glm::mat4 m(1.0f);
+    world.set_world_transform(iid, m);
+
+    scenegraph::Camera cam;
+    cam.eye = glm::vec3(0.0f, 0.0f, 1500.0f);
+    cam.target = glm::vec3(0.0f, 0.0f, 0.0f);
+    cam.aspect = 1.0f;
+
+    glViewport(0, 0, 256, 256);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    renderer::FrameSubmitter submitter;
+    renderer::Lighting lighting;
+    submitter.submit_opaque_in_pass(world, cam, *p,
+        [model_h](scenegraph::ModelHandle h) -> const assets::Model* {
+            return reinterpret_cast<const assets::Model*>(h);
+        }, lighting, scenegraph::Pass::Space);
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
 TEST_F(FrameTest, GlowContributesWithZeroAmbient) {
     // Galaxy.nif's NiImages reference "Ent-D_*_glow.tga" files directly
     // (BC's AddLOD "_glow" suffix convention). model_build.cc detects the

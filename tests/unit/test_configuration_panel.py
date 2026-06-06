@@ -21,10 +21,11 @@ def _make(**overrides):
     kwargs = dict(
         tabs=[("graphics", "Graphics")],
         initial_settings=SettingsSnapshot(
-            dust_on=True, specular_on=True, fov_deg=70,
+            dust_on=True, specular_on=True, rim_on=True, fov_deg=70,
         ),
         set_dust=Mock(),
         set_specular=Mock(),
+        set_rim=Mock(),
         set_fov_rad=Mock(),
     )
     kwargs.update(overrides)
@@ -51,13 +52,13 @@ def test_open_close_round_trip():
 
 def test_initial_settings_round_trip_to_render_payload():
     p, _ = _make(initial_settings=SettingsSnapshot(
-        dust_on=False, specular_on=True, fov_deg=62,
+        dust_on=False, specular_on=True, rim_on=False, fov_deg=62,
     ))
     p.open()
     payload = p.render_payload()
     body = json.loads(payload[len("setConfigurationPanel("):-2])
     assert body["settings"] == {
-        "dust_on": False, "specular_on": True, "fov_deg": 62,
+        "dust_on": False, "specular_on": True, "rim_on": False, "fov_deg": 62,
     }
 
 
@@ -240,19 +241,19 @@ def test_focus_first_up_lands_on_last_focusable():
     p.handle_input(r)
     payload = p.render_payload()
     body = json.loads(payload[len("setConfigurationPanel("):-2])
-    assert body["focused"] == 3  # ctrl:fov is last in a 4-item list
+    assert body["focused"] == 4  # ctrl:rim is last in a 5-item list
 
 
 def test_focus_wraps_at_bottom():
     p, _ = _make()
     p.open()
     r = _FakeReader()
-    for _ in range(5):
+    for _ in range(6):
         r.press(r.keys.KEY_DOWN)
         p.handle_input(r)
     payload = p.render_payload()
     body = json.loads(payload[len("setConfigurationPanel("):-2])
-    assert body["focused"] == 0  # 0,1,2,3,wrap→0
+    assert body["focused"] == 0  # 0,1,2,3,4,wrap→0
 
 
 def test_space_on_dust_row_toggles():
@@ -279,7 +280,7 @@ def test_right_arrow_on_fov_row_increments():
 
 def test_left_arrow_on_fov_row_decrements_and_clamps():
     p, kw = _make(initial_settings=SettingsSnapshot(
-        dust_on=True, specular_on=True, fov_deg=55,
+        dust_on=True, specular_on=True, rim_on=True, fov_deg=55,
     ))
     p.open()
     r = _FakeReader()
@@ -324,3 +325,30 @@ def test_handle_key_esc_when_closed_is_noop():
     p, _ = _make()
     p.handle_key_esc()
     assert p.is_open() is False
+
+
+# ---- rim toggle -----------------------------------------------------------
+
+def test_toggle_rim_fires_applier_and_flips_state():
+    p, kw = _make()
+    p.open()
+    assert p._settings.rim_on is True
+    handled = p.dispatch_event("toggle:rim")
+    assert handled is True
+    kw["set_rim"].assert_called_once_with(False)
+    assert p._settings.rim_on is False
+
+
+def test_render_payload_includes_rim_on():
+    p, _ = _make()
+    p.open()
+    js = p.render_payload()
+    assert js is not None
+    payload = json.loads(js[len("setConfigurationPanel("):-len(");")])
+    assert payload["settings"]["rim_on"] is True
+
+
+def test_rim_is_a_graphics_focusable():
+    p, _ = _make()
+    focusables = p._focusables()
+    assert ("ctrl", "rim") in focusables

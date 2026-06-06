@@ -135,3 +135,17 @@
 .cp-done-button:hover {
     background: #265c80;
 }
+
+.cp-divider {
+    border: none;
+    border-top: 1px solid rgba(42, 77, 110, 0.75);
+    margin: 14px 0 10px 0;
+}
+
+.cp-group-header {
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: rgba(74, 163, 223, 0.85);
+    margin: 0 0 8px 2px;
+}

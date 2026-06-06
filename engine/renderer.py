@@ -153,6 +153,17 @@ def set_specular_enabled(enabled: bool) -> None:
     _h.specular_set_enabled(enabled)
 
 
+def set_rim_enabled(enabled: bool) -> None:
+    """Toggle the opaque-pass Fresnel rim term. Default: on after init()."""
+    _h.rim_set_enabled(enabled)
+
+
+def set_rim_eligible(instance_id: InstanceId, eligible: bool) -> None:
+    """Mark a ship-hull instance as eligible for the Fresnel rim term.
+    Planets are left ineligible so they don't receive a metallic rim."""
+    _h.set_rim_eligible(instance_id, eligible)
+
+
 # ── Shield pass ─────────────────────────────────────────────────────────────
 
 def model_aabb(model: int) -> Tuple[Tuple[float, float, float],

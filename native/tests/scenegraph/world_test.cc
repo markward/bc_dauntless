@@ -103,4 +103,21 @@ TEST(World, ForEachVisibleInPassRespectsVisibilityFlag) {
     EXPECT_EQ(count, 0);
 }
 
+TEST(World, NewInstanceDefaultsRimIneligible) {
+    scenegraph::World w;
+    auto id = w.create_instance(7);
+    auto* inst = w.get(id);
+    ASSERT_NE(inst, nullptr);
+    EXPECT_FALSE(inst->rim_eligible);
+}
+
+TEST(World, SetRimEligibleUpdatesField) {
+    scenegraph::World w;
+    auto id = w.create_instance(7);
+    w.set_rim_eligible(id, true);
+    EXPECT_TRUE(w.get(id)->rim_eligible);
+    w.set_rim_eligible(id, false);
+    EXPECT_FALSE(w.get(id)->rim_eligible);
+}
+
 }  // namespace
