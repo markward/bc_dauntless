@@ -2582,6 +2582,11 @@ def run(mission_name: Optional[str] = None,
             suns = _aggregate_suns()
             r.set_suns(suns)
 
+            import App
+            planets = _aggregate_planets(
+                list(App.g_kSetManager._sets.values()))
+            r.set_dust_planets(planets)
+
             lens_flares = _aggregate_lens_flares()
             r.set_lens_flares(lens_flares)
 
@@ -2592,6 +2597,8 @@ def run(mission_name: Optional[str] = None,
                 print(f"[host_loop] tick 0 backdrops: "
                       f"{len(backdrops)} layer(s)", flush=True)
                 print(f"[host_loop] tick 0 suns: {len(suns)} sun(s)", flush=True)
+                print(f"[host_loop] tick 0 dust planets: "
+                      f"{len(planets)} planet(s)", flush=True)
                 print(f"[host_loop] tick 0 lens flares: "
                       f"{len(lens_flares)} flare(s)", flush=True)
 
