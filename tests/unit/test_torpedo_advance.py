@@ -67,11 +67,11 @@ def test_torpedo_collides_with_ship_sphere():
     assert len(hits) == 1
     assert hits[0][0] is t
     assert hits[0][1] is target
-    # New: 4-tuple emits the hit point. Headless (no host) → torpedo._position.
-    assert len(hits[0]) == 4
-    assert hits[0][3].x == pytest.approx(t._position.x)
-    assert hits[0][3].y == pytest.approx(t._position.y)
-    assert hits[0][3].z == pytest.approx(t._position.z)
+    # 3-tuple: (torpedo, ship, hit_point). Headless (no host) → torpedo._position.
+    assert len(hits[0]) == 3
+    assert hits[0][2].x == pytest.approx(t._position.x)
+    assert hits[0][2].y == pytest.approx(t._position.y)
+    assert hits[0][2].z == pytest.approx(t._position.z)
     assert _active == []
 
 
@@ -143,7 +143,7 @@ def test_torpedo_uses_host_ray_trace_mesh_when_supplied():
         ship_instances={target: instance_sentinel},
     )
     assert len(hits) == 1
-    _, ship, _, hit_point = hits[0]
+    _, ship, hit_point = hits[0]
     assert ship is target
     assert hit_point.x == pytest.approx(7.0)
     assert hit_point.y == pytest.approx(7.0)

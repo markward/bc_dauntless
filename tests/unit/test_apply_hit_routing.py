@@ -1,4 +1,6 @@
-"""apply_hit routes damage: shields-face → subsystem → hull bleed.
+"""apply_hit routes damage via spherical-splash attribution:
+shields absorb first, then hull takes full post-shield damage unconditionally,
+and each non-hull subsystem within the splash sphere takes weighted damage.
 Broadcasts WeaponHitEvent at the end.
 """
 import sys
@@ -81,15 +83,20 @@ def test_excess_bleeds_to_hull_when_no_subsystem_match():
     assert hull.GetCondition() == 600.0
 
 
-def test_excess_routes_to_picked_subsystem_first():
+def test_splash_hit_at_subsystem_centre_damages_it():
+    """Splash model: impact directly on the bridge (d=0 → w=1.0).
+    Shields absorb 100; post-shield=400. Hull takes 400 unconditionally.
+    Bridge (r_sub=2, r_hit=0.15) is within range so it takes 400, capped at 300.
+    """
     shields = _FakeShields(current=100.0)
     hull = _FakeSubsystem("Hull", max_cond=1000.0)
     bridge = _FakeSubsystem("Bridge", max_cond=300.0, position=TGPoint3(0, 5, 0), radius=2.0)
     ship = _FakeShip(shields=shields, hull=hull, children=[bridge])
     apply_hit(ship, 500.0, TGPoint3(0, 5, 0), source=None)
-    # Shields absorbed 100, bridge took 300 (capped), remaining 100 bled to hull.
+    # Bridge should be destroyed (took full 400, capped at max 300).
     assert bridge.GetCondition() == 0.0
-    assert hull.GetCondition() == 900.0
+    # Hull takes full post-shield damage: 1000 - 400 = 600.
+    assert hull.GetCondition() == 600.0
 
 
 def test_hull_zero_marks_ship_dying():
@@ -149,7 +156,7 @@ def test_apply_hit_calls_dispatch_with_absorbed_shields(monkeypatch):
 
     ship = _make_ship_with_full_shield(face_charge=100.0)
     combat.apply_hit(ship, damage=30.0, hit_point=TGPoint3(0, 1, 0),
-                     source=None, subsystem=None,
+                     source=None,
                      normal=TGPoint3(0, -1, 0))
 
     assert len(spy.calls) == 1
@@ -162,7 +169,7 @@ def test_apply_hit_calls_dispatch_with_absorbed_shields(monkeypatch):
 
 
 def test_apply_hit_calls_dispatch_with_hull_bleed(monkeypatch):
-    """Shields drained, hull absorbs the overflow."""
+    """Shields drained; hull takes the full post-shield overflow."""
     from engine.appc import combat, hit_feedback
     from engine.appc.math import TGPoint3
 
@@ -171,19 +178,24 @@ def test_apply_hit_calls_dispatch_with_hull_bleed(monkeypatch):
 
     ship = _make_ship_with_full_shield(face_charge=10.0)
     combat.apply_hit(ship, damage=30.0, hit_point=TGPoint3(0, 1, 0),
-                     source=None, subsystem=None,
+                     source=None,
                      normal=None)
 
     kw = spy.calls[0]
     assert kw["absorbed_shields"] == pytest.approx(10.0)
-    # subsystem=None → pick_target_subsystem returns hull; absorbed_subsystem
-    # stays 0; the 20 spills to hull.
+    # No subsystems in splash range → absorbed_subsystem stays 0;
+    # hull takes the full post-shield 20.
     assert kw["absorbed_subsystem"] == pytest.approx(0.0)
     assert kw["absorbed_hull"] == pytest.approx(20.0)
 
 
 def test_apply_hit_dispatch_captures_subsystem_transition(monkeypatch):
-    """A subsystem that flips disabled this tick produces sub_transition='disabled'."""
+    """A subsystem in splash range that flips disabled this tick produces sub_transition='disabled'.
+
+    The flipping sub is at body (0, 1, 0) with radius=10; hit_point is
+    (0, 1, 0) so d=0 < r_sub+r_hit — it is within the splash sphere and
+    will be damaged, triggering the transition detection.
+    """
     from engine.appc import combat, hit_feedback
     from engine.appc.math import TGPoint3
 
@@ -195,7 +207,7 @@ def test_apply_hit_dispatch_captures_subsystem_transition(monkeypatch):
                                           final_dmg=True,
                                           final_dis=True)
     combat.apply_hit(ship, damage=50.0, hit_point=TGPoint3(0, 1, 0),
-                     source=None, subsystem=ship._flipping_sub,
+                     source=None,
                      normal=None)
 
     kw = spy.calls[0]
@@ -204,8 +216,7 @@ def test_apply_hit_dispatch_captures_subsystem_transition(monkeypatch):
 
 def _make_ship_with_full_shield(*, face_charge):
     """Ship with FRONT shield charged to `face_charge`, no children.
-    pick_target_subsystem returns hull (no candidate children pass the
-    proximity gate)."""
+    No subsystems in splash range so absorbed_subsystem stays 0."""
     shields = _FakeShields(current=face_charge)
     hull = _FakeSubsystem("Hull", max_cond=1000.0)
     return _FakeShip(shields=shields, hull=hull, children=[])
@@ -236,8 +247,9 @@ class _FlippingSub(_FakeSubsystem):
 
 def _make_ship_with_flipping_sub(*, initial_dmg, initial_dis,
                                    final_dmg, final_dis):
-    """Ship with one _FlippingSub as a child, no shields. Caller passes
-    ship._flipping_sub explicitly to apply_hit's `subsystem` kwarg."""
+    """Ship with one _FlippingSub as a child, no shields. The sub is at
+    body (0, 1, 0) with radius=10 so a hit at (0, 1, 0) puts it within
+    the splash sphere (d=0 < r_sub+r_hit)."""
     shields = _FakeShields(current=0.0)
     hull = _FakeSubsystem("Hull", max_cond=1000.0)
     flipping = _FlippingSub(

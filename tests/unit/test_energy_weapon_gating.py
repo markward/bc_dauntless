@@ -81,6 +81,7 @@ def test_stop_firing_clears_flag():
 
 
 def test_fire_plays_start_sound():
+    """_play_fire_sfx calls mgr.GetSound(name + ' Start') and plays it."""
     bank = _charged_bank()
     prop = PhaserProperty("Galaxy Phaser Hardpoint")
     prop.SetFireSound("Galaxy Phaser")
@@ -88,13 +89,19 @@ def test_fire_plays_start_sound():
 
     with patch("engine.audio.tg_sound.TGSoundManager.instance") as mock_mgr:
         bank.Fire(target=None, offset=None)
-        mock_mgr.return_value.PlaySound.assert_called_once_with("Galaxy Phaser Start")
+        # _play_fire_sfx: GetSound("Galaxy Phaser Start") is called first.
+        # (GetSound("Galaxy Phaser Loop") may also be called for the sustain.)
+        get_sound_calls = [c.args[0] for c in mock_mgr.return_value.GetSound.call_args_list]
+        assert "Galaxy Phaser Start" in get_sound_calls
+        # The sound returned for the start variant should have been played.
+        start_sound = mock_mgr.return_value.GetSound.return_value
+        assert start_sound.Play.call_count >= 1
 
 
 def test_fire_falls_back_to_bare_name_when_no_start_variant():
     """Tractor uses SetFireSound("Tractor Beam") — LoadTacticalSounds
-    registers it without the " Start" suffix.  Spec: try Start first,
-    fall back to bare name."""
+    registers it without the " Start" suffix.  Spec: GetSound tries Start
+    first (returns None), then falls back to bare name."""
     beam = TractorBeam("Aft Tractor 1")
     parent = PhaserSystem("TractorParent")  # any WeaponSystem will do for IsOn()
     parent.TurnOn()
@@ -107,14 +114,21 @@ def test_fire_falls_back_to_bare_name_when_no_start_variant():
     beam.SetProperty(prop)
 
     with patch("engine.audio.tg_sound.TGSoundManager.instance") as mock_mgr:
-        # PlaySound returns None for unregistered names; the trigger should
-        # try "Tractor Beam Start" first, then fall back to "Tractor Beam".
-        def play(name):
-            return None if "Start" in name else object()  # bare name "registered"
-        mock_mgr.return_value.PlaySound.side_effect = play
+        # GetSound("Tractor Beam Start") → None (not registered).
+        # GetSound("Tractor Beam")       → a real sound object (registered).
+        from unittest.mock import MagicMock
+        bare_sound = MagicMock()
+        def get_sound(name):
+            return None if "Start" in name else bare_sound
+        mock_mgr.return_value.GetSound.side_effect = get_sound
+
         beam.Fire(target=None, offset=None)
-        calls = [c.args[0] for c in mock_mgr.return_value.PlaySound.call_args_list]
-        assert calls == ["Tractor Beam Start", "Tractor Beam"]
+
+        get_sound_calls = [c.args[0] for c in mock_mgr.return_value.GetSound.call_args_list]
+        assert "Tractor Beam Start" in get_sound_calls
+        assert "Tractor Beam" in get_sound_calls
+        # The bare-name sound's Play should have been called (Start was None so skipped).
+        assert bare_sound.Play.call_count >= 1
 
 
 def test_fire_with_empty_fire_sound_no_sfx():
