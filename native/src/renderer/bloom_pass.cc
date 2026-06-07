@@ -17,6 +17,11 @@
 
 #include <glm/glm.hpp>
 
+namespace {
+static constexpr int kMaxMips  = 6;  // maximum mip levels in the bloom chain
+static constexpr int kMinMipDim = 8; // stop halving when next level would be < this
+}  // namespace
+
 namespace renderer {
 
 BloomPass::BloomPass()
@@ -65,8 +70,8 @@ void BloomPass::destroy() {
 void BloomPass::rebuild(int fw, int fh) {
     destroy();
 
-    // mip[0] = half-res, each subsequent = half down to min dimension >= 8,
-    // capped at 6 mips.
+    // mip[0] = half-res, each subsequent = half down to min dimension >= kMinMipDim,
+    // capped at kMaxMips mips.
     int w = fw / 2;
     int h = fh / 2;
     if (w < 1) w = 1;
@@ -95,11 +100,11 @@ void BloomPass::rebuild(int fw, int fh) {
 
         mips_.push_back(m);
 
-        // Stop if we've reached the cap or the next halving would be < 8.
-        if (static_cast<int>(mips_.size()) >= 6) break;
+        // Stop if we've reached the cap or the next halving would be < kMinMipDim.
+        if (static_cast<int>(mips_.size()) >= kMaxMips) break;
         int nw = w / 2;
         int nh = h / 2;
-        if (nw < 8 || nh < 8) break;
+        if (nw < kMinMipDim || nh < kMinMipDim) break;
         w = nw;
         h = nh;
     }
@@ -164,6 +169,8 @@ std::uint32_t BloomPass::render(std::uint32_t hdr_color_tex, int fw, int fh) {
     }
 
     glDisable(GL_BLEND);
+    // reset to pipeline-default blend func (we changed it to additive for upsample)
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     // Restore state.
     if (prev_depth_test) glEnable(GL_DEPTH_TEST);

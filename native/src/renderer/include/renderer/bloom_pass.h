@@ -2,7 +2,10 @@
 #include <cstdint>
 #include <memory>
 #include <vector>
-namespace renderer { class Shader;
+namespace renderer {
+
+class Shader;
+
 class BloomPass {
 public:
     BloomPass();
