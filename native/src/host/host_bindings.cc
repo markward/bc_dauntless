@@ -54,6 +54,14 @@
 
 namespace py = pybind11;
 
+// Toggle for the HDR resolve pass. Defined in frame.cc (librenderer).
+// Forward-declared here (before the anonymous namespace) so frame() inside
+// the anonymous namespace can call dauntless_hdr::enabled().
+namespace dauntless_hdr {
+    bool enabled();            // defined in frame.cc
+    void set_enabled(bool v);  // defined in frame.cc
+}
+
 namespace {
 
 std::unique_ptr<renderer::Window> g_window;
@@ -303,7 +311,7 @@ void frame() {
     // on top of the resolved 3D scene.
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(0, 0, fw, fh);
-    g_resolve_pass->set_hdr_enabled(false);   // Task 3 will switch to dauntless_hdr::enabled()
+    g_resolve_pass->set_hdr_enabled(dauntless_hdr::enabled());
     g_resolve_pass->draw(g_hdr_target->color_texture());
 
     // Snapshot tracked keys' current state BEFORE poll_events. The next
@@ -349,7 +357,6 @@ namespace dauntless_specular {
 namespace dauntless_rim {
     void set_enabled(bool v);  // defined in frame.cc
 }
-
 PYBIND11_MODULE(_dauntless_host, m) {
     m.doc() = "open_stbc renderer host bindings (Phase B: window + frame stub)";
 
@@ -706,6 +713,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](bool enabled) { dauntless_rim::set_enabled(enabled); },
           py::arg("enabled"),
           "Toggle the opaque-pass Fresnel rim term. Default: on.");
+    m.def("hdr_set_enabled",
+          [](bool e) { dauntless_hdr::set_enabled(e); },
+          py::arg("enabled"),
+          "Toggle the HDR resolve (tonemap+bloom+grade). Default: on.");
 
     m.def("dust_set_density",
           [](int count) {

@@ -42,6 +42,17 @@ namespace {
     void set_enabled(bool v) { g_rim_enabled = v; }
 }
 
+// Toggle for the HDR resolve pass (tonemap + bloom + grade). Default on.
+// host_bindings.cc forward-declares set_enabled; frame() reads enabled()
+// when calling g_resolve_pass->set_hdr_enabled().
+namespace dauntless_hdr {
+namespace {
+    bool g_hdr_enabled = true;
+}
+    bool enabled() { return g_hdr_enabled; }
+    void set_enabled(bool v) { g_hdr_enabled = v; }
+}
+
 namespace renderer {
 
 namespace {

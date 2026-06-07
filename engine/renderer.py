@@ -158,6 +158,11 @@ def set_rim_enabled(enabled: bool) -> None:
     _h.rim_set_enabled(enabled)
 
 
+def set_hdr_enabled(enabled: bool) -> None:
+    """Toggle the HDR resolve (tonemap+bloom+grade). Default: on after init()."""
+    _h.hdr_set_enabled(enabled)
+
+
 def set_rim_eligible(instance_id: InstanceId, eligible: bool) -> None:
     """Mark a ship-hull instance as eligible for the Fresnel rim term.
     Planets are left ineligible so they don't receive a metallic rim."""

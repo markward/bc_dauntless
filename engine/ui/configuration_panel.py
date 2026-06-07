@@ -1,9 +1,9 @@
 """Configuration panel — pause-menu modal with tabbed settings.
 
 Subclasses engine.ui.panel.Panel; pumped by PanelRegistry like the
-mission picker. Owns a SettingsSnapshot and four injected appliers
-(dust, specular, rim, fov). Every state mutation immediately fires the
-matching applier — there is no Apply/Cancel; closing the panel does
+mission picker. Owns a SettingsSnapshot and five injected appliers
+(dust, specular, hdr, rim, fov). Every state mutation immediately fires
+the matching applier — there is no Apply/Cancel; closing the panel does
 not revert. Settings are not persisted across launches.
 
 Spec: docs/superpowers/specs/2026-06-05-configuration-panel-design.md
@@ -26,6 +26,7 @@ FOV_MAX = 75
 class SettingsSnapshot:
     dust_on: bool
     specular_on: bool
+    hdr_on: bool
     rim_on: bool
     fov_deg: int
 
@@ -36,6 +37,7 @@ class ConfigurationPanel(Panel):
                  initial_settings: SettingsSnapshot,
                  set_dust: Callable[[bool], None],
                  set_specular: Callable[[bool], None],
+                 set_hdr: Callable[[bool], None],
                  set_rim: Callable[[bool], None],
                  set_fov_rad: Callable[[float], None]):
         super().__init__()
@@ -44,11 +46,13 @@ class ConfigurationPanel(Panel):
         self._settings = SettingsSnapshot(
             dust_on=initial_settings.dust_on,
             specular_on=initial_settings.specular_on,
+            hdr_on=initial_settings.hdr_on,
             rim_on=initial_settings.rim_on,
             fov_deg=int(initial_settings.fov_deg),
         )
         self._set_dust = set_dust
         self._set_specular = set_specular
+        self._set_hdr = set_hdr
         self._set_rim = set_rim
         self._set_fov_rad = set_fov_rad
         self._visible: bool = False
@@ -77,6 +81,7 @@ class ConfigurationPanel(Panel):
             self._focused,
             self._settings.dust_on,
             self._settings.specular_on,
+            self._settings.hdr_on,
             self._settings.rim_on,
             self._settings.fov_deg,
         )
@@ -93,6 +98,7 @@ class ConfigurationPanel(Panel):
             "settings": {
                 "dust_on": self._settings.dust_on,
                 "specular_on": self._settings.specular_on,
+                "hdr_on": self._settings.hdr_on,
                 "rim_on": self._settings.rim_on,
                 "fov_deg": self._settings.fov_deg,
             },
@@ -117,6 +123,11 @@ class ConfigurationPanel(Panel):
             new_val = not self._settings.specular_on
             self._set_specular(new_val)
             self._settings.specular_on = new_val
+            return True
+        if action == "toggle:hdr":
+            new_val = not self._settings.hdr_on
+            self._set_hdr(new_val)
+            self._settings.hdr_on = new_val
             return True
         if action == "toggle:rim":
             new_val = not self._settings.rim_on
@@ -186,6 +197,8 @@ class ConfigurationPanel(Panel):
             self.dispatch_event("toggle:dust")
         elif activate and kind == "ctrl" and target == "specular":
             self.dispatch_event("toggle:specular")
+        elif activate and kind == "ctrl" and target == "hdr":
+            self.dispatch_event("toggle:hdr")
         elif activate and kind == "ctrl" and target == "rim":
             self.dispatch_event("toggle:rim")
         elif activate and kind == "tab":
@@ -201,8 +214,9 @@ class ConfigurationPanel(Panel):
         """Ordered focusable list: tab rows then controls in the
         currently selected tab. For the only tab today (graphics):
         [('tab','graphics'), ('ctrl','dust'), ('ctrl','specular'),
-         ('ctrl','fov'), ('ctrl','rim')]."""
+         ('ctrl','fov'), ('ctrl','hdr'), ('ctrl','rim')]."""
         out: list = [("tab", tid) for tid, _ in self._tabs]
         if self._selected_tab == "graphics":
-            out += [("ctrl", "dust"), ("ctrl", "specular"), ("ctrl", "fov"), ("ctrl", "rim")]
+            out += [("ctrl", "dust"), ("ctrl", "specular"), ("ctrl", "fov"),
+                    ("ctrl", "hdr"), ("ctrl", "rim")]
         return out

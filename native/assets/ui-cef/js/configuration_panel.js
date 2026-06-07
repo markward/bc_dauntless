@@ -22,6 +22,7 @@ function _cpFocusableList(state) {
         out.push({kind: 'ctrl', target: 'dust'});
         out.push({kind: 'ctrl', target: 'specular'});
         out.push({kind: 'ctrl', target: 'fov'});
+        out.push({kind: 'ctrl', target: 'hdr'});
         out.push({kind: 'ctrl', target: 'rim'});
     }
     return out;
@@ -89,6 +90,17 @@ function _cpRenderGraphicsBody(state, focusables) {
     // ── Modern VFX group ─────────────────────────────────────────────
     html += '<hr class="cp-divider">';
     html += '<div class="cp-group-header">Modern VFX</div>';
+
+    // HDR toggle
+    html += '<div class="cp-row' + (isFoc('hdr') ? ' cp-focused' : '') + '">'
+          +   '<div class="cp-row__label">HDR</div>'
+          +   '<div class="cp-row__control">'
+          +     '<button class="cp-toggle' + (s.hdr_on ? ' cp-toggle--on' : '') + '"'
+          +        ' onclick="dauntlessEvent(\'configuration/toggle:hdr\')">'
+          +       (s.hdr_on ? 'On' : 'Off')
+          +     '</button>'
+          +   '</div>'
+          + '</div>';
 
     // Fresnel Rim Light toggle
     html += '<div class="cp-row' + (isFoc('rim') ? ' cp-focused' : '') + '">'

@@ -21,10 +21,11 @@ def _make(**overrides):
     kwargs = dict(
         tabs=[("graphics", "Graphics")],
         initial_settings=SettingsSnapshot(
-            dust_on=True, specular_on=True, rim_on=True, fov_deg=70,
+            dust_on=True, specular_on=True, hdr_on=True, rim_on=True, fov_deg=70,
         ),
         set_dust=Mock(),
         set_specular=Mock(),
+        set_hdr=Mock(),
         set_rim=Mock(),
         set_fov_rad=Mock(),
     )
@@ -52,13 +53,13 @@ def test_open_close_round_trip():
 
 def test_initial_settings_round_trip_to_render_payload():
     p, _ = _make(initial_settings=SettingsSnapshot(
-        dust_on=False, specular_on=True, rim_on=False, fov_deg=62,
+        dust_on=False, specular_on=True, hdr_on=True, rim_on=False, fov_deg=62,
     ))
     p.open()
     payload = p.render_payload()
     body = json.loads(payload[len("setConfigurationPanel("):-2])
     assert body["settings"] == {
-        "dust_on": False, "specular_on": True, "rim_on": False, "fov_deg": 62,
+        "dust_on": False, "specular_on": True, "hdr_on": True, "rim_on": False, "fov_deg": 62,
     }
 
 
@@ -241,19 +242,19 @@ def test_focus_first_up_lands_on_last_focusable():
     p.handle_input(r)
     payload = p.render_payload()
     body = json.loads(payload[len("setConfigurationPanel("):-2])
-    assert body["focused"] == 4  # ctrl:rim is last in a 5-item list
+    assert body["focused"] == 5  # ctrl:rim is last in a 6-item list
 
 
 def test_focus_wraps_at_bottom():
     p, _ = _make()
     p.open()
     r = _FakeReader()
-    for _ in range(6):
+    for _ in range(7):
         r.press(r.keys.KEY_DOWN)
         p.handle_input(r)
     payload = p.render_payload()
     body = json.loads(payload[len("setConfigurationPanel("):-2])
-    assert body["focused"] == 0  # 0,1,2,3,4,wrap→0
+    assert body["focused"] == 0  # 0,1,2,3,4,5,wrap→0
 
 
 def test_space_on_dust_row_toggles():
@@ -280,7 +281,7 @@ def test_right_arrow_on_fov_row_increments():
 
 def test_left_arrow_on_fov_row_decrements_and_clamps():
     p, kw = _make(initial_settings=SettingsSnapshot(
-        dust_on=True, specular_on=True, rim_on=True, fov_deg=55,
+        dust_on=True, specular_on=True, hdr_on=True, rim_on=True, fov_deg=55,
     ))
     p.open()
     r = _FakeReader()
@@ -352,3 +353,28 @@ def test_rim_is_a_graphics_focusable():
     p, _ = _make()
     focusables = p._focusables()
     assert ("ctrl", "rim") in focusables
+
+
+# ---- hdr toggle -----------------------------------------------------------
+
+def test_toggle_hdr_fires_applier_and_flips_state():
+    p, kw = _make()
+    p.open()
+    assert p._settings.hdr_on is True
+    assert p.dispatch_event("toggle:hdr") is True
+    kw["set_hdr"].assert_called_once_with(False)
+    assert p._settings.hdr_on is False
+
+
+def test_render_payload_includes_hdr_on():
+    p, _ = _make()
+    p.open()
+    payload = json.loads(p.render_payload()[len("setConfigurationPanel("):-len(");")])
+    assert payload["settings"]["hdr_on"] is True
+
+
+def test_hdr_is_a_graphics_focusable_before_rim():
+    p, _ = _make()
+    f = p._focusables()
+    assert ("ctrl", "hdr") in f and ("ctrl", "rim") in f
+    assert f.index(("ctrl", "hdr")) < f.index(("ctrl", "rim"))

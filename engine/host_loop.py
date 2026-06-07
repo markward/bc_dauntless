@@ -2060,6 +2060,7 @@ def run(mission_name: Optional[str] = None,
             initial_settings=SettingsSnapshot(
                 dust_on=True,
                 specular_on=True,
+                hdr_on=True,
                 rim_on=True,
                 fov_deg=int(round(_math.degrees(
                     director.fov_y_rad
@@ -2067,6 +2068,7 @@ def run(mission_name: Optional[str] = None,
             ),
             set_dust=r.set_dust_enabled,
             set_specular=r.set_specular_enabled,
+            set_hdr=r.set_hdr_enabled,
             set_rim=r.set_rim_enabled,
             set_fov_rad=director.set_fov,
         )
