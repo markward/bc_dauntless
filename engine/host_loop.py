@@ -2078,7 +2078,7 @@ def run(mission_name: Optional[str] = None,
         pause_menu = default_pause_menu(
             on_exit=pause.request_quit,
             on_configuration=configuration_panel.open,
-            on_cancel=pause.close,
+            on_resume=pause.close,
         )
         registry = PanelRegistry(legacy_handler=pause_menu.dispatch_event)
         controller.panel_registry = registry  # expose to _drain_pending_swap

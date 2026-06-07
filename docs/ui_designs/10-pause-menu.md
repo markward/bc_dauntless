@@ -4,7 +4,7 @@ Visual reference: [10-pause-menu.html](10-pause-menu.html)
 
 The in-game pause menu. Opens on `ESC` during a mission, freezes the simulation, and presents a vertical list of actions. Replaces the original engine's `MWT_OPTIONS` window (a C++-only widget — no SDK Python defines it; see `DefaultKeyboardBinding.py:25`).
 
-Dauntless ships with two actions — **Exit Program** and **Cancel**. The original game's "Abort Mission" is omitted: there is no main menu to return to. The shape is intentionally extensible: adding a row is a single `model.add_item(label, action_id)` call in Python with a matching handler registered on the model.
+Dauntless ships with two actions — **Resume** and **Exit Program**. The original game's "Abort Mission" is omitted: there is no main menu to return to. The shape is intentionally extensible: adding a row is a single `model.add_item(label, action_id)` call in Python with a matching handler registered on the model. The two ends are pinned: **Resume** is always the first row (the safe back-out) and **Exit Program** is always the last (the destructive quit), so neither drifts mid-list as rows are added between them.
 
 ## Structure
 
@@ -18,8 +18,8 @@ This widget composes two primitives from elsewhere in the design language — no
         │  GAME PAUSED                           │  ← shared chrome header (Menu1 gradient)
         ╞════════════════════════════════════════╡
         ║                                        │
-        ║    ▸ Exit Program          ←  chosen   │  ← row primitive, chosen state
-        ║    ▸ Cancel                            │  ← row primitive, available state
+        ║    ▸ Resume                ←  chosen   │  ← row primitive, chosen state
+        ║    ▸ Exit Program                      │  ← row primitive, available state
         ║                                        │
         └────────────────────────────────────────┘
 ```
@@ -50,7 +50,7 @@ The dim is intentionally flat rather than the radial gradient used by [08 modal-
 | Body padding | n/a | `12px 10px` |
 | Row gap | n/a | `2px` (vertical margin between rows) |
 
-Header reads `GAME PAUSED` (Antonio 600, 14 px, uppercase, letter-spacing 1.5 px) with **no** `▼` collapse glyph — the menu is dismissed by ESC or the Cancel row, not by collapsing the panel.
+Header reads `GAME PAUSED` (Antonio 600, 14 px, uppercase, letter-spacing 1.5 px) with **no** `▼` collapse glyph — the menu is dismissed by ESC or the Resume row, not by collapsing the panel.
 
 ## Rows
 
@@ -75,8 +75,8 @@ There is none — the pause menu is dauntless-native. The model lives in [`engin
 from engine.ui.pause_menu import PauseMenuModel
 
 model = PauseMenuModel()
+model.add_item("Resume",       "resume", handler=lambda: pause.toggle())
 model.add_item("Exit Program", "exit",   handler=lambda: pause.request_quit())
-model.add_item("Cancel",       "cancel", handler=lambda: pause.toggle())
 
 # host_loop, per tick while pause.is_open:
 model.handle_input(h)              # ↑/↓ move focus; Enter activates
