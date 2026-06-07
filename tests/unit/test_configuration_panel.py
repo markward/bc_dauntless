@@ -101,9 +101,9 @@ def test_dispatch_fov_sets_and_applies_radians():
 def test_dispatch_fov_clamps_low():
     p, kw = _make()
     p.open()
-    p.dispatch_event("fov:42")
+    p.dispatch_event("fov:30")
     (called_rad,), _ = kw["set_fov_rad"].call_args
-    assert called_rad == pytest.approx(math.radians(55))
+    assert called_rad == pytest.approx(math.radians(40))
 
 
 def test_dispatch_fov_clamps_high():
@@ -111,7 +111,7 @@ def test_dispatch_fov_clamps_high():
     p.open()
     p.dispatch_event("fov:120")
     (called_rad,), _ = kw["set_fov_rad"].call_args
-    assert called_rad == pytest.approx(math.radians(75))
+    assert called_rad == pytest.approx(math.radians(80))
 
 
 def test_dispatch_fov_garbage_value_returns_false():
@@ -276,22 +276,22 @@ def test_right_arrow_on_fov_row_increments():
         r.press(r.keys.KEY_DOWN); p.handle_input(r)
     r.press(r.keys.KEY_RIGHT); p.handle_input(r)
     (called_rad,), _ = kw["set_fov_rad"].call_args
-    assert called_rad == pytest.approx(math.radians(71))  # 70 + 1
+    assert called_rad == pytest.approx(math.radians(75))  # 70 + 5
 
 
 def test_left_arrow_on_fov_row_decrements_and_clamps():
     p, kw = _make(initial_settings=SettingsSnapshot(
-        dust_on=True, specular_on=True, hdr_on=True, rim_on=True, fov_deg=55,
+        dust_on=True, specular_on=True, hdr_on=True, rim_on=True, fov_deg=40,
     ))
     p.open()
     r = _FakeReader()
     for _ in range(4):
         r.press(r.keys.KEY_DOWN); p.handle_input(r)
     r.press(r.keys.KEY_LEFT); p.handle_input(r)
-    # Still 55 (clamped), but applier still fires (consistency: every
+    # Still 40 (clamped), but applier still fires (consistency: every
     # press emits the current state to the renderer).
     (called_rad,), _ = kw["set_fov_rad"].call_args
-    assert called_rad == pytest.approx(math.radians(55))
+    assert called_rad == pytest.approx(math.radians(40))
 
 
 def test_handle_input_missing_optional_keys_does_not_crash():

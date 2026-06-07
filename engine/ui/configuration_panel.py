@@ -18,8 +18,9 @@ from typing import Callable, List, Optional, Tuple
 from engine.ui.panel import Panel
 
 
-FOV_MIN = 55
-FOV_MAX = 75
+FOV_MIN  = 40
+FOV_MAX  = 80
+FOV_STEP = 5
 
 
 @dataclass
@@ -206,9 +207,9 @@ class ConfigurationPanel(Panel):
 
         if kind == "ctrl" and target == "fov":
             if _pressed(k_right):
-                self.dispatch_event("fov:" + str(self._settings.fov_deg + 1))
+                self.dispatch_event("fov:" + str(self._settings.fov_deg + FOV_STEP))
             if _pressed(k_left):
-                self.dispatch_event("fov:" + str(self._settings.fov_deg - 1))
+                self.dispatch_event("fov:" + str(self._settings.fov_deg - FOV_STEP))
 
     def _focusables(self) -> list:
         """Ordered focusable list: tab rows then controls in the

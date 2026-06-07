@@ -14,7 +14,7 @@ import math
 # which also re-syncs the tracking solver's projection math.
 # host_loop.py reads director.fov_y_rad when calling r.set_camera,
 # so the constant is the source of truth at startup only.
-EXTERIOR_FOV_Y_RAD: float = math.radians(70.0)
+EXTERIOR_FOV_Y_RAD: float = math.radians(60.0)
 
 # Camera-follow distances as multiples of the player ship's GetRadius().
 CAM_BACK_RADII  =  1.5
