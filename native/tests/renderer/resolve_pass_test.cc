@@ -82,4 +82,38 @@ TEST_F(ResolvePassTest, PassthroughClampsHighlightsWhenHdrOff) {
     unsigned char off[4]; glReadPixels(32,32,1,1,GL_RGBA,GL_UNSIGNED_BYTE,off);
     EXPECT_EQ(off[0], 255);   // passthrough clamps 1.5 -> 1.0 -> 255
 }
+
+// ── Regression: fullscreen triangle must survive the Pipeline's cull state ──
+// The Pipeline enables GL_CULL_FACE with CW front faces. The fullscreen
+// triangle winds CCW and would be culled as a back face → black backbuffer.
+// Disable+restore in ResolvePass::draw must protect against this.
+TEST_F(ResolvePassTest, DrawsWhenBackfaceCullingEnabled) {
+    // Reproduce the Pipeline's GL state: CW front faces, cull back faces.
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
+    glFrontFace(GL_CW);
+
+    renderer::HdrTarget hdr;
+    hdr.resize(32, 32);
+    hdr.bind();
+    glClearColor(0.25f, 0.5f, 0.75f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, 64, 64);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);   // black: if the triangle is culled, this stays black
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    renderer::ResolvePass resolve;
+    resolve.set_hdr_enabled(false);
+    resolve.draw(hdr.color_texture(), hdr.color_texture());
+
+    unsigned char px[4] = {0,0,0,0};
+    glReadPixels(32, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
+    EXPECT_NEAR(px[0], 64,  2);   // would be 0 (black) if the fullscreen tri is culled
+    EXPECT_NEAR(px[1], 128, 2);
+    EXPECT_NEAR(px[2], 191, 2);
+
+    glDisable(GL_CULL_FACE);      // leave global state clean for other tests
+}
 }  // namespace

@@ -37,9 +37,14 @@ ResolvePass::~ResolvePass() {
 
 void ResolvePass::draw(std::uint32_t hdr_color_tex, std::uint32_t bloom_tex) {
     // Save GL state we clobber so 3D passes on the next frame see unchanged config.
+    const GLboolean prev_cull       = glIsEnabled(GL_CULL_FACE);
     const GLboolean prev_depth_test = glIsEnabled(GL_DEPTH_TEST);
     const GLboolean prev_blend      = glIsEnabled(GL_BLEND);
 
+    // The fullscreen triangle winds CCW; the Pipeline sets CW as front-facing,
+    // so it would be culled as a back face → black screen. Disable culling for
+    // the draw and restore it afterwards (mirrors CefCompositePass).
+    glDisable(GL_CULL_FACE);
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_BLEND);
 
@@ -66,6 +71,7 @@ void ResolvePass::draw(std::uint32_t hdr_color_tex, std::uint32_t bloom_tex) {
     glBindTexture(GL_TEXTURE_2D, 0);
 
     // Restore.
+    if (prev_cull)       glEnable(GL_CULL_FACE);
     if (prev_depth_test) glEnable(GL_DEPTH_TEST);
     if (prev_blend)      glEnable(GL_BLEND);
 }

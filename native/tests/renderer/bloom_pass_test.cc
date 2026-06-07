@@ -93,7 +93,39 @@ TEST_F(BloomPassTest, SpreadsEnergyFromBrightTexel) {
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 
-// ── Test 2: fully black input produces zero bloom ───────────────────────────
+// ── Test 2: bloom still produces energy when Pipeline's cull state is active ──
+// The Pipeline enables GL_CULL_FACE with CW front faces. Every fullscreen draw
+// in BloomPass::render winds CCW → culled as a back face → fully black bloom.
+// Disable+restore in BloomPass::render must protect against this.
+TEST_F(BloomPassTest, ProducesEnergyWhenBackfaceCullingEnabled) {
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
+    glFrontFace(GL_CW);
+
+    renderer::HdrTarget hdr;
+    hdr.resize(64, 64);
+    hdr.bind();
+    glClearColor(0,0,0,1); glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glEnable(GL_SCISSOR_TEST); glScissor(28,28,8,8);
+    glClearColor(4,4,4,1); glClear(GL_COLOR_BUFFER_BIT);
+    glDisable(GL_SCISSOR_TEST);
+
+    renderer::BloomPass bloom;
+    std::uint32_t tex = bloom.render(hdr.color_texture(), 64, 64);
+    ASSERT_NE(tex, 0u);
+
+    // Read mip0 (32x32) center; with culling the fullscreen passes would all
+    // be culled and the result fully black.
+    std::vector<float> buf(32*32*4, -1.0f);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_FLOAT, buf.data());
+    float center_r = buf[(15*32+15)*4];
+    EXPECT_GT(center_r, 0.5f);   // would be 0 if culled
+
+    glDisable(GL_CULL_FACE);
+}
+
+// ── Test 3: fully black input produces zero bloom ───────────────────────────
 TEST_F(BloomPassTest, BlackInputProducesNoBloom) {
     renderer::HdrTarget hdr;
     hdr.resize(64, 64);

@@ -120,10 +120,15 @@ std::uint32_t BloomPass::render(std::uint32_t hdr_color_tex, int fw, int fh) {
 
     const int N = static_cast<int>(mips_.size());
 
-    // Save blend and depth-test state.
+    // Save blend, depth-test, and cull state.
+    const GLboolean prev_cull       = glIsEnabled(GL_CULL_FACE);
     const GLboolean prev_depth_test = glIsEnabled(GL_DEPTH_TEST);
     const GLboolean prev_blend      = glIsEnabled(GL_BLEND);
 
+    // The fullscreen triangle winds CCW; the Pipeline sets CW as front-facing,
+    // so it would be culled as a back face → black bloom. Disable culling for
+    // all draws and restore it afterwards (mirrors CefCompositePass).
+    glDisable(GL_CULL_FACE);
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_BLEND);
 
@@ -173,6 +178,7 @@ std::uint32_t BloomPass::render(std::uint32_t hdr_color_tex, int fw, int fh) {
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     // Restore state.
+    if (prev_cull)       glEnable(GL_CULL_FACE);
     if (prev_depth_test) glEnable(GL_DEPTH_TEST);
     if (prev_blend)      glEnable(GL_BLEND);
 
