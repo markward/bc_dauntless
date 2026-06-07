@@ -357,6 +357,7 @@ namespace dauntless_specular {
 namespace dauntless_rim {
     void set_enabled(bool v);  // defined in frame.cc
 }
+
 PYBIND11_MODULE(_dauntless_host, m) {
     m.doc() = "open_stbc renderer host bindings (Phase B: window + frame stub)";
 
