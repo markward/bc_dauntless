@@ -40,14 +40,19 @@ TEST_F(ResolvePassTest, PassthroughPreservesColorWithinTolerance) {
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 
-TEST_F(ResolvePassTest, TonemapCompressesHighlightsWhenHdrOn) {
+// The "faithful + glow" operator is identity below the knee, so a 0.5
+// midtone stays near stock with HDR on (the Muted Film grade's 0.95
+// exposure + faint tint land it ~124) — NOT crushed the way a full filmic
+// tonemap would (ACES mapped 0.5 -> ~0.39 -> ~99). This pins that HDR-on
+// does not dim BC's emissive / LDR-authored content like a film curve.
+TEST_F(ResolvePassTest, HdrOnPreservesMidtoneBrightness) {
     renderer::HdrTarget hdr;
     hdr.resize(16, 16);
     hdr.bind();
-    glClearColor(1.5f, 1.5f, 1.5f, 1.0f);   // above 1.0 — only representable in 16F
+    glClearColor(0.5f, 0.5f, 0.5f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    // Create a black bloom source so bloom doesn't affect this test's assertion.
+    // Black bloom source so bloom doesn't affect this assertion.
     renderer::HdrTarget bloom_dummy;
     bloom_dummy.resize(8, 8);
     bloom_dummy.bind();
@@ -65,8 +70,40 @@ TEST_F(ResolvePassTest, TonemapCompressesHighlightsWhenHdrOn) {
 
     unsigned char on[4] = {0,0,0,0};
     glReadPixels(32, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, on);
-    EXPECT_LT(on[0], 250);   // ACES rolls the >1.0 highlight off below pure white
-    EXPECT_GT(on[0], 150);   // but it's still bright
+    EXPECT_GT(on[0], 112);   // near stock — far above a filmic curve's ~99 crush
+    EXPECT_LT(on[0], 132);   // and not blown out
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+// At the top of the range the soft shoulder gently rolls a 1.0 input below
+// pure white (shoulder(1.0) ~= 0.963 -> ~246), where HDR-off hard-clips to
+// 255 — confirming the shoulder softens highlights without a hard clip.
+TEST_F(ResolvePassTest, HdrOnSoftShoulderRollsTopOfRange) {
+    renderer::HdrTarget hdr;
+    hdr.resize(16, 16);
+    hdr.bind();
+    glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    renderer::HdrTarget bloom_dummy;
+    bloom_dummy.resize(8, 8);
+    bloom_dummy.bind();
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, 64, 64);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    renderer::ResolvePass r;
+    r.set_hdr_enabled(true);
+    r.draw(hdr.color_texture(), bloom_dummy.color_texture());
+
+    unsigned char on[4] = {0,0,0,0};
+    glReadPixels(32, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, on);
+    EXPECT_LT(on[0], 254);   // softened below pure white
+    EXPECT_GT(on[0], 230);   // but still very bright
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 

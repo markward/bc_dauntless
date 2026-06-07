@@ -25,6 +25,6 @@ private:
     int fw_ = 0, fh_ = 0;
     std::uint32_t vao_ = 0, vbo_ = 0;
     std::unique_ptr<Shader> prefilter_, down_, up_;
-    float threshold_ = 1.0f;
+    float threshold_ = 0.8f;   // TEMP tuning — let lights (~1.0) feed bloom
 };
 }  // namespace renderer

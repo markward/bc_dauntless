@@ -6,29 +6,35 @@ uniform sampler2D u_bloom;
 uniform float u_bloom_strength;
 uniform int u_hdr_enabled;
 
-// ACES filmic tonemap (Krzysztof Narkowicz fit). Maps HDR radiance to
-// [0,1] with a filmic shoulder so highlights >1.0 roll off to white
-// instead of hard-clipping.
-vec3 aces(vec3 x) {
-    const float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
-    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
-}
+// HDR color grade — the "Muted Film" profile chosen interactively. Named
+// consts (eye-tunable by rebuilding, like the Fresnel rim consts): a slight
+// exposure pull-down, desaturation, a low soft-shoulder knee, and a faint
+// warm-cool tint. Identity-below-knee keeps BC's emissive content (nacelle
+// bussards, window glow, running lights) at near-stock brightness.
+const float EXPOSURE   = 0.95;
+const float SATURATION = 0.90;
+const float KNEE       = 0.82;                 // identity below; soft roll above
+const vec3  TINT       = vec3(1.02, 1.00, 0.99);
 
-// HDR color grade (eye-tunable, like the Fresnel rim consts). Exposure
-// multiplies the HDR radiance before tonemap; saturation adjusts the
-// tonemapped result. Defaults are near-neutral; tune by rebuilding.
-const float EXPOSURE   = 1.0;   // 1.0 = neutral
-const float SATURATION = 1.05;  // 1.0 = neutral; >1 punchier
+// Highlight-only soft shoulder. Identity below KNEE; values above roll
+// smoothly toward white instead of hard-clipping. Chosen over a full filmic
+// tonemap (ACES), which compressed the whole range and dimmed the lights.
+float shoulder(float x) {
+    if (x <= KNEE) return x;
+    float range = 1.0 - KNEE;                  // headroom to white
+    return KNEE + range * (1.0 - exp(-(x - KNEE) / range));
+}
 
 void main() {
     vec3 c = texture(u_hdr, v_uv).rgb;
     if (u_hdr_enabled != 0) {
-        c += u_bloom_strength * texture(u_bloom, v_uv).rgb;   // bloom (pre-tonemap)
-        c *= EXPOSURE;                                        // exposure (pre-tonemap)
-        c = aces(c);                                          // filmic tonemap
-        float l = dot(c, vec3(0.2126, 0.7152, 0.0722));       // luma
-        c = mix(vec3(l), c, SATURATION);                      // saturation (post-tonemap)
-        c = clamp(c, 0.0, 1.0);                               // SATURATION can push slightly OOR
+        c *= EXPOSURE;                                           // exposure
+        c = vec3(shoulder(c.r), shoulder(c.g), shoulder(c.b));   // soft highlight roll
+        c += u_bloom_strength * texture(u_bloom, v_uv).rgb;      // additive bloom glow
+        float l = dot(c, vec3(0.2126, 0.7152, 0.0722));          // luma
+        c = mix(vec3(l), c, SATURATION);                         // saturation
+        c *= TINT;                                               // white balance
+        c = clamp(c, 0.0, 1.0);                                  // bloom/grade can exceed 1
     } else {
         c = clamp(c, 0.0, 1.0);   // neutral passthrough (stock look)
     }
