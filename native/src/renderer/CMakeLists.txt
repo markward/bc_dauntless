@@ -41,6 +41,7 @@ add_library(renderer STATIC
     shader.cc
     pipeline.cc
     frame.cc
+    hdr_target.cc
     sphere_mesh.cc
     backdrop_pass.cc
     sun_pass.cc
