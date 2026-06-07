@@ -14,12 +14,21 @@ vec3 aces(vec3 x) {
     return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
 }
 
+// HDR color grade (eye-tunable, like the Fresnel rim consts). Exposure
+// multiplies the HDR radiance before tonemap; saturation adjusts the
+// tonemapped result. Defaults are near-neutral; tune by rebuilding.
+const float EXPOSURE   = 1.0;   // 1.0 = neutral
+const float SATURATION = 1.05;  // 1.0 = neutral; >1 punchier
+
 void main() {
     vec3 c = texture(u_hdr, v_uv).rgb;
     if (u_hdr_enabled != 0) {
-        // Composite bloom pre-tonemap so it participates in the filmic rolloff.
-        c += u_bloom_strength * texture(u_bloom, v_uv).rgb;
-        c = aces(c);
+        c += u_bloom_strength * texture(u_bloom, v_uv).rgb;   // bloom (pre-tonemap)
+        c *= EXPOSURE;                                        // exposure (pre-tonemap)
+        c = aces(c);                                          // filmic tonemap
+        float l = dot(c, vec3(0.2126, 0.7152, 0.0722));       // luma
+        c = mix(vec3(l), c, SATURATION);                      // saturation (post-tonemap)
+        c = clamp(c, 0.0, 1.0);                               // SATURATION can push slightly OOR
     } else {
         c = clamp(c, 0.0, 1.0);   // neutral passthrough (stock look)
     }
