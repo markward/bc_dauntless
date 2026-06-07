@@ -15,6 +15,7 @@ add_executable(renderer_tests
     bridge_pass_test.cc
     hdr_target_test.cc
     resolve_pass_test.cc
+    bloom_pass_test.cc
 )
 
 target_link_libraries(renderer_tests

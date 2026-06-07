@@ -2,6 +2,8 @@
 in vec2 v_uv;
 out vec4 frag_color;
 uniform sampler2D u_hdr;
+uniform sampler2D u_bloom;
+uniform float u_bloom_strength;
 uniform int u_hdr_enabled;
 
 // ACES filmic tonemap (Krzysztof Narkowicz fit). Maps HDR radiance to
@@ -15,8 +17,8 @@ vec3 aces(vec3 x) {
 void main() {
     vec3 c = texture(u_hdr, v_uv).rgb;
     if (u_hdr_enabled != 0) {
-        // HDR resolve. Bloom (added pre-tonemap) and grade (post-tonemap)
-        // land in later tasks; for now just the filmic tonemap.
+        // Composite bloom pre-tonemap so it participates in the filmic rolloff.
+        c += u_bloom_strength * texture(u_bloom, v_uv).rgb;
         c = aces(c);
     } else {
         c = clamp(c, 0.0, 1.0);   // neutral passthrough (stock look)

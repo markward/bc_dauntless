@@ -30,6 +30,7 @@
 #include <renderer/phaser_pass.h>
 #include <renderer/bridge_pass.h>
 #include <renderer/hdr_target.h>
+#include <renderer/bloom_pass.h>
 #include <renderer/resolve_pass.h>
 #include <renderer/aabb.h>
 #include <renderer/ray_trace.h>
@@ -91,6 +92,7 @@ std::vector<renderer::PhaserBeamDescriptor> g_phaser_beams;
 std::unique_ptr<renderer::PhaserPass>      g_phaser_pass;
 std::unique_ptr<renderer::BridgePass>      g_bridge_pass;
 std::unique_ptr<renderer::HdrTarget>       g_hdr_target;
+std::unique_ptr<renderer::BloomPass>       g_bloom_pass;
 std::unique_ptr<renderer::ResolvePass>     g_resolve_pass;
 double g_prev_frame_time_seconds = 0.0;
 
@@ -189,6 +191,7 @@ void init(int width, int height, const std::string& title) {
     g_phaser_pass  = std::make_unique<renderer::PhaserPass>();
     g_bridge_pass  = std::make_unique<renderer::BridgePass>();
     g_hdr_target   = std::make_unique<renderer::HdrTarget>();
+    g_bloom_pass   = std::make_unique<renderer::BloomPass>();
     g_resolve_pass = std::make_unique<renderer::ResolvePass>();
     g_prev_frame_time_seconds = glfwGetTime();
 }
@@ -220,6 +223,7 @@ void shutdown() {
     g_phaser_beams.clear();
     g_phaser_pass.reset();
     g_bridge_pass.reset();
+    g_bloom_pass.reset();
     g_resolve_pass.reset();
     g_hdr_target.reset();
     g_window.reset();
@@ -306,13 +310,21 @@ void frame() {
                               lookup, g_bridge_lighting);
     }
 
+    // Compute bloom from the HDR target while the HDR FBO is still in use.
+    // bloom_tex is set to the HDR color texture as a harmless dummy when HDR is
+    // off — the resolve's OFF branch never samples u_bloom.
+    std::uint32_t bloom_tex = g_hdr_target->color_texture();
+    if (dauntless_hdr::enabled()) {
+        bloom_tex = g_bloom_pass->render(g_hdr_target->color_texture(), fw, fh);
+    }
+
     // Resolve the HDR target back to the default framebuffer (backbuffer).
     // CEF composite + swap_buffers run after this so the overlay composites
     // on top of the resolved 3D scene.
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(0, 0, fw, fh);
     g_resolve_pass->set_hdr_enabled(dauntless_hdr::enabled());
-    g_resolve_pass->draw(g_hdr_target->color_texture());
+    g_resolve_pass->draw(g_hdr_target->color_texture(), bloom_tex);
 
     // Snapshot tracked keys' current state BEFORE poll_events. The next
     // tick's Python sees the post-poll state as `now` and this pre-poll

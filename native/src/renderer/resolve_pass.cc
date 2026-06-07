@@ -35,7 +35,7 @@ ResolvePass::~ResolvePass() {
     // shader_ is RAII — no glDeleteProgram needed here.
 }
 
-void ResolvePass::draw(std::uint32_t hdr_color_tex) {
+void ResolvePass::draw(std::uint32_t hdr_color_tex, std::uint32_t bloom_tex) {
     // Save GL state we clobber so 3D passes on the next frame see unchanged config.
     const GLboolean prev_depth_test = glIsEnabled(GL_DEPTH_TEST);
     const GLboolean prev_blend      = glIsEnabled(GL_BLEND);
@@ -46,15 +46,23 @@ void ResolvePass::draw(std::uint32_t hdr_color_tex) {
     shader_->use();
     shader_->set_int("u_hdr", 0);
     shader_->set_int("u_hdr_enabled", hdr_enabled_ ? 1 : 0);
+    shader_->set_int("u_bloom", 1);
+    shader_->set_float("u_bloom_strength", 0.04f);
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, hdr_color_tex);
+
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, bloom_tex);
 
     glBindVertexArray(vao_);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     glBindVertexArray(0);
 
     glUseProgram(0);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, 0);
 
     // Restore.
