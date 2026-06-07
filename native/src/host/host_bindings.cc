@@ -29,6 +29,8 @@
 #include <renderer/hit_vfx_pass.h>
 #include <renderer/phaser_pass.h>
 #include <renderer/bridge_pass.h>
+#include <renderer/hdr_target.h>
+#include <renderer/resolve_pass.h>
 #include <renderer/aabb.h>
 #include <renderer/ray_trace.h>
 #include <scenegraph/world.h>
@@ -80,6 +82,8 @@ std::unique_ptr<renderer::HitVfxPass>      g_hit_vfx_pass;
 std::vector<renderer::PhaserBeamDescriptor> g_phaser_beams;
 std::unique_ptr<renderer::PhaserPass>      g_phaser_pass;
 std::unique_ptr<renderer::BridgePass>      g_bridge_pass;
+std::unique_ptr<renderer::HdrTarget>       g_hdr_target;
+std::unique_ptr<renderer::ResolvePass>     g_resolve_pass;
 double g_prev_frame_time_seconds = 0.0;
 
 // Bridge pass state. Camera is set from Python via set_bridge_camera each
@@ -176,6 +180,8 @@ void init(int width, int height, const std::string& title) {
     g_hit_vfx_pass = std::make_unique<renderer::HitVfxPass>();
     g_phaser_pass  = std::make_unique<renderer::PhaserPass>();
     g_bridge_pass  = std::make_unique<renderer::BridgePass>();
+    g_hdr_target   = std::make_unique<renderer::HdrTarget>();
+    g_resolve_pass = std::make_unique<renderer::ResolvePass>();
     g_prev_frame_time_seconds = glfwGetTime();
 }
 
@@ -206,6 +212,8 @@ void shutdown() {
     g_phaser_beams.clear();
     g_phaser_pass.reset();
     g_bridge_pass.reset();
+    g_resolve_pass.reset();
+    g_hdr_target.reset();
     g_window.reset();
     g_prev_key_state.clear();
     g_prev_mouse_state.clear();
@@ -228,7 +236,10 @@ void frame() {
     }
     int fw = 0, fh = 0;
     g_window->framebuffer_size(&fw, &fh);
-    glViewport(0, 0, fw, fh);
+
+    // Route 3D scene into the HDR target. resize() is a no-op when unchanged.
+    g_hdr_target->resize(fw, fh);
+    g_hdr_target->bind();   // sets viewport to fw x fh
     glClearColor(0.05f, 0.07f, 0.10f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -286,6 +297,14 @@ void frame() {
         g_bridge_pass->render(g_world, g_bridge_camera, *g_pipeline,
                               lookup, g_bridge_lighting);
     }
+
+    // Resolve the HDR target back to the default framebuffer (backbuffer).
+    // CEF composite + swap_buffers run after this so the overlay composites
+    // on top of the resolved 3D scene.
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, fw, fh);
+    g_resolve_pass->set_hdr_enabled(false);   // Task 3 will switch to dauntless_hdr::enabled()
+    g_resolve_pass->draw(g_hdr_target->color_texture());
 
     // Snapshot tracked keys' current state BEFORE poll_events. The next
     // tick's Python sees the post-poll state as `now` and this pre-poll
