@@ -41,8 +41,8 @@ static std::vector<float> readback_texture(std::uint32_t tex, int w, int h) {
 // ── Test 1: bright input square spreads energy beyond its bounds ────────────
 // Set up a 64x64 HDR target cleared to black, then use scissor to paint a
 // bright (4,4,4) square in the middle (pixels 28–35 in each axis). Run bloom.
-// Assert that a corner texel of the half-res bloom texture (mip0 = 32x32) is
-// > 0 (energy diffused outward), and that the returned texture handle is valid.
+// Assert that (a) the bright-center texel in mip0 (32x32) is clearly bright,
+// and (b) a texel just outside the bright square receives real upsample energy.
 TEST_F(BloomPassTest, SpreadsEnergyFromBrightTexel) {
     renderer::HdrTarget hdr;
     hdr.resize(64, 64);
@@ -71,14 +71,24 @@ TEST_F(BloomPassTest, SpreadsEnergyFromBrightTexel) {
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 
     // Bloom mip0 is 32x32 (half-res). Read it back.
+    // Buffer layout: row-major, index = (y*32 + x) * 4 for RGBA floats.
     auto buf = readback_texture(bloom_tex, 32, 32);
 
-    // The bright square covers pixels 14–17 (≈ 28–35 / 2) of the 32x32 mip.
-    // After the downsample + upsample the energy should have spread to at
-    // least one corner pixel (0,0). Check R channel of the first texel.
-    float corner_r = buf[0];  // texel (0,0), R channel
-    EXPECT_GT(corner_r, 0.0f)
-        << "Bloom energy expected to spread to mip0 corner; got " << corner_r;
+    // The bright source square covers mip0 pixels ~(14,14)-(17,17).
+    //
+    // Sanity: the bright-center texel must be clearly above the threshold.
+    float center_r = buf[(15 * 32 + 15) * 4];
+    EXPECT_GT(center_r, 1.0f)
+        << "Bloom center texel (15,15) should be bright; got " << center_r;
+
+    // Energy-spread: texel (13,13) is just outside the bright square.
+    // The tent-upsample kernel reaches it with real energy (~0.81 measured),
+    // well above any bilinear-bleed noise. Use 0.1 as the threshold — stable
+    // and meaningful.
+    float spread_r = buf[(13 * 32 + 13) * 4];
+    EXPECT_GT(spread_r, 0.1f)
+        << "Bloom energy expected at mip0 (13,13) just outside bright square; "
+        << "got " << spread_r;
 
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
