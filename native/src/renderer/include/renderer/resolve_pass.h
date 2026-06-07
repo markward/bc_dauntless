@@ -1,5 +1,7 @@
 #pragma once
 #include <cstdint>
+#include <memory>
+#include <renderer/shader.h>
 namespace renderer {
 class ResolvePass {
 public:
@@ -13,8 +15,8 @@ public:
     /// restores them. Caller binds the target framebuffer + viewport first.
     void draw(std::uint32_t hdr_color_tex);
 private:
-    std::uint32_t program_ = 0, vao_ = 0, vbo_ = 0;
-    int u_hdr_loc_ = -1, u_hdr_enabled_loc_ = -1;
+    std::unique_ptr<renderer::Shader> shader_;
+    std::uint32_t vao_ = 0, vbo_ = 0;
     bool hdr_enabled_ = true;
 };
 }  // namespace renderer
