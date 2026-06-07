@@ -19,6 +19,12 @@ public:
     void resize(int w, int h);
 
     /// Make this the draw framebuffer and set the viewport to its size.
+    /// CALLER CONTRACT: after rendering into this target, the caller must
+    /// restore the default framebuffer (glBindFramebuffer(GL_FRAMEBUFFER, 0))
+    /// AND reset the viewport to the window size before any backbuffer-
+    /// targeted draw (e.g. the resolve pass or CEF composite), or that draw
+    /// will be confined to this target's sub-rect. Must be called after
+    /// resize() — binding before the first resize() is a programming error.
     void bind() const;
 
     std::uint32_t color_texture() const { return color_tex_; }

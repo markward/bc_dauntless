@@ -1,5 +1,6 @@
 // native/src/renderer/hdr_target.cc
 #include "renderer/hdr_target.h"
+#include <cassert>
 #include <glad/glad.h>
 
 namespace renderer {
@@ -41,6 +42,7 @@ void HdrTarget::resize(int w, int h) {
 }
 
 void HdrTarget::bind() const {
+    assert(fbo_ != 0 && "HdrTarget::bind() before resize()");
     glBindFramebuffer(GL_FRAMEBUFFER, fbo_);
     glViewport(0, 0, width_, height_);
 }
