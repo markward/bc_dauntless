@@ -36,6 +36,7 @@
 #include <renderer/ray_trace.h>
 #include <scenegraph/world.h>
 #include <scenegraph/camera.h>
+#include <scenegraph/damage_decals.h>
 #include <assets/cache.h>
 #include "developer_mode.h"
 
@@ -858,6 +859,43 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "origin and direction are in world coordinates; direction is "
           "auto-normalised. Returns ((point), (normal), t) on hit or None "
           "on miss. t is world-space distance from origin.");
+
+    m.def("damage_decal_add",
+          [](scenegraph::InstanceId id,
+             std::tuple<float, float, float> world_point,
+             std::tuple<float, float, float> world_normal,
+             float radius, float intensity,
+             std::uint32_t weapon_class, float time) {
+              if (weapon_class > 1u) return;  // unknown weapon class — drop silently
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return;  // stale id — drop silently
+              const glm::vec3 pw(std::get<0>(world_point),
+                                 std::get<1>(world_point),
+                                 std::get<2>(world_point));
+              const glm::vec3 nw(std::get<0>(world_normal),
+                                 std::get<1>(world_normal),
+                                 std::get<2>(world_normal));
+              const glm::vec3 pb = scenegraph::world_to_body(inst->world, pw);
+              const glm::vec3 nb = scenegraph::world_dir_to_body(inst->world, nw);
+              inst->decals.add(pb, nb, radius, intensity,
+                               static_cast<scenegraph::WeaponClass>(weapon_class),
+                               time);
+          },
+          py::arg("instance_id"), py::arg("world_point"), py::arg("world_normal"),
+          py::arg("radius"), py::arg("intensity"),
+          py::arg("weapon_class"), py::arg("time"),
+          "Record an object-space damage decal on a ship instance. World-space "
+          "point/normal are transformed into the ship body frame. weapon_class: "
+          "0=HeatGlow (phaser), 1=Scorch (torpedo/disruptor).");
+
+    m.def("damage_decals_tick",
+          [](float time) {
+              g_world.for_each_alive([&](scenegraph::Instance& inst) {
+                  inst.decals.tick(time);
+              });
+          },
+          py::arg("time"),
+          "Age every instance's decal ring; reclaim cold heat-glow decals.");
 
     auto keys = m.def_submodule("keys", "GLFW key-code constants for input bindings.");
     keys.attr("KEY_W") = GLFW_KEY_W;
