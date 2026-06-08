@@ -420,4 +420,34 @@ TEST_F(FrameTest, ScorchEmberIsBrightWhenFreshAndCoolsWithGameTime) {
     EXPECT_GT(fresh, cold) << "ember did not brighten the fresh scorch, or did not cool";
 }
 
+TEST_F(FrameTest, PhaserHeatGlowIsTransientAndLeavesNoScar) {
+    auto model_h = cache->load(kGalaxyNif, kGalaxyTex);
+    auto lut = [model_h](scenegraph::ModelHandle h) -> const assets::Model* {
+        return reinterpret_cast<const assets::Model*>(h); };
+
+    // Undamaged baseline for the struck region.
+    scenegraph::World w0;
+    auto i0 = w0.create_instance(reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
+    w0.set_world_transform(i0, glm::mat4(1.0f));
+    render_galaxy(w0, *p, lut, 0.0f);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const double base = block_mean(130, 100, 25, 50);
+
+    scenegraph::World w;
+    auto iid = w.create_instance(reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
+    w.set_world_transform(iid, glm::mat4(1.0f));
+    w.get(iid)->decals.add(glm::vec3(60, 0, 20), glm::vec3(0, 0, 1),
+                           120.0f, 1.0f, scenegraph::WeaponClass::HeatGlow, 0.0f);
+
+    render_galaxy(w, *p, lut, /*decal_time=*/0.1f);   // fresh glow
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const double fresh = block_mean(130, 100, 25, 50);
+    render_galaxy(w, *p, lut, /*decal_time=*/2.0f);   // past T_GLOW (1.2s)
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const double faded = block_mean(130, 100, 25, 50);
+
+    EXPECT_GT(fresh, base * 1.02) << "fresh phaser glow should brighten the hull";
+    EXPECT_NEAR(faded, base, base * 0.03) << "phaser glow should leave no scar after T_GLOW";
+}
+
 }  // namespace

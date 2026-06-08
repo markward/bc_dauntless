@@ -52,6 +52,7 @@ const float EMBER_TIGHT = 6.0;
 const float EMBER_BROAD = 2.0;
 const float T_EMBER     = 10.0;          // seconds to cold
 const float EMBER_TAU   = T_EMBER / 3.2; // decay time const ~3.1 s; heat ~4% at T_EMBER
+const float T_GLOW      = 1.2;           // seconds; phaser heat-glow lifetime
 const float NOISE_SCALE = 0.03;   // 1/model-units; tuned for NIF-scale p_body
 
 float dhash(vec2 v) { return fract(sin(dot(v, vec2(127.1, 311.7))) * 43758.5453); }
@@ -99,6 +100,16 @@ void apply_damage_decals(vec3 p_body, vec3 n_body,
         // impact normal (dn). ~+1 on the struck face, ~-1 opposite — mirroring fix.
         float wn = smoothstep(NORMAL_MIN, 1.0, dot(-n_body, dn));
         if (wn <= 0.0) continue;
+
+        // HeatGlow (phaser, weapon_class 0): additive emissive bloom, NO deposit,
+        // fades by T_GLOW. `continue` skips the scorch deposit + ember entirely.
+        if (u_decal_c[i].y < 0.5) {
+            float age  = max(0.0, u_decal_time - u_decal_c[i].x);
+            float life = clamp(1.0 - age / T_GLOW, 0.0, 1.0);
+            float glow = exp(-r * r * 5.0) * life;
+            emissive += blackbody(0.6 + 0.4 * life) * glow * wn * intensity;
+            continue;
+        }
 
         // Spread-B: dense core + noise-broken radial ejecta thinning with r.
         float core   = exp(-r * r * 3.0);
