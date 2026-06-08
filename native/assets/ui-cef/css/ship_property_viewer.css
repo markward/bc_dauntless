@@ -1,0 +1,133 @@
+/* Ship Property Viewer overlay.
+   Full-viewport transparent overlay: only the titlebar and popover are
+   opaque chrome; everything else is pointer-events:none so GL orbit-drag
+   reaches the host. The titlebar and popover restore pointer-events:auto.
+
+   Visual language matches the cp-* palette from configuration_panel.css:
+   - "Antonio" display font
+   - maroon→orange gradient header bar, #ffd text, uppercase
+   - dark near-black body panels
+   - purple/gold accents for row highlight
+
+   Spec: docs/superpowers/specs/2026-06-08-ship-property-viewer-design.md */
+
+#spv-root {
+    display: none;
+    position: fixed;
+    inset: 0;
+    /* Transparent viewport — the GL hologram shows through.
+       pointer-events:none on the root ensures mouse drags in the 3D area
+       reach the host process; interactive children restore auto below. */
+    pointer-events: none;
+    z-index: 60;
+    font-family: "Antonio", sans-serif;
+}
+
+/* ── Title bar ─────────────────────────────────────────────────────────── */
+
+.spv-titlebar {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 34px;
+    display: flex;
+    align-items: center;
+    background: linear-gradient(90deg, rgb(216, 94, 86) 0%, rgb(216, 132, 80) 100%);
+    padding: 0 12px;
+    box-sizing: border-box;
+    pointer-events: auto;
+    gap: 10px;
+}
+
+.spv-title {
+    color: #ffd;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    flex: 1;
+}
+
+.spv-pincount {
+    color: rgba(255, 240, 180, 0.75);
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    text-transform: lowercase;
+}
+
+.spv-close {
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 230, 160, 0.4);
+    color: #ffd;
+    font-family: inherit;
+    font-size: 14px;
+    width: 26px;
+    height: 22px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    line-height: 1;
+    transition: background-color 80ms linear;
+    pointer-events: auto;
+}
+
+.spv-close:hover {
+    background: rgba(0, 0, 0, 0.5);
+}
+
+/* ── Property popover ──────────────────────────────────────────────────── */
+
+#spv-popover {
+    display: none;
+    position: absolute;
+    top: 44px;   /* just below titlebar */
+    right: 12px;
+    width: 280px;
+    max-height: calc(100vh - 60px);
+    overflow-y: auto;
+    background: rgb(20, 22, 28);
+    border: 1px solid rgb(80, 88, 100);
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.6);
+    pointer-events: auto;
+}
+
+.spv-pop-title {
+    background: linear-gradient(90deg, rgb(216, 94, 86) 0%, rgb(216, 132, 80) 100%);
+    color: #ffd;
+    padding: 5px 12px;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+}
+
+.spv-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    padding: 5px 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    color: #cdd3dc;
+    font-size: 13px;
+}
+
+.spv-row:last-child {
+    border-bottom: none;
+}
+
+.spv-k {
+    color: rgba(216, 132, 80, 0.9);
+    letter-spacing: 0.04em;
+    flex-shrink: 0;
+    margin-right: 10px;
+}
+
+.spv-v {
+    color: #cdd3dc;
+    text-align: right;
+    word-break: break-all;
+    font-variant-numeric: tabular-nums;
+}
