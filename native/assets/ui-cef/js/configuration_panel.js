@@ -25,6 +25,7 @@ function _cpFocusableList(state) {
         out.push({kind: 'ctrl', target: 'hdr'});
         out.push({kind: 'ctrl', target: 'rim'});
         out.push({kind: 'ctrl', target: 'decals'});
+        out.push({kind: 'ctrl', target: 'fxaa'});
     }
     return out;
 }
@@ -121,6 +122,17 @@ function _cpRenderGraphicsBody(state, focusables) {
           +     '<button class="cp-toggle' + (s.decals_on ? ' cp-toggle--on' : '') + '"'
           +        ' onclick="dauntlessEvent(\'configuration/toggle:decals\')">'
           +       (s.decals_on ? 'On' : 'Off')
+          +     '</button>'
+          +   '</div>'
+          + '</div>';
+
+    // FXAA toggle (post-process anti-aliasing)
+    html += '<div class="cp-row' + (isFoc('fxaa') ? ' cp-focused' : '') + '">'
+          +   '<div class="cp-row__label">FXAA</div>'
+          +   '<div class="cp-row__control">'
+          +     '<button class="cp-toggle' + (s.fxaa_on ? ' cp-toggle--on' : '') + '"'
+          +        ' onclick="dauntlessEvent(\'configuration/toggle:fxaa\')">'
+          +       (s.fxaa_on ? 'On' : 'Off')
           +     '</button>'
           +   '</div>'
           + '</div>';
