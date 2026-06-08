@@ -106,9 +106,8 @@ void draw_model(const assets::Model& model,
             shader.set_vec4_array("u_decal_a", a, n);
             shader.set_vec4_array("u_decal_b", b, n);
             shader.set_vec4_array("u_decal_c", c, n);
-            // world->body for in-shader body-frame reconstruction. The opaque
-            // shader's location is -1 until the Phase 2 decal shader lands;
-            // needed then, so this is not dead code.
+            // world->body for the opaque shader's body-frame fragment
+            // reconstruction (opaque.frag: p_body / n_body).
             shader.set_mat4("u_ship_world_inv", glm::inverse(world));
             shader.set_float("u_decal_time", decal_time);
         }
