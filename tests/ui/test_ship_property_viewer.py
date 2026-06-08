@@ -43,3 +43,29 @@ def test_world_position_none_mount_returns_ship_location():
     sub = _FakeSub(None, ship)
     w = subsystem_world_position(sub)
     assert (w.x, w.y, w.z) == (3.0, 4.0, 5.0)
+
+
+from engine.ui.ship_property_viewer import OrbitCamera, project
+
+
+def test_orbit_camera_eye_in_front_at_zero_angles():
+    cam = OrbitCamera(target=(0.0, 0.0, 0.0), distance=10.0, yaw=0.0, pitch=0.0)
+    eye = cam.eye()
+    # At yaw=pitch=0 the eye sits on +/-Y (BC forward) looking back at origin,
+    # distance 10 -> one axis is +/-10, others ~0.
+    assert round(max(abs(eye[0]), abs(eye[1]), abs(eye[2])), 4) == 10.0
+
+
+def test_project_point_at_target_lands_at_screen_centre():
+    cam = OrbitCamera(target=(0.0, 0.0, 0.0), distance=10.0, yaw=0.0, pitch=0.0)
+    sx, sy, depth, visible = project((0.0, 0.0, 0.0), cam, (800, 600))
+    assert visible is True
+    assert abs(sx - 400.0) < 0.5 and abs(sy - 300.0) < 0.5
+
+
+def test_project_point_behind_camera_not_visible():
+    cam = OrbitCamera(target=(0.0, 0.0, 0.0), distance=10.0, yaw=0.0, pitch=0.0)
+    # A point far on the far side beyond the target, behind the eye direction.
+    far_behind = tuple(c * 1000.0 for c in cam.eye())
+    sx, sy, depth, visible = project(far_behind, cam, (800, 600))
+    assert visible is False
