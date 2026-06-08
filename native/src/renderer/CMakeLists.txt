@@ -71,6 +71,7 @@ add_library(renderer STATIC
     hit_vfx_pass.cc
     phaser_pass.cc
     hologram_pass.cc
+    subsystem_pin_pass.cc
     bridge_pass.cc
 )
 target_include_directories(renderer
