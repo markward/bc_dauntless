@@ -36,6 +36,7 @@
 #include <renderer/ray_trace.h>
 #include <scenegraph/world.h>
 #include <scenegraph/camera.h>
+#include <scenegraph/damage_decals.h>
 #include <assets/cache.h>
 #include "developer_mode.h"
 
@@ -95,6 +96,7 @@ std::unique_ptr<renderer::HdrTarget>       g_hdr_target;
 std::unique_ptr<renderer::BloomPass>       g_bloom_pass;
 std::unique_ptr<renderer::ResolvePass>     g_resolve_pass;
 double g_prev_frame_time_seconds = 0.0;
+float g_decal_game_time = 0.0f;  // game-time secs for decal ember; set by damage_decals_tick
 
 // Bridge pass state. Camera is set from Python via set_bridge_camera each
 // tick when bridge mode is active. The pass renders after the dust pass;
@@ -272,7 +274,7 @@ void frame() {
     g_sun_pass->render(g_suns, g_camera, *g_pipeline, now);
     g_submitter->submit_opaque_in_pass(
         g_world, g_camera, *g_pipeline, lookup, g_lighting,
-        scenegraph::Pass::Space);
+        scenegraph::Pass::Space, g_decal_game_time);
 
     // Shield pass: additive flash on top of opaque ships. Runs before dust
     // so dust specks appear in front of fading shields (both are additive
@@ -367,6 +369,10 @@ namespace dauntless_specular {
 }
 // Toggle for the opaque-pass Fresnel rim term. Defined in frame.cc.
 namespace dauntless_rim {
+    void set_enabled(bool v);  // defined in frame.cc
+}
+// Toggle for the opaque-pass persistent damage decals. Defined in frame.cc.
+namespace dauntless_decals {
     void set_enabled(bool v);  // defined in frame.cc
 }
 
@@ -730,6 +736,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](bool e) { dauntless_hdr::set_enabled(e); },
           py::arg("enabled"),
           "Toggle the HDR resolve (tonemap+bloom+grade). Default: on.");
+    m.def("decals_set_enabled",
+          [](bool enabled) { dauntless_decals::set_enabled(enabled); },
+          py::arg("enabled"),
+          "Enable/disable persistent hull damage decals (default on).");
 
     m.def("dust_set_density",
           [](int count) {
@@ -858,6 +868,50 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "origin and direction are in world coordinates; direction is "
           "auto-normalised. Returns ((point), (normal), t) on hit or None "
           "on miss. t is world-space distance from origin.");
+
+    m.def("damage_decal_add",
+          [](scenegraph::InstanceId id,
+             std::tuple<float, float, float> world_point,
+             std::tuple<float, float, float> world_normal,
+             float radius, float intensity,
+             std::uint32_t weapon_class, float time) {
+              if (weapon_class > 1u) return;  // unknown weapon class — drop silently
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return;  // stale id — drop silently
+              const glm::vec3 pw(std::get<0>(world_point),
+                                 std::get<1>(world_point),
+                                 std::get<2>(world_point));
+              const glm::vec3 nw(std::get<0>(world_normal),
+                                 std::get<1>(world_normal),
+                                 std::get<2>(world_normal));
+              const glm::vec3 pb = scenegraph::world_to_body(inst->world, pw);
+              const glm::vec3 nb = scenegraph::world_dir_to_body(inst->world, nw);
+              // Convert radius game-units -> NIF/model units here (the same
+              // space as pb), so the ring's merge test and the shader both work
+              // in model units. s = |world's X column| = the uniform NIF->world
+              // scale baked into inst->world.
+              const float s = glm::length(glm::vec3(inst->world[0]));
+              const float radius_model = (s > 0.0f) ? radius / s : radius;
+              inst->decals.add(pb, nb, radius_model, intensity,
+                               static_cast<scenegraph::WeaponClass>(weapon_class),
+                               time);
+          },
+          py::arg("instance_id"), py::arg("world_point"), py::arg("world_normal"),
+          py::arg("radius"), py::arg("intensity"),
+          py::arg("weapon_class"), py::arg("time"),
+          "Record an object-space damage decal on a ship instance. World-space "
+          "point/normal are transformed into the ship body frame. weapon_class: "
+          "0=HeatGlow (phaser), 1=Scorch (torpedo/disruptor).");
+
+    m.def("damage_decals_tick",
+          [](float time) {
+              g_decal_game_time = time;
+              g_world.for_each_alive([&](scenegraph::Instance& inst) {
+                  inst.decals.tick(time);
+              });
+          },
+          py::arg("time"),
+          "Age every instance's decal ring; reclaim cold heat-glow decals.");
 
     auto keys = m.def_submodule("keys", "GLFW key-code constants for input bindings.");
     keys.attr("KEY_W") = GLFW_KEY_W;

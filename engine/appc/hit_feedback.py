@@ -25,6 +25,14 @@ class Severity(IntEnum):
     CRITICAL = 2
 
 
+# Decal-emission throttle. A continuous phaser beam ticks ~60x/s; emitting a
+# decal every tick saturates the 24-slot per-instance ring, so decals are
+# FIFO-evicted within ~0.3 s — before they can cool over T_GLOW. Cap to a few
+# decals/sec per (ship, weapon class) so a beam leaves a short cooling trail.
+DECAL_EMIT_INTERVAL = 0.2  # game-time seconds between decals per (ship, class)
+_last_decal_emit: dict = {}  # (id(ship), weapon_class) -> last emit game-time
+
+
 def classify(*, absorbed_shields: float, absorbed_subsystem: float,
              absorbed_hull: float, sub_transition,
              subsystem, hull) -> Severity:
@@ -80,7 +88,7 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
              absorbed_shields: float, absorbed_subsystem: float,
              absorbed_hull: float, sub_transition,
              host=None, ship_instances=None,
-             weapon_type: str | None = None) -> None:
+             weapon_type: str | None = None, radius: float = 0.0) -> None:
     """Per-impact fan-out: VFX + audio + camera shake.
 
     Severity is computed via classify(...). Exactly one visual fires per
@@ -149,6 +157,32 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
     if (player is not None and ship is player
             and severity != Severity.SHIELD):
         camera_shake.apply_kick(float(damage))
+
+    # 4. Persistent damage decal — Phase 1 of persistent-damage-decals.
+    # Emit ONLY when hull damage was actually dealt: a hit fully absorbed
+    # by shields must NOT leave a scar (the shield-gating fix). Requires a
+    # surface normal (mesh trace) for normal-aware falloff; sphere-entry
+    # fallbacks (normal=None) are skipped.
+    if (absorbed_hull > 0.0 and normal is not None
+            and host is not None and ship_instances is not None
+            and hasattr(host, "damage_decal_add")):
+        iid = ship_instances.get(ship)
+        if iid is not None:
+            from engine.appc import damage_decals
+            now = damage_decals.current_game_time()
+            wclass = damage_decals.weapon_class_for(weapon_type)
+            key = (id(ship), wclass)
+            if now - _last_decal_emit.get(key, -1e9) >= DECAL_EMIT_INTERVAL:
+                _last_decal_emit[key] = now
+                host.damage_decal_add(
+                    instance_id=iid,
+                    world_point=(point.x, point.y, point.z),
+                    world_normal=(normal.x, normal.y, normal.z),
+                    radius=float(radius) * damage_decals.decal_radius_scale(wclass),
+                    intensity=damage_decals.decal_intensity(absorbed_hull),
+                    weapon_class=wclass,
+                    time=now,
+                )
 
 
 def _play_audio(severity: Severity, point, weapon_type: str | None = None) -> None:

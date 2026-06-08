@@ -8,6 +8,7 @@
 #include <scenegraph/world.h>
 #include <scenegraph/camera.h>
 #include <scenegraph/instance.h>
+#include <scenegraph/damage_decals.h>
 
 #include <assets/model.h>
 #include <assets/mesh.h>
@@ -53,6 +54,18 @@ namespace {
     void set_enabled(bool v) { g_hdr_enabled = v; }
 }
 
+// Toggle for the opaque-pass persistent damage decals (Phase 2). Default on
+// so the "Modern VFX" group ships enabled. host_bindings.cc forward-declares
+// set_enabled; draw_model reads enabled() per instance and uploads
+// u_decal_count = 0 when off (stock-BC hull, no per-fragment decal cost).
+namespace dauntless_decals {
+namespace {
+    bool g_decals_enabled = true;
+}
+    bool enabled() { return g_decals_enabled; }
+    void set_enabled(bool v) { g_decals_enabled = v; }
+}
+
 namespace renderer {
 
 namespace {
@@ -62,7 +75,42 @@ void draw_model(const assets::Model& model,
                 Shader& shader,
                 GLuint white_fallback,
                 GLuint black_fallback,
-                bool rim_active) {
+                bool rim_active,
+                const scenegraph::DamageDecalRing& decals,
+                float decal_time) {
+    // ── Per-instance damage decals (Phase 2) ───────────────────────────────
+    // Pack the active ring into vec4 arrays. point_body and radius are both in
+    // NIF/model units (damage_decal_add converts radius GU->model before
+    // ring.add), so no conversion here. u_decal_count == 0 when disabled or
+    // empty makes the shader skip the loop entirely.
+    {
+        glm::vec4 a[scenegraph::DamageDecalRing::kMaxDecals];
+        glm::vec4 b[scenegraph::DamageDecalRing::kMaxDecals];
+        glm::vec4 c[scenegraph::DamageDecalRing::kMaxDecals];
+        int n = 0;
+        if (dauntless_decals::enabled()) {
+            for (const auto& d : decals.slots()) {
+                if (!d.active) continue;
+                a[n] = glm::vec4(d.point_body, d.intensity);
+                b[n] = glm::vec4(d.normal_body, d.radius);  // already model units
+                c[n] = glm::vec4(d.birth_time,
+                                 static_cast<float>(static_cast<std::uint32_t>(d.weapon_class)),
+                                 0.0f, 0.0f);
+                ++n;
+            }
+        }
+        shader.set_int("u_decal_count", n);
+        if (n > 0) {
+            shader.set_vec4_array("u_decal_a", a, n);
+            shader.set_vec4_array("u_decal_b", b, n);
+            shader.set_vec4_array("u_decal_c", c, n);
+            // world->body for the opaque shader's body-frame fragment
+            // reconstruction (opaque.frag: p_body / n_body).
+            shader.set_mat4("u_ship_world_inv", glm::inverse(world));
+            shader.set_float("u_decal_time", decal_time);
+        }
+    }
+
     // Walk nodes; each node may reference one or more meshes by index. The
     // node's local_transform is composed with parent transforms here. The
     // asset pipeline already orders nodes such that parents precede children,
@@ -195,7 +243,8 @@ void FrameSubmitter::submit_opaque(const scenegraph::World& world,
                                    const scenegraph::Camera& camera,
                                    Pipeline& pipeline,
                                    const ModelLookup& lookup,
-                                   const Lighting& lighting) {
+                                   const Lighting& lighting,
+                                   float decal_time) {
     auto& shader = pipeline.opaque_shader();
     shader.use();
     shader.set_mat4("u_view", camera.view_matrix());
@@ -222,7 +271,8 @@ void FrameSubmitter::submit_opaque(const scenegraph::World& world,
     world.for_each_visible([&](const scenegraph::Instance& inst) {
         const assets::Model* m = lookup(inst.model_handle);
         const bool rim_active = dauntless_rim::enabled() && inst.rim_eligible;
-        if (m) draw_model(*m, inst.world, shader, white, black, rim_active);
+        if (m) draw_model(*m, inst.world, shader, white, black, rim_active,
+                          inst.decals, decal_time);
     });
 }
 
@@ -231,7 +281,8 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
                                            Pipeline& pipeline,
                                            const ModelLookup& lookup,
                                            const Lighting& lighting,
-                                           scenegraph::Pass pass) {
+                                           scenegraph::Pass pass,
+                                           float decal_time) {
     auto& shader = pipeline.opaque_shader();
     shader.use();
     shader.set_mat4("u_view", camera.view_matrix());
@@ -258,7 +309,8 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
     world.for_each_visible_in_pass(pass, [&](const scenegraph::Instance& inst) {
         const assets::Model* m = lookup(inst.model_handle);
         const bool rim_active = dauntless_rim::enabled() && inst.rim_eligible;
-        if (m) draw_model(*m, inst.world, shader, white, black, rim_active);
+        if (m) draw_model(*m, inst.world, shader, white, black, rim_active,
+                          inst.decals, decal_time);
     });
 }
 

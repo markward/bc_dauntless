@@ -252,10 +252,10 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
         dt, ships_list,
         host=host, ship_instances=ship_instances,
     )
-    for torpedo, ship, hit_point in hits:
+    for torpedo, ship, hit_point, hit_normal in hits:
         apply_hit(ship, torpedo._damage, hit_point,
                   source=torpedo._source_ship,
-                  normal=None, host=host, ship_instances=ship_instances,
+                  normal=hit_normal, host=host, ship_instances=ship_instances,
                   weapon_type="torpedo",
                   hardpoint_weapon=torpedo)
 
@@ -2062,6 +2062,7 @@ def run(mission_name: Optional[str] = None,
                 specular_on=True,
                 hdr_on=True,
                 rim_on=True,
+                decals_on=True,
                 fov_deg=int(round(_math.degrees(
                     director.fov_y_rad
                 ))),
@@ -2070,6 +2071,7 @@ def run(mission_name: Optional[str] = None,
             set_specular=r.set_specular_enabled,
             set_hdr=r.set_hdr_enabled,
             set_rim=r.set_rim_enabled,
+            set_decals=r.set_decals_enabled,
             set_fov_rad=director.set_fov,
         )
 
@@ -2586,6 +2588,12 @@ def run(mission_name: Optional[str] = None,
             # in stock BC; game time matches the original cadence.
             import App as _App
             r.set_bridge_wall_time(_App.g_kUtopiaModule.GetGameTime())
+
+            # Age every ship's persistent damage-decal ring on the same game
+            # clock used for decal birth_time (engine.appc.damage_decals).
+            # hasattr-guarded so an older _dauntless_host.so still runs.
+            if hasattr(r, "damage_decals_tick"):
+                r.damage_decals_tick(_App.g_kUtopiaModule.GetGameTime())
 
             backdrops = _aggregate_backdrops(active_set)
             r.set_backdrops(backdrops)

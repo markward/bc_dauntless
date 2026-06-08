@@ -54,9 +54,11 @@ def test_update_all_hit_point_is_tgpoint_not_tuple():
     projectiles.update_all call was not updated to unpack, causing
     hit_point to be a tuple instead of TGPoint3.
 
-    update_all now returns 3-tuples: (torpedo, ship, hit_point).
+    update_all now returns 4-tuples: (torpedo, ship, hit_point, hit_normal).
     pick_target_subsystem has been removed; subsystem selection is
-    handled inside apply_hit via spherical-splash attribution.
+    handled inside apply_hit via spherical-splash attribution. hit_normal
+    is the mesh surface normal forwarded to apply_hit for decal rendering;
+    with no host it degrades to None.
     """
     src = _FakeShip(-100, 0, 0)
     target = _FakeShip(5, 0, 0, radius=10.0)
@@ -65,8 +67,9 @@ def test_update_all_hit_point_is_tgpoint_not_tuple():
     hits = update_all(dt=0.1, all_ships=[src, target])
 
     assert len(hits) == 1
-    _torpedo, ship, hit_point = hits[0]
+    _torpedo, ship, hit_point, hit_normal = hits[0]
     assert ship is target
+    assert hit_normal is None  # no host -> sphere/fallback path, no normal
     assert hasattr(hit_point, "x"), \
         f"hit_point must be a TGPoint3, got {type(hit_point).__name__}"
     assert isinstance(hit_point.x, float), \

@@ -420,6 +420,7 @@ def apply_hit(ship, damage: float, hit_point, source, *,
             sub_transition=primary_transition,
             host=host, ship_instances=ship_instances,
             weapon_type=weapon_type,
+            radius=r_hit,
         )
     except Exception:
         pass

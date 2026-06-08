@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <glm/glm.hpp>
+#include "scenegraph/damage_decals.h"
 
 namespace scenegraph {
 
@@ -30,6 +31,10 @@ struct Instance {
     /// not receive a metallic rim — they default false. The future
     /// planet-atmosphere effect will add its own per-instance params.
     bool rim_eligible = false;
+
+    /// Per-instance persistent damage decals (object space, body frame).
+    /// Runtime VFX state only — never serialized to saves.
+    DamageDecalRing decals;
 };
 
 }  // namespace scenegraph
