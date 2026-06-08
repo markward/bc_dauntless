@@ -222,3 +222,29 @@ def project(world: Vec3, cam: "OrbitCamera",
     sx = (ndc_x * 0.5 + 0.5) * w
     sy = (1.0 - (ndc_y * 0.5 + 0.5)) * h   # flip Y to top-left origin
     return (sx, sy, ndc_z, visible)
+
+
+# ---------------------------------------------------------------------------
+# Pin picking
+# ---------------------------------------------------------------------------
+
+PIN_RADIUS_PX = 18.0  # click target radius in screen pixels
+
+
+def pick_pin(cursor_x: float, cursor_y: float, descriptors: List[dict],
+             cam: "OrbitCamera", viewport: Tuple[int, int]) -> Optional[int]:
+    """Index of the nearest visible pin whose screen disc contains the cursor,
+    or None. Nearest-by-screen-distance wins on overlap; first pin wins on
+    exact tie (strict-less-than after the first candidate)."""
+    best_idx: Optional[int] = None
+    best_d2 = PIN_RADIUS_PX * PIN_RADIUS_PX
+    for i, d in enumerate(descriptors):
+        sx, sy, _depth, visible = project(d["world_pos"], cam, viewport)
+        if not visible:
+            continue
+        dx, dy = sx - cursor_x, sy - cursor_y
+        d2 = dx*dx + dy*dy
+        if d2 < best_d2 or (best_idx is None and d2 <= best_d2):
+            best_d2 = d2
+            best_idx = i
+    return best_idx

@@ -171,3 +171,23 @@ def test_state_for_healthy():
 def test_state_for_destroyed_takes_priority_over_disabled():
     """IsDestroyed beats IsDisabled when both are True."""
     assert _state_for(_StateStub(destroyed=True, disabled=True)) == "destroyed"
+
+
+from engine.ui.ship_property_viewer import pick_pin, PIN_RADIUS_PX
+
+
+def test_pick_returns_nearest_pin_within_radius():
+    cam = OrbitCamera(target=(0.0, 0.0, 0.0), distance=10.0, yaw=0.0, pitch=0.0)
+    descs = [
+        {"name": "A", "world_pos": (0.0, 0.0, 0.0)},   # screen centre
+        {"name": "B", "world_pos": (3.0, 0.0, 0.0)},   # off to one side
+    ]
+    idx = pick_pin(400.0, 300.0, descs, cam, (800, 600))
+    assert idx == 0
+
+
+def test_pick_returns_none_when_click_misses_all_pins():
+    cam = OrbitCamera(target=(0.0, 0.0, 0.0), distance=10.0, yaw=0.0, pitch=0.0)
+    descs = [{"name": "A", "world_pos": (0.0, 0.0, 0.0)}]
+    idx = pick_pin(400.0 + PIN_RADIUS_PX + 50.0, 300.0, descs, cam, (800, 600))
+    assert idx is None
