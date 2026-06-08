@@ -28,6 +28,9 @@ void DamageDecalRing::add(const glm::vec3& point_body, const glm::vec3& normal_b
             d.intensity = std::min(1.0f, d.intensity + clamped_in);
             d.birth_time = now;          // re-ignite ember
             d.normal_body = normal_body; // freshest surface normal
+            d.seq = next_seq_++;         // freshly touched: refresh FIFO age so
+                                         // a reinforced scar isn't evicted before
+                                         // older, untouched ones.
             return;
         }
     }

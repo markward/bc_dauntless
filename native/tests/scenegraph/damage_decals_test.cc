@@ -72,6 +72,28 @@ TEST(DamageDecalRing, FullRingEvictsOldest) {
     }
 }
 
+TEST(DamageDecalRing, MergeRefreshesFifoAgeSoReinforcedScarSurvives) {
+    DamageDecalRing ring;
+    // Fill all 24 slots; x=0 is the oldest (seq=1), x=10 the next-oldest.
+    for (int i = 0; i < 24; ++i) {
+        ring.add({static_cast<float>(i) * 10.0f, 0, 0}, {0, 0, 1},
+                 0.2f, 0.4f, WeaponClass::Scorch, static_cast<float>(i));
+    }
+    // Reinforce the oldest decal (x=0) — a merge that refreshes its FIFO age.
+    ring.add({0.0f, 0, 0}, {0, 0, 1}, 0.2f, 0.3f, WeaponClass::Scorch, 50.0f);
+    EXPECT_EQ(ring.count(), 24u);  // merged, not allocated
+    // A new distinct hit now evicts the next-oldest (x=10), not the refreshed x=0.
+    ring.add({999.0f, 0, 0}, {0, 0, 1}, 0.2f, 0.4f, WeaponClass::Scorch, 60.0f);
+    bool has_x0 = false, has_x10 = false;
+    for (const auto& d : ring.slots()) {
+        if (!d.active) continue;
+        if (d.point_body.x == 0.0f) has_x0 = true;
+        if (d.point_body.x == 10.0f) has_x10 = true;
+    }
+    EXPECT_TRUE(has_x0);    // refreshed by the merge — survives eviction
+    EXPECT_FALSE(has_x10);  // now the oldest — evicted instead
+}
+
 TEST(DamageDecalRing, TickReclaimsColdHeatGlowButKeepsScorch) {
     DamageDecalRing ring;
     ring.add({0, 0, 0}, {0, 0, 1}, 0.2f, 0.9f, WeaponClass::HeatGlow, 0.0f);
