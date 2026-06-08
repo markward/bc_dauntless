@@ -31,11 +31,12 @@ class ShipPropertyViewerPanel(Panel):
         return self._visible
 
     def open(self) -> None:
+        self._last_pushed = None
         ship = self._ship_getter()
         self._descriptors = build_descriptors(ship) if ship is not None else []
         self.selected_index = None
-        self.camera = OrbitCamera(target=(0.0, 0.0, 0.0),
-                                  distance=self._fit_distance())
+        target = self._fit_target()
+        self.camera = OrbitCamera(target=target, distance=self._fit_distance(target))
         self._visible = True
 
     def close(self) -> None:
@@ -44,11 +45,28 @@ class ShipPropertyViewerPanel(Panel):
         self.selected_index = None
         self.camera = None
 
-    def _fit_distance(self) -> float:
+    def _fit_target(self) -> tuple:
+        """Centroid of the subsystem mounts in world space. Descriptors carry
+        absolute world positions (subsystem_world_position adds the ship's
+        world location), so the viewer orbits the ship where it actually sits
+        in the scene — consistent with the GL hologram re-drawing the real
+        ship instance at its real transform. No re-centring."""
+        if not self._descriptors:
+            return (0.0, 0.0, 0.0)
+        n = len(self._descriptors)
+        sx = sum(d["world_pos"][0] for d in self._descriptors) / n
+        sy = sum(d["world_pos"][1] for d in self._descriptors) / n
+        sz = sum(d["world_pos"][2] for d in self._descriptors) / n
+        return (sx, sy, sz)
+
+    def _fit_distance(self, target: tuple) -> float:
+        """Far enough to frame the furthest mount from the centroid."""
         if not self._descriptors:
             return 10.0
-        max_r = max((sum(c * c for c in d["world_pos"])) ** 0.5
-                    for d in self._descriptors)
+        def _r(d):
+            wx, wy, wz = d["world_pos"]
+            return ((wx-target[0])**2 + (wy-target[1])**2 + (wz-target[2])**2) ** 0.5
+        max_r = max(_r(d) for d in self._descriptors)
         return max(max_r * 2.5, 5.0)
 
     def descriptors(self) -> List[dict]:
@@ -99,6 +117,8 @@ class ShipPropertyViewerPanel(Panel):
                 return True
             return False
         if action == "deselect":
+            if self.selected_index is None:
+                return False
             self.selected_index = None
             self._last_pushed = None
             return True
