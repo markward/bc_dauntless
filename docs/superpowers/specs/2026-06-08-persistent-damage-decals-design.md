@@ -190,7 +190,7 @@ A ship with an empty ring uploads `decal_count = 0`; the loop runs zero iteratio
 
 Each phase is an independently-shippable session: plan → implement → merge.
 
-### Phase 1 — Decal store + plumbing (no shader read)
+### Phase 1 — Decal store + plumbing (no shader read) — shipped 2026-06-08
 
 - Add the 24-slot ring to `ModelInstance` (C++).
 - Add the `host.damage_decal_add(instance_id, world_point, world_normal, radius, intensity, weapon_class)` binding: resolve the instance, transform world→body via `inverse(ship_world)`, apply merge-then-FIFO (§3.5).
@@ -204,6 +204,7 @@ Visual result: none. Substrate only.
 
 - Extend `opaque.frag` with the decal uniform array, `u_ship_world_inv`, `u_time`, and the §4 recipe (normal-aware falloff, spread-B deposit, blackbody ember, phaser glow).
 - Upload the live decal array + `u_ship_world_inv` per `draw_model` in `frame.cc`.
+- Once a `slots()` readback binding is exposed for the upload path, add a host-level integration test covering the `damage_decal_add` world→body transform end-to-end (create instance, set a rotated/translated world matrix, add a world-space hit, assert the stored body-frame record). Phase 1 leaves this one junction tested only transitively via the standalone `world_to_body` gtest (no readback binding existed yet).
 - Tests: render a known-damaged ship and sample the framebuffer — torpedo region shows a soot deposit; phaser region shows an emissive bloom that is gone after `T_glow`; a mirror-position decal pair does **not** cross-contaminate (the regression that killed the UV approach); an undamaged ship renders byte-identical to baseline.
 
 Visual result: subtle scorch + heat glow appear where hits land. The mirroring bug is gone. This is the spec's primary visual payoff.
