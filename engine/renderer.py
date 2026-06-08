@@ -328,3 +328,15 @@ def set_subsystem_pins(pins: list) -> None:
 def clear_subsystem_pins() -> None:
     """Clear all subsystem pin billboards. Takes effect next frame()."""
     _h.clear_subsystem_pins()
+
+
+def set_hologram_only_mode(enabled: bool, bg=(0.0, 0.0, 0.0)) -> None:
+    """When enabled, frame() clears to bg (r, g, b) and skips the space scene
+    and bridge pass, drawing only the hologram + subsystem pins."""
+    _h.set_hologram_only_mode(bool(enabled), tuple(bg))
+
+
+def get_instance_bounds(instance_id: InstanceId):
+    """World-space bounding sphere of an instance's model as
+    (cx, cy, cz, radius), or None if the instance/model is not resolvable."""
+    return _h.get_instance_bounds(instance_id)

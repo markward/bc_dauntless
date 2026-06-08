@@ -2650,14 +2650,25 @@ def run(mission_name: Optional[str] = None,
                          and ship_property_viewer.is_open()
                          and ship_property_viewer.camera is not None)
             if _spv_open:
-                _cam = ship_property_viewer.camera
-                r.set_camera(eye=_cam.eye(), target=_cam.target,
-                             up=_cam.up(), fov_y_rad=_cam.fov_y_rad,
-                             near=_cam.near, far=_cam.far)
                 _player_iid_spv = (
                     session.ship_instances.get(player)
                     if session is not None else None
                 )
+                # On the open edge, frame the orbit camera to the ship's real
+                # world-space bounding sphere so it fills the view. The
+                # subsystem-centroid fit in open() is only a fallback (it
+                # underestimates the hull extent and leaves the ship small).
+                if not _spv_was_open and _player_iid_spv is not None:
+                    _bounds = r.get_instance_bounds(_player_iid_spv)
+                    if _bounds is not None:
+                        _bx, _by, _bz, _br = _bounds
+                        ship_property_viewer.frame_to_bounds((_bx, _by, _bz), _br)
+                # Take over the frame: solid background, no space scene / bridge.
+                r.set_hologram_only_mode(True, (0.0, 0.0, 0.0))
+                _cam = ship_property_viewer.camera
+                r.set_camera(eye=_cam.eye(), target=_cam.target,
+                             up=_cam.up(), fov_y_rad=_cam.fov_y_rad,
+                             near=_cam.near, far=_cam.far)
                 if _player_iid_spv is not None:
                     r.set_visible(_player_iid_spv, False)
                     r.set_hologram_ship(_player_iid_spv)
@@ -2674,6 +2685,7 @@ def run(mission_name: Optional[str] = None,
                         r.set_visible(_spv_hidden_iid, True)
                     r.clear_hologram_ship()
                     r.clear_subsystem_pins()
+                    r.set_hologram_only_mode(False, (0.0, 0.0, 0.0))
                     _spv_hidden_iid = None
                 r.set_camera(eye=eye, target=target, up=up_vec,
                              fov_y_rad=director.fov_y_rad,

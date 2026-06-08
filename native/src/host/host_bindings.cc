@@ -99,6 +99,11 @@ renderer::HologramShip                       g_hologram_ship;
 std::unique_ptr<renderer::HologramPass>      g_hologram_pass;
 std::vector<renderer::SubsystemPin>          g_subsystem_pins;
 std::unique_ptr<renderer::SubsystemPinPass>  g_subsystem_pin_pass;
+// "Hologram-only" frame mode: when on (set by the Ship Property Viewer while
+// open), frame() clears to g_hologram_bg and skips both the space scene and the
+// bridge pass, drawing only the hologram + subsystem pins.
+bool      g_hologram_only_mode = false;
+glm::vec3 g_hologram_bg{0.0f, 0.0f, 0.0f};
 std::unique_ptr<renderer::BridgePass>      g_bridge_pass;
 std::unique_ptr<renderer::HdrTarget>       g_hdr_target;
 std::unique_ptr<renderer::BloomPass>       g_bloom_pass;
@@ -122,6 +127,13 @@ struct LoadedModel {
 
 std::unique_ptr<assets::AssetCache> g_cache;
 std::vector<LoadedModel> g_loaded_models;  // index = our public ModelHandle - 1
+
+// Resolve a model handle to its loaded asset (or nullptr). File-scope so both
+// frame()'s draw lookup and the get_instance_bounds binding share one path.
+const assets::Model* resolve_model(scenegraph::ModelHandle h) {
+    if (h == 0 || h > g_loaded_models.size()) return nullptr;
+    return g_loaded_models[h - 1].handle.get();
+}
 
 // Tracks key state from the previous frame() so key_pressed can detect
 // rising edges. Only keys that have been queried via key_pressed appear
@@ -241,6 +253,7 @@ void shutdown() {
     g_phaser_pass.reset();
     g_subsystem_pins.clear();
     g_hologram_ship = renderer::HologramShip{};
+    g_hologram_only_mode = false;
     g_hologram_pass.reset();
     g_subsystem_pin_pass.reset();
     g_bridge_pass.reset();
@@ -273,48 +286,57 @@ void frame() {
     g_window->framebuffer_size(&fw, &fh);
 
     // Route 3D scene into the HDR target. resize() is a no-op when unchanged.
+    // Hologram-only mode (Ship Property Viewer open): clear to a solid colour
+    // and skip the whole space scene + bridge pass, drawing just the hologram
+    // and pins. The orbit camera is supplied via set_camera by the host loop.
+    const bool viewer_mode = g_hologram_only_mode;
+
     g_hdr_target->resize(fw, fh);
     g_hdr_target->bind();   // sets viewport to fw x fh
-    glClearColor(0.05f, 0.07f, 0.10f, 1.0f);
+    if (viewer_mode) {
+        glClearColor(g_hologram_bg.r, g_hologram_bg.g, g_hologram_bg.b, 1.0f);
+    } else {
+        glClearColor(0.05f, 0.07f, 0.10f, 1.0f);
+    }
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     if (fh > 0) g_camera.aspect = static_cast<float>(fw) / static_cast<float>(fh);
 
-    auto lookup = [](scenegraph::ModelHandle h) -> const assets::Model* {
-        if (h == 0 || h > g_loaded_models.size()) return nullptr;
-        return g_loaded_models[h - 1].handle.get();
-    };
-
-    g_world.propagate();
-    g_backdrop_pass->render(g_backdrops, g_camera, *g_pipeline);
+    auto lookup = resolve_model;
 
     const double now = glfwGetTime();
     const float  dt  = static_cast<float>(now - g_prev_frame_time_seconds);
     g_prev_frame_time_seconds = now;
 
-    g_sun_pass->render(g_suns, g_camera, *g_pipeline, now);
-    g_submitter->submit_opaque_in_pass(
-        g_world, g_camera, *g_pipeline, lookup, g_lighting,
-        scenegraph::Pass::Space, g_decal_game_time);
+    g_world.propagate();
 
-    // Shield pass: additive flash on top of opaque ships. Runs before dust
-    // so dust specks appear in front of fading shields (both are additive
-    // blends, so order is mostly cosmetic, but dust drawn last keeps it
-    // visually on top of any lingering shield fade).
-    if (g_shield_pass) g_shield_pass->submit(g_world, g_camera, *g_pipeline,
-                                              now, lookup);
+    if (!viewer_mode) {
+        g_backdrop_pass->render(g_backdrops, g_camera, *g_pipeline);
+        g_sun_pass->render(g_suns, g_camera, *g_pipeline, now);
+        g_submitter->submit_opaque_in_pass(
+            g_world, g_camera, *g_pipeline, lookup, g_lighting,
+            scenegraph::Pass::Space, g_decal_game_time);
 
-    if (g_dust_pass) g_dust_pass->render(g_camera, dt, *g_pipeline,
-                                         g_suns, g_dust_planets);
+        // Shield pass: additive flash on top of opaque ships. Runs before dust
+        // so dust specks appear in front of fading shields (both are additive
+        // blends, so order is mostly cosmetic, but dust drawn last keeps it
+        // visually on top of any lingering shield fade).
+        if (g_shield_pass) g_shield_pass->submit(g_world, g_camera, *g_pipeline,
+                                                  now, lookup);
 
-    if (g_lens_flare_pass) {
-        g_lens_flare_pass->render(g_lens_flares, g_camera, *g_pipeline,
-                                  fw, fh, now);
+        if (g_dust_pass) g_dust_pass->render(g_camera, dt, *g_pipeline,
+                                             g_suns, g_dust_planets);
+
+        if (g_lens_flare_pass) {
+            g_lens_flare_pass->render(g_lens_flares, g_camera, *g_pipeline,
+                                      fw, fh, now);
+        }
+
+        if (g_torpedo_pass) g_torpedo_pass->render(g_torpedoes,    g_camera, *g_pipeline);
+        if (g_phaser_pass)  g_phaser_pass ->render(g_phaser_beams, g_camera, *g_pipeline);
+        if (g_hit_vfx_pass) g_hit_vfx_pass->render(g_hit_vfx,      g_camera, *g_pipeline);
     }
 
-    if (g_torpedo_pass) g_torpedo_pass->render(g_torpedoes,    g_camera, *g_pipeline);
-    if (g_phaser_pass)  g_phaser_pass ->render(g_phaser_beams, g_camera, *g_pipeline);
-    if (g_hit_vfx_pass) g_hit_vfx_pass->render(g_hit_vfx,      g_camera, *g_pipeline);
     if (g_hologram_pass && g_hologram_ship.active)
         g_hologram_pass->render(g_hologram_ship, g_world, g_camera, *g_pipeline, lookup);
     if (g_subsystem_pin_pass && !g_subsystem_pins.empty())
@@ -329,7 +351,7 @@ void frame() {
     // the future viewscreen RTT can swap the space pass's target from
     // "main framebuffer" to "viewscreen texture" without adding a
     // "render space here" path that didn't exist before.
-    if (g_bridge_pass_enabled && g_bridge_pass) {
+    if (!viewer_mode && g_bridge_pass_enabled && g_bridge_pass) {
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         if (fh > 0) g_bridge_camera.aspect = static_cast<float>(fw) / static_cast<float>(fh);
@@ -773,6 +795,32 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("clear_hologram_ship",
           []() { g_hologram_ship = renderer::HologramShip{}; },
           "Clear the hologram overlay (deactivates it). Takes effect next frame().");
+    m.def("set_hologram_only_mode",
+          [](bool enabled, std::array<float, 3> bg) {
+              g_hologram_only_mode = enabled;
+              g_hologram_bg = {bg[0], bg[1], bg[2]};
+          },
+          py::arg("enabled"), py::arg("bg") = std::array<float, 3>{0.0f, 0.0f, 0.0f},
+          "When enabled, frame() clears to bg (r,g,b) and skips the space scene "
+          "and bridge pass, drawing only the hologram + subsystem pins.");
+    m.def("get_instance_bounds",
+          [](scenegraph::InstanceId iid) -> py::object {
+              const scenegraph::Instance* inst = g_world.get(iid);
+              if (inst == nullptr) return py::none();
+              const assets::Model* model = resolve_model(inst->model_handle);
+              if (model == nullptr) return py::none();
+              renderer::Aabb box = renderer::compute_model_aabb(*model);
+              const glm::vec4 c = inst->world * glm::vec4(box.center, 1.0f);
+              // Uniform-scale factor baked into the instance world matrix
+              // (the X basis column length), so the world-space bounding
+              // radius matches the rendered size even if the ship is scaled.
+              const float scale = glm::length(glm::vec3(inst->world[0]));
+              const float radius = glm::length(box.half_extents) * scale;
+              return py::make_tuple(c.x, c.y, c.z, radius);
+          },
+          py::arg("instance_id"),
+          "Return (cx, cy, cz, radius) world-space bounding sphere of the "
+          "instance's model, or None if the instance/model is not resolvable.");
     m.def("set_subsystem_pins",
           [](const std::vector<std::tuple<std::array<float, 3>, int, bool>>& pins) {
               g_subsystem_pins.clear();

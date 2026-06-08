@@ -243,3 +243,27 @@ def test_handle_input_missing_bindings_is_noop():
         pass
 
     p.handle_input(_Bare())  # no exception
+
+
+def test_frame_to_bounds_centers_and_fills(monkeypatch):
+    import math
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [{"name": "A", "world_pos": (0, 0, 0),
+                                       "state": "healthy", "properties": {},
+                                       "icon_id": 6}])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: object())
+    p.open()
+    p.frame_to_bounds((100.0, 50.0, -7.0), 8.0)
+    assert p.camera.target == (100.0, 50.0, -7.0)
+    half = p.camera.fov_y_rad / 2.0
+    expected = 8.0 / (mod.SCREEN_FILL * math.tan(half))
+    assert abs(p.camera.distance - expected) < 1e-6
+
+
+def test_frame_to_bounds_ignores_nonpositive_radius():
+    p = ShipPropertyViewerPanel(ship_getter=lambda: None)
+    p.camera = OrbitCamera(target=(1.0, 2.0, 3.0), distance=42.0)
+    p.frame_to_bounds((9.0, 9.0, 9.0), 0.0)   # bad radius → no change
+    assert p.camera.target == (1.0, 2.0, 3.0)
+    assert p.camera.distance == 42.0

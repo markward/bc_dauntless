@@ -7,12 +7,17 @@ Spec: docs/superpowers/specs/2026-06-08-ship-property-viewer-design.md
 from __future__ import annotations
 
 import json
+import math
 from typing import Callable, List, Optional
 
 from engine.ui.panel import Panel
 from engine.ui.ship_property_viewer import (
     build_descriptors, OrbitCamera, pick_pin,
 )
+
+# Fraction of the view height the ship's bounding sphere should fill when the
+# viewer first frames the ship (1.0 = sphere touches top/bottom edges).
+SCREEN_FILL = 0.95
 
 # Radians of orbit per pixel of left-drag. ~0.35 rad (20°) for a 50 px drag.
 ORBIT_SENS = 0.007
@@ -67,6 +72,21 @@ class ShipPropertyViewerPanel(Panel):
         self._drag_last = None
         self._press_pos = None
         self._drag_dist = 0.0
+
+    def frame_to_bounds(self, center, radius: float) -> None:
+        """Point the orbit camera at `center` and pull back so the model's
+        world-space bounding sphere (`radius`) fills ~SCREEN_FILL of the view
+        height. Called by the host loop on open with the real ship bounds
+        (the subsystem-centroid framing in open() is only a fallback)."""
+        if self.camera is None or radius <= 0.0:
+            return
+        self.camera.target = (float(center[0]), float(center[1]), float(center[2]))
+        half_fov = self.camera.fov_y_rad / 2.0
+        tan_half = math.tan(half_fov)
+        if tan_half <= 0.0:
+            return
+        d = radius / (SCREEN_FILL * tan_half)
+        self.camera.distance = max(min(d, MAX_DISTANCE), MIN_DISTANCE)
 
     def _fit_target(self) -> tuple:
         """Centroid of the subsystem mounts in world space. Descriptors carry
