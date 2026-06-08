@@ -29,6 +29,7 @@ def _make(**overrides):
         set_hdr=Mock(),
         set_rim=Mock(),
         set_decals=Mock(),
+        set_fxaa=Mock(),
         set_fov_rad=Mock(),
     )
     kwargs.update(overrides)
@@ -63,7 +64,7 @@ def test_initial_settings_round_trip_to_render_payload():
     body = json.loads(payload[len("setConfigurationPanel("):-2])
     assert body["settings"] == {
         "dust_on": False, "specular_on": True, "hdr_on": True, "rim_on": False,
-        "decals_on": False, "fov_deg": 62,
+        "decals_on": False, "fxaa_on": True, "fov_deg": 62,
     }
 
 
@@ -246,19 +247,19 @@ def test_focus_first_up_lands_on_last_focusable():
     p.handle_input(r)
     payload = p.render_payload()
     body = json.loads(payload[len("setConfigurationPanel("):-2])
-    assert body["focused"] == 6  # ctrl:decals is last in a 7-item list
+    assert body["focused"] == 7  # ctrl:fxaa is last in an 8-item list
 
 
 def test_focus_wraps_at_bottom():
     p, _ = _make()
     p.open()
     r = _FakeReader()
-    for _ in range(8):
+    for _ in range(9):
         r.press(r.keys.KEY_DOWN)
         p.handle_input(r)
     payload = p.render_payload()
     body = json.loads(payload[len("setConfigurationPanel("):-2])
-    assert body["focused"] == 0  # 0,1,2,3,4,5,6,wrap→0
+    assert body["focused"] == 0  # 0,1,2,3,4,5,6,7,wrap→0
 
 
 def test_space_on_dust_row_toggles():
@@ -421,3 +422,45 @@ def test_space_on_decals_row_toggles():
     r.press(r.keys.KEY_SPACE); p.handle_input(r)
     kw["set_decals"].assert_called_once_with(False)
     assert p._settings.decals_on is False
+
+
+# ---- fxaa toggle ----------------------------------------------------------
+
+def test_toggle_fxaa_fires_applier_and_flips_state():
+    p, kw = _make()
+    p.open()
+    assert p._settings.fxaa_on is True
+    assert p.dispatch_event("toggle:fxaa") is True
+    kw["set_fxaa"].assert_called_once_with(False)
+    assert p._settings.fxaa_on is False
+
+
+def test_render_payload_includes_fxaa_on():
+    p, _ = _make()
+    p.open()
+    payload = json.loads(p.render_payload()[len("setConfigurationPanel("):-len(");")])
+    assert payload["settings"]["fxaa_on"] is True
+
+
+def test_fxaa_is_a_graphics_focusable():
+    p, _ = _make()
+    assert ("ctrl", "fxaa") in p._focusables()
+
+
+def test_space_on_fxaa_row_toggles():
+    p, kw = _make()
+    p.open()
+    p._focused = p._focusables().index(("ctrl", "fxaa"))
+
+    class _Keys:
+        KEY_DOWN = 1; KEY_UP = 2; KEY_SPACE = 3; KEY_ENTER = 4
+        KEY_LEFT = 5; KEY_RIGHT = 6
+
+    class _H:
+        keys = _Keys()
+        def key_pressed(self, code):
+            return code == _Keys.KEY_SPACE
+
+    p.handle_input(_H())
+    kw["set_fxaa"].assert_called_once_with(False)
+    assert p._settings.fxaa_on is False
