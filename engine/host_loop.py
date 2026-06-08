@@ -1467,6 +1467,24 @@ def _rot_determinant(rot) -> float:
           + m[0][2] * (m[1][0]*m[2][1] - m[1][1]*m[2][0]))
 
 
+def _world_matrix_from(loc, rot, s: float) -> list:
+    """Row-major TRS mat4 from an explicit (loc, rot) and combined scale s.
+
+    Shared by _ship_world_matrix, _astro_world_matrix, and the render
+    interpolation path. Applies the determinant-normalization X-flip
+    (see _ship_world_matrix docstring) so every rendered instance reaches
+    the GPU with det < 0 under glFrontFace(GL_CW).
+    """
+    flip = -1.0 if _rot_determinant(rot) > 0.0 else 1.0
+    sx = s * flip
+    return [
+        rot._m[0][0]*sx, rot._m[0][1]*s, rot._m[0][2]*s, loc.x,
+        rot._m[1][0]*sx, rot._m[1][1]*s, rot._m[1][2]*s, loc.y,
+        rot._m[2][0]*sx, rot._m[2][1]*s, rot._m[2][2]*s, loc.z,
+        0.0,             0.0,            0.0,            1.0,
+    ]
+
+
 def _ship_world_matrix(ship, natural_scale: float) -> list:
     """Row-major TRS mat4 for a ship.
 
@@ -1503,14 +1521,7 @@ def _ship_world_matrix(ship, natural_scale: float) -> list:
     except Exception:
         py_scale = 1.0
     s = natural_scale * py_scale
-    flip = -1.0 if _rot_determinant(rot) > 0.0 else 1.0
-    sx = s * flip
-    return [
-        rot._m[0][0]*sx, rot._m[0][1]*s, rot._m[0][2]*s, loc.x,
-        rot._m[1][0]*sx, rot._m[1][1]*s, rot._m[1][2]*s, loc.y,
-        rot._m[2][0]*sx, rot._m[2][1]*s, rot._m[2][2]*s, loc.z,
-        0.0,             0.0,            0.0,            1.0,
-    ]
+    return _world_matrix_from(loc, rot, s)
 
 
 def _astro_world_matrix(obj, natural_scale: float) -> list:
@@ -1527,14 +1538,7 @@ def _astro_world_matrix(obj, natural_scale: float) -> list:
     except Exception:
         py_scale = 1.0
     s = natural_scale * py_scale
-    flip = -1.0 if _rot_determinant(rot) > 0.0 else 1.0
-    sx = s * flip
-    return [
-        rot._m[0][0]*sx, rot._m[0][1]*s, rot._m[0][2]*s, loc.x,
-        rot._m[1][0]*sx, rot._m[1][1]*s, rot._m[1][2]*s, loc.y,
-        rot._m[2][0]*sx, rot._m[2][1]*s, rot._m[2][2]*s, loc.z,
-        0.0,             0.0,            0.0,            1.0,
-    ]
+    return _world_matrix_from(loc, rot, s)
 
 
 @dataclass
@@ -2165,6 +2169,8 @@ def run(mission_name: Optional[str] = None,
         from engine.core.timestep import step_accumulator
         _previous_real_time = time.monotonic()
         _accumulator = 0.0
+        from engine.core.transform_buffer import TransformBuffer
+        _xform_buf = TransformBuffer()
 
         while not r.should_close():
             # --- Input dispatch + modality (ESC always live; SPACE only when unpaused) ---
@@ -2372,6 +2378,9 @@ def run(mission_name: Optional[str] = None,
             # matches step_accumulator's spiral-of-death cap so a
             # stalled frame doesn't teleport the player.
             _player_dt = 0.0 if pause.is_open else min(max(_frame_dt, 0.0), MAX_FRAME_DT)
+            _interp_alpha = _accumulator / TICK_DT  # in [0, 1) after step_accumulator
+            if _sim_ticks_this_frame > 0:
+                _xform_buf.roll()
             for _ in range(_sim_ticks_this_frame):
                 loop.tick()
 
@@ -2382,6 +2391,7 @@ def run(mission_name: Optional[str] = None,
                 controller._drain_pending_swap()
                 if had_pending_swap:
                     director.snap()
+                    _xform_buf.reset_all()
             else:
                 had_pending_swap = False
 
@@ -2496,9 +2506,45 @@ def run(mission_name: Optional[str] = None,
                 )
 
                 # Sync transforms for known instances.
+                #
+                # Player ship: pushed live (it is integrated per render
+                # frame on wall-clock dt in _PlayerControl, so it is
+                # already smooth in world space).
+                #
+                # Non-player ships: integrated on the fixed 60 Hz tick,
+                # so they are rendered at lerp(prev, cur, _interp_alpha)
+                # to hide the discrete steps. _xform_buf.roll() ran above
+                # before this frame's ticks (only when a tick fired); here
+                # we capture the new current state and push the interpolated
+                # pose. This only affects what is sent to the renderer — the
+                # ship objects keep live transforms, so physics/AI/combat
+                # (which ran earlier this frame) are unaffected.
                 if session is not None:
+                    # player is always set when a session exists, so
+                    # _player_iid is a real iid (never None) at runtime.
+                    _player_iid = session.ship_instances.get(player)
+                    _live_ship_iids = []
                     for ship, iid in session.ship_instances.items():
-                        r.set_world_transform(iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
+                        if iid == _player_iid:
+                            r.set_world_transform(
+                                iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
+                            continue
+                        _live_ship_iids.append(iid)
+                        # NOTE: scale is read live, not interpolated — the
+                        # buffer only stores loc+rot. Fine for steady scale;
+                        # a mid-animation GetScale() change applies the
+                        # current scale to the blended pose (imperceptible).
+                        try:
+                            _ps = float(ship.GetScale())
+                        except Exception:
+                            _ps = 1.0
+                        _xform_buf.set_current(
+                            iid, ship.GetWorldLocation(), ship.GetWorldRotation())
+                        _sampled = _xform_buf.sample(iid, _interp_alpha)
+                        _iloc, _irot = _sampled
+                        r.set_world_transform(
+                            iid, _world_matrix_from(_iloc, _irot, BC_MODEL_SCALE * _ps))
+                    _xform_buf.prune(_live_ship_iids)
                     for planet, iid in session.planet_instances.items():
                         ns = session.planet_natural_scale.get(planet, 1.0)
                         r.set_world_transform(iid, _astro_world_matrix(planet, ns))
@@ -2513,7 +2559,7 @@ def run(mission_name: Optional[str] = None,
             elif player is not None:
                 eye, target, up_vec = _compute_camera(
                     view_mode, director,
-                    player=player, dt=TICK_DT)
+                    player=player, dt=_player_dt)
                 # Camera shake — apply to the exterior view. The bridge
                 # first-person camera below gets its own perturb call
                 # against the shared shake state.
