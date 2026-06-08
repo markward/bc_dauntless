@@ -1033,7 +1033,7 @@ def _apply_pause_menu_side_effects(pause: "_PauseMenuController",
     bindings module (or fake) exposing cef_execute_javascript and
     set_cursor_locked. `blockers` is an iterable of objects with an
     is_open() method (today: mission picker + developer options panel +
-    configuration panel); when any is open, the pause-menu must hide regardless of
+    ship property viewer + configuration panel); when any is open, the pause-menu must hide regardless of
     pause.is_open so the blocker isn't occluded.
 
     On close, the view-mode sync latch is invalidated so the next
@@ -2214,9 +2214,10 @@ def run(mission_name: Optional[str] = None,
             # idempotent — only fires when the mode changed.
             if _h is not None:
                 # ESC priority: mission picker first (dev only), then the
-                # developer options panel (dev only), then the configuration
-                # panel, otherwise the pause menu toggle. All three modal
-                # blockers close on ESC and return the user to the pause menu.
+                # developer options panel (dev only), then the ship property
+                # viewer (dev only), then the configuration panel, otherwise
+                # the pause menu toggle. All four modal blockers close on ESC
+                # and return the user to the pause menu.
                 if mission_picker.is_open():
                     if _h.key_pressed(_h.keys.KEY_ESCAPE):
                         mission_picker.handle_key_esc()
