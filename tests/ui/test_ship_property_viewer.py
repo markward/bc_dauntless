@@ -138,3 +138,36 @@ def test_build_descriptors_skips_subsystems_without_mount(monkeypatch):
     assert d["world_pos"] == (0.0, 1.0, 0.5)
     assert d["state"] in ("healthy", "damaged", "disabled", "destroyed")
     assert d["properties"]["name"] == "Dorsal Phaser 1"
+
+
+from engine.ui.ship_property_viewer import _state_for
+
+
+class _StateStub:
+    """Minimal subsystem stub for testing _state_for predicate ladder."""
+    def __init__(self, destroyed=False, disabled=False, damaged=False):
+        self._destroyed, self._disabled, self._damaged = destroyed, disabled, damaged
+    def IsDestroyed(self): return self._destroyed
+    def IsDisabled(self): return self._disabled
+    def IsDamaged(self): return self._damaged
+
+
+def test_state_for_destroyed():
+    assert _state_for(_StateStub(destroyed=True)) == "destroyed"
+
+
+def test_state_for_disabled():
+    assert _state_for(_StateStub(disabled=True)) == "disabled"
+
+
+def test_state_for_damaged():
+    assert _state_for(_StateStub(damaged=True)) == "damaged"
+
+
+def test_state_for_healthy():
+    assert _state_for(_StateStub()) == "healthy"
+
+
+def test_state_for_destroyed_takes_priority_over_disabled():
+    """IsDestroyed beats IsDisabled when both are True."""
+    assert _state_for(_StateStub(destroyed=True, disabled=True)) == "destroyed"

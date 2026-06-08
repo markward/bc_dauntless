@@ -133,7 +133,7 @@ def build_descriptors(ship) -> List[dict]:
         if local is None:
             continue
         w = subsystem_world_position(sub)
-        props = _properties_for(sub)
+        props = _properties_for(sub, local)
         out.append({
             "name":       props["name"],
             "icon_id":    _icon_id_for(sub),
@@ -146,13 +146,15 @@ def build_descriptors(ship) -> List[dict]:
 
 def _iter_subsystems(ship):
     """Yield damage-relevant subsystems of a ship. Mirrors
-    engine.ui.ship_display_panel._iter_damage_subsystems; kept thin so a stub
-    ship iterable works in tests."""
+    engine.ui.ship_display_panel._iter_damage_subsystems. Falls back to
+    iterating the ship directly only when that module cannot be imported
+    (e.g. test stubs run without the full UI stack); real enumeration
+    errors are allowed to propagate rather than be masked."""
     try:
         from engine.ui.ship_display_panel import _iter_damage_subsystems
-        return list(_iter_damage_subsystems(ship))
-    except Exception:
-        return list(ship)  # stub fallback
+    except ImportError:
+        return list(ship)
+    return list(_iter_damage_subsystems(ship))
 
 
 def _icon_id_for(sub) -> int:
@@ -161,37 +163,32 @@ def _icon_id_for(sub) -> int:
 
 
 def _state_for(sub) -> str:
-    """healthy/damaged/disabled/destroyed predicate ladder, mirroring
-    ship_display_panel._row_state (which uses IsDestroyed/IsDisabled/IsDamaged).
-    Falls back to GetCondition() for stub/simplified subsystems that lack
-    those boolean methods."""
-    try:
-        if hasattr(sub, "IsDestroyed") and sub.IsDestroyed():
-            return "destroyed"
-        if hasattr(sub, "GetCondition") and not hasattr(sub, "IsDestroyed"):
-            # stub path: no IsDestroyed, use condition <= 0
-            if sub.GetCondition() <= 0.0:
-                return "destroyed"
-        if hasattr(sub, "IsDisabled") and sub.IsDisabled():
-            return "disabled"
-        if hasattr(sub, "IsDamaged") and sub.IsDamaged():
-            return "damaged"
-        if hasattr(sub, "GetCondition") and not hasattr(sub, "IsDamaged"):
-            # stub path: no IsDamaged, use condition < 1
-            if sub.GetCondition() < 1.0:
-                return "damaged"
-    except Exception:
-        pass
+    """healthy/damaged/disabled/destroyed — mirrors
+    engine.ui.ship_display_panel._row_state (boolean predicate ladder).
+    Missing predicate methods on stub objects are treated as False."""
+    def _is(name: str) -> bool:
+        m = getattr(sub, name, None)
+        if m is None:
+            return False
+        try:
+            return bool(m())
+        except Exception:
+            return False
+    if _is("IsDestroyed"):
+        return "destroyed"
+    if _is("IsDisabled"):
+        return "disabled"
+    if _is("IsDamaged"):
+        return "damaged"
     return "healthy"
 
 
-def _properties_for(sub) -> dict:
+def _properties_for(sub, pos) -> dict:
     def _safe(getter, default=None):
         try:
             return getter()
         except Exception:
             return default
-    pos = _safe(sub.GetPosition) if hasattr(sub, "GetPosition") else None
     return {
         "name":      _safe(getattr(sub, "GetName", lambda: None)) or "<unnamed>",
         "type":      type(sub).__name__,
