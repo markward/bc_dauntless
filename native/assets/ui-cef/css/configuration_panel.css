@@ -1,10 +1,21 @@
 /* Configuration panel — pause-menu modal with vertical left tab
    strip + per-tab body. Hidden by default; setConfigurationPanel
-   flips display to 'flex'. Visual palette mirrors the existing
-   pause-menu and mission-picker styling.
+   flips display to 'flex'.
+
+   Visual language is shared with the pause menu (global.css) and the
+   mission picker:
+     - "Antonio" display font throughout
+     - maroon→orange gradient header bar, #ffd text, uppercase
+     - dark near-black body
+     - purple row accent (rgb(147,103,255)) that flips to a gold
+       highlight (rgb(255,210,90)) on hover / keyboard focus — the
+       same "this is what will activate" cue the pause rows use
+     - steel-grey buttons/borders borrowed from the mission picker
+       (the pause menu has no buttons of its own)
    Spec: docs/superpowers/specs/2026-06-05-configuration-panel-design.md */
 
-#configuration-panel {
+#configuration-panel,
+#developer-options-panel {
     display: none;
     position: fixed;
     inset: 0;
@@ -12,6 +23,7 @@
     justify-content: center;
     background: rgba(0, 0, 0, 0.55);
     z-index: 50;
+    font-family: "Antonio", sans-serif;
 }
 
 .cp-modal {
@@ -19,18 +31,24 @@
     height: 420px;
     display: flex;
     flex-direction: column;
-    background: #0a1620;
-    color: #cfe2f3;
-    border: 1px solid #2a4d6e;
+    background: rgb(20, 22, 28);
+    color: #cdd3dc;
+    border: 1px solid rgb(80, 88, 100);
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
-    font-family: sans-serif;
 }
 
 .cp-header {
-    padding: 12px 16px;
-    font-size: 18px;
-    font-weight: bold;
-    border-bottom: 1px solid #2a4d6e;
+    background: linear-gradient(90deg, rgb(216, 94, 86) 0%, rgb(216, 132, 80) 100%);
+    color: #ffd;
+    padding: 6px 16px;
+    height: 28px;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
 }
 
 .cp-content {
@@ -41,8 +59,8 @@
 
 .cp-tabstrip {
     flex: 0 0 140px;
-    border-right: 1px solid #2a4d6e;
-    background: #081220;
+    border-right: 1px solid rgb(60, 64, 72);
+    background: rgb(14, 15, 20);
     display: flex;
     flex-direction: column;
 }
@@ -50,22 +68,29 @@
 .cp-tab {
     padding: 10px 16px;
     cursor: pointer;
+    color: #cdd3dc;
     border-left: 3px solid transparent;
+    transition: background-color 80ms linear, color 80ms linear,
+                border-left-color 80ms linear;
 }
 
 .cp-tab:hover {
-    background: #102536;
+    background: rgba(173, 132, 255, 0.15);
+    color: #ffffff;
 }
 
 .cp-tab--active {
-    background: #102536;
-    border-left-color: #4aa3df;
-    font-weight: bold;
+    background: rgb(37, 26, 64);
+    color: #ffffff;
+    border-left-color: rgb(147, 103, 255);
+    font-weight: 600;
 }
 
+/* Keyboard focus shares the gold highlight the pause rows use, so the
+   row/tab that will activate on Enter is unmistakable. */
 .cp-tab.cp-focused,
 .cp-row.cp-focused {
-    outline: 1px solid #4aa3df;
+    outline: 1px solid rgb(255, 210, 90);
     outline-offset: -1px;
 }
 
@@ -80,7 +105,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 8px 4px;
-    border-bottom: 1px solid #16283a;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .cp-row__label {
@@ -96,19 +121,33 @@
 .cp-toggle {
     width: 48px;
     height: 22px;
-    border: 1px solid #2a4d6e;
-    background: #0a1620;
-    color: #cfe2f3;
+    border: 1px solid rgb(80, 88, 100);
+    background: rgb(40, 44, 52);
+    color: #cdd3dc;
     cursor: pointer;
+    font-family: inherit;
     font-size: 12px;
+    transition: background-color 80ms linear, color 80ms linear,
+                border-left-color 80ms linear;
+}
+
+.cp-toggle:hover {
+    background: rgb(60, 64, 72);
 }
 
 .cp-toggle--on {
-    background: #1f4d6e;
+    background: rgb(147, 103, 255);
+    border-color: rgb(147, 103, 255);
+    color: #ffffff;
+}
+
+.cp-toggle--on:hover {
+    background: rgb(173, 132, 255);
 }
 
 .cp-slider {
     width: 200px;
+    accent-color: rgb(147, 103, 255);
 }
 
 .cp-slider-value {
@@ -119,26 +158,27 @@
 
 .cp-footer {
     padding: 10px 16px;
-    border-top: 1px solid #2a4d6e;
+    border-top: 1px solid rgb(60, 64, 72);
     display: flex;
     justify-content: flex-end;
 }
 
 .cp-done-button {
     padding: 6px 18px;
-    background: #1f4d6e;
-    color: #cfe2f3;
-    border: 1px solid #2a4d6e;
+    background: rgb(40, 44, 52);
+    color: #ffd;
+    border: 1px solid rgb(80, 88, 100);
+    font: inherit;
     cursor: pointer;
 }
 
 .cp-done-button:hover {
-    background: #265c80;
+    background: rgb(60, 64, 72);
 }
 
 .cp-divider {
     border: none;
-    border-top: 1px solid rgba(42, 77, 110, 0.75);
+    border-top: 1px solid rgb(60, 64, 72);
     margin: 14px 0 10px 0;
 }
 
@@ -146,6 +186,6 @@
     font-size: 12px;
     letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: rgba(74, 163, 223, 0.85);
+    color: rgba(216, 132, 80, 0.9);
     margin: 0 0 8px 2px;
 }

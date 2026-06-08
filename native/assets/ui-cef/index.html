@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <title>dauntless</title>
-    <link rel="stylesheet" href="css/ship_status.css">
+    <link rel="stylesheet" href="css/global.css">
     <link rel="stylesheet" href="css/target_list.css">
     <link rel="stylesheet" href="css/sensors.css">
     <link rel="stylesheet" href="css/sdk_mirror.css">
@@ -58,6 +58,29 @@
         <div class="cp-footer">
           <button class="cp-done-button"
                   onclick="dauntlessEvent('configuration/cancel')">
+            Done
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Developer Options overlay (developer-only).
+         setDeveloperOptions({...}) drives state; clicks fire
+         dauntlessEvent('developer-options/<verb>:<arg>'). ESC and the
+         Done button both fire 'developer-options/cancel'. The .dev-only
+         class keeps it hidden outside --developer; the panel is also only
+         registered with the PanelRegistry under --developer.
+         Spec: docs/superpowers/specs/2026-06-08-developer-options-menu-design.md -->
+    <section id="developer-options-panel" class="dev-only">
+      <div class="cp-modal">
+        <div class="cp-header">Developer Options</div>
+        <div class="cp-content">
+          <nav class="cp-tabstrip" id="do-tabstrip"></nav>
+          <div class="cp-body" id="do-body"></div>
+        </div>
+        <div class="cp-footer">
+          <button class="cp-done-button"
+                  onclick="dauntlessEvent('developer-options/cancel')">
             Done
           </button>
         </div>
@@ -219,5 +242,6 @@
     <script src="panels/weapons_display/weapons_display.js"></script>
     <script src="js/sdk_mirror.js"></script>
     <script src="js/configuration_panel.js"></script>
+    <script src="js/developer_options.js"></script>
 </body>
 </html>

@@ -31,7 +31,7 @@ void DauntlessCefApp::OnBeforeCommandLineProcessing(
         "disable-features",
         "NativeNotifications,SystemNotifications,UNNotifications");
 
-    // Allow file:// ship_status.html to load sibling assets (panel CSS/JS,
+    // Allow file:// index.html to load sibling assets (panel CSS/JS,
     // ship-icon PNGs under icons/ships/, fonts, etc.). Chromium treats
     // each file:// URL as a unique origin by default, so without this
     // switch <img src="icons/ships/Galaxy.png"> requests are silently
