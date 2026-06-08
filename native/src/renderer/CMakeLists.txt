@@ -37,6 +37,8 @@ embed_shader(SHADER_LIGHTMAP_VS shaders/lightmap.vert lightmap_vs)
 embed_shader(SHADER_LIGHTMAP_FS shaders/lightmap.frag lightmap_fs)
 embed_shader(SHADER_RESOLVE_VS shaders/resolve.vert resolve_vs)
 embed_shader(SHADER_RESOLVE_FS shaders/resolve.frag resolve_fs)
+embed_shader(SHADER_FXAA_VS shaders/fxaa.vert fxaa_vs)
+embed_shader(SHADER_FXAA_FS shaders/fxaa.frag fxaa_fs)
 embed_shader(SHADER_BLOOM_PREFILTER_FS shaders/bloom_prefilter.frag bloom_prefilter_fs)
 embed_shader(SHADER_BLOOM_DOWN_FS shaders/bloom_down.frag bloom_down_fs)
 embed_shader(SHADER_BLOOM_UP_FS shaders/bloom_up.frag bloom_up_fs)
@@ -50,6 +52,7 @@ add_library(renderer STATIC
     ldr_target.cc
     bloom_pass.cc
     resolve_pass.cc
+    fxaa_pass.cc
     sphere_mesh.cc
     backdrop_pass.cc
     sun_pass.cc
