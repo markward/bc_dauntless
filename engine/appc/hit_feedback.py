@@ -80,7 +80,7 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
              absorbed_shields: float, absorbed_subsystem: float,
              absorbed_hull: float, sub_transition,
              host=None, ship_instances=None,
-             weapon_type: str | None = None) -> None:
+             weapon_type: str | None = None, radius: float = 0.0) -> None:
     """Per-impact fan-out: VFX + audio + camera shake.
 
     Severity is computed via classify(...). Exactly one visual fires per
@@ -149,6 +149,27 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
     if (player is not None and ship is player
             and severity != Severity.SHIELD):
         camera_shake.apply_kick(float(damage))
+
+    # 4. Persistent damage decal — Phase 1 of persistent-damage-decals.
+    # Emit ONLY when hull damage was actually dealt: a hit fully absorbed
+    # by shields must NOT leave a scar (the shield-gating fix). Requires a
+    # surface normal (mesh trace) for normal-aware falloff; sphere-entry
+    # fallbacks (normal=None) are skipped.
+    if (absorbed_hull > 0.0 and normal is not None
+            and host is not None and ship_instances is not None
+            and hasattr(host, "damage_decal_add")):
+        iid = ship_instances.get(ship)
+        if iid is not None:
+            from engine.appc import damage_decals
+            host.damage_decal_add(
+                instance_id=iid,
+                world_point=(point.x, point.y, point.z),
+                world_normal=(normal.x, normal.y, normal.z),
+                radius=float(radius),
+                intensity=damage_decals.decal_intensity(absorbed_hull),
+                weapon_class=damage_decals.weapon_class_for(weapon_type),
+                time=damage_decals.current_game_time(),
+            )
 
 
 def _play_audio(severity: Severity, point, weapon_type: str | None = None) -> None:
