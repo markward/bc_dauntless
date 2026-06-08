@@ -413,7 +413,7 @@ def test_space_on_decals_row_toggles():
     p, kw = _make()
     p.open()
     r = _FakeReader()
-    # Navigate down to the decals control (last focusable) and activate it.
+    # Navigate down to the decals control and activate it.
     focusables = p._focusables()
     # Reaching index i needs i+1 down-presses (first press lands on index 0).
     steps = focusables.index(("ctrl", "decals")) + 1
