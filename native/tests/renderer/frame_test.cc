@@ -7,9 +7,12 @@
 
 #include <scenegraph/world.h>
 #include <scenegraph/camera.h>
+#include <scenegraph/damage_decals.h>
 
 #include <assets/cache.h>
 #include <assets/model.h>
+
+#include <cstring>
 
 #include <filesystem>
 
@@ -236,6 +239,51 @@ TEST_F(FrameTest, SpecularShipRendersWithDirectionalLight) {
         << "Expected the Keldon to render at all (non-zero pixels under a "
            "directional light) — this is a pipeline smoke test, not a proof "
            "that the specular term contributes. See test docstring.";
+}
+
+TEST_F(FrameTest, DecalUploadDoesNotAlterRenderBeforeShaderReads) {
+    auto model_h = cache->load(kGalaxyNif, kGalaxyTex);
+    scenegraph::World world;
+    auto iid = world.create_instance(
+        reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
+    world.set_world_transform(iid, glm::mat4(1.0f));
+
+    scenegraph::Camera cam;
+    cam.eye = glm::vec3(0.0f, 0.0f, 1500.0f);
+    cam.target = glm::vec3(0.0f, 0.0f, 0.0f);
+    cam.aspect = 1.0f;
+
+    auto lut = [model_h](scenegraph::ModelHandle h) -> const assets::Model* {
+        return reinterpret_cast<const assets::Model*>(h);
+    };
+    renderer::FrameSubmitter submitter;
+    renderer::Lighting lighting;
+
+    // Baseline: render the instance with an empty ring, capture the center pixel.
+    glViewport(0, 0, 256, 256);
+    glClearColor(0, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    submitter.submit_opaque_in_pass(world, cam, *p, lut, lighting,
+                                    scenegraph::Pass::Space, /*decal_time=*/0.0f);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    unsigned char px_ref[4] = {0};
+    glReadPixels(128, 128, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px_ref);
+    EXPECT_GT(px_ref[0] + px_ref[1] + px_ref[2], 0) << "baseline center pixel black";
+
+    // Seed a scorch decal. At this task's stage the shader ignores the decal
+    // uniforms, so the render must be byte-identical to the baseline — proving
+    // the pack path is wired and crash-free without yet altering output.
+    world.get(iid)->decals.add(glm::vec3(0, 0, 0), glm::vec3(0, 0, 1),
+                               /*radius=*/200.0f, /*intensity=*/1.0f,
+                               scenegraph::WeaponClass::Scorch, /*now=*/0.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    submitter.submit_opaque_in_pass(world, cam, *p, lut, lighting,
+                                    scenegraph::Pass::Space, /*decal_time=*/0.0f);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    unsigned char px[4] = {0};
+    glReadPixels(128, 128, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
+    EXPECT_EQ(std::memcmp(px_ref, px, 4), 0)
+        << "decal upload changed pixels before the shader reads the uniforms";
 }
 
 }  // namespace

@@ -96,6 +96,7 @@ std::unique_ptr<renderer::HdrTarget>       g_hdr_target;
 std::unique_ptr<renderer::BloomPass>       g_bloom_pass;
 std::unique_ptr<renderer::ResolvePass>     g_resolve_pass;
 double g_prev_frame_time_seconds = 0.0;
+float g_decal_game_time = 0.0f;  // game-time secs for decal ember; set by damage_decals_tick
 
 // Bridge pass state. Camera is set from Python via set_bridge_camera each
 // tick when bridge mode is active. The pass renders after the dust pass;
@@ -273,7 +274,7 @@ void frame() {
     g_sun_pass->render(g_suns, g_camera, *g_pipeline, now);
     g_submitter->submit_opaque_in_pass(
         g_world, g_camera, *g_pipeline, lookup, g_lighting,
-        scenegraph::Pass::Space);
+        scenegraph::Pass::Space, g_decal_game_time);
 
     // Shield pass: additive flash on top of opaque ships. Runs before dust
     // so dust specks appear in front of fading shields (both are additive
@@ -898,6 +899,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
 
     m.def("damage_decals_tick",
           [](float time) {
+              g_decal_game_time = time;
               g_world.for_each_alive([&](scenegraph::Instance& inst) {
                   inst.decals.tick(time);
               });

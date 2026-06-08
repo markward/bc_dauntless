@@ -134,7 +134,8 @@ public:
                        const scenegraph::Camera& camera,
                        Pipeline& pipeline,
                        const ModelLookup& lookup,
-                       const Lighting& lighting);
+                       const Lighting& lighting,
+                       float decal_time = 0.0f);
 
     /// Like submit_opaque but only iterates instances tagged with `pass`.
     /// Used by the space pass to exclude bridge-tagged geometry, which
@@ -144,7 +145,8 @@ public:
                                Pipeline& pipeline,
                                const ModelLookup& lookup,
                                const Lighting& lighting,
-                               scenegraph::Pass pass);
+                               scenegraph::Pass pass,
+                               float decal_time = 0.0f);
 
 private:
     /// Lazily-allocated 1x1 white texture used as a fallback when a material
