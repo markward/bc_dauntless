@@ -48,6 +48,15 @@ public:
         }
     }
 
+    /// Iterate every alive instance (mutable). Used to age per-instance
+    /// state (e.g. decal rings) regardless of visibility.
+    template <typename Fn>
+    void for_each_alive(Fn&& fn) {
+        for (std::size_t i = 0; i < slots_.size(); ++i) {
+            if (slots_[i].alive) fn(slots_[i].instance);
+        }
+    }
+
 private:
     struct Slot {
         Instance instance;
