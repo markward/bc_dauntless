@@ -69,3 +69,14 @@ def test_project_point_behind_camera_not_visible():
     far_behind = tuple(c * 1000.0 for c in cam.eye())
     sx, sy, depth, visible = project(far_behind, cam, (800, 600))
     assert visible is False
+
+
+def test_project_at_extreme_pitch_is_finite_and_visible():
+    import math as _m
+    cam = OrbitCamera(target=(0.0, 0.0, 0.0), distance=10.0, yaw=0.0,
+                      pitch=_m.pi / 2.0)  # straight-down: would be degenerate
+    sx, sy, depth, visible = project((0.0, 0.0, 0.0), cam, (800, 600))
+    assert visible is True
+    # No NaN/inf, and the target still lands near screen centre.
+    assert sx == sx and sy == sy          # not NaN
+    assert abs(sx - 400.0) < 1.0 and abs(sy - 300.0) < 1.0

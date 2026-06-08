@@ -39,6 +39,8 @@ def subsystem_world_position(sub) -> TGPoint3:
 
 Vec3 = Tuple[float, float, float]
 
+_MAX_PITCH = math.pi / 2.0 - 1e-3  # avoid forward ∥ up (gimbal) in _look_at
+
 
 def _sub(a: Vec3, b: Vec3) -> Vec3:
     return (a[0]-b[0], a[1]-b[1], a[2]-b[2])
@@ -77,12 +79,13 @@ class OrbitCamera:
         self.far = far
 
     def eye(self) -> Vec3:
-        cp = math.cos(self.pitch)
+        pitch = max(-_MAX_PITCH, min(_MAX_PITCH, self.pitch))
+        cp = math.cos(pitch)
         # yaw about Z (up), pitch lifts toward +Z.
         dir_to_eye = (
             -math.sin(self.yaw) * cp,
             -math.cos(self.yaw) * cp,
-            math.sin(self.pitch),
+            math.sin(pitch),
         )
         return (self.target[0] + dir_to_eye[0] * self.distance,
                 self.target[1] + dir_to_eye[1] * self.distance,
