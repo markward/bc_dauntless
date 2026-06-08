@@ -395,4 +395,29 @@ TEST_F(FrameTest, ScorchToggleOffRendersLikeUndamaged) {
     EXPECT_LT(R_on, R_off * 0.97) << "decals-on should differ from decals-off";
 }
 
+TEST_F(FrameTest, ScorchEmberIsBrightWhenFreshAndCoolsWithGameTime) {
+    auto model_h = cache->load(kGalaxyNif, kGalaxyTex);
+    auto lut = [model_h](scenegraph::ModelHandle h) -> const assets::Model* {
+        return reinterpret_cast<const assets::Model*>(h); };
+
+    scenegraph::World w;
+    auto iid = w.create_instance(reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
+    w.set_world_transform(iid, glm::mat4(1.0f));
+    // birth_time = 0; ember keyed on (u_decal_time - birth_time).
+    w.get(iid)->decals.add(glm::vec3(60, 0, 20), glm::vec3(0, 0, 1),
+                           120.0f, 1.0f, scenegraph::WeaponClass::Scorch, 0.0f);
+
+    render_galaxy(w, *p, lut, /*decal_time=*/0.2f);   // fresh: hot ember
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const double fresh = block_mean(130, 100, 25, 50);
+
+    render_galaxy(w, *p, lut, /*decal_time=*/30.0f);  // long after T_EMBER: cold
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const double cold = block_mean(130, 100, 25, 50);
+
+    // The fresh ember adds emissive brightness; once cold only the soot deposit
+    // remains, which is darker than the glowing-fresh state.
+    EXPECT_GT(fresh, cold) << "ember did not brighten the fresh scorch, or did not cool";
+}
+
 }  // namespace

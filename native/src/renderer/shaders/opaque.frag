@@ -48,11 +48,44 @@ uniform float u_decal_time;                  // game-time seconds (ember clock)
 const float NORMAL_MIN = 0.15;               // back-face cutoff for falloff
 const vec3  SOOT_COLOR = vec3(0.06, 0.05, 0.045);
 
-// Flat scorch for Task 3: dark soot deposit, normal-aware, body-space.
-// base_lit is composited toward soot; emissive is left untouched here
-// (noise + ember + phaser land in Tasks 4-5).
+const float EMBER_TIGHT = 6.0;
+const float EMBER_BROAD = 2.0;
+const float T_EMBER     = 10.0;          // seconds to cold
+const float EMBER_TAU   = T_EMBER / 3.2; // decay time const ~3.1 s; heat ~4% at T_EMBER
+const float NOISE_SCALE = 0.03;   // 1/model-units; tuned for NIF-scale p_body
+
+float dhash(vec2 v) { return fract(sin(dot(v, vec2(127.1, 311.7))) * 43758.5453); }
+float vnoise(vec2 v) {
+    vec2 i = floor(v), f = fract(v);
+    float a = dhash(i), b = dhash(i + vec2(1,0));
+    float c = dhash(i + vec2(0,1)), d = dhash(i + vec2(1,1));
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+float fbm(vec2 v) {
+    float s = 0.0, amp = 0.5, freq = 1.0;
+    for (int i = 0; i < 3; ++i) { s += amp * vnoise(v * freq); freq *= 2.1; amp *= 0.5; }
+    return s;
+}
+// Blackbody-ish ramp keyed on heat 0..1 (white-hot -> red -> black).
+vec3 blackbody(float heat) {
+    vec3 cold = vec3(0.0);
+    vec3 red  = vec3(0.59, 0.10, 0.02);
+    vec3 org  = vec3(1.0, 0.45, 0.08);
+    vec3 white= vec3(1.0, 0.92, 0.72);
+    vec3 lo = mix(cold, red, smoothstep(0.0, 0.35, heat));
+    vec3 mid= mix(lo, org, smoothstep(0.35, 0.7, heat));
+    return mix(mid, white, smoothstep(0.7, 1.0, heat));
+}
+
 void apply_damage_decals(vec3 p_body, vec3 n_body,
                          inout vec3 base_lit, inout vec3 emissive) {
+    // Fragment-position noise: depends only on p_body, so compute once for all
+    // decals. The z term uses a distinct per-axis scale (not a scalar broadcast)
+    // so z variation doesn't collapse onto the x==y diagonal on curved hull.
+    float nval = fbm(p_body.xy * NOISE_SCALE
+                     + p_body.z * vec2(NOISE_SCALE, NOISE_SCALE * 0.7));
+
     for (int i = 0; i < u_decal_count; ++i) {
         vec3  point = u_decal_a[i].xyz;
         float intensity = u_decal_a[i].w;
@@ -60,17 +93,36 @@ void apply_damage_decals(vec3 p_body, vec3 n_body,
         float radius = u_decal_b[i].w;
         if (radius <= 0.0) continue;
 
-        float r = length(p_body - point) / radius;          // 0 at center, 1 at edge
+        float r = length(p_body - point) / radius;   // 0 at center, 1 at edge
         if (r >= 1.0) continue;
-        // NIF normals are stored inward; negate to get the outward-facing direction
-        // for comparison with the outward impact normal (dn). Dot product is ~+1
-        // on the struck face and ~-1 on the opposite face — the mirroring fix.
+        // NIF normals are stored inward; negate to compare against the outward
+        // impact normal (dn). ~+1 on the struck face, ~-1 opposite — mirroring fix.
         float wn = smoothstep(NORMAL_MIN, 1.0, dot(-n_body, dn));
         if (wn <= 0.0) continue;
 
-        float core = 1.0 - smoothstep(0.0, 1.0, r);          // soft radial
-        float deposit = clamp(core, 0.0, 1.0) * intensity * wn;
+        // Spread-B: dense core + noise-broken radial ejecta thinning with r.
+        float core   = exp(-r * r * 3.0);
+        float reach  = 0.35 + nval * 0.9;             // 0.35 min reach + noise-driven variability
+        float ejecta = max(0.0, (reach - r) / reach)  // thins to 0 at `reach`
+                       * pow(nval, 1.5)               // gamma: suppress thin/low-noise ejecta
+                       * 1.3;                         // peak ejecta scale
+        float deposit = clamp(core + ejecta, 0.0, 1.0) * intensity * wn;
         base_lit = mix(base_lit, SOOT_COLOR, deposit);
+
+        // Game-time blackbody ember (Scorch only; weapon_class 1 in c.y).
+        // Only fires when age > 0 (decal_time strictly after birth_time), so
+        // a decal rendered at exactly its birth frame has no ember contribution
+        // — important for the soot-darkening tests that pass decal_time==0.
+        if (u_decal_c[i].y > 0.5) {
+            float age = u_decal_time - u_decal_c[i].x;
+            if (age > 0.0) {
+                float heat = exp(-age / EMBER_TAU);
+                float glow = (exp(-r * r * EMBER_BROAD) + exp(-r * r * EMBER_TIGHT));
+                // heat appears twice (in the colour ramp and as a scalar): a
+                // deliberate heat^2 emphasis so the ember pops hot then snaps dark.
+                emissive += blackbody(heat) * glow * heat * wn * intensity;
+            }
+        }
     }
 }
 
