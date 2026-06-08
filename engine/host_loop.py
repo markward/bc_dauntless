@@ -2169,6 +2169,8 @@ def run(mission_name: Optional[str] = None,
         from engine.core.timestep import step_accumulator
         _previous_real_time = time.monotonic()
         _accumulator = 0.0
+        from engine.core.transform_buffer import TransformBuffer
+        _xform_buf = TransformBuffer()
 
         while not r.should_close():
             # --- Input dispatch + modality (ESC always live; SPACE only when unpaused) ---
@@ -2376,6 +2378,9 @@ def run(mission_name: Optional[str] = None,
             # matches step_accumulator's spiral-of-death cap so a
             # stalled frame doesn't teleport the player.
             _player_dt = 0.0 if pause.is_open else min(max(_frame_dt, 0.0), MAX_FRAME_DT)
+            _interp_alpha = _accumulator / TICK_DT  # in [0, 1) after step_accumulator
+            if _sim_ticks_this_frame > 0:
+                _xform_buf.roll()
             for _ in range(_sim_ticks_this_frame):
                 loop.tick()
 
@@ -2386,6 +2391,7 @@ def run(mission_name: Optional[str] = None,
                 controller._drain_pending_swap()
                 if had_pending_swap:
                     director.snap()
+                    _xform_buf.reset_all()
             else:
                 had_pending_swap = False
 
@@ -2500,9 +2506,36 @@ def run(mission_name: Optional[str] = None,
                 )
 
                 # Sync transforms for known instances.
+                #
+                # Player ship: pushed live (it is integrated per render
+                # frame on wall-clock dt in _PlayerControl, so it is
+                # already smooth in world space).
+                #
+                # Non-player ships: integrated on the fixed 60 Hz tick,
+                # so they are rendered at lerp(prev, cur, _interp_alpha)
+                # to hide the discrete steps. _xform_buf.roll() ran above
+                # before this frame's ticks; here we capture the new
+                # current state and push the interpolated pose.
                 if session is not None:
+                    _player_iid = session.ship_instances.get(player)
+                    _live_ship_iids = []
                     for ship, iid in session.ship_instances.items():
-                        r.set_world_transform(iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
+                        if iid == _player_iid:
+                            r.set_world_transform(
+                                iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
+                            continue
+                        _live_ship_iids.append(iid)
+                        try:
+                            _ps = float(ship.GetScale())
+                        except Exception:
+                            _ps = 1.0
+                        _xform_buf.set_current(
+                            iid, ship.GetWorldLocation(), ship.GetWorldRotation())
+                        _sampled = _xform_buf.sample(iid, _interp_alpha)
+                        _iloc, _irot = _sampled
+                        r.set_world_transform(
+                            iid, _world_matrix_from(_iloc, _irot, BC_MODEL_SCALE * _ps))
+                    _xform_buf.prune(_live_ship_iids)
                     for planet, iid in session.planet_instances.items():
                         ns = session.planet_natural_scale.get(planet, 1.0)
                         r.set_world_transform(iid, _astro_world_matrix(planet, ns))
