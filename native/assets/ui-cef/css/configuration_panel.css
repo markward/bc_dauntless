@@ -14,7 +14,8 @@
        (the pause menu has no buttons of its own)
    Spec: docs/superpowers/specs/2026-06-05-configuration-panel-design.md */
 
-#configuration-panel {
+#configuration-panel,
+#developer-options-panel {
     display: none;
     position: fixed;
     inset: 0;
