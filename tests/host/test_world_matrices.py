@@ -152,3 +152,17 @@ def test_astro_world_matrix_scales_mesh_and_position():
     assert m[11] == pytest.approx(300.0)
     # Homogeneous row
     assert m[15] == pytest.approx(1.0)
+
+
+def test_world_matrix_from_matches_manual_build():
+    from engine.appc.math import TGMatrix3, TGPoint3
+    from engine.host_loop import _world_matrix_from
+
+    rot = TGMatrix3(); rot.MakeYRotation(0.0)  # identity-ish, det +1
+    loc = TGPoint3(3.0, -2.0, 5.0)
+    m = _world_matrix_from(loc, rot, 0.5)
+    # det(rot) > 0 -> X body axis negated; scale 0.5 on all axes.
+    assert m[3] == 3.0 and m[7] == -2.0 and m[11] == 5.0  # translation
+    assert m[0] == rot._m[0][0] * -0.5  # col0 negated by flip
+    assert m[1] == rot._m[0][1] * 0.5
+    assert m[15] == 1.0

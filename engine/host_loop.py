@@ -1467,6 +1467,24 @@ def _rot_determinant(rot) -> float:
           + m[0][2] * (m[1][0]*m[2][1] - m[1][1]*m[2][0]))
 
 
+def _world_matrix_from(loc, rot, s: float) -> list:
+    """Row-major TRS mat4 from an explicit (loc, rot) and combined scale s.
+
+    Shared by _ship_world_matrix, _astro_world_matrix, and the render
+    interpolation path. Applies the determinant-normalization X-flip
+    (see _ship_world_matrix docstring) so every rendered instance reaches
+    the GPU with det < 0 under glFrontFace(GL_CW).
+    """
+    flip = -1.0 if _rot_determinant(rot) > 0.0 else 1.0
+    sx = s * flip
+    return [
+        rot._m[0][0]*sx, rot._m[0][1]*s, rot._m[0][2]*s, loc.x,
+        rot._m[1][0]*sx, rot._m[1][1]*s, rot._m[1][2]*s, loc.y,
+        rot._m[2][0]*sx, rot._m[2][1]*s, rot._m[2][2]*s, loc.z,
+        0.0,             0.0,            0.0,            1.0,
+    ]
+
+
 def _ship_world_matrix(ship, natural_scale: float) -> list:
     """Row-major TRS mat4 for a ship.
 
@@ -1503,14 +1521,7 @@ def _ship_world_matrix(ship, natural_scale: float) -> list:
     except Exception:
         py_scale = 1.0
     s = natural_scale * py_scale
-    flip = -1.0 if _rot_determinant(rot) > 0.0 else 1.0
-    sx = s * flip
-    return [
-        rot._m[0][0]*sx, rot._m[0][1]*s, rot._m[0][2]*s, loc.x,
-        rot._m[1][0]*sx, rot._m[1][1]*s, rot._m[1][2]*s, loc.y,
-        rot._m[2][0]*sx, rot._m[2][1]*s, rot._m[2][2]*s, loc.z,
-        0.0,             0.0,            0.0,            1.0,
-    ]
+    return _world_matrix_from(loc, rot, s)
 
 
 def _astro_world_matrix(obj, natural_scale: float) -> list:
@@ -1527,14 +1538,7 @@ def _astro_world_matrix(obj, natural_scale: float) -> list:
     except Exception:
         py_scale = 1.0
     s = natural_scale * py_scale
-    flip = -1.0 if _rot_determinant(rot) > 0.0 else 1.0
-    sx = s * flip
-    return [
-        rot._m[0][0]*sx, rot._m[0][1]*s, rot._m[0][2]*s, loc.x,
-        rot._m[1][0]*sx, rot._m[1][1]*s, rot._m[1][2]*s, loc.y,
-        rot._m[2][0]*sx, rot._m[2][1]*s, rot._m[2][2]*s, loc.z,
-        0.0,             0.0,            0.0,            1.0,
-    ]
+    return _world_matrix_from(loc, rot, s)
 
 
 @dataclass
