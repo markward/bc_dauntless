@@ -2514,9 +2514,14 @@ def run(mission_name: Optional[str] = None,
                 # Non-player ships: integrated on the fixed 60 Hz tick,
                 # so they are rendered at lerp(prev, cur, _interp_alpha)
                 # to hide the discrete steps. _xform_buf.roll() ran above
-                # before this frame's ticks; here we capture the new
-                # current state and push the interpolated pose.
+                # before this frame's ticks (only when a tick fired); here
+                # we capture the new current state and push the interpolated
+                # pose. This only affects what is sent to the renderer — the
+                # ship objects keep live transforms, so physics/AI/combat
+                # (which ran earlier this frame) are unaffected.
                 if session is not None:
+                    # player is always set when a session exists, so
+                    # _player_iid is a real iid (never None) at runtime.
                     _player_iid = session.ship_instances.get(player)
                     _live_ship_iids = []
                     for ship, iid in session.ship_instances.items():
@@ -2525,6 +2530,10 @@ def run(mission_name: Optional[str] = None,
                                 iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
                             continue
                         _live_ship_iids.append(iid)
+                        # NOTE: scale is read live, not interpolated — the
+                        # buffer only stores loc+rot. Fine for steady scale;
+                        # a mid-animation GetScale() change applies the
+                        # current scale to the blended pose (imperceptible).
                         try:
                             _ps = float(ship.GetScale())
                         except Exception:
