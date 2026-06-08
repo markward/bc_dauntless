@@ -91,3 +91,19 @@ def test_headless_host_none_is_safe(patched):
     # dispatch is documented headless-safe: host=None must not raise and must
     # emit nothing. Makes the "headless-safe" invariant machine-checked.
     _dispatch(None, absorbed_hull=5.0)
+
+
+def test_no_decal_when_persist_decal_false(patched):
+    # God mode (combat passes persist_decal=False): hull "damage" is still
+    # reported for the transient spark, but must NOT leave a persistent scar.
+    host = _FakeHost()
+    ship = _Ship()
+    hit_feedback.dispatch(
+        ship=ship, source=None, point=_Pt(1, 2, 3), normal=_Pt(0, 0, 1),
+        damage=10.0, subsystem=None,
+        absorbed_shields=0.0, absorbed_subsystem=0.0,
+        absorbed_hull=5.0, sub_transition=None,
+        host=host, ship_instances={ship: "IID"},
+        weapon_type="torpedo", radius=0.2, persist_decal=False,
+    )
+    assert host.decal_calls == []

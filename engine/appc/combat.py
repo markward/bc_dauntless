@@ -345,9 +345,31 @@ def apply_hit(ship, damage: float, hit_point, source, *,
     """
     from engine.appc.events import WeaponHitEvent
     from engine.appc import hit_feedback
+    import engine.dev_combat_cheats as _cheats
     import App
 
     r_hit = weapon_splash_radius(hardpoint_weapon, payload_template)
+
+    # -- Developer combat cheats (dev-mode only; no-ops in production). --
+    # Resolve the player once, then apply: 2x player weapons (source is
+    # player), god mode (target is player -> suppress all state mutation
+    # but keep feedback), and disable-NPC-shields (target is not player).
+    # Every getter ANDs with dev_mode, so a production build is unaffected.
+    # Spec: docs/superpowers/specs/2026-06-08-developer-options-menu-design.md
+    try:
+        _game = App.Game_GetCurrentGame() if hasattr(App, "Game_GetCurrentGame") else None
+        _player = _game.GetPlayer() if _game is not None and hasattr(_game, "GetPlayer") else None
+    except Exception:
+        _player = None
+    _target_is_player = _player is not None and ship is _player
+    _source_is_player = _player is not None and source is _player
+
+    if _cheats.double_player_weapons_active() and _source_is_player:
+        damage = float(damage) * 2.0
+
+    # When god mode protects the player, mutation calls are skipped but the
+    # absorbed_* amounts are still computed so hit feedback fires unchanged.
+    _commit = not (_cheats.god_mode_active() and _target_is_player)
 
     # 1. Shields take the first bite. Identical to the pre-splash flow.
     remaining = float(damage)
@@ -358,10 +380,21 @@ def apply_hit(ship, damage: float, hit_point, source, *,
     shields_destroyed = bool(getattr(shields, "IsDestroyed", lambda: 0)()) if shields is not None else False
     shields_online = (shields is not None and shields_on
                       and not shields_disabled and not shields_destroyed)
+    # Disable-NPC-shields cheat: every non-player ship's shields stop
+    # absorbing, so full damage reaches the hull/subsystems.
+    if _cheats.disable_npc_shields_active() and not _target_is_player:
+        shields_online = False
     if shields_online and hasattr(shields, "ApplyDamage"):
         face = _shield_face_from_hit_point(ship, hit_point)
         before = remaining
-        remaining = shields.ApplyDamage(face, remaining)
+        if _commit:
+            remaining = shields.ApplyDamage(face, remaining)
+        else:
+            # God mode: compute the overflow WITHOUT draining the face, so
+            # the shield flash still fires but the player's shields stay full.
+            cur = (shields.GetCurrentShields(face)
+                   if hasattr(shields, "GetCurrentShields") else before)
+            remaining = max(0.0, remaining - cur)
         absorbed_shields = before - remaining
 
     post_shield = remaining
@@ -375,7 +408,8 @@ def apply_hit(ship, damage: float, hit_point, source, *,
     if post_shield > 0.0:
         # 2. Hull always takes full post-shield damage.
         if hull is not None and hasattr(ship, "DamageSystem"):
-            ship.DamageSystem(hull, post_shield)
+            if _commit:
+                ship.DamageSystem(hull, post_shield)
             absorbed_hull = post_shield
 
         # 3. Each non-hull subsystem within the splash sphere takes a
@@ -399,7 +433,8 @@ def apply_hit(ship, damage: float, hit_point, source, *,
             amount = post_shield * w
             if hasattr(ship, "DamageSystem"):
                 before_flags = _subsystem_state_flags(sub)
-                ship.DamageSystem(sub, amount)
+                if _commit:
+                    ship.DamageSystem(sub, amount)
                 absorbed_subsystem_total += amount
                 after_flags = _subsystem_state_flags(sub)
                 transition = _diff_state(before_flags, after_flags)
@@ -421,6 +456,7 @@ def apply_hit(ship, damage: float, hit_point, source, *,
             host=host, ship_instances=ship_instances,
             weapon_type=weapon_type,
             radius=r_hit,
+            persist_decal=_commit,
         )
     except Exception:
         pass

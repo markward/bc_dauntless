@@ -88,7 +88,8 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
              absorbed_shields: float, absorbed_subsystem: float,
              absorbed_hull: float, sub_transition,
              host=None, ship_instances=None,
-             weapon_type: str | None = None, radius: float = 0.0) -> None:
+             weapon_type: str | None = None, radius: float = 0.0,
+             persist_decal: bool = True) -> None:
     """Per-impact fan-out: VFX + audio + camera shake.
 
     Severity is computed via classify(...). Exactly one visual fires per
@@ -163,7 +164,9 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
     # by shields must NOT leave a scar (the shield-gating fix). Requires a
     # surface normal (mesh trace) for normal-aware falloff; sphere-entry
     # fallbacks (normal=None) are skipped.
-    if (absorbed_hull > 0.0 and normal is not None
+    # `persist_decal` is False under god mode: the transient spark/shake above
+    # still fire (severity is unchanged), but no permanent scar is written.
+    if (persist_decal and absorbed_hull > 0.0 and normal is not None
             and host is not None and ship_instances is not None
             and hasattr(host, "damage_decal_add")):
         iid = ship_instances.get(ship)
