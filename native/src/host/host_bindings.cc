@@ -370,6 +370,10 @@ namespace dauntless_specular {
 namespace dauntless_rim {
     void set_enabled(bool v);  // defined in frame.cc
 }
+// Toggle for the opaque-pass persistent damage decals. Defined in frame.cc.
+namespace dauntless_decals {
+    void set_enabled(bool v);  // defined in frame.cc
+}
 
 PYBIND11_MODULE(_dauntless_host, m) {
     m.doc() = "open_stbc renderer host bindings (Phase B: window + frame stub)";
@@ -731,6 +735,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](bool e) { dauntless_hdr::set_enabled(e); },
           py::arg("enabled"),
           "Toggle the HDR resolve (tonemap+bloom+grade). Default: on.");
+    m.def("decals_set_enabled",
+          [](bool enabled) { dauntless_decals::set_enabled(enabled); },
+          py::arg("enabled"),
+          "Enable/disable persistent hull damage decals (default on).");
 
     m.def("dust_set_density",
           [](int count) {

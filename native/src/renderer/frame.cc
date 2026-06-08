@@ -53,6 +53,18 @@ namespace {
     void set_enabled(bool v) { g_hdr_enabled = v; }
 }
 
+// Toggle for the opaque-pass persistent damage decals (Phase 2). Default on
+// so the "Modern VFX" group ships enabled. host_bindings.cc forward-declares
+// set_enabled; draw_model reads enabled() per instance and uploads
+// u_decal_count = 0 when off (stock-BC hull, no per-fragment decal cost).
+namespace dauntless_decals {
+namespace {
+    bool g_decals_enabled = true;
+}
+    bool enabled() { return g_decals_enabled; }
+    void set_enabled(bool v) { g_decals_enabled = v; }
+}
+
 namespace renderer {
 
 namespace {

@@ -13,6 +13,17 @@
 
 #include <filesystem>
 
+// dauntless_decals toggle is declared in frame.cc; forward-declare both here.
+namespace dauntless_decals { bool enabled(); void set_enabled(bool); }
+
+TEST(DauntlessDecalsToggle, DefaultsOnAndRoundTrips) {
+    EXPECT_TRUE(dauntless_decals::enabled());     // default on
+    dauntless_decals::set_enabled(false);
+    EXPECT_FALSE(dauntless_decals::enabled());
+    dauntless_decals::set_enabled(true);          // restore for other tests
+    EXPECT_TRUE(dauntless_decals::enabled());
+}
+
 namespace {
 
 const std::filesystem::path kProjectRoot =
