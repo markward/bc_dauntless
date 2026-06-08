@@ -48,12 +48,14 @@ Per `draw_model`, **active** ring slots (filter on `DamageDecal::active`) pack i
 | Uniform | x | y | z | w |
 |---|---|---|---|---|
 | `u_decal_a[i]` | point_body.x | point_body.y | point_body.z | intensity |
-| `u_decal_b[i]` | normal_body.x | normal_body.y | normal_body.z | radius |
+| `u_decal_b[i]` | normal_body.x | normal_body.y | normal_body.z | radius_model |
 | `u_decal_c[i]` | birth_time | weapon_class (0/1 as float) | — | — |
 
 Plus `uniform int u_decal_count;`, `uniform mat4 u_ship_world_inv;`, `uniform float u_decal_time;`. `MAX_DECALS = 24` is a shared constant (mirror of `DamageDecalRing::kMaxDecals`). `weapon_class` rides as a float (0.0/1.0); no separate int array. This is ~72 vec4 of fragment-uniform data, far under the GL 3.3 floor.
 
 Packing happens in C++ in `draw_model` using `Shader::set_vec4_array` (one call per array). Only active slots are packed, compacted to `[0, count)`.
+
+**Units (important).** `_ship_world_matrix` (`engine/host_loop.py`) bakes the flat `BC_MODEL_SCALE` NIF→GU scale **into `inst.world`**. Therefore `inverse(inst.world)` maps world-GU back to the ship's **NIF/model units**, so both the stored `DamageDecal::point_body` and the shader's reconstructed `p_body` are in **model units** — while `DamageDecal::radius` is in **game units** (`r_hit`). The two cannot be compared directly (a ~100× mismatch at `BC_MODEL_SCALE = 0.01`). The packing step converts radius GU→model units using the world-matrix scale `s = length(vec3(world[0]))` (the X column's length; sign-flip from the det-normalisation is irrelevant to `length`): `radius_model = radius / s`. The shader then compares `r` (model units) to `radius_model` (model units) consistently. `point_body` needs no conversion (already model units). All decal math thus stays in model units; nothing else in the shader changes. (Uniform scale assumed, which `_ship_world_matrix` guarantees.)
 
 ### 2.4 The shader recipe
 
