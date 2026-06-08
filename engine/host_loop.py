@@ -1915,13 +1915,13 @@ def run(mission_name: Optional[str] = None,
     from engine.core.loop import GameLoop
 
     r.init(1280, 720, "open_stbc")
-    # Initialise the CEF UI overlay. Resolves ship_status.html relative
+    # Initialise the CEF UI overlay. Resolves index.html relative
     # to the project root (two parents up from this file). _CEF_VIEW_W/H
     # are reused by the pause-menu mouse-forwarding path to scale
     # framebuffer-pixel cursor coords back into the OSR view's logical
     # pixel space on Retina.
     _CEF_VIEW_W, _CEF_VIEW_H = 1280, 720
-    _cef_html = _project_root_for_cef() / "native" / "assets" / "ui-cef" / "ship_status.html"
+    _cef_html = _project_root_for_cef() / "native" / "assets" / "ui-cef" / "index.html"
     # Detect the framebuffer's device-pixel ratio so CEF renders at
     # high-DPI density on Retina. Without this, the composite pass
     # bilinear-upscales a 1280x720 bitmap to the 2560x1440 framebuffer
@@ -2313,7 +2313,7 @@ def run(mission_name: Optional[str] = None,
                     # gated on these because forwarding consumes the
                     # mouse-button edge state — see the rationale comment
                     # above. Bboxes track the layout zones defined in
-                    # ship_status.css; new panels need a bbox here or their
+                    # global.css; new panels need a bbox here or their
                     # buttons will silently swallow clicks.
                     #
                     # Left column (#tactical-left-column): position:fixed;

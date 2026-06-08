@@ -16,7 +16,7 @@
 // console.* call reaches OnConsoleMessage regardless of how CEF is
 // configured, and DevTools makes it trivially debuggable.
 //
-// OnLoadEnd fires once the main frame finishes loading ship_status.html.
+// OnLoadEnd fires once the main frame finishes loading index.html.
 // The panel layer subscribes via cef_lifecycle::set_load_end_handler
 // so it can invalidate snapshot caches once the page is ready.
 
@@ -94,7 +94,7 @@ public:
 
     // Load-end handler injection. cef_lifecycle::set_load_end_handler
     // routes here. Fired once when the main frame finishes loading
-    // ship_status.html; panels use this to invalidate their snapshot caches
+    // index.html; panels use this to invalidate their snapshot caches
     // so the first state-push lands AFTER the page is ready.
     void set_load_end_handler(std::function<void()> handler);
 

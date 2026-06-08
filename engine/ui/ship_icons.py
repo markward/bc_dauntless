@@ -11,7 +11,7 @@ inspection/debugging — that copy is gitignored.
 Returning a data URL (instead of a relative file path) sidesteps
 Chromium's file:// same-origin restriction: an <img src="data:..."> is
 just inline bytes, so the browser doesn't need to issue a sub-resource
-request. The ship_status.html page can then render the silhouette without
+request. The index.html page can then render the silhouette without
 needing --allow-file-access-from-files or a custom CEF scheme handler.
 
 The species name passed in must match the TGA filename stem (e.g.
