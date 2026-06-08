@@ -124,6 +124,87 @@ def _mat_vec4(m, v):
     return [sum(m[r][c] * v[c] for c in range(4)) for r in range(4)]
 
 
+def build_descriptors(ship) -> List[dict]:
+    """One descriptor per subsystem that has a 3D mount. Subsystems with no
+    GetPosition() are skipped (cannot be placed in space)."""
+    out: List[dict] = []
+    for sub in _iter_subsystems(ship):
+        local = sub.GetPosition() if hasattr(sub, "GetPosition") else None
+        if local is None:
+            continue
+        w = subsystem_world_position(sub)
+        props = _properties_for(sub)
+        out.append({
+            "name":       props["name"],
+            "icon_id":    _icon_id_for(sub),
+            "world_pos":  (w.x, w.y, w.z),
+            "state":      _state_for(sub),
+            "properties": props,
+        })
+    return out
+
+
+def _iter_subsystems(ship):
+    """Yield damage-relevant subsystems of a ship. Mirrors
+    engine.ui.ship_display_panel._iter_damage_subsystems; kept thin so a stub
+    ship iterable works in tests."""
+    try:
+        from engine.ui.ship_display_panel import _iter_damage_subsystems
+        return list(_iter_damage_subsystems(ship))
+    except Exception:
+        return list(ship)  # stub fallback
+
+
+def _icon_id_for(sub) -> int:
+    from engine.ui import damage_icons
+    return damage_icons.icon_num_for_subsystem(sub)
+
+
+def _state_for(sub) -> str:
+    """healthy/damaged/disabled/destroyed predicate ladder, mirroring
+    ship_display_panel._row_state (which uses IsDestroyed/IsDisabled/IsDamaged).
+    Falls back to GetCondition() for stub/simplified subsystems that lack
+    those boolean methods."""
+    try:
+        if hasattr(sub, "IsDestroyed") and sub.IsDestroyed():
+            return "destroyed"
+        if hasattr(sub, "GetCondition") and not hasattr(sub, "IsDestroyed"):
+            # stub path: no IsDestroyed, use condition <= 0
+            if sub.GetCondition() <= 0.0:
+                return "destroyed"
+        if hasattr(sub, "IsDisabled") and sub.IsDisabled():
+            return "disabled"
+        if hasattr(sub, "IsDamaged") and sub.IsDamaged():
+            return "damaged"
+        if hasattr(sub, "GetCondition") and not hasattr(sub, "IsDamaged"):
+            # stub path: no IsDamaged, use condition < 1
+            if sub.GetCondition() < 1.0:
+                return "damaged"
+    except Exception:
+        pass
+    return "healthy"
+
+
+def _properties_for(sub) -> dict:
+    def _safe(getter, default=None):
+        try:
+            return getter()
+        except Exception:
+            return default
+    pos = _safe(sub.GetPosition) if hasattr(sub, "GetPosition") else None
+    return {
+        "name":      _safe(getattr(sub, "GetName", lambda: None)) or "<unnamed>",
+        "type":      type(sub).__name__,
+        "condition": _safe(getattr(sub, "GetCondition", lambda: None)),
+        "disabled":  bool(_safe(getattr(sub, "IsDisabled", lambda: False))),
+        "position":  None if pos is None else (pos.x, pos.y, pos.z),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Orbit camera and world→screen projection
+# ---------------------------------------------------------------------------
+
 def project(world: Vec3, cam: "OrbitCamera",
             viewport: Tuple[int, int]) -> Tuple[float, float, float, bool]:
     """Project a world point to screen pixels (top-left origin).

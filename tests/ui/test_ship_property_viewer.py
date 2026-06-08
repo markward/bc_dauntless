@@ -96,3 +96,45 @@ def test_extreme_pitch_clamp_matches_near_limit_reference():
     assert ex[0] == ex[0] and ex[1] == ex[1]   # not NaN
     assert ex[3] is True
     assert abs(ex[0] - ref[0]) < 1e-6 and abs(ex[1] - ref[1]) < 1e-6
+
+
+from engine.ui.ship_property_viewer import build_descriptors
+
+
+class _StubSubsystem:
+    def __init__(self, name, pos, cls_icon, disabled=False, condition=1.0):
+        self._name, self._pos, self._icon = name, pos, cls_icon
+        self._disabled, self._condition = disabled, condition
+        self.parent_ship = None
+    def GetName(self): return self._name
+    def GetPosition(self):
+        return None if self._pos is None else TGPoint3(*self._pos)
+    def _climb_to_ship(self): return self.parent_ship
+    def IsDisabled(self): return self._disabled
+    def GetCondition(self): return self._condition
+
+
+class _StubShip:
+    def __init__(self, subs):
+        self._subs = subs
+        for s in subs:
+            s.parent_ship = self
+    def GetWorldLocation(self): return TGPoint3(0.0, 0.0, 0.0)
+    def GetWorldRotation(self): return TGMatrix3()
+    def __iter__(self): return iter(self._subs)
+
+
+def test_build_descriptors_skips_subsystems_without_mount(monkeypatch):
+    import engine.ui.ship_property_viewer as spv
+    monkeypatch.setattr(spv, "_icon_id_for", lambda sub: 2)        # Phaser
+    monkeypatch.setattr(spv, "_iter_subsystems", lambda ship: list(ship))
+    mounted = _StubSubsystem("Dorsal Phaser 1", (0.0, 1.0, 0.5), 2)
+    floating = _StubSubsystem("Abstract System", None, 6)
+    ship = _StubShip([mounted, floating])
+    descs = build_descriptors(ship)
+    assert [d["name"] for d in descs] == ["Dorsal Phaser 1"]
+    d = descs[0]
+    assert d["icon_id"] == 2
+    assert d["world_pos"] == (0.0, 1.0, 0.5)
+    assert d["state"] in ("healthy", "damaged", "disabled", "destroyed")
+    assert d["properties"]["name"] == "Dorsal Phaser 1"
