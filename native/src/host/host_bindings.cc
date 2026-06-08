@@ -28,6 +28,8 @@
 #include <renderer/torpedo_pass.h>
 #include <renderer/hit_vfx_pass.h>
 #include <renderer/phaser_pass.h>
+#include <renderer/hologram_pass.h>
+#include <renderer/subsystem_pin_pass.h>
 #include <renderer/bridge_pass.h>
 #include <renderer/hdr_target.h>
 #include <renderer/bloom_pass.h>
@@ -93,6 +95,10 @@ std::vector<renderer::HitVfxDescriptor>    g_hit_vfx;
 std::unique_ptr<renderer::HitVfxPass>      g_hit_vfx_pass;
 std::vector<renderer::PhaserBeamDescriptor> g_phaser_beams;
 std::unique_ptr<renderer::PhaserPass>      g_phaser_pass;
+renderer::HologramShip                       g_hologram_ship;
+std::unique_ptr<renderer::HologramPass>      g_hologram_pass;
+std::vector<renderer::SubsystemPin>          g_subsystem_pins;
+std::unique_ptr<renderer::SubsystemPinPass>  g_subsystem_pin_pass;
 std::unique_ptr<renderer::BridgePass>      g_bridge_pass;
 std::unique_ptr<renderer::HdrTarget>       g_hdr_target;
 std::unique_ptr<renderer::BloomPass>       g_bloom_pass;
@@ -195,8 +201,10 @@ void init(int width, int height, const std::string& title) {
     g_lens_flare_pass = std::make_unique<renderer::LensFlarePass>();
     g_torpedo_pass = std::make_unique<renderer::TorpedoPass>();
     g_hit_vfx_pass = std::make_unique<renderer::HitVfxPass>();
-    g_phaser_pass  = std::make_unique<renderer::PhaserPass>();
-    g_bridge_pass  = std::make_unique<renderer::BridgePass>();
+    g_phaser_pass        = std::make_unique<renderer::PhaserPass>();
+    g_hologram_pass      = std::make_unique<renderer::HologramPass>();
+    g_subsystem_pin_pass = std::make_unique<renderer::SubsystemPinPass>();
+    g_bridge_pass        = std::make_unique<renderer::BridgePass>();
     g_hdr_target   = std::make_unique<renderer::HdrTarget>();
     g_bloom_pass   = std::make_unique<renderer::BloomPass>();
     g_resolve_pass = std::make_unique<renderer::ResolvePass>();
@@ -231,6 +239,10 @@ void shutdown() {
     g_hit_vfx_pass.reset();
     g_phaser_beams.clear();
     g_phaser_pass.reset();
+    g_subsystem_pins.clear();
+    g_hologram_ship = renderer::HologramShip{};
+    g_hologram_pass.reset();
+    g_subsystem_pin_pass.reset();
     g_bridge_pass.reset();
     g_bloom_pass.reset();
     g_fxaa_pass.reset();
@@ -303,6 +315,10 @@ void frame() {
     if (g_torpedo_pass) g_torpedo_pass->render(g_torpedoes,    g_camera, *g_pipeline);
     if (g_phaser_pass)  g_phaser_pass ->render(g_phaser_beams, g_camera, *g_pipeline);
     if (g_hit_vfx_pass) g_hit_vfx_pass->render(g_hit_vfx,      g_camera, *g_pipeline);
+    if (g_hologram_pass && g_hologram_ship.active)
+        g_hologram_pass->render(g_hologram_ship, g_world, g_camera, *g_pipeline, lookup);
+    if (g_subsystem_pin_pass && !g_subsystem_pins.empty())
+        g_subsystem_pin_pass->render(g_subsystem_pins, g_camera, *g_pipeline);
 
     // ── Bridge pass ──────────────────────────────────────────────────────
     // Renders bridge-tagged instances with the bridge camera, after a
@@ -737,6 +753,45 @@ PYBIND11_MODULE(_dauntless_host, m) {
           },
           py::arg("beams"),
           "Set the active phaser-beam list, applied each frame().");
+
+    m.def("set_hologram_ship",
+          [](scenegraph::InstanceId iid,
+             std::array<float, 3> color,
+             float opacity_facing,
+             float opacity_grazing) {
+              g_hologram_ship.active          = true;
+              g_hologram_ship.instance        = iid;
+              g_hologram_ship.color           = {color[0], color[1], color[2]};
+              g_hologram_ship.opacity_facing  = opacity_facing;
+              g_hologram_ship.opacity_grazing = opacity_grazing;
+          },
+          py::arg("instance_id"), py::arg("color"),
+          py::arg("opacity_facing"), py::arg("opacity_grazing"),
+          "Set the ship drawn as a Fresnel hologram overlay. Pass the scenegraph "
+          "InstanceId of the ship, its tint color (r,g,b), and opacity at facing "
+          "and grazing angles. Takes effect next frame().");
+    m.def("clear_hologram_ship",
+          []() { g_hologram_ship = renderer::HologramShip{}; },
+          "Clear the hologram overlay (deactivates it). Takes effect next frame().");
+    m.def("set_subsystem_pins",
+          [](const std::vector<std::tuple<std::array<float, 3>, int, bool>>& pins) {
+              g_subsystem_pins.clear();
+              g_subsystem_pins.reserve(pins.size());
+              for (const auto& t : pins) {
+                  renderer::SubsystemPin p;
+                  const auto& pos = std::get<0>(t);
+                  p.world_pos   = {pos[0], pos[1], pos[2]};
+                  p.icon_id     = std::get<1>(t);
+                  p.highlighted = std::get<2>(t);
+                  g_subsystem_pins.push_back(p);
+              }
+          },
+          py::arg("pins"),
+          "Set the subsystem pin billboard list. Each element is "
+          "(world_pos:(x,y,z), icon_id:int, highlighted:bool). Applied each frame().");
+    m.def("clear_subsystem_pins",
+          []() { g_subsystem_pins.clear(); },
+          "Clear all subsystem pin billboards. Takes effect next frame().");
 
     m.def("dust_set_enabled",
           [](bool enabled) {
