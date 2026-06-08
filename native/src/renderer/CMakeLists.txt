@@ -47,6 +47,7 @@ add_library(renderer STATIC
     pipeline.cc
     frame.cc
     hdr_target.cc
+    ldr_target.cc
     bloom_pass.cc
     resolve_pass.cc
     sphere_mesh.cc
