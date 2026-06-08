@@ -91,9 +91,8 @@ Re-draws the **player ship mesh** with a holographic Fresnel shader.
   cull disabled — same strategy as `phaser_pass`, so no transparency sorting is
   needed and grazing edges accumulate into a natural rim glow.
 - Uses the ship's existing model→world transform (rotation `R` column-vector
-  convention, translation, scale) — the same matrix the opaque ship render and
-  phaser emitter positioning already use. Normals transform by `R` (uniform
-  scale assumed, as elsewhere).
+  convention + translation; no scale) — the same matrix the opaque ship render
+  already uses. Normals transform by `R`.
 
 ### 2. SubsystemPinPass (`native/src/renderer/subsystem_pin_pass.{h,cc}` + shaders)
 
@@ -108,8 +107,11 @@ Camera-facing **billboard** quads, one per subsystem descriptor.
 - **Always visible:** drawn after the hologram with depth-test **off**, so pins
   on the far side of the hull are not occluded (engineering view wants every
   subsystem visible through the translucent hull).
-- **Constant screen size:** billboard scaled by distance so pins stay legible at
-  any zoom.
+- **World-scaled size:** billboards have a fixed size in game units anchored to
+  the hull, so they grow/shrink with zoom and distance like real pinned objects
+  (tunable `kPinWorldSize`). Click tolerance (`PIN_RADIUS_PX`) is a separate
+  screen-space value. (Constant-screen-size is the easy alternative — multiply
+  the world size by camera distance — if world-scaling reads poorly in-app.)
 - Descriptor: `{ world_pos: vec3, icon_id: int (0..9), highlighted: bool }`.
   `highlighted` lets the selected pin draw with a brighter ring.
 
@@ -131,10 +133,13 @@ subsystems — reusing the ship-status-panel enumeration pattern
 }
 ```
 
-- **`model_to_world`** applies the ship's world rotation/translation/scale to the
-  subsystem's model-local mount point — the *same* transform used to place
-  phaser beam emitters from hardpoint positions. Factor this into one shared
-  helper if it is currently inline in the phaser-beam code.
+- **`subsystem_world_position(sub)`** applies the ship's world rotation +
+  translation to the subsystem's model-local mount point — **no scale factor**
+  (`world = ship.GetWorldLocation() + GetWorldRotation()·GetPosition()`, per the
+  hardpoint-scale instrumentation documented at
+  [subsystems.py:769](../../../engine/appc/subsystems.py#L769)). This is the same
+  transform the phaser `_emitter_world_position` uses; extract the general form
+  into one shared helper.
 - Pins feed `SubsystemPinPass`; the `properties` dicts feed the CEF popover.
 - **Picking:** on a click, project every pin's `world_pos` through
   `project(world_pos, camera, viewport_rect)`, take the nearest pin whose
@@ -187,8 +192,9 @@ Mirror the phaser plumbing in `native/src/host/host_bindings.cc`:
 - In the frame render, after the normal scene, call
   `g_hologram_pass->render(...)` then `g_subsystem_pin_pass->render(...)` when
   active.
-- Expose `project_to_screen(world_pos)` (or reuse an existing camera projection
-  binding) so Python pin-picking matches the GL projection exactly.
+- **No projection binding needed.** The viewer owns its orbit camera params and
+  feeds them to `set_camera`; pin-picking projects the same params in pure Python
+  (unit-testable), so GL and pick projection match by construction.
 
 All bindings are inert when the viewer is closed (empty lists / null ship).
 
