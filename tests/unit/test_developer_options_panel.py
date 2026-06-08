@@ -115,6 +115,7 @@ def test_render_payload_shape(panel):
     assert body["visible"] is True
     assert body["tabs"] == [{"id": "combat", "label": "Combat"}]
     assert body["selected_tab"] == "combat"
+    assert body["focused"] == -1  # nothing keyboard-focused on first paint
     assert body["settings"] == {
         "god_mode": False, "double_weapons": False, "no_npc_shields": False,
     }
