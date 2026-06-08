@@ -62,6 +62,8 @@ def test_prune_drops_absent_iids():
     buf.prune({7})
     assert buf.has(7)
     assert not buf.has(8)
+    # _prev must be cleaned up too, not just _cur (has() only reads _cur).
+    assert buf.sample(8, 0.5) is None
 
 
 def test_sample_unknown_iid_returns_none():
