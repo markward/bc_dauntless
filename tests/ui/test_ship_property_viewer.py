@@ -71,12 +71,28 @@ def test_project_point_behind_camera_not_visible():
     assert visible is False
 
 
-def test_project_at_extreme_pitch_is_finite_and_visible():
+def test_extreme_pitch_clamp_matches_near_limit_reference():
+    """Any pitch beyond _MAX_PITCH (e.g. from mouse drag past vertical) flips
+    cos(pitch) negative, mirroring the horizontal axis and placing off-center
+    points hundreds of pixels from where the clamp-limited camera would put
+    them.  The clamp in eye() must cap all such inputs at _MAX_PITCH, so an
+    off-center point always projects to the same finite coords as the reference
+    camera sitting exactly at the clamp limit.
+
+    Note: cos(pi/2) in Python floats is ~6e-17, not 0, so the basis is not
+    truly degenerate at pi/2 exactly; the real regression case is any value
+    *past* pi/2, hence pitch = pi/2 + 0.01 here."""
     import math as _m
-    cam = OrbitCamera(target=(0.0, 0.0, 0.0), distance=10.0, yaw=0.0,
-                      pitch=_m.pi / 2.0)  # straight-down: would be degenerate
-    sx, sy, depth, visible = project((0.0, 0.0, 0.0), cam, (800, 600))
-    assert visible is True
-    # No NaN/inf, and the target still lands near screen centre.
-    assert sx == sx and sy == sy          # not NaN
-    assert abs(sx - 400.0) < 1.0 and abs(sy - 300.0) < 1.0
+    from engine.ui.ship_property_viewer import _MAX_PITCH
+    off_center = (3.0, 0.0, 0.0)
+    over_pitch = _m.pi / 2.0 + 0.01   # past vertical — cos goes negative
+    cam_extreme = OrbitCamera(target=(0.0, 0.0, 0.0), distance=10.0,
+                              yaw=0.0, pitch=over_pitch)
+    cam_ref = OrbitCamera(target=(0.0, 0.0, 0.0), distance=10.0,
+                          yaw=0.0, pitch=_MAX_PITCH)
+    ex = project(off_center, cam_extreme, (800, 600))
+    ref = project(off_center, cam_ref, (800, 600))
+    # Finite (not NaN) and identical to the clamp-limit reference.
+    assert ex[0] == ex[0] and ex[1] == ex[1]   # not NaN
+    assert ex[3] is True
+    assert abs(ex[0] - ref[0]) < 1e-6 and abs(ex[1] - ref[1]) < 1e-6
