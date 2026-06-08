@@ -10,7 +10,20 @@ import json
 from typing import Callable, List, Optional
 
 from engine.ui.panel import Panel
-from engine.ui.ship_property_viewer import build_descriptors, OrbitCamera
+from engine.ui.ship_property_viewer import (
+    build_descriptors, OrbitCamera, pick_pin,
+)
+
+# Radians of orbit per pixel of left-drag. ~0.35 rad (20°) for a 50 px drag.
+ORBIT_SENS = 0.007
+# Fraction of distance removed per scroll notch (positive scroll = zoom in).
+ZOOM_STEP = 0.1
+# Orbit distance clamps (game units) so the ship can't be lost or clipped.
+MIN_DISTANCE = 1.0
+MAX_DISTANCE = 1.0e5
+# A left press+release that moved less than this many pixels counts as a
+# click (pin pick) rather than an orbit drag.
+CLICK_SLOP_PX = 4.0
 
 
 class ShipPropertyViewerPanel(Panel):
@@ -22,6 +35,12 @@ class ShipPropertyViewerPanel(Panel):
         self.selected_index: Optional[int] = None
         self.camera: Optional[OrbitCamera] = None
         self._last_pushed: Optional[tuple] = None
+        # Left-drag tracking (panel-local edge detection so we don't steal
+        # the CEF mouse-release edge — see handle_input).
+        self._lmb_down = False
+        self._drag_last: Optional[tuple] = None   # (x, y) previous cursor
+        self._press_pos: Optional[tuple] = None   # (x, y) where press began
+        self._drag_dist = 0.0                     # accumulated |motion| px
 
     @property
     def name(self) -> str:
@@ -44,6 +63,10 @@ class ShipPropertyViewerPanel(Panel):
         self._descriptors = []
         self.selected_index = None
         self.camera = None
+        self._lmb_down = False
+        self._drag_last = None
+        self._press_pos = None
+        self._drag_dist = 0.0
 
     def _fit_target(self) -> tuple:
         """Centroid of the subsystem mounts in world space. Descriptors carry
@@ -97,10 +120,89 @@ class ShipPropertyViewerPanel(Panel):
         if self._visible:
             self.close()
 
+    # ------------------------------------------------------------------
+    # Pure camera math (host-free → unit-testable in isolation)
+    # ------------------------------------------------------------------
+    def apply_orbit(self, dx: float, dy: float) -> None:
+        """Advance yaw by dx px and pitch by dy px of left-drag. OrbitCamera
+        clamps pitch internally (in eye()), so no clamp here."""
+        if self.camera is None:
+            return
+        self.camera.yaw += dx * ORBIT_SENS
+        self.camera.pitch += dy * ORBIT_SENS
+
+    def apply_zoom(self, wheel: float) -> None:
+        """Scale orbit distance by a scroll delta (positive wheel = zoom in),
+        clamped to [MIN_DISTANCE, MAX_DISTANCE]."""
+        if self.camera is None or wheel == 0.0:
+            return
+        new_d = self.camera.distance * (1.0 - wheel * ZOOM_STEP)
+        self.camera.distance = max(MIN_DISTANCE, min(MAX_DISTANCE, new_d))
+
+    def pick_at(self, x: float, y: float, viewport) -> None:
+        """Run a pin pick at cursor (x, y) and emit select/deselect."""
+        if self.camera is None:
+            return
+        idx = pick_pin(x, y, self._descriptors, self.camera, viewport)
+        if idx is not None:
+            self.dispatch_event("select_pin:%d" % idx)
+        else:
+            self.dispatch_event("deselect")
+
+    # ------------------------------------------------------------------
+    # Host input pump (called each frame while open + focused)
+    # ------------------------------------------------------------------
     def handle_input(self, h) -> None:
-        """Mouse orbit/zoom/pick input handling wired in task D1.
-        Stub present to match DeveloperOptionsPanel's interface contract."""
-        pass
+        """Mouse orbit / zoom / pin-pick.
+
+        `h` is the host bindings module (`_dauntless_host`). We read the raw
+        left-button state via mouse_button_state (which does NOT consume the
+        edge that the pause-menu CEF forwarding relies on) and track the
+        press/drag/release ourselves. Cursor + viewport are framebuffer
+        pixels — the same space project()/pick_pin() and the GL render use.
+
+        Degrades to a no-op if any required binding is missing (headless)."""
+        if self.camera is None:
+            return
+        try:
+            btn_state = h.mouse_button_state
+            cursor_pos = h.cursor_pos
+            fb_size = h.framebuffer_size
+            left = h.keys.MOUSE_BUTTON_LEFT
+        except AttributeError:
+            return
+
+        # Zoom: drain the wheel accumulator even when no other input so a
+        # later open doesn't inherit stale scroll.
+        consume_scroll = getattr(h, "consume_scroll_y", None)
+        if consume_scroll is not None:
+            self.apply_zoom(consume_scroll())
+
+        x, y = cursor_pos()
+        down = btn_state(left)
+
+        if down and not self._lmb_down:
+            # Press edge.
+            self._lmb_down = True
+            self._drag_last = (x, y)
+            self._press_pos = (x, y)
+            self._drag_dist = 0.0
+        elif down and self._lmb_down:
+            # Drag: orbit by the per-frame cursor delta.
+            if self._drag_last is not None:
+                dx = x - self._drag_last[0]
+                dy = y - self._drag_last[1]
+                self.apply_orbit(dx, dy)
+                self._drag_dist += (dx * dx + dy * dy) ** 0.5
+            self._drag_last = (x, y)
+        elif (not down) and self._lmb_down:
+            # Release edge: a near-stationary press+release is a click → pick.
+            self._lmb_down = False
+            if self._drag_dist <= CLICK_SLOP_PX:
+                self.pick_at(x, y, fb_size())
+            self._drag_last = None
+            self._press_pos = None
+            self._drag_dist = 0.0
 
     def dispatch_event(self, action: str) -> bool:
         if action == "cancel":

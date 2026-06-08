@@ -1146,6 +1146,23 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("button"),
           "Returns true on the first frame the mouse button is released (falling edge).");
 
+    // Raw held-state read. Unlike mouse_button_pressed/released this does
+    // NOT touch g_prev_mouse_state, so callers can poll the current
+    // up/down state without stealing the edge that the pause-menu CEF
+    // forwarding (mouse_button_released) relies on. Used by panels that
+    // do their own drag-edge tracking (e.g. the Ship Property Viewer's
+    // orbit drag) while CEF still receives clicks for its own widgets.
+    m.def("mouse_button_state",
+          [](int button) {
+              if (!g_window) {
+                  throw std::runtime_error("mouse_button_state: init must be called first");
+              }
+              return g_window->mouse_button_state(button);
+          },
+          py::arg("button"),
+          "Return the raw current up/down state of a mouse button without "
+          "consuming any edge state.");
+
     // Test/debug helper: read one RGBA8 pixel from the most recently
     // presented frame. Reads GL_FRONT (the buffer that swap_buffers
     // promoted from BACK) so a single frame() + read_pixel sequence
