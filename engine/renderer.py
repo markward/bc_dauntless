@@ -179,6 +179,11 @@ def set_decals_enabled(enabled: bool) -> None:
     _h.decals_set_enabled(enabled)
 
 
+def set_fxaa_enabled(enabled: bool) -> None:
+    """Toggle the post-process FXAA pass. Default: on after init()."""
+    _h.fxaa_set_enabled(enabled)
+
+
 def set_rim_eligible(instance_id: InstanceId, eligible: bool) -> None:
     """Mark a ship-hull instance as eligible for the Fresnel rim term.
     Planets are left ineligible so they don't receive a metallic rim."""
