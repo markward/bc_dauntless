@@ -39,14 +39,15 @@ def nlerp_rotation(a: TGMatrix3, b: TGMatrix3, alpha: float) -> TGMatrix3:
     """
     blended = [None, None, None]
     for i in range(3):
-        s = a.GetCol(i)
-        l = b.GetCol(i)
+        col_a = a.GetCol(i)
+        col_b = b.GetCol(i)
         blended[i] = TGPoint3(
-            s.x + alpha * (l.x - s.x),
-            s.y + alpha * (l.y - s.y),
-            s.z + alpha * (l.z - s.z),
+            col_a.x + alpha * (col_b.x - col_a.x),
+            col_a.y + alpha * (col_b.y - col_a.y),
+            col_a.z + alpha * (col_b.z - col_a.z),
         )
 
+    # blended[0] (right) is discarded; re-derived below as f x u to keep the basis right-handed.
     f = _norm(blended[1])
     u_in = blended[2]
     dot_uf = u_in.x * f.x + u_in.y * f.y + u_in.z * f.z
@@ -68,6 +69,10 @@ def nlerp_rotation(a: TGMatrix3, b: TGMatrix3, alpha: float) -> TGMatrix3:
     return out
 
 
-def lerp_transform(prev_loc, prev_rot, cur_loc, cur_rot, alpha):
+def lerp_transform(
+    prev_loc: TGPoint3, prev_rot: TGMatrix3,
+    cur_loc: TGPoint3, cur_rot: TGMatrix3,
+    alpha: float,
+) -> tuple:
     """Return interpolated (loc, rot) for a render frame."""
     return lerp_point(prev_loc, cur_loc, alpha), nlerp_rotation(prev_rot, cur_rot, alpha)
