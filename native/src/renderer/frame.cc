@@ -79,22 +79,20 @@ void draw_model(const assets::Model& model,
                 const scenegraph::DamageDecalRing& decals,
                 float decal_time) {
     // ── Per-instance damage decals (Phase 2) ───────────────────────────────
-    // Pack the active ring into vec4 arrays. point_body is in NIF/model units
-    // (the ship scale lives in `world`), so convert radius GU->model units via
-    // the world-matrix scale s = |world's X column|. u_decal_count == 0 when
-    // disabled or empty makes the shader skip the loop entirely.
+    // Pack the active ring into vec4 arrays. point_body and radius are both in
+    // NIF/model units (damage_decal_add converts radius GU->model before
+    // ring.add), so no conversion here. u_decal_count == 0 when disabled or
+    // empty makes the shader skip the loop entirely.
     {
         glm::vec4 a[scenegraph::DamageDecalRing::kMaxDecals];
         glm::vec4 b[scenegraph::DamageDecalRing::kMaxDecals];
         glm::vec4 c[scenegraph::DamageDecalRing::kMaxDecals];
         int n = 0;
         if (dauntless_decals::enabled()) {
-            const float s = glm::length(glm::vec3(world[0]));   // uniform scale
-            const float inv_s = (s > 0.0f) ? (1.0f / s) : 1.0f;
             for (const auto& d : decals.slots()) {
                 if (!d.active) continue;
                 a[n] = glm::vec4(d.point_body, d.intensity);
-                b[n] = glm::vec4(d.normal_body, d.radius * inv_s);  // GU->model
+                b[n] = glm::vec4(d.normal_body, d.radius);  // already model units
                 c[n] = glm::vec4(d.birth_time,
                                  static_cast<float>(static_cast<std::uint32_t>(d.weapon_class)),
                                  0.0f, 0.0f);

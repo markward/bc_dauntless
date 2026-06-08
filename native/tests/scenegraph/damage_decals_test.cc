@@ -98,9 +98,9 @@ TEST(DamageDecalRing, TickReclaimsColdHeatGlowButKeepsScorch) {
     DamageDecalRing ring;
     ring.add({0, 0, 0}, {0, 0, 1}, 0.2f, 0.9f, WeaponClass::HeatGlow, 0.0f);
     ring.add({5, 0, 0}, {0, 0, 1}, 0.2f, 0.9f, WeaponClass::Scorch, 0.0f);
-    ring.tick(0.5f);              // within 1.2 s lifetime
+    ring.tick(1.0f);              // within 3 s lifetime
     EXPECT_EQ(ring.count(), 2u);
-    ring.tick(2.0f);             // past 1.2 s — glow reclaimed, scorch stays
+    ring.tick(3.5f);             // past 3 s — glow reclaimed, scorch stays
     EXPECT_EQ(ring.count(), 1u);
     EXPECT_EQ(first_active(ring)->weapon_class, WeaponClass::Scorch);
 }
@@ -127,4 +127,32 @@ TEST(WorldDirToBody, NormalisesResult) {
     EXPECT_NEAR(body.x, 1.0f, 1e-4f);
     EXPECT_NEAR(body.y, 0.0f, 1e-4f);
     EXPECT_NEAR(body.z, 0.0f, 1e-4f);
+}
+
+TEST(DamageDecalRing, HeatGlowDoesNotMergeSoEachGlowCoolsIndependently) {
+    DamageDecalRing ring;
+    ring.add({0, 0, 0}, {0, 0, 1}, 0.2f, 0.5f, WeaponClass::HeatGlow, 0.0f);
+    // Co-located: would merge if it were Scorch, but HeatGlow must allocate a
+    // separate slot so each transient glow ages and cools on its own.
+    ring.add({0.01f, 0, 0}, {0, 0, 1}, 0.2f, 0.5f, WeaponClass::HeatGlow, 1.0f);
+    EXPECT_EQ(ring.count(), 2u);
+}
+
+TEST(DamageDecalRing, ScorchSurvivesHeatGlowFlooding) {
+    DamageDecalRing ring;
+    // One persistent Scorch, the oldest decal (seq=1).
+    ring.add({0, 0, 0}, {0, 0, 1}, 0.2f, 1.0f, WeaponClass::Scorch, 0.0f);
+    // Flood with far more distinct HeatGlow decals than free slots remain.
+    for (int i = 0; i < 40; ++i) {
+        ring.add({static_cast<float>(i + 1) * 10.0f, 0, 0}, {0, 0, 1},
+                 0.2f, 0.5f, WeaponClass::HeatGlow, static_cast<float>(i));
+    }
+    EXPECT_EQ(ring.count(), 24u);
+    // Eviction must prefer the transient HeatGlow; the oldest-overall Scorch
+    // survives the phaser flood.
+    bool scorch_present = false;
+    for (const auto& d : ring.slots()) {
+        if (d.active && d.weapon_class == WeaponClass::Scorch) scorch_present = true;
+    }
+    EXPECT_TRUE(scorch_present) << "phaser flooding evicted the persistent scorch";
 }

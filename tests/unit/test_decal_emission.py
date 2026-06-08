@@ -60,7 +60,9 @@ def test_decal_emitted_when_hull_damaged(patched):
     assert call["instance_id"] == "IID"
     assert call["world_point"] == (1, 2, 3)
     assert call["weapon_class"] == dd.WEAPON_CLASS_SCORCH
-    assert call["radius"] == 0.2
+    # r_hit (0.2) is scaled by the per-class visual radius scale before emit.
+    assert call["radius"] == pytest.approx(
+        0.2 * dd.decal_radius_scale(dd.WEAPON_CLASS_SCORCH))
     assert call["time"] == 42.0
     assert 0.0 < call["intensity"] <= 1.0
 

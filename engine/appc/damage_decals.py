@@ -12,8 +12,25 @@ WEAPON_CLASS_HEAT_GLOW = 0   # phaser — transient emissive bloom
 WEAPON_CLASS_SCORCH = 1      # torpedo / disruptor — persistent deposit + ember
 
 # Hull damage that maps to a full-intensity (1.0) decal. Tuning constant;
-# spec §3.6 fixes only the contract (monotonic, clamped). Revisit in Phase 2.
-INTENSITY_REFERENCE_DAMAGE = 8.0
+# spec §3.6 fixes only the contract (monotonic, clamped). Calibrated against
+# the live renderer: per-tick phaser hull damage is ~0.28, so 8.0 gave ~3.5%
+# intensity (invisible). 0.5 makes a single tick ~0.56 and a couple of merged
+# ticks saturate to a clearly-visible glow; torpedoes saturate on one hit.
+# Deliberately bold for visibility confirmation; dial up toward ~1-2 for subtlety.
+INTENSITY_REFERENCE_DAMAGE = 0.5
+
+# Visual-only radius multipliers per weapon class (gameplay r_hit unchanged).
+# Calibrated against the live renderer: phaser glow reads better tight (0.5);
+# torpedo scorch wants a broad deposit (3x the phaser scale) for the spread-B look.
+_RADIUS_SCALE = {
+    WEAPON_CLASS_HEAT_GLOW: 0.5,
+    WEAPON_CLASS_SCORCH: 1.5,
+}
+
+
+def decal_radius_scale(weapon_class: int) -> float:
+    """Visual-only radius multiplier for the given weapon class."""
+    return _RADIUS_SCALE.get(weapon_class, 0.5)
 
 
 def weapon_class_for(weapon_type):

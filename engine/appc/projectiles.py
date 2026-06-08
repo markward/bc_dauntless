@@ -153,11 +153,30 @@ def update_all(dt: float, all_ships, *, host=None, ship_instances=None) -> list[
                 # to fallback", which is what we want for a stationary tick.
                 aim_unit = (TGPoint3(seg.x / seg_len, seg.y / seg_len, seg.z / seg_len)
                             if seg_len > 1e-9 else None)
+                # Cast from OUTSIDE the hull along the travel direction, long
+                # enough to cross it. A one-tick segment (prev_pos, seg_len) is
+                # too short and, once the torpedo has penetrated, starts inside
+                # the mesh — so ray_trace_mesh finds no entry surface and the
+                # normal comes back None (suppressing the scorch decal). Backing
+                # the origin up by the ship radius and spanning ~2x the radius
+                # mirrors how the phaser trace (firing-ship -> target) succeeds.
+                if aim_unit is not None:
+                    radius = ship.GetRadius() if hasattr(ship, "GetRadius") else 0.0
+                    backoff = radius + seg_len
+                    ray_origin = TGPoint3(
+                        t._position.x - aim_unit.x * backoff,
+                        t._position.y - aim_unit.y * backoff,
+                        t._position.z - aim_unit.z * backoff,
+                    )
+                    ray_max = 2.0 * radius + seg_len
+                else:
+                    ray_origin = prev_pos
+                    ray_max = seg_len
                 hit_point, hit_normal = _resolve_hit_point(
                     host=host, ship_instances=ship_instances, ship=ship,
-                    ray_origin=prev_pos,
+                    ray_origin=ray_origin,
                     ray_direction=aim_unit,
-                    max_dist=seg_len,
+                    max_dist=ray_max,
                     fallback_point=t._position,
                 )
                 hits.append((t, ship, hit_point, hit_normal))

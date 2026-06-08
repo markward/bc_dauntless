@@ -276,7 +276,7 @@ TEST_F(FrameTest, DecalUploadPipelineRunsWithoutGLError) {
 
     // Seed a scorch decal at center. The shader now reads it — just verify no
     // GL errors and the draw completes without crashing.
-    world.get(iid)->decals.add(glm::vec3(0, 0, 0), glm::vec3(0, 0, 1),
+    world.get(iid)->decals.add(glm::vec3(0, 0, 0), glm::vec3(0, 0, -1),
                                /*radius=*/200.0f, /*intensity=*/1.0f,
                                scenegraph::WeaponClass::Scorch, /*now=*/0.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -348,10 +348,14 @@ TEST_F(FrameTest, ScorchDecalDarkensHullAndDoesNotMirror) {
     auto i1 = w1.create_instance(reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
     w1.set_world_transform(i1, glm::mat4(1.0f));
     // point_body = (60, 0, 20): +X half, top face, near-surface Z.
-    // normal_body = (0, 0, 1): outward +Z impact direction in BC convention.
-    // The shader uses dot(-n_body, dn) to handle NIF inward normals.
+    // normal_body = (0, 0, -1): the decal normal must match the convention of
+    // the reconstructed fragment normal n_body (the raw NIF vertex normal here,
+    // which points inward). The shader compares dot(n_body, dn) > 0, exactly as
+    // the live ray_trace -> world_dir_to_body pipeline produces a dn aligned
+    // with the surface's vertex normal. (Seeding an outward +Z here would be
+    // rejected by the falloff -- the bug that hid all in-game decals.)
     // radius 120 GU — covers most of the right sample block.
-    w1.get(i1)->decals.add(glm::vec3(60.0f, 0.0f, 20.0f), glm::vec3(0, 0, 1),
+    w1.get(i1)->decals.add(glm::vec3(60.0f, 0.0f, 20.0f), glm::vec3(0, 0, -1),
                            /*radius=*/120.0f, /*intensity=*/1.0f,
                            scenegraph::WeaponClass::Scorch, 0.0f);
     render_galaxy(w1, *p, lut, 0.0f);
@@ -378,7 +382,7 @@ TEST_F(FrameTest, ScorchToggleOffRendersLikeUndamaged) {
     scenegraph::World w;
     auto iid = w.create_instance(reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
     w.set_world_transform(iid, glm::mat4(1.0f));
-    w.get(iid)->decals.add(glm::vec3(60.0f, 0.0f, 20.0f), glm::vec3(0, 0, 1),
+    w.get(iid)->decals.add(glm::vec3(60.0f, 0.0f, 20.0f), glm::vec3(0, 0, -1),
                            120.0f, 1.0f, scenegraph::WeaponClass::Scorch, 0.0f);
 
     dauntless_decals::set_enabled(false);
@@ -404,7 +408,7 @@ TEST_F(FrameTest, ScorchEmberIsBrightWhenFreshAndCoolsWithGameTime) {
     auto iid = w.create_instance(reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
     w.set_world_transform(iid, glm::mat4(1.0f));
     // birth_time = 0; ember keyed on (u_decal_time - birth_time).
-    w.get(iid)->decals.add(glm::vec3(60, 0, 20), glm::vec3(0, 0, 1),
+    w.get(iid)->decals.add(glm::vec3(60, 0, 20), glm::vec3(0, 0, -1),
                            120.0f, 1.0f, scenegraph::WeaponClass::Scorch, 0.0f);
 
     render_galaxy(w, *p, lut, /*decal_time=*/0.2f);   // fresh: hot ember
@@ -436,13 +440,13 @@ TEST_F(FrameTest, PhaserHeatGlowIsTransientAndLeavesNoScar) {
     scenegraph::World w;
     auto iid = w.create_instance(reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
     w.set_world_transform(iid, glm::mat4(1.0f));
-    w.get(iid)->decals.add(glm::vec3(60, 0, 20), glm::vec3(0, 0, 1),
+    w.get(iid)->decals.add(glm::vec3(60, 0, 20), glm::vec3(0, 0, -1),
                            120.0f, 1.0f, scenegraph::WeaponClass::HeatGlow, 0.0f);
 
     render_galaxy(w, *p, lut, /*decal_time=*/0.1f);   // fresh glow
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
     const double fresh = block_mean(130, 100, 25, 50);
-    render_galaxy(w, *p, lut, /*decal_time=*/2.0f);   // past T_GLOW (1.2s)
+    render_galaxy(w, *p, lut, /*decal_time=*/4.0f);   // past T_GLOW (3.0s)
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
     const double faded = block_mean(130, 100, 25, 50);
 

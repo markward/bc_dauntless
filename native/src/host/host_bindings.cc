@@ -886,7 +886,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                  std::get<2>(world_normal));
               const glm::vec3 pb = scenegraph::world_to_body(inst->world, pw);
               const glm::vec3 nb = scenegraph::world_dir_to_body(inst->world, nw);
-              inst->decals.add(pb, nb, radius, intensity,
+              // Convert radius game-units -> NIF/model units here (the same
+              // space as pb), so the ring's merge test and the shader both work
+              // in model units. s = |world's X column| = the uniform NIF->world
+              // scale baked into inst->world.
+              const float s = glm::length(glm::vec3(inst->world[0]));
+              const float radius_model = (s > 0.0f) ? radius / s : radius;
+              inst->decals.add(pb, nb, radius_model, intensity,
                                static_cast<scenegraph::WeaponClass>(weapon_class),
                                time);
           },

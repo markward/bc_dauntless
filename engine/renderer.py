@@ -84,6 +84,16 @@ def set_bridge_wall_time(t: float) -> None:
     _h.set_bridge_wall_time(t)
 
 
+def damage_decals_tick(game_time: float) -> None:
+    """Age every ship's persistent damage-decal ring on the game clock.
+
+    Reclaims cold phaser heat-glows and supplies the shader's decal time
+    (drives ember cool-down). Must be called each tick; without it the decal
+    clock stays frozen and glows never cool.
+    """
+    _h.damage_decals_tick(game_time)
+
+
 def set_suns(suns: list) -> None:
     """Configure the renderer's sun list. Each entry is a dict:
         {"position": (x,y,z), "radius": float,

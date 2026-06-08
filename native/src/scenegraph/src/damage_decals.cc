@@ -20,31 +20,45 @@ void DamageDecalRing::add(const glm::vec3& point_body, const glm::vec3& normal_b
                           float now) {
     const float clamped_in = std::clamp(intensity, 0.0f, 1.0f);
 
-    // 1. Merge into a co-located same-class decal.
-    const float merge_dist = kMergeFactor * radius;
-    for (auto& d : slots_) {
-        if (!d.active || d.weapon_class != weapon_class) continue;
-        if (glm::length(point_body - d.point_body) <= merge_dist) {
-            d.intensity = std::min(1.0f, d.intensity + clamped_in);
-            d.birth_time = now;          // re-ignite ember
-            d.normal_body = normal_body; // freshest surface normal
-            d.seq = next_seq_++;         // freshly touched: refresh FIFO age so
-                                         // a reinforced scar isn't evicted before
-                                         // older, untouched ones.
-            return;
+    // 1. Merge into a co-located same-class decal — Scorch only. Scorch is
+    //    persistent, so co-located torpedo/disruptor hits should deepen one
+    //    deposit. HeatGlow (phaser) is transient and must NOT merge: merging
+    //    re-ignites birth_time, pinning an actively-hit area bright so it never
+    //    visibly cools. Keeping each glow independent lets it age out on its own.
+    if (weapon_class == WeaponClass::Scorch) {
+        const float merge_dist = kMergeFactor * radius;
+        for (auto& d : slots_) {
+            if (!d.active || d.weapon_class != weapon_class) continue;
+            if (glm::length(point_body - d.point_body) <= merge_dist) {
+                d.intensity = std::min(1.0f, d.intensity + clamped_in);
+                d.birth_time = now;          // re-ignite ember
+                d.normal_body = normal_body; // freshest surface normal
+                d.seq = next_seq_++;         // refresh FIFO age (reinforced scar
+                                             // survives eviction over older ones)
+                return;
+            }
         }
     }
 
-    // 2. Allocate the first free slot, else 3. evict the oldest.
+    // 2. Allocate the first free slot, else 3. evict.
     DamageDecal* target = nullptr;
     for (auto& d : slots_) {
         if (!d.active) { target = &d; break; }
     }
     if (target == nullptr) {
-        target = &slots_[0];
+        // Prefer evicting the oldest transient HeatGlow so a persistent Scorch
+        // is never pushed out by phaser flooding. Only if there is no HeatGlow
+        // to reclaim do we evict the oldest decal overall.
+        DamageDecal* oldest_glow = nullptr;
+        DamageDecal* oldest_any = &slots_[0];
         for (auto& d : slots_) {
-            if (d.seq < target->seq) target = &d;
+            if (d.seq < oldest_any->seq) oldest_any = &d;
+            if (d.weapon_class == WeaponClass::HeatGlow
+                && (oldest_glow == nullptr || d.seq < oldest_glow->seq)) {
+                oldest_glow = &d;
+            }
         }
+        target = (oldest_glow != nullptr) ? oldest_glow : oldest_any;
     }
 
     *target = DamageDecal{

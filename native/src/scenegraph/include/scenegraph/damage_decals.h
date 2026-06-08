@@ -42,7 +42,8 @@ class DamageDecalRing {
 public:
     static constexpr std::size_t kMaxDecals = 24;
     static constexpr float kMergeFactor = 0.5f;       // merge within 0.5 * radius
-    static constexpr float kHeatGlowLifetime = 1.2f;  // seconds before reclaim
+    static constexpr float kHeatGlowLifetime = 3.0f;  // seconds before reclaim
+                                                      // (matches shader T_GLOW)
 
     /// Insert a decal (point/normal already in body frame).
     /// Merge: if a same-class active decal lies within kMergeFactor*radius,
