@@ -29,6 +29,7 @@ class SettingsSnapshot:
     specular_on: bool
     hdr_on: bool
     rim_on: bool
+    decals_on: bool
     fov_deg: int
 
 
@@ -40,6 +41,7 @@ class ConfigurationPanel(Panel):
                  set_specular: Callable[[bool], None],
                  set_hdr: Callable[[bool], None],
                  set_rim: Callable[[bool], None],
+                 set_decals: Callable[[bool], None],
                  set_fov_rad: Callable[[float], None]):
         super().__init__()
         self._tabs = list(tabs)
@@ -49,12 +51,14 @@ class ConfigurationPanel(Panel):
             specular_on=initial_settings.specular_on,
             hdr_on=initial_settings.hdr_on,
             rim_on=initial_settings.rim_on,
+            decals_on=initial_settings.decals_on,
             fov_deg=int(initial_settings.fov_deg),
         )
         self._set_dust = set_dust
         self._set_specular = set_specular
         self._set_hdr = set_hdr
         self._set_rim = set_rim
+        self._set_decals = set_decals
         self._set_fov_rad = set_fov_rad
         self._visible: bool = False
         self._focused: int = -1
@@ -84,6 +88,7 @@ class ConfigurationPanel(Panel):
             self._settings.specular_on,
             self._settings.hdr_on,
             self._settings.rim_on,
+            self._settings.decals_on,
             self._settings.fov_deg,
         )
         if snapshot == self._last_pushed:
@@ -101,6 +106,7 @@ class ConfigurationPanel(Panel):
                 "specular_on": self._settings.specular_on,
                 "hdr_on": self._settings.hdr_on,
                 "rim_on": self._settings.rim_on,
+                "decals_on": self._settings.decals_on,
                 "fov_deg": self._settings.fov_deg,
             },
         }
@@ -134,6 +140,11 @@ class ConfigurationPanel(Panel):
             new_val = not self._settings.rim_on
             self._set_rim(new_val)
             self._settings.rim_on = new_val
+            return True
+        if action == "toggle:decals":
+            new_val = not self._settings.decals_on
+            self._set_decals(new_val)
+            self._settings.decals_on = new_val
             return True
         if action.startswith("fov:"):
             raw = action[len("fov:"):]
@@ -202,6 +213,8 @@ class ConfigurationPanel(Panel):
             self.dispatch_event("toggle:hdr")
         elif activate and kind == "ctrl" and target == "rim":
             self.dispatch_event("toggle:rim")
+        elif activate and kind == "ctrl" and target == "decals":
+            self.dispatch_event("toggle:decals")
         elif activate and kind == "tab":
             self.dispatch_event("tab:" + target)
 
@@ -215,9 +228,9 @@ class ConfigurationPanel(Panel):
         """Ordered focusable list: tab rows then controls in the
         currently selected tab. For the only tab today (graphics):
         [('tab','graphics'), ('ctrl','dust'), ('ctrl','specular'),
-         ('ctrl','fov'), ('ctrl','hdr'), ('ctrl','rim')]."""
+         ('ctrl','fov'), ('ctrl','hdr'), ('ctrl','rim'), ('ctrl','decals')]."""
         out: list = [("tab", tid) for tid, _ in self._tabs]
         if self._selected_tab == "graphics":
             out += [("ctrl", "dust"), ("ctrl", "specular"), ("ctrl", "fov"),
-                    ("ctrl", "hdr"), ("ctrl", "rim")]
+                    ("ctrl", "hdr"), ("ctrl", "rim"), ("ctrl", "decals")]
         return out

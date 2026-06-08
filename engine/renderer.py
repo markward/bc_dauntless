@@ -163,6 +163,12 @@ def set_hdr_enabled(enabled: bool) -> None:
     _h.hdr_set_enabled(enabled)
 
 
+def set_decals_enabled(enabled: bool) -> None:
+    """Toggle persistent hull damage decals (scorch/heat-glow). Default: on
+    after init()."""
+    _h.decals_set_enabled(enabled)
+
+
 def set_rim_eligible(instance_id: InstanceId, eligible: bool) -> None:
     """Mark a ship-hull instance as eligible for the Fresnel rim term.
     Planets are left ineligible so they don't receive a metallic rim."""
