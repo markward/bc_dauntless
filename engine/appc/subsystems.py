@@ -768,28 +768,9 @@ class ShipSubsystem(TGEventHandlerObject):
 
     def _emitter_world_position(self) -> TGPoint3:
         """Ship world location + emitter local position rotated into world frame.
-
-        SDK SetPosition values are already in world units relative to the
-        ship's centre of mass — confirmed via the 2026-05-16 hardpoint-
-        scale instrumentation (see
-        docs/instrumented_experiments/2026-05-15-hardpoint-scale-investigation.md).
-        BC applies no scale factor; `world = ship_loc + rotate(local_pos)`.
-        """
-        ship = self._climb_to_ship()
-        if ship is None:
-            return TGPoint3(0.0, 0.0, 0.0)
-        ship_pos = ship.GetWorldLocation()
-        local = self.GetPosition() if hasattr(self, "GetPosition") else None
-        if not isinstance(local, TGPoint3):
-            return TGPoint3(ship_pos.x, ship_pos.y, ship_pos.z)
-        offset = TGPoint3(local.x, local.y, local.z)
-        if hasattr(ship, "GetWorldRotation"):
-            rot = ship.GetWorldRotation()
-            if isinstance(rot, TGMatrix3):
-                offset.MultMatrixLeft(rot)
-        return TGPoint3(ship_pos.x + offset.x,
-                        ship_pos.y + offset.y,
-                        ship_pos.z + offset.z)
+        (Delegates to the shared engine.ui.ship_property_viewer helper.)"""
+        from engine.ui.ship_property_viewer import subsystem_world_position
+        return subsystem_world_position(self)
 
     def _strip_emit_position(self, target_world) -> TGPoint3:
         """Closest point on a phaser-strip arc to ``target_world``.
