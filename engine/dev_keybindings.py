@@ -39,3 +39,25 @@ def register_for_frame(_h, session, player) -> None:
     dev_mode.register_dev_keybinding(
         _h.keys.KEY_F10, _f10_shield_debug, "Shield-hit debug (F10)"
     )
+
+    # [ : drop every ship's shields to zero (and stop regen) so weapons hit
+    # the hull directly. Testing aid for hull-damage VFX (scorch decals).
+    def _drop_all_shields() -> None:
+        if session is None:
+            return
+        for ship in list(session.ship_instances.keys()):
+            shields = ship.GetShields() if hasattr(ship, "GetShields") else None
+            if shields is None:
+                continue
+            n = int(getattr(shields, "NUM_SHIELDS", 6))
+            for f in range(n):
+                try:
+                    shields.SetCurrentShields(f, 0.0)
+                    shields.SetShieldChargePerSecond(f, 0.0)
+                except Exception:
+                    pass
+
+    dev_mode.register_dev_keybinding(
+        _h.keys.KEY_LEFT_BRACKET, _drop_all_shields,
+        "Drop all shields to zero (dev) — [",
+    )
