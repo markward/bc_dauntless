@@ -252,10 +252,10 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
         dt, ships_list,
         host=host, ship_instances=ship_instances,
     )
-    for torpedo, ship, hit_point in hits:
+    for torpedo, ship, hit_point, hit_normal in hits:
         apply_hit(ship, torpedo._damage, hit_point,
                   source=torpedo._source_ship,
-                  normal=None, host=host, ship_instances=ship_instances,
+                  normal=hit_normal, host=host, ship_instances=ship_instances,
                   weapon_type="torpedo",
                   hardpoint_weapon=torpedo)
 

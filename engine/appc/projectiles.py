@@ -109,12 +109,15 @@ def expire(torpedo: Torpedo) -> None:
 
 def update_all(dt: float, all_ships, *, host=None, ship_instances=None) -> list[tuple]:
     """Advance every active torpedo by dt.  Returns list of
-    (torpedo, hit_ship, hit_point) tuples that connected this tick.
+    (torpedo, hit_ship, hit_point, hit_normal) tuples that connected this tick.
     Expired torpedoes (TTL or impact) are removed from _active.
 
     `host` and `ship_instances` are forwarded to combat._resolve_hit_point;
     when omitted (headless tests, no renderer), hit_point degrades to the
-    torpedo's post-advance position — matching the pre-project behaviour.
+    torpedo's post-advance position and hit_normal is None — matching the
+    pre-project behaviour. `hit_normal` is the mesh surface normal (a TGPoint3)
+    when the trace succeeds, else None; callers forward it to apply_hit so the
+    persistent damage decal can render (a None normal suppresses the decal).
     """
     from engine.appc.combat import (sphere_hit, _resolve_hit_point)
     from engine.appc.math import TGPoint3
@@ -150,14 +153,14 @@ def update_all(dt: float, all_ships, *, host=None, ship_instances=None) -> list[
                 # to fallback", which is what we want for a stationary tick.
                 aim_unit = (TGPoint3(seg.x / seg_len, seg.y / seg_len, seg.z / seg_len)
                             if seg_len > 1e-9 else None)
-                hit_point, _hit_normal = _resolve_hit_point(
+                hit_point, hit_normal = _resolve_hit_point(
                     host=host, ship_instances=ship_instances, ship=ship,
                     ray_origin=prev_pos,
                     ray_direction=aim_unit,
                     max_dist=seg_len,
                     fallback_point=t._position,
                 )
-                hits.append((t, ship, hit_point))
+                hits.append((t, ship, hit_point, hit_normal))
                 expired.append(t)
                 break
 
