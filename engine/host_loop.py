@@ -2517,7 +2517,7 @@ def run(mission_name: Optional[str] = None,
             elif player is not None:
                 eye, target, up_vec = _compute_camera(
                     view_mode, director,
-                    player=player, dt=TICK_DT)
+                    player=player, dt=_player_dt)
                 # Camera shake — apply to the exterior view. The bridge
                 # first-person camera below gets its own perturb call
                 # against the shared shake state.
