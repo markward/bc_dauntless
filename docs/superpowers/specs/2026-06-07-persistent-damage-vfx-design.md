@@ -1,6 +1,10 @@
 # Persistent Damage VFX — Phased Design
 
-**Status:** drafted, awaiting user review
+**Status:** SUPERSEDED by [`2026-06-08-persistent-damage-decals-design.md`](./2026-06-08-persistent-damage-decals-design.md).
+The UV-space damage-mask approach below failed smoke testing (mirrored UVs painted
+damage on both hull halves; uniform black splotches; a shield-gating wiring bug). It
+is retained only as a record of what not to do. Do not extend this spec — the
+object-space decal design supersedes it in full.
 **Date:** 2026-06-07
 **Author:** Mark Ward (with Claude)
 
