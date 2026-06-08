@@ -2587,6 +2587,12 @@ def run(mission_name: Optional[str] = None,
             import App as _App
             r.set_bridge_wall_time(_App.g_kUtopiaModule.GetGameTime())
 
+            # Age every ship's persistent damage-decal ring on the same game
+            # clock used for decal birth_time (engine.appc.damage_decals).
+            # hasattr-guarded so an older _dauntless_host.so still runs.
+            if hasattr(r, "damage_decals_tick"):
+                r.damage_decals_tick(_App.g_kUtopiaModule.GetGameTime())
+
             backdrops = _aggregate_backdrops(active_set)
             r.set_backdrops(backdrops)
 
