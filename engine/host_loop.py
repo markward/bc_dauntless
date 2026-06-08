@@ -1032,8 +1032,8 @@ def _apply_pause_menu_side_effects(pause: "_PauseMenuController",
     effective visibility has changed since the last call. `h` is the
     bindings module (or fake) exposing cef_execute_javascript and
     set_cursor_locked. `blockers` is an iterable of objects with an
-    is_open() method (today: mission picker + configuration panel);
-    when any is open, the pause-menu must hide regardless of
+    is_open() method (today: mission picker + developer options panel +
+    configuration panel); when any is open, the pause-menu must hide regardless of
     pause.is_open so the blocker isn't occluded.
 
     On close, the view-mode sync latch is invalidated so the next
@@ -2029,6 +2029,7 @@ def run(mission_name: Optional[str] = None,
         # PanelRegistry itself exists.
         # See docs/superpowers/specs/2026-06-02-dev-mission-loader-design.md.
         mission_picker = _NULL_PICKER  # noop until we know dev mode is on
+        developer_options_panel = _NULL_PICKER  # noop until dev mode confirmed
         if dev_mode.is_enabled():
             _picker_registry_cache: list = [None]
             def _get_mission_registry():
@@ -2049,6 +2050,12 @@ def run(mission_name: Optional[str] = None,
             )
             dev_mode.register_dev_pause_menu_entry(
                 "Load Mission…", mission_picker.open,
+            )
+
+            from engine.ui.developer_options_panel import DeveloperOptionsPanel
+            developer_options_panel = DeveloperOptionsPanel()
+            dev_mode.register_dev_pause_menu_entry(
+                "Developer Options…", developer_options_panel.open,
             )
 
         # Configuration panel — production-visible pause-menu modal
@@ -2098,6 +2105,7 @@ def run(mission_name: Optional[str] = None,
         registry.register(configuration_panel)
         if dev_mode.is_enabled():
             registry.register(mission_picker)
+            registry.register(developer_options_panel)
 
         # SDK ShipDisplay factories register against this same registry.
         # In stock BC, Bridge/TacticalMenuHandlers.py:517,714 invokes
@@ -2178,13 +2186,16 @@ def run(mission_name: Optional[str] = None,
             # renderer state (bridge pass enable + cursor lock) and is
             # idempotent — only fires when the mode changed.
             if _h is not None:
-                # ESC priority: mission picker (when open) first, then
-                # configuration panel (when open), otherwise the pause
-                # menu toggle. Both modal blockers close on ESC and
-                # return the user to the pause menu.
+                # ESC priority: mission picker first (dev only), then the
+                # developer options panel (dev only), then the configuration
+                # panel, otherwise the pause menu toggle. All three modal
+                # blockers close on ESC and return the user to the pause menu.
                 if mission_picker.is_open():
                     if _h.key_pressed(_h.keys.KEY_ESCAPE):
                         mission_picker.handle_key_esc()
+                elif developer_options_panel.is_open():
+                    if _h.key_pressed(_h.keys.KEY_ESCAPE):
+                        developer_options_panel.handle_key_esc()
                 elif configuration_panel.is_open():
                     if _h.key_pressed(_h.keys.KEY_ESCAPE):
                         configuration_panel.handle_key_esc()
@@ -2192,14 +2203,16 @@ def run(mission_name: Optional[str] = None,
                     pause.apply(_h)
                 _apply_pause_menu_side_effects(
                     pause, view_mode, _h,
-                    [mission_picker, configuration_panel],
+                    [mission_picker, developer_options_panel, configuration_panel],
                 )
                 if pause.is_open:
-                    # When the configuration panel is open it consumes
-                    # keyboard input — pause-menu navigation would
-                    # otherwise activate rows hidden behind the modal.
+                    # When a settings modal is open it consumes keyboard
+                    # input — pause-menu navigation would otherwise activate
+                    # rows hidden behind the modal.
                     if configuration_panel.is_open():
                         configuration_panel.handle_input(_h)
+                    elif developer_options_panel.is_open():
+                        developer_options_panel.handle_input(_h)
                     elif not mission_picker.is_open():
                         pause_menu.handle_input(_h)
                         _script = pause_menu.render_payload()
