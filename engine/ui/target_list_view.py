@@ -128,6 +128,10 @@ class TargetListView(Panel):
         # preserves the user's open accordions until something
         # invalidates explicitly.
         self._expanded_ships: set = set()
+        # Keys are "<ship-name>/<subsystem-name>" for subsystem (aggregator)
+        # rows whose child leaves are expanded in the panel (2nd accordion
+        # level). Persists across re-renders like _expanded_ships.
+        self._expanded_subsystems: set = set()
 
     def _snapshot(self):
         """Build a hashable snapshot of the rendered state."""
@@ -154,11 +158,17 @@ class TargetListView(Panel):
                     # by construction in STSubsystemMenu.RebuildShipMenu, so
                     # the label is a valid lookup key for the name-based
                     # _resolve_subsystem_by_name path inside _query_subsystem_condition.
-                    subsystems = tuple(
-                        (sub_child.GetLabel(),
-                         _query_subsystem_condition(ship, sub_child.GetLabel()))
-                        for sub_child in child._children
-                    )
+                    ship_name_for_keys = ship.GetName()
+                    def _sub_entry(sub_child):
+                        label = sub_child.GetLabel()
+                        cond = _query_subsystem_condition(ship, label)
+                        kids = tuple(
+                            (gc.GetLabel(), _query_subsystem_condition(ship, gc.GetLabel()))
+                            for gc in getattr(sub_child, "_children", ())
+                        )
+                        expanded = (ship_name_for_keys + "/" + label) in self._expanded_subsystems
+                        return (label, cond, kids, expanded)
+                    subsystems = tuple(_sub_entry(sub_child) for sub_child in child._children)
                     name = ship.GetName()
                     rows.append((
                         name,
@@ -198,8 +208,13 @@ class TargetListView(Panel):
                     "affiliation": aff,
                     "hull": hull,
                     "shields": shields,
-                    "subsystems": [{"name": s_name, "condition": s_cond}
-                                   for (s_name, s_cond) in subs],
+                    "subsystems": [
+                        {"name": s_name, "condition": s_cond,
+                         "expanded": s_expanded,
+                         "children": [{"name": c_name, "condition": c_cond}
+                                      for (c_name, c_cond) in s_kids]}
+                        for (s_name, s_cond, s_kids, s_expanded) in subs
+                    ],
                     "expanded": expanded,
                 }
                 for (name, aff, is_vis, hull, shields, subs, expanded) in rows
@@ -207,6 +222,16 @@ class TargetListView(Panel):
             ],
         }
         return "setTargetList(" + json.dumps(payload) + ");"
+
+    def dispatch_event_subsystem_toggle(self, ship_name: str, subsystem_name: str) -> bool:
+        """Toggle the expansion of a subsystem (aggregator) row. Pure UI
+        state, no target change."""
+        key = ship_name + "/" + subsystem_name
+        if key in self._expanded_subsystems:
+            self._expanded_subsystems.discard(key)
+        else:
+            self._expanded_subsystems.add(key)
+        return True
 
     def dispatch_event(self, action: str) -> bool:
         """Action format:
@@ -234,6 +259,11 @@ class TargetListView(Panel):
             else:
                 self._expanded_ships.add(ship_name)
             return True
+
+        # Subsystem-level accordion toggle: "<subsystem>/__toggle__".
+        if suffix is not None and suffix.endswith("/" + self._TOGGLE_ACTION):
+            subsystem_name = suffix[: -(len(self._TOGGLE_ACTION) + 1)]
+            return self.dispatch_event_subsystem_toggle(ship_name, subsystem_name)
 
         player.SetTarget(ship_name)
 
