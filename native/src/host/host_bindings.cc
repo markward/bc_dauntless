@@ -1079,9 +1079,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                  std::get<1>(world_normal),
                                  std::get<2>(world_normal));
               const glm::vec3 pb = scenegraph::world_to_body(inst->world, pw);
-              glm::vec3 nb = scenegraph::world_dir_to_body(inst->world, nw);
-              const float len = glm::length(nb);
-              if (len > 1e-6f) nb /= len;
+              const glm::vec3 nb = scenegraph::world_dir_to_body(inst->world, nw);
               return py::make_tuple(
                   py::make_tuple(pb.x, pb.y, pb.z),
                   py::make_tuple(nb.x, nb.y, nb.z));

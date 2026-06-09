@@ -53,9 +53,14 @@ def test_world_to_body_round_trips_under_translation():
         # With identity rotation and unit scale, body point = world - translation.
         assert body_pt[0] == pytest.approx(10.0, abs=1e-4)
         assert body_pt[1] == pytest.approx(0.0, abs=1e-4)
+        assert body_pt[2] == pytest.approx(0.0, abs=1e-4)
         # Direction is translation-invariant and length-normalised.
         n = math.sqrt(sum(c * c for c in body_nrm))
         assert n == pytest.approx(1.0, abs=1e-4)
+        # With identity rotation, world (1,0,0) maps to body (1,0,0).
+        assert body_nrm[0] == pytest.approx(1.0, abs=1e-4)
+        assert body_nrm[1] == pytest.approx(0.0, abs=1e-4)
+        assert body_nrm[2] == pytest.approx(0.0, abs=1e-4)
     finally:
         _host.shutdown()
 
