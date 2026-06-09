@@ -769,8 +769,17 @@ class ShipSubsystem(TGEventHandlerObject):
     def GetTextureSpeed(self) -> float:       return self._texture_speed
 
     def GetWorldLocation(self) -> TGPoint3:
-        if self._parent_ship is not None:
-            return subsystem_world_position(self, self._parent_ship)
+        # Direct attachment sets _parent_ship; child subsystems (pods/nacelles
+        # added via AddChildSubsystem) only have _parent_subsystem, so climb the
+        # chain to the ship. Without this, off-centre pods returned the bare
+        # local mount near the origin — weapon aim at a locked nacelle fired
+        # well off screen even though the reticle (which passes the ship
+        # explicitly) located it correctly.
+        ship = self._parent_ship
+        if ship is None:
+            ship = self._climb_to_ship()
+        if ship is not None:
+            return subsystem_world_position(self, ship)
         return self.GetPositionTG()
 
     def GetDamagePoint(self) -> TGPoint3:

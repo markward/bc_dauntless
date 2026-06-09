@@ -38,6 +38,39 @@ def test_subsystem_world_location_rotates_offset():
     assert abs(w.x - w2.x) < 1e-9 and abs(w.y - w2.y) < 1e-9 and abs(w.z - w2.z) < 1e-9
 
 
+def test_nested_subsystem_world_location_climbs_to_ship():
+    """A child subsystem (pod/nacelle added via AddChildSubsystem) has
+    _parent_ship == None — only _parent_subsystem is set. GetWorldLocation
+    must climb the parent-subsystem chain to the ship so off-centre pods
+    resolve to a real world point, not the bare local mount near the origin
+    (the latter put weapon aim well off screen for subsystem-locked fire)."""
+    import math
+    from engine.appc.math import TGPoint3, TGMatrix3
+    from engine.appc.subsystems import ShipSubsystem
+
+    class _FakeShip:
+        def __init__(self, loc, rot):
+            self._loc, self._rot = loc, rot
+        def GetWorldLocation(self):  return self._loc
+        def GetWorldRotation(self):  return self._rot
+
+    R = TGMatrix3(); R.MakeZRotation(math.pi / 2.0)
+    ship = _FakeShip(TGPoint3(100.0, 0.0, 0.0), R)
+
+    parent = ShipSubsystem("Engines")
+    parent.SetParentShip(ship)                  # directly attached to the ship
+    pod = ShipSubsystem("Port Warp")
+    pod._position = TGPoint3(0.0, 10.0, 0.0)    # +10 along ship local Y
+    parent.AddChildSubsystem(pod)               # sets pod._parent_subsystem only
+
+    assert pod._parent_ship is None             # precondition: nested, no direct ship
+    w = pod.GetWorldLocation()
+    # R·(0,10,0) for +90° Z = (-10, 0, 0); plus ship loc (100,0,0) = (90, 0, 0).
+    assert abs(w.x - 90.0) < 1e-5
+    assert abs(w.y -  0.0) < 1e-5
+    assert abs(w.z -  0.0) < 1e-5
+
+
 def test_subsystem_class_hierarchy():
     assert issubclass(TorpedoSystem, WeaponSystem)
     assert issubclass(PhaserSystem, WeaponSystem)
