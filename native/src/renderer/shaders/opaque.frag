@@ -64,13 +64,14 @@ const float FLICKER_DURATION  = 0.5;    // seconds (game time)
 const float STUTTER_GAIN      = 1.6;    // peak signed swing of the glow multiplier
 const float FLICKER_TIGHTNESS = 4.0;    // radial falloff (normalised r)
 const float STUTTER_FREQ      = 60.0;   // base oscillation rate; ~8-12 flickers / window
+const float FLICKER_MAX = 1.0 + STUTTER_GAIN;   // cap multi-decal glow pile-up (~2.6x); single-hit peak unaffected
 
 float stutter(float age) {
     // Deterministic; all fragments of one decal share `age`, so the whole
     // patch flickers together (electrical-disruption read). Mixes two sines
     // for irregularity; result in [-1, 1].
     float s1 = sin(age * STUTTER_FREQ);
-    float s2 = sin(age * STUTTER_FREQ * 2.37 + 1.7);
+    float s2 = sin(age * STUTTER_FREQ * 2.37 + 1.7);  // 2.37 = irrational-ish freq ratio for decoherence; 1.7 = phase offset
     return clamp(0.6 * s1 + 0.4 * s2, -1.0, 1.0);
 }
 
@@ -163,11 +164,10 @@ void apply_damage_decals(vec3 p_body, vec3 n_body,
             }
             // Power-disruption flicker: modulate the ship's own glow map for
             // ~500ms. Reuses wn (normal-aware) + the decal's normalized radius r.
-            float fl_age = u_decal_time - birth;
-            if (fl_age >= 0.0 && fl_age < FLICKER_DURATION) {
-                float env  = 1.0 - (fl_age / FLICKER_DURATION);
+            if (age >= 0.0 && age < FLICKER_DURATION) {  // >= 0: fire immediately at the birth frame (electrical jolt)
+                float env  = 1.0 - (age / FLICKER_DURATION);
                 float fall = exp(-r * r * FLICKER_TIGHTNESS);
-                glow_flicker += STUTTER_GAIN * env * stutter(fl_age) * fall * wn;
+                glow_flicker += STUTTER_GAIN * env * stutter(age) * fall * wn;
             }
         }
     }
@@ -206,7 +206,7 @@ void main() {
     }
 
     vec4 glow = texture(u_glow_map, v_uv);
-    float gf = max(glow_flicker, 0.0);
+    float gf = clamp(glow_flicker, 0.0, FLICKER_MAX);
     vec3 spec = (u_specular_enabled != 0)
         ? spec_acc * u_specular_color * texture(u_specular_map, v_uv).rgb
         : vec3(0.0);
