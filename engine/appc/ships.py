@@ -888,13 +888,11 @@ class ShipClass(DamageableObject):
         # warp).  BC uses no dedicated engine-leaf class — pods are plain
         # ShipSubsystems (sdk/.../App.py declares EngineProperty but no
         # EngineSubsystem).  Idempotent: skip a parent already seeded with
-        # children on a prior run.
+        # children on a prior run.  A scrubbed (None) aggregator means the
+        # hardpoint registered no powered aggregator property; pods are then
+        # dropped rather than fabricating a zero-speed engine.
         from engine.appc.properties import EngineProperty
-        from engine.appc.subsystems import (
-            ShipSubsystem as _ShipSubsystem,
-            ImpulseEngineSubsystem as _ImpulseEngineSubsystem,
-            WarpEngineSubsystem as _WarpEngineSubsystem,
-        )
+        from engine.appc.subsystems import ShipSubsystem as _ShipSubsystem
         _engine_parent_for = {
             EngineProperty.EP_IMPULSE: self._impulse_engine_subsystem,
             EngineProperty.EP_WARP:    self._warp_engine_subsystem,
@@ -906,19 +904,8 @@ class ShipClass(DamageableObject):
         for prop in self.GetPropertySet().GetPropertyList():
             if type(prop) is not EngineProperty:
                 continue
-            etype = prop.GetEngineType()
-            parent = _engine_parent_for.get(etype)
-            # If the aggregator was scrubbed by Pass 3 (no matching powered
-            # property registered), lazily recreate it so pods have a home.
-            if parent is None:
-                if etype == EngineProperty.EP_IMPULSE:
-                    parent = _ImpulseEngineSubsystem("Impulse Engines")
-                    self.SetImpulseEngineSubsystem(parent)
-                else:
-                    parent = _WarpEngineSubsystem("Warp Engines")
-                    self.SetWarpEngineSubsystem(parent)
-                _engine_parent_for[etype] = parent
-            if id(parent) in _engine_parents_seeded:
+            parent = _engine_parent_for.get(prop.GetEngineType())
+            if parent is None or id(parent) in _engine_parents_seeded:
                 continue
             pod = _ShipSubsystem(prop.GetName() or "")
             pod.SetProperty(prop)
