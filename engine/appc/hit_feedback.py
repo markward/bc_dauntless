@@ -170,7 +170,29 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
                 )
     else:
         # HULL or CRITICAL — hit_vfx.spawn handles both, filtered by severity.
-        hit_vfx.spawn(point, normal=normal, severity=severity)
+        # Spark policy + hull anchor (sparks are independent of decals).
+        spark_count, weapon_kind = spark_params(
+            weapon_type=weapon_type, severity=severity,
+            absorbed_hull=absorbed_hull)
+        body_point = body_normal = None
+        instance_id = None
+        if (spark_count > 0 and host is not None and ship_instances is not None
+                and normal is not None and hasattr(host, "world_to_body")):
+            instance_id = ship_instances.get(ship)
+            if instance_id is not None:
+                conv = host.world_to_body(
+                    instance_id=instance_id,
+                    world_point=(point.x, point.y, point.z),
+                    world_normal=(normal.x, normal.y, normal.z))
+                if conv is not None:
+                    body_point, body_normal = conv
+                else:
+                    instance_id = None  # stale id; render flash only, no sparks
+        hit_vfx.spawn(
+            point, normal=normal, severity=severity,
+            instance_id=instance_id, body_point=body_point,
+            body_normal=body_normal, weapon_kind=weapon_kind,
+            spark_count=(spark_count if body_point is not None else 0))
 
     # 2. Audio — edge-triggered per (ship, severity). Plays once at
     # the start of a contiguous burst; subsequent ticks while the same

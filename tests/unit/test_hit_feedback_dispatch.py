@@ -475,3 +475,59 @@ def test_audio_continuous_dispatch_at_60hz_plays_once(spy, monkeypatch):
 
     assert len(spy["audio"]) == 1, \
         f"continuous fire should play once, got {len(spy['audio'])}"
+
+
+# ── Spark burst wiring ─────────────────────────────────────────────────────
+
+def test_heavy_hull_hit_spawns_sparks_with_body_anchor():
+    """A torpedo hit exceeding SPARK_HULL_THRESHOLD should populate
+    instance_id, body_point, and weapon_kind in the hit_vfx descriptor."""
+    from engine.appc.hit_feedback import SPARK_HULL_THRESHOLD
+
+    class _FakeHostWithBodyConv:
+        def world_to_body(self, *, instance_id, world_point, world_normal):
+            return ((1.0, 2.0, 3.0), (0.0, 0.0, 1.0))
+
+    hull = _HullMarker()
+    ship = _Ship(hull)
+    ship_instances = {ship: 5}
+    point = TGPoint3(10.0, 0.0, 0.0)
+    normal = TGPoint3(0.0, 0.0, 1.0)
+
+    hit_feedback.dispatch(
+        ship=ship, source=None, point=point, normal=normal,
+        damage=200.0, subsystem=hull,
+        absorbed_shields=0.0, absorbed_subsystem=0.0,
+        absorbed_hull=SPARK_HULL_THRESHOLD + 50.0, sub_transition=None,
+        host=_FakeHostWithBodyConv(), ship_instances=ship_instances,
+        weapon_type="torpedo", radius=5.0)
+
+    snap = hit_vfx.snapshot()
+    assert len(snap) == 1
+    e = snap[0]
+    assert e["spark_count"] > 0
+    assert e["instance_id"] == 5
+    assert e["body_point"] == (1.0, 2.0, 3.0)
+    assert e["weapon_kind"] == hit_feedback.SPARK_KIND_TORPEDO
+
+
+def test_light_hull_hit_spawns_no_sparks():
+    """A hit below SPARK_HULL_THRESHOLD should produce spark_count == 0."""
+    from engine.appc.hit_feedback import SPARK_HULL_THRESHOLD
+
+    hull = _HullMarker()
+    ship = _Ship(hull)
+    point = TGPoint3(0.0, 0.0, 0.0)
+    normal = TGPoint3(0.0, 0.0, 1.0)
+
+    hit_feedback.dispatch(
+        ship=ship, source=None, point=point, normal=normal,
+        damage=5.0, subsystem=hull,
+        absorbed_shields=0.0, absorbed_subsystem=0.0,
+        absorbed_hull=SPARK_HULL_THRESHOLD - 1.0, sub_transition=None,
+        host=None, ship_instances=None, weapon_type="phaser", radius=2.0)
+
+    snap = hit_vfx.snapshot()
+    assert len(snap) == 1
+    e = snap[0]
+    assert e["spark_count"] == 0
