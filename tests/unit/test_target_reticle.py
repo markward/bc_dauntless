@@ -101,3 +101,19 @@ def test_build_reticle_subtarget_agrees_with_aim_point():
     assert abs(r.subtarget_pos[0] - a.x) < 1e-9
     assert abs(r.subtarget_pos[1] - a.y) < 1e-9
     assert abs(r.subtarget_pos[2] - a.z) < 1e-9
+
+
+def test_bar_alignment_fore_abeam_aft():
+    from engine.appc.math import TGPoint3, TGMatrix3
+
+    R = TGMatrix3(); R.MakeIdentity()   # player forward = +Y (GetCol(1))
+    # Target dead ahead (+Y) -> alignment ~ +1.
+    p = _ship(TGPoint3(0, 0, 0), R)
+    tgt = _ship(TGPoint3(0, 100, 0), _identity()); p._t = tgt
+    assert build_target_reticle(p).bar_alignment > 0.99
+    # Target abeam (+X) -> alignment ~ 0.
+    tgt2 = _ship(TGPoint3(100, 0, 0), _identity()); p._t = tgt2
+    assert abs(build_target_reticle(p).bar_alignment) < 0.01
+    # Target dead astern (-Y) -> alignment ~ -1.
+    tgt3 = _ship(TGPoint3(0, -100, 0), _identity()); p._t = tgt3
+    assert build_target_reticle(p).bar_alignment < -0.99
