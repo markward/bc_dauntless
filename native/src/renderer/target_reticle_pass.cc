@@ -23,7 +23,7 @@ constexpr const char* kCrosshairFile = "game/data/subtarget.tga";
 
 // Constant on-screen size (pixels) for each corner glyph and the crosshair.
 constexpr float kCornerSizePx    = 24.0f;
-constexpr float kCrosshairSizePx = 20.0f;
+constexpr float kCrosshairSizePx = 40.0f;
 
 std::unique_ptr<assets::Texture> load_tga(const char* path) {
     std::ifstream in(path, std::ios::binary);
