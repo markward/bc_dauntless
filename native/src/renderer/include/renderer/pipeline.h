@@ -20,8 +20,10 @@ public:
     Shader& lens_flare_shader() noexcept { return *lens_flare_; }
     Shader& torpedo_shader() noexcept    { return *torpedo_; }
     Shader& hit_vfx_shader() noexcept    { return *hit_vfx_; }
-    Shader& phaser_shader() noexcept     { return *phaser_; }
-    Shader& bridge_shader() noexcept     { return *bridge_; }
+    Shader& phaser_shader() noexcept          { return *phaser_; }
+    Shader& hologram_shader() noexcept        { return *hologram_; }
+    Shader& subsystem_pin_shader() noexcept   { return *subsystem_pin_; }
+    Shader& bridge_shader() noexcept          { return *bridge_; }
     Shader& lightmap_shader() noexcept   { return *lightmap_; }
 
 private:
@@ -35,6 +37,8 @@ private:
     std::unique_ptr<Shader> torpedo_;
     std::unique_ptr<Shader> hit_vfx_;
     std::unique_ptr<Shader> phaser_;
+    std::unique_ptr<Shader> hologram_;
+    std::unique_ptr<Shader> subsystem_pin_;
     std::unique_ptr<Shader> bridge_;
     std::unique_ptr<Shader> lightmap_;
 };

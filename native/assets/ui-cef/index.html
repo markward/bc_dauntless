@@ -10,6 +10,7 @@
     <link rel="stylesheet" href="panels/ship_display/ship_display.css">
     <link rel="stylesheet" href="panels/weapons_display/weapons_display.css">
     <link rel="stylesheet" href="css/configuration_panel.css">
+    <link rel="stylesheet" href="css/ship_property_viewer.css">
 </head>
 <body>
     <!-- Pause menu overlay.
@@ -86,6 +87,23 @@
         </div>
       </div>
     </section>
+
+    <!-- Ship Property Viewer overlay (developer-only).
+         setShipPropertyViewer({visible, pin_count, selected}) drives state.
+         The overlay is transparent full-viewport; only the titlebar and
+         popover are opaque chrome. pointer-events:none on #spv-root lets
+         GL orbit-drag reach the host; the titlebar/popover restore auto.
+         Close button fires dauntlessEvent('ship-property-viewer/cancel').
+         The .dev-only class keeps it hidden outside --developer.
+         Spec: docs/superpowers/specs/2026-06-08-ship-property-viewer-design.md -->
+    <div id="spv-root" class="spv-root dev-only">
+      <div class="spv-titlebar">
+        <span class="spv-title">Ship Property Viewer</span>
+        <span id="spv-pincount" class="spv-pincount"></span>
+        <button class="spv-close" onclick="shipPropertyViewerClose()">&#x2715;</button>
+      </div>
+      <div id="spv-popover" class="spv-popover"></div>
+    </div>
 
     <!-- Tactical-view layout zones. All panels are flex children of one
          of these two containers; no panel uses absolute/fixed positioning
@@ -243,5 +261,6 @@
     <script src="js/sdk_mirror.js"></script>
     <script src="js/configuration_panel.js"></script>
     <script src="js/developer_options.js"></script>
+    <script src="js/ship_property_viewer.js"></script>
 </body>
 </html>

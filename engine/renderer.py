@@ -293,3 +293,52 @@ def cef_toggle_devtools() -> None:
 def cef_reload() -> None:
     """Reload the overlay browser's current document."""
     _h.cef_reload()
+
+
+# ── Ship Property Viewer ─────────────────────────────────────────────────────
+
+def set_hologram_ship(instance_id: InstanceId,
+                      color=(0.30, 0.62, 1.0),
+                      opacity_facing: float = 0.20,
+                      opacity_grazing: float = 0.70) -> None:
+    """Draw the given render instance as a translucent Fresnel hologram.
+
+    instance_id is the InstanceId of the ship's render instance.
+    color is the RGB tint (r, g, b) in [0, 1].
+    opacity_facing and opacity_grazing control the Fresnel ramp endpoints:
+    faces aligned with the camera get opacity_facing (0.20 = 80% transparent),
+    faces perpendicular get opacity_grazing (0.70 = 30% transparent).
+    """
+    _h.set_hologram_ship(instance_id, tuple(color),
+                         float(opacity_facing), float(opacity_grazing))
+
+
+def clear_hologram_ship() -> None:
+    """Deactivate the hologram overlay. Takes effect next frame()."""
+    _h.clear_hologram_ship()
+
+
+def set_subsystem_pins(pins: list) -> None:
+    """Set the subsystem pin billboard list.
+
+    pins: list of (world_pos:(x, y, z), icon_id:int, highlighted:bool).
+    Applied each frame().
+    """
+    _h.set_subsystem_pins(pins)
+
+
+def clear_subsystem_pins() -> None:
+    """Clear all subsystem pin billboards. Takes effect next frame()."""
+    _h.clear_subsystem_pins()
+
+
+def set_hologram_only_mode(enabled: bool, bg=(0.0, 0.0, 0.0)) -> None:
+    """When enabled, frame() clears to bg (r, g, b) and skips the space scene
+    and bridge pass, drawing only the hologram + subsystem pins."""
+    _h.set_hologram_only_mode(bool(enabled), tuple(bg))
+
+
+def get_instance_bounds(instance_id: InstanceId):
+    """World-space bounding sphere of an instance's model as
+    (cx, cy, cz, radius), or None if the instance/model is not resolvable."""
+    return _h.get_instance_bounds(instance_id)

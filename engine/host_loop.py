@@ -1033,7 +1033,7 @@ def _apply_pause_menu_side_effects(pause: "_PauseMenuController",
     bindings module (or fake) exposing cef_execute_javascript and
     set_cursor_locked. `blockers` is an iterable of objects with an
     is_open() method (today: mission picker + developer options panel +
-    configuration panel); when any is open, the pause-menu must hide regardless of
+    ship property viewer + configuration panel); when any is open, the pause-menu must hide regardless of
     pause.is_open so the blocker isn't occluded.
 
     On close, the view-mode sync latch is invalidated so the next
@@ -2030,6 +2030,7 @@ def run(mission_name: Optional[str] = None,
         # See docs/superpowers/specs/2026-06-02-dev-mission-loader-design.md.
         mission_picker = _NULL_PICKER  # noop until we know dev mode is on
         developer_options_panel = _NULL_PICKER  # noop until dev mode confirmed
+        ship_property_viewer = _NULL_PICKER  # noop until dev mode confirmed
         if dev_mode.is_enabled():
             _picker_registry_cache: list = [None]
             def _get_mission_registry():
@@ -2056,6 +2057,23 @@ def run(mission_name: Optional[str] = None,
             developer_options_panel = DeveloperOptionsPanel()
             dev_mode.register_dev_pause_menu_entry(
                 "Developer Options…", developer_options_panel.open,
+            )
+
+            # Ship Property Viewer — dev-only orbiting hologram inspector.
+            # ship_getter returns the live player ship (same object the
+            # render block maps to a render InstanceId via
+            # session.ship_instances), or None between missions.
+            from engine.ui.ship_property_viewer_panel import (
+                ShipPropertyViewerPanel,
+            )
+            def _spv_player():
+                sess = controller.session
+                return sess.player if sess is not None else None
+            ship_property_viewer = ShipPropertyViewerPanel(
+                ship_getter=_spv_player,
+            )
+            dev_mode.register_dev_pause_menu_entry(
+                "Ship Property Viewer", ship_property_viewer.open,
             )
 
         # Configuration panel — production-visible pause-menu modal
@@ -2106,6 +2124,7 @@ def run(mission_name: Optional[str] = None,
         if dev_mode.is_enabled():
             registry.register(mission_picker)
             registry.register(developer_options_panel)
+            registry.register(ship_property_viewer)
 
         # SDK ShipDisplay factories register against this same registry.
         # In stock BC, Bridge/TacticalMenuHandlers.py:517,714 invokes
@@ -2180,6 +2199,14 @@ def run(mission_name: Optional[str] = None,
         from engine.core.transform_buffer import TransformBuffer
         _xform_buf = TransformBuffer()
 
+        # Ship Property Viewer (dev-only) transition state. _spv_hidden_iid
+        # remembers which solid hull was hidden so it can be restored, and
+        # _spv_was_open detects the open→closed edge so restore/clear runs
+        # exactly once. Both stay None/False when the viewer is never opened,
+        # so the render path is byte-identical in production.
+        _spv_hidden_iid = None
+        _spv_was_open = False
+
         while not r.should_close():
             # --- Input dispatch + modality (ESC always live; SPACE only when unpaused) ---
             # _apply_view_mode_side_effects mirrors the SPACE flag into
@@ -2187,15 +2214,19 @@ def run(mission_name: Optional[str] = None,
             # idempotent — only fires when the mode changed.
             if _h is not None:
                 # ESC priority: mission picker first (dev only), then the
-                # developer options panel (dev only), then the configuration
-                # panel, otherwise the pause menu toggle. All three modal
-                # blockers close on ESC and return the user to the pause menu.
+                # developer options panel (dev only), then the ship property
+                # viewer (dev only), then the configuration panel, otherwise
+                # the pause menu toggle. All four modal blockers close on ESC
+                # and return the user to the pause menu.
                 if mission_picker.is_open():
                     if _h.key_pressed(_h.keys.KEY_ESCAPE):
                         mission_picker.handle_key_esc()
                 elif developer_options_panel.is_open():
                     if _h.key_pressed(_h.keys.KEY_ESCAPE):
                         developer_options_panel.handle_key_esc()
+                elif ship_property_viewer.is_open():
+                    if _h.key_pressed(_h.keys.KEY_ESCAPE):
+                        ship_property_viewer.handle_key_esc()
                 elif configuration_panel.is_open():
                     if _h.key_pressed(_h.keys.KEY_ESCAPE):
                         configuration_panel.handle_key_esc()
@@ -2203,7 +2234,8 @@ def run(mission_name: Optional[str] = None,
                     pause.apply(_h)
                 _apply_pause_menu_side_effects(
                     pause, view_mode, _h,
-                    [mission_picker, developer_options_panel, configuration_panel],
+                    [mission_picker, developer_options_panel,
+                     ship_property_viewer, configuration_panel],
                 )
                 if pause.is_open:
                     # When a settings modal is open it consumes keyboard
@@ -2213,6 +2245,8 @@ def run(mission_name: Optional[str] = None,
                         configuration_panel.handle_input(_h)
                     elif developer_options_panel.is_open():
                         developer_options_panel.handle_input(_h)
+                    elif ship_property_viewer.is_open():
+                        ship_property_viewer.handle_input(_h)
                     elif not mission_picker.is_open():
                         pause_menu.handle_input(_h)
                         _script = pause_menu.render_payload()
@@ -2268,11 +2302,16 @@ def run(mission_name: Optional[str] = None,
                 # Target list only renders in the exterior tactical view.
                 # SPACE toggles view_mode.is_exterior ↔ view_mode.is_bridge.
                 # The setter is idempotent so writing every tick is cheap.
-                target_list_view.visible    = view_mode.is_exterior
-                sensors_panel.visible       = view_mode.is_exterior
-                ship_display_player.visible = view_mode.is_exterior
-                ship_display_target.visible = view_mode.is_exterior
-                weapons_display.visible     = view_mode.is_exterior
+                # The Ship Property Viewer takes over the whole frame, so hide
+                # the tactical panels while it's open (as bridge view does).
+                # _NULL_PICKER.is_open() is False, so this is a no-op in
+                # production / non-dev.
+                _tac_visible = view_mode.is_exterior and not ship_property_viewer.is_open()
+                target_list_view.visible    = _tac_visible
+                sensors_panel.visible       = _tac_visible
+                ship_display_player.visible = _tac_visible
+                ship_display_target.visible = _tac_visible
+                weapons_display.visible     = _tac_visible
 
                 # Sensor-visibility update — flip per-row IsVisible
                 # based on range from the player. TargetListView
@@ -2603,9 +2642,60 @@ def run(mission_name: Optional[str] = None,
                 eye = (0.0, 30.0, 200.0)
                 target = (0.0, 0.0, 0.0)
                 up_vec = (0.0, 1.0, 0.0)
-            r.set_camera(eye=eye, target=target, up=up_vec,
-                         fov_y_rad=director.fov_y_rad,
-                         near=1.0, far=5000.0)
+
+            # --- Ship Property Viewer override (dev-only) ---
+            # When the viewer is open the world is already frozen (the
+            # pause menu zeroes frame_dt → no sim ticks), so we just
+            # repoint the camera, hide the solid hull, draw the hologram,
+            # and place the subsystem pins. On the open→closed edge we
+            # restore the hull and clear the passes exactly once. None of
+            # this constructs or runs unless --developer opened the panel,
+            # so production rendering is untouched.
+            _spv_open = (dev_mode.is_enabled()
+                         and ship_property_viewer.is_open()
+                         and ship_property_viewer.camera is not None)
+            if _spv_open:
+                _player_iid_spv = (
+                    session.ship_instances.get(player)
+                    if session is not None else None
+                )
+                # On the open edge, frame the orbit camera to the ship's real
+                # world-space bounding sphere so it fills the view. The
+                # subsystem-centroid fit in open() is only a fallback (it
+                # underestimates the hull extent and leaves the ship small).
+                if not _spv_was_open and _player_iid_spv is not None:
+                    _bounds = r.get_instance_bounds(_player_iid_spv)
+                    if _bounds is not None:
+                        _bx, _by, _bz, _br = _bounds
+                        ship_property_viewer.frame_to_bounds((_bx, _by, _bz), _br)
+                # Take over the frame: solid background, no space scene / bridge.
+                r.set_hologram_only_mode(True, (0.0, 0.0, 0.0))
+                _cam = ship_property_viewer.camera
+                r.set_camera(eye=_cam.eye(), target=_cam.target,
+                             up=_cam.up(), fov_y_rad=_cam.fov_y_rad,
+                             near=_cam.near, far=_cam.far)
+                if _player_iid_spv is not None:
+                    r.set_visible(_player_iid_spv, False)
+                    r.set_hologram_ship(_player_iid_spv)
+                r.set_subsystem_pins([
+                    (d["world_pos"], d["icon_id"],
+                     i == ship_property_viewer.selected_index)
+                    for i, d in enumerate(ship_property_viewer.descriptors())
+                ])
+                _spv_hidden_iid = _player_iid_spv
+            else:
+                if _spv_was_open:
+                    # open → closed: restore + clear once.
+                    if _spv_hidden_iid is not None:
+                        r.set_visible(_spv_hidden_iid, True)
+                    r.clear_hologram_ship()
+                    r.clear_subsystem_pins()
+                    r.set_hologram_only_mode(False, (0.0, 0.0, 0.0))
+                    _spv_hidden_iid = None
+                r.set_camera(eye=eye, target=target, up=up_vec,
+                             fov_y_rad=director.fov_y_rad,
+                             near=1.0, far=5000.0)
+            _spv_was_open = _spv_open
 
             # Audio listener (skipped while paused — silence the rumble).
             if not pause.is_open:
