@@ -20,7 +20,7 @@ namespace {
 
 constexpr const char* kCornerFile    = "game/data/target.tga";
 constexpr const char* kCrosshairFile = "game/data/subtarget.tga";
-constexpr const char* kBarFile   = "game/data/Icons/tilevertline.tga";
+constexpr const char* kBarFile   = "game/data/Icons/tilehorizline.tga";
 constexpr const char* kArrowFile = "game/data/Icons/TargetArrow.tga";
 
 // Constant on-screen size (pixels) for each corner glyph and the crosshair.
@@ -32,7 +32,8 @@ constexpr glm::vec4 kBoxTint      {0.847f, 0.518f, 0.314f, 1.0f};  // orange #d8
 constexpr glm::vec4 kCrosshairTint{1.000f, 0.860f, 0.000f, 1.0f};  // yellow
 constexpr glm::vec4 kBarTint  {1.000f, 0.860f, 0.000f, 1.0f};  // yellow
 constexpr glm::vec4 kArrowTint{0.300f, 0.850f, 0.300f, 1.0f};  // green
-constexpr float kBarWidthPx  = 4.0f;    // on-screen bar line width
+constexpr float kBarWidthPx  = 10.0f;   // on-screen length of each horizontal tick
+constexpr float kBarTilePx   = 6.0f;    // on-screen vertical spacing between ticks
 constexpr float kArrowSizePx = 22.0f;   // on-screen arrow size
 
 // Texture sub-rect (umin, vmin, uextent, vextent). Most elements use the full
@@ -173,12 +174,20 @@ void TargetReticlePass::render(const TargetReticle& reticle,
         const float v = (reticle.bar_alignment < -1.0f) ? -1.0f
                       : (reticle.bar_alignment >  1.0f) ?  1.0f
                       : reticle.bar_alignment;            // arrow height in [-1,1]
+        // Tile the single-line tile vertically so the bar reads as a column of
+        // repeating horizontal ticks: v runs 0..reps and the texture wraps.
+        const float world_per_px = world_for_px(reticle.ship_center, 1.0f);
+        const float bar_px  = (world_per_px > 1e-9f) ? (2.0f * r / world_per_px) : 0.0f;
+        const float bar_reps = (bar_px > kBarTilePx) ? (bar_px / kBarTilePx) : 1.0f;
         for (float side : {-1.0f, 1.0f}) {               // left, right edge
             const glm::vec3 bar_centre = reticle.ship_center + cam_right * (side * r);
-            // Bar: thin, full box height.
+            // Bar: a vertical strip of repeating horizontal ticks.
             glBindTexture(GL_TEXTURE_2D, bar_tex_ ? bar_tex_->id() : 0);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);  // crisp tiled lines
             shader.set_vec4("u_tint",        kBarTint);
-            shader.set_vec4("u_uv_rect",     kFullUvRect);
+            shader.set_vec4("u_uv_rect",     glm::vec4(0.0f, 0.0f, 1.0f, bar_reps));
             shader.set_vec3("u_center_world", bar_centre);
             shader.set_vec2("u_size_world",   glm::vec2(bar_w, 2.0f * r));
             shader.set_vec2("u_uv_flip",      glm::vec2(1.0f, 1.0f));
