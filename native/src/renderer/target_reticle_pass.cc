@@ -35,6 +35,13 @@ constexpr glm::vec4 kArrowTint{0.300f, 0.850f, 0.300f, 1.0f};  // green
 constexpr float kBarWidthPx  = 4.0f;    // on-screen bar line width
 constexpr float kArrowSizePx = 22.0f;   // on-screen arrow size
 
+// Texture sub-rect (umin, vmin, uextent, vextent). Most elements use the full
+// texture; the arrow samples just the centre up-triangle of TargetArrow.tga,
+// a 64x32 three-arrow atlas (left + centre-up + right), to avoid drawing the
+// whole jumbled sheet.
+constexpr glm::vec4 kFullUvRect {0.0f,   0.0f, 1.0f,   1.0f};
+constexpr glm::vec4 kArrowUvRect{0.375f, 0.0f, 0.281f, 0.70f};
+
 std::unique_ptr<assets::Texture> load_tga(const char* path) {
     std::ifstream in(path, std::ios::binary);
     if (!in) {
@@ -137,7 +144,8 @@ void TargetReticlePass::render(const TargetReticle& reticle,
         {-1.0f, -1.0f,  1.0f, -1.0f},   // lower-left  (mirror V)
         { 1.0f, -1.0f, -1.0f, -1.0f},   // lower-right (mirror H+V)
     };
-    shader.set_vec4("u_tint", kBoxTint);
+    shader.set_vec4("u_tint",    kBoxTint);
+    shader.set_vec4("u_uv_rect", kFullUvRect);   // box/crosshair use full texture
     for (const auto& c : kCornerDefs) {
         const glm::vec3 centre = reticle.ship_center
                                + cam_right * (c[0] * r)
@@ -170,15 +178,18 @@ void TargetReticlePass::render(const TargetReticle& reticle,
             // Bar: thin, full box height.
             glBindTexture(GL_TEXTURE_2D, bar_tex_ ? bar_tex_->id() : 0);
             shader.set_vec4("u_tint",        kBarTint);
+            shader.set_vec4("u_uv_rect",     kFullUvRect);
             shader.set_vec3("u_center_world", bar_centre);
             shader.set_vec2("u_size_world",   glm::vec2(bar_w, 2.0f * r));
             shader.set_vec2("u_uv_flip",      glm::vec2(1.0f, 1.0f));
             glDrawArrays(GL_TRIANGLES, 0, 6);
-            // Arrow: constant px, slid to v along the bar height.
+            // Arrow: constant px, slid to v along the bar height. Samples only
+            // the centre up-triangle of the TargetArrow atlas.
             const glm::vec3 arrow_centre = bar_centre + cam_up * (v * r);
             const float asz = world_for_px(arrow_centre, kArrowSizePx);
             glBindTexture(GL_TEXTURE_2D, arrow_tex_ ? arrow_tex_->id() : 0);
             shader.set_vec4("u_tint",        kArrowTint);
+            shader.set_vec4("u_uv_rect",     kArrowUvRect);
             shader.set_vec3("u_center_world", arrow_centre);
             shader.set_vec2("u_size_world",   glm::vec2(asz, asz));
             shader.set_vec2("u_uv_flip",      glm::vec2(1.0f, 1.0f));
