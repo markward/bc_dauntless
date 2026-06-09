@@ -32,14 +32,14 @@ constexpr glm::vec4 kBoxTint      {0.847f, 0.518f, 0.314f, 1.0f};  // orange #d8
 constexpr glm::vec4 kCrosshairTint{1.000f, 0.860f, 0.000f, 1.0f};  // yellow
 constexpr glm::vec4 kBarTint  {1.000f, 0.860f, 0.000f, 1.0f};  // yellow
 constexpr glm::vec4 kArrowTint{0.300f, 0.850f, 0.300f, 1.0f};  // green
-constexpr float kBarWidthPx  = 15.0f;   // on-screen length of each horizontal tick
-constexpr float kBarTilePx   = 6.0f;    // on-screen vertical spacing between ticks
+constexpr float kBarWidthPx  = 10.0f;   // on-screen length of each horizontal tick
+constexpr float kBarTilePx   = 9.0f;    // on-screen vertical spacing between ticks (~150%)
 constexpr float kArrowSizePx = 11.0f;   // on-screen arrow size
 
 // Green convergence indicator: two horizontal lines that sit apart when the
 // target is off-axis and meet (becoming the arrow) when it lines up fore/aft.
-constexpr float kMarkerLenPx   = 28.0f;  // length of each green converging line
-constexpr float kMarkerThickPx = 8.0f;   // thickness of each green converging line
+constexpr float kMarkerLenPx   = 14.0f;  // length of each green converging line
+constexpr float kMarkerThickPx = 8.0f;   // thickness of each green converging line (~200%)
 constexpr float kMarkerSpan    = 0.85f;  // max half-separation as fraction of r
 constexpr float kLinedUpThresh = 0.04f;  // misalign below this -> show the arrow
 
