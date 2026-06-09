@@ -790,9 +790,8 @@ class ShipSubsystem(TGEventHandlerObject):
         return None
 
     def _emitter_world_position(self) -> TGPoint3:
-        """Ship world location + emitter local position rotated into world frame.
-        (Delegates to the shared engine.ui.ship_property_viewer helper.)"""
-        from engine.ui.ship_property_viewer import subsystem_world_position
+        """World position of this emitter mount: ship_loc + R · local.
+        Delegates to the module-level subsystem_world_position helper."""
         return subsystem_world_position(self)
 
     def _strip_emit_position(self, target_world) -> TGPoint3:
