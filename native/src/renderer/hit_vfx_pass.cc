@@ -43,7 +43,10 @@ constexpr glm::vec4 kSparkTint[2] = {
     {0.78f, 0.86f, 1.00f, 1.0f},   // phaser — cool white-blue
     {1.00f, 0.55f, 0.18f, 1.0f},   // torpedo — hot orange
 };
-constexpr float kSparkConeDegByKind[2] = {40.0f, 120.0f};  // phaser tight, torpedo wide
+// Spread tuning per kind, fed to rotate_jitter as a degree-scaled jitter
+// amplitude (NOT a literal half-angle; rotate_jitter adds sin(jitter*k)
+// offsets, so 120 yields ~50 deg max spread). phaser tight, torpedo wide.
+constexpr float kSparkConeDegByKind[2] = {40.0f, 120.0f};
 constexpr float kSparkSpeed     = 4.0f;    // wu/s initial speed
 constexpr float kSparkSizeMult  = 0.6f;    // multiplier on tier peak_size
 constexpr float kSparkDamping   = 1.4f;    // velocity damping rate (SDK SetDamping analogue)
@@ -250,6 +253,7 @@ void HitVfxPass::render(const std::vector<HitVfxDescriptor>& vfx,
         }
     }
 
+    glBindTexture(GL_TEXTURE_2D, 0);
     glBindVertexArray(0);
     glEnable(GL_CULL_FACE);
     glDepthMask(GL_TRUE);
