@@ -10,6 +10,7 @@ def _impulse_pod(name):
     p.SetEngineType(EngineProperty.EP_IMPULSE)
     p.SetMaxCondition(2600.0)
     p.SetTargetable(1)
+    p.SetRadius(0.25)
     return p
 
 
@@ -35,6 +36,8 @@ def test_impulse_pods_attach_to_impulse_aggregator():
     child = imp.GetChildSubsystem("Port Impulse")
     assert isinstance(child, ShipSubsystem)
     assert child.GetMaxCondition() == 2600.0
+    assert child.GetTargetable() == 1
+    assert child.GetRadius() == 0.25
 
 
 def test_warp_pods_attach_to_warp_aggregator():

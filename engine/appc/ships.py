@@ -930,9 +930,17 @@ class ShipClass(DamageableObject):
                 continue
             pod = _ShipSubsystem(prop.GetName() or "")
             pod.SetProperty(prop)
-            mc = prop.GetMaxCondition()
-            if mc is not None:
-                pod.SetMaxCondition(mc)
+            for src, setter in (
+                (prop.GetMaxCondition,       pod.SetMaxCondition),
+                (prop.GetCritical,           pod.SetCritical),
+                (prop.GetTargetable,         pod.SetTargetable),
+                (prop.GetPrimary,            pod.SetPrimary),
+                (prop.GetRadius,             pod.SetRadius),
+                (prop.GetDisabledPercentage, pod.SetDisabledPercentage),
+            ):
+                v = src()
+                if v is not None:
+                    setter(v)
             parent.AddChildSubsystem(pod)
 
         # Pass 6 — object emitters.  ObjectEmitterProperty templates become
