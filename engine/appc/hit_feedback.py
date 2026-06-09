@@ -25,6 +25,39 @@ class Severity(IntEnum):
     CRITICAL = 2
 
 
+# ── Spark-burst policy (transient impact VFX) ──────────────────────────────
+# Sparks fire on a *heavy direct hit* (absorbed_hull magnitude) OR on any
+# CRITICAL subsystem transition. Magnitude-based so a single torpedo clears
+# the bar while per-tick phaser dribble does not. Policy lives here; the
+# renderer only renders the count it is told.
+SPARK_HULL_THRESHOLD = 80.0   # game-units of hull damage in one hit (tune-by-eye)
+
+SPARK_KIND_PHASER = 0    # cool white-blue, fewer, tight cone
+SPARK_KIND_TORPEDO = 1   # hot orange, more, wide cone (also disruptor/default)
+
+_SPARK_BASE_COUNT = {SPARK_KIND_PHASER: 6, SPARK_KIND_TORPEDO: 12}
+_SPARK_CRITICAL_MULT = 1.5
+
+
+def _spark_kind_for(weapon_type) -> int:
+    return SPARK_KIND_PHASER if weapon_type == "phaser" else SPARK_KIND_TORPEDO
+
+
+def spark_params(*, weapon_type, severity, absorbed_hull):
+    """Return (spark_count, spark_kind). count == 0 means no burst.
+
+    Pure function, tested in isolation. `severity` is a Severity.
+    """
+    kind = _spark_kind_for(weapon_type)
+    fire = (absorbed_hull >= SPARK_HULL_THRESHOLD) or (severity == Severity.CRITICAL)
+    if not fire:
+        return 0, kind
+    count = _SPARK_BASE_COUNT[kind]
+    if severity == Severity.CRITICAL:
+        count = int(count * _SPARK_CRITICAL_MULT)
+    return count, kind
+
+
 # Decal-emission throttle. A continuous phaser beam ticks ~60x/s; emitting a
 # decal every tick saturates the 24-slot per-instance ring, so decals are
 # FIFO-evicted within ~0.3 s — before they can cool over T_GLOW. Cap to a few
