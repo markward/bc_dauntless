@@ -11,8 +11,13 @@
     <link rel="stylesheet" href="panels/weapons_display/weapons_display.css">
     <link rel="stylesheet" href="css/configuration_panel.css">
     <link rel="stylesheet" href="css/ship_property_viewer.css">
+    <link rel="stylesheet" href="css/reticle_text.css">
 </head>
 <body>
+    <!-- Target reticle text labels (name above box, range/speed below),
+         positioned by js/reticle_text.js from Python-projected screen coords. -->
+    <div id="reticle-name"></div>
+    <div id="reticle-dist"></div>
     <!-- Pause menu overlay.
          Python toggles visibility via cef_execute_javascript on the
          #pause-menu container, and pushes the row list + focused index
@@ -256,6 +261,7 @@
     <script src="js/pause_menu.js"></script>
     <script src="js/target_list.js"></script>
     <script src="js/sensors.js"></script>
+    <script src="js/reticle_text.js"></script>
     <script src="panels/ship_display/ship_display.js"></script>
     <script src="panels/weapons_display/weapons_display.js"></script>
     <script src="js/sdk_mirror.js"></script>

@@ -20,6 +20,7 @@ import engine.dev_mode as dev_mode
 from engine.dev_mission_picker import MissionPicker
 import engine.missions as _missions
 from engine.ui.target_reticle import build_target_reticle
+from engine.ui.reticle_text import build_reticle_text, _ReticleCam
 
 import math as _math
 
@@ -2686,6 +2687,7 @@ def run(mission_name: Optional[str] = None,
                 # The gameplay target reticle is hidden while the viewer owns
                 # the frame; it returns on close via the else branch below.
                 r.clear_target_reticle()
+                r.clear_reticle_text()
                 _spv_hidden_iid = _player_iid_spv
             else:
                 if _spv_was_open:
@@ -2701,8 +2703,14 @@ def run(mission_name: Optional[str] = None,
                              near=1.0, far=5000.0)
                 if player is not None:
                     r.set_target_reticle(build_target_reticle(player))
+                    _rcam = _ReticleCam(eye=eye, target=target, up=up_vec,
+                                        fov_y_rad=director.fov_y_rad,
+                                        near=1.0, far=5000.0)
+                    r.set_reticle_text(build_reticle_text(
+                        player, _rcam, (_CEF_VIEW_W, _CEF_VIEW_H)))
                 else:
                     r.clear_target_reticle()
+                    r.clear_reticle_text()
             _spv_was_open = _spv_open
 
             # Audio listener (skipped while paused — silence the rumble).

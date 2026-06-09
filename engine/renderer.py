@@ -351,6 +351,26 @@ def clear_target_reticle() -> None:
         fn()
 
 
+def set_reticle_text(payload) -> None:
+    """Push the reticle text overlay state (a build_reticle_text dict) to CEF.
+
+    Reuses the existing cef_execute_javascript binding (present in both the
+    CEF and no-CEF build configs); no-ops silently when unavailable (headless).
+    """
+    import json as _json
+    fn = getattr(_h, "cef_execute_javascript", None)
+    if fn is None:
+        return
+    fn("setReticleText(" + _json.dumps(payload) + ");")
+
+
+def clear_reticle_text() -> None:
+    """Hide the reticle text overlay. Takes effect next CEF pump."""
+    fn = getattr(_h, "cef_execute_javascript", None)
+    if fn is not None:
+        fn('setReticleText({"visible": false});')
+
+
 def set_hologram_only_mode(enabled: bool, bg=(0.0, 0.0, 0.0)) -> None:
     """When enabled, frame() clears to bg (r, g, b) and skips the space scene
     and bridge pass, drawing only the hologram + subsystem pins."""

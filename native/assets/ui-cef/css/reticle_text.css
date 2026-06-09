@@ -1,0 +1,23 @@
+/* Target reticle text labels — non-interactive, anchored at projected points.
+   #reticle-name sits above the box top corner; #reticle-dist below the bottom.
+   Driven by js/reticle_text.js. */
+#reticle-name, #reticle-dist {
+    position: absolute;
+    display: none;
+    pointer-events: none;
+    white-space: nowrap;
+    font-family: "Helvetica Neue", Arial, sans-serif;
+    text-shadow: 0 0 3px #000, 0 0 3px #000;
+    letter-spacing: 0.04em;
+}
+#reticle-name {
+    color: #d88450;             /* chrome orange */
+    font-size: 15px;
+    font-style: italic;
+    transform: translate(-50%, -160%);   /* lift above the box top corner */
+}
+#reticle-dist {
+    color: #ffd;                /* pale */
+    font-size: 13px;
+    transform: translate(-50%, 60%);      /* drop below the box bottom corner */
+}
