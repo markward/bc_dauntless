@@ -43,16 +43,30 @@ def _query_hull_percentage(ship) -> int:
 
 
 def _resolve_subsystem_by_name(ship, name: str):
-    """Walk the ship's subsystems and return the first whose GetName()
-    matches. Returns None if no match — caller treats that as "clear
-    subsystem lock"."""
+    """Walk the ship's subsystems (and their children) and return the first
+    whose GetName() matches. Returns None if no match — caller treats that
+    as 'clear subsystem lock'."""
     import App
+
+    def _search(sub):
+        if hasattr(sub, "GetName") and sub.GetName() == name:
+            return sub
+        n = sub.GetNumChildSubsystems() if hasattr(sub, "GetNumChildSubsystems") else 0
+        for i in range(n):
+            child = sub.GetChildSubsystem(i)
+            if child is not None:
+                hit = _search(child)
+                if hit is not None:
+                    return hit
+        return None
+
     it = ship.StartGetSubsystemMatch(App.CT_SHIP_SUBSYSTEM)
     try:
         sub = ship.GetNextSubsystemMatch(it)
         while sub is not None:
-            if hasattr(sub, "GetName") and sub.GetName() == name:
-                return sub
+            hit = _search(sub)
+            if hit is not None:
+                return hit
             sub = ship.GetNextSubsystemMatch(it)
     finally:
         ship.EndGetSubsystemMatch(it)
