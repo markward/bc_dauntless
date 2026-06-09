@@ -20,6 +20,8 @@ namespace {
 
 constexpr const char* kCornerFile    = "game/data/target.tga";
 constexpr const char* kCrosshairFile = "game/data/subtarget.tga";
+constexpr const char* kBarFile   = "game/data/Icons/tilevertline.tga";
+constexpr const char* kArrowFile = "game/data/Icons/TargetArrow.tga";
 
 // Constant on-screen size (pixels) for each corner glyph and the crosshair.
 constexpr float kCornerSizePx    = 24.0f;
@@ -28,6 +30,10 @@ constexpr float kCrosshairSizePx = 40.0f;
 // Chrome palette (rgb 0..1, a = alpha scale). From the UI config-panel gradient.
 constexpr glm::vec4 kBoxTint      {0.847f, 0.518f, 0.314f, 1.0f};  // orange #d88450
 constexpr glm::vec4 kCrosshairTint{1.000f, 0.860f, 0.000f, 1.0f};  // yellow
+constexpr glm::vec4 kBarTint  {1.000f, 0.860f, 0.000f, 1.0f};  // yellow
+constexpr glm::vec4 kArrowTint{0.300f, 0.850f, 0.300f, 1.0f};  // green
+constexpr float kBarWidthPx  = 4.0f;    // on-screen bar line width
+constexpr float kArrowSizePx = 22.0f;   // on-screen arrow size
 
 std::unique_ptr<assets::Texture> load_tga(const char* path) {
     std::ifstream in(path, std::ios::binary);
@@ -77,6 +83,8 @@ void TargetReticlePass::ensure_textures() {
     textures_loaded_ = true;
     corner_tex_    = load_tga(kCornerFile);
     crosshair_tex_ = load_tga(kCrosshairFile);
+    bar_tex_   = load_tga(kBarFile);
+    arrow_tex_ = load_tga(kArrowFile);
 }
 
 void TargetReticlePass::render(const TargetReticle& reticle,
@@ -149,6 +157,33 @@ void TargetReticlePass::render(const TargetReticle& reticle,
         shader.set_vec2("u_size_world",   glm::vec2(cs, cs));
         shader.set_vec2("u_uv_flip",      glm::vec2(1.0f, 1.0f));
         glDrawArrays(GL_TRIANGLES, 0, 6);
+    }
+
+    // --- Fore/aft side bars (tilevertline) + arrows (TargetArrow) ---
+    if (reticle.has_bars) {
+        const float bar_w = world_for_px(reticle.ship_center, kBarWidthPx);
+        const float v = (reticle.bar_alignment < -1.0f) ? -1.0f
+                      : (reticle.bar_alignment >  1.0f) ?  1.0f
+                      : reticle.bar_alignment;            // arrow height in [-1,1]
+        for (float side : {-1.0f, 1.0f}) {               // left, right edge
+            const glm::vec3 bar_centre = reticle.ship_center + cam_right * (side * r);
+            // Bar: thin, full box height.
+            glBindTexture(GL_TEXTURE_2D, bar_tex_ ? bar_tex_->id() : 0);
+            shader.set_vec4("u_tint",        kBarTint);
+            shader.set_vec3("u_center_world", bar_centre);
+            shader.set_vec2("u_size_world",   glm::vec2(bar_w, 2.0f * r));
+            shader.set_vec2("u_uv_flip",      glm::vec2(1.0f, 1.0f));
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+            // Arrow: constant px, slid to v along the bar height.
+            const glm::vec3 arrow_centre = bar_centre + cam_up * (v * r);
+            const float asz = world_for_px(arrow_centre, kArrowSizePx);
+            glBindTexture(GL_TEXTURE_2D, arrow_tex_ ? arrow_tex_->id() : 0);
+            shader.set_vec4("u_tint",        kArrowTint);
+            shader.set_vec3("u_center_world", arrow_centre);
+            shader.set_vec2("u_size_world",   glm::vec2(asz, asz));
+            shader.set_vec2("u_uv_flip",      glm::vec2(1.0f, 1.0f));
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+        }
     }
 
     glBindVertexArray(0);

@@ -341,7 +341,7 @@ def set_target_reticle(payload) -> None:
     if fn is None:
         return
     fn(payload.visible, payload.ship_center, payload.ship_radius,
-       payload.subtarget_pos)
+       payload.subtarget_pos, payload.bar_alignment)
 
 
 def clear_target_reticle() -> None:
