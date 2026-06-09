@@ -29,6 +29,10 @@ class ShipClass(DamageableObject):
         self._shield_subsystem = None
         self._power_subsystem = None
         self._repair_subsystem = None
+        # ObjectEmitter mount markers (shuttle bay, probe launcher, etc.) — not
+        # subsystems: no condition, not targetable.  Populated by SetupProperties
+        # Pass 6; starts empty.
+        self._object_emitters = []
         # Hull is created lazily by SetupProperties() when a HullProperty is
         # found in the property set (SDK App.py:5382-5383).  Stays None for
         # ships with no hardpoint applied.
@@ -586,6 +590,11 @@ class ShipClass(DamageableObject):
             self._hull,
         ) if s is not None]
 
+    def GetObjectEmitters(self) -> list:
+        """Return the ship's ObjectEmitter mount markers (shuttle/probe/decoy
+        launch points). Not subsystems — viewer-only, never targetable."""
+        return list(self._object_emitters)
+
     def GetSubsystemByProperty(self, prop):
         """Find the live subsystem whose source property is `prop`.
 
@@ -925,6 +934,22 @@ class ShipClass(DamageableObject):
             if mc is not None:
                 pod.SetMaxCondition(mc)
             parent.AddChildSubsystem(pod)
+
+        # Pass 6 — object emitters.  ObjectEmitterProperty templates become
+        # ObjectEmitter mount markers (shuttle bay, probe launcher). Not
+        # subsystems: no condition, not targetable. Idempotent by name.
+        from engine.appc.properties import ObjectEmitterProperty
+        from engine.appc.object_emitter import ObjectEmitter
+        _existing_emitters = {e.GetName() for e in self._object_emitters}
+        for prop in self.GetPropertySet().GetPropertyList():
+            if not isinstance(prop, ObjectEmitterProperty):
+                continue
+            if (prop.GetName() or "") in _existing_emitters:
+                continue
+            emitter = ObjectEmitter(prop)
+            emitter.SetParentShip(self)
+            self._object_emitters.append(emitter)
+            _existing_emitters.add(prop.GetName() or "")
 
     @staticmethod
     def _copy_powered_subsystem_fields(prop, subsystem) -> None:
