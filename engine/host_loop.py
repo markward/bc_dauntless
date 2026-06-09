@@ -2302,11 +2302,16 @@ def run(mission_name: Optional[str] = None,
                 # Target list only renders in the exterior tactical view.
                 # SPACE toggles view_mode.is_exterior ↔ view_mode.is_bridge.
                 # The setter is idempotent so writing every tick is cheap.
-                target_list_view.visible    = view_mode.is_exterior
-                sensors_panel.visible       = view_mode.is_exterior
-                ship_display_player.visible = view_mode.is_exterior
-                ship_display_target.visible = view_mode.is_exterior
-                weapons_display.visible     = view_mode.is_exterior
+                # The Ship Property Viewer takes over the whole frame, so hide
+                # the tactical panels while it's open (as bridge view does).
+                # _NULL_PICKER.is_open() is False, so this is a no-op in
+                # production / non-dev.
+                _tac_visible = view_mode.is_exterior and not ship_property_viewer.is_open()
+                target_list_view.visible    = _tac_visible
+                sensors_panel.visible       = _tac_visible
+                ship_display_player.visible = _tac_visible
+                ship_display_target.visible = _tac_visible
+                weapons_display.visible     = _tac_visible
 
                 # Sensor-visibility update — flip per-row IsVisible
                 # based on range from the player. TargetListView

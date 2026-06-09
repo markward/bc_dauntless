@@ -33,10 +33,10 @@ constexpr const char* kGlyphFiles[10] = {
     "game/data/Icons/Damage/Disruptor.tga",  // 9
 };
 
-// World-space pin size (game units). Pins scale with zoom/distance — a fixed
-// GU radius anchored to the hull — rather than constant screen size.
-// B4 / in-app tuning will adjust if needed.
-constexpr float kPinWorldSize = 0.6f;
+// Constant on-screen pin size (pixels), independent of zoom/distance. The
+// per-pin world size is derived each frame so the billboard projects to this
+// many pixels of viewport height regardless of how far the camera is.
+constexpr float kPinSizePx = 60.0f;
 
 }  // namespace
 
@@ -127,6 +127,18 @@ void SubsystemPinPass::render(const std::vector<SubsystemPin>& pins,
     shader.set_vec3("u_camera_up",    cam_up);
     shader.set_int ("u_glyph",        0);  // texture unit 0
 
+    // Constant on-screen pin size: derive the world size per pin from its
+    // camera distance so the billboard projects to kPinSizePx pixels of
+    // viewport height at any zoom. tan(fov_y/2) = 1/proj[1][1]; viewport
+    // height from the current GL viewport. world = 2·dist·px·tan / height.
+    const glm::mat4 proj = camera.proj_matrix();
+    const float tan_half_fov = (proj[1][1] != 0.0f) ? (1.0f / proj[1][1]) : 1.0f;
+    GLint vp_rect[4] = {0, 0, 0, 0};
+    glGetIntegerv(GL_VIEWPORT, vp_rect);
+    const float viewport_h = (vp_rect[3] > 0) ? static_cast<float>(vp_rect[3]) : 1.0f;
+    const float px_to_world = 2.0f * kPinSizePx * tan_half_fov / viewport_h;
+    const glm::vec3 eye = camera.eye;
+
     // State: blend on, depth-test off (pins always on top), cull off (two-sided).
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -143,7 +155,8 @@ void SubsystemPinPass::render(const std::vector<SubsystemPin>& pins,
         // a valid bind (black/transparent result) — shader disc still shows.
         glBindTexture(GL_TEXTURE_2D, tex ? tex->id() : 0);
 
-        const float size = kPinWorldSize * (p.highlighted ? 1.3f : 1.0f);
+        const float dist = glm::length(p.world_pos - eye);
+        const float size = dist * px_to_world * (p.highlighted ? 1.3f : 1.0f);
         shader.set_vec3 ("u_center_world", p.world_pos);
         shader.set_float("u_size_world",   size);
         glDrawArrays(GL_TRIANGLES, 0, 6);
