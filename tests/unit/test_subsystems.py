@@ -7,6 +7,37 @@ from engine.appc.subsystems import (
 from engine.appc.ships import ShipClass
 
 
+def test_subsystem_world_location_rotates_offset():
+    """GetWorldLocation must rotate the local mount through the ship's
+    world rotation (R · local), not add the raw body-frame offset."""
+    import math
+    from engine.appc.math import TGPoint3, TGMatrix3
+    from engine.appc.subsystems import ShipSubsystem, subsystem_world_position
+
+    class _FakeShip:
+        def __init__(self, loc, rot):
+            self._loc, self._rot = loc, rot
+        def GetWorldLocation(self):  return self._loc
+        def GetWorldRotation(self):  return self._rot
+
+    # 90° yaw about Z: ship-+X local maps to world +Y (column-vector R).
+    R = TGMatrix3(); R.MakeZRotation(math.pi / 2.0)
+    ship = _FakeShip(TGPoint3(100.0, 0.0, 0.0), R)
+
+    sub = ShipSubsystem("Port Nacelle")
+    sub._position = TGPoint3(10.0, 0.0, 0.0)    # +10 along ship local X
+    sub.SetParentShip(ship)
+
+    w = sub.GetWorldLocation()
+    # R·(10,0,0) for a +90° Z rotation = (0, 10, 0); plus ship loc (100,0,0).
+    assert abs(w.x - 100.0) < 1e-5
+    assert abs(w.y -  10.0) < 1e-5
+    assert abs(w.z -   0.0) < 1e-5
+    # The free function must agree with the method.
+    w2 = subsystem_world_position(sub, ship)
+    assert abs(w.x - w2.x) < 1e-9 and abs(w.y - w2.y) < 1e-9 and abs(w.z - w2.z) < 1e-9
+
+
 def test_subsystem_class_hierarchy():
     assert issubclass(TorpedoSystem, WeaponSystem)
     assert issubclass(PhaserSystem, WeaponSystem)
