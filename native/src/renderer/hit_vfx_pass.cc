@@ -37,7 +37,7 @@ constexpr TierConfig kTiers[3] = {
     {7.0f, 0.10f, 0.55f, 0.65f, {1.00f, 0.92f, 0.80f, 1.0f}},  // CRITICAL
 };
 
-// Weapon-distinct spark tints + cone half-angles (spec 3.4). weapon_kind:
+// Weapon-distinct spark tints + spread tuning (spec 3.4). weapon_kind:
 // 0 = phaser (cool white-blue, tight), 1 = torpedo/disruptor (hot orange, wide).
 constexpr glm::vec4 kSparkTint[2] = {
     {0.78f, 0.86f, 1.00f, 1.0f},   // phaser — cool white-blue
