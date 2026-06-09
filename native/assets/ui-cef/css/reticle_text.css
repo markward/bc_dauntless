@@ -13,7 +13,6 @@
 #reticle-name {
     color: #d88450;             /* chrome orange */
     font-size: 15px;
-    font-style: italic;
     transform: translate(-50%, -160%);   /* lift above the box top corner */
 }
 #reticle-dist {
