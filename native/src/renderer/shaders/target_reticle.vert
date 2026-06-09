@@ -7,10 +7,14 @@ uniform vec3  u_camera_up;
 uniform vec2  u_size_world;                // world full-size (x=width, y=height)
 uniform vec2  u_uv_flip;                   // (+1/-1) per axis to mirror art
 uniform vec4  u_uv_rect;                   // (umin, vmin, uextent, vextent); full = (0,0,1,1)
+uniform vec2  u_rot;                        // billboard rotation (cos, sin); none = (1,0)
 out vec2 v_uv;
 void main() {
-    vec3 offset = u_camera_right * (a_corner.x * u_size_world.x)
-                + u_camera_up    * (a_corner.y * u_size_world.y);
+    // Rotate the quad corner (sprite spins); UV stays on the unrotated corner.
+    vec2 rc = vec2(a_corner.x * u_rot.x - a_corner.y * u_rot.y,
+                   a_corner.x * u_rot.y + a_corner.y * u_rot.x);
+    vec3 offset = u_camera_right * (rc.x * u_size_world.x)
+                + u_camera_up    * (rc.y * u_size_world.y);
     // Negate the vertical component: decoded texture is top-left origin.
     vec2 base = vec2(0.5) + vec2(a_corner.x, -a_corner.y) * u_uv_flip;
     // Window into a sub-rect of the texture (atlases like TargetArrow.tga).
