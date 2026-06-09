@@ -119,13 +119,13 @@ void TargetReticlePass::render(const TargetReticle& reticle,
     const float r = reticle.ship_radius;
     const float corner_size = world_for_px(reticle.ship_center, kCornerSizePx);
     // (sign_right, sign_up, uv_flip_x, uv_flip_y) — UL, UR, LL, LR.
-    const float corners[4][4] = {
+    const float kCornerDefs[4][4] = {
         {-1.0f,  1.0f,  1.0f,  1.0f},   // upper-left  (art as authored)
         { 1.0f,  1.0f, -1.0f,  1.0f},   // upper-right (mirror H)
         {-1.0f, -1.0f,  1.0f, -1.0f},   // lower-left  (mirror V)
         { 1.0f, -1.0f, -1.0f, -1.0f},   // lower-right (mirror H+V)
     };
-    for (const auto& c : corners) {
+    for (const auto& c : kCornerDefs) {
         const glm::vec3 centre = reticle.ship_center
                                + cam_right * (c[0] * r)
                                + cam_up    * (c[1] * r);
