@@ -176,6 +176,10 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
             absorbed_hull=absorbed_hull)
         body_point = body_normal = None
         instance_id = None
+        # Bail to flash-only (no sparks) when any of: no host (headless),
+        # no instance map, no surface normal (sphere-entry fallback), the
+        # host can't convert, the ship has no instance, or the id is stale.
+        # Sparks need a hull anchor; the impact-flash billboard fires regardless.
         if (spark_count > 0 and host is not None and ship_instances is not None
                 and normal is not None and hasattr(host, "world_to_body")):
             instance_id = ship_instances.get(ship)
@@ -188,6 +192,9 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
                     body_point, body_normal = conv
                 else:
                     instance_id = None  # stale id; render flash only, no sparks
+        # body_point is None unless the world->body conversion succeeded;
+        # force spark_count=0 in every no-anchor path so the renderer never
+        # anchors a burst at the default (0,0,0) body origin.
         hit_vfx.spawn(
             point, normal=normal, severity=severity,
             instance_id=instance_id, body_point=body_point,
