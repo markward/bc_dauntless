@@ -9,7 +9,9 @@
 // TargetListView.dispatch_event):
 //   target/<ship>                   — set target ship, clear sub-lock
 //   target/<ship>/<subsystem>       — set target + subsystem
+//   target/<ship>/<leaf>            — set target + nested leaf subsystem (recursive resolve)
 //   target/<ship>/__toggle__        — toggle accordion expansion
+//   target/<ship>/<subsystem>/__toggle__ — toggle subsystem (aggregator) accordion
 //
 // Spec: docs/ui_designs/02-tactical-cluster.md
 
