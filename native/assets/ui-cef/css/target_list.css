@@ -164,6 +164,10 @@
 }
 
 .target-list__sub-bullet {
+    flex: 0 0 auto;
+    display: inline-block;
+    width: 14px;
+    text-align: center;
     margin-right: 8px;
     color: white;
 }
@@ -210,12 +214,15 @@
 /* Mirrors .target-list__caret so subsystem carets look consistent
  * with ship-level carets. */
 .target-list__sub-caret {
+    flex: 0 0 auto;
+    display: inline-block;
+    width: 14px;
+    text-align: center;
     margin-right: 8px;
     font-size: 14px;
     line-height: 1;
     color: white;
     cursor: pointer;
-    padding: 0 4px;
 }
 
 /* ── Nested leaf rows ─────────────────────────────────────────────── */
