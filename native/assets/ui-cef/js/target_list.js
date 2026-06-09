@@ -102,22 +102,54 @@ function setTargetList(state) {
 
         // Subsystem child rows — only emitted when this row is expanded.
         // Collapsed rows hide their subsystem children entirely.
+        // Aggregator subsystems (those with children) get a caret toggle;
+        // leaf-only subsystems get a bullet. When a subsystem is itself
+        // expanded, its nested leaf rows (banks / tubes / pods / etc.)
+        // are emitted directly after it at a deeper indent level.
         if (expanded) {
             const subs = row.subsystems || [];
             for (let j = 0; j < subs.length; j++) {
                 const sub = subs[j];
                 const subName = String(sub.name || '');
                 const subCondition = (typeof sub.condition === 'number') ? sub.condition : 100;
+                const subExpanded = !!sub.expanded;
+                const subChildren = sub.children || [];
+                const hasChildren = subChildren.length > 0;
                 const subChosen = (selected === name && selectedSub === subName)
                     ? ' target-list__sub--chosen' : '';
                 const subAttr = clickAttr('target/' + name + '/' + subName);
+                const subToggleAttr = clickAttr('target/' + name + '/' + subName + '/__toggle__');
+                const subCaret = hasChildren
+                    ? '<span class="target-list__sub-caret"'
+                      + ' onclick="event.stopPropagation();' + subToggleAttr + '">'
+                      + (subExpanded ? '&#9662;' : '&#9656;') + '</span>'
+                    : '<span class="target-list__sub-bullet">&#8226;</span>';
                 html += '<div class="target-list__sub target-list__sub--' + aff + subChosen + '"'
                       +   ' onclick="' + subAttr + '">'
-                      +   '<span class="target-list__sub-bullet">&#8226;</span>'
+                      +   subCaret
                       +   '<span class="target-list__sub-name">' + escapeHtml(subName) + '</span>'
                       +   '<span class="target-list__sub-bar"'
                       +   ' style="--bar-pct:' + subCondition + '%"></span>'
                       + '</div>';
+
+                // Nested leaf rows (banks / tubes / pods / nacelles / emitters).
+                if (subExpanded && hasChildren) {
+                    for (let k = 0; k < subChildren.length; k++) {
+                        const leaf = subChildren[k];
+                        const leafName = String(leaf.name || '');
+                        const leafCond = (typeof leaf.condition === 'number') ? leaf.condition : 100;
+                        const leafChosen = (selected === name && selectedSub === leafName)
+                            ? ' target-list__leaf--chosen' : '';
+                        const leafAttr = clickAttr('target/' + name + '/' + leafName);
+                        html += '<div class="target-list__leaf target-list__leaf--' + aff + leafChosen + '"'
+                              +   ' onclick="' + leafAttr + '">'
+                              +   '<span class="target-list__leaf-bullet">&#8226;</span>'
+                              +   '<span class="target-list__leaf-name">' + escapeHtml(leafName) + '</span>'
+                              +   '<span class="target-list__leaf-bar"'
+                              +   ' style="--bar-pct:' + leafCond + '%"></span>'
+                              + '</div>';
+                    }
+                }
             }
         }
     }

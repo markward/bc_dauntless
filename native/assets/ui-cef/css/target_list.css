@@ -205,3 +205,71 @@
     background: var(--bar-fill);
     transition: width 120ms linear;
 }
+
+/* ── Subsystem caret (aggregator subsystems only) ─────────────────── */
+/* Mirrors .target-list__caret so subsystem carets look consistent
+ * with ship-level carets. */
+.target-list__sub-caret {
+    margin-right: 8px;
+    font-size: 14px;
+    line-height: 1;
+    color: white;
+    cursor: pointer;
+    padding: 0 4px;
+}
+
+/* ── Nested leaf rows ─────────────────────────────────────────────── */
+/* One indentation level deeper than .target-list__sub (28px → 44px).
+ * Same flex layout, same font size, slightly reduced text opacity to
+ * keep leaves visually subordinate to their aggregator subsystem. */
+.target-list__leaf {
+    display: flex;
+    align-items: center;
+    padding: 3px 12px 3px 44px;   /* deeper indent than sub (28px) */
+    cursor: pointer;
+    font-size: 13px;
+    color: rgba(235, 225, 255, 0.60);
+}
+
+.target-list__leaf-bullet {
+    margin-right: 8px;
+    color: white;
+}
+
+.target-list__leaf-name {
+    flex: 1 1 auto;
+}
+
+/* Leaf hover: same affiliation tint, lower baseline alpha than sub. */
+.target-list__leaf--FRIENDLY:hover { background: rgba( 80, 112, 230, 0.10); }
+.target-list__leaf--ENEMY:hover    { background: rgba(216,  43,  43, 0.10); }
+.target-list__leaf--NEUTRAL:hover  { background: rgba(255, 255, 175, 0.07); }
+.target-list__leaf--UNKNOWN:hover  { background: rgba(128, 128, 128, 0.10); }
+
+/* Chosen leaf: a tick brighter than hover so the locked leaf reads
+ * clearly. Mirrors .target-list__sub--chosen alpha bumps. */
+.target-list__leaf--FRIENDLY.target-list__leaf--chosen { background: rgba( 80, 112, 230, 0.25); color: rgb(235, 225, 255); }
+.target-list__leaf--ENEMY.target-list__leaf--chosen    { background: rgba(216,  43,  43, 0.25); color: rgb(235, 225, 255); }
+.target-list__leaf--NEUTRAL.target-list__leaf--chosen  { background: rgba(255, 255, 175, 0.20); color: rgb(235, 225, 255); }
+.target-list__leaf--UNKNOWN.target-list__leaf--chosen  { background: rgba(128, 128, 128, 0.25); color: rgb(235, 225, 255); }
+
+/* ── Leaf health bar (small) ──────────────────────────────────────── */
+/* Mirrors .target-list__sub-bar exactly — same size tokens. */
+.target-list__leaf-bar {
+    --bar-pct: 0%;
+    --bar-fill: rgb(255, 200, 60);
+    width: 24px;
+    height: 6px;
+    background: rgba(40, 40, 40, 0.6);
+    position: relative;
+    margin-left: 6px;
+}
+
+.target-list__leaf-bar::after {
+    content: "";
+    display: block;
+    height: 100%;
+    width: var(--bar-pct);
+    background: var(--bar-fill);
+    transition: width 120ms linear;
+}
