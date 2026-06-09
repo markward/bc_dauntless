@@ -55,6 +55,25 @@ const float EMBER_TAU   = T_EMBER / 3.2; // decay time const ~3.1 s; heat ~4% at
 const float T_GLOW      = 3.0;           // seconds; phaser heat-glow cool time
 const float NOISE_SCALE = 0.03;   // 1/model-units; tuned for NIF-scale p_body
 
+// ── Torpedo/disruptor power-disruption flicker (impact-feedback spec 3.5) ──
+// A ~500ms electrical stutter of the ship's OWN glow map within a SCORCH
+// decal's radius. Signed multiplier on the sampled glow (above and below
+// baseline). Distinct from the blackbody ember on the same record. Phaser
+// (HeatGlow) decals never flicker.
+const float FLICKER_DURATION  = 0.5;    // seconds (game time)
+const float STUTTER_GAIN      = 1.6;    // peak signed swing of the glow multiplier
+const float FLICKER_TIGHTNESS = 4.0;    // radial falloff (normalised r)
+const float STUTTER_FREQ      = 60.0;   // base oscillation rate; ~8-12 flickers / window
+
+float stutter(float age) {
+    // Deterministic; all fragments of one decal share `age`, so the whole
+    // patch flickers together (electrical-disruption read). Mixes two sines
+    // for irregularity; result in [-1, 1].
+    float s1 = sin(age * STUTTER_FREQ);
+    float s2 = sin(age * STUTTER_FREQ * 2.37 + 1.7);
+    return clamp(0.6 * s1 + 0.4 * s2, -1.0, 1.0);
+}
+
 float dhash(vec2 v) { return fract(sin(dot(v, vec2(127.1, 311.7))) * 43758.5453); }
 float vnoise(vec2 v) {
     vec2 i = floor(v), f = fract(v);
@@ -80,7 +99,8 @@ vec3 blackbody(float heat) {
 }
 
 void apply_damage_decals(vec3 p_body, vec3 n_body,
-                         inout vec3 base_lit, inout vec3 emissive) {
+                         inout vec3 base_lit, inout vec3 emissive,
+                         inout float glow_flicker) {
     // Fragment-position noise: depends only on p_body, so compute once for all
     // decals. The z term uses a distinct per-axis scale (not a scalar broadcast)
     // so z variation doesn't collapse onto the x==y diagonal on curved hull.
@@ -132,13 +152,22 @@ void apply_damage_decals(vec3 p_body, vec3 n_body,
         // a decal rendered at exactly its birth frame has no ember contribution
         // — important for the soot-darkening tests that pass decal_time==0.
         if (u_decal_c[i].y > 0.5) {
-            float age = u_decal_time - u_decal_c[i].x;
+            float birth = u_decal_c[i].x;
+            float age = u_decal_time - birth;
             if (age > 0.0) {
                 float heat = exp(-age / EMBER_TAU);
-                float glow = (exp(-r * r * EMBER_BROAD) + exp(-r * r * EMBER_TIGHT));
+                float ember_glow = (exp(-r * r * EMBER_BROAD) + exp(-r * r * EMBER_TIGHT));
                 // heat appears twice (in the colour ramp and as a scalar): a
                 // deliberate heat^2 emphasis so the ember pops hot then snaps dark.
-                emissive += blackbody(heat) * glow * heat * wn * intensity;
+                emissive += blackbody(heat) * ember_glow * heat * wn * intensity;
+            }
+            // Power-disruption flicker: modulate the ship's own glow map for
+            // ~500ms. Reuses wn (normal-aware) + the decal's normalized radius r.
+            float fl_age = u_decal_time - birth;
+            if (fl_age >= 0.0 && fl_age < FLICKER_DURATION) {
+                float env  = 1.0 - (fl_age / FLICKER_DURATION);
+                float fall = exp(-r * r * FLICKER_TIGHTNESS);
+                glow_flicker += STUTTER_GAIN * env * stutter(fl_age) * fall * wn;
             }
         }
     }
@@ -171,11 +200,13 @@ void main() {
     vec3 p_body = (u_ship_world_inv * vec4(v_position_ws, 1.0)).xyz;
     vec3 n_body = normalize(mat3(u_ship_world_inv) * v_normal_ws);
     vec3 decal_emissive = vec3(0.0);
+    float glow_flicker = 1.0;
     if (u_decal_count > 0) {
-        apply_damage_decals(p_body, n_body, lit, decal_emissive);
+        apply_damage_decals(p_body, n_body, lit, decal_emissive, glow_flicker);
     }
 
     vec4 glow = texture(u_glow_map, v_uv);
+    float gf = max(glow_flicker, 0.0);
     vec3 spec = (u_specular_enabled != 0)
         ? spec_acc * u_specular_color * texture(u_specular_map, v_uv).rgb
         : vec3(0.0);
@@ -186,5 +217,5 @@ void main() {
         rim = RIM_GAIN * f * lit_dir * u_rim_strength;
     }
 
-    frag_color = vec4(lit + u_emissive_color + glow.rgb * glow.a + spec + rim + decal_emissive, 1.0);
+    frag_color = vec4(lit + u_emissive_color + glow.rgb * glow.a * gf + spec + rim + decal_emissive, 1.0);
 }
