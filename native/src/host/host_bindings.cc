@@ -766,8 +766,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
               }
           },
           py::arg("vfx"),
-          "Set the active hit-VFX list (position + normal + severity + age), "
-          "applied each frame().");
+          "Set the active hit-VFX list, applied each frame(). Each dict has "
+          "position + normal + severity + age, plus optional spark fields "
+          "(instance_id, body_point, body_normal, weapon_kind, spark_count).");
 
     m.def("set_phaser_beams",
           [](const std::vector<py::dict>& descs) {
