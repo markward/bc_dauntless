@@ -172,6 +172,36 @@ def test_apply_zoom_scales_distance_and_clamps():
     assert p.camera.distance == _mod.MAX_DISTANCE
 
 
+def test_zoom_by_factor_multiplies_and_clamps():
+    p = ShipPropertyViewerPanel(ship_getter=lambda: None)
+    p.camera = OrbitCamera(target=(0, 0, 0), distance=100.0)
+    p.zoom_by_factor(_mod.ZOOM_KEY_FACTOR)            # = key (zoom in)
+    assert math.isclose(p.camera.distance, 100.0 * _mod.ZOOM_KEY_FACTOR)
+    p.zoom_by_factor(1.0 / _mod.ZOOM_KEY_FACTOR)      # - key (zoom out)
+    assert math.isclose(p.camera.distance, 100.0)
+    p.camera.distance = _mod.MIN_DISTANCE
+    p.zoom_by_factor(_mod.ZOOM_KEY_FACTOR)            # cannot go below MIN
+    assert p.camera.distance == _mod.MIN_DISTANCE
+
+
+def test_handle_input_equals_key_zooms_in():
+    class _KeyHost(_FakeHost):
+        class keys(_FakeHost.keys):
+            KEY_EQUAL = 61
+            KEY_MINUS = 45
+        def __init__(self, pressed):
+            super().__init__()
+            self._pressed = pressed
+        def key_pressed(self, code):
+            return code == self._pressed
+    p = ShipPropertyViewerPanel(ship_getter=lambda: None)
+    p.camera = OrbitCamera(target=(0, 0, 0), distance=100.0)
+    p.handle_input(_KeyHost(pressed=61))   # '=' down → zoom in
+    assert math.isclose(p.camera.distance, 100.0 * _mod.ZOOM_KEY_FACTOR)
+    p.handle_input(_KeyHost(pressed=45))   # '-' down → zoom out
+    assert math.isclose(p.camera.distance, 100.0)
+
+
 def test_handle_input_drag_orbits_camera(monkeypatch):
     fake = [{"name": "A", "icon_id": 1, "world_pos": (0, 5, 0),
              "state": "healthy", "properties": {}}]

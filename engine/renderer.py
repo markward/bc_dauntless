@@ -299,13 +299,15 @@ def cef_reload() -> None:
 
 def set_hologram_ship(instance_id: InstanceId,
                       color=(0.30, 0.62, 1.0),
-                      opacity_facing: float = 0.05,
-                      opacity_grazing: float = 0.50) -> None:
+                      opacity_facing: float = 0.20,
+                      opacity_grazing: float = 0.70) -> None:
     """Draw the given render instance as a translucent Fresnel hologram.
 
     instance_id is the InstanceId of the ship's render instance.
     color is the RGB tint (r, g, b) in [0, 1].
-    opacity_facing and opacity_grazing control the Fresnel ramp endpoints.
+    opacity_facing and opacity_grazing control the Fresnel ramp endpoints:
+    faces aligned with the camera get opacity_facing (0.20 = 80% transparent),
+    faces perpendicular get opacity_grazing (0.70 = 30% transparent).
     """
     _h.set_hologram_ship(instance_id, tuple(color),
                          float(opacity_facing), float(opacity_grazing))

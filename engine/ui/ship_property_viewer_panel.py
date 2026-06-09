@@ -23,6 +23,9 @@ SCREEN_FILL = 0.95
 ORBIT_SENS = 0.007
 # Fraction of distance removed per scroll notch (positive scroll = zoom in).
 ZOOM_STEP = 0.1
+# Multiplicative distance step per =/- key press (zoom in multiplies by this;
+# zoom out divides). Mirrors the external view's notch zoom.
+ZOOM_KEY_FACTOR = 0.9
 # Orbit distance clamps (game units) so the ship can't be lost or clipped.
 MIN_DISTANCE = 1.0
 MAX_DISTANCE = 1.0e5
@@ -159,6 +162,14 @@ class ShipPropertyViewerPanel(Panel):
         new_d = self.camera.distance * (1.0 - wheel * ZOOM_STEP)
         self.camera.distance = max(MIN_DISTANCE, min(MAX_DISTANCE, new_d))
 
+    def zoom_by_factor(self, factor: float) -> None:
+        """Multiply orbit distance by `factor` (=-key zoom in, -key zoom out),
+        clamped to [MIN_DISTANCE, MAX_DISTANCE]."""
+        if self.camera is None:
+            return
+        new_d = self.camera.distance * factor
+        self.camera.distance = max(MIN_DISTANCE, min(MAX_DISTANCE, new_d))
+
     def pick_at(self, x: float, y: float, viewport) -> None:
         """Run a pin pick at cursor (x, y) and emit select/deselect."""
         if self.camera is None:
@@ -197,6 +208,16 @@ class ShipPropertyViewerPanel(Panel):
         consume_scroll = getattr(h, "consume_scroll_y", None)
         if consume_scroll is not None:
             self.apply_zoom(consume_scroll())
+
+        # Keyboard zoom: = / - notch zoom, matching the external view.
+        kp = getattr(h, "key_pressed", None)
+        if kp is not None:
+            k_eq = getattr(h.keys, "KEY_EQUAL", None)
+            k_min = getattr(h.keys, "KEY_MINUS", None)
+            if k_eq is not None and kp(k_eq):
+                self.zoom_by_factor(ZOOM_KEY_FACTOR)
+            if k_min is not None and kp(k_min):
+                self.zoom_by_factor(1.0 / ZOOM_KEY_FACTOR)
 
         x, y = cursor_pos()
         down = btn_state(left)
