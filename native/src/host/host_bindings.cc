@@ -30,6 +30,7 @@
 #include <renderer/phaser_pass.h>
 #include <renderer/hologram_pass.h>
 #include <renderer/subsystem_pin_pass.h>
+#include <renderer/target_reticle_pass.h>
 #include <renderer/bridge_pass.h>
 #include <renderer/hdr_target.h>
 #include <renderer/bloom_pass.h>
@@ -99,6 +100,8 @@ renderer::HologramShip                       g_hologram_ship;
 std::unique_ptr<renderer::HologramPass>      g_hologram_pass;
 std::vector<renderer::SubsystemPin>          g_subsystem_pins;
 std::unique_ptr<renderer::SubsystemPinPass>  g_subsystem_pin_pass;
+renderer::TargetReticle                      g_target_reticle;
+std::unique_ptr<renderer::TargetReticlePass> g_target_reticle_pass;
 // "Hologram-only" frame mode: when on (set by the Ship Property Viewer while
 // open), frame() clears to g_hologram_bg and skips both the space scene and the
 // bridge pass, drawing only the hologram + subsystem pins.
@@ -215,8 +218,9 @@ void init(int width, int height, const std::string& title) {
     g_hit_vfx_pass = std::make_unique<renderer::HitVfxPass>();
     g_phaser_pass        = std::make_unique<renderer::PhaserPass>();
     g_hologram_pass      = std::make_unique<renderer::HologramPass>();
-    g_subsystem_pin_pass = std::make_unique<renderer::SubsystemPinPass>();
-    g_bridge_pass        = std::make_unique<renderer::BridgePass>();
+    g_subsystem_pin_pass  = std::make_unique<renderer::SubsystemPinPass>();
+    g_target_reticle_pass = std::make_unique<renderer::TargetReticlePass>();
+    g_bridge_pass         = std::make_unique<renderer::BridgePass>();
     g_hdr_target   = std::make_unique<renderer::HdrTarget>();
     g_bloom_pass   = std::make_unique<renderer::BloomPass>();
     g_resolve_pass = std::make_unique<renderer::ResolvePass>();
@@ -256,6 +260,8 @@ void shutdown() {
     g_hologram_only_mode = false;
     g_hologram_pass.reset();
     g_subsystem_pin_pass.reset();
+    g_target_reticle = renderer::TargetReticle{};
+    g_target_reticle_pass.reset();
     g_bridge_pass.reset();
     g_bloom_pass.reset();
     g_fxaa_pass.reset();
@@ -341,6 +347,8 @@ void frame() {
         g_hologram_pass->render(g_hologram_ship, g_world, g_camera, *g_pipeline, lookup);
     if (g_subsystem_pin_pass && !g_subsystem_pins.empty())
         g_subsystem_pin_pass->render(g_subsystem_pins, g_camera, *g_pipeline);
+    if (g_target_reticle_pass && g_target_reticle.visible)
+        g_target_reticle_pass->render(g_target_reticle, g_camera, *g_pipeline);
 
     // ── Bridge pass ──────────────────────────────────────────────────────
     // Renders bridge-tagged instances with the bridge camera, after a
@@ -840,6 +848,30 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("clear_subsystem_pins",
           []() { g_subsystem_pins.clear(); },
           "Clear all subsystem pin billboards. Takes effect next frame().");
+
+    m.def("set_target_reticle",
+          [](bool visible,
+             std::array<float, 3> ship_center, float ship_radius,
+             py::object subtarget_pos) {
+              g_target_reticle.visible     = visible;
+              g_target_reticle.ship_center = {ship_center[0], ship_center[1], ship_center[2]};
+              g_target_reticle.ship_radius = ship_radius;
+              if (subtarget_pos.is_none()) {
+                  g_target_reticle.has_subtarget = false;
+              } else {
+                  auto s = subtarget_pos.cast<std::array<float, 3>>();
+                  g_target_reticle.has_subtarget = true;
+                  g_target_reticle.subtarget_pos = {s[0], s[1], s[2]};
+              }
+          },
+          py::arg("visible"), py::arg("ship_center"), py::arg("ship_radius"),
+          py::arg("subtarget_pos"),
+          "Set the target reticle: full-ship corner box at ship_center sized "
+          "by ship_radius (GU), plus an optional subtarget crosshair at "
+          "subtarget_pos (x,y,z) or None. Applied each frame().");
+    m.def("clear_target_reticle",
+          []() { g_target_reticle = renderer::TargetReticle{}; },
+          "Hide the target reticle. Takes effect next frame().");
 
     m.def("dust_set_enabled",
           [](bool enabled) {

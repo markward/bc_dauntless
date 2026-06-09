@@ -332,6 +332,25 @@ def clear_subsystem_pins() -> None:
     _h.clear_subsystem_pins()
 
 
+def set_target_reticle(payload) -> None:
+    """Feed the target reticle pass from a target_reticle.TargetReticlePayload.
+
+    No-ops silently if the host binding is unavailable (headless tests).
+    """
+    fn = getattr(_h, "set_target_reticle", None)
+    if fn is None:
+        return
+    fn(payload.visible, payload.ship_center, payload.ship_radius,
+       payload.subtarget_pos)
+
+
+def clear_target_reticle() -> None:
+    """Hide the target reticle. Takes effect next frame()."""
+    fn = getattr(_h, "clear_target_reticle", None)
+    if fn is not None:
+        fn()
+
+
 def set_hologram_only_mode(enabled: bool, bg=(0.0, 0.0, 0.0)) -> None:
     """When enabled, frame() clears to bg (r, g, b) and skips the space scene
     and bridge pass, drawing only the hologram + subsystem pins."""
