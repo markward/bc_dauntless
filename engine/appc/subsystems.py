@@ -77,6 +77,34 @@ def _resolve_bank_aim_world(bank, target):
     return _resolve_aim_world(ship, None)
 
 
+def subsystem_world_position(sub, ship=None):
+    """World mount point of a subsystem: ship_loc + R · local_mount.
+
+    Column-vector rotation convention (R · v); NO scale — BC stores mounts
+    in world units relative to the ship centre. Returns the ship location if
+    the subsystem has no 3D mount, and the origin if no ship is resolvable.
+
+    ``ship`` may be passed explicitly (required for the Hull/root subsystem,
+    whose ``_climb_to_ship()`` returns None).
+    """
+    if ship is None:
+        ship = sub._climb_to_ship() if hasattr(sub, "_climb_to_ship") else None
+    if ship is None or not hasattr(ship, "GetWorldLocation"):
+        return TGPoint3(0.0, 0.0, 0.0)
+    ship_pos = ship.GetWorldLocation()
+    local = sub.GetPosition() if hasattr(sub, "GetPosition") else None
+    if not isinstance(local, TGPoint3):
+        return TGPoint3(ship_pos.x, ship_pos.y, ship_pos.z)
+    offset = TGPoint3(local.x, local.y, local.z)
+    if hasattr(ship, "GetWorldRotation"):
+        rot = ship.GetWorldRotation()
+        if isinstance(rot, TGMatrix3):
+            offset.MultMatrixLeft(rot)   # R · offset (column-vector)
+    return TGPoint3(ship_pos.x + offset.x,
+                    ship_pos.y + offset.y,
+                    ship_pos.z + offset.z)
+
+
 def _emitter_in_arc(emitter, ship, aim_world):
     """Returns True if `aim_world` (unit vector) lies inside the emitter's
     firing arc, rotated into world space via the ship's rotation.
@@ -741,13 +769,17 @@ class ShipSubsystem(TGEventHandlerObject):
     def GetTextureSpeed(self) -> float:       return self._texture_speed
 
     def GetWorldLocation(self) -> TGPoint3:
-        if self._parent_ship is not None:
-            base = self._parent_ship.GetWorldLocation()
-            return TGPoint3(
-                base.x + self._position.x,
-                base.y + self._position.y,
-                base.z + self._position.z,
-            )
+        # Direct attachment sets _parent_ship; child subsystems (pods/nacelles
+        # added via AddChildSubsystem) only have _parent_subsystem, so climb the
+        # chain to the ship. Without this, off-centre pods returned the bare
+        # local mount near the origin — weapon aim at a locked nacelle fired
+        # well off screen even though the reticle (which passes the ship
+        # explicitly) located it correctly.
+        ship = self._parent_ship
+        if ship is None:
+            ship = self._climb_to_ship()
+        if ship is not None:
+            return subsystem_world_position(self, ship)
         return self.GetPositionTG()
 
     def GetDamagePoint(self) -> TGPoint3:
@@ -767,9 +799,8 @@ class ShipSubsystem(TGEventHandlerObject):
         return None
 
     def _emitter_world_position(self) -> TGPoint3:
-        """Ship world location + emitter local position rotated into world frame.
-        (Delegates to the shared engine.ui.ship_property_viewer helper.)"""
-        from engine.ui.ship_property_viewer import subsystem_world_position
+        """World position of this emitter mount: ship_loc + R · local.
+        Delegates to the module-level subsystem_world_position helper."""
         return subsystem_world_position(self)
 
     def _strip_emit_position(self, target_world) -> TGPoint3:

@@ -11,6 +11,7 @@ from enum import Enum
 from engine.cameras          import EXTERIOR_FOV_Y_RAD
 from engine.cameras.chase    import _ChaseCamera
 from engine.cameras.tracking import _TrackingCamera
+from engine.ui.target_reticle import target_aim_point
 
 
 class CameraMode(Enum):
@@ -119,7 +120,8 @@ class _CameraDirector:
                 self._opted_out_target = None
                 self.tracking.exit_zoom_target()
             else:
-                return self.tracking.compute(player=player, target=tgt, dt=dt)
+                return self.tracking.compute(player=player, target=tgt, dt=dt,
+                                             aim_point=target_aim_point(player))
         else:
             # CHASE: auto-engage Tracking if a target is present and the user
             # hasn't manually opted out of Tracking for this specific target.
@@ -133,7 +135,8 @@ class _CameraDirector:
                 self.tracking.snap()
                 self._opted_out_target = None
                 self.chase.exit_reverse()
-                return self.tracking.compute(player=player, target=tgt, dt=dt)
+                return self.tracking.compute(player=player, target=tgt, dt=dt,
+                                             aim_point=target_aim_point(player))
         return self.chase.compute_camera(loc, rot, dt=dt)
 
     # ── helpers ──────────────────────────────────────────────────────

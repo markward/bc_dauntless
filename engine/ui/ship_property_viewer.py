@@ -11,33 +11,9 @@ from typing import List, Optional, Tuple
 from engine.appc.math import TGPoint3, TGMatrix3
 
 
-def subsystem_world_position(sub, ship=None) -> TGPoint3:
-    """World mount point of a subsystem: ship location + body->world rotated
-    local mount. No scale factor (BC stores mounts in world units relative to
-    the ship centre — see engine/appc/subsystems.py:769). Returns the ship
-    location if the subsystem has no 3D mount.
-
-    ``ship`` may be passed explicitly when the caller already knows it (the
-    Ship Property Viewer does). This is REQUIRED for the Hull/root subsystem,
-    whose ``_climb_to_ship()`` returns None (it has no parent back-pointer —
-    children reach the ship through it, but it has no link of its own), which
-    would otherwise collapse its pin to the world origin."""
-    if ship is None:
-        ship = sub._climb_to_ship() if hasattr(sub, "_climb_to_ship") else None
-    if ship is None or not hasattr(ship, "GetWorldLocation"):
-        return TGPoint3(0.0, 0.0, 0.0)
-    ship_pos = ship.GetWorldLocation()
-    local = sub.GetPosition() if hasattr(sub, "GetPosition") else None
-    if not isinstance(local, TGPoint3):
-        return TGPoint3(ship_pos.x, ship_pos.y, ship_pos.z)
-    offset = TGPoint3(local.x, local.y, local.z)
-    if hasattr(ship, "GetWorldRotation"):
-        rot = ship.GetWorldRotation()
-        if isinstance(rot, TGMatrix3):
-            offset.MultMatrixLeft(rot)  # R . offset (column-vector)
-    return TGPoint3(ship_pos.x + offset.x,
-                    ship_pos.y + offset.y,
-                    ship_pos.z + offset.z)
+# Canonical implementation lives in engine.appc.subsystems so the renderer,
+# camera, and Ship Property Viewer all share one source of truth.
+from engine.appc.subsystems import subsystem_world_position  # noqa: F401
 
 
 # ---------------------------------------------------------------------------

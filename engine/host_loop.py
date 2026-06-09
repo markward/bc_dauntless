@@ -19,6 +19,7 @@ import engine.dev_keybindings as dev_keybindings
 import engine.dev_mode as dev_mode
 from engine.dev_mission_picker import MissionPicker
 import engine.missions as _missions
+from engine.ui.target_reticle import build_target_reticle
 
 import math as _math
 
@@ -2682,6 +2683,9 @@ def run(mission_name: Optional[str] = None,
                      i == ship_property_viewer.selected_index)
                     for i, d in enumerate(ship_property_viewer.descriptors())
                 ])
+                # The gameplay target reticle is hidden while the viewer owns
+                # the frame; it returns on close via the else branch below.
+                r.clear_target_reticle()
                 _spv_hidden_iid = _player_iid_spv
             else:
                 if _spv_was_open:
@@ -2695,6 +2699,10 @@ def run(mission_name: Optional[str] = None,
                 r.set_camera(eye=eye, target=target, up=up_vec,
                              fov_y_rad=director.fov_y_rad,
                              near=1.0, far=5000.0)
+                if player is not None:
+                    r.set_target_reticle(build_target_reticle(player))
+                else:
+                    r.clear_target_reticle()
             _spv_was_open = _spv_open
 
             # Audio listener (skipped while paused — silence the rumble).
