@@ -74,6 +74,22 @@ def test_build_reticle_box_only_when_no_subsystem():
     assert r.subtarget_pos is None
 
 
+def test_build_reticle_ship_center_is_hull_not_subsystem():
+    R = TGMatrix3(); R.MakeZRotation(math.pi / 2.0)
+    tgt = _ship(TGPoint3(200, 0, 0), R, radius=6.0)
+    sub = ShipSubsystem("Port Nacelle"); sub._position = TGPoint3(10, 0, 0)
+    sub.SetParentShip(tgt); tgt._sub = sub
+    p = _ship(TGPoint3(0, 0, 0), _identity()); p._t = tgt
+    r = build_target_reticle(p)
+    # ship_center stays at the hull centre…
+    assert abs(r.ship_center[0] - 200) < 1e-6
+    assert abs(r.ship_center[1] - 0) < 1e-6
+    # …while the subtarget sits at the rotated subsystem mount (200,10,0).
+    assert r.subtarget_pos is not None
+    assert abs(r.subtarget_pos[0] - 200) < 1e-5
+    assert abs(r.subtarget_pos[1] - 10) < 1e-5
+
+
 def test_build_reticle_subtarget_agrees_with_aim_point():
     R = TGMatrix3(); R.MakeZRotation(math.pi / 2.0)
     tgt = _ship(TGPoint3(200, 0, 0), R)

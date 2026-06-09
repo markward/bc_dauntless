@@ -63,7 +63,7 @@ def build_target_reticle(player) -> TargetReticlePayload:
     if target is None:
         return TargetReticlePayload(visible=False)
     centre = target.GetWorldLocation()
-    radius = target.GetRadius() if hasattr(target, "GetRadius") else 0.0
+    radius = target.GetRadius()
     sub = _valid_subsystem(target)
     subtarget = None
     if sub is not None:
@@ -72,6 +72,6 @@ def build_target_reticle(player) -> TargetReticlePayload:
     return TargetReticlePayload(
         visible=True,
         ship_center=(centre.x, centre.y, centre.z),
-        ship_radius=float(radius or 0.0),
+        ship_radius=float(radius),
         subtarget_pos=subtarget,
     )
