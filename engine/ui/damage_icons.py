@@ -72,15 +72,18 @@ _CLASS_TABLE: tuple = (
 )
 
 
+ICON_SYSTEM_FALLBACK = 6  # SDK DamageIcons.System; default glyph for unknown / non-subsystem types
+
+
 def icon_num_for_subsystem(sub) -> int:
     """Returns the BC DamageIcons enum value for a ShipSubsystem.
     Unknown / None / non-subsystem inputs fall back to 6 (System)."""
     if sub is None:
-        return 6
+        return ICON_SYSTEM_FALLBACK
     for cls, num in _CLASS_TABLE:
         if isinstance(sub, cls):
             return num
-    return 6
+    return ICON_SYSTEM_FALLBACK
 
 
 # ── Resolver ───────────────────────────────────────────────────────────

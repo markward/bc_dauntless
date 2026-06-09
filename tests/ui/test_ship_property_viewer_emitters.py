@@ -22,3 +22,5 @@ def test_emitter_appears_as_mount_descriptor():
     assert len(mounts) == 1
     assert mounts[0]["name"] == "Shuttle Bay"
     assert mounts[0]["state"] == "mount"
+    assert mounts[0]["world_pos"] == (0.0, 0.05, 0.57)
+    assert mounts[0]["properties"]["emitted_type"] == ObjectEmitterProperty.OEP_SHUTTLE

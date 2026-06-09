@@ -154,6 +154,7 @@ def build_descriptors(ship) -> List[dict]:
     # launcher). Distinct "mount" kind/state so the pin renderer can style
     # them apart from damageable subsystems; never targetable.
     emitters = ship.GetObjectEmitters() if hasattr(ship, "GetObjectEmitters") else []
+    from engine.ui import damage_icons as _damage_icons
     for em in emitters:
         local = em.GetPosition() if hasattr(em, "GetPosition") else None
         if local is None:
@@ -161,7 +162,7 @@ def build_descriptors(ship) -> List[dict]:
         w = subsystem_world_position(em, ship)
         out.append({
             "name":       em.GetName(),
-            "icon_id":    6,            # damage_icons "System" fallback glyph
+            "icon_id":    _damage_icons.ICON_SYSTEM_FALLBACK,  # "System" fallback glyph (damage_icons.ICON_SYSTEM_FALLBACK)
             "world_pos":  (w.x, w.y, w.z),
             "state":      "mount",
             "kind":       "mount",
