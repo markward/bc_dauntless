@@ -750,6 +750,18 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   v.surface_normal = {std::get<0>(n), std::get<1>(n), std::get<2>(n)};
                   v.severity = d["severity"].cast<int>();
                   v.age = d["age"].cast<float>();
+                  v.instance_id = d.contains("instance_id") && !d["instance_id"].is_none()
+                                  ? d["instance_id"].cast<int>() : -1;
+                  v.weapon_kind = d.contains("weapon_kind") ? d["weapon_kind"].cast<int>() : 1;
+                  v.spark_count = d.contains("spark_count") ? d["spark_count"].cast<int>() : 0;
+                  if (d.contains("body_point") && !d["body_point"].is_none()) {
+                      auto bp = d["body_point"].cast<std::tuple<float, float, float>>();
+                      v.body_point = {std::get<0>(bp), std::get<1>(bp), std::get<2>(bp)};
+                  }
+                  if (d.contains("body_normal") && !d["body_normal"].is_none()) {
+                      auto bn = d["body_normal"].cast<std::tuple<float, float, float>>();
+                      v.body_normal = {std::get<0>(bn), std::get<1>(bn), std::get<2>(bn)};
+                  }
                   g_hit_vfx.push_back(std::move(v));
               }
           },

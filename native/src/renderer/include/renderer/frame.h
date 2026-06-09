@@ -96,6 +96,12 @@ struct HitVfxDescriptor {
     glm::vec3 surface_normal{0.0f};   // (0,0,0) sentinel = no normal
     float     age      = 0.0f;
     int       severity = 1;           // 1=HULL, 2=CRITICAL; SHIELD never reaches here
+    // Spark burst (hull-anchored, detached). spark_count == 0 => no sparks.
+    int       instance_id = -1;       // receiving ship's renderer instance id
+    glm::vec3 body_point{0.0f};       // impact in ship body frame (model units)
+    glm::vec3 body_normal{0.0f};      // surface normal, body frame
+    int       weapon_kind = 1;        // 0=phaser (cool/tight), 1=torpedo (hot/wide)
+    int       spark_count = 0;
 };
 
 /// Phaser-beam render descriptor.  One entry per concentric beam layer
