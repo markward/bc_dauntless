@@ -805,6 +805,16 @@ class EngineProperty(SubsystemProperty):
     EP_IMPULSE = 0
     EP_WARP    = 1
 
+    def __init__(self, name: str = "") -> None:
+        super().__init__(name)
+        self._engine_type = self.EP_IMPULSE
+
+    def SetEngineType(self, t) -> None:
+        self._engine_type = int(t)
+
+    def GetEngineType(self) -> int:
+        return self._engine_type
+
 
 class ImpulseEngineProperty(PoweredSubsystemProperty):
     def __init__(self, name: str = "") -> None:

@@ -467,6 +467,56 @@ def test_query_subsystem_condition_prefers_combined_over_individual():
     assert _query_subsystem_condition(FakeShip(flat), "Impulse") == 60
 
 
+# ── Nested children + expansion reach the payload (end-to-end) ───────────────
+
+def test_nested_children_and_expanded_reach_payload():
+    """End-to-end: a phaser aggregator with two banks must surface in
+    render_payload's JSON as a "Phasers" subsystem entry whose
+    `children` lists both banks, and toggling the aggregator flips its
+    `expanded` flag in the payload."""
+    from engine.ui.target_list_view import TargetListView
+    from engine.appc.ships import ShipClass_Create
+    from engine.appc.properties import WeaponSystemProperty, PhaserProperty
+
+    App._reset_target_menu_singleton()
+    target_menu = App.STTargetMenu_CreateW("Targets")
+    game, player, mission = _setup_game_with_player()
+    try:
+        ship = ShipClass_Create("X")
+        ship.SetName("USS Galaxy")
+        ps = ship.GetPropertySet()
+        phasers = WeaponSystemProperty("Phasers")
+        phasers.SetWeaponSystemType(WeaponSystemProperty.WST_PHASER)
+        ps.AddToSet("Scene Root", phasers)
+        ps.AddToSet("Scene Root", PhaserProperty("Dorsal Phaser 1"))
+        ps.AddToSet("Scene Root", PhaserProperty("Dorsal Phaser 2"))
+        ship.SetupProperties()
+        target_menu.RebuildShipMenu(ship)
+
+        view = TargetListView()
+        # Prime the snapshot cache before toggling.
+        view.render_payload()
+
+        # Expand the Phasers aggregator (2nd-level accordion).
+        handled = view.dispatch_event_subsystem_toggle("USS Galaxy", "Phasers")
+        assert handled is True
+
+        script = view.render_payload()
+        body = script[len("setTargetList("):-2]
+        state = json.loads(body)
+
+        row = next(r for r in state["rows"] if r["name"] == "USS Galaxy")
+        phasers_entry = next(s for s in row["subsystems"] if s["name"] == "Phasers")
+
+        assert phasers_entry["expanded"] is True
+        assert len(phasers_entry["children"]) == 2
+        child_names = sorted(c["name"] for c in phasers_entry["children"])
+        assert child_names == ["Dorsal Phaser 1", "Dorsal Phaser 2"]
+    finally:
+        from engine.core.game import _set_current_game
+        _set_current_game(None)
+
+
 def test_query_subsystem_condition_defaults_to_100_when_resolution_misses():
     """If the subsystem can't be found on the ship, default to 100 so
     the bar renders full rather than misleadingly empty."""

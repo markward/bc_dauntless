@@ -432,6 +432,7 @@ _DAMAGE_SOURCE_GETTERS = (
     "GetPhaserSystem",
     "GetTorpedoSystem",
     "GetPulseWeaponSystem",
+    "GetTractorBeamSystem",
 )
 
 

@@ -11,7 +11,11 @@ import pytest
 
 import App
 from engine.appc.ships import ShipClass, ShipClass_Create
-from engine.appc.subsystems import PhaserBank, PulseWeapon, TractorBeam, TorpedoTube
+from engine.appc.subsystems import (
+    PhaserBank, PulseWeapon, TractorBeam, TorpedoTube,
+    ShipSubsystem, HullSubsystem,
+)
+from engine.appc.object_emitter import ObjectEmitter
 
 
 @pytest.fixture(scope="module")
@@ -140,3 +144,40 @@ def test_galaxy_get_weapon_system_group_secondary_is_torpedoes(galaxy_ship):
 
 def test_galaxy_get_weapon_system_group_tractor_is_tractors(galaxy_ship):
     assert galaxy_ship.GetWeaponSystemGroup(ShipClass.WG_TRACTOR) is galaxy_ship.GetTractorBeamSystem()
+
+
+# ── Faithful loading: engine pods, bridge, object emitters ───────────────────
+
+def test_galaxy_impulse_aggregator_has_three_pods(galaxy_ship):
+    imp = galaxy_ship.GetImpulseEngineSubsystem()
+    names = sorted(imp.GetChildSubsystem(i).GetName()
+                   for i in range(imp.GetNumChildSubsystems()))
+    assert names == ["Center Impulse", "Port Impulse", "Star Impulse"]
+
+
+def test_galaxy_warp_aggregator_has_two_nacelles(galaxy_ship):
+    warp = galaxy_ship.GetWarpEngineSubsystem()
+    names = sorted(warp.GetChildSubsystem(i).GetName()
+                   for i in range(warp.GetNumChildSubsystems()))
+    assert names == ["Port Warp", "Star Warp"]
+
+
+def test_galaxy_port_warp_condition_matches_hardpoint(galaxy_ship):
+    warp = galaxy_ship.GetWarpEngineSubsystem()
+    port = warp.GetChildSubsystem("Port Warp")
+    assert isinstance(port, ShipSubsystem)
+    assert port.GetMaxCondition() == 5000.0  # galaxy.py:909
+
+
+def test_galaxy_bridge_is_child_of_hull(galaxy_ship):
+    hull = galaxy_ship.GetHull()
+    assert hull.GetName() == "Hull"
+    bridge = hull.GetChildSubsystem("Bridge")
+    assert isinstance(bridge, HullSubsystem)
+    assert bridge.GetMaxCondition() == 12000.0  # galaxy.py:1108
+
+
+def test_galaxy_has_two_object_emitters(galaxy_ship):
+    names = sorted(e.GetName() for e in galaxy_ship.GetObjectEmitters())
+    assert names == ["Probe Launcher", "Shuttle Bay"]
+    assert all(isinstance(e, ObjectEmitter) for e in galaxy_ship.GetObjectEmitters())

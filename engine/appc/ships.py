@@ -29,6 +29,10 @@ class ShipClass(DamageableObject):
         self._shield_subsystem = None
         self._power_subsystem = None
         self._repair_subsystem = None
+        # ObjectEmitter mount markers (shuttle bay, probe launcher, etc.) — not
+        # subsystems: no condition, not targetable.  Populated by SetupProperties
+        # Pass 6; starts empty.
+        self._object_emitters = []
         # Hull is created lazily by SetupProperties() when a HullProperty is
         # found in the property set (SDK App.py:5382-5383).  Stays None for
         # ships with no hardpoint applied.
@@ -586,6 +590,11 @@ class ShipClass(DamageableObject):
             self._hull,
         ) if s is not None]
 
+    def GetObjectEmitters(self) -> list:
+        """Return the ship's ObjectEmitter mount markers (shuttle/probe/decoy
+        launch points). Not subsystems — viewer-only, never targetable."""
+        return list(self._object_emitters)
+
     def GetSubsystemByProperty(self, prop):
         """Find the live subsystem whose source property is `prop`.
 
@@ -672,22 +681,34 @@ class ShipClass(DamageableObject):
                     _copy_name(prop, self._warp_engine_subsystem)
                     self._warp_engine_subsystem.SetProperty(prop)
             elif isinstance(prop, HullProperty):
-                # Only the FIRST HullProperty is the main hull — galaxy.py
-                # registers "Hull" first then "Bridge" as a child component.
-                # GetHull() must return the primary hull (SDK App.py:5382).
-                if self._hull is None:
-                    self._hull = HullSubsystem(prop.GetName() or "Hull")
-                    self._hull.SetProperty(prop)
-                    for src, setter in (
-                        (prop.GetMaxCondition,        self._hull.SetMaxCondition),
-                        (prop.GetCritical,            self._hull.SetCritical),
-                        (prop.GetTargetable,          self._hull.SetTargetable),
-                        (prop.GetPrimary,             self._hull.SetPrimary),
-                        (prop.GetRadius,              self._hull.SetRadius),
-                        (prop.GetDisabledPercentage,  self._hull.SetDisabledPercentage),
-                    ):
-                        v = src()
-                        if v is not None: setter(v)
+                # The FIRST HullProperty is the primary hull; GetHull() must
+                # return it (SDK App.py:5382). Additional HullProperties (e.g.
+                # galaxy.py's non-primary "Bridge") attach as children of the
+                # primary hull so they are damageable + viewer-visible. Plain
+                # children of a targetable parent stay out of the AI loop.
+                if self._hull is not None and self._hull.GetProperty() is prop:
+                    pass  # re-run: primary already bound to this property
+                else:
+                    receiver = None
+                    if self._hull is None:
+                        self._hull = HullSubsystem(prop.GetName() or "Hull")
+                        self._hull.SetProperty(prop)
+                        receiver = self._hull
+                    elif self._hull.GetChildSubsystem(prop.GetName()) is None:
+                        receiver = HullSubsystem(prop.GetName() or "Bridge")
+                        receiver.SetProperty(prop)
+                        self._hull.AddChildSubsystem(receiver)
+                    if receiver is not None:
+                        for src, setter in (
+                            (prop.GetMaxCondition,        receiver.SetMaxCondition),
+                            (prop.GetCritical,            receiver.SetCritical),
+                            (prop.GetTargetable,          receiver.SetTargetable),
+                            (prop.GetPrimary,             receiver.SetPrimary),
+                            (prop.GetRadius,              receiver.SetRadius),
+                            (prop.GetDisabledPercentage,  receiver.SetDisabledPercentage),
+                        ):
+                            v = src()
+                            if v is not None: setter(v)
             elif isinstance(prop, SensorProperty):
                 self._copy_powered_subsystem_fields(prop, self._sensor_subsystem)
                 sens = self._sensor_subsystem
@@ -882,6 +903,61 @@ class ShipClass(DamageableObject):
 
                 parent.AddChildSubsystem(child)
                 break
+
+        # Pass 5 — engine pods.  EngineProperty leaves attach to the matching
+        # powered aggregator by EngineType (EP_IMPULSE -> impulse, EP_WARP ->
+        # warp).  BC uses no dedicated engine-leaf class — pods are plain
+        # ShipSubsystems (sdk/.../App.py declares EngineProperty but no
+        # EngineSubsystem).  Idempotent: skip a parent already seeded with
+        # children on a prior run.  A scrubbed (None) aggregator means the
+        # hardpoint registered no powered aggregator property; pods are then
+        # dropped rather than fabricating a zero-speed engine.
+        from engine.appc.properties import EngineProperty
+        from engine.appc.subsystems import ShipSubsystem as _ShipSubsystem
+        _engine_parent_for = {
+            EngineProperty.EP_IMPULSE: self._impulse_engine_subsystem,
+            EngineProperty.EP_WARP:    self._warp_engine_subsystem,
+        }
+        _engine_parents_seeded = {
+            id(p) for p in _engine_parent_for.values()
+            if p is not None and p.GetNumChildSubsystems() > 0
+        }
+        for prop in self.GetPropertySet().GetPropertyList():
+            if type(prop) is not EngineProperty:
+                continue
+            parent = _engine_parent_for.get(prop.GetEngineType())
+            if parent is None or id(parent) in _engine_parents_seeded:
+                continue
+            pod = _ShipSubsystem(prop.GetName() or "")
+            pod.SetProperty(prop)
+            for src, setter in (
+                (prop.GetMaxCondition,       pod.SetMaxCondition),
+                (prop.GetCritical,           pod.SetCritical),
+                (prop.GetTargetable,         pod.SetTargetable),
+                (prop.GetPrimary,            pod.SetPrimary),
+                (prop.GetRadius,             pod.SetRadius),
+                (prop.GetDisabledPercentage, pod.SetDisabledPercentage),
+            ):
+                v = src()
+                if v is not None:
+                    setter(v)
+            parent.AddChildSubsystem(pod)
+
+        # Pass 6 — object emitters.  ObjectEmitterProperty templates become
+        # ObjectEmitter mount markers (shuttle bay, probe launcher). Not
+        # subsystems: no condition, not targetable. Idempotent by name.
+        from engine.appc.properties import ObjectEmitterProperty
+        from engine.appc.object_emitter import ObjectEmitter
+        _existing_emitters = {e.GetName() for e in self._object_emitters}
+        for prop in self.GetPropertySet().GetPropertyList():
+            if not isinstance(prop, ObjectEmitterProperty):
+                continue
+            if (prop.GetName() or "") in _existing_emitters:
+                continue
+            emitter = ObjectEmitter(prop)
+            emitter.SetParentShip(self)
+            self._object_emitters.append(emitter)
+            _existing_emitters.add(prop.GetName() or "")
 
     @staticmethod
     def _copy_powered_subsystem_fields(prop, subsystem) -> None:
