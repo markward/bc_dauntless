@@ -214,7 +214,9 @@ void TargetReticlePass::render(const TargetReticle& reticle,
                 glBindTexture(GL_TEXTURE_2D, arrow_tex_ ? arrow_tex_->id() : 0);
                 shader.set_vec4("u_tint",        kArrowTint);
                 shader.set_vec4("u_uv_rect",     kArrowUvRect);
-                shader.set_vec2("u_rot",         glm::vec2(0.0f, 1.0f));  // 90°
+                // Rotate 90°; sign flips with the side so the left arrow is the
+                // horizontal mirror of the right (both point inward).
+                shader.set_vec2("u_rot",         glm::vec2(0.0f, side));
                 shader.set_vec3("u_center_world", bar_centre);
                 shader.set_vec2("u_size_world",   glm::vec2(asz, asz));
                 shader.set_vec2("u_uv_flip",      glm::vec2(1.0f, 1.0f));
