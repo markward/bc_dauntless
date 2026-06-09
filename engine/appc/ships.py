@@ -672,22 +672,34 @@ class ShipClass(DamageableObject):
                     _copy_name(prop, self._warp_engine_subsystem)
                     self._warp_engine_subsystem.SetProperty(prop)
             elif isinstance(prop, HullProperty):
-                # Only the FIRST HullProperty is the main hull — galaxy.py
-                # registers "Hull" first then "Bridge" as a child component.
-                # GetHull() must return the primary hull (SDK App.py:5382).
-                if self._hull is None:
-                    self._hull = HullSubsystem(prop.GetName() or "Hull")
-                    self._hull.SetProperty(prop)
-                    for src, setter in (
-                        (prop.GetMaxCondition,        self._hull.SetMaxCondition),
-                        (prop.GetCritical,            self._hull.SetCritical),
-                        (prop.GetTargetable,          self._hull.SetTargetable),
-                        (prop.GetPrimary,             self._hull.SetPrimary),
-                        (prop.GetRadius,              self._hull.SetRadius),
-                        (prop.GetDisabledPercentage,  self._hull.SetDisabledPercentage),
-                    ):
-                        v = src()
-                        if v is not None: setter(v)
+                # The FIRST HullProperty is the primary hull; GetHull() must
+                # return it (SDK App.py:5382). Additional HullProperties (e.g.
+                # galaxy.py's non-primary "Bridge") attach as children of the
+                # primary hull so they are damageable + viewer-visible. Plain
+                # children of a targetable parent stay out of the AI loop.
+                if self._hull is not None and self._hull.GetProperty() is prop:
+                    pass  # re-run: primary already bound to this property
+                else:
+                    receiver = None
+                    if self._hull is None:
+                        self._hull = HullSubsystem(prop.GetName() or "Hull")
+                        self._hull.SetProperty(prop)
+                        receiver = self._hull
+                    elif self._hull.GetChildSubsystem(prop.GetName()) is None:
+                        receiver = HullSubsystem(prop.GetName() or "Bridge")
+                        receiver.SetProperty(prop)
+                        self._hull.AddChildSubsystem(receiver)
+                    if receiver is not None:
+                        for src, setter in (
+                            (prop.GetMaxCondition,        receiver.SetMaxCondition),
+                            (prop.GetCritical,            receiver.SetCritical),
+                            (prop.GetTargetable,          receiver.SetTargetable),
+                            (prop.GetPrimary,             receiver.SetPrimary),
+                            (prop.GetRadius,              receiver.SetRadius),
+                            (prop.GetDisabledPercentage,  receiver.SetDisabledPercentage),
+                        ):
+                            v = src()
+                            if v is not None: setter(v)
             elif isinstance(prop, SensorProperty):
                 self._copy_powered_subsystem_fields(prop, self._sensor_subsystem)
                 sens = self._sensor_subsystem
