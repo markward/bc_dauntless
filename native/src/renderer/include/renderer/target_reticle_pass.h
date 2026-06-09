@@ -24,6 +24,8 @@ struct TargetReticle {
     float     ship_radius   = 0.0f;
     bool      has_subtarget = false;
     glm::vec3 subtarget_pos {0.0f};
+    bool      has_bars      = false;
+    float     bar_alignment = 0.0f;   // [-1,+1], +1 fore, -1 aft
 };
 
 class TargetReticlePass {
@@ -45,6 +47,8 @@ private:
     unsigned int quad_vbo_ = 0;
     std::unique_ptr<assets::Texture> corner_tex_;     // game/data/target.tga
     std::unique_ptr<assets::Texture> crosshair_tex_;  // game/data/subtarget.tga
+    std::unique_ptr<assets::Texture> bar_tex_;     // game/data/Icons/tilevertline.tga
+    std::unique_ptr<assets::Texture> arrow_tex_;   // game/data/Icons/TargetArrow.tga
     bool textures_loaded_ = false;
 };
 

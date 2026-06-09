@@ -17,6 +17,7 @@ class TargetReticlePayload:
     ship_center: Tuple[float, float, float] = (0.0, 0.0, 0.0)
     ship_radius: float = 0.0
     subtarget_pos: Optional[Tuple[float, float, float]] = None
+    bar_alignment: float = 0.0   # [-1,+1]: +1 target fore, -1 aft, 0 abeam
 
 
 def _valid_target(player):
@@ -74,9 +75,20 @@ def build_target_reticle(player) -> TargetReticlePayload:
     if sub is not None:
         w = subsystem_world_position(sub, target)
         subtarget = (w.x, w.y, w.z)
+    bar_alignment = 0.0
+    rot = player.GetWorldRotation() if hasattr(player, "GetWorldRotation") else None
+    pc = player.GetWorldLocation() if hasattr(player, "GetWorldLocation") else None
+    if rot is not None and pc is not None:
+        fwd = rot.GetCol(1)                       # ship forward in world space
+        dx, dy, dz = centre.x - pc.x, centre.y - pc.y, centre.z - pc.z
+        dlen = (dx * dx + dy * dy + dz * dz) ** 0.5
+        if dlen > 1e-6:
+            dot = (fwd.x * dx + fwd.y * dy + fwd.z * dz) / dlen
+            bar_alignment = max(-1.0, min(1.0, dot))
     return TargetReticlePayload(
         visible=True,
         ship_center=(centre.x, centre.y, centre.z),
         ship_radius=float(radius),
         subtarget_pos=subtarget,
+        bar_alignment=bar_alignment,
     )

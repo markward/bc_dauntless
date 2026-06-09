@@ -852,10 +852,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("set_target_reticle",
           [](bool visible,
              std::array<float, 3> ship_center, float ship_radius,
-             py::object subtarget_pos) {
+             py::object subtarget_pos, float bar_alignment) {
               g_target_reticle.visible     = visible;
               g_target_reticle.ship_center = {ship_center[0], ship_center[1], ship_center[2]};
               g_target_reticle.ship_radius = ship_radius;
+              g_target_reticle.has_bars      = visible;
+              g_target_reticle.bar_alignment = bar_alignment;
               if (subtarget_pos.is_none()) {
                   g_target_reticle.has_subtarget = false;
               } else {
@@ -865,10 +867,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
               }
           },
           py::arg("visible"), py::arg("ship_center"), py::arg("ship_radius"),
-          py::arg("subtarget_pos"),
-          "Set the target reticle: full-ship corner box at ship_center sized "
-          "by ship_radius (GU), plus an optional subtarget crosshair at "
-          "subtarget_pos (x,y,z) or None. Applied each frame().");
+          py::arg("subtarget_pos"), py::arg("bar_alignment"),
+          "Set the target reticle: full-ship corner box, optional subtarget "
+          "crosshair, and fore/aft side bars whose arrows sit at bar_alignment "
+          "([-1,+1], +1 fore). Applied each frame().");
     m.def("clear_target_reticle",
           []() { g_target_reticle = renderer::TargetReticle{}; },
           "Hide the target reticle. Takes effect next frame().");
