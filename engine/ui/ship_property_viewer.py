@@ -11,12 +11,19 @@ from typing import List, Optional, Tuple
 from engine.appc.math import TGPoint3, TGMatrix3
 
 
-def subsystem_world_position(sub) -> TGPoint3:
+def subsystem_world_position(sub, ship=None) -> TGPoint3:
     """World mount point of a subsystem: ship location + body->world rotated
     local mount. No scale factor (BC stores mounts in world units relative to
     the ship centre — see engine/appc/subsystems.py:769). Returns the ship
-    location if the subsystem has no 3D mount."""
-    ship = sub._climb_to_ship() if hasattr(sub, "_climb_to_ship") else None
+    location if the subsystem has no 3D mount.
+
+    ``ship`` may be passed explicitly when the caller already knows it (the
+    Ship Property Viewer does). This is REQUIRED for the Hull/root subsystem,
+    whose ``_climb_to_ship()`` returns None (it has no parent back-pointer —
+    children reach the ship through it, but it has no link of its own), which
+    would otherwise collapse its pin to the world origin."""
+    if ship is None:
+        ship = sub._climb_to_ship() if hasattr(sub, "_climb_to_ship") else None
     if ship is None or not hasattr(ship, "GetWorldLocation"):
         return TGPoint3(0.0, 0.0, 0.0)
     ship_pos = ship.GetWorldLocation()
@@ -132,7 +139,9 @@ def build_descriptors(ship) -> List[dict]:
         local = sub.GetPosition() if hasattr(sub, "GetPosition") else None
         if local is None:
             continue
-        w = subsystem_world_position(sub)
+        # Pass the known ship: the Hull/root subsystem's _climb_to_ship()
+        # returns None, which would otherwise place its pin at the origin.
+        w = subsystem_world_position(sub, ship)
         props = _properties_for(sub, local)
         out.append({
             "name":       props["name"],

@@ -45,6 +45,18 @@ def test_world_position_none_mount_returns_ship_location():
     assert (w.x, w.y, w.z) == (3.0, 4.0, 5.0)
 
 
+def test_world_position_uses_explicit_ship_when_climb_returns_none():
+    # The Hull/root subsystem's _climb_to_ship() returns None; passing the
+    # known ship explicitly must still place it correctly (not at the origin).
+    ship = _FakeShip(TGPoint3(43.9, 13.9, 0.0), TGMatrix3())   # identity rot
+    hull = _FakeSub((0.0, -1.5, -0.5), None)                   # climb → None
+    assert hull._climb_to_ship() is None
+    w_climbed = subsystem_world_position(hull)                 # no ship → origin
+    assert (w_climbed.x, w_climbed.y, w_climbed.z) == (0.0, 0.0, 0.0)
+    w = subsystem_world_position(hull, ship)                   # explicit ship
+    assert (round(w.x, 5), round(w.y, 5), round(w.z, 5)) == (43.9, 12.4, -0.5)
+
+
 from engine.ui.ship_property_viewer import OrbitCamera, project
 
 
