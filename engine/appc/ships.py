@@ -883,6 +883,50 @@ class ShipClass(DamageableObject):
                 parent.AddChildSubsystem(child)
                 break
 
+        # Pass 5 — engine pods.  EngineProperty leaves attach to the matching
+        # powered aggregator by EngineType (EP_IMPULSE -> impulse, EP_WARP ->
+        # warp).  BC uses no dedicated engine-leaf class — pods are plain
+        # ShipSubsystems (sdk/.../App.py declares EngineProperty but no
+        # EngineSubsystem).  Idempotent: skip a parent already seeded with
+        # children on a prior run.
+        from engine.appc.properties import EngineProperty
+        from engine.appc.subsystems import (
+            ShipSubsystem as _ShipSubsystem,
+            ImpulseEngineSubsystem as _ImpulseEngineSubsystem,
+            WarpEngineSubsystem as _WarpEngineSubsystem,
+        )
+        _engine_parent_for = {
+            EngineProperty.EP_IMPULSE: self._impulse_engine_subsystem,
+            EngineProperty.EP_WARP:    self._warp_engine_subsystem,
+        }
+        _engine_parents_seeded = {
+            id(p) for p in _engine_parent_for.values()
+            if p is not None and p.GetNumChildSubsystems() > 0
+        }
+        for prop in self.GetPropertySet().GetPropertyList():
+            if type(prop) is not EngineProperty:
+                continue
+            etype = prop.GetEngineType()
+            parent = _engine_parent_for.get(etype)
+            # If the aggregator was scrubbed by Pass 3 (no matching powered
+            # property registered), lazily recreate it so pods have a home.
+            if parent is None:
+                if etype == EngineProperty.EP_IMPULSE:
+                    parent = _ImpulseEngineSubsystem("Impulse Engines")
+                    self.SetImpulseEngineSubsystem(parent)
+                else:
+                    parent = _WarpEngineSubsystem("Warp Engines")
+                    self.SetWarpEngineSubsystem(parent)
+                _engine_parent_for[etype] = parent
+            if id(parent) in _engine_parents_seeded:
+                continue
+            pod = _ShipSubsystem(prop.GetName() or "")
+            pod.SetProperty(prop)
+            mc = prop.GetMaxCondition()
+            if mc is not None:
+                pod.SetMaxCondition(mc)
+            parent.AddChildSubsystem(pod)
+
     @staticmethod
     def _copy_powered_subsystem_fields(prop, subsystem) -> None:
         if subsystem is None:
