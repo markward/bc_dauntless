@@ -340,7 +340,7 @@ void frame() {
 
         if (g_torpedo_pass) g_torpedo_pass->render(g_torpedoes,    g_camera, *g_pipeline);
         if (g_phaser_pass)  g_phaser_pass ->render(g_phaser_beams, g_camera, *g_pipeline);
-        if (g_hit_vfx_pass) g_hit_vfx_pass->render(g_hit_vfx,      g_camera, *g_pipeline);
+        if (g_hit_vfx_pass) g_hit_vfx_pass->render(g_hit_vfx, g_world, g_camera, *g_pipeline);
     }
 
     if (g_hologram_pass && g_hologram_ship.active)
@@ -750,8 +750,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   v.surface_normal = {std::get<0>(n), std::get<1>(n), std::get<2>(n)};
                   v.severity = d["severity"].cast<int>();
                   v.age = d["age"].cast<float>();
-                  v.instance_id = d.contains("instance_id") && !d["instance_id"].is_none()
-                                  ? d["instance_id"].cast<int>() : -1;
+                  if (d.contains("instance_id") && !d["instance_id"].is_none()) {
+                      v.instance_id = d["instance_id"].cast<scenegraph::InstanceId>();
+                  }
                   v.weapon_kind = d.contains("weapon_kind") ? d["weapon_kind"].cast<int>() : 1;
                   v.spark_count = d.contains("spark_count") ? d["spark_count"].cast<int>() : 0;
                   if (d.contains("body_point") && !d["body_point"].is_none()) {

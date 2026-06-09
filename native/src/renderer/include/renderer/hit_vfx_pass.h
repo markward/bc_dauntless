@@ -7,7 +7,7 @@
 #include <memory>
 #include <vector>
 
-namespace scenegraph { struct Camera; }
+namespace scenegraph { struct Camera; class World; }
 
 namespace renderer {
 
@@ -24,6 +24,7 @@ public:
     /// position.  Size eases 0→1 over first 100ms; alpha fades 1→0 over
     /// next 400ms based on `age` (engine prunes after 500ms).
     void render(const std::vector<HitVfxDescriptor>& vfx,
+                const scenegraph::World& world,
                 const scenegraph::Camera& camera,
                 Pipeline& pipeline);
 
@@ -31,9 +32,11 @@ private:
     unsigned int quad_vao_ = 0;
     unsigned int quad_vbo_ = 0;
     std::unique_ptr<assets::Texture> texture_;
+    std::unique_ptr<assets::Texture> spark_texture_;
 
     void ensure_quad_mesh();
     void ensure_texture();
+    void ensure_spark_texture();
 };
 
 }  // namespace renderer
