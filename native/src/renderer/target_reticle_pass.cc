@@ -25,6 +25,10 @@ constexpr const char* kCrosshairFile = "game/data/subtarget.tga";
 constexpr float kCornerSizePx    = 24.0f;
 constexpr float kCrosshairSizePx = 40.0f;
 
+// Chrome palette (rgb 0..1, a = alpha scale). From the UI config-panel gradient.
+constexpr glm::vec4 kBoxTint      {0.847f, 0.518f, 0.314f, 1.0f};  // orange #d88450
+constexpr glm::vec4 kCrosshairTint{1.000f, 0.860f, 0.000f, 1.0f};  // yellow
+
 std::unique_ptr<assets::Texture> load_tga(const char* path) {
     std::ifstream in(path, std::ios::binary);
     if (!in) {
@@ -125,23 +129,25 @@ void TargetReticlePass::render(const TargetReticle& reticle,
         {-1.0f, -1.0f,  1.0f, -1.0f},   // lower-left  (mirror V)
         { 1.0f, -1.0f, -1.0f, -1.0f},   // lower-right (mirror H+V)
     };
+    shader.set_vec4("u_tint", kBoxTint);
     for (const auto& c : kCornerDefs) {
         const glm::vec3 centre = reticle.ship_center
                                + cam_right * (c[0] * r)
                                + cam_up    * (c[1] * r);
-        shader.set_vec3 ("u_center_world", centre);
-        shader.set_float("u_size_world",   corner_size);
-        shader.set_vec2 ("u_uv_flip", glm::vec2(c[2], c[3]));
+        shader.set_vec3("u_center_world", centre);
+        shader.set_vec2("u_size_world",   glm::vec2(corner_size, corner_size));
+        shader.set_vec2("u_uv_flip",      glm::vec2(c[2], c[3]));
         glDrawArrays(GL_TRIANGLES, 0, 6);
     }
 
     // --- Subtarget crosshair (subtarget.tga) ---
     if (reticle.has_subtarget) {
         glBindTexture(GL_TEXTURE_2D, crosshair_tex_ ? crosshair_tex_->id() : 0);
-        shader.set_vec3 ("u_center_world", reticle.subtarget_pos);
-        shader.set_float("u_size_world",
-                         world_for_px(reticle.subtarget_pos, kCrosshairSizePx));
-        shader.set_vec2 ("u_uv_flip", glm::vec2(1.0f, 1.0f));
+        const float cs = world_for_px(reticle.subtarget_pos, kCrosshairSizePx);
+        shader.set_vec4("u_tint",         kCrosshairTint);
+        shader.set_vec3("u_center_world", reticle.subtarget_pos);
+        shader.set_vec2("u_size_world",   glm::vec2(cs, cs));
+        shader.set_vec2("u_uv_flip",      glm::vec2(1.0f, 1.0f));
         glDrawArrays(GL_TRIANGLES, 0, 6);
     }
 
