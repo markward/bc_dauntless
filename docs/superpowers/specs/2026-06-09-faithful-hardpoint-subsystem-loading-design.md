@@ -37,13 +37,21 @@ player target list, and gameplay targeting/damage.
 1. **Scope:** everything registered in the hardpoint files must load.
 2. **Integration depth:** newly-loaded targetable subsystems are player-targetable and
    damageable, and shown in the viewer/damage panel.
-3. **AI:** accept stock-BC behavior. Faithful child-tree loading naturally exposes the
-   engine pods and tractor emitters to the enemy AI targeting loop (their aggregators are
-   `Targetable=0`, which the AI's `GetTargetableSubsystems` recurses through). This is
-   exactly what stock BC does. We do **not** build a parallel hierarchy to hide them.
+3. **AI:** unchanged in this work, and unchanged *for free*. `ShipSubsystem.IsTargetable()`
+   is currently hardcoded to return `1` (`engine/appc/subsystems.py:920`), so the SDK AI
+   loop (`GetTargetableSubsystems`, which only recurses into children of *non-targetable*
+   parents) never recurses into any children. Attaching pods/emitters/bridge as children
+   therefore does not reach the AI path at all — no parallel hierarchy required. Full
+   stock-BC AI fidelity (enemies targeting individual nacelles/pods) requires a broad
+   `IsTargetable()` overhaul touching every ship; that is **deferred** to a follow-up,
+   documented in `docs/superpowers/specs/2026-06-09-subsystem-targetability-fidelity-followup.md`.
 4. **Object emitters:** mount-only. Created as non-targetable, non-damageable mount
    markers, surfaced in the Property Viewer as informational pins, excluded from the
    target list and damage panel. No launch gameplay in this work.
+5. **Target menu:** hierarchical. Aggregators (Phasers, Torpedoes, Impulse Engines, Warp
+   Engines, Tractors) remain parent rows; expanding one reveals its child leaves
+   (banks / tubes / pods / nacelles / emitters) as a second accordion level. Nothing
+   currently targetable stops being targetable.
 
 ## Enumeration landscape (why the fix touches several paths)
 
@@ -56,10 +64,18 @@ Our engine has four divergent subsystem-enumeration paths (stock BC has one unif
 | Combat damage (`engine/appc/combat.py:279`) | `GetSubsystems()` + one level of `_children` | yes |
 | Viewer / damage panel (`engine/ui/ship_display_panel.py:447`) | `_DAMAGE_SOURCE_GETTERS` + one level of children | yes — but the getter list **omits tractors** |
 
-The BC-faithful model is a single tree: leaves are children of their aggregators. Because
-the impulse/warp/tractor aggregators are `Targetable=0`, the AI recurses into them; the
-primary Hull is `Targetable=1`, so the AI does **not** recurse into it (this is why the
-Bridge, attached under the Hull, stays out of the AI loop for free).
+The BC-faithful model is a single tree: leaves are children of their aggregators.
+
+**Targetability nuance (decisive for "AI unchanged"):** in stock BC the AI recurses into
+children of `Targetable=0` aggregators, so pods/emitters would become AI targets. But our
+`ShipSubsystem.IsTargetable()` is hardcoded to `1`, so the SDK AI loop sees *every* parent
+as targetable and never recurses into children. Adding children therefore leaves the AI
+path untouched with no special-casing. (See decision 3 and the deferred follow-up.)
+
+Note also that `StartGetSubsystemMatch(CT_SHIP_SUBSYSTEM)` returning top-level subsystems
+only is **BC-faithful**: the SDK's own `MissionLib.HideSubsystems:2187` iterates it
+top-level and then recurses children *manually* (`HideSubsystem:2172`). So §5 does not
+change the iterator — the menu *builder* recurses, matching the canonical SDK pattern.
 
 ## Design
 
@@ -120,17 +136,28 @@ primary). Because the primary hull is `Targetable=1`, the AI loop does not recur
 it, so the bridge is player-targetable + damageable + shown in the viewer without
 perturbing AI.
 
-### Section 5 — Player target menu walks the full tree
+### Section 5 — Hierarchical target menu (aggregators expand to children)
 
-`StartGetSubsystemMatch(CT_SHIP_SUBSYSTEM)` (`ships.py:1014`) currently returns top-level
-slots only, so no child — not even today's phaser banks — is player-targetable. Extend the
-`CT_SHIP_SUBSYSTEM` case to recurse the full subsystem tree (depth-first over `_children`).
+`StartGetSubsystemMatch(CT_SHIP_SUBSYSTEM)` stays unchanged (top-level only — BC-faithful).
+The fix lives in the menu *builder* and the CEF renderer, producing a two-level accordion:
+**ship → subsystem (aggregator) → child leaf**.
 
-This is a deliberate, BC-correct behavior change: phaser banks and torpedo tubes also
-become individually player-targetable, as in stock BC. Recursion is **full** (not scoped
-to only the new leaf types) — approved during brainstorming — because it removes a hidden
-inconsistency rather than papering over it. Other `CT_*` match types (weapon system,
-sensor, etc.) keep their existing top-level semantics; only `CT_SHIP_SUBSYSTEM` recurses.
+- `STSubsystemMenu.RebuildShipMenu` (`engine/appc/target_menu.py:130`): for each top-level
+  subsystem matched, add its row; then recurse into `GetNumChildSubsystems()` /
+  `GetChildSubsystem(i)` (the canonical `HideSubsystem` pattern) and add each child as a
+  nested row beneath it. `STMenu` rows gain child rows.
+- `TargetListView` (`engine/ui/target_list_view.py`): the per-ship `subsystems` snapshot
+  entries gain an optional `children: [{name, condition}]` list and a per-subsystem
+  `expanded` flag; track expanded subsystems keyed by `"<ship>/<subsystem>"`. Add a
+  subsystem-level toggle action `target/<ship>/<subsystem>/__toggle__`.
+- `target_list.js` (`native/assets/ui-cef/js/target_list.js`): render child rows with their
+  own caret + toggle when the parent subsystem row is expanded; clicking a child emits
+  `target/<ship>/<subsystem-or-child-name>`. `_resolve_subsystem_by_name` already resolves
+  by name; extend it to also search child subsystems so a child click locks the leaf.
+- CSS: a nested-indent style for the third accordion level (target-list CSS).
+
+Nothing currently targetable stops being targetable; this is purely additive (children
+become reachable by expanding their aggregator).
 
 ### Section 6 — Object emitters (viewer-only mounts)
 
@@ -173,8 +200,10 @@ TDD throughout. Each section begins with a focused failing test, then implementa
   reachable from the damage/viewer getters.
 - Bridge is a `Targetable=1` `HullSubsystem` child of the primary hull; `GetHull()` still
   returns the primary; AI walk does not include the bridge.
-- Player target walk (`StartGetSubsystemMatch(CT_SHIP_SUBSYSTEM)`) yields the warp nacelle,
-  an impulse pod, a phaser bank, and a tractor emitter.
+- `RebuildShipMenu` produces nested rows: the impulse aggregator row has 3 child rows
+  (Port/Star/Center Impulse), the warp aggregator 2 (Port/Star Warp), the tractor aggregator
+  4 emitters, the phaser aggregator 8 banks. `_resolve_subsystem_by_name` resolves a child
+  leaf (e.g. "Port Warp") to the live subsystem instance.
 - Galaxy exposes exactly 2 `ObjectEmitter`s (Shuttle Bay, Probe Launcher), and they do
   **not** appear in `_iter_damage_subsystems` or the target list.
 
