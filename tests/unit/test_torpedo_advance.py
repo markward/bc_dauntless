@@ -4,8 +4,38 @@ turns toward the target up to max_angular_accel × dt.
 Collision: sphere_hit against any ship except source; first hit wins.
 """
 import pytest
-from engine.appc.math import TGPoint3
-from engine.appc.projectiles import Torpedo, register, update_all, _active
+from engine.appc.math import TGPoint3, TGMatrix3
+from engine.appc.projectiles import Torpedo, register, update_all, _active, _steer_toward
+from engine.appc.subsystems import ShipSubsystem
+
+
+class _RotShip:
+    def __init__(self, loc, rot):
+        self._loc, self._rot = loc, rot
+    def GetWorldLocation(self): return self._loc
+    def GetWorldRotation(self): return self._rot
+
+
+def test_steer_toward_homes_on_locked_subsystem():
+    """Guidance must steer toward the locked subsystem's world position, not
+    the target ship's hull centre, when the torpedo carries a subsystem lock."""
+    R = TGMatrix3(); R.MakeIdentity()
+    ship = _RotShip(TGPoint3(0.0, 0.0, 0.0), R)
+    sub = ShipSubsystem("Port Nacelle")
+    sub._position = TGPoint3(0.0, 50.0, 0.0)   # +50 in ship local Y
+    sub.SetParentShip(ship)
+
+    t = Torpedo()
+    t._position = TGPoint3(100.0, 0.0, 0.0)
+    t._velocity = TGPoint3(-10.0, 0.0, 0.0)    # heading straight at hull centre
+    t._max_angular_accel = 10.0                # ample turn authority
+    t._target_ship = ship
+    t._target_subsystem = sub
+
+    _steer_toward(t, ship, dt=0.05)
+    # The subsystem at (0,50,0) is +Y of the hull centre; homing on it must
+    # introduce a +Y velocity component (homing on the centre would not).
+    assert t._velocity.y > 1e-6
 
 
 @pytest.fixture(autouse=True)

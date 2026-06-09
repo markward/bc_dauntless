@@ -190,10 +190,19 @@ def update_all(dt: float, all_ships, *, host=None, ship_instances=None) -> list[
 
 
 def _steer_toward(torpedo: Torpedo, target_ship, dt: float) -> None:
-    """Rotate torpedo._velocity toward target ship position by at most
+    """Rotate torpedo._velocity toward the homing point by at most
     max_angular_accel × dt radians.  Preserves velocity magnitude.
+
+    Homes on the locked subsystem's world position when the torpedo carries a
+    subsystem lock (mirrors the launch aim in subsystems.py and the phaser
+    aim), else the target ship's hull centre. ShipSubsystem.GetWorldLocation
+    climbs to its ship, so off-centre nacelle/impulse pods resolve correctly.
     """
-    target_pos = target_ship.GetWorldLocation()
+    sub = torpedo._target_subsystem
+    if sub is not None and hasattr(sub, "GetWorldLocation"):
+        target_pos = sub.GetWorldLocation()
+    else:
+        target_pos = target_ship.GetWorldLocation()
     to_target = target_pos - torpedo._position
     dist = to_target.Length()
     if dist < 1e-6:
