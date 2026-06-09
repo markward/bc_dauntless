@@ -27,6 +27,8 @@
 #include "embedded_hologram_fs.h"
 #include "embedded_subsystem_pin_vs.h"
 #include "embedded_subsystem_pin_fs.h"
+#include "embedded_target_reticle_vs.h"
+#include "embedded_target_reticle_fs.h"
 #include "embedded_bridge_vs.h"
 #include "embedded_bridge_fs.h"
 #include "embedded_lightmap_vs.h"
@@ -47,6 +49,7 @@ Pipeline::Pipeline() {
     phaser_        = std::make_unique<Shader>(shader_src::phaser_vs,        shader_src::phaser_fs);
     hologram_      = std::make_unique<Shader>(shader_src::hologram_vs,      shader_src::hologram_fs);
     subsystem_pin_ = std::make_unique<Shader>(shader_src::subsystem_pin_vs, shader_src::subsystem_pin_fs);
+    target_reticle_ = std::make_unique<Shader>(shader_src::target_reticle_vs, shader_src::target_reticle_fs);
     bridge_        = std::make_unique<Shader>(shader_src::bridge_vs,        shader_src::bridge_fs);
     lightmap_   = std::make_unique<Shader>(shader_src::lightmap_vs,   shader_src::lightmap_fs);
     glEnable(GL_DEPTH_TEST);
