@@ -156,10 +156,23 @@ class STTargetMenu(STTopLevelMenu):
         kIter = ship.StartGetSubsystemMatch(_App.CT_SHIP_SUBSYSTEM)
         sub = ship.GetNextSubsystemMatch(kIter)
         while sub is not None:
-            label = sub.GetName() if hasattr(sub, "GetName") else ""
-            row.AddChild(STMenu(label))
+            self._add_subsystem_row(row, sub)
             sub = ship.GetNextSubsystemMatch(kIter)
         ship.EndGetSubsystemMatch(kIter)
+
+    def _add_subsystem_row(self, parent_row, sub):
+        """Add a row for `sub` under `parent_row`, then recurse into its
+        child subsystems so aggregators (Phasers, Impulse Engines, Tractors,
+        ...) become expandable parents of their leaves. Mirrors the canonical
+        SDK MissionLib.HideSubsystem recursion pattern."""
+        label = sub.GetName() if hasattr(sub, "GetName") else ""
+        sub_row = STMenu(label)
+        parent_row.AddChild(sub_row)
+        n = sub.GetNumChildSubsystems() if hasattr(sub, "GetNumChildSubsystems") else 0
+        for i in range(n):
+            child = sub.GetChildSubsystem(i)
+            if child is not None:
+                self._add_subsystem_row(sub_row, child)
 
     def RebuildShipMenus(self, source_set=None) -> None:
         """Bulk rebuild. Never called from SDK Python; included so the
