@@ -1065,6 +1065,32 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "point/normal are transformed into the ship body frame. weapon_class: "
           "0=HeatGlow (phaser), 1=Scorch (torpedo/disruptor).");
 
+    m.def("world_to_body",
+          [](scenegraph::InstanceId id,
+             std::tuple<float, float, float> world_point,
+             std::tuple<float, float, float> world_normal)
+              -> py::object {
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return py::none();  // stale id
+              const glm::vec3 pw(std::get<0>(world_point),
+                                 std::get<1>(world_point),
+                                 std::get<2>(world_point));
+              const glm::vec3 nw(std::get<0>(world_normal),
+                                 std::get<1>(world_normal),
+                                 std::get<2>(world_normal));
+              const glm::vec3 pb = scenegraph::world_to_body(inst->world, pw);
+              glm::vec3 nb = scenegraph::world_dir_to_body(inst->world, nw);
+              const float len = glm::length(nb);
+              if (len > 1e-6f) nb /= len;
+              return py::make_tuple(
+                  py::make_tuple(pb.x, pb.y, pb.z),
+                  py::make_tuple(nb.x, nb.y, nb.z));
+          },
+          py::arg("instance_id"), py::arg("world_point"), py::arg("world_normal"),
+          "Convert a world-space hit point + normal into the ship instance's "
+          "body frame (model units). Returns ((bx,by,bz),(nx,ny,nz)) or None "
+          "if the instance id is stale.");
+
     m.def("damage_decals_tick",
           [](float time) {
               g_decal_game_time = time;
