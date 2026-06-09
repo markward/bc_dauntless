@@ -28,6 +28,13 @@ public:
                 const scenegraph::Camera& camera,
                 Pipeline& pipeline);
 
+    /// Sprite paths this pass opens via std::ifstream, relative to the
+    /// renderer's runtime CWD (the project root). Exposed so a test can
+    /// verify they resolve — a missing "game/" prefix silently no-ops the
+    /// whole pass.
+    static const char* impact_texture_path();
+    static const char* spark_texture_path();
+
 private:
     unsigned int quad_vao_ = 0;
     unsigned int quad_vbo_ = 0;

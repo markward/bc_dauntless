@@ -51,8 +51,13 @@ constexpr float kSparkSpeed     = 4.0f;    // wu/s initial speed
 constexpr float kSparkSizeMult  = 0.6f;    // multiplier on tier peak_size
 constexpr float kSparkDamping   = 1.4f;    // velocity damping rate (SDK SetDamping analogue)
 
-constexpr const char* kImpactTexturePath = "data/Textures/Tactical/TorpedoFlares.tga";
-constexpr const char* kSparkTexturePath  = "data/rough.tga";
+// Renderer CWD is the project root (see engine/host_loop.py:_resolve_game_texture),
+// so these direct-ifstream sprite loads need the "game/" prefix — matching
+// phaser_pass.cc's "game/data/phaser.tga". Without it load_sprite fails, the
+// main texture stays id()==0, and render() early-returns, suppressing the WHOLE
+// pass (flash + sparks).
+constexpr const char* kImpactTexturePath = "game/data/Textures/Tactical/TorpedoFlares.tga";
+constexpr const char* kSparkTexturePath  = "game/data/rough.tga";
 
 constexpr float kQuadCorners[] = {
     -1.0f, -1.0f,
@@ -152,6 +157,9 @@ void load_sprite(std::unique_ptr<assets::Texture>& slot, const char* path) {
 }
 
 }  // namespace
+
+const char* HitVfxPass::impact_texture_path() { return kImpactTexturePath; }
+const char* HitVfxPass::spark_texture_path()  { return kSparkTexturePath; }
 
 void HitVfxPass::ensure_texture() {
     if (texture_) return;
