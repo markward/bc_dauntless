@@ -30,9 +30,14 @@ def _valid_target(player):
     return tgt
 
 
-def _valid_subsystem(target):
-    """The locked subsystem if present and not destroyed, else None."""
-    get = getattr(target, "GetTargetSubsystem", None)
+def _valid_subsystem(ship):
+    """The subsystem ``ship`` has locked, if present and not destroyed, else
+    None. BC stores the subsystem lock on the *firing* ship (the player), set
+    via ``player.SetTargetSubsystem`` — see engine/ui/target_list_view.py and
+    engine/appc/ships.py:GetTargetSubsystem. The locked subsystem instance
+    itself belongs to the *target* ship, so resolve its world position against
+    the target, not against ``ship``."""
+    get = getattr(ship, "GetTargetSubsystem", None)
     if get is None:
         return None
     sub = get()
@@ -46,12 +51,12 @@ def _valid_subsystem(target):
 
 def target_aim_point(player):
     """World point the tracking camera should orbit, or None if no valid
-    target. Subsystem world position when a valid subsystem is locked,
-    otherwise the target's hull centre."""
+    target. Subsystem world position when the player has a valid subsystem
+    locked, otherwise the target's hull centre."""
     target = _valid_target(player)
     if target is None:
         return None
-    sub = _valid_subsystem(target)
+    sub = _valid_subsystem(player)
     if sub is not None:
         return subsystem_world_position(sub, target)
     return target.GetWorldLocation()
@@ -64,7 +69,7 @@ def build_target_reticle(player) -> TargetReticlePayload:
         return TargetReticlePayload(visible=False)
     centre = target.GetWorldLocation()
     radius = target.GetRadius()
-    sub = _valid_subsystem(target)
+    sub = _valid_subsystem(player)
     subtarget = None
     if sub is not None:
         w = subsystem_world_position(sub, target)

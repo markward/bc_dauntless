@@ -42,8 +42,8 @@ def test_aim_point_subsystem_uses_rotated_world_pos():
     tgt = _ship(TGPoint3(200, 0, 0), R)
     sub = _Sub("Port Nacelle"); sub._position = TGPoint3(10, 0, 0)
     sub.SetParentShip(tgt)
-    tgt._sub = sub
-    p = _ship(TGPoint3(0, 0, 0), _identity()); p._t = tgt
+    # The subsystem lock lives on the PLAYER (firing ship), not the target.
+    p = _ship(TGPoint3(0, 0, 0), _identity()); p._t = tgt; p._sub = sub
     a = target_aim_point(p)
     # ship (200,0,0) + R·(10,0,0) = (200, 10, 0)
     assert abs(a.x - 200) < 1e-5 and abs(a.y - 10) < 1e-5 and abs(a.z) < 1e-5
@@ -53,8 +53,7 @@ def test_aim_point_destroyed_subsystem_falls_back_to_hull():
     tgt = _ship(TGPoint3(200, 0, 0), _identity())
     sub = _Sub("Port Nacelle"); sub._position = TGPoint3(10, 0, 0)
     sub.SetParentShip(tgt); sub.SetDestroyed(True)
-    tgt._sub = sub
-    p = _ship(TGPoint3(0, 0, 0), _identity()); p._t = tgt
+    p = _ship(TGPoint3(0, 0, 0), _identity()); p._t = tgt; p._sub = sub
     a = target_aim_point(p)
     assert abs(a.x - 200) < 1e-6 and abs(a.y) < 1e-6
 
@@ -78,8 +77,8 @@ def test_build_reticle_ship_center_is_hull_not_subsystem():
     R = TGMatrix3(); R.MakeZRotation(math.pi / 2.0)
     tgt = _ship(TGPoint3(200, 0, 0), R, radius=6.0)
     sub = ShipSubsystem("Port Nacelle"); sub._position = TGPoint3(10, 0, 0)
-    sub.SetParentShip(tgt); tgt._sub = sub
-    p = _ship(TGPoint3(0, 0, 0), _identity()); p._t = tgt
+    sub.SetParentShip(tgt)
+    p = _ship(TGPoint3(0, 0, 0), _identity()); p._t = tgt; p._sub = sub
     r = build_target_reticle(p)
     # ship_center stays at the hull centre…
     assert abs(r.ship_center[0] - 200) < 1e-6
@@ -94,8 +93,8 @@ def test_build_reticle_subtarget_agrees_with_aim_point():
     R = TGMatrix3(); R.MakeZRotation(math.pi / 2.0)
     tgt = _ship(TGPoint3(200, 0, 0), R)
     sub = _Sub("Port Nacelle"); sub._position = TGPoint3(10, 0, 0)
-    sub.SetParentShip(tgt); tgt._sub = sub
-    p = _ship(TGPoint3(0, 0, 0), _identity()); p._t = tgt
+    sub.SetParentShip(tgt)
+    p = _ship(TGPoint3(0, 0, 0), _identity()); p._t = tgt; p._sub = sub
     r = build_target_reticle(p)
     a = target_aim_point(p)
     assert r.subtarget_pos is not None
