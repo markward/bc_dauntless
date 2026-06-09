@@ -92,3 +92,26 @@ def test_lifetime_widens_to_cover_critical_tail():
     """_LIFETIME must be at least 0.7s — CRITICAL kTotalLife in the renderer."""
     from engine.appc import hit_vfx
     assert hit_vfx._LIFETIME >= 0.7
+
+
+def test_spawn_records_spark_anchor_and_kind():
+    hit_vfx._active.clear()
+    pos = TGPoint3(1.0, 2.0, 3.0)
+    nrm = TGPoint3(0.0, 0.0, 1.0)
+    spawn(pos, normal=nrm, severity=Severity.HULL,
+          instance_id=7, body_point=(0.5, -0.5, 0.25),
+          body_normal=(0.0, 0.0, 1.0), weapon_kind=1, spark_count=12)
+    e = snapshot()[0]
+    assert e["instance_id"] == 7
+    assert e["body_point"] == (0.5, -0.5, 0.25)
+    assert e["body_normal"] == (0.0, 0.0, 1.0)
+    assert e["weapon_kind"] == 1
+    assert e["spark_count"] == 12
+
+
+def test_spawn_defaults_have_no_sparks():
+    hit_vfx._active.clear()
+    spawn(TGPoint3(0, 0, 0))
+    e = snapshot()[0]
+    assert e["spark_count"] == 0
+    assert e["instance_id"] is None

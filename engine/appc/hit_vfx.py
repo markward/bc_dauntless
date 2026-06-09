@@ -21,20 +21,34 @@ _LIFETIME = 0.7  # seconds — must cover renderer's longest kTotalLife (CRITICA
 _active: list[dict] = []
 
 
-def spawn(position: TGPoint3, normal=None, severity=Severity.HULL) -> None:
-    """Register a new hit VFX at `position`.
+def spawn(position: TGPoint3, normal=None, severity=Severity.HULL,
+          *, instance_id=None, body_point=None, body_normal=None,
+          weapon_kind=1, spark_count=0) -> None:
+    """Register a new hit VFX at `position` (world space).
 
     `normal` is a unit TGPoint3 surface normal or None (mesh trace missed).
     `severity` is Severity.SHIELD / HULL / CRITICAL. SHIELD is a no-op —
     the shield_hit renderer pass handles its own splash.
+
+    Spark fields (all optional; spark_count == 0 disables the burst):
+      instance_id  — receiving ship's renderer instance id (hull anchor)
+      body_point   — impact point in ship body frame (model units, 3-tuple)
+      body_normal  — surface normal in ship body frame (3-tuple)
+      weapon_kind  — SPARK_KIND_PHASER (0) / SPARK_KIND_TORPEDO (1) tint+cone
+      spark_count  — number of sparks to emit
     """
     if severity == Severity.SHIELD:
         return
     _active.append({
-        "position": position,
-        "normal":   normal,
-        "severity": int(severity),
-        "age":      0.0,
+        "position":    position,
+        "normal":      normal,
+        "severity":    int(severity),
+        "age":         0.0,
+        "instance_id": instance_id,
+        "body_point":  body_point,
+        "body_normal": body_normal,
+        "weapon_kind": int(weapon_kind),
+        "spark_count": int(spark_count),
     })
 
 
