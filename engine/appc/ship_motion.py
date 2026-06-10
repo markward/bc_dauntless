@@ -37,13 +37,6 @@ FALLBACK_MAX_ACCEL = 1.0e9
 # gap to target decays exponentially with τ.
 BC_IMPULSE_TAU = 1.0
 
-# When the impulse engine subsystem is disabled or destroyed,
-# _step_ship_motion clamps target speed and angular targets to zero
-# and scales the ramp step by this fraction so velocity decays
-# gracefully instead of instantly. 0.1 = ~10× the normal stop time.
-# Spec: docs/superpowers/specs/2026-06-02-subsystem-failure-consequences-design.md §2.
-DISABLED_ENGINE_DRAG_FRACTION = 0.1
-
 # Body-frame axes — matches _PlayerControl convention.
 _X_AXIS = TGPoint3(1.0, 0.0, 0.0)
 _Y_AXIS = TGPoint3(0.0, 1.0, 0.0)
