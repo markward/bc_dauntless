@@ -1087,11 +1087,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
              float radius) -> int {
               auto* inst = g_world.get(id);
               if (inst == nullptr) return -1;
-              // Resolve the model exactly as ray_trace_mesh does
-              // (host_bindings.cc) — there is no world.model_for().
-              const auto h = inst->model_handle;
-              if (h == 0 || h > g_loaded_models.size()) return -1;
-              const assets::Model* model = g_loaded_models[h - 1].handle.get();
+              const assets::Model* model = resolve_model(inst->model_handle);
               if (model == nullptr) return -1;
               // hardpoint center/radius are in game units; convert to the
               // model frame the CPU verts live in (same s as damage_decal_add).
@@ -1110,9 +1106,14 @@ PYBIND11_MODULE(_dauntless_host, m) {
               for (std::size_t i = 0; i < inst->nacelles.size(); ++i) {
                   if (inst->nacelles[i].active) continue;
                   auto& n = inst->nacelles[i];
-                  n.center = fit.center; n.axis = fit.axis;
-                  n.radius = fit.radius; n.aft = fit.aft; n.fore = fit.fore;
-                  n.dim_target = 1.0f; n.disable_time = -1.0f; n.active = true;
+                  n.center = fit.center;
+                  n.axis = fit.axis;
+                  n.radius = fit.radius;
+                  n.aft = fit.aft;
+                  n.fore = fit.fore;
+                  n.dim_target = 1.0f;
+                  n.disable_time = -1.0f;
+                  n.active = true;
                   return static_cast<int>(i);
               }
               return -1;  // no free slot
