@@ -202,13 +202,13 @@ def compute_capsule_region(instance_id: InstanceId,
 
 
 def set_glow_region_dim(instance_id: InstanceId, region_index: int,
-                        dim_target: float, disable_time: float) -> None:
-    """Update a nacelle capsule's dim target [0,1] and disable timestamp.
-
-    disable_time is game-time seconds of the last disable edge; <0 = healthy.
-    """
+                        dim_target: float, disable_time: float,
+                        flicker: float) -> None:
+    """Update a glow region's dim target [0,1], last state-change edge time
+    (game-time secs; <0 = healthy), and flicker flag (1 = disabled/continuous
+    flicker, 0 = solid settle)."""
     _h.set_glow_region_dim(instance_id, int(region_index),
-                           float(dim_target), float(disable_time))
+                           float(dim_target), float(disable_time), float(flicker))
 
 
 # ── Shield pass ─────────────────────────────────────────────────────────────

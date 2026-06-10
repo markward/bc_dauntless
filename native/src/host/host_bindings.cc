@@ -1126,7 +1126,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
 
     m.def("set_glow_region_dim",
           [](scenegraph::InstanceId id, int region_index,
-             float dim_target, float disable_time) {
+             float dim_target, float disable_time, float flicker) {
               auto* inst = g_world.get(id);
               if (inst == nullptr) return;
               if (region_index < 0 ||
@@ -1135,11 +1135,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
               if (!n.active) return;
               n.dim_target = dim_target;
               n.disable_time = disable_time;
+              n.flicker = flicker;
           },
           py::arg("instance_id"), py::arg("region_index"),
-          py::arg("dim_target"), py::arg("disable_time"),
-          "Update a glow region's live dim target [0,1] and the game-time "
-          "seconds of the last disable edge (<0 = healthy / never disabled).");
+          py::arg("dim_target"), py::arg("disable_time"), py::arg("flicker"),
+          "Update a glow region's live dim target [0,1], the game-time seconds "
+          "of the last state-change edge (<0 = healthy), and the flicker flag "
+          "(1 = disabled/continuous flicker, 0 = solid settle to dim_target).");
 
     m.def("world_to_body",
           [](scenegraph::InstanceId id,
