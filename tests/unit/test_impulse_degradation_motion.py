@@ -34,12 +34,22 @@ def test_effective_motion_full_fraction_is_base():
 
 
 def test_effective_motion_fallback_ship_has_no_real_limits():
-    # bare ship: no IES populated → has_linear and has_angular are False
+    # bare ship: no ImpulseEngineSubsystem at all (GetImpulseEngineSubsystem
+    # → None), so neither axis group has real limits.
     from engine.appc.ships import ShipClass
     ship = ShipClass()
     em = _effective_motion(ship, 1.0)
     assert em.has_linear is False
     assert em.has_angular is False
+
+
+def test_effective_motion_zero_fraction_zeros_all_limits():
+    # f == 0 is the total-loss / drift trigger: every scaled limit is zero.
+    ship = _galaxy()
+    em = _effective_motion(ship, 0.0)
+    assert em.has_linear is True and em.has_angular is True
+    assert em.max_speed == 0.0 and em.max_accel == 0.0
+    assert em.max_ang_vel == 0.0 and em.max_ang_accel == 0.0
 
 
 def test_cap_keep_caps_acceleration_below_cap():

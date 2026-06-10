@@ -17,7 +17,7 @@ Ships whose setpoints are still None are skipped entirely so the
 player ship (driven by `engine/host_loop.py:_PlayerControl` directly
 on the transform) is left alone.
 """
-from collections import namedtuple
+from dataclasses import dataclass
 
 from engine.appc.math import TGMatrix3, TGPoint3
 from engine.appc.objects import PhysicsObjectClass
@@ -50,26 +50,33 @@ _Z_AXIS = TGPoint3(0.0, 0.0, 1.0)
 # Per-tick effective motion limits at engine-fraction f. has_linear /
 # has_angular are False for fallback ships (no populated IES limits); the
 # integrator then uses FALLBACK_MAX_ACCEL snap semantics for that axis group.
-_EffectiveMotion = namedtuple(
-    "_EffectiveMotion",
-    "has_linear max_speed max_accel has_angular max_ang_vel max_ang_accel",
-)
+@dataclass(frozen=True)
+class _EffectiveMotion:
+    has_linear: bool
+    max_speed: float
+    max_accel: float
+    has_angular: bool
+    max_ang_vel: float
+    max_ang_accel: float
 
 
 def _effective_motion(ship, f: float) -> "_EffectiveMotion":
     """Resolve a ship's impulse limits scaled by online-fraction f."""
     getter = getattr(ship, "GetImpulseEngineSubsystem", None)
     ies = getter() if getter is not None else None
-    has_lin = ies is not None and ies.GetMaxSpeed() > 0.0
-    has_ang = ies is not None and ies.GetMaxAngularVelocity() > 0.0
-    max_speed = f * ies.GetMaxSpeed() if has_lin else 0.0
+    raw_speed = ies.GetMaxSpeed() if ies is not None else 0.0
+    raw_ang_vel = ies.GetMaxAngularVelocity() if ies is not None else 0.0
+    has_lin = raw_speed > 0.0
+    has_ang = raw_ang_vel > 0.0
     accel = ies.GetMaxAccel() if has_lin else 0.0
-    max_accel = f * accel if (has_lin and accel > 0.0) else 0.0
-    max_ang_vel = f * ies.GetMaxAngularVelocity() if has_ang else 0.0
     ang_accel = ies.GetMaxAngularAccel() if has_ang else 0.0
-    max_ang_accel = f * ang_accel if (has_ang and ang_accel > 0.0) else 0.0
     return _EffectiveMotion(
-        has_lin, max_speed, max_accel, has_ang, max_ang_vel, max_ang_accel,
+        has_linear=has_lin,
+        max_speed=f * raw_speed if has_lin else 0.0,
+        max_accel=f * accel if (has_lin and accel > 0.0) else 0.0,
+        has_angular=has_ang,
+        max_ang_vel=f * raw_ang_vel if has_ang else 0.0,
+        max_ang_accel=f * ang_accel if (has_ang and ang_accel > 0.0) else 0.0,
     )
 
 
