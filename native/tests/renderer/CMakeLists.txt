@@ -9,6 +9,7 @@ add_executable(renderer_tests
     sun_pass_test.cc
     dust_pass_test.cc
     aabb_test.cc
+    nacelle_region_test.cc
     ray_trace_test.cc
     shield_state_test.cc
     skin_shield_test.cc

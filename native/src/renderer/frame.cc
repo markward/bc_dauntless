@@ -17,6 +17,7 @@
 
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <array>
 #include <vector>
 
 // Toggle for the opaque-pass specular term. Default on so existing
@@ -77,6 +78,8 @@ void draw_model(const assets::Model& model,
                 GLuint black_fallback,
                 bool rim_active,
                 const scenegraph::DamageDecalRing& decals,
+                const std::array<scenegraph::Instance::Nacelle,
+                                 scenegraph::Instance::kMaxNacelles>& nacelles,
                 float decal_time) {
     // ── Per-instance damage decals (Phase 2) ───────────────────────────────
     // Pack the active ring into vec4 arrays. point_body and radius are both in
@@ -106,6 +109,34 @@ void draw_model(const assets::Model& model,
             shader.set_vec4_array("u_decal_c", c, n);
             // world->body for the opaque shader's body-frame fragment
             // reconstruction (opaque.frag: p_body / n_body).
+            shader.set_mat4("u_ship_world_inv", glm::inverse(world));
+            shader.set_float("u_decal_time", decal_time);
+        }
+    }
+
+    // ── Warp-nacelle glow capsules ─────────────────────────────────────────
+    // Dim the glow term inside an auto-fitted capsule when a warp pod is
+    // disabled. u_nacelle_count == 0 makes the shader skip the loop entirely,
+    // keeping the production path byte-identical.
+    {
+        glm::vec4 na[scenegraph::Instance::kMaxNacelles];
+        glm::vec4 nb[scenegraph::Instance::kMaxNacelles];
+        glm::vec4 nc[scenegraph::Instance::kMaxNacelles];
+        int nn = 0;
+        for (const auto& n : nacelles) {
+            if (!n.active) continue;
+            na[nn] = glm::vec4(n.center, n.radius);
+            nb[nn] = glm::vec4(n.axis, n.aft);
+            nc[nn] = glm::vec4(n.fore, n.dim_target, n.disable_time, 0.0f);
+            ++nn;
+        }
+        shader.set_int("u_nacelle_count", nn);
+        if (nn > 0) {
+            shader.set_vec4_array("u_nacelle_a", na, nn);
+            shader.set_vec4_array("u_nacelle_b", nb, nn);
+            shader.set_vec4_array("u_nacelle_c", nc, nn);
+            // Reuse the decal world->body inverse + clock; set them here too in
+            // case this instance has nacelles but no active decals.
             shader.set_mat4("u_ship_world_inv", glm::inverse(world));
             shader.set_float("u_decal_time", decal_time);
         }
@@ -272,7 +303,7 @@ void FrameSubmitter::submit_opaque(const scenegraph::World& world,
         const assets::Model* m = lookup(inst.model_handle);
         const bool rim_active = dauntless_rim::enabled() && inst.rim_eligible;
         if (m) draw_model(*m, inst.world, shader, white, black, rim_active,
-                          inst.decals, decal_time);
+                          inst.decals, inst.nacelles, decal_time);
     });
 }
 
@@ -310,7 +341,7 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
         const assets::Model* m = lookup(inst.model_handle);
         const bool rim_active = dauntless_rim::enabled() && inst.rim_eligible;
         if (m) draw_model(*m, inst.world, shader, white, black, rim_active,
-                          inst.decals, decal_time);
+                          inst.decals, inst.nacelles, decal_time);
     });
 }
 

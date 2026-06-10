@@ -1567,6 +1567,9 @@ class MissionSession:
     """
     mission_name: str
     ship_instances:   dict[Any, int] = field(default_factory=dict)
+    # Warp-nacelle glow-dimming controllers, keyed by render instance id.
+    # Best-effort VFX; ships without a warp subsystem get no entry.
+    warp_glow_controllers: dict[int, Any] = field(default_factory=dict)
     planet_instances: dict[Any, int] = field(default_factory=dict)
     # Per-planet natural_scale = GetRadius() / NIF_extent, cached at load.
     # Ships share a single flat NIF→world scale (BC_MODEL_SCALE) so they
@@ -1581,6 +1584,7 @@ class MissionSession:
         for iid in list(self.planet_instances.values()):
             renderer.destroy_instance(iid)
         self.ship_instances.clear()
+        self.warp_glow_controllers.clear()
         self.planet_instances.clear()
         self.planet_natural_scale.clear()
         self.player = None
@@ -1702,6 +1706,16 @@ class _MissionLoader:
             # Fresnel rim applies to ship hulls only — planets share the
             # opaque shader and must stay rim-free (default ineligible).
             r_.set_rim_eligible(iid, True)
+
+            # Warp-nacelle glow dimming (best-effort VFX). A ship without a
+            # warp subsystem is a clean no-op; any failure must never block
+            # spawning the ship instance.
+            try:
+                from engine.appc.warp_glow import WarpGlowController
+                sess.warp_glow_controllers[iid] = WarpGlowController(
+                    r_, iid, ship.GetWarpEngineSubsystem())
+            except Exception:
+                pass  # nacelle dimming is best-effort VFX; never block spawn
 
             # Register shield render state. Reads ShieldProperty data-bag
             # for glow color, decay, and skin-mode flag. No-op for ships
@@ -2592,7 +2606,14 @@ def run(mission_name: Optional[str] = None,
                     # _player_iid is a real iid (never None) at runtime.
                     _player_iid = session.ship_instances.get(player)
                     _live_ship_iids = []
+                    # Same game clock the decal system ages on
+                    # (engine.appc.damage_decals). Read once per frame.
+                    import App as _App_wg
+                    _wg_now = _App_wg.g_kUtopiaModule.GetGameTime()
                     for ship, iid in session.ship_instances.items():
+                        _wg = session.warp_glow_controllers.get(iid)
+                        if _wg is not None:
+                            _wg.update(_wg_now)
                         if iid == _player_iid:
                             r.set_world_transform(
                                 iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
@@ -2613,6 +2634,14 @@ def run(mission_name: Optional[str] = None,
                         r.set_world_transform(
                             iid, _world_matrix_from(_iloc, _irot, BC_MODEL_SCALE * _ps))
                     _xform_buf.prune(_live_ship_iids)
+                    # Drop controllers for instances no longer present. The
+                    # player iid is excluded from _live_ship_iids (handled by
+                    # the continue above), so key the keep-set on the full
+                    # live ship_instances values, not _live_ship_iids.
+                    _wg_live_iids = set(session.ship_instances.values())
+                    for _dead in list(session.warp_glow_controllers.keys()):
+                        if _dead not in _wg_live_iids:
+                            del session.warp_glow_controllers[_dead]
                     for planet, iid in session.planet_instances.items():
                         ns = session.planet_natural_scale.get(planet, 1.0)
                         r.set_world_transform(iid, _astro_world_matrix(planet, ns))
