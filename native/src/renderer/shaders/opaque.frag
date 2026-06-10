@@ -110,15 +110,14 @@ float nacelle_glow_mult(vec3 p_body, float now) {
         // Inside the capsule? lateral within radius AND axial within [aft,fore].
         if (dot(perp, perp) > radius * radius) continue;
         if (t < aft || t > fore) continue;
-        if (dtime < 0.0) continue;  // healthy — no dimming
+        if (dtime < 0.0) continue;  // healthy (Python writes -1.0; a real disable edge writes a >=0 game-time, incl. exactly 0.0)
 
         float age = max(now - dtime, 0.0);
         // Flicker-then-die: during the stutter window, oscillate between full
         // and target; afterward settle to target.
-        float settled = target;
         float flicker = mix(target, 1.0, 0.5 + 0.5 * stutter(age));
         float w = clamp(age / NACELLE_FLICKER_SECS, 0.0, 1.0);
-        float region_mult = mix(flicker, settled, w);
+        float region_mult = mix(flicker, target, w);
         mult = min(mult, region_mult);  // overlapping capsules: darkest wins
     }
     return mult;
@@ -297,8 +296,7 @@ void main() {
 
     float nac = 1.0;
     if (u_nacelle_count > 0) {
-        vec3 p_body_n = (u_ship_world_inv * vec4(v_position_ws, 1.0)).xyz;
-        nac = nacelle_glow_mult(p_body_n, u_decal_time);
+        nac = nacelle_glow_mult(p_body, u_decal_time);  // reuse existing body-frame pos
     }
 
     frag_color = vec4(lit + u_emissive_color + glow.rgb * glow.a * gf * nac + spec + rim + decal_emissive, 1.0);
