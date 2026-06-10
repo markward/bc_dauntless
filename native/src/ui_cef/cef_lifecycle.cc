@@ -149,13 +149,16 @@ bool initialize(int view_width, int view_height,
 void pump() {
     if (!g_initialized) return;
     CefDoMessageLoopWork();
-    // Force the OSR browser to repaint on every pump. Without this, CEF
-    // sometimes skips OnPaint after JS-driven DOM mutation on macOS in
-    // --disable-gpu mode.
-    if (g_client && g_client->browser()) {
-        auto host = g_client->browser()->GetHost();
-        if (host) host->Invalidate(PET_VIEW);
-    }
+    // NOTE: we deliberately do NOT force host->Invalidate(PET_VIEW) here.
+    // Forcing a full-view re-raster every pump (even rate-limited to 60 Hz)
+    // makes CEF's software rasteriser (--disable-gpu / --disable-gpu-
+    // compositing) re-raster the entire 2560x1440 page on the CPU
+    // repeatedly. It can't finish in time, so it delivers partial frames —
+    // panel borders/headers paint but the bodies don't — for clusters of
+    // several frames, which is the HUD flicker (proven via paired overlay/
+    // framebuffer dumps: the overlay buffer itself arrives body-less).
+    // CEF auto-invalidates the regions our JS DOM mutations actually dirty,
+    // so panels still repaint on change without the blunt full-view force.
 }
 
 void composite() {
