@@ -18,7 +18,7 @@ struct NacelleRegion {
     float     aft    = 0.0f;       // min projection (<= 0)
     float     fore   = 0.0f;       // max projection (>= 0)
     float     dim_target   = 1.0f; // 1 = full glow, ~0.08 = disabled
-    float     disable_time = -1.0f;// game-time secs of last disable edge; <0 = never
+    float     disable_time = -1.0f; // game-time secs of last disable edge; <0 = never
     bool      active = false;
 };
 

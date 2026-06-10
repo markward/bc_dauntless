@@ -25,6 +25,9 @@ NacelleRegion compute_nacelle_region(const assets::Model& model,
     int captured = 0;
 
     if (!model.nodes.empty()) {
+        // Walk node hierarchy to chain local_transform from root down. The asset
+        // pipeline orders nodes so parents precede children, so a single linear
+        // pass produces correct world-per-node matrices.
         std::vector<glm::mat4> node_world(model.nodes.size(), glm::mat4(1.0f));
         node_world[model.root_node] =
             model.nodes[model.root_node].local_transform;
