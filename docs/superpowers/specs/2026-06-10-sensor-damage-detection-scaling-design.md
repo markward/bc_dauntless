@@ -27,9 +27,10 @@ sensor subsystem's condition.
   **hardcoded 30000 GU** default — neither the ship's real sensor range nor
   condition-scaled. Called from `host_loop.py:2328`. The radar panel,
   `TargetListView`, and `sensors_panel` all filter on `row.IsVisible()`.
-- **AI:** the SDK's `SelectTarget.UpdateTargetInfo`
-  (`sdk/Build/scripts/AI/Preprocessors.py:1432`) enumerates candidates via
-  `self.pTargetGroup.GetActiveObjectTupleInSet(pSet)` (our shim,
+- **AI:** the SDK's `SelectTarget.FindGoodTarget`
+  (`sdk/Build/scripts/AI/Preprocessors.py:1423`, called from
+  `SelectTarget.Update` at `:1251`) enumerates candidates via
+  `self.pTargetGroup.GetActiveObjectTupleInSet(pSet)` at `:1432` (our shim,
   `engine/appc/objects.py:415`) with **no sensor filtering**. The SDK's
   `bIgnoreSensors` flag defaults to `1` (ignore) and is never read in the
   Python path — the real filtering lived in the C++ engine. The method has
@@ -100,15 +101,17 @@ No UI changes — the panels already filter on `row.IsVisible()`.
 A two-part monkeypatch installed once at engine init — no fork of the SDK file,
 no reimplementation of the selection logic:
 
-1. Wrap `SelectTarget.UpdateTargetInfo` to stash `self.pCodeAI.GetShip()` in a
-   module global for the duration of the call (`try/finally`).
+1. Wrap `SelectTarget.FindGoodTarget` (the method that actually enumerates
+   candidates) to stash `self.pCodeAI.GetShip()` in a module global for the
+   duration of the call (`try/finally` via a context manager).
 2. Wrap `ObjectGroup.GetActiveObjectTupleInSet` so that **when that global is
    set**, it filters its result through `can_detect(observer_ship, obj)`.
 
 Single-threaded Python (CLAUDE.md `setcheckinterval`) makes the global safe. The
 filter is a no-op for every other caller of `GetActiveObjectTupleInSet`
-(E1M2 proximity, MissionLib's player scan) because the global is `None` outside
-AI target selection.
+(E1M2 proximity, MissionLib's player scan, and `SelectTarget`'s own
+post-selection `UpdateTargetInfo` event-handler bookkeeping) because the global
+is `None` outside `FindGoodTarget`.
 
 Result: an AI ship with offline sensors gets an empty candidate list →
 `SelectTarget` returns `None` → no target; a sensor-damaged AI ship only sees

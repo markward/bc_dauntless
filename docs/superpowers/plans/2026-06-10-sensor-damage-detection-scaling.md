@@ -4,7 +4,7 @@
 
 **Goal:** Reduce a ship's target-detection range in proportion to its sensor subsystem's condition, and detect nothing once the sensor is offline — for both the player's target list and AI candidate selection.
 
-**Architecture:** A new pure-formula module `engine/appc/sensor_detection.py` computes `effective_sensor_range(ship)` and `can_detect(observer, target)`. The player target list (`update_target_list_visibility` in `subsystems.py`) sources its range from that formula. AI selection is gated by a two-part monkeypatch: `SelectTarget.UpdateTargetInfo` publishes the querying ship into a module global, and a wrapped `ObjectGroup.GetActiveObjectTupleInSet` filters candidates through `can_detect` while that global is set. Single-threaded Python makes the global safe.
+**Architecture:** A new pure-formula module `engine/appc/sensor_detection.py` computes `effective_sensor_range(ship)` and `can_detect(observer, target)`. The player target list (`update_target_list_visibility` in `subsystems.py`) sources its range from that formula. AI selection is gated by a two-part monkeypatch: `SelectTarget.FindGoodTarget` (the candidate-enumeration method) publishes the querying ship into a module global, and a wrapped `ObjectGroup.GetActiveObjectTupleInSet` filters candidates through `can_detect` while that global is set. Single-threaded Python makes the global safe.
 
 **Tech Stack:** Python 3, pytest. No renderer/native build involved — all headless.
 
@@ -19,7 +19,7 @@
 - `_get_xyz(obj)` (`engine/appc/subsystems.py:2224`) reads a world position as `(x, y, z)` floats, tolerating whichever accessor the object exposes; falls back to `(0, 0, 0)`.
 - `ShipClass.GetSensorSubsystem()` (`engine/appc/ships.py:526`) returns the attached sensor subsystem or `None`.
 - `update_target_list_visibility(target_menu, ships, player, range_units=30000.0)` (`engine/appc/subsystems.py:2176`) currently hides all rows when the player sensor is offline, else does a distance check against `range_units`. It is called from `engine/host_loop.py:2328` with **no** `range_units` argument.
-- The SDK's `SelectTarget.UpdateTargetInfo` (`sdk/Build/scripts/AI/Preprocessors.py:1432`) calls `self.pTargetGroup.GetActiveObjectTupleInSet(pSet)` to enumerate candidates, then has shortcuts `len==0 → None` and `len==1 → that one`. `self.pCodeAI.GetShip()` is the querying ship.
+- The SDK's `SelectTarget.FindGoodTarget` (`sdk/Build/scripts/AI/Preprocessors.py:1423`, called from `SelectTarget.Update` at `:1251`) calls `self.pTargetGroup.GetActiveObjectTupleInSet(pSet)` at `:1432` to enumerate candidates, then has shortcuts `len==0 → None` and `len==1 → that one`. `self.pCodeAI.GetShip()` is the querying ship. `UpdateTargetInfo` (`:1331`) runs *after* selection and does not enumerate — do not wrap it.
 - `ObjectGroup.GetActiveObjectTupleInSet(self, pSet)` is defined once at `engine/appc/objects.py:415`; `ObjectGroupWithInfo` (the type `ObjectGroup_ForceToGroup` returns) inherits it without override, so patching the base class covers both.
 - `_bootstrap_firing_pipeline()` (`engine/host_loop.py:82`, called at `:2190`) is the established "bring up the SDK-faithful pipeline at startup" hook.
 
@@ -31,7 +31,7 @@
 
 ## File Structure
 
-- **Create** `engine/appc/sensor_detection.py` — the formula (`effective_sensor_range`, `can_detect`), the AI-gate primitives (`observing`, `current_observing_ship`, `_wrap_active_tuple`, `_wrap_update_target_info`, `install_ai_sensor_gate`).
+- **Create** `engine/appc/sensor_detection.py` — the formula (`effective_sensor_range`, `can_detect`), the AI-gate primitives (`observing`, `current_observing_ship`, `_wrap_active_tuple`, `_wrap_find_good_target`, `install_ai_sensor_gate`).
 - **Create** `tests/unit/test_sensor_detection.py` — all new tests.
 - **Modify** `engine/appc/subsystems.py:2176` — `update_target_list_visibility` sources range from the formula when `range_units` is omitted.
 - **Modify** `engine/host_loop.py:82` — install the AI gate during bootstrap.
@@ -215,7 +215,7 @@ Append to `tests/unit/test_sensor_detection.py`:
 ```python
 from engine.appc.sensor_detection import (
     observing, current_observing_ship,
-    _wrap_active_tuple, _wrap_update_target_info,
+    _wrap_active_tuple, _wrap_find_good_target,
 )
 
 
@@ -238,14 +238,14 @@ def test_observing_restores_even_on_exception():
     assert current_observing_ship() is None
 
 
-def test_wrap_update_target_info_publishes_ship_during_call():
+def test_wrap_find_good_target_publishes_ship_during_call():
     captured = []
 
     def fake_orig(self, dEndTime):
         captured.append(current_observing_ship())
         return "result"
 
-    wrapped = _wrap_update_target_info(fake_orig)
+    wrapped = _wrap_find_good_target(fake_orig)
 
     class _FakeCodeAI:
         def GetShip(self):
@@ -260,14 +260,14 @@ def test_wrap_update_target_info_publishes_ship_during_call():
     assert getattr(wrapped, "_sensor_gated", False) is True
 
 
-def test_wrap_update_target_info_handles_missing_codeai():
+def test_wrap_find_good_target_handles_missing_codeai():
     captured = []
 
     def fake_orig(self, dEndTime):
         captured.append(current_observing_ship())
         return "ok"
 
-    wrapped = _wrap_update_target_info(fake_orig)
+    wrapped = _wrap_find_good_target(fake_orig)
 
     class _NoCodeAI:
         pCodeAI = None
@@ -359,7 +359,7 @@ def _wrap_active_tuple(orig):
     return _gated_active
 
 
-def _wrap_update_target_info(orig):
+def _wrap_find_good_target(orig):
     """Wrap SelectTarget.UpdateTargetInfo so the querying ship is published as
     the current observer for the duration of the original call."""
 
@@ -392,7 +392,7 @@ def install_ai_sensor_gate() -> None:
         # wrap installs on a later call once the SDK is importable.
         return
     if not getattr(_pp.SelectTarget.UpdateTargetInfo, "_sensor_gated", False):
-        _pp.SelectTarget.UpdateTargetInfo = _wrap_update_target_info(
+        _pp.SelectTarget.UpdateTargetInfo = _wrap_find_good_target(
             _pp.SelectTarget.UpdateTargetInfo
         )
 ```
