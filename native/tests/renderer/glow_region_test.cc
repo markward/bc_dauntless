@@ -82,12 +82,12 @@ TEST(GlowRegion, NonZeroCenterAxialProjectionsRelativeToCenter) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Production-path safety lock for the warp-nacelle glow-dimming feature.
+// Production-path safety lock for the subsystem glow-dimming feature.
 //
 // The feature's core safety guarantee is that an instance with NO active
-// nacelle capsule contributes ZERO nacelle effect: frame.cc counts active
-// nacelles into `nn`, calls `set_int("u_glow_region_count", nn)`, and the shader's
-// `if (u_glow_region_count > 0)` skips the whole nacelle block. When nn == 0 the
+// glow-region capsule contributes ZERO glow-region effect: frame.cc counts active
+// glow regions into `nn`, calls `set_int("u_glow_region_count", nn)`, and the shader's
+// `if (u_glow_region_count > 0)` skips the whole glow-region block. When nn == 0 the
 // glow term is byte-identical to before the feature existed.
 //
 // The frame_test.cc harness CANNOT lock this directly: it needs real BC assets
@@ -99,24 +99,24 @@ TEST(GlowRegion, NonZeroCenterAxialProjectionsRelativeToCenter) {
 // Instance::GlowRegion / Instance::glow_regions.
 
 // Lock #1 — the REAL invariant: a default-constructed Instance (i.e. every
-// production ship the moment it is created, before any nacelle is fitted) has
-// ALL nacelle slots inactive. This is the property the `if (!n.active) continue`
-// in frame.cc relies on to keep nn == 0. If a future edit changed Nacelle's
+// production ship the moment it is created, before any glow region is fitted) has
+// ALL glow-region slots inactive. This is the property the `if (!n.active) continue`
+// in frame.cc relies on to keep nn == 0. If a future edit changed GlowRegion's
 // default to active = true, nn would become nonzero for untouched instances and
 // the production glow path would silently change — this test would catch it.
-TEST(GlowRegionProductionPath, DefaultInstanceHasNoActiveNacelles) {
+TEST(GlowRegionProductionPath, DefaultInstanceHasNoActiveGlowRegions) {
     scenegraph::Instance inst{};  // exactly what World::create_instance yields
     for (std::size_t i = 0; i < scenegraph::Instance::kMaxGlowRegions; ++i) {
         EXPECT_FALSE(inst.glow_regions[i].active)
-            << "nacelle slot " << i << " defaulted to active; a production "
-               "instance must have zero active nacelles so frame.cc sets "
+            << "glow region " << i << " defaulted to active; a production "
+               "instance must have zero active glow regions so frame.cc sets "
                "u_glow_region_count == 0 and the glow path stays byte-identical";
     }
 }
 
 // Lock #2 — replicate frame.cc's exact active-count loop over the default array
 // and assert it yields 0, documenting that an all-inactive instance produces
-// u_glow_region_count == 0 (the value the shader treats as "skip the nacelle block
+// u_glow_region_count == 0 (the value the shader treats as "skip the glow-region block
 // entirely"). The loop body below is a faithful copy of frame.cc's draw_model
 // counting loop (skip `!active`, else `++nn`).
 TEST(GlowRegionProductionPath, ActiveCountLoopYieldsZeroForDefaultInstance) {
@@ -128,8 +128,17 @@ TEST(GlowRegionProductionPath, ActiveCountLoopYieldsZeroForDefaultInstance) {
     }
     EXPECT_EQ(nn, 0)
         << "frame.cc would set u_glow_region_count == " << nn << " for a default "
-           "instance; it must be 0 so the shader skips the nacelle block and "
+           "instance; it must be 0 so the shader skips the glow-region block and "
            "the production glow term is unchanged by this feature";
+}
+
+TEST(GlowRegionProductionPath, DefaultGlowRegionHasFlickerOff) {
+    scenegraph::Instance inst{};
+    for (std::size_t i = 0; i < scenegraph::Instance::kMaxGlowRegions; ++i) {
+        EXPECT_FLOAT_EQ(inst.glow_regions[i].flicker, 0.0f)
+            << "glow region " << i << " must default flicker=0 so an "
+               "untouched instance keeps the production glow path";
+    }
 }
 
 TEST(GlowRegion, MultiNodeComposesChildTranslation) {

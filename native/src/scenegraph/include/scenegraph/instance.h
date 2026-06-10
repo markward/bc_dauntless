@@ -50,6 +50,7 @@ struct Instance {
         float     fore = 0.0f;
         float     dim_target = 1.0f;
         float     disable_time = -1.0f;
+        float     flicker = 0.0f;   // 1 = disabled (continuous flicker), 0 = solid settle
         bool      active = false;
     };
     std::array<GlowRegion, kMaxGlowRegions> glow_regions{};
