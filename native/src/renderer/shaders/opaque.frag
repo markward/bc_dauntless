@@ -45,6 +45,14 @@ uniform vec4  u_decal_c[MAX_DECALS];         // birth_time, weapon_class, _, _
 uniform mat4  u_ship_world_inv;              // inverse(ship world): world->body
 uniform float u_decal_time;                  // game-time seconds (ember clock)
 
+// ── Warp-nacelle glow dimming ───────────────────────────────────────────
+const int MAX_NACELLES = 4;
+uniform int  u_nacelle_count;            // 0 disables the loop entirely
+uniform vec4 u_nacelle_a[MAX_NACELLES];  // center.xyz, radius (model units)
+uniform vec4 u_nacelle_b[MAX_NACELLES];  // axis.xyz, aft
+uniform vec4 u_nacelle_c[MAX_NACELLES];  // fore, dim_target, disable_time, _
+const float NACELLE_FLICKER_SECS = 0.4;  // electrical stutter window on disable
+
 const float NORMAL_MIN = 0.15;               // back-face cutoff for falloff
 const vec3  SOOT_COLOR = vec3(0.06, 0.05, 0.045);
 
@@ -78,6 +86,42 @@ float stutter(float age) {
     float s1 = sin(age * STUTTER_FREQ);
     float s2 = sin(age * STUTTER_FREQ * 2.37 + 1.7);  // 2.37 = irrational-ish freq ratio for decoherence; 1.7 = phase offset
     return clamp(0.6 * s1 + 0.4 * s2, -1.0, 1.0);
+}
+
+// Multiplier applied to the ship's glow term from all active nacelle
+// capsules. 1.0 = untouched. Inside a capsule, ramps from 1.0 toward
+// dim_target, with a brief flicker for the first NACELLE_FLICKER_SECS after
+// the disable edge (reuses stutter()). p_body is the body-frame fragment
+// position; now is the game clock (u_decal_time).
+float nacelle_glow_mult(vec3 p_body, float now) {
+    float mult = 1.0;
+    for (int i = 0; i < u_nacelle_count; ++i) {
+        vec3  center = u_nacelle_a[i].xyz;
+        float radius = u_nacelle_a[i].w;
+        vec3  axis   = u_nacelle_b[i].xyz;
+        float aft    = u_nacelle_b[i].w;
+        float fore   = u_nacelle_c[i].x;
+        float target = u_nacelle_c[i].y;
+        float dtime  = u_nacelle_c[i].z;
+
+        vec3  d = p_body - center;
+        float t = dot(d, axis);
+        vec3  perp = d - t * axis;
+        // Inside the capsule? lateral within radius AND axial within [aft,fore].
+        if (dot(perp, perp) > radius * radius) continue;
+        if (t < aft || t > fore) continue;
+        if (dtime < 0.0) continue;  // healthy — no dimming
+
+        float age = max(now - dtime, 0.0);
+        // Flicker-then-die: during the stutter window, oscillate between full
+        // and target; afterward settle to target.
+        float settled = target;
+        float flicker = mix(target, 1.0, 0.5 + 0.5 * stutter(age));
+        float w = clamp(age / NACELLE_FLICKER_SECS, 0.0, 1.0);
+        float region_mult = mix(flicker, settled, w);
+        mult = min(mult, region_mult);  // overlapping capsules: darkest wins
+    }
+    return mult;
 }
 
 float dhash(vec2 v) { return fract(sin(dot(v, vec2(127.1, 311.7))) * 43758.5453); }
@@ -251,5 +295,11 @@ void main() {
         rim = RIM_GAIN * f * lit_dir * u_rim_strength;
     }
 
-    frag_color = vec4(lit + u_emissive_color + glow.rgb * glow.a * gf + spec + rim + decal_emissive, 1.0);
+    float nac = 1.0;
+    if (u_nacelle_count > 0) {
+        vec3 p_body_n = (u_ship_world_inv * vec4(v_position_ws, 1.0)).xyz;
+        nac = nacelle_glow_mult(p_body_n, u_decal_time);
+    }
+
+    frag_color = vec4(lit + u_emissive_color + glow.rgb * glow.a * gf * nac + spec + rim + decal_emissive, 1.0);
 }
