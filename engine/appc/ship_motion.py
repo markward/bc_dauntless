@@ -17,6 +17,8 @@ Ships whose setpoints are still None are skipped entirely so the
 player ship (driven by `engine/host_loop.py:_PlayerControl` directly
 on the transform) is left alone.
 """
+from collections import namedtuple
+
 from engine.appc.math import TGMatrix3, TGPoint3
 from engine.appc.objects import PhysicsObjectClass
 
@@ -44,6 +46,51 @@ DISABLED_ENGINE_DRAG_FRACTION = 0.1
 _X_AXIS = TGPoint3(1.0, 0.0, 0.0)
 _Y_AXIS = TGPoint3(0.0, 1.0, 0.0)
 _Z_AXIS = TGPoint3(0.0, 0.0, 1.0)
+
+# Per-tick effective motion limits at engine-fraction f. has_linear /
+# has_angular are False for fallback ships (no populated IES limits); the
+# integrator then uses FALLBACK_MAX_ACCEL snap semantics for that axis group.
+_EffectiveMotion = namedtuple(
+    "_EffectiveMotion",
+    "has_linear max_speed max_accel has_angular max_ang_vel max_ang_accel",
+)
+
+
+def _effective_motion(ship, f: float) -> "_EffectiveMotion":
+    """Resolve a ship's impulse limits scaled by online-fraction f."""
+    getter = getattr(ship, "GetImpulseEngineSubsystem", None)
+    ies = getter() if getter is not None else None
+    has_lin = ies is not None and ies.GetMaxSpeed() > 0.0
+    has_ang = ies is not None and ies.GetMaxAngularVelocity() > 0.0
+    max_speed = f * ies.GetMaxSpeed() if has_lin else 0.0
+    accel = ies.GetMaxAccel() if has_lin else 0.0
+    max_accel = f * accel if (has_lin and accel > 0.0) else 0.0
+    max_ang_vel = f * ies.GetMaxAngularVelocity() if has_ang else 0.0
+    ang_accel = ies.GetMaxAngularAccel() if has_ang else 0.0
+    max_ang_accel = f * ang_accel if (has_ang and ang_accel > 0.0) else 0.0
+    return _EffectiveMotion(
+        has_lin, max_speed, max_accel, has_ang, max_ang_vel, max_ang_accel,
+    )
+
+
+def _cap_keep(commanded: float, current: float, cap: float) -> float:
+    """Limit |commanded| to max(cap, |current|), preserving commanded's sign.
+
+    Caps future acceleration without force-braking a value already above the
+    cap (spec 2026-06-10-impulse-engine-degradation-design.md §3 'caps limit
+    future acceleration; they do not force-brake').
+    """
+    limit = cap if cap > abs(current) else abs(current)
+    if commanded > limit:
+        return limit
+    if commanded < -limit:
+        return -limit
+    return commanded
+
+
+def _asymptote_step(accel: float, gap: float, dt: float) -> float:
+    """BC rate-limited asymptote step: min(accel, |gap|/tau) · dt."""
+    return min(accel, abs(gap) / BC_IMPULSE_TAU) * dt
 
 
 def tick_all_ship_motion(dt: float) -> None:
