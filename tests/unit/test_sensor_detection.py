@@ -2,7 +2,7 @@
 and the AI candidate-selection gate."""
 import App
 from engine.appc.ships import ShipClass_Create
-from engine.appc.subsystems import SensorSubsystem
+from engine.appc.subsystems import SensorSubsystem, update_target_list_visibility
 from engine.appc.sensor_detection import (
     FALLBACK_RANGE_GU, effective_sensor_range, can_detect,
     observing, current_observing_ship,
@@ -218,9 +218,6 @@ def test_install_is_idempotent():
     # Second install must not re-wrap (same function object, no double filter).
     assert first is second
     assert getattr(second, "_sensor_gated", False) is True
-
-
-from engine.appc.subsystems import update_target_list_visibility
 
 
 def test_player_list_uses_scaled_range_when_range_units_omitted():

@@ -2173,7 +2173,7 @@ def WarpEngineSubsystem_SetWarpEffectTime(seconds: float) -> None:
 
 # ── Sensor-visibility update ──────────────────────────────────────────────────
 
-def update_target_list_visibility(target_menu, ships, player, range_units: float = None) -> None:
+def update_target_list_visibility(target_menu, ships, player, range_units: float | None = None) -> None:
     """Flip STSubsystemMenu.SetVisible/SetNotVisible on each row based
     on the ship's distance from the player.
 
