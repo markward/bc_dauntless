@@ -50,9 +50,9 @@ def can_detect(observer, target) -> bool:
 
 
 # ── AI candidate-selection gate ───────────────────────────────────────────────
-# The SDK's SelectTarget.UpdateTargetInfo enumerates candidates via
+# The SDK's SelectTarget.FindGoodTarget enumerates candidates via
 # ObjectGroup.GetActiveObjectTupleInSet, which has no ship context. We stash the
-# querying ship in a module global for the duration of an UpdateTargetInfo call
+# querying ship in a module global for the duration of a FindGoodTarget call
 # (single-threaded Python -- safe) and have a wrapped GetActiveObjectTupleInSet
 # consult it. Every other caller of that method runs with the global None and is
 # unaffected.
@@ -103,24 +103,26 @@ def _wrap_active_tuple(orig):
     return _gated_active
 
 
-def _wrap_update_target_info(orig):
-    """Wrap SelectTarget.UpdateTargetInfo so the querying ship is published as
-    the current observer for the duration of the original call."""
+def _wrap_find_good_target(orig):
+    """Wrap SelectTarget.FindGoodTarget (the candidate-enumeration method) so
+    the querying ship is published as the current observer for the duration of
+    the original call. FindGoodTarget calls ObjectGroup.GetActiveObjectTupleInSet,
+    which the companion wrapper filters while an observer is published."""
 
-    def _gated_update(self, dEndTime):
+    def _gated_find(self):
         code_ai = getattr(self, "pCodeAI", None)
         ship = code_ai.GetShip() if code_ai is not None else None
         with observing(ship):
-            return orig(self, dEndTime)
+            return orig(self)
 
-    _gated_update._sensor_gated = True
-    return _gated_update
+    _gated_find._sensor_gated = True
+    return _gated_find
 
 
 def install_ai_sensor_gate() -> None:
     """Idempotently install the two-part AI sensor gate: wrap
     ObjectGroup.GetActiveObjectTupleInSet (candidate filter) and
-    SelectTarget.UpdateTargetInfo (observer publisher). Safe to call repeatedly
+    SelectTarget.FindGoodTarget (observer publisher). Safe to call repeatedly
     and safe when the SDK AI package is unavailable."""
     from engine.appc.objects import ObjectGroup
     if not getattr(ObjectGroup.GetActiveObjectTupleInSet, "_sensor_gated", False):
@@ -132,10 +134,11 @@ def install_ai_sensor_gate() -> None:
         import AI.Preprocessors as _pp
     except ImportError:
         # Pure-unit context without the SDK AI tree. The ObjectGroup patch is
-        # still live and exercised directly via observing(); the SelectTarget
-        # wrap installs on a later call once the SDK is importable.
+        # still live (exercised directly via observing()); the FindGoodTarget
+        # wrap is simply absent here. Production installs this from the host
+        # bootstrap, where AI.Preprocessors is importable, so the wrap lands.
         return
-    if not getattr(_pp.SelectTarget.UpdateTargetInfo, "_sensor_gated", False):
-        _pp.SelectTarget.UpdateTargetInfo = _wrap_update_target_info(
-            _pp.SelectTarget.UpdateTargetInfo
+    if not getattr(_pp.SelectTarget.FindGoodTarget, "_sensor_gated", False):
+        _pp.SelectTarget.FindGoodTarget = _wrap_find_good_target(
+            _pp.SelectTarget.FindGoodTarget
         )

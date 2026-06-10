@@ -6,7 +6,7 @@ from engine.appc.subsystems import SensorSubsystem
 from engine.appc.sensor_detection import (
     FALLBACK_RANGE_GU, effective_sensor_range, can_detect,
     observing, current_observing_ship,
-    _wrap_active_tuple, _wrap_update_target_info,
+    _wrap_active_tuple, _wrap_find_good_target,
 )
 
 
@@ -97,14 +97,14 @@ def test_observing_restores_even_on_exception():
     assert current_observing_ship() is None
 
 
-def test_wrap_update_target_info_publishes_ship_during_call():
+def test_wrap_find_good_target_publishes_ship_during_call():
     captured = []
 
-    def fake_orig(self, dEndTime):
+    def fake_orig(self):
         captured.append(current_observing_ship())
         return "result"
 
-    wrapped = _wrap_update_target_info(fake_orig)
+    wrapped = _wrap_find_good_target(fake_orig)
 
     class _FakeCodeAI:
         def GetShip(self):
@@ -113,26 +113,37 @@ def test_wrap_update_target_info_publishes_ship_during_call():
     class _FakeSelectTarget:
         pCodeAI = _FakeCodeAI()
 
-    assert wrapped(_FakeSelectTarget(), 1.0) == "result"
+    assert wrapped(_FakeSelectTarget()) == "result"
     assert captured == ["SHIP_X"]
     assert current_observing_ship() is None  # cleared after the call
     assert getattr(wrapped, "_sensor_gated", False) is True
 
 
-def test_wrap_update_target_info_handles_missing_codeai():
+def test_wrap_find_good_target_handles_missing_codeai():
     captured = []
 
-    def fake_orig(self, dEndTime):
+    def fake_orig(self):
         captured.append(current_observing_ship())
         return "ok"
 
-    wrapped = _wrap_update_target_info(fake_orig)
+    wrapped = _wrap_find_good_target(fake_orig)
 
     class _NoCodeAI:
         pCodeAI = None
 
-    assert wrapped(_NoCodeAI(), 0.0) == "ok"
+    # pCodeAI None -> observer None -> the companion filter is a passthrough.
+    assert wrapped(_NoCodeAI()) == "ok"
     assert captured == [None]
+
+
+def test_install_wraps_find_good_target_on_select_target():
+    from engine.appc.sensor_detection import install_ai_sensor_gate
+    import AI.Preprocessors as pp
+    install_ai_sensor_gate()
+    assert getattr(pp.SelectTarget.FindGoodTarget, "_sensor_gated", False) is True
+    # UpdateTargetInfo must NOT be wrapped — it runs after selection and never
+    # enumerates candidates.
+    assert getattr(pp.SelectTarget.UpdateTargetInfo, "_sensor_gated", False) is False
 
 
 def test_wrap_active_tuple_filters_only_when_observer_set():
