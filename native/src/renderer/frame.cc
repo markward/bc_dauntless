@@ -127,7 +127,7 @@ void draw_model(const assets::Model& model,
             if (!n.active) continue;
             na[nn] = glm::vec4(n.center, n.radius);
             nb[nn] = glm::vec4(n.axis, n.aft);
-            nc[nn] = glm::vec4(n.fore, n.dim_target, n.disable_time, 0.0f);
+            nc[nn] = glm::vec4(n.fore, n.dim_target, n.disable_time, n.flicker);
             ++nn;
         }
         shader.set_int("u_glow_region_count", nn);
