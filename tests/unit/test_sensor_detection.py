@@ -261,14 +261,19 @@ def test_player_list_explicit_range_units_still_honored():
 
 
 def test_bootstrap_installs_sensor_gate():
-    """The startup bootstrap installs the AI sensor gate as its first action,
-    so ObjectGroup.GetActiveObjectTupleInSet is wrapped after host init."""
+    """The host bootstrap installs the AI sensor gate. We first verify the
+    installer wraps the method (real traceback on failure), then confirm the
+    bootstrap path triggers it too. Later pipeline steps may need fuller host
+    state, so only those are tolerated as failures."""
     from engine import host_loop
+
+    # Direct install must succeed and wrap the method (surfaces real errors).
+    install_ai_sensor_gate()
+    assert getattr(ObjectGroup.GetActiveObjectTupleInSet, "_sensor_gated", False) is True
+
+    # And the bootstrap hook calls it as its first statement.
     try:
         host_loop._bootstrap_firing_pipeline()
     except Exception:
-        # Later pipeline setup may need fuller host state in some contexts;
-        # the gate install is the first line of the function, so it has
-        # already run by the time any later step could raise.
         pass
     assert getattr(ObjectGroup.GetActiveObjectTupleInSet, "_sensor_gated", False) is True
