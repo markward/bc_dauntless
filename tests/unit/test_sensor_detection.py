@@ -218,3 +218,46 @@ def test_install_is_idempotent():
     # Second install must not re-wrap (same function object, no double filter).
     assert first is second
     assert getattr(second, "_sensor_gated", False) is True
+
+
+from engine.appc.subsystems import update_target_list_visibility
+
+
+def test_player_list_uses_scaled_range_when_range_units_omitted():
+    App._reset_target_menu_singleton()
+    player, sensors = _ship_with_sensor(2000.0, at=(0.0, 0.0, 0.0))
+    player.SetName("Player")
+    enemy = ShipClass_Create("BirdOfPrey"); enemy.SetName("Enemy")
+    enemy.SetTranslateXYZ(1000.0, 0.0, 0.0)
+
+    menu = App.STTargetMenu_CreateW("Targets")
+    menu.RebuildShipMenu(enemy)
+
+    # Undamaged: 2000 GU range, enemy at 1000 GU -> visible.
+    update_target_list_visibility(menu, [enemy], player)
+    assert menu.GetObjectEntry(enemy).IsVisible() == 1
+
+    # Damaged to 40% -> 800 GU range, enemy at 1000 GU now out of range.
+    sensors.SetCondition(40.0)
+    update_target_list_visibility(menu, [enemy], player)
+    assert menu.GetObjectEntry(enemy).IsVisible() == 0
+
+    # Repaired: visible again.
+    sensors.SetCondition(100.0)
+    update_target_list_visibility(menu, [enemy], player)
+    assert menu.GetObjectEntry(enemy).IsVisible() == 1
+
+
+def test_player_list_explicit_range_units_still_honored():
+    App._reset_target_menu_singleton()
+    player, sensors = _ship_with_sensor(2000.0, at=(0.0, 0.0, 0.0))
+    player.SetName("Player")
+    enemy = ShipClass_Create("BirdOfPrey"); enemy.SetName("Enemy")
+    enemy.SetTranslateXYZ(2500.0, 0.0, 0.0)  # beyond 2000 base, inside 30000
+
+    menu = App.STTargetMenu_CreateW("Targets")
+    menu.RebuildShipMenu(enemy)
+
+    # Explicit override ignores the scaled range and uses 30000.
+    update_target_list_visibility(menu, [enemy], player, range_units=30000.0)
+    assert menu.GetObjectEntry(enemy).IsVisible() == 1
