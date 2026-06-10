@@ -5,6 +5,8 @@
 
 #include <assets/texture.h>
 #include <scenegraph/camera.h>
+#include <scenegraph/world.h>
+#include <scenegraph/instance.h>
 
 #include <glad/glad.h>
 #include <glm/glm.hpp>
@@ -29,18 +31,39 @@ struct TierConfig {
 };
 
 // Indexed by severity: 0=SHIELD (unused — never reaches renderer), 1=HULL, 2=CRITICAL.
+// peak_size is a world-unit (GU) half-extent. Scale reference: a Galaxy-class
+// hull is only ~3.6 GU long, so the flash must be a fraction of that — an
+// impact spot, not a ship-sized blob. (The original 3.0/7.0 were calibrated
+// for the old NIF-unit test scale and rendered ~the size of the whole ship in
+// the live GU scene. Tune by eye against the tracking camera.)
 constexpr TierConfig kTiers[3] = {
-    {0.0f, 0.0f, 0.0f, 0.0f, {1.0f, 1.0f, 1.0f, 1.0f}},   // SHIELD — never used.
-    {3.0f, 0.08f, 0.25f, 0.33f, {1.00f, 0.55f, 0.20f, 1.0f}},  // HULL
-    {7.0f, 0.10f, 0.55f, 0.65f, {1.00f, 0.92f, 0.80f, 1.0f}},  // CRITICAL
+    {0.0f,  0.0f, 0.0f, 0.0f, {1.0f, 1.0f, 1.0f, 1.0f}},   // SHIELD — never used.
+    {0.20f, 0.08f, 0.25f, 0.33f, {1.00f, 0.55f, 0.20f, 1.0f}},  // HULL
+    {0.40f, 0.10f, 0.55f, 0.65f, {1.00f, 0.92f, 0.80f, 1.0f}},  // CRITICAL
 };
 
-constexpr int   kSparkCount     = 6;
-constexpr float kSparkSpeed     = 4.0f;    // wu/s
-constexpr float kSparkSizeMult  = 0.6f;    // multiplier on tier peak_size
-constexpr float kSparkConeDeg   = 30.0f;   // half-angle of spark cone around the normal
+// Weapon-distinct spark tints + spread tuning (spec 3.4). weapon_kind:
+// 0 = phaser (cool white-blue, tight), 1 = torpedo/disruptor (hot orange, wide).
+constexpr glm::vec4 kSparkTint[2] = {
+    {0.78f, 0.86f, 1.00f, 1.0f},   // phaser — cool white-blue
+    {1.00f, 0.55f, 0.18f, 1.0f},   // torpedo — hot orange
+};
+// Spread tuning per kind, fed to rotate_jitter as a degree-scaled jitter
+// amplitude (NOT a literal half-angle; rotate_jitter adds sin(jitter*k)
+// offsets, so 120 yields ~50 deg max spread). phaser tight, torpedo wide.
+constexpr float kSparkConeDegByKind[2] = {40.0f, 120.0f};
+constexpr float kSparkSpeed     = 1.0f;    // GU/s initial speed (travel ≈ speed/damping ≈ 0.7 GU)
+constexpr float kSparkSize      = 0.12f;   // GU half-size of a spark point (decoupled from flash)
+constexpr float kSparkLife      = 3.0f;    // seconds — spark visibility, intentionally far longer than the flash
+constexpr float kSparkDamping   = 1.4f;    // velocity damping rate (SDK SetDamping analogue)
 
-constexpr const char* kImpactTexturePath = "data/Textures/Tactical/TorpedoFlares.tga";
+// Renderer CWD is the project root (see engine/host_loop.py:_resolve_game_texture),
+// so these direct-ifstream sprite loads need the "game/" prefix — matching
+// phaser_pass.cc's "game/data/phaser.tga". Without it load_sprite fails, the
+// main texture stays id()==0, and render() early-returns, suppressing the WHOLE
+// pass (flash + sparks).
+constexpr const char* kImpactTexturePath = "game/data/Textures/Tactical/TorpedoFlares.tga";
+constexpr const char* kSparkTexturePath  = "game/data/rough.tga";
 
 constexpr float kQuadCorners[] = {
     -1.0f, -1.0f,
@@ -74,15 +97,15 @@ inline glm::vec2 hash3(const glm::vec3& p, int i) {
     return glm::vec2{to_unit(h), to_unit(h2)};
 }
 
-// Rotate `base` toward `+kSparkConeDeg` along two perpendicular axes,
-// jittered by `jitter` ∈ [-1, 1]^2. Approximation of a true 30° cone
-// rotation (Rodrigues would be exact); error is negligible at this
-// half-angle.
+// Rotate `base` toward `±cone_deg` along two perpendicular axes,
+// jittered by `jitter` ∈ [-1, 1]^2. Approximation of a true cone
+// rotation (Rodrigues would be exact); error is acceptable here.
 glm::vec3 rotate_jitter(const glm::vec3& base, const glm::vec3& cam_up,
-                          const glm::vec3& cam_right, glm::vec2 jitter) {
-    const float ang_h = jitter.x * (kSparkConeDeg * 3.14159265f / 180.0f);
-    const float ang_v = jitter.y * (kSparkConeDeg * 3.14159265f / 180.0f);
-    glm::vec3 v = base + cam_right * std::sin(ang_h) + cam_up * std::sin(ang_v);
+                          const glm::vec3& cam_right, glm::vec2 jitter,
+                          float cone_deg) {
+    const float k = cone_deg * 3.14159265f / 180.0f;
+    glm::vec3 v = base + cam_right * std::sin(jitter.x * k)
+                       + cam_up    * std::sin(jitter.y * k);
     float len = glm::length(v);
     if (len > 1e-6f) v /= len;
     return v;
@@ -111,13 +134,15 @@ void HitVfxPass::ensure_quad_mesh() {
     glBindVertexArray(0);
 }
 
-void HitVfxPass::ensure_texture() {
-    if (texture_) return;
-    std::ifstream in(kImpactTexturePath, std::ios::binary);
+namespace {
+
+// Load a TGA sprite into `slot`. On any failure `slot` is set to an empty
+// Texture (id()==0) so the caller can detect and skip rather than crash.
+void load_sprite(std::unique_ptr<assets::Texture>& slot, const char* path) {
+    std::ifstream in(path, std::ios::binary);
     if (!in) {
-        std::fprintf(stderr, "[hit_vfx_pass] failed to open '%s'\n",
-                     kImpactTexturePath);
-        texture_ = std::make_unique<assets::Texture>();
+        std::fprintf(stderr, "[hit_vfx_pass] failed to open '%s'\n", path);
+        slot = std::make_unique<assets::Texture>();
         return;
     }
     in.seekg(0, std::ios::end);
@@ -129,20 +154,37 @@ void HitVfxPass::ensure_texture() {
     try {
         assets::Image img = assets::decode_tga(bytes);
         assets::Texture tex = assets::upload_image(img, /*generate_mipmaps=*/true);
-        texture_ = std::make_unique<assets::Texture>(std::move(tex));
+        slot = std::make_unique<assets::Texture>(std::move(tex));
     } catch (const std::exception& e) {
         std::fprintf(stderr, "[hit_vfx_pass] failed to decode '%s': %s\n",
-                     kImpactTexturePath, e.what());
-        texture_ = std::make_unique<assets::Texture>();
+                     path, e.what());
+        slot = std::make_unique<assets::Texture>();
     }
 }
 
+}  // namespace
+
+const char* HitVfxPass::impact_texture_path() { return kImpactTexturePath; }
+const char* HitVfxPass::spark_texture_path()  { return kSparkTexturePath; }
+
+void HitVfxPass::ensure_texture() {
+    if (texture_) return;
+    load_sprite(texture_, kImpactTexturePath);
+}
+
+void HitVfxPass::ensure_spark_texture() {
+    if (spark_texture_) return;
+    load_sprite(spark_texture_, kSparkTexturePath);
+}
+
 void HitVfxPass::render(const std::vector<HitVfxDescriptor>& vfx,
+                        const scenegraph::World& world,
                         const scenegraph::Camera& camera,
                         Pipeline& pipeline) {
     if (vfx.empty()) return;
     ensure_quad_mesh();
     ensure_texture();
+    ensure_spark_texture();
     if (!texture_ || texture_->id() == 0) return;
 
     auto& shader = pipeline.hit_vfx_shader();
@@ -166,7 +208,6 @@ void HitVfxPass::render(const std::vector<HitVfxDescriptor>& vfx,
 
     glBindVertexArray(quad_vao_);
     glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, texture_->id());
 
     for (const auto& v : vfx) {
         // Clamp severity to [1, 2]; index 0 (SHIELD) should never reach
@@ -175,43 +216,66 @@ void HitVfxPass::render(const std::vector<HitVfxDescriptor>& vfx,
         const TierConfig& tier = kTiers[sev];
 
         const float age = std::max(0.0f, v.age);
-        if (age >= tier.total_life) continue;
+        // The flash fades over tier.total_life; sparks live longer (kSparkLife),
+        // so keep the descriptor alive for whichever is longer.
+        const bool has_sparks = (v.spark_count > 0);
+        const float life_cap = has_sparks ? std::max(tier.total_life, kSparkLife)
+                                           : tier.total_life;
+        if (age >= life_cap) continue;
 
-        // ── Main billboard ──
-        const float size_t  = std::min(1.0f, age / tier.spawn_dur);
-        const float fade_t  = std::max(0.0f, std::min(1.0f,
-                                  (age - tier.spawn_dur) / tier.fade_dur));
-        const float size    = tier.peak_size * size_t;
-        const float alpha   = 1.0f - fade_t;
+        // ── Main billboard ── (only during its own, shorter lifetime)
+        if (age < tier.total_life) {
+            const float size_t  = std::min(1.0f, age / tier.spawn_dur);
+            const float fade_t  = std::max(0.0f, std::min(1.0f,
+                                      (age - tier.spawn_dur) / tier.fade_dur));
+            const float size    = tier.peak_size * size_t;
+            const float alpha   = 1.0f - fade_t;
 
-        shader.set_vec4 ("u_tint",           tier.tint);
-        shader.set_vec3 ("u_world_position", v.world_pos);
-        shader.set_float("u_size",           size);
-        shader.set_float("u_alpha",          alpha);
-        glDrawArrays(GL_TRIANGLES, 0, 6);
+            glBindTexture(GL_TEXTURE_2D, texture_->id());
+            shader.set_vec4 ("u_tint",           tier.tint);
+            shader.set_vec3 ("u_world_position", v.world_pos);
+            shader.set_float("u_size",           size);
+            shader.set_float("u_alpha",          alpha);
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+        }
 
-        // ── CRITICAL spark burst ──
-        if (sev == 2) {
-            // u_tint stays set from the main billboard above — sparks share
-            // the CRITICAL tier tint.
-            const bool has_normal = glm::length(v.surface_normal) > 1e-3f;
-            const glm::vec3 base = has_normal ? glm::normalize(v.surface_normal)
-                                              : cam_right;
-            for (int i = 0; i < kSparkCount; ++i) {
-                const glm::vec2 jitter = hash3(v.world_pos, i);
-                const glm::vec3 dir = rotate_jitter(base, cam_up, cam_right, jitter);
-                const glm::vec3 pos = v.world_pos + dir * (kSparkSpeed * age);
-                const float life_t = age / tier.total_life;
-                const float spark_size = kSparkSizeMult * tier.peak_size * (1.0f - life_t);
-                const float spark_alpha = 1.0f - life_t;
-                shader.set_vec3 ("u_world_position", pos);
-                shader.set_float("u_size",           spark_size);
-                shader.set_float("u_alpha",          spark_alpha);
-                glDrawArrays(GL_TRIANGLES, 0, 6);
+        // Spark burst (hull-anchored, detached, weapon-distinct).
+        if (v.spark_count > 0 && spark_texture_ && spark_texture_->id() != 0) {
+            const scenegraph::Instance* inst = world.get(v.instance_id);
+            if (inst != nullptr) {
+                const glm::vec3 origin =
+                    glm::vec3(inst->world * glm::vec4(v.body_point, 1.0f));
+                glm::vec3 base = glm::mat3(inst->world) * v.body_normal;
+                float blen = glm::length(base);
+                base = (blen > 1e-6f) ? base / blen : cam_right;
+
+                const int kind = (v.weapon_kind == 0) ? 0 : 1;
+                glBindTexture(GL_TEXTURE_2D, spark_texture_->id());
+                shader.set_vec4("u_tint", kSparkTint[kind]);
+                const float cone = kSparkConeDegByKind[kind];
+                // Damped ballistic travel: x(t) = (v0/c)(1 - e^{-c t}).
+                const float travel =
+                    (kSparkSpeed / kSparkDamping) * (1.0f - std::exp(-kSparkDamping * age));
+                // Sparks fade over their own (longer) lifetime, decoupled from
+                // the flash so halving the flash size doesn't shrink them.
+                const float life_t = std::min(1.0f, age / kSparkLife);
+                for (int i = 0; i < v.spark_count; ++i) {
+                    const glm::vec2 jitter = hash3(origin, i);
+                    const glm::vec3 dir =
+                        rotate_jitter(base, cam_up, cam_right, jitter, cone);
+                    const glm::vec3 pos = origin + dir * travel;
+                    const float spark_size  = kSparkSize * (1.0f - life_t);
+                    const float spark_alpha = 1.0f - life_t;
+                    shader.set_vec3 ("u_world_position", pos);
+                    shader.set_float("u_size",           spark_size);
+                    shader.set_float("u_alpha",          spark_alpha);
+                    glDrawArrays(GL_TRIANGLES, 0, 6);
+                }
             }
         }
     }
 
+    glBindTexture(GL_TEXTURE_2D, 0);
     glBindVertexArray(0);
     glEnable(GL_CULL_FACE);
     glDepthMask(GL_TRUE);

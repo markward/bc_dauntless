@@ -411,10 +411,15 @@ def _build_hit_vfx_render_data():
         pos = entry["position"]
         n = entry["normal"]
         out.append({
-            "position": (pos.x, pos.y, pos.z),
-            "normal":   (n.x, n.y, n.z) if n is not None else (0.0, 0.0, 0.0),
-            "severity": entry["severity"],
-            "age":      entry["age"],
+            "position":    (pos.x, pos.y, pos.z),
+            "normal":      (n.x, n.y, n.z) if n is not None else (0.0, 0.0, 0.0),
+            "severity":    entry["severity"],
+            "age":         entry["age"],
+            "instance_id": entry.get("instance_id"),
+            "body_point":  entry.get("body_point"),
+            "body_normal": entry.get("body_normal"),
+            "weapon_kind": entry.get("weapon_kind", 1),
+            "spark_count": entry.get("spark_count", 0),
         })
     return out
 

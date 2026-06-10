@@ -12,7 +12,9 @@
 #include <assets/cache.h>
 #include <assets/model.h>
 
+#include <algorithm>
 #include <cstring>
+#include <vector>
 
 #include <filesystem>
 
@@ -297,6 +299,21 @@ double block_mean(int x0, int y0, int w, int h) {
     return acc / (w * h);
 }
 
+// Count "direction changes" (sign flips of consecutive deltas) in a sequence,
+// ignoring deltas smaller than `eps` so floating/quantisation noise is not
+// mistaken for a real reversal. A strictly monotonic sequence has 0 changes;
+// an oscillating one accumulates one per reversal.
+static int direction_changes(const std::vector<double>& xs, double eps) {
+    int changes = 0, prev_sign = 0;
+    for (size_t i = 1; i < xs.size(); ++i) {
+        double d = xs[i] - xs[i-1];
+        int s = (d > eps) ? 1 : (d < -eps) ? -1 : 0;
+        if (s != 0 && prev_sign != 0 && s != prev_sign) ++changes;
+        if (s != 0) prev_sign = s;
+    }
+    return changes;
+}
+
 template <class Lut>
 void render_galaxy(scenegraph::World& world, renderer::Pipeline& pipeline,
                    Lut&& lut, float decal_time) {
@@ -358,7 +375,13 @@ TEST_F(FrameTest, ScorchDecalDarkensHullAndDoesNotMirror) {
     w1.get(i1)->decals.add(glm::vec3(60.0f, 0.0f, 20.0f), glm::vec3(0, 0, -1),
                            /*radius=*/120.0f, /*intensity=*/1.0f,
                            scenegraph::WeaponClass::Scorch, 0.0f);
-    render_galaxy(w1, *p, lut, 0.0f);
+    // Sample at decal_time = 65 s: past the transient glow-flicker window
+    // (randomised per-impact, up to FLICKER_DUR_MAX = 60 s) AND past the
+    // blackbody ember (~10 s to cold), so only the PERMANENT soot deposit
+    // remains. (At the impact the flicker brightens the glow and the ember
+    // ignites — both transient — so the permanent-darkening assertion must be
+    // sampled after they settle.)
+    render_galaxy(w1, *p, lut, 65.0f);
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
     const double L1 = block_mean(93, 100, 25, 50);
     const double R1 = block_mean(130, 100, 25, 50);
@@ -385,12 +408,16 @@ TEST_F(FrameTest, ScorchToggleOffRendersLikeUndamaged) {
     w.get(iid)->decals.add(glm::vec3(60.0f, 0.0f, 20.0f), glm::vec3(0, 0, -1),
                            120.0f, 1.0f, scenegraph::WeaponClass::Scorch, 0.0f);
 
+    // decal_time = 65 s isolates the permanent soot deposit from the transient
+    // flicker (randomised, up to 60 s) + ember (~10 s), so decals-on reads as
+    // darkened, not transiently brightened. (decal_time is irrelevant on the
+    // disabled path.)
     dauntless_decals::set_enabled(false);
-    render_galaxy(w, *p, lut, 0.0f);
+    render_galaxy(w, *p, lut, 65.0f);
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
     const double R_off = block_mean(130, 100, 25, 50);
     dauntless_decals::set_enabled(true);
-    render_galaxy(w, *p, lut, 0.0f);
+    render_galaxy(w, *p, lut, 65.0f);
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
     const double R_on = block_mean(130, 100, 25, 50);
     dauntless_decals::set_enabled(true);  // leave enabled
@@ -452,6 +479,298 @@ TEST_F(FrameTest, PhaserHeatGlowIsTransientAndLeavesNoScar) {
 
     EXPECT_GT(fresh, base * 1.02) << "fresh phaser glow should brighten the hull";
     EXPECT_NEAR(faded, base, base * 0.03) << "phaser glow should leave no scar after T_GLOW";
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Flicker tests (Task B2): verifies the glow-map electrical stutter added by
+// Task B1 behaves correctly.
+//
+// Strategy: render under *zero ambient + zero directional* lighting so the
+// opaque pass output reduces to:
+//
+//     out = glow.rgb * glow.a * gf  +  decal_emissive
+//
+// At exact birth (age = 0.0):
+//   - SCORCH ember:   skipped   (shader guard is `age > 0.0`)
+//   - SCORCH flicker: FIRES     (guard is `age >= 0.0`)
+//   - HeatGlow bloom: present   (but weapon_class==0 branch `continue`s before flicker)
+//
+// At decal_time = 30.0 (far past FLICKER_DURATION=0.5 and T_EMBER=10s):
+//   - ember: exp(-30/~3.1) ≈ 0 → decal_emissive ≈ 0
+//   - flicker: age >= 0.5 → gf stays 1.0
+//   - soot: modifies base_lit, but base_lit = 0 under zero ambient
+//   => output ≈ glow.rgb * glow.a * 1.0  ≡  undamaged baseline
+//
+// For HeatGlow at decal_time = 4.0 (past T_GLOW=3.0):
+//   - bloom: life = clamp(1 - 4/3, 0, 1) = 0 → decal_emissive = 0
+//   - flicker: never touched (weapon_class==0 `continue` fires first)
+//   => output ≡ undamaged baseline
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Helper: same camera/geometry as render_galaxy but with zero ambient light.
+// Under zero ambient the rendered value is exactly glow.rgb*glow.a*gf +
+// decal_emissive, which isolates the glow-flicker multiplier from diffuse lit.
+template <class Lut>
+void render_galaxy_zero_ambient(scenegraph::World& world,
+                                renderer::Pipeline& pipeline,
+                                Lut&& lut, float decal_time) {
+    scenegraph::Camera cam;
+    cam.eye = glm::vec3(0, 0, 1500); cam.target = glm::vec3(0);
+    cam.aspect = 1.0f;
+    renderer::FrameSubmitter submitter;
+    renderer::Lighting zero_light;
+    zero_light.ambient           = glm::vec3(0.0f);
+    zero_light.directional_count = 0;
+    glViewport(0, 0, 256, 256);
+    glClearColor(0, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    submitter.submit_opaque_in_pass(world, cam, pipeline, lut, zero_light,
+                                    scenegraph::Pass::Space, decal_time);
+}
+
+// Test 1: A SCORCH decal's glow region OSCILLATES (is non-monotonic) across
+// several closely-spaced ages WITHIN the flicker window.
+//
+// WHY THIS IS FALSIFIABLE (and the old "brighter at birth" test was not):
+// Under zero ambient the region luminance decomposes into three terms:
+//   - soot deposit (via base_lit→SOOT_COLOR):  CONSTANT in time (age-independent)
+//   - blackbody ember (emissive):              MONOTONICALLY DECAYS (exp(-age/τ))
+//   - glow.rgb*glow.a*gf, gf = 1 + flicker:    OSCILLATES (2-sine stutter, [-1,1])
+// A constant plus a monotone decay can only ever produce a MONOTONIC sequence.
+// The ONLY term that can reverse direction is the flicker. So observing >=2
+// direction changes across in-window ages proves the oscillating flicker is
+// live. If the flicker were removed (glow_flicker never accumulates → gf≡1),
+// the sequence collapses to soot+ember = monotonic and direction_changes→0,
+// failing the assertion. This is robust to tuning the stutter constants: as
+// long as the window contains multiple cycles (~8-12 by design) the sequence
+// reverses direction many times.
+TEST_F(FrameTest, ScorchGlowOscillatesWithinFlickerWindow) {
+    auto model_h = cache->load(kGalaxyNif, kGalaxyTex);
+    auto lut = [model_h](scenegraph::ModelHandle h) -> const assets::Model* {
+        return reinterpret_cast<const assets::Model*>(h); };
+
+    // Same body point / normal / radius as the ember + darkening tests, so the
+    // sampled right block (130,100,25,50) sits squarely inside the decal.
+    //
+    // intensity = 0.25 (not 1.0) is deliberate: a full-intensity SCORCH ember
+    // is so bright it SATURATES the 8-bit framebuffer across the whole window,
+    // clipping the glow-flicker ripple out of existence (every pixel pinned at
+    // 255 reads as a flat/monotone block regardless of gf). At 0.25 the region
+    // stays well below saturation, so the oscillating glow*gf term remains
+    // visible on top of the monotone soot+ember baseline.
+    scenegraph::World w1;
+    auto i1 = w1.create_instance(reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
+    w1.set_world_transform(i1, glm::mat4(1.0f));
+    w1.get(i1)->decals.add(glm::vec3(60.0f, 0.0f, 20.0f), glm::vec3(0, 0, -1),
+                            /*radius=*/120.0f, /*intensity=*/0.25f,
+                            scenegraph::WeaponClass::Scorch, /*birth_time=*/0.0f);
+
+    // Sample N ages evenly across [0.1, 3.0] s — all strictly within the
+    // SHORTEST possible randomised window (FLICKER_DUR_MIN = 5 s), so the
+    // flicker is active for the whole sequence regardless of which duration
+    // this decal's birth_time hashed to. All have age > 0 so the ember is
+    // present (and monotonically cooling), making the soot+ember baseline a
+    // clean monotone — any reversal is the flicker. The 3 s span covers several
+    // oscillation cycles at STUTTER_FREQ = 15, so samples land on distinct
+    // peaks and troughs.
+    const int N = 16;
+    std::vector<double> seq;
+    seq.reserve(N);
+    for (int k = 0; k < N; ++k) {
+        float age = 0.1f + (3.0f - 0.1f) * static_cast<float>(k)
+                                         / static_cast<float>(N - 1);
+        render_galaxy_zero_ambient(w1, *p, lut, /*decal_time=*/age);
+        ASSERT_EQ(glGetError(), GL_NO_ERROR);
+        seq.push_back(block_mean(130, 100, 25, 50));
+    }
+
+    // Establish the swing so eps is small relative to it (and so we know the
+    // glow region is actually lit — a dark region makes the test vacuous).
+    double lo = seq[0], hi = seq[0];
+    for (double v : seq) { lo = std::min(lo, v); hi = std::max(hi, v); }
+    const double swing = hi - lo;
+    ASSERT_GT(swing, 0.0) << "glow region never changed across the window; "
+                              "either the region is dark or the flicker is dead";
+    // eps ≈ 5% of the swing rejects 8-bit quantisation jitter but is far below
+    // a real reversal of the oscillation.
+    const double eps = 0.05 * swing;
+
+    const int changes = direction_changes(seq, eps);
+    EXPECT_GE(changes, 2)
+        << "SCORCH glow region was (near-)monotonic across the flicker window — "
+           "soot is constant and ember decays monotonically, so >=2 direction "
+           "changes can ONLY come from the oscillating glow flicker. Removing the "
+           "flicker would make this sequence monotonic and fail here. "
+           "changes=" << changes << " swing=" << swing;
+
+    // ── Sanity: past the window the oscillation stops. Sample closely-spaced
+    // ages all > FLICKER_DUR_MAX (60 s), so the flicker is over for ANY
+    // randomised duration; with gf pinned at 1.0 and the ember long cold, the
+    // sequence must be monotonic (flat). ──
+    std::vector<double> settled;
+    settled.reserve(6);
+    for (int k = 0; k < 6; ++k) {
+        float age = 65.0f + 0.1f * static_cast<float>(k);  // 65.0 .. 65.5 s
+        render_galaxy_zero_ambient(w1, *p, lut, /*decal_time=*/age);
+        ASSERT_EQ(glGetError(), GL_NO_ERROR);
+        settled.push_back(block_mean(130, 100, 25, 50));
+    }
+    EXPECT_LE(direction_changes(settled, eps), 1)
+        << "SCORCH glow still oscillated past FLICKER_DUR_MAX (60 s); "
+           "gf should be pinned at 1.0 after the window.";
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+// The 5 s stutter phase is followed, for longer randomised durations, by a
+// SOLID blackout (gf clamped to 0 -> lights out in the impact region) until the
+// duration ends, then the glow restores. The duration is hash-randomised per
+// birth_time, so we probe a handful of birth_times for one whose duration is
+// long enough to be in blackout at age 14 s (past both the 5 s stutter phase
+// AND the ~10 s ember), then assert the blackout darkens the region and that it
+// restores past FLICKER_DUR_MAX (60 s). Zero-ambient isolates the glow term.
+TEST_F(FrameTest, ScorchFlickerBlacksOutThenRestoresForLongDurations) {
+    auto model_h = cache->load(kGalaxyNif, kGalaxyTex);
+    auto lut = [model_h](scenegraph::ModelHandle h) -> const assets::Model* {
+        return reinterpret_cast<const assets::Model*>(h); };
+
+    auto sample = [&](float birth, float decal_time, bool decals_on) -> double {
+        dauntless_decals::set_enabled(decals_on);
+        scenegraph::World w;
+        auto iid = w.create_instance(
+            reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
+        w.set_world_transform(iid, glm::mat4(1.0f));
+        w.get(iid)->decals.add(glm::vec3(60.0f, 0.0f, 20.0f), glm::vec3(0, 0, -1),
+                               120.0f, 0.25f, scenegraph::WeaponClass::Scorch, birth);
+        render_galaxy_zero_ambient(w, *p, lut, decal_time);
+        dauntless_decals::set_enabled(true);
+        return block_mean(130, 100, 25, 50);
+    };
+
+    // Glow-only baseline: same geometry, decals disabled.
+    const double B = sample(0.0f, 0.0f, /*decals_on=*/false);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    ASSERT_GT(B, 0.0) << "sample region has no glow; test would be vacuous";
+
+    // Probe birth_times for one in blackout at age 14 s (fdur > 14 ⇒ ~45% of
+    // births qualify; 16 probes makes a miss astronomically unlikely).
+    float found = -1.0f;
+    double dark = 0.0;
+    for (int b = 0; b < 16 && found < 0.0f; ++b) {
+        double d = sample(static_cast<float>(b), static_cast<float>(b) + 14.0f, true);
+        if (d < B * 0.4) { found = static_cast<float>(b); dark = d; }
+    }
+    ASSERT_GE(found, 0.0f)
+        << "no probed birth_time went solidly dark at age 14 s — the blackout "
+           "phase past the 5 s stutter is not driving the glow off";
+    EXPECT_LT(dark, B * 0.4) << "blackout did not darken the glow region";
+
+    // Past FLICKER_DUR_MAX (60 s) the disruption is over and the glow restores.
+    const double R = sample(found, found + 65.0f, true);
+    EXPECT_GT(R, B * 0.7) << "glow did not restore after the disruption ended";
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+// Test 2: A HeatGlow (phaser, weapon_class == 0) decal's glow region is
+// MONOTONIC across the SAME in-window ages where a SCORCH oscillates.
+//
+// This exercises the weapon_class gating WITHIN the active flicker window: the
+// shader's weapon_class==0 branch hits `continue` BEFORE the glow_flicker
+// accumulation, so gf stays 1.0 for a phaser at every age. HeatGlow's own
+// additive bloom is blackbody(life)*glow where life = clamp(1 - age/T_GLOW)
+// decreases monotonically over T_GLOW = 3 s; across [0.02, 0.45] that is a
+// gentle monotone decrease with NO reversals.
+//
+// WHY THIS IS FALSIFIABLE: if the weapon_class==0 `continue` were removed so a
+// phaser reached the flicker code, gf would oscillate and the region luminance
+// would gain reversals (>=2 direction changes), failing the <=0 assertion. The
+// direction-change metric tolerates the monotone bloom decay while rejecting
+// oscillation — which is exactly the phaser-vs-torpedo distinction. (The OLD
+// test sampled a single age past the window, so it never reached the guard.)
+TEST_F(FrameTest, PhaserHeatGlowGlowIsMonotonicWithinFlickerWindow) {
+    auto model_h = cache->load(kGalaxyNif, kGalaxyTex);
+    auto lut = [model_h](scenegraph::ModelHandle h) -> const assets::Model* {
+        return reinterpret_cast<const assets::Model*>(h); };
+
+    // Same region, ages, AND intensity as Test 1 (0.25), but a HeatGlow decal.
+    // Matching the intensity is what makes this test falsifiable: at 0.25 the
+    // region stays unsaturated, so IF the weapon_class guard were broken and the
+    // phaser reached the flicker, the glow*gf oscillation WOULD show up as
+    // direction changes (exactly as it does for the SCORCH in Test 1). At full
+    // intensity the bloom saturates the framebuffer and would hide any injected
+    // flicker, making the guard impossible to test.
+    scenegraph::World w;
+    auto iid = w.create_instance(reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
+    w.set_world_transform(iid, glm::mat4(1.0f));
+    w.get(iid)->decals.add(glm::vec3(60.0f, 0.0f, 20.0f), glm::vec3(0, 0, -1),
+                            /*radius=*/120.0f, /*intensity=*/0.25f,
+                            scenegraph::WeaponClass::HeatGlow, /*birth_time=*/0.0f);
+
+    // SAME N in-window ages as the SCORCH oscillation test.
+    const int N = 12;
+    std::vector<double> seq;
+    seq.reserve(N);
+    for (int k = 0; k < N; ++k) {
+        float age = 0.02f + (0.45f - 0.02f) * static_cast<float>(k)
+                                            / static_cast<float>(N - 1);
+        render_galaxy_zero_ambient(w, *p, lut, /*decal_time=*/age);
+        ASSERT_EQ(glGetError(), GL_NO_ERROR);
+        seq.push_back(block_mean(130, 100, 25, 50));
+    }
+
+    double lo = seq[0], hi = seq[0];
+    for (double v : seq) { lo = std::min(lo, v); hi = std::max(hi, v); }
+    const double swing = hi - lo;
+    ASSERT_GT(swing, 0.0) << "HeatGlow region never changed across the window; "
+                              "the bloom decay should produce a monotone trend "
+                              "(a flat sequence would make this test vacuous)";
+    const double eps = 0.05 * swing;
+
+    // Monotone: the gentle bloom decay only ever moves one direction. With the
+    // phaser guard intact, gf==1.0 at every age, so there is no oscillation.
+    EXPECT_LE(direction_changes(seq, eps), 0)
+        << "HeatGlow (phaser) glow region oscillated within the flicker window — "
+           "it must NOT flicker (the weapon_class==0 `continue` runs before the "
+           "glow_flicker accumulation). Removing that guard would make this "
+           "sequence non-monotonic and fail here. "
+           "changes=" << direction_changes(seq, eps) << " swing=" << swing;
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+// Test 3: An undamaged instance (empty decal ring) renders within tight
+// tolerance of the pre-decal baseline. Complements ScorchToggleOff by
+// verifying the empty-ring fast-path (u_decal_count == 0 skips apply_damage_decals
+// entirely) leaves glow_flicker at its initial value of 1.0.
+TEST_F(FrameTest, UndamagedInstanceGlowMatchesEmptyRingBaseline) {
+    auto model_h = cache->load(kGalaxyNif, kGalaxyTex);
+    auto lut = [model_h](scenegraph::ModelHandle h) -> const assets::Model* {
+        return reinterpret_cast<const assets::Model*>(h); };
+
+    // Render A: empty decal ring, default lighting.
+    scenegraph::World wa;
+    auto ia = wa.create_instance(reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
+    wa.set_world_transform(ia, glm::mat4(1.0f));
+    render_galaxy(wa, *p, lut, 0.0f);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const double R_a = block_mean(130, 100, 25, 50);
+    ASSERT_GT(R_a, 0.0) << "baseline block was black";
+
+    // Render B: second independent instance, also empty decal ring.
+    // Any state shared between FrameSubmitter renders must not bleed over.
+    scenegraph::World wb;
+    auto ib = wb.create_instance(reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
+    wb.set_world_transform(ib, glm::mat4(1.0f));
+    render_galaxy(wb, *p, lut, 0.0f);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const double R_b = block_mean(130, 100, 25, 50);
+
+    // Two identical undamaged renders must be pixel-identical (or very close).
+    EXPECT_NEAR(R_b, R_a, R_a * 0.01)
+        << "Two undamaged instances rendered to different luminances; "
+           "glow_flicker initial value may be wrong.  R_a=" << R_a << " R_b=" << R_b;
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 
 }  // namespace

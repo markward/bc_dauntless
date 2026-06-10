@@ -25,6 +25,39 @@ class Severity(IntEnum):
     CRITICAL = 2
 
 
+# ── Spark-burst policy (transient impact VFX) ──────────────────────────────
+# Sparks fire on a *heavy direct hit* (absorbed_hull magnitude) OR on any
+# CRITICAL subsystem transition. Magnitude-based so a single torpedo clears
+# the bar while per-tick phaser dribble does not. Policy lives here; the
+# renderer only renders the count it is told.
+SPARK_HULL_THRESHOLD = 80.0   # game-units of hull damage in one hit (tune-by-eye)
+
+SPARK_KIND_PHASER = 0    # cool white-blue, fewer, tight cone
+SPARK_KIND_TORPEDO = 1   # hot orange, more, wide cone (also disruptor/default)
+
+_SPARK_BASE_COUNT = {SPARK_KIND_PHASER: 6, SPARK_KIND_TORPEDO: 12}
+_SPARK_CRITICAL_MULT = 1.5
+
+
+def _spark_kind_for(weapon_type) -> int:
+    return SPARK_KIND_PHASER if weapon_type == "phaser" else SPARK_KIND_TORPEDO
+
+
+def spark_params(*, weapon_type, severity, absorbed_hull):
+    """Return (spark_count, spark_kind). count == 0 means no burst.
+
+    Pure function, tested in isolation. `severity` is a Severity.
+    """
+    kind = _spark_kind_for(weapon_type)
+    fire = (absorbed_hull >= SPARK_HULL_THRESHOLD) or (severity == Severity.CRITICAL)
+    if not fire:
+        return 0, kind
+    count = _SPARK_BASE_COUNT[kind]
+    if severity == Severity.CRITICAL:
+        count = int(count * _SPARK_CRITICAL_MULT)
+    return count, kind
+
+
 # Decal-emission throttle. A continuous phaser beam ticks ~60x/s; emitting a
 # decal every tick saturates the 24-slot per-instance ring, so decals are
 # FIFO-evicted within ~0.3 s — before they can cool over T_GLOW. Cap to a few
@@ -137,7 +170,36 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
                 )
     else:
         # HULL or CRITICAL — hit_vfx.spawn handles both, filtered by severity.
-        hit_vfx.spawn(point, normal=normal, severity=severity)
+        # Spark policy + hull anchor (sparks are independent of decals).
+        spark_count, weapon_kind = spark_params(
+            weapon_type=weapon_type, severity=severity,
+            absorbed_hull=absorbed_hull)
+        body_point = body_normal = None
+        instance_id = None
+        # Bail to flash-only (no sparks) when any of: no host (headless),
+        # no instance map, no surface normal (sphere-entry fallback), the
+        # host can't convert, the ship has no instance, or the id is stale.
+        # Sparks need a hull anchor; the impact-flash billboard fires regardless.
+        if (spark_count > 0 and host is not None and ship_instances is not None
+                and normal is not None and hasattr(host, "world_to_body")):
+            instance_id = ship_instances.get(ship)
+            if instance_id is not None:
+                conv = host.world_to_body(
+                    instance_id=instance_id,
+                    world_point=(point.x, point.y, point.z),
+                    world_normal=(normal.x, normal.y, normal.z))
+                if conv is not None:
+                    body_point, body_normal = conv
+                else:
+                    instance_id = None  # stale id; render flash only, no sparks
+        # body_point is None unless the world->body conversion succeeded;
+        # force spark_count=0 in every no-anchor path so the renderer never
+        # anchors a burst at the default (0,0,0) body origin.
+        hit_vfx.spawn(
+            point, normal=normal, severity=severity,
+            instance_id=instance_id, body_point=body_point,
+            body_normal=body_normal, weapon_kind=weapon_kind,
+            spark_count=(spark_count if body_point is not None else 0))
 
     # 2. Audio — edge-triggered per (ship, severity). Plays once at
     # the start of a contiguous burst; subsequent ticks while the same

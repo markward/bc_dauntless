@@ -21,10 +21,12 @@ INTENSITY_REFERENCE_DAMAGE = 0.5
 
 # Visual-only radius multipliers per weapon class (gameplay r_hit unchanged).
 # Calibrated against the live renderer: phaser glow reads better tight (0.5);
-# torpedo scorch wants a broad deposit (3x the phaser scale) for the spread-B look.
+# torpedo scorch wants a broad deposit for the spread-B look. Scorch scale
+# tuned by eye to 2.25 (= 1.5x the original 1.5); also scales the ember/flicker
+# footprint, which share the decal radius.
 _RADIUS_SCALE = {
     WEAPON_CLASS_HEAT_GLOW: 0.5,
-    WEAPON_CLASS_SCORCH: 1.5,
+    WEAPON_CLASS_SCORCH: 2.25,
 }
 
 

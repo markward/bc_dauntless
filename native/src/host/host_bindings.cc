@@ -340,7 +340,7 @@ void frame() {
 
         if (g_torpedo_pass) g_torpedo_pass->render(g_torpedoes,    g_camera, *g_pipeline);
         if (g_phaser_pass)  g_phaser_pass ->render(g_phaser_beams, g_camera, *g_pipeline);
-        if (g_hit_vfx_pass) g_hit_vfx_pass->render(g_hit_vfx,      g_camera, *g_pipeline);
+        if (g_hit_vfx_pass) g_hit_vfx_pass->render(g_hit_vfx, g_world, g_camera, *g_pipeline);
     }
 
     if (g_hologram_pass && g_hologram_ship.active)
@@ -750,12 +750,26 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   v.surface_normal = {std::get<0>(n), std::get<1>(n), std::get<2>(n)};
                   v.severity = d["severity"].cast<int>();
                   v.age = d["age"].cast<float>();
+                  if (d.contains("instance_id") && !d["instance_id"].is_none()) {
+                      v.instance_id = d["instance_id"].cast<scenegraph::InstanceId>();
+                  }
+                  v.weapon_kind = d.contains("weapon_kind") ? d["weapon_kind"].cast<int>() : 1;
+                  v.spark_count = d.contains("spark_count") ? d["spark_count"].cast<int>() : 0;
+                  if (d.contains("body_point") && !d["body_point"].is_none()) {
+                      auto bp = d["body_point"].cast<std::tuple<float, float, float>>();
+                      v.body_point = {std::get<0>(bp), std::get<1>(bp), std::get<2>(bp)};
+                  }
+                  if (d.contains("body_normal") && !d["body_normal"].is_none()) {
+                      auto bn = d["body_normal"].cast<std::tuple<float, float, float>>();
+                      v.body_normal = {std::get<0>(bn), std::get<1>(bn), std::get<2>(bn)};
+                  }
                   g_hit_vfx.push_back(std::move(v));
               }
           },
           py::arg("vfx"),
-          "Set the active hit-VFX list (position + normal + severity + age), "
-          "applied each frame().");
+          "Set the active hit-VFX list, applied each frame(). Each dict has "
+          "position + normal + severity + age, plus optional spark fields "
+          "(instance_id, body_point, body_normal, weapon_kind, spark_count).");
 
     m.def("set_phaser_beams",
           [](const std::vector<py::dict>& descs) {
@@ -1064,6 +1078,30 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Record an object-space damage decal on a ship instance. World-space "
           "point/normal are transformed into the ship body frame. weapon_class: "
           "0=HeatGlow (phaser), 1=Scorch (torpedo/disruptor).");
+
+    m.def("world_to_body",
+          [](scenegraph::InstanceId id,
+             std::tuple<float, float, float> world_point,
+             std::tuple<float, float, float> world_normal)
+              -> py::object {
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return py::none();  // stale id
+              const glm::vec3 pw(std::get<0>(world_point),
+                                 std::get<1>(world_point),
+                                 std::get<2>(world_point));
+              const glm::vec3 nw(std::get<0>(world_normal),
+                                 std::get<1>(world_normal),
+                                 std::get<2>(world_normal));
+              const glm::vec3 pb = scenegraph::world_to_body(inst->world, pw);
+              const glm::vec3 nb = scenegraph::world_dir_to_body(inst->world, nw);
+              return py::make_tuple(
+                  py::make_tuple(pb.x, pb.y, pb.z),
+                  py::make_tuple(nb.x, nb.y, nb.z));
+          },
+          py::arg("instance_id"), py::arg("world_point"), py::arg("world_normal"),
+          "Convert a world-space hit point + normal into the ship instance's "
+          "body frame (model units). Returns ((bx,by,bz),(nx,ny,nz)) or None "
+          "if the instance id is stale.");
 
     m.def("damage_decals_tick",
           [](float time) {
