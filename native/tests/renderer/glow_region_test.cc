@@ -42,7 +42,8 @@ TEST(GlowRegion, FitsForeAftExtentFromTubeVertices) {
     EXPECT_TRUE(reg.active);
     EXPECT_NEAR(reg.aft, -3.0f, 1e-4f);
     EXPECT_NEAR(reg.fore, 5.0f, 1e-4f);
-    EXPECT_NEAR(reg.radius, 1.25f, 1e-4f);  // widened
+    // Rendered capsule radius = widened (1.0*1.25) * render fraction (0.3).
+    EXPECT_NEAR(reg.radius, 1.25f * renderer::kGlowCapsuleRenderRadiusFrac, 1e-4f);
 }
 
 TEST(GlowRegion, FallsBackToFormulaWhenCaptureDegenerate) {
@@ -79,6 +80,33 @@ TEST(GlowRegion, NonZeroCenterAxialProjectionsRelativeToCenter) {
     // aft and fore are axial projections relative to center
     EXPECT_NEAR(reg.aft,  -3.0f, 1e-4f);
     EXPECT_NEAR(reg.fore, +5.0f, 1e-4f);
+}
+
+TEST(GlowRegion, GapStopExcludesDisconnectedAxialCluster) {
+    // Reproduces the real-hull over-capture: an infinite-Y lateral tube through
+    // a nacelle's (x,z) also passes through the saucer, which sits at the SAME
+    // (x,z) column but a far-away Y. A global min/max fit then stretches
+    // fore/aft across the whole ship. The fit must instead keep only the
+    // contiguous axial run around the hardpoint (t=0) and stop at the axial gap,
+    // dropping the disconnected far cluster.
+    assets::Model m;
+    std::vector<glm::vec3> verts;
+    // Local "nacelle" cluster: dense, axial t in [-1, +1], all within radius.
+    for (int k = -10; k <= 10; ++k) {
+        verts.push_back({0.1f, 0.1f * static_cast<float>(k), 0.0f});  // y in [-1, 1]
+    }
+    // Disconnected "saucer" cluster: same lateral column, axial t in [4, 5],
+    // separated from the nacelle by a ~3-unit axial gap.
+    for (int k = 0; k <= 5; ++k) {
+        verts.push_back({0.1f, 4.0f + 0.2f * static_cast<float>(k), 0.0f});  // y in [4, 5]
+    }
+    add_cpu_mesh(m, verts);
+    auto reg = renderer::compute_capsule_region(
+        m, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f), 1.0f);
+    EXPECT_TRUE(reg.active);
+    EXPECT_NEAR(reg.aft, -1.0f, 1e-4f);
+    // fore must stop at the nacelle's far edge (~+1), NOT reach the saucer (+5).
+    EXPECT_NEAR(reg.fore, 1.0f, 1e-4f);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
