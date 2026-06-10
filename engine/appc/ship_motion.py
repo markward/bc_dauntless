@@ -1,21 +1,23 @@
 """Per-tick kinematic integrator for AI-controlled ships.
 
-Reads each ship's `_speed_setpoint` (written via SetSpeed / SetImpulse)
-and ramps `_current_speed` toward the target speed at the ship's
-MaxAccel (with FALLBACK_MAX_ACCEL for ships without a populated
-ImpulseEngineSubsystem). Position advances along the world-space
-direction each tick.
+Reads each ship's `_speed_setpoint` / `_target_angular_velocity_setpoint`
+and ramps `_current_speed` / `_current_angular_velocity` toward them under
+limits scaled by the ship's online impulse-pod fraction f (see
+`impulse_online_fraction`). At f in (0, 1] flight runs under f-scaled
+MaxSpeed / MaxAccel / MaxAngularVelocity / MaxAngularAccel with a
+non-braking `_cap_keep` clamp; ships with no populated ImpulseEngineSubsystem
+fall back to FALLBACK_MAX_ACCEL snap semantics. At f == 0 the ship drifts on
+inertia: the world-space velocity is snapshotted into `_drift_velocity` and
+position integrates by that frozen vector while residual angular momentum
+still tumbles the hull (velocity decoupled from facing, no thrust, no decay).
 
-Reads each ship's `_target_angular_velocity_setpoint` and ramps
-`_current_angular_velocity` per axis toward it at the ship's
-MaxAngularAccel (same fallback rule). The per-tick rotation delta
-is built as pitch/yaw/roll matrices and pre-multiplied into the
-existing world rotation — matches the `_PlayerControl.apply`
-body-frame-delta convention.
+The per-tick rotation delta is built as pitch/yaw/roll matrices and
+post-multiplied into the world rotation (`_integrate_rotation`) — matches the
+`_PlayerControl.apply` body-frame-delta convention.
 
-Ships whose setpoints are still None are skipped entirely so the
-player ship (driven by `engine/host_loop.py:_PlayerControl` directly
-on the transform) is left alone.
+Ships whose setpoints are still None are skipped entirely so the player ship
+(driven by `engine/host_loop.py:_PlayerControl` directly on the transform) is
+left alone.
 """
 from dataclasses import dataclass
 
@@ -115,81 +117,75 @@ def _ramp_toward(current: float, target: float, step: float) -> float:
     return current + (step if delta > 0 else -step)
 
 
-def _max_accel(ship) -> float:
-    ies = ship.GetImpulseEngineSubsystem()
-    if ies is not None and ies.GetMaxSpeed() > 0.0:
-        a = ies.GetMaxAccel()
-        return a if a > 0.0 else FALLBACK_MAX_ACCEL
-    return FALLBACK_MAX_ACCEL
-
-
-def _linear_step_magnitude(ship, gap: float, dt: float) -> float:
-    """Per-tick speed step magnitude for the rate-limited asymptote
-    impulse ramp — min(MaxAccel, |gap|/τ) · dt with τ = BC_IMPULSE_TAU.
-
-    Test/fallback ships (no IES MaxSpeed, or duck-typed objects without
-    GetImpulseEngineSubsystem) bypass the τ cap so existing snap-to-
-    target tests keep their semantics.
-    """
-    getter = getattr(ship, "GetImpulseEngineSubsystem", None)
-    ies = getter() if getter is not None else None
-    if ies is not None and ies.GetMaxSpeed() > 0.0:
-        a = ies.GetMaxAccel()
-        if a <= 0.0:
-            a = FALLBACK_MAX_ACCEL
-        return min(a, abs(gap) / BC_IMPULSE_TAU) * dt
-    return FALLBACK_MAX_ACCEL * dt
-
-
-def _max_angular_accel(ship) -> float:
-    ies = ship.GetImpulseEngineSubsystem()
-    if ies is not None and ies.GetMaxAngularVelocity() > 0.0:
-        a = ies.GetMaxAngularAccel()
-        return a if a > 0.0 else FALLBACK_MAX_ACCEL
-    return FALLBACK_MAX_ACCEL
-
-
 def _step_ship_motion(ship, dt: float) -> None:
     """Advance one ship's transform by one tick.
 
-    Skips entirely when no setpoint has ever been written so the
-    player ship (driven via `_PlayerControl`, not setpoints) and
-    freshly-spawned non-AI props are left alone.
+    Skips entirely when no setpoint has ever been written so the player ship
+    (driven via `_PlayerControl`) and freshly-spawned non-AI props are left
+    alone. Otherwise: at engine-fraction f in (0, 1] flies under f-scaled
+    limits with a non-braking cap; at f == 0 drifts on inertia (frozen
+    world-space velocity + residual angular momentum). Spec
+    docs/superpowers/specs/2026-06-10-impulse-engine-degradation-design.md.
     """
     sp = getattr(ship, "_speed_setpoint", None)
     av = getattr(ship, "_target_angular_velocity_setpoint", None)
     if sp is None and av is None:
         return
 
-    # ── Resolve target speed + world-space direction ─────────────────
+    # -- Commanded speed + world-space direction --
     if sp is None:
-        target_speed = 0.0
-        world_dir = TGPoint3(0.0, 1.0, 0.0)  # arbitrary; magnitude is 0
+        commanded_speed = 0.0
+        world_dir = TGPoint3(0.0, 1.0, 0.0)
     else:
-        target_speed_signed, direction, frame = sp
+        commanded_speed, direction, frame = sp
         if frame == PhysicsObjectClass.DIRECTION_MODEL_SPACE:
             world_dir = TGPoint3(direction.x, direction.y, direction.z)
             world_dir.MultMatrixLeft(ship.GetWorldRotation())
         else:
             world_dir = TGPoint3(direction.x, direction.y, direction.z)
         world_dir.Unitize()
-        target_speed = target_speed_signed
 
-    # ── Engines-disabled gate: clamp target + scale ramp by drag fraction.
-    # Reads predicate at use-time so repair lifting condition releases
-    # the gate on the next call. Spec §4.1.
-    from engine.appc.subsystems import _is_offline
-    engines_offline = _is_offline(ship.GetImpulseEngineSubsystem())
-    if engines_offline:
-        target_speed = 0.0
+    from engine.appc.subsystems import impulse_online_fraction
+    getter = getattr(ship, "GetImpulseEngineSubsystem", None)
+    ies = getter() if getter is not None else None
+    f = impulse_online_fraction(ies)
 
-    # ── Ramp current speed toward target ─────────────────────────────
-    step = _linear_step_magnitude(ship, target_speed - ship._current_speed, dt)
-    if engines_offline:
-        step *= DISABLED_ENGINE_DRAG_FRACTION
+    # -- Total loss -> inertial drift --
+    if f <= 0.0:
+        drift = getattr(ship, "_drift_velocity", None)
+        if drift is None:
+            drift = TGPoint3(
+                world_dir.x * ship._current_speed,
+                world_dir.y * ship._current_speed,
+                world_dir.z * ship._current_speed,
+            )
+            ship._drift_velocity = drift
+        p = ship.GetTranslate()
+        ship.SetTranslateXYZ(
+            p.x + drift.x * dt, p.y + drift.y * dt, p.z + drift.z * dt,
+        )
+        ship.SetVelocity(TGPoint3(drift.x, drift.y, drift.z))
+        _integrate_rotation(ship, dt)   # residual angular momentum, held
+        return
+
+    # -- Powered flight: clear any drift snapshot, re-seed speed --
+    drift = getattr(ship, "_drift_velocity", None)
+    if drift is not None:
+        ship._current_speed = drift.Length()
+        ship._drift_velocity = None
+
+    em = _effective_motion(ship, f)
+
+    # -- Linear ramp toward (capped) target --
+    if em.has_linear:
+        target_speed = _cap_keep(commanded_speed, ship._current_speed, em.max_speed)
+        accel = em.max_accel if em.max_accel > 0.0 else FALLBACK_MAX_ACCEL
+        step = _asymptote_step(accel, target_speed - ship._current_speed, dt)
+    else:
+        target_speed = commanded_speed
+        step = FALLBACK_MAX_ACCEL * dt
     ship._current_speed = _ramp_toward(ship._current_speed, target_speed, step)
 
-    # ── Integrate position ───────────────────────────────────────────
     if ship._current_speed != 0.0:
         p = ship.GetTranslate()
         ship.SetTranslateXYZ(
@@ -197,44 +193,39 @@ def _step_ship_motion(ship, dt: float) -> None:
             p.y + world_dir.y * ship._current_speed * dt,
             p.z + world_dir.z * ship._current_speed * dt,
         )
-
-    # Publish velocity so SDK consumers (Intercept's brake-aware control,
-    # Defensive, etc.) reading GetVelocityTG().Length() see real numbers.
-    # Zero speed publishes zero velocity — caller-visible state must
-    # match the integrator's actual progress this tick.
     ship.SetVelocity(TGPoint3(
         world_dir.x * ship._current_speed,
         world_dir.y * ship._current_speed,
         world_dir.z * ship._current_speed,
     ))
 
-    # ── Resolve target angular velocity ──────────────────────────────
+    # -- Angular ramp toward (capped) target --
     if av is None:
-        target_av_x = target_av_y = target_av_z = 0.0
+        tx = ty = tz = 0.0
     else:
-        target_av_x, target_av_y, target_av_z = av.x, av.y, av.z
-
-    # Engines-disabled gate also kills angular thrust (SDK puts
-    # MaxAngularVelocity / MaxAngularAccel directly on ImpulseEngines;
-    # no separate RCS subsystem). Spec §4.1.
-    if engines_offline:
-        target_av_x = target_av_y = target_av_z = 0.0
-
-    # ── Ramp each axis of _current_angular_velocity toward target ────
-    ang_step = _max_angular_accel(ship) * dt
-    if engines_offline:
-        ang_step *= DISABLED_ENGINE_DRAG_FRACTION
+        tx, ty, tz = av.x, av.y, av.z
     cav = ship._current_angular_velocity
-    cav.x = _ramp_toward(cav.x, target_av_x, ang_step)
-    cav.y = _ramp_toward(cav.y, target_av_y, ang_step)
-    cav.z = _ramp_toward(cav.z, target_av_z, ang_step)
+    if em.has_angular:
+        tx = _cap_keep(tx, cav.x, em.max_ang_vel)
+        ty = _cap_keep(ty, cav.y, em.max_ang_vel)
+        tz = _cap_keep(tz, cav.z, em.max_ang_vel)
+        aa = em.max_ang_accel if em.max_ang_accel > 0.0 else FALLBACK_MAX_ACCEL
+        ang_step = aa * dt
+    else:
+        ang_step = FALLBACK_MAX_ACCEL * dt
+    cav.x = _ramp_toward(cav.x, tx, ang_step)
+    cav.y = _ramp_toward(cav.y, ty, ang_step)
+    cav.z = _ramp_toward(cav.z, tz, ang_step)
 
-    # ── Integrate rotation ───────────────────────────────────────────
-    # Same convention as _PlayerControl.apply step 4: column-vector
-    # matrices, body-frame delta POST-multiplies (R · D); see
-    # CLAUDE.md ↦ "Rotation matrix convention". Pitch (X) → yaw (Z) →
-    # roll (Y) Euler order. Body axes map: X=right, Y=forward, Z=up;
-    # cav components are per-axis rates around those body axes.
+    _integrate_rotation(ship, dt)
+
+
+def _integrate_rotation(ship, dt: float) -> None:
+    """Apply ship._current_angular_velocity to the world rotation for one
+    tick. Column-vector matrices, body-frame delta POST-multiplies (R . D);
+    pitch (X) -> yaw (Z) -> roll (Y) Euler order. See CLAUDE.md -> 'Rotation
+    matrix convention'."""
+    cav = ship._current_angular_velocity
     if cav.x or cav.y or cav.z:
         R = ship.GetWorldRotation()
         R_pitch = TGMatrix3(); R_pitch.MakeRotation(cav.x * dt, _X_AXIS)
