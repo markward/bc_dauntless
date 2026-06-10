@@ -785,7 +785,12 @@ class _PlayerControl:
             and h.key_pressed(h.keys.KEY_I)
         ):
             self._warp_boost = not self._warp_boost
-            self._current_speed = self.GetTargetSpeed(player)
+            # While drifting (all engines offline) _current_speed is frozen and
+            # _drift_velocity drives motion; don't snap it — drift-exit re-seeds
+            # it from the drift magnitude. The boost flag still flips so it
+            # takes effect once an engine is repaired.
+            if self._drift_velocity is None:
+                self._current_speed = self.GetTargetSpeed(player)
             print(
                 f"[host_loop] in-system warp {'ON' if self._warp_boost else 'OFF'}",
                 flush=True,
