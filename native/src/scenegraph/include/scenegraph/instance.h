@@ -38,11 +38,11 @@ struct Instance {
     /// Runtime VFX state only — never serialized to saves.
     DamageDecalRing decals;
 
-    /// Per-instance warp-nacelle glow capsules (body frame, model units).
+    /// Per-instance glow capsules (body frame, model units).
     /// Runtime VFX state only — never serialized. Fixed cap: a ship has at
-    /// most a handful of nacelles.
-    static constexpr std::size_t kMaxNacelles = 4;
-    struct Nacelle {
+    /// most a handful of glow regions.
+    static constexpr std::size_t kMaxGlowRegions = 4;
+    struct GlowRegion {
         glm::vec3 center{0.0f};
         glm::vec3 axis{0.0f, 1.0f, 0.0f};
         float     radius = 0.0f;
@@ -50,9 +50,10 @@ struct Instance {
         float     fore = 0.0f;
         float     dim_target = 1.0f;
         float     disable_time = -1.0f;
+        float     flicker = 0.0f;   // 1 = disabled (continuous flicker), 0 = solid settle
         bool      active = false;
     };
-    std::array<Nacelle, kMaxNacelles> nacelles{};
+    std::array<GlowRegion, kMaxGlowRegions> glow_regions{};
 };
 
 }  // namespace scenegraph

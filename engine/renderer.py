@@ -190,25 +190,33 @@ def set_rim_eligible(instance_id: InstanceId, eligible: bool) -> None:
     _h.set_rim_eligible(instance_id, eligible)
 
 
-def compute_nacelle_region(instance_id: InstanceId,
+def compute_capsule_region(instance_id: InstanceId,
                            center, axis, radius: float) -> int:
     """Fit and store a warp-nacelle glow capsule on the instance.
 
     center/axis are 3-tuples in game units / body frame; radius in game units.
     Returns the region index (>=0) or -1 on failure.
     """
-    return _h.compute_nacelle_region(
+    return _h.compute_capsule_region(
         instance_id, tuple(center), tuple(axis), float(radius))
 
 
-def set_nacelle_dim(instance_id: InstanceId, region_index: int,
-                    dim_target: float, disable_time: float) -> None:
-    """Update a nacelle capsule's dim target [0,1] and disable timestamp.
+def add_sphere_region(instance_id: InstanceId, center, radius: float) -> int:
+    """Store a sphere glow region at a hardpoint. center is a 3-tuple in game
+    units / body frame; radius in game units. Returns the region index (>=0) or
+    -1 on failure. Used for impulse engines and sensor arrays (compact spots);
+    warp nacelles use compute_capsule_region for their elongated shape."""
+    return _h.add_sphere_region(instance_id, tuple(center), float(radius))
 
-    disable_time is game-time seconds of the last disable edge; <0 = healthy.
-    """
-    _h.set_nacelle_dim(instance_id, int(region_index),
-                       float(dim_target), float(disable_time))
+
+def set_glow_region_dim(instance_id: InstanceId, region_index: int,
+                        dim_target: float, disable_time: float,
+                        flicker: float) -> None:
+    """Update a glow region's dim target [0,1], last state-change edge time
+    (game-time secs; <0 = healthy), and flicker flag (1 = disabled/continuous
+    flicker, 0 = solid settle)."""
+    _h.set_glow_region_dim(instance_id, int(region_index),
+                           float(dim_target), float(disable_time), float(flicker))
 
 
 # ── Shield pass ─────────────────────────────────────────────────────────────
