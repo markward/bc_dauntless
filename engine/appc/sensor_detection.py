@@ -50,12 +50,14 @@ def can_detect(observer, target) -> bool:
 
 
 # ── AI candidate-selection gate ───────────────────────────────────────────────
-# The SDK's SelectTarget.FindGoodTarget enumerates candidates via
-# ObjectGroup.GetActiveObjectTupleInSet, which has no ship context. We stash the
-# querying ship in a module global for the duration of a FindGoodTarget call
-# (single-threaded Python -- safe) and have a wrapped GetActiveObjectTupleInSet
-# consult it. Every other caller of that method runs with the global None and is
-# unaffected.
+# The SDK's SelectTarget.FindGoodTarget and StarbaseAttack.GetTargets both
+# enumerate candidates via ObjectGroup.GetActiveObjectTupleInSet, which has no
+# ship context. We stash the querying ship in a module global for the duration
+# of each call (single-threaded Python -- safe) and have a wrapped
+# GetActiveObjectTupleInSet consult it. Every other caller of that method
+# (mission proximity checks, MissionLib's player scan, the player target list)
+# runs with the global None and is unaffected; only SelectTarget.FindGoodTarget
+# and StarbaseAttack.GetTargets publish an observer.
 
 _observing_ship = None
 
@@ -119,6 +121,20 @@ def _wrap_find_good_target(orig):
     return _gated_find
 
 
+def _wrap_get_targets(orig):
+    """Wrap StarbaseAttack.GetTargets (an offensive target-acquisition method)
+    so the querying ship — passed as the pShip argument — is published as the
+    current observer while it enumerates candidates via
+    ObjectGroup.GetActiveObjectTupleInSet."""
+
+    def _gated_get_targets(self, pShip):
+        with observing(pShip):
+            return orig(self, pShip)
+
+    _gated_get_targets._sensor_gated = True
+    return _gated_get_targets
+
+
 def install_ai_sensor_gate() -> None:
     """Idempotently install the two-part AI sensor gate: wrap
     ObjectGroup.GetActiveObjectTupleInSet (candidate filter) and
@@ -141,4 +157,13 @@ def install_ai_sensor_gate() -> None:
     if not getattr(_pp.SelectTarget.FindGoodTarget, "_sensor_gated", False):
         _pp.SelectTarget.FindGoodTarget = _wrap_find_good_target(
             _pp.SelectTarget.FindGoodTarget
+        )
+
+    try:
+        import AI.PlainAI.StarbaseAttack as _sba
+    except ImportError:
+        return
+    if not getattr(_sba.StarbaseAttack.GetTargets, "_sensor_gated", False):
+        _sba.StarbaseAttack.GetTargets = _wrap_get_targets(
+            _sba.StarbaseAttack.GetTargets
         )

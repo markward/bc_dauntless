@@ -6,7 +6,7 @@ from engine.appc.subsystems import SensorSubsystem, update_target_list_visibilit
 from engine.appc.sensor_detection import (
     FALLBACK_RANGE_GU, effective_sensor_range, can_detect,
     observing, current_observing_ship,
-    _wrap_active_tuple, _wrap_find_good_target,
+    _wrap_active_tuple, _wrap_find_good_target, _wrap_get_targets,
     install_ai_sensor_gate,
 )
 from engine.appc.objects import ObjectGroup
@@ -277,3 +277,29 @@ def test_bootstrap_installs_sensor_gate():
     except Exception:
         pass
     assert getattr(ObjectGroup.GetActiveObjectTupleInSet, "_sensor_gated", False) is True
+
+
+def test_wrap_get_targets_publishes_ship_arg_during_call():
+    captured = []
+
+    def fake_orig(self, pShip):
+        captured.append(current_observing_ship())
+        return "result"
+
+    wrapped = _wrap_get_targets(fake_orig)
+
+    observer, _ = _ship_with_sensor(2000.0, at=(0.0, 0.0, 0.0))
+
+    class _FakeStarbaseAttack:
+        pass
+
+    assert wrapped(_FakeStarbaseAttack(), observer) == "result"
+    assert captured == [observer]
+    assert current_observing_ship() is None  # cleared after the call
+    assert getattr(wrapped, "_sensor_gated", False) is True
+
+
+def test_install_wraps_starbase_attack_get_targets():
+    install_ai_sensor_gate()
+    import AI.PlainAI.StarbaseAttack as sba
+    assert getattr(sba.StarbaseAttack.GetTargets, "_sensor_gated", False) is True
