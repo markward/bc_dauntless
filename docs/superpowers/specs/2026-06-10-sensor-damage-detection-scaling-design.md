@@ -101,9 +101,14 @@ No UI changes — the panels already filter on `row.IsVisible()`.
 A two-part monkeypatch installed once at engine init — no fork of the SDK file,
 no reimplementation of the selection logic:
 
-1. Wrap `SelectTarget.FindGoodTarget` (the method that actually enumerates
-   candidates) to stash `self.pCodeAI.GetShip()` in a module global for the
-   duration of the call (`try/finally` via a context manager).
+1. Wrap each AI **offensive** target-enumeration method to stash the querying
+   ship in a module global for the duration of the call (via a context
+   manager). There are exactly two such methods in the SDK AI tree that call
+   `GetActiveObjectTupleInSet`: `SelectTarget.FindGoodTarget` (ship via
+   `self.pCodeAI.GetShip()`) and `StarbaseAttack.GetTargets` (ship via the
+   `pShip` argument). `Flee.Update` is the third caller but enumerates objects
+   to *flee from* (defensive avoidance, not target selection), so it is
+   intentionally **not** gated — a blind ship should still try to evade.
 2. Wrap `ObjectGroup.GetActiveObjectTupleInSet` so that **when that global is
    set**, it filters its result through `can_detect(observer_ship, obj)`.
 
