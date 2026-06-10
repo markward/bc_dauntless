@@ -258,3 +258,17 @@ def test_player_list_explicit_range_units_still_honored():
     # Explicit override ignores the scaled range and uses 30000.
     update_target_list_visibility(menu, [enemy], player, range_units=30000.0)
     assert menu.GetObjectEntry(enemy).IsVisible() == 1
+
+
+def test_bootstrap_installs_sensor_gate():
+    """The startup bootstrap installs the AI sensor gate as its first action,
+    so ObjectGroup.GetActiveObjectTupleInSet is wrapped after host init."""
+    from engine import host_loop
+    try:
+        host_loop._bootstrap_firing_pipeline()
+    except Exception:
+        # Later pipeline setup may need fuller host state in some contexts;
+        # the gate install is the first line of the function, so it has
+        # already run by the time any later step could raise.
+        pass
+    assert getattr(ObjectGroup.GetActiveObjectTupleInSet, "_sensor_gated", False) is True

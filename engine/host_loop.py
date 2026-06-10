@@ -91,6 +91,11 @@ def _bootstrap_firing_pipeline() -> None:
     All SDK imports are guarded: any missing shim surface is logged as a
     warning but never crashes the host loop.
     """
+    # Install the sensor-damage AI gate first so it is live regardless of
+    # whether any later pipeline step short-circuits. Idempotent.
+    from engine.appc.sensor_detection import install_ai_sensor_gate
+    install_ai_sensor_gate()
+
     import App
 
     # Default destination for fire events.
