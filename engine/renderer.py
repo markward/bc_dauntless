@@ -190,6 +190,27 @@ def set_rim_eligible(instance_id: InstanceId, eligible: bool) -> None:
     _h.set_rim_eligible(instance_id, eligible)
 
 
+def compute_nacelle_region(instance_id: InstanceId,
+                           center, axis, radius: float) -> int:
+    """Fit and store a warp-nacelle glow capsule on the instance.
+
+    center/axis are 3-tuples in game units / body frame; radius in game units.
+    Returns the region index (>=0) or -1 on failure.
+    """
+    return _h.compute_nacelle_region(
+        instance_id, tuple(center), tuple(axis), float(radius))
+
+
+def set_nacelle_dim(instance_id: InstanceId, region_index: int,
+                    dim_target: float, disable_time: float) -> None:
+    """Update a nacelle capsule's dim target [0,1] and disable timestamp.
+
+    disable_time is game-time seconds of the last disable edge; <0 = healthy.
+    """
+    _h.set_nacelle_dim(instance_id, int(region_index),
+                       float(dim_target), float(disable_time))
+
+
 # ── Shield pass ─────────────────────────────────────────────────────────────
 
 def model_aabb(model: int) -> Tuple[Tuple[float, float, float],
