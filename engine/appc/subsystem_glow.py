@@ -63,3 +63,71 @@ def warp_pods(warp_subsystem):
     if n > 0:
         return [warp_subsystem.GetChildSubsystem(i) for i in range(n)]
     return [warp_subsystem]
+
+
+def _position_tuple(sub):
+    """Body-frame (x, y, z) of a subsystem's hardpoint, or None."""
+    if sub is None or not hasattr(sub, "GetPosition"):
+        return None
+    p = sub.GetPosition()
+    if p is None:
+        return None
+    return (p.GetX(), p.GetY(), p.GetZ())
+
+
+def _radius(sub) -> float:
+    """Hardpoint radius in game units (default 1.0 if unspecified)."""
+    if hasattr(sub, "GetRadius"):
+        r = sub.GetRadius()
+        if r:
+            return float(r)
+    return 1.0
+
+
+class ShipGlowController:
+    """Per-ship: register glow regions once, push state each frame.
+
+    Capsule region per warp pod (elongated nacelles); sphere region for the
+    impulse engine and the sensor array (compact spots). Holds
+    (subsystem, region_index, prev_state, edge_time) per region. `renderer` is
+    engine.renderer (injected for testability).
+    """
+
+    def __init__(self, renderer, instance_id, ship):
+        self._r = renderer
+        self._iid = instance_id
+        self._regions = []  # dicts: sub, idx, prev, etime
+
+        # Warp nacelles -> capsule regions (fit the elongated shape).
+        for pod in warp_pods(ship.GetWarpEngineSubsystem()):
+            pos = _position_tuple(pod)
+            if pos is None:
+                continue
+            idx = self._r.compute_capsule_region(
+                instance_id, pos, WARP_AXIS, _radius(pod))
+            if idx < 0:
+                continue
+            self._regions.append(
+                {"sub": pod, "idx": idx, "prev": HEALTHY, "etime": -1.0})
+
+        # Impulse + sensors -> sphere regions (compact hardpoint spots).
+        for sub in (ship.GetImpulseEngineSubsystem(),
+                    ship.GetSensorSubsystem()):
+            pos = _position_tuple(sub)
+            if pos is None:
+                continue
+            idx = self._r.add_sphere_region(instance_id, pos, _radius(sub))
+            if idx < 0:
+                continue
+            self._regions.append(
+                {"sub": sub, "idx": idx, "prev": HEALTHY, "etime": -1.0})
+
+    def update(self, now: float) -> None:
+        """Read each region's live state and push dim/edge/flicker for `now`."""
+        for reg in self._regions:
+            state = glow_state(reg["sub"])
+            etime = glow_edge(reg["prev"], state, reg["etime"], now)
+            dim, flick = dim_and_flicker(state)
+            self._r.set_glow_region_dim(self._iid, reg["idx"], dim, etime, flick)
+            reg["prev"] = state
+            reg["etime"] = etime
