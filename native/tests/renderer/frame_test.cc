@@ -375,7 +375,13 @@ TEST_F(FrameTest, ScorchDecalDarkensHullAndDoesNotMirror) {
     w1.get(i1)->decals.add(glm::vec3(60.0f, 0.0f, 20.0f), glm::vec3(0, 0, -1),
                            /*radius=*/120.0f, /*intensity=*/1.0f,
                            scenegraph::WeaponClass::Scorch, 0.0f);
-    render_galaxy(w1, *p, lut, 0.0f);
+    // Sample at decal_time = 65 s: past the transient glow-flicker window
+    // (randomised per-impact, up to FLICKER_DUR_MAX = 60 s) AND past the
+    // blackbody ember (~10 s to cold), so only the PERMANENT soot deposit
+    // remains. (At the impact the flicker brightens the glow and the ember
+    // ignites — both transient — so the permanent-darkening assertion must be
+    // sampled after they settle.)
+    render_galaxy(w1, *p, lut, 65.0f);
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
     const double L1 = block_mean(93, 100, 25, 50);
     const double R1 = block_mean(130, 100, 25, 50);
@@ -402,12 +408,16 @@ TEST_F(FrameTest, ScorchToggleOffRendersLikeUndamaged) {
     w.get(iid)->decals.add(glm::vec3(60.0f, 0.0f, 20.0f), glm::vec3(0, 0, -1),
                            120.0f, 1.0f, scenegraph::WeaponClass::Scorch, 0.0f);
 
+    // decal_time = 65 s isolates the permanent soot deposit from the transient
+    // flicker (randomised, up to 60 s) + ember (~10 s), so decals-on reads as
+    // darkened, not transiently brightened. (decal_time is irrelevant on the
+    // disabled path.)
     dauntless_decals::set_enabled(false);
-    render_galaxy(w, *p, lut, 0.0f);
+    render_galaxy(w, *p, lut, 65.0f);
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
     const double R_off = block_mean(130, 100, 25, 50);
     dauntless_decals::set_enabled(true);
-    render_galaxy(w, *p, lut, 0.0f);
+    render_galaxy(w, *p, lut, 65.0f);
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
     const double R_on = block_mean(130, 100, 25, 50);
     dauntless_decals::set_enabled(true);  // leave enabled
@@ -555,18 +565,20 @@ TEST_F(FrameTest, ScorchGlowOscillatesWithinFlickerWindow) {
                             /*radius=*/120.0f, /*intensity=*/0.25f,
                             scenegraph::WeaponClass::Scorch, /*birth_time=*/0.0f);
 
-    // Sample N ages evenly across [0.02, 0.45], all strictly within the
-    // FLICKER_DURATION = 0.5 s window AND all with age > 0 so the ember is
-    // present (and monotonically cooling) for the entire sequence — making the
-    // soot+ember baseline a clean monotone, so any reversal is the flicker.
-    // ~8-12 cycles in the window means these samples land on distinct phases of
-    // the oscillation (peaks and troughs).
-    const int N = 12;
+    // Sample N ages evenly across [0.1, 3.0] s — all strictly within the
+    // SHORTEST possible randomised window (FLICKER_DUR_MIN = 5 s), so the
+    // flicker is active for the whole sequence regardless of which duration
+    // this decal's birth_time hashed to. All have age > 0 so the ember is
+    // present (and monotonically cooling), making the soot+ember baseline a
+    // clean monotone — any reversal is the flicker. The 3 s span covers several
+    // oscillation cycles at STUTTER_FREQ = 15, so samples land on distinct
+    // peaks and troughs.
+    const int N = 16;
     std::vector<double> seq;
     seq.reserve(N);
     for (int k = 0; k < N; ++k) {
-        float age = 0.02f + (0.45f - 0.02f) * static_cast<float>(k)
-                                            / static_cast<float>(N - 1);
+        float age = 0.1f + (3.0f - 0.1f) * static_cast<float>(k)
+                                         / static_cast<float>(N - 1);
         render_galaxy_zero_ambient(w1, *p, lut, /*decal_time=*/age);
         ASSERT_EQ(glGetError(), GL_NO_ERROR);
         seq.push_back(block_mean(130, 100, 25, 50));
@@ -591,21 +603,71 @@ TEST_F(FrameTest, ScorchGlowOscillatesWithinFlickerWindow) {
            "flicker would make this sequence monotonic and fail here. "
            "changes=" << changes << " swing=" << swing;
 
-    // ── Sanity: past the window the oscillation stops. Sample the same kind of
-    // closely-spaced ages, but all > FLICKER_DURATION; with gf pinned at 1.0
-    // and the ember monotonically cooling, the sequence must be monotonic. ──
+    // ── Sanity: past the window the oscillation stops. Sample closely-spaced
+    // ages all > FLICKER_DUR_MAX (60 s), so the flicker is over for ANY
+    // randomised duration; with gf pinned at 1.0 and the ember long cold, the
+    // sequence must be monotonic (flat). ──
     std::vector<double> settled;
     settled.reserve(6);
     for (int k = 0; k < 6; ++k) {
-        float age = 1.0f + 0.1f * static_cast<float>(k);  // 1.0 .. 1.5 s
+        float age = 65.0f + 0.1f * static_cast<float>(k);  // 65.0 .. 65.5 s
         render_galaxy_zero_ambient(w1, *p, lut, /*decal_time=*/age);
         ASSERT_EQ(glGetError(), GL_NO_ERROR);
         settled.push_back(block_mean(130, 100, 25, 50));
     }
     EXPECT_LE(direction_changes(settled, eps), 1)
-        << "SCORCH glow still oscillated past FLICKER_DURATION (0.5 s); "
+        << "SCORCH glow still oscillated past FLICKER_DUR_MAX (60 s); "
            "gf should be pinned at 1.0 after the window.";
 
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+// The 5 s stutter phase is followed, for longer randomised durations, by a
+// SOLID blackout (gf clamped to 0 -> lights out in the impact region) until the
+// duration ends, then the glow restores. The duration is hash-randomised per
+// birth_time, so we probe a handful of birth_times for one whose duration is
+// long enough to be in blackout at age 14 s (past both the 5 s stutter phase
+// AND the ~10 s ember), then assert the blackout darkens the region and that it
+// restores past FLICKER_DUR_MAX (60 s). Zero-ambient isolates the glow term.
+TEST_F(FrameTest, ScorchFlickerBlacksOutThenRestoresForLongDurations) {
+    auto model_h = cache->load(kGalaxyNif, kGalaxyTex);
+    auto lut = [model_h](scenegraph::ModelHandle h) -> const assets::Model* {
+        return reinterpret_cast<const assets::Model*>(h); };
+
+    auto sample = [&](float birth, float decal_time, bool decals_on) -> double {
+        dauntless_decals::set_enabled(decals_on);
+        scenegraph::World w;
+        auto iid = w.create_instance(
+            reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
+        w.set_world_transform(iid, glm::mat4(1.0f));
+        w.get(iid)->decals.add(glm::vec3(60.0f, 0.0f, 20.0f), glm::vec3(0, 0, -1),
+                               120.0f, 0.25f, scenegraph::WeaponClass::Scorch, birth);
+        render_galaxy_zero_ambient(w, *p, lut, decal_time);
+        dauntless_decals::set_enabled(true);
+        return block_mean(130, 100, 25, 50);
+    };
+
+    // Glow-only baseline: same geometry, decals disabled.
+    const double B = sample(0.0f, 0.0f, /*decals_on=*/false);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    ASSERT_GT(B, 0.0) << "sample region has no glow; test would be vacuous";
+
+    // Probe birth_times for one in blackout at age 14 s (fdur > 14 ⇒ ~45% of
+    // births qualify; 16 probes makes a miss astronomically unlikely).
+    float found = -1.0f;
+    double dark = 0.0;
+    for (int b = 0; b < 16 && found < 0.0f; ++b) {
+        double d = sample(static_cast<float>(b), static_cast<float>(b) + 14.0f, true);
+        if (d < B * 0.4) { found = static_cast<float>(b); dark = d; }
+    }
+    ASSERT_GE(found, 0.0f)
+        << "no probed birth_time went solidly dark at age 14 s — the blackout "
+           "phase past the 5 s stutter is not driving the glow off";
+    EXPECT_LT(dark, B * 0.4) << "blackout did not darken the glow region";
+
+    // Past FLICKER_DUR_MAX (60 s) the disruption is over and the glow restores.
+    const double R = sample(found, found + 65.0f, true);
+    EXPECT_GT(R, B * 0.7) << "glow did not restore after the disruption ended";
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 

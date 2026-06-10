@@ -31,10 +31,15 @@ struct TierConfig {
 };
 
 // Indexed by severity: 0=SHIELD (unused — never reaches renderer), 1=HULL, 2=CRITICAL.
+// peak_size is a world-unit (GU) half-extent. Scale reference: a Galaxy-class
+// hull is only ~3.6 GU long, so the flash must be a fraction of that — an
+// impact spot, not a ship-sized blob. (The original 3.0/7.0 were calibrated
+// for the old NIF-unit test scale and rendered ~the size of the whole ship in
+// the live GU scene. Tune by eye against the tracking camera.)
 constexpr TierConfig kTiers[3] = {
-    {0.0f, 0.0f, 0.0f, 0.0f, {1.0f, 1.0f, 1.0f, 1.0f}},   // SHIELD — never used.
-    {3.0f, 0.08f, 0.25f, 0.33f, {1.00f, 0.55f, 0.20f, 1.0f}},  // HULL
-    {7.0f, 0.10f, 0.55f, 0.65f, {1.00f, 0.92f, 0.80f, 1.0f}},  // CRITICAL
+    {0.0f,  0.0f, 0.0f, 0.0f, {1.0f, 1.0f, 1.0f, 1.0f}},   // SHIELD — never used.
+    {0.20f, 0.08f, 0.25f, 0.33f, {1.00f, 0.55f, 0.20f, 1.0f}},  // HULL
+    {0.40f, 0.10f, 0.55f, 0.65f, {1.00f, 0.92f, 0.80f, 1.0f}},  // CRITICAL
 };
 
 // Weapon-distinct spark tints + spread tuning (spec 3.4). weapon_kind:
@@ -47,8 +52,9 @@ constexpr glm::vec4 kSparkTint[2] = {
 // amplitude (NOT a literal half-angle; rotate_jitter adds sin(jitter*k)
 // offsets, so 120 yields ~50 deg max spread). phaser tight, torpedo wide.
 constexpr float kSparkConeDegByKind[2] = {40.0f, 120.0f};
-constexpr float kSparkSpeed     = 4.0f;    // wu/s initial speed
-constexpr float kSparkSizeMult  = 0.6f;    // multiplier on tier peak_size
+constexpr float kSparkSpeed     = 1.0f;    // GU/s initial speed (travel ≈ speed/damping ≈ 0.7 GU)
+constexpr float kSparkSize      = 0.12f;   // GU half-size of a spark point (decoupled from flash)
+constexpr float kSparkLife      = 3.0f;    // seconds — spark visibility, intentionally far longer than the flash
 constexpr float kSparkDamping   = 1.4f;    // velocity damping rate (SDK SetDamping analogue)
 
 // Renderer CWD is the project root (see engine/host_loop.py:_resolve_game_texture),
@@ -210,21 +216,28 @@ void HitVfxPass::render(const std::vector<HitVfxDescriptor>& vfx,
         const TierConfig& tier = kTiers[sev];
 
         const float age = std::max(0.0f, v.age);
-        if (age >= tier.total_life) continue;
+        // The flash fades over tier.total_life; sparks live longer (kSparkLife),
+        // so keep the descriptor alive for whichever is longer.
+        const bool has_sparks = (v.spark_count > 0);
+        const float life_cap = has_sparks ? std::max(tier.total_life, kSparkLife)
+                                           : tier.total_life;
+        if (age >= life_cap) continue;
 
-        // ── Main billboard ──
-        const float size_t  = std::min(1.0f, age / tier.spawn_dur);
-        const float fade_t  = std::max(0.0f, std::min(1.0f,
-                                  (age - tier.spawn_dur) / tier.fade_dur));
-        const float size    = tier.peak_size * size_t;
-        const float alpha   = 1.0f - fade_t;
+        // ── Main billboard ── (only during its own, shorter lifetime)
+        if (age < tier.total_life) {
+            const float size_t  = std::min(1.0f, age / tier.spawn_dur);
+            const float fade_t  = std::max(0.0f, std::min(1.0f,
+                                      (age - tier.spawn_dur) / tier.fade_dur));
+            const float size    = tier.peak_size * size_t;
+            const float alpha   = 1.0f - fade_t;
 
-        glBindTexture(GL_TEXTURE_2D, texture_->id());
-        shader.set_vec4 ("u_tint",           tier.tint);
-        shader.set_vec3 ("u_world_position", v.world_pos);
-        shader.set_float("u_size",           size);
-        shader.set_float("u_alpha",          alpha);
-        glDrawArrays(GL_TRIANGLES, 0, 6);
+            glBindTexture(GL_TEXTURE_2D, texture_->id());
+            shader.set_vec4 ("u_tint",           tier.tint);
+            shader.set_vec3 ("u_world_position", v.world_pos);
+            shader.set_float("u_size",           size);
+            shader.set_float("u_alpha",          alpha);
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+        }
 
         // Spark burst (hull-anchored, detached, weapon-distinct).
         if (v.spark_count > 0 && spark_texture_ && spark_texture_->id() != 0) {
@@ -243,14 +256,15 @@ void HitVfxPass::render(const std::vector<HitVfxDescriptor>& vfx,
                 // Damped ballistic travel: x(t) = (v0/c)(1 - e^{-c t}).
                 const float travel =
                     (kSparkSpeed / kSparkDamping) * (1.0f - std::exp(-kSparkDamping * age));
-                const float life_t = age / tier.total_life;
+                // Sparks fade over their own (longer) lifetime, decoupled from
+                // the flash so halving the flash size doesn't shrink them.
+                const float life_t = std::min(1.0f, age / kSparkLife);
                 for (int i = 0; i < v.spark_count; ++i) {
                     const glm::vec2 jitter = hash3(origin, i);
                     const glm::vec3 dir =
                         rotate_jitter(base, cam_up, cam_right, jitter, cone);
                     const glm::vec3 pos = origin + dir * travel;
-                    const float spark_size =
-                        kSparkSizeMult * tier.peak_size * (1.0f - life_t);
+                    const float spark_size  = kSparkSize * (1.0f - life_t);
                     const float spark_alpha = 1.0f - life_t;
                     shader.set_vec3 ("u_world_position", pos);
                     shader.set_float("u_size",           spark_size);
