@@ -487,6 +487,14 @@
     content: 'Status Note';
     color: var(--c-yellow);
   }
+  .callout.next {
+    border-left-color: var(--c-violet);
+    background: rgba(176, 122, 204, 0.06);
+  }
+  .callout.next::before {
+    content: 'Next Up';
+    color: var(--c-violet);
+  }
   .callout p { color: var(--t); font-size: 14px; }
   .callout p:last-child { margin-bottom: 0; }
 
@@ -537,6 +545,38 @@
   }
   .latest .shot img:hover { opacity: 0.92; }
 
+  /* Video thumbnail (YouTube) */
+  .latest .shot--video img { cursor: pointer; }
+  .latest .shot--video .play-badge {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    background: var(--c-red);
+    box-shadow: 0 4px 22px rgba(0, 0, 0, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    transition: transform 0.15s, background 0.15s;
+  }
+  .latest .shot--video .play-badge::before {
+    content: '';
+    width: 0;
+    height: 0;
+    border-style: solid;
+    border-width: 11px 0 11px 19px;
+    border-color: transparent transparent transparent #fff;
+    margin-left: 4px;
+  }
+  .latest .shot--video:hover .play-badge {
+    transform: translate(-50%, -50%) scale(1.08);
+    background: #e03b4d;
+  }
+
   /* ─── LIGHTBOX ─── */
   .lightbox {
     position: fixed;
@@ -567,6 +607,27 @@
     border-radius: var(--radius);
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
     cursor: default;
+  }
+  .lightbox .video-frame {
+    display: none;
+    position: relative;
+    width: min(90vw, calc((100vh - 120px) * 16 / 9));
+    aspect-ratio: 16 / 9;
+    border: 1px solid var(--hairline-2);
+    border-radius: var(--radius);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+    overflow: hidden;
+    background: #000;
+    cursor: default;
+  }
+  .lightbox.video .video-frame { display: block; }
+  .lightbox.video img { display: none; }
+  .lightbox .video-frame iframe {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border: 0;
   }
   .lightbox .close {
     position: absolute;
@@ -817,7 +878,7 @@
   <span class="sep">/</span>
   <span class="hide-sm">Modernised remake for Star Trek: Bridge Commander</span>
   <span class="spacer"></span>
-  <span class="phase-tag">Phase 03 > 07 · Active</span>
+  <span class="phase-tag">Stage 06 · Combat MVP</span>
   <span class="sep hide-sm">·</span>
   <a class="hide-sm" href="https://github.com/markward/bc_dauntless">Github repo →</a>
 </header>
@@ -830,7 +891,7 @@
     <a href="#experiment"  class="nav-item" data-accent="orange"><span class="num">01</span><span>The Experiment</span></a>
     <a href="#mission"     class="nav-item" data-accent="peach"><span class="num">02</span><span>Mission</span></a>
     <a href="#latest"      class="nav-item" data-accent="violet"><span class="num">03</span><span>Latest Signal</span></a>
-    <a href="#roadmap"     class="nav-item" data-accent="blue"><span class="num">04</span><span>Phase Roadmap</span></a>
+    <a href="#roadmap"     class="nav-item" data-accent="blue"><span class="num">04</span><span>Roadmap</span></a>
     <a href="#hood"        class="nav-item" data-accent="pink"><span class="num">05</span><span>Under the Hood</span></a>
     <a href="#crew"        class="nav-item" data-accent="green"><span class="num">06</span><span>Who's Building</span></a>
     <a href="#disclaimer"  class="nav-item" data-accent="red"><span class="num">07</span><span>Disclaimer</span></a>
@@ -851,7 +912,7 @@
       <div class="motto">May the wind be at our backs</div>
 
       <div class="chips">
-        <span class="chip active">Phase 03 > 07 · Active</span>
+        <span class="chip active">Stage 06 · Combat MVP</span>
         <span class="chip">Claude-assisted</span>
         <span class="chip">C++ · CPython embedded</span>
         <span class="chip">macOS · Linux · Windows</span>
@@ -869,35 +930,29 @@
       </div>
       <h2>What this is, and what it isn't</h2>
       <p style="margin-top:12px;">
-        <strong>This is an experiment, and we don't know how it ends.</strong> The goal: take the original
-        <em>Star Trek: Bridge Commander</em> — a 2002 Windows-only game — and rebuild it's closed-source
-        engine from scratch so the original game scripts run again on modern macOS, Linux, and Windows.
+        <strong>This is an experiment, and we don't know how it ends.</strong> The goal is simple:
+        take <em>Star Trek: Bridge Commander</em> — a 2002 Windows-only game — and rebuild its
+        closed-source engine from scratch, so the original game scripts run again on modern macOS,
+        Linux, and Windows.
       </p>
       <p>
-        The original development team had a great vision, pushing the boundaries of Python scripting to
-        create an ambitious space simulation game which captured the scale and scope of Star Trek. 24 years
-        we are being equally ambitious, attempting to bring these game scripts back to life with the power of AI.
+        Its original team was ambitious, pushing Python scripting to capture the scale of Star Trek.
+        24 years on, we're being just as ambitious — bringing those scripts back to life with AI.
       </p>
       <p>
-        What makes this experiment unusual is the method. Almost every line of code in this project
-        was written with <strong>Claude</strong> (Anthropic's LLM) as a pair-programmer.
-        That includes the NIF asset loader, the C++ renderer, the host loop that embeds CPython,
-        the physics integration, the shaders — the lot. As far as we're aware, this is the first
-        serious attempt to reconstruct a legacy game engine of this size with an LLM as the principal collaborator.
+        That's what makes this unusual. Almost every line of code here was written with
+        <strong>Claude</strong> (Anthropic's LLM) as a pair-programmer: the NIF asset loader, the
+        C++ renderer, the host loop that embeds CPython, the physics, the shaders — all of it. As
+        far as we know, it's the first serious attempt to rebuild a legacy game engine this big with
+        an LLM as the principal collaborator.
       </p>
       <p>
-        It might not work. It might stall at Phase 05 with the AI scripts running fine but combat
-        refusing to feel right. It might hit a wall at character animation. It might surprise me
-        and land. The point of putting this page up is to make the attempt visible — what's been built,
-        what's next, what broke last week.
+        It might not work. It could stall at Combat MVP, with the AI scripts running but combat never
+        feeling right. It could hit a wall at bridge characters. Or it might surprise us and land.
+        Either way, this page is here to make the attempt visible — what's built, what's next, and
+        what broke last week.
       </p>
 
-      <div class="callout">
-        <p>
-          If you are reading this and thinking <em>"that's not how you rebuild a game engine,"</em>
-          you're probably right. Maybe it will work though! Our progress will be honest.
-        </p>
-      </div>
     </section>
 
     <!-- MISSION -->
@@ -924,11 +979,11 @@
       <div class="cards">
         <div class="card">
           <h4>Faithful to the original</h4>
-          <p>The original missions, ships, and scripts run as-is. We're rebuilding the engine, not the game — every mission you remember should play the way you remember it.</p>
+          <p>The original missions, ships, and scripts run as-is. We're rebuilding the engine, not the game — every mission you remember should play as they are.</p>
         </div>
         <div class="card peach">
           <h4>Modern visuals</h4>
-          <p>A brand-new graphics engine, built from scratch, drawing the same ships and effects but with the headroom to look great on today's displays.</p>
+          <p>A brand-new graphics engine, built from scratch, drawing the same ships and effects but with the required upgrades to look even better on today's displays.</p>
         </div>
         <div class="card violet">
           <h4>Runs everywhere</h4>
@@ -952,44 +1007,44 @@
 
       <div class="latest">
         <div class="narrative">
-          <div class="stamp">Stardate 2026-05-18 · Where we are</div>
+          <div class="stamp">Stardate 2026-06-10 · Here comes the fun part</div>
           <p>
-            <strong>The core blocks of the game are coming together.</strong> The original SDK loads.
-            Star systems and the things inside them — ships, planets, stations — populate a working
-            scene. Ships load with their subsystems intact. You can fly the player ship around, and
-            there's early support for weapons fire and shield impacts. First steps toward the bridge
-            interior are in too.
+            <strong>The original Python game files keep us anchored.</strong> They remain Claude's
+            best source of truth — though as we push into the more intricate corners of the game,
+            I'm increasingly having to insist on a deep read of the source before
+            guessing at how something is meant to work.
           </p>
           <p>
-            One of the surprises has been just how much the original SDK gives us. Every script is
-            a hint about how the 2002 team handled a problem — a quiet expert sitting in the repo.
-            Claude is good at reading those hints once you point it at them, though it sometimes
-            needs a nudge to go and look first rather than guessing.
+            <strong>In under a month we've mapped enough of the game to stand up the fundamentals of
+            combat.</strong> Careful measurement has the ships' speed and movement matching the
+            original, and paired with STBC-faithful camera controls, it feels very familiar indeed.
           </p>
           <p>
-            <strong>Two things keep biting us.</strong> The first is testing against the original
-            Windows game. We can run it, but the only way to get data <em>out</em> is by abusing the
-            config-file system the game uses for its options menu — a narrow, fragile channel that
-            often crashes the game before we get our answer.
+            <strong>Units, scaling and coordinate systems have been the real pain</strong> these past
+            two weeks though. Claude thankfully caught that it has been inventing inconsistent coordinate spaces, and fixed
+            that just in time. It still struggles to infer what "the right size" or "the right angle" should be from the original Python
+            alone. We're nearly through it — the stragglers are star-system coordinates (planets
+            loading on top of moons) and phaser arrays I suspect are firing in reverse.
           </p>
           <p>
-            The second is units and scale. The original engine assumed everything had been exported
-            to a consistent size, and quietly fixed up anything that wasn't. So when we load the
-            same assets fresh, planets come out smaller than ships, and weapon hardpoints sit slightly
-            off the hulls they're meant to bolt onto. Each one is a small puzzle in what convention
-            the original code was silently relying on.
+            <strong>But now we're at the fun part.</strong> More than once I've sat down to debug a
+            problem and got happily sidetracked tearing apart an enemy Galaxy-class ship — all the
+            more fun now I've allowed time for some side quests to add VFX I've been dreaming about for years.
           </p>
-          <p>
-            Next up: We'll be starting work to restore <em>Bridge Commander</em>'s NPC ship AI
-            systems, enabling non player ships to move and even attack.
-          </p>
+          <div class="callout next">
+            <p>
+              Getting ship combat working end to end, then on to the Dauntless reinterpretation
+              of Quick Battle to round it all out.
+            </p>
+          </div>
         </div>
 
         <div class="shots">
-          <div class="shot">
-            <img src="img/latest_1.png" alt="Star system loaded in the Dauntless engine with the player ship in flight and a new in-game target list showing nearby ships"
-                 onerror="this.style.display='none';this.parentElement.classList.add('placeholder');this.parentElement.innerHTML='<div>img/latest_1.png</div><div style=&quot;font-size:9px;&quot;>Drop screenshot here</div>';">
-            <div class="caption">Star system loading and player controls are now in place, with a new UI listing targets.</div>
+          <div class="shot shot--video" data-video-id="qC61yiV-6OU">
+            <img src="https://i.ytimg.com/vi/qC61yiV-6OU/maxresdefault.jpg" alt="Watch: ship combat and new VFX running in the Dauntless engine"
+                 onerror="this.onerror=null;this.src='https://i.ytimg.com/vi/qC61yiV-6OU/hqdefault.jpg';">
+            <div class="play-badge"></div>
+            <div class="caption">Watch: ship combat and the new VFX in motion (YouTube).</div>
           </div>
           <div class="shot">
             <img src="img/latest_2.png" alt="Early bridge interior rendering inside the Dauntless engine — the player's bridge with crew stations beginning to take shape"
@@ -1005,12 +1060,12 @@
       <div class="panel-header">
         <span class="accent-dot" style="background: var(--c-blue);"></span>
         <span class="num">04</span>
-        <span class="label">Phase Roadmap</span>
+        <span class="label">Roadmap</span>
         <span class="spacer"></span>
-        <span class="num">15 phases to 1.0</span>
+        <span class="num">15 stages</span>
       </div>
       <p style="margin-bottom: 20px; color: var(--t-dim);">
-        Each phase is a self-contained milestone — something visible and shippable.
+        Each stage is a self-contained milestone — something visible and shippable.
         Status is honest: <strong style="color:var(--c-green);">Complete</strong> means it works end-to-end today,
         <strong style="color:var(--c-orange);">In Progress</strong> means we're actively pushing on it,
         and <strong style="color:var(--t-dim);">Standby</strong> means it hasn't started.
@@ -1021,8 +1076,8 @@
         <article class="phase done">
           <div class="num">01</div>
           <div class="body">
-            <div class="title">Headless logic engine</div>
-            <div class="desc">Original BC Python scripts running against a stubbed <code>Appc</code>, with PyBullet driving physics. Missions load, timers fire, AI ticks.</div>
+            <div class="title">SDK loading</div>
+            <div class="desc">A Python 3 bridge that loads and parses the original 2000-era BC Python files.</div>
           </div>
           <div class="status">Complete</div>
         </article>
@@ -1030,62 +1085,62 @@
         <article class="phase done">
           <div class="num">02</div>
           <div class="body">
-            <div class="title">Native renderer &amp; flight</div>
-            <div class="desc">C++ host loop, NIF asset loading, ship controls, rough star-system loading. The engine flies under its own power.</div>
+            <div class="title">Mission harness &amp; game loop</div>
+            <div class="desc">Missions load against stubbed engine calls, and the game "ticks" — processing basic calls each frame.</div>
+          </div>
+          <div class="status">Complete</div>
+        </article>
+
+        <article class="phase done">
+          <div class="num">03</div>
+          <div class="body">
+            <div class="title">3D renderer</div>
+            <div class="desc">Loads NIF models and TGA textures, rendering barebones bridge and space scenes.</div>
+          </div>
+          <div class="status">Complete</div>
+        </article>
+
+        <article class="phase done">
+          <div class="num">04</div>
+          <div class="body">
+            <div class="title">Basic mission loading</div>
+            <div class="desc">Simple missions load — star systems, stars, planets, moons, starbases and ships appearing roughly as they did in the original.</div>
+          </div>
+          <div class="status">Complete</div>
+        </article>
+
+        <article class="phase done">
+          <div class="num">05</div>
+          <div class="body">
+            <div class="title">Basic tactical UI</div>
+            <div class="desc">Fly the ship in the space scene with the essence of impulse engines and weapon control, reproducing the original game's space-view panels.</div>
           </div>
           <div class="status">Complete</div>
         </article>
 
         <article class="phase active">
-          <div class="num">03</div>
-          <div class="body">
-            <div class="title">UI framework</div>
-            <div class="desc">Reusable UI components — buttons, lists, panels — aligned with the original <code>LoadInterface</code> scripts so BC's screens render on the new stack.</div>
-          </div>
-          <div class="status">In Progress</div>
-        </article>
-
-        <article class="phase active">
-          <div class="num">04</div>
-          <div class="body">
-            <div class="title">Targeting &amp; combat</div>
-            <div class="desc">Weapons, lock-on, shields, sub-system damage — replicated to original BC behaviour and balance.</div>
-          </div>
-          <div class="status">In Progress</div>
-        </article>
-
-        <article class="phase active">
-          <div class="num">05</div>
-          <div class="body">
-            <div class="title">Audio engine</div>
-            <div class="desc">OpenAL pipeline online: weapon SFX, engine hum, ambient bridge, music cues driven by the original sound scripts.</div>
-          </div>
-          <div class="status">In Progress</div>
-        </article>
-
-        <article class="phase active">
           <div class="num">06</div>
           <div class="body">
-            <div class="title">Bridge interior</div>
-            <div class="desc">Render the player's bridge with crew stations and viewscreen. Stand on the deck of your own ship.</div>
+            <div class="title">Combat MVP</div>
+            <div class="desc">Weapons fire, shields absorb hits and weaken, shields and weapons recharge on the right timings, subsystems can be targeted and damaged with early VFX, and AI carry out basic attacks. VFX go beyond the original.</div>
           </div>
           <div class="status">In Progress</div>
         </article>
 
-        <article class="phase active">
+        <article class="phase">
           <div class="num">07</div>
           <div class="body">
-            <div class="title">AI scripts online</div>
-            <div class="desc">The original tactical and strategic AI scripts run unmodified on the new engine. NPCs make their own decisions.</div>
+            <div class="title">New Quick Battle</div>
+            <div class="desc">A fresh take on Quick Battle: simulate whatever ships you like from the star system you're in — a new approach versus the original STBC.</div>
           </div>
-          <div class="status">In Progress</div>
-        </article>        
+          <div class="status">Standby</div>
+        </article>
 
         <article class="phase">
           <div class="num">08</div>
           <div class="body">
-            <div class="title">Save &amp; load</div>
-            <div class="desc">Restore BC's pickle-based save path so mid-mission state round-trips across the new engine end to end.</div>
+            <div class="title">Helm, Tactical, XO &amp; Science</div>
+            <div class="desc">The core space-view menus, plus upgraded star-system navigation that still supports missions. Weapons and tractor beams move to Tactical; Science's "scan target" gains new capabilities.</div>
           </div>
           <div class="status">Standby</div>
         </article>
@@ -1093,8 +1148,8 @@
         <article class="phase">
           <div class="num">09</div>
           <div class="body">
-            <div class="title">Quick Battle</div>
-            <div class="desc">First end-to-end playable game mode — pick a ship, pick a scenario, fight. The first time the project feels like a game.</div>
+            <div class="title">Engineering menu</div>
+            <div class="desc">An upgraded repair UI and proper power controls — plus AI ships that can repair their own systems and manage power.</div>
           </div>
           <div class="status">Standby</div>
         </article>
@@ -1102,8 +1157,8 @@
         <article class="phase">
           <div class="num">10</div>
           <div class="body">
-            <div class="title">UI polish pass</div>
-            <div class="desc">HiDPI, theming, modernisation of the BC UI surface. Looks good on a 5K display.</div>
+            <div class="title">Config saving</div>
+            <div class="desc">Settings that persist, plus an onboarding flow to pick your game and SDK directories from anywhere on disk.</div>
           </div>
           <div class="status">Standby</div>
         </article>
@@ -1111,8 +1166,8 @@
         <article class="phase">
           <div class="num">11</div>
           <div class="body">
-            <div class="title">Character animation</div>
-            <div class="desc">Animated bridge crew restored — idles, turns, console interactions.</div>
+            <div class="title">Bridge loading</div>
+            <div class="desc">Import bridge characters and animations, with a possible overhaul of bridge lighting and more visual-FX controls.</div>
           </div>
           <div class="status">Standby</div>
         </article>
@@ -1120,8 +1175,8 @@
         <article class="phase">
           <div class="num">12</div>
           <div class="body">
-            <div class="title">Voice &amp; cinematics</div>
-            <div class="desc">In-mission voice-over playback, lip-sync hooks, and the scripted cinematic camera system the campaign relies on.</div>
+            <div class="title">Full mission support</div>
+            <div class="desc">The long haul: every mission loads and plays through without bugs. Likely an episode-by-episode push.</div>
           </div>
           <div class="status">Standby</div>
         </article>
@@ -1129,8 +1184,8 @@
         <article class="phase">
           <div class="num">13</div>
           <div class="body">
-            <div class="title">Single-player campaign</div>
-            <div class="desc">Full mission compatibility — the original campaign playable from start to finish on the new engine.</div>
+            <div class="title">VFX enhancements &amp; polish</div>
+            <div class="desc">Further visual upgrades — improvements to the star box, planets and star rendering.</div>
           </div>
           <div class="status">Standby</div>
         </article>
@@ -1138,8 +1193,8 @@
         <article class="phase">
           <div class="num">14</div>
           <div class="body">
-            <div class="title">1.0 release</div>
-            <div class="desc">Packaged builds for macOS, Linux, and Windows. Installer, signing, public release notes. The ship-it milestone.</div>
+            <div class="title">Enhanced mod support</div>
+            <div class="desc">Make adding new ships and other mods easier, with modernised art assets and built-in tools for building and distributing mods.</div>
           </div>
           <div class="status">Standby</div>
         </article>
@@ -1147,8 +1202,8 @@
         <article class="phase">
           <div class="num">15</div>
           <div class="body">
-            <div class="title">Mod &amp; SDK compatibility</div>
-            <div class="desc">Load community mods that target the original BC script API; document any divergences. Optional content-tools bundle for asset conversion.</div>
+            <div class="title">Multiplayer</div>
+            <div class="desc">New multiplayer modes — not aiming for original-STBC compatibility, but focused on bringing new features and gameplay.</div>
           </div>
           <div class="status">Standby</div>
         </article>
@@ -1157,9 +1212,8 @@
 
       <div class="callout warning">
         <p>
-          Phases past <strong>05 · Targeting &amp; Combat</strong> are educated guesses about scope and order.
-          Reality will reshuffle them. If a phase turns out to be three phases, the roadmap will be honest
-          about that when it happens.
+          Stages past <strong>06 · Combat MVP</strong> are educated guesses about scope and order.
+          Reality will reshuffle them.
         </p>
       </div>
     </section>
@@ -1177,9 +1231,9 @@
       <dl class="specs" style="margin-top: 16px;">
         <dt>Host process</dt><dd>C++ executable embedding CPython 3 — drives the BC Python game loop natively, no shim DLL.</dd>
         <dt>Renderer</dt><dd>In-house C++ renderer parsing BC's NIF asset blocks. Passes: opaque hull, sovereign shields, glow (via AddLOD), space dust.</dd>
-        <dt>Physics</dt><dd>PyBullet during the Phase 1 headless work; transitioning to native Bullet through the C++ host as Phase 2 settles.</dd>
-        <dt>Audio</dt><dd>OpenAL — stands up in Phase 06 alongside the audio script bindings.</dd>
-        <dt>UI</dt><dd>RmlUi for HUD overlays; reusable component library mirrors the original BC LoadInterface scripts.</dd>
+        <dt>Physics</dt><dd>PyBullet during the early headless work; transitioning to native Bullet through the C++ host.</dd>
+        <dt>Audio</dt><dd>OpenAL — slated to stand up alongside the audio script bindings.</dd>
+        <dt>UI</dt><dd>Chromium Embedded Framework (CEF) — menus and HUD overlays are built as HTML/CSS/JS, composited over the renderer; a component library mirrors the original BC LoadInterface scripts.</dd>
         <dt>Asset pipeline</dt><dd>BC NIF files (NetImmerse / Gamebryo blocks). Right-handed coordinate space, W-first quaternions, link-ID streaming.</dd>
         <dt>Platforms</dt><dd>macOS-first development. Linux follows. Windows joins for 1.0. Single codebase, no DirectX dependency.</dd>
         <dt>Source material</dt><dd>BC SDK v1.1 — 1,228 Python files, fully readable, unchanged since 2002.</dd>
@@ -1271,6 +1325,7 @@
 <div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="Image viewer" hidden>
   <button type="button" class="close" aria-label="Close">×</button>
   <img alt="">
+  <div class="video-frame"><iframe title="Video player" allow="autoplay; encrypted-media; fullscreen; picture-in-picture" allowfullscreen></iframe></div>
   <div class="hint">Click anywhere or press ESC to close</div>
 </div>
 
@@ -1278,16 +1333,27 @@
   (function () {
     var lb = document.getElementById('lightbox');
     var lbImg = lb.querySelector('img');
+    var videoFrame = lb.querySelector('.video-frame');
+    var iframe = videoFrame.querySelector('iframe');
     var closeBtn = lb.querySelector('.close');
 
-    function open(src, alt) {
-      lbImg.src = src;
-      lbImg.alt = alt || '';
+    function reveal() {
       lb.hidden = false;
       // force reflow so the transition fires
       void lb.offsetWidth;
       lb.classList.add('open');
       document.body.style.overflow = 'hidden';
+    }
+    function openImage(src, alt) {
+      lb.classList.remove('video');
+      lbImg.src = src;
+      lbImg.alt = alt || '';
+      reveal();
+    }
+    function openVideo(id) {
+      lb.classList.add('video');
+      iframe.src = 'https://www.youtube-nocookie.com/embed/' + id + '?autoplay=1&rel=0';
+      reveal();
     }
     function close() {
       lb.classList.remove('open');
@@ -1296,18 +1362,26 @@
         if (!lb.classList.contains('open')) {
           lb.hidden = true;
           lbImg.src = '';
+          iframe.src = '';
+          lb.classList.remove('video');
         }
       }, 200);
     }
 
-    document.querySelectorAll('.shot img').forEach(function (img) {
-      img.addEventListener('click', function () {
-        open(img.currentSrc || img.src, img.alt);
+    document.querySelectorAll('.shot').forEach(function (shot) {
+      var videoId = shot.getAttribute('data-video-id');
+      shot.addEventListener('click', function () {
+        if (videoId) {
+          openVideo(videoId);
+        } else {
+          var img = shot.querySelector('img');
+          if (img) openImage(img.currentSrc || img.src, img.alt);
+        }
       });
     });
 
     lb.addEventListener('click', function (e) {
-      if (e.target === lbImg) return;
+      if (e.target === lbImg || videoFrame.contains(e.target)) return;
       close();
     });
     closeBtn.addEventListener('click', close);
