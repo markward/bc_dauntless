@@ -1,6 +1,8 @@
 // native/src/scenegraph/include/scenegraph/instance.h
 #pragma once
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <glm/glm.hpp>
 #include "scenegraph/damage_decals.h"
@@ -35,6 +37,22 @@ struct Instance {
     /// Per-instance persistent damage decals (object space, body frame).
     /// Runtime VFX state only — never serialized to saves.
     DamageDecalRing decals;
+
+    /// Per-instance warp-nacelle glow capsules (body frame, model units).
+    /// Runtime VFX state only — never serialized. Fixed cap: a ship has at
+    /// most a handful of nacelles.
+    static constexpr std::size_t kMaxNacelles = 4;
+    struct Nacelle {
+        glm::vec3 center{0.0f};
+        glm::vec3 axis{0.0f, 1.0f, 0.0f};
+        float     radius = 0.0f;
+        float     aft = 0.0f;
+        float     fore = 0.0f;
+        float     dim_target = 1.0f;
+        float     disable_time = -1.0f;
+        bool      active = false;
+    };
+    std::array<Nacelle, kMaxNacelles> nacelles{};
 };
 
 }  // namespace scenegraph
