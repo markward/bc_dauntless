@@ -48,7 +48,15 @@ def test_all_pods_offline_returns_zero():
     assert impulse_online_fraction(ies) == 0.0
 
 
-def test_master_offline_forces_zero_even_with_online_pods():
+def test_master_destroyed_forces_zero_even_with_online_pods():
     ies = _master_with_pods(4)        # all pods healthy
-    ies.SetCondition(0.0)             # but master itself disabled
+    ies.SetCondition(0.0)             # master destroyed (IsDestroyed → _is_offline → 0.0)
+    assert impulse_online_fraction(ies) == 0.0
+
+
+def test_master_disabled_not_destroyed_forces_zero():
+    # Condition below the disabled threshold (50% of 100) but above zero:
+    # master IsDisabled (not IsDestroyed). _is_offline still folds it to 0.0.
+    ies = _master_with_pods(4)        # all pods healthy
+    ies.SetCondition(30.0)
     assert impulse_online_fraction(ies) == 0.0
