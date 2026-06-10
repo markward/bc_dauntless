@@ -742,6 +742,24 @@ class _PlayerControl:
             return target
         return current + (step if delta > 0 else -step)
 
+    @staticmethod
+    def _apply_body_rotation(player, pitch_rate: float, yaw_rate: float,
+                             roll_rate: float, dt: float) -> None:
+        """Integrate body-frame pitch/yaw/roll rates into the player's world
+        rotation for one tick. Column-vector matrices, body-frame delta
+        POST-multiplies (R · D); pitch (X) → yaw (Z) → roll (Y) Euler order.
+        See CLAUDE.md ↦ 'Rotation matrix convention'. No-op when all rates
+        are zero."""
+        if not (pitch_rate or yaw_rate or roll_rate):
+            return
+        from engine.appc.math import TGMatrix3, TGPoint3
+        R = player.GetWorldRotation()
+        R_pitch = TGMatrix3(); R_pitch.MakeRotation(pitch_rate * dt, TGPoint3(1.0, 0.0, 0.0))
+        R_yaw   = TGMatrix3(); R_yaw.MakeRotation(yaw_rate   * dt, TGPoint3(0.0, 0.0, 1.0))
+        R_roll  = TGMatrix3(); R_roll.MakeRotation(roll_rate  * dt, TGPoint3(0.0, 1.0, 0.0))
+        delta = R_pitch.MultMatrix(R_yaw).MultMatrix(R_roll)
+        player.SetMatrixRotation(R.MultMatrix(delta))
+
     # ── Per-tick step ────────────────────────────────────────────────────────
 
     def apply(self, player, dt: float, h) -> None:
@@ -792,33 +810,25 @@ class _PlayerControl:
         from engine.appc.ship_motion import (
             _effective_motion, _cap_keep, _asymptote_step,
         )
-        from engine.appc.math import TGMatrix3, TGPoint3
-        X_AXIS = TGPoint3(1.0, 0.0, 0.0)
-        Y_AXIS = TGPoint3(0.0, 1.0, 0.0)
-        Z_AXIS = TGPoint3(0.0, 0.0, 1.0)
+        from engine.appc.math import TGPoint3
 
         ies = self._get_ies(player)
         f = impulse_online_fraction(ies)
 
         # ── Total loss → inertial drift ─────────────────────────────────
         if f <= 0.0:
-            R = player.GetWorldRotation()
             if self._drift_velocity is None:
-                fwd = R.GetCol(1)
+                fwd = player.GetWorldRotation().GetCol(1)
                 self._drift_velocity = TGPoint3(
                     fwd.x * self._current_speed,
                     fwd.y * self._current_speed,
                     fwd.z * self._current_speed,
                 )
             # residual rotation: held rates, no thrust, no decay
-            pr, yr, rr = (self._current_pitch_rate, self._current_yaw_rate,
-                          self._current_roll_rate)
-            if pr or yr or rr:
-                R_pitch = TGMatrix3(); R_pitch.MakeRotation(pr * dt, X_AXIS)
-                R_yaw   = TGMatrix3(); R_yaw.MakeRotation(yr * dt, Z_AXIS)
-                R_roll  = TGMatrix3(); R_roll.MakeRotation(rr * dt, Y_AXIS)
-                delta = R_pitch.MultMatrix(R_yaw).MultMatrix(R_roll)
-                player.SetMatrixRotation(R.MultMatrix(delta))
+            self._apply_body_rotation(
+                player, self._current_pitch_rate, self._current_yaw_rate,
+                self._current_roll_rate, dt,
+            )
             d = self._drift_velocity
             p = player.GetTranslate()
             player.SetTranslateXYZ(p.x + d.x * dt, p.y + d.y * dt, p.z + d.z * dt)
@@ -867,23 +877,15 @@ class _PlayerControl:
         self._current_pitch_rate = self._ramp_toward(self._current_pitch_rate, pitch_target, ang_step)
         self._current_yaw_rate   = self._ramp_toward(self._current_yaw_rate,   yaw_target,   ang_step)
         self._current_roll_rate  = self._ramp_toward(self._current_roll_rate,  roll_target,  ang_step)
-        pitch_rate = self._current_pitch_rate
-        yaw_rate   = self._current_yaw_rate
-        roll_rate  = self._current_roll_rate
-
         # Rotation integration (R · D body-frame delta; see CLAUDE.md).
-        R = player.GetWorldRotation()
-        if pitch_rate or yaw_rate or roll_rate:
-            R_pitch = TGMatrix3(); R_pitch.MakeRotation(pitch_rate * dt, X_AXIS)
-            R_yaw   = TGMatrix3(); R_yaw.MakeRotation(yaw_rate   * dt, Z_AXIS)
-            R_roll  = TGMatrix3(); R_roll.MakeRotation(roll_rate  * dt, Y_AXIS)
-            delta = R_pitch.MultMatrix(R_yaw).MultMatrix(R_roll)
-            R = R.MultMatrix(delta)
-            player.SetMatrixRotation(R)
+        self._apply_body_rotation(
+            player, self._current_pitch_rate, self._current_yaw_rate,
+            self._current_roll_rate, dt,
+        )
 
         # Position integration (powered: velocity follows facing).
         if self._current_speed != 0.0:
-            forward = R.GetCol(1)
+            forward = player.GetWorldRotation().GetCol(1)
             p = player.GetTranslate()
             player.SetTranslateXYZ(
                 p.x + forward.x * self._current_speed * dt,
