@@ -179,3 +179,66 @@ def test_advance_combat_stops_disabled_system_mid_tick():
     # All banks stopped.
     for i in range(4):
         assert sys_.GetWeapon(i).IsFiring() == 0
+
+
+def _firing_ship_with_sensor(condition):
+    """A firing PhaserSystem ship that also carries a sensor subsystem
+    (BaseSensorRange 2000, disabled at <=50%) at the given condition."""
+    from engine.appc.subsystems import SensorSubsystem
+    ship, sys_ = _firing_phaser_system()
+    sensors = SensorSubsystem("Sensors")
+    sensors._max_condition = 100.0
+    sensors._condition = condition
+    sensors._disabled_percentage = 0.5
+    sensors.SetBaseSensorRange(2000.0)
+    ship.SetSensorSubsystem(sensors)
+    return ship, sys_, sensors
+
+
+def _run_advance_combat(ship, target):
+    """Run _advance_combat with apply_hit spied; return the call list."""
+    from engine.host_loop import _advance_combat
+    import engine.appc.combat as combat_mod
+    calls = []
+    original = combat_mod.apply_hit
+    combat_mod.apply_hit = lambda *a, **kw: calls.append((a, kw))
+    try:
+        _advance_combat([ship, target], dt=1.0 / 60, host=None,
+                        ship_instances=None)
+    finally:
+        combat_mod.apply_hit = original
+    return calls
+
+
+def test_advance_combat_fires_when_sensors_healthy():
+    """Positive control: with healthy sensors and the target in range, the
+    continuous-fire tick applies damage (apply_hit called)."""
+    from engine.appc.ships import ShipClass_Create
+    ship, sys_, _ = _firing_ship_with_sensor(condition=100.0)
+    target = ShipClass_Create("Galaxy")
+    target.SetTranslateXYZ(0.0, 100.0, 0.0)  # 100 GU ahead, within 2000 range
+    sys_.StartFiring(target=target)
+    assert any(sys_.GetWeapon(i).IsFiring() == 1 for i in range(4))
+
+    calls = _run_advance_combat(ship, target)
+    assert calls != []  # damage applied
+
+
+def test_advance_combat_stops_firing_when_sensors_offline():
+    """The bug: banks left IsFiring by an AI that stopped updating keep
+    dealing damage via _advance_combat with no sensor check. A ship whose
+    sensors are offline must not keep firing — banks stop, no apply_hit."""
+    from engine.appc.ships import ShipClass_Create
+    ship, sys_, sensors = _firing_ship_with_sensor(condition=100.0)
+    target = ShipClass_Create("Galaxy")
+    target.SetTranslateXYZ(0.0, 100.0, 0.0)
+    sys_.StartFiring(target=target)
+    assert any(sys_.GetWeapon(i).IsFiring() == 1 for i in range(4))
+
+    # Knock the firing ship's sensors offline (10 <= 0.5 * 100).
+    sensors.SetCondition(10.0)
+
+    calls = _run_advance_combat(ship, target)
+    assert calls == []  # no damage applied
+    for i in range(4):
+        assert sys_.GetWeapon(i).IsFiring() == 0

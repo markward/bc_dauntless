@@ -91,6 +91,11 @@ def _bootstrap_firing_pipeline() -> None:
     All SDK imports are guarded: any missing shim surface is logged as a
     warning but never crashes the host loop.
     """
+    # Install the sensor-damage AI gate first so it is live regardless of
+    # whether any later pipeline step short-circuits. Idempotent.
+    from engine.appc.sensor_detection import install_ai_sensor_gate
+    install_ai_sensor_gate()
+
     import App
 
     # Default destination for fire events.
@@ -271,6 +276,7 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
     # apply_hit (which routes shields → subsystem → hull, calls
     # hit_feedback.dispatch, and broadcasts WeaponHitEvent).
     from engine.appc.subsystems import _emitter_in_arc, _is_offline, _resolve_bank_aim_world
+    from engine.appc.sensor_detection import can_detect
     from engine.appc.math import TGPoint3
     for ship in ships_list:
         sys_ = ship.GetPhaserSystem() if hasattr(ship, "GetPhaserSystem") else None
@@ -294,6 +300,17 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
                 continue
             target = bank._target
             if target is None or (hasattr(target, "IsDead") and target.IsDead()):
+                bank.StopFiring()
+                continue
+            # Sensor gate (authoritative): this is the per-tick chokepoint where
+            # continuous phaser damage is actually applied. A bank can be left
+            # IsFiring by an AI that stopped updating (e.g. the firing ship's
+            # own SelectTarget cleared its target once its sensors degraded, so
+            # FireScript bailed via PS_DONE without StopFiring), so gating only
+            # FireScript.TargetVisible isn't enough — stranded banks would keep
+            # dealing damage here. A ship that can't detect its target can't
+            # keep firing at it. See engine/appc/sensor_detection.can_detect.
+            if not can_detect(ship, target):
                 bank.StopFiring()
                 continue
             target_sub = (ship.GetTargetSubsystem()
