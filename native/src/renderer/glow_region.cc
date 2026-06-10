@@ -68,4 +68,15 @@ GlowRegion compute_capsule_region(const assets::Model& model,
     return reg;
 }
 
+GlowRegion add_sphere_region(const glm::vec3& center, float radius) {
+    GlowRegion reg;
+    reg.center = center;
+    reg.axis   = glm::vec3(0.0f);
+    reg.radius = radius;
+    reg.aft    = 0.0f;
+    reg.fore   = 0.0f;
+    reg.active = true;
+    return reg;
+}
+
 }  // namespace renderer

@@ -45,4 +45,11 @@ GlowRegion compute_capsule_region(const assets::Model& model,
                                   const glm::vec3& axis,
                                   float radius);
 
+/// Build a sphere glow region: the capsule test degenerates to a sphere when
+/// axis == (0,0,0) and aft == fore == 0 (then the axial bound 0<=0<=0 always
+/// holds and the lateral test becomes dot(d,d) > radius^2). No vertex fit and
+/// no widen — impulse/sensor glow is a compact spot, not a long tube. center /
+/// radius are in body/model units.
+GlowRegion add_sphere_region(const glm::vec3& center, float radius);
+
 }  // namespace renderer

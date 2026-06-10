@@ -141,6 +141,20 @@ TEST(GlowRegionProductionPath, DefaultGlowRegionHasFlickerOff) {
     }
 }
 
+TEST(GlowRegion, SphereRegionHasNoAxisAndZeroFoaAft) {
+    auto reg = renderer::add_sphere_region(glm::vec3(1.0f, 2.0f, 3.0f), 0.5f);
+    EXPECT_TRUE(reg.active);
+    EXPECT_FLOAT_EQ(reg.center.x, 1.0f);
+    EXPECT_FLOAT_EQ(reg.center.y, 2.0f);
+    EXPECT_FLOAT_EQ(reg.center.z, 3.0f);
+    EXPECT_FLOAT_EQ(reg.radius, 0.5f);   // no widen for spheres
+    EXPECT_FLOAT_EQ(reg.axis.x, 0.0f);
+    EXPECT_FLOAT_EQ(reg.axis.y, 0.0f);
+    EXPECT_FLOAT_EQ(reg.axis.z, 0.0f);
+    EXPECT_FLOAT_EQ(reg.aft, 0.0f);
+    EXPECT_FLOAT_EQ(reg.fore, 0.0f);
+}
+
 TEST(GlowRegion, MultiNodeComposesChildTranslation) {
     // Root node (identity, no meshes). Child node translated +4 along Y,
     // carrying a mesh whose local vertices span Y from -2 to +3.

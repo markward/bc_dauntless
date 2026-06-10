@@ -1124,6 +1124,40 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "center/axis/radius are in game units / body frame. Returns the "
           "region index, or -1 on failure (stale id, no model, no slot).");
 
+    m.def("add_sphere_region",
+          [](scenegraph::InstanceId id,
+             std::tuple<float, float, float> center, float radius) -> int {
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return -1;
+              // hardpoint center/radius are in game units; convert to model
+              // frame (same s as compute_capsule_region / damage_decal_add).
+              const float s = glm::length(glm::vec3(inst->world[0]));
+              const float inv = (s > 0.0f) ? 1.0f / s : 1.0f;
+              const glm::vec3 c(std::get<0>(center) * inv,
+                                std::get<1>(center) * inv,
+                                std::get<2>(center) * inv);
+              const renderer::GlowRegion reg =
+                  renderer::add_sphere_region(c, radius * inv);
+              for (std::size_t i = 0; i < inst->glow_regions.size(); ++i) {
+                  if (inst->glow_regions[i].active) continue;
+                  auto& n = inst->glow_regions[i];
+                  n.center = reg.center;
+                  n.axis = reg.axis;
+                  n.radius = reg.radius;
+                  n.aft = reg.aft;
+                  n.fore = reg.fore;
+                  n.dim_target = 1.0f;
+                  n.disable_time = -1.0f;
+                  n.flicker = 0.0f;
+                  n.active = true;
+                  return static_cast<int>(i);
+              }
+              return -1;  // no free slot
+          },
+          py::arg("instance_id"), py::arg("center"), py::arg("radius"),
+          "Store a sphere glow region at a hardpoint (game units / body frame). "
+          "Returns the region index, or -1 on failure (stale id, no slot).");
+
     m.def("set_glow_region_dim",
           [](scenegraph::InstanceId id, int region_index,
              float dim_target, float disable_time, float flicker) {

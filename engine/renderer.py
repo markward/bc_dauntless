@@ -201,6 +201,14 @@ def compute_capsule_region(instance_id: InstanceId,
         instance_id, tuple(center), tuple(axis), float(radius))
 
 
+def add_sphere_region(instance_id: InstanceId, center, radius: float) -> int:
+    """Store a sphere glow region at a hardpoint. center is a 3-tuple in game
+    units / body frame; radius in game units. Returns the region index (>=0) or
+    -1 on failure. Used for impulse engines and sensor arrays (compact spots);
+    warp nacelles use compute_capsule_region for their elongated shape."""
+    return _h.add_sphere_region(instance_id, tuple(center), float(radius))
+
+
 def set_glow_region_dim(instance_id: InstanceId, region_index: int,
                         dim_target: float, disable_time: float,
                         flicker: float) -> None:
