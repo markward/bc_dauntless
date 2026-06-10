@@ -1113,6 +1113,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   n.fore = fit.fore;
                   n.dim_target = 1.0f;
                   n.disable_time = -1.0f;
+                  n.flicker = 0.0f;
                   n.active = true;
                   return static_cast<int>(i);
               }
