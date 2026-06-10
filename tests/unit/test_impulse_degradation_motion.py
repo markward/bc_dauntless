@@ -1,6 +1,8 @@
 """Effective-limit + keep-rule helpers for impulse degradation."""
+from engine.appc.math import TGPoint3
+from engine.appc.objects import PhysicsObjectClass
 from engine.appc.ship_motion import (
-    _effective_motion, _cap_keep, _asymptote_step,
+    _effective_motion, _cap_keep, _asymptote_step, _step_ship_motion,
 )
 from engine.appc.ships import ShipClass_Create
 from engine.appc.subsystems import ShipSubsystem
@@ -82,11 +84,6 @@ def test_asymptote_step_rate_limited():
 def test_asymptote_step_closes_small_gap():
     # small gap (|gap|/tau < accel) → limited by gap/tau (tau == 1.0)
     assert abs(_asymptote_step(1.5, 0.3, 1.0 / 60) - 0.3 / 60) < 1e-9
-
-
-from engine.appc.math import TGPoint3
-from engine.appc.objects import PhysicsObjectClass
-from engine.appc.ship_motion import _step_ship_motion
 
 
 def _disable_pods(ship, count):
