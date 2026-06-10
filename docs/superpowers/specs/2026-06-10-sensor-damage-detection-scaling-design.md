@@ -114,9 +114,37 @@ no reimplementation of the selection logic:
 
 Single-threaded Python (CLAUDE.md `setcheckinterval`) makes the global safe. The
 filter is a no-op for every other caller of `GetActiveObjectTupleInSet`
-(E1M2 proximity, MissionLib's player scan, and `SelectTarget`'s own
-post-selection `UpdateTargetInfo` event-handler bookkeeping) because the global
-is `None` outside `FindGoodTarget`.
+(E1M2 proximity, MissionLib's player scan, the player target list) because the
+global is `None` outside the gated selection methods.
+
+### 3a. AI firing gate (`FireScript.TargetVisible`)
+
+Target *selection* is not the only path: enemies actually **fire** through the
+`FireScript` preprocessor (used by `FedAttack` / `NonFedAttack` / `CloakAttack`),
+which resolves its target *by name* (`ObjectClass_GetObject`) — bypassing the
+candidate-enumeration gate — and fires every ~0.2s. So gating selection alone
+lets a sensor-disabled ship keep firing at an already-locked target (the
+selection re-evaluation that would clear the lock only runs every ~5s, and the
+firing AI holds its own target name regardless).
+
+Stock BC left the intended hook for this stubbed out:
+
+```python
+def TargetVisible(self, pTarget):
+    # For now, skip this check.
+    self.bTargetVisible = 1
+    return self.bTargetVisible
+```
+
+`install_ai_sensor_gate` replaces `FireScript.TargetVisible` with a sensor-reach
+gate: `bTargetVisible = can_detect(ourShip, target)` (1 if the firing ship can't
+be resolved, to avoid breaking firing for non-ship AIs). When the firing ship's
+sensors are offline (range 0) or the target is beyond the condition-scaled reach,
+`FireScript.Update` sees `bTargetVisible == 0`, calls `StopFiring()`, and ceases
+fire within its 0.2s cadence. Normal combat is unaffected because typical sensor
+ranges (1000–2000 GU) exceed the phaser fire range (~700 GU), and ships without a
+sensor subsystem fall back to full range. `StarbaseAttack` fires only at its
+already-gated `GetTargets` result, so it needs no separate firing gate.
 
 Result: an AI ship with offline sensors gets an empty candidate list →
 `SelectTarget` returns `None` → no target; a sensor-damaged AI ship only sees

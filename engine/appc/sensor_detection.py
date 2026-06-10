@@ -135,11 +135,37 @@ def _wrap_get_targets(orig):
     return _gated_get_targets
 
 
+def _gated_fire_script_target_visible(self, pTarget):
+    """Replacement for FireScript.TargetVisible, which stock BC stubs to
+    unconditionally return 1 ("# For now, skip this check").
+
+    FireScript is the firing preprocessor used by FedAttack / NonFedAttack /
+    CloakAttack etc.; it resolves its target by name (bypassing the candidate-
+    enumeration gate) and fires every ~0.2s. Without a sensor gate here, a ship
+    whose sensors are damaged/offline keeps firing at an already-locked target.
+
+    Gate firing on the firing ship's sensor reach: a ship can only engage a
+    target it can actually detect (can_detect, which scales range by sensor
+    condition and returns False when the sensor is offline). When the firing
+    ship can't be resolved (non-ship AI / legacy fixtures), default to visible
+    so firing is never broken for cases this gate doesn't model.
+    """
+    code_ai = getattr(self, "pCodeAI", None)
+    ship = code_ai.GetShip() if code_ai is not None else None
+    self.bTargetVisible = 1 if (ship is None or can_detect(ship, pTarget)) else 0
+    return self.bTargetVisible
+
+
+_gated_fire_script_target_visible._sensor_gated = True
+
+
 def install_ai_sensor_gate() -> None:
-    """Idempotently install the two-part AI sensor gate: wrap
-    ObjectGroup.GetActiveObjectTupleInSet (candidate filter) and
-    SelectTarget.FindGoodTarget (observer publisher). Safe to call repeatedly
-    and safe when the SDK AI package is unavailable."""
+    """Idempotently install the AI sensor gate: wrap
+    ObjectGroup.GetActiveObjectTupleInSet (candidate filter),
+    SelectTarget.FindGoodTarget / StarbaseAttack.GetTargets (observer
+    publishers for target selection), and replace FireScript.TargetVisible
+    (the firing/engagement gate). Safe to call repeatedly and safe when the
+    SDK AI package is unavailable."""
     from engine.appc.objects import ObjectGroup
     if not getattr(ObjectGroup.GetActiveObjectTupleInSet, "_sensor_gated", False):
         ObjectGroup.GetActiveObjectTupleInSet = _wrap_active_tuple(
@@ -158,6 +184,11 @@ def install_ai_sensor_gate() -> None:
         _pp.SelectTarget.FindGoodTarget = _wrap_find_good_target(
             _pp.SelectTarget.FindGoodTarget
         )
+
+    # Gate the actual firing path. FireScript.TargetVisible is a no-op stub in
+    # stock BC; replace it so a ship that can't detect its target stops firing.
+    if not getattr(_pp.FireScript.TargetVisible, "_sensor_gated", False):
+        _pp.FireScript.TargetVisible = _gated_fire_script_target_visible
 
     try:
         import AI.PlainAI.StarbaseAttack as _sba

@@ -303,3 +303,38 @@ def test_install_wraps_starbase_attack_get_targets():
     install_ai_sensor_gate()
     import AI.PlainAI.StarbaseAttack as sba
     assert getattr(sba.StarbaseAttack.GetTargets, "_sensor_gated", False) is True
+
+
+def test_fire_script_target_visible_gated_by_firing_ship_sensors():
+    """FireScript drives AI firing; stock BC stubs TargetVisible to always-true.
+    After install, it must gate on the firing ship's sensor reach so a
+    sensor-disabled ship stops firing at its locked target."""
+    install_ai_sensor_gate()
+    import AI.Preprocessors as pp
+
+    fs = pp.FireScript("Enemy")
+    observer, sensors = _ship_with_sensor(2000.0, at=(0.0, 0.0, 0.0))
+    target = ShipClass_Create("BirdOfPrey")
+    target.SetTranslateXYZ(500.0, 0.0, 0.0)
+
+    class _FakeCodeAI:
+        def GetShip(self):
+            return observer
+
+    fs.pCodeAI = _FakeCodeAI()
+
+    # Healthy sensors, target within range -> visible (fires).
+    assert fs.TargetVisible(target) == 1
+    assert fs.bTargetVisible == 1
+
+    # Disabled sensors -> not visible (firing gate trips).
+    sensors.SetCondition(0.0)
+    assert fs.TargetVisible(target) == 0
+    assert fs.bTargetVisible == 0
+
+    # Target beyond the (healthy) sensor reach -> not visible either.
+    sensors.SetCondition(100.0)
+    target.SetTranslateXYZ(5000.0, 0.0, 0.0)
+    assert fs.TargetVisible(target) == 0
+
+    assert getattr(pp.FireScript.TargetVisible, "_sensor_gated", False) is True
