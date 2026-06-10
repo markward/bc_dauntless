@@ -43,8 +43,10 @@ def test_destroyed_sensor_returns_zero():
 
 
 def test_no_sensor_subsystem_returns_fallback():
-    ship = ShipClass_Create("Galaxy")  # no sensor attached
-    assert effective_sensor_range(ship) == FALLBACK_RANGE_GU
+    class _NoSensorShip:
+        def GetSensorSubsystem(self):
+            return None
+    assert effective_sensor_range(_NoSensorShip()) == FALLBACK_RANGE_GU
 
 
 def test_zero_base_range_returns_fallback():
