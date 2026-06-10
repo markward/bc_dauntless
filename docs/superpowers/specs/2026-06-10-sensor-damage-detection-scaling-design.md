@@ -45,7 +45,10 @@ sensor subsystem's condition.
    100%-condition range (not the 30000 GU placeholder).
 2. **Scaling curve:** `effective_range = base × GetConditionPercentage()`, with a
    hard cutoff to `0` once the sensor crosses the disabled threshold
-   (`_is_offline`, ≤25% condition = `DisabledPercentage`) or is destroyed.
+   (`_is_offline` / `IsDisabled()`, i.e. condition ≤ the **hardpoint's**
+   `DisabledPercentage` — Galaxy sensor = 0.50) or is destroyed. The threshold
+   is per-ship from the `SensorProperty`, NOT a fixed default, so it matches the
+   game/UI's notion of "disabled" (see Bug note below).
 3. **AI:** symmetric with the player, reading each AI ship's own sensor
    condition. This deliberately overrides stock BC's `bIgnoreSensors=1` default.
 
@@ -62,7 +65,7 @@ FALLBACK_RANGE_GU = 30000.0
 def effective_sensor_range(ship) -> float:
     sensors = ship.GetSensorSubsystem() if ship is not None else None
     if sensors is None:        return FALLBACK_RANGE_GU   # legacy / no-sensor fixtures: full sight
-    if _is_offline(sensors):   return 0.0                 # disabled (≤25%) OR destroyed → blind
+    if _is_offline(sensors):   return 0.0                 # IsDisabled (≤ hardpoint DisabledPercentage) OR destroyed → blind
     base = sensors.GetBaseSensorRange()
     if base <= 0.0:            return FALLBACK_RANGE_GU    # no sensor hardpoint data
     return base * sensors.GetConditionPercentage()
@@ -83,7 +86,16 @@ accessor pattern as `subsystems._get_xyz`.
 
 Net behavior: full `BaseSensorRange` undamaged → shrinks linearly with
 condition → snaps to 0 at the disabled threshold or on destruction. There is an
-intentional discontinuity (≈0.25×base → 0) at the disabled line.
+intentional discontinuity (DisabledPercentage×base → 0) at the disabled line.
+
+**Bug note (post-implementation):** the disabled threshold must come from the
+hardpoint, not the engine default. `ShipClass.SetupProperties` originally did not
+copy `SubsystemProperty.GetDisabledPercentage()` onto powered subsystems (sensor,
+shields, impulse, …), so they kept the `ShipSubsystem` default of 0.25 while the
+real Galaxy sensor is 0.50. That made `_is_offline` disagree with the game/UI: a
+sensor damaged to ~26% read as disabled in the UI but still "online" (≈519 GU) to
+the gate, so AI kept firing. Fixed by copying `DisabledPercentage` in
+`_copy_powered_subsystem_fields`.
 
 ### 2. Player target list
 

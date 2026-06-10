@@ -968,6 +968,11 @@ class ShipClass(DamageableObject):
         if mc is not None: subsystem.SetMaxCondition(mc)
         np = prop.GetNormalPowerPerSecond()
         if np is not None: subsystem.SetNormalPowerPerSecond(np)
+        # DisabledPercentage drives IsDisabled() — must come from the hardpoint
+        # (e.g. Galaxy sensor 0.50), not the engine default 0.25, so every
+        # powered subsystem's "disabled" gate matches the game and the UI.
+        dp = prop.GetDisabledPercentage()
+        if dp is not None: subsystem.SetDisabledPercentage(dp)
 
     # ── Targeting ────────────────────────────────────────────────────────────
     def GetTarget(self):                          return self._target
