@@ -46,12 +46,12 @@ uniform mat4  u_ship_world_inv;              // inverse(ship world): world->body
 uniform float u_decal_time;                  // game-time seconds (ember clock)
 
 // ── Warp-nacelle glow dimming ───────────────────────────────────────────
-const int MAX_NACELLES = 4;
-uniform int  u_nacelle_count;            // 0 disables the loop entirely
-uniform vec4 u_nacelle_a[MAX_NACELLES];  // center.xyz, radius (model units)
-uniform vec4 u_nacelle_b[MAX_NACELLES];  // axis.xyz, aft
-uniform vec4 u_nacelle_c[MAX_NACELLES];  // fore, dim_target, disable_time, _
-const float NACELLE_FLICKER_SECS = 0.4;  // electrical stutter window on disable
+const int MAX_GLOW_REGIONS = 4;
+uniform int  u_glow_region_count;            // 0 disables the loop entirely
+uniform vec4 u_glow_region_a[MAX_GLOW_REGIONS];  // center.xyz, radius (model units)
+uniform vec4 u_glow_region_b[MAX_GLOW_REGIONS];  // axis.xyz, aft
+uniform vec4 u_glow_region_c[MAX_GLOW_REGIONS];  // fore, dim_target, disable_time, _
+const float GLOW_FLICKER_SECS = 0.4;  // electrical stutter window on disable
 
 const float NORMAL_MIN = 0.15;               // back-face cutoff for falloff
 const vec3  SOOT_COLOR = vec3(0.06, 0.05, 0.045);
@@ -90,19 +90,19 @@ float stutter(float age) {
 
 // Multiplier applied to the ship's glow term from all active nacelle
 // capsules. 1.0 = untouched. Inside a capsule, ramps from 1.0 toward
-// dim_target, with a brief flicker for the first NACELLE_FLICKER_SECS after
+// dim_target, with a brief flicker for the first GLOW_FLICKER_SECS after
 // the disable edge (reuses stutter()). p_body is the body-frame fragment
 // position; now is the game clock (u_decal_time).
-float nacelle_glow_mult(vec3 p_body, float now) {
+float glow_region_mult(vec3 p_body, float now) {
     float mult = 1.0;
-    for (int i = 0; i < u_nacelle_count; ++i) {
-        vec3  center = u_nacelle_a[i].xyz;
-        float radius = u_nacelle_a[i].w;
-        vec3  axis   = u_nacelle_b[i].xyz;
-        float aft    = u_nacelle_b[i].w;
-        float fore   = u_nacelle_c[i].x;
-        float target = u_nacelle_c[i].y;
-        float dtime  = u_nacelle_c[i].z;
+    for (int i = 0; i < u_glow_region_count; ++i) {
+        vec3  center = u_glow_region_a[i].xyz;
+        float radius = u_glow_region_a[i].w;
+        vec3  axis   = u_glow_region_b[i].xyz;
+        float aft    = u_glow_region_b[i].w;
+        float fore   = u_glow_region_c[i].x;
+        float target = u_glow_region_c[i].y;
+        float dtime  = u_glow_region_c[i].z;
 
         vec3  d = p_body - center;
         float t = dot(d, axis);
@@ -116,7 +116,7 @@ float nacelle_glow_mult(vec3 p_body, float now) {
         // Flicker-then-die: during the stutter window, oscillate between full
         // and target; afterward settle to target.
         float flicker = mix(target, 1.0, 0.5 + 0.5 * stutter(age));
-        float w = clamp(age / NACELLE_FLICKER_SECS, 0.0, 1.0);
+        float w = clamp(age / GLOW_FLICKER_SECS, 0.0, 1.0);
         float region_mult = mix(flicker, target, w);
         mult = min(mult, region_mult);  // overlapping capsules: darkest wins
     }
@@ -295,8 +295,8 @@ void main() {
     }
 
     float nac = 1.0;
-    if (u_nacelle_count > 0) {
-        nac = nacelle_glow_mult(p_body, u_decal_time);  // reuse existing body-frame pos
+    if (u_glow_region_count > 0) {
+        nac = glow_region_mult(p_body, u_decal_time);  // reuse existing body-frame pos
     }
 
     frag_color = vec4(lit + u_emissive_color + glow.rgb * glow.a * gf * nac + spec + rim + decal_emissive, 1.0);

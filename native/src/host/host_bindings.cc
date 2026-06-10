@@ -39,7 +39,7 @@
 #include <renderer/fxaa_pass.h>
 #include <renderer/aabb.h>
 #include <renderer/ray_trace.h>
-#include <renderer/nacelle_region.h>
+#include <renderer/glow_region.h>
 #include <scenegraph/world.h>
 #include <scenegraph/camera.h>
 #include <scenegraph/damage_decals.h>
@@ -1080,7 +1080,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "point/normal are transformed into the ship body frame. weapon_class: "
           "0=HeatGlow (phaser), 1=Scorch (torpedo/disruptor).");
 
-    m.def("compute_nacelle_region",
+    m.def("compute_capsule_region",
           [](scenegraph::InstanceId id,
              std::tuple<float, float, float> center,
              std::tuple<float, float, float> axis,
@@ -1100,12 +1100,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
                           std::get<2>(axis));
               const float alen = glm::length(a);
               a = (alen > 0.0f) ? a / alen : glm::vec3(0.0f, 1.0f, 0.0f);
-              const renderer::NacelleRegion fit =
-                  renderer::compute_nacelle_region(*model, c, a, radius * inv);
+              const renderer::GlowRegion fit =
+                  renderer::compute_capsule_region(*model, c, a, radius * inv);
               // find a free slot
-              for (std::size_t i = 0; i < inst->nacelles.size(); ++i) {
-                  if (inst->nacelles[i].active) continue;
-                  auto& n = inst->nacelles[i];
+              for (std::size_t i = 0; i < inst->glow_regions.size(); ++i) {
+                  if (inst->glow_regions[i].active) continue;
+                  auto& n = inst->glow_regions[i];
                   n.center = fit.center;
                   n.axis = fit.axis;
                   n.radius = fit.radius;
@@ -1124,21 +1124,21 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "center/axis/radius are in game units / body frame. Returns the "
           "region index, or -1 on failure (stale id, no model, no slot).");
 
-    m.def("set_nacelle_dim",
+    m.def("set_glow_region_dim",
           [](scenegraph::InstanceId id, int region_index,
              float dim_target, float disable_time) {
               auto* inst = g_world.get(id);
               if (inst == nullptr) return;
               if (region_index < 0 ||
-                  region_index >= static_cast<int>(inst->nacelles.size())) return;
-              auto& n = inst->nacelles[static_cast<std::size_t>(region_index)];
+                  region_index >= static_cast<int>(inst->glow_regions.size())) return;
+              auto& n = inst->glow_regions[static_cast<std::size_t>(region_index)];
               if (!n.active) return;
               n.dim_target = dim_target;
               n.disable_time = disable_time;
           },
           py::arg("instance_id"), py::arg("region_index"),
           py::arg("dim_target"), py::arg("disable_time"),
-          "Update a nacelle capsule's live dim target [0,1] and the game-time "
+          "Update a glow region's live dim target [0,1] and the game-time "
           "seconds of the last disable edge (<0 = healthy / never disabled).");
 
     m.def("world_to_body",

@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
-#include "renderer/nacelle_region.h"
+#include "renderer/glow_region.h"
 #include "assets/model.h"
 #include "scenegraph/instance.h"
 
@@ -24,11 +24,11 @@ void add_cpu_mesh(assets::Model& m, std::vector<glm::vec3> positions) {
 }
 }  // namespace
 
-TEST(NacelleRegion, FitsForeAftExtentFromTubeVertices) {
+TEST(GlowRegion, FitsForeAftExtentFromTubeVertices) {
     // A tube along +Y from y=-3 to y=+5, cross-section within radius 1 of the
     // axis through center (0,0,0). Plus a far-away stray vertex OUTSIDE the
     // lateral radius that must be ignored.
-    // Enough tube vertices (>= kNacelleMinCaptured=8) to trigger the mesh-fit
+    // Enough tube vertices (>= kGlowCapsuleMinCaptured=8) to trigger the mesh-fit
     // path rather than the fallback.
     assets::Model m;
     add_cpu_mesh(m, {
@@ -37,7 +37,7 @@ TEST(NacelleRegion, FitsForeAftExtentFromTubeVertices) {
         {0.0f,  4.0f, 0.0f}, {0.3f, -1.0f, 0.3f}, {0.0f, -2.0f, 0.0f},
         {10.0f, 50.0f, 0.0f},   // lateral dist 10 > 1*1.25 -> ignored
     });
-    auto reg = renderer::compute_nacelle_region(
+    auto reg = renderer::compute_capsule_region(
         m, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f), 1.0f);
     EXPECT_TRUE(reg.active);
     EXPECT_NEAR(reg.aft, -3.0f, 1e-4f);
@@ -45,26 +45,26 @@ TEST(NacelleRegion, FitsForeAftExtentFromTubeVertices) {
     EXPECT_NEAR(reg.radius, 1.25f, 1e-4f);  // widened
 }
 
-TEST(NacelleRegion, FallsBackToFormulaWhenCaptureDegenerate) {
-    // No vertices near the axis -> fewer than kNacelleMinCaptured captured.
+TEST(GlowRegion, FallsBackToFormulaWhenCaptureDegenerate) {
+    // No vertices near the axis -> fewer than kGlowCapsuleMinCaptured captured.
     assets::Model m;
     add_cpu_mesh(m, {{100.0f, 0.0f, 0.0f}, {100.0f, 1.0f, 0.0f}});
-    auto reg = renderer::compute_nacelle_region(
+    auto reg = renderer::compute_capsule_region(
         m, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f), 2.0f);
     EXPECT_TRUE(reg.active);
-    const float widened = 2.0f * renderer::kNacelleRadiusWiden;
-    const float half = renderer::kNacelleFallbackHalfLenFactor * widened;
+    const float widened = 2.0f * renderer::kGlowCapsuleRadiusWiden;
+    const float half = renderer::kGlowCapsuleFallbackHalfLenFactor * widened;
     EXPECT_NEAR(reg.fore, half, 1e-4f);
     EXPECT_NEAR(reg.aft, -half, 1e-4f);
 }
 
-TEST(NacelleRegion, NonZeroCenterAxialProjectionsRelativeToCenter) {
+TEST(GlowRegion, NonZeroCenterAxialProjectionsRelativeToCenter) {
     // Tube vertices span world-Y from -1 to +7. Center is at Y=2.
     // Axial projections (relative to center) are therefore:
     //   aft  = (-1) - 2 = -3
     //   fore = (+7) - 2 = +5
     // All vertices have |x|,|z| <= 0.9, well within the widened radius
-    // (1.0 * kNacelleRadiusWiden = 1.25). Enough vertices (>= 8) to
+    // (1.0 * kGlowCapsuleRadiusWiden = 1.25). Enough vertices (>= 8) to
     // use the mesh-fit path, not the fallback.
     assets::Model m;
     add_cpu_mesh(m, {
@@ -74,7 +74,7 @@ TEST(NacelleRegion, NonZeroCenterAxialProjectionsRelativeToCenter) {
     });
     const glm::vec3 center(0.0f, 2.0f, 0.0f);
     const glm::vec3 axis(0.0f, 1.0f, 0.0f);
-    auto reg = renderer::compute_nacelle_region(m, center, axis, 1.0f);
+    auto reg = renderer::compute_capsule_region(m, center, axis, 1.0f);
     EXPECT_TRUE(reg.active);
     // aft and fore are axial projections relative to center
     EXPECT_NEAR(reg.aft,  -3.0f, 1e-4f);
@@ -86,17 +86,17 @@ TEST(NacelleRegion, NonZeroCenterAxialProjectionsRelativeToCenter) {
 //
 // The feature's core safety guarantee is that an instance with NO active
 // nacelle capsule contributes ZERO nacelle effect: frame.cc counts active
-// nacelles into `nn`, calls `set_int("u_nacelle_count", nn)`, and the shader's
-// `if (u_nacelle_count > 0)` skips the whole nacelle block. When nn == 0 the
+// nacelles into `nn`, calls `set_int("u_glow_region_count", nn)`, and the shader's
+// `if (u_glow_region_count > 0)` skips the whole nacelle block. When nn == 0 the
 // glow term is byte-identical to before the feature existed.
 //
 // The frame_test.cc harness CANNOT lock this directly: it needs real BC assets
 // (GTEST_SKIP otherwise) and a GL context, and there is no uniform readback
-// path (Shader::set_int has no getter), so "assert u_nacelle_count == 0" is not
+// path (Shader::set_int has no getter), so "assert u_glow_region_count == 0" is not
 // observable through that harness. These two CPU tests lock the guarantee at the
 // data level — no GL, no assets, fully deterministic — by testing the REAL code
 // that makes nn == 0 in production: the default member initializers on
-// Instance::Nacelle / Instance::nacelles.
+// Instance::GlowRegion / Instance::glow_regions.
 
 // Lock #1 — the REAL invariant: a default-constructed Instance (i.e. every
 // production ship the moment it is created, before any nacelle is fitted) has
@@ -104,35 +104,35 @@ TEST(NacelleRegion, NonZeroCenterAxialProjectionsRelativeToCenter) {
 // in frame.cc relies on to keep nn == 0. If a future edit changed Nacelle's
 // default to active = true, nn would become nonzero for untouched instances and
 // the production glow path would silently change — this test would catch it.
-TEST(NacelleProductionPath, DefaultInstanceHasNoActiveNacelles) {
+TEST(GlowRegionProductionPath, DefaultInstanceHasNoActiveNacelles) {
     scenegraph::Instance inst{};  // exactly what World::create_instance yields
-    for (std::size_t i = 0; i < scenegraph::Instance::kMaxNacelles; ++i) {
-        EXPECT_FALSE(inst.nacelles[i].active)
+    for (std::size_t i = 0; i < scenegraph::Instance::kMaxGlowRegions; ++i) {
+        EXPECT_FALSE(inst.glow_regions[i].active)
             << "nacelle slot " << i << " defaulted to active; a production "
                "instance must have zero active nacelles so frame.cc sets "
-               "u_nacelle_count == 0 and the glow path stays byte-identical";
+               "u_glow_region_count == 0 and the glow path stays byte-identical";
     }
 }
 
 // Lock #2 — replicate frame.cc's exact active-count loop over the default array
 // and assert it yields 0, documenting that an all-inactive instance produces
-// u_nacelle_count == 0 (the value the shader treats as "skip the nacelle block
+// u_glow_region_count == 0 (the value the shader treats as "skip the nacelle block
 // entirely"). The loop body below is a faithful copy of frame.cc's draw_model
 // counting loop (skip `!active`, else `++nn`).
-TEST(NacelleProductionPath, ActiveCountLoopYieldsZeroForDefaultInstance) {
+TEST(GlowRegionProductionPath, ActiveCountLoopYieldsZeroForDefaultInstance) {
     scenegraph::Instance inst{};
     int nn = 0;
-    for (const auto& n : inst.nacelles) {  // mirrors frame.cc draw_model
+    for (const auto& n : inst.glow_regions) {  // mirrors frame.cc draw_model
         if (!n.active) continue;
         ++nn;
     }
     EXPECT_EQ(nn, 0)
-        << "frame.cc would set u_nacelle_count == " << nn << " for a default "
+        << "frame.cc would set u_glow_region_count == " << nn << " for a default "
            "instance; it must be 0 so the shader skips the nacelle block and "
            "the production glow term is unchanged by this feature";
 }
 
-TEST(NacelleRegion, MultiNodeComposesChildTranslation) {
+TEST(GlowRegion, MultiNodeComposesChildTranslation) {
     // Root node (identity, no meshes). Child node translated +4 along Y,
     // carrying a mesh whose local vertices span Y from -2 to +3.
     // After composition the world positions span Y from 2 to 7.
@@ -166,7 +166,7 @@ TEST(NacelleRegion, MultiNodeComposesChildTranslation) {
     mesh.set_cpu_data(std::move(cpu));
     m.meshes.push_back(std::move(mesh));
 
-    auto reg = renderer::compute_nacelle_region(
+    auto reg = renderer::compute_capsule_region(
         m, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f), 1.0f);
     EXPECT_TRUE(reg.active);
     // World Y after +4 translation: -2+4=2 to 3+4=7 -> aft=2, fore=7

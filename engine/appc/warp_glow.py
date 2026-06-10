@@ -87,7 +87,7 @@ class WarpGlowController:
             pos = _pod_position(pod)
             if pos is None:
                 continue
-            idx = self._r.compute_nacelle_region(
+            idx = self._r.compute_capsule_region(
                 instance_id, pos, NACELLE_AXIS, _pod_radius(pod))
             if idx < 0:
                 continue
@@ -99,7 +99,7 @@ class WarpGlowController:
         for reg in self._regions:
             disabled = _is_disabled(reg["pod"])
             dtime = disable_edge(reg["prev"], disabled, reg["dtime"], now)
-            self._r.set_nacelle_dim(
+            self._r.set_glow_region_dim(
                 self._iid, reg["idx"], dim_target(disabled), dtime)
             reg["prev"] = disabled
             reg["dtime"] = dtime

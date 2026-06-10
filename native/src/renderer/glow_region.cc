@@ -1,5 +1,5 @@
-// native/src/renderer/nacelle_region.cc
-#include "renderer/nacelle_region.h"
+// native/src/renderer/glow_region.cc
+#include "renderer/glow_region.h"
 
 #include <limits>
 #include <vector>
@@ -9,14 +9,14 @@
 
 namespace renderer {
 
-NacelleRegion compute_nacelle_region(const assets::Model& model,
-                                     const glm::vec3& center,
-                                     const glm::vec3& axis,
-                                     float radius) {
-    NacelleRegion reg;
+GlowRegion compute_capsule_region(const assets::Model& model,
+                                  const glm::vec3& center,
+                                  const glm::vec3& axis,
+                                  float radius) {
+    GlowRegion reg;
     reg.center = center;
     reg.axis   = axis;
-    reg.radius = radius * kNacelleRadiusWiden;
+    reg.radius = radius * kGlowCapsuleRadiusWiden;
     reg.active = true;
 
     const float lat2 = reg.radius * reg.radius;
@@ -57,8 +57,8 @@ NacelleRegion compute_nacelle_region(const assets::Model& model,
         }
     }
 
-    if (captured < kNacelleMinCaptured) {
-        const float half = kNacelleFallbackHalfLenFactor * reg.radius;
+    if (captured < kGlowCapsuleMinCaptured) {
+        const float half = kGlowCapsuleFallbackHalfLenFactor * reg.radius;
         reg.aft  = -half;
         reg.fore =  half;
         return reg;

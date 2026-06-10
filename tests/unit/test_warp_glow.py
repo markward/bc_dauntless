@@ -94,10 +94,10 @@ class _FakeRenderer:
         self._region_results = list(region_results)
         self.compute_calls = []
         self.dim_calls = []
-    def compute_nacelle_region(self, instance_id, center, axis, radius):
+    def compute_capsule_region(self, instance_id, center, axis, radius):
         self.compute_calls.append((instance_id, center, axis, radius))
         return self._region_results.pop(0)
-    def set_nacelle_dim(self, instance_id, region_index, dim_target, disable_time):
+    def set_glow_region_dim(self, instance_id, region_index, dim_target, disable_time):
         self.dim_calls.append((instance_id, region_index, dim_target, disable_time))
 
 
@@ -111,7 +111,7 @@ def test_controller_registers_and_drives_dim_state_across_edges():
     rend = _FakeRenderer(region_results=[0, 1, -1])
     ctrl = warp_glow.WarpGlowController(rend, instance_id=42, warp_subsystem=agg)
 
-    # (a) compute_nacelle_region called once per pod with valid position + axis.
+    # (a) compute_capsule_region called once per pod with valid position + axis.
     assert len(rend.compute_calls) == 3
     assert rend.compute_calls[0] == (42, (-3.0, 1.0, 0.0),
                                      warp_glow.NACELLE_AXIS, 2.0)
