@@ -39,6 +39,7 @@
 #include <renderer/fxaa_pass.h>
 #include <renderer/aabb.h>
 #include <renderer/ray_trace.h>
+#include <renderer/nacelle_region.h>
 #include <scenegraph/world.h>
 #include <scenegraph/camera.h>
 #include <scenegraph/damage_decals.h>
@@ -1078,6 +1079,66 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Record an object-space damage decal on a ship instance. World-space "
           "point/normal are transformed into the ship body frame. weapon_class: "
           "0=HeatGlow (phaser), 1=Scorch (torpedo/disruptor).");
+
+    m.def("compute_nacelle_region",
+          [](scenegraph::InstanceId id,
+             std::tuple<float, float, float> center,
+             std::tuple<float, float, float> axis,
+             float radius) -> int {
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return -1;
+              // Resolve the model exactly as ray_trace_mesh does
+              // (host_bindings.cc) — there is no world.model_for().
+              const auto h = inst->model_handle;
+              if (h == 0 || h > g_loaded_models.size()) return -1;
+              const assets::Model* model = g_loaded_models[h - 1].handle.get();
+              if (model == nullptr) return -1;
+              // hardpoint center/radius are in game units; convert to the
+              // model frame the CPU verts live in (same s as damage_decal_add).
+              const float s = glm::length(glm::vec3(inst->world[0]));
+              const float inv = (s > 0.0f) ? 1.0f / s : 1.0f;
+              const glm::vec3 c(std::get<0>(center) * inv,
+                                std::get<1>(center) * inv,
+                                std::get<2>(center) * inv);
+              glm::vec3 a(std::get<0>(axis), std::get<1>(axis),
+                          std::get<2>(axis));
+              const float alen = glm::length(a);
+              a = (alen > 0.0f) ? a / alen : glm::vec3(0.0f, 1.0f, 0.0f);
+              const renderer::NacelleRegion fit =
+                  renderer::compute_nacelle_region(*model, c, a, radius * inv);
+              // find a free slot
+              for (std::size_t i = 0; i < inst->nacelles.size(); ++i) {
+                  if (inst->nacelles[i].active) continue;
+                  auto& n = inst->nacelles[i];
+                  n.center = fit.center; n.axis = fit.axis;
+                  n.radius = fit.radius; n.aft = fit.aft; n.fore = fit.fore;
+                  n.dim_target = 1.0f; n.disable_time = -1.0f; n.active = true;
+                  return static_cast<int>(i);
+              }
+              return -1;  // no free slot
+          },
+          py::arg("instance_id"), py::arg("center"), py::arg("axis"),
+          py::arg("radius"),
+          "Fit and store a warp-nacelle glow capsule on the instance. "
+          "center/axis/radius are in game units / body frame. Returns the "
+          "region index, or -1 on failure (stale id, no model, no slot).");
+
+    m.def("set_nacelle_dim",
+          [](scenegraph::InstanceId id, int region_index,
+             float dim_target, float disable_time) {
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return;
+              if (region_index < 0 ||
+                  region_index >= static_cast<int>(inst->nacelles.size())) return;
+              auto& n = inst->nacelles[static_cast<std::size_t>(region_index)];
+              if (!n.active) return;
+              n.dim_target = dim_target;
+              n.disable_time = disable_time;
+          },
+          py::arg("instance_id"), py::arg("region_index"),
+          py::arg("dim_target"), py::arg("disable_time"),
+          "Update a nacelle capsule's live dim target [0,1] and the game-time "
+          "seconds of the last disable edge (<0 = healthy / never disabled).");
 
     m.def("world_to_body",
           [](scenegraph::InstanceId id,
