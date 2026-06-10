@@ -122,8 +122,9 @@ class ShipClass(DamageableObject):
         Fallback for ships without an IES (or with MaxSpeed == 0):
         store as-is. Many headless tests construct bare ShipClass
         instances and rely on the literal-pass-through behaviour;
-        this guard avoids breaking them and matches the pattern in
-        _PlayerControl._max_accel.
+        this guard avoids breaking them and matches the
+        MaxSpeed-populated guard in ship_motion._effective_motion /
+        _PlayerControl.GetTargetSpeed.
         """
         ies = self.GetImpulseEngineSubsystem()
         max_speed = ies.GetMaxSpeed() if ies is not None else 0.0
@@ -289,7 +290,7 @@ class ShipClass(DamageableObject):
             av_z += pt.z * roll_angle
 
         # 3. Clamp per-axis to MaxAngularVelocity. Uses the same
-        # IES-populated guard as ship_motion._max_angular_accel.
+        # IES-populated guard as ship_motion._effective_motion.
         ies = self.GetImpulseEngineSubsystem()
         if ies is not None and ies.GetMaxAngularVelocity() > 0.0:
             max_av = ies.GetMaxAngularVelocity()

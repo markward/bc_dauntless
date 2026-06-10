@@ -378,6 +378,28 @@ def _is_offline(sub) -> bool:
     return bool(sub.IsDisabled()) or bool(sub.IsDestroyed())
 
 
+def impulse_online_fraction(ies) -> float:
+    """Fraction in [0, 1] of a ship's impulse engine pods that are online.
+
+    `ies` is the master ImpulseEngineSubsystem (or None). A pod is offline
+    iff _is_offline(pod) (disabled OR destroyed). Returns:
+      - 1.0 when ies is None or has no child pods (fallback ships);
+      - 0.0 when the master itself is offline;
+      - online_pods / total_pods otherwise.
+    """
+    if ies is None:
+        return 1.0
+    if _is_offline(ies):
+        return 0.0
+    n = ies.GetNumChildSubsystems()
+    if n == 0:
+        return 1.0
+    online = sum(
+        1 for i in range(n) if not _is_offline(ies.GetChildSubsystem(i))
+    )
+    return online / float(n)
+
+
 class ShipSubsystem(TGEventHandlerObject):
     def __init__(self, name: str = ""):
         super().__init__()
