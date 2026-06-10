@@ -700,6 +700,7 @@ class _PlayerControl:
         self._current_yaw_rate   = 0.0
         self._current_roll_rate  = 0.0
         self._warp_boost = False
+        self._drift_velocity = None   # TGPoint3 while drifting (f==0), else None
 
     # ── Hardpoint accessors ──────────────────────────────────────────────────
 
@@ -709,21 +710,14 @@ class _PlayerControl:
         return getter() if getter else None
 
     def GetTargetSpeed(self, player) -> float:
-        """Convert impulse_level into a target speed using the ship's
-        ImpulseEngineProperty.MaxSpeed when present, or the legacy
-        per-level placeholder otherwise.
-
-        Forward speed is multiplied by WARP_BOOST_FACTOR when the
-        in-system warp toggle is on (Ctrl+I); reverse is unaffected.
-
-        Disabled-engines gate (Project 5 §4.1): when the IES reports
-        IsDisabled or IsDestroyed, target is unconditionally 0 — the
-        ship coasts under the ship_motion drag fraction.
+        """Convert impulse_level into the throttle-commanded target speed
+        against the ship's BASE MaxSpeed (unscaled). Degradation caps are
+        applied by the keep-rule clamp in apply(), so a ship above its
+        reduced cap is not braked. Forward speed is multiplied by
+        WARP_BOOST_FACTOR when the in-system warp toggle is on (Ctrl+I);
+        reverse is unaffected.
         """
-        from engine.appc.subsystems import _is_offline
         ies = self._get_ies(player)
-        if _is_offline(ies):
-            return 0.0
         max_speed = ies.GetMaxSpeed() if ies is not None else 0.0
         boost = self.WARP_BOOST_FACTOR if self._warp_boost else 1.0
         if max_speed > 0.0:
@@ -736,30 +730,6 @@ class _PlayerControl:
 
     def GetCurrentSpeed(self) -> float:
         return self._current_speed
-
-    def _max_accel(self, player) -> float:
-        ies = self._get_ies(player)
-        if ies is not None and ies.GetMaxSpeed() > 0.0:
-            a = ies.GetMaxAccel()
-            return a if a > 0.0 else self.FALLBACK_MAX_ACCEL
-        return self.FALLBACK_MAX_ACCEL
-
-    def _angular_rate(self, player) -> float:
-        ies = self._get_ies(player)
-        if ies is not None and ies.GetMaxAngularVelocity() > 0.0:
-            return ies.GetMaxAngularVelocity()
-        return self.TURN_RATE_RAD_PER_S
-
-    def _angular_accel(self, player) -> float:
-        """Per-axis angular acceleration (rad/s²).  When the IES has no
-        MaxAngularAccel value, falls back to a very large rate so the legacy
-        snap-to-rate semantics are preserved (tests using fake ships keep
-        seeing instant rotation onset)."""
-        ies = self._get_ies(player)
-        if ies is not None and ies.GetMaxAngularVelocity() > 0.0:
-            a = ies.GetMaxAngularAccel()
-            return a if a > 0.0 else self.FALLBACK_MAX_ACCEL
-        return self.FALLBACK_MAX_ACCEL
 
     def GetCurrentPitchRate(self) -> float: return self._current_pitch_rate
     def GetCurrentYawRate(self)   -> float: return self._current_yaw_rate
@@ -817,58 +787,83 @@ class _PlayerControl:
                     self.impulse_level = level
                     break
 
-        # Disabled-engines gate: read once, applied to both linear and
-        # angular ramps. Spec §4.1.
-        from engine.appc.subsystems import _is_offline
+        # ── Engine effectiveness for this tick (spec 2026-06-10) ─────────
+        from engine.appc.subsystems import impulse_online_fraction
         from engine.appc.ship_motion import (
-            DISABLED_ENGINE_DRAG_FRACTION,
-            _linear_step_magnitude,
+            _effective_motion, _cap_keep, _asymptote_step,
         )
-        engines_offline = _is_offline(self._get_ies(player))
+        from engine.appc.math import TGMatrix3, TGPoint3
+        X_AXIS = TGPoint3(1.0, 0.0, 0.0)
+        Y_AXIS = TGPoint3(0.0, 1.0, 0.0)
+        Z_AXIS = TGPoint3(0.0, 0.0, 1.0)
 
-        # 2. Linear speed ramp toward target — BC's rate-limited asymptote
-        #    (linear at MaxAccel until the gap drops below MaxAccel·τ,
-        #    then exponential closure with τ=1 s). Disabled engines: scale
-        #    ramp by drag fraction so velocity decays gradually rather
-        #    than at full MaxAccel. Spec §4.1.
-        target_speed = self.GetTargetSpeed(player)
-        linear_step = _linear_step_magnitude(
-            player, target_speed - self._current_speed, dt,
-        )
-        if engines_offline:
-            linear_step *= DISABLED_ENGINE_DRAG_FRACTION
+        ies = self._get_ies(player)
+        f = impulse_online_fraction(ies)
+
+        # ── Total loss → inertial drift ─────────────────────────────────
+        if f <= 0.0:
+            R = player.GetWorldRotation()
+            if self._drift_velocity is None:
+                fwd = R.GetCol(1)
+                self._drift_velocity = TGPoint3(
+                    fwd.x * self._current_speed,
+                    fwd.y * self._current_speed,
+                    fwd.z * self._current_speed,
+                )
+            # residual rotation: held rates, no thrust, no decay
+            pr, yr, rr = (self._current_pitch_rate, self._current_yaw_rate,
+                          self._current_roll_rate)
+            if pr or yr or rr:
+                R_pitch = TGMatrix3(); R_pitch.MakeRotation(pr * dt, X_AXIS)
+                R_yaw   = TGMatrix3(); R_yaw.MakeRotation(yr * dt, Z_AXIS)
+                R_roll  = TGMatrix3(); R_roll.MakeRotation(rr * dt, Y_AXIS)
+                delta = R_pitch.MultMatrix(R_yaw).MultMatrix(R_roll)
+                player.SetMatrixRotation(R.MultMatrix(delta))
+            d = self._drift_velocity
+            p = player.GetTranslate()
+            player.SetTranslateXYZ(p.x + d.x * dt, p.y + d.y * dt, p.z + d.z * dt)
+            return
+
+        # ── Powered flight: clear drift, re-seed speed ──────────────────
+        if self._drift_velocity is not None:
+            self._current_speed = self._drift_velocity.Length()
+            self._drift_velocity = None
+
+        em = _effective_motion(player, f)
+
+        # Linear ramp toward (capped) target.
+        commanded = self.GetTargetSpeed(player)
+        if em.has_linear:
+            target_speed = _cap_keep(commanded, self._current_speed, em.max_speed)
+            accel = em.max_accel if em.max_accel > 0.0 else self.FALLBACK_MAX_ACCEL
+            linear_step = _asymptote_step(accel, target_speed - self._current_speed, dt)
+        else:
+            target_speed = commanded
+            linear_step = self.FALLBACK_MAX_ACCEL * dt
         self._current_speed = self._ramp_toward(
-            self._current_speed,
-            target_speed,
-            linear_step,
+            self._current_speed, target_speed, linear_step,
         )
 
-        # 3. Angular rates: held keys set a per-axis target rate; current rate
-        #    ramps toward target at MaxAngularAccel.
-        # Key → on-screen effect:
-        #   W = nose DOWN,  S = nose UP
-        #   A = yaw LEFT,   D = yaw RIGHT
-        #   Q = roll LEFT,  E = roll RIGHT
-        # Sign convention: under right-hand rule with col-vector matrices
-        # (see CLAUDE.md), +ω_x = nose UP, +ω_z = yaw LEFT, +ω_y = roll LEFT.
-        # The key→sign mapping below produces the documented visual effect.
-        ang_rate    = self._angular_rate(player)
-        ang_step    = self._angular_accel(player) * dt
-        if engines_offline:
-            ang_step *= DISABLED_ENGINE_DRAG_FRACTION
-        pitch_target = 0.0
-        yaw_target   = 0.0
-        roll_target  = 0.0
+        # Angular: held keys → per-axis target rate, capped + ramped.
+        # W=nose DOWN S=nose UP A=yaw LEFT D=yaw RIGHT Q=roll LEFT E=roll RIGHT
+        if em.has_angular:
+            ang_rate = em.max_ang_vel
+            aa = em.max_ang_accel if em.max_ang_accel > 0.0 else self.FALLBACK_MAX_ACCEL
+            ang_step = aa * dt
+        else:
+            ang_rate = self.TURN_RATE_RAD_PER_S
+            ang_step = self.FALLBACK_MAX_ACCEL * dt
+        pitch_target = 0.0; yaw_target = 0.0; roll_target = 0.0
         if h.key_state(h.keys.KEY_W): pitch_target -= ang_rate
         if h.key_state(h.keys.KEY_S): pitch_target += ang_rate
         if h.key_state(h.keys.KEY_A): yaw_target   -= ang_rate
         if h.key_state(h.keys.KEY_D): yaw_target   += ang_rate
         if h.key_state(h.keys.KEY_Q): roll_target  += ang_rate
         if h.key_state(h.keys.KEY_E): roll_target  -= ang_rate
-        if engines_offline:
-            pitch_target = 0.0
-            yaw_target = 0.0
-            roll_target = 0.0
+        if em.has_angular:
+            pitch_target = _cap_keep(pitch_target, self._current_pitch_rate, em.max_ang_vel)
+            yaw_target   = _cap_keep(yaw_target,   self._current_yaw_rate,   em.max_ang_vel)
+            roll_target  = _cap_keep(roll_target,  self._current_roll_rate,  em.max_ang_vel)
         self._current_pitch_rate = self._ramp_toward(self._current_pitch_rate, pitch_target, ang_step)
         self._current_yaw_rate   = self._ramp_toward(self._current_yaw_rate,   yaw_target,   ang_step)
         self._current_roll_rate  = self._ramp_toward(self._current_roll_rate,  roll_target,  ang_step)
@@ -876,17 +871,7 @@ class _PlayerControl:
         yaw_rate   = self._current_yaw_rate
         roll_rate  = self._current_roll_rate
 
-        # 4. Rotation integration.  BC uses column-vector matrices where
-        #    v_world = R · v_body (see CLAUDE.md ↦ "Rotation matrix
-        #    convention").  A body-frame delta D acts on v_body first:
-        #    v_world = R · (D · v_body) = (R · D) · v_body.  So body-frame
-        #    rotation is POST-multiply (R · D).  Pitch → yaw → roll Euler
-        #    order.
-        from engine.appc.math import TGMatrix3, TGPoint3
-        X_AXIS = TGPoint3(1.0, 0.0, 0.0)
-        Y_AXIS = TGPoint3(0.0, 1.0, 0.0)
-        Z_AXIS = TGPoint3(0.0, 0.0, 1.0)
-
+        # Rotation integration (R · D body-frame delta; see CLAUDE.md).
         R = player.GetWorldRotation()
         if pitch_rate or yaw_rate or roll_rate:
             R_pitch = TGMatrix3(); R_pitch.MakeRotation(pitch_rate * dt, X_AXIS)
@@ -896,7 +881,7 @@ class _PlayerControl:
             R = R.MultMatrix(delta)
             player.SetMatrixRotation(R)
 
-        # 5. Position integration (forward = ship-local Y axis in world).
+        # Position integration (powered: velocity follows facing).
         if self._current_speed != 0.0:
             forward = R.GetCol(1)
             p = player.GetTranslate()
