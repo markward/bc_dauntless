@@ -3,6 +3,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include "renderer/nacelle_region.h"
 #include "assets/model.h"
+#include "scenegraph/instance.h"
 
 namespace {
 // Single-node model whose vertices we control directly in body space.
@@ -78,6 +79,57 @@ TEST(NacelleRegion, NonZeroCenterAxialProjectionsRelativeToCenter) {
     // aft and fore are axial projections relative to center
     EXPECT_NEAR(reg.aft,  -3.0f, 1e-4f);
     EXPECT_NEAR(reg.fore, +5.0f, 1e-4f);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Production-path safety lock for the warp-nacelle glow-dimming feature.
+//
+// The feature's core safety guarantee is that an instance with NO active
+// nacelle capsule contributes ZERO nacelle effect: frame.cc counts active
+// nacelles into `nn`, calls `set_int("u_nacelle_count", nn)`, and the shader's
+// `if (u_nacelle_count > 0)` skips the whole nacelle block. When nn == 0 the
+// glow term is byte-identical to before the feature existed.
+//
+// The frame_test.cc harness CANNOT lock this directly: it needs real BC assets
+// (GTEST_SKIP otherwise) and a GL context, and there is no uniform readback
+// path (Shader::set_int has no getter), so "assert u_nacelle_count == 0" is not
+// observable through that harness. These two CPU tests lock the guarantee at the
+// data level — no GL, no assets, fully deterministic — by testing the REAL code
+// that makes nn == 0 in production: the default member initializers on
+// Instance::Nacelle / Instance::nacelles.
+
+// Lock #1 — the REAL invariant: a default-constructed Instance (i.e. every
+// production ship the moment it is created, before any nacelle is fitted) has
+// ALL nacelle slots inactive. This is the property the `if (!n.active) continue`
+// in frame.cc relies on to keep nn == 0. If a future edit changed Nacelle's
+// default to active = true, nn would become nonzero for untouched instances and
+// the production glow path would silently change — this test would catch it.
+TEST(NacelleProductionPath, DefaultInstanceHasNoActiveNacelles) {
+    scenegraph::Instance inst{};  // exactly what World::create_instance yields
+    for (std::size_t i = 0; i < scenegraph::Instance::kMaxNacelles; ++i) {
+        EXPECT_FALSE(inst.nacelles[i].active)
+            << "nacelle slot " << i << " defaulted to active; a production "
+               "instance must have zero active nacelles so frame.cc sets "
+               "u_nacelle_count == 0 and the glow path stays byte-identical";
+    }
+}
+
+// Lock #2 — replicate frame.cc's exact active-count loop over the default array
+// and assert it yields 0, documenting that an all-inactive instance produces
+// u_nacelle_count == 0 (the value the shader treats as "skip the nacelle block
+// entirely"). The loop body below is a faithful copy of frame.cc's draw_model
+// counting loop (skip `!active`, else `++nn`).
+TEST(NacelleProductionPath, ActiveCountLoopYieldsZeroForDefaultInstance) {
+    scenegraph::Instance inst{};
+    int nn = 0;
+    for (const auto& n : inst.nacelles) {  // mirrors frame.cc draw_model
+        if (!n.active) continue;
+        ++nn;
+    }
+    EXPECT_EQ(nn, 0)
+        << "frame.cc would set u_nacelle_count == " << nn << " for a default "
+           "instance; it must be 0 so the shader skips the nacelle block and "
+           "the production glow term is unchanged by this feature";
 }
 
 TEST(NacelleRegion, MultiNodeComposesChildTranslation) {
