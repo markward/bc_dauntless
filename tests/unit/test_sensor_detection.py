@@ -7,7 +7,9 @@ from engine.appc.sensor_detection import (
     FALLBACK_RANGE_GU, effective_sensor_range, can_detect,
     observing, current_observing_ship,
     _wrap_active_tuple, _wrap_find_good_target,
+    install_ai_sensor_gate,
 )
+from engine.appc.objects import ObjectGroup
 
 
 def _ship_with_sensor(base_range, condition=100.0, max_condition=100.0,
@@ -137,7 +139,6 @@ def test_wrap_find_good_target_handles_missing_codeai():
 
 
 def test_install_wraps_find_good_target_on_select_target():
-    from engine.appc.sensor_detection import install_ai_sensor_gate
     import AI.Preprocessors as pp
     install_ai_sensor_gate()
     assert getattr(pp.SelectTarget.FindGoodTarget, "_sensor_gated", False) is True
@@ -163,3 +164,57 @@ def test_wrap_active_tuple_filters_only_when_observer_set():
     with observing(observer):
         assert wrapped(object(), None) == (near,)
     assert getattr(wrapped, "_sensor_gated", False) is True
+
+
+# ── Installed-gate integration tests ─────────────────────────────────────────
+
+
+def _set_with(*named_ships):
+    pSet = App.SetClass_Create()
+    pSet.SetName("S")
+    for name, ship in named_ships:
+        ship.SetName(name)
+        pSet.AddObjectToSet(ship, name)
+    return pSet
+
+
+def test_installed_gate_filters_active_tuple_by_sensor_range():
+    install_ai_sensor_gate()
+
+    near = ShipClass_Create("BirdOfPrey"); near.SetTranslateXYZ(500.0, 0.0, 0.0)
+    far = ShipClass_Create("BirdOfPrey"); far.SetTranslateXYZ(5000.0, 0.0, 0.0)
+    pSet = _set_with(("Near", near), ("Far", far))
+
+    group = ObjectGroup()
+    group.AddName("Near"); group.AddName("Far")
+
+    # No observer -> both contacts returned (non-AI callers unaffected).
+    assert set(group.GetActiveObjectTupleInSet(pSet)) == {near, far}
+
+    # Observer with 2000 GU range -> only the near contact survives.
+    observer, sensors = _ship_with_sensor(2000.0, at=(0.0, 0.0, 0.0))
+    with observing(observer):
+        assert group.GetActiveObjectTupleInSet(pSet) == (near,)
+
+
+def test_installed_gate_blinds_observer_with_offline_sensors():
+    install_ai_sensor_gate()
+
+    enemy = ShipClass_Create("BirdOfPrey"); enemy.SetTranslateXYZ(100.0, 0.0, 0.0)
+    pSet = _set_with(("Enemy", enemy))
+    group = ObjectGroup(); group.AddName("Enemy")
+
+    observer, sensors = _ship_with_sensor(2000.0, at=(0.0, 0.0, 0.0))
+    sensors.SetCondition(0.0)  # offline -> range 0
+    with observing(observer):
+        assert group.GetActiveObjectTupleInSet(pSet) == ()
+
+
+def test_install_is_idempotent():
+    install_ai_sensor_gate()
+    first = ObjectGroup.GetActiveObjectTupleInSet
+    install_ai_sensor_gate()
+    second = ObjectGroup.GetActiveObjectTupleInSet
+    # Second install must not re-wrap (same function object, no double filter).
+    assert first is second
+    assert getattr(second, "_sensor_gated", False) is True
