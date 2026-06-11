@@ -120,4 +120,22 @@ def desired_tier(sub):
     return TIER_NONE
 
 
+# ---- backend interface ------------------------------------------------------
+
+class _NullHandle:
+    def stop_emitting(self):       pass
+    def has_live_particles(self):  return False
+
+
+class NullBackend:
+    """Default production backend until Spec A's real controllers land.
+    Every call is a safe no-op; the manager runs its full state machine but
+    nothing renders."""
+    def create(self, factory, params, emit_pos_body, emit_dir, direction_mode):
+        return _NullHandle()
+
+    def fire_one_shot(self, factory, emit_pos_body, emit_dir):
+        pass
+
+
 reset_registry()
