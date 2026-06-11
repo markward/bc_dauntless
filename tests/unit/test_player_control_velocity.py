@@ -65,3 +65,39 @@ def test_player_control_publishes_velocity_when_moving():
     finally:
         # Restore original _get_ies.
         _PlayerControl._get_ies = _original_get_ies
+
+
+def test_player_control_publishes_velocity_powered_branch():
+    """The everyday powered-flight path must also publish world velocity.
+
+    A bare ShipClass has no impulse engine, so f == 1.0 (powered branch) and
+    the FALLBACK ramp drives _current_speed to the commanded target in one
+    tick. Override GetTargetSpeed to command 5 GU/s; identity rotation makes
+    forward = +Y, so GetVelocity() must read (0, 5, 0).
+    """
+    from engine.host_loop import _PlayerControl
+
+    pc = _PlayerControl()
+    player = _player()
+    pc.GetTargetSpeed = lambda p: 5.0  # instance override shadows the method
+
+    pc.apply(player, 1.0 / 60.0, _FakeHost())
+
+    v = player.GetVelocity()
+    assert v.y == 5.0, f"expected v.y==5.0, got {v.y}"
+    assert v.x == 0.0 and v.z == 0.0
+
+
+def test_player_control_publishes_zero_velocity_when_stationary():
+    """Stationary powered ship publishes a zero velocity (not a stale value)."""
+    from engine.host_loop import _PlayerControl
+
+    pc = _PlayerControl()
+    player = _player()
+    player.SetVelocity(TGPoint3(99.0, 99.0, 99.0))  # stale value to be overwritten
+    pc.GetTargetSpeed = lambda p: 0.0
+
+    pc.apply(player, 1.0 / 60.0, _FakeHost())
+
+    v = player.GetVelocity()
+    assert v.x == 0.0 and v.y == 0.0 and v.z == 0.0
