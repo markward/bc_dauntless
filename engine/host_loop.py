@@ -2613,9 +2613,13 @@ def run(mission_name: Optional[str] = None,
                 # mass-weighted impulse into each body's decaying
                 # _collision_velocity overlay. Spec
                 # docs/superpowers/specs/2026-06-11-collision-response-design.md.
+                # dt = _player_dt (clamped wall-clock frame delta), matching
+                # the player integrator — the collision-velocity overlay is
+                # real-time motion, so it advances/decays on real elapsed time,
+                # not the fixed sim TICK_DT.
                 from engine.appc import collisions
                 collisions.tick_collisions(
-                    TICK_DT, host=_h,
+                    _player_dt, host=_h,
                     ship_instances=(session.ship_instances if session is not None else None),
                 )
 

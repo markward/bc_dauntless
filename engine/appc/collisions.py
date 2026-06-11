@@ -89,7 +89,7 @@ def _ke_damage(inv_sum: float, v_rel: float) -> float:
     return COLLISION_DAMAGE_COEFF * 0.5 * mu * v_rel * v_rel
 
 
-def _respond_pair(a: "_Body", b: "_Body", dt: float, host, ship_instances):
+def _respond_pair(a: "_Body", b: "_Body", host, ship_instances):
     """Resolve one body pair. On an approaching overlap: inject a
     mass-weighted impulse into each movable body's overlay, de-penetrate
     positions, and apply KE damage via combat.apply_hit. Returns the
@@ -187,7 +187,7 @@ def _apply_overlay_all(objects, dt: float) -> None:
         cv.z *= decay
 
 
-def resolve_collisions(objects, dt: float, host=None, ship_instances=None):
+def resolve_collisions(objects, host=None, ship_instances=None):
     """Snapshot every object into a _Body and resolve all unordered pairs.
     Returns the list of collision tuples from _respond_pair (for tests /
     debugging). De-penetration mutates positions in place; with n small and
@@ -197,7 +197,7 @@ def resolve_collisions(objects, dt: float, host=None, ship_instances=None):
     hits = []
     for i in range(len(bodies)):
         for k in range(i + 1, len(bodies)):
-            hit = _respond_pair(bodies[i], bodies[k], dt, host, ship_instances)
+            hit = _respond_pair(bodies[i], bodies[k], host, ship_instances)
             if hit is not None:
                 hits.append(hit)
     return hits
@@ -224,4 +224,4 @@ def tick_collisions(dt: float, host=None, ship_instances=None):
     tuples. Call once per render frame after motion + player input have run."""
     objects = list(iter_collidables())
     _apply_overlay_all(objects, dt)
-    return resolve_collisions(objects, dt, host=host, ship_instances=ship_instances)
+    return resolve_collisions(objects, host=host, ship_instances=ship_instances)

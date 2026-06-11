@@ -92,7 +92,7 @@ def test_symmetric_head_on_equal_opposite_impulse():
     a = _ship(0.0, 1000.0, +10.0)
     b = _ship(1.5, 1000.0, -10.0)  # overlapping (dist 1.5 < r 1 + r 1)
     ba, bb = _resolve_body(a), _resolve_body(b)
-    hit = _respond_pair(ba, bb, 1.0 / 60.0, host=None, ship_instances=None)
+    hit = _respond_pair(ba, bb, host=None, ship_instances=None)
     assert hit is not None
     # Equal masses -> equal & opposite overlays along +/-x.
     assert a._collision_velocity.x == pytest.approx(-b._collision_velocity.x)
@@ -105,7 +105,7 @@ def test_mismatched_mass_light_ship_recoils_more():
     light = _ship(0.0, 1000.0, +10.0)
     heavy = _ship(1.5, 5000.0, -10.0)
     _respond_pair(_resolve_body(light), _resolve_body(heavy),
-                  1.0 / 60.0, host=None, ship_instances=None)
+                  host=None, ship_instances=None)
     assert abs(light._collision_velocity.x) > abs(heavy._collision_velocity.x)
 
 
@@ -116,7 +116,7 @@ def test_ship_vs_immovable_planet_bounces_planet_fixed():
     planet.SetTranslateXYZ(2.5, 0.0, 0.0)  # dist 2.5 < r1 + r2.0 = 3.0
     pre = planet.GetTranslate().x
     _respond_pair(_resolve_body(ship), _resolve_body(planet),
-                  1.0 / 60.0, host=None, ship_instances=None)
+                  host=None, ship_instances=None)
     assert ship._collision_velocity.x < 0.0          # ship recoils
     assert planet.GetTranslate().x == pytest.approx(pre)  # planet unmoved
     assert _overlay_vec(planet) is None              # planet got no impulse
@@ -127,7 +127,7 @@ def test_receding_pair_is_ignored():
     a = _ship(0.0, 1000.0, -10.0)   # moving away from b
     b = _ship(1.5, 1000.0, +10.0)
     hit = _respond_pair(_resolve_body(a), _resolve_body(b),
-                        1.0 / 60.0, host=None, ship_instances=None)
+                        host=None, ship_instances=None)
     assert hit is None
     assert _overlay_vec(a) is None and _overlay_vec(b) is None
 
@@ -137,7 +137,7 @@ def test_non_overlapping_pair_is_ignored():
     a = _ship(0.0, 1000.0, +10.0)
     b = _ship(50.0, 1000.0, -10.0)  # far apart
     assert _respond_pair(_resolve_body(a), _resolve_body(b),
-                         1.0 / 60.0, host=None, ship_instances=None) is None
+                         host=None, ship_instances=None) is None
 
 
 def test_respond_pair_invokes_apply_hit_for_both_ships(monkeypatch):
@@ -149,7 +149,7 @@ def test_respond_pair_invokes_apply_hit_for_both_ships(monkeypatch):
     a = _ship(0.0, 1000.0, +10.0)
     b = _ship(1.5, 1000.0, -10.0)
     _respond_pair(_resolve_body(a), _resolve_body(b),
-                  1.0 / 60.0, host=None, ship_instances=None)
+                  host=None, ship_instances=None)
     assert len(calls) == 2
     assert {id(a), id(b)} == {id(calls[0][0]), id(calls[1][0])}
     assert all(dmg > 0.0 for _, dmg in calls)
@@ -179,7 +179,7 @@ def test_resolve_collisions_returns_one_hit_per_overlapping_pair():
     a = _ship(0.0, 1000.0, +10.0)
     b = _ship(1.5, 1000.0, -10.0)
     c = _ship(50.0, 1000.0, 0.0)   # isolated
-    hits = resolve_collisions([a, b, c], 1.0 / 60.0)
+    hits = resolve_collisions([a, b, c])
     assert len(hits) == 1
 
 
@@ -190,10 +190,12 @@ def test_overlap_persistence_applies_damage_once(monkeypatch):
     from engine.appc.collisions import resolve_collisions
     a = _ship(0.0, 1000.0, +10.0)
     b = _ship(1.5, 1000.0, -10.0)
-    resolve_collisions([a, b], 1.0 / 60.0)   # approaching: 2 hits
+    resolve_collisions([a, b])   # approaching: 2 hits
     n_after_first = len(calls)
-    # Still overlapping but now receding (overlays reversed v_rel): no new damage.
-    resolve_collisions([a, b], 1.0 / 60.0)
+    # After the first resolve, de-penetration separates the pair to exactly
+    # touching (dist == sum_r), so the second resolve finds no overlap and
+    # applies no further damage — verifying no repeat-damage across frames.
+    resolve_collisions([a, b])
     assert n_after_first == 2
     assert len(calls) == 2
 
