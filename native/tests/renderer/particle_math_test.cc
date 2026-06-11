@@ -1,5 +1,6 @@
 #include <renderer/particle_math.h>
 #include <gtest/gtest.h>
+#include <cmath>
 
 using namespace renderer;
 
@@ -69,4 +70,29 @@ TEST(ParticleMath, ConeAndRadius) {
     // They won't be identical (unless the hash happens to collide, which it won't
     // for these salts).
     EXPECT_GT(std::abs(glm::length(off) - glm::length(off2)), 1e-6f);
+}
+
+TEST(ParticleMath, DampedTravel) {
+    EXPECT_FLOAT_EQ(damped_travel(2.0f, 0.0f, 0.5f), 1.0f);   // c=0 => linear v*tau
+    float t1 = damped_travel(2.0f, 1.0f, 0.5f);
+    float t2 = damped_travel(2.0f, 1.0f, 1.0f);
+    EXPECT_LT(t1, 1.0f);            // below linear (2*0.5)
+    EXPECT_GT(t2, t1);             // monotonic
+    EXPECT_LT(t2, 2.0f);          // bounded by v/c = 2.0
+    EXPECT_NEAR(damped_travel(2.0f, 1.0f, 100.0f), 2.0f, 1e-2f);  // asymptote v/c
+}
+
+TEST(ParticleMath, StreakQuadDegeneratesAndAligns) {
+    glm::vec3 center{0, 0, 0};
+    glm::vec3 axis{0, 1, 0};
+    glm::vec3 cam_right{1, 0, 0};
+    glm::vec3 cam_up{0, 0, 1};
+    auto sq = streak_quad(center, axis, /*length=*/0.0f, /*half_width=*/0.5f, cam_right, cam_up);
+    // corner 0 is (-1,-1) => center - cam_right*0.5 - cam_up*0.5 = (-0.5, 0, -0.5)
+    EXPECT_NEAR(sq[0].x, -0.5f, 1e-5f);
+    EXPECT_NEAR(sq[0].z, -0.5f, 1e-5f);
+    auto st = streak_quad(center, axis, /*length=*/2.0f, /*half_width=*/0.1f, cam_right, cam_up);
+    // long edge (corner 2 - corner 1) runs along `axis`
+    glm::vec3 long_edge = st[2] - st[1];
+    EXPECT_GT(std::abs(glm::dot(glm::normalize(long_edge), axis)), 0.9f);
 }

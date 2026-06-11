@@ -2,6 +2,7 @@
 #pragma once
 #include <glm/glm.hpp>
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 namespace renderer {
@@ -84,6 +85,42 @@ inline glm::vec3 random_cone_dir(const glm::vec3& axis, float cone_deg, glm::vec
     const glm::vec3 t   = glm::normalize(glm::cross(up, a));
     const glm::vec3 b   = glm::cross(a, t);
     return glm::normalize(a * cz + (t * std::cos(phi) + b * std::sin(phi)) * sz);
+}
+
+/// Damped ballistic travel distance: (v/c)(1 - e^{-c*tau}); linear v*tau at c<=0.
+/// Matches hit_vfx_pass's spark travel formula.
+inline float damped_travel(float v, float c, float tau) {
+    return (c > 1e-6f) ? (v / c) * (1.0f - std::exp(-c * tau)) : v * tau;
+}
+
+/// Four world-space corners of a particle quad. length<=0 => a camera-facing
+/// square of half-extent `half_width`. length>0 => long axis along `vel_axis`
+/// (length = streak length), short axis the camera-facing perpendicular
+/// (half-extent `half_width`). Corner order: 0=(-1,-1) 1=(+1,-1) 2=(+1,+1)
+/// 3=(-1,+1) in (right,up) space. GL-free reference mirrored by hit_vfx.vert.
+inline std::array<glm::vec3, 4> streak_quad(const glm::vec3& center,
+                                            const glm::vec3& vel_axis,
+                                            float length, float half_width,
+                                            const glm::vec3& cam_right,
+                                            const glm::vec3& cam_up) {
+    glm::vec3 right, up;
+    if (length > 1e-6f && glm::length(vel_axis) > 1e-6f) {
+        glm::vec3 axis = glm::normalize(vel_axis);
+        glm::vec3 view = glm::normalize(glm::cross(cam_right, cam_up));  // camera forward
+        glm::vec3 perp = glm::cross(axis, view);
+        float pl = glm::length(perp);
+        right = (pl > 1e-6f) ? (perp / pl) * half_width : cam_right * half_width;
+        up    = axis * length;
+    } else {
+        right = cam_right * half_width;
+        up    = cam_up * half_width;
+    }
+    return {
+        center - right - up,   // (-1,-1)
+        center + right - up,   // (+1,-1)
+        center + right + up,   // (+1,+1)
+        center - right + up,   // (-1,+1)
+    };
 }
 
 }  // namespace renderer
