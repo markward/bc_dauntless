@@ -196,3 +196,38 @@ def test_overlap_persistence_applies_damage_once(monkeypatch):
     resolve_collisions([a, b], 1.0 / 60.0)
     assert n_after_first == 2
     assert len(calls) == 2
+
+
+def test_iter_collidables_yields_ships_and_planets_only():
+    from engine.appc.collisions import iter_collidables
+    pSet = App.SetClass_Create()
+    App.g_kSetManager.AddSet(pSet, "test")
+    ship = _ship(0.0, 1000.0, 0.0)
+    planet = Planet_Create(170.0, ""); planet.SetTranslateXYZ(500.0, 0.0, 0.0)
+    pSet.AddObjectToSet(ship, "Ship")
+    pSet.AddObjectToSet(planet, "Planet")
+    found = set(id(o) for o in iter_collidables())
+    assert id(ship) in found
+    assert id(planet) in found
+
+
+def test_iter_collidables_skips_zero_radius():
+    from engine.appc.collisions import iter_collidables
+    pSet = App.SetClass_Create()
+    App.g_kSetManager.AddSet(pSet, "test")
+    ship = ShipClass()  # radius defaults to 0.0
+    pSet.AddObjectToSet(ship, "Ship")
+    assert list(iter_collidables()) == []
+
+
+def test_tick_collisions_resolves_live_set_pair():
+    from engine.appc.collisions import tick_collisions
+    pSet = App.SetClass_Create()
+    App.g_kSetManager.AddSet(pSet, "test")
+    a = _ship(0.0, 1000.0, +10.0)
+    b = _ship(1.5, 1000.0, -10.0)
+    pSet.AddObjectToSet(a, "A")
+    pSet.AddObjectToSet(b, "B")
+    hits = tick_collisions(1.0 / 60.0, host=None, ship_instances=None)
+    assert len(hits) == 1
+    assert a._collision_velocity.x < 0.0 and b._collision_velocity.x > 0.0

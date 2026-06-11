@@ -197,3 +197,27 @@ def resolve_collisions(objects, dt: float, host=None, ship_instances=None):
             if hit is not None:
                 hits.append(hit)
     return hits
+
+
+def iter_collidables():
+    """Yield every collidable across all active sets: ships and asteroids
+    (ShipClass) plus planets/moons/suns (Planet). isinstance filtering (not
+    hasattr) is required — set membership includes _NamedStub objects whose
+    __getattr__ answers True to any hasattr probe (see ship_iter.py)."""
+    import App
+    from engine.appc.ship_iter import iter_set_objects
+    from engine.appc.ships import ShipClass
+    from engine.appc.planet import Planet
+    for pSet in App.g_kSetManager._sets.values():
+        for obj in iter_set_objects(pSet):
+            if isinstance(obj, (ShipClass, Planet)) and obj.GetRadius() > 0.0:
+                yield obj
+
+
+def tick_collisions(dt: float, host=None, ship_instances=None):
+    """Per-frame entry point: consume overlays for every collidable, then
+    detect + resolve all overlapping pairs. Returns the list of collision
+    tuples. Call once per render frame after motion + player input have run."""
+    objects = list(iter_collidables())
+    _apply_overlay_all(objects, dt)
+    return resolve_collisions(objects, dt, host=host, ship_instances=ship_instances)
