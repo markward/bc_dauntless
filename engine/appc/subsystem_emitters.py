@@ -324,4 +324,39 @@ class PlumeManager:
             em.fading = True
 
 
+# ---- module singleton + host-loop entry point ------------------------------
+
+_backend = None        # set via set_backend(); defaults to NullBackend
+_manager = None
+
+
+def set_backend(backend):
+    """Install the particle-controller backend (Spec A in production; a fake in
+    tests). Resets the manager so the next pump rebuilds against it."""
+    global _backend, _manager
+    _backend = backend
+    _manager = None
+
+
+def reset_manager():
+    """Drop the singleton manager (and any tracked emitters). Used by tests and
+    on mission swap / load so plumes re-derive from predicates."""
+    global _manager
+    _manager = None
+
+
+def get_manager():
+    global _manager, _backend
+    if _manager is None:
+        if _backend is None:
+            _backend = NullBackend()
+        _manager = PlumeManager(_backend)
+    return _manager
+
+
+def pump(ships, camera_pos, dt):
+    """Host-loop entry point: advance the plume state machine one tick."""
+    get_manager().update(ships, camera_pos, dt)
+
+
 reset_registry()
