@@ -27,6 +27,7 @@ class GameLoop:
         from engine.appc.time_slice import g_kAIManager
         from engine.appc.ai_driver import tick_all_ai
         from engine.appc.ship_motion import tick_all_ship_motion
+        from engine.appc.collision_avoidance import tick_collision_avoidance
         from engine.appc.planet import evaluate_proximity_checks
         game_time = App.g_kTimerManager.get_time()
         real_time = App.g_kRealtimeTimerManager.get_time()
@@ -36,6 +37,12 @@ class GameLoop:
         # ConditionInRange register ProximityChecks; the per-tick sweep
         # fires events when objects cross the radius boundary.
         evaluate_proximity_checks()
+        # Collision avoidance overrides the heading of any AI ship on an
+        # imminent collision course, AFTER the AI has set its heading and
+        # BEFORE motion integrates. Restores the original Appc autopilot's
+        # obstacle avoidance (the SDK movement scripts only command a
+        # heading; the C++ autopilot steered around obstacles).
+        tick_collision_avoidance()
         tick_all_ship_motion(TICK_DELTA)
 
         for ship in iter_ships():

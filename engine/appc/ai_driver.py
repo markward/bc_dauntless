@@ -218,6 +218,21 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
     if hasattr(inst, "lWeapons") and getattr(inst, "pCodeAI", None) is not None:
         _ensure_fire_script_initialized(inst)
 
+    # Focus model surrogate — a PreprocessingAI reached on the active
+    # dispatch path holds focus this tick. SelectTarget gates the
+    # ship's target lock on `self.pCodeAI.HasFocus()`
+    # (AI/Preprocessors.py:1257): without focus it never calls
+    # pOurShip.SetTarget, so the AI ship's GetTarget() stays None and
+    # every torpedo dumbfires forward instead of homing. `inst.pCodeAI`
+    # is this PreprocessingAI node (ai.py SetPreprocessingMethod binds
+    # `args[0].pCodeAI = self`), so setting it here is exactly what
+    # HasFocus() reads. ArtificialIntelligence.HasFocus is the *only*
+    # AI-side consumer in the whole SDK (the other HasFocus hits are
+    # unrelated UI windows), so this is safe and well-scoped. Set
+    # before the preprocessor's Update runs below, since SelectTarget
+    # queries HasFocus mid-Update.
+    ai._has_focus = True
+
     # GotFocus dispatch — SDK preprocessors put side-effecting init in
     # GotFocus (sdk/.../AI/Preprocessors.py:2047 AlertLevel,
     # CloakShip, Defensive, …) rather than Update. The optimized
@@ -323,6 +338,21 @@ def _ensure_select_target_initialized(inst) -> None:
     App.g_kEventManager.AddBroadcastPythonMethodHandler(
         App.ET_WEAPON_HIT, inst.pEventHandler, "DamageEvent", pShip,
     )
+
+    # Initial ship-target push. NonFedAttack/FedAttack build SelectTarget
+    # with ForceCurrentTargetString(sInitialTarget), which presets
+    # sCurrentTarget *without* calling pShip.SetTarget — the on-change
+    # branch in SelectTarget.Update (Preprocessors.py:1255) then sees no
+    # change and skips it forever. In stock BC the C++-optimized CodeAISet
+    # performed this initial push (the Python CodeAISet is a dead `return`
+    # stub, lines 1136-1157). Without it the AI ship's GetTarget() stays
+    # None and every torpedo dumbfires forward (subsystems.py:1700). Mirror
+    # SelectTarget.Update's `pOurShip.SetTarget(self.sCurrentTarget)`
+    # (line 1260); mid-combat target *changes* are handled by the same
+    # call once HasFocus() is true.
+    if getattr(inst, "bSetShipTarget", 0) and getattr(inst, "sCurrentTarget", None):
+        pShip.SetTarget(inst.sCurrentTarget)
+
     inst._dauntless_codeaiset_done = True
 
 
