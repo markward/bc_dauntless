@@ -184,6 +184,7 @@ from engine.appc.properties import (
 from engine.appc.particles import (
     AnimTSParticleController_Create,
     EffectAction_Create,
+    ExplosionPlumeController_Create,
 )
 
 # ── App.CT_* class-type constants ─────────────────────────────────────────────

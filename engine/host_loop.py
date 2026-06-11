@@ -1093,6 +1093,13 @@ class _NullPicker:
 
 _NULL_PICKER = _NullPicker()
 
+# Install the real particle backend so Spec B plume state machine drives
+# actual SDK smoke controllers.  set_backend() only stores the reference and
+# sets _manager = None — no simulation side-effects at import time.
+from engine.appc import subsystem_emitters as _se_for_backend
+from engine.appc import particles as _particles_for_backend
+_se_for_backend.set_backend(_particles_for_backend.ParticleBackend())
+
 
 def _any_blocker_open(blockers) -> bool:
     """True if any of the supplied panel-like objects (each exposing
