@@ -375,8 +375,8 @@ class DamageableObject(PhysicsObjectClass):
         new_cond = max(0.0, cur - amt)
         subsystem.SetCondition(new_cond)
         if new_cond <= 0.0 and _is_critical(subsystem) \
-                and hasattr(self, "IsDying") and not self.IsDying() \
-                and not self.IsDead():
+                and hasattr(self, "IsDying") and hasattr(self, "IsDead") \
+                and not self.IsDying() and not self.IsDead():
             from engine.appc import ship_death
             ship_death.begin(self)
 

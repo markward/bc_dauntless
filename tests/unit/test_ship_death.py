@@ -174,3 +174,14 @@ def test_partial_damage_does_not_trigger_death():
     obj = FakeDamageable()
     obj.DamageSystem(obj.GetHull(), 40.0)  # hull still at 60
     assert obj.IsDying() == 0
+
+
+def test_killing_blow_on_dying_ship_is_no_op():
+    """A second killing blow through DamageSystem on an already-dying ship
+    must not re-trigger begin (the IsDying guard prevents double-register)."""
+    obj = FakeDamageable()
+    obj.DamageSystem(obj.GetHull(), 100.0)  # first kill -> dying
+    assert obj.IsDying() == 1
+    obj.DamageSystem(obj.GetHull(), 100.0)  # second blow -> still just dying
+    assert obj.IsDying() == 1
+    assert len(ship_death._active) == 1

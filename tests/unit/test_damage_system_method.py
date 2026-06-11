@@ -39,8 +39,9 @@ def test_damage_system_hull_zero_triggers_dying():
 
 
 def test_damage_system_non_hull_zero_does_not_trigger_dying():
-    """A subsystem at zero condition that isn't the hull does NOT
-    flip the ship to dying — that's a hull-only effect."""
+    """A non-critical subsystem at zero condition does NOT flip the ship to
+    dying — death is a critical-subsystem effect (hull + warp core). Sensors
+    are non-critical, so zeroing them leaves the ship alive."""
     from engine.appc.subsystems import SensorSubsystem
     ship, hull = _ship_with_hull(max_cond=1000.0)
     sensor = SensorSubsystem("Sensors")
