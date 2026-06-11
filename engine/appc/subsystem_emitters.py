@@ -131,10 +131,11 @@ class NullBackend:
     """Default production backend until Spec A's real controllers land.
     Every call is a safe no-op; the manager runs its full state machine but
     nothing renders."""
-    def create(self, factory, params, emit_pos_body, emit_dir, direction_mode):
+    def create(self, factory, params, emit_pos_body, emit_dir, direction_mode,
+               ship=None):
         return _NullHandle()
 
-    def fire_one_shot(self, factory, emit_pos_body, emit_dir):
+    def fire_one_shot(self, factory, emit_pos_body, emit_dir, ship=None):
         pass
 
 
@@ -274,7 +275,8 @@ class PlumeManager:
     def _spawn(self, key, ship, sub, tier, descriptor):
         emit_pos_body, emit_dir = _emit_frame(ship, sub, descriptor)
         handle = self.backend.create(descriptor.factory, descriptor.params,
-                                     emit_pos_body, emit_dir, descriptor.direction_mode)
+                                     emit_pos_body, emit_dir, descriptor.direction_mode,
+                                     ship=ship)
         self._active[key] = _ActiveEmitter(tier, handle)
 
     def _go_destroyed(self, key, ship, sub, first_sight):
@@ -302,7 +304,7 @@ class PlumeManager:
             self._active[key] = existing
         if puff is not None:
             p = sub.GetPosition()
-            self.backend.fire_one_shot(puff, (p.x, p.y, p.z), None)
+            self.backend.fire_one_shot(puff, (p.x, p.y, p.z), None, ship=ship)
         self._terminal.add(key)
 
     # -- fade + suppression bookkeeping --------------------------------------

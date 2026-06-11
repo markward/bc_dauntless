@@ -181,6 +181,13 @@ from engine.appc.properties import (
     CloakingSubsystemProperty_Create,
     ObjectEmitterProperty_Create, ObjectEmitterProperty_Cast,
 )
+from engine.appc.particles import (
+    AnimTSParticleController_Create,
+    EffectAction_Create,
+    ExplosionPlumeController_Create,
+    EffectController,
+    EffectController_GetEffectLevel,
+)
 
 # ── App.CT_* class-type constants ─────────────────────────────────────────────
 # In the original BC engine these are integer enum tags. In the SDK they reach

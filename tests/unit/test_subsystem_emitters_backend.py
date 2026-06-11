@@ -5,12 +5,14 @@ from engine.appc import subsystem_emitters as se
 class FakeHandle:
     """Models a sustained controller: alive until stop_emitting(), then it has
     `linger` ticks of in-flight particles before has_live_particles() goes False."""
-    def __init__(self, factory, params, emit_pos_body, emit_dir, direction_mode, linger=2):
+    def __init__(self, factory, params, emit_pos_body, emit_dir, direction_mode,
+                 ship=None, linger=2):
         self.factory = factory
         self.params = params
         self.emit_pos_body = emit_pos_body
         self.emit_dir = emit_dir
         self.direction_mode = direction_mode
+        self.ship = ship
         self.emitting = True
         self._linger = linger
 
@@ -30,12 +32,14 @@ class FakeControllerBackend:
         self.created = []     # all sustained handles ever made
         self.one_shots = []   # (factory, emit_pos_body, emit_dir) death puffs
 
-    def create(self, factory, params, emit_pos_body, emit_dir, direction_mode):
-        h = FakeHandle(factory, params, emit_pos_body, emit_dir, direction_mode)
+    def create(self, factory, params, emit_pos_body, emit_dir, direction_mode,
+               ship=None):
+        h = FakeHandle(factory, params, emit_pos_body, emit_dir, direction_mode,
+                       ship=ship)
         self.created.append(h)
         return h
 
-    def fire_one_shot(self, factory, emit_pos_body, emit_dir):
+    def fire_one_shot(self, factory, emit_pos_body, emit_dir, ship=None):
         self.one_shots.append((factory, emit_pos_body, emit_dir))
 
 

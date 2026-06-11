@@ -267,6 +267,8 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
                   hardpoint_weapon=torpedo)
 
     hit_vfx.update_ages(dt)
+    from engine.appc import particles
+    particles.advance(dt)
     from engine.appc import subsystem_emitters
     subsystem_emitters.pump(ships_list, _camera_world_pos(host), dt)
     from engine.appc import camera_shake
@@ -364,6 +366,8 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
         host.set_torpedoes(_build_torpedo_render_data())
     if host is not None and hasattr(host, "set_hit_vfx"):
         host.set_hit_vfx(_build_hit_vfx_render_data())
+    if host is not None and hasattr(host, "set_particle_emitters"):
+        host.set_particle_emitters(_build_particle_render_data(ship_instances))
     if host is not None and hasattr(host, "set_phaser_beams"):
         host.set_phaser_beams(_build_phaser_beam_render_data(
             ships_list, host=host, ship_instances=ship_instances))
@@ -441,6 +445,48 @@ def _build_hit_vfx_render_data():
             "spark_count": entry.get("spark_count", 0),
         })
     return out
+
+
+def _emit_from_instance_id(emit_from, ship_instances):
+    """Map an emit-from object to its renderer instance id.
+
+    Reuses the session.ship_instances dict passed through from
+    _advance_combat (the same map used by set_hit_vfx). Returns None
+    when the object isn't a known live ship or when ship_instances is
+    unavailable.
+    """
+    if ship_instances is None or emit_from is None:
+        return None
+    return ship_instances.get(emit_from)
+
+
+def _build_particle_render_data(ship_instances=None):
+    """Build one render descriptor per active particle controller.
+
+    `ship_instances` is the session's ship→instance-id map (same dict
+    used by set_hit_vfx). When None, emitters render unattached at their
+    world emit_pos (instance_id will be None in every descriptor).
+    """
+    from engine.appc import particles
+
+    def _resolve_emit_attach(emit_from):
+        """Map a controller's emit-from object to its renderer instance id +
+        world velocity. Returns None when the object isn't a live attachable
+        ship. Exception-safe: any failure yields None rather than aborting
+        the frame."""
+        try:
+            inst = _emit_from_instance_id(emit_from, ship_instances)
+            if inst is None:
+                return None
+            vel = (0.0, 0.0, 0.0)
+            if hasattr(emit_from, "GetVelocity"):
+                v = emit_from.GetVelocity()
+                vel = (v.x, v.y, v.z)
+            return {"instance_id": inst, "velocity": vel}
+        except Exception:
+            return None
+
+    return particles.snapshot_descriptors(resolve_attach=_resolve_emit_attach)
 
 
 # Tunable scale applied to SDK-declared beam radii (PhaserWidth /
@@ -1047,6 +1093,13 @@ class _NullPicker:
 
 _NULL_PICKER = _NullPicker()
 
+# Install the real particle backend so Spec B plume state machine drives
+# actual SDK smoke controllers.  set_backend() only stores the reference and
+# sets _manager = None — no simulation side-effects at import time.
+from engine.appc import subsystem_emitters as _se_for_backend
+from engine.appc import particles as _particles_for_backend
+_se_for_backend.set_backend(_particles_for_backend.ParticleBackend())
+
 
 def _any_blocker_open(blockers) -> bool:
     """True if any of the supplied panel-like objects (each exposing
@@ -1650,6 +1703,8 @@ class HostController:
         ship_lifecycle.reset()
         from engine.appc import subsystem_emitters
         subsystem_emitters.reset_manager()
+        from engine.appc import particles
+        particles.reset()
         reset_sdk_globals()
         if self.panel_registry is not None:
             self.panel_registry.invalidate_all()

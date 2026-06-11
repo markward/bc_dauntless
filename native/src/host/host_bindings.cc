@@ -27,6 +27,7 @@
 #include <renderer/lens_flare_pass.h>
 #include <renderer/torpedo_pass.h>
 #include <renderer/hit_vfx_pass.h>
+#include <renderer/particle_pass.h>
 #include <renderer/phaser_pass.h>
 #include <renderer/hologram_pass.h>
 #include <renderer/subsystem_pin_pass.h>
@@ -95,6 +96,8 @@ std::vector<renderer::TorpedoDescriptor>   g_torpedoes;
 std::unique_ptr<renderer::TorpedoPass>     g_torpedo_pass;
 std::vector<renderer::HitVfxDescriptor>    g_hit_vfx;
 std::unique_ptr<renderer::HitVfxPass>      g_hit_vfx_pass;
+std::vector<renderer::ParticleEmitterDescriptor> g_particle_emitters;
+std::unique_ptr<renderer::ParticlePass>          g_particle_pass;
 std::vector<renderer::PhaserBeamDescriptor> g_phaser_beams;
 std::unique_ptr<renderer::PhaserPass>      g_phaser_pass;
 renderer::HologramShip                       g_hologram_ship;
@@ -217,6 +220,7 @@ void init(int width, int height, const std::string& title) {
     g_lens_flare_pass = std::make_unique<renderer::LensFlarePass>();
     g_torpedo_pass = std::make_unique<renderer::TorpedoPass>();
     g_hit_vfx_pass = std::make_unique<renderer::HitVfxPass>();
+    g_particle_pass = std::make_unique<renderer::ParticlePass>();
     g_phaser_pass        = std::make_unique<renderer::PhaserPass>();
     g_hologram_pass      = std::make_unique<renderer::HologramPass>();
     g_subsystem_pin_pass  = std::make_unique<renderer::SubsystemPinPass>();
@@ -254,6 +258,8 @@ void shutdown() {
     g_torpedo_pass.reset();
     g_hit_vfx.clear();
     g_hit_vfx_pass.reset();
+    g_particle_emitters.clear();
+    g_particle_pass.reset();
     g_phaser_beams.clear();
     g_phaser_pass.reset();
     g_subsystem_pins.clear();
@@ -342,6 +348,7 @@ void frame() {
         if (g_torpedo_pass) g_torpedo_pass->render(g_torpedoes,    g_camera, *g_pipeline);
         if (g_phaser_pass)  g_phaser_pass ->render(g_phaser_beams, g_camera, *g_pipeline);
         if (g_hit_vfx_pass) g_hit_vfx_pass->render(g_hit_vfx, g_world, g_camera, *g_pipeline);
+        if (g_particle_pass) g_particle_pass->render(g_particle_emitters, g_world, g_camera, *g_pipeline);
     }
 
     if (g_hologram_pass && g_hologram_ship.active)
@@ -771,6 +778,56 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Set the active hit-VFX list, applied each frame(). Each dict has "
           "position + normal + severity + age, plus optional spark fields "
           "(instance_id, body_point, body_normal, weapon_kind, spark_count).");
+
+    m.def("set_particle_emitters",
+          [](const std::vector<py::dict>& descs) {
+              g_particle_emitters.clear();
+              g_particle_emitters.reserve(descs.size());
+              for (const auto& d : descs) {
+                  renderer::ParticleEmitterDescriptor e;
+                  if (d.contains("instance_id") && !d["instance_id"].is_none())
+                      e.instance_id = d["instance_id"].cast<scenegraph::InstanceId>();
+                  auto p = d["emit_pos"].cast<std::tuple<float,float,float>>();
+                  e.emit_pos = {std::get<0>(p), std::get<1>(p), std::get<2>(p)};
+                  auto dir = d["emit_dir"].cast<std::tuple<float,float,float>>();
+                  e.emit_dir = {std::get<0>(dir), std::get<1>(dir), std::get<2>(dir)};
+                  auto vel = d["emit_vel_world"].cast<std::tuple<float,float,float>>();
+                  e.emit_vel_world = {std::get<0>(vel), std::get<1>(vel), std::get<2>(vel)};
+                  e.inherit            = d["inherit"].cast<float>();
+                  e.emit_velocity      = d["emit_velocity"].cast<float>();
+                  e.angle_variance     = d["angle_variance"].cast<float>();
+                  e.emit_life          = d["emit_life"].cast<float>();
+                  e.emit_life_variance = d["emit_life_variance"].cast<float>();
+                  e.emit_frequency     = d["emit_frequency"].cast<float>();
+                  e.effect_age         = d["effect_age"].cast<float>();
+                  e.stop_age           = d["stop_age"].cast<float>();
+                  e.draw_old_to_new    = d["draw_old_to_new"].cast<int>();
+                  e.texture_path       = d["texture_path"].cast<std::string>();
+                  auto load_keys = [&](const char* key, int& count, renderer::ParticleKey* out, bool color) {
+                      count = 0;
+                      if (!d.contains(key)) return;
+                      for (const auto& k : d[key].cast<std::vector<py::tuple>>()) {
+                          if (count >= 8) break;
+                          renderer::ParticleKey pk;
+                          pk.t = k[0].cast<float>();
+                          if (color) { pk.r = k[1].cast<float>(); pk.g = k[2].cast<float>(); pk.b = k[3].cast<float>(); }
+                          else       { pk.v = k[1].cast<float>(); }
+                          out[count++] = pk;
+                      }
+                  };
+                  load_keys("color_keys", e.num_color_keys, e.color_keys, true);
+                  load_keys("alpha_keys", e.num_alpha_keys, e.alpha_keys, false);
+                  load_keys("size_keys",  e.num_size_keys,  e.size_keys,  false);
+                  // A2 explosion extensions — default to A1 behaviour when absent.
+                  e.blend_mode            = d.contains("blend_mode")            ? d["blend_mode"].cast<int>()            : 0;
+                  e.emit_radius           = d.contains("emit_radius")           ? d["emit_radius"].cast<float>()           : 0.0f;
+                  e.random_velocity_cone  = d.contains("random_velocity_cone")  ? d["random_velocity_cone"].cast<float>()  : 0.0f;
+                  e.random_velocity_speed = d.contains("random_velocity_speed") ? d["random_velocity_speed"].cast<float>() : 0.0f;
+                  g_particle_emitters.push_back(std::move(e));
+              }
+          },
+          py::arg("emitters"),
+          "Set the active particle-emitter list, applied each frame().");
 
     m.def("set_phaser_beams",
           [](const std::vector<py::dict>& descs) {

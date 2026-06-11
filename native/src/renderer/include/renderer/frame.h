@@ -106,6 +106,41 @@ struct HitVfxDescriptor {
     int       spark_count = 0;
 };
 
+/// One keyframe. Colour keys use (r,g,b); alpha/size keys use `v` only.
+struct ParticleKey {
+    float t = 0.0f;
+    float v = 0.0f;            // alpha or size
+    float r = 0.0f, g = 0.0f, b = 0.0f;  // colour keys only
+};
+
+/// A single analytic particle emitter. The renderer derives every live
+/// particle's state from these fields + the per-particle hash; there is no
+/// per-particle state anywhere. See particle_math.h for the model.
+struct ParticleEmitterDescriptor {
+    scenegraph::InstanceId instance_id{};   // {0,0} sentinel => unattached
+    glm::vec3 emit_pos{0.0f};               // body-frame if attached, world if not
+    glm::vec3 emit_dir{0.0f, -1.0f, 0.0f};  // body-frame if attached, world if not
+    glm::vec3 emit_vel_world{0.0f};         // ship world velocity (already world)
+    float inherit            = 1.0f;        // SetInheritsVelocity fraction [0,1]
+    float emit_velocity      = 1.0f;
+    float angle_variance     = 0.0f;        // degrees
+    float emit_life          = 1.0f;
+    float emit_life_variance = 0.0f;
+    float emit_frequency     = 0.05f;
+    float effect_age         = 0.0f;
+    float stop_age           = 1.0e30f;     // emission cutoff (EffectLifeTime / explicit stop)
+    int   draw_old_to_new    = 1;
+    int   num_color_keys = 0; ParticleKey color_keys[8];
+    int   num_alpha_keys = 0; ParticleKey alpha_keys[8];
+    int   num_size_keys  = 0; ParticleKey size_keys[8];
+    std::string texture_path;               // CreateTarget path; pass caches by string
+    // A2 explosion extensions (all default to A1 behaviour when zero):
+    int   blend_mode             = 0;       // 0 = alpha (A1 default), 1 = additive
+    float emit_radius            = 0.0f;    // particles born within this sphere radius
+    float random_velocity_cone   = 0.0f;    // degrees; 180 = full sphere
+    float random_velocity_speed  = 0.0f;    // 0 = no random velocity (A1)
+};
+
 /// Phaser-beam render descriptor.  One entry per concentric beam layer
 /// emitted by an actively-firing PhaserBank: rendered as an additive
 /// N-sided prism extruded from emitter_world to target_world with
