@@ -185,6 +185,8 @@ from engine.appc.particles import (
     AnimTSParticleController_Create,
     EffectAction_Create,
     ExplosionPlumeController_Create,
+    EffectController,
+    EffectController_GetEffectLevel,
 )
 
 # ── App.CT_* class-type constants ─────────────────────────────────────────────

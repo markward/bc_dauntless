@@ -83,18 +83,40 @@ class AnimTSParticleController:
         return self._effective_stop_age() + max_life > self._effect_age
 
 
+# ---- EffectController ------------------------------------------------------
+
+class EffectController:
+    """Mirror of App.EffectController: quality-level enum + getter."""
+    LOW    = 0
+    MEDIUM = 1
+    HIGH   = 2
+
+
+def EffectController_GetEffectLevel():
+    """Always return HIGH so the SDK takes the high-detail particle path."""
+    return EffectController.HIGH
+
+
 # ---- active registry -------------------------------------------------------
 
-_active = []   # list[AnimTSParticleController]
+_active    = []   # list[AnimTSParticleController]
+_tickables = []   # list[objects with .tick(dt) / .is_finished()]
 
 
 def reset():
-    """Drop all active controllers (mission swap / load)."""
+    """Drop all active controllers and tickables (mission swap / load)."""
     _active.clear()
+    _tickables.clear()
 
 
 def active_count():
     return len(_active)
+
+
+def register_tickable(obj):
+    """Register an object with .tick(dt) / .is_finished() for per-frame advance."""
+    if obj not in _tickables:
+        _tickables.append(obj)
 
 
 def register(controller):
@@ -111,7 +133,8 @@ def deregister(controller):
 
 def advance(dt):
     """Age every active controller; prune those past EffectLifeTime whose
-    particles have all expired."""
+    particles have all expired.  Also ticks registered tickables (sequences)
+    and prunes finished ones."""
     dt = float(dt)
     survivors = []
     for c in _active:
@@ -119,6 +142,12 @@ def advance(dt):
         if c._effect_age <= c._effect_life_time or c.has_live_particles():
             survivors.append(c)
     _active[:] = survivors
+    live = []
+    for s in _tickables:
+        s.tick(dt)
+        if not s.is_finished():
+            live.append(s)
+    _tickables[:] = live
 
 
 def _vec3(p, default=(0.0, 0.0, 0.0)):

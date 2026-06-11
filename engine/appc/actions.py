@@ -148,6 +148,26 @@ class TGSequence(TGAction):
         for action in list(self._actions):
             action.Play()
 
+    def Start(self) -> None:
+        """Particle-effect entry point: call Start() on every child action.
+        Children that are EffectActions use Start(); plain TGActions fall back
+        to Play().  Delay args in AddAction are ignored in Phase 1 (all fire
+        immediately), matching the synchronous execution model documented at
+        the top of this file."""
+        for action in list(self._actions):
+            if hasattr(action, "Start") and not isinstance(action, TGSequence):
+                action.Start()
+            else:
+                action.Play()
+
+    def Stop(self) -> None:
+        """Stop all child actions (call Stop() where available, else Abort())."""
+        for action in list(self._actions):
+            if hasattr(action, "Stop") and not isinstance(action, TGSequence):
+                action.Stop()
+            else:
+                action.Abort()
+
 
 def TGSequence_Create() -> TGSequence:
     return TGSequence()
