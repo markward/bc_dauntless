@@ -52,6 +52,40 @@ def test_proximity_breaks_ties_between_ships():
     assert m.active_count() == 2
 
 
+def test_priority_bias_breaks_tier_ties():
+    # Two subsystems on one ship, same severity tier (TIER_DAMAGED), different
+    # priority_bias.  With n_per_ship=1 only the higher-bias descriptor is admitted.
+    se.reset_registry()
+    # Register two kinds at the same tier with distinct biases and a tag param
+    # that lets us identify which descriptor was chosen.
+    desc_high = se.PlumeDescriptor(
+        factory="CreateSmokeHigh",
+        params={"tag": "high"},
+        direction_mode=se.DirectionMode.FIXED_BODY_VECTOR,
+        priority_bias=10.0,
+    )
+    desc_low = se.PlumeDescriptor(
+        factory="CreateSmokeHigh",
+        params={"tag": "low"},
+        direction_mode=se.DirectionMode.FIXED_BODY_VECTOR,
+        priority_bias=1.0,
+    )
+    se.register_kind_alias("HighBiasSubsystem", "bias_kind_high")
+    se.register_kind_alias("LowBiasSubsystem",  "bias_kind_low")
+    se.register("bias_kind_high", se.TIER_DAMAGED, desc_high)
+    se.register("bias_kind_low",  se.TIER_DAMAGED, desc_low)
+
+    sub_high = FakeSub("HighBiasSubsystem", name="h", pos=(1.0, 0.0, 0.0), state="damaged")
+    sub_low  = FakeSub("LowBiasSubsystem",  name="l", pos=(2.0, 0.0, 0.0), state="damaged")
+
+    b = FakeControllerBackend()
+    m = se.PlumeManager(b, n_per_ship=1, r_cull=None)
+    m.update([FakeShip(subs=[sub_high, sub_low])], None, 0.1)
+
+    assert m.active_count() == 1
+    assert b.created[0].params["tag"] == "high"  # high bias wins the single slot
+
+
 def test_suppressed_active_fades_when_budget_shrinks():
     se.reset_registry()
     b = FakeControllerBackend()
