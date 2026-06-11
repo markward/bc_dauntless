@@ -1,6 +1,7 @@
 // native/src/renderer/particle_pass.cc
 #include <renderer/particle_pass.h>
 
+#include <renderer/asset_path.h>
 #include <renderer/particle_math.h>
 #include <renderer/pipeline.h>
 #include <scenegraph/world.h>
@@ -92,9 +93,15 @@ assets::Texture* ParticlePass::texture_for(const std::string& path) {
     }
 
     // Not yet cached — load it now.
-    std::ifstream in(path, std::ios::binary);
+    // SDK paths (from Effects.py CreateTarget / CreateSmokeHigh / etc.) are
+    // relative to the BC game install root, e.g. "data/Textures/Effects/ExplosionB.tga".
+    // The renderer's CWD is the repo root where assets live under "game/", so
+    // prefix accordingly. Mirrors hit_vfx_pass.cc's hardcoded "game/" convention.
+    const std::string resolved = resolve_asset_path(path);
+    std::ifstream in(resolved, std::ios::binary);
     if (!in) {
-        std::fprintf(stderr, "[particle_pass] failed to open '%s'\n", path.c_str());
+        std::fprintf(stderr, "[particle_pass] failed to open '%s' (resolved '%s')\n",
+                     path.c_str(), resolved.c_str());
         textures_[path] = std::make_unique<assets::Texture>();
         return nullptr;
     }

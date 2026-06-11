@@ -4,9 +4,12 @@
 // without producing a GL error, both with a real emitter descriptor and with
 // an empty emitter list. Tests are skipped when no offscreen GL context is
 // available (headless CI) or when the required BC asset is absent.
+// Also verifies that SDK-style (prefix-less) texture paths are resolved
+// correctly via resolve_asset_path (the root-cause fix for invisible plumes).
 
 #include <gtest/gtest.h>
 
+#include <renderer/asset_path.h>
 #include <renderer/particle_pass.h>
 #include <renderer/pipeline.h>
 #include <renderer/window.h>
@@ -17,6 +20,7 @@
 #include <glad/glad.h>
 
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <vector>
 
@@ -194,6 +198,72 @@ TEST_F(ParticlePassTest, EmptyListProducesNoGlError) {
 
     while (glGetError() != GL_NO_ERROR) {}
     pass.render({}, world, camera, *pipeline);
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+// ── Test 4: SDK prefix-less path resolves to an openable file and renders ────
+//
+// Root-cause regression test: before the fix, texture_for() opened the path
+// verbatim ("data/Textures/Effects/ExplosionB.tga") from the repo-root CWD
+// where no "data/" dir exists → open failed → emitter skipped → nothing rendered.
+// After the fix, resolve_asset_path() prepends "game/" so the real asset is found.
+//
+// Part (a): resolve_asset_path() maps the SDK path to "game/data/..." AND
+//           that path is openable on disk (i.e. the real asset exists).
+// Part (b): rendering an emitter with the prefix-less SDK path produces no GL
+//           error (requires an offscreen GL context; skipped when unavailable
+//           or when BC assets are absent).
+TEST_F(ParticlePassTest, SdkTexturePathLoadsRealAsset) {
+    namespace fs = std::filesystem;
+
+    // Part (a): file-system check — unconditional, no GL context needed.
+    const std::string sdk_path = "data/Textures/Effects/ExplosionB.tga";
+    const std::string resolved = renderer::resolve_asset_path(sdk_path);
+    EXPECT_EQ(resolved, "game/data/Textures/Effects/ExplosionB.tga");
+
+    // Verify the resolved path is openable from the project root.
+    // (Tests run with CWD = build/, so derive the absolute path via __FILE__.)
+    const fs::path abs_resolved = project_root() / resolved;
+    {
+        std::ifstream probe(abs_resolved, std::ios::binary);
+        if (!probe) {
+            GTEST_SKIP() << "BC asset absent at resolved path: " << abs_resolved;
+        }
+    }
+
+    // Part (b): GL render with the PREFIX-LESS SDK path — pass must NOT skip it.
+    renderer::ParticlePass pass;
+    scenegraph::World world;
+    scenegraph::Camera camera;
+    camera.eye    = {0.0f, 0.0f, 100.0f};
+    camera.target = {0.0f, 0.0f,   0.0f};
+    camera.up     = {0.0f, 1.0f,   0.0f};
+    camera.aspect = 1.0f;
+
+    while (glGetError() != GL_NO_ERROR) {}
+
+    renderer::ParticleEmitterDescriptor e;
+    e.texture_path       = sdk_path;   // deliberately prefix-less, as Effects.py supplies
+    e.emit_pos           = {0.0f, 0.0f, 0.0f};
+    e.emit_dir           = {0.0f, 1.0f, 0.0f};
+    e.emit_vel_world     = {0.0f, 0.0f, 0.0f};
+    e.inherit            = 0.0f;
+    e.emit_velocity      = 1.0f;
+    e.angle_variance     = 10.0f;
+    e.emit_life          = 1.0f;
+    e.emit_life_variance = 0.0f;
+    e.emit_frequency     = 0.1f;
+    e.effect_age         = 0.1f;
+    e.stop_age           = 1.0e30f;
+    e.draw_old_to_new    = 1;
+    e.num_size_keys = 1;
+    e.size_keys[0].t = 0.0f;
+    e.size_keys[0].v = 1.0f;
+    e.num_alpha_keys = 1;
+    e.alpha_keys[0].t = 0.0f;
+    e.alpha_keys[0].v = 1.0f;
+
+    pass.render({e}, world, camera, *pipeline);
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 
