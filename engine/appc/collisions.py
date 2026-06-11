@@ -9,7 +9,6 @@ collidable.
 
 Spec: docs/superpowers/specs/2026-06-11-collision-response-design.md
 """
-import math
 from dataclasses import dataclass
 
 from engine.appc.math import TGPoint3
@@ -70,11 +69,16 @@ def _resolve_body(obj) -> "_Body":
         v = TGPoint3(0.0, 0.0, 0.0)
     cv = _overlay_vec(obj)
     if cv is not None:
-        v = TGPoint3(v.x + cv.x, v.y + cv.y, v.z + cv.z)
+        v = v + cv
     return _Body(obj, center, radius, inv_mass, movable, v)
 
 
 def _ke_damage(inv_sum: float, v_rel: float) -> float:
-    """KE-of-closing-speed damage: COEFF * 0.5 * mu * v_rel**2, mu = 1/inv_sum."""
+    """KE-of-closing-speed damage: COEFF * 0.5 * mu * v_rel**2, mu = 1/inv_sum.
+
+    Precondition: inv_sum > 0 (at least one body must be movable). The
+    pair-response caller gates two-immovable pairs out before reaching here.
+    """
+    assert inv_sum > 0.0, "inv_sum must be > 0; two immovable bodies cannot collide"
     mu = 1.0 / inv_sum
     return COLLISION_DAMAGE_COEFF * 0.5 * mu * v_rel * v_rel

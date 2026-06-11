@@ -49,7 +49,26 @@ def test_resolve_body_planet_is_immovable():
     b = _resolve_body(p)
     assert b.is_movable is False
     assert b.inv_mass == 0.0
-    assert b.velocity.x == 0.0 and b.velocity.y == 0.0 and b.velocity.z == 0.0
+    assert b.velocity.x == 0.0
+    assert b.velocity.y == 0.0
+    assert b.velocity.z == 0.0
+
+
+def test_overlay_vec_returns_none_for_fresh_ship():
+    # TGObject.__getattr__ returns a truthy stub for unknown attributes;
+    # _overlay_vec must bypass that and return None for a never-collided ship.
+    from engine.appc.collisions import _overlay_vec
+    assert _overlay_vec(ShipClass()) is None
+
+
+def test_ensure_overlay_creates_zero_vector_and_reuses_it():
+    from engine.appc.collisions import _ensure_overlay
+    s = ShipClass()
+    cv = _ensure_overlay(s)
+    assert cv.x == 0.0
+    assert cv.y == 0.0
+    assert cv.z == 0.0
+    assert _ensure_overlay(s) is cv  # same object on second call, not a fresh one
 
 
 def test_resolve_body_includes_collision_overlay_in_velocity():
