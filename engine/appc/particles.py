@@ -209,6 +209,9 @@ class EffectAction:
     def Start(self):
         register(self._controller)
 
+    def Play(self):
+        self.Start()
+
     def Stop(self):
         deregister(self._controller)
 
