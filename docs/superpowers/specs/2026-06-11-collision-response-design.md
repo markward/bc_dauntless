@@ -234,20 +234,29 @@ torpedo/phaser damage tick in the same per-frame block.
 | Constant | Default | Meaning |
 |---|---|---|
 | `COLLISION_RESTITUTION` | `0.2` | Bounciness `e`; mostly inelastic crunch. |
-| `COLLISION_DAMAGE_COEFF` | `1.0` (start) | KE → hull-damage-points scale; calibrated below. |
+| `COLLISION_DAMAGE_COEFF` | `5.0` | KE → hull-damage-points scale; calibrated below. |
 | `COLLISION_DECAY_TAU` | `0.5` s | Collision-velocity overlay decay time constant. |
 | `COLLISION_FALLBACK_MASS` | `1.0e4` | Nominal mass for a ship reporting `GetMass() == 0` (test ships built without `SetupProperties`). |
 
 All live in `collisions.py` (and the one integrator constant referenced from
 `ship_motion.py`); no magic numbers scattered across call sites.
 
-**Calibrating `COLLISION_DAMAGE_COEFF`:** the very first implementation step
-logs `KE = ½·μ·v_rel²` for one representative full-impulse ram (e.g. Galaxy vs
-Galaxy at cruising impulse, using real `GetMass()` and ground-truth impulse
-speed in GU/s) and one slow dock-bump. Set the coefficient so the ram lands in
-the "catastrophic" band (multi-hundred hull points, near-fatal for a typical
-hull strength) and the dock-bump is single-digit. This is a one-number tuning
-pass, not open-ended.
+**Calibrating `COLLISION_DAMAGE_COEFF` (done):** derived from Galaxy
+ground-truth — mass 120, hull `MaxCondition` 15000, impulse `MaxSpeed`
+6.3 GU/s (`sdk/.../ships/Hardpoints/Galaxy.py`). With `KE = ½·μ·v_rel²` and
+`COEFF = 5.0`:
+
+| Scenario | μ | v_rel (GU/s) | KE | damage | % of 15000 hull |
+|---|---|---|---|---|---|
+| Head-on, both full impulse | 60 | 12.6 | 4763 | 23814 | >100% — instant kill |
+| Full-impulse ram into planet | 120 | 6.3 | 2381 | 11905 | 79% — near-fatal |
+| Ram a stationary ship | 60 | 6.3 | 1190 | 5953 | 40% — heavy |
+| Slow dock bump | 60 | 0.1 | 0.3 | 1.5 | trivial |
+
+This matches the design intent: high-speed planet impact near-fatal, full
+head-on ram devastating, gentle contact negligible. The constant remains a
+single in-engine "feel" knob — adjust after the manual fly-test if the band
+needs shifting.
 
 ## 10. Testing (headless, no renderer)
 

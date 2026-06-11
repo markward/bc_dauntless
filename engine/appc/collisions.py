@@ -16,7 +16,11 @@ from engine.appc.math import TGPoint3
 
 # -- Tuning constants (single home; see spec §9) --
 COLLISION_RESTITUTION = 0.2      # bounciness e; mostly inelastic crunch
-COLLISION_DAMAGE_COEFF = 1.0     # KE -> hull-damage-points (calibrated in Task 7)
+COLLISION_DAMAGE_COEFF = 5.0     # KE -> hull-damage-points; calibrated against
+                                 # Galaxy (mass 120, hull 15000, impulse 6.3 GU/s):
+                                 # full-impulse planet ram ~79% hull (near-fatal),
+                                 # head-on both-full ram >100% (kill), dock-bump
+                                 # trivial. Tune in-engine by feel. See spec §9.
 COLLISION_DECAY_TAU = 0.5        # collision-velocity overlay decay time constant (s)
 COLLISION_FALLBACK_MASS = 1.0e4  # nominal mass for a ship reporting GetMass()==0
 
