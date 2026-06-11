@@ -282,8 +282,9 @@ class PlumeManager:
             return
         existing = self._active.pop(key, None)
         if first_sight and existing is None:
-            # Loaded already-destroyed (or it died before we ever rendered a
-            # plume): no live transition to punctuate -> no puff (spec §4.6).
+            # Never observed alive in this session: either loaded already-
+            # destroyed (spec §4.6), or never admitted to the budget before
+            # dying. No live transition to punctuate -> no puff.
             self._terminal.add(key)
             return
         # death_puff: use the most-severe registered puff for this kind
@@ -315,9 +316,9 @@ class PlumeManager:
     def _suppress_unseen(self, admitted):
         """Any active emitter whose subsystem is no longer a live candidate
         (repaired, or budget-suppressed) stops emitting and fades."""
-        seen = {row[0] for row in admitted}
+        admitted_keys = {row[0] for row in admitted}
         for key, em in self._active.items():
-            if key in seen or em.fading:
+            if key in admitted_keys or em.fading:
                 continue
             em.handle.stop_emitting()
             em.fading = True
