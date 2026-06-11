@@ -35,6 +35,11 @@ def tick_ai(ai, game_time: float) -> int:
     """Tick one AI subtree at the given game time. Returns the resulting status."""
     if ai is None:
         return US_DONE
+    # Inert-coast gate: a dying/dead ship issues no new orders.
+    from engine.appc import ship_death
+    ship = ai.GetShip() if hasattr(ai, "GetShip") else None
+    if ship is not None and ship_death._out_of_action(ship):
+        return US_DONE
     if isinstance(ai, BuilderAI):
         return _tick_builder(ai, game_time)
     if isinstance(ai, PreprocessingAI):

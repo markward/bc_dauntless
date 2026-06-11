@@ -230,3 +230,31 @@ def test_mission_teardown_calls_ship_death_reset():
     import inspect
     src = inspect.getsource(host_loop.HostController._drain_pending_swap)
     assert "ship_death.reset()" in src
+
+
+# --- Task 5: AI gate --------------------------------------------------------
+def test_dying_ship_ai_tick_returns_done_without_running():
+    from engine.appc import ai_driver
+    from engine.appc.ai import PlainAI, ArtificialIntelligence
+
+    class SpyAI(PlainAI):
+        def __init__(self, ship):
+            super().__init__()
+            self._ship = ship
+
+    ship = FakeShip(name="AIShip")
+    ship.SetDying(True)
+    ai = SpyAI(ship)
+
+    status = ai_driver.tick_ai(ai, 0.0)
+    assert status == ArtificialIntelligence.US_DONE
+
+
+def test_alive_ship_ai_tick_not_gated():
+    from engine.appc import ai_driver
+    from engine.appc.ai import PlainAI
+    ship = FakeShip(name="LiveShip")  # not dying
+    ai = PlainAI()
+    ai._ship = ship
+    # Should not raise and should not be force-returned by the death gate.
+    ai_driver.tick_ai(ai, 0.0)
