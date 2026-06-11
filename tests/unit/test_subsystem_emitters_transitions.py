@@ -76,7 +76,7 @@ def test_destroyed_does_not_reemit_next_tick():
     m.update([ship], None, 0.1)
     m.update([ship], None, 0.1)
     assert b.created == []                    # never a sustained plume
-    assert len(b.one_shots) == 1             # puff fires exactly once (on first sight)
+    assert b.one_shots == []                 # first-sight-destroyed fires no puff (load contract §4.6)
 
 
 def test_faded_handle_dropped_when_particles_die():

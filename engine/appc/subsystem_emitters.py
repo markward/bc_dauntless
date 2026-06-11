@@ -188,6 +188,7 @@ class PlumeManager:
         self.r_cull = r_cull          # None disables distance culling
         self._active = {}             # key -> _ActiveEmitter
         self._terminal = set()        # keys that reached DESTROYED (never re-emit)
+        self._seen = set()            # keys observed at least once this manager's lifetime
 
     def active_count(self):
         return len(self._active)
@@ -253,8 +254,10 @@ class PlumeManager:
     # -- per-subsystem reconcile (spec §4.2 transition matrix) ---------------
 
     def _reconcile(self, key, ship, sub, tier, descriptor):
+        first_sight = key not in self._seen
+        self._seen.add(key)
         if tier == TIER_DESTROYED:
-            self._go_destroyed(key, ship, sub)
+            self._go_destroyed(key, ship, sub, first_sight)
             return
         if key in self._terminal:
             return  # destroyed earlier; never re-emit
@@ -274,10 +277,15 @@ class PlumeManager:
                                      emit_pos_body, emit_dir, descriptor.direction_mode)
         self._active[key] = _ActiveEmitter(tier, handle)
 
-    def _go_destroyed(self, key, ship, sub):
+    def _go_destroyed(self, key, ship, sub, first_sight):
         if key in self._terminal:
-            return  # puff already fired
+            return
         existing = self._active.pop(key, None)
+        if first_sight and existing is None:
+            # Loaded already-destroyed (or it died before we ever rendered a
+            # plume): no live transition to punctuate -> no puff (spec §4.6).
+            self._terminal.add(key)
+            return
         # death_puff: use the most-severe registered puff for this kind
         # (DISABLED before DAMAGED). Both share one puff in the builtin table.
         kind = subsystem_kind(sub)
@@ -288,9 +296,9 @@ class PlumeManager:
                 puff = d.death_puff
                 break
         if existing is not None:
-            existing.handle.stop_emitting()  # fade the sustained plume
+            existing.handle.stop_emitting()
             existing.fading = True
-            self._active[key] = existing     # keep lingering until particles die
+            self._active[key] = existing
         if puff is not None:
             p = sub.GetPosition()
             self.backend.fire_one_shot(puff, (p.x, p.y, p.z), None)
