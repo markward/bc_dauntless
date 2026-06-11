@@ -552,3 +552,31 @@ def test_two_delayed_steps_fire_in_time_order():
     assert log == ["t0", "t05"]
     _advance_game_time(1.0)               # total ~1.6s
     assert log == ["t0", "t05", "t15"]
+
+
+# ── TGConditionAction deferred completion ────────────────────────────────────
+
+def test_condition_action_play_stays_pending_when_unsatisfied():
+    from engine.appc.ai import TGCondition
+    ca = App.TGConditionAction_Create()
+    cond = TGCondition()
+    ca.AddCondition(cond)
+    ca.Play()
+    assert ca.GetState() == App.TGConditionAction.TGCA_WAIT
+    assert ca.IsPlaying()                 # still pending, not completed
+
+
+def test_sequence_step_waits_for_condition_flip():
+    from engine.appc.ai import TGCondition
+    log = []
+    s = App.TGSequence_Create()
+    cond = TGCondition()
+    gate = App.TGConditionAction_Create()
+    gate.AddCondition(cond)
+    s.AddAction(gate)
+    s.AddAction(_RecordingAction(log, "after"), gate)
+    s.Play()
+    assert log == []                      # gate pending -> dependent waits
+    cond.SetActive()
+    cond.SetStatus(1)                     # condition flips
+    assert log == ["after"]              # dependent fires on completion

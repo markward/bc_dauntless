@@ -570,6 +570,17 @@ class TGConditionAction(TGAction):
                 self._state = self.TGCA_COMPLETED
                 return
 
+    def Play(self) -> None:
+        # Unlike the base TGAction, a condition action does NOT auto-complete:
+        # it completes only when a condition is already satisfied at Play time,
+        # otherwise it stays pending until ConditionChanged() flips it on a
+        # later frame. This is what lets a sequence step gate on it across
+        # frames (the base class's unconditional Completed() masked the gate).
+        self._playing = True
+        self._do_play()
+        if self._state == self.TGCA_COMPLETED:
+            self.Completed()
+
 
 def TGConditionAction_Create() -> TGConditionAction:
     return TGConditionAction()
