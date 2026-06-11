@@ -26,6 +26,10 @@ class AnimTSParticleController:
         self._attach_node = None   # AttachEffect target
         self._emit_pos = None      # body-frame (attached) or world (SetEmitPositionAndDirection)
         self._emit_dir = None
+        self._emit_radius = 0.0
+        self._rv_cone = 0.0
+        self._rv_speed = 0.0
+        self._blend_mode = 0   # 0 = alpha (A1), 1 = additive
         # runtime, owned by the registry
         self._effect_age = 0.0
         self._stop_age = None      # None => still emitting
@@ -48,6 +52,15 @@ class AnimTSParticleController:
     def SetEmitPositionAndDirection(self, pos, d):
         self._emit_pos = pos
         self._emit_dir = d
+
+    def SetEmitRadius(self, r):            self._emit_radius = r
+    def SetUpRandomVelocity(self, cone, speed):
+        self._rv_cone = cone
+        self._rv_speed = speed
+    def SetTargetAlphaBlendModes(self, src, dst):
+        # The SDK calls this only to request the additive ONE/INV_SRC_ALPHA path
+        # (SetTargetAlphaBlendModes(0, 7)). Any call => additive blend.
+        self._blend_mode = 1
 
     def __getattr__(self, name):
         # Tolerate any other SDK Set*/Add* call as a harmless no-op so future
@@ -141,6 +154,10 @@ def _descriptor_for(c, resolve_attach):
         "effect_age":        float(c._effect_age),
         "stop_age":          float(c._effective_stop_age()),
         "draw_old_to_new":   int(c._draw_old_to_new),
+        "blend_mode":            int(c._blend_mode),
+        "emit_radius":           float(c._emit_radius),
+        "random_velocity_cone":  float(c._rv_cone),
+        "random_velocity_speed": float(c._rv_speed),
         "color_keys":        list(c._color_keys),
         "alpha_keys":        list(c._alpha_keys),
         "size_keys":         list(c._size_keys),
