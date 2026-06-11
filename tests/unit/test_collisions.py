@@ -153,3 +153,46 @@ def test_respond_pair_invokes_apply_hit_for_both_ships(monkeypatch):
     assert len(calls) == 2
     assert {id(a), id(b)} == {id(calls[0][0]), id(calls[1][0])}
     assert all(dmg > 0.0 for _, dmg in calls)
+
+
+def test_apply_overlay_moves_and_decays():
+    from engine.appc.collisions import _apply_overlay_all, COLLISION_DECAY_TAU
+    import math
+    s = _ship(0.0, 1000.0, 0.0)
+    s._collision_velocity = TGPoint3(6.0, 0.0, 0.0)
+    dt = 1.0 / 60.0
+    _apply_overlay_all([s], dt)
+    assert s.GetTranslate().x == pytest.approx(6.0 * dt)
+    assert s._collision_velocity.x == pytest.approx(6.0 * math.exp(-dt / COLLISION_DECAY_TAU))
+
+
+def test_apply_overlay_skips_objects_without_overlay():
+    from engine.appc.collisions import _apply_overlay_all
+    s = _ship(3.0, 1000.0, 0.0)
+    _apply_overlay_all([s], 1.0 / 60.0)
+    assert s.GetTranslate().x == pytest.approx(3.0)        # unmoved
+    assert s.__dict__.get("_collision_velocity") is None    # not created
+
+
+def test_resolve_collisions_returns_one_hit_per_overlapping_pair():
+    from engine.appc.collisions import resolve_collisions
+    a = _ship(0.0, 1000.0, +10.0)
+    b = _ship(1.5, 1000.0, -10.0)
+    c = _ship(50.0, 1000.0, 0.0)   # isolated
+    hits = resolve_collisions([a, b, c], 1.0 / 60.0)
+    assert len(hits) == 1
+
+
+def test_overlap_persistence_applies_damage_once(monkeypatch):
+    import engine.appc.combat as combat
+    calls = []
+    monkeypatch.setattr(combat, "apply_hit", lambda *a, **k: calls.append(1))
+    from engine.appc.collisions import resolve_collisions
+    a = _ship(0.0, 1000.0, +10.0)
+    b = _ship(1.5, 1000.0, -10.0)
+    resolve_collisions([a, b], 1.0 / 60.0)   # approaching: 2 hits
+    n_after_first = len(calls)
+    # Still overlapping but now receding (overlays reversed v_rel): no new damage.
+    resolve_collisions([a, b], 1.0 / 60.0)
+    assert n_after_first == 2
+    assert len(calls) == 2

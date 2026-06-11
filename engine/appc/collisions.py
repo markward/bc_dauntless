@@ -161,3 +161,39 @@ def _respond_pair(a: "_Body", b: "_Body", dt: float, host, ship_instances):
                   host=host, ship_instances=ship_instances, weapon_type=None)
 
     return (a.obj, b.obj, contact, v_rel)
+
+
+def _apply_overlay_all(objects, dt: float) -> None:
+    """Consume each object's collision overlay: displace by overlay*dt and
+    decay the overlay toward zero. Objects that never collided have no
+    _collision_velocity attribute and are skipped (byte-identical).
+
+    Uses obj.__dict__.get rather than getattr(..., None): TGObject.__getattr__
+    returns a truthy stub for unknown attributes, so getattr would never see
+    the None sentinel (same gotcha _overlay_vec documents)."""
+    decay = math.exp(-dt / COLLISION_DECAY_TAU)
+    for o in objects:
+        cv = o.__dict__.get("_collision_velocity")
+        if cv is None or not (cv.x or cv.y or cv.z):
+            continue
+        p = o.GetTranslate()
+        o.SetTranslateXYZ(p.x + cv.x * dt, p.y + cv.y * dt, p.z + cv.z * dt)
+        cv.x *= decay
+        cv.y *= decay
+        cv.z *= decay
+
+
+def resolve_collisions(objects, dt: float, host=None, ship_instances=None):
+    """Snapshot every object into a _Body and resolve all unordered pairs.
+    Returns the list of collision tuples from _respond_pair (for tests /
+    debugging). De-penetration mutates positions in place; with n small and
+    overlaps rare, later pairs reading slightly stale centres self-corrects
+    next frame (spec §4)."""
+    bodies = [_resolve_body(o) for o in objects]
+    hits = []
+    for i in range(len(bodies)):
+        for k in range(i + 1, len(bodies)):
+            hit = _respond_pair(bodies[i], bodies[k], dt, host, ship_instances)
+            if hit is not None:
+                hits.append(hit)
+    return hits
