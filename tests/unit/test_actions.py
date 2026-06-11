@@ -608,3 +608,42 @@ def test_stop_cancels_pending_delay_timers():
     assert s._pending_timers == []
     _advance_game_time(1.0)
     assert log == []
+
+
+# ── TGSoundAction / TGCreditAction inline completion ─────────────────────────
+
+def test_sound_action_completes_inline_so_chain_advances():
+    # Regression: a step chained after a TGSoundAction must fire. The sound
+    # action must complete inline (it previously never called Completed(),
+    # hanging every dependent step — e.g. the probe-launch chain in
+    # ScienceMenuHandlers).
+    import sys, types
+    log = []
+    mod = types.ModuleType("_test_sound_chain")
+    mod.after = lambda pAction: log.append("after")
+    sys.modules["_test_sound_chain"] = mod
+
+    s = App.TGSequence_Create()
+    s.AppendAction(App.TGSoundAction_Create("ProbeLaunchTestSfx"))
+    s.AppendAction(App.TGScriptAction_Create("_test_sound_chain", "after"))
+    s.Play()
+
+    assert log == ["after"]
+    assert not s.IsPlaying()          # sequence self-completed
+    del sys.modules["_test_sound_chain"]
+
+
+def test_credit_action_completes_inline_so_chain_advances():
+    import sys, types
+    log = []
+    mod = types.ModuleType("_test_credit_chain")
+    mod.after = lambda pAction: log.append("after")
+    sys.modules["_test_credit_chain"] = mod
+
+    s = App.TGSequence_Create()
+    s.AppendAction(App.TGCreditAction_Create("Hello", None))
+    s.AppendAction(App.TGScriptAction_Create("_test_credit_chain", "after"))
+    s.Play()
+
+    assert log == ["after"]
+    del sys.modules["_test_credit_chain"]

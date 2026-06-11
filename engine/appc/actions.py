@@ -1,10 +1,15 @@
 """
-Action and sequence system for Phase 1 headless engine.
+Action and sequence system for the headless engine.
 
-Phase 1 execution model: all actions complete synchronously when Play() is
-called. Sequence dependencies and delays are recorded but not enforced — every
-action in a sequence plays immediately in insertion order.  This is correct for
-validating mission logic flow without needing a real-time event loop.
+Execution model: event-driven.  An action completes inline when its Play()
+returns (instantaneous actions) or later (TGConditionAction waits for a
+condition to flip).  TGSequence honors per-step delays and completion
+dependencies: a step fires when its dependency completes, plus its declared
+delay measured via the game-time g_kTimerManager.  Because the event bus
+(g_kEventManager.AddEvent) dispatches inline, zero-delay dependency chains
+still resolve fully synchronously within the launching Play() call; only real
+delays or deferred completions span frames.  See
+docs/superpowers/specs/2026-06-11-action-sequence-timing-design.md.
 """
 import sys
 from engine.appc.events import TGEventHandlerObject, TGEvent
@@ -387,9 +392,12 @@ class TGSoundAction(TGTimedAction):
     def GetName(self) -> str:
         return self._sound_name
 
-    def Play(self) -> None:
+    def _do_play(self) -> None:
         # Late import: tg_sound pulls in the native audio extension; keep this
         # module light at startup since actions is loaded very early via App.py.
+        # Overriding _do_play (not Play) means the base TGAction.Play() runs the
+        # standard lifecycle and calls Completed() — so a sequence step chained
+        # after this sound action advances instead of hanging forever.
         from engine.audio.tg_sound import TGSoundManager
         TGSoundManager.instance().PlaySound(self._sound_name)
 
@@ -496,9 +504,12 @@ class TGCreditAction(TGTimedAction):
     def SetColor(self, r: float, g: float, b: float, a: float = 1.0) -> None:
         self._color = (float(r), float(g), float(b), float(a))
 
-    def Play(self) -> None:
-        # Idempotent: SDK sometimes chains Play through a TGSequence that
-        # re-fires Play on the same action. Match TGSoundAction's discipline.
+    def _do_play(self) -> None:
+        # Overriding _do_play (not Play) lets the base TGAction.Play() call
+        # Completed(), so a sequence step chained after this credit action
+        # advances. The _played guard keeps the *visible* text idempotent when a
+        # sequence re-fires Play on the same action; Completed() itself is
+        # idempotent (it clears _completed_events after the first dispatch).
         if self._played: return
         self._played = True
         host = self._subtitle
