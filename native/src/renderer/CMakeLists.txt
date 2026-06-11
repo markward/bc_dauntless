@@ -72,6 +72,7 @@ add_library(renderer STATIC
     lens_flare_pass.cc
     torpedo_pass.cc
     hit_vfx_pass.cc
+    particle_pass.cc
     phaser_pass.cc
     hologram_pass.cc
     subsystem_pin_pass.cc
