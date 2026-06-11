@@ -269,6 +269,8 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
     hit_vfx.update_ages(dt)
     from engine.appc import particles
     particles.advance(dt)
+    from engine.appc import ship_death
+    ship_death.advance(dt)
     from engine.appc import subsystem_emitters
     subsystem_emitters.pump(ships_list, _camera_world_pos(host), dt)
     from engine.appc import camera_shake
@@ -1690,6 +1692,8 @@ class HostController:
         self.panel_registry: Any = None
 
     def swap_mission(self, mission_name: str) -> None:
+        from engine.appc import ship_death
+        ship_death.reset()
         self.pending_swap = mission_name
 
     def _drain_pending_swap(self) -> None:
@@ -1701,6 +1705,8 @@ class HostController:
             self.session.teardown(self.renderer)
         from engine.appc import ship_lifecycle
         ship_lifecycle.reset()
+        from engine.appc import ship_death
+        ship_death.reset()
         from engine.appc import subsystem_emitters
         subsystem_emitters.reset_manager()
         from engine.appc import particles

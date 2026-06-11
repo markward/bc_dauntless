@@ -209,3 +209,24 @@ def test_destroy_system_none_is_noop():
     obj = FakeDamageable()
     obj.DestroySystem(None)  # must not raise
     assert obj.IsDying() == 0
+
+
+# --- Task 4: host-loop wiring ------------------------------------------------
+def test_host_loop_advance_combat_ticks_death():
+    """_advance_combat must call ship_death.advance so dying ships progress."""
+    import engine.host_loop as host_loop
+    ship = FakeShip(name="Tick")
+    ship_death.begin(ship)
+    # Drive the per-frame combat hub with no ships and a full-throes dt.
+    host_loop._advance_combat([], ship_death.THROES_DURATION)
+    assert ship.IsDead() == 1
+
+
+def test_swap_mission_calls_ship_death_reset():
+    """swap_mission must clear the death registry (no dangling throes)."""
+    import engine.host_loop as host_loop
+    import inspect
+    # The wiring is a single line; assert the source references it so this
+    # test fails until the call is added.
+    src = inspect.getsource(host_loop.HostController.swap_mission)
+    assert "ship_death.reset()" in src
