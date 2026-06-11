@@ -74,8 +74,29 @@ def _finish(ship) -> None:
 
 
 def _spawn_explosion(ship) -> None:
-    """Death explosion VFX. Filled in a later task; no-op for now."""
-    pass
+    """Death explosion: an ExplosionA/B fireball sized to the ship radius,
+    emitted from the (still-present, coasting) hull. Reuses the SDK Effects
+    helper via our AnimTSParticleController shim + particle backend.
+
+    Raise-safe: death logic must never depend on VFX succeeding (missing
+    asset / headless test without a backend just yields no explosion)."""
+    try:
+        import Effects
+        from engine.appc.math import TGPoint3
+        radius = ship.GetRadius() if hasattr(ship, "GetRadius") else 1.0
+        size = max(radius * EXPLOSION_SIZE_FACTOR, MIN_EXPLOSION_SIZE)
+        action = Effects.CreateExplosionPuffHigh(
+            THROES_DURATION,            # fLife
+            size,                       # fSize
+            ship,                       # pEmitFrom — tracks the tumbling hull
+            TGPoint3(0.0, 0.0, 0.0),    # kEmitPos (body origin)
+            TGPoint3(0.0, 0.0, 1.0),    # kEmitDir
+            None,                       # pAttachTo — unattached at emit pos
+        )
+        if action is not None and hasattr(action, "Play"):
+            action.Play()
+    except Exception:
+        pass
 
 
 def reset() -> None:

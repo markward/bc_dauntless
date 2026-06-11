@@ -287,3 +287,29 @@ def test_weapon_offline_unaffected_when_no_parent_ship():
         def GetParentShip(self): return None
 
     assert _is_offline(FakeWeaponNoShip()) is False
+
+
+# --- Task 7: explosion VFX --------------------------------------------------
+def test_begin_spawns_explosion_controller():
+    """begin must register at least one particle controller targeting an
+    Explosion sprite."""
+    from engine.appc import particles
+    particles.reset()
+    ship = FakeShip(name="Boom", radius=3.0)
+    ship_death.begin(ship)
+    descriptors = particles.snapshot_descriptors()
+    assert len(descriptors) >= 1
+    paths = [d.get("texture_path", "") for d in descriptors]
+    assert any("Explosion" in p for p in paths)
+    particles.reset()
+
+
+def test_spawn_explosion_raise_safe(monkeypatch):
+    """If the SDK Effects call raises, begin must still mark the ship dying."""
+    import Effects
+    def boom(*a, **k):
+        raise RuntimeError("no backend")
+    monkeypatch.setattr(Effects, "CreateExplosionPuffHigh", boom)
+    ship = FakeShip(name="Safe")
+    ship_death.begin(ship)  # must not raise
+    assert ship.IsDying() == 1
