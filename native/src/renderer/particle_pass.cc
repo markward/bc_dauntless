@@ -40,7 +40,9 @@ inline glm::vec2 hash3(const glm::vec3& p, int i) {
     };
     std::uint32_t h = bits(p.x) ^ (bits(p.y) * 0x9E3779B9u)
                     ^ (bits(p.z) * 0x85EBCA6Bu) ^ (std::uint32_t(i) * 0xC2B2AE35u);
+    h ^= h << 13; h ^= h >> 17; h ^= h << 5;
     std::uint32_t h2 = h * 0x1B873593u;
+    h2 ^= h2 << 13; h2 ^= h2 >> 17; h2 ^= h2 << 5;
     auto to_unit = [](std::uint32_t x) {
         return static_cast<float>(x & 0xFFFFFFu) / static_cast<float>(0x1000000u);
     };
@@ -148,6 +150,7 @@ void ParticlePass::render(const std::vector<ParticleEmitterDescriptor>& emitters
     float kt[8], kr[8], kg[8], kb[8];
     float at[8], av[8], st[8], sv[8];
 
+    const scenegraph::InstanceId null_id{};
     for (const auto& e : emitters) {
         assets::Texture* tex = texture_for(e.texture_path);
         if (!tex || tex->id() == 0) continue;
@@ -155,7 +158,6 @@ void ParticlePass::render(const std::vector<ParticleEmitterDescriptor>& emitters
         // Resolve emitter origin to world space.
         glm::vec3 emit_pos_world = e.emit_pos;
         glm::vec3 emit_dir_world = e.emit_dir;
-        const scenegraph::InstanceId null_id{};
         if (!(e.instance_id == null_id)) {
             const scenegraph::Instance* inst = world.get(e.instance_id);
             if (inst == nullptr) continue;
