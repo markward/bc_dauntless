@@ -823,6 +823,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   e.emit_radius           = d.contains("emit_radius")           ? d["emit_radius"].cast<float>()           : 0.0f;
                   e.random_velocity_cone  = d.contains("random_velocity_cone")  ? d["random_velocity_cone"].cast<float>()  : 0.0f;
                   e.random_velocity_speed = d.contains("random_velocity_speed") ? d["random_velocity_speed"].cast<float>() : 0.0f;
+                  e.damping     = d.contains("damping")     ? d["damping"].cast<float>()     : 0.0f;
+                  e.tail_length = d.contains("tail_length") ? d["tail_length"].cast<float>() : 0.0f;
                   g_particle_emitters.push_back(std::move(e));
               }
           },
