@@ -1692,8 +1692,6 @@ class HostController:
         self.panel_registry: Any = None
 
     def swap_mission(self, mission_name: str) -> None:
-        from engine.appc import ship_death
-        ship_death.reset()
         self.pending_swap = mission_name
 
     def _drain_pending_swap(self) -> None:

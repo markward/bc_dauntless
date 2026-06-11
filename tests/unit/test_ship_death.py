@@ -222,11 +222,11 @@ def test_host_loop_advance_combat_ticks_death():
     assert ship.IsDead() == 1
 
 
-def test_swap_mission_calls_ship_death_reset():
-    """swap_mission must clear the death registry (no dangling throes)."""
+def test_mission_teardown_calls_ship_death_reset():
+    """The mission-swap teardown must clear the death registry (no dangling
+    throes). The real teardown lives in _drain_pending_swap, alongside
+    ship_lifecycle.reset()."""
     import engine.host_loop as host_loop
     import inspect
-    # The wiring is a single line; assert the source references it so this
-    # test fails until the call is added.
-    src = inspect.getsource(host_loop.HostController.swap_mission)
+    src = inspect.getsource(host_loop.HostController._drain_pending_swap)
     assert "ship_death.reset()" in src
