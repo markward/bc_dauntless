@@ -12,17 +12,20 @@ See docs/superpowers/specs/2026-06-11-ship-death-sequence-design.md.
 """
 
 THROES_DURATION       = 2.5   # seconds the ship coasts, dying, before removal
+# Consumed by _spawn_explosion (filled in a later task); defined here so the
+# VFX tunables live alongside THROES_DURATION.
 EXPLOSION_SIZE_FACTOR = 1.0   # ship-radius multiplier (starting value, tune by feel)
 MIN_EXPLOSION_SIZE    = 2.0   # GU floor for tiny craft (starting value, tune by feel)
 
-# Registry of in-progress death sequences: list of {"ship", "time_left"}.
+# Registry of in-progress death sequences: each entry is
+# {"ship": ship, "time_left": float}.
 _active: list[dict] = []
 
 
 def _out_of_action(ship) -> bool:
-    """True when `ship` is dying or dead. Single definition of 'inert',
-    imported by the AI and weapon gate sites. hasattr-guarded so non-ship
-    objects never read as out of action."""
+    """True when `ship` is dying or dead. The single definition of 'inert',
+    which the AI and weapon gate sites will call in later tasks. hasattr-
+    guarded so non-ship objects never read as out of action."""
     if ship is None:
         return False
     dying = bool(ship.IsDying()) if hasattr(ship, "IsDying") else False

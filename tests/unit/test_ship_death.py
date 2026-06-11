@@ -98,6 +98,11 @@ def test_out_of_action_predicate():
     assert ship_death._out_of_action(ship) is True
 
 
+def test_begin_ignores_none():
+    ship_death.begin(None)  # must not raise
+    ship_death.advance(ship_death.THROES_DURATION)  # registry stayed empty
+
+
 def test_advance_prunes_ship_with_no_set():
     ship = FakeShip()
     ship._set = None  # GetContainingSet() -> None
