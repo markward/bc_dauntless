@@ -10,7 +10,9 @@ class FakeSub:
     """A minimal subsystem: settable damage state + class-name kind + anchor."""
     def __init__(self, kind_class_name="WarpEngineSubsystem", name="nacelle",
                  pos=(1.0, -2.0, 0.5), state="ok"):
-        self.__class__.__name__ = kind_class_name  # so type(sub).__name__ matches
+        # Per-instance subclass so type(sub).__name__ is unique per instance
+        # (mutating FakeSub.__name__ directly would be shared across all instances).
+        self.__class__ = type(kind_class_name, (FakeSub,), {})
         self._name = name
         self._pos = TGPoint3(*pos)
         self._state = state  # "ok" | "damaged" | "disabled" | "destroyed"

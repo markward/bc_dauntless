@@ -11,7 +11,7 @@ nothing in production.
 
 Spec: docs/superpowers/specs/2026-06-11-subsystem-damage-emitters-design.md
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 class DirectionMode:
@@ -45,7 +45,7 @@ _kind_aliases = {}
 
 _DEFAULT_KINDS = {
     "WarpEngineSubsystem":   "warp_engine",
-    "ImpulseEngineSubsystem":"impulse_engine",
+    "ImpulseEngineSubsystem": "impulse_engine",
     "PowerSubsystem":        "warp_core",
     "ShieldSubsystem":       "shield_generator",
 }
