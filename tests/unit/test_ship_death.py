@@ -258,3 +258,32 @@ def test_alive_ship_ai_tick_not_gated():
     ai._ship = ship
     # Should not raise and should not be force-returned by the death gate.
     ai_driver.tick_ai(ai, 0.0)
+
+
+# --- Task 6: weapon gate ----------------------------------------------------
+def test_weapon_offline_when_parent_ship_dying():
+    from engine.appc.subsystems import _is_offline
+
+    class FakeWeapon:
+        def __init__(self, ship):
+            self._ship = ship
+        def IsDisabled(self):   return 0
+        def IsDestroyed(self):  return 0
+        def GetParentShip(self): return self._ship
+
+    ship = FakeShip(name="Gunner")
+    weapon = FakeWeapon(ship)
+    assert _is_offline(weapon) is False  # alive: weapon online
+    ship.SetDying(True)
+    assert _is_offline(weapon) is True   # dying: weapon gated offline
+
+
+def test_weapon_offline_unaffected_when_no_parent_ship():
+    from engine.appc.subsystems import _is_offline
+
+    class FakeWeaponNoShip:
+        def IsDisabled(self):   return 0
+        def IsDestroyed(self):  return 0
+        def GetParentShip(self): return None
+
+    assert _is_offline(FakeWeaponNoShip()) is False

@@ -366,16 +366,20 @@ class _EnergyWeaponFireMixin:
 
 
 def _is_offline(sub) -> bool:
-    """True when a subsystem is disabled OR destroyed.
-
-    Project 5 single source of truth for the five capability gates
-    (engines, weapons, sensors, shield generator, repair-verify).
-    Reads predicates at use-time so repair lifting condition releases
-    the gate automatically on the next call.
-    """
+    """True when a subsystem is disabled OR destroyed, OR its parent ship is
+    out of action (dying/dead — inert coast). Single source of truth for the
+    capability gates (weapons, engines, sensors, shield generator, repair).
+    Reads predicates at use-time so repair lifting condition releases the gate
+    automatically on the next call."""
     if sub is None:
         return False
-    return bool(sub.IsDisabled()) or bool(sub.IsDestroyed())
+    if bool(sub.IsDisabled()) or bool(sub.IsDestroyed()):
+        return True
+    if hasattr(sub, "GetParentShip"):
+        from engine.appc import ship_death
+        if ship_death._out_of_action(sub.GetParentShip()):
+            return True
+    return False
 
 
 def impulse_online_fraction(ies) -> float:
