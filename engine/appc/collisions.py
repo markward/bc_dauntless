@@ -9,6 +9,7 @@ collidable.
 
 Spec: docs/superpowers/specs/2026-06-11-collision-response-design.md
 """
+import math
 from dataclasses import dataclass
 
 from engine.appc.math import TGPoint3
@@ -82,3 +83,78 @@ def _ke_damage(inv_sum: float, v_rel: float) -> float:
     assert inv_sum > 0.0, "inv_sum must be > 0; two immovable bodies cannot collide"
     mu = 1.0 / inv_sum
     return COLLISION_DAMAGE_COEFF * 0.5 * mu * v_rel * v_rel
+
+
+def _respond_pair(a: "_Body", b: "_Body", dt: float, host, ship_instances):
+    """Resolve one body pair. On an approaching overlap: inject a
+    mass-weighted impulse into each movable body's overlay, de-penetrate
+    positions, and apply KE damage via combat.apply_hit. Returns the
+    (a.obj, b.obj, contact_point, v_rel) tuple if they collided, else None.
+
+    The `v_rel < 0` (approaching) gate is the debounce: once the impulse
+    reverses relative velocity, later frames read receding and do nothing
+    while the spheres still overlap (spec §5)."""
+    dx = b.center.x - a.center.x
+    dy = b.center.y - a.center.y
+    dz = b.center.z - a.center.z
+    dist2 = dx * dx + dy * dy + dz * dz
+    sum_r = a.radius + b.radius
+    if dist2 >= sum_r * sum_r:
+        return None
+    dist = math.sqrt(dist2)
+    if dist < 1e-9:
+        return None  # concentric: degenerate normal, skip
+    nx, ny, nz = dx / dist, dy / dist, dz / dist
+
+    # Closing speed along the normal (negative = approaching).
+    rvx = b.velocity.x - a.velocity.x
+    rvy = b.velocity.y - a.velocity.y
+    rvz = b.velocity.z - a.velocity.z
+    v_rel = rvx * nx + rvy * ny + rvz * nz
+    if v_rel >= 0.0:
+        return None  # receding / resting: debounce
+
+    inv_sum = a.inv_mass + b.inv_mass
+    if inv_sum <= 0.0:
+        return None  # two immovables
+
+    # Mass-weighted impulse magnitude.
+    j = -(1.0 + COLLISION_RESTITUTION) * v_rel / inv_sum
+    if a.is_movable:
+        cva = _ensure_overlay(a.obj)
+        cva.x -= j * a.inv_mass * nx
+        cva.y -= j * a.inv_mass * ny
+        cva.z -= j * a.inv_mass * nz
+    if b.is_movable:
+        cvb = _ensure_overlay(b.obj)
+        cvb.x += j * b.inv_mass * nx
+        cvb.y += j * b.inv_mass * ny
+        cvb.z += j * b.inv_mass * nz
+
+    # Positional de-penetration, split by inverse mass.
+    pen = sum_r - dist
+    if a.is_movable:
+        s = pen * a.inv_mass / inv_sum
+        p = a.obj.GetTranslate()
+        a.obj.SetTranslateXYZ(p.x - nx * s, p.y - ny * s, p.z - nz * s)
+    if b.is_movable:
+        s = pen * b.inv_mass / inv_sum
+        p = b.obj.GetTranslate()
+        b.obj.SetTranslateXYZ(p.x + nx * s, p.y + ny * s, p.z + nz * s)
+
+    # KE impact damage routed through the existing weapons path.
+    from engine.appc.combat import apply_hit
+    damage = _ke_damage(inv_sum, v_rel)
+    contact = TGPoint3(a.center.x + nx * a.radius,
+                       a.center.y + ny * a.radius,
+                       a.center.z + nz * a.radius)
+    if a.is_movable:
+        apply_hit(a.obj, damage, contact, source=b.obj,
+                  normal=TGPoint3(nx, ny, nz),
+                  host=host, ship_instances=ship_instances, weapon_type=None)
+    if b.is_movable:
+        apply_hit(b.obj, damage, contact, source=a.obj,
+                  normal=TGPoint3(-nx, -ny, -nz),
+                  host=host, ship_instances=ship_instances, weapon_type=None)
+
+    return (a.obj, b.obj, contact, v_rel)
