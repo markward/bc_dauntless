@@ -170,5 +170,9 @@ class EffectAction:
         return self._controller
 
 
+def AnimTSParticleController_Create():
+    return AnimTSParticleController()
+
+
 def EffectAction_Create(controller):
     return EffectAction(controller)
