@@ -868,6 +868,7 @@ class _PlayerControl:
             d = self._drift_velocity
             p = player.GetTranslate()
             player.SetTranslateXYZ(p.x + d.x * dt, p.y + d.y * dt, p.z + d.z * dt)
+            player.SetVelocity(TGPoint3(d.x, d.y, d.z))
             return
 
         # ── Powered flight: clear drift, re-seed speed ──────────────────
@@ -920,14 +921,16 @@ class _PlayerControl:
         )
 
         # Position integration (powered: velocity follows facing).
+        # Publish world velocity unconditionally so GetVelocity() is
+        # authoritative for the collision system (zero when stationary).
+        forward = player.GetWorldRotation().GetCol(1)
+        vx = forward.x * self._current_speed
+        vy = forward.y * self._current_speed
+        vz = forward.z * self._current_speed
+        player.SetVelocity(TGPoint3(vx, vy, vz))
         if self._current_speed != 0.0:
-            forward = player.GetWorldRotation().GetCol(1)
             p = player.GetTranslate()
-            player.SetTranslateXYZ(
-                p.x + forward.x * self._current_speed * dt,
-                p.y + forward.y * self._current_speed * dt,
-                p.z + forward.z * self._current_speed * dt,
-            )
+            player.SetTranslateXYZ(p.x + vx * dt, p.y + vy * dt, p.z + vz * dt)
 
 
 from engine.cameras.chase import _ChaseCamera as _CameraControl
