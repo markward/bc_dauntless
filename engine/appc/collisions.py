@@ -145,6 +145,9 @@ def _respond_pair(a: "_Body", b: "_Body", dt: float, host, ship_instances):
     # KE impact damage routed through the existing weapons path.
     from engine.appc.combat import apply_hit
     damage = _ke_damage(inv_sum, v_rel)
+    # Contact point on a's sphere surface: exact midpoint for equal radii,
+    # approximate for mismatched radii (ship-vs-planet) but adequate for
+    # decal/VFX placement.
     contact = TGPoint3(a.center.x + nx * a.radius,
                        a.center.y + ny * a.radius,
                        a.center.z + nz * a.radius)

@@ -91,7 +91,6 @@ def test_symmetric_head_on_equal_opposite_impulse():
     from engine.appc.collisions import _resolve_body, _respond_pair
     a = _ship(0.0, 1000.0, +10.0)
     b = _ship(1.5, 1000.0, -10.0)  # overlapping (dist 1.5 < r 1 + r 1)
-    a.SetRadius(1.0); b.SetRadius(1.0)
     ba, bb = _resolve_body(a), _resolve_body(b)
     hit = _respond_pair(ba, bb, 1.0 / 60.0, host=None, ship_instances=None)
     assert hit is not None
@@ -105,7 +104,6 @@ def test_mismatched_mass_light_ship_recoils_more():
     from engine.appc.collisions import _resolve_body, _respond_pair
     light = _ship(0.0, 1000.0, +10.0)
     heavy = _ship(1.5, 5000.0, -10.0)
-    light.SetRadius(1.0); heavy.SetRadius(1.0)
     _respond_pair(_resolve_body(light), _resolve_body(heavy),
                   1.0 / 60.0, host=None, ship_instances=None)
     assert abs(light._collision_velocity.x) > abs(heavy._collision_velocity.x)
@@ -114,7 +112,6 @@ def test_mismatched_mass_light_ship_recoils_more():
 def test_ship_vs_immovable_planet_bounces_planet_fixed():
     from engine.appc.collisions import _resolve_body, _respond_pair, _overlay_vec
     ship = _ship(0.0, 1000.0, +10.0)
-    ship.SetRadius(1.0)
     planet = Planet_Create(2.0, "")
     planet.SetTranslateXYZ(2.5, 0.0, 0.0)  # dist 2.5 < r1 + r2.0 = 3.0
     pre = planet.GetTranslate().x
@@ -129,7 +126,6 @@ def test_receding_pair_is_ignored():
     from engine.appc.collisions import _resolve_body, _respond_pair, _overlay_vec
     a = _ship(0.0, 1000.0, -10.0)   # moving away from b
     b = _ship(1.5, 1000.0, +10.0)
-    a.SetRadius(1.0); b.SetRadius(1.0)
     hit = _respond_pair(_resolve_body(a), _resolve_body(b),
                         1.0 / 60.0, host=None, ship_instances=None)
     assert hit is None
@@ -140,7 +136,6 @@ def test_non_overlapping_pair_is_ignored():
     from engine.appc.collisions import _resolve_body, _respond_pair
     a = _ship(0.0, 1000.0, +10.0)
     b = _ship(50.0, 1000.0, -10.0)  # far apart
-    a.SetRadius(1.0); b.SetRadius(1.0)
     assert _respond_pair(_resolve_body(a), _resolve_body(b),
                          1.0 / 60.0, host=None, ship_instances=None) is None
 
@@ -151,8 +146,8 @@ def test_respond_pair_invokes_apply_hit_for_both_ships(monkeypatch):
     monkeypatch.setattr(combat, "apply_hit",
                         lambda ship, dmg, *a, **k: calls.append((ship, dmg)))
     from engine.appc.collisions import _resolve_body, _respond_pair
-    a = _ship(0.0, 1000.0, +10.0); a.SetRadius(1.0)
-    b = _ship(1.5, 1000.0, -10.0); b.SetRadius(1.0)
+    a = _ship(0.0, 1000.0, +10.0)
+    b = _ship(1.5, 1000.0, -10.0)
     _respond_pair(_resolve_body(a), _resolve_body(b),
                   1.0 / 60.0, host=None, ship_instances=None)
     assert len(calls) == 2
