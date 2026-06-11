@@ -155,6 +155,39 @@ def test_respond_pair_invokes_apply_hit_for_both_ships(monkeypatch):
     assert all(dmg > 0.0 for _, dmg in calls)
 
 
+def test_contact_point_refined_to_mesh_when_host_present(monkeypatch):
+    """With a renderer host + instance ids, each ship's collision damage lands
+    on ITS OWN mesh surface (via combat.ray_trace_mesh) with the mesh normal,
+    not the bounding-sphere point — mirroring the weapons hit path."""
+    import engine.appc.combat as combat
+    captured = []
+    monkeypatch.setattr(
+        combat, "apply_hit",
+        lambda ship, dmg, hit_point, source=None, *, normal=None, **k:
+            captured.append((ship, hit_point, normal)))
+
+    class _FakeHost:
+        def ray_trace_mesh(self, iid, origin, direction, max_dist):
+            # Encode which ship was traced in the surface point's x (= iid),
+            # and return a distinctive mesh normal.
+            return ((float(iid), 7.0, 7.0), (0.0, 0.0, 1.0), 0.5)
+
+    from engine.appc.collisions import _resolve_body, _respond_pair
+    a = _ship(0.0, 1000.0, +10.0)
+    b = _ship(1.5, 1000.0, -10.0)
+    insts = {a: 11, b: 22}
+    _respond_pair(_resolve_body(a), _resolve_body(b),
+                  host=_FakeHost(), ship_instances=insts)
+
+    pts = {id(ship): hp for ship, hp, _n in captured}
+    # Each ship's contact point came from its OWN mesh trace (iid-encoded x).
+    assert pts[id(a)].x == 11.0 and pts[id(a)].y == 7.0
+    assert pts[id(b)].x == 22.0 and pts[id(b)].y == 7.0
+    # Mesh surface normal propagated to apply_hit for both ships.
+    for _ship_obj, _hp, n in captured:
+        assert (n.x, n.y, n.z) == (0.0, 0.0, 1.0)
+
+
 def test_apply_overlay_moves_and_decays():
     from engine.appc.collisions import _apply_overlay_all, COLLISION_DECAY_TAU
     import math

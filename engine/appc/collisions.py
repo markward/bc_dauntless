@@ -146,22 +146,34 @@ def _respond_pair(a: "_Body", b: "_Body", host, ship_instances):
         p = b.obj.GetTranslate()
         b.obj.SetTranslateXYZ(p.x + nx * s, p.y + ny * s, p.z + nz * s)
 
-    # KE impact damage routed through the existing weapons path.
-    from engine.appc.combat import apply_hit
+    # KE impact damage routed through the existing weapons path. Each ship's
+    # hit lands on its OWN hull: trace from the other body's centre into this
+    # ship along the contact line so combat._resolve_hit_point refines the
+    # contact point + surface normal to the mesh (host present) exactly as the
+    # weapons path does, falling back to the bounding-sphere surface + the
+    # geometric normal when headless. `contact` (a's sphere surface) is the
+    # nominal point returned for tests/debugging and the A-side fallback.
+    from engine.appc.combat import apply_hit, _resolve_hit_point
     damage = _ke_damage(inv_sum, v_rel)
-    # Contact point on a's sphere surface: exact midpoint for equal radii,
-    # approximate for mismatched radii (ship-vs-planet) but adequate for
-    # decal/VFX placement.
     contact = TGPoint3(a.center.x + nx * a.radius,
                        a.center.y + ny * a.radius,
                        a.center.z + nz * a.radius)
     if a.is_movable:
-        apply_hit(a.obj, damage, contact, source=b.obj,
-                  normal=TGPoint3(nx, ny, nz),
+        pt_a, mesh_n_a = _resolve_hit_point(
+            host, ship_instances, a.obj,
+            b.center, TGPoint3(-nx, -ny, -nz), dist, contact)
+        apply_hit(a.obj, damage, pt_a, source=b.obj,
+                  normal=(mesh_n_a if mesh_n_a is not None else TGPoint3(nx, ny, nz)),
                   host=host, ship_instances=ship_instances, weapon_type=None)
     if b.is_movable:
-        apply_hit(b.obj, damage, contact, source=a.obj,
-                  normal=TGPoint3(-nx, -ny, -nz),
+        fb_b = TGPoint3(b.center.x - nx * b.radius,
+                        b.center.y - ny * b.radius,
+                        b.center.z - nz * b.radius)
+        pt_b, mesh_n_b = _resolve_hit_point(
+            host, ship_instances, b.obj,
+            a.center, TGPoint3(nx, ny, nz), dist, fb_b)
+        apply_hit(b.obj, damage, pt_b, source=a.obj,
+                  normal=(mesh_n_b if mesh_n_b is not None else TGPoint3(-nx, -ny, -nz)),
                   host=host, ship_instances=ship_instances, weapon_type=None)
 
     return (a.obj, b.obj, contact, v_rel)

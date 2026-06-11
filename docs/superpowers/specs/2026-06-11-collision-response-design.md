@@ -183,10 +183,16 @@ damage = COLLISION_DAMAGE_COEFF * KE
   strengths.
 - **Both ships take damage** from the same impact (symmetric). Each movable ship
   receives `apply_hit`; immovable bodies deal damage but never receive it.
-- **Contact point & normal:** midpoint on the contact line
-  `contact = centerA + n * rA`. Where a precise hull surface point is wanted
-  (matching the projectile path), trace `ray_trace_mesh` along the centre line;
-  otherwise the sphere-surface point + `n` is sufficient for decal/VFX placement.
+- **Contact point & normal (mesh-refined, implemented):** each movable ship's
+  hit is placed on its OWN hull surface. We call `combat._resolve_hit_point`,
+  tracing a ray from the *other* body's centre along the contact line into this
+  ship — the same machinery the projectile path uses. With a renderer host +
+  instance id, it returns the precise mesh surface point and the surface normal;
+  headless (or no instance), it degrades to the bounding-sphere surface point +
+  the geometric normal (`+n` for A, `−n` for B). This removes the
+  "decal floats off the hull" artefact of a pure sphere-surface point. The
+  nominal geometric contact `centerA + n·rA` is the A-side fallback and the
+  value returned from `_respond_pair` for tests/debugging.
 - **Routing:** reuse the existing path verbatim —
 
   ```python
