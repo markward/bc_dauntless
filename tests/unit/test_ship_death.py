@@ -185,3 +185,26 @@ def test_killing_blow_on_dying_ship_is_no_op():
     obj.DamageSystem(obj.GetHull(), 100.0)  # second blow -> still just dying
     assert obj.IsDying() == 1
     assert len(ship_death._active) == 1
+
+
+# --- Task 3: DestroySystem --------------------------------------------------
+def test_destroy_system_on_critical_kills():
+    obj = FakeDamageable()
+    obj.DestroySystem(obj.GetHull())
+    assert obj.GetHull().GetCondition() == 0.0
+    assert obj.IsDying() == 1
+
+
+def test_destroy_system_on_noncritical_zeroes_but_no_death():
+    obj = FakeDamageable()
+    sensors = FakeSub(critical=0)
+    obj.DestroySystem(sensors)
+    assert sensors.GetCondition() == 0.0
+    assert sensors.IsDestroyed() == 1
+    assert obj.IsDying() == 0
+
+
+def test_destroy_system_none_is_noop():
+    obj = FakeDamageable()
+    obj.DestroySystem(None)  # must not raise
+    assert obj.IsDying() == 0

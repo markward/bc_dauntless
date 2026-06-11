@@ -380,6 +380,21 @@ class DamageableObject(PhysicsObjectClass):
             from engine.appc import ship_death
             ship_death.begin(self)
 
+    def DestroySystem(self, subsystem) -> None:
+        """Force a subsystem to zero condition (mirrors SDK
+        pShip.DestroySystem). Ship death is a side effect only when the
+        subsystem is critical; DestroySystem(pSensors) just zeroes sensors."""
+        if subsystem is None:
+            return
+        subsystem.SetCondition(0.0)
+        if hasattr(subsystem, "SetDestroyed"):
+            subsystem.SetDestroyed(True)
+        if _is_critical(subsystem) \
+                and hasattr(self, "IsDying") and hasattr(self, "IsDead") \
+                and not self.IsDying() and not self.IsDead():
+            from engine.appc import ship_death
+            ship_death.begin(self)
+
 
 class ObjectGroup(TGEventHandlerObject):
     GROUP_CHANGED = 1
