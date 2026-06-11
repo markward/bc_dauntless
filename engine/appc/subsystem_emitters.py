@@ -146,6 +146,18 @@ class _ActiveEmitter:
         self.fading = False
 
 
+def _camera_distance(ship, camera_pos):
+    """Euclidean distance from ship world location to camera, or None if the
+    camera position is unknown (proximity term then drops out)."""
+    if camera_pos is None or not hasattr(ship, "GetWorldLocation"):
+        return None
+    loc = ship.GetWorldLocation()
+    dx = loc.x - camera_pos[0]
+    dy = loc.y - camera_pos[1]
+    dz = loc.z - camera_pos[2]
+    return (dx * dx + dy * dy + dz * dz) ** 0.5
+
+
 def _emit_frame(ship, sub, descriptor):
     """Return (emit_pos_body, emit_dir) for the backend.
 
@@ -193,10 +205,15 @@ class PlumeManager:
     # -- candidate selection (Task 6 replaces the body with the budget) ------
 
     def _select_candidates(self, ships, camera_pos):
-        """Yield (key, ship, sub, kind, tier, descriptor) for every registered,
-        damaged subsystem. No budget yet - Task 6 caps/culls/sorts this list."""
+        """Per-ship: gather registered damaged subsystems, distance-cull whole
+        ships, sort by (severity desc, proximity desc, priority_bias desc), and
+        admit the top n_per_ship (spec §4.3)."""
         out = []
         for ship in ships:
+            dist = _camera_distance(ship, camera_pos)
+            if self.r_cull is not None and dist is not None and dist > self.r_cull:
+                continue
+            cands = []
             for sub in ship.GetSubsystems():
                 kind = subsystem_kind(sub)
                 if kind is None:
@@ -206,13 +223,25 @@ class PlumeManager:
                     continue
                 key = (ship.GetObjID(), id(sub))
                 if tier == TIER_DESTROYED:
-                    descriptor = None  # death-puff handled in _reconcile
-                else:
-                    descriptor = resolve(kind, tier)
-                    if descriptor is None:
-                        continue
-                out.append((key, ship, sub, kind, tier, descriptor))
-        return out
+                    cands.append((key, ship, sub, kind, tier, None, 0.0))
+                    continue
+                descriptor = resolve(kind, tier)
+                if descriptor is None:
+                    continue
+                cands.append((key, ship, sub, kind, tier, descriptor,
+                              descriptor.priority_bias))
+            # DESTROYED is a one-shot and must never consume a sustained slot:
+            destroyed = [c for c in cands if c[4] == TIER_DESTROYED]
+            sustained = [c for c in cands if c[4] != TIER_DESTROYED]
+            # sort sustained by severity, then bias (proximity is per-ship-uniform)
+            sustained.sort(key=lambda c: (c[4], c[6]), reverse=True)
+            admitted = destroyed + sustained[:self.n_per_ship]
+            for c in admitted:
+                out.append((c[0], c[1], c[2], c[3], c[4], c[5], dist))
+        # cross-ship proximity ordering (nearest first) for deterministic admit
+        out.sort(key=lambda r: (r[6] if r[6] is not None else 0.0))
+        # return the 6-tuple the rest of the manager expects
+        return [(r[0], r[1], r[2], r[3], r[4], r[5]) for r in out]
 
     # -- per-subsystem reconcile (spec §4.2 transition matrix) ---------------
 
