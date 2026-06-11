@@ -109,4 +109,15 @@ def subsystem_kind(sub):
     return _DEFAULT_KINDS.get(token)
 
 
+def desired_tier(sub):
+    """Resolve a subsystem's current state to a severity tier (most severe wins)."""
+    if sub.IsDestroyed():
+        return TIER_DESTROYED
+    if sub.IsDisabled():
+        return TIER_DISABLED
+    if sub.IsDamaged():
+        return TIER_DAMAGED
+    return TIER_NONE
+
+
 reset_registry()
