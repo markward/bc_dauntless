@@ -47,3 +47,49 @@ def test_duration_caps_emission_stop_age():
     c.SetEmitLife(0.5)
     c._effect_age = 2.0
     assert c._effective_stop_age() <= 1.0   # emission ceased by `duration`=1.0
+
+
+def test_create_weapon_sparks_runs_unmodified():
+    import App
+    import Effects
+    App._stub_tracker.clear()
+    P.reset()
+
+    class FakeNode:
+        pass
+
+    class FakeTarget:
+        def GetNode(self):
+            return FakeNode()
+
+    class FakeEvent:
+        def GetTargetObject(self):
+            return FakeTarget()
+
+        def GetObjectHitPoint(self):
+            return (0.0, 0.0, 0.0)
+
+        def GetObjectHitNormal(self):
+            return (0.0, 1.0, 0.0)
+
+    action = Effects.CreateWeaponSparks(1.0, FakeEvent(), object())
+    action.Start()
+    assert P.active_count() == 1
+    ctrl = P._active[0]
+    assert isinstance(ctrl, SparkParticleController)
+    assert ctrl._tail_length > 0.0          # SetTailLength was honoured
+    assert ctrl._damping == 0.3             # CreateWeaponSparks sets SetDamping(0.3)
+    names = {row[0] for row in App._stub_tracker.report()}
+    assert "SparkParticleController_Create" not in names
+
+
+def test_create_debris_sparks_runs_unmodified():
+    import Effects
+    P.reset()
+    action = Effects.CreateDebrisSparks(1.0, object(), 0, object())
+    action.Start()
+    assert P.active_count() == 1
+    ctrl = P._active[0]
+    assert isinstance(ctrl, SparkParticleController)
+    assert ctrl._texture_path.endswith("smooth.tga")
+    assert ctrl._tail_length > 0.0

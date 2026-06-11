@@ -183,6 +183,7 @@ from engine.appc.properties import (
 )
 from engine.appc.particles import (
     AnimTSParticleController_Create,
+    SparkParticleController_Create,
     EffectAction_Create,
     ExplosionPlumeController_Create,
     EffectController,
