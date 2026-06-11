@@ -267,6 +267,8 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
                   hardpoint_weapon=torpedo)
 
     hit_vfx.update_ages(dt)
+    from engine.appc import subsystem_emitters
+    subsystem_emitters.pump(ships_list, _camera_world_pos(host), dt)
     from engine.appc import camera_shake
     camera_shake.update(dt)
 
@@ -561,6 +563,18 @@ def _all_ships_for_tick():
         return iter_ships()
     except Exception:
         return iter(())
+
+
+def _camera_world_pos(host):
+    """Best-effort camera world position for plume distance culling; None if
+    unavailable (culling then disabled, cap still applies)."""
+    if host is not None and hasattr(host, "get_camera_world_pos"):
+        try:
+            p = host.get_camera_world_pos()
+            return (p[0], p[1], p[2])
+        except Exception:
+            return None
+    return None
 
 
 def _extract_ypr(R) -> tuple:
@@ -1631,6 +1645,8 @@ class HostController:
             self.session.teardown(self.renderer)
         from engine.appc import ship_lifecycle
         ship_lifecycle.reset()
+        from engine.appc import subsystem_emitters
+        subsystem_emitters.reset_manager()
         reset_sdk_globals()
         if self.panel_registry is not None:
             self.panel_registry.invalidate_all()
