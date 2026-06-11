@@ -359,3 +359,57 @@ def test_tg_condition_action_in_sequence():
     next_action = App.TGAction_CreateNull()
     seq.AddAction(next_action, ca)
     assert seq.GetNumActions() == 2
+
+
+# ── TGSequence step model ────────────────────────────────────────────────────
+
+def test_add_action_stores_step_with_no_dependency():
+    from engine.appc.actions import TGSequence_Create
+    s = TGSequence_Create()
+    a = App.TGAction_CreateNull()
+    s.AddAction(a)
+    assert s.GetNumActions() == 1
+    assert s.GetAction(0) is a
+    assert s._steps[0].dependency is None
+    assert s._steps[0].delay == 0.0
+
+
+def test_add_action_parses_dependency_and_delay_by_type():
+    from engine.appc.actions import TGSequence_Create
+    s = TGSequence_Create()
+    dep = App.TGAction_CreateNull()
+    a = App.TGAction_CreateNull()
+    s.AddAction(a, dep, 1.5)
+    step = s._steps[0]
+    assert step.dependency is dep
+    assert step.delay == 1.5
+
+
+def test_add_action_delay_only_arg_is_delay_not_dependency():
+    from engine.appc.actions import TGSequence_Create
+    s = TGSequence_Create()
+    a = App.TGAction_CreateNull()
+    s.AddAction(a, 2.0)
+    assert s._steps[0].dependency is None
+    assert s._steps[0].delay == 2.0
+
+
+def test_append_action_chains_to_previous_action():
+    from engine.appc.actions import TGSequence_Create
+    s = TGSequence_Create()
+    first = App.TGAction_CreateNull()
+    second = App.TGAction_CreateNull()
+    s.AppendAction(first)
+    s.AppendAction(second, 0.25)
+    assert s._steps[0].dependency is None           # first chains to start
+    assert s._steps[1].dependency is first          # second chains to first
+    assert s._steps[1].delay == 0.25
+
+
+def test_parse_extra_helper():
+    from engine.appc.actions import _parse_extra
+    dep = App.TGAction_CreateNull()
+    assert _parse_extra(()) == (None, 0.0)
+    assert _parse_extra((dep,)) == (dep, 0.0)
+    assert _parse_extra((3,)) == (None, 3.0)
+    assert _parse_extra((dep, 0.5)) == (dep, 0.5)

@@ -124,29 +124,68 @@ def TGScriptAction_Create(module_name: str, func_name: str, *args) -> TGScriptAc
     return TGScriptAction(module_name, func_name, *args)
 
 
+class _Step:
+    """One scheduled action within a TGSequence.
+
+    `dependency` None means the step is a root (fires at sequence start).
+    `delay` is seconds measured from the dependency's completion.
+    """
+    __slots__ = ("action", "dependency", "delay", "started")
+
+    def __init__(self, action, dependency, delay):
+        self.action = action
+        self.dependency = dependency
+        self.delay = float(delay)
+        self.started = False
+
+
+def _parse_extra(extra):
+    """Resolve TGSequence AddAction/AppendAction *extra args by type:
+    a TGAction is the dependency; a number is the delay (seconds).
+    Returns (dependency_or_None, delay_float)."""
+    dependency = None
+    delay = 0.0
+    for arg in extra:
+        if isinstance(arg, TGAction):
+            dependency = arg
+        elif isinstance(arg, (int, float)):
+            delay = float(arg)
+    return dependency, delay
+
+
 class TGSequence(TGAction):
     def __init__(self):
         super().__init__()
-        self._actions: list[TGAction] = []
+        self._steps: list[_Step] = []
+        self._verb: str = "Play"
+        self._completed_actions: set[int] = set()
+        self._pending_timers: list = []   # (manager, _Step, TGTimer)
 
     def AddAction(self, action: TGAction, *extra) -> None:
-        """Add action to the sequence. Dependency/delay args (extra) ignored in Phase 1."""
-        self._actions.append(action)
+        """Add a parallel/explicit-dependency step. With no extra args the
+        action is a root (fires at sequence start)."""
+        dependency, delay = _parse_extra(extra)
+        self._steps.append(_Step(action, dependency, delay))
 
     def AppendAction(self, action: TGAction, *extra) -> None:
-        self._actions.append(action)
+        """Append a step chained to the previously added action. An explicit
+        dependency arg overrides the implicit chain; a numeric arg is the delay."""
+        dependency, delay = _parse_extra(extra)
+        if dependency is None and self._steps:
+            dependency = self._steps[-1].action
+        self._steps.append(_Step(action, dependency, delay))
 
     def GetNumActions(self) -> int:
-        return len(self._actions)
+        return len(self._steps)
 
     def GetAction(self, index: int) -> "TGAction | None":
-        if 0 <= index < len(self._actions):
-            return self._actions[index]
+        if 0 <= index < len(self._steps):
+            return self._steps[index].action
         return None
 
     def _do_play(self) -> None:
-        for action in list(self._actions):
-            action.Play()
+        for step in list(self._steps):
+            step.action.Play()
 
     def Start(self) -> None:
         """Particle-effect entry point: call Start() on every child action.
@@ -154,7 +193,8 @@ class TGSequence(TGAction):
         to Play().  Delay args in AddAction are ignored in Phase 1 (all fire
         immediately), matching the synchronous execution model documented at
         the top of this file."""
-        for action in list(self._actions):
+        for step in list(self._steps):
+            action = step.action
             if hasattr(action, "Start") and not isinstance(action, TGSequence):
                 action.Start()
             else:
@@ -162,7 +202,8 @@ class TGSequence(TGAction):
 
     def Stop(self) -> None:
         """Stop all child actions (call Stop() where available, else Abort())."""
-        for action in list(self._actions):
+        for step in list(self._steps):
+            action = step.action
             if hasattr(action, "Stop") and not isinstance(action, TGSequence):
                 action.Stop()
             else:
