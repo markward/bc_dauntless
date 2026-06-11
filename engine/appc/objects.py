@@ -337,6 +337,14 @@ class PhysicsObjectClass(ObjectClass):
         pass
 
 
+def _is_critical(subsystem) -> bool:
+    """True when a subsystem carries the engine's critical flag. Guarded so
+    objects/subsystems without IsCritical (Phase 1 stubs) read as False."""
+    if subsystem is None or not hasattr(subsystem, "IsCritical"):
+        return False
+    return bool(subsystem.IsCritical())
+
+
 class DamageableObject(PhysicsObjectClass):
     """Placeholder — hull/shield damage state lives here in Phase 2.
 
@@ -355,11 +363,9 @@ class DamageableObject(PhysicsObjectClass):
         return self._property_set
 
     def DamageSystem(self, subsystem, amount: float) -> None:
-        """Apply damage to a subsystem.  Decrement its condition floored
-        at zero.  If the subsystem is this object's hull and condition
-        reaches zero, mark the object as dying — mission scripts trigger
-        the destruction sequence via the existing SetDying/SetDead path.
-        """
+        """Apply damage to a subsystem, flooring condition at zero. If the
+        subsystem is critical and reaches zero, start the ship death
+        sequence (covers hull AND warp core via SetCritical(1))."""
         if subsystem is None:
             return
         amt = float(amount)
@@ -368,9 +374,11 @@ class DamageableObject(PhysicsObjectClass):
         cur = subsystem.GetCondition()
         new_cond = max(0.0, cur - amt)
         subsystem.SetCondition(new_cond)
-        hull = self.GetHull() if hasattr(self, "GetHull") else None
-        if subsystem is hull and new_cond <= 0.0 and hasattr(self, "SetDying"):
-            self.SetDying(True)
+        if new_cond <= 0.0 and _is_critical(subsystem) \
+                and hasattr(self, "IsDying") and not self.IsDying() \
+                and not self.IsDead():
+            from engine.appc import ship_death
+            ship_death.begin(self)
 
 
 class ObjectGroup(TGEventHandlerObject):

@@ -109,3 +109,68 @@ def test_advance_prunes_ship_with_no_set():
     ship_death.begin(ship)
     ship_death.advance(ship_death.THROES_DURATION)  # must not raise
     assert ship.IsDead() == 1
+
+
+# --- Task 2: critical-flag trigger via DamageSystem -------------------------
+from engine.appc.objects import DamageableObject
+
+
+class FakeSub:
+    """Subsystem with condition + critical flag (mirrors ShipSubsystem)."""
+    def __init__(self, max_condition=100.0, critical=0):
+        self._cond = float(max_condition)
+        self._max = float(max_condition)
+        self._critical = int(critical)
+        self._destroyed = False
+    def GetCondition(self):      return self._cond
+    def SetCondition(self, v):   self._cond = max(0.0, float(v))
+    def GetMaxCondition(self):   return self._max
+    def IsCritical(self):        return self._critical
+    def SetDestroyed(self, v):   self._destroyed = bool(v)
+    def IsDestroyed(self):       return 1 if self._destroyed else 0
+
+
+class FakeDamageable(DamageableObject):
+    """DamageableObject with a hull + lifecycle flags, for trigger tests."""
+    def __init__(self):
+        super().__init__()
+        self._hull = FakeSub(critical=1)
+        self._dying = False
+        self._dead = False
+        self._name = "Subject"
+        self._set = FakeSet()
+    def GetHull(self):           return self._hull
+    def GetName(self):           return self._name
+    def GetContainingSet(self):  return self._set
+    def GetRadius(self):         return 1.0
+    def IsDying(self):           return 1 if self._dying else 0
+    def IsDead(self):            return 1 if self._dead else 0
+    def SetDying(self, v):       self._dying = bool(v)
+    def SetDead(self, v=True):   self._dead = bool(v) if v is not True else True
+
+
+def test_damaging_critical_subsystem_to_zero_triggers_death():
+    obj = FakeDamageable()
+    obj.DamageSystem(obj.GetHull(), 100.0)  # hull is critical
+    assert obj.IsDying() == 1
+
+
+def test_damaging_noncritical_subsystem_to_zero_does_not_trigger_death():
+    obj = FakeDamageable()
+    sensors = FakeSub(critical=0)
+    obj.DamageSystem(sensors, 100.0)
+    assert sensors.GetCondition() == 0.0
+    assert obj.IsDying() == 0
+
+
+def test_warp_core_critical_triggers_death():
+    obj = FakeDamageable()
+    warp_core = FakeSub(critical=1)
+    obj.DamageSystem(warp_core, 100.0)
+    assert obj.IsDying() == 1
+
+
+def test_partial_damage_does_not_trigger_death():
+    obj = FakeDamageable()
+    obj.DamageSystem(obj.GetHull(), 40.0)  # hull still at 60
+    assert obj.IsDying() == 0
