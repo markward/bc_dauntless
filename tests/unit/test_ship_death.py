@@ -313,3 +313,40 @@ def test_spawn_explosion_raise_safe(monkeypatch):
     ship = FakeShip(name="Safe")
     ship_death.begin(ship)  # must not raise
     assert ship.IsDying() == 1
+
+
+# --- Task 8: ET_OBJECT_DESTROYED broadcast ----------------------------------
+def test_app_defines_object_destroyed_constant():
+    import App
+    assert isinstance(App.ET_OBJECT_DESTROYED, int)
+
+
+def test_death_broadcasts_object_destroyed_once():
+    import App
+    from engine.appc.events import TGPythonInstanceWrapper
+
+    fired = {"count": 0, "source_name": None}
+
+    class Listener:
+        def Destroyed(self, pEvent):
+            fired["count"] += 1
+            src = pEvent.GetSource()
+            fired["source_name"] = src.GetName() if src is not None else None
+
+    listener = Listener()
+    wrapper = TGPythonInstanceWrapper()
+    wrapper.SetPyWrapper(listener)
+
+    ship = FakeShip(name="Marked")
+    # Register a per-source method handler keyed on this ship (the SDK
+    # ConditionDestroyed pattern: target == the watched object).
+    App.g_kEventManager.AddBroadcastPythonMethodHandler(
+        App.ET_OBJECT_DESTROYED, wrapper, "Destroyed", ship)
+
+    ship_death.begin(ship)
+    ship_death.advance(ship_death.THROES_DURATION)
+
+    assert fired["count"] == 1
+    assert fired["source_name"] == "Marked"
+
+    App.g_kEventManager.RemoveAllInstanceHandlers()

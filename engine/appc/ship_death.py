@@ -61,14 +61,31 @@ def advance(dt: float) -> None:
 
 
 def _finish(ship) -> None:
-    """Death instant: mark dead, then remove from set. Order matters —
-    SetDead fires publish_destroyed while the handle is still valid."""
+    """Death instant: mark dead, broadcast ET_OBJECT_DESTROYED, then remove
+    from set. Order matters — the event fires while the handle is still in
+    the set so handlers can read the ship's name/position."""
     if hasattr(ship, "SetDead"):
         ship.SetDead()
+    _broadcast_destroyed(ship)
     try:
         pSet = ship.GetContainingSet() if hasattr(ship, "GetContainingSet") else None
         if pSet is not None and hasattr(ship, "GetName"):
             pSet.RemoveObjectFromSet(ship.GetName())
+    except Exception:
+        pass
+
+
+def _broadcast_destroyed(ship) -> None:
+    """Fire ET_OBJECT_DESTROYED with source == destination == ship, so both
+    func-broadcast handlers (read GetSource) and per-source method handlers
+    (filter on GetDestination) receive it. Raise-safe."""
+    try:
+        import App
+        evt = App.TGEvent_Create()
+        evt.SetEventType(App.ET_OBJECT_DESTROYED)
+        evt.SetSource(ship)
+        evt.SetDestination(ship)
+        App.g_kEventManager.AddEvent(evt)
     except Exception:
         pass
 
