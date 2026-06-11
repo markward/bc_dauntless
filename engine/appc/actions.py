@@ -334,6 +334,12 @@ class TGSequence(TGAction):
         mgr.AddTimer(timer)
         self._pending_timers.append((mgr, step, timer))
 
+    def Abort(self) -> None:
+        for mgr, _step, timer in self._pending_timers:
+            mgr.RemoveTimer(timer)
+        self._pending_timers = []
+        self._playing = False
+
     def Stop(self) -> None:
         for mgr, _step, timer in self._pending_timers:
             mgr.RemoveTimer(timer)

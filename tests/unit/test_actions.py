@@ -580,3 +580,31 @@ def test_sequence_step_waits_for_condition_flip():
     cond.SetActive()
     cond.SetStatus(1)                     # condition flips
     assert log == ["after"]              # dependent fires on completion
+
+
+# ── TGSequence teardown ──────────────────────────────────────────────────────
+
+def test_abort_cancels_pending_delay_timers():
+    log = []
+    s = App.TGSequence_Create()
+    s.AddAction(_RecordingAction(log, "later"),
+                App.TGAction_CreateNull(), 0.5)
+    s.Play()
+    assert len(s._pending_timers) == 1
+    s.Abort()
+    assert s._pending_timers == []
+    _advance_game_time(1.0)
+    assert log == []                      # timer was cancelled; never fired
+    assert not s.IsPlaying()
+
+
+def test_stop_cancels_pending_delay_timers():
+    log = []
+    s = App.TGSequence_Create()
+    s.AddAction(_RecordingAction(log, "later"),
+                App.TGAction_CreateNull(), 0.5)
+    s.Play()
+    s.Stop()
+    assert s._pending_timers == []
+    _advance_game_time(1.0)
+    assert log == []
