@@ -40,48 +40,7 @@ def test_object_exploding_registers_real_debris_sparks():
     import Effects
     from engine.appc import particles as P
     from engine.appc.particles import SparkParticleController
-    from engine.appc.objects import DamageableObject
-
-    class FakeSet:
-        def GetName(self):
-            return "TestSet"
-
-        def GetEffectRoot(self):
-            return object()
-
-        def GetNode(self):
-            return None
-
-    class FakeNode:
-        pass
-
-    class FakeObject(DamageableObject):
-        def __init__(self):
-            super().__init__()
-            self._fake_set = FakeSet()
-            self._fake_node = FakeNode()
-
-        def GetRandomPointOnModel(self):
-            return (1.0, 2.0, 3.0)
-
-        def GetRadius(self):
-            return 10.0
-
-        def GetObjID(self):
-            return 9999
-
-        def GetNode(self):
-            return self._fake_node
-
-        def GetContainingSet(self):
-            return self._fake_set
-
-        def GetLifeTime(self):
-            # > 1_000_000 so ObjectExploding picks a random short lifetime
-            return 2_000_000.0
-
-        def SetLifeTime(self, f):
-            self._lifetime = f
+    from tests.unit.test_particles_death_probe import FakeObject
 
     P.reset()
     fake = FakeObject()

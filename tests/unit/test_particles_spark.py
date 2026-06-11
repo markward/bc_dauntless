@@ -52,8 +52,6 @@ def test_duration_caps_emission_stop_age():
 def test_create_weapon_sparks_runs_unmodified():
     import App
     import Effects
-    App._stub_tracker.clear()
-    P.reset()
 
     class FakeNode:
         pass
@@ -72,14 +70,20 @@ def test_create_weapon_sparks_runs_unmodified():
         def GetObjectHitNormal(self):
             return (0.0, 1.0, 0.0)
 
-    action = Effects.CreateWeaponSparks(1.0, FakeEvent(), object())
-    action.Start()
+    P.reset()
+    App._stub_tracker.clear()
+    App._stub_tracker.set_mission("spark-a3")
+    try:
+        action = Effects.CreateWeaponSparks(1.0, FakeEvent(), object())
+        action.Start()
+        names = {row[0] for row in App._stub_tracker.report()}
+    finally:
+        App._stub_tracker.reset_mission()
     assert P.active_count() == 1
     ctrl = P._active[0]
     assert isinstance(ctrl, SparkParticleController)
     assert ctrl._tail_length > 0.0          # SetTailLength was honoured
     assert ctrl._damping == 0.3             # CreateWeaponSparks sets SetDamping(0.3)
-    names = {row[0] for row in App._stub_tracker.report()}
     assert "SparkParticleController_Create" not in names
 
 
