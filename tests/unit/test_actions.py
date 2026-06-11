@@ -413,3 +413,97 @@ def test_parse_extra_helper():
     assert _parse_extra((dep,)) == (dep, 0.0)
     assert _parse_extra((3,)) == (None, 3.0)
     assert _parse_extra((dep, 0.5)) == (dep, 0.5)
+
+
+# ── TGSequence synchronous launch engine ─────────────────────────────────────
+
+class _RecordingAction(TGAction):
+    """Test action that records the order in which it was played."""
+    def __init__(self, log, tag):
+        super().__init__()
+        self._log = log
+        self._tag = tag
+
+    def _do_play(self):
+        self._log.append(self._tag)
+
+
+def test_add_action_roots_fire_in_parallel_on_play():
+    log = []
+    s = App.TGSequence_Create()
+    s.AddAction(_RecordingAction(log, "a"))
+    s.AddAction(_RecordingAction(log, "b"))
+    s.Play()
+    assert log == ["a", "b"]          # both roots fired
+
+
+def test_append_action_zero_delay_chains_inline():
+    log = []
+    s = App.TGSequence_Create()
+    s.AppendAction(_RecordingAction(log, "a"))
+    s.AppendAction(_RecordingAction(log, "b"))   # depends on a, delay 0
+    s.Play()
+    assert log == ["a", "b"]          # b fired inline after a completed
+
+
+def test_explicit_dependency_zero_delay_fires_inline():
+    log = []
+    s = App.TGSequence_Create()
+    dep = _RecordingAction(log, "dep")
+    s.AddAction(dep)
+    s.AddAction(_RecordingAction(log, "next"), dep)
+    s.Play()
+    assert log == ["dep", "next"]
+
+
+def test_sequence_not_playing_after_synchronous_completion():
+    s = App.TGSequence_Create()
+    s.AddAction(App.TGAction_CreateNull())
+    s.Play()
+    assert not s.IsPlaying()
+
+
+def test_sequence_fires_own_completed_event_when_all_done():
+    import sys, types
+    fired = []
+    mod = types.ModuleType("_test_seq_done")
+    mod.on_done = lambda obj, ev: fired.append(True)
+    sys.modules["_test_seq_done"] = mod
+    App.g_kTGActionManager.AddPythonFuncHandlerForInstance(
+        App.ET_ACTION_COMPLETED, "_test_seq_done.on_done")
+
+    s = App.TGSequence_Create()
+    s.AddAction(App.TGAction_CreateNull())
+    ev = App.TGEvent_Create()
+    ev.SetEventType(App.ET_ACTION_COMPLETED)
+    ev.SetDestination(App.g_kTGActionManager)
+    s.AddCompletedEvent(ev)
+    s.Play()
+
+    assert fired == [True]
+    App.g_kTGActionManager.RemoveHandlerForInstance(
+        App.ET_ACTION_COMPLETED, "_test_seq_done.on_done")
+    del sys.modules["_test_seq_done"]
+
+
+def test_dependent_waits_for_dependency_listed_later():
+    # 'b' is listed BEFORE its dependency 'a' in insertion order, so a pure
+    # insertion-order engine would fire b first. The dependency engine must
+    # fire a (the dependency) and only then b.
+    log = []
+    s = App.TGSequence_Create()
+    a = _RecordingAction(log, "a")
+    s.AddAction(_RecordingAction(log, "b"), a)   # b depends on a (listed first)
+    s.AddAction(a)                                # a is a root (listed second)
+    s.Play()
+    assert log == ["a", "b"]
+
+
+def test_replay_runs_steps_again():
+    # A second Play() must re-run the sequence, not hang (step.started reset).
+    log = []
+    s = App.TGSequence_Create()
+    s.AddAction(_RecordingAction(log, "x"))
+    s.Play()
+    s.Play()
+    assert log == ["x", "x"]

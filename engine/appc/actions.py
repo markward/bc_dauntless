@@ -10,6 +10,13 @@ import sys
 from engine.appc.events import TGEventHandlerObject, TGEvent
 from engine.core.ids import get_object_by_id
 
+# Private event types used only by the TGSequence scheduler. They are delivered
+# directly to the owning sequence via event destination routing and never reach
+# the SDK broadcast bus, so the values only need to be unique within a sequence's
+# ProcessEvent. Kept well outside the SDK's ET_* ranges (100s/200s).
+_ET_SEQ_STEP_COMPLETED = 0x5E01   # a tracked action finished -> advance dependents
+_ET_SEQ_TIMER_FIRED    = 0x5E02   # a delay timer elapsed -> launch the pending step
+
 
 class TGAction(TGEventHandlerObject):
     def __init__(self):
@@ -183,31 +190,149 @@ class TGSequence(TGAction):
             return self._steps[index].action
         return None
 
-    def _do_play(self) -> None:
-        for step in list(self._steps):
-            step.action.Play()
+    # ── launch ──────────────────────────────────────────────────────────────
+    def Play(self) -> None:
+        self._launch("Play")
 
     def Start(self) -> None:
-        """Particle-effect entry point: call Start() on every child action.
-        Children that are EffectActions use Start(); plain TGActions fall back
-        to Play().  Delay args in AddAction are ignored in Phase 1 (all fire
-        immediately), matching the synchronous execution model documented at
-        the top of this file."""
-        for step in list(self._steps):
-            action = step.action
-            if hasattr(action, "Start") and not isinstance(action, TGSequence):
-                action.Start()
-            else:
-                action.Play()
+        """Particle-effect entry point: launch children with Start() where
+        available (plain actions and sub-sequences fall back to Play())."""
+        self._launch("Start")
+
+    def _launch(self, verb: str) -> None:
+        self._playing = True
+        self._verb = verb
+        self._completed_actions = set()
+        self._pending_timers = []
+        for step in self._steps:
+            step.started = False
+
+        # Subscribe to completion of every member action and every dependency
+        # (including the throwaway-null idiom used to anchor a delay at t=0).
+        tracked = {}
+        for step in self._steps:
+            tracked[id(step.action)] = step.action
+            if step.dependency is not None:
+                tracked[id(step.dependency)] = step.dependency
+        for action in tracked.values():
+            self._subscribe_completion(action)
+
+        # Play non-member dependencies now so they complete at sequence start
+        # and anchor their dependents' delays at t=0.
+        member_ids = {id(s.action) for s in self._steps}
+        for action in list(tracked.values()):
+            if id(action) not in member_ids:
+                self._fire(action)
+
+        # Fire all root steps (no dependency) immediately.
+        for step in self._steps:
+            if step.dependency is None:
+                self._begin_step(step)
+
+        self._maybe_complete()
+
+    def _subscribe_completion(self, action) -> None:
+        # Fire-and-forget actions (e.g. the headless EffectAction) have no
+        # completion-event support; they are treated as completing on launch
+        # (see _fire), so there is nothing to subscribe to here.
+        if not hasattr(action, "AddCompletedEvent"):
+            return
+        ev = TGObjPtrEvent()
+        ev.SetEventType(_ET_SEQ_STEP_COMPLETED)
+        ev.SetDestination(self)
+        ev.SetObjPtr(action)
+        action.AddCompletedEvent(ev)
+
+    @staticmethod
+    def _has_real_start(action) -> bool:
+        """Return True if the action has a genuine Start() method (not a
+        TGObject.__getattr__ _Stub).  We must check via the MRO rather than
+        hasattr() because TGObject.__getattr__ returns a _Stub for every
+        attribute name, so hasattr always returns True regardless of whether
+        Start is actually implemented."""
+        for cls in type(action).__mro__:
+            if "Start" in cls.__dict__:
+                return True
+        return False
+
+    def _fire(self, action) -> None:
+        """Launch an action using the sequence's verb, mirroring the legacy
+        Start() routing (Start for non-sequence actions that support it)."""
+        if (self._verb == "Start" and self._has_real_start(action)
+                and not isinstance(action, TGSequence)):
+            action.Start()
+        else:
+            action.Play()
+        # Actions without completion-event support never post
+        # _ET_SEQ_STEP_COMPLETED, so treat them as completing the instant they
+        # launch — otherwise dependents and the sequence's own completion would
+        # hang waiting on an event that never arrives.
+        if not hasattr(action, "AddCompletedEvent"):
+            self._on_dependency_complete(action)
+
+    def _begin_step(self, step: "_Step") -> None:
+        if step.started:
+            return
+        step.started = True
+        if step.delay <= 0:
+            self._fire(step.action)
+        else:
+            self._schedule_timer(step)
+
+    # ── event routing ───────────────────────────────────────────────────────
+    def ProcessEvent(self, event) -> None:
+        et = event.GetEventType()
+        if et == _ET_SEQ_STEP_COMPLETED:
+            self._on_dependency_complete(event.GetObjPtr())
+            return
+        if et == _ET_SEQ_TIMER_FIRED:
+            self._on_timer_fired(event.GetObjPtr())
+            return
+        super().ProcessEvent(event)
+
+    def _on_dependency_complete(self, action) -> None:
+        self._completed_actions.add(id(action))
+        for step in self._steps:
+            if (not step.started and step.dependency is not None
+                    and step.dependency is action):
+                self._begin_step(step)
+        self._maybe_complete()
+
+    def _on_timer_fired(self, step) -> None:
+        self._pending_timers = [
+            rec for rec in self._pending_timers if rec[1] is not step
+        ]
+        self._fire(step.action)
+        self._maybe_complete()
+
+    # ── completion ──────────────────────────────────────────────────────────
+    def _maybe_complete(self) -> None:
+        if not self._playing:
+            return
+        if self._pending_timers:
+            return
+        if any(not s.started for s in self._steps):
+            return
+        member_ids = {id(s.action) for s in self._steps}
+        if not member_ids.issubset(self._completed_actions):
+            return
+        self.Completed()
+
+    def _schedule_timer(self, step: "_Step") -> None:
+        # Implemented in Task 3.
+        raise NotImplementedError
 
     def Stop(self) -> None:
-        """Stop all child actions (call Stop() where available, else Abort())."""
-        for step in list(self._steps):
+        for mgr, _step, timer in self._pending_timers:
+            mgr.RemoveTimer(timer)
+        self._pending_timers = []
+        for step in self._steps:
             action = step.action
             if hasattr(action, "Stop") and not isinstance(action, TGSequence):
                 action.Stop()
             else:
                 action.Abort()
+        self._playing = False
 
 
 def TGSequence_Create() -> TGSequence:
