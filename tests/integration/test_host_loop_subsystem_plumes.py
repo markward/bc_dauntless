@@ -23,3 +23,16 @@ def test_default_backend_is_null_safe_noop():
     se.pump([FakeShip(subs=[sub])], camera_pos=None, dt=0.1)
     # Manager ran its full state machine without error; NullBackend rendered nothing.
     assert se.get_manager().active_count() == 1  # tracked, but inert handle
+
+
+def test_reset_manager_drops_tracked_emitters():
+    se.reset_registry()
+    se.reset_manager()
+    b = FakeControllerBackend()
+    se.set_backend(b)
+    sub = FakeSub("WarpEngineSubsystem", state="disabled")
+    se.pump([FakeShip(subs=[sub])], camera_pos=None, dt=0.1)
+    assert se.get_manager().active_count() == 1
+    # Simulate a mission swap: reset_manager() must drop all tracked emitters.
+    se.reset_manager()
+    assert se.get_manager().active_count() == 0

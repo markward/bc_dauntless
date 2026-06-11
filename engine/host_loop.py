@@ -1645,6 +1645,8 @@ class HostController:
             self.session.teardown(self.renderer)
         from engine.appc import ship_lifecycle
         ship_lifecycle.reset()
+        from engine.appc import subsystem_emitters
+        subsystem_emitters.reset_manager()
         reset_sdk_globals()
         if self.panel_registry is not None:
             self.panel_registry.invalidate_all()
