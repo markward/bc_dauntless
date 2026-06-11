@@ -110,7 +110,80 @@ TEST_F(ParticlePassTest, RendersWithoutGlError) {
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 
-// ── Test 2: empty emitter list never touches GL state (early-return guard) ──
+// ── Test 2: streak + damping render cleanly (A3 byte-identity guard) ────────
+TEST_F(ParticlePassTest, StreakAndDampingRenderCleanly) {
+    namespace fs = std::filesystem;
+
+    const fs::path tex_path = project_root()
+        / "game" / "data" / "Textures" / "Effects" / "ExplosionB.tga";
+
+    if (!fs::is_regular_file(tex_path)) {
+        GTEST_SKIP() << "BC asset absent: " << tex_path;
+    }
+
+    renderer::ParticlePass pass;
+    scenegraph::World world;
+    scenegraph::Camera camera;
+    camera.eye    = {0.0f, 0.0f, 100.0f};
+    camera.target = {0.0f, 0.0f,   0.0f};
+    camera.up     = {0.0f, 1.0f,   0.0f};
+    camera.aspect = 1.0f;
+
+    while (glGetError() != GL_NO_ERROR) {}
+
+    // Emitter A: streak + damping active.
+    renderer::ParticleEmitterDescriptor ea;
+    ea.texture_path       = tex_path.string();
+    ea.emit_pos           = {0.0f, 0.0f, 0.0f};
+    ea.emit_dir           = {0.0f, 1.0f, 0.0f};
+    ea.emit_vel_world     = {0.0f, 0.0f, 0.0f};
+    ea.inherit            = 0.0f;
+    ea.emit_velocity      = 2.0f;
+    ea.angle_variance     = 10.0f;
+    ea.emit_life          = 1.0f;
+    ea.emit_life_variance = 0.0f;
+    ea.emit_frequency     = 0.1f;
+    ea.effect_age         = 0.3f;
+    ea.stop_age           = 1.0e30f;
+    ea.draw_old_to_new    = 1;
+    ea.tail_length        = 0.2f;
+    ea.damping            = 1.0f;
+    ea.num_size_keys = 1;
+    ea.size_keys[0].t = 0.0f;
+    ea.size_keys[0].v = 1.0f;
+    ea.num_alpha_keys = 1;
+    ea.alpha_keys[0].t = 0.0f;
+    ea.alpha_keys[0].v = 1.0f;
+
+    pass.render({ea}, world, camera, *pipeline);
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+
+    // Emitter B: byte-identity path (tail_length==0, damping==0 => A1/A2 behaviour).
+    renderer::ParticleEmitterDescriptor eb;
+    eb.texture_path       = tex_path.string();
+    eb.emit_pos           = {0.0f, 0.0f, 0.0f};
+    eb.emit_dir           = {0.0f, 1.0f, 0.0f};
+    eb.emit_vel_world     = {0.0f, 0.0f, 0.0f};
+    eb.inherit            = 0.0f;
+    eb.emit_velocity      = 1.0f;
+    eb.emit_life          = 1.0f;
+    eb.emit_frequency     = 0.1f;
+    eb.effect_age         = 0.1f;
+    eb.stop_age           = 1.0e30f;
+    eb.tail_length        = 0.0f;
+    eb.damping            = 0.0f;
+    eb.num_size_keys = 1;
+    eb.size_keys[0].t = 0.0f;
+    eb.size_keys[0].v = 1.0f;
+    eb.num_alpha_keys = 1;
+    eb.alpha_keys[0].t = 0.0f;
+    eb.alpha_keys[0].v = 1.0f;
+
+    pass.render({eb}, world, camera, *pipeline);
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+// ── Test 3: empty emitter list never touches GL state (early-return guard) ──
 TEST_F(ParticlePassTest, EmptyListProducesNoGlError) {
     renderer::ParticlePass pass;
     scenegraph::World world;

@@ -191,6 +191,9 @@ void ParticlePass::render(const std::vector<ParticleEmitterDescriptor>& emitters
 
         const int n = particle_max_count(e.emit_life, e.emit_life_variance,
                                          e.emit_frequency);
+        // Defensive default: emitters with tail_length==0 never hit the
+        // per-particle branch below, so pre-zero the uniform once here.
+        shader.set_float("u_streak_length", 0.0f);
         glBindTexture(GL_TEXTURE_2D, tex->id());
 
         for (int i = 0; i < n; ++i) {
@@ -204,21 +207,22 @@ void ParticlePass::render(const std::vector<ParticleEmitterDescriptor>& emitters
             const glm::vec3 dir = cone_jitter(emit_dir_world, cam_up, cam_right,
                                               jit, e.angle_variance);
 
-            // Base world position (A1 model).
-            glm::vec3 pos = particle_world_pos(emit_pos_world, dir,
-                                               e.emit_vel_world,
-                                               e.emit_velocity, e.inherit, tau);
+            // A3: damped directed travel (identical to A1/A2 when damping==0).
+            const float directed = damped_travel(e.emit_velocity, e.damping, tau);
+            glm::vec3 pos = emit_pos_world + dir * directed
+                          - e.emit_vel_world * ((1.0f - e.inherit) * tau);
 
             // A2 extension: emit-radius birth offset (zero when emit_radius==0).
             pos += emit_radius_offset(e.emit_radius, jit, i);
 
             // A2 extension: 3D random velocity (zero when random_velocity_speed==0).
+            // A3: random travel also uses damped_travel (linear when damping==0).
             if (e.random_velocity_speed > 0.0f) {
                 const glm::vec2 rv_hash = hash3(emit_pos_world, i + 7919);
                 const glm::vec3 rv_dir  = random_cone_dir(emit_dir_world,
                                                           e.random_velocity_cone,
                                                           rv_hash);
-                pos += rv_dir * (e.random_velocity_speed * tau);
+                pos += rv_dir * damped_travel(e.random_velocity_speed, e.damping, tau);
             }
 
             const float t     = (life_i > 1e-6f) ? (tau / life_i) : 0.0f;
@@ -232,6 +236,14 @@ void ParticlePass::render(const std::vector<ParticleEmitterDescriptor>& emitters
             shader.set_vec3 ("u_world_position", pos);
             shader.set_float("u_size",           size);
             shader.set_float("u_alpha",          alpha);
+            // A3: streak uniforms. tail_length==0 => camera-facing billboard (A1/A2 path).
+            if (e.tail_length > 0.0f) {
+                const float speed = e.emit_velocity * std::exp(-e.damping * tau);
+                shader.set_vec3 ("u_streak_axis",   dir);
+                shader.set_float("u_streak_length", e.tail_length * speed);
+            } else {
+                shader.set_float("u_streak_length", 0.0f);
+            }
             glDrawArrays(GL_TRIANGLES, 0, 6);
         }
     }
