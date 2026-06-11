@@ -209,6 +209,7 @@ def test_iter_collidables_yields_ships_and_planets_only():
     found = set(id(o) for o in iter_collidables())
     assert id(ship) in found
     assert id(planet) in found
+    assert len(found) == 2  # nothing else (e.g. stubs) leaked through the filter
 
 
 def test_iter_collidables_skips_zero_radius():
