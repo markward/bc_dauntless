@@ -2606,6 +2606,19 @@ def run(mission_name: Optional[str] = None,
                     ship_instances=(session.ship_instances if session is not None else None),
                 )
 
+                # Collision detection + response (ships/asteroids/moons/
+                # planets). Runs once per render frame after motion + player
+                # input, so every body's post-thrust position is current.
+                # Reuses combat.apply_hit for impact damage; injects a
+                # mass-weighted impulse into each body's decaying
+                # _collision_velocity overlay. Spec
+                # docs/superpowers/specs/2026-06-11-collision-response-design.md.
+                from engine.appc import collisions
+                collisions.tick_collisions(
+                    TICK_DT, host=_h,
+                    ship_instances=(session.ship_instances if session is not None else None),
+                )
+
                 # Sync transforms for known instances.
                 #
                 # Player ship: pushed live (it is integrated per render
