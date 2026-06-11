@@ -204,7 +204,14 @@ def _call_factory(factory_name, first_param, fLife, fSize, emit_from, emit_pos, 
       - CreateExplosionPlumeHigh → fConeAngle
 
     Signature: (first_param, fLife, fSize, pEmitFrom, kEmitPos, kEmitDir, pAttachTo)
-    This covers every factory referenced in the Spec B built-in table.
+
+    WARNING — arity coupling: this helper is only valid for factories with the
+    7-arg (fVel/fCone, fLife, fSize, pEmitFrom, kEmitPos, kEmitDir, pAttachTo)
+    shape — i.e. CreateSmokeHigh and CreateExplosionPlumeHigh, the two that the
+    Spec B built-in table drives.  It is NOT a general SDK-factory caller.
+    CreateWeaponSmoke(fDuration, fSize, pEvent, pEffectRoot) and
+    CreateDebrisSmoke(fDuration, fSize, pEmitFrom, bOwnsEmitFrom, pEffectRoot)
+    have different arities and must be called directly, not through this helper.
     """
     Effects = _importlib.import_module("Effects")
     fn = getattr(Effects, factory_name)
