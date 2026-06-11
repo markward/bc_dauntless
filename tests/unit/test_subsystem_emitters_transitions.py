@@ -91,3 +91,18 @@ def test_faded_handle_dropped_when_particles_die():
     for _ in range(5):
         m.update([ship], None, 0.1)
     assert m.active_count() == 0
+
+
+def test_same_tier_across_ticks_does_not_respawn():
+    se.reset_registry()
+    b = FakeControllerBackend()
+    m = _mgr(b)
+    sub = FakeSub("WarpEngineSubsystem", state="damaged")
+    ship = FakeShip(subs=[sub])
+    m.update([ship], None, 0.1)
+    m.update([ship], None, 0.1)
+    m.update([ship], None, 0.1)
+    # A subsystem that stays at the same tier must NOT spawn a new controller
+    # each tick — exactly one sustained emitter for its whole damaged life.
+    assert len(b.created) == 1
+    assert m.active_count() == 1

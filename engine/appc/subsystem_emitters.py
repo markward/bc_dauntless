@@ -183,6 +183,7 @@ class PlumeManager:
     # -- main entry ----------------------------------------------------------
 
     def update(self, ships, camera_pos, dt):
+        # dt: reserved for future timed-fade behaviour; unused today.
         self._advance_faders()
         admitted = self._select_candidates(ships, camera_pos)  # Task 6 adds budget
         for key, ship, sub, kind, tier, descriptor in admitted:
@@ -241,7 +242,8 @@ class PlumeManager:
         if key in self._terminal:
             return  # puff already fired
         existing = self._active.pop(key, None)
-        # find a death_puff factory: prefer the active tier's, else the kind's
+        # death_puff: use the most-severe registered puff for this kind
+        # (DISABLED before DAMAGED). Both share one puff in the builtin table.
         kind = subsystem_kind(sub)
         puff = None
         for t in (TIER_DISABLED, TIER_DAMAGED):
