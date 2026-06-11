@@ -73,7 +73,11 @@ class AnimTSParticleController:
     # ---- analytic lifecycle (used by the registry + the Spec B handle) -
     def _effective_stop_age(self):
         explicit = self._stop_age if self._stop_age is not None else float("inf")
-        return min(explicit, self._effect_life_time)
+        cap = min(explicit, self._effect_life_time)
+        duration = getattr(self, "_duration", None)
+        if duration is not None:
+            cap = min(cap, duration)
+        return cap
 
     def stop_emitting(self):
         self._stop_age = self._effect_age
@@ -187,6 +191,8 @@ def _descriptor_for(c, resolve_attach):
         "emit_radius":           float(c._emit_radius),
         "random_velocity_cone":  float(c._rv_cone),
         "random_velocity_speed": float(c._rv_speed),
+        "damping":           float(getattr(c, "_damping", 0.0)),
+        "tail_length":       float(getattr(c, "_tail_length", 0.0)),
         "color_keys":        list(c._color_keys),
         "alpha_keys":        list(c._alpha_keys),
         "size_keys":         list(c._size_keys),
@@ -232,6 +238,25 @@ def ExplosionPlumeController_Create():
     Effects.CreateExplosionPlumeHigh run without crashing while the full
     ExplosionPlumeController implementation is deferred to A2."""
     return AnimTSParticleController()
+
+
+class SparkParticleController(AnimTSParticleController):
+    """Spark/debris particles: damped ballistic motion + a motion-streak tail.
+    SDK ctor is SparkParticleController_Create(total_life, duration, emit_rate)."""
+    def __init__(self, total_life=1.0, duration=1.0, emit_rate=0.005):
+        super().__init__()
+        self._effect_life_time = total_life   # ctor arg 1
+        self._emit_frequency = emit_rate      # ctor arg 3
+        self._duration = duration             # ctor arg 2 — emission window
+        self._damping = 0.0
+        self._tail_length = 0.0
+
+    def SetDamping(self, d):    self._damping = d
+    def SetTailLength(self, l): self._tail_length = l
+
+
+def SparkParticleController_Create(total_life=1.0, duration=1.0, emit_rate=0.005):
+    return SparkParticleController(total_life, duration, emit_rate)
 
 
 def EffectAction_Create(controller):

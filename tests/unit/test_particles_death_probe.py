@@ -179,7 +179,7 @@ def test_object_exploding_full_cascade():
     - TGSequence_Create → implemented
     - while loop: GetLifeTime > 1_000_000 → SetLifeTime with random value
     - Multiple CreateObjectExplosion calls (each → CreateDebrisExplosion)
-    - CreateDebrisSparks → App.SparkParticleController_Create  [LIKELY WALL]
+    - CreateDebrisSparks → App.SparkParticleController_Create  (implemented in A3)
     - CreateDebrisExplosion × 3 more on pSet.GetEffectRoot()
     - TGSoundAction_Create (sound at end of final sequence)
     - pFullSequence.Play() — synchronous, delays collapsed
@@ -187,10 +187,10 @@ def test_object_exploding_full_cascade():
     Under synchronous TGSequence: all sub-sequences fire immediately with
     delays ignored — explosions collapse to a single burst.
 
-    Expected wall: App.SparkParticleController_Create is not implemented in
-    App.py (not imported from engine.appc.particles, no shim).  CreateDebrisSparks
-    calls it → AttributeError (or _NamedStub that breaks on AddColorKey's
-    4-arg form, or on EffectAction_Create).
+    The remaining known limitation is timing only: under the Phase-1
+    synchronous action model, explosion delays are collapsed and all
+    CreateObjectExplosion calls fire immediately rather than staggered.
+    Debris sparks themselves are real (A3 implemented SparkParticleController).
     """
     P.reset()
     Effects = _import_effects()
@@ -252,17 +252,12 @@ def test_sequence_delays_are_ignored():
 # ---------------------------------------------------------------------------
 
 def test_create_debris_sparks_wall():
-    """Isolate whether CreateDebrisSparks is the wall.
+    """Probe CreateDebrisSparks end-to-end now that A3 implemented SparkParticleController.
 
-    CreateDebrisSparks calls App.SparkParticleController_Create — if that
-    returns a _NamedStub, AddColorKey etc. will be called on it.  The stub
-    __getattr__ handles attribute access, but calling AddColorKey on a stub
-    returns another stub; EffectAction_Create(pSpark) returns an EffectAction
-    wrapping a stub, which registers on Start().
-
-    If that silently passes: the debris sparks path is effectively a no-op
-    but doesn't break — document that.
-    If it raises: document the exact exception.
+    A3 wired App.SparkParticleController_Create to a real controller in
+    engine.appc.particles, so this path should no longer raise or silently
+    no-op.  The test still uses skip-on-exception so any unexpected wall is
+    clearly reported rather than erroring.
     """
     P.reset()
     Effects = _import_effects()
@@ -284,13 +279,7 @@ def test_create_debris_sparks_wall():
             f"WALL: CreateDebrisSparks action.Start() raised {type(e).__name__}: {e}"
         )
 
-    # If we get here: SparkParticleController_Create returned something
-    # (likely a _NamedStub) that didn't crash but also probably didn't
-    # register a real AnimTSParticleController.
-    # Report what actually happened.
+    # A3 implemented SparkParticleController_Create as a real controller,
+    # so EffectAction.Start() should register it in P._active.
     spark_count = P.active_count()
-    # A _NamedStub wrapped in EffectAction won't register in P._active
-    # (EffectAction.Start() calls particles.register(self._controller)
-    # which appends self._controller — stub or not).
-    # This is NOT a wall but it IS a data-loss: stub != real controller.
     assert True, f"CreateDebrisSparks ran without error; active_count={spark_count}"

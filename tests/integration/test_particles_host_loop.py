@@ -30,3 +30,22 @@ def test_spec_b_plume_renders_through_particle_backend():
     se.pump([ship], camera_pos=None, dt=0.1)
     assert P.active_count() == 1
     assert P._active[0]._texture_path.endswith("ExplosionB.tga")
+
+
+def test_object_exploding_registers_real_debris_sparks():
+    """ObjectExploding now routes CreateDebrisSparks through the real
+    SparkParticleController_Create (Task 5).  Confirms the A2 death-debris
+    gap is closed end-to-end: at least one SparkParticleController is active
+    after the full death cascade fires."""
+    import Effects
+    from engine.appc import particles as P
+    from engine.appc.particles import SparkParticleController
+    from tests.unit.test_particles_death_probe import FakeObject
+
+    P.reset()
+    fake = FakeObject()
+    Effects.ObjectExploding(fake)
+    assert any(isinstance(c, SparkParticleController) for c in P._active), (
+        f"Expected at least one SparkParticleController in P._active, "
+        f"got: {[type(c).__name__ for c in P._active]}"
+    )

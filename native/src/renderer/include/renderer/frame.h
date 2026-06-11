@@ -139,6 +139,8 @@ struct ParticleEmitterDescriptor {
     float emit_radius            = 0.0f;    // particles born within this sphere radius
     float random_velocity_cone   = 0.0f;    // degrees; 180 = full sphere
     float random_velocity_speed  = 0.0f;    // 0 = no random velocity (A1)
+    float damping     = 0.0f;   // velocity decay rate; 0 = linear (A1/A2)
+    float tail_length = 0.0f;   // streak length multiplier; 0 = camera-facing billboard
 };
 
 /// Phaser-beam render descriptor.  One entry per concentric beam layer

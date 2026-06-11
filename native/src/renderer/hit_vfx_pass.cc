@@ -52,10 +52,11 @@ constexpr glm::vec4 kSparkTint[2] = {
 // amplitude (NOT a literal half-angle; rotate_jitter adds sin(jitter*k)
 // offsets, so 120 yields ~50 deg max spread). phaser tight, torpedo wide.
 constexpr float kSparkConeDegByKind[2] = {40.0f, 120.0f};
-constexpr float kSparkSpeed     = 1.0f;    // GU/s initial speed (travel ≈ speed/damping ≈ 0.7 GU)
-constexpr float kSparkSize      = 0.12f;   // GU half-size of a spark point (decoupled from flash)
-constexpr float kSparkLife      = 3.0f;    // seconds — spark visibility, intentionally far longer than the flash
-constexpr float kSparkDamping   = 1.4f;    // velocity damping rate (SDK SetDamping analogue)
+constexpr float kSparkSpeed      = 1.0f;    // GU/s initial speed (travel ≈ speed/damping ≈ 0.7 GU)
+constexpr float kSparkSize       = 0.12f;   // GU half-size of a spark point (decoupled from flash)
+constexpr float kSparkLife       = 3.0f;    // seconds — spark visibility, intentionally far longer than the flash
+constexpr float kSparkDamping    = 1.4f;    // velocity damping rate (SDK SetDamping analogue)
+constexpr float kSparkTailLength = 0.15f;   // streak length per unit speed (tune-by-eye)
 
 // Renderer CWD is the project root (see engine/host_loop.py:_resolve_game_texture),
 // so these direct-ifstream sprite loads need the "game/" prefix — matching
@@ -236,6 +237,10 @@ void HitVfxPass::render(const std::vector<HitVfxDescriptor>& vfx,
             shader.set_vec3 ("u_world_position", v.world_pos);
             shader.set_float("u_size",           size);
             shader.set_float("u_alpha",          alpha);
+            // Flash is a camera-facing billboard — zero the streak so stale
+            // u_streak_length from the previous frame's particle pass cannot
+            // make the flash render as a streak (cross-contamination fix).
+            shader.set_float("u_streak_length",  0.0f);
             glDrawArrays(GL_TRIANGLES, 0, 6);
         }
 
@@ -259,6 +264,9 @@ void HitVfxPass::render(const std::vector<HitVfxDescriptor>& vfx,
                 // Sparks fade over their own (longer) lifetime, decoupled from
                 // the flash so halving the flash size doesn't shrink them.
                 const float life_t = std::min(1.0f, age / kSparkLife);
+                // Damped speed at current age; used to scale the streak tail
+                // so fast-moving sparks look longer than nearly-stopped ones.
+                const float spark_speed = kSparkSpeed * std::exp(-kSparkDamping * age);
                 for (int i = 0; i < v.spark_count; ++i) {
                     const glm::vec2 jitter = hash3(origin, i);
                     const glm::vec3 dir =
@@ -269,6 +277,8 @@ void HitVfxPass::render(const std::vector<HitVfxDescriptor>& vfx,
                     shader.set_vec3 ("u_world_position", pos);
                     shader.set_float("u_size",           spark_size);
                     shader.set_float("u_alpha",          spark_alpha);
+                    shader.set_vec3 ("u_streak_axis",    dir);
+                    shader.set_float("u_streak_length",  kSparkTailLength * spark_speed);
                     glDrawArrays(GL_TRIANGLES, 0, 6);
                 }
             }
