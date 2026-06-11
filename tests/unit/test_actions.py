@@ -507,3 +507,48 @@ def test_replay_runs_steps_again():
     s.Play()
     s.Play()
     assert log == ["x", "x"]
+
+
+# ── TGSequence delay scheduling ──────────────────────────────────────────────
+
+def _advance_game_time(seconds, step=1.0 / 60.0):
+    """Advance g_kTimerManager in 60 Hz ticks for `seconds` of game time."""
+    n = int(round(seconds / step))
+    for _ in range(n):
+        App.g_kTimerManager.tick(step)
+
+
+def test_delayed_step_does_not_fire_before_delay():
+    log = []
+    s = App.TGSequence_Create()
+    s.AddAction(_RecordingAction(log, "now"))
+    s.AddAction(_RecordingAction(log, "later"),
+                App.TGAction_CreateNull(), 0.5)
+    s.Play()
+    assert log == ["now"]                 # delayed step not fired yet
+    _advance_game_time(0.25)
+    assert log == ["now"]                 # still waiting at t=0.25
+
+
+def test_delayed_step_fires_after_delay():
+    log = []
+    s = App.TGSequence_Create()
+    s.AddAction(_RecordingAction(log, "now"))
+    s.AddAction(_RecordingAction(log, "later"),
+                App.TGAction_CreateNull(), 0.5)
+    s.Play()
+    _advance_game_time(0.6)               # past the 0.5s delay
+    assert log == ["now", "later"]
+
+
+def test_two_delayed_steps_fire_in_time_order():
+    log = []
+    s = App.TGSequence_Create()
+    s.AddAction(_RecordingAction(log, "t0"))
+    s.AddAction(_RecordingAction(log, "t05"), App.TGAction_CreateNull(), 0.5)
+    s.AddAction(_RecordingAction(log, "t15"), App.TGAction_CreateNull(), 1.5)
+    s.Play()
+    _advance_game_time(0.6)
+    assert log == ["t0", "t05"]
+    _advance_game_time(1.0)               # total ~1.6s
+    assert log == ["t0", "t05", "t15"]

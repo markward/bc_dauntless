@@ -319,8 +319,20 @@ class TGSequence(TGAction):
         self.Completed()
 
     def _schedule_timer(self, step: "_Step") -> None:
-        # Implemented in Task 3.
-        raise NotImplementedError
+        import App
+        use_real = bool(getattr(step.action, "IsUseRealTime",
+                                lambda: False)())
+        mgr = App.g_kRealtimeTimerManager if use_real else App.g_kTimerManager
+        timer = App.TGTimer_Create()
+        timer.SetTimerStart(mgr.get_time() + step.delay)
+        timer.SetDelay(-1.0)   # one-shot: fires once, then marks itself done
+        ev = TGObjPtrEvent()
+        ev.SetEventType(_ET_SEQ_TIMER_FIRED)
+        ev.SetDestination(self)
+        ev.SetObjPtr(step)     # timer events carry the _Step, not the action
+        timer.SetEvent(ev)
+        mgr.AddTimer(timer)
+        self._pending_timers.append((mgr, step, timer))
 
     def Stop(self) -> None:
         for mgr, _step, timer in self._pending_timers:
