@@ -110,8 +110,8 @@ TEST_F(ParticlePassTest, RendersWithoutGlError) {
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 
-// ── Test 2: streak + damping render cleanly (A3 byte-identity guard) ────────
-TEST_F(ParticlePassTest, StreakAndDampingRenderCleanly) {
+// ── Test 2: streak + damping render without GL error ────────────────────────
+TEST_F(ParticlePassTest, StreakAndDampingRenderWithoutGlError) {
     namespace fs = std::filesystem;
 
     const fs::path tex_path = project_root()
@@ -158,7 +158,7 @@ TEST_F(ParticlePassTest, StreakAndDampingRenderCleanly) {
     pass.render({ea}, world, camera, *pipeline);
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 
-    // Emitter B: byte-identity path (tail_length==0, damping==0 => A1/A2 behaviour).
+    // Emitter B: defaults path (tail_length==0, damping==0 => A1/A2 code path); also asserts GL_NO_ERROR.
     renderer::ParticleEmitterDescriptor eb;
     eb.texture_path       = tex_path.string();
     eb.emit_pos           = {0.0f, 0.0f, 0.0f};
