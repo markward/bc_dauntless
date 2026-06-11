@@ -168,12 +168,12 @@ def _apply_overlay_all(objects, dt: float) -> None:
     decay the overlay toward zero. Objects that never collided have no
     _collision_velocity attribute and are skipped (byte-identical).
 
-    Uses obj.__dict__.get rather than getattr(..., None): TGObject.__getattr__
-    returns a truthy stub for unknown attributes, so getattr would never see
-    the None sentinel (same gotcha _overlay_vec documents)."""
+    Reads the overlay via _overlay_vec (obj.__dict__ lookup) rather than
+    getattr(..., None): TGObject.__getattr__ returns a truthy stub for unknown
+    attributes, so getattr would never see the None sentinel."""
     decay = math.exp(-dt / COLLISION_DECAY_TAU)
     for o in objects:
-        cv = o.__dict__.get("_collision_velocity")
+        cv = _overlay_vec(o)
         if cv is None or not (cv.x or cv.y or cv.z):
             continue
         p = o.GetTranslate()
