@@ -206,8 +206,10 @@ class PlumeManager:
 
     def _select_candidates(self, ships, camera_pos):
         """Per-ship: gather registered damaged subsystems, distance-cull whole
-        ships, sort by (severity desc, proximity desc, priority_bias desc), and
-        admit the top n_per_ship (spec §4.3)."""
+        ships, sort sustained candidates by (severity desc, priority_bias desc),
+        and admit the top n_per_ship (spec §4.3). Proximity is uniform within a
+        ship, so it is not a per-ship tiebreaker; it only orders ships against
+        each other for reconcile sequencing (see the cross-ship sort below)."""
         out = []
         for ship in ships:
             dist = _camera_distance(ship, camera_pos)
@@ -236,9 +238,14 @@ class PlumeManager:
             # sort sustained by severity, then bias (proximity is per-ship-uniform)
             sustained.sort(key=lambda c: (c[4], c[6]), reverse=True)
             admitted = destroyed + sustained[:self.n_per_ship]
+            # out rows are 7-tuples: (key, ship, sub, kind, tier, descriptor, dist).
+            # Note index 6 is `dist` here, whereas in `cands` index 6 was priority_bias.
             for c in admitted:
                 out.append((c[0], c[1], c[2], c[3], c[4], c[5], dist))
-        # cross-ship proximity ordering (nearest first) for deterministic admit
+        # cross-ship proximity ordering (nearest first). This does NOT change
+        # which plumes are admitted (already capped per-ship above); it only
+        # makes reconcile call order deterministic. Ships with unknown distance
+        # (None) sort as 0.0 / nearest.
         out.sort(key=lambda r: (r[6] if r[6] is not None else 0.0))
         # return the 6-tuple the rest of the manager expects
         return [(r[0], r[1], r[2], r[3], r[4], r[5]) for r in out]
