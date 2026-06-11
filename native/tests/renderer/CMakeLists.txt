@@ -19,6 +19,7 @@ add_executable(renderer_tests
     resolve_pass_test.cc
     bloom_pass_test.cc
     particle_math_test.cc
+    particle_pass_test.cc
 )
 
 target_link_libraries(renderer_tests
