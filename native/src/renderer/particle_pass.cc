@@ -139,7 +139,6 @@ void ParticlePass::render(const std::vector<ParticleEmitterDescriptor>& emitters
     shader.set_int ("u_texture",      0);
 
     glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);  // alpha blend (not additive)
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_FALSE);
     glDisable(GL_CULL_FACE);
@@ -151,9 +150,20 @@ void ParticlePass::render(const std::vector<ParticleEmitterDescriptor>& emitters
     float at[8], av[8], st[8], sv[8];
 
     const scenegraph::InstanceId null_id{};
+    int active_blend_mode = -1;  // force first set
     for (const auto& e : emitters) {
         assets::Texture* tex = texture_for(e.texture_path);
         if (!tex || tex->id() == 0) continue;
+
+        // Set blend mode per emitter (A2). Only update GL state when it changes.
+        if (e.blend_mode != active_blend_mode) {
+            active_blend_mode = e.blend_mode;
+            if (e.blend_mode == 1) {
+                glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);  // additive
+            } else {
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);  // alpha (A1 default)
+            }
+        }
 
         // Resolve emitter origin to world space.
         glm::vec3 emit_pos_world = e.emit_pos;
@@ -193,9 +203,24 @@ void ParticlePass::render(const std::vector<ParticleEmitterDescriptor>& emitters
 
             const glm::vec3 dir = cone_jitter(emit_dir_world, cam_up, cam_right,
                                               jit, e.angle_variance);
-            const glm::vec3 pos = particle_world_pos(emit_pos_world, dir,
-                                                     e.emit_vel_world,
-                                                     e.emit_velocity, e.inherit, tau);
+
+            // Base world position (A1 model).
+            glm::vec3 pos = particle_world_pos(emit_pos_world, dir,
+                                               e.emit_vel_world,
+                                               e.emit_velocity, e.inherit, tau);
+
+            // A2 extension: emit-radius birth offset (zero when emit_radius==0).
+            pos += emit_radius_offset(e.emit_radius, jit, i);
+
+            // A2 extension: 3D random velocity (zero when random_velocity_speed==0).
+            if (e.random_velocity_speed > 0.0f) {
+                const glm::vec2 rv_hash = hash3(emit_pos_world, i + 7919);
+                const glm::vec3 rv_dir  = random_cone_dir(emit_dir_world,
+                                                          e.random_velocity_cone,
+                                                          rv_hash);
+                pos += rv_dir * (e.random_velocity_speed * tau);
+            }
+
             const float t     = (life_i > 1e-6f) ? (tau / life_i) : 0.0f;
             const float size  = curve_lerp1(st, sv, e.num_size_keys,  t);
             const float alpha = curve_lerp1(at, av, e.num_alpha_keys, t);

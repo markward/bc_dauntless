@@ -37,3 +37,36 @@ TEST(ParticleMath, TrailTermAppearsOnlyWhenInheritBelowOne) {
     EXPECT_NEAR(p_lag.x, -5.0f, 1e-5f);
     EXPECT_NEAR(p_lag.y, -1.0f, 1e-5f);
 }
+
+TEST(ParticleMath, ConeAndRadius) {
+    const glm::vec3 axis{0.0f, -1.0f, 0.0f};
+    const glm::vec2 h{0.3f, 0.7f};
+
+    // Tight cone (0 deg) should return the axis itself.
+    glm::vec3 tight = random_cone_dir(axis, 0.0f, h);
+    EXPECT_NEAR(tight.x, axis.x, 1e-5f);
+    EXPECT_NEAR(tight.y, axis.y, 1e-5f);
+    EXPECT_NEAR(tight.z, axis.z, 1e-5f);
+
+    // Full-sphere cone should produce a unit vector.
+    glm::vec3 full = random_cone_dir(axis, 180.0f, h);
+    EXPECT_NEAR(glm::length(full), 1.0f, 1e-5f);
+
+    // A half-hemisphere cone should also produce a unit vector.
+    glm::vec3 hemi = random_cone_dir(axis, 90.0f, glm::vec2{0.5f, 0.25f});
+    EXPECT_NEAR(glm::length(hemi), 1.0f, 1e-5f);
+
+    // emit_radius_offset with radius==0 must return zero.
+    glm::vec3 zero_off = emit_radius_offset(0.0f, h, 42);
+    EXPECT_NEAR(glm::length(zero_off), 0.0f, 1e-9f);
+
+    // emit_radius_offset with radius==5 must stay within the sphere.
+    glm::vec3 off = emit_radius_offset(5.0f, h, 42);
+    EXPECT_LE(glm::length(off), 5.0f + 1e-5f);
+
+    // Multiple salts decorrelate (lengths differ for same h).
+    glm::vec3 off2 = emit_radius_offset(5.0f, h, 99);
+    // They won't be identical (unless the hash happens to collide, which it won't
+    // for these salts).
+    EXPECT_GT(std::abs(glm::length(off) - glm::length(off2)), 1e-6f);
+}

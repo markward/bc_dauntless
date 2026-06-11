@@ -134,6 +134,11 @@ struct ParticleEmitterDescriptor {
     int   num_alpha_keys = 0; ParticleKey alpha_keys[8];
     int   num_size_keys  = 0; ParticleKey size_keys[8];
     std::string texture_path;               // CreateTarget path; pass caches by string
+    // A2 explosion extensions (all default to A1 behaviour when zero):
+    int   blend_mode             = 0;       // 0 = alpha (A1 default), 1 = additive
+    float emit_radius            = 0.0f;    // particles born within this sphere radius
+    float random_velocity_cone   = 0.0f;    // degrees; 180 = full sphere
+    float random_velocity_speed  = 0.0f;    // 0 = no random velocity (A1)
 };
 
 /// Phaser-beam render descriptor.  One entry per concentric beam layer

@@ -818,6 +818,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   load_keys("color_keys", e.num_color_keys, e.color_keys, true);
                   load_keys("alpha_keys", e.num_alpha_keys, e.alpha_keys, false);
                   load_keys("size_keys",  e.num_size_keys,  e.size_keys,  false);
+                  // A2 explosion extensions — default to A1 behaviour when absent.
+                  e.blend_mode            = d.contains("blend_mode")            ? d["blend_mode"].cast<int>()            : 0;
+                  e.emit_radius           = d.contains("emit_radius")           ? d["emit_radius"].cast<float>()           : 0.0f;
+                  e.random_velocity_cone  = d.contains("random_velocity_cone")  ? d["random_velocity_cone"].cast<float>()  : 0.0f;
+                  e.random_velocity_speed = d.contains("random_velocity_speed") ? d["random_velocity_speed"].cast<float>() : 0.0f;
                   g_particle_emitters.push_back(std::move(e));
               }
           },

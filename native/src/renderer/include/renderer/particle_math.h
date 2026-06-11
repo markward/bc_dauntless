@@ -52,4 +52,38 @@ inline glm::vec3 particle_world_pos(const glm::vec3& emit_pos_world,
          - emit_vel_world * ((1.0f - inherit) * tau);
 }
 
+/// A deterministic 3D offset of magnitude <= radius, derived from a
+/// 2-component hash in [0,1) and an integer salt. Returns zero when radius<=0
+/// (A1 behaviour). The salt decorrelates the r sample from h.x/h.y so
+/// multiple draws with the same h but different salts are independent.
+inline glm::vec3 emit_radius_offset(float radius, glm::vec2 h, int salt) {
+    if (radius <= 0.0f) return glm::vec3(0.0f);
+    const float theta = h.x * 6.2831853f;
+    const float z   = h.y * 2.0f - 1.0f;                  // cos(phi) in [-1,1]
+    const float rxy = std::sqrt(std::max(0.0f, 1.0f - z * z));
+    const float frac = 0.5f + 0.5f * std::sin(static_cast<float>(salt) * 12.9898f);
+    const float rr   = radius * std::cbrt(frac);           // uniform-in-sphere
+    return glm::vec3(rr * rxy * std::cos(theta),
+                     rr * rxy * std::sin(theta),
+                     rr * z);
+}
+
+/// A 3D unit direction within cone_deg degrees of `axis`.
+/// cone_deg >= 180 covers the full sphere. Uses a 2-component hash h in [0,1).
+inline glm::vec3 random_cone_dir(const glm::vec3& axis, float cone_deg, glm::vec2 h) {
+    const glm::vec3 a = (glm::length(axis) > 1e-6f)
+                        ? glm::normalize(axis)
+                        : glm::vec3(0.0f, -1.0f, 0.0f);
+    const float cos_max = std::cos(std::min(cone_deg, 180.0f) * 0.0174532925f);
+    const float cz = 1.0f - h.x * (1.0f - cos_max);      // cos(theta) in [cos_max, 1]
+    const float sz = std::sqrt(std::max(0.0f, 1.0f - cz * cz));
+    const float phi = h.y * 6.2831853f;
+    // Build an orthonormal basis around a.
+    const glm::vec3 up  = (std::abs(a.y) < 0.99f) ? glm::vec3(0.0f, 1.0f, 0.0f)
+                                                    : glm::vec3(1.0f, 0.0f, 0.0f);
+    const glm::vec3 t   = glm::normalize(glm::cross(up, a));
+    const glm::vec3 b   = glm::cross(a, t);
+    return glm::normalize(a * cz + (t * std::cos(phi) + b * std::sin(phi)) * sz);
+}
+
 }  // namespace renderer
