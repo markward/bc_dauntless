@@ -138,4 +138,143 @@ class NullBackend:
         pass
 
 
+class _ActiveEmitter:
+    __slots__ = ("tier", "handle", "fading")
+    def __init__(self, tier, handle):
+        self.tier = tier
+        self.handle = handle
+        self.fading = False
+
+
+def _emit_frame(ship, sub, descriptor):
+    """Return (emit_pos_body, emit_dir) for the backend.
+
+    Position is the subsystem's body-frame hardpoint (world-SCALE offset, no
+    model scale - CLAUDE.md hardpoint-position-frame). Direction depends on the
+    descriptor's mode. The backend resolves these through the ship's live world
+    matrix each frame (SetEmitFromObject), so the manager stays body-frame.
+    """
+    p = sub.GetPosition()
+    emit_pos_body = (p.x, p.y, p.z)
+    mode = descriptor.direction_mode
+    if mode == DirectionMode.SPHERICAL:
+        emit_dir = None
+    elif mode == DirectionMode.ALONG_SUBSYSTEM_AXIS and hasattr(sub, "GetDirection"):
+        d = sub.GetDirection()
+        emit_dir = (d.x, d.y, d.z)
+    else:  # FIXED_BODY_VECTOR (and the axis fallback)
+        emit_dir = tuple(descriptor.direction_vec)
+    return emit_pos_body, emit_dir
+
+
+class PlumeManager:
+    """Per-tick subsystem-plume state machine (spec §3, §4)."""
+
+    def __init__(self, backend, *, n_per_ship=3, r_cull=4000.0):
+        self.backend = backend
+        self.n_per_ship = n_per_ship
+        self.r_cull = r_cull          # None disables distance culling
+        self._active = {}             # key -> _ActiveEmitter
+        self._terminal = set()        # keys that reached DESTROYED (never re-emit)
+
+    def active_count(self):
+        return len(self._active)
+
+    # -- main entry ----------------------------------------------------------
+
+    def update(self, ships, camera_pos, dt):
+        self._advance_faders()
+        admitted = self._select_candidates(ships, camera_pos)  # Task 6 adds budget
+        for key, ship, sub, kind, tier, descriptor in admitted:
+            self._reconcile(key, ship, sub, tier, descriptor)
+        self._suppress_unseen(admitted)
+
+    # -- candidate selection (Task 6 replaces the body with the budget) ------
+
+    def _select_candidates(self, ships, camera_pos):
+        """Yield (key, ship, sub, kind, tier, descriptor) for every registered,
+        damaged subsystem. No budget yet - Task 6 caps/culls/sorts this list."""
+        out = []
+        for ship in ships:
+            for sub in ship.GetSubsystems():
+                kind = subsystem_kind(sub)
+                if kind is None:
+                    continue
+                tier = desired_tier(sub)
+                if tier == TIER_NONE:
+                    continue
+                key = (ship.GetObjID(), id(sub))
+                if tier == TIER_DESTROYED:
+                    descriptor = None  # death-puff handled in _reconcile
+                else:
+                    descriptor = resolve(kind, tier)
+                    if descriptor is None:
+                        continue
+                out.append((key, ship, sub, kind, tier, descriptor))
+        return out
+
+    # -- per-subsystem reconcile (spec §4.2 transition matrix) ---------------
+
+    def _reconcile(self, key, ship, sub, tier, descriptor):
+        if tier == TIER_DESTROYED:
+            self._go_destroyed(key, ship, sub)
+            return
+        if key in self._terminal:
+            return  # destroyed earlier; never re-emit
+        existing = self._active.get(key)
+        if existing is None:
+            self._spawn(key, ship, sub, tier, descriptor)
+        elif existing.fading:
+            # was repaired/suppressed and re-damaged before fade finished
+            self._spawn(key, ship, sub, tier, descriptor)
+        elif existing.tier != tier:
+            existing.handle.stop_emitting()  # swap tiers: fade old, spawn new
+            self._spawn(key, ship, sub, tier, descriptor)
+
+    def _spawn(self, key, ship, sub, tier, descriptor):
+        emit_pos_body, emit_dir = _emit_frame(ship, sub, descriptor)
+        handle = self.backend.create(descriptor.factory, descriptor.params,
+                                     emit_pos_body, emit_dir, descriptor.direction_mode)
+        self._active[key] = _ActiveEmitter(tier, handle)
+
+    def _go_destroyed(self, key, ship, sub):
+        if key in self._terminal:
+            return  # puff already fired
+        existing = self._active.pop(key, None)
+        # find a death_puff factory: prefer the active tier's, else the kind's
+        kind = subsystem_kind(sub)
+        puff = None
+        for t in (TIER_DISABLED, TIER_DAMAGED):
+            d = resolve(kind, t)
+            if d is not None and d.death_puff:
+                puff = d.death_puff
+                break
+        if existing is not None:
+            existing.handle.stop_emitting()  # fade the sustained plume
+            existing.fading = True
+            self._active[key] = existing     # keep lingering until particles die
+        if puff is not None:
+            p = sub.GetPosition()
+            self.backend.fire_one_shot(puff, (p.x, p.y, p.z), None)
+        self._terminal.add(key)
+
+    # -- fade + suppression bookkeeping --------------------------------------
+
+    def _advance_faders(self):
+        for key in list(self._active.keys()):
+            em = self._active[key]
+            if em.fading and not em.handle.has_live_particles():
+                del self._active[key]
+
+    def _suppress_unseen(self, admitted):
+        """Any active emitter whose subsystem is no longer a live candidate
+        (repaired, or budget-suppressed) stops emitting and fades."""
+        seen = {row[0] for row in admitted}
+        for key, em in self._active.items():
+            if key in seen or em.fading:
+                continue
+            em.handle.stop_emitting()
+            em.fading = True
+
+
 reset_registry()
