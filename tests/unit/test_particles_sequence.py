@@ -27,16 +27,19 @@ def test_sequence_starts_immediate_children_on_start():
 
 
 def test_sequence_fires_delayed_child_after_delay():
-    """Phase 1 TGSequence ignores delays (all fire immediately on Start()).
-    Both immediate and delayed children are started at once."""
+    """A child added with a delay does NOT start until the delay elapses on
+    the game-time timer manager; the immediate child starts at once."""
     P.reset()
     import App
     seq = App.TGSequence_Create()
     seq.AddAction(EffectAction_Create(_ctrl()))                          # t=0
-    seq.AddAction(EffectAction_Create(_ctrl()), App.TGAction_CreateNull(), 0.5)  # t=0.5 (delay ignored in Phase 1)
+    seq.AddAction(EffectAction_Create(_ctrl()),
+                  App.TGAction_CreateNull(), 0.5)                        # t=0.5
     seq.Start()
-    # In Phase 1 both fire immediately — delays are not enforced
-    assert P.active_count() == 2
+    assert P.active_count() == 1          # only the immediate child started
+    for _ in range(int(round(0.6 / (1.0 / 60.0)))):
+        App.g_kTimerManager.tick(1.0 / 60.0)
+    assert P.active_count() == 2          # delayed child started after 0.5s
 
 
 def test_effect_controller_high():
