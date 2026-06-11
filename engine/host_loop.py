@@ -868,6 +868,7 @@ class _PlayerControl:
             d = self._drift_velocity
             p = player.GetTranslate()
             player.SetTranslateXYZ(p.x + d.x * dt, p.y + d.y * dt, p.z + d.z * dt)
+            player.SetVelocity(TGPoint3(d.x, d.y, d.z))
             return
 
         # ── Powered flight: clear drift, re-seed speed ──────────────────
@@ -920,14 +921,16 @@ class _PlayerControl:
         )
 
         # Position integration (powered: velocity follows facing).
+        # Publish world velocity unconditionally so GetVelocity() is
+        # authoritative for the collision system (zero when stationary).
+        forward = player.GetWorldRotation().GetCol(1)
+        vx = forward.x * self._current_speed
+        vy = forward.y * self._current_speed
+        vz = forward.z * self._current_speed
+        player.SetVelocity(TGPoint3(vx, vy, vz))
         if self._current_speed != 0.0:
-            forward = player.GetWorldRotation().GetCol(1)
             p = player.GetTranslate()
-            player.SetTranslateXYZ(
-                p.x + forward.x * self._current_speed * dt,
-                p.y + forward.y * self._current_speed * dt,
-                p.z + forward.z * self._current_speed * dt,
-            )
+            player.SetTranslateXYZ(p.x + vx * dt, p.y + vy * dt, p.z + vz * dt)
 
 
 from engine.cameras.chase import _ChaseCamera as _CameraControl
@@ -2600,6 +2603,23 @@ def run(mission_name: Optional[str] = None,
                 _advance_weapons(_all_ships_for_tick(), TICK_DT)
                 _advance_combat(
                     _all_ships_for_tick(), TICK_DT, host=_h,
+                    ship_instances=(session.ship_instances if session is not None else None),
+                )
+
+                # Collision detection + response (ships/asteroids/moons/
+                # planets). Runs once per render frame after motion + player
+                # input, so every body's post-thrust position is current.
+                # Reuses combat.apply_hit for impact damage; injects a
+                # mass-weighted impulse into each body's decaying
+                # _collision_velocity overlay. Spec
+                # docs/superpowers/specs/2026-06-11-collision-response-design.md.
+                # dt = _player_dt (clamped wall-clock frame delta), matching
+                # the player integrator — the collision-velocity overlay is
+                # real-time motion, so it advances/decays on real elapsed time,
+                # not the fixed sim TICK_DT.
+                from engine.appc import collisions
+                collisions.tick_collisions(
+                    _player_dt, host=_h,
                     ship_instances=(session.ship_instances if session is not None else None),
                 )
 
