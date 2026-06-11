@@ -264,6 +264,9 @@ void HitVfxPass::render(const std::vector<HitVfxDescriptor>& vfx,
                 // Sparks fade over their own (longer) lifetime, decoupled from
                 // the flash so halving the flash size doesn't shrink them.
                 const float life_t = std::min(1.0f, age / kSparkLife);
+                // Damped speed at current age; used to scale the streak tail
+                // so fast-moving sparks look longer than nearly-stopped ones.
+                const float spark_speed = kSparkSpeed * std::exp(-kSparkDamping * age);
                 for (int i = 0; i < v.spark_count; ++i) {
                     const glm::vec2 jitter = hash3(origin, i);
                     const glm::vec3 dir =
@@ -271,9 +274,6 @@ void HitVfxPass::render(const std::vector<HitVfxDescriptor>& vfx,
                     const glm::vec3 pos = origin + dir * travel;
                     const float spark_size  = kSparkSize * (1.0f - life_t);
                     const float spark_alpha = 1.0f - life_t;
-                    // Damped speed at current age; used to scale the streak tail
-                    // so fast-moving sparks look longer than nearly-stopped ones.
-                    const float spark_speed = kSparkSpeed * std::exp(-kSparkDamping * age);
                     shader.set_vec3 ("u_world_position", pos);
                     shader.set_float("u_size",           spark_size);
                     shader.set_float("u_alpha",          spark_alpha);
