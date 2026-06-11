@@ -192,6 +192,7 @@ def test_destroy_system_on_critical_kills():
     obj = FakeDamageable()
     obj.DestroySystem(obj.GetHull())
     assert obj.GetHull().GetCondition() == 0.0
+    assert obj.GetHull().IsDestroyed() == 1
     assert obj.IsDying() == 1
 
 
