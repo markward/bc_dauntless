@@ -171,6 +171,7 @@ class STMenu(ObjectClass):
     def IsEnabled(self) -> int:                   return 1 if self._enabled else 0
     def SetVisible(self, *args) -> None:          self._visible = True
     def SetNotVisible(self, *args) -> None:       self._visible = False
+    def IsVisible(self) -> int:                   return 1 if self._visible else 0
     def SetFocus(self, *args) -> None:            self._focus = True
     def IsTypeOf(self, type_id) -> int:           return 0
     def Close(self, *args) -> None:               pass
