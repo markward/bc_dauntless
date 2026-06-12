@@ -1,0 +1,90 @@
+/* Crew menu bar — dauntless-styled top-left menu strip for SDK bridge menus.
+   Driven by setCrewMenus({menus:[...]}) from CrewMenuPanel.
+   Colors/fonts follow the sdk_mirror.css palette (rgba(10,20,40), #3a6bb8,
+   #e8f0ff, sans-serif 14px). */
+
+#crew-menu-bar {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  display: flex;
+  gap: 6px;
+  z-index: 30; /* above scene, below pause menu */
+}
+
+.crew-menu {
+  position: relative;
+}
+
+.crew-menu-title {
+  padding: 4px 12px;
+  cursor: pointer;
+  user-select: none;
+  background: rgba(10, 20, 40, 0.85);
+  border: 1px solid #3a6bb8;
+  border-radius: 4px;
+  color: #7fa8d8;
+  font-family: sans-serif;
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.crew-menu-title:hover {
+  background: rgba(20, 40, 80, 0.92);
+  color: #e8f0ff;
+}
+
+.crew-menu-title.disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.crew-menu-drop {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 160px;
+  background: rgba(10, 20, 40, 0.92);
+  border: 1px solid #3a6bb8;
+  border-radius: 4px;
+  margin-top: 2px;
+}
+
+.crew-menu.open .crew-menu-drop {
+  display: block;
+}
+
+.crew-menu-entry {
+  padding: 4px 12px;
+  cursor: pointer;
+  position: relative;
+  color: #e8f0ff;
+  font-family: sans-serif;
+  font-size: 14px;
+}
+
+.crew-menu-entry:hover {
+  background: rgba(58, 107, 184, 0.35);
+}
+
+.crew-menu-entry.disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.crew-menu-sub {
+  display: none;
+  position: absolute;
+  left: 100%;
+  top: 0;
+  min-width: 160px;
+  background: rgba(10, 20, 40, 0.92);
+  border: 1px solid #3a6bb8;
+  border-radius: 4px;
+}
+
+.crew-menu-entry:hover > .crew-menu-sub {
+  display: block;
+}

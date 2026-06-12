@@ -2228,6 +2228,9 @@ def run(mission_name: Optional[str] = None,
         from engine.appc.sdk_mirror_panel import SDKMirrorPanel
         sdk_mirror = SDKMirrorPanel()
         registry.register(sdk_mirror)
+        from engine.ui.crew_menu_panel import CrewMenuPanel
+        crew_menu_panel = CrewMenuPanel()
+        registry.register(crew_menu_panel)
         registry.register(configuration_panel)
         if dev_mode.is_enabled():
             registry.register(mission_picker)

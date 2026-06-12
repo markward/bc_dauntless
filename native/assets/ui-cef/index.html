@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="css/target_list.css">
     <link rel="stylesheet" href="css/sensors.css">
     <link rel="stylesheet" href="css/sdk_mirror.css">
+    <link rel="stylesheet" href="css/crew_menus.css">
     <link rel="stylesheet" href="panels/ship_display/ship_display.css">
     <link rel="stylesheet" href="panels/weapons_display/weapons_display.css">
     <link rel="stylesheet" href="css/configuration_panel.css">
@@ -257,6 +258,11 @@
     <div id="sdk-subtitle" class="sdk-mirror" hidden></div>
     <div id="sdk-stylized-stack" class="sdk-mirror"></div>
 
+    <!-- Crew-menu bar — top-left menu strip driven by CrewMenuPanel.
+         Receives setCrewMenus({menus:[...]}) from Python; button clicks
+         fire dauntlessEvent("crew-menu/click:<id>"). -->
+    <div id="crew-menu-bar"></div>
+
     <script src="js/mission_picker.js"></script>
     <script src="js/pause_menu.js"></script>
     <script src="js/target_list.js"></script>
@@ -265,6 +271,7 @@
     <script src="panels/ship_display/ship_display.js"></script>
     <script src="panels/weapons_display/weapons_display.js"></script>
     <script src="js/sdk_mirror.js"></script>
+    <script src="js/crew_menus.js"></script>
     <script src="js/configuration_panel.js"></script>
     <script src="js/developer_options.js"></script>
     <script src="js/ship_property_viewer.js"></script>
