@@ -32,3 +32,18 @@ def test_lcars_module_actually_imports():
     mode = GraphicsModeInfo_GetCurrentMode()
     LCARS = __import__(mode.GetLcarsModule())
     assert LCARS.SCREEN_PIXEL_WIDTH == 1024.0
+
+
+def test_current_resolution_enum():
+    mode = GraphicsModeInfo_GetCurrentMode()
+    assert mode.GetCurrentResolution() == GraphicsModeInfo.RES_1024x768
+    res = [GraphicsModeInfo.RES_640x480, GraphicsModeInfo.RES_800x600,
+           GraphicsModeInfo.RES_1024x768, GraphicsModeInfo.RES_1280x1024,
+           GraphicsModeInfo.RES_1600x1200]
+    assert len(set(res)) == 5
+
+
+def test_pixel_dimensions():
+    mode = GraphicsModeInfo_GetCurrentMode()
+    assert mode.GetPixelWidth() == 1.0 / 1024.0
+    assert mode.GetPixelHeight() == 1.0 / 768.0
