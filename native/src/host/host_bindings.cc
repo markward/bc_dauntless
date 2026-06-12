@@ -825,6 +825,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   e.random_velocity_speed = d.contains("random_velocity_speed") ? d["random_velocity_speed"].cast<float>() : 0.0f;
                   e.damping     = d.contains("damping")     ? d["damping"].cast<float>()     : 0.0f;
                   e.tail_length = d.contains("tail_length") ? d["tail_length"].cast<float>() : 0.0f;
+                  e.atlas_cols  = d.contains("atlas_cols")  ? d["atlas_cols"].cast<int>()    : 1;
+                  e.atlas_rows  = d.contains("atlas_rows")  ? d["atlas_rows"].cast<int>()    : 1;
                   g_particle_emitters.push_back(std::move(e));
               }
           },

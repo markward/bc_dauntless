@@ -350,3 +350,32 @@ def test_death_broadcasts_object_destroyed_once():
     assert fired["source_name"] == "Marked"
 
     App.g_kEventManager.RemoveAllInstanceHandlers()
+
+
+# --- Sprite-sheet explosion animation ---------------------------------------
+def test_anim_controller_texture_cells_default_and_set():
+    """AnimTSParticleController defaults to a 1x1 grid (whole texture); the
+    descriptor carries atlas_cols/atlas_rows; SetTextureCells overrides them."""
+    from engine.appc import particles
+    c = particles.AnimTSParticleController_Create()
+    c.CreateTarget("x.tga")
+    d = particles._descriptor_for(c, None)
+    assert d["atlas_cols"] == 1 and d["atlas_rows"] == 1   # default whole-texture
+    c.SetTextureCells(8, 8)
+    d = particles._descriptor_for(c, None)
+    assert d["atlas_cols"] == 8 and d["atlas_rows"] == 8
+
+
+def test_death_explosion_is_explosionA_8x8_sheet():
+    """The death explosion forces the colour ExplosionA sheet and declares its
+    8x8 sprite-sheet grid so the renderer animates frames + varies the row."""
+    from engine.appc import particles
+    particles.reset()
+    ship = FakeShip(name="Boom", radius=3.0)
+    ship_death.begin(ship)
+    descriptors = particles.snapshot_descriptors()
+    sheets = [d for d in descriptors
+              if "ExplosionA" in d.get("texture_path", "")
+              and d.get("atlas_cols") == 8 and d.get("atlas_rows") == 8]
+    assert len(sheets) >= 1
+    particles.reset()

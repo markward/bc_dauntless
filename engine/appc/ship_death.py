@@ -91,9 +91,15 @@ def _broadcast_destroyed(ship) -> None:
 
 
 def _spawn_explosion(ship) -> None:
-    """Death explosion: an ExplosionA/B fireball sized to the ship radius,
-    emitted from the (still-present, coasting) hull. Reuses the SDK Effects
-    helper via our AnimTSParticleController shim + particle backend.
+    """Death explosion: an animated ExplosionA fireball sized to the ship
+    radius, emitted from the (still-present, coasting) hull. Reuses the SDK
+    Effects helper via our AnimTSParticleController shim + particle backend.
+
+    ExplosionA.tga is a 256x256, 8x8 sprite sheet: 8 animation frames across,
+    8 explosion variants down. We force ExplosionA (it carries its own alpha,
+    unlike the greyscale ExplosionB) and declare the 8x8 grid so the renderer
+    steps a per-particle cell (frame from age, row for variety) instead of
+    drawing the whole sheet as one static billboard.
 
     Raise-safe: death logic must never depend on VFX succeeding (missing
     asset / headless test without a backend just yields no explosion)."""
@@ -110,6 +116,11 @@ def _spawn_explosion(ship) -> None:
             TGPoint3(0.0, 0.0, 1.0),    # kEmitDir
             None,                       # pAttachTo — unattached at emit pos
         )
+        ctrl = action.GetController() if hasattr(action, "GetController") else None
+        if ctrl is not None:
+            ctrl.CreateTarget("data/Textures/Effects/ExplosionA.tga")
+            if hasattr(ctrl, "SetTextureCells"):
+                ctrl.SetTextureCells(8, 8)
         if action is not None and hasattr(action, "Play"):
             action.Play()
     except Exception:

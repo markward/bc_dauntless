@@ -30,6 +30,12 @@ class AnimTSParticleController:
         self._rv_cone = 0.0
         self._rv_speed = 0.0
         self._blend_mode = 0   # 0 = alpha (A1), 1 = additive
+        # Texture-sheet animation grid. 1x1 = whole texture (default; hit VFX,
+        # plumes). >1 means the texture is an N-column (frames) x M-row
+        # (variants) sprite sheet; the renderer steps a per-particle cell
+        # (frame from age, row from a per-particle hash).
+        self._atlas_cols = 1
+        self._atlas_rows = 1
         # runtime, owned by the registry
         self._effect_age = 0.0
         self._stop_age = None      # None => still emitting
@@ -47,6 +53,13 @@ class AnimTSParticleController:
     def SetInheritsVelocity(self, on): self._inherit = 1.0 if on else 0.0
     def SetDrawOldToNew(self, on):     self._draw_old_to_new = 1 if on else 0
     def CreateTarget(self, path):      self._texture_path = path
+    def SetTextureCells(self, cols, rows):
+        """Declare the target texture as a `cols` x `rows` sprite sheet:
+        `cols` animation frames per variant, `rows` variants. Default 1x1
+        (whole texture). The renderer animates frames over each particle's
+        life and picks a random row per particle for variety."""
+        self._atlas_cols = max(1, int(cols))
+        self._atlas_rows = max(1, int(rows))
     def SetEmitFromObject(self, obj):  self._emit_from = obj
     def AttachEffect(self, node):      self._attach_node = node
     def SetEmitPositionAndDirection(self, pos, d):
@@ -197,6 +210,8 @@ def _descriptor_for(c, resolve_attach):
         "alpha_keys":        list(c._alpha_keys),
         "size_keys":         list(c._size_keys),
         "texture_path":      c._texture_path,
+        "atlas_cols":        int(c._atlas_cols),
+        "atlas_rows":        int(c._atlas_rows),
     }
 
 

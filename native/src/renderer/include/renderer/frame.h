@@ -141,6 +141,11 @@ struct ParticleEmitterDescriptor {
     float random_velocity_speed  = 0.0f;    // 0 = no random velocity (A1)
     float damping     = 0.0f;   // velocity decay rate; 0 = linear (A1/A2)
     float tail_length = 0.0f;   // streak length multiplier; 0 = camera-facing billboard
+    // Texture-sheet animation: texture is an atlas_cols x atlas_rows grid.
+    // 1x1 (default) = whole texture. >1 => per-particle cell (frame from age
+    // along the columns, variant row from a per-particle hash).
+    int   atlas_cols = 1;
+    int   atlas_rows = 1;
 };
 
 /// Phaser-beam render descriptor.  One entry per concentric beam layer

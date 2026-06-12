@@ -200,6 +200,11 @@ void HitVfxPass::render(const std::vector<HitVfxDescriptor>& vfx,
     shader.set_vec3("u_camera_right", cam_right);
     shader.set_vec3("u_camera_up",    cam_up);
     shader.set_int ("u_texture",      0);
+    // Hit VFX use whole textures, not sprite sheets. Reset the atlas uniforms
+    // so this pass never inherits a >1 grid left set by the particle pass
+    // (the two passes share hit_vfx_shader).
+    shader.set_vec2("u_atlas_grid", glm::vec2(1.0f, 1.0f));
+    shader.set_vec2("u_atlas_cell", glm::vec2(0.0f, 0.0f));
 
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE);
