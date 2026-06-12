@@ -15,6 +15,7 @@ public:
     void set_visible(InstanceId id, bool visible);
     void set_pass(InstanceId id, Pass pass);
     void set_rim_eligible(InstanceId id, bool eligible);
+    void set_emissive_scale(InstanceId id, float scale);
 
     bool is_valid(InstanceId id) const noexcept;
     Instance* get(InstanceId id) noexcept;

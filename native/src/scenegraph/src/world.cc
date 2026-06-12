@@ -42,6 +42,10 @@ void World::set_rim_eligible(InstanceId id, bool eligible) {
     if (auto* inst = get(id)) inst->rim_eligible = eligible;
 }
 
+void World::set_emissive_scale(InstanceId id, float scale) {
+    if (auto* inst = get(id)) inst->emissive_scale = scale;
+}
+
 bool World::is_valid(InstanceId id) const noexcept {
     return id.index < slots_.size()
         && slots_[id.index].alive

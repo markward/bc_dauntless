@@ -9,6 +9,7 @@ uniform vec3 u_diffuse_color;
 
 uniform sampler2D u_glow_map;
 uniform vec3 u_emissive_color;
+uniform float u_emissive_scale;   // 1 = normal, 0 = destroyed (dark hull)
 
 uniform sampler2D u_specular_map;
 uniform vec3 u_specular_color;
@@ -306,5 +307,9 @@ void main() {
         nac = glow_region_mult(p_body, u_decal_time);  // reuse existing body-frame pos
     }
 
-    frag_color = vec4(lit + u_emissive_color + glow.rgb * glow.a * gf * nac + spec + rim + decal_emissive, 1.0);
+    // Self-illumination (material emissive + window/light glow map) scales by
+    // u_emissive_scale so a destroyed ship goes dark; diffuse-lit, specular,
+    // rim, and damage-decal embers are external/transient and stay.
+    vec3 self_illum = u_emissive_scale * (u_emissive_color + glow.rgb * glow.a * gf * nac);
+    frag_color = vec4(lit + self_illum + spec + rim + decal_emissive, 1.0);
 }

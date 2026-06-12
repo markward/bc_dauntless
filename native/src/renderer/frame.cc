@@ -80,7 +80,8 @@ void draw_model(const assets::Model& model,
                 const scenegraph::DamageDecalRing& decals,
                 const std::array<scenegraph::Instance::GlowRegion,
                                  scenegraph::Instance::kMaxGlowRegions>& glow_regions,
-                float decal_time) {
+                float decal_time,
+                float emissive_scale) {
     // ── Per-instance damage decals (Phase 2) ───────────────────────────────
     // Pack the active ring into vec4 arrays. point_body and radius are both in
     // NIF/model units (damage_decal_add converts radius GU->model before
@@ -164,6 +165,8 @@ void draw_model(const assets::Model& model,
                 : assets::Material{});
             shader.set_vec3("u_diffuse_color", mat.diffuse);
             shader.set_vec3("u_emissive_color", mat.emissive);
+            // Self-illumination scale (1 = normal, 0 = destroyed/dark hull).
+            shader.set_float("u_emissive_scale", emissive_scale);
 
             const int base_tex = mat.stages[
                 static_cast<std::size_t>(assets::Material::StageSlot::Base)
@@ -303,7 +306,8 @@ void FrameSubmitter::submit_opaque(const scenegraph::World& world,
         const assets::Model* m = lookup(inst.model_handle);
         const bool rim_active = dauntless_rim::enabled() && inst.rim_eligible;
         if (m) draw_model(*m, inst.world, shader, white, black, rim_active,
-                          inst.decals, inst.glow_regions, decal_time);
+                          inst.decals, inst.glow_regions, decal_time,
+                          inst.emissive_scale);
     });
 }
 
@@ -341,7 +345,8 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
         const assets::Model* m = lookup(inst.model_handle);
         const bool rim_active = dauntless_rim::enabled() && inst.rim_eligible;
         if (m) draw_model(*m, inst.world, shader, white, black, rim_active,
-                          inst.decals, inst.glow_regions, decal_time);
+                          inst.decals, inst.glow_regions, decal_time,
+                          inst.emissive_scale);
     });
 }
 

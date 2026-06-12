@@ -501,6 +501,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("id"), py::arg("eligible"),
           "Mark an instance as a ship hull eligible for the Fresnel rim "
           "term. Default false (planets stay rim-free).");
+    m.def("set_emissive_scale",
+          [](scenegraph::InstanceId id, float scale) {
+              g_world.set_emissive_scale(id, scale);
+          },
+          py::arg("id"), py::arg("scale"),
+          "Scale an instance's self-illumination (material emissive + glow "
+          "map). 1.0 = normal, 0.0 = destroyed/dark hull.");
 
     m.def("create_bridge_instance",
           [](scenegraph::ModelHandle h) {
