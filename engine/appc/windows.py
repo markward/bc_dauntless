@@ -66,7 +66,11 @@ class TacticalControlWindow(TGEventHandlerObject):
 
         def _contains_menu(container, target_menu, depth):
             """Return the container if target_menu is a direct child, else None."""
-            children = getattr(container, "_children", [])
+            # __dict__ read — TGObject.__getattr__ returns a truthy _Stub
+            # for missing attributes (never the getattr default), and
+            # iterating a _Stub is infinite (__getitem__ yields stubs for
+            # every index). STButton has no _children; this must yield [].
+            children = container.__dict__.get("_children", [])
             for item in children:
                 # TGPane stores tuples (child, x, y); _STStylizedWindow/STMenu
                 # stores plain objects.

@@ -105,3 +105,26 @@ def test_get_menu_parent_pane_skips_non_matching_panes():
     orphan = STTopLevelMenu("Helm")
     tcw.AddMenuToList(orphan)
     assert tcw.GetMenuParentPane("Helm") is None
+
+
+def test_get_menu_parent_pane_survives_buttons_in_tree():
+    """STButton children (no _children attr -> stub __getattr__ trap) must
+    not hang the subtree walk. Regression: M1 host-loop spin."""
+    import threading
+    from engine.appc.characters import STButton
+    tcw = TacticalControlWindow.GetInstance()
+    pane, menu = _pane_with_menu("Helm")
+    menu.AddChild(STButton("All Stop"))
+    tcw.AddChild(pane, 0.0, 0.0)
+    tcw.AddMenuToList(menu)
+    orphan = STTopLevelMenu("Tactical")
+    tcw.AddMenuToList(orphan)   # forces a full-tree walk past the button
+
+    result = {}
+    def _walk():
+        result["pane"] = tcw.GetMenuParentPane("Tactical")
+    t = threading.Thread(target=_walk, daemon=True)
+    t.start()
+    t.join(5.0)
+    assert not t.is_alive(), "GetMenuParentPane hung walking an STButton"
+    assert result["pane"] is None
