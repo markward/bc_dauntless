@@ -174,6 +174,11 @@ class STMenu(ObjectClass):
     def SetFocus(self, *args) -> None:            self._focus = True
     def IsTypeOf(self, type_id) -> int:           return 0
     def Close(self, *args) -> None:               pass
+    def CallNextHandler(self, _evt) -> None:
+        # SDK handlers end with pMenu.CallNextHandler(pEvent) for chain
+        # propagation (e.g. HelmMenuHandlers.AllStop:1524). No parent
+        # window chain headless — explicit no-op instead of __getattr__ stub.
+        pass
 
 
 class STTopLevelMenu(STMenu):
