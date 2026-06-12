@@ -54,6 +54,10 @@ class SortedRegionMenu(STMenu):
         super().__init__(label)
         self._pause_sorting = 0
 
+    def ClearInfo(self, *args) -> None:
+        # Region-info reset on set-course rebuild (Systems/Utils.py:70).
+        pass
+
 
 class STRoundedButton(STButton):
     pass
@@ -163,4 +167,14 @@ def STWarpButton_Cast(obj):
 
 
 def SortedRegionMenu_Cast(obj):
-    return obj if isinstance(obj, SortedRegionMenu) else None
+    """Lenient pass-through, same rationale as characters.STMenu_Cast:
+    SDK chains the result without null-guarding (Systems/Utils.py:70
+    `pSystemMenu.ClearInfo()`, MissionLib.py:2613 `assert pMenu`), and the
+    input is often a plain STMenu auto-vivified by GetSubmenuW. Real
+    SortedRegionMenus cast cleanly; other objects flow through so their
+    TGObject stub-__getattr__ absorbs the follow-up calls."""
+    if isinstance(obj, SortedRegionMenu):
+        return obj
+    if obj is None:
+        return None
+    return obj

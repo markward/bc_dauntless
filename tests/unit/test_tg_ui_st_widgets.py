@@ -94,4 +94,12 @@ def test_new_casts():
     assert STWarpButton_Cast(b) is b
     assert STWarpButton_Cast(m) is None
     assert SortedRegionMenu_Cast(m) is m
-    assert SortedRegionMenu_Cast(b) is None
+    assert SortedRegionMenu_Cast(None) is None
+    # Lenient pass-through (STMenu_Cast pattern): non-matching objects flow
+    # through so SDK call chains hit TGObject's stub-absorbing __getattr__.
+    assert SortedRegionMenu_Cast(b) is b
+
+
+def test_sorted_region_menu_clear_info_is_noop():
+    m = SortedRegionMenu_CreateW("Set Course")
+    m.ClearInfo()  # must not raise
