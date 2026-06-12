@@ -80,3 +80,28 @@ def test_stmenu_is_completely_visible_mirrors_visibility():
     assert m.IsCompletelyVisible() == 1
     m.SetNotVisible()
     assert m.IsCompletelyVisible() == 0
+
+
+def test_stbutton_chosen_toggle_round_trip():
+    from engine.appc.characters import STButton
+    b = STButton("Fire")
+    assert b.IsChosen() == 0
+    b.SetChosen(not b.IsChosen())     # SDK toggle idiom (TacticalControlHandlers.py:190)
+    assert b.IsChosen() == 1
+    b.SetChosen(not b.IsChosen())
+    assert b.IsChosen() == 0
+
+
+def test_get_menu_parent_pane_skips_non_matching_panes():
+    tcw = TacticalControlWindow.GetInstance()
+    other_pane, other_menu = _pane_with_menu("Science")
+    pane, menu = _pane_with_menu("Tactical")
+    tcw.AddChild(other_pane, 0.0, 0.0)
+    tcw.AddChild(pane, 0.0, 0.0)
+    tcw.AddMenuToList(other_menu)
+    tcw.AddMenuToList(menu)
+    assert tcw.GetMenuParentPane("Tactical") is pane
+    # Menu known to TCW but contained in no recorded pane -> None.
+    orphan = STTopLevelMenu("Helm")
+    tcw.AddMenuToList(orphan)
+    assert tcw.GetMenuParentPane("Helm") is None

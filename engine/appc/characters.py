@@ -57,7 +57,8 @@ class STButton(ObjectClass):
     def SetNotHighlighted(self, *args) -> None:   self._highlighted = False
     def SetSelected(self, *args) -> None:         self._selected = True
     def SetNotSelected(self, *args) -> None:      self._selected = False
-    def SetChosen(self, *args) -> None:           self._chosen = True
+    def SetChosen(self, value=1) -> None:         self._chosen = bool(value)
+    def IsChosen(self) -> int:                    return 1 if self._chosen else 0
     def IsTypeOf(self, type_id) -> int:           return 0  # SDK class-id check; no hierarchy in Phase 1
 
     def SendActivationEvent(self) -> None:
