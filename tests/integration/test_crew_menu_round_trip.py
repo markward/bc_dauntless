@@ -70,10 +70,17 @@ def test_all_stop_click_gives_player_stay_ai():
     # sController != "Tactical".  Pre-stub it so the real module (which
     # touches bridge characters and TopWindow) is never loaded here.
     import types
+
+    class _AttrSinkModule(types.ModuleType):
+        """Minimal stand-in for conftest._StubModule: absorbs attribute writes
+        and returns no-op callables for reads (MissionLib.SetPlayerAI pokes
+        Bridge.TacticalMenuHandlers when controller != 'Tactical')."""
+        def __getattr__(self, name):
+            return lambda *a, **k: None
+
     _tact_saved = sys.modules.get("Bridge.TacticalMenuHandlers")
     if _tact_saved is None:
-        from tests.conftest import _StubModule  # noqa: PLC0415
-        _tact_stub = _StubModule("Bridge.TacticalMenuHandlers")
+        _tact_stub = _AttrSinkModule("Bridge.TacticalMenuHandlers")
         sys.modules["Bridge.TacticalMenuHandlers"] = _tact_stub
         if "Bridge" in sys.modules:
             try:
@@ -124,6 +131,10 @@ def test_all_stop_click_gives_player_stay_ai():
         )
 
         wid = all_stop_node["id"]
+
+        # --- Hard assertion 0: All Stop button is enabled ---
+        target = panel._widgets_by_id[wid]
+        assert target.IsEnabled(), "All Stop button unexpectedly disabled"
 
         # --- Hard assertion 1: dispatch_event returns True ---
         result = panel.dispatch_event("click:%d" % wid)
