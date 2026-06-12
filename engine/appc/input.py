@@ -18,6 +18,19 @@ WC_MBUTTON: int = 0x04
 KY_LBUTTON: int = 0x01
 KY_RBUTTON: int = 0x02
 KY_MBUTTON: int = 0x04
+# Function keys — Windows VK_F1..F5 values (KeyConfig.MapScancodes
+# registers them; DefaultKeyboardBinding.py:121-125 binds them to
+# ET_INPUT_TALK_TO_*). KY_ mirrors WC_ like the mouse buttons above.
+WC_F1: int = 0x70
+WC_F2: int = 0x71
+WC_F3: int = 0x72
+WC_F4: int = 0x73
+WC_F5: int = 0x74
+KY_F1: int = 0x70
+KY_F2: int = 0x71
+KY_F3: int = 0x72
+KY_F4: int = 0x73
+KY_F5: int = 0x74
 KS_KEYDOWN   = TGKeyboardEvent.KS_KEYDOWN
 KS_KEYUP     = TGKeyboardEvent.KS_KEYUP
 KS_KEYREPEAT = TGKeyboardEvent.KS_KEYREPEAT
