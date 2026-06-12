@@ -1204,16 +1204,23 @@ def ShipClass_Cast(obj) -> "ShipClass | None":
     return None
 
 
-def ShipClass_GetObjectByID(pSet_or_id, obj_id=None) -> "ShipClass | None":
+_UNSET = object()  # sentinel for ShipClass_GetObjectByID dispatch
+
+
+def ShipClass_GetObjectByID(pSet_or_id, obj_id=_UNSET) -> "ShipClass | None":
     """Accept both 1-arg (obj_id) and 2-arg (pSet, obj_id) SDK calling conventions.
 
     The real Appc signature is GetObjectByID(pSet, id); many SDK scripts pass a
-    null set as the first argument.  Our headless version ignores the set."""
-    if obj_id is None:
-        # 1-arg form: ShipClass_GetObjectByID(obj_id)
+    null set as the first argument.  Our headless version ignores the set.
+
+    Dispatch is sentinel-based so that a caller passing None as the explicit id
+    (2-arg SDK form: ShipClass_GetObjectByID(SetClass_GetNull(), None)) is
+    correctly treated as the 2-arg form rather than collapsing to 1-arg."""
+    if obj_id is _UNSET:
+        # 1-arg engine form: ShipClass_GetObjectByID(id)
         real_id = pSet_or_id
     else:
-        # 2-arg form: ShipClass_GetObjectByID(pSet, obj_id)
+        # 2-arg SDK form: ShipClass_GetObjectByID(pSet, id)
         real_id = obj_id
     from engine.core.ids import get_object_by_id
     obj = get_object_by_id(real_id)

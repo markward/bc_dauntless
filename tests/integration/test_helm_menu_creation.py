@@ -1,8 +1,9 @@
 """Run the REAL sdk/Build/scripts/Bridge/HelmMenuHandlers.CreateMenus().
 
-conftest pre-stubs Bridge.HelmMenuHandlers as a _StubModule (MissionLib
-writes attributes onto it), so this test swaps in the real module and
-restores the stub afterwards.
+The stub-swap helpers (_fresh_real_helm / _restore) remain for isolation so
+MissionLib attribute writes don't pollute the real module across tests.
+conftest no longer pre-stubs Bridge.HelmMenuHandlers — the real module loads
+normally; these helpers perform the swap themselves at test boundaries.
 """
 import sys
 

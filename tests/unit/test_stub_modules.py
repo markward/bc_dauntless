@@ -11,9 +11,20 @@ def test_loadspacehelper_preload_ship_callable():
 
 
 def test_load_bridge_load_callable():
+    import App
     import LoadBridge
-    result = LoadBridge.Load("GalaxyBridge")
-    assert result is not None
+    from engine.appc.windows import TacticalControlWindow
+    from engine.appc.tg_ui import st_widgets
+    try:
+        result = LoadBridge.Load("GalaxyBridge")
+        assert result is not None
+    finally:
+        App.g_kEventManager._broadcast_handlers.clear()
+        if hasattr(App.g_kEventManager, "_method_handlers"):
+            App.g_kEventManager._method_handlers.clear()
+        LoadBridge._reset_menus_created()
+        TacticalControlWindow._instance = None
+        st_widgets._reset_module_state()
 
 
 def test_bridge_helm_menu_handlers_attr_set():

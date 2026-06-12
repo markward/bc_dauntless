@@ -23,6 +23,12 @@ REAL_SYMBOLS = [
     "STRoundedButton", "STRoundedButton_CreateW", "STRoundedButton_Cast",
     "STSubPane", "STSubPane_Create", "STSubPane_Cast",
     "STButton_Cast", "STStylizedWindow_Cast",
+    "WeaponsDisplay", "WeaponsDisplay_Cast", "WeaponsDisplay_Create",
+    "NiPoint2", "NiColorA", "STBSF_SIZE_TO_TEXT",
+    "TacticalControlWindow_Create",
+    "EngRepairPane", "EngRepairPane_Create",
+    "TacWeaponsCtrl_Create", "EngPowerDisplay_Create",
+    "EngPowerCtrl_GetPowerCtrl",
 ]
 
 

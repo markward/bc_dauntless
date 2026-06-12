@@ -22,6 +22,10 @@ def _fresh_world():
     LoadBridge._reset_menus_created()
     _reset_ship_display()
     App.g_kSetManager._sets.clear()
+    # Handlers re-register on each Load; clear stale ones from prior tests.
+    App.g_kEventManager._broadcast_handlers.clear()
+    if hasattr(App.g_kEventManager, "_method_handlers"):
+        App.g_kEventManager._method_handlers.clear()
     # Game/Episode/Mission scaffolding — mirrors
     # tests/integration/test_crew_menu_round_trip.py's _make_game() exactly.
     game = Game()

@@ -1335,6 +1335,10 @@ def reset_sdk_globals() -> None:
     try:
         from engine.appc.windows import TacticalControlWindow as _TCW
         _TCW._instance = None
+        # Re-point keyboard dispatch at the fresh singleton — the old
+        # instance was just orphaned and still held the default destination.
+        App.g_kKeyboardBinding.SetDefaultDestination(
+            _TCW.GetInstance())
     except Exception:
         pass
 
