@@ -19,6 +19,32 @@ from engine.appc.windows import (
     SubtitleWindow, SubtitleWindow_Cast,
     STStylizedWindow_CreateW,
 )
+from engine.appc.tg_ui.widgets import (
+    TGPane, TGPane_Create, TGPane_Cast,
+    TGIcon, TGIcon_Create, TGIcon_Cast,
+    TGParagraph, TGParagraph_Create, TGParagraph_CreateW, TGParagraph_Cast,
+    TGIconGroup,
+)
+from engine.appc.tg_ui.managers import (
+    g_kFontManager, g_kIconManager, g_kImageManager,
+    g_kFocusManager, g_kRootWindow,
+)
+from engine.appc.tg_ui.graphics_mode import (
+    GraphicsModeInfo, GraphicsModeInfo_GetCurrentMode,
+    TGUIModule_PixelAlignValue,
+)
+from engine.appc.tg_ui.st_widgets import (
+    STCharacterMenu, STCharacterMenu_CreateW,
+    STToggle, STToggle_CreateW, STToggle_Cast,
+    STWarpButton, STWarpButton_CreateW, STWarpButton_Cast,
+    SortedRegionMenu, SortedRegionMenu_CreateW, SortedRegionMenu_Cast,
+    SortedRegionMenu_SetWarpButton, SortedRegionMenu_GetWarpButton,
+    SortedRegionMenu_SetPauseSorting, SortedRegionMenu_ClearSetCourseMenu,
+    SortedRegionMenu_IsSortingPaused,
+    STRoundedButton, STRoundedButton_CreateW, STRoundedButton_Cast,
+    STSubPane, STSubPane_Create, STSubPane_Cast,
+    STButton_Cast, STStylizedWindow_Cast,
+)
 from engine.appc.radar import (
     RadarDisplay_Create, RadarDisplay_Cast,
     RadarScope_Create, RadarBlip_Create,
@@ -236,7 +262,6 @@ def GridClass_Create(): return GridClass()
 
 class Placement(ObjectClass): pass
 class MultiplayerGame: pass
-class SortedRegionMenu(STMenu): pass
 
 # Property / subsystem templates
 CT_SUBSYSTEM_PROPERTY            = SubsystemProperty
