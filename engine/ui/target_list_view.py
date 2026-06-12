@@ -146,12 +146,16 @@ class TargetListView(Panel):
         game = Game_GetCurrentGame()
         player = game.GetPlayer() if game is not None else None
 
+        from engine.appc.ship_death import _out_of_action
         rows = []
         child = target_menu.GetFirstChild()
         while child is not None:
             if isinstance(child, STSubsystemMenu):
                 ship = child.GetShip()
-                if ship is not None and ship is not player:
+                # A ship whose death sequence has begun (dying or dead) is no
+                # longer a valid target — drop it off the list immediately.
+                if ship is not None and ship is not player \
+                        and not _out_of_action(ship):
                     hull_pct = _query_hull_percentage(ship)
                     shield_pct = _query_shield_percentage(ship)
                     # sub_child.GetLabel() equals the subsystem's GetName()
