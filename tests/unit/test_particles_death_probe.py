@@ -4,8 +4,9 @@ current engine?  Each test is either a hard assertion (wall cleared) or a
 documented skip (wall hit).  The skips ARE the deliverable — they map the exact
 boundary of what the Phase-1 engine can reach.
 
-Phase-1 TGSequence execution model: delays are IGNORED, every child action
-fires immediately in insertion order.  All timing tests below confirm this.
+TGSequence execution model: delay-aware.  Zero-delay dependency chains resolve
+inline within Play(); steps added with a real fDelay are scheduled on
+g_kTimerManager game time and fire only once it advances past the delay.
 """
 import pytest
 import App
@@ -182,14 +183,12 @@ def test_object_exploding_full_cascade():
     - CreateDebrisSparks → App.SparkParticleController_Create  (implemented in A3)
     - CreateDebrisExplosion × 3 more on pSet.GetEffectRoot()
     - TGSoundAction_Create (sound at end of final sequence)
-    - pFullSequence.Play() — synchronous, delays collapsed
+    - pFullSequence.Play() — zero-delay steps fire inline, delayed steps are
+      scheduled on g_kTimerManager game time
 
-    Under synchronous TGSequence: all sub-sequences fire immediately with
-    delays ignored — explosions collapse to a single burst.
-
-    The remaining known limitation is timing only: under the Phase-1
-    synchronous action model, explosion delays are collapsed and all
-    CreateObjectExplosion calls fire immediately rather than staggered.
+    The first explosion in the while-loop is added at fExplosionTime=0.0, so
+    at least one CreateObjectExplosion fires inline during Play(); the rest
+    stagger out over the object's lifetime as game time advances.
     Debris sparks themselves are real (A3 implemented SparkParticleController).
     """
     P.reset()
@@ -203,22 +202,28 @@ def test_object_exploding_full_cascade():
             f"WALL: ObjectExploding raised {type(e).__name__}: {e}"
         )
 
-    # If we get here, the whole cascade ran.  Under synchronous TGSequence
-    # the while-loop fires all CreateObjectExplosion calls immediately.
+    # If we get here, the whole cascade ran.  The t=0 step of the while-loop
+    # fires its CreateObjectExplosion inline during Play().
     assert P.active_count() >= 1, (
         "ObjectExploding ran but registered no particle controllers"
     )
 
 
 # ---------------------------------------------------------------------------
-# Test 4: Timed-cascade timing collapse confirmation
+# Test 4: Timed-cascade delay scheduling confirmation
 # ---------------------------------------------------------------------------
 
-def test_sequence_delays_are_ignored():
-    """Confirm that AddAction(action, dependency, fDelay) discards fDelay in
-    Phase 1: both actions in the sequence fire and both controllers are active
-    immediately after Play(), even though the second was added with a 5-second
-    delay."""
+def _advance_game_time(seconds, step=1.0 / 60.0):
+    """Advance g_kTimerManager in 60 Hz ticks for `seconds` of game time."""
+    n = int(round(seconds / step))
+    for _ in range(n):
+        App.g_kTimerManager.tick(step)
+
+
+def test_sequence_delays_are_honored():
+    """Confirm that AddAction(action, dependency, fDelay) schedules fDelay on
+    game time: only the zero-delay action fires at Start(), and the 5-second
+    action fires once g_kTimerManager has advanced past its delay."""
     from engine.appc.actions import TGSequence_Create, TGAction_CreateNull
     from engine.appc.particles import (
         AnimTSParticleController, AnimTSParticleController_Create, EffectAction_Create,
@@ -235,15 +240,23 @@ def test_sequence_delays_are_ignored():
     c2.SetEffectLifeTime(10.0)
     ea2 = EffectAction_Create(c2)
 
-    # Second action has a 5-second delay — IGNORED in Phase 1.
     seq.AddAction(ea1, TGAction_CreateNull(), 0.0)
     seq.AddAction(ea2, TGAction_CreateNull(), 5.0)
 
     seq.Start()
 
-    assert P.active_count() == 2, (
-        f"Expected 2 active controllers (delays ignored), got {P.active_count()}. "
-        "Phase-1 TGSequence collapse is not working."
+    # Assert on this test's own controllers, not global counts: earlier tests
+    # in this file leave pending delayed steps on g_kTimerManager that also
+    # fire when game time advances.
+    assert c1 in P._active, "Zero-delay controller did not fire at Start()"
+    assert c2 not in P._active, (
+        "5s-delay controller fired at Start() — delay was not honored"
+    )
+
+    _advance_game_time(5.1)
+
+    assert c2 in P._active, (
+        "5s-delay controller did not fire after game time advanced past it"
     )
 
 

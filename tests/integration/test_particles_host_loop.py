@@ -36,15 +36,22 @@ def test_object_exploding_registers_real_debris_sparks():
     """ObjectExploding now routes CreateDebrisSparks through the real
     SparkParticleController_Create (Task 5).  Confirms the A2 death-debris
     gap is closed end-to-end: at least one SparkParticleController is active
-    after the full death cascade fires."""
+    after the full death cascade fires.
+
+    The sparks live in the final-explosion sub-sequence, which the delay-aware
+    TGSequence schedules at fTotalLifeLeft - 2.5 s of game time
+    (fTotalLifeLeft is randomly 5.0-14.9 s), so the test must advance
+    g_kTimerManager past the worst case before asserting."""
+    import App
     import Effects
     from engine.appc import particles as P
     from engine.appc.particles import SparkParticleController
-    from tests.unit.test_particles_death_probe import FakeObject
+    from tests.unit.test_particles_death_probe import FakeObject, _advance_game_time
 
     P.reset()
     fake = FakeObject()
     Effects.ObjectExploding(fake)
+    _advance_game_time(15.0)
     assert any(isinstance(c, SparkParticleController) for c in P._active), (
         f"Expected at least one SparkParticleController in P._active, "
         f"got: {[type(c).__name__ for c in P._active]}"
