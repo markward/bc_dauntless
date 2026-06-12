@@ -89,9 +89,11 @@ Conventions (all matching `engine/appc/characters.py` `STMenu`/`STButton`):
 
 **Supporting change — bare-name Icons imports:** BC's `Autoexec.py` does
 `sys.path.append("scripts/Icons")`, so SDK code imports `LCARS_1024` and
-`FontsAndIcons` as top-level names. `_SDKFinder` (in `tests/conftest.py` and the host
-loop's equivalent) learns to resolve bare module names from
-`sdk/Build/scripts/Icons/` as a final fallback.
+`FontsAndIcons` as top-level names. Verified during planning: `_SDKFinder`'s
+existing Python-1.5 implicit-relative-import fallback (rglob over
+`sdk/Build/scripts/`) already resolves these in both `tests/conftest.py` and
+`tools/mission_harness.py` (which the host loop uses via `_setup_sdk`). No finder
+change needed — regression tests pin the behaviour.
 
 **ET_ constants (App.py stable-int block):** `ET_ST_BUTTON_CLICKED`,
 `ET_COMMUNICATE`, `ET_HAIL`, `ET_SCAN`, `ET_SET_COURSE`, `ET_ALL_STOP`, `ET_DOCK`,
