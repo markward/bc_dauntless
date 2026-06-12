@@ -52,20 +52,31 @@ class TimeSliceProcess:
 
 
 class PythonMethodProcess(TimeSliceProcess):
-    """SDK signature: pmp.SetFunction(instance, method_name).
+    """SDK signature: pmp.SetFunction(instance, method_name) [2-arg]
+    or pmp.SetInstance(instance); pmp.SetFunction(method_name) [1-arg].
 
-    On dispatch, getattr(instance, method_name)() is invoked. The two-arg
-    form matches sdk/.../AI/Setup.py and is the only form Python-side SDK
-    code actually uses.
+    On dispatch, getattr(instance, method_name)(dTimeAvailable) is invoked.
+    The two-arg form matches sdk/.../AI/Setup.py; the one-arg + SetInstance
+    form is used by HelmMenuHandlers.ProcessWrapper (py:56-70).
     """
     def __init__(self):
         super().__init__()
         self._instance = None
         self._method_name: str = ""
 
-    def SetFunction(self, instance, method_name: str) -> None:
+    def SetInstance(self, instance) -> None:
+        # HelmMenuHandlers.ProcessWrapper:69 — separate instance setter used
+        # with the 1-arg SetFunction form.
         self._instance = instance
-        self._method_name = method_name
+
+    def SetFunction(self, instance_or_name, method_name: str = "") -> None:
+        if method_name:
+            # 2-arg form: SetFunction(instance, "MethodName")
+            self._instance = instance_or_name
+            self._method_name = method_name
+        else:
+            # 1-arg form: SetFunction("MethodName") after SetInstance()
+            self._method_name = str(instance_or_name)
 
     def Update(self) -> None:
         if self._instance is None or not self._method_name:

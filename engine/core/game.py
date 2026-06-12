@@ -74,6 +74,12 @@ class Episode(TGObject):
     def SetCurrentMission(self, mission: Mission) -> None:
         self._current_mission = mission
 
+    def AddPersistentModule(self, module_name: str) -> None:
+        # SDK Episode.AddPersistentModule(name) — prevents module unload between
+        # missions (HelmMenuHandlers.py:31, BridgeHandlers.py, et al.).
+        # Headless: no module lifecycle management — accept and ignore.
+        pass
+
 
 def Game_GetDifficulty() -> int:
     return 1  # MEDIUM
@@ -138,6 +144,13 @@ class Game(TGObject):
     # SDK uses both spellings; GetCurrentPlayer is the module-exposed form.
     GetCurrentPlayer = GetPlayer
     SetCurrentPlayer = SetPlayer
+
+    def GetPlayerGroup(self):
+        # SDK App.py:3712 — returns an ObjectGroup of ships owned by the player.
+        # BridgeHandlers/HelmMenuHandlers.AddFleetCommandHandlers call this to
+        # register entered-set event handlers; null-guarded at every call site.
+        # Headless: no player group — return None so the if-guards skip cleanly.
+        return None
 
     def LoadSound(self, path: str, name: str, loadspec: int):
         # Late import: engine.audio depends on the native extension which may
