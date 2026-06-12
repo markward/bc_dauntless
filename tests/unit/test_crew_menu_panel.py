@@ -108,3 +108,40 @@ def test_click_on_disabled_button_is_ignored():
     panel.render_payload()
     panel.dispatch_event(f"click:{ensure_widget_id(btn)}")
     assert _clicks == []
+
+
+def test_quiescent_panel_emits_nothing_on_first_tick():
+    panel = CrewMenuPanel()        # no menus registered
+    assert panel.render_payload() is None
+    panel.invalidate()             # CEF reload: empty state must fire once
+    assert panel.render_payload() == 'setCrewMenus({"menus": []});'
+
+
+def test_nested_submenu_snapshot_depth():
+    from engine.appc.characters import STMenu
+    helm, btn = _build_helm_with_button()
+    warp = STMenu("Warp")
+    warp.AddChild(App.STButton_CreateW("Engage", None))
+    helm.AddChild(warp)
+    panel = CrewMenuPanel()
+    payload = panel.render_payload()
+    import json as _json
+    data = _json.loads(payload[len("setCrewMenus("):-2])
+    nodes = data["menus"][0]["children"]
+    warp_node = [n for n in nodes if n["label"] == "Warp"][0]
+    assert warp_node["type"] == "menu"
+    assert warp_node["children"][0]["label"] == "Engage"
+    assert warp_node["children"][0]["type"] == "button"
+
+
+def test_menu_click_is_clean_noop():
+    _clicks.clear()
+    helm, btn = _build_helm_with_button()
+    helm.AddPythonFuncHandlerForInstance(
+        App.ET_ALL_STOP, __name__ + "._record_all_stop")
+    helm.AddPythonFuncHandlerForInstance(
+        App.ET_ST_BUTTON_CLICKED, __name__ + "._record_all_stop")
+    panel = CrewMenuPanel()
+    panel.render_payload()
+    assert panel.dispatch_event(f"click:{ensure_widget_id(helm)}") is True
+    assert _clicks == []           # no SDK event fired for a menu node

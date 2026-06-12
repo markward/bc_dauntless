@@ -24,7 +24,10 @@ _logger = logging.getLogger(__name__)
 class CrewMenuPanel(Panel):
     def __init__(self):
         super().__init__()
-        self._last_pushed: Optional[str] = None
+        # Empty-state sentinel (matches SDKMirrorPanel): a quiescent panel
+        # emits nothing on the first tick; invalidate() resets to None so
+        # the empty state still fires once after a CEF page reload.
+        self._last_pushed: Optional[str] = json.dumps({"menus": []})
         self._widgets_by_id: dict = {}
         self._logged_unrecognised: set = set()
 
@@ -94,6 +97,7 @@ class CrewMenuPanel(Panel):
                 clicked.SetDestination(root)
                 clicked.SetSource(widget)
                 App.g_kEventManager.AddEvent(clicked)
+        # Menu nodes open/close client-side in CEF; no SDK event needed.
         return True
 
     def invalidate(self) -> None:
