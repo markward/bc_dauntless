@@ -7,6 +7,15 @@ from these fields each frame. See
 docs/superpowers/specs/2026-06-11-particle-backend-a1-smoke-design.md.
 """
 
+# Known sprite-sheet textures, by lowercase basename -> (cols, rows).
+# BC's stock explosion sheets are 256x256 with an 8x8 grid: 8 animation
+# frames across, 8 explosion variants down (B is the greyscale twin of A).
+# CreateTarget applies these automatically; SetTextureCells can override.
+_KNOWN_SHEET_TEXTURES = {
+    "explosiona.tga": (8, 8),
+    "explosionb.tga": (8, 8),
+}
+
 
 class AnimTSParticleController:
     def __init__(self):
@@ -52,7 +61,16 @@ class AnimTSParticleController:
     def SetEffectLifeTime(self, t):    self._effect_life_time = t
     def SetInheritsVelocity(self, on): self._inherit = 1.0 if on else 0.0
     def SetDrawOldToNew(self, on):     self._draw_old_to_new = 1 if on else 0
-    def CreateTarget(self, path):      self._texture_path = path
+    def CreateTarget(self, path):
+        self._texture_path = path
+        # Auto-detect known sprite-sheet textures so every SDK Effects
+        # caller (weapon-hit explosions, smoke, plumes) animates frames
+        # instead of billboarding the whole 8x8 grid. SDK scripts never
+        # declare the grid — the original engine knew it natively.
+        base = str(path).replace("\\", "/").rsplit("/", 1)[-1].lower()
+        cells = _KNOWN_SHEET_TEXTURES.get(base)
+        if cells is not None:
+            self._atlas_cols, self._atlas_rows = cells
     def SetTextureCells(self, cols, rows):
         """Declare the target texture as a `cols` x `rows` sprite sheet:
         `cols` animation frames per variant, `rows` variants. Default 1x1

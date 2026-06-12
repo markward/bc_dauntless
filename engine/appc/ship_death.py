@@ -122,9 +122,9 @@ def _spawn_explosion(ship) -> None:
         )
         ctrl = action.GetController() if hasattr(action, "GetController") else None
         if ctrl is not None:
+            # Force the colour sheet (helper randomly picks A or greyscale B);
+            # CreateTarget auto-declares the 8x8 sprite-sheet grid.
             ctrl.CreateTarget("data/Textures/Effects/ExplosionA.tga")
-            if hasattr(ctrl, "SetTextureCells"):
-                ctrl.SetTextureCells(8, 8)
             # Frames step over each puff's life, so a longer life = slower
             # animation. Spread births across a hull-sized sphere so puffs
             # appear all over the ship, not just at its centre.
