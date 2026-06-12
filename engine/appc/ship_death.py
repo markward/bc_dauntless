@@ -12,10 +12,14 @@ See docs/superpowers/specs/2026-06-11-ship-death-sequence-design.md.
 """
 
 THROES_DURATION       = 5.0   # seconds the ship coasts, dying, before removal
-# Consumed by _spawn_explosion (filled in a later task); defined here so the
-# VFX tunables live alongside THROES_DURATION.
-EXPLOSION_SIZE_FACTOR = 1.0   # ship-radius multiplier (starting value, tune by feel)
-MIN_EXPLOSION_SIZE    = 2.0   # GU floor for tiny craft (starting value, tune by feel)
+# Explosion VFX tunables (consumed by _spawn_explosion), kept beside
+# THROES_DURATION. Tuned by feel.
+EXPLOSION_SIZE_FACTOR   = 0.75  # per-puff size as a fraction of ship radius
+MIN_EXPLOSION_SIZE      = 2.0   # GU floor for tiny craft
+EXPLOSION_PUFF_LIFE     = 3.0   # seconds per puff = 8-frame animation duration
+                                # (2x the SDK 1.5s default → frames play 2x slower)
+EXPLOSION_SPREAD_FACTOR = 0.8   # emit-sphere radius as a fraction of ship radius,
+                                # so puffs spawn all over the hull, not just centre
 
 # Registry of in-progress death sequences: each entry is
 # {"ship": ship, "time_left": float}.
@@ -121,6 +125,11 @@ def _spawn_explosion(ship) -> None:
             ctrl.CreateTarget("data/Textures/Effects/ExplosionA.tga")
             if hasattr(ctrl, "SetTextureCells"):
                 ctrl.SetTextureCells(8, 8)
+            # Frames step over each puff's life, so a longer life = slower
+            # animation. Spread births across a hull-sized sphere so puffs
+            # appear all over the ship, not just at its centre.
+            ctrl.SetEmitLife(EXPLOSION_PUFF_LIFE)
+            ctrl.SetEmitRadius(radius * EXPLOSION_SPREAD_FACTOR)
         if action is not None and hasattr(action, "Play"):
             action.Play()
     except Exception:

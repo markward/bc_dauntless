@@ -379,3 +379,21 @@ def test_death_explosion_is_explosionA_8x8_sheet():
               and d.get("atlas_cols") == 8 and d.get("atlas_rows") == 8]
     assert len(sheets) >= 1
     particles.reset()
+
+
+def test_death_explosion_tuning():
+    """Per-puff life drives the 8-frame animation duration; the emit radius
+    spreads puffs across a hull-sized sphere; the size is the 0.75 factor."""
+    from engine.appc import particles
+    particles.reset()
+    radius = 4.0
+    ship = FakeShip(name="Tuned", radius=radius)
+    ship_death.begin(ship)
+    sheets = [d for d in particles.snapshot_descriptors()
+              if "ExplosionA" in d.get("texture_path", "")]
+    assert sheets
+    d = sheets[0]
+    assert d["emit_life"] == ship_death.EXPLOSION_PUFF_LIFE          # slower animation
+    assert d["emit_radius"] == radius * ship_death.EXPLOSION_SPREAD_FACTOR  # hull spread
+    assert ship_death.EXPLOSION_SIZE_FACTOR == 0.75                  # smaller puffs
+    particles.reset()
