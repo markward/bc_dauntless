@@ -146,6 +146,11 @@ struct ParticleEmitterDescriptor {
     // along the columns, variant row from a per-particle hash).
     int   atlas_cols = 1;
     int   atlas_rows = 1;
+    // Stable per-emitter hash seed in [0,1). ALL per-particle randomness
+    // (jitter, birth offset, variant row) derives from this — never from the
+    // emitter's world position, which moves with an attached ship and would
+    // re-roll every particle each frame (teleporting/flickering puffs).
+    float seed = 0.0f;
 };
 
 /// Phaser-beam render descriptor.  One entry per concentric beam layer

@@ -395,5 +395,41 @@ def test_death_explosion_tuning():
     d = sheets[0]
     assert d["emit_life"] == ship_death.EXPLOSION_PUFF_LIFE          # slower animation
     assert d["emit_radius"] == radius * ship_death.EXPLOSION_SPREAD_FACTOR  # hull spread
+    assert d["emit_frequency"] == ship_death.EXPLOSION_EMIT_PERIOD   # thinner flurry
     assert ship_death.EXPLOSION_SIZE_FACTOR == 0.75                  # smaller puffs
     particles.reset()
+
+
+def test_emitter_seed_is_stable_and_distinct():
+    """Per-particle randomness must derive from a per-emitter seed that is
+    constant across snapshots (a moving emitter must not re-roll particles
+    every frame) and differs between emitters (no twin explosions)."""
+    from engine.appc import particles
+    c1 = particles.AnimTSParticleController_Create()
+    c2 = particles.AnimTSParticleController_Create()
+    s1a = particles._descriptor_for(c1, None)["seed"]
+    s1b = particles._descriptor_for(c1, None)["seed"]
+    s2 = particles._descriptor_for(c2, None)["seed"]
+    assert s1a == s1b                 # stable across snapshots
+    assert s1a != s2                  # distinct between emitters
+    assert 0.0 <= s1a < 1.0
+
+
+def test_descriptor_anchors_at_last_world_location_when_unresolved():
+    """When the emit-from ship has no render instance (removed at death),
+    the descriptor anchors at the ship's last world location so the
+    explosion finishes at the wreck site."""
+    from engine.appc import particles
+
+    class _Loc:
+        x, y, z = 10.0, -5.0, 3.0
+
+    class _Wreck:
+        def GetWorldLocation(self):
+            return _Loc()
+
+    c = particles.AnimTSParticleController_Create()
+    c.SetEmitFromObject(_Wreck())
+    d = particles._descriptor_for(c, resolve_attach=lambda obj: None)
+    assert d["instance_id"] is None
+    assert d["emit_pos"] == (10.0, -5.0, 3.0)

@@ -20,6 +20,9 @@ EXPLOSION_PUFF_LIFE     = 3.0   # seconds per puff = 8-frame animation duration
                                 # (2x the SDK 1.5s default → frames play 2x slower)
 EXPLOSION_SPREAD_FACTOR = 0.8   # emit-sphere radius as a fraction of ship radius,
                                 # so puffs spawn all over the hull, not just centre
+EXPLOSION_EMIT_PERIOD   = 0.25  # seconds between puff births (SDK default 0.09
+                                # + 3s puff life = ~33 concurrent puffs — a wall
+                                # of fire; 0.25 -> ~12 concurrent, distinct blasts)
 
 # Registry of in-progress death sequences: each entry is
 # {"ship": ship, "time_left": float}.
@@ -130,6 +133,7 @@ def _spawn_explosion(ship) -> None:
             # appear all over the ship, not just at its centre.
             ctrl.SetEmitLife(EXPLOSION_PUFF_LIFE)
             ctrl.SetEmitRadius(radius * EXPLOSION_SPREAD_FACTOR)
+            ctrl.SetEmitFrequency(EXPLOSION_EMIT_PERIOD)
         if action is not None and hasattr(action, "Play"):
             action.Play()
     except Exception:

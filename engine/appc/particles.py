@@ -6,6 +6,7 @@ particles. The renderer (ParticlePass) derives every particle analytically
 from these fields each frame. See
 docs/superpowers/specs/2026-06-11-particle-backend-a1-smoke-design.md.
 """
+import random as _random
 
 # Known sprite-sheet textures, by lowercase basename -> (cols, rows).
 # BC's stock explosion sheets are 256x256 with an 8x8 grid: 8 animation
@@ -45,6 +46,11 @@ class AnimTSParticleController:
         # (frame from age, row from a per-particle hash).
         self._atlas_cols = 1
         self._atlas_rows = 1
+        # Stable per-emitter hash seed. The renderer derives ALL per-particle
+        # randomness (jitter, birth offset, variant row) from this, NOT from
+        # the emitter's world position — a moving emitter must not re-roll
+        # its particles every frame.
+        self._seed = _random.random()
         # runtime, owned by the registry
         self._effect_age = 0.0
         self._stop_age = None      # None => still emitting
@@ -198,12 +204,22 @@ def _descriptor_for(c, resolve_attach):
     emit_vel_world = (0.0, 0.0, 0.0)
     emit_pos = _vec3(c._emit_pos)
     emit_dir = _vec3(c._emit_dir, default=(0.0, -1.0, 0.0))
-    if c._emit_from is not None and resolve_attach is not None:
-        r = resolve_attach(c._emit_from)
+    if c._emit_from is not None:
+        r = resolve_attach(c._emit_from) if resolve_attach is not None else None
         if r is not None:
             instance_id = r.get("instance_id")
             emit_vel_world = tuple(r.get("velocity", (0.0, 0.0, 0.0)))
             # emit_pos/emit_dir stay body-frame; the pass resolves them.
+        else:
+            # Attach target has no render instance (e.g. ship removed at the
+            # end of its death sequence). Anchor the effect at the object's
+            # last world location so it finishes playing at the wreck site
+            # instead of snapping to the body-frame origin.
+            try:
+                wp = c._emit_from.GetWorldLocation()
+                emit_pos = (float(wp.x), float(wp.y), float(wp.z))
+            except Exception:
+                pass
     return {
         "instance_id":       instance_id,
         "emit_pos":          emit_pos,
@@ -230,6 +246,7 @@ def _descriptor_for(c, resolve_attach):
         "texture_path":      c._texture_path,
         "atlas_cols":        int(c._atlas_cols),
         "atlas_rows":        int(c._atlas_rows),
+        "seed":              float(c._seed),
     }
 
 

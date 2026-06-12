@@ -198,6 +198,13 @@ void ParticlePass::render(const std::vector<ParticleEmitterDescriptor>& emitters
 
         const int n = particle_max_count(e.emit_life, e.emit_life_variance,
                                          e.emit_frequency);
+        // Stable hash seed for this emitter. NEVER seed from emit_pos_world:
+        // an emitter attached to a moving ship changes position every frame,
+        // which would re-roll every particle's jitter/offset/row per frame
+        // (puffs teleport and flicker — the "mad flurry" bug).
+        const glm::vec3 hseed(e.seed * 127.1f + 0.37f,
+                              e.seed * 311.7f + 1.93f,
+                              e.seed * 74.7f  + 4.71f);
         // Defensive default: emitters with tail_length==0 never hit the
         // per-particle branch below, so pre-zero the uniform once here.
         shader.set_float("u_streak_length", 0.0f);
@@ -211,7 +218,7 @@ void ParticlePass::render(const std::vector<ParticleEmitterDescriptor>& emitters
         for (int i = 0; i < n; ++i) {
             const float b   = slot_birth_age(e.effect_age, i, n, e.emit_frequency);
             const float tau = e.effect_age - b;
-            const glm::vec2 jit = hash3(emit_pos_world, i);
+            const glm::vec2 jit = hash3(hseed, i);
             const float life_i  = e.emit_life + jit.x * std::max(0.0f, e.emit_life_variance);
             if (tau < 0.0f || tau > life_i) continue;
             if (b < 0.0f || b > e.stop_age) continue;
@@ -230,7 +237,7 @@ void ParticlePass::render(const std::vector<ParticleEmitterDescriptor>& emitters
             // A2 extension: 3D random velocity (zero when random_velocity_speed==0).
             // A3: random travel also uses damped_travel (linear when damping==0).
             if (e.random_velocity_speed > 0.0f) {
-                const glm::vec2 rv_hash = hash3(emit_pos_world, i + 7919);
+                const glm::vec2 rv_hash = hash3(hseed, i + 7919);
                 const glm::vec3 rv_dir  = random_cone_dir(emit_dir_world,
                                                           e.random_velocity_cone,
                                                           rv_hash);
@@ -251,7 +258,7 @@ void ParticlePass::render(const std::vector<ParticleEmitterDescriptor>& emitters
             frame = std::min(std::max(frame, 0), atlas_cols - 1);
             int row = 0;
             if (atlas_rows > 1) {
-                const glm::vec2 rh = hash3(emit_pos_world, i + 4099);
+                const glm::vec2 rh = hash3(hseed, i + 4099);
                 row = std::min(static_cast<int>(rh.x * atlas_rows), atlas_rows - 1);
             }
             shader.set_vec2("u_atlas_cell", glm::vec2(float(frame), float(row)));
