@@ -151,6 +151,13 @@ class TGIconGroup:
     def GetIconLocation(self, slot):
         return self._locations.get(int(slot))
 
+    def GetIconScreenWidth(self, slot) -> float:
+        # SDK uses this for pixel layout we never render — 0.0 is fine.
+        return 0.0
+
+    def GetIconScreenHeight(self, slot) -> float:
+        return 0.0
+
 
 # ── Factories + lenient casts (engine/appc convention) ───────────────────────
 
