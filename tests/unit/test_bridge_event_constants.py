@@ -30,3 +30,10 @@ def test_character_est_constants():
     assert type(CharacterClass.EST_SET_COURSE_INTERCEPT) is int
     assert CharacterClass.EST_ALERT_GREEN == 0
     assert CharacterClass.EST_SCAN_OBJECT != CharacterClass.EST_SCAN_AREA
+
+
+def test_character_est_constants_are_distinct():
+    from engine.appc.characters import CharacterClass
+    values = [v for n, v in vars(CharacterClass).items() if n.startswith("EST_")]
+    assert len(values) == 43
+    assert len(set(values)) == len(values)

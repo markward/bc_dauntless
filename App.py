@@ -662,8 +662,9 @@ ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL = 1055
 
 # ── Bridge-interaction event types ─────────────────────────────────────────────
 # Spec: docs/superpowers/specs/2026-06-12-tg-widget-tree-crew-menus-design.md.
-# Static ints in 1060-1099 — above the input block (1001-1055), below the
-# Game_GetNextEventType allocator floor (1200).
+# Static ints in 1060-1099 — above the input block (1001-1055, plus slack
+# 1056-1059 left for input-block growth), below the Game_GetNextEventType
+# allocator floor (1200).
 ET_ST_BUTTON_CLICKED        = 1060
 ET_COMMUNICATE              = 1061
 ET_HAIL                     = 1062
