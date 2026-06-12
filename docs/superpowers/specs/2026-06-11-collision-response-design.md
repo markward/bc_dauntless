@@ -123,7 +123,11 @@ report zero velocity.
 For every unordered pair `(A, B)` of collidables:
 
 1. `d = centerB − centerA`; `dist = |d|`.
-2. **Overlap test:** `dist < rA + rB` (skip if not overlapping, or if `dist`
+2. **Overlap test:** `dist < (rA + rB) · COLLISION_RADIUS_SCALE` — the
+   effective boundary is 80% of the raw bounding-sphere sum, letting hulls
+   close 20% of the gap before a hit registers (bounding spheres are generous
+   for elongated hulls). De-penetration separates back to the same scaled
+   boundary. (Skip if not overlapping, or if `dist`
    is ~0 to avoid division-by-zero degeneracy).
 3. Contact normal `n = d / dist` (unit, A→B).
 
@@ -243,6 +247,7 @@ torpedo/phaser damage tick in the same per-frame block.
 | `COLLISION_DAMAGE_COEFF` | `5.0` | KE → hull-damage-points scale; calibrated below. |
 | `COLLISION_DECAY_TAU` | `0.5` s | Collision-velocity overlay decay time constant. |
 | `COLLISION_FALLBACK_MASS` | `1.0e4` | Nominal mass for a ship reporting `GetMass() == 0` (test ships built without `SetupProperties`). |
+| `COLLISION_RADIUS_SCALE` | `0.8` | Effective collision boundary as a fraction of `rA + rB`; hulls close 20% of the bounding-sphere gap before a hit registers. |
 
 All live in `collisions.py` (and the one integrator constant referenced from
 `ship_motion.py`); no magic numbers scattered across call sites.
