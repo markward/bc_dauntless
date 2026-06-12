@@ -2,7 +2,6 @@
 // Payload: {menus:[{id,type,label,enabled,visible,children:[...]}]}
 // Invoked directly by the C++ CEF host as setCrewMenus(payload) where
 // payload is already a JS object (matching the setSdkMirror convention).
-let crewMenuOpenId = null;
 
 function setCrewMenus(payload) {
   const slot = document.getElementById("crew-menu-bar");
@@ -15,18 +14,13 @@ function setCrewMenus(payload) {
 
 function renderCrewMenu(menu) {
   const wrap = document.createElement("div");
-  wrap.className = "crew-menu" + (menu.id === crewMenuOpenId ? " open" : "");
+  wrap.className = "crew-menu" + (menu.open ? " open" : "");
   const title = document.createElement("div");
   title.className = "crew-menu-title" + (menu.enabled ? "" : " disabled");
   title.textContent = menu.label;
-  title.onclick = () => {
-    const wasOpen = crewMenuOpenId === menu.id;
-    crewMenuOpenId = wasOpen ? null : menu.id;
-    // Single-open invariant: clear every dropdown, then re-open this one.
-    document.querySelectorAll("#crew-menu-bar .crew-menu.open")
-      .forEach((el) => el.classList.remove("open"));
-    if (!wasOpen) wrap.classList.add("open");
-  };
+  // Open-state lives in CrewMenuPanel (shared with F1-F5 hotkeys);
+  // the next setCrewMenus payload re-renders with the new state.
+  title.onclick = () => dauntlessEvent("crew-menu/toggle:" + menu.id);
   wrap.appendChild(title);
   const drop = document.createElement("div");
   drop.className = "crew-menu-drop";
