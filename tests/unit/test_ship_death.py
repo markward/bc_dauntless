@@ -441,10 +441,12 @@ def test_descriptor_anchors_at_last_world_location_when_unresolved():
     assert d["emit_pos"] == (10.0, -5.0, 3.0)
 
 
-# --- Target-lock release on death --------------------------------------------
-def test_begin_clears_locks_held_on_dying_ship():
-    """Any ship locked onto the dying ship (target + targeted-subsystem,
-    which BC stores on the FIRING ship) must lose its lock at begin()."""
+# --- Target-lock release at end of death sequence ----------------------------
+def test_locks_held_through_throes_and_released_at_finish():
+    """Locks on the dying ship persist through the throes window (the player
+    keeps watching the wreck) and release at the END of the sequence — both
+    the target and the targeted-subsystem lock (which BC stores on the
+    FIRING ship). Unrelated locks survive throughout."""
     import App
     from engine.appc.ships import ShipClass
 
@@ -463,7 +465,14 @@ def test_begin_clears_locks_held_on_dying_ship():
         bystander.SetTarget(other)             # unrelated lock must survive
 
         ship_death.begin(victim)
+        ship_death.advance(ship_death.THROES_DURATION / 2.0)
+        # Mid-throes: still locked on the dying ship.
+        assert attacker.GetTarget() is victim
+        assert attacker.GetTargetSubsystem() is not None
 
+        ship_death.advance(ship_death.THROES_DURATION / 2.0)
+        # Sequence complete: locks on the wreck released; unrelated kept.
+        assert victim.IsDead() == 1
         assert attacker.GetTarget() is None
         assert attacker.GetTargetSubsystem() is None
         assert bystander.GetTarget() is other

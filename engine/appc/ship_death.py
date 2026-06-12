@@ -48,7 +48,6 @@ def begin(ship) -> None:
     if hasattr(ship, "SetDying"):
         ship.SetDying(True)
     _active.append({"ship": ship, "time_left": THROES_DURATION})
-    _clear_target_locks(ship)
     _spawn_explosion(ship)
 
 
@@ -87,11 +86,14 @@ def advance(dt: float) -> None:
 
 
 def _finish(ship) -> None:
-    """Death instant: mark dead, broadcast ET_OBJECT_DESTROYED, then remove
-    from set. Order matters — the event fires while the handle is still in
-    the set so handlers can read the ship's name/position."""
+    """Death instant: mark dead, release locks held on the ship, broadcast
+    ET_OBJECT_DESTROYED, then remove from set. Order matters — the event
+    fires while the handle is still in the set so handlers can read the
+    ship's name/position. Locks persist through the throes (the player keeps
+    watching the wreck) and release only here, when the ship actually goes."""
     if hasattr(ship, "SetDead"):
         ship.SetDead()
+    _clear_target_locks(ship)
     _broadcast_destroyed(ship)
     try:
         pSet = ship.GetContainingSet() if hasattr(ship, "GetContainingSet") else None
