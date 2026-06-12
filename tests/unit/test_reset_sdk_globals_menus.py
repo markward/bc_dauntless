@@ -46,3 +46,24 @@ def test_reset_rearms_ship_display_slots():
     ship_display._create_count = 2          # both per-bridge slots consumed
     reset_sdk_globals()
     assert ship_display._create_count == 0
+
+
+def test_reset_rewires_hotkeys_to_fresh_tcw():
+    from engine.ui import crew_menu_hotkeys
+    from engine.ui.crew_menu_panel import CrewMenuPanel
+    from engine.appc.characters import STTopLevelMenu
+    panel = CrewMenuPanel()
+    crew_menu_hotkeys.wire(TacticalControlWindow.GetInstance(), panel)
+
+    reset_sdk_globals()
+
+    fresh = TacticalControlWindow.GetInstance()
+    helm = STTopLevelMenu("Helm")
+    fresh.AddMenuToList(helm)
+    panel.render_payload()
+    evt = App.TGEvent_Create()
+    evt.SetEventType(App.ET_INPUT_TALK_TO_HELM)
+    evt.SetDestination(fresh)
+    App.g_kEventManager.AddEvent(evt)
+    assert panel._open_menu_id is not None
+    crew_menu_hotkeys._wired_panel = None      # don't leak into other tests

@@ -185,6 +185,41 @@ def _poll_mouse_buttons(host) -> None:
             App.g_kInputManager.OnKeyUp(wc)
 
 
+# Previous-frame F-key levels for edge detection (host has key_pressed for
+# rising edges but no key_released; deriving both edges from key_state keeps
+# the pair symmetric). Module-level so tests can reset it.
+_fn_key_prev: dict = {}
+
+
+def _poll_function_keys(host) -> None:
+    """Forward F1-F5 edges into g_kInputManager (WC_F1..F5).
+
+    From there the SDK pipeline (KeyConfig registration +
+    DefaultKeyboardBinding bindings) produces ET_INPUT_TALK_TO_* events —
+    see docs/superpowers/specs/2026-06-12-bridge-menu-hotkeys-design.md.
+    """
+    if host is None or not hasattr(host, "key_state"):
+        return
+    keys = getattr(host, "keys", None)
+    if keys is None or not hasattr(keys, "KEY_F1"):
+        return
+    import App
+    for glfw_key, wc in (
+        (keys.KEY_F1, App.WC_F1),
+        (keys.KEY_F2, App.WC_F2),
+        (keys.KEY_F3, App.WC_F3),
+        (keys.KEY_F4, App.WC_F4),
+        (keys.KEY_F5, App.WC_F5),
+    ):
+        down = bool(host.key_state(glfw_key))
+        was_down = _fn_key_prev.get(glfw_key, False)
+        if down and not was_down:
+            App.g_kInputManager.OnKeyDown(wc)
+        elif was_down and not down:
+            App.g_kInputManager.OnKeyUp(wc)
+        _fn_key_prev[glfw_key] = down
+
+
 def _advance_weapons(ships, dt: float) -> None:
     """Per-frame charge / reload advancement for every weapon emitter.
 
@@ -1346,6 +1381,8 @@ def reset_sdk_globals() -> None:
         # instance was just orphaned and still held the default destination.
         App.g_kKeyboardBinding.SetDefaultDestination(
             _TCW.GetInstance())
+        from engine.ui import crew_menu_hotkeys
+        crew_menu_hotkeys.rewire()
     except Exception:
         pass
 
@@ -2264,6 +2301,10 @@ def run(mission_name: Optional[str] = None,
         from engine.ui.crew_menu_panel import CrewMenuPanel
         crew_menu_panel = CrewMenuPanel()
         registry.register(crew_menu_panel)
+        from engine.ui import crew_menu_hotkeys
+        crew_menu_hotkeys.wire(
+            App.TacticalControlWindow_GetTacticalControlWindow(),
+            crew_menu_panel)
         registry.register(configuration_panel)
         if dev_mode.is_enabled():
             registry.register(mission_picker)
@@ -2374,6 +2415,9 @@ def run(mission_name: Optional[str] = None,
                 elif configuration_panel.is_open():
                     if _h.key_pressed(_h.keys.KEY_ESCAPE):
                         configuration_panel.handle_key_esc()
+                elif crew_menu_panel.has_open_menu():
+                    if _h.key_pressed(_h.keys.KEY_ESCAPE):
+                        crew_menu_panel.close_open_menu()
                 else:
                     pause.apply(_h)
                 _apply_pause_menu_side_effects(
@@ -2690,6 +2734,7 @@ def run(mission_name: Optional[str] = None,
                 # Forward mouse button edges into the input manager (fire
                 # events route via g_kKeyboardBinding → TCW handlers).
                 _poll_mouse_buttons(_h)
+                _poll_function_keys(_h)
 
                 # Advance weapon charge / reload for every ship in every
                 # active set.  Runs after AI/physics (approximate — the host
