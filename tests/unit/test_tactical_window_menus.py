@@ -32,3 +32,51 @@ def test_add_child_is_recorded():
     tcw = TacticalControlWindow.GetInstance()
     tcw.AddChild(object(), 0.0, 0.0)  # must not raise
     assert tcw.GetMenuList() == []    # children are not menus
+
+
+def _pane_with_menu(label):
+    from engine.appc.windows import STStylizedWindow_CreateW
+    pane = STStylizedWindow_CreateW("StylizedWindow", "NoMinimize", label, 0.0, 0.0)
+    menu = STTopLevelMenu(label)
+    pane.AddChild(menu, 0.0, 0.0, 0)
+    return pane, menu
+
+
+def test_find_menu_by_label_and_missing_returns_none():
+    tcw = TacticalControlWindow.GetInstance()
+    helm = STTopLevelMenu("Helm")
+    tcw.AddMenuToList(helm)
+    assert tcw.FindMenu("Helm") is helm
+    assert tcw.FindMenu("Nope") is None
+
+
+def test_find_menu_coerces_tgstring_like_labels():
+    from engine.appc.localization import _TGString
+    tcw = TacticalControlWindow.GetInstance()
+    helm = STTopLevelMenu("Helm")
+    tcw.AddMenuToList(helm)
+    assert tcw.FindMenu(_TGString("Helm")) is helm
+
+
+def test_get_menu_parent_pane():
+    tcw = TacticalControlWindow.GetInstance()
+    pane, menu = _pane_with_menu("Tactical")
+    tcw.AddChild(pane, 0.0, 0.0)
+    tcw.AddMenuToList(menu)
+    assert tcw.GetMenuParentPane("Tactical") is pane
+    assert tcw.GetMenuParentPane("Nope") is None
+
+
+def test_tactical_menu_pointer_roundtrip():
+    tcw = TacticalControlWindow.GetInstance()
+    assert tcw.GetTacticalMenu() is None
+    menu = STTopLevelMenu("Tactical")
+    tcw.SetTacticalMenu(menu)
+    assert tcw.GetTacticalMenu() is menu
+
+
+def test_stmenu_is_completely_visible_mirrors_visibility():
+    m = STTopLevelMenu("Helm")
+    assert m.IsCompletelyVisible() == 1
+    m.SetNotVisible()
+    assert m.IsCompletelyVisible() == 0

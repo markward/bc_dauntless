@@ -172,6 +172,11 @@ class STMenu(ObjectClass):
     def SetVisible(self, *args) -> None:          self._visible = True
     def SetNotVisible(self, *args) -> None:       self._visible = False
     def IsVisible(self) -> int:                   return 1 if self._visible else 0
+    def IsCompletelyVisible(self) -> int:
+        # Headless has no partial scroll clipping — visibility is the
+        # faithful answer (TacticalControlHandlers.py:183 chains this off
+        # GetTacticalMenu before toggling the manual-aim button).
+        return self.IsVisible()
     def SetFocus(self, *args) -> None:            self._focus = True
     def IsTypeOf(self, type_id) -> int:           return 0
     def Close(self, *args) -> None:               pass

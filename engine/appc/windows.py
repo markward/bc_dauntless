@@ -19,6 +19,7 @@ class TacticalControlWindow(TGEventHandlerObject):
         self._radar_display = None
         self._children: list = []      # (child, x, y) — recorded, not rendered
         self._menus: list = []         # STTopLevelMenu roots, in add order
+        self._tactical_menu = None
 
     @classmethod
     def GetInstance(cls) -> "TacticalControlWindow":
@@ -40,6 +41,34 @@ class TacticalControlWindow(TGEventHandlerObject):
 
     def GetMenuList(self) -> list:
         return list(self._menus)
+
+    def FindMenu(self, label):
+        """Menu lookup by label. SDK: 66 call sites, all null-guarded with
+        `if pMenu:` — None for a missing label is the faithful contract."""
+        key = str(label)
+        for menu in self._menus:
+            if menu.GetLabel() == key:
+                return menu
+        return None
+
+    def GetMenuParentPane(self, label):
+        """The AddChild-recorded pane whose subtree holds the labelled menu.
+        SDK: LoadBridge.py:155, guarded `if pPane != None:`."""
+        menu = self.FindMenu(label)
+        if menu is None:
+            return None
+        for (child, _x, _y) in self._children:
+            if menu in getattr(child, "_children", []):
+                return child
+        return None
+
+    def SetTacticalMenu(self, menu) -> None:
+        # Engine-internal in original BC (Appc binding has no Python
+        # caller); our LoadBridge.CreateCharacterMenus stands in.
+        self._tactical_menu = menu
+
+    def GetTacticalMenu(self):
+        return self._tactical_menu
 
     # Radar display accessor — SDK TacticalMenuHandlers.CreateRadarDisplay
     # at sdk/Build/scripts/Bridge/TacticalMenuHandlers.py:475 calls
