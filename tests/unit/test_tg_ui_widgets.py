@@ -67,3 +67,43 @@ def test_widget_ids_monotonic_and_stable():
 def test_pane_inherits_event_handler_registration():
     from engine.appc.events import TGEventHandlerObject
     assert isinstance(TGPane_Create(), TGEventHandlerObject)
+
+
+def test_sdk_child_iteration():
+    parent = TGPane_Create()
+    a, b, c = TGPane_Create(), TGPane_Create(), TGPane_Create()
+    for w in (a, b, c):
+        parent.AddChild(w)
+    assert parent.GetFirstChild() is a
+    assert parent.GetNextChild(a) is b
+    assert parent.GetNextChild(c) is None
+    assert parent.GetNextChild(TGPane_Create()) is None  # non-child
+    assert parent.GetNthChild(1) is b
+    assert parent.GetNthChild(99) is None
+    # The SDK while-loop pattern terminates:
+    seen, child = [], parent.GetFirstChild()
+    while child:
+        seen.append(child)
+        child = parent.GetNextChild(child)
+    assert seen == [a, b, c]
+
+
+def test_empty_pane_iteration_and_delete():
+    parent = TGPane_Create()
+    assert parent.GetFirstChild() is None
+    a = TGPane_Create()
+    parent.AddChild(a)
+    parent.DeleteChild(a)
+    assert parent.GetFirstChild() is None
+    parent.AddChild(a)
+    parent.KillChildren()
+    assert parent.GetChildren() == []
+
+
+def test_icon_group_missing_slot_returns_none():
+    assert TGIconGroup("X").GetIconLocation(5) is None
+
+
+def test_pane_cast_accepts_subclasses():
+    icon = TGIcon_Create("LCARS_1024", 1)
+    assert TGPane_Cast(icon) is icon

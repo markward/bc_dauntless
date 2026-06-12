@@ -42,7 +42,32 @@ class TGPane(TGEventHandlerObject):
         self._children.append((child, float(x), float(y)))
 
     def GetChildren(self) -> list:
+        # Returns (child, x, y) 3-tuples — dauntless-internal convenience,
+        # NOT an SDK method. SDK code iterates via GetFirstChild/GetNextChild.
         return list(self._children)
+
+    # ── SDK child-iteration API ──────────────────────────────────────────────
+    # StylizedWindow.py walks panes with GetFirstChild/GetNextChild (its local
+    # GetChildren helper). These must exist as real methods: a missing name
+    # resolves to a truthy _Stub via TGObject.__getattr__ and the SDK's
+    # `while pChild:` loop never terminates.
+
+    def GetFirstChild(self):
+        return self._children[0][0] if self._children else None
+
+    def GetNextChild(self, child):
+        for i, (c, _x, _y) in enumerate(self._children):
+            if c is child:
+                if i + 1 < len(self._children):
+                    return self._children[i + 1][0]
+                return None
+        return None
+
+    def GetNthChild(self, n):
+        n = int(n)
+        if 0 <= n < len(self._children):
+            return self._children[n][0]
+        return None
 
     def DeleteChild(self, child) -> None:
         self._children = [(c, x, y) for (c, x, y) in self._children if c is not child]
@@ -99,7 +124,8 @@ class TGParagraph(TGPane):
 
 class TGIconGroup:
     """Texture-atlas icon group. Records SetIconLocation entries verbatim
-    so a future renderer (or debug tooling) can read them; draws nothing."""
+    so a future renderer (or debug tooling) can read them; draws nothing.
+    Asset registry, not a scene widget — no TGObject inheritance on purpose."""
 
     ROTATE_0, ROTATE_90, ROTATE_180, ROTATE_270 = 0, 1, 2, 3
     MIRROR_NONE, MIRROR_HORIZONTAL, MIRROR_VERTICAL = 0, 1, 2
