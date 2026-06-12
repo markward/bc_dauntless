@@ -11,7 +11,7 @@ same way hit_vfx / particles do.
 See docs/superpowers/specs/2026-06-11-ship-death-sequence-design.md.
 """
 
-THROES_DURATION       = 2.5   # seconds the ship coasts, dying, before removal
+THROES_DURATION       = 5.0   # seconds the ship coasts, dying, before removal
 # Consumed by _spawn_explosion (filled in a later task); defined here so the
 # VFX tunables live alongside THROES_DURATION.
 EXPLOSION_SIZE_FACTOR = 1.0   # ship-radius multiplier (starting value, tune by feel)
