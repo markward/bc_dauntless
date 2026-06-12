@@ -1338,6 +1338,10 @@ def reset_sdk_globals() -> None:
         # Warp-button / sorted-region registry must not leak across missions.
         from engine.appc.tg_ui import st_widgets
         st_widgets._reset_module_state()
+        # Re-arm the per-bridge ShipDisplay slots (player + target) —
+        # ShipDisplay_Create raises on the 3rd call per bridge load.
+        from engine.sdk_ui.widgets import ship_display
+        ship_display._reset_for_bridge_teardown()
         # Re-point keyboard dispatch at the fresh singleton — the old
         # instance was just orphaned and still held the default destination.
         App.g_kKeyboardBinding.SetDefaultDestination(

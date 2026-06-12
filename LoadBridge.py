@@ -38,9 +38,15 @@ def CreateCharacterMenus(*args, **kwargs):
     global _menus_created
     if _menus_created:
         return
-    _menus_created = True
     import importlib
     import App
+    if App.Game_GetCurrentGame() is None:
+        # Stock BC never builds bridge menus before a game exists — Load()
+        # is called from mission StartMission. The host's eager bridge
+        # preload runs pre-game; defer (without latching the flag) to the
+        # mission's own Load().
+        return
+    _menus_created = True
 
     handler_modules = [
         "Bridge.TacticalMenuHandlers",
