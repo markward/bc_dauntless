@@ -20,9 +20,8 @@ EXPLOSION_PUFF_LIFE     = 3.0   # seconds per puff = 8-frame animation duration
                                 # (2x the SDK 1.5s default → frames play 2x slower)
 EXPLOSION_SPREAD_FACTOR = 0.8   # emit-sphere radius as a fraction of ship radius,
                                 # so puffs spawn all over the hull, not just centre
-EXPLOSION_EMIT_PERIOD   = 0.25  # seconds between puff births (SDK default 0.09
-                                # + 3s puff life = ~33 concurrent puffs — a wall
-                                # of fire; 0.25 -> ~12 concurrent, distinct blasts)
+EXPLOSION_COUNT         = 4     # total big blasts over the throes window —
+                                # evenly spaced, each at a different hull spot
 
 # Registry of in-progress death sequences: each entry is
 # {"ship": ship, "time_left": float}.
@@ -133,7 +132,14 @@ def _spawn_explosion(ship) -> None:
             # appear all over the ship, not just at its centre.
             ctrl.SetEmitLife(EXPLOSION_PUFF_LIFE)
             ctrl.SetEmitRadius(radius * EXPLOSION_SPREAD_FACTOR)
-            ctrl.SetEmitFrequency(EXPLOSION_EMIT_PERIOD)
+            # Exactly EXPLOSION_COUNT births, evenly spaced across the throes
+            # window: births land at i*spacing; capping the emission window at
+            # (COUNT - 0.5)*spacing allows births 0..COUNT-1 and no more. The
+            # last blast finishes its animation after the hulk is removed,
+            # anchored at the wreck site.
+            spacing = THROES_DURATION / EXPLOSION_COUNT
+            ctrl.SetEmitFrequency(spacing)
+            ctrl.SetEffectLifeTime(spacing * (EXPLOSION_COUNT - 0.5))
         if action is not None and hasattr(action, "Play"):
             action.Play()
     except Exception:

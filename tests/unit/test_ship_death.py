@@ -395,8 +395,14 @@ def test_death_explosion_tuning():
     d = sheets[0]
     assert d["emit_life"] == ship_death.EXPLOSION_PUFF_LIFE          # slower animation
     assert d["emit_radius"] == radius * ship_death.EXPLOSION_SPREAD_FACTOR  # hull spread
-    assert d["emit_frequency"] == ship_death.EXPLOSION_EMIT_PERIOD   # thinner flurry
     assert ship_death.EXPLOSION_SIZE_FACTOR == 0.75                  # smaller puffs
+    # Exactly EXPLOSION_COUNT births: spacing covers the throes evenly and
+    # the emission window admits births 0..COUNT-1 only.
+    spacing = ship_death.THROES_DURATION / ship_death.EXPLOSION_COUNT
+    assert d["emit_frequency"] == spacing
+    births = [i * spacing for i in range(ship_death.EXPLOSION_COUNT + 2)
+              if i * spacing <= d["stop_age"]]
+    assert len(births) == ship_death.EXPLOSION_COUNT
     particles.reset()
 
 
