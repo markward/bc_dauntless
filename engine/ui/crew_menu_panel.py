@@ -3,7 +3,7 @@ TacticalControlWindow into CEF, and routes clicks back as SDK events.
 
 Outbound: walk TacticalControlWindow.GetMenuList() once per tick, snapshot
 labels/flags/ids, diff, emit setCrewMenus(...). Inbound: resolve clicked id
-to the live widget and fire its activation event (next commit).
+to the live widget and fire its activation event.
 
 Spec: docs/superpowers/specs/2026-06-12-tg-widget-tree-crew-menus-design.md
 """
@@ -67,10 +67,52 @@ class CrewMenuPanel(Panel):
         return node
 
     def dispatch_event(self, action: str) -> bool:
-        return False  # inbound dispatch lands in the next commit
+        if not action.startswith("click:"):
+            return False
+        try:
+            wid = int(action[len("click:"):])
+        except ValueError:
+            _logger.info("crew-menu: malformed click action %r", action)
+            return True
+        widget = self._widgets_by_id.get(wid)
+        if widget is None:
+            # Menu rebuilt between frames — drop; next snapshot repairs the UI.
+            _logger.info("crew-menu: stale click id %d dropped", wid)
+            return True
+        if not widget.IsEnabled():
+            return True
+        root = self._root_of(wid)
+        if isinstance(widget, STButton):
+            # Original engine order: per-button activation event, then
+            # ET_ST_BUTTON_CLICKED at the owning top-level menu (the SDK
+            # registers BridgeMenus.ButtonClicked there for click sounds).
+            widget.SendActivationEvent()
+            if root is not None:
+                import App
+                clicked = App.TGEvent_Create()
+                clicked.SetEventType(App.ET_ST_BUTTON_CLICKED)
+                clicked.SetDestination(root)
+                clicked.SetSource(widget)
+                App.g_kEventManager.AddEvent(clicked)
+        return True
 
     def invalidate(self) -> None:
         self._last_pushed = None
+
+    def _root_of(self, wid: int):
+        """Top-level menu whose subtree contains the widget id, else None."""
+        for menu in TacticalControlWindow.GetInstance().GetMenuList():
+            if self._contains(menu, wid):
+                return menu
+        return None
+
+    def _contains(self, widget, wid: int) -> bool:
+        # __dict__ read — TGObject.__getattr__ stubs missing attributes.
+        if widget.__dict__.get("_widget_id") == wid:
+            return True
+        if isinstance(widget, STMenu):
+            return any(self._contains(c, wid) for c in widget._children)
+        return False
 
     def _log_unrecognised_once(self, type_name: str) -> None:
         if type_name in self._logged_unrecognised:
