@@ -35,6 +35,10 @@ class STButton(ObjectClass):
     Mission scripts query buttons via menu.GetButtonW(name) and call
     SetEnabled/SetDisabled/SendActivationEvent on the result.
     """
+    # SDK flag constant used in STButton_CreateW calls:
+    #   App.STButton_CreateW(label, event, App.STBSF_SIZE_TO_TEXT)
+    STBSF_SIZE_TO_TEXT = 1
+
     def __init__(self, label: str = "", event=None, flags: int = 0):
         super().__init__()
         self._label = label
@@ -92,6 +96,12 @@ class STButton(ObjectClass):
     def SetDisabledColor(self, *args) -> None:    pass
     def SetUseUIHeight(self, *args) -> None:      pass
     def SetJustification(self, *args) -> None:    pass
+    def SetAutoChoose(self, *args) -> None:        pass
+    def SetChoosable(self, *args) -> None:         pass
+    def SetUseEndCaps(self, *args) -> None:        pass
+    def Layout(self, *args) -> None:               pass
+    def SetActivationEvent(self, evt) -> None:
+        self._event = evt
 
 
 class STMenu(ObjectClass):

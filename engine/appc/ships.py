@@ -1204,9 +1204,19 @@ def ShipClass_Cast(obj) -> "ShipClass | None":
     return None
 
 
-def ShipClass_GetObjectByID(obj_id: int) -> "ShipClass | None":
+def ShipClass_GetObjectByID(pSet_or_id, obj_id=None) -> "ShipClass | None":
+    """Accept both 1-arg (obj_id) and 2-arg (pSet, obj_id) SDK calling conventions.
+
+    The real Appc signature is GetObjectByID(pSet, id); many SDK scripts pass a
+    null set as the first argument.  Our headless version ignores the set."""
+    if obj_id is None:
+        # 1-arg form: ShipClass_GetObjectByID(obj_id)
+        real_id = pSet_or_id
+    else:
+        # 2-arg form: ShipClass_GetObjectByID(pSet, obj_id)
+        real_id = obj_id
     from engine.core.ids import get_object_by_id
-    obj = get_object_by_id(obj_id)
+    obj = get_object_by_id(real_id)
     if isinstance(obj, ShipClass):
         return obj
     return None

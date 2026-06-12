@@ -53,13 +53,36 @@ class TacticalControlWindow(TGEventHandlerObject):
 
     def GetMenuParentPane(self, label):
         """The AddChild-recorded pane whose subtree holds the labelled menu.
-        SDK: LoadBridge.py:155, guarded `if pPane != None:`."""
+        SDK: LoadBridge.py:155, guarded `if pPane != None:`.
+
+        For most menus (Science, XO, Helm, Engineer) the menu's containing
+        STStylizedWindow is a direct AddChild of the TCW.  For Tactical the
+        pane is nested one level deeper inside kInterfacePane; search
+        recursively up to 2 levels so both layouts are covered.
+        """
         menu = self.FindMenu(label)
         if menu is None:
             return None
+
+        def _contains_menu(container, target_menu, depth):
+            """Return the container if target_menu is a direct child, else None."""
+            children = getattr(container, "_children", [])
+            for item in children:
+                # TGPane stores tuples (child, x, y); _STStylizedWindow/STMenu
+                # stores plain objects.
+                child = item[0] if isinstance(item, tuple) else item
+                if child is target_menu:
+                    return container
+                if depth > 0:
+                    result = _contains_menu(child, target_menu, depth - 1)
+                    if result is not None:
+                        return result
+            return None
+
         for (child, _x, _y) in self._children:
-            if menu in getattr(child, "_children", []):
-                return child
+            found = _contains_menu(child, menu, depth=2)
+            if found is not None:
+                return found
         return None
 
     def SetTacticalMenu(self, menu) -> None:
@@ -79,6 +102,63 @@ class TacticalControlWindow(TGEventHandlerObject):
 
     def GetRadarDisplay(self):
         return self._radar_display
+
+    # ── Additional state sinks for TacticalMenuHandlers.CreateMenus() ────────
+    # These accessors are recorded for future use by the tactical interface
+    # but have no effect in the headless bridge-menu build phase.
+    def SetTargetMenu(self, p) -> None:
+        self._target_menu = p
+
+    def GetTargetMenu(self):
+        return getattr(self, "_target_menu", None)
+
+    def SetShipDisplay(self, p) -> None:
+        self._ship_display = p
+
+    def GetShipDisplay(self):
+        return getattr(self, "_ship_display", None)
+
+    def SetEnemyShipDisplay(self, p) -> None:
+        self._enemy_ship_display = p
+
+    def GetEnemyShipDisplay(self):
+        return getattr(self, "_enemy_ship_display", None)
+
+    def SetWeaponsDisplay(self, p) -> None:
+        self._weapons_display = p
+
+    def GetWeaponsDisplay(self):
+        return getattr(self, "_weapons_display", None)
+
+    def SetWeaponsControl(self, p) -> None:
+        self._weapons_control = p
+
+    def GetWeaponsControl(self):
+        return getattr(self, "_weapons_control", None)
+
+    def SetRadarToggle(self, p) -> None:
+        self._radar_toggle = p
+
+    def GetRadarToggle(self):
+        return getattr(self, "_radar_toggle", None)
+
+    def SetMousePickFire(self, v) -> None:
+        self._mouse_pick_fire = bool(v)
+
+    def GetMousePickFire(self) -> int:
+        return 1 if getattr(self, "_mouse_pick_fire", False) else 0
+
+    def GetNthChild(self, n):
+        n = int(n)
+        if 0 <= n < len(self._children):
+            return self._children[n][0]
+        return None
+
+    def GetParent(self):
+        return None
+
+    def IsVisible(self) -> int:
+        return 1
 
 
 
@@ -168,12 +248,19 @@ class _STStylizedWindow:
         self._visible = True
         self._children: list = []
         self._handler_registrations: list[tuple[int, str]] = []
+        self._max_w: float = 0.0
+        self._max_h: float = 0.0
+        # Lazy interior/exterior panes — allocated on first access so the
+        # (common) case of never calling these methods stays lightweight.
+        self._interior_pane: "TGPane | None" = None
+        self._exterior_pane: "TGPane | None" = None
+        self._name_paragraph: "TGParagraph | None" = None
 
     def AddChild(self, child, x: float = 0.0, y: float = 0.0, *_extra) -> None:
         self._children.append(child)
 
-    def SetVisible(self) -> None:    self._visible = True
-    def SetNotVisible(self) -> None: self._visible = False
+    def SetVisible(self, *_args) -> None:    self._visible = True
+    def SetNotVisible(self, *_args) -> None: self._visible = False
 
     def GetObjID(self) -> int:
         # SDK identity hook used in profile (3 missions × 108 calls).
@@ -192,10 +279,120 @@ class _STStylizedWindow:
         # propagation is needed — accept and ignore.
         pass
 
-    def SetNoFocus(self) -> None:
+    def SetNoFocus(self, *_args) -> None:
         # Inherited from TGUIObject; disables keyboard focus traversal for
         # this pane. Dauntless has no focus system yet — accept and ignore.
         pass
+
+    # ── Geometry (headless: all 0.0 — no real pixel layout) ─────────────────
+    def GetWidth(self) -> float:             return 0.0
+    def GetHeight(self) -> float:            return 0.0
+    def GetBorderWidth(self) -> float:       return 0.0
+    def GetBorderHeight(self) -> float:      return 0.0
+    def GetMaximumWidth(self) -> float:      return self._max_w
+    def GetMaximumHeight(self) -> float:     return self._max_h
+    # Interior-size variants used by TacticalControlWindow.ResizeUI to size
+    # child menus to the available interior area (width minus frame borders).
+    # Headless: same as the outer maximum since we have no rendered borders.
+    def GetMaximumInteriorWidth(self) -> float:  return self._max_w
+    def GetMaximumInteriorHeight(self) -> float: return self._max_h
+    def Resize(self, *_args) -> None:        pass
+    def ResizeUI(self, *_args) -> None:      pass
+    def RepositionUI(self, *_args) -> None:  pass
+    def Layout(self, *_args) -> None:        pass
+    def ResizeToContents(self, *_args) -> None: pass
+
+    def SetMaximumSize(self, w, h) -> None:
+        # TacticalMenuHandlers / EngineerMenuHandlers use this to cap layout;
+        # headless stores the values for potential introspection.
+        self._max_w = float(w) if not isinstance(w, type(None)) else 0.0
+        self._max_h = float(h) if not isinstance(h, type(None)) else 0.0
+
+    def SetFixedSize(self, *_args) -> None:  pass
+    def AlignTo(self, *_args) -> None:       pass  # layout-relative positioning; no-op headless
+    def SetPosition(self, *_args) -> None:   pass
+    def SetLeft(self, *_args) -> None:       pass
+    def SetTop(self, *_args) -> None:        pass
+    def GetLeft(self) -> float:              return 0.0
+    def GetTop(self) -> float:              return 0.0
+
+    # ── Child access ─────────────────────────────────────────────────────────
+    def GetFirstChild(self):
+        return self._children[0] if self._children else None
+
+    def GetLastChild(self):
+        return self._children[-1] if self._children else None
+
+    def GetNextChild(self, child):
+        try:
+            idx = self._children.index(child)
+            return self._children[idx + 1] if idx + 1 < len(self._children) else None
+        except ValueError:
+            return None
+
+    def GetPrevChild(self, child):
+        try:
+            idx = self._children.index(child)
+            return self._children[idx - 1] if idx > 0 else None
+        except ValueError:
+            return None
+
+    def GetNthChild(self, n):
+        n = int(n)
+        return self._children[n] if 0 <= n < len(self._children) else None
+
+    def KillChildren(self) -> None:
+        self._children.clear()
+        self._interior_pane = None
+
+    # ── Interior/exterior pane (LCARS frame structure) ───────────────────────
+    # BC's STStylizedWindow wraps a content pane (interior) and a decorative
+    # frame pane (exterior).  Headless: interior = self (children live here),
+    # exterior = an empty TGPane (glass-icon queries return None → no-ops).
+    def GetInteriorPane(self):
+        if self._interior_pane is None:
+            self._interior_pane = _STStylizedWindowInterior(self)
+        return self._interior_pane
+
+    def GetExteriorPane(self):
+        if self._exterior_pane is None:
+            # EngineerMenuHandlers gets three glass TGIcons via GetLastChild /
+            # GetPrevChild, then calls SetColor / SetIconNum on each.  Pre-populate
+            # the exterior pane with three TGIcon stubs so TGIcon_Cast returns a real
+            # object and those calls succeed as state-sinks.
+            from engine.appc.tg_ui.widgets import TGPane, TGIcon  # lazy — avoids circular import
+            p = TGPane()
+            for _ in range(3):
+                p.AddChild(TGIcon())
+            self._exterior_pane = p
+        return self._exterior_pane
+
+    def GetNameParagraph(self):
+        # EngineerMenuHandlers changes the power-window title font/color.
+        if self._name_paragraph is None:
+            from engine.appc.tg_ui.widgets import TGParagraph  # lazy — avoids circular import
+            self._name_paragraph = TGParagraph(self._title)
+        return self._name_paragraph
+
+    # ── Focus / visibility ────────────────────────────────────────────────────
+    def SetFocus(self, *_args) -> None:                pass
+    def SetUseFocusGlass(self, *_args) -> None:        pass
+    def SetUseScrolling(self, *_args) -> None:         pass
+    def SetNotMinimized(self, *_args) -> None:         pass
+    def SetEnabled(self, *_args) -> None:              pass
+    def IsVisible(self) -> int:                        return 1 if self._visible else 0
+    def IsEnabled(self) -> int:                        return 1
+
+    # ── Containing-window linkage (bridge menus ask menus for their window) ──
+    # STButton / STMenu call GetContainingWindow() to find their host frame.
+    # Headless: the stylized window IS the containing window.
+    def GetContainingWindow(self): return self
+    def GetConceptualParent(self):  return self
+    def GetParent(self):
+        # EngineerMenuHandlers line 55: GetInteriorPane().GetParent().SetNotBatchChildPolys()
+        return _NullBatchPane()
+
+    def SetNotBatchChildPolys(self, *_args) -> None:   pass
 
     def _snapshot(self) -> dict:
         return {
@@ -204,6 +401,41 @@ class _STStylizedWindow:
             "visible": self._visible,
             "title": self._title,
         }
+
+
+class _STStylizedWindowInterior:
+    """Proxy that forwards child operations back to the owning STStylizedWindow.
+
+    BC's interior pane IS the content area — AddChild calls on the interior
+    and on the stylized window itself should see the same child list.
+    Uses duck-typing so no TGPane import is needed at class-definition time.
+    """
+
+    def __init__(self, owner: "_STStylizedWindow"):
+        self._owner = owner
+
+    def AddChild(self, child, x: float = 0.0, y: float = 0.0, *_extra) -> None:
+        self._owner.AddChild(child, x, y)
+
+    def GetFirstChild(self):
+        return self._owner.GetFirstChild()
+
+    def GetNextChild(self, child):
+        return self._owner.GetNextChild(child)
+
+    def GetParent(self):
+        return _NullBatchPane()
+
+    def SetNotBatchChildPolys(self, *_args) -> None:
+        pass
+
+
+class _NullBatchPane:
+    """Minimal pane returned by GetParent() so SetNotBatchChildPolys no-ops."""
+    def SetNotBatchChildPolys(self, *_args) -> None: pass
+    def SetVisible(self, *_args) -> None:            pass
+    def SetNotVisible(self, *_args) -> None:         pass
+    def IsVisible(self) -> int:                      return 0
 
 
 def STStylizedWindow_CreateW(title="", *_extra) -> _STStylizedWindow:

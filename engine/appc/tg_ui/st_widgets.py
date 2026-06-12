@@ -11,7 +11,28 @@ from engine.appc.windows import _STStylizedWindow
 
 class STCharacterMenu(STMenu):
     """Crew-interaction submenu (Hail list, character dialog root)."""
-    pass
+
+    def __init__(self, label: str = ""):
+        super().__init__(label)
+        self._sub_pane: "STSubPane | None" = None
+
+    def GetSubPane(self) -> "STSubPane":
+        # SDK TacticalMenuHandlers.CreateOrdersStatusDisplay:644 calls
+        # App.STSubPane_Cast(pPopupMenu.GetSubPane()).SetExpandToFillParent(0)
+        # to opt out of the sub-pane's fill-to-parent layout behaviour.
+        # Headless: return a stable STSubPane so the cast succeeds.
+        if self._sub_pane is None:
+            self._sub_pane = STSubPane()
+        return self._sub_pane
+
+    def Open(self, *_args) -> None:   pass
+    def Close(self, *_args) -> None:  pass
+    def GetDesiredSize(self, size_out=None) -> None:
+        # TacticalMenuHandlers:673,677: pMenu.GetDesiredSize(kSize)
+        # kSize is an App.NiPoint2; set x/y to 0.0 to avoid layout errors.
+        if size_out is not None and hasattr(size_out, "x"):
+            size_out.x = 0.0
+            size_out.y = 0.0
 
 
 class STToggle(STButton):
@@ -64,7 +85,9 @@ class STRoundedButton(STButton):
 
 
 class STSubPane(TGPane):
-    pass
+    def SetExpandToFillParent(self, *_args) -> None:
+        # TacticalMenuHandlers:644 opts out of fill-to-parent layout.
+        pass
 
 
 # ── Module-level registry (SDK: SortedRegionMenu_* module functions) ─────────

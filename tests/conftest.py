@@ -430,16 +430,12 @@ def pytest_configure(config):
     sys.modules.pop("LoadBridge", None)
 
     # Bridge: real SDK package at sdk/Build/scripts/Bridge/.  Setting __path__
-    # lets Python (and _SDKFinder) find Bridge.* submodules.  HelmMenuHandlers
-    # is pre-stubbed as callable because MissionLib writes to its attributes.
+    # lets Python (and _SDKFinder) find Bridge.* submodules.  All Bridge.*
+    # MenuHandlers are loaded as real SDK modules by LoadBridge.CreateCharacterMenus.
     if "Bridge" not in sys.modules:
         _bridge = types.ModuleType("Bridge")
         _bridge.__path__ = [str(SDK_SCRIPTS / "Bridge")]  # type: ignore[attr-defined]
         sys.modules["Bridge"] = _bridge
-    if "Bridge.HelmMenuHandlers" not in sys.modules:
-        _helm = _StubModule("Bridge.HelmMenuHandlers")
-        sys.modules["Bridge.HelmMenuHandlers"] = _helm
-        sys.modules["Bridge"].HelmMenuHandlers = _helm  # type: ignore[attr-defined]
 
     # Actions: real SDK package at sdk/Build/scripts/Actions/.  Setting __path__
     # lets Python (and _SDKFinder) find Actions.* submodules.

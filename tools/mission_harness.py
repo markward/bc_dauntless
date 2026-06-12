@@ -418,10 +418,6 @@ def setup_sdk() -> None:
         _bridge = types.ModuleType("Bridge")
         _bridge.__path__ = [str(SDK_SCRIPTS / "Bridge")]  # type: ignore[attr-defined]
         sys.modules["Bridge"] = _bridge
-    if "Bridge.HelmMenuHandlers" not in sys.modules:
-        _helm = _StubModule("Bridge.HelmMenuHandlers")
-        sys.modules["Bridge.HelmMenuHandlers"] = _helm
-        sys.modules["Bridge"].HelmMenuHandlers = _helm  # type: ignore[attr-defined]
 
     if "Actions" not in sys.modules:
         _actions = types.ModuleType("Actions")

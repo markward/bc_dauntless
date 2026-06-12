@@ -138,6 +138,8 @@ from engine.appc.characters import (
     STButton, STMenu, STTopLevelMenu,
     STButton_CreateW, STMenu_Cast, STTopLevelMenu_CreateW, STTopLevelMenu_Cast,
 )
+# STButton size-to-text flag — TacticalMenuHandlers uses App.STBSF_SIZE_TO_TEXT.
+STBSF_SIZE_TO_TEXT = STButton.STBSF_SIZE_TO_TEXT
 from engine.appc.target_menu import (
     STSubsystemMenu, STSubsystemMenu_Cast,
     STComponentMenu, STComponentMenu_Cast,
@@ -546,6 +548,14 @@ from engine.appc.top_window import (
 
 def TacticalControlWindow_GetTacticalControlWindow():
     return TacticalControlWindow.GetInstance()
+
+
+def TacticalControlWindow_Create():
+    # SDK TacticalMenuHandlers.CreateMenus() calls this to create and get the
+    # singleton TCW. In the real engine this creates a new window; in dauntless
+    # we return the same singleton so AddMenuToList / AddChild calls land on one
+    # place regardless of which call site the SDK uses to reach the window.
+    return TacticalControlWindow.GetInstance()
 g_kSetManager = SetManager()
 g_kTGActionManager = TGActionManager()
 g_kModelPropertyManager = TGModelPropertyManager()
@@ -905,6 +915,17 @@ def TGStringEvent_Create(): return _TGStringEvent()
 def TGFloatEvent_Create(): return _TGFloatEvent()
 
 
+# ── NiPoint2 — 2-float (x, y) value used by layout helpers ───────────────────
+# SDK TacticalMenuHandlers.CreateOrdersStatusDisplay:
+#   kSize = App.NiPoint2(0.0, 0.0)
+#   pPopupMenu.GetDesiredSize(kSize)
+#   pPane.Resize(kSize.x, ...)
+class NiPoint2:
+    def __init__(self, x: float = 0.0, y: float = 0.0):
+        self.x = float(x)
+        self.y = float(y)
+
+
 # ── TGColorA — 4-float RGBA value (NetImmerse NiColorA) ───────────────────────
 # Hardpoint scripts and Tactical/Projectiles/* allocate these to hold shield-
 # glow / weapon / torpedo / UI panel tints, then hand them to engine setters
@@ -940,6 +961,246 @@ class TGColorA:
     def Copy(self, other):
         self.r = other.r; self.g = other.g
         self.b = other.b; self.a = other.a
+
+
+# ── NiColorA — NetImmerse RGBA colour; alias and named constants ───────────────
+# TGColorA (above) and NiColorA are the same layout in BC.  EngineerMenuHandlers
+# and several art scripts write colour attributes using the NiColorA name.
+NiColorA = TGColorA   # same implementation; different BC module name
+NiColorA_BLACK = NiColorA(0.0, 0.0, 0.0, 1.0)
+NiColorA_WHITE = NiColorA(1.0, 1.0, 1.0, 1.0)
+
+# ── STButton colours referenced in TacticalMenuHandlers ──────────────────────
+# TacticalMenuHandlers.OverrideButtonColors uses these module-level colour
+# constants.  Headless: real NiColorA objects with reasonable defaults; the
+# exact RGBA values are irrelevant because dauntless never renders them.
+g_kSTMenu2NormalBase    = NiColorA(0.5, 0.5, 0.5, 1.0)
+g_kSTMenu2HighlightedBase = NiColorA(0.8, 0.8, 0.8, 1.0)
+g_kSTMenu2Disabled      = NiColorA(0.3, 0.3, 0.3, 0.5)
+
+# ── Ship species constants ────────────────────────────────────────────────────
+# Used by WeaponsDisplay.SetShipIcon and other art routines.  Exact Appc values
+# are not available; we use unique sentinel integers — they are only ever passed
+# to TGIcon_Create("ShipIcons", SPECIES_*) where headless rendering ignores them.
+SPECIES_GALAXY          = 0
+SPECIES_DEFIANT         = 1
+SPECIES_SOVEREIGN       = 2
+SPECIES_KLINGON_BOK_RAT = 3
+SPECIES_KLINGON_KVORT   = 4
+SPECIES_KLINGON_NEGH_VAR= 5
+SPECIES_ROMULAN_WARBIRD = 6
+SPECIES_BORG_CUBE       = 7
+SPECIES_BORG_SPHERE     = 8
+SPECIES_CARDASSIAN      = 9
+SPECIES_FERENGI         = 10
+SPECIES_GENERIC         = 11
+
+# ── Tactical / Engineering display widget factories ────────────────────────────
+# TacticalMenuHandlers and EngineerMenuHandlers create several purely-visual
+# display widgets (weapons display, ship display sub-panels, power display,
+# repair pane, etc.) whose only effect on the headless menu tree is being
+# registered on the TCW via Set*/Add*.  They must survive a handful of layout
+# calls (GetNthChild, Resize, SetFixedSize, GetBorderWidth, …) without crashing.
+#
+# Implementation: each factory returns a _DisplayWidget — a minimal subclass of
+# the STStylizedWindow layout sink that overrides GetNthChild to always return
+# a fresh TGPane so downstream TGPane_Cast(…GetNthChild(X)) succeeds.
+
+class _DisplayWidget:
+    """Minimal layout-sink widget for tactical/engineering display areas.
+
+    All geometry and layout calls are no-ops.  GetNthChild always returns a
+    fresh TGPane so SDK patterns like TGPane_Cast(w.GetNthChild(SLOT)).Resize(…)
+    never encounter None.
+
+    GetShipID() returns None so that SDK code that does:
+        pShip = ShipClass_GetObjectByID(SetClass_GetNull(), pDisplay.GetShipID())
+        if pShip == None: return
+    exits early without crashing.
+    """
+    def __init__(self, name: str = ""):
+        self._name = name
+        self._children: list = []
+
+    def SetUseScrolling(self, *_a) -> None:      pass
+    def SetName(self, *_a) -> None:              pass
+    def GetName(self) -> str:                    return self._name
+    def GetNameParagraph(self):
+        from engine.appc.tg_ui.widgets import TGParagraph
+        return TGParagraph(self._name)
+    def SetFixedSize(self, *_a) -> None:         pass
+    def SetMaximumSize(self, *_a) -> None:       pass
+    def InteriorChangedSize(self, *_a) -> None:  pass
+    def Layout(self, *_a) -> None:               pass
+    def Resize(self, *_a) -> None:               pass
+    def GetWidth(self) -> float:                 return 0.0
+    def GetHeight(self) -> float:                return 0.0
+    def GetBorderWidth(self) -> float:           return 0.0
+    def GetBorderHeight(self) -> float:          return 0.0
+    def GetMaximumWidth(self) -> float:          return 0.0
+    def GetMaximumHeight(self) -> float:         return 0.0
+    def AlignTo(self, *_a) -> None:              pass
+    def SetPosition(self, *_a) -> None:          pass
+    def SetNotVisible(self, *_a) -> None:        pass
+    def SetVisible(self, *_a) -> None:           pass
+    def SetMinimizable(self, *_a) -> None:       pass
+    def SetEnabled(self, *_a) -> None:           pass
+    def ResizeUI(self, *_a) -> None:             pass
+    # SDK calls GetShipID() then passes it to ShipClass_GetObjectByID to check
+    # whether a real ship exists.  Return None so the pShip == None guard fires.
+    def GetShipID(self):                         return None
+    # GetConceptualParent: some SDK functions (EngRepairPane, WeaponsDisplay)
+    # walk up the widget tree via GetParent().GetConceptualParent().  Make the
+    # top-level display widget terminate that chain gracefully.
+    def GetConceptualParent(self):               return self
+    # GetParent: PowerDisplay.py line 275 calls pPowerDisplay.GetParent().Resize(…).
+    # Return self so that Resize() no-ops cleanly.
+    def GetParent(self):                         return self
+    def IsMinimized(self):                       return 0
+
+    def AddChild(self, child, *_a) -> None:
+        self._children.append(child)
+
+    def GetNthChild(self, n):
+        n = int(n)
+        if 0 <= n < len(self._children):
+            return self._children[n]
+        # Return a fresh TGPane so TGPane_Cast(…GetNthChild(SLOT)).Resize(…) works.
+        from engine.appc.tg_ui.widgets import TGPane
+        return TGPane()
+
+    def GetFirstChild(self):
+        return self._children[0] if self._children else None
+
+    def __getattr__(self, name):
+        # Absorb any remaining SDK calls — these widgets have dozens of
+        # display-only methods we'll never enumerate exhaustively.
+        return lambda *_a, **_kw: None
+
+
+class WeaponsDisplay:
+    """Constants for child-pane slot indices (SDK App.WeaponsDisplay.*).
+
+    The exact Appc values are not available without running the DLL.  We use
+    unique sequential integers so that getattr accesses succeed and dict-keyed
+    lookups in GetNthChild don't alias.  The actual values don't matter because
+    our _BackRefPane.GetNthChild returns a fresh _SelfParentedPane for every
+    slot, and no SDK code treats the index as a magic number outside of
+    App.WeaponsDisplay.<NAME>.
+    """
+    DISPLAY_PANE                    = 0
+    TORPEDO_PANE                    = 1
+    ICON_PANE                       = 2
+    TOP_RIGHT_BORDER                = 3
+    TOP_BORDER                      = 4
+    LEFT_TOP_BORDER                 = 5
+    LEFT_BORDER                     = 6
+    LEFT_BOTTOM_BORDER              = 7
+    RIGHT_TOP_BORDER                = 8
+    RIGHT_BORDER                    = 9
+    RIGHT_BOTTOM_BORDER             = 10
+    GLASS                           = 11
+    UPPER_PHASER_PANE               = 12
+    UPPER_PHASER_INDICATOR_PANE     = 13
+    UPPER_DISRUPTOR_PANE            = 14
+    UPPER_DISRUPTOR_INDICATOR_PANE  = 15
+    LOWER_PHASER_PANE               = 16
+    LOWER_PHASER_INDICATOR_PANE     = 17
+    LOWER_DISRUPTOR_PANE            = 18
+    LOWER_DISRUPTOR_INDICATOR_PANE  = 19
+    SHIP_ICON                       = 20
+
+
+class EngRepairPane:
+    """Constants for EngRepairPane child slots (SDK App.EngRepairPane.*)."""
+    DIVIDER = 0
+
+
+def WeaponsDisplay_Cast(obj) -> "_DisplayWidget | None":
+    """Return obj if it is a _DisplayWidget (headless WeaponsDisplay), else None.
+
+    SDK code does:
+        pDisplay = App.WeaponsDisplay_Cast(pParent.GetConceptualParent())
+        pShip = App.ShipClass_GetObjectByID(App.SetClass_GetNull(), pDisplay.GetShipID())
+        if pShip == None: return
+
+    We need WeaponsDisplay_Cast to return the _DisplayWidget so that
+    GetShipID() → None → ShipClass_GetObjectByID returns None → early exit.
+    """
+    return obj if isinstance(obj, _DisplayWidget) else None
+
+
+def WeaponsDisplay_Create(width=0.0, height=0.0) -> "_DisplayWidget":
+    w = _DisplayWidget("WeaponsDisplay")
+    # Pre-seed DISPLAY_PANE (slot 0) with a _BackRefPane whose GetParent()
+    # returns w and GetConceptualParent() returns w.  The torpedo pane lives
+    # inside that pane.  This lets ResizeTorpedoPane walk:
+    #   torp_pane.GetParent()          → display_pane (_BackRefPane, is TGPane)
+    #   TGPane_Cast(display_pane)      → display_pane (passes isinstance check)
+    #   display_pane.GetConceptualParent() → w (_DisplayWidget)
+    #   WeaponsDisplay_Cast(w)         → w
+    #   w.GetShipID()                  → None
+    #   ShipClass_GetObjectByID(…, None) → None
+    #   if pShip == None: return       ← exits cleanly
+    from engine.appc.tg_ui.widgets import TGPane
+
+    class _SelfParentedPane(TGPane):
+        """TGPane whose GetParent() returns itself and GetConceptualParent() returns the owner.
+
+        Used for all child panes of the WeaponsDisplay display_pane so that SDK
+        patterns like:
+            pParent = pUpperPane.GetParent()          # → self (a TGPane)
+            pParent.GetWidth()                        # → 0.0 (safe)
+            pParent.GetConceptualParent()             # → owner (_DisplayWidget)
+        always terminate cleanly even when TGPane_Cast is applied.
+        """
+        def __init__(self, owner: "_DisplayWidget"):
+            super().__init__()
+            self._owner = owner
+
+        def GetParent(self):
+            return self  # TGPane_Cast(self) succeeds; GetWidth()/GetHeight() → 0.0
+
+        def GetConceptualParent(self):
+            return self._owner  # WeaponsDisplay_Cast(owner) → owner; owner.GetShipID() → None
+
+        def GetNthChild(self, n):
+            # Child panes of display_pane also need to be self-parented so the
+            # same GetParent chain works one level deeper.
+            n = int(n)
+            if 0 <= n < len(self._children):
+                return self._children[n][0]
+            return _SelfParentedPane(self._owner)
+
+    class _BackRefPane(_SelfParentedPane):
+        """The DISPLAY_PANE itself — GetConceptualParent returns the top-level display widget."""
+        pass
+
+    display_pane = _BackRefPane(w)
+    torp_pane = _SelfParentedPane(w)
+    display_pane.AddChild(torp_pane)
+    w.AddChild(display_pane)
+    return w
+
+
+def TacWeaponsCtrl_Create(width=0.0, height=0.0) -> "_DisplayWidget":
+    return _DisplayWidget("TacWeaponsCtrl")
+
+
+def EngRepairPane_Create(width=0.0, height=0.0, n=0) -> "_DisplayWidget":
+    pane = _DisplayWidget("EngRepairPane")
+    # Pre-seed one child (index 0 = DIVIDER) so GetNthChild(DIVIDER).Layout() works.
+    from engine.appc.tg_ui.widgets import TGPane
+    pane.AddChild(TGPane())
+    return pane
+
+
+def EngPowerDisplay_Create(width=0.0, height=0.0) -> "_DisplayWidget":
+    return _DisplayWidget("EngPowerDisplay")
+
+
+def EngPowerCtrl_GetPowerCtrl() -> "_DisplayWidget":
+    return _DisplayWidget("EngPowerCtrl")
 
 
 # ── Stub call tracker ─────────────────────────────────────────────────────────

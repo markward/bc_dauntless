@@ -1315,6 +1315,28 @@ def reset_sdk_globals() -> None:
     _waypoint_registry.clear()
     App._next_event_type_id = 1200
     App._reset_target_menu_singleton()
+    # Allow LoadBridge.CreateCharacterMenus to rebuild menus on the next
+    # LoadBridge.Load() call (which the mission SDK scripts make after game
+    # context is established in _init_mission).  The eagerly-called
+    # _LoadBridge.Load() at run()-startup runs before any game/episode/mission
+    # objects exist, so HelmMenuHandlers.AddFleetCommandHandlers crashes on
+    # Game_GetCurrentGame() == None; the menus it builds are incomplete.
+    # Resetting the flag here lets the mission's own Load() call rebuild them
+    # correctly once _set_current_game() has fired.
+    #
+    # Also reset the TacticalControlWindow singleton so the TCW built during
+    # the premature Load() call (with empty/broken menus) doesn't carry its
+    # broken menu list into the mission's proper Load() call.
+    try:
+        import LoadBridge as _LB_reset
+        _LB_reset._reset_menus_created()
+    except Exception:
+        pass
+    try:
+        from engine.appc.windows import TacticalControlWindow as _TCW
+        _TCW._instance = None
+    except Exception:
+        pass
 
 
 def _init_mission(mission_module_name: str):

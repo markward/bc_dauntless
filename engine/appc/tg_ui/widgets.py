@@ -55,6 +55,15 @@ class TGPane(TGEventHandlerObject):
     def GetFirstChild(self):
         return self._children[0][0] if self._children else None
 
+    def GetLastChild(self):
+        return self._children[-1][0] if self._children else None
+
+    def GetPrevChild(self, child):
+        for i, (c, _x, _y) in enumerate(self._children):
+            if c is child:
+                return self._children[i - 1][0] if i > 0 else None
+        return None
+
     def GetNextChild(self, child):
         for i, (c, _x, _y) in enumerate(self._children):
             if c is child:
@@ -68,6 +77,13 @@ class TGPane(TGEventHandlerObject):
         if 0 <= n < len(self._children):
             return self._children[n][0]
         return None
+
+    def GetNumChildren(self) -> int:
+        return len(self._children)
+
+    def InsertChild(self, index, child, x: float = 0.0, y: float = 0.0, *_extra) -> None:
+        """Insert a child at the given list position, shifting later children right."""
+        self._children.insert(int(index), (child, float(x), float(y)))
 
     def DeleteChild(self, child) -> None:
         self._children = [(c, x, y) for (c, x, y) in self._children if c is not child]
@@ -84,11 +100,20 @@ class TGPane(TGEventHandlerObject):
 
     def GetWidth(self) -> float:              return self._width
     def GetHeight(self) -> float:             return self._height
+    def GetLeft(self) -> float:               return 0.0
+    def GetTop(self) -> float:                return 0.0
+    def GetParent(self):                      return None  # No-op; callers null-guard via TGPane_Cast
     def Resize(self, *args) -> None:          pass
+    def ResizeUI(self, *args) -> None:        pass
+    def RepositionUI(self, *args) -> None:    pass
+    def Layout(self, *args) -> None:          pass
     def InteriorChangedSize(self, *args) -> None:  pass
     def SetNoFocus(self, *args) -> None:      pass
     def SetFocus(self, *args) -> None:        pass
     def CallNextHandler(self, _evt) -> None:  pass
+    def SetNotMinimized(self, *args) -> None: pass
+    def AlignTo(self, *args) -> None:         pass
+    def SetPosition(self, *args) -> None:     pass
 
 
 class TGIcon(TGPane):
@@ -103,6 +128,7 @@ class TGIcon(TGPane):
     def GetIconGroupName(self) -> str:  return self._group_name
     def GetIconID(self) -> int:         return self._icon_id
     def SetColor(self, color) -> None:  self._color = color
+    def SetIconNum(self, n) -> None:    self._icon_id = int(n)
 
 
 class TGParagraph(TGPane):
