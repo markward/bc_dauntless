@@ -2301,10 +2301,14 @@ def run(mission_name: Optional[str] = None,
         from engine.ui.crew_menu_panel import CrewMenuPanel
         crew_menu_panel = CrewMenuPanel()
         registry.register(crew_menu_panel)
-        from engine.ui import crew_menu_hotkeys
-        crew_menu_hotkeys.wire(
-            App.TacticalControlWindow_GetTacticalControlWindow(),
-            crew_menu_panel)
+        try:
+            from engine.ui import crew_menu_hotkeys
+            crew_menu_hotkeys.wire(
+                App.TacticalControlWindow_GetTacticalControlWindow(),
+                crew_menu_panel)
+        except Exception as _e:
+            print(f"[host_loop] WARNING: crew_menu_hotkeys.wire() failed: {_e}",
+                  flush=True)
         registry.register(configuration_panel)
         if dev_mode.is_enabled():
             registry.register(mission_picker)

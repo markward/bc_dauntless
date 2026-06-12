@@ -27,6 +27,8 @@ _EVENT_TO_TGL_KEY = None
 
 _wired_panel = None
 
+_label_cache: dict = {}     # event_type -> resolved menu label
+
 
 def _event_map():
     global _EVENT_TO_TGL_KEY
@@ -46,6 +48,9 @@ def wire(tcw, panel) -> None:
     """Register TALK_TO handlers on `tcw`; remember `panel` for rewire()."""
     global _wired_panel
     _wired_panel = panel
+    _label_cache.clear()
+    for event_type, tgl_key in _event_map().items():
+        _label_cache[event_type] = _resolve_label(tgl_key)
     for event_type in _event_map():
         tcw.AddPythonFuncHandlerForInstance(
             event_type, __name__ + "._on_talk_to")
@@ -76,13 +81,13 @@ def _on_talk_to(dest, event) -> None:
     panel = _wired_panel
     if panel is None:
         return
-    tgl_key = _event_map().get(event.GetEventType())
-    if tgl_key is None:
+    label = _label_cache.get(event.GetEventType())
+    if label is None:
         return
     from engine.appc.windows import TacticalControlWindow
     tcw = TacticalControlWindow.GetInstance()
-    menu = tcw.FindMenu(_resolve_label(tgl_key))
+    menu = tcw.FindMenu(label)
     if menu is None:
-        _logger.info("crew-menu hotkey: no '%s' menu to toggle", tgl_key)
+        _logger.info("crew-menu hotkey: no '%s' menu to toggle", label)
         return
     panel.toggle_menu(menu)

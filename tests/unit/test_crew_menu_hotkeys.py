@@ -11,11 +11,13 @@ from engine.ui.crew_menu_panel import CrewMenuPanel
 def setup_function(_):
     TacticalControlWindow._instance = None
     crew_menu_hotkeys._wired_panel = None
+    crew_menu_hotkeys._label_cache.clear()
 
 
 def teardown_function(_):
     TacticalControlWindow._instance = None
     crew_menu_hotkeys._wired_panel = None
+    crew_menu_hotkeys._label_cache.clear()
 
 
 def _build(labels=("Helm", "Tactical")):
@@ -78,3 +80,11 @@ def test_rewire_targets_fresh_tcw():
 
 def test_rewire_without_wire_is_noop():
     crew_menu_hotkeys.rewire()   # must not raise
+
+
+def test_labels_cached_at_wire_time():
+    tcw, panel, menus = _build()
+    crew_menu_hotkeys.wire(tcw, panel)
+    assert crew_menu_hotkeys._label_cache[App.ET_INPUT_TALK_TO_HELM] == "Helm"
+    # Headless TGL falls back to the key string — pin that assumption.
+    assert crew_menu_hotkeys._resolve_label("Helm") == "Helm"
