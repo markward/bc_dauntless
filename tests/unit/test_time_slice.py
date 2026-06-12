@@ -31,11 +31,11 @@ def test_delay_uses_game_time_round_trip():
 
 def test_python_method_process_set_function_invokes_method():
     """SDK signature: pmp.SetFunction(instance, method_name). Update()
-    on the manager dispatches by calling getattr(instance, method_name)()."""
+    on the manager dispatches by calling getattr(instance, method_name)(dTimeAvailable)."""
     class Holder:
         def __init__(self):
             self.calls = 0
-        def Bump(self):
+        def Bump(self, _dt=0.0):
             self.calls += 1
 
     h = Holder()
@@ -56,7 +56,7 @@ def test_priority_order_normal_runs_before_low():
     order = []
     class H:
         def __init__(self, tag): self.tag = tag
-        def Go(self): order.append(self.tag)
+        def Go(self, _dt=0.0): order.append(self.tag)
 
     n = PythonMethodProcess(); n.SetFunction(H("N"), "Go"); n.SetDelay(0.1)
     n.SetDelayUsesGameTime(1); n.SetPriority(TimeSliceProcess.NORMAL)
@@ -75,7 +75,7 @@ def test_game_time_vs_real_time_isolated():
     fired = []
     class H:
         def __init__(self, tag): self.tag = tag
-        def Go(self): fired.append(self.tag)
+        def Go(self, _dt=0.0): fired.append(self.tag)
 
     g = PythonMethodProcess(); g.SetFunction(H("G"), "Go"); g.SetDelay(1.0)
     g.SetDelayUsesGameTime(1)
@@ -94,7 +94,7 @@ def test_reschedule_after_fire():
     """After dispatch the process re-arms at next_fire += delay."""
     h_calls = []
     class H:
-        def Go(self): h_calls.append(1)
+        def Go(self, _dt=0.0): h_calls.append(1)
 
     p = PythonMethodProcess(); p.SetFunction(H(), "Go"); p.SetDelay(1.0)
     p.SetDelayUsesGameTime(1)
@@ -109,7 +109,7 @@ def test_reschedule_after_fire():
 def test_remove_stops_dispatch():
     fired = []
     class H:
-        def Go(self): fired.append(1)
+        def Go(self, _dt=0.0): fired.append(1)
     p = PythonMethodProcess(); p.SetFunction(H(), "Go"); p.SetDelay(0.5)
     p.SetDelayUsesGameTime(1)
     mgr = TimeSliceProcessManager()
@@ -117,3 +117,55 @@ def test_remove_stops_dispatch():
     mgr.Remove(p)
     mgr.tick(game_time=1.0, real_time=0.0)
     assert fired == []
+
+
+def test_sdk_convention_one_arg_form_receives_float_time_budget():
+    """BC SDK convention: SetInstance(obj) + SetFunction("MethodName") [1-arg form].
+
+    ProcessFunc(self, dTimeAvailable) — as in HelmMenuHandlers.ProcessWrapper:74 —
+    must receive a float positional arg on each dispatch.  The value passed is
+    the process delay (the configured time-slice budget).
+    """
+    received = []
+
+    class ProcessWrapper:
+        def ProcessFunc(self, dTimeAvailable):
+            received.append(dTimeAvailable)
+
+    wrapper = ProcessWrapper()
+    pmp = PythonMethodProcess()
+    pmp.SetInstance(wrapper)
+    pmp.SetFunction("ProcessFunc")
+    pmp.SetDelay(0.25)
+    pmp.SetDelayUsesGameTime(1)
+
+    mgr = TimeSliceProcessManager()
+    mgr.Add(pmp)
+    mgr.tick(game_time=0.25, real_time=0.0)
+
+    assert len(received) == 1
+    assert isinstance(received[0], float)
+    assert received[0] == 0.25  # delay is passed as dTimeAvailable
+
+
+def test_sdk_convention_two_arg_form_receives_float_time_budget():
+    """2-arg SetFunction(instance, "MethodName") form also delivers the float."""
+    received = []
+
+    class Obj:
+        def Update(self, dTimeAvailable):
+            received.append(dTimeAvailable)
+
+    obj = Obj()
+    pmp = PythonMethodProcess()
+    pmp.SetFunction(obj, "Update")
+    pmp.SetDelay(0.5)
+    pmp.SetDelayUsesGameTime(1)
+
+    mgr = TimeSliceProcessManager()
+    mgr.Add(pmp)
+    mgr.tick(game_time=0.5, real_time=0.0)
+
+    assert len(received) == 1
+    assert isinstance(received[0], float)
+    assert received[0] == 0.5

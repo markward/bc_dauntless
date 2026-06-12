@@ -53,7 +53,7 @@ def test_gameloop_ticks_time_slice_manager():
     from engine.appc.time_slice import PythonMethodProcess, g_kAIManager
     fired = []
     class H:
-        def Go(self): fired.append(1)
+        def Go(self, _dt=0.0): fired.append(1)
     proc = PythonMethodProcess()
     proc.SetFunction(H(), "Go")
     proc.SetDelay(0.05)

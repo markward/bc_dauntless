@@ -78,10 +78,15 @@ class PythonMethodProcess(TimeSliceProcess):
             # 1-arg form: SetFunction("MethodName") after SetInstance()
             self._method_name = str(instance_or_name)
 
-    def Update(self) -> None:
+    def Update(self, dTimeAvailable: float = 0.0) -> None:
         if self._instance is None or not self._method_name:
             return
-        getattr(self._instance, self._method_name)()
+        # BC passes the process delay as the time-available budget.  The
+        # original Appc.dll uses the configured delay as the representative
+        # slice length (HelmMenuHandlers.ProcessWrapper.ProcessFunc confirms
+        # the signature: def ProcessFunc(self, dTimeAvailable)).  We mirror
+        # that here so SDK callbacks receive a meaningful float, not zero.
+        getattr(self._instance, self._method_name)(dTimeAvailable)
 
 
 class TimeSliceProcessManager:
@@ -117,7 +122,7 @@ class TimeSliceProcessManager:
                 due.append((proc._priority, t, proc))
         due.sort(key=lambda triple: triple[0])
         for _prio, t_at_fire, proc in due:
-            proc.Update()
+            proc.Update(proc._delay)
             # Reschedule at next_fire += delay (avoids drift under
             # variable tick lengths; same semantics as TGTimer._advance).
             if proc._delay > 0:
