@@ -31,6 +31,16 @@ def _record(dest, event):
     _received.append(event.GetEventType())
 
 
+def setup_function(_):
+    # Integration tests call _fresh_world(), which does
+    # App.g_kEventManager._broadcast_handlers.clear().  That wipes the
+    # ET_KEYBOARD_EVENT → KeyboardBinding.OnKeyboardEvent registration that
+    # App.py makes at module-load time.  Re-register so OnKeyDown works
+    # regardless of test order (same call App.py makes at startup).
+    from engine.appc.input import register_input_handlers
+    register_input_handlers(App.g_kEventManager)
+
+
 def teardown_function(_):
     # Drop the TCW carrying this module's _record handler so no other
     # test file inherits it.
