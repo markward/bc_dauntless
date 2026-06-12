@@ -24,16 +24,22 @@ calling AddChild + GetSubmenuW/GetButtonW chains.
 """
 
 from engine.appc.objects import ObjectClass
+from engine.appc.tg_ui.widgets import TGPane
 
 
 # ── Bridge menu primitives ───────────────────────────────────────────────────
 
-class STButton(ObjectClass):
+class STButton(TGPane):
     """Single menu button — backed by an event that fires on activation.
 
     Phase 1: stores the button label, event, and visibility/enabled state.
     Mission scripts query buttons via menu.GetButtonW(name) and call
     SetEnabled/SetDisabled/SendActivationEvent on the result.
+
+    Inherits TGPane so that TGPane_Cast(an_STButton) returns the button
+    itself — matching the real SDK hierarchy where STButton(TGButtonBase(TGPane)).
+    sdk/Build/scripts/App.py:7860 — class STButton(TGButtonBase) where
+    TGButtonBase(TGPane) at line 1472.
     """
     # SDK flag constant used in STButton_CreateW calls:
     #   App.STButton_CreateW(label, event, App.STBSF_SIZE_TO_TEXT)

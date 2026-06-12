@@ -3,6 +3,7 @@ real SDK Bridge/*MenuHandlers. Strict: no degraded pass. Spec:
 docs/superpowers/specs/2026-06-12-bridge-menu-activation-design.md
 """
 import json
+import logging
 import sys
 
 import App
@@ -43,10 +44,13 @@ def _fresh_world():
     return game
 
 
-def test_load_builds_all_five_menus():
+def test_load_builds_all_five_menus(caplog):
     _fresh_world()
+    caplog.set_level(logging.ERROR, logger="LoadBridge")
     try:
         LoadBridge.Load("GalaxyBridge")
+        handler_errors = [r for r in caplog.records if r.levelname == "ERROR"]
+        assert handler_errors == [], [r.getMessage() for r in handler_errors]
         tcw = TacticalControlWindow.GetInstance()
         menus = tcw.GetMenuList()
         assert len(menus) == 5, [m.GetLabel() for m in menus]

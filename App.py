@@ -1039,8 +1039,11 @@ class _DisplayWidget:
     def GetBorderHeight(self) -> float:          return 0.0
     def GetMaximumWidth(self) -> float:          return 0.0
     def GetMaximumHeight(self) -> float:         return 0.0
+    def GetLeft(self) -> float:                  return 0.0
+    def GetTop(self) -> float:                   return 0.0
     def AlignTo(self, *_a) -> None:              pass
     def SetPosition(self, *_a) -> None:          pass
+    def Move(self, *_a) -> None:                 pass
     def SetNotVisible(self, *_a) -> None:        pass
     def SetVisible(self, *_a) -> None:           pass
     def SetMinimizable(self, *_a) -> None:       pass

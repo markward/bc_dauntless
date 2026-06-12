@@ -9,6 +9,7 @@ STStylizedWindow: per-instance centred panel (LCARS-framed in BC; dauntless
 import time
 
 from engine.appc.events import TGEventHandlerObject
+from engine.appc.tg_ui.widgets import TGPane
 
 
 class TacticalControlWindow(TGEventHandlerObject):
@@ -242,15 +243,30 @@ def SubtitleWindow_Cast(obj):
 # modal panel via #sdk-stylized-stack. SDK pixel coords (parent/x/y/w/h) are
 # accepted at the factory but ignored at render time — slot CSS decides layout.
 
-class _STStylizedWindow:
+class _STStylizedWindow(TGPane):
+    """LCARS-framed content panel.
+
+    Inherits TGPane so that TGPane_Cast(an_STStylizedWindow) succeeds,
+    matching the real SDK hierarchy where STStylizedWindow(TGWindow(TGPane)).
+    sdk/Build/scripts/App.py:7604 — class STStylizedWindow(TGWindow) where
+    TGWindow(TGPane) at line 1805.
+
+    _STStylizedWindow overrides all geometry, child-access, and visibility
+    methods from TGPane with its own implementations, so inheriting TGPane
+    is purely for IS-A correctness; no TGPane behaviour leaks through.
+    Children are stored as bare objects (not (child, x, y) tuples) to match
+    the original _STStylizedWindow contract; GetNthChild/GetFirstChild etc.
+    are overridden accordingly.
+    """
     _counter = 0  # class-level; reset by top_window.reset_for_tests()
 
     def __init__(self, title: str = ""):
+        super().__init__()   # TGPane.__init__ — initialises _children=[], etc.
         type(self)._counter += 1
         self._id = f"stylized-{type(self)._counter}"
         self._title = str(title)
         self._visible = True
-        self._children: list = []
+        self._children: list = []       # bare children (not (child,x,y) tuples)
         self._handler_registrations: list[tuple[int, str]] = []
         self._max_w: float = 0.0
         self._max_h: float = 0.0
