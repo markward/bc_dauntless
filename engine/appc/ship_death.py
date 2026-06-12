@@ -48,7 +48,27 @@ def begin(ship) -> None:
     if hasattr(ship, "SetDying"):
         ship.SetDying(True)
     _active.append({"ship": ship, "time_left": THROES_DURATION})
+    _clear_target_locks(ship)
     _spawn_explosion(ship)
+
+
+def _clear_target_locks(dying) -> None:
+    """Release every lock held ON the dying ship: the target itself and the
+    targeted-subsystem lock (which BC stores on the FIRING ship — see
+    player.SetTargetSubsystem). The player's HUD reticle and tracking camera
+    follow GetTarget, so they drop automatically. Raise-safe."""
+    try:
+        from engine.appc.ship_iter import iter_ships
+        for other in iter_ships():
+            if other is dying:
+                continue
+            if not hasattr(other, "GetTarget") or other.GetTarget() is not dying:
+                continue
+            other.SetTarget(None)
+            if hasattr(other, "SetTargetSubsystem"):
+                other.SetTargetSubsystem(None)
+    except Exception:
+        pass
 
 
 def advance(dt: float) -> None:

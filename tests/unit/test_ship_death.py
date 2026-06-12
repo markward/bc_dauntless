@@ -439,3 +439,33 @@ def test_descriptor_anchors_at_last_world_location_when_unresolved():
     d = particles._descriptor_for(c, resolve_attach=lambda obj: None)
     assert d["instance_id"] is None
     assert d["emit_pos"] == (10.0, -5.0, 3.0)
+
+
+# --- Target-lock release on death --------------------------------------------
+def test_begin_clears_locks_held_on_dying_ship():
+    """Any ship locked onto the dying ship (target + targeted-subsystem,
+    which BC stores on the FIRING ship) must lose its lock at begin()."""
+    import App
+    from engine.appc.ships import ShipClass
+
+    pSet = App.SetClass()
+    attacker = ShipClass(); attacker.SetName("Attacker")
+    bystander = ShipClass(); bystander.SetName("Bystander")
+    victim = ShipClass(); victim.SetName("Victim")
+    other = ShipClass(); other.SetName("Other")
+    for s in (attacker, bystander, victim, other):
+        pSet.AddObjectToSet(s, s.GetName())
+    # iter_ships walks g_kSetManager — register the set as the game does.
+    App.g_kSetManager.AddSet(pSet, "lock_test")
+    try:
+        attacker.SetTarget(victim)
+        attacker.SetTargetSubsystem(object())  # subsystem lock rides on attacker
+        bystander.SetTarget(other)             # unrelated lock must survive
+
+        ship_death.begin(victim)
+
+        assert attacker.GetTarget() is None
+        assert attacker.GetTargetSubsystem() is None
+        assert bystander.GetTarget() is other
+    finally:
+        App.g_kSetManager._sets.pop("lock_test", None)
