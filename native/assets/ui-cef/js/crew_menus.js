@@ -20,8 +20,12 @@ function renderCrewMenu(menu) {
   title.className = "crew-menu-title" + (menu.enabled ? "" : " disabled");
   title.textContent = menu.label;
   title.onclick = () => {
-    crewMenuOpenId = crewMenuOpenId === menu.id ? null : menu.id;
-    wrap.classList.toggle("open");
+    const wasOpen = crewMenuOpenId === menu.id;
+    crewMenuOpenId = wasOpen ? null : menu.id;
+    // Single-open invariant: clear every dropdown, then re-open this one.
+    document.querySelectorAll("#crew-menu-bar .crew-menu.open")
+      .forEach((el) => el.classList.remove("open"));
+    if (!wasOpen) wrap.classList.add("open");
   };
   wrap.appendChild(title);
   const drop = document.createElement("div");
@@ -34,6 +38,7 @@ function renderCrewMenu(menu) {
 }
 
 function renderCrewMenuEntry(node) {
+  if (node.visible === false) return document.createDocumentFragment();
   const row = document.createElement("div");
   row.className = "crew-menu-entry " + node.type +
                   (node.enabled ? "" : " disabled");

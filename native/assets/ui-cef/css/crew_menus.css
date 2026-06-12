@@ -5,11 +5,11 @@
 
 #crew-menu-bar {
   position: absolute;
-  top: 8px;
-  left: 8px;
+  top: 16px;
+  left: 16px;
   display: flex;
   gap: 6px;
-  z-index: 30; /* above scene, below pause menu */
+  z-index: 45; /* above sdk-stylized-stack (40) so open dropdowns aren't clipped; below subtitle (50) and pause menu (100) */
 }
 
 .crew-menu {
