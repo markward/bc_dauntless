@@ -17,6 +17,8 @@ class TacticalControlWindow(TGEventHandlerObject):
     def __init__(self):
         super().__init__()
         self._radar_display = None
+        self._children: list = []      # (child, x, y) — recorded, not rendered
+        self._menus: list = []         # STTopLevelMenu roots, in add order
 
     @classmethod
     def GetInstance(cls) -> "TacticalControlWindow":
@@ -28,6 +30,16 @@ class TacticalControlWindow(TGEventHandlerObject):
         """SDK handlers call pObject.CallNextHandler(pEvent) for chain
         propagation.  Without a parent window chain we no-op."""
         return None
+
+    def AddChild(self, child, x: float = 0.0, y: float = 0.0, *_extra) -> None:
+        self._children.append((child, float(x), float(y)))
+
+    def AddMenuToList(self, menu) -> None:
+        if menu not in self._menus:
+            self._menus.append(menu)
+
+    def GetMenuList(self) -> list:
+        return list(self._menus)
 
     # Radar display accessor — SDK TacticalMenuHandlers.CreateRadarDisplay
     # at sdk/Build/scripts/Bridge/TacticalMenuHandlers.py:475 calls
