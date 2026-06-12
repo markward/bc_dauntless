@@ -145,3 +145,58 @@ def test_menu_click_is_clean_noop():
     panel.render_payload()
     assert panel.dispatch_event(f"click:{ensure_widget_id(helm)}") is True
     assert _clicks == []           # no SDK event fired for a menu node
+
+
+def test_toggle_menu_open_switch_close():
+    helm, _ = _build_helm_with_button()
+    from engine.appc.characters import STTopLevelMenu
+    tactical = STTopLevelMenu("Tactical")
+    TacticalControlWindow.GetInstance().AddMenuToList(tactical)
+    panel = CrewMenuPanel()
+    panel.render_payload()
+
+    panel.toggle_menu(helm)
+    assert panel.has_open_menu()
+    payload = json.loads(panel.render_payload()[len("setCrewMenus("):-2])
+    opens = {m["label"]: m["open"] for m in payload["menus"]}
+    assert opens == {"Helm": True, "Tactical": False}
+
+    panel.toggle_menu(tactical)            # switch: single-open invariant
+    payload = json.loads(panel.render_payload()[len("setCrewMenus("):-2])
+    opens = {m["label"]: m["open"] for m in payload["menus"]}
+    assert opens == {"Helm": False, "Tactical": True}
+
+    panel.toggle_menu(tactical)            # same again: close
+    assert not panel.has_open_menu()
+
+
+def test_close_open_menu_returns_whether_closed():
+    helm, _ = _build_helm_with_button()
+    panel = CrewMenuPanel()
+    panel.render_payload()
+    assert panel.close_open_menu() is False
+    panel.toggle_menu(helm)
+    assert panel.close_open_menu() is True
+    assert panel.close_open_menu() is False
+
+
+def test_dispatch_toggle_action():
+    helm, _ = _build_helm_with_button()
+    panel = CrewMenuPanel()
+    panel.render_payload()
+    wid = ensure_widget_id(helm)
+    assert panel.dispatch_event(f"toggle:{wid}") is True
+    assert panel.has_open_menu()
+    assert panel.dispatch_event(f"toggle:{wid}") is True
+    assert not panel.has_open_menu()
+    assert panel.dispatch_event("toggle:999999") is True   # stale: dropped
+    assert panel.dispatch_event("toggle:zap") is True      # malformed: dropped
+
+
+def test_open_state_changes_force_reemit():
+    helm, _ = _build_helm_with_button()
+    panel = CrewMenuPanel()
+    assert panel.render_payload() is not None
+    assert panel.render_payload() is None
+    panel.toggle_menu(helm)
+    assert panel.render_payload() is not None   # open flag changed payload

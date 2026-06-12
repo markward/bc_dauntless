@@ -30,6 +30,7 @@ class CrewMenuPanel(Panel):
         self._last_pushed: Optional[str] = json.dumps({"menus": []})
         self._widgets_by_id: dict = {}
         self._logged_unrecognised: set = set()
+        self._open_menu_id: Optional[int] = None
 
     @property
     def name(self) -> str:
@@ -37,11 +38,13 @@ class CrewMenuPanel(Panel):
 
     def render_payload(self) -> Optional[str]:
         self._widgets_by_id = {}
-        menus = [
-            self._snapshot_node(m)
-            for m in TacticalControlWindow.GetInstance().GetMenuList()
-        ]
-        payload = json.dumps({"menus": [m for m in menus if m is not None]})
+        menus = []
+        for m in TacticalControlWindow.GetInstance().GetMenuList():
+            node = self._snapshot_node(m)
+            if node is not None:
+                node["open"] = (node["id"] == self._open_menu_id)
+                menus.append(node)
+        payload = json.dumps({"menus": menus})
         if payload == self._last_pushed:
             return None
         self._last_pushed = payload
@@ -70,34 +73,63 @@ class CrewMenuPanel(Panel):
         return node
 
     def dispatch_event(self, action: str) -> bool:
-        if not action.startswith("click:"):
+        if action.startswith("toggle:"):
+            try:
+                wid = int(action[len("toggle:"):])
+            except ValueError:
+                _logger.info("crew-menu: malformed toggle action %r", action)
+                return True
+            widget = self._widgets_by_id.get(wid)
+            if widget is None:
+                _logger.info("crew-menu: stale toggle id %d dropped", wid)
+                return True
+            self.toggle_menu(widget)
+            return True
+        if action.startswith("click:"):
+            try:
+                wid = int(action[len("click:"):])
+            except ValueError:
+                _logger.info("crew-menu: malformed click action %r", action)
+                return True
+            widget = self._widgets_by_id.get(wid)
+            if widget is None:
+                # Menu rebuilt between frames — drop; next snapshot repairs the UI.
+                _logger.info("crew-menu: stale click id %d dropped", wid)
+                return True
+            if not widget.IsEnabled():
+                return True
+            root = self._root_of(wid)
+            if isinstance(widget, STButton):
+                # Original engine order: per-button activation event, then
+                # ET_ST_BUTTON_CLICKED at the owning top-level menu (the SDK
+                # registers BridgeMenus.ButtonClicked there for click sounds).
+                widget.SendActivationEvent()
+                if root is not None:
+                    import App
+                    clicked = App.TGEvent_Create()
+                    clicked.SetEventType(App.ET_ST_BUTTON_CLICKED)
+                    clicked.SetDestination(root)
+                    clicked.SetSource(widget)
+                    App.g_kEventManager.AddEvent(clicked)
+            # Menu nodes open/close client-side in CEF; no SDK event needed.
+            return True
+        return False
+
+    def toggle_menu(self, menu) -> None:
+        """Open `menu` (closing any other), or close it if already open.
+        Single-open invariant shared by hotkeys and CEF title clicks."""
+        wid = ensure_widget_id(menu)
+        self._open_menu_id = None if self._open_menu_id == wid else wid
+
+    def has_open_menu(self) -> bool:
+        return self._open_menu_id is not None
+
+    def close_open_menu(self) -> bool:
+        """Close any open menu; True if one was open (ESC consumes the
+        press in that case — see host_loop's modal ladder)."""
+        if self._open_menu_id is None:
             return False
-        try:
-            wid = int(action[len("click:"):])
-        except ValueError:
-            _logger.info("crew-menu: malformed click action %r", action)
-            return True
-        widget = self._widgets_by_id.get(wid)
-        if widget is None:
-            # Menu rebuilt between frames — drop; next snapshot repairs the UI.
-            _logger.info("crew-menu: stale click id %d dropped", wid)
-            return True
-        if not widget.IsEnabled():
-            return True
-        root = self._root_of(wid)
-        if isinstance(widget, STButton):
-            # Original engine order: per-button activation event, then
-            # ET_ST_BUTTON_CLICKED at the owning top-level menu (the SDK
-            # registers BridgeMenus.ButtonClicked there for click sounds).
-            widget.SendActivationEvent()
-            if root is not None:
-                import App
-                clicked = App.TGEvent_Create()
-                clicked.SetEventType(App.ET_ST_BUTTON_CLICKED)
-                clicked.SetDestination(root)
-                clicked.SetSource(widget)
-                App.g_kEventManager.AddEvent(clicked)
-        # Menu nodes open/close client-side in CEF; no SDK event needed.
+        self._open_menu_id = None
         return True
 
     def invalidate(self) -> None:
