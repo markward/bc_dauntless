@@ -200,3 +200,24 @@ def test_open_state_changes_force_reemit():
     assert panel.render_payload() is None
     panel.toggle_menu(helm)
     assert panel.render_payload() is not None   # open flag changed payload
+
+
+def test_invalidate_clears_open_state():
+    helm, _ = _build_helm_with_button()
+    panel = CrewMenuPanel()
+    panel.render_payload()
+    panel.toggle_menu(helm)
+    panel.invalidate()                      # CEF reload / mission swap
+    assert not panel.has_open_menu()
+
+
+def test_toggle_ignores_disabled_menu_and_buttons():
+    helm, btn = _build_helm_with_button()
+    panel = CrewMenuPanel()
+    panel.render_payload()
+    helm.SetDisabled()
+    panel.toggle_menu(helm)
+    assert not panel.has_open_menu()        # disabled menus stay closed
+    helm.SetEnabled()
+    panel.toggle_menu(btn)
+    assert not panel.has_open_menu()        # buttons are not togglable

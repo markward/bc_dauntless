@@ -20,7 +20,9 @@ function renderCrewMenu(menu) {
   title.textContent = menu.label;
   // Open-state lives in CrewMenuPanel (shared with F1-F5 hotkeys);
   // the next setCrewMenus payload re-renders with the new state.
-  title.onclick = () => dauntlessEvent("crew-menu/toggle:" + menu.id);
+  if (menu.enabled) {
+    title.onclick = () => dauntlessEvent("crew-menu/toggle:" + menu.id);
+  }
   wrap.appendChild(title);
   const drop = document.createElement("div");
   drop.className = "crew-menu-drop";

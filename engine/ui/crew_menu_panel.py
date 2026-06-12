@@ -117,7 +117,12 @@ class CrewMenuPanel(Panel):
 
     def toggle_menu(self, menu) -> None:
         """Open `menu` (closing any other), or close it if already open.
-        Single-open invariant shared by hotkeys and CEF title clicks."""
+        Single-open invariant shared by hotkeys and CEF title clicks.
+        Disabled menus stay closed (stock BC) and non-menus are ignored
+        (the JS only emits toggle: for top-level titles, but hotkey code
+        may resolve unexpected objects)."""
+        if not isinstance(menu, STMenu) or not menu.IsEnabled():
+            return
         wid = ensure_widget_id(menu)
         self._open_menu_id = None if self._open_menu_id == wid else wid
 
@@ -134,6 +139,9 @@ class CrewMenuPanel(Panel):
 
     def invalidate(self) -> None:
         self._last_pushed = None
+        # Mission swap rebuilds menus with fresh widget ids — a stale open
+        # id would keep has_open_menu() True and swallow one ESC press.
+        self._open_menu_id = None
 
     def _root_of(self, wid: int):
         """Top-level menu whose subtree contains the widget id, else None."""
