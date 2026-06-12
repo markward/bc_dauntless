@@ -660,6 +660,26 @@ ET_QUICK_LOAD                   = 1053
 ET_INPUT_PRINT_SCREEN             = 1054
 ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL = 1055
 
+# ── Bridge-interaction event types ─────────────────────────────────────────────
+# Spec: docs/superpowers/specs/2026-06-12-tg-widget-tree-crew-menus-design.md.
+# Static ints in 1060-1099 — above the input block (1001-1055), below the
+# Game_GetNextEventType allocator floor (1200).
+ET_ST_BUTTON_CLICKED        = 1060
+ET_COMMUNICATE              = 1061
+ET_HAIL                     = 1062
+ET_SCAN                     = 1063
+ET_SET_COURSE               = 1064
+ET_ALL_STOP                 = 1065
+ET_DOCK                     = 1066
+ET_MANAGE_POWER             = 1067
+ET_MANEUVER                 = 1068
+ET_HAILABLE_CHANGE          = 1069
+ET_SENSORS_SHIP_IDENTIFIED  = 1070
+ET_CLOAK_COMPLETED          = 1071
+ET_DECLOAK_COMPLETED        = 1072
+ET_CHARACTER_MENU           = 1073
+ET_CONTACT_STARFLEET        = 1074
+
 _next_event_type_id = 1200
 
 

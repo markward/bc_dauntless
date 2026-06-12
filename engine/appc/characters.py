@@ -244,12 +244,52 @@ class CharacterClass(ObjectClass):
     CS_UI_ENABLED       = 12
     CS_STOP_INITIATIVE  = 13
 
-    # Alert-state constants — used by DefaultKeyboardBinding.Initialize to
-    # pass the desired alert level as an int value to ET_SET_ALERT_LEVEL.
-    # Values mirror ShipClass.GREEN/YELLOW/RED_ALERT (sdk/.../App.py:4657-4659).
-    EST_ALERT_GREEN  = 0
-    EST_ALERT_YELLOW = 1
-    EST_ALERT_RED    = 2
+    # EST_* — "execute ship task" subtype carried in bridge-menu TGIntEvents
+    # (BridgeUtils.CreateBridgeMenuButton SetInt payload). Sequential ints in
+    # SDK declaration order (sdk/.../App.py CharacterClass_EST_* bindings).
+    EST_ALERT_GREEN                       = 0
+    EST_ALERT_YELLOW                      = 1
+    EST_ALERT_RED                         = 2
+    EST_REPORT_OVERVIEW                   = 3
+    EST_REPORT_ENGINES                    = 4
+    EST_REPORT_WEAPONS                    = 5
+    EST_REPORT_SHIELDS                    = 6
+    EST_REPORT_REPAIR                     = 7
+    EST_REPORT_SENSORS                    = 8
+    EST_REPORT_DESTINATION                = 9
+    EST_REPORT_SPEED                      = 10
+    EST_REPORT_ETA                        = 11
+    EST_SHIP_STATUS                       = 12
+    EST_TARGET_STATUS                     = 13
+    EST_TRANSFER_POWER_WEAPONS            = 14
+    EST_TRANSFER_POWER_SHIELDS_FORE       = 15
+    EST_TRANSFER_POWER_SHIELDS_AFT        = 16
+    EST_TRANSFER_POWER_SHIELDS_PORT       = 17
+    EST_TRANSFER_POWER_SHIELDS_STARBOARD  = 18
+    EST_TRANSFER_POWER_SHIELDS_DORSAL     = 19
+    EST_TRANSFER_POWER_SHIELDS_VENTRAL    = 20
+    EST_TRANSFER_POWER_SENSORS            = 21
+    EST_TRANSFER_POWER_ENGINES            = 22
+    EST_REPAIR_PHASERS                    = 23
+    EST_REPAIR_TORPEDO_TUBES              = 24
+    EST_REPAIR_SENSORS                    = 25
+    EST_REPAIR_IMPULSE_ENGINES            = 26
+    EST_REPAIR_WARP_ENGINES               = 27
+    EST_REPAIR_TRACTOR_BEAM               = 28
+    EST_REPAIR_ENGINEERING                = 29
+    EST_SET_COURSE_TO_MISSION_AREA        = 30
+    EST_SET_COURSE_TO_PLANET              = 31
+    EST_SET_COURSE_INTERCEPT              = 32
+    EST_SET_COURSE_FOLLOW                 = 33
+    EST_SCAN_OBJECT                       = 34
+    EST_SCAN_AREA                         = 35
+    EST_ATTACK_BEAM_WEAPON                = 36
+    EST_ATTACK_WARHEAD                    = 37
+    EST_ATTACK_IMPULSE_ENGINES            = 38
+    EST_ATTACK_WARP_ENGINES               = 39
+    EST_ATTACK_SENSORS                    = 40
+    EST_ATTACK_ENGINEERING                = 41
+    EST_ATTACK_TRACTOR_BEAM               = 42
 
     # Animation-type bitmask constants.
     CAT_BREATHE             = 1
