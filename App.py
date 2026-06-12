@@ -577,6 +577,7 @@ ET_EPISODE_START = 103
 ET_OBJECT_DELETED = 104
 ET_ENTERED_SET = 105
 ET_OBJECT_EXPLODING = 106
+ET_OBJECT_DESTROYED = 107
 
 # Used by Conditions/Condition*.py — broadcast events the SDK conditions
 # subscribe to. Values arbitrary but stable; keep contiguous with the

@@ -269,6 +269,8 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
     hit_vfx.update_ages(dt)
     from engine.appc import particles
     particles.advance(dt)
+    from engine.appc import ship_death
+    ship_death.advance(dt)
     from engine.appc import subsystem_emitters
     subsystem_emitters.pump(ships_list, _camera_world_pos(host), dt)
     from engine.appc import camera_shake
@@ -1701,6 +1703,8 @@ class HostController:
             self.session.teardown(self.renderer)
         from engine.appc import ship_lifecycle
         ship_lifecycle.reset()
+        from engine.appc import ship_death
+        ship_death.reset()
         from engine.appc import subsystem_emitters
         subsystem_emitters.reset_manager()
         from engine.appc import particles
@@ -2701,10 +2705,14 @@ def run(mission_name: Optional[str] = None,
                     # (engine.appc.damage_decals). Read once per frame.
                     import App as _App_wg
                     _wg_now = _App_wg.g_kUtopiaModule.GetGameTime()
+                    from engine.appc.ship_death import _out_of_action as _oa
                     for ship, iid in session.ship_instances.items():
                         _wg = session.ship_glow_controllers.get(iid)
                         if _wg is not None:
                             _wg.update(_wg_now)
+                        # Destroyed (dying/dead) ships lose self-illumination —
+                        # a dark hulk in space. Hull stays lit by external light.
+                        r.set_emissive_scale(iid, 0.0 if _oa(ship) else 1.0)
                         if iid == _player_iid:
                             r.set_world_transform(
                                 iid, _ship_world_matrix(ship, BC_MODEL_SCALE))

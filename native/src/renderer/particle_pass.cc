@@ -198,15 +198,27 @@ void ParticlePass::render(const std::vector<ParticleEmitterDescriptor>& emitters
 
         const int n = particle_max_count(e.emit_life, e.emit_life_variance,
                                          e.emit_frequency);
+        // Stable hash seed for this emitter. NEVER seed from emit_pos_world:
+        // an emitter attached to a moving ship changes position every frame,
+        // which would re-roll every particle's jitter/offset/row per frame
+        // (puffs teleport and flicker — the "mad flurry" bug).
+        const glm::vec3 hseed(e.seed * 127.1f + 0.37f,
+                              e.seed * 311.7f + 1.93f,
+                              e.seed * 74.7f  + 4.71f);
         // Defensive default: emitters with tail_length==0 never hit the
         // per-particle branch below, so pre-zero the uniform once here.
         shader.set_float("u_streak_length", 0.0f);
+        // Texture-sheet grid (1x1 = whole texture). Per-particle cell set below.
+        const int atlas_cols = std::max(1, e.atlas_cols);
+        const int atlas_rows = std::max(1, e.atlas_rows);
+        shader.set_vec2("u_atlas_grid",
+                        glm::vec2(float(atlas_cols), float(atlas_rows)));
         glBindTexture(GL_TEXTURE_2D, tex->id());
 
         for (int i = 0; i < n; ++i) {
             const float b   = slot_birth_age(e.effect_age, i, n, e.emit_frequency);
             const float tau = e.effect_age - b;
-            const glm::vec2 jit = hash3(emit_pos_world, i);
+            const glm::vec2 jit = hash3(hseed, i);
             const float life_i  = e.emit_life + jit.x * std::max(0.0f, e.emit_life_variance);
             if (tau < 0.0f || tau > life_i) continue;
             if (b < 0.0f || b > e.stop_age) continue;
@@ -225,7 +237,7 @@ void ParticlePass::render(const std::vector<ParticleEmitterDescriptor>& emitters
             // A2 extension: 3D random velocity (zero when random_velocity_speed==0).
             // A3: random travel also uses damped_travel (linear when damping==0).
             if (e.random_velocity_speed > 0.0f) {
-                const glm::vec2 rv_hash = hash3(emit_pos_world, i + 7919);
+                const glm::vec2 rv_hash = hash3(hseed, i + 7919);
                 const glm::vec3 rv_dir  = random_cone_dir(emit_dir_world,
                                                           e.random_velocity_cone,
                                                           rv_hash);
@@ -238,6 +250,18 @@ void ParticlePass::render(const std::vector<ParticleEmitterDescriptor>& emitters
             const float r     = curve_lerp1(kt, kr, e.num_color_keys, t);
             const float g     = curve_lerp1(kt, kg, e.num_color_keys, t);
             const float bl    = curve_lerp1(kt, kb, e.num_color_keys, t);
+
+            // Sprite-sheet cell: frame steps along the columns over the
+            // particle's life (0->cols-1); the variant row is a stable
+            // per-particle hash. For a 1x1 grid this is always (0,0).
+            int frame = static_cast<int>(t * atlas_cols);
+            frame = std::min(std::max(frame, 0), atlas_cols - 1);
+            int row = 0;
+            if (atlas_rows > 1) {
+                const glm::vec2 rh = hash3(hseed, i + 4099);
+                row = std::min(static_cast<int>(rh.x * atlas_rows), atlas_rows - 1);
+            }
+            shader.set_vec2("u_atlas_cell", glm::vec2(float(frame), float(row)));
 
             shader.set_vec4 ("u_tint",           glm::vec4(r, g, bl, 1.0f));
             shader.set_vec3 ("u_world_position", pos);

@@ -46,6 +46,12 @@ def set_visible(iid: InstanceId, visible: bool) -> None:
     _h.set_visible(iid, visible)
 
 
+def set_emissive_scale(iid: InstanceId, scale: float) -> None:
+    """Scale an instance's self-illumination (emissive + glow). 1.0 = normal,
+    0.0 = destroyed/dark hull."""
+    _h.set_emissive_scale(iid, scale)
+
+
 def set_camera(eye: Tuple[float, float, float],
                target: Tuple[float, float, float],
                up: Tuple[float, float, float],

@@ -112,3 +112,41 @@ def test_create_weapon_explosion_runs_unmodified():
     assert "EffectAction_Create" not in names, (
         "EffectAction_Create still hitting stub tracker"
     )
+
+
+def test_explosion_sheet_autodetected_for_all_effects_callers():
+    """Every emitter targeting the stock ExplosionA/B sheets must carry the
+    8x8 atlas grid automatically — SDK Effects callers (weapon hits, smoke)
+    never declare it, and a 1x1 grid billboards the whole 64-cell sheet."""
+    import Effects
+    P.reset()
+
+    class FakeNode:
+        pass
+
+    class FakeTarget:
+        def GetNode(self):
+            return FakeNode()
+
+    class FakeEvent:
+        def GetTargetObject(self):
+            return FakeTarget()
+
+        def GetObjectHitPoint(self):
+            return (0.0, 0.0, 0.0)
+
+        def GetObjectHitNormal(self):
+            return (0.0, 1.0, 0.0)
+
+    action = Effects.CreateWeaponExplosion(1.0, 1.0, FakeEvent())
+    action.Start()
+
+    sheet_descs = [d for d in P.snapshot_descriptors()
+                   if "Explosion" in d.get("texture_path", "")]
+    assert sheet_descs, "weapon explosion registered no Explosion* emitters"
+    for d in sheet_descs:
+        assert (d["atlas_cols"], d["atlas_rows"]) == (8, 8), (
+            f"{d['texture_path']} billboarding the full sheet "
+            f"(grid {d['atlas_cols']}x{d['atlas_rows']})"
+        )
+    P.reset()

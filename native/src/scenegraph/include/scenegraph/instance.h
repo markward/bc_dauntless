@@ -34,6 +34,12 @@ struct Instance {
     /// planet-atmosphere effect will add its own per-instance params.
     bool rim_eligible = false;
 
+    /// Scales the ship's self-illumination (material emissive + glow map) at
+    /// draw time. 1.0 = normal; 0.0 = no self-light, used for destroyed ships
+    /// so a dead hull goes dark in space (diffuse-lit, specular, and rim
+    /// terms are unaffected, so the hull stays visible).
+    float emissive_scale = 1.0f;
+
     /// Per-instance persistent damage decals (object space, body frame).
     /// Runtime VFX state only — never serialized to saves.
     DamageDecalRing decals;

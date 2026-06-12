@@ -6,6 +6,16 @@ particles. The renderer (ParticlePass) derives every particle analytically
 from these fields each frame. See
 docs/superpowers/specs/2026-06-11-particle-backend-a1-smoke-design.md.
 """
+import random as _random
+
+# Known sprite-sheet textures, by lowercase basename -> (cols, rows).
+# BC's stock explosion sheets are 256x256 with an 8x8 grid: 8 animation
+# frames across, 8 explosion variants down (B is the greyscale twin of A).
+# CreateTarget applies these automatically; SetTextureCells can override.
+_KNOWN_SHEET_TEXTURES = {
+    "explosiona.tga": (8, 8),
+    "explosionb.tga": (8, 8),
+}
 
 
 class AnimTSParticleController:
@@ -30,6 +40,17 @@ class AnimTSParticleController:
         self._rv_cone = 0.0
         self._rv_speed = 0.0
         self._blend_mode = 0   # 0 = alpha (A1), 1 = additive
+        # Texture-sheet animation grid. 1x1 = whole texture (default; hit VFX,
+        # plumes). >1 means the texture is an N-column (frames) x M-row
+        # (variants) sprite sheet; the renderer steps a per-particle cell
+        # (frame from age, row from a per-particle hash).
+        self._atlas_cols = 1
+        self._atlas_rows = 1
+        # Stable per-emitter hash seed. The renderer derives ALL per-particle
+        # randomness (jitter, birth offset, variant row) from this, NOT from
+        # the emitter's world position — a moving emitter must not re-roll
+        # its particles every frame.
+        self._seed = _random.random()
         # runtime, owned by the registry
         self._effect_age = 0.0
         self._stop_age = None      # None => still emitting
@@ -46,7 +67,23 @@ class AnimTSParticleController:
     def SetEffectLifeTime(self, t):    self._effect_life_time = t
     def SetInheritsVelocity(self, on): self._inherit = 1.0 if on else 0.0
     def SetDrawOldToNew(self, on):     self._draw_old_to_new = 1 if on else 0
-    def CreateTarget(self, path):      self._texture_path = path
+    def CreateTarget(self, path):
+        self._texture_path = path
+        # Auto-detect known sprite-sheet textures so every SDK Effects
+        # caller (weapon-hit explosions, smoke, plumes) animates frames
+        # instead of billboarding the whole 8x8 grid. SDK scripts never
+        # declare the grid — the original engine knew it natively.
+        base = str(path).replace("\\", "/").rsplit("/", 1)[-1].lower()
+        cells = _KNOWN_SHEET_TEXTURES.get(base)
+        if cells is not None:
+            self._atlas_cols, self._atlas_rows = cells
+    def SetTextureCells(self, cols, rows):
+        """Declare the target texture as a `cols` x `rows` sprite sheet:
+        `cols` animation frames per variant, `rows` variants. Default 1x1
+        (whole texture). The renderer animates frames over each particle's
+        life and picks a random row per particle for variety."""
+        self._atlas_cols = max(1, int(cols))
+        self._atlas_rows = max(1, int(rows))
     def SetEmitFromObject(self, obj):  self._emit_from = obj
     def AttachEffect(self, node):      self._attach_node = node
     def SetEmitPositionAndDirection(self, pos, d):
@@ -167,12 +204,22 @@ def _descriptor_for(c, resolve_attach):
     emit_vel_world = (0.0, 0.0, 0.0)
     emit_pos = _vec3(c._emit_pos)
     emit_dir = _vec3(c._emit_dir, default=(0.0, -1.0, 0.0))
-    if c._emit_from is not None and resolve_attach is not None:
-        r = resolve_attach(c._emit_from)
+    if c._emit_from is not None:
+        r = resolve_attach(c._emit_from) if resolve_attach is not None else None
         if r is not None:
             instance_id = r.get("instance_id")
             emit_vel_world = tuple(r.get("velocity", (0.0, 0.0, 0.0)))
             # emit_pos/emit_dir stay body-frame; the pass resolves them.
+        else:
+            # Attach target has no render instance (e.g. ship removed at the
+            # end of its death sequence). Anchor the effect at the object's
+            # last world location so it finishes playing at the wreck site
+            # instead of snapping to the body-frame origin.
+            try:
+                wp = c._emit_from.GetWorldLocation()
+                emit_pos = (float(wp.x), float(wp.y), float(wp.z))
+            except Exception:
+                pass
     return {
         "instance_id":       instance_id,
         "emit_pos":          emit_pos,
@@ -197,6 +244,9 @@ def _descriptor_for(c, resolve_attach):
         "alpha_keys":        list(c._alpha_keys),
         "size_keys":         list(c._size_keys),
         "texture_path":      c._texture_path,
+        "atlas_cols":        int(c._atlas_cols),
+        "atlas_rows":        int(c._atlas_rows),
+        "seed":              float(c._seed),
     }
 
 

@@ -61,3 +61,23 @@ def register_for_frame(_h, session, player) -> None:
         _h.keys.KEY_LEFT_BRACKET, _drop_all_shields,
         "Drop all shields to zero (dev) — [",
     )
+
+    # ] : destroy the player's current target via the REAL death path
+    # (DestroySystem on the hull -> critical-flag trigger -> throes ->
+    # explosion -> dark hulk -> target-list drop -> removal). Testing aid
+    # for the ship death sequence.
+    def _destroy_target() -> None:
+        if player is None:
+            return
+        target = player.GetTarget() if hasattr(player, "GetTarget") else None
+        if target is None or target is player:
+            return
+        hull = target.GetHull() if hasattr(target, "GetHull") else None
+        if hull is None or not hasattr(target, "DestroySystem"):
+            return
+        target.DestroySystem(hull)
+
+    dev_mode.register_dev_keybinding(
+        _h.keys.KEY_RIGHT_BRACKET, _destroy_target,
+        "Destroy target ship (dev) — ]",
+    )

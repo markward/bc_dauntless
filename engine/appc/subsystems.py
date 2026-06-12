@@ -366,16 +366,20 @@ class _EnergyWeaponFireMixin:
 
 
 def _is_offline(sub) -> bool:
-    """True when a subsystem is disabled OR destroyed.
-
-    Project 5 single source of truth for the five capability gates
-    (engines, weapons, sensors, shield generator, repair-verify).
-    Reads predicates at use-time so repair lifting condition releases
-    the gate automatically on the next call.
-    """
+    """True when a subsystem is disabled OR destroyed, OR its parent ship is
+    out of action (dying/dead — inert coast). Single source of truth for the
+    capability gates (weapons, engines, sensors, shield generator, repair).
+    Reads predicates at use-time so repair lifting condition releases the gate
+    automatically on the next call."""
     if sub is None:
         return False
-    return bool(sub.IsDisabled()) or bool(sub.IsDestroyed())
+    if bool(sub.IsDisabled()) or bool(sub.IsDestroyed()):
+        return True
+    if hasattr(sub, "GetParentShip"):
+        from engine.appc import ship_death
+        if ship_death._out_of_action(sub.GetParentShip()):
+            return True
+    return False
 
 
 def impulse_online_fraction(ies) -> float:
@@ -965,10 +969,12 @@ class ShipSubsystem(TGEventHandlerObject):
     # need them.
 
     def IsCritical(self) -> int:
-        """SDK Preprocessors.py:963 — rating heuristic. Phase 1 default 0
-        (no subsystem is flagged critical until SubsystemProperty data
-        flows into _critical via SetCritical)."""
-        return 0
+        """SDK Preprocessors.py:963 — true when destroying this subsystem
+        destroys the ship.  Reflects the `_critical` flag set from hardpoint
+        SubsystemProperty data via SetCritical (every hardpoint flags the
+        hull and warp core critical).  The death sequence reads this to
+        decide whether a zero-condition subsystem kills the ship."""
+        return 1 if self._critical else 0
 
     def IsTargetable(self) -> int:
         """SDK Preprocessors.py:953-954, 829 — AI iterates subsystems and
@@ -1785,8 +1791,19 @@ class TorpedoTube(WeaponSystem):
 
 class HullSubsystem(ShipSubsystem):
     """Live hull state.  Hull isn't a powered subsystem — it just tracks
-    condition (max + current) so damage logic can read GetMaxCondition()."""
-    pass
+    condition (max + current) so damage logic can read GetMaxCondition().
+
+    The hull is critical by nature: every ship hardpoint sets
+    ``Hull.SetCritical(1)``, and a ship whose hull reaches zero is
+    destroyed.  Default ``_critical = 1`` so even a hull built without the
+    hardpoint property flow (tests, minimally-constructed ships) still
+    triggers the death sequence on hull-zero.  The property flow may
+    re-assert this via SetCritical, but never clears it (no hardpoint
+    flags the hull non-critical)."""
+
+    def __init__(self, name: str = ""):
+        super().__init__(name)
+        self._critical = 1
 
 
 class SensorSubsystem(PoweredSubsystem):

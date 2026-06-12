@@ -532,3 +532,38 @@ def test_query_subsystem_condition_defaults_to_100_when_resolution_misses():
     assert _query_subsystem_condition(EmptyShip(), "Phantom") == 100
     assert _query_subsystem_condition(None, "Anything") == 100
     assert _query_subsystem_condition(EmptyShip(), "") == 100
+
+
+def test_destroyed_ship_excluded_from_target_list():
+    """A ship that is dying or dead (death sequence in progress) must drop
+    off the target list immediately, not linger for the throes window."""
+    from engine.ui.target_list_view import TargetListView
+    App._reset_target_menu_singleton()
+    target_menu = App.STTargetMenu_CreateW("Targets")
+    game, player, mission = _setup_game_with_player()
+    try:
+        alive = ShipClass(); alive.SetName("Alive")
+        doomed = ShipClass(); doomed.SetName("Doomed")
+        target_menu.RebuildShipMenu(alive)
+        target_menu.RebuildShipMenu(doomed)
+
+        doomed.SetDying(True)   # death sequence started -> not a valid target
+
+        view = TargetListView()
+        script = view.render_payload()
+        assert script is not None
+        body = script[len("setTargetList("):-2]
+        state = json.loads(body)
+        names = [r["name"] for r in state["rows"]]
+        assert names == ["Alive"]
+
+        # A fully dead ship is likewise excluded.
+        alive.SetDead(True)
+        view.invalidate()
+        script2 = view.render_payload()
+        body2 = script2[len("setTargetList("):-2]
+        names2 = [r["name"] for r in json.loads(body2)["rows"]]
+        assert names2 == []
+    finally:
+        from engine.core.game import _set_current_game
+        _set_current_game(None)
