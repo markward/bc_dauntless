@@ -31,6 +31,13 @@ def _record(dest, event):
     _received.append(event.GetEventType())
 
 
+def teardown_function(_):
+    # Drop the TCW carrying this module's _record handler so no other
+    # test file inherits it.
+    TacticalControlWindow._instance = None
+    _received.clear()
+
+
 def test_f1_keydown_reaches_tcw_through_sdk_pipeline():
     _received.clear()
     TacticalControlWindow._instance = None

@@ -21,6 +21,9 @@ KY_MBUTTON: int = 0x04
 # Function keys — Windows VK_F1..F5 values (KeyConfig.MapScancodes
 # registers them; DefaultKeyboardBinding.py:121-125 binds them to
 # ET_INPUT_TALK_TO_*). KY_ mirrors WC_ like the mouse buttons above.
+# F6-F12 remain stubs (int()=0): their registrations/bindings collapse
+# onto key 0, last-write-wins, and nothing polls key 0 — give them real
+# VK codes here when a consumer lands.
 WC_F1: int = 0x70
 WC_F2: int = 0x71
 WC_F3: int = 0x72
