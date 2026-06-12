@@ -113,7 +113,7 @@ def test_ship_vs_immovable_planet_bounces_planet_fixed():
     from engine.appc.collisions import _resolve_body, _respond_pair, _overlay_vec
     ship = _ship(0.0, 1000.0, +10.0)
     planet = Planet_Create(2.0, "")
-    planet.SetTranslateXYZ(2.5, 0.0, 0.0)  # dist 2.5 < r1 + r2.0 = 3.0
+    planet.SetTranslateXYZ(2.3, 0.0, 0.0)  # dist 2.3 < 0.8*(1+2) = 2.4 scaled boundary
     pre = planet.GetTranslate().x
     _respond_pair(_resolve_body(ship), _resolve_body(planet),
                   host=None, ship_instances=None)
@@ -138,6 +138,19 @@ def test_non_overlapping_pair_is_ignored():
     b = _ship(50.0, 1000.0, -10.0)  # far apart
     assert _respond_pair(_resolve_body(a), _resolve_body(b),
                          host=None, ship_instances=None) is None
+
+
+def test_radius_scale_allows_closer_approach_before_trigger():
+    """Inside the raw bounding-sphere sum (2.0) but outside the scaled
+    boundary (0.8 * 2.0 = 1.6) -> no collision yet. Pins the 20% grace
+    window that compensates for generous bounding spheres."""
+    from engine.appc.collisions import _resolve_body, _respond_pair, _overlay_vec
+    a = _ship(0.0, 1000.0, +10.0)
+    b = _ship(1.7, 1000.0, -10.0)  # 1.6 < dist 1.7 < 2.0
+    hit = _respond_pair(_resolve_body(a), _resolve_body(b),
+                        host=None, ship_instances=None)
+    assert hit is None
+    assert _overlay_vec(a) is None and _overlay_vec(b) is None
 
 
 def test_respond_pair_invokes_apply_hit_for_both_ships(monkeypatch):

@@ -23,6 +23,11 @@ COLLISION_DAMAGE_COEFF = 5.0     # KE -> hull-damage-points; calibrated against
                                  # trivial. Tune in-engine by feel. See spec §9.
 COLLISION_DECAY_TAU = 0.5        # collision-velocity overlay decay time constant (s)
 COLLISION_FALLBACK_MASS = 1.0e4  # nominal mass for a ship reporting GetMass()==0
+COLLISION_RADIUS_SCALE = 0.8     # effective collision boundary as a fraction of
+                                 # rA+rB: objects close 20% of the bounding-
+                                 # sphere gap before a hit registers, compensating
+                                 # for hulls sitting well inside their generous
+                                 # bounding spheres (e.g. Galaxy saucer+nacelles)
 
 
 @dataclass
@@ -102,7 +107,9 @@ def _respond_pair(a: "_Body", b: "_Body", host, ship_instances):
     dy = b.center.y - a.center.y
     dz = b.center.z - a.center.z
     dist2 = dx * dx + dy * dy + dz * dz
-    sum_r = a.radius + b.radius
+    # Effective boundary is scaled below the raw bounding-sphere sum so hulls
+    # visually close most of the gap before the hit registers (spec §4).
+    sum_r = (a.radius + b.radius) * COLLISION_RADIUS_SCALE
     if dist2 >= sum_r * sum_r:
         return None
     dist = math.sqrt(dist2)
@@ -155,9 +162,12 @@ def _respond_pair(a: "_Body", b: "_Body", host, ship_instances):
     # nominal point returned for tests/debugging and the A-side fallback.
     from engine.appc.combat import apply_hit, _resolve_hit_point
     damage = _ke_damage(inv_sum, v_rel)
-    contact = TGPoint3(a.center.x + nx * a.radius,
-                       a.center.y + ny * a.radius,
-                       a.center.z + nz * a.radius)
+    # Fallback contact sits on the SCALED sphere surface (where the collision
+    # actually registered); mesh refinement overrides it when a host is present.
+    eff_ra = a.radius * COLLISION_RADIUS_SCALE
+    contact = TGPoint3(a.center.x + nx * eff_ra,
+                       a.center.y + ny * eff_ra,
+                       a.center.z + nz * eff_ra)
     if a.is_movable:
         pt_a, mesh_n_a = _resolve_hit_point(
             host, ship_instances, a.obj,
@@ -166,9 +176,10 @@ def _respond_pair(a: "_Body", b: "_Body", host, ship_instances):
                   normal=(mesh_n_a if mesh_n_a is not None else TGPoint3(nx, ny, nz)),
                   host=host, ship_instances=ship_instances, weapon_type=None)
     if b.is_movable:
-        fb_b = TGPoint3(b.center.x - nx * b.radius,
-                        b.center.y - ny * b.radius,
-                        b.center.z - nz * b.radius)
+        eff_rb = b.radius * COLLISION_RADIUS_SCALE
+        fb_b = TGPoint3(b.center.x - nx * eff_rb,
+                        b.center.y - ny * eff_rb,
+                        b.center.z - nz * eff_rb)
         pt_b, mesh_n_b = _resolve_hit_point(
             host, ship_instances, b.obj,
             a.center, TGPoint3(nx, ny, nz), dist, fb_b)
