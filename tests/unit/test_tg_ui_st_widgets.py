@@ -7,9 +7,11 @@ from engine.appc.tg_ui.st_widgets import (
     SortedRegionMenu, SortedRegionMenu_CreateW,
     SortedRegionMenu_SetWarpButton, SortedRegionMenu_GetWarpButton,
     SortedRegionMenu_SetPauseSorting, SortedRegionMenu_ClearSetCourseMenu,
+    SortedRegionMenu_IsSortingPaused,
     STRoundedButton, STRoundedButton_CreateW, STRoundedButton_Cast,
     STSubPane, STSubPane_Create, STSubPane_Cast,
     STButton_Cast, STStylizedWindow_Cast, STToggle_Cast,
+    STWarpButton_Cast, SortedRegionMenu_Cast,
     _reset_module_state,
 )
 from engine.appc.windows import STStylizedWindow_CreateW
@@ -60,3 +62,36 @@ def test_casts():
     sp = STSubPane_Create()
     assert STSubPane_Cast(sp) is sp
     assert STToggle_Cast(btn) is None
+
+
+def test_warp_button_destination_default_falsy():
+    b = STWarpButton_CreateW("Warp")
+    assert not b.GetDestination()          # SDK truth-branch must not fire
+    b.SetDestination("Systems.Artrus.Artrus3")
+    assert b.GetDestination() == "Systems.Artrus.Artrus3"
+
+
+def test_toggle_state_and_factory():
+    from engine.appc.tg_ui.st_widgets import STToggle, STToggle_CreateW
+    t = STToggle_CreateW("Cloak", 1, "On", None, "Off", None)
+    assert t.IsToggled() == 1
+    t.SetNotToggled()
+    assert t.IsToggled() == 0
+    assert t.GetToggleState() == 0
+
+
+def test_sorting_paused_reflects_flag():
+    from engine.appc.tg_ui.st_widgets import SortedRegionMenu_IsSortingPaused
+    assert SortedRegionMenu_IsSortingPaused() == 0
+    SortedRegionMenu_SetPauseSorting(1)
+    assert SortedRegionMenu_IsSortingPaused() == 1
+
+
+def test_new_casts():
+    from engine.appc.tg_ui.st_widgets import STWarpButton_Cast, SortedRegionMenu_Cast
+    b = STWarpButton_CreateW("Warp")
+    m = SortedRegionMenu_CreateW("Set Course")
+    assert STWarpButton_Cast(b) is b
+    assert STWarpButton_Cast(m) is None
+    assert SortedRegionMenu_Cast(m) is m
+    assert SortedRegionMenu_Cast(b) is None

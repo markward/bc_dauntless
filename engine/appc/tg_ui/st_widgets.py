@@ -24,6 +24,7 @@ class STToggle(STButton):
     def SetToggled(self, *args) -> None:    self._toggled = True
     def SetNotToggled(self, *args) -> None: self._toggled = False
     def IsToggled(self) -> int:             return 1 if self._toggled else 0
+    def GetToggleState(self) -> int:        return self.IsToggled()
 
 
 class STWarpButton(STButton):
@@ -33,11 +34,17 @@ class STWarpButton(STButton):
         super().__init__(label, event, flags)
         self._warp_time = 0.0
         self._course_menu = None
+        self._destination = None
 
     def SetWarpTime(self, t) -> None:     self._warp_time = float(t)
     def GetWarpTime(self) -> float:       return self._warp_time
     def SetCourseMenu(self, m) -> None:   self._course_menu = m
     def GetCourseMenu(self):              return self._course_menu
+    # Destination is read in SDK truth-branches and string comparisons
+    # (BridgeHandlers.py:1409, E6M1/E6M5/E7M6 warp handlers) — must be a
+    # real falsy default, never a truthy _Stub.
+    def SetDestination(self, dest) -> None:  self._destination = dest
+    def GetDestination(self):                return self._destination
 
 
 class SortedRegionMenu(STMenu):
@@ -87,6 +94,12 @@ def SortedRegionMenu_ClearSetCourseMenu(*args) -> None:
     pass
 
 
+def SortedRegionMenu_IsSortingPaused() -> int:
+    # Systems/Utils.py:32 branches on `if not bPaused:` — must return the
+    # real flag, not a truthy stub.
+    return _pause_sorting
+
+
 # ── Factories ────────────────────────────────────────────────────────────────
 
 def STCharacterMenu_CreateW(label="", *_extra) -> STCharacterMenu:
@@ -95,6 +108,20 @@ def STCharacterMenu_CreateW(label="", *_extra) -> STCharacterMenu:
 
 def STWarpButton_CreateW(label="", event=None, flags=0) -> STWarpButton:
     return STWarpButton(str(label), event, flags)
+
+
+def STToggle_CreateW(label="", default=0, label_on="", event_on=None,
+                     label_off="", event_off=None, *_extra) -> STToggle:
+    """SDK signature (BridgeUtils.py:76): STToggle_CreateW(pName, iDefault,
+    pNameOn, pOnEvent, pNameOff, pOffEvent)."""
+    t = STToggle(str(label), event_on)
+    t._label_on = str(label_on)
+    t._label_off = str(label_off)
+    t._event_on = event_on
+    t._event_off = event_off
+    if default:
+        t.SetToggled()
+    return t
 
 
 def SortedRegionMenu_CreateW(label="", *_extra) -> SortedRegionMenu:
@@ -129,3 +156,11 @@ def STSubPane_Cast(obj):
 
 def STToggle_Cast(obj):
     return obj if isinstance(obj, STToggle) else None
+
+
+def STWarpButton_Cast(obj):
+    return obj if isinstance(obj, STWarpButton) else None
+
+
+def SortedRegionMenu_Cast(obj):
+    return obj if isinstance(obj, SortedRegionMenu) else None
