@@ -1,5 +1,7 @@
 #include <audio/audio_system.h>
 #include <audio/wav.h>
+#include <audio/mp3.h>
+#include <cstring>
 
 namespace dauntless::audio {
 
@@ -15,7 +17,12 @@ bool AudioSystem::load_sound(const std::string&, const std::string& name,
                              const uint8_t* wav_bytes, size_t wav_len,
                              bool positional) {
     WavData wav;
-    if (!decode_wav(wav_bytes, wav_len, wav)) return false;
+    const bool is_wav = wav_len >= 12
+        && std::memcmp(wav_bytes, "RIFF", 4) == 0
+        && std::memcmp(wav_bytes + 8, "WAVE", 4) == 0;
+    const bool decoded = is_wav ? decode_wav(wav_bytes, wav_len, wav)
+                                : decode_mp3(wav_bytes, wav_len, wav);
+    if (!decoded) return false;
     PcmDesc d{wav.channels, wav.bits_per_sample, wav.sample_rate};
     BufferHandle h = backend_->create_buffer(d, wav.pcm.data(), wav.pcm.size());
     if (h == 0) return false;

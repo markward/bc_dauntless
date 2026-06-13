@@ -122,4 +122,25 @@ TEST(AudioSystem, UpdateReapsFinishedOneShotsViaBackendStop) {
     EXPECT_TRUE(saw_stop_for_handle);
 }
 
+TEST(AudioSystemDispatch, LoadsWavViaSniff) {
+    using namespace dauntless::audio;
+    auto backend = std::make_unique<NullBackend>();
+    AudioSystem sys(std::move(backend));
+    ASSERT_TRUE(sys.init());
+    auto wav = tiny_wav();
+    EXPECT_TRUE(sys.load_sound("", "wav_sound", wav.data(), wav.size(), false));
+    EXPECT_NE(sys.get_sound("wav_sound"), 0u);
+}
+
+TEST(AudioSystemDispatch, NonWavRoutedToMp3AndFailsCleanly) {
+    using namespace dauntless::audio;
+    auto backend = std::make_unique<NullBackend>();
+    AudioSystem sys(std::move(backend));
+    ASSERT_TRUE(sys.init());
+    // Not RIFF/WAVE -> routed to decode_mp3 -> not a valid MP3 -> false, no crash.
+    std::vector<uint8_t> junk = {0x49, 0x44, 0x33, 0x00, 0x11, 0x22, 0x33, 0x44};
+    EXPECT_FALSE(sys.load_sound("", "bad", junk.data(), junk.size(), false));
+    EXPECT_EQ(sys.get_sound("bad"), 0u);
+}
+
 }  // namespace
