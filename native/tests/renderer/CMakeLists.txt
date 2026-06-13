@@ -9,6 +9,7 @@ add_executable(renderer_tests
     sun_pass_test.cc
     dust_pass_test.cc
     aabb_test.cc
+    bone_palette_test.cc
     glow_region_test.cc
     ray_trace_test.cc
     shield_state_test.cc
