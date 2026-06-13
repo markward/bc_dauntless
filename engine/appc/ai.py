@@ -1092,6 +1092,31 @@ class CharacterAction(TGAction):
     def UseNameAndSetInsteadOfObject(self, v) -> None:
         self._use_name_and_set = bool(v)
 
+    def _do_play(self) -> None:
+        # Route the speak action-types through the shared speech bus; every
+        # other action type (MOVE/TURN/GLANCE/...) stays a Phase-1 no-op.
+        # Lazy imports avoid an ai<->characters/crew_speech import cycle.
+        at = self._action_type
+        if at in (self.AT_SPEAK_LINE, self.AT_SPEAK_LINE_NO_FLAP_LIPS):
+            voice_only = False
+        elif at in (self.AT_SAY_LINE, self.AT_SAY_LINE_AFTER_TURN):
+            voice_only = True
+        else:
+            return
+        from engine.appc import crew_speech
+        from engine.appc.characters import CharacterClass_Cast
+        cc = CharacterClass_Cast(self._character) if self._character is not None else None
+        if cc is not None:
+            name = cc.GetCharacterName()
+        elif isinstance(self._character, str):
+            # CharacterAction_CreateByName passes the character's name as a
+            # string (e.g. "Liu"); use it directly when there's no object.
+            name = self._character
+        else:
+            name = ""
+        crew_speech.emit(name, self._database, self._detail,
+                         self._priority, voice_only=voice_only)
+
 
 def CharacterAction_Create(
     character=None,

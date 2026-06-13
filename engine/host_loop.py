@@ -1371,6 +1371,7 @@ def reset_sdk_globals() -> None:
     try:
         import LoadBridge as _LB_reset
         _LB_reset._reset_menus_created()
+        _LB_reset._reset_crew_populated()
     except Exception:
         pass
     try:

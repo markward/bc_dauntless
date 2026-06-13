@@ -501,3 +501,40 @@ def test_speakline_with_stub_database_shows_no_subtitle():
 
     sub = App.TopWindow_GetTopWindow().FindMainWindow(App.MWT_SUBTITLE)
     assert sub._snapshot(now=0.0) is None
+
+
+def test_setdatabase_loads_path_string_into_db_object():
+    from engine.appc.characters import CharacterClass
+    from engine.appc.localization import TGLocalizationDatabase
+    c = CharacterClass()
+    c.SetDatabase("data/TGL/Bridge Menus.tgl")   # path string -> loaded DB
+    db = c.GetDatabase()
+    assert isinstance(db, TGLocalizationDatabase)
+    # HasString is callable on the resolved DB (real method, not a stub).
+    assert db.HasString("definitely-not-a-key") in (True, False)
+
+
+def test_setdatabase_passes_through_db_object():
+    from engine.appc.characters import CharacterClass
+    from engine.appc.localization import TGLocalizationDatabase
+    c = CharacterClass()
+    real = TGLocalizationDatabase("x.tgl", strings={"k": "v"})
+    c.SetDatabase(real)                            # object -> stored as-is
+    assert c.GetDatabase() is real
+
+
+def test_setdatabase_none_stays_none():
+    from engine.appc.characters import CharacterClass
+    c = CharacterClass()
+    c.SetDatabase(None)
+    assert c.GetDatabase() is None
+
+
+def test_setdatabase_returns_loaded_db():
+    # SWIG CharacterClass_SetDatabase returns the loaded database; mirror that.
+    from engine.appc.characters import CharacterClass
+    from engine.appc.localization import TGLocalizationDatabase
+    c = CharacterClass()
+    result = c.SetDatabase("data/TGL/Bridge Menus.tgl")
+    assert isinstance(result, TGLocalizationDatabase)
+    assert result is c.GetDatabase()

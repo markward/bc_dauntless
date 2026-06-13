@@ -133,6 +133,7 @@ class CrewMenuPanel(Panel):
                     clicked.SetDestination(root)
                     clicked.SetSource(widget)
                     App.g_kEventManager.AddEvent(clicked)
+                    self._acknowledge(root)
             # Menu nodes open/close client-side in CEF; no SDK event needed.
             return True
         return False
@@ -146,10 +147,25 @@ class CrewMenuPanel(Panel):
         if not isinstance(menu, STMenu) or not menu.IsEnabled():
             return
         wid = ensure_widget_id(menu)
+        opening = self._open_menu_id != wid
         self._open_menu_id = None if self._open_menu_id == wid else wid
         # Open menu changed (toggle always closes or switches) — a reopened
         # menu starts with all submenus collapsed.
         self._expanded_ids.clear()
+        if opening:
+            self._acknowledge(menu)
+
+    def _acknowledge(self, menu) -> None:
+        """Fire the owning officer's spoken acknowledgement. A resolution miss
+        (unknown label / no bridge set) is a silent no-op — menu interaction
+        must never break on a speech hiccup."""
+        try:
+            from engine.ui import crew_menu_hotkeys
+            from engine.appc import crew_speech
+            char = crew_menu_hotkeys.resolve_character(menu.GetLabel())
+            crew_speech.acknowledge(char)
+        except Exception:
+            _logger.debug("crew-menu ack failed", exc_info=True)
 
     def has_open_menu(self) -> bool:
         return self._open_menu_id is not None

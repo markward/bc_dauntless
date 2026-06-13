@@ -386,7 +386,22 @@ class CharacterClass(ObjectClass):
     def GetYesSir(self) -> str:                   return self._yes_sir_audio
 
     # ── Database (localization) ─────────────────────────────────────────────
-    def SetDatabase(self, db) -> None:            self._database = db
+    def SetDatabase(self, db):
+        # SDK passes a TGL path string (e.g. "data/TGL/Bridge Crew General.tgl");
+        # load it into a real localization DB so GetDatabase() callers
+        # (acknowledge/emit) get HasString/GetFilename. A DB object (or any
+        # non-string) is stored as-is. Best-effort: a load failure stores None.
+        # Returns the stored DB — the SWIG CharacterClass_SetDatabase binding
+        # returns the loaded database (App.py:4707).
+        if isinstance(db, str):
+            try:
+                import App
+                self._database = App.g_kLocalizationManager.Load(db)
+            except Exception:
+                self._database = None
+        else:
+            self._database = db
+        return self._database
     def GetDatabase(self):                        return self._database
 
     # ── Menu ────────────────────────────────────────────────────────────────
@@ -484,18 +499,7 @@ class CharacterClass(ObjectClass):
         # SDK call shape is uniformly SpeakLine(db, lineID, priority) (or the
         # 2-arg form with the default priority); no addressee arg.
         db = pDatabase if pDatabase is not None else self._database
-        line = str(lineID)
-        # Gate on HasString so a missing TGL doesn't render the raw line key.
-        text = db.GetString(line) if (db and db.HasString(line)) else None
-        # A stub database (e.g. GetEpisode().GetDatabase() with no live episode)
-        # returns a truthy _NamedStub from HasString/GetString rather than a
-        # real string; never route its repr as subtitle text.
-        if not isinstance(text, str):
-            text = None
-        wav = db.GetFilename(line) if db else None
-        if not isinstance(wav, str) or not wav:
-            wav = None
-        crew_speech.bus().speak(self._character_name, text, wav, int(priority))
+        crew_speech.emit(self._character_name, db, lineID, priority, voice_only=False)
 
     def SayLine(self, pDatabase=None, lineID="", _addressee=None,
                 _flag=None, priority=CSP_NORMAL, *_) -> None:
@@ -503,13 +507,10 @@ class CharacterClass(ObjectClass):
         #   SayLine(db, lineID, "Captain", 1)                       -> default priority
         #   SayLine(db, lineID, "Captain", 1, App.CSP_SPONTANEOUS)  -> explicit priority
         # arg3 is the addressee and arg4 a flag; both are meaningless headless.
-        # The real priority is the OPTIONAL 5th arg — mapping it to the 4th
-        # positional (as a naive (db, lineID, priority) signature would) drops
-        # the SPONTANEOUS tag off the most common idle-callout form. Voice-only
-        # acknowledgement, no subtitle.
+        # The real priority is the OPTIONAL 5th arg. Voice-only acknowledgement.
         db = pDatabase if pDatabase is not None else self._database
-        wav = (db.GetFilename(str(lineID)) or None) if db else None
-        crew_speech.bus().speak(self._character_name, None, wav, int(priority))
+        crew_speech.emit(self._character_name, db, lineID, priority, voice_only=True)
+
     def Breathe(self, *args) -> None:             pass
     def Blink(self, *args) -> None:               pass
     def MoveTo(self, *args) -> None:              pass
@@ -570,7 +571,9 @@ class CharacterClass(ObjectClass):
 
 # ── Factories ────────────────────────────────────────────────────────────────
 
-def CharacterClass_Create(body_nif: str = "", head_nif: str = "") -> CharacterClass:
+def CharacterClass_Create(body_nif: str = "", head_nif: str = "", *_extra) -> CharacterClass:
+    # Some SDK character modules (Kiska, Saffi) pass a 3rd positional arg
+    # (a quality/female flag in the original Appc). Accept and ignore it.
     return CharacterClass(body_nif, head_nif)
 
 

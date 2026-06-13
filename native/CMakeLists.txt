@@ -16,6 +16,7 @@ endif()
 
 # Third-party vendored libraries.
 add_subdirectory(third_party/stb)
+add_subdirectory(third_party/dr_libs)
 add_subdirectory(third_party/glad)
 add_subdirectory(third_party/glm)
 

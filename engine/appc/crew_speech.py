@@ -83,6 +83,67 @@ class CrewSpeechBus:
             pass
 
 
+def emit(speaker, db, line_id, priority, *, voice_only) -> None:
+    """Resolve a line's subtitle text (unless voice_only) and voice wav from a
+    localization DB, then feed the speech bus. Single home for the HasString
+    gate + isinstance(str) stub-DB guards shared by SpeakLine/SayLine and
+    CharacterAction speak actions."""
+    line = str(line_id)
+    text = None
+    if not voice_only and db is not None and db.HasString(line):
+        t = db.GetString(line)
+        text = t if isinstance(t, str) else None   # drop stub-DB repr
+    wav = db.GetFilename(line) if db is not None else None
+    if not isinstance(wav, str) or not wav:         # drop stub-DB / empty
+        wav = None
+    bus().speak(speaker, text, wav, int(priority))
+
+
+def _mission_database():
+    """MissionLib.GetMissionDatabase(), best-effort (None if unavailable)."""
+    try:
+        import MissionLib
+        return MissionLib.GetMissionDatabase()
+    except Exception:
+        return None
+
+
+def _rand5() -> int:
+    """App.g_kSystemWrapper.GetRandomNumber(5) (0..4), best-effort -> 0."""
+    try:
+        import App
+        return int(App.g_kSystemWrapper.GetRandomNumber(5))
+    except Exception:
+        return 0
+
+
+def acknowledge(character) -> None:
+    """Spoken acknowledgement for a bridge officer (subtitle + best-effort
+    voice). Mirrors BridgeHandlers.CharacterInteraction's line selection;
+    falls back to a literal 'Aye, Captain.' so the ack is always visible."""
+    if character is None:
+        return
+    from engine.appc.ai import CSP_NORMAL
+    name = character.GetCharacterName()
+    yes = character.GetYesSir()
+    if yes:
+        db = _mission_database()
+        line = str(yes)
+    else:
+        db = character.GetDatabase()
+        line = name + "Sir" + str(_rand5() + 1)   # 1..5
+    text = None
+    if db is not None and db.HasString(line):
+        t = db.GetString(line)
+        text = t if isinstance(t, str) else None
+    if not text:
+        text = "Aye, Captain."                      # guaranteed-visible fallback
+    wav = db.GetFilename(line) if db is not None else None
+    if not isinstance(wav, str) or not wav:
+        wav = None
+    bus().speak(name, text, wav, CSP_NORMAL)
+
+
 _bus: Optional[CrewSpeechBus] = None
 
 

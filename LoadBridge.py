@@ -20,6 +20,70 @@ _logger = logging.getLogger(__name__)
 
 _menus_created = False
 
+_crew_populated = False
+
+# Per-bridge officer roster: (character module, set-object name). The set name
+# is documentation only — each module's CreateCharacter owns the actual
+# AddObjectToSet(pChar, "Tactical") call; we keep the column here so the roster
+# reads as the SDK's ConfigureCharacters mapping. Only GalaxyBridge for now;
+# other bridges (and the full SDK bridge Load) extend this table.
+_BRIDGE_CREW = {
+    "GalaxyBridge": [
+        ("Bridge.Characters.Felix",  "Tactical"),
+        ("Bridge.Characters.Kiska",  "Helm"),
+        ("Bridge.Characters.Saffi",  "XO"),
+        ("Bridge.Characters.Miguel", "Science"),
+        ("Bridge.Characters.Brex",   "Engineer"),
+    ],
+}
+
+
+def _reset_crew_populated():
+    """Mission-swap hook (reset_sdk_globals) and test reset."""
+    global _crew_populated
+    _crew_populated = False
+
+
+def populate_bridge_crew(pBridgeSet, bridge_name):
+    """Create + configure the bridge officers for `bridge_name`, mirroring the
+    SDK create->configure order. Each officer's CreateCharacter sets its name
+    and SetDatabase(...tgl); the bridge module's ConfigureCharacters layers on
+    (animation) config. Per-officer and per-stage try/except so one failure
+    can't abort the rest or block mission load. Idempotent via CreateCharacter's
+    own existing-object guard + the _crew_populated latch.
+
+    Defers (without latching) when there is no current game, exactly like
+    CreateCharacterMenus: the SDK CreateCharacter calls LoadSounds() ->
+    pGame.LoadDatabaseSoundInGroup(...), which raises on the host's eager
+    pre-game bridge preload (Game_GetCurrentGame() is None). The mission's own
+    Load() runs with the game present, so population happens there cleanly."""
+    global _crew_populated
+    if _crew_populated:
+        return
+    import App
+    if App.Game_GetCurrentGame() is None:
+        # Pre-game (eager bridge preload): defer without latching so the
+        # mission's own Load() repopulates once the game exists.
+        return
+    roster = _BRIDGE_CREW.get(bridge_name)
+    if roster is None:
+        _logger.info("populate_bridge_crew: no roster for %s", bridge_name)
+        return
+    _crew_populated = True
+    import importlib
+    for mod_name, _set_name in roster:
+        try:
+            importlib.import_module(mod_name).CreateCharacter(pBridgeSet)
+        except Exception:
+            _logger.exception("CreateCharacter failed for %s", mod_name)
+    # Bridge-specific configuration (animations etc.). Speech-critical data
+    # (name + database) is already set by CreateCharacter; this is the faithful
+    # extra and the seam the full SDK bridge Load will reuse.
+    try:
+        importlib.import_module("Bridge." + bridge_name).ConfigureCharacters(pBridgeSet)
+    except Exception:
+        _logger.exception("ConfigureCharacters failed for %s", bridge_name)
+
 
 def _reset_menus_created():
     """Mission-swap hook (reset_sdk_globals) and test reset."""
@@ -93,6 +157,7 @@ def Load(bridge_name: str = ""):
     import App
     existing = App.g_kSetManager.GetSet("bridge")
     if existing:
+        populate_bridge_crew(existing, LAST_REQUESTED)
         CreateCharacterMenus()
         return existing
     pSet = App.SetClass_Create()
@@ -108,5 +173,6 @@ def Load(bridge_name: str = ""):
     pSet.CreateAmbientLight(1.0, 1.0, 1.0, 1.0, "ambientlight1")
     # Stock BC builds the five bridge menus as part of Load —
     # sdk/Build/scripts/LoadBridge.py:187.
+    populate_bridge_crew(pSet, LAST_REQUESTED)
     CreateCharacterMenus()
     return pSet
