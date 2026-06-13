@@ -31,6 +31,11 @@ class CrewMenuPanel(Panel):
         self._widgets_by_id: dict = {}
         self._logged_unrecognised: set = set()
         self._open_menu_id: Optional[int] = None
+        # Inline accordion expand-state for submenu rows — Python-owned,
+        # mirroring TargetListView's per-row `expanded` flag. Cleared
+        # whenever the open menu changes (a reopened menu starts collapsed,
+        # matching BC).
+        self._expanded_ids: set[int] = set()
 
     @property
     def name(self) -> str:
@@ -68,11 +73,28 @@ class CrewMenuPanel(Panel):
             "visible": bool(widget.IsVisible()),
         }
         if isinstance(widget, STMenu):
+            node["expanded"] = wid in self._expanded_ids
             children = [self._snapshot_node(c) for c in widget._children]
             node["children"] = [c for c in children if c is not None]
         return node
 
     def dispatch_event(self, action: str) -> bool:
+        if action.startswith("expand:"):
+            try:
+                wid = int(action[len("expand:"):])
+            except ValueError:
+                _logger.info("crew-menu: malformed expand action %r", action)
+                return True
+            widget = self._widgets_by_id.get(wid)
+            if widget is None:
+                _logger.info("crew-menu: stale expand id %d dropped", wid)
+                return True
+            if isinstance(widget, STMenu):
+                if wid in self._expanded_ids:
+                    self._expanded_ids.discard(wid)
+                else:
+                    self._expanded_ids.add(wid)
+            return True
         if action.startswith("toggle:"):
             try:
                 wid = int(action[len("toggle:"):])
@@ -125,6 +147,9 @@ class CrewMenuPanel(Panel):
             return
         wid = ensure_widget_id(menu)
         self._open_menu_id = None if self._open_menu_id == wid else wid
+        # Open menu changed (toggle always closes or switches) — a reopened
+        # menu starts with all submenus collapsed.
+        self._expanded_ids.clear()
 
     def has_open_menu(self) -> bool:
         return self._open_menu_id is not None
@@ -135,6 +160,7 @@ class CrewMenuPanel(Panel):
         if self._open_menu_id is None:
             return False
         self._open_menu_id = None
+        self._expanded_ids.clear()
         return True
 
     def invalidate(self) -> None:
@@ -142,6 +168,7 @@ class CrewMenuPanel(Panel):
         # Mission swap rebuilds menus with fresh widget ids — a stale open
         # id would keep has_open_menu() True and swallow one ESC press.
         self._open_menu_id = None
+        self._expanded_ids.clear()
 
     def _root_of(self, wid: int):
         """Top-level menu whose subtree contains the widget id, else None."""

@@ -221,3 +221,63 @@ def test_toggle_ignores_disabled_menu_and_buttons():
     helm.SetEnabled()
     panel.toggle_menu(btn)
     assert not panel.has_open_menu()        # buttons are not togglable
+
+
+def _build_helm_with_submenu():
+    """Helm top-level menu with a 'Set Course' submenu that has one child."""
+    from engine.appc.characters import STTopLevelMenu, STMenu, STButton
+    tcw = TacticalControlWindow.GetInstance()
+    helm = STTopLevelMenu("Helm")
+    setcourse = STMenu("Set Course")
+    setcourse.AddChild(STButton("Sol System"))
+    helm.AddChild(setcourse)
+    tcw.AddMenuToList(helm)
+    return helm, setcourse
+
+
+def test_expand_toggles_node_and_flag():
+    helm, setcourse = _build_helm_with_submenu()
+    panel = CrewMenuPanel()
+    panel.toggle_menu(helm)               # open Helm
+    panel.render_payload()                # build _widgets_by_id
+    sc_id = ensure_widget_id(setcourse)
+
+    assert panel.dispatch_event(f"expand:{sc_id}") is True
+    data = json.loads(panel.render_payload()[len("setCrewMenus("):-2])
+    setcourse_node = data["menus"][0]["children"][0]
+    assert setcourse_node["expanded"] is True
+    assert setcourse_node["children"][0]["label"] == "Sol System"
+
+    assert panel.dispatch_event(f"expand:{sc_id}") is True   # collapse
+    data = json.loads(panel.render_payload()[len("setCrewMenus("):-2])
+    assert data["menus"][0]["children"][0]["expanded"] is False
+
+
+def test_expand_stale_and_malformed_dropped():
+    helm, _ = _build_helm_with_submenu()
+    panel = CrewMenuPanel()
+    panel.toggle_menu(helm)
+    panel.render_payload()
+    assert panel.dispatch_event("expand:999999") is True   # stale
+    assert panel.dispatch_event("expand:nope") is True      # malformed
+
+
+def test_closing_menu_clears_expanded():
+    helm, setcourse = _build_helm_with_submenu()
+    panel = CrewMenuPanel()
+    panel.toggle_menu(helm)
+    panel.render_payload()
+    panel.dispatch_event(f"expand:{ensure_widget_id(setcourse)}")
+    assert panel._expanded_ids
+    panel.toggle_menu(helm)               # close → expansion resets
+    assert not panel._expanded_ids
+
+
+def test_invalidate_clears_expanded():
+    helm, setcourse = _build_helm_with_submenu()
+    panel = CrewMenuPanel()
+    panel.toggle_menu(helm)
+    panel.render_payload()
+    panel.dispatch_event(f"expand:{ensure_widget_id(setcourse)}")
+    panel.invalidate()
+    assert not panel._expanded_ids
