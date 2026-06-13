@@ -11,13 +11,23 @@ function setSdkMirror(payload) {
 function renderSubtitle(entry) {
   const el = document.getElementById("sdk-subtitle");
   if (!el) return;
-  if (!entry || !entry.visible || !entry.lines || entry.lines.length === 0) {
+  const lines = (entry && entry.lines) || [];
+  const hasSpeech = !!(entry && entry.speech);
+  if (!entry || !entry.visible || (lines.length === 0 && !hasSpeech)) {
     el.hidden = true;
     el.innerHTML = "";
     return;
   }
   el.hidden = false;
-  el.innerHTML = entry.lines.map(escapeHtml).join("<br>");
+  const parts = lines.map(escapeHtml);
+  if (hasSpeech) {
+    const speaker = entry.speaker
+      ? '<span class="sdk-subtitle__speaker">' +
+        escapeHtml(entry.speaker) + ":</span> "
+      : "";
+    parts.push(speaker + escapeHtml(entry.speech));
+  }
+  el.innerHTML = parts.join("<br>");
 }
 
 function renderStylizedStack(entries) {
