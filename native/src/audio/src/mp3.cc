@@ -2,6 +2,7 @@
 #include <vector>
 
 #define DR_MP3_IMPLEMENTATION
+#define DR_MP3_NO_STDIO   // we only decode from memory (drmp3_init_memory)
 #include "dr_mp3.h"
 
 namespace dauntless::audio {
