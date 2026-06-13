@@ -503,6 +503,21 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
                         skin_bone_to_skeleton[b] = it->second;
                 }
                 fill_skin_weights(cpu, *skin, skin_bone_to_skeleton);
+            } else {
+                // Skinned model, but this shape carries NO skin controller. In
+                // BC, body parts are rigid shapes parented to bone nodes (the
+                // static node-walk in draw_model already places them via
+                // u_model = world * node_chain). When this model is drawn
+                // through the skinned program, every vertex is blended by the
+                // bone palette; a default {0,0,0,0} weight would collapse the
+                // shape to the origin. Bind each vertex fully to bone 0 (the
+                // root), whose palette entry is identity at bind pose, so the
+                // skinned shader leaves the shape undeformed and it lands in the
+                // exact same world position as the static draw.
+                for (auto& v : cpu.vertices) {
+                    v.bone_indices = glm::u8vec4(0, 0, 0, 0);
+                    v.bone_weights = glm::u8vec4(255, 0, 0, 0);
+                }
             }
         }
 
