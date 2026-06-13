@@ -483,20 +483,16 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
         // Skinning: if this shape carries a NiTriShapeSkinController via its
         // controller link, map its bones to skeleton indices and fill
         // per-vertex weights. BC character shapes attach the skin controller
-        // directly to the shape; we additionally follow next_controller_link
-        // on skin controllers themselves (rare). Mirrors
+        // directly to the shape's controller link, so we resolve that single
+        // link rather than walking the controller chain. Mirrors
         // gather_bone_block_indices' resolve.
         if (!model.skeleton.bones.empty()) {
             const nif::NiTriShapeSkinController* skin = nullptr;
             std::uint32_t ctrl = shape->av.obj.controller_link;
-            while (ctrl != 0) {
+            if (ctrl != 0) {
                 auto ci = resolver.resolve(ctrl);
-                if (ci == LinkResolver::kInvalidIndex || ci >= f.blocks.size())
-                    break;
-                const auto* candidate =
-                    std::get_if<nif::NiTriShapeSkinController>(&f.blocks[ci]);
-                if (candidate) { skin = candidate; break; }
-                break;  // non-skin controller: BC shapes attach skin directly.
+                if (ci != LinkResolver::kInvalidIndex && ci < f.blocks.size())
+                    skin = std::get_if<nif::NiTriShapeSkinController>(&f.blocks[ci]);
             }
             if (skin) {
                 std::vector<int> skin_bone_to_skeleton(skin->bone_links.size(), -1);
