@@ -370,3 +370,63 @@ def test_app_exposes_menu_classes():
     assert App.STMenu is STMenu
     assert App.STTopLevelMenu is STTopLevelMenu
     assert App.STButton_CreateW is STButton_CreateW
+
+
+def test_speakline_routes_text_and_speaker_to_subtitle(monkeypatch):
+    import App
+    from engine.appc import top_window, crew_speech
+    from engine.appc.characters import CharacterClass
+    from engine.appc.localization import TGLocalizationDatabase
+    from engine.appc.ai import CSP_NORMAL
+
+    top_window.reset_for_tests()
+    crew_speech.bus().reset()
+
+    char = CharacterClass()
+    char.SetCharacterName("Tactical")
+    db = TGLocalizationDatabase("x.tgl", strings={"L1": "Shields holding"})
+
+    char.SpeakLine(db, "L1", CSP_NORMAL)
+
+    sub = App.TopWindow_GetTopWindow().FindMainWindow(App.MWT_SUBTITLE)
+    snap = sub._snapshot(now=0.0)
+    assert snap["speaker"] == "Tactical"
+    assert snap["speech"] == "Shields holding"
+
+
+def test_speakline_without_string_shows_no_subtitle(monkeypatch):
+    import App
+    from engine.appc import top_window, crew_speech
+    from engine.appc.characters import CharacterClass
+    from engine.appc.localization import TGLocalizationDatabase
+
+    top_window.reset_for_tests()
+    crew_speech.bus().reset()
+
+    char = CharacterClass()
+    char.SetCharacterName("Eng")
+    db = TGLocalizationDatabase("x.tgl")  # no strings -> HasString False
+
+    char.SpeakLine(db, "ge119")  # 2-arg form, default priority
+
+    sub = App.TopWindow_GetTopWindow().FindMainWindow(App.MWT_SUBTITLE)
+    assert sub._snapshot(now=0.0) is None  # nothing displayed
+
+
+def test_sayline_sets_no_subtitle(monkeypatch):
+    import App
+    from engine.appc import top_window, crew_speech
+    from engine.appc.characters import CharacterClass
+    from engine.appc.localization import TGLocalizationDatabase
+
+    top_window.reset_for_tests()
+    crew_speech.bus().reset()
+
+    char = CharacterClass()
+    char.SetCharacterName("XO")
+    db = TGLocalizationDatabase("x.tgl", strings={"ack": "Aye sir"})
+
+    char.SayLine(db, "ack")  # voice-only -- must NOT set a subtitle slot
+
+    sub = App.TopWindow_GetTopWindow().FindMainWindow(App.MWT_SUBTITLE)
+    assert sub._snapshot(now=0.0) is None

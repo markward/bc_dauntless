@@ -25,6 +25,8 @@ calling AddChild + GetSubmenuW/GetButtonW chains.
 
 from engine.appc.objects import ObjectClass
 from engine.appc.tg_ui.widgets import TGPane
+from engine.appc import crew_speech
+from engine.appc.ai import CSP_NORMAL
 
 
 # ── Bridge menu primitives ───────────────────────────────────────────────────
@@ -478,8 +480,19 @@ class CharacterClass(ObjectClass):
         return self._data.get("Location")
 
     # ── Speak/animate verbs (no-op in headless) ─────────────────────────────
-    def SpeakLine(self, *args) -> None:           pass
-    def SayLine(self, *args) -> None:             pass
+    def SpeakLine(self, pDatabase=None, lineID="", priority=CSP_NORMAL, *_) -> None:
+        db = pDatabase if pDatabase is not None else self._database
+        line = str(lineID)
+        # Gate on HasString so a missing TGL doesn't render the raw line key.
+        text = db.GetString(line) if (db and db.HasString(line)) else None
+        wav = (db.GetFilename(line) or None) if db else None
+        crew_speech.bus().speak(self._character_name, text, wav, int(priority))
+
+    def SayLine(self, pDatabase=None, lineID="", priority=CSP_NORMAL, *_) -> None:
+        # "Aye, Captain" acknowledgements: voice-only, no subtitle (matches BC).
+        db = pDatabase if pDatabase is not None else self._database
+        wav = (db.GetFilename(str(lineID)) or None) if db else None
+        crew_speech.bus().speak(self._character_name, None, wav, int(priority))
     def Breathe(self, *args) -> None:             pass
     def Blink(self, *args) -> None:               pass
     def MoveTo(self, *args) -> None:              pass
