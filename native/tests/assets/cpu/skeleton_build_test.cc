@@ -9,10 +9,6 @@
 
 #include <cmath>
 
-// Helper exposed for testing: fills inverse_bind_pose for every bone from
-// the bones' local_transform + parent_index chain.
-namespace assets::detail { void compute_inverse_bind_poses(Skeleton&); }
-
 namespace {
 
 bool mat_near(const glm::mat4& a, const glm::mat4& b, float eps = 1e-4f) {
@@ -21,7 +17,6 @@ bool mat_near(const glm::mat4& a, const glm::mat4& b, float eps = 1e-4f) {
             if (std::abs(a[c][r] - b[c][r]) > eps) return false;
     return true;
 }
-
 
 // Synthetic file: Root → Pelvis → Spine → Arm, with a NiTriShapeSkinController
 // referencing the three bones.

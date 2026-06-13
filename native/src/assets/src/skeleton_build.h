@@ -22,6 +22,9 @@ SkeletonBuildResult build_skeleton(const nif::File& file);
 
 /// Fill every bone's inverse_bind_pose = inverse(world-bind transform),
 /// where world-bind composes local_transform down the parent chain.
+/// Precondition: parent_index values must be acyclic and in range (-1 or a
+/// valid bone index); build_skeleton guarantees this. A malformed chain would
+/// loop or read out of bounds.
 void compute_inverse_bind_poses(Skeleton& skeleton);
 
 }  // namespace assets::detail
