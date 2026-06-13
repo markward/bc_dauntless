@@ -297,3 +297,48 @@ def test_close_open_menu_clears_expanded():
     assert panel._expanded_ids
     assert panel.close_open_menu() is True   # ESC path
     assert not panel._expanded_ids
+
+
+def test_opening_menu_fires_acknowledgement():
+    import App
+    from engine.appc import top_window, crew_speech
+    from engine.appc.characters import STTopLevelMenu
+    from engine.appc.windows import TacticalControlWindow
+    from engine.ui.crew_menu_panel import CrewMenuPanel
+
+    top_window.reset_for_tests()
+    crew_speech.bus().reset()
+    tcw = TacticalControlWindow.GetInstance()
+    menu = STTopLevelMenu("Tactical")          # label == TGL-key fallback
+    tcw.AddMenuToList(menu)
+
+    panel = CrewMenuPanel()
+    panel.toggle_menu(menu)                     # opens -> ack
+
+    sub = App.TopWindow_GetTopWindow().FindMainWindow(App.MWT_SUBTITLE)
+    snap = sub._snapshot(now=0.0)
+    assert snap is not None
+    assert snap["speaker"] == "Tactical"
+
+
+def test_closing_menu_fires_no_acknowledgement():
+    import App
+    from engine.appc import top_window, crew_speech
+    from engine.appc.characters import STTopLevelMenu
+    from engine.appc.windows import TacticalControlWindow
+    from engine.ui.crew_menu_panel import CrewMenuPanel
+
+    top_window.reset_for_tests()
+    crew_speech.bus().reset()
+    tcw = TacticalControlWindow.GetInstance()
+    menu = STTopLevelMenu("Tactical")
+    tcw.AddMenuToList(menu)
+
+    panel = CrewMenuPanel()
+    panel.toggle_menu(menu)   # open (acks)
+    crew_speech.bus().reset() # clear channel
+    top_window.reset_for_tests()
+    panel.toggle_menu(menu)   # close -> no ack
+
+    sub = App.TopWindow_GetTopWindow().FindMainWindow(App.MWT_SUBTITLE)
+    assert sub._snapshot(now=0.0) is None
