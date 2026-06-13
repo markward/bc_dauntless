@@ -1,60 +1,78 @@
-// CrewMenuPanel renderer — dauntless-styled bridge menus.
-// Payload: {menus:[{id,type,label,enabled,visible,open,children:[...]}]}
-// Invoked directly by the C++ CEF host as setCrewMenus(payload) where
-// payload is already a JS object (matching the setSdkMirror convention).
+// CrewMenuPanel renderer — officer/tactical menus (F1-F5).
+// Payload: {menus:[{id,type,label,enabled,visible,open,expanded,children:[...]}]}
+// Invoked by the C++ CEF host as setCrewMenus(payload) (payload is a JS
+// object, matching the setSdkMirror convention).
 //
-// Only the OPEN menu renders. There is no persistent title bar: a menu
-// appears when summoned (F1-F5 hotkeys; bridge-character click is a future
-// path) and disappears when closed. The payload still carries every menu
-// so widget ids stay stable for click/toggle dispatch.
+// Only the OPEN menu renders, as one .bc-panel mounted in #crew-menu-host
+// (first child of #tactical-target-stack). No persistent bar: the host is
+// empty until a menu is summoned. Submenus expand inline as indented
+// accordion rows; expand-state is Python-owned (crew-menu/expand:<id>).
+// Leaf buttons fire crew-menu/click:<id>. The payload carries every menu so
+// widget ids stay stable for dispatch.
 
 function setCrewMenus(payload) {
-  const slot = document.getElementById("crew-menu-bar");
-  if (!slot) return;
-  slot.innerHTML = "";
+  const host = document.getElementById("crew-menu-host");
+  if (!host) return;
+  host.innerHTML = "";
   for (const menu of payload.menus) {
     if (!menu.open) continue;
-    slot.appendChild(renderCrewMenu(menu));
+    host.appendChild(renderCrewMenu(menu));
   }
 }
 
 function renderCrewMenu(menu) {
-  const wrap = document.createElement("div");
-  wrap.className = "crew-menu" + (menu.open ? " open" : "");
-  const title = document.createElement("div");
-  title.className = "crew-menu-title" + (menu.enabled ? "" : " disabled");
+  const panel = document.createElement("section");
+  panel.className = "bc-panel crew-menu";
+
+  const header = document.createElement("header");
+  header.className = "bc-panel__header";
+  const title = document.createElement("span");
+  title.className = "bc-panel__title";
   title.textContent = menu.label;
-  // Open-state lives in CrewMenuPanel (shared with F1-F5 hotkeys);
-  // the next setCrewMenus payload re-renders with the new state.
-  if (menu.enabled) {
-    title.onclick = () => dauntlessEvent("crew-menu/toggle:" + menu.id);
-  }
-  wrap.appendChild(title);
-  const drop = document.createElement("div");
-  drop.className = "crew-menu-drop";
-  for (const child of menu.children || []) {
-    drop.appendChild(renderCrewMenuEntry(child));
-  }
-  wrap.appendChild(drop);
-  return wrap;
+  header.appendChild(title);
+  panel.appendChild(header);
+
+  const body = document.createElement("div");
+  body.className = "bc-panel__body";
+  appendCrewRows(body, menu.children || [], 0);
+  panel.appendChild(body);
+  return panel;
 }
 
-function renderCrewMenuEntry(node) {
-  if (node.visible === false) return document.createDocumentFragment();
-  const row = document.createElement("div");
-  row.className = "crew-menu-entry " + node.type +
-                  (node.enabled ? "" : " disabled");
-  row.textContent = node.label;
-  if (node.type === "button" && node.enabled) {
-    row.onclick = () => dauntlessEvent("crew-menu/click:" + node.id);
-  }
-  if (node.type === "menu" && (node.children || []).length) {
-    const sub = document.createElement("div");
-    sub.className = "crew-menu-sub";
-    for (const child of node.children) {
-      sub.appendChild(renderCrewMenuEntry(child));
+// Append rows for `nodes` at `depth`, recursing into expanded submenus.
+function appendCrewRows(body, nodes, depth) {
+  for (const node of nodes) {
+    if (node.visible === false) continue;
+    const hasChildren = node.type === "menu" && (node.children || []).length > 0;
+
+    const row = document.createElement("div");
+    row.className = "crew-menu__row" + (node.enabled ? "" : " disabled") +
+                    (hasChildren ? "" : " crew-menu__row--leaf");
+    row.setAttribute("data-depth", String(Math.min(depth, 2)));
+
+    if (hasChildren) {
+      const caret = document.createElement("span");
+      caret.className = "crew-menu__caret";
+      caret.textContent = node.expanded ? "▾" : "▸";   // down / right
+      row.appendChild(caret);
     }
-    row.appendChild(sub);
+
+    const label = document.createElement("span");
+    label.className = "crew-menu__label";
+    label.textContent = node.label;
+    row.appendChild(label);
+
+    if (node.enabled) {
+      if (hasChildren) {
+        row.onclick = () => dauntlessEvent("crew-menu/expand:" + node.id);
+      } else if (node.type === "button") {
+        row.onclick = () => dauntlessEvent("crew-menu/click:" + node.id);
+      }
+    }
+    body.appendChild(row);
+
+    if (hasChildren && node.expanded) {
+      appendCrewRows(body, node.children, depth + 1);
+    }
   }
-  return row;
 }

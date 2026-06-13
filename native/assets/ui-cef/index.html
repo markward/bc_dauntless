@@ -123,6 +123,12 @@
          See docs/ui_designs/tactical_ui_state.md "Layout gap". -->
     <div id="tactical-left-column">
         <div id="tactical-target-stack">
+            <!-- Crew-menu panel — officer/tactical menus summoned by F1-F5
+                 (CrewMenuPanel). Empty until a menu is open; renders one
+                 .bc-panel matching the target panels below it. Spec:
+                 docs/superpowers/specs/2026-06-13-crew-menu-panel-restyle-design.md -->
+            <div id="crew-menu-host"></div>
+
             <!-- Target ship status — visible only when the player has
                  selected a target ship. Renders the same composite
                  (silhouette + shields + hull bar) as the player panel. -->
@@ -257,11 +263,6 @@
          Spec: docs/superpowers/specs/2026-06-03-cef-sdk-ui-mirror-design.md -->
     <div id="sdk-subtitle" class="sdk-mirror" hidden></div>
     <div id="sdk-stylized-stack" class="sdk-mirror"></div>
-
-    <!-- Crew-menu bar — top-left menu strip driven by CrewMenuPanel.
-         Receives setCrewMenus({menus:[...]}) from Python; button clicks
-         fire dauntlessEvent("crew-menu/click:<id>"). -->
-    <div id="crew-menu-bar"></div>
 
     <script src="js/mission_picker.js"></script>
     <script src="js/pause_menu.js"></script>

@@ -1,90 +1,56 @@
-/* Crew menu bar — dauntless-styled top-left menu strip for SDK bridge menus.
-   Driven by setCrewMenus({menus:[...]}) from CrewMenuPanel.
-   Colors/fonts follow the sdk_mirror.css palette (rgba(10,20,40), #3a6bb8,
-   #e8f0ff, sans-serif 14px). */
+/* Crew menu panel — officer/tactical menus (F1-F5), rendered by
+   CrewMenuPanel into #crew-menu-host (first child of #tactical-target-stack).
+   Matches the shared tactical panel chrome: .bc-panel header/body (salmon
+   LCARS gradient, near-opaque body, Antonio font) plus target-list row
+   styling. Only the open menu renders; the host collapses to zero height
+   when nothing is open. Spec:
+   docs/superpowers/specs/2026-06-13-crew-menu-panel-restyle-design.md */
 
-#crew-menu-bar {
-  position: absolute;
-  top: 16px;
-  left: 16px;
+#crew-menu-host {
+  width: 100%;
+  font-family: "Antonio", "Antonio-Regular", sans-serif;
+  font-weight: 600;
+  color: var(--bc-label-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* .crew-menu is a .bc-panel — header/body chrome inherited from the
+   global bc-panel classes (panels/ship_display/ship_display.css). */
+.crew-menu { width: 100%; }
+
+/* Body rows mirror target-list row styling (.target-list__row / __sub /
+   __leaf). Crew rows carry no affiliation colour, so hover uses a neutral
+   tint of --bc-menu1-base. */
+.crew-menu__row {
   display: flex;
-  gap: 6px;
-  z-index: 45; /* above sdk-stylized-stack (40) so open dropdowns aren't clipped; below subtitle (50) and pause menu (100) */
-}
-
-.crew-menu {
-  position: relative;
-}
-
-.crew-menu-title {
-  padding: 4px 12px;
+  align-items: center;
+  padding: 6px 12px;
   cursor: pointer;
-  user-select: none;
-  background: rgba(10, 20, 40, 0.85);
-  border: 1px solid #3a6bb8;
-  border-radius: 4px;
-  color: #7fa8d8;
-  font-family: sans-serif;
-  font-size: 11px;
-  letter-spacing: 1px;
-  text-transform: uppercase;
+  font-size: 13px;
+  letter-spacing: 0.04em;
 }
 
-.crew-menu-title:hover {
-  background: rgba(20, 40, 80, 0.92);
-  color: #e8f0ff;
+.crew-menu__row:hover { background: rgba(216, 94, 86, 0.18); }
+
+.crew-menu__row[data-depth="1"] { padding-left: 28px; }
+.crew-menu__row[data-depth="2"] { padding-left: 44px; }
+
+.crew-menu__row.disabled { opacity: 0.4; cursor: default; }
+.crew-menu__row.disabled:hover { background: transparent; }
+
+/* Caret matches .target-list__caret — neutral white, glyph swapped in JS
+   (no CSS rotate; rotation promotes the caret to its own GPU layer in CEF
+   and blurs adjacent text). */
+.crew-menu__caret {
+  flex: 0 0 auto;
+  width: 14px;
+  text-align: center;
+  margin-right: 8px;
+  line-height: 1;
+  color: white;
 }
 
-.crew-menu-title.disabled {
-  opacity: 0.4;
-  cursor: default;
-}
+/* Leaf rows have no caret — pad the label to align with carried rows. */
+.crew-menu__row--leaf .crew-menu__label { margin-left: 22px; }
 
-.crew-menu-drop {
-  display: none;
-  position: absolute;
-  top: 100%;
-  left: 0;
-  min-width: 160px;
-  background: rgba(10, 20, 40, 0.92);
-  border: 1px solid #3a6bb8;
-  border-radius: 4px;
-  margin-top: 2px;
-}
-
-.crew-menu.open .crew-menu-drop {
-  display: block;
-}
-
-.crew-menu-entry {
-  padding: 4px 12px;
-  cursor: pointer;
-  position: relative;
-  color: #e8f0ff;
-  font-family: sans-serif;
-  font-size: 14px;
-}
-
-.crew-menu-entry:hover {
-  background: rgba(58, 107, 184, 0.35);
-}
-
-.crew-menu-entry.disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.crew-menu-sub {
-  display: none;
-  position: absolute;
-  left: 100%;
-  top: 0;
-  min-width: 160px;
-  background: rgba(10, 20, 40, 0.92);
-  border: 1px solid #3a6bb8;
-  border-radius: 4px;
-}
-
-.crew-menu-entry:hover > .crew-menu-sub {
-  display: block;
-}
+.crew-menu__label { flex: 1 1 auto; }
