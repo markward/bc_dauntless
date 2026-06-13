@@ -37,6 +37,10 @@ public:
                         const glm::vec4* data,
                         int count) const;
 
+    void set_mat4_array(const std::string& name,
+                        const glm::mat4* data,
+                        int count) const;
+
     void set_int_array(const std::string& name,
                        const int* data,
                        int count) const;
