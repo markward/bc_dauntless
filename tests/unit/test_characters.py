@@ -528,3 +528,13 @@ def test_setdatabase_none_stays_none():
     c = CharacterClass()
     c.SetDatabase(None)
     assert c.GetDatabase() is None
+
+
+def test_setdatabase_returns_loaded_db():
+    # SWIG CharacterClass_SetDatabase returns the loaded database; mirror that.
+    from engine.appc.characters import CharacterClass
+    from engine.appc.localization import TGLocalizationDatabase
+    c = CharacterClass()
+    result = c.SetDatabase("data/TGL/Bridge Menus.tgl")
+    assert isinstance(result, TGLocalizationDatabase)
+    assert result is c.GetDatabase()

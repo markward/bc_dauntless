@@ -386,11 +386,13 @@ class CharacterClass(ObjectClass):
     def GetYesSir(self) -> str:                   return self._yes_sir_audio
 
     # ── Database (localization) ─────────────────────────────────────────────
-    def SetDatabase(self, db) -> None:
+    def SetDatabase(self, db):
         # SDK passes a TGL path string (e.g. "data/TGL/Bridge Crew General.tgl");
         # load it into a real localization DB so GetDatabase() callers
         # (acknowledge/emit) get HasString/GetFilename. A DB object (or any
         # non-string) is stored as-is. Best-effort: a load failure stores None.
+        # Returns the stored DB — the SWIG CharacterClass_SetDatabase binding
+        # returns the loaded database (App.py:4707).
         if isinstance(db, str):
             try:
                 import App
@@ -399,6 +401,7 @@ class CharacterClass(ObjectClass):
                 self._database = None
         else:
             self._database = db
+        return self._database
     def GetDatabase(self):                        return self._database
 
     # ── Menu ────────────────────────────────────────────────────────────────
