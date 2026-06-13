@@ -199,6 +199,9 @@ void BridgePass::render(const scenegraph::World& world,
     // Any Pass::Bridge instance carrying a skeleton is drawn here, lit by the
     // same bridge ambient as the geometry (bridge.frag, white dark-map). Bone
     // palette is bind-pose for now (SP1); SP2 supplies an animated pose.
+    // Unlike the bridge shell (sub-pass A, mixed winding → culling disabled),
+    // character NIFs have consistent winding, so cull-back (re-enabled above)
+    // is correct for them.
     auto& skin_shader = pipeline.skinned_bridge_shader();
     skin_shader.use();
     skin_shader.set_mat4("u_view", camera.view_matrix());
