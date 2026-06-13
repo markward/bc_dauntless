@@ -94,3 +94,37 @@ def test_cast_returns_none_for_non_subtitle_window():
     assert SubtitleWindow_Cast("not-a-window") is None
     assert SubtitleWindow_Cast(object()) is None
     assert SubtitleWindow_Cast(42) is None
+
+
+def test_set_crew_line_records_slot(monkeypatch):
+    sw = _SubtitleWindow()
+    monkeypatch.setattr("engine.appc.windows.time.monotonic", lambda: 100.0)
+    sw.set_crew_line("Tactical", "Shields holding", 4.0)
+    assert sw._crew_line == ("Tactical", "Shields holding", 104.0)
+
+
+def test_snapshot_includes_speaker_and_speech_when_crew_line_live(monkeypatch):
+    sw = _SubtitleWindow()
+    monkeypatch.setattr("engine.appc.windows.time.monotonic", lambda: 0.0)
+    sw.set_crew_line("Helm", "Course laid in", 5.0)
+    snap = sw._snapshot(now=1.0)
+    assert snap["visible"] is True
+    assert snap["speaker"] == "Helm"
+    assert snap["speech"] == "Course laid in"
+    assert snap["lines"] == []
+
+
+def test_snapshot_prunes_expired_crew_line(monkeypatch):
+    sw = _SubtitleWindow()
+    monkeypatch.setattr("engine.appc.windows.time.monotonic", lambda: 0.0)
+    sw.set_crew_line("XO", "Aye", 1.0)
+    snap = sw._snapshot(now=5.0)   # crew line expired, nothing else visible
+    assert snap is None
+
+
+def test_snapshot_omits_speaker_keys_when_no_crew_line():
+    sw = _SubtitleWindow()
+    sw.SetOn()
+    snap = sw._snapshot(now=0.0)
+    assert "speaker" not in snap
+    assert "speech" not in snap
