@@ -2,6 +2,7 @@ add_executable(audio_tests
     wav_test.cc
     null_backend_test.cc
     audio_system_test.cc
+    mp3_test.cc
 )
 target_link_libraries(audio_tests
     PRIVATE
