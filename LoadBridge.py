@@ -22,8 +22,10 @@ _menus_created = False
 
 _crew_populated = False
 
-# Per-bridge officer roster: (character module, set-object name). Mirrors the
-# bridge config module's ConfigureCharacters mapping. Only GalaxyBridge for now;
+# Per-bridge officer roster: (character module, set-object name). The set name
+# is documentation only — each module's CreateCharacter owns the actual
+# AddObjectToSet(pChar, "Tactical") call; we keep the column here so the roster
+# reads as the SDK's ConfigureCharacters mapping. Only GalaxyBridge for now;
 # other bridges (and the full SDK bridge Load) extend this table.
 _BRIDGE_CREW = {
     "GalaxyBridge": [
@@ -48,7 +50,14 @@ def populate_bridge_crew(pBridgeSet, bridge_name):
     and SetDatabase(...tgl); the bridge module's ConfigureCharacters layers on
     (animation) config. Per-officer and per-stage try/except so one failure
     can't abort the rest or block mission load. Idempotent via CreateCharacter's
-    own existing-object guard + the _crew_populated latch."""
+    own existing-object guard + the _crew_populated latch.
+
+    Unlike CreateCharacterMenus, this does NOT defer when there is no current
+    game: officers don't depend on the game (only their per-character
+    LoadSounds() does, which the per-officer guard absorbs pre-game), and
+    reset_sdk_globals clears both _crew_populated and the bridge set at mission
+    start, so any pre-game population is recreated cleanly by the mission's
+    own Load() with the game present."""
     global _crew_populated
     if _crew_populated:
         return
