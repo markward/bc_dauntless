@@ -6,6 +6,7 @@
 #include "mesh_build.h"
 #include "mesh_upload.h"
 #include "skeleton_build.h"
+#include "skin_weights.h"
 
 #include <assets/texture.h>
 
@@ -372,6 +373,7 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
 
     // 1. Skeleton (may be empty for ships).
     auto skel = build_skeleton(f);
+    const auto nif_block_to_bone = skel.nif_block_to_bone_index;  // copy for weight fill
     model.skeleton = std::move(skel.skeleton);
 
     // 2. Textures.
@@ -477,6 +479,36 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
         int node_index = find_parent_node_index(f, i, nodes, resolver);
 
         MeshCpu cpu = build_mesh_cpu(*shape, *data, mat_index, node_index);
+
+        // Skinning: if this shape carries a NiTriShapeSkinController via its
+        // controller link, map its bones to skeleton indices and fill
+        // per-vertex weights. BC character shapes attach the skin controller
+        // directly to the shape; we additionally follow next_controller_link
+        // on skin controllers themselves (rare). Mirrors
+        // gather_bone_block_indices' resolve.
+        if (!model.skeleton.bones.empty()) {
+            const nif::NiTriShapeSkinController* skin = nullptr;
+            std::uint32_t ctrl = shape->av.obj.controller_link;
+            while (ctrl != 0) {
+                auto ci = resolver.resolve(ctrl);
+                if (ci == LinkResolver::kInvalidIndex || ci >= f.blocks.size())
+                    break;
+                const auto* candidate =
+                    std::get_if<nif::NiTriShapeSkinController>(&f.blocks[ci]);
+                if (candidate) { skin = candidate; break; }
+                break;  // non-skin controller: BC shapes attach skin directly.
+            }
+            if (skin) {
+                std::vector<int> skin_bone_to_skeleton(skin->bone_links.size(), -1);
+                for (std::size_t b = 0; b < skin->bone_links.size(); ++b) {
+                    auto blk = resolver.resolve(skin->bone_links[b]);
+                    auto it = nif_block_to_bone.find(blk);
+                    if (it != nif_block_to_bone.end())
+                        skin_bone_to_skeleton[b] = it->second;
+                }
+                fill_skin_weights(cpu, *skin, skin_bone_to_skeleton);
+            }
+        }
 
         if (node_index >= 0) {
             int mesh_idx = static_cast<int>(model.meshes.size());
