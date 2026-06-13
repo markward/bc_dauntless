@@ -122,6 +122,16 @@ def test_snapshot_prunes_expired_crew_line(monkeypatch):
     assert snap is None
 
 
+def test_snapshot_crew_line_expires_exactly_at_expiry(monkeypatch):
+    # Boundary case: a crew line whose expiry == now is treated as expired
+    # (the prune uses `<= now`, complementing _active_texts' `e > now`).
+    sw = _SubtitleWindow()
+    monkeypatch.setattr("engine.appc.windows.time.monotonic", lambda: 0.0)
+    sw.set_crew_line("Science", "Scan complete", 3.0)  # expiry == 3.0
+    assert sw._snapshot(now=2.999)["speech"] == "Scan complete"  # just live
+    assert sw._snapshot(now=3.0) is None                          # exact boundary → gone
+
+
 def test_snapshot_omits_speaker_keys_when_no_crew_line():
     sw = _SubtitleWindow()
     sw.SetOn()
