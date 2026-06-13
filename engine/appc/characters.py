@@ -488,8 +488,12 @@ class CharacterClass(ObjectClass):
         wav = (db.GetFilename(line) or None) if db else None
         crew_speech.bus().speak(self._character_name, text, wav, int(priority))
 
-    def SayLine(self, pDatabase=None, lineID="", priority=CSP_NORMAL, *_) -> None:
-        # "Aye, Captain" acknowledgements: voice-only, no subtitle (matches BC).
+    def SayLine(self, pDatabase=None, lineID="", _addressee=None,
+                priority=CSP_NORMAL, *_) -> None:
+        # SDK signature is SayLine(db, lineID, addressee, priority) — e.g.
+        # SayLine(pMissionDatabase, "E7M1...", "Captain", 1). The addressee
+        # ("Captain") is whom the line is spoken to; dauntless has no addressee
+        # concept (voice-only acknowledgement, no subtitle), so we ignore it.
         db = pDatabase if pDatabase is not None else self._database
         wav = (db.GetFilename(str(lineID)) or None) if db else None
         crew_speech.bus().speak(self._character_name, None, wav, int(priority))

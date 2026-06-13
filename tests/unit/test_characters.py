@@ -372,7 +372,7 @@ def test_app_exposes_menu_classes():
     assert App.STButton_CreateW is STButton_CreateW
 
 
-def test_speakline_routes_text_and_speaker_to_subtitle(monkeypatch):
+def test_speakline_routes_text_and_speaker_to_subtitle():
     import App
     from engine.appc import top_window, crew_speech
     from engine.appc.characters import CharacterClass
@@ -394,7 +394,7 @@ def test_speakline_routes_text_and_speaker_to_subtitle(monkeypatch):
     assert snap["speech"] == "Shields holding"
 
 
-def test_speakline_without_string_shows_no_subtitle(monkeypatch):
+def test_speakline_without_string_shows_no_subtitle():
     import App
     from engine.appc import top_window, crew_speech
     from engine.appc.characters import CharacterClass
@@ -413,7 +413,30 @@ def test_speakline_without_string_shows_no_subtitle(monkeypatch):
     assert sub._snapshot(now=0.0) is None  # nothing displayed
 
 
-def test_sayline_sets_no_subtitle(monkeypatch):
+def test_sayline_4arg_sdk_form_sets_no_subtitle_and_does_not_raise():
+    # Real SDK call shape: SayLine(db, lineID, addressee, priority) — e.g.
+    # g_pMiguel.SayLine(pMissionDatabase, "E7M1EnterpriseDestroyed", "Captain", 1).
+    # The "Captain" addressee must NOT be coerced into the priority slot
+    # (int("Captain") would raise). Voice-only: no subtitle.
+    import App
+    from engine.appc import top_window, crew_speech
+    from engine.appc.characters import CharacterClass
+    from engine.appc.localization import TGLocalizationDatabase
+
+    top_window.reset_for_tests()
+    crew_speech.bus().reset()
+
+    char = CharacterClass()
+    char.SetCharacterName("Miguel")
+    db = TGLocalizationDatabase("x.tgl", strings={"ack": "Aye sir"})
+
+    char.SayLine(db, "ack", "Captain", 1)  # must not raise
+
+    sub = App.TopWindow_GetTopWindow().FindMainWindow(App.MWT_SUBTITLE)
+    assert sub._snapshot(now=0.0) is None
+
+
+def test_sayline_2arg_form_sets_no_subtitle():
     import App
     from engine.appc import top_window, crew_speech
     from engine.appc.characters import CharacterClass
