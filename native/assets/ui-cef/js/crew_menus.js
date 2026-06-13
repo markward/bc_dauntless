@@ -1,13 +1,19 @@
-// CrewMenuPanel renderer — dauntless-styled menu bar for SDK bridge menus.
-// Payload: {menus:[{id,type,label,enabled,visible,children:[...]}]}
+// CrewMenuPanel renderer — dauntless-styled bridge menus.
+// Payload: {menus:[{id,type,label,enabled,visible,open,children:[...]}]}
 // Invoked directly by the C++ CEF host as setCrewMenus(payload) where
 // payload is already a JS object (matching the setSdkMirror convention).
+//
+// Only the OPEN menu renders. There is no persistent title bar: a menu
+// appears when summoned (F1-F5 hotkeys; bridge-character click is a future
+// path) and disappears when closed. The payload still carries every menu
+// so widget ids stay stable for click/toggle dispatch.
 
 function setCrewMenus(payload) {
   const slot = document.getElementById("crew-menu-bar");
   if (!slot) return;
   slot.innerHTML = "";
   for (const menu of payload.menus) {
+    if (!menu.open) continue;
     slot.appendChild(renderCrewMenu(menu));
   }
 }

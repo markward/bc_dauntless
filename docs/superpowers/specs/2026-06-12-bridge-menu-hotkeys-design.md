@@ -96,9 +96,16 @@ nothing was ever wired, e.g. headless tests).
 
 ### CEF side (`native/assets/ui-cef/js/crew_menus.js`)
 
-Remove `crewMenuOpenId` and local class toggling. Top-level `.crew-menu` gets
-the `open` class from the payload's `"open"` flag. The title click handler
-becomes `dauntlessEvent("crew-menu/toggle:" + menu.id)`.
+Remove `crewMenuOpenId` and local class toggling. **Only the open menu
+renders** — there is no persistent title bar. `setCrewMenus` skips menus whose
+`"open"` flag is false, so the bar is empty until a menu is summoned and
+empties again when it closes. The rendered (open) menu shows its label as a
+header plus its entries; clicking the header toggles it closed. Stock BC has
+no always-on menu strip: menus are summoned by the F1–F5 hotkeys (and, in a
+future path, by clicking the crew member in the 3D bridge view — deferred,
+not built here). The payload still carries every menu (open and closed) so
+widget ids stay stable for click/toggle dispatch and a future bridge-click
+path can read them.
 
 ### ESC ordering (`engine/host_loop.py`)
 
