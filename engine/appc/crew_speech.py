@@ -11,8 +11,12 @@ Spec: docs/superpowers/specs/2026-06-13-bridge-crew-speech-design.md
 """
 from __future__ import annotations
 
+import logging
 import time
 from typing import Optional
+
+# TEMP DIAGNOSTIC (crew-voice verification, round 2) — remove once confirmed.
+_diag = logging.getLogger("crew_speech.diag")
 
 _MIN_DURATION_S = 2.0
 _MAX_DURATION_S = 8.0
@@ -69,18 +73,24 @@ class CrewSpeechBus:
 
     def _play_voice(self, wav) -> None:
         try:
+            from engine.audio import tg_sound
             from engine.audio.tg_sound import TGSoundManager, TGSound
+            _diag.warning("play_voice: wav=%r audio_backend=%s",
+                          wav, tg_sound._audio is not None)  # TEMP DIAGNOSTIC
             mgr = TGSoundManager.instance()
             snd = mgr.GetSound(wav)
             if snd is None:
                 # The wav path doubles as the GetSound name key.
                 snd = mgr.LoadSound(wav, wav, TGSound.LS_STREAMED)
+                _diag.warning("play_voice: LoadSound -> %s", snd is not None)  # TEMP DIAGNOSTIC
             if snd is None:
+                _diag.warning("play_voice: NO SOUND for wav=%r (decode/file failed)", wav)  # TEMP DIAGNOSTIC
                 return
             snd.SetVoice()
-            snd.Play()
+            handle = snd.Play()
+            _diag.warning("play_voice: Play -> handle=%r", handle)  # TEMP DIAGNOSTIC
         except Exception:
-            pass
+            _diag.exception("play_voice: EXCEPTION for wav=%r", wav)  # TEMP DIAGNOSTIC
 
 
 def emit(speaker, db, line_id, priority, *, voice_only) -> None:
@@ -141,6 +151,8 @@ def acknowledge(character) -> None:
     wav = db.GetFilename(line) if db is not None else None
     if not isinstance(wav, str) or not wav:
         wav = None
+    _diag.warning("acknowledge: speaker=%r line=%r text=%r wav=%r",
+                  name, line, text, wav)  # TEMP DIAGNOSTIC
     bus().speak(name, text, wav, CSP_NORMAL)
 
 
