@@ -519,7 +519,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Like create_instance but tags the new instance for the bridge pass.");
 
     // Developer-only (SP1): load a skinned character NIF and spawn one instance
-    // at world_pos with identity rotation. Character body textures live next to
+    // framed in front of the active camera, tagged for the active pass (bridge
+    // or space), with identity rotation. Character body textures live next to
     // the NIF (e.g. BodyMaleL/body.tga), so the texture search path is the NIF's
     // own directory. Reuses load_model_impl/create_instance/set_world_transform
     // — no special skinned-spawn path is needed: a non-empty skeleton routes the
