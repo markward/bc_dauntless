@@ -21,7 +21,8 @@ _WORDS_PER_SECOND = 2.5
 
 def _estimate_duration(text: Optional[str], wav: Optional[str]) -> float:
     """Coarse reading-speed dwell. Drives both the on-screen time and the
-    bus free-up time, so they can never disagree."""
+    bus free-up time, so they can never disagree. A voice-only line (no text,
+    only a wav path) falls back to the minimum dwell."""
     source = text or wav or ""
     words = max(1, len(source.split()))
     secs = words / _WORDS_PER_SECOND
@@ -41,6 +42,8 @@ class CrewSpeechBus:
         """Arbitrate one line. Returns True if accepted, False if dropped."""
         if now is None:
             now = time.monotonic()
+        if text is None and wav is None:
+            return False  # nothing to say — don't occupy the channel
         priority = int(priority)
         line_live = now < self._active_expiry
         if line_live and priority < self._active_priority:

@@ -42,6 +42,20 @@ def test_reset_frees_the_channel():
     assert bus.speak("Eng", "chatter", None, CSP_SPONTANEOUS, now=0.1) is True
 
 
+def test_voice_only_line_is_accepted():
+    # SayLine path: text=None, wav present. Must not block on the absent text.
+    bus = CrewSpeechBus()
+    assert bus.speak("Helm", None, "sounds/aye.wav", CSP_NORMAL, now=0.0) is True
+
+
+def test_empty_line_with_no_text_or_wav_is_dropped():
+    # A line with nothing to say must not occupy the channel.
+    bus = CrewSpeechBus()
+    assert bus.speak("Helm", None, None, CSP_MISSION_CRITICAL, now=0.0) is False
+    # ...and the channel stays free for the next real line.
+    assert bus.speak("Eng", "chatter", None, CSP_SPONTANEOUS, now=0.1) is True
+
+
 def test_duration_clamps_between_2_and_8_seconds():
     assert _estimate_duration("hi", None) == 2.0                 # 1 word -> floored
     assert _estimate_duration(None, None) == 2.0                 # empty -> floored
