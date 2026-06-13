@@ -571,7 +571,9 @@ class CharacterClass(ObjectClass):
 
 # ── Factories ────────────────────────────────────────────────────────────────
 
-def CharacterClass_Create(body_nif: str = "", head_nif: str = "") -> CharacterClass:
+def CharacterClass_Create(body_nif: str = "", head_nif: str = "", *_extra) -> CharacterClass:
+    # Some SDK character modules (Kiska, Saffi) pass a 3rd positional arg
+    # (a quality/female flag in the original Appc). Accept and ignore it.
     return CharacterClass(body_nif, head_nif)
 
 
