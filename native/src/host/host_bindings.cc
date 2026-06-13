@@ -518,6 +518,30 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("model"),
           "Like create_instance but tags the new instance for the bridge pass.");
 
+    // Developer-only (SP1): load a skinned character NIF and spawn one instance
+    // at world_pos with identity rotation. Character body textures live next to
+    // the NIF (e.g. BodyMaleL/body.tga), so the texture search path is the NIF's
+    // own directory. Reuses load_model_impl/create_instance/set_world_transform
+    // — no special skinned-spawn path is needed: a non-empty skeleton routes the
+    // instance through the skinned draw branch automatically.
+    m.def("spawn_test_character",
+          [](const std::string& nif_path,
+             std::array<float, 3> world_pos) {
+              std::filesystem::path tex_dir =
+                  std::filesystem::path(nif_path).parent_path();
+              auto handle = load_model_impl(nif_path, py::cast(tex_dir.string()));
+              auto id = g_world.create_instance(handle);
+              glm::mat4 world(1.0f);
+              world[3][0] = world_pos[0];
+              world[3][1] = world_pos[1];
+              world[3][2] = world_pos[2];
+              g_world.set_world_transform(id, world);
+              return id;
+          },
+          py::arg("nif_path"), py::arg("world_pos"),
+          "Developer-only: load a skinned NIF and spawn one instance at "
+          "world_pos (identity rotation). Returns its InstanceId.");
+
     m.def("set_bridge_camera",
           [](std::tuple<float,float,float> eye,
              std::tuple<float,float,float> target,
