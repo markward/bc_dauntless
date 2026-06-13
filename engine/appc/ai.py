@@ -1106,7 +1106,14 @@ class CharacterAction(TGAction):
         from engine.appc import crew_speech
         from engine.appc.characters import CharacterClass_Cast
         cc = CharacterClass_Cast(self._character) if self._character is not None else None
-        name = cc.GetCharacterName() if cc is not None else ""
+        if cc is not None:
+            name = cc.GetCharacterName()
+        elif isinstance(self._character, str):
+            # CharacterAction_CreateByName passes the character's name as a
+            # string (e.g. "Liu"); use it directly when there's no object.
+            name = self._character
+        else:
+            name = ""
         crew_speech.emit(name, self._database, self._detail,
                          self._priority, voice_only=voice_only)
 

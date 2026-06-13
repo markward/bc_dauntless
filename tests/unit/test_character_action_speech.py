@@ -46,3 +46,20 @@ def test_non_speech_action_is_silent():
     a.Play()  # must not raise, must not speak
     assert _subtitle()._snapshot(now=0.0) is None
     assert crew_speech.bus()._active_priority == -1  # channel untouched
+
+
+def test_create_by_name_uses_string_character_as_speaker():
+    # CharacterAction_CreateByName(setName, charName, action_type, detail, ...)
+    # stores charName as a STRING in _character (no CharacterClass object), e.g.
+    # CreateByName("LiuSet", "Liu", AT_SPEAK_LINE, "L1", None, 0, db). The
+    # speaker label must be "Liu", not blank.
+    from engine.appc.ai import CharacterAction_CreateByName
+    top_window.reset_for_tests()
+    crew_speech.bus().reset()
+    db = TGLocalizationDatabase("x.tgl", strings={"L1": "Torpedoes loaded"})
+    a = CharacterAction_CreateByName(
+        "LiuSet", "Liu", CharacterAction.AT_SPEAK_LINE, "L1", None, 0, db)
+    a.Play()
+    snap = _subtitle()._snapshot(now=0.0)
+    assert snap["speaker"] == "Liu"
+    assert snap["speech"] == "Torpedoes loaded"
