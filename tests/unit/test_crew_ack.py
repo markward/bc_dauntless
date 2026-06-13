@@ -55,3 +55,17 @@ def test_ack_yessir_path_uses_mission_database(monkeypatch):
     crew_speech.acknowledge(char)
     snap = _subtitle()._snapshot(now=0.0)
     assert snap["speech"] == "On it, Captain."
+
+
+def test_ack_yessir_falls_back_when_mission_db_unavailable(monkeypatch):
+    # YesSir set but the mission DB can't be loaded -> the fallback still
+    # guarantees a visible subtitle.
+    top_window.reset_for_tests()
+    crew_speech.bus().reset()
+    monkeypatch.setattr(crew_speech, "_mission_database", lambda: None)
+    char = _char("Tactical")
+    char.SetYesSir("FelixYes")
+    crew_speech.acknowledge(char)
+    snap = _subtitle()._snapshot(now=0.0)
+    assert snap["speaker"] == "Tactical"
+    assert snap["speech"] == "Aye, Captain."
