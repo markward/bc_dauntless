@@ -3,7 +3,10 @@
 
 #include <nif/block.h>
 
+#include <glm/gtc/matrix_inverse.hpp>
+
 #include <set>
+#include <vector>
 
 namespace assets::detail {
 
@@ -109,7 +112,27 @@ SkeletonBuildResult build_skeleton(const nif::File& f) {
             break;
         }
     }
+
+    compute_inverse_bind_poses(out.skeleton);
     return out;
+}
+
+void compute_inverse_bind_poses(Skeleton& sk) {
+    // world_bind(i) composed by walking up the parent chain. Bones are not
+    // guaranteed to be parent-before-child ordered, so resolve each bone's
+    // world transform by collecting its chain to the root.
+    auto world_bind = [&](int i) {
+        glm::mat4 w(1.0f);
+        // Collect chain leaf..root, then multiply root..leaf.
+        std::vector<int> chain;
+        for (int b = i; b != -1; b = sk.bones[b].parent_index) chain.push_back(b);
+        for (auto it = chain.rbegin(); it != chain.rend(); ++it)
+            w = w * sk.bones[*it].local_transform;
+        return w;
+    };
+    for (std::size_t i = 0; i < sk.bones.size(); ++i)
+        sk.bones[i].inverse_bind_pose =
+            glm::inverse(world_bind(static_cast<int>(i)));
 }
 
 }  // namespace assets::detail

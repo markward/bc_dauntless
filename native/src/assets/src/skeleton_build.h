@@ -20,4 +20,8 @@ struct SkeletonBuildResult {
 /// Returns an empty skeleton if no skinning is present (typical for ships).
 SkeletonBuildResult build_skeleton(const nif::File& file);
 
+/// Fill every bone's inverse_bind_pose = inverse(world-bind transform),
+/// where world-bind composes local_transform down the parent chain.
+void compute_inverse_bind_poses(Skeleton& skeleton);
+
 }  // namespace assets::detail
