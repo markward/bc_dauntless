@@ -8,6 +8,7 @@ from engine.appc import top_window, crew_speech
 from engine.appc.characters import CharacterClass
 from engine.appc.localization import TGLocalizationDatabase
 from engine.ui import crew_menu_hotkeys
+from engine.core.game import Game, _set_current_game
 
 
 def _fresh_bridge_set():
@@ -19,12 +20,16 @@ def _fresh_bridge_set():
 
 
 @pytest.fixture(autouse=True)
-def _cleanup_bridge_set():
-    """Restore set-manager + crew-populated flag after each test so downstream
-    tests that rely on an unpopulated bridge set are not affected."""
+def _bridge_env():
+    """populate_bridge_crew defers without a current game, so set one. Restore
+    set-manager + crew-populated flag + game after each test so a populated
+    "Tactical"=Felix can't leak into other files (e.g. test_crew_menu_hotkeys
+    expects resolve_character to auto-vivify)."""
+    _set_current_game(Game())
     yield
     App.g_kSetManager._sets.clear()
     LoadBridge._reset_crew_populated()
+    _set_current_game(None)
 
 
 def test_resolve_character_returns_populated_officer():

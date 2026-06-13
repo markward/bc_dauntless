@@ -1,22 +1,26 @@
 """LoadBridge.populate_bridge_crew creates the 5 GalaxyBridge officers with
-real names + loaded localization DBs. Calls the helper directly (no game-state
-guard) for determinism."""
+real names + loaded localization DBs."""
 import pytest
 
 import App
 import LoadBridge
 from engine.appc.characters import CharacterClass
 from engine.appc.localization import TGLocalizationDatabase
+from engine.core.game import Game, _set_current_game
 
 
 @pytest.fixture(autouse=True)
-def _cleanup_bridge_set():
-    # Populating the bridge set is global state; clear it (and the latch) after
-    # each test so a populated "Tactical"=Felix can't leak into other files
-    # (e.g. test_crew_menu_hotkeys expects resolve_character to auto-vivify).
+def _bridge_env():
+    # populate_bridge_crew defers without a current game (the SDK
+    # CreateCharacter -> LoadSounds path needs one), so set a game for the
+    # happy-path tests. Clear set-manager + latch + game after each test so a
+    # populated "Tactical"=Felix can't leak into other files (e.g.
+    # test_crew_menu_hotkeys expects resolve_character to auto-vivify).
+    _set_current_game(Game())
     yield
     App.g_kSetManager._sets.clear()
     LoadBridge._reset_crew_populated()
+    _set_current_game(None)
 
 
 def _fresh_bridge_set():
@@ -62,3 +66,15 @@ def test_populate_unknown_bridge_is_noop():
     pSet = _fresh_bridge_set()
     LoadBridge.populate_bridge_crew(pSet, "NoSuchBridge")   # must not raise
     assert pSet.GetObject("Tactical") is None
+
+
+def test_populate_defers_without_current_game():
+    # The eager pre-game bridge preload (Game_GetCurrentGame() is None) must
+    # NOT populate or latch — the SDK CreateCharacter->LoadSounds path needs a
+    # game. The mission's own Load() repopulates once the game exists.
+    LoadBridge._reset_crew_populated()
+    _set_current_game(None)
+    pSet = _fresh_bridge_set()
+    LoadBridge.populate_bridge_crew(pSet, "GalaxyBridge")
+    assert pSet.GetObject("Tactical") is None
+    assert LoadBridge._crew_populated is False   # not latched -> mission Load retries
