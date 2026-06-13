@@ -1114,10 +1114,14 @@ def CharacterAction_CreateByName(name: str, *args) -> CharacterAction:
 
 
 # ── Character action priority constants ──────────────────────────────────────
-# Top-level App constants used in BridgeHandlers.py:650 etc.
-CSP_LOW    = 0
-CSP_NORMAL = 1
-CSP_HIGH   = 2
+# Top-level App constants used in BridgeHandlers.py:650 and every SpeakLine
+# call site. The SDK names are CSP_SPONTANEOUS/CSP_NORMAL/CSP_MISSION_CRITICAL;
+# CSP_LOW/CSP_HIGH are dauntless-era aliases kept for back-compat.
+CSP_SPONTANEOUS      = 0   # idle chatter (engineer reports, ge*)
+CSP_NORMAL           = 1   # acknowledgements; default
+CSP_MISSION_CRITICAL = 2   # scripted mission narration
+CSP_LOW  = CSP_SPONTANEOUS      # back-compat alias
+CSP_HIGH = CSP_MISSION_CRITICAL # back-compat alias
 
 
 # ── Module-level helpers (SDK `App.*` surface) ───────────────────────────────
