@@ -254,12 +254,17 @@ def test_expand_toggles_node_and_flag():
 
 
 def test_expand_stale_and_malformed_dropped():
-    helm, _ = _build_helm_with_submenu()
+    helm, setcourse = _build_helm_with_submenu()
     panel = CrewMenuPanel()
     panel.toggle_menu(helm)
     panel.render_payload()
     assert panel.dispatch_event("expand:999999") is True   # stale
     assert panel.dispatch_event("expand:nope") is True      # malformed
+    # expand: on a leaf-button id is a clean no-op (guarded by isinstance
+    # STMenu) — must not pollute _expanded_ids.
+    leaf = setcourse._children[0]            # the "Sol System" STButton
+    assert panel.dispatch_event(f"expand:{ensure_widget_id(leaf)}") is True
+    assert ensure_widget_id(leaf) not in panel._expanded_ids
 
 
 def test_closing_menu_clears_expanded():
@@ -280,4 +285,15 @@ def test_invalidate_clears_expanded():
     panel.render_payload()
     panel.dispatch_event(f"expand:{ensure_widget_id(setcourse)}")
     panel.invalidate()
+    assert not panel._expanded_ids
+
+
+def test_close_open_menu_clears_expanded():
+    helm, setcourse = _build_helm_with_submenu()
+    panel = CrewMenuPanel()
+    panel.toggle_menu(helm)
+    panel.render_payload()
+    panel.dispatch_event(f"expand:{ensure_widget_id(setcourse)}")
+    assert panel._expanded_ids
+    assert panel.close_open_menu() is True   # ESC path
     assert not panel._expanded_ids
