@@ -22,10 +22,18 @@ std::vector<glm::mat4> build_bone_palette(
     };
 
     // world_pose(i) = product of local transforms down the parent chain.
+    // The chain-walk MUST traverse the full ancestry to the root (mirrors
+    // assets::detail::compute_inverse_bind_poses in skeleton_build.cc): bones
+    // are not parent-ordered, so an in-range bone (index < n) can have an
+    // ancestor with index >= n. inverse_bind_pose composes the full chain with
+    // no clamp, so this walk must too, or palette = world_bind * inverse_bind
+    // would not collapse to identity at bind pose. Precondition: parent_index
+    // values are acyclic and in range (see bone_palette.h). The kMaxBones clamp
+    // applies only to the OUTER palette loop, not this inner walk.
     auto world_of = [&](int i) {
         glm::mat4 w(1.0f);
         std::vector<int> chain;
-        for (int b = i; b != -1 && b < static_cast<int>(n); b = sk.bones[b].parent_index)
+        for (int b = i; b != -1; b = sk.bones[b].parent_index)
             chain.push_back(b);
         for (auto it = chain.rbegin(); it != chain.rend(); ++it)
             w = w * local_of(static_cast<std::size_t>(*it));
