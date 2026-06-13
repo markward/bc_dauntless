@@ -13,6 +13,9 @@ import engine.dev_mode as dev_mode
 # handler every tick, so the toggle state must survive across re-binds.
 _test_character_iid = None
 
+# Fallback spawn point (GU) when there's no player ship to anchor against.
+_DEFAULT_SPAWN_POS = (0.0, 0.0, 6.0)
+
 # Real skinned character NIF shipped with BC. Confirmed present at
 # game/data/Models/Characters/Bodies/BodyMaleL/BodyMaleL.NIF. Absolutised the
 # same way host_loop resolves ship/bridge NIFs (PROJECT_ROOT / "game" / rel).
@@ -120,7 +123,7 @@ def register_for_frame(_h, session, player) -> None:
 
         # ~6 GU in front of the player ship along its forward axis; fall back to
         # a fixed world point when there's no player to anchor against.
-        world_pos = (0.0, 0.0, 6.0)
+        world_pos = _DEFAULT_SPAWN_POS
         if player is not None:
             try:
                 wp = player.GetWorldLocation()
@@ -131,11 +134,17 @@ def register_for_frame(_h, session, player) -> None:
                     float(wp.z) + float(fwd.z) * 6.0,
                 )
             except Exception:
-                world_pos = (0.0, 0.0, 6.0)
+                world_pos = _DEFAULT_SPAWN_POS
 
-        _test_character_iid = renderer.spawn_test_character(
-            _TEST_CHARACTER_NIF, world_pos
-        )
+        # Asset load can raise (missing/corrupt NIF). Keep a load failure from
+        # bubbling out into the frame body — log and stay un-spawned.
+        try:
+            _test_character_iid = renderer.spawn_test_character(
+                _TEST_CHARACTER_NIF, world_pos
+            )
+        except Exception as exc:  # noqa: BLE001 - dev hook must not break the tick
+            print("[dev] spawn_test_character failed:", exc)
+            _test_character_iid = None
 
     dev_mode.register_dev_keybinding(
         _h.keys.KEY_F7, _toggle_test_character,
