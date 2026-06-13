@@ -40,6 +40,7 @@ embed_shader(SHADER_TARGET_RETICLE_VS shaders/target_reticle.vert target_reticle
 embed_shader(SHADER_TARGET_RETICLE_FS shaders/target_reticle.frag target_reticle_fs)
 embed_shader(SHADER_BRIDGE_VS shaders/bridge.vert bridge_vs)
 embed_shader(SHADER_BRIDGE_FS shaders/bridge.frag bridge_fs)
+embed_shader(SHADER_SKINNED_BRIDGE_VS shaders/skinned_bridge.vert skinned_bridge_vs)
 embed_shader(SHADER_LIGHTMAP_VS shaders/lightmap.vert lightmap_vs)
 embed_shader(SHADER_LIGHTMAP_FS shaders/lightmap.frag lightmap_fs)
 embed_shader(SHADER_RESOLVE_VS shaders/resolve.vert resolve_vs)
