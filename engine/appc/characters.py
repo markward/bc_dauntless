@@ -495,6 +495,7 @@ class CharacterClass(ObjectClass):
         # The real priority is the OPTIONAL 5th arg. Voice-only acknowledgement.
         db = pDatabase if pDatabase is not None else self._database
         crew_speech.emit(self._character_name, db, lineID, priority, voice_only=True)
+
     def Breathe(self, *args) -> None:             pass
     def Blink(self, *args) -> None:               pass
     def MoveTo(self, *args) -> None:              pass
