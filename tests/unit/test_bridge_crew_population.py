@@ -1,10 +1,22 @@
 """LoadBridge.populate_bridge_crew creates the 5 GalaxyBridge officers with
 real names + loaded localization DBs. Calls the helper directly (no game-state
 guard) for determinism."""
+import pytest
+
 import App
 import LoadBridge
 from engine.appc.characters import CharacterClass
 from engine.appc.localization import TGLocalizationDatabase
+
+
+@pytest.fixture(autouse=True)
+def _cleanup_bridge_set():
+    # Populating the bridge set is global state; clear it (and the latch) after
+    # each test so a populated "Tactical"=Felix can't leak into other files
+    # (e.g. test_crew_menu_hotkeys expects resolve_character to auto-vivify).
+    yield
+    App.g_kSetManager._sets.clear()
+    LoadBridge._reset_crew_populated()
 
 
 def _fresh_bridge_set():
