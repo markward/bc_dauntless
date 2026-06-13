@@ -453,3 +453,51 @@ def test_sayline_2arg_form_sets_no_subtitle():
 
     sub = App.TopWindow_GetTopWindow().FindMainWindow(App.MWT_SUBTITLE)
     assert sub._snapshot(now=0.0) is None
+
+
+def test_sayline_5arg_form_extracts_explicit_priority():
+    # Dominant SDK form (59 call sites): the real priority is the OPTIONAL 5th
+    # arg, e.g. SayLine(pDatabase, "Shields05", "Captain", 1, App.CSP_SPONTANEOUS).
+    # arg4 (1) is a flag and must NOT be read as the priority.
+    from engine.appc import top_window, crew_speech
+    from engine.appc.characters import CharacterClass
+    from engine.appc.localization import TGLocalizationDatabase
+    from engine.appc.ai import CSP_SPONTANEOUS
+
+    top_window.reset_for_tests()
+    crew_speech.bus().reset()
+
+    char = CharacterClass()
+    char.SetCharacterName("Engineering")
+    # SayLine is voice-only, so the line needs a registered wav or the bus
+    # drops it as "nothing to say" before recording a priority.
+    db = TGLocalizationDatabase(
+        "x.tgl", strings={"Shields05": "Shields at 5%"},
+        sounds={"Shields05": "shields05.wav"})
+
+    char.SayLine(db, "Shields05", "Captain", 1, CSP_SPONTANEOUS)  # must not raise
+
+    # The explicit arg5 priority reached the bus (not the arg4 flag value 1).
+    assert crew_speech.bus()._active_priority == CSP_SPONTANEOUS
+
+
+def test_speakline_with_stub_database_shows_no_subtitle():
+    # GetEpisode().GetDatabase() resolves to a _NamedStub when no episode is
+    # live; its HasString/GetString/GetFilename return truthy stubs that must
+    # never be rendered as subtitle text.
+    import App
+    from engine.appc import top_window, crew_speech
+    from engine.appc.characters import CharacterClass
+    from engine.appc.ai import CSP_NORMAL
+
+    top_window.reset_for_tests()
+    crew_speech.bus().reset()
+
+    char = CharacterClass()
+    char.SetCharacterName("Felix")
+    stub_db = App.NoSuchManager.GetDatabase()  # a _NamedStub chain
+
+    char.SpeakLine(stub_db, "E6M1Line", CSP_NORMAL)
+
+    sub = App.TopWindow_GetTopWindow().FindMainWindow(App.MWT_SUBTITLE)
+    assert sub._snapshot(now=0.0) is None

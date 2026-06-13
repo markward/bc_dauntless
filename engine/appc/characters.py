@@ -481,19 +481,32 @@ class CharacterClass(ObjectClass):
 
     # ── Speak/animate verbs (no-op in headless) ─────────────────────────────
     def SpeakLine(self, pDatabase=None, lineID="", priority=CSP_NORMAL, *_) -> None:
+        # SDK call shape is uniformly SpeakLine(db, lineID, priority) (or the
+        # 2-arg form with the default priority); no addressee arg.
         db = pDatabase if pDatabase is not None else self._database
         line = str(lineID)
         # Gate on HasString so a missing TGL doesn't render the raw line key.
         text = db.GetString(line) if (db and db.HasString(line)) else None
-        wav = (db.GetFilename(line) or None) if db else None
+        # A stub database (e.g. GetEpisode().GetDatabase() with no live episode)
+        # returns a truthy _NamedStub from HasString/GetString rather than a
+        # real string; never route its repr as subtitle text.
+        if not isinstance(text, str):
+            text = None
+        wav = db.GetFilename(line) if db else None
+        if not isinstance(wav, str) or not wav:
+            wav = None
         crew_speech.bus().speak(self._character_name, text, wav, int(priority))
 
     def SayLine(self, pDatabase=None, lineID="", _addressee=None,
-                priority=CSP_NORMAL, *_) -> None:
-        # SDK signature is SayLine(db, lineID, addressee, priority) — e.g.
-        # SayLine(pMissionDatabase, "E7M1...", "Captain", 1). The addressee
-        # ("Captain") is whom the line is spoken to; dauntless has no addressee
-        # concept (voice-only acknowledgement, no subtitle), so we ignore it.
+                _flag=None, priority=CSP_NORMAL, *_) -> None:
+        # SDK SayLine has a 4-arg and a (dominant) 5-arg form:
+        #   SayLine(db, lineID, "Captain", 1)                       -> default priority
+        #   SayLine(db, lineID, "Captain", 1, App.CSP_SPONTANEOUS)  -> explicit priority
+        # arg3 is the addressee and arg4 a flag; both are meaningless headless.
+        # The real priority is the OPTIONAL 5th arg — mapping it to the 4th
+        # positional (as a naive (db, lineID, priority) signature would) drops
+        # the SPONTANEOUS tag off the most common idle-callout form. Voice-only
+        # acknowledgement, no subtitle.
         db = pDatabase if pDatabase is not None else self._database
         wav = (db.GetFilename(str(lineID)) or None) if db else None
         crew_speech.bus().speak(self._character_name, None, wav, int(priority))
