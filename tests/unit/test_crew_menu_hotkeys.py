@@ -88,3 +88,21 @@ def test_labels_cached_at_wire_time():
     assert crew_menu_hotkeys._label_cache[App.ET_INPUT_TALK_TO_HELM] == "Helm"
     # Headless TGL falls back to the key string — pin that assumption.
     assert crew_menu_hotkeys._resolve_label("Helm") == "Helm"
+
+
+def test_resolve_character_maps_labels_to_officers():
+    from engine.ui import crew_menu_hotkeys
+    from engine.appc.characters import CharacterClass
+    # Headless TGL falls back to the key, so label == key here.
+    for label, expected in [
+        ("Tactical", "Tactical"), ("Helm", "Helm"), ("Science", "Science"),
+        ("Commander", "XO"), ("Engineering", "Engineer"),
+    ]:
+        char = crew_menu_hotkeys.resolve_character(label)
+        assert isinstance(char, CharacterClass)
+        assert char.GetCharacterName() == expected
+
+
+def test_resolve_character_unknown_label_is_none():
+    from engine.ui import crew_menu_hotkeys
+    assert crew_menu_hotkeys.resolve_character("Bogus Menu") is None

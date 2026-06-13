@@ -44,6 +44,30 @@ def _event_map():
     return _EVENT_TO_TGL_KEY
 
 
+# Menu label (TGL key) -> bridge CharacterClass set-object name. Two officers
+# differ: menu "Commander" is character "XO"; menu "Engineering" is "Engineer".
+_KEY_TO_CHARACTER = {
+    "Helm": "Helm", "Tactical": "Tactical", "Commander": "XO",
+    "Science": "Science", "Engineering": "Engineer",
+}
+
+
+def resolve_character(menu_label):
+    """Map an opened top-level menu's label to its bridge CharacterClass, or
+    None. Locale-safe: matches the label against GetString(key) the same way
+    the hotkey layer resolves labels."""
+    import App
+    db = App.g_kLocalizationManager.Load("data/TGL/Bridge Menus.tgl")
+    try:
+        for key, char_name in _KEY_TO_CHARACTER.items():
+            if str(db.GetString(key)) == str(menu_label):
+                bridge = App.g_kSetManager.GetSet("bridge")
+                return App.CharacterClass_GetObject(bridge, char_name)
+    finally:
+        App.g_kLocalizationManager.Unload(db)
+    return None
+
+
 def wire(tcw, panel) -> None:
     """Register TALK_TO handlers on `tcw`; remember `panel` for rewire()."""
     global _wired_panel
