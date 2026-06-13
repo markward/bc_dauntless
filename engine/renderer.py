@@ -42,15 +42,17 @@ def set_world_transform(iid: InstanceId, mat4_row_major: list) -> None:
     _h.set_world_transform(iid, mat4_row_major)
 
 
-def spawn_test_character(nif_path: str, world_pos):
-    """Dev-only (SP1): load a skinned character NIF and spawn one instance at
-    `world_pos` with identity rotation. Returns the InstanceId, or None when the
-    host binding is unavailable (e.g. headless tests or a stale .so without it).
+def spawn_test_character(nif_path: str):
+    """Dev-only (SP1): load a skinned character NIF and spawn one instance
+    framed in front of the active camera, tagged for the active render pass
+    (bridge or space) — the host computes placement from its own camera + pass
+    state. Returns the InstanceId, or None when the host binding is unavailable
+    (e.g. headless tests or a stale .so without it).
     """
     fn = getattr(_h, "spawn_test_character", None)
     if fn is None:
         return None
-    return fn(nif_path, tuple(world_pos))
+    return fn(nif_path)
 
 
 def set_visible(iid: InstanceId, visible: bool) -> None:

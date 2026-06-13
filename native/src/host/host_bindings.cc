@@ -525,22 +525,49 @@ PYBIND11_MODULE(_dauntless_host, m) {
     // — no special skinned-spawn path is needed: a non-empty skeleton routes the
     // instance through the skinned draw branch automatically.
     m.def("spawn_test_character",
-          [](const std::string& nif_path,
-             std::array<float, 3> world_pos) {
+          [](const std::string& nif_path) {
               std::filesystem::path tex_dir =
                   std::filesystem::path(nif_path).parent_path();
               auto handle = load_model_impl(nif_path, py::cast(tex_dir.string()));
               auto id = g_world.create_instance(handle);
+
+              // The host owns the cameras + pass state, so it places the
+              // character in front of the *active* camera (bridge if the bridge
+              // pass is live, else the space/exterior camera) and tags the
+              // *active* pass, so the preview is visible wherever we are.
+              const bool bridge = g_bridge_pass_enabled && g_bridge_pass;
+              const scenegraph::Camera& cam = bridge ? g_bridge_camera : g_camera;
+
+              // Bounds-aware distance: the instance has an identity transform
+              // (scale 1), so the model-local bounding radius is the world-space
+              // radius. Use the center→corner distance (length of the AABB
+              // half-extents), matching get_instance_bounds. Fall back to a sane
+              // constant if the model carries no CPU bounds.
+              float radius = 3.0f;
+              if (const assets::Model* model = resolve_model(handle)) {
+                  const renderer::Aabb box = renderer::compute_model_aabb(*model);
+                  const float r = glm::length(box.half_extents);
+                  if (r > 0.0f) radius = r;
+              }
+
+              glm::vec3 fwd = cam.target - cam.eye;
+              const float len = glm::length(fwd);
+              fwd = (len > 1e-4f) ? fwd / len : glm::vec3(0.0f, 0.0f, -1.0f);
+              const glm::vec3 pos = cam.eye + fwd * (radius * 1.8f);
+
               glm::mat4 world(1.0f);
-              world[3][0] = world_pos[0];
-              world[3][1] = world_pos[1];
-              world[3][2] = world_pos[2];
+              world[3][0] = pos.x;
+              world[3][1] = pos.y;
+              world[3][2] = pos.z;
               g_world.set_world_transform(id, world);
+              g_world.set_pass(id, bridge ? scenegraph::Pass::Bridge
+                                          : scenegraph::Pass::Space);
               return id;
           },
-          py::arg("nif_path"), py::arg("world_pos"),
-          "Developer-only: load a skinned NIF and spawn one instance at "
-          "world_pos (identity rotation). Returns its InstanceId.");
+          py::arg("nif_path"),
+          "Developer-only: spawn a skinned NIF framed in front of the active "
+          "camera, tagged for the active pass (bridge or space). Returns its "
+          "InstanceId.");
 
     m.def("set_bridge_camera",
           [](std::tuple<float,float,float> eye,

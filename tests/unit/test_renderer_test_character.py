@@ -13,7 +13,7 @@ def test_spawn_test_character_without_binding_returns_none(monkeypatch):
         pass
 
     monkeypatch.setattr(renderer, "_h", _NoBinding())
-    assert renderer.spawn_test_character("x.nif", (0, 0, 6)) is None
+    assert renderer.spawn_test_character("x.nif") is None
 
 
 def test_spawn_test_character_forwards_to_binding(monkeypatch):
@@ -21,8 +21,8 @@ def test_spawn_test_character_forwards_to_binding(monkeypatch):
     fake.spawn_test_character.return_value = "iid-sentinel"
     monkeypatch.setattr(renderer, "_h", fake)
 
-    result = renderer.spawn_test_character("body.nif", [1.0, 2.0, 3.0])
+    result = renderer.spawn_test_character("body.nif")
 
-    # world_pos is normalised to a tuple before crossing into the binding.
-    fake.spawn_test_character.assert_called_once_with("body.nif", (1.0, 2.0, 3.0))
+    # The host owns placement now; the wrapper just forwards the nif path.
+    fake.spawn_test_character.assert_called_once_with("body.nif")
     assert result == "iid-sentinel"

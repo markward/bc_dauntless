@@ -13,9 +13,6 @@ import engine.dev_mode as dev_mode
 # handler every tick, so the toggle state must survive across re-binds.
 _test_character_iid = None
 
-# Fallback spawn point (GU) when there's no player ship to anchor against.
-_DEFAULT_SPAWN_POS = (0.0, 0.0, 6.0)
-
 # Real skinned character NIF shipped with BC. Confirmed present at
 # game/data/Models/Characters/Bodies/BodyMaleL/BodyMaleL.NIF. Absolutised the
 # same way host_loop resolves ship/bridge NIFs (PROJECT_ROOT / "game" / rel).
@@ -108,10 +105,11 @@ def register_for_frame(_h, session, player) -> None:
     )
 
     # F7: spawn/despawn a skinned test character (SP1 skinned-mesh preview).
-    # First press loads BodyMaleL.NIF and spawns one instance ~6 GU in front of
-    # the player ship (a fixed world point if no player); a non-empty skeleton
-    # routes it through the skinned draw path automatically. Second press
-    # despawns it. Production builds never register this (dev-mode gated).
+    # First press loads BodyMaleL.NIF and spawns one instance framed in front of
+    # the active camera, tagged for the active pass (bridge or space) — the host
+    # computes the bounds-aware placement. A non-empty skeleton routes it through
+    # the skinned draw path automatically. Second press despawns it. Production
+    # builds never register this (dev-mode gated).
     def _toggle_test_character() -> None:
         global _test_character_iid
         import engine.renderer as renderer
@@ -121,26 +119,13 @@ def register_for_frame(_h, session, player) -> None:
             _test_character_iid = None
             return
 
-        # ~6 GU in front of the player ship along its forward axis; fall back to
-        # a fixed world point when there's no player to anchor against.
-        world_pos = _DEFAULT_SPAWN_POS
-        if player is not None:
-            try:
-                wp = player.GetWorldLocation()
-                fwd = player.GetWorldRotation().GetCol(1)
-                world_pos = (
-                    float(wp.x) + float(fwd.x) * 6.0,
-                    float(wp.y) + float(fwd.y) * 6.0,
-                    float(wp.z) + float(fwd.z) * 6.0,
-                )
-            except Exception:
-                world_pos = _DEFAULT_SPAWN_POS
-
+        # The host frames the character in front of the active camera and tags
+        # the active pass (bridge or space) — no Python-side placement math.
         # Asset load can raise (missing/corrupt NIF). Keep a load failure from
         # bubbling out into the frame body — log and stay un-spawned.
         try:
             _test_character_iid = renderer.spawn_test_character(
-                _TEST_CHARACTER_NIF, world_pos
+                _TEST_CHARACTER_NIF
             )
         except Exception as exc:  # noqa: BLE001 - dev hook must not break the tick
             print("[dev] spawn_test_character failed:", exc)
