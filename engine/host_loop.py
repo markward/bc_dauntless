@@ -1331,6 +1331,12 @@ def reset_sdk_globals() -> None:
     # bleed across missions or in-process swaps. See
     # docs/superpowers/specs/2026-06-03-top-window-shim-design.md.
     top_window.reset_for_tests()
+    # Clear the global crew-speech channel so a line still "live" at swap
+    # time can't suppress the next mission's first SpeakLine. The subtitle
+    # crew slot itself is cleared transitively by reset_for_tests (it
+    # rebuilds _SubtitleWindow).
+    from engine.appc import crew_speech
+    crew_speech.bus().reset()
     # Unhook the target-menu subscriber from the live bridge set so a
     # mission swap doesn't leave a dangling subscription on a recreated
     # set. unwire_from_bridge_set is idempotent — safe to call even when
