@@ -514,6 +514,12 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
                 // root), whose palette entry is identity at bind pose, so the
                 // skinned shader leaves the shape undeformed and it lands in the
                 // exact same world position as the static draw.
+                //
+                // SP2 (animation) caveat: bone 0 is correct ONLY at bind pose.
+                // Once a pose is applied, a rigid shape must follow the bone its
+                // node is parented to, not the root. SP2 must replace this with
+                // a bind to the shape's actual parent bone (resolve node_index ->
+                // bone), or rigid body parts will detach from the animated skeleton.
                 for (auto& v : cpu.vertices) {
                     v.bone_indices = glm::u8vec4(0, 0, 0, 0);
                     v.bone_weights = glm::u8vec4(255, 0, 0, 0);
