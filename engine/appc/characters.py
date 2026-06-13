@@ -386,7 +386,19 @@ class CharacterClass(ObjectClass):
     def GetYesSir(self) -> str:                   return self._yes_sir_audio
 
     # ── Database (localization) ─────────────────────────────────────────────
-    def SetDatabase(self, db) -> None:            self._database = db
+    def SetDatabase(self, db) -> None:
+        # SDK passes a TGL path string (e.g. "data/TGL/Bridge Crew General.tgl");
+        # load it into a real localization DB so GetDatabase() callers
+        # (acknowledge/emit) get HasString/GetFilename. A DB object (or any
+        # non-string) is stored as-is. Best-effort: a load failure stores None.
+        if isinstance(db, str):
+            try:
+                import App
+                self._database = App.g_kLocalizationManager.Load(db)
+            except Exception:
+                self._database = None
+        else:
+            self._database = db
     def GetDatabase(self):                        return self._database
 
     # ── Menu ────────────────────────────────────────────────────────────────
