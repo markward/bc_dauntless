@@ -23,6 +23,11 @@
   pointer-events: none;
 }
 
+.sdk-subtitle__speaker {
+  font-weight: 700;
+  color: #9cc4ff;
+}
+
 #sdk-stylized-stack {
   position: absolute;
   inset: 0;

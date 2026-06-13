@@ -184,6 +184,10 @@ class _SubtitleWindow:
         self._visible = False
         self._mode = self._SM_TACTICAL
         self._active_texts: list[tuple[str, float]] = []
+        # Single replaceable crew-speech slot (speaker, text, expiry). Separate
+        # from _active_texts so a SpeakLine preemption is a clean replacement
+        # and never collides with a mission banner. Owned by CrewSpeechBus.
+        self._crew_line: tuple[str, str, float] | None = None
 
     def SetOn(self) -> None:    self._visible = True
     def SetOff(self) -> None:   self._visible = False
@@ -198,20 +202,33 @@ class _SubtitleWindow:
         # missions (e.g. E1M1:2298, E1M2:4916) but has no meaning in dauntless.
         self._mode = int(mode)
 
+    def set_crew_line(self, speaker: str, text: str, duration: float) -> None:
+        # Replaces the crew slot wholesale -- preemption == replacement.
+        self._crew_line = (
+            str(speaker), str(text), time.monotonic() + float(duration),
+        )
+
     def _add_text(self, text: str, duration_s: float) -> None:
         self._active_texts.append((str(text), time.monotonic() + float(duration_s)))
 
     def _snapshot(self, now: float) -> dict | None:
         self._active_texts = [(t, e) for (t, e) in self._active_texts if e > now]
-        if not self._visible and not self._active_texts:
+        if self._crew_line is not None and self._crew_line[2] <= now:
+            self._crew_line = None
+        has_crew = self._crew_line is not None
+        if not self._visible and not self._active_texts and not has_crew:
             return None
-        return {
+        snap = {
             "type": "subtitle",
             "id": self._id,
-            "visible": self._visible or bool(self._active_texts),
+            "visible": self._visible or bool(self._active_texts) or has_crew,
             "mode": self._mode,
             "lines": [t for (t, _) in self._active_texts],
         }
+        if has_crew:
+            snap["speaker"] = self._crew_line[0]
+            snap["speech"] = self._crew_line[1]
+        return snap
 
 
 class SubtitleWindow:
