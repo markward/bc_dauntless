@@ -4,9 +4,11 @@ add_executable(assets_tests
     cpu/animation_build_test.cc
     cpu/cache_test.cc
     cpu/material_build_test.cc
+    cpu/mesh_bake_test.cc
     cpu/mesh_build_test.cc
     cpu/model_build_test.cc
     cpu/model_compose_test.cc
+    cpu/animation_load_test.cc
     cpu/path_resolver_test.cc
     cpu/raw_image_decode_test.cc
     cpu/skeleton_build_test.cc

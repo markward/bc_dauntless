@@ -3,6 +3,7 @@
 #include "animation_build.h"
 #include "link_resolver.h"
 #include "material_build.h"
+#include "mesh_bake.h"
 #include "mesh_build.h"
 #include "mesh_upload.h"
 #include "skeleton_build.h"
@@ -456,6 +457,11 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
         flip_animation_index_for_prop[prop_link_id] = anim_idx;
     }
 
+    // Deferred CPU meshes: built in NiTriShape order, then (for skinned
+    // models) baked to model space, then uploaded. mesh index == position
+    // in this list, matching the node->meshes indices recorded below.
+    std::vector<MeshCpu> cpu_meshes;
+
     bool any_trishape = false;
     for (std::uint32_t i = 0; i < f.blocks.size(); ++i) {
         const auto* shape = std::get_if<nif::NiTriShape>(&f.blocks[i]);
@@ -546,10 +552,36 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
         }
 
         if (node_index >= 0) {
-            int mesh_idx = static_cast<int>(model.meshes.size());
+            // mesh index == position in the deferred cpu_meshes list, which
+            // is uploaded in order below into model.meshes.
+            int mesh_idx = static_cast<int>(cpu_meshes.size());
             model.nodes[node_index].meshes.push_back(mesh_idx);
         }
-        // Avoid copying the CPU vertex data unless retention is requested.
+        cpu_meshes.push_back(std::move(cpu));
+    }
+    if (!any_trishape) throw ModelBuildError("no NiTriShape in NIF file");
+
+    // Skinned models: bake each mesh's node-chain transform into its vertices
+    // so the meshes live in MODEL space. The skinned program then poses them
+    // with the bone palette alone (u_model = inst.world, no per-node factor),
+    // which is the standard skinning setup. Without this, a rigid part baked
+    // by neither vertex-space nor palette would carry its bind transform
+    // twice under a real pose and explode. Ships/static models have an empty
+    // skeleton and are left UNTOUCHED (per-node u_model, vertices unchanged).
+    if (!model.skeleton.bones.empty()) {
+        const auto local_world_per_node =
+            compute_local_world_per_node(model.nodes, model.root_node);
+        for (auto& cpu : cpu_meshes) {
+            if (cpu.node_index < 0 ||
+                cpu.node_index >= static_cast<int>(local_world_per_node.size()))
+                continue;
+            bake_mesh_to_model_space(cpu, local_world_per_node[cpu.node_index]);
+        }
+    }
+
+    // Upload the (possibly baked) CPU meshes in order. Avoid copying the CPU
+    // vertex data unless retention is requested.
+    for (auto& cpu : cpu_meshes) {
         if (ctx.keep_cpu_data) {
             Mesh mesh = mesh_upload(MeshCpu(cpu));
             mesh.set_cpu_data(std::move(cpu));
@@ -558,7 +590,6 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
             model.meshes.push_back(mesh_upload(std::move(cpu)));
         }
     }
-    if (!any_trishape) throw ModelBuildError("no NiTriShape in NIF file");
 
     // 5. Animations.
     model.animations = build_animations(f);

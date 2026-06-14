@@ -12,6 +12,7 @@
 #include <assets/texture.h>
 #include <nif/file.h>
 
+#include "mesh_bake.h"
 #include "model_build.h"
 
 namespace assets {
@@ -105,11 +106,29 @@ std::vector<MeshCpu> graft_head_cpu(Model& body, Model& head,
         body.materials.push_back(std::move(copy));
     }
 
+    // The body is skinned, so build_model baked every body mesh into MODEL
+    // space and the renderer now draws skinned models with u_model = inst.world
+    // and the bone palette alone (no per-node transform). The grafted head must
+    // therefore ALSO be in body model space, otherwise the head bone's palette
+    // would pose verts that are still in the attach node's local frame. Bake
+    // each head mesh by the attach node's model-space transform: at bind pose
+    // (identity palette) this reproduces the legacy world_per_node[attach_node]
+    // placement exactly, and under a real head pose the head rigidly follows
+    // the head bone.
+    const auto local_world_per_node =
+        detail::compute_local_world_per_node(body.nodes, body.root_node);
+    const glm::mat4 attach_world =
+        (node_index >= 0 &&
+         node_index < static_cast<int>(local_world_per_node.size()))
+            ? local_world_per_node[node_index]
+            : glm::mat4(1.0f);
+
     // Build one rigid-bound MeshCpu per graftable head mesh.
     std::vector<MeshCpu> out;
     out.reserve(graftable.size());
     for (const MeshCpu* src : graftable) {
         MeshCpu cpu = *src;  // deep copy of vertices/indices/extra_uvs
+        detail::bake_mesh_to_model_space(cpu, attach_world);
         for (auto& v : cpu.vertices) {
             v.bone_indices = glm::u8vec4(static_cast<std::uint8_t>(attach_idx),
                                          0, 0, 0);

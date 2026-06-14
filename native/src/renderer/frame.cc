@@ -172,7 +172,11 @@ void draw_model(const assets::Model& model,
         }
         for (int mesh_idx : node.meshes) {
             const auto& mesh = model.meshes[mesh_idx];
-            prog.set_mat4("u_model", world_per_node[i]);
+            // Skinned models have their node-chain transform baked into the
+            // vertices (model space) at build time, so the bone palette alone
+            // poses them: u_model is the instance world ONLY. Static models
+            // keep the per-node world transform (vertices are node-local).
+            prog.set_mat4("u_model", skinned ? world : world_per_node[i]);
 
             const auto& mat = (mesh.material_index() >= 0
                 ? model.materials[mesh.material_index()]
