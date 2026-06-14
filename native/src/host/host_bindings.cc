@@ -698,25 +698,15 @@ PYBIND11_MODULE(_dauntless_host, m) {
               const assets::Model* body = resolve_model(body_model);
               if (!body || body->skeleton.bones.empty()) return out;
 
-              if (!g_cache) {
-                  assets::AssetCache::Config cfg;
-                  cfg.keep_cpu_data = true;
-                  g_cache = std::make_unique<assets::AssetCache>(std::move(cfg));
-              }
-              // The placement NIF is pure animation (no skinned geometry), so a
-              // texture search dir is irrelevant — pass the NIF's own dir.
-              std::filesystem::path nif_dir =
-                  std::filesystem::path(placement_nif).parent_path();
-              std::vector<std::filesystem::path> search = {nif_dir};
-              assets::ModelHandle clip_model;
-              try {
-                  clip_model = g_cache->load(placement_nif, search);
-              } catch (const std::exception&) {
-                  return out;  // missing/unreadable NIF -> bind pose
-              }
-              if (!clip_model || clip_model->animations.empty()) return out;
+              // Placement NIFs (data/animations/*.nif) are pure animation with
+              // no NiTriShape geometry, so the full model build rejects them
+              // ("no NiTriShape in NIF file"). Load just the clips. Empty list
+              // -> bind pose.
+              std::vector<assets::AnimationClip> clips =
+                  assets::load_animation_clips(placement_nif);
+              if (clips.empty()) return out;
 
-              const assets::AnimationClip& clip = clip_model->animations.front();
+              const assets::AnimationClip& clip = clips.front();
               std::vector<glm::mat4> pose = renderer::sample_pose(
                   clip, body->skeleton, clip.duration_seconds);
               std::vector<glm::mat4> palette =

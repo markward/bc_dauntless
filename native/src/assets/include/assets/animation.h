@@ -1,6 +1,7 @@
 // native/src/assets/include/assets/animation.h
 #pragma once
 
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -30,5 +31,13 @@ struct AnimationClip {
 
     std::vector<NodeTrack> tracks;
 };
+
+/// Parse a NIF and extract its animation clips WITHOUT building a model.
+/// Placement/animation NIFs (e.g. data/animations/db_stand_t_l.nif) carry only
+/// keyframe controllers and no NiTriShape geometry, so the full model build
+/// rejects them ("no NiTriShape in NIF file"). This loads just the clips.
+/// Returns empty on parse failure or if the NIF has no animation.
+std::vector<AnimationClip> load_animation_clips(
+    const std::filesystem::path& nif_path);
 
 }  // namespace assets
