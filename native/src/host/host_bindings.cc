@@ -21,6 +21,7 @@
 #include <renderer/pipeline.h>
 #include <renderer/bone_palette.h>
 #include <renderer/pose_sampler.h>
+#include <renderer/animation_update.h>
 #include <renderer/placement_map.h>
 #include <renderer/frame.h>
 #include <renderer/backdrop_pass.h>
@@ -329,6 +330,12 @@ void frame() {
     g_prev_frame_time_seconds = now;
 
     g_world.propagate();
+
+    // SP2: rebuild each animated instance's bone palette for this frame BEFORE
+    // anything consumes it (the space skinned draw below and the bridge pass).
+    // Shares the same `now` wall clock threaded into draw_model / flip
+    // controllers so animation time and texture-flip time are one clock.
+    renderer::update_animations(g_world, lookup, now);
 
     if (!viewer_mode) {
         g_backdrop_pass->render(g_backdrops, g_camera, *g_pipeline);

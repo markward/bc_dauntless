@@ -46,6 +46,18 @@ struct Instance {
     /// placement system; SP2 rewrites it per frame. Runtime state, not saved.
     std::vector<glm::mat4> bone_palette;
 
+    /// SP2 animation playback. clip_index < 0 means "not animated" (palette is
+    /// left as set, or bind). The clip lives in the instance's Model::animations.
+    /// Runtime state, never serialized.
+    struct AnimationState {
+        int    clip_index     = -1;
+        double start_wall_time = 0.0;
+        bool   loop           = false;
+        bool   sample_at_start = false;  // movement clips evaluate from t=0
+        bool   settled        = false;   // non-loop clip reached its end
+    };
+    AnimationState animation;
+
     /// Per-instance persistent damage decals (object space, body frame).
     /// Runtime VFX state only — never serialized to saves.
     DamageDecalRing decals;

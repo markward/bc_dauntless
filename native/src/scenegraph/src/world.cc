@@ -34,6 +34,10 @@ void World::set_bone_palette(InstanceId id, std::vector<glm::mat4> palette) {
     if (auto* inst = get(id)) inst->bone_palette = std::move(palette);
 }
 
+void World::set_animation(InstanceId id, Instance::AnimationState state) {
+    if (Instance* in = get(id)) { in->animation = state; in->animation.settled = false; }
+}
+
 void World::set_visible(InstanceId id, bool visible) {
     if (auto* inst = get(id)) inst->visible = visible;
 }
