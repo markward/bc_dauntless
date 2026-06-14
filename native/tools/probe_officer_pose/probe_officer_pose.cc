@@ -1,29 +1,20 @@
 // native/tools/probe_officer_pose/probe_officer_pose.cc
 //
-// Headless numeric probe for SP3 officer posing. Builds a body NIF's node
-// tree + skeleton WITHOUT a GL context (stub mesh/texture uploaders), applies
-// load_pose_locals(placement) via apply_pose_to_nodes, then walks the node
-// hierarchy to print the WORLD position of key Bip01 bones. This lets us check
-// the pose math (arms down, neck normal, legs at rest) without a live render.
+// Headless numeric probe for officer posing. Builds a body NIF's node tree +
+// skeleton WITHOUT a GL context (stub mesh/texture uploaders), then walks the
+// node hierarchy to print the BIND world position of key Bip01 bones and
+// inspects the body's skin controllers / shape counts. (The SP2 palette-path
+// assertion is added in Task 4.)
 //
 // Usage:
-//   probe_officer_pose <body.nif> <placement.nif> [--sample-start]
-//
-// It prints two passes:
-//   REST  = the placement NIF's static node skeleton (no keyframe overlay)
-//   POSED = load_pose_locals output (selective upper-body keyframe overlay)
-// so the legs should be identical across both and the arms/neck should differ.
+//   probe_officer_pose <body.nif> <placement.nif>
 
 #include <nif/file.h>
 
-#include <assets/animation.h>
 #include <assets/model.h>
-#include <assets/model_compose.h>
 #include <assets/path_resolver.h>
 
 #include <glm/glm.hpp>
-#include <glm/gtc/quaternion.hpp>
-#include <glm/gtx/quaternion.hpp>
 
 #include <cstdio>
 #include <filesystem>
@@ -36,28 +27,6 @@
 namespace fs = std::filesystem;
 
 namespace {
-
-// Read a placement NIF's per-node REST local transforms (no keyframe overlay)
-// the same way load_pose_locals builds its `rest` map, so we have a pure-rest
-// baseline to diff the selective overlay against.
-std::unordered_map<std::string, glm::mat4> rest_only(const fs::path& nif_path) {
-    std::unordered_map<std::string, glm::mat4> out;
-    nif::File f = nif::load(nif_path.string());
-    for (const auto& blk : f.blocks) {
-        const auto* n = std::get_if<nif::NiNode>(&blk);
-        if (!n || n->av.obj.name.empty()) continue;
-        const auto& av = n->av;
-        glm::mat4 m(1.0f);
-        const auto& r = av.rotation.m;
-        m[0] = glm::vec4(r[0], r[3], r[6], 0.0f);
-        m[1] = glm::vec4(r[1], r[4], r[7], 0.0f);
-        m[2] = glm::vec4(r[2], r[5], r[8], 0.0f);
-        m[3] = glm::vec4(av.translation.x, av.translation.y, av.translation.z, 1.0f);
-        if (av.scale != 1.0f) { m[0] *= av.scale; m[1] *= av.scale; m[2] *= av.scale; }
-        out[av.obj.name] = m;
-    }
-    return out;
-}
 
 glm::vec3 world_pos(const assets::Model& m, int idx) {
     glm::mat4 w = m.nodes[idx].local_transform;
@@ -93,13 +62,12 @@ void dump(const assets::Model& m, const char* tag) {
 int main(int argc, char** argv) {
     if (argc < 3) {
         std::fprintf(stderr,
-                     "usage: probe_officer_pose <body.nif> <placement.nif> "
-                     "[--sample-start]\n");
+                     "usage: probe_officer_pose <body.nif> <placement.nif>\n");
         return 2;
     }
     const fs::path body_nif = argv[1];
     const fs::path place_nif = argv[2];
-    bool sample_start = (argc > 3 && std::string(argv[3]) == "--sample-start");
+    (void)place_nif;  // Task 4 adds the placement-clip palette-path assertion.
 
     // Build the body's node tree headlessly: stub uploaders so no GL is touched.
     nif::File bf = nif::load(body_nif.string());
@@ -148,18 +116,6 @@ int main(int argc, char** argv) {
     {
         assets::Model m = fresh();
         dump(m, "BIND (body NIF, no pose applied)");
-    }
-    {
-        assets::Model m = fresh();
-        assets::apply_pose_to_nodes(m, rest_only(place_nif));
-        dump(m, "REST (placement static skeleton)");
-    }
-    {
-        assets::Model m = fresh();
-        assets::apply_pose_to_nodes(
-            m, assets::load_pose_locals(place_nif, sample_start));
-        dump(m, sample_start ? "POSED (selective overlay @start)"
-                             : "POSED (selective overlay @end)");
     }
     return 0;
 }

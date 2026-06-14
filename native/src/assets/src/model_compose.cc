@@ -7,11 +7,9 @@
 #include <utility>
 
 #include <algorithm>
-#include <unordered_map>
 
 #include <assets/material.h>
 #include <assets/path_resolver.h>
-#include <assets/pose_sample.h>
 #include <assets/skeleton.h>
 #include <assets/texture.h>
 #include <nif/file.h>
@@ -166,24 +164,6 @@ std::vector<int> graft_head(Model& body, Model& head,
         grafted_mesh_indices.push_back(mesh_index);
     }
     return grafted_mesh_indices;
-}
-
-void apply_pose_to_nodes(
-    Model& model,
-    const std::unordered_map<std::string, glm::mat4>& pose_locals) {
-    // The placement-animation NIF's static node skeleton IS the officer's
-    // placed standing pose: each NiNode's parent-relative LOCAL transform is
-    // the bone's rest pose (root bone carries the station offset). We overwrite
-    // each matching body bone node's local_transform with the placement NIF's,
-    // so the body's own node-walk composes the standing pose at the station.
-    // Bones with no placement entry (and the non-bone scaffolding above Bip01)
-    // keep their bind local. (The keyframe controllers only animate AROUND this
-    // rest pose; for static SP3 placement the rest pose alone is correct, and
-    // it auto-handles "move-to-L1" clips since their rest frame is the station.)
-    for (auto& node : model.nodes) {
-        auto it = pose_locals.find(node.name);
-        if (it != pose_locals.end()) node.local_transform = it->second;
-    }
 }
 
 bool set_base_texture(Model& model, std::span<const int> mesh_indices,

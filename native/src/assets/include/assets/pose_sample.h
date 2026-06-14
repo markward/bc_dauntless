@@ -1,12 +1,10 @@
 // native/src/assets/include/assets/pose_sample.h
 //
-// Per-track keyframe interpolation, shared by:
-//   * renderer::sample_pose (GPU palette skinning — pose_sampler.cc), and
-//   * assets::apply_pose_to_nodes (static node-posing — model_compose.cc).
-//
-// Both need the SAME sampling math (translation LERP, rotation SLERP, scale
-// LERP, key bracketing) but live in different libraries. To avoid a renderer→
-// assets dependency inversion, the interpolation lives here in `assets`.
+// Per-track keyframe interpolation, used by renderer::sample_pose (GPU palette
+// skinning — pose_sampler.cc) to evaluate a clip's tracks into per-bone locals.
+// The sampling math (translation LERP, rotation SLERP, scale LERP, key
+// bracketing) lives here in `assets` so the renderer can reuse it without an
+// assets→renderer dependency inversion.
 #pragma once
 
 #include <glm/glm.hpp>

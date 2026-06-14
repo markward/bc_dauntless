@@ -523,6 +523,26 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("id"), py::arg("matrices"),
           "Set an instance's skinning palette (list of column-major mat4 as "
           "16 floats). Empty list restores the model's bind pose.");
+    m.def("set_instance_animation",
+          [](scenegraph::InstanceId id, int clip_index, bool loop,
+             bool sample_at_start) {
+              auto* in = g_world.get(id);
+              if (!in) return;
+              scenegraph::Instance::AnimationState st;
+              st.clip_index = clip_index;
+              st.loop = loop;
+              st.sample_at_start = sample_at_start;
+              // Same wall clock frame() threads into update_animations /
+              // draw_model / flip controllers, so animation t=0 lines up with
+              // the per-frame sample. (frame() reads glfwGetTime() into `now`.)
+              st.start_wall_time = glfwGetTime();
+              g_world.set_animation(id, st);
+          },
+          py::arg("iid"), py::arg("clip_index"), py::arg("loop") = false,
+          py::arg("sample_at_start") = false,
+          "SP2: play model.animations[clip_index] on this instance. loop=false "
+          "(default) plays once and holds the last frame; the renderer rebuilds "
+          "the bone palette each frame until it settles.");
     m.def("set_visible",
           [](scenegraph::InstanceId id, bool v) { g_world.set_visible(id, v); },
           py::arg("id"), py::arg("visible"));
@@ -646,24 +666,15 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   head_nif, as_path(head_tex),
                   "Bip01 Head");
 
-              // SP3 node-posing: BC bodies are rigid NiTriShapes parented to
-              // Bip01 NiNodes (which ARE model.nodes here). The placement NIF's
-              // STATIC node skeleton is the officer's placed standing pose — so
-              // overwrite each matching body bone's local with the placement
-              // NIF's rest local, then CLEAR the skeleton so the model routes to
-              // the static bridge walk (walk_bridge_meshes skips non-empty
-              // skeletons; the skinned sub-pass requires one). No palette, no
-              // inverse-bind. The placement NIF's rest skeleton is the base
-              // pose; its keyframe rotations settle the arms/spine. sample_at_
-              // start picks the clip START for "move-to-L1" clips.
+              // SP2: keep the skeleton; load the placement clip so the
+              // per-frame animation updater can pose it through the GPU bone
+              // palette. No node-walk, no skeleton clear. The Python caller
+              // forwards sample_at_start to set_instance_animation (it picks the
+              // clip START for "move-to-L1" clips), so it is unused here.
+              (void)sample_at_start;
               const std::filesystem::path placement = as_path(placement_nif);
               if (!placement.empty()) {
-                  auto pose_locals =
-                      assets::load_pose_locals(placement, sample_at_start);
-                  if (!pose_locals.empty())
-                      assets::apply_pose_to_nodes(composed, pose_locals);
-                  composed.skeleton.bones.clear();
-                  composed.skeleton.root_bone_index = -1;
+                  composed.animations = assets::load_animation_clips(placement);
               }
 
               // Register as a new handle. compose_officer_model bypasses
@@ -687,10 +698,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "grafting the head onto the body's 'Bip01 Head' node. "
           "body_tex/head_tex are per-officer skin .tga FILE paths (str) that "
           "override the body/head materials' Base stage; omit to keep the NIF "
-          "default. If placement_nif (str) is given, the placement clip's "
-          "rest-frame pose is baked into the node-local transforms and the "
-          "skeleton is CLEARED, so the officer renders as a STATIC posed model "
-          "through the bridge node-walk (no palette). Returns a ModelHandle.");
+          "default. If placement_nif (str) is given, its placement clip is "
+          "loaded into the composed model's animations[0] (the skeleton is "
+          "KEPT); the caller then calls set_instance_animation to play it "
+          "through the GPU bone palette. sample_at_start is unused here (the "
+          "caller forwards it to set_instance_animation). Returns a "
+          "ModelHandle.");
 
     // SP3: resolve a CharacterClass GetLocation() string (e.g. "DBTactical")
     // to its placement-animation NIF + hidden flag. The nif path is RELATIVE
@@ -712,54 +725,6 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "SP3: resolve a character GetLocation() string to its "
           "placement-animation NIF (data-root-RELATIVE path) + hidden flag, as "
           "{'nif': str, 'hidden': bool}, or None if the location is unknown.");
-
-    // SP3: evaluate a station's placement clip at its rest frame into a skinning
-    // palette for an already-assembled officer body model. The placement NIF
-    // carries a single AnimationClip whose tracks address the body's Bip01
-    // skeleton by bone name; we sample it at the clip's final time (the static
-    // rest pose) and fold it through the body skeleton's inverse-bind to get the
-    // same column-major mat4 palette set_instance_bone_palette consumes.
-    //
-    // placement_nif is an ABSOLUTE path (the Python caller joined the relative
-    // path from resolve_placement with the data root). Returns an empty list if
-    // the body model has no skeleton or the placement NIF has no animation — the
-    // caller then leaves the instance at its bind pose.
-    m.def("sample_placement_pose",
-          [](scenegraph::ModelHandle body_model,
-             const std::string& placement_nif)
-              -> std::vector<std::array<float, 16>> {
-              std::vector<std::array<float, 16>> out;
-              const assets::Model* body = resolve_model(body_model);
-              if (!body || body->skeleton.bones.empty()) return out;
-
-              // Placement NIFs (data/animations/*.nif) are pure animation with
-              // no NiTriShape geometry, so the full model build rejects them
-              // ("no NiTriShape in NIF file"). Load just the clips. Empty list
-              // -> bind pose.
-              std::vector<assets::AnimationClip> clips =
-                  assets::load_animation_clips(placement_nif);
-              if (clips.empty()) return out;
-
-              const assets::AnimationClip& clip = clips.front();
-              std::vector<glm::mat4> pose = renderer::sample_pose(
-                  clip, body->skeleton, clip.duration_seconds);
-              std::vector<glm::mat4> palette =
-                  renderer::build_bone_palette(body->skeleton, &pose);
-
-              out.reserve(palette.size());
-              for (const glm::mat4& m : palette) {
-                  std::array<float, 16> a{};
-                  const float* p = glm::value_ptr(m);  // column-major
-                  for (int i = 0; i < 16; ++i) a[i] = p[i];
-                  out.push_back(a);
-              }
-              return out;
-          },
-          py::arg("body_model"), py::arg("placement_nif"),
-          "SP3: sample a station placement clip at its rest frame into a "
-          "skinning palette for the given assembled body model. Returns a list "
-          "of column-major mat4 (16 floats each) for set_instance_bone_palette, "
-          "or an empty list (-> bind pose) if there is no skeleton/animation.");
 
     m.def("set_bridge_camera",
           [](std::tuple<float,float,float> eye,
