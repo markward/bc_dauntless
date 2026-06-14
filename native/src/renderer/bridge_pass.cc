@@ -1,6 +1,7 @@
 // native/src/renderer/bridge_pass.cc
 #include "renderer/bridge_pass.h"
 #include "renderer/pipeline.h"
+#include "renderer/bone_palette.h"
 
 #include <glad/glad.h>
 
@@ -57,6 +58,9 @@ void walk_bridge_meshes(const scenegraph::World& world,
         [&](const scenegraph::Instance& inst) {
             const assets::Model* m = lookup(inst.model_handle);
             if (!m) return;
+            // Skinned models are drawn by the skinned sub-pass only; the static
+            // base shader would draw them undeformed and double-draw them.
+            if (!m->skeleton.bones.empty()) return;
             std::vector<glm::mat4> world_per_node(m->nodes.size(), glm::mat4(1.0f));
             if (!m->nodes.empty()) {
                 world_per_node[m->root_node] =
@@ -190,6 +194,47 @@ void BridgePass::render(const scenegraph::World& world,
         });
 
     glEnable(GL_CULL_FACE);
+
+    // ── Sub-pass C: skinned bridge characters ──────────────────────────────
+    // Any Pass::Bridge instance carrying a skeleton is drawn here, lit by the
+    // same bridge ambient as the geometry (bridge.frag, white dark-map). Bone
+    // palette is bind-pose for now (SP1); SP2 supplies an animated pose.
+    // Unlike the bridge shell (sub-pass A, mixed winding → culling disabled),
+    // character NIFs have consistent winding, so cull-back (re-enabled above)
+    // is correct for them.
+    auto& skin_shader = pipeline.skinned_bridge_shader();
+    skin_shader.use();
+    skin_shader.set_mat4("u_view", camera.view_matrix());
+    skin_shader.set_mat4("u_proj", camera.proj_matrix());
+    skin_shader.set_vec3("u_ambient", lighting.ambient);
+    skin_shader.set_int("u_base_color", 0);
+    skin_shader.set_int("u_dark_map", 1);
+    skin_shader.set_float("u_alpha_test_threshold", 0.5f);
+
+    world.for_each_visible_in_pass(scenegraph::Pass::Bridge,
+        [&](const scenegraph::Instance& inst) {
+            const assets::Model* m = lookup(inst.model_handle);
+            if (!m || m->skeleton.bones.empty()) return;
+            std::vector<glm::mat4> palette = build_bone_palette(m->skeleton, nullptr);
+            skin_shader.set_mat4_array("u_bones", palette.data(),
+                                       static_cast<int>(palette.size()));
+            // World transform per node, same node-walk as walk_bridge_meshes.
+            std::vector<glm::mat4> world_per_node(m->nodes.size(), glm::mat4(1.0f));
+            if (!m->nodes.empty())
+                world_per_node[m->root_node] =
+                    inst.world * m->nodes[m->root_node].local_transform;
+            for (std::size_t i = 0; i < m->nodes.size(); ++i) {
+                const auto& node = m->nodes[i];
+                if (node.parent_index >= 0)
+                    world_per_node[i] = world_per_node[node.parent_index] * node.local_transform;
+                for (int mesh_idx : node.meshes) {
+                    const auto& mesh = m->meshes[mesh_idx];
+                    const auto& mat = (mesh.material_index() >= 0
+                        ? m->materials[mesh.material_index()] : assets::Material{});
+                    draw_mesh(*m, mesh, mat, skin_shader, world_per_node[i], white, t);
+                }
+            }
+        });
 
     glBindVertexArray(0);
 }

@@ -4,7 +4,19 @@
 #include <nif/block.h>
 #include <nif/file.h>
 
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/epsilon.hpp>
+
+#include <cmath>
+
 namespace {
+
+bool mat_near(const glm::mat4& a, const glm::mat4& b, float eps = 1e-4f) {
+    for (int c = 0; c < 4; ++c)
+        for (int r = 0; r < 4; ++r)
+            if (std::abs(a[c][r] - b[c][r]) > eps) return false;
+    return true;
+}
 
 // Synthetic file: Root → Pelvis → Spine → Arm, with a NiTriShapeSkinController
 // referencing the three bones.
@@ -97,6 +109,27 @@ TEST(SkeletonBuild, IdentifiesRoot) {
     EXPECT_EQ(
         result.skeleton.bones[result.skeleton.root_bone_index].name,
         "Pelvis");
+}
+
+TEST(InverseBindPose, BindPosePaletteIsIdentityPerBone) {
+    // Root translated +X by 2; child translated +Y by 3 in root's local frame.
+    assets::Skeleton sk;
+    assets::Bone root;  root.name = "root";  root.parent_index = -1;
+    root.local_transform  = glm::translate(glm::mat4(1.0f), glm::vec3(2, 0, 0));
+    assets::Bone child; child.name = "child"; child.parent_index = 0;
+    child.local_transform = glm::translate(glm::mat4(1.0f), glm::vec3(0, 3, 0));
+    sk.bones = {root, child};
+    sk.root_bone_index = 0;
+
+    assets::detail::compute_inverse_bind_poses(sk);
+
+    // world_bind(child) = T(+x2) * T(+y3); palette at bind = world_bind * inverse_bind == I.
+    glm::mat4 world_root  = sk.bones[0].local_transform;
+    glm::mat4 world_child = world_root * sk.bones[1].local_transform;
+    EXPECT_TRUE(mat_near(world_root  * sk.bones[0].inverse_bind_pose, glm::mat4(1.0f)));
+    EXPECT_TRUE(mat_near(world_child * sk.bones[1].inverse_bind_pose, glm::mat4(1.0f)));
+    // child inverse-bind must equal inverse of its composed world transform.
+    EXPECT_TRUE(mat_near(sk.bones[1].inverse_bind_pose, glm::inverse(world_child)));
 }
 
 TEST(SkeletonBuild, ParentWalkThroughNonBoneNiNode) {

@@ -136,6 +136,16 @@ void Shader::set_vec4_array(const std::string& name,
     }
 }
 
+void Shader::set_mat4_array(const std::string& name,
+                            const glm::mat4* data,
+                            int count) const {
+    if (count <= 0) return;
+    GLint loc = glGetUniformLocation(program_, name.c_str());
+    if (loc >= 0) {
+        glUniformMatrix4fv(loc, count, GL_FALSE, glm::value_ptr(*data));
+    }
+}
+
 void Shader::set_int_array(const std::string& name,
                             const int* data,
                             int count) const {

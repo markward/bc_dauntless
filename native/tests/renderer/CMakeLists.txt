@@ -3,18 +3,22 @@ add_executable(renderer_tests
     shader_test.cc
     pipeline_test.cc
     frame_test.cc
+    skinned_program_test.cc
+    skinned_render_test.cc
     hit_vfx_pass_test.cc
     lighting_test.cc
     backdrop_pass_test.cc
     sun_pass_test.cc
     dust_pass_test.cc
     aabb_test.cc
+    bone_palette_test.cc
     glow_region_test.cc
     ray_trace_test.cc
     shield_state_test.cc
     skin_shield_test.cc
     lens_flare_pass_test.cc
     bridge_pass_test.cc
+    skinned_bridge_test.cc
     hdr_target_test.cc
     resolve_pass_test.cc
     bloom_pass_test.cc

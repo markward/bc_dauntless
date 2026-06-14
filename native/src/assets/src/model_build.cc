@@ -6,6 +6,7 @@
 #include "mesh_build.h"
 #include "mesh_upload.h"
 #include "skeleton_build.h"
+#include "skin_weights.h"
 
 #include <assets/texture.h>
 
@@ -372,6 +373,7 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
 
     // 1. Skeleton (may be empty for ships).
     auto skel = build_skeleton(f);
+    const auto nif_block_to_bone = skel.nif_block_to_bone_index;  // copy for weight fill
     model.skeleton = std::move(skel.skeleton);
 
     // 2. Textures.
@@ -477,6 +479,53 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
         int node_index = find_parent_node_index(f, i, nodes, resolver);
 
         MeshCpu cpu = build_mesh_cpu(*shape, *data, mat_index, node_index);
+
+        // Skinning: if this shape carries a NiTriShapeSkinController via its
+        // controller link, map its bones to skeleton indices and fill
+        // per-vertex weights. BC character shapes attach the skin controller
+        // directly to the shape's controller link, so we resolve that single
+        // link rather than walking the controller chain. Mirrors
+        // gather_bone_block_indices' resolve.
+        if (!model.skeleton.bones.empty()) {
+            const nif::NiTriShapeSkinController* skin = nullptr;
+            std::uint32_t ctrl = shape->av.obj.controller_link;
+            if (ctrl != 0) {
+                auto ci = resolver.resolve(ctrl);
+                if (ci != LinkResolver::kInvalidIndex && ci < f.blocks.size())
+                    skin = std::get_if<nif::NiTriShapeSkinController>(&f.blocks[ci]);
+            }
+            if (skin) {
+                std::vector<int> skin_bone_to_skeleton(skin->bone_links.size(), -1);
+                for (std::size_t b = 0; b < skin->bone_links.size(); ++b) {
+                    auto blk = resolver.resolve(skin->bone_links[b]);
+                    auto it = nif_block_to_bone.find(blk);
+                    if (it != nif_block_to_bone.end())
+                        skin_bone_to_skeleton[b] = it->second;
+                }
+                fill_skin_weights(cpu, *skin, skin_bone_to_skeleton);
+            } else {
+                // Skinned model, but this shape carries NO skin controller. In
+                // BC, body parts are rigid shapes parented to bone nodes (the
+                // static node-walk in draw_model already places them via
+                // u_model = world * node_chain). When this model is drawn
+                // through the skinned program, every vertex is blended by the
+                // bone palette; a default {0,0,0,0} weight would collapse the
+                // shape to the origin. Bind each vertex fully to bone 0 (the
+                // root), whose palette entry is identity at bind pose, so the
+                // skinned shader leaves the shape undeformed and it lands in the
+                // exact same world position as the static draw.
+                //
+                // SP2 (animation) caveat: bone 0 is correct ONLY at bind pose.
+                // Once a pose is applied, a rigid shape must follow the bone its
+                // node is parented to, not the root. SP2 must replace this with
+                // a bind to the shape's actual parent bone (resolve node_index ->
+                // bone), or rigid body parts will detach from the animated skeleton.
+                for (auto& v : cpu.vertices) {
+                    v.bone_indices = glm::u8vec4(0, 0, 0, 0);
+                    v.bone_weights = glm::u8vec4(255, 0, 0, 0);
+                }
+            }
+        }
 
         if (node_index >= 0) {
             int mesh_idx = static_cast<int>(model.meshes.size());

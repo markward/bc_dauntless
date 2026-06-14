@@ -13,6 +13,7 @@ endfunction()
 
 embed_shader(SHADER_OPAQUE_VS shaders/opaque.vert opaque_vs)
 embed_shader(SHADER_OPAQUE_FS shaders/opaque.frag opaque_fs)
+embed_shader(SHADER_SKINNED_VS shaders/skinned.vert skinned_vs)
 embed_shader(SHADER_BACKDROP_VS shaders/backdrop.vert backdrop_vs)
 embed_shader(SHADER_BACKDROP_FS shaders/backdrop.frag backdrop_fs)
 embed_shader(SHADER_SUN_VS shaders/sun.vert sun_vs)
@@ -39,6 +40,7 @@ embed_shader(SHADER_TARGET_RETICLE_VS shaders/target_reticle.vert target_reticle
 embed_shader(SHADER_TARGET_RETICLE_FS shaders/target_reticle.frag target_reticle_fs)
 embed_shader(SHADER_BRIDGE_VS shaders/bridge.vert bridge_vs)
 embed_shader(SHADER_BRIDGE_FS shaders/bridge.frag bridge_fs)
+embed_shader(SHADER_SKINNED_BRIDGE_VS shaders/skinned_bridge.vert skinned_bridge_vs)
 embed_shader(SHADER_LIGHTMAP_VS shaders/lightmap.vert lightmap_vs)
 embed_shader(SHADER_LIGHTMAP_FS shaders/lightmap.frag lightmap_fs)
 embed_shader(SHADER_RESOLVE_VS shaders/resolve.vert resolve_vs)
@@ -52,6 +54,7 @@ embed_shader(SHADER_BLOOM_UP_FS shaders/bloom_up.frag bloom_up_fs)
 add_library(renderer STATIC
     window.cc
     shader.cc
+    bone_palette.cc
     pipeline.cc
     frame.cc
     hdr_target.cc

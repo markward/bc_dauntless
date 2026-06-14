@@ -4,7 +4,29 @@ Handlers needing per-frame state (player ship, session) are re-bound every
 tick via register_for_frame(); pure-static handlers can be registered once
 at module import time.
 """
+from pathlib import Path
+
 import engine.dev_mode as dev_mode
+
+# SP1 skinned-mesh preview: instance id of the spawned test character, or None.
+# Module-level (not closure state) because register_for_frame re-binds the
+# handler every tick, so the toggle state must survive across re-binds.
+_test_character_iid = None
+
+# Real skinned character NIF shipped with BC. Confirmed present at
+# game/data/Models/Characters/Bodies/BodyMaleL/BodyMaleL.NIF. Absolutised the
+# same way host_loop resolves ship/bridge NIFs (PROJECT_ROOT / "game" / rel).
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_TEST_CHARACTER_NIF = str(
+    _PROJECT_ROOT
+    / "game"
+    / "data"
+    / "Models"
+    / "Characters"
+    / "Bodies"
+    / "BodyMaleL"
+    / "BodyMaleL.NIF"
+)
 
 
 def register_for_frame(_h, session, player) -> None:
@@ -80,4 +102,36 @@ def register_for_frame(_h, session, player) -> None:
     dev_mode.register_dev_keybinding(
         _h.keys.KEY_RIGHT_BRACKET, _destroy_target,
         "Destroy target ship (dev) — ]",
+    )
+
+    # F7: spawn/despawn a skinned test character (SP1 skinned-mesh preview).
+    # First press loads BodyMaleL.NIF and spawns one instance framed in front of
+    # the active camera, tagged for the active pass (bridge or space) — the host
+    # computes the bounds-aware placement. A non-empty skeleton routes it through
+    # the skinned draw path automatically. Second press despawns it. Production
+    # builds never register this (dev-mode gated).
+    def _toggle_test_character() -> None:
+        global _test_character_iid
+        import engine.renderer as renderer
+
+        if _test_character_iid is not None:
+            renderer.destroy_instance(_test_character_iid)
+            _test_character_iid = None
+            return
+
+        # The host frames the character in front of the active camera and tags
+        # the active pass (bridge or space) — no Python-side placement math.
+        # Asset load can raise (missing/corrupt NIF). Keep a load failure from
+        # bubbling out into the frame body — log and stay un-spawned.
+        try:
+            _test_character_iid = renderer.spawn_test_character(
+                _TEST_CHARACTER_NIF
+            )
+        except Exception as exc:  # noqa: BLE001 - dev hook must not break the tick
+            print("[dev] spawn_test_character failed:", exc)
+            _test_character_iid = None
+
+    dev_mode.register_dev_keybinding(
+        _h.keys.KEY_F7, _toggle_test_character,
+        "Spawn/despawn skinned test character (SP1) — F7",
     )

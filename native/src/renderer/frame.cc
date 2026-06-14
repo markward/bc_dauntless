@@ -2,6 +2,8 @@
 #include "renderer/frame.h"
 #include "renderer/lighting.h"
 #include "renderer/pipeline.h"
+#include "renderer/bone_palette.h"
+#include "renderer/shader.h"
 
 #include <glad/glad.h>
 
@@ -69,19 +71,31 @@ namespace {
 
 namespace renderer {
 
-namespace {
-
 void draw_model(const assets::Model& model,
                 const glm::mat4& world,
                 Shader& shader,
-                GLuint white_fallback,
-                GLuint black_fallback,
+                Shader& skinned_shader,
+                std::uint32_t white_fallback,
+                std::uint32_t black_fallback,
                 bool rim_active,
                 const scenegraph::DamageDecalRing& decals,
                 const std::array<scenegraph::Instance::GlowRegion,
                                  scenegraph::Instance::kMaxGlowRegions>& glow_regions,
                 float decal_time,
-                float emissive_scale) {
+                float emissive_scale,
+                const std::vector<glm::mat4>& bone_palette) {
+    // Pick the program: skinned only when the model carries a skeleton AND a
+    // non-empty palette is supplied. An empty palette forces the static branch,
+    // which is byte-identical to the pre-skinning path (used by the plumbing
+    // test to render a skinned model through the static program).
+    const bool skinned = !model.skeleton.bones.empty() && !bone_palette.empty();
+    Shader& prog = skinned ? skinned_shader : shader;
+    prog.use();
+    if (skinned) {
+        prog.set_mat4_array("u_bones", bone_palette.data(),
+                            static_cast<int>(bone_palette.size()));
+    }
+
     // ── Per-instance damage decals (Phase 2) ───────────────────────────────
     // Pack the active ring into vec4 arrays. point_body and radius are both in
     // NIF/model units (damage_decal_add converts radius GU->model before
@@ -103,15 +117,15 @@ void draw_model(const assets::Model& model,
                 ++n;
             }
         }
-        shader.set_int("u_decal_count", n);
+        prog.set_int("u_decal_count", n);
         if (n > 0) {
-            shader.set_vec4_array("u_decal_a", a, n);
-            shader.set_vec4_array("u_decal_b", b, n);
-            shader.set_vec4_array("u_decal_c", c, n);
+            prog.set_vec4_array("u_decal_a", a, n);
+            prog.set_vec4_array("u_decal_b", b, n);
+            prog.set_vec4_array("u_decal_c", c, n);
             // world->body for the opaque shader's body-frame fragment
             // reconstruction (opaque.frag: p_body / n_body).
-            shader.set_mat4("u_ship_world_inv", glm::inverse(world));
-            shader.set_float("u_decal_time", decal_time);
+            prog.set_mat4("u_ship_world_inv", glm::inverse(world));
+            prog.set_float("u_decal_time", decal_time);
         }
     }
 
@@ -131,15 +145,15 @@ void draw_model(const assets::Model& model,
             nc[nn] = glm::vec4(n.fore, n.dim_target, n.disable_time, n.flicker);
             ++nn;
         }
-        shader.set_int("u_glow_region_count", nn);
+        prog.set_int("u_glow_region_count", nn);
         if (nn > 0) {
-            shader.set_vec4_array("u_glow_region_a", na, nn);
-            shader.set_vec4_array("u_glow_region_b", nb, nn);
-            shader.set_vec4_array("u_glow_region_c", nc, nn);
+            prog.set_vec4_array("u_glow_region_a", na, nn);
+            prog.set_vec4_array("u_glow_region_b", nb, nn);
+            prog.set_vec4_array("u_glow_region_c", nc, nn);
             // Reuse the decal world->body inverse + clock; set them here too in
             // case this instance has glow regions but no active decals.
-            shader.set_mat4("u_ship_world_inv", glm::inverse(world));
-            shader.set_float("u_decal_time", decal_time);
+            prog.set_mat4("u_ship_world_inv", glm::inverse(world));
+            prog.set_float("u_decal_time", decal_time);
         }
     }
 
@@ -158,15 +172,15 @@ void draw_model(const assets::Model& model,
         }
         for (int mesh_idx : node.meshes) {
             const auto& mesh = model.meshes[mesh_idx];
-            shader.set_mat4("u_model", world_per_node[i]);
+            prog.set_mat4("u_model", world_per_node[i]);
 
             const auto& mat = (mesh.material_index() >= 0
                 ? model.materials[mesh.material_index()]
                 : assets::Material{});
-            shader.set_vec3("u_diffuse_color", mat.diffuse);
-            shader.set_vec3("u_emissive_color", mat.emissive);
+            prog.set_vec3("u_diffuse_color", mat.diffuse);
+            prog.set_vec3("u_emissive_color", mat.emissive);
             // Self-illumination scale (1 = normal, 0 = destroyed/dark hull).
-            shader.set_float("u_emissive_scale", emissive_scale);
+            prog.set_float("u_emissive_scale", emissive_scale);
 
             const int base_tex = mat.stages[
                 static_cast<std::size_t>(assets::Material::StageSlot::Base)
@@ -177,7 +191,7 @@ void draw_model(const assets::Model& model,
             } else {
                 glBindTexture(GL_TEXTURE_2D, white_fallback);
             }
-            shader.set_int("u_base_color", 0);
+            prog.set_int("u_base_color", 0);
 
             const int glow_tex = mat.stages[
                 static_cast<std::size_t>(assets::Material::StageSlot::Glow)
@@ -188,7 +202,7 @@ void draw_model(const assets::Model& model,
             } else {
                 glBindTexture(GL_TEXTURE_2D, black_fallback);
             }
-            shader.set_int("u_glow_map", 1);
+            prog.set_int("u_glow_map", 1);
 
             // Opaque-pass texture-unit convention: 0 = base, 1 = glow,
             // 2 = specular mask. Each unit owns one sampler uniform.
@@ -210,16 +224,16 @@ void draw_model(const assets::Model& model,
             } else {
                 glBindTexture(GL_TEXTURE_2D, black_fallback);
             }
-            shader.set_int  ("u_specular_map",   2);
-            shader.set_vec3 ("u_specular_color", mat.specular);
-            shader.set_float("u_specular_power",
+            prog.set_int  ("u_specular_map",   2);
+            prog.set_vec3 ("u_specular_color", mat.specular);
+            prog.set_float("u_specular_power",
                 renderer::glossiness_to_specular_power(mat.glossiness));
-            shader.set_int("u_specular_enabled",
+            prog.set_int("u_specular_enabled",
                            dauntless_specular::enabled() ? 1 : 0);
             const float rim = rim_active
                 ? renderer::rim_strength_from_material(mat.specular, mat.glossiness)
                 : 0.0f;
-            shader.set_float("u_rim_strength", rim);
+            prog.set_float("u_rim_strength", rim);
 
             glBindVertexArray(mesh.vao());
             glDrawElements(GL_TRIANGLES, mesh.index_count(), GL_UNSIGNED_INT, nullptr);
@@ -227,8 +241,6 @@ void draw_model(const assets::Model& model,
     }
     glBindVertexArray(0);
 }
-
-}  // namespace
 
 FrameSubmitter::~FrameSubmitter() {
     if (white_texture_ != 0) {
@@ -279,25 +291,35 @@ void FrameSubmitter::submit_opaque(const scenegraph::World& world,
                                    const ModelLookup& lookup,
                                    const Lighting& lighting,
                                    float decal_time) {
+    // Per-frame uniforms common to the static AND skinned programs (view/proj,
+    // camera, ambient, directional lights). The skinned vertex stage pairs with
+    // opaque.frag, so the fragment-side uniforms are identical; applying the
+    // same values to both keeps a skinned draw shaded identically to a static
+    // one. The set + order on the static program is unchanged from before.
+    auto configure_common = [&](Shader& s) {
+        s.use();
+        s.set_mat4("u_view", camera.view_matrix());
+        s.set_mat4("u_proj", camera.proj_matrix());
+
+        const glm::vec3 cam_pos_ws =
+            glm::vec3(glm::inverse(camera.view_matrix())[3]);
+        s.set_vec3("u_camera_pos_ws", cam_pos_ws);
+
+        s.set_vec3("u_ambient_light", lighting.ambient);
+        s.set_int("u_dir_light_count", lighting.directional_count);
+        if (lighting.directional_count > 0) {
+            s.set_vec3_array("u_dir_light_dir_ws",
+                             lighting.directional_dir_ws,
+                             lighting.directional_count);
+            s.set_vec3_array("u_dir_light_color",
+                             lighting.directional_color,
+                             lighting.directional_count);
+        }
+    };
+
     auto& shader = pipeline.opaque_shader();
-    shader.use();
-    shader.set_mat4("u_view", camera.view_matrix());
-    shader.set_mat4("u_proj", camera.proj_matrix());
-
-    const glm::vec3 cam_pos_ws =
-        glm::vec3(glm::inverse(camera.view_matrix())[3]);
-    shader.set_vec3("u_camera_pos_ws", cam_pos_ws);
-
-    shader.set_vec3("u_ambient_light", lighting.ambient);
-    shader.set_int("u_dir_light_count", lighting.directional_count);
-    if (lighting.directional_count > 0) {
-        shader.set_vec3_array("u_dir_light_dir_ws",
-                              lighting.directional_dir_ws,
-                              lighting.directional_count);
-        shader.set_vec3_array("u_dir_light_color",
-                              lighting.directional_color,
-                              lighting.directional_count);
-    }
+    configure_common(shader);
+    configure_common(pipeline.skinned_shader());
 
     const GLuint white = ensure_white_texture();
     const GLuint black = ensure_black_texture();
@@ -305,9 +327,13 @@ void FrameSubmitter::submit_opaque(const scenegraph::World& world,
     world.for_each_visible([&](const scenegraph::Instance& inst) {
         const assets::Model* m = lookup(inst.model_handle);
         const bool rim_active = dauntless_rim::enabled() && inst.rim_eligible;
-        if (m) draw_model(*m, inst.world, shader, white, black, rim_active,
+        std::vector<glm::mat4> palette;
+        if (m && !m->skeleton.bones.empty())
+            palette = build_bone_palette(m->skeleton, /*local_pose=*/nullptr);
+        if (m) draw_model(*m, inst.world, shader, pipeline.skinned_shader(),
+                          white, black, rim_active,
                           inst.decals, inst.glow_regions, decal_time,
-                          inst.emissive_scale);
+                          inst.emissive_scale, palette);
     });
 }
 
@@ -318,25 +344,32 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
                                            const Lighting& lighting,
                                            scenegraph::Pass pass,
                                            float decal_time) {
+    // See submit_opaque: configure the common per-frame uniforms on BOTH the
+    // static and skinned programs. The static-program set is unchanged.
+    auto configure_common = [&](Shader& s) {
+        s.use();
+        s.set_mat4("u_view", camera.view_matrix());
+        s.set_mat4("u_proj", camera.proj_matrix());
+
+        const glm::vec3 cam_pos_ws =
+            glm::vec3(glm::inverse(camera.view_matrix())[3]);
+        s.set_vec3("u_camera_pos_ws", cam_pos_ws);
+
+        s.set_vec3("u_ambient_light", lighting.ambient);
+        s.set_int("u_dir_light_count", lighting.directional_count);
+        if (lighting.directional_count > 0) {
+            s.set_vec3_array("u_dir_light_dir_ws",
+                             lighting.directional_dir_ws,
+                             lighting.directional_count);
+            s.set_vec3_array("u_dir_light_color",
+                             lighting.directional_color,
+                             lighting.directional_count);
+        }
+    };
+
     auto& shader = pipeline.opaque_shader();
-    shader.use();
-    shader.set_mat4("u_view", camera.view_matrix());
-    shader.set_mat4("u_proj", camera.proj_matrix());
-
-    const glm::vec3 cam_pos_ws =
-        glm::vec3(glm::inverse(camera.view_matrix())[3]);
-    shader.set_vec3("u_camera_pos_ws", cam_pos_ws);
-
-    shader.set_vec3("u_ambient_light", lighting.ambient);
-    shader.set_int("u_dir_light_count", lighting.directional_count);
-    if (lighting.directional_count > 0) {
-        shader.set_vec3_array("u_dir_light_dir_ws",
-                              lighting.directional_dir_ws,
-                              lighting.directional_count);
-        shader.set_vec3_array("u_dir_light_color",
-                              lighting.directional_color,
-                              lighting.directional_count);
-    }
+    configure_common(shader);
+    configure_common(pipeline.skinned_shader());
 
     const GLuint white = ensure_white_texture();
     const GLuint black = ensure_black_texture();
@@ -344,9 +377,13 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
     world.for_each_visible_in_pass(pass, [&](const scenegraph::Instance& inst) {
         const assets::Model* m = lookup(inst.model_handle);
         const bool rim_active = dauntless_rim::enabled() && inst.rim_eligible;
-        if (m) draw_model(*m, inst.world, shader, white, black, rim_active,
+        std::vector<glm::mat4> palette;
+        if (m && !m->skeleton.bones.empty())
+            palette = build_bone_palette(m->skeleton, /*local_pose=*/nullptr);
+        if (m) draw_model(*m, inst.world, shader, pipeline.skinned_shader(),
+                          white, black, rim_active,
                           inst.decals, inst.glow_regions, decal_time,
-                          inst.emissive_scale);
+                          inst.emissive_scale, palette);
     });
 }
 

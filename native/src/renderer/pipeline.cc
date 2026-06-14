@@ -5,6 +5,7 @@
 
 #include "embedded_opaque_vs.h"
 #include "embedded_opaque_fs.h"
+#include "embedded_skinned_vs.h"
 #include "embedded_backdrop_vs.h"
 #include "embedded_backdrop_fs.h"
 #include "embedded_sun_vs.h"
@@ -31,6 +32,7 @@
 #include "embedded_target_reticle_fs.h"
 #include "embedded_bridge_vs.h"
 #include "embedded_bridge_fs.h"
+#include "embedded_skinned_bridge_vs.h"
 #include "embedded_lightmap_vs.h"
 #include "embedded_lightmap_fs.h"
 
@@ -38,6 +40,7 @@ namespace renderer {
 
 Pipeline::Pipeline() {
     opaque_ = std::make_unique<Shader>(shader_src::opaque_vs, shader_src::opaque_fs);
+    skinned_ = std::make_unique<Shader>(shader_src::skinned_vs, shader_src::opaque_fs);
     backdrop_ = std::make_unique<Shader>(shader_src::backdrop_vs, shader_src::backdrop_fs);
     sun_ = std::make_unique<Shader>(shader_src::sun_vs, shader_src::sun_fs);
     sun_flare_ = std::make_unique<Shader>(shader_src::sun_flare_vs, shader_src::sun_flare_fs);
@@ -51,6 +54,7 @@ Pipeline::Pipeline() {
     subsystem_pin_ = std::make_unique<Shader>(shader_src::subsystem_pin_vs, shader_src::subsystem_pin_fs);
     target_reticle_ = std::make_unique<Shader>(shader_src::target_reticle_vs, shader_src::target_reticle_fs);
     bridge_        = std::make_unique<Shader>(shader_src::bridge_vs,        shader_src::bridge_fs);
+    skinned_bridge_ = std::make_unique<Shader>(shader_src::skinned_bridge_vs, shader_src::bridge_fs);
     lightmap_   = std::make_unique<Shader>(shader_src::lightmap_vs,   shader_src::lightmap_fs);
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);

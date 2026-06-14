@@ -8,11 +8,14 @@
 
 #include <glm/glm.hpp>
 
+#include <array>
+
 #include <scenegraph/instance.h>
 
 namespace assets { struct Model; }
-namespace scenegraph { class World; struct Camera; enum class Pass : std::uint8_t; }
-namespace renderer { class Pipeline; }
+namespace scenegraph { class World; struct Camera; enum class Pass : std::uint8_t;
+                       class DamageDecalRing; }
+namespace renderer { class Pipeline; class Shader; }
 
 namespace renderer {
 
@@ -172,6 +175,24 @@ struct PhaserBeamDescriptor {
     float     perimeter_tile;   // SetPerimeterTile — V-axis texture repeats around prism
     float     texture_speed;    // SetTextureSpeed — U-axis scroll wu/sec
 };
+
+/// Draw a single model instance. Picks the skinned program when the model has
+/// a skeleton AND a non-empty bone palette is supplied; otherwise draws through
+/// the static `shader` byte-identically to the pre-skinning path. Declared here
+/// so offscreen render tests can drive it with a controllable palette.
+void draw_model(const assets::Model& model,
+                const glm::mat4& world,
+                Shader& shader,
+                Shader& skinned_shader,
+                std::uint32_t white_fallback,
+                std::uint32_t black_fallback,
+                bool rim_active,
+                const scenegraph::DamageDecalRing& decals,
+                const std::array<scenegraph::Instance::GlowRegion,
+                                 scenegraph::Instance::kMaxGlowRegions>& glow_regions,
+                float decal_time,
+                float emissive_scale,
+                const std::vector<glm::mat4>& bone_palette);
 
 class FrameSubmitter {
 public:

@@ -518,6 +518,65 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("model"),
           "Like create_instance but tags the new instance for the bridge pass.");
 
+    // Developer-only (SP1): load a skinned character NIF and spawn one instance
+    // framed in front of the active camera, tagged for the active pass (bridge
+    // or space), with identity rotation. Character body textures live next to
+    // the NIF (e.g. BodyMaleL/body.tga), so the texture search path is the NIF's
+    // own directory. Reuses load_model_impl/create_instance/set_world_transform
+    // — no special skinned-spawn path is needed: a non-empty skeleton routes the
+    // instance through the skinned draw branch automatically.
+    m.def("spawn_test_character",
+          [](const std::string& nif_path) {
+              std::filesystem::path tex_dir =
+                  std::filesystem::path(nif_path).parent_path();
+              auto handle = load_model_impl(nif_path, py::cast(tex_dir.string()));
+              auto id = g_world.create_instance(handle);
+
+              // The host owns the cameras + pass state, so it places the
+              // character in front of the *active* camera (bridge if the bridge
+              // pass is live, else the space/exterior camera) and tags the
+              // *active* pass, so the preview is visible wherever we are.
+              const bool bridge = g_bridge_pass_enabled && g_bridge_pass;
+              const scenegraph::Camera& cam = bridge ? g_bridge_camera : g_camera;
+
+              // Bounds-aware framing: the instance has an identity transform
+              // (scale 1), so the model-local AABB is the world-space AABB. Use
+              // the center→corner distance (length of the AABB half-extents),
+              // matching get_instance_bounds, and the AABB center to recentre —
+              // a character NIF's origin sits at its feet, so placing the origin
+              // (rather than the centre) on the view ray rides the body up out of
+              // frame. Fall back to a sane radius if the model has no CPU bounds.
+              float radius = 3.0f;
+              glm::vec3 center(0.0f);
+              if (const assets::Model* model = resolve_model(handle)) {
+                  const renderer::Aabb box = renderer::compute_model_aabb(*model);
+                  const float r = glm::length(box.half_extents);
+                  if (r > 0.0f) radius = r;
+                  center = box.center;
+              }
+
+              glm::vec3 fwd = cam.target - cam.eye;
+              const float len = glm::length(fwd);
+              fwd = (len > 1e-4f) ? fwd / len : glm::vec3(0.0f, 0.0f, -1.0f);
+              // Frame point ~2.5 radii ahead (margin around the body), then shift
+              // so the AABB *centre* lands there rather than the model origin.
+              const glm::vec3 frame_point = cam.eye + fwd * (radius * 2.5f);
+              const glm::vec3 pos = frame_point - center;
+
+              glm::mat4 world(1.0f);
+              world[3][0] = pos.x;
+              world[3][1] = pos.y;
+              world[3][2] = pos.z;
+              g_world.set_world_transform(id, world);
+              g_world.set_pass(id, bridge ? scenegraph::Pass::Bridge
+                                          : scenegraph::Pass::Space);
+              return id;
+          },
+          py::arg("nif_path"),
+          "Developer-only: spawn a skinned NIF framed in front of the active "
+          "camera, tagged for the active pass (bridge or space). Returns its "
+          "InstanceId.");
+
     m.def("set_bridge_camera",
           [](std::tuple<float,float,float> eye,
              std::tuple<float,float,float> target,
