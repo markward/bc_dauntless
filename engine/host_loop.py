@@ -2069,25 +2069,18 @@ def _place_bridge_officers(controller) -> None:
         except Exception:
             pass
     controller.officer_instances = []
-    import sys as _sys
-    def _dbg(m):
-        print("[SP3] " + m, file=_sys.stderr); _sys.stderr.flush()
-    _dbg("_place_bridge_officers: ENTER")
     try:
         import _dauntless_host as _host
     except ImportError:
-        _dbg("  _dauntless_host import FAILED")
         return
     # The placement bindings (resolve_placement etc.) are required; a stale
     # binary without them must not crash mission load.
     if not hasattr(_host, "resolve_placement"):
-        _dbg("  resolve_placement binding ABSENT (stale binary)")
         return
     try:
         import LoadBridge as _LoadBridge
         import engine.bridge_officers as _bridge_officers
         officers = _LoadBridge.bridge_officers()
-        _dbg("  bridge_officers() -> %d officer(s)" % len(officers))
         if not officers:
             return
         data_root = str(PROJECT_ROOT / "game")

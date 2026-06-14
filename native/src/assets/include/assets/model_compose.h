@@ -47,7 +47,15 @@ namespace assets {
 /// pass's node-walk — no bone palette, no inverse-bind. Pair with clearing the
 /// skeleton (model.skeleton.bones.clear(); root_bone_index = -1) so the model
 /// routes to the static bridge walk and is skipped by the skinned sub-pass.
-void apply_pose_to_nodes(Model& model, const AnimationClip& clip, float t);
+///
+/// `pose_locals` maps bone-node name -> the placement NIF's parent-relative
+/// rest local transform (from assets::load_pose_locals). Each matching body
+/// bone node's local_transform is overwritten with it, so the body's node-walk
+/// composes the standing pose at the station. The placement NIF's static node
+/// skeleton IS the pose — see load_pose_locals.
+void apply_pose_to_nodes(
+    Model& model,
+    const std::unordered_map<std::string, glm::mat4>& pose_locals);
 
 /// CPU-only stage of the head graft. On success:
 ///   * appends a copy of each grafted head material to body.materials, with

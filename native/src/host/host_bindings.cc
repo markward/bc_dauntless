@@ -621,7 +621,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("assemble_officer",
           [](const std::string& body_nif, const std::string& head_nif,
              const py::object& body_tex, const py::object& head_tex,
-             const py::object& placement_nif)
+             const py::object& placement_nif, bool sample_at_start)
               -> scenegraph::ModelHandle {
               if (!g_window) {
                   throw std::runtime_error(
@@ -640,21 +640,21 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   "Bip01 Head");
 
               // SP3 node-posing: BC bodies are rigid NiTriShapes parented to
-              // Bip01 NiNodes (which ARE model.nodes here), so we pose the NODE
-              // hierarchy from the placement clip's rest frame and render the
-              // result as a STATIC model — no palette, no inverse-bind. Apply
-              // the clip's posed node-locals, then CLEAR the skeleton so the
-              // model routes to the static bridge walk (walk_bridge_meshes
-              // skips non-empty skeletons; the skinned sub-pass requires one).
+              // Bip01 NiNodes (which ARE model.nodes here). The placement NIF's
+              // STATIC node skeleton is the officer's placed standing pose — so
+              // overwrite each matching body bone's local with the placement
+              // NIF's rest local, then CLEAR the skeleton so the model routes to
+              // the static bridge walk (walk_bridge_meshes skips non-empty
+              // skeletons; the skinned sub-pass requires one). No palette, no
+              // inverse-bind. The placement NIF's rest skeleton is the base
+              // pose; its keyframe rotations settle the arms/spine. sample_at_
+              // start picks the clip START for "move-to-L1" clips.
               const std::filesystem::path placement = as_path(placement_nif);
               if (!placement.empty()) {
-                  std::vector<assets::AnimationClip> clips =
-                      assets::load_animation_clips(placement);
-                  if (!clips.empty()) {
-                      const assets::AnimationClip& clip = clips.front();
-                      assets::apply_pose_to_nodes(
-                          composed, clip, clip.duration_seconds);
-                  }
+                  auto pose_locals =
+                      assets::load_pose_locals(placement, sample_at_start);
+                  if (!pose_locals.empty())
+                      assets::apply_pose_to_nodes(composed, pose_locals);
                   composed.skeleton.bones.clear();
                   composed.skeleton.root_bone_index = -1;
               }
@@ -675,6 +675,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("body_nif"), py::arg("head_nif"),
           py::arg("body_tex") = py::none(), py::arg("head_tex") = py::none(),
           py::arg("placement_nif") = py::none(),
+          py::arg("sample_at_start") = false,
           "Developer/SP3: compose a bridge officer from a body NIF + head NIF, "
           "grafting the head onto the body's 'Bip01 Head' node. "
           "body_tex/head_tex are per-officer skin .tga FILE paths (str) that "
@@ -697,6 +698,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               py::dict d;
               d["nif"] = placement->nif_path;     // data-root-relative
               d["hidden"] = placement->hidden;
+              d["sample_at_start"] = placement->sample_at_start;
               return d;
           },
           py::arg("location"),

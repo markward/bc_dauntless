@@ -9,6 +9,12 @@ namespace renderer {
 struct Placement {
     std::string nif_path;
     bool hidden = false;
+    /// True when the clip is a "station-to-staging" MOVEMENT clip (e.g.
+    /// db_StoL1_S = "Science to L1"): the officer is AT the station at the
+    /// clip START (t=0), and walks away by the end. Static placement must
+    /// sample t=0, not t=duration. "stand" clips leave this false (settled
+    /// standing pose is at t=duration).
+    bool sample_at_start = false;
 };
 
 /// Resolve a CharacterClass GetLocation() string to its placement-animation

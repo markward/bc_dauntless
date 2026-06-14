@@ -13,8 +13,10 @@ std::optional<Placement> placement_for_location(std::string_view loc) {
         {"DBTactical",   {"data/animations/db_stand_t_l.nif", false}},
         {"DBCommander",  {"data/animations/db_stand_c_m.nif", false}},
         {"DBCommander1", {"data/animations/DB_C1toC_M.nif",   false}},
-        {"DBScience",    {"data/animations/db_StoL1_S.nif",   false}},
-        {"DBEngineer",   {"data/animations/db_EtoL1_s.nif",   false}},
+        // Science/Engineer use "station-to-L1" MOVEMENT clips: the officer is
+        // AT the station at t=0 (sample_at_start), then walks to L1.
+        {"DBScience",    {"data/animations/db_StoL1_S.nif",   false, true}},
+        {"DBEngineer",   {"data/animations/db_EtoL1_s.nif",   false, true}},
         {"DBGuest",      {"data/animations/Seated_P.nif",     false}},
         {"DBL1S",        {"data/animations/DB_L1toE_S.nif",   true}},
         {"DBL1M",        {"data/animations/DB_L1toG1_M.nif",  true}},

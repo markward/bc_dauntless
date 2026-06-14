@@ -135,6 +135,23 @@ std::vector<int> graft_head(Model& body, Model& head,
         graft_head_cpu(body, head, attach_bone, &node_index);
     if (grafted.empty()) return {};
 
+    // BC's ReplaceBodyAndHead REPLACES the body's head with the new one. The
+    // body NIF carries its own default head/neck geometry on the attach-node
+    // sub-tree; drop those meshes from the node-walk before adding the grafted
+    // head, otherwise the body's default head and the new head stack (the
+    // long-neck / doubled-face artifact). Meshes stay in body.meshes (harmless,
+    // just unreferenced); only the node->mesh links are cleared.
+    if (node_index >= 0) {
+        for (std::size_t i = 0; i < body.nodes.size(); ++i) {
+            bool in_head_subtree = false;
+            for (int c = static_cast<int>(i); c != -1;
+                 c = body.nodes[c].parent_index) {
+                if (c == node_index) { in_head_subtree = true; break; }
+            }
+            if (in_head_subtree) body.nodes[i].meshes.clear();
+        }
+    }
+
     std::vector<int> grafted_mesh_indices;
     grafted_mesh_indices.reserve(grafted.size());
     for (const MeshCpu& cpu : grafted) {
@@ -151,26 +168,21 @@ std::vector<int> graft_head(Model& body, Model& head,
     return grafted_mesh_indices;
 }
 
-void apply_pose_to_nodes(Model& model, const AnimationClip& clip, float t) {
-    t = std::clamp(t, 0.0f, clip.duration_seconds);
-
-    // Map track target name -> track once, then pose each matching node.
-    std::unordered_map<std::string, const AnimationClip::NodeTrack*> by_name;
-    by_name.reserve(clip.tracks.size());
-    for (const auto& tr : clip.tracks)
-        by_name[tr.target_node_name] = &tr;
-
+void apply_pose_to_nodes(
+    Model& model,
+    const std::unordered_map<std::string, glm::mat4>& pose_locals) {
+    // The placement-animation NIF's static node skeleton IS the officer's
+    // placed standing pose: each NiNode's parent-relative LOCAL transform is
+    // the bone's rest pose (root bone carries the station offset). We overwrite
+    // each matching body bone node's local_transform with the placement NIF's,
+    // so the body's own node-walk composes the standing pose at the station.
+    // Bones with no placement entry (and the non-bone scaffolding above Bip01)
+    // keep their bind local. (The keyframe controllers only animate AROUND this
+    // rest pose; for static SP3 placement the rest pose alone is correct, and
+    // it auto-handles "move-to-L1" clips since their rest frame is the station.)
     for (auto& node : model.nodes) {
-        auto it = by_name.find(node.name);
-        if (it == by_name.end()) continue;  // unmatched node stays at bind
-        // Bind translation is the fallback for any channel the track omits;
-        // rotation falls back to identity and scale to 1 (matching the bone
-        // path in renderer::sample_pose). The shared per-track interpolation
-        // (assets::sample_track_trs) keeps node-posing and palette-skinning
-        // numerically identical.
-        const glm::vec3 bind_t = glm::vec3(node.local_transform[3]);
-        node.local_transform = sample_track_trs(
-            *it->second, t, bind_t, glm::quat(1, 0, 0, 0), 1.0f);
+        auto it = pose_locals.find(node.name);
+        if (it != pose_locals.end()) node.local_transform = it->second;
     }
 }
 

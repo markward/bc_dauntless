@@ -28,16 +28,9 @@ same way host_loop joins bridge/ship NIF paths.
 """
 import logging
 import os
-import sys
 
 _logger = logging.getLogger(__name__)
 
-
-def _dbg(msg):
-    # TEMP SP3 diagnostic (remove after placement is verified): print to stderr
-    # so it surfaces in the terminal regardless of logging config.
-    print("[SP3] " + msg, file=sys.stderr)
-    sys.stderr.flush()
 
 # Bridge-set-space transform for each officer instance. The placement clip's
 # root bone (in the palette) carries the station position, so the instance
@@ -58,8 +51,6 @@ def place_officers(officers, host, data_root):
     Officers with no location, an unknown/hidden location, or no body NIF are
     skipped. Every officer is wrapped so one bad NIF can't abort the rest.
     """
-    _dbg("place_officers: %d officer(s) enumerated, data_root=%s"
-         % (len(list(officers)), data_root))
     placed = []
     for off in officers:
         try:
@@ -83,22 +74,16 @@ def _place_one(off, host, data_root):
     except Exception:
         _name = "?"
     loc = off.GetLocation()
-    _dbg("officer %r: location=%r" % (_name, loc))
     # GetLocation() returns "" before ConfigureCharacters runs, or a Location
     # object in some SDK forms. Only station-name strings are placeable.
     if not loc or not isinstance(loc, str):
-        _dbg("  -> SKIP (no/non-str location)")
         return None
     placement = host.resolve_placement(loc)
-    _dbg("  resolve_placement(%r) -> %r" % (loc, placement))
     if not placement or placement.get("hidden"):
-        _dbg("  -> SKIP (unknown/hidden)")
         return None
 
     ap = off.appearance()
-    _dbg("  appearance=%r" % (ap,))
     if not ap.get("body_nif"):
-        _dbg("  -> SKIP (no body_nif)")
         return None
 
     # The appearance paths from the SDK config are data-root-relative
@@ -115,22 +100,22 @@ def _place_one(off, host, data_root):
     # palette is involved anymore (sample_placement_pose / set_instance_bone_
     # palette are gone). The placement NIF path is data-root-relative.
     placement_nif_abs = os.path.join(str(data_root), placement["nif"])
-    _dbg("  placement_nif=%s" % (placement_nif_abs,))
 
+    # Movement clips (Science/Engineer "to L1") have the officer AT the station
+    # at t=0; assemble_officer samples t=0 when sample_at_start is set.
     model = host.assemble_officer(
         _abs(ap.get("body_nif")), _abs(ap.get("head_nif")),
         _abs(ap.get("body_tex")), _abs(ap.get("head_tex")),
         placement_nif_abs,
+        bool(placement.get("sample_at_start")),
     )
     iid = host.create_bridge_instance(model)
-    _dbg("  assembled model=%r instance=%r" % (model, iid))
 
     # From here the instance exists in the renderer; if the world-transform set
     # raises, destroy the orphaned instance before propagating so place_officers
     # skips this officer without leaking a tracked-nowhere render instance.
     try:
         host.set_world_transform(iid, _BRIDGE_IDENTITY_MAT4)
-        _dbg("  -> PLACED instance=%r" % (iid,))
     except Exception:
         try:
             host.destroy_instance(iid)

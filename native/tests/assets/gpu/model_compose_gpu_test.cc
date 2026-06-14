@@ -68,20 +68,25 @@ TEST_F(ModelComposeGpuTest, GraftRealHeadOntoBodyMaleL) {
     EXPECT_GT(grafted_meshes, 0)
         << "expected at least one grafted head mesh rigid-bound to 'Bip01 Head'";
 
-    // Every grafted mesh must be reachable from a node (renderer walks nodes).
-    std::set<int> attached;
-    for (const auto& n : composed.nodes)
-        for (int mi : n.meshes) attached.insert(mi);
-    for (std::size_t i = 0; i < composed.meshes.size(); ++i) {
-        const auto& cpu = composed.meshes[i].cpu_data();
-        if (!cpu) continue;
-        bool grafted = !cpu->vertices.empty();
+    // The grafted head replaces the body's default head: the attach node
+    // ("Bip01 Head") must now carry meshes (the grafted Felix head), and they
+    // must be reachable from a node (the renderer walks nodes). graft_head
+    // clears the body's own head-subtree meshes from the node-walk first, so we
+    // only require that the attach node has grafted, head-bone-bound meshes —
+    // not that EVERY head-bone-bound mesh in the model is node-referenced (the
+    // body's replaced default head is intentionally unreferenced).
+    int attach_node = -1;
+    for (std::size_t i = 0; i < composed.nodes.size(); ++i)
+        if (composed.nodes[i].name == "Bip01 Head") attach_node = static_cast<int>(i);
+    ASSERT_GE(attach_node, 0) << "composed body has no 'Bip01 Head' node";
+    EXPECT_GT(composed.nodes[attach_node].meshes.size(), 0u)
+        << "attach node has no grafted head meshes";
+    for (int mi : composed.nodes[attach_node].meshes) {
+        const auto& cpu = composed.meshes[mi].cpu_data();
+        ASSERT_TRUE(cpu);
         for (const auto& v : cpu->vertices)
-            if (!(v.bone_indices.x == head_bone && v.bone_weights.x == 255))
-                grafted = false;
-        if (grafted)
-            EXPECT_TRUE(attached.count(static_cast<int>(i)))
-                << "grafted mesh " << i << " is not on any node's mesh list";
+            EXPECT_EQ(v.bone_indices.x, head_bone)
+                << "mesh on attach node not bound to head bone";
     }
 
     // GL handles uploaded cleanly.

@@ -2,16 +2,18 @@
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtc/quaternion.hpp>
 
-#include <assets/animation.h>
+#include <string>
+#include <unordered_map>
+
 #include <assets/model.h>
 #include <assets/model_compose.h>
 
 // SP3 node-posing: apply_pose_to_nodes overwrites the local_transform of every
-// node whose name matches a clip track's target, leaving non-matching nodes at
-// their bind transform. This is the CPU core of the rigid-body officer pose
-// (no GL, no palette, no inverse-bind).
+// body node whose name matches a placement-pose entry (the placement NIF's rest
+// node skeleton), leaving non-matching nodes at their bind transform. This is
+// the CPU core of the rigid-body officer pose (no GL, no palette, no
+// inverse-bind, no keyframe sampling).
 
 namespace {
 
@@ -28,59 +30,36 @@ assets::Model make_two_node_model() {
     m.nodes.push_back(head);
     m.nodes.push_back(spine);
     m.root_node = 0;
-    // A skeleton present so we can also prove it can be cleared by the caller.
     m.skeleton.bones.resize(2);
     m.skeleton.root_bone_index = 0;
     return m;
-}
-
-assets::AnimationClip make_clip_translating_head(const glm::vec3& target) {
-    assets::AnimationClip clip;
-    clip.duration_seconds = 1.0f;
-    assets::AnimationClip::NodeTrack tr;
-    tr.target_node_name = "Bip01 Head";
-    // Single translation key at t=duration -> sampled value is exactly target.
-    tr.translation.push_back({1.0f, target});
-    clip.tracks.push_back(std::move(tr));
-    return clip;
 }
 
 }  // namespace
 
 TEST(ApplyPoseToNodes, OverwritesMatchingNodeLeavesOthersAtBind) {
     assets::Model model = make_two_node_model();
-    const glm::vec3 posed_head_t(1.0f, 2.0f, 3.0f);
-    const assets::AnimationClip clip = make_clip_translating_head(posed_head_t);
-
     const glm::mat4 spine_bind = model.nodes[1].local_transform;
 
-    assets::apply_pose_to_nodes(model, clip, clip.duration_seconds);
+    const glm::mat4 posed_head =
+        glm::translate(glm::mat4(1.0f), glm::vec3(1.0f, 2.0f, 3.0f));
+    std::unordered_map<std::string, glm::mat4> pose{{"Bip01 Head", posed_head}};
 
-    // The matched "Bip01 Head" node's local_transform now carries the sampled
-    // translation (rotation identity, scale 1 -> a pure translation matrix).
-    const glm::vec3 head_t = glm::vec3(model.nodes[0].local_transform[3]);
-    EXPECT_FLOAT_EQ(head_t.x, posed_head_t.x);
-    EXPECT_FLOAT_EQ(head_t.y, posed_head_t.y);
-    EXPECT_FLOAT_EQ(head_t.z, posed_head_t.z);
-    // Upper-left 3x3 is identity (no rotation/scale in this clip).
-    EXPECT_FLOAT_EQ(model.nodes[0].local_transform[0][0], 1.0f);
-    EXPECT_FLOAT_EQ(model.nodes[0].local_transform[1][1], 1.0f);
-    EXPECT_FLOAT_EQ(model.nodes[0].local_transform[2][2], 1.0f);
+    assets::apply_pose_to_nodes(model, pose);
 
+    // The matched "Bip01 Head" node now carries the placement rest local.
+    EXPECT_EQ(model.nodes[0].local_transform, posed_head);
     // The non-matching "Bip01 Spine" node is unchanged from its bind.
     EXPECT_EQ(model.nodes[1].local_transform, spine_bind);
 }
 
 TEST(ApplyPoseToNodes, SkeletonCanBeClearedAfterPosing) {
     assets::Model model = make_two_node_model();
-    const assets::AnimationClip clip =
-        make_clip_translating_head(glm::vec3(5.0f, 0.0f, 0.0f));
+    std::unordered_map<std::string, glm::mat4> pose{
+        {"Bip01 Head", glm::translate(glm::mat4(1.0f), glm::vec3(5, 0, 0))}};
 
-    assets::apply_pose_to_nodes(model, clip, clip.duration_seconds);
+    assets::apply_pose_to_nodes(model, pose);
 
-    // Clearing the skeleton is what routes the posed model to the STATIC bridge
-    // walk (and away from the skinned sub-pass). Prove it leaves an empty,
-    // sentinel-rooted skeleton with the posed nodes intact.
     model.skeleton.bones.clear();
     model.skeleton.root_bone_index = -1;
 
@@ -94,15 +73,10 @@ TEST(ApplyPoseToNodes, NoMatchingNodesLeavesModelUntouched) {
     const glm::mat4 head_bind = model.nodes[0].local_transform;
     const glm::mat4 spine_bind = model.nodes[1].local_transform;
 
-    // Track targets a name no node carries.
-    assets::AnimationClip clip;
-    clip.duration_seconds = 1.0f;
-    assets::AnimationClip::NodeTrack tr;
-    tr.target_node_name = "Bip01 Nonexistent";
-    tr.translation.push_back({1.0f, glm::vec3(7.0f)});
-    clip.tracks.push_back(std::move(tr));
+    std::unordered_map<std::string, glm::mat4> pose{
+        {"Bip01 Nonexistent", glm::translate(glm::mat4(1.0f), glm::vec3(7))}};
 
-    assets::apply_pose_to_nodes(model, clip, clip.duration_seconds);
+    assets::apply_pose_to_nodes(model, pose);
 
     EXPECT_EQ(model.nodes[0].local_transform, head_bind);
     EXPECT_EQ(model.nodes[1].local_transform, spine_bind);

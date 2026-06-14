@@ -25,11 +25,13 @@ class FakeHost:
         return self._placements.get(location)
 
     def assemble_officer(self, body_nif, head_nif, body_tex, head_tex,
-                         placement_nif):
+                         placement_nif, sample_at_start=False):
         # SP3 node-posing: the officer model is posed at assembly time from the
         # placement NIF; there is no separate palette step anymore.
+        # sample_at_start selects t=0 (movement clips) vs t=end (stand clips).
         self.assembled.append(
-            (body_nif, head_nif, body_tex, head_tex, placement_nif))
+            (body_nif, head_nif, body_tex, head_tex, placement_nif,
+             sample_at_start))
         h = self._next_model
         self._next_model += 1
         return h
@@ -104,6 +106,7 @@ def test_visible_officer_assembles_posed_and_places():
         "/game/Bodies/BodyMaleM/FedGold_body.tga",
         "/game/Heads/HeadFelix/felix_head.tga",
         "/game/data/animations/db_stand_t_l.nif",
+        False,  # DBTactical is a stand clip -> sample t=end, not start
     )]
     # A bridge instance was created from the assembled (pre-posed) model handle.
     assert host.created == [100]
