@@ -44,7 +44,8 @@ MeshCpu build_mesh_cpu(
     const nif::NiTriShape& shape,
     const nif::NiTriShapeData& data,
     int material_index,
-    int node_index)
+    int node_index,
+    const glm::mat4& extra_model_transform)
 {
     MeshCpu mesh;
     mesh.material_index = material_index;
@@ -68,6 +69,18 @@ MeshCpu build_mesh_cpu(
         for (std::size_t i = 0; i < data.normals.size(); ++i) {
             const auto& n = data.normals[i];
             mesh.vertices[i].normal = apply_rotation(r, {n.x, n.y, n.z});
+        }
+    }
+
+    // SP2: for rigid character shapes the caller passes the parent node's
+    // bind-world transform so verts move from node-local into BIND-MODEL space
+    // (the space the GPU palette poses). Identity for everything else, so ships
+    // and bridges are byte-identical.
+    if (extra_model_transform != glm::mat4(1.0f)) {
+        const glm::mat3 nm = glm::mat3(extra_model_transform);  // BC scale is uniform/1
+        for (auto& v : mesh.vertices) {
+            v.position = glm::vec3(extra_model_transform * glm::vec4(v.position, 1.0f));
+            v.normal   = glm::normalize(nm * v.normal);
         }
     }
     if (data.has_uv && !data.uv_sets.empty()) {

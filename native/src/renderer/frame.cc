@@ -172,7 +172,10 @@ void draw_model(const assets::Model& model,
         }
         for (int mesh_idx : node.meshes) {
             const auto& mesh = model.meshes[mesh_idx];
-            prog.set_mat4("u_model", world_per_node[i]);
+            // SP2: skinned models carry bind-model verts posed entirely by the
+            // bone palette, so the instance world is the model matrix. Static
+            // (non-skinned) models keep the node-walk transform.
+            prog.set_mat4("u_model", skinned ? world : world_per_node[i]);
 
             const auto& mat = (mesh.material_index() >= 0
                 ? model.materials[mesh.material_index()]

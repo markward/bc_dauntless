@@ -394,6 +394,17 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
     model.nodes = std::move(nodes.nodes);
     model.root_node = 0;
 
+    // Bind-world of each model node (product of node local_transforms root->node).
+    // Used to bake RIGID character shapes into bind-model space (SP2). Nodes are
+    // ordered parents-before-children, so a single linear pass suffices.
+    std::vector<glm::mat4> node_bind_world(model.nodes.size(), glm::mat4(1.0f));
+    for (std::size_t i = 0; i < model.nodes.size(); ++i) {
+        const auto& nd = model.nodes[i];
+        node_bind_world[i] = nd.parent_index >= 0
+            ? node_bind_world[nd.parent_index] * nd.local_transform
+            : nd.local_transform;
+    }
+
     // 4. Meshes + materials, in lock-step.
     auto mesh_upload = ctx.mesh_uploader
         ? ctx.mesh_uploader
@@ -487,22 +498,36 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
 
         int node_index = find_parent_node_index(f, i, nodes, resolver);
 
-        MeshCpu cpu = build_mesh_cpu(*shape, *data, mat_index, node_index);
-
         // Skinning: if this shape carries a NiTriShapeSkinController via its
         // controller link, map its bones to skeleton indices and fill
         // per-vertex weights. BC character shapes attach the skin controller
         // directly to the shape's controller link, so we resolve that single
         // link rather than walking the controller chain. Mirrors
-        // gather_bone_block_indices' resolve.
+        // gather_bone_block_indices' resolve. Resolve it FIRST so we know
+        // whether this shape is rigid before building the mesh (SP2).
+        const nif::NiTriShapeSkinController* skin = nullptr;
         if (!model.skeleton.bones.empty()) {
-            const nif::NiTriShapeSkinController* skin = nullptr;
             std::uint32_t ctrl = shape->av.obj.controller_link;
             if (ctrl != 0) {
                 auto ci = resolver.resolve(ctrl);
                 if (ci != LinkResolver::kInvalidIndex && ci < f.blocks.size())
                     skin = std::get_if<nif::NiTriShapeSkinController>(&f.blocks[ci]);
             }
+        }
+
+        // SP2: a RIGID character shape (skeleton present, no skin controller)
+        // gets its verts baked into bind-model space via the parent node's
+        // bind-world. Skinned shapes are already model-space, so they are NOT
+        // baked; non-skeleton models (ships/bridges) keep identity.
+        glm::mat4 bake(1.0f);
+        if (!model.skeleton.bones.empty() && skin == nullptr &&
+            node_index >= 0 &&
+            node_index < static_cast<int>(node_bind_world.size()))
+            bake = node_bind_world[node_index];
+
+        MeshCpu cpu = build_mesh_cpu(*shape, *data, mat_index, node_index, bake);
+
+        if (!model.skeleton.bones.empty()) {
             if (skin) {
                 std::vector<int> skin_bone_to_skeleton(skin->bone_links.size(), -1);
                 for (std::size_t b = 0; b < skin->bone_links.size(); ++b) {

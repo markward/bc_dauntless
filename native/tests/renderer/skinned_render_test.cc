@@ -1,18 +1,27 @@
 // native/tests/renderer/skinned_render_test.cc
 //
-// Offscreen GL verification for the skinned draw branch added to
-// renderer::draw_model (Task 5). Two tests:
+// Offscreen GL verification for the skinned draw branch in
+// renderer::draw_model. Two tests:
 //
-//   A (plumbing): a skinned model at BIND POSE renders identically whether
-//       drawn through the static program (empty palette) or the skinned program
-//       (identity-per-bone palette). Proves the skinning plumbing reproduces the
-//       undeformed mesh.
+//   A (plumbing): a skinned model at BIND POSE renders a non-empty silhouette
+//       through the skinned program (identity-per-bone palette). Proves the
+//       skinning plumbing reaches the rasteriser.
 //
 //   B (palette math): translating every bone palette entry +X shifts the
 //       rendered silhouette's non-background centroid toward +screen-X. Proves
 //       the palette actually deforms geometry.
 //
 // Both SKIP (not fail) when the BC asset or a GL context is unavailable.
+//
+// SP2: the former Test A (BindPoseMatchesStaticDraw) compared the skinned
+// program against a per-node static-walk reference. After 1a/1b the skinned
+// path draws with u_model = inst.world over bind-model verts, while the static
+// walk applies world_bind(node) to each shape — the two coincide for the 30
+// rigid shapes but legitimately diverge for the 2 truly-skinned shapes (the
+// static walk was never a valid reference for real skinning, it only matched
+// at bind because vertex space was irrelevant under an identity palette). The
+// posed-palette correctness check now lives on the probe / palette path; here
+// we only assert a non-empty bind render plus the palette-deforms-geometry test.
 
 #include <gtest/gtest.h>
 
@@ -190,41 +199,20 @@ protected:
     }
 };
 
-// Test A — PLUMBING: skinned model at bind pose renders identically whether
-// drawn through the static program (empty palette) or the skinned program
-// (identity-per-bone palette).
-TEST_F(SkinnedRenderTest, BindPoseMatchesStaticDraw) {
-    // Static branch: empty palette → draw_model uses the static shader.
-    const std::vector<unsigned char> bufA = render_with_palette({});
-    ASSERT_EQ(glGetError(), GL_NO_ERROR);
-
-    // Skinned branch: identity-per-bone palette (local_pose = nullptr).
-    const std::vector<glm::mat4> ident =
+// Test A — PLUMBING: a skinned model at bind pose renders a non-empty
+// silhouette through the skinned program (identity-per-bone palette). Proves
+// the skinning plumbing reaches the rasteriser. (SP2: replaces the retired
+// BindPoseMatchesStaticDraw, whose per-node static-walk reference is no longer
+// valid for the 2 truly-skinned shapes once u_model = inst.world — see the
+// file header.)
+TEST_F(SkinnedRenderTest, BindPoseRendersNonEmpty) {
+    const std::vector<glm::mat4> palette =
         renderer::build_bone_palette(model_h->skeleton, /*local_pose=*/nullptr);
-    ASSERT_FALSE(ident.empty());
-    const std::vector<unsigned char> bufB = render_with_palette(ident);
+    ASSERT_FALSE(palette.empty());
+    const std::vector<unsigned char> buf = render_with_palette(palette);
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
-
-    // The model must actually have rendered something in at least one path.
-    ASSERT_GT(foreground_count(bufA), 0)
-        << "static-program render of the skinned model was empty";
-    ASSERT_GT(foreground_count(bufB), 0)
-        << "skinned-program render at bind pose was empty";
-
-    // Per-channel equality within a tiny tolerance (rasteriser / interpolation
-    // LSB noise between two different programs computing the same vertex math).
-    long differing = 0;
-    int max_diff = 0;
-    for (size_t i = 0; i < bufA.size(); ++i) {
-        const int d = std::abs(static_cast<int>(bufA[i]) -
-                               static_cast<int>(bufB[i]));
-        if (d > max_diff) max_diff = d;
-        if (d > 2) ++differing;
-    }
-    EXPECT_EQ(differing, 0)
-        << "bind-pose skinned render diverged from the static render: "
-        << differing << " channels differ by >2 (max diff " << max_diff
-        << ") — the skinning plumbing does not reproduce the static mesh.";
+    EXPECT_GT(foreground_count(buf), 0)
+        << "skinned bind-pose render was empty";
 }
 
 // Test B — PALETTE MATH: a palette translating every bone +X shifts the

@@ -220,20 +220,16 @@ void BridgePass::render(const scenegraph::World& world,
                 : inst.bone_palette;
             skin_shader.set_mat4_array("u_bones", palette.data(),
                                        static_cast<int>(palette.size()));
-            // World transform per node, same node-walk as walk_bridge_meshes.
-            std::vector<glm::mat4> world_per_node(m->nodes.size(), glm::mat4(1.0f));
-            if (!m->nodes.empty())
-                world_per_node[m->root_node] =
-                    inst.world * m->nodes[m->root_node].local_transform;
+            // SP2: bind-model verts + palette => u_model is the instance world.
+            // The node loop now only enumerates meshes; the palette does all
+            // per-bone placement, so the per-node walk is no longer composed.
             for (std::size_t i = 0; i < m->nodes.size(); ++i) {
                 const auto& node = m->nodes[i];
-                if (node.parent_index >= 0)
-                    world_per_node[i] = world_per_node[node.parent_index] * node.local_transform;
                 for (int mesh_idx : node.meshes) {
                     const auto& mesh = m->meshes[mesh_idx];
                     const auto& mat = (mesh.material_index() >= 0
                         ? m->materials[mesh.material_index()] : assets::Material{});
-                    draw_mesh(*m, mesh, mat, skin_shader, world_per_node[i], white, t);
+                    draw_mesh(*m, mesh, mat, skin_shader, inst.world, white, t);
                 }
             }
         });
