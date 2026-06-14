@@ -6,8 +6,12 @@
 #include <set>
 #include <utility>
 
+#include <algorithm>
+#include <unordered_map>
+
 #include <assets/material.h>
 #include <assets/path_resolver.h>
+#include <assets/pose_sample.h>
 #include <assets/skeleton.h>
 #include <assets/texture.h>
 #include <nif/file.h>
@@ -145,6 +149,29 @@ std::vector<int> graft_head(Model& body, Model& head,
         grafted_mesh_indices.push_back(mesh_index);
     }
     return grafted_mesh_indices;
+}
+
+void apply_pose_to_nodes(Model& model, const AnimationClip& clip, float t) {
+    t = std::clamp(t, 0.0f, clip.duration_seconds);
+
+    // Map track target name -> track once, then pose each matching node.
+    std::unordered_map<std::string, const AnimationClip::NodeTrack*> by_name;
+    by_name.reserve(clip.tracks.size());
+    for (const auto& tr : clip.tracks)
+        by_name[tr.target_node_name] = &tr;
+
+    for (auto& node : model.nodes) {
+        auto it = by_name.find(node.name);
+        if (it == by_name.end()) continue;  // unmatched node stays at bind
+        // Bind translation is the fallback for any channel the track omits;
+        // rotation falls back to identity and scale to 1 (matching the bone
+        // path in renderer::sample_pose). The shared per-track interpolation
+        // (assets::sample_track_trs) keeps node-posing and palette-skinning
+        // numerically identical.
+        const glm::vec3 bind_t = glm::vec3(node.local_transform[3]);
+        node.local_transform = sample_track_trs(
+            *it->second, t, bind_t, glm::quat(1, 0, 0, 0), 1.0f);
+    }
 }
 
 bool set_base_texture(Model& model, std::span<const int> mesh_indices,

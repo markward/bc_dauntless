@@ -620,7 +620,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
     // handle registration.
     m.def("assemble_officer",
           [](const std::string& body_nif, const std::string& head_nif,
-             const py::object& body_tex, const py::object& head_tex)
+             const py::object& body_tex, const py::object& head_tex,
+             const py::object& placement_nif)
               -> scenegraph::ModelHandle {
               if (!g_window) {
                   throw std::runtime_error(
@@ -638,6 +639,26 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   head_nif, as_path(head_tex),
                   "Bip01 Head");
 
+              // SP3 node-posing: BC bodies are rigid NiTriShapes parented to
+              // Bip01 NiNodes (which ARE model.nodes here), so we pose the NODE
+              // hierarchy from the placement clip's rest frame and render the
+              // result as a STATIC model — no palette, no inverse-bind. Apply
+              // the clip's posed node-locals, then CLEAR the skeleton so the
+              // model routes to the static bridge walk (walk_bridge_meshes
+              // skips non-empty skeletons; the skinned sub-pass requires one).
+              const std::filesystem::path placement = as_path(placement_nif);
+              if (!placement.empty()) {
+                  std::vector<assets::AnimationClip> clips =
+                      assets::load_animation_clips(placement);
+                  if (!clips.empty()) {
+                      const assets::AnimationClip& clip = clips.front();
+                      assets::apply_pose_to_nodes(
+                          composed, clip, clip.duration_seconds);
+                  }
+                  composed.skeleton.bones.clear();
+                  composed.skeleton.root_bone_index = -1;
+              }
+
               // Register as a new handle. compose_officer_model bypasses
               // g_cache (it builds owned, mutable models so the head's textures
               // can be moved into the body), so we wrap the composed model in a
@@ -653,11 +674,15 @@ PYBIND11_MODULE(_dauntless_host, m) {
           },
           py::arg("body_nif"), py::arg("head_nif"),
           py::arg("body_tex") = py::none(), py::arg("head_tex") = py::none(),
+          py::arg("placement_nif") = py::none(),
           "Developer/SP3: compose a bridge officer from a body NIF + head NIF, "
-          "grafting the head onto the body skeleton's 'Bip01 Head' bone. "
+          "grafting the head onto the body's 'Bip01 Head' node. "
           "body_tex/head_tex are per-officer skin .tga FILE paths (str) that "
           "override the body/head materials' Base stage; omit to keep the NIF "
-          "default. Returns a ModelHandle for the composed skinned model.");
+          "default. If placement_nif (str) is given, the placement clip's "
+          "rest-frame pose is baked into the node-local transforms and the "
+          "skeleton is CLEARED, so the officer renders as a STATIC posed model "
+          "through the bridge node-walk (no palette). Returns a ModelHandle.");
 
     // SP3: resolve a CharacterClass GetLocation() string (e.g. "DBTactical")
     // to its placement-animation NIF + hidden flag. The nif path is RELATIVE

@@ -13,10 +13,9 @@ class FakeHost:
     def __init__(self, placements):
         # placements: location-str -> {"nif": rel, "hidden": bool} or None
         self._placements = placements
-        self.assembled = []          # (body_nif, head_nif, body_tex, head_tex)
+        # (body_nif, head_nif, body_tex, head_tex, placement_nif)
+        self.assembled = []
         self.created = []            # model handles
-        self.poses_sampled = []      # (model, nif_abs)
-        self.palettes_set = []       # (iid, palette)
         self.transforms_set = []     # (iid, mat4)
         self.destroyed = []          # iid
         self._next_model = 100
@@ -25,8 +24,12 @@ class FakeHost:
     def resolve_placement(self, location):
         return self._placements.get(location)
 
-    def assemble_officer(self, body_nif, head_nif, body_tex, head_tex):
-        self.assembled.append((body_nif, head_nif, body_tex, head_tex))
+    def assemble_officer(self, body_nif, head_nif, body_tex, head_tex,
+                         placement_nif):
+        # SP3 node-posing: the officer model is posed at assembly time from the
+        # placement NIF; there is no separate palette step anymore.
+        self.assembled.append(
+            (body_nif, head_nif, body_tex, head_tex, placement_nif))
         h = self._next_model
         self._next_model += 1
         return h
@@ -37,22 +40,21 @@ class FakeHost:
         self._next_iid += 1
         return iid
 
-    def sample_placement_pose(self, model, nif_abs):
-        self.poses_sampled.append((model, nif_abs))
-        # Return a non-empty single-bone palette (column-major identity).
-        return [[1.0, 0.0, 0.0, 0.0,
-                 0.0, 1.0, 0.0, 0.0,
-                 0.0, 0.0, 1.0, 0.0,
-                 0.0, 0.0, 0.0, 1.0]]
-
-    def set_instance_bone_palette(self, iid, palette):
-        self.palettes_set.append((iid, palette))
-
     def set_world_transform(self, iid, mat4):
         self.transforms_set.append((iid, mat4))
 
     def destroy_instance(self, iid):
         self.destroyed.append(iid)
+
+    # The legacy GPU-palette path is gone. If place_officers ever calls these,
+    # it's a regression back to the skinned pipeline — fail loudly.
+    def sample_placement_pose(self, *a, **k):  # pragma: no cover
+        raise AssertionError(
+            "sample_placement_pose must not be called (SP3 node-posing)")
+
+    def set_instance_bone_palette(self, *a, **k):  # pragma: no cover
+        raise AssertionError(
+            "set_instance_bone_palette must not be called (SP3 node-posing)")
 
 
 class FakeOfficer:
@@ -84,7 +86,7 @@ _PLACEMENTS = {
 }
 
 
-def test_visible_officer_assembles_poses_and_places():
+def test_visible_officer_assembles_posed_and_places():
     host = FakeHost(_PLACEMENTS)
     officer = FakeOfficer("Felix", "DBTactical", _FULL_APPEARANCE)
 
@@ -92,23 +94,24 @@ def test_visible_officer_assembles_poses_and_places():
 
     # One instance placed.
     assert placed == [1]
-    # assemble_officer got the four appearance paths.
+    # SP3: assemble_officer got the four appearance paths AND the placement NIF,
+    # all joined to the data root (the SDK gives data-root-relative paths; the
+    # host opens files relative to CWD, so they must be absolutised). The
+    # placement NIF (5th arg) drives the node-pose bake inside assemble_officer.
     assert host.assembled == [(
-        "Bodies/BodyMaleL/BodyMaleL.nif",
-        "Heads/HeadFelix/felix_head.nif",
-        "Bodies/BodyMaleM/FedGold_body.tga",
-        "Heads/HeadFelix/felix_head.tga",
+        "/game/Bodies/BodyMaleL/BodyMaleL.nif",
+        "/game/Heads/HeadFelix/felix_head.nif",
+        "/game/Bodies/BodyMaleM/FedGold_body.tga",
+        "/game/Heads/HeadFelix/felix_head.tga",
+        "/game/data/animations/db_stand_t_l.nif",
     )]
-    # A bridge instance was created from the assembled model handle.
+    # A bridge instance was created from the assembled (pre-posed) model handle.
     assert host.created == [100]
-    # Pose sampled with the resolved NIF joined to the data root.
-    assert host.poses_sampled == [(100, "/game/data/animations/db_stand_t_l.nif")]
-    # Palette set on the created instance.
-    assert len(host.palettes_set) == 1
-    assert host.palettes_set[0][0] == 1
-    # World transform applied.
+    # World transform applied to the created instance (bridge-identity space).
     assert len(host.transforms_set) == 1
     assert host.transforms_set[0][0] == 1
+    # No GPU-palette calls: the model is posed via node transforms at assembly.
+    # (FakeHost.sample_placement_pose / set_instance_bone_palette raise if hit.)
 
 
 def test_hidden_location_is_skipped():
@@ -120,7 +123,6 @@ def test_hidden_location_is_skipped():
     assert placed == []
     assert host.assembled == []
     assert host.created == []
-    assert host.poses_sampled == []
 
 
 def test_unknown_location_is_skipped():

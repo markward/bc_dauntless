@@ -11,6 +11,7 @@ add_library(assets STATIC
     src/model_build.cc
     src/model_compose.cc
     src/path_resolver.cc
+    src/pose_sample.cc
     src/skeleton_build.cc
     src/skin_weights.cc
     src/texture_decode.cc

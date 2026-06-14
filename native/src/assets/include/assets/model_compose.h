@@ -24,11 +24,30 @@
 #include <string_view>
 #include <vector>
 
+#include <assets/animation.h>
 #include <assets/mesh.h>
 #include <assets/model.h>
 #include <assets/texture.h>
 
 namespace assets {
+
+/// SP3: overwrite each posed node's `local_transform` with the placement clip's
+/// sampled local TRS at time `t`. For every `model.nodes[i]` whose `name`
+/// matches a `clip.tracks[].target_node_name`, the node's local_transform is
+/// REPLACED by the sampled T·R·S (translation LERP, rotation SLERP, scale LERP —
+/// the same per-track math renderer::sample_pose uses, factored into
+/// assets/pose_sample.h). Channels the track omits fall back to the node's bind
+/// translation / identity rotation / unit scale. Nodes whose name matches no
+/// track are left at their bind local_transform.
+///
+/// This is the NODE-hierarchy posing path: BC character bodies are ~30/32 rigid
+/// NiTriShapes parented to Bip01 NiNodes, so the original engine animated the
+/// node locals and let rigid parts follow their parent node with ZERO bind math.
+/// After this call the model renders as a STATIC posed model through the bridge
+/// pass's node-walk — no bone palette, no inverse-bind. Pair with clearing the
+/// skeleton (model.skeleton.bones.clear(); root_bone_index = -1) so the model
+/// routes to the static bridge walk and is skipped by the skinned sub-pass.
+void apply_pose_to_nodes(Model& model, const AnimationClip& clip, float t);
 
 /// CPU-only stage of the head graft. On success:
 ///   * appends a copy of each grafted head material to body.materials, with
