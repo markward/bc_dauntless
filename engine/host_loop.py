@@ -2047,7 +2047,6 @@ def _ensure_bridge_for_session(controller) -> None:
     controller.bridge_instance = r_.create_bridge_instance(handle)
     r_.set_world_transform(controller.bridge_instance, _BRIDGE_IDENTITY_MAT4)
     controller.current_bridge_nif_abs = nif_abs
-    _place_bridge_officers(controller)
 
 
 def _place_bridge_officers(controller) -> None:
@@ -2247,6 +2246,16 @@ def run(mission_name: Optional[str] = None,
         # list pointed at the current mission's ship roster.
         def _after_mission_loaded():
             _ensure_bridge_for_session(controller)
+            # Place bridge officers on EVERY load/swap, not only when the
+            # bridge NIF changed. _ensure_bridge_for_session early-returns
+            # for same-bridge swaps (the common case — most missions reuse
+            # GalaxyBridge), so officer placement must live here, after the
+            # bridge set is ensured AND the crew is populated (LoadBridge.Load
+            # → populate_bridge_crew runs during loader.load(), which precedes
+            # this hook). _place_bridge_officers tears down prior officer
+            # instances before re-placing, so calling it every load is
+            # idempotent (no duplicates / leaks).
+            _place_bridge_officers(controller)
             _wire_target_menu_to_player_set(controller)
         controller.post_load_hook = _after_mission_loaded
         _after_mission_loaded()

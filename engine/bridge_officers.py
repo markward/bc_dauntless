@@ -22,6 +22,7 @@ point and lets the palette's root bone do the placement.
   sample_placement_pose(model, nif)  -> list[list[float]]  (column-major mat4s)
   set_instance_bone_palette(iid, palette)
   set_world_transform(iid, mat4)
+  destroy_instance(iid)              (used to clean up on mid-placement failure)
 
 `data_root` is the absolute game data root (e.g. ".../game"); the placement
 NIF path from resolve_placement is data-root-relative and is joined here the
@@ -83,14 +84,24 @@ def _place_one(off, host, data_root):
         return None
 
     model = host.assemble_officer(
-        ap["body_nif"], ap["head_nif"],
+        ap.get("body_nif"), ap.get("head_nif"),
         ap.get("body_tex") or None, ap.get("head_tex") or None,
     )
     iid = host.create_bridge_instance(model)
 
-    nif_abs = os.path.join(str(data_root), placement["nif"])
-    palette = host.sample_placement_pose(model, nif_abs)
-    if palette:
-        host.set_instance_bone_palette(iid, palette)
-    host.set_world_transform(iid, _BRIDGE_IDENTITY_MAT4)
+    # From here the instance exists in the renderer; if any post-create step
+    # raises, destroy the orphaned instance before propagating so place_officers
+    # skips this officer without leaking a tracked-nowhere render instance.
+    try:
+        nif_abs = os.path.join(str(data_root), placement["nif"])
+        palette = host.sample_placement_pose(model, nif_abs)
+        if palette:
+            host.set_instance_bone_palette(iid, palette)
+        host.set_world_transform(iid, _BRIDGE_IDENTITY_MAT4)
+    except Exception:
+        try:
+            host.destroy_instance(iid)
+        except Exception:
+            pass
+        raise
     return iid
