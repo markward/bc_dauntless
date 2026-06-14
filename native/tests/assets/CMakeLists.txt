@@ -6,6 +6,7 @@ add_executable(assets_tests
     cpu/material_build_test.cc
     cpu/mesh_build_test.cc
     cpu/model_build_test.cc
+    cpu/model_compose_test.cc
     cpu/path_resolver_test.cc
     cpu/raw_image_decode_test.cc
     cpu/skeleton_build_test.cc
@@ -16,6 +17,7 @@ add_executable(assets_tests
     gpu/fixture_smoke_test.cc
     gpu/mesh_upload_test.cc
     gpu/model_smoke_test.cc
+    gpu/model_compose_gpu_test.cc
     gpu/texture_upload_test.cc
 )
 

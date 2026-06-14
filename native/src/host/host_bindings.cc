@@ -46,6 +46,7 @@
 #include <scenegraph/camera.h>
 #include <scenegraph/damage_decals.h>
 #include <assets/cache.h>
+#include <assets/model_compose.h>
 
 #include <glm/gtc/type_ptr.hpp>
 #include <array>
@@ -598,6 +599,75 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Developer-only: spawn a skinned NIF framed in front of the active "
           "camera, tagged for the active pass (bridge or space). Returns its "
           "InstanceId.");
+
+    // SP3: compose a bridge officer from a body NIF (skinned, owns the Bip01
+    // skeleton + animations) and a separate head NIF. The head's meshes are
+    // grafted onto the body skeleton's "Bip01 Head" bone (rigid) so the pair
+    // renders as ONE skinned bridge instance sharing one skeleton + palette.
+    //
+    // body_tex / head_tex are texture SEARCH DIRECTORIES (a str or a sequence
+    // of strs), like load_model's texture_search_path: BC characters reference
+    // their skins by the filenames embedded in the NIF, resolved against these
+    // dirs. Pass the per-officer skin directory to substitute a skin; pass the
+    // NIF's own directory (or "" / omit) to use the authored default.
+    //
+    // Returns a fresh ModelHandle for the composed model (not deduped/cached —
+    // each composed officer is a distinct asset). Mirrors load_model_impl's
+    // handle registration.
+    m.def("assemble_officer",
+          [](const std::string& body_nif, const std::string& head_nif,
+             const py::object& body_tex, const py::object& head_tex)
+              -> scenegraph::ModelHandle {
+              if (!g_window) {
+                  throw std::runtime_error(
+                      "assemble_officer: init must be called first "
+                      "(asset upload needs a GL context)");
+              }
+              auto as_dirs = [](const py::object& o,
+                                const std::string& nif_path)
+                  -> std::vector<std::filesystem::path> {
+                  std::vector<std::filesystem::path> dirs;
+                  if (o.is_none()) {
+                      // fall back to the NIF's own directory
+                  } else if (py::isinstance<py::str>(o)) {
+                      std::string s = o.cast<std::string>();
+                      if (!s.empty()) dirs.emplace_back(std::move(s));
+                  } else {
+                      for (auto item : o) {
+                          std::string s = item.cast<std::string>();
+                          if (!s.empty()) dirs.emplace_back(std::move(s));
+                      }
+                  }
+                  if (dirs.empty())
+                      dirs.emplace_back(
+                          std::filesystem::path(nif_path).parent_path());
+                  return dirs;
+              };
+
+              assets::Model composed = assets::compose_officer_model(
+                  body_nif, as_dirs(body_tex, body_nif),
+                  head_nif, as_dirs(head_tex, head_nif),
+                  "Bip01 Head");
+
+              // Register as a new handle. compose_officer_model bypasses
+              // g_cache (it builds owned, mutable models so the head's textures
+              // can be moved into the body), so we wrap the composed model in a
+              // shared_ptr<const Model> directly — the same handle type the
+              // cache hands out. nif_path is the body NIF for diagnostics; this
+              // entry is never matched by load_model_impl's dedupe (it compares
+              // against single-NIF loads), which is intended.
+              assets::ModelHandle handle =
+                  std::make_shared<const assets::Model>(std::move(composed));
+              g_loaded_models.push_back({std::filesystem::path(body_nif),
+                                         std::move(handle)});
+              return static_cast<scenegraph::ModelHandle>(g_loaded_models.size());
+          },
+          py::arg("body_nif"), py::arg("head_nif"),
+          py::arg("body_tex") = py::none(), py::arg("head_tex") = py::none(),
+          "Developer/SP3: compose a bridge officer from a body NIF + head NIF, "
+          "grafting the head onto the body skeleton's 'Bip01 Head' bone. "
+          "body_tex/head_tex are texture search dirs (str or list). Returns a "
+          "ModelHandle for the composed skinned model.");
 
     m.def("set_bridge_camera",
           [](std::tuple<float,float,float> eye,

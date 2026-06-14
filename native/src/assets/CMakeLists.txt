@@ -8,6 +8,7 @@ add_library(assets STATIC
     src/mesh_lifetime.cc
     src/mesh_upload.cc
     src/model_build.cc
+    src/model_compose.cc
     src/path_resolver.cc
     src/skeleton_build.cc
     src/skin_weights.cc
