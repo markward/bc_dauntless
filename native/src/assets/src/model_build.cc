@@ -14,6 +14,7 @@
 #include <cctype>
 #include <fstream>
 #include <functional>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -376,6 +377,12 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
     const auto nif_block_to_bone = skel.nif_block_to_bone_index;  // copy for weight fill
     model.skeleton = std::move(skel.skeleton);
 
+    // Map each skeleton bone's name -> its index, to bind rigid shapes to the
+    // bone their NIF node corresponds to (the node and bone share a name).
+    std::unordered_map<std::string, int> bone_by_name;
+    for (std::size_t b = 0; b < model.skeleton.bones.size(); ++b)
+        bone_by_name[model.skeleton.bones[b].name] = static_cast<int>(b);
+
     // 2. Textures.
     auto tex_result = load_all_textures(f, model, ctx, resolver);
 
@@ -510,18 +517,27 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
                 // u_model = world * node_chain). When this model is drawn
                 // through the skinned program, every vertex is blended by the
                 // bone palette; a default {0,0,0,0} weight would collapse the
-                // shape to the origin. Bind each vertex fully to bone 0 (the
-                // root), whose palette entry is identity at bind pose, so the
-                // skinned shader leaves the shape undeformed and it lands in the
-                // exact same world position as the static draw.
+                // shape to the origin.
                 //
-                // SP2 (animation) caveat: bone 0 is correct ONLY at bind pose.
-                // Once a pose is applied, a rigid shape must follow the bone its
-                // node is parented to, not the root. SP2 must replace this with
-                // a bind to the shape's actual parent bone (resolve node_index ->
-                // bone), or rigid body parts will detach from the animated skeleton.
+                // Bind every vertex fully to the shape's PARENT bone so the
+                // rigid part follows the right bone under a pose. node_index is
+                // this shape's parent NiNode; the node and its skeleton bone
+                // share a name, so we resolve it through bone_by_name. Fall back
+                // to bone 0 (the root) only if unmatched. At bind pose every
+                // palette entry is identity, so binding to the parent bone is
+                // byte-identical to bone 0 and matches the static draw exactly;
+                // under a pose it now follows the correct bone (SP1's bone-0
+                // caveat is resolved here).
+                int rigid_bone = 0;
+                if (node_index >= 0 &&
+                    node_index < static_cast<int>(model.nodes.size())) {
+                    auto it = bone_by_name.find(model.nodes[node_index].name);
+                    if (it != bone_by_name.end()) rigid_bone = it->second;
+                }
+                const auto idx =
+                    static_cast<std::uint8_t>(std::clamp(rigid_bone, 0, 255));
                 for (auto& v : cpu.vertices) {
-                    v.bone_indices = glm::u8vec4(0, 0, 0, 0);
+                    v.bone_indices = glm::u8vec4(idx, 0, 0, 0);
                     v.bone_weights = glm::u8vec4(255, 0, 0, 0);
                 }
             }

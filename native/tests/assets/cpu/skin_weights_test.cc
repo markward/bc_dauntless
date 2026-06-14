@@ -9,6 +9,7 @@
 #include <nif/file.h>
 
 #include <filesystem>
+#include <set>
 
 using assets::detail::fill_skin_weights;
 
@@ -121,4 +122,55 @@ TEST(FillSkinWeightsAsset, BodyMaleLHasNonTrivialWeights) {
     EXPECT_TRUE(found)
         << "expected at least one retained vertex with bone_weights.x > 0 "
            "and a valid bone index";
+}
+
+// SP3: skin-controller-less (rigid) shapes of a skinned model must bind to
+// their PARENT bone, not always bone 0. BodyMaleL is mostly rigid shapes
+// parented to Bip01 bone nodes, so after the rebind the set of bones used by
+// rigid-bound vertices (weight == (255,0,0,0)) must include a real non-root
+// bone index. SP1 bound them all to bone 0, which this test rejects.
+TEST(RigidRebindAsset, RigidShapesBindToParentBoneNotAlwaysZero) {
+    namespace fs = std::filesystem;
+    const fs::path root = OPEN_STBC_PROJECT_ROOT;
+    const fs::path nif = root / "game" / "data" / "Models" / "Characters"
+        / "Bodies" / "BodyMaleL" / "BodyMaleL.NIF";
+    if (!fs::exists(nif)) GTEST_SKIP() << "BodyMaleL.NIF not present at " << nif;
+
+    nif::File f = nif::load(nif);
+
+    assets::PathResolver resolver;
+    assets::detail::ModelBuildContext ctx;
+    ctx.resolver = &resolver;
+    ctx.texture_search_paths = {nif.parent_path()};
+    ctx.texture_uploader = stub_texture;
+    ctx.mesh_uploader = stub_mesh;
+    ctx.keep_cpu_data = true;
+
+    assets::Model model = assets::detail::build_model(f, ctx);
+    ASSERT_FALSE(model.skeleton.bones.empty())
+        << "BodyMaleL should produce a non-empty skeleton";
+
+    // Collect bone indices of rigid-bound vertices: weight exactly (255,0,0,0).
+    std::set<int> rigid_bones;
+    for (const auto& mesh : model.meshes) {
+        const auto& cpu = mesh.cpu_data();
+        if (!cpu) continue;
+        for (const auto& v : cpu->vertices) {
+            if (v.bone_weights.x == 255 && v.bone_weights.y == 0 &&
+                v.bone_weights.z == 0 && v.bone_weights.w == 0) {
+                rigid_bones.insert(static_cast<int>(v.bone_indices.x));
+            }
+        }
+    }
+    ASSERT_FALSE(rigid_bones.empty())
+        << "expected at least one rigid-bound (255,0,0,0) vertex in BodyMaleL";
+
+    const int nbones = static_cast<int>(model.skeleton.bones.size());
+    bool has_real_nonroot = false;
+    for (int b : rigid_bones) {
+        if (b > 0 && b < nbones) { has_real_nonroot = true; break; }
+    }
+    EXPECT_TRUE(has_real_nonroot)
+        << "rigid shapes should bind to a real non-root parent bone "
+           "(index > 0, < bone count), not all to bone 0";
 }
