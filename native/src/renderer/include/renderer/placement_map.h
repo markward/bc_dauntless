@@ -1,3 +1,4 @@
+// native/src/renderer/include/renderer/placement_map.h
 #pragma once
 #include <optional>
 #include <string>
@@ -7,7 +8,7 @@ namespace renderer {
 
 struct Placement {
     std::string nif_path;
-    bool hidden;
+    bool hidden = false;
 };
 
 /// Resolve a CharacterClass GetLocation() string to its placement-animation
