@@ -605,11 +605,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
     // grafted onto the body skeleton's "Bip01 Head" bone (rigid) so the pair
     // renders as ONE skinned bridge instance sharing one skeleton + palette.
     //
-    // body_tex / head_tex are texture SEARCH DIRECTORIES (a str or a sequence
-    // of strs), like load_model's texture_search_path: BC characters reference
-    // their skins by the filenames embedded in the NIF, resolved against these
-    // dirs. Pass the per-officer skin directory to substitute a skin; pass the
-    // NIF's own directory (or "" / omit) to use the authored default.
+    // body_tex / head_tex are per-officer skin FILE paths (str), resolved by
+    // the caller the same way NIF paths are (absolute, or relative to cwd).
+    // BC officer skins are differently-NAMED .tga files than the basename the
+    // NIF embeds ("body.tga"), so a search-dir lookup can never select them;
+    // compose_officer_model overrides the loaded material's Base stage via
+    // set_base_texture. Empty / omitted -> keep the NIF's authored default; a
+    // missing path warns and keeps the default (never crashes).
     //
     // Returns a fresh ModelHandle for the composed model (not deduped/cached —
     // each composed officer is a distinct asset). Mirrors load_model_impl's
@@ -623,30 +625,15 @@ PYBIND11_MODULE(_dauntless_host, m) {
                       "assemble_officer: init must be called first "
                       "(asset upload needs a GL context)");
               }
-              auto as_dirs = [](const py::object& o,
-                                const std::string& nif_path)
-                  -> std::vector<std::filesystem::path> {
-                  std::vector<std::filesystem::path> dirs;
-                  if (o.is_none()) {
-                      // fall back to the NIF's own directory
-                  } else if (py::isinstance<py::str>(o)) {
-                      std::string s = o.cast<std::string>();
-                      if (!s.empty()) dirs.emplace_back(std::move(s));
-                  } else {
-                      for (auto item : o) {
-                          std::string s = item.cast<std::string>();
-                          if (!s.empty()) dirs.emplace_back(std::move(s));
-                      }
-                  }
-                  if (dirs.empty())
-                      dirs.emplace_back(
-                          std::filesystem::path(nif_path).parent_path());
-                  return dirs;
+              auto as_path = [](const py::object& o)
+                  -> std::filesystem::path {
+                  if (o.is_none()) return {};
+                  return std::filesystem::path(o.cast<std::string>());
               };
 
               assets::Model composed = assets::compose_officer_model(
-                  body_nif, as_dirs(body_tex, body_nif),
-                  head_nif, as_dirs(head_tex, head_nif),
+                  body_nif, as_path(body_tex),
+                  head_nif, as_path(head_tex),
                   "Bip01 Head");
 
               // Register as a new handle. compose_officer_model bypasses
@@ -666,8 +653,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("body_tex") = py::none(), py::arg("head_tex") = py::none(),
           "Developer/SP3: compose a bridge officer from a body NIF + head NIF, "
           "grafting the head onto the body skeleton's 'Bip01 Head' bone. "
-          "body_tex/head_tex are texture search dirs (str or list). Returns a "
-          "ModelHandle for the composed skinned model.");
+          "body_tex/head_tex are per-officer skin .tga FILE paths (str) that "
+          "override the body/head materials' Base stage; omit to keep the NIF "
+          "default. Returns a ModelHandle for the composed skinned model.");
 
     m.def("set_bridge_camera",
           [](std::tuple<float,float,float> eye,

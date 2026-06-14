@@ -134,6 +134,64 @@ TEST(GraftHeadCpu, BindsGraftedVerticesToAttachBoneRigid) {
     EXPECT_EQ(grafted[0].node_index, node_index);
 }
 
+// SP3 Task 6: set_base_texture must append a new texture and repoint the Base
+// stage of every material referenced by the given meshes at it. Uses a stub
+// loader so no GL context / real file is needed.
+TEST(SetBaseTextureCpu, RepointsBaseStageToAppendedTexture) {
+    assets::Model m = make_body();  // 1 texture, 1 material, 1 mesh (mat 0)
+    const std::size_t tex_before = m.textures.size();   // 1
+    const auto base =
+        static_cast<std::size_t>(assets::Material::StageSlot::Base);
+    // Body material starts with the default Base texture_index (-1 here, since
+    // make_body's material is default-constructed).
+    ASSERT_EQ(m.materials[0].stages[base].texture_index, -1);
+
+    int loader_calls = 0;
+    assets::TgaTextureLoaderFn stub =
+        [&](const std::filesystem::path&) -> assets::Texture {
+        ++loader_calls;
+        return assets::Texture(/*id=*/0, 4, 4, false);
+    };
+
+    const int mesh_indices[] = {0};
+    const bool ok = assets::set_base_texture(
+        m, mesh_indices, "FedRed_body.tga", stub);
+
+    EXPECT_TRUE(ok);
+    EXPECT_EQ(loader_calls, 1);
+    // One texture appended.
+    ASSERT_EQ(m.textures.size(), tex_before + 1);
+    // Body material's Base stage now points at the newly-appended texture.
+    EXPECT_EQ(m.materials[0].stages[base].texture_index,
+              static_cast<int>(tex_before));  // 1
+}
+
+// An empty path is a no-op (NIF default kept); a load failure is a no-op too.
+TEST(SetBaseTextureCpu, EmptyPathAndLoadFailureAreNoOps) {
+    assets::Model m = make_body();
+    const std::size_t tex_before = m.textures.size();
+    const auto base =
+        static_cast<std::size_t>(assets::Material::StageSlot::Base);
+    const int orig = m.materials[0].stages[base].texture_index;
+
+    const int mesh_indices[] = {0};
+
+    // Empty path: loader never invoked, model untouched.
+    EXPECT_FALSE(assets::set_base_texture(m, mesh_indices, "", {}));
+    EXPECT_EQ(m.textures.size(), tex_before);
+    EXPECT_EQ(m.materials[0].stages[base].texture_index, orig);
+
+    // Loader throws (simulating a missing/bad TGA): model untouched, no crash.
+    assets::TgaTextureLoaderFn throwing =
+        [](const std::filesystem::path&) -> assets::Texture {
+        throw std::runtime_error("boom");
+    };
+    EXPECT_FALSE(
+        assets::set_base_texture(m, mesh_indices, "missing.tga", throwing));
+    EXPECT_EQ(m.textures.size(), tex_before);
+    EXPECT_EQ(m.materials[0].stages[base].texture_index, orig);
+}
+
 TEST(GraftHeadCpu, MissingBoneLeavesBodyUnchanged) {
     assets::Model body = make_body();
     assets::Model head = make_head();

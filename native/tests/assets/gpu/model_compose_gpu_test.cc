@@ -32,9 +32,10 @@ TEST_F(ModelComposeGpuTest, GraftRealHeadOntoBodyMaleL) {
                      << " / " << head_nif << ")";
 
     // Build the body alone first to get its mesh count and the "Bip01 Head"
-    // bone index for the rigid-bind assertion.
+    // bone index for the rigid-bind assertion. No skin override here (empty
+    // tex paths) — this test only exercises the graft.
     assets::Model composed = assets::compose_officer_model(
-        body_nif, {body_dir}, head_nif, {head_dir}, "Bip01 Head");
+        body_nif, /*body_tex=*/{}, head_nif, /*head_tex=*/{}, "Bip01 Head");
 
     ASSERT_FALSE(composed.skeleton.bones.empty());
 
@@ -88,5 +89,110 @@ TEST_F(ModelComposeGpuTest, GraftRealHeadOntoBodyMaleL) {
         EXPECT_NE(mesh.vao(), 0u);
         EXPECT_TRUE(glIsVertexArray(mesh.vao()));
     }
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+}
+
+// SP3 Task 6 (spec §6 / Step 4): the per-officer skin override must actually
+// re-point the body/head materials' Base stage at a freshly-loaded texture
+// (a differently-NAMED .tga than the one the NIF embeds), not just resolve the
+// NIF basename in a search dir. We assemble BodyMaleM (embeds "body.tga") with
+// a specific body_tex of "FedRed_body.tga" and a Picard head (embeds
+// "head.tga") with head_tex "picard_head.tga", then assert the targeted
+// materials' Base texture_index points into the NEWLY-appended texture range.
+TEST_F(ModelComposeGpuTest, OverridesBodyAndHeadBaseTextures) {
+    const fs::path root = OPEN_STBC_PROJECT_ROOT;
+    const fs::path body_dir =
+        root / "game/data/Models/Characters/Bodies/BodyMaleM";
+    const fs::path body_nif = body_dir / "BodyMaleM.NIF";
+    const fs::path body_tex = body_dir / "FedRed_body.tga";  // != NIF "body.tga"
+    const fs::path head_dir =
+        root / "game/data/Models/Characters/Heads/HeadPicard";
+    const fs::path head_nif = head_dir / "Picard_head.NIF";
+    const fs::path head_tex = head_dir / "picard_head.tga";  // != NIF "head.tga"
+
+    if (!fs::exists(body_nif) || !fs::exists(head_nif) ||
+        !fs::exists(body_tex) || !fs::exists(head_tex))
+        GTEST_SKIP() << "character assets not installed";
+
+    // First compose with NO override: capture the body mesh count and the
+    // texture-table size, plus the Base texture_index each body material had
+    // from the NIF default.
+    assets::Model base = assets::compose_officer_model(
+        body_nif, /*body_tex=*/{}, head_nif, /*head_tex=*/{}, "Bip01 Head");
+
+    const std::size_t base_tex_count = base.textures.size();
+    ASSERT_GT(base_tex_count, 0u);
+
+    // Now compose WITH overrides.
+    assets::Model composed = assets::compose_officer_model(
+        body_nif, body_tex, head_nif, head_tex, "Bip01 Head");
+
+    const auto base_slot =
+        static_cast<std::size_t>(assets::Material::StageSlot::Base);
+
+    // Identify the grafted (head) mesh indices: every vertex rigid-bound to the
+    // "Bip01 Head" bone. Body meshes are the remainder.
+    int head_bone = -1;
+    for (std::size_t i = 0; i < composed.skeleton.bones.size(); ++i)
+        if (composed.skeleton.bones[i].name == "Bip01 Head")
+            head_bone = static_cast<int>(i);
+    ASSERT_GE(head_bone, 0);
+
+    auto is_grafted = [&](const assets::Mesh& m) {
+        const auto& cpu = m.cpu_data();
+        if (!cpu || cpu->vertices.empty()) return false;
+        for (const auto& v : cpu->vertices)
+            if (!(v.bone_indices.x == head_bone && v.bone_weights.x == 255 &&
+                  v.bone_weights.y == 0 && v.bone_weights.z == 0 &&
+                  v.bone_weights.w == 0))
+                return false;
+        return true;
+    };
+
+    // The override appends new textures, so the composed model must have a
+    // larger texture table than the un-overridden compose.
+    EXPECT_GT(composed.textures.size(), base_tex_count)
+        << "override should append at least one new texture";
+
+    // The body skin override appends a texture *after* both NIFs' textures are
+    // merged. We assert: at least one body material now points its Base stage
+    // at an index >= the pre-override merged-texture count (i.e. a NEW texture),
+    // proving the override took effect rather than the NIF default.
+    bool body_overridden = false;
+    bool head_overridden = false;
+    int body_mat_count = 0;
+    int head_mat_count = 0;
+    for (std::size_t i = 0; i < composed.meshes.size(); ++i) {
+        const int mat = composed.meshes[i].material_index();
+        if (mat < 0 || mat >= static_cast<int>(composed.materials.size()))
+            continue;
+        const int tex_idx =
+            composed.materials[mat].stages[base_slot].texture_index;
+        if (is_grafted(composed.meshes[i])) {
+            ++head_mat_count;
+            if (tex_idx >= static_cast<int>(base_tex_count))
+                head_overridden = true;
+        } else {
+            ++body_mat_count;
+            if (tex_idx >= static_cast<int>(base_tex_count))
+                body_overridden = true;
+        }
+    }
+
+    std::fprintf(stderr,
+                 "override: base_tex=%zu composed_tex=%zu body_mats=%d "
+                 "head_mats=%d body_ovr=%d head_ovr=%d\n",
+                 base_tex_count, composed.textures.size(), body_mat_count,
+                 head_mat_count, body_overridden, head_overridden);
+
+    EXPECT_GT(body_mat_count, 0);
+    EXPECT_TRUE(body_overridden)
+        << "body material Base stage was not repointed to the FedRed_body.tga "
+           "override (still on the NIF default)";
+    EXPECT_GT(head_mat_count, 0);
+    EXPECT_TRUE(head_overridden)
+        << "head material Base stage was not repointed to the picard_head.tga "
+           "override (still on the NIF default)";
+
     EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
 }

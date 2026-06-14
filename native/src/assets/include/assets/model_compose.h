@@ -19,11 +19,14 @@
 #pragma once
 
 #include <filesystem>
+#include <functional>
+#include <span>
 #include <string_view>
 #include <vector>
 
 #include <assets/mesh.h>
 #include <assets/model.h>
+#include <assets/texture.h>
 
 namespace assets {
 
@@ -48,28 +51,67 @@ std::vector<MeshCpu> graft_head_cpu(Model& body, Model& head,
 
 /// Full graft: graft_head_cpu + GL upload. Appends one GL Mesh to body.meshes
 /// per grafted MeshCpu and registers each on the chosen body node's mesh list.
-/// Requires a current GL context. Returns false (body unchanged) if the attach
-/// bone is missing or the head has no graftable meshes. `head` is cannibalized
-/// (its textures are moved into `body`).
-bool graft_head(Model& body, Model& head, std::string_view attach_bone);
+/// Requires a current GL context. `head` is cannibalized (its textures are
+/// moved into `body`).
+///
+/// Returns the body.meshes indices of the newly-appended (grafted head) meshes,
+/// in append order. Empty when the attach bone is missing or the head has no
+/// graftable meshes (body unchanged). The body's own meshes are precisely
+/// `[0, body.meshes.size() - returned.size())` — i.e. everything *before* the
+/// first returned index — which lets callers partition body vs. head materials
+/// for per-region texture overrides.
+std::vector<int> graft_head(Model& body, Model& head,
+                            std::string_view attach_bone);
+
+/// Function that decodes+uploads a TGA-on-disk Image into a GL Texture. The
+/// default (passed as `{}` to set_base_texture) reads the file, decode_tga's
+/// it, and upload_image's it with mipmaps. Injectable so the override can be
+/// unit-tested with a stub uploader and no GL context.
+using TgaTextureLoaderFn =
+    std::function<Texture(const std::filesystem::path&)>;
+
+/// Replace the Base texture stage of every material referenced by `mesh_indices`
+/// (indices into `model.meshes`) with the texture decoded+uploaded from
+/// `tga_path`. The new texture is appended once to `model.textures` and shared
+/// by all targeted materials; their `StageSlot::Base` `texture_index` is
+/// repointed at it. This is how a per-officer skin (a differently-NAMED .tga
+/// than the one the NIF embeds, e.g. "FedRed_body.tga" vs the NIF's "body.tga")
+/// actually overrides the authored default — without it, all officers sharing a
+/// body NIF render with the same baked-in skin.
+///
+/// `loader` (empty -> the default: read_file + decode_tga + upload_image) lets
+/// callers inject a stub for CPU-only tests. Returns true if the override was
+/// applied. Returns false WITHOUT mutating the model when `tga_path` is empty,
+/// missing, or fails to load (a warning is logged to stderr), or when none of
+/// `mesh_indices` reference a material with a Base stage — so a bad skin path
+/// safely leaves the NIF default in place.
+bool set_base_texture(Model& model, std::span<const int> mesh_indices,
+                      const std::filesystem::path& tga_path,
+                      const TgaTextureLoaderFn& loader = {});
 
 /// Host-facing one-shot: load `body_nif` (skinned) and `head_nif` from disk
-/// (resolving each model's textures against its own search-dir list, exactly
-/// like the AssetCache path), graft the head onto the body's `attach_bone`, and
-/// return the composed Model by value (mutable, GL handles uploaded). Both
-/// models are built with keep_cpu_data so cpu-walking passes (bounds, shields)
-/// keep working. Requires a current GL context. Throws on load/build failure.
+/// (each model's NIF-default textures resolved against its own NIF directory,
+/// exactly like the AssetCache path), graft the head onto the body's
+/// `attach_bone`, then — if a per-officer skin override is given — replace the
+/// Base texture stage of the body materials with `body_tex` and of the grafted
+/// head materials with `head_tex`. Returns the composed Model by value
+/// (mutable, GL handles uploaded). Both models are built with keep_cpu_data so
+/// cpu-walking passes (bounds, shields) keep working. Requires a current GL
+/// context. Throws on NIF load/build failure.
 ///
-/// Note on textures: BC characters reference their skins by the filenames
-/// embedded in the NIF (e.g. "body.tga", "head.tga"), resolved against the
-/// search dirs — there is no per-material "replace base texture" path in the
-/// pipeline. So `body_tex_dirs` / `head_tex_dirs` are texture *search
-/// directories*; pass the per-officer skin directory to substitute a skin.
+/// `body_tex` / `head_tex` are per-officer skin FILE paths (e.g.
+/// "…/Bodies/BodyFemS/FedFemRed_body.tga"). BC officer skins are
+/// differently-NAMED files than the basename the NIF embeds ("body.tga"), so a
+/// pure search-dir lookup can never select them — set_base_texture overrides
+/// the loaded material's Base stage instead. An empty path leaves the NIF
+/// default; a missing/unreadable path logs a warning and leaves the default.
+/// The body override targets every material on the body's own (pre-graft)
+/// meshes; the head override targets only the grafted head meshes.
 Model compose_officer_model(
     const std::filesystem::path& body_nif,
-    const std::vector<std::filesystem::path>& body_tex_dirs,
+    const std::filesystem::path& body_tex,
     const std::filesystem::path& head_nif,
-    const std::vector<std::filesystem::path>& head_tex_dirs,
+    const std::filesystem::path& head_tex,
     std::string_view attach_bone);
 
 }  // namespace assets
