@@ -361,6 +361,11 @@ class CharacterClass(ObjectClass):
         super().__init__()
         self._body_nif = body_nif
         self._head_nif = head_nif
+        # Texture paths are supplied separately via ReplaceBodyAndHead (the SDK
+        # passes the body/head TEXTURE paths there, not NIFs). Keep distinct
+        # from the NIF paths above so SP3 appearance assembly has all four.
+        self._body_tex = ""
+        self._head_tex = ""
         self._character_name = ""
         self._yes_sir_audio: str = ""
         self._database = None
@@ -416,9 +421,17 @@ class CharacterClass(ObjectClass):
         return self._menu
 
     # ── Body/face/animation registration ────────────────────────────────────
-    def ReplaceBodyAndHead(self, body_nif: str, head_nif: str) -> None:
-        self._body_nif = str(body_nif)
-        self._head_nif = str(head_nif)
+    def ReplaceBodyAndHead(self, body_tex: str, head_tex: str) -> None:
+        # SDK passes TEXTURE paths here (e.g. FedFemRed_body.tga); the NIFs
+        # came from CharacterClass_Create. Keep them distinct.
+        self._body_tex = str(body_tex)
+        self._head_tex = str(head_tex)
+
+    def appearance(self) -> dict:
+        return {
+            "body_nif": self._body_nif, "head_nif": self._head_nif,
+            "body_tex": self._body_tex, "head_tex": self._head_tex,
+        }
 
     def AddFacialImage(self, image_type, filename) -> None:
         self._facial_images[image_type] = filename

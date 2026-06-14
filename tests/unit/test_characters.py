@@ -41,10 +41,16 @@ def test_yes_sir_round_trip():
 
 
 def test_replace_body_and_head():
+    # The SDK passes TEXTURE paths to ReplaceBodyAndHead (not NIFs). The body
+    # and head NIFs from CharacterClass_Create must be preserved; the textures
+    # land in the separate texture fields.
     c = CharacterClass_Create("a.nif", "b.nif")
-    c.ReplaceBodyAndHead("c.nif", "d.nif")
-    assert c.GetBodyNIF() == "c.nif"
-    assert c.GetHeadNIF() == "d.nif"
+    c.ReplaceBodyAndHead("c.tga", "d.tga")
+    assert c.GetBodyNIF() == "a.nif"
+    assert c.GetHeadNIF() == "b.nif"
+    ap = c.appearance()
+    assert ap["body_tex"] == "c.tga"
+    assert ap["head_tex"] == "d.tga"
 
 
 def test_database_round_trip():
