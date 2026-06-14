@@ -379,6 +379,8 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
 
     // Map each skeleton bone's name -> its index, to bind rigid shapes to the
     // bone their NIF node corresponds to (the node and bone share a name).
+    // Assumes bone names are unique (true for the canonical Bip01 skeleton);
+    // a duplicate name would keep the last bone, mis-following only under a pose.
     std::unordered_map<std::string, int> bone_by_name;
     for (std::size_t b = 0; b < model.skeleton.bones.size(); ++b)
         bone_by_name[model.skeleton.bones[b].name] = static_cast<int>(b);
