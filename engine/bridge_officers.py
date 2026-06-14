@@ -38,13 +38,22 @@ _logger = logging.getLogger(__name__)
 
 # Bridge-set-space transform for each officer instance. The placement clip's
 # root bone (in the palette) carries the station position, so the instance
-# itself sits at the bridge origin. Row-major identity (set_world_transform
-# transposes on input).
+# itself sits at the bridge origin — EXCEPT for the determinant-normalization
+# X-flip every rendered instance needs.
+#
+# The renderer runs glFrontFace(GL_CW) and assumes every world matrix has
+# det < 0 (see host_loop._ship_world_matrix). BC character NIFs are authored
+# in a left-handed model frame (left hand at +X), so an officer placed at plain
+# identity (det = +1) would render inside-out AND mirrored. Negating the X basis
+# axis (row-major col 0) mirrors the body into the renderer's right-handed world
+# the same way ships are flipped, giving det < 0 and the correct station pose
+# (e.g. db_stand_t_l L-Hand at world ≈ (-21, -107, 23) instead of the mirrored
+# +X). Row-major; set_world_transform transposes on input.
 _BRIDGE_IDENTITY_MAT4 = [
-    1.0, 0.0, 0.0, 0.0,
-    0.0, 1.0, 0.0, 0.0,
-    0.0, 0.0, 1.0, 0.0,
-    0.0, 0.0, 0.0, 1.0,
+    -1.0, 0.0, 0.0, 0.0,
+     0.0, 1.0, 0.0, 0.0,
+     0.0, 0.0, 1.0, 0.0,
+     0.0, 0.0, 0.0, 1.0,
 ]
 
 

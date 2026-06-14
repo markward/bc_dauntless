@@ -5,6 +5,7 @@
 
 #include <glm/gtc/matrix_inverse.hpp>
 
+#include <functional>
 #include <set>
 #include <vector>
 
@@ -31,22 +32,6 @@ glm::mat4 av_to_local_transform(const nif::AvObjectBase& av) {
     return m;
 }
 
-/// Maps block index → parent block index (or std::uint32_t::max for root).
-std::unordered_map<std::uint32_t, std::uint32_t>
-compute_parent_map(const nif::File& f, const LinkResolver& resolver) {
-    std::unordered_map<std::uint32_t, std::uint32_t> parents;
-    for (std::uint32_t i = 0; i < f.blocks.size(); ++i) {
-        const auto* node = std::get_if<nif::NiNode>(&f.blocks[i]);
-        if (!node) continue;
-        for (auto child_link : node->child_links) {
-            auto child_idx = resolver.resolve(child_link);
-            if (child_idx == LinkResolver::kInvalidIndex) continue;
-            parents[child_idx] = i;
-        }
-    }
-    return parents;
-}
-
 std::set<std::uint32_t> gather_bone_block_indices(
     const nif::File& f, const LinkResolver& resolver)
 {
@@ -67,49 +52,62 @@ std::set<std::uint32_t> gather_bone_block_indices(
 SkeletonBuildResult build_skeleton(const nif::File& f) {
     SkeletonBuildResult out;
     LinkResolver resolver(f);
+
+    // Gating: only models that carry at least one skin controller are
+    // characters and get a skeleton. Ships and bridges have no skin
+    // controller — they return an empty skeleton exactly as before, so the
+    // rigid-bake / skinned-program path in build_model is never engaged for
+    // them and the production render path stays byte-identical.
     auto bone_indices = gather_bone_block_indices(f, resolver);
     if (bone_indices.empty()) return out;
 
-    auto parents = compute_parent_map(f, resolver);
-
-    int next_index = 0;
-    for (auto block_idx : bone_indices) {
-        auto* node = node_at(f, block_idx);
+    // For a character, the skeleton mirrors the FULL NiNode hierarchy, not
+    // just the skin-controller-referenced subset. This is what makes the
+    // skeleton's world-bind match the Task-1 vertex bake (node_bind_world,
+    // rooted at the model root) AND keeps the placement clip's "Bip01" root
+    // node — whose root-translation track carries the station offset — as a
+    // real bone that the pose sampler can drive by name.
+    //
+    // Walk the tree exactly the way build_nodes (model_build.cc) does: find
+    // the root NiNode (a NiNode that no other NiNode lists as a child), then
+    // recurse, assigning each NiNode one Bone with its actual parent bone
+    // index (now never skipped, because every NiNode is a bone).
+    std::unordered_map<std::uint32_t, int> ref_count;
+    for (std::uint32_t i = 0; i < f.blocks.size(); ++i) {
+        const auto* node = std::get_if<nif::NiNode>(&f.blocks[i]);
         if (!node) continue;
-        Bone b;
-        b.name = node->av.obj.name;
-        b.local_transform = av_to_local_transform(node->av);
-        out.skeleton.bones.push_back(std::move(b));
-        out.nif_block_to_bone_index[block_idx] = next_index++;
-    }
-
-    for (auto block_idx : bone_indices) {
-        auto bit = out.nif_block_to_bone_index.find(block_idx);
-        if (bit == out.nif_block_to_bone_index.end()) continue;
-        int self_bone = bit->second;
-
-        // Walk up the parent chain through any non-bone NiNodes until we
-        // find another bone or hit the scene root. A skeleton like
-        //   Pelvis(bone) -> Spine(plain NiNode) -> Chest(bone)
-        // must record Chest's parent as Pelvis, not -1.
-        int parent_bone = -1;
-        for (auto current = parents.find(block_idx);
-             current != parents.end();
-             current = parents.find(current->second))
-        {
-            auto parent_bit = out.nif_block_to_bone_index.find(current->second);
-            if (parent_bit != out.nif_block_to_bone_index.end()) {
-                parent_bone = parent_bit->second;
-                break;
-            }
+        for (auto child_link : node->child_links) {
+            auto child_idx = resolver.resolve(child_link);
+            if (child_idx == LinkResolver::kInvalidIndex) continue;
+            ref_count[child_idx]++;
         }
-        out.skeleton.bones[self_bone].parent_index = parent_bone;
     }
 
-    for (std::size_t i = 0; i < out.skeleton.bones.size(); ++i) {
-        if (out.skeleton.bones[i].parent_index == -1) {
-            out.skeleton.root_bone_index = static_cast<int>(i);
-            break;
+    std::function<void(std::uint32_t, int)> walk =
+        [&](std::uint32_t nif_idx, int parent_bone) {
+            const auto* node = node_at(f, nif_idx);
+            if (!node) return;
+            Bone b;
+            b.name = node->av.obj.name;
+            b.local_transform = av_to_local_transform(node->av);
+            b.parent_index = parent_bone;
+            int self = static_cast<int>(out.skeleton.bones.size());
+            out.skeleton.bones.push_back(std::move(b));
+            out.nif_block_to_bone_index[nif_idx] = self;
+
+            for (auto child_link : node->child_links) {
+                auto child_idx = resolver.resolve(child_link);
+                if (child_idx != LinkResolver::kInvalidIndex)
+                    walk(child_idx, self);
+            }
+        };
+
+    for (std::uint32_t i = 0; i < f.blocks.size(); ++i) {
+        if (!std::get_if<nif::NiNode>(&f.blocks[i])) continue;
+        if (ref_count[i] == 0) {
+            out.skeleton.root_bone_index = static_cast<int>(out.skeleton.bones.size());
+            walk(i, /*parent_bone=*/-1);
+            break;  // BC files have a single root NiNode
         }
     }
 

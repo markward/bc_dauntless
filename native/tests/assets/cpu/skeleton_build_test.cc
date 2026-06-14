@@ -77,18 +77,25 @@ TEST(SkeletonBuild, NoSkinningProducesEmptySkeleton) {
 }
 
 TEST(SkeletonBuild, FlattensBonesWithParentIndices) {
+    // SP2: a character skeleton mirrors the FULL node hierarchy, so the
+    // skin-controller subset {Pelvis,Spine,Arm} is joined by their ancestor
+    // "Root" — which is the true skeleton root and carries the placement
+    // clip's root-translation track (station offset).
     auto f = build_synthetic_skinned_file();
     auto result = assets::detail::build_skeleton(f);
 
-    ASSERT_EQ(result.skeleton.bones.size(), 3u);
+    ASSERT_EQ(result.skeleton.bones.size(), 4u);
+    int root   = find_bone(result.skeleton, "Root");
     int pelvis = find_bone(result.skeleton, "Pelvis");
     int spine  = find_bone(result.skeleton, "Spine");
     int arm    = find_bone(result.skeleton, "Arm");
+    ASSERT_NE(root, -1);
     ASSERT_NE(pelvis, -1);
     ASSERT_NE(spine, -1);
     ASSERT_NE(arm, -1);
 
-    EXPECT_EQ(result.skeleton.bones[pelvis].parent_index, -1);
+    EXPECT_EQ(result.skeleton.bones[root].parent_index, -1);
+    EXPECT_EQ(result.skeleton.bones[pelvis].parent_index, root);
     EXPECT_EQ(result.skeleton.bones[spine].parent_index, pelvis);
     EXPECT_EQ(result.skeleton.bones[arm].parent_index, spine);
 }
@@ -97,18 +104,21 @@ TEST(SkeletonBuild, NifBlockIndexMapPopulated) {
     auto f = build_synthetic_skinned_file();
     auto result = assets::detail::build_skeleton(f);
 
+    // Every NiNode is now a bone, including the root (block 0).
+    EXPECT_TRUE(result.nif_block_to_bone_index.count(0));
     EXPECT_TRUE(result.nif_block_to_bone_index.count(1));
     EXPECT_TRUE(result.nif_block_to_bone_index.count(2));
     EXPECT_TRUE(result.nif_block_to_bone_index.count(3));
 }
 
 TEST(SkeletonBuild, IdentifiesRoot) {
+    // Root is the hierarchy root NiNode, not the first skinned bone.
     auto f = build_synthetic_skinned_file();
     auto result = assets::detail::build_skeleton(f);
     ASSERT_NE(result.skeleton.root_bone_index, -1);
     EXPECT_EQ(
         result.skeleton.bones[result.skeleton.root_bone_index].name,
-        "Pelvis");
+        "Root");
 }
 
 TEST(InverseBindPose, BindPosePaletteIsIdentityPerBone) {
@@ -132,11 +142,13 @@ TEST(InverseBindPose, BindPosePaletteIsIdentityPerBone) {
     EXPECT_TRUE(mat_near(sk.bones[1].inverse_bind_pose, glm::inverse(world_child)));
 }
 
-TEST(SkeletonBuild, ParentWalkThroughNonBoneNiNode) {
-    // Hierarchy: Root(0) -> Pelvis(1, bone) -> SpineHelper(2, plain NiNode)
-    //                                          -> Chest(3, bone)
-    // SpineHelper is NOT in the skin's bone_links; Chest's parent should
-    // resolve transitively to Pelvis, not -1.
+TEST(SkeletonBuild, FullHierarchyIncludesNonSkinnedNodes) {
+    // SP2: the skeleton now mirrors the full node hierarchy, so a node that
+    // is NOT referenced by any skin controller (SpineHelper) is STILL a bone.
+    // Hierarchy: Root(0) -> Pelvis(1, skinned) -> SpineHelper(2, NOT skinned)
+    //                                             -> Chest(3, skinned)
+    // Chest's parent is its ACTUAL parent SpineHelper (no skipping), and
+    // SpineHelper's parent is Pelvis.
     nif::File f;
     {
         nif::NiNode root;
@@ -169,13 +181,21 @@ TEST(SkeletonBuild, ParentWalkThroughNonBoneNiNode) {
     }
 
     auto result = assets::detail::build_skeleton(f);
-    ASSERT_EQ(result.skeleton.bones.size(), 2u);
+    ASSERT_EQ(result.skeleton.bones.size(), 4u)
+        << "full hierarchy: Root, Pelvis, SpineHelper, Chest";
 
+    int root   = find_bone(result.skeleton, "Root");
     int pelvis = find_bone(result.skeleton, "Pelvis");
+    int helper = find_bone(result.skeleton, "SpineHelper");
     int chest  = find_bone(result.skeleton, "Chest");
+    ASSERT_NE(root, -1);
     ASSERT_NE(pelvis, -1);
+    ASSERT_NE(helper, -1)
+        << "non-skinned intermediate node must still be a bone";
     ASSERT_NE(chest, -1);
-    EXPECT_EQ(result.skeleton.bones[pelvis].parent_index, -1);
-    EXPECT_EQ(result.skeleton.bones[chest].parent_index, pelvis)
-        << "Chest's parent should walk through SpineHelper to Pelvis";
+    EXPECT_EQ(result.skeleton.bones[root].parent_index, -1);
+    EXPECT_EQ(result.skeleton.bones[pelvis].parent_index, root);
+    EXPECT_EQ(result.skeleton.bones[helper].parent_index, pelvis);
+    EXPECT_EQ(result.skeleton.bones[chest].parent_index, helper)
+        << "Chest's parent is its ACTUAL parent SpineHelper, no skipping";
 }

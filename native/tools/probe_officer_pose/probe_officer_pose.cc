@@ -4,10 +4,12 @@
 // skeleton WITHOUT a GL context (stub mesh/texture uploaders), then walks the
 // node hierarchy to print the BIND world position of key Bip01 bones and
 // inspects the body's skin controllers / shape counts. It then drives the SP2
-// GPU palette path: it loads the placement clip, samples it, builds the bone
-// palette, and prints the POSED world position of "Bip01 L Hand" so the palette
-// pose can be checked headlessly against the node-walk reference (Z≈23, hip
-// height, arms-down for db_stand_t_l).
+// GPU palette path: it loads the placement clip, samples it, and prints the
+// POSED world position of "Bip01 L Hand" (with the same X-flip officers are
+// placed with) so the palette pose can be checked headlessly against the
+// verified station value (db_stand_t_l → ≈ (-21, -107, 23): hip height,
+// arms-down). The skeleton mirrors the FULL node hierarchy, so the clip's
+// "Bip01" root-translation track (station offset) flows into the palette.
 //
 // Usage:
 //   probe_officer_pose <body.nif> <placement.nif>
@@ -121,27 +123,33 @@ int main(int argc, char** argv) {
 
     dump(m, "BIND (body NIF, no pose applied)");
 
-    // NOTE: the skeleton is built ONLY from skin-controller-referenced bones, so
-    // its root is "Bip01 Pelvis" — the true "Bip01" root NiNode (which carries
-    // the clip's root translation track / station offset) is NOT a skeleton bone.
-    // The palette-path posed world below therefore reflects upper-body posing
-    // relative to the pelvis, but does NOT include the Bip01 root translation
-    // that the old node-walk applied. See the report for SP2 follow-up.
+    // SP2 fix: the skeleton now mirrors the FULL node hierarchy, so its root is
+    // the model root NiNode and the "Bip01" node — carrying the placement clip's
+    // 17-key root-translation track (the station offset) — is a real bone the
+    // pose sampler drives by name. The palette-path posed world below therefore
+    // reproduces the node-walk posed hand EXACTLY (station offset + bind frame),
+    // not just upper-body posing relative to the pelvis.
     std::printf("skeleton bones=%zu root_bone_index=%d (root name=%s)\n",
                 m.skeleton.bones.size(), m.skeleton.root_bone_index,
                 m.skeleton.root_bone_index >= 0
-                    ? m.skeleton.bones[m.skeleton.root_bone_index].name.c_str()
+                    ? (m.skeleton.bones[m.skeleton.root_bone_index].name.empty()
+                        ? "<model-root>"
+                        : m.skeleton.bones[m.skeleton.root_bone_index].name.c_str())
                     : "<none>");
 
     // SP2 palette-path check: drive the GPU pose path and print the POSED world
     // origin of "Bip01 L Hand" so it can be compared headlessly against the
-    // node-walk reference (Z≈23, hip height, arms-down for db_stand_t_l).
+    // verified station pose (db_stand_t_l → L-Hand ≈ (-21, -107, 23): hip
+    // height, arms-down).
     //
-    // The posed bone origin in world space is world_pose(b)[3] — the product of
-    // the sampled LOCAL transforms down the parent chain (this is exactly what
-    // the renderer's u_model * palette feeds, minus the inverse_bind that maps a
-    // bind-model vertex back into the bone frame; for the bone ORIGIN we want the
-    // raw world_pose). We also print palette[b]*(0,0,0,1) as a cross-check.
+    // The renderer feeds the GPU u_model = inst.world and the bone palette. BC
+    // character NIFs are authored in a left-handed model frame (left hand at +X),
+    // and the renderer runs glFrontFace(GL_CW) assuming det < 0 — so officers are
+    // placed with the determinant-normalization X-flip (engine/bridge_officers.py
+    // _BRIDGE_IDENTITY_MAT4 negates the X axis), exactly like ships. We apply the
+    // same X-flip to inst.world here so the printed value matches the on-bridge
+    // render. The posed bone ORIGIN is world_pose(b)[3]; multiplying by inst.world
+    // mirrors X into the renderer's right-handed world.
     {
         std::vector<assets::AnimationClip> clips =
             assets::load_animation_clips(place_nif.string());
@@ -152,8 +160,11 @@ int main(int argc, char** argv) {
             // Stand clips settle into pose at t=duration (play-once-and-hold).
             std::vector<glm::mat4> pose =
                 renderer::sample_pose(clip, m.skeleton, clip.duration_seconds);
-            std::vector<glm::mat4> palette =
-                renderer::build_bone_palette(m.skeleton, &pose);
+
+            // inst.world for a bridge officer: identity with the X axis negated
+            // (det < 0), matching engine/bridge_officers.py _BRIDGE_IDENTITY_MAT4.
+            glm::mat4 inst_world(1.0f);
+            inst_world[0][0] = -1.0f;
 
             // world_pose(b)[3]: product of sampled bone LOCAL transforms,
             // root->bone (mirrors build_bone_palette's internal world_of).
@@ -170,14 +181,11 @@ int main(int argc, char** argv) {
             bool found = false;
             for (std::size_t b = 0; b < m.skeleton.bones.size(); ++b) {
                 if (m.skeleton.bones[b].name == "Bip01 L Hand") {
-                    glm::vec3 wp = glm::vec3(posed_world(static_cast<int>(b))[3]);
-                    glm::vec4 pal = palette[b] * glm::vec4(0, 0, 0, 1);
+                    glm::vec3 wp = glm::vec3(
+                        inst_world * posed_world(static_cast<int>(b))[3]);
                     std::printf(
                         "PALETTE L-Hand posed world = (%.1f %.1f %.1f)\n",
                         wp.x, wp.y, wp.z);
-                    std::printf(
-                        "PALETTE L-Hand palette*(0,0,0,1) = (%.1f %.1f %.1f)\n",
-                        pal.x, pal.y, pal.z);
                     found = true;
                     break;
                 }
