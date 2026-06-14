@@ -55,6 +55,7 @@ add_library(renderer STATIC
     window.cc
     shader.cc
     bone_palette.cc
+    pose_sampler.cc
     pipeline.cc
     frame.cc
     hdr_target.cc
