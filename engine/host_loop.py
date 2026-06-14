@@ -2050,16 +2050,18 @@ def _ensure_bridge_for_session(controller) -> None:
 
 
 def _place_bridge_officers(controller) -> None:
-    """SP3: render the populated bridge crew posed at their stations.
+    """SP3/SP2: render the populated bridge crew posed at their stations.
 
     Tears down any previously-placed officer instances first (the bridge
     config — DBridge vs EBridge — may have changed on a mission swap), then
     enumerates the populated CharacterClass officers from the "bridge" set and
-    places each. Entirely best-effort: a failure here must never block mission
-    load (mirrors populate_bridge_crew's discipline), so the whole body is
-    wrapped. Requires the _dauntless_host bindings (resolve_placement /
-    assemble_officer / sample_placement_pose); if they're absent (binding
-    module not built), placement is skipped silently.
+    places each. Each placed officer keeps its skeleton and plays its placement
+    clip (model.animations[0]) once-and-hold via set_instance_animation; the
+    renderer poses it through the GPU bone palette. Entirely best-effort: a
+    failure here must never block mission load (mirrors populate_bridge_crew's
+    discipline), so the whole body is wrapped. Requires the _dauntless_host
+    bindings (resolve_placement / assemble_officer / set_instance_animation); if
+    they're absent (binding module not built), placement is skipped silently.
     """
     r_ = controller.renderer
     # Destroy prior officer instances regardless of what follows.

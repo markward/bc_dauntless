@@ -1,5 +1,5 @@
 add_executable(probe_officer_pose probe_officer_pose.cc)
-target_link_libraries(probe_officer_pose PRIVATE assets nif glm)
+target_link_libraries(probe_officer_pose PRIVATE renderer assets nif glm)
 # nif self-registers its block parsers via static initializers; without
 # force-loading the archive the linker dead-strips those TUs and nif::load
 # returns 0 blocks. Mirror the other probe tools.

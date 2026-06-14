@@ -17,6 +17,7 @@ class FakeHost:
         self.assembled = []
         self.created = []            # model handles
         self.transforms_set = []     # (iid, mat4)
+        self.animations_set = []     # (iid, clip_index, loop, sample_at_start)
         self.destroyed = []          # iid
         self._next_model = 100
         self._next_iid = 1
@@ -26,9 +27,9 @@ class FakeHost:
 
     def assemble_officer(self, body_nif, head_nif, body_tex, head_tex,
                          placement_nif, sample_at_start=False):
-        # SP3 node-posing: the officer model is posed at assembly time from the
-        # placement NIF; there is no separate palette step anymore.
-        # sample_at_start selects t=0 (movement clips) vs t=end (stand clips).
+        # SP2: assemble_officer keeps the skeleton and loads the placement clip
+        # into model.animations[0]; the per-instance clip selection now happens
+        # via set_instance_animation. sample_at_start is forwarded there.
         self.assembled.append(
             (body_nif, head_nif, body_tex, head_tex, placement_nif,
              sample_at_start))
@@ -45,18 +46,20 @@ class FakeHost:
     def set_world_transform(self, iid, mat4):
         self.transforms_set.append((iid, mat4))
 
+    def set_instance_animation(self, iid, clip_index, loop, sample_at_start):
+        # SP2: the renderer plays model.animations[clip_index] on this instance
+        # (play-once-and-hold when loop is False) and rebuilds the bone palette
+        # each frame until it settles.
+        self.animations_set.append((iid, clip_index, loop, sample_at_start))
+
     def destroy_instance(self, iid):
         self.destroyed.append(iid)
 
-    # The legacy GPU-palette path is gone. If place_officers ever calls these,
-    # it's a regression back to the skinned pipeline — fail loudly.
+    # The dead SP3 node-walk posing path is gone. If place_officers ever calls
+    # these, it's a regression back to that path — fail loudly.
     def sample_placement_pose(self, *a, **k):  # pragma: no cover
         raise AssertionError(
-            "sample_placement_pose must not be called (SP3 node-posing)")
-
-    def set_instance_bone_palette(self, *a, **k):  # pragma: no cover
-        raise AssertionError(
-            "set_instance_bone_palette must not be called (SP3 node-posing)")
+            "sample_placement_pose must not be called (removed in SP2)")
 
 
 class FakeOfficer:
@@ -108,13 +111,46 @@ def test_visible_officer_assembles_posed_and_places():
         "/game/data/animations/db_stand_t_l.nif",
         False,  # DBTactical is a stand clip -> sample t=end, not start
     )]
-    # A bridge instance was created from the assembled (pre-posed) model handle.
+    # A bridge instance was created from the assembled model handle.
     assert host.created == [100]
     # World transform applied to the created instance (bridge-identity space).
     assert len(host.transforms_set) == 1
     assert host.transforms_set[0][0] == 1
-    # No GPU-palette calls: the model is posed via node transforms at assembly.
-    # (FakeHost.sample_placement_pose / set_instance_bone_palette raise if hit.)
+    # SP2: the officer plays its placement clip (animations[0]) once and holds.
+    assert host.animations_set == [(1, 0, False, False)]
+
+
+def test_place_one_sets_animation():
+    """Each placed officer is wired to play its placement clip (clip_index 0,
+    play-once-and-hold) with the placement's sample_at_start flag forwarded."""
+    host = FakeHost(_PLACEMENTS)
+    officer = FakeOfficer("Felix", "DBTactical", _FULL_APPEARANCE)
+
+    place_officers([officer], host, data_root="/game")
+
+    anim = host.animations_set
+    assert len(anim) == 1
+    iid, clip_index, loop, sample_at_start = anim[0]
+    assert iid == 1
+    assert clip_index == 0
+    assert loop is False
+    # DBTactical is a stand clip -> no sample_at_start flag -> False.
+    assert sample_at_start is False
+
+
+def test_place_one_forwards_sample_at_start():
+    """A movement-station placement (sample_at_start True) forwards the flag to
+    set_instance_animation."""
+    placements = {
+        "DBL1S": {"nif": "data/animations/DB_L1toE_S.nif", "hidden": False,
+                  "sample_at_start": True},
+    }
+    host = FakeHost(placements)
+    officer = FakeOfficer("Mover", "DBL1S", _FULL_APPEARANCE)
+
+    place_officers([officer], host, data_root="/game")
+
+    assert host.animations_set == [(1, 0, False, True)]
 
 
 def test_hidden_location_is_skipped():

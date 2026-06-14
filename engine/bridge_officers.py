@@ -1,25 +1,29 @@
-"""SP3: place populated bridge officers at their stations (posed + appearance).
+"""SP3/SP2: place populated bridge officers at their stations (posed + appearance).
 
-Ties together the SP3 building blocks: for each populated bridge-crew
+Ties together the building blocks: for each populated bridge-crew
 CharacterClass, resolve its station placement clip, assemble its
-per-character body+head model PRE-POSED to the placement clip's rest frame,
-create a bridge render instance, and pin the instance into bridge-set space.
+per-character body+head model, create a bridge render instance, pin the
+instance into bridge-set space, and start its placement animation.
 
-SP3 pivot — NODE posing, not GPU palette skinning. BC bodies are rigid
-NiTriShapes parented to Bip01 NiNodes, so assemble_officer bakes the
-placement clip's rest pose into the model's node-local transforms and clears
-the skeleton; the officer then renders as a STATIC posed model through the
-bridge node-walk (no palette, no inverse-bind). The placement clip's root
-track carries the station offset, so the instance's own world transform is
-the bridge set's identity space here (the bridge geometry renders at world
-identity). The exact Z-up / X-flip parity and root offset are a live-tuning
-concern; identity is the simplest starting point.
+SP2 — GPU bone-palette skinning, not node posing. The officer keeps its
+skeleton; assemble_officer loads the placement clip into the composed model's
+animations[0]. We then call set_instance_animation(iid, 0, loop=False, ...) so
+the renderer plays that clip once and holds the last frame (a stand clip
+settles into the standing pose; a movement clip walks the officer to the
+station and holds). The renderer poses the body each frame through the GPU bone
+palette (world_pose * inverse_bind), which deforms both the rigid and the
+skinned shapes of a BC body uniformly. The placement clip's root track carries
+the station offset, so the instance's own world transform is the bridge set's
+identity space here (the bridge geometry renders at world identity). The exact
+Z-up / X-flip parity and root offset are a live-tuning concern; identity is the
+simplest starting point.
 
 `host` is the _dauntless_host bindings module (or a fake in tests) exposing:
   resolve_placement(location)        -> {"nif": str(rel), "hidden": bool} | None
   assemble_officer(b_nif, h_nif, b_tex, h_tex, placement_nif) -> ModelHandle
   create_bridge_instance(model)      -> InstanceId
   set_world_transform(iid, mat4)
+  set_instance_animation(iid, clip_index, loop, sample_at_start)
   destroy_instance(iid)              (used to clean up on mid-placement failure)
 
 `data_root` is the absolute game data root (e.g. ".../game"); the placement
@@ -93,16 +97,15 @@ def _place_one(off, host, data_root):
     def _abs(p):
         return os.path.join(str(data_root), p) if p else None
 
-    # SP3 node-posing: the officer model is now POSED at assembly time. We pass
-    # the placement NIF into assemble_officer, which bakes the clip's rest-frame
-    # pose into the model's node-local transforms and clears the skeleton so the
-    # model renders as a STATIC posed model through the bridge node-walk. No bone
-    # palette is involved anymore (sample_placement_pose / set_instance_bone_
-    # palette are gone). The placement NIF path is data-root-relative.
+    # SP2: assemble_officer keeps the skeleton and loads the placement clip into
+    # the composed model's animations[0]. We pass the placement NIF so it can
+    # load that clip; the per-instance playback is started below via
+    # set_instance_animation, and the renderer poses the body through the GPU
+    # bone palette each frame. The placement NIF path is data-root-relative.
     placement_nif_abs = os.path.join(str(data_root), placement["nif"])
 
     # Movement clips (Science/Engineer "to L1") have the officer AT the station
-    # at t=0; assemble_officer samples t=0 when sample_at_start is set.
+    # at t=0; sample_at_start (forwarded to set_instance_animation) selects that.
     model = host.assemble_officer(
         _abs(ap.get("body_nif")), _abs(ap.get("head_nif")),
         _abs(ap.get("body_tex")), _abs(ap.get("head_tex")),
@@ -116,6 +119,10 @@ def _place_one(off, host, data_root):
     # skips this officer without leaking a tracked-nowhere render instance.
     try:
         host.set_world_transform(iid, _BRIDGE_IDENTITY_MAT4)
+        # SP2: play the placement clip once and hold (clip is animations[0] of
+        # the assembled model). sample_at_start = the placement's movement flag.
+        host.set_instance_animation(
+            iid, 0, False, bool(placement.get("sample_at_start")))
     except Exception:
         try:
             host.destroy_instance(iid)
