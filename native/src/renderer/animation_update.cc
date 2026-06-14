@@ -19,7 +19,13 @@ void update_animations(scenegraph::World& world, const ModelLookup& lookup,
         double elapsed = now_wall_time - a.start_wall_time;
         if (elapsed < 0.0) elapsed = 0.0;
         float t;
-        if (a.loop) {
+        if (a.sample_at_start) {
+            // Movement clips (e.g. db_StoL1_S "Science to L1") place the officer
+            // AT the station at t=0 and walk AWAY by t=dur. A stationed officer
+            // holds the start frame: evaluate at t=0 and freeze immediately.
+            t = 0.0f;
+            a.settled = true;
+        } else if (a.loop) {
             t = dur > 0.0f ? static_cast<float>(std::fmod(elapsed, dur)) : 0.0f;
         } else if (elapsed >= dur) {
             t = dur;
