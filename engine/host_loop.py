@@ -1758,6 +1758,12 @@ class HostController:
         # NIF path currently bound to bridge_instance. _ensure_bridge_for_session
         # compares against the BC bridge_name → NIF map to decide whether to swap.
         self.current_bridge_nif_abs: Optional[str] = None
+        # SP3: InstanceIds of the placed-and-posed bridge officers. Lives on the
+        # controller (not the per-mission session) because the bridge interior
+        # is eagerly loaded and reused across mission swaps; _ensure_bridge_for_
+        # session re-places them per mission (the bridge config can change), so
+        # it destroys this list's instances before re-placing.
+        self.officer_instances: list = []
         # Invoked once after each successful loader.load(). Stage 2 CEF
         # integration will wire this to rebuild UI state so the panel
         # filters the player ship (Game.SetPlayer runs during loader.load
@@ -2041,6 +2047,50 @@ def _ensure_bridge_for_session(controller) -> None:
     controller.bridge_instance = r_.create_bridge_instance(handle)
     r_.set_world_transform(controller.bridge_instance, _BRIDGE_IDENTITY_MAT4)
     controller.current_bridge_nif_abs = nif_abs
+    _place_bridge_officers(controller)
+
+
+def _place_bridge_officers(controller) -> None:
+    """SP3: render the populated bridge crew posed at their stations.
+
+    Tears down any previously-placed officer instances first (the bridge
+    config — DBridge vs EBridge — may have changed on a mission swap), then
+    enumerates the populated CharacterClass officers from the "bridge" set and
+    places each. Entirely best-effort: a failure here must never block mission
+    load (mirrors populate_bridge_crew's discipline), so the whole body is
+    wrapped. Requires the _dauntless_host bindings (resolve_placement /
+    assemble_officer / sample_placement_pose); if they're absent (binding
+    module not built), placement is skipped silently.
+    """
+    r_ = controller.renderer
+    # Destroy prior officer instances regardless of what follows.
+    for iid in controller.officer_instances:
+        try:
+            r_.destroy_instance(iid)
+        except Exception:
+            pass
+    controller.officer_instances = []
+    try:
+        import _dauntless_host as _host
+    except ImportError:
+        return
+    # The placement bindings (resolve_placement etc.) are required; a stale
+    # binary without them must not crash mission load.
+    if not hasattr(_host, "resolve_placement"):
+        return
+    try:
+        import LoadBridge as _LoadBridge
+        import engine.bridge_officers as _bridge_officers
+        officers = _LoadBridge.bridge_officers()
+        if not officers:
+            return
+        data_root = str(PROJECT_ROOT / "game")
+        controller.officer_instances = _bridge_officers.place_officers(
+            officers, _host, data_root)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception(
+            "_place_bridge_officers: officer placement failed")
 
 
 def _wire_target_menu_to_player_set(controller) -> None:

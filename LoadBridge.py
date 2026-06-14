@@ -85,6 +85,30 @@ def populate_bridge_crew(pBridgeSet, bridge_name):
         _logger.exception("ConfigureCharacters failed for %s", bridge_name)
 
 
+def bridge_officers(pBridgeSet=None):
+    """Return the populated bridge-crew CharacterClass instances.
+
+    SP3 placement reads each officer's GetLocation()/appearance() to render it
+    posed at its station. populate_bridge_crew adds the five officers to the
+    bridge SetClass under station names ("Tactical", "Helm", ...); the set also
+    holds the bridge-model ObjectClass and lights, so we filter to
+    CharacterClass. Pass the bridge set explicitly, or omit to look it up via
+    g_kSetManager.GetSet("bridge"). Returns [] if there is no bridge set yet.
+    """
+    import App
+    if pBridgeSet is None:
+        pBridgeSet = App.g_kSetManager.GetSet("bridge")
+    if pBridgeSet is None:
+        return []
+    get_list = getattr(pBridgeSet, "GetObjectList", None)
+    objects = get_list() if get_list is not None else []
+    out = []
+    for obj in objects:
+        if App.CharacterClass_Cast(obj) is not None:
+            out.append(obj)
+    return out
+
+
 def _reset_menus_created():
     """Mission-swap hook (reset_sdk_globals) and test reset."""
     global _menus_created

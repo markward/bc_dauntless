@@ -20,6 +20,8 @@
 #include <renderer/window.h>
 #include <renderer/pipeline.h>
 #include <renderer/bone_palette.h>
+#include <renderer/pose_sampler.h>
+#include <renderer/placement_map.h>
 #include <renderer/frame.h>
 #include <renderer/backdrop_pass.h>
 #include <renderer/sun_pass.h>
@@ -656,6 +658,84 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "body_tex/head_tex are per-officer skin .tga FILE paths (str) that "
           "override the body/head materials' Base stage; omit to keep the NIF "
           "default. Returns a ModelHandle for the composed skinned model.");
+
+    // SP3: resolve a CharacterClass GetLocation() string (e.g. "DBTactical")
+    // to its placement-animation NIF + hidden flag. The nif path is RELATIVE
+    // to the game data root (e.g. "data/animations/db_stand_t_l.nif"); the
+    // Python caller joins it with the data root the same way it builds bridge /
+    // ship NIF paths (PROJECT_ROOT/game/...). Returns None for unknown / empty
+    // locations so the caller can skip them.
+    m.def("resolve_placement",
+          [](const std::string& location) -> py::object {
+              auto placement = renderer::placement_for_location(location);
+              if (!placement) return py::none();
+              py::dict d;
+              d["nif"] = placement->nif_path;     // data-root-relative
+              d["hidden"] = placement->hidden;
+              return d;
+          },
+          py::arg("location"),
+          "SP3: resolve a character GetLocation() string to its "
+          "placement-animation NIF (data-root-RELATIVE path) + hidden flag, as "
+          "{'nif': str, 'hidden': bool}, or None if the location is unknown.");
+
+    // SP3: evaluate a station's placement clip at its rest frame into a skinning
+    // palette for an already-assembled officer body model. The placement NIF
+    // carries a single AnimationClip whose tracks address the body's Bip01
+    // skeleton by bone name; we sample it at the clip's final time (the static
+    // rest pose) and fold it through the body skeleton's inverse-bind to get the
+    // same column-major mat4 palette set_instance_bone_palette consumes.
+    //
+    // placement_nif is an ABSOLUTE path (the Python caller joined the relative
+    // path from resolve_placement with the data root). Returns an empty list if
+    // the body model has no skeleton or the placement NIF has no animation — the
+    // caller then leaves the instance at its bind pose.
+    m.def("sample_placement_pose",
+          [](scenegraph::ModelHandle body_model,
+             const std::string& placement_nif)
+              -> std::vector<std::array<float, 16>> {
+              std::vector<std::array<float, 16>> out;
+              const assets::Model* body = resolve_model(body_model);
+              if (!body || body->skeleton.bones.empty()) return out;
+
+              if (!g_cache) {
+                  assets::AssetCache::Config cfg;
+                  cfg.keep_cpu_data = true;
+                  g_cache = std::make_unique<assets::AssetCache>(std::move(cfg));
+              }
+              // The placement NIF is pure animation (no skinned geometry), so a
+              // texture search dir is irrelevant — pass the NIF's own dir.
+              std::filesystem::path nif_dir =
+                  std::filesystem::path(placement_nif).parent_path();
+              std::vector<std::filesystem::path> search = {nif_dir};
+              assets::ModelHandle clip_model;
+              try {
+                  clip_model = g_cache->load(placement_nif, search);
+              } catch (const std::exception&) {
+                  return out;  // missing/unreadable NIF -> bind pose
+              }
+              if (!clip_model || clip_model->animations.empty()) return out;
+
+              const assets::AnimationClip& clip = clip_model->animations.front();
+              std::vector<glm::mat4> pose = renderer::sample_pose(
+                  clip, body->skeleton, clip.duration_seconds);
+              std::vector<glm::mat4> palette =
+                  renderer::build_bone_palette(body->skeleton, &pose);
+
+              out.reserve(palette.size());
+              for (const glm::mat4& m : palette) {
+                  std::array<float, 16> a{};
+                  const float* p = glm::value_ptr(m);  // column-major
+                  for (int i = 0; i < 16; ++i) a[i] = p[i];
+                  out.push_back(a);
+              }
+              return out;
+          },
+          py::arg("body_model"), py::arg("placement_nif"),
+          "SP3: sample a station placement clip at its rest frame into a "
+          "skinning palette for the given assembled body model. Returns a list "
+          "of column-major mat4 (16 floats each) for set_instance_bone_palette, "
+          "or an empty list (-> bind pose) if there is no skeleton/animation.");
 
     m.def("set_bridge_camera",
           [](std::tuple<float,float,float> eye,
