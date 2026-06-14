@@ -125,23 +125,6 @@ protected:
         return count;
     }
 
-    // Mean column index of non-background pixels (background = clear black).
-    // Returns -1 when no foreground pixel is found.
-    static double centroid_x(const std::vector<unsigned char>& buf) {
-        double sum_x = 0.0;
-        long count = 0;
-        for (int y = 0; y < kH; ++y) {
-            for (int x = 0; x < kW; ++x) {
-                const size_t i = (static_cast<size_t>(y) * kW + x) * 4;
-                if (buf[i] + buf[i + 1] + buf[i + 2] > 6) {
-                    sum_x += x;
-                    ++count;
-                }
-            }
-        }
-        return count > 0 ? sum_x / static_cast<double>(count) : -1.0;
-    }
-
     // Render one skinned Pass::Bridge instance through BridgePass::render with
     // a bright bridge ambient and the given per-instance palette. An empty
     // palette exercises the bind-pose fallback; a non-empty palette is applied

@@ -19,6 +19,7 @@
 #include <GLFW/glfw3.h>
 #include <renderer/window.h>
 #include <renderer/pipeline.h>
+#include <renderer/bone_palette.h>
 #include <renderer/frame.h>
 #include <renderer/backdrop_pass.h>
 #include <renderer/sun_pass.h>
@@ -497,11 +498,16 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("set_instance_bone_palette",
           [](scenegraph::InstanceId id,
              const std::vector<std::array<float, 16>>& mats) {
+              // Clamp to the shader's u_bones[kMaxBones] just like
+              // build_bone_palette does, so this path can't overflow the
+              // uniform array on stricter GL drivers.
+              const std::size_t n = std::min(mats.size(), renderer::kMaxBones);
               std::vector<glm::mat4> palette;
-              palette.reserve(mats.size());
+              palette.reserve(n);
               // glm is column-major; Python sends each mat4 as 16 floats in
               // column-major order (column 0, then column 1, ...).
-              for (const auto& a : mats) palette.push_back(glm::make_mat4(a.data()));
+              for (std::size_t i = 0; i < n; ++i)
+                  palette.push_back(glm::make_mat4(mats[i].data()));
               g_world.set_bone_palette(id, std::move(palette));
           },
           py::arg("id"), py::arg("matrices"),
