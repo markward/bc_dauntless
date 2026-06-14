@@ -5,7 +5,6 @@ add_library(assets STATIC
     src/gl_handle.cc
     src/flip_frame.cc
     src/material_build.cc
-    src/mesh_bake.cc
     src/mesh_build.cc
     src/mesh_lifetime.cc
     src/mesh_upload.cc

@@ -4,7 +4,6 @@ add_executable(assets_tests
     cpu/animation_build_test.cc
     cpu/cache_test.cc
     cpu/material_build_test.cc
-    cpu/mesh_bake_test.cc
     cpu/mesh_build_test.cc
     cpu/model_build_test.cc
     cpu/model_compose_test.cc
