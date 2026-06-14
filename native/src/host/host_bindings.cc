@@ -45,6 +45,9 @@
 #include <scenegraph/camera.h>
 #include <scenegraph/damage_decals.h>
 #include <assets/cache.h>
+
+#include <glm/gtc/type_ptr.hpp>
+#include <array>
 #include "developer_mode.h"
 
 #ifdef DAUNTLESS_ENABLE_CEF
@@ -491,6 +494,19 @@ PYBIND11_MODULE(_dauntless_host, m) {
               g_world.set_world_transform(id, mat);
           },
           py::arg("id"), py::arg("mat4"));
+    m.def("set_instance_bone_palette",
+          [](scenegraph::InstanceId id,
+             const std::vector<std::array<float, 16>>& mats) {
+              std::vector<glm::mat4> palette;
+              palette.reserve(mats.size());
+              // glm is column-major; Python sends each mat4 as 16 floats in
+              // column-major order (column 0, then column 1, ...).
+              for (const auto& a : mats) palette.push_back(glm::make_mat4(a.data()));
+              g_world.set_bone_palette(id, std::move(palette));
+          },
+          py::arg("id"), py::arg("matrices"),
+          "Set an instance's skinning palette (list of column-major mat4 as "
+          "16 floats). Empty list restores the model's bind pose.");
     m.def("set_visible",
           [](scenegraph::InstanceId id, bool v) { g_world.set_visible(id, v); },
           py::arg("id"), py::arg("visible"));

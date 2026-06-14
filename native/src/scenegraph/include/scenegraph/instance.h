@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 #include <glm/glm.hpp>
 #include "scenegraph/damage_decals.h"
 
@@ -39,6 +40,11 @@ struct Instance {
     /// so a dead hull goes dark in space (diffuse-lit, specular, and rim
     /// terms are unaffected, so the hull stays visible).
     float emissive_scale = 1.0f;
+
+    /// Per-instance skinning palette (world_pose * inverse_bind per bone).
+    /// Empty = the renderer falls back to the model's bind pose. Set by the
+    /// placement system; SP2 rewrites it per frame. Runtime state, not saved.
+    std::vector<glm::mat4> bone_palette;
 
     /// Per-instance persistent damage decals (object space, body frame).
     /// Runtime VFX state only — never serialized to saves.

@@ -215,7 +215,9 @@ void BridgePass::render(const scenegraph::World& world,
         [&](const scenegraph::Instance& inst) {
             const assets::Model* m = lookup(inst.model_handle);
             if (!m || m->skeleton.bones.empty()) return;
-            std::vector<glm::mat4> palette = build_bone_palette(m->skeleton, nullptr);
+            std::vector<glm::mat4> palette = inst.bone_palette.empty()
+                ? build_bone_palette(m->skeleton, nullptr)
+                : inst.bone_palette;
             skin_shader.set_mat4_array("u_bones", palette.data(),
                                        static_cast<int>(palette.size()));
             // World transform per node, same node-walk as walk_bridge_meshes.

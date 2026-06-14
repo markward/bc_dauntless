@@ -30,6 +30,10 @@ void World::set_world_transform(InstanceId id, const glm::mat4& world) {
     if (auto* inst = get(id)) inst->world = world;
 }
 
+void World::set_bone_palette(InstanceId id, std::vector<glm::mat4> palette) {
+    if (auto* inst = get(id)) inst->bone_palette = std::move(palette);
+}
+
 void World::set_visible(InstanceId id, bool visible) {
     if (auto* inst = get(id)) inst->visible = visible;
 }

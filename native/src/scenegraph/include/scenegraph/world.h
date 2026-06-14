@@ -12,6 +12,7 @@ public:
     InstanceId create_instance(ModelHandle model);
     void destroy_instance(InstanceId id);
     void set_world_transform(InstanceId id, const glm::mat4& world);
+    void set_bone_palette(InstanceId id, std::vector<glm::mat4> palette);
     void set_visible(InstanceId id, bool visible);
     void set_pass(InstanceId id, Pass pass);
     void set_rim_eligible(InstanceId id, bool eligible);

@@ -16,6 +16,7 @@
 #include <gtest/gtest.h>
 
 #include <renderer/bridge_pass.h>
+#include <renderer/bone_palette.h>
 #include <renderer/frame.h>
 #include <renderer/pipeline.h>
 #include <renderer/window.h>
@@ -30,6 +31,7 @@
 #include <glad/glad.h>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <cstdlib>
 #include <filesystem>
 #include <memory>
 #include <vector>
@@ -122,6 +124,59 @@ protected:
         }
         return count;
     }
+
+    // Mean column index of non-background pixels (background = clear black).
+    // Returns -1 when no foreground pixel is found.
+    static double centroid_x(const std::vector<unsigned char>& buf) {
+        double sum_x = 0.0;
+        long count = 0;
+        for (int y = 0; y < kH; ++y) {
+            for (int x = 0; x < kW; ++x) {
+                const size_t i = (static_cast<size_t>(y) * kW + x) * 4;
+                if (buf[i] + buf[i + 1] + buf[i + 2] > 6) {
+                    sum_x += x;
+                    ++count;
+                }
+            }
+        }
+        return count > 0 ? sum_x / static_cast<double>(count) : -1.0;
+    }
+
+    // Render one skinned Pass::Bridge instance through BridgePass::render with
+    // a bright bridge ambient and the given per-instance palette. An empty
+    // palette exercises the bind-pose fallback; a non-empty palette is applied
+    // verbatim via World::set_bone_palette. Reads back the framebuffer.
+    std::vector<unsigned char> render_with_palette(
+            const std::vector<glm::mat4>& palette) {
+        scenegraph::World world;
+        auto iid = world.create_instance(
+            reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
+        world.set_world_transform(iid, glm::mat4(1.0f));
+        world.set_pass(iid, scenegraph::Pass::Bridge);
+        world.set_bone_palette(iid, palette);
+
+        renderer::BridgePass::ModelLookup lookup =
+            [&](unsigned long long h) -> const assets::Model* {
+                return reinterpret_cast<const assets::Model*>(h);
+            };
+
+        renderer::Lighting lighting;
+        lighting.ambient = glm::vec3(0.8f, 0.8f, 0.8f);
+        lighting.directional_count = 0;
+
+        scenegraph::Camera cam = frame_camera();
+
+        glViewport(0, 0, kW, kH);
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        renderer::BridgePass pass;
+        pass.render(world, cam, *p, lookup, lighting);
+
+        std::vector<unsigned char> buf(static_cast<size_t>(kW) * kH * 4);
+        glReadPixels(0, 0, kW, kH, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
+        return buf;
+    }
 };
 
 // Test A — the skinned character renders through the bridge pass and is lit by
@@ -144,6 +199,52 @@ TEST_F(SkinnedBridgeTest, DarkBridgeAmbientYieldsBlackCharacter) {
     EXPECT_EQ(foreground_count(buf), 0)
         << "character was non-black under zero bridge ambient — it is not lit "
            "by the bridge ambient (some other light source is leaking in).";
+}
+
+// Test C — PER-INSTANCE POSE: an empty palette renders the model's bind pose,
+// while a non-identity per-instance palette (every bone translated, applied via
+// World::set_bone_palette) changes the rendered silhouette. Proves the bridge
+// sub-pass reads Instance::bone_palette instead of always rebuilding the bind
+// pose. Mirrors SP1's SkinnedRenderTest.TranslatedPaletteShiftsSilhouette but
+// drives the palette through the scenegraph instance, not draw_model directly.
+TEST_F(SkinnedBridgeTest, PerInstancePaletteShiftsSilhouette) {
+    // Bind-pose baseline via the empty-palette fallback path.
+    const std::vector<unsigned char> buf0 = render_with_palette({});
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const long fg0 = foreground_count(buf0);
+    ASSERT_GT(fg0, 0) << "bind-pose (empty palette) render produced no "
+                         "silhouette";
+
+    // Non-identity palette: translate every bone in world space. Pre-multiplying
+    // each bind palette entry by a world-space translation moves every skinned
+    // (and rigid-bound) vertex, so the whole silhouette shifts. The body NIF
+    // fills most of the frame at bind pose, so a sizeable shift slides much of
+    // the figure out of view — a large, unambiguous silhouette change.
+    std::vector<glm::mat4> shifted =
+        renderer::build_bone_palette(model_h->skeleton, /*local_pose=*/nullptr);
+    ASSERT_FALSE(shifted.empty());
+    const glm::mat4 T = glm::translate(glm::mat4(1.0f),
+                                       glm::vec3(40.0f, 0.0f, 0.0f));
+    for (auto& m : shifted) m = T * m;
+
+    const std::vector<unsigned char> buf1 = render_with_palette(shifted);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const long fg1 = foreground_count(buf1);
+
+    // Per-pixel difference between the two renders: the posed palette must
+    // produce a materially different image from the bind pose. (If the bridge
+    // sub-pass ignored Instance::bone_palette, both renders would be the bind
+    // pose and these buffers would be identical.)
+    long differing = 0;
+    for (size_t i = 0; i < buf0.size(); ++i) {
+        if (std::abs(static_cast<int>(buf0[i]) - static_cast<int>(buf1[i])) > 2)
+            ++differing;
+    }
+    EXPECT_GT(differing, fg0 / 4)
+        << "the per-instance posed palette did not change the silhouette "
+           "(differing channels=" << differing << ", bind fg=" << fg0
+           << ", posed fg=" << fg1 << ") — the bridge sub-pass is not using "
+           "Instance::bone_palette.";
 }
 
 }  // namespace
