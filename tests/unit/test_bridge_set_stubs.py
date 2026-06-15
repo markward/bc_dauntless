@@ -44,13 +44,21 @@ def test_viewscreen_round_trips():
     assert bs.GetViewScreen() is vs
 
 
-def test_bridge_object_stub_supports_sdk_calls():
-    obj = BridgeObjectClass_Create("DBridge.nif")
-    # GalaxyBridge.CreateBridgeModel calls these — must not raise.
-    obj.SetTranslateXYZ(0.0, 0.0, 0.0)
+def test_bridge_object_is_real_pure_object():
+    obj = BridgeObjectClass_Create("data/Models/Sets/DBridge/DBridge.nif")
+    # No longer a loud stub — must drop off the bridge-stub summary.
+    assert "BridgeObjectClass_Create" not in st.fired()
+    # Carries the NIF path so the host can realize the mesh.
+    assert obj.nif == "data/Models/Sets/DBridge/DBridge.nif"
+    # Host fills this in; defaults to None.
+    assert obj.render_instance is None
+    # GalaxyBridge.CreateBridgeModel calls these — they record, don't raise.
+    obj.SetTranslateXYZ(1.0, 2.0, 3.0)
     obj.SetAngleAxisRotation(0.0, 1.0, 0.0, 0.0)
+    assert obj.translate == (1.0, 2.0, 3.0)
+    assert obj.rotation == (0.0, 1.0, 0.0, 0.0)
+    # Property set stays truthy so DBridgeProperties.LoadPropertySet runs.
     assert obj.GetPropertySet() is not None
-    assert "BridgeObjectClass_Create" in st.fired()
 
 
 def test_camera_stub_supports_sdk_calls():
@@ -71,7 +79,13 @@ def test_camera_get_object_returns_added_camera():
     assert ZoomCameraObjectClass_GetObject(bs, "maincamera") is cam
 
 
-def test_model_manager_load_model_is_loud_but_noop():
+def test_model_manager_load_model_records_env_and_is_not_loud():
     mm = ModelManager()
-    assert mm.LoadModel("DBridge.nif", None, "env/") is None
-    assert "g_kModelManager.LoadModel" in st.fired()
+    # Real now: records the texture/env path, returns None, and is NOT a
+    # loud stub (it must drop off the bridge-stub summary in step 3).
+    assert mm.LoadModel("data/Models/Sets/DBridge/DBridge.nif", None,
+                        "data/Models/Sets/DBridge/High/") is None
+    assert "g_kModelManager.LoadModel" not in st.fired()
+    assert mm.env_for("data/Models/Sets/DBridge/DBridge.nif") == \
+        "data/Models/Sets/DBridge/High/"
+    assert mm.env_for("missing.nif") is None

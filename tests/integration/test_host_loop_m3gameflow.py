@@ -18,11 +18,11 @@ import pytest
 
 pytest.importorskip("_dauntless_host")
 
-# Probe the BC game install. engine/host_loop.py loads the default
-# bridge NIF at host_loop:1908-1910 via DBRIDGE_NIF_REL =
-# "data/Models/Sets/DBridge/Dbridge.NIF" — a missing file there would
-# surface as a renderer-side RuntimeError before any mission script
-# runs. Skip rather than fail in environments without BC assets.
+# Probe the BC game install. The bridge interior NIF
+# ("data/Models/Sets/DBridge/Dbridge.NIF") is loaded by the SDK path during
+# mission load (host_loop._realize_bridge_model) — a missing file there would
+# surface as a renderer-side RuntimeError. Skip rather than fail in
+# environments without BC assets.
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _BRIDGE_NIF = (
     _PROJECT_ROOT / "game" / "data" / "Models" / "Sets" / "DBridge" / "Dbridge.NIF"

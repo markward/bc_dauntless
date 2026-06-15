@@ -32,17 +32,34 @@ class _LoudStub:
         return True
 
 
-class BridgeObjectClass(_LoudStub):
+class BridgeObjectClass:
+    """The bridge model object the SDK config script creates and adds to the
+    bridge set as "bridge". A pure, headless data object: it carries the NIF
+    path and transform the SDK sets; the HOST reads it after LoadBridge.Load and
+    fills in `render_instance` (see host_loop._realize_bridge_model). Not a
+    `_LoudStub` — it is real, so it drops off the bridge-stub summary."""
     def __init__(self, nif):
-        self._nif = nif
-        # A property-set object the SDK fetches via GetPropertySet(); return a
-        # chainable stub so DBridgeProperties.LoadPropertySet(pPropertySet) runs.
+        self.nif = nif
+        self.translate = (0.0, 0.0, 0.0)
+        self.rotation = (0.0, 1.0, 0.0, 0.0)   # angle, x, y, z
+        self.render_instance = None            # host fills this in
+        # DBridgeProperties.LoadPropertySet(pPropertySet) still runs against a
+        # chainable stub; faithful hardpoint loading is a later step.
         self._property_set = _LoudStub()
+
     def GetPropertySet(self):
         return self._property_set
+
     def SetTranslateXYZ(self, x, y, z):
-        return None
+        self.translate = (x, y, z)
+
     def SetAngleAxisRotation(self, a, x, y, z):
+        self.rotation = (a, x, y, z)
+
+    def GetAnimNode(self):
+        # Animation playback is not implemented headlessly; return None so the
+        # SDK's PutGuestChairOut() / PutGuestChairIn() pass safely through the
+        # App.TGAnimPosition_Create stub without crashing.
         return None
 
 
@@ -65,9 +82,20 @@ class ZoomCameraObjectClass(_LoudStub):
 
 
 class ModelManager:
+    """Real (no longer a loud stub): our renderer loads NIFs lazily at instance
+    creation, host-side. LoadModel's faithful equivalent is to remember the
+    texture/env path the SDK pre-loads each NIF with, so the host can search the
+    right detail directory (Low/Medium/High) when it realizes the mesh. It loads
+    nothing into the renderer itself."""
+    def __init__(self):
+        self._env = {}                       # nif path -> texture/env path
+
     def LoadModel(self, path, a=None, env=None):
-        _stub_trace.stub_call("g_kModelManager.LoadModel", "path=%s" % path)
+        self._env[path] = env
         return None
+
+    def env_for(self, path):
+        return self._env.get(path)
 
 
 class BridgeSet(SetClass):
@@ -116,8 +144,7 @@ def BridgeSet_Cast(obj):
 
 
 def BridgeObjectClass_Create(nif):
-    _stub_trace.stub_call("BridgeObjectClass_Create", "nif=%s" % nif)
-    return BridgeObjectClass(nif)
+    return BridgeObjectClass(nif)              # real, no stub_call -> off summary
 
 
 def ViewScreenObject_Create(nif):
