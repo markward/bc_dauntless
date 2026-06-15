@@ -416,6 +416,26 @@ def TGAnimAction_Create(*args) -> TGAnimAction:
     return TGAnimAction()
 
 
+class TGAnimPosition(TGAction):
+    """Placement action created by Bridge.Characters.CommonAnimations.SetPosition.
+
+    The SDK builds these via App.TGAnimPosition_Create(animNode, clipName) and
+    appends them to a TGSequence to move a character's anim node to the position
+    baked into the named clip's keyframes. Headless we never play it — we only
+    record the clip NAME so the host can resolve it to a NIF path via
+    g_kAnimationManager.path_for and feed it to the skinned renderer.
+    """
+    def __init__(self, name: str = ""):
+        super().__init__()
+        self.name = str(name)
+
+
+def TGAnimPosition_Create(anim_node=None, name: str = "") -> TGAnimPosition:
+    # SDK call shape: App.TGAnimPosition_Create(pAnimNode, "db_stand_t_l").
+    # The anim node is irrelevant headless; keep only the clip name.
+    return TGAnimPosition(name)
+
+
 class SubtitleAction(TGTimedAction):
     def __init__(self, database=None, string_id: str = ""):
         super().__init__()

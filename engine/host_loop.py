@@ -751,6 +751,29 @@ IDENTITY_MAT4 = [
     0.0, 0.0, 0.0, 1.0,
 ]
 
+# Officer instance world transform — IDENTITY (bridge-set space, the same frame
+# as the bridge mesh, which _realize_bridge_model also places at identity).
+#
+# Why NOT the negate-X-basis flip the replaced placement layer assumed: in this
+# renderer u_model multiplies the whole posed vertex (gl_Position =
+# proj·view·u_model·skin·v in skinned_bridge.vert), and the placement clip's
+# root track bakes the STATION translation into `skin`. An X-flip u_model
+# therefore mirrors not just the body geometry but the station position across
+# the bridge centerline, dropping laterally-offset officers (the Commander/XO)
+# into their mirror-image seat (the guest chair) — the symptom seen in live
+# verify. Ships avoid this because their world translation rides in the matrix's
+# 4th column (unflipped); an officer's station translation does not — it is
+# inside the palette. The skinned bridge sub-pass disables back-face culling
+# (bridge_pass.cc) and bridge.frag does no normal-based lighting, so identity
+# does NOT render officers inside-out/dark — the flip's only effects here were
+# the (buggy) position mirror plus a left/right body-geometry mirror.
+#
+# Live-tuning anchor: keeping the body's authored handedness AND the station
+# position both correct needs the station translation pulled out of the bone
+# palette into u_model's 4th column (ship-style) — a renderer-side follow-up.
+# Until then identity prioritises correct seating. Row-major.
+OFFICER_TRANSFORM = list(IDENTITY_MAT4)
+
 # Captain's-chair camera position in bridge-local NIF space, per
 # Bridge.<X>.GetBaseCameraPosition() in the SDK scripts. Mirrors
 # sdk/Build/scripts/Bridge/GalaxyBridge.py:84 and SovereignBridge.py:80.
@@ -1750,11 +1773,10 @@ class HostController:
         # NIF path currently bound to bridge_instance. Set by
         # _realize_bridge_model when the SDK-created bridge object is realized.
         self.current_bridge_nif_abs: Optional[str] = None
-        # InstanceIds of placed-and-posed bridge officers. Lives on the
-        # controller (not the per-mission session) to mirror bridge_instance,
-        # which the controller likewise owns across mission swaps. (Officer
-        # placement is not wired in this build; kept as an empty list for
-        # compatibility.)
+        # InstanceIds of placed-and-posed bridge officers. Owned by the
+        # controller (like bridge_instance) so it survives mission swaps;
+        # repopulated each load by _place_bridge_officers, which destroys the
+        # prior load's instances first.
         self.officer_instances: list = []
         # Invoked once after each successful loader.load(). Stage 2 CEF
         # integration will wire this to rebuild UI state so the panel
@@ -2047,6 +2069,86 @@ def _realize_bridge_model(controller, r) -> None:
     controller.current_bridge_nif_abs = nif_abs
 
 
+def _place_bridge_officers(controller, r) -> None:
+    """Render every SDK-populated bridge officer posed at its station.
+
+    Called from _after_mission_loaded after _realize_bridge_model. Enumerates
+    all CharacterClass objects in the SDK-created "bridge" set (5 standard crew
+    + 3 random extras + any mission-added guest), captures each one's placement
+    clip by running the SDK's own CommonAnimations.SetPosition (see
+    engine.appc.bridge_placement.capture_placement — no invented table), and
+    feeds the kept SP1/SP2 skinned renderer:
+      assemble_officer -> create_bridge_instance -> set_world_transform
+                       -> set_instance_animation (play placement clip once/hold).
+
+    Leak-free + idempotent (mirrors _realize_bridge_model): destroys every prior
+    officer instance before placing; per-character _render_instance tag prevents
+    double-placement within a load. reset_sdk_globals clears g_kSetManager._sets
+    each swap, so each load enumerates fresh (untagged) characters and the
+    destroy-prior step recycles the previous load's instances.
+    """
+    import App as _App
+    from engine.appc.characters import CharacterClass
+    from engine.appc.bridge_placement import capture_placement
+
+    bridge = _App.g_kSetManager.GetSet("bridge")
+    if bridge is None:
+        return
+
+    # Tear down the previous load's officers first.
+    for iid in controller.officer_instances:
+        try:
+            r.destroy_instance(iid)
+        except Exception:
+            pass
+    controller.officer_instances = []
+
+    def _abs(p):
+        return str(PROJECT_ROOT / "game" / p) if p else None
+
+    for off in bridge.GetClassObjectList(CharacterClass):
+        if getattr(off, "_render_instance", None) is not None:
+            continue                                   # already placed this load
+        try:
+            placement = capture_placement(off)
+            if not placement or placement["hidden"]:
+                continue
+            ap = off.appearance()
+            if not ap.get("body_nif"):
+                continue
+
+            model = r.assemble_officer(
+                _abs(ap.get("body_nif")), _abs(ap.get("head_nif")),
+                _abs(ap.get("body_tex")), _abs(ap.get("head_tex")),
+                _abs(placement["clip_nif"]),
+                placement["sample_at_start"],
+            )
+            iid = r.create_bridge_instance(model)
+            try:
+                r.set_world_transform(iid, OFFICER_TRANSFORM)
+                r.set_instance_animation(
+                    iid, 0, False, placement["sample_at_start"])
+            except Exception:
+                try:
+                    r.destroy_instance(iid)
+                except Exception:
+                    pass
+                raise
+            off._render_instance = iid
+            controller.officer_instances.append(iid)
+        except Exception:
+            name = ""
+            try:
+                name = off.GetCharacterName()
+            except Exception:
+                pass
+            import traceback
+            print(f"[host_loop] WARNING: failed to place officer {name!r}",
+                  flush=True)
+            traceback.print_exc()
+            continue
+
+
 def _wire_target_menu_to_player_set(controller) -> None:
     """Subscribe the target-menu singleton to the player's containing
     spatial set, then bulk-rebuild rows for ships already there.
@@ -2195,6 +2297,7 @@ def run(mission_name: Optional[str] = None,
             # Realize the SDK-created bridge object into a render instance
             # (replaces the deleted eager startup load).
             _realize_bridge_model(controller, r)
+            _place_bridge_officers(controller, r)
             import engine.appc._stub_trace as _stub_trace
             _stub_trace.dump_stub_summary()
             _wire_target_menu_to_player_set(controller)
