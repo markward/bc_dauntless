@@ -94,22 +94,34 @@ def test_bridge_object_is_real_pure_object():
     assert obj.GetPropertySet() is not None
 
 
-def test_camera_stub_supports_sdk_calls():
-    cam = ZoomCameraObjectClass_Create(0.0, 1.0, 2.0, 1.57, 0.0, 0.0, 1.0, "maincamera")
-    cam.SetMinZoom(0.64)
-    cam.SetMaxZoom(1.0)
-    cam.SetZoomTime(0.375)
-    cam.PushCameraMode(cam.GetNamedCameraMode("GalaxyBridgeCaptain"))
-    cam.Update(0.0)
-    cam.SetTranslateXYZ(0.0, 1.0, 2.0)
-    assert "ZoomCameraObjectClass_Create" in st.fired()
+def test_zoom_camera_is_real_data_object_and_round_trips():
+    cam = ZoomCameraObjectClass_Create(0.683736, 86.978439, 50.0,
+                                       1.570796, -0.000665, -0.087559, 0.996159,
+                                       "maincamera")
+    # Step 5a: real data object now -> off the stub summary.
+    assert "ZoomCameraObjectClass_Create" not in st.fired()
+    assert cam.position == (0.683736, 86.978439, 50.0)
+    assert cam.orientation == (1.570796, -0.000665, -0.087559, 0.996159)
+    # Zoom params round-trip through the getters.
+    cam.SetMinZoom(0.64); cam.SetMaxZoom(1.0); cam.SetZoomTime(0.375)
+    assert cam.GetMinZoom() == 0.64
+    assert cam.GetMaxZoom() == 1.0
+    assert cam.GetZoomTime() == 0.375
+    # ConfigureCharacters overrides the position via SetTranslateXYZ.
+    cam.SetTranslateXYZ(0.683736, 86.978439, 61.934944)
+    assert cam.position == (0.683736, 86.978439, 61.934944)
+    # The unbuilt camera-mode / zoom-animation surface still no-ops via _LoudStub.
+    assert cam.PushCameraMode(cam.GetNamedCameraMode("GalaxyBridgeCaptain")) is None
+    assert cam.ToggleZoom(0.0) is None
+    assert cam.Update(0.0) is None
 
 
-def test_camera_get_object_returns_added_camera():
+def test_zoom_camera_get_object_returns_added_camera_not_loud():
     bs = BridgeSet_Create()
     cam = ZoomCameraObjectClass_Create(0, 0, 0, 0, 0, 0, 1, "maincamera")
     bs.AddCameraToSet(cam, "maincamera")
     assert ZoomCameraObjectClass_GetObject(bs, "maincamera") is cam
+    assert "ZoomCameraObjectClass_GetObject" not in st.fired()
 
 
 def test_model_manager_load_model_records_env_and_is_not_loud():

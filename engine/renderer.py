@@ -464,3 +464,13 @@ def get_instance_bounds(instance_id: InstanceId):
     """World-space bounding sphere of an instance's model as
     (cx, cy, cz, radius), or None if the instance/model is not resolvable."""
     return _h.get_instance_bounds(instance_id)
+
+
+def get_instance_head_center(instance_id: InstanceId):
+    """World-space centre (cx, cy, cz) of a posed character's HEAD (vertices
+    bound to 'Bip01 Head'), or the full skinned centre if there's no head bone,
+    or None if unskinned / not yet posed. The officer zoom look-at point.
+    Unlike get_instance_bounds (static AABB x instance world transform), this
+    applies the bone palette — a bridge officer sits at an identity instance
+    transform with their station offset baked into the palette."""
+    return _h.get_instance_head_center(instance_id)

@@ -774,23 +774,16 @@ IDENTITY_MAT4 = [
 # Until then identity prioritises correct seating. Row-major.
 OFFICER_TRANSFORM = list(IDENTITY_MAT4)
 
-# Captain's-chair camera position in bridge-local NIF space, per
-# Bridge.<X>.GetBaseCameraPosition() in the SDK scripts. Mirrors
-# sdk/Build/scripts/Bridge/GalaxyBridge.py:84 and SovereignBridge.py:80.
-# Used by _BridgeCamera at compute time; resolved per frame against
-# _CURRENT_BRIDGE_NAME so a bridge swap is picked up without
-# rebuilding the camera.
-_BRIDGE_CAMERA_OFFSETS: dict[str, tuple[float, float, float]] = {
-    "GalaxyBridge":    (0.683736, 86.978439, 50.0),
-    "SovereignBridge": (0.683736, 129.585,   70.678),
-}
-
-# The bridge config name (e.g. "GalaxyBridge") the active mission's
-# LoadBridge.Load set on the bridge SetClass. Cached once per mission load
-# (see _after_mission_loaded) so the per-frame camera offset lookup does not
-# poll the loud-stubbed BridgeSet.GetConfig() every frame. Replaces the
-# shim's LoadBridge.LAST_REQUESTED.
-_CURRENT_BRIDGE_NAME: str = "GalaxyBridge"
+# Captain's-chair eye position + zoom params, taken from the SDK
+# ZoomCameraObjectClass ("maincamera") at mission load (see
+# _after_mission_loaded). Defaults are GalaxyBridge's create-time values; the
+# host overwrites them per bridge — config-driven for every bridge.
+# The zoom params are FOV multipliers + seconds consumed by _BridgeCamera's
+# zoom state machine.
+_BRIDGE_CAMERA_EYE: tuple = (0.683736, 86.978439, 50.0)
+_BRIDGE_ZOOM_MIN: float = 1.0     # SDK GetMinZoom — zoomed-in FOV factor
+_BRIDGE_ZOOM_MAX: float = 1.0     # SDK GetMaxZoom — captain FOV factor
+_BRIDGE_ZOOM_TIME: float = 0.0    # SDK GetZoomTime — ease duration (seconds)
 
 # Lighting defaults — used by both the per-tick fallback (when no active set
 # has lights) and as the conceptual source of truth that the C++
@@ -1233,11 +1226,6 @@ class _BridgeCamera:
     let mouse-look + visual iteration discover the right default.
     """
 
-    # Captain's-chair offset used when _CURRENT_BRIDGE_NAME isn't in
-    # the per-bridge table. Mirrors GalaxyBridge.GetBaseCameraPosition()
-    # — sdk/Build/scripts/Bridge/GalaxyBridge.py:84.
-    DEFAULT_BRIDGE_OFFSET = (0.683736, 86.978439, 50.0)
-
     # PoC starting values; tuned by feel during visual verification.
     NEAR              = 1.0
     FAR               = 800.0
@@ -1254,37 +1242,65 @@ class _BridgeCamera:
     def __init__(self):
         self.yaw_rad   = self.INITIAL_YAW_RAD
         self.pitch_rad = 0.0
+        # Zoom-into-officer state (step 5a). _zoom_t eases 0 (captain view) ->
+        # 1 (framed on officer). _zoom_target_world is the look-at point (kept
+        # during ease-out until _zoom_t returns to 0). _zoom_active = a target
+        # is currently selected.
+        self._zoom_t = 0.0
+        self._zoom_active = False
+        self._zoom_target_world = None
 
     def _eye_offset(self) -> tuple:
-        """Resolve the per-bridge captain's-chair offset from the cached
-        bridge name (_CURRENT_BRIDGE_NAME, set at mission load). Called every
-        frame; reads the cache rather than polling the loud-stubbed
-        BridgeSet.GetConfig()."""
-        return _BRIDGE_CAMERA_OFFSETS.get(_CURRENT_BRIDGE_NAME,
-                                          self.DEFAULT_BRIDGE_OFFSET)
+        """Captain's-chair eye, taken from the SDK maincamera at mission load
+        (module global _BRIDGE_CAMERA_EYE), config-driven for every bridge."""
+        return _BRIDGE_CAMERA_EYE
+
+    @staticmethod
+    def _smoothstep(t: float) -> float:
+        return t * t * (3.0 - 2.0 * t)
+
+    @staticmethod
+    def _lerp(a: float, b: float, t: float) -> float:
+        return a + (b - a) * t
+
+    def set_zoom_target(self, world_xyz, dt: float) -> None:
+        """Select (world_xyz != None) or deselect (None) an officer to zoom
+        onto; advance the ease by dt at rate 1/zoom_time, clamped to [0, 1].
+        Mouse-look is suspended whenever a zoom is in progress (see apply)."""
+        self._zoom_active = world_xyz is not None
+        if world_xyz is not None:
+            self._zoom_target_world = world_xyz
+        step = dt / max(_BRIDGE_ZOOM_TIME, 1e-6)
+        if self._zoom_active:
+            self._zoom_t = min(1.0, self._zoom_t + step)
+        else:
+            self._zoom_t = max(0.0, self._zoom_t - step)
+            if self._zoom_t == 0.0:
+                self._zoom_target_world = None
 
     def apply(self, mouse_dx: float, mouse_dy: float) -> None:
         """Accumulate mouse delta into yaw/pitch with sign conventions:
         right-mouse (+dx) → look-right (-yaw); up-mouse (-dy in screen
         coords) → look-up (+pitch). Pitch clamps; yaw wraps freely."""
+        # Mouse-look is frozen while a zoom is in progress or held — the camera
+        # is framing the officer; it resumes only at the full captain view.
+        if self._zoom_t > 0.0 or self._zoom_active:
+            return
         self.yaw_rad   -= mouse_dx * self.MOUSE_SENSITIVITY
         self.pitch_rad -= mouse_dy * self.MOUSE_SENSITIVITY
         if self.pitch_rad >  self.PITCH_LIMIT_RAD: self.pitch_rad =  self.PITCH_LIMIT_RAD
         if self.pitch_rad < -self.PITCH_LIMIT_RAD: self.pitch_rad = -self.PITCH_LIMIT_RAD
 
     def compute_camera(self) -> tuple:
-        """Return (eye, target, up) as 3-tuples in bridge-local space.
-
-        Bridge geometry is at world identity; the camera is too. No
-        ship_loc / ship_rot coupling — see class docstring.
-        """
+        """Return (eye, target, up, fov_y_rad). Captain view is mouse-look at
+        the SDK eye + base FOV. When an officer is selected the look direction
+        eases toward that officer's world position and the FOV narrows toward
+        FOV_Y_RAD * min_zoom, both over the SDK zoom time. The camera never
+        leaves the chair (eye is fixed)."""
         local_fwd = (0.0, 1.0, 0.0)   # bridge-local +Y
         local_up  = (0.0, 0.0, 1.0)   # bridge-local +Z
 
-        # Yaw around the world-up axis (Z).
         local_fwd = _rot_around(local_fwd, (0.0, 0.0, 1.0), self.yaw_rad)
-
-        # Pitch around the local right axis (forward × up).
         right = (
             local_fwd[1]*local_up[2] - local_fwd[2]*local_up[1],
             local_fwd[2]*local_up[0] - local_fwd[0]*local_up[2],
@@ -1297,12 +1313,26 @@ class _BridgeCamera:
             local_up  = _rot_around(local_up,  right, self.pitch_rad)
 
         eye = self._eye_offset()
-        target = (
-            eye[0] + local_fwd[0],
-            eye[1] + local_fwd[1],
-            eye[2] + local_fwd[2],
-        )
-        return eye, target, local_up
+        fov = self.FOV_Y_RAD * _BRIDGE_ZOOM_MAX
+
+        if self._zoom_t > 0.0 and self._zoom_target_world is not None:
+            e = self._smoothstep(self._zoom_t)
+            dx = self._zoom_target_world[0] - eye[0]
+            dy = self._zoom_target_world[1] - eye[1]
+            dz = self._zoom_target_world[2] - eye[2]
+            dl = _math.sqrt(dx*dx + dy*dy + dz*dz)
+            if dl > 1e-6:
+                ofwd = (dx/dl, dy/dl, dz/dl)
+                bx = self._lerp(local_fwd[0], ofwd[0], e)
+                by = self._lerp(local_fwd[1], ofwd[1], e)
+                bz = self._lerp(local_fwd[2], ofwd[2], e)
+                bl = _math.sqrt(bx*bx + by*by + bz*bz)
+                if bl > 1e-6:
+                    local_fwd = (bx/bl, by/bl, bz/bl)
+            fov = self.FOV_Y_RAD * self._lerp(_BRIDGE_ZOOM_MAX, _BRIDGE_ZOOM_MIN, e)
+
+        target = (eye[0] + local_fwd[0], eye[1] + local_fwd[1], eye[2] + local_fwd[2])
+        return eye, target, local_up, fov
 
 
 def _rot_around(v, axis_xyz, angle_rad):
@@ -1318,6 +1348,35 @@ def _rot_around(v, axis_xyz, angle_rad):
         vy*ca + cross[1]*sa + ay*dot*(1.0 - ca),
         vz*ca + cross[2]*sa + az*dot*(1.0 - ca),
     )
+
+
+def _active_zoom_officer_world(crew_menu_panel, r):
+    """World-space centre (x, y, z) of the officer whose crew menu is open, or
+    None. Resolves the open menu's label -> bridge CharacterClass (via
+    crew_menu_hotkeys.resolve_character) -> its step-4 render instance ->
+    get_instance_head_center. Any missing hop -> None (captain view, no zoom).
+
+    Uses the posed HEAD centre, NOT get_instance_bounds: officers sit at an
+    identity instance transform with their station offset baked into the bone
+    palette, so the static-AABB bounds collapse every officer to ~the model
+    origin (which made all crew zoom to the same low spot far off the captain's
+    forward); the body centre reads too low, so the look-at targets the head."""
+    if crew_menu_panel is None:
+        return None
+    label = crew_menu_panel.open_menu_label()
+    if not label:
+        return None
+    from engine.ui import crew_menu_hotkeys
+    off = crew_menu_hotkeys.resolve_character(label)
+    if off is None:
+        return None
+    iid = getattr(off, "_render_instance", None)
+    if iid is None:
+        return None
+    center = r.get_instance_head_center(iid)
+    if not center:
+        return None
+    return (center[0], center[1], center[2])
 
 
 def _setup_sdk() -> None:
@@ -2353,16 +2412,20 @@ def run(mission_name: Optional[str] = None,
         def _after_mission_loaded():
             # The mission's own StartMission calls the real SDK
             # LoadBridge.Load(name) during loader.load(), creating the "bridge"
-            # SetClass + crew via the SDK path against loud stubs. Cache the
-            # bridge config name for the camera, then print the loud stub
-            # summary so the still-unimplemented SDK surface is visible.
-            global _CURRENT_BRIDGE_NAME
+            # SetClass + crew via the SDK path against loud stubs. Realize the
+            # bridge objects below, then print the loud stub summary so any
+            # still-unimplemented SDK surface is visible.
+            # Step 5a: take the captain's-chair eye + zoom params from the SDK
+            # maincamera (config-driven; replaces the hardcoded offsets table).
+            global _BRIDGE_CAMERA_EYE, _BRIDGE_ZOOM_MIN, _BRIDGE_ZOOM_MAX, _BRIDGE_ZOOM_TIME
             import App as _App
             _bridge = _App.g_kSetManager.GetSet("bridge")
-            if _bridge is not None and hasattr(_bridge, "GetConfig"):
-                _name = _bridge.GetConfig() or ""
-                if _name:
-                    _CURRENT_BRIDGE_NAME = _name
+            _cam = _bridge.GetCamera("maincamera") if _bridge is not None else None
+            if _cam is not None and hasattr(_cam, "position"):
+                _BRIDGE_CAMERA_EYE = _cam.position
+                _BRIDGE_ZOOM_MIN = _cam.GetMinZoom()
+                _BRIDGE_ZOOM_MAX = _cam.GetMaxZoom()
+                _BRIDGE_ZOOM_TIME = _cam.GetZoomTime()
             # Realize the SDK-created bridge object into a render instance
             # (replaces the deleted eager startup load).
             _realize_bridge_model(controller, r)
@@ -3033,8 +3096,11 @@ def run(mission_name: Optional[str] = None,
                     # skip the yaw/pitch advance so the bridge camera
                     # stays frozen alongside the rest of the world.
                     if not pause.is_open:
+                        bridge_camera.set_zoom_target(
+                            _active_zoom_officer_world(crew_menu_panel, r),
+                            _player_dt)
                         bridge_camera.apply(mouse_dx, mouse_dy)
-                    b_eye, b_target, b_up = bridge_camera.compute_camera()
+                    b_eye, b_target, b_up, b_fov = bridge_camera.compute_camera()
                     # Bridge first-person camera uses separate (eye, target,
                     # up) vectors from the exterior view, so it needs its own
                     # perturb call. The camera_shake module is global state,
@@ -3043,7 +3109,7 @@ def run(mission_name: Optional[str] = None,
                     b_eye, b_target, b_up = camera_shake.perturb(b_eye, b_target, b_up)
                     r.set_bridge_camera(
                         eye=b_eye, target=b_target, up=b_up,
-                        fov_y_rad=_BridgeCamera.FOV_Y_RAD,
+                        fov_y_rad=b_fov,
                         near=_BridgeCamera.NEAR,
                         far=_BridgeCamera.FAR,
                     )
