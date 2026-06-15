@@ -1135,6 +1135,82 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("instance_id"),
           "Return (cx, cy, cz, radius) world-space bounding sphere of the "
           "instance's model, or None if the instance/model is not resolvable.");
+    m.def("get_instance_head_center",
+          [](scenegraph::InstanceId iid) -> py::object {
+              // World-space centre of a posed character's HEAD — the officer
+              // zoom look-at point. Skins every vertex exactly as
+              // skinned_bridge.vert does (skin = sum w_k * palette[idx_k];
+              // world = u_model * skin * v), then takes the AABB centre of ONLY
+              // the vertices bound to the "Bip01 Head" bone (the grafted head
+              // meshes are rigid-bound there). Falls back to the full-body
+              // skinned centre when there is no head bone. Returns None for an
+              // unskinned / not-yet-posed instance (caller -> captain view).
+              //
+              // Unlike get_instance_bounds (static AABB * inst.world), this
+              // uses the bone palette: a bridge officer sits at inst.world ==
+              // identity with the station offset baked into the palette, so
+              // get_instance_bounds collapses every officer to ~the model
+              // origin (low + identical for all). The body AABB centre reads
+              // too low (waist); the head bone gives a level look at the face.
+              const scenegraph::Instance* inst = g_world.get(iid);
+              if (inst == nullptr) return py::none();
+              const assets::Model* model = resolve_model(inst->model_handle);
+              if (model == nullptr || inst->bone_palette.empty()) return py::none();
+              const auto& palette = inst->bone_palette;
+
+              int head_bi = -1;
+              for (std::size_t i = 0; i < model->skeleton.bones.size(); ++i) {
+                  if (model->skeleton.bones[i].name == "Bip01 Head") {
+                      head_bi = static_cast<int>(i);
+                      break;
+                  }
+              }
+
+              glm::vec3 head_lo(1e30f), head_hi(-1e30f);
+              glm::vec3 body_lo(1e30f), body_hi(-1e30f);
+              bool any_head = false, any_body = false;
+              for (const auto& mesh : model->meshes) {
+                  const auto& cd = mesh.cpu_data();
+                  if (!cd) continue;
+                  for (const auto& v : cd->vertices) {
+                      const glm::vec4 p(v.position, 1.0f);
+                      glm::vec4 skinned(0.0f);
+                      float wsum = 0.0f;
+                      bool on_head = false;
+                      for (int k = 0; k < 4; ++k) {
+                          const float w = static_cast<float>(v.bone_weights[k]) / 255.0f;
+                          if (w <= 0.0f) continue;
+                          const std::size_t bi =
+                              static_cast<std::size_t>(v.bone_indices[k]);
+                          if (bi >= palette.size()) continue;   // GPU-safe guard
+                          skinned += w * (palette[bi] * p);
+                          wsum += w;
+                          if (static_cast<int>(bi) == head_bi) on_head = true;
+                      }
+                      if (wsum <= 0.0f) continue;
+                      const glm::vec3 s(skinned);
+                      body_lo = glm::min(body_lo, s);
+                      body_hi = glm::max(body_hi, s);
+                      any_body = true;
+                      if (on_head) {
+                          head_lo = glm::min(head_lo, s);
+                          head_hi = glm::max(head_hi, s);
+                          any_head = true;
+                      }
+                  }
+              }
+              glm::vec3 center;
+              if (any_head)      center = 0.5f * (head_lo + head_hi);
+              else if (any_body) center = 0.5f * (body_lo + body_hi);
+              else               return py::none();
+              const glm::vec4 c = inst->world * glm::vec4(center, 1.0f);
+              return py::make_tuple(c.x, c.y, c.z);
+          },
+          py::arg("instance_id"),
+          "Return (cx, cy, cz) world-space centre of a posed character's HEAD "
+          "(vertices bound to 'Bip01 Head'), or the full skinned centre if "
+          "there is no head bone, or None if unskinned / not posed. The officer "
+          "zoom look-at point — get_instance_bounds ignores the bone palette.");
     m.def("set_subsystem_pins",
           [](const std::vector<std::tuple<std::array<float, 3>, int, bool>>& pins) {
               g_subsystem_pins.clear();

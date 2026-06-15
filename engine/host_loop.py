@@ -1354,7 +1354,13 @@ def _active_zoom_officer_world(crew_menu_panel, r):
     """World-space centre (x, y, z) of the officer whose crew menu is open, or
     None. Resolves the open menu's label -> bridge CharacterClass (via
     crew_menu_hotkeys.resolve_character) -> its step-4 render instance ->
-    get_instance_bounds. Any missing hop -> None (captain view, no zoom)."""
+    get_instance_head_center. Any missing hop -> None (captain view, no zoom).
+
+    Uses the posed HEAD centre, NOT get_instance_bounds: officers sit at an
+    identity instance transform with their station offset baked into the bone
+    palette, so the static-AABB bounds collapse every officer to ~the model
+    origin (which made all crew zoom to the same low spot far off the captain's
+    forward); the body centre reads too low, so the look-at targets the head."""
     if crew_menu_panel is None:
         return None
     label = crew_menu_panel.open_menu_label()
@@ -1367,10 +1373,10 @@ def _active_zoom_officer_world(crew_menu_panel, r):
     iid = getattr(off, "_render_instance", None)
     if iid is None:
         return None
-    bounds = r.get_instance_bounds(iid)
-    if not bounds:
+    center = r.get_instance_head_center(iid)
+    if not center:
         return None
-    return (bounds[0], bounds[1], bounds[2])
+    return (center[0], center[1], center[2])
 
 
 def _setup_sdk() -> None:
