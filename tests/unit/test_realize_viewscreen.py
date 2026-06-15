@@ -16,6 +16,7 @@ class _FakeRenderer:
         self.destroyed = []       # iids
         self._next_handle = 200
         self._next_iid = 800
+        self.viewscreen_model = None
 
     def load_model(self, nif_abs, tex_abs):
         self.loaded.append((nif_abs, tex_abs))
@@ -33,11 +34,15 @@ class _FakeRenderer:
     def destroy_instance(self, iid):
         self.destroyed.append(iid)
 
+    def set_viewscreen_model(self, handle):
+        self.viewscreen_model = handle
+
 
 class _FakeController:
     def __init__(self):
         self.viewscreen_instance = None
         self.nif_to_handle = {}
+        self.viewscreen_obj = None
 
 
 def _make_bridge_with_viewscreen(nif=VS_NIF, record_env=True):
@@ -73,6 +78,12 @@ def test_realizes_instance_and_harvests_iid():
     assert ctl.nif_to_handle[nif_abs] == r.created[0]
     # World transform applied once (identity — bridge-local space).
     assert len(r.transformed) == 1
+    # Step 5c: the realized model handle is registered with the renderer,
+    # the screen defaults on, and the object is cached for the per-frame
+    # on/off poll.
+    assert r.viewscreen_model == r.created[0]
+    assert vs.IsOn() == 1
+    assert ctl.viewscreen_obj is vs
 
 
 def test_same_config_reuse_is_noop():

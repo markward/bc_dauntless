@@ -78,7 +78,7 @@ void walk_bridge_meshes(const scenegraph::World& world,
                         ? m->materials[mesh.material_index()]
                         : assets::Material{});
                     if (mat.lightmap_pass != want_lightmap_pass) continue;
-                    draw_one(*m, mesh, mat, world_per_node[i]);
+                    draw_one(*m, mesh, mat, world_per_node[i], inst.model_handle);
                 }
             }
         });
@@ -90,7 +90,8 @@ void draw_mesh(const assets::Model& model,
                Shader& shader,
                const glm::mat4& world,
                GLuint white_fallback,
-               double wall_time) {
+               double wall_time,
+               GLuint base_override) {
     shader.set_mat4("u_model", world);
     shader.set_vec3("u_emissive", mat.emissive);
     // Alpha test only fires when the material carries an NiAlphaProperty;
@@ -123,7 +124,13 @@ void draw_mesh(const assets::Model& model,
         }
     }
     glActiveTexture(GL_TEXTURE0);
-    if (base_tex >= 0) {
+    if (base_override != 0) {
+        // Viewscreen RTT feed: ignore the NIF base texture and draw the
+        // offscreen scene full-bright (BC's emissive=(1,1,1) screen
+        // convention -> FragColor = feed, unaffected by bridge ambient).
+        glBindTexture(GL_TEXTURE_2D, base_override);
+        shader.set_vec3("u_emissive", glm::vec3(1.0f));
+    } else if (base_tex >= 0) {
         glBindTexture(GL_TEXTURE_2D, model.textures[base_tex].id());
     } else {
         glBindTexture(GL_TEXTURE_2D, white_fallback);
@@ -184,13 +191,21 @@ void BridgePass::render(const scenegraph::World& world,
     const double t = wall_time_;
     walk_bridge_meshes(world, lookup, /*want_lightmap_pass=*/false,
         [&](const assets::Model& m, const assets::Mesh& mesh,
-            const assets::Material& mat, const glm::mat4& w) {
-            draw_mesh(m, mesh, mat, base_shader, w, white, t);
+            const assets::Material& mat, const glm::mat4& w,
+            unsigned long long mh) {
+            const GLuint ov = (viewscreen_model_handle_ != 0
+                               && mh == viewscreen_model_handle_)
+                              ? viewscreen_tex_ : 0u;
+            draw_mesh(m, mesh, mat, base_shader, w, white, t, ov);
         });
     walk_bridge_meshes(world, lookup, /*want_lightmap_pass=*/true,
         [&](const assets::Model& m, const assets::Mesh& mesh,
-            const assets::Material& mat, const glm::mat4& w) {
-            draw_mesh(m, mesh, mat, base_shader, w, white, t);
+            const assets::Material& mat, const glm::mat4& w,
+            unsigned long long mh) {
+            const GLuint ov = (viewscreen_model_handle_ != 0
+                               && mh == viewscreen_model_handle_)
+                              ? viewscreen_tex_ : 0u;
+            draw_mesh(m, mesh, mat, base_shader, w, white, t, ov);
         });
 
     // ── Sub-pass C: skinned bridge characters ──────────────────────────────
@@ -234,7 +249,7 @@ void BridgePass::render(const scenegraph::World& world,
                     const auto& mesh = m->meshes[mesh_idx];
                     const auto& mat = (mesh.material_index() >= 0
                         ? m->materials[mesh.material_index()] : assets::Material{});
-                    draw_mesh(*m, mesh, mat, skin_shader, inst.world, white, t);
+                    draw_mesh(*m, mesh, mat, skin_shader, inst.world, white, t, 0u);
                 }
             }
         });

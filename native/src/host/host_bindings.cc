@@ -120,6 +120,7 @@ bool      g_hologram_only_mode = false;
 glm::vec3 g_hologram_bg{0.0f, 0.0f, 0.0f};
 std::unique_ptr<renderer::BridgePass>      g_bridge_pass;
 std::unique_ptr<renderer::HdrTarget>       g_hdr_target;
+std::unique_ptr<renderer::HdrTarget>       g_viewscreen_hdr;
 std::unique_ptr<renderer::BloomPass>       g_bloom_pass;
 std::unique_ptr<renderer::ResolvePass>     g_resolve_pass;
 std::unique_ptr<renderer::LdrTarget>       g_ldr_target;
@@ -133,6 +134,12 @@ float g_decal_game_time = 0.0f;  // game-time secs for decal ember; set by damag
 // see frame().
 scenegraph::Camera g_bridge_camera;
 bool g_bridge_pass_enabled = false;
+bool g_viewscreen_enabled = false;
+
+// Fixed resolution of the viewscreen render-to-texture feed (16:9). The screen
+// quad is small, so this is plenty and keeps the second scene render cheap.
+constexpr int kViewscreenRttW = 640;
+constexpr int kViewscreenRttH = 360;
 
 struct LoadedModel {
     std::filesystem::path nif_path;
@@ -233,7 +240,8 @@ void init(int width, int height, const std::string& title) {
     g_subsystem_pin_pass  = std::make_unique<renderer::SubsystemPinPass>();
     g_target_reticle_pass = std::make_unique<renderer::TargetReticlePass>();
     g_bridge_pass         = std::make_unique<renderer::BridgePass>();
-    g_hdr_target   = std::make_unique<renderer::HdrTarget>();
+    g_hdr_target      = std::make_unique<renderer::HdrTarget>();
+    g_viewscreen_hdr  = std::make_unique<renderer::HdrTarget>();
     g_bloom_pass   = std::make_unique<renderer::BloomPass>();
     g_resolve_pass = std::make_unique<renderer::ResolvePass>();
     g_ldr_target   = std::make_unique<renderer::LdrTarget>();
@@ -282,6 +290,7 @@ void shutdown() {
     g_ldr_target.reset();
     g_resolve_pass.reset();
     g_hdr_target.reset();
+    g_viewscreen_hdr.reset();
     g_window.reset();
     g_prev_key_state.clear();
     g_prev_mouse_state.clear();
@@ -292,6 +301,7 @@ void shutdown() {
     g_lighting = renderer::Lighting{};
     g_bridge_lighting = renderer::Lighting{};
     g_bridge_pass_enabled = false;
+    g_viewscreen_enabled = false;
 }
 
 bool should_close() {
@@ -311,6 +321,64 @@ void frame() {
     // and pins. The orbit camera is supplied via set_camera by the host loop.
     const bool viewer_mode = g_hologram_only_mode;
 
+    auto lookup = resolve_model;
+
+    const double now = glfwGetTime();
+    const float  dt  = static_cast<float>(now - g_prev_frame_time_seconds);
+    g_prev_frame_time_seconds = now;
+
+    g_world.propagate();
+    // SP2: rebuild each animated instance's bone palette for this frame BEFORE
+    // anything consumes it (the space skinned draw and the bridge pass). Shares
+    // the `now` wall clock with draw_model / flip controllers.
+    renderer::update_animations(g_world, lookup, now);
+
+    const bool bridge_active = !viewer_mode && g_bridge_pass_enabled && g_bridge_pass;
+    const bool viewscreen_on = bridge_active && g_viewscreen_enabled;
+
+    // Renders the space scene from `cam` into the currently-bound FBO.
+    // for_viewscreen=true skips the cockpit/screen-space effects that make no
+    // sense on (or would corrupt state for) the viewscreen RTT: dust (camera-
+    // anchored smear with cross-frame prev_eye state), lens flares (screen-
+    // space, sized to the main framebuffer), and particles. Order is otherwise
+    // identical to the historical inline block.
+    auto render_space = [&](const scenegraph::Camera& cam, bool for_viewscreen) {
+        g_backdrop_pass->render(g_backdrops, cam, *g_pipeline);
+        g_sun_pass->render(g_suns, cam, *g_pipeline, now);
+        g_submitter->submit_opaque_in_pass(
+            g_world, cam, *g_pipeline, lookup, g_lighting,
+            scenegraph::Pass::Space, g_decal_game_time);
+        if (g_shield_pass) g_shield_pass->submit(g_world, cam, *g_pipeline, now, lookup);
+        if (!for_viewscreen && g_dust_pass)
+            g_dust_pass->render(cam, dt, *g_pipeline, g_suns, g_dust_planets);
+        if (!for_viewscreen && g_lens_flare_pass)
+            g_lens_flare_pass->render(g_lens_flares, cam, *g_pipeline, fw, fh, now);
+        if (g_torpedo_pass) g_torpedo_pass->render(g_torpedoes,    cam, *g_pipeline);
+        if (g_phaser_pass)  g_phaser_pass ->render(g_phaser_beams, cam, *g_pipeline);
+        if (g_hit_vfx_pass) g_hit_vfx_pass->render(g_hit_vfx, g_world, cam, *g_pipeline);
+        if (!for_viewscreen && g_particle_pass)
+            g_particle_pass->render(g_particle_emitters, g_world, cam, *g_pipeline);
+    };
+
+    // ── Viewscreen render-to-texture (bridge view, screen on) ──────────────
+    // The forward space view (g_camera is already forward-from-ship in bridge
+    // mode — see host_loop._compute_camera) renders into an offscreen HDR
+    // target, which the bridge pass samples onto the viewscreen instance.
+    if (viewscreen_on) {
+        g_viewscreen_hdr->resize(kViewscreenRttW, kViewscreenRttH);
+        g_viewscreen_hdr->bind();   // sets viewport to RTT size
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        scenegraph::Camera vcam = g_camera;
+        vcam.aspect = static_cast<float>(kViewscreenRttW)
+                    / static_cast<float>(kViewscreenRttH);
+        render_space(vcam, /*for_viewscreen=*/true);
+        g_bridge_pass->set_viewscreen_texture(g_viewscreen_hdr->color_texture());
+    } else if (g_bridge_pass) {
+        g_bridge_pass->set_viewscreen_texture(0);   // off -> step-5b blank panel
+    }
+
+    // ── Main HDR target ────────────────────────────────────────────────────
     g_hdr_target->resize(fw, fh);
     g_hdr_target->bind();   // sets viewport to fw x fh
     if (viewer_mode) {
@@ -319,49 +387,14 @@ void frame() {
         glClearColor(0.05f, 0.07f, 0.10f, 1.0f);
     }
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
     if (fh > 0) g_camera.aspect = static_cast<float>(fw) / static_cast<float>(fh);
 
-    auto lookup = resolve_model;
-
-    const double now = glfwGetTime();
-    const float  dt  = static_cast<float>(now - g_prev_frame_time_seconds);
-    g_prev_frame_time_seconds = now;
-
-    g_world.propagate();
-
-    // SP2: rebuild each animated instance's bone palette for this frame BEFORE
-    // anything consumes it (the space skinned draw below and the bridge pass).
-    // Shares the same `now` wall clock threaded into draw_model / flip
-    // controllers so animation time and texture-flip time are one clock.
-    renderer::update_animations(g_world, lookup, now);
-
-    if (!viewer_mode) {
-        g_backdrop_pass->render(g_backdrops, g_camera, *g_pipeline);
-        g_sun_pass->render(g_suns, g_camera, *g_pipeline, now);
-        g_submitter->submit_opaque_in_pass(
-            g_world, g_camera, *g_pipeline, lookup, g_lighting,
-            scenegraph::Pass::Space, g_decal_game_time);
-
-        // Shield pass: additive flash on top of opaque ships. Runs before dust
-        // so dust specks appear in front of fading shields (both are additive
-        // blends, so order is mostly cosmetic, but dust drawn last keeps it
-        // visually on top of any lingering shield fade).
-        if (g_shield_pass) g_shield_pass->submit(g_world, g_camera, *g_pipeline,
-                                                  now, lookup);
-
-        if (g_dust_pass) g_dust_pass->render(g_camera, dt, *g_pipeline,
-                                             g_suns, g_dust_planets);
-
-        if (g_lens_flare_pass) {
-            g_lens_flare_pass->render(g_lens_flares, g_camera, *g_pipeline,
-                                      fw, fh, now);
-        }
-
-        if (g_torpedo_pass) g_torpedo_pass->render(g_torpedoes,    g_camera, *g_pipeline);
-        if (g_phaser_pass)  g_phaser_pass ->render(g_phaser_beams, g_camera, *g_pipeline);
-        if (g_hit_vfx_pass) g_hit_vfx_pass->render(g_hit_vfx, g_world, g_camera, *g_pipeline);
-        if (g_particle_pass) g_particle_pass->render(g_particle_emitters, g_world, g_camera, *g_pipeline);
+    // Space scene goes to the main view only outside bridge view (in bridge
+    // view it went to the RTT above, or nowhere when the screen is off — the
+    // bridge pass fills the screen either way). This also retires the old
+    // "wasted space render in bridge mode".
+    if (!viewer_mode && !bridge_active) {
+        render_space(g_camera, /*for_viewscreen=*/false);
     }
 
     if (g_hologram_pass && g_hologram_ship.active)
@@ -375,12 +408,11 @@ void frame() {
     // Renders bridge-tagged instances with the bridge camera, after a
     // color + depth clear so the bridge geometry overlays the space
     // scene cleanly (without the space pass's color leaking through any
-    // gaps in the bridge interior). The space pass + special passes
-    // above are wasted GPU work in bridge mode today, but are kept so
-    // the future viewscreen RTT can swap the space pass's target from
-    // "main framebuffer" to "viewscreen texture" without adding a
-    // "render space here" path that didn't exist before.
-    if (!viewer_mode && g_bridge_pass_enabled && g_bridge_pass) {
+    // gaps in the bridge interior). In bridge mode the main-target space
+    // render is now skipped entirely (see the `!bridge_active` guard
+    // above); the forward space view instead renders into the viewscreen
+    // RTT and the bridge pass samples it onto the viewscreen instance.
+    if (bridge_active) {
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         if (fh > 0) g_bridge_camera.aspect = static_cast<float>(fw) / static_cast<float>(fh);
@@ -729,6 +761,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](bool enabled) { g_bridge_pass_enabled = enabled; },
           py::arg("enabled"),
           "Enable or disable the bridge render pass.");
+    m.def("set_viewscreen_model",
+          [](unsigned long long h) { if (g_bridge_pass) g_bridge_pass->set_viewscreen_model(h); });
+    m.def("set_viewscreen_enabled",
+          [](bool on) { g_viewscreen_enabled = on; });
 
     m.def("set_camera",
           [](std::tuple<float,float,float> eye,
