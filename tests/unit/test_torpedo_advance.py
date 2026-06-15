@@ -73,6 +73,10 @@ class _FakeShip:
     def GetShields(self): return self._shields
     def GetNumChildSubsystems(self): return len(self._children)
     def GetChildSubsystem(self, i): return self._children[i]
+    # subsystem_emitters._select_candidates (reached via _advance_combat ->
+    # pump) walks ship.GetSubsystems()/GetObjID(); mirror ShipClass.
+    def GetSubsystems(self): return list(self._children)
+    def GetObjID(self): return id(self)
 
 
 def test_torpedo_position_advances_by_velocity_dt():

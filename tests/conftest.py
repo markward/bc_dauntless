@@ -8,6 +8,8 @@ import types
 import warnings
 from pathlib import Path
 
+import pytest
+
 # Default audio to the null backend during tests so no device is opened.
 os.environ.setdefault("OPEN_STBC_AUDIO", "0")
 
@@ -513,3 +515,100 @@ def pytest_configure(config):
             _il.import_module("Maelstrom.Episode7.Episode7")
         except Exception:
             pass
+
+
+# ── Per-test isolation of leak-prone engine globals ──────────────────────────
+#
+# Several engine modules hold module-level mutable state that a mission/bridge
+# load populates: the event-manager handler tables, the projectile / hit-VFX /
+# ship-death accumulator lists, the ShipDisplay panel registry, and a handful
+# of UI singletons. Historically each test file that touched these reset them
+# in its *setup* but not its *teardown*, so a test could pass alone yet leave
+# state that broke a later test in the full suite (e.g. a leaked bridge load
+# left stale broadcast handlers that swallowed the next test's fire event ->
+# "0 torpedoes"; a leaked ShipDisplay registry -> "duplicate panel name").
+# These only surfaced once the full suite became runnable (see
+# docs/test-suite-memory.md); focused subsets hid them.
+#
+# This autouse fixture gives every test a clean slate for exactly that
+# forward-leakable state. It deliberately does NOT clear g_kSetManager._sets or
+# the model-property templates: module-scoped fixtures (e.g.
+# test_galaxy_hardpoint_emitters.galaxy_ship) build a ship once and rely on
+# those persisting across the file's tests. Because it runs before
+# explicitly-requested fixtures, it cleans the *previous* test's leaks without
+# clobbering the current test's own setup.
+def _reset_leakable_engine_globals():
+    try:
+        import App
+    except Exception:
+        return
+    # Event handlers: clear stale handlers, then re-register the engine's own
+    # input-dispatch handler so the input pipeline stays functional (mirrors
+    # engine.host_loop.reset_sdk_globals).
+    try:
+        ev = App.g_kEventManager
+        ev._broadcast_handlers.clear()
+        if hasattr(ev, "_method_handlers"):
+            ev._method_handlers.clear()
+        from engine.appc.input import register_input_handlers
+        register_input_handlers(ev)
+    except Exception:
+        pass
+    try:
+        App._next_event_type_id = 1200
+    except Exception:
+        pass
+    # Audio singleton: the audio tests' teardown (shutdown_audio_for_tests)
+    # leaves TGSoundManager._instance and App.g_kSoundManager as None. A later
+    # bridge load then calls App.g_kSoundManager.GetSound(...) -> AttributeError
+    # on None. Restore the import-time invariant that App.g_kSoundManager is a
+    # valid manager (GetSound on an empty manager returns None, which every
+    # caller already guards for).
+    try:
+        from engine.audio import tg_sound
+        if tg_sound.TGSoundManager._instance is None:
+            tg_sound.TGSoundManager._instance = tg_sound.TGSoundManager()
+        _mgr = tg_sound.TGSoundManager._instance
+        tg_sound.g_kSoundManager = _mgr
+        App.g_kSoundManager = _mgr
+    except Exception:
+        pass
+    # Accumulator lists drained per mission tick in production.
+    for _mod, _attr in (
+        ("engine.appc.projectiles", "_active"),
+        ("engine.appc.hit_vfx", "_active"),
+        ("engine.appc.ship_death", "_active"),
+    ):
+        try:
+            _m = sys.modules.get(_mod)
+            if _m is not None:
+                getattr(_m, _attr).clear()
+        except Exception:
+            pass
+    # UI singletons rebuilt per bridge load.
+    try:
+        from engine.sdk_ui.widgets import ship_display
+        ship_display._reset_for_bridge_teardown()
+    except Exception:
+        pass
+    try:
+        from engine.appc.windows import TacticalControlWindow
+        TacticalControlWindow._instance = None
+    except Exception:
+        pass
+    try:
+        from engine.appc.target_menu import _reset_target_menu_singleton
+        _reset_target_menu_singleton()
+    except Exception:
+        pass
+    try:
+        from engine.appc.tg_ui import st_widgets
+        st_widgets._reset_module_state()
+    except Exception:
+        pass
+
+
+@pytest.fixture(autouse=True)
+def _isolate_engine_globals():
+    _reset_leakable_engine_globals()
+    yield
