@@ -64,6 +64,14 @@ public:
     // bilinear-upscaling a low-resolution bitmap.
     void set_device_scale_factor(float dsf) { device_scale_factor_ = dsf; }
 
+    // Update the OSR logical view size (in CSS/logical pixels). Takes
+    // effect the next time CEF queries GetViewRect/GetScreenInfo, which
+    // the lifecycle's resize() forces via CefBrowserHost::WasResized().
+    void set_view_size(int width, int height) {
+        view_width_  = width;
+        view_height_ = height;
+    }
+
     // CefLifeSpanHandler — stores the browser handle for toggle_devtools / reload.
     void OnAfterCreated(CefRefPtr<CefBrowser> browser) override;
     void OnBeforeClose(CefRefPtr<CefBrowser> browser) override;

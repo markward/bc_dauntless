@@ -1812,6 +1812,19 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "blit 1:1 to a high-DPI framebuffer instead of bilinear-"
           "upscaling a low-resolution bitmap. Returns true on success.");
 
+    m.def("cef_resize",
+          [](int view_width, int view_height, float device_scale_factor) {
+              dauntless::ui_cef::resize(view_width, view_height,
+                                        device_scale_factor);
+          },
+          py::arg("view_width"), py::arg("view_height"),
+          py::arg("device_scale_factor") = 1.0f,
+          "Re-size the OSR overlay browser to track the host window. "
+          "view_width/height are logical (window-point) pixels; "
+          "device_scale_factor is framebuffer/window. Forces CEF to "
+          "re-layout the HTML/CSS at the new size (no stretch). Cheap when "
+          "called with unchanged values; the host still guards on change.");
+
     m.def("cef_pump",
           []() { dauntless::ui_cef::pump(); },
           "Run one iteration of CEF's message loop. Call once per frame.");
@@ -1901,6 +1914,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("cef_initialize",
           [](int, int, const std::string&, float) { return false; },
           py::arg("view_width"), py::arg("view_height"), py::arg("html_path"),
+          py::arg("device_scale_factor") = 1.0f);
+    m.def("cef_resize",
+          [](int, int, float) {},
+          py::arg("view_width"), py::arg("view_height"),
           py::arg("device_scale_factor") = 1.0f);
     m.def("cef_pump",            []() {});
     m.def("cef_composite",       []() {});

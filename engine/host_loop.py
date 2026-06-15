@@ -1287,6 +1287,34 @@ def _forward_mouse_to_cef(h, send_mouse_move, view_w, view_h) -> tuple:
     return mx, my
 
 
+def _compute_cef_resize(fb_w, fb_h, win_w, win_h,
+                        cur_view_w, cur_view_h, cur_dsf):
+    """Decide whether the windowless CEF browser must be resized to track
+    the host window, and to what logical size + device-scale-factor.
+
+    CEF lays out HTML/CSS in *logical* pixels (window points) and
+    rasterises at logical x dsf device pixels. To keep the overlay 1:1
+    with the framebuffer — no bilinear stretch, DPI-correct text — the
+    logical view must equal the window size in **points** (NOT the
+    framebuffer pixels, which would re-introduce the 2x stretch on
+    Retina) and dsf must equal framebuffer/window.
+
+    Returns (new_view_w, new_view_h, new_dsf) when a change is needed,
+    else None. A zero-size window (minimised) is ignored.
+    """
+    if win_w <= 0 or win_h <= 0:
+        return None
+    new_dsf = (float(fb_w) / float(win_w)) if fb_w > 0 else cur_dsf
+    unchanged = (
+        win_w == cur_view_w
+        and win_h == cur_view_h
+        and abs(new_dsf - cur_dsf) < 1e-3
+    )
+    if unchanged:
+        return None
+    return (win_w, win_h, new_dsf)
+
+
 class _BridgeCamera:
     """First-person bridge camera with mouse-look.
 
@@ -2751,6 +2779,10 @@ def run(mission_name: Optional[str] = None,
         # still navigates by keyboard.
         _cef_send_mouse_move  = getattr(_h, "cef_send_mouse_move",  None) if _h else None
         _cef_send_mouse_click = getattr(_h, "cef_send_mouse_click", None) if _h else None
+        # Window-resize forwarding: re-lay-out the OSR overlay when the
+        # window changes size (older builds lack it -> overlay stays at its
+        # init size and stretches, the prior behaviour).
+        _cef_resize = getattr(_h, "cef_resize", None) if _h else None
         _cef_set_event_handler = getattr(_h, "cef_set_event_handler", None) if _h else None
         if _cef_set_event_handler is not None:
             _cef_set_event_handler(registry.dispatch)
@@ -2806,6 +2838,25 @@ def run(mission_name: Optional[str] = None,
                            ship_property_viewer, configuration_panel]
 
         while not r.should_close():
+            # --- Track window resizes: re-lay-out the CEF overlay at the new
+            # size so it reflows instead of being stretched. Guarded so
+            # WasResized only fires when the logical size or DPR actually
+            # changes; _CEF_VIEW_W/H stay authoritative for mouse-forward
+            # scaling and the panel-corner layout math below.
+            if _cef_resize is not None and _h is not None:
+                try:
+                    _fbw, _fbh = _h.framebuffer_size()
+                    _wnw, _wnh = _h.window_size()
+                    _delta = _compute_cef_resize(
+                        _fbw, _fbh, _wnw, _wnh,
+                        _CEF_VIEW_W, _CEF_VIEW_H, _cef_dsf)
+                    if _delta is not None:
+                        _CEF_VIEW_W, _CEF_VIEW_H, _cef_dsf = _delta
+                        _cef_resize(_CEF_VIEW_W, _CEF_VIEW_H,
+                                    device_scale_factor=_cef_dsf)
+                except Exception as _e:
+                    dev_mode.log_swallowed("CEF window-resize forward", _e)
+
             # --- Input dispatch + modality (ESC always live; SPACE only when unpaused) ---
             # _apply_view_mode_side_effects mirrors the SPACE flag into
             # renderer state (bridge pass enable + cursor lock) and is
