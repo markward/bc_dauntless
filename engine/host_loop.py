@@ -1203,6 +1203,81 @@ def _apply_pause_menu_side_effects(pause: "_PauseMenuController",
     pause._last_synced_is_open = target
 
 
+def _dispatch_modal_esc(blockers, crew_menu_panel, pause, h) -> None:
+    """ESC routing across the modal stack, in priority order.
+
+    The first open blocker (each a CEF panel exposing is_open() +
+    handle_key_esc()) consumes ESC; otherwise the crew menu closes its
+    open submenu; otherwise ESC falls through to the pause-menu toggle
+    via pause.apply(h).
+
+    key_pressed(KEY_ESCAPE) is read inside the taken branch only — never
+    before pause.apply — so the ESC edge isn't consumed out from under
+    the pause toggle. Mirrors the original elif ladder exactly: at most
+    one key_pressed(KEY_ESCAPE) call per frame, and zero at this site
+    when the fall-through to pause.apply runs.
+    """
+    for b in blockers:
+        if b.is_open():
+            if h.key_pressed(h.keys.KEY_ESCAPE):
+                b.handle_key_esc()
+            return
+    if crew_menu_panel.has_open_menu():
+        if h.key_pressed(h.keys.KEY_ESCAPE):
+            crew_menu_panel.close_open_menu()
+        return
+    pause.apply(h)
+
+
+def _dispatch_modal_pause_input(blockers, pause_menu, h) -> None:
+    """Keyboard-input routing while the pause menu is open, in priority
+    order.
+
+    The first open blocker that owns keyboard input (exposes
+    handle_input) consumes this frame's input. A blocker that is open
+    but click-only (the mission picker — CEF events, no handle_input)
+    blocks the pause menu without consuming input itself. When no
+    blocker is open the pause menu navigates and re-emits its row
+    payload. This reproduces the original ladder's
+    ``elif not mission_picker.is_open()`` guard as "an open click-only
+    blocker suppresses pause_menu.handle_input".
+    """
+    for b in blockers:
+        if b.is_open():
+            handler = getattr(b, "handle_input", None)
+            if handler is not None:
+                handler(h)
+            return
+    pause_menu.handle_input(h)
+    _script = pause_menu.render_payload()
+    if _script is not None:
+        h.cef_execute_javascript(_script)
+
+
+def _forward_mouse_to_cef(h, send_mouse_move, view_w, view_h) -> tuple:
+    """Scale the framebuffer-pixel cursor into CEF OSR view space, send
+    it as a mouse-move, and return the (mx, my) view-space coords for
+    any follow-up click forwarding.
+
+    cursor_pos() returns FRAMEBUFFER (physical) pixels — see
+    renderer/window.cc:173-182 — but the CEF OSR view was initialised in
+    logical pixels (view_w x view_h, the dims passed to cef_initialize).
+    On Retina the two spaces differ by the device-pixel ratio, so scale
+    framebuffer → view-space here. mouse_move forwarding is
+    unconditional because it doesn't touch the mouse-button edge state.
+    Extracted so a future Retina fix touches one place (was copy-pasted
+    in the paused + unpaused mouse-forwarding paths).
+    """
+    mx_fb, my_fb = h.cursor_pos()
+    fb_w, fb_h = h.framebuffer_size()
+    sx = (view_w / fb_w) if fb_w > 0 else 1.0
+    sy = (view_h / fb_h) if fb_h > 0 else 1.0
+    mx = int(mx_fb * sx)
+    my = int(my_fb * sy)
+    send_mouse_move(mx, my)
+    return mx, my
+
+
 class _BridgeCamera:
     """First-person bridge camera with mouse-look.
 
@@ -2306,6 +2381,74 @@ def _wire_target_menu_to_player_set(controller) -> None:
         menu.ResetAffiliationColors()
 
 
+def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
+                              game_time, model_scale) -> None:
+    """Push ship + planet world transforms to the renderer for one frame.
+
+    Player ship: pushed live (it is integrated per render frame on
+    wall-clock dt in _PlayerControl, so it is already smooth in world
+    space).
+
+    Non-player ships: integrated on the fixed 60 Hz tick, so they are
+    rendered at lerp(prev, cur, interp_alpha) to hide the discrete
+    steps. xform_buf.roll() ran earlier this frame (only when a tick
+    fired); here we capture the new current state and push the
+    interpolated pose. This only affects what is sent to the renderer —
+    the ship objects keep live transforms, so physics/AI/combat (which
+    ran earlier this frame) are unaffected.
+
+    Also ages each ship's glow controller on `game_time` (the same game
+    clock the decal system ages on, engine.appc.damage_decals), drops
+    self-illumination for out-of-action hulks, prunes the transform
+    buffer + dead glow controllers, and pushes planet transforms.
+    `model_scale` is BC_MODEL_SCALE; non-player ships additionally
+    multiply by their live GetScale().
+    """
+    # player is always set when a session exists, so _player_iid is a
+    # real iid (never None) at runtime.
+    _player_iid = session.ship_instances.get(player)
+    _live_ship_iids = []
+    from engine.appc.ship_death import _out_of_action as _oa
+    for ship, iid in session.ship_instances.items():
+        _wg = session.ship_glow_controllers.get(iid)
+        if _wg is not None:
+            _wg.update(game_time)
+        # Destroyed (dying/dead) ships lose self-illumination —
+        # a dark hulk in space. Hull stays lit by external light.
+        r.set_emissive_scale(iid, 0.0 if _oa(ship) else 1.0)
+        if iid == _player_iid:
+            r.set_world_transform(
+                iid, _ship_world_matrix(ship, model_scale))
+            continue
+        _live_ship_iids.append(iid)
+        # NOTE: scale is read live, not interpolated — the
+        # buffer only stores loc+rot. Fine for steady scale;
+        # a mid-animation GetScale() change applies the
+        # current scale to the blended pose (imperceptible).
+        try:
+            _ps = float(ship.GetScale())
+        except Exception:
+            _ps = 1.0
+        xform_buf.set_current(
+            iid, ship.GetWorldLocation(), ship.GetWorldRotation())
+        _sampled = xform_buf.sample(iid, interp_alpha)
+        _iloc, _irot = _sampled
+        r.set_world_transform(
+            iid, _world_matrix_from(_iloc, _irot, model_scale * _ps))
+    xform_buf.prune(_live_ship_iids)
+    # Drop controllers for instances no longer present. The
+    # player iid is excluded from _live_ship_iids (handled by
+    # the continue above), so key the keep-set on the full
+    # live ship_instances values, not _live_ship_iids.
+    _wg_live_iids = set(session.ship_instances.values())
+    for _dead in list(session.ship_glow_controllers.keys()):
+        if _dead not in _wg_live_iids:
+            del session.ship_glow_controllers[_dead]
+    for planet, iid in session.planet_instances.items():
+        ns = session.planet_natural_scale.get(planet, 1.0)
+        r.set_world_transform(iid, _astro_world_matrix(planet, ns))
+
+
 def run(mission_name: Optional[str] = None,
         max_ticks: Optional[int] = None) -> int:
     """Boot the renderer, init the named mission, run until the window closes
@@ -2332,6 +2475,10 @@ def run(mission_name: Optional[str] = None,
 
     import App
     from engine.core.loop import GameLoop
+    # Hoisted out of the per-tick loop body — imported once per run()
+    # rather than every frame. Both are only used inside the loop below.
+    from engine.appc import collisions
+    from engine.appc import camera_shake
 
     r.init(1280, 720, "open_stbc")
     # Initialise the CEF UI overlay. Resolves index.html relative
@@ -2639,6 +2786,16 @@ def run(mission_name: Optional[str] = None,
         _spv_hidden_iid = None
         _spv_was_open = False
 
+        # Ordered modal blockers (highest priority first). Each is a CEF
+        # panel exposing is_open()/handle_key_esc(); the keyboard-input
+        # ones (developer options, ship property viewer, configuration)
+        # also expose handle_input(). The mission picker is click-only.
+        # In production (no --developer) the first three are _NULL_PICKER
+        # whose is_open() is False, so they never fire. One list drives
+        # ESC routing, pause-menu visibility, and pause-input routing.
+        _modal_blockers = [mission_picker, developer_options_panel,
+                           ship_property_viewer, configuration_panel]
+
         while not r.should_close():
             # --- Input dispatch + modality (ESC always live; SPACE only when unpaused) ---
             # _apply_view_mode_side_effects mirrors the SPACE flag into
@@ -2647,46 +2804,18 @@ def run(mission_name: Optional[str] = None,
             if _h is not None:
                 # ESC priority: mission picker first (dev only), then the
                 # developer options panel (dev only), then the ship property
-                # viewer (dev only), then the configuration panel, otherwise
-                # the pause menu toggle. All four modal blockers close on ESC
-                # and return the user to the pause menu.
-                if mission_picker.is_open():
-                    if _h.key_pressed(_h.keys.KEY_ESCAPE):
-                        mission_picker.handle_key_esc()
-                elif developer_options_panel.is_open():
-                    if _h.key_pressed(_h.keys.KEY_ESCAPE):
-                        developer_options_panel.handle_key_esc()
-                elif ship_property_viewer.is_open():
-                    if _h.key_pressed(_h.keys.KEY_ESCAPE):
-                        ship_property_viewer.handle_key_esc()
-                elif configuration_panel.is_open():
-                    if _h.key_pressed(_h.keys.KEY_ESCAPE):
-                        configuration_panel.handle_key_esc()
-                elif crew_menu_panel.has_open_menu():
-                    if _h.key_pressed(_h.keys.KEY_ESCAPE):
-                        crew_menu_panel.close_open_menu()
-                else:
-                    pause.apply(_h)
+                # viewer (dev only), then the configuration panel, then the
+                # crew menu, otherwise the pause menu toggle. All four modal
+                # blockers close on ESC and return the user to the pause menu.
+                _dispatch_modal_esc(_modal_blockers, crew_menu_panel, pause, _h)
                 _apply_pause_menu_side_effects(
-                    pause, view_mode, _h,
-                    [mission_picker, developer_options_panel,
-                     ship_property_viewer, configuration_panel],
+                    pause, view_mode, _h, _modal_blockers,
                 )
                 if pause.is_open:
                     # When a settings modal is open it consumes keyboard
                     # input — pause-menu navigation would otherwise activate
                     # rows hidden behind the modal.
-                    if configuration_panel.is_open():
-                        configuration_panel.handle_input(_h)
-                    elif developer_options_panel.is_open():
-                        developer_options_panel.handle_input(_h)
-                    elif ship_property_viewer.is_open():
-                        ship_property_viewer.handle_input(_h)
-                    elif not mission_picker.is_open():
-                        pause_menu.handle_input(_h)
-                        _script = pause_menu.render_payload()
-                        if _script is not None:
-                            _h.cef_execute_javascript(_script)
+                    _dispatch_modal_pause_input(_modal_blockers, pause_menu, _h)
                     # Forward mouse to CEF only while paused — keeps
                     # normal-gameplay input out of the overlay. The
                     # event-handler callback installed at startup turns
@@ -2700,13 +2829,9 @@ def run(mission_name: Optional[str] = None,
                     # _CEF_VIEW_W/H mirror the dims passed to
                     # cef_initialize above.
                     if _cef_send_mouse_move is not None:
-                        _mx_fb, _my_fb = _h.cursor_pos()
-                        _fb_w, _fb_h = _h.framebuffer_size()
-                        _sx = (_CEF_VIEW_W / _fb_w) if _fb_w > 0 else 1.0
-                        _sy = (_CEF_VIEW_H / _fb_h) if _fb_h > 0 else 1.0
-                        _mx = int(_mx_fb * _sx)
-                        _my = int(_my_fb * _sy)
-                        _cef_send_mouse_move(_mx, _my)
+                        _mx, _my = _forward_mouse_to_cef(
+                            _h, _cef_send_mouse_move,
+                            _CEF_VIEW_W, _CEF_VIEW_H)
                     if _cef_send_mouse_click is not None:
                         if _h.mouse_button_pressed(_h.keys.MOUSE_BUTTON_LEFT):
                             _cef_send_mouse_click(_mx, _my, 0, True)
@@ -2753,8 +2878,7 @@ def run(mission_name: Optional[str] = None,
                 # filters rows where IsVisible() == 0. We walk the
                 # player's spatial set (e.g. "Biranu1"), not the
                 # bridge set (which holds bridge-interior objects).
-                import App as _App_sv
-                _menu = _App_sv.STTargetMenu_GetTargetMenu()
+                _menu = App.STTargetMenu_GetTargetMenu()
                 from engine.core.game import Game_GetCurrentGame
                 _game = Game_GetCurrentGame()
                 _player = _game.GetPlayer() if _game is not None else None
@@ -2789,13 +2913,9 @@ def run(mission_name: Optional[str] = None,
                 # unconditional because it doesn't touch button state
                 # and the panel needs it for CSS :hover.
                 if not pause.is_open and _cef_send_mouse_move is not None:
-                    _mx_fb, _my_fb = _h.cursor_pos()
-                    _fb_w, _fb_h = _h.framebuffer_size()
-                    _sx = (_CEF_VIEW_W / _fb_w) if _fb_w > 0 else 1.0
-                    _sy = (_CEF_VIEW_H / _fb_h) if _fb_h > 0 else 1.0
-                    _mx = int(_mx_fb * _sx)
-                    _my = int(_my_fb * _sy)
-                    _cef_send_mouse_move(_mx, _my)
+                    _mx, _my = _forward_mouse_to_cef(
+                        _h, _cef_send_mouse_move,
+                        _CEF_VIEW_W, _CEF_VIEW_H)
                     # Panel bboxes in CEF view space. Click forwarding is
                     # gated on these because forwarding consumes the
                     # mouse-button edge state — see the rationale comment
@@ -2987,9 +3107,12 @@ def run(mission_name: Optional[str] = None,
                 # active set.  Runs after AI/physics (approximate — the host
                 # loop is single-threaded and Python AI runs in the gameloop
                 # tick above) so emitters are ready when AI fire calls land.
-                _advance_weapons(_all_ships_for_tick(), TICK_DT)
+                # Materialize the ship list once per frame — both consumers
+                # re-walked every set independently before.
+                _ships_this_tick = list(_all_ships_for_tick())
+                _advance_weapons(_ships_this_tick, TICK_DT)
                 _advance_combat(
-                    _all_ships_for_tick(), TICK_DT, host=_h,
+                    _ships_this_tick, TICK_DT, host=_h,
                     ship_instances=(session.ship_instances if session is not None else None),
                 )
 
@@ -3004,7 +3127,6 @@ def run(mission_name: Optional[str] = None,
                 # the player integrator — the collision-velocity overlay is
                 # real-time motion, so it advances/decays on real elapsed time,
                 # not the fixed sim TICK_DT.
-                from engine.appc import collisions
                 collisions.tick_collisions(
                     _player_dt, host=_h,
                     ship_instances=(session.ship_instances if session is not None else None),
@@ -3025,53 +3147,11 @@ def run(mission_name: Optional[str] = None,
                 # ship objects keep live transforms, so physics/AI/combat
                 # (which ran earlier this frame) are unaffected.
                 if session is not None:
-                    # player is always set when a session exists, so
-                    # _player_iid is a real iid (never None) at runtime.
-                    _player_iid = session.ship_instances.get(player)
-                    _live_ship_iids = []
                     # Same game clock the decal system ages on
                     # (engine.appc.damage_decals). Read once per frame.
-                    import App as _App_wg
-                    _wg_now = _App_wg.g_kUtopiaModule.GetGameTime()
-                    from engine.appc.ship_death import _out_of_action as _oa
-                    for ship, iid in session.ship_instances.items():
-                        _wg = session.ship_glow_controllers.get(iid)
-                        if _wg is not None:
-                            _wg.update(_wg_now)
-                        # Destroyed (dying/dead) ships lose self-illumination —
-                        # a dark hulk in space. Hull stays lit by external light.
-                        r.set_emissive_scale(iid, 0.0 if _oa(ship) else 1.0)
-                        if iid == _player_iid:
-                            r.set_world_transform(
-                                iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
-                            continue
-                        _live_ship_iids.append(iid)
-                        # NOTE: scale is read live, not interpolated — the
-                        # buffer only stores loc+rot. Fine for steady scale;
-                        # a mid-animation GetScale() change applies the
-                        # current scale to the blended pose (imperceptible).
-                        try:
-                            _ps = float(ship.GetScale())
-                        except Exception:
-                            _ps = 1.0
-                        _xform_buf.set_current(
-                            iid, ship.GetWorldLocation(), ship.GetWorldRotation())
-                        _sampled = _xform_buf.sample(iid, _interp_alpha)
-                        _iloc, _irot = _sampled
-                        r.set_world_transform(
-                            iid, _world_matrix_from(_iloc, _irot, BC_MODEL_SCALE * _ps))
-                    _xform_buf.prune(_live_ship_iids)
-                    # Drop controllers for instances no longer present. The
-                    # player iid is excluded from _live_ship_iids (handled by
-                    # the continue above), so key the keep-set on the full
-                    # live ship_instances values, not _live_ship_iids.
-                    _wg_live_iids = set(session.ship_instances.values())
-                    for _dead in list(session.ship_glow_controllers.keys()):
-                        if _dead not in _wg_live_iids:
-                            del session.ship_glow_controllers[_dead]
-                    for planet, iid in session.planet_instances.items():
-                        ns = session.planet_natural_scale.get(planet, 1.0)
-                        r.set_world_transform(iid, _astro_world_matrix(planet, ns))
+                    _sync_instance_transforms(
+                        r, session, player, _xform_buf, _interp_alpha,
+                        App.g_kUtopiaModule.GetGameTime(), BC_MODEL_SCALE)
 
             # --- Render (always runs, including while paused) ---
             # Camera: orbit + zoom around the player ship (or origin fallback).
@@ -3087,7 +3167,6 @@ def run(mission_name: Optional[str] = None,
                 # Camera shake — apply to the exterior view. The bridge
                 # first-person camera below gets its own perturb call
                 # against the shared shake state.
-                from engine.appc import camera_shake
                 eye, target, up_vec = camera_shake.perturb(eye, target, up_vec)
                 if view_mode.is_bridge:
                     mouse_dx, mouse_dy = _h.consume_mouse_delta() if _h else (0.0, 0.0)
@@ -3237,14 +3316,13 @@ def run(mission_name: Optional[str] = None,
             # original engine scaled, instrumentation Q3). Feeding wall
             # time made the LCARS animation play noticeably faster than
             # in stock BC; game time matches the original cadence.
-            import App as _App
-            r.set_bridge_wall_time(_App.g_kUtopiaModule.GetGameTime())
+            r.set_bridge_wall_time(App.g_kUtopiaModule.GetGameTime())
 
             # Age every ship's persistent damage-decal ring on the same game
             # clock used for decal birth_time (engine.appc.damage_decals).
             # hasattr-guarded so an older _dauntless_host.so still runs.
             if hasattr(r, "damage_decals_tick"):
-                r.damage_decals_tick(_App.g_kUtopiaModule.GetGameTime())
+                r.damage_decals_tick(App.g_kUtopiaModule.GetGameTime())
 
             backdrops = _aggregate_backdrops(active_set)
             r.set_backdrops(backdrops)
@@ -3253,7 +3331,7 @@ def run(mission_name: Optional[str] = None,
             r.set_suns(suns)
 
             planets = _aggregate_planets(
-                list(_App.g_kSetManager._sets.values()))
+                list(App.g_kSetManager._sets.values()))
             r.set_dust_planets(planets)
 
             lens_flares = _aggregate_lens_flares()
