@@ -93,16 +93,30 @@ class ViewScreenObject(_LoudStub):
 
 
 class ZoomCameraObjectClass(_LoudStub):
+    """SDK bridge camera ("maincamera"). Core data is real (captain-chair
+    position, angle-axis orientation, zoom min/max/time); the engine's
+    camera-mode + zoom-transform surface (GetNamedCameraMode, PushCameraMode,
+    Update, ToggleZoom, Zoom, IsZoomed, LookForward, ...) stays a silent
+    _LoudStub no-op — that geometry lived in Appc and is not reconstructed
+    here. The host reads `position` + the zoom getters after LoadBridge.Load to
+    drive _BridgeCamera (see host_loop). Kept a _LoudStub (unlike
+    BridgeObjectClass) precisely because that camera-mode surface is large and
+    not built."""
     def __init__(self, x, y, z, qw, qx, qy, qz, name):
+        self.position = (x, y, z)
+        self.orientation = (qw, qx, qy, qz)   # angle, axis-x, axis-y, axis-z
         self._name = name
-    def SetMinZoom(self, v): return None
-    def SetMaxZoom(self, v): return None
-    def SetZoomTime(self, v): return None
-    def GetNamedCameraMode(self, name):
-        return _LoudStub()
-    def PushCameraMode(self, mode): return None
-    def Update(self, t): return None
-    def SetTranslateXYZ(self, x, y, z): return None
+        self._min_zoom = 1.0
+        self._max_zoom = 1.0
+        self._zoom_time = 0.0
+
+    def SetMinZoom(self, v):  self._min_zoom = v
+    def SetMaxZoom(self, v):  self._max_zoom = v
+    def SetZoomTime(self, v): self._zoom_time = v
+    def GetMinZoom(self):  return self._min_zoom
+    def GetMaxZoom(self):  return self._max_zoom
+    def GetZoomTime(self): return self._zoom_time
+    def SetTranslateXYZ(self, x, y, z): self.position = (x, y, z)
 
 
 class ModelManager:
@@ -171,15 +185,12 @@ def ViewScreenObject_Create(nif):
 
 
 def ZoomCameraObjectClass_Create(x, y, z, qw, qx, qy, qz, name):
-    _stub_trace.stub_call("ZoomCameraObjectClass_Create", "name=%s" % name)
-    return ZoomCameraObjectClass(x, y, z, qw, qx, qy, qz, name)
+    return ZoomCameraObjectClass(x, y, z, qw, qx, qy, qz, name)  # real -> off summary
 
 
 def ZoomCameraObjectClass_GetObject(pSet, name):
-    # The camera was added to the set via AddCameraToSet; return it (or a loud
-    # stub if not present so ConfigureCharacters' SetTranslateXYZ doesn't crash).
+    # Return the real camera added via AddCameraToSet. The _LoudStub fallback
+    # (camera absent) keeps ConfigureCharacters' SetTranslateXYZ from crashing,
+    # but no longer fires stub_call.
     cam = pSet.GetCamera(name) if pSet is not None else None
-    if cam is None:
-        _stub_trace.stub_call("ZoomCameraObjectClass_GetObject", "name=%s" % name)
-        return _LoudStub()
-    return cam
+    return cam if cam is not None else _LoudStub()

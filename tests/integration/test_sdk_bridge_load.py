@@ -119,9 +119,19 @@ def test_sdk_load_runs_end_to_end_and_populates_crew(sdk_loadbridge):
     assert "BridgeSet.SetConfig" not in fired
     assert "BridgeSet.IsSameConfig" not in fired
     assert "BridgeSet.DeleteCameraFromSet" not in fired
-    # Still-stubbed control-flow symbols prove the SDK path actually ran.
+    # Step 5a: the zoom camera is real now; BridgeSet_Create proves the SDK path
+    # ran, and NO bridge-load symbol remains stubbed.
     assert "BridgeSet_Create" in fired
-    assert "ZoomCameraObjectClass_Create" in fired
+    assert "ZoomCameraObjectClass_Create" not in fired
+    assert "ZoomCameraObjectClass_GetObject" not in fired
+
+    # The SDK-created maincamera carries the captain pose; ConfigureCharacters'
+    # SetTranslateXYZ override won (z=61.934944, not the 50.0 from create), and
+    # the zoom params are the GalaxyBridge values.
+    cam = bridge.GetCamera("maincamera")
+    assert cam is not None
+    assert cam.position == (0.683736, 86.978439, 61.934944)
+    assert (cam.GetMinZoom(), cam.GetMaxZoom(), cam.GetZoomTime()) == (0.64, 1.0, 0.375)
 
     # The SDK-created bridge object carries the bridge NIF for the host to
     # realize (mesh selection is config-driven, not hardcoded).
@@ -144,8 +154,8 @@ def test_summary_prints_outstanding_stubs(sdk_loadbridge, capsys):
     st.dump_stub_summary()
     err = capsys.readouterr().err
     assert "still need fleshing out" in err
-    # Step 5b: the viewscreen + BridgeSet.* are real now; only the zoom
-    # camera remains stubbed for step 5a.
-    assert "ZoomCameraObjectClass_Create" in err
+    # Step 5a: the zoom camera is real now too -> NO bridge-load stubs remain.
+    assert "ZoomCameraObjectClass_Create" not in err
+    assert "ZoomCameraObjectClass_GetObject" not in err
     assert "ViewScreenObject_Create" not in err
     assert "BridgeObjectClass_Create" not in err
