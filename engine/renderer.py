@@ -313,6 +313,20 @@ def bridge_pass_set_enabled(enabled: bool) -> None:
     _h.bridge_pass_set_enabled(enabled)
 
 
+def set_viewscreen_model(handle: int) -> None:
+    """Register which loaded model handle is the bridge viewscreen surface, so
+    the bridge pass binds the RTT feed texture there. No-op until
+    set_viewscreen_enabled(True)."""
+    _h.set_viewscreen_model(handle)
+
+
+def set_viewscreen_enabled(on: bool) -> None:
+    """Enable/disable the viewscreen render-to-texture feed. When on (and in
+    bridge view), the renderer renders the forward space scene into the
+    offscreen target and maps it onto the viewscreen instance."""
+    _h.set_viewscreen_enabled(on)
+
+
 def consume_mouse_delta() -> Tuple[float, float]:
     """Return (dx, dy) accumulated cursor motion in pixels since the last
     call. Reset on each call. GLFW raw mode while cursor is locked."""

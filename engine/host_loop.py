@@ -1771,6 +1771,7 @@ class HostController:
         self.pending_swap: Optional[str] = None
         self.bridge_instance: Optional[Any] = None  # InstanceId; set by _realize_bridge_model
         self.viewscreen_instance: Optional[Any] = None  # InstanceId; set by _realize_viewscreen
+        self.viewscreen_obj: Optional[Any] = None  # set by _realize_viewscreen
         # NIF path currently bound to bridge_instance. Set by
         # _realize_bridge_model when the SDK-created bridge object is realized.
         self.current_bridge_nif_abs: Optional[str] = None
@@ -2113,6 +2114,28 @@ def _realize_viewscreen(controller, r) -> None:
     vs.render_instance = iid
     controller.viewscreen_instance = iid
     controller.nif_to_handle[nif_abs] = handle
+    # Step 5c: register the model handle so the bridge pass maps the RTT feed
+    # onto this instance, default the screen on (the SDK doesn't call SetIsOn
+    # on a fresh load), and cache the object for the per-frame on/off poll.
+    r.set_viewscreen_model(handle)
+    vs.SetIsOn(1)
+    controller.viewscreen_obj = vs
+
+
+def _viewscreen_feed_on(viewscreen_obj) -> bool:
+    """The viewscreen RTT feed is on iff a realized viewscreen object reports
+    IsOn(). Off (or no viewscreen) -> the step-5b blank panel."""
+    return bool(viewscreen_obj is not None and viewscreen_obj.IsOn())
+
+
+def _apply_bridge_player_visibility(r, player_iid, *, is_bridge, spv_open) -> None:
+    """Hide the player ship while in bridge view so it doesn't appear on its
+    own viewscreen feed (and the centre-mounted forward cam doesn't clip its
+    hull). No-op while the Ship Property Viewer owns the frame (it manages
+    visibility itself). Idempotent — safe to call every frame."""
+    if spv_open or player_iid is None:
+        return
+    r.set_visible(player_iid, not is_bridge)
 
 
 def _place_bridge_officers(controller, r) -> None:
@@ -3096,6 +3119,17 @@ def run(mission_name: Optional[str] = None,
                     r.clear_target_reticle()
                     r.clear_reticle_text()
             _spv_was_open = _spv_open
+
+            # Step 5c: drive the viewscreen RTT feed on/off from the realized
+            # viewscreen object, and hide the player ship while in bridge view
+            # so it doesn't show on its own screen.
+            _vs_obj = getattr(controller, "viewscreen_obj", None)
+            r.set_viewscreen_enabled(_viewscreen_feed_on(_vs_obj))
+            _player_iid_vs = (session.ship_instances.get(player)
+                              if session is not None and player is not None else None)
+            _apply_bridge_player_visibility(
+                r, _player_iid_vs,
+                is_bridge=view_mode.is_bridge, spv_open=_spv_open)
 
             # Audio listener (skipped while paused — silence the rumble).
             if not pause.is_open:
