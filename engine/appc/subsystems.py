@@ -17,6 +17,7 @@ import math as _math
 
 from engine.appc.events import TGEventHandlerObject
 from engine.appc.math import TGPoint3, TGMatrix3
+import engine.dev_mode as dev_mode
 
 
 def _resolve_aim_world(ship, target):
@@ -1836,15 +1837,15 @@ class SensorSubsystem(PoweredSubsystem):
         """Register *obj* as a known sensor contact."""
         try:
             self._known_objects.add(obj.GetObjID())
-        except Exception:
-            pass
+        except Exception as _e:
+            dev_mode.log_swallowed("AddKnownObject", _e)
 
     def RemoveKnownObject(self, obj) -> None:
         """Remove *obj* from known contacts."""
         try:
             self._known_objects.discard(obj.GetObjID())
-        except Exception:
-            pass
+        except Exception as _e:
+            dev_mode.log_swallowed("RemoveKnownObject", _e)
 
 
 class ImpulseEngineSubsystem(PoweredSubsystem):
@@ -2264,8 +2265,8 @@ def _get_xyz(ship) -> tuple:
                 # plain tuple or list
                 if isinstance(t, (tuple, list)) and len(t) == 3:
                     return (float(t[0]), float(t[1]), float(t[2]))
-            except Exception:
-                pass
+            except Exception as _e:
+                dev_mode.log_swallowed(f"ship position via {name}", _e)
     # Last resort — direct attribute access for the simplest possible shim.
     if hasattr(ship, "_position"):
         try:
@@ -2274,6 +2275,6 @@ def _get_xyz(ship) -> tuple:
                 return (float(p.x), float(p.y), float(p.z))
             if isinstance(p, (tuple, list)) and len(p) == 3:
                 return (float(p[0]), float(p[1]), float(p[2]))
-        except Exception:
-            pass
+        except Exception as _e:
+            dev_mode.log_swallowed("ship position via _position attr", _e)
     return (0.0, 0.0, 0.0)

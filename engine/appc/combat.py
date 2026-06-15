@@ -6,6 +6,7 @@ subsystem → hull bleed, then broadcasts WeaponHitEvent so mission
 handlers (FriendlyFireHandler etc.) see the hit.
 """
 from engine.appc.math import TGPoint3
+import engine.dev_mode as dev_mode
 
 
 def sphere_hit(point, center, radius: float) -> bool:
@@ -458,8 +459,8 @@ def apply_hit(ship, damage: float, hit_point, source, *,
             radius=r_hit,
             persist_decal=_commit,
         )
-    except Exception:
-        pass
+    except Exception as _e:
+        dev_mode.log_swallowed("hit_feedback.dispatch", _e)
 
     # 5. Broadcast WeaponHitEvent.
     evt = WeaponHitEvent()

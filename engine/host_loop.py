@@ -1547,8 +1547,8 @@ def reset_sdk_globals() -> None:
             _TCW.GetInstance())
         from engine.ui import crew_menu_hotkeys
         crew_menu_hotkeys.rewire()
-    except Exception:
-        pass
+    except Exception as _e:
+        dev_mode.log_swallowed("crew_menu_hotkeys.rewire after TCW reset", _e)
 
 
 def _init_mission(mission_module_name: str):
@@ -2017,8 +2017,8 @@ class _MissionLoader:
             if ship.GetRadius() <= 0.0:
                 try:
                     ship.SetRadius(extent * BC_MODEL_SCALE)
-                except Exception:
-                    pass
+                except Exception as _e:
+                    dev_mode.log_swallowed("ship.SetRadius fallback", _e)
             iid = r_.create_instance(handle)
             r_.set_world_transform(iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
             sess.ship_instances[ship] = iid
@@ -2033,8 +2033,9 @@ class _MissionLoader:
                 from engine.appc.subsystem_glow import ShipGlowController
                 sess.ship_glow_controllers[iid] = ShipGlowController(
                     r_, iid, ship)
-            except Exception:
-                pass  # glow dimming is best-effort VFX; never block spawn
+            except Exception as _e:
+                # glow dimming is best-effort VFX; never block spawn
+                dev_mode.log_swallowed("ShipGlowController register", _e)
 
             # Register shield render state. Reads ShieldProperty data-bag
             # for glow color, decay, and skin-mode flag. No-op for ships
@@ -2072,8 +2073,8 @@ class _MissionLoader:
             if planet.GetRadius() <= 0.0:
                 try:
                     planet.SetRadius(extent * BC_MODEL_SCALE)
-                except Exception:
-                    pass
+                except Exception as _e:
+                    dev_mode.log_swallowed("planet.SetRadius fallback", _e)
             radius = planet.GetRadius()
             natural_scale = (radius / extent) if extent > 0.0 else 1.0
             iid = r_.create_instance(handle)
@@ -2194,8 +2195,8 @@ def _realize_bridge_model(controller, r) -> None:
     if controller.bridge_instance is not None:
         try:
             r.destroy_instance(controller.bridge_instance)
-        except Exception:
-            pass
+        except Exception as _e:
+            dev_mode.log_swallowed("destroy bridge instance", _e)
         controller.bridge_instance = None
 
     nif_abs = str(PROJECT_ROOT / "game" / obj.nif)
@@ -2240,8 +2241,8 @@ def _realize_viewscreen(controller, r) -> None:
     if controller.viewscreen_instance is not None:
         try:
             r.destroy_instance(controller.viewscreen_instance)
-        except Exception:
-            pass
+        except Exception as _e:
+            dev_mode.log_swallowed("destroy viewscreen instance", _e)
         controller.viewscreen_instance = None
 
     nif_abs = str(PROJECT_ROOT / "game" / vs.nif)
@@ -2310,8 +2311,8 @@ def _place_bridge_officers(controller, r) -> None:
     for iid in controller.officer_instances:
         try:
             r.destroy_instance(iid)
-        except Exception:
-            pass
+        except Exception as _e:
+            dev_mode.log_swallowed("destroy officer instance (teardown)", _e)
     controller.officer_instances = []
 
     def _abs(p):
@@ -2342,8 +2343,9 @@ def _place_bridge_officers(controller, r) -> None:
             except Exception:
                 try:
                     r.destroy_instance(iid)
-                except Exception:
-                    pass
+                except Exception as _e:
+                    dev_mode.log_swallowed(
+                        "destroy officer instance (rollback)", _e)
                 raise
             off._render_instance = iid
             controller.officer_instances.append(iid)
@@ -2351,8 +2353,8 @@ def _place_bridge_officers(controller, r) -> None:
             name = ""
             try:
                 name = off.GetCharacterName()
-            except Exception:
-                pass
+            except Exception as _e:
+                dev_mode.log_swallowed("off.GetCharacterName in error path", _e)
             import traceback
             print(f"[host_loop] WARNING: failed to place officer {name!r}",
                   flush=True)
@@ -2506,8 +2508,8 @@ def run(mission_name: Optional[str] = None,
         _win_w, _win_h = _h_init.window_size()
         if _win_w > 0:
             _cef_dsf = float(_fb_w) / float(_win_w)
-    except Exception:
-        pass
+    except Exception as _e:
+        dev_mode.log_swallowed("CEF device-pixel-ratio probe", _e)
     if not r.cef_initialize(_CEF_VIEW_W, _CEF_VIEW_H, str(_cef_html),
                             device_scale_factor=_cef_dsf):
         # Non-fatal in builds where CEF is disabled (the stub returns False).
@@ -3313,8 +3315,8 @@ def run(mission_name: Optional[str] = None,
                 try:
                     if player.GetAlertLevel() == 2:  # ShipClass.RED_ALERT
                         bridge_ambient = tuple(c * 0.5 for c in bridge_ambient)
-                except Exception:
-                    pass
+                except Exception as _e:
+                    dev_mode.log_swallowed("red-alert bridge-dim probe", _e)
             r.set_bridge_lighting(bridge_ambient, bridge_directionals)
             # BC's NiFlipController observes *game time*, not wall time
             # — controllers advance with g_kTimerManager (which the

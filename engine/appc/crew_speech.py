@@ -14,6 +14,8 @@ from __future__ import annotations
 import time
 from typing import Optional
 
+import engine.dev_mode as dev_mode
+
 _MIN_DURATION_S = 2.0
 _MAX_DURATION_S = 8.0
 _WORDS_PER_SECOND = 2.5
@@ -79,8 +81,8 @@ class CrewSpeechBus:
                 return
             snd.SetVoice()
             snd.Play()
-        except Exception:
-            pass
+        except Exception as _e:
+            dev_mode.log_swallowed("play crew speech sound", _e)
 
 
 def emit(speaker, db, line_id, priority, *, voice_only) -> None:

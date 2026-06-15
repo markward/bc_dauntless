@@ -11,6 +11,7 @@ from typing import Optional
 from engine.ui.panel import Panel
 from engine.ui import ship_icons
 from engine.ui.species_icons import stem_for_species
+import engine.dev_mode as dev_mode
 
 
 ROLE_PLAYER = "player"
@@ -367,8 +368,8 @@ def _affiliation_for(ship, player) -> str:
                 group = getattr(mission, group_getter, lambda: None)()
                 if group is not None and group.IsNameInGroup(ship.GetName()):
                     return kind
-    except Exception:
-        pass
+    except Exception as _e:
+        dev_mode.log_swallowed("resolve ship allegiance", _e)
     return "UNKNOWN"
 
 
@@ -519,8 +520,8 @@ def _row_state(sub) -> str:
             return "disabled"
         if hasattr(sub, "IsDamaged") and sub.IsDamaged():
             return "damaged"
-    except Exception:
-        pass
+    except Exception as _e:
+        dev_mode.log_swallowed("subsystem health state", _e)
     return "healthy"
 
 

@@ -12,6 +12,8 @@ lifetime via the unsubscribe handle returned by ``subscribe``.
 from __future__ import annotations
 from typing import Callable
 
+import engine.dev_mode as dev_mode
+
 _Callback = Callable[[str, object], None]
 
 _subscribers: list[_Callback] = []
@@ -52,5 +54,5 @@ def _fanout(event: str, ship) -> None:
     for cb in list(_subscribers):
         try:
             cb(event, ship)
-        except Exception:
-            pass
+        except Exception as _e:
+            dev_mode.log_swallowed("ship_lifecycle subscriber callback", _e)
