@@ -24,6 +24,7 @@ def _isolate_registries():
 
 
 class _Keys:
+    KEY_F7 = 296
     KEY_F10 = 299
     KEY_LEFT_BRACKET = 91
     KEY_RIGHT_BRACKET = 93
