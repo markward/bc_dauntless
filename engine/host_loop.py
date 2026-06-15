@@ -1751,9 +1751,10 @@ class HostController:
         # _realize_bridge_model when the SDK-created bridge object is realized.
         self.current_bridge_nif_abs: Optional[str] = None
         # InstanceIds of placed-and-posed bridge officers. Lives on the
-        # controller (not the per-mission session) because the bridge interior
-        # is eagerly loaded and reused across mission swaps. (Officer placement
-        # is not wired in this build; kept as an empty list for compatibility.)
+        # controller (not the per-mission session) to mirror bridge_instance,
+        # which the controller likewise owns across mission swaps. (Officer
+        # placement is not wired in this build; kept as an empty list for
+        # compatibility.)
         self.officer_instances: list = []
         # Invoked once after each successful loader.load(). Stage 2 CEF
         # integration will wire this to rebuild UI state so the panel
