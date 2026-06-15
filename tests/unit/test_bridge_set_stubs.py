@@ -27,21 +27,54 @@ def test_cast_returns_none_for_non_bridgeset():
     assert BridgeSet_Cast(bs) is bs
 
 
-def test_config_round_trips_and_is_same_config():
+def test_config_round_trips_and_is_not_loud():
     bs = BridgeSet_Create()
     assert bs.IsSameConfig("GalaxyBridge") == 0     # nothing set yet
     bs.SetConfig("GalaxyBridge")
     assert bs.GetConfig() == "GalaxyBridge"
     assert bs.IsSameConfig("GalaxyBridge")          # truthy
     assert bs.IsSameConfig("SovereignBridge") == 0
+    # Step 5b: faithful plumbing the host/SDK consume — off the summary.
+    assert "BridgeSet.GetConfig" not in st.fired()
+    assert "BridgeSet.SetConfig" not in st.fired()
+    assert "BridgeSet.IsSameConfig" not in st.fired()
 
 
-def test_viewscreen_round_trips():
+def test_viewscreen_is_real_data_object_and_round_trips():
     bs = BridgeSet_Create()
     assert bs.GetViewScreen() is None
-    vs = ViewScreenObject_Create("vs.nif")
+    vs = ViewScreenObject_Create("data/Models/Sets/DBridge/DBridgeViewScreen.nif")
+    # Step 5b: now a real object — must drop off the bridge-stub summary.
+    assert "ViewScreenObject_Create" not in st.fired()
+    # Carries the NIF path so the host can realize the screen mesh.
+    assert vs.nif == "data/Models/Sets/DBridge/DBridgeViewScreen.nif"
+    # Host fills this in; defaults to None.
+    assert vs.render_instance is None
+    # Feed state round-trips (consumed later by 5c/RTT). Off by default.
+    assert vs.GetRemoteCam() is None
+    vs.SetRemoteCam("cam-sentinel")
+    assert vs.GetRemoteCam() == "cam-sentinel"
+    vs.SetIsOn(1)
+    assert vs.IsOn() == 1
+    # SetViewScreen stores it and is no longer loud.
     bs.SetViewScreen(vs, "viewscreen")
     assert bs.GetViewScreen() is vs
+    assert "BridgeSet.SetViewScreen" not in st.fired()
+    assert "BridgeSet.GetViewScreen" not in st.fired()
+    # The unbuilt menu/handler surface still no-ops via the _LoudStub catch-all
+    # (does not raise, does not fire a stub_call).
+    assert vs.SetMenu("whatever") is None
+    assert vs.ToggleRemoteCam() is None
+    assert vs.IsStaticOn() is None
+
+
+def test_delete_camera_from_set_is_not_loud():
+    bs = BridgeSet_Create()
+    cam = ZoomCameraObjectClass_Create(0, 0, 0, 0, 0, 0, 1, "maincamera")
+    bs.AddCameraToSet(cam, "maincamera")
+    bs.DeleteCameraFromSet("maincamera")
+    assert bs.GetCamera("maincamera") is None
+    assert "BridgeSet.DeleteCameraFromSet" not in st.fired()
 
 
 def test_bridge_object_is_real_pure_object():
