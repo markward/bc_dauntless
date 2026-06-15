@@ -57,9 +57,16 @@ class _FakeShip:
         from engine.appc.math import TGMatrix3
         self._pos = _FakePoint(0.0, 0.0, 0.0)
         self._rot = TGMatrix3()  # identity
+        self._vel = _FakePoint(0.0, 0.0, 0.0)
 
     def GetTranslate(self):
         return _FakePoint(self._pos.x, self._pos.y, self._pos.z)
+
+    def SetVelocity(self, v):
+        self._vel = _FakePoint(v.x, v.y, v.z)
+
+    def GetVelocity(self):
+        return _FakePoint(self._vel.x, self._vel.y, self._vel.z)
 
     def SetTranslateXYZ(self, x, y, z):
         self._pos = _FakePoint(x, y, z)

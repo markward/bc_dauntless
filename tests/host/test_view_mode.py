@@ -157,11 +157,14 @@ def test_apply_input_in_bridge_keeps_ship_moving_under_real_player_control():
         def __init__(self):
             self._loc = TGPoint3(0.0, 0.0, 0.0)
             self._rot = TGMatrix3()
+            self._vel = TGPoint3(0.0, 0.0, 0.0)
         def GetWorldRotation(self): return self._rot
         def GetTranslate(self):     return self._loc
         def SetMatrixRotation(self, R): self._rot = R
         def SetTranslateXYZ(self, x, y, z):
             self._loc = TGPoint3(x, y, z)
+        def SetVelocity(self, v): self._vel = TGPoint3(v.x, v.y, v.z)
+        def GetVelocity(self):    return self._vel
         # No ImpulseEngineSubsystem → _PlayerControl falls back to legacy
         # IMPULSE_UNIT * level for target speed.
         GetImpulseEngineSubsystem = None
