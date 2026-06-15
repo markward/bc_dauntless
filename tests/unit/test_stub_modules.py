@@ -16,7 +16,11 @@ def test_load_bridge_load_callable():
     from engine.appc.windows import TacticalControlWindow
     from engine.appc.tg_ui import st_widgets
     from engine.sdk_ui.widgets.ship_display import (
-        _reset_create_count as _reset_ship_display,
+        # Clears BOTH _create_count AND the stale module-level _registry; a
+        # prior host-loop test can leave _registry pointing at a registry that
+        # already holds a "ship-player" panel, which would make LoadBridge.Load's
+        # ShipDisplay_Create re-register it and raise "duplicate panel name".
+        _reset_for_bridge_teardown as _reset_ship_display,
     )
     from engine.core.game import Game, Episode, Mission, _set_current_game
     # The SDK LoadBridge.Load registers a beep handler on the current Game, so

@@ -75,6 +75,7 @@ class TGSound:
         self._looping = False
         self._gain = 1.0
         self._category_tag = "SFX"
+        self._priority = 0.0
         self._min_dist = 100.0
         self._max_dist = 100000.0
         self._loaded = _audio is not None and _audio.get_sound(name) != 0
@@ -99,6 +100,12 @@ class TGSound:
 
     def SetMinMaxDistance(self, mn, mx) -> None:
         self._min_dist, self._max_dist = float(mn), float(mx)
+
+    def SetPriority(self, priority) -> None:
+        self._priority = float(priority)
+
+    def GetPriority(self) -> float:
+        return self._priority
 
     def SetSFX(self, *_args) -> None:       self._category_tag = "SFX"
     def IsSFX(self) -> int:                  return 1 if self._category_tag == "SFX" else 0
