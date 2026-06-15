@@ -8,7 +8,7 @@ it always reads from the bound script per shot.
 
 Module-level _active registry holds in-flight torpedoes; update_all
 advances motion, runs collision, returns the list of (torpedo, hit_ship,
-hit_point) tuples for host_loop to route through combat.apply_hit.
+hit_point, hit_normal) tuples for host_loop to route through combat.apply_hit.
 """
 import math
 
