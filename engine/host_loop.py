@@ -1350,6 +1350,29 @@ def _rot_around(v, axis_xyz, angle_rad):
     )
 
 
+def _active_zoom_officer_world(crew_menu_panel, r):
+    """World-space centre (x, y, z) of the officer whose crew menu is open, or
+    None. Resolves the open menu's label -> bridge CharacterClass (via
+    crew_menu_hotkeys.resolve_character) -> its step-4 render instance ->
+    get_instance_bounds. Any missing hop -> None (captain view, no zoom)."""
+    if crew_menu_panel is None:
+        return None
+    label = crew_menu_panel.open_menu_label()
+    if not label:
+        return None
+    from engine.ui import crew_menu_hotkeys
+    off = crew_menu_hotkeys.resolve_character(label)
+    if off is None:
+        return None
+    iid = getattr(off, "_render_instance", None)
+    if iid is None:
+        return None
+    bounds = r.get_instance_bounds(iid)
+    if not bounds:
+        return None
+    return (bounds[0], bounds[1], bounds[2])
+
+
 def _setup_sdk() -> None:
     """Install SDK finder + AST transforms so SDK script imports work."""
     if str(PROJECT_ROOT) not in sys.path:
@@ -3067,7 +3090,9 @@ def run(mission_name: Optional[str] = None,
                     # skip the yaw/pitch advance so the bridge camera
                     # stays frozen alongside the rest of the world.
                     if not pause.is_open:
-                        bridge_camera.set_zoom_target(None, _player_dt)
+                        bridge_camera.set_zoom_target(
+                            _active_zoom_officer_world(crew_menu_panel, r),
+                            _player_dt)
                         bridge_camera.apply(mouse_dx, mouse_dy)
                     b_eye, b_target, b_up, b_fov = bridge_camera.compute_camera()
                     # Bridge first-person camera uses separate (eye, target,

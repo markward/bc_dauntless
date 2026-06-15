@@ -167,6 +167,15 @@ class CrewMenuPanel(Panel):
         except Exception:
             _logger.debug("crew-menu ack failed", exc_info=True)
 
+    def open_menu_label(self) -> Optional[str]:
+        """Label of the open top-level (station) menu, or None. The open id is
+        always a top-level menu (toggle_menu only fires for titles), so its
+        root is itself; the label feeds crew_menu_hotkeys.resolve_character."""
+        if self._open_menu_id is None:
+            return None
+        root = self._root_of(self._open_menu_id)
+        return root.GetLabel() if root is not None else None
+
     def has_open_menu(self) -> bool:
         return self._open_menu_id is not None
 
