@@ -44,13 +44,21 @@ def test_viewscreen_round_trips():
     assert bs.GetViewScreen() is vs
 
 
-def test_bridge_object_stub_supports_sdk_calls():
-    obj = BridgeObjectClass_Create("DBridge.nif")
-    # GalaxyBridge.CreateBridgeModel calls these — must not raise.
-    obj.SetTranslateXYZ(0.0, 0.0, 0.0)
+def test_bridge_object_is_real_pure_object():
+    obj = BridgeObjectClass_Create("data/Models/Sets/DBridge/DBridge.nif")
+    # No longer a loud stub — must drop off the bridge-stub summary.
+    assert "BridgeObjectClass_Create" not in st.fired()
+    # Carries the NIF path so the host can realize the mesh.
+    assert obj.nif == "data/Models/Sets/DBridge/DBridge.nif"
+    # Host fills this in; defaults to None.
+    assert obj.render_instance is None
+    # GalaxyBridge.CreateBridgeModel calls these — they record, don't raise.
+    obj.SetTranslateXYZ(1.0, 2.0, 3.0)
     obj.SetAngleAxisRotation(0.0, 1.0, 0.0, 0.0)
+    assert obj.translate == (1.0, 2.0, 3.0)
+    assert obj.rotation == (0.0, 1.0, 0.0, 0.0)
+    # Property set stays truthy so DBridgeProperties.LoadPropertySet runs.
     assert obj.GetPropertySet() is not None
-    assert "BridgeObjectClass_Create" in st.fired()
 
 
 def test_camera_stub_supports_sdk_calls():

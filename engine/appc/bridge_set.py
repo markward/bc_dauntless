@@ -32,18 +32,29 @@ class _LoudStub:
         return True
 
 
-class BridgeObjectClass(_LoudStub):
+class BridgeObjectClass:
+    """The bridge model object the SDK config script creates and adds to the
+    bridge set as "bridge". A pure, headless data object: it carries the NIF
+    path and transform the SDK sets; the HOST reads it after LoadBridge.Load and
+    fills in `render_instance` (see host_loop._realize_bridge_model). Not a
+    `_LoudStub` — it is real, so it drops off the bridge-stub summary."""
     def __init__(self, nif):
-        self._nif = nif
-        # A property-set object the SDK fetches via GetPropertySet(); return a
-        # chainable stub so DBridgeProperties.LoadPropertySet(pPropertySet) runs.
+        self.nif = nif
+        self.translate = (0.0, 0.0, 0.0)
+        self.rotation = (0.0, 1.0, 0.0, 0.0)   # angle, x, y, z
+        self.render_instance = None            # host fills this in
+        # DBridgeProperties.LoadPropertySet(pPropertySet) still runs against a
+        # chainable stub; faithful hardpoint loading is a later step.
         self._property_set = _LoudStub()
+
     def GetPropertySet(self):
         return self._property_set
+
     def SetTranslateXYZ(self, x, y, z):
-        return None
+        self.translate = (x, y, z)
+
     def SetAngleAxisRotation(self, a, x, y, z):
-        return None
+        self.rotation = (a, x, y, z)
 
 
 class ViewScreenObject(_LoudStub):
@@ -127,8 +138,7 @@ def BridgeSet_Cast(obj):
 
 
 def BridgeObjectClass_Create(nif):
-    _stub_trace.stub_call("BridgeObjectClass_Create", "nif=%s" % nif)
-    return BridgeObjectClass(nif)
+    return BridgeObjectClass(nif)              # real, no stub_call -> off summary
 
 
 def ViewScreenObject_Create(nif):
