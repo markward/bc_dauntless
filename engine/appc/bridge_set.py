@@ -56,6 +56,12 @@ class BridgeObjectClass:
     def SetAngleAxisRotation(self, a, x, y, z):
         self.rotation = (a, x, y, z)
 
+    def GetAnimNode(self):
+        # Animation playback is not implemented headlessly; return None so the
+        # SDK's PutGuestChairOut() / PutGuestChairIn() pass safely through the
+        # App.TGAnimPosition_Create stub without crashing.
+        return None
+
 
 class ViewScreenObject(_LoudStub):
     def __init__(self, nif):
