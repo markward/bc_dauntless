@@ -2139,9 +2139,10 @@ def _place_bridge_officers(controller, r) -> None:
                 name = off.GetCharacterName()
             except Exception:
                 pass
-            import logging
-            logging.getLogger(__name__).exception(
-                "_place_bridge_officers: failed to place %r", name)
+            import traceback
+            print(f"[host_loop] WARNING: failed to place officer {name!r}",
+                  flush=True)
+            traceback.print_exc()
             continue
 
 
