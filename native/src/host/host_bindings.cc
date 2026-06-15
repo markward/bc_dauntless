@@ -22,7 +22,6 @@
 #include <renderer/bone_palette.h>
 #include <renderer/pose_sampler.h>
 #include <renderer/animation_update.h>
-#include <renderer/placement_map.h>
 #include <renderer/frame.h>
 #include <renderer/backdrop_pass.h>
 #include <renderer/sun_pass.h>
@@ -704,27 +703,6 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "through the GPU bone palette. sample_at_start is unused here (the "
           "caller forwards it to set_instance_animation). Returns a "
           "ModelHandle.");
-
-    // SP3: resolve a CharacterClass GetLocation() string (e.g. "DBTactical")
-    // to its placement-animation NIF + hidden flag. The nif path is RELATIVE
-    // to the game data root (e.g. "data/animations/db_stand_t_l.nif"); the
-    // Python caller joins it with the data root the same way it builds bridge /
-    // ship NIF paths (PROJECT_ROOT/game/...). Returns None for unknown / empty
-    // locations so the caller can skip them.
-    m.def("resolve_placement",
-          [](const std::string& location) -> py::object {
-              auto placement = renderer::placement_for_location(location);
-              if (!placement) return py::none();
-              py::dict d;
-              d["nif"] = placement->nif_path;     // data-root-relative
-              d["hidden"] = placement->hidden;
-              d["sample_at_start"] = placement->sample_at_start;
-              return d;
-          },
-          py::arg("location"),
-          "SP3: resolve a character GetLocation() string to its "
-          "placement-animation NIF (data-root-RELATIVE path) + hidden flag, as "
-          "{'nif': str, 'hidden': bool}, or None if the location is unknown.");
 
     m.def("set_bridge_camera",
           [](std::tuple<float,float,float> eye,

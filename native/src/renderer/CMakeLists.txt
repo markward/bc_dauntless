@@ -57,7 +57,6 @@ add_library(renderer STATIC
     bone_palette.cc
     pose_sampler.cc
     animation_update.cc
-    placement_map.cc
     pipeline.cc
     frame.cc
     hdr_target.cc
