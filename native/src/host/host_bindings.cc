@@ -336,32 +336,36 @@ void frame() {
     // controllers so animation time and texture-flip time are one clock.
     renderer::update_animations(g_world, lookup, now);
 
-    if (!viewer_mode) {
-        g_backdrop_pass->render(g_backdrops, g_camera, *g_pipeline);
-        g_sun_pass->render(g_suns, g_camera, *g_pipeline, now);
+    // Renders the space scene from `cam` into the currently-bound FBO.
+    // for_viewscreen=true skips the cockpit/screen-space effects that make no
+    // sense on (or would corrupt state for) the viewscreen RTT: dust (camera-
+    // anchored smear with cross-frame prev_eye state), lens flares (screen-
+    // space, sized to the main framebuffer), and particles. Order is otherwise
+    // identical to the historical inline block.
+    auto render_space = [&](const scenegraph::Camera& cam, bool for_viewscreen) {
+        g_backdrop_pass->render(g_backdrops, cam, *g_pipeline);
+        g_sun_pass->render(g_suns, cam, *g_pipeline, now);
         g_submitter->submit_opaque_in_pass(
-            g_world, g_camera, *g_pipeline, lookup, g_lighting,
+            g_world, cam, *g_pipeline, lookup, g_lighting,
             scenegraph::Pass::Space, g_decal_game_time);
-
         // Shield pass: additive flash on top of opaque ships. Runs before dust
         // so dust specks appear in front of fading shields (both are additive
         // blends, so order is mostly cosmetic, but dust drawn last keeps it
         // visually on top of any lingering shield fade).
-        if (g_shield_pass) g_shield_pass->submit(g_world, g_camera, *g_pipeline,
-                                                  now, lookup);
+        if (g_shield_pass) g_shield_pass->submit(g_world, cam, *g_pipeline, now, lookup);
+        if (!for_viewscreen && g_dust_pass)
+            g_dust_pass->render(cam, dt, *g_pipeline, g_suns, g_dust_planets);
+        if (!for_viewscreen && g_lens_flare_pass)
+            g_lens_flare_pass->render(g_lens_flares, cam, *g_pipeline, fw, fh, now);
+        if (g_torpedo_pass) g_torpedo_pass->render(g_torpedoes,    cam, *g_pipeline);
+        if (g_phaser_pass)  g_phaser_pass ->render(g_phaser_beams, cam, *g_pipeline);
+        if (g_hit_vfx_pass) g_hit_vfx_pass->render(g_hit_vfx, g_world, cam, *g_pipeline);
+        if (!for_viewscreen && g_particle_pass)
+            g_particle_pass->render(g_particle_emitters, g_world, cam, *g_pipeline);
+    };
 
-        if (g_dust_pass) g_dust_pass->render(g_camera, dt, *g_pipeline,
-                                             g_suns, g_dust_planets);
-
-        if (g_lens_flare_pass) {
-            g_lens_flare_pass->render(g_lens_flares, g_camera, *g_pipeline,
-                                      fw, fh, now);
-        }
-
-        if (g_torpedo_pass) g_torpedo_pass->render(g_torpedoes,    g_camera, *g_pipeline);
-        if (g_phaser_pass)  g_phaser_pass ->render(g_phaser_beams, g_camera, *g_pipeline);
-        if (g_hit_vfx_pass) g_hit_vfx_pass->render(g_hit_vfx, g_world, g_camera, *g_pipeline);
-        if (g_particle_pass) g_particle_pass->render(g_particle_emitters, g_world, g_camera, *g_pipeline);
+    if (!viewer_mode) {
+        render_space(g_camera, /*for_viewscreen=*/false);
     }
 
     if (g_hologram_pass && g_hologram_ship.active)
