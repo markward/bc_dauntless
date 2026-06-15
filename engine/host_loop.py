@@ -1242,34 +1242,65 @@ class _BridgeCamera:
     def __init__(self):
         self.yaw_rad   = self.INITIAL_YAW_RAD
         self.pitch_rad = 0.0
+        # Zoom-into-officer state (step 5a). _zoom_t eases 0 (captain view) ->
+        # 1 (framed on officer). _zoom_target_world is the look-at point (kept
+        # during ease-out until _zoom_t returns to 0). _zoom_active = a target
+        # is currently selected.
+        self._zoom_t = 0.0
+        self._zoom_active = False
+        self._zoom_target_world = None
 
     def _eye_offset(self) -> tuple:
         """Captain's-chair eye, taken from the SDK maincamera at mission load
         (module global _BRIDGE_CAMERA_EYE), config-driven for every bridge."""
         return _BRIDGE_CAMERA_EYE
 
+    @staticmethod
+    def _smoothstep(t: float) -> float:
+        return t * t * (3.0 - 2.0 * t)
+
+    @staticmethod
+    def _lerp(a: float, b: float, t: float) -> float:
+        return a + (b - a) * t
+
+    def set_zoom_target(self, world_xyz, dt: float) -> None:
+        """Select (world_xyz != None) or deselect (None) an officer to zoom
+        onto; advance the ease by dt at rate 1/zoom_time, clamped to [0, 1].
+        Mouse-look is suspended whenever a zoom is in progress (see apply)."""
+        self._zoom_active = world_xyz is not None
+        if world_xyz is not None:
+            self._zoom_target_world = world_xyz
+        step = dt / max(_BRIDGE_ZOOM_TIME, 1e-6)
+        if self._zoom_active:
+            self._zoom_t = min(1.0, self._zoom_t + step)
+        else:
+            self._zoom_t = max(0.0, self._zoom_t - step)
+            if self._zoom_t == 0.0:
+                self._zoom_target_world = None
+
     def apply(self, mouse_dx: float, mouse_dy: float) -> None:
         """Accumulate mouse delta into yaw/pitch with sign conventions:
         right-mouse (+dx) → look-right (-yaw); up-mouse (-dy in screen
         coords) → look-up (+pitch). Pitch clamps; yaw wraps freely."""
+        # Mouse-look is frozen while a zoom is in progress or held — the camera
+        # is framing the officer; it resumes only at the full captain view.
+        if self._zoom_t > 0.0 or self._zoom_active:
+            return
         self.yaw_rad   -= mouse_dx * self.MOUSE_SENSITIVITY
         self.pitch_rad -= mouse_dy * self.MOUSE_SENSITIVITY
         if self.pitch_rad >  self.PITCH_LIMIT_RAD: self.pitch_rad =  self.PITCH_LIMIT_RAD
         if self.pitch_rad < -self.PITCH_LIMIT_RAD: self.pitch_rad = -self.PITCH_LIMIT_RAD
 
     def compute_camera(self) -> tuple:
-        """Return (eye, target, up) as 3-tuples in bridge-local space.
-
-        Bridge geometry is at world identity; the camera is too. No
-        ship_loc / ship_rot coupling — see class docstring.
-        """
+        """Return (eye, target, up, fov_y_rad). Captain view is mouse-look at
+        the SDK eye + base FOV. When an officer is selected the look direction
+        eases toward that officer's world position and the FOV narrows toward
+        FOV_Y_RAD * min_zoom, both over the SDK zoom time. The camera never
+        leaves the chair (eye is fixed)."""
         local_fwd = (0.0, 1.0, 0.0)   # bridge-local +Y
         local_up  = (0.0, 0.0, 1.0)   # bridge-local +Z
 
-        # Yaw around the world-up axis (Z).
         local_fwd = _rot_around(local_fwd, (0.0, 0.0, 1.0), self.yaw_rad)
-
-        # Pitch around the local right axis (forward × up).
         right = (
             local_fwd[1]*local_up[2] - local_fwd[2]*local_up[1],
             local_fwd[2]*local_up[0] - local_fwd[0]*local_up[2],
@@ -1282,12 +1313,26 @@ class _BridgeCamera:
             local_up  = _rot_around(local_up,  right, self.pitch_rad)
 
         eye = self._eye_offset()
-        target = (
-            eye[0] + local_fwd[0],
-            eye[1] + local_fwd[1],
-            eye[2] + local_fwd[2],
-        )
-        return eye, target, local_up
+        fov = self.FOV_Y_RAD * _BRIDGE_ZOOM_MAX
+
+        if self._zoom_t > 0.0 and self._zoom_target_world is not None:
+            e = self._smoothstep(self._zoom_t)
+            dx = self._zoom_target_world[0] - eye[0]
+            dy = self._zoom_target_world[1] - eye[1]
+            dz = self._zoom_target_world[2] - eye[2]
+            dl = _math.sqrt(dx*dx + dy*dy + dz*dz)
+            if dl > 1e-6:
+                ofwd = (dx/dl, dy/dl, dz/dl)
+                bx = self._lerp(local_fwd[0], ofwd[0], e)
+                by = self._lerp(local_fwd[1], ofwd[1], e)
+                bz = self._lerp(local_fwd[2], ofwd[2], e)
+                bl = _math.sqrt(bx*bx + by*by + bz*bz)
+                if bl > 1e-6:
+                    local_fwd = (bx/bl, by/bl, bz/bl)
+            fov = self.FOV_Y_RAD * self._lerp(_BRIDGE_ZOOM_MAX, _BRIDGE_ZOOM_MIN, e)
+
+        target = (eye[0] + local_fwd[0], eye[1] + local_fwd[1], eye[2] + local_fwd[2])
+        return eye, target, local_up, fov
 
 
 def _rot_around(v, axis_xyz, angle_rad):
@@ -3022,8 +3067,9 @@ def run(mission_name: Optional[str] = None,
                     # skip the yaw/pitch advance so the bridge camera
                     # stays frozen alongside the rest of the world.
                     if not pause.is_open:
+                        bridge_camera.set_zoom_target(None, _player_dt)
                         bridge_camera.apply(mouse_dx, mouse_dy)
-                    b_eye, b_target, b_up = bridge_camera.compute_camera()
+                    b_eye, b_target, b_up, b_fov = bridge_camera.compute_camera()
                     # Bridge first-person camera uses separate (eye, target,
                     # up) vectors from the exterior view, so it needs its own
                     # perturb call. The camera_shake module is global state,
@@ -3032,7 +3078,7 @@ def run(mission_name: Optional[str] = None,
                     b_eye, b_target, b_up = camera_shake.perturb(b_eye, b_target, b_up)
                     r.set_bridge_camera(
                         eye=b_eye, target=b_target, up=b_up,
-                        fov_y_rad=_BridgeCamera.FOV_Y_RAD,
+                        fov_y_rad=b_fov,
                         near=_BridgeCamera.NEAR,
                         far=_BridgeCamera.FAR,
                     )

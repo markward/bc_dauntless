@@ -62,7 +62,7 @@ def test_camera_anchored_at_bridge_local_offset():
     global _BRIDGE_CAMERA_EYE. Up is unit length. Target differs from eye."""
     from engine.host_loop import _BridgeCamera
     bc = _BridgeCamera()
-    eye, target, up = bc.compute_camera()
+    eye, target, up, _fov = bc.compute_camera()
     ox, oy, oz = bc._eye_offset()
     assert eye[0] == pytest.approx(ox)
     assert eye[1] == pytest.approx(oy)
@@ -82,7 +82,7 @@ def test_yaw_rotates_forward_in_xy_plane():
     from engine.host_loop import _BridgeCamera
     bc = _BridgeCamera()
     bc.yaw_rad = math.radians(90.0)
-    eye, target, _ = bc.compute_camera()
+    eye, target, _up, _fov = bc.compute_camera()
     fx = target[0] - eye[0]
     fy = target[1] - eye[1]
     assert fx == pytest.approx(-1.0, abs=1e-6)
