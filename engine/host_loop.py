@@ -75,8 +75,8 @@ from engine.appc.subsystems import (
     _is_offline,
     _resolve_bank_aim_world,
     impulse_online_fraction,
-    update_target_list_visibility,
 )
+from engine.ui.target_list_visibility import update_target_list_visibility
 
 _alert_listener: "AlertAudioListener" = AlertAudioListener()
 

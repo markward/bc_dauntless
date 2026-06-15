@@ -2,7 +2,8 @@
 and the AI candidate-selection gate."""
 import App
 from engine.appc.ships import ShipClass_Create
-from engine.appc.subsystems import SensorSubsystem, update_target_list_visibility
+from engine.appc.subsystems import SensorSubsystem
+from engine.ui.target_list_visibility import update_target_list_visibility
 from engine.appc.sensor_detection import (
     FALLBACK_RANGE_GU, effective_sensor_range, can_detect,
     observing, current_observing_ship,

@@ -23,7 +23,7 @@ def _setup_game_with_player():
 
 
 def test_in_range_ship_remains_visible():
-    from engine.appc.subsystems import update_target_list_visibility
+    from engine.ui.target_list_visibility import update_target_list_visibility
 
     App._reset_target_menu_singleton()
     target_menu = App.STTargetMenu_CreateW("Targets")
@@ -41,7 +41,7 @@ def test_in_range_ship_remains_visible():
 
 
 def test_out_of_range_ship_becomes_invisible():
-    from engine.appc.subsystems import update_target_list_visibility
+    from engine.ui.target_list_visibility import update_target_list_visibility
 
     App._reset_target_menu_singleton()
     target_menu = App.STTargetMenu_CreateW("Targets")
@@ -60,7 +60,7 @@ def test_out_of_range_ship_becomes_invisible():
 
 def test_ship_pops_back_when_back_in_range():
     """Out → in transition flips visibility back to 1."""
-    from engine.appc.subsystems import update_target_list_visibility
+    from engine.ui.target_list_visibility import update_target_list_visibility
 
     App._reset_target_menu_singleton()
     target_menu = App.STTargetMenu_CreateW("Targets")

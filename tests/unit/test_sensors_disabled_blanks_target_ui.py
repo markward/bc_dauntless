@@ -102,7 +102,7 @@ def test_affiliation_restored_after_repair():
 def test_update_visibility_hides_all_rows_when_sensors_offline():
     """When player sensors offline, every row in the target menu goes
     invisible — radar and target-list views read this via row.IsVisible()."""
-    from engine.appc.subsystems import update_target_list_visibility
+    from engine.ui.target_list_visibility import update_target_list_visibility
 
     _, player, enemy, sensors, _ = _setup()
     target_menu = App.STTargetMenu_CreateW("Targets")
@@ -120,7 +120,7 @@ def test_update_visibility_hides_all_rows_when_sensors_offline():
 
 
 def test_update_visibility_restores_after_sensor_repair():
-    from engine.appc.subsystems import update_target_list_visibility
+    from engine.ui.target_list_visibility import update_target_list_visibility
 
     _, player, enemy, sensors, _ = _setup()
     target_menu = App.STTargetMenu_CreateW("Targets")
