@@ -7,6 +7,25 @@ dependencies = []
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
 
+[tool.pytest.ini_options]
+# Scope collection to the real suite. Without this, bare `uv run pytest`
+# collects from the project root and its scope depends entirely on pytest's
+# built-in `norecursedirs` defaults to skip `build/` (pybind11's own
+# numpy/eigen-allocating tests) and dot-dirs (the duplicate `tests/` tree
+# under `.claude/worktrees/`). A git worktree created without a dot prefix at
+# the project root would otherwise make pytest collect the suite twice-over
+# in one process — the historical trigger behind the >100 GB full-suite OOM
+# (see docs/test-suite-memory.md). testpaths makes the scope deterministic
+# and rootdir-independent.
+testpaths = ["tests"]
+# norecursedirs REPLACES pytest's defaults, so re-list them and add the
+# heavy project trees (gitignored game/ + sdk/ BC installs, the native build
+# tree, vendored deps) as defense for explicit-path runs like `pytest .`.
+norecursedirs = [
+    "*.egg", ".*", "_darcs", "build", "CVS", "dist", "node_modules",
+    "venv", "{arch}", "game", "sdk", "native",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["engine"]
 
