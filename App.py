@@ -106,6 +106,7 @@ from engine.appc.actions import (
     TGSequence, TGSequence_Create, TGSequence_Cast,
     TGTimedAction, TGSoundAction, TGSoundAction_Create,
     TGAnimAction, TGAnimAction_Create,
+    TGAnimPosition, TGAnimPosition_Create,
     SubtitleAction, SubtitleAction_Create,
     TGActionManager,
     TGActionManager_RegisterAction, TGActionManager_UnregisterAction,
