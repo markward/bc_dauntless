@@ -39,6 +39,45 @@ from engine.audio.engine_rumble import install_engine_rumble_listener
 # init_audio so engine rumble + alert names resolve before first spawn.
 from engine.audio.tg_sound import TGSoundManager, register_default_sounds  # noqa: F401
 
+# ── Per-frame imports (hoisted from function bodies; cleanup issue #2) ─────────
+# These names are used on the 60 Hz tick/render path. They were originally
+# imported inside their functions; hoisting is code-hygiene (a per-tick
+# sys.modules dict hit removed). None of these modules import host_loop at load
+# time, so there is no circular-import back-edge.
+# NOTE: `import App` is intentionally NOT hoisted here. Importing the App
+# shim at host_loop module-load time perturbs sound-manager init order so
+# AmbBridge loads early during LoadBridge.Load (breaks a bridge-load test).
+# Kept deferred inside _poll_mouse_buttons / _poll_function_keys.
+from engine.audio.engine_rumble import update_positions, set_muted as _rumble_set_muted
+from engine.audio.bridge_ambient import set_active as _bridge_ambient_set
+from engine.ui import crew_menu_hotkeys
+from engine.core.game import Game_GetCurrentGame
+from engine.appc import (
+    projectiles,
+    hit_vfx,
+    particles,
+    ship_death,
+    subsystem_emitters,
+    camera_shake,
+    hit_feedback,
+    combat,
+)
+# combat is imported as a module (not `from combat import apply_hit`) so call
+# sites read combat.apply_hit at call time — tests monkeypatch that attribute.
+from engine.appc.sensor_detection import can_detect
+from engine.appc.math import TGPoint3, TGMatrix3
+from engine.appc.ships import ShipClass
+from engine.appc.ship_death import _out_of_action as _oa
+from engine.appc.ship_motion import _effective_motion, _cap_keep, _asymptote_step
+from engine.appc.subsystems import (
+    TorpedoTube,
+    _emitter_in_arc,
+    _is_offline,
+    _resolve_bank_aim_world,
+    impulse_online_fraction,
+    update_target_list_visibility,
+)
+
 _alert_listener: "AlertAudioListener" = AlertAudioListener()
 
 
@@ -70,7 +109,6 @@ def tick_audio(*, camera_position, camera_forward, camera_up, dt, player) -> Non
         return
     # Push ship positions to looping rumble sources before set_listener,
     # so positional math sees up-to-date source positions.
-    from engine.audio.engine_rumble import update_positions
     update_positions()
     px, py, pz = camera_position
     fx, fy, fz = camera_forward
@@ -171,7 +209,7 @@ def _poll_mouse_buttons(host) -> None:
     """
     if host is None or not hasattr(host, "mouse_button_pressed"):
         return
-    import App
+    import App  # deferred: module-top import reorders sound-manager init
     # PR 2c re-enables left-click (phasers) alongside right-click
     # (torpedoes).  Middle-click is still out of scope — tractor beam is
     # deferred to a future PR.
@@ -203,7 +241,7 @@ def _poll_function_keys(host) -> None:
     keys = getattr(host, "keys", None)
     if keys is None or not hasattr(keys, "KEY_F1"):
         return
-    import App
+    import App  # deferred: module-top import reorders sound-manager init
     for glfw_key, wc in (
         (keys.KEY_F1, App.WC_F1),
         (keys.KEY_F2, App.WC_F2),
@@ -228,7 +266,6 @@ def _advance_weapons(ships, dt: float) -> None:
     included — their AI scripts call StartFiring expecting charged
     emitters.
     """
-    from engine.appc.subsystems import TorpedoTube
     for ship in ships:
         for group in (
             ship.GetPhaserSystem(),
@@ -285,9 +322,6 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
     apply_hit so hit_feedback.dispatch can fire host.shield_hit on the
     SHIELD severity path.
     """
-    from engine.appc import projectiles, hit_vfx
-    from engine.appc.combat import apply_hit, _resolve_hit_point
-
     ships_list = list(ships)
 
     hits = projectiles.update_all(
@@ -295,20 +329,16 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
         host=host, ship_instances=ship_instances,
     )
     for torpedo, ship, hit_point, hit_normal in hits:
-        apply_hit(ship, torpedo._damage, hit_point,
+        combat.apply_hit(ship, torpedo._damage, hit_point,
                   source=torpedo._source_ship,
                   normal=hit_normal, host=host, ship_instances=ship_instances,
                   weapon_type="torpedo",
                   hardpoint_weapon=torpedo)
 
     hit_vfx.update_ages(dt)
-    from engine.appc import particles
     particles.advance(dt)
-    from engine.appc import ship_death
     ship_death.advance(dt)
-    from engine.appc import subsystem_emitters
     subsystem_emitters.pump(ships_list, _camera_world_pos(host), dt)
-    from engine.appc import camera_shake
     camera_shake.update(dt)
 
     # Continuous phaser damage tick.  Each ship's PhaserSystem has banks
@@ -316,9 +346,6 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
     # stop drifters), compute distance falloff, and route damage through
     # apply_hit (which routes shields → subsystem → hull, calls
     # hit_feedback.dispatch, and broadcasts WeaponHitEvent).
-    from engine.appc.subsystems import _emitter_in_arc, _is_offline, _resolve_bank_aim_world
-    from engine.appc.sensor_detection import can_detect
-    from engine.appc.math import TGPoint3
     for ship in ships_list:
         sys_ = ship.GetPhaserSystem() if hasattr(ship, "GetPhaserSystem") else None
         if sys_ is None:
@@ -385,14 +412,14 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
                 dt=dt,
             )
             if damage > 0:
-                impact_point, impact_normal = _resolve_hit_point(
+                impact_point, impact_normal = combat._resolve_hit_point(
                     host=host, ship_instances=ship_instances, ship=target,
                     ray_origin=emitter_pos,
                     ray_direction=(aim_unit if dist > 1e-6 else None),
                     max_dist=(dist * 1.5 if dist > 1e-6 else 0.0),
                     fallback_point=target_pos,
                 )
-                apply_hit(target, damage, impact_point,
+                combat.apply_hit(target, damage, impact_point,
                           source=ship,
                           normal=impact_normal,
                           host=host, ship_instances=ship_instances,
@@ -440,7 +467,6 @@ def _resolve_game_texture(path: str) -> str:
 
 def _build_torpedo_render_data():
     """Convert projectiles._active into the dict shape set_torpedoes expects."""
-    from engine.appc import projectiles
     out = []
     for t in projectiles._active:
         out.append({
@@ -465,7 +491,6 @@ def _build_torpedo_render_data():
 
 
 def _build_hit_vfx_render_data():
-    from engine.appc import hit_vfx
     out = []
     for entry in hit_vfx.snapshot():
         pos = entry["position"]
@@ -504,7 +529,6 @@ def _build_particle_render_data(ship_instances=None):
     used by set_hit_vfx). When None, emitters render unattached at their
     world emit_pos (instance_id will be None in every descriptor).
     """
-    from engine.appc import particles
 
     def _resolve_emit_attach(emit_from):
         """Map a controller's emit-from object to its renderer instance id +
@@ -547,7 +571,6 @@ def _build_phaser_beam_render_data(ships, host=None, ship_instances=None):
     clipped to the mesh-trace surface point so the visible beam ends on
     the target's hull rather than at its bounding-sphere centre.
     """
-    from engine.appc.combat import _resolve_hit_point
     out = []
     for ship in ships:
         sys_ = ship.GetPhaserSystem() if hasattr(ship, "GetPhaserSystem") else None
@@ -578,11 +601,10 @@ def _build_phaser_beam_render_data(ships, host=None, ship_instances=None):
             # rendered beam terminates on the hull surface (not at the
             # bounding-sphere centre).
             if raw_length > 1e-6 and host is not None and ship_instances is not None:
-                from engine.appc.math import TGPoint3
                 aim_unit = TGPoint3(dx / raw_length,
                                     dy / raw_length,
                                     dz / raw_length)
-                clipped, _clipped_normal = _resolve_hit_point(
+                clipped, _clipped_normal = combat._resolve_hit_point(
                     host=host, ship_instances=ship_instances, ship=target,
                     ray_origin=emitter_pos,
                     ray_direction=aim_unit,
@@ -642,8 +664,7 @@ def _all_ships_for_tick():
     ShipClass instances only.
     """
     try:
-        from engine.appc.ship_iter import iter_ships
-        return iter_ships()
+        return _iter_ships()
     except Exception:
         return iter(())
 
@@ -716,7 +737,6 @@ def _apply_alert_keys(h, player) -> None:
     """
     if player is None or not _shift_held(h):
         return
-    from engine.appc.ships import ShipClass
     keys = h.keys
     if h.key_pressed(keys.KEY_1):
         player.SetAlertLevel(ShipClass.GREEN_ALERT)
@@ -891,7 +911,6 @@ class _PlayerControl:
         are zero."""
         if not (pitch_rate or yaw_rate or roll_rate):
             return
-        from engine.appc.math import TGMatrix3, TGPoint3
         R = player.GetWorldRotation()
         R_pitch = TGMatrix3(); R_pitch.MakeRotation(pitch_rate * dt, TGPoint3(1.0, 0.0, 0.0))
         R_yaw   = TGMatrix3(); R_yaw.MakeRotation(yaw_rate   * dt, TGPoint3(0.0, 0.0, 1.0))
@@ -950,12 +969,6 @@ class _PlayerControl:
                     break
 
         # ── Engine effectiveness for this tick (spec 2026-06-10) ─────────
-        from engine.appc.subsystems import impulse_online_fraction
-        from engine.appc.ship_motion import (
-            _effective_motion, _cap_keep, _asymptote_step,
-        )
-        from engine.appc.math import TGPoint3
-
         ies = self._get_ies(player)
         f = impulse_online_fraction(ies)
 
@@ -1128,19 +1141,15 @@ def _apply_view_mode_side_effects(view_mode: "_ViewModeController", h) -> None:
     h.set_cursor_locked(target)
     # Engine rumble is direct radiation from each ship — silenced when
     # the player is inside the bridge.
-    from engine.audio.engine_rumble import set_muted as _rumble_set_muted
     _rumble_set_muted(target)
     # Bridge ambient hum (AmbBridge): start when entering, stop when
     # leaving. Mirrors LoadBridge.py:213-217's play-at-load behaviour
     # but gated on view mode so it only sounds when the player is
     # actually on the bridge.
-    from engine.audio.bridge_ambient import set_active as _bridge_ambient_set
     _bridge_ambient_set(target)
     # View-mode change — drop any leftover camera-shake energy so
     # the new view doesn't inherit a rumble from the old one.
-    from engine.appc import camera_shake
     camera_shake.reset()
-    from engine.appc import hit_feedback
     hit_feedback.reset_audio_throttle()
     view_mode._last_synced_is_bridge = target
 
@@ -1441,7 +1450,6 @@ def _active_zoom_officer_world(crew_menu_panel, r):
     label = crew_menu_panel.open_menu_label()
     if not label:
         return None
-    from engine.ui import crew_menu_hotkeys
     off = crew_menu_hotkeys.resolve_character(label)
     if off is None:
         return None
@@ -2408,7 +2416,6 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
     # real iid (never None) at runtime.
     _player_iid = session.ship_instances.get(player)
     _live_ship_iids = []
-    from engine.appc.ship_death import _out_of_action as _oa
     for ship, iid in session.ship_instances.items():
         _wg = session.ship_glow_controllers.get(iid)
         if _wg is not None:
@@ -2879,12 +2886,10 @@ def run(mission_name: Optional[str] = None,
                 # player's spatial set (e.g. "Biranu1"), not the
                 # bridge set (which holds bridge-interior objects).
                 _menu = App.STTargetMenu_GetTargetMenu()
-                from engine.core.game import Game_GetCurrentGame
                 _game = Game_GetCurrentGame()
                 _player = _game.GetPlayer() if _game is not None else None
                 _player_set = getattr(_player, "_containing_set", None) if _player is not None else None
                 if _menu is not None and _player is not None and _player_set is not None:
-                    from engine.appc.subsystems import update_target_list_visibility
                     update_target_list_visibility(
                         _menu, _player_set.GetObjectList(), _player
                     )
