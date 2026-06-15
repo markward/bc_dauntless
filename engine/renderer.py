@@ -279,6 +279,27 @@ def create_bridge_instance(model: int) -> InstanceId:
     return _h.create_bridge_instance(model)
 
 
+def assemble_officer(body_nif: str, head_nif: str,
+                     body_tex=None, head_tex=None,
+                     placement_nif=None, sample_at_start: bool = False) -> int:
+    """SP3: compose a bridge officer from a body NIF + head NIF (head grafted
+    onto the body's 'Bip01 Head' bone), overriding the body/head Base textures,
+    and load placement_nif's clip into the composed model's animations[0].
+    Returns a ModelHandle. The caller plays the clip via set_instance_animation.
+    """
+    return _h.assemble_officer(body_nif, head_nif, body_tex, head_tex,
+                               placement_nif, sample_at_start)
+
+
+def set_instance_animation(iid: InstanceId, clip_index: int,
+                           loop: bool = False,
+                           sample_at_start: bool = False) -> None:
+    """SP2: play model.animations[clip_index] on this instance through the GPU
+    bone palette. loop=False plays once and holds the last frame;
+    sample_at_start holds frame 0 instead (for move-from-station clips)."""
+    _h.set_instance_animation(iid, clip_index, loop, sample_at_start)
+
+
 def set_bridge_camera(eye: Tuple[float, float, float],
                       target: Tuple[float, float, float],
                       up: Tuple[float, float, float],
