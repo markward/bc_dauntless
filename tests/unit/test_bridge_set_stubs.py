@@ -71,7 +71,13 @@ def test_camera_get_object_returns_added_camera():
     assert ZoomCameraObjectClass_GetObject(bs, "maincamera") is cam
 
 
-def test_model_manager_load_model_is_loud_but_noop():
+def test_model_manager_load_model_records_env_and_is_not_loud():
     mm = ModelManager()
-    assert mm.LoadModel("DBridge.nif", None, "env/") is None
-    assert "g_kModelManager.LoadModel" in st.fired()
+    # Real now: records the texture/env path, returns None, and is NOT a
+    # loud stub (it must drop off the bridge-stub summary in step 3).
+    assert mm.LoadModel("data/Models/Sets/DBridge/DBridge.nif", None,
+                        "data/Models/Sets/DBridge/High/") is None
+    assert "g_kModelManager.LoadModel" not in st.fired()
+    assert mm.env_for("data/Models/Sets/DBridge/DBridge.nif") == \
+        "data/Models/Sets/DBridge/High/"
+    assert mm.env_for("missing.nif") is None

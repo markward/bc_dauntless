@@ -65,9 +65,20 @@ class ZoomCameraObjectClass(_LoudStub):
 
 
 class ModelManager:
+    """Real (no longer a loud stub): our renderer loads NIFs lazily at instance
+    creation, host-side. LoadModel's faithful equivalent is to remember the
+    texture/env path the SDK pre-loads each NIF with, so the host can search the
+    right detail directory (Low/Medium/High) when it realizes the mesh. It loads
+    nothing into the renderer itself."""
+    def __init__(self):
+        self._env = {}                       # nif path -> texture/env path
+
     def LoadModel(self, path, a=None, env=None):
-        _stub_trace.stub_call("g_kModelManager.LoadModel", "path=%s" % path)
+        self._env[path] = env
         return None
+
+    def env_for(self, path):
+        return self._env.get(path)
 
 
 class BridgeSet(SetClass):
