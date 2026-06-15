@@ -774,23 +774,16 @@ IDENTITY_MAT4 = [
 # Until then identity prioritises correct seating. Row-major.
 OFFICER_TRANSFORM = list(IDENTITY_MAT4)
 
-# Captain's-chair camera position in bridge-local NIF space, per
-# Bridge.<X>.GetBaseCameraPosition() in the SDK scripts. Mirrors
-# sdk/Build/scripts/Bridge/GalaxyBridge.py:84 and SovereignBridge.py:80.
-# Used by _BridgeCamera at compute time; resolved per frame against
-# _CURRENT_BRIDGE_NAME so a bridge swap is picked up without
-# rebuilding the camera.
-_BRIDGE_CAMERA_OFFSETS: dict[str, tuple[float, float, float]] = {
-    "GalaxyBridge":    (0.683736, 86.978439, 50.0),
-    "SovereignBridge": (0.683736, 129.585,   70.678),
-}
-
-# The bridge config name (e.g. "GalaxyBridge") the active mission's
-# LoadBridge.Load set on the bridge SetClass. Cached once per mission load
-# (see _after_mission_loaded) so the per-frame camera offset lookup does not
-# poll the loud-stubbed BridgeSet.GetConfig() every frame. Replaces the
-# shim's LoadBridge.LAST_REQUESTED.
-_CURRENT_BRIDGE_NAME: str = "GalaxyBridge"
+# Captain's-chair eye position + zoom params, taken from the SDK
+# ZoomCameraObjectClass ("maincamera") at mission load (see
+# _after_mission_loaded). Defaults are GalaxyBridge's create-time values; the
+# host overwrites them per bridge — config-driven for every bridge.
+# The zoom params are FOV multipliers + seconds consumed by _BridgeCamera's
+# zoom state machine.
+_BRIDGE_CAMERA_EYE: tuple = (0.683736, 86.978439, 50.0)
+_BRIDGE_ZOOM_MIN: float = 1.0     # SDK GetMinZoom — zoomed-in FOV factor
+_BRIDGE_ZOOM_MAX: float = 1.0     # SDK GetMaxZoom — captain FOV factor
+_BRIDGE_ZOOM_TIME: float = 0.0    # SDK GetZoomTime — ease duration (seconds)
 
 # Lighting defaults — used by both the per-tick fallback (when no active set
 # has lights) and as the conceptual source of truth that the C++
@@ -1233,11 +1226,6 @@ class _BridgeCamera:
     let mouse-look + visual iteration discover the right default.
     """
 
-    # Captain's-chair offset used when _CURRENT_BRIDGE_NAME isn't in
-    # the per-bridge table. Mirrors GalaxyBridge.GetBaseCameraPosition()
-    # — sdk/Build/scripts/Bridge/GalaxyBridge.py:84.
-    DEFAULT_BRIDGE_OFFSET = (0.683736, 86.978439, 50.0)
-
     # PoC starting values; tuned by feel during visual verification.
     NEAR              = 1.0
     FAR               = 800.0
@@ -1256,12 +1244,9 @@ class _BridgeCamera:
         self.pitch_rad = 0.0
 
     def _eye_offset(self) -> tuple:
-        """Resolve the per-bridge captain's-chair offset from the cached
-        bridge name (_CURRENT_BRIDGE_NAME, set at mission load). Called every
-        frame; reads the cache rather than polling the loud-stubbed
-        BridgeSet.GetConfig()."""
-        return _BRIDGE_CAMERA_OFFSETS.get(_CURRENT_BRIDGE_NAME,
-                                          self.DEFAULT_BRIDGE_OFFSET)
+        """Captain's-chair eye, taken from the SDK maincamera at mission load
+        (module global _BRIDGE_CAMERA_EYE), config-driven for every bridge."""
+        return _BRIDGE_CAMERA_EYE
 
     def apply(self, mouse_dx: float, mouse_dy: float) -> None:
         """Accumulate mouse delta into yaw/pitch with sign conventions:
@@ -2353,16 +2338,20 @@ def run(mission_name: Optional[str] = None,
         def _after_mission_loaded():
             # The mission's own StartMission calls the real SDK
             # LoadBridge.Load(name) during loader.load(), creating the "bridge"
-            # SetClass + crew via the SDK path against loud stubs. Cache the
-            # bridge config name for the camera, then print the loud stub
-            # summary so the still-unimplemented SDK surface is visible.
-            global _CURRENT_BRIDGE_NAME
+            # SetClass + crew via the SDK path against loud stubs. Realize the
+            # bridge objects below, then print the loud stub summary so any
+            # still-unimplemented SDK surface is visible.
+            # Step 5a: take the captain's-chair eye + zoom params from the SDK
+            # maincamera (config-driven; replaces the hardcoded offsets table).
+            global _BRIDGE_CAMERA_EYE, _BRIDGE_ZOOM_MIN, _BRIDGE_ZOOM_MAX, _BRIDGE_ZOOM_TIME
             import App as _App
             _bridge = _App.g_kSetManager.GetSet("bridge")
-            if _bridge is not None and hasattr(_bridge, "GetConfig"):
-                _name = _bridge.GetConfig() or ""
-                if _name:
-                    _CURRENT_BRIDGE_NAME = _name
+            _cam = _bridge.GetCamera("maincamera") if _bridge is not None else None
+            if _cam is not None and hasattr(_cam, "position"):
+                _BRIDGE_CAMERA_EYE = _cam.position
+                _BRIDGE_ZOOM_MIN = _cam.GetMinZoom()
+                _BRIDGE_ZOOM_MAX = _cam.GetMaxZoom()
+                _BRIDGE_ZOOM_TIME = _cam.GetZoomTime()
             # Realize the SDK-created bridge object into a render instance
             # (replaces the deleted eager startup load).
             _realize_bridge_model(controller, r)

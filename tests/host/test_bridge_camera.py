@@ -58,8 +58,8 @@ def test_yaw_wraps_freely_no_clamp():
 
 def test_camera_anchored_at_bridge_local_offset():
     """Initial yaw (π) makes the default forward -Y. Eye sits at the
-    per-bridge captain's-chair offset resolved against the cached
-    _CURRENT_BRIDGE_NAME. Up is unit length. Target differs from eye."""
+    per-bridge captain's-chair offset from the SDK-camera-derived module
+    global _BRIDGE_CAMERA_EYE. Up is unit length. Target differs from eye."""
     from engine.host_loop import _BridgeCamera
     bc = _BridgeCamera()
     eye, target, up = bc.compute_camera()
@@ -96,3 +96,12 @@ def test_compute_camera_takes_no_ship_args():
     bc = _BridgeCamera()
     # Would raise TypeError if compute_camera still required ship args.
     bc.compute_camera()
+
+
+def test_eye_offset_reads_module_global(monkeypatch):
+    """Step 5a: the captain eye comes from the SDK-camera-derived module
+    global, not a hardcoded per-bridge table."""
+    import engine.host_loop as hl
+    from engine.host_loop import _BridgeCamera
+    monkeypatch.setattr(hl, "_BRIDGE_CAMERA_EYE", (1.0, 2.0, 3.0))
+    assert _BridgeCamera()._eye_offset() == (1.0, 2.0, 3.0)
