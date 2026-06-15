@@ -40,6 +40,18 @@ public:
     /// once per tick with time.monotonic().
     void set_wall_time(double t) { wall_time_ = t; }
 
+    /// Identify the viewscreen instance by its model handle and supply the
+    /// render-to-texture color texture to draw on it. When a Pass::Bridge
+    /// instance's model_handle matches the registered viewscreen handle and
+    /// the texture is non-zero, the base sub-pass binds `tex` as u_base_color
+    /// and forces full emissive (so the feed isn't dimmed by bridge ambient).
+    /// tex==0 (the default) restores the instance's authored NIF texture —
+    /// the step-5b blank panel.
+    void set_viewscreen_model(unsigned long long model_handle) {
+        viewscreen_model_handle_ = model_handle;
+    }
+    void set_viewscreen_texture(unsigned int tex) { viewscreen_tex_ = tex; }
+
 private:
     /// Lazily-allocated 1x1 white texture, used as a fallback for any
     /// bridge mesh whose Base-stage texture failed to load. Same role
@@ -48,6 +60,8 @@ private:
     std::uint32_t white_texture_ = 0;
     std::uint32_t ensure_white_texture();
     double wall_time_ = 0.0;
+    unsigned long long viewscreen_model_handle_ = 0;
+    unsigned int       viewscreen_tex_ = 0;
 };
 
 }  // namespace renderer
