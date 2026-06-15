@@ -77,7 +77,7 @@ Anything else that fails to import after deletion is in scope to fix as part of 
 
 ### Documentation touch-ups
 
-- `CLAUDE.md` "Key reference material" table — remove the row for `engine/ui/` + `docs/project/superpowers/specs/2026-05-11-ui-components-design.md`. The space-dust row stays (dust_pass is renderer code, not UI).
+- `CLAUDE.md` "Key reference material" table — remove the row for `engine/ui/` + `docs/superpowers/specs/2026-05-11-ui-components-design.md`. The space-dust row stays (dust_pass is renderer code, not UI).
 - `THIRD_PARTY_NOTICES.md` — remove the RmlUi entry if present.
 
 ## What stays untouched

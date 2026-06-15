@@ -8,7 +8,7 @@
 
 **Tech Stack:** C++17, GLFW, RmlUi (already linked), GTest for native unit tests. Python harness for end-to-end behaviour checks via the existing `_h.consume_scroll_y` path.
 
-**Spec:** [docs/project/superpowers/specs/2026-05-12-scrollable-target-list-design.md](../specs/2026-05-12-scrollable-target-list-design.md).
+**Spec:** [docs/superpowers/specs/2026-05-12-scrollable-target-list-design.md](../specs/2026-05-12-scrollable-target-list-design.md).
 
 ---
 

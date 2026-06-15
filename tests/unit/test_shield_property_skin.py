@@ -2,7 +2,7 @@
 
 Originally this file pinned the TGModelProperty data-bag storage format
 because SkinShielding had no explicit accessor on ShieldProperty.  After
-the render-prop promotion (docs/project/superpowers/specs/2026-05-12-shield-render-props-design.md)
+the render-prop promotion (docs/superpowers/specs/2026-05-12-shield-render-props-design.md)
 SkinShielding is a real attribute, and these tests pin the new interface:
 that hardpoint scripts opting in via App.ShieldProperty_Create(...).SetSkinShielding(1)
 end up with GetSkinShielding() == 1 on the property the renderer sees.

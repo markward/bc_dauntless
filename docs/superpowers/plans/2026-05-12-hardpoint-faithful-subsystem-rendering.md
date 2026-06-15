@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3, pytest. SDK scripts load via `tools/mission_harness._SDKFinder`. No native changes.
 
-**Spec:** [docs/project/superpowers/specs/2026-05-12-hardpoint-faithful-subsystem-rendering-design.md](../specs/2026-05-12-hardpoint-faithful-subsystem-rendering-design.md).
+**Spec:** [docs/superpowers/specs/2026-05-12-hardpoint-faithful-subsystem-rendering-design.md](../specs/2026-05-12-hardpoint-faithful-subsystem-rendering-design.md).
 
 ---
 

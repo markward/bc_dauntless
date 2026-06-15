@@ -153,7 +153,7 @@ def aggregate_suns_for_renderer(project_root, pSets):
     The corona is rendered as a thin 1.1x halo around the body. SDK
     atmosphere_thickness is gameplay-only (Planet.AtmosphereRadius is the
     AI keep-out / damage zone) and is NOT used for visual sizing. See
-    docs/project/superpowers/specs/2026-05-28-sun-render-fidelity-design.md.
+    docs/superpowers/specs/2026-05-28-sun-render-fidelity-design.md.
 
     flare_texture_path resolves the Sun's _flare_texture (5th arg to
     Sun_Create). Empty string when unset OR when the file is missing on

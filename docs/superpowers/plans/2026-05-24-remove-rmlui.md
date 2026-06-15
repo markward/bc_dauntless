@@ -872,7 +872,7 @@ git commit -m "build: drop native/assets/ui directory"
 Find the row in the "Key reference material" table (in `CLAUDE.md`):
 
 ```markdown
-| UI components | `engine/ui/`, `docs/project/superpowers/specs/2026-05-11-ui-components-design.md` | Reusable Button + CollapsibleList; theme registries mirror LoadInterface.py |
+| UI components | `engine/ui/`, `docs/superpowers/specs/2026-05-11-ui-components-design.md` | Reusable Button + CollapsibleList; theme registries mirror LoadInterface.py |
 ```
 
 Delete the entire row.

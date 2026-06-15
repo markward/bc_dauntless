@@ -1,6 +1,6 @@
 """TGModelProperty hierarchy + manager.
 
-See docs/project/superpowers/specs/2026-05-08-model-property-manager-design.md.
+See docs/superpowers/specs/2026-05-08-model-property-manager-design.md.
 """
 
 

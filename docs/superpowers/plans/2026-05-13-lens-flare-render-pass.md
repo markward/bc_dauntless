@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3 (engine), CPython embedded via pybind11, OpenGL 3.3 core / GLSL 330, GoogleTest (C++ tests), pytest (Python tests), CMake.
 
-**Spec:** [docs/project/superpowers/specs/2026-05-12-lens-flare-render-pass-design.md](../specs/2026-05-12-lens-flare-render-pass-design.md)
+**Spec:** [docs/superpowers/specs/2026-05-12-lens-flare-render-pass-design.md](../specs/2026-05-12-lens-flare-render-pass-design.md)
 
 ---
 

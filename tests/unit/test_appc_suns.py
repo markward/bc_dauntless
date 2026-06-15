@@ -122,7 +122,7 @@ def test_aggregate_corona_radius_is_1_1x_radius(tmp_path):
     """corona_radius is body_radius * 1.1, independent of atmosphere_thickness.
 
     atmosphere_thickness is a gameplay parameter (AI keep-out radius) — not
-    a visual size. See docs/project/superpowers/specs/2026-05-28-sun-render-fidelity-design.md.
+    a visual size. See docs/superpowers/specs/2026-05-28-sun-render-fidelity-design.md.
     """
     import App
     from engine.appc.planet import aggregate_suns_for_renderer, Sun_Create

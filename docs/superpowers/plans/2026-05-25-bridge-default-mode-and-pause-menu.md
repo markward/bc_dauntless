@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python (engine/host_loop.py), pybind11 + CEF (native/src/host/host_bindings.cc, native/src/ui_cef/cef_lifecycle.{h,cc}), HTML/CSS (native/assets/ui-cef/), pytest.
 
-**Spec:** [docs/project/superpowers/specs/2026-05-25-bridge-default-mode-and-pause-menu-design.md](../../project/superpowers/specs/2026-05-25-bridge-default-mode-and-pause-menu-design.md)
+**Spec:** [docs/superpowers/specs/2026-05-25-bridge-default-mode-and-pause-menu-design.md](../specs/2026-05-25-bridge-default-mode-and-pause-menu-design.md)
 
 ---
 

@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3, pytest. SDK scripts run via `tools/mission_harness._SDKFinder`. Math primitives in `engine/appc/math.py`.
 
-**Spec:** [docs/project/superpowers/specs/2026-05-12-object-emitter-emission-design.md](../specs/2026-05-12-object-emitter-emission-design.md).
+**Spec:** [docs/superpowers/specs/2026-05-12-object-emitter-emission-design.md](../specs/2026-05-12-object-emitter-emission-design.md).
 
 ---
 
@@ -917,7 +917,7 @@ Replaces Actions.ShipScriptActions.LaunchObject with a wrapper that
 resolves the right emitter on the ship's PropertySet, computes the
 world-frame position and orientation, and records the event in
 App._emission_recorder. No real spawning — Layer 3 of the emission
-design (see docs/project/superpowers/specs/2026-05-12-object-emitter-emission-design.md).
+design (see docs/superpowers/specs/2026-05-12-object-emitter-emission-design.md).
 
 Install once at harness setup:
     from engine.appc.emission import install_launch_object_hook
