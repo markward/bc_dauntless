@@ -751,25 +751,28 @@ IDENTITY_MAT4 = [
     0.0, 0.0, 0.0, 1.0,
 ]
 
-# Officer instance world transform — the SP2-validated negate-X-basis identity
-# (det<0). BC character NIFs are authored in a left-handed model frame; the
-# renderer runs glFrontFace(GL_CW) and assumes det<0 world matrices, so plain
-# identity would render the body inside-out AND mirrored. Negating the X basis
-# axis mirrors the body into the renderer's right-handed world (matching ships)
-# and gives the correct station pose. The placement clip's root track carries
-# the per-station offset, so NO per-officer translation is set here — officers
-# sit in bridge-set identity space like the bridge mesh.
+# Officer instance world transform — IDENTITY (bridge-set space, the same frame
+# as the bridge mesh, which _realize_bridge_model also places at identity).
 #
-# This is the live-tuning anchor: the X-flip assumption lived in the replaced
-# placement layer, so re-verify orientation against the real SDK poses with
-# Mark and tune this single matrix if needed. Row-major; set_world_transform
-# transposes on input.
-OFFICER_TRANSFORM = [
-    -1.0, 0.0, 0.0, 0.0,
-     0.0, 1.0, 0.0, 0.0,
-     0.0, 0.0, 1.0, 0.0,
-     0.0, 0.0, 0.0, 1.0,
-]
+# Why NOT the negate-X-basis flip the replaced placement layer assumed: in this
+# renderer u_model multiplies the whole posed vertex (gl_Position =
+# proj·view·u_model·skin·v in skinned_bridge.vert), and the placement clip's
+# root track bakes the STATION translation into `skin`. An X-flip u_model
+# therefore mirrors not just the body geometry but the station position across
+# the bridge centerline, dropping laterally-offset officers (the Commander/XO)
+# into their mirror-image seat (the guest chair) — the symptom seen in live
+# verify. Ships avoid this because their world translation rides in the matrix's
+# 4th column (unflipped); an officer's station translation does not — it is
+# inside the palette. The skinned bridge sub-pass disables back-face culling
+# (bridge_pass.cc) and bridge.frag does no normal-based lighting, so identity
+# does NOT render officers inside-out/dark — the flip's only effects here were
+# the (buggy) position mirror plus a left/right body-geometry mirror.
+#
+# Live-tuning anchor: keeping the body's authored handedness AND the station
+# position both correct needs the station translation pulled out of the bone
+# palette into u_model's 4th column (ship-style) — a renderer-side follow-up.
+# Until then identity prioritises correct seating. Row-major.
+OFFICER_TRANSFORM = list(IDENTITY_MAT4)
 
 # Captain's-chair camera position in bridge-local NIF space, per
 # Bridge.<X>.GetBaseCameraPosition() in the SDK scripts. Mirrors
