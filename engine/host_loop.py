@@ -1770,6 +1770,7 @@ class HostController:
         self.session: Optional[MissionSession] = None
         self.pending_swap: Optional[str] = None
         self.bridge_instance: Optional[Any] = None  # InstanceId; set by _realize_bridge_model
+        self.viewscreen_instance: Optional[Any] = None  # InstanceId; set by _realize_viewscreen
         # NIF path currently bound to bridge_instance. Set by
         # _realize_bridge_model when the SDK-created bridge object is realized.
         self.current_bridge_nif_abs: Optional[str] = None
@@ -2069,6 +2070,51 @@ def _realize_bridge_model(controller, r) -> None:
     controller.current_bridge_nif_abs = nif_abs
 
 
+def _realize_viewscreen(controller, r) -> None:
+    """Turn the SDK-created viewscreen object into a rendered bridge instance.
+
+    Mirrors _realize_bridge_model: reads bridge.GetViewScreen() (set by the SDK's
+    CreateBridgeModel -> ViewScreenObject_Create + SetViewScreen), resolves the
+    NIF + the env path LoadModel recorded, and creates a bridge-pass instance at
+    identity. The screen renders faithfully-as-authored (a blank panel) until
+    5c/RTT feeds u_base_color from the tactical camera.
+
+    Idempotent/leak-free (identical to _realize_bridge_model): same-config reuse
+    (object already has render_instance) is a no-op; a fresh object (set rebuild
+    via reset_sdk_globals) destroys the prior instance first. Config-driven —
+    reads vs.nif, so Sovereign/EBridge viewscreens work with no name branching.
+    """
+    import App as _App
+    bridge = _App.g_kSetManager.GetSet("bridge")
+    if bridge is None:
+        return
+    vs = bridge.GetViewScreen()
+    if vs is None or not hasattr(vs, "nif"):
+        return                                     # no SDK viewscreen yet
+    if vs.render_instance is not None:
+        return                                     # same-config reuse
+
+    if controller.viewscreen_instance is not None:
+        try:
+            r.destroy_instance(controller.viewscreen_instance)
+        except Exception:
+            pass
+        controller.viewscreen_instance = None
+
+    nif_abs = str(PROJECT_ROOT / "game" / vs.nif)
+    env = _App.g_kModelManager.env_for(vs.nif)
+    tex_abs = (str(PROJECT_ROOT / "game" / env) if env
+               else str(PROJECT_ROOT / "game" / DBRIDGE_TEX_REL))
+
+    handle = r.load_model(nif_abs, tex_abs)
+    iid = r.create_bridge_instance(handle)
+    r.set_world_transform(iid, IDENTITY_MAT4)
+
+    vs.render_instance = iid
+    controller.viewscreen_instance = iid
+    controller.nif_to_handle[nif_abs] = handle
+
+
 def _place_bridge_officers(controller, r) -> None:
     """Render every SDK-populated bridge officer posed at its station.
 
@@ -2297,6 +2343,7 @@ def run(mission_name: Optional[str] = None,
             # Realize the SDK-created bridge object into a render instance
             # (replaces the deleted eager startup load).
             _realize_bridge_model(controller, r)
+            _realize_viewscreen(controller, r)
             _place_bridge_officers(controller, r)
             import engine.appc._stub_trace as _stub_trace
             _stub_trace.dump_stub_summary()
