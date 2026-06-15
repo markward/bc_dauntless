@@ -23,13 +23,20 @@ import logging
 
 _logger = logging.getLogger(__name__)
 
-# Clip-name fragments whose station end is frame 0: the move-FROM-station clips
-# (Science "Station to L1", Engineer "Engineer to L1", and the generic L1
-# transitions). Matching clips must be held at frame 0 (sample_at_start=True) so
-# the officer reads as standing at the console rather than mid-walk to L1.
-# In-place "stand"/"seated" clips contain none of these and play-and-hold.
-# Keyed off the SDK's own clip names, not the station role (EBridge Science uses
-# an in-place EB_stand_s_s, so it correctly maps to False).
+# Clip-name fragments whose station end is frame 0: the move-FROM-station clips.
+# sample_at_start=True holds the officer at frame 0 (standing at the console)
+# instead of letting the clip walk them away. This covers the standard visible
+# bridge crew: Science (db_StoL1_S) and Engineer (db_EtoL1_s). In-place
+# "stand"/"seated" clips contain none of these and correctly play-and-hold
+# (sample_at_start=False) — e.g. EBridge Science's EB_stand_s_s, so the rule
+# keys off the clip name, not the station role.
+#
+# Known-incomplete by design: the SDK has other transition clips this list does
+# NOT match (EB_L2toG2_M, EB_G*toL*_M gallery walks, DB/EB_C1toC_M). Those are
+# either hidden locations (SetHidden(1) -> the caller skips them regardless) or
+# non-standard E-Bridge gallery/seat positions outside the standard-crew path.
+# sample_at_start is a live-tunable heuristic (see the step-4 design doc); extend
+# this list only after visually verifying the affected clip against the renderer.
 _FRAME0_FRAGMENTS = ("stol1", "etol1", "l1to")
 
 
