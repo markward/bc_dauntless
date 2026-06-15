@@ -742,6 +742,15 @@ DBRIDGE_TEX_REL = "data/Models/Sets/DBridge/High"
 EBRIDGE_NIF_REL = "data/Models/Sets/EBridge/EBridge.nif"
 EBRIDGE_TEX_REL = "data/Models/Sets/EBridge/High"
 
+# Bridge geometry renders at world identity: the bridge pass camera works in
+# bridge-local frame, so the bridge's world position is irrelevant.
+IDENTITY_MAT4 = [
+    1.0, 0.0, 0.0, 0.0,
+    0.0, 1.0, 0.0, 0.0,
+    0.0, 0.0, 1.0, 0.0,
+    0.0, 0.0, 0.0, 1.0,
+]
+
 # Captain's-chair camera position in bridge-local NIF space, per
 # Bridge.<X>.GetBaseCameraPosition() in the SDK scripts. Mirrors
 # sdk/Build/scripts/Bridge/GalaxyBridge.py:84 and SovereignBridge.py:80.
@@ -1737,9 +1746,9 @@ class HostController:
         self.nif_to_extent: dict[str, float] = {}
         self.session: Optional[MissionSession] = None
         self.pending_swap: Optional[str] = None
-        self.bridge_instance: Optional[Any] = None  # InstanceId from create_bridge_instance
-        # NIF path currently bound to bridge_instance. Set when the eager
-        # bridge mesh is loaded at run() startup.
+        self.bridge_instance: Optional[Any] = None  # InstanceId; set by _realize_bridge_model
+        # NIF path currently bound to bridge_instance. Set by
+        # _realize_bridge_model when the SDK-created bridge object is realized.
         self.current_bridge_nif_abs: Optional[str] = None
         # InstanceIds of placed-and-posed bridge officers. Lives on the
         # controller (not the per-mission session) because the bridge interior
@@ -1990,6 +1999,53 @@ def _update_ui_for_tick(player, view_mode, session, active_set) -> None:
     return
 
 
+def _realize_bridge_model(controller, r) -> None:
+    """Turn the SDK-created "bridge" set object into the rendered instance.
+
+    Called from _after_mission_loaded after the mission's StartMission has run
+    the real LoadBridge.Load (which calls GalaxyBridge.CreateBridgeModel ->
+    BridgeObjectClass_Create + g_kModelManager.LoadModel). Reads the bridge
+    object's NIF path + the env path LoadModel recorded, loads the mesh, and
+    creates the bridge render instance.
+
+    Idempotent: same-config reuse (object already has render_instance) is a
+    no-op; a config change / set rebuild (a fresh object with render_instance
+    None) destroys the prior instance first. Mesh selection is config-driven —
+    obj.nif is whatever the active Bridge.<name> config script set, so
+    EBridge/Sovereign work with no bridge-name branching.
+    """
+    import App as _App
+    bridge = _App.g_kSetManager.GetSet("bridge")
+    if bridge is None:
+        return
+    obj = bridge.GetObject("bridge")
+    if obj is None or not hasattr(obj, "nif"):
+        return                                     # no SDK bridge object yet
+    if obj.render_instance is not None:
+        return                                     # same-config reuse
+
+    if controller.bridge_instance is not None:
+        try:
+            r.destroy_instance(controller.bridge_instance)
+        except Exception:
+            pass
+        controller.bridge_instance = None
+
+    nif_abs = str(PROJECT_ROOT / "game" / obj.nif)
+    env = _App.g_kModelManager.env_for(obj.nif)
+    tex_abs = (str(PROJECT_ROOT / "game" / env) if env
+               else str(PROJECT_ROOT / "game" / DBRIDGE_TEX_REL))
+
+    handle = r.load_model(nif_abs, tex_abs)
+    iid = r.create_bridge_instance(handle)
+    r.set_world_transform(iid, IDENTITY_MAT4)
+
+    obj.render_instance = iid
+    controller.bridge_instance = iid
+    controller.nif_to_handle[nif_abs] = handle
+    controller.current_bridge_nif_abs = nif_abs
+
+
 def _wire_target_menu_to_player_set(controller) -> None:
     """Subscribe the target-menu singleton to the player's containing
     spatial set, then bulk-rebuild rows for ships already there.
@@ -2085,24 +2141,11 @@ def run(mission_name: Optional[str] = None,
         controller.renderer = r
         controller.loader = _MissionLoader(controller, verbose=verbose)
 
-        # Bridge interior — eagerly loaded once and reused across mission
-        # swaps. Instance lives on the controller, not the per-mission
-        # session, so MissionSession.teardown doesn't destroy it.
-        bridge_nif_abs = str(PROJECT_ROOT / "game" / DBRIDGE_NIF_REL)
-        bridge_tex_abs = str(PROJECT_ROOT / "game" / DBRIDGE_TEX_REL)
-        bridge_handle  = r.load_model(bridge_nif_abs, bridge_tex_abs)
-        controller.nif_to_handle[bridge_nif_abs] = bridge_handle
-        controller.bridge_instance = r.create_bridge_instance(bridge_handle)
-        controller.current_bridge_nif_abs = bridge_nif_abs
-        # Identity transform — the bridge pass camera works in
-        # bridge-local frame, so the bridge's world position is irrelevant.
-        IDENTITY_MAT4 = [
-            1.0, 0.0, 0.0, 0.0,
-            0.0, 1.0, 0.0, 0.0,
-            0.0, 0.0, 1.0, 0.0,
-            0.0, 0.0, 0.0, 1.0,
-        ]
-        r.set_world_transform(controller.bridge_instance, IDENTITY_MAT4)
+        # Bridge interior is created by the SDK path (LoadBridge.Load ->
+        # Bridge.<name>.CreateBridgeModel) during the mission load below, then
+        # realized into a render instance by _realize_bridge_model in
+        # _after_mission_loaded. No eager pre-game load — the SDK is the single
+        # source of the bridge mesh.
 
         controller.session = controller.loader.load(mission_name)
         if verbose:
@@ -2148,6 +2191,9 @@ def run(mission_name: Optional[str] = None,
                 _name = _bridge.GetConfig() or ""
                 if _name:
                     _CURRENT_BRIDGE_NAME = _name
+            # Realize the SDK-created bridge object into a render instance
+            # (replaces the deleted eager startup load).
+            _realize_bridge_model(controller, r)
             import engine.appc._stub_trace as _stub_trace
             _stub_trace.dump_stub_summary()
             _wire_target_menu_to_player_set(controller)
