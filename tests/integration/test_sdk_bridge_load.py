@@ -109,20 +109,33 @@ def test_sdk_load_runs_end_to_end_and_populates_crew(sdk_loadbridge):
     assert len(extras) == 3
 
     fired = st.fired()
-    # Step 3: these two are now REAL and must have left the summary.
+    # Steps 3 + 5b: these are now REAL and must have left the summary.
     assert "BridgeObjectClass_Create" not in fired
     assert "g_kModelManager.LoadModel" not in fired
+    assert "ViewScreenObject_Create" not in fired
+    assert "BridgeSet.GetViewScreen" not in fired
+    assert "BridgeSet.SetViewScreen" not in fired
+    assert "BridgeSet.GetConfig" not in fired
+    assert "BridgeSet.SetConfig" not in fired
+    assert "BridgeSet.IsSameConfig" not in fired
+    assert "BridgeSet.DeleteCameraFromSet" not in fired
     # Still-stubbed control-flow symbols prove the SDK path actually ran.
     assert "BridgeSet_Create" in fired
-    assert "ViewScreenObject_Create" in fired
     assert "ZoomCameraObjectClass_Create" in fired
 
-    # The SDK-created bridge object now carries the bridge NIF for the host
-    # to realize (mesh selection is config-driven, not hardcoded).
+    # The SDK-created bridge object carries the bridge NIF for the host to
+    # realize (mesh selection is config-driven, not hardcoded).
     bridge_obj = bridge.GetObject("bridge")
     assert bridge_obj is not None
     assert bridge_obj.nif.endswith("DBridge.nif")
     assert bridge_obj.render_instance is None      # host fills this in live
+
+    # Step 5b: the SDK-created viewscreen carries DBridgeViewScreen.nif for
+    # the host to realize; render_instance stays None until the host runs.
+    viewscreen = bridge.GetViewScreen()
+    assert viewscreen is not None
+    assert viewscreen.nif.endswith("DBridgeViewScreen.nif")
+    assert viewscreen.render_instance is None
 
 
 def test_summary_prints_outstanding_stubs(sdk_loadbridge, capsys):
@@ -131,6 +144,8 @@ def test_summary_prints_outstanding_stubs(sdk_loadbridge, capsys):
     st.dump_stub_summary()
     err = capsys.readouterr().err
     assert "still need fleshing out" in err
-    # The viewscreen is still a stub (step 5); the bridge object is not.
-    assert "ViewScreenObject_Create" in err
+    # Step 5b: the viewscreen + BridgeSet.* are real now; only the zoom
+    # camera remains stubbed for step 5a.
+    assert "ZoomCameraObjectClass_Create" in err
+    assert "ViewScreenObject_Create" not in err
     assert "BridgeObjectClass_Create" not in err
