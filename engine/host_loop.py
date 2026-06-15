@@ -751,6 +751,26 @@ IDENTITY_MAT4 = [
     0.0, 0.0, 0.0, 1.0,
 ]
 
+# Officer instance world transform — the SP2-validated negate-X-basis identity
+# (det<0). BC character NIFs are authored in a left-handed model frame; the
+# renderer runs glFrontFace(GL_CW) and assumes det<0 world matrices, so plain
+# identity would render the body inside-out AND mirrored. Negating the X basis
+# axis mirrors the body into the renderer's right-handed world (matching ships)
+# and gives the correct station pose. The placement clip's root track carries
+# the per-station offset, so NO per-officer translation is set here — officers
+# sit in bridge-set identity space like the bridge mesh.
+#
+# This is the live-tuning anchor: the X-flip assumption lived in the replaced
+# placement layer, so re-verify orientation against the real SDK poses with
+# Mark and tune this single matrix if needed. Row-major; set_world_transform
+# transposes on input.
+OFFICER_TRANSFORM = [
+    -1.0, 0.0, 0.0, 0.0,
+     0.0, 1.0, 0.0, 0.0,
+     0.0, 0.0, 1.0, 0.0,
+     0.0, 0.0, 0.0, 1.0,
+]
+
 # Captain's-chair camera position in bridge-local NIF space, per
 # Bridge.<X>.GetBaseCameraPosition() in the SDK scripts. Mirrors
 # sdk/Build/scripts/Bridge/GalaxyBridge.py:84 and SovereignBridge.py:80.
@@ -1750,11 +1770,10 @@ class HostController:
         # NIF path currently bound to bridge_instance. Set by
         # _realize_bridge_model when the SDK-created bridge object is realized.
         self.current_bridge_nif_abs: Optional[str] = None
-        # InstanceIds of placed-and-posed bridge officers. Lives on the
-        # controller (not the per-mission session) to mirror bridge_instance,
-        # which the controller likewise owns across mission swaps. (Officer
-        # placement is not wired in this build; kept as an empty list for
-        # compatibility.)
+        # InstanceIds of placed-and-posed bridge officers. Owned by the
+        # controller (like bridge_instance) so it survives mission swaps;
+        # repopulated each load by _place_bridge_officers, which destroys the
+        # prior load's instances first.
         self.officer_instances: list = []
         # Invoked once after each successful loader.load(). Stage 2 CEF
         # integration will wire this to rebuild UI state so the panel
@@ -2047,6 +2066,85 @@ def _realize_bridge_model(controller, r) -> None:
     controller.current_bridge_nif_abs = nif_abs
 
 
+def _place_bridge_officers(controller, r) -> None:
+    """Render every SDK-populated bridge officer posed at its station.
+
+    Called from _after_mission_loaded after _realize_bridge_model. Enumerates
+    all CharacterClass objects in the SDK-created "bridge" set (5 standard crew
+    + 3 random extras + any mission-added guest), captures each one's placement
+    clip by running the SDK's own CommonAnimations.SetPosition (see
+    engine.appc.bridge_placement.capture_placement — no invented table), and
+    feeds the kept SP1/SP2 skinned renderer:
+      assemble_officer -> create_bridge_instance -> set_world_transform
+                       -> set_instance_animation (play placement clip once/hold).
+
+    Leak-free + idempotent (mirrors _realize_bridge_model): destroys every prior
+    officer instance before placing; per-character _render_instance tag prevents
+    double-placement within a load. reset_sdk_globals clears g_kSetManager._sets
+    each swap, so each load enumerates fresh (untagged) characters and the
+    destroy-prior step recycles the previous load's instances.
+    """
+    import App as _App
+    from engine.appc.characters import CharacterClass
+    from engine.appc.bridge_placement import capture_placement
+
+    bridge = _App.g_kSetManager.GetSet("bridge")
+    if bridge is None:
+        return
+
+    # Tear down the previous load's officers first.
+    for iid in controller.officer_instances:
+        try:
+            r.destroy_instance(iid)
+        except Exception:
+            pass
+    controller.officer_instances = []
+
+    def _abs(p):
+        return str(PROJECT_ROOT / "game" / p) if p else None
+
+    for off in bridge.GetClassObjectList(CharacterClass):
+        if getattr(off, "_render_instance", None) is not None:
+            continue                                   # already placed this load
+        try:
+            placement = capture_placement(off)
+            if not placement or placement["hidden"]:
+                continue
+            ap = off.appearance()
+            if not ap.get("body_nif"):
+                continue
+
+            model = r.assemble_officer(
+                _abs(ap.get("body_nif")), _abs(ap.get("head_nif")),
+                _abs(ap.get("body_tex")), _abs(ap.get("head_tex")),
+                _abs(placement["clip_nif"]),
+                placement["sample_at_start"],
+            )
+            iid = r.create_bridge_instance(model)
+            try:
+                r.set_world_transform(iid, OFFICER_TRANSFORM)
+                r.set_instance_animation(
+                    iid, 0, False, placement["sample_at_start"])
+            except Exception:
+                try:
+                    r.destroy_instance(iid)
+                except Exception:
+                    pass
+                raise
+            off._render_instance = iid
+            controller.officer_instances.append(iid)
+        except Exception:
+            name = ""
+            try:
+                name = off.GetCharacterName()
+            except Exception:
+                pass
+            import logging
+            logging.getLogger(__name__).exception(
+                "_place_bridge_officers: failed to place %r", name)
+            continue
+
+
 def _wire_target_menu_to_player_set(controller) -> None:
     """Subscribe the target-menu singleton to the player's containing
     spatial set, then bulk-rebuild rows for ships already there.
@@ -2195,6 +2293,7 @@ def run(mission_name: Optional[str] = None,
             # Realize the SDK-created bridge object into a render instance
             # (replaces the deleted eager startup load).
             _realize_bridge_model(controller, r)
+            _place_bridge_officers(controller, r)
             import engine.appc._stub_trace as _stub_trace
             _stub_trace.dump_stub_summary()
             _wire_target_menu_to_player_set(controller)
