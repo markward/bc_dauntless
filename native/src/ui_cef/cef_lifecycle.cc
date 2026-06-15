@@ -146,6 +146,24 @@ bool initialize(int view_width, int view_height,
     return true;
 }
 
+void resize(int view_width, int view_height, float device_scale_factor) {
+    if (!g_initialized || !g_client) return;
+    g_client->set_view_size(view_width, view_height);
+    g_client->set_device_scale_factor(device_scale_factor);
+    auto browser = g_client->browser();
+    if (!browser) return;  // not created yet; new size applies on first paint
+    auto host = browser->GetHost();
+    if (!host) return;
+    // NotifyScreenInfoChanged re-queries GetScreenInfo (device_scale_factor
+    // + rect) so a DPR change — e.g. dragging the window to a different-DPI
+    // monitor — re-rasters at the new density. WasResized re-queries
+    // GetViewRect and re-lays-out the page at the new logical size. The next
+    // OnPaint delivers a bitmap matching the framebuffer, so composite()'s
+    // fullscreen blit is 1:1 instead of a stretch.
+    host->NotifyScreenInfoChanged();
+    host->WasResized();
+}
+
 void pump() {
     if (!g_initialized) return;
     CefDoMessageLoopWork();

@@ -31,6 +31,18 @@ bool initialize(int view_width, int view_height,
                 const std::string& html_path,
                 float device_scale_factor);
 
+// Re-size the OSR browser to track the host window. view_width/height are
+// the new logical (window-point) dimensions; device_scale_factor is the
+// new framebuffer/window ratio (recomputed in case the window moved to a
+// different-DPI monitor). Updates the client's GetViewRect/GetScreenInfo
+// response and calls CefBrowserHost::WasResized(), which makes CEF
+// re-layout the HTML/CSS at the new size and re-raster — so the overlay
+// reflows instead of being bilinear-stretched by the composite pass.
+// No-op if no browser is alive. Safe to call every frame; cheap when the
+// size is unchanged (the host should still guard to avoid needless
+// WasResized churn).
+void resize(int view_width, int view_height, float device_scale_factor);
+
 // Call once per frame after the 3D scene renders.
 //   pump()      runs CEF's message loop (may invoke OnPaint synchronously);
 //   composite() blits the latest CEF bitmap with premultiplied-alpha blend.
