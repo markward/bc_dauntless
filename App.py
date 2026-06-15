@@ -70,6 +70,19 @@ from engine.appc.objects import (
     IsNull,
 )
 from engine.appc.sets import SetClass, SetManager, SetClass_Create, SetClass_GetNull
+from engine.appc.bridge_set import (
+    BridgeSet,
+    BridgeSet_Create,
+    BridgeSet_Cast,
+    BridgeObjectClass,
+    BridgeObjectClass_Create,
+    ViewScreenObject,
+    ViewScreenObject_Create,
+    ZoomCameraObjectClass,
+    ZoomCameraObjectClass_Create,
+    ZoomCameraObjectClass_GetObject,
+    ModelManager,
+)
 from engine.appc.placement import (
     PlacementObject, Waypoint, Waypoint_Create,
     Waypoint_Cast, PlacementObject_Cast,
@@ -560,6 +573,7 @@ def TacticalControlWindow_Create():
     # place regardless of which call site the SDK uses to reach the window.
     return TacticalControlWindow.GetInstance()
 g_kSetManager = SetManager()
+g_kModelManager = ModelManager()
 g_kTGActionManager = TGActionManager()
 g_kModelPropertyManager = TGModelPropertyManager()
 g_kLODModelManager = LODModelManager()

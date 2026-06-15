@@ -65,6 +65,11 @@ class Light(ObjectClass):
         # they discard via `pLight = pSet.GetLight(...)` reassignment).
         return None
 
+    def UnilluminateEntireSet(self):
+        """SDK LoadBridge.CreateAndPopulateBridgeSet calls this on the bridge
+        ambient light. Renderer-internal in original BC; no-op in the shim."""
+        return None
+
 
 class LightPlacement(PlacementObject):
     def ConfigAmbientLight(self, r, g, b, dimmer):
