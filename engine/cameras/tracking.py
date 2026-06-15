@@ -34,7 +34,9 @@ class _TrackingCamera:
                                             # closest framing is less oppressive
                                             # (post-playtest tuning).
     ZOOM_MAX_RADII:        float = 30.0    # reuse CAM_MAX_RADII semantics
-    ZOOM_DEFAULT_RADII:    float = 0.74    # ZoomTarget seed = ZOOM_MIN_RADII
+    # ZoomTarget seed = ZOOM_MIN_RADII pulled back 5 zoom-out clicks
+    # (÷0.9 each) so the initial framing starts further out.
+    ZOOM_DEFAULT_RADII:    float = ZOOM_MIN_RADII / (ZOOM_FACTOR_PER_PRESS ** 5)
 
     def __init__(self):
         self.v_fov_rad        = EXTERIOR_FOV_Y_RAD
@@ -65,8 +67,8 @@ class _TrackingCamera:
         self.d_chase_tracking = _math.sqrt(CAM_BACK_RADII**2 + CAM_UP_RADII**2) * radius
         self.zoom_min         = self.ZOOM_MIN_RADII * radius
         self.zoom_max         = self.ZOOM_MAX_RADII * radius
-        # ZoomTarget seeds at minimum so the first `=` press is a no-op
-        # (matches BC behaviour observed in playtest).
+        # ZoomTarget seeds 5 zoom-out clicks above the minimum so the
+        # initial framing starts further out (see ZOOM_DEFAULT_RADII).
         self.d_chase_zoom     = self.ZOOM_DEFAULT_RADII * radius
 
     def zoom_in(self) -> None:
