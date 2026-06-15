@@ -11,6 +11,17 @@
 // arms-down). The skeleton mirrors the FULL node hierarchy, so the clip's
 // "Bip01" root-translation track (station offset) flows into the palette.
 //
+// SKIN-AABB explosion oracle (SP2): a bone ORIGIN check cannot catch a
+// skinned-vertex explosion (mis-skinned verts blow up while bone origins stay
+// put). So the probe ALSO fully skins every mesh vertex through the posed
+// palette exactly as the GPU does — pos = Σ_k w_k · palette[idx_k] · v with
+// u_model = inst.world applied uniformly, matching renderer/bridge_pass.cc's
+// skinned sub-pass — and asserts the resulting AABB is bounded (|coord| < 300,
+// extent < 200). This is the headless safety net for the "skinned shapes baked
+// into bind-model space" fix in model_build.cc: a regression that returned the
+// skinned arms to a wrong base space would shift this AABB (and, for a body
+// whose skin-root bind-world carried rotation/scale, explode it outright).
+//
 // Usage:
 //   probe_officer_pose <body.nif> <placement.nif>
 
@@ -25,11 +36,17 @@
 
 #include <glm/glm.hpp>
 
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
+#include <optional>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <variant>
+#include <vector>
 
 #include "../../src/assets/src/model_build.h"
 
@@ -85,7 +102,10 @@ int main(int argc, char** argv) {
     ctx.texture_search_paths = {body_nif.parent_path()};
     ctx.texture_uploader = [](const assets::Image&, bool) { return assets::Texture{}; };
     ctx.mesh_uploader = [](assets::MeshCpu) { return assets::Mesh{}; };
-    ctx.keep_cpu_data = false;
+    // Keep CPU data so the SKIN-AABB oracle below can fully skin every vertex
+    // through the posed palette and assert the result is bounded (an exploded
+    // skinned shape produces coordinates in the thousands).
+    ctx.keep_cpu_data = true;
     int ninodes = 0, shapes = 0, skinned = 0;
     for (const auto& blk : bf.blocks) {
         if (std::get_if<nif::NiNode>(&blk)) ++ninodes;
@@ -192,6 +212,121 @@ int main(int argc, char** argv) {
             }
             if (!found)
                 std::printf("PALETTE: 'Bip01 L Hand' bone not found\n");
+        }
+    }
+
+    // SKIN-AABB explosion oracle (SP2): the L-Hand bone-ORIGIN check above
+    // verifies the skeleton/palette, but cannot catch a skinned-vertex
+    // explosion — mis-skinned verts blow up while the bone origins stay put.
+    // Here we fully skin EVERY mesh vertex through the posed palette exactly as
+    // the GPU does (pos = Σ_k w_k · palette[idx_k] · v) and assert the AABB is
+    // bounded. A correctly bind-baked body poses to ~80 units at a station
+    // offset of ~|130|; an exploded shape produces coordinates in the thousands.
+    {
+        std::vector<assets::AnimationClip> clips =
+            assets::load_animation_clips(place_nif.string());
+        if (clips.empty()) {
+            std::printf("SKIN-AABB: no clips in %s\n", place_nif.string().c_str());
+            return 1;
+        }
+        const assets::AnimationClip& clip = clips.front();
+        std::vector<glm::mat4> pose =
+            renderer::sample_pose(clip, m.skeleton, clip.duration_seconds);
+        std::vector<glm::mat4> palette =
+            renderer::build_bone_palette(m.skeleton, &pose);
+
+        // Which mesh indices the live bridge skinned pass would actually draw:
+        // it iterates m.nodes[i].meshes, so a mesh with no node registration is
+        // never drawn (orphaned). Build that set so the oracle can report it.
+        std::set<int> drawn_by_bridge_pass;
+        for (const auto& node : m.nodes)
+            for (int mi : node.meshes) drawn_by_bridge_pass.insert(mi);
+
+        glm::vec3 lo(1e30f), hi(-1e30f);
+        std::size_t verts_skinned = 0, meshes_with_cpu = 0;
+        int mesh_no = -1;
+        for (const assets::Mesh& mesh : m.meshes) {
+            ++mesh_no;
+            const std::optional<assets::MeshCpu>& cd = mesh.cpu_data();
+            if (!cd) continue;
+            ++meshes_with_cpu;
+            // Per-mesh diagnostic: distinct bone-index count (>1 ⇒ true
+            // multi-bone skinned shape) and this mesh's own posed AABB.
+            std::set<int> bones_used;
+            glm::vec3 mlo(1e30f), mhi(-1e30f);
+            std::size_t mverts = 0;
+            for (const assets::MeshCpu::Vertex& v : cd->vertices) {
+                glm::vec4 p(v.position, 1.0f);
+                glm::vec4 skinned(0.0f);
+                float wsum = 0.0f;
+                for (int k = 0; k < 4; ++k) {
+                    float w = static_cast<float>(v.bone_weights[k]) / 255.0f;
+                    if (w <= 0.0f) continue;
+                    std::size_t bi = static_cast<std::size_t>(v.bone_indices[k]);
+                    if (bi >= palette.size()) continue;
+                    skinned += w * (palette[bi] * p);
+                    wsum += w;
+                    bones_used.insert(static_cast<int>(bi));
+                }
+                // Vertices with no weight at all (degenerate) are skipped so they
+                // don't anchor the AABB at the origin and mask an explosion.
+                if (wsum <= 0.0f) continue;
+                glm::vec3 s = glm::vec3(skinned);
+                lo = glm::min(lo, s);
+                hi = glm::max(hi, s);
+                mlo = glm::min(mlo, s);
+                mhi = glm::max(mhi, s);
+                ++verts_skinned;
+                ++mverts;
+            }
+            if (mverts > 0 && bones_used.size() > 1) {
+                glm::vec3 me = mhi - mlo;
+                float mme = std::max(me.x, std::max(me.y, me.z));
+                // Read node_index from the CPU data (the stub mesh uploader
+                // discards Mesh::node_index_, so mesh.node_index() is always -1).
+                int pn = cd->node_index;
+                glm::vec3 pnt(0.0f);
+                const char* pname = "?";
+                if (pn >= 0 && pn < static_cast<int>(m.nodes.size())) {
+                    pnt = world_pos(m, pn);
+                    pname = m.nodes[pn].name.c_str();
+                }
+                std::printf(
+                    "  mesh[%d] MULTI-BONE bones=%zu verts=%zu posed_extent=%.1f "
+                    "min=(%.1f %.1f %.1f) max=(%.1f %.1f %.1f) node_index=%d "
+                    "parent='%s' parent_bindworld=(%.1f %.1f %.1f) "
+                    "drawn_by_bridge_pass=%d\n",
+                    mesh_no, bones_used.size(), mverts, mme, mlo.x, mlo.y, mlo.z,
+                    mhi.x, mhi.y, mhi.z, pn, pname, pnt.x, pnt.y, pnt.z,
+                    drawn_by_bridge_pass.count(mesh_no) ? 1 : 0);
+            }
+        }
+
+        if (verts_skinned == 0) {
+            std::printf("SKIN-AABB FAIL (no skinned vertices; meshes_with_cpu=%zu)\n",
+                        meshes_with_cpu);
+            return 1;
+        }
+
+        glm::vec3 ext = hi - lo;
+        float max_ext = std::max(ext.x, std::max(ext.y, ext.z));
+        float max_coord = std::max(std::max(std::abs(lo.x), std::abs(hi.x)),
+                          std::max(std::max(std::abs(lo.y), std::abs(hi.y)),
+                                   std::max(std::abs(lo.z), std::abs(hi.z))));
+        std::printf(
+            "SKIN-AABB meshes_with_cpu=%zu verts=%zu min=(%.1f %.1f %.1f) "
+            "max=(%.1f %.1f %.1f) extent=(%.1f %.1f %.1f) max_extent=%.1f "
+            "max_coord=%.1f\n",
+            meshes_with_cpu, verts_skinned, lo.x, lo.y, lo.z, hi.x, hi.y, hi.z,
+            ext.x, ext.y, ext.z, max_ext, max_coord);
+
+        const bool ok = (max_coord < 300.0f) && (max_ext < 200.0f);
+        if (ok) {
+            std::printf("SKIN-AABB PASS\n");
+        } else {
+            std::printf("SKIN-AABB FAIL (extent=%.1f max_coord=%.1f)\n",
+                        max_ext, max_coord);
+            return 1;
         }
     }
     return 0;

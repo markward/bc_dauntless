@@ -515,12 +515,18 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
             }
         }
 
-        // SP2: a RIGID character shape (skeleton present, no skin controller)
-        // gets its verts baked into bind-model space via the parent node's
-        // bind-world. Skinned shapes are already model-space, so they are NOT
-        // baked; non-skeleton models (ships/bridges) keep identity.
+        // SP2: ALL character shapes (rigid AND skinned) are baked into
+        // bind-model space via the parent node's bind-world. The renderer feeds
+        // u_model = inst.world, so the per-node bind-world factor SP1's
+        // node-walk applied is no longer in u_model and MUST live in the verts.
+        // fill_skin_weights applies no compensating bind transform, so skinned
+        // verts must already be in bind-model space. At bind, palette = identity
+        // ⇒ pos = inst.world · node_bind_world[parent] · v_nodelocal, exactly
+        // SP1's world_per_node[parent]·v; under a pose the palette poses it. The
+        // ONLY rigid/skinned difference is the WEIGHTS (single parent bone vs
+        // multi-bone via fill_skin_weights). Non-skeleton models keep identity.
         glm::mat4 bake(1.0f);
-        if (!model.skeleton.bones.empty() && skin == nullptr &&
+        if (!model.skeleton.bones.empty() &&
             node_index >= 0 &&
             node_index < static_cast<int>(node_bind_world.size()))
             bake = node_bind_world[node_index];
