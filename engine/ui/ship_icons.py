@@ -28,8 +28,16 @@ from engine.ui.tga import decode_tga
 from engine.ui.png_encoder import encode_png_rgba
 
 
-_GAME_ICONS_DIR = "game/data/Icons/Ships"
-_CACHE_DIR      = "native/assets/ui-cef/icons/ships"
+# Anchor source + output directories at the project root rather than CWD.
+# The native host (init_frame / dust_set_enabled / etc.) can chdir away from
+# the project root during startup, after which a CWD-relative path resolves
+# to nowhere and the silhouette silently disappears. weapon_icons.py and
+# damage_icons.py anchor the same way.
+_PROJECT_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..")
+)
+_GAME_ICONS_DIR = os.path.join(_PROJECT_ROOT, "game", "data", "Icons", "Ships")
+_CACHE_DIR      = os.path.join(_PROJECT_ROOT, "native", "assets", "ui-cef", "icons", "ships")
 
 # species stem → data URL (or None for known-missing).
 _resolved: dict[str, Optional[str]] = {}

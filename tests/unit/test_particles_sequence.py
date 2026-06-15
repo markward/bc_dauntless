@@ -7,6 +7,22 @@ from engine.appc import particles as P
 from engine.appc.particles import EffectAction_Create, AnimTSParticleController
 
 
+@pytest.fixture(autouse=True)
+def _clean_timer_manager():
+    """Tests here advance App.g_kTimerManager to fire delayed sequence
+    children. The timer manager is a process-global shared with every other
+    test module, so stale pending timers left by earlier tests would fire
+    during our tick loop and inflate the active-controller count. Clear it
+    (and the accumulated game-time) before and after each test so the tick
+    loop only ever sees timers this test created. Mirrors test_loop.py."""
+    import App
+    App.g_kTimerManager._timers.clear()
+    App.g_kTimerManager._time = 0.0
+    yield
+    App.g_kTimerManager._timers.clear()
+    App.g_kTimerManager._time = 0.0
+
+
 def _ctrl():
     c = AnimTSParticleController()
     c.CreateTarget("data/Textures/Effects/ExplosionA.tga")

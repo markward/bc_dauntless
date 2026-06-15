@@ -47,10 +47,14 @@ def test_damage_descriptors_emit_one_row_per_positioned_subsystem(galaxy_ship):
 def test_galaxy_hull_emits_row_at_hardpoint_position(galaxy_ship):
     rows = list(sdp._damage_icon_descriptors(galaxy_ship))
     hulls = [r for r in rows if r["icon_num"] == 0]
-    assert len(hulls) == 1
-    # Galaxy hardpoint: Hull.SetPosition2D(64, 40)
-    assert hulls[0]["x_px"] == pytest.approx(64.0)
-    assert hulls[0]["y_px"] == pytest.approx(40.0)
+    # The Galaxy hardpoint declares two HullProperty subsystems — Hull@(64,40)
+    # (Galaxy.py:700) and Bridge@(64,25) (Galaxy.py:1113) — so both surface as
+    # icon_num 0. Assert the Hull's own hardpoint row is present and unique.
+    assert len(hulls) >= 1
+    hull_at_hp = [r for r in hulls
+                  if r["x_px"] == pytest.approx(64.0)
+                  and r["y_px"] == pytest.approx(40.0)]
+    assert len(hull_at_hp) == 1
 
 
 def test_galaxy_sensor_array_emits_row_with_sensor_icon_num(galaxy_ship):

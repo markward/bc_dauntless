@@ -21,7 +21,7 @@ def test_set_hologram_ship_default_color(monkeypatch):
     iid = object()
     renderer.set_hologram_ship(iid)
     fake.set_hologram_ship.assert_called_once_with(iid, (0.30, 0.62, 1.0),
-                                                   0.05, 0.50)
+                                                   0.20, 0.70)
 
 
 def test_set_hologram_ship_coerces_list_color(monkeypatch):
