@@ -58,8 +58,8 @@ def test_yaw_wraps_freely_no_clamp():
 
 def test_camera_anchored_at_bridge_local_offset():
     """Initial yaw (π) makes the default forward -Y. Eye sits at the
-    per-bridge captain's-chair offset resolved against
-    LoadBridge.LAST_REQUESTED. Up is unit length. Target differs from eye."""
+    per-bridge captain's-chair offset resolved against the cached
+    _CURRENT_BRIDGE_NAME. Up is unit length. Target differs from eye."""
     from engine.host_loop import _BridgeCamera
     bc = _BridgeCamera()
     eye, target, up = bc.compute_camera()

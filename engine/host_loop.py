@@ -742,23 +742,23 @@ DBRIDGE_TEX_REL = "data/Models/Sets/DBridge/High"
 EBRIDGE_NIF_REL = "data/Models/Sets/EBridge/EBridge.nif"
 EBRIDGE_TEX_REL = "data/Models/Sets/EBridge/High"
 
-# Maps the BC LoadBridge.Load(name) argument to (nif_rel, tex_rel).
-# Mirrors sdk/Build/scripts/Bridge/GalaxyBridge.py and SovereignBridge.py.
-_BRIDGE_NIF_MAP: dict[str, tuple[str, str]] = {
-    "GalaxyBridge":    (DBRIDGE_NIF_REL, DBRIDGE_TEX_REL),
-    "SovereignBridge": (EBRIDGE_NIF_REL, EBRIDGE_TEX_REL),
-}
-
 # Captain's-chair camera position in bridge-local NIF space, per
 # Bridge.<X>.GetBaseCameraPosition() in the SDK scripts. Mirrors
 # sdk/Build/scripts/Bridge/GalaxyBridge.py:84 and SovereignBridge.py:80.
 # Used by _BridgeCamera at compute time; resolved per frame against
-# LoadBridge.LAST_REQUESTED so a bridge swap is picked up without
+# _CURRENT_BRIDGE_NAME so a bridge swap is picked up without
 # rebuilding the camera.
 _BRIDGE_CAMERA_OFFSETS: dict[str, tuple[float, float, float]] = {
     "GalaxyBridge":    (0.683736, 86.978439, 50.0),
     "SovereignBridge": (0.683736, 129.585,   70.678),
 }
+
+# The bridge config name (e.g. "GalaxyBridge") the active mission's
+# LoadBridge.Load set on the bridge SetClass. Cached once per mission load
+# (see _after_mission_loaded) so the per-frame camera offset lookup does not
+# poll the loud-stubbed BridgeSet.GetConfig() every frame. Replaces the
+# shim's LoadBridge.LAST_REQUESTED.
+_CURRENT_BRIDGE_NAME: str = "GalaxyBridge"
 
 # Lighting defaults — used by both the per-tick fallback (when no active set
 # has lights) and as the conceptual source of truth that the C++
@@ -1201,7 +1201,7 @@ class _BridgeCamera:
     let mouse-look + visual iteration discover the right default.
     """
 
-    # Captain's-chair offset used when LoadBridge.LAST_REQUESTED isn't in
+    # Captain's-chair offset used when _CURRENT_BRIDGE_NAME isn't in
     # the per-bridge table. Mirrors GalaxyBridge.GetBaseCameraPosition()
     # — sdk/Build/scripts/Bridge/GalaxyBridge.py:84.
     DEFAULT_BRIDGE_OFFSET = (0.683736, 86.978439, 50.0)
@@ -1224,15 +1224,12 @@ class _BridgeCamera:
         self.pitch_rad = 0.0
 
     def _eye_offset(self) -> tuple:
-        """Resolve the per-bridge captain's-chair offset from
-        LoadBridge.LAST_REQUESTED. Called every frame so a mid-session
-        bridge swap is picked up without re-constructing the camera."""
-        try:
-            import LoadBridge as _LB
-            name = getattr(_LB, "LAST_REQUESTED", "")
-        except Exception:
-            name = ""
-        return _BRIDGE_CAMERA_OFFSETS.get(name, self.DEFAULT_BRIDGE_OFFSET)
+        """Resolve the per-bridge captain's-chair offset from the cached
+        bridge name (_CURRENT_BRIDGE_NAME, set at mission load). Called every
+        frame; reads the cache rather than polling the loud-stubbed
+        BridgeSet.GetConfig()."""
+        return _BRIDGE_CAMERA_OFFSETS.get(_CURRENT_BRIDGE_NAME,
+                                          self.DEFAULT_BRIDGE_OFFSET)
 
     def apply(self, mouse_dx: float, mouse_dy: float) -> None:
         """Accumulate mouse delta into yaw/pitch with sign conventions:
@@ -1356,24 +1353,10 @@ def reset_sdk_globals() -> None:
     _waypoint_registry.clear()
     App._next_event_type_id = 1200
     App._reset_target_menu_singleton()
-    # Allow LoadBridge.CreateCharacterMenus to rebuild menus on the next
-    # LoadBridge.Load() call (which the mission SDK scripts make after game
-    # context is established in _init_mission).  The eagerly-called
-    # _LoadBridge.Load() at run()-startup runs before any game/episode/mission
-    # objects exist, so HelmMenuHandlers.AddFleetCommandHandlers crashes on
-    # Game_GetCurrentGame() == None; the menus it builds are incomplete.
-    # Resetting the flag here lets the mission's own Load() call rebuild them
-    # correctly once _set_current_game() has fired.
-    #
-    # Also reset the TacticalControlWindow singleton so the TCW built during
-    # the premature Load() call (with empty/broken menus) doesn't carry its
-    # broken menu list into the mission's proper Load() call.
-    try:
-        import LoadBridge as _LB_reset
-        _LB_reset._reset_menus_created()
-        _LB_reset._reset_crew_populated()
-    except Exception:
-        pass
+    # Reset the TacticalControlWindow singleton so a TCW built for the prior
+    # mission doesn't carry its menu list into the next mission's
+    # LoadBridge.Load() call. The SDK LoadBridge rebuilds its menus per Load,
+    # so no LoadBridge-side reset is needed.
     try:
         from engine.appc.windows import TacticalControlWindow as _TCW
         _TCW._instance = None
@@ -1755,14 +1738,13 @@ class HostController:
         self.session: Optional[MissionSession] = None
         self.pending_swap: Optional[str] = None
         self.bridge_instance: Optional[Any] = None  # InstanceId from create_bridge_instance
-        # NIF path currently bound to bridge_instance. _ensure_bridge_for_session
-        # compares against the BC bridge_name → NIF map to decide whether to swap.
+        # NIF path currently bound to bridge_instance. Set when the eager
+        # bridge mesh is loaded at run() startup.
         self.current_bridge_nif_abs: Optional[str] = None
-        # SP3: InstanceIds of the placed-and-posed bridge officers. Lives on the
+        # InstanceIds of placed-and-posed bridge officers. Lives on the
         # controller (not the per-mission session) because the bridge interior
-        # is eagerly loaded and reused across mission swaps; _ensure_bridge_for_
-        # session re-places them per mission (the bridge config can change), so
-        # it destroys this list's instances before re-placing.
+        # is eagerly loaded and reused across mission swaps. (Officer placement
+        # is not wired in this build; kept as an empty list for compatibility.)
         self.officer_instances: list = []
         # Invoked once after each successful loader.load(). Stage 2 CEF
         # integration will wire this to rebuild UI state so the panel
@@ -2008,92 +1990,6 @@ def _update_ui_for_tick(player, view_mode, session, active_set) -> None:
     return
 
 
-_BRIDGE_IDENTITY_MAT4 = [
-    1.0, 0.0, 0.0, 0.0,
-    0.0, 1.0, 0.0, 0.0,
-    0.0, 0.0, 1.0, 0.0,
-    0.0, 0.0, 0.0, 1.0,
-]
-
-
-def _ensure_bridge_for_session(controller) -> None:
-    """Swap the renderer's bridge model to whatever the last mission
-    requested via LoadBridge.Load(name).
-
-    Mission scripts call LoadBridge.Load("SovereignBridge" |
-    "GalaxyBridge") during StartMission; the shim records the value as
-    LoadBridge.LAST_REQUESTED. This helper reads it back, maps it to a
-    NIF path via _BRIDGE_NIF_MAP, and replaces controller.bridge_instance
-    if the path differs from what's currently loaded. Model handles are
-    cached in controller.nif_to_handle so repeated swaps don't re-upload.
-    """
-    import LoadBridge as _LoadBridge
-    bridge_name = getattr(_LoadBridge, "LAST_REQUESTED", "GalaxyBridge")
-    mapping = _BRIDGE_NIF_MAP.get(bridge_name)
-    if mapping is None:
-        return
-    nif_rel, tex_rel = mapping
-    nif_abs = str(PROJECT_ROOT / "game" / nif_rel)
-    if nif_abs == controller.current_bridge_nif_abs:
-        return
-    r_ = controller.renderer
-    tex_abs = str(PROJECT_ROOT / "game" / tex_rel)
-    handle = controller.nif_to_handle.get(nif_abs)
-    if handle is None:
-        handle = r_.load_model(nif_abs, tex_abs)
-        controller.nif_to_handle[nif_abs] = handle
-    if controller.bridge_instance is not None:
-        r_.destroy_instance(controller.bridge_instance)
-    controller.bridge_instance = r_.create_bridge_instance(handle)
-    r_.set_world_transform(controller.bridge_instance, _BRIDGE_IDENTITY_MAT4)
-    controller.current_bridge_nif_abs = nif_abs
-
-
-def _place_bridge_officers(controller) -> None:
-    """SP3/SP2: render the populated bridge crew posed at their stations.
-
-    Tears down any previously-placed officer instances first (the bridge
-    config — DBridge vs EBridge — may have changed on a mission swap), then
-    enumerates the populated CharacterClass officers from the "bridge" set and
-    places each. Each placed officer keeps its skeleton and plays its placement
-    clip (model.animations[0]) once-and-hold via set_instance_animation; the
-    renderer poses it through the GPU bone palette. Entirely best-effort: a
-    failure here must never block mission load (mirrors populate_bridge_crew's
-    discipline), so the whole body is wrapped. Requires the _dauntless_host
-    bindings (resolve_placement / assemble_officer / set_instance_animation); if
-    they're absent (binding module not built), placement is skipped silently.
-    """
-    r_ = controller.renderer
-    # Destroy prior officer instances regardless of what follows.
-    for iid in controller.officer_instances:
-        try:
-            r_.destroy_instance(iid)
-        except Exception:
-            pass
-    controller.officer_instances = []
-    try:
-        import _dauntless_host as _host
-    except ImportError:
-        return
-    # The placement bindings (resolve_placement etc.) are required; a stale
-    # binary without them must not crash mission load.
-    if not hasattr(_host, "resolve_placement"):
-        return
-    try:
-        import LoadBridge as _LoadBridge
-        import engine.bridge_officers as _bridge_officers
-        officers = _LoadBridge.bridge_officers()
-        if not officers:
-            return
-        data_root = str(PROJECT_ROOT / "game")
-        controller.officer_instances = _bridge_officers.place_officers(
-            officers, _host, data_root)
-    except Exception:
-        import logging
-        logging.getLogger(__name__).exception(
-            "_place_bridge_officers: officer placement failed")
-
-
 def _wire_target_menu_to_player_set(controller) -> None:
     """Subscribe the target-menu singleton to the player's containing
     spatial set, then bulk-rebuild rows for ships already there.
@@ -2198,13 +2094,6 @@ def run(mission_name: Optional[str] = None,
         controller.nif_to_handle[bridge_nif_abs] = bridge_handle
         controller.bridge_instance = r.create_bridge_instance(bridge_handle)
         controller.current_bridge_nif_abs = bridge_nif_abs
-        # Eagerly register the "bridge" SetClass so its CreateAmbientLight
-        # value reaches the renderer via aggregate_bridge_for_renderer.
-        # Stock missions only call LoadBridge.Load() when they need it,
-        # but our bridge mesh is always loaded — the lighting needs to
-        # match.
-        import LoadBridge as _LoadBridge
-        _LoadBridge.Load()
         # Identity transform — the bridge pass camera works in
         # bridge-local frame, so the bridge's world position is irrelevant.
         IDENTITY_MAT4 = [
@@ -2247,17 +2136,20 @@ def run(mission_name: Optional[str] = None,
         # and any pending_swap drain — so this hook keeps the target
         # list pointed at the current mission's ship roster.
         def _after_mission_loaded():
-            _ensure_bridge_for_session(controller)
-            # Place bridge officers on EVERY load/swap, not only when the
-            # bridge NIF changed. _ensure_bridge_for_session early-returns
-            # for same-bridge swaps (the common case — most missions reuse
-            # GalaxyBridge), so officer placement must live here, after the
-            # bridge set is ensured AND the crew is populated (LoadBridge.Load
-            # → populate_bridge_crew runs during loader.load(), which precedes
-            # this hook). _place_bridge_officers tears down prior officer
-            # instances before re-placing, so calling it every load is
-            # idempotent (no duplicates / leaks).
-            _place_bridge_officers(controller)
+            # The mission's own StartMission calls the real SDK
+            # LoadBridge.Load(name) during loader.load(), creating the "bridge"
+            # SetClass + crew via the SDK path against loud stubs. Cache the
+            # bridge config name for the camera, then print the loud stub
+            # summary so the still-unimplemented SDK surface is visible.
+            global _CURRENT_BRIDGE_NAME
+            import App as _App
+            _bridge = _App.g_kSetManager.GetSet("bridge")
+            if _bridge is not None and hasattr(_bridge, "GetConfig"):
+                _name = _bridge.GetConfig() or ""
+                if _name:
+                    _CURRENT_BRIDGE_NAME = _name
+            import engine.appc._stub_trace as _stub_trace
+            _stub_trace.dump_stub_summary()
             _wire_target_menu_to_player_set(controller)
         controller.post_load_hook = _after_mission_loaded
         _after_mission_loaded()

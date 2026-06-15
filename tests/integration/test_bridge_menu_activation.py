@@ -20,7 +20,6 @@ def _fresh_world():
     TacticalControlWindow._instance = None
     _reset_target_menu_singleton()
     st_widgets._reset_module_state()
-    LoadBridge._reset_menus_created()
     _reset_ship_display()
     App.g_kSetManager._sets.clear()
     # Handlers re-register on each Load; clear stale ones from prior tests.

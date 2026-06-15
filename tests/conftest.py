@@ -424,9 +424,9 @@ def pytest_configure(config):
     if not any(isinstance(f, _SDKFinder) for f in sys.meta_path):
         sys.meta_path.insert(0, _SDKFinder())
 
-    # LoadBridge is a real Phase 1 shim (LoadBridge.py at project root) that
-    # registers an empty "bridge" SetClass.  Remove any stale stub entry so the
-    # real module is picked up on first import.
+    # LoadBridge is now the real SDK module (sdk/Build/scripts/LoadBridge.py);
+    # the project-root shim has been removed.  Remove any stale stub entry so
+    # the SDK module is picked up fresh on first import.
     sys.modules.pop("LoadBridge", None)
 
     # Bridge: real SDK package at sdk/Build/scripts/Bridge/.  Setting __path__
