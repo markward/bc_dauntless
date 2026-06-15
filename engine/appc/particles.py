@@ -8,6 +8,8 @@ docs/superpowers/specs/2026-06-11-particle-backend-a1-smoke-design.md.
 """
 import random as _random
 
+import engine.dev_mode as dev_mode
+
 # Known sprite-sheet textures, by lowercase basename -> (cols, rows).
 # BC's stock explosion sheets are 256x256 with an 8x8 grid: 8 animation
 # frames across, 8 explosion variants down (B is the greyscale twin of A).
@@ -218,8 +220,8 @@ def _descriptor_for(c, resolve_attach):
             try:
                 wp = c._emit_from.GetWorldLocation()
                 emit_pos = (float(wp.x), float(wp.y), float(wp.z))
-            except Exception:
-                pass
+            except Exception as _e:
+                dev_mode.log_swallowed("particle emit anchor at wreck", _e)
     return {
         "instance_id":       instance_id,
         "emit_pos":          emit_pos,

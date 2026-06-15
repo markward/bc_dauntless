@@ -39,6 +39,7 @@ import weakref
 from engine.appc.objects import ObjectClass
 from engine.appc.actions import TGAction
 from engine.appc.events import TGEvent
+import engine.dev_mode as dev_mode
 
 
 # ── Condition system ──────────────────────────────────────────────────────────
@@ -661,8 +662,8 @@ class ConditionEventCreator(TGConditionHandler):
         try:
             import App
             App.g_kEventManager.AddEvent(self._event)
-        except Exception:
-            pass
+        except Exception as _e:
+            dev_mode.log_swallowed("AI add activation event", _e)
 
 
 # ── BuilderAI ────────────────────────────────────────────────────────────────

@@ -18,6 +18,7 @@ from typing import Optional
 
 from engine.ui.panel import Panel
 from engine.ui.radar_projection import project_contact
+import engine.dev_mode as dev_mode
 
 
 # The disc's default world-space radius, in BC game units (GU). 1 GU
@@ -65,8 +66,8 @@ class SensorsPanel(Panel):
         if radar is not None and hasattr(radar, "GetRange"):
             try:
                 return float(radar.GetRange())
-            except Exception:
-                pass
+            except Exception as _e:
+                dev_mode.log_swallowed("RadarDisplay.GetRange fallback", _e)
         return DEFAULT_RANGE_GU
 
     def _resolve_minimize_state(self) -> tuple:

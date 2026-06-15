@@ -4,9 +4,12 @@ Reads the per-process boolean exposed by the C++ host as
 _dauntless_host.developer_mode. Uses getattr with a False default so a stale
 .so without the attribute degrades to "production mode" rather than raising.
 """
+import logging
 from typing import Callable
 
 import _dauntless_host
+
+_logger = logging.getLogger(__name__)
 
 # Mapping of GLFW key code -> (handler, description). Populated by
 # register_dev_keybinding() in engine/dev_keybindings.py and elsewhere.
@@ -17,6 +20,29 @@ _dev_keybindings: dict[int, tuple[Callable, str]] = {}
 def is_enabled() -> bool:
     """True iff the binary was launched with --developer."""
     return bool(getattr(_dauntless_host, "developer_mode", False))
+
+
+def log_swallowed(context: str, exc: BaseException) -> None:
+    """Surface an otherwise-silent swallowed exception — dev mode only.
+
+    Many ``except Exception: pass`` sites in the engine are deliberate
+    robustness shims (optional SDK methods, teardown that must not throw,
+    the static Python build's missing stdlib). They are correct to swallow
+    but invisible when something genuinely misbehaves. Replacing the bare
+    ``pass`` with ``dev_mode.log_swallowed("<operation>", exc)`` keeps the
+    success path byte-identical in production: this is a no-op unless
+    ``is_enabled()`` (one ``getattr`` bool check, then early return — no
+    I/O, no formatting). Under ``--developer`` it logs the context string
+    and exception at WARNING via stdlib ``logging``, which a developer can
+    grep for when a silent failure is suspected.
+
+    `context` is a short, specific operation name (e.g. "destroy bridge
+    instance", "ship.SetRadius fallback") — it is what a developer will
+    search for.
+    """
+    if not is_enabled():
+        return
+    _logger.warning("swallowed exception [%s]: %r", context, exc)
 
 
 def register_dev_keybinding(key: int, handler: Callable, description: str) -> None:

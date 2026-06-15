@@ -24,6 +24,8 @@ Phase 1 model:
 import logging
 import time as _time
 
+import engine.dev_mode as dev_mode
+
 
 _log = logging.getLogger("open_stbc.cpy_debug")
 
@@ -72,8 +74,8 @@ class TGProfilingInfo:
         if self._timing_id:
             try:
                 TGProfilingInfo_StopTiming(self._timing_id)
-            except Exception:
-                pass
+            except Exception as _e:
+                dev_mode.log_swallowed("stop profiling timer (__del__)", _e)
 
     def Stop(self) -> float:
         """Explicit stop — useful when the caller wants the elapsed value."""

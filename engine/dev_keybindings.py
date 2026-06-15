@@ -76,8 +76,8 @@ def register_for_frame(_h, session, player) -> None:
                 try:
                     shields.SetCurrentShields(f, 0.0)
                     shields.SetShieldChargePerSecond(f, 0.0)
-                except Exception:
-                    pass
+                except Exception as _e:
+                    dev_mode.log_swallowed("dev drop-shields per facet", _e)
 
     dev_mode.register_dev_keybinding(
         _h.keys.KEY_LEFT_BRACKET, _drop_all_shields,

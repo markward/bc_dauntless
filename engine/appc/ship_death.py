@@ -11,6 +11,8 @@ same way hit_vfx / particles do.
 See docs/superpowers/specs/2026-06-11-ship-death-sequence-design.md.
 """
 
+import engine.dev_mode as dev_mode
+
 THROES_DURATION       = 5.0   # seconds the ship coasts, dying, before removal
 # Explosion VFX tunables (consumed by _spawn_explosion), kept beside
 # THROES_DURATION. Tuned by feel.
@@ -66,8 +68,8 @@ def _clear_target_locks(dying) -> None:
             other.SetTarget(None)
             if hasattr(other, "SetTargetSubsystem"):
                 other.SetTargetSubsystem(None)
-    except Exception:
-        pass
+    except Exception as _e:
+        dev_mode.log_swallowed("clear target locks on dying ship", _e)
 
 
 def advance(dt: float) -> None:
@@ -99,8 +101,8 @@ def _finish(ship) -> None:
         pSet = ship.GetContainingSet() if hasattr(ship, "GetContainingSet") else None
         if pSet is not None and hasattr(ship, "GetName"):
             pSet.RemoveObjectFromSet(ship.GetName())
-    except Exception:
-        pass
+    except Exception as _e:
+        dev_mode.log_swallowed("remove dead ship from set", _e)
 
 
 def _broadcast_destroyed(ship) -> None:
@@ -114,8 +116,8 @@ def _broadcast_destroyed(ship) -> None:
         evt.SetSource(ship)
         evt.SetDestination(ship)
         App.g_kEventManager.AddEvent(evt)
-    except Exception:
-        pass
+    except Exception as _e:
+        dev_mode.log_swallowed("broadcast ET_OBJECT_DESTROYED", _e)
 
 
 def _spawn_explosion(ship) -> None:
@@ -164,8 +166,8 @@ def _spawn_explosion(ship) -> None:
             ctrl.SetEffectLifeTime(spacing * (EXPLOSION_COUNT - 0.5))
         if action is not None and hasattr(action, "Play"):
             action.Play()
-    except Exception:
-        pass
+    except Exception as _e:
+        dev_mode.log_swallowed("spawn death explosion", _e)
 
 
 def reset() -> None:

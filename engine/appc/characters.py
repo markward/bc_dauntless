@@ -27,6 +27,7 @@ from engine.appc.objects import ObjectClass
 from engine.appc.tg_ui.widgets import TGPane
 from engine.appc import crew_speech
 from engine.appc.ai import CSP_NORMAL
+import engine.dev_mode as dev_mode
 
 
 # ── Bridge menu primitives ───────────────────────────────────────────────────
@@ -78,8 +79,8 @@ class STButton(TGPane):
             try:
                 import App
                 App.g_kEventManager.AddEvent(self._event)
-            except Exception:
-                pass
+            except Exception as _e:
+                dev_mode.log_swallowed("character SendActivationEvent", _e)
 
     # ── Layout placeholders — bridge UI never queries real values headless ──
     def GetWidth(self) -> float:                  return 0.0

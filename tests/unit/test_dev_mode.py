@@ -155,3 +155,53 @@ def test_register_dev_pause_menu_entry_allows_duplicate_labels(reset_dev_mode):
     assert len(entries) == 2
     assert entries[0] == ("Same", h1)
     assert entries[1] == ("Same", h2)
+
+
+# ── log_swallowed ──────────────────────────────────────────────────────────
+# Production parity is the whole point: when --developer is OFF, log_swallowed
+# must be a pure no-op (no logging, no formatting, no I/O) so every swallowed
+# exception site stays byte-for-byte identical to the bare `pass` it replaced.
+
+def test_log_swallowed_is_noop_when_disabled(reset_dev_mode, monkeypatch):
+    """Production path: dev mode off -> the logger is never touched."""
+    import _dauntless_host
+    import engine.dev_mode as dev_mode
+    _dauntless_host.developer_mode = False
+
+    called: list[tuple] = []
+    monkeypatch.setattr(
+        dev_mode._logger, "warning",
+        lambda *a, **k: called.append((a, k)),
+    )
+    dev_mode.log_swallowed("some operation", RuntimeError("boom"))
+    assert called == []
+
+
+def test_log_swallowed_logs_when_enabled(reset_dev_mode, monkeypatch):
+    """Dev path: context string and exception are logged at WARNING."""
+    import _dauntless_host
+    import engine.dev_mode as dev_mode
+    _dauntless_host.developer_mode = True
+
+    called: list[tuple] = []
+    monkeypatch.setattr(
+        dev_mode._logger, "warning",
+        lambda *a, **k: called.append((a, k)),
+    )
+    exc = RuntimeError("boom")
+    dev_mode.log_swallowed("destroy bridge instance", exc)
+    assert len(called) == 1
+    args, _kwargs = called[0]
+    # context string and the exception itself are both passed through
+    assert "destroy bridge instance" in args
+    assert exc in args
+
+
+def test_log_swallowed_never_raises_when_disabled(reset_dev_mode):
+    """Defensive: must not raise even if logging would be misconfigured —
+    it returns before touching the logger at all in production."""
+    import _dauntless_host
+    import engine.dev_mode as dev_mode
+    _dauntless_host.developer_mode = False
+    # No assertion needed beyond "does not raise".
+    dev_mode.log_swallowed("ctx", ValueError("x"))

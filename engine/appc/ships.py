@@ -1,5 +1,6 @@
 from engine.appc.objects import DamageableObject
 from engine.appc.math import TGPoint3
+import engine.dev_mode as dev_mode
 
 
 class ShipClass(DamageableObject):
@@ -1014,8 +1015,8 @@ class ShipClass(DamageableObject):
                                     resolved = candidate
                                     break
                             child = menu.GetNextChild(child)
-                except Exception:
-                    pass
+                except Exception as _e:
+                    dev_mode.log_swallowed("resolve target via target menu", _e)
                 self._target = resolved
         else:
             self._target = target
