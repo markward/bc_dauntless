@@ -193,15 +193,20 @@ void BridgePass::render(const scenegraph::World& world,
             draw_mesh(m, mesh, mat, base_shader, w, white, t);
         });
 
-    glEnable(GL_CULL_FACE);
-
     // ── Sub-pass C: skinned bridge characters ──────────────────────────────
     // Any Pass::Bridge instance carrying a skeleton is drawn here, lit by the
-    // same bridge ambient as the geometry (bridge.frag, white dark-map). Bone
-    // palette is bind-pose for now (SP1); SP2 supplies an animated pose.
-    // Unlike the bridge shell (sub-pass A, mixed winding → culling disabled),
-    // character NIFs have consistent winding, so cull-back (re-enabled above)
-    // is correct for them.
+    // same bridge ambient as the geometry (bridge.frag, white dark-map). The
+    // per-instance bone palette (SP2) poses the body.
+    //
+    // Culling stays DISABLED (as for the bridge shell). A bridge officer's
+    // instance world carries BC's left-handed X-flip (det<0), and its bone
+    // palette (world_pose · inverse_bind) is built from BC's left-handed bind
+    // basis (also det<0). The two reflections compose to det>0, so the posed
+    // triangles wind opposite to a plain X-flipped rigid ship — cull-back would
+    // discard the FRONT faces and render the officer inside-out (shredded).
+    // Characters are small; double-siding them is cheaper than tracking the
+    // net winding through the skin matrix.
+    glDisable(GL_CULL_FACE);
     auto& skin_shader = pipeline.skinned_bridge_shader();
     skin_shader.use();
     skin_shader.set_mat4("u_view", camera.view_matrix());

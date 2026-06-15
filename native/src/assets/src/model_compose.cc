@@ -74,11 +74,38 @@ std::vector<MeshCpu> graft_head_cpu(Model& body, Model& head,
     const int attach_idx = find_bone(body.skeleton, attach_bone);
     if (attach_idx < 0) return {};  // unknown bone: leave body untouched
 
-    // Collect the head meshes that carry CPU data (the only ones we can graft).
+    // BC "head" NIFs (e.g. felix_head.nif) are FULL CHARACTER NIFs — a complete
+    // Bip01 body+head template. ReplaceBodyAndHead uses only the HEAD; the body
+    // comes from `body`. So graft ONLY the meshes in the head NIF's attach-bone
+    // ("Bip01 Head") subtree (the face + ponytail), discarding the template
+    // body. Grafting every mesh binds the template's arms/torso/legs to the
+    // single head bone — they fling out as skin-coloured spikes ("brown
+    // skeleton"). If the head NIF has no such node (a head-only NIF), graft all.
     std::vector<const MeshCpu*> graftable;
-    graftable.reserve(head.meshes.size());
-    for (const auto& mesh : head.meshes)
-        if (mesh.cpu_data()) graftable.push_back(&*mesh.cpu_data());
+    int head_node = -1;
+    for (std::size_t i = 0; i < head.nodes.size(); ++i)
+        if (head.nodes[i].name == attach_bone) { head_node = static_cast<int>(i); break; }
+    if (head_node >= 0) {
+        std::vector<char> in_subtree(head.nodes.size(), 0);
+        std::vector<int> stack{head_node};
+        while (!stack.empty()) {
+            int n = stack.back(); stack.pop_back();
+            if (n < 0 || n >= static_cast<int>(head.nodes.size()) || in_subtree[n])
+                continue;
+            in_subtree[n] = 1;
+            for (int c : head.nodes[n].children) stack.push_back(c);
+        }
+        for (std::size_t n = 0; n < head.nodes.size(); ++n) {
+            if (!in_subtree[n]) continue;
+            for (int mi : head.nodes[n].meshes)
+                if (mi >= 0 && mi < static_cast<int>(head.meshes.size()) &&
+                    head.meshes[mi].cpu_data())
+                    graftable.push_back(&*head.meshes[mi].cpu_data());
+        }
+    } else {
+        for (const auto& mesh : head.meshes)
+            if (mesh.cpu_data()) graftable.push_back(&*mesh.cpu_data());
+    }
     if (graftable.empty()) return {};  // nothing to graft: leave body untouched
 
     const int node_index = choose_attach_node(body, attach_bone);
@@ -113,6 +140,10 @@ std::vector<MeshCpu> graft_head_cpu(Model& body, Model& head,
     for (const MeshCpu* src : graftable) {
         MeshCpu cpu = *src;  // deep copy of vertices/indices/extra_uvs
         for (auto& v : cpu.vertices) {
+            // The head NIF builds its verts already in character-bind-model
+            // space (the head sits at its character head height), so binding to
+            // the head bone with weight 1 lets the body's bone palette pose it
+            // exactly like a rigid body shape — no extra transform.
             v.bone_indices = glm::u8vec4(static_cast<std::uint8_t>(attach_idx),
                                          0, 0, 0);
             v.bone_weights = glm::u8vec4(255, 0, 0, 0);

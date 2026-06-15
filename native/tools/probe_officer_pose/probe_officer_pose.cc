@@ -229,6 +229,36 @@ int main(int argc, char** argv) {
             std::printf("SKIN-AABB: no clips in %s\n", place_nif.string().c_str());
             return 1;
         }
+        // BIND-CONSISTENCY: a rigid shape follows its bone only if the skeleton's
+        // bind world for that bone EQUALS the vertex-bake's node bind world for
+        // the same-named node (so inverse_bind cancels the bake). Any mismatch
+        // contorts the skin even with correct bone origins. Compute both and
+        // report the worst per-bone divergence.
+        {
+            std::vector<glm::mat4> node_bw(m.nodes.size(), glm::mat4(1.0f));
+            for (std::size_t i = 0; i < m.nodes.size(); ++i)
+                node_bw[i] = m.nodes[i].parent_index >= 0
+                    ? node_bw[m.nodes[i].parent_index] * m.nodes[i].local_transform
+                    : m.nodes[i].local_transform;
+            float worst = 0.0f; std::string worst_bone; int checked = 0;
+            for (const auto& bone : m.skeleton.bones) {
+                int ni = -1;
+                for (std::size_t i = 0; i < m.nodes.size(); ++i)
+                    if (m.nodes[i].name == bone.name) { ni = (int)i; break; }
+                if (ni < 0) continue;
+                glm::mat4 skel_bw = glm::inverse(bone.inverse_bind_pose);
+                float d = 0.0f;
+                for (int c = 0; c < 4; ++c)
+                    for (int r = 0; r < 4; ++r)
+                        d = std::max(d, std::abs(skel_bw[c][r] - node_bw[ni][c][r]));
+                if (d > worst) { worst = d; worst_bone = bone.name; }
+                ++checked;
+            }
+            std::printf("BIND-CONSISTENCY checked=%d worst_delta=%.4f bone='%s' "
+                        "(0=perfect; >0.01 => skin contorts)\n",
+                        checked, worst, worst_bone.c_str());
+        }
+
         const assets::AnimationClip& clip = clips.front();
         std::vector<glm::mat4> pose =
             renderer::sample_pose(clip, m.skeleton, clip.duration_seconds);
@@ -244,6 +274,8 @@ int main(int argc, char** argv) {
 
         glm::vec3 lo(1e30f), hi(-1e30f);
         std::size_t verts_skinned = 0, meshes_with_cpu = 0;
+        int g_maxidx = -1;          // highest bone index any vertex references
+        std::size_t g_oob = 0;      // influences with bone index >= palette size
         int mesh_no = -1;
         for (const assets::Mesh& mesh : m.meshes) {
             ++mesh_no;
@@ -263,7 +295,11 @@ int main(int argc, char** argv) {
                     float w = static_cast<float>(v.bone_weights[k]) / 255.0f;
                     if (w <= 0.0f) continue;
                     std::size_t bi = static_cast<std::size_t>(v.bone_indices[k]);
-                    if (bi >= palette.size()) continue;
+                    g_maxidx = std::max(g_maxidx, static_cast<int>(bi));
+                    // The GPU does NOT guard this: it reads u_bones[bi] even when
+                    // bi >= uploaded palette size (stale slot -> explosion). Count
+                    // such cases instead of silently skipping them.
+                    if (bi >= palette.size()) { ++g_oob; continue; }
                     skinned += w * (palette[bi] * p);
                     wsum += w;
                     bones_used.insert(static_cast<int>(bi));
@@ -316,11 +352,12 @@ int main(int argc, char** argv) {
         std::printf(
             "SKIN-AABB meshes_with_cpu=%zu verts=%zu min=(%.1f %.1f %.1f) "
             "max=(%.1f %.1f %.1f) extent=(%.1f %.1f %.1f) max_extent=%.1f "
-            "max_coord=%.1f\n",
+            "max_coord=%.1f  MAXIDX=%d palette=%zu OOB=%zu\n",
             meshes_with_cpu, verts_skinned, lo.x, lo.y, lo.z, hi.x, hi.y, hi.z,
-            ext.x, ext.y, ext.z, max_ext, max_coord);
+            ext.x, ext.y, ext.z, max_ext, max_coord,
+            g_maxidx, palette.size(), g_oob);
 
-        const bool ok = (max_coord < 300.0f) && (max_ext < 200.0f);
+        const bool ok = (max_coord < 300.0f) && (max_ext < 200.0f) && (g_oob == 0);
         if (ok) {
             std::printf("SKIN-AABB PASS\n");
         } else {
