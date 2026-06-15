@@ -19,5 +19,16 @@ class AnimationManager:
         # "db_stand_t_l"). Record name -> path; re-load of a name overwrites.
         self._paths[str(name)] = str(path)
 
+    def FreeAnimation(self, name) -> None:
+        # SDK unloads animations by name on bridge teardown; drop the record so
+        # the registry stays clean across bridge reloads.
+        self._paths.pop(str(name), None)
+
+    def GetAnimationLength(self, name) -> float:
+        # Headless: no clip is actually loaded, so report 0.0. The SDK feeds
+        # this into Timer durations; 0.0 fires immediately (safe-fail) rather
+        # than hanging. (Was previously absorbed by the App-level _NamedStub.)
+        return 0.0
+
     def path_for(self, name) -> "str | None":
         return self._paths.get(str(name))

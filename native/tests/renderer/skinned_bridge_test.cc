@@ -305,15 +305,15 @@ TEST_F(SkinnedBridgeTest, DISABLED_DumpPosedOfficerPNG) {
     // skin-coloured head contorts (the "brown skeleton").
     {
         const std::filesystem::path body =
-            kProjectRoot / "game/data/Models/Characters/Bodies/BodyFemM/BodyFemM.NIF";
+            kProjectRoot / "game/data/Models/Characters/Bodies/BodyMaleS/BodyMaleS.NIF";
         const std::filesystem::path head =
-            kProjectRoot / "game/data/Models/Characters/Heads/HeadKiska/kiska_head.nif";
+            kProjectRoot / "game/data/Models/Characters/Heads/HeadBrex/brex_head_no_mouth.nif";
         const std::filesystem::path clipp =
-            kProjectRoot / "game/data/animations/db_stand_h_m.nif";
+            kProjectRoot / "game/data/animations/db_EtoL1_s.nif";
         const std::filesystem::path body_tex =
-            kProjectRoot / "game/data/Models/Characters/Bodies/BodyFemS/FedFemGold_body.tga";
+            kProjectRoot / "game/data/Models/Characters/Bodies/BodyMaleM/FedGold_body.tga";
         const std::filesystem::path head_tex =
-            kProjectRoot / "game/data/Models/Characters/Heads/HeadKiska/kiska_head.tga";
+            kProjectRoot / "game/data/Models/Characters/Heads/HeadBrex/brex_head.tga";
         if (std::filesystem::is_regular_file(head)) {
             assets::Model composed = assets::compose_officer_model(
                 body, body_tex, head, head_tex, "Bip01 Head");

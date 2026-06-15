@@ -19,6 +19,25 @@ def test_reload_same_name_overwrites():
     assert m.path_for("x") == "b.nif"
 
 
+def test_free_animation_removes_entry():
+    m = AnimationManager()
+    m.LoadAnimation("data/animations/x.nif", "x")
+    m.FreeAnimation("x")
+    assert m.path_for("x") is None
+
+
+def test_free_animation_unknown_name_is_noop():
+    m = AnimationManager()
+    m.FreeAnimation("never_loaded")   # must not raise
+
+
+def test_get_animation_length_returns_zero_float():
+    m = AnimationManager()
+    length = m.GetAnimationLength("x")
+    assert length == 0.0
+    assert isinstance(length, float)
+
+
 def test_app_exposes_singleton():
     import App
     assert hasattr(App, "g_kAnimationManager")
