@@ -64,8 +64,32 @@ class BridgeObjectClass:
 
 
 class ViewScreenObject(_LoudStub):
+    """SDK viewscreen object. Core data is real (nif, render_instance, the
+    RemoteCam/IsOn feed state consumed later by 5c RTT); the unbuilt
+    station-menu/handler surface (SetMenu, ToggleRemoteCam,
+    AddPythonFuncHandlerForInstance, IsStaticOn, MenuDown, ...) falls through
+    _LoudStub.__getattr__ as a silent no-op so missions that touch it don't
+    crash. The HOST reads this object after LoadBridge.Load and fills in
+    render_instance (see host_loop._realize_viewscreen), mirroring
+    BridgeObjectClass. Kept a _LoudStub (unlike BridgeObjectClass) precisely
+    because that menu/handler surface is large and not yet built."""
     def __init__(self, nif):
-        self._nif = nif
+        self.nif = nif
+        self.render_instance = None    # host fills this in
+        self._remote_cam = None
+        self._is_on = 0
+
+    def GetRemoteCam(self):
+        return self._remote_cam
+
+    def SetRemoteCam(self, cam):
+        self._remote_cam = cam
+
+    def SetIsOn(self, on):
+        self._is_on = on
+
+    def IsOn(self):
+        return self._is_on
 
 
 class ZoomCameraObjectClass(_LoudStub):
@@ -101,35 +125,30 @@ class ModelManager:
 class BridgeSet(SetClass):
     """The bridge SetClass. Crew/light/object registration is inherited REAL
     from SetClass; only the bridge-config/viewscreen/camera-delete surface is
-    overridden so it is loud + stateful instead of silently stubbed."""
+    overridden so it is stateful — faithful plumbing the host/SDK consume
+    instead of silently stubbed."""
     def __init__(self):
         super().__init__()
         self._config = ""
         self._viewscreen = None
 
     def IsSameConfig(self, name):
-        _stub_trace.stub_call("BridgeSet.IsSameConfig", "name=%s" % name)
         return 1 if self._config == name else 0
 
     def GetConfig(self):
-        _stub_trace.stub_call("BridgeSet.GetConfig")
         return self._config
 
     def SetConfig(self, name):
-        _stub_trace.stub_call("BridgeSet.SetConfig", "name=%s" % name)
         self._config = name
 
     def GetViewScreen(self):
-        _stub_trace.stub_call("BridgeSet.GetViewScreen")
         return self._viewscreen
 
     def SetViewScreen(self, viewscreen, name="viewscreen"):
-        _stub_trace.stub_call("BridgeSet.SetViewScreen", "name=%s" % name)
         self._viewscreen = viewscreen
         self.AddObjectToSet(viewscreen, name)
 
     def DeleteCameraFromSet(self, name):
-        _stub_trace.stub_call("BridgeSet.DeleteCameraFromSet", "name=%s" % name)
         self.RemoveCameraFromSet(name)
 
 
@@ -148,8 +167,7 @@ def BridgeObjectClass_Create(nif):
 
 
 def ViewScreenObject_Create(nif):
-    _stub_trace.stub_call("ViewScreenObject_Create", "nif=%s" % nif)
-    return ViewScreenObject(nif)
+    return ViewScreenObject(nif)               # real, no stub_call -> off summary
 
 
 def ZoomCameraObjectClass_Create(x, y, z, qw, qx, qy, qz, name):
