@@ -16,12 +16,15 @@ from engine.appc.sets import SetClass
 
 
 class _LoudStub:
-    """A truthy, chainable object that announces the first time it is created.
+    """A truthy placeholder for a deferred engine object (bridge object,
+    viewscreen, camera).
 
-    Used for engine objects (bridge object, viewscreen, camera) whose methods
-    the SDK calls but whose behaviour is deferred. Method calls return self so
-    chains like `pViewScreen.GetRemoteCam()` don't crash. Distinct from App.py's
-    silent `_NamedStub` only in that creation is announced by the factory.
+    Calls to undefined methods return ``None`` — which is control-flow-correct
+    for the SDK's bridge-load path (e.g. `pViewScreen.GetRemoteCam()` must be
+    falsey so the `if pCamera != None:` guard skips). It stays truthy via
+    `__bool__` so guards like `if pViewScreen:` don't short-circuit. The
+    announcement happens in the FACTORY that creates it, not here, so each
+    distinct symbol is reported once rather than per method call.
     """
     def __getattr__(self, name):
         return lambda *a, **k: None
