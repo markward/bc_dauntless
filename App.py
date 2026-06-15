@@ -131,6 +131,7 @@ from engine.appc.var_manager import TGVarManager
 from engine.appc.save_load import SaveLoadManager
 from engine.appc.config_mapping import TGConfigMapping
 from engine.appc.lod_models import LODModelManager
+from engine.appc.animation_manager import AnimationManager
 from engine.appc.debug import (
     CPyDebug, TGProfilingInfo,
     TGProfilingInfo_EnableProfiling, TGProfilingInfo_DisableProfiling,
@@ -574,6 +575,7 @@ def TacticalControlWindow_Create():
     return TacticalControlWindow.GetInstance()
 g_kSetManager = SetManager()
 g_kModelManager = ModelManager()
+g_kAnimationManager = AnimationManager()
 g_kTGActionManager = TGActionManager()
 g_kModelPropertyManager = TGModelPropertyManager()
 g_kLODModelManager = LODModelManager()
