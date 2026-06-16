@@ -5,6 +5,13 @@
 
 #include "renderer/gl_caps.h"
 
+#include <assets/texture.h>
+
+#include <fstream>
+#include <iterator>
+#include <span>
+#include <vector>
+
 #include "embedded_opaque_vs.h"
 #include "embedded_opaque_fs.h"
 #include "embedded_skinned_vs.h"
@@ -71,6 +78,24 @@ Pipeline::Pipeline() {
                                            shader_src::opaque_deform_tes,
                                            shader_src::opaque_fs);
     }
+    // Shared hull-damage interior texture for gouge shading. Loaded once; bound
+    // to unit 3 per ship draw. game/ is gitignored (absent in CI) — fall back
+    // silently to no texture (gouges then sample the unit-3 black fallback).
+    try {
+        std::ifstream in("game/data/Textures/Effects/Damage.tga", std::ios::binary);
+        if (in) {
+            std::vector<std::uint8_t> bytes(
+                (std::istreambuf_iterator<char>(in)),
+                std::istreambuf_iterator<char>());
+            assets::Image img = assets::decode_tga(
+                std::span<const std::uint8_t>(bytes));
+            damage_texture_ =
+                std::make_unique<assets::Texture>(assets::upload_image(img, true));
+        }
+    } catch (const std::exception&) {
+        damage_texture_.reset();  // decode/upload failure -> no gouge texture
+    }
+
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
     glEnable(GL_CULL_FACE);

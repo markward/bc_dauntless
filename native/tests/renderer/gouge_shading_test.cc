@@ -6,6 +6,8 @@
 #include <renderer/shader.h>
 #include <renderer/window.h>
 
+#include <filesystem>
+
 namespace {
 
 GLuint make_solid_texture(unsigned char r, unsigned char g, unsigned char b) {
@@ -90,6 +92,24 @@ TEST(GougeShading, DeepDisplacementShowsDamageTexture) {
         glDeleteTextures(1, &white);
         glDeleteBuffers(1, &vbo);
         glDeleteVertexArrays(1, &vao);
+    } catch (const std::runtime_error& e) {
+        GTEST_SKIP() << "no GL context available: " << e.what();
+    }
+}
+
+TEST(GougeShading, PipelineLoadsDamageTextureWhenPresent) {
+    try {
+        renderer::Window w(64, 64, "dmg-load-test", /*visible=*/false);
+        renderer::Pipeline pipeline;
+        const bool asset_present =
+            std::filesystem::exists("game/data/Textures/Effects/Damage.tga");
+        if (asset_present) {
+            EXPECT_NE(pipeline.damage_texture(), 0u)
+                << "Damage.tga present but Pipeline did not load it";
+        } else {
+            GTEST_SKIP() << "Damage.tga not present (game/ absent) — load path "
+                            "falls back; nothing to assert";
+        }
     } catch (const std::runtime_error& e) {
         GTEST_SKIP() << "no GL context available: " << e.what();
     }

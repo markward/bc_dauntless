@@ -85,7 +85,8 @@ void draw_model(const assets::Model& model,
                 float decal_time,
                 float emissive_scale,
                 const std::vector<glm::mat4>& bone_palette,
-                bool use_patches) {
+                bool use_patches,
+                std::uint32_t damage_tex) {
     // Pick the program: skinned only when the model carries a skeleton AND a
     // non-empty palette is supplied. An empty palette forces the static branch,
     // which is byte-identical to the pre-skinning path (used by the plumbing
@@ -263,6 +264,15 @@ void draw_model(const assets::Model& model,
                 renderer::glossiness_to_specular_power(mat.glossiness));
             prog.set_int("u_specular_enabled",
                            dauntless_specular::enabled() ? 1 : 0);
+
+            // Unit 3: shared hull-damage interior texture for gouge shading.
+            // Falls back to black_fallback when the asset was absent at load
+            // (gouges then sample black, effectively a no-op tint).
+            glActiveTexture(GL_TEXTURE3);
+            glBindTexture(GL_TEXTURE_2D,
+                          damage_tex != 0 ? damage_tex : black_fallback);
+            prog.set_int("u_damage_texture", 3);
+
             const float rim = rim_active
                 ? renderer::rim_strength_from_material(mat.specular, mat.glossiness)
                 : 0.0f;
@@ -379,7 +389,8 @@ void FrameSubmitter::submit_opaque(const scenegraph::World& world,
         if (m) draw_model(*m, inst.world, prog, pipeline.skinned_shader(),
                           white, black, rim_active,
                           inst.decals, inst.craters, inst.glow_regions, decal_time,
-                          inst.emissive_scale, palette, deform);
+                          inst.emissive_scale, palette, deform,
+                          pipeline.damage_texture());
     });
 }
 
@@ -434,7 +445,8 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
         if (m) draw_model(*m, inst.world, prog, pipeline.skinned_shader(),
                           white, black, rim_active,
                           inst.decals, inst.craters, inst.glow_regions, decal_time,
-                          inst.emissive_scale, palette, deform);
+                          inst.emissive_scale, palette, deform,
+                          pipeline.damage_texture());
     });
 }
 
