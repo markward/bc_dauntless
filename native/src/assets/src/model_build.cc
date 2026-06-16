@@ -8,6 +8,7 @@
 #include "skeleton_build.h"
 #include "skin_weights.h"
 
+#include "assets/crushability_bake.h"
 #include <assets/texture.h>
 
 #include <algorithm>
@@ -582,6 +583,11 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
         }
         // Avoid copying the CPU vertex data unless retention is requested.
         if (ctx.keep_cpu_data) {
+            // Ships retain CPU geometry (for ray-tracing) and are the only
+            // models that deform — bake per-vertex crushability here, before
+            // upload, so attribute 7 carries real thickness-derived weights.
+            // Non-retained models (bridge/props/UI) keep the 0.5 default.
+            bake_crushability(cpu);
             Mesh mesh = mesh_upload(MeshCpu(cpu));
             mesh.set_cpu_data(std::move(cpu));
             model.meshes.push_back(std::move(mesh));
