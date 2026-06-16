@@ -3,6 +3,7 @@
 
 #include "renderer/shader.h"
 
+#include <cassert>
 #include <memory>
 
 namespace renderer {
@@ -31,7 +32,10 @@ public:
 
     /// Deform (hull-deformation tessellation) program. Only valid when
     /// tessellation_available() is true; otherwise null-program (do not use).
-    Shader& deform_shader() noexcept { return *deform_; }
+    Shader& deform_shader() noexcept {
+        assert(deform_ && "deform_shader() requires tessellation_available()");
+        return *deform_;
+    }
     bool tessellation_available() const noexcept { return tessellation_available_; }
 
 private:
