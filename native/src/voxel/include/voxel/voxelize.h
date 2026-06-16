@@ -19,4 +19,9 @@ std::vector<Tri> collect_hull_triangles(const assets::Model& model);
 /// overlaps as solid. Voxels outside [0,dims) are skipped.
 void surface_voxelize(VoxelVolume& v, const std::vector<Tri>& tris);
 
+/// Solid-fill the interior: BFS-flood "exterior empty" from all border
+/// voxels through empty space; every voxel never reached is marked solid.
+/// Robust to small surface leaks (a leak lets the flood bleed inward).
+void solidify(VoxelVolume& v);
+
 }  // namespace voxel

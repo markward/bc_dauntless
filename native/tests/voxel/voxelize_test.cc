@@ -144,3 +144,22 @@ TEST(SurfaceVoxelize, MarksVoxelsTrianglePassesThrough) {
     EXPECT_TRUE(v.solid(2, 2, 4));   // inside the triangle, on its plane
     EXPECT_FALSE(v.solid(2, 2, 0));  // far from the triangle
 }
+
+TEST(Solidify, FillsHollowBoxInterior) {
+    voxel::VoxelVolume v;
+    v.dims = {6, 6, 6};
+    v.origin = {0.f, 0.f, 0.f};
+    v.cell = {1.f, 1.f, 1.f};
+    v.occ.assign(6 * 6 * 6, 0);
+    // Hollow shell: mark the outer faces of a 1..4 cube as solid, interior empty.
+    for (int z = 1; z <= 4; ++z)
+    for (int y = 1; y <= 4; ++y)
+    for (int x = 1; x <= 4; ++x) {
+        bool shell = (x==1||x==4||y==1||y==4||z==1||z==4);
+        if (shell) v.set(x, y, z, true);
+    }
+    EXPECT_FALSE(v.solid(2, 2, 2));        // interior empty before
+    voxel::solidify(v);
+    EXPECT_TRUE(v.solid(2, 2, 2));         // interior filled after
+    EXPECT_FALSE(v.solid(0, 0, 0));        // exterior still empty
+}

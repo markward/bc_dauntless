@@ -2,6 +2,8 @@
 #include <voxel/voxelize.h>
 #include <assets/model.h>
 #include <cmath>
+#include <cstdint>
+#include <queue>
 #include <glm/glm.hpp>
 
 namespace voxel {
@@ -74,6 +76,31 @@ void surface_voxelize(VoxelVolume& v, const std::vector<Tri>& tris) {
                 v.set(c.x, c.y, c.z, true);
         }
     }
+}
+
+void solidify(VoxelVolume& v) {
+    const glm::ivec3 d = v.dims;
+    std::vector<std::uint8_t> exterior(v.occ.size(), 0);
+    std::queue<glm::ivec3> q;
+    auto push_if_empty = [&](int x, int y, int z) {
+        if (x < 0 || y < 0 || z < 0 || x >= d.x || y >= d.y || z >= d.z) return;
+        std::size_t i = v.index(x, y, z);
+        if (v.occ[i] == 0 && exterior[i] == 0) { exterior[i] = 1; q.push({x, y, z}); }
+    };
+    // Seed from every border voxel.
+    for (int z = 0; z < d.z; ++z)
+    for (int y = 0; y < d.y; ++y)
+    for (int x = 0; x < d.x; ++x)
+        if (x==0||y==0||z==0||x==d.x-1||y==d.y-1||z==d.z-1) push_if_empty(x, y, z);
+    // BFS through empty space.
+    const int dx[6]={1,-1,0,0,0,0}, dy[6]={0,0,1,-1,0,0}, dz[6]={0,0,0,0,1,-1};
+    while (!q.empty()) {
+        glm::ivec3 c = q.front(); q.pop();
+        for (int k = 0; k < 6; ++k) push_if_empty(c.x+dx[k], c.y+dy[k], c.z+dz[k]);
+    }
+    // Anything not reached and not already solid surface = interior solid.
+    for (std::size_t i = 0; i < v.occ.size(); ++i)
+        if (exterior[i] == 0) v.occ[i] = 1;
 }
 
 }  // namespace voxel
