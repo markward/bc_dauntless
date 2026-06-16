@@ -17,3 +17,48 @@ TEST(CrushabilityMapping, ClampsAndHandlesDegenerateRef) {
     EXPECT_FLOAT_EQ(crushability_from_thickness(-1.0f, 4.0f), 1.0f);  // negative -> clamp 1
     EXPECT_FLOAT_EQ(crushability_from_thickness(1.0f, 0.0f), 0.0f);   // ref<=0 -> 0 (uncrushable)
 }
+
+#include <assets/mesh.h>
+#include <limits>
+
+namespace {
+// Two facing quads: a small top quad at z=0 (x,y in [0,10]) and a larger
+// bottom quad at z=-1 (x,y in [-5,15]). The bottom overhangs the top so a
+// ray straight down from any top point lands in the bottom's interior
+// (avoids fragile edge/corner hits).
+assets::MeshCpu make_facing_quads() {
+    assets::MeshCpu m;
+    auto v = [](float x, float y, float z, glm::vec3 n) {
+        assets::MeshCpu::Vertex vert;
+        vert.position = {x, y, z};
+        vert.normal = n;
+        return vert;
+    };
+    const glm::vec3 up{0, 0, 1}, down{0, 0, -1};
+    // 0..3 top quad (normal +z), 4..7 bottom quad (normal -z)
+    m.vertices = {
+        v(0, 0, 0, up),  v(10, 0, 0, up),  v(10, 10, 0, up),  v(0, 10, 0, up),
+        v(-5, -5, -1, down), v(15, -5, -1, down),
+        v(15, 15, -1, down), v(-5, 15, -1, down),
+    };
+    m.indices = {
+        0, 1, 2,  0, 2, 3,        // top
+        4, 5, 6,  4, 6, 7,        // bottom
+    };
+    return m;
+}
+}  // namespace
+
+TEST(ProbeThickness, HitsOppositeSurface) {
+    const assets::MeshCpu m = make_facing_quads();
+    // From the centre of the top quad, straight down, must hit the bottom at t=1.
+    const float t = assets::probe_thickness(m, {5, 5, 0}, {0, 0, -1}, 100.0f);
+    EXPECT_NEAR(t, 1.0f, 1e-4f);
+}
+
+TEST(ProbeThickness, MissReturnsInfinity) {
+    const assets::MeshCpu m = make_facing_quads();
+    // From the top quad centre, straight UP (away from all geometry): no hit.
+    const float t = assets::probe_thickness(m, {5, 5, 0}, {0, 0, 1}, 100.0f);
+    EXPECT_TRUE(std::isinf(t));
+}
