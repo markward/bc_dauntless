@@ -356,6 +356,8 @@ void FrameSubmitter::submit_opaque(const scenegraph::World& world,
     auto& shader = pipeline.opaque_shader();
     configure_common(shader);
     configure_common(pipeline.skinned_shader());
+    if (pipeline.tessellation_available())
+        configure_common(pipeline.deform_shader());
 
     const GLuint white = ensure_white_texture();
     const GLuint black = ensure_black_texture();
@@ -409,6 +411,8 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
     auto& shader = pipeline.opaque_shader();
     configure_common(shader);
     configure_common(pipeline.skinned_shader());
+    if (pipeline.tessellation_available())
+        configure_common(pipeline.deform_shader());
 
     const GLuint white = ensure_white_texture();
     const GLuint black = ensure_black_texture();
