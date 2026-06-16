@@ -15,7 +15,7 @@ uniform mat4 u_ship_world_inv; // inverse(instance_world) (world -> body)
 const int MAX_CRATERS = 24;
 uniform int  u_crater_count;
 uniform vec4 u_crater_a[MAX_CRATERS];  // point_body.xyz, depth
-uniform vec4 u_crater_b[MAX_CRATERS];  // impact_dir_body.xyz, radius
+uniform vec4 u_crater_b[MAX_CRATERS];  // impact_dir_body.xyz (unit length), radius
 
 out vec3 v_normal_ws;
 out vec2 v_uv;
@@ -38,8 +38,8 @@ vec3 crater_displacement(vec3 p_body, float crush) {
         if (radius <= 0.0) continue;
         float r = length(p_body - c_pt) / radius;   // 0 center, 1 edge
         if (r >= 1.0) continue;
-        float fall = 1.0 - r * r;                    // smooth radial falloff
-        fall *= fall;
+        float fall = 1.0 - r * r;
+        fall *= fall;                                // smooth radial falloff (1 - r^2)^2
         disp += depth * fall * crush * dir;
     }
     return disp;

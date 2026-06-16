@@ -149,11 +149,13 @@ void draw_model(const assets::Model& model,
             ++cn;
         }
         prog.set_int("u_crater_count", cn);
+        // The deform TES reads these unconditionally (body_pos), so upload
+        // them regardless of crater count to avoid a stale-matrix coupling.
+        prog.set_mat4("u_ship_world", world);                    // body -> world (TES)
+        prog.set_mat4("u_ship_world_inv", glm::inverse(world));  // world -> body
         if (cn > 0) {
             prog.set_vec4_array("u_crater_a", ca, cn);
             prog.set_vec4_array("u_crater_b", cb, cn);
-            prog.set_mat4("u_ship_world", world);                    // body -> world (TES)
-            prog.set_mat4("u_ship_world_inv", glm::inverse(world));  // world -> body
         }
     }
 
