@@ -148,7 +148,8 @@ protected:
         renderer::draw_model(*model_h, glm::mat4(1.0f), opaque, skinned,
                              white, black, /*rim_active=*/false,
                              no_decals, no_craters, no_glow, /*decal_time=*/0.0f,
-                             /*emissive_scale=*/1.0f, palette);
+                             /*emissive_scale=*/1.0f, palette,
+                             /*use_patches=*/false);
 
         glDeleteTextures(1, &white);
         glDeleteTextures(1, &black);

@@ -84,7 +84,8 @@ void draw_model(const assets::Model& model,
                                  scenegraph::Instance::kMaxGlowRegions>& glow_regions,
                 float decal_time,
                 float emissive_scale,
-                const std::vector<glm::mat4>& bone_palette) {
+                const std::vector<glm::mat4>& bone_palette,
+                bool use_patches) {
     // Pick the program: skinned only when the model carries a skeleton AND a
     // non-empty palette is supplied. An empty palette forces the static branch,
     // which is byte-identical to the pre-skinning path (used by the plumbing
@@ -266,7 +267,12 @@ void draw_model(const assets::Model& model,
             prog.set_float("u_rim_strength", rim);
 
             glBindVertexArray(mesh.vao());
-            glDrawElements(GL_TRIANGLES, mesh.index_count(), GL_UNSIGNED_INT, nullptr);
+            if (!skinned && use_patches) {
+                glPatchParameteri(GL_PATCH_VERTICES, 3);
+                glDrawElements(GL_PATCHES, mesh.index_count(), GL_UNSIGNED_INT, nullptr);
+            } else {
+                glDrawElements(GL_TRIANGLES, mesh.index_count(), GL_UNSIGNED_INT, nullptr);
+            }
         }
     }
     glBindVertexArray(0);
@@ -360,10 +366,13 @@ void FrameSubmitter::submit_opaque(const scenegraph::World& world,
         std::vector<glm::mat4> palette;
         if (m && !m->skeleton.bones.empty())
             palette = build_bone_palette(m->skeleton, /*local_pose=*/nullptr);
-        if (m) draw_model(*m, inst.world, shader, pipeline.skinned_shader(),
+        const bool deform = pipeline.tessellation_available()
+                            && inst.craters.count() > 0;
+        Shader& prog = deform ? pipeline.deform_shader() : shader;
+        if (m) draw_model(*m, inst.world, prog, pipeline.skinned_shader(),
                           white, black, rim_active,
                           inst.decals, inst.craters, inst.glow_regions, decal_time,
-                          inst.emissive_scale, palette);
+                          inst.emissive_scale, palette, deform);
     });
 }
 
@@ -410,10 +419,13 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
         std::vector<glm::mat4> palette;
         if (m && !m->skeleton.bones.empty())
             palette = build_bone_palette(m->skeleton, /*local_pose=*/nullptr);
-        if (m) draw_model(*m, inst.world, shader, pipeline.skinned_shader(),
+        const bool deform = pipeline.tessellation_available()
+                            && inst.craters.count() > 0;
+        Shader& prog = deform ? pipeline.deform_shader() : shader;
+        if (m) draw_model(*m, inst.world, prog, pipeline.skinned_shader(),
                           white, black, rim_active,
                           inst.decals, inst.craters, inst.glow_regions, decal_time,
-                          inst.emissive_scale, palette);
+                          inst.emissive_scale, palette, deform);
     });
 }
 
