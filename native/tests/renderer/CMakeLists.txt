@@ -28,6 +28,7 @@ add_executable(renderer_tests
     particle_pass_test.cc
     asset_path_test.cc
     gl_caps_test.cc
+    tess_program_test.cc
 )
 
 target_link_libraries(renderer_tests
@@ -50,6 +51,7 @@ endif()
 
 target_include_directories(renderer_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/native/tests/assets/gpu  # reuse gl_fixture for offscreen contexts
+    $<TARGET_PROPERTY:renderer,BINARY_DIR>        # embedded_*.h generated headers
 )
 
 gtest_discover_tests(renderer_tests
