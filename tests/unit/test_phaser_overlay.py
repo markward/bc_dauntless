@@ -173,3 +173,7 @@ def test_overlay_arc_only_for_selected_bank():
     # Exactly one bank's worth of arc beams (4 × ARC_SAMPLES).
     assert sum(1 for x in with_arc if x["color"] == po.ARC_COLOR) \
         == 4 * po.ARC_SAMPLES
+
+
+def test_overlay_empty_for_none_ship():
+    assert po.build_phaser_overlay(None, selected_name="DorsalPhaser1") == []

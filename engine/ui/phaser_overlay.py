@@ -146,7 +146,7 @@ def build_arc_beams(bank, ship) -> List[dict]:
     return beams
 
 
-def phaser_banks(ship) -> List:
+def phaser_banks(ship) -> "List[PhaserBank]":
     """All PhaserBank subsystems on `ship` (uses the SPV's own enumeration)."""
     from engine.appc.weapon_subsystems import PhaserBank
     from engine.ui.ship_property_viewer import _iter_subsystems
@@ -157,7 +157,8 @@ def build_phaser_overlay(ship, selected_name: Optional[str] = None,
                          banks: Optional[List] = None) -> List[dict]:
     """Yellow strips for every phaser bank, plus a cyan firing arc for the
     bank whose GetName() matches `selected_name` (if it is a phaser bank).
-    Pass `banks` to bypass enumeration (tests / pre-fetched lists)."""
+    Pass `banks` to bypass enumeration (tests / pre-fetched lists).
+    selected_name=None or "" both suppress the arc."""
     if ship is None:
         return []
     if banks is None:
