@@ -12,12 +12,18 @@ class _Ship:
         return None  # skip the phaser damage loop
 
 
-def test_advance_combat_updates_eligibility(monkeypatch):
-    calls = []
-    monkeypatch.setattr(de, "update", lambda ships: calls.append(list(ships)))
+def test_advance_combat_updates_eligibility_before_hits(monkeypatch):
+    # Pin both the call (with the tick's ship list) AND the spec-critical
+    # ordering: eligibility must refresh BEFORE hit processing, else this
+    # tick's hits would gate against last tick's eligible set. projectiles.
+    # update_all is the first hit-pipeline call, so it anchors "hits".
+    events = []
+    monkeypatch.setattr(de, "update",
+                        lambda ships: events.append(("update", list(ships))))
+    monkeypatch.setattr(projectiles, "update_all",
+                        lambda *a, **k: events.append(("hits",)) or [])
 
-    # Stub everything else _advance_combat touches so an empty/None world is safe.
-    monkeypatch.setattr(projectiles, "update_all", lambda *a, **k: [])
+    # Stub the remaining collaborators so an empty/None world is safe.
     monkeypatch.setattr(hit_vfx, "update_ages", lambda *a, **k: None)
     monkeypatch.setattr(particles, "advance", lambda *a, **k: None)
     monkeypatch.setattr(ship_death, "advance", lambda *a, **k: None)
@@ -28,4 +34,4 @@ def test_advance_combat_updates_eligibility(monkeypatch):
     s1, s2 = _Ship(), _Ship()
     host_loop._advance_combat([s1, s2], 0.016, host=None, ship_instances={})
 
-    assert calls == [[s1, s2]]
+    assert events == [("update", [s1, s2]), ("hits",)]
