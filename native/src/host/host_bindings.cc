@@ -106,6 +106,7 @@ std::unique_ptr<renderer::HitVfxPass>      g_hit_vfx_pass;
 std::vector<renderer::ParticleEmitterDescriptor> g_particle_emitters;
 std::unique_ptr<renderer::ParticlePass>          g_particle_pass;
 std::vector<renderer::PhaserBeamDescriptor> g_phaser_beams;
+std::vector<renderer::PhaserBeamDescriptor> g_spv_overlay_beams;
 std::unique_ptr<renderer::PhaserPass>      g_phaser_pass;
 renderer::HologramShip                       g_hologram_ship;
 std::unique_ptr<renderer::HologramPass>      g_hologram_pass;
@@ -276,6 +277,7 @@ void shutdown() {
     g_particle_emitters.clear();
     g_particle_pass.reset();
     g_phaser_beams.clear();
+    g_spv_overlay_beams.clear();
     g_phaser_pass.reset();
     g_subsystem_pins.clear();
     g_hologram_ship = renderer::HologramShip{};
@@ -399,6 +401,9 @@ void frame() {
 
     if (g_hologram_pass && g_hologram_ship.active)
         g_hologram_pass->render(g_hologram_ship, g_world, g_camera, *g_pipeline, lookup);
+    if (viewer_mode && g_phaser_pass && !g_spv_overlay_beams.empty())
+        g_phaser_pass->render(g_spv_overlay_beams, g_camera, *g_pipeline,
+                              /*depth_test=*/false);
     if (g_subsystem_pin_pass && !g_subsystem_pins.empty()) {
         // Device-pixel ratio = framebuffer / logical window height, so pins
         // keep a constant apparent size on HiDPI/Retina displays.
@@ -501,6 +506,26 @@ namespace dauntless_rim {
 // Toggle for the opaque-pass persistent damage decals. Defined in frame.cc.
 namespace dauntless_decals {
     void set_enabled(bool v);  // defined in frame.cc
+}
+
+static renderer::PhaserBeamDescriptor beam_from_dict(const py::dict& d) {
+    renderer::PhaserBeamDescriptor b;
+    auto e = d["emitter"].cast<std::tuple<float, float, float>>();
+    auto t = d["target"].cast<std::tuple<float, float, float>>();
+    auto c = d["color"].cast<std::tuple<float, float, float, float>>();
+    b.emitter_world = {std::get<0>(e), std::get<1>(e), std::get<2>(e)};
+    b.target_world  = {std::get<0>(t), std::get<1>(t), std::get<2>(t)};
+    b.color         = {std::get<0>(c), std::get<1>(c), std::get<2>(c), std::get<3>(c)};
+    b.width         = d["width"].cast<float>();
+    b.u_tiles       = d.contains("u_tiles") ? d["u_tiles"].cast<float>() : 1.0f;
+    b.num_sides        = d.contains("num_sides")        ? d["num_sides"].cast<int>()          : 6;
+    b.taper_radius     = d.contains("taper_radius")     ? d["taper_radius"].cast<float>()     : 0.01f;
+    b.taper_ratio      = d.contains("taper_ratio")      ? d["taper_ratio"].cast<float>()      : 0.25f;
+    b.taper_min_length = d.contains("taper_min_length") ? d["taper_min_length"].cast<float>() : 5.0f;
+    b.taper_max_length = d.contains("taper_max_length") ? d["taper_max_length"].cast<float>() : 30.0f;
+    b.perimeter_tile   = d.contains("perimeter_tile")   ? d["perimeter_tile"].cast<float>()   : 1.0f;
+    b.texture_speed    = d.contains("texture_speed")    ? d["texture_speed"].cast<float>()    : 0.0f;
+    return b;
 }
 
 PYBIND11_MODULE(_dauntless_host, m) {
@@ -1074,28 +1099,26 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](const std::vector<py::dict>& descs) {
               g_phaser_beams.clear();
               g_phaser_beams.reserve(descs.size());
-              for (const auto& d : descs) {
-                  renderer::PhaserBeamDescriptor b;
-                  auto e = d["emitter"].cast<std::tuple<float, float, float>>();
-                  auto t = d["target"].cast<std::tuple<float, float, float>>();
-                  auto c = d["color"].cast<std::tuple<float, float, float, float>>();
-                  b.emitter_world = {std::get<0>(e), std::get<1>(e), std::get<2>(e)};
-                  b.target_world  = {std::get<0>(t), std::get<1>(t), std::get<2>(t)};
-                  b.color         = {std::get<0>(c), std::get<1>(c), std::get<2>(c), std::get<3>(c)};
-                  b.width         = d["width"].cast<float>();
-                  b.u_tiles       = d.contains("u_tiles") ? d["u_tiles"].cast<float>() : 1.0f;
-                  b.num_sides        = d.contains("num_sides")        ? d["num_sides"].cast<int>()          : 6;
-                  b.taper_radius     = d.contains("taper_radius")     ? d["taper_radius"].cast<float>()     : 0.01f;
-                  b.taper_ratio      = d.contains("taper_ratio")      ? d["taper_ratio"].cast<float>()      : 0.25f;
-                  b.taper_min_length = d.contains("taper_min_length") ? d["taper_min_length"].cast<float>() : 5.0f;
-                  b.taper_max_length = d.contains("taper_max_length") ? d["taper_max_length"].cast<float>() : 30.0f;
-                  b.perimeter_tile   = d.contains("perimeter_tile")   ? d["perimeter_tile"].cast<float>()   : 1.0f;
-                  b.texture_speed    = d.contains("texture_speed")    ? d["texture_speed"].cast<float>()    : 0.0f;
-                  g_phaser_beams.push_back(std::move(b));
-              }
+              for (const auto& d : descs)
+                  g_phaser_beams.push_back(beam_from_dict(d));
           },
           py::arg("beams"),
           "Set the active phaser-beam list, applied each frame().");
+
+    m.def("set_spv_overlay_beams",
+          [](const std::vector<py::dict>& descs) {
+              g_spv_overlay_beams.clear();
+              g_spv_overlay_beams.reserve(descs.size());
+              for (const auto& d : descs)
+                  g_spv_overlay_beams.push_back(beam_from_dict(d));
+          },
+          py::arg("beams"),
+          "Set the Ship Property Viewer phaser strip/arc overlay beams "
+          "(rendered depth-test-off in viewer_mode). Applied each frame().");
+
+    m.def("clear_spv_overlay_beams",
+          []() { g_spv_overlay_beams.clear(); },
+          "Clear the SPV phaser overlay beams. Takes effect next frame().");
 
     m.def("set_hologram_ship",
           [](scenegraph::InstanceId iid,

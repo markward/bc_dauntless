@@ -214,3 +214,14 @@ def test_pick_radius_scales_with_device_pixel_ratio():
     assert pick_pin(400.0 + offset, 300.0, descs, cam, (800, 600)) is None
     assert pick_pin(400.0 + offset, 300.0, descs, cam, (800, 600),
                     device_scale_factor=2.0) == 0
+
+
+def test_selected_name_returns_selected_descriptor_name():
+    from engine.ui.ship_property_viewer_panel import ShipPropertyViewerPanel
+    p = ShipPropertyViewerPanel(ship_getter=lambda: None)
+    p._descriptors = [{"name": "DorsalPhaser1"}, {"name": "VentralPhaser1"}]
+    assert p.selected_name() is None          # nothing selected
+    p.selected_index = 1
+    assert p.selected_name() == "VentralPhaser1"
+    p.selected_index = 99                     # out of range → None
+    assert p.selected_name() is None

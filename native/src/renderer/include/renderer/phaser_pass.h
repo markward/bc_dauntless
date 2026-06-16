@@ -21,9 +21,14 @@ public:
     PhaserPass& operator=(const PhaserPass&) = delete;
 
     /// Render every active beam as an additive camera-aligned quad.
+    /// depth_test=false draws the beams with depth-testing disabled (always
+    /// visible — used by the Ship Property Viewer overlay so strips/arcs read
+    /// through the hologram hull). Defaults to true (gameplay beams occlude
+    /// behind geometry as before).
     void render(const std::vector<PhaserBeamDescriptor>& beams,
                 const scenegraph::Camera& camera,
-                Pipeline& pipeline);
+                Pipeline& pipeline,
+                bool depth_test = true);
 
 private:
     // Per-beam VAO/VBO — rebuilt each frame from the descriptor list.

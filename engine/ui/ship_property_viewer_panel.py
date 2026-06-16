@@ -118,6 +118,20 @@ class ShipPropertyViewerPanel(Panel):
     def descriptors(self) -> List[dict]:
         return self._descriptors
 
+    def selected_descriptor(self) -> Optional[dict]:
+        """The currently-selected pin's descriptor, or None."""
+        if self.selected_index is None:
+            return None
+        if 0 <= self.selected_index < len(self._descriptors):
+            return self._descriptors[self.selected_index]
+        return None
+
+    def selected_name(self) -> Optional[str]:
+        """Name of the selected subsystem (matches a phaser bank's GetName()
+        for firing-arc overlay selection), or None."""
+        d = self.selected_descriptor()
+        return d["name"] if d else None
+
     def render_payload(self) -> Optional[str]:
         snapshot = (self._visible, len(self._descriptors), self.selected_index)
         if snapshot == self._last_pushed:

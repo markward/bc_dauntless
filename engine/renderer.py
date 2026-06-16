@@ -415,6 +415,24 @@ def clear_subsystem_pins() -> None:
     _h.clear_subsystem_pins()
 
 
+def set_spv_overlay_beams(beams: list) -> None:
+    """Set the Ship Property Viewer phaser strip/arc overlay beams.
+
+    `beams` is a list of PhaserBeamDescriptor dicts (engine.ui.phaser_overlay).
+    No-ops silently if the host binding is unavailable (headless / pre-rebuild).
+    """
+    fn = getattr(_h, "set_spv_overlay_beams", None)
+    if fn is not None:
+        fn(beams)
+
+
+def clear_spv_overlay_beams() -> None:
+    """Clear the SPV phaser overlay beams. Takes effect next frame()."""
+    fn = getattr(_h, "clear_spv_overlay_beams", None)
+    if fn is not None:
+        fn()
+
+
 def set_target_reticle(payload) -> None:
     """Feed the target reticle pass from a target_reticle.TargetReticlePayload.
 
