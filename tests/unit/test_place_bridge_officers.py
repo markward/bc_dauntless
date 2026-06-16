@@ -36,7 +36,7 @@ class FakeController:
 def _bridge_with(*characters):
     """Build a fresh 'bridge' set holding the given configured characters."""
     App.g_kSetManager._sets.pop("bridge", None)
-    s = App.BridgeSet_Create()                  # registers loud-stub BridgeSet_Create
+    s = App.BridgeSet_Create()                  # real BridgeSet
     App.g_kSetManager.AddSet(s, "bridge")
     for name, loc in characters:
         c = App.CharacterClass_Create(

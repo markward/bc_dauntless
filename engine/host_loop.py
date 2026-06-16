@@ -2615,8 +2615,6 @@ def run(mission_name: Optional[str] = None,
             _realize_bridge_model(controller, r)
             _realize_viewscreen(controller, r)
             _place_bridge_officers(controller, r)
-            import engine.appc._stub_trace as _stub_trace
-            _stub_trace.dump_stub_summary()
             _wire_target_menu_to_player_set(controller)
         controller.post_load_hook = _after_mission_loaded
         _after_mission_loaded()

@@ -1,4 +1,3 @@
-import engine.appc._stub_trace as st
 from engine.appc.bridge_set import (
     BridgeSet, BridgeSet_Create, BridgeSet_Cast,
     BridgeObjectClass_Create, ViewScreenObject_Create,
@@ -8,15 +7,10 @@ from engine.appc.bridge_set import (
 from engine.appc.sets import SetClass
 
 
-def setup_function(_):
-    st.reset()
-
-
 def test_create_returns_bridgeset_and_is_a_setclass():
     pset = BridgeSet_Create()
     assert isinstance(pset, BridgeSet)
     assert isinstance(pset, SetClass)          # crew creation path works for real
-    assert "BridgeSet_Create" in st.fired()
 
 
 def test_cast_returns_none_for_non_bridgeset():
@@ -27,25 +21,19 @@ def test_cast_returns_none_for_non_bridgeset():
     assert BridgeSet_Cast(bs) is bs
 
 
-def test_config_round_trips_and_is_not_loud():
+def test_config_round_trips():
     bs = BridgeSet_Create()
     assert bs.IsSameConfig("GalaxyBridge") == 0     # nothing set yet
     bs.SetConfig("GalaxyBridge")
     assert bs.GetConfig() == "GalaxyBridge"
     assert bs.IsSameConfig("GalaxyBridge")          # truthy
     assert bs.IsSameConfig("SovereignBridge") == 0
-    # Step 5b: faithful plumbing the host/SDK consume — off the summary.
-    assert "BridgeSet.GetConfig" not in st.fired()
-    assert "BridgeSet.SetConfig" not in st.fired()
-    assert "BridgeSet.IsSameConfig" not in st.fired()
 
 
 def test_viewscreen_is_real_data_object_and_round_trips():
     bs = BridgeSet_Create()
     assert bs.GetViewScreen() is None
     vs = ViewScreenObject_Create("data/Models/Sets/DBridge/DBridgeViewScreen.nif")
-    # Step 5b: now a real object — must drop off the bridge-stub summary.
-    assert "ViewScreenObject_Create" not in st.fired()
     # Carries the NIF path so the host can realize the screen mesh.
     assert vs.nif == "data/Models/Sets/DBridge/DBridgeViewScreen.nif"
     # Host fills this in; defaults to None.
@@ -56,31 +44,26 @@ def test_viewscreen_is_real_data_object_and_round_trips():
     assert vs.GetRemoteCam() == "cam-sentinel"
     vs.SetIsOn(1)
     assert vs.IsOn() == 1
-    # SetViewScreen stores it and is no longer loud.
+    # SetViewScreen stores it.
     bs.SetViewScreen(vs, "viewscreen")
     assert bs.GetViewScreen() is vs
-    assert "BridgeSet.SetViewScreen" not in st.fired()
-    assert "BridgeSet.GetViewScreen" not in st.fired()
     # The unbuilt menu/handler surface still no-ops via the _LoudStub catch-all
-    # (does not raise, does not fire a stub_call).
+    # (does not raise).
     assert vs.SetMenu("whatever") is None
     assert vs.ToggleRemoteCam() is None
     assert vs.IsStaticOn() is None
 
 
-def test_delete_camera_from_set_is_not_loud():
+def test_delete_camera_from_set():
     bs = BridgeSet_Create()
     cam = ZoomCameraObjectClass_Create(0, 0, 0, 0, 0, 0, 1, "maincamera")
     bs.AddCameraToSet(cam, "maincamera")
     bs.DeleteCameraFromSet("maincamera")
     assert bs.GetCamera("maincamera") is None
-    assert "BridgeSet.DeleteCameraFromSet" not in st.fired()
 
 
 def test_bridge_object_is_real_pure_object():
     obj = BridgeObjectClass_Create("data/Models/Sets/DBridge/DBridge.nif")
-    # No longer a loud stub — must drop off the bridge-stub summary.
-    assert "BridgeObjectClass_Create" not in st.fired()
     # Carries the NIF path so the host can realize the mesh.
     assert obj.nif == "data/Models/Sets/DBridge/DBridge.nif"
     # Host fills this in; defaults to None.
@@ -98,8 +81,6 @@ def test_zoom_camera_is_real_data_object_and_round_trips():
     cam = ZoomCameraObjectClass_Create(0.683736, 86.978439, 50.0,
                                        1.570796, -0.000665, -0.087559, 0.996159,
                                        "maincamera")
-    # Step 5a: real data object now -> off the stub summary.
-    assert "ZoomCameraObjectClass_Create" not in st.fired()
     assert cam.position == (0.683736, 86.978439, 50.0)
     assert cam.orientation == (1.570796, -0.000665, -0.087559, 0.996159)
     # Zoom params round-trip through the getters.
@@ -116,21 +97,18 @@ def test_zoom_camera_is_real_data_object_and_round_trips():
     assert cam.Update(0.0) is None
 
 
-def test_zoom_camera_get_object_returns_added_camera_not_loud():
+def test_zoom_camera_get_object_returns_added_camera():
     bs = BridgeSet_Create()
     cam = ZoomCameraObjectClass_Create(0, 0, 0, 0, 0, 0, 1, "maincamera")
     bs.AddCameraToSet(cam, "maincamera")
     assert ZoomCameraObjectClass_GetObject(bs, "maincamera") is cam
-    assert "ZoomCameraObjectClass_GetObject" not in st.fired()
 
 
-def test_model_manager_load_model_records_env_and_is_not_loud():
+def test_model_manager_load_model_records_env():
     mm = ModelManager()
-    # Real now: records the texture/env path, returns None, and is NOT a
-    # loud stub (it must drop off the bridge-stub summary in step 3).
+    # Records the texture/env path the SDK pre-loads each NIF with, returns None.
     assert mm.LoadModel("data/Models/Sets/DBridge/DBridge.nif", None,
                         "data/Models/Sets/DBridge/High/") is None
-    assert "g_kModelManager.LoadModel" not in st.fired()
     assert mm.env_for("data/Models/Sets/DBridge/DBridge.nif") == \
         "data/Models/Sets/DBridge/High/"
     assert mm.env_for("missing.nif") is None
