@@ -163,4 +163,82 @@ TEST(DeformPipeline, CraterDisplacesGeometry) {
     }
 }
 
+TEST(DeformPipeline, SubdividedTrianglesAreFrontFacing) {
+    try {
+        renderer::Window w(64, 64, "deform-winding-test", /*visible=*/false);
+        renderer::Pipeline pipeline;
+        ASSERT_TRUE(pipeline.tessellation_available());
+        renderer::Shader& prog = pipeline.deform_shader();
+
+        // CW-wound triangle (front-facing under glFrontFace(GL_CW)), centred on
+        // the viewport. Signed area negative = CW in window space.
+        const float verts[] = {
+             0.0f,  0.8f, 0.0f,   // top
+             0.8f, -0.8f, 0.0f,   // bottom-right
+            -0.8f, -0.8f, 0.0f,   // bottom-left  (this order is CW in window space)
+        };
+        GLuint vao = 0, vbo = 0;
+        glGenVertexArrays(1, &vao);
+        glGenBuffers(1, &vbo);
+        glBindVertexArray(vao);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_STATIC_DRAW);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
+        glEnableVertexAttribArray(0);
+        glVertexAttrib1f(7, 1.0f);  // crushability = 1
+
+        // Match the real pipeline's culling so a wrong sub-triangle winding is
+        // actually culled (and caught) here.
+        glEnable(GL_CULL_FACE);
+        glFrontFace(GL_CW);
+        glCullFace(GL_BACK);
+
+        glViewport(0, 0, 64, 64);
+        // Clear to red (sentinel): the fragment shader never writes red as its
+        // primary output (opaque.frag with zero lights writes near-black RGB).
+        // If the subdivided sub-triangles are culled (wrong winding), the
+        // interior pixel stays red (px[0]==255). If they survive culling, the
+        // fragment overwrites it with near-black (px[0] << 255).
+        glClearColor(1.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        prog.use();
+        glm::mat4 I(1.0f);
+        prog.set_mat4("u_model", I);
+        prog.set_mat4("u_view", I);
+        prog.set_mat4("u_proj", I);
+        prog.set_mat4("u_ship_world", I);
+        prog.set_mat4("u_ship_world_inv", I);
+        // One crater at the triangle centroid with a small depth (keeps geometry
+        // roughly in place) but large enough radius to drive the adaptive TCS
+        // to a high level -> the patch subdivides into many sub-triangles.
+        prog.set_int("u_crater_count", 1);
+        glm::vec4 ca(0.0f, -0.27f, 0.0f, 0.02f);  // centroid-ish, tiny depth
+        glm::vec4 cb(0.0f, 0.0f, -1.0f, 3.0f);    // dir -z, big radius -> high tess
+        prog.set_vec4_array("u_crater_a", &ca, 1);
+        prog.set_vec4_array("u_crater_b", &cb, 1);
+
+        while (glGetError() != GL_NO_ERROR) {}
+        glPatchParameteri(GL_PATCH_VERTICES, 3);
+        glDrawArrays(GL_PATCHES, 0, 3);
+
+        unsigned char px[4] = {0, 0, 0, 0};
+        glReadPixels(32, 24, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
+        EXPECT_EQ(glGetError(), GLenum(GL_NO_ERROR));
+        // Front-facing sub-triangles survive culling -> interior pixel covered by
+        // fragment (near-black RGB). If the winding qualifier is wrong the
+        // subdivided triangles are culled and the pixel stays at clear red
+        // (px[0]==255).
+        EXPECT_LT(px[0], 200)
+            << "interior pixel was not covered — subdivided triangles likely culled "
+               "(wrong TES winding qualifier)";
+
+        glDeleteBuffers(1, &vbo);
+        glDeleteVertexArrays(1, &vao);
+        glDisable(GL_CULL_FACE);
+    } catch (const std::runtime_error& e) {
+        GTEST_SKIP() << "no GL context available: " << e.what();
+    }
+}
+
 }  // namespace
