@@ -98,6 +98,45 @@ def _bank_world_frame(bank, ship):
     return ((w.x, w.y, w.z), fwd_t, up_t, right_t)
 
 
+def _arc_direction(fwd: Vec3, up: Vec3, right: Vec3,
+                   yaw: float, pitch: float) -> Vec3:
+    """Aim direction at (yaw about Up, pitch about the yawed Right axis).
+    Mirrors the yaw/pitch decomposition in engine.appc.weapon_subsystems."""
+    radial = _rodrigues(fwd, up, yaw)
+    right_yaw = _norm(_rodrigues(right, up, yaw))
+    return _rodrigues(radial, right_yaw, pitch)
+
+
+def build_arc_beams(bank, ship) -> List[dict]:
+    """Cyan wireframe of a bank's firing envelope: 4 swept edges of the
+    yaw×pitch rectangle at radius = Length × ARC_RADIUS_SCALE around the
+    mount Position."""
+    length = float(bank.GetLength()) * ARC_RADIUS_SCALE
+    if length <= 0.0:
+        return []
+    pos, fwd, up, right = _bank_world_frame(bank, ship)
+    yaw_lo, yaw_hi = bank.GetArcWidthAngles()
+    pitch_lo, pitch_hi = bank.GetArcHeightAngles()
+
+    def _edge(yaw_of_t, pitch_of_t) -> List[Vec3]:
+        pts: List[Vec3] = []
+        for i in range(ARC_SAMPLES + 1):
+            t = i / ARC_SAMPLES
+            d = _arc_direction(fwd, up, right, yaw_of_t(t), pitch_of_t(t))
+            pts.append(_add(pos, _scale(d, length)))
+        return pts
+
+    def _yaw(t):   return yaw_lo + (yaw_hi - yaw_lo) * t
+    def _pitch(t): return pitch_lo + (pitch_hi - pitch_lo) * t
+
+    beams: List[dict] = []
+    beams += _polyline(_edge(_yaw, lambda t: pitch_hi), ARC_COLOR)   # top
+    beams += _polyline(_edge(_yaw, lambda t: pitch_lo), ARC_COLOR)   # bottom
+    beams += _polyline(_edge(lambda t: yaw_lo, _pitch), ARC_COLOR)   # left
+    beams += _polyline(_edge(lambda t: yaw_hi, _pitch), ARC_COLOR)   # right
+    return beams
+
+
 def build_strip_beams(banks, ship) -> List[dict]:
     """Yellow beams tracing each bank's emitter strip: an arc of radius=Length
     around the mount Position swept across ArcWidthAngles around Up, plus an

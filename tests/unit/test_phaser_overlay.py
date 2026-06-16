@@ -84,3 +84,29 @@ def test_inner_rim_and_caps_only_when_width_positive():
     beams = po.build_strip_beams([bank], ship)
     # Only the outer rim polyline: exactly STRIP_SAMPLES segments.
     assert len(beams) == po.STRIP_SAMPLES
+
+
+def test_arc_wireframe_has_four_edges_at_radius_length():
+    bank = _galaxy_dorsal1_bank()
+    ship = _StubShip([bank])
+    bank._parent_ship = ship
+    beams = po.build_arc_beams(bank, ship)
+    # 4 edges × ARC_SAMPLES segments each.
+    assert len(beams) == 4 * po.ARC_SAMPLES
+    pos = (0.0, 1.27, 0.5)
+    radius = 1.69 * po.ARC_RADIUS_SCALE
+    for b in beams:
+        assert _dist(b["emitter"], pos) == pytest.approx(radius, abs=1e-5)
+        assert _dist(b["target"], pos) == pytest.approx(radius, abs=1e-5)
+        assert b["color"] == po.ARC_COLOR
+
+
+def test_arc_empty_when_length_zero():
+    bank = _galaxy_dorsal1_bank()
+    prop = bank.GetProperty()
+    prop.SetLength(0.0)
+    bank.SetProperty(prop)   # re-mirror: bank._length now 0.0
+    assert bank.GetLength() == 0.0
+    ship = _StubShip([bank])
+    bank._parent_ship = ship
+    assert po.build_arc_beams(bank, ship) == []
