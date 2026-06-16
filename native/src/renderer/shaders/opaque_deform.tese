@@ -45,25 +45,41 @@ vec3 crater_displacement(vec3 p_body, float crush) {
     return disp;
 }
 
+// Displaced body-frame position for a given barycentric coord. Re-evaluates
+// the patch interpolation + crater displacement at an arbitrary (u,v,w).
+vec3 displaced_body_at(vec3 bc) {
+    vec3 lp = bc.x * tcp_pos[0] + bc.y * tcp_pos[1] + bc.z * tcp_pos[2];
+    float cr = bc.x * tcp_crush[0] + bc.y * tcp_crush[1] + bc.z * tcp_crush[2];
+    vec3 wp = (u_model * vec4(lp, 1.0)).xyz;
+    vec3 bp = (u_ship_world_inv * vec4(wp, 1.0)).xyz;
+    return bp + crater_displacement(bp, cr);
+}
+
 void main() {
-    vec3  local_pos = bary3(tcp_pos[0], tcp_pos[1], tcp_pos[2]);
-    vec3  local_n   = normalize(bary3(tcp_normal[0], tcp_normal[1], tcp_normal[2]));
-    vec2  uv        = gl_TessCoord.x * tcp_uv[0]
-                    + gl_TessCoord.y * tcp_uv[1]
-                    + gl_TessCoord.z * tcp_uv[2];
-    float crush     = gl_TessCoord.x * tcp_crush[0]
-                    + gl_TessCoord.y * tcp_crush[1]
-                    + gl_TessCoord.z * tcp_crush[2];
+    vec3 bc = gl_TessCoord;
+    vec2 uv = bc.x * tcp_uv[0] + bc.y * tcp_uv[1] + bc.z * tcp_uv[2];
 
-    vec3 world_pos = (u_model * vec4(local_pos, 1.0)).xyz;
-    vec3 body_pos  = (u_ship_world_inv * vec4(world_pos, 1.0)).xyz;
+    vec3 db = displaced_body_at(bc);
 
-    vec3 disp_body      = crater_displacement(body_pos, crush);
-    vec3 displaced_body = body_pos + disp_body;
-    vec3 displaced_world = (u_ship_world * vec4(displaced_body, 1.0)).xyz;
+    // Finite-difference the displaced surface in barycentric space for the
+    // post-dent normal. Offsets stay inside the triangle by trading weight
+    // between coords; eps small relative to the patch.
+    const float eps = 0.01;
+    vec3 bc_u = clamp(bc + vec3( eps, -eps, 0.0), 0.0, 1.0);
+    vec3 bc_v = clamp(bc + vec3( eps, 0.0, -eps), 0.0, 1.0);
+    vec3 du = displaced_body_at(bc_u) - db;
+    vec3 dv = displaced_body_at(bc_v) - db;
+    vec3 n_body = normalize(cross(du, dv));
 
-    // Normal still from the undisplaced surface; Task 7 recomputes it.
-    vec3 world_n = normalize(mat3(u_model) * local_n);
+    // Orient like the original surface normal (cross sign depends on the
+    // offset choice / winding); flip if it points the wrong way.
+    vec3 orig_local_n = normalize(bc.x * tcp_normal[0] + bc.y * tcp_normal[1]
+                                  + bc.z * tcp_normal[2]);
+    vec3 orig_n_body = normalize(mat3(u_ship_world_inv) * (mat3(u_model) * orig_local_n));
+    if (dot(n_body, orig_n_body) < 0.0) n_body = -n_body;
+
+    vec3 displaced_world = (u_ship_world * vec4(db, 1.0)).xyz;
+    vec3 world_n = normalize(mat3(u_ship_world) * n_body);
 
     v_position_ws = displaced_world;
     v_normal_ws   = world_n;

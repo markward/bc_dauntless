@@ -241,4 +241,51 @@ TEST(DeformPipeline, SubdividedTrianglesAreFrontFacing) {
     }
 }
 
+TEST(DeformPipeline, NormalRecomputeRendersWithoutError) {
+    try {
+        renderer::Window w(64, 64, "deform-normal-test", /*visible=*/false);
+        renderer::Pipeline pipeline;
+        ASSERT_TRUE(pipeline.tessellation_available());
+        renderer::Shader& prog = pipeline.deform_shader();
+
+        const float verts[] = {
+            -0.8f, -0.8f, 0.0f,  0.8f, -0.8f, 0.0f,  0.8f,  0.8f, 0.0f,
+            -0.8f, -0.8f, 0.0f,  0.8f,  0.8f, 0.0f, -0.8f,  0.8f, 0.0f,
+        };
+        GLuint vao = 0, vbo = 0;
+        glGenVertexArrays(1, &vao);
+        glGenBuffers(1, &vbo);
+        glBindVertexArray(vao);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_STATIC_DRAW);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
+        glEnableVertexAttribArray(0);
+        glVertexAttrib1f(7, 1.0f);
+
+        glViewport(0, 0, 64, 64);
+        glClear(GL_COLOR_BUFFER_BIT);
+        prog.use();
+        glm::mat4 I(1.0f);
+        prog.set_mat4("u_model", I);
+        prog.set_mat4("u_view", I);
+        prog.set_mat4("u_proj", I);
+        prog.set_mat4("u_ship_world", I);
+        prog.set_mat4("u_ship_world_inv", I);
+        prog.set_int("u_crater_count", 1);
+        glm::vec4 ca(0.0f, 0.0f, 0.0f, 0.5f);
+        glm::vec4 cb(0.0f, 0.0f, -1.0f, 1.5f);  // push along -z (inward dent)
+        prog.set_vec4_array("u_crater_a", &ca, 1);
+        prog.set_vec4_array("u_crater_b", &cb, 1);
+        while (glGetError() != GL_NO_ERROR) {}
+        glPatchParameteri(GL_PATCH_VERTICES, 3);
+        glDrawArrays(GL_PATCHES, 0, 6);
+        EXPECT_EQ(glGetError(), GLenum(GL_NO_ERROR));
+
+        glDeleteBuffers(1, &vbo);
+        glDeleteVertexArrays(1, &vao);
+    } catch (const std::runtime_error& e) {
+        GTEST_SKIP() << "no GL context available: " << e.what();
+    }
+}
+
 }  // namespace
