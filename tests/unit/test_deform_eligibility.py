@@ -80,6 +80,37 @@ def test_is_eligible_reads_current_set():
     assert de.is_eligible(s) is False
 
 
+def test_player_always_wins_over_zero_cap():
+    # Degenerate max_count=0: player-always (spec §4) overrides the cap.
+    player = _Ship()
+    other = _Ship(pos=(1.0, 0.0, 0.0))
+    ids = de.select_eligible(player, [player, other], max_count=0)
+    assert ids == frozenset({id(player)})
+
+
+def test_all_zero_radii_no_divide_by_zero():
+    player = _Ship(radius=0.0)
+    other = _Ship(pos=(1.0, 0.0, 0.0), radius=0.0)
+    ids = de.select_eligible(player, [player, other], max_count=2)
+    assert id(player) in ids and id(other) in ids
+
+
+def test_empty_ship_list_returns_player_only():
+    player = _Ship()
+    assert de.select_eligible(player, [], max_count=4) == frozenset({id(player)})
+
+
+def test_update_falls_back_when_no_game(monkeypatch):
+    # update() must be exception/absence safe: no App.Game_GetCurrentGame ->
+    # player=None -> size-only selection, no raise.
+    import App
+    monkeypatch.delattr(App, "Game_GetCurrentGame", raising=False)
+    big = _Ship(pos=(0.0, 0.0, 0.0), radius=50.0)
+    small = _Ship(pos=(1.0, 0.0, 0.0), radius=1.0)
+    de.update([big, small])
+    assert id(big) in de.current()
+
+
 def test_update_resolves_player_and_refreshes(monkeypatch):
     player = _Ship(pos=(0.0, 0.0, 0.0), radius=1.0)
     other = _Ship(pos=(1.0, 0.0, 0.0), radius=1.0)

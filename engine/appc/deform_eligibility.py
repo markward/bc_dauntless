@@ -43,6 +43,10 @@ def select_eligible(player, ships, *, max_count: int = DEFAULT_MAX_ELIGIBLE):
     highest-scoring other ships. With a player, score = PROX_WEIGHT * prox +
     SIZE_WEIGHT * size; without one, score = size only. Deterministic for
     fixed inputs (ties broken by id()).
+
+    `max_count` is assumed >= 1. Player-always (spec §4) takes precedence over
+    the cap: the player's slot is seeded before the cap loop, so a degenerate
+    max_count=0 still yields the player rather than dropping it.
     """
     ships = list(ships)
     eligible: set = set()
