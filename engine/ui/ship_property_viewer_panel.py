@@ -170,11 +170,13 @@ class ShipPropertyViewerPanel(Panel):
         new_d = self.camera.distance * factor
         self.camera.distance = max(MIN_DISTANCE, min(MAX_DISTANCE, new_d))
 
-    def pick_at(self, x: float, y: float, viewport) -> None:
+    def pick_at(self, x: float, y: float, viewport,
+                device_scale_factor: float = 1.0) -> None:
         """Run a pin pick at cursor (x, y) and emit select/deselect."""
         if self.camera is None:
             return
-        idx = pick_pin(x, y, self._descriptors, self.camera, viewport)
+        idx = pick_pin(x, y, self._descriptors, self.camera, viewport,
+                       device_scale_factor)
         if idx is not None:
             self.dispatch_event("select_pin:%d" % idx)
         else:
@@ -202,6 +204,20 @@ class ShipPropertyViewerPanel(Panel):
             left = h.keys.MOUSE_BUTTON_LEFT
         except AttributeError:
             return
+
+        # Device-pixel ratio = framebuffer / logical window height, so the
+        # pin click radius (logical points) matches the GL-rendered disc on
+        # HiDPI displays. Degrades to 1.0 if window_size is unavailable.
+        dsf = 1.0
+        win_size = getattr(h, "window_size", None)
+        if win_size is not None:
+            try:
+                _fb_w, fb_h = fb_size()
+                _win_w, win_h = win_size()
+                if win_h > 0:
+                    dsf = float(fb_h) / float(win_h)
+            except (TypeError, ValueError, ZeroDivisionError):
+                dsf = 1.0
 
         # Zoom: drain the wheel accumulator even when no other input so a
         # later open doesn't inherit stale scroll.
@@ -240,7 +256,7 @@ class ShipPropertyViewerPanel(Panel):
             # Release edge: a near-stationary press+release is a click → pick.
             self._lmb_down = False
             if self._drag_dist <= CLICK_SLOP_PX:
-                self.pick_at(x, y, fb_size())
+                self.pick_at(x, y, fb_size(), dsf)
             self._drag_last = None
             self._press_pos = None
             self._drag_dist = 0.0

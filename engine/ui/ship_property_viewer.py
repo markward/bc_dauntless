@@ -232,16 +232,22 @@ def project(world: Vec3, cam: "OrbitCamera",
 # Pin picking
 # ---------------------------------------------------------------------------
 
-PIN_RADIUS_PX = 18.0  # click target radius in screen pixels
+PIN_RADIUS_PT = 9.0  # click target radius in logical points (DPI-independent)
 
 
 def pick_pin(cursor_x: float, cursor_y: float, descriptors: List[dict],
-             cam: "OrbitCamera", viewport: Tuple[int, int]) -> Optional[int]:
+             cam: "OrbitCamera", viewport: Tuple[int, int],
+             device_scale_factor: float = 1.0) -> Optional[int]:
     """Index of the nearest visible pin whose screen disc contains the cursor,
     or None. Nearest-by-screen-distance wins on overlap; first pin wins on
-    exact tie (strict-less-than after the first candidate)."""
+    exact tie (strict-less-than after the first candidate).
+
+    cursor/viewport are in physical framebuffer pixels (the same space the GL
+    render uses), so the logical-point click radius is scaled by
+    device_scale_factor to match the rendered pin size on HiDPI displays."""
     best_idx: Optional[int] = None
-    best_d2 = PIN_RADIUS_PX * PIN_RADIUS_PX
+    radius_px = PIN_RADIUS_PT * (device_scale_factor if device_scale_factor > 0.0 else 1.0)
+    best_d2 = radius_px * radius_px
     for i, d in enumerate(descriptors):
         sx, sy, _depth, visible = project(d["world_pos"], cam, viewport)
         if not visible:

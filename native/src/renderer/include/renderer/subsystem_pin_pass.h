@@ -33,9 +33,14 @@ public:
     SubsystemPinPass(const SubsystemPinPass&)            = delete;
     SubsystemPinPass& operator=(const SubsystemPinPass&) = delete;
 
+    /// device_scale_factor is the display's device-pixel ratio
+    /// (framebuffer / logical window size). Pins are sized in logical
+    /// points and multiplied by this so they keep a constant apparent
+    /// size on HiDPI/Retina displays. Defaults to 1.0 (no scaling).
     void render(const std::vector<SubsystemPin>& pins,
                 const scenegraph::Camera& camera,
-                Pipeline& pipeline);
+                Pipeline& pipeline,
+                float device_scale_factor = 1.0f);
 
 private:
     void ensure_quad();
