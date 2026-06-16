@@ -213,7 +213,7 @@ TEST(DeformPipeline, SubdividedTrianglesAreFrontFacing) {
         // roughly in place) but large enough radius to drive the adaptive TCS
         // to a high level -> the patch subdivides into many sub-triangles.
         prog.set_int("u_crater_count", 1);
-        glm::vec4 ca(0.0f, -0.27f, 0.0f, 0.02f);  // centroid-ish, tiny depth
+        glm::vec4 ca(0.0f, -0.27f, 0.0f, 0.02f);  // near patch centroid (~0,-0.267,0) -> proximity ~1 -> tess level ~16
         glm::vec4 cb(0.0f, 0.0f, -1.0f, 3.0f);    // dir -z, big radius -> high tess
         prog.set_vec4_array("u_crater_a", &ca, 1);
         prog.set_vec4_array("u_crater_b", &cb, 1);

@@ -34,6 +34,8 @@ vec3 patch_body_centroid() {
 float patch_tess_level() {
     if (u_crater_count == 0) return MIN_TESS;
     vec3 c_body = patch_body_centroid();
+    // Reach is 2*radius here (vs 1*radius in the TES crater_displacement cutoff)
+    // so the displaced rim just outside the crater gets adequate resolution.
     float prox = 0.0;
     for (int i = 0; i < u_crater_count; ++i) {
         float radius = u_crater_b[i].w;
