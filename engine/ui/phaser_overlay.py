@@ -9,7 +9,7 @@ Spec: docs/superpowers/specs/2026-06-16-spv-phaser-strips-and-arcs-design.md
 from __future__ import annotations
 
 import math
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from engine.appc.subsystems import subsystem_world_position
 
@@ -143,6 +143,30 @@ def build_arc_beams(bank, ship) -> List[dict]:
     beams += _polyline(_edge(_yaw, lambda t: pitch_lo), ARC_COLOR)   # bottom
     beams += _polyline(_edge(lambda t: yaw_lo, _pitch), ARC_COLOR)   # left
     beams += _polyline(_edge(lambda t: yaw_hi, _pitch), ARC_COLOR)   # right
+    return beams
+
+
+def phaser_banks(ship) -> List:
+    """All PhaserBank subsystems on `ship` (uses the SPV's own enumeration)."""
+    from engine.appc.weapon_subsystems import PhaserBank
+    from engine.ui.ship_property_viewer import _iter_subsystems
+    return [s for s in _iter_subsystems(ship) if isinstance(s, PhaserBank)]
+
+
+def build_phaser_overlay(ship, selected_name: Optional[str] = None,
+                         banks: Optional[List] = None) -> List[dict]:
+    """Yellow strips for every phaser bank, plus a cyan firing arc for the
+    bank whose GetName() matches `selected_name` (if it is a phaser bank).
+    Pass `banks` to bypass enumeration (tests / pre-fetched lists)."""
+    if ship is None:
+        return []
+    if banks is None:
+        banks = phaser_banks(ship)
+    beams = build_strip_beams(banks, ship)
+    if selected_name:
+        sel = next((b for b in banks if b.GetName() == selected_name), None)
+        if sel is not None:
+            beams += build_arc_beams(sel, ship)
     return beams
 
 

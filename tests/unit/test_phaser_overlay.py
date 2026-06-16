@@ -117,3 +117,59 @@ def test_arc_empty_when_length_zero():
     ship = _StubShip([bank])
     bank._parent_ship = ship
     assert po.build_arc_beams(bank, ship) == []
+
+
+def test_phaser_banks_filters_non_phaser_subsystems():
+    """phaser_banks() returns only PhaserBank instances.
+
+    _iter_damage_subsystems (called by _iter_subsystems) enumerates subsystems
+    via specific getter methods on the ship (GetPhaserSystem, GetHull, etc.),
+    NOT via __iter__.  So we give the stub ship those getters:
+      - GetPhaserSystem() → a PhaserSystem that holds `a` as a child bank
+      - GetHull() → a _NotAPhaser object
+    This mirrors the real ship wiring and lets _iter_damage_subsystems yield
+    both; phaser_banks() should then filter out the hull stub.
+    """
+    from engine.appc.weapon_subsystems import PhaserSystem
+    from engine.appc.subsystems import HullSubsystem
+
+    a = _galaxy_dorsal1_bank("DorsalPhaser1")
+
+    phaser_sys = PhaserSystem("PhaserSystem")
+    phaser_sys.AddChildSubsystem(a)
+
+    hull = HullSubsystem("Hull")
+
+    class _StubShipWithGetters(_StubShip):
+        def GetPhaserSystem(self): return phaser_sys
+        def GetHull(self): return hull
+
+    ship = _StubShipWithGetters([a])
+    a._parent_ship = ship
+
+    banks = po.phaser_banks(ship)
+    assert banks == [a]
+
+
+def _colors(beams):
+    return {b["color"] for b in beams}
+
+
+def test_overlay_arc_only_for_selected_bank():
+    a = _galaxy_dorsal1_bank("DorsalPhaser1")
+    b = _galaxy_dorsal1_bank("DorsalPhaser2")
+    ship = _StubShip([a, b])
+    a._parent_ship = ship
+    b._parent_ship = ship
+    banks = [a, b]
+    # No selection → strips only (yellow), no cyan arc.
+    strips_only = po.build_phaser_overlay(ship, selected_name=None, banks=banks)
+    assert po.STRIP_COLOR in _colors(strips_only)
+    assert po.ARC_COLOR not in _colors(strips_only)
+    # Select bank b → strips + b's arc (cyan present).
+    with_arc = po.build_phaser_overlay(ship, selected_name="DorsalPhaser2",
+                                       banks=banks)
+    assert po.ARC_COLOR in _colors(with_arc)
+    # Exactly one bank's worth of arc beams (4 × ARC_SAMPLES).
+    assert sum(1 for x in with_arc if x["color"] == po.ARC_COLOR) \
+        == 4 * po.ARC_SAMPLES
