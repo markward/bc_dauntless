@@ -14,6 +14,7 @@ TEST(GlCaps, ReportsTessellationAvailableUnderTestContext) {
         // tessellation (GL 4.0+) must be reported available.
         EXPECT_GE(caps.version_major, 4);
         EXPECT_TRUE(caps.tessellation_available);
+        EXPECT_GE(caps.version_minor, 0);
     } catch (const std::runtime_error& e) {
         GTEST_SKIP() << "no GL context available: " << e.what();
     }

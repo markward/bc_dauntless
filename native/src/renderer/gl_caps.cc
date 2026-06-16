@@ -10,9 +10,7 @@ GlCaps query_gl_caps() {
     glGetIntegerv(GL_MAJOR_VERSION, &caps.version_major);
     glGetIntegerv(GL_MINOR_VERSION, &caps.version_minor);
     // Tessellation control/evaluation shaders are core since GL 4.0.
-    caps.tessellation_available =
-        (caps.version_major > 4) ||
-        (caps.version_major == 4 && caps.version_minor >= 0);
+    caps.tessellation_available = (caps.version_major >= 4);
     return caps;
 }
 
