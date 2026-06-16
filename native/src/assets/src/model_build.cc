@@ -589,7 +589,7 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
             // else loaded with this flag). Intentional — the bake is cheap and
             // harmless on non-deformable geometry (the weights sit unused unless
             // the model takes hull-deformation craters). Models loaded with
-            // keep_cpu_data=false (bridge/characters) skip it.
+            // keep_cpu_data=false skip it.
             bake_crushability(cpu);
             Mesh mesh = mesh_upload(MeshCpu(cpu));
             mesh.set_cpu_data(std::move(cpu));
