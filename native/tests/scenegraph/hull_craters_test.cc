@@ -61,6 +61,7 @@ TEST(HullCraterField, MergeGrowsRadiusAndRefreshesDirection) {
     EXPECT_FLOAT_EQ(c->radius, 0.5f);             // grew to max
     EXPECT_FLOAT_EQ(c->impact_dir_body.x, 1.0f);  // freshest direction
     EXPECT_FLOAT_EQ(c->normal_body.y, 1.0f);      // freshest normal
+    EXPECT_GT(c->seq, 1u);  // merge refreshed age (seq advanced past the first add)
 }
 
 TEST(HullCraterField, DistantHitAllocatesSecondCrater) {

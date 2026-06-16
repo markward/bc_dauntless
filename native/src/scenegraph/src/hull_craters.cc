@@ -2,7 +2,6 @@
 #include "scenegraph/hull_craters.h"
 
 #include <algorithm>
-#include <glm/glm.hpp>
 
 namespace scenegraph {
 
