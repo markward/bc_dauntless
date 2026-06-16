@@ -2,6 +2,7 @@
 #include <gtest/gtest.h>
 #include <glad/glad.h>
 
+#include <renderer/pipeline.h>
 #include <renderer/shader.h>
 #include <renderer/window.h>
 
@@ -22,6 +23,19 @@ TEST(DeformPipeline, ProgramLinksWithOpaqueFragment) {
                               renderer::shader_src::opaque_deform_tes,
                               renderer::shader_src::opaque_fs);
         ASSERT_NE(prog.program(), 0u);
+    } catch (const std::runtime_error& e) {
+        GTEST_SKIP() << "no GL context available: " << e.what();
+    }
+}
+
+TEST(DeformPipeline, PipelineExposesDeformShaderWhenTessellationAvailable) {
+    try {
+        renderer::Window w(64, 64, "deform-pipeline-test", /*visible=*/false);
+        renderer::Pipeline pipeline;
+        // The test GL context is >= 4.1, so tessellation is available and the
+        // deform program is built.
+        EXPECT_TRUE(pipeline.tessellation_available());
+        EXPECT_NE(pipeline.deform_shader().program(), 0u);
     } catch (const std::runtime_error& e) {
         GTEST_SKIP() << "no GL context available: " << e.what();
     }

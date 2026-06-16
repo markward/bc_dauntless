@@ -3,6 +3,8 @@
 
 #include <glad/glad.h>
 
+#include "renderer/gl_caps.h"
+
 #include "embedded_opaque_vs.h"
 #include "embedded_opaque_fs.h"
 #include "embedded_skinned_vs.h"
@@ -35,6 +37,9 @@
 #include "embedded_skinned_bridge_vs.h"
 #include "embedded_lightmap_vs.h"
 #include "embedded_lightmap_fs.h"
+#include "embedded_opaque_deform_vs.h"
+#include "embedded_opaque_deform_tcs.h"
+#include "embedded_opaque_deform_tes.h"
 
 namespace renderer {
 
@@ -56,6 +61,16 @@ Pipeline::Pipeline() {
     bridge_        = std::make_unique<Shader>(shader_src::bridge_vs,        shader_src::bridge_fs);
     skinned_bridge_ = std::make_unique<Shader>(shader_src::skinned_bridge_vs, shader_src::bridge_fs);
     lightmap_   = std::make_unique<Shader>(shader_src::lightmap_vs,   shader_src::lightmap_fs);
+    // Hull-deformation tessellation program (GL 4.0+). Reuses opaque.frag as
+    // the fragment stage (the TES emits the matching varyings). Falls back to
+    // the static opaque path when tessellation is unavailable (spec §8).
+    tessellation_available_ = query_gl_caps().tessellation_available;
+    if (tessellation_available_) {
+        deform_ = std::make_unique<Shader>(shader_src::opaque_deform_vs,
+                                           shader_src::opaque_deform_tcs,
+                                           shader_src::opaque_deform_tes,
+                                           shader_src::opaque_fs);
+    }
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
     glEnable(GL_CULL_FACE);

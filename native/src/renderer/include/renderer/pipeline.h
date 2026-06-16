@@ -29,6 +29,11 @@ public:
     Shader& skinned_bridge_shader() noexcept  { return *skinned_bridge_; }
     Shader& lightmap_shader() noexcept   { return *lightmap_; }
 
+    /// Deform (hull-deformation tessellation) program. Only valid when
+    /// tessellation_available() is true; otherwise null-program (do not use).
+    Shader& deform_shader() noexcept { return *deform_; }
+    bool tessellation_available() const noexcept { return tessellation_available_; }
+
 private:
     std::unique_ptr<Shader> opaque_;
     std::unique_ptr<Shader> skinned_;
@@ -47,6 +52,8 @@ private:
     std::unique_ptr<Shader> bridge_;
     std::unique_ptr<Shader> skinned_bridge_;
     std::unique_ptr<Shader> lightmap_;
+    std::unique_ptr<Shader> deform_;
+    bool tessellation_available_ = false;
 };
 
 }  // namespace renderer
