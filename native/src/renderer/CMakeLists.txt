@@ -50,6 +50,10 @@ embed_shader(SHADER_FXAA_FS shaders/fxaa.frag fxaa_fs)
 embed_shader(SHADER_BLOOM_PREFILTER_FS shaders/bloom_prefilter.frag bloom_prefilter_fs)
 embed_shader(SHADER_BLOOM_DOWN_FS shaders/bloom_down.frag bloom_down_fs)
 embed_shader(SHADER_BLOOM_UP_FS shaders/bloom_up.frag bloom_up_fs)
+embed_shader(SHADER_PASSTHROUGH_TESS_VS  shaders/passthrough_tess.vert  passthrough_tess_vs)
+embed_shader(SHADER_PASSTHROUGH_TESS_TCS shaders/passthrough_tess.tesc  passthrough_tess_tcs)
+embed_shader(SHADER_PASSTHROUGH_TESS_TES shaders/passthrough_tess.tese  passthrough_tess_tes)
+embed_shader(SHADER_PASSTHROUGH_TESS_FS  shaders/passthrough_tess.frag  passthrough_tess_fs)
 
 add_library(renderer STATIC
     window.cc
