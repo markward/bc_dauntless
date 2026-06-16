@@ -14,7 +14,7 @@
 
 namespace assets { struct Model; }
 namespace scenegraph { class World; struct Camera; enum class Pass : std::uint8_t;
-                       class DamageDecalRing; }
+                       class DamageDecalRing; class HullCraterField; }
 namespace renderer { class Pipeline; class Shader; }
 
 namespace renderer {
@@ -188,6 +188,7 @@ void draw_model(const assets::Model& model,
                 std::uint32_t black_fallback,
                 bool rim_active,
                 const scenegraph::DamageDecalRing& decals,
+                const scenegraph::HullCraterField& craters,
                 const std::array<scenegraph::Instance::GlowRegion,
                                  scenegraph::Instance::kMaxGlowRegions>& glow_regions,
                 float decal_time,

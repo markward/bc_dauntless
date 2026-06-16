@@ -79,6 +79,7 @@ void draw_model(const assets::Model& model,
                 std::uint32_t black_fallback,
                 bool rim_active,
                 const scenegraph::DamageDecalRing& decals,
+                const scenegraph::HullCraterField& craters,
                 const std::array<scenegraph::Instance::GlowRegion,
                                  scenegraph::Instance::kMaxGlowRegions>& glow_regions,
                 float decal_time,
@@ -126,6 +127,34 @@ void draw_model(const assets::Model& model,
             // reconstruction (opaque.frag: p_body / n_body).
             prog.set_mat4("u_ship_world_inv", glm::inverse(world));
             prog.set_float("u_decal_time", decal_time);
+        }
+    }
+
+    // ── Hull-deformation craters (Plan 4b) ────────────────────────────────
+    // Pack the active crater slots into vec4 arrays:
+    //   ca: point_body.xyz + depth
+    //   cb: impact_dir_body.xyz + radius
+    // u_crater_count == 0 when no craters are active; the deform TES (Tasks
+    // 5-7) skips the loop and the opaque program ignores these uniforms via
+    // the loc>=0 guard in Shader::set_*.
+    {
+        constexpr int kMaxCraters =
+            static_cast<int>(scenegraph::HullCraterField::kMaxCraters);
+        glm::vec4 ca[kMaxCraters];  // point_body.xyz, depth
+        glm::vec4 cb[kMaxCraters];  // impact_dir_body.xyz, radius
+        int cn = 0;
+        for (const auto& c : craters.slots()) {
+            if (!c.active) continue;
+            ca[cn] = glm::vec4(c.point_body, c.depth);
+            cb[cn] = glm::vec4(c.impact_dir_body, c.radius);
+            ++cn;
+        }
+        prog.set_int("u_crater_count", cn);
+        if (cn > 0) {
+            prog.set_vec4_array("u_crater_a", ca, cn);
+            prog.set_vec4_array("u_crater_b", cb, cn);
+            prog.set_mat4("u_ship_world", world);                    // body -> world (TES)
+            prog.set_mat4("u_ship_world_inv", glm::inverse(world));  // world -> body
         }
     }
 
@@ -335,7 +364,7 @@ void FrameSubmitter::submit_opaque(const scenegraph::World& world,
             palette = build_bone_palette(m->skeleton, /*local_pose=*/nullptr);
         if (m) draw_model(*m, inst.world, shader, pipeline.skinned_shader(),
                           white, black, rim_active,
-                          inst.decals, inst.glow_regions, decal_time,
+                          inst.decals, inst.craters, inst.glow_regions, decal_time,
                           inst.emissive_scale, palette);
     });
 }
@@ -385,7 +414,7 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
             palette = build_bone_palette(m->skeleton, /*local_pose=*/nullptr);
         if (m) draw_model(*m, inst.world, shader, pipeline.skinned_shader(),
                           white, black, rim_active,
-                          inst.decals, inst.glow_regions, decal_time,
+                          inst.decals, inst.craters, inst.glow_regions, decal_time,
                           inst.emissive_scale, palette);
     });
 }
