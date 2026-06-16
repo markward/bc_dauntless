@@ -51,3 +51,16 @@ def test_impact_direction_degenerate_ray_falls_back():
     d = hd.impact_direction(
         (0.0, 1.0, 0.0), source_pos=(5.0, 5.0, 5.0), hit_point=(5.0, 5.0, 5.0))
     assert d == pytest.approx((0.0, -1.0, 0.0))
+
+
+def test_impact_direction_oblique_ray_returned_not_normal():
+    # An inward ray that is NOT collinear with -normal must be returned as the
+    # ray, not collapsed to -normal. Distinguishes the ray branch from the
+    # fallback (which earlier tests can't, since their rays equal -normal).
+    normal = (0.0, 0.0, 1.0)
+    source_pos = (0.0, 2.0, 10.0)
+    hit_point = (0.0, 0.0, 2.0)  # ray = (0,-2,-8): inward (dot -normal = 8 > 0)
+    d = hd.impact_direction(normal, source_pos=source_pos, hit_point=hit_point)
+    m = (0.0 ** 2 + (-2.0) ** 2 + (-8.0) ** 2) ** 0.5
+    assert d == pytest.approx((0.0, -2.0 / m, -8.0 / m))
+    assert d != pytest.approx((0.0, 0.0, -1.0))  # not the -normal fallback
