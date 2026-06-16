@@ -21,9 +21,13 @@ uniform sampler2D u_damage_texture;   // shared torn-hull interior (unit 3)
 // reads as a deep dent edging into gouge; accumulation ruptures fully. The
 // old 0.15/0.45 band sat far below any real displacement, so every dent
 // instantly read as a full gouge once depths were scaled to ship size.
-const float RUPTURE_MIN = 5.0;
-const float RUPTURE_MAX = 20.0;
-const float DAMAGE_TEX_SCALE = 1.5;   // triplanar tiling (1/model-units), tuned
+const float RUPTURE_MIN = 2.0;
+const float RUPTURE_MAX = 8.0;
+// Triplanar tiling rate (1/model-units). p_body is in NIF model units (hulls
+// ~180 units across), so this must be SMALL or the texture tiles hundreds of
+// times across a crater and reads as aliased noise. 0.05 => one Damage.tga
+// tile per ~20 model units (~half a crater radius). Tuned by eye.
+const float DAMAGE_TEX_SCALE = 0.05;
 const vec3  CHAR_COLOR = vec3(0.04, 0.03, 0.025);  // charred ring near the gouge edge
 uniform int u_procedural_damage;   // 0 = sample Damage.tga (baseline); 1 = procedural interior
 

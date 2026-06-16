@@ -12,6 +12,12 @@ uniform mat4 u_proj;
 uniform mat4 u_ship_world;     // instance_world (body -> world)
 uniform mat4 u_ship_world_inv; // inverse(instance_world) (world -> body)
 
+// Displacement (model units) above which the recomputed (finite-difference)
+// normal fully replaces the smooth interpolated normal. Below it the smooth
+// normal dominates so undisplaced hull never facets. ~10% of a typical crater
+// depth; tuned by eye.
+const float NORMAL_BLEND_DEPTH = 2.0;
+
 const int MAX_CRATERS = 24;  // must match scenegraph::HullCraterField::kMaxCraters (C++)
 uniform int  u_crater_count;
 uniform vec4 u_crater_a[MAX_CRATERS];  // point_body.xyz, depth
@@ -79,27 +85,36 @@ void main() {
     vec3 du = displaced_body_at(bc_u) - db;
     vec3 dv = displaced_body_at(bc_v) - db;
 
-    // At a patch corner the clamped offsets collapse (du/dv ~ 0); fall back to
-    // the undisplaced normal instead of normalize(vec3(0)) -> NaN.
+    // Undisplaced body position; its distance to db is the displacement
+    // magnitude the FS uses to pick dent vs gouge, and the blend weight below.
+    vec3 lp0 = bc.x * tcp_pos[0] + bc.y * tcp_pos[1] + bc.z * tcp_pos[2];
+    vec3 wp0 = (u_model * vec4(lp0, 1.0)).xyz;
+    vec3 bp0 = (u_ship_world_inv * vec4(wp0, 1.0)).xyz;
+    float dmag = length(db - bp0);
+
+    // Finite-difference normal of the displaced surface. At a patch corner the
+    // clamped offsets collapse (du/dv ~ 0); fall back to the smooth normal
+    // instead of normalize(vec3(0)) -> NaN.
     vec3 cx = cross(du, dv);
-    vec3 n_body;
-    if (dot(cx, cx) < 1e-12) {
-        n_body = orig_n_body;
-    } else {
-        n_body = normalize(cx);
-        if (dot(n_body, orig_n_body) < 0.0) n_body = -n_body;  // resolve cross sign
+    vec3 fd_n = orig_n_body;
+    if (dot(cx, cx) >= 1e-12) {
+        fd_n = normalize(cx);
+        if (dot(fd_n, orig_n_body) < 0.0) fd_n = -fd_n;  // resolve cross sign
     }
+
+    // CRITICAL: where there is no displacement the finite difference reduces to
+    // the FLAT per-triangle face normal, which would facet the ENTIRE hull
+    // (visible "lines" all over the ship, not just craters). Blend toward the
+    // smooth interpolated normal by displacement magnitude so undisplaced hull
+    // shades byte-identically to the static GL_TRIANGLES path; only the dented
+    // region adopts the recomputed normal.
+    float n_blend = smoothstep(0.0, NORMAL_BLEND_DEPTH, dmag);
+    vec3 n_body = normalize(mix(orig_n_body, fd_n, n_blend));
 
     vec3 displaced_world = (u_ship_world * vec4(db, 1.0)).xyz;
     vec3 world_n = normalize(mat3(u_ship_world) * n_body);
 
-    // Undisplaced body position for the displacement magnitude the FS uses to
-    // pick dent vs gouge (db is the displaced body position).
-    vec3 lp0 = bc.x * tcp_pos[0] + bc.y * tcp_pos[1] + bc.z * tcp_pos[2];
-    vec3 wp0 = (u_model * vec4(lp0, 1.0)).xyz;
-    vec3 bp0 = (u_ship_world_inv * vec4(wp0, 1.0)).xyz;
-    v_deform_depth = length(db - bp0);
-
+    v_deform_depth = dmag;
     v_position_ws = displaced_world;
     v_normal_ws   = world_n;
     v_uv          = uv;

@@ -96,6 +96,14 @@ Pipeline::Pipeline() {
                 std::span<const std::uint8_t>(bytes));
             damage_texture_ =
                 std::make_unique<assets::Texture>(assets::upload_image(img, true));
+            std::fprintf(stderr, "[pipeline] loaded gouge Damage.tga from %s\n",
+                         damage_path.c_str());
+        } else {
+            // Missing file (game/ gitignored/absent) -> gouge samples the
+            // unit-3 black fallback. Log so a silent black gouge is diagnosable.
+            std::fprintf(stderr,
+                "[pipeline] Damage.tga not found at %s; gouge interior will be black\n",
+                damage_path.c_str());
         }
     } catch (const std::exception& e) {
         std::fprintf(stderr, "[pipeline] failed to load Damage.tga: %s\n", e.what());
