@@ -136,6 +136,11 @@ TEST(GougeShading, ProceduralInteriorDiffersFromBase) {
         glEnableVertexAttribArray(0);
         glVertexAttrib1f(7, 1.0f);
 
+        GLuint dmg = make_solid_texture(255, 0, 255);      // bright magenta interior
+        GLuint white = make_solid_texture(255, 255, 255);  // base
+        glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, white);
+        glActiveTexture(GL_TEXTURE3); glBindTexture(GL_TEXTURE_2D, dmg);
+
         glViewport(0, 0, 64, 64);
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
@@ -147,6 +152,8 @@ TEST(GougeShading, ProceduralInteriorDiffersFromBase) {
         prog.set_mat4("u_proj", I);
         prog.set_mat4("u_ship_world", I);
         prog.set_mat4("u_ship_world_inv", I);
+        prog.set_int("u_base_color", 0);
+        prog.set_int("u_damage_texture", 3);
         prog.set_vec3("u_ambient_light", glm::vec3(1.0f));
         prog.set_int("u_dir_light_count", 0);
         prog.set_vec3("u_diffuse_color", glm::vec3(1.0f));
@@ -167,8 +174,10 @@ TEST(GougeShading, ProceduralInteriorDiffersFromBase) {
         unsigned char center[4] = {0, 0, 0, 0};
         glReadPixels(32, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, center);
         EXPECT_EQ(glGetError(), GLenum(GL_NO_ERROR));
-        EXPECT_LT(center[0], 150) << "procedural gouge centre should be dark charred metal, not lit base";
+        EXPECT_LT(center[0], 150) << "procedural interior should override the bound (magenta) damage texture with dark charred metal";
 
+        glDeleteTextures(1, &dmg);
+        glDeleteTextures(1, &white);
         glDeleteBuffers(1, &vbo);
         glDeleteVertexArrays(1, &vao);
     } catch (const std::runtime_error& e) {
