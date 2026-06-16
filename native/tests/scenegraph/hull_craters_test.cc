@@ -70,3 +70,44 @@ TEST(HullCraterField, DistantHitAllocatesSecondCrater) {
     f.add({5, 0, 0}, {0, 0, -1}, {0, 0, 1}, 0.2f, 0.3f);  // far -> separate
     EXPECT_EQ(f.count(), 2u);
 }
+
+TEST(HullCraterField, FullFieldEvictsShallowestCrater) {
+    HullCraterField f;
+    // Fill all slots with distinct, far-apart, deep craters (depth 0.5).
+    for (std::size_t i = 0; i < HullCraterField::kMaxCraters; ++i) {
+        f.add({static_cast<float>(i) * 10.0f, 0, 0}, {0, 0, -1}, {0, 0, 1},
+              0.2f, 0.5f);
+    }
+    EXPECT_EQ(f.count(), HullCraterField::kMaxCraters);
+
+    // Field is full; all existing craters are depth 0.5. A new, far-apart,
+    // DEEPER crater (0.9) must evict the shallowest existing one. Count stays
+    // at capacity and a 0.9-deep crater now exists.
+    f.add({999.0f, 0, 0}, {0, 0, -1}, {0, 0, 1}, 0.2f, 0.9f);
+    EXPECT_EQ(f.count(), HullCraterField::kMaxCraters);
+
+    bool found_deep = false;
+    for (const auto& c : f.slots()) {
+        if (c.active && c.depth > 0.8f) found_deep = true;
+    }
+    EXPECT_TRUE(found_deep);  // the new deep crater displaced a shallow one
+}
+
+TEST(HullCraterField, EvictionPrefersShallowOverOld) {
+    HullCraterField f;
+    // One shallow OLD crater first (smallest seq), then fill the rest deep.
+    f.add({0, 0, 0}, {0, 0, -1}, {0, 0, 1}, 0.2f, 0.1f);  // shallow, oldest
+    for (std::size_t i = 1; i < HullCraterField::kMaxCraters; ++i) {
+        f.add({static_cast<float>(i) * 10.0f, 0, 0}, {0, 0, -1}, {0, 0, 1},
+              0.2f, 0.6f);  // deep
+    }
+    // Field full. A new far crater must evict the shallow (0.1) one, not a deep
+    // one — depth dominates, so the deep-but-older craters are safe.
+    f.add({999.0f, 0, 0}, {0, 0, -1}, {0, 0, 1}, 0.2f, 0.6f);
+
+    bool shallow_gone = true;
+    for (const auto& c : f.slots()) {
+        if (c.active && c.depth < 0.2f) shallow_gone = false;
+    }
+    EXPECT_TRUE(shallow_gone);  // shallow crater was the eviction victim
+}

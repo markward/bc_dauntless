@@ -34,7 +34,20 @@ void HullCraterField::add(const glm::vec3& point_body,
     for (auto& c : slots_) {
         if (!c.active) { target = &c; break; }
     }
-    if (target == nullptr) return;
+    if (target == nullptr) {
+        // Evict the shallowest crater; tie-break on oldest (smallest seq). A
+        // deep crater is more visually important than a shallow old one, so
+        // depth dominates the victim choice (differs from the decal ring's
+        // pure-FIFO eviction).
+        HullCrater* victim = &slots_[0];
+        for (auto& c : slots_) {
+            if (c.depth < victim->depth ||
+                (c.depth == victim->depth && c.seq < victim->seq)) {
+                victim = &c;
+            }
+        }
+        target = victim;
+    }
 
     *target = HullCrater{
         point_body, impact_dir_body, normal_body,
