@@ -2,6 +2,7 @@
 #include "scenegraph/hull_craters.h"
 
 #include <algorithm>
+#include <glm/glm.hpp>
 
 namespace scenegraph {
 
@@ -11,8 +12,25 @@ void HullCraterField::add(const glm::vec3& point_body,
                           float radius, float depth) {
     const float clamped_depth = std::clamp(depth, 0.0f, kMaxDepth);
 
-    // Allocate the first free slot. (Merge and eviction are added in later
-    // tasks; for now an over-full field silently drops the crater.)
+    // 1. Merge into a co-located crater: deepen it (accumulation). Deformation
+    //    is weapon-class-agnostic, so any active crater in range is a merge
+    //    target — a torpedo, a phaser, or a collision all cave the same spot.
+    const float merge_dist = kMergeFactor * radius;
+    for (auto& c : slots_) {
+        if (!c.active) continue;
+        if (glm::length(point_body - c.point_body) <= merge_dist) {
+            c.depth = std::min(kMaxDepth, c.depth + clamped_depth);
+            c.radius = std::max(c.radius, radius);   // a wider re-hit grows it
+            c.impact_dir_body = impact_dir_body;     // freshest shove direction
+            c.normal_body = normal_body;             // freshest surface normal
+            c.seq = next_seq_++;                     // refresh age (a reinforced
+                                                     // crater survives eviction)
+            return;
+        }
+    }
+
+    // 2. Allocate the first free slot. (Eviction is added in the next task; an
+    //    over-full field silently drops the crater for now.)
     HullCrater* target = nullptr;
     for (auto& c : slots_) {
         if (!c.active) { target = &c; break; }
