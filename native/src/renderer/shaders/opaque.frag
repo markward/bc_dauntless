@@ -170,6 +170,7 @@ vec3 blackbody(float heat) {
 // texture asset. The "Modern VFX -> Procedural hull damage" alternative to the
 // stock Damage.tga interior.
 vec3 procedural_gouge_interior(vec3 p_body) {
+    // 0.4: fine-grain torn-metal detail (~13x the decal NOISE_SCALE), not broad smearing
     float n = fbm(p_body.xy * 0.4 + p_body.z * vec2(0.3, 0.5));
     vec3 charred = vec3(0.05, 0.045, 0.040);
     vec3 metal   = vec3(0.18, 0.165, 0.150);

@@ -46,6 +46,9 @@ TEST(GougeShading, DeepDisplacementShowsDamageTexture) {
         glEnableVertexAttribArray(0);
         glVertexAttrib1f(7, 1.0f);  // crushability = 1
 
+        // Bind bright magenta on unit 3: if the procedural branch were ignored,
+        // the gouge would sample magenta (R~230); the procedural dark charred
+        // metal (R~45) overriding it is what the R<150 assertion verifies.
         GLuint dmg = make_solid_texture(255, 0, 255);    // magenta interior
         GLuint white = make_solid_texture(255, 255, 255); // base
         glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, white);
