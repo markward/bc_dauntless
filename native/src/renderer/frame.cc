@@ -69,6 +69,15 @@ namespace {
     void set_enabled(bool v) { g_decals_enabled = v; }
 }
 
+// "Modern VFX -> Procedural hull damage": when ON, gouge interiors are
+// shader-synthesized (procedural charred metal) instead of sampling Damage.tga.
+// Defaults OFF so the stock texture interior is the out-of-the-box look.
+namespace dauntless_procedural_damage {
+    bool g_enabled = false;
+    bool enabled() { return g_enabled; }
+    void set_enabled(bool v) { g_enabled = v; }
+}
+
 namespace renderer {
 
 void draw_model(const assets::Model& model,
@@ -272,6 +281,7 @@ void draw_model(const assets::Model& model,
             glBindTexture(GL_TEXTURE_2D,
                           damage_tex != 0 ? damage_tex : black_fallback);
             prog.set_int("u_damage_texture", 3);
+            prog.set_int("u_procedural_damage", dauntless_procedural_damage::enabled() ? 1 : 0);
 
             const float rim = rim_active
                 ? renderer::rim_strength_from_material(mat.specular, mat.glossiness)
