@@ -70,6 +70,13 @@ _last_decal_emit: dict = {}  # (id(ship), weapon_class) -> last emit game-time
 _last_deform_emit: dict = {}  # id(ship) -> last emit game-time
 
 
+def reset_deform_throttle() -> None:
+    """Clear the per-ship hull-deformation emission throttle. Called on
+    mission swap so a fresh ship that reuses a previous ship's id() is not
+    spuriously throttled on its first crater."""
+    _last_deform_emit.clear()
+
+
 def classify(*, absorbed_shields: float, absorbed_subsystem: float,
              absorbed_hull: float, sub_transition,
              subsystem, hull) -> Severity:

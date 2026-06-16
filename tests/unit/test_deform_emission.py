@@ -124,6 +124,20 @@ def test_headless_host_none_is_safe(patched):
     _dispatch(None, ship, absorbed_hull=hd.MIN_DEFORM_HULL + 60.0)
 
 
+def test_reset_deform_throttle_clears_state(patched):
+    # After a mission swap, a fresh ship reusing a previous id() must not be
+    # throttled on its first crater.
+    host = _FakeHost()
+    ship = _Ship()
+    de.set_current(frozenset({id(ship)}))
+    _dispatch(host, ship, absorbed_hull=hd.MIN_DEFORM_HULL + 60.0)
+    assert len(host.deform_calls) == 1
+    # Same frozen clock would normally throttle the second hit...
+    hit_feedback.reset_deform_throttle()
+    _dispatch(host, ship, absorbed_hull=hd.MIN_DEFORM_HULL + 60.0)
+    assert len(host.deform_calls) == 2  # throttle was cleared
+
+
 def test_impact_dir_uses_weapon_ray(patched):
     # Oblique source so the weapon ray is NOT collinear with -normal: this
     # proves dispatch actually threads source_pos through to impact_direction

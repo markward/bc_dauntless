@@ -1984,6 +1984,8 @@ class HostController:
         subsystem_emitters.reset_manager()
         from engine.appc import particles
         particles.reset()
+        deform_eligibility.reset()
+        hit_feedback.reset_deform_throttle()
         reset_sdk_globals()
         if self.panel_registry is not None:
             self.panel_registry.invalidate_all()
