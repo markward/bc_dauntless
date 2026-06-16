@@ -194,7 +194,8 @@ void draw_model(const assets::Model& model,
                 float decal_time,
                 float emissive_scale,
                 const std::vector<glm::mat4>& bone_palette,
-                bool use_patches = false);
+                bool use_patches = false,
+                std::uint32_t damage_tex = 0);
 
 class FrameSubmitter {
 public:

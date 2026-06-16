@@ -1,8 +1,9 @@
 #version 330 core
 
-in vec3 v_normal_ws;
-in vec2 v_uv;
-in vec3 v_position_ws;
+in vec3  v_normal_ws;
+in vec2  v_uv;
+in vec3  v_position_ws;
+in float v_deform_depth;   // |hull displacement| (model units); 0 on the static path
 
 uniform sampler2D u_base_color;
 uniform vec3 u_diffuse_color;
@@ -10,6 +11,15 @@ uniform vec3 u_diffuse_color;
 uniform sampler2D u_glow_map;
 uniform vec3 u_emissive_color;
 uniform float u_emissive_scale;   // 1 = normal, 0 = destroyed (dark hull)
+
+uniform sampler2D u_damage_texture;   // shared torn-hull interior (unit 3)
+// Rupture band (model units): displacement below RUPTURE_MIN is a dent (hull
+// texture preserved); above RUPTURE_MAX is a full gouge (torn interior).
+const float RUPTURE_MIN = 0.15;
+const float RUPTURE_MAX = 0.45;
+const float DAMAGE_TEX_SCALE = 1.5;   // triplanar tiling (1/model-units), tuned
+const vec3  CHAR_COLOR = vec3(0.04, 0.03, 0.025);  // charred ring near the gouge edge
+uniform int u_procedural_damage;   // 0 = sample Damage.tga (baseline); 1 = procedural interior
 
 uniform sampler2D u_specular_map;
 uniform vec3 u_specular_color;
@@ -155,6 +165,18 @@ vec3 blackbody(float heat) {
     return mix(mid, white, smoothstep(0.7, 1.0, heat));
 }
 
+// Procedural torn-hull interior: charred dark metal with fbm-broken exposed
+// structure. Body-position-driven so it's stable on the hull and needs no
+// texture asset. The "Modern VFX -> Procedural hull damage" alternative to the
+// stock Damage.tga interior.
+vec3 procedural_gouge_interior(vec3 p_body) {
+    // 0.4: fine-grain torn-metal detail (~13x the decal NOISE_SCALE), not broad smearing
+    float n = fbm(p_body.xy * 0.4 + p_body.z * vec2(0.3, 0.5));
+    vec3 charred = vec3(0.05, 0.045, 0.040);
+    vec3 metal   = vec3(0.18, 0.165, 0.150);
+    return mix(charred, metal, smoothstep(0.4, 0.7, n));
+}
+
 void apply_damage_decals(vec3 p_body, vec3 n_body,
                          inout vec3 base_lit, inout vec3 emissive,
                          inout float glow_flicker) {
@@ -284,6 +306,29 @@ void main() {
     // Reconstruct body-frame fragment pos/normal for object-space decals.
     vec3 p_body = (u_ship_world_inv * vec4(v_position_ws, 1.0)).xyz;
     vec3 n_body = normalize(mat3(u_ship_world_inv) * v_normal_ws);
+
+    // Hull-deformation gouge: where the surface is displaced past the rupture
+    // band, tear it open to a triplanar damage-texture interior with a charred
+    // edge ring. v_deform_depth is 0 on the static path (no gouge there).
+    if (v_deform_depth > RUPTURE_MIN) {
+        float gouge = smoothstep(RUPTURE_MIN, RUPTURE_MAX, v_deform_depth);  // 0..1
+        vec3 interior;
+        if (u_procedural_damage != 0) {
+            interior = procedural_gouge_interior(p_body);
+        } else {
+            vec3 bw = abs(n_body);
+            bw /= (bw.x + bw.y + bw.z + 1e-5);
+            vec3 dx = texture(u_damage_texture, p_body.yz * DAMAGE_TEX_SCALE).rgb;
+            vec3 dy = texture(u_damage_texture, p_body.zx * DAMAGE_TEX_SCALE).rgb;
+            vec3 dz = texture(u_damage_texture, p_body.xy * DAMAGE_TEX_SCALE).rgb;
+            interior = dx * bw.x + dy * bw.y + dz * bw.z;
+        }
+        float ring = (1.0 - gouge);                       // darkest at rupture onset
+        // ring*0.6: cap the char blend at 60% so the torn interior still shows through at the onset edge
+        vec3 gouge_color = mix(interior, CHAR_COLOR, ring * 0.6);
+        lit = mix(lit, gouge_color, gouge);
+    }
+
     vec3 decal_emissive = vec3(0.0);
     float glow_flicker = 1.0;
     if (u_decal_count > 0) {

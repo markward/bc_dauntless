@@ -495,6 +495,11 @@ namespace dauntless_rim {
 namespace dauntless_decals {
     void set_enabled(bool v);  // defined in frame.cc
 }
+// Toggle for procedural hull-damage gouge interiors. Defined in frame.cc.
+namespace dauntless_procedural_damage {
+    bool enabled();
+    void set_enabled(bool v);
+}
 
 PYBIND11_MODULE(_dauntless_host, m) {
     m.doc() = "open_stbc renderer host bindings (Phase B: window + frame stub)";
@@ -1280,6 +1285,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](bool enabled) { dauntless_decals::set_enabled(enabled); },
           py::arg("enabled"),
           "Enable/disable persistent hull damage decals (default on).");
+    m.def("procedural_damage_set_enabled",
+          [](bool enabled) { dauntless_procedural_damage::set_enabled(enabled); },
+          py::arg("enabled"),
+          "Toggle procedural (shader-synthesized) hull-damage gouge interiors. "
+          "Default off = stock Damage.tga interior.");
     m.def("fxaa_set_enabled",
           [](bool enabled) { g_fxaa_enabled = enabled; },
           py::arg("enabled"),

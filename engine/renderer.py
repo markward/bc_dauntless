@@ -222,6 +222,14 @@ def set_decals_enabled(enabled: bool) -> None:
     _h.decals_set_enabled(enabled)
 
 
+def set_procedural_damage_enabled(enabled: bool) -> None:
+    """Toggle procedural (shader-synthesized) hull-damage gouge interiors.
+    Default off = stock Damage.tga interior."""
+    fn = getattr(_h, "procedural_damage_set_enabled", None)
+    if fn is not None:
+        fn(enabled)
+
+
 def set_fxaa_enabled(enabled: bool) -> None:
     """Toggle the post-process FXAA pass. Default: on after init()."""
     _h.fxaa_set_enabled(enabled)

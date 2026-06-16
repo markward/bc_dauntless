@@ -13,9 +13,10 @@ uniform mat4 u_view;
 uniform mat4 u_proj;
 uniform mat4 u_bones[128];   // size must equal renderer::kMaxBones (bone_palette.h)
 
-out vec3 v_normal_ws;
-out vec2 v_uv;
-out vec3 v_position_ws;
+out vec3  v_normal_ws;
+out vec2  v_uv;
+out vec3  v_position_ws;
+out float v_deform_depth;   // |hull displacement| (model units); 0 on the static path
 
 void main() {
     mat4 skin = a_bone_weights.x * u_bones[a_bone_indices.x]
@@ -26,8 +27,9 @@ void main() {
     // mat3(skin) (no inverse-transpose) is correct for rigid rotation+translation
     // bones; it would be wrong only under non-uniform bone scale, which BC
     // character skeletons do not use.
-    v_normal_ws   = mat3(u_model) * mat3(skin) * a_normal;
-    v_uv          = a_uv;
-    v_position_ws = ws.xyz;
-    gl_Position   = u_proj * u_view * ws;
+    v_normal_ws    = mat3(u_model) * mat3(skin) * a_normal;
+    v_uv           = a_uv;
+    v_position_ws  = ws.xyz;
+    v_deform_depth = 0.0;
+    gl_Position    = u_proj * u_view * ws;
 }

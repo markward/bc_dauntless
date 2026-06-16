@@ -32,6 +32,7 @@ class SettingsSnapshot:
     decals_on: bool
     fov_deg: int
     fxaa_on: bool = True
+    procedural_damage_on: bool = False
 
 
 class ConfigurationPanel(Panel):
@@ -44,6 +45,7 @@ class ConfigurationPanel(Panel):
                  set_rim: Callable[[bool], None],
                  set_decals: Callable[[bool], None],
                  set_fxaa: Callable[[bool], None],
+                 set_procedural_damage: Callable[[bool], None],
                  set_fov_rad: Callable[[float], None]):
         super().__init__()
         self._tabs = list(tabs)
@@ -55,6 +57,7 @@ class ConfigurationPanel(Panel):
             rim_on=initial_settings.rim_on,
             decals_on=initial_settings.decals_on,
             fxaa_on=initial_settings.fxaa_on,
+            procedural_damage_on=initial_settings.procedural_damage_on,
             fov_deg=int(initial_settings.fov_deg),
         )
         self._set_dust = set_dust
@@ -63,6 +66,7 @@ class ConfigurationPanel(Panel):
         self._set_rim = set_rim
         self._set_decals = set_decals
         self._set_fxaa = set_fxaa
+        self._set_procedural_damage = set_procedural_damage
         self._set_fov_rad = set_fov_rad
         self._visible: bool = False
         self._focused: int = -1
@@ -94,6 +98,7 @@ class ConfigurationPanel(Panel):
             self._settings.rim_on,
             self._settings.decals_on,
             self._settings.fxaa_on,
+            self._settings.procedural_damage_on,
             self._settings.fov_deg,
         )
         if snapshot == self._last_pushed:
@@ -113,6 +118,7 @@ class ConfigurationPanel(Panel):
                 "rim_on": self._settings.rim_on,
                 "decals_on": self._settings.decals_on,
                 "fxaa_on": self._settings.fxaa_on,
+                "procedural_damage_on": self._settings.procedural_damage_on,
                 "fov_deg": self._settings.fov_deg,
             },
         }
@@ -156,6 +162,11 @@ class ConfigurationPanel(Panel):
             new_val = not self._settings.fxaa_on
             self._set_fxaa(new_val)
             self._settings.fxaa_on = new_val
+            return True
+        if action == "toggle:procedural_damage":
+            new_val = not self._settings.procedural_damage_on
+            self._set_procedural_damage(new_val)
+            self._settings.procedural_damage_on = new_val
             return True
         if action.startswith("fov:"):
             raw = action[len("fov:"):]
@@ -228,6 +239,8 @@ class ConfigurationPanel(Panel):
             self.dispatch_event("toggle:decals")
         elif activate and kind == "ctrl" and target == "fxaa":
             self.dispatch_event("toggle:fxaa")
+        elif activate and kind == "ctrl" and target == "procedural_damage":
+            self.dispatch_event("toggle:procedural_damage")
         elif activate and kind == "tab":
             self.dispatch_event("tab:" + target)
 
@@ -246,5 +259,5 @@ class ConfigurationPanel(Panel):
         if self._selected_tab == "graphics":
             out += [("ctrl", "dust"), ("ctrl", "specular"), ("ctrl", "fov"),
                     ("ctrl", "hdr"), ("ctrl", "rim"), ("ctrl", "decals"),
-                    ("ctrl", "fxaa")]
+                    ("ctrl", "fxaa"), ("ctrl", "procedural_damage")]
         return out

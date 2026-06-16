@@ -30,6 +30,7 @@ add_executable(renderer_tests
     gl_caps_test.cc
     tess_program_test.cc
     deform_pipeline_test.cc
+    gouge_shading_test.cc
 )
 
 target_link_libraries(renderer_tests

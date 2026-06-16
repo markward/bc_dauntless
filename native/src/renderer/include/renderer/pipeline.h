@@ -3,6 +3,8 @@
 
 #include "renderer/shader.h"
 
+#include <assets/texture.h>
+
 #include <cassert>
 #include <memory>
 
@@ -38,6 +40,13 @@ public:
     }
     bool tessellation_available() const noexcept { return tessellation_available_; }
 
+    /// Shared torn-hull "Damage.tga" interior texture (GL id), bound to unit 3
+    /// for ship draws. 0 if the asset was missing at load (gouges then sample
+    /// the unit-3 black fallback).
+    unsigned damage_texture() const noexcept {
+        return damage_texture_ ? damage_texture_->id() : 0u;
+    }
+
 private:
     std::unique_ptr<Shader> opaque_;
     std::unique_ptr<Shader> skinned_;
@@ -58,6 +67,7 @@ private:
     std::unique_ptr<Shader> lightmap_;
     std::unique_ptr<Shader> deform_;
     bool tessellation_available_ = false;
+    std::unique_ptr<assets::Texture> damage_texture_;
 };
 
 }  // namespace renderer
