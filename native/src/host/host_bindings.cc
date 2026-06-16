@@ -1447,6 +1447,49 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "point/normal are transformed into the ship body frame. weapon_class: "
           "0=HeatGlow (phaser), 1=Scorch (torpedo/disruptor).");
 
+    m.def("hull_deform_add",
+          [](scenegraph::InstanceId id,
+             std::tuple<float, float, float> world_point,
+             std::tuple<float, float, float> world_normal,
+             std::tuple<float, float, float> world_impact_dir,
+             float radius, float depth) {
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return;  // stale id — drop silently
+              const glm::vec3 pw(std::get<0>(world_point),
+                                 std::get<1>(world_point),
+                                 std::get<2>(world_point));
+              const glm::vec3 nw(std::get<0>(world_normal),
+                                 std::get<1>(world_normal),
+                                 std::get<2>(world_normal));
+              const glm::vec3 dw(std::get<0>(world_impact_dir),
+                                 std::get<1>(world_impact_dir),
+                                 std::get<2>(world_impact_dir));
+              const glm::vec3 pb = scenegraph::world_to_body(inst->world, pw);
+              const glm::vec3 nb = scenegraph::world_dir_to_body(inst->world, nw);
+              const glm::vec3 db = scenegraph::world_dir_to_body(inst->world, dw);
+              // radius and depth are GU lengths; convert to model units (the
+              // space pb lives in). s = |world's X column| = NIF->world scale.
+              const float s = glm::length(glm::vec3(inst->world[0]));
+              const float inv = (s > 0.0f) ? 1.0f / s : 1.0f;
+              inst->craters.add(pb, db, nb, radius * inv, depth * inv);
+          },
+          py::arg("instance_id"), py::arg("world_point"), py::arg("world_normal"),
+          py::arg("world_impact_dir"), py::arg("radius"), py::arg("depth"),
+          "Record a persistent hull-deformation crater on a ship instance. "
+          "World-space point/normal/impact-direction are transformed into the "
+          "ship body frame; radius and depth (game units) are converted to model "
+          "units. Re-hitting a region deepens an existing crater.");
+
+    m.def("hull_deform_crater_count",
+          [](scenegraph::InstanceId id) -> int {
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return 0;  // stale id -> no craters
+              return static_cast<int>(inst->craters.count());
+          },
+          py::arg("instance_id"),
+          "Number of active hull-deformation craters on an instance (0 for a "
+          "stale id). Used to decide whether a ship needs the tessellation path.");
+
     m.def("compute_capsule_region",
           [](scenegraph::InstanceId id,
              std::tuple<float, float, float> center,
