@@ -1,5 +1,5 @@
 #version 410 core
-layout(triangles, equal_spacing, ccw) in;  // ccw = the default front-face winding the opaque GL_TRIANGLES path uses for these meshes
+layout(triangles, equal_spacing, ccw) in;  // At tess level 1 the single emitted triangle preserves the patch v0->v1->v2 order (matches the opaque GL_TRIANGLES path, which renders correctly under glFrontFace(GL_CW)). The ccw vs cw qualifier only changes sub-triangle winding at level>1; that is validated with a front-facing test when adaptive tessellation lands.
 
 in  vec3  tcp_pos[];
 in  vec3  tcp_normal[];
