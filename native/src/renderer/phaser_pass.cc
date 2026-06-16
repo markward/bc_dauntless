@@ -110,7 +110,8 @@ void PhaserPass::ensure_mesh(const std::vector<PhaserBeamDescriptor>& beams) {
 
 void PhaserPass::render(const std::vector<PhaserBeamDescriptor>& beams,
                          const scenegraph::Camera& camera,
-                         Pipeline& pipeline) {
+                         Pipeline& pipeline,
+                         bool depth_test) {
     if (beams.empty()) return;
     ensure_texture();
     if (!texture_ || texture_->id() == 0) return;
@@ -126,7 +127,8 @@ void PhaserPass::render(const std::vector<PhaserBeamDescriptor>& beams,
 
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-    glEnable(GL_DEPTH_TEST);
+    if (depth_test) glEnable(GL_DEPTH_TEST);
+    else            glDisable(GL_DEPTH_TEST);
     glDepthMask(GL_FALSE);
     glDisable(GL_CULL_FACE);
 
@@ -153,6 +155,7 @@ void PhaserPass::render(const std::vector<PhaserBeamDescriptor>& beams,
 
     glEnable(GL_CULL_FACE);
     glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);   // restore (no-op for gameplay path)
     glDisable(GL_BLEND);
 }
 
