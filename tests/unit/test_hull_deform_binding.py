@@ -35,11 +35,16 @@ def test_hull_deform_crater_count_forwards(monkeypatch):
     assert renderer.hull_deform_crater_count("IID") == 7
 
 
-def test_wrappers_noop_when_binding_absent(monkeypatch):
-    # A host module without the bindings (e.g. a stale .so) must not raise.
+def test_hull_deform_add_noop_when_binding_absent(monkeypatch):
+    # A host module without the binding (e.g. a stale .so) must not raise.
     empty = types.SimpleNamespace()
     monkeypatch.setattr(renderer, "_h", empty)
     renderer.hull_deform_add(
         iid="IID", world_point=(0, 0, 0), world_normal=(0, 0, 1),
-        world_impact_dir=(0, 0, -1), radius=0.1, depth=0.1)  # no raise
+        world_impact_dir=(0, 0, -1), radius=0.1, depth=0.1)  # must not raise
+
+
+def test_hull_deform_crater_count_returns_zero_when_binding_absent(monkeypatch):
+    empty = types.SimpleNamespace()
+    monkeypatch.setattr(renderer, "_h", empty)
     assert renderer.hull_deform_crater_count("IID") == 0

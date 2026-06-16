@@ -122,7 +122,8 @@ def hull_deform_add(*, iid: InstanceId,
 
     World-space point/normal/impact-direction are transformed to the ship
     body frame natively; radius and depth are game units. No-ops if the
-    native binding is absent (e.g. a stale extension module)."""
+    native binding is absent (e.g. a stale extension module).
+    """
     fn = getattr(_h, "hull_deform_add", None)
     if fn is not None:
         fn(iid, world_point, world_normal, world_impact_dir, radius, depth)
@@ -130,7 +131,8 @@ def hull_deform_add(*, iid: InstanceId,
 
 def hull_deform_crater_count(iid: InstanceId) -> int:
     """Number of active hull-deformation craters on an instance (0 if the
-    binding is absent or the id is stale)."""
+    binding is absent or the id is stale).
+    """
     fn = getattr(_h, "hull_deform_crater_count", None)
     return fn(iid) if fn is not None else 0
 
