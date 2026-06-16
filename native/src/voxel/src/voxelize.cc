@@ -1,8 +1,17 @@
 // native/src/voxel/src/voxelize.cc
 #include <voxel/voxelize.h>
 #include <assets/model.h>
+#include <cmath>
+#include <glm/glm.hpp>
 
 namespace voxel {
+
+namespace {
+glm::ivec3 to_cell(const VoxelVolume& v, glm::vec3 p) {
+    glm::vec3 g = (p - v.origin) / v.cell;
+    return glm::ivec3(int(std::floor(g.x)), int(std::floor(g.y)), int(std::floor(g.z)));
+}
+}  // namespace
 
 std::vector<Tri> collect_hull_triangles(const assets::Model& model) {
     // Build per-node world transforms in a single linear pass.
@@ -50,6 +59,21 @@ std::vector<Tri> collect_hull_triangles(const assets::Model& model) {
         }
     }
     return out;
+}
+
+void surface_voxelize(VoxelVolume& v, const std::vector<Tri>& tris) {
+    const int N = 16;  // samples per edge; dense enough to leave no gaps at grid res
+    for (const auto& t : tris) {
+        for (int i = 0; i <= N; ++i)
+        for (int j = 0; j + i <= N; ++j) {
+            float u = float(i) / N, w = float(j) / N;
+            glm::vec3 p = t.a + u * (t.b - t.a) + w * (t.c - t.a);
+            glm::ivec3 c = to_cell(v, p);
+            if (glm::all(glm::greaterThanEqual(c, glm::ivec3(0))) &&
+                glm::all(glm::lessThan(c, v.dims)))
+                v.set(c.x, c.y, c.z, true);
+        }
+    }
 }
 
 }  // namespace voxel
