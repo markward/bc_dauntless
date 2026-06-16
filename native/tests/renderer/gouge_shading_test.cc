@@ -115,4 +115,65 @@ TEST(GougeShading, PipelineLoadsDamageTextureWhenPresent) {
     }
 }
 
+TEST(GougeShading, ProceduralInteriorDiffersFromBase) {
+    try {
+        renderer::Window w(64, 64, "gouge-proc-test", /*visible=*/false);
+        renderer::Pipeline pipeline;
+        ASSERT_TRUE(pipeline.tessellation_available());
+        renderer::Shader& prog = pipeline.deform_shader();
+
+        const float verts[] = {
+            -0.9f, -0.9f, 0.0f,  0.9f,  0.9f, 0.0f,  0.9f, -0.9f, 0.0f,  // CW
+            -0.9f, -0.9f, 0.0f, -0.9f,  0.9f, 0.0f,  0.9f,  0.9f, 0.0f,
+        };
+        GLuint vao = 0, vbo = 0;
+        glGenVertexArrays(1, &vao);
+        glGenBuffers(1, &vbo);
+        glBindVertexArray(vao);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_STATIC_DRAW);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
+        glEnableVertexAttribArray(0);
+        glVertexAttrib1f(7, 1.0f);
+
+        glViewport(0, 0, 64, 64);
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        prog.use();
+        glm::mat4 I(1.0f);
+        prog.set_mat4("u_model", I);
+        prog.set_mat4("u_view", I);
+        prog.set_mat4("u_proj", I);
+        prog.set_mat4("u_ship_world", I);
+        prog.set_mat4("u_ship_world_inv", I);
+        prog.set_vec3("u_ambient_light", glm::vec3(1.0f));
+        prog.set_int("u_dir_light_count", 0);
+        prog.set_vec3("u_diffuse_color", glm::vec3(1.0f));
+        prog.set_float("u_emissive_scale", 0.0f);
+        prog.set_int("u_decal_count", 0);
+        prog.set_int("u_glow_region_count", 0);
+        prog.set_int("u_procedural_damage", 1);   // procedural interior
+        prog.set_int("u_crater_count", 1);
+        glm::vec4 ca(0.0f, 0.0f, 0.0f, 0.6f);
+        glm::vec4 cb(0.0f, 0.0f, -1.0f, 0.5f);
+        prog.set_vec4_array("u_crater_a", &ca, 1);
+        prog.set_vec4_array("u_crater_b", &cb, 1);
+
+        while (glGetError() != GL_NO_ERROR) {}
+        glPatchParameteri(GL_PATCH_VERTICES, 3);
+        glDrawArrays(GL_PATCHES, 0, 6);
+
+        unsigned char center[4] = {0, 0, 0, 0};
+        glReadPixels(32, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, center);
+        EXPECT_EQ(glGetError(), GLenum(GL_NO_ERROR));
+        EXPECT_LT(center[0], 150) << "procedural gouge centre should be dark charred metal, not lit base";
+
+        glDeleteBuffers(1, &vbo);
+        glDeleteVertexArrays(1, &vao);
+    } catch (const std::runtime_error& e) {
+        GTEST_SKIP() << "no GL context available: " << e.what();
+    }
+}
+
 }  // namespace

@@ -19,6 +19,7 @@ const float RUPTURE_MIN = 0.15;
 const float RUPTURE_MAX = 0.45;
 const float DAMAGE_TEX_SCALE = 1.5;   // triplanar tiling (1/model-units), tuned
 const vec3  CHAR_COLOR = vec3(0.04, 0.03, 0.025);  // charred ring near the gouge edge
+uniform int u_procedural_damage;   // 0 = sample Damage.tga (baseline); 1 = procedural interior
 
 uniform sampler2D u_specular_map;
 uniform vec3 u_specular_color;
@@ -164,6 +165,17 @@ vec3 blackbody(float heat) {
     return mix(mid, white, smoothstep(0.7, 1.0, heat));
 }
 
+// Procedural torn-hull interior: charred dark metal with fbm-broken exposed
+// structure. Body-position-driven so it's stable on the hull and needs no
+// texture asset. The "Modern VFX -> Procedural hull damage" alternative to the
+// stock Damage.tga interior.
+vec3 procedural_gouge_interior(vec3 p_body) {
+    float n = fbm(p_body.xy * 0.4 + p_body.z * vec2(0.3, 0.5));
+    vec3 charred = vec3(0.05, 0.045, 0.040);
+    vec3 metal   = vec3(0.18, 0.165, 0.150);
+    return mix(charred, metal, smoothstep(0.4, 0.7, n));
+}
+
 void apply_damage_decals(vec3 p_body, vec3 n_body,
                          inout vec3 base_lit, inout vec3 emissive,
                          inout float glow_flicker) {
@@ -299,12 +311,17 @@ void main() {
     // edge ring. v_deform_depth is 0 on the static path (no gouge there).
     if (v_deform_depth > RUPTURE_MIN) {
         float gouge = smoothstep(RUPTURE_MIN, RUPTURE_MAX, v_deform_depth);  // 0..1
-        vec3 bw = abs(n_body);
-        bw /= (bw.x + bw.y + bw.z + 1e-5);
-        vec3 dx = texture(u_damage_texture, p_body.yz * DAMAGE_TEX_SCALE).rgb;
-        vec3 dy = texture(u_damage_texture, p_body.zx * DAMAGE_TEX_SCALE).rgb;
-        vec3 dz = texture(u_damage_texture, p_body.xy * DAMAGE_TEX_SCALE).rgb;
-        vec3 interior = dx * bw.x + dy * bw.y + dz * bw.z;
+        vec3 interior;
+        if (u_procedural_damage != 0) {
+            interior = procedural_gouge_interior(p_body);
+        } else {
+            vec3 bw = abs(n_body);
+            bw /= (bw.x + bw.y + bw.z + 1e-5);
+            vec3 dx = texture(u_damage_texture, p_body.yz * DAMAGE_TEX_SCALE).rgb;
+            vec3 dy = texture(u_damage_texture, p_body.zx * DAMAGE_TEX_SCALE).rgb;
+            vec3 dz = texture(u_damage_texture, p_body.xy * DAMAGE_TEX_SCALE).rgb;
+            interior = dx * bw.x + dy * bw.y + dz * bw.z;
+        }
         float ring = (1.0 - gouge);                       // darkest at rupture onset
         // ring*0.6: cap the char blend at 60% so the torn interior still shows through at the onset edge
         vec3 gouge_color = mix(interior, CHAR_COLOR, ring * 0.6);
