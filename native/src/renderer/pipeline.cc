@@ -7,6 +7,9 @@
 
 #include <assets/texture.h>
 
+#include "renderer/asset_path.h"
+
+#include <cstdio>
 #include <fstream>
 #include <iterator>
 #include <span>
@@ -82,7 +85,9 @@ Pipeline::Pipeline() {
     // to unit 3 per ship draw. game/ is gitignored (absent in CI) — fall back
     // silently to no texture (gouges then sample the unit-3 black fallback).
     try {
-        std::ifstream in("game/data/Textures/Effects/Damage.tga", std::ios::binary);
+        const std::string damage_path =
+            renderer::resolve_asset_path("data/Textures/Effects/Damage.tga");
+        std::ifstream in(damage_path, std::ios::binary);
         if (in) {
             std::vector<std::uint8_t> bytes(
                 (std::istreambuf_iterator<char>(in)),
@@ -92,7 +97,8 @@ Pipeline::Pipeline() {
             damage_texture_ =
                 std::make_unique<assets::Texture>(assets::upload_image(img, true));
         }
-    } catch (const std::exception&) {
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[pipeline] failed to load Damage.tga: %s\n", e.what());
         damage_texture_.reset();  // decode/upload failure -> no gouge texture
     }
 
