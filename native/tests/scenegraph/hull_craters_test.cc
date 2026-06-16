@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include <glm/glm.hpp>
 #include "scenegraph/hull_craters.h"
+#include "scenegraph/instance.h"
 
 using scenegraph::HullCrater;
 using scenegraph::HullCraterField;
@@ -110,4 +111,9 @@ TEST(HullCraterField, EvictionPrefersShallowOverOld) {
         if (c.active && c.depth < 0.2f) shallow_gone = false;
     }
     EXPECT_TRUE(shallow_gone);  // shallow crater was the eviction victim
+}
+
+TEST(Instance, HasEmptyCraterFieldByDefault) {
+    scenegraph::Instance inst;
+    EXPECT_EQ(inst.craters.count(), 0u);
 }

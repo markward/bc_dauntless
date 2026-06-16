@@ -7,6 +7,7 @@
 #include <vector>
 #include <glm/glm.hpp>
 #include "scenegraph/damage_decals.h"
+#include "scenegraph/hull_craters.h"
 
 namespace scenegraph {
 
@@ -61,6 +62,10 @@ struct Instance {
     /// Per-instance persistent damage decals (object space, body frame).
     /// Runtime VFX state only — never serialized to saves.
     DamageDecalRing decals;
+
+    /// Per-instance persistent hull-deformation craters (object space, body
+    /// frame). Runtime VFX state only — never serialized to saves (spec §9).
+    HullCraterField craters;
 
     /// Per-instance glow capsules (body frame, model units).
     /// Runtime VFX state only — never serialized. Fixed cap: a ship has at
