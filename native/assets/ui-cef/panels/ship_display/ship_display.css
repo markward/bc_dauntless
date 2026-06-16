@@ -51,11 +51,10 @@
 }
 
 /* Player panel — flex child of #tactical-bottom-row (see global.css).
-   Width sized by content + a viewport floor; positioning owned by the
-   bottom-row container. */
+   Fixed width so the panel doesn't grow with the viewport; positioning
+   owned by the bottom-row container (justify-content: flex-end). */
 #ship-display-player {
-    width: 16vw;
-    min-width: 220px;
+    width: 240px;
 }
 
 /* Target panel — flex child of #tactical-target-stack (left column).

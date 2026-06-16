@@ -24,8 +24,7 @@
    flex-end alignment for this child only and matches the row's
    tallest sibling (the player ShipDisplay). */
 #weapons-display {
-    width: 16vw;
-    min-width: 220px;
+    width: 240px;
     align-self: stretch;
     display: flex;
     flex-direction: column;
