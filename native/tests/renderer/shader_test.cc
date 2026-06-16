@@ -46,8 +46,8 @@ TEST_F(ShaderTest, UniformSettersDoNotCrashWhenMissing) {
     s.set_vec3("also_missing", glm::vec3(1, 2, 3));
 }
 
-// Not using the ShaderTest fixture: tessellation requires a GL 4.0+ context;
-// a fresh Window here keeps room to pass a context hint if that's ever needed.
+// Not using the ShaderTest fixture so this test owns its own Window and can
+// adjust context hints independently if that's ever needed.
 TEST(Shader, CompilesTessellationProgram) {
     try {
         renderer::Window w(64, 64, "tess-shader-test", /*visible=*/false);
