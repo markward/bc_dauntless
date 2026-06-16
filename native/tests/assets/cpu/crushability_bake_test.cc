@@ -47,6 +47,45 @@ assets::MeshCpu make_facing_quads() {
 }
 }  // namespace
 
+TEST(BakeCrushability, ThinFaceCrushesMoreThanNoHitEdge) {
+    assets::MeshCpu m = make_facing_quads();
+    assets::bake_crushability(m);  // default params
+
+    // Top-quad vertices (normal +z) cast down, hit the overhanging bottom at
+    // thickness 1 (thin) -> crushability well above the 0.5 fallback.
+    for (std::size_t i = 0; i < 4; ++i) {
+        EXPECT_GT(m.vertices[i].crushability, 0.5f)
+            << "top vertex " << i << " should read as thin/crushable";
+    }
+    // Bottom-quad corners (normal -z) cast up but the smaller top quad does not
+    // cover them, so the ray misses -> no_hit_value (0.5).
+    for (std::size_t i = 4; i < 8; ++i) {
+        EXPECT_FLOAT_EQ(m.vertices[i].crushability, 0.5f)
+            << "bottom corner " << i << " should fall back to no_hit_value";
+    }
+}
+
+TEST(BakeCrushability, ZeroNormalGetsNoHitValue) {
+    assets::MeshCpu m = make_facing_quads();
+    m.vertices[0].normal = {0, 0, 0};  // degenerate normal
+    assets::bake_crushability(m);
+    EXPECT_FLOAT_EQ(m.vertices[0].crushability, 0.5f);
+}
+
+TEST(BakeCrushability, EmptyMeshIsLeftUnchanged) {
+    assets::MeshCpu m;  // no vertices, no indices
+    assets::bake_crushability(m);  // must not crash
+    EXPECT_TRUE(m.vertices.empty());
+}
+
+TEST(BakeCrushability, RespectsCustomNoHitValue) {
+    assets::MeshCpu m = make_facing_quads();
+    assets::CrushabilityParams p;
+    p.no_hit_value = 0.1f;
+    assets::bake_crushability(m, p);
+    EXPECT_FLOAT_EQ(m.vertices[4].crushability, 0.1f);  // a missing bottom corner
+}
+
 TEST(ProbeThickness, HitsOppositeSurface) {
     const assets::MeshCpu m = make_facing_quads();
     // From the centre of the top quad, straight down, must hit the bottom at t=1.

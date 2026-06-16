@@ -63,4 +63,33 @@ float probe_thickness(const MeshCpu& mesh, const glm::vec3& origin,
     return best;
 }
 
+void bake_crushability(MeshCpu& mesh, const CrushabilityParams& params) {
+    if (mesh.vertices.empty() || mesh.indices.size() < 3) return;
+
+    // Bounding-box diagonal gives a per-mesh, scale-invariant reference: a
+    // vertex is "thin" relative to the size of its own shape.
+    glm::vec3 lo(std::numeric_limits<float>::infinity());
+    glm::vec3 hi(-std::numeric_limits<float>::infinity());
+    for (const auto& vert : mesh.vertices) {
+        lo = glm::min(lo, vert.position);
+        hi = glm::max(hi, vert.position);
+    }
+    const float diag = glm::length(hi - lo);
+    const float ref = params.thick_fraction * diag;
+    const float max_dist = (diag > 0.0f) ? diag : 1.0f;  // no ray exceeds the shape
+
+    for (auto& vert : mesh.vertices) {
+        const float nlen = glm::length(vert.normal);
+        if (nlen < 1e-8f) {            // degenerate normal -> can't cast inward
+            vert.crushability = params.no_hit_value;
+            continue;
+        }
+        const glm::vec3 inward = -vert.normal / nlen;
+        const float thickness = probe_thickness(mesh, vert.position, inward, max_dist);
+        vert.crushability = std::isinf(thickness)
+            ? params.no_hit_value
+            : crushability_from_thickness(thickness, ref);
+    }
+}
+
 }  // namespace assets
