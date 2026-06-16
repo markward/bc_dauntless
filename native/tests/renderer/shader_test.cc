@@ -46,4 +46,44 @@ TEST_F(ShaderTest, UniformSettersDoNotCrashWhenMissing) {
     s.set_vec3("also_missing", glm::vec3(1, 2, 3));
 }
 
+TEST(Shader, CompilesTessellationProgram) {
+    try {
+        renderer::Window w(64, 64, "tess-shader-test", /*visible=*/false);
+
+        const char* vs = R"GLSL(#version 410 core
+layout(location=0) in vec3 a_pos;
+void main() { gl_Position = vec4(a_pos, 1.0); }
+)GLSL";
+        const char* tcs = R"GLSL(#version 410 core
+layout(vertices=3) out;
+void main() {
+    if (gl_InvocationID == 0) {
+        gl_TessLevelInner[0] = 1.0;
+        gl_TessLevelOuter[0] = 1.0;
+        gl_TessLevelOuter[1] = 1.0;
+        gl_TessLevelOuter[2] = 1.0;
+    }
+    gl_out[gl_InvocationID].gl_Position = gl_in[gl_InvocationID].gl_Position;
+}
+)GLSL";
+        const char* tes = R"GLSL(#version 410 core
+layout(triangles, equal_spacing, cw) in;
+void main() {
+    gl_Position = gl_TessCoord.x * gl_in[0].gl_Position
+                + gl_TessCoord.y * gl_in[1].gl_Position
+                + gl_TessCoord.z * gl_in[2].gl_Position;
+}
+)GLSL";
+        const char* fs = R"GLSL(#version 410 core
+out vec4 frag;
+void main() { frag = vec4(1.0); }
+)GLSL";
+
+        renderer::Shader prog(vs, tcs, tes, fs);
+        EXPECT_NE(prog.program(), 0u);
+    } catch (const std::runtime_error& e) {
+        GTEST_SKIP() << "no GL context available: " << e.what();
+    }
+}
+
 }  // namespace

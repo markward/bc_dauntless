@@ -62,6 +62,48 @@ Shader::Shader(const std::string& vsrc, const std::string& fsrc) {
     glDeleteShader(fs);
 }
 
+Shader::Shader(const std::string& vsrc,
+               const std::string& tcsrc,
+               const std::string& tesrc,
+               const std::string& fsrc) {
+    GLuint vs = compile_stage(GL_VERTEX_SHADER, vsrc);
+    GLuint tcs = 0, tes = 0, fs = 0;
+    auto cleanup = [&]() {
+        if (vs) glDeleteShader(vs);
+        if (tcs) glDeleteShader(tcs);
+        if (tes) glDeleteShader(tes);
+        if (fs) glDeleteShader(fs);
+    };
+    try {
+        tcs = compile_stage(GL_TESS_CONTROL_SHADER, tcsrc);
+        tes = compile_stage(GL_TESS_EVALUATION_SHADER, tesrc);
+        fs = compile_stage(GL_FRAGMENT_SHADER, fsrc);
+    } catch (...) {
+        cleanup();
+        throw;
+    }
+    program_ = glCreateProgram();
+    glAttachShader(program_, vs);
+    glAttachShader(program_, tcs);
+    glAttachShader(program_, tes);
+    glAttachShader(program_, fs);
+    glLinkProgram(program_);
+    GLint ok = 0;
+    glGetProgramiv(program_, GL_LINK_STATUS, &ok);
+    if (!ok) {
+        GLint len = 0;
+        glGetProgramiv(program_, GL_INFO_LOG_LENGTH, &len);
+        std::vector<char> log(len > 0 ? len : 1);
+        if (len > 0) glGetProgramInfoLog(program_, len, nullptr, log.data());
+        glDeleteProgram(program_);
+        program_ = 0;
+        cleanup();
+        throw std::runtime_error("renderer::Shader tess link failed: " +
+                                 std::string(log.data()));
+    }
+    cleanup();
+}
+
 Shader::~Shader() {
     if (program_) glDeleteProgram(program_);
 }

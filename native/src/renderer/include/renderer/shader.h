@@ -9,6 +9,15 @@ namespace renderer {
 class Shader {
 public:
     Shader(const std::string& vertex_src, const std::string& fragment_src);
+
+    /// Construct a tessellation pipeline program: vertex -> tessellation
+    /// control -> tessellation evaluation -> fragment. Requires a GL 4.0+
+    /// context. Pass GLSL with `#version 410 core`.
+    Shader(const std::string& vertex_src,
+           const std::string& tess_control_src,
+           const std::string& tess_eval_src,
+           const std::string& fragment_src);
+
     ~Shader();
     Shader(const Shader&) = delete;
     Shader& operator=(const Shader&) = delete;
