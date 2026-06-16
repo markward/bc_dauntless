@@ -29,6 +29,7 @@ add_executable(renderer_tests
     asset_path_test.cc
     gl_caps_test.cc
     tess_program_test.cc
+    deform_pipeline_test.cc
 )
 
 target_link_libraries(renderer_tests

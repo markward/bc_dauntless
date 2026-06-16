@@ -54,6 +54,9 @@ embed_shader(SHADER_PASSTHROUGH_TESS_VS  shaders/passthrough_tess.vert  passthro
 embed_shader(SHADER_PASSTHROUGH_TESS_TCS shaders/passthrough_tess.tesc  passthrough_tess_tcs)
 embed_shader(SHADER_PASSTHROUGH_TESS_TES shaders/passthrough_tess.tese  passthrough_tess_tes)
 embed_shader(SHADER_PASSTHROUGH_TESS_FS  shaders/passthrough_tess.frag  passthrough_tess_fs)
+embed_shader(SHADER_OPAQUE_DEFORM_VS  shaders/opaque_deform.vert opaque_deform_vs)
+embed_shader(SHADER_OPAQUE_DEFORM_TCS shaders/opaque_deform.tesc opaque_deform_tcs)
+embed_shader(SHADER_OPAQUE_DEFORM_TES shaders/opaque_deform.tese opaque_deform_tes)
 
 add_library(renderer STATIC
     window.cc
