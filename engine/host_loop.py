@@ -2696,6 +2696,7 @@ def run(mission_name: Optional[str] = None,
                 rim_on=True,
                 decals_on=True,
                 fxaa_on=True,
+                procedural_damage_on=False,
                 fov_deg=int(round(_math.degrees(
                     director.fov_y_rad
                 ))),
@@ -2706,6 +2707,7 @@ def run(mission_name: Optional[str] = None,
             set_rim=r.set_rim_enabled,
             set_decals=r.set_decals_enabled,
             set_fxaa=r.set_fxaa_enabled,
+            set_procedural_damage=r.set_procedural_damage_enabled,
             set_fov_rad=director.set_fov,
         )
 
