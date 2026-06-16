@@ -125,13 +125,21 @@ def test_headless_host_none_is_safe(patched):
 
 
 def test_impact_dir_uses_weapon_ray(patched):
+    # Oblique source so the weapon ray is NOT collinear with -normal: this
+    # proves dispatch actually threads source_pos through to impact_direction
+    # rather than falling back to -normal. hit_point is (1,2,3), normal (0,0,1).
     host = _FakeHost()
     ship = _Ship()
     de.set_current(frozenset({id(ship)}))
 
     class _Src:
         def GetWorldLocation(self):
-            return _Pt(1.0, 2.0, 13.0)
+            # ray = hit - src = (1-11, 2-2, 3-13) = (-10, 0, -10) -> diagonal,
+            # inward (dot -normal = 10 > 0), distinct from the (0,0,-1) fallback.
+            return _Pt(11.0, 2.0, 13.0)
 
     _dispatch(host, ship, absorbed_hull=hd.MIN_DEFORM_HULL + 60.0, source=_Src())
-    assert host.deform_calls[0]["world_impact_dir"] == pytest.approx((0.0, 0.0, -1.0))
+    m = (10.0 ** 2 + 10.0 ** 2) ** 0.5
+    got = host.deform_calls[0]["world_impact_dir"]
+    assert got == pytest.approx((-10.0 / m, 0.0, -10.0 / m))
+    assert got != pytest.approx((0.0, 0.0, -1.0))  # not the -normal fallback
