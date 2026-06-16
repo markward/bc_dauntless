@@ -40,14 +40,16 @@ TEST_F(MeshUploadTest, MovedFromMeshIsZero) {
     EXPECT_TRUE(glIsVertexArray(b.vao()));
 }
 
-TEST_F(MeshUploadTest, AllSixAttributesEnabled) {
+TEST_F(MeshUploadTest, AllVertexAttributesEnabled) {
     assets::MeshCpu cpu;
     cpu.vertices.resize(1);
     cpu.indices = {0};
 
     auto mesh = assets::upload_mesh(cpu);
     glBindVertexArray(mesh.vao());
-    for (int loc = 0; loc < 6; ++loc) {
+    // Locations 0-7: position, normal, uv, color, bone_indices, bone_weights,
+    // uv1, crushability.
+    for (int loc = 0; loc < 8; ++loc) {
         GLint enabled = 0;
         glGetVertexAttribiv(loc, GL_VERTEX_ATTRIB_ARRAY_ENABLED, &enabled);
         EXPECT_EQ(enabled, GL_TRUE) << "attribute location " << loc << " not enabled";

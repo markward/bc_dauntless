@@ -71,6 +71,9 @@ Mesh upload_mesh(const MeshCpu& cpu) {
     glEnableVertexAttribArray(6);
     glVertexAttribPointer(6, 2, GL_FLOAT, GL_FALSE, stride,
                           reinterpret_cast<void*>(offsetof(V, uv1)));
+    glEnableVertexAttribArray(7);
+    glVertexAttribPointer(7, 1, GL_FLOAT, GL_FALSE, stride,
+                          reinterpret_cast<void*>(offsetof(V, crushability)));
 
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
