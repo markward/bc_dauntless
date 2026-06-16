@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include <cmath>
 #include <assets/crushability_bake.h>
+#include <assets/mesh.h>
 
 using assets::crushability_from_thickness;
 
@@ -17,9 +18,6 @@ TEST(CrushabilityMapping, ClampsAndHandlesDegenerateRef) {
     EXPECT_FLOAT_EQ(crushability_from_thickness(-1.0f, 4.0f), 1.0f);  // negative -> clamp 1
     EXPECT_FLOAT_EQ(crushability_from_thickness(1.0f, 0.0f), 0.0f);   // ref<=0 -> 0 (uncrushable)
 }
-
-#include <assets/mesh.h>
-#include <limits>
 
 namespace {
 // Two facing quads: a small top quad at z=0 (x,y in [0,10]) and a larger
