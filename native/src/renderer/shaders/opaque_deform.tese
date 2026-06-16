@@ -61,22 +61,33 @@ void main() {
 
     vec3 db = displaced_body_at(bc);
 
-    // Finite-difference the displaced surface in barycentric space for the
-    // post-dent normal. Offsets stay inside the triangle by trading weight
-    // between coords; eps small relative to the patch.
-    const float eps = 0.01;
+    // Original (undisplaced) surface normal in body frame. Used for the
+    // sign-fix below, and as the fallback when the finite-difference cross
+    // degenerates at a patch corner.
+    vec3 orig_local_n = normalize(bc.x * tcp_normal[0] + bc.y * tcp_normal[1]
+                                  + bc.z * tcp_normal[2]);
+    vec3 orig_n_body = normalize(mat3(u_ship_world_inv) * (mat3(u_model) * orig_local_n));
+
+    // Finite-difference the displaced surface for the post-dent normal. The two
+    // offsets trade eps between barycentric coords so they stay inside the patch:
+    //   bc_u moves along the 0->1 edge (x up, y down)
+    //   bc_v moves along the 0->2 edge (x up, z down)
+    const float eps = 0.01;  // ~1/10 of a tess-level-8 step: small vs patch, large vs float precision
     vec3 bc_u = clamp(bc + vec3( eps, -eps, 0.0), 0.0, 1.0);
     vec3 bc_v = clamp(bc + vec3( eps, 0.0, -eps), 0.0, 1.0);
     vec3 du = displaced_body_at(bc_u) - db;
     vec3 dv = displaced_body_at(bc_v) - db;
-    vec3 n_body = normalize(cross(du, dv));
 
-    // Orient like the original surface normal (cross sign depends on the
-    // offset choice / winding); flip if it points the wrong way.
-    vec3 orig_local_n = normalize(bc.x * tcp_normal[0] + bc.y * tcp_normal[1]
-                                  + bc.z * tcp_normal[2]);
-    vec3 orig_n_body = normalize(mat3(u_ship_world_inv) * (mat3(u_model) * orig_local_n));
-    if (dot(n_body, orig_n_body) < 0.0) n_body = -n_body;
+    // At a patch corner the clamped offsets collapse (du/dv ~ 0); fall back to
+    // the undisplaced normal instead of normalize(vec3(0)) -> NaN.
+    vec3 cx = cross(du, dv);
+    vec3 n_body;
+    if (dot(cx, cx) < 1e-12) {
+        n_body = orig_n_body;
+    } else {
+        n_body = normalize(cx);
+        if (dot(n_body, orig_n_body) < 0.0) n_body = -n_body;  // resolve cross sign
+    }
 
     vec3 displaced_world = (u_ship_world * vec4(db, 1.0)).xyz;
     vec3 world_n = normalize(mat3(u_ship_world) * n_body);
