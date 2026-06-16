@@ -29,9 +29,15 @@ class HullCraterField {
 public:
     static constexpr std::size_t kMaxCraters = 24;
     static constexpr float kMergeFactor = 0.5f;  // merge within 0.5 * radius
-    /// Maximum accumulated depth (model units). Default cap; tuned in Plan 4
-    /// against visual results. Caps runaway deepening from repeated hits.
-    static constexpr float kMaxDepth = 1.0f;
+    /// Maximum accumulated depth (model units). Caps runaway deepening from
+    /// repeated hits. Sized for BC ship scale: hulls are ~180 model units in
+    /// radius (BC_MODEL_SCALE = 0.01, so model = GU * 100), and a visible
+    /// crater needs tens of model units of depth. 60 model units = 0.6 GU
+    /// (~105 m) is a deep ram/torpedo-spam gouge (~1/3 of hull radius); a
+    /// single torpedo deposits ~20. The old 1.0 clamped every crater to a
+    /// sub-metre, invisible dimple. Tuned by eye against the live renderer
+    /// together with the shader's RUPTURE_MIN/MAX (opaque.frag).
+    static constexpr float kMaxDepth = 60.0f;
 
     /// Insert a crater (point/dir/normal already in body frame, radius/depth in
     /// model units). If an active crater lies within kMergeFactor*radius, deepen

@@ -22,13 +22,24 @@ MIN_DEFORM_HULL = 40.0
 # per-hit depth cap. The crater field also caps the *cumulative* merged depth
 # (HullCraterField::kMaxDepth, in model units). Tuning knobs — calibrate by
 # eye against the live renderer together with RUPTURE_MIN/MAX.
-DEPTH_GU_PER_HULL = 0.0004
-MAX_CRATER_DEPTH_GU = 0.5
+#
+# SCALE: the native binding converts GU -> model units by dividing by the
+# instance scale s = BC_MODEL_SCALE = 0.01 (host_loop), i.e. model = GU * 100.
+# Ship hulls are ~180 model units in radius, so a *visible* crater needs tens
+# of model units of depth. 0.0010 GU/hull -> a ~200-hull torpedo deposits
+# 0.20 GU = 20 model units (~11% of hull radius); accumulation deepens toward
+# MAX_CRATER_DEPTH_GU = 0.6 GU = 60 model units (matching kMaxDepth). The old
+# 0.0004/0.5 values produced model depths that the kMaxDepth=1.0 cap then
+# clamped to ~1 model unit — a sub-metre, invisible dimple.
+DEPTH_GU_PER_HULL = 0.0010
+MAX_CRATER_DEPTH_GU = 0.6
 
 # Crater radius = splash radius (GU) * scale, with a floor so a crater always
-# has falloff extent. Independent of the decal radius scale. Tuning knobs.
-DEFORM_RADIUS_SCALE = 1.5
-MIN_DEFORM_RADIUS_GU = 0.15
+# has falloff extent. Independent of the decal radius scale. 0.30 GU floor =
+# 30 model units (~17% of hull radius) so a hit always has a visible footprint.
+# Tuning knobs.
+DEFORM_RADIUS_SCALE = 2.0
+MIN_DEFORM_RADIUS_GU = 0.30
 
 # Game-time seconds between craters emitted on one ship, so a continuous beam
 # cannot saturate the 24-slot crater field in a fraction of a second (mirrors

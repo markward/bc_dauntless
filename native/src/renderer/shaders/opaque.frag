@@ -15,8 +15,14 @@ uniform float u_emissive_scale;   // 1 = normal, 0 = destroyed (dark hull)
 uniform sampler2D u_damage_texture;   // shared torn-hull interior (unit 3)
 // Rupture band (model units): displacement below RUPTURE_MIN is a dent (hull
 // texture preserved); above RUPTURE_MAX is a full gouge (torn interior).
-const float RUPTURE_MIN = 0.15;
-const float RUPTURE_MAX = 0.45;
+// Sized for BC ship scale (hulls ~180 model units in radius; crater depths
+// reach tens of model units — see HullCraterField::kMaxDepth). A single
+// torpedo (~20 model units depth, ~half that displacement after crushability)
+// reads as a deep dent edging into gouge; accumulation ruptures fully. The
+// old 0.15/0.45 band sat far below any real displacement, so every dent
+// instantly read as a full gouge once depths were scaled to ship size.
+const float RUPTURE_MIN = 5.0;
+const float RUPTURE_MAX = 20.0;
 const float DAMAGE_TEX_SCALE = 1.5;   // triplanar tiling (1/model-units), tuned
 const vec3  CHAR_COLOR = vec3(0.04, 0.03, 0.025);  // charred ring near the gouge edge
 uniform int u_procedural_damage;   // 0 = sample Damage.tga (baseline); 1 = procedural interior

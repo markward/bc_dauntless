@@ -48,8 +48,8 @@ TEST(HullCraterField, CoLocatedHitDeepensExistingCrater) {
 
 TEST(HullCraterField, AccumulatedDepthClampsToMax) {
     HullCraterField f;
-    f.add({0, 0, 0}, {0, 0, -1}, {0, 0, 1}, 0.2f, 0.8f);
-    f.add({0.0f, 0, 0}, {0, 0, -1}, {0, 0, 1}, 0.2f, 0.8f);  // 1.6 -> caps at 1.0
+    f.add({0, 0, 0}, {0, 0, -1}, {0, 0, 1}, 0.2f, 40.0f);
+    f.add({0.0f, 0, 0}, {0, 0, -1}, {0, 0, 1}, 0.2f, 40.0f);  // 80 -> caps at kMaxDepth
     EXPECT_EQ(f.count(), 1u);
     EXPECT_FLOAT_EQ(first_active(f)->depth, HullCraterField::kMaxDepth);
 }

@@ -60,9 +60,16 @@ TEST(GougeShading, DeepDisplacementShowsDamageTexture) {
 
         prog.use();
         glm::mat4 I(1.0f);
+        // Scale clip-z so a ship-scale crater depth (tens of model units, see
+        // RUPTURE_MIN/MAX) stays inside the [-1,1] clip volume. The crater
+        // pushes the centre vertex to z = -depth; without this the displaced
+        // sub-triangles would clip away and the centre pixel would read clear
+        // colour (a vacuous pass). x/y are untouched, so coverage is unchanged.
+        glm::mat4 proj(1.0f);
+        proj[2][2] = 1.0f / 40.0f;
         prog.set_mat4("u_model", I);
         prog.set_mat4("u_view", I);
-        prog.set_mat4("u_proj", I);
+        prog.set_mat4("u_proj", proj);
         prog.set_mat4("u_ship_world", I);
         prog.set_mat4("u_ship_world_inv", I);
         prog.set_int("u_base_color", 0);
@@ -74,7 +81,7 @@ TEST(GougeShading, DeepDisplacementShowsDamageTexture) {
         prog.set_int("u_decal_count", 0);
         prog.set_int("u_glow_region_count", 0);
         prog.set_int("u_crater_count", 1);
-        glm::vec4 ca(0.0f, 0.0f, 0.0f, 0.6f);   // point_body (0,0,0), depth 0.6 model units
+        glm::vec4 ca(0.0f, 0.0f, 0.0f, 30.0f);  // point_body (0,0,0), depth 30 model units (> RUPTURE_MAX -> full gouge)
         glm::vec4 cb(0.0f, 0.0f, -1.0f, 0.5f);  // impact_dir -z, radius 0.5
         prog.set_vec4_array("u_crater_a", &ca, 1);
         prog.set_vec4_array("u_crater_b", &cb, 1);
@@ -150,9 +157,16 @@ TEST(GougeShading, ProceduralInteriorDiffersFromBase) {
 
         prog.use();
         glm::mat4 I(1.0f);
+        // Scale clip-z so a ship-scale crater depth (tens of model units, see
+        // RUPTURE_MIN/MAX) stays inside the [-1,1] clip volume. The crater
+        // pushes the centre vertex to z = -depth; without this the displaced
+        // sub-triangles would clip away and the centre pixel would read clear
+        // colour (a vacuous pass). x/y are untouched, so coverage is unchanged.
+        glm::mat4 proj(1.0f);
+        proj[2][2] = 1.0f / 40.0f;
         prog.set_mat4("u_model", I);
         prog.set_mat4("u_view", I);
-        prog.set_mat4("u_proj", I);
+        prog.set_mat4("u_proj", proj);
         prog.set_mat4("u_ship_world", I);
         prog.set_mat4("u_ship_world_inv", I);
         prog.set_int("u_base_color", 0);
@@ -165,7 +179,7 @@ TEST(GougeShading, ProceduralInteriorDiffersFromBase) {
         prog.set_int("u_glow_region_count", 0);
         prog.set_int("u_procedural_damage", 1);   // procedural interior
         prog.set_int("u_crater_count", 1);
-        glm::vec4 ca(0.0f, 0.0f, 0.0f, 0.6f);
+        glm::vec4 ca(0.0f, 0.0f, 0.0f, 30.0f);  // depth 30 model units (> RUPTURE_MAX -> full gouge)
         glm::vec4 cb(0.0f, 0.0f, -1.0f, 0.5f);
         prog.set_vec4_array("u_crater_a", &ca, 1);
         prog.set_vec4_array("u_crater_b", &cb, 1);
