@@ -1,8 +1,9 @@
 #version 330 core
 
-in vec3 v_normal_ws;
-in vec2 v_uv;
-in vec3 v_position_ws;
+in vec3  v_normal_ws;
+in vec2  v_uv;
+in vec3  v_position_ws;
+in float v_deform_depth;   // |hull displacement| (model units); 0 on the static path
 
 uniform sampler2D u_base_color;
 uniform vec3 u_diffuse_color;

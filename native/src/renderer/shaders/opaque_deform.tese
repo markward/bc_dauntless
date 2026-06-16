@@ -17,9 +17,10 @@ uniform int  u_crater_count;
 uniform vec4 u_crater_a[MAX_CRATERS];  // point_body.xyz, depth
 uniform vec4 u_crater_b[MAX_CRATERS];  // impact_dir_body.xyz (unit length), radius
 
-out vec3 v_normal_ws;
-out vec2 v_uv;
-out vec3 v_position_ws;
+out vec3  v_normal_ws;
+out vec2  v_uv;
+out vec3  v_position_ws;
+out float v_deform_depth;   // |displacement| at this vertex (model units); FS thresholds dent vs gouge
 
 vec3 bary3(vec3 a, vec3 b, vec3 c) {
     return gl_TessCoord.x * a + gl_TessCoord.y * b + gl_TessCoord.z * c;
@@ -91,6 +92,13 @@ void main() {
 
     vec3 displaced_world = (u_ship_world * vec4(db, 1.0)).xyz;
     vec3 world_n = normalize(mat3(u_ship_world) * n_body);
+
+    // Undisplaced body position for the displacement magnitude the FS uses to
+    // pick dent vs gouge (db is the displaced body position).
+    vec3 lp0 = bc.x * tcp_pos[0] + bc.y * tcp_pos[1] + bc.z * tcp_pos[2];
+    vec3 wp0 = (u_model * vec4(lp0, 1.0)).xyz;
+    vec3 bp0 = (u_ship_world_inv * vec4(wp0, 1.0)).xyz;
+    v_deform_depth = length(db - bp0);
 
     v_position_ws = displaced_world;
     v_normal_ws   = world_n;
