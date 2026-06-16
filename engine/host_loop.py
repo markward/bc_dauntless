@@ -61,6 +61,7 @@ from engine.appc import (
     camera_shake,
     hit_feedback,
     combat,
+    deform_eligibility,
 )
 # combat is imported as a module (not `from combat import apply_hit`) so call
 # sites read combat.apply_hit at call time — tests monkeypatch that attribute.
@@ -323,6 +324,11 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
     SHIELD severity path.
     """
     ships_list = list(ships)
+
+    # Refresh hull-deformation eligibility for this tick before any hits are
+    # processed, so hit_feedback gates crater emission against a fresh set
+    # (player + capped nearest/largest). See engine.appc.deform_eligibility.
+    deform_eligibility.update(ships_list)
 
     hits = projectiles.update_all(
         dt, ships_list,
