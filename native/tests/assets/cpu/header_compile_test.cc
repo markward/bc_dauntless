@@ -36,4 +36,5 @@ TEST(AssetsHeaders, MeshCpuVertexLayoutDefaults) {
     EXPECT_EQ(v.color, glm::u8vec4(255, 255, 255, 255));
     EXPECT_EQ(v.bone_indices, glm::u8vec4(0, 0, 0, 0));
     EXPECT_EQ(v.bone_weights, glm::u8vec4(0, 0, 0, 0));
+    EXPECT_FLOAT_EQ(v.crushability, 0.5f);
 }
