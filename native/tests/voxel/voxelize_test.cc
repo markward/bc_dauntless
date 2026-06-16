@@ -128,3 +128,19 @@ TEST(CollectHullTriangles, TransformOrderIsRootFirst) {
     EXPECT_NEAR(tris[0].a.y, 1.0f, kEps);
     EXPECT_NEAR(tris[0].a.z, 0.0f, kEps);
 }
+
+TEST(SurfaceVoxelize, MarksVoxelsTrianglePassesThrough) {
+    voxel::VoxelVolume v;
+    v.dims = {8, 8, 8};
+    v.origin = {0.f, 0.f, 0.f};
+    v.cell = {1.f, 1.f, 1.f};
+    v.occ.assign(8 * 8 * 8, 0);
+    // A triangle lying in the z=4 plane spanning x,y in [1,6].
+    std::vector<voxel::Tri> tris = {
+        {{1,1,4},{6,1,4},{1,6,4}}
+    };
+    voxel::surface_voxelize(v, tris);
+    EXPECT_GT(v.solid_count(), 0u);
+    EXPECT_TRUE(v.solid(2, 2, 4));   // inside the triangle, on its plane
+    EXPECT_FALSE(v.solid(2, 2, 0));  // far from the triangle
+}
