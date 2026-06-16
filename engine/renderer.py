@@ -113,6 +113,28 @@ def damage_decals_tick(game_time: float) -> None:
     _h.damage_decals_tick(game_time)
 
 
+def hull_deform_add(*, iid: InstanceId,
+                    world_point: Tuple[float, float, float],
+                    world_normal: Tuple[float, float, float],
+                    world_impact_dir: Tuple[float, float, float],
+                    radius: float, depth: float) -> None:
+    """Record a persistent hull-deformation crater on a ship instance.
+
+    World-space point/normal/impact-direction are transformed to the ship
+    body frame natively; radius and depth are game units. No-ops if the
+    native binding is absent (e.g. a stale extension module)."""
+    fn = getattr(_h, "hull_deform_add", None)
+    if fn is not None:
+        fn(iid, world_point, world_normal, world_impact_dir, radius, depth)
+
+
+def hull_deform_crater_count(iid: InstanceId) -> int:
+    """Number of active hull-deformation craters on an instance (0 if the
+    binding is absent or the id is stale)."""
+    fn = getattr(_h, "hull_deform_crater_count", None)
+    return fn(iid) if fn is not None else 0
+
+
 def set_suns(suns: list) -> None:
     """Configure the renderer's sun list. Each entry is a dict:
         {"position": (x,y,z), "radius": float,
