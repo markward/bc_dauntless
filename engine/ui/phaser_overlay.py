@@ -101,10 +101,16 @@ def _bank_world_frame(bank, ship):
 def _arc_direction(fwd: Vec3, up: Vec3, right: Vec3,
                    yaw: float, pitch: float) -> Vec3:
     """Aim direction at (yaw about Up, pitch about the yawed Right axis).
-    Mirrors the yaw/pitch decomposition in engine.appc.weapon_subsystems."""
+    Mirrors the yaw/pitch decomposition in engine.appc.weapon_subsystems.
+
+    Sign note: weapon_subsystems measures pitch as asin((fwd×right)·aim),
+    so positive pitch = toward (fwd×right), i.e. upward when right points
+    left (the BC convention). Rotating around right_yaw by -pitch achieves
+    this: _rodrigues(radial, right_yaw, -pitch) lifts toward world-up for
+    positive pitch angles."""
     radial = _rodrigues(fwd, up, yaw)
-    right_yaw = _norm(_rodrigues(right, up, yaw))
-    return _rodrigues(radial, right_yaw, pitch)
+    right_yaw = _norm(_rodrigues(right, up, yaw))  # renormalise for float drift
+    return _rodrigues(radial, right_yaw, -pitch)
 
 
 def build_arc_beams(bank, ship) -> List[dict]:
@@ -126,8 +132,11 @@ def build_arc_beams(bank, ship) -> List[dict]:
             pts.append(_add(pos, _scale(d, length)))
         return pts
 
-    def _yaw(t):   return yaw_lo + (yaw_hi - yaw_lo) * t
-    def _pitch(t): return pitch_lo + (pitch_hi - pitch_lo) * t
+    def _yaw(t):
+        return yaw_lo + (yaw_hi - yaw_lo) * t
+
+    def _pitch(t):
+        return pitch_lo + (pitch_hi - pitch_lo) * t
 
     beams: List[dict] = []
     beams += _polyline(_edge(_yaw, lambda t: pitch_hi), ARC_COLOR)   # top

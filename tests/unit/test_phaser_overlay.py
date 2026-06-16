@@ -100,6 +100,13 @@ def test_arc_wireframe_has_four_edges_at_radius_length():
         assert _dist(b["target"], pos) == pytest.approx(radius, abs=1e-5)
         assert b["color"] == po.ARC_COLOR
 
+    # Directional sanity: top edge (pitch_hi) is higher along world-up (+Z)
+    # than the bottom edge (pitch_lo). Compare midpoint beam emitters.
+    mid = po.ARC_SAMPLES // 2
+    top_z = beams[mid]["emitter"][2]                      # top edge
+    bot_z = beams[po.ARC_SAMPLES + mid]["emitter"][2]     # bottom edge
+    assert top_z > bot_z
+
 
 def test_arc_empty_when_length_zero():
     bank = _galaxy_dorsal1_bank()
