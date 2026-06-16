@@ -43,11 +43,15 @@ TEST(TessProgram, EmbeddedPassthroughCompilesLinksAndDraws) {
         glClear(GL_COLOR_BUFFER_BIT);
 
         prog.use();
+        // Drain any benign errors left by context/shader init so the
+        // post-draw glGetError() check only sees errors from our draw.
+        while (glGetError() != GL_NO_ERROR) {}
         glPatchParameteri(GL_PATCH_VERTICES, 3);
         glDrawArrays(GL_PATCHES, 0, 3);
 
-        // The pass-through FS writes white. Sample the centroid pixel; it
-        // must be lit, proving the tessellated patch rasterized.
+        // The pass-through FS writes white. Sample an interior pixel (inside
+        // the triangle on all three edges); it must be lit, proving the
+        // tessellated patch rasterized.
         unsigned char px[4] = {0, 0, 0, 0};
         glReadPixels(32, 24, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
 
