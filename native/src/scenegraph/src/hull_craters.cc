@@ -28,8 +28,7 @@ void HullCraterField::add(const glm::vec3& point_body,
         }
     }
 
-    // 2. Allocate the first free slot. (Eviction is added in the next task; an
-    //    over-full field silently drops the crater for now.)
+    // 2. Allocate the first free slot, or evict to make room.
     HullCrater* target = nullptr;
     for (auto& c : slots_) {
         if (!c.active) { target = &c; break; }
@@ -41,6 +40,9 @@ void HullCraterField::add(const glm::vec3& point_body,
         // pure-FIFO eviction).
         HullCrater* victim = &slots_[0];
         for (auto& c : slots_) {
+            // Exact float equality is intentional: both depths are stored
+            // values compared without intervening arithmetic, so identity is
+            // the right tie-break predicate.
             if (c.depth < victim->depth ||
                 (c.depth == victim->depth && c.seq < victim->seq)) {
                 victim = &c;
