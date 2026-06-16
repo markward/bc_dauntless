@@ -138,10 +138,8 @@ void draw_model(const assets::Model& model,
     // 5-7) skips the loop and the opaque program ignores these uniforms via
     // the loc>=0 guard in Shader::set_*.
     {
-        constexpr int kMaxCraters =
-            static_cast<int>(scenegraph::HullCraterField::kMaxCraters);
-        glm::vec4 ca[kMaxCraters];  // point_body.xyz, depth
-        glm::vec4 cb[kMaxCraters];  // impact_dir_body.xyz, radius
+        glm::vec4 ca[scenegraph::HullCraterField::kMaxCraters];  // point_body.xyz, depth
+        glm::vec4 cb[scenegraph::HullCraterField::kMaxCraters];  // impact_dir_body.xyz, radius
         int cn = 0;
         for (const auto& c : craters.slots()) {
             if (!c.active) continue;
