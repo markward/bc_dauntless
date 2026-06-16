@@ -65,6 +65,10 @@ def spark_params(*, weapon_type, severity, absorbed_hull):
 DECAL_EMIT_INTERVAL = 0.2  # game-time seconds between decals per (ship, class)
 _last_decal_emit: dict = {}  # (id(ship), weapon_class) -> last emit game-time
 
+# Hull-deformation emission throttle, parallel to _last_decal_emit. Keyed by
+# id(ship) only (a crater is weapon-agnostic geometry, unlike a decal class).
+_last_deform_emit: dict = {}  # id(ship) -> last emit game-time
+
 
 def classify(*, absorbed_shields: float, absorbed_subsystem: float,
              absorbed_hull: float, sub_transition,
@@ -248,6 +252,42 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
                     weapon_class=wclass,
                     time=now,
                 )
+
+    # 5. Persistent hull deformation — tessellated dent/gouge crater. Same
+    # hull-absorbing, mesh-normal, renderer-present, committed-hit gating as
+    # the decal, PLUS: the hit must clear the deform threshold (phaser dribble
+    # scorches but does not dent) and the target must be deform-eligible
+    # (player + capped nearest/largest; see engine.appc.deform_eligibility).
+    # Throttled per-ship so a sustained beam cannot saturate the crater field.
+    if (persist_decal and normal is not None and host is not None
+            and ship_instances is not None
+            and hasattr(host, "hull_deform_add")):
+        from engine.appc import hull_deformation, deform_eligibility, damage_decals
+        if (hull_deformation.should_deform(absorbed_hull)
+                and deform_eligibility.is_eligible(ship)):
+            iid = ship_instances.get(ship)
+            if iid is not None:
+                now = damage_decals.current_game_time()
+                key = id(ship)
+                if (now - _last_deform_emit.get(key, -1e9)
+                        >= hull_deformation.DEFORM_EMIT_INTERVAL):
+                    _last_deform_emit[key] = now
+                    src_pos = None
+                    if source is not None and hasattr(source, "GetWorldLocation"):
+                        sp = source.GetWorldLocation()
+                        src_pos = (sp.x, sp.y, sp.z)
+                    impact_dir = hull_deformation.impact_direction(
+                        (normal.x, normal.y, normal.z),
+                        source_pos=src_pos,
+                        hit_point=(point.x, point.y, point.z))
+                    host.hull_deform_add(
+                        instance_id=iid,
+                        world_point=(point.x, point.y, point.z),
+                        world_normal=(normal.x, normal.y, normal.z),
+                        world_impact_dir=impact_dir,
+                        radius=hull_deformation.crater_radius_gu(radius),
+                        depth=hull_deformation.crater_depth_gu(absorbed_hull),
+                    )
 
 
 def _play_audio(severity: Severity, point, weapon_type: str | None = None) -> None:
