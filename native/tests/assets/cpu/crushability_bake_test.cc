@@ -72,10 +72,31 @@ TEST(BakeCrushability, ZeroNormalGetsNoHitValue) {
     EXPECT_FLOAT_EQ(m.vertices[0].crushability, 0.5f);
 }
 
-TEST(BakeCrushability, EmptyMeshIsLeftUnchanged) {
+TEST(BakeCrushability, EmptyMeshDoesNotCrash) {
     assets::MeshCpu m;  // no vertices, no indices
     assets::bake_crushability(m);  // must not crash
     EXPECT_TRUE(m.vertices.empty());
+    EXPECT_TRUE(m.indices.empty());
+}
+
+TEST(BakeCrushability, NoTrianglesGivesAllNoHitValue) {
+    // Vertices present but no triangles: no ray can hit, so every vertex
+    // gets no_hit_value (honoring a custom value).
+    assets::MeshCpu m;
+    auto vert = [](float x, float y, float z) {
+        assets::MeshCpu::Vertex v;
+        v.position = {x, y, z};
+        v.normal = {0, 0, 1};
+        return v;
+    };
+    m.vertices = {vert(0, 0, 0), vert(1, 0, 0), vert(0, 1, 0)};
+    // indices intentionally left empty (no triangles)
+    assets::CrushabilityParams p;
+    p.no_hit_value = 0.3f;
+    assets::bake_crushability(m, p);
+    for (const auto& v : m.vertices) {
+        EXPECT_FLOAT_EQ(v.crushability, 0.3f);
+    }
 }
 
 TEST(BakeCrushability, RespectsCustomNoHitValue) {

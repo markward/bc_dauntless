@@ -64,7 +64,12 @@ float probe_thickness(const MeshCpu& mesh, const glm::vec3& origin,
 }
 
 void bake_crushability(MeshCpu& mesh, const CrushabilityParams& params) {
-    if (mesh.vertices.empty() || mesh.indices.size() < 3) return;
+    if (mesh.vertices.empty()) return;
+    if (mesh.indices.size() < 3) {
+        // No triangles: no ray can hit anything, so every vertex is "no hit".
+        for (auto& vert : mesh.vertices) vert.crushability = params.no_hit_value;
+        return;
+    }
 
     // Bounding-box diagonal gives a per-mesh, scale-invariant reference: a
     // vertex is "thin" relative to the size of its own shape.
