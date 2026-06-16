@@ -39,6 +39,7 @@ public:
     /// age instead of allocating. Otherwise take a free slot, else evict the
     /// shallowest crater (tie-break: oldest). `depth` is clamped to
     /// [0, kMaxDepth]; negative input floors to 0.
+    /// `impact_dir_body` must be unit length; add() does not renormalise it.
     void add(const glm::vec3& point_body, const glm::vec3& impact_dir_body,
              const glm::vec3& normal_body, float radius, float depth);
 
