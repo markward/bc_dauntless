@@ -23,6 +23,13 @@ struct MeshCpu {
         /// bridge floors, doors, wall insets). Zero for everything else;
         /// shaders that don't sample uv1 ignore it.
         glm::vec2   uv1{};
+        /// Per-vertex hull "crushability" weight in [0,1] for hull-damage
+        /// deformation: 1 = thin/easily-crushed (bow tip, saucer rim),
+        /// 0 = thick/resists. Default 0.5 (the bake-absent / no-hit fallback,
+        /// spec §8); assets::bake_crushability() overwrites it with the
+        /// thickness-derived value. Plan 4 uploads it as a vertex attribute
+        /// and the tessellation shaders read it.
+        float       crushability = 0.5f;
     };
 
     std::vector<Vertex> vertices;
