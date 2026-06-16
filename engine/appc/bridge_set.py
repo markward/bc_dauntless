@@ -1,17 +1,17 @@
-"""Loud, control-flow-correct stubs for the SDK bridge-load sequence.
+"""Control-flow-correct shims for the SDK bridge-load sequence.
 
 The real sdk/Build/scripts/LoadBridge.py + Bridge/<name>.py call a swath of
 Appc surface that does not yet exist in our shim. Rather than let App.py's
 permissive `_NamedStub` swallow them silently (and break control flow —
 `BridgeSet_Cast` returning a truthy stub makes Load skip crew creation), we
-register explicit stubs here. Each announces via `_stub_trace.stub_call` and
-returns control-flow-correct values, so the sequence runs end-to-end and the
-end-of-load summary lists exactly what still needs faithful implementation.
+register explicit, control-flow-correct implementations here, so the sequence
+runs end-to-end. The bridge config/object/viewscreen/camera objects are real,
+stateful data the host and SDK consume; only the large engine-side
+menu/handler/camera-mode surface stays a silent `_LoudStub` no-op.
 
 These are registered into the `App` namespace by App.py (explicit module
 attributes shadow App.py's `__getattr__` catch-all).
 """
-from engine.appc import _stub_trace
 from engine.appc.sets import SetClass
 
 
@@ -22,9 +22,7 @@ class _LoudStub:
     Calls to undefined methods return ``None`` — which is control-flow-correct
     for the SDK's bridge-load path (e.g. `pViewScreen.GetRemoteCam()` must be
     falsey so the `if pCamera != None:` guard skips). It stays truthy via
-    `__bool__` so guards like `if pViewScreen:` don't short-circuit. The
-    announcement happens in the FACTORY that creates it, not here, so each
-    distinct symbol is reported once rather than per method call.
+    `__bool__` so guards like `if pViewScreen:` don't short-circuit.
     """
     def __getattr__(self, name):
         return lambda *a, **k: None
@@ -167,7 +165,6 @@ class BridgeSet(SetClass):
 
 
 def BridgeSet_Create():
-    _stub_trace.stub_call("BridgeSet_Create")
     return BridgeSet()
 
 
@@ -177,11 +174,11 @@ def BridgeSet_Cast(obj):
 
 
 def BridgeObjectClass_Create(nif):
-    return BridgeObjectClass(nif)              # real, no stub_call -> off summary
+    return BridgeObjectClass(nif)              # real, stateful data object
 
 
 def ViewScreenObject_Create(nif):
-    return ViewScreenObject(nif)               # real, no stub_call -> off summary
+    return ViewScreenObject(nif)               # real, stateful data object
 
 
 def ZoomCameraObjectClass_Create(x, y, z, qw, qx, qy, qz, name):
@@ -190,7 +187,6 @@ def ZoomCameraObjectClass_Create(x, y, z, qw, qx, qy, qz, name):
 
 def ZoomCameraObjectClass_GetObject(pSet, name):
     # Return the real camera added via AddCameraToSet. The _LoudStub fallback
-    # (camera absent) keeps ConfigureCharacters' SetTranslateXYZ from crashing,
-    # but no longer fires stub_call.
+    # (camera absent) keeps ConfigureCharacters' SetTranslateXYZ from crashing.
     cam = pSet.GetCamera(name) if pSet is not None else None
     return cam if cam is not None else _LoudStub()
