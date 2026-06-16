@@ -26,6 +26,7 @@ function _cpFocusableList(state) {
         out.push({kind: 'ctrl', target: 'rim'});
         out.push({kind: 'ctrl', target: 'decals'});
         out.push({kind: 'ctrl', target: 'fxaa'});
+        out.push({kind: 'ctrl', target: 'procedural_damage'});
     }
     return out;
 }
@@ -133,6 +134,17 @@ function _cpRenderGraphicsBody(state, focusables) {
           +     '<button class="cp-toggle' + (s.fxaa_on ? ' cp-toggle--on' : '') + '"'
           +        ' onclick="dauntlessEvent(\'configuration/toggle:fxaa\')">'
           +       (s.fxaa_on ? 'On' : 'Off')
+          +     '</button>'
+          +   '</div>'
+          + '</div>';
+
+    // Procedural Hull Damage toggle
+    html += '<div class="cp-row' + (isFoc('procedural_damage') ? ' cp-focused' : '') + '">'
+          +   '<div class="cp-row__label">Procedural Hull Damage</div>'
+          +   '<div class="cp-row__control">'
+          +     '<button class="cp-toggle' + (s.procedural_damage_on ? ' cp-toggle--on' : '') + '"'
+          +        ' onclick="dauntlessEvent(\'configuration/toggle:procedural_damage\')">'
+          +       (s.procedural_damage_on ? 'On' : 'Off')
           +     '</button>'
           +   '</div>'
           + '</div>';
