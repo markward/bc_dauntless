@@ -1483,7 +1483,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("hull_deform_crater_count",
           [](scenegraph::InstanceId id) -> int {
               auto* inst = g_world.get(id);
-              if (inst == nullptr) return 0;  // stale id -> no craters
+              if (inst == nullptr) return 0;  // stale id — no craters
               return static_cast<int>(inst->craters.count());
           },
           py::arg("instance_id"),
