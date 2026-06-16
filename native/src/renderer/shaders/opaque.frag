@@ -306,6 +306,7 @@ void main() {
         vec3 dz = texture(u_damage_texture, p_body.xy * DAMAGE_TEX_SCALE).rgb;
         vec3 interior = dx * bw.x + dy * bw.y + dz * bw.z;
         float ring = (1.0 - gouge);                       // darkest at rupture onset
+        // ring*0.6: cap the char blend at 60% so the torn interior still shows through at the onset edge
         vec3 gouge_color = mix(interior, CHAR_COLOR, ring * 0.6);
         lit = mix(lit, gouge_color, gouge);
     }

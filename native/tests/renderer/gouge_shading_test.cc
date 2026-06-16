@@ -1,7 +1,6 @@
 // native/tests/renderer/gouge_shading_test.cc
 #include <gtest/gtest.h>
 #include <glad/glad.h>
-#include <vector>
 
 #include <renderer/pipeline.h>
 #include <renderer/shader.h>
