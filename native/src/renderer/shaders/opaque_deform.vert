@@ -2,7 +2,7 @@
 layout(location = 0) in vec3 a_position;
 layout(location = 1) in vec3 a_normal;
 layout(location = 2) in vec2 a_uv;
-layout(location = 7) in float a_crushability;
+layout(location = 7) in float a_crushability;  // per-vertex hull deformation weight; loc 7 (3-6 are opaque.vert color/bone slots)
 
 out vec3  vcp_pos;       // local-space control point (pre-u_model)
 out vec3  vcp_normal;    // local-space normal

@@ -15,7 +15,7 @@ void main() {
     tcp_pos[gl_InvocationID]    = vcp_pos[gl_InvocationID];
     tcp_normal[gl_InvocationID] = vcp_normal[gl_InvocationID];
     tcp_uv[gl_InvocationID]     = vcp_uv[gl_InvocationID];
-    tcp_crush[gl_InvocationID]  = vcp_crush[gl_InvocationID];
+    tcp_crush[gl_InvocationID]  = vcp_crush[gl_InvocationID];  // forwarded; weights displacement in the TES (Task 5)
 
     if (gl_InvocationID == 0) {
         // Identity tessellation (level 1); Task 6 makes this adaptive.

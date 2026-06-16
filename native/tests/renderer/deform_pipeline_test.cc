@@ -21,7 +21,7 @@ TEST(DeformPipeline, ProgramLinksWithOpaqueFragment) {
                               renderer::shader_src::opaque_deform_tcs,
                               renderer::shader_src::opaque_deform_tes,
                               renderer::shader_src::opaque_fs);
-        EXPECT_NE(prog.program(), 0u);
+        ASSERT_NE(prog.program(), 0u);
     } catch (const std::runtime_error& e) {
         GTEST_SKIP() << "no GL context available: " << e.what();
     }

@@ -1,10 +1,10 @@
 #version 410 core
-layout(triangles, equal_spacing, ccw) in;
+layout(triangles, equal_spacing, ccw) in;  // ccw = the default front-face winding the opaque GL_TRIANGLES path uses for these meshes
 
 in  vec3  tcp_pos[];
 in  vec3  tcp_normal[];
 in  vec2  tcp_uv[];
-in  float tcp_crush[];
+in  float tcp_crush[];   // displacement weight; forwarded unused this stage, consumed in Task 5
 
 uniform mat4 u_model;   // instance_world * node_world (local -> world)
 uniform mat4 u_view;
