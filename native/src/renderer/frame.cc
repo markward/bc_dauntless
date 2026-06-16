@@ -20,7 +20,26 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <array>
+#include <cstdio>
+#include <cstdlib>
 #include <vector>
+
+// Diagnostic (DAUNTLESS_DEBUG_DEFORM=1): confirm the deform/tessellation path
+// is actually selected for a cratered instance at draw time, and report its
+// live crater count. Throttled to the first few hits so it never spams.
+namespace {
+bool deform_debug_enabled() {
+    static const bool on = std::getenv("DAUNTLESS_DEBUG_DEFORM") != nullptr;
+    return on;
+}
+void log_deform_draw(std::size_t crater_count) {
+    static int budget = 12;
+    if (!deform_debug_enabled() || budget <= 0) return;
+    --budget;
+    std::fprintf(stderr, "[deform-draw] taking patches path, craters=%zu\n",
+                 crater_count);
+}
+}  // namespace
 
 // Toggle for the opaque-pass specular term. Default on so existing
 // renders look identical until the user flips the Configuration row.
@@ -395,6 +414,7 @@ void FrameSubmitter::submit_opaque(const scenegraph::World& world,
             palette = build_bone_palette(m->skeleton, /*local_pose=*/nullptr);
         const bool deform = pipeline.tessellation_available()
                             && inst.craters.count() > 0;
+        if (deform) log_deform_draw(inst.craters.count());
         Shader& prog = deform ? pipeline.deform_shader() : shader;
         if (m) draw_model(*m, inst.world, prog, pipeline.skinned_shader(),
                           white, black, rim_active,
@@ -451,6 +471,7 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
             palette = build_bone_palette(m->skeleton, /*local_pose=*/nullptr);
         const bool deform = pipeline.tessellation_available()
                             && inst.craters.count() > 0;
+        if (deform) log_deform_draw(inst.craters.count());
         Shader& prog = deform ? pipeline.deform_shader() : shader;
         if (m) draw_model(*m, inst.world, prog, pipeline.skinned_shader(),
                           white, black, rim_active,

@@ -10,6 +10,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <limits>
 #include <optional>
 
@@ -94,6 +96,23 @@ void bake_crushability(MeshCpu& mesh, const CrushabilityParams& params) {
         vert.crushability = std::isinf(thickness)
             ? params.no_hit_value
             : crushability_from_thickness(thickness, ref);
+    }
+
+    // Diagnostic (DAUNTLESS_DEBUG_DEFORM=1): per-mesh crushability stats. If
+    // min/max/avg are all ~0 the deform displacement (depth*fall*crush) is
+    // suppressed regardless of crater depth — i.e. the hull "resists" too hard.
+    static const bool dbg = std::getenv("DAUNTLESS_DEBUG_DEFORM") != nullptr;
+    if (dbg && !mesh.vertices.empty()) {
+        float cmin = 1.0f, cmax = 0.0f, csum = 0.0f;
+        for (const auto& v : mesh.vertices) {
+            cmin = std::min(cmin, v.crushability);
+            cmax = std::max(cmax, v.crushability);
+            csum += v.crushability;
+        }
+        std::fprintf(stderr,
+            "[crush] verts=%zu min=%.2f max=%.2f avg=%.2f diag=%.2f ref=%.2f\n",
+            mesh.vertices.size(), cmin, cmax,
+            csum / static_cast<float>(mesh.vertices.size()), diag, ref);
     }
 }
 
