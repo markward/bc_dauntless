@@ -134,12 +134,20 @@ def _emitter_in_arc(emitter, ship, aim_world):
         rot = ship.GetWorldRotation()
         if isinstance(rot, TGMatrix3):
             world_right.MultMatrixLeft(rot)
-    # Up = Direction × Right (right-handed body frame).
-    world_up = TGPoint3(
-        world_dir.y * world_right.z - world_dir.z * world_right.y,
-        world_dir.z * world_right.x - world_dir.x * world_right.z,
-        world_dir.x * world_right.y - world_dir.y * world_right.x,
-    )
+    # Up: rotate the stored body up axis directly. Deriving it as
+    # world_dir × world_right *looks* equivalent but flips sign when the ship
+    # rotation is left-handed (det = -1) — which is exactly what AlignToVectors
+    # produces (objects.py:135, CLAUDE.md X-flip note): (R·a)×(R·b) = -R·(a×b).
+    # That sign flip inverted the pitch gate on a maneuvering ship, so ventral
+    # banks fired at targets ABOVE the ship and dorsal banks went silent.
+    # Rotating the stored Up directly is handedness-independent.
+    # See tests/unit/test_phaser_arc_handedness.py.
+    up_local = emitter.GetUp() if hasattr(emitter, "GetUp") else TGPoint3(0.0, 0.0, 1.0)
+    world_up = TGPoint3(up_local.x, up_local.y, up_local.z)
+    if ship is not None and hasattr(ship, "GetWorldRotation"):
+        rot = ship.GetWorldRotation()
+        if isinstance(rot, TGMatrix3):
+            world_up.MultMatrixLeft(rot)
 
     # Project aim onto body frame.
     fwd_dot   = world_dir.x   * aim_world.x + world_dir.y   * aim_world.y + world_dir.z   * aim_world.z
