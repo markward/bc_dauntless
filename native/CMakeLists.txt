@@ -165,6 +165,9 @@ add_subdirectory(src/renderer)
 # Scene-graph data + math (pure C++, no GL).
 add_subdirectory(src/scenegraph)
 
+# Voxel hull-damage foundation.
+add_subdirectory(src/voxel)
+
 # Renderer host subtree.
 add_subdirectory(src/host)
 
