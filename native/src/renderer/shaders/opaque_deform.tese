@@ -12,7 +12,7 @@ uniform mat4 u_proj;
 uniform mat4 u_ship_world;     // instance_world (body -> world)
 uniform mat4 u_ship_world_inv; // inverse(instance_world) (world -> body)
 
-const int MAX_CRATERS = 24;
+const int MAX_CRATERS = 24;  // must match scenegraph::HullCraterField::kMaxCraters (C++)
 uniform int  u_crater_count;
 uniform vec4 u_crater_a[MAX_CRATERS];  // point_body.xyz, depth
 uniform vec4 u_crater_b[MAX_CRATERS];  // impact_dir_body.xyz (unit length), radius

@@ -269,6 +269,9 @@ void draw_model(const assets::Model& model,
             prog.set_float("u_rim_strength", rim);
 
             glBindVertexArray(mesh.vao());
+            // Tessellated deform path is static-hull only: a skinned model is
+            // never cratered (only bridge characters are skinned), so the
+            // !skinned guard silently keeps it on the GL_TRIANGLES path.
             if (!skinned && use_patches) {
                 glPatchParameteri(GL_PATCH_VERTICES, 3);
                 glDrawElements(GL_PATCHES, mesh.index_count(), GL_UNSIGNED_INT, nullptr);
