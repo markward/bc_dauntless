@@ -172,9 +172,17 @@ def build_phaser_overlay(ship, selected_name: Optional[str] = None,
 
 
 def build_strip_beams(banks, ship) -> List[dict]:
-    """Yellow beams tracing each bank's emitter strip: an arc of radius=Length
-    around the mount Position swept across ArcWidthAngles around Up, plus an
-    inner rim at Length−Width and two end-caps when Width>0."""
+    """Yellow beams tracing each bank's emitter strip: the single arc of
+    radius=Length around the mount Position, swept across ArcWidthAngles around
+    Up. This arc is the locus of all beam emit points — ShipSubsystem.
+    _strip_emit_position emits from `Position + Length × direction`, using only
+    Length — so it *is* the physical lit strip on the hull.
+
+    We deliberately do NOT draw an inner rim at Length−Width or end-caps: the
+    SDK `Width` is unused by the emit math and its meaning is unvalidated
+    (docs/instrumented_experiments/hardpoint_handling_research.md flags it
+    "Unvalidated"). Drawing it produced spurious pie-wedges reaching into the
+    saucer centre that do not correspond to any real emitter geometry."""
     beams: List[dict] = []
     for bank in banks:
         length = float(bank.GetLength())
@@ -182,19 +190,10 @@ def build_strip_beams(banks, ship) -> List[dict]:
             continue
         pos, fwd, up, _right = _bank_world_frame(bank, ship)
         yaw_lo, yaw_hi = bank.GetArcWidthAngles()
-        width = float(bank.GetWidth()) if hasattr(bank, "GetWidth") else 0.0
-        inner = length - width
-        outer_pts: List[Vec3] = []
-        inner_pts: List[Vec3] = []
+        pts: List[Vec3] = []
         for i in range(STRIP_SAMPLES + 1):
             yaw = yaw_lo + (yaw_hi - yaw_lo) * (i / STRIP_SAMPLES)
             radial = _rodrigues(fwd, up, yaw)
-            outer_pts.append(_add(pos, _scale(radial, length)))
-            if width > 0.0:
-                inner_pts.append(_add(pos, _scale(radial, inner)))
-        beams += _polyline(outer_pts, STRIP_COLOR)
-        if width > 0.0 and inner_pts:
-            beams += _polyline(inner_pts, STRIP_COLOR)
-            beams.append(_beam(outer_pts[0], inner_pts[0], STRIP_COLOR))
-            beams.append(_beam(outer_pts[-1], inner_pts[-1], STRIP_COLOR))
+            pts.append(_add(pos, _scale(radial, length)))
+        beams += _polyline(pts, STRIP_COLOR)
     return beams

@@ -73,17 +73,21 @@ def test_strip_spans_arc_width_angles():
     assert beams[0]["emitter"] == pytest.approx(expect_lo, abs=1e-6)
 
 
-def test_inner_rim_and_caps_only_when_width_positive():
-    bank = _galaxy_dorsal1_bank()
-    # Mutate width to zero via property + re-bind (SetProperty re-mirrors _width).
-    prop = bank.GetProperty()
-    prop.SetWidth(0.0)
-    bank.SetProperty(prop)   # re-mirror: bank._width now 0.0
+def test_strip_is_outer_arc_only_regardless_of_width():
+    # The strip is the single radius=Length emit arc; SDK Width must NOT add an
+    # inner rim or end-caps (those produced spurious pie-wedges into the saucer
+    # centre). The Galaxy bank has a large Width (1.35), so this guards the
+    # regression: still exactly STRIP_SAMPLES outer-arc segments, no extras.
+    bank = _galaxy_dorsal1_bank()           # Width = 1.35
     ship = _StubShip([bank])
     bank._parent_ship = ship
     beams = po.build_strip_beams([bank], ship)
-    # Only the outer rim polyline: exactly STRIP_SAMPLES segments.
     assert len(beams) == po.STRIP_SAMPLES
+    pos = (0.0, 1.27, 0.5)
+    # Every endpoint lies on the radius=Length arc — nothing reaches inward.
+    for b in beams:
+        assert _dist(b["emitter"], pos) == pytest.approx(1.69, abs=1e-5)
+        assert _dist(b["target"], pos) == pytest.approx(1.69, abs=1e-5)
 
 
 def test_arc_wireframe_has_four_edges_at_radius_length():

@@ -95,14 +95,20 @@ via `set_phaser_beams`). Reuses the Rodrigues arc-sampling math from the
 Public functions:
 
 - `build_strip_beams(ship) -> list[dict]`
-  Yellow beams for **every** `PhaserBank` on the ship. Per bank:
-  - Outer rim: arc of radius `Length` around the bank's world `Position`, swept
-    across `ArcWidthAngles` in the (forward, right) plane around `Up`, sampled
-    in `STRIP_SAMPLES` segments; consecutive sample points joined by beam
-    segments.
-  - Inner rim (only when `Width > 0`): same sweep at radius `Length − Width`.
-  - End caps (only when `Width > 0`): two radial segments joining the rims at
-    `yaw_lo` and `yaw_hi`.
+  Yellow beams for **every** `PhaserBank` on the ship. Per bank: a single arc of
+  radius `Length` around the bank's world `Position`, swept across
+  `ArcWidthAngles` in the (forward, right) plane around `Up`, sampled in
+  `STRIP_SAMPLES` segments and joined by beam segments. This arc is the locus of
+  all beam emit points (`ShipSubsystem._strip_emit_position` emits from
+  `Position + Length × direction`, using only `Length`), so it *is* the lit
+  emitter strip on the hull.
+
+  **No inner rim / end-caps.** An earlier revision drew an inner rim at
+  `Length − Width` plus radial end-caps when `Width > 0`. That was removed: the
+  SDK `Width` is unused by the emit math and its meaning is unvalidated
+  (`docs/instrumented_experiments/hardpoint_handling_research.md`), and on the
+  Galaxy (`Width 1.35` vs `Length 1.69`) it drew spurious pie-wedges reaching
+  into the saucer centre that correspond to no real emitter geometry.
 
 - `build_arc_beams(bank) -> list[dict]`
   Cyan wireframe of the firing envelope at radius `Length × ARC_RADIUS_SCALE`
@@ -184,9 +190,12 @@ Unit tests on `engine/ui/phaser_overlay.py` (pure Python, no GL):
 
 - **Strip on arc:** every strip outer-rim endpoint lies at distance `Length`
   from the bank world `Position` (within tolerance).
+- **Strip is outer-arc only:** a bank with large `Width` still yields exactly
+  `STRIP_SAMPLES` arc segments, all at radius `Length` (no inner rim / caps).
 - **Strip sweep:** the rim spans `ArcWidthAngles` (first/last sample at the lo/hi
   yaw bounds).
-- **Width gating:** inner rim + end-cap beams appear iff `Width > 0`.
+- **No Width geometry:** `Width` adds no inner rim or caps; the strip is the
+  outer arc regardless of `Width`.
 - **Strip colour:** strip beams are `STRIP_COLOR` (yellow).
 - **Arc edges:** arc wireframe has 4 edges; all vertices lie at radius
   `Length × ARC_RADIUS_SCALE`; the envelope is bounded by the yaw/pitch angles
