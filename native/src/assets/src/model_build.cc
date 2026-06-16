@@ -583,10 +583,13 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
         }
         // Avoid copying the CPU vertex data unless retention is requested.
         if (ctx.keep_cpu_data) {
-            // Ships retain CPU geometry (for ray-tracing) and are the only
-            // models that deform — bake per-vertex crushability here, before
-            // upload, so attribute 7 carries real thickness-derived weights.
-            // Non-retained models (bridge/props/UI) keep the 0.5 default.
+            // Bake per-vertex crushability before upload so attribute 7 carries
+            // real thickness-derived weights. Gated on keep_cpu_data: this fires
+            // for every model that retains CPU geometry (ships, and anything
+            // else loaded with this flag). Intentional — the bake is cheap and
+            // harmless on non-deformable geometry (the weights sit unused unless
+            // the model takes hull-deformation craters). Models loaded with
+            // keep_cpu_data=false (bridge/characters) skip it.
             bake_crushability(cpu);
             Mesh mesh = mesh_upload(MeshCpu(cpu));
             mesh.set_cpu_data(std::move(cpu));

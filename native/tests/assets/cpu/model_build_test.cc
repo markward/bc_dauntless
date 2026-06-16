@@ -236,7 +236,7 @@ TEST_F(ModelBuildTest, ShipModelGetsBakedCrushability) {
     }
 }
 
-TEST_F(ModelBuildTest, NonShipModelKeepsDefaultCrushability) {
+TEST_F(ModelBuildTest, NonRetainedModelHasNoCpuData) {
     // keep_cpu_data=false (the make_ctx default): no CPU data retained AND the
     // bake is skipped. We can't read crushability without cpu_data, so this
     // test just confirms the non-retained path still builds a model cleanly.
