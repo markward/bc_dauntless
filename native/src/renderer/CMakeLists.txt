@@ -54,6 +54,7 @@ embed_shader(SHADER_BLOOM_UP_FS shaders/bloom_up.frag bloom_up_fs)
 add_library(renderer STATIC
     window.cc
     shader.cc
+    gl_caps.cc
     bone_palette.cc
     pose_sampler.cc
     animation_update.cc
