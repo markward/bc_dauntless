@@ -33,11 +33,15 @@ def test_zoom_in_in_zoom_target_decreases_d_chase_zoom():
 
 
 def test_zoom_in_clamps_at_zoom_min():
-    """ZoomTarget seeds at zoom_min, so the first = press in
-    ZoomTarget must be a no-op (matches BC behaviour)."""
+    """zoom_in must never push d_chase_zoom below zoom_min: once at the
+    floor, a further = press is a no-op (matches BC behaviour).
+
+    Note: set_ship_radius now seeds d_chase_zoom 5 zoom-out clicks above
+    zoom_min (ZOOM_DEFAULT_RADII), so this test drives it to the floor
+    explicitly before exercising the clamp."""
     tc = _seeded_camera()
     tc.zoom_target_active = True
-    # set_ship_radius already seeded d_chase_zoom = zoom_min.
+    tc.d_chase_zoom = tc.zoom_min  # drive to the floor
     assert tc.d_chase_zoom == pytest.approx(tc.zoom_min)
     tc.zoom_in()
     assert tc.d_chase_zoom == pytest.approx(tc.zoom_min)  # still at floor

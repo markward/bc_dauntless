@@ -100,6 +100,15 @@ def test_ship_class_get_object_finds_ships(game_context):
 
 def test_create_regions_creates_biranu1_set(game_context):
     import Custom.Tutorial.Episode.M2Objects.M2Objects as M2
+    # CreateRegions -> Biranu.CreateMenus -> Systems.Utils.CreateSystemMenu
+    # walks pTacticalControlWindow.FindMenu("Helm").GetSubmenuW("Set Course").
+    # Production builds the Helm menu during bridge load; this test never loads
+    # a bridge, so provide the minimal Helm menu the menu path needs (submenus
+    # auto-vivify from there). Without it FindMenu("Helm") is None -> crash.
+    from engine.appc.windows import TacticalControlWindow
+    from engine.appc.characters import STTopLevelMenu
+    TacticalControlWindow.GetInstance().AddMenuToList(STTopLevelMenu("Helm"))
+
     M2.CreateRegions()
 
     pSet = App.g_kSetManager.GetSet("Biranu1")
