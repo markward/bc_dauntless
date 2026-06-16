@@ -103,4 +103,35 @@ void solidify(VoxelVolume& v) {
         if (exterior[i] == 0) v.occ[i] = 1;
 }
 
+VoxelVolume voxelize(const assets::Model& model, glm::ivec3 dims) {
+    auto tris = collect_hull_triangles(model);
+
+    // Guard: empty hull — return an all-empty volume so callers get a valid
+    // (if degenerate) VoxelVolume rather than NaN origin/cell.
+    if (tris.empty()) {
+        VoxelVolume v;
+        v.dims = dims;
+        v.cell = glm::vec3(1.f);
+        v.origin = glm::vec3(0.f);
+        v.occ.assign(std::size_t(dims.x) * dims.y * dims.z, 0);
+        return v;
+    }
+
+    glm::vec3 mn(1e30f), mx(-1e30f);
+    for (const auto& t : tris) {
+        mn = glm::min(mn, glm::min(t.a, glm::min(t.b, t.c)));
+        mx = glm::max(mx, glm::max(t.a, glm::max(t.b, t.c)));
+    }
+
+    VoxelVolume v;
+    v.dims = dims;
+    glm::vec3 extent = mx - mn;
+    v.cell = extent / glm::vec3(dims - 2);   // 1-voxel margin each side
+    v.origin = mn - v.cell;                   // shift so margin voxels are empty
+    v.occ.assign(std::size_t(dims.x) * dims.y * dims.z, 0);
+    surface_voxelize(v, tris);
+    solidify(v);
+    return v;
+}
+
 }  // namespace voxel

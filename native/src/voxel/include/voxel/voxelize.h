@@ -24,4 +24,11 @@ void surface_voxelize(VoxelVolume& v, const std::vector<Tri>& tris);
 /// Robust to small surface leaks (a leak lets the flood bleed inward).
 void solidify(VoxelVolume& v);
 
+/// Voxelize a hull into a solid volume at the given grid resolution.
+/// Computes a tight body-frame AABB (with a 1-voxel margin), surface-
+/// rasterizes the triangle soup, then flood-fill solidifies.
+/// The dims parameter is provisional; a later task replaces it with the
+/// BC-recovered resolution rule.
+VoxelVolume voxelize(const assets::Model& model, glm::ivec3 dims);
+
 }  // namespace voxel

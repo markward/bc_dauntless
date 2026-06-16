@@ -163,3 +163,43 @@ TEST(Solidify, FillsHollowBoxInterior) {
     EXPECT_TRUE(v.solid(2, 2, 2));         // interior filled after
     EXPECT_FALSE(v.solid(0, 0, 0));        // exterior still empty
 }
+
+TEST(Voxelize, SolidCubeModelIsMostlySolid) {
+    // Axis-aligned solid cube hull with vertices at x,y,z in [0,4], 12 triangles.
+    assets::Model m;
+    assets::Node n; n.parent_index = -1; n.meshes = {0};
+    m.nodes = {n}; m.root_node = 0;
+
+    glm::vec3 c[8] = {
+        {0,0,0},{4,0,0},{4,4,0},{0,4,0},
+        {0,0,4},{4,0,4},{4,4,4},{0,4,4}
+    };
+    int f[12][3] = {
+        {0,1,2},{0,2,3},   // bottom (-Z face)
+        {4,6,5},{4,7,6},   // top    (+Z face)
+        {0,4,5},{0,5,1},   // front  (-Y face)
+        {1,5,6},{1,6,2},   // right  (+X face)
+        {2,6,7},{2,7,3},   // back   (+Y face)
+        {3,7,4},{3,4,0}    // left   (-X face)
+    };
+
+    assets::MeshCpu cpu;
+    for (int i = 0; i < 8; ++i)
+        cpu.vertices.push_back(assets::MeshCpu::Vertex{ .position = c[i] });
+    for (int i = 0; i < 12; ++i) {
+        cpu.indices.push_back(static_cast<uint32_t>(f[i][0]));
+        cpu.indices.push_back(static_cast<uint32_t>(f[i][1]));
+        cpu.indices.push_back(static_cast<uint32_t>(f[i][2]));
+    }
+
+    assets::Mesh mesh;  // default-constructed, vao/vbo/ebo = 0
+    mesh.set_cpu_data(std::move(cpu));
+    m.meshes.push_back(std::move(mesh));
+
+    voxel::VoxelVolume v = voxel::voxelize(m, glm::ivec3(16, 16, 16));
+    // A solid 4x4x4 box in a 16^3 grid sized to a small margin should fill
+    // a large, contiguous central region.
+    EXPECT_GT(v.solid_count(), 100u);
+    glm::ivec3 mid = v.dims / 2;
+    EXPECT_TRUE(v.solid(mid.x, mid.y, mid.z));
+}
