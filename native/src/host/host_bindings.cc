@@ -1482,6 +1482,16 @@ PYBIND11_MODULE(_dauntless_host, m) {
               const float s = glm::length(glm::vec3(inst->world[0]));
               const float inv = (s > 0.0f) ? 1.0f / s : 1.0f;
               inst->craters.add(pb, db, nb, radius * inv, depth * inv);
+              // Calibration/diagnostic aid: set DAUNTLESS_DEBUG_DEFORM=1 to log
+              // each crater's model-unit depth/radius (vs kMaxDepth and the
+              // shader RUPTURE band) and the instance's resulting crater count.
+              static const bool dbg = std::getenv("DAUNTLESS_DEBUG_DEFORM") != nullptr;
+              if (dbg) {
+                  std::fprintf(stderr,
+                      "[deform] iid=%u s=%.4f depth=%.2f->%.2f model radius=%.2f->%.2f model count=%zu\n",
+                      static_cast<unsigned>(id.index), s, depth, depth * inv,
+                      radius, radius * inv, inst->craters.count());
+              }
           },
           py::arg("instance_id"), py::arg("world_point"), py::arg("world_normal"),
           py::arg("world_impact_dir"), py::arg("radius"), py::arg("depth"),
