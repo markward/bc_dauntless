@@ -53,7 +53,7 @@ def test_strip_outer_rim_lies_on_sphere_of_radius_length():
     # Width=1.35 < Length=1.69, so an inner rim exists too. The OUTER rim
     # endpoints sit at radius=Length; assert at least those beams do.
     outer = [b for b in beams
-             if _dist(b["emitter"], pos) == pytest.approx(1.69, abs=1e-5)]
+             if abs(_dist(b["emitter"], pos) - 1.69) < 1e-5]
     assert outer, "no outer-rim beam endpoints at radius=Length"
     for b in beams:
         assert b["color"] == po.STRIP_COLOR

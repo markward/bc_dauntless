@@ -9,7 +9,7 @@ Spec: docs/superpowers/specs/2026-06-16-spv-phaser-strips-and-arcs-design.md
 from __future__ import annotations
 
 import math
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 from engine.appc.subsystems import subsystem_world_position
 
@@ -24,10 +24,6 @@ BEAM_WIDTH = 0.02        # thin overlay line half-width (game units)
 # Colours (RGBA).
 STRIP_COLOR = (1.0, 1.0, 0.0, 1.0)   # yellow
 ARC_COLOR = (0.0, 1.0, 1.0, 1.0)     # cyan
-
-
-def _sub(a: Vec3, b: Vec3) -> Vec3:
-    return (a[0]-b[0], a[1]-b[1], a[2]-b[2])
 
 
 def _add(a: Vec3, b: Vec3) -> Vec3:
