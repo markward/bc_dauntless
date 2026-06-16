@@ -2,6 +2,7 @@ add_library(assets STATIC
     src/animation_build.cc
     src/animation_load.cc
     src/cache.cc
+    src/crushability_bake.cc
     src/gl_handle.cc
     src/flip_frame.cc
     src/material_build.cc
