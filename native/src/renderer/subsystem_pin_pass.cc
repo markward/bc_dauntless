@@ -33,10 +33,13 @@ constexpr const char* kGlyphFiles[10] = {
     "game/data/Icons/Damage/Disruptor.tga",  // 9
 };
 
-// Constant on-screen pin size (pixels), independent of zoom/distance. The
-// per-pin world size is derived each frame so the billboard projects to this
-// many pixels of viewport height regardless of how far the camera is.
-constexpr float kPinSizePx = 60.0f;
+// Constant on-screen pin size in *logical points*, independent of
+// zoom/distance and of display DPI. The per-pin world size is derived each
+// frame so the billboard projects to this many points of viewport height
+// regardless of camera distance; the caller's device_scale_factor converts
+// points to the framebuffer's physical pixels so the apparent size is the
+// same on HiDPI/Retina displays as on a 1× display.
+constexpr float kPinSizePt = 30.0f;
 
 }  // namespace
 
@@ -98,7 +101,8 @@ void SubsystemPinPass::ensure_glyphs() {
 
 void SubsystemPinPass::render(const std::vector<SubsystemPin>& pins,
                                const scenegraph::Camera& camera,
-                               Pipeline& pipeline) {
+                               Pipeline& pipeline,
+                               float device_scale_factor) {
     if (pins.empty()) return;
     ensure_quad();
     ensure_glyphs();
@@ -128,15 +132,19 @@ void SubsystemPinPass::render(const std::vector<SubsystemPin>& pins,
     shader.set_int ("u_glyph",        0);  // texture unit 0
 
     // Constant on-screen pin size: derive the world size per pin from its
-    // camera distance so the billboard projects to kPinSizePx pixels of
-    // viewport height at any zoom. tan(fov_y/2) = 1/proj[1][1]; viewport
-    // height from the current GL viewport. world = 2·dist·px·tan / height.
+    // camera distance so the billboard projects to kPinSizePt logical points
+    // of viewport height at any zoom. The GL viewport is in physical
+    // framebuffer pixels, so scale points→pixels by device_scale_factor to
+    // keep the apparent size constant across display DPI. tan(fov_y/2) =
+    // 1/proj[1][1]. world = 2·dist·px·tan / height.
     const glm::mat4 proj = camera.proj_matrix();
     const float tan_half_fov = (proj[1][1] != 0.0f) ? (1.0f / proj[1][1]) : 1.0f;
     GLint vp_rect[4] = {0, 0, 0, 0};
     glGetIntegerv(GL_VIEWPORT, vp_rect);
     const float viewport_h = (vp_rect[3] > 0) ? static_cast<float>(vp_rect[3]) : 1.0f;
-    const float px_to_world = 2.0f * kPinSizePx * tan_half_fov / viewport_h;
+    const float dsf = (device_scale_factor > 0.0f) ? device_scale_factor : 1.0f;
+    const float pin_size_px = kPinSizePt * dsf;
+    const float px_to_world = 2.0f * pin_size_px * tan_half_fov / viewport_h;
     const glm::vec3 eye = camera.eye;
 
     // State: blend on, depth-test off (pins always on top), cull off (two-sided).

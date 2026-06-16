@@ -185,7 +185,7 @@ def test_state_for_destroyed_takes_priority_over_disabled():
     assert _state_for(_StateStub(destroyed=True, disabled=True)) == "destroyed"
 
 
-from engine.ui.ship_property_viewer import pick_pin, PIN_RADIUS_PX
+from engine.ui.ship_property_viewer import pick_pin, PIN_RADIUS_PT
 
 
 def test_pick_returns_nearest_pin_within_radius():
@@ -201,5 +201,16 @@ def test_pick_returns_nearest_pin_within_radius():
 def test_pick_returns_none_when_click_misses_all_pins():
     cam = OrbitCamera(target=(0.0, 0.0, 0.0), distance=10.0, yaw=0.0, pitch=0.0)
     descs = [{"name": "A", "world_pos": (0.0, 0.0, 0.0)}]
-    idx = pick_pin(400.0 + PIN_RADIUS_PX + 50.0, 300.0, descs, cam, (800, 600))
+    idx = pick_pin(400.0 + PIN_RADIUS_PT + 50.0, 300.0, descs, cam, (800, 600))
     assert idx is None
+
+
+def test_pick_radius_scales_with_device_pixel_ratio():
+    """A cursor just outside the 1x click radius lands inside it at 2x DPR,
+    matching the GL pin which also scales its size by the device-pixel ratio."""
+    cam = OrbitCamera(target=(0.0, 0.0, 0.0), distance=10.0, yaw=0.0, pitch=0.0)
+    descs = [{"name": "A", "world_pos": (0.0, 0.0, 0.0)}]
+    offset = PIN_RADIUS_PT + 5.0  # between 1x (18) and 2x (36) radii
+    assert pick_pin(400.0 + offset, 300.0, descs, cam, (800, 600)) is None
+    assert pick_pin(400.0 + offset, 300.0, descs, cam, (800, 600),
+                    device_scale_factor=2.0) == 0
