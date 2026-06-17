@@ -30,11 +30,11 @@ std::vector<ParticleEmitterDescriptor> build_venting_descriptors(
 
         d.emit_vel_world = glm::vec3(0.f); // no ship-velocity inheritance for venting
         d.inherit        = 0.f;
-        d.emit_velocity  = 0.8f;           // GU / s (decorative; body-frame scale)
+        d.emit_velocity  = 1.5f;           // GU / s (decorative; body-frame scale)
         d.angle_variance = 25.f;           // degrees: wispy jet spread
         d.emit_life      = 0.6f;           // each particle lives 0.6 s
         d.emit_life_variance = 0.2f;
-        d.emit_frequency = 0.04f;          // 25 particles/s at start
+        d.emit_frequency = 0.02f;          // 50 particles/s at start
         d.effect_age     = effect_age;
         d.stop_age       = scenegraph::kVentLife;
         d.blend_mode     = 1;              // additive: bright plasma
@@ -46,11 +46,13 @@ std::vector<ParticleEmitterDescriptor> build_venting_descriptors(
         d.alpha_keys[0] = ParticleKey{0.f,  1.f};
         d.alpha_keys[1] = ParticleKey{1.f,  0.f};
 
-        // Size keys: grow then shrink (wispy).
+        // Size keys: grow then shrink (wispy). Sizes are billboard half-extents
+        // in world units (GU); a breach is ~0.5-1 GU, so ~0.3 GU peak reads as
+        // a visible jet without swamping the hull. Eyeball-tunable.
         d.num_size_keys = 3;
-        d.size_keys[0] = ParticleKey{0.0f, 0.05f};
-        d.size_keys[1] = ParticleKey{0.4f, 0.12f};
-        d.size_keys[2] = ParticleKey{1.0f, 0.02f};
+        d.size_keys[0] = ParticleKey{0.0f, 0.10f};
+        d.size_keys[1] = ParticleKey{0.4f, 0.30f};
+        d.size_keys[2] = ParticleKey{1.0f, 0.06f};
 
         // Stable seed: derived from event seed, NOT from world position.
         // Convert uint64 seed to float in [0,1) as the pass expects.
@@ -58,8 +60,11 @@ std::vector<ParticleEmitterDescriptor> build_venting_descriptors(
             (ev.seed ^ 0x517cc1b727220a95ull) >> 11)
             * (1.f / static_cast<float>(1ull << 53));
 
-        // Pale plasma / atmosphere tint (light blue-white).
-        d.texture_path = "game/data/Textures/Effects/ExplosionNoise.tga";
+        // Soft noise puff for the venting plasma (additive). MUST be an existing,
+        // non-atlas texture: the pass skips emitters whose texture fails to load,
+        // and an 8x8 atlas (ExplosionA/B) would draw the whole sheet per particle.
+        // (Prior value "ExplosionNoise.tga" did not exist → venting never drew.)
+        d.texture_path = "game/data/Textures/Effects/Noise3.tga";
 
         out.push_back(d);
     }

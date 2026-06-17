@@ -119,7 +119,7 @@ void main() {
         // kRimBand: fill units above iso that still count as "rim region".
         const float kRimBand = 0.12;
         float rim_w = 1.0 - smoothstep(u_fill_iso, u_fill_iso + kRimBand, fillv);
-        c += blackbody(heat) * rim_w * 1.5;  // 1.5: HDR headroom for glow
+        c += blackbody(heat) * rim_w * 3.0;  // gain: brighter molten glow (eyeball-tunable)
     }
 
     frag_color = vec4(c, 1.0);
