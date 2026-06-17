@@ -132,7 +132,17 @@ class TGIcon(TGPane):
 
 
 class TGParagraph(TGPane):
-    """Text widget — holds the string; font/scale/color stored, unused."""
+    """Text widget — holds the string; font/scale/color stored, unused.
+
+    The SDK passes paragraph flags (read-only, word-wrap, …) OR'd together as
+    the last arg to TGParagraph_Create/CreateW. They're opaque to us — never
+    decoded — so distinct bit values are all that's required."""
+
+    TGPF_READ_ONLY = 0x01
+    TGPF_INSERT_MODE = 0x02
+    TGPF_WORD_WRAP = 0x04
+    TGPF_RECALC_BOUNDS = 0x08
+    TGPF_FLAGS_MASK = 0x0F
 
     def __init__(self, text: str = "", scale: float = 1.0, color=None):
         super().__init__()
