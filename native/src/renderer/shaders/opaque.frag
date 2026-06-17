@@ -69,8 +69,8 @@ uniform int       u_frame_enabled;  // 0 = framework skipped (stock path)
 // Framework shape constants (eyeball-tunable; comment explains each).
 const float kFrameOuter   = 1.8;  // lattice extends to 1.8*r laterally from breach axis
 const float kFrameUvScale = 0.6;  // breach radius → texture span (lower = bigger lattice cells)
-const float kFrameAlpha   = 0.5;  // stencil alpha below this (scaled by density) = cut gap
-const float kFrameScar    = 0.7;  // how much the kept struts darken toward the scar colour
+const float kFrameCut     = 0.5;  // cut where damage (decal alpha × density) exceeds this
+const float kFrameScar    = 0.7;  // how much the surviving struts darken toward the scar colour
 
 // breach shape — KEEP IN SYNC with breach.vert / opaque.frag
 const float kDepthOffset = 0.55;
@@ -355,13 +355,18 @@ void main() {
                               / (r * kFrameUvScale) * 0.5 + 0.5;
                     vec4 dmg = texture(u_damage_decal, uv);
                     // density ramps from 1 near the hole edge (ld≈r) to 0 at the
-                    // outer rim (ld≈kFrameOuter*r), so gaps are densest near the hole.
+                    // outer rim (ld≈kFrameOuter*r), so cutting is densest near the hole.
                     float dens = smoothstep(kFrameOuter * r, r, ld);
-                    // Discard gap fragments (low alpha scaled by density).
-                    if (dmg.a < kFrameAlpha * dens) discard;
-                    // Accumulate scar tint for surviving struts.
-                    // Stronger where the stencil is mid/torn and close to the hole.
-                    float s = kFrameScar * dens * (1.0 - dmg.a);
+                    // Damage.tga is a damage DECAL: HIGH alpha = damaged area
+                    // (torn through → see-through gap), LOW alpha = intact hull
+                    // (the remaining struts). So cut where the decal's damage,
+                    // scaled by proximity to the hole, exceeds the threshold;
+                    // the intact-hull struts survive.
+                    float damage = dmg.a * dens;
+                    if (damage > kFrameCut) discard;
+                    // Scar the surviving struts: stronger where more damaged
+                    // (higher alpha, closer to the hole) but not enough to cut.
+                    float s = kFrameScar * damage;
                     if (s > frame_scar) {
                         frame_scar     = s;
                         frame_scar_col = dmg.rgb;
