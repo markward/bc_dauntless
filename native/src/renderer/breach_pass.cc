@@ -35,6 +35,15 @@ namespace {
 constexpr const char* kDamageTgaPath =
     "game/data/Textures/Effects/Damage.tga";
 
+// Inflate each DC-mesh vertex along its outward normal by this many cell
+// widths before applying u_model. The dual-contour isosurface sits ~1 cell
+// inset from the real hull surface (lattice nodes live at cell centres, one
+// step inside the AABB), so without inflation the cavity rim is recessed
+// behind the clip hole and leaves a see-through gap near the breach edge.
+// 1.0 is the baseline; dial up/down visually if a thicker or thinner rim
+// is needed.
+static constexpr float kInflateCells = 1.0f;
+
 unsigned int load_damage_tga() {
     std::ifstream in(kDamageTgaPath, std::ios::binary);
     if (!in) {
@@ -230,6 +239,13 @@ void BreachPass::draw_instance(std::uintptr_t instance_key,
     const float cell_avg = (c.x + c.y + c.z) / 3.0f;
     shader.set_float("u_tex_scale", cell_avg > 0.0f ? 1.0f / (cell_avg * 4.0f)
                                                      : 0.25f);
+
+    // Inflate the DC cavity outward by ~1 cell so its rim reaches the hull
+    // surface / clip-hole edge (plugs the ~1-cell see-through gap at the rim).
+    // The source fill has cubic cells, so any component gives the same size;
+    // fall back to cell_avg if a degenerate zero cell is encountered.
+    const float cell_size = (c.x > 0.0f) ? c.x : cell_avg;
+    shader.set_float("u_inflate", cell_size * kInflateCells);
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, damage_tex_);
