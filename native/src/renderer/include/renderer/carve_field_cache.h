@@ -43,7 +43,6 @@ public:
         glm::ivec3 dims{0};
         glm::vec3  origin{0.0f};
         glm::vec3  cell{1.0f};
-        voxel::VoxelVolume fill;    // raw original-fill volume (for debris sampling)
     };
 
     /// Get (build if not yet cached) the static original fill texture for the

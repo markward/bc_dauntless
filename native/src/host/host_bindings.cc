@@ -34,8 +34,8 @@
 #include <renderer/phaser_pass.h>
 #include <renderer/hologram_pass.h>
 #include <renderer/breach_pass.h>
-#include <renderer/debris_pass.h>
 #include <renderer/breach_venting.h>  // venting descriptor builder
+#include <renderer/breach_debris.h>  // debris descriptor builder
 #include <renderer/carve_field_cache.h>
 #include <renderer/subsystem_pin_pass.h>
 #include <renderer/target_reticle_pass.h>
@@ -124,7 +124,6 @@ std::unique_ptr<renderer::PhaserPass>      g_phaser_pass;
 renderer::HologramShip                       g_hologram_ship;
 std::unique_ptr<renderer::HologramPass>      g_hologram_pass;
 std::unique_ptr<renderer::BreachPass>        g_breach_pass;
-std::unique_ptr<renderer::DebrisPass>        g_debris_pass;
 // Shared static original-fill cache: the UNCARVED hull fill + its GL_R8 3D
 // texture are built once per hull source path (not per-instance) and consumed
 // ONLY by the breach pass as a material mask (fill >= iso → solid interior;
@@ -260,7 +259,6 @@ void init(int width, int height, const std::string& title) {
     g_phaser_pass        = std::make_unique<renderer::PhaserPass>();
     g_hologram_pass      = std::make_unique<renderer::HologramPass>();
     g_breach_pass        = std::make_unique<renderer::BreachPass>();
-    g_debris_pass        = std::make_unique<renderer::DebrisPass>();
     g_carve_cache        = std::make_unique<renderer::CarveFieldCache>();
     // Load BC's Damage.tga once and hand its GL id to the breach pass for the
     // triplanar interior-surface sample. If the file is missing the pass falls
@@ -330,7 +328,6 @@ void shutdown() {
     g_hologram_only_mode = false;
     g_hologram_pass.reset();
     g_breach_pass.reset();   // releases the sphere mesh + fill textures while the GL context lives
-    g_debris_pass.reset();   // releases the cube mesh while the GL context lives
     g_carve_cache.reset();   // releases the carved-fill 3D textures (GL alive)
     g_subsystem_pin_pass.reset();
     g_target_reticle = renderer::TargetReticle{};
@@ -407,9 +404,6 @@ void frame() {
         if (g_breach_pass && g_carve_cache)
             g_breach_pass->render(g_world, cam, *g_pipeline, lookup,
                                   *g_carve_cache, g_decal_game_time);
-        if (g_debris_pass && g_carve_cache)
-            g_debris_pass->render(g_world, cam, *g_pipeline, lookup,
-                                  *g_carve_cache, g_decal_game_time);
         if (g_shield_pass) g_shield_pass->submit(g_world, cam, *g_pipeline, now, lookup);
         if (!for_viewscreen && g_dust_pass)
             g_dust_pass->render(cam, dt, *g_pipeline, g_suns, g_dust_planets);
@@ -435,6 +429,10 @@ void frame() {
                             inst.breach_events, inst.id, g_decal_game_time);
                         all_emitters.insert(all_emitters.end(),
                                             vent.begin(), vent.end());
+                        auto debris = renderer::build_debris_descriptors(
+                            inst.breach_events, inst.id, g_decal_game_time);
+                        all_emitters.insert(all_emitters.end(),
+                                            debris.begin(), debris.end());
                     });
             }
             g_particle_pass->render(all_emitters, g_world, cam, *g_pipeline);

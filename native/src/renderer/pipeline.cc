@@ -28,8 +28,6 @@
 #include "embedded_hologram_fs.h"
 #include "embedded_breach_vs.h"
 #include "embedded_breach_fs.h"
-#include "embedded_debris_vs.h"
-#include "embedded_debris_fs.h"
 #include "embedded_subsystem_pin_vs.h"
 #include "embedded_subsystem_pin_fs.h"
 #include "embedded_target_reticle_vs.h"
@@ -56,7 +54,6 @@ Pipeline::Pipeline() {
     phaser_        = std::make_unique<Shader>(shader_src::phaser_vs,        shader_src::phaser_fs);
     hologram_      = std::make_unique<Shader>(shader_src::hologram_vs,      shader_src::hologram_fs);
     breach_        = std::make_unique<Shader>(shader_src::breach_vs,        shader_src::breach_fs);
-    debris_        = std::make_unique<Shader>(shader_src::debris_vs,        shader_src::debris_fs);
     subsystem_pin_ = std::make_unique<Shader>(shader_src::subsystem_pin_vs, shader_src::subsystem_pin_fs);
     target_reticle_ = std::make_unique<Shader>(shader_src::target_reticle_vs, shader_src::target_reticle_fs);
     bridge_        = std::make_unique<Shader>(shader_src::bridge_vs,        shader_src::bridge_fs);

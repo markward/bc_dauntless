@@ -30,9 +30,8 @@ add_executable(renderer_tests
     asset_path_test.cc
     hull_clip_test.cc
     breach_pass_test.cc
-    debris_chunks_test.cc
-    debris_pass_test.cc
     breach_venting_test.cc
+    breach_debris_test.cc
 )
 
 target_link_libraries(renderer_tests
@@ -55,7 +54,6 @@ endif()
 
 target_include_directories(renderer_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/native/tests/assets/gpu  # reuse gl_fixture for offscreen contexts
-    ${CMAKE_SOURCE_DIR}/native/src/renderer      # private renderer headers (e.g. debris_chunks.h)
 )
 
 gtest_discover_tests(renderer_tests
