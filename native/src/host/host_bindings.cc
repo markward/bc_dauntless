@@ -1477,6 +1477,30 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "point/normal are transformed into the ship body frame. weapon_class: "
           "0=HeatGlow (phaser), 1=Scorch (torpedo/disruptor).");
 
+    m.def("hull_carve_add",
+          [](scenegraph::InstanceId id,
+             std::tuple<float, float, float> world_point,
+             std::tuple<float, float, float> /*world_normal*/,  // accepted for call-shape symmetry
+             float radius, float /*time*/) {                    // with damage_decal_add; unused in 2a
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return;  // stale id — drop silently
+              const glm::vec3 pw(std::get<0>(world_point),
+                                 std::get<1>(world_point),
+                                 std::get<2>(world_point));
+              const glm::vec3 pb = scenegraph::world_to_body(inst->world, pw);
+              // s = |world's X column| = the uniform NIF->world scale baked into
+              // inst->world (same derivation as damage_decal_add).
+              const float s = glm::length(glm::vec3(inst->world[0]));
+              const float radius_model = (s > 0.0f) ? radius / s : radius;
+              inst->carve.add(pb, radius_model);
+          },
+          py::arg("instance_id"), py::arg("world_point"), py::arg("world_normal"),
+          py::arg("radius"), py::arg("time"),
+          "Push a hull-carve sphere onto a ship instance. World-space impact point "
+          "is transformed to body frame (model units). world_normal and time are "
+          "accepted for call-shape symmetry with damage_decal_add but are unused "
+          "in renderer phase 2a (sphere carve; no oriented crater yet).");
+
     m.def("compute_capsule_region",
           [](scenegraph::InstanceId id,
              std::tuple<float, float, float> center,
