@@ -50,6 +50,7 @@
 #include <scenegraph/damage_decals.h>
 #include <assets/cache.h>
 #include <assets/model_compose.h>
+#include <assets/texture.h>
 
 #include <glm/gtc/type_ptr.hpp>
 #include <array>
@@ -60,8 +61,11 @@
 #endif
 
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -241,6 +245,28 @@ void init(int width, int height, const std::string& title) {
     g_phaser_pass        = std::make_unique<renderer::PhaserPass>();
     g_hologram_pass      = std::make_unique<renderer::HologramPass>();
     g_breach_pass        = std::make_unique<renderer::BreachPass>();
+    // Load BC's Damage.tga once and hand its GL id to the breach pass for the
+    // triplanar interior-surface sample. If the file is missing the pass falls
+    // back to its own lazy load (and ultimately a null texture -> flat-lit
+    // surface), so this is best-effort and never fatal.
+    {
+        static std::unique_ptr<assets::Texture> s_damage_tex;
+        std::ifstream in("game/data/Textures/Effects/Damage.tga",
+                         std::ios::binary);
+        if (in) {
+            std::vector<std::uint8_t> bytes(
+                (std::istreambuf_iterator<char>(in)),
+                std::istreambuf_iterator<char>());
+            try {
+                assets::Image img = assets::decode_tga(bytes);
+                s_damage_tex = std::make_unique<assets::Texture>(
+                    assets::upload_image(img, /*generate_mipmaps=*/true));
+                g_breach_pass->set_damage_texture(s_damage_tex->id());
+            } catch (const std::exception&) {
+                // leave unset -> breach pass lazy-loads on first draw
+            }
+        }
+    }
     g_subsystem_pin_pass  = std::make_unique<renderer::SubsystemPinPass>();
     g_target_reticle_pass = std::make_unique<renderer::TargetReticlePass>();
     g_bridge_pass         = std::make_unique<renderer::BridgePass>();

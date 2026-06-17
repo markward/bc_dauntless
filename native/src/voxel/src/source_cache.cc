@@ -36,4 +36,26 @@ const VoxelVolume& SourceVolumeCache::get_for_hull(
     return ins->second;
 }
 
+const std::vector<glm::vec4>& SourceVolumeCache::planes_for_hull(
+        const std::filesystem::path& hull_nif) {
+    const std::string key = hull_nif.string();
+    auto it = planes_by_path_.find(key);
+    if (it != planes_by_path_.end()) return it->second;
+
+    std::vector<glm::vec4> planes;  // empty by default (mod-ship graceful path)
+    const std::filesystem::path vox = vox_sibling_path(hull_nif);
+    if (std::filesystem::exists(vox)) {
+        nif::File f = nif::load(vox);
+        const nif::NiBinaryVoxelData* vd = nullptr;
+        for (const auto& b : f.blocks)
+            if (auto* q = std::get_if<nif::NiBinaryVoxelData>(&b)) vd = q;
+        if (vd) {
+            SurfaceData sd = from_nif_surface(*vd);
+            planes = std::move(sd.planes);
+        }
+    }
+    auto [ins, _] = planes_by_path_.emplace(key, std::move(planes));
+    return ins->second;
+}
+
 }  // namespace voxel

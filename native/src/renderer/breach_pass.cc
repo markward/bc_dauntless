@@ -7,16 +7,21 @@
 #include <scenegraph/instance.h>
 #include <scenegraph/world.h>
 #include <assets/model.h>
+#include <assets/texture.h>
 
-#include <voxel/voxelize.h>  // select_breach_voxels
+#include <voxel/dual_contour.h>
+#include <voxel/voxelize.h>  // carve_sphere
 
 #include <glad/glad.h>
 #include <glm/glm.hpp>
 
 #include <cstdint>
+#include <cstdio>
+#include <fstream>
+#include <iterator>
 #include <vector>
 
-// Toggle for the hull-breach renderer (carve emission + clip + breach splat).
+// Toggle for the hull-breach renderer (carve emission + clip + breach surface).
 // Defined in frame.cc (librenderer); forward-declared here so the pass can gate
 // itself without a circular dependency. When off, render() does nothing.
 namespace dauntless_hull_damage {
@@ -27,104 +32,171 @@ namespace renderer {
 
 namespace {
 
-// Unit cube centred at the origin, corners in [-0.5, 0.5]. 8 verts, 36 indices
-// (12 triangles). Winding is CW for front faces to match the pipeline's
-// glFrontFace(GL_CW); but the pass disables culling anyway (interior voxels are
-// viewed from arbitrary angles through holes), so winding is cosmetic here.
-constexpr float kCubeVerts[] = {
-    -0.5f, -0.5f, -0.5f,
-     0.5f, -0.5f, -0.5f,
-     0.5f,  0.5f, -0.5f,
-    -0.5f,  0.5f, -0.5f,
-    -0.5f, -0.5f,  0.5f,
-     0.5f, -0.5f,  0.5f,
-     0.5f,  0.5f,  0.5f,
-    -0.5f,  0.5f,  0.5f,
-};
+constexpr const char* kDamageTgaPath =
+    "game/data/Textures/Effects/Damage.tga";
 
-constexpr std::uint32_t kCubeIndices[] = {
-    0, 1, 2, 0, 2, 3,   // -Z
-    4, 6, 5, 4, 7, 6,   // +Z
-    0, 4, 5, 0, 5, 1,   // -Y
-    3, 2, 6, 3, 6, 7,   // +Y
-    0, 3, 7, 0, 7, 4,   // -X
-    1, 5, 6, 1, 6, 2,   // +X
-};
+unsigned int load_damage_tga() {
+    std::ifstream in(kDamageTgaPath, std::ios::binary);
+    if (!in) {
+        std::fprintf(stderr, "[breach] failed to open '%s'\n", kDamageTgaPath);
+        return 0;
+    }
+    std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(in)),
+                                    std::istreambuf_iterator<char>());
+    try {
+        assets::Image img = assets::decode_tga(bytes);
+        assets::Texture tex = assets::upload_image(img, /*generate_mipmaps=*/true);
+        // assets::Texture has no id-release; keep the owner alive in a
+        // process-lifetime static so the GL id we hand back stays valid (this
+        // lazy fallback path runs at most once — GL tests / no host wiring).
+        static std::vector<assets::Texture> s_owned;
+        unsigned int id = tex.id();
+        s_owned.emplace_back(std::move(tex));
+        return id;
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[breach] decode/upload '%s' failed: %s\n",
+                     kDamageTgaPath, e.what());
+        return 0;
+    }
+}
 
 }  // namespace
 
 BreachPass::BreachPass() = default;
 
 BreachPass::~BreachPass() {
-    if (instance_vbo_) glDeleteBuffers(1, &instance_vbo_);
-    if (cube_ebo_)     glDeleteBuffers(1, &cube_ebo_);
-    if (cube_vbo_)     glDeleteBuffers(1, &cube_vbo_);
-    if (cube_vao_)     glDeleteVertexArrays(1, &cube_vao_);
+    if (ebo_) glDeleteBuffers(1, &ebo_);
+    if (vbo_) glDeleteBuffers(1, &vbo_);
+    if (vao_) glDeleteVertexArrays(1, &vao_);
 }
 
-void BreachPass::ensure_cube_mesh() {
-    if (cube_vao_ != 0) return;
-    glGenVertexArrays(1, &cube_vao_);
-    glBindVertexArray(cube_vao_);
+void BreachPass::ensure_mesh_buffers() {
+    if (vao_ != 0) return;
+    glGenVertexArrays(1, &vao_);
+    glBindVertexArray(vao_);
 
-    // Static unit-cube geometry: location 0 = corner position.
-    glGenBuffers(1, &cube_vbo_);
-    glBindBuffer(GL_ARRAY_BUFFER, cube_vbo_);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(kCubeVerts), kCubeVerts, GL_STATIC_DRAW);
+    glGenBuffers(1, &vbo_);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo_);
+    // Interleaved: location 0 = body-frame position, location 1 = body normal.
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float),
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float),
                           reinterpret_cast<void*>(0));
-
-    glGenBuffers(1, &cube_ebo_);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, cube_ebo_);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(kCubeIndices), kCubeIndices,
-                 GL_STATIC_DRAW);
-    index_count_ = static_cast<int>(sizeof(kCubeIndices) / sizeof(kCubeIndices[0]));
-
-    // Per-instance attribute: location 1 = vec4(center.xyz, seed), one per cube.
-    // Filled per draw via glBufferData (orphaned each time).
-    glGenBuffers(1, &instance_vbo_);
-    glBindBuffer(GL_ARRAY_BUFFER, instance_vbo_);
     glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(glm::vec4),
-                          reinterpret_cast<void*>(0));
-    glVertexAttribDivisor(1, 1);  // advance once per instance
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float),
+                          reinterpret_cast<void*>(3 * sizeof(float)));
+
+    glGenBuffers(1, &ebo_);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo_);
 
     glBindVertexArray(0);
 }
 
-void BreachPass::draw_instance(const voxel::VoxelVolume& volume,
+void BreachPass::ensure_damage_texture() {
+    if (damage_tex_ != 0 || damage_tex_tried_) return;
+    damage_tex_tried_ = true;
+    damage_tex_ = load_damage_tga();
+}
+
+voxel::VoxelVolume BreachPass::build_carved_fill(
+        const voxel::VoxelVolume& fill,
+        const scenegraph::HullCarveField& carve) {
+    voxel::VoxelVolume carved = fill;  // copy the intact source fill
+    for (const auto& s : carve.slots()) {
+        if (!s.active) continue;
+        voxel::carve_sphere(carved, s.center_body, s.radius);
+    }
+    return carved;
+}
+
+std::uint64_t BreachPass::carve_version(
+        const scenegraph::HullCarveField& carve) const {
+    // Max active carve seq strictly increases on every add/grow (hull_carve.cc),
+    // so it is a monotone version key; 0 means no active carves.
+    std::uint64_t v = 0;
+    for (const auto& s : carve.slots()) {
+        if (s.active && s.seq > v) v = s.seq;
+    }
+    return v;
+}
+
+const BreachPass::CachedMesh& BreachPass::mesh_for(
+        std::uintptr_t instance_key,
+        const voxel::VoxelVolume& fill,
+        const std::vector<glm::vec4>& palette,
+        const scenegraph::HullCarveField& carve) {
+    CachedMesh& slot = mesh_cache_[instance_key];
+    const std::uint64_t version = carve_version(carve);
+    if (slot.carve_version == version && version != 0) {
+        return slot;  // unchanged carves -> reuse the extracted mesh
+    }
+
+    // Re-extract: carve the fill, dual-contour it, interleave pos+normal.
+    voxel::VoxelVolume carved = build_carved_fill(fill, carve);
+    voxel::Mesh m = voxel::dual_contour(carved, kIsovalue, palette);
+
+    slot.carve_version = version;
+    slot.indices = std::move(m.indices);
+    slot.index_count = static_cast<int>(slot.indices.size());
+    slot.interleaved.clear();
+    slot.interleaved.reserve(m.positions.size() * 6);
+    for (std::size_t i = 0; i < m.positions.size(); ++i) {
+        const glm::vec3& p = m.positions[i];
+        const glm::vec3  n = (i < m.normals.size()) ? m.normals[i]
+                                                     : glm::vec3(0, 1, 0);
+        slot.interleaved.push_back(p.x);
+        slot.interleaved.push_back(p.y);
+        slot.interleaved.push_back(p.z);
+        slot.interleaved.push_back(n.x);
+        slot.interleaved.push_back(n.y);
+        slot.interleaved.push_back(n.z);
+    }
+    return slot;
+}
+
+void BreachPass::draw_instance(std::uintptr_t instance_key,
+                               const voxel::VoxelVolume& fill,
+                               const std::vector<glm::vec4>& palette,
                                const scenegraph::HullCarveField& carve,
                                const glm::mat4& world_xf,
                                const scenegraph::Camera& camera,
                                Pipeline& pipeline) {
-    ensure_cube_mesh();
+    if (carve.count() == 0) return;
 
-    // Accumulate every solid interior voxel inside every active carve sphere.
-    scratch_.clear();
-    for (const auto& s : carve.slots()) {
-        if (!s.active) continue;
-        auto sel = voxel::select_breach_voxels(volume, s.center_body, s.radius);
-        scratch_.insert(scratch_.end(), sel.begin(), sel.end());
-    }
-    if (scratch_.empty()) return;
+    const CachedMesh& mesh = mesh_for(instance_key, fill, palette, carve);
+    if (mesh.index_count == 0) return;
+
+    ensure_mesh_buffers();
+    ensure_damage_texture();
 
     auto& shader = pipeline.breach_shader();
     shader.use();
     shader.set_mat4("u_model", world_xf);
     shader.set_mat4("u_view",  camera.view_matrix());
     shader.set_mat4("u_proj",  camera.proj_matrix());
-    shader.set_vec3("u_cell_half", 0.5f * volume.cell);
+    shader.set_int("u_damage_tex", 0);
+    // Triplanar projection scale: 1 sample period over a few cells so the
+    // texture reads as panel detail, not a single stretched splat.
+    const glm::vec3 c = fill.cell;
+    const float cell_avg = (c.x + c.y + c.z) / 3.0f;
+    shader.set_float("u_tex_scale", cell_avg > 0.0f ? 1.0f / (cell_avg * 4.0f)
+                                                     : 0.25f);
 
-    glBindVertexArray(cube_vao_);
-    glBindBuffer(GL_ARRAY_BUFFER, instance_vbo_);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, damage_tex_);
+
+    glBindVertexArray(vao_);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo_);
     glBufferData(GL_ARRAY_BUFFER,
-                 static_cast<GLsizeiptr>(scratch_.size() * sizeof(glm::vec4)),
-                 scratch_.data(), GL_DYNAMIC_DRAW);
+                 static_cast<GLsizeiptr>(mesh.interleaved.size() * sizeof(float)),
+                 mesh.interleaved.data(), GL_DYNAMIC_DRAW);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo_);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                 static_cast<GLsizeiptr>(mesh.indices.size() * sizeof(std::uint32_t)),
+                 mesh.indices.data(), GL_DYNAMIC_DRAW);
 
-    glDrawElementsInstanced(GL_TRIANGLES, index_count_, GL_UNSIGNED_INT,
-                            nullptr, static_cast<GLsizei>(scratch_.size()));
+    glDrawElements(GL_TRIANGLES, mesh.index_count, GL_UNSIGNED_INT, nullptr);
     glBindVertexArray(0);
+    glBindTexture(GL_TEXTURE_2D, 0);
 }
 
 void BreachPass::render(const scenegraph::World& world,
@@ -133,9 +205,10 @@ void BreachPass::render(const scenegraph::World& world,
                         const ModelLookup& lookup) {
     if (!dauntless_hull_damage::enabled()) return;
 
-    // Depth-test ON, depth-write ON, no blend, no cull. Drawn after the opaque
-    // hull pass: cubes behind intact hull depth-fail (hidden); cubes behind a
-    // hole (no depth written there) pass (visible through the breach).
+    // Depth-test ON, depth-write ON, no blend, CULL OFF (double-sided): the DC
+    // mesh winds inward with outward normals, so we must not backface-cull.
+    // Drawn after the opaque hull pass: surface behind intact hull depth-fails
+    // (hidden); behind a hole (no depth written there) passes (visible).
     bool any_state_changed = false;
     auto ensure_state = [&]() {
         if (any_state_changed) return;
@@ -153,11 +226,18 @@ void BreachPass::render(const scenegraph::World& world,
             const assets::Model* model = lookup(inst.model_handle);
             if (!model) return;
             if (model->source.empty()) return;
-            const voxel::VoxelVolume& volume =
+            const voxel::VoxelVolume& fill =
                 source_cache_.get_for_hull(model->source);
-            if (volume.occ.empty()) return;
+            if (fill.occ.empty()) return;
+            const std::vector<glm::vec4>& palette =
+                source_cache_.planes_for_hull(model->source);
             ensure_state();
-            draw_instance(volume, inst.carve, inst.world, camera, pipeline);
+            // Per-instance cache key: the instance's stable storage address.
+            // (A slot recycled to a different ship just re-extracts once.)
+            const std::uintptr_t key =
+                reinterpret_cast<std::uintptr_t>(&inst);
+            draw_instance(key, fill, palette, inst.carve, inst.world, camera,
+                          pipeline);
         });
 
     // Restore default opaque-pass GL state only if we touched it. We re-assert
