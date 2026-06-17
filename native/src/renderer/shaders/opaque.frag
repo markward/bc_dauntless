@@ -66,11 +66,12 @@ uniform vec3 u_carve_normals[MAX_CARVES];      // body-frame outward hit normal
 uniform sampler2D u_damage_decal;   // Damage.tga: RGB=scar colour, A=lattice stencil
 uniform int       u_frame_enabled;  // 0 = framework skipped (stock path)
 
-// Framework shape constants (eyeball-tunable; comment explains each).
-const float kFrameOuter   = 1.8;  // lattice extends to 1.8*r laterally from breach axis
+// Framework lattice constants (eyeball-tunable). The stencil applies INSIDE the
+// breach: hull struts remain where Damage.tga's alpha is opaque, gaps reveal the
+// interior behind. The surrounding hull is never touched.
 const float kFrameUvScale = 0.6;  // breach radius → texture span (lower = bigger lattice cells)
-const float kFrameCut     = 0.5;  // cut where damage (decal alpha × density) exceeds this
-const float kFrameScar    = 0.7;  // how much the surviving struts darken toward the scar colour
+const float kStrutAlpha   = 0.5;  // keep a hull strut where stencil alpha exceeds this
+const float kOpenCore     = 0.35; // inner fraction of the breach always fully open (no struts)
 
 // breach shape — KEEP IN SYNC with breach.vert / opaque.frag
 const float kDepthOffset = 0.55;
@@ -313,10 +314,6 @@ void main() {
     // Discard hull fragments inside any active carve sphere. The breach pass
     // renders the exposed interior (scoop) within the same spheres, so hole and
     // interior align by construction. u_carve_count == 0 (or disabled) = stock path.
-    //
-    // Framework lattice accumulators: filled inside the loop when u_frame_enabled.
-    float frame_scar = 0.0;
-    vec3  frame_scar_col = vec3(0.0);
     if (u_carve_enabled != 0 && u_carve_count > 0) {
         for (int i = 0; i < u_carve_count; i++) {
             vec3 c  = u_carve_spheres[i].xyz;
@@ -328,49 +325,29 @@ void main() {
             if (L < r * (1.0 + kShapeAmp)) {
                 vec3 d = v / max(L, 1e-5);
                 float r_eff = r * (1.0 + kShapeAmp * (vnoise3(d * kShapeFreq + c * kPhase) * 2.0 - 1.0));
-                if (L < r_eff) discard;
-            }
-
-            // ── Skeletal framework lattice ────────────────────────────────────
-            // Project Damage.tga alpha onto the hull annulus around this breach.
-            // Fragments that SURVIVED the hole discard above arrive here; those
-            // inside the hole are already gone. Only active when u_frame_enabled.
-            if (u_frame_enabled != 0) {
-                vec3  rel     = p_body - c;              // vector from original carve center
-                float along   = dot(rel, n);             // component along outward normal
-                vec3  lateral = rel - along * n;         // component in the hull tangent plane
-                float ld      = length(lateral);
-                // Only process fragments in the annular band around the breach:
-                // laterally within kFrameOuter*r of the breach axis, and axially
-                // within r of the surface (so we don't lattice-cut interior scoop).
-                if (ld < kFrameOuter * r && abs(along) < r) {
-                    // Build a consistent tangent frame from the breach normal.
-                    // Choose an up-vector that is not collinear with n.
-                    vec3 up = abs(n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
-                    vec3 t  = normalize(cross(up, n));
-                    vec3 b  = cross(n, t);
-                    // UV maps the lateral offset into [0,1] centred at the breach.
-                    // kFrameUvScale controls lattice cell size (smaller = bigger cells).
-                    vec2 uv = vec2(dot(lateral, t), dot(lateral, b))
-                              / (r * kFrameUvScale) * 0.5 + 0.5;
-                    vec4 dmg = texture(u_damage_decal, uv);
-                    // density ramps from 1 near the hole edge (ld≈r) to 0 at the
-                    // outer rim (ld≈kFrameOuter*r), so cutting is densest near the hole.
-                    float dens = smoothstep(kFrameOuter * r, r, ld);
-                    // Damage.tga is a damage DECAL: HIGH alpha = damaged area
-                    // (torn through → see-through gap), LOW alpha = intact hull
-                    // (the remaining struts). So cut where the decal's damage,
-                    // scaled by proximity to the hole, exceeds the threshold;
-                    // the intact-hull struts survive.
-                    float damage = dmg.a * dens;
-                    if (damage > kFrameCut) discard;
-                    // Scar the surviving struts: stronger where more damaged
-                    // (higher alpha, closer to the hole) but not enough to cut.
-                    float s = kFrameScar * damage;
-                    if (s > frame_scar) {
-                        frame_scar     = s;
-                        frame_scar_col = dmg.rgb;
+                if (L < r_eff) {
+                    // ── Skeletal framework lattice (INSIDE the breach) ──────────
+                    // Don't cut a clean hole: leave torn HULL STRUTS bridging the
+                    // breach where Damage.tga's stencil is opaque; the gaps between
+                    // struts reveal the recessed interior behind. Struts cluster
+                    // toward the rim (open core) so it still reads as a hole. The
+                    // surrounding hull (L >= r_eff) is left completely untouched.
+                    bool cut = true;
+                    if (u_frame_enabled != 0) {
+                        // tangent-plane UV around the breach axis (basis from n)
+                        vec3 up = abs(n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+                        vec3 t  = normalize(cross(up, n));
+                        vec3 b  = cross(n, t);
+                        vec3 lateral = v - dot(v, n) * n;       // offset from breach axis
+                        vec2 uv = vec2(dot(lateral, t), dot(lateral, b))
+                                  / (r * kFrameUvScale) * 0.5 + 0.5;
+                        float a    = texture(u_damage_decal, uv).a;
+                        float frac = L / r_eff;                 // 0 center .. 1 rim
+                        // Keep a hull strut where the stencil is opaque (the lattice)
+                        // AND we're outside the open core; everything else is cut.
+                        if (a > kStrutAlpha && frac > kOpenCore) cut = false;
                     }
+                    if (cut) discard;
                 }
             }
         }
@@ -424,13 +401,6 @@ void main() {
     // rim, and damage-decal embers are external/transient and stay.
     vec3 self_illum = u_emissive_scale * (u_emissive_color + glow.rgb * glow.a * gf * nac);
     vec3 final_color = lit + self_illum + spec + rim + decal_emissive;
-
-    // ── Framework strut scar tint ─────────────────────────────────────────────
-    // Darken surviving framework struts toward a soot-tinted version of the
-    // stencil colour. frame_scar == 0 when u_frame_enabled=0 (stock path no-op).
-    if (frame_scar > 0.0) {
-        final_color = mix(final_color, frame_scar_col * 0.25, frame_scar);
-    }
 
     frag_color = vec4(final_color, 1.0);
 }
