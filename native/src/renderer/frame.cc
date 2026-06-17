@@ -7,6 +7,10 @@
 #include "renderer/carve_field_cache.h"
 
 #include <cstdint>
+#include <cstdio>
+#include <fstream>
+#include <iterator>
+#include <vector>
 
 #include <glad/glad.h>
 
@@ -86,6 +90,41 @@ namespace {
 }
 
 namespace renderer {
+
+namespace {
+
+// Lazily load game/data/Textures/Effects/Damage.tga once per process.
+// Returns the GL texture id, or 0 if the file is absent (game/ not installed).
+// assets::upload_image defaults to GL_REPEAT, which is correct for the tiling
+// lattice. Caller owns nothing — the assets::Texture lives in a process-lifetime
+// static, keeping the id valid.
+unsigned int ensure_damage_decal_texture() {
+    static unsigned int s_id   = 0;
+    static bool         s_tried = false;
+    if (s_tried) return s_id;
+    s_tried = true;
+
+    constexpr const char* kPath = "game/data/Textures/Effects/Damage.tga";
+    std::ifstream in(kPath, std::ios::binary);
+    if (!in) {
+        // game/ not installed — framework will be silently disabled.
+        return 0;
+    }
+    std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(in)),
+                                    std::istreambuf_iterator<char>());
+    try {
+        assets::Image   img = assets::decode_tga(bytes);
+        assets::Texture tex = assets::upload_image(img, /*generate_mipmaps=*/true);
+        static assets::Texture s_owner;   // process-lifetime owner
+        s_id    = tex.id();
+        s_owner = std::move(tex);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[frame] failed to load '%s': %s\n", kPath, e.what());
+    }
+    return s_id;
+}
+
+}  // namespace
 
 void draw_model(const assets::Model& model,
                 const glm::mat4& world,
@@ -209,6 +248,23 @@ void draw_model(const assets::Model& model,
             prog.set_int("u_carve_enabled", 0);
             prog.set_int("u_carve_count", 0);
         }
+    }
+
+    // ── Skeletal framework lattice (Damage.tga alpha stencil) ─────────────────
+    // Bind Damage.tga to texture unit 3 and tell the shader whether the
+    // framework is active. Unit 3 is free in this pass (0=base, 1=glow,
+    // 2=specular). When the toggle is off, there are no carves, or the texture
+    // failed to load, u_frame_enabled=0 → framework skipped (stock path).
+    {
+        const unsigned int dmg_id = ensure_damage_decal_texture();
+        const bool frame_on = (dmg_id != 0)
+                              && dauntless_hull_damage::enabled()
+                              && (carve.count() > 0);
+        glActiveTexture(GL_TEXTURE3);
+        glBindTexture(GL_TEXTURE_2D, dmg_id != 0 ? dmg_id : 0);
+        prog.set_int("u_damage_decal",  3);
+        prog.set_int("u_frame_enabled", frame_on ? 1 : 0);
+        glActiveTexture(GL_TEXTURE0);  // restore default active unit
     }
 
     // Walk nodes; each node may reference one or more meshes by index. The
