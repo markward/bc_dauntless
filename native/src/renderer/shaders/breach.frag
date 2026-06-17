@@ -63,9 +63,11 @@ void main() {
     // Neutral metallic base so the cross-section always reads as structural
     // hull interior; Damage.tga modulates it. With no texture bound (mod ship /
     // missing asset) the sample is ~0, leaving just the muted grey base —
-    // graceful degradation, never a black hole to the stars.
-    const vec3 kBase = vec3(0.32, 0.33, 0.36);
-    tex = kBase + tex * 0.6;
+    // graceful degradation, never a black hole to the stars. The texture now
+    // DOMINATES (kBase is only a dark floor at the texture's darkest spots) so
+    // the scorch detail reads clearly instead of being washed out by the base.
+    const vec3 kBase = vec3(0.16, 0.17, 0.19);
+    tex = kBase + tex * 1.1;
 
     // ── Double-sided lighting ──────────────────────────────────────────────
     // The inner wall is rendered back-face (cull-front), so gl_FrontFacing is
@@ -81,10 +83,11 @@ void main() {
     float ndl   = max(dot(nf, view_dir), 0.0);
     float light = 0.35 + 0.55 * ndl;
 
-    // Mute: desaturate slightly, keep brightness moderate.
+    // Mute: desaturate slightly, keep brightness moderate. Keep more of the
+    // texture's own colour (0.75) so the scorch detail reads.
     float luma = dot(tex, vec3(0.299, 0.587, 0.114));
-    vec3 muted  = mix(vec3(luma), tex, 0.6);
-    vec3 c      = muted * light * 0.85;
+    vec3 muted  = mix(vec3(luma), tex, 0.75);
+    vec3 c      = muted * light;
 
     frag_color = vec4(c, 1.0);
 }

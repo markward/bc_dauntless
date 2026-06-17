@@ -41,9 +41,13 @@ constexpr const char* kDamageTgaPath =
 // triangles: more than enough resolution for a 1–5 GU breach.
 constexpr int kSphereTargetTris = 768;
 
-// Triplanar texture scale: 1 period over 4 model units (body-frame).
-// Matches the feel of the original DC-mesh texture scale.
-constexpr float kTexScale = 1.0f / 4.0f;
+// Triplanar texture scale: 1 period over ~40 model units (body-frame).
+// The carve scoop spans ~50-400 model units (radius 25-200), so this gives
+// roughly 1-10 readable Damage.tga features across a breach. The old 1/4
+// tiled the 128px texture ~12-50x across a scoop; minified through mipmaps
+// that averaged to the texture's mean colour and read as a flat, untextured
+// surface. Eyeball-tunable: lower = larger features.
+constexpr float kTexScale = 1.0f / 40.0f;
 
 unsigned int load_damage_tga() {
     std::ifstream in(kDamageTgaPath, std::ios::binary);
