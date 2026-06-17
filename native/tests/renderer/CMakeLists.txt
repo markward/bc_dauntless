@@ -31,6 +31,7 @@ add_executable(renderer_tests
     hull_clip_test.cc
     breach_pass_test.cc
     debris_chunks_test.cc
+    debris_pass_test.cc
 )
 
 target_link_libraries(renderer_tests

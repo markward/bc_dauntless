@@ -73,6 +73,7 @@ const CarveFieldCache::Entry* CarveFieldCache::get_for_source(
     const voxel::VoxelVolume& fill = source_cache_.get_for_hull(source);
     if (fill.occ.empty()) return nullptr;
 
+    e.fill = fill;
     upload_texture(e, fill);
     return (e.tex3d != 0) ? &e : nullptr;
 }

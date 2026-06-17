@@ -36,6 +36,8 @@ embed_shader(SHADER_HOLOGRAM_VS shaders/hologram.vert hologram_vs)
 embed_shader(SHADER_HOLOGRAM_FS shaders/hologram.frag hologram_fs)
 embed_shader(SHADER_BREACH_VS shaders/breach.vert breach_vs)
 embed_shader(SHADER_BREACH_FS shaders/breach.frag breach_fs)
+embed_shader(SHADER_DEBRIS_VS shaders/debris.vert debris_vs)
+embed_shader(SHADER_DEBRIS_FS shaders/debris.frag debris_fs)
 embed_shader(SHADER_SUBSYSTEM_PIN_VS shaders/subsystem_pin.vert subsystem_pin_vs)
 embed_shader(SHADER_SUBSYSTEM_PIN_FS shaders/subsystem_pin.frag subsystem_pin_fs)
 embed_shader(SHADER_TARGET_RETICLE_VS shaders/target_reticle.vert target_reticle_vs)
@@ -84,6 +86,8 @@ add_library(renderer STATIC
     phaser_pass.cc
     hologram_pass.cc
     debris_chunks.cc
+    cube_mesh.cc
+    debris_pass.cc
     breach_pass.cc
     carve_field_cache.cc
     subsystem_pin_pass.cc
