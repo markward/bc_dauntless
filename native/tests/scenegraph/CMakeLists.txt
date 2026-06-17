@@ -2,6 +2,7 @@ add_executable(scenegraph_tests
     camera_test.cc
     world_test.cc
     damage_decals_test.cc
+    hull_carve_test.cc
 )
 target_link_libraries(scenegraph_tests
     PRIVATE
