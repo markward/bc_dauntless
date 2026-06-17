@@ -65,9 +65,12 @@ the **effect** of playback:
 
 - **Camera** target → drive `_BridgeCamera` along the camera-path NIF keyframes
   (bridge-local eye + orientation).
-- **Door** target (the bridge model object) → play `DB_Door_L1.nif` on the
-  bridge mesh's door node via the existing `set_instance_animation` path used by
-  bridge officers.
+- **Door** target (the bridge model object) → play the lift-door keyframe
+  animation that is **baked into `DBridge.nif` itself** via the existing
+  `set_instance_animation` path used by bridge officers. (The door controllers
+  live on nodes `DBl1`/`l1`, `door 01a`…`door 04b` inside the bridge NIF; the
+  standalone `data/animations/DB_Door_L1.nif` the SDK references is a vestigial
+  art asset — confirmed by inspecting the install.)
 
 ## Components
 
@@ -129,7 +132,7 @@ most one active camera-path request plus any door request.
   - **new camera request:** resolve `clip_name → nif` via
     `anim_mgr.path_for`, native-load the clip table, hand it to
     `bridge_camera.play_path(table)`, flip `view_mode` to bridge, set `t = 0`.
-  - **new door request:** resolve nif, call `renderer.set_instance_animation(bridge_iid, ...)`.
+  - **new door request:** call `renderer.set_instance_animation(bridge_iid, 0, loop=False)` to play the embedded bridge clip (the door tracks are baked into the bridge model's `animations[0]`).
   - advance `t += dt`; when `t >= duration`: `bridge_camera.end_path()`, call
     `action.Completed()` (→ `ET_CAMERA_ANIMATION_DONE`), clear the request.
 
@@ -199,7 +202,10 @@ host tick → controller.update(dt, ...):
   to `db_camera_walk_capt.nif` (**present**, `DB_Camera_Walk_Capt.NIF`, 3802 B).
   The latter is the real camera-path data; the former never resolves and is
   harmless (the re-register wins).
-- Door: `DB_Door_L1.nif` present; sound `"LiftDoor"`.
+- Door: animation is embedded in `DBridge.nif` (keyframe controllers on
+  `DBl1`/`l1`, `door 01a`…`door 04b`), extracted by `build_animations` into the
+  bridge model's `animations[0]`. The standalone `data/animations/DB_Door_L1.nif`
+  is vestigial and unused by this path. Sound cue: `"LiftDoor"`.
 
 ## Testing strategy
 
@@ -215,10 +221,13 @@ host tick → controller.update(dt, ...):
 
 ## Risks
 
-- **Door rigging.** Depends on `DB_Door_L1.nif`'s track targeting a node that
-  exists in the loaded bridge model. If the bridge mesh exposes no separable
-  door node, the door is split to a follow-on and the camera move still ships.
-  Verified during implementation, not assumed.
+- **Door selectivity.** The door animation is baked into `DBridge.nif` and our
+  `build_animations` collapses **all** of the NIF's keyframe controllers into a
+  single clip (`animations[0]`) with one track per node. Playing it therefore
+  animates every door (01–04 + the L1 lift door) at once, not just L1. For v1
+  we play the whole embedded clip and verify live; isolating the L1 door (e.g.
+  named-range playback, or per-track native selection) is a documented
+  follow-on. The camera move ships regardless.
 - **`BridgeObjectClass.GetAnimNode()` behavior change** (None → real node).
   Mitigated by the `PutGuestChairOut/In` regression test above.
 - **Completion coupling.** The action's completion is host-driven (native owns
