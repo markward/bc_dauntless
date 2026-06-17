@@ -8,18 +8,23 @@
 - **Python:** `bash scripts/run_tests.sh` → **3225 passed, 3 skipped**, peak RSS 435 MB.
 - The DC extractor reproduces the Galaxy hull as sharp flat panels (dihedral median 6.8°, 45% of edges <5°; verified `/tmp/galaxy_dc.obj`).
 
-## What 2b delivers
-Breaches now reveal a **real dual-contouring interior surface** carved from BC's own voxel data — sharp flat-panel hull cross-sections (not see-through to stars, not a flat candy-cube splat), textured with triplanar `Damage.tga`, muted, rendered double-sided through the 2a clip holes. Carve size/threshold toned down per 2a feedback. Built via **Path B** (our own DC from the decoded fill + plane palette); the `bytes2` head-tree descent was found unnecessary and deferred.
+## What 2b delivers (Path C — final, replaces the dual-contouring approach)
+**Reframed mid-implementation after in-game verification.** Dual-contouring the carved volume's OUTER surface (Path B) could never align with the hull — the coarse 15-GU voxelization is fatter than the hull mesh, so the cavity poked out and clipping the hull by the fill eroded thin features. BC instead cut a hole and rendered the **inside of the volume exposed within the damage radius**. The shipped model (Path C):
+- **Hull hole** = pure damage-sphere fragment clip in `opaque.frag` (discard hull fragments inside any active carve sphere). No fill sampling on the hull.
+- **Interior scoop** = `breach_pass` renders a unit sphere per active carve, **front-face-culled** (recessed inner wall, can't poke out), masked by the ship's **static original voxel fill** (GL_R8 3D texture from `CarveFieldCache`): `discard` where `fill < iso` → genuine see-through where there's no ship material. Triplanar `Damage.tga` (`kTexScale = 1/40`, texture-dominant blend) reads as scorched structural guts.
+- Hole and scoop are the SAME sphere in the SAME `inst.world` frame → aligned by construction. The fill is a material mask, not a surface.
+- The `voxel::dual_contour` library stays (tested) but is unused by the render path.
 
-## Manual in-game check (Mark drives — no synthetic input / capture)
-Run `./build/dauntless`, combat mission, damage a **Galaxy** (has a real `_vox.nif` → full plane palette). Confirm:
-1. **Solid interior, no see-through.** A breach reveals a solid hull cross-section, NOT stars through the far side.
-2. **Sharp facets.** The interior reads as flat panels with crisp edges (the dual-contouring + palette result), not a rounded blob and not flat colored cubes.
-3. **Texture.** The interior is `Damage.tga`-toned, muted (not candy-rainbow).
-4. **Toned down.** Breaches are smaller / form less readily than 2a (radius scale 1.5→1.0, threshold 40→60).
-5. **Through-and-through.** A heavy enough hit that carves both walls should still show through (that's correct — a real breach all the way through).
-6. **Toggle.** Config → Modern VFX → "Hull breaches" off ⇒ stock; on ⇒ breaches return.
-7. **Perf.** No stutter during sustained fire — the DC mesh re-extracts only when the carve changes, not per frame.
+## Manual in-game check (Mark drives — no synthetic input / capture) — ✅ CONFIRMED
+Run `./build/dauntless`, combat mission, damage a **Galaxy**. All confirmed in-game:
+1. **Aligned hole + interior.** The scoop sits in the hole (same sphere); no "see straight through the ship near the damage" gap. ✅
+2. **No erosion / no frosting.** Only the impact region is cut; thin features (struts, saucer rim) intact. ✅
+3. **No poke-out.** Recessed inner wall (front-face cull) stays inside the hull. ✅
+4. **Through-and-through.** A deep enough hit shows stars through (fill mask discards where no material) — correct breach. ✅
+5. **Texture reads.** Triplanar `Damage.tga` reads as scorched structural guts after the `kTexScale` 1/4→1/40 + blend fix (1/4 tiled ~12-50× across a breach → minified to flat mush). ✅
+6. **Toned down.** Breaches smaller / form less readily than 2a (radius scale 1.0, threshold 60). ✅
+7. **Toggle.** Config → Modern VFX → "Hull breaches" off ⇒ stock; on ⇒ breaches. ✅
+8. **Perf.** No stutter — the scoop is just spheres rebuilt from carve slots; the fill texture is static per hull (no per-frame extraction). ✅
 
 ## Known follow-ups (deferred — non-blocking)
 From the Task 6 review (all bounded, none affect correctness/in-frame perf):

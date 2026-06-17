@@ -1,7 +1,7 @@
 # Hull Breach Renderer — 2b (Dual-Contouring Breach Interior) — Design
 
 **Date:** 2026-06-17
-**Status:** Design approved, ready for implementation plan
+**Status:** SHIPPED via **Path C** (see REFRAME 2 below). In-game confirmed on the Galaxy: scoop aligns with the hole, no whole-hull erosion, no poke-out, genuine see-through breach-through, triplanar `Damage.tga` reads on the carved wall. The dual-contouring approach (Path A/B below) was abandoned for rendering; the `voxel::dual_contour` library remains (tested) but is unused by the render path.
 **Scope:** Spec 2b of the hull-damage renderer. One feature: replace 2a's see-through breaches + flat colored-cube splat with a real **dual-contouring interior surface** built from BC's voxel data — sharp hull-facet cross-sections, no see-through. Builds on the merged 2a and the now fully-decoded vox format.
 
 ## Motivation
