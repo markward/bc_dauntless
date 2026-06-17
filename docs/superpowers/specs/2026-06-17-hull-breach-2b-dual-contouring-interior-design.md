@@ -17,10 +17,14 @@ Dual contouring on the interior-node lattice:
 - The extracted **interior surface** renders through the 2a fragment-clip holes, interior-shaded (muted), depth-tested so it shows only through breaches. It **replaces** 2a's colored-cube splat.
 - The original NIF hull (exterior, fragment-clipped) is unchanged — we only build the interior cavity, so no loss of hull detail.
 
+## REFRAME (cleanroom round 3): no head-tree needed — Path B
+
+The `bytes2` head-tree descent (cell→authored-plane index) turned out hard (records are **face-octant-major**, not lexicographic) AND **unnecessary**. The cleanroom confirmed two self-contained routes that skip it; we take **Path B: re-extract our own dual-contouring surface from the decoded fill + plane palette.** Per surface cell, the Hermite plane comes from the **nearest palette plane(s) by point-to-plane distance** (`|n̂·p − d|` minimal — the discriminating metric; the earlier *gradient-normal* matching failed only the byte-exact anchor gate, which we no longer target). This (a) gives sharp flat-panel cross-sections, (b) needs no tree and no leaf order, and (c) is the **same code that generates `_vox` for mod ships** (decode-existing and generate-new share one extractor). The head-tree descent is now a deferred *nice-to-have* (byte-faithful reads of the 84 originals only).
+
 ## Components
 
-### 1. `bytes2` tree reader (NEW, voxel lib)
-Per the formal spec: descend the per-Z → Y → X range-coded CSR (`[lo,hi,csrOffsets,marker]` nodes; trailer gives level sizes for direct addressing) to resolve, for a fill cell `(i,j,k)`, its **6-byte leaf** `{u16 planeIndex, u16 meshRefA, u16 meshRefB}`. We read **field 0** (palette index; verified 100% valid). `meshRefA/B` (BC's own quad stitching) are ignored — we re-derive connectivity in the extractor.
+### 1. ~~`bytes2` tree reader~~ → Nearest-palette-plane matching (Path B)
+No tree parse. The plane palette (decoded, §5) + the fill scalar field are enough. For each surface cell, select the palette plane(s) the cell's surface point lies on (`|n̂·p − d|` minimal), giving the sharp Hermite normal(s) for the QEF. Validation is the Galaxy IoU + eyeball, **not** byte-exact anchors.
 
 ### 2. Source surface data (extends `SourceVolumeCache`)
 Per model, alongside the fill volume: the **plane palette** and a **cell→plane resolver** (the tree reader). Decoded once per model, shared (immutable).

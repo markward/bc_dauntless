@@ -40,3 +40,30 @@ Artifacts (binary dumps):
 
 ## GATE (must reproduce, planeIndex=field2@7750)
 (13,4,0)->2247  (13,5,1)->417  (7,2,0)->270  (22,2,0)->280
+
+## ROUND 3 FINDINGS (cleanroom)
+- cell->plane is MANY-TO-ONE: planes are shared flat panels. A plane is referenced on
+  average ~4.8x; only 253/3002 referenced exactly once. The gate's cell->recordIdx uses the
+  FIRST occurrence of that (distinctive) plane. So a "cell" owns up to 3 edge-records, and a
+  plane spans many cells.
+- nextRefA/nextRefB (leaf fields 0/1) are ADJACENCY POINTERS to other leaf records (forward-
+  mostly; refA zero 73%, refB zero 44%), NOT endpoints and NOT this record's id. They stitch
+  the DC quad mesh. Max ~14699 > nRec 14449 (a few virtual/boundary edges).
+- EDGE-SCAN SIDESTEP FAILS: nRec=14449 matches no grid quantity over the (30,42,9) fill
+  (sign-change edges 2557; exposed faces 2920; either-endpoint-nonzero edges 9458;
+  3*nonzeroNodes 8361). The leaves are the extracted surface's own edge list.
+- RECORD ORDER IS NOT (k,j,i)-LEXICOGRAPHIC. Evidence from the gate (recordIdx, dominant
+  normal): (7,2,0) -x ->1095 ; (22,2,0) +x ->1140 ; (13,5,1) +z ->1719 ; (13,4,0) -z ->10175.
+  Within a row, ~3 records/cell with contiguous X (1095 vs 1140 = +45 over di=15). But
+  same-slice j=2 (~1100) and j=4 (~10175) are 9000 apart, while the order tracks FACE
+  DIRECTION: x-faces early (~1.1k), +z mid (~1.7k), -z late (~10.2k). => ordering looks
+  FACE-OCTANT-MAJOR, then spatial. The head-tree descent must reconcile this with the
+  per-slice CSR. This is why a naive Z->Y->X descent won't hit the gate.
+
+## STRATEGIC NOTE
+For a clean reimpl the head-tree descent may be UNNECESSARY:
+  (A) render from leaves alone: planeIndex(Hermite) + nextRef adjacency + palette -> DC mesh.
+  (B) RE-EXTRACT from fill: fill 0..127 (iso~63-64) for topology + nearest palette plane for
+      sharp Hermite normals -> own dual contouring. Sidesteps tree AND leaf order; also the
+      path needed to generate _vox for NEW models. Recommended.
+The head tree is only required for byte-faithful reproduction of BC's spatial query path.

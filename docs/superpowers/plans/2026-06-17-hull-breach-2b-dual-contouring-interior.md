@@ -10,6 +10,18 @@
 
 **Sequencing note:** The extractor is the novel risk, so Tasks 1–4 build and **validate it on static (uncarved) data** before any carve/render wiring (Tasks 5–7). Same "prove the core first" discipline as the decoder.
 
+> **REFRAME (cleanroom round 3) — `bytes2` head-tree DROPPED, Path B adopted.**
+> The cell→authored-plane head-tree descent (Task 2) proved hard (records are
+> face-octant-major) and is **unnecessary**. We extract our **own** dual-contouring
+> surface from the decoded fill + plane palette, choosing each surface cell's Hermite
+> plane(s) as the **nearest palette plane(s) by point-to-plane distance** (`|n̂·p − d|`
+> minimal). No tree, no leaf order; validated by **Galaxy IoU + eyeball**, not the
+> byte-exact anchors. This same extractor generates `_vox` for mod ships.
+> **Status:** Task 1 ✅ (container decode), Task 3 ✅ (QEF), Task 5a ✅ (`carve_sphere`).
+> **Task 2 is DEFERRED** (nice-to-have for byte-faithful reads only — WIP committed,
+> anchor test DISABLED). **Task 4 below is superseded by Path B** (nearest-palette-plane
+> instead of the `PlaneIndexMap`); the implementer prompt carries the precise approach.
+
 ---
 
 ## File Structure

@@ -166,31 +166,36 @@ element / dual-contouring edge). The index tree (§6) resolves a cell to a conti
 these.
 
 ```
-leaf record (6 bytes):    # CORRECTED ORDER (verified Task 2, see note below)
-  u16 meshRefA         # dual-contouring mesh element id (sequential edge id)
-  u16 meshRefB         # dual-contouring mesh element id (sequential edge id)
-  u16 planeIndex       # index into the plane palette (§5) — the Hermite plane  [bytes +4..+6]
+leaf record (6 bytes):    # field order verified against Galaxy
+  u16 nextRefA         # adjacency pointer to another leaf record (+0..+2); 0 = none
+  u16 nextRefB         # adjacency pointer to another leaf record (+2..+4); 0 = none
+  u16 planeIndex       # index into the plane palette (§5) — the Hermite plane  [+4..+6]
 ```
 
-> **CORRECTION (verified against Galaxy, Task 2):** `planeIndex` is **field 2** (the
-> last u16, bytes +4..+6 of each record), NOT field 0 as originally written. With
-> this, the leaf tail starts at byte `numBytes2 − 6·14449 = 7750`, all 14,449
-> records' field-2 values are `< numPlanes`, and the four anchors all resolve.
-> Fields 0/1 (`meshRefA/B`) are *sequential* edge ids (they increment globally),
-> confirming the DC-edge model. The cell→leaf-record *head-tree* descent (§6)
-> remains unresolved — see `bytes2-tree-descent-notes.md`.
+> **Leaf framing (verified, Galaxy):** the tail starts at `numBytes2 − 6·nRec = 94444 − 6·14449
+> = 7750`; `planeIndex` is **field 2** (bytes +4..+6). End-anchoring is the correct derivation.
+> All 14,449 `planeIndex` values are `< numPlanes`; the four gate anchors resolve.
+
+**`nextRefA/B` are adjacency pointers, not endpoints or this record's id.** They reference
+*other* leaf records (forward-pointing, mostly), with `nextRefA` zero 73% of the time and
+`nextRefB` zero 44% — i.e. up-to-two outgoing links that stitch the dual-contouring surface
+into quads. Their max (~14,699) slightly exceeds `nRec` (14,449), so the id space includes a
+few virtual/boundary edges. **For the plane read you need only `planeIndex`.**
 
 **Verification (Galaxy, 14,449 records):**
-* `planeIndex` (field 0) is `< numPlanes` for **100%** of records (range [0, 3001]).
-* The four cross-reference anchors land exactly on the 6-byte grid as field 0:
-  `(13,4,0)→2247`, `(13,5,1)→417`, `(7,2,0)→270`, `(22,2,0)→280` (the last one record
-  further along). Residual to palette by normal+`d` ≤ 0.02 GU.
-* `meshRefA/B` reach ~14,699 (> node count 11,340 and > numPlanes), with 73%/44% zeros —
-  i.e. **connectivity ids, not plane or node indices**. Not needed for the plane read; used
-  to stitch the dual-contouring mesh.
+* `planeIndex` `< numPlanes` for **100%** of records (range [0, 3001]).
+* Gate anchors resolve as `planeIndex` at `7750 + 6·k`: `(13,4,0)→2247`, `(13,5,1)→417`,
+  `(7,2,0)→270`, `(22,2,0)→280`. Residual to palette by normal+`d` ≤ 0.02 GU.
 
-**For extraction you need only field 0.** `meshRefA/B` are for reconstructing quad
-connectivity if you want BC's exact mesh topology rather than re-deriving it.
+> **The edge-scan sidestep does NOT work (tested).** The leaf count 14,449 matches *no* simple
+> grid quantity over the `(nx−1,ny−1,nz−1)` fill: sign-change active edges = 2,557; exposed
+> surface faces = 2,920; "either-endpoint-nonzero" edges = 9,458; `3·nonzeroNodes` = 8,361.
+> So the leaves are the **extracted DC surface's own edge list**, whose cardinality depends on
+> the surface topology — not a closed-form scan of the fill grid. Reproducing the order would
+> mean replicating BC's *entire* extractor **and** its edge-emission order, which is more work
+> than the head-tree descent (§6). Recommend against it. **The cell→leaf-record mapping
+> therefore requires the §6 head-tree descent** (still open — see
+> `bytes2-tree-descent-notes.md`).
 
 ---
 
