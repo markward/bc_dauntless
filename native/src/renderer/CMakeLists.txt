@@ -88,6 +88,7 @@ add_library(renderer STATIC
     debris_chunks.cc
     cube_mesh.cc
     debris_pass.cc
+    breach_venting.cc
     breach_pass.cc
     carve_field_cache.cc
     subsystem_pin_pass.cc

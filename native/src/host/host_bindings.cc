@@ -35,6 +35,7 @@
 #include <renderer/hologram_pass.h>
 #include <renderer/breach_pass.h>
 #include <renderer/debris_pass.h>
+#include <renderer/breach_venting.h>  // venting descriptor builder
 #include <renderer/carve_field_cache.h>
 #include <renderer/subsystem_pin_pass.h>
 #include <renderer/target_reticle_pass.h>
@@ -412,8 +413,22 @@ void frame() {
         if (g_torpedo_pass) g_torpedo_pass->render(g_torpedoes,    cam, *g_pipeline);
         if (g_phaser_pass)  g_phaser_pass ->render(g_phaser_beams, cam, *g_pipeline);
         if (g_hit_vfx_pass) g_hit_vfx_pass->render(g_hit_vfx, g_world, cam, *g_pipeline);
-        if (!for_viewscreen && g_particle_pass)
-            g_particle_pass->render(g_particle_emitters, g_world, cam, *g_pipeline);
+        // Venting jets: build per-frame descriptors from active breach events
+        // and append to a combined emitter list for the particle pass.
+        // Never mutate g_particle_emitters in place (Python-owned).
+        if (!for_viewscreen && g_particle_pass) {
+            std::vector<renderer::ParticleEmitterDescriptor> all_emitters = g_particle_emitters;
+            g_world.for_each_visible_in_pass(
+                scenegraph::Pass::Space,
+                [&](const scenegraph::Instance& inst) {
+                    if (inst.breach_events.count() == 0) return;
+                    auto vent = renderer::build_venting_descriptors(
+                        inst.breach_events, inst.id, g_decal_game_time);
+                    all_emitters.insert(all_emitters.end(),
+                                        vent.begin(), vent.end());
+                });
+            g_particle_pass->render(all_emitters, g_world, cam, *g_pipeline);
+        }
     };
 
     // ── Viewscreen render-to-texture (bridge view, screen on) ──────────────

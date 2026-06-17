@@ -32,6 +32,7 @@ add_executable(renderer_tests
     breach_pass_test.cc
     debris_chunks_test.cc
     debris_pass_test.cc
+    breach_venting_test.cc
 )
 
 target_link_libraries(renderer_tests
