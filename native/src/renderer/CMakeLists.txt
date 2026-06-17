@@ -83,6 +83,7 @@ add_library(renderer STATIC
     particle_pass.cc
     phaser_pass.cc
     hologram_pass.cc
+    debris_chunks.cc
     breach_pass.cc
     carve_field_cache.cc
     subsystem_pin_pass.cc
