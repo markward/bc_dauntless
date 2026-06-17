@@ -7,6 +7,7 @@
 #include <vector>
 #include <glm/glm.hpp>
 #include "scenegraph/damage_decals.h"
+#include "scenegraph/hull_carve.h"
 
 namespace scenegraph {
 
@@ -61,6 +62,11 @@ struct Instance {
     /// Per-instance persistent damage decals (object space, body frame).
     /// Runtime VFX state only — never serialized to saves.
     DamageDecalRing decals;
+
+    /// Per-instance hull carve spheres (body frame, model units). Drives the
+    /// see-through breach holes and the interior voxel splat. Runtime VFX only
+    /// — never serialized to saves.
+    HullCarveField carve;
 
     /// Per-instance glow capsules (body frame, model units).
     /// Runtime VFX state only — never serialized. Fixed cap: a ship has at

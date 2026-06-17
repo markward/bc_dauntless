@@ -24,3 +24,11 @@ TEST(HullCarveField, EvictsWhenFull) {
     f.add({999000.f, 0, 0}, 50.0f);             // far away, large -> evicts a slot
     EXPECT_EQ(f.count(), HullCarveField::kMaxCarves);  // still capped, not grown
 }
+
+#include <scenegraph/instance.h>
+TEST(Instance, HasCarveField) {
+    scenegraph::Instance inst;
+    EXPECT_EQ(inst.carve.count(), 0u);
+    inst.carve.add({1,2,3}, 4.0f);
+    EXPECT_EQ(inst.carve.count(), 1u);
+}
