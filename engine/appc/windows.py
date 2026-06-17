@@ -310,6 +310,21 @@ class _STStylizedWindow(TGPane):
         # will consume _handler_registrations like _TopWindow does.
         self._handler_registrations.append((int(event_type), str(qualified_name)))
 
+    def ProcessEvent(self, event) -> None:
+        # The base TGEventHandlerObject.ProcessEvent dispatches from _handlers,
+        # but this class records handlers in _handler_registrations (kept as the
+        # introspection surface for the future click-dispatch spec). Dispatch
+        # from that list so the Close button's ET_INPUT_CLOSE_MENU event reaches
+        # MissionLib.CloseInfoBox + the mission's own handler.
+        from engine.appc.events import _resolve_handler
+        etype = event.GetEventType()
+        for reg_type, qualified_name in list(self._handler_registrations):
+            if reg_type != etype:
+                continue
+            fn = _resolve_handler(qualified_name)
+            if fn is not None:
+                fn(self, event)
+
     def InteriorChangedSize(self, *_args) -> None:
         # Inherited from TGPane; SDK fires this after AddChild in some
         # layout flows. Dauntless re-styles via slot CSS so no layout

@@ -1,0 +1,57 @@
+/* native/assets/ui-cef/css/info_box.css
+   Centred dauntless-styled modal stack for SDK info boxes. Re-style, not LCARS. */
+#sdk-infobox {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    pointer-events: none;       /* slot is transparent; modals re-enable */
+    z-index: 40;                /* above 3D scene + mirror, below pause menu */
+}
+.info-box-modal {
+    pointer-events: auto;
+    min-width: 340px;
+    max-width: 560px;
+    background: rgba(8, 18, 30, 0.92);
+    border: 1px solid #2f6f9f;
+    border-radius: 6px;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
+    color: #cfe6f5;
+    font-family: sans-serif;
+    padding: 14px 18px 16px;
+}
+.info-box-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: #8fd0ff;
+    border-bottom: 1px solid #2f6f9f;
+    padding-bottom: 6px;
+    margin-bottom: 10px;
+}
+.info-box-body {
+    font-size: 13px;
+    line-height: 1.5;
+}
+.info-box-key {
+    display: inline-block;
+    border: 1px solid #5a93bf;
+    border-radius: 3px;
+    padding: 0 5px;
+    margin: 0 2px;
+    font-weight: 600;
+    background: rgba(47, 111, 159, 0.25);
+}
+.info-box-close {
+    margin-top: 14px;
+    padding: 5px 16px;
+    background: rgba(47, 111, 159, 0.4);
+    color: #e6f3ff;
+    border: 1px solid #5a93bf;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+}
+.info-box-close:hover { background: rgba(90, 147, 191, 0.6); }

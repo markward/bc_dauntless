@@ -13,6 +13,7 @@
     <link rel="stylesheet" href="css/configuration_panel.css">
     <link rel="stylesheet" href="css/ship_property_viewer.css">
     <link rel="stylesheet" href="css/reticle_text.css">
+    <link rel="stylesheet" href="css/info_box.css">
 </head>
 <body>
     <!-- Target reticle text labels (name above box, range/speed below),
@@ -263,6 +264,9 @@
          Spec: docs/superpowers/specs/2026-06-03-cef-sdk-ui-mirror-design.md -->
     <div id="sdk-subtitle" class="sdk-mirror" hidden></div>
     <div id="sdk-stylized-stack" class="sdk-mirror"></div>
+    <!-- #sdk-infobox: centred modal stack for MissionLib info boxes.
+         Spec: docs/superpowers/specs/2026-06-17-sdk-info-box-rendering-design.md -->
+    <div id="sdk-infobox"></div>
 
     <script src="js/mission_picker.js"></script>
     <script src="js/pause_menu.js"></script>
@@ -276,5 +280,6 @@
     <script src="js/configuration_panel.js"></script>
     <script src="js/developer_options.js"></script>
     <script src="js/ship_property_viewer.js"></script>
+    <script src="js/info_box.js"></script>
 </body>
 </html>

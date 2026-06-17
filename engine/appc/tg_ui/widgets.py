@@ -27,6 +27,40 @@ def ensure_widget_id(widget) -> int:
     return wid
 
 
+# ── Wide-char (WC_*) constants ────────────────────────────────────────────────
+# SDK paragraph code points. BC's Appc exports a full table; the shim defines
+# only what scripts reference (faithful Unicode code points). WC_CURSOR marks an
+# inline child-widget insertion point — BC's real value is engine-internal and
+# never displayed, so a Unicode Private-Use-Area sentinel is used.
+WC_BACKSPACE = 8
+WC_TAB = 9
+WC_LINEFEED = 10
+WC_RETURN = 13
+WC_SPACE = 32
+WC_CURSOR = 0xE000
+
+_WC_TO_STR = {
+    WC_BACKSPACE: "",
+    WC_TAB: "\t",
+    WC_LINEFEED: "\n",
+    WC_RETURN: "\n",
+    WC_SPACE: " ",
+    WC_CURSOR: "",
+}
+
+
+def wc_to_str(wc) -> str:
+    """Map a WC_* code point to its display string (control codes → '' or
+    whitespace; printable code points → the character)."""
+    wc = int(wc)
+    if wc in _WC_TO_STR:
+        return _WC_TO_STR[wc]
+    try:
+        return chr(wc)
+    except (ValueError, OverflowError):
+        return ""
+
+
 class TGPane(TGEventHandlerObject):
     """Container widget. Width/height/(x, y) stored, never rendered."""
 
@@ -132,18 +166,64 @@ class TGIcon(TGPane):
 
 
 class TGParagraph(TGPane):
-    """Text widget — holds the string; font/scale/color stored, unused."""
+    """Text widget — holds the string; font/scale/color stored, unused.
+
+    The SDK passes paragraph flags (read-only, word-wrap, …) OR'd together as
+    the last arg to TGParagraph_Create/CreateW. They're opaque to us — never
+    decoded — so distinct bit values are all that's required."""
+
+    TGPF_READ_ONLY = 0x01
+    TGPF_INSERT_MODE = 0x02
+    TGPF_WORD_WRAP = 0x04
+    TGPF_RECALC_BOUNDS = 0x08
+    TGPF_FLAGS_MASK = 0x0F
 
     def __init__(self, text: str = "", scale: float = 1.0, color=None):
         super().__init__()
-        self._text = str(text)
+        # Ordered content stream: ("text", str) | ("char", int) | ("child", TGParagraph)
+        self._segments: list = []
+        if text:
+            self._segments.append(("text", str(text)))
         self._scale = float(scale)
         self._color = color
 
-    def GetText(self) -> str:           return self._text
-    def SetText(self, text) -> None:    self._text = str(text)
+    def AppendStringW(self, text) -> None:
+        self._segments.append(("text", str(text)))
+
+    # SDK also calls the non-W name in a few places.
+    AppendString = AppendStringW
+
+    def AppendChar(self, wc) -> None:
+        self._segments.append(("char", int(wc)))
+
+    def AddChild(self, child, x: float = 0.0, y: float = 0.0, *_extra) -> None:
+        # Keep the TGPane container contract (child lands on _children) AND
+        # record positionally in the segment stream so inline glyphs render
+        # in call order relative to surrounding text.
+        super().AddChild(child, x, y)
+        self._segments.append(("child", child))
+
+    def iter_segments(self) -> list:
+        """dauntless-internal: the ordered (kind, value) content stream."""
+        return list(self._segments)
+
+    def GetText(self) -> str:
+        out = []
+        for kind, val in self._segments:
+            if kind == "text":
+                out.append(val)
+            elif kind == "char":
+                out.append(wc_to_str(val))
+            elif kind == "child":
+                out.append(val.GetText())
+        return "".join(out)
+
+    def SetText(self, text) -> None:
+        self._segments = [("text", str(text))] if text else []
+
     # SDK W-variant setter name used by some callers.
-    def SetStringW(self, text) -> None: self._text = str(text)
+    SetStringW = SetText
+
     def SetFont(self, *args) -> None:   pass
     def SetColor(self, color) -> None:  self._color = color
 
