@@ -4,9 +4,7 @@
 #include <nif/block.h>
 
 #include <array>
-#include <cstdint>
 #include <unordered_map>
-#include <variant>
 #include <vector>
 
 namespace nif {
@@ -97,14 +95,15 @@ bool walk(const File& f,
 }
 
 // Find the index of the root block via pointer comparison (BlockHandle::ptr
-// points into f.blocks). Falls back to index 0 if root is null or not found.
+// points into f.blocks). Returns f.blocks.size() (an invalid index) when
+// root is null or not found, so callers can detect the unresolved case.
 std::size_t root_index(const File& f) {
     if (f.root.ptr) {
         for (std::size_t i = 0; i < f.blocks.size(); ++i) {
             if (&f.blocks[i] == f.root.ptr) return i;
         }
     }
-    return 0;
+    return f.blocks.size();  // sentinel: root did not resolve
 }
 
 }  // namespace
@@ -114,13 +113,17 @@ std::optional<SetCamera> find_first_camera(const File& f) {
     auto links = link_map(f);
     std::vector<bool> seen(f.blocks.size(), false);
     SetCamera out;
-    if (walk(f, links, root_index(f), Xform{}, seen, out)) return out;
-    // Root walk may miss cameras not under the declared root; sweep any
-    // unvisited NiCamera with identity-from-here as a fallback.
+    // Only do the root-anchored walk when the root actually resolves.
+    std::size_t root = root_index(f);
+    if (root < f.blocks.size()) {
+        if (walk(f, links, root, Xform{}, seen, out)) return out;
+    }
+    // Root walk may miss cameras not under the declared root (or the root
+    // did not resolve). Sweep remaining unvisited blocks, sharing `seen`
+    // so each block is visited at most once total.
     for (std::size_t i = 0; i < f.blocks.size(); ++i) {
         if (!seen[i]) {
-            std::vector<bool> seen2(f.blocks.size(), false);
-            if (walk(f, links, i, Xform{}, seen2, out)) return out;
+            if (walk(f, links, i, Xform{}, seen, out)) return out;
         }
     }
     return std::nullopt;

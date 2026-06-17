@@ -14,7 +14,7 @@
 namespace nif {
 
 struct SetCamera {
-    std::array<float, 3> position{0, 0, 0};   // world translation, model frame
+    std::array<float, 3> position{0, 0, 0};   // world-space translation (composed from the parent chain)
     std::array<float, 9> rotation{1, 0, 0, 0, 1, 0, 0, 0, 1};  // row-major
     std::array<float, 4> frustum{0, 0, 0, 0}; // left, right, top, bottom
     float near_distance = 0.0f;
