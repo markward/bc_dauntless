@@ -82,6 +82,9 @@ from engine.appc.bridge_set import (
     ZoomCameraObjectClass_Create,
     ZoomCameraObjectClass_GetObject,
     ModelManager,
+    CameraObjectClass,
+    CameraObjectClass_Create,
+    CameraObjectClass_CreateFromNiCamera,
 )
 from engine.appc.placement import (
     PlacementObject, Waypoint, Waypoint_Create,

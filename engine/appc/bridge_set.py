@@ -13,6 +13,7 @@ These are registered into the `App` namespace by App.py (explicit module
 attributes shadow App.py's `__getattr__` catch-all).
 """
 from engine.appc.sets import SetClass
+from engine.appc.math import TGMatrix3, TGPoint3
 
 
 class _LoudStub:
@@ -115,6 +116,82 @@ class ZoomCameraObjectClass(_LoudStub):
     def GetMaxZoom(self):  return self._max_zoom
     def GetZoomTime(self): return self._zoom_time
     def SetTranslateXYZ(self, x, y, z): self.position = (x, y, z)
+
+
+class _NiFrustum:
+    """Mutable frustum bounds, mirroring the engine's NiFrustum struct.
+    MissionLib.SetupBridgeSet reads these, scales each by 0.5, and writes
+    them back via SetNiFrustum."""
+    def __init__(self, left=0.0, right=0.0, top=0.0, bottom=0.0,
+                 near=0.0, far=0.0):
+        self.m_fLeft = left
+        self.m_fRight = right
+        self.m_fTop = top
+        self.m_fBottom = bottom
+        self.m_fNear = near
+        self.m_fFar = far
+
+
+class NiCameraData:
+    """Opaque handle the SDK passes from CloneCamera to
+    CameraObjectClass_CreateFromNiCamera. Holds the camera placement +
+    frustum parsed out of a set NIF (game units; rotation row-major,
+    column-vector convention)."""
+    def __init__(self, position, rotation, frustum, near, far, source=""):
+        self.position = tuple(position)      # (x, y, z) world, game units
+        self.rotation = tuple(rotation)      # 9 floats, row-major storage
+        self.frustum = tuple(frustum)        # (left, right, top, bottom)
+        self.near = near
+        self.far = far
+        self.source = source
+
+
+class CameraObjectClass:
+    """A set camera. Built either from an embedded NiCamera
+    (CameraObjectClass_CreateFromNiCamera) or from explicit coordinates
+    (CameraObjectClass_Create). Real, stateful data: the viewscreen's
+    SetRemoteCam consumes it. Comm-set rendering through it is not yet
+    built (flagged loudly under developer mode)."""
+    def __init__(self, name, position, orientation, frustum, near, far):
+        self._name = name
+        self.position = tuple(position)
+        self.orientation = orientation       # TGMatrix3 (column-vector)
+        self._frustum = frustum              # _NiFrustum
+        self._near = near
+        self._far = far
+
+    def GetNiFrustum(self):
+        return self._frustum
+
+    def SetNiFrustum(self, frustum):
+        self._frustum = frustum
+
+    def SetNearAndFarDistance(self, near, far):
+        self._near = near
+        self._far = far
+
+    def GetNearDistance(self):
+        return self._near
+
+    def GetFarDistance(self):
+        return self._far
+
+
+def CameraObjectClass_CreateFromNiCamera(niCamera, name):
+    left, right, top, bottom = niCamera.frustum
+    frustum = _NiFrustum(left, right, top, bottom, niCamera.near, niCamera.far)
+    orientation = TGMatrix3()
+    orientation.Set(*niCamera.rotation)      # row-major args
+    return CameraObjectClass(name, niCamera.position, orientation,
+                             frustum, niCamera.near, niCamera.far)
+
+
+def CameraObjectClass_Create(x, y, z, a, ax, ay, az, name):
+    """Fallback camera from explicit coords + angle-axis orientation. The SDK
+    overrides near/far via SetNearAndFarDistance; frustum starts default."""
+    orientation = TGMatrix3().MakeRotation(a, TGPoint3(ax, ay, az))
+    return CameraObjectClass(name, (x, y, z), orientation,
+                             _NiFrustum(), 1.0, 800.0)
 
 
 class ModelManager:
