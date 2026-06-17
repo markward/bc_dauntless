@@ -70,3 +70,24 @@ The updated decoder `ni_sdk/nibinaryvoxel_decode.py` returns `fillGrid`, `planes
 `bytes2`, `trailer`. On request we can dump, for any ship: the full per-slice byte
 regions of `bytes2`, the plane list, plane-component histograms, and cross-reference
 counts (numPlanes vs solid-nodes vs per-slice sizes) — say what would help.
+
+---
+
+## Cross-reference for the leaf-layout pass (Galaxy)
+
+Known-normal surface nodes matched to the palette by BOTH normal and `d`
+(`d ≈ n̂·pos`, `pos = aabbMin + (i+1,j+1,k+1)·cellSize`, ISO=64). These are the
+cell↔plane ground-truth pairs to pin the 12-byte leaf field order:
+
+| node (i,j,k) | GU pos | normal | palette idx | n̂ | d | residual |
+|---|---|---|---|---|---|---|
+| (13,4,0) | (−22.5,−247.5,−60) | −ẑ | **2247** | (0.186,0.121,−0.975) | 24.28 | **0.02 GU** |
+| (13,5,1) | (−22.5,−232.5,−45) | +ẑ | 417 | (−0.159,−0.207,0.965) | 9.29 | 0.92 GU |
+| (22,2,0) | (112.5,−277.5,−60) | +x̂ | 280 | (0.975,0.220,0.029) | 51.09 | 4.34 GU |
+| (7,2,0) | (−112.5,−277.5,−60) | −x̂ | 270 | (−0.975,0.220,0.029) | 51.09 | 4.34 GU |
+
+Palette axis-plane counts (|n̂·axis|>0.98): z=746, x=194, y=132 — hull-consistent
+(deck/saucer faces dominate). numPlanes(Galaxy)=3002, all unique.
+
+The `(13,4,0) → palette[2247]` pair (0.02 GU residual) is the cleanest anchor: find
+plane index 2247 in that cell's leaf record to identify the plane-index field.
