@@ -32,7 +32,9 @@ Per model, alongside the fill volume: the **plane palette** and a **cell→plane
 Per-instance mutable copy of the fill; a hit subtracts a smooth radial falloff inside the carve sphere (clamped at 0), giving a smooth cut surface. (2a stored carve spheres only; 2b needs the carved scalar volume.) Re-extract the dirty region after a carve.
 
 ### 5. Breach interior render (replaces 2a breach pass)
-Render the extracted interior mesh through the clipped holes: depth-test ON, interior material (muted, lightly lit — folds in the tone-down), so it reads as a solid breached cross-section and is visible only through breaches. The 2a colored-cube splat is removed.
+Render the extracted interior mesh through the clipped holes: depth-test ON, lit by the DC facet normals, so it reads as a solid breached cross-section and is visible only through breaches. The 2a colored-cube splat is removed.
+
+**Texturing — triplanar `Damage.tga`.** The DC mesh is generated geometry with **no UVs**, so it's textured by **triplanar projection** (project down the 3 body-space axes, blend by the facet normal). Content is BC's own **`game/data/Textures/Effects/Damage.tga`** (the texture the original used for damaged-interior shading) — muted (folding in the tone-down). The DC facet normals make the projection read as clean panels with blended edges. (A subtle emissive ember accent at deep/recent cuts is a later option; a fully-procedural material is the fallback if `Damage.tga` reads poorly.)
 
 ### 6. Tone-down (folded in)
 Reduce breach size/frequency (the 2a `hull_carve.py` knobs) and use the muted interior shading above — addresses the "too strong" + candy-color feedback as part of this work, not a separate effort.
