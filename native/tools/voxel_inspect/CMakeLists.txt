@@ -1,6 +1,6 @@
 add_executable(voxel_inspect main.cc)
 
-target_link_libraries(voxel_inspect PRIVATE nif)
+target_link_libraries(voxel_inspect PRIVATE voxel nif)
 
 # Block parsers self-register via static initializers in libnif.a; force the
 # whole archive in so every registration runs (NiBinaryVoxelData included).

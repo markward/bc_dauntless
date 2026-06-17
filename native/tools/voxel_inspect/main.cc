@@ -21,6 +21,8 @@
 
 #include <nif/file.h>
 #include <nif/block.h>
+#include <voxel/voxelize.h>
+#include <voxel/volume.h>
 
 #include <algorithm>
 #include <array>
@@ -490,6 +492,92 @@ int dump_hull_obj(const fs::path& hull_path, const fs::path& obj_path) {
     return 0;
 }
 
+// ---- OBJ point-cloud from decoded VoxelVolume --------------------------------
+// Loads a *_vox.nif, decodes NiBinaryVoxelData via voxel::from_nif_voxel_data,
+// and writes one OBJ "v x y z" vertex per solid node (occ > 0). No faces are
+// emitted — this is a pure point cloud for alignment verification.
+//
+// Node (i,j,k) center in body-frame = origin + (i+0.5, j+0.5, k+0.5) * cell
+// which, given origin = aabb_min + 0.5*cell_size (set by decode.cc), expands to:
+//   center_x = aabb_min[0] + (i+1)*cell_size
+//   center_y = aabb_min[1] + (j+1)*cell_size
+//   center_z = aabb_min[2] + (k+1)*cell_size
+
+int dump_decode_obj(const fs::path& vox_path, const fs::path& obj_path) {
+    nif::File f;
+    try { f = nif::load(vox_path); }
+    catch (const std::exception& e) {
+        std::fprintf(stderr, "vox load failed: %s\n", e.what());
+        return 1;
+    }
+
+    const nif::NiBinaryVoxelData* vd = find_voxel(f);
+    if (!vd) {
+        std::fprintf(stderr, "no NiBinaryVoxelData block found in %s\n",
+                     vox_path.string().c_str());
+        return 1;
+    }
+
+    voxel::VoxelVolume vol = voxel::from_nif_voxel_data(*vd);
+
+    // Count solids and compute point-cloud AABB for reporting.
+    std::size_t solid_count = 0;
+    Aabb pt_aabb;
+    const glm::ivec3 dims = vol.dims;
+    for (int k = 0; k < dims.z; ++k)
+        for (int j = 0; j < dims.y; ++j)
+            for (int i = 0; i < dims.x; ++i)
+                if (vol.occ[vol.index(i, j, k)] != 0) {
+                    ++solid_count;
+                    Vec3 c{
+                        vol.origin.x + (i + 0.5f) * vol.cell.x,
+                        vol.origin.y + (j + 0.5f) * vol.cell.y,
+                        vol.origin.z + (k + 0.5f) * vol.cell.z,
+                    };
+                    pt_aabb.add(c);
+                }
+
+    std::ofstream out(obj_path);
+    if (!out) {
+        std::fprintf(stderr, "cannot open output: %s\n", obj_path.string().c_str());
+        return 1;
+    }
+
+    out << "# voxel_inspect --dump-decode-obj\n";
+    out << "# source: " << vox_path.string() << '\n';
+    out << "# dims: " << dims.x << ' ' << dims.y << ' ' << dims.z << '\n';
+    out << "# solid_nodes: " << solid_count << '\n';
+
+    for (int k = 0; k < dims.z; ++k)
+        for (int j = 0; j < dims.y; ++j)
+            for (int i = 0; i < dims.x; ++i)
+                if (vol.occ[vol.index(i, j, k)] != 0) {
+                    float cx = vol.origin.x + (i + 0.5f) * vol.cell.x;
+                    float cy = vol.origin.y + (j + 0.5f) * vol.cell.y;
+                    float cz = vol.origin.z + (k + 0.5f) * vol.cell.z;
+                    out << "v " << cx << ' ' << cy << ' ' << cz << '\n';
+                }
+
+    out.flush();
+    out.close();
+
+    std::printf("decode-obj: %s\n", obj_path.string().c_str());
+    std::printf("  source: %s\n", vox_path.string().c_str());
+    std::printf("  dims=(%d,%d,%d)  solid_nodes=%zu\n",
+                dims.x, dims.y, dims.z, solid_count);
+    if (pt_aabb.valid) {
+        std::printf("  point_aabb min=(%.4f, %.4f, %.4f)\n",
+                    pt_aabb.lo.x, pt_aabb.lo.y, pt_aabb.lo.z);
+        std::printf("  point_aabb max=(%.4f, %.4f, %.4f)\n",
+                    pt_aabb.hi.x, pt_aabb.hi.y, pt_aabb.hi.z);
+    }
+    std::printf("  vox aabb_min=(%.4f, %.4f, %.4f)\n",
+                vd->aabb_min[0], vd->aabb_min[1], vd->aabb_min[2]);
+    std::printf("  vox aabb_max=(%.4f, %.4f, %.4f)\n",
+                vd->aabb_max[0], vd->aabb_max[1], vd->aabb_max[2]);
+    return 0;
+}
+
 }  // namespace
 
 // Run the two-ended anchoring and print a per-file report. Returns the
@@ -612,10 +700,11 @@ int main(int argc, char** argv) {
     if (argc < 2) {
         std::fprintf(stderr,
             "usage: %s <X_vox.nif> [X.nif (hull, for AABB compare)]\n"
-            "       %s --dump-hull-obj <hull.nif> <out.obj>  # export body-frame hull mesh\n"
-            "       %s --anchor <X_vox.nif>                  # two-ended payload anchoring\n"
-            "       %s --anchor-corpus <models_dir>          # anchor every *_vox.nif\n",
-            argv[0], argv[0], argv[0], argv[0]);
+            "       %s --dump-hull-obj <hull.nif> <out.obj>        # export body-frame hull mesh\n"
+            "       %s --dump-decode-obj <X_vox.nif> <out.obj>    # decoded fill-field point cloud\n"
+            "       %s --anchor <X_vox.nif>                        # two-ended payload anchoring\n"
+            "       %s --anchor-corpus <models_dir>                # anchor every *_vox.nif\n",
+            argv[0], argv[0], argv[0], argv[0], argv[0]);
         return 2;
     }
 
@@ -626,6 +715,15 @@ int main(int argc, char** argv) {
             return 2;
         }
         return dump_hull_obj(fs::path(argv[2]), fs::path(argv[3]));
+    }
+
+    // --dump-decode-obj mode
+    if (std::strcmp(argv[1], "--dump-decode-obj") == 0) {
+        if (argc < 4) {
+            std::fprintf(stderr, "--dump-decode-obj needs <X_vox.nif> <out.obj>\n");
+            return 2;
+        }
+        return dump_decode_obj(fs::path(argv[2]), fs::path(argv[3]));
     }
 
     // --anchor / --anchor-corpus modes
