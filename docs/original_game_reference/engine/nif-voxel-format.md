@@ -1,11 +1,14 @@
 # NiBinaryVoxelData — recovered binary format (BC `*_vox.nif`)
 
-Status: **DONE_WITH_CONCERNS.** The header (dimensions + bounds + cell size)
-is **fully solved with high confidence** and corpus-validated across all 62
-`*_vox.nif` files. The opaque voxel **payload encoding is characterized but
-NOT decoded** — enough structure is recovered to plan Task 8, but the exact
-unpacking procedure is unconfirmed and must be nailed down with the
-point-dump / IoU validation (Tasks 8–10) before any decoder is trusted.
+Status: **Container SOLVED; one codec remaining.** The header is fully solved
+(below). The payload **container layout is cleanroom-confirmed** — a standalone
+decoder (`ni_sdk/nibinaryvoxel_decode.py`, derived from niftools nif.xml +
+byte analysis, no NDL SDK source) parses **all 84** `*_vox.nif` files end-to-end
+with **zero slack** (the parse lands exactly on the trailing "End Of File"
+block). The one remaining unknown is the internal **occupancy-bitmask codec**
+(variable-length, compressed — see §4). See also the corpus table
+`nif-voxel-corpus-table.csv` and the cleanroom brief
+`nif-voxel-format-cleanroom-brief.md`.
 
 Investigation tool: `native/tools/voxel_inspect/` (`voxel_inspect <X_vox.nif> [X.nif]`).
 All numbers below are this tool's actual output plus corpus scripts.
@@ -110,7 +113,53 @@ subdivision finer than the coarse 15-GU lattice.
 
 ---
 
-## 4. Payload encoding — CHARACTERIZED, NOT DECODED
+## 4. Payload — container CONFIRMED, bitmask codec remaining
+
+### Container layout (cleanroom-confirmed; all 84 files parse with zero slack)
+
+After the 34-byte header, the payload is:
+
+```
+occupancyBitmask : byte[L]               # L implicit — recovered by two-ended closure
+numVectors       : uint32
+planes           : Vector4<f32>[numVectors]   # (n̂.x, n̂.y, n̂.z, d) — hull face planes
+numBytes2        : uint32
+bytes2           : byte[numBytes2]            # CSR-like offset-indexed table
+trailer          : uint32[5]
+```
+
+`L` is **not stored**; it is recovered by the constraint that the vector run
+ends exactly where `numBytes2` begins and the whole payload closes on the EOF
+block (the decoder does this; it succeeds on all 84 files).
+
+**Correction to an earlier guess:** the Vector4 records are **planes, not
+positions**. Every record has a unit-magnitude xyz (n̂); the 4th float is a
+signed plane distance `d` whose range exceeds the coordinate half-extents (so it
+cannot be a coordinate). These are the hull's supporting/face planes used for
+collision. Galaxy: 3002 planes; Shuttle: 526. There are no position vectors.
+
+**`bytes2` is a CSR-like table:** it opens with a `uint32` array of
+monotonically increasing offsets (Galaxy: 0, 56, 188, 328, 468, 664, …) — a
+prefix-sum index into a following data region. Record stride/semantics still
+need the corpus to pin.
+
+**The niflib `byte[7][12]`=84 "Unknown Bytes 1" field does not exist** — that is
+niflib's misparse of the variable-length `occupancyBitmask`. This single error
+is why niflib's `numVectors` read as garbage.
+
+### The remaining unknown — the occupancy-bitmask codec
+
+`occupancyBitmask` is bit-packed but **variable-length and compressed**, not a
+dense fixed-resolution grid:
+
+- Galaxy `L = 9926` bytes, 14 702 set bits; Shuttle `L = 7` bytes, **0** set
+  bits (a thin shuttle has no interior-solid cells — its slab is all-empty).
+- `L` is **not** `ceil(nx·ny·nz/8)` (that is 1667 for Galaxy, not 9926) and not
+  any padded fine-grid product: `9926 = 2·7·709`, 709 prime — no `fx·fy·fz` nor
+  row-padded factorization. An autocorrelation peak at stride 15 bytes plus the
+  un-factorable length point to a **per-slice convex-span or RLE encoding**, not
+  a dense grid. This is the last real unknown; the 84-file corpus table
+  (`nif-voxel-corpus-table.csv`) is the input for fitting it.
 
 ### What is observable (facts)
 
@@ -143,72 +192,50 @@ subdivision finer than the coarse 15-GU lattice.
   trailing-count interpretation closed the buffer. Treat that schema as a
   *hint that float-vector + byte sections exist*, not as the layout.
 
-### What the encoding probably is (HYPOTHESIS — unconfirmed)
+### Index / bit / axis order — HYPOTHESIS (confirm after codec is cracked)
 
-A two-part body: **(a)** a bit-packed occupancy slab over a finer grid (the
-shifting-bit-run region), followed by **(b)** per-occupied-voxel attribute data
-(floats = normal/position, plus the indexed tail table). The coarse
-(nx,ny,nz) shorts + AABB give the *outer* box; the occupancy bits define the
-finer solid fill; the float/index sections color it. **This is a hypothesis;
-the precise field order, the finer subdivision factor, the bit/axis order, and
-the record stride are all UNCONFIRMED.** Do not implement a decoder against
-this section as if it were spec.
-
-### Index / bit / axis order — HYPOTHESIS only
-
-Standard NetImmerse/voxel convention would be **X-fastest, then Y, then Z**
-(linear index `i = x + nx*(y + ny*z)`), bits packed LSB-first within each byte.
-The shifting-bit-run direction in the leading region is consistent with
-X-fastest packing, **but this is not confirmed.** It must be validated in
-Task 8/9 by dumping decoded occupied points back into body frame and checking
-they land inside the hull AABB and reproduce the hull silhouette (IoU).
+Standard NetImmerse convention is **X-fastest, then Y, then Z** (`i = x +
+nx*(y + ny*z)`), bits LSB-first within each byte. Consistent with the
+shifting-bit-run direction, **but unconfirmed** — because the slab is
+compressed, axis/bit order can only be confirmed once the codec is decoded and a
+slice is rendered against the hull cross-section (Task 9 point-dump).
 
 ---
 
-## 5. Open questions / unconfirmed (be honest before building Tasks 7–8)
+## 5. Status of the open questions
 
-1. **Exact payload field order.** Where does the occupancy slab end and the
-   attribute data begin? Is there an explicit count, or is it implied by the
-   occupancy bit total? **Unknown.**
-2. **Finer subdivision factor.** The coarse grid is (nx,ny,nz) at `cellsize`,
-   but the payload is far larger. Is each coarse cell subdivided (e.g. 2³, 4³),
-   or is there an independent fine grid resolution stored somewhere in the
-   leading bytes we currently treat as opaque? **Unknown** — this is the single
-   most important gap; the payload size cannot be predicted from the header
-   without it.
-3. **What the float vectors are.** Normals, positions, or both, and their
-   exact per-voxel record layout. The unit-magnitude entries are almost
-   certainly normals; the rest are spatial but unverified. **Unconfirmed.**
-4. **The tail index/value table.** Stride and meaning of the `u32`/`u16`
-   records (the ~0x39xx indices). **Unconfirmed.**
-5. **Bit and axis order.** X-fastest LSB-first is the working assumption only.
-   **Must be confirmed by point-dump.**
-6. **`NiBinaryVoxelExtraData.unknown_int`.** Always 0 in samples; purpose
-   unknown (harmless).
+| # | Question | Status |
+|---|----------|--------|
+| 1 | Payload field order | ✅ **CLOSED** — container confirmed (§4), all 84 files parse with zero slack |
+| 2 | The Vector4 records | ✅ **CLOSED** — they are **planes** `(n̂, d)`, not positions/normals-only; hull face planes |
+| 3 | `bytes2` tail | 🟡 **PARTIAL** — it's a CSR-like prefix-sum offset table; record stride/semantics need the corpus |
+| 4 | `NiBinaryVoxelExtraData.unknown_int` | ✅ **CLOSED** — vestigial reserved/bytes-remaining slot; write 0, ignore |
+| 5 | Occupancy-bitmask codec | ❌ **OPEN** — variable-length, compressed (per-slice convex-span or RLE); the one real remaining unknown |
+| 6 | Bit/axis order | ❌ **OPEN** — X-fastest LSB-first hypothesis; confirm via Task 9 point-dump once the codec is decoded |
 
-### What additional evidence would close these
+### What closes the remaining unknowns
 
-- A **known-trivial shape** vox file (a unit cube / single filled cell) would
-  expose the occupancy-section length and the per-voxel record stride directly.
-  Worth generating one if BC's runtime voxelizer can be coaxed, or hand-crafting
-  the simplest real file (Shuttle is the smallest at 2×2×1 coarse cells / 17.6 KB
-  and is the best existing probe target for Task 8).
-- The **point-dump + IoU validation** (Tasks 9–10): decode under the hypothesis,
-  project occupied voxels to body frame, and measure overlap with the hull mesh.
-  High IoU confirms dims/bounds/axis-order simultaneously and is the real gate
-  on the payload interpretation.
+The cleanroom needs corpus data, now produced: **`nif-voxel-corpus-table.csv`**
+— all 84 files with `(dims, cellSize, aabb-diagonal, L, popcount, numPlanes,
+numBytes2, trailer)`. The cellSize spread is now rich (1.0, 1.5, 2.0, 2.5, 4.5,
+15, 25, 30, 50, 85, 100), versus the single value (15) the first four samples
+had. With L and dims across 84 files the cleanroom can fit the bitmask
+resolution/codec rule and the cellSize-selection (generation) policy.
 
 ---
 
-## 6. Contract for Tasks 7–8 (what you can safely build on)
+## 6. Contract for downstream tasks
 
 **Safe to implement now (high confidence):**
-- Read 3 `u16` dims, 1 `f32` cell size, 3 `f32` min, 3 `f32` max.
+- Header: 3 `u16` dims, 1 `f32` cell size, 3 `f32` min, 3 `f32` max (34 bytes).
 - Grid AABB = [min, max]; resolution = (nx,ny,nz); cell edge = cellsize;
   `(max-min)/cellsize == (nx,ny,nz)` is an assertable invariant.
-- Body-frame world position of coarse cell (i,j,k) center =
-  `min + (i+0.5, j+0.5, k+0.5) * cellsize`.
+- Coarse cell (i,j,k) center = `min + (i+0.5, j+0.5, k+0.5) * cellsize`.
+- The **container** parse (bitmask length recovery, planes, bytes2, trailer) —
+  the `ni_sdk/nibinaryvoxel_decode.py` algorithm parses all 84 files.
 
-**NOT safe to implement yet (must pass Task 9/10 validation first):**
-- Any interpretation of `raw_voxel_payload` (occupancy, color, normals).
-  Keep it as opaque bytes until the point-dump confirms the unpacking.
+**NOT safe yet (blocked on the codec):**
+- Interpreting the `occupancyBitmask` bytes as a solid grid — the compression
+  codec is unresolved. Until it's cracked, the decoded occupancy (and hence the
+  faithful BC volume) is unavailable; our own voxelizer (Tasks 1–5) is the
+  volume source in the meantime.
