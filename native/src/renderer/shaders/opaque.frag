@@ -53,17 +53,31 @@ uniform float u_decal_time;                  // game-time seconds (ember clock)
 //
 // u_carve_enabled == 0 is the stock path (no sample, zero per-fragment cost).
 // u_carve_fill is GL_R8 (occ 0..127 sampled as occ/255.0 in [0,1]); the grid is
-// described by u_carve_origin/cell/dims (body frame, model units). A fragment
-// whose body position maps inside the grid and samples below u_carve_iso (=
-// 64/255) is INSIDE the carved cavity -> discard. Texcoords outside [0,1] clamp
-// to the edge node (intended: that clamp is what lets the surface hole appear
-// at the hull boundary).
+// described by u_carve_origin/cell/dims (body frame, model units).
+//
+// SPHERE GATE — the fill clip is only applied inside an active carve sphere.
+// Away from any carve the source fill approximately matches the hull surface,
+// but thin features (nacelle struts, saucer rim, pylons) can sample below iso
+// and get wrongly discarded (whole-hull erosion). The gate restricts the discard
+// to fragments that are inside at least one active carve sphere, so only the
+// region around a breach is ever clipped. The fill sample still shapes the
+// hole edge (= isosurface boundary = breach cavity boundary), keeping hole and
+// cavity aligned.
+//
+// u_carve_count == 0 (or u_carve_enabled == 0) disables the clip entirely.
 uniform sampler3D u_carve_fill;
 uniform int       u_carve_enabled;
 uniform vec3      u_carve_origin;   // body-frame min corner of voxel (0,0,0)
 uniform vec3      u_carve_cell;     // cell size per axis
 uniform ivec3     u_carve_dims;     // nx, ny, nz
 uniform float     u_carve_iso;      // 64.0/255.0 (matches DC isovalue 64)
+
+// Sphere gate: one entry per active carve impact. Only fragments inside a
+// sphere are candidates for the fill-clip discard. center_body.xyz in model
+// units; .w is the radius in model units.
+const int MAX_CARVES = 24;
+uniform int  u_carve_count;                    // 0 = no gate -> no clip
+uniform vec4 u_carve_spheres[MAX_CARVES];      // xyz=center_body, w=radius
 
 // ── Warp-nacelle glow dimming ───────────────────────────────────────────
 const int MAX_GLOW_REGIONS = 4;
@@ -286,18 +300,30 @@ void main() {
     // Body-frame fragment position (object-space carve + decals).
     vec3 p_body = (u_ship_world_inv * vec4(v_position_ws, 1.0)).xyz;
 
-    // ── Hull-breach carved-fill clip ────────────────────────────────────────
+    // ── Hull-breach carved-fill clip (sphere-gated) ─────────────────────────
     // Early-out BEFORE lighting/decals so carved fragments cost nothing beyond
-    // the fill sample. u_carve_enabled == 0 is the stock path (no sample).
-    // tc maps p_body into the carved-fill grid; sampling clamps outside [0,1].
-    if (u_carve_enabled != 0) {
-        vec3 grid = u_carve_cell * vec3(u_carve_dims);
-        vec3 tc   = (p_body - u_carve_origin) / grid;
-        // Only clip fragments that map INSIDE the carved-fill grid; fragments
-        // off the grid keep the stock hull (no spurious discard at clamp edges).
-        bool inside = all(greaterThanEqual(tc, vec3(0.0))) &&
-                      all(lessThanEqual(tc, vec3(1.0)));
-        if (inside && texture(u_carve_fill, tc).r < u_carve_iso) { discard; }
+    // the sphere test + fill sample.
+    // Gate: only discard if the fragment is inside at least one active carve
+    // sphere AND the fill sample is below iso. This prevents whole-hull erosion
+    // on thin features (nacelle struts, saucer rim, pylons) where the source
+    // fill only approximately matches the hull surface.
+    if (u_carve_enabled != 0 && u_carve_count > 0) {
+        bool in_carve = false;
+        for (int i = 0; i < u_carve_count; ++i) {
+            if (distance(p_body, u_carve_spheres[i].xyz) < u_carve_spheres[i].w) {
+                in_carve = true;
+                break;
+            }
+        }
+        if (in_carve) {
+            vec3 grid = u_carve_cell * vec3(u_carve_dims);
+            vec3 tc   = (p_body - u_carve_origin) / grid;
+            // Only clip fragments that map INSIDE the carved-fill grid; fragments
+            // off the grid keep the stock hull (no spurious discard at clamp edges).
+            bool inside = all(greaterThanEqual(tc, vec3(0.0))) &&
+                          all(lessThanEqual(tc, vec3(1.0)));
+            if (inside && texture(u_carve_fill, tc).r < u_carve_iso) { discard; }
+        }
     }
 
     vec3 lit_dir  = vec3(0.0);

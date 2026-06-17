@@ -205,13 +205,18 @@ void draw_model(const assets::Model& model,
         }
     }
 
-    // ── Hull-breach carved-fill clip ───────────────────────────────────────
+    // ── Hull-breach carved-fill clip (sphere-gated) ────────────────────────
     // Clip the hull by the per-instance CARVED FILL (the same 3D scalar field
-    // the breach DC mesh is extracted from) instead of the old carve spheres,
-    // so the see-through hole edge IS the breach isosurface boundary. The
-    // carved fill + its GL_R8 3D texture live in the shared CarveFieldCache
-    // (built/uploaded only on carve-version change), shared with the breach
-    // pass — no double build. u_carve_enabled == 0 is the stock path.
+    // the breach DC mesh is extracted from) so the see-through hole edge IS the
+    // breach isosurface boundary. The carved fill + its GL_R8 3D texture live
+    // in the shared CarveFieldCache (built/uploaded only on carve-version
+    // change), shared with the breach pass — no double build.
+    //
+    // SPHERE GATE: also upload the active carve spheres as u_carve_spheres so
+    // the shader only applies the fill discard inside a breach region. This
+    // prevents whole-hull erosion on thin features (nacelle struts, saucer rim,
+    // pylons) where the source fill approximately — but not exactly — matches
+    // the hull surface. u_carve_count == 0 disables the clip entirely.
     {
         const CarveFieldCache::Entry* ce = nullptr;
         if (dauntless_hull_damage::enabled() && carve_cache &&
@@ -236,9 +241,28 @@ void draw_model(const assets::Model& model,
             // Ensure u_ship_world_inv is set (p_body) even if this instance has
             // no decals and no glow regions.
             prog.set_mat4("u_ship_world_inv", glm::inverse(world));
+
+            // Upload the sphere gate: pack active carve slots into vec4
+            // (center_body.xyz, radius). u_carve_count == 0 → no gate → no clip.
+            {
+                static constexpr int kMaxCarves = 24;
+                glm::vec4 spheres[kMaxCarves];
+                int ns = 0;
+                for (const auto& s : carve.slots()) {
+                    if (!s.active) continue;
+                    if (ns >= kMaxCarves) break;
+                    spheres[ns] = glm::vec4(s.center_body, s.radius);
+                    ++ns;
+                }
+                prog.set_int("u_carve_count", ns);
+                if (ns > 0) {
+                    prog.set_vec4_array("u_carve_spheres", spheres, ns);
+                }
+            }
         } else {
             glBindTexture(GL_TEXTURE_3D, ensure_carve_fallback_3d());
             prog.set_int("u_carve_enabled", 0);
+            prog.set_int("u_carve_count", 0);
         }
         glActiveTexture(GL_TEXTURE0);
     }

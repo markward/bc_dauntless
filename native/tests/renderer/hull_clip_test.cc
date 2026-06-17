@@ -1,20 +1,25 @@
 // native/tests/renderer/hull_clip_test.cc
 //
-// Tests for the hull-breach CARVED-FILL clip (hull-breach-2b cross-pass unify).
+// Tests for the hull-breach CARVED-FILL clip, sphere-gated (hull-breach-2b).
 //
-// The 2a carve-SPHERE discard was replaced by a 3D-texture FILL clip: the hull
-// fragment shader samples the per-instance carved fill (GL_R8, occ 0..127
-// sampled as occ/255) at the fragment's body position and discards where the
-// sampled value < u_carve_iso (= 64/255).  The hole edge is then the carved-
-// fill isovalue boundary — exactly where the breach DC mesh sits.
+// The hull fragment shader samples the per-instance carved fill (GL_R8, occ
+// 0..127 sampled as occ/255) at the fragment's body position, BUT only discards
+// where BOTH conditions hold:
+//   (a) the fragment is inside at least one active carve sphere (sphere gate), AND
+//   (b) the sampled fill value < u_carve_iso (= 64/255).
+//
+// The sphere gate prevents whole-hull erosion on thin features (nacelle struts,
+// saucer rim, pylons) where the source fill only approximately matches the hull
+// surface.  The fill sample still shapes the hole edge (= isosurface boundary =
+// breach cavity boundary), keeping hole and cavity aligned.
 //
 // Test strategy: two layers.
 //
 // Layer 1 — CPU-only invariant (always runs, no GL):
 //   A default-constructed HullCarveField has zero active slots / count()==0.
 //   frame.cc only queries the carve cache (and sets u_carve_enabled=1) when
-//   carve.count() > 0, so a fresh instance produces u_carve_enabled == 0 and
-//   the shader's clip is skipped — the stock-path safety lock.
+//   carve.count() > 0, so a fresh instance produces u_carve_enabled == 0 /
+//   u_carve_count == 0 and the shader's clip is skipped — the stock-path lock.
 //
 // Layer 2 — GL compile + draw + readback (skips without a GL context):
 //   Draw a fullscreen triangle through the Pipeline's opaque program, reading
@@ -22,9 +27,11 @@
 //   the centre fragment maps to body (0,0,0).  A 1×1×1 carved-fill 3D texture
 //   placed over the origin (origin=(-1,-1,-1), cell=(2,2,2)) maps that fragment
 //   to tc=(0.5,0.5,0.5), inside [0,1].  Tests:
-//     A) u_carve_enabled = 0                  → hull renders (pixel non-zero)
-//     B) enabled, fill = 127 (>= iso, intact) → hull renders (pixel non-zero)
-//     C) enabled, fill = 0   (< iso, carved)  → fragment discarded (pixel zero)
+//     A) u_carve_enabled = 0                                → renders (no clip)
+//     B) enabled, fill = 127 (>= iso, intact)              → renders (fill pass)
+//     C) enabled, fill = 0 (<iso) + sphere covering origin → discarded (gate+fill)
+//     D) enabled, fill = 0 (<iso) + u_carve_count = 0      → renders (no gate =
+//        no erosion — the whole-hull-erosion regression guard)
 
 #include <gtest/gtest.h>
 
@@ -183,12 +190,17 @@ protected:
         s.set_float("u_carve_iso",
                     static_cast<float>(renderer::CarveFieldCache::kIsovalue) / 255.0f);
         s.set_int("u_carve_enabled", 0);
+        // Sphere gate: default to no active spheres (u_carve_count = 0).
+        // Tests that exercise the gate set these explicitly before drawing.
+        s.set_int("u_carve_count", 0);
         glActiveTexture(GL_TEXTURE0);
     }
 
     // Enable the fill clip with a 1×1×1 texture of value `occ` over the origin.
     // origin=(-1,-1,-1), cell=(2,2,2), dims=(1,1,1): the centre fragment
     // (p_body=(0,0,0)) maps to tc=(0.5,0.5,0.5), inside [0,1].
+    // u_carve_count is NOT set here — callers that need the sphere gate must call
+    // enable_sphere_gate() (or set_carve_count(0) to confirm no-gate behaviour).
     void enable_fill_clip(renderer::Shader& s, unsigned char occ) {
         if (fill_tex_) { glDeleteTextures(1, &fill_tex_); fill_tex_ = 0; }
         fill_tex_ = make_fill_tex(occ);
@@ -202,6 +214,16 @@ protected:
         s.set_ivec3("u_carve_dims",  glm::ivec3(1));
         s.set_float("u_carve_iso",
                     static_cast<float>(renderer::CarveFieldCache::kIsovalue) / 255.0f);
+    }
+
+    // Place one covering sphere centred at the origin with radius 2.0 (model
+    // units), enclosing p_body=(0,0,0) — the centre fragment.  Mirrors the gate
+    // upload in draw_model: vec4(center.xyz, radius).
+    void enable_sphere_gate(renderer::Shader& s) {
+        s.use();
+        const glm::vec4 sphere(0.0f, 0.0f, 0.0f, 2.0f);  // covers origin
+        s.set_int("u_carve_count", 1);
+        s.set_vec4_array("u_carve_spheres", &sphere, 1);
     }
 
     std::array<unsigned char, 4> read_center() const {
@@ -254,17 +276,40 @@ TEST_F(HullClipTest, IntactFillRendersHull) {
            "(intact hull region)";
 }
 
-// GL Test C: clip enabled, fill = 0 (< iso, carved cavity) → discarded.
-TEST_F(HullClipTest, CarvedFillDiscardsFragment) {
+// GL Test C: clip enabled, fill = 0 (< iso), fragment inside carve sphere →
+// discarded.  Both gate conditions are met: sphere covers origin AND fill < iso.
+TEST_F(HullClipTest, CarvedFillInsideSphereDiscardsFragment) {
     renderer::Shader& prog = pipeline->opaque_shader();
     set_uniforms(prog);
-    enable_fill_clip(prog, /*occ=*/0);     // 0 < 64/255 → inside the cavity
+    enable_fill_clip(prog, /*occ=*/0);  // 0 < 64/255 → inside the carved cavity
+    enable_sphere_gate(prog);           // sphere covers p_body=(0,0,0)
     draw();
 
-    EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error in carved-fill draw";
+    EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error in carved-fill+sphere draw";
     auto px = read_center();
     EXPECT_LT(px[0] + px[1] + px[2], 64)
         << "Center pixel is bright (R=" << (int)px[0] << " G=" << (int)px[1]
-        << " B=" << (int)px[2] << ") — fill 0 (< iso) should discard the "
-           "fragment (carved cavity)";
+        << " B=" << (int)px[2] << ") — fill 0 inside carve sphere should discard "
+           "(breach cavity)";
+}
+
+// GL Test D: clip enabled, fill = 0 (< iso) but NO carve sphere (u_carve_count=0)
+// → hull renders.  This is the whole-hull-erosion regression guard: without a
+// sphere gate the fill clip would discard thin hull features (nacelle struts,
+// saucer rim, pylons) away from any actual breach.
+TEST_F(HullClipTest, CarvedFillOutsideAllSpheresDoesNotDiscard) {
+    renderer::Shader& prog = pipeline->opaque_shader();
+    set_uniforms(prog);
+    enable_fill_clip(prog, /*occ=*/0);  // fill < iso — would erode without the gate
+    // Explicitly confirm no sphere gate (set_uniforms sets count=0 already, but
+    // be explicit so the intent is obvious).
+    prog.set_int("u_carve_count", 0);
+    draw();
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error in no-sphere-gate draw";
+    auto px = read_center();
+    EXPECT_GT(px[0] + px[1] + px[2], 128 * 3 / 2)
+        << "Center pixel is dark (R=" << (int)px[0] << " G=" << (int)px[1]
+        << " B=" << (int)px[2] << ") — fill<iso with no carve sphere must NOT "
+           "discard (no whole-hull erosion)";
 }
