@@ -9,7 +9,6 @@
 #include <glm/glm.hpp>
 
 #include <scenegraph/instance.h>  // InstanceId, ModelHandle
-#include <voxel/source_cache.h>
 #include <voxel/volume.h>
 
 namespace assets { struct Model; }
@@ -18,6 +17,7 @@ namespace scenegraph { class World; struct Camera; class HullCarveField; }
 namespace renderer {
 
 class Pipeline;
+class CarveFieldCache;
 
 /// Breach pass — dual-contour interior surface (hull-breach-2b, Task 6).
 ///
@@ -50,16 +50,20 @@ public:
     BreachPass& operator=(const BreachPass&) = delete;
 
     /// Iterate the world; for each Space-pass instance with carve spheres,
-    /// resolve its model -> source-hull fill + plane palette (via the owned
-    /// cache), build the carved fill, extract the DC surface (cached), and draw
-    /// it at the instance's world transform.
+    /// fetch its SHARED carved fill + plane palette from `carve_cache` (the same
+    /// carved fill the opaque-pass hull clip samples — no rebuild here), extract
+    /// the DC surface (cached by carve version), and draw it at the instance's
+    /// world transform. The carve cache is owned by the host and shared with the
+    /// opaque submit path so the hull hole and the DC cavity are ONE isosurface.
     void render(const scenegraph::World& world,
                 const scenegraph::Camera& camera,
                 Pipeline& pipeline,
-                const ModelLookup& lookup);
+                const ModelLookup& lookup,
+                CarveFieldCache& carve_cache);
 
     /// Lower-level entry: draw the breach interior surface for ONE instance
-    /// given its source fill, plane palette, carve field, and world transform.
+    /// given its SOURCE fill, plane palette, carve field, and world transform.
+    /// Builds the carved fill internally (via build_carved_fill) then extracts.
     /// `instance_key` identifies the per-instance mesh cache slot (so repeat
     /// calls with an unchanged carve version reuse the extracted mesh). Public
     /// so the GL render test can drive it with a synthetic volume without
@@ -72,6 +76,19 @@ public:
                        const glm::mat4& world_xf,
                        const scenegraph::Camera& camera,
                        Pipeline& pipeline);
+
+    /// Draw the breach interior for ONE instance from an ALREADY-CARVED fill
+    /// (no build_carved_fill — the carved fill comes from the shared cache).
+    /// `version` keys the per-instance DC-mesh cache (the cache's carve version).
+    /// Used by render(); the carve field is still needed for the triangle filter.
+    void draw_carved_instance(std::uintptr_t instance_key,
+                              std::uint64_t version,
+                              const voxel::VoxelVolume& carved,
+                              const std::vector<glm::vec4>& palette,
+                              const scenegraph::HullCarveField& carve,
+                              const glm::mat4& world_xf,
+                              const scenegraph::Camera& camera,
+                              Pipeline& pipeline);
 
     /// Copy `fill` and apply every active carve sphere (smooth-falloff
     /// carve_sphere). Pure CPU; exposed for testing the carve application.
@@ -114,8 +131,11 @@ private:
     };
 
     std::uint64_t carve_version(const scenegraph::HullCarveField& carve) const;
+    // Extract (or reuse) the DC mesh from an ALREADY-CARVED fill, keyed by
+    // `version` (the shared carve cache's version). No build_carved_fill.
     const CachedMesh& mesh_for(std::uintptr_t instance_key,
-                               const voxel::VoxelVolume& fill,
+                               std::uint64_t version,
+                               const voxel::VoxelVolume& carved,
                                const std::vector<glm::vec4>& palette,
                                const scenegraph::HullCarveField& carve);
 
@@ -126,7 +146,6 @@ private:
     bool         damage_tex_tried_ = false;  // lazy-load attempted
 
     std::unordered_map<std::uintptr_t, CachedMesh> mesh_cache_;
-    voxel::SourceVolumeCache source_cache_;
 };
 
 }  // namespace renderer

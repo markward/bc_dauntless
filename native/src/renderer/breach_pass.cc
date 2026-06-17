@@ -2,6 +2,7 @@
 #include <renderer/breach_pass.h>
 
 #include <renderer/pipeline.h>
+#include <renderer/carve_field_cache.h>
 #include <scenegraph/camera.h>
 #include <scenegraph/hull_carve.h>
 #include <scenegraph/instance.h>
@@ -35,14 +36,12 @@ namespace {
 constexpr const char* kDamageTgaPath =
     "game/data/Textures/Effects/Damage.tga";
 
-// Inflate each DC-mesh vertex along its outward normal by this many cell
-// widths before applying u_model. The dual-contour isosurface sits ~1 cell
-// inset from the real hull surface (lattice nodes live at cell centres, one
-// step inside the AABB), so without inflation the cavity rim is recessed
-// behind the clip hole and leaves a see-through gap near the breach edge.
-// 1.0 is the baseline; dial up/down visually if a thicker or thinner rim
-// is needed.
-static constexpr float kInflateCells = 1.0f;
+// Offset each DC-mesh vertex along its outward normal by this many cell widths
+// before applying u_model. With the hull now clipped by the SAME carved fill
+// the DC mesh is extracted from (hole == cavity, ONE isosurface), the rim
+// aligns by construction — no inflation needed, and any nonzero value would
+// reintroduce the very poke/gap mismatch this change removes. Keep at 0.
+static constexpr float kInflateCells = 0.0f;
 
 unsigned int load_damage_tga() {
     std::ifstream in(kDamageTgaPath, std::ios::binary);
@@ -170,27 +169,26 @@ std::uint64_t BreachPass::carve_version(
 
 const BreachPass::CachedMesh& BreachPass::mesh_for(
         std::uintptr_t instance_key,
-        const voxel::VoxelVolume& fill,
+        std::uint64_t version,
+        const voxel::VoxelVolume& carved,
         const std::vector<glm::vec4>& palette,
         const scenegraph::HullCarveField& carve) {
     CachedMesh& slot = mesh_cache_[instance_key];
-    const std::uint64_t version = carve_version(carve);
     if (slot.carve_version == version && version != 0) {
         return slot;  // unchanged carves -> reuse the extracted mesh
     }
 
-    // Re-extract: carve the fill, dual-contour it, then restrict to
+    // Re-extract: dual-contour the (already-carved) fill, then restrict to
     // triangles whose centroids fall within the active carve spheres.
     // The DC isosurface of the (mostly-uncarved) fill coincides with the hull
     // shell everywhere outside the craters; drawing the full mesh causes a
     // whole-hull "frosting" overlay.  Keeping only crater-region triangles
     // restricts the rendered surface to the actual breach cavity walls.
-    voxel::VoxelVolume carved = build_carved_fill(fill, carve);
     voxel::Mesh m = voxel::dual_contour(carved, kIsovalue, palette);
 
     // Margin = one cell diagonal so that cavity-wall triangles just outside a
     // carve sphere radius are not clipped.
-    const float margin = glm::length(fill.cell);
+    const float margin = glm::length(carved.cell);
     m.indices = filter_to_carves(m.positions, m.indices, carve, margin);
 
     slot.carve_version = version;
@@ -220,8 +218,27 @@ void BreachPass::draw_instance(std::uintptr_t instance_key,
                                const scenegraph::Camera& camera,
                                Pipeline& pipeline) {
     if (carve.count() == 0) return;
+    // Test / standalone path: build the carved fill here, then delegate to the
+    // shared draw core. Production goes through render() with the carved fill
+    // already built by the shared CarveFieldCache (no rebuild).
+    const std::uint64_t version = carve_version(carve);
+    voxel::VoxelVolume carved = build_carved_fill(fill, carve);
+    draw_carved_instance(instance_key, version, carved, palette, carve,
+                         world_xf, camera, pipeline);
+}
 
-    const CachedMesh& mesh = mesh_for(instance_key, fill, palette, carve);
+void BreachPass::draw_carved_instance(std::uintptr_t instance_key,
+                                      std::uint64_t version,
+                                      const voxel::VoxelVolume& carved,
+                                      const std::vector<glm::vec4>& palette,
+                                      const scenegraph::HullCarveField& carve,
+                                      const glm::mat4& world_xf,
+                                      const scenegraph::Camera& camera,
+                                      Pipeline& pipeline) {
+    if (carve.count() == 0) return;
+
+    const CachedMesh& mesh =
+        mesh_for(instance_key, version, carved, palette, carve);
     if (mesh.index_count == 0) return;
 
     ensure_mesh_buffers();
@@ -235,15 +252,13 @@ void BreachPass::draw_instance(std::uintptr_t instance_key,
     shader.set_int("u_damage_tex", 0);
     // Triplanar projection scale: 1 sample period over a few cells so the
     // texture reads as panel detail, not a single stretched splat.
-    const glm::vec3 c = fill.cell;
+    const glm::vec3 c = carved.cell;
     const float cell_avg = (c.x + c.y + c.z) / 3.0f;
     shader.set_float("u_tex_scale", cell_avg > 0.0f ? 1.0f / (cell_avg * 4.0f)
                                                      : 0.25f);
 
-    // Inflate the DC cavity outward by ~1 cell so its rim reaches the hull
-    // surface / clip-hole edge (plugs the ~1-cell see-through gap at the rim).
-    // The source fill has cubic cells, so any component gives the same size;
-    // fall back to cell_avg if a degenerate zero cell is encountered.
+    // No inflation: the hull is clipped by this same carved fill (hole ==
+    // cavity), so the rim aligns by construction (kInflateCells == 0).
     const float cell_size = (c.x > 0.0f) ? c.x : cell_avg;
     shader.set_float("u_inflate", cell_size * kInflateCells);
 
@@ -268,7 +283,8 @@ void BreachPass::draw_instance(std::uintptr_t instance_key,
 void BreachPass::render(const scenegraph::World& world,
                         const scenegraph::Camera& camera,
                         Pipeline& pipeline,
-                        const ModelLookup& lookup) {
+                        const ModelLookup& lookup,
+                        CarveFieldCache& carve_cache) {
     if (!dauntless_hull_damage::enabled()) return;
 
     // Depth-test ON, depth-write ON, no blend, CULL OFF (double-sided): the DC
@@ -292,18 +308,21 @@ void BreachPass::render(const scenegraph::World& world,
             const assets::Model* model = lookup(inst.model_handle);
             if (!model) return;
             if (model->source.empty()) return;
-            const voxel::VoxelVolume& fill =
-                source_cache_.get_for_hull(model->source);
-            if (fill.occ.empty()) return;
-            const std::vector<glm::vec4>& palette =
-                source_cache_.planes_for_hull(model->source);
-            ensure_state();
-            // Per-instance cache key: the instance's stable storage address.
-            // (A slot recycled to a different ship just re-extracts once.)
+            // Per-instance cache key: the instance's stable storage address —
+            // the SAME key the opaque submit path uses (reinterpret_cast of
+            // &inst), so the shared carved fill + 3D texture are built once and
+            // consumed by both passes.
             const std::uintptr_t key =
                 reinterpret_cast<std::uintptr_t>(&inst);
-            draw_instance(key, fill, palette, inst.carve, inst.world, camera,
-                          pipeline);
+            // Fetch the SHARED carved fill (already built + uploaded as the
+            // hull-clip 3D texture by the opaque pass; same version key).
+            const CarveFieldCache::Entry* ce =
+                carve_cache.get(key, model->source, inst.carve);
+            if (ce == nullptr || ce->palette == nullptr) return;
+            ensure_state();
+            draw_carved_instance(key, ce->carve_version, ce->carved,
+                                 *ce->palette, inst.carve, inst.world, camera,
+                                 pipeline);
         });
 
     // Restore default opaque-pass GL state only if we touched it. We re-assert

@@ -4,6 +4,9 @@
 #include "renderer/pipeline.h"
 #include "renderer/bone_palette.h"
 #include "renderer/shader.h"
+#include "renderer/carve_field_cache.h"
+
+#include <cstdint>
 
 #include <glad/glad.h>
 
@@ -84,6 +87,35 @@ namespace {
 
 namespace renderer {
 
+namespace {
+// A 1x1x1 GL_R8 "fully solid" (127) fallback 3D texture, lazily created and
+// kept for the process lifetime (GL-context-bound, same pattern as the damage
+// TGA fallback). ALWAYS bound to texture unit 3 with u_carve_fill -> 3 so the
+// opaque/skinned program's sampler3D references a valid 3D texture on a unit
+// distinct from the 2D samplers (0/1/2). Without this, when the clip is
+// disabled the sampler3D would default to unit 0 and collide with the 2D
+// u_base_color, raising GL_INVALID_OPERATION at draw time on strict drivers.
+std::uint32_t ensure_carve_fallback_3d() {
+    static std::uint32_t s_tex = 0;
+    if (s_tex != 0) return s_tex;
+    GLuint t = 0;
+    glGenTextures(1, &t);
+    glBindTexture(GL_TEXTURE_3D, t);
+    const std::uint8_t solid = 127;  // >= isovalue -> never discards
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexImage3D(GL_TEXTURE_3D, 0, GL_R8, 1, 1, 1, 0,
+                 GL_RED, GL_UNSIGNED_BYTE, &solid);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_3D, 0);
+    s_tex = t;
+    return s_tex;
+}
+}  // namespace
+
 void draw_model(const assets::Model& model,
                 const glm::mat4& world,
                 Shader& shader,
@@ -97,7 +129,9 @@ void draw_model(const assets::Model& model,
                 float decal_time,
                 float emissive_scale,
                 const std::vector<glm::mat4>& bone_palette,
-                const scenegraph::HullCarveField& carve) {
+                const scenegraph::HullCarveField& carve,
+                CarveFieldCache* carve_cache,
+                std::uintptr_t instance_key) {
     // Pick the program: skinned only when the model carries a skeleton AND a
     // non-empty palette is supplied. An empty palette forces the static branch,
     // which is byte-identical to the pre-skinning path (used by the plumbing
@@ -171,30 +205,42 @@ void draw_model(const assets::Model& model,
         }
     }
 
-    // ── Hull-breach carve spheres ──────────────────────────────────────────
-    // Upload center_body + radius as vec4 per active slot. u_carve_count == 0
-    // when the toggle is off or no carves exist, making the shader skip the
-    // loop entirely (stock path, byte-identical to pre-carve). The shader's
-    // body-frame position (p_body via u_ship_world_inv) is already uploaded
-    // by the decal or glow-region block above; if neither ran, upload it here
-    // so the carve distance check has a valid transform.
+    // ── Hull-breach carved-fill clip ───────────────────────────────────────
+    // Clip the hull by the per-instance CARVED FILL (the same 3D scalar field
+    // the breach DC mesh is extracted from) instead of the old carve spheres,
+    // so the see-through hole edge IS the breach isosurface boundary. The
+    // carved fill + its GL_R8 3D texture live in the shared CarveFieldCache
+    // (built/uploaded only on carve-version change), shared with the breach
+    // pass — no double build. u_carve_enabled == 0 is the stock path.
     {
-        glm::vec4 cv[scenegraph::HullCarveField::kMaxCarves];
-        int nc = 0;
-        if (dauntless_hull_damage::enabled()) {
-            for (const auto& s : carve.slots()) {
-                if (!s.active) continue;
-                cv[nc] = glm::vec4(s.center_body, s.radius);
-                ++nc;
-            }
+        const CarveFieldCache::Entry* ce = nullptr;
+        if (dauntless_hull_damage::enabled() && carve_cache &&
+            carve.count() > 0) {
+            ce = carve_cache->get(instance_key, model.source, carve);
         }
-        prog.set_int("u_carve_count", nc);
-        if (nc > 0) {
-            prog.set_vec4_array("u_carve", cv, nc);
-            // Ensure u_ship_world_inv is always set when carves are active,
-            // in case this instance has no decals and no glow regions.
+        // ALWAYS bind a 3D texture to unit 3 and point u_carve_fill there, so
+        // the sampler3D never aliases a 2D sampler unit (GL_INVALID_OPERATION).
+        // When the clip is disabled we bind the solid (127) fallback and set
+        // u_carve_enabled = 0 (the shader skips the sample entirely).
+        glActiveTexture(GL_TEXTURE3);
+        prog.set_int("u_carve_fill", 3);
+        if (ce != nullptr) {
+            glBindTexture(GL_TEXTURE_3D, ce->tex3d);
+            prog.set_int("u_carve_enabled", 1);
+            prog.set_vec3("u_carve_origin", ce->origin);
+            prog.set_vec3("u_carve_cell", ce->cell);
+            prog.set_ivec3("u_carve_dims", ce->dims);
+            // GL_R8: occ byte 0..127 samples as occ/255; iso 64 -> 64/255.
+            prog.set_float("u_carve_iso",
+                           static_cast<float>(CarveFieldCache::kIsovalue) / 255.0f);
+            // Ensure u_ship_world_inv is set (p_body) even if this instance has
+            // no decals and no glow regions.
             prog.set_mat4("u_ship_world_inv", glm::inverse(world));
+        } else {
+            glBindTexture(GL_TEXTURE_3D, ensure_carve_fallback_3d());
+            prog.set_int("u_carve_enabled", 0);
         }
+        glActiveTexture(GL_TEXTURE0);
     }
 
     // Walk nodes; each node may reference one or more meshes by index. The
@@ -283,6 +329,12 @@ void draw_model(const assets::Model& model,
         }
     }
     glBindVertexArray(0);
+    // Release the carve 3D texture binding on unit 3 and restore the active
+    // unit to 0 (the opaque-pass convention) so a following draw isn't left
+    // with a stale sampler3D bound.
+    glActiveTexture(GL_TEXTURE3);
+    glBindTexture(GL_TEXTURE_3D, 0);
+    glActiveTexture(GL_TEXTURE0);
 }
 
 FrameSubmitter::~FrameSubmitter() {
@@ -333,7 +385,8 @@ void FrameSubmitter::submit_opaque(const scenegraph::World& world,
                                    Pipeline& pipeline,
                                    const ModelLookup& lookup,
                                    const Lighting& lighting,
-                                   float decal_time) {
+                                   float decal_time,
+                                   CarveFieldCache* carve_cache) {
     // Per-frame uniforms common to the static AND skinned programs (view/proj,
     // camera, ambient, directional lights). The skinned vertex stage pairs with
     // opaque.frag, so the fragment-side uniforms are identical; applying the
@@ -376,7 +429,9 @@ void FrameSubmitter::submit_opaque(const scenegraph::World& world,
         if (m) draw_model(*m, inst.world, shader, pipeline.skinned_shader(),
                           white, black, rim_active,
                           inst.decals, inst.glow_regions, decal_time,
-                          inst.emissive_scale, palette, inst.carve);
+                          inst.emissive_scale, palette, inst.carve,
+                          carve_cache,
+                          reinterpret_cast<std::uintptr_t>(&inst));
     });
 }
 
@@ -386,7 +441,8 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
                                            const ModelLookup& lookup,
                                            const Lighting& lighting,
                                            scenegraph::Pass pass,
-                                           float decal_time) {
+                                           float decal_time,
+                                           CarveFieldCache* carve_cache) {
     // See submit_opaque: configure the common per-frame uniforms on BOTH the
     // static and skinned programs. The static-program set is unchanged.
     auto configure_common = [&](Shader& s) {
@@ -426,7 +482,9 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
         if (m) draw_model(*m, inst.world, shader, pipeline.skinned_shader(),
                           white, black, rim_active,
                           inst.decals, inst.glow_regions, decal_time,
-                          inst.emissive_scale, palette, inst.carve);
+                          inst.emissive_scale, palette, inst.carve,
+                          carve_cache,
+                          reinterpret_cast<std::uintptr_t>(&inst));
     });
 }
 

@@ -15,7 +15,7 @@
 namespace assets { struct Model; }
 namespace scenegraph { class World; struct Camera; enum class Pass : std::uint8_t;
                        class DamageDecalRing; }
-namespace renderer { class Pipeline; class Shader; }
+namespace renderer { class Pipeline; class Shader; class CarveFieldCache; }
 
 namespace renderer {
 
@@ -193,7 +193,9 @@ void draw_model(const assets::Model& model,
                 float decal_time,
                 float emissive_scale,
                 const std::vector<glm::mat4>& bone_palette,
-                const scenegraph::HullCarveField& carve);
+                const scenegraph::HullCarveField& carve,
+                CarveFieldCache* carve_cache,
+                std::uintptr_t instance_key);
 
 class FrameSubmitter {
 public:
@@ -212,7 +214,8 @@ public:
                        Pipeline& pipeline,
                        const ModelLookup& lookup,
                        const Lighting& lighting,
-                       float decal_time = 0.0f);
+                       float decal_time = 0.0f,
+                       CarveFieldCache* carve_cache = nullptr);
 
     /// Like submit_opaque but only iterates instances tagged with `pass`.
     /// Used by the space pass to exclude bridge-tagged geometry, which
@@ -223,7 +226,8 @@ public:
                                const ModelLookup& lookup,
                                const Lighting& lighting,
                                scenegraph::Pass pass,
-                               float decal_time = 0.0f);
+                               float decal_time = 0.0f,
+                               CarveFieldCache* carve_cache = nullptr);
 
 private:
     /// Lazily-allocated 1x1 white texture used as a fallback when a material

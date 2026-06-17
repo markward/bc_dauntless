@@ -101,6 +101,11 @@ void Shader::set_int(const std::string& name, int v) const {
     if (loc >= 0) glUniform1i(loc, v);
 }
 
+void Shader::set_ivec3(const std::string& name, const glm::ivec3& v) const {
+    GLint loc = glGetUniformLocation(program_, name.c_str());
+    if (loc >= 0) glUniform3i(loc, v.x, v.y, v.z);
+}
+
 void Shader::set_float(const std::string& name, float v) const {
     GLint loc = glGetUniformLocation(program_, name.c_str());
     if (loc >= 0) glUniform1f(loc, v);

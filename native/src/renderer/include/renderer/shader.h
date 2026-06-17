@@ -24,6 +24,7 @@ public:
     void set_vec4(const std::string& name, const glm::vec4& v) const;
     void set_vec2(const std::string& name, const glm::vec2& v) const;
     void set_int(const std::string& name, int v) const;
+    void set_ivec3(const std::string& name, const glm::ivec3& v) const;
     void set_float(const std::string& name, float v) const;
 
     /// Set a `vec3[]` uniform with `count` consecutive elements. The data
