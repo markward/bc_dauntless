@@ -62,6 +62,13 @@ void main() {
     vec3 body_pos = u_carve_center
                   + lateral * r_eff
                   + nrm * (along * kDepthFactor * u_carve_radius);
+    // Contain to the hull: project any part above the impact tangent plane back
+    // down onto it. The oblate's outward half (and the fat-fill balloon) would
+    // otherwise rise proud of the hull; this keeps the breach flush at the
+    // surface with the interior recessed below — never above the hull line
+    // (matches stock BC).
+    float above = dot(body_pos - u_carve_center, nrm);
+    if (above > 0.0) body_pos -= above * nrm;
     vec4 world    = u_model * vec4(body_pos, 1.0);
     v_body_pos    = body_pos;
     v_body_normal = a_pos;              // unit-sphere outward normal in body frame
