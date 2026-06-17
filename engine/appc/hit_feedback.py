@@ -69,8 +69,9 @@ _last_decal_emit: dict = {}  # (id(ship), weapon_class) -> last emit game-time
 # id(ship) only (a carve is weapon-agnostic geometry, unlike a decal class).
 _last_carve_time: dict = {}  # id(ship) -> last emit game-time
 
-# Feature toggle for hull carve emission. Task 7 will wire this to the config
-# panel; for now default True so the binding fires in dev mode.
+# Feature toggle for hull carve emission. Driven by the "Hull breaches"
+# Modern-VFX config toggle via engine.renderer.set_hull_damage_enabled (which
+# flips this flag and the C++ render gate together). Default on.
 _HULL_CARVE_ENABLED = True
 
 
