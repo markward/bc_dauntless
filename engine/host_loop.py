@@ -61,6 +61,7 @@ from engine.appc import (
     camera_shake,
     hit_feedback,
     combat,
+    damage_eligibility,
 )
 # combat is imported as a module (not `from combat import apply_hit`) so call
 # sites read combat.apply_hit at call time — tests monkeypatch that attribute.
@@ -323,6 +324,11 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
     SHIELD severity path.
     """
     ships_list = list(ships)
+
+    # Refresh damage-carve eligibility for this tick before any hits are
+    # processed: player always + capped nearest/largest ships.
+    # See engine.appc.damage_eligibility.
+    damage_eligibility.update(ships_list)
 
     hits = projectiles.update_all(
         dt, ships_list,
@@ -1978,6 +1984,8 @@ class HostController:
         subsystem_emitters.reset_manager()
         from engine.appc import particles
         particles.reset()
+        damage_eligibility.reset()
+        hit_feedback._last_carve_time.clear()
         reset_sdk_globals()
         if self.panel_registry is not None:
             self.panel_registry.invalidate_all()

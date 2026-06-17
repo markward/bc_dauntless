@@ -65,6 +65,18 @@ def spark_params(*, weapon_type, severity, absorbed_hull):
 DECAL_EMIT_INTERVAL = 0.2  # game-time seconds between decals per (ship, class)
 _last_decal_emit: dict = {}  # (id(ship), weapon_class) -> last emit game-time
 
+# Hull-carve emission throttle, parallel to _last_decal_emit. Keyed by
+# id(ship) only (a carve is weapon-agnostic geometry, unlike a decal class).
+_last_carve_time: dict = {}  # id(ship) -> last emit game-time
+
+# Feature toggle for hull carve emission. Task 7 will wire this to the config
+# panel; for now default True so the binding fires in dev mode.
+_HULL_CARVE_ENABLED = True
+
+
+def _hull_carve_enabled() -> bool:
+    return _HULL_CARVE_ENABLED
+
 
 def classify(*, absorbed_shields: float, absorbed_subsystem: float,
              absorbed_hull: float, sub_transition,
@@ -248,6 +260,32 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
                     weapon_class=wclass,
                     time=now,
                 )
+
+    # 5. Hull carve (breach): heavier than scorch; eligible ships only; throttled.
+    # Same hull-absorbing, mesh-normal, renderer-present, committed-hit gating
+    # as the decal, PLUS: the hit must clear MIN_CARVE_HULL and the target must
+    # be damage-eligible (player + capped nearest/largest; see
+    # engine.appc.damage_eligibility).
+    if (absorbed_hull > 0.0 and normal is not None and persist_decal
+            and host is not None and ship_instances is not None
+            and hasattr(host, "hull_carve_add")):
+        from engine.appc import hull_carve, damage_eligibility, damage_decals
+        if (hull_carve.should_carve(absorbed_hull)
+                and damage_eligibility.is_eligible(ship)
+                and _hull_carve_enabled()):
+            iid = ship_instances.get(ship)
+            if iid is not None:
+                now = damage_decals.current_game_time()
+                ship_key = id(ship)
+                if now - _last_carve_time.get(ship_key, -1e9) >= hull_carve.CARVE_EMIT_INTERVAL:
+                    _last_carve_time[ship_key] = now
+                    host.hull_carve_add(
+                        iid,
+                        (point.x, point.y, point.z),
+                        (normal.x, normal.y, normal.z),
+                        hull_carve.carve_radius_gu(radius),
+                        now,
+                    )
 
 
 def _play_audio(severity: Severity, point, weapon_type: str | None = None) -> None:
