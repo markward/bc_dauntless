@@ -109,7 +109,19 @@ class InfoBoxPanel(Panel):
         return "setInfoBoxes(" + payload + ");"
 
     def dispatch_event(self, action: str) -> bool:
-        # Implemented in Task 5.
+        if action.startswith("close:"):
+            box_id = action[len("close:"):]
+            box = self._boxes_by_id.get(box_id)
+            if box is None:
+                # Box rebuilt/removed between frames — drop; next snapshot
+                # repairs the UI.
+                _logger.info("info-box: stale close id %s dropped", box_id)
+                return True
+            from engine.appc.characters import STButton
+            button = _find_first(box, lambda w: isinstance(w, STButton))
+            if button is not None:
+                button.SendActivationEvent()
+            return True
         return False
 
     def invalidate(self) -> None:
