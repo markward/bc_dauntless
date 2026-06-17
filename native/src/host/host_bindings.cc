@@ -507,6 +507,10 @@ namespace dauntless_rim {
 namespace dauntless_decals {
     void set_enabled(bool v);  // defined in frame.cc
 }
+// Toggle for the hull-breach renderer pass. Defined in frame.cc.
+namespace dauntless_hull_damage {
+    void set_enabled(bool v);  // defined in frame.cc
+}
 
 static renderer::PhaserBeamDescriptor beam_from_dict(const py::dict& d) {
     renderer::PhaserBeamDescriptor b;
@@ -1310,6 +1314,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](bool enabled) { dauntless_decals::set_enabled(enabled); },
           py::arg("enabled"),
           "Enable/disable persistent hull damage decals (default on).");
+    m.def("hull_damage_set_enabled",
+          [](bool enabled) { dauntless_hull_damage::set_enabled(enabled); },
+          py::arg("enabled"),
+          "Enable/disable hull-breach renderer pass (default on).");
     m.def("fxaa_set_enabled",
           [](bool enabled) { g_fxaa_enabled = enabled; },
           py::arg("enabled"),

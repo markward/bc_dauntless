@@ -2703,6 +2703,7 @@ def run(mission_name: Optional[str] = None,
                 hdr_on=True,
                 rim_on=True,
                 decals_on=True,
+                hull_damage_on=True,
                 fxaa_on=True,
                 fov_deg=int(round(_math.degrees(
                     director.fov_y_rad
@@ -2713,6 +2714,7 @@ def run(mission_name: Optional[str] = None,
             set_hdr=r.set_hdr_enabled,
             set_rim=r.set_rim_enabled,
             set_decals=r.set_decals_enabled,
+            set_hull_damage=r.set_hull_damage_enabled,
             set_fxaa=r.set_fxaa_enabled,
             set_fov_rad=director.set_fov,
         )
