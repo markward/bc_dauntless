@@ -12,8 +12,13 @@ menu/handler/camera-mode surface stays a silent `_LoudStub` no-op.
 These are registered into the `App` namespace by App.py (explicit module
 attributes shadow App.py's `__getattr__` catch-all).
 """
+from pathlib import Path as _Path
+
 from engine.appc.sets import SetClass
 from engine.appc.math import TGMatrix3, TGPoint3
+
+# bridge_set.py lives at engine/appc/ -> project root is two parents up.
+_GAME_ROOT = _Path(__file__).resolve().parent.parent.parent / "game"
 
 
 class _LoudStub:
@@ -208,20 +213,34 @@ class ModelManager:
         return None
 
     def CloneCamera(self, path):
-        """The real engine clones an NiCamera embedded in the set NIF, or
-        returns None when the model has none. Some set NIFs DO carry one
-        (e.g. starbasecontrolRM.nif has 'Camera01'); the player bridges do
-        not (DBridge/EBridge have no NiCamera — which is exactly why
-        MissionLib.SetupBridgeSet hardcodes their camera coords in the None
-        branch). We return None unconditionally for now: the NIF parser reads
-        NiCamera fine, but the *consuming* SDK surface
-        (CameraObjectClass_CreateFromNiCamera + Get/SetNiFrustum) is not yet
-        implemented, and no set other than the player "bridge" has its
-        maincamera consumed by the renderer. None routes to SetupBridgeSet's
-        well-defined fallback (explicit camera coords) and is crash-free.
-        When the comm/viewscreen-set render path lands, implement the clone
-        path and return the parsed Camera01."""
-        return None
+        """Return the camera embedded in the set NIF, or None when the model
+        has none / the renderer isn't present.
+
+        Some set NIFs carry a camera (e.g. starbasecontrolRM.nif has
+        'Camera01'); the player bridges do not (DBridge/EBridge), which is
+        why MissionLib.SetupBridgeSet hardcodes their coords in the None
+        branch. Parsing happens C++-side via the parse-only host binding; in
+        headless tests (no compiled module) we return None and the SDK takes
+        its fallback branch."""
+        try:
+            import _dauntless_host
+        except ImportError:
+            return None
+        if _dauntless_host is None or not hasattr(_dauntless_host,
+                                                  "parse_set_camera"):
+            return None
+        nif_abs = str(_GAME_ROOT / path)
+        data = _dauntless_host.parse_set_camera(nif_abs)
+        if data is None:
+            return None
+        return NiCameraData(
+            position=data["position"],
+            rotation=data["rotation"],
+            frustum=data["frustum"],
+            near=data["near"],
+            far=data["far"],
+            source=path,
+        )
 
     def env_for(self, path):
         return self._env.get(path)

@@ -54,6 +54,8 @@
 #include <assets/cache.h>
 #include <assets/model_compose.h>
 #include <assets/texture.h>
+#include <nif/file.h>
+#include <nif/scene_camera.h>
 
 #include <glm/gtc/type_ptr.hpp>
 #include <array>
@@ -590,6 +592,34 @@ static renderer::PhaserBeamDescriptor beam_from_dict(const py::dict& d) {
     return b;
 }
 
+// Parse-only: extract the embedded set camera (frustum + world transform)
+// from a NIF without any GL context or asset-cache entry. Feeds
+// MissionLib.SetupBridgeSet's embedded-camera path via ModelManager.CloneCamera.
+py::object parse_set_camera_impl(const std::string& nif_abs_path) {
+    std::filesystem::path path = nif_abs_path;
+    if (!std::filesystem::exists(path)) return py::none();
+    nif::File f;
+    try {
+        f = nif::load(path);
+    } catch (const std::exception&) {
+        return py::none();
+    }
+    auto cam = nif::find_first_camera(f);
+    if (!cam.has_value()) return py::none();
+    py::dict d;
+    d["position"] = py::make_tuple(cam->position[0], cam->position[1],
+                                   cam->position[2]);
+    d["rotation"] = py::make_tuple(
+        cam->rotation[0], cam->rotation[1], cam->rotation[2],
+        cam->rotation[3], cam->rotation[4], cam->rotation[5],
+        cam->rotation[6], cam->rotation[7], cam->rotation[8]);
+    d["frustum"] = py::make_tuple(cam->frustum[0], cam->frustum[1],
+                                  cam->frustum[2], cam->frustum[3]);
+    d["near"] = cam->near_distance;
+    d["far"] = cam->far_distance;
+    return d;
+}
+
 PYBIND11_MODULE(_dauntless_host, m) {
     m.doc() = "dauntless renderer + sim host bindings";
 
@@ -606,6 +636,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("frame", &frame);
     m.def("load_model", &load_model_impl,
           py::arg("nif_path"), py::arg("texture_search_path"));
+    m.def("parse_set_camera", &parse_set_camera_impl,
+          "Extract the embedded camera (frustum + world transform) from a set "
+          "NIF, or None. Parse-only; no GL context required.");
 
     py::class_<scenegraph::InstanceId>(m, "InstanceId")
         .def_readonly("index", &scenegraph::InstanceId::index)

@@ -71,3 +71,29 @@ def test_setupbridgeset_fallback_branch_when_no_camera(monkeypatch):
                         lambda self, path: None)
     pSet = MissionLib.SetupBridgeSet("CamTestSet2", "nocam.nif", -35, 65, -1.55)
     assert pSet.GetCamera("maincamera") is not None
+
+
+def test_clonecamera_returns_none_without_host_module(monkeypatch):
+    """Headless: the compiled host module is absent -> None (SDK fallback)."""
+    import sys
+    import App
+    monkeypatch.setitem(sys.modules, "_dauntless_host", None)
+    assert App.g_kModelManager.CloneCamera("data/Models/Sets/X/x.nif") is None
+
+
+def test_clonecamera_wraps_binding_result(monkeypatch):
+    import sys
+    import types
+    import App
+    fake = types.ModuleType("_dauntless_host")
+    fake.parse_set_camera = lambda p: {
+        "position": (1.0, 2.0, 3.0),
+        "rotation": (1, 0, 0, 0, 1, 0, 0, 0, 1),
+        "frustum": (-0.5, 0.5, 0.4, -0.4),
+        "near": 1.0, "far": 800.0,
+    }
+    monkeypatch.setitem(sys.modules, "_dauntless_host", fake)
+    data = App.g_kModelManager.CloneCamera("data/Models/Sets/X/x.nif")
+    assert data is not None
+    assert data.position == (1.0, 2.0, 3.0)
+    assert data.frustum == (-0.5, 0.5, 0.4, -0.4)
