@@ -87,35 +87,6 @@ namespace {
 
 namespace renderer {
 
-namespace {
-// A 1x1x1 GL_R8 "fully solid" (127) fallback 3D texture, lazily created and
-// kept for the process lifetime (GL-context-bound, same pattern as the damage
-// TGA fallback). ALWAYS bound to texture unit 3 with u_carve_fill -> 3 so the
-// opaque/skinned program's sampler3D references a valid 3D texture on a unit
-// distinct from the 2D samplers (0/1/2). Without this, when the clip is
-// disabled the sampler3D would default to unit 0 and collide with the 2D
-// u_base_color, raising GL_INVALID_OPERATION at draw time on strict drivers.
-std::uint32_t ensure_carve_fallback_3d() {
-    static std::uint32_t s_tex = 0;
-    if (s_tex != 0) return s_tex;
-    GLuint t = 0;
-    glGenTextures(1, &t);
-    glBindTexture(GL_TEXTURE_3D, t);
-    const std::uint8_t solid = 127;  // >= isovalue -> never discards
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    glTexImage3D(GL_TEXTURE_3D, 0, GL_R8, 1, 1, 1, 0,
-                 GL_RED, GL_UNSIGNED_BYTE, &solid);
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-    glBindTexture(GL_TEXTURE_3D, 0);
-    s_tex = t;
-    return s_tex;
-}
-}  // namespace
-
 void draw_model(const assets::Model& model,
                 const glm::mat4& world,
                 Shader& shader,
@@ -130,8 +101,8 @@ void draw_model(const assets::Model& model,
                 float emissive_scale,
                 const std::vector<glm::mat4>& bone_palette,
                 const scenegraph::HullCarveField& carve,
-                CarveFieldCache* carve_cache,
-                std::uintptr_t instance_key) {
+                CarveFieldCache* /*carve_cache*/,
+                std::uintptr_t /*instance_key*/) {
     // Pick the program: skinned only when the model carries a skeleton AND a
     // non-empty palette is supplied. An empty palette forces the static branch,
     // which is byte-identical to the pre-skinning path (used by the plumbing
@@ -205,66 +176,34 @@ void draw_model(const assets::Model& model,
         }
     }
 
-    // ── Hull-breach carved-fill clip (sphere-gated) ────────────────────────
-    // Clip the hull by the per-instance CARVED FILL (the same 3D scalar field
-    // the breach DC mesh is extracted from) so the see-through hole edge IS the
-    // breach isosurface boundary. The carved fill + its GL_R8 3D texture live
-    // in the shared CarveFieldCache (built/uploaded only on carve-version
-    // change), shared with the breach pass — no double build.
-    //
-    // SPHERE GATE: also upload the active carve spheres as u_carve_spheres so
-    // the shader only applies the fill discard inside a breach region. This
-    // prevents whole-hull erosion on thin features (nacelle struts, saucer rim,
-    // pylons) where the source fill approximately — but not exactly — matches
-    // the hull surface. u_carve_count == 0 disables the clip entirely.
+    // ── Hull-breach hole: pure sphere clip ────────────────────────────────
+    // Upload the active carve spheres as u_carve_spheres. The opaque.frag
+    // shader discards hull fragments inside any active sphere. No fill texture
+    // needed — the sphere IS the clip primitive (Path C). u_carve_count == 0
+    // disables the clip entirely (stock-BC path).
     {
-        const CarveFieldCache::Entry* ce = nullptr;
-        if (dauntless_hull_damage::enabled() && carve_cache &&
-            carve.count() > 0) {
-            ce = carve_cache->get(instance_key, model.source, carve);
-        }
-        // ALWAYS bind a 3D texture to unit 3 and point u_carve_fill there, so
-        // the sampler3D never aliases a 2D sampler unit (GL_INVALID_OPERATION).
-        // When the clip is disabled we bind the solid (127) fallback and set
-        // u_carve_enabled = 0 (the shader skips the sample entirely).
-        glActiveTexture(GL_TEXTURE3);
-        prog.set_int("u_carve_fill", 3);
-        if (ce != nullptr) {
-            glBindTexture(GL_TEXTURE_3D, ce->tex3d);
+        if (dauntless_hull_damage::enabled() && carve.count() > 0) {
+            static constexpr int kMaxCarves = 24;
+            glm::vec4 spheres[kMaxCarves];
+            int ns = 0;
+            for (const auto& s : carve.slots()) {
+                if (!s.active) continue;
+                if (ns >= kMaxCarves) break;
+                spheres[ns] = glm::vec4(s.center_body, s.radius);
+                ++ns;
+            }
             prog.set_int("u_carve_enabled", 1);
-            prog.set_vec3("u_carve_origin", ce->origin);
-            prog.set_vec3("u_carve_cell", ce->cell);
-            prog.set_ivec3("u_carve_dims", ce->dims);
-            // GL_R8: occ byte 0..127 samples as occ/255; iso 64 -> 64/255.
-            prog.set_float("u_carve_iso",
-                           static_cast<float>(CarveFieldCache::kIsovalue) / 255.0f);
-            // Ensure u_ship_world_inv is set (p_body) even if this instance has
-            // no decals and no glow regions.
-            prog.set_mat4("u_ship_world_inv", glm::inverse(world));
-
-            // Upload the sphere gate: pack active carve slots into vec4
-            // (center_body.xyz, radius). u_carve_count == 0 → no gate → no clip.
-            {
-                static constexpr int kMaxCarves = 24;
-                glm::vec4 spheres[kMaxCarves];
-                int ns = 0;
-                for (const auto& s : carve.slots()) {
-                    if (!s.active) continue;
-                    if (ns >= kMaxCarves) break;
-                    spheres[ns] = glm::vec4(s.center_body, s.radius);
-                    ++ns;
-                }
-                prog.set_int("u_carve_count", ns);
-                if (ns > 0) {
-                    prog.set_vec4_array("u_carve_spheres", spheres, ns);
-                }
+            prog.set_int("u_carve_count", ns);
+            if (ns > 0) {
+                // Ensure u_ship_world_inv is set (p_body) even if this instance
+                // has no decals and no glow regions.
+                prog.set_mat4("u_ship_world_inv", glm::inverse(world));
+                prog.set_vec4_array("u_carve_spheres", spheres, ns);
             }
         } else {
-            glBindTexture(GL_TEXTURE_3D, ensure_carve_fallback_3d());
             prog.set_int("u_carve_enabled", 0);
             prog.set_int("u_carve_count", 0);
         }
-        glActiveTexture(GL_TEXTURE0);
     }
 
     // Walk nodes; each node may reference one or more meshes by index. The
@@ -353,12 +292,6 @@ void draw_model(const assets::Model& model,
         }
     }
     glBindVertexArray(0);
-    // Release the carve 3D texture binding on unit 3 and restore the active
-    // unit to 0 (the opaque-pass convention) so a following draw isn't left
-    // with a stale sampler3D bound.
-    glActiveTexture(GL_TEXTURE3);
-    glBindTexture(GL_TEXTURE_3D, 0);
-    glActiveTexture(GL_TEXTURE0);
 }
 
 FrameSubmitter::~FrameSubmitter() {

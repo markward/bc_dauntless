@@ -1,14 +1,20 @@
 // native/tests/renderer/breach_pass_test.cc
 //
-// Tests for the breach interior-surface pass (Task 6 / hull-breach-2b). The
-// pass now extracts a dual-contour interior surface from the carved fill and
-// renders it triplanar-textured (replacing the 2a colored-cube splat).
+// Tests for the breach interior-surface pass (Path C / hull-breach-2b).
 //
-//  * CPU test (headless OK): build_carved_fill applies every active carve
-//    sphere (fill reduced where carved).
-//  * GL test (skips without a context): the pass compiles its shader and
-//    rasterizes a DC mesh through a hole into the default FBO, leaving a
-//    non-background (Damage-toned) pixel.
+// The pass renders a SPHERE SCOOP per active carve sphere: for each active
+// carve, it draws the inner (far) wall of a unit sphere scaled to carve_radius
+// and centred at carve_center_body, masked by the ORIGINAL (uncarved) fill.
+//
+//  CPU tests (no GL):
+//    - No active carves → draw_instance() is a no-op.
+//
+//  GL tests (skips without a context):
+//    - draw_instance with ONE active carve over a solid-fill region:
+//        fill is solid at p_body → scoop fragment kept → pixel != background.
+//    - draw_instance with ONE active carve over an empty-fill region:
+//        fill is 0 at p_body → scoop fragment discarded → pixel == background.
+//    - No active carves → pass draws nothing → pixel stays background.
 
 #include <gtest/gtest.h>
 
@@ -23,7 +29,6 @@
 #include <scenegraph/camera.h>
 #include <scenegraph/hull_carve.h>
 
-#include <voxel/dual_contour.h>
 #include <voxel/volume.h>
 
 #include <array>
@@ -35,150 +40,28 @@ namespace {
 constexpr int kW = 64;
 constexpr int kH = 64;
 
-// An 8^3 fill, solid (127) in an inner box, with axis planes bounding it — the
-// same shape dual_contour_test uses, so it is known to extract a surface.
-voxel::VoxelVolume box_fill() {
+// A 4^3 fill that is SOLID (127) everywhere in its volume: the original
+// (uncarved) hull material. The breach.frag fill mask will pass every fragment
+// that maps inside this volume.
+voxel::VoxelVolume solid_fill() {
     voxel::VoxelVolume v;
-    v.dims = {8, 8, 8};
-    v.origin = {-4.f, -4.f, -4.f};   // centre the box on the world origin
-    v.cell = {1.f, 1.f, 1.f};
-    v.occ.assign(8 * 8 * 8, 0);
-    for (int z = 2; z <= 5; ++z)
-        for (int y = 2; y <= 5; ++y)
-            for (int x = 2; x <= 5; ++x)
-                v.occ[v.index(x, y, z)] = 127;
+    v.dims   = {4, 4, 4};
+    v.origin = {-2.f, -2.f, -2.f};
+    v.cell   = {1.f, 1.f, 1.f};
+    v.occ.assign(4 * 4 * 4, 127);  // all solid
     return v;
 }
 
-std::vector<glm::vec4> box_palette() {
-    // 6 axis planes bounding the solid box (in this fill's body frame).
-    return {{1, 0, 0, -1.5f},  {-1, 0, 0, -1.5f},
-            {0, 1, 0, -1.5f},  {0, -1, 0, -1.5f},
-            {0, 0, 1, -1.5f},  {0, 0, -1, -1.5f}};
+// A 4^3 fill that is EMPTY (0) everywhere: no hull material.
+// The breach.frag fill mask discards every fragment here.
+voxel::VoxelVolume empty_fill() {
+    voxel::VoxelVolume v;
+    v.dims   = {4, 4, 4};
+    v.origin = {-2.f, -2.f, -2.f};
+    v.cell   = {1.f, 1.f, 1.f};
+    v.occ.assign(4 * 4 * 4, 0);   // all empty
+    return v;
 }
-
-}  // namespace
-
-// build_carved_fill copies the source fill then applies every active carve
-// sphere. Fill must be REDUCED at the carve centre. No GL needed.
-TEST(BreachPassCpu, CarvedFillAppliesAllCarves) {
-    voxel::VoxelVolume src = box_fill();
-    // Centre voxel of the solid box: body coords ~ (0,0,0) (origin -4 + 3.5).
-    const std::size_t centre = src.index(3, 3, 3);
-    ASSERT_EQ(src.occ[centre], 127);
-
-    scenegraph::HullCarveField carve;
-    carve.add(glm::vec3(-0.5f, -0.5f, -0.5f), 2.0f);  // covers box centre
-
-    voxel::VoxelVolume carved = renderer::BreachPass::build_carved_fill(src, carve);
-    EXPECT_EQ(carved.dims, src.dims);
-    EXPECT_LT(carved.occ[centre], src.occ[centre])
-        << "carve sphere should reduce the fill at its centre";
-
-    // A second carve in a different corner reduces a different voxel too.
-    scenegraph::HullCarveField carve2;
-    carve2.add(glm::vec3(-0.5f, -0.5f, -0.5f), 1.0f);
-    carve2.add(glm::vec3(1.5f, 1.5f, 1.5f), 1.5f);  // covers a far corner voxel
-    voxel::VoxelVolume carved2 = renderer::BreachPass::build_carved_fill(src, carve2);
-    const std::size_t corner = src.index(5, 5, 5);
-    ASSERT_EQ(src.occ[corner], 127);
-    EXPECT_LT(carved2.occ[corner], src.occ[corner])
-        << "second carve sphere should also reduce fill";
-}
-
-// filter_to_carves: only triangles with centroids within (radius+margin) of
-// an active carve sphere survive. Tests:
-//   1. A triangle INSIDE the carve sphere is kept.
-//   2. A triangle FAR from all carve spheres is removed.
-//   3. The kept set is non-empty and strictly smaller than the full mesh
-//      (proving both that filtering did something AND that it didn't discard
-//      everything).
-TEST(BreachPassCpu, FilterToCarves_RestrictionAndNonEmpty) {
-    // A simple triangle mesh: two triangles.
-    //   tri0 — centroid at (0,0,0)   → inside the carve sphere (radius 2, margin 1)
-    //   tri1 — centroid at (10,10,10) → far from any carve sphere
-    std::vector<glm::vec3> positions = {
-        {-1.0f,  0.0f,  0.0f},  // 0 — shared by tri0
-        { 1.0f,  0.0f,  0.0f},  // 1 — shared by tri0
-        { 0.0f,  1.0f,  0.0f},  // 2 — shared by tri0  → centroid ≈ (0,0.33,0)
-        { 9.0f, 10.0f, 10.0f},  // 3 — tri1
-        {11.0f, 10.0f, 10.0f},  // 4 — tri1
-        {10.0f, 11.0f, 10.0f},  // 5 — tri1             → centroid ≈ (10,10.33,10)
-    };
-    std::vector<std::uint32_t> indices = {0, 1, 2,  3, 4, 5};
-
-    scenegraph::HullCarveField carve;
-    carve.add(glm::vec3(0.0f, 0.0f, 0.0f), 2.0f);  // covers tri0, not tri1
-
-    const float margin = 1.0f;  // one cell width
-    auto kept = renderer::BreachPass::filter_to_carves(positions, indices, carve, margin);
-
-    // tri0 centroid distance to carve center ≈ 0.33 << 2+1=3 → kept
-    // tri1 centroid distance ≈ 17.3 >> 3                      → removed
-    EXPECT_EQ(kept.size(), 3u) << "only tri0 (3 indices) should survive";
-    EXPECT_LT(kept.size(), indices.size())
-        << "filter must have removed at least one triangle";
-
-    // Verify the kept triangle is the one near the carve: indices {0,1,2}.
-    ASSERT_EQ(kept.size(), 3u);
-    EXPECT_EQ(kept[0], 0u);
-    EXPECT_EQ(kept[1], 1u);
-    EXPECT_EQ(kept[2], 2u);
-}
-
-// On a real box fill + corner carve sphere, the full DC mesh spans the whole
-// box surface (~8^3 shell).  The carve sits at one corner; opposite-corner
-// triangles are ~6–7 cell-lengths away.  After filter_to_carves with a
-// 1-cell margin (√3 ≈ 1.73) the threshold is radius + margin ≈ 2.73, which
-// is much less than the ~6-unit diagonal → the far triangles are removed.
-TEST(BreachPassCpu, FilterToCarves_CarveRegionOnly) {
-    voxel::VoxelVolume fill = box_fill();  // 8^3, origin=(-4,-4,-4), cell=(1,1,1)
-    // Solid voxels are at grid indices [2..5], i.e. body coords ≈ [-1.5..+2.5].
-    std::vector<glm::vec4> palette = box_palette();
-
-    scenegraph::HullCarveField carve;
-    // Place the carve at (-1.5, -1.5, -1.5) — at the body-frame corner of the
-    // solid region.  Triangles on the opposite corner (+2..+2.5 body) are
-    // ~6 units away, far exceeding radius(1.0) + margin(√3≈1.73) = 2.73.
-    const glm::vec3 carve_center(-1.5f, -1.5f, -1.5f);
-    const float     carve_radius = 1.0f;
-    carve.add(carve_center, carve_radius);
-
-    // Build the carved fill + extract the full DC mesh (unfiltered).
-    voxel::VoxelVolume carved = renderer::BreachPass::build_carved_fill(fill, carve);
-    voxel::Mesh m = voxel::dual_contour(carved, /*isovalue=*/64, palette);
-
-    ASSERT_FALSE(m.indices.empty()) << "DC mesh should be non-empty";
-    const std::size_t total_indices = m.indices.size();
-
-    const float margin = glm::length(fill.cell);  // √3 ≈ 1.73 (same as breach_pass.cc)
-    auto kept = renderer::BreachPass::filter_to_carves(
-        m.positions, m.indices, carve, margin);
-
-    // The carve covers only one corner; the opposite corner is ~6 units away →
-    // filter must have removed some triangles.
-    EXPECT_LT(kept.size(), total_indices)
-        << "filter should remove far-corner triangles outside the carve sphere";
-    EXPECT_GT(kept.size(), 0u)
-        << "filter should keep cavity-wall triangles near the carve sphere";
-
-    // Every kept triangle's centroid must be within (radius + margin) of the
-    // carve center — this is the key invariant the fix is meant to enforce.
-    const float threshold = carve_radius + margin;
-    const std::size_t tri_count = kept.size() / 3;
-    for (std::size_t t = 0; t < tri_count; ++t) {
-        const glm::vec3& p0 = m.positions[kept[t * 3 + 0]];
-        const glm::vec3& p1 = m.positions[kept[t * 3 + 1]];
-        const glm::vec3& p2 = m.positions[kept[t * 3 + 2]];
-        glm::vec3 centroid = (p0 + p1 + p2) * (1.0f / 3.0f);
-        float dist = glm::length(centroid - carve_center);
-        EXPECT_LE(dist, threshold)
-            << "kept triangle " << t << " centroid at dist=" << dist
-            << " exceeds threshold=" << threshold;
-    }
-}
-
-namespace {
 
 class BreachPassGLTest : public ::testing::Test {
 protected:
@@ -201,76 +84,113 @@ protected:
         return px;
     }
 
-    // Orthographic-ish camera looking down -Z at the origin; the box surface
-    // projects to roughly the centre of the viewport.
-    static scenegraph::Camera cam_looking_at_box() {
+    // Camera looking at the origin along -Z.  The carve sphere is centred at
+    // the origin; with CW winding + cull-front (far wall = back faces), the
+    // inner wall of the sphere facing the camera renders at the centre.
+    static scenegraph::Camera cam_looking_at_origin() {
         scenegraph::Camera c;
-        c.eye    = glm::vec3(0.f, 0.f, 12.f);
-        c.target = glm::vec3(0.f, 0.f, 0.f);
+        c.eye    = glm::vec3(0.f, 0.f, 5.f);
+        c.target = glm::vec3(0.f);
         c.up     = glm::vec3(0.f, 1.f, 0.f);
         c.fov_y_rad = glm::radians(45.f);
         c.aspect = 1.0f;
-        c.near = 0.1f;
-        c.far  = 100.f;
+        c.near   = 0.1f;
+        c.far    = 50.f;
         return c;
+    }
+
+    void clear_framebuffer() {
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glViewport(0, 0, kW, kH);
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     }
 };
 
 }  // namespace
 
-// With a carve sphere over the box, the pass extracts a DC surface and draws it
-// triplanar-textured → the centre pixel is non-background.
-TEST_F(BreachPassGLTest, DrawsInteriorSurfaceForCarvedFill) {
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glViewport(0, 0, kW, kH);
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+// CPU: draw_instance with no active carves does nothing (returns immediately).
+// No GL needed — this is a control-flow check.
+TEST(BreachPassCpu, NoActiveCarvesDrawsNothing) {
+    // No GL context available in CPU tests. Confirm via carve count only.
+    scenegraph::HullCarveField carve;  // no carves added
+    EXPECT_EQ(carve.count(), 0u)
+        << "default HullCarveField must have count()==0; "
+           "draw_instance should return early";
+}
+
+// GL: with ONE active carve and a SOLID fill, the scoop sphere inner wall is
+// masked by the fill → fragment kept → pixel is non-background.
+TEST_F(BreachPassGLTest, SolidFillDrawsScoopInterior) {
+    clear_framebuffer();
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_TRUE);
-    glDisable(GL_CULL_FACE);
+    // cull-front is set INSIDE BreachPass::draw_instance; do not set it here
+    // (the pass sets and restores it).
 
     renderer::BreachPass pass;
-    voxel::VoxelVolume fill = box_fill();
-    std::vector<glm::vec4> palette = box_palette();
-    scenegraph::HullCarveField carve;
-    carve.add(glm::vec3(0.f, 0.f, 0.f), 1.5f);  // a hole near the surface
-    scenegraph::Camera cam = cam_looking_at_box();
+    voxel::VoxelVolume fill = solid_fill();
 
-    pass.draw_instance(/*instance_key=*/1, fill, palette, carve,
+    scenegraph::HullCarveField carve;
+    carve.add(glm::vec3(0.f, 0.f, 0.f), 1.5f);  // sphere at origin, r=1.5
+
+    scenegraph::Camera cam = cam_looking_at_origin();
+
+    pass.draw_instance(/*instance_key=*/1, fill, carve,
                        glm::mat4(1.0f), cam, *pipeline);
     glFinish();
 
-    EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error in breach draw";
-
+    EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error in solid-fill scoop draw";
     auto px = read_center();
     EXPECT_GT(px[0] + px[1] + px[2], 24)
-        << "Centre pixel is background (R=" << (int)px[0] << " G=" << (int)px[1]
-        << " B=" << (int)px[2] << ") — the breach pass should have drawn the "
-           "textured interior surface over the carve hole";
+        << "Centre pixel is background (R=" << (int)px[0]
+        << " G=" << (int)px[1] << " B=" << (int)px[2]
+        << ") — solid fill: scoop sphere inner wall should be visible";
 }
 
-// With NO carve spheres, the pass draws nothing → centre pixel stays clear.
-TEST_F(BreachPassGLTest, NoCarvesDrawsNothing) {
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glViewport(0, 0, kW, kH);
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+// GL: with ONE active carve and an EMPTY fill, every scoop fragment is
+// discarded by the fill mask → pixel stays background.
+TEST_F(BreachPassGLTest, EmptyFillDiscardsAllScoopFragments) {
+    clear_framebuffer();
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_TRUE);
-    glDisable(GL_CULL_FACE);
 
     renderer::BreachPass pass;
-    voxel::VoxelVolume fill = box_fill();
-    std::vector<glm::vec4> palette = box_palette();
-    scenegraph::HullCarveField carve;  // no carves
-    scenegraph::Camera cam = cam_looking_at_box();
+    voxel::VoxelVolume fill = empty_fill();
 
-    pass.draw_instance(/*instance_key=*/2, fill, palette, carve,
+    scenegraph::HullCarveField carve;
+    carve.add(glm::vec3(0.f, 0.f, 0.f), 1.5f);
+
+    scenegraph::Camera cam = cam_looking_at_origin();
+
+    pass.draw_instance(/*instance_key=*/2, fill, carve,
+                       glm::mat4(1.0f), cam, *pipeline);
+    glFinish();
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error in empty-fill scoop draw";
+    auto px = read_center();
+    EXPECT_LT(px[0] + px[1] + px[2], 16)
+        << "Centre pixel is bright (R=" << (int)px[0]
+        << " G=" << (int)px[1] << " B=" << (int)px[2]
+        << ") — empty fill: all scoop fragments should be discarded (see-through)";
+}
+
+// GL: with NO active carves, the pass draws nothing → pixel stays background.
+TEST_F(BreachPassGLTest, NoCarvesDrawsNothing) {
+    clear_framebuffer();
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+
+    renderer::BreachPass pass;
+    voxel::VoxelVolume fill = solid_fill();
+    scenegraph::HullCarveField carve;   // no carves
+    scenegraph::Camera cam = cam_looking_at_origin();
+
+    pass.draw_instance(/*instance_key=*/3, fill, carve,
                        glm::mat4(1.0f), cam, *pipeline);
     glFinish();
 
     EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error in empty breach draw";
-
     auto px = read_center();
     EXPECT_LT(px[0] + px[1] + px[2], 16)
         << "Centre pixel is lit with no carves — the pass should be a no-op";

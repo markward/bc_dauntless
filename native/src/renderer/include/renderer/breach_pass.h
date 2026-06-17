@@ -3,12 +3,14 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <unordered_map>
-#include <vector>
 
 #include <glm/glm.hpp>
 
+#include <assets/mesh.h>
 #include <scenegraph/instance.h>  // InstanceId, ModelHandle
+
 #include <voxel/volume.h>
 
 namespace assets { struct Model; }
@@ -19,26 +21,24 @@ namespace renderer {
 class Pipeline;
 class CarveFieldCache;
 
-/// Breach pass — dual-contour interior surface (hull-breach-2b, Task 6).
+/// Breach pass — sphere-scoop interior surface (hull-breach-2b Path C).
 ///
-/// For each damaged instance (one with active carve spheres), carves the
-/// source hull's scalar fill with every active carve sphere, extracts a sharp
-/// dual-contour surface mesh, and renders it triplanar-textured with BC's
-/// Damage.tga — the flat-panel hull cross-section seen through the holes the
-/// hull-clip pass punches (replaces the 2a colored-cube splat).
+/// For each damaged instance (with active carve spheres), draws the inner
+/// (far) wall of a unit sphere scaled to each active carve sphere's radius,
+/// masked by the ORIGINAL (uncarved) hull fill. Fragments where the original
+/// fill says "no material" (open space, far side of thin hull) are discarded,
+/// giving genuine see-through. Fragments in solid material render the recessed
+/// interior bowl, triplanar-textured with BC's Damage.tga.
 ///
-/// Runs AFTER the opaque hull pass with depth-test ON, depth-write ON, and
-/// CULL OFF (double-sided: the DC mesh winds INWARD with OUTWARD normals — see
-/// voxel/dual_contour.h): a surface fragment behind intact hull depth-fails
-/// (hidden); one behind a hole (hull discarded, no depth written there) passes
-/// (visible through the hole).
+/// GL state: depth-test ON, depth-write ON, cull FRONT (so the inner/far wall
+/// is drawn and cannot poke out past the hull). Must run AFTER the opaque hull
+/// pass so the hull's depth occludes the scoop except through the clip holes.
 ///
-/// Extraction is expensive (~16 ms for the Galaxy), so the carved fill + mesh
-/// are cached per instance and only re-extracted when that instance's carve
-/// "version" (the max active carve seq) changes — never per frame.
+/// The hull hole clip (opaque.frag) is now a pure sphere clip — identical
+/// spheres — so hole and scoop align by construction.
 ///
-/// Gated entirely on dauntless_hull_damage::enabled(): when off, render() is a
-/// no-op and the stock-BC path is byte-identical.
+/// Gated entirely on dauntless_hull_damage::enabled(): when off, render() is
+/// a no-op and the stock-BC path is byte-identical.
 class BreachPass {
 public:
     using ModelLookup =
@@ -49,103 +49,68 @@ public:
     BreachPass(const BreachPass&)            = delete;
     BreachPass& operator=(const BreachPass&) = delete;
 
-    /// Iterate the world; for each Space-pass instance with carve spheres,
-    /// fetch its SHARED carved fill + plane palette from `carve_cache` (the same
-    /// carved fill the opaque-pass hull clip samples — no rebuild here), extract
-    /// the DC surface (cached by carve version), and draw it at the instance's
-    /// world transform. The carve cache is owned by the host and shared with the
-    /// opaque submit path so the hull hole and the DC cavity are ONE isosurface.
+    /// Iterate the world; for each Space-pass instance with active carves,
+    /// fetch the original fill from `carve_cache` and draw the scoop.
     void render(const scenegraph::World& world,
                 const scenegraph::Camera& camera,
                 Pipeline& pipeline,
                 const ModelLookup& lookup,
                 CarveFieldCache& carve_cache);
 
-    /// Lower-level entry: draw the breach interior surface for ONE instance
-    /// given its SOURCE fill, plane palette, carve field, and world transform.
-    /// Builds the carved fill internally (via build_carved_fill) then extracts.
-    /// `instance_key` identifies the per-instance mesh cache slot (so repeat
-    /// calls with an unchanged carve version reuse the extracted mesh). Public
-    /// so the GL render test can drive it with a synthetic volume without
-    /// standing up the asset cache. Assumes the breach shader GL state
-    /// (depth/cull) is the caller's responsibility — render() sets it.
+    /// Draw the breach scoop for ONE instance given its ORIGINAL fill,
+    /// carve field, and world transform. Builds and uploads a GL_R8 3D
+    /// texture for the fill on first use (keyed by fill pointer). Public so
+    /// GL render tests can drive the pass without standing up the full asset
+    /// cache. Caller owns the GL state (depth/cull); render() sets it.
+    ///
+    /// `instance_key` is used to cache the per-instance fill 3D texture in
+    /// test paths; in production, the fill texture comes from CarveFieldCache.
     void draw_instance(std::uintptr_t instance_key,
                        const voxel::VoxelVolume& fill,
-                       const std::vector<glm::vec4>& palette,
                        const scenegraph::HullCarveField& carve,
                        const glm::mat4& world_xf,
                        const scenegraph::Camera& camera,
                        Pipeline& pipeline);
 
-    /// Draw the breach interior for ONE instance from an ALREADY-CARVED fill
-    /// (no build_carved_fill — the carved fill comes from the shared cache).
-    /// `version` keys the per-instance DC-mesh cache (the cache's carve version).
-    /// Used by render(); the carve field is still needed for the triangle filter.
-    void draw_carved_instance(std::uintptr_t instance_key,
-                              std::uint64_t version,
-                              const voxel::VoxelVolume& carved,
-                              const std::vector<glm::vec4>& palette,
-                              const scenegraph::HullCarveField& carve,
-                              const glm::mat4& world_xf,
-                              const scenegraph::Camera& camera,
-                              Pipeline& pipeline);
-
-    /// Copy `fill` and apply every active carve sphere (smooth-falloff
-    /// carve_sphere). Pure CPU; exposed for testing the carve application.
-    static voxel::VoxelVolume build_carved_fill(
-        const voxel::VoxelVolume& fill,
-        const scenegraph::HullCarveField& carve);
-
-    /// Filter a DC mesh's index list to only triangles whose centroid lies
-    /// within (slot.radius + margin) of at least one active carve sphere.
-    /// The positions array is unchanged (unused verts are harmless). Pure CPU;
-    /// exposed for testing. margin should be ~1 cell (e.g. glm::length(cell)).
-    static std::vector<std::uint32_t> filter_to_carves(
-        const std::vector<glm::vec3>& positions,
-        const std::vector<std::uint32_t>& indices,
-        const scenegraph::HullCarveField& carve,
-        float margin);
-
     /// GL texture id for the triplanar Damage.tga sample. Set once in host
     /// init. If left 0, the pass lazily loads Damage.tga from the default BC
-    /// path on first draw (so GL tests work without host wiring).
+    /// path on first draw.
     void set_damage_texture(unsigned int tex_id) { damage_tex_ = tex_id; }
 
 private:
-    void ensure_mesh_buffers();
+    void ensure_sphere();
     void ensure_damage_texture();
 
-    // Isovalue used to threshold BC's 0..127 fill field during DC extraction.
+    // Draw one sphere scoop for a single carve slot using an already-uploaded
+    // fill 3D texture. Sets the per-carve uniforms (center, radius, fill).
+    void draw_scoop(const glm::vec3& center_body,
+                    float radius,
+                    unsigned int fill_tex,
+                    const glm::vec3& fill_origin,
+                    const glm::vec3& fill_cell,
+                    const glm::ivec3& fill_dims,
+                    const glm::mat4& world_xf,
+                    const scenegraph::Camera& camera,
+                    Pipeline& pipeline);
+
+    // Build (once) a fill GL_R8 3D texture from a VoxelVolume.
+    // Returns 0 on failure.  Caller owns the GL texture.
+    static unsigned int upload_fill_tex(const voxel::VoxelVolume& fill);
+
+    // Isovalue for the fill mask (matches hull clip and DC isovalue).
     static constexpr int kIsovalue = 64;
 
-    // Per-instance extracted-surface cache. Re-extract only when the carve
-    // version (max active carve seq) changes.
-    struct CachedMesh {
-        std::uint64_t carve_version = 0;  // 0 = never extracted
-        int           index_count = 0;
-        // No GPU buffers per instance: we stream into a shared dynamic
-        // VBO/EBO per draw, but keep CPU mesh data so a re-draw at the same
-        // version doesn't re-extract.
-        std::vector<float>         interleaved;  // pos.xyz, normal.xyz
-        std::vector<std::uint32_t> indices;
-    };
+    // Sphere VAO/VBO/EBO — built once per pass lifetime.
+    std::unique_ptr<assets::Mesh> sphere_mesh_;
 
-    std::uint64_t carve_version(const scenegraph::HullCarveField& carve) const;
-    // Extract (or reuse) the DC mesh from an ALREADY-CARVED fill, keyed by
-    // `version` (the shared carve cache's version). No build_carved_fill.
-    const CachedMesh& mesh_for(std::uintptr_t instance_key,
-                               std::uint64_t version,
-                               const voxel::VoxelVolume& carved,
-                               const std::vector<glm::vec4>& palette,
-                               const scenegraph::HullCarveField& carve);
+    unsigned int damage_tex_       = 0;
+    bool         damage_tex_tried_ = false;
 
-    unsigned int vao_       = 0;
-    unsigned int vbo_       = 0;  // interleaved pos+normal, streamed per draw
-    unsigned int ebo_       = 0;  // indices, streamed per draw
-    unsigned int damage_tex_ = 0;
-    bool         damage_tex_tried_ = false;  // lazy-load attempted
-
-    std::unordered_map<std::uintptr_t, CachedMesh> mesh_cache_;
+    // Per-instance fill 3D texture cache used by the test/standalone path in
+    // draw_instance(). In the production path, the fill tex comes from
+    // CarveFieldCache. Keyed by instance_key; textures are deleted in the dtor.
+    struct FillEntry { unsigned int tex3d = 0; };
+    std::unordered_map<std::uintptr_t, FillEntry> fill_cache_;
 };
 
 }  // namespace renderer
