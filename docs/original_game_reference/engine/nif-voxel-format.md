@@ -6,7 +6,9 @@ confirmed; the standalone decoder `ni_sdk/nibinaryvoxel_decode.py` decodes all
 84 `*_vox.nif` end-to-end (zero slack to EOF) and returns `fillGrid[k][j][i]`
 (0–127). Remaining items are minor/non-blocking (exact 0–127 value transfer
 function; `bytes2` per-record split; a small-dims padding nuance — see §4). See
-also `nif-voxel-corpus-table.csv` and `nif-voxel-format-cleanroom-brief.md`.
+also `nibinaryvoxeldata-format-v3.1.md` (formal spec), `nif-voxel-corpus-table.csv`, and the cleanroom briefs.
+
+> **UPDATE (cell→plane mapping now solved too):** the `bytes2` index tree (per-Z-slice → Y → X range-coded CSR) and its **6-byte leaf records `{u16 planeIndex, u16 meshRefA, u16 meshRefB}`** are decoded — field 0 is the plane-palette index (independently verified: 100% valid across 14.7k Galaxy leaves). Full read path + the dual-contouring extraction recipe (0–127 fill, isovalue ≈63–64, plane palette as Hermite data, per-cell QEF) are in the formal spec **`nibinaryvoxeldata-format-v3.1.md`**. Only the bytes2 *writer* (regeneration) still needs a round-trip diff before generated `_vox.nif` are trusted in the original runtime.
 
 ### The fill-field encoding (the former "codec", now solved)
 
