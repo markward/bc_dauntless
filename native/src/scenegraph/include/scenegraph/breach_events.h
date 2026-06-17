@@ -7,13 +7,13 @@
 namespace scenegraph {
 
 // Effect lifetime constants. All consumers include this header.
-inline constexpr float kDebrisLife = 2.5f;  // seconds: tumbling chunks
+inline constexpr float kDebrisLife = 10.0f; // seconds: tumbling chunks drift + fade
 inline constexpr float kVentLife   = 0.5f;  // seconds: venting EMISSION window — a
                                             // short, fast gas-release burst (particles
                                             // fade ~0.4s after), not a sustained plume
 inline constexpr float kRimLife    = 3.0f;  // seconds: molten rim cooling
 // An event lives until all consumers have finished with it.
-inline constexpr float kEventLife  = 3.0f;  // max(kDebrisLife, kVentLife, kRimLife)
+inline constexpr float kEventLife  = 10.0f; // max(kDebrisLife, kVentLife, kRimLife)
 
 struct BreachEvent {
     glm::vec3     center_body   {0.0f};         // breach center in body frame (model units)

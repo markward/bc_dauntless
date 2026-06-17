@@ -84,6 +84,19 @@ protected:
         return px;
     }
 
+    // Sum of all RGB across the framebuffer. Robust to where the chunks land
+    // (the ejection speed shifts them off the exact centre pixel), so it tests
+    // "chunks visible somewhere" rather than "at the centre".
+    long read_frame_sum() const {
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+        std::array<unsigned char, kW * kH * 4> buf{};
+        glReadPixels(0, 0, kW, kH, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
+        long sum = 0;
+        for (int p = 0; p < kW * kH; ++p)
+            sum += buf[p*4] + buf[p*4+1] + buf[p*4+2];
+        return sum;
+    }
+
     static scenegraph::Camera cam_at_z5() {
         scenegraph::Camera c;
         c.eye       = {0, 0, 5};
@@ -190,11 +203,9 @@ TEST_F(DebrisPassGLTest, FreshEventDrawsChunks) {
     glFinish();
 
     EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error in fresh-event draw";
-    auto px = read_center();
-    EXPECT_GT(px[0] + px[1] + px[2], 24)
-        << "Centre pixel is background (R=" << (int)px[0]
-        << " G=" << (int)px[1] << " B=" << (int)px[2]
-        << ") — fresh event with solid fill: chunks should be visible";
+    EXPECT_GT(read_frame_sum(), 100L)
+        << "Frame is empty — a fresh event over a solid fill should draw "
+           "visible chunks somewhere in the view";
 }
 
 // GL: event aged past kDebrisLife → draw_chunks_direct skips → pixel == background.

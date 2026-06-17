@@ -102,8 +102,11 @@ ChunkTransform chunk_transform(
     const glm::vec3 btan = glm::cross(radial, tang);
     const glm::vec3 dir  = glm::normalize(radial + tang * kick_x + btan * kick_y);
 
-    // Speed in [1.5, 4.5] body-units / second.
-    const float speed = 1.5f + h01(h3) * 3.0f;
+    // Speed in [20, 60] body-units (model units) / second. The breach gap is
+    // ~25-100 model units wide and the hull ~350, so the old [1.5,4.5] barely
+    // crept out of the hole; this ejects chunks clear of the gap in ~1s, then
+    // they coast + tumble + fade over kDebrisLife. Eyeball-tunable.
+    const float speed = 20.0f + h01(h3) * 40.0f;
 
     // Alpha: linear fade 1 → 0 over kDebrisLife; clamp to [0,1].
     const float t    = age / scenegraph::kDebrisLife;
