@@ -10,13 +10,14 @@ Constants are eye-calibration tuning knobs.
 """
 
 # Absorbed hull damage below this leaves only a scorch decal, no carve.
-# Set near the spark threshold (hit_feedback.SPARK_HULL_THRESHOLD = 80) so a
-# torpedo/ram carves but per-tick phaser dribble (~0.28/tick) does not.
-MIN_CARVE_HULL = 40.0
+# Raised from 40 → 60 (Mark 2a feedback: effect triggered too readily; set
+# between the phaser dribble and a solid torpedo hit to carve less readily).
+MIN_CARVE_HULL = 60.0
 
 # Carve radius = splash radius (GU) * scale, with a floor so a carve always
 # has some extent. 0.25 GU floor = 25 model units (~14% of hull radius).
-CARVE_RADIUS_SCALE = 1.5
+# Toned down from 1.5 → 1.0 (Mark 2a feedback: holes too big).
+CARVE_RADIUS_SCALE = 1.0
 MIN_CARVE_RADIUS_GU = 0.25
 
 # Game-time seconds between carves emitted on one ship, so a continuous beam
