@@ -6,9 +6,30 @@
 
 namespace voxel {
 
-/// Solid voxel volume. Occupancy is one byte per voxel (1 = solid), indexed
-/// x-fastest then y then z. In-memory representation; the on-disk BC format
-/// is bit-packed and decoded into this by from_nif_voxel_data().
+/// Solid voxel volume — the shared output type for both the decoder and the
+/// voxelizer. Holds one byte per cell in `occ`, indexed x-fastest:
+///   index(x,y,z) = x + dims.x * (y + dims.y * z)
+///
+/// **Dual semantics of `occ`:**
+///   - When produced by the voxelizer (voxelize / voxelize_into / surface_voxelize
+///     + solidify): each byte is BINARY occupancy: 1 = solid, 0 = empty.
+///   - When produced by the decoder (from_nif_voxel_data): each byte is the
+///     0–127 fill value read from BC's 7-bit fill field for that interior node.
+///     0 = empty, 127 = fully solid, 1–126 = partial fill (semantics TBD).
+/// In both cases, `solid(x,y,z)` treats any nonzero byte as solid, so the same
+/// downstream code (IoU, carving, solidify checks) works for both.
+///
+/// **Dual lattice:**
+///   - The decoder produces the INTERIOR-NODE lattice: dims = (nx-1, ny-1, nz-1)
+///     where (nx, ny, nz) are the header shorts from NiBinaryVoxelData. The fill
+///     values live at interior nodes, not at the coarse cell corners.
+///   - The voxelizer produces a CALLER-CHOSEN grid with whatever dims are passed.
+/// To compare the two (e.g. via iou()), the hull must be re-voxelized onto the
+/// decoded lattice explicitly:
+///   voxelize_into(tris, ref.dims, ref.origin, ref.cell)
+/// A naive iou(decoded, voxelize(model, header_dims)) would silently compare
+/// mismatched grids ((nx-1,ny-1,nz-1) vs (nx,ny,nz)) and assert-fail or
+/// produce wrong results.
 struct VoxelVolume {
     glm::ivec3 dims{0};        // nx, ny, nz
     glm::vec3  origin{0.f};    // body-frame position of voxel (0,0,0) min corner
@@ -23,5 +44,12 @@ struct VoxelVolume {
     void set(int x, int y, int z, bool v) { occ[index(x, y, z)] = v ? 1 : 0; }
     std::size_t solid_count() const;
 };
+
+/// Intersection-over-union of the SOLID sets of two volumes.
+/// Requires equal dims; asserts and returns -1.0 if mismatched.
+/// Returns 1.0 when both volumes are empty (vacuously identical).
+/// solid(i) is defined as occ[i] != 0, so works for both binary (0/1)
+/// voxelizer output and 0–127 decoder fill values.
+double iou(const VoxelVolume& a, const VoxelVolume& b);
 
 }  // namespace voxel

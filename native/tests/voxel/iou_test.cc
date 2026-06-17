@@ -1,8 +1,7 @@
 // native/tests/voxel/iou_test.cc
 // TDD tests for voxel::iou on synthetic 4x4x4 volumes with known overlap.
 #include <gtest/gtest.h>
-#include <voxel/voxelize.h>  // declares iou()
-#include <voxel/volume.h>
+#include <voxel/volume.h>  // declares iou()
 
 namespace {
 

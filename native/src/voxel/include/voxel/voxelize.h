@@ -5,7 +5,7 @@
 #include <voxel/volume.h>
 
 namespace assets { struct Model; }
-namespace nif { struct NiBinaryVoxelData; }
+namespace nif { struct File; struct NiBinaryVoxelData; }
 
 namespace voxel {
 
@@ -50,10 +50,12 @@ VoxelVolume voxelize_into(const std::vector<Tri>& tris,
 /// the payload is too small.
 VoxelVolume from_nif_voxel_data(const nif::NiBinaryVoxelData& vd);
 
-/// Intersection-over-union of the SOLID sets of two volumes.
-/// Requires equal dims; asserts and returns -1.0 if mismatched.
-/// Returns 1.0 when both volumes are empty (vacuously identical).
-/// solid(i) is defined as occ[i] != 0.
-double iou(const VoxelVolume& a, const VoxelVolume& b);
+/// GL-free NiNode-tree walk: collect every world-transformed triangle from
+/// every NiTriShapeData in the NIF into a triangle soup. Walks the scene
+/// from the root block (or all top-level blocks if no root is set). Uses the
+/// same T*R*S accumulation as voxel_inspect's hull_tris(). No GL or assets
+/// dependency; links only against `nif`. Used by voxel_inspect and by tests
+/// that need hull geometry without a renderer.
+std::vector<Tri> collect_hull_triangles_from_nif(const nif::File& f);
 
 }  // namespace voxel

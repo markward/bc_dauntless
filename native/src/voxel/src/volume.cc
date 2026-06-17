@@ -1,5 +1,4 @@
 #include <voxel/volume.h>
-#include <voxel/voxelize.h>
 #include <cassert>
 
 namespace voxel {
