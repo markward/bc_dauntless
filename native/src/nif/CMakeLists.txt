@@ -12,6 +12,7 @@ add_library(nif STATIC
     src/blocks/properties.cc
     src/blocks/scene.cc
     src/blocks/textures.cc
+    src/scene_camera.cc
 )
 
 target_include_directories(nif
