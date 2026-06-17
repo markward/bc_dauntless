@@ -3,6 +3,7 @@ add_executable(voxel_tests
     voxelize_test.cc
     decode_test.cc
     iou_test.cc
+    iou_realdata_test.cc
 )
 target_link_libraries(voxel_tests PRIVATE voxel GTest::gtest_main)
 target_compile_definitions(voxel_tests PRIVATE
