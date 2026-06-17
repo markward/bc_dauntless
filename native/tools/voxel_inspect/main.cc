@@ -1,23 +1,25 @@
 // native/tools/voxel_inspect/main.cc
 //
-// Reverse-engineering inspector for BC's NiBinaryVoxelData blocks (the
-// per-ship solid-voxel grid stored in *_vox.nif files). Dumps the parsed
-// header (3 shorts + 7 floats), the raw payload size, hex of the payload
-// head/tail, a byte-value histogram, and the candidate-dimension sanity
-// arithmetic (nx*ny*nz, /8, vs payload length).
+// Inspector for BC's NiBinaryVoxelData blocks (the per-ship solid-voxel grid
+// stored in *_vox.nif files). The format is FULLY SOLVED (see
+// docs/original_game_reference/engine/nif-voxel-format.md). Dumps the parsed
+// header (dims + cellSize + aabbMin/Max), the raw payload size, hex of the
+// payload head/tail, a byte-value histogram, and sanity arithmetic. Supports
+// multiple modes for decode verification and IoU comparison.
 //
 // Optionally takes a HULL nif as a second argument; if given, the tool
 // computes the hull's body-frame AABB (by walking the NiNode tree and
 // transforming NiTriShapeData vertices) and prints it next to the voxel
-// block's 7 floats, so the bounds mapping can be deduced.
+// header, confirming the bounds mapping.
 //
 // Usage:
-//   voxel_inspect <path/to/X_vox.nif> [path/to/X.nif]
-//   voxel_inspect --dump-hull-obj <hull.nif> <out.obj>
-//   voxel_inspect --anchor <X_vox.nif>
-//   voxel_inspect --anchor-corpus <models_dir>
+//   voxel_inspect <path/to/X_vox.nif> [path/to/X.nif]       -- header + payload info
+//   voxel_inspect --dump-hull-obj <hull.nif> <out.obj>        -- export hull as OBJ
+//   voxel_inspect --anchor <X_vox.nif>                        -- two-ended closure
+//   voxel_inspect --anchor-corpus <models_dir>                -- corpus-wide closure
+//   voxel_inspect --iou <X_vox.nif> <X.nif>                  -- decode vs. voxelize IoU
 //
-// GL-free: links only against `nif`, walks NiTriShapeData verts directly.
+// GL-free: links only against `nif` and `voxel`; walks NiTriShapeData verts directly.
 
 #include <nif/file.h>
 #include <nif/block.h>
@@ -492,63 +494,11 @@ int dump_hull_obj(const fs::path& hull_path, const fs::path& obj_path) {
     return 0;
 }
 
-// ---- Triangle collection (GL-free, mirrors accumulate_aabb) ------------------
-// Walks the NiNode tree and emits world-transformed voxel::Tri entries for
-// every NiTriShapeData, using the same local-to-world accumulation as
-// accumulate_aabb and accumulate_obj. The result feeds voxel::voxelize_into.
-
-void accumulate_tris(const nif::File& f,
-                     const std::unordered_map<std::uint32_t, std::size_t>& links,
-                     std::size_t idx, const Mat4& parent,
-                     std::vector<bool>& visited,
-                     std::vector<voxel::Tri>& out) {
-    if (idx >= f.blocks.size() || visited[idx]) return;
-    visited[idx] = true;
-    const auto& blk = f.blocks[idx];
-    if (auto* n = std::get_if<nif::NiNode>(&blk)) {
-        Mat4 world = mul(parent, av_to_mat4(n->av));
-        for (auto link : n->child_links) {
-            auto it = links.find(link);
-            if (it != links.end())
-                accumulate_tris(f, links, it->second, world, visited, out);
-        }
-    } else if (auto* sh = std::get_if<nif::NiTriShape>(&blk)) {
-        Mat4 world = mul(parent, av_to_mat4(sh->av));
-        auto it = links.find(sh->data_link);
-        if (it == links.end()) return;
-        const auto* d = std::get_if<nif::NiTriShapeData>(&f.blocks[it->second]);
-        if (!d) return;
-        for (const auto& tri : d->triangles) {
-            if (tri[0] >= d->vertices.size() ||
-                tri[1] >= d->vertices.size() ||
-                tri[2] >= d->vertices.size()) continue;
-            Vec3 a = transform_point(world, d->vertices[tri[0]]);
-            Vec3 b = transform_point(world, d->vertices[tri[1]]);
-            Vec3 c = transform_point(world, d->vertices[tri[2]]);
-            out.push_back({
-                glm::vec3(a.x, a.y, a.z),
-                glm::vec3(b.x, b.y, b.z),
-                glm::vec3(c.x, c.y, c.z),
-            });
-        }
-    }
-}
-
-std::vector<voxel::Tri> hull_tris(const nif::File& f) {
-    auto links = build_link_map(f);
-    std::vector<voxel::Tri> out;
-    std::vector<bool> visited(f.blocks.size(), false);
-    std::size_t start = 0;
-    if (f.root.ptr) {
-        for (std::size_t i = 0; i < f.blocks.size(); ++i)
-            if (&f.blocks[i] == f.root.ptr) { start = i; break; }
-        accumulate_tris(f, links, start, Mat4::identity(), visited, out);
-    } else {
-        for (std::size_t i = 0; i < f.blocks.size(); ++i)
-            accumulate_tris(f, links, i, Mat4::identity(), visited, out);
-    }
-    return out;
-}
+// ---- Triangle collection (GL-free) ------------------------------------------
+// Delegated to voxel::collect_hull_triangles_from_nif (voxel library), which
+// is the canonical NiNode-tree walker shared by this tool and the voxel tests.
+// Previously this file had a local accumulate_tris / hull_tris copy; replaced
+// to avoid duplication.
 
 // Returns 0 on success, 1 on error.
 int run_iou(const fs::path& vox_path, const fs::path& hull_path) {
@@ -577,7 +527,7 @@ int run_iou(const fs::path& vox_path, const fs::path& hull_path) {
         std::fprintf(stderr, "hull load failed: %s\n", e.what());
         return 1;
     }
-    auto tris = hull_tris(hf);
+    auto tris = voxel::collect_hull_triangles_from_nif(hf);
     if (tris.empty()) {
         std::fprintf(stderr, "no triangles found in hull %s\n", hull_path.string().c_str());
         return 1;

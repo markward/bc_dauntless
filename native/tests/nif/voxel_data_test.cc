@@ -33,6 +33,8 @@ TEST(VoxelDataHeader, GalaxyHeaderDecodesToConfirmedValues) {
     EXPECT_NEAR(vd->aabb_max[0],  232.5f,  1e-2);
     EXPECT_NEAR(vd->aabb_max[1],  322.5f,  1e-2);
     EXPECT_NEAR(vd->aabb_max[2],   74.997f, 1e-2);
-    // Payload stays opaque (codec unresolved): just confirm it's captured.
+    // raw_voxel_payload captures the full payload (fillField + planes + bytes2 +
+    // trailer). The fillField is decoded by the voxel module (see decode_test.cc);
+    // this NIF-level test just confirms the raw payload is captured correctly.
     EXPECT_GT(vd->raw_voxel_payload.size(), 0u);
 }

@@ -42,11 +42,14 @@ NIF_REGISTER_BLOCK(NiBinaryVoxelExtraData, [](Reader& r) -> Block {
 //   3 × float   AABB min corner (aabb_min)
 //   3 × float   AABB max corner (aabb_max)
 //
-// After the header comes a variable-length opaque payload whose container
-// layout is understood (bitmask[L] | numVectors | Vector4[] planes |
-// numBytes2 | bytes2 | trailer u32[5]) but whose occupancy-bitmask codec
-// is not yet resolved. The payload is therefore kept opaque in
-// `raw_voxel_payload`.
+// After the header comes a variable-length payload whose container layout is
+// fully confirmed (fillField[L] | numVectors | Vector4[] planes | numBytes2 |
+// bytes2 | trailer u32[5]).  The leading fillField bytes are the 7-bit fill
+// values (0–127) over the (dim_x-1)×(dim_y-1)×(dim_z-1) interior-node
+// lattice; voxel::from_nif_voxel_data() decodes them from raw_voxel_payload.
+// The planes and bytes2 sub-structures are not parsed here — they are retained
+// in raw_voxel_payload for future consumers. See
+// docs/original_game_reference/engine/nif-voxel-format.md.
 //
 // NiBinaryVoxelData is always the last block before the EOF sentinel across
 // the entire corpus. We walk byte-by-byte after the header until the next

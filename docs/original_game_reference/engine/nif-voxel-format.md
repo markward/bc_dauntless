@@ -128,14 +128,18 @@ subdivision finer than the coarse 15-GU lattice.
 
 ---
 
-## 4. Payload — container CONFIRMED, bitmask codec remaining
+## 4. Payload — container CONFIRMED, fill field DECODED
 
 ### Container layout (cleanroom-confirmed; all 84 files parse with zero slack)
 
 After the 34-byte header, the payload is:
 
 ```
-occupancyBitmask : byte[L]               # L implicit — recovered by two-ended closure
+fillField        : byte[L]               # L implicit — recovered by two-ended closure
+                                         # This IS the "occupancyBitmask" found by the
+                                         # earlier anchoring analysis. It is the 7-bit fill
+                                         # field described in §"The fill-field encoding"
+                                         # above. The two names refer to the same bytes.
 numVectors       : uint32
 planes           : Vector4<f32>[numVectors]   # (n̂.x, n̂.y, n̂.z, d) — hull face planes
 numBytes2        : uint32
@@ -147,6 +151,15 @@ trailer          : uint32[5]
 ends exactly where `numBytes2` begins and the whole payload closes on the EOF
 block (the decoder does this; it succeeds on all 84 files).
 
+**Identity clarification:** The leading `fillField` bytes are precisely what
+earlier analysis called the "occupancyBitmask". They are the 7-bit fill field
+documented in §"The fill-field encoding" — 7 LSB-first bit-planes over the
+(nx-1)×(ny-1)×(nz-1) interior-node lattice. `voxel::from_nif_voxel_data`
+decodes this region and stores the 0–127 fill values in `VoxelVolume::occ`.
+The `raw_voxel_payload` in `NiBinaryVoxelData` retains the full payload (fill
+field + planes + bytes2 + trailer) for any consumer that needs the unparsed
+sub-structures.
+
 **Correction to an earlier guess:** the Vector4 records are **planes, not
 positions**. Every record has a unit-magnitude xyz (n̂); the 4th float is a
 signed plane distance `d` whose range exceeds the coordinate half-extents (so it
@@ -155,65 +168,32 @@ collision. Galaxy: 3002 planes; Shuttle: 526. There are no position vectors.
 
 **`bytes2` is a CSR-like table:** it opens with a `uint32` array of
 monotonically increasing offsets (Galaxy: 0, 56, 188, 328, 468, 664, …) — a
-prefix-sum index into a following data region. Record stride/semantics still
-need the corpus to pin.
+prefix-sum index into a following data region. Record stride/semantics are a
+minor remaining item; not needed for occupancy.
 
 **The niflib `byte[7][12]`=84 "Unknown Bytes 1" field does not exist** — that is
-niflib's misparse of the variable-length `occupancyBitmask`. This single error
+niflib's misparse of the variable-length fill field. This single error
 is why niflib's `numVectors` read as garbage.
 
-### The remaining unknown — the occupancy-bitmask codec
+### The fill field — DECODED (see §"The fill-field encoding" above)
 
-`occupancyBitmask` is bit-packed but **variable-length and compressed**, not a
-dense fixed-resolution grid:
+The leading `fillField` bytes (`L` bytes, recovered by two-ended closure) are
+**not** a dense grid indexed at (nx,ny,nz) resolution, which explains why `L`
+does not equal `ceil(nx·ny·nz/8)`. They encode the *interior-node* lattice at
+`(nx-1,ny-1,nz-1)` resolution, using 7 LSB-first bit-planes (7·W bytes where
+W = ceil(N/8), N = (nx-1)·(ny-1)·(nz-1)). Galaxy decoded: N = 11 340 nodes,
+L = 7·1418 = 9926 bytes, matching the corpus measurement exactly.
 
-- Galaxy `L = 9926` bytes, 14 702 set bits; Shuttle `L = 7` bytes, **0** set
-  bits (a thin shuttle has no interior-solid cells — its slab is all-empty).
-- `L` is **not** `ceil(nx·ny·nz/8)` (that is 1667 for Galaxy, not 9926) and not
-  any padded fine-grid product: `9926 = 2·7·709`, 709 prime — no `fx·fy·fz` nor
-  row-padded factorization. An autocorrelation peak at stride 15 bytes plus the
-  un-factorable length point to a **per-slice convex-span or RLE encoding**, not
-  a dense grid. This is the last real unknown; the 84-file corpus table
-  (`nif-voxel-corpus-table.csv`) is the input for fitting it.
+`voxel::from_nif_voxel_data` fully decodes this region. Golden-verified on
+Galaxy: dims (30,42,9), max 127, 2787 nonzero, 1584 solid (==127), node
+flat-idx 37 = 88.
 
-### What is observable (facts)
+### Index / bit / axis order — CONFIRMED
 
-- **Full byte entropy.** All 256 byte values occur in every sample. ~26–31%
-  of bytes are `0x00`; `0xff` is rare (<1%). Not a sparse single-symbol stream.
-- **Leading bit-run region.** Every file, a few dozen bytes into the payload,
-  has a run of bytes that form a smoothly *shifting* bit pattern, e.g.
-  Sovereign: `1c 00  0e 00  07 80  03 c0  01 e0  00 70  00 38  00 08` and
-  Galaxy: `…1e  00 00 c0 0f  00 00 f0 03  00 00 fc 00  00 00 3f 00…`.
-  Read as bits, these are a set bit-mask widening then narrowing — the classic
-  signature of a **bit-packed occupancy slab of a convex hull cross-section**.
-  DryDock's equivalent region is sparse single bits (`08`, `40`, `10 00 08`),
-  consistent with a hollow/large structure. **There is a bit-packed occupancy
-  component**, but it does not start at payload offset 0 and is not the whole
-  payload.
-- **Float vectors present.** Shuttle's payload (offset ~11 onward) is a long
-  run of IEEE-754 floats. Many are unit-magnitude (|v| = 1.000 — normals);
-  interleaved with larger vectors whose components fall inside the grid AABB
-  (positions). So the payload also carries **floating-point per-voxel geometry
-  (normals and/or positions)**, not just bits.
-- **Structured tail.** The last region is regular records mixing `u32` and
-  `u16` fields with recurring high-byte indices in the ~0x39xx range
-  (~14 700), close to but not equal to the Galaxy cell count (13 330). These
-  read like an index/value table, but the stride is **not** a clean 6/8 bytes
-  and did not resolve to a self-consistent record array from four samples.
-- **No clean niflib match.** The auto-gen niflib schema
-  (3 u16 + 7 f32 + 7×12 bytes + numVectors + Vector4[] + numBytes2 + byte[] +
-  5 u32) does **not** parse cleanly: the would-be `num_unknown_vectors` u32 at
-  the post-7×12 offset is garbage (e.g. 70 498 116 for Shuttle), and no
-  trailing-count interpretation closed the buffer. Treat that schema as a
-  *hint that float-vector + byte sections exist*, not as the layout.
-
-### Index / bit / axis order — HYPOTHESIS (confirm after codec is cracked)
-
-Standard NetImmerse convention is **X-fastest, then Y, then Z** (`i = x +
-nx*(y + ny*z)`), bits LSB-first within each byte. Consistent with the
-shifting-bit-run direction, **but unconfirmed** — because the slab is
-compressed, axis/bit order can only be confirmed once the codec is decoded and a
-slice is rendered against the hull cross-section (Task 9 point-dump).
+**X-fastest, Y, Z** (`idx = x + (nx-1)*(y + (ny-1)*z)`), bits LSB-first within
+each byte, planes LSB-first (plane 0 = bit 0). Confirmed by the Galaxy XY-slice
+rendering the correct saucer+nacelle silhouette and by the golden node-37 spot
+check.
 
 ---
 
@@ -223,34 +203,35 @@ slice is rendered against the hull cross-section (Task 9 point-dump).
 |---|----------|--------|
 | 1 | Payload field order | ✅ **CLOSED** — container confirmed (§4), all 84 files parse with zero slack |
 | 2 | The Vector4 records | ✅ **CLOSED** — they are **planes** `(n̂, d)`, not positions/normals-only; hull face planes |
-| 3 | `bytes2` tail | 🟡 **PARTIAL** — it's a CSR-like prefix-sum offset table; record stride/semantics need the corpus |
+| 3 | `bytes2` tail | 🟡 **PARTIAL** — it's a CSR-like prefix-sum offset table; record stride/semantics are a minor non-blocking item (not needed for occupancy) |
 | 4 | `NiBinaryVoxelExtraData.unknown_int` | ✅ **CLOSED** — vestigial reserved/bytes-remaining slot; write 0, ignore |
-| 5 | Occupancy-bitmask codec | ❌ **OPEN** — variable-length, compressed (per-slice convex-span or RLE); the one real remaining unknown |
-| 6 | Bit/axis order | ❌ **OPEN** — X-fastest LSB-first hypothesis; confirm via Task 9 point-dump once the codec is decoded |
-
-### What closes the remaining unknowns
-
-The cleanroom needs corpus data, now produced: **`nif-voxel-corpus-table.csv`**
-— all 84 files with `(dims, cellSize, aabb-diagonal, L, popcount, numPlanes,
-numBytes2, trailer)`. The cellSize spread is now rich (1.0, 1.5, 2.0, 2.5, 4.5,
-15, 25, 30, 50, 85, 100), versus the single value (15) the first four samples
-had. With L and dims across 84 files the cleanroom can fit the bitmask
-resolution/codec rule and the cellSize-selection (generation) policy.
+| 5 | Fill-field / "occupancy-bitmask" codec | ✅ **SOLVED** — 7 LSB-first bit-planes over (nx-1)·(ny-1)·(nz-1) interior-node lattice; decoded by `voxel::from_nif_voxel_data`; golden-verified on Galaxy (dims 30×42×9, max 127, 2787 nonzero, 1584 solid, occ[37]=88). Minor remaining items: exact 0–127 value transfer function (partial); `bytes2` per-record split (partial); small-dims padding nuance. None block occupancy use. |
+| 6 | Bit/axis order | ✅ **CONFIRMED** — X-fastest, Y, Z; LSB-first in byte; planes LSB-first (plane 0 = bit 0). Confirmed by Galaxy XY-slice silhouette match + golden spot check. |
 
 ---
 
 ## 6. Contract for downstream tasks
 
-**Safe to implement now (high confidence):**
+**Safe and implemented:**
 - Header: 3 `u16` dims, 1 `f32` cell size, 3 `f32` min, 3 `f32` max (34 bytes).
 - Grid AABB = [min, max]; resolution = (nx,ny,nz); cell edge = cellsize;
   `(max-min)/cellsize == (nx,ny,nz)` is an assertable invariant.
 - Coarse cell (i,j,k) center = `min + (i+0.5, j+0.5, k+0.5) * cellsize`.
-- The **container** parse (bitmask length recovery, planes, bytes2, trailer) —
+- The **container** parse (fill-field length recovery, planes, bytes2, trailer) —
   the `ni_sdk/nibinaryvoxel_decode.py` algorithm parses all 84 files.
+- **The fill field IS decoded** — `voxel::from_nif_voxel_data(vd)` reads the
+  leading `fillField` bytes from `raw_voxel_payload` and returns a `VoxelVolume`
+  whose `occ` holds 0–127 per interior node; `solid()` treats any nonzero as
+  solid. This is the faithful BC voxel volume for stock ships. Golden-verified on
+  Galaxy (see §"The fill-field encoding").
 
-**NOT safe yet (blocked on the codec):**
-- Interpreting the `occupancyBitmask` bytes as a solid grid — the compression
-  codec is unresolved. Until it's cracked, the decoded occupancy (and hence the
-  faithful BC volume) is unavailable; our own voxelizer (Tasks 1–5) is the
-  volume source in the meantime.
+**Remaining non-blocking items (do not block occupancy use):**
+- Exact 0–127 value transfer function (partial — values are correct; semantics
+  of intermediate values 1–126 are not yet mapped to a physical quantity).
+- `bytes2` per-record split — the CSR-like structure is identified but the
+  per-record field layout is unresolved. Not needed for occupancy.
+- Small-dims padding nuance — degenerate single-cell objects (nz-1 = 0 ⇒ N = 0)
+  produce an empty fill grid, handled by `from_nif_voxel_data` returning an
+  empty volume (tested by ShuttleDegenerateIsEmpty).
+- **`planes` and `bytes2` sub-parsing** — retained opaquely in
+  `raw_voxel_payload` for future consumers; not needed for the voxel volume.
