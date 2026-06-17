@@ -2746,6 +2746,9 @@ def run(mission_name: Optional[str] = None,
         except Exception as _e:
             print(f"[host_loop] WARNING: crew_menu_hotkeys.wire() failed: {_e}",
                   flush=True)
+        from engine.ui.info_box_panel import InfoBoxPanel
+        info_box_panel = InfoBoxPanel()
+        registry.register(info_box_panel)
         registry.register(configuration_panel)
         if dev_mode.is_enabled():
             registry.register(mission_picker)
