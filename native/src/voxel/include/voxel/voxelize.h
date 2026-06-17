@@ -58,4 +58,10 @@ VoxelVolume from_nif_voxel_data(const nif::NiBinaryVoxelData& vd);
 /// that need hull geometry without a renderer.
 std::vector<Tri> collect_hull_triangles_from_nif(const nif::File& f);
 
+/// Voxelize a raw triangle soup into a solid volume at the given grid
+/// resolution. Computes the tris' AABB, derives a 1-voxel margin lattice, then
+/// calls voxelize_into. Returns an all-empty volume (with the given dims) when
+/// tris is empty.
+VoxelVolume voxelize_tris(const std::vector<Tri>& tris, glm::ivec3 dims);
+
 }  // namespace voxel

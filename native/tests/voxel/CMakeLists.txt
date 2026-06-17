@@ -4,6 +4,7 @@ add_executable(voxel_tests
     decode_test.cc
     iou_test.cc
     iou_realdata_test.cc
+    source_cache_test.cc
 )
 target_link_libraries(voxel_tests PRIVATE voxel GTest::gtest_main)
 target_compile_definitions(voxel_tests PRIVATE

@@ -121,17 +121,14 @@ VoxelVolume voxelize_into(const std::vector<Tri>& tris,
     return v;
 }
 
-VoxelVolume voxelize(const assets::Model& model, glm::ivec3 dims) {
-    auto tris = collect_hull_triangles(model);
-
-    // Guard: empty hull — return an all-empty volume so callers get a valid
-    // (if degenerate) VoxelVolume rather than NaN origin/cell.
+VoxelVolume voxelize_tris(const std::vector<Tri>& tris, glm::ivec3 dims) {
+    // Guard: empty tris — return an all-empty volume.
     if (tris.empty()) {
         VoxelVolume v;
         v.dims = dims;
         v.cell = glm::vec3(1.f);
         v.origin = glm::vec3(0.f);
-        v.occ.assign(std::size_t(dims.x) * dims.y * dims.z, 0);
+        v.occ.assign(std::size_t(dims.x) * std::size_t(dims.y) * std::size_t(dims.z), 0);
         return v;
     }
 
@@ -145,6 +142,10 @@ VoxelVolume voxelize(const assets::Model& model, glm::ivec3 dims) {
     glm::vec3 cell   = extent / glm::vec3(dims - 2);   // 1-voxel margin each side
     glm::vec3 origin = mn - cell;                       // shift so margin voxels are empty
     return voxelize_into(tris, dims, origin, cell);
+}
+
+VoxelVolume voxelize(const assets::Model& model, glm::ivec3 dims) {
+    return voxelize_tris(collect_hull_triangles(model), dims);
 }
 
 // ---- GL-free NiNode triangle walk ----------------------------------------
