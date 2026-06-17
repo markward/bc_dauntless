@@ -9,6 +9,7 @@
 #include <glm/glm.hpp>
 
 #include <assets/mesh.h>
+#include <scenegraph/breach_events.h>
 #include <scenegraph/instance.h>  // InstanceId, ModelHandle
 
 #include <voxel/volume.h>
@@ -51,11 +52,14 @@ public:
 
     /// Iterate the world; for each Space-pass instance with active carves,
     /// fetch the original fill from `carve_cache` and draw the scoop.
+    /// `now` is the current game-clock time (seconds) used to compute the age
+    /// of each breach event for the molten-rim emissive term.
     void render(const scenegraph::World& world,
                 const scenegraph::Camera& camera,
                 Pipeline& pipeline,
                 const ModelLookup& lookup,
-                CarveFieldCache& carve_cache);
+                CarveFieldCache& carve_cache,
+                float now = 0.f);    // NEW: game clock for event age lookup
 
     /// Draw the breach scoop for ONE instance given its ORIGINAL fill,
     /// carve field, and world transform. Builds and uploads a GL_R8 3D
@@ -91,7 +95,8 @@ private:
                     const glm::ivec3& fill_dims,
                     const glm::mat4& world_xf,
                     const scenegraph::Camera& camera,
-                    Pipeline& pipeline);
+                    Pipeline& pipeline,
+                    float breach_age);   // NEW: age of matching event; large = cold
 
     // Build (once) a fill GL_R8 3D texture from a VoxelVolume.
     // Returns 0 on failure.  Caller owns the GL texture.

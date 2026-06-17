@@ -5,6 +5,7 @@
 #include <renderer/carve_field_cache.h>
 #include "sphere_mesh.h"
 
+#include <scenegraph/breach_events.h>
 #include <scenegraph/camera.h>
 #include <scenegraph/hull_carve.h>
 #include <scenegraph/instance.h>
@@ -136,7 +137,8 @@ void BreachPass::draw_scoop(const glm::vec3& center_body,
                              const glm::ivec3& fill_dims,
                              const glm::mat4& world_xf,
                              const scenegraph::Camera& camera,
-                             Pipeline& pipeline) {
+                             Pipeline& pipeline,
+                             float breach_age) {
     // Camera world position: inverse of view matrix column 3, computed once
     // CPU-side per draw (not per fragment). Matches how the opaque pass derives
     // u_camera_pos_ws in submit_opaque / submit_opaque_in_pass.
@@ -163,6 +165,11 @@ void BreachPass::draw_scoop(const glm::vec3& center_body,
     // Triplanar Damage.tga on unit 1.
     shader.set_int("u_damage_tex", 1);
     shader.set_float("u_tex_scale", kTexScale);
+
+    // Molten-rim emissive: age of the nearest active breach event.
+    // breach_age >= kRimLife → heat = 0 → no emissive (cold hole).
+    shader.set_float("u_breach_age", breach_age);
+    shader.set_float("u_rim_life",   scenegraph::kRimLife);
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_3D, fill_tex);
@@ -208,7 +215,8 @@ void BreachPass::draw_instance(std::uintptr_t instance_key,
         if (!s.active) continue;
         draw_scoop(s.center_body, s.radius,
                    fe.tex3d, fill.origin, fill.cell, fill.dims,
-                   world_xf, camera, pipeline);
+                   world_xf, camera, pipeline,
+                   scenegraph::kRimLife + 1.f);  // no event → cold
     }
 
     // Restore cull state.
@@ -225,7 +233,8 @@ void BreachPass::render(const scenegraph::World& world,
                         const scenegraph::Camera& camera,
                         Pipeline& pipeline,
                         const ModelLookup& lookup,
-                        CarveFieldCache& carve_cache) {
+                        CarveFieldCache& carve_cache,
+                        float now) {
     if (!dauntless_hull_damage::enabled()) return;
 
     ensure_sphere();
@@ -258,9 +267,22 @@ void BreachPass::render(const scenegraph::World& world,
 
             for (const auto& s : inst.carve.slots()) {
                 if (!s.active) continue;
+
+                // Find the nearest active breach event for this carve slot.
+                float breach_age = scenegraph::kRimLife + 1.f;  // default: cold
+                float best_dist  = 1e30f;
+                for (const auto& ev : inst.breach_events.slots()) {
+                    if (!ev.active) continue;
+                    const float d = glm::length(ev.center_body - s.center_body);
+                    if (d < best_dist) {
+                        best_dist   = d;
+                        breach_age  = now - ev.birth_time;
+                    }
+                }
+
                 draw_scoop(s.center_body, s.radius,
                            ce->tex3d, ce->origin, ce->cell, ce->dims,
-                           inst.world, camera, pipeline);
+                           inst.world, camera, pipeline, breach_age);
             }
         });
 

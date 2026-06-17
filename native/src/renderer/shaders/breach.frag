@@ -36,7 +36,30 @@ uniform sampler2D u_damage_tex;
 uniform vec3      u_camera_pos_ws; // camera world position — uploaded CPU-side, avoids per-fragment inverse
 uniform float     u_tex_scale;     // body-units -> texture-period scale
 
+// Carve sphere geometry — same values as the vertex shader, needed here for
+// rim-weight computation in the molten emissive term.
+uniform vec3  u_carve_center;  // body-frame centre of the carve sphere
+uniform float u_carve_radius;  // radius in body-frame model units
+
+// Molten-rim emissive (hull-breach-2c).
+// u_breach_age: age of the matching breach event (large value → cold when no match).
+// u_rim_life:   kRimLife constant; rim cools to 0 by this age.
+uniform float u_breach_age;
+uniform float u_rim_life;
+
 out vec4 frag_color;
+
+// Blackbody-ish ramp keyed on heat 0..1 (white-hot -> red -> black).
+// Copied from opaque.frag for consistent cooling colour across all damage VFX.
+vec3 blackbody(float heat) {
+    vec3 cold  = vec3(0.0);
+    vec3 red   = vec3(0.59, 0.10, 0.02);
+    vec3 org   = vec3(1.0,  0.45, 0.08);
+    vec3 white = vec3(1.0,  0.92, 0.72);
+    vec3 lo  = mix(cold, red,   smoothstep(0.0,  0.35, heat));
+    vec3 mid = mix(lo,   org,   smoothstep(0.35, 0.7,  heat));
+    return     mix(mid,  white, smoothstep(0.7,  1.0,  heat));
+}
 
 void main() {
     // ── Fill mask ──────────────────────────────────────────────────────────
@@ -88,6 +111,18 @@ void main() {
     float luma = dot(tex, vec3(0.299, 0.587, 0.114));
     vec3 muted  = mix(vec3(luma), tex, 0.75);
     vec3 c      = muted * light;
+
+    // ── Molten rim emissive ──────────────────────────────────────────────────
+    // heat: 1 at birth (age=0) → 0 at kRimLife. Clamped to [0,1].
+    float heat = clamp(1.0 - u_breach_age / u_rim_life, 0.0, 1.0);
+    if (heat > 0.0) {
+        // Rim weight: distance from the carve sphere center vs radius.
+        // Strongest near the rim (r close to 1.0), fading toward center.
+        // u_carve_center and u_carve_radius are already bound from the fill-mask block.
+        float r_norm = length(v_body_pos - u_carve_center) / max(u_carve_radius, 1e-4);
+        float rim_w = smoothstep(0.5, 1.0, r_norm);
+        c += blackbody(heat) * rim_w * 1.5;  // 1.5: HDR headroom for glow
+    }
 
     frag_color = vec4(c, 1.0);
 }

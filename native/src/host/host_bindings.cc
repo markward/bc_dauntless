@@ -401,7 +401,7 @@ void frame() {
         // Gated on dauntless_hull_damage::enabled() inside the pass (no-op when off).
         if (g_breach_pass && g_carve_cache)
             g_breach_pass->render(g_world, cam, *g_pipeline, lookup,
-                                  *g_carve_cache);
+                                  *g_carve_cache, g_decal_game_time);
         if (g_debris_pass && g_carve_cache)
             g_debris_pass->render(g_world, cam, *g_pipeline, lookup,
                                   *g_carve_cache, g_decal_game_time);
