@@ -27,6 +27,40 @@ def ensure_widget_id(widget) -> int:
     return wid
 
 
+# ── Wide-char (WC_*) constants ────────────────────────────────────────────────
+# SDK paragraph code points. BC's Appc exports a full table; the shim defines
+# only what scripts reference (faithful Unicode code points). WC_CURSOR marks an
+# inline child-widget insertion point — BC's real value is engine-internal and
+# never displayed, so a Unicode Private-Use-Area sentinel is used.
+WC_BACKSPACE = 8
+WC_TAB = 9
+WC_LINEFEED = 10
+WC_RETURN = 13
+WC_SPACE = 32
+WC_CURSOR = 0xE000
+
+_WC_TO_STR = {
+    WC_BACKSPACE: "",
+    WC_TAB: "\t",
+    WC_LINEFEED: "\n",
+    WC_RETURN: "\n",
+    WC_SPACE: " ",
+    WC_CURSOR: "",
+}
+
+
+def wc_to_str(wc) -> str:
+    """Map a WC_* code point to its display string (control codes → '' or
+    whitespace; printable code points → the character)."""
+    wc = int(wc)
+    if wc in _WC_TO_STR:
+        return _WC_TO_STR[wc]
+    try:
+        return chr(wc)
+    except (ValueError, OverflowError):
+        return ""
+
+
 class TGPane(TGEventHandlerObject):
     """Container widget. Width/height/(x, y) stored, never rendered."""
 

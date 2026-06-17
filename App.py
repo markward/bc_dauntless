@@ -26,6 +26,7 @@ from engine.appc.tg_ui.widgets import (
     TGIcon, TGIcon_Create, TGIcon_Cast,
     TGParagraph, TGParagraph_Create, TGParagraph_CreateW, TGParagraph_Cast,
     TGIconGroup,
+    WC_BACKSPACE, WC_TAB, WC_LINEFEED, WC_RETURN, WC_SPACE, WC_CURSOR,
 )
 from engine.appc.tg_ui.managers import (
     g_kFontManager, g_kIconManager, g_kImageManager,
