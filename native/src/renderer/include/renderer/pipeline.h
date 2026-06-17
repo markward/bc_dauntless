@@ -23,6 +23,7 @@ public:
     Shader& hit_vfx_shader() noexcept    { return *hit_vfx_; }
     Shader& phaser_shader() noexcept          { return *phaser_; }
     Shader& hologram_shader() noexcept        { return *hologram_; }
+    Shader& breach_shader() noexcept          { return *breach_; }
     Shader& subsystem_pin_shader() noexcept   { return *subsystem_pin_; }
     Shader& target_reticle_shader() noexcept  { return *target_reticle_; }
     Shader& bridge_shader() noexcept          { return *bridge_; }
@@ -42,6 +43,7 @@ private:
     std::unique_ptr<Shader> hit_vfx_;
     std::unique_ptr<Shader> phaser_;
     std::unique_ptr<Shader> hologram_;
+    std::unique_ptr<Shader> breach_;
     std::unique_ptr<Shader> subsystem_pin_;
     std::unique_ptr<Shader> target_reticle_;
     std::unique_ptr<Shader> bridge_;

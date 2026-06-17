@@ -64,4 +64,15 @@ std::vector<Tri> collect_hull_triangles_from_nif(const nif::File& f);
 /// tris is empty.
 VoxelVolume voxelize_tris(const std::vector<Tri>& tris, glm::ivec3 dims);
 
+/// Select the SOLID voxels of `v` whose body-frame centre lies within `radius`
+/// of `center_body` (both in the NIF/model body frame; radius in model units).
+/// Returns one vec4 per matching voxel: `xyz` = the voxel's body-frame centre
+/// (origin + (i+0.5)*cell), `w` = a stable per-voxel seed (the flat occ index
+/// as a float) the breach shader hashes into a colour. Iterates only the voxel
+/// index bounding box of the sphere (clamped to dims), never the whole grid.
+/// Returns an empty vector when the volume is degenerate or nothing matches.
+std::vector<glm::vec4> select_breach_voxels(const VoxelVolume& v,
+                                            glm::vec3 center_body,
+                                            float radius);
+
 }  // namespace voxel

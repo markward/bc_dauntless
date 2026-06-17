@@ -34,6 +34,8 @@ embed_shader(SHADER_PHASER_VS shaders/phaser.vert phaser_vs)
 embed_shader(SHADER_PHASER_FS shaders/phaser.frag phaser_fs)
 embed_shader(SHADER_HOLOGRAM_VS shaders/hologram.vert hologram_vs)
 embed_shader(SHADER_HOLOGRAM_FS shaders/hologram.frag hologram_fs)
+embed_shader(SHADER_BREACH_VS shaders/breach.vert breach_vs)
+embed_shader(SHADER_BREACH_FS shaders/breach.frag breach_fs)
 embed_shader(SHADER_SUBSYSTEM_PIN_VS shaders/subsystem_pin.vert subsystem_pin_vs)
 embed_shader(SHADER_SUBSYSTEM_PIN_FS shaders/subsystem_pin.frag subsystem_pin_fs)
 embed_shader(SHADER_TARGET_RETICLE_VS shaders/target_reticle.vert target_reticle_vs)
@@ -81,6 +83,7 @@ add_library(renderer STATIC
     particle_pass.cc
     phaser_pass.cc
     hologram_pass.cc
+    breach_pass.cc
     subsystem_pin_pass.cc
     target_reticle_pass.cc
     bridge_pass.cc
@@ -90,4 +93,4 @@ target_include_directories(renderer
     PRIVATE "${CMAKE_CURRENT_BINARY_DIR}"
 )
 target_compile_features(renderer PUBLIC cxx_std_20)
-target_link_libraries(renderer PUBLIC assets scenegraph glad glfw glm)
+target_link_libraries(renderer PUBLIC assets scenegraph voxel glad glfw glm)

@@ -33,6 +33,7 @@
 #include <renderer/particle_pass.h>
 #include <renderer/phaser_pass.h>
 #include <renderer/hologram_pass.h>
+#include <renderer/breach_pass.h>
 #include <renderer/subsystem_pin_pass.h>
 #include <renderer/target_reticle_pass.h>
 #include <renderer/bridge_pass.h>
@@ -110,6 +111,7 @@ std::vector<renderer::PhaserBeamDescriptor> g_spv_overlay_beams;
 std::unique_ptr<renderer::PhaserPass>      g_phaser_pass;
 renderer::HologramShip                       g_hologram_ship;
 std::unique_ptr<renderer::HologramPass>      g_hologram_pass;
+std::unique_ptr<renderer::BreachPass>        g_breach_pass;
 std::vector<renderer::SubsystemPin>          g_subsystem_pins;
 std::unique_ptr<renderer::SubsystemPinPass>  g_subsystem_pin_pass;
 renderer::TargetReticle                      g_target_reticle;
@@ -238,6 +240,7 @@ void init(int width, int height, const std::string& title) {
     g_particle_pass = std::make_unique<renderer::ParticlePass>();
     g_phaser_pass        = std::make_unique<renderer::PhaserPass>();
     g_hologram_pass      = std::make_unique<renderer::HologramPass>();
+    g_breach_pass        = std::make_unique<renderer::BreachPass>();
     g_subsystem_pin_pass  = std::make_unique<renderer::SubsystemPinPass>();
     g_target_reticle_pass = std::make_unique<renderer::TargetReticlePass>();
     g_bridge_pass         = std::make_unique<renderer::BridgePass>();
@@ -283,6 +286,7 @@ void shutdown() {
     g_hologram_ship = renderer::HologramShip{};
     g_hologram_only_mode = false;
     g_hologram_pass.reset();
+    g_breach_pass.reset();   // releases cube VAO/VBO while the GL context lives
     g_subsystem_pin_pass.reset();
     g_target_reticle = renderer::TargetReticle{};
     g_target_reticle_pass.reset();
@@ -350,6 +354,13 @@ void frame() {
         g_submitter->submit_opaque_in_pass(
             g_world, cam, *g_pipeline, lookup, g_lighting,
             scenegraph::Pass::Space, g_decal_game_time);
+        // Breach interior-voxel splat: fills the see-through holes the opaque
+        // pass's carve-clip punched with colored interior cubes. Runs right
+        // after the opaque hull (depth-test/write on) so cubes behind a hole
+        // show through and cubes behind intact hull are occluded. Gated on
+        // dauntless_hull_damage::enabled() inside the pass (no-op when off).
+        if (g_breach_pass)
+            g_breach_pass->render(g_world, cam, *g_pipeline, lookup);
         if (g_shield_pass) g_shield_pass->submit(g_world, cam, *g_pipeline, now, lookup);
         if (!for_viewscreen && g_dust_pass)
             g_dust_pass->render(cam, dt, *g_pipeline, g_suns, g_dust_planets);
