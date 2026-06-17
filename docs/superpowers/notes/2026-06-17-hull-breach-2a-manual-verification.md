@@ -33,6 +33,21 @@ Run `./build/dauntless`, load a combat mission, and damage a ship (the Galaxy is
 - **Voxelizer fallback grid is a default resolution** (mod ships); BC-matched per-ship resolution tuning is a later refinement.
 - Breach guts cube **size/density** is scaled exactly to the voxel `cell`; if it reads too blocky or too sparse in practice, that's a feel-tuning knob, not a correctness issue.
 
-## Observations
+## Observations (2026-06-17, in-game on a Galaxy)
 
-_(Record what you saw here after the in-game check — screenshots, any misalignment, the breach look vs. the stock destroyed-Galaxy reference.)_
+**Correctness: PASS.** Heavy hits open a real see-through breach — the hole cuts
+clean through the hull to the starfield behind, with the classic colored-voxel
+guts recessed *inside* the cavity at the impact point. Fragment clip + breach
+pass + depth ordering all confirmed working live; guts are occluded by intact
+hull and visible only through the hole. No misalignment, no floating-in-front.
+
+**Tuning items for 2b (feel, not bugs):**
+1. **Effect is too strong** — breaches read as too large / too readily formed.
+   Tone down for a more restrained look. Knobs: `hull_carve.CARVE_RADIUS_SCALE`
+   (1.5) and `MIN_CARVE_RADIUS_GU` (0.25) → smaller holes; `MIN_CARVE_HULL`
+   (40.0) → carve less readily; `HullCarveField` merge/accumulation cadence.
+2. **Interior colors are candy-rainbow** — the placeholder seed→color hash in
+   `breach.frag` is far more saturated than BC's muted speckle. Retune toward
+   the authentic darker/muted palette (or drive from `Damage.tga`).
+3. (Already-known 2b scope: torn-rim geometry, modern lit interior,
+   classic↔modern toggle.)
