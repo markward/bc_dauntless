@@ -30,8 +30,11 @@ out vec3 v_body_pos;      // body-frame position (fill mask TC + triplanar UVs)
 out vec3 v_body_normal;   // unit-sphere outward normal in body frame
 out vec3 v_world_pos;     // world position (double-sided lighting)
 
-// breach shape — KEEP IN SYNC with breach.vert / opaque.frag
-const float kDepthOffset = 0.55;
+// breach shape — KEEP IN SYNC with opaque.frag.
+// The breach is an OBLATE spheroid centred on the hull surface: FULL lateral
+// radius (original hole width) but compressed to kDepthFactor along the normal
+// (shallow). Noise perturbs the lateral radius by azimuth (jagged rim).
+const float kDepthFactor = 0.45;  // depth = kDepthFactor * radius (shallow)
 const float kShapeAmp    = 0.25;
 const float kShapeFreq   = 4.0;
 const float kPhase       = 0.13;
@@ -47,9 +50,18 @@ float vnoise3(vec3 p){
 }
 
 void main() {
-    vec3 cp = u_carve_center + kDepthOffset * u_carve_radius * u_carve_normal;
-    float r_eff = u_carve_radius * (1.0 + kShapeAmp * (vnoise3(a_pos * kShapeFreq + u_carve_center * kPhase) * 2.0 - 1.0));
-    vec3 body_pos = cp + r_eff * a_pos;
+    vec3  nrm     = normalize(u_carve_normal);
+    float along   = dot(a_pos, nrm);            // unit-sphere component along the normal
+    vec3  lateral = a_pos - along * nrm;         // unit-sphere lateral component
+    float ll      = length(lateral);
+    // Azimuthal direction (around the normal) drives the noise — identical on
+    // both the hull-clip and the scoop, so the jagged rim aligns.
+    vec3  az = ll > 1e-4 ? lateral / ll : vec3(1.0, 0.0, 0.0);
+    float r_eff = u_carve_radius * (1.0 + kShapeAmp * (vnoise3(az * kShapeFreq + u_carve_center * kPhase) * 2.0 - 1.0));
+    // Oblate spheroid: full lateral radius r_eff, compressed depth along normal.
+    vec3 body_pos = u_carve_center
+                  + lateral * r_eff
+                  + nrm * (along * kDepthFactor * u_carve_radius);
     vec4 world    = u_model * vec4(body_pos, 1.0);
     v_body_pos    = body_pos;
     v_body_normal = a_pos;              // unit-sphere outward normal in body frame

@@ -73,8 +73,11 @@ const float kFrameUvScale = 0.6;  // breach radius → texture span (lower = big
 const float kStrutAlpha   = 0.5;  // keep a hull strut where stencil alpha exceeds this
 const float kOpenCore     = 0.35; // inner fraction of the breach always fully open (no struts)
 
-// breach shape — KEEP IN SYNC with breach.vert / opaque.frag
-const float kDepthOffset = 0.55;
+// breach shape — KEEP IN SYNC with breach.vert.
+// OBLATE spheroid centred on the hull surface: FULL lateral radius (original
+// hole width), compressed to kDepthFactor along the normal (shallow). Noise
+// perturbs the lateral radius by azimuth (jagged rim).
+const float kDepthFactor = 0.45;  // depth = kDepthFactor * radius (shallow)
 const float kShapeAmp    = 0.25;
 const float kShapeFreq   = 4.0;
 const float kPhase       = 0.13;
@@ -319,30 +322,36 @@ void main() {
             vec3 c  = u_carve_spheres[i].xyz;
             float r = u_carve_spheres[i].w;
             vec3 n  = u_carve_normals[i];
-            vec3 cp = c + kDepthOffset * r * n;
-            vec3 v  = p_body - cp;
-            float L = length(v);
-            if (L < r * (1.0 + kShapeAmp)) {
-                vec3 d = v / max(L, 1e-5);
-                float r_eff = r * (1.0 + kShapeAmp * (vnoise3(d * kShapeFreq + c * kPhase) * 2.0 - 1.0));
-                if (L < r_eff) {
+            // Oblate breach centred on the hull surface: full lateral radius,
+            // shallow along the normal.
+            vec3 v       = p_body - c;
+            float along  = dot(v, n);
+            vec3 lateral = v - along * n;
+            float ld     = length(lateral);
+            if (ld < r * (1.0 + kShapeAmp) && abs(along) < kDepthFactor * r * (1.0 + kShapeAmp)) {
+                // Azimuthal noise on the lateral radius (jagged rim); same
+                // azimuth term the scoop uses, so the hole edge aligns.
+                vec3 az = ld > 1e-4 ? lateral / ld : vec3(1.0, 0.0, 0.0);
+                float r_eff = r * (1.0 + kShapeAmp * (vnoise3(az * kShapeFreq + c * kPhase) * 2.0 - 1.0));
+                float dz = along / (kDepthFactor * r);
+                float e  = (ld * ld) / (r_eff * r_eff) + dz * dz;   // <1 inside the oblate
+                if (e < 1.0) {
                     // ── Skeletal framework lattice (INSIDE the breach) ──────────
                     // Don't cut a clean hole: leave torn HULL STRUTS bridging the
                     // breach where Damage.tga's stencil is opaque; the gaps between
                     // struts reveal the recessed interior behind. Struts cluster
                     // toward the rim (open core) so it still reads as a hole. The
-                    // surrounding hull (L >= r_eff) is left completely untouched.
+                    // surrounding hull (outside the oblate) is left untouched.
                     bool cut = true;
                     if (u_frame_enabled != 0) {
                         // tangent-plane UV around the breach axis (basis from n)
                         vec3 up = abs(n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
                         vec3 t  = normalize(cross(up, n));
                         vec3 b  = cross(n, t);
-                        vec3 lateral = v - dot(v, n) * n;       // offset from breach axis
                         vec2 uv = vec2(dot(lateral, t), dot(lateral, b))
                                   / (r * kFrameUvScale) * 0.5 + 0.5;
                         float a    = texture(u_damage_decal, uv).a;
-                        float frac = L / r_eff;                 // 0 center .. 1 rim
+                        float frac = sqrt(e);                   // 0 center .. 1 rim
                         // Keep a hull strut where the stencil is opaque (the lattice)
                         // AND we're outside the open core; everything else is cut.
                         if (a > kStrutAlpha && frac > kOpenCore) cut = false;
