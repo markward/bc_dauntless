@@ -130,6 +130,22 @@ class ModelManager:
         self._env[path] = env
         return None
 
+    def CloneCamera(self, path):
+        """The real engine clones an NiCamera embedded in the set NIF, or
+        returns None when the model has none. Some set NIFs DO carry one
+        (e.g. starbasecontrolRM.nif has 'Camera01'); the player bridges do
+        not (DBridge/EBridge have no NiCamera — which is exactly why
+        MissionLib.SetupBridgeSet hardcodes their camera coords in the None
+        branch). We return None unconditionally for now: the NIF parser reads
+        NiCamera fine, but the *consuming* SDK surface
+        (CameraObjectClass_CreateFromNiCamera + Get/SetNiFrustum) is not yet
+        implemented, and no set other than the player "bridge" has its
+        maincamera consumed by the renderer. None routes to SetupBridgeSet's
+        well-defined fallback (explicit camera coords) and is crash-free.
+        When the comm/viewscreen-set render path lands, implement the clone
+        path and return the parsed Camera01."""
+        return None
+
     def env_for(self, path):
         return self._env.get(path)
 
