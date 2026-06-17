@@ -5,6 +5,7 @@
 #include <voxel/volume.h>
 
 namespace assets { struct Model; }
+namespace nif { struct NiBinaryVoxelData; }
 
 namespace voxel {
 
@@ -30,5 +31,13 @@ void solidify(VoxelVolume& v);
 /// The dims parameter is provisional; a later task replaces it with the
 /// BC-recovered resolution rule.
 VoxelVolume voxelize(const assets::Model& model, glm::ivec3 dims);
+
+/// Decode a NiBinaryVoxelData block into a VoxelVolume.
+/// Reads the 7-bit fill field from raw_voxel_payload (LSB-plane-first bit
+/// packing over the (nx-1)*(ny-1)*(nz-1) interior-node lattice) and stores
+/// the 0–127 fill value per node in occ (not thresholded; solid() treats
+/// nonzero as solid). Returns an empty volume if the grid is degenerate or
+/// the payload is too small.
+VoxelVolume from_nif_voxel_data(const nif::NiBinaryVoxelData& vd);
 
 }  // namespace voxel
