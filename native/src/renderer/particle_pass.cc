@@ -166,7 +166,14 @@ void ParticlePass::render(const std::vector<ParticleEmitterDescriptor>& emitters
         if (e.blend_mode != active_blend_mode) {
             active_blend_mode = e.blend_mode;
             if (e.blend_mode == 1) {
-                glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);  // additive
+                // Classic additive (matches HitVfxPass). GL_SRC_ALPHA multiplies
+                // the source RGB by alpha at the blend stage, so sprites whose
+                // shape lives in the ALPHA channel (all BC effect textures —
+                // spark/rough/Noise/flares are flat-white RGB + shaped alpha)
+                // render their SHAPE, not a flat square. The previous
+                // GL_ONE,GL_ONE_MINUS_SRC_ALPHA is premultiplied-over, which
+                // needs premultiplied RGB we don't produce → added a full square.
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE);
             } else {
                 glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);  // alpha (A1 default)
             }
