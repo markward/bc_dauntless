@@ -1,6 +1,5 @@
 """Dev-mode comm-set render flag: announce once per activation."""
 import logging
-import types
 
 from engine.appc.comm_render_flag import CommRenderFlag
 

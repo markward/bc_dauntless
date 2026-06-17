@@ -51,8 +51,6 @@ def test_setupbridgeset_else_branch_with_embedded_camera(monkeypatch):
                         (-1.0, 1.0, 0.8, -0.8), 1.0, 800.0, "starbase.nif")
     monkeypatch.setattr(bridge_set.ModelManager, "CloneCamera",
                         lambda self, path: data)
-    App.g_kSetManager.RemoveSet("CamTestSet") if hasattr(
-        App.g_kSetManager, "RemoveSet") else None
 
     pSet = MissionLib.SetupBridgeSet("CamTestSet", "starbase.nif", -35, 65, -1.55)
     cam = pSet.GetCamera("maincamera")
