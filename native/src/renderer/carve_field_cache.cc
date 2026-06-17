@@ -29,6 +29,9 @@ void CarveFieldCache::upload_texture(Entry& e, const voxel::VoxelVolume& vol) {
 
     GLint prev_unpack = 0;
     glGetIntegerv(GL_UNPACK_ALIGNMENT, &prev_unpack);
+    GLint prev_unit = 0;
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &prev_unit);
+    glActiveTexture(GL_TEXTURE0);
 
     glBindTexture(GL_TEXTURE_3D, e.tex3d);
     // occ is one byte per cell (0..127), tightly packed x-fastest.
@@ -45,6 +48,7 @@ void CarveFieldCache::upload_texture(Entry& e, const voxel::VoxelVolume& vol) {
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
     glBindTexture(GL_TEXTURE_3D, 0);
+    glActiveTexture(static_cast<GLenum>(prev_unit));
 
     glPixelStorei(GL_UNPACK_ALIGNMENT, prev_unpack);
 

@@ -100,9 +100,7 @@ void draw_model(const assets::Model& model,
                 float decal_time,
                 float emissive_scale,
                 const std::vector<glm::mat4>& bone_palette,
-                const scenegraph::HullCarveField& carve,
-                CarveFieldCache* /*carve_cache*/,
-                std::uintptr_t /*instance_key*/) {
+                const scenegraph::HullCarveField& carve) {
     // Pick the program: skinned only when the model carries a skeleton AND a
     // non-empty palette is supplied. An empty palette forces the static branch,
     // which is byte-identical to the pre-skinning path (used by the plumbing
@@ -183,7 +181,11 @@ void draw_model(const assets::Model& model,
     // disables the clip entirely (stock-BC path).
     {
         if (dauntless_hull_damage::enabled() && carve.count() > 0) {
-            static constexpr int kMaxCarves = 24;
+            // Mirror how the decal block uses DamageDecalRing::kMaxDecals.
+            // opaque.frag's `const int MAX_CARVES = 24` must stay in sync with
+            // HullCarveField::kMaxCarves; confirm both equal 24 before changing either.
+            static constexpr int kMaxCarves =
+                static_cast<int>(scenegraph::HullCarveField::kMaxCarves);
             glm::vec4 spheres[kMaxCarves];
             int ns = 0;
             for (const auto& s : carve.slots()) {
@@ -386,9 +388,7 @@ void FrameSubmitter::submit_opaque(const scenegraph::World& world,
         if (m) draw_model(*m, inst.world, shader, pipeline.skinned_shader(),
                           white, black, rim_active,
                           inst.decals, inst.glow_regions, decal_time,
-                          inst.emissive_scale, palette, inst.carve,
-                          carve_cache,
-                          reinterpret_cast<std::uintptr_t>(&inst));
+                          inst.emissive_scale, palette, inst.carve);
     });
 }
 
@@ -439,9 +439,7 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
         if (m) draw_model(*m, inst.world, shader, pipeline.skinned_shader(),
                           white, black, rim_active,
                           inst.decals, inst.glow_regions, decal_time,
-                          inst.emissive_scale, palette, inst.carve,
-                          carve_cache,
-                          reinterpret_cast<std::uintptr_t>(&inst));
+                          inst.emissive_scale, palette, inst.carve);
     });
 }
 

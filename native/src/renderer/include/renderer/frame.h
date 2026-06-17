@@ -193,9 +193,7 @@ void draw_model(const assets::Model& model,
                 float decal_time,
                 float emissive_scale,
                 const std::vector<glm::mat4>& bone_palette,
-                const scenegraph::HullCarveField& carve,
-                CarveFieldCache* carve_cache,
-                std::uintptr_t instance_key);
+                const scenegraph::HullCarveField& carve);
 
 class FrameSubmitter {
 public:

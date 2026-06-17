@@ -33,7 +33,7 @@ uniform ivec3     u_fill_dims;     // nx, ny, nz
 uniform float     u_fill_iso;      // 64.0/255.0
 
 uniform sampler2D u_damage_tex;
-uniform mat4      u_view;
+uniform vec3      u_camera_pos_ws; // camera world position — uploaded CPU-side, avoids per-fragment inverse
 uniform float     u_tex_scale;     // body-units -> texture-period scale
 
 out vec4 frag_color;
@@ -72,7 +72,7 @@ void main() {
     // ── Double-sided lighting ──────────────────────────────────────────────
     // The inner wall is rendered back-face (cull-front), so gl_FrontFacing is
     // false; faceforward() corrects the normal toward the viewer for shading.
-    vec3 cam_pos  = inverse(u_view)[3].xyz;
+    vec3 cam_pos  = u_camera_pos_ws;
     vec3 view_dir = normalize(cam_pos - v_world_pos);
     // v_body_normal is the OUTWARD sphere normal; faceforward flips it inward
     // (toward camera) for the lighting dot product.

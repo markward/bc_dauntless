@@ -5,9 +5,9 @@
 //   2. Statically linked into open_stbc (registered via
 //      PyImport_AppendInittab before Py_InitializeEx).
 //
-// Phase B: real window owned by the bindings; init/shutdown control its
-// lifetime, frame() polls + swaps. No draws yet — Phase D adds the opaque
-// pass.
+// Full renderer + Python host bindings: init/shutdown manage the window and
+// GL context lifetime; frame() runs all render passes; Python drives sim state
+// through the remaining bindings.
 
 #include "host_bindings.h"
 
@@ -117,10 +117,11 @@ std::unique_ptr<renderer::PhaserPass>      g_phaser_pass;
 renderer::HologramShip                       g_hologram_ship;
 std::unique_ptr<renderer::HologramPass>      g_hologram_pass;
 std::unique_ptr<renderer::BreachPass>        g_breach_pass;
-// Shared per-instance carved-fill cache: the carved fill + its GL 3D texture
-// are built once per carve-version and consumed by BOTH the opaque-pass hull
-// clip and the breach DC mesh (unifies hole + cavity to one isosurface). Owns
-// GL textures, so it lives/dies with the GL context like g_breach_pass.
+// Shared static original-fill cache: the UNCARVED hull fill + its GL_R8 3D
+// texture are built once per hull source path (not per-instance) and consumed
+// ONLY by the breach pass as a material mask (fill >= iso → solid interior;
+// discard otherwise). The opaque hull clip is a pure sphere test — it needs no
+// fill texture. Owns GL textures; lives/dies with the GL context.
 std::unique_ptr<renderer::CarveFieldCache>   g_carve_cache;
 std::vector<renderer::SubsystemPin>          g_subsystem_pins;
 std::unique_ptr<renderer::SubsystemPinPass>  g_subsystem_pin_pass;
@@ -319,7 +320,7 @@ void shutdown() {
     g_hologram_ship = renderer::HologramShip{};
     g_hologram_only_mode = false;
     g_hologram_pass.reset();
-    g_breach_pass.reset();   // releases cube VAO/VBO while the GL context lives
+    g_breach_pass.reset();   // releases the sphere mesh + fill textures while the GL context lives
     g_carve_cache.reset();   // releases the carved-fill 3D textures (GL alive)
     g_subsystem_pin_pass.reset();
     g_target_reticle = renderer::TargetReticle{};
@@ -388,11 +389,11 @@ void frame() {
         g_submitter->submit_opaque_in_pass(
             g_world, cam, *g_pipeline, lookup, g_lighting,
             scenegraph::Pass::Space, g_decal_game_time, g_carve_cache.get());
-        // Breach interior-voxel splat: fills the see-through holes the opaque
-        // pass's carve-clip punched with colored interior cubes. Runs right
-        // after the opaque hull (depth-test/write on) so cubes behind a hole
-        // show through and cubes behind intact hull are occluded. Gated on
-        // dauntless_hull_damage::enabled() inside the pass (no-op when off).
+        // Breach scoop pass: for each active carve sphere, draws the front-
+        // face-culled sphere inner wall masked by the original hull fill
+        // (triplanar Damage.tga). Runs right after the opaque hull
+        // (depth-test/write on) so the scoop shows only through clip holes.
+        // Gated on dauntless_hull_damage::enabled() inside the pass (no-op when off).
         if (g_breach_pass && g_carve_cache)
             g_breach_pass->render(g_world, cam, *g_pipeline, lookup,
                                   *g_carve_cache);
@@ -579,7 +580,7 @@ static renderer::PhaserBeamDescriptor beam_from_dict(const py::dict& d) {
 }
 
 PYBIND11_MODULE(_dauntless_host, m) {
-    m.doc() = "open_stbc renderer host bindings (Phase B: window + frame stub)";
+    m.doc() = "dauntless renderer + sim host bindings";
 
     // Process-global developer-mode flag. Set in host_main.cc from --developer.
     // When loaded standalone (e.g. pytest), defaults to False; tests can

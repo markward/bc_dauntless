@@ -15,6 +15,7 @@
 
 #include <glad/glad.h>
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <cstdint>
 #include <cstdio>
@@ -136,13 +137,20 @@ void BreachPass::draw_scoop(const glm::vec3& center_body,
                              const glm::mat4& world_xf,
                              const scenegraph::Camera& camera,
                              Pipeline& pipeline) {
+    // Camera world position: inverse of view matrix column 3, computed once
+    // CPU-side per draw (not per fragment). Matches how the opaque pass derives
+    // u_camera_pos_ws in submit_opaque / submit_opaque_in_pass.
+    const glm::vec3 cam_pos_ws =
+        glm::vec3(glm::inverse(camera.view_matrix())[3]);
+
     auto& shader = pipeline.breach_shader();
     shader.use();
-    shader.set_mat4("u_model",        world_xf);
-    shader.set_mat4("u_view",         camera.view_matrix());
-    shader.set_mat4("u_proj",         camera.proj_matrix());
-    shader.set_vec3("u_carve_center", center_body);
-    shader.set_float("u_carve_radius", radius);
+    shader.set_mat4("u_model",           world_xf);
+    shader.set_mat4("u_view",            camera.view_matrix());
+    shader.set_mat4("u_proj",            camera.proj_matrix());
+    shader.set_vec3("u_camera_pos_ws",   cam_pos_ws);
+    shader.set_vec3("u_carve_center",    center_body);
+    shader.set_float("u_carve_radius",   radius);
 
     // Fill mask (original uncarved fill).
     shader.set_int("u_fill",    0);
@@ -150,7 +158,7 @@ void BreachPass::draw_scoop(const glm::vec3& center_body,
     shader.set_vec3("u_fill_cell",   fill_cell);
     shader.set_ivec3("u_fill_dims",  fill_dims);
     shader.set_float("u_fill_iso",
-                     static_cast<float>(kIsovalue) / 255.0f);
+                     static_cast<float>(CarveFieldCache::kIsovalue) / 255.0f);
 
     // Triplanar Damage.tga on unit 1.
     shader.set_int("u_damage_tex", 1);

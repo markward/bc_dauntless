@@ -97,9 +97,6 @@ private:
     // Returns 0 on failure.  Caller owns the GL texture.
     static unsigned int upload_fill_tex(const voxel::VoxelVolume& fill);
 
-    // Isovalue for the fill mask (matches hull clip and DC isovalue).
-    static constexpr int kIsovalue = 64;
-
     // Sphere VAO/VBO/EBO — built once per pass lifetime.
     std::unique_ptr<assets::Mesh> sphere_mesh_;
 
