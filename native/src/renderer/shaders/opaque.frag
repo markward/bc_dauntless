@@ -57,6 +57,23 @@ uniform int  u_carve_enabled;
 const int MAX_CARVES = 24;
 uniform int  u_carve_count;                    // 0 = no clip
 uniform vec4 u_carve_spheres[MAX_CARVES];      // xyz=center_body, w=radius
+uniform vec3 u_carve_normals[MAX_CARVES];      // body-frame outward hit normal
+
+// breach shape — KEEP IN SYNC with breach.vert / opaque.frag
+const float kDepthOffset = 0.55;
+const float kShapeAmp    = 0.25;
+const float kShapeFreq   = 4.0;
+const float kPhase       = 0.13;
+
+float vh3(vec3 p){ return fract(sin(dot(p, vec3(127.1,311.7,74.7))) * 43758.5453123); }
+float vnoise3(vec3 p){
+    vec3 i = floor(p), f = fract(p);
+    vec3 u = f*f*(3.0-2.0*f);
+    float n000=vh3(i), n100=vh3(i+vec3(1,0,0)), n010=vh3(i+vec3(0,1,0)), n110=vh3(i+vec3(1,1,0));
+    float n001=vh3(i+vec3(0,0,1)), n101=vh3(i+vec3(1,0,1)), n011=vh3(i+vec3(0,1,1)), n111=vh3(i+vec3(1,1,1));
+    float nx00=mix(n000,n100,u.x), nx10=mix(n010,n110,u.x), nx01=mix(n001,n101,u.x), nx11=mix(n011,n111,u.x);
+    return mix(mix(nx00,nx10,u.y), mix(nx01,nx11,u.y), u.z);
+}
 
 // ── Warp-nacelle glow dimming ───────────────────────────────────────────
 const int MAX_GLOW_REGIONS = 4;
@@ -284,9 +301,17 @@ void main() {
     // renders the exposed interior (scoop) within the same spheres, so hole and
     // interior align by construction. u_carve_count == 0 (or disabled) = stock path.
     if (u_carve_enabled != 0 && u_carve_count > 0) {
-        for (int i = 0; i < u_carve_count; ++i) {
-            if (distance(p_body, u_carve_spheres[i].xyz) < u_carve_spheres[i].w) {
-                discard;
+        for (int i = 0; i < u_carve_count; i++) {
+            vec3 c  = u_carve_spheres[i].xyz;
+            float r = u_carve_spheres[i].w;
+            vec3 n  = u_carve_normals[i];
+            vec3 cp = c + kDepthOffset * r * n;
+            vec3 v  = p_body - cp;
+            float L = length(v);
+            if (L < r * (1.0 + kShapeAmp)) {
+                vec3 d = v / max(L, 1e-5);
+                float r_eff = r * (1.0 + kShapeAmp * (vnoise3(d * kShapeFreq + c * kPhase) * 2.0 - 1.0));
+                if (L < r_eff) discard;
             }
         }
     }

@@ -1571,7 +1571,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               // inst->world (same derivation as damage_decal_add).
               const float s = glm::length(glm::vec3(inst->world[0]));
               const float radius_model = (s > 0.0f) ? radius / s : radius;
-              inst->carve.add(pb, radius_model);
+              inst->carve.add(pb, radius_model, nb);
               // Breach event: transient VFX ring (debris, venting, rim).
               // Seed: deterministic hash of center_body to avoid per-frame
               // re-rolling; XOR with a counter grown per push to decorrelate

@@ -91,6 +91,7 @@ private:
     // fill 3D texture. Sets the per-carve uniforms (center, radius, fill).
     void draw_scoop(const glm::vec3& center_body,
                     float radius,
+                    const glm::vec3& surface_normal,
                     unsigned int fill_tex,
                     const glm::vec3& fill_origin,
                     const glm::vec3& fill_cell,

@@ -187,11 +187,13 @@ void draw_model(const assets::Model& model,
             static constexpr int kMaxCarves =
                 static_cast<int>(scenegraph::HullCarveField::kMaxCarves);
             glm::vec4 spheres[kMaxCarves];
+            glm::vec3 normals[kMaxCarves];
             int ns = 0;
             for (const auto& s : carve.slots()) {
                 if (!s.active) continue;
                 if (ns >= kMaxCarves) break;
                 spheres[ns] = glm::vec4(s.center_body, s.radius);
+                normals[ns] = s.surface_normal;
                 ++ns;
             }
             prog.set_int("u_carve_enabled", 1);
@@ -201,6 +203,7 @@ void draw_model(const assets::Model& model,
                 // has no decals and no glow regions.
                 prog.set_mat4("u_ship_world_inv", glm::inverse(world));
                 prog.set_vec4_array("u_carve_spheres", spheres, ns);
+                prog.set_vec3_array("u_carve_normals", normals, ns);
             }
         } else {
             prog.set_int("u_carve_enabled", 0);

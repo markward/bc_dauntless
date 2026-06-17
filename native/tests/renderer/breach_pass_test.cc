@@ -43,15 +43,19 @@ namespace {
 constexpr int kW = 64;
 constexpr int kH = 64;
 
-// A 4^3 fill that is SOLID (127) everywhere in its volume: the original
-// (uncarved) hull material. The breach.frag fill mask will pass every fragment
-// that maps inside this volume.
+// An 8^3 fill that is SOLID (127) everywhere in its volume: the original
+// (uncarved) hull material. The breach.frag fill mask passes every fragment
+// that maps inside this volume. The 2c scoop is a shallow cap offset toward
+// the hit normal by kDepthOffset*radius, so the sphere extends well beyond the
+// carve centre; the fill cube must span [-4,4] (not the old [-2,2]) so the
+// offset interior wall still lands in solid material rather than reading as
+// see-through off the edge of an undersized fill.
 voxel::VoxelVolume solid_fill() {
     voxel::VoxelVolume v;
-    v.dims   = {4, 4, 4};
-    v.origin = {-2.f, -2.f, -2.f};
+    v.dims   = {8, 8, 8};
+    v.origin = {-4.f, -4.f, -4.f};
     v.cell   = {1.f, 1.f, 1.f};
-    v.occ.assign(4 * 4 * 4, 127);  // all solid
+    v.occ.assign(8 * 8 * 8, 127);  // all solid
     return v;
 }
 
@@ -98,6 +102,28 @@ protected:
         std::array<unsigned char, 4> px{0, 0, 0, 0};
         glReadPixels(kW / 2, kH / 2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
         return px;
+    }
+
+    // Brightest RGB sum over the inner half of the framebuffer. The 2c scoop is
+    // a shallow cap offset toward the hit normal (kDepthOffset) with a
+    // noise-deformed radius, so the visible interior wall is an off-centre
+    // annulus rather than a disc centred on the exact pole pixel. Sampling the
+    // inner-half max proves the interior wall rendered near the breach axis
+    // without depending on which single pixel the (degenerate) UV-sphere pole
+    // lands on.
+    int read_inner_max() const {
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+        std::vector<unsigned char> buf(kW * kH * 4);
+        glReadPixels(0, 0, kW, kH, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
+        int best = 0;
+        for (int y = kH / 4; y < 3 * kH / 4; ++y) {
+            for (int x = kW / 4; x < 3 * kW / 4; ++x) {
+                int i = (y * kW + x) * 4;
+                int s = buf[i] + buf[i + 1] + buf[i + 2];
+                if (s > best) best = s;
+            }
+        }
+        return best;
     }
 
     // Sum all RGB components across the whole framebuffer — used to compare
@@ -163,7 +189,8 @@ TEST_F(BreachPassGLTest, SolidFillDrawsScoopInterior) {
     voxel::VoxelVolume fill = solid_fill();
 
     scenegraph::HullCarveField carve;
-    carve.add(glm::vec3(0.f, 0.f, 0.f), 1.5f);  // sphere at origin, r=1.5
+    carve.add(glm::vec3(0.f, 0.f, 0.f), 1.5f,
+              glm::vec3(0.f, 0.f, 1.f));  // sphere at origin, r=1.5, +Z normal
 
     scenegraph::Camera cam = cam_looking_at_origin();
 
@@ -172,11 +199,9 @@ TEST_F(BreachPassGLTest, SolidFillDrawsScoopInterior) {
     glFinish();
 
     EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error in solid-fill scoop draw";
-    auto px = read_center();
-    EXPECT_GT(px[0] + px[1] + px[2], 24)
-        << "Centre pixel is background (R=" << (int)px[0]
-        << " G=" << (int)px[1] << " B=" << (int)px[2]
-        << ") — solid fill: scoop sphere inner wall should be visible";
+    EXPECT_GT(read_inner_max(), 24)
+        << "Inner region is background — solid fill: scoop sphere inner wall "
+           "should be visible around the breach axis";
 }
 
 // GL: with ONE active carve and an EMPTY fill, every scoop fragment is
@@ -190,7 +215,7 @@ TEST_F(BreachPassGLTest, EmptyFillDiscardsAllScoopFragments) {
     voxel::VoxelVolume fill = empty_fill();
 
     scenegraph::HullCarveField carve;
-    carve.add(glm::vec3(0.f, 0.f, 0.f), 1.5f);
+    carve.add(glm::vec3(0.f, 0.f, 0.f), 1.5f, glm::vec3(0.f, 0.f, 1.f));
 
     scenegraph::Camera cam = cam_looking_at_origin();
 
@@ -235,7 +260,7 @@ TEST_F(BreachPassGLTest, NoCarvesDrawsNothing) {
 // strictly larger.
 TEST_F(BreachPassGLTest, HotBreachBrighterThanCold) {
     scenegraph::HullCarveField carve;
-    carve.add(glm::vec3(0.f, 0.f, 0.f), 1.5f);
+    carve.add(glm::vec3(0.f, 0.f, 0.f), 1.5f, glm::vec3(0.f, 0.f, 1.f));
     scenegraph::Camera cam = cam_looking_at_origin();
 
     // ── Cold render (age well past kRimLife → heat = 0, no emissive) ────────

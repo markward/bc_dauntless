@@ -142,6 +142,7 @@ unsigned int BreachPass::upload_fill_tex(const voxel::VoxelVolume& fill) {
 
 void BreachPass::draw_scoop(const glm::vec3& center_body,
                              float radius,
+                             const glm::vec3& surface_normal,
                              unsigned int fill_tex,
                              const glm::vec3& fill_origin,
                              const glm::vec3& fill_cell,
@@ -165,6 +166,7 @@ void BreachPass::draw_scoop(const glm::vec3& center_body,
     shader.set_vec3("u_camera_pos_ws",   cam_pos_ws);
     shader.set_vec3("u_carve_center",    center_body);
     shader.set_float("u_carve_radius",   radius);
+    shader.set_vec3("u_carve_normal",    surface_normal);
 
     // Fill mask (original uncarved fill).
     shader.set_int("u_fill",    0);
@@ -226,7 +228,7 @@ void BreachPass::draw_instance(std::uintptr_t instance_key,
 
     for (const auto& s : carve.slots()) {
         if (!s.active) continue;
-        draw_scoop(s.center_body, s.radius,
+        draw_scoop(s.center_body, s.radius, s.surface_normal,
                    fe.tex3d, fill.origin, fill.cell, fill.dims,
                    world_xf, camera, pipeline,
                    breach_age, damage_frames_[0]);
@@ -301,7 +303,7 @@ void BreachPass::render(const scenegraph::World& world,
                     }
                 }
 
-                draw_scoop(s.center_body, s.radius,
+                draw_scoop(s.center_body, s.radius, s.surface_normal,
                            ce->tex3d, ce->origin, ce->cell, ce->dims,
                            inst.world, camera, pipeline, breach_age, frame_tex);
             }

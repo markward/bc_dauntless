@@ -40,6 +40,8 @@
 #include <scenegraph/hull_carve.h>
 #include <scenegraph/instance.h>
 
+#include <array>
+
 // ── CPU invariant ──────────────────────────────────────────────────────────────
 
 // Lock: a default-constructed HullCarveField has ALL slots inactive and
@@ -152,6 +154,14 @@ protected:
         // Pure sphere clip: disabled by default.
         s.set_int("u_carve_enabled", 0);
         s.set_int("u_carve_count", 0);
+        // Default carve normal (+Z) for every slot so the shallow-cap offset is
+        // well-defined even before a test sets specific spheres.
+        {
+            std::array<glm::vec3, 24> normals;
+            normals.fill(glm::vec3(0.0f, 0.0f, 1.0f));
+            s.set_vec3_array("u_carve_normals", normals.data(),
+                             static_cast<int>(normals.size()));
+        }
         glActiveTexture(GL_TEXTURE0);
     }
 
@@ -214,10 +224,15 @@ TEST_F(HullClipTest, FragmentInsideSphereIsDiscarded) {
     renderer::Shader& prog = pipeline->opaque_shader();
     set_uniforms(prog);
     prog.set_int("u_carve_enabled", 1);
-    // One sphere centred at origin with radius 2: covers p_body=(0,0,0).
+    // One sphere centred at origin, radius 2, normal +Z. The shallow cap sits at
+    // cp = c + 0.55*r*n = (0,0,1.1); the fragment at p_body=(0,0,0) is L=1.1 from
+    // the cap centre, well inside the minimum deformed radius (r*(1-0.25)=1.5),
+    // so it discards regardless of the noise term. This is the breach hole.
     const glm::vec4 sphere(0.0f, 0.0f, 0.0f, 2.0f);
+    const glm::vec3 normal(0.0f, 0.0f, 1.0f);
     prog.set_int("u_carve_count", 1);
     prog.set_vec4_array("u_carve_spheres", &sphere, 1);
+    prog.set_vec3_array("u_carve_normals", &normal, 1);
     draw();
 
     EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error in covering-sphere draw";
@@ -236,8 +251,10 @@ TEST_F(HullClipTest, FragmentOutsideSphereRendersHull) {
     prog.set_int("u_carve_enabled", 1);
     // Sphere centred at (10,10,10) with radius 1: nowhere near the origin.
     const glm::vec4 sphere(10.0f, 10.0f, 10.0f, 1.0f);
+    const glm::vec3 normal(0.0f, 0.0f, 1.0f);
     prog.set_int("u_carve_count", 1);
     prog.set_vec4_array("u_carve_spheres", &sphere, 1);
+    prog.set_vec3_array("u_carve_normals", &normal, 1);
     draw();
 
     EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error in non-covering-sphere draw";

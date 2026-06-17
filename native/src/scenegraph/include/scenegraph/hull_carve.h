@@ -12,6 +12,7 @@ namespace scenegraph {
 struct HullCarve {
     glm::vec3     center_body{0.0f};
     float         radius = 0.0f;
+    glm::vec3     surface_normal{0.0f, 0.0f, 1.0f};  // body-frame outward normal
     std::uint64_t seq = 0;     // insertion order (0 = never used)
     bool          active = false;
 };
@@ -24,9 +25,12 @@ public:
 
     /// Insert a carve sphere (body frame, model units). If an active carve lies
     /// within kMergeFactor*radius, grow it (max radius) and refresh its age
-    /// instead of allocating. Otherwise take a free slot, else evict the
-    /// smallest carve (tie-break: oldest).
-    void add(const glm::vec3& center_body, float radius);
+    /// instead of allocating (keeping the existing slot's surface_normal).
+    /// Otherwise take a free slot, else evict the smallest carve (tie-break:
+    /// oldest). surface_normal is the body-frame outward hit normal, used by the
+    /// hole-clip / scoop to offset the cap and align hole and interior.
+    void add(const glm::vec3& center_body, float radius,
+             const glm::vec3& surface_normal);
 
     std::size_t count() const;
     const std::array<HullCarve, kMaxCarves>& slots() const { return slots_; }

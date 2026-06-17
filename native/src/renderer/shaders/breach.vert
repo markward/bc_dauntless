@@ -24,13 +24,32 @@ uniform mat4  u_view;
 uniform mat4  u_proj;
 uniform vec3  u_carve_center;   // body-frame sphere centre (model units)
 uniform float u_carve_radius;   // sphere radius (model units)
+uniform vec3  u_carve_normal;   // body-frame outward hit normal
 
 out vec3 v_body_pos;      // body-frame position (fill mask TC + triplanar UVs)
 out vec3 v_body_normal;   // unit-sphere outward normal in body frame
 out vec3 v_world_pos;     // world position (double-sided lighting)
 
+// breach shape — KEEP IN SYNC with breach.vert / opaque.frag
+const float kDepthOffset = 0.55;
+const float kShapeAmp    = 0.25;
+const float kShapeFreq   = 4.0;
+const float kPhase       = 0.13;
+
+float vh3(vec3 p){ return fract(sin(dot(p, vec3(127.1,311.7,74.7))) * 43758.5453123); }
+float vnoise3(vec3 p){
+    vec3 i = floor(p), f = fract(p);
+    vec3 u = f*f*(3.0-2.0*f);
+    float n000=vh3(i), n100=vh3(i+vec3(1,0,0)), n010=vh3(i+vec3(0,1,0)), n110=vh3(i+vec3(1,1,0));
+    float n001=vh3(i+vec3(0,0,1)), n101=vh3(i+vec3(1,0,1)), n011=vh3(i+vec3(0,1,1)), n111=vh3(i+vec3(1,1,1));
+    float nx00=mix(n000,n100,u.x), nx10=mix(n010,n110,u.x), nx01=mix(n001,n101,u.x), nx11=mix(n011,n111,u.x);
+    return mix(mix(nx00,nx10,u.y), mix(nx01,nx11,u.y), u.z);
+}
+
 void main() {
-    vec3 body_pos = u_carve_center + u_carve_radius * a_pos;
+    vec3 cp = u_carve_center + kDepthOffset * u_carve_radius * u_carve_normal;
+    float r_eff = u_carve_radius * (1.0 + kShapeAmp * (vnoise3(a_pos * kShapeFreq + u_carve_center * kPhase) * 2.0 - 1.0));
+    vec3 body_pos = cp + r_eff * a_pos;
     vec4 world    = u_model * vec4(body_pos, 1.0);
     v_body_pos    = body_pos;
     v_body_normal = a_pos;              // unit-sphere outward normal in body frame
