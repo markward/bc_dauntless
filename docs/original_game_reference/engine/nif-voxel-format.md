@@ -1,14 +1,29 @@
 # NiBinaryVoxelData — recovered binary format (BC `*_vox.nif`)
 
-Status: **Container SOLVED; one codec remaining.** The header is fully solved
-(below). The payload **container layout is cleanroom-confirmed** — a standalone
-decoder (`ni_sdk/nibinaryvoxel_decode.py`, derived from niftools nif.xml +
-byte analysis, no NDL SDK source) parses **all 84** `*_vox.nif` files end-to-end
-with **zero slack** (the parse lands exactly on the trailing "End Of File"
-block). The one remaining unknown is the internal **occupancy-bitmask codec**
-(variable-length, compressed — see §4). See also the corpus table
-`nif-voxel-corpus-table.csv` and the cleanroom brief
-`nif-voxel-format-cleanroom-brief.md`.
+Status: **FULLY SOLVED** (cleanroom, verified against real geometry). Header,
+container, the 7-bit fill field, and the cell index→(x,y,z) mapping are all
+confirmed; the standalone decoder `ni_sdk/nibinaryvoxel_decode.py` decodes all
+84 `*_vox.nif` end-to-end (zero slack to EOF) and returns `fillGrid[k][j][i]`
+(0–127). Remaining items are minor/non-blocking (exact 0–127 value transfer
+function; `bytes2` per-record split; a small-dims padding nuance — see §4). See
+also `nif-voxel-corpus-table.csv` and `nif-voxel-format-cleanroom-brief.md`.
+
+### The fill-field encoding (the former "codec", now solved)
+
+```
+fillField : byte[L]   where  N = (nx-1)·(ny-1)·(nz-1)   # interior-node lattice
+                             W = ceil(N / 8)
+                             L = 7 · W                  # 7 bit-planes, W bytes each
+node (i,j,k):  idx = i + (nx-1)·(j + (ny-1)·k)          # X-fastest
+               value v = Σ_{p=0..6} bit(plane_p, idx) << p      # LSB-plane first, 0..127
+               bit(plane_p, idx) = (fillField[p·W + idx/8] >> (idx%8)) & 1   # LSB-first in byte
+```
+`v` ∈ 0..127 is the hull fill/coverage at that interior node (0 empty … 127
+solid) — the quantity the runtime carves for battle damage. **Golden check
+(Galaxy):** grid (30,42,9), N=11340, max=127, 2787 nonzero, 1584 solid(==127),
+node flat-idx 37 = 88. Degenerate single-cell objects have `nz-1=0` ⇒ N=0 ⇒
+empty fill grid (valid). Axis/bit order confirmed by the Galaxy XY-slice
+rendering the correct saucer+nacelle silhouette.
 
 Investigation tool: `native/tools/voxel_inspect/` (`voxel_inspect <X_vox.nif> [X.nif]`).
 All numbers below are this tool's actual output plus corpus scripts.
