@@ -180,14 +180,50 @@ class TGParagraph(TGPane):
 
     def __init__(self, text: str = "", scale: float = 1.0, color=None):
         super().__init__()
-        self._text = str(text)
+        # Ordered content stream: ("text", str) | ("char", int) | ("child", TGParagraph)
+        self._segments: list = []
+        if text:
+            self._segments.append(("text", str(text)))
         self._scale = float(scale)
         self._color = color
 
-    def GetText(self) -> str:           return self._text
-    def SetText(self, text) -> None:    self._text = str(text)
+    def AppendStringW(self, text) -> None:
+        self._segments.append(("text", str(text)))
+
+    # SDK also calls the non-W name in a few places.
+    AppendString = AppendStringW
+
+    def AppendChar(self, wc) -> None:
+        self._segments.append(("char", int(wc)))
+
+    def AddChild(self, child, x: float = 0.0, y: float = 0.0, *_extra) -> None:
+        # Keep the TGPane container contract (child lands on _children) AND
+        # record positionally in the segment stream so inline glyphs render
+        # in call order relative to surrounding text.
+        super().AddChild(child, x, y)
+        self._segments.append(("child", child))
+
+    def iter_segments(self) -> list:
+        """dauntless-internal: the ordered (kind, value) content stream."""
+        return list(self._segments)
+
+    def GetText(self) -> str:
+        out = []
+        for kind, val in self._segments:
+            if kind == "text":
+                out.append(val)
+            elif kind == "char":
+                out.append(wc_to_str(val))
+            elif kind == "child":
+                out.append(val.GetText())
+        return "".join(out)
+
+    def SetText(self, text) -> None:
+        self._segments = [("text", str(text))] if text else []
+
     # SDK W-variant setter name used by some callers.
-    def SetStringW(self, text) -> None: self._text = str(text)
+    SetStringW = SetText
+
     def SetFont(self, *args) -> None:   pass
     def SetColor(self, color) -> None:  self._color = color
 
