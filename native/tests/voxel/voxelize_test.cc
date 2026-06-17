@@ -270,3 +270,24 @@ TEST(Voxelize, SolidCubeModelIsMostlySolid) {
     glm::ivec3 mid = v.dims / 2;
     EXPECT_TRUE(v.solid(mid.x, mid.y, mid.z));
 }
+
+TEST(CarveSphere, SmoothFalloffSubtractsFill) {
+    voxel::VoxelVolume v;
+    v.dims = {8,8,8};
+    v.origin = {0.f,0.f,0.f};
+    v.cell = {1.f,1.f,1.f};
+    v.occ.assign(8*8*8, 127);                  // fully solid field
+    glm::vec3 center = {4.f,4.f,4.f};           // mid-grid (voxel-center frame)
+    float r = 3.0f;
+    voxel::carve_sphere(v, center, r);
+    // voxel whose center is nearest the sphere center -> heavily reduced (≈0)
+    // voxel (3,3,3) center = (3.5,3.5,3.5), dist to (4,4,4) ≈ 0.87 -> deep cut
+    EXPECT_LT(v.occ[v.index(3,3,3)], 30);
+    // a voxel just inside the rim -> partial (between 0 and 127)
+    // (6,4,4) center=(6.5,4.5,4.5) dist≈2.55 < 3 -> reduced but not to 0
+    int rim = v.occ[v.index(6,4,4)];
+    EXPECT_GT(rim, 0);
+    EXPECT_LT(rim, 127);
+    // a voxel well outside the sphere -> unchanged
+    EXPECT_EQ(v.occ[v.index(0,0,0)], 127);
+}

@@ -253,4 +253,33 @@ std::vector<Tri> collect_hull_triangles_from_nif(const nif::File& f) {
     return out;
 }
 
+void carve_sphere(VoxelVolume& v, glm::vec3 center_body, float radius) {
+    if (radius <= 0.f || v.occ.empty()) return;
+
+    // Compute the voxel-index bounding box of the sphere, clamped to dims.
+    glm::vec3 r3(radius);
+    glm::vec3 lo_f = (center_body - r3 - v.origin) / v.cell;
+    glm::vec3 hi_f = (center_body + r3 - v.origin) / v.cell;
+
+    int x0 = std::max(0, int(std::floor(lo_f.x)));
+    int y0 = std::max(0, int(std::floor(lo_f.y)));
+    int z0 = std::max(0, int(std::floor(lo_f.z)));
+    int x1 = std::min(v.dims.x - 1, int(std::floor(hi_f.x)));
+    int y1 = std::min(v.dims.y - 1, int(std::floor(hi_f.y)));
+    int z1 = std::min(v.dims.z - 1, int(std::floor(hi_f.z)));
+
+    for (int z = z0; z <= z1; ++z)
+    for (int y = y0; y <= y1; ++y)
+    for (int x = x0; x <= x1; ++x) {
+        // Voxel body-frame center.
+        glm::vec3 c = v.origin + (glm::vec3(x, y, z) + 0.5f) * v.cell;
+        float dist = glm::length(c - center_body);
+        if (dist >= radius) continue;
+        // smoothstep: 0 at dist=0, 1 at dist=radius.
+        float factor = glm::smoothstep(0.f, radius, dist);
+        std::size_t idx = v.index(x, y, z);
+        v.occ[idx] = static_cast<std::uint8_t>(float(v.occ[idx]) * factor);
+    }
+}
+
 }  // namespace voxel
