@@ -166,11 +166,19 @@ element / dual-contouring edge). The index tree (§6) resolves a cell to a conti
 these.
 
 ```
-leaf record (6 bytes):
-  u16 planeIndex       # index into the plane palette (§5)  — the Hermite plane
-  u16 meshRefA         # dual-contouring mesh element id (DC vertex/edge); 0 = none
-  u16 meshRefB         # dual-contouring mesh element id; 0 = none
+leaf record (6 bytes):    # CORRECTED ORDER (verified Task 2, see note below)
+  u16 meshRefA         # dual-contouring mesh element id (sequential edge id)
+  u16 meshRefB         # dual-contouring mesh element id (sequential edge id)
+  u16 planeIndex       # index into the plane palette (§5) — the Hermite plane  [bytes +4..+6]
 ```
+
+> **CORRECTION (verified against Galaxy, Task 2):** `planeIndex` is **field 2** (the
+> last u16, bytes +4..+6 of each record), NOT field 0 as originally written. With
+> this, the leaf tail starts at byte `numBytes2 − 6·14449 = 7750`, all 14,449
+> records' field-2 values are `< numPlanes`, and the four anchors all resolve.
+> Fields 0/1 (`meshRefA/B`) are *sequential* edge ids (they increment globally),
+> confirming the DC-edge model. The cell→leaf-record *head-tree* descent (§6)
+> remains unresolved — see `bytes2-tree-descent-notes.md`.
 
 **Verification (Galaxy, 14,449 records):**
 * `planeIndex` (field 0) is `< numPlanes` for **100%** of records (range [0, 3001]).
@@ -286,6 +294,6 @@ trailer: (6244, 1508, 2256, 40, 0)   # 40 = 4*nz ; 0 reserved
 * niftools `byte[7][12]` "Unknown Bytes 1" — **wrong**; that region is the §4 fill field,
   length `7·W` (variable), not 84.
 * The `Vector4[]` are **planes (n̂, d)**, *not* positions; 100% unit normals.
-* The leaf record is **6 bytes** (not 12 — the 12 is index-level stride); field 0 = plane
-  index.
+* The leaf record is **6 bytes** (not 12 — the 12 is index-level stride); **planeIndex
+  is field 2** (last u16, bytes +4..+6), not field 0 — see the §7 correction.
 * `numPlanes` is independent of `L`: a deduplicated palette, not per-voxel.
