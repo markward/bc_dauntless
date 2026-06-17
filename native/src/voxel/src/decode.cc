@@ -19,6 +19,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <algorithm>
+#include <cstring>  // std::memcpy
 
 namespace voxel {
 
@@ -82,6 +83,93 @@ VoxelVolume from_nif_voxel_data(const nif::NiBinaryVoxelData& vd) {
     }
 
     return vol;
+}
+
+SurfaceData from_nif_surface(const nif::NiBinaryVoxelData& vd) {
+    const int nx = static_cast<int>(vd.dim_x);
+    const int ny = static_cast<int>(vd.dim_y);
+    const int nz = static_cast<int>(vd.dim_z);
+
+    // Compute fill-field length to locate the start of the palette in the payload.
+    //   N = (nx-1)*(ny-1)*(nz-1)   interior node count
+    //   W = ceil(N/8)               bytes per plane
+    //   L = 7*W                     fill field byte length
+    // For degenerate objects (any dim <= 1) N=0, so W=0 and L=0; the cursor
+    // then starts at 0 and the palette reads fail their bounds checks, returning
+    // an empty SurfaceData. (The fill decoder takes a separate early-return path;
+    // behavior here differs but is equally safe.)
+    const int dnx = nx - 1;
+    const int dny = ny - 1;
+    const int dnz = nz - 1;
+
+    std::size_t N = 0;
+    if (dnx > 0 && dny > 0 && dnz > 0) {
+        N = static_cast<std::size_t>(dnx)
+          * static_cast<std::size_t>(dny)
+          * static_cast<std::size_t>(dnz);
+    }
+    const std::size_t W = (N + 7u) / 8u;
+    const std::size_t L = 7u * W;
+
+    const auto& payload = vd.raw_voxel_payload;
+
+    // Little-endian cursor helpers operating over payload bytes.
+    // Returns false (and sets cursor past end) if a read would exceed payload size.
+    std::size_t cursor = L;
+
+    auto read_u32 = [&](std::uint32_t& out) -> bool {
+        if (cursor + 4u > payload.size()) return false;
+        std::uint32_t tmp = 0;
+        std::memcpy(&tmp, payload.data() + cursor, 4u);
+        // Reinterpret raw bytes as little-endian u32 (host is assumed LE on all
+        // target platforms — same assumption as the existing fill decoder which
+        // reads bytes directly without byte-swap).
+        out = tmp;
+        cursor += 4u;
+        return true;
+    };
+
+    auto read_f32 = [&](float& out) -> bool {
+        if (cursor + 4u > payload.size()) return false;
+        std::memcpy(&out, payload.data() + cursor, 4u);
+        cursor += 4u;
+        return true;
+    };
+
+    // ---- numPlanes ----
+    std::uint32_t numPlanes = 0;
+    if (!read_u32(numPlanes)) return {};
+
+    // ---- plane palette: numPlanes × (n.x, n.y, n.z, d) Vector4 ----
+    // Guard the allocation against a malformed count before resizing (the
+    // bytes2 path below checks-before-alloc the same way): 16 bytes per plane.
+    if (static_cast<std::size_t>(numPlanes) > (payload.size() - cursor) / 16u)
+        return {};
+    SurfaceData s;
+    s.planes.resize(numPlanes);
+    for (std::uint32_t i = 0; i < numPlanes; ++i) {
+        float x, y, z, d;
+        if (!read_f32(x) || !read_f32(y) || !read_f32(z) || !read_f32(d))
+            return {};
+        s.planes[i] = glm::vec4(x, y, z, d);
+    }
+
+    // ---- numBytes2 ----
+    std::uint32_t numBytes2 = 0;
+    if (!read_u32(numBytes2)) return {};
+
+    // ---- bytes2 blob ----
+    if (cursor + numBytes2 > payload.size()) return {};
+    s.bytes2.assign(payload.data() + cursor,
+                    payload.data() + cursor + numBytes2);
+    cursor += numBytes2;
+
+    // ---- trailer: 5 × u32 ----
+    for (int i = 0; i < 5; ++i) {
+        if (!read_u32(s.trailer[static_cast<std::size_t>(i)])) return {};
+    }
+
+    return s;
 }
 
 }  // namespace voxel

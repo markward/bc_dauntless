@@ -42,6 +42,14 @@ VoxelVolume voxelize_into(const std::vector<Tri>& tris,
                           glm::vec3  origin,
                           glm::vec3  cell);
 
+/// Decode the plane palette, bytes2 index, and trailer from a NiBinaryVoxelData
+/// block into a SurfaceData. Computes the fill-field byte length L = 7*W (where
+/// W = ceil(N/8), N = (nx-1)*(ny-1)*(nz-1)) to locate the start of the palette
+/// within raw_voxel_payload, then reads numPlanes × Vector4, numBytes2 bytes, and
+/// the five u32 trailer words. Returns an empty SurfaceData if the payload is too
+/// small (malformed / degenerate object such as the Shuttle).
+SurfaceData from_nif_surface(const nif::NiBinaryVoxelData& vd);
+
 /// Decode a NiBinaryVoxelData block into a VoxelVolume.
 /// Reads the 7-bit fill field from raw_voxel_payload (LSB-plane-first bit
 /// packing over the (nx-1)*(ny-1)*(nz-1) interior-node lattice) and stores

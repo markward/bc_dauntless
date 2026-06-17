@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -43,6 +44,16 @@ struct VoxelVolume {
     bool solid(int x, int y, int z) const { return occ[index(x, y, z)] != 0; }
     void set(int x, int y, int z, bool v) { occ[index(x, y, z)] = v ? 1 : 0; }
     std::size_t solid_count() const;
+};
+
+/// Plane palette + bytes2 index + trailer decoded from a NiBinaryVoxelData block.
+/// planes: plane palette in Hesse normal form (n̂.x, n̂.y, n̂.z, d), d in GU (§5).
+/// bytes2: raw bytes of the cell→plane index tree + leaf records (§6/§7).
+/// trailer: the five u32 trailer words (§8); trailer[3] = 4*nz, trailer[4] = 0.
+struct SurfaceData {
+    std::vector<glm::vec4>       planes;     // (n̂.xyz, d) Hesse form, GU (§5)
+    std::vector<std::uint8_t>    bytes2;     // index tree + leaf tail (§6/§7)
+    std::array<std::uint32_t, 5> trailer{};
 };
 
 /// Intersection-over-union of the SOLID sets of two volumes.
