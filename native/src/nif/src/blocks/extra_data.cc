@@ -31,24 +31,36 @@ NIF_REGISTER_BLOCK(NiBinaryVoxelExtraData, [](Reader& r) -> Block {
     return d;
 });
 
-// NiBinaryVoxelData v3.x — partial parser.
+// NiBinaryVoxelData v3.x — confirmed-header parser.
 //
-// niflib's auto-gen Read describes a fixed-size header (3 uint16 + 7 floats
-// + 7×12 bytes) followed by `Num Unknown Vectors` (uint32) + Vector4 array
-// + `Num Unknown Bytes 2` (uint32) + byte array + 5 trailing uint32. That
-// layout doesn't match real BC v3.x voxel files: the bytes after the
-// 7-float bounds section are clearly RLE/bit-packed voxel grid data, not
-// the schema's variable-length structure.
+// Cleanroom analysis of all 84 *_vox.nif files in the BC asset corpus
+// confirmed the header is exactly 34 bytes (documented in
+// docs/original_game_reference/engine/nif-voxel-format.md):
 //
-// Across all 84 _vox files in the BC asset corpus, NiBinaryVoxelData is
-// always followed immediately by the End Of File sentinel (verified via
-// list_nif_blocks.py inventory). So we use a pragmatic scan: read the
-// fixed-size header (3 dimension shorts + 7 bound floats), then advance
-// the cursor byte-by-byte until the next 15 bytes match the EOF marker
-// (`0b 00 00 00 "End Of File"`). The walker resumes on the marker and
-// the file completes cleanly. The opaque voxel-grid bytes between the
-// header and the EOF marker are stored in `raw_voxel_payload` for future
-// decoding work.
+//   3 × uint16  grid dimensions (dim_x, dim_y, dim_z)
+//   1 × float   cell edge length (cell_size)
+//   3 × float   AABB min corner (aabb_min)
+//   3 × float   AABB max corner (aabb_max)
+//
+// After the header comes a variable-length payload whose container layout is
+// fully confirmed (fillField[L] | numVectors | Vector4[] planes | numBytes2 |
+// bytes2 | trailer u32[5]).  The leading fillField bytes are the 7-bit fill
+// values (0–127) over the (dim_x-1)×(dim_y-1)×(dim_z-1) interior-node
+// lattice; voxel::from_nif_voxel_data() decodes them from raw_voxel_payload.
+// The planes and bytes2 sub-structures are not parsed here — they are retained
+// in raw_voxel_payload for future consumers. See
+// docs/original_game_reference/engine/nif-voxel-format.md.
+//
+// NiBinaryVoxelData is always the last block before the EOF sentinel across
+// the entire corpus. We walk byte-by-byte after the header until the next
+// 15 bytes match the EOF marker (`0b 00 00 00 "End Of File"`); the walker
+// resumes on the marker and the file completes cleanly.
+//
+// NOTE: niflib's auto-gen schema described a different layout (3 uint16 +
+// 7 floats + 7×12 bytes + numVectors + Vec3[] + numBytes2 + byte[] +
+// uint32[5]). The 7×12-byte section is niflib's misparse of the variable-
+// length bitmask; it does not exist. All niflib dead-field declarations
+// have been removed from NiBinaryVoxelData.
 namespace {
 inline constexpr std::size_t kEofMarkerSize = 15;
 inline constexpr unsigned char kEofMarker[kEofMarkerSize] = {
@@ -58,10 +70,12 @@ inline constexpr unsigned char kEofMarker[kEofMarkerSize] = {
 
 NiBinaryVoxelData parse_NiBinaryVoxelData_body(Reader& r) {
     NiBinaryVoxelData d;
-    d.unknown_short1 = r.read_uint16();
-    d.unknown_short2 = r.read_uint16();
-    d.unknown_short3 = r.read_uint16();
-    for (auto& f : d.unknown_7_floats) f = r.read_float();
+    d.dim_x = r.read_uint16();
+    d.dim_y = r.read_uint16();
+    d.dim_z = r.read_uint16();
+    d.cell_size = r.read_float();
+    for (auto& f : d.aabb_min) f = r.read_float();
+    for (auto& f : d.aabb_max) f = r.read_float();
     // Reserve up to the remaining bytes (minus the marker we'll stop at)
     // so push_back doesn't trigger O(log n) reallocations on the 230KB-class
     // voxel payloads.

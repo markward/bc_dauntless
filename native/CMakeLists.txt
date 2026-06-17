@@ -150,6 +150,7 @@ add_subdirectory(tools/dump_bridge_assets)
 add_subdirectory(tools/dump_nif_tree)
 add_subdirectory(tools/inspect_flip)
 add_subdirectory(tools/inspect_tex_props)
+add_subdirectory(tools/voxel_inspect)
 
 # GLFW is a runtime dep for the renderer host; tests reuse the same build.
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
@@ -164,6 +165,9 @@ add_subdirectory(src/renderer)
 
 # Scene-graph data + math (pure C++, no GL).
 add_subdirectory(src/scenegraph)
+
+# Voxel hull-damage foundation.
+add_subdirectory(src/voxel)
 
 # Renderer host subtree.
 add_subdirectory(src/host)

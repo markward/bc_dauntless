@@ -24,6 +24,7 @@ add_executable(nif_tests
     nif/ship_gate_test.cc
     nif/animation_parse_test.cc
     nif/legacy_rng_test.cc
+    nif/voxel_data_test.cc
 )
 
 target_link_libraries(nif_tests
@@ -64,3 +65,4 @@ add_subdirectory(assets)
 add_subdirectory(renderer)
 add_subdirectory(scenegraph)
 add_subdirectory(audio)
+add_subdirectory(voxel)
