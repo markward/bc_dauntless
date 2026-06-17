@@ -8,6 +8,7 @@ add_executable(voxel_tests
     select_breach_voxels_test.cc
     surface_decode_test.cc
     plane_index_test.cc
+    dual_contour_test.cc
 )
 target_link_libraries(voxel_tests PRIVATE voxel GTest::gtest_main)
 target_compile_definitions(voxel_tests PRIVATE
