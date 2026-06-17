@@ -79,6 +79,16 @@ public:
         const voxel::VoxelVolume& fill,
         const scenegraph::HullCarveField& carve);
 
+    /// Filter a DC mesh's index list to only triangles whose centroid lies
+    /// within (slot.radius + margin) of at least one active carve sphere.
+    /// The positions array is unchanged (unused verts are harmless). Pure CPU;
+    /// exposed for testing. margin should be ~1 cell (e.g. glm::length(cell)).
+    static std::vector<std::uint32_t> filter_to_carves(
+        const std::vector<glm::vec3>& positions,
+        const std::vector<std::uint32_t>& indices,
+        const scenegraph::HullCarveField& carve,
+        float margin);
+
     /// GL texture id for the triplanar Damage.tga sample. Set once in host
     /// init. If left 0, the pass lazily loads Damage.tga from the default BC
     /// path on first draw (so GL tests work without host wiring).

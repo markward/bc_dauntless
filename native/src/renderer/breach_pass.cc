@@ -108,6 +108,46 @@ voxel::VoxelVolume BreachPass::build_carved_fill(
     return carved;
 }
 
+std::vector<std::uint32_t> BreachPass::filter_to_carves(
+        const std::vector<glm::vec3>& positions,
+        const std::vector<std::uint32_t>& indices,
+        const scenegraph::HullCarveField& carve,
+        float margin) {
+    std::vector<std::uint32_t> kept;
+    kept.reserve(indices.size());
+
+    const std::size_t tri_count = indices.size() / 3;
+    for (std::size_t t = 0; t < tri_count; ++t) {
+        const std::uint32_t i0 = indices[t * 3 + 0];
+        const std::uint32_t i1 = indices[t * 3 + 1];
+        const std::uint32_t i2 = indices[t * 3 + 2];
+
+        // Guard against degenerate index buffers.
+        if (i0 >= positions.size() ||
+            i1 >= positions.size() ||
+            i2 >= positions.size()) continue;
+
+        const glm::vec3 centroid =
+            (positions[i0] + positions[i1] + positions[i2]) * (1.0f / 3.0f);
+
+        bool near_carve = false;
+        for (const auto& s : carve.slots()) {
+            if (!s.active) continue;
+            const float threshold = s.radius + margin;
+            if (glm::length(centroid - s.center_body) <= threshold) {
+                near_carve = true;
+                break;
+            }
+        }
+        if (!near_carve) continue;
+
+        kept.push_back(i0);
+        kept.push_back(i1);
+        kept.push_back(i2);
+    }
+    return kept;
+}
+
 std::uint64_t BreachPass::carve_version(
         const scenegraph::HullCarveField& carve) const {
     // Max active carve seq strictly increases on every add/grow (hull_carve.cc),
@@ -130,9 +170,19 @@ const BreachPass::CachedMesh& BreachPass::mesh_for(
         return slot;  // unchanged carves -> reuse the extracted mesh
     }
 
-    // Re-extract: carve the fill, dual-contour it, interleave pos+normal.
+    // Re-extract: carve the fill, dual-contour it, then restrict to
+    // triangles whose centroids fall within the active carve spheres.
+    // The DC isosurface of the (mostly-uncarved) fill coincides with the hull
+    // shell everywhere outside the craters; drawing the full mesh causes a
+    // whole-hull "frosting" overlay.  Keeping only crater-region triangles
+    // restricts the rendered surface to the actual breach cavity walls.
     voxel::VoxelVolume carved = build_carved_fill(fill, carve);
     voxel::Mesh m = voxel::dual_contour(carved, kIsovalue, palette);
+
+    // Margin = one cell diagonal so that cavity-wall triangles just outside a
+    // carve sphere radius are not clipped.
+    const float margin = glm::length(fill.cell);
+    m.indices = filter_to_carves(m.positions, m.indices, carve, margin);
 
     slot.carve_version = version;
     slot.indices = std::move(m.indices);

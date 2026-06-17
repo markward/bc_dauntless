@@ -23,6 +23,7 @@
 #include <scenegraph/camera.h>
 #include <scenegraph/hull_carve.h>
 
+#include <voxel/dual_contour.h>
 #include <voxel/volume.h>
 
 #include <array>
@@ -83,6 +84,98 @@ TEST(BreachPassCpu, CarvedFillAppliesAllCarves) {
     ASSERT_EQ(src.occ[corner], 127);
     EXPECT_LT(carved2.occ[corner], src.occ[corner])
         << "second carve sphere should also reduce fill";
+}
+
+// filter_to_carves: only triangles with centroids within (radius+margin) of
+// an active carve sphere survive. Tests:
+//   1. A triangle INSIDE the carve sphere is kept.
+//   2. A triangle FAR from all carve spheres is removed.
+//   3. The kept set is non-empty and strictly smaller than the full mesh
+//      (proving both that filtering did something AND that it didn't discard
+//      everything).
+TEST(BreachPassCpu, FilterToCarves_RestrictionAndNonEmpty) {
+    // A simple triangle mesh: two triangles.
+    //   tri0 — centroid at (0,0,0)   → inside the carve sphere (radius 2, margin 1)
+    //   tri1 — centroid at (10,10,10) → far from any carve sphere
+    std::vector<glm::vec3> positions = {
+        {-1.0f,  0.0f,  0.0f},  // 0 — shared by tri0
+        { 1.0f,  0.0f,  0.0f},  // 1 — shared by tri0
+        { 0.0f,  1.0f,  0.0f},  // 2 — shared by tri0  → centroid ≈ (0,0.33,0)
+        { 9.0f, 10.0f, 10.0f},  // 3 — tri1
+        {11.0f, 10.0f, 10.0f},  // 4 — tri1
+        {10.0f, 11.0f, 10.0f},  // 5 — tri1             → centroid ≈ (10,10.33,10)
+    };
+    std::vector<std::uint32_t> indices = {0, 1, 2,  3, 4, 5};
+
+    scenegraph::HullCarveField carve;
+    carve.add(glm::vec3(0.0f, 0.0f, 0.0f), 2.0f);  // covers tri0, not tri1
+
+    const float margin = 1.0f;  // one cell width
+    auto kept = renderer::BreachPass::filter_to_carves(positions, indices, carve, margin);
+
+    // tri0 centroid distance to carve center ≈ 0.33 << 2+1=3 → kept
+    // tri1 centroid distance ≈ 17.3 >> 3                      → removed
+    EXPECT_EQ(kept.size(), 3u) << "only tri0 (3 indices) should survive";
+    EXPECT_LT(kept.size(), indices.size())
+        << "filter must have removed at least one triangle";
+
+    // Verify the kept triangle is the one near the carve: indices {0,1,2}.
+    ASSERT_EQ(kept.size(), 3u);
+    EXPECT_EQ(kept[0], 0u);
+    EXPECT_EQ(kept[1], 1u);
+    EXPECT_EQ(kept[2], 2u);
+}
+
+// On a real box fill + corner carve sphere, the full DC mesh spans the whole
+// box surface (~8^3 shell).  The carve sits at one corner; opposite-corner
+// triangles are ~6–7 cell-lengths away.  After filter_to_carves with a
+// 1-cell margin (√3 ≈ 1.73) the threshold is radius + margin ≈ 2.73, which
+// is much less than the ~6-unit diagonal → the far triangles are removed.
+TEST(BreachPassCpu, FilterToCarves_CarveRegionOnly) {
+    voxel::VoxelVolume fill = box_fill();  // 8^3, origin=(-4,-4,-4), cell=(1,1,1)
+    // Solid voxels are at grid indices [2..5], i.e. body coords ≈ [-1.5..+2.5].
+    std::vector<glm::vec4> palette = box_palette();
+
+    scenegraph::HullCarveField carve;
+    // Place the carve at (-1.5, -1.5, -1.5) — at the body-frame corner of the
+    // solid region.  Triangles on the opposite corner (+2..+2.5 body) are
+    // ~6 units away, far exceeding radius(1.0) + margin(√3≈1.73) = 2.73.
+    const glm::vec3 carve_center(-1.5f, -1.5f, -1.5f);
+    const float     carve_radius = 1.0f;
+    carve.add(carve_center, carve_radius);
+
+    // Build the carved fill + extract the full DC mesh (unfiltered).
+    voxel::VoxelVolume carved = renderer::BreachPass::build_carved_fill(fill, carve);
+    voxel::Mesh m = voxel::dual_contour(carved, /*isovalue=*/64, palette);
+
+    ASSERT_FALSE(m.indices.empty()) << "DC mesh should be non-empty";
+    const std::size_t total_indices = m.indices.size();
+
+    const float margin = glm::length(fill.cell);  // √3 ≈ 1.73 (same as breach_pass.cc)
+    auto kept = renderer::BreachPass::filter_to_carves(
+        m.positions, m.indices, carve, margin);
+
+    // The carve covers only one corner; the opposite corner is ~6 units away →
+    // filter must have removed some triangles.
+    EXPECT_LT(kept.size(), total_indices)
+        << "filter should remove far-corner triangles outside the carve sphere";
+    EXPECT_GT(kept.size(), 0u)
+        << "filter should keep cavity-wall triangles near the carve sphere";
+
+    // Every kept triangle's centroid must be within (radius + margin) of the
+    // carve center — this is the key invariant the fix is meant to enforce.
+    const float threshold = carve_radius + margin;
+    const std::size_t tri_count = kept.size() / 3;
+    for (std::size_t t = 0; t < tri_count; ++t) {
+        const glm::vec3& p0 = m.positions[kept[t * 3 + 0]];
+        const glm::vec3& p1 = m.positions[kept[t * 3 + 1]];
+        const glm::vec3& p2 = m.positions[kept[t * 3 + 2]];
+        glm::vec3 centroid = (p0 + p1 + p2) * (1.0f / 3.0f);
+        float dist = glm::length(centroid - carve_center);
+        EXPECT_LE(dist, threshold)
+            << "kept triangle " << t << " centroid at dist=" << dist
+            << " exceeds threshold=" << threshold;
+    }
 }
 
 namespace {
