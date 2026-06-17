@@ -13,6 +13,9 @@
 //
 // Usage:
 //   voxel_inspect <path/to/X_vox.nif> [path/to/X.nif]
+//   voxel_inspect --dump-hull-obj <hull.nif> <out.obj>
+//   voxel_inspect --anchor <X_vox.nif>
+//   voxel_inspect --anchor-corpus <models_dir>
 //
 // GL-free: links only against `nif`, walks NiTriShapeData verts directly.
 
@@ -27,7 +30,9 @@
 #include <cstring>
 #include <exception>
 #include <filesystem>
+#include <fstream>
 #include <limits>
+#include <string>
 #include <unordered_map>
 #include <variant>
 #include <vector>
@@ -373,6 +378,118 @@ AnchorResult run_anchor(const nif::NiBinaryVoxelData* vd) {
     return res;
 }
 
+// ---- OBJ hull-mesh export -----------------------------------------------
+// Walks the same NiNode tree as accumulate_aabb using the same world
+// transform (T*R*S accumulated top-down, column-vector v_world = M * v_body).
+// For each NiTriShapeData encountered the transformed vertices are written
+// as OBJ "v x y z" lines and the triangles as 1-based global "f a b c" lines.
+// vbase tracks the running global vertex offset so faces are always globally
+// indexed as required by the OBJ spec.
+
+struct ObjStats {
+    std::size_t total_verts = 0;
+    std::size_t total_tris  = 0;
+    Aabb        vert_aabb;   // recomputed from emitted verts for verification
+};
+
+void accumulate_obj(const nif::File& f,
+                    const std::unordered_map<std::uint32_t, std::size_t>& links,
+                    std::size_t idx, const Mat4& parent,
+                    std::vector<bool>& visited,
+                    std::ofstream& out,
+                    std::size_t& vbase,
+                    ObjStats& stats) {
+    if (idx >= f.blocks.size() || visited[idx]) return;
+    visited[idx] = true;
+    const auto& blk = f.blocks[idx];
+    if (auto* n = std::get_if<nif::NiNode>(&blk)) {
+        Mat4 world = mul(parent, av_to_mat4(n->av));
+        for (auto link : n->child_links) {
+            auto it = links.find(link);
+            if (it != links.end())
+                accumulate_obj(f, links, it->second, world, visited, out, vbase, stats);
+        }
+    } else if (auto* sh = std::get_if<nif::NiTriShape>(&blk)) {
+        Mat4 world = mul(parent, av_to_mat4(sh->av));
+        auto it = links.find(sh->data_link);
+        if (it == links.end()) return;
+        const auto* d = std::get_if<nif::NiTriShapeData>(&f.blocks[it->second]);
+        if (!d) return;
+
+        // Emit transformed vertices.
+        for (const auto& v : d->vertices) {
+            Vec3 w = transform_point(world, v);
+            out << "v " << w.x << ' ' << w.y << ' ' << w.z << '\n';
+            stats.vert_aabb.add(w);
+        }
+        // Emit 1-based global faces.
+        for (const auto& tri : d->triangles) {
+            out << "f "
+                << (vbase + tri[0] + 1) << ' '
+                << (vbase + tri[1] + 1) << ' '
+                << (vbase + tri[2] + 1) << '\n';
+        }
+        stats.total_verts += d->vertices.size();
+        stats.total_tris  += d->triangles.size();
+        vbase += d->vertices.size();
+    }
+}
+
+// Returns 0 on success, 1 on error.
+int dump_hull_obj(const fs::path& hull_path, const fs::path& obj_path) {
+    nif::File hf;
+    try { hf = nif::load(hull_path); }
+    catch (const std::exception& e) {
+        std::fprintf(stderr, "hull load failed: %s\n", e.what());
+        return 1;
+    }
+
+    std::ofstream out(obj_path);
+    if (!out) {
+        std::fprintf(stderr, "cannot open output: %s\n", obj_path.string().c_str());
+        return 1;
+    }
+
+    // Write header comment; placeholders replaced after walk.
+    // (We write counts in a second pass by reopening; just flush counts to
+    // stdout after the walk — the OBJ spec doesn't require them in the file.)
+    out << "# voxel_inspect --dump-hull-obj\n";
+    out << "# source: " << hull_path.string() << '\n';
+    out << "# transform: column-vector v_world = (T*R*S)_accumulated * v_body\n";
+
+    auto link_map = build_link_map(hf);
+    ObjStats stats;
+    std::vector<bool> visited(hf.blocks.size(), false);
+    std::size_t vbase = 0;
+
+    if (hf.root.ptr) {
+        std::size_t start = 0;
+        for (std::size_t i = 0; i < hf.blocks.size(); ++i)
+            if (&hf.blocks[i] == hf.root.ptr) { start = i; break; }
+        accumulate_obj(hf, link_map, start, Mat4::identity(), visited, out, vbase, stats);
+    } else {
+        for (std::size_t i = 0; i < hf.blocks.size(); ++i)
+            accumulate_obj(hf, link_map, i, Mat4::identity(), visited, out, vbase, stats);
+    }
+
+    out.flush();
+    out.close();
+
+    // Rewrite the file prepending a stats comment. Re-open and prepend isn't
+    // trivial in C++; instead write a brief summary to stdout so the caller
+    // can capture it in headers.txt.
+    std::printf("OBJ: %s\n", obj_path.string().c_str());
+    std::printf("  source: %s\n", hull_path.string().c_str());
+    std::printf("  verts=%zu  tris=%zu\n", stats.total_verts, stats.total_tris);
+    if (stats.vert_aabb.valid) {
+        std::printf("  vert_aabb min=(%.4f, %.4f, %.4f)\n",
+                    stats.vert_aabb.lo.x, stats.vert_aabb.lo.y, stats.vert_aabb.lo.z);
+        std::printf("  vert_aabb max=(%.4f, %.4f, %.4f)\n",
+                    stats.vert_aabb.hi.x, stats.vert_aabb.hi.y, stats.vert_aabb.hi.z);
+    }
+    return 0;
+}
+
 }  // namespace
 
 // Run the two-ended anchoring and print a per-file report. Returns the
@@ -495,10 +612,20 @@ int main(int argc, char** argv) {
     if (argc < 2) {
         std::fprintf(stderr,
             "usage: %s <X_vox.nif> [X.nif (hull, for AABB compare)]\n"
-            "       %s --anchor <X_vox.nif>          # two-ended payload anchoring\n"
-            "       %s --anchor-corpus <models_dir>  # anchor every *_vox.nif\n",
-            argv[0], argv[0], argv[0]);
+            "       %s --dump-hull-obj <hull.nif> <out.obj>  # export body-frame hull mesh\n"
+            "       %s --anchor <X_vox.nif>                  # two-ended payload anchoring\n"
+            "       %s --anchor-corpus <models_dir>          # anchor every *_vox.nif\n",
+            argv[0], argv[0], argv[0], argv[0]);
         return 2;
+    }
+
+    // --dump-hull-obj mode
+    if (std::strcmp(argv[1], "--dump-hull-obj") == 0) {
+        if (argc < 4) {
+            std::fprintf(stderr, "--dump-hull-obj needs <hull.nif> <out.obj>\n");
+            return 2;
+        }
+        return dump_hull_obj(fs::path(argv[2]), fs::path(argv[3]));
     }
 
     // --anchor / --anchor-corpus modes
