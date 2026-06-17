@@ -8,7 +8,25 @@
 
 2a opened see-through holes but left two problems: (1) a breach reveals straight through the single-sided ship to stars (no interior surface), and (2) the interior is a flat candy-rainbow cube splat. The fix is the **runtime voxel remesh** this whole approach was named for, now unblocked: BC's `*_vox.nif` is fully decoded, including the **0–127 scalar fill field**, the **deduplicated plane palette** (Hesse-form `(n̂,d)` surface orientations), and the **`bytes2` index tree** mapping each fill cell to its palette plane. That is exactly the Hermite data dual contouring needs to reconstruct **sharp hull facets** — the authentic look (BC was smooth-with-hard-corners, not blocky). Reference: `docs/original_game_reference/engine/nibinaryvoxeldata-format-v3.1.md`.
 
-## Approach (settled)
+## REFRAME 2 (in-game verification, 2026-06-17): render the INSIDE of the volume, not the outside — Path C
+
+The dual-contouring approach below (Path B) extracted the **outer boundary surface of the carved volume** and tried to make *that* stand in for the hull. In-game this was wrong on two counts, confirmed by Mark:
+
+1. **The coarse voxel fill is fatter than the hull.** Voxelizing a smooth mesh at 15-GU cells inflates the solid region by up to a cell, so the DC surface always sits ~1 cell *outside* the real hull. No nudge/inflation/clip can reconcile a fattened proxy with the hull mesh — the cavity poked out past the hull, and clipping the hull *by* the fill eroded thin features.
+2. **BC never rendered the volume's outer surface.** It cut a hole and rendered the **inside of the volume exposed within the damage radius** — a recessed scooped cross-section seen *through* the hole.
+
+**Path C (the corrected, faithful model).** The **damage radius (sphere) is the single primitive**; the **fill is a material mask**, not a surface to extract:
+
+- **Hull hole** — pure damage-sphere fragment clip in `opaque.frag`: discard a hull fragment iff it is inside *any* active carve sphere. (This is exactly the 2a sphere clip, which worked. No fill sampling in the hull clip.)
+- **Interior scoop** — for each active carve sphere render its **inner (far) wall**, masking each fragment by the **original (uncarved) fill**: keep the fragment iff `fill(p_body) ≥ iso` (solid material there), else `discard`. The in-material arc of the sphere is the exposed bowl; where the sphere passes back out of solid (far side of a thin hull, or the half that's out in space) the mask discards → genuine see-through breach. Render **back faces** (cull front) so the wall is recessed and **cannot poke out**; depth-test against the already-drawn hull so the scoop shows *only* through the hole. Triplanar `Damage.tga`, muted (reuse the 2a/`breach.frag` shading).
+- **Alignment is by construction** — the same sphere defines the hole *and* the scoop extent, so they cannot mismatch. The fill no longer needs to coincide with the hull (it's only a "is there ship material here?" mask).
+- **Progressive deepening** — repeated/overlapping hits at a spot merge in the carve field → larger/deeper scoops → the indentation pushes further back, eventually punching through. (Matches the intended damage model.)
+
+**What this removes:** the DC mesh from the render path (dual-contouring code stays, tested, just unused by the breach pass), the *carved*-fill 3D texture and its carve-version cache (the mask is the **static original fill**, built once per hull), and the fill-based hull clip.
+
+**v1 surface = smooth spherical scoop.** Reproducing BC's grittier chunky/voxel-faced interior is a fast follow-on if the smooth bowl reads too clean in-game; start smooth to get alignment + masking right first.
+
+## Approach (superseded by REFRAME 2 — kept for history)
 
 Dual contouring on the interior-node lattice:
 - **Scalar field** = the 7-bit fill (0–127); **isovalue ≈ 63–64** is the surface.
