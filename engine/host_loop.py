@@ -2628,6 +2628,8 @@ def run(mission_name: Optional[str] = None,
         _after_mission_loaded()
 
         bridge_camera  = _BridgeCamera()
+        from engine.appc.comm_render_flag import CommRenderFlag
+        _comm_render_flag = CommRenderFlag()
         try:
             import _dauntless_host as _h
         except ImportError:
@@ -3343,6 +3345,9 @@ def run(mission_name: Optional[str] = None,
             # so it doesn't show on its own screen.
             _vs_obj = getattr(controller, "viewscreen_obj", None)
             r.set_viewscreen_enabled(_viewscreen_feed_on(_vs_obj))
+            # Dev-only: the RTT shows the forward view; a comm/remote set
+            # requested via ViewscreenOn is not yet rendered. Flag it loudly.
+            _comm_render_flag.notice(_vs_obj)
             _player_iid_vs = (session.ship_instances.get(player)
                               if session is not None and player is not None else None)
             _apply_bridge_player_visibility(
