@@ -31,5 +31,13 @@ Run `./build/dauntless`, combat mission, damage a **Galaxy**. Confirm:
 - Rim band/gain in `breach.frag` (`kRimBand`, the `* 1.5` emissive gain).
 - Venting jet direction is `normalize(center_body)` — a radial approximation of the breach surface normal (the body has no per-breach stored normal); revisit if a jet ever points visibly wrong.
 
-## Observations
-_(Record the in-game result here — debris feel, vent density, rim cool time, any state/order artifacts, final tuning.)_
+## Final shipped state (after in-game tuning — supersedes the plan where they differ)
+Confirmed in-game ("really close to the original"). The feature evolved during tuning:
+- **Debris is billboard sprites, not 3D cubes.** The cube `DebrisPass`/`cube_mesh`/`debris_chunks`/`debris.vert,frag` were removed; debris is now a `ParticlePass` emitter (`renderer/breach_debris.cc`) — per breach: ~4 grey `square.tga` hull chunks (alpha) + ~15 bright **orange additive** `spark.tga` sparks. (Fixed a `ParticlePass` additive bug: BC effect textures are flat-white RGB + shape-in-ALPHA, so additive must be `GL_SRC_ALPHA,GL_ONE` (classic), not premultiplied-over — else sprites render as squares.)
+- **Venting** is a short, fast gas-release burst (`kVentLife=0.5s`), jet along the real body-frame surface normal (now stored on `BreachEvent`/`HullCarve`), gated by the hull-damage toggle.
+- **Interior** uses BC's 4-frame animated `data/Damage1..4.tga` (cycled ~8fps), not the static `Textures/Effects/Damage.tga`.
+- **Breach shape**: an **oblate** cavity — full original hole width, shallow depth (`kDepthFactor=0.45`), jagged rim via azimuthal noise; hull-clip (`opaque.frag`) and scoop (`breach.vert`) share the math so they align. The scoop is **clamped to the hull surface** (vertex projection) so the fat-vox fill never pokes above the hull line.
+- **Skeletal framework**: `Damage.tga`'s **alpha lattice** applied INSIDE the breach in `opaque.frag` — hull struts remain where the stencil is opaque (clustered toward the rim, open core), gaps reveal the interior. Surrounding hull untouched. Knobs: `kStrutAlpha`, `kOpenCore`, `kFrameUvScale`.
+- Molten rim keyed on `u_breach_age`/`u_rim_life`, fill-iso-proximity rim weight.
+
+Key tuning constants live in `breach.vert`/`opaque.frag` (KEEP IN SYNC: `kDepthFactor`, `kShapeAmp/Freq`, `kPhase`), `breach_events.h` (lifetimes), `breach_debris.cc` (counts/speeds/colours), `breach_pass.cc` (`kDamageAnimFps`, `kTexScale`).
