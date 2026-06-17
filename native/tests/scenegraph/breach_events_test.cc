@@ -13,7 +13,7 @@ const BreachEvent* first_active(const BreachEventRing& ring) {
 
 TEST(BreachEventRing, PushCreatesOneActiveEvent) {
     BreachEventRing ring;
-    ring.push({1.f, 2.f, 3.f}, 1.5f, 0.0f, 42u);
+    ring.push({1.f, 2.f, 3.f}, 1.5f, {0.f, 0.f, 1.f}, 0.0f, 42u);
     EXPECT_EQ(ring.count(), 1u);
     const BreachEvent* e = first_active(ring);
     ASSERT_NE(e, nullptr);
@@ -28,11 +28,12 @@ TEST(BreachEventRing, FullRingOverwritesOldest) {
     BreachEventRing ring;
     for (std::size_t i = 0; i < BreachEventRing::kMaxEvents; ++i) {
         ring.push({static_cast<float>(i), 0.f, 0.f}, 1.f,
+                  {0.f, 0.f, 1.f},
                   static_cast<float>(i), static_cast<std::uint64_t>(i));
     }
     EXPECT_EQ(ring.count(), BreachEventRing::kMaxEvents);
     // One more push overwrites the oldest (center_body.x == 0).
-    ring.push({999.f, 0.f, 0.f}, 1.f, 100.f, 999u);
+    ring.push({999.f, 0.f, 0.f}, 1.f, {0.f, 0.f, 1.f}, 100.f, 999u);
     EXPECT_EQ(ring.count(), BreachEventRing::kMaxEvents);
     bool found_zero = false;
     for (const auto& e : ring.slots()) {
@@ -43,7 +44,7 @@ TEST(BreachEventRing, FullRingOverwritesOldest) {
 
 TEST(BreachEventRing, TickExpiresAtEventLife) {
     BreachEventRing ring;
-    ring.push({0.f, 0.f, 0.f}, 1.f, 0.0f, 1u);
+    ring.push({0.f, 0.f, 0.f}, 1.f, {0.f, 0.f, 1.f}, 0.0f, 1u);
     ring.tick(scenegraph::kEventLife - 0.001f);
     EXPECT_EQ(ring.count(), 1u)     << "must still be active before kEventLife";
     ring.tick(scenegraph::kEventLife + 0.001f);
@@ -55,10 +56,21 @@ TEST(BreachEventRing, SlotsAccessorReturnsAll) {
     EXPECT_EQ(ring.slots().size(), BreachEventRing::kMaxEvents);
 }
 
+TEST(BreachEventRing, SurfaceNormalIsStoredVerbatim) {
+    BreachEventRing ring;
+    const glm::vec3 n{0.f, 1.f, 0.f};  // ship-top normal (body +Y)
+    ring.push({0.f, 5.f, 0.f}, 1.f, n, 0.f, 7u);
+    const BreachEvent* e = first_active(ring);
+    ASSERT_NE(e, nullptr);
+    EXPECT_FLOAT_EQ(e->surface_normal.x, n.x);
+    EXPECT_FLOAT_EQ(e->surface_normal.y, n.y);
+    EXPECT_FLOAT_EQ(e->surface_normal.z, n.z);
+}
+
 TEST(BreachEventRing, CountsOnlyActiveSlots) {
     BreachEventRing ring;
-    ring.push({0.f, 0.f, 0.f}, 1.f, 0.f, 1u);
-    ring.push({1.f, 0.f, 0.f}, 1.f, 0.f, 2u);
+    ring.push({0.f, 0.f, 0.f}, 1.f, {0.f, 0.f, 1.f}, 0.f, 1u);
+    ring.push({1.f, 0.f, 0.f}, 1.f, {0.f, 0.f, 1.f}, 0.f, 2u);
     EXPECT_EQ(ring.count(), 2u);
     ring.tick(scenegraph::kEventLife + 1.f);
     EXPECT_EQ(ring.count(), 0u);
@@ -66,6 +78,6 @@ TEST(BreachEventRing, CountsOnlyActiveSlots) {
 
 TEST(BreachEventRing, SeedIsStoredVerbatim) {
     BreachEventRing ring;
-    ring.push({0.f, 0.f, 0.f}, 1.f, 0.f, 0xDEADBEEFull);
+    ring.push({0.f, 0.f, 0.f}, 1.f, {0.f, 0.f, 1.f}, 0.f, 0xDEADBEEFull);
     EXPECT_EQ(first_active(ring)->seed, 0xDEADBEEFull);
 }

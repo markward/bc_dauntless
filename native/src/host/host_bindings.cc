@@ -85,6 +85,11 @@ namespace dauntless_hdr {
     bool enabled();            // defined in frame.cc
     void set_enabled(bool v);  // defined in frame.cc
 }
+// Forward-declared here (before the anonymous namespace) so render_space()
+// inside the anonymous namespace can gate venting on the toggle.
+namespace dauntless_hull_damage {
+    bool enabled();            // defined in frame.cc
+}
 
 namespace {
 
@@ -418,15 +423,20 @@ void frame() {
         // Never mutate g_particle_emitters in place (Python-owned).
         if (!for_viewscreen && g_particle_pass) {
             std::vector<renderer::ParticleEmitterDescriptor> all_emitters = g_particle_emitters;
-            g_world.for_each_visible_in_pass(
-                scenegraph::Pass::Space,
-                [&](const scenegraph::Instance& inst) {
-                    if (inst.breach_events.count() == 0) return;
-                    auto vent = renderer::build_venting_descriptors(
-                        inst.breach_events, inst.id, g_decal_game_time);
-                    all_emitters.insert(all_emitters.end(),
-                                        vent.begin(), vent.end());
-                });
+            // Venting jets are hull-breach VFX; skip descriptor build entirely
+            // when the hull-breach toggle is off (Python-owned g_particle_emitters
+            // still renders regardless of the toggle).
+            if (dauntless_hull_damage::enabled()) {
+                g_world.for_each_visible_in_pass(
+                    scenegraph::Pass::Space,
+                    [&](const scenegraph::Instance& inst) {
+                        if (inst.breach_events.count() == 0) return;
+                        auto vent = renderer::build_venting_descriptors(
+                            inst.breach_events, inst.id, g_decal_game_time);
+                        all_emitters.insert(all_emitters.end(),
+                                            vent.begin(), vent.end());
+                    });
+            }
             g_particle_pass->render(all_emitters, g_world, cam, *g_pipeline);
         }
     };
@@ -579,6 +589,7 @@ namespace dauntless_decals {
 // Toggle for the hull-breach renderer pass. Defined in frame.cc.
 namespace dauntless_hull_damage {
     void set_enabled(bool v);  // defined in frame.cc
+    bool enabled();            // defined in frame.cc
 }
 
 static renderer::PhaserBeamDescriptor beam_from_dict(const py::dict& d) {
@@ -1557,14 +1568,27 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("hull_carve_add",
           [](scenegraph::InstanceId id,
              std::tuple<float, float, float> world_point,
-             std::tuple<float, float, float> /*world_normal*/,  // accepted for call-shape symmetry
-             float radius, float /*time*/) {                    // with damage_decal_add; unused in 2a
+             std::tuple<float, float, float> world_normal,
+             float radius, float /*time*/) {
               auto* inst = g_world.get(id);
               if (inst == nullptr) return;  // stale id — drop silently
               const glm::vec3 pw(std::get<0>(world_point),
                                  std::get<1>(world_point),
                                  std::get<2>(world_point));
+              const glm::vec3 nw(std::get<0>(world_normal),
+                                 std::get<1>(world_normal),
+                                 std::get<2>(world_normal));
               const glm::vec3 pb = scenegraph::world_to_body(inst->world, pw);
+              // Transform the world-space surface normal to body frame.
+              // world_dir_to_body strips translation and scale; result is
+              // a unit body-frame outward normal. Fall back to the radial
+              // direction from origin if the transformed result is degenerate.
+              glm::vec3 nb = scenegraph::world_dir_to_body(inst->world, nw);
+              if (glm::length(nb) < 1e-4f) {
+                  nb = (glm::length(pb) > 1e-4f)
+                       ? glm::normalize(pb)
+                       : glm::vec3(0.f, 0.f, 1.f);
+              }
               // s = |world's X column| = the uniform NIF->world scale baked into
               // inst->world (same derivation as damage_decal_add).
               const float s = glm::length(glm::vec3(inst->world[0]));
@@ -1585,16 +1609,17 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   const std::uint64_t seed =
                       (bx * 2654435761ull) ^ (by * 805459861ull) ^
                       (bz * 3674653429ull) ^ (++s_counter * 6364136223846793005ull);
-                  inst->breach_events.push(pb, radius_model,
+                  inst->breach_events.push(pb, radius_model, nb,
                                            g_decal_game_time, seed);
               }
           },
           py::arg("instance_id"), py::arg("world_point"), py::arg("world_normal"),
           py::arg("radius"), py::arg("time"),
           "Push a hull-carve sphere onto a ship instance. World-space impact point "
-          "is transformed to body frame (model units). world_normal and time are "
-          "accepted for call-shape symmetry with damage_decal_add but are unused "
-          "in renderer phase 2a (sphere carve; no oriented crater yet).");
+          "and surface normal are transformed to body frame (model units). The "
+          "body-frame normal is stored in the breach event for accurate venting "
+          "jet direction. time is accepted for call-shape symmetry with "
+          "damage_decal_add but is unused.");
 
     m.def("compute_capsule_region",
           [](scenegraph::InstanceId id,
@@ -1727,7 +1752,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
               });
           },
           py::arg("time"),
-          "Age every instance's decal ring; reclaim cold heat-glow decals.");
+          "Age every instance's decal ring; reclaim cold heat-glow decals. "
+          "Also ticks the breach-event ring for each instance, expiring events "
+          "whose age exceeds kEventLife.");
 
     auto keys = m.def_submodule("keys", "GLFW key-code constants for input bindings.");
     keys.attr("KEY_W") = GLFW_KEY_W;

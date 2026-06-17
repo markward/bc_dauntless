@@ -31,6 +31,8 @@ std::vector<glm::vec3> sample_chunk_origins(
     std::vector<glm::vec3> candidates;
     candidates.reserve(64);
 
+    // TODO(perf): iterates the full voxel grid; could clamp loop bounds to the
+    // carve sphere's voxel bbox to skip empty regions if fill grids ever grow large.
     // Enumerate solid voxels inside the carve sphere.
     for (int iz = 0; iz < fill.dims.z; ++iz) {
         for (int iy = 0; iy < fill.dims.y; ++iy) {

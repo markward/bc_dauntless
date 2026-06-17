@@ -18,11 +18,15 @@ std::vector<ParticleEmitterDescriptor> build_venting_descriptors(
         d.instance_id  = instance_id;
         d.emit_pos     = ev.center_body;  // body frame: breach center
 
-        // Outward direction in body frame: radially away from origin along breach
-        // center if non-zero, else straight up in body frame (+Y).
-        d.emit_dir = (glm::length(ev.center_body) > 1e-4f)
-            ? glm::normalize(ev.center_body)
-            : glm::vec3(0.f, 1.f, 0.f);
+        // Outward direction in body frame: use the stored surface normal, which
+        // was derived from the actual hull geometry at impact (accurate for flat
+        // saucer tops, fins, etc.). Fall back to the radial-from-origin direction
+        // if the stored normal is degenerate (should not occur in practice).
+        d.emit_dir = (glm::length(ev.surface_normal) > 1e-4f)
+            ? glm::normalize(ev.surface_normal)
+            : ((glm::length(ev.center_body) > 1e-4f)
+               ? glm::normalize(ev.center_body)
+               : glm::vec3(0.f, 1.f, 0.f));
 
         d.emit_vel_world = glm::vec3(0.f); // no ship-velocity inheritance for venting
         d.inherit        = 0.f;
