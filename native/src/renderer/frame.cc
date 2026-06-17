@@ -11,6 +11,7 @@
 #include <scenegraph/camera.h>
 #include <scenegraph/instance.h>
 #include <scenegraph/damage_decals.h>
+#include <scenegraph/hull_carve.h>
 
 #include <assets/model.h>
 #include <assets/mesh.h>
@@ -95,7 +96,8 @@ void draw_model(const assets::Model& model,
                                  scenegraph::Instance::kMaxGlowRegions>& glow_regions,
                 float decal_time,
                 float emissive_scale,
-                const std::vector<glm::mat4>& bone_palette) {
+                const std::vector<glm::mat4>& bone_palette,
+                const scenegraph::HullCarveField& carve) {
     // Pick the program: skinned only when the model carries a skeleton AND a
     // non-empty palette is supplied. An empty palette forces the static branch,
     // which is byte-identical to the pre-skinning path (used by the plumbing
@@ -166,6 +168,32 @@ void draw_model(const assets::Model& model,
             // case this instance has glow regions but no active decals.
             prog.set_mat4("u_ship_world_inv", glm::inverse(world));
             prog.set_float("u_decal_time", decal_time);
+        }
+    }
+
+    // ── Hull-breach carve spheres ──────────────────────────────────────────
+    // Upload center_body + radius as vec4 per active slot. u_carve_count == 0
+    // when the toggle is off or no carves exist, making the shader skip the
+    // loop entirely (stock path, byte-identical to pre-carve). The shader's
+    // body-frame position (p_body via u_ship_world_inv) is already uploaded
+    // by the decal or glow-region block above; if neither ran, upload it here
+    // so the carve distance check has a valid transform.
+    {
+        glm::vec4 cv[scenegraph::HullCarveField::kMaxCarves];
+        int nc = 0;
+        if (dauntless_hull_damage::enabled()) {
+            for (const auto& s : carve.slots()) {
+                if (!s.active) continue;
+                cv[nc] = glm::vec4(s.center_body, s.radius);
+                ++nc;
+            }
+        }
+        prog.set_int("u_carve_count", nc);
+        if (nc > 0) {
+            prog.set_vec4_array("u_carve", cv, nc);
+            // Ensure u_ship_world_inv is always set when carves are active,
+            // in case this instance has no decals and no glow regions.
+            prog.set_mat4("u_ship_world_inv", glm::inverse(world));
         }
     }
 
@@ -348,7 +376,7 @@ void FrameSubmitter::submit_opaque(const scenegraph::World& world,
         if (m) draw_model(*m, inst.world, shader, pipeline.skinned_shader(),
                           white, black, rim_active,
                           inst.decals, inst.glow_regions, decal_time,
-                          inst.emissive_scale, palette);
+                          inst.emissive_scale, palette, inst.carve);
     });
 }
 
@@ -398,7 +426,7 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
         if (m) draw_model(*m, inst.world, shader, pipeline.skinned_shader(),
                           white, black, rim_active,
                           inst.decals, inst.glow_regions, decal_time,
-                          inst.emissive_scale, palette);
+                          inst.emissive_scale, palette, inst.carve);
     });
 }
 

@@ -28,6 +28,7 @@ add_executable(renderer_tests
     particle_math_test.cc
     particle_pass_test.cc
     asset_path_test.cc
+    hull_clip_test.cc
 )
 
 target_link_libraries(renderer_tests
