@@ -22,13 +22,14 @@ def _make(**overrides):
         tabs=[("graphics", "Graphics")],
         initial_settings=SettingsSnapshot(
             dust_on=True, specular_on=True, hdr_on=True, rim_on=True,
-            decals_on=True, fov_deg=70,
+            decals_on=True, hull_damage_on=True, fov_deg=70,
         ),
         set_dust=Mock(),
         set_specular=Mock(),
         set_hdr=Mock(),
         set_rim=Mock(),
         set_decals=Mock(),
+        set_hull_damage=Mock(),
         set_fxaa=Mock(),
         set_fov_rad=Mock(),
     )
@@ -57,14 +58,14 @@ def test_open_close_round_trip():
 def test_initial_settings_round_trip_to_render_payload():
     p, _ = _make(initial_settings=SettingsSnapshot(
         dust_on=False, specular_on=True, hdr_on=True, rim_on=False,
-        decals_on=False, fov_deg=62,
+        decals_on=False, hull_damage_on=False, fov_deg=62,
     ))
     p.open()
     payload = p.render_payload()
     body = json.loads(payload[len("setConfigurationPanel("):-2])
     assert body["settings"] == {
         "dust_on": False, "specular_on": True, "hdr_on": True, "rim_on": False,
-        "decals_on": False, "fxaa_on": True, "fov_deg": 62,
+        "decals_on": False, "hull_damage_on": False, "fxaa_on": True, "fov_deg": 62,
     }
 
 
@@ -247,19 +248,19 @@ def test_focus_first_up_lands_on_last_focusable():
     p.handle_input(r)
     payload = p.render_payload()
     body = json.loads(payload[len("setConfigurationPanel("):-2])
-    assert body["focused"] == 7  # ctrl:fxaa is last in an 8-item list
+    assert body["focused"] == 8  # ctrl:fxaa is last in a 9-item list
 
 
 def test_focus_wraps_at_bottom():
     p, _ = _make()
     p.open()
     r = _FakeReader()
-    for _ in range(9):
+    for _ in range(10):
         r.press(r.keys.KEY_DOWN)
         p.handle_input(r)
     payload = p.render_payload()
     body = json.loads(payload[len("setConfigurationPanel("):-2])
-    assert body["focused"] == 0  # 0,1,2,3,4,5,6,7,wrap→0
+    assert body["focused"] == 0  # 0,1,2,3,4,5,6,7,8,wrap→0
 
 
 def test_space_on_dust_row_toggles():
@@ -287,7 +288,7 @@ def test_right_arrow_on_fov_row_increments():
 def test_left_arrow_on_fov_row_decrements_and_clamps():
     p, kw = _make(initial_settings=SettingsSnapshot(
         dust_on=True, specular_on=True, hdr_on=True, rim_on=True,
-        decals_on=True, fov_deg=40,
+        decals_on=True, hull_damage_on=True, fov_deg=40,
     ))
     p.open()
     r = _FakeReader()
@@ -422,6 +423,43 @@ def test_space_on_decals_row_toggles():
     r.press(r.keys.KEY_SPACE); p.handle_input(r)
     kw["set_decals"].assert_called_once_with(False)
     assert p._settings.decals_on is False
+
+
+# ---- hull_damage toggle ---------------------------------------------------
+
+def test_toggle_hull_damage_fires_applier_and_flips_state():
+    p, kw = _make()
+    p.open()
+    assert p._settings.hull_damage_on is True
+    assert p.dispatch_event("toggle:hull_damage") is True
+    kw["set_hull_damage"].assert_called_once_with(False)
+    assert p._settings.hull_damage_on is False
+
+
+def test_render_payload_includes_hull_damage_on():
+    p, _ = _make()
+    p.open()
+    payload = json.loads(p.render_payload()[len("setConfigurationPanel("):-len(");")])
+    assert payload["settings"]["hull_damage_on"] is True
+
+
+def test_hull_damage_is_a_graphics_focusable():
+    p, _ = _make()
+    assert ("ctrl", "hull_damage") in p._focusables()
+
+
+def test_space_on_hull_damage_row_toggles():
+    p, kw = _make()
+    p.open()
+    r = _FakeReader()
+    # Navigate down to the hull_damage control and activate it.
+    focusables = p._focusables()
+    steps = focusables.index(("ctrl", "hull_damage")) + 1
+    for _ in range(steps):
+        r.press(r.keys.KEY_DOWN); p.handle_input(r)
+    r.press(r.keys.KEY_SPACE); p.handle_input(r)
+    kw["set_hull_damage"].assert_called_once_with(False)
+    assert p._settings.hull_damage_on is False
 
 
 # ---- fxaa toggle ----------------------------------------------------------

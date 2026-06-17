@@ -192,7 +192,8 @@ void draw_model(const assets::Model& model,
                                  scenegraph::Instance::kMaxGlowRegions>& glow_regions,
                 float decal_time,
                 float emissive_scale,
-                const std::vector<glm::mat4>& bone_palette);
+                const std::vector<glm::mat4>& bone_palette,
+                const scenegraph::HullCarveField& carve);
 
 class FrameSubmitter {
 public:

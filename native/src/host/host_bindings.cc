@@ -33,6 +33,7 @@
 #include <renderer/particle_pass.h>
 #include <renderer/phaser_pass.h>
 #include <renderer/hologram_pass.h>
+#include <renderer/breach_pass.h>
 #include <renderer/subsystem_pin_pass.h>
 #include <renderer/target_reticle_pass.h>
 #include <renderer/bridge_pass.h>
@@ -110,6 +111,7 @@ std::vector<renderer::PhaserBeamDescriptor> g_spv_overlay_beams;
 std::unique_ptr<renderer::PhaserPass>      g_phaser_pass;
 renderer::HologramShip                       g_hologram_ship;
 std::unique_ptr<renderer::HologramPass>      g_hologram_pass;
+std::unique_ptr<renderer::BreachPass>        g_breach_pass;
 std::vector<renderer::SubsystemPin>          g_subsystem_pins;
 std::unique_ptr<renderer::SubsystemPinPass>  g_subsystem_pin_pass;
 renderer::TargetReticle                      g_target_reticle;
@@ -238,6 +240,7 @@ void init(int width, int height, const std::string& title) {
     g_particle_pass = std::make_unique<renderer::ParticlePass>();
     g_phaser_pass        = std::make_unique<renderer::PhaserPass>();
     g_hologram_pass      = std::make_unique<renderer::HologramPass>();
+    g_breach_pass        = std::make_unique<renderer::BreachPass>();
     g_subsystem_pin_pass  = std::make_unique<renderer::SubsystemPinPass>();
     g_target_reticle_pass = std::make_unique<renderer::TargetReticlePass>();
     g_bridge_pass         = std::make_unique<renderer::BridgePass>();
@@ -283,6 +286,7 @@ void shutdown() {
     g_hologram_ship = renderer::HologramShip{};
     g_hologram_only_mode = false;
     g_hologram_pass.reset();
+    g_breach_pass.reset();   // releases cube VAO/VBO while the GL context lives
     g_subsystem_pin_pass.reset();
     g_target_reticle = renderer::TargetReticle{};
     g_target_reticle_pass.reset();
@@ -350,6 +354,13 @@ void frame() {
         g_submitter->submit_opaque_in_pass(
             g_world, cam, *g_pipeline, lookup, g_lighting,
             scenegraph::Pass::Space, g_decal_game_time);
+        // Breach interior-voxel splat: fills the see-through holes the opaque
+        // pass's carve-clip punched with colored interior cubes. Runs right
+        // after the opaque hull (depth-test/write on) so cubes behind a hole
+        // show through and cubes behind intact hull are occluded. Gated on
+        // dauntless_hull_damage::enabled() inside the pass (no-op when off).
+        if (g_breach_pass)
+            g_breach_pass->render(g_world, cam, *g_pipeline, lookup);
         if (g_shield_pass) g_shield_pass->submit(g_world, cam, *g_pipeline, now, lookup);
         if (!for_viewscreen && g_dust_pass)
             g_dust_pass->render(cam, dt, *g_pipeline, g_suns, g_dust_planets);
@@ -505,6 +516,10 @@ namespace dauntless_rim {
 }
 // Toggle for the opaque-pass persistent damage decals. Defined in frame.cc.
 namespace dauntless_decals {
+    void set_enabled(bool v);  // defined in frame.cc
+}
+// Toggle for the hull-breach renderer pass. Defined in frame.cc.
+namespace dauntless_hull_damage {
     void set_enabled(bool v);  // defined in frame.cc
 }
 
@@ -1310,6 +1325,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](bool enabled) { dauntless_decals::set_enabled(enabled); },
           py::arg("enabled"),
           "Enable/disable persistent hull damage decals (default on).");
+    m.def("hull_damage_set_enabled",
+          [](bool enabled) { dauntless_hull_damage::set_enabled(enabled); },
+          py::arg("enabled"),
+          "Enable/disable hull-breach renderer pass (default on).");
     m.def("fxaa_set_enabled",
           [](bool enabled) { g_fxaa_enabled = enabled; },
           py::arg("enabled"),
@@ -1476,6 +1495,30 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Record an object-space damage decal on a ship instance. World-space "
           "point/normal are transformed into the ship body frame. weapon_class: "
           "0=HeatGlow (phaser), 1=Scorch (torpedo/disruptor).");
+
+    m.def("hull_carve_add",
+          [](scenegraph::InstanceId id,
+             std::tuple<float, float, float> world_point,
+             std::tuple<float, float, float> /*world_normal*/,  // accepted for call-shape symmetry
+             float radius, float /*time*/) {                    // with damage_decal_add; unused in 2a
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return;  // stale id — drop silently
+              const glm::vec3 pw(std::get<0>(world_point),
+                                 std::get<1>(world_point),
+                                 std::get<2>(world_point));
+              const glm::vec3 pb = scenegraph::world_to_body(inst->world, pw);
+              // s = |world's X column| = the uniform NIF->world scale baked into
+              // inst->world (same derivation as damage_decal_add).
+              const float s = glm::length(glm::vec3(inst->world[0]));
+              const float radius_model = (s > 0.0f) ? radius / s : radius;
+              inst->carve.add(pb, radius_model);
+          },
+          py::arg("instance_id"), py::arg("world_point"), py::arg("world_normal"),
+          py::arg("radius"), py::arg("time"),
+          "Push a hull-carve sphere onto a ship instance. World-space impact point "
+          "is transformed to body frame (model units). world_normal and time are "
+          "accepted for call-shape symmetry with damage_decal_add but are unused "
+          "in renderer phase 2a (sphere carve; no oriented crater yet).");
 
     m.def("compute_capsule_region",
           [](scenegraph::InstanceId id,

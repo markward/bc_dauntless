@@ -2,6 +2,7 @@ add_library(voxel STATIC
     src/volume.cc
     src/voxelize.cc
     src/decode.cc
+    src/source_cache.cc
 )
 target_include_directories(voxel PUBLIC include)
 target_compile_features(voxel PUBLIC cxx_std_20)

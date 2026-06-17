@@ -61,6 +61,7 @@ from engine.appc import (
     camera_shake,
     hit_feedback,
     combat,
+    damage_eligibility,
 )
 # combat is imported as a module (not `from combat import apply_hit`) so call
 # sites read combat.apply_hit at call time — tests monkeypatch that attribute.
@@ -323,6 +324,11 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
     SHIELD severity path.
     """
     ships_list = list(ships)
+
+    # Refresh damage-carve eligibility for this tick before any hits are
+    # processed: player always + capped nearest/largest ships.
+    # See engine.appc.damage_eligibility.
+    damage_eligibility.update(ships_list)
 
     hits = projectiles.update_all(
         dt, ships_list,
@@ -1978,6 +1984,8 @@ class HostController:
         subsystem_emitters.reset_manager()
         from engine.appc import particles
         particles.reset()
+        damage_eligibility.reset()
+        hit_feedback._last_carve_time.clear()
         reset_sdk_globals()
         if self.panel_registry is not None:
             self.panel_registry.invalidate_all()
@@ -2695,6 +2703,7 @@ def run(mission_name: Optional[str] = None,
                 hdr_on=True,
                 rim_on=True,
                 decals_on=True,
+                hull_damage_on=True,
                 fxaa_on=True,
                 fov_deg=int(round(_math.degrees(
                     director.fov_y_rad
@@ -2705,6 +2714,7 @@ def run(mission_name: Optional[str] = None,
             set_hdr=r.set_hdr_enabled,
             set_rim=r.set_rim_enabled,
             set_decals=r.set_decals_enabled,
+            set_hull_damage=r.set_hull_damage_enabled,
             set_fxaa=r.set_fxaa_enabled,
             set_fov_rad=director.set_fov,
         )

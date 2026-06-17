@@ -46,6 +46,13 @@ uniform vec4  u_decal_c[MAX_DECALS];         // birth_time, weapon_class, _, _
 uniform mat4  u_ship_world_inv;              // inverse(ship world): world->body
 uniform float u_decal_time;                  // game-time seconds (ember clock)
 
+// ── Hull-breach carve spheres ────────────────────────────────────────────
+// u_carve_count == 0 makes the loop a no-op (stock path, zero per-fragment
+// cost). Each entry: center_body.xyz + radius in model units (body frame).
+const int MAX_CARVES = 24;
+uniform int  u_carve_count;
+uniform vec4 u_carve[MAX_CARVES];
+
 // ── Warp-nacelle glow dimming ───────────────────────────────────────────
 const int MAX_GLOW_REGIONS = 4;
 uniform int  u_glow_region_count;            // 0 disables the loop entirely
@@ -264,6 +271,16 @@ void main() {
     vec3 n = normalize(v_normal_ws);
     vec3 V = normalize(u_camera_pos_ws - v_position_ws);
 
+    // Body-frame fragment position (object-space carve + decals).
+    vec3 p_body = (u_ship_world_inv * vec4(v_position_ws, 1.0)).xyz;
+
+    // ── Hull-breach carve: discard fragments inside any active carve sphere ──
+    // Early-out BEFORE lighting/decals so carved fragments cost nothing beyond
+    // p_body. u_carve_count == 0 is the stock path (loop never executes).
+    for (int i = 0; i < u_carve_count; ++i) {
+        if (distance(p_body, u_carve[i].xyz) < u_carve[i].w) { discard; }
+    }
+
     vec3 lit_dir  = vec3(0.0);
     vec3 spec_acc = vec3(0.0);
     for (int i = 0; i < u_dir_light_count; ++i) {
@@ -281,9 +298,9 @@ void main() {
     vec4 base = texture(u_base_color, v_uv);
     vec3 lit  = (u_ambient_light + lit_dir) * u_diffuse_color * base.rgb;
 
-    // Reconstruct body-frame fragment pos/normal for object-space decals.
-    vec3 p_body = (u_ship_world_inv * vec4(v_position_ws, 1.0)).xyz;
+    // Body-frame normal for object-space decals.
     vec3 n_body = normalize(mat3(u_ship_world_inv) * v_normal_ws);
+
     vec3 decal_emissive = vec3(0.0);
     float glow_flicker = 1.0;
     if (u_decal_count > 0) {
