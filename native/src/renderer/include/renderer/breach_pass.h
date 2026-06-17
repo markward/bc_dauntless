@@ -69,12 +69,18 @@ public:
     ///
     /// `instance_key` is used to cache the per-instance fill 3D texture in
     /// test paths; in production, the fill texture comes from CarveFieldCache.
+    ///
+    /// `breach_age` is the age (in seconds) of the matching breach event for
+    /// the molten-rim emissive. Pass 0.0f for a fresh (hot) breach, or
+    /// kRimLife + 1 (the default) for a cold/no-event scoop — which is
+    /// byte-identical to the pre-emissive 2b scoop.
     void draw_instance(std::uintptr_t instance_key,
                        const voxel::VoxelVolume& fill,
                        const scenegraph::HullCarveField& carve,
                        const glm::mat4& world_xf,
                        const scenegraph::Camera& camera,
-                       Pipeline& pipeline);
+                       Pipeline& pipeline,
+                       float breach_age = scenegraph::kRimLife + 1.f);
 
     /// GL texture id for the triplanar Damage.tga sample. Set once in host
     /// init. If left 0, the pass lazily loads Damage.tga from the default BC

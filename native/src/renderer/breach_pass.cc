@@ -189,7 +189,8 @@ void BreachPass::draw_instance(std::uintptr_t instance_key,
                                const scenegraph::HullCarveField& carve,
                                const glm::mat4& world_xf,
                                const scenegraph::Camera& camera,
-                               Pipeline& pipeline) {
+                               Pipeline& pipeline,
+                               float breach_age) {
     if (carve.count() == 0) return;
 
     ensure_sphere();
@@ -216,7 +217,7 @@ void BreachPass::draw_instance(std::uintptr_t instance_key,
         draw_scoop(s.center_body, s.radius,
                    fe.tex3d, fill.origin, fill.cell, fill.dims,
                    world_xf, camera, pipeline,
-                   scenegraph::kRimLife + 1.f);  // no event → cold
+                   breach_age);
     }
 
     // Restore cull state.

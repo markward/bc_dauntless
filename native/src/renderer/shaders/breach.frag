@@ -36,11 +36,6 @@ uniform sampler2D u_damage_tex;
 uniform vec3      u_camera_pos_ws; // camera world position — uploaded CPU-side, avoids per-fragment inverse
 uniform float     u_tex_scale;     // body-units -> texture-period scale
 
-// Carve sphere geometry — same values as the vertex shader, needed here for
-// rim-weight computation in the molten emissive term.
-uniform vec3  u_carve_center;  // body-frame centre of the carve sphere
-uniform float u_carve_radius;  // radius in body-frame model units
-
 // Molten-rim emissive (hull-breach-2c).
 // u_breach_age: age of the matching breach event (large value → cold when no match).
 // u_rim_life:   kRimLife constant; rim cools to 0 by this age.
@@ -69,7 +64,8 @@ void main() {
     // for out-of-grid fragments keeps the scoop finite.
     vec3 tc = (v_body_pos - u_fill_origin) / (u_fill_cell * vec3(u_fill_dims));
     if (any(lessThan(tc, vec3(0.0))) || any(greaterThan(tc, vec3(1.0)))) discard;
-    if (texture(u_fill, tc).r < u_fill_iso) discard;
+    float fillv = texture(u_fill, tc).r;
+    if (fillv < u_fill_iso) discard;
 
     // ── Triplanar blend ────────────────────────────────────────────────────
     vec3 n = normalize(v_body_normal);
@@ -116,11 +112,13 @@ void main() {
     // heat: 1 at birth (age=0) → 0 at kRimLife. Clamped to [0,1].
     float heat = clamp(1.0 - u_breach_age / u_rim_life, 0.0, 1.0);
     if (heat > 0.0) {
-        // Rim weight: distance from the carve sphere center vs radius.
-        // Strongest near the rim (r close to 1.0), fading toward center.
-        // u_carve_center and u_carve_radius are already bound from the fill-mask block.
-        float r_norm = length(v_body_pos - u_carve_center) / max(u_carve_radius, 1e-4);
-        float rim_w = smoothstep(0.5, 1.0, r_norm);
+        // Rim weight: proximity to the iso surface (the shallow cut edge where
+        // the hole opens). Near the rim the fill is just above iso; deeper into
+        // solid material the fill rises higher. So fragments close to iso (rim)
+        // get rim_w ≈ 1; fragments deep in solid material get rim_w ≈ 0.
+        // kRimBand: fill units above iso that still count as "rim region".
+        const float kRimBand = 0.12;
+        float rim_w = 1.0 - smoothstep(u_fill_iso, u_fill_iso + kRimBand, fillv);
         c += blackbody(heat) * rim_w * 1.5;  // 1.5: HDR headroom for glow
     }
 

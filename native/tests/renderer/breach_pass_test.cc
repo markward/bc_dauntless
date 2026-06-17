@@ -1,6 +1,6 @@
 // native/tests/renderer/breach_pass_test.cc
 //
-// Tests for the breach interior-surface pass (Path C / hull-breach-2b).
+// Tests for the breach interior-surface pass (Path C / hull-breach-2b/2c).
 //
 // The pass renders a SPHERE SCOOP per active carve sphere: for each active
 // carve, it draws the inner (far) wall of a unit sphere scaled to carve_radius
@@ -15,6 +15,7 @@
 //    - draw_instance with ONE active carve over an empty-fill region:
 //        fill is 0 at p_body → scoop fragment discarded → pixel == background.
 //    - No active carves → pass draws nothing → pixel stays background.
+//    - Rim emissive: fresh breach (age=0) renders brighter than cold (age≥kRimLife).
 
 #include <gtest/gtest.h>
 
@@ -26,6 +27,7 @@
 #include <renderer/pipeline.h>
 #include <renderer/window.h>
 
+#include <scenegraph/breach_events.h>
 #include <scenegraph/camera.h>
 #include <scenegraph/hull_carve.h>
 
@@ -33,6 +35,7 @@
 
 #include <array>
 #include <memory>
+#include <numeric>
 #include <vector>
 
 namespace {
@@ -63,6 +66,19 @@ voxel::VoxelVolume empty_fill() {
     return v;
 }
 
+// A 4^3 fill where every cell is 75 (just above kIsovalue=64, well inside the
+// rim band [64/255, (64+0.12*255)/255] ≈ byte [64, 94]).  Fragments pass the
+// fill mask (75 > 64) and land in the rim band → rim_w ≈ 1.  Used by the
+// hot-vs-cold emissive test to ensure the emissive term fires.
+voxel::VoxelVolume rim_fill() {
+    voxel::VoxelVolume v;
+    v.dims   = {4, 4, 4};
+    v.origin = {-2.f, -2.f, -2.f};
+    v.cell   = {1.f, 1.f, 1.f};
+    v.occ.assign(4 * 4 * 4, 75);  // just above iso, inside rim band
+    return v;
+}
+
 class BreachPassGLTest : public ::testing::Test {
 protected:
     std::unique_ptr<renderer::Window>   w;
@@ -82,6 +98,21 @@ protected:
         std::array<unsigned char, 4> px{0, 0, 0, 0};
         glReadPixels(kW / 2, kH / 2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
         return px;
+    }
+
+    // Sum all RGB components across the whole framebuffer — used to compare
+    // brightness between a hot and a cold render.
+    long long read_frame_sum() const {
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+        std::vector<unsigned char> buf(kW * kH * 4);
+        glReadPixels(0, 0, kW, kH, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
+        long long s = 0;
+        for (int i = 0; i < kW * kH; ++i) {
+            s += buf[i * 4 + 0];  // R
+            s += buf[i * 4 + 1];  // G
+            s += buf[i * 4 + 2];  // B
+        }
+        return s;
     }
 
     // Camera looking at the origin along -Z.  The carve sphere is centred at
@@ -194,4 +225,57 @@ TEST_F(BreachPassGLTest, NoCarvesDrawsNothing) {
     auto px = read_center();
     EXPECT_LT(px[0] + px[1] + px[2], 16)
         << "Centre pixel is lit with no carves — the pass should be a no-op";
+}
+
+// GL: a fresh breach (age=0, heat=1) must render brighter than a cold one
+// (age≥kRimLife, heat=0).  Uses rim_fill() — voxels at byte 75 — which falls
+// inside the rim band [iso, iso+0.12*255] so rim_w is nonzero when hot.
+// The cold render should look identical to the base scoop (no emissive term);
+// the hot render adds the blackbody emissive → the whole-frame RGB sum is
+// strictly larger.
+TEST_F(BreachPassGLTest, HotBreachBrighterThanCold) {
+    scenegraph::HullCarveField carve;
+    carve.add(glm::vec3(0.f, 0.f, 0.f), 1.5f);
+    scenegraph::Camera cam = cam_looking_at_origin();
+
+    // ── Cold render (age well past kRimLife → heat = 0, no emissive) ────────
+    clear_framebuffer();
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    {
+        renderer::BreachPass pass;
+        voxel::VoxelVolume fill = rim_fill();
+        pass.draw_instance(/*instance_key=*/10, fill, carve,
+                           glm::mat4(1.0f), cam, *pipeline,
+                           scenegraph::kRimLife + 1.f);  // cold
+    }
+    glFinish();
+    EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error in cold breach draw";
+    const long long cold_sum = read_frame_sum();
+
+    // ── Hot render (age=0 → heat=1, maximum emissive) ───────────────────────
+    clear_framebuffer();
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    {
+        renderer::BreachPass pass;
+        voxel::VoxelVolume fill = rim_fill();
+        pass.draw_instance(/*instance_key=*/11, fill, carve,
+                           glm::mat4(1.0f), cam, *pipeline,
+                           0.f);  // fresh (hot)
+    }
+    glFinish();
+    EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error in hot breach draw";
+    const long long hot_sum = read_frame_sum();
+
+    // A fresh breach must be meaningfully brighter than a cold one.
+    // The blackbody emissive at heat=1 yields near-white (≈1,0.92,0.72)
+    // scaled by 1.5, so even with clamping the hot frame is substantially
+    // brighter. We require a margin of at least 512 (summed RGB units across
+    // all pixels) to rule out noise; typical values are several thousand.
+    EXPECT_GT(hot_sum, cold_sum + 512)
+        << "Hot breach (age=0) frame sum=" << hot_sum
+        << " should be significantly brighter than cold (age>=kRimLife) sum="
+        << cold_sum
+        << " — rim emissive did not contribute";
 }
