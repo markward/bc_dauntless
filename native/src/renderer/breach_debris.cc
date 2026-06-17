@@ -70,7 +70,7 @@ std::vector<ParticleEmitterDescriptor> build_debris_descriptors(
             ((ev.seed ^ 0x9e3779b97f4a7c15ull) ^ 0x517cc1b727220a95ull) >> 11)
             * (1.f / static_cast<float>(1ull << 53));
 
-        d.texture_path = "game/data/Textures/Effects/Noise2.tga";
+        d.texture_path = "game/data/spark.tga";
 
         out.push_back(d);
     }
