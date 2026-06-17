@@ -52,9 +52,10 @@ TEST(BuildVentingDescriptors, EffectAgeEqualsNowMinusBirthTime) {
     scenegraph::BreachEventRing ring;
     ring.push({0.f, 0.f, 0.f}, 1.f, {0.f, 0.f, 1.f}, 1.0f /*birth*/, 1u);
     scenegraph::InstanceId id{1, 1};
-    auto desc = renderer::build_venting_descriptors(ring, id, 2.5f /*now*/);
+    // now within the burst window (< kVentLife) so the event still vents.
+    auto desc = renderer::build_venting_descriptors(ring, id, 1.3f /*now*/);
     ASSERT_EQ(desc.size(), 1u);
-    EXPECT_FLOAT_EQ(desc[0].effect_age, 1.5f);
+    EXPECT_FLOAT_EQ(desc[0].effect_age, 0.3f);
 }
 
 TEST(BuildVentingDescriptors, NoDescriptorPastVentLife) {
@@ -112,8 +113,8 @@ TEST(BuildVentingDescriptors, SeedIsStable) {
     scenegraph::BreachEventRing ring;
     ring.push({0.f, 0.f, 0.f}, 1.f, {0.f, 0.f, 1.f}, 0.f, 77u);
     scenegraph::InstanceId id{1, 1};
-    auto a = renderer::build_venting_descriptors(ring, id, 0.5f);
-    auto b = renderer::build_venting_descriptors(ring, id, 0.5f);
+    auto a = renderer::build_venting_descriptors(ring, id, 0.3f);
+    auto b = renderer::build_venting_descriptors(ring, id, 0.3f);
     ASSERT_EQ(a.size(), 1u);
     EXPECT_FLOAT_EQ(a[0].seed, b[0].seed)
         << "seed must not change between calls with the same ring state";
