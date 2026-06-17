@@ -120,4 +120,13 @@ TEST(World, SetRimEligibleUpdatesField) {
     EXPECT_FALSE(w.get(id)->rim_eligible);
 }
 
+TEST(World, CreateInstanceStampsIdOntoInstance) {
+    scenegraph::World world;
+    scenegraph::InstanceId id = world.create_instance(0);
+    const scenegraph::Instance* inst = world.get(id);
+    ASSERT_NE(inst, nullptr);
+    EXPECT_EQ(inst->id, id)
+        << "create_instance must stamp the returned InstanceId onto instance.id";
+}
+
 }  // namespace

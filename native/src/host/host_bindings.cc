@@ -1548,6 +1548,24 @@ PYBIND11_MODULE(_dauntless_host, m) {
               const float s = glm::length(glm::vec3(inst->world[0]));
               const float radius_model = (s > 0.0f) ? radius / s : radius;
               inst->carve.add(pb, radius_model);
+              // Breach event: transient VFX ring (debris, venting, rim).
+              // Seed: deterministic hash of center_body to avoid per-frame
+              // re-rolling; XOR with a counter grown per push to decorrelate
+              // closely-spaced simultaneous breaches on the same ship.
+              {
+                  static std::uint64_t s_counter = 0;
+                  const auto bx = static_cast<std::uint64_t>(
+                      static_cast<std::uint32_t>(pb.x * 1000.f));
+                  const auto by = static_cast<std::uint64_t>(
+                      static_cast<std::uint32_t>(pb.y * 1000.f));
+                  const auto bz = static_cast<std::uint64_t>(
+                      static_cast<std::uint32_t>(pb.z * 1000.f));
+                  const std::uint64_t seed =
+                      (bx * 2654435761ull) ^ (by * 805459861ull) ^
+                      (bz * 3674653429ull) ^ (++s_counter * 6364136223846793005ull);
+                  inst->breach_events.push(pb, radius_model,
+                                           g_decal_game_time, seed);
+              }
           },
           py::arg("instance_id"), py::arg("world_point"), py::arg("world_normal"),
           py::arg("radius"), py::arg("time"),
@@ -1683,6 +1701,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               g_decal_game_time = time;
               g_world.for_each_alive([&](scenegraph::Instance& inst) {
                   inst.decals.tick(time);
+                  inst.breach_events.tick(time);
               });
           },
           py::arg("time"),

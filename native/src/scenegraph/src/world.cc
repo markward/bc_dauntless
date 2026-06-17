@@ -17,7 +17,9 @@ InstanceId World::create_instance(ModelHandle model) {
     slots_[idx].alive = true;
     slots_[idx].instance = Instance{};
     slots_[idx].instance.model_handle = model;
-    return InstanceId{idx, slots_[idx].generation};
+    const InstanceId new_id{idx, slots_[idx].generation};
+    slots_[idx].instance.id = new_id;
+    return new_id;
 }
 
 void World::destroy_instance(InstanceId id) {

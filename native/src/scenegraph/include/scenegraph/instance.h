@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <vector>
 #include <glm/glm.hpp>
+#include "scenegraph/breach_events.h"
 #include "scenegraph/damage_decals.h"
 #include "scenegraph/hull_carve.h"
 
@@ -67,6 +68,14 @@ struct Instance {
     /// see-through breach holes and the interior voxel splat. Runtime VFX only
     /// — never serialized to saves.
     HullCarveField carve;
+
+    /// Per-instance transient breach-event ring. Drives debris, venting, and
+    /// molten-rim emissive. Runtime VFX only — never serialized to saves.
+    BreachEventRing breach_events;
+
+    /// Self-referential id stamped by World::create_instance so particle
+    /// emitters built from breach events can carry an attached instance_id.
+    InstanceId id{};
 
     /// Per-instance glow capsules (body frame, model units).
     /// Runtime VFX state only — never serialized. Fixed cap: a ship has at
