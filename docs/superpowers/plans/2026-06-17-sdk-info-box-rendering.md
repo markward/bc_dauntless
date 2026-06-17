@@ -582,7 +582,7 @@ def _serialize_body(paragraph) -> list:
 class InfoBoxPanel(Panel):
     def __init__(self):
         super().__init__()
-        self._last_pushed: Optional[str] = json.dumps({"entries": []})
+        self._last_pushed: Optional[str] = None  # None (not the empty sentinel): test_hidden_box_is_not_serialized needs a non-None first emit
         self._boxes_by_id: dict = {}
 
     @property

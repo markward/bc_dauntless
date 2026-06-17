@@ -90,6 +90,10 @@ class InfoBoxPanel(Panel):
             if not child.IsVisible():
                 continue
             self._boxes_by_id[child._id] = child
+            # MissionLib.SetupInfoBoxFromParagraph always builds the body as the
+            # outermost TGParagraph (a direct child of the box's content TGPane),
+            # with key-glyph children carried inside that paragraph's segment
+            # stream — so the BFS lands on the body, not a glyph.
             paragraph = _find_first(child, lambda w: isinstance(w, TGParagraph))
             button = _find_first(child, lambda w: isinstance(w, STButton))
             entry = {
@@ -121,6 +125,8 @@ class InfoBoxPanel(Panel):
             button = _find_first(box, lambda w: isinstance(w, STButton))
             if button is not None:
                 button.SendActivationEvent()
+            else:
+                _logger.warning("info-box: box %s has no close button; ignoring close", box_id)
             return True
         return False
 

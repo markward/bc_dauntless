@@ -36,7 +36,7 @@ function setInfoBoxes(payload) {
                 body.appendChild(chip);
             } else {
                 // Preserve newlines from the segment stream.
-                seg.text.split("\n").forEach(function (line, i) {
+                (seg.text || "").split("\n").forEach(function (line, i) {
                     if (i > 0) { body.appendChild(document.createElement("br")); }
                     body.appendChild(document.createTextNode(line));
                 });
