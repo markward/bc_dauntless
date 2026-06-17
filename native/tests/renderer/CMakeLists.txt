@@ -1,5 +1,6 @@
 add_executable(renderer_tests
     window_test.cc
+    gl_caps_test.cc
     shader_test.cc
     pipeline_test.cc
     frame_test.cc
