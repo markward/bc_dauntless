@@ -41,10 +41,10 @@ std::vector<ParticleEmitterDescriptor> build_debris_descriptors(
             d.emit_vel_world = glm::vec3(0.f);
             d.inherit        = 0.f;
             d.effect_age     = effect_age;
-            // ~8 chunks over a 0.4s burst, each living ~10s.
+            // ~4 chunks over a 0.4s burst, each living ~10s.
             d.emit_life          = 10.0f;
             d.emit_life_variance = 2.0f;
-            d.emit_frequency     = 0.05f;
+            d.emit_frequency     = 0.10f;
             d.stop_age           = 0.4f;
             d.emit_velocity         = 4.0f;
             d.random_velocity_cone  = 110.f;
@@ -78,10 +78,10 @@ std::vector<ParticleEmitterDescriptor> build_debris_descriptors(
             d.emit_vel_world = glm::vec3(0.f);
             d.inherit        = 0.f;
             d.effect_age     = effect_age;
-            // ~5 sparks in a quick burst; they burn out faster than chunks.
+            // ~15 sparks in a quick burst; they burn out faster than chunks.
             d.emit_life          = 2.5f;
             d.emit_life_variance = 1.0f;
-            d.emit_frequency     = 0.06f;
+            d.emit_frequency     = 0.02f;
             d.stop_age           = 0.3f;
             d.emit_velocity         = 6.0f;   // sparks fly fast
             d.random_velocity_cone  = 130.f;
