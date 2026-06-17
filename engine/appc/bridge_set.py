@@ -50,6 +50,7 @@ class BridgeObjectClass:
         # DBridgeProperties.LoadPropertySet(pPropertySet) still runs against a
         # chainable stub; faithful hardpoint loading is a later step.
         self._property_set = _LoudStub()
+        self._anim_node = None
 
     def GetPropertySet(self):
         return self._property_set
@@ -61,10 +62,13 @@ class BridgeObjectClass:
         self.rotation = (a, x, y, z)
 
     def GetAnimNode(self):
-        # Animation playback is not implemented headlessly; return None so the
-        # SDK's PutGuestChairOut() / PutGuestChairIn() pass safely through the
-        # App.TGAnimPosition_Create stub without crashing.
-        return None
+        # Real recording node (kind="object"): the door TGAnimAction targets
+        # this. PutGuestChairOut/In still only build a TGAnimPosition from it,
+        # which is safe. Was previously None.
+        if getattr(self, "_anim_node", None) is None:
+            from engine.appc.anim_node import TGAnimNode
+            self._anim_node = TGAnimNode(owner=self, kind="object")
+        return self._anim_node
 
 
 class ViewScreenObject(_LoudStub):
@@ -113,6 +117,16 @@ class ZoomCameraObjectClass(_LoudStub):
         self._min_zoom = 1.0
         self._max_zoom = 1.0
         self._zoom_time = 0.0
+        self._anim_node = None   # lazily created TGAnimNode (kind="camera")
+
+    def GetAnimNode(self):
+        # Real recording node (kind="camera"): the cutscene controller reads
+        # the camera-path clip a TGAnimAction queues on it. Was previously a
+        # _LoudStub no-op returning None, which crashed E1M1 Briefing().
+        if self._anim_node is None:
+            from engine.appc.anim_node import TGAnimNode
+            self._anim_node = TGAnimNode(owner=self, kind="camera")
+        return self._anim_node
 
     def SetMinZoom(self, v):  self._min_zoom = v
     def SetMaxZoom(self, v):  self._max_zoom = v

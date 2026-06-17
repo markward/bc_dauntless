@@ -112,3 +112,31 @@ def test_model_manager_load_model_records_env():
     assert mm.env_for("data/Models/Sets/DBridge/DBridge.nif") == \
         "data/Models/Sets/DBridge/High/"
     assert mm.env_for("missing.nif") is None
+
+
+from engine.appc.anim_node import TGAnimNode
+from engine.appc.actions import TGAnimPosition_Create
+
+
+def test_camera_get_anim_node_is_real_and_does_not_crash():
+    # Regression for the E1M1 Briefing() crash:
+    # 'NoneType' object has no attribute 'UseAnimationPosition'.
+    cam = ZoomCameraObjectClass_Create(0, 0, 0, 0, 0, 0, 1, "maincamera")
+    node = cam.GetAnimNode()
+    assert isinstance(node, TGAnimNode)
+    assert node.kind == "camera"
+    assert node.owner is cam
+    assert cam.GetAnimNode() is node            # persistent
+    node.UseAnimationPosition("WalkCameraToCaptD")   # must not raise
+    assert node.position_clip == "WalkCameraToCaptD"
+
+
+def test_bridge_object_get_anim_node_real_and_guest_chair_safe():
+    obj = BridgeObjectClass_Create("data/Models/Sets/DBridge/DBridge.nif")
+    node = obj.GetAnimNode()
+    assert isinstance(node, TGAnimNode)
+    assert node.kind == "object"
+    assert obj.GetAnimNode() is node            # persistent
+    # PutGuestChairOut/In build a TGAnimPosition from the node — must work.
+    pos = TGAnimPosition_Create(node, "db_guest_chair_out")
+    assert pos.name == "db_guest_chair_out"
