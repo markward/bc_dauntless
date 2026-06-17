@@ -310,6 +310,16 @@ def set_instance_animation(iid: InstanceId, clip_index: int,
     _h.set_instance_animation(iid, clip_index, loop, sample_at_start)
 
 
+def load_animation_clips(path: str) -> list:
+    """Parse a NIF's keyframe controllers into animation clips.
+
+    Returns [{"name": str, "duration": float, "tracks": [...]}] where each
+    track is {"node": str, "translation": [(t,x,y,z), ...],
+    "rotation": [(t,x,y,z,w), ...]}. Used to drive the bridge camera
+    walk-on cutscene (see engine/bridge_cutscene.py)."""
+    return _h.load_animation_clips(path)
+
+
 def set_bridge_camera(eye: Tuple[float, float, float],
                       target: Tuple[float, float, float],
                       up: Tuple[float, float, float],

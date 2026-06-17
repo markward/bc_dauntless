@@ -46,6 +46,7 @@
 #include <renderer/ldr_target.h>
 #include <renderer/fxaa_pass.h>
 #include <renderer/aabb.h>
+#include <renderer/asset_path.h>
 #include <renderer/ray_trace.h>
 #include <renderer/glow_region.h>
 #include <scenegraph/world.h>
@@ -701,6 +702,40 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "SP2: play model.animations[clip_index] on this instance. loop=false "
           "(default) plays once and holds the last frame; the renderer rebuilds "
           "the bone palette each frame until it settles.");
+    m.def("load_animation_clips",
+          [](const std::string& path) {
+              py::list clips_out;
+              for (const auto& clip :
+                   assets::load_animation_clips(renderer::resolve_asset_path(path))) {
+                  py::dict d;
+                  d["name"] = clip.name;
+                  d["duration"] = clip.duration_seconds;
+                  py::list tracks_out;
+                  for (const auto& tr : clip.tracks) {
+                      py::dict td;
+                      td["node"] = tr.target_node_name;
+                      py::list tl;
+                      for (const auto& k : tr.translation)
+                          tl.append(py::make_tuple(k.time, k.value.x,
+                                                   k.value.y, k.value.z));
+                      td["translation"] = tl;
+                      py::list rl;
+                      for (const auto& k : tr.rotation)
+                          rl.append(py::make_tuple(k.time, k.value.x,
+                                                   k.value.y, k.value.z,
+                                                   k.value.w));
+                      td["rotation"] = rl;
+                      tracks_out.append(td);
+                  }
+                  d["tracks"] = tracks_out;
+                  clips_out.append(d);
+              }
+              return clips_out;
+          },
+          py::arg("path"),
+          "Parse a NIF's keyframe controllers into animation clips: "
+          "[{name, duration, tracks:[{node, translation:[(t,x,y,z)], "
+          "rotation:[(t,x,y,z,w)]}]}]. Quaternions are (x,y,z,w).");
     m.def("set_visible",
           [](scenegraph::InstanceId id, bool v) { g_world.set_visible(id, v); },
           py::arg("id"), py::arg("visible"));
