@@ -36,8 +36,18 @@ namespace renderer {
 
 namespace {
 
-constexpr const char* kDamageTgaPath =
-    "game/data/Textures/Effects/Damage.tga";
+// Animated interior texture: 4 frames of the same damage texture, cycled by
+// the game clock. (BC ships these loose in data/, separate from the static
+// Textures/Effects/Damage.tga.) 64x64 24-bit RGB each.
+constexpr const char* kDamageFramePaths[4] = {
+    "game/data/Damage1.tga",
+    "game/data/Damage2.tga",
+    "game/data/Damage3.tga",
+    "game/data/Damage4.tga",
+};
+// Animation playback rate (frames/sec). 4 frames at 8 fps = a 0.5s loop —
+// a lively damage shimmer on the breach interior. Eyeball-tunable.
+constexpr float kDamageAnimFps = 8.0f;
 
 // Target triangle count for the scoop sphere. 16×24 lat/lon segments ≈ 768
 // triangles: more than enough resolution for a 1–5 GU breach.
@@ -51,10 +61,10 @@ constexpr int kSphereTargetTris = 768;
 // surface. Eyeball-tunable: lower = larger features.
 constexpr float kTexScale = 1.0f / 40.0f;
 
-unsigned int load_damage_tga() {
-    std::ifstream in(kDamageTgaPath, std::ios::binary);
+unsigned int load_damage_tga(const char* path) {
+    std::ifstream in(path, std::ios::binary);
     if (!in) {
-        std::fprintf(stderr, "[breach] failed to open '%s'\n", kDamageTgaPath);
+        std::fprintf(stderr, "[breach] failed to open '%s'\n", path);
         return 0;
     }
     std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(in)),
@@ -70,7 +80,7 @@ unsigned int load_damage_tga() {
         return id;
     } catch (const std::exception& e) {
         std::fprintf(stderr, "[breach] decode/upload '%s' failed: %s\n",
-                     kDamageTgaPath, e.what());
+                     path, e.what());
         return 0;
     }
 }
@@ -96,10 +106,11 @@ void BreachPass::ensure_sphere() {
     sphere_mesh_ = std::make_unique<assets::Mesh>(assets::upload_mesh(cpu));
 }
 
-void BreachPass::ensure_damage_texture() {
-    if (damage_tex_ != 0 || damage_tex_tried_) return;
-    damage_tex_tried_ = true;
-    damage_tex_ = load_damage_tga();
+void BreachPass::ensure_damage_frames() {
+    if (damage_frames_tried_) return;
+    damage_frames_tried_ = true;
+    for (int i = 0; i < 4; ++i)
+        damage_frames_[i] = load_damage_tga(kDamageFramePaths[i]);
 }
 
 /*static*/
@@ -138,7 +149,8 @@ void BreachPass::draw_scoop(const glm::vec3& center_body,
                              const glm::mat4& world_xf,
                              const scenegraph::Camera& camera,
                              Pipeline& pipeline,
-                             float breach_age) {
+                             float breach_age,
+                             unsigned int damage_tex) {
     // Camera world position: inverse of view matrix column 3, computed once
     // CPU-side per draw (not per fragment). Matches how the opaque pass derives
     // u_camera_pos_ws in submit_opaque / submit_opaque_in_pass.
@@ -175,7 +187,7 @@ void BreachPass::draw_scoop(const glm::vec3& center_body,
     glBindTexture(GL_TEXTURE_3D, fill_tex);
 
     glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, damage_tex_);
+    glBindTexture(GL_TEXTURE_2D, damage_tex);
 
     glBindVertexArray(sphere_mesh_->vao());
     glDrawElements(GL_TRIANGLES,
@@ -194,7 +206,7 @@ void BreachPass::draw_instance(std::uintptr_t instance_key,
     if (carve.count() == 0) return;
 
     ensure_sphere();
-    ensure_damage_texture();
+    ensure_damage_frames();
 
     // Build + upload the fill 3D texture. In the test/standalone path there is
     // no shared CarveFieldCache, so we own the texture in fill_cache_ (member).
@@ -217,7 +229,7 @@ void BreachPass::draw_instance(std::uintptr_t instance_key,
         draw_scoop(s.center_body, s.radius,
                    fe.tex3d, fill.origin, fill.cell, fill.dims,
                    world_xf, camera, pipeline,
-                   breach_age);
+                   breach_age, damage_frames_[0]);
     }
 
     // Restore cull state.
@@ -239,7 +251,15 @@ void BreachPass::render(const scenegraph::World& world,
     if (!dauntless_hull_damage::enabled()) return;
 
     ensure_sphere();
-    ensure_damage_texture();
+    ensure_damage_frames();
+
+    // Current animation frame, cycled by the game clock. All scoops drawn this
+    // frame share it. frame_tex may be 0 (asset missing) → shader grey base.
+    int frame = 0;
+    if (now > 0.f) {
+        frame = static_cast<int>(now * kDamageAnimFps) & 3;  // % 4, now >= 0
+    }
+    const unsigned int frame_tex = damage_frames_[frame];
 
     bool any_state_changed = false;
     auto ensure_state = [&]() {
@@ -283,7 +303,7 @@ void BreachPass::render(const scenegraph::World& world,
 
                 draw_scoop(s.center_body, s.radius,
                            ce->tex3d, ce->origin, ce->cell, ce->dims,
-                           inst.world, camera, pipeline, breach_age);
+                           inst.world, camera, pipeline, breach_age, frame_tex);
             }
         });
 

@@ -82,14 +82,10 @@ public:
                        Pipeline& pipeline,
                        float breach_age = scenegraph::kRimLife + 1.f);
 
-    /// GL texture id for the triplanar Damage.tga sample. Set once in host
-    /// init. If left 0, the pass lazily loads Damage.tga from the default BC
-    /// path on first draw.
-    void set_damage_texture(unsigned int tex_id) { damage_tex_ = tex_id; }
-
 private:
     void ensure_sphere();
-    void ensure_damage_texture();
+    // Lazily load the 4-frame animated interior texture (game/data/Damage1..4.tga).
+    void ensure_damage_frames();
 
     // Draw one sphere scoop for a single carve slot using an already-uploaded
     // fill 3D texture. Sets the per-carve uniforms (center, radius, fill).
@@ -102,7 +98,8 @@ private:
                     const glm::mat4& world_xf,
                     const scenegraph::Camera& camera,
                     Pipeline& pipeline,
-                    float breach_age);   // NEW: age of matching event; large = cold
+                    float breach_age,     // age of matching event; large = cold
+                    unsigned int damage_tex);  // current animation frame texture
 
     // Build (once) a fill GL_R8 3D texture from a VoxelVolume.
     // Returns 0 on failure.  Caller owns the GL texture.
@@ -111,8 +108,11 @@ private:
     // Sphere VAO/VBO/EBO — built once per pass lifetime.
     std::unique_ptr<assets::Mesh> sphere_mesh_;
 
-    unsigned int damage_tex_       = 0;
-    bool         damage_tex_tried_ = false;
+    // 4-frame animated interior texture (game/data/Damage1..4.tga), cycled by
+    // the game clock in render(). Any frame left 0 (asset missing / headless
+    // test) degrades to the shader's grey base — never a hole to the stars.
+    unsigned int damage_frames_[4]  = {0, 0, 0, 0};
+    bool         damage_frames_tried_ = false;
 
     // Per-instance fill 3D texture cache used by the test/standalone path in
     // draw_instance(). In the production path, the fill tex comes from
