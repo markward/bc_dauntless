@@ -396,23 +396,29 @@ struct NiBinaryVoxelExtraData {
     std::uint32_t data_link = 0;
 };
 
-/// Raw voxel-collision data block. Field set per niflib's
-/// NiBinaryVoxelData::Read.
+/// Raw voxel-collision data block. Header layout confirmed via cleanroom
+/// analysis of all 84 *_vox.nif files in the BC asset corpus (34 bytes):
+///   3 × uint16  grid dimensions (dim_x, dim_y, dim_z)
+///   1 × float   cubic cell edge length (cell_size)
+///   3 × float   AABB minimum corner (aabb_min)
+///   3 × float   AABB maximum corner (aabb_max)
+/// Followed by a variable-length opaque payload up to the EOF sentinel.
+/// Container layout (bitmask[L] | numVectors | planes | numBytes2 | bytes2 |
+/// trailer[5]) is documented in
+/// docs/original_game_reference/engine/nif-voxel-format.md, but the
+/// occupancy-bitmask codec is unresolved, so the payload stays opaque.
 struct NiBinaryVoxelData {
-    std::uint16_t unknown_short1 = 0;
-    std::uint16_t unknown_short2 = 0;
-    std::uint16_t unknown_short3 = 0;
-    std::array<float, 7> unknown_7_floats{};
-    /// 7 × 12 bytes of opaque preamble data.
-    std::array<std::array<std::uint8_t, 12>, 7> unknown_bytes1{};
-    std::uint32_t num_unknown_vectors = 0;
-    std::vector<Vec3> unknown_vectors;
-    std::uint32_t num_unknown_bytes2 = 0;
-    std::vector<std::uint8_t> unknown_bytes2;
-    std::array<std::uint32_t, 5> unknown_5_ints{};
-    /// Opaque voxel-grid bytes captured between the parsed header and the
-    /// End Of File marker. Real v3.x voxel encoding is undocumented; this
-    /// preserves the bytes so future work can decode them.
+    std::uint16_t dim_x = 0;               // grid resolution, X (was unknown_short1)
+    std::uint16_t dim_y = 0;               // grid resolution, Y (was unknown_short2)
+    std::uint16_t dim_z = 0;               // grid resolution, Z (was unknown_short3)
+    float cell_size = 0.f;                 // cubic cell edge, world units (was unknown_7_floats[0])
+    std::array<float, 3> aabb_min{};       // grid AABB min corner (was unknown_7_floats[1..3])
+    std::array<float, 3> aabb_max{};       // grid AABB max corner (was unknown_7_floats[4..6])
+    /// Opaque payload after the 34-byte header, up to the EOF sentinel.
+    /// Container layout (bitmask[L] | numVectors | planes | numBytes2 | bytes2 |
+    /// trailer[5]) is documented in
+    /// docs/original_game_reference/engine/nif-voxel-format.md, but the
+    /// occupancy-bitmask codec is unresolved, so this stays opaque for now.
     std::vector<std::uint8_t> raw_voxel_payload;
 };
 
