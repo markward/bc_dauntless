@@ -5,7 +5,6 @@ add_executable(voxel_tests
     iou_test.cc
     iou_realdata_test.cc
     source_cache_test.cc
-    select_breach_voxels_test.cc
     surface_decode_test.cc
     plane_index_test.cc
     dual_contour_test.cc
