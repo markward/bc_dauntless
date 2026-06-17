@@ -32,6 +32,16 @@ void solidify(VoxelVolume& v);
 /// BC-recovered resolution rule.
 VoxelVolume voxelize(const assets::Model& model, glm::ivec3 dims);
 
+/// Voxelize a triangle soup into a grid with EXPLICITLY given dims/origin/cell.
+/// Builds a VoxelVolume from the supplied grid parameters (does not compute a
+/// bbox; uses the caller's lattice as-is), zeroes occ, runs surface_voxelize
+/// then solidify, and returns the result. This allows matching an external
+/// reference lattice (e.g. from from_nif_voxel_data) exactly.
+VoxelVolume voxelize_into(const std::vector<Tri>& tris,
+                          glm::ivec3 dims,
+                          glm::vec3  origin,
+                          glm::vec3  cell);
+
 /// Decode a NiBinaryVoxelData block into a VoxelVolume.
 /// Reads the 7-bit fill field from raw_voxel_payload (LSB-plane-first bit
 /// packing over the (nx-1)*(ny-1)*(nz-1) interior-node lattice) and stores
@@ -39,5 +49,11 @@ VoxelVolume voxelize(const assets::Model& model, glm::ivec3 dims);
 /// nonzero as solid). Returns an empty volume if the grid is degenerate or
 /// the payload is too small.
 VoxelVolume from_nif_voxel_data(const nif::NiBinaryVoxelData& vd);
+
+/// Intersection-over-union of the SOLID sets of two volumes.
+/// Requires equal dims; asserts and returns -1.0 if mismatched.
+/// Returns 1.0 when both volumes are empty (vacuously identical).
+/// solid(i) is defined as occ[i] != 0.
+double iou(const VoxelVolume& a, const VoxelVolume& b);
 
 }  // namespace voxel

@@ -492,6 +492,210 @@ int dump_hull_obj(const fs::path& hull_path, const fs::path& obj_path) {
     return 0;
 }
 
+// ---- Triangle collection (GL-free, mirrors accumulate_aabb) ------------------
+// Walks the NiNode tree and emits world-transformed voxel::Tri entries for
+// every NiTriShapeData, using the same local-to-world accumulation as
+// accumulate_aabb and accumulate_obj. The result feeds voxel::voxelize_into.
+
+void accumulate_tris(const nif::File& f,
+                     const std::unordered_map<std::uint32_t, std::size_t>& links,
+                     std::size_t idx, const Mat4& parent,
+                     std::vector<bool>& visited,
+                     std::vector<voxel::Tri>& out) {
+    if (idx >= f.blocks.size() || visited[idx]) return;
+    visited[idx] = true;
+    const auto& blk = f.blocks[idx];
+    if (auto* n = std::get_if<nif::NiNode>(&blk)) {
+        Mat4 world = mul(parent, av_to_mat4(n->av));
+        for (auto link : n->child_links) {
+            auto it = links.find(link);
+            if (it != links.end())
+                accumulate_tris(f, links, it->second, world, visited, out);
+        }
+    } else if (auto* sh = std::get_if<nif::NiTriShape>(&blk)) {
+        Mat4 world = mul(parent, av_to_mat4(sh->av));
+        auto it = links.find(sh->data_link);
+        if (it == links.end()) return;
+        const auto* d = std::get_if<nif::NiTriShapeData>(&f.blocks[it->second]);
+        if (!d) return;
+        for (const auto& tri : d->triangles) {
+            if (tri[0] >= d->vertices.size() ||
+                tri[1] >= d->vertices.size() ||
+                tri[2] >= d->vertices.size()) continue;
+            Vec3 a = transform_point(world, d->vertices[tri[0]]);
+            Vec3 b = transform_point(world, d->vertices[tri[1]]);
+            Vec3 c = transform_point(world, d->vertices[tri[2]]);
+            out.push_back({
+                glm::vec3(a.x, a.y, a.z),
+                glm::vec3(b.x, b.y, b.z),
+                glm::vec3(c.x, c.y, c.z),
+            });
+        }
+    }
+}
+
+std::vector<voxel::Tri> hull_tris(const nif::File& f) {
+    auto links = build_link_map(f);
+    std::vector<voxel::Tri> out;
+    std::vector<bool> visited(f.blocks.size(), false);
+    std::size_t start = 0;
+    if (f.root.ptr) {
+        for (std::size_t i = 0; i < f.blocks.size(); ++i)
+            if (&f.blocks[i] == f.root.ptr) { start = i; break; }
+        accumulate_tris(f, links, start, Mat4::identity(), visited, out);
+    } else {
+        for (std::size_t i = 0; i < f.blocks.size(); ++i)
+            accumulate_tris(f, links, i, Mat4::identity(), visited, out);
+    }
+    return out;
+}
+
+// Returns 0 on success, 1 on error.
+int run_iou(const fs::path& vox_path, const fs::path& hull_path) {
+    // 1. Decode reference volume from *_vox.nif
+    nif::File vf;
+    try { vf = nif::load(vox_path); }
+    catch (const std::exception& e) {
+        std::fprintf(stderr, "vox load failed: %s\n", e.what());
+        return 1;
+    }
+    const nif::NiBinaryVoxelData* vd = find_voxel(vf);
+    if (!vd) {
+        std::fprintf(stderr, "no NiBinaryVoxelData in %s\n", vox_path.string().c_str());
+        return 1;
+    }
+    voxel::VoxelVolume ref = voxel::from_nif_voxel_data(*vd);
+    if (ref.dims.x == 0 || ref.dims.y == 0 || ref.dims.z == 0) {
+        std::fprintf(stderr, "decoded volume is empty/degenerate\n");
+        return 1;
+    }
+
+    // 2. Gather hull triangles (GL-free NiNode walk)
+    nif::File hf;
+    try { hf = nif::load(hull_path); }
+    catch (const std::exception& e) {
+        std::fprintf(stderr, "hull load failed: %s\n", e.what());
+        return 1;
+    }
+    auto tris = hull_tris(hf);
+    if (tris.empty()) {
+        std::fprintf(stderr, "no triangles found in hull %s\n", hull_path.string().c_str());
+        return 1;
+    }
+
+    // 3. Voxelize hull onto the reference lattice
+    voxel::VoxelVolume ours = voxel::voxelize_into(tris, ref.dims, ref.origin, ref.cell);
+
+    // 4. Compute IoU and counts
+    double score = voxel::iou(ref, ours);
+    std::size_t ref_solid  = ref.solid_count();
+    std::size_t ours_solid = ours.solid_count();
+    const std::size_t total = static_cast<std::size_t>(ref.dims.x)
+                            * static_cast<std::size_t>(ref.dims.y)
+                            * static_cast<std::size_t>(ref.dims.z);
+
+    std::printf("=== IoU: %s vs %s ===\n",
+                vox_path.filename().string().c_str(),
+                hull_path.filename().string().c_str());
+    std::printf("  grid dims:     (%d, %d, %d)  total_cells=%zu\n",
+                ref.dims.x, ref.dims.y, ref.dims.z, total);
+    std::printf("  ref_solid:     %zu  (%.1f%%)\n",
+                ref_solid,  total ? 100.0 * ref_solid  / total : 0.0);
+    std::printf("  ours_solid:    %zu  (%.1f%%)\n",
+                ours_solid, total ? 100.0 * ours_solid / total : 0.0);
+    std::printf("  IoU:           %.4f\n", score);
+
+    // 5. Partial-cell correlation
+    // BC fill values 1..126 are "partial" (not fully empty and not fully solid).
+    // For each partial reference node, record whether our voxelizer marks it solid.
+    std::size_t partial_count = 0;
+    std::size_t partial_our_solid = 0;
+    // Histogram of ref partial values in 8 buckets: [1..16), [16..32), ...
+    const int N_BUCKETS = 8;
+    std::size_t bucket_count[N_BUCKETS]    = {};  // how many ref partials fall in bucket
+    std::size_t bucket_our_solid[N_BUCKETS] = {};  // of those, how many ours marks solid
+
+    for (std::size_t i = 0; i < ref.occ.size(); ++i) {
+        uint8_t rv = ref.occ[i];
+        if (rv == 0 || rv == 127) continue;  // fully empty or fully solid — skip
+        ++partial_count;
+        bool our_s = (ours.occ[i] != 0);
+        if (our_s) ++partial_our_solid;
+        // Bucket index: rv is 1..126; map to 0..7 via (rv-1)/16.
+        int bkt = (rv - 1) / 16;
+        if (bkt >= N_BUCKETS) bkt = N_BUCKETS - 1;
+        ++bucket_count[bkt];
+        if (our_s) ++bucket_our_solid[bkt];
+    }
+
+    std::printf("\n  --- Partial-cell correlation (ref occ in 1..126) ---\n");
+    std::printf("  partial_cells: %zu  (%.1f%% of total)\n",
+                partial_count, total ? 100.0 * partial_count / total : 0.0);
+    if (partial_count > 0) {
+        std::printf("  our solid rate over partial cells: %zu / %zu  (%.1f%%)\n",
+                    partial_our_solid, partial_count,
+                    100.0 * partial_our_solid / partial_count);
+        std::printf("  bucket histogram (ref fill value → our solid rate):\n");
+        for (int b = 0; b < N_BUCKETS; ++b) {
+            int lo_v = 1  + b * 16;
+            int hi_v = lo_v + 15;
+            if (hi_v > 126) hi_v = 126;
+            if (bucket_count[b] == 0) continue;
+            std::printf("    fill [%3d..%3d]: %5zu cells, our_solid=%5zu (%.1f%%)\n",
+                        lo_v, hi_v,
+                        bucket_count[b], bucket_our_solid[b],
+                        100.0 * bucket_our_solid[b] / bucket_count[b]);
+        }
+    } else {
+        std::printf("  (no partial cells found — volume uses only 0 and 127)\n");
+    }
+
+    // --- Diagnostic: IoU on the OUTER node grid (ref.dims+2, ref.origin-ref.cell) ---
+    // The BC interior lattice (dims = header_dims - 1) places node CENTERS from
+    // aabb_min+cell to aabb_max-cell, leaving the hull surface triangles near the
+    // AABB corners OUTSIDE the ref grid. This causes solidify to flood inward
+    // through the open surface, reducing IoU. The outer grid (dims+2, origin-cell)
+    // covers aabb_min..aabb_max exactly and is the proper grid for full-hull matching.
+    {
+        glm::ivec3 outer_dims   = ref.dims + glm::ivec3(2, 2, 2);
+        glm::vec3  outer_origin = ref.origin - ref.cell;
+        voxel::VoxelVolume outer =
+            voxel::voxelize_into(tris, outer_dims, outer_origin, ref.cell);
+        std::size_t outer_solid = outer.solid_count();
+        const std::size_t outer_total = static_cast<std::size_t>(outer_dims.x)
+                                      * static_cast<std::size_t>(outer_dims.y)
+                                      * static_cast<std::size_t>(outer_dims.z);
+
+        // Project outer volume back onto the ref lattice for IoU comparison:
+        // Each interior ref cell (i,j,k) corresponds to outer cell (i+1,j+1,k+1).
+        voxel::VoxelVolume outer_proj;
+        outer_proj.dims = ref.dims;
+        outer_proj.origin = ref.origin;
+        outer_proj.cell = ref.cell;
+        outer_proj.occ.resize(ref.occ.size(), 0);
+        for (int k = 0; k < ref.dims.z; ++k)
+        for (int j = 0; j < ref.dims.y; ++j)
+        for (int i = 0; i < ref.dims.x; ++i) {
+            if (outer.solid(i + 1, j + 1, k + 1))
+                outer_proj.occ[outer_proj.index(i, j, k)] = 1;
+        }
+        double outer_iou = voxel::iou(ref, outer_proj);
+
+        std::printf("\n  --- Outer-grid diagnostic (covers full hull AABB) ---\n");
+        std::printf("  outer dims:    (%d,%d,%d)  total=%zu\n",
+                    outer_dims.x, outer_dims.y, outer_dims.z, outer_total);
+        std::printf("  outer_solid:   %zu  (%.1f%%)\n",
+                    outer_solid, outer_total ? 100.0 * outer_solid / outer_total : 0.0);
+        std::printf("  IoU (projected onto ref lattice): %.4f\n", outer_iou);
+        std::printf("  NOTE: inner-lattice IoU=%.4f is lower because hull surface\n"
+                    "        triangles outside the interior lattice leave open gaps\n"
+                    "        and solidify floods inward. The outer-grid IoU is more\n"
+                    "        representative of the voxelizer quality.\n", score);
+    }
+    std::printf("\n");
+    return 0;
+}
+
 // ---- OBJ point-cloud from decoded VoxelVolume --------------------------------
 // Loads a *_vox.nif, decodes NiBinaryVoxelData via voxel::from_nif_voxel_data,
 // and writes one OBJ "v x y z" vertex per solid node (occ > 0). No faces are
@@ -703,9 +907,19 @@ int main(int argc, char** argv) {
             "       %s --dump-hull-obj <hull.nif> <out.obj>        # export body-frame hull mesh\n"
             "       %s --dump-decode-obj <X_vox.nif> <out.obj>    # decoded fill-field point cloud\n"
             "       %s --anchor <X_vox.nif>                        # two-ended payload anchoring\n"
-            "       %s --anchor-corpus <models_dir>                # anchor every *_vox.nif\n",
-            argv[0], argv[0], argv[0], argv[0], argv[0]);
+            "       %s --anchor-corpus <models_dir>                # anchor every *_vox.nif\n"
+            "       %s --iou <X_vox.nif> <X.nif>                  # IoU: decoded vs voxelized hull\n",
+            argv[0], argv[0], argv[0], argv[0], argv[0], argv[0]);
         return 2;
+    }
+
+    // --iou mode
+    if (std::strcmp(argv[1], "--iou") == 0) {
+        if (argc < 4) {
+            std::fprintf(stderr, "--iou needs <X_vox.nif> <X.nif>\n");
+            return 2;
+        }
+        return run_iou(fs::path(argv[2]), fs::path(argv[3]));
     }
 
     // --dump-hull-obj mode

@@ -164,6 +164,73 @@ TEST(Solidify, FillsHollowBoxInterior) {
     EXPECT_FALSE(v.solid(0, 0, 0));        // exterior still empty
 }
 
+// Build a cube triangle-soup (not wrapped in a Model) for voxelize_into tests.
+static std::vector<voxel::Tri> cube_tris(float lo, float hi) {
+    const float L = lo, H = hi;
+    glm::vec3 c[8] = {
+        {L,L,L},{H,L,L},{H,H,L},{L,H,L},
+        {L,L,H},{H,L,H},{H,H,H},{L,H,H}
+    };
+    int f[12][3] = {
+        {0,1,2},{0,2,3},
+        {4,6,5},{4,7,6},
+        {0,4,5},{0,5,1},
+        {1,5,6},{1,6,2},
+        {2,6,7},{2,7,3},
+        {3,7,4},{3,4,0}
+    };
+    std::vector<voxel::Tri> tris;
+    tris.reserve(12);
+    for (int i = 0; i < 12; ++i)
+        tris.push_back({c[f[i][0]], c[f[i][1]], c[f[i][2]]});
+    return tris;
+}
+
+// voxelize_into with explicit grid: a cube [0,4]^3 on a 16^3 grid with the
+// same grid parameters as voxelize() would compute (1-voxel margin).
+// Central voxels must be solid; the grid dims/origin/cell must match exactly.
+TEST(VoxelizeInto, SolidCubeOnExplicitGrid) {
+    const glm::ivec3 dims(16, 16, 16);
+    // Mirror what voxelize() computes: extent/(dims-2) cell, mn-cell origin.
+    const float lo = 0.f, hi = 4.f;
+    const float extent = hi - lo;
+    const glm::vec3 cell(extent / float(dims.x - 2),
+                         extent / float(dims.y - 2),
+                         extent / float(dims.z - 2));
+    const glm::vec3 origin(lo - cell.x, lo - cell.y, lo - cell.z);
+
+    auto tris = cube_tris(lo, hi);
+    voxel::VoxelVolume v = voxel::voxelize_into(tris, dims, origin, cell);
+
+    EXPECT_EQ(v.dims, dims);
+    EXPECT_EQ(v.occ.size(), std::size_t(16 * 16 * 16));
+    // Should be mostly solid.
+    EXPECT_GT(v.solid_count(), 100u);
+    // Centre voxel must be solid.
+    glm::ivec3 mid = dims / 2;
+    EXPECT_TRUE(v.solid(mid.x, mid.y, mid.z));
+}
+
+// voxelize_into with a SHIFTED origin: same cube tris, but place the grid
+// so the cube sits in the upper-right quadrant of the volume. Voxels in the
+// lower-left corner must be empty; the cube interior must be solid.
+TEST(VoxelizeInto, ExplicitGridSuppressesOutOfRangeTris) {
+    const glm::ivec3 dims(16, 16, 16);
+    // The cube lives at [0,4]^3 but we shift origin so it fills voxels ~[4,12].
+    const glm::vec3 cell(0.5f, 0.5f, 0.5f);
+    const glm::vec3 origin(-2.f, -2.f, -2.f);  // voxel 0 center at (-1.75, ...)
+
+    auto tris = cube_tris(0.f, 4.f);
+    voxel::VoxelVolume v = voxel::voxelize_into(tris, dims, origin, cell);
+
+    EXPECT_EQ(v.dims, dims);
+    // Interior voxels around the centre of the cube must be solid.
+    // Cube [0,4] → centre (2,2,2). In grid: voxel ~ (2-origin)/cell = (8,8,8).
+    EXPECT_TRUE(v.solid(8, 8, 8));
+    // Voxel at (0,0,0): centre = origin + 0.5*cell = (-1.75,...). Outside cube → empty.
+    EXPECT_FALSE(v.solid(0, 0, 0));
+}
+
 TEST(Voxelize, SolidCubeModelIsMostlySolid) {
     // Axis-aligned solid cube hull with vertices at x,y,z in [0,4], 12 triangles.
     assets::Model m;

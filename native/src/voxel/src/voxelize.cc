@@ -103,6 +103,20 @@ void solidify(VoxelVolume& v) {
         if (exterior[i] == 0) v.occ[i] = 1;
 }
 
+VoxelVolume voxelize_into(const std::vector<Tri>& tris,
+                          glm::ivec3 dims,
+                          glm::vec3  origin,
+                          glm::vec3  cell) {
+    VoxelVolume v;
+    v.dims   = dims;
+    v.origin = origin;
+    v.cell   = cell;
+    v.occ.assign(std::size_t(dims.x) * std::size_t(dims.y) * std::size_t(dims.z), 0);
+    surface_voxelize(v, tris);
+    solidify(v);
+    return v;
+}
+
 VoxelVolume voxelize(const assets::Model& model, glm::ivec3 dims) {
     auto tris = collect_hull_triangles(model);
 
@@ -123,15 +137,10 @@ VoxelVolume voxelize(const assets::Model& model, glm::ivec3 dims) {
         mx = glm::max(mx, glm::max(t.a, glm::max(t.b, t.c)));
     }
 
-    VoxelVolume v;
-    v.dims = dims;
     glm::vec3 extent = mx - mn;
-    v.cell = extent / glm::vec3(dims - 2);   // 1-voxel margin each side
-    v.origin = mn - v.cell;                   // shift so margin voxels are empty
-    v.occ.assign(std::size_t(dims.x) * dims.y * dims.z, 0);
-    surface_voxelize(v, tris);
-    solidify(v);
-    return v;
+    glm::vec3 cell   = extent / glm::vec3(dims - 2);   // 1-voxel margin each side
+    glm::vec3 origin = mn - cell;                       // shift so margin voxels are empty
+    return voxelize_into(tris, dims, origin, cell);
 }
 
 }  // namespace voxel
