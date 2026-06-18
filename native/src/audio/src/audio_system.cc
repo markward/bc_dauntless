@@ -23,11 +23,17 @@ bool AudioSystem::load_sound(const std::string&, const std::string& name,
     const bool decoded = is_wav ? decode_wav(wav_bytes, wav_len, wav)
                                 : decode_mp3(wav_bytes, wav_len, wav);
     if (!decoded) return false;
+    double duration_sec = 0.0;
+    const uint32_t bytes_per_sample = wav.bits_per_sample / 8;
+    const uint64_t denom =
+        static_cast<uint64_t>(wav.sample_rate) * wav.channels * bytes_per_sample;
+    if (denom > 0)
+        duration_sec = static_cast<double>(wav.pcm.size()) / static_cast<double>(denom);
     PcmDesc d{wav.channels, wav.bits_per_sample, wav.sample_rate};
     BufferHandle h = backend_->create_buffer(d, wav.pcm.data(), wav.pcm.size());
     if (h == 0) return false;
     SoundId id = next_sound_id_++;
-    sounds_[id] = {h, positional};
+    sounds_[id] = {h, positional, duration_sec};
     name_to_id_[name] = id;
     return true;
 }
@@ -41,6 +47,13 @@ bool AudioSystem::is_loaded(SoundId id) const { return sounds_.count(id) > 0; }
 bool AudioSystem::is_positional(SoundId id) const {
     auto it = sounds_.find(id);
     return it != sounds_.end() && it->second.positional;
+}
+
+double AudioSystem::get_duration(const std::string& name) const {
+    auto it = name_to_id_.find(name);
+    if (it == name_to_id_.end()) return 0.0;
+    auto sit = sounds_.find(it->second);
+    return sit == sounds_.end() ? 0.0 : sit->second.duration_sec;
 }
 
 PlayingId AudioSystem::play(SoundId id, bool looping, float gain, Category cat,

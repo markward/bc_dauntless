@@ -48,6 +48,10 @@ static uint32_t get_sound_impl(const std::string& name) {
     return g_system ? g_system->get_sound(name) : 0;
 }
 
+static double get_duration_impl(const std::string& name) {
+    return g_system ? g_system->get_duration(name) : 0.0;
+}
+
 static uint32_t play_impl(const std::string& name, bool looping, float gain,
                           const std::string& category, uint32_t attach_node,
                           py::object position) {
@@ -121,6 +125,7 @@ void register_python_bindings(py::module_& parent) {
           py::arg("path"), py::arg("name"), py::arg("wav"),
           py::arg("positional") = false);
     m.def("get_sound", &get_sound_impl);
+    m.def("get_duration", &get_duration_impl);
     m.def("play", &play_impl,
           py::arg("name"), py::arg("looping") = false,
           py::arg("gain") = 1.0f, py::arg("category") = "SFX",
