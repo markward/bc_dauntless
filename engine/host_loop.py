@@ -2231,6 +2231,32 @@ def _compute_camera(view_mode, director, *, player, dt) -> tuple:
     return director.compute(player=player, dt=dt)
 
 
+def _active_cutscene_camera(player):
+    """If the rendered set has an active cutscene camera with a live mode,
+    return (camera, mode); else None.
+
+    Mission scripts do ChangeRenderedSet(space_set) + CutsceneCameraBegin +
+    a camera-mode action (LockedView/ChaseCam/TargetWatch), which pushes a
+    CameraMode onto the set's active camera. When that's present we drive the
+    exterior view from the mode (see the exterior branch below). Otherwise we
+    fall through to the player director, unchanged.
+
+    Gated on a live IsValid() mode so plain comm 'maincamera's, mode-less
+    cameras, and dead-target modes all return None and the director resumes.
+    """
+    import App as _App
+    rendered = _App.g_kSetManager.GetRenderedSet()
+    if rendered is None:
+        return None
+    get_active = getattr(rendered, "GetActiveCamera", None)
+    cam = get_active() if callable(get_active) else None
+    if cam is None:
+        return None
+    get_mode = getattr(cam, "GetCurrentCameraMode", None)
+    mode = get_mode() if callable(get_mode) else None
+    if mode is None or not mode.IsValid():
+        return None
+    return (cam, mode)
 
 
 
@@ -3422,6 +3448,15 @@ def run(mission_name: Optional[str] = None,
                 eye, target, up_vec = _compute_camera(
                     view_mode, director,
                     player=player, dt=_player_dt)
+                # In-space cutscene camera: if the rendered set has an active
+                # cutscene camera with a live mode, drive the exterior view
+                # from it instead of the player director (SDK CutsceneCamera*
+                # + LockedView/ChaseCam/TargetWatch). Reverts automatically
+                # when CutsceneCameraEnd removes the camera/mode.
+                if not pause.is_open:
+                    _cc = _active_cutscene_camera(player)
+                    if _cc is not None:
+                        eye, target, up_vec = _cc[1].Update(_player_dt)
                 # Camera shake — apply to the exterior view. The bridge
                 # first-person camera below gets its own perturb call
                 # against the shared shake state.
