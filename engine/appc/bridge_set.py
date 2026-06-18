@@ -315,6 +315,8 @@ class CameraObjectClass(_LoudStub):
         return self._mode_stack
 
     def PushCameraMode(self, mode):
+        if mode is None:
+            return None
         stack = self._ensure_stack()
         R = self.GetWorldRotation()
         loc = self.GetWorldLocation()
