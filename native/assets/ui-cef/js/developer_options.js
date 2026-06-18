@@ -22,6 +22,7 @@ function _doFocusableList(state) {
         out.push({kind: 'ctrl', target: 'god_mode'});
         out.push({kind: 'ctrl', target: 'double_weapons'});
         out.push({kind: 'ctrl', target: 'no_npc_shields'});
+        out.push({kind: 'ctrl', target: 'disable_collisions'});
     }
     return out;
 }
@@ -66,6 +67,8 @@ function _doRenderCombatBody(state, focusables) {
                          s.double_weapons, isFoc('double_weapons'));
     html += _doToggleRow('Disable NPC Shields', 'no_npc_shields',
                          s.no_npc_shields, isFoc('no_npc_shields'));
+    html += _doToggleRow('Disable Collisions', 'disable_collisions',
+                         s.disable_collisions, isFoc('disable_collisions'));
     return html;
 }
 

@@ -280,3 +280,50 @@ def test_tick_collisions_resolves_live_set_pair():
     hits = tick_collisions(1.0 / 60.0, host=None, ship_instances=None)
     assert len(hits) == 1
     assert a._collision_velocity.x < 0.0 and b._collision_velocity.x > 0.0
+
+
+def test_tick_collisions_disabled_flag_suppresses_all_effects():
+    import _dauntless_host
+    import engine.dev_combat_cheats as cheats
+    from engine.appc.collisions import tick_collisions, _overlay_vec
+    original_dev = getattr(_dauntless_host, "developer_mode", False)
+    _dauntless_host.developer_mode = True
+    cheats.reset()
+    cheats.set_disable_collisions(True)
+    try:
+        pSet = App.SetClass_Create()
+        App.g_kSetManager.AddSet(pSet, "test")
+        a = _ship(0.0, 1000.0, +10.0)
+        b = _ship(1.5, 1000.0, -10.0)
+        pSet.AddObjectToSet(a, "A")
+        pSet.AddObjectToSet(b, "B")
+        hits = tick_collisions(1.0 / 60.0, host=None, ship_instances=None)
+        assert hits == []                  # no pair resolved
+        assert _overlay_vec(a) is None      # no impulse injected
+        assert _overlay_vec(b) is None
+    finally:
+        cheats.reset()
+        _dauntless_host.developer_mode = original_dev
+
+
+def test_tick_collisions_disabled_still_decays_existing_overlay():
+    import _dauntless_host
+    import engine.dev_combat_cheats as cheats
+    from engine.appc.collisions import tick_collisions, _overlay_vec
+    from engine.appc.math import TGPoint3
+    original_dev = getattr(_dauntless_host, "developer_mode", False)
+    _dauntless_host.developer_mode = True
+    cheats.reset()
+    cheats.set_disable_collisions(True)
+    try:
+        pSet = App.SetClass_Create()
+        App.g_kSetManager.AddSet(pSet, "test")
+        a = _ship(0.0, 1000.0, 0.0)
+        a._collision_velocity = TGPoint3(5.0, 0.0, 0.0)
+        pSet.AddObjectToSet(a, "A")
+        tick_collisions(1.0 / 60.0, host=None, ship_instances=None)
+        # Overlay path runs before the gate, so the existing overlay decays.
+        assert _overlay_vec(a).x < 5.0
+    finally:
+        cheats.reset()
+        _dauntless_host.developer_mode = original_dev
