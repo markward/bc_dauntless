@@ -21,6 +21,7 @@ from engine.core.ids import get_object_by_id
 # ProcessEvent. Kept well outside the SDK's ET_* ranges (100s/200s).
 _ET_SEQ_STEP_COMPLETED = 0x5E01   # a tracked action finished -> advance dependents
 _ET_SEQ_TIMER_FIRED    = 0x5E02   # a delay timer elapsed -> launch the pending step
+_ET_ACTION_DEFERRED_COMPLETE = 0x5E03  # realtime timer elapsed -> self.Completed()
 
 
 class TGAction(TGEventHandlerObject):
@@ -28,6 +29,7 @@ class TGAction(TGEventHandlerObject):
         super().__init__()
         self._completed_events: list[TGEvent] = []
         self._playing: bool = False
+        self._deferred_timer = None   # (manager, TGTimer) while a deferral is pending
 
     def IsPlaying(self) -> bool:
         return self._playing
@@ -43,6 +45,32 @@ class TGAction(TGEventHandlerObject):
         for ev in events:
             App.g_kEventManager.AddEvent(ev)
 
+    def _complete_after(self, duration_real_s) -> None:
+        """Complete this action after duration_real_s wall-clock seconds via
+        g_kRealtimeTimerManager. duration <= 0 (or None) completes inline,
+        preserving synchronous behavior when there is no audio to wait on."""
+        if not duration_real_s or duration_real_s <= 0:
+            self.Completed()
+            return
+        import App
+        mgr = App.g_kRealtimeTimerManager
+        timer = App.TGTimer_Create()
+        timer.SetTimerStart(mgr.get_time() + float(duration_real_s))
+        timer.SetDelay(-1.0)            # one-shot
+        ev = App.TGEvent_Create()
+        ev.SetEventType(_ET_ACTION_DEFERRED_COMPLETE)
+        ev.SetDestination(self)
+        timer.SetEvent(ev)
+        mgr.AddTimer(timer)
+        self._deferred_timer = (mgr, timer)
+
+    def _cancel_deferred_timer(self) -> None:
+        rec = self._deferred_timer
+        if rec is not None:
+            mgr, timer = rec
+            mgr.RemoveTimer(timer)
+            self._deferred_timer = None
+
     def Play(self) -> None:
         self._playing = True
         self._do_play()
@@ -51,8 +79,16 @@ class TGAction(TGEventHandlerObject):
     def _do_play(self) -> None:
         pass
 
+    def ProcessEvent(self, event) -> None:
+        if event.GetEventType() == _ET_ACTION_DEFERRED_COMPLETE:
+            self._deferred_timer = None
+            self.Completed()
+            return
+        super().ProcessEvent(event)
+
     def Abort(self) -> None:
         self._playing = False
+        self._cancel_deferred_timer()
 
     def Skip(self) -> None:
         self.Completed()

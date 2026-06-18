@@ -647,3 +647,48 @@ def test_credit_action_completes_inline_so_chain_advances():
 
     assert log == ["after"]
     del sys.modules["_test_credit_chain"]
+
+
+# ── TGAction._complete_after deferred completion ────────────────────────────
+
+def _advance_real_time(seconds, step=1.0 / 60.0):
+    """Advance g_kRealtimeTimerManager in 60 Hz ticks for `seconds`."""
+    n = int(round(seconds / step))
+    for _ in range(n):
+        App.g_kRealtimeTimerManager.tick(step)
+
+
+def test_complete_after_zero_completes_inline():
+    a = TGAction()
+    done = []
+    a.Completed = lambda: done.append(True)  # type: ignore
+    a._playing = True
+    a._complete_after(0.0)
+    assert done == [True]                      # inline, no timer
+
+
+def test_complete_after_duration_defers_until_timer():
+    a = TGAction()
+    done = []
+    real_completed = a.Completed
+    a.Completed = lambda: (done.append(True), real_completed())  # type: ignore
+    a._playing = True
+    a._complete_after(0.5)
+    assert done == []                          # not yet
+    _advance_real_time(0.25)
+    assert done == []                          # still waiting at t=0.25
+    _advance_real_time(0.4)                    # past 0.5s total
+    assert done == [True]                      # completed exactly once
+    _advance_real_time(1.0)
+    assert done == [True]                      # one-shot: no re-fire
+
+
+def test_cancel_deferred_timer_prevents_completion():
+    a = TGAction()
+    done = []
+    a.Completed = lambda: done.append(True)    # type: ignore
+    a._playing = True
+    a._complete_after(0.5)
+    a._cancel_deferred_timer()
+    _advance_real_time(1.0)
+    assert done == []                          # cancelled before firing
