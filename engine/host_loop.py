@@ -2329,6 +2329,30 @@ def realize_set(controller, r, set_obj, *, is_bridge: bool) -> None:
         else:
             controller.comm_instances_by_set.setdefault(set_name, []).append(iid)
 
+    # ── Viewscreen (bridge only) ───────────────────────────────────────────
+    if is_bridge:
+        vs = set_obj.GetViewScreen()
+        if vs is not None and hasattr(vs, "nif") and vs.render_instance is None:
+            if controller.viewscreen_instance is not None:
+                try:
+                    r.destroy_instance(controller.viewscreen_instance)
+                except Exception as _e:
+                    dev_mode.log_swallowed("destroy viewscreen instance", _e)
+                controller.viewscreen_instance = None
+            vs_nif_abs = str(PROJECT_ROOT / "game" / vs.nif)
+            vs_env = _App.g_kModelManager.env_for(vs.nif)
+            vs_tex = (str(PROJECT_ROOT / "game" / vs_env) if vs_env
+                      else str(PROJECT_ROOT / "game" / DBRIDGE_TEX_REL))
+            vs_handle = r.load_model(vs_nif_abs, vs_tex)
+            vs_iid = r.create_bridge_instance(vs_handle)
+            r.set_world_transform(vs_iid, IDENTITY_MAT4)
+            vs.render_instance = vs_iid
+            controller.viewscreen_instance = vs_iid
+            controller.nif_to_handle[vs_nif_abs] = vs_handle
+            r.set_viewscreen_model(vs_handle)
+            vs.SetIsOn(1)
+            controller.viewscreen_obj = vs
+
 
 def _realize_viewscreen(controller, r) -> None:
     """Turn the SDK-created viewscreen object into a rendered bridge instance.
