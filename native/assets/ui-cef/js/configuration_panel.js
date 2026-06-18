@@ -27,6 +27,8 @@ function _cpFocusableList(state) {
         out.push({kind: 'ctrl', target: 'decals'});
         out.push({kind: 'ctrl', target: 'hull_damage'});
         out.push({kind: 'ctrl', target: 'fxaa'});
+    } else if (state.selected_tab === 'gameplay') {
+        out.push({kind: 'ctrl', target: 'subtitles'});
     }
     return out;
 }
@@ -152,6 +154,23 @@ function _cpRenderGraphicsBody(state, focusables) {
     return html;
 }
 
+function _cpRenderGameplayBody(state, focusables) {
+    const focused = focusables[state.focused] || {};
+    const isFoc = (target) => focused.kind === 'ctrl' && focused.target === target;
+    const s = state.settings;
+    let html = '';
+
+    // Subtitles toggle
+    html += '<div class="cp-row' + (isFoc('subtitles') ? ' cp-focused' : '') + '">'
+          +     '<span class="cp-label">Subtitles</span>'
+          +     '<button class="cp-toggle' + (s.subtitles_on ? ' cp-toggle--on' : '') + '"'
+          +        ' onclick="dauntlessEvent(\'configuration/toggle:subtitles\')">'
+          +       (s.subtitles_on ? 'On' : 'Off')
+          +     '</button>'
+          + '</div>';
+    return html;
+}
+
 function setConfigurationPanel(state) {
     const root = document.getElementById('configuration-panel');
     if (!root) return;
@@ -166,8 +185,10 @@ function setConfigurationPanel(state) {
     if (body) {
         if (state.selected_tab === 'graphics') {
             body.innerHTML = _cpRenderGraphicsBody(state, focusables);
+        } else if (state.selected_tab === 'gameplay') {
+            body.innerHTML = _cpRenderGameplayBody(state, focusables);
         } else {
-            body.innerHTML = '';  // future tabs slot in here
+            body.innerHTML = '';
         }
     }
     root.style.display = 'flex';
