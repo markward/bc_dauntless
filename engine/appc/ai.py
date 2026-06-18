@@ -772,6 +772,14 @@ class ProximityCheck(ObjectClass):
         # would silently mis-resolve — see TGPythonInstanceWrapper notes in
         # engine/appc/events.py for the same hazard.
         self._inside_set: set = set()
+        # Objects whose baseline inside/outside state has been sampled at
+        # least once. Edge detection needs a prior sample to detect a
+        # crossing, so the FIRST per-tick evaluation of an object only
+        # records the baseline and never fires — otherwise an object that
+        # is already in its trigger state when the check starts evaluating
+        # (e.g. the player docked inside the starbase proximity at mission
+        # load) would be mistaken for a fresh crossing.
+        self._baselined: set = set()
 
     def GetEventType(self) -> int:
         return self._event_type
@@ -916,9 +924,15 @@ class ProximityCheck(ObjectClass):
             self._inside_set.add(id(obj))
         else:
             self._inside_set.discard(id(obj))
+        # First per-tick sample only establishes the baseline; it never fires
+        # (the force=True CheckProximity path bypasses this for explicit
+        # immediate checks). This is what stops an already-inside object at
+        # mission load from being read as a fresh crossing.
+        first_eval = id(obj) not in self._baselined
+        self._baselined.add(id(obj))
         if not matches:
             return
-        if not force and is_inside == was_inside:
+        if not force and (first_eval or is_inside == was_inside):
             return
         evt = ProximityEvent()
         evt.SetEventType(self._event_type)
@@ -967,6 +981,7 @@ class ProximityCheck(ObjectClass):
         self._check_object_ids = []
         self._check_types = []
         self._inside_set = set()
+        self._baselined = set()
         # Drop ourselves from the anchor-set's proximity manager so
         # evaluate_proximity_checks stops walking us.
         anchor = self._anchor
