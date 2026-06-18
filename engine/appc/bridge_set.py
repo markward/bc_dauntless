@@ -242,6 +242,21 @@ class CameraObjectClass(_LoudStub):
         m.SetCol(2, u)
         self.orientation = m
 
+    def SetMatrixRotation(self, matrix):
+        """Set the camera's orientation directly from a TGMatrix3.
+
+        Mirrors BaseObjectClass.SetMatrixRotation (App.py:3884) and
+        ObjectClass.SetMatrixRotation (engine/appc/objects.py:108): it stores
+        the matrix verbatim — same column-vector right-handed convention
+        GetWorldRotation returns and AlignToVectors builds (CLAUDE.md ↦
+        rotation matrix convention). CutsceneCameraBegin
+        (Actions/CameraScriptActions.py:154) calls this with the active
+        camera's GetWorldRotation() to seed the cutscene camera's start
+        orientation; without a real method here it fell through
+        _LoudStub.__getattr__ to a silent no-op and the rotation was never
+        copied."""
+        self.orientation = matrix
+
     def UpdateNodeOnly(self):
         """No-op: Phase 1 has no live scene-graph node to flush the transform
         into. The .position / .orientation set above are read directly by the
@@ -264,6 +279,72 @@ class CameraObjectClass(_LoudStub):
     def GetWorldRotation(self):
         """Return the stored orientation TGMatrix3 (column-vector)."""
         return self.orientation
+
+    # ── Camera-mode stack ─────────────────────────────────────────────────────
+    # Real replacement for the _LoudStub no-ops so the SDK's Camera.NewMode
+    # (sdk/Build/scripts/Camera.py) can push live modes. The mode's Update()
+    # then drives the rendered exterior view (host_loop._active_cutscene_camera).
+    # AddModeHierarchy stays a no-op — the mode-fallback tree is out of v1 scope.
+
+    _MODE_FACTORY = {
+        "Locked": ("LockedMode", {}),
+        "Chase": ("ChaseMode", {}),
+        "ReverseChase": ("ChaseMode", {"reverse": True}),
+        "Target": ("TargetMode", {}),
+    }
+
+    def GetNamedCameraMode(self, name, *args):
+        if "_named_modes" not in self.__dict__:
+            self._named_modes = {}
+            self._mode_stack = []
+        if name in self._named_modes:
+            return self._named_modes[name]
+        spec = self._MODE_FACTORY.get(name)
+        if spec is None:
+            return None
+        from engine.appc import camera_modes
+        cls = getattr(camera_modes, spec[0])
+        mode = cls(**spec[1])
+        self._named_modes[name] = mode
+        return mode
+
+    def _ensure_stack(self):
+        if "_mode_stack" not in self.__dict__:
+            self._named_modes = {}
+            self._mode_stack = []
+        return self._mode_stack
+
+    def PushCameraMode(self, mode):
+        if mode is None:
+            return None
+        stack = self._ensure_stack()
+        R = self.GetWorldRotation()
+        loc = self.GetWorldLocation()
+        fwd = R.GetCol(1)
+        up = R.GetCol(2)
+        mode.set_initial_pose((loc.x, loc.y, loc.z),
+                              (fwd.x, fwd.y, fwd.z), (up.x, up.y, up.z))
+        stack.append(mode)
+
+    def PopCameraMode(self, mode=None):
+        stack = self._ensure_stack()
+        if not stack:
+            return None
+        if mode is None:
+            return stack.pop()
+        # Named/object pop: remove the matching mode wherever it sits.
+        for i in range(len(stack) - 1, -1, -1):
+            if stack[i] is mode or (
+                    hasattr(mode, "GetObjID") and stack[i].GetObjID() == mode.GetObjID()):
+                return stack.pop(i)
+        return None
+
+    def GetCurrentCameraMode(self, *args):
+        stack = self._ensure_stack()
+        return stack[-1] if stack else None
+
+    def AddModeHierarchy(self, *args):
+        return None
 
 
 def CameraObjectClass_CreateFromNiCamera(niCamera, name):
@@ -429,3 +510,21 @@ def ZoomCameraObjectClass_GetObject(pSet, name):
     # (camera absent) keeps ConfigureCharacters' SetTranslateXYZ from crashing.
     cam = pSet.GetCamera(name) if pSet is not None else None
     return cam if cam is not None else _LoudStub()
+
+
+def CameraObjectClass_GetObject(pSet, name):
+    """Look up a named camera in a set, mirroring App.py's real
+    CameraObjectClass_GetObject (which returns the Appc camera or a falsey
+    null).
+
+    Unlike ZoomCameraObjectClass_GetObject, a MISS returns None (not a
+    _LoudStub): every SDK caller guards the result with ``if pCamera == None``
+    / ``if not pCamera`` (Actions/CameraScriptActions.py:65,76,109,473,519,560;
+    WarpSequence.py:530), so a truthy stub on miss would defeat those guards
+    and drive camera-mode calls against a fake object. None is both faithful
+    and control-flow-correct.
+
+    This backs CutsceneCameraEnd and the cutscene camera-mode functions; it was
+    previously absent, so App.CameraObjectClass_GetObject fell through App.py's
+    module __getattr__ to a *truthy* _NamedStub."""
+    return pSet.GetCamera(name) if pSet is not None else None
