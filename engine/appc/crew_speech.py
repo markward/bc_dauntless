@@ -40,24 +40,27 @@ class CrewSpeechBus:
         self._active_priority = -1
         self._active_expiry = 0.0
 
-    def speak(self, speaker, text, wav, priority, now=None) -> bool:
-        """Arbitrate one line. Returns True if accepted, False if dropped."""
+    def speak(self, speaker, text, wav, priority, now=None) -> float:
+        """Arbitrate one line. Returns its duration in seconds (0.0 if dropped).
+        The returned value also drives the subtitle dwell and the bus free-up,
+        so they can never disagree, and is what gates the owning action's
+        completion."""
         if now is None:
             now = time.monotonic()
         if text is None and wav is None:
-            return False  # nothing to say — don't occupy the channel
+            return 0.0  # nothing to say — don't occupy the channel
         priority = int(priority)
         line_live = now < self._active_expiry
         if line_live and priority < self._active_priority:
-            return False  # a higher-priority line is still talking
-        duration = _estimate_duration(text, wav)
+            return 0.0  # a higher-priority line is still talking
         self._active_priority = priority
+        # Real decoded length when the voice is loadable; estimate otherwise.
+        real = self._play_voice(str(wav)) if wav else 0.0
+        duration = real if real > 0.0 else _estimate_duration(text, wav)
         self._active_expiry = now + duration
         if text:
             self._route_subtitle(str(speaker), str(text), duration)
-        if wav:
-            self._play_voice(str(wav))
-        return True
+        return duration
 
     # -- Best-effort routing (never raises) ----------------------------------
     def _route_subtitle(self, speaker, text, duration) -> None:
@@ -69,7 +72,7 @@ class CrewSpeechBus:
         if sub is not None and hasattr(sub, "set_crew_line"):
             sub.set_crew_line(speaker, text, duration)
 
-    def _play_voice(self, wav) -> None:
+    def _play_voice(self, wav) -> float:
         try:
             from engine.audio.tg_sound import TGSoundManager, TGSound
             mgr = TGSoundManager.instance()
@@ -78,14 +81,16 @@ class CrewSpeechBus:
                 # The wav path doubles as the GetSound name key.
                 snd = mgr.LoadSound(wav, wav, TGSound.LS_STREAMED)
             if snd is None:
-                return
+                return 0.0
             snd.SetVoice()
             snd.Play()
+            return mgr.duration_for(wav)
         except Exception as _e:
             dev_mode.log_swallowed("play crew speech sound", _e)
+            return 0.0
 
 
-def emit(speaker, db, line_id, priority, *, voice_only) -> None:
+def emit(speaker, db, line_id, priority, *, voice_only) -> float:
     """Resolve a line's subtitle text (unless voice_only) and voice wav from a
     localization DB, then feed the speech bus. Single home for the HasString
     gate + isinstance(str) stub-DB guards shared by SpeakLine/SayLine and
@@ -98,7 +103,7 @@ def emit(speaker, db, line_id, priority, *, voice_only) -> None:
     wav = db.GetFilename(line) if db is not None else None
     if not isinstance(wav, str) or not wav:         # drop stub-DB / empty
         wav = None
-    bus().speak(speaker, text, wav, int(priority))
+    return bus().speak(speaker, text, wav, int(priority))
 
 
 def _mission_database():
