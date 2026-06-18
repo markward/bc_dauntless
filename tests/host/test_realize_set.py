@@ -40,6 +40,7 @@ def test_realize_set_loads_bridge_geometry_and_tags_instance():
         bridge_instance = None
         nif_to_handle = {}
         comm_instances_by_set = {}
+        officer_instances = []
     c = _C(); r = _FakeRenderer()
 
     hl.realize_set(c, r, s, is_bridge=True)
@@ -58,6 +59,7 @@ def test_realize_set_bridge_geometry_is_idempotent():
         bridge_instance = None
         nif_to_handle = {}
         comm_instances_by_set = {}
+        officer_instances = []
     c = _C(); r = _FakeRenderer()
 
     hl.realize_set(c, r, s, is_bridge=True)
@@ -77,6 +79,7 @@ def test_realize_set_realizes_bridge_viewscreen():
         viewscreen_obj = None
         nif_to_handle = {}
         comm_instances_by_set = {}
+        officer_instances = []
     c = _C()
 
     class _R(_FakeRenderer):
@@ -105,6 +108,7 @@ def test_realize_set_viewscreen_is_idempotent():
         viewscreen_obj = None
         nif_to_handle = {}
         comm_instances_by_set = {}
+        officer_instances = []
     c = _C()
 
     class _R(_FakeRenderer):
@@ -147,6 +151,32 @@ def test_realize_set_places_characters_with_pass_matching_set_kind(monkeypatch):
         comm_instances_by_set = {}
     hl.realize_set(_C(), _FakeRenderer(), s, is_bridge=False)
     assert placed == [("Liu", False)]
+
+
+def test_realize_set_tears_down_prior_officers_on_bridge_re_realize():
+    # Mission swap re-realizes the bridge set. The prior load's officer render
+    # instances must be destroyed and officer_instances reset before re-placing,
+    # otherwise they leak in the renderer and the list grows unbounded.
+    s, _obj = _bridge_set_with_geometry()
+
+    class _C:
+        bridge_instance = None
+        nif_to_handle = {}
+        comm_instances_by_set = {}
+        officer_instances = None
+    c = _C(); r = _FakeRenderer()
+
+    # Simulate a prior load having placed two officers.
+    c.officer_instances = [("officer", 1), ("officer", 2)]
+
+    hl.realize_set(c, r, s, is_bridge=True)
+
+    # Both prior officer instances were torn down...
+    assert ("officer", 1) in r.destroyed
+    assert ("officer", 2) in r.destroyed
+    # ...and the tracking list was reset (not the stale, growing list).
+    assert ("officer", 1) not in c.officer_instances
+    assert ("officer", 2) not in c.officer_instances
 
 
 def test_realize_all_sets_realizes_bridge_and_comm_sets(monkeypatch):

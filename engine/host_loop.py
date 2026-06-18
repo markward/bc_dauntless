@@ -2308,6 +2308,15 @@ def realize_set(controller, r, set_obj, *, is_bridge: bool) -> None:
             controller.viewscreen_obj = vs
 
     # ── Characters ─────────────────────────────────────────────────────────
+    # Characters: tear down prior officer instances before re-placing (mission
+    # swap re-realizes the bridge set; without this the old instances leak).
+    if is_bridge:
+        for _iid in controller.officer_instances:
+            try:
+                r.destroy_instance(_iid)
+            except Exception as _e:
+                dev_mode.log_swallowed("destroy officer instance (teardown)", _e)
+        controller.officer_instances = []
     for character in _iter_set_characters(set_obj):     # same enumeration the
         _place_one_character(controller, r, character,  # old officer loop used
                              set_name, is_bridge)
