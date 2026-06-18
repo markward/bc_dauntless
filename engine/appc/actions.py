@@ -49,9 +49,14 @@ class TGAction(TGEventHandlerObject):
         """Complete this action after duration_real_s wall-clock seconds via
         g_kRealtimeTimerManager. duration <= 0 (or None) completes inline,
         preserving synchronous behavior when there is no audio to wait on."""
+        from engine.appc import _seq_debug
         if not duration_real_s or duration_real_s <= 0:
+            _seq_debug.log("complete_after INLINE %s dur=%s" % (
+                type(self).__name__, duration_real_s))
             self.Completed()
             return
+        _seq_debug.log("complete_after DEFER %s dur=%s" % (
+            type(self).__name__, duration_real_s))
         import App
         mgr = App.g_kRealtimeTimerManager
         timer = App.TGTimer_Create()
@@ -176,6 +181,9 @@ class TGScriptAction(TGAction):
                 # (e.g. ViewscreenOn/PlayDialog return 1) => the function wired
                 # a deferred completion, so we must NOT auto-complete here.
                 ret = fn(self, *self._args)
+                from engine.appc import _seq_debug
+                _seq_debug.log("ScriptAction %s.%s args=%r -> ret=%r deferred=%s" % (
+                    self._module_name, self._func_name, self._args, ret, bool(ret)))
                 if ret:
                     self._deferred = True
         finally:
@@ -578,6 +586,9 @@ class TGActionManager(TGEventHandlerObject):
         import App
         if event.GetEventType() == App.ET_ACTION_COMPLETED:
             owner = event.GetObjPtr() if isinstance(event, TGObjPtrEvent) else None
+            from engine.appc import _seq_debug
+            _seq_debug.log("manager ET_ACTION_COMPLETED owner=%r" % (
+                type(owner).__name__ if owner is not None else None))
             if owner is not None and hasattr(owner, "Completed"):
                 owner.Completed()
                 return

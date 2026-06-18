@@ -96,6 +96,10 @@ class ViewScreenObject(_LoudStub):
         # cam back to a comm set, falling back to the forward view for anything
         # else — so a plain store gives the correct comm-then-revert behavior now
         # that action-sequence timing holds the comm scene for the dialogue.
+        from engine.appc import _seq_debug
+        _seq_debug.log("SetRemoteCam cam=%s is_camera=%s prev=%s is_on=%s" % (
+            type(cam).__name__, isinstance(cam, CameraObjectClass),
+            type(self._remote_cam).__name__, self._is_on))
         self._remote_cam = cam
 
     def SetIsOn(self, on):
