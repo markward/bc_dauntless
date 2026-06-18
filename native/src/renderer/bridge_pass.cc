@@ -123,6 +123,10 @@ void draw_mesh(const assets::Model& model,
             base_tex = anim.texture_indices[frame];
         }
     }
+    // Flip V only for the viewscreen RTT feed: its FBO colour attachment is
+    // bottom-up, the NIF screen UVs are top-down (see bridge.frag). Set every
+    // draw so it never sticks on for the surrounding bridge geometry.
+    shader.set_int("u_flip_v", base_override != 0 ? 1 : 0);
     glActiveTexture(GL_TEXTURE0);
     if (base_override != 0) {
         // Viewscreen RTT feed: ignore the NIF base texture and draw the
