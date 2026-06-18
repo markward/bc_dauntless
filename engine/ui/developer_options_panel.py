@@ -25,6 +25,7 @@ class DeveloperOptionsPanel(Panel):
         self._god_mode = cheats.god_mode_active()
         self._double_weapons = cheats.double_player_weapons_active()
         self._no_npc_shields = cheats.disable_npc_shields_active()
+        self._disable_collisions = cheats.disable_collisions_active()
         self._visible = False
         self._focused = -1
         self._last_pushed: Optional[tuple] = None
@@ -42,6 +43,7 @@ class DeveloperOptionsPanel(Panel):
         self._god_mode = cheats.god_mode_active()
         self._double_weapons = cheats.double_player_weapons_active()
         self._no_npc_shields = cheats.disable_npc_shields_active()
+        self._disable_collisions = cheats.disable_collisions_active()
         self._visible = True
 
     def close(self) -> None:
@@ -52,7 +54,7 @@ class DeveloperOptionsPanel(Panel):
         snapshot = (
             self._visible, tuple(self._tabs), self._selected_tab,
             self._focused, self._god_mode, self._double_weapons,
-            self._no_npc_shields,
+            self._no_npc_shields, self._disable_collisions,
         )
         if snapshot == self._last_pushed:
             return None
@@ -68,6 +70,7 @@ class DeveloperOptionsPanel(Panel):
                 "god_mode": self._god_mode,
                 "double_weapons": self._double_weapons,
                 "no_npc_shields": self._no_npc_shields,
+                "disable_collisions": self._disable_collisions,
             },
         }
         return "setDeveloperOptions(" + json.dumps(payload) + ");"
@@ -94,6 +97,11 @@ class DeveloperOptionsPanel(Panel):
             cheats.set_disable_npc_shields(new_val)
             self._no_npc_shields = new_val
             return True
+        if action == "toggle:disable_collisions":
+            new_val = not self._disable_collisions
+            cheats.set_disable_collisions(new_val)
+            self._disable_collisions = new_val
+            return True
         if action.startswith("tab:"):
             tab_id = action[len("tab:"):]
             if any(tid == tab_id for tid, _ in self._tabs):
@@ -114,7 +122,7 @@ class DeveloperOptionsPanel(Panel):
         out: list = [("tab", tid) for tid, _ in self._tabs]
         if self._selected_tab == "combat":
             out += [("ctrl", "god_mode"), ("ctrl", "double_weapons"),
-                    ("ctrl", "no_npc_shields")]
+                    ("ctrl", "no_npc_shields"), ("ctrl", "disable_collisions")]
         return out
 
     def handle_input(self, h) -> None:

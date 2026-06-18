@@ -244,7 +244,14 @@ def iter_collidables():
 def tick_collisions(dt: float, host=None, ship_instances=None):
     """Per-frame entry point: consume overlays for every collidable, then
     detect + resolve all overlapping pairs. Returns the list of collision
-    tuples. Call once per render frame after motion + player input have run."""
+    tuples. Call once per render frame after motion + player input have run.
+
+    When the dev-only Disable Collisions toggle is active, existing knockback
+    overlays still decay (above) but no new pair is detected or resolved, so
+    impulse, de-penetration, and collision damage are all suppressed."""
     objects = list(iter_collidables())
     _apply_overlay_all(objects, dt)
+    from engine.dev_combat_cheats import disable_collisions_active
+    if disable_collisions_active():
+        return []
     return resolve_collisions(objects, host=host, ship_instances=ship_instances)

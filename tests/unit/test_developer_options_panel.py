@@ -118,6 +118,7 @@ def test_render_payload_shape(panel):
     assert body["focused"] == -1  # nothing keyboard-focused on first paint
     assert body["settings"] == {
         "god_mode": False, "double_weapons": False, "no_npc_shields": False,
+        "disable_collisions": False,
     }
 
 
@@ -190,6 +191,7 @@ def test_focusables_order(panel):
         ("ctrl", "god_mode"),
         ("ctrl", "double_weapons"),
         ("ctrl", "no_npc_shields"),
+        ("ctrl", "disable_collisions"),
     ]
 
 
@@ -209,3 +211,35 @@ def test_handle_key_esc_when_open_closes(panel):
     p.open()
     p.handle_key_esc()
     assert p.is_open() is False
+
+
+# ---- disable_collisions toggle -------------------------------------------
+
+def test_dispatch_disable_collisions_writes_through(panel):
+    p, cheats = panel
+    assert cheats.disable_collisions_active() is False
+    assert p.dispatch_event("toggle:disable_collisions") is True
+    assert cheats.disable_collisions_active() is True
+    assert p.dispatch_event("toggle:disable_collisions") is True
+    assert cheats.disable_collisions_active() is False
+
+
+def test_render_payload_includes_disable_collisions(panel):
+    p, _ = panel
+    p.open()
+    body = _body(p.render_payload())
+    assert "disable_collisions" in body["settings"]
+    assert body["settings"]["disable_collisions"] is False
+
+
+def test_open_resyncs_disable_collisions(panel):
+    p, cheats = panel
+    cheats.set_disable_collisions(True)
+    p.open()
+    body = _body(p.render_payload())
+    assert body["settings"]["disable_collisions"] is True
+
+
+def test_focusables_include_disable_collisions(panel):
+    p, _ = panel
+    assert ("ctrl", "disable_collisions") in p._focusables()
