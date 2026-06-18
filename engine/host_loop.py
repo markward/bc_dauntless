@@ -1986,6 +1986,12 @@ class HostController:
         # InstanceIds of comm-set background geometry, keyed by set name.
         # Populated by realize_set for non-bridge sets; survives mission swaps.
         self.comm_instances_by_set: dict = {}
+        # Stable small positive int id per comm set name, allocated at
+        # realize_all_sets time (sequential from 1). The renderer tags each
+        # comm instance with its set's id (r.set_comm_set_id); the bridge pass
+        # renders one tagged set into the viewscreen RTT. _active_comm_feed
+        # resolves which (if any) is the live viewscreen feed each frame.
+        self.comm_set_ids: dict = {}
         # Invoked once after each successful loader.load(). Stage 2 CEF
         # integration will wire this to rebuild UI state so the panel
         # filters the player ship (Game.SetPlayer runs during loader.load
@@ -2233,7 +2239,8 @@ def _update_ui_for_tick(player, view_mode, session, active_set) -> None:
     return
 
 
-def realize_set(controller, r, set_obj, *, is_bridge: bool) -> None:
+def realize_set(controller, r, set_obj, *, is_bridge: bool,
+                comm_set_id: int = None) -> None:
     """Realize any SDK set's renderable content into the renderer.
 
     Generic replacement for the retired bridge-specific realize functions
@@ -2243,6 +2250,11 @@ def realize_set(controller, r, set_obj, *, is_bridge: bool) -> None:
       - comm:   set.GetBackgroundModelNIF()  (SetBackgroundModel)
     Idempotent + leak-free: a carrier that already has a render instance is
     reused; a fresh carrier (set rebuild) destroys the prior instance first.
+
+    `comm_set_id` (comm sets only): a small positive int the caller allocated
+    for this set; every comm instance created here is tagged via
+    r.set_comm_set_id so the bridge pass can render this set into the
+    viewscreen RTT.
     """
     import App as _App
     set_name = set_obj.GetName()
@@ -2281,6 +2293,7 @@ def realize_set(controller, r, set_obj, *, is_bridge: bool) -> None:
             controller.current_bridge_nif_abs = nif_abs
         else:
             controller.comm_instances_by_set.setdefault(set_name, []).append(iid)
+            _tag_comm_instance(r, iid, comm_set_id)
 
     # ── Viewscreen (bridge only) ───────────────────────────────────────────
     if is_bridge:
@@ -2319,7 +2332,7 @@ def realize_set(controller, r, set_obj, *, is_bridge: bool) -> None:
         controller.officer_instances = []
     for character in _iter_set_characters(set_obj):     # same enumeration the
         _place_one_character(controller, r, character,  # old officer loop used
-                             set_name, is_bridge)
+                             set_name, is_bridge, comm_set_id=comm_set_id)
 
 
 def realize_all_sets(controller, r) -> None:
@@ -2333,6 +2346,7 @@ def realize_all_sets(controller, r) -> None:
     """
     import App as _App
     mgr = _App.g_kSetManager
+    _next_comm_id = 1
     for name, s in list(mgr.iter_sets()):          # use the manager's set map
         if name == "bridge":
             realize_set(controller, r, s, is_bridge=True)
@@ -2341,7 +2355,15 @@ def realize_all_sets(controller, r) -> None:
             # Guard: comm-instance primitives are added in a later task.
             # Skip non-bridge sets cleanly when the renderer build doesn't
             # expose create_comm_instance yet (no-op once the binding lands).
-            realize_set(controller, r, s, is_bridge=False)
+            # Allocate a stable small positive id for this comm set so its
+            # instances can be tagged + the viewscreen RTT can render it.
+            comm_set_id = controller.comm_set_ids.get(name)
+            if comm_set_id is None:
+                comm_set_id = _next_comm_id
+                controller.comm_set_ids[name] = comm_set_id
+            _next_comm_id = max(_next_comm_id, comm_set_id) + 1
+            realize_set(controller, r, s, is_bridge=False,
+                        comm_set_id=comm_set_id)
 
 
 def _iter_set_characters(set_obj):
@@ -2351,7 +2373,21 @@ def _iter_set_characters(set_obj):
     return set_obj.GetClassObjectList(CharacterClass)
 
 
-def _place_one_character(controller, r, character, set_name, is_bridge) -> None:
+def _tag_comm_instance(r, iid, comm_set_id) -> None:
+    """Tag a comm instance with its set's id so the bridge pass can render the
+    set into the viewscreen RTT. Guarded: renderer builds without the binding
+    (and the FakeRenderer in unit tests) silently skip the tag."""
+    if comm_set_id is None:
+        return
+    if hasattr(r, "set_comm_set_id"):
+        try:
+            r.set_comm_set_id(iid, comm_set_id)
+        except Exception as _e:
+            dev_mode.log_swallowed("set_comm_set_id", _e)
+
+
+def _place_one_character(controller, r, character, set_name, is_bridge,
+                         *, comm_set_id: int = None) -> None:
     """Pose one SDK CharacterClass at its station and create its skinned
     instance. Body extracted verbatim from the prior bridge-officer placement
     loop; the only change is create_bridge_instance vs create_comm_instance
@@ -2402,6 +2438,7 @@ def _place_one_character(controller, r, character, set_name, is_bridge) -> None:
             controller.officer_instances.append(iid)
         else:
             controller.comm_instances_by_set.setdefault(set_name, []).append(iid)
+            _tag_comm_instance(r, iid, comm_set_id)
     except Exception:
         name = ""
         try:
@@ -2418,6 +2455,57 @@ def _viewscreen_feed_on(viewscreen_obj) -> bool:
     """The viewscreen RTT feed is on iff a realized viewscreen object reports
     IsOn(). Off (or no viewscreen) -> the step-5b blank panel."""
     return bool(viewscreen_obj is not None and viewscreen_obj.IsOn())
+
+
+def _active_comm_feed(controller):
+    """If the bridge viewscreen's remote cam is a comm set's 'maincamera',
+    return (comm_set_id, camera); else None (forward-view fallback).
+
+    MissionLib.ViewscreenOn sets the look-at set's "maincamera" as the
+    viewscreen's remote cam (SetRemoteCam). We identity-match that camera back
+    to the set it belongs to, then look up the set's allocated comm_set_id.
+    """
+    vs = getattr(controller, "viewscreen_obj", None)
+    if vs is None or not vs.IsOn():
+        return None
+    cam = vs.GetRemoteCam()
+    if cam is None:
+        return None
+    import App as _App
+    for name, s in list(_App.g_kSetManager.iter_sets()):
+        if s.GetCamera("maincamera") is cam:
+            set_id = controller.comm_set_ids.get(name)
+            if set_id is not None:
+                return (set_id, cam)
+            return None
+    return None
+
+
+def _comm_camera_params(cam):
+    """Convert a CameraObjectClass into the viewscreen-RTT camera tuple
+    (eye, target, up, fov_y_rad, near, far), all in game units.
+
+    Right-handed column-vector convention (CLAUDE.md): world-forward is
+    orientation.GetCol(1), world-up is GetCol(2). fov_y is derived from the
+    _NiFrustum top/bottom + near as 2*atan(((top-bottom)/2)/near); a degenerate
+    frustum falls back to the bridge base FOV.
+    """
+    eye = tuple(cam.position)
+    R = cam.orientation
+    fwd = R.GetCol(1)
+    up = R.GetCol(2)
+    target = (eye[0] + fwd.x, eye[1] + fwd.y, eye[2] + fwd.z)
+    up_t = (up.x, up.y, up.z)
+
+    near = cam.GetNearDistance()
+    far = cam.GetFarDistance()
+    fov = _BridgeCamera.FOV_Y_RAD          # sane default for degenerate frustum
+    fr = cam.GetNiFrustum()
+    if fr is not None:
+        half_h = (fr.m_fTop - fr.m_fBottom) * 0.5
+        if half_h > 1e-6 and near > 1e-6:
+            fov = 2.0 * _math.atan(half_h / near)
+    return eye, target, up_t, fov, near, far
 
 
 def _apply_bridge_player_visibility(r, player_iid, *, is_bridge, spv_open) -> None:
@@ -2671,8 +2759,6 @@ def run(mission_name: Optional[str] = None,
         bridge_camera  = _BridgeCamera()
 
         _after_mission_loaded()
-        from engine.appc.comm_render_flag import CommRenderFlag
-        _comm_render_flag = CommRenderFlag()
         try:
             import _dauntless_host as _h
         except ImportError:
@@ -3411,9 +3497,17 @@ def run(mission_name: Optional[str] = None,
             # so it doesn't show on its own screen.
             _vs_obj = getattr(controller, "viewscreen_obj", None)
             r.set_viewscreen_enabled(_viewscreen_feed_on(_vs_obj))
-            # Dev-only: the RTT shows the forward view; a comm/remote set
-            # requested via ViewscreenOn is not yet rendered. Flag it loudly.
-            _comm_render_flag.notice(_vs_obj)
+            # Comm-set feed: if the viewscreen's remote cam belongs to a comm
+            # set, render that set into the RTT from its maincamera; otherwise
+            # the RTT keeps the forward space view.
+            _feed = _active_comm_feed(controller)
+            if _feed is not None:
+                _set_id, _cam = _feed
+                _eye, _tgt, _up, _fov, _near, _far = _comm_camera_params(_cam)
+                r.set_viewscreen_comm_source(_set_id, _eye, _tgt, _up,
+                                             _fov, _near, _far)
+            else:
+                r.clear_viewscreen_comm_source()
             _player_iid_vs = (session.ship_instances.get(player)
                               if session is not None and player is not None else None)
             _apply_bridge_player_visibility(

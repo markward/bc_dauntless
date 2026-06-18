@@ -195,6 +195,47 @@ class CameraObjectClass:
     def GetFarDistance(self):
         return self._far
 
+    # ── Activation-path placement (CameraScriptActions) ──────────────────────
+    # SetCameraPositionAndFacing / CutsceneCameraBegin (Actions/
+    # CameraScriptActions.py:122-123, 158) call SetTranslate + AlignToVectors +
+    # UpdateNodeOnly on the set "maincamera" during the viewscreen/dock
+    # activation event chain. Without these, the AttributeError raised here is
+    # swallowed by characters.STButton.SendActivationEvent, which kills the
+    # whole activation chain (SetRemoteCam may never fire, so the comm feed
+    # never engages). These keep .position / .orientation faithful so the
+    # comm-feed camera params (_comm_camera_params) read the posed camera.
+
+    def SetTranslate(self, point):
+        """Place the camera at a TGPoint3 (game units). Mirrors
+        ObjectClass.SetTranslate; updates the tuple the feed reads."""
+        self.position = (float(point.x), float(point.y), float(point.z))
+
+    def AlignToVectors(self, forward, up):
+        """Build the orientation TGMatrix3 from forward/up, column-vector
+        right-handed convention (col0=right, col1=forward, col2=up). Mirrors
+        ObjectClass.AlignToVectors verbatim (right = forward × up, det = +1;
+        see CLAUDE.md ↦ rotation matrix convention)."""
+        fwd = TGPoint3(forward.x, forward.y, forward.z)
+        fwd.Unitize()
+        u = TGPoint3(up.x, up.y, up.z)
+        dot = fwd.Dot(u)
+        u = TGPoint3(u.x - dot * fwd.x, u.y - dot * fwd.y, u.z - dot * fwd.z)
+        u.Unitize()
+        right = fwd.Cross(u)
+        right.Unitize()
+        m = TGMatrix3()
+        m.SetCol(0, right)
+        m.SetCol(1, fwd)
+        m.SetCol(2, u)
+        self.orientation = m
+
+    def UpdateNodeOnly(self):
+        """No-op: Phase 1 has no live scene-graph node to flush the transform
+        into. The .position / .orientation set above are read directly by the
+        host. Faithful to the SDK call (it only forces a node-transform update;
+        no return value)."""
+        return None
+
 
 def CameraObjectClass_CreateFromNiCamera(niCamera, name):
     left, right, top, bottom = niCamera.frustum
@@ -207,7 +248,10 @@ def CameraObjectClass_CreateFromNiCamera(niCamera, name):
 
 def CameraObjectClass_Create(x, y, z, a, ax, ay, az, name):
     """Fallback camera from explicit coords + angle-axis orientation. The SDK
-    overrides near/far via SetNearAndFarDistance; frustum starts default."""
+    overrides near/far via SetNearAndFarDistance; frustum starts default.
+
+    The host renders a comm set through this camera when the bridge viewscreen
+    is showing it (host_loop._active_comm_feed / _comm_camera_params)."""
     orientation = TGMatrix3().MakeRotation(a, TGPoint3(ax, ay, az))
     return CameraObjectClass(name, (x, y, z), orientation,
                              _NiFrustum(), 1.0, 800.0)

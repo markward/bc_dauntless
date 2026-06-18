@@ -141,7 +141,7 @@ def test_realize_set_places_characters_with_pass_matching_set_kind(monkeypatch):
     # Stub the heavy skinned-assembly path: realize_set must call a single
     # helper per character; assert it receives create_comm_instance for comm.
     monkeypatch.setattr(hl, "_place_one_character",
-                        lambda c, r, ch, set_name, is_bridge: placed.append((ch.GetCharacterName(), is_bridge)))
+                        lambda c, r, ch, set_name, is_bridge, **kw: placed.append((ch.GetCharacterName(), is_bridge)))
 
     class _C:
         bridge_instance = None
@@ -188,17 +188,64 @@ def test_realize_all_sets_realizes_bridge_and_comm_sets(monkeypatch):
     _App.g_kSetManager._sets.clear()
     seen = []
     monkeypatch.setattr(hl, "realize_set",
-                        lambda c, r, s, *, is_bridge: seen.append((s.GetName(), is_bridge)))
+                        lambda c, r, s, *, is_bridge, comm_set_id=None: seen.append((s.GetName(), is_bridge)))
     bridge = SetClass(); bridge.SetName("bridge")
     bridge.AddObjectToSet(BridgeObjectClass("b.nif"), "bridge")
     comm = SetClass(); comm.SetName("StarbaseSet"); comm.SetBackgroundModel("c.nif")
     _App.g_kSetManager.AddSet(bridge, "bridge")
     _App.g_kSetManager.AddSet(comm, "StarbaseSet")
 
+    class _C:
+        comm_set_ids = {}
     # Use a renderer that HAS create_comm_instance so the comm set is realized.
-    hl.realize_all_sets(object(), _FakeRenderer())
+    hl.realize_all_sets(_C(), _FakeRenderer())
     assert ("bridge", True) in seen
     assert ("StarbaseSet", False) in seen
+
+
+def test_realize_all_sets_assigns_stable_comm_set_ids_and_tags_instances(monkeypatch):
+    """Each comm set gets a small positive id (sequential from 1), stored in
+    controller.comm_set_ids[set_name], and every comm instance for that set is
+    tagged via r.set_comm_set_id(iid, set_id). The bridge set gets no id."""
+    import App as _App
+    from engine.appc.sets import SetClass
+    from engine.appc.bridge_set import BridgeObjectClass
+
+    _App.g_kSetManager._sets.clear()
+    bridge = SetClass(); bridge.SetName("bridge")
+    bridge.AddObjectToSet(BridgeObjectClass("b.nif"), "bridge")
+    a = SetClass(); a.SetName("AlphaSet"); a.SetBackgroundModel("a.nif")
+    b = SetClass(); b.SetName("BetaSet"); b.SetBackgroundModel("b2.nif")
+    _App.g_kSetManager.AddSet(bridge, "bridge")
+    _App.g_kSetManager.AddSet(a, "AlphaSet")
+    _App.g_kSetManager.AddSet(b, "BetaSet")
+
+    class _R(_FakeRenderer):
+        def __init__(s2): super().__init__(); s2.tagged = []
+        def set_comm_set_id(s2, iid, set_id): s2.tagged.append((iid, set_id))
+
+    class _C:
+        bridge_instance = None
+        viewscreen_instance = None
+        viewscreen_obj = None
+        nif_to_handle = {}
+        comm_instances_by_set = {}
+        officer_instances = []
+        comm_set_ids = {}
+    c = _C(); r = _R()
+
+    hl.realize_all_sets(c, r)
+
+    # Comm sets got sequential positive ids; bridge got none.
+    assert "bridge" not in c.comm_set_ids
+    assert set(c.comm_set_ids.keys()) == {"AlphaSet", "BetaSet"}
+    ids = sorted(c.comm_set_ids.values())
+    assert ids == [1, 2]
+    # Every comm instance is tagged with its set's id.
+    for set_name, iids in c.comm_instances_by_set.items():
+        sid = c.comm_set_ids[set_name]
+        for iid in iids:
+            assert (iid, sid) in r.tagged
 
 
 def test_realize_all_sets_skips_comm_set_when_renderer_lacks_create_comm_instance(monkeypatch):
