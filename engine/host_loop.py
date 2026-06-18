@@ -1983,6 +1983,9 @@ class HostController:
         # repopulated each load by _place_bridge_officers, which destroys the
         # prior load's instances first.
         self.officer_instances: list = []
+        # InstanceIds of comm-set background geometry, keyed by set name.
+        # Populated by realize_set for non-bridge sets; survives mission swaps.
+        self.comm_instances_by_set: dict = {}
         # Invoked once after each successful loader.load(). Stage 2 CEF
         # integration will wire this to rebuild UI state so the panel
         # filters the player ship (Game.SetPlayer runs during loader.load
@@ -2275,6 +2278,56 @@ def _realize_bridge_model(controller, r) -> None:
     controller.bridge_instance = iid
     controller.nif_to_handle[nif_abs] = handle
     controller.current_bridge_nif_abs = nif_abs
+
+
+def realize_set(controller, r, set_obj, *, is_bridge: bool) -> None:
+    """Realize any SDK set's renderable content into the renderer.
+
+    Generic replacement for the bridge-specific _realize_bridge_model /
+    _realize_viewscreen / _place_bridge_officers. Honors the SDK calls that
+    declared the content:
+      - bridge: BridgeObjectClass carrier (set.GetObject("bridge").nif)
+      - comm:   set.GetBackgroundModelNIF()  (SetBackgroundModel)
+    Idempotent + leak-free: a carrier that already has a render instance is
+    reused; a fresh carrier (set rebuild) destroys the prior instance first.
+    """
+    import App as _App
+    set_name = set_obj.GetName()
+
+    # ── Background geometry ────────────────────────────────────────────────
+    if is_bridge:
+        carrier = set_obj.GetObject("bridge")
+        nif = getattr(carrier, "nif", None) if carrier is not None else None
+    else:
+        carrier = set_obj
+        nif = set_obj.GetBackgroundModelNIF()
+
+    if nif and getattr(carrier, "render_instance", None) is None:
+        if is_bridge and controller.bridge_instance is not None:
+            try:
+                r.destroy_instance(controller.bridge_instance)
+            except Exception as _e:
+                dev_mode.log_swallowed("destroy bridge instance", _e)
+            controller.bridge_instance = None
+
+        nif_abs = str(PROJECT_ROOT / "game" / nif)
+        env = _App.g_kModelManager.env_for(nif)
+        tex_abs = (str(PROJECT_ROOT / "game" / env) if env
+                   else str(PROJECT_ROOT / "game" / DBRIDGE_TEX_REL))
+        handle = r.load_model(nif_abs, tex_abs)
+        if is_bridge:
+            iid = r.create_bridge_instance(handle)
+        else:
+            iid = r.create_comm_instance(handle)
+        r.set_world_transform(iid, IDENTITY_MAT4)
+        if hasattr(carrier, "render_instance"):
+            carrier.render_instance = iid
+        controller.nif_to_handle[nif_abs] = handle
+        if is_bridge:
+            controller.bridge_instance = iid
+            controller.current_bridge_nif_abs = nif_abs
+        else:
+            controller.comm_instances_by_set.setdefault(set_name, []).append(iid)
 
 
 def _realize_viewscreen(controller, r) -> None:
