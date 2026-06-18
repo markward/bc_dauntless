@@ -2231,7 +2231,7 @@ def _compute_camera(view_mode, director, *, player, dt) -> tuple:
     return director.compute(player=player, dt=dt)
 
 
-def _active_cutscene_camera(player):
+def _active_cutscene_camera():
     """If the rendered set has an active cutscene camera with a live mode,
     return (camera, mode); else None.
 
@@ -2257,7 +2257,6 @@ def _active_cutscene_camera(player):
     if mode is None or not mode.IsValid():
         return None
     return (cam, mode)
-
 
 
 def _update_ui_for_tick(player, view_mode, session, active_set) -> None:
@@ -3453,8 +3452,8 @@ def run(mission_name: Optional[str] = None,
                 # from it instead of the player director (SDK CutsceneCamera*
                 # + LockedView/ChaseCam/TargetWatch). Reverts automatically
                 # when CutsceneCameraEnd removes the camera/mode.
-                if not pause.is_open:
-                    _cc = _active_cutscene_camera(player)
+                if not pause.is_open and not view_mode.is_bridge:
+                    _cc = _active_cutscene_camera()
                     if _cc is not None:
                         eye, target, up_vec = _cc[1].Update(_player_dt)
                 # Camera shake — apply to the exterior view. The bridge
