@@ -120,3 +120,46 @@ class LockedMode(CameraMode):
         fwd = _unit(*_apply_rot(R, F))
         up = _unit(*_apply_rot(R, U))
         return (eye, fwd, up)
+
+
+CHASE_DIST_GU = 12.0
+CHASE_UP_GU = 3.0
+
+
+class ChaseMode(CameraMode):
+    """Follow the target from behind (ChaseCam) or ahead (ReverseChaseCam),
+    looking at it. Offset built in the target body frame, mapped to world via
+    the column-vector convention (mirrors engine/cameras/chase.py)."""
+
+    def __init__(self, reverse=False):
+        super().__init__()
+        self._reverse = reverse
+
+    def _ideal(self):
+        t = self.GetAttrIDObject("Target")
+        if not _target_alive(t):
+            return None
+        R = t.GetWorldRotation()
+        loc = t.GetWorldLocation()
+        sign = 1.0 if self._reverse else -1.0           # behind = -forward
+        off = _apply_rot(R, TGPoint3(0.0, sign * CHASE_DIST_GU, CHASE_UP_GU))
+        eye = (loc.x + off[0], loc.y + off[1], loc.z + off[2])
+        fwd = _unit(loc.x - eye[0], loc.y - eye[1], loc.z - eye[2])
+        up = _unit(*_apply_rot(R, TGPoint3(0.0, 0.0, 1.0)))
+        return (eye, fwd, up)
+
+
+class TargetMode(CameraMode):
+    """Look from a source object to a target object (TargetWatch)."""
+
+    def _ideal(self):
+        src = self.GetAttrIDObject("Source")
+        dst = self.GetAttrIDObject("Target")
+        if not _target_alive(src) or not _target_alive(dst):
+            return None
+        s = src.GetWorldLocation()
+        d = dst.GetWorldLocation()
+        eye = (s.x, s.y, s.z)
+        fwd = _unit(d.x - s.x, d.y - s.y, d.z - s.z)
+        up = _unit(*_apply_rot(src.GetWorldRotation(), TGPoint3(0.0, 0.0, 1.0)))
+        return (eye, fwd, up)

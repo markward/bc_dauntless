@@ -97,3 +97,50 @@ def test_dt_zero_does_not_snap_mid_sweep():
     # The returned eye should be IDENTICAL to eye1 (frozen at mid-sweep point).
     eye2, _, _ = m.Update(0.0)
     assert eye2 == eye1, f"dt=0.0 must freeze the sweep; got {eye2} != {eye1}"
+
+
+from engine.appc.camera_modes import ChaseMode, TargetMode, CHASE_DIST_GU
+
+
+def test_chase_mode_sits_behind_target():
+    t = _FakeTarget((0.0, 0.0, 0.0))           # identity rot: fwd = +Y (GetCol(1))
+    m = ChaseMode()
+    m.SetAttrIDObject("Target", t)
+    m.SnapToIdealPosition()
+    eye, fwd, up = m.Update()
+    # Behind = -Y of forward, so eye.y is negative ~ -CHASE_DIST_GU; looks +Y.
+    assert eye[1] < 0.0
+    assert abs(eye[1] + CHASE_DIST_GU) < 1e-6
+    assert fwd[1] > 0.9                         # looking toward the ship (+Y)
+
+
+def test_reverse_chase_sits_in_front():
+    t = _FakeTarget((0.0, 0.0, 0.0))
+    m = ChaseMode(reverse=True)
+    m.SetAttrIDObject("Target", t)
+    m.SnapToIdealPosition()
+    eye, fwd, up = m.Update()
+    assert eye[1] > 0.0                          # in front (+Y)
+    assert fwd[1] < -0.9                          # looking back toward ship
+
+
+def test_target_mode_looks_from_source_to_target():
+    src = _FakeTarget((0.0, 0.0, 0.0))
+    dst = _FakeTarget((0.0, 100.0, 0.0))
+    m = TargetMode()
+    m.SetAttrIDObject("Source", src)
+    m.SetAttrIDObject("Target", dst)
+    m.SnapToIdealPosition()
+    eye, fwd, up = m.Update()
+    assert eye == (0.0, 0.0, 0.0)
+    assert abs(fwd[1] - 1.0) < 1e-6              # +Y toward dst
+
+
+def test_chase_invalid_without_target():
+    assert not ChaseMode().IsValid()
+
+
+def test_target_invalid_without_both():
+    m = TargetMode()
+    m.SetAttrIDObject("Source", _FakeTarget((0.0, 0.0, 0.0)))
+    assert not m.IsValid()
