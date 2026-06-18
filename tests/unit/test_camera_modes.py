@@ -1,0 +1,72 @@
+import math
+from engine.appc.camera_modes import CameraMode, LockedMode, SWEEP_TAU_S
+from engine.appc.math import TGPoint3, TGMatrix3
+
+
+class _FakeTarget:
+    """Minimal stand-in for an ObjectClass target."""
+    def __init__(self, loc, rot=None):
+        self._loc = TGPoint3(*loc)
+        self._rot = rot if rot is not None else TGMatrix3()  # identity
+
+    def GetWorldLocation(self):
+        return TGPoint3(self._loc.x, self._loc.y, self._loc.z)
+
+    def GetWorldRotation(self):
+        return self._rot
+
+
+def test_locked_mode_snap_identity_rotation():
+    t = _FakeTarget((100.0, 0.0, 0.0))
+    m = LockedMode()
+    m.SetAttrIDObject("Target", t)
+    m.SetAttrPoint("Position", TGPoint3(0.0, -10.0, 0.0))   # 10 GU behind (model -Y)
+    m.SetAttrPoint("Forward", TGPoint3(0.0, 1.0, 0.0))
+    m.SetAttrPoint("Up", TGPoint3(0.0, 0.0, 1.0))
+    m.SnapToIdealPosition()
+    eye, fwd, up = m.Update()                                # no dt ⇒ snap
+    assert eye == (100.0, -10.0, 0.0)
+    assert fwd == (0.0, 1.0, 0.0)
+    assert up == (0.0, 0.0, 1.0)
+
+
+def test_locked_mode_applies_target_rotation():
+    # Target yawed 180° about Z: model -Y maps to world +Y; model +Y to world -Y.
+    r = TGMatrix3().MakeZRotation(math.pi)
+    t = _FakeTarget((0.0, 0.0, 0.0), rot=r)
+    m = LockedMode()
+    m.SetAttrIDObject("Target", t)
+    m.SetAttrPoint("Position", TGPoint3(0.0, -10.0, 0.0))
+    m.SetAttrPoint("Forward", TGPoint3(0.0, 1.0, 0.0))
+    m.SetAttrPoint("Up", TGPoint3(0.0, 0.0, 1.0))
+    m.SnapToIdealPosition()
+    eye, fwd, up = m.Update()
+    assert abs(eye[1] - 10.0) < 1e-6      # -10 model-Y → +10 world-Y
+    assert abs(fwd[1] - (-1.0)) < 1e-6    # +Y model-fwd → -Y world
+
+
+def test_locked_mode_invalid_without_target():
+    m = LockedMode()
+    assert not m.IsValid()
+
+
+def test_camera_mode_obj_ids_unique():
+    a, b = LockedMode(), LockedMode()
+    assert a.GetObjID() != b.GetObjID()
+
+
+def test_sweep_converges_toward_ideal():
+    t = _FakeTarget((100.0, 0.0, 0.0))
+    m = LockedMode()
+    m.SetAttrIDObject("Target", t)
+    m.SetAttrPoint("Position", TGPoint3(0.0, 0.0, 0.0))
+    m.SetAttrPoint("Forward", TGPoint3(0.0, 1.0, 0.0))
+    m.SetAttrPoint("Up", TGPoint3(0.0, 0.0, 1.0))
+    m.set_initial_pose((0.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+    # One small step does NOT reach the ideal...
+    eye1, _, _ = m.Update(0.016)
+    assert 0.0 < eye1[0] < 100.0
+    # ...but many steps do.
+    for _ in range(600):
+        eye, _, _ = m.Update(0.016)
+    assert abs(eye[0] - 100.0) < 1.0
