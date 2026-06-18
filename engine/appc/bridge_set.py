@@ -242,6 +242,21 @@ class CameraObjectClass(_LoudStub):
         m.SetCol(2, u)
         self.orientation = m
 
+    def SetMatrixRotation(self, matrix):
+        """Set the camera's orientation directly from a TGMatrix3.
+
+        Mirrors BaseObjectClass.SetMatrixRotation (App.py:3884) and
+        ObjectClass.SetMatrixRotation (engine/appc/objects.py:108): it stores
+        the matrix verbatim — same column-vector right-handed convention
+        GetWorldRotation returns and AlignToVectors builds (CLAUDE.md ↦
+        rotation matrix convention). CutsceneCameraBegin
+        (Actions/CameraScriptActions.py:154) calls this with the active
+        camera's GetWorldRotation() to seed the cutscene camera's start
+        orientation; without a real method here it fell through
+        _LoudStub.__getattr__ to a silent no-op and the rotation was never
+        copied."""
+        self.orientation = matrix
+
     def UpdateNodeOnly(self):
         """No-op: Phase 1 has no live scene-graph node to flush the transform
         into. The .position / .orientation set above are read directly by the
@@ -429,3 +444,21 @@ def ZoomCameraObjectClass_GetObject(pSet, name):
     # (camera absent) keeps ConfigureCharacters' SetTranslateXYZ from crashing.
     cam = pSet.GetCamera(name) if pSet is not None else None
     return cam if cam is not None else _LoudStub()
+
+
+def CameraObjectClass_GetObject(pSet, name):
+    """Look up a named camera in a set, mirroring App.py's real
+    CameraObjectClass_GetObject (which returns the Appc camera or a falsey
+    null).
+
+    Unlike ZoomCameraObjectClass_GetObject, a MISS returns None (not a
+    _LoudStub): every SDK caller guards the result with ``if pCamera == None``
+    / ``if not pCamera`` (Actions/CameraScriptActions.py:65,76,109,473,519,560;
+    WarpSequence.py:530), so a truthy stub on miss would defeat those guards
+    and drive camera-mode calls against a fake object. None is both faithful
+    and control-flow-correct.
+
+    This backs CutsceneCameraEnd and the cutscene camera-mode functions; it was
+    previously absent, so App.CameraObjectClass_GetObject fell through App.py's
+    module __getattr__ to a *truthy* _NamedStub."""
+    return pSet.GetCamera(name) if pSet is not None else None

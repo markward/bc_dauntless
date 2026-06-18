@@ -87,6 +87,7 @@ from engine.appc.bridge_set import (
     CameraObjectClass_Create,
     CameraObjectClass_CreateFromNiCamera,
     CameraObjectClass_Cast,
+    CameraObjectClass_GetObject,
 )
 from engine.appc.placement import (
     PlacementObject, Waypoint, Waypoint_Create,
