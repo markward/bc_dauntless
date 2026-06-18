@@ -35,10 +35,22 @@ class CrewSpeechBus:
     def __init__(self) -> None:
         self._active_priority: int = -1
         self._active_expiry: float = 0.0
+        self._active_handle = None   # _PlayingSound of the line on the channel
 
     def reset(self) -> None:
+        self._stop_active_voice()
         self._active_priority = -1
         self._active_expiry = 0.0
+
+    def _stop_active_voice(self) -> None:
+        """Stop whatever voice currently holds the channel (best-effort)."""
+        h = self._active_handle
+        self._active_handle = None
+        if h is not None:
+            try:
+                h.Stop()
+            except Exception:
+                pass
 
     def speak(self, speaker, text, wav, priority, now=None) -> float:
         """Arbitrate one line. Returns its duration in seconds (0.0 if dropped).
@@ -53,9 +65,16 @@ class CrewSpeechBus:
         line_live = now < self._active_expiry
         if line_live and priority < self._active_priority:
             return 0.0  # a higher-priority line is still talking
+        # Accepted: this line takes the single VO channel. Stop any still-playing
+        # previous voice so two lines never overlap audibly (BC plays one crew/
+        # comm voice at a time — a new equal-or-higher line cuts the old). This
+        # only bites when two lines genuinely overlap in time (e.g. Graff's comm
+        # greeting and Liu's briefing); within one gated sequence the prior line
+        # has already finished, so stopping its handle is a harmless no-op.
+        self._stop_active_voice()
         self._active_priority = priority
         # Real decoded length when the voice is loadable; estimate otherwise.
-        real = self._play_voice(str(wav)) if wav else 0.0
+        real, self._active_handle = self._play_voice(str(wav)) if wav else (0.0, None)
         duration = real if real > 0.0 else _estimate_duration(text, wav)
         self._active_expiry = now + duration
         if text:
@@ -72,7 +91,10 @@ class CrewSpeechBus:
         if sub is not None and hasattr(sub, "set_crew_line"):
             sub.set_crew_line(speaker, text, duration)
 
-    def _play_voice(self, wav) -> float:
+    def _play_voice(self, wav):
+        """Play the voice line. Returns (duration_seconds, playing_handle).
+        The handle (tg_sound._PlayingSound or None) lets the bus stop this voice
+        if a later line preempts it. Best-effort: (0.0, None) on any failure."""
         try:
             from engine.audio.tg_sound import TGSoundManager, TGSound
             mgr = TGSoundManager.instance()
@@ -81,13 +103,13 @@ class CrewSpeechBus:
                 # The wav path doubles as the GetSound name key.
                 snd = mgr.LoadSound(wav, wav, TGSound.LS_STREAMED)
             if snd is None:
-                return 0.0
+                return 0.0, None
             snd.SetVoice()
-            snd.Play()
-            return mgr.duration_for(wav)
+            handle = snd.Play()
+            return mgr.duration_for(wav), handle
         except Exception as _e:
             dev_mode.log_swallowed("play crew speech sound", _e)
-            return 0.0
+            return 0.0, None
 
 
 def emit(speaker, db, line_id, priority, *, voice_only) -> float:
@@ -103,7 +125,11 @@ def emit(speaker, db, line_id, priority, *, voice_only) -> float:
     wav = db.GetFilename(line) if db is not None else None
     if not isinstance(wav, str) or not wav:         # drop stub-DB / empty
         wav = None
-    return bus().speak(speaker, text, wav, int(priority))
+    dur = bus().speak(speaker, text, wav, int(priority))
+    from engine.appc import _seq_debug
+    _seq_debug.log("emit speaker=%r line=%r db=%s text=%r wav=%r dur=%s" % (
+        speaker, line, db is not None, text, wav, dur))
+    return dur
 
 
 def _mission_database():

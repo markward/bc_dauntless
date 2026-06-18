@@ -74,3 +74,46 @@ def test_speak_returns_estimate_duration_for_text_only():
 def test_speak_dropped_line_returns_zero():
     bus = CrewSpeechBus()
     assert bus.speak("Liu", None, None, 1, now=0.0) == 0.0   # nothing to say
+
+
+class _FakeHandle:
+    """Stands in for tg_sound._PlayingSound — records Stop() calls."""
+    def __init__(self, tag, stopped):
+        self.tag = tag
+        self._stopped = stopped
+    def Stop(self):
+        self._stopped.append(self.tag)
+
+
+def test_preempting_line_stops_previous_voice():
+    # Two overlapping accepted lines (e.g. Graff's greeting + Liu's briefing)
+    # must not play simultaneously: the new line takes the single VO channel and
+    # the previous voice is stopped. Regression for two-admirals-talking-at-once.
+    bus = CrewSpeechBus()
+    stopped = []
+    handles = iter([_FakeHandle("graff", stopped), _FakeHandle("liu", stopped)])
+    bus._play_voice = lambda wav: (5.0, next(handles))      # (duration, handle)
+
+    bus.speak("Graff", None, "graff.mp3", 1, now=0.0)
+    assert stopped == []                                     # nothing to stop yet
+    bus.speak("Liu", None, "liu.mp3", 1, now=1.0)            # graff still live -> preempt
+    assert stopped == ["graff"]                              # graff's voice was stopped
+
+
+def test_dropped_line_does_not_stop_active_voice():
+    bus = CrewSpeechBus()
+    stopped = []
+    handles = iter([_FakeHandle("hi", stopped)])
+    bus._play_voice = lambda wav: (5.0, next(handles))
+    bus.speak("XO", None, "hi.mp3", 2, now=0.0)             # high priority, live
+    bus.speak("Helm", None, "low.mp3", 0, now=1.0)          # lower priority -> dropped
+    assert stopped == []                                    # the live line keeps playing
+
+
+def test_reset_stops_active_voice():
+    bus = CrewSpeechBus()
+    stopped = []
+    bus._play_voice = lambda wav: (5.0, _FakeHandle("x", stopped))
+    bus.speak("XO", None, "x.mp3", 1, now=0.0)
+    bus.reset()
+    assert stopped == ["x"]
