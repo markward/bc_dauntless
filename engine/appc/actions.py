@@ -409,11 +409,47 @@ def TGSoundAction_Create(*args) -> TGSoundAction:
 
 
 class TGAnimAction(TGAction):
-    pass
+    """Plays a named clip on a target's anim node.
+
+    Camera (kind="camera") and bridge-object (kind="object") anim nodes route
+    to the BridgeCutsceneController, which drives playback host-side and
+    completes the action when the clip ends (deferred). Every other target
+    (character gesture clips via a _NodeStub node, or no controller
+    registered) keeps the Phase-1 instant-complete behaviour.
+    """
+    def __init__(self, anim_node=None, clip_name=""):
+        super().__init__()
+        self._anim_node = anim_node
+        self._clip = str(clip_name)
+        self._deferred = False
+
+    def Play(self) -> None:
+        self._playing = True
+        self._deferred = False
+        self._do_play()
+        if not self._deferred:
+            self.Completed()
+
+    def _do_play(self) -> None:
+        kind = getattr(self._anim_node, "kind", None)
+        if kind not in ("camera", "object"):
+            return
+        from engine.bridge_cutscene import get_controller
+        ctrl = get_controller()
+        if ctrl is None:
+            return
+        if kind == "camera":
+            ctrl.request_camera_path(self, self._anim_node, self._clip)
+        else:
+            ctrl.request_object_anim(self, self._anim_node, self._clip)
+        self._deferred = True
 
 
 def TGAnimAction_Create(*args) -> TGAnimAction:
-    return TGAnimAction()
+    # SDK call shape: App.TGAnimAction_Create(pAnimNode, "ClipName", flags...).
+    anim_node = args[0] if len(args) >= 1 else None
+    clip_name = args[1] if len(args) >= 2 and isinstance(args[1], str) else ""
+    return TGAnimAction(anim_node, clip_name)
 
 
 class TGAnimPosition(TGAction):
