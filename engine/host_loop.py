@@ -2645,14 +2645,15 @@ def run(mission_name: Optional[str] = None,
             _place_bridge_officers(controller, r)
             _wire_target_menu_to_player_set(controller)
         controller.post_load_hook = _after_mission_loaded
-        _after_mission_loaded()
 
         bridge_camera  = _BridgeCamera()
         from engine.bridge_cutscene import (
-            BridgeCutsceneController, set_controller, clear_controller,
+            BridgeCutsceneController, set_controller,
         )
         cutscene = BridgeCutsceneController()
         set_controller(cutscene)
+
+        _after_mission_loaded()
         from engine.appc.comm_render_flag import CommRenderFlag
         _comm_render_flag = CommRenderFlag()
         try:

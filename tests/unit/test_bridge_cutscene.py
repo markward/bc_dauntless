@@ -130,7 +130,12 @@ def test_has_pending_camera_flag():
     ctrl = BridgeCutsceneController()
     assert ctrl.has_pending_camera() is False
     ctrl.request_camera_path(_FakeAction(), _FakeNode("camera"), "X")
-    assert ctrl.has_pending_camera() is True
+    assert ctrl.has_pending_camera() is True        # pending branch
+    ctrl._pending_camera = None
+    ctrl._active_camera = object()                  # simulate in-flight playback
+    assert ctrl.has_pending_camera() is True        # active branch
+    ctrl._active_camera = None
+    assert ctrl.has_pending_camera() is False
 
 
 def test_module_level_registry():
