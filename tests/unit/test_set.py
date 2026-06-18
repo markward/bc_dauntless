@@ -237,8 +237,6 @@ def test_add_backdrop_assigns_name_to_object():
 def test_set_unrelated_renderer_methods_still_stub():
     """Regression: catch-all _RendererStub still handles non-light methods."""
     pSet = App.SetClass_Create()
-    # SetBackgroundModel is not implemented — should silently chain via stub.
-    result = pSet.SetBackgroundModel("data/Models/Sets/X.nif", 0, 0, 0)
-    # Result is a chainable stub; the test only checks that the call did
-    # not raise AttributeError.
-    assert result is not None
+    # SetBackgroundModel is now implemented — call succeeds and records state.
+    pSet.SetBackgroundModel("data/Models/Sets/X.nif", 0, 0, 0)
+    assert pSet.GetBackgroundModelNIF() == "data/Models/Sets/X.nif"
