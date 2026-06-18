@@ -44,9 +44,10 @@ assets::MeshCpu build_uv_sphere(int target_tris) {
         }
     }
 
-    // Indices: clockwise winding from OUTSIDE the sphere. Combined with
-    // glFrontFace(GL_CW) + glCullFace(GL_FRONT) (we cull front faces in
-    // BackdropPass), the inside of the sphere is what's drawn.
+    // Indices: clockwise winding from OUTSIDE the sphere. The inside-sphere
+    // passes (BackdropPass, SunPass) cull GL_FRONT so the inside is drawn.
+    // Verified correct under glFrontFace(GL_CCW) after the 2026-06-18
+    // right-handed un-mirror (docs/superpowers/plans/).
     for (int i = 0; i < lat_segs; ++i) {
         for (int j = 0; j < lon_segs; ++j) {
             std::uint32_t a = static_cast<std::uint32_t>( i      * (lon_segs + 1) + j     );

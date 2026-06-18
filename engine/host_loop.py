@@ -914,13 +914,23 @@ class _PlayerControl:
         rotation for one tick. Column-vector matrices, body-frame delta
         POST-multiplies (R · D); pitch (X) → yaw (Z) → roll (Y) Euler order.
         See CLAUDE.md ↦ 'Rotation matrix convention'. No-op when all rates
-        are zero."""
+        are zero.
+
+        Yaw (about Z) and roll (about Y) are negated relative to the input
+        rates: the 2026-06-18 un-mirror made the ship frame right-handed
+        (AlignToVectors builds forward × up, so GetCol(0) flipped sign). The
+        body-frame yaw/roll deltas move forward/up toward body ±X, which maps
+        to world through that flipped GetCol(0) — so the on-screen swing
+        reversed for yaw and roll, while pitch (toward body +Z = unchanged
+        GetCol(2)) stayed put. Negating restores "press right → turn right /
+        roll right". See docs/superpowers/plans/2026-06-18-render-handedness-
+        unmirror.md."""
         if not (pitch_rate or yaw_rate or roll_rate):
             return
         R = player.GetWorldRotation()
-        R_pitch = TGMatrix3(); R_pitch.MakeRotation(pitch_rate * dt, TGPoint3(1.0, 0.0, 0.0))
-        R_yaw   = TGMatrix3(); R_yaw.MakeRotation(yaw_rate   * dt, TGPoint3(0.0, 0.0, 1.0))
-        R_roll  = TGMatrix3(); R_roll.MakeRotation(roll_rate  * dt, TGPoint3(0.0, 1.0, 0.0))
+        R_pitch = TGMatrix3(); R_pitch.MakeRotation( pitch_rate * dt, TGPoint3(1.0, 0.0, 0.0))
+        R_yaw   = TGMatrix3(); R_yaw.MakeRotation(  -yaw_rate  * dt, TGPoint3(0.0, 0.0, 1.0))
+        R_roll  = TGMatrix3(); R_roll.MakeRotation( -roll_rate * dt, TGPoint3(0.0, 1.0, 0.0))
         delta = R_pitch.MultMatrix(R_yaw).MultMatrix(R_roll)
         player.SetMatrixRotation(R.MultMatrix(delta))
 
@@ -1847,17 +1857,21 @@ def _world_matrix_from(loc, rot, s: float) -> list:
     """Row-major TRS mat4 from an explicit (loc, rot) and combined scale s.
 
     Shared by _ship_world_matrix, _astro_world_matrix, and the render
-    interpolation path. Applies the determinant-normalization X-flip
-    (see _ship_world_matrix docstring) so every rendered instance reaches
-    the GPU with det < 0 under glFrontFace(GL_CW).
+    interpolation path.
+
+    Right-handed convention (post un-mirror, 2026-06-18): the rotation goes to
+    the GPU untouched. The previous determinant-normalization X-flip — which
+    negated body-X when det(rot) > 0 to force det < 0 under glFrontFace(GL_CW) —
+    REFLECTED every ship, the cause of the mirrored hull registry text. It is
+    removed in concert with AlignToVectors (now right-handed) and pipeline.cc
+    (now glFrontFace(GL_CCW)). See docs/superpowers/plans/2026-06-18-render-
+    handedness-unmirror.md.
     """
-    flip = -1.0 if _rot_determinant(rot) > 0.0 else 1.0
-    sx = s * flip
     return [
-        rot._m[0][0]*sx, rot._m[0][1]*s, rot._m[0][2]*s, loc.x,
-        rot._m[1][0]*sx, rot._m[1][1]*s, rot._m[1][2]*s, loc.y,
-        rot._m[2][0]*sx, rot._m[2][1]*s, rot._m[2][2]*s, loc.z,
-        0.0,             0.0,            0.0,            1.0,
+        rot._m[0][0]*s, rot._m[0][1]*s, rot._m[0][2]*s, loc.x,
+        rot._m[1][0]*s, rot._m[1][1]*s, rot._m[1][2]*s, loc.y,
+        rot._m[2][0]*s, rot._m[2][1]*s, rot._m[2][2]*s, loc.z,
+        0.0,            0.0,            0.0,            1.0,
     ]
 
 
@@ -1875,20 +1889,13 @@ def _ship_world_matrix(ship, natural_scale: float) -> list:
     u_model is also column-vector, so the rotation is sent directly —
     no transpose.
 
-    Determinant normalization (workaround): the renderer is configured
-    with glFrontFace(GL_CW) and assumes the world matrix has det < 0 —
-    which holds for ships whose rotation came from AlignToVectors (it
-    builds right = up × forward, giving det = -1). Ships placed by
-    other paths (e.g. Akira at the "Docking Exit" hardpoint, or any
-    ship with identity rotation) arrive with a proper rotation
-    (det = +1), and render inside-out because their world matrix flips
-    screen-space winding the wrong way under GL_CW. Until the coupled
-    fix lands (AlignToVectors → proper rotation, pipeline.cc →
-    glFrontFace(GL_CCW), backdrop/sun cull state → GL_BACK), we negate
-    the X body axis here when det > 0 so every rendered ship reaches
-    the GPU with det < 0. ship.GetWorldRotation() is left untouched —
-    camera-follow, physics, and AI continue to see the original
-    rotation.
+    Right-handed convention (2026-06-18 un-mirror): the rotation is drawn
+    directly with NO reflection. AlignToVectors now builds right = forward × up
+    (det = +1) and pipeline.cc uses glFrontFace(GL_CCW), so every ship reaches
+    the GPU true-handed — the hull is no longer mirror-imaged. The previous
+    determinant-normalization X-flip (which forced det < 0 for the old GL_CW
+    state) was removed from _world_matrix_from. See docs/superpowers/plans/
+    2026-06-18-render-handedness-unmirror.md.
     """
     loc = ship.GetWorldLocation()
     rot = ship.GetWorldRotation()

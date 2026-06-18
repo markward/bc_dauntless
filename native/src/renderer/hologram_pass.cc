@@ -50,8 +50,9 @@ void HologramPass::render(const HologramShip& ship,
     // Walk nodes exactly as the opaque pass does (frame.cc draw_model): each
     // node composes parent transform * local_transform, and references meshes
     // by index. Parents precede children, so a single linear pass suffices.
-    // The X-axis flip / world handedness is already baked into inst->world by
-    // the host; we re-use it verbatim so geometry overlays the opaque ship.
+    // inst->world is the host's right-handed ship transform (no reflection
+    // post 2026-06-18 un-mirror); we re-use it verbatim so the hologram
+    // overlays the opaque ship exactly.
     const glm::mat4& world_xf = inst->world;
     std::vector<glm::mat4> world_per_node(model->nodes.size(), glm::mat4(1.0f));
     if (!model->nodes.empty()) {

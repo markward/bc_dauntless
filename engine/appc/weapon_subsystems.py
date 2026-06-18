@@ -127,27 +127,27 @@ def _emitter_in_arc(emitter, ship, aim_world):
               + world_dir.z * aim_world.z) > 0.0
     arc_w = emitter.GetArcWidthAngles()
 
-    # Rotate Right axis into world too.
-    right_local = emitter.GetRight() if hasattr(emitter, "GetRight") else TGPoint3(1.0, 0.0, 0.0)
-    world_right = TGPoint3(right_local.x, right_local.y, right_local.z)
-    if ship is not None and hasattr(ship, "GetWorldRotation"):
-        rot = ship.GetWorldRotation()
-        if isinstance(rot, TGMatrix3):
-            world_right.MultMatrixLeft(rot)
-    # Up: rotate the stored body up axis directly. Deriving it as
-    # world_dir × world_right *looks* equivalent but flips sign when the ship
-    # rotation is left-handed (det = -1) — which is exactly what AlignToVectors
-    # produces (objects.py:135, CLAUDE.md X-flip note): (R·a)×(R·b) = -R·(a×b).
-    # That sign flip inverted the pitch gate on a maneuvering ship, so ventral
-    # banks fired at targets ABOVE the ship and dorsal banks went silent.
-    # Rotating the stored Up directly is handedness-independent.
-    # See tests/unit/test_phaser_arc_handedness.py.
+    # Up: rotate the stored body up axis directly into world space.
     up_local = emitter.GetUp() if hasattr(emitter, "GetUp") else TGPoint3(0.0, 0.0, 1.0)
     world_up = TGPoint3(up_local.x, up_local.y, up_local.z)
     if ship is not None and hasattr(ship, "GetWorldRotation"):
         rot = ship.GetWorldRotation()
         if isinstance(rot, TGMatrix3):
             world_up.MultMatrixLeft(rot)
+
+    # Right = world_forward × world_up. Under the right-handed convention
+    # (post 2026-06-18 un-mirror: AlignToVectors builds forward × up, det > 0,
+    # and the renderer draws R with no reflection) this equals R·(forward×up)
+    # = R·GetCol(0) = the TRUE starboard axis the player sees. Deriving it as a
+    # cross of the rotated forward/up keeps gate and beam in one frame and is
+    # handedness-correct without reading the stored _right. Matches
+    # _strip_emit_position. See tests/unit/test_phaser_arc_handedness.py and
+    # docs/superpowers/plans/2026-06-18-render-handedness-unmirror.md.
+    world_right = TGPoint3(
+        world_dir.y * world_up.z - world_dir.z * world_up.y,
+        world_dir.z * world_up.x - world_dir.x * world_up.z,
+        world_dir.x * world_up.y - world_dir.y * world_up.x,
+    )
 
     # Project aim onto body frame.
     fwd_dot   = world_dir.x   * aim_world.x + world_dir.y   * aim_world.y + world_dir.z   * aim_world.z

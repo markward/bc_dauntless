@@ -36,14 +36,14 @@ def test_set_orientation_stores_up_axis():
     assert (u.x, u.y, u.z) == (0.0, 0.0, 1.0)
 
 
-def test_set_orientation_derives_right_as_up_cross_forward():
-    """right = up × forward (right-handed).  The arc gate recovers
-    up = direction × right, so this convention closes the basis."""
+def test_set_orientation_derives_right_as_forward_cross_up():
+    """right = forward × up — right-handed (post 2026-06-18 un-mirror), so
+    GetRight() is the true starboard axis."""
     p = PhaserProperty("DorsalPhaser1")
     p.SetOrientation(TGPoint3(-1.0, 0.0, 0.0), TGPoint3(0.0, 0.0, 1.0))
     r = p.GetRight()
-    # (0,0,1) × (-1,0,0) = (0, -1, 0)
-    assert (r.x, r.y, r.z) == (0.0, -1.0, 0.0)
+    # (-1,0,0) × (0,0,1) = (0, 1, 0)
+    assert (r.x, r.y, r.z) == (0.0, 1.0, 0.0)
 
 
 def test_get_orientation_forward_mirrors_phaserbank_api():
@@ -54,7 +54,7 @@ def test_get_orientation_forward_mirrors_phaserbank_api():
     u = p.GetOrientationUp()
     assert (u.x, u.y, u.z) == (0.0, 0.0, 1.0)
     r = p.GetOrientationRight()
-    assert (r.x, r.y, r.z) == (0.0, -1.0, 0.0)
+    assert (r.x, r.y, r.z) == (0.0, 1.0, 0.0)
 
 
 def test_set_orientation_available_on_pulse_and_tractor():

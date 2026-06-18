@@ -134,13 +134,24 @@ Current shims:
 
 Add new SDK-name shadows at the root only when needed; keep application code in `engine/`. If a third shim shows up, consider grouping them into a `shims/` directory and updating `_SDKFinder` accordingly.
 
-## Rotation matrix convention — column-vector, always
+## Rotation matrix convention — column-vector, right-handed
 
 `TGMatrix3` stores **basis vectors as columns**. For a ship's world rotation `R`:
 
-- `R.GetCol(0)` = ship-right axis in world space
+- `R.GetCol(0)` = ship-right (starboard) axis in world space
 - `R.GetCol(1)` = ship-forward axis in world space (model-Y mapped through R)
 - `R.GetCol(2)` = ship-up axis in world space (model-Z mapped through R)
+
+**Handedness (right-handed, det = +1).** `AlignToVectors` builds
+`right = forward × up`, so the basis is right-handed and `GetCol(0)` is the
+TRUE starboard axis. The renderer draws `R` **directly with no reflection**
+(`glFrontFace(GL_CCW)`). This replaced the historical left-handed convention
+(`right = up × forward`, det = -1, which the renderer reflected with an
+X-column flip — drawing every hull mirror-imaged) on **2026-06-18**; see
+`docs/superpowers/plans/2026-06-18-render-handedness-unmirror.md`. Consequences:
+cross products of rotated vectors **no longer flip sign** (det = +1), so the old
+left-handed gotchas are retired; and `_PlayerControl` negates yaw/roll rates so
+controls match the un-reflected view (pitch is unchanged).
 
 Transforming a body-frame vector to world: `v_world = R · v_body`. The
 SDK's `NiPoint3.MultMatrixLeft(R)` mutates `self` in place to that result;
@@ -168,11 +179,11 @@ coin flip.
   `engine/appc/ship_motion.py:_step_ship_motion`.
 - Body→world direction transform: `v.MultMatrixLeft(R)` — already does
   `R · v` correctly.
-- Renderer hands `R` to the GL shader **directly** (no transpose); the
-  shader's `u_model` is column-vector and `R`'s columns are body axes.
-  The X-axis flip in `_ship_world_matrix` / `_astro_world_matrix` is a
-  *separate* concern compensating for `AlignToVectors` producing a
-  left-handed (det = -1) basis; it stays.
+- Renderer hands `R` to the GL shader **directly** (no transpose, no
+  reflection); the shader's `u_model` is column-vector and `R`'s columns are
+  body axes. `_world_matrix_from` applies position + uniform scale only — there
+  is **no** X-column flip (removed with the 2026-06-18 right-handed un-mirror;
+  the NIF winding is handled by `glFrontFace(GL_CCW)` in `pipeline.cc`).
 
 ### When this convention was unified
 

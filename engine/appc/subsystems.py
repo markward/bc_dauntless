@@ -553,13 +553,15 @@ class ShipSubsystem(TGEventHandlerObject):
         world_forward.MultMatrixLeft(rot)
         world_up = TGPoint3(self._up.x, self._up.y, self._up.z)
         world_up.MultMatrixLeft(rot)
-        # Right = up × forward (matches WeaponProperty.SetOrientation
-        # derivation; the arc gate's up = direction × right reconstructs
-        # this same up vector).
+        # Right = forward × up. Under the right-handed convention (post
+        # 2026-06-18 un-mirror) this is R·(forward×up) = R·GetCol(0) = true
+        # starboard, matching the arc gate (_emitter_in_arc) so the beam
+        # emerges on the same side the gate admits. See docs/superpowers/plans/
+        # 2026-06-18-render-handedness-unmirror.md.
         world_right = TGPoint3(
-            world_up.y * world_forward.z - world_up.z * world_forward.y,
-            world_up.z * world_forward.x - world_up.x * world_forward.z,
-            world_up.x * world_forward.y - world_up.y * world_forward.x,
+            world_forward.y * world_up.z - world_forward.z * world_up.y,
+            world_forward.z * world_up.x - world_forward.x * world_up.z,
+            world_forward.x * world_up.y - world_forward.y * world_up.x,
         )
 
         # Project target offset onto the (forward, right) plane.
@@ -578,19 +580,17 @@ class ShipSubsystem(TGEventHandlerObject):
         yaw_hi = getattr(self, "_arc_width_hi",  _math.pi)
         yaw = max(yaw_lo, min(yaw_hi, yaw))
 
-        # Rodrigues: rotate world_forward around world_up by yaw.
+        # Rotate world_forward toward world_right by yaw, in their (orthonormal)
+        # plane: emit = cos(yaw)·forward + sin(yaw)·right. Because yaw was
+        # measured as atan2(right_proj, fwd_proj) against the SAME world_right,
+        # a +yaw target gives an emit on the +right (target) side — the beam
+        # faces the target. (Replaces the old up×forward Rodrigues, whose sin
+        # term pointed along -world_right under the right-handed convention.)
         c, s = _math.cos(yaw), _math.sin(yaw)
-        u_dot_f = (world_up.x * world_forward.x
-                 + world_up.y * world_forward.y
-                 + world_up.z * world_forward.z)
-        # u × f
-        ux_fx_y = world_up.y * world_forward.z - world_up.z * world_forward.y
-        ux_fx_z = world_up.z * world_forward.x - world_up.x * world_forward.z
-        ux_fx_w = world_up.x * world_forward.y - world_up.y * world_forward.x
         emit_dir = TGPoint3(
-            world_forward.x * c + ux_fx_y * s + world_up.x * u_dot_f * (1.0 - c),
-            world_forward.y * c + ux_fx_z * s + world_up.y * u_dot_f * (1.0 - c),
-            world_forward.z * c + ux_fx_w * s + world_up.z * u_dot_f * (1.0 - c),
+            world_forward.x * c + world_right.x * s,
+            world_forward.y * c + world_right.y * s,
+            world_forward.z * c + world_right.z * s,
         )
 
         return TGPoint3(

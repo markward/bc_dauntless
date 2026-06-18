@@ -63,13 +63,15 @@ Pipeline::Pipeline() {
     glDepthFunc(GL_LESS);
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
-    // NIFs come from Gamebryo/NetImmerse, which targeted Direct3D first;
-    // BC's triangle indices are wound clockwise for front-facing triangles
-    // (D3D default). With glFrontFace(GL_CCW) — OpenGL's default — every
-    // front face would be culled and only the back faces drawn, which from
-    // outside the model looks like the inside of the hull (the original
-    // "inside-out" report).
-    glFrontFace(GL_CW);
+    // NIFs come from Gamebryo/NetImmerse, which targeted Direct3D first; BC's
+    // triangle indices are wound clockwise for front-facing triangles (D3D
+    // default). Ship model matrices are now right-handed (det > 0, no
+    // reflection — see host_loop._world_matrix_from / AlignToVectors), so a
+    // CW-wound NIF presents CCW front faces in screen space. Front-facing is
+    // therefore GL_CCW. (Was GL_CW back when every model matrix was reflected
+    // to det < 0; see docs/superpowers/plans/2026-06-18-render-handedness-
+    // unmirror.md.)
+    glFrontFace(GL_CCW);
 }
 
 }  // namespace renderer
