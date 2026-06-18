@@ -692,3 +692,39 @@ def test_cancel_deferred_timer_prevents_completion():
     a._cancel_deferred_timer()
     _advance_real_time(1.0)
     assert done == []                          # cancelled before firing
+
+
+def test_script_action_truthy_return_defers_completion():
+    import sys, types
+    mod = types.ModuleType("_test_script_defer")
+    mod.deferred = lambda pAction: 1          # truthy => "I'll complete later"
+    sys.modules["_test_script_defer"] = mod
+
+    a = App.TGScriptAction_Create("_test_script_defer", "deferred")
+    a.Play()
+    assert a.IsPlaying()                       # deferred: NOT auto-completed
+    del sys.modules["_test_script_defer"]
+
+
+def test_script_action_falsy_return_auto_completes():
+    import sys, types
+    mod = types.ModuleType("_test_script_instant")
+    mod.instant = lambda pAction: 0           # falsy => auto-complete
+    sys.modules["_test_script_instant"] = mod
+
+    a = App.TGScriptAction_Create("_test_script_instant", "instant")
+    a.Play()
+    assert not a.IsPlaying()                   # completed inline
+    del sys.modules["_test_script_instant"]
+
+
+def test_script_action_none_return_auto_completes():
+    import sys, types
+    mod = types.ModuleType("_test_script_none")
+    mod.noret = lambda pAction: None
+    sys.modules["_test_script_none"] = mod
+
+    a = App.TGScriptAction_Create("_test_script_none", "noret")
+    a.Play()
+    assert not a.IsPlaying()
+    del sys.modules["_test_script_none"]

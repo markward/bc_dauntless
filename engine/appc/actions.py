@@ -147,6 +147,14 @@ class TGScriptAction(TGAction):
         self._module_name = module_name
         self._func_name = func_name
         self._args = args
+        self._deferred = False
+
+    def Play(self) -> None:
+        self._playing = True
+        self._deferred = False
+        self._do_play()
+        if not self._deferred:
+            self.Completed()
 
     def _do_play(self) -> None:
         key = (self._module_name, self._func_name)
@@ -163,7 +171,13 @@ class TGScriptAction(TGAction):
                     return
             fn = getattr(mod, self._func_name, None)
             if fn is not None:
-                fn(self, *self._args)
+                # SDK convention: a script-action function returns falsy/None
+                # ("Return: 0 - Action completed") => auto-complete; truthy
+                # (e.g. ViewscreenOn/PlayDialog return 1) => the function wired
+                # a deferred completion, so we must NOT auto-complete here.
+                ret = fn(self, *self._args)
+                if ret:
+                    self._deferred = True
         finally:
             _script_action_depth[key] -= 1
 
