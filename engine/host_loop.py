@@ -778,7 +778,7 @@ IDENTITY_MAT4 = [
 ]
 
 # Officer instance world transform — IDENTITY (bridge-set space, the same frame
-# as the bridge mesh, which _realize_bridge_model also places at identity).
+# as the bridge mesh, which realize_set also places at identity).
 #
 # Why NOT the negate-X-basis flip the replaced placement layer assumed: in this
 # renderer u_model multiplies the whole posed vertex (gl_Position =
@@ -1972,16 +1972,16 @@ class HostController:
         self.nif_to_extent: dict[str, float] = {}
         self.session: Optional[MissionSession] = None
         self.pending_swap: Optional[str] = None
-        self.bridge_instance: Optional[Any] = None  # InstanceId; set by _realize_bridge_model
-        self.viewscreen_instance: Optional[Any] = None  # InstanceId; set by _realize_viewscreen
-        self.viewscreen_obj: Optional[Any] = None  # set by _realize_viewscreen
+        self.bridge_instance: Optional[Any] = None  # InstanceId; set by realize_set
+        self.viewscreen_instance: Optional[Any] = None  # InstanceId; set by realize_set
+        self.viewscreen_obj: Optional[Any] = None  # set by realize_set
         # NIF path currently bound to bridge_instance. Set by
-        # _realize_bridge_model when the SDK-created bridge object is realized.
+        # realize_set when the SDK-created bridge object is realized.
         self.current_bridge_nif_abs: Optional[str] = None
         # InstanceIds of placed-and-posed bridge officers. Owned by the
         # controller (like bridge_instance) so it survives mission swaps;
-        # repopulated each load by _place_bridge_officers, which destroys the
-        # prior load's instances first.
+        # repopulated each load by realize_set's character loop, which
+        # destroys the prior load's instances first.
         self.officer_instances: list = []
         # InstanceIds of comm-set background geometry, keyed by set name.
         # Populated by realize_set for non-bridge sets; survives mission swaps.
@@ -2233,58 +2233,11 @@ def _update_ui_for_tick(player, view_mode, session, active_set) -> None:
     return
 
 
-def _realize_bridge_model(controller, r) -> None:
-    """Turn the SDK-created "bridge" set object into the rendered instance.
-
-    Called from _after_mission_loaded after the mission's StartMission has run
-    the real LoadBridge.Load (which calls GalaxyBridge.CreateBridgeModel ->
-    BridgeObjectClass_Create + g_kModelManager.LoadModel). Reads the bridge
-    object's NIF path + the env path LoadModel recorded, loads the mesh, and
-    creates the bridge render instance.
-
-    Idempotent: same-config reuse (object already has render_instance) is a
-    no-op; a config change / set rebuild (a fresh object with render_instance
-    None) destroys the prior instance first. Mesh selection is config-driven —
-    obj.nif is whatever the active Bridge.<name> config script set, so
-    EBridge/Sovereign work with no bridge-name branching.
-    """
-    import App as _App
-    bridge = _App.g_kSetManager.GetSet("bridge")
-    if bridge is None:
-        return
-    obj = bridge.GetObject("bridge")
-    if obj is None or not hasattr(obj, "nif"):
-        return                                     # no SDK bridge object yet
-    if obj.render_instance is not None:
-        return                                     # same-config reuse
-
-    if controller.bridge_instance is not None:
-        try:
-            r.destroy_instance(controller.bridge_instance)
-        except Exception as _e:
-            dev_mode.log_swallowed("destroy bridge instance", _e)
-        controller.bridge_instance = None
-
-    nif_abs = str(PROJECT_ROOT / "game" / obj.nif)
-    env = _App.g_kModelManager.env_for(obj.nif)
-    tex_abs = (str(PROJECT_ROOT / "game" / env) if env
-               else str(PROJECT_ROOT / "game" / DBRIDGE_TEX_REL))
-
-    handle = r.load_model(nif_abs, tex_abs)
-    iid = r.create_bridge_instance(handle)
-    r.set_world_transform(iid, IDENTITY_MAT4)
-
-    obj.render_instance = iid
-    controller.bridge_instance = iid
-    controller.nif_to_handle[nif_abs] = handle
-    controller.current_bridge_nif_abs = nif_abs
-
-
 def realize_set(controller, r, set_obj, *, is_bridge: bool) -> None:
     """Realize any SDK set's renderable content into the renderer.
 
-    Generic replacement for the bridge-specific _realize_bridge_model /
-    _realize_viewscreen / _place_bridge_officers. Honors the SDK calls that
+    Generic replacement for the retired bridge-specific realize functions
+    (geometry, viewscreen, officer placement). Honors the SDK calls that
     declared the content:
       - bridge: BridgeObjectClass carrier (set.GetObject("bridge").nif)
       - comm:   set.GetBackgroundModelNIF()  (SetBackgroundModel)
@@ -2360,16 +2313,34 @@ def realize_set(controller, r, set_obj, *, is_bridge: bool) -> None:
                              set_name, is_bridge)
 
 
+def realize_all_sets(controller, r) -> None:
+    """Realize every SDK-created set into the renderer after mission load.
+
+    The 'bridge' set is the player bridge; any other set that declared a
+    background model or characters is a comm/remote set. Replaces the old
+    bridge-specific geometry / viewscreen / officer-placement call sequence —
+    the bridge is now just one set realized through the generic realize_set
+    path.
+    """
+    import App as _App
+    mgr = _App.g_kSetManager
+    for name, s in list(mgr.iter_sets()):          # use the manager's set map
+        if name == "bridge":
+            realize_set(controller, r, s, is_bridge=True)
+        elif s.GetBackgroundModelNIF() is not None or _iter_set_characters(s):
+            realize_set(controller, r, s, is_bridge=False)
+
+
 def _iter_set_characters(set_obj):
     """Enumerate every CharacterClass in a set — the same walk the old
-    _place_bridge_officers loop used (GetClassObjectList(CharacterClass))."""
+    bridge-officer loop used (GetClassObjectList(CharacterClass))."""
     from engine.appc.characters import CharacterClass
     return set_obj.GetClassObjectList(CharacterClass)
 
 
 def _place_one_character(controller, r, character, set_name, is_bridge) -> None:
     """Pose one SDK CharacterClass at its station and create its skinned
-    instance. Body extracted verbatim from the prior _place_bridge_officers
+    instance. Body extracted verbatim from the prior bridge-officer placement
     loop; the only change is create_bridge_instance vs create_comm_instance
     and the comm_instances_by_set bookkeeping.
 
@@ -2425,60 +2396,9 @@ def _place_one_character(controller, r, character, set_name, is_bridge) -> None:
         except Exception as _e:
             dev_mode.log_swallowed("character.GetCharacterName in error path", _e)
         import traceback
-        print(f"[host_loop] WARNING: failed to place officer {name!r}",
+        print(f"[host_loop] WARNING: failed to place character {name!r}",
               flush=True)
         traceback.print_exc()
-
-
-def _realize_viewscreen(controller, r) -> None:
-    """Turn the SDK-created viewscreen object into a rendered bridge instance.
-
-    Mirrors _realize_bridge_model: reads bridge.GetViewScreen() (set by the SDK's
-    CreateBridgeModel -> ViewScreenObject_Create + SetViewScreen), resolves the
-    NIF + the env path LoadModel recorded, and creates a bridge-pass instance at
-    identity. The screen renders faithfully-as-authored (a blank panel) until
-    5c/RTT feeds u_base_color from the tactical camera.
-
-    Idempotent/leak-free (identical to _realize_bridge_model): same-config reuse
-    (object already has render_instance) is a no-op; a fresh object (set rebuild
-    via reset_sdk_globals) destroys the prior instance first. Config-driven —
-    reads vs.nif, so Sovereign/EBridge viewscreens work with no name branching.
-    """
-    import App as _App
-    bridge = _App.g_kSetManager.GetSet("bridge")
-    if bridge is None:
-        return
-    vs = bridge.GetViewScreen()
-    if vs is None or not hasattr(vs, "nif"):
-        return                                     # no SDK viewscreen yet
-    if vs.render_instance is not None:
-        return                                     # same-config reuse
-
-    if controller.viewscreen_instance is not None:
-        try:
-            r.destroy_instance(controller.viewscreen_instance)
-        except Exception as _e:
-            dev_mode.log_swallowed("destroy viewscreen instance", _e)
-        controller.viewscreen_instance = None
-
-    nif_abs = str(PROJECT_ROOT / "game" / vs.nif)
-    env = _App.g_kModelManager.env_for(vs.nif)
-    tex_abs = (str(PROJECT_ROOT / "game" / env) if env
-               else str(PROJECT_ROOT / "game" / DBRIDGE_TEX_REL))
-
-    handle = r.load_model(nif_abs, tex_abs)
-    iid = r.create_bridge_instance(handle)
-    r.set_world_transform(iid, IDENTITY_MAT4)
-
-    vs.render_instance = iid
-    controller.viewscreen_instance = iid
-    controller.nif_to_handle[nif_abs] = handle
-    # Step 5c: register the model handle so the bridge pass maps the RTT feed
-    # onto this instance, default the screen on (the SDK doesn't call SetIsOn
-    # on a fresh load), and cache the object for the per-frame on/off poll.
-    r.set_viewscreen_model(handle)
-    vs.SetIsOn(1)
-    controller.viewscreen_obj = vs
 
 
 def _viewscreen_feed_on(viewscreen_obj) -> bool:
@@ -2495,42 +2415,6 @@ def _apply_bridge_player_visibility(r, player_iid, *, is_bridge, spv_open) -> No
     if spv_open or player_iid is None:
         return
     r.set_visible(player_iid, not is_bridge)
-
-
-def _place_bridge_officers(controller, r) -> None:
-    """Render every SDK-populated bridge officer posed at its station.
-
-    Called from _after_mission_loaded after _realize_bridge_model. Enumerates
-    all CharacterClass objects in the SDK-created "bridge" set (5 standard crew
-    + 3 random extras + any mission-added guest), captures each one's placement
-    clip by running the SDK's own CommonAnimations.SetPosition (see
-    engine.appc.bridge_placement.capture_placement — no invented table), and
-    feeds the kept SP1/SP2 skinned renderer:
-      assemble_officer -> create_bridge_instance -> set_world_transform
-                       -> set_instance_animation (play placement clip once/hold).
-
-    Leak-free + idempotent (mirrors _realize_bridge_model): destroys every prior
-    officer instance before placing; per-character _render_instance tag prevents
-    double-placement within a load. reset_sdk_globals clears g_kSetManager._sets
-    each swap, so each load enumerates fresh (untagged) characters and the
-    destroy-prior step recycles the previous load's instances.
-    """
-    import App as _App
-
-    bridge = _App.g_kSetManager.GetSet("bridge")
-    if bridge is None:
-        return
-
-    # Tear down the previous load's officers first.
-    for iid in controller.officer_instances:
-        try:
-            r.destroy_instance(iid)
-        except Exception as _e:
-            dev_mode.log_swallowed("destroy officer instance (teardown)", _e)
-    controller.officer_instances = []
-
-    for off in _iter_set_characters(bridge):
-        _place_one_character(controller, r, off, "bridge", is_bridge=True)
 
 
 def _wire_target_menu_to_player_set(controller) -> None:
@@ -2712,7 +2596,7 @@ def run(mission_name: Optional[str] = None,
 
         # Bridge interior is created by the SDK path (LoadBridge.Load ->
         # Bridge.<name>.CreateBridgeModel) during the mission load below, then
-        # realized into a render instance by _realize_bridge_model in
+        # realized into a render instance by realize_all_sets in
         # _after_mission_loaded. No eager pre-game load — the SDK is the single
         # source of the bridge mesh.
 
@@ -2764,11 +2648,10 @@ def run(mission_name: Optional[str] = None,
                 _BRIDGE_ZOOM_MIN = _cam.GetMinZoom()
                 _BRIDGE_ZOOM_MAX = _cam.GetMaxZoom()
                 _BRIDGE_ZOOM_TIME = _cam.GetZoomTime()
-            # Realize the SDK-created bridge object into a render instance
-            # (replaces the deleted eager startup load).
-            _realize_bridge_model(controller, r)
-            _realize_viewscreen(controller, r)
-            _place_bridge_officers(controller, r)
+            # Realize every SDK-created set (the player bridge + any comm/
+            # remote sets) into render instances. The bridge is realized as
+            # is_bridge=True; comm sets with geometry/characters as False.
+            realize_all_sets(controller, r)
             _wire_target_menu_to_player_set(controller)
         controller.post_load_hook = _after_mission_loaded
 

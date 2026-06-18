@@ -40,7 +40,7 @@ class BridgeObjectClass:
     """The bridge model object the SDK config script creates and adds to the
     bridge set as "bridge". A pure, headless data object: it carries the NIF
     path and transform the SDK sets; the HOST reads it after LoadBridge.Load and
-    fills in `render_instance` (see host_loop._realize_bridge_model). Not a
+    fills in `render_instance` (see host_loop.realize_set). Not a
     `_LoudStub` — it is real, so it drops off the bridge-stub summary."""
     def __init__(self, nif):
         self.nif = nif
@@ -78,7 +78,7 @@ class ViewScreenObject(_LoudStub):
     AddPythonFuncHandlerForInstance, IsStaticOn, MenuDown, ...) falls through
     _LoudStub.__getattr__ as a silent no-op so missions that touch it don't
     crash. The HOST reads this object after LoadBridge.Load and fills in
-    render_instance (see host_loop._realize_viewscreen), mirroring
+    render_instance (see host_loop.realize_set), mirroring
     BridgeObjectClass. Kept a _LoudStub (unlike BridgeObjectClass) precisely
     because that menu/handler surface is large and not yet built."""
     def __init__(self, nif):

@@ -318,6 +318,14 @@ class SetManager:
     def GetNumSets(self) -> int:
         return len(self._sets)
 
+    def iter_sets(self):
+        """(name, SetClass) pairs for every registered set.
+
+        Engine-internal accessor (not on the SWIG surface) used by the host's
+        realize_all_sets to enumerate every SDK-created set after mission load.
+        """
+        return self._sets.items()
+
     def GetRenderedSet(self) -> "SetClass | None":
         if self._rendered_set_name is None:
             return None

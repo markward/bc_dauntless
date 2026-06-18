@@ -147,3 +147,24 @@ def test_realize_set_places_characters_with_pass_matching_set_kind(monkeypatch):
         comm_instances_by_set = {}
     hl.realize_set(_C(), _FakeRenderer(), s, is_bridge=False)
     assert placed == [("Liu", False)]
+
+
+def test_realize_all_sets_realizes_bridge_and_comm_sets(monkeypatch):
+    import App as _App
+    from engine.appc.sets import SetClass
+    from engine.appc.bridge_set import BridgeObjectClass
+
+    # Reset + register a bridge set and a comm set in the SetManager.
+    _App.g_kSetManager._sets.clear()
+    seen = []
+    monkeypatch.setattr(hl, "realize_set",
+                        lambda c, r, s, *, is_bridge: seen.append((s.GetName(), is_bridge)))
+    bridge = SetClass(); bridge.SetName("bridge")
+    bridge.AddObjectToSet(BridgeObjectClass("b.nif"), "bridge")
+    comm = SetClass(); comm.SetName("StarbaseSet"); comm.SetBackgroundModel("c.nif")
+    _App.g_kSetManager.AddSet(bridge, "bridge")
+    _App.g_kSetManager.AddSet(comm, "StarbaseSet")
+
+    hl.realize_all_sets(object(), object())
+    assert ("bridge", True) in seen
+    assert ("StarbaseSet", False) in seen
