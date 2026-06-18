@@ -70,3 +70,30 @@ def test_sweep_converges_toward_ideal():
     for _ in range(600):
         eye, _, _ = m.Update(0.016)
     assert abs(eye[0] - 100.0) < 1.0
+
+
+def test_dt_zero_does_not_snap_mid_sweep():
+    """Regression test for Fix 1: dt=0.0 must NOT snap; only dt=None snaps.
+
+    A cutscene camera mid-sweep should freeze (not jump to ideal) when dt=0
+    (e.g., sim paused). The buggy condition `not dt` treats 0.0 as falsy and
+    incorrectly snaps to the ideal; it should test `dt is None` explicitly.
+    """
+    t = _FakeTarget((100.0, 0.0, 0.0))
+    m = LockedMode()
+    m.SetAttrIDObject("Target", t)
+    m.SetAttrPoint("Position", TGPoint3(0.0, 0.0, 0.0))
+    m.SetAttrPoint("Forward", TGPoint3(0.0, 1.0, 0.0))
+    m.SetAttrPoint("Up", TGPoint3(0.0, 0.0, 1.0))
+
+    # Seed into mid-sweep: eye starts at origin, target ideal at (100, 0, 0)
+    m.set_initial_pose((0.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+
+    # One small dt step glides partway: eye1[0] should be ~25
+    eye1, _, _ = m.Update(0.016)
+    assert 0.0 < eye1[0] < 100.0
+
+    # Now call Update(0.0) (sim paused). Should NOT snap to ideal.
+    # The returned eye should be IDENTICAL to eye1 (frozen at mid-sweep point).
+    eye2, _, _ = m.Update(0.0)
+    assert eye2 == eye1, f"dt=0.0 must freeze the sweep; got {eye2} != {eye1}"

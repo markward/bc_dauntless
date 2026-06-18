@@ -75,7 +75,7 @@ class CameraMode:
         if ideal is None:
             return self._cur if self._cur is not None else (
                 (0.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
-        if self._cur is None or self._snap or not dt:
+        if self._cur is None or self._snap or dt is None:
             self._cur = ideal
             self._snap = False
             return self._cur
@@ -98,7 +98,7 @@ def _target_alive(obj):
     try:
         return not (callable(is_dying) and is_dying())
     except Exception:
-        return True
+        return False
 
 
 class LockedMode(CameraMode):
