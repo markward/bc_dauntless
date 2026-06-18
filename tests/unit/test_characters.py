@@ -419,11 +419,11 @@ def test_speakline_without_string_shows_no_subtitle():
     assert sub._snapshot(now=0.0) is None  # nothing displayed
 
 
-def test_sayline_4arg_sdk_form_sets_no_subtitle_and_does_not_raise():
+def test_sayline_4arg_sdk_form_routes_subtitle_and_does_not_raise():
     # Real SDK call shape: SayLine(db, lineID, addressee, priority) — e.g.
     # g_pMiguel.SayLine(pMissionDatabase, "E7M1EnterpriseDestroyed", "Captain", 1).
     # The "Captain" addressee must NOT be coerced into the priority slot
-    # (int("Captain") would raise). Voice-only: no subtitle.
+    # (int("Captain") would raise). SayLine routes a subtitle like SpeakLine.
     import App
     from engine.appc import top_window, crew_speech
     from engine.appc.characters import CharacterClass
@@ -439,10 +439,12 @@ def test_sayline_4arg_sdk_form_sets_no_subtitle_and_does_not_raise():
     char.SayLine(db, "ack", "Captain", 1)  # must not raise
 
     sub = App.TopWindow_GetTopWindow().FindMainWindow(App.MWT_SUBTITLE)
-    assert sub._snapshot(now=0.0) is None
+    snap = sub._snapshot(now=0.0)
+    assert snap is not None
+    assert snap["speech"] == "Aye sir"
 
 
-def test_sayline_2arg_form_sets_no_subtitle():
+def test_sayline_2arg_form_routes_subtitle():
     import App
     from engine.appc import top_window, crew_speech
     from engine.appc.characters import CharacterClass
@@ -455,10 +457,12 @@ def test_sayline_2arg_form_sets_no_subtitle():
     char.SetCharacterName("XO")
     db = TGLocalizationDatabase("x.tgl", strings={"ack": "Aye sir"})
 
-    char.SayLine(db, "ack")  # voice-only -- must NOT set a subtitle slot
+    char.SayLine(db, "ack")  # SayLine now routes a subtitle like SpeakLine
 
     sub = App.TopWindow_GetTopWindow().FindMainWindow(App.MWT_SUBTITLE)
-    assert sub._snapshot(now=0.0) is None
+    snap = sub._snapshot(now=0.0)
+    assert snap is not None
+    assert snap["speech"] == "Aye sir"
 
 
 def test_sayline_5arg_form_extracts_explicit_priority():
