@@ -165,12 +165,20 @@ class NiCameraData:
         self.source = source
 
 
-class CameraObjectClass:
+class CameraObjectClass(_LoudStub):
     """A set camera. Built either from an embedded NiCamera
     (CameraObjectClass_CreateFromNiCamera) or from explicit coordinates
     (CameraObjectClass_Create). Real, stateful data: the viewscreen's
     SetRemoteCam consumes it. The host renders a comm set through this camera
-    when the bridge viewscreen is showing it."""
+    when the bridge viewscreen is showing it.
+
+    The unbuilt camera-mode/control surface (GetNamedCameraMode, PushCameraMode,
+    LookForward, AddModeHierarchy, etc.) degrades to no-ops via _LoudStub.__getattr__
+    — exactly like ZoomCameraObjectClass. This prevents AttributeError from
+    aborting the SDK's SendActivationEvent → ViewscreenOn chain before
+    SetRemoteCam fires. Real explicit methods (GetNiFrustum, SetTranslate,
+    AlignToVectors, GetWorldLocation, GetWorldRotation, ...) take precedence
+    over the fallthrough."""
     def __init__(self, name, position, orientation, frustum, near, far):
         self._name = name
         self.position = tuple(position)
@@ -235,6 +243,22 @@ class CameraObjectClass:
         host. Faithful to the SDK call (it only forces a node-transform update;
         no return value)."""
         return None
+
+    # ── World-transform getters ──────────────────────────────────────────────
+    # CutsceneCameraBegin (CameraScriptActions.py:158) calls
+    # GetWorldLocation + GetWorldRotation to seed the cutscene camera start
+    # pose. Return the real placement data we already hold; more faithful than
+    # the _LoudStub None fallthrough and lets the cutscene path read the actual
+    # camera origin (important for comm-feed camera continuity).
+
+    def GetWorldLocation(self):
+        """Return camera position as a TGPoint3 (game units)."""
+        x, y, z = self.position
+        return TGPoint3(x, y, z)
+
+    def GetWorldRotation(self):
+        """Return the stored orientation TGMatrix3 (column-vector)."""
+        return self.orientation
 
 
 def CameraObjectClass_CreateFromNiCamera(niCamera, name):

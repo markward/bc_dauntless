@@ -137,3 +137,33 @@ def test_camera_object_survives_activation_calls():
     assert abs(fwd.y - 1.0) < 1e-9
     assert abs(up.z - 1.0) < 1e-9
     assert cam.UpdateNodeOnly() is None          # no-op, no scene-graph node
+
+
+def test_camera_object_camera_mode_surface_no_ops():
+    # GetNamedCameraMode / PushCameraMode are called by the SDK activation chain
+    # (ViewscreenOn). Without _LoudStub fallthrough, CameraObjectClass raises
+    # AttributeError, which characters.SendActivationEvent swallows — aborting
+    # the chain before SetRemoteCam fires and the comm feed never engages.
+    from engine.appc.bridge_set import CameraObjectClass, _NiFrustum
+    from engine.appc.math import TGMatrix3
+    cam = CameraObjectClass("maincamera", (0.0, 0.0, 0.0), TGMatrix3(),
+                            _NiFrustum(), 1.0, 800.0)
+    # These must return None (falsey), not raise — SDK guards with `if pMode:`
+    assert cam.GetNamedCameraMode("ViewscreenZoomTarget") is None
+    assert cam.PushCameraMode(None) is None
+    # truthy + isinstance checks must still hold
+    assert bool(cam)
+    assert isinstance(cam, CameraObjectClass)
+
+
+def test_camera_object_world_transform_getters():
+    # CutsceneCameraBegin (CameraScriptActions.py:158) calls GetWorldLocation /
+    # GetWorldRotation. These should return the real stored placement data.
+    from engine.appc.bridge_set import CameraObjectClass, _NiFrustum, CameraObjectClass_Create
+    from engine.appc.math import TGMatrix3, TGPoint3
+    cam = CameraObjectClass_Create(1.0, 2.0, 3.0, 0, 0, 0, 1, "maincamera")
+    loc = cam.GetWorldLocation()
+    assert hasattr(loc, "x") and hasattr(loc, "y") and hasattr(loc, "z")
+    assert (loc.x, loc.y, loc.z) == (1.0, 2.0, 3.0)
+    rot = cam.GetWorldRotation()
+    assert rot is cam.orientation
