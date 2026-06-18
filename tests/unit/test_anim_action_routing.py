@@ -46,3 +46,16 @@ def test_character_gesture_action_completes_instantly():
     action = TGAnimAction_Create(node, "twitch", 0, 0)
     action.Play()
     assert action.IsPlaying() is False           # completed (no controller)
+
+
+def test_node_stub_with_controller_present_still_instant_completes():
+    # Character gesture actions are built from CharacterClass.GetAnimNode(),
+    # which returns a _NodeStub (no real `kind`). Even with a controller
+    # registered (live cutscene), they MUST instant-complete and NOT route.
+    from engine.appc.objects import _NodeStub
+    ctrl = _RecordingController()
+    bc.set_controller(ctrl)
+    action = TGAnimAction_Create(_NodeStub(), "twitch", 0, 0)
+    action.Play()
+    assert action.IsPlaying() is False          # completed, not deferred
+    assert ctrl.camera == [] and ctrl.door == []  # controller saw nothing

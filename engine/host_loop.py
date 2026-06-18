@@ -2584,6 +2584,17 @@ def run(mission_name: Optional[str] = None,
         controller.renderer = r
         controller.loader = _MissionLoader(controller, verbose=verbose)
 
+        # Register the bridge cutscene controller BEFORE the initial mission
+        # load so that TGAnimActions created during Initialize()/Briefing()
+        # find a live controller and defer correctly (not instant-complete).
+        # The controller stays registered for the lifetime of run(); mission
+        # swaps reuse it without re-registering.
+        from engine.bridge_cutscene import (
+            BridgeCutsceneController, set_controller,
+        )
+        cutscene = BridgeCutsceneController()
+        set_controller(cutscene)
+
         # Bridge interior is created by the SDK path (LoadBridge.Load ->
         # Bridge.<name>.CreateBridgeModel) during the mission load below, then
         # realized into a render instance by _realize_bridge_model in
@@ -2647,11 +2658,6 @@ def run(mission_name: Optional[str] = None,
         controller.post_load_hook = _after_mission_loaded
 
         bridge_camera  = _BridgeCamera()
-        from engine.bridge_cutscene import (
-            BridgeCutsceneController, set_controller,
-        )
-        cutscene = BridgeCutsceneController()
-        set_controller(cutscene)
 
         _after_mission_loaded()
         from engine.appc.comm_render_flag import CommRenderFlag
