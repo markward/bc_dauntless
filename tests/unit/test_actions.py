@@ -763,3 +763,34 @@ def test_sound_action_zero_duration_completes_inline(monkeypatch):
     a = App.TGSoundAction_Create("AnySfx")
     a.Play()
     assert not a.IsPlaying()                    # inline (synchronous preserved)
+
+
+# ── CharacterAction speak-type deferral ──────────────────────────────────────
+
+def test_character_speak_action_defers_by_duration(monkeypatch):
+    import engine.appc.crew_speech as crew_speech
+    monkeypatch.setattr(crew_speech, "emit",
+                        lambda *a, **k: 0.5, raising=True)
+    from engine.appc.ai import CharacterAction
+    a = CharacterAction(None, CharacterAction.AT_SAY_LINE, "AnyLine")
+    a.Play()
+    assert a.IsPlaying()                       # gated on 0.5s line duration
+    _advance_real_time(0.6)
+    assert not a.IsPlaying()
+
+
+def test_character_speak_zero_duration_inline(monkeypatch):
+    import engine.appc.crew_speech as crew_speech
+    monkeypatch.setattr(crew_speech, "emit",
+                        lambda *a, **k: 0.0, raising=True)
+    from engine.appc.ai import CharacterAction
+    a = CharacterAction(None, CharacterAction.AT_SAY_LINE, "AnyLine")
+    a.Play()
+    assert not a.IsPlaying()                    # inline
+
+
+def test_character_nonspeak_action_completes_inline():
+    from engine.appc.ai import CharacterAction
+    a = CharacterAction(None, CharacterAction.AT_TURN, None)
+    a.Play()
+    assert not a.IsPlaying()                    # non-speak: unchanged, inline
