@@ -213,14 +213,12 @@ void BridgePass::render(const scenegraph::World& world,
     // same bridge ambient as the geometry (bridge.frag, white dark-map). The
     // per-instance bone palette (SP2) poses the body.
     //
-    // Culling stays DISABLED (as for the bridge shell). A bridge officer's
-    // instance world carries BC's left-handed X-flip (det<0), and its bone
-    // palette (world_pose · inverse_bind) is built from BC's left-handed bind
-    // basis (also det<0). The two reflections compose to det>0, so the posed
-    // triangles wind opposite to a plain X-flipped rigid ship — cull-back would
-    // discard the FRONT faces and render the officer inside-out (shredded).
-    // Characters are small; double-siding them is cheaper than tracking the
-    // net winding through the skin matrix.
+    // Culling stays DISABLED (as for the bridge shell). The officer skin
+    // matrix (world_pose · inverse_bind) and the instance world compose to a
+    // winding that isn't worth tracking per-frame, and characters are small —
+    // double-siding is cheaper. This stayed correct across the 2026-06-18
+    // right-handed un-mirror precisely because culling is off (the pass is
+    // winding-insensitive); the instance world is no longer reflected.
     glDisable(GL_CULL_FACE);
     auto& skin_shader = pipeline.skinned_bridge_shader();
     skin_shader.use();
