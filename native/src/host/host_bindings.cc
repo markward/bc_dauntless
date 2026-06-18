@@ -781,7 +781,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](scenegraph::InstanceId id, unsigned int set_id) {
               g_world.set_comm_set_id(id, set_id);
           },
-          py::arg("id"), py::arg("set_id"));
+          py::arg("iid"), py::arg("set_id"));
 
     // Developer-only (SP1): load a skinned character NIF and spawn one instance
     // framed in front of the active camera, tagged for the active pass (bridge

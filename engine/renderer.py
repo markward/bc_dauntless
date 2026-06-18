@@ -289,7 +289,7 @@ def create_bridge_instance(model: int) -> InstanceId:
     return _h.create_bridge_instance(model)
 
 
-def create_comm_instance(model: int) -> "InstanceId":
+def create_comm_instance(model: int) -> InstanceId:
     """Like create_instance but tags the new instance for the comm pass."""
     return _h.create_comm_instance(model)
 
