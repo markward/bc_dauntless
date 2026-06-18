@@ -42,4 +42,4 @@ def test_reset_sdk_globals_clean_after_ack():
     panel = CrewMenuPanel()
     panel.toggle_menu(tcw.FindMenu("Tactical"))   # acks
     reset_sdk_globals()
-    assert crew_speech.bus().speak("Eng", "x", None, App.CSP_SPONTANEOUS) is True
+    assert crew_speech.bus().speak("Eng", "x", None, App.CSP_SPONTANEOUS) > 0.0

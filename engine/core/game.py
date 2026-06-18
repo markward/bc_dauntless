@@ -21,6 +21,33 @@ class Mission(TGEventHandlerObject):
         self._neutral_group = None
         self._tractor_group = None
         self._script: str = ""
+        self._database = None
+
+    def SetDatabase(self, db):
+        """Load (or store) this mission's localization database and return it.
+
+        SDK pattern (E1M1.py:260): ``g_pMissionDatabase =
+        pMission.SetDatabase("data/TGL/Maelstrom/Episode 1/E1M1.tgl")`` — the
+        binding loads the TGL and returns the database, which mission scripts
+        keep for line lookups and which ``MissionLib.GetMissionDatabase()``
+        re-fetches via ``GetDatabase()``. A string is loaded through
+        ``g_kLocalizationManager`` (so mission VO text + voice wavs resolve);
+        a pre-built database object is stored as-is. Mirrors
+        ``CharacterClass.SetDatabase``. Without this the mission database is an
+        unresolved stub, so every mission VO line collapses to zero duration.
+        """
+        if isinstance(db, str):
+            try:
+                import App
+                self._database = App.g_kLocalizationManager.Load(db)
+            except Exception:
+                self._database = None
+        else:
+            self._database = db
+        return self._database
+
+    def GetDatabase(self):
+        return self._database
 
     def GetScript(self) -> str:
         """Return the mission's script module name (e.g. 'Maelstrom.M1Basic').

@@ -30,6 +30,7 @@ public:
     SoundId get_sound(const std::string& name) const;
     bool is_loaded(SoundId) const;
     bool is_positional(SoundId) const;
+    double get_duration(const std::string& name) const;
 
     PlayingId play_sound(const std::string& name, bool looping, float gain,
                          Category, NodeId attach_node,
@@ -58,6 +59,7 @@ private:
     struct Sound {
         BufferHandle buf;
         bool positional;
+        double duration_sec = 0.0;
     };
     struct Source {
         SourceHandle backend;

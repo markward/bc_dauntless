@@ -26,6 +26,32 @@ def test_mission_is_event_handler():
     assert isinstance(mission, TGEventHandlerObject)
 
 
+def test_mission_set_database_loads_tgl_and_returns_it():
+    # SDK: g_pMissionDatabase = pMission.SetDatabase("data/TGL/.../E1M1.tgl").
+    # The returned DB must resolve the mission's lines (text + voice wav), and
+    # GetDatabase() must return the same object so MissionLib.GetMissionDatabase
+    # works. Without this, mission VO lines collapse to zero duration.
+    mission = Mission()
+    db = mission.SetDatabase("data/TGL/Maelstrom/Episode 1/E1M1.tgl")
+    assert db is not None
+    assert mission.GetDatabase() is db
+    assert db.HasString("E1M1Briefing1")
+    assert "Admiral Liu" in db.GetString("E1M1Briefing1")
+    assert db.GetFilename("E1M1Briefing1").endswith("E1M1Briefing1.mp3")
+
+
+def test_mission_set_database_accepts_db_object():
+    # Non-string arg (an already-loaded DB) is stored as-is and returned.
+    mission = Mission()
+    sentinel = object()
+    assert mission.SetDatabase(sentinel) is sentinel
+    assert mission.GetDatabase() is sentinel
+
+
+def test_mission_get_database_default_none():
+    assert Mission().GetDatabase() is None
+
+
 def test_game_get_player_initially_none():
     from engine.core.game import Game
     g = Game()

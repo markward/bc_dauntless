@@ -139,6 +139,14 @@ class TGSound:
     def DetachFromNode(self, *_a): pass
     def SetPosition(self, *_a): pass
     def SetOrientation(self, *_a): pass
+    def GetDuration(self) -> float:
+        if _audio is None:
+            return 0.0
+        try:
+            return float(_audio.get_duration(self._name))
+        except Exception:
+            return 0.0
+
     def GetSoundName(self): return self._name
     def GetFileName(self): return self._name
     def Is3D(self): return 1 if self._positional else 0
@@ -173,6 +181,19 @@ class TGSoundManager:
         snd = TGSound(name, positional)
         self._sounds[name] = snd
         return snd
+
+    def duration_for(self, name: str) -> float:
+        """Real decoded length (seconds) of a loaded sound, else 0.0.
+
+        0.0 covers: no audio backend (tests), sound not loaded, or a
+        zero-length/undecodable buffer. Callers treat 0.0 as 'complete inline'.
+        """
+        if _audio is None:
+            return 0.0
+        try:
+            return float(_audio.get_duration(name))
+        except Exception:
+            return 0.0
 
     def GetSound(self, name: str) -> Optional[TGSound]:
         return self._sounds.get(name)

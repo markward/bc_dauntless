@@ -58,8 +58,8 @@ def test_reset_sdk_globals_clears_speech_channel():
     reset_sdk_globals()
 
     # Channel is free: a brand-new low-priority line is accepted immediately
-    # (would return False if reset_sdk_globals had not cleared the bus lock).
-    assert crew_speech.bus().speak("Eng", "hi", None, CSP_SPONTANEOUS) is True
+    # (would return 0.0 if reset_sdk_globals had not cleared the bus lock).
+    assert crew_speech.bus().speak("Eng", "hi", None, CSP_SPONTANEOUS) > 0.0
     # ...and it routes into the freshly rebuilt subtitle window.
     snap = _subtitle()._snapshot(now=0.0)
     assert snap["speaker"] == "Eng"

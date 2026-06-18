@@ -647,3 +647,150 @@ def test_credit_action_completes_inline_so_chain_advances():
 
     assert log == ["after"]
     del sys.modules["_test_credit_chain"]
+
+
+# ── TGAction._complete_after deferred completion ────────────────────────────
+
+def _advance_real_time(seconds, step=1.0 / 60.0):
+    """Advance g_kRealtimeTimerManager in 60 Hz ticks for `seconds`."""
+    n = int(round(seconds / step))
+    for _ in range(n):
+        App.g_kRealtimeTimerManager.tick(step)
+
+
+def test_complete_after_zero_completes_inline():
+    a = TGAction()
+    done = []
+    a.Completed = lambda: done.append(True)  # type: ignore
+    a._playing = True
+    a._complete_after(0.0)
+    assert done == [True]                      # inline, no timer
+
+
+def test_complete_after_duration_defers_until_timer():
+    a = TGAction()
+    done = []
+    real_completed = a.Completed
+    a.Completed = lambda: (done.append(True), real_completed())  # type: ignore
+    a._playing = True
+    a._complete_after(0.5)
+    assert done == []                          # not yet
+    _advance_real_time(0.25)
+    assert done == []                          # still waiting at t=0.25
+    _advance_real_time(0.4)                    # past 0.5s total
+    assert done == [True]                      # completed exactly once
+    _advance_real_time(1.0)
+    assert done == [True]                      # one-shot: no re-fire
+
+
+def test_cancel_deferred_timer_prevents_completion():
+    a = TGAction()
+    done = []
+    a.Completed = lambda: done.append(True)    # type: ignore
+    a._playing = True
+    a._complete_after(0.5)
+    a._cancel_deferred_timer()
+    _advance_real_time(1.0)
+    assert done == []                          # cancelled before firing
+
+
+def test_script_action_truthy_return_defers_completion():
+    import sys, types
+    mod = types.ModuleType("_test_script_defer")
+    mod.deferred = lambda pAction: 1          # truthy => "I'll complete later"
+    sys.modules["_test_script_defer"] = mod
+
+    a = App.TGScriptAction_Create("_test_script_defer", "deferred")
+    a.Play()
+    assert a.IsPlaying()                       # deferred: NOT auto-completed
+    del sys.modules["_test_script_defer"]
+
+
+def test_script_action_falsy_return_auto_completes():
+    import sys, types
+    mod = types.ModuleType("_test_script_instant")
+    mod.instant = lambda pAction: 0           # falsy => auto-complete
+    sys.modules["_test_script_instant"] = mod
+
+    a = App.TGScriptAction_Create("_test_script_instant", "instant")
+    a.Play()
+    assert not a.IsPlaying()                   # completed inline
+    del sys.modules["_test_script_instant"]
+
+
+def test_script_action_none_return_auto_completes():
+    import sys, types
+    mod = types.ModuleType("_test_script_none")
+    mod.noret = lambda pAction: None
+    sys.modules["_test_script_none"] = mod
+
+    a = App.TGScriptAction_Create("_test_script_none", "noret")
+    a.Play()
+    assert not a.IsPlaying()
+    del sys.modules["_test_script_none"]
+
+
+def test_action_manager_completes_objptr_on_action_completed():
+    owner = TGAction()
+    done = []
+    owner.Completed = lambda: done.append(True)   # type: ignore
+
+    ev = App.TGObjPtrEvent_Create()
+    ev.SetEventType(App.ET_ACTION_COMPLETED)
+    ev.SetObjPtr(owner)
+    App.g_kTGActionManager.ProcessEvent(ev)
+
+    assert done == [True]
+
+
+# ── TGSoundAction deferred completion ────────────────────────────────────────
+
+def test_sound_action_defers_by_real_duration(monkeypatch):
+    from engine.audio.tg_sound import TGSoundManager
+    monkeypatch.setattr(TGSoundManager, "duration_for",
+                        lambda self, name: 0.5, raising=True)
+    a = App.TGSoundAction_Create("AnySfx")
+    a.Play()
+    assert a.IsPlaying()                       # gated on the 0.5s duration
+    _advance_real_time(0.6)
+    assert not a.IsPlaying()                    # completed after duration
+
+
+def test_sound_action_zero_duration_completes_inline(monkeypatch):
+    from engine.audio.tg_sound import TGSoundManager
+    monkeypatch.setattr(TGSoundManager, "duration_for",
+                        lambda self, name: 0.0, raising=True)
+    a = App.TGSoundAction_Create("AnySfx")
+    a.Play()
+    assert not a.IsPlaying()                    # inline (synchronous preserved)
+
+
+# ── CharacterAction speak-type deferral ──────────────────────────────────────
+
+def test_character_speak_action_defers_by_duration(monkeypatch):
+    import engine.appc.crew_speech as crew_speech
+    monkeypatch.setattr(crew_speech, "emit",
+                        lambda *a, **k: 0.5, raising=True)
+    from engine.appc.ai import CharacterAction
+    a = CharacterAction(None, CharacterAction.AT_SAY_LINE, "AnyLine")
+    a.Play()
+    assert a.IsPlaying()                       # gated on 0.5s line duration
+    _advance_real_time(0.6)
+    assert not a.IsPlaying()
+
+
+def test_character_speak_zero_duration_inline(monkeypatch):
+    import engine.appc.crew_speech as crew_speech
+    monkeypatch.setattr(crew_speech, "emit",
+                        lambda *a, **k: 0.0, raising=True)
+    from engine.appc.ai import CharacterAction
+    a = CharacterAction(None, CharacterAction.AT_SAY_LINE, "AnyLine")
+    a.Play()
+    assert not a.IsPlaying()                    # inline
+
+
+def test_character_nonspeak_action_completes_inline():
+    from engine.appc.ai import CharacterAction
+    a = CharacterAction(None, CharacterAction.AT_TURN, None)
+    a.Play()
+    assert not a.IsPlaying()                    # non-speak: unchanged, inline
