@@ -2354,6 +2354,81 @@ def realize_set(controller, r, set_obj, *, is_bridge: bool) -> None:
             vs.SetIsOn(1)
             controller.viewscreen_obj = vs
 
+    # ── Characters ─────────────────────────────────────────────────────────
+    for character in _iter_set_characters(set_obj):     # same enumeration the
+        _place_one_character(controller, r, character,  # old officer loop used
+                             set_name, is_bridge)
+
+
+def _iter_set_characters(set_obj):
+    """Enumerate every CharacterClass in a set — the same walk the old
+    _place_bridge_officers loop used (GetClassObjectList(CharacterClass))."""
+    from engine.appc.characters import CharacterClass
+    return set_obj.GetClassObjectList(CharacterClass)
+
+
+def _place_one_character(controller, r, character, set_name, is_bridge) -> None:
+    """Pose one SDK CharacterClass at its station and create its skinned
+    instance. Body extracted verbatim from the prior _place_bridge_officers
+    loop; the only change is create_bridge_instance vs create_comm_instance
+    and the comm_instances_by_set bookkeeping.
+
+    Leak-free + idempotent: per-character _render_instance tag prevents
+    double-placement within a load (a fresh set rebuild enumerates fresh,
+    untagged characters).
+    """
+    from engine.appc.bridge_placement import capture_placement
+
+    if getattr(character, "_render_instance", None) is not None:
+        return                                       # already placed this load
+
+    def _abs(p):
+        return str(PROJECT_ROOT / "game" / p) if p else None
+
+    create = r.create_bridge_instance if is_bridge else r.create_comm_instance
+
+    try:
+        placement = capture_placement(character)
+        if not placement or placement["hidden"]:
+            return
+        ap = character.appearance()
+        if not ap.get("body_nif"):
+            return
+
+        model = r.assemble_officer(
+            _abs(ap.get("body_nif")), _abs(ap.get("head_nif")),
+            _abs(ap.get("body_tex")), _abs(ap.get("head_tex")),
+            _abs(placement["clip_nif"]),
+            placement["sample_at_start"],
+        )
+        iid = create(model)
+        try:
+            r.set_world_transform(iid, OFFICER_TRANSFORM)
+            r.set_instance_animation(
+                iid, 0, False, placement["sample_at_start"])
+        except Exception:
+            try:
+                r.destroy_instance(iid)
+            except Exception as _e:
+                dev_mode.log_swallowed(
+                    "destroy officer instance (rollback)", _e)
+            raise
+        character._render_instance = iid
+        if is_bridge:
+            controller.officer_instances.append(iid)
+        else:
+            controller.comm_instances_by_set.setdefault(set_name, []).append(iid)
+    except Exception:
+        name = ""
+        try:
+            name = character.GetCharacterName()
+        except Exception as _e:
+            dev_mode.log_swallowed("character.GetCharacterName in error path", _e)
+        import traceback
+        print(f"[host_loop] WARNING: failed to place officer {name!r}",
+              flush=True)
+        traceback.print_exc()
+
 
 def _realize_viewscreen(controller, r) -> None:
     """Turn the SDK-created viewscreen object into a rendered bridge instance.
@@ -2441,8 +2516,6 @@ def _place_bridge_officers(controller, r) -> None:
     destroy-prior step recycles the previous load's instances.
     """
     import App as _App
-    from engine.appc.characters import CharacterClass
-    from engine.appc.bridge_placement import capture_placement
 
     bridge = _App.g_kSetManager.GetSet("bridge")
     if bridge is None:
@@ -2456,51 +2529,8 @@ def _place_bridge_officers(controller, r) -> None:
             dev_mode.log_swallowed("destroy officer instance (teardown)", _e)
     controller.officer_instances = []
 
-    def _abs(p):
-        return str(PROJECT_ROOT / "game" / p) if p else None
-
-    for off in bridge.GetClassObjectList(CharacterClass):
-        if getattr(off, "_render_instance", None) is not None:
-            continue                                   # already placed this load
-        try:
-            placement = capture_placement(off)
-            if not placement or placement["hidden"]:
-                continue
-            ap = off.appearance()
-            if not ap.get("body_nif"):
-                continue
-
-            model = r.assemble_officer(
-                _abs(ap.get("body_nif")), _abs(ap.get("head_nif")),
-                _abs(ap.get("body_tex")), _abs(ap.get("head_tex")),
-                _abs(placement["clip_nif"]),
-                placement["sample_at_start"],
-            )
-            iid = r.create_bridge_instance(model)
-            try:
-                r.set_world_transform(iid, OFFICER_TRANSFORM)
-                r.set_instance_animation(
-                    iid, 0, False, placement["sample_at_start"])
-            except Exception:
-                try:
-                    r.destroy_instance(iid)
-                except Exception as _e:
-                    dev_mode.log_swallowed(
-                        "destroy officer instance (rollback)", _e)
-                raise
-            off._render_instance = iid
-            controller.officer_instances.append(iid)
-        except Exception:
-            name = ""
-            try:
-                name = off.GetCharacterName()
-            except Exception as _e:
-                dev_mode.log_swallowed("off.GetCharacterName in error path", _e)
-            import traceback
-            print(f"[host_loop] WARNING: failed to place officer {name!r}",
-                  flush=True)
-            traceback.print_exc()
-            continue
+    for off in _iter_set_characters(bridge):
+        _place_one_character(controller, r, off, "bridge", is_bridge=True)
 
 
 def _wire_target_menu_to_player_set(controller) -> None:

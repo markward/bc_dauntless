@@ -120,3 +120,30 @@ def test_realize_set_viewscreen_is_idempotent():
 
     assert vs.render_instance is first_instance
     assert sum(1 for kind, _, _ in r.created if kind == "bridge") == bridge_created_count
+
+
+def test_realize_set_places_characters_with_pass_matching_set_kind(monkeypatch):
+    # A comm set with one character must place it via create_comm_instance and
+    # track it under the set name.
+    from engine.appc.sets import SetClass
+    from engine.appc.characters import CharacterClass
+
+    s = SetClass(); s.SetName("StarbaseSet")
+    s.SetBackgroundModel("data/Models/Sets/StarbaseControl/starbasecontrolRM.nif")
+    liu = CharacterClass("body.nif", "head.nif"); liu.SetCharacterName("Liu")
+    s.AddObjectToSet(liu, "Liu")
+
+    placed = []
+    # Stub the heavy skinned-assembly path: realize_set must call a single
+    # helper per character; assert it receives create_comm_instance for comm.
+    monkeypatch.setattr(hl, "_place_one_character",
+                        lambda c, r, ch, set_name, is_bridge: placed.append((ch.GetCharacterName(), is_bridge)))
+
+    class _C:
+        bridge_instance = None
+        viewscreen_instance = None
+        viewscreen_obj = None
+        nif_to_handle = {}
+        comm_instances_by_set = {}
+    hl.realize_set(_C(), _FakeRenderer(), s, is_bridge=False)
+    assert placed == [("Liu", False)]
