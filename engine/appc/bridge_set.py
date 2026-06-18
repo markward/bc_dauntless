@@ -213,6 +213,21 @@ def CameraObjectClass_Create(x, y, z, a, ax, ay, az, name):
                              _NiFrustum(), 1.0, 800.0)
 
 
+def CameraObjectClass_Cast(obj):
+    """Downcast to a camera, mirroring BridgeSet_Cast / the SDK's *_Cast.
+
+    Bridge.Characters.CommonAnimations.WalkCameraToCaptOnD/OnE do
+    ``pCamera = App.CameraObjectClass_Cast(pCharacter)`` then build the
+    camera-move TGAnimAction on ``pCamera.GetAnimNode()``. The ZoomCamera the
+    SDK passes in IS a camera (ZoomCameraObjectClass derives from
+    CameraObjectClass in the original engine), so return it; anything else is
+    not a camera. Without this, App's module __getattr__ hands back a
+    _NamedStub, the anim node loses kind="camera", and the walk-on never routes
+    to the cutscene controller (it instant-completes). Control-flow-correct: a
+    non-camera returns None so ``if pCamera:`` guards behave."""
+    return obj if isinstance(obj, (CameraObjectClass, ZoomCameraObjectClass)) else None
+
+
 class ModelManager:
     """Real (no longer a loud stub): our renderer loads NIFs lazily at instance
     creation, host-side. LoadModel's faithful equivalent is to remember the
