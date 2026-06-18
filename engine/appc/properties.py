@@ -362,24 +362,23 @@ class WeaponProperty(SubsystemProperty):
         """Set the body-frame orientation from a (forward, up) pair.
 
         SDK signature: ``PhaserProperty.SetOrientation(forward, up)``
-        (App.py:9320). The C++ side derives Right = Up × Forward so
-        ``world_up = direction × right`` recovers the up vector cleanly
-        inside the arc gate. Without this typed setter the call falls
-        through TGModelProperty's data-bag and every bank stays at the
-        default (firing +Y) — i.e. every phaser arc is centred on the
-        ship's nose. See research doc Bug B.
+        (App.py:9320). Right = Forward × Up gives a right-handed body basis, so
+        ``GetRight()`` is the true starboard axis (post 2026-06-18 un-mirror).
+        Without this typed setter the call falls through TGModelProperty's
+        data-bag and every bank stays at the default (firing +Y) — i.e. every
+        phaser arc is centred on the ship's nose. See research doc Bug B and
+        docs/superpowers/plans/2026-06-18-render-handedness-unmirror.md.
         """
         from engine.appc.math import TGPoint3
         if not (isinstance(forward, TGPoint3) and isinstance(up, TGPoint3)):
             return
         self._direction = TGPoint3(forward.x, forward.y, forward.z)
         self._up        = TGPoint3(up.x, up.y, up.z)
-        # Right-handed basis: Right = Up × Forward. Matches the arc
-        # check's reconstruction up = direction × right.
+        # Right-handed basis: Right = Forward × Up.
         self._right = TGPoint3(
-            up.y * forward.z - up.z * forward.y,
-            up.z * forward.x - up.x * forward.z,
-            up.x * forward.y - up.y * forward.x,
+            forward.y * up.z - forward.z * up.y,
+            forward.z * up.x - forward.x * up.z,
+            forward.x * up.y - forward.y * up.x,
         )
 
     def GetDamageRadiusFactor(self) -> float:

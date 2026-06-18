@@ -85,7 +85,10 @@ def _bank_world_frame(bank, ship):
     """(pos, forward, up, right) in world space for a phaser bank.
 
     Column-vector rotation: v_world = R · v_body via MultMatrixLeft(R).
-    right = up × forward (matches engine.appc.subsystems convention)."""
+    right = forward × up — the right-handed convention (post 2026-06-18
+    un-mirror), matching _emitter_in_arc / _strip_emit_position so the overlay
+    arcs land on the same side the gate admits and the un-reflected hologram
+    shows. See docs/superpowers/plans/2026-06-18-render-handedness-unmirror.md."""
     rot = ship.GetWorldRotation()
     fwd = bank.GetDirection()
     fwd.MultMatrixLeft(rot)
@@ -93,24 +96,27 @@ def _bank_world_frame(bank, ship):
     up.MultMatrixLeft(rot)
     fwd_t = _norm((fwd.x, fwd.y, fwd.z))
     up_t = _norm((up.x, up.y, up.z))
-    right_t = _norm(_cross(up_t, fwd_t))
+    right_t = _norm(_cross(fwd_t, up_t))
     w = subsystem_world_position(bank, ship)
     return ((w.x, w.y, w.z), fwd_t, up_t, right_t)
 
 
 def _arc_direction(fwd: Vec3, up: Vec3, right: Vec3,
                    yaw: float, pitch: float) -> Vec3:
-    """Aim direction at (yaw about Up, pitch about the yawed Right axis).
-    Mirrors the yaw/pitch decomposition in engine.appc.weapon_subsystems.
-
-    Sign note: weapon_subsystems measures pitch as asin((fwd×right)·aim),
-    so positive pitch = toward (fwd×right), i.e. upward when right points
-    left (the BC convention). Rotating around right_yaw by -pitch achieves
-    this: _rodrigues(radial, right_yaw, -pitch) lifts toward world-up for
-    positive pitch angles."""
-    radial = _rodrigues(fwd, up, yaw)
-    right_yaw = _norm(_rodrigues(right, up, yaw))  # renormalise for float drift
-    return _rodrigues(radial, right_yaw, -pitch)
+    """Aim direction for arc angles (yaw, pitch), the exact inverse of the
+    gate's decomposition in engine.appc.weapon_subsystems._emitter_in_arc:
+        yaw   = atan2(right·d, forward·d)   (right = forward × up)
+        pitch = asin(up·d)
+    so d = cos(pitch)·(cos(yaw)·forward + sin(yaw)·right) + sin(pitch)·up.
+    Using the same right-handed ``right`` as the gate keeps the drawn envelope
+    on the side the gate admits (post 2026-06-18 un-mirror)."""
+    cp, sp = math.cos(pitch), math.sin(pitch)
+    cy, sy = math.cos(yaw), math.sin(yaw)
+    return (
+        cp * (cy * fwd[0] + sy * right[0]) + sp * up[0],
+        cp * (cy * fwd[1] + sy * right[1]) + sp * up[1],
+        cp * (cy * fwd[2] + sy * right[2]) + sp * up[2],
+    )
 
 
 def build_arc_beams(bank, ship) -> List[dict]:
