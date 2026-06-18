@@ -3098,9 +3098,15 @@ def run(mission_name: Optional[str] = None,
             # no tick means no state change to follow.
             if _sim_ticks_this_frame > 0:
                 had_pending_swap = controller.pending_swap is not None
-                controller._drain_pending_swap()
+                # Clear any stale cutscene from the OUTGOING mission BEFORE the
+                # drain — the drain runs the incoming mission's Initialize()/
+                # Briefing(), which queues that mission's own camera/door
+                # requests. Resetting after the drain would wipe the freshly
+                # queued walk-on (the camera then never moves).
                 if had_pending_swap:
                     cutscene.reset()
+                controller._drain_pending_swap()
+                if had_pending_swap:
                     director.snap()
                     _xform_buf.reset_all()
             else:
