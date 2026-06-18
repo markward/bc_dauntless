@@ -65,13 +65,14 @@ class CrewSpeechBus:
         line_live = now < self._active_expiry
         if line_live and priority < self._active_priority:
             return 0.0  # a higher-priority line is still talking
-        # Accepted: this line takes the single VO channel. Stop any still-playing
-        # previous voice so two lines never overlap audibly (BC plays one crew/
-        # comm voice at a time — a new equal-or-higher line cuts the old). This
-        # only bites when two lines genuinely overlap in time (e.g. Graff's comm
-        # greeting and Liu's briefing); within one gated sequence the prior line
-        # has already finished, so stopping its handle is a harmless no-op.
-        self._stop_active_voice()
+        # If a line is still live, this one preempts it: stop the previous voice
+        # so two lines never overlap audibly (BC plays one crew/comm voice at a
+        # time — a new equal-or-higher line cuts the old). When the channel is
+        # already free (the prior line ended), there is nothing to stop. Within
+        # one gated sequence the next line starts exactly as the prior ends, so
+        # no real overlap occurs; this only bites when two sequences collide.
+        if line_live:
+            self._stop_active_voice()
         self._active_priority = priority
         # Real decoded length when the voice is loadable; estimate otherwise.
         real, self._active_handle = self._play_voice(str(wav)) if wav else (0.0, None)
@@ -125,11 +126,7 @@ def emit(speaker, db, line_id, priority, *, voice_only) -> float:
     wav = db.GetFilename(line) if db is not None else None
     if not isinstance(wav, str) or not wav:         # drop stub-DB / empty
         wav = None
-    dur = bus().speak(speaker, text, wav, int(priority))
-    from engine.appc import _seq_debug
-    _seq_debug.log("emit speaker=%r line=%r db=%s text=%r wav=%r dur=%s" % (
-        speaker, line, db is not None, text, wav, dur))
-    return dur
+    return bus().speak(speaker, text, wav, int(priority))
 
 
 def _mission_database():

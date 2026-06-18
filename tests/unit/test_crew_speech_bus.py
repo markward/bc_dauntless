@@ -117,3 +117,16 @@ def test_reset_stops_active_voice():
     bus.speak("XO", None, "x.mp3", 1, now=0.0)
     bus.reset()
     assert stopped == ["x"]
+
+
+def test_non_overlapping_line_does_not_stop_previous():
+    # When the previous line has already ended (channel free), accepting a new
+    # line must NOT call Stop() — there is nothing playing to cut. Only a live
+    # preempt cuts. (Sequential lines within a gated sequence hit this path.)
+    bus = CrewSpeechBus()
+    stopped = []
+    handles = iter([_FakeHandle("first", stopped), _FakeHandle("second", stopped)])
+    bus._play_voice = lambda wav: (1.0, next(handles))
+    bus.speak("Liu", None, "a.mp3", 0, now=0.0)        # dur 1.0 -> expiry 1.0
+    bus.speak("Liu", None, "b.mp3", 0, now=2.0)        # channel free (2.0 > 1.0)
+    assert stopped == []                                # nothing cut

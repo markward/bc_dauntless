@@ -1114,9 +1114,6 @@ class CharacterAction(TGAction):
         # Non-speak types (MOVE/TURN/GLANCE/...) complete inline as before.
         self._playing = True
         dur = self._do_play()
-        from engine.appc import _seq_debug
-        _seq_debug.log("CharAction at=%d detail=%r dur=%s" % (
-            self._action_type, self._detail, dur))
         self._complete_after(dur or 0.0)
 
     def _do_play(self):
