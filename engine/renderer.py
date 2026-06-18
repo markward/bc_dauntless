@@ -357,6 +357,14 @@ def set_viewscreen_enabled(on: bool) -> None:
     _h.set_viewscreen_enabled(on)
 
 
+def set_viewscreen_comm_source(set_id, eye, target, up, fov_y_rad, near, far) -> None:
+    _h.set_viewscreen_comm_source(set_id, eye, target, up, fov_y_rad, near, far)
+
+
+def clear_viewscreen_comm_source() -> None:
+    _h.clear_viewscreen_comm_source()
+
+
 def consume_mouse_delta() -> Tuple[float, float]:
     """Return (dx, dy) accumulated cursor motion in pixels since the last
     call. Reset on each call. GLFW raw mode while cursor is locked."""

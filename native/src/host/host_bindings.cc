@@ -165,6 +165,11 @@ bool g_viewscreen_enabled = false;
 constexpr int kViewscreenRttW = 640;
 constexpr int kViewscreenRttH = 360;
 
+// Active comm source: when set, frame() renders this comm set from the given
+// camera into the viewscreen RTT instead of the forward space feed.
+struct CommSource { bool active = false; std::uint32_t set_id = 0; scenegraph::Camera cam; };
+CommSource g_comm_source;
+
 struct LoadedModel {
     std::filesystem::path nif_path;
     assets::ModelHandle handle;
@@ -433,13 +438,22 @@ void frame() {
     // target, which the bridge pass samples onto the viewscreen instance.
     if (viewscreen_on) {
         g_viewscreen_hdr->resize(kViewscreenRttW, kViewscreenRttH);
-        g_viewscreen_hdr->bind();   // sets viewport to RTT size
+        g_viewscreen_hdr->bind();
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        scenegraph::Camera vcam = g_camera;
-        vcam.aspect = static_cast<float>(kViewscreenRttW)
-                    / static_cast<float>(kViewscreenRttH);
-        render_space(vcam, /*for_viewscreen=*/true);
+        if (g_comm_source.active && g_bridge_pass) {
+            scenegraph::Camera ccam = g_comm_source.cam;
+            ccam.aspect = static_cast<float>(kViewscreenRttW)
+                        / static_cast<float>(kViewscreenRttH);
+            g_bridge_pass->render(g_world, ccam, *g_pipeline, lookup,
+                                  g_bridge_lighting, scenegraph::Pass::Comm,
+                                  g_comm_source.set_id);
+        } else {
+            scenegraph::Camera vcam = g_camera;
+            vcam.aspect = static_cast<float>(kViewscreenRttW)
+                        / static_cast<float>(kViewscreenRttH);
+            render_space(vcam, /*for_viewscreen=*/true);
+        }
         g_bridge_pass->set_viewscreen_texture(g_viewscreen_hdr->color_texture());
     } else if (g_bridge_pass) {
         g_bridge_pass->set_viewscreen_texture(0);   // off -> step-5b blank panel
@@ -947,6 +961,25 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](unsigned long long h) { if (g_bridge_pass) g_bridge_pass->set_viewscreen_model(h); });
     m.def("set_viewscreen_enabled",
           [](bool on) { g_viewscreen_enabled = on; });
+    m.def("set_viewscreen_comm_source",
+          [](unsigned int set_id,
+             std::tuple<float,float,float> eye,
+             std::tuple<float,float,float> target,
+             std::tuple<float,float,float> up,
+             float fov_y_rad, float near, float far) {
+              g_comm_source.active = true;
+              g_comm_source.set_id = set_id;
+              g_comm_source.cam.eye    = {std::get<0>(eye),    std::get<1>(eye),    std::get<2>(eye)};
+              g_comm_source.cam.target = {std::get<0>(target), std::get<1>(target), std::get<2>(target)};
+              g_comm_source.cam.up     = {std::get<0>(up),     std::get<1>(up),     std::get<2>(up)};
+              g_comm_source.cam.fov_y_rad = fov_y_rad;
+              g_comm_source.cam.near = near;
+              g_comm_source.cam.far  = far;
+          },
+          py::arg("set_id"), py::arg("eye"), py::arg("target"),
+          py::arg("up"), py::arg("fov_y_rad"), py::arg("near"), py::arg("far"));
+    m.def("clear_viewscreen_comm_source",
+          []() { g_comm_source.active = false; });
 
     m.def("set_camera",
           [](std::tuple<float,float,float> eye,
