@@ -195,6 +195,16 @@ void draw_model(const assets::Model& model,
                 const std::vector<glm::mat4>& bone_palette,
                 const scenegraph::HullCarveField& carve);
 
+/// Release the process-lifetime damage-decal texture (game/data/Textures/
+/// Effects/Damage.tga) lazily loaded by draw_model, and clear its "tried" flag.
+/// MUST be called by shutdown() while the creating GL context is still current:
+/// init()/shutdown() destroy and recreate the context per session, and a fresh
+/// context reuses GL ids from 1. Without this reset the cached id leaks into the
+/// next context, where binding it to GL_TEXTURE_2D collides with a texture that
+/// context created as GL_TEXTURE_3D (carve/breach fill) — GL_INVALID_OPERATION
+/// (0x502), surfacing later at the next check_gl (e.g. in upload_mesh).
+void reset_damage_decal_texture();
+
 class FrameSubmitter {
 public:
     using ModelLookup = std::function<const assets::Model*(unsigned long long)>;

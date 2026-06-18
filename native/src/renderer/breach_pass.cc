@@ -61,27 +61,32 @@ constexpr int kSphereTargetTris = 768;
 // surface. Eyeball-tunable: lower = larger features.
 constexpr float kTexScale = 1.0f / 40.0f;
 
-unsigned int load_damage_tga(const char* path) {
+// Returns the uploaded texture (id() == 0 on failure). The CALLER owns the
+// returned Texture and must keep it alive for as long as the GL id is used —
+// see BreachPass::damage_owned_. Owning the texture on the pass (rather than a
+// process-lifetime static) is essential: init()/shutdown() destroy and recreate
+// the GL context per session, and a fresh context reuses GL ids from 1. A
+// static that outlives the context would leave Texture objects whose ids alias
+// a *different* live texture in the next context — and whose eventual deletion
+// corrupts that context's state (observed as a stray GL_INVALID_OPERATION
+// surfacing at the next check_gl, e.g. in upload_mesh). Tying ownership to the
+// pass means shutdown()'s g_breach_pass.reset() releases them in the correct,
+// still-current context.
+assets::Texture load_damage_tga(const char* path) {
     std::ifstream in(path, std::ios::binary);
     if (!in) {
         std::fprintf(stderr, "[breach] failed to open '%s'\n", path);
-        return 0;
+        return assets::Texture{};
     }
     std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(in)),
                                     std::istreambuf_iterator<char>());
     try {
         assets::Image img = assets::decode_tga(bytes);
-        assets::Texture tex = assets::upload_image(img, /*generate_mipmaps=*/true);
-        // Texture has no id-release; keep the owner alive in a
-        // process-lifetime static so the GL id we hand back stays valid.
-        static std::vector<assets::Texture> s_owned;
-        unsigned int id = tex.id();
-        s_owned.emplace_back(std::move(tex));
-        return id;
+        return assets::upload_image(img, /*generate_mipmaps=*/true);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "[breach] decode/upload '%s' failed: %s\n",
                      path, e.what());
-        return 0;
+        return assets::Texture{};
     }
 }
 
@@ -109,8 +114,11 @@ void BreachPass::ensure_sphere() {
 void BreachPass::ensure_damage_frames() {
     if (damage_frames_tried_) return;
     damage_frames_tried_ = true;
-    for (int i = 0; i < 4; ++i)
-        damage_frames_[i] = load_damage_tga(kDamageFramePaths[i]);
+    for (int i = 0; i < 4; ++i) {
+        assets::Texture tex = load_damage_tga(kDamageFramePaths[i]);
+        damage_frames_[i] = tex.id();
+        damage_owned_.emplace_back(std::move(tex));  // keep the id alive on the pass
+    }
 }
 
 /*static*/
