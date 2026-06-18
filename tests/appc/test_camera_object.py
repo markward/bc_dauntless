@@ -5,6 +5,11 @@ from engine.appc.bridge_set import (
 )
 
 
+def _approx(p, expected, tol=1e-3):
+    return (abs(p.x - expected[0]) < tol and abs(p.y - expected[1]) < tol
+            and abs(p.z - expected[2]) < tol)
+
+
 def test_create_from_nicamera_copies_frustum_and_placement():
     data = NiCameraData(
         position=(1.0, 2.0, 3.0),
@@ -17,8 +22,41 @@ def test_create_from_nicamera_copies_frustum_and_placement():
     f = cam.GetNiFrustum()
     assert (f.m_fLeft, f.m_fRight, f.m_fTop, f.m_fBottom) == (-0.5, 0.5, 0.4, -0.4)
     assert cam.GetNearDistance() == 1.0 and cam.GetFarDistance() == 800.0
-    # orientation is a column-vector matrix: identity -> forward is +Y col.
-    assert cam.orientation.GetCol(1).y == 1.0
+    # orientation is converted from the Gamebryo NiCamera frame to the BC-object
+    # convention (col1=forward, col2=up). A BC-era set camera views down its
+    # local +X with up = local +Y (see the factory docstring), so for an
+    # identity NiCamera object-forward is world +X and object-up is world +Y.
+    assert _approx(cam.orientation.GetCol(1), (1.0, 0.0, 0.0))   # forward = +gbCol0 (local +X)
+    assert _approx(cam.orientation.GetCol(2), (0.0, 1.0, 0.0))   # up = +gbCol1 (local +Y)
+
+
+def test_create_from_nicamera_converts_gamebryo_view_axis_to_object_forward():
+    """A BC-era NetImmerse set camera's NIF node frame (columns = world images
+    of local +X/+Y/+Z) VIEWS DOWN LOCAL +X with up = local +Y. The documented
+    Gamebryo-1.2 -Z view axis does NOT hold for BC content: on the real Liu
+    hail it pointed the camera at a side wall (live-refuted 2026-06-18), while
+    +gbCol0 frames the seated admiral. CameraObjectClass.orientation is the
+    BC-object convention (col0=right, col1=forward, col2=up; see AlignToVectors),
+    so the factory converts with a cyclic column shift:
+        forward = +gbCol0, up = +gbCol1, right = +gbCol2  (gbCol0 × gbCol1 = gbCol2).
+
+    Input is the real maincamera rotation from
+    data/Models/Sets/StarbaseControl/starbasecontrolRM.nif (E1M1 Liu hail),
+    row-major. forward (+gbCol0 ≈ world +Y) aims from eye toward the room/Liu;
+    up (+gbCol1 ≈ world +Z) is level."""
+    rot = (0.1477, 0.0094, 0.9890,
+           0.9762, -0.1619, -0.1442,
+           0.1588, 0.9868, -0.0330)
+    data = NiCameraData((-18.594, -41.858, 37.277), rot,
+                        (-0.6941, 0.6941, 0.6941, -0.6941), 1.0, 5000.0)
+    cam = CameraObjectClass_CreateFromNiCamera(data, "maincamera")
+    # gbCol0=(0.1477,0.9762,0.1588), gbCol1=(0.0094,-0.1619,0.9868),
+    # gbCol2=(0.9890,-0.1442,-0.0330).
+    assert _approx(cam.orientation.GetCol(1), (0.1477, 0.9762, 0.1588))    # forward = +gbCol0
+    assert _approx(cam.orientation.GetCol(2), (0.0094, -0.1619, 0.9868))   # up = +gbCol1
+    assert _approx(cam.orientation.GetCol(0), (0.9890, -0.1442, -0.0330))  # right = +gbCol2
+    # near/far carry through from the NIF (not the Create-path defaults).
+    assert cam.GetNearDistance() == 1.0 and cam.GetFarDistance() == 5000.0
 
 
 def test_frustum_halving_round_trips_through_setter():

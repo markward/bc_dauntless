@@ -153,6 +153,32 @@ column-vector, `_NiFrustum`, near/far) provides the comm view. Built already by
 SDK) for comm sets. The host builds a `scenegraph::Camera` from it (game units,
 right-handed convention per CLAUDE.md).
 
+#### 4.3.1 Set-camera view-axis convention (resolved 2026-06-18)
+
+`CameraObjectClass.orientation` is the BC-**object** convention (col0=right,
+col1=forward, col2=up — the frame `AlignToVectors` builds and `_comm_camera_params`
+reads). The two camera factories feed it from different sources, reconciled there:
+
+- **`CameraObjectClass_Create`** (D/E bridges — no embedded NiCamera): the SDK's
+  explicit angle-axis is already in the object convention. `forward=col1`,
+  `up=col2`. No conversion.
+- **`CameraObjectClass_CreateFromNiCamera`** (StarbaseControl/Liu and other
+  embedded-camera comm sets): the NIF node rotation's basis columns
+  (`gbCol0/1/2`) are the world images of the node's local +X/+Y/+Z. **BC's
+  NetImmerse 3.x/4.x set cameras VIEW DOWN LOCAL +X with UP = LOCAL +Y** — NOT
+  the documented Gamebryo-1.2 `-Z` view axis. The `-Z` reading was **live-refuted**:
+  on the real E1M1 Liu hail `-gbCol2` aimed at a side wall and lost the admiral.
+  `+gbCol0` frames the seated subject; `up=+gbCol1` is level *and* still matches
+  the documented Gamebryo up axis exactly. (BC directional lights also shine down
+  local +X — cleanroom SDK §10 — so +X-forward is consistent with that family.)
+  The factory converts with a cyclic column shift:
+  `forward=+gbCol0`, `up=+gbCol1`, `right=+gbCol2` (`gbCol0 × gbCol1 == gbCol2`,
+  det +1). Regression: `tests/appc/test_camera_object.py`.
+
+`_comm_feed_view` (host_loop) frames the comm RTT from this authored orientation;
+the former unconditional aim-at-room-centre hack survives **only** as a
+degenerate-orientation fallback (zero/uninitialised matrix → no view direction).
+
 ### 4.4 Data flow
 
 - **Mission load:** after `StartMission`, the host enumerates every set in

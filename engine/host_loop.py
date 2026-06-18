@@ -2503,10 +2503,16 @@ def _comm_camera_params(cam):
     """Convert a CameraObjectClass into the viewscreen-RTT camera tuple
     (eye, target, up, fov_y_rad, near, far), all in game units.
 
-    Right-handed column-vector convention (CLAUDE.md): world-forward is
-    orientation.GetCol(1), world-up is GetCol(2). fov_y is derived from the
-    _NiFrustum top/bottom + near as 2*atan(((top-bottom)/2)/near); a degenerate
-    frustum falls back to the bridge base FOV.
+    CameraObjectClass.orientation is the BC-object convention (col0=right,
+    col1=forward, col2=up) for BOTH camera sources: the explicit angle-axis
+    D/E coords cameras (CameraObjectClass_Create) and the embedded NiCamera
+    sets, whose Gamebryo camera frame (-Z view axis) is converted into this
+    convention by CameraObjectClass_CreateFromNiCamera. So world-forward is
+    GetCol(1) and world-up is GetCol(2) here, uniformly.
+
+    fov_y is derived from the _NiFrustum top/bottom + near as
+    2*atan(((top-bottom)/2)/near); a degenerate frustum falls back to the bridge
+    base FOV.
     """
     eye = tuple(cam.position)
     R = cam.orientation
@@ -2524,6 +2530,30 @@ def _comm_camera_params(cam):
         if half_h > 1e-6 and near > 1e-6:
             fov = 2.0 * _math.atan(half_h / near)
     return eye, target, up_t, fov, near, far
+
+
+def _comm_feed_view(cam, get_bounds):
+    """Resolve the comm viewscreen camera view from the set's authored camera.
+
+    Returns (eye, target, up, fov_y_rad, near, far) in game units, framed by the
+    camera's authored orientation (CameraObjectClass.orientation — the faithful
+    NiCamera shot for embedded-camera sets, the explicit angle-axis pose for the
+    D/E coords-fallback cameras).
+
+    ``get_bounds`` is a 0-arg callable returning the comm room geometry's
+    (x, y, z, radius) bounds or None. It is consulted ONLY as a graceful fallback
+    when the authored orientation is degenerate (a zero/uninitialised matrix
+    yields no view direction), in which case the camera aims at the room centre
+    so the set is still framed. This replaced the former unconditional
+    aim-at-centre hack, which ignored the authored orientation entirely."""
+    eye, target, up, fov, near, far = _comm_camera_params(cam)
+    fwd_len = _math.sqrt(sum((target[i] - eye[i]) ** 2 for i in range(3)))
+    if fwd_len < 1e-6:                       # degenerate orientation -> aim at centre
+        b = get_bounds()
+        if b:
+            target = (b[0], b[1], b[2])
+            up = (0.0, 0.0, 1.0)
+    return eye, target, up, fov, near, far
 
 
 def _apply_bridge_player_visibility(r, player_iid, *, is_bridge, spv_open) -> None:
@@ -3521,26 +3551,24 @@ def run(mission_name: Optional[str] = None,
             _feed = _active_comm_feed(controller)
             if _feed is not None:
                 _set_id, _cam = _feed
-                _eye, _tgt, _up, _fov, _near, _far = _comm_camera_params(_cam)
-                # Frame the comm set by aiming the camera at the room geometry's
-                # centre (the set's first comm instance), rather than the
-                # NiCamera's authored orientation. The Gamebryo NiCamera view-axis
-                # convention isn't reconstructed in this cleanroom (the bridge
-                # camera sidesteps it the same way), so aim-at-centre is the
-                # pragmatic framing that reliably puts the set on screen. Using
-                # the authored orientation faithfully is a tracked follow-up.
-                _set_name = next((n for n, i in controller.comm_set_ids.items()
-                                  if i == _set_id), None)
-                _iids = controller.comm_instances_by_set.get(_set_name, [])
-                if _iids:
+                # Frame the comm set by the camera's AUTHORED orientation (the
+                # faithful NiCamera shot, or the D/E explicit angle-axis pose).
+                # Aim-at-room-centre survives only as a degenerate-orientation
+                # fallback inside _comm_feed_view: a 0-arg bounds getter over the
+                # set's first comm instance.
+                def _comm_bounds(_set_id=_set_id):
+                    _set_name = next((n for n, i in controller.comm_set_ids.items()
+                                      if i == _set_id), None)
+                    _iids = controller.comm_instances_by_set.get(_set_name, [])
+                    if not _iids:
+                        return None
                     try:
-                        _b = r.get_instance_bounds(_iids[0])
+                        return r.get_instance_bounds(_iids[0])
                     except Exception as _e:
-                        _b = None
                         dev_mode.log_swallowed("comm get_instance_bounds", _e)
-                    if _b:
-                        _tgt = (_b[0], _b[1], _b[2])
-                        _up = (0.0, 0.0, 1.0)
+                        return None
+                _eye, _tgt, _up, _fov, _near, _far = _comm_feed_view(
+                    _cam, _comm_bounds)
                 r.set_viewscreen_comm_source(_set_id, _eye, _tgt, _up,
                                              _fov, _near, _far)
             else:

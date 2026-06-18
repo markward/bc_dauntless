@@ -277,8 +277,33 @@ class CameraObjectClass(_LoudStub):
 def CameraObjectClass_CreateFromNiCamera(niCamera, name):
     left, right, top, bottom = niCamera.frustum
     frustum = _NiFrustum(left, right, top, bottom, niCamera.near, niCamera.far)
+    # niCamera.rotation is the set camera's WORLD node rotation (row-major), whose
+    # basis columns (gbCol0/1/2) are the world images of the node's local +X/+Y/+Z.
+    #
+    # The documented Gamebryo-1.2 camera convention (view down local -Z, up local
+    # +Y) does NOT hold for BC's NetImmerse 3.x/4.x content: on the real E1M1 Liu
+    # hail, -gbCol2 aimed the camera at a side wall and lost the admiral
+    # (live-refuted 2026-06-18). The frame that actually matches the authored shot
+    # is VIEW DOWN LOCAL +X, UP LOCAL +Y — gbCol0 aims from the eye toward the
+    # seated subject and gbCol1 is level. (BC's directional lights likewise shine
+    # down local +X — cleanroom SDK §10 — so a +X-forward set camera is consistent
+    # with that NetImmerse-era family. up = +gbCol1 still matches the documented
+    # Gamebryo up axis exactly; only forward/right are cyclically shifted.)
+    #
+    # CameraObjectClass.orientation is the BC-OBJECT convention (col0=right,
+    # col1=forward, col2=up) — the frame AlignToVectors builds and that
+    # _comm_camera_params / CameraObjectClass_Create / GetWorldRotation all read.
+    # Convert with a cyclic column shift:
+    #     object forward = +gbCol0   (the camera's view direction)
+    #     object up      = +gbCol1
+    #     object right   = +gbCol2   (= forward × up; gbCol0 × gbCol1 == gbCol2)
+    # The result is a proper right-handed rotation (det +1) with right = fwd × up.
+    gb = TGMatrix3()
+    gb.Set(*niCamera.rotation)                # row-major args -> columns = gb basis
     orientation = TGMatrix3()
-    orientation.Set(*niCamera.rotation)      # row-major args
+    orientation.SetCol(0, gb.GetCol(2))       # right
+    orientation.SetCol(1, gb.GetCol(0))       # forward
+    orientation.SetCol(2, gb.GetCol(1))       # up
     return CameraObjectClass(name, niCamera.position, orientation,
                              frustum, niCamera.near, niCamera.far)
 
