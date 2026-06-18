@@ -99,7 +99,7 @@ def test_dt_zero_does_not_snap_mid_sweep():
     assert eye2 == eye1, f"dt=0.0 must freeze the sweep; got {eye2} != {eye1}"
 
 
-from engine.appc.camera_modes import ChaseMode, TargetMode, CHASE_DIST_GU
+from engine.appc.camera_modes import ChaseMode, TargetMode, CHASE_DIST_GU, CHASE_UP_GU
 
 
 def test_chase_mode_sits_behind_target():
@@ -112,6 +112,8 @@ def test_chase_mode_sits_behind_target():
     assert eye[1] < 0.0
     assert abs(eye[1] + CHASE_DIST_GU) < 1e-6
     assert fwd[1] > 0.9                         # looking toward the ship (+Y)
+    # Check that the up-offset is applied: under identity rotation, eye.z should equal CHASE_UP_GU.
+    assert abs(eye[2] - CHASE_UP_GU) < 1e-6
 
 
 def test_reverse_chase_sits_in_front():
@@ -120,8 +122,22 @@ def test_reverse_chase_sits_in_front():
     m.SetAttrIDObject("Target", t)
     m.SnapToIdealPosition()
     eye, fwd, up = m.Update()
-    assert eye[1] > 0.0                          # in front (+Y)
+    assert abs(eye[1] - CHASE_DIST_GU) < 1e-6  # in front (+Y), exact value
     assert fwd[1] < -0.9                          # looking back toward ship
+
+
+def test_chase_mode_applies_target_rotation():
+    # Target yawed 180° about Z: body -Y "behind" maps to world +Y (in front).
+    r = TGMatrix3().MakeZRotation(math.pi)
+    t = _FakeTarget((0.0, 0.0, 0.0), rot=r)
+    m = ChaseMode()
+    m.SetAttrIDObject("Target", t)
+    m.SnapToIdealPosition()
+    eye, fwd, up = m.Update()
+    # Under 180° yaw, -Y offset becomes +Y in world: eye should be at +CHASE_DIST_GU
+    assert abs(eye[1] - CHASE_DIST_GU) < 1e-6  # in front (not behind)
+    # Z offset unaffected by Z-rotation
+    assert abs(eye[2] - CHASE_UP_GU) < 1e-6
 
 
 def test_target_mode_looks_from_source_to_target():
