@@ -1088,6 +1088,10 @@ class _ViewModeController:
     def toggle(self) -> None:
         self._mode = self.BRIDGE if self.is_exterior else self.EXTERIOR
 
+    def set_bridge(self) -> None:
+        """Force bridge view (used to start a bridge cutscene)."""
+        self._mode = self.BRIDGE
+
     def apply(self, h) -> None:
         """Poll space-pressed and toggle on edge."""
         if h.key_pressed(h.keys.KEY_SPACE):
@@ -1367,6 +1371,10 @@ class _BridgeCamera:
         self._zoom_t = 0.0
         self._zoom_active = False
         self._zoom_target_world = None
+        # Cutscene animation override: when set, compute_camera returns this
+        # (eye, target, up) verbatim and mouse-look is frozen. Driven by
+        # BridgeCutsceneController.update (engine/bridge_cutscene.py).
+        self._anim_pose = None
 
     def _eye_offset(self) -> tuple:
         """Captain's-chair eye, taken from the SDK maincamera at mission load
@@ -1396,10 +1404,19 @@ class _BridgeCamera:
             if self._zoom_t == 0.0:
                 self._zoom_target_world = None
 
+    def set_anim_pose(self, eye, target, up) -> None:
+        """Override the camera with a cutscene-sampled pose (bridge-local)."""
+        self._anim_pose = (tuple(eye), tuple(target), tuple(up))
+
+    def clear_anim_pose(self) -> None:
+        self._anim_pose = None
+
     def apply(self, mouse_dx: float, mouse_dy: float) -> None:
         """Accumulate mouse delta into yaw/pitch with sign conventions:
         right-mouse (+dx) → look-right (-yaw); up-mouse (-dy in screen
         coords) → look-up (+pitch). Pitch clamps; yaw wraps freely."""
+        if self._anim_pose is not None:
+            return
         # Mouse-look is frozen while a zoom is in progress or held — the camera
         # is framing the officer; it resumes only at the full captain view.
         if self._zoom_t > 0.0 or self._zoom_active:
@@ -1415,6 +1432,9 @@ class _BridgeCamera:
         eases toward that officer's world position and the FOV narrows toward
         FOV_Y_RAD * min_zoom, both over the SDK zoom time. The camera never
         leaves the chair (eye is fixed)."""
+        if self._anim_pose is not None:
+            eye, target, up = self._anim_pose
+            return eye, target, up, self.FOV_Y_RAD * _BRIDGE_ZOOM_MAX
         local_fwd = (0.0, 1.0, 0.0)   # bridge-local +Y
         local_up  = (0.0, 0.0, 1.0)   # bridge-local +Z
 
