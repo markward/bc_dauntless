@@ -93,16 +93,18 @@ namespace renderer {
 
 namespace {
 
-// Lazily load game/data/Textures/Effects/Damage.tga once per process.
+// Lazily load game/data/Textures/Effects/Damage.tga once per GL session.
 // Returns the GL texture id, or 0 if the file is absent (game/ not installed).
 // assets::upload_image defaults to GL_REPEAT, which is correct for the tiling
-// lattice. Caller owns nothing — the assets::Texture lives in a process-lifetime
-// static, keeping the id valid.
+// lattice. The assets::Texture owner is a session-scoped static released by
+// reset_damage_decal_texture() in shutdown() — see that function's contract.
+unsigned int      g_decal_id    = 0;
+bool              g_decal_tried  = false;
+assets::Texture   g_decal_owner;     // owns the GL id in g_decal_id
+
 unsigned int ensure_damage_decal_texture() {
-    static unsigned int s_id   = 0;
-    static bool         s_tried = false;
-    if (s_tried) return s_id;
-    s_tried = true;
+    if (g_decal_tried) return g_decal_id;
+    g_decal_tried = true;
 
     constexpr const char* kPath = "game/data/Textures/Effects/Damage.tga";
     std::ifstream in(kPath, std::ios::binary);
@@ -115,16 +117,21 @@ unsigned int ensure_damage_decal_texture() {
     try {
         assets::Image   img = assets::decode_tga(bytes);
         assets::Texture tex = assets::upload_image(img, /*generate_mipmaps=*/true);
-        static assets::Texture s_owner;   // process-lifetime owner
-        s_id    = tex.id();
-        s_owner = std::move(tex);
+        g_decal_id    = tex.id();
+        g_decal_owner = std::move(tex);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "[frame] failed to load '%s': %s\n", kPath, e.what());
     }
-    return s_id;
+    return g_decal_id;
 }
 
 }  // namespace
+
+void reset_damage_decal_texture() {
+    g_decal_owner = assets::Texture{};  // glDeleteTextures in the current context
+    g_decal_id    = 0;
+    g_decal_tried = false;
+}
 
 void draw_model(const assets::Model& model,
                 const glm::mat4& world,

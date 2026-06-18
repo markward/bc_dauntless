@@ -284,6 +284,11 @@ void shutdown() {
     // still current.
     g_submitter.reset();
     g_pipeline.reset();
+    // Release the session-scoped damage-decal texture while this context is
+    // still current; otherwise its id leaks into the next init()'s context and
+    // collides with a 3D texture id there (GL_INVALID_OPERATION). See
+    // renderer::reset_damage_decal_texture().
+    renderer::reset_damage_decal_texture();
     g_loaded_models.clear();
     g_cache.reset();
     g_world = scenegraph::World{};

@@ -16,6 +16,13 @@ std::atomic<int> g_glfw_users{0};
 
 void ensure_glfw() {
     if (g_glfw_users.fetch_add(1) == 0) {
+        // macOS: GLFW defaults GLFW_COCOA_CHDIR_RESOURCES to TRUE, so glfwInit()
+        // chdir's the process into the app bundle's Resources directory. We embed
+        // GLFW in a CPython process whose cwd is the project root, and all asset
+        // paths resolve relative to it (renderer::resolve_asset_path prepends
+        // "game/"). Letting GLFW hijack the cwd breaks every subsequent relative
+        // asset load — and leaks across pytest tests in one process. Opt out.
+        glfwInitHint(GLFW_COCOA_CHDIR_RESOURCES, GLFW_FALSE);
         if (!glfwInit()) {
             g_glfw_users.fetch_sub(1);
             throw std::runtime_error("renderer::Window: glfwInit failed");

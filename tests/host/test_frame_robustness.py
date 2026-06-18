@@ -113,30 +113,35 @@ def test_m1_basic_ship_gate_renders_non_black():
         )
         _dauntless_host.frame()
 
-        # Sample a 5x5 grid around the center. The Galaxy should occupy
-        # roughly the center of the viewport; at least one sample should
-        # differ meaningfully from the dark-blue clear color.
-        # Clear-color is approximately r<25 g<30 b<40; ship-rendered
-        # pixels are illuminated (white-fallback texture) so r,g,b are
-        # all much higher.
+        # Scan the whole framebuffer on a coarse grid rather than a tiny
+        # center patch. The Galaxy's model origin is near the neck, so the
+        # hull sits below screen-centre and its textured features (registry
+        # markings, coloured panels) land off to the sides — a 5x5 centre
+        # grid samples only grey saucer hull plus background and misses them.
+        # (This is why the test broke after the 2026-06-18 render un-mirror:
+        # the one centrally-textured feature moved to the opposite side. See
+        # docs/.../render-handedness-unmirror.) Scanning the footprint tests
+        # the real intent — "the ship drew and real BC textures were used,
+        # not the white fallback" — independent of which side a feature is on.
         ship_pixels = 0
         textured_pixels = 0
         fw, fh = _dauntless_host.framebuffer_size()
-        cx, cy = fw // 2, fh // 2
-        step = max(1, min(fw, fh) // 20)
-        for dx in (-2 * step, -step, 0, step, 2 * step):
-            for dy in (-2 * step, -step, 0, step, 2 * step):
-                r, g, b, _ = _dauntless_host.read_pixel(cx + dx, cy + dy)
+        step = max(1, min(fw, fh) // 64)
+        for y in range(0, fh, step):
+            for x in range(0, fw, step):
+                r, g, b, _ = _dauntless_host.read_pixel(x, y)
                 # Anything brighter than the clear color counts as ship.
                 if r > 60 or g > 60 or b > 80:
                     ship_pixels += 1
+                else:
+                    continue
                 # White-fallback texture produces near-grey pixels (R≈G≈B).
                 # Real BC textures have meaningful per-channel variation.
                 # Accept anything where the channels differ by more than ~12
                 # as evidence of real texturing (modulo lighting on a
                 # neutral-diffuse material, channels would still drift).
                 channel_spread = max(r, g, b) - min(r, g, b)
-                if (r > 60 or g > 60 or b > 80) and channel_spread > 12:
+                if channel_spread > 12:
                     textured_pixels += 1
         assert ship_pixels > 0, (
             f"no ship pixels found around center; framebuffer is just clear color. "

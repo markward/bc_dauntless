@@ -5,10 +5,12 @@
 #include <functional>
 #include <memory>
 #include <unordered_map>
+#include <vector>
 
 #include <glm/glm.hpp>
 
 #include <assets/mesh.h>
+#include <assets/texture.h>
 #include <scenegraph/breach_events.h>
 #include <scenegraph/instance.h>  // InstanceId, ModelHandle
 
@@ -114,6 +116,10 @@ private:
     // test) degrades to the shader's grey base — never a hole to the stars.
     unsigned int damage_frames_[4]  = {0, 0, 0, 0};
     bool         damage_frames_tried_ = false;
+    // Owns the GL textures backing damage_frames_[]. Tied to the pass (not a
+    // process-lifetime static) so they are released in the same GL context that
+    // created them when shutdown() resets the pass — see load_damage_tga().
+    std::vector<assets::Texture> damage_owned_;
 
     // Per-instance fill 3D texture cache used by the test/standalone path in
     // draw_instance(). In the production path, the fill tex comes from
