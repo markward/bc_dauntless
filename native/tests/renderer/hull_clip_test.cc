@@ -83,11 +83,14 @@ protected:
 
         pipeline = std::make_unique<renderer::Pipeline>();
 
-        // Fullscreen triangle (CW, matching Pipeline's glFrontFace(GL_CW)).
+        // Fullscreen triangle, wound CCW to be front-facing under Pipeline's
+        // glFrontFace(GL_CCW) (right-handed un-mirror, 2026-06-18). This test
+        // exercises the carve-discard fragment shader, not winding, but culling
+        // is on (GL_BACK), so the triangle must present its front face.
         const float verts[9] = {
-            -1.0f, -1.0f, 0.0f,   // CW: bottom-left
-            -1.0f,  3.0f, 0.0f,   //     top-left
-             3.0f, -1.0f, 0.0f,   //     bottom-right
+            -1.0f, -1.0f, 0.0f,   // CCW: bottom-left
+             3.0f, -1.0f, 0.0f,   //      bottom-right
+            -1.0f,  3.0f, 0.0f,   //      top-left
         };
         glGenVertexArrays(1, &vao_);
         glGenBuffers(1, &vbo_);

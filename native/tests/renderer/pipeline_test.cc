@@ -46,11 +46,14 @@ TEST_F(PipelineTest, GlStateMatchesBCConvention) {
     glGetIntegerv(GL_CULL_FACE_MODE, &cull_face);
     EXPECT_EQ(cull_face, GL_BACK);
 
-    // NIFs are CW-wound for front faces (Gamebryo/D3D convention). If this
-    // assertion ever fails to GL_CCW, BC ships will render inside-out.
+    // NIFs are CW-wound for front faces (Gamebryo/D3D convention). Ship model
+    // matrices are right-handed (det>0, no reflection) post the 2026-06-18
+    // un-mirror, so those CW triangles present CCW front faces in screen space.
+    // If this ever reads GL_CW again, BC ships render mirror-imaged. See
+    // docs/superpowers/plans/2026-06-18-render-handedness-unmirror.md.
     GLint front_face = 0;
     glGetIntegerv(GL_FRONT_FACE, &front_face);
-    EXPECT_EQ(front_face, GL_CW);
+    EXPECT_EQ(front_face, GL_CCW);
 
     GLint depth_func = 0;
     glGetIntegerv(GL_DEPTH_FUNC, &depth_func);
