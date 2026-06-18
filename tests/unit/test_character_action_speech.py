@@ -28,14 +28,17 @@ def test_speak_line_action_shows_subtitle():
     assert snap["speech"] == "Course laid in"
 
 
-def test_say_line_action_sets_no_subtitle():
+def test_say_line_action_now_routes_subtitle():
+    # With voice_only removed, AT_SAY_LINE routes a subtitle like AT_SPEAK_LINE.
     top_window.reset_for_tests()
     crew_speech.bus().reset()
     db = TGLocalizationDatabase("x.tgl", strings={"ack": "Aye sir"})
     a = CharacterAction_Create(_char("XO"), CharacterAction.AT_SAY_LINE,
                                "ack", "Captain", 0, db, CSP_NORMAL)
     a.Play()
-    assert _subtitle()._snapshot(now=0.0) is None
+    snap = _subtitle()._snapshot(now=0.0)
+    assert snap is not None
+    assert snap["speech"] == "Aye sir"
 
 
 def test_non_speech_action_is_silent():

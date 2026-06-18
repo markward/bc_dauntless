@@ -513,7 +513,7 @@ class CharacterClass(ObjectClass):
         # SDK call shape is uniformly SpeakLine(db, lineID, priority) (or the
         # 2-arg form with the default priority); no addressee arg.
         db = pDatabase if pDatabase is not None else self._database
-        crew_speech.emit(self._character_name, db, lineID, priority, voice_only=False)
+        crew_speech.emit(self._character_name, db, lineID, priority)
 
     def SayLine(self, pDatabase=None, lineID="", _addressee=None,
                 _flag=None, priority=CSP_NORMAL, *_) -> None:
@@ -521,9 +521,9 @@ class CharacterClass(ObjectClass):
         #   SayLine(db, lineID, "Captain", 1)                       -> default priority
         #   SayLine(db, lineID, "Captain", 1, App.CSP_SPONTANEOUS)  -> explicit priority
         # arg3 is the addressee and arg4 a flag; both are meaningless headless.
-        # The real priority is the OPTIONAL 5th arg. Voice-only acknowledgement.
+        # The real priority is the OPTIONAL 5th arg.
         db = pDatabase if pDatabase is not None else self._database
-        crew_speech.emit(self._character_name, db, lineID, priority, voice_only=True)
+        crew_speech.emit(self._character_name, db, lineID, priority)
 
     def Breathe(self, *args) -> None:             pass
     def Blink(self, *args) -> None:               pass

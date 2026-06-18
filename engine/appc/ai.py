@@ -1118,11 +1118,8 @@ class CharacterAction(TGAction):
 
     def _do_play(self):
         at = self._action_type
-        if at in (self.AT_SPEAK_LINE, self.AT_SPEAK_LINE_NO_FLAP_LIPS):
-            voice_only = False
-        elif at in (self.AT_SAY_LINE, self.AT_SAY_LINE_AFTER_TURN):
-            voice_only = True
-        else:
+        if at not in (self.AT_SPEAK_LINE, self.AT_SPEAK_LINE_NO_FLAP_LIPS,
+                      self.AT_SAY_LINE, self.AT_SAY_LINE_AFTER_TURN):
             return 0.0
         from engine.appc import crew_speech
         from engine.appc.characters import CharacterClass_Cast
@@ -1134,7 +1131,7 @@ class CharacterAction(TGAction):
         else:
             name = ""
         return crew_speech.emit(name, self._database, self._detail,
-                                self._priority, voice_only=voice_only) or 0.0
+                                self._priority) or 0.0
 
 
 def CharacterAction_Create(

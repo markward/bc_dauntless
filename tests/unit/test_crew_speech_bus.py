@@ -130,3 +130,16 @@ def test_non_overlapping_line_does_not_stop_previous():
     bus.speak("Liu", None, "a.mp3", 0, now=0.0)        # dur 1.0 -> expiry 1.0
     bus.speak("Liu", None, "b.mp3", 0, now=2.0)        # channel free (2.0 > 1.0)
     assert stopped == []                                # nothing cut
+
+
+def test_subtitles_disabled_does_not_affect_duration():
+    # The subtitle flag gates display only — a text-only line still returns its
+    # estimated duration so the sequence still gates on it.
+    from engine.appc.crew_speech import set_subtitles_enabled
+    bus = CrewSpeechBus()
+    set_subtitles_enabled(False)
+    try:
+        dur = bus.speak("Liu", "A briefing line here", None, 1, now=0.0)
+        assert dur > 0.0
+    finally:
+        set_subtitles_enabled(True)
