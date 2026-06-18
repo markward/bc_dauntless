@@ -16,8 +16,13 @@ class TGModelProperty:
         # Both fell through to __getattr__'s data-bag before this fix.
         self._position = None
 
-    def GetName(self) -> str:
-        return self._name
+    def GetName(self):
+        # Real Appc returns a TGString (App.py:436 binds CompareC on it); SDK
+        # callers chain ``GetName().CompareC(name, 1)`` to match named mounts
+        # (MissionLib.GetPositionOrientationFromProperty). _TGString subclasses
+        # str, so every plain-string use site is unaffected.
+        from engine.appc.localization import _TGString
+        return _TGString(self._name)
 
     def SetName(self, value: str) -> None:
         self._name = value

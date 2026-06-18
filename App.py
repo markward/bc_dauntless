@@ -347,6 +347,21 @@ def ShieldClass_Cast(obj):
     return None
 
 
+def PositionOrientationProperty_Cast(obj):
+    """Returns obj if it's a PositionOrientationProperty, else None.
+
+    MissionLib.GetPositionOrientationFromProperty (MissionLib.py:1815) casts
+    each property in a CT_POSITION_ORIENTATION_PROPERTY list through this; the
+    DockWithStarbase / UndockFromStarbase AI then reads GetPosition/GetForward/
+    GetUp off the result.  ObjectEmitterProperty subclasses
+    PositionOrientationProperty, so it matches too (SDK hierarchy)."""
+    if isinstance(obj, _NamedStub):
+        return None
+    if isinstance(obj, PositionOrientationProperty):
+        return obj
+    return None
+
+
 def ShieldProperty_Cast(obj):
     """Lenient pass-through: returns obj if it's a ShieldProperty, else None."""
     if isinstance(obj, _NamedStub):

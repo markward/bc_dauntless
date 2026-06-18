@@ -111,6 +111,16 @@ class _TGString(str):
     def GetLength(self) -> int:
         return len(self)
 
+    def CompareC(self, other, case_insensitive: int = 0) -> int:
+        # SDK binds TGString.CompareC = Appc.TGString_CompareC (App.py:436);
+        # it returns C strcmp semantics — 0 when equal, <0 / >0 otherwise.
+        # Flag 1 requests a case-insensitive compare (MissionLib.py:1818
+        # matches property names this way). Callers test ``not CompareC(...)``.
+        a, b = str(self), str(other)
+        if case_insensitive:
+            a, b = a.lower(), b.lower()
+        return (a > b) - (a < b)
+
     def __mod__(self, args) -> "_TGString":
         # Phase 1 fallback strings (key-as-value) don't carry %s placeholders
         # that real TGL values would, so SDK code like
