@@ -116,6 +116,58 @@ def test_comm_camera_params_degenerate_frustum_falls_back():
     assert fov > 0.0                                     # sane default, not 0
 
 
+# ── _comm_feed_view (authored orientation + degenerate fallback) ─────────────
+
+def test_comm_feed_view_uses_authored_orientation_not_bounds():
+    """The authored camera orientation frames the shot; the aim-at-centre
+    bounds are IGNORED when the orientation is valid (the interim hack removed)."""
+    from engine.appc.bridge_set import CameraObjectClass, _NiFrustum
+    from engine.appc.math import TGMatrix3, TGPoint3
+    orient = TGMatrix3()
+    orient.SetCol(0, TGPoint3(1.0, 0.0, 0.0))       # right
+    orient.SetCol(1, TGPoint3(0.0, 1.0, 0.0))       # forward = +Y
+    orient.SetCol(2, TGPoint3(0.0, 0.0, 1.0))       # up = +Z
+    cam = CameraObjectClass("maincamera", (5.0, 5.0, 5.0), orient,
+                            _NiFrustum(-1.0, 1.0, 0.75, -0.75, 1.0, 800.0),
+                            1.0, 800.0)
+    # bounds centre is somewhere else entirely; it must NOT be used.
+    eye, target, up, fov, near, far = hl._comm_feed_view(
+        cam, lambda: (99.0, 99.0, 99.0, 50.0))
+    assert eye == (5.0, 5.0, 5.0)
+    assert target == (5.0, 6.0, 5.0)                # eye + forward(+Y), not bounds
+    assert up == (0.0, 0.0, 1.0)                    # authored up, not (0,0,1) hack-default
+
+
+def test_comm_feed_view_falls_back_to_bounds_when_orientation_degenerate():
+    """A zero/uninitialised orientation yields no view direction; the feed
+    then aims at the comm room geometry centre so the set is still framed."""
+    from engine.appc.bridge_set import CameraObjectClass, _NiFrustum
+    from engine.appc.math import TGMatrix3
+    zero = TGMatrix3().MakeZero()                   # degenerate: no basis
+    cam = CameraObjectClass("maincamera", (5.0, 5.0, 5.0), zero,
+                            _NiFrustum(-1.0, 1.0, 0.75, -0.75, 1.0, 800.0),
+                            1.0, 800.0)
+    eye, target, up, fov, near, far = hl._comm_feed_view(
+        cam, lambda: (1.0, 2.0, 3.0, 50.0))
+    assert eye == (5.0, 5.0, 5.0)
+    assert target == (1.0, 2.0, 3.0)                # aimed at bounds centre
+    assert up == (0.0, 0.0, 1.0)
+
+
+def test_comm_feed_view_degenerate_with_no_bounds_keeps_authored():
+    """Degenerate orientation AND no bounds available -> return the (degenerate)
+    authored tuple unchanged rather than crashing."""
+    from engine.appc.bridge_set import CameraObjectClass, _NiFrustum
+    from engine.appc.math import TGMatrix3
+    zero = TGMatrix3().MakeZero()
+    cam = CameraObjectClass("maincamera", (5.0, 5.0, 5.0), zero,
+                            _NiFrustum(-1.0, 1.0, 0.75, -0.75, 1.0, 800.0),
+                            1.0, 800.0)
+    eye, target, up, fov, near, far = hl._comm_feed_view(cam, lambda: None)
+    assert eye == (5.0, 5.0, 5.0)
+    assert target == (5.0, 5.0, 5.0)                # eye + zero-forward, no crash
+
+
 # ── CameraObjectClass activation methods (folded-in fix) ─────────────────────
 
 def test_camera_object_survives_activation_calls():
