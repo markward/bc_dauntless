@@ -25,10 +25,6 @@ class _FakeRenderer:
     def destroy_instance(self, iid): self.destroyed.append(iid)
 
 
-class _FakeBridgeObj:
-    def __init__(self, nif): self.nif = nif; self.render_instance = None
-
-
 def _bridge_set_with_geometry(nif="data/Models/Sets/DBridge/DBridge.nif"):
     from engine.appc.bridge_set import BridgeObjectClass
     from engine.appc.sets import SetClass
