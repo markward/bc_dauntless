@@ -768,6 +768,21 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("model"),
           "Like create_instance but tags the new instance for the bridge pass.");
 
+    m.def("create_comm_instance",
+          [](scenegraph::ModelHandle h) {
+              auto id = g_world.create_instance(h);
+              g_world.set_pass(id, scenegraph::Pass::Comm);
+              return id;
+          },
+          py::arg("model"),
+          "Like create_instance but tags the new instance for the comm pass.");
+
+    m.def("set_comm_set_id",
+          [](scenegraph::InstanceId id, unsigned int set_id) {
+              g_world.set_comm_set_id(id, set_id);
+          },
+          py::arg("id"), py::arg("set_id"));
+
     // Developer-only (SP1): load a skinned character NIF and spawn one instance
     // framed in front of the active camera, tagged for the active pass (bridge
     // or space), with identity rotation. Character body textures live next to

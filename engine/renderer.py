@@ -289,6 +289,16 @@ def create_bridge_instance(model: int) -> InstanceId:
     return _h.create_bridge_instance(model)
 
 
+def create_comm_instance(model: int) -> "InstanceId":
+    """Like create_instance but tags the new instance for the comm pass."""
+    return _h.create_comm_instance(model)
+
+
+def set_comm_set_id(iid: "InstanceId", set_id: int) -> None:
+    """Tag a comm-pass instance with a set id for active-set filtering."""
+    _h.set_comm_set_id(iid, set_id)
+
+
 def assemble_officer(body_nif: str, head_nif: str,
                      body_tex=None, head_tex=None,
                      placement_nif=None, sample_at_start: bool = False) -> int:

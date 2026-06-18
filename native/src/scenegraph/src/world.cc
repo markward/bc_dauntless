@@ -48,6 +48,10 @@ void World::set_pass(InstanceId id, Pass pass) {
     if (auto* inst = get(id)) inst->pass = pass;
 }
 
+void World::set_comm_set_id(InstanceId id, std::uint32_t set_id) {
+    if (Instance* inst = get(id)) inst->comm_set_id = set_id;
+}
+
 void World::set_rim_eligible(InstanceId id, bool eligible) {
     if (auto* inst = get(id)) inst->rim_eligible = eligible;
 }
