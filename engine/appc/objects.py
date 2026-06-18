@@ -132,12 +132,15 @@ class ObjectClass(TGEventHandlerObject):
         v_body = model_forward = (0, 1, 0) selects column 1, the
         world-forward axis.
 
-        `right = up × forward` produces a left-handed basis (det = -1)
-        in BC's Z-up / Y-forward coordinate system. The renderer
-        compensates with an X-axis flip in
-        `engine/host_loop.py:_ship_world_matrix`; do not reorder the
-        cross here without also dropping that flip and updating the GL
-        front-face state.
+        `right = forward × up` is a RIGHT-HANDED basis (det = +1) in BC's
+        Z-up / Y-forward coordinate system, so `GetCol(0)` is the true
+        starboard axis. The renderer draws this rotation directly with no
+        reflection (`engine/host_loop.py:_world_matrix_from` no longer negates
+        X; `pipeline.cc` uses `glFrontFace(GL_CCW)`). This was converted from
+        the historical left-handed (`up × forward`, det = -1) convention on
+        2026-06-18 — see docs/superpowers/plans/2026-06-18-render-handedness-
+        unmirror.md. Do not reorder the cross back without restoring that flip
+        and the GL front-face state.
         """
         fwd = TGPoint3(forward.x, forward.y, forward.z)
         fwd.Unitize()
@@ -146,7 +149,7 @@ class ObjectClass(TGEventHandlerObject):
         dot = fwd.Dot(u)
         u = TGPoint3(u.x - dot * fwd.x, u.y - dot * fwd.y, u.z - dot * fwd.z)
         u.Unitize()
-        right = u.Cross(fwd)
+        right = fwd.Cross(u)
         right.Unitize()
         m = TGMatrix3()
         m.SetCol(0, right)
