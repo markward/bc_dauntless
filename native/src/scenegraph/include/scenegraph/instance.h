@@ -23,13 +23,20 @@ struct InstanceId {
 /// Which renderer pass an instance is drawn in.
 /// - Space: ships, planets, suns, dust, backdrops (default).
 /// - Bridge: the bridge interior geometry, drawn after a depth clear.
-enum class Pass : std::uint8_t { Space = 0, Bridge = 1 };
+/// - Comm: comm/remote-set geometry (starbase viewscreens, hailing faces),
+///   drawn by the comm render branch for the active comm set only.
+enum class Pass : std::uint8_t { Space = 0, Bridge = 1, Comm = 2 };
 
 struct Instance {
     ModelHandle model_handle = 0;
     glm::mat4 world{1.0f};
     bool visible = true;
     Pass pass = Pass::Space;
+
+    /// Which comm/remote set this instance belongs to (0 = none). Lets the
+    /// comm render branch draw only the viewscreen's active set when several
+    /// comm sets are realized at once.
+    std::uint32_t comm_set_id = 0;
 
     /// True for ship hulls; gates the opaque-pass Fresnel rim term so it
     /// applies to hulls only. Planets share the opaque shader but must
