@@ -289,6 +289,16 @@ def create_bridge_instance(model: int) -> InstanceId:
     return _h.create_bridge_instance(model)
 
 
+def create_comm_instance(model: int) -> InstanceId:
+    """Like create_instance but tags the new instance for the comm pass."""
+    return _h.create_comm_instance(model)
+
+
+def set_comm_set_id(iid: "InstanceId", set_id: int) -> None:
+    """Tag a comm-pass instance with a set id for active-set filtering."""
+    _h.set_comm_set_id(iid, set_id)
+
+
 def assemble_officer(body_nif: str, head_nif: str,
                      body_tex=None, head_tex=None,
                      placement_nif=None, sample_at_start: bool = False) -> int:
@@ -345,6 +355,17 @@ def set_viewscreen_enabled(on: bool) -> None:
     bridge view), the renderer renders the forward space scene into the
     offscreen target and maps it onto the viewscreen instance."""
     _h.set_viewscreen_enabled(on)
+
+
+def set_viewscreen_comm_source(set_id, eye, target, up, fov_y_rad, near, far) -> None:
+    """Configure the comm viewscreen feed to render a remote set through the
+    given camera parameters."""
+    _h.set_viewscreen_comm_source(set_id, eye, target, up, fov_y_rad, near, far)
+
+
+def clear_viewscreen_comm_source() -> None:
+    """Disable the comm viewscreen feed, returning to the space view."""
+    _h.clear_viewscreen_comm_source()
 
 
 def consume_mouse_delta() -> Tuple[float, float]:

@@ -53,9 +53,13 @@ template <typename DrawOne>
 void walk_bridge_meshes(const scenegraph::World& world,
                         const BridgePass::ModelLookup& lookup,
                         bool want_lightmap_pass,
+                        scenegraph::Pass pass,
+                        std::uint32_t comm_set_id,
                         const DrawOne& draw_one) {
-    world.for_each_visible_in_pass(scenegraph::Pass::Bridge,
+    world.for_each_visible_in_pass(pass,
         [&](const scenegraph::Instance& inst) {
+            // comm_set_id == 0 means "no set filter" (bridge default).
+            if (comm_set_id != 0 && inst.comm_set_id != comm_set_id) return;
             const assets::Model* m = lookup(inst.model_handle);
             if (!m) return;
             // Skinned models are drawn by the skinned sub-pass only; the static
@@ -161,7 +165,9 @@ void BridgePass::render(const scenegraph::World& world,
                         const scenegraph::Camera& camera,
                         Pipeline& pipeline,
                         const ModelLookup& lookup,
-                        const Lighting& lighting) {
+                        const Lighting& lighting,
+                        scenegraph::Pass pass,
+                        std::uint32_t comm_set_id) {
     // ── Sub-pass A: base geometry, opaque, base × ambient, alpha-test ──
     auto& base_shader = pipeline.bridge_shader();
     base_shader.use();
@@ -194,6 +200,7 @@ void BridgePass::render(const scenegraph::World& world,
     const GLuint white = ensure_white_texture();
     const double t = wall_time_;
     walk_bridge_meshes(world, lookup, /*want_lightmap_pass=*/false,
+        pass, comm_set_id,
         [&](const assets::Model& m, const assets::Mesh& mesh,
             const assets::Material& mat, const glm::mat4& w,
             unsigned long long mh) {
@@ -203,6 +210,7 @@ void BridgePass::render(const scenegraph::World& world,
             draw_mesh(m, mesh, mat, base_shader, w, white, t, ov);
         });
     walk_bridge_meshes(world, lookup, /*want_lightmap_pass=*/true,
+        pass, comm_set_id,
         [&](const assets::Model& m, const assets::Mesh& mesh,
             const assets::Material& mat, const glm::mat4& w,
             unsigned long long mh) {
@@ -233,8 +241,9 @@ void BridgePass::render(const scenegraph::World& world,
     skin_shader.set_int("u_dark_map", 1);
     skin_shader.set_float("u_alpha_test_threshold", 0.5f);
 
-    world.for_each_visible_in_pass(scenegraph::Pass::Bridge,
+    world.for_each_visible_in_pass(pass,
         [&](const scenegraph::Instance& inst) {
+            if (comm_set_id != 0 && inst.comm_set_id != comm_set_id) return;
             const assets::Model* m = lookup(inst.model_handle);
             if (!m || m->skeleton.bones.empty()) return;
             std::vector<glm::mat4> palette = inst.bone_palette.empty()

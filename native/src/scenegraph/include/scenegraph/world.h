@@ -16,6 +16,7 @@ public:
     void set_animation(InstanceId id, Instance::AnimationState state);
     void set_visible(InstanceId id, bool visible);
     void set_pass(InstanceId id, Pass pass);
+    void set_comm_set_id(InstanceId id, std::uint32_t set_id);
     void set_rim_eligible(InstanceId id, bool eligible);
     void set_emissive_scale(InstanceId id, float scale);
 

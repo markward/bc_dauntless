@@ -3,6 +3,9 @@
 
 #include <renderer/frame.h>
 
+#include <scenegraph/instance.h>  // scenegraph::Pass
+
+#include <cstdint>
 #include <functional>
 
 namespace scenegraph { class World; struct Camera; }
@@ -29,11 +32,18 @@ public:
     BridgePass(const BridgePass&) = delete;
     BridgePass& operator=(const BridgePass&) = delete;
 
+    /// Render every visible instance tagged `pass` from `camera`. Defaults
+    /// (Pass::Bridge, comm_set_id == 0) preserve the original bridge behaviour
+    /// exactly. When `comm_set_id != 0`, only instances whose
+    /// Instance::comm_set_id matches are drawn (used to render one comm set into
+    /// the viewscreen RTT); comm_set_id == 0 means "no set filter".
     void render(const scenegraph::World& world,
                 const scenegraph::Camera& camera,
                 Pipeline& pipeline,
                 const ModelLookup& lookup,
-                const Lighting& lighting);
+                const Lighting& lighting,
+                scenegraph::Pass pass = scenegraph::Pass::Bridge,
+                std::uint32_t comm_set_id = 0);
 
     /// Set the wall time used to advance NiFlipController-driven
     /// texture animations on bridge materials. Host loop calls this

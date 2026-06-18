@@ -40,7 +40,7 @@ class BridgeObjectClass:
     """The bridge model object the SDK config script creates and adds to the
     bridge set as "bridge". A pure, headless data object: it carries the NIF
     path and transform the SDK sets; the HOST reads it after LoadBridge.Load and
-    fills in `render_instance` (see host_loop._realize_bridge_model). Not a
+    fills in `render_instance` (see host_loop.realize_set). Not a
     `_LoudStub` — it is real, so it drops off the bridge-stub summary."""
     def __init__(self, nif):
         self.nif = nif
@@ -78,7 +78,7 @@ class ViewScreenObject(_LoudStub):
     AddPythonFuncHandlerForInstance, IsStaticOn, MenuDown, ...) falls through
     _LoudStub.__getattr__ as a silent no-op so missions that touch it don't
     crash. The HOST reads this object after LoadBridge.Load and fills in
-    render_instance (see host_loop._realize_viewscreen), mirroring
+    render_instance (see host_loop.realize_set), mirroring
     BridgeObjectClass. Kept a _LoudStub (unlike BridgeObjectClass) precisely
     because that menu/handler surface is large and not yet built."""
     def __init__(self, nif):
@@ -91,6 +91,19 @@ class ViewScreenObject(_LoudStub):
         return self._remote_cam
 
     def SetRemoteCam(self, cam):
+        # INTERIM comm-feed hold: once a real comm-set camera (CameraObjectClass)
+        # is showing, ignore a SetRemoteCam that would replace it with anything
+        # that is NOT a real camera. MissionLib.ViewscreenOff reverts the remote
+        # cam to Game.GetPlayerCamera(), which is an unimplemented stub here, and
+        # it fires immediately after ViewscreenOn because the action-sequence
+        # timing gap collapses the dialogue delay. Without this hold the comm
+        # scene would never be visible. A real camera (e.g. another comm set's
+        # maincamera) DOES replace it, so legitimate camera changes still work.
+        # TODO: remove once action-sequence timing lands (ViewscreenOff will then
+        # revert correctly after the dialogue, and the player camera will be real).
+        if (isinstance(self._remote_cam, CameraObjectClass)
+                and not isinstance(cam, CameraObjectClass)):
+            return
         self._remote_cam = cam
 
     def SetIsOn(self, on):
@@ -165,12 +178,20 @@ class NiCameraData:
         self.source = source
 
 
-class CameraObjectClass:
+class CameraObjectClass(_LoudStub):
     """A set camera. Built either from an embedded NiCamera
     (CameraObjectClass_CreateFromNiCamera) or from explicit coordinates
     (CameraObjectClass_Create). Real, stateful data: the viewscreen's
-    SetRemoteCam consumes it. Comm-set rendering through it is not yet
-    built (flagged loudly under developer mode)."""
+    SetRemoteCam consumes it. The host renders a comm set through this camera
+    when the bridge viewscreen is showing it.
+
+    The unbuilt camera-mode/control surface (GetNamedCameraMode, PushCameraMode,
+    LookForward, AddModeHierarchy, etc.) degrades to no-ops via _LoudStub.__getattr__
+    — exactly like ZoomCameraObjectClass. This prevents AttributeError from
+    aborting the SDK's SendActivationEvent → ViewscreenOn chain before
+    SetRemoteCam fires. Real explicit methods (GetNiFrustum, SetTranslate,
+    AlignToVectors, GetWorldLocation, GetWorldRotation, ...) take precedence
+    over the fallthrough."""
     def __init__(self, name, position, orientation, frustum, near, far):
         self._name = name
         self.position = tuple(position)
@@ -195,6 +216,63 @@ class CameraObjectClass:
     def GetFarDistance(self):
         return self._far
 
+    # ── Activation-path placement (CameraScriptActions) ──────────────────────
+    # SetCameraPositionAndFacing / CutsceneCameraBegin (Actions/
+    # CameraScriptActions.py:122-123, 158) call SetTranslate + AlignToVectors +
+    # UpdateNodeOnly on the set "maincamera" during the viewscreen/dock
+    # activation event chain. Without these, the AttributeError raised here is
+    # swallowed by characters.STButton.SendActivationEvent, which kills the
+    # whole activation chain (SetRemoteCam may never fire, so the comm feed
+    # never engages). These keep .position / .orientation faithful so the
+    # comm-feed camera params (_comm_camera_params) read the posed camera.
+
+    def SetTranslate(self, point):
+        """Place the camera at a TGPoint3 (game units). Mirrors
+        ObjectClass.SetTranslate; updates the tuple the feed reads."""
+        self.position = (float(point.x), float(point.y), float(point.z))
+
+    def AlignToVectors(self, forward, up):
+        """Build the orientation TGMatrix3 from forward/up, column-vector
+        right-handed convention (col0=right, col1=forward, col2=up). Mirrors
+        ObjectClass.AlignToVectors verbatim (right = forward × up, det = +1;
+        see CLAUDE.md ↦ rotation matrix convention)."""
+        fwd = TGPoint3(forward.x, forward.y, forward.z)
+        fwd.Unitize()
+        u = TGPoint3(up.x, up.y, up.z)
+        dot = fwd.Dot(u)
+        u = TGPoint3(u.x - dot * fwd.x, u.y - dot * fwd.y, u.z - dot * fwd.z)
+        u.Unitize()
+        right = fwd.Cross(u)
+        right.Unitize()
+        m = TGMatrix3()
+        m.SetCol(0, right)
+        m.SetCol(1, fwd)
+        m.SetCol(2, u)
+        self.orientation = m
+
+    def UpdateNodeOnly(self):
+        """No-op: Phase 1 has no live scene-graph node to flush the transform
+        into. The .position / .orientation set above are read directly by the
+        host. Faithful to the SDK call (it only forces a node-transform update;
+        no return value)."""
+        return None
+
+    # ── World-transform getters ──────────────────────────────────────────────
+    # CutsceneCameraBegin (CameraScriptActions.py:158) calls
+    # GetWorldLocation + GetWorldRotation to seed the cutscene camera start
+    # pose. Return the real placement data we already hold; more faithful than
+    # the _LoudStub None fallthrough and lets the cutscene path read the actual
+    # camera origin (important for comm-feed camera continuity).
+
+    def GetWorldLocation(self):
+        """Return camera position as a TGPoint3 (game units)."""
+        x, y, z = self.position
+        return TGPoint3(x, y, z)
+
+    def GetWorldRotation(self):
+        """Return the stored orientation TGMatrix3 (column-vector)."""
+        return self.orientation
+
 
 def CameraObjectClass_CreateFromNiCamera(niCamera, name):
     left, right, top, bottom = niCamera.frustum
@@ -207,7 +285,10 @@ def CameraObjectClass_CreateFromNiCamera(niCamera, name):
 
 def CameraObjectClass_Create(x, y, z, a, ax, ay, az, name):
     """Fallback camera from explicit coords + angle-axis orientation. The SDK
-    overrides near/far via SetNearAndFarDistance; frustum starts default."""
+    overrides near/far via SetNearAndFarDistance; frustum starts default.
+
+    The host renders a comm set through this camera when the bridge viewscreen
+    is showing it (host_loop._active_comm_feed / _comm_camera_params)."""
     orientation = TGMatrix3().MakeRotation(a, TGPoint3(ax, ay, az))
     return CameraObjectClass(name, (x, y, z), orientation,
                              _NiFrustum(), 1.0, 800.0)

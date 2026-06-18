@@ -198,6 +198,15 @@ class SetClass(TGEventHandlerObject):
     # GetLight returns the named Light or None — must be None (not a stub) so
     # that scripts using `if pLight: ...` short-circuit for misses.
 
+    def SetBackgroundModel(self, nif, x=0.0, y=0.0, z=0.0):
+        # SDK: comm/bridge sets declare their room geometry here. Recorded so
+        # the host's realize_set can load + render it. (Was a _RendererStub no-op.)
+        self._background_model = (str(nif), (float(x), float(y), float(z)))
+
+    def GetBackgroundModelNIF(self):
+        bm = getattr(self, "_background_model", None)
+        return bm[0] if bm else None
+
     def CreateAmbientLight(self, r, g, b, dimmer, name):
         """SDK signature: pSet.CreateAmbientLight(r, g, b, range_or_dimmer, name).
 
@@ -215,10 +224,14 @@ class SetClass(TGEventHandlerObject):
         """
         from engine.appc.lights import Light
         clamped_dimmer = min(max(float(dimmer), 0.0), 1.0)
+        self._ambient = (float(r), float(g), float(b), clamped_dimmer)
         light = Light(Light.KIND_AMBIENT, name, r, g, b, clamped_dimmer)
         self._lights.append(light)
         self._lights_by_name[name] = light
         return light
+
+    def GetAmbient(self):
+        return getattr(self, "_ambient", None)
 
     def CreateDirectionalLight(self, r, g, b, dimmer, dx, dy, dz, name):
         """SDK signature observed in DeepSpace.py:
@@ -304,6 +317,14 @@ class SetManager:
 
     def GetNumSets(self) -> int:
         return len(self._sets)
+
+    def iter_sets(self):
+        """(name, SetClass) pairs for every registered set.
+
+        Engine-internal accessor (not on the SWIG surface) used by the host's
+        realize_all_sets to enumerate every SDK-created set after mission load.
+        """
+        return self._sets.items()
 
     def GetRenderedSet(self) -> "SetClass | None":
         if self._rendered_set_name is None:
