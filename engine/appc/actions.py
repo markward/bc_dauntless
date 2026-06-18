@@ -456,9 +456,8 @@ class TGSoundAction(TGTimedAction):
     def _do_play(self) -> None:
         # Late import: tg_sound pulls in the native audio extension; keep this
         # module light at startup since actions is loaded very early via App.py.
-        # Overriding _do_play (not Play) means the base TGAction.Play() runs the
-        # standard lifecycle and calls Completed() — so a sequence step chained
-        # after this sound action advances instead of hanging forever.
+        # Play() is overridden (above) to gate completion on the sound's real
+        # duration; this _do_play just starts playback.
         from engine.audio.tg_sound import TGSoundManager
         TGSoundManager.instance().PlaySound(self._sound_name)
 
