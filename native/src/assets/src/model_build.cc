@@ -472,6 +472,17 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
         const auto* shape = std::get_if<nif::NiTriShape>(&f.blocks[i]);
         if (!shape) continue;
         any_trishape = true;
+        // Honor the NiAVObject "hidden" flag (bit 0x01): the stock engine never
+        // draws hidden shapes. BC character NIFs (BodyMaleM, liu_head, …) carry
+        // ~30 hidden "Biped Object" boxes — the 3ds Max Biped skeleton-bone
+        // visualization geometry, flagged 0x0005 — alongside the 1-2 visible
+        // skinned meshes (0x0004). Rendering the hidden boxes draws a "lego
+        // skeleton" doubled body and lets the head graft pick a placeholder box
+        // under "Bip01 Head" instead of the real (skinned) head mesh. A corpus
+        // scan confirms the bit is set ONLY on those character boxes — every
+        // ship and bridge shape is 0x0004 — so skipping it is character-only in
+        // effect and byte-identical for all other models.
+        if (shape->av.flags & 0x0001u) continue;
         auto data_idx = resolver.resolve(shape->data_link);
         const nif::NiTriShapeData* data = nullptr;
         if (data_idx != LinkResolver::kInvalidIndex && data_idx < f.blocks.size()) {

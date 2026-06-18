@@ -89,6 +89,18 @@ TEST_F(ModelComposeGpuTest, GraftRealHeadOntoBodyMaleL) {
                 << "mesh on attach node not bound to head bone";
     }
 
+    // Regression (the "lego skeleton" bug): BC body/head NIFs carry ~30 HIDDEN
+    // "Biped Object" skeleton-placeholder boxes that must never render. With
+    // model_build dropping hidden shapes, the composed draw list is exactly the
+    // visible geometry: BodyMaleL's 2 body meshes + the grafted head meshes.
+    // Before the fix this was 30+ (every box was node-attached and drawn).
+    std::size_t draw_list = 0;
+    for (const auto& n : composed.nodes) draw_list += n.meshes.size();
+    EXPECT_EQ(draw_list, 2u + static_cast<std::size_t>(grafted_meshes))
+        << "draw list should be body(2) + grafted head only — no hidden "
+           "'Biped Object' skeleton boxes";
+    EXPECT_LT(draw_list, 10u) << "skeleton-placeholder boxes leaked into draw list";
+
     // GL handles uploaded cleanly.
     for (const auto& mesh : composed.meshes) {
         EXPECT_NE(mesh.vao(), 0u);

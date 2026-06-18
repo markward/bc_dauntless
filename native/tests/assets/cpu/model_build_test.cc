@@ -112,6 +112,57 @@ protected:
         return f;
     }
 
+    // Root node with two NiTriShapes: one visible (flags bit0 clear) and one
+    // HIDDEN (flags bit0 set, 0x0005 — exactly how BC character NIFs flag their
+    // 3ds Max "Biped Object" skeleton-placeholder boxes). The hidden one must
+    // never enter the built model.
+    nif::File file_with_hidden_and_visible_shapes() {
+        nif::File f;
+        // Block 0: root NiNode, children -> 1 (visible), 3 (hidden)
+        nif::NiNode root;
+        root.av.obj.name = "Root";
+        root.child_links = {1, 3};
+        f.blocks.push_back(root);
+        f.block_ids.push_back(0);
+
+        // Block 1: VISIBLE NiTriShape (flags default 0 -> bit0 clear)
+        nif::NiTriShape vis;
+        vis.av.obj.name = "RealMesh";
+        vis.data_link = 2;
+        f.blocks.push_back(vis);
+        f.block_ids.push_back(1);
+
+        // Block 2: data for the visible shape
+        nif::NiTriShapeData dv;
+        dv.num_vertices = 3;
+        dv.has_vertices = true;
+        dv.vertices = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}};
+        dv.num_triangles = 1;
+        dv.triangles.push_back({0, 1, 2});
+        f.blocks.push_back(dv);
+        f.block_ids.push_back(2);
+
+        // Block 3: HIDDEN NiTriShape ("Biped Object"), flags 0x0005 (bit0 set)
+        nif::NiTriShape hid;
+        hid.av.obj.name = "Biped Object";
+        hid.av.flags = 0x0005;
+        hid.data_link = 4;
+        f.blocks.push_back(hid);
+        f.block_ids.push_back(3);
+
+        // Block 4: data for the hidden shape
+        nif::NiTriShapeData dh;
+        dh.num_vertices = 3;
+        dh.has_vertices = true;
+        dh.vertices = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}};
+        dh.num_triangles = 1;
+        dh.triangles.push_back({0, 1, 2});
+        f.blocks.push_back(dh);
+        f.block_ids.push_back(4);
+
+        return f;
+    }
+
     assets::detail::ModelBuildContext make_ctx() {
         assets::detail::ModelBuildContext ctx;
         ctx.resolver = &resolver;
@@ -167,4 +218,21 @@ TEST_F(ModelBuildTest, ChildShapeInheritsParentNodeProperty) {
     EXPECT_FLOAT_EQ(model.materials[0].diffuse.x, 0.25f);
     EXPECT_FLOAT_EQ(model.materials[0].diffuse.y, 0.5f);
     EXPECT_FLOAT_EQ(model.materials[0].diffuse.z, 0.75f);
+}
+
+// BC character NIFs carry ~30 hidden "Biped Object" skeleton-placeholder shapes
+// (NiAVObject flags bit0 = 0x01 set) alongside the real skinned mesh. The stock
+// engine never draws hidden shapes; we must skip them at build time, otherwise
+// they render as a "lego skeleton" duplicate body. Only the visible shape may
+// reach model.meshes / node.meshes / model.materials.
+TEST_F(ModelBuildTest, HiddenShapesAreNotBuilt) {
+    auto f = file_with_hidden_and_visible_shapes();
+    auto model = assets::detail::build_model(f, make_ctx());
+
+    EXPECT_EQ(model.meshes.size(), 1u);      // only the visible RealMesh
+    EXPECT_EQ(model.materials.size(), 1u);   // hidden shape's material not built
+
+    std::size_t attached = 0;
+    for (const auto& n : model.nodes) attached += n.meshes.size();
+    EXPECT_EQ(attached, 1u);                  // no node references the hidden box
 }
