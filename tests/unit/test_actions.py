@@ -728,3 +728,16 @@ def test_script_action_none_return_auto_completes():
     a.Play()
     assert not a.IsPlaying()
     del sys.modules["_test_script_none"]
+
+
+def test_action_manager_completes_objptr_on_action_completed():
+    owner = TGAction()
+    done = []
+    owner.Completed = lambda: done.append(True)   # type: ignore
+
+    ev = App.TGObjPtrEvent_Create()
+    ev.SetEventType(App.ET_ACTION_COMPLETED)
+    ev.SetObjPtr(owner)
+    App.g_kTGActionManager.ProcessEvent(ev)
+
+    assert done == [True]

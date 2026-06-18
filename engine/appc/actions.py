@@ -560,6 +560,19 @@ class TGActionManager(TGEventHandlerObject):
     def IsRegistered(self, name: str) -> int:
         return 1 if str(name) in self._registered else 0
 
+    def ProcessEvent(self, event) -> None:
+        # SDK manager-ObjPtr deferred-completion pattern: ViewscreenOn /
+        # ViewscreenOff / PlayDialog wire a leaf action's completion to post
+        # ET_ACTION_COMPLETED here with the OWNER action as the ObjPtr. Route it
+        # to the owner so the sequence step gated on the owner advances.
+        import App
+        if event.GetEventType() == App.ET_ACTION_COMPLETED:
+            owner = event.GetObjPtr() if isinstance(event, TGObjPtrEvent) else None
+            if owner is not None and hasattr(owner, "Completed"):
+                owner.Completed()
+                return
+        super().ProcessEvent(event)
+
 
 def TGActionManager_RegisterAction(action, name: str) -> None:
     """Module-level convenience wrapper used by SDK MissionLib.
