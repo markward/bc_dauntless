@@ -2874,8 +2874,9 @@ def run(mission_name: Optional[str] = None,
         from engine.ui.configuration_panel import (
             ConfigurationPanel, SettingsSnapshot,
         )
+        from engine.appc import crew_speech as _crew_speech
         configuration_panel = ConfigurationPanel(
-            tabs=[("graphics", "Graphics")],
+            tabs=[("graphics", "Graphics"), ("gameplay", "Gameplay")],
             initial_settings=SettingsSnapshot(
                 dust_on=True,
                 specular_on=True,
@@ -2887,6 +2888,7 @@ def run(mission_name: Optional[str] = None,
                 fov_deg=int(round(_math.degrees(
                     director.fov_y_rad
                 ))),
+                subtitles_on=_crew_speech.subtitles_enabled(),
             ),
             set_dust=r.set_dust_enabled,
             set_specular=r.set_specular_enabled,
@@ -2895,6 +2897,7 @@ def run(mission_name: Optional[str] = None,
             set_decals=r.set_decals_enabled,
             set_hull_damage=r.set_hull_damage_enabled,
             set_fxaa=r.set_fxaa_enabled,
+            set_subtitles=_crew_speech.set_subtitles_enabled,
             set_fov_rad=director.set_fov,
         )
 
