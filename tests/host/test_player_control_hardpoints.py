@@ -285,9 +285,10 @@ def test_speed_ramp_matches_bc_shuttle_curve():
 
 def test_rotation_integrates_ramped_angular_rate():
     """Hold D from rest with MaxAngularVelocity=0.28, MaxAngularAccel=0.12.
-    Over 1.0 s, ship's heading rotates by ∫(yaw_rate dt) = 0.06 rad.
-    D produces +yaw_rate so MakeZRotation(+0.06).GetCol(1) gives
-    forward = (-sin 0.06, cos 0.06, 0) — yaw left."""
+    Over 1.0 s, ship's heading rotates by ∫(yaw_rate dt) = 0.06 rad. D produces
+    +yaw_rate, which _apply_body_rotation NEGATES (right-handed un-mirror), so
+    MakeZRotation(-0.06).GetCol(1) gives forward = (+sin 0.06, cos 0.06, 0) —
+    nose swings toward starboard (+X)."""
     import math
     pc = _PlayerControl()
     ship = _galaxy_like_ship()
@@ -296,7 +297,7 @@ def test_rotation_integrates_ramped_angular_rate():
     for _ in range(60):
         pc.apply(ship, dt=1.0/60, h=reader)
     forward = ship.GetWorldRotation().GetCol(1)
-    expected_x = -math.sin(0.06)
+    expected_x = math.sin(0.06)
     expected_y = math.cos(0.06)
     assert abs(forward.x - expected_x) < 1e-3, f"forward.x={forward.x}"
     assert abs(forward.y - expected_y) < 1e-3, f"forward.y={forward.y}"

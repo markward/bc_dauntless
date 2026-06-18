@@ -914,13 +914,23 @@ class _PlayerControl:
         rotation for one tick. Column-vector matrices, body-frame delta
         POST-multiplies (R · D); pitch (X) → yaw (Z) → roll (Y) Euler order.
         See CLAUDE.md ↦ 'Rotation matrix convention'. No-op when all rates
-        are zero."""
+        are zero.
+
+        Yaw (about Z) and roll (about Y) are negated relative to the input
+        rates: the 2026-06-18 un-mirror made the ship frame right-handed
+        (AlignToVectors builds forward × up, so GetCol(0) flipped sign). The
+        body-frame yaw/roll deltas move forward/up toward body ±X, which maps
+        to world through that flipped GetCol(0) — so the on-screen swing
+        reversed for yaw and roll, while pitch (toward body +Z = unchanged
+        GetCol(2)) stayed put. Negating restores "press right → turn right /
+        roll right". See docs/superpowers/plans/2026-06-18-render-handedness-
+        unmirror.md."""
         if not (pitch_rate or yaw_rate or roll_rate):
             return
         R = player.GetWorldRotation()
-        R_pitch = TGMatrix3(); R_pitch.MakeRotation(pitch_rate * dt, TGPoint3(1.0, 0.0, 0.0))
-        R_yaw   = TGMatrix3(); R_yaw.MakeRotation(yaw_rate   * dt, TGPoint3(0.0, 0.0, 1.0))
-        R_roll  = TGMatrix3(); R_roll.MakeRotation(roll_rate  * dt, TGPoint3(0.0, 1.0, 0.0))
+        R_pitch = TGMatrix3(); R_pitch.MakeRotation( pitch_rate * dt, TGPoint3(1.0, 0.0, 0.0))
+        R_yaw   = TGMatrix3(); R_yaw.MakeRotation(  -yaw_rate  * dt, TGPoint3(0.0, 0.0, 1.0))
+        R_roll  = TGMatrix3(); R_roll.MakeRotation( -roll_rate * dt, TGPoint3(0.0, 1.0, 0.0))
         delta = R_pitch.MultMatrix(R_yaw).MultMatrix(R_roll)
         player.SetMatrixRotation(R.MultMatrix(delta))
 

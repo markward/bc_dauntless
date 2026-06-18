@@ -191,9 +191,10 @@ def test_pitch_up_rotates_forward_above_horizontal():
     assert abs(forward.z - expected_z) < 1e-3
 
 
-def test_yaw_left_rotates_forward_toward_minus_x():
-    """Hold D (yaw left) for one second. Forward rotates around world Z
-    (which is also ship-Z at identity start) by 1.5 rad: from +Y toward -X."""
+def test_yaw_d_rotates_forward_toward_plus_x():
+    """Hold D for one second. D produces +yaw_rate, which _apply_body_rotation
+    NEGATES (right-handed un-mirror, 2026-06-18), so forward rotates around
+    world Z by -1.5 rad: from +Y toward +X (nose swings to starboard)."""
     import math
     pc = _PlayerControl()
     ship = _FakeShip()
@@ -202,7 +203,7 @@ def test_yaw_left_rotates_forward_toward_minus_x():
     for _ in range(60):
         pc.apply(ship, dt=1.0/60, h=reader)
     forward = ship.GetWorldRotation().GetCol(1)
-    expected_x = -math.sin(1.5)
+    expected_x = math.sin(1.5)
     expected_y = math.cos(1.5)
     assert abs(forward.x - expected_x) < 1e-3, f"forward.x={forward.x}, expected {expected_x}"
     assert abs(forward.y - expected_y) < 1e-3
@@ -266,10 +267,10 @@ def test_full_stop_after_movement_stops_advancement():
     assert abs(pos_after_second_half.y - pos_after_first_half.y) < 1e-3
 
 
-def test_roll_left_rotates_up_toward_minus_x():
-    """Hold E (roll left) for one second at identity start. Roll is
-    around ship-Y (forward axis). Ship's up (col 2 under column-vector
-    convention) starts at +Z and rolls toward -X."""
+def test_roll_e_rotates_up_toward_plus_x():
+    """Hold E for one second at identity start. Roll is around ship-Y (forward
+    axis). E produces -roll_rate, which _apply_body_rotation NEGATES (right-
+    handed un-mirror), so up (col 2) starts at +Z and rolls toward +X."""
     import math
     pc = _PlayerControl()
     ship = _FakeShip()
@@ -278,7 +279,7 @@ def test_roll_left_rotates_up_toward_minus_x():
     for _ in range(60):
         pc.apply(ship, dt=1.0/60, h=reader)
     up = ship.GetWorldRotation().GetCol(2)
-    expected_x = -math.sin(1.5)
+    expected_x = math.sin(1.5)
     expected_z = math.cos(1.5)
     assert abs(up.x - expected_x) < 1e-3, f"up.x={up.x}, expected {expected_x}"
     assert abs(up.y) < 1e-3
