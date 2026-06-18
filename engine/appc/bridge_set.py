@@ -91,19 +91,11 @@ class ViewScreenObject(_LoudStub):
         return self._remote_cam
 
     def SetRemoteCam(self, cam):
-        # INTERIM comm-feed hold: once a real comm-set camera (CameraObjectClass)
-        # is showing, ignore a SetRemoteCam that would replace it with anything
-        # that is NOT a real camera. MissionLib.ViewscreenOff reverts the remote
-        # cam to Game.GetPlayerCamera(), which is an unimplemented stub here, and
-        # it fires immediately after ViewscreenOn because the action-sequence
-        # timing gap collapses the dialogue delay. Without this hold the comm
-        # scene would never be visible. A real camera (e.g. another comm set's
-        # maincamera) DOES replace it, so legitimate camera changes still work.
-        # TODO: remove once action-sequence timing lands (ViewscreenOff will then
-        # revert correctly after the dialogue, and the player camera will be real).
-        if (isinstance(self._remote_cam, CameraObjectClass)
-                and not isinstance(cam, CameraObjectClass)):
-            return
+        # ViewscreenOn sets a comm set's maincamera; ViewscreenOff reverts to the
+        # player camera. The host's _active_comm_feed identity-matches the remote
+        # cam back to a comm set, falling back to the forward view for anything
+        # else — so a plain store gives the correct comm-then-revert behavior now
+        # that action-sequence timing holds the comm scene for the dialogue.
         self._remote_cam = cam
 
     def SetIsOn(self, on):
