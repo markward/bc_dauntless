@@ -741,3 +741,25 @@ def test_action_manager_completes_objptr_on_action_completed():
     App.g_kTGActionManager.ProcessEvent(ev)
 
     assert done == [True]
+
+
+# ── TGSoundAction deferred completion ────────────────────────────────────────
+
+def test_sound_action_defers_by_real_duration(monkeypatch):
+    from engine.audio.tg_sound import TGSoundManager
+    monkeypatch.setattr(TGSoundManager, "duration_for",
+                        lambda self, name: 0.5, raising=True)
+    a = App.TGSoundAction_Create("AnySfx")
+    a.Play()
+    assert a.IsPlaying()                       # gated on the 0.5s duration
+    _advance_real_time(0.6)
+    assert not a.IsPlaying()                    # completed after duration
+
+
+def test_sound_action_zero_duration_completes_inline(monkeypatch):
+    from engine.audio.tg_sound import TGSoundManager
+    monkeypatch.setattr(TGSoundManager, "duration_for",
+                        lambda self, name: 0.0, raising=True)
+    a = App.TGSoundAction_Create("AnySfx")
+    a.Play()
+    assert not a.IsPlaying()                    # inline (synchronous preserved)

@@ -442,6 +442,17 @@ class TGSoundAction(TGTimedAction):
     def GetName(self) -> str:
         return self._sound_name
 
+    def Play(self) -> None:
+        # Override (not _do_play) so completion is gated on the sound's real
+        # wall-clock length: a sequence step chained after this action advances
+        # only when the audio actually finishes. Zero duration (no backend /
+        # unloaded) completes inline, preserving synchronous behavior.
+        self._playing = True
+        self._do_play()
+        from engine.audio.tg_sound import TGSoundManager
+        dur = TGSoundManager.instance().duration_for(self._sound_name)
+        self._complete_after(dur)
+
     def _do_play(self) -> None:
         # Late import: tg_sound pulls in the native audio extension; keep this
         # module light at startup since actions is loaded very early via App.py.
