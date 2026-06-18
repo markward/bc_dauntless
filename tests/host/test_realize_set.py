@@ -195,6 +195,38 @@ def test_realize_all_sets_realizes_bridge_and_comm_sets(monkeypatch):
     _App.g_kSetManager.AddSet(bridge, "bridge")
     _App.g_kSetManager.AddSet(comm, "StarbaseSet")
 
-    hl.realize_all_sets(object(), object())
+    # Use a renderer that HAS create_comm_instance so the comm set is realized.
+    hl.realize_all_sets(object(), _FakeRenderer())
     assert ("bridge", True) in seen
     assert ("StarbaseSet", False) in seen
+
+
+def test_realize_all_sets_skips_comm_set_when_renderer_lacks_create_comm_instance(monkeypatch):
+    """Renderer without create_comm_instance must not reach realize_set for comm
+    sets — it would crash with AttributeError (the guard introduced to fix the
+    feat/comm-set-viewscreen crash during live E1M1 load).  The bridge set
+    is unaffected."""
+    import App as _App
+    from engine.appc.sets import SetClass
+    from engine.appc.bridge_set import BridgeObjectClass
+
+    _App.g_kSetManager._sets.clear()
+    seen = []
+    monkeypatch.setattr(hl, "realize_set",
+                        lambda c, r, s, *, is_bridge: seen.append((s.GetName(), is_bridge)))
+
+    bridge = SetClass(); bridge.SetName("bridge")
+    bridge.AddObjectToSet(BridgeObjectClass("b.nif"), "bridge")
+    comm = SetClass(); comm.SetName("StarbaseSet"); comm.SetBackgroundModel("c.nif")
+    _App.g_kSetManager.AddSet(bridge, "bridge")
+    _App.g_kSetManager.AddSet(comm, "StarbaseSet")
+
+    # Renderer WITHOUT create_comm_instance (simulates a build without comm support).
+    class _RendererNoComm:
+        pass
+
+    hl.realize_all_sets(object(), _RendererNoComm())
+
+    # Bridge realized; comm set skipped — no AttributeError.
+    assert ("bridge", True) in seen
+    assert ("StarbaseSet", False) not in seen

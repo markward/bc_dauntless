@@ -2336,7 +2336,11 @@ def realize_all_sets(controller, r) -> None:
     for name, s in list(mgr.iter_sets()):          # use the manager's set map
         if name == "bridge":
             realize_set(controller, r, s, is_bridge=True)
-        elif s.GetBackgroundModelNIF() is not None or _iter_set_characters(s):
+        elif hasattr(r, "create_comm_instance") and (
+                s.GetBackgroundModelNIF() is not None or _iter_set_characters(s)):
+            # Guard: comm-instance primitives are added in a later task.
+            # Skip non-bridge sets cleanly when the renderer build doesn't
+            # expose create_comm_instance yet (no-op once the binding lands).
             realize_set(controller, r, s, is_bridge=False)
 
 
