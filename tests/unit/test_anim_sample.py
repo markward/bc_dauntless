@@ -27,3 +27,27 @@ def test_quat_rotate_90_about_z():
     q = (0.0, 0.0, math.sin(math.pi / 4), math.cos(math.pi / 4))  # +90 Z
     x, y, z = quat_rotate(q, (1.0, 0.0, 0.0))
     assert abs(x - 0.0) < 1e-6 and abs(y - 1.0) < 1e-6 and abs(z) < 1e-6
+
+
+def test_rotation_slerp_takes_shortest_path_across_hemispheres():
+    q0 = (0.0, 0.0, 0.0, 1.0)                       # identity
+    # Antipodal encoding of +90 deg about Z: same rotation as
+    # (0,0,sin(pi/4),cos(pi/4)) but negated (w<0), so dot(q0,q1) < 0.
+    q1 = (0.0, 0.0, -math.sin(math.pi / 4), -math.cos(math.pi / 4))
+    keys = [(0.0, *q0), (1.0, *q1)]
+    rm = sample_rotation(keys, 0.5)
+    # Shortest path => 45 deg about +Z (NOT 135 deg the long way).
+    expected = (0.0, 0.0, math.sin(math.pi / 8), math.cos(math.pi / 8))
+    # Quaternion sign may be globally flipped; compare up to sign.
+    assert (all(abs(a - b) < 1e-6 for a, b in zip(rm, expected))
+            or all(abs(a + b) < 1e-6 for a, b in zip(rm, expected)))
+
+
+def test_rotation_slerp_clamps_and_hits_endpoints():
+    q0 = (0.0, 0.0, 0.0, 1.0)
+    q1 = (0.0, 0.0, math.sin(math.pi / 4), math.cos(math.pi / 4))
+    keys = [(0.0, *q0), (1.0, *q1)]
+    # Clamp low -> q0; clamp high and exact endpoint -> q1.
+    for t, exp in ((-1.0, q0), (1.0, q1), (2.0, q1)):
+        r = sample_rotation(keys, t)
+        assert all(abs(a - b) < 1e-6 for a, b in zip(r, exp))
