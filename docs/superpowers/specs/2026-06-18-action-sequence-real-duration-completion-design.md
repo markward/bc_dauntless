@@ -282,3 +282,46 @@ normal-play crew speech unchanged.
 - Save/load of a mid-flight sequence (pending deferred-completion timers).
   Sequences remain transient and are not pickled.
 - Any host-loop or renderer change beyond removing the comm-feed hold hack.
+
+## §9 — Live verification & follow-on fixes (2026-06-18)
+
+The core timing system (§1–§8) was implemented and verified, then live-tested on
+the E1M1 Starbase 12 hail. Making leaf durations *real* exposed three
+pre-existing gaps that had been invisible while every line collapsed to zero
+duration. Each was root-caused with temporary `DAUNTLESS_SEQ_DEBUG` stderr
+instrumentation (since removed) and fixed on this branch:
+
+1. **Mission VO database not loaded** (`engine/core/game.py`). `Mission.SetDatabase`
+   was an unimplemented stub, so `g_pMissionDatabase` resolved no text/wav and
+   every mission line (Liu's briefing, Picard/Saffi intros) collapsed to zero
+   duration — with the hold hack removed, the comm view reverted instantly and
+   Liu never appeared. Fix: load the TGL via `g_kLocalizationManager.Load`
+   (mirrors `CharacterClass.SetDatabase`) + add `GetDatabase()`.
+
+2. **Two crew/comm voices overlapping** (`engine/appc/crew_speech.py`). The bus
+   arbitrated priority but never *stopped* a preempted voice, so two real-duration
+   lines played simultaneously. Fix: hold the active `_PlayingSound` handle and
+   `Stop()` it when a genuinely live line is preempted (BC's single VO channel).
+
+3. **Proximity check fired at mission load** (`engine/appc/ai.py`). `ProximityCheck`
+   edge detection started with an empty `_inside_set`, so an object *already
+   inside* its `TT_INSIDE` radius on the first evaluation read as a fresh
+   crossing. The player starts docked inside the starbase's 690 GU proximity, so
+   `StarbaseInnerProximity` fired Graff's arrival greeting (`CloseToStarbase`) at
+   load, concurrent with the opening Liu briefing — the two comm conversations
+   then fought over the voice channel ("all over the place"). Fix: the first
+   per-tick sample only establishes the baseline; only a genuine transition
+   fires. The explicit immediate-check path (`force=True`/`CheckProximity`) is
+   unchanged.
+
+Result (live-verified): the opening plays cleanly — Miguel/Kiska, then Liu's six
+briefing lines back-to-back with the comm view held (g≈10→72), then a natural
+revert to the forward view and the Picard/Saffi crew intros. No overlap, no
+premature Graff greeting. The genuine Graff arrival now fires later, on the real
+approach to the starbase.
+
+### Known follow-ups (not blocking)
+
+- `AT_SAY_LINE` maps to `voice_only=True`, so the comm briefing plays audio
+  without on-screen subtitle text. If subtitles are wanted for briefing-style
+  `SayLine` calls, revisit that mapping.
