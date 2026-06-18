@@ -280,6 +280,70 @@ class CameraObjectClass(_LoudStub):
         """Return the stored orientation TGMatrix3 (column-vector)."""
         return self.orientation
 
+    # ── Camera-mode stack ─────────────────────────────────────────────────────
+    # Real replacement for the _LoudStub no-ops so the SDK's Camera.NewMode
+    # (sdk/Build/scripts/Camera.py) can push live modes. The mode's Update()
+    # then drives the rendered exterior view (host_loop._active_cutscene_camera).
+    # AddModeHierarchy stays a no-op — the mode-fallback tree is out of v1 scope.
+
+    _MODE_FACTORY = {
+        "Locked": ("LockedMode", {}),
+        "Chase": ("ChaseMode", {}),
+        "ReverseChase": ("ChaseMode", {"reverse": True}),
+        "Target": ("TargetMode", {}),
+    }
+
+    def GetNamedCameraMode(self, name, *args):
+        if "_named_modes" not in self.__dict__:
+            self._named_modes = {}
+            self._mode_stack = []
+        if name in self._named_modes:
+            return self._named_modes[name]
+        spec = self._MODE_FACTORY.get(name)
+        if spec is None:
+            return None
+        from engine.appc import camera_modes
+        cls = getattr(camera_modes, spec[0])
+        mode = cls(**spec[1])
+        self._named_modes[name] = mode
+        return mode
+
+    def _ensure_stack(self):
+        if "_mode_stack" not in self.__dict__:
+            self._named_modes = {}
+            self._mode_stack = []
+        return self._mode_stack
+
+    def PushCameraMode(self, mode):
+        stack = self._ensure_stack()
+        R = self.GetWorldRotation()
+        loc = self.GetWorldLocation()
+        fwd = R.GetCol(1)
+        up = R.GetCol(2)
+        mode.set_initial_pose((loc.x, loc.y, loc.z),
+                              (fwd.x, fwd.y, fwd.z), (up.x, up.y, up.z))
+        stack.append(mode)
+
+    def PopCameraMode(self, mode=None):
+        stack = self._ensure_stack()
+        if not stack:
+            return None
+        if mode is None:
+            return stack.pop()
+        # Named/object pop: remove the matching mode wherever it sits.
+        for i in range(len(stack) - 1, -1, -1):
+            if stack[i] is mode or (
+                    hasattr(mode, "GetObjID") and stack[i].GetObjID() == mode.GetObjID()):
+                return stack.pop(i)
+        return None
+
+    def GetCurrentCameraMode(self, *args):
+        stack = self._ensure_stack()
+        return stack[-1] if stack else None
+
+    def AddModeHierarchy(self, *args):
+        return None
+
 
 def CameraObjectClass_CreateFromNiCamera(niCamera, name):
     left, right, top, bottom = niCamera.frustum
