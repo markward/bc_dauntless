@@ -20,6 +20,20 @@ _MIN_DURATION_S = 2.0
 _MAX_DURATION_S = 8.0
 _WORDS_PER_SECOND = 2.5
 
+# Global subtitle display flag (Configuration > Gameplay). Gates on-screen text
+# only — line duration + voice playback are unaffected. Default ON; applied live
+# by the configuration panel; not persisted across launches.
+_subtitles_enabled: bool = True
+
+
+def set_subtitles_enabled(on: bool) -> None:
+    global _subtitles_enabled
+    _subtitles_enabled = bool(on)
+
+
+def subtitles_enabled() -> bool:
+    return _subtitles_enabled
+
 
 def _estimate_duration(text: Optional[str], wav: Optional[str]) -> float:
     """Coarse reading-speed dwell. Drives both the on-screen time and the
@@ -84,6 +98,8 @@ class CrewSpeechBus:
 
     # -- Best-effort routing (never raises) ----------------------------------
     def _route_subtitle(self, speaker, text, duration) -> None:
+        if not subtitles_enabled():
+            return
         try:
             import App
             sub = App.TopWindow_GetTopWindow().FindMainWindow(App.MWT_SUBTITLE)
@@ -113,14 +129,16 @@ class CrewSpeechBus:
             return 0.0, None
 
 
-def emit(speaker, db, line_id, priority, *, voice_only) -> float:
-    """Resolve a line's subtitle text (unless voice_only) and voice wav from a
-    localization DB, then feed the speech bus. Single home for the HasString
-    gate + isinstance(str) stub-DB guards shared by SpeakLine/SayLine and
-    CharacterAction speak actions."""
+def emit(speaker, db, line_id, priority) -> float:
+    """Resolve a line's subtitle text and voice wav from a localization DB,
+    then feed the speech bus. Single home for the HasString gate +
+    isinstance(str) stub-DB guards shared by SpeakLine/SayLine and
+    CharacterAction speak actions. Subtitle *display* is gated globally by
+    subtitles_enabled() inside the bus; text is always resolved here so the
+    duration estimate (text-only lines) is unaffected by the toggle."""
     line = str(line_id)
     text = None
-    if not voice_only and db is not None and db.HasString(line):
+    if db is not None and db.HasString(line):
         t = db.GetString(line)
         text = t if isinstance(t, str) else None   # drop stub-DB repr
     wav = db.GetFilename(line) if db is not None else None

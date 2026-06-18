@@ -31,6 +31,7 @@ def _make(**overrides):
         set_decals=Mock(),
         set_hull_damage=Mock(),
         set_fxaa=Mock(),
+        set_subtitles=Mock(),
         set_fov_rad=Mock(),
     )
     kwargs.update(overrides)
@@ -65,7 +66,8 @@ def test_initial_settings_round_trip_to_render_payload():
     body = json.loads(payload[len("setConfigurationPanel("):-2])
     assert body["settings"] == {
         "dust_on": False, "specular_on": True, "hdr_on": True, "rim_on": False,
-        "decals_on": False, "hull_damage_on": False, "fxaa_on": True, "fov_deg": 62,
+        "decals_on": False, "hull_damage_on": False, "fxaa_on": True,
+        "subtitles_on": True, "fov_deg": 62,
     }
 
 
@@ -502,3 +504,44 @@ def test_space_on_fxaa_row_toggles():
     p.handle_input(_H())
     kw["set_fxaa"].assert_called_once_with(False)
     assert p._settings.fxaa_on is False
+
+
+# ---- subtitles toggle / gameplay tab --------------------------------------
+
+def test_render_payload_includes_subtitles_on():
+    p, _ = _make()
+    p.open()
+    payload = p.render_payload()
+    data = json.loads(payload[len("setConfigurationPanel("):-len(");")])
+    assert data["settings"]["subtitles_on"] is True
+
+
+def test_toggle_subtitles_flips_and_calls_applier():
+    p, kwargs = _make()
+    p.open()
+    p.dispatch_event("toggle:subtitles")
+    kwargs["set_subtitles"].assert_called_once_with(False)
+    # state reflects the new value
+    payload = p.render_payload()
+    data = json.loads(payload[len("setConfigurationPanel("):-len(");")])
+    assert data["settings"]["subtitles_on"] is False
+
+
+def test_gameplay_tab_focusables_include_subtitles():
+    p, _ = _make(tabs=[("graphics", "Graphics"), ("gameplay", "Gameplay")])
+    p.dispatch_event("tab:gameplay")
+    focusables = p._focusables()
+    assert ("ctrl", "subtitles") in focusables
+    # graphics controls are not present on the gameplay tab
+    assert ("ctrl", "dust") not in focusables
+
+
+def test_initial_subtitles_off_round_trips():
+    p, _ = _make(initial_settings=SettingsSnapshot(
+        dust_on=True, specular_on=True, hdr_on=True, rim_on=True,
+        decals_on=True, hull_damage_on=True, fov_deg=70, subtitles_on=False,
+    ))
+    p.open()
+    payload = p.render_payload()
+    data = json.loads(payload[len("setConfigurationPanel("):-len(");")])
+    assert data["settings"]["subtitles_on"] is False

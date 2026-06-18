@@ -33,6 +33,7 @@ class SettingsSnapshot:
     hull_damage_on: bool
     fov_deg: int
     fxaa_on: bool = True
+    subtitles_on: bool = True
 
 
 class ConfigurationPanel(Panel):
@@ -46,6 +47,7 @@ class ConfigurationPanel(Panel):
                  set_decals: Callable[[bool], None],
                  set_hull_damage: Callable[[bool], None],
                  set_fxaa: Callable[[bool], None],
+                 set_subtitles: Callable[[bool], None],
                  set_fov_rad: Callable[[float], None]):
         super().__init__()
         self._tabs = list(tabs)
@@ -59,6 +61,7 @@ class ConfigurationPanel(Panel):
             hull_damage_on=initial_settings.hull_damage_on,
             fxaa_on=initial_settings.fxaa_on,
             fov_deg=int(initial_settings.fov_deg),
+            subtitles_on=initial_settings.subtitles_on,
         )
         self._set_dust = set_dust
         self._set_specular = set_specular
@@ -67,6 +70,7 @@ class ConfigurationPanel(Panel):
         self._set_decals = set_decals
         self._set_hull_damage = set_hull_damage
         self._set_fxaa = set_fxaa
+        self._set_subtitles = set_subtitles
         self._set_fov_rad = set_fov_rad
         self._visible: bool = False
         self._focused: int = -1
@@ -99,6 +103,7 @@ class ConfigurationPanel(Panel):
             self._settings.decals_on,
             self._settings.hull_damage_on,
             self._settings.fxaa_on,
+            self._settings.subtitles_on,
             self._settings.fov_deg,
         )
         if snapshot == self._last_pushed:
@@ -119,6 +124,7 @@ class ConfigurationPanel(Panel):
                 "decals_on": self._settings.decals_on,
                 "hull_damage_on": self._settings.hull_damage_on,
                 "fxaa_on": self._settings.fxaa_on,
+                "subtitles_on": self._settings.subtitles_on,
                 "fov_deg": self._settings.fov_deg,
             },
         }
@@ -167,6 +173,11 @@ class ConfigurationPanel(Panel):
             new_val = not self._settings.fxaa_on
             self._set_fxaa(new_val)
             self._settings.fxaa_on = new_val
+            return True
+        if action == "toggle:subtitles":
+            new_val = not self._settings.subtitles_on
+            self._set_subtitles(new_val)
+            self._settings.subtitles_on = new_val
             return True
         if action.startswith("fov:"):
             raw = action[len("fov:"):]
@@ -241,6 +252,8 @@ class ConfigurationPanel(Panel):
             self.dispatch_event("toggle:hull_damage")
         elif activate and kind == "ctrl" and target == "fxaa":
             self.dispatch_event("toggle:fxaa")
+        elif activate and kind == "ctrl" and target == "subtitles":
+            self.dispatch_event("toggle:subtitles")
         elif activate and kind == "tab":
             self.dispatch_event("tab:" + target)
 
@@ -261,4 +274,6 @@ class ConfigurationPanel(Panel):
             out += [("ctrl", "dust"), ("ctrl", "specular"), ("ctrl", "fov"),
                     ("ctrl", "hdr"), ("ctrl", "rim"), ("ctrl", "decals"),
                     ("ctrl", "hull_damage"), ("ctrl", "fxaa")]
+        elif self._selected_tab == "gameplay":
+            out += [("ctrl", "subtitles")]
         return out
