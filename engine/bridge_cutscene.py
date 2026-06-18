@@ -13,10 +13,14 @@ See docs/superpowers/specs/2026-06-17-bridge-camera-walkon-cutscene-design.md.
 """
 from engine.anim_sample import sample_translation, sample_rotation, quat_rotate
 
-# Camera node local basis the keyframe rotation orients. Tuned during live
-# verification (the NIF camera node's authored forward/up convention).
-LOCAL_FORWARD = (0.0, 1.0, 0.0)
-LOCAL_UP = (0.0, 0.0, 1.0)
+# Camera node local basis the keyframe rotation orients. Derived from the
+# db_camera_walk_capt.nif "Camera01" track: its rotation maps local +X to the
+# view direction and local +Y to up. Verified against the path's final keyframe,
+# which lands on the captain's-chair eye with forward = world -Y (into the
+# bridge / toward the viewscreen) and up = world +Z — i.e. exactly the pose the
+# normal _BridgeCamera holds after the cutscene, so the handoff is seamless.
+LOCAL_FORWARD = (1.0, 0.0, 0.0)
+LOCAL_UP = (0.0, 1.0, 0.0)
 
 
 class BridgeCutsceneController:
