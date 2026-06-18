@@ -26,6 +26,7 @@ def test_all_flags_default_off(reset_cheats):
     assert cheats.god_mode_active() is False
     assert cheats.double_player_weapons_active() is False
     assert cheats.disable_npc_shields_active() is False
+    assert cheats.disable_collisions_active() is False
 
 
 def test_set_god_mode_flips_active_when_dev_on(reset_cheats):
@@ -89,3 +90,32 @@ def test_reset_clears_all_flags(reset_cheats):
     assert cheats.god_mode_active() is False
     assert cheats.double_player_weapons_active() is False
     assert cheats.disable_npc_shields_active() is False
+
+
+def test_set_disable_collisions_flips_active_when_dev_on(reset_cheats):
+    import _dauntless_host
+    _dauntless_host.developer_mode = True
+    cheats = reset_cheats
+    cheats.set_disable_collisions(True)
+    assert cheats.disable_collisions_active() is True
+    cheats.set_disable_collisions(False)
+    assert cheats.disable_collisions_active() is False
+
+
+def test_disable_collisions_gated_off_when_dev_mode_off(reset_cheats):
+    import _dauntless_host
+    cheats = reset_cheats
+    cheats.set_disable_collisions(True)
+    _dauntless_host.developer_mode = True
+    assert cheats.disable_collisions_active() is True
+    _dauntless_host.developer_mode = False
+    assert cheats.disable_collisions_active() is False
+
+
+def test_reset_clears_disable_collisions(reset_cheats):
+    import _dauntless_host
+    _dauntless_host.developer_mode = True
+    cheats = reset_cheats
+    cheats.set_disable_collisions(True)
+    cheats.reset()
+    assert cheats.disable_collisions_active() is False
