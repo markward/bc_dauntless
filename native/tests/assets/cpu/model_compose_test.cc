@@ -84,7 +84,61 @@ assets::Model make_head() {
     return m;
 }
 
+// Head Model shaped like a real BC head NIF (e.g. liu_head): a "Bip01 Head"
+// node exists in the hierarchy but carries NO renderable mesh — the actual
+// head/face mesh is a skinned shape parented higher up (under "Bip01 Spine1").
+// A subtree-walk anchored on the "Bip01 Head" node would graft nothing.
+assets::Model make_head_mesh_not_under_attach_node() {
+    assets::Model m;
+
+    m.textures.emplace_back(/*id=*/0, 1, 1, false);
+    assets::Material mat;
+    mat.stages[static_cast<std::size_t>(assets::Material::StageSlot::Base)]
+        .texture_index = 0;
+    m.materials.push_back(mat);
+
+    assets::MeshCpu head_cpu;
+    head_cpu.vertices.resize(4);
+    head_cpu.indices = {0, 1, 2, 0, 2, 3};
+    head_cpu.material_index = 0;
+    assets::Mesh head_mesh(/*vao=*/0, /*vbo=*/0, /*ebo=*/0, 6,
+                           head_cpu.material_index, /*node_index=*/1);
+    head_mesh.set_cpu_data(head_cpu);
+    m.meshes.push_back(std::move(head_mesh));
+
+    // Node 0: "Bip01 Head" (the attach bone's node) — empty, no meshes.
+    // Node 1: "Bip01 Spine1" — carries the real head mesh (index 0).
+    assets::Node head_node;  head_node.name = "Bip01 Head";   head_node.parent_index = -1;
+    assets::Node spine_node; spine_node.name = "Bip01 Spine1"; spine_node.parent_index = -1;
+    m.nodes = {head_node, spine_node};
+    m.root_node = 0;
+    m.nodes[1].meshes.push_back(0);
+
+    return m;
+}
+
 }  // namespace
+
+// Regression: the head/face mesh of a real BC head NIF is NOT parented under
+// the "Bip01 Head" node (it's a skinned shape under "Bip01 Spine1"). The graft
+// must still pull it onto the body. A node-subtree walk anchored on the attach
+// bone grafts nothing here and leaves the officer headless. graft_head_cpu must
+// graft the head model's (visible) mesh regardless of which node it hangs off.
+TEST(GraftHeadCpu, GraftsHeadMeshNotParentedUnderAttachNode) {
+    assets::Model body = make_body();
+    assets::Model head = make_head_mesh_not_under_attach_node();
+
+    std::vector<assets::MeshCpu> grafted =
+        assets::graft_head_cpu(body, head, "Bip01 Head");
+
+    ASSERT_EQ(grafted.size(), 1u);  // the real head mesh, not an empty subtree
+
+    const int kAttachBone = 1;  // body's "Bip01 Head" bone index
+    for (const auto& v : grafted[0].vertices) {
+        EXPECT_EQ(v.bone_indices.x, kAttachBone);
+        EXPECT_EQ(v.bone_weights.x, 255);
+    }
+}
 
 TEST(GraftHeadCpu, BindsGraftedVerticesToAttachBoneRigid) {
     assets::Model body = make_body();

@@ -76,36 +76,21 @@ std::vector<MeshCpu> graft_head_cpu(Model& body, Model& head,
 
     // BC "head" NIFs (e.g. felix_head.nif) are FULL CHARACTER NIFs — a complete
     // Bip01 body+head template. ReplaceBodyAndHead uses only the HEAD; the body
-    // comes from `body`. So graft ONLY the meshes in the head NIF's attach-bone
-    // ("Bip01 Head") subtree (the face + ponytail), discarding the template
-    // body. Grafting every mesh binds the template's arms/torso/legs to the
-    // single head bone — they fling out as skin-coloured spikes ("brown
-    // skeleton"). If the head NIF has no such node (a head-only NIF), graft all.
+    // comes from `body`. Earlier this grafted only the "Bip01 Head" node
+    // subtree to discard the template body, but that was the wrong cut: the only
+    // shapes parented under the "Bip01 Head" node are the HIDDEN "Biped Object"
+    // skeleton-placeholder boxes (head box + ponytail box), while the real
+    // head/face mesh is a SKINNED shape parented higher up (under "Bip01
+    // Spine1"). The subtree walk therefore grafted placeholder boxes and missed
+    // the actual head — the "lego skeleton head" bug.
+    //
+    // model_build now drops every hidden shape (see model_build.cc), so a built
+    // head Model contains ONLY the real (visible) head/face mesh(es) — a corpus
+    // scan confirms every head NIF's visible shapes are head geometry, never a
+    // body. So graft ALL of the head Model's meshes: that is exactly the head.
     std::vector<const MeshCpu*> graftable;
-    int head_node = -1;
-    for (std::size_t i = 0; i < head.nodes.size(); ++i)
-        if (head.nodes[i].name == attach_bone) { head_node = static_cast<int>(i); break; }
-    if (head_node >= 0) {
-        std::vector<char> in_subtree(head.nodes.size(), 0);
-        std::vector<int> stack{head_node};
-        while (!stack.empty()) {
-            int n = stack.back(); stack.pop_back();
-            if (n < 0 || n >= static_cast<int>(head.nodes.size()) || in_subtree[n])
-                continue;
-            in_subtree[n] = 1;
-            for (int c : head.nodes[n].children) stack.push_back(c);
-        }
-        for (std::size_t n = 0; n < head.nodes.size(); ++n) {
-            if (!in_subtree[n]) continue;
-            for (int mi : head.nodes[n].meshes)
-                if (mi >= 0 && mi < static_cast<int>(head.meshes.size()) &&
-                    head.meshes[mi].cpu_data())
-                    graftable.push_back(&*head.meshes[mi].cpu_data());
-        }
-    } else {
-        for (const auto& mesh : head.meshes)
-            if (mesh.cpu_data()) graftable.push_back(&*mesh.cpu_data());
-    }
+    for (const auto& mesh : head.meshes)
+        if (mesh.cpu_data()) graftable.push_back(&*mesh.cpu_data());
     if (graftable.empty()) return {};  // nothing to graft: leave body untouched
 
     const int node_index = choose_attach_node(body, attach_bone);
