@@ -56,6 +56,32 @@ def _resolve_tgl_path(filename: str):
     return None
 
 
+def _tgstring_text(value) -> str:
+    """Coerce any TGString-ish value to its plain Python text.
+
+    Compare/CompareC accept str, _TGString (a str subclass), or a mutable
+    TGString handle. The mutable TGString has no useful __str__, so extract
+    its backing value explicitly; everything else is already str-compatible.
+    """
+    if isinstance(value, TGString):
+        return value._value
+    return str(value)
+
+
+def _tgstring_compare(a_text: str, other, case_insensitive: int) -> int:
+    """Shared C-strcmp comparison for both TGString classes.
+
+    Real Appc binds TGString.Compare / TGString.CompareC (App.py:436-437) to
+    strcmp-style routines: 0 when equal, <0 / >0 otherwise. Flag 1 requests a
+    case-insensitive compare. SDK callers test ``not Compare(...)`` /
+    ``Compare(...) == 0`` for a match, or ``Compare(...) != 0`` for difference.
+    """
+    a, b = a_text, _tgstring_text(other)
+    if case_insensitive:
+        a, b = a.lower(), b.lower()
+    return (a > b) - (a < b)
+
+
 class TGString:
     """Mutable TGString factory matching the SDK constructor idiom.
 
@@ -80,6 +106,12 @@ class TGString:
 
     def GetLength(self) -> int:
         return len(self._value)
+
+    def Compare(self, other, case_insensitive: int = 0) -> int:
+        return _tgstring_compare(self._value, other, case_insensitive)
+
+    def CompareC(self, other, case_insensitive: int = 0) -> int:
+        return _tgstring_compare(self._value, other, case_insensitive)
 
     def __bool__(self) -> bool:
         return True
@@ -111,15 +143,11 @@ class _TGString(str):
     def GetLength(self) -> int:
         return len(self)
 
+    def Compare(self, other, case_insensitive: int = 0) -> int:
+        return _tgstring_compare(str(self), other, case_insensitive)
+
     def CompareC(self, other, case_insensitive: int = 0) -> int:
-        # SDK binds TGString.CompareC = Appc.TGString_CompareC (App.py:436);
-        # it returns C strcmp semantics — 0 when equal, <0 / >0 otherwise.
-        # Flag 1 requests a case-insensitive compare (MissionLib.py:1818
-        # matches property names this way). Callers test ``not CompareC(...)``.
-        a, b = str(self), str(other)
-        if case_insensitive:
-            a, b = a.lower(), b.lower()
-        return (a > b) - (a < b)
+        return _tgstring_compare(str(self), other, case_insensitive)
 
     def __mod__(self, args) -> "_TGString":
         # Phase 1 fallback strings (key-as-value) don't carry %s placeholders

@@ -1,6 +1,47 @@
 from engine.appc.localization import (
-    TGLocalizationManager, TGLocalizationDatabase, _TGString,
+    TGLocalizationManager, TGLocalizationDatabase, TGString, _TGString,
 )
+
+
+# ---------------------------------------------------------------------------
+# TGString comparison API — the real Appc binds both Compare (TGString vs
+# TGString) and CompareC (TGString vs C string) on TGString (App.py:436-437),
+# with C strcmp semantics (0 == equal). Both our TGString classes must expose
+# them: the mutable factory (App.TGString()) and the str-subclass returned by
+# localization lookups. Bridge menu enable/disable + docking-AI name matching
+# depend on this (e.g. HelmMenuHandlers.py:2125, MissionLib.py:1818).
+# ---------------------------------------------------------------------------
+
+def test_mutable_tgstring_compare_equal_returns_zero():
+    kString = TGString("USS Dauntless")
+    assert kString.Compare(_TGString("USS Dauntless")) == 0
+
+
+def test_mutable_tgstring_compare_different_is_nonzero():
+    kString = TGString("USS Dauntless")
+    assert kString.Compare(_TGString("Starbase 12")) != 0
+
+
+def test_mutable_tgstring_compare_case_insensitive_flag():
+    kString = TGString("USS Dauntless")
+    assert kString.Compare("uss dauntless", 1) == 0
+    assert kString.Compare("uss dauntless", 0) != 0
+
+
+def test_mutable_tgstring_compare_against_tgstring_arg():
+    """BridgeMenus.py:135 — kName.Compare(kMenuName) where both are TGString;
+    the arg's repr must NOT leak into the comparison."""
+    assert TGString("Helm").Compare(TGString("Helm")) == 0
+    assert TGString("Helm").Compare(TGString("Tactical")) != 0
+
+
+def test_mutable_tgstring_comparec_matches_c_string():
+    assert TGString("Docking Entry Start").CompareC("Docking Entry Start", 1) == 0
+
+
+def test_immutable_tgstring_compare_round_trips():
+    assert _TGString("Helm").Compare("Helm") == 0
+    assert _TGString("Helm").Compare(_TGString("Tactical")) != 0
 
 
 def test_tgstring_acts_as_python_str():
