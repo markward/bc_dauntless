@@ -35,6 +35,10 @@ class BridgeCutsceneController:
     def request_object_anim(self, action, anim_node, clip_name):
         self._pending_doors.append((action, getattr(anim_node, "owner", None)))
 
+    def has_pending_camera(self):
+        """True when a camera path is queued or actively playing."""
+        return self._pending_camera is not None or self._active_camera is not None
+
     def reset(self):
         """Clear all pending/active state (called on mission swap so a stale
         cutscene from the prior mission cannot leak into the next)."""

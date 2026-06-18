@@ -2648,6 +2648,11 @@ def run(mission_name: Optional[str] = None,
         _after_mission_loaded()
 
         bridge_camera  = _BridgeCamera()
+        from engine.bridge_cutscene import (
+            BridgeCutsceneController, set_controller, clear_controller,
+        )
+        cutscene = BridgeCutsceneController()
+        set_controller(cutscene)
         from engine.appc.comm_render_flag import CommRenderFlag
         _comm_render_flag = CommRenderFlag()
         try:
@@ -3088,6 +3093,7 @@ def run(mission_name: Optional[str] = None,
                 had_pending_swap = controller.pending_swap is not None
                 controller._drain_pending_swap()
                 if had_pending_swap:
+                    cutscene.reset()
                     director.snap()
                     _xform_buf.reset_all()
             else:
@@ -3259,7 +3265,20 @@ def run(mission_name: Optional[str] = None,
                 # first-person camera below gets its own perturb call
                 # against the shared shake state.
                 eye, target, up_vec = camera_shake.perturb(eye, target, up_vec)
+                # If a cutscene camera path is queued or playing, pull the
+                # view back to bridge so the update pump below can reach it.
+                if cutscene.has_pending_camera() and not pause.is_open:
+                    view_mode.set_bridge()
                 if view_mode.is_bridge:
+                    import App as _App
+                    if not pause.is_open:
+                        cutscene.update(
+                            _player_dt,
+                            bridge_camera=bridge_camera,
+                            view_mode=view_mode,
+                            renderer=r,
+                            anim_mgr=_App.g_kAnimationManager,
+                        )
                     mouse_dx, mouse_dy = _h.consume_mouse_delta() if _h else (0.0, 0.0)
                     # While paused we still drain the accumulated mouse
                     # delta (so it doesn't snap the look on resume) but

@@ -126,6 +126,13 @@ def test_object_anim_waits_for_render_instance():
     assert rend.anim_calls == [(99, 0, False)]
 
 
+def test_has_pending_camera_flag():
+    ctrl = BridgeCutsceneController()
+    assert ctrl.has_pending_camera() is False
+    ctrl.request_camera_path(_FakeAction(), _FakeNode("camera"), "X")
+    assert ctrl.has_pending_camera() is True
+
+
 def test_module_level_registry():
     clear_controller()
     assert get_controller() is None
