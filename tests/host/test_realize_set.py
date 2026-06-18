@@ -277,3 +277,82 @@ def test_realize_all_sets_skips_comm_set_when_renderer_lacks_create_comm_instanc
     # Bridge realized; comm set skipped — no AttributeError.
     assert ("bridge", True) in seen
     assert ("StarbaseSet", False) not in seen
+
+
+# ── Comm-set (remote/look-at set) realization regressions ────────────────────
+# A comm set is a plain SetClass with a background model (MissionLib.
+# SetupBridgeSet). SetClass.__getattr__ returns a truthy _RendererStub for
+# unknown attributes — which hid the comm geometry (see the __dict__ guard).
+
+def _comm_set_with_geometry(name="StarbaseSet",
+                            nif="data/Models/Sets/StarbaseControl/starbasecontrolRM.nif"):
+    from engine.appc.sets import SetClass
+    s = SetClass(); s.SetName(name)
+    s.SetBackgroundModel(nif, 0, 0, 0)
+    return s
+
+
+class _CommCtl:
+    bridge_instance = None
+    nif_to_handle = {}
+    comm_instances_by_set = {}
+    comm_set_ids = {}
+    officer_instances = []
+
+
+def _comm_renderer():
+    r = _FakeRenderer()
+    r.set_comm_set_id = lambda *a, **k: None
+    return r
+
+
+def test_realize_set_comm_geometry_creates_instance_despite_setclass_getattr():
+    """Regression: SetClass.__getattr__ returns a truthy stub for unknown attrs,
+    so the old getattr(set, 'render_instance', None) guard was never None and the
+    room geometry never realized (viewscreen rendered black). The __dict__ guard
+    must let a fresh comm set realize its room."""
+    s = _comm_set_with_geometry()
+    c = _CommCtl(); c.comm_instances_by_set = {}; c.nif_to_handle = {}
+    r = _comm_renderer()
+    hl.realize_set(c, r, s, is_bridge=False, comm_set_id=1)
+    comm = [x for x in r.created if x[0] == "comm"]
+    assert len(comm) == 1, "comm room geometry instance was not created"
+    assert c.comm_instances_by_set.get("StarbaseSet")
+
+
+def test_realize_set_comm_geometry_is_idempotent():
+    s = _comm_set_with_geometry()
+    c = _CommCtl(); c.comm_instances_by_set = {}; c.nif_to_handle = {}
+    r = _comm_renderer()
+    hl.realize_set(c, r, s, is_bridge=False, comm_set_id=1)
+    hl.realize_set(c, r, s, is_bridge=False, comm_set_id=1)
+    comm = [x for x in r.created if x[0] == "comm"]
+    assert len(comm) == 1, "second realize must reuse the room instance"
+
+
+def test_realize_set_comm_texture_path_is_model_dir_high():
+    """env_for is None for comm sets (SetupBridgeSet uses SetBackgroundModel, not
+    LoadModel) — the texture search path must be <model_dir>/High, not the
+    DBridge fallback (which holds only DBridge's textures)."""
+    s = _comm_set_with_geometry()
+    c = _CommCtl(); c.comm_instances_by_set = {}; c.nif_to_handle = {}
+    r = _comm_renderer()
+    hl.realize_set(c, r, s, is_bridge=False, comm_set_id=1)
+    _nif_abs, tex_abs = r.loaded[0]
+    assert tex_abs.replace("\\", "/").endswith(
+        "data/Models/Sets/StarbaseControl/High")
+
+
+def test_realize_set_comm_load_failure_is_nonfatal():
+    """A comm set is non-critical: a load_model failure must log+skip, not abort
+    the mission load (which would take the whole bridge down with it)."""
+    s = _comm_set_with_geometry()
+    c = _CommCtl(); c.comm_instances_by_set = {}; c.nif_to_handle = {}
+
+    class _BoomRenderer(_FakeRenderer):
+        def load_model(self, *a):
+            raise RuntimeError("texture not found: chair.tga")
+    r = _BoomRenderer()
+    r.set_comm_set_id = lambda *a, **k: None
+    hl.realize_set(c, r, s, is_bridge=False, comm_set_id=1)   # must not raise
+    assert [x for x in r.created if x[0] == "comm"] == []

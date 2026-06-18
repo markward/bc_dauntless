@@ -2267,7 +2267,11 @@ def realize_set(controller, r, set_obj, *, is_bridge: bool,
         carrier = set_obj
         nif = set_obj.GetBackgroundModelNIF()
 
-    if nif and getattr(carrier, "render_instance", None) is None:
+    # NOTE: use __dict__, not getattr — the comm carrier is a SetClass whose
+    # __getattr__ returns a truthy _RendererStub for any unknown attribute, so
+    # getattr(carrier, "render_instance", None) would NEVER be None and the
+    # room geometry would never realize. __dict__ sees only real attributes.
+    if nif and carrier.__dict__.get("render_instance") is None:
         if is_bridge and controller.bridge_instance is not None:
             try:
                 r.destroy_instance(controller.bridge_instance)
@@ -2277,23 +2281,38 @@ def realize_set(controller, r, set_obj, *, is_bridge: bool,
 
         nif_abs = str(PROJECT_ROOT / "game" / nif)
         env = _App.g_kModelManager.env_for(nif)
-        tex_abs = (str(PROJECT_ROOT / "game" / env) if env
-                   else str(PROJECT_ROOT / "game" / DBRIDGE_TEX_REL))
-        handle = r.load_model(nif_abs, tex_abs)
+        if env:
+            tex_abs = str(PROJECT_ROOT / "game" / env)
+        else:
+            # No LoadModel-recorded env — comm sets declare geometry via
+            # SetBackgroundModel, not LoadModel, so env_for is None. Set
+            # textures live in <model_dir>/High by BC convention; use that
+            # rather than the DBridge fallback (which holds only DBridge's tgas).
+            import posixpath as _pp
+            tex_abs = str(PROJECT_ROOT / "game" / _pp.dirname(nif) / "High")
         if is_bridge:
+            handle = r.load_model(nif_abs, tex_abs)
             iid = r.create_bridge_instance(handle)
         else:
-            iid = r.create_comm_instance(handle)
-        r.set_world_transform(iid, IDENTITY_MAT4)
-        if hasattr(carrier, "render_instance"):
-            carrier.render_instance = iid
-        controller.nif_to_handle[nif_abs] = handle
-        if is_bridge:
-            controller.bridge_instance = iid
-            controller.current_bridge_nif_abs = nif_abs
-        else:
-            controller.comm_instances_by_set.setdefault(set_name, []).append(iid)
-            _tag_comm_instance(r, iid, comm_set_id)
+            # A comm/remote set is non-critical: if its NIF or a texture fails
+            # to load, log and skip so one bad set can't abort the whole mission.
+            try:
+                handle = r.load_model(nif_abs, tex_abs)
+            except Exception as _e:
+                dev_mode.log_swallowed("comm set load_model %r" % set_name, _e)
+                handle = None
+            iid = r.create_comm_instance(handle) if handle is not None else None
+        if iid is not None:
+            r.set_world_transform(iid, IDENTITY_MAT4)
+            if hasattr(carrier, "render_instance"):
+                carrier.render_instance = iid
+            controller.nif_to_handle[nif_abs] = handle
+            if is_bridge:
+                controller.bridge_instance = iid
+                controller.current_bridge_nif_abs = nif_abs
+            else:
+                controller.comm_instances_by_set.setdefault(set_name, []).append(iid)
+                _tag_comm_instance(r, iid, comm_set_id)
 
     # ── Viewscreen (bridge only) ───────────────────────────────────────────
     if is_bridge:
@@ -2352,9 +2371,8 @@ def realize_all_sets(controller, r) -> None:
             realize_set(controller, r, s, is_bridge=True)
         elif hasattr(r, "create_comm_instance") and (
                 s.GetBackgroundModelNIF() is not None or _iter_set_characters(s)):
-            # Guard: comm-instance primitives are added in a later task.
-            # Skip non-bridge sets cleanly when the renderer build doesn't
-            # expose create_comm_instance yet (no-op once the binding lands).
+            # hasattr guard: skip comm-set realization cleanly against a stale
+            # renderer build that predates the create_comm_instance binding.
             # Allocate a stable small positive id for this comm set so its
             # instances can be tagged + the viewscreen RTT can render it.
             comm_set_id = controller.comm_set_ids.get(name)
@@ -3504,6 +3522,25 @@ def run(mission_name: Optional[str] = None,
             if _feed is not None:
                 _set_id, _cam = _feed
                 _eye, _tgt, _up, _fov, _near, _far = _comm_camera_params(_cam)
+                # Frame the comm set by aiming the camera at the room geometry's
+                # centre (the set's first comm instance), rather than the
+                # NiCamera's authored orientation. The Gamebryo NiCamera view-axis
+                # convention isn't reconstructed in this cleanroom (the bridge
+                # camera sidesteps it the same way), so aim-at-centre is the
+                # pragmatic framing that reliably puts the set on screen. Using
+                # the authored orientation faithfully is a tracked follow-up.
+                _set_name = next((n for n, i in controller.comm_set_ids.items()
+                                  if i == _set_id), None)
+                _iids = controller.comm_instances_by_set.get(_set_name, [])
+                if _iids:
+                    try:
+                        _b = r.get_instance_bounds(_iids[0])
+                    except Exception as _e:
+                        _b = None
+                        dev_mode.log_swallowed("comm get_instance_bounds", _e)
+                    if _b:
+                        _tgt = (_b[0], _b[1], _b[2])
+                        _up = (0.0, 0.0, 1.0)
                 r.set_viewscreen_comm_source(_set_id, _eye, _tgt, _up,
                                              _fov, _near, _far)
             else:
