@@ -2331,8 +2331,9 @@ def realize_set(controller, r, set_obj, *, is_bridge: bool) -> None:
 
     # ── Viewscreen (bridge only) ───────────────────────────────────────────
     if is_bridge:
+        from engine.appc.bridge_set import ViewScreenObject
         vs = set_obj.GetViewScreen()
-        if vs is not None and hasattr(vs, "nif") and vs.render_instance is None:
+        if isinstance(vs, ViewScreenObject) and vs.render_instance is None:
             if controller.viewscreen_instance is not None:
                 try:
                     r.destroy_instance(controller.viewscreen_instance)

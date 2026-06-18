@@ -91,3 +91,32 @@ def test_realize_set_realizes_bridge_viewscreen():
     assert c.viewscreen_obj is vs
     assert r.vs_model is not None      # registered for the RTT feed
     assert vs.IsOn()                   # defaults on (SDK doesn't SetIsOn on load)
+
+
+def test_realize_set_viewscreen_is_idempotent():
+    from engine.appc.bridge_set import ViewScreenObject
+    s, _obj = _bridge_set_with_geometry()
+    vs = ViewScreenObject("data/Models/Sets/DBridge/DBridgeViewscreen.nif")
+    s.SetViewScreen(vs)
+
+    class _C:
+        bridge_instance = None
+        viewscreen_instance = None
+        viewscreen_obj = None
+        nif_to_handle = {}
+        comm_instances_by_set = {}
+    c = _C()
+
+    class _R(_FakeRenderer):
+        def __init__(s2): super().__init__(); s2.vs_model = None
+        def set_viewscreen_model(s2, h): s2.vs_model = h
+    r = _R()
+
+    hl.realize_set(c, r, s, is_bridge=True)
+    first_instance = vs.render_instance
+    bridge_created_count = sum(1 for kind, _, _ in r.created if kind == "bridge")
+
+    hl.realize_set(c, r, s, is_bridge=True)   # same ViewScreenObject -> no second instance
+
+    assert vs.render_instance is first_instance
+    assert sum(1 for kind, _, _ in r.created if kind == "bridge") == bridge_created_count
