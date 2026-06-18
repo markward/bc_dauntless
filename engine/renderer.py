@@ -358,10 +358,13 @@ def set_viewscreen_enabled(on: bool) -> None:
 
 
 def set_viewscreen_comm_source(set_id, eye, target, up, fov_y_rad, near, far) -> None:
+    """Configure the comm viewscreen feed to render a remote set through the
+    given camera parameters."""
     _h.set_viewscreen_comm_source(set_id, eye, target, up, fov_y_rad, near, far)
 
 
 def clear_viewscreen_comm_source() -> None:
+    """Disable the comm viewscreen feed, returning to the space view."""
     _h.clear_viewscreen_comm_source()
 
 

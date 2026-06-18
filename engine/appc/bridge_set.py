@@ -169,8 +169,8 @@ class CameraObjectClass:
     """A set camera. Built either from an embedded NiCamera
     (CameraObjectClass_CreateFromNiCamera) or from explicit coordinates
     (CameraObjectClass_Create). Real, stateful data: the viewscreen's
-    SetRemoteCam consumes it. Comm-set rendering through it is not yet
-    built (flagged loudly under developer mode)."""
+    SetRemoteCam consumes it. The host renders a comm set through this camera
+    when the bridge viewscreen is showing it."""
     def __init__(self, name, position, orientation, frustum, near, far):
         self._name = name
         self.position = tuple(position)
