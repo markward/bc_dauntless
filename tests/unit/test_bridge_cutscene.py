@@ -36,6 +36,7 @@ class _FakeViewMode:
 class _FakeRenderer:
     def __init__(self):
         self.anim_calls = []
+        self.node_anim_calls = []
 
     def load_animation_clips(self, path):
         # Two-key straight slide on +X over 1 second, identity rotation.
@@ -51,6 +52,9 @@ class _FakeRenderer:
 
     def set_instance_animation(self, iid, clip_index, loop=False):
         self.anim_calls.append((iid, clip_index, loop))
+
+    def play_instance_node_anim(self, iid, clip_index, loop=False, reverse=False):
+        self.node_anim_calls.append((iid, clip_index, loop, reverse))
 
 
 class _FakeAnimMgr:
@@ -105,8 +109,9 @@ def test_object_anim_plays_embedded_bridge_clip():
 
     cam, vm, rend, mgr = _FakeCamera(), _FakeViewMode(), _FakeRenderer(), _FakeAnimMgr()
     ctrl.update(0.0, **_ctx(cam, vm, rend, mgr))
-    # Plays the bridge model's embedded clip 0 on the owner's render instance.
-    assert rend.anim_calls == [(77, 0, False)]
+    # Plays the bridge model's embedded clip 0 on the owner's render instance
+    # via play_instance_node_anim (animates non-skinned door-leaf nodes).
+    assert rend.node_anim_calls == [(77, 0, False, False)]
     assert action.completed is True       # door is fire-and-forget
 
 
@@ -120,10 +125,10 @@ def test_object_anim_waits_for_render_instance():
 
     cam, vm, rend, mgr = _FakeCamera(), _FakeViewMode(), _FakeRenderer(), _FakeAnimMgr()
     ctrl.update(0.0, **_ctx(cam, vm, rend, mgr))
-    assert rend.anim_calls == []          # deferred
+    assert rend.node_anim_calls == []     # deferred
     owner.render_instance = 99
     ctrl.update(0.0, **_ctx(cam, vm, rend, mgr))
-    assert rend.anim_calls == [(99, 0, False)]
+    assert rend.node_anim_calls == [(99, 0, False, False)]
 
 
 def test_has_pending_camera_flag():

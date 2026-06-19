@@ -7,7 +7,7 @@ completion; each host tick update() loads the clip (native), samples it, and
 drives _BridgeCamera, completing the action when the clip ends so the SDK
 sequence proceeds (firing ET_CAMERA_ANIMATION_DONE). A door TGAnimAction
 queues an object request, which plays the bridge model's embedded clip 0
-(the door keyframes baked into DBridge.nif) via set_instance_animation.
+(the door keyframes baked into DBridge.nif) via play_instance_node_anim.
 
 See docs/superpowers/specs/2026-06-17-bridge-camera-walkon-cutscene-design.md.
 """
@@ -62,8 +62,11 @@ class BridgeCutsceneController:
             if iid is None:
                 still_pending.append((action, owner))   # wait for realize
                 continue
-            # The door keyframes are baked into the bridge model's clip 0.
-            renderer.set_instance_animation(iid, 0, False)
+            # Door keyframes are the bridge model's embedded clip 0 (DBridge.nif's
+            # NiKeyframeControllers). play_instance_node_anim animates the
+            # non-skinned door-leaf nodes (set_instance_animation only built a
+            # bone palette, which the bridge — having no skeleton — ignored).
+            renderer.play_instance_node_anim(iid, 0, loop=False, reverse=False)
             action.Completed()                            # fire-and-forget
         self._pending_doors = still_pending
 
