@@ -6,6 +6,7 @@ class _FakeRenderer:
         self.loaded = {}        # (iid, path) -> clip_index
         self.played = []        # (iid, clip_index)
         self.restored = []      # iid
+        self.idled = []         # (iid, clip_index)
         self._next = 1
     def load_instance_clip(self, iid, path):
         key = (iid, path)
@@ -17,6 +18,8 @@ class _FakeRenderer:
         self.played.append((iid, clip_index))
     def restore_rest_pose(self, iid):
         self.restored.append(iid)
+    def play_instance_idle(self, iid, clip_index):
+        self.idled.append((iid, clip_index))
 
 
 class _Char:
@@ -117,3 +120,39 @@ def test_zero_duration_unresolvable_uses_floor():
     assert r.restored == []
     ctrl.update(0.3, renderer=r, anim_mgr=None)       # 0.5 >= 0.4 -> restore
     assert r.restored == [7]
+
+
+def test_completion_resumes_breathing_when_idle_registered():
+    ctrl = BridgeCharacterAnimController()
+    r = _FakeRenderer()
+    ch = _Char(8)
+    ctrl.set_idle(8, 99)                       # breathe clip index for iid 8
+    ctrl.submit(ch, [("g.nif", 0.5)], priority=0)
+    ctrl.update(0.0, renderer=r, anim_mgr=None)    # start gesture
+    ctrl.update(0.5, renderer=r, anim_mgr=None)    # complete -> resume breathing
+    assert r.idled == [(8, 99)]                # play_instance_idle called
+    assert r.restored == []                    # NOT restore_rest_pose
+
+
+def test_completion_falls_back_to_restore_when_no_idle():
+    ctrl = BridgeCharacterAnimController()
+    r = _FakeRenderer()
+    ch = _Char(9)                              # no set_idle for 9
+    ctrl.submit(ch, [("g.nif", 0.5)], priority=0)
+    ctrl.update(0.0, renderer=r, anim_mgr=None)
+    ctrl.update(0.5, renderer=r, anim_mgr=None)
+    assert r.idled == []
+    assert r.restored == [9]                   # static fallback
+
+
+def test_reset_clears_idle_registry():
+    ctrl = BridgeCharacterAnimController()
+    r = _FakeRenderer()
+    ch = _Char(10)
+    ctrl.set_idle(10, 42)
+    ctrl.reset()
+    ctrl.submit(ch, [("g.nif", 0.5)], priority=0)
+    ctrl.update(0.0, renderer=r, anim_mgr=None)
+    ctrl.update(0.5, renderer=r, anim_mgr=None)
+    assert r.idled == []                       # registry cleared -> fallback
+    assert r.restored == [10]

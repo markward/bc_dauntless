@@ -36,6 +36,7 @@ class BridgeCharacterAnimController:
     def __init__(self):
         self._active = {}           # iid -> _Action
         self._dur_cache = {}        # nif_path -> real clip duration (s)
+        self._idle_clips = {}       # iid -> looping breathe clip index
 
     def is_busy(self, character) -> bool:
         iid = getattr(character, "_render_instance", None)
@@ -52,8 +53,14 @@ class BridgeCharacterAnimController:
             return                  # don't preempt equal/higher priority
         self._active[iid] = _Action(iid, list(clips), priority)
 
+    def set_idle(self, iid, clip_index) -> None:
+        """Register the officer's looping breathe clip — what the controller
+        returns to when its transient queue empties (AT_DEFAULT)."""
+        self._idle_clips[iid] = clip_index
+
     def reset(self) -> None:
         self._active = {}
+        self._idle_clips = {}
 
     def update(self, dt, *, renderer, anim_mgr=None) -> None:
         done = []
@@ -68,11 +75,19 @@ class BridgeCharacterAnimController:
             if nxt < len(act.clips):
                 self._start_clip(renderer, act, nxt)
             else:
-                if hasattr(renderer, "restore_rest_pose"):
-                    renderer.restore_rest_pose(iid)
+                self._return_to_default(renderer, iid)
                 done.append(iid)
         for iid in done:
             self._active.pop(iid, None)
+
+    def _return_to_default(self, renderer, iid) -> None:
+        """Resume the looping breathe idle if one is registered; otherwise snap
+        to the static rest pose (officer with no breathe registration)."""
+        idle = self._idle_clips.get(iid)
+        if idle is not None and hasattr(renderer, "play_instance_idle"):
+            renderer.play_instance_idle(iid, idle)
+        elif hasattr(renderer, "restore_rest_pose"):
+            renderer.restore_rest_pose(iid)
 
     def _start_clip(self, renderer, act, index) -> None:
         path, sdk_dur = act.clips[index]
