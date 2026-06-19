@@ -169,6 +169,73 @@ class TGSound:
     def IsStreamed(self): return 0
 
 
+class TGSoundRegion:
+    """Headless shim for Appc's TGSoundRegion.
+
+    A named bucket of sounds with a filter that can mute / muffle the whole
+    region. The SDK only ever uses the "bridge" region with FT_NONE
+    (LoadBridge.py:353-356), but we honour FT_MUTE/FT_MUFFLE actively so the
+    surface behaves like the original.
+    """
+
+    # Filter types. Values are ours to define — the SDK references them only
+    # symbolically (App.TGSoundRegion.FT_NONE), never as integer literals.
+    FT_NONE = 0
+    FT_MUTE = 1
+    FT_MUFFLE = 2
+
+    # FT_MUFFLE is BC's lowpass; we approximate it with a gain cut.
+    _MUFFLE_FACTOR = 0.3
+
+    def __init__(self, name: str) -> None:
+        self._name = name
+        self._filter = TGSoundRegion.FT_NONE
+        self._sounds: list[TGSound] = []
+
+    def filter_factor(self) -> float:
+        if self._filter == TGSoundRegion.FT_MUTE:
+            return 0.0
+        if self._filter == TGSoundRegion.FT_MUFFLE:
+            return TGSoundRegion._MUFFLE_FACTOR
+        return 1.0
+
+    def SetFilter(self, ft) -> None:
+        self._filter = int(ft)
+        factor = self.filter_factor()
+        for snd in self._sounds:
+            for h in snd._active:
+                if h._pid:
+                    h.SetGain(snd._gain * factor)
+
+    def AddSound(self, snd) -> None:
+        if snd is None:  # a failed LoadSoundInGroup returns None
+            return
+        if snd not in self._sounds:
+            self._sounds.append(snd)
+        snd._region = self
+
+    def RemoveSound(self, snd) -> None:
+        if snd in self._sounds:
+            self._sounds.remove(snd)
+        if snd is not None and getattr(snd, "_region", None) is self:
+            snd._region = None
+
+
+_regions: dict[str, TGSoundRegion] = {}
+
+
+def TGSoundRegion_GetRegion(name: str) -> TGSoundRegion:
+    r = _regions.get(name)
+    if r is None:
+        r = TGSoundRegion(name)
+        _regions[name] = r
+    return r
+
+
+def TGSoundRegion_Create(name: str) -> TGSoundRegion:
+    return TGSoundRegion_GetRegion(name)
+
+
 class TGSoundManager:
     _instance: "Optional[TGSoundManager]" = None
 
@@ -276,6 +343,7 @@ def init_audio_for_tests() -> None:
     TGSoundManager._instance = TGSoundManager()
     global g_kSoundManager
     g_kSoundManager = TGSoundManager._instance
+    _regions.clear()
     # Keep App.g_kSoundManager in sync — it was bound at import time via
     # `from engine.audio.tg_sound import g_kSoundManager` so we must push
     # the new reference into the App module's namespace directly.
@@ -291,6 +359,7 @@ def shutdown_audio_for_tests() -> None:
     TGSoundManager._instance = None
     global g_kSoundManager
     g_kSoundManager = None
+    _regions.clear()
     # Mirror init_audio_for_tests: push None into App's namespace so the
     # module-level binding doesn't silently keep a stale manager alive.
     if "App" in sys.modules:
