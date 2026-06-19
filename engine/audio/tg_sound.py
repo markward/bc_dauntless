@@ -79,6 +79,8 @@ class TGSound:
         self._min_dist = 100.0
         self._max_dist = 100000.0
         self._loaded = _audio is not None and _audio.get_sound(name) != 0
+        self._active: list[_PlayingSound] = []
+        self._region = None  # set by TGSoundRegion.AddSound; gates launch gain
 
     def IsLoaded(self) -> int:
         return 1 if self._loaded else 0
@@ -117,20 +119,34 @@ class TGSound:
     def Play(self, attach_node: int = 0, position=None) -> Optional[_PlayingSound]:
         if not _audio or not self._loaded:
             return None
+        # Drop handles we explicitly stopped earlier so the list can't grow
+        # without bound across repeated one-shot plays.
+        self._active = [h for h in self._active if h._pid]
+        factor = self._region.filter_factor() if self._region is not None else 1.0
         pid = _audio.play(
-            name=self._name, looping=self._looping, gain=self._gain,
+            name=self._name, looping=self._looping, gain=self._gain * factor,
             category=self._category_tag, attach_node=int(attach_node),
             position=position,
         )
         if pid == 0:
             return None
+        handle = _PlayingSound(pid)
+        self._active.append(handle)
         if self._positional or attach_node != 0 or position is not None:
             _audio.set_min_max_distance(pid, self._min_dist, self._max_dist)
-        return _PlayingSound(pid)
+        return handle
 
     # No-ops kept for the wider SDK surface (callers exist; behaviour deferred).
     def PlayAndNotify(self, *_args, **_kw): return self.Play()
-    def Stop(self): pass
+    def Stop(self):
+        """Stop every handle this sound started (real Appc TGSound.Stop).
+
+        Used by region muting and to silence the SDK's load-time AmbBridge
+        play when the player isn't on the bridge.
+        """
+        for h in self._active:
+            h.Stop()
+        self._active = []
     def Pause(self): pass
     def Unpause(self): pass
     def SetSingleShot(self, *_a): pass

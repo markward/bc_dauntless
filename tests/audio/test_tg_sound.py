@@ -69,3 +69,15 @@ def test_play_returns_handle_we_can_stop(audio, tmp_path):
     playing.Stop()
     ops = [e["op"] for e in _dauntless_host.audio.debug_command_log()]
     assert "stop" in ops
+
+
+def test_tgsound_stop_stops_active_loop(audio, tmp_path):
+    wav = tmp_path / "x.wav"
+    wav.write_bytes(_wav(22050, [0, 0]))
+    snd = audio.LoadSound(str(wav), "AmbLoop", TGSound.LS_STREAMED)
+    snd.SetLooping(1)
+    snd.Play()
+    _dauntless_host.audio.clear_command_log()
+    snd.Stop()  # TGSound.Stop (not the per-handle _PlayingSound.Stop)
+    ops = [e["op"] for e in _dauntless_host.audio.debug_command_log()]
+    assert "stop" in ops
