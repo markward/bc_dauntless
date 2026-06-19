@@ -107,29 +107,35 @@ class BridgeCharacterAnimController:
             self._active.pop(iid, None)
 
     def _process_turn(self, renderer, character, turn) -> None:
-        """Swap the default idle (BreatheTurned <-> Breathe) and play the
-        turn/back transient. Best-effort: a missing clip skips that half."""
+        """On menu open, the officer GLANCES at the captain (a head turn) and
+        holds it; on close, glances away and resumes normal breathing.
+
+        We use the SDK's GlanceCaptain / GlanceAwayCaptain, NOT TurnCaptain: the
+        TurnCaptain "chair turn" clips rotate a bridge-SET seat node (and bake a
+        camera path), not the officer's skeleton — they were never meant to play
+        on the officer. GlanceCaptain (MouseOver_*) is a clean, root-less
+        head/neck turn on the character, which is what the original game shows
+        on menu-open. Best-effort: a missing clip skips that half.
+        """
         iid = getattr(character, "_render_instance", None)
         if iid is None:
             return
         if turn:
-            # Turn toward the captain and HOLD the turned pose while the menu is
-            # open. We do NOT swap the idle to BreatheTurned: that clip, layered
-            # over the forward placement, does not preserve the turn — so playing
-            # it on completion would snap the officer back to facing the console.
-            move = capture_registered_clip(character, "TurnCaptain")
+            # Glance toward the captain and HOLD the head turn while the menu is
+            # open.
+            move = capture_registered_clip(character, "GlanceCaptain")
             if move:
                 self.submit(character, [(self._resolve(move["clip_nif"]), 0.0)],
                             priority=_TURN, hold=True)
         else:
-            # Turn back: restore normal breathing as the default, then play the
-            # reverse turn, which returns to that idle on completion.
+            # Glance away: restore normal breathing as the default, then play the
+            # look-away, which returns to that idle on completion.
             idle = capture_registered_clip(character, "Breathe")
             if idle and hasattr(renderer, "load_instance_clip"):
                 idx = renderer.load_instance_clip(iid, self._resolve(idle["clip_nif"]))
                 if idx is not None and idx >= 0:
                     self.set_idle(iid, idx)
-            move = capture_registered_clip(character, "BackCaptain")
+            move = capture_registered_clip(character, "GlanceAwayCaptain")
             if move:
                 self.submit(character, [(self._resolve(move["clip_nif"]), 0.0)],
                             priority=_TURN, hold=False)
