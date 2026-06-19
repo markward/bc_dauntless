@@ -112,14 +112,19 @@ same `<location>TurnCaptain` / `BackCaptain` builders.
 
 ```
 R_delta        = seat_animated_world · inverse(seat_rest_world)
-officer_world' = seat_pivot · R_delta · inverse(seat_pivot) · officer_world
+officer_world' = R_delta · officer_base_world
 ```
 
-`seat_pivot` is the seat node's rest world translation. At rest `R_delta = I`, so a coupled
-officer with an un-animated seat is **byte-identical** to its placement — the production path is
-unchanged. Standing officers (no seat node) are never coupled. The officer body clip continues to
-play **on top** of the coupled (chair-rotated) base, so Helm gets body-turn + seat rotation and
-Tactical is carried by the chair alone.
+A point rigidly attached to the seat at rest-world position `p` moves to `R_delta · p`, so
+`R_delta` (the seat's animated-relative-to-rest world transform) is exactly what any rider gets —
+it **already encodes the seat's world pivot**, because `seat_rest_world` contains the seat's world
+translation (do **not** additionally conjugate by the pivot — that would rotate about `2·pivot`).
+The seated officer's base world is `OFFICER_TRANSFORM` (identity), so `officer_world' = R_delta`.
+At rest `R_delta = I`, so a coupled officer with an un-animated seat is **byte-identical** to its
+placement — the production path is unchanged. Standing officers (no seat node) are never coupled.
+The officer body clip continues to play **on top** of the coupled (chair-rotated) base (the chair
+rotation is the instance world; the body clip is the GPU bone palette), so Helm gets body-turn +
+seat rotation and Tactical is carried by the chair alone.
 
 **`engine/bridge_cutscene.py`** — already routes the door action via `request_object_anim` →
 `set_instance_animation(iid, 0, False)`. Once Component 1 honors non-skinned overrides, this call
