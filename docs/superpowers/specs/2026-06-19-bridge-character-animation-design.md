@@ -107,13 +107,17 @@ intent. The fix is purely in rendering: instead of playing the clip over its dur
 sample it **once at the rest frame** and hold that palette as the instance's stored rest
 pose.
 
-- The rest frame is the existing first-vs-last decision: **frame 0** for `sample_at_start`
-  clips (Science/Engineer move-from-station), **last frame** for "stand"/"seated" clips.
-  We generalize the native `sample_at_start` settle-immediately logic so the `False` case
-  *also* settles immediately — at `t=dur` instead of `t=0`. No play-through either way.
-- The `sample_at_start` heuristic (`_FRAME0_FRAGMENTS` in `bridge_placement.py:40`) stays
-  as-is. It is adjacent to the bug, not the bug. If the GUI shows a wrong-end officer we
-  reclassify that clip, but that is not blocking and not in scope to rework now.
+- The rest frame is **frame 0 for every placement clip**. `TGAnimPosition` holds the
+  clip's start pose, and all the SetPosition clips are "stand-up-from-station" /
+  "move-from-station" sequences whose frame 0 is the officer at the console and whose last
+  frame is stood up / walked away. (Corrected 2026-06-19: an earlier draft held the *last*
+  frame for "stand"/"seated" clips on the assumption the at-station pose was the clip end;
+  GUI verification showed that froze every standing officer in the stood-up pose. The
+  `_FRAME0_FRAGMENTS` heuristic and the `sample_at_end` distinction were removed —
+  `capture_placement` now always returns `sample_at_start=True`.)
+- The native `sample_at_end` sampling mode added in Task 1 is therefore unused by
+  placement; it remains a tested general capability (follow-up: remove if no consumer
+  emerges).
 - The placement call at `engine/host_loop.py:2521` switches from the play-through
   `set_instance_animation` to `set_instance_rest_pose`.
 

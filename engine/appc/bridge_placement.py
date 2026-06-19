@@ -23,26 +23,17 @@ import logging
 
 _logger = logging.getLogger(__name__)
 
-# Clip-name fragments whose station end is frame 0: the move-FROM-station clips.
-# sample_at_start=True holds the officer at frame 0 (standing at the console)
-# instead of letting the clip walk them away. This covers the standard visible
-# bridge crew: Science (db_StoL1_S) and Engineer (db_EtoL1_s). In-place
-# "stand"/"seated" clips contain none of these and correctly play-and-hold
-# (sample_at_start=False) — e.g. EBridge Science's EB_stand_s_s, so the rule
-# keys off the clip name, not the station role.
+# TGAnimPosition holds the clip's START frame (frame 0) for EVERY placement
+# clip. The SetPosition clips are all "stand-up-from-station" / "move-from-
+# station" sequences whose FRAME 0 is the officer at the console (the working
+# pose) and whose LAST frame is the officer stood up / walked away. So the
+# faithful rest pose is always frame 0 (sample_at_start=True).
 #
-# Known-incomplete by design: the SDK has other transition clips this list does
-# NOT match (EB_L2toG2_M, EB_G*toL*_M gallery walks, DB/EB_C1toC_M). Those are
-# either hidden locations (SetHidden(1) -> the caller skips them regardless) or
-# non-standard E-Bridge gallery/seat positions outside the standard-crew path.
-# sample_at_start is a live-tunable heuristic (see the step-4 design doc); extend
-# this list only after visually verifying the affected clip against the renderer.
-_FRAME0_FRAGMENTS = ("stol1", "etol1", "l1to")
-
-
-def _samples_at_start(clip_name: str) -> bool:
-    low = clip_name.lower()
-    return any(frag in low for frag in _FRAME0_FRAGMENTS)
+# Confirmed in-GUI (2026-06-19): holding the LAST frame for the "stand" clips
+# (the earlier db_StoL1/EtoL1/L1to heuristic, which classified only the
+# move-FROM clips as frame-0 and let the rest play-and-hold to their end) left
+# every standing officer frozen in the stood-up / leaving pose. Holding frame 0
+# uniformly is the correct TGAnimPosition behaviour for all stations.
 
 
 def capture_placement(character):
@@ -74,5 +65,6 @@ def capture_placement(character):
     return {
         "clip_nif": clip_nif,
         "hidden": hidden,
-        "sample_at_start": _samples_at_start(clip_name),
+        # TGAnimPosition holds frame 0 (the at-station pose) for every clip.
+        "sample_at_start": True,
     }

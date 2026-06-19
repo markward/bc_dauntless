@@ -13,11 +13,14 @@ def _char(location):
     return c
 
 
-def test_in_place_stand_clip_tactical():
+def test_stand_clip_tactical_holds_frame_zero():
+    # TGAnimPosition holds frame 0 (the at-station pose) for the "stand" clips
+    # too — holding the last frame left officers frozen stood-up (confirmed
+    # in-GUI 2026-06-19).
     p = capture_placement(_char("DBTactical"))
     assert p["clip_nif"] == "data/animations/db_stand_t_l.nif"
     assert p["hidden"] is False
-    assert p["sample_at_start"] is False
+    assert p["sample_at_start"] is True
 
 
 def test_helm_and_commander_stand_clips():
@@ -37,12 +40,12 @@ def test_movement_clip_engineer_samples_at_start():
     assert p["sample_at_start"] is True
 
 
-def test_ebridge_science_stand_clip_does_not_sample_at_start():
-    # EBridge Science uses an in-place stand clip, NOT a movement clip — the
-    # heuristic must key off the clip name, not the station role.
+def test_ebridge_science_stand_clip_holds_frame_zero():
+    # Every placement clip — stand or move-from — holds frame 0 (the at-station
+    # pose). EBridge Science's in-place stand clip is no exception.
     p = capture_placement(_char("EBScience"))
     assert p["clip_nif"] == "data/animations/EB_stand_s_s.nif"
-    assert p["sample_at_start"] is False
+    assert p["sample_at_start"] is True
 
 
 def test_l1_moving_location_is_hidden():
