@@ -1,7 +1,6 @@
 // native/src/renderer/pose_sampler.cc
 #include "renderer/pose_sampler.h"
 #include <algorithm>
-#include <cctype>
 #include <string>
 #include <unordered_map>
 
@@ -83,41 +82,6 @@ std::vector<glm::mat4> sample_pose_over_base(
         // carry the base translation here, so this is a no-op for them.
         if (static_cast<int>(i) == skeleton.root_bone_index)
             out[i][3] = base[3];
-    }
-
-    // Chair-turn remap: a seated officer's turn clip (e.g. db_chair_H_face_capt)
-    // rotates the SEAT node ("console seat 01"/"console seat 02"), not the
-    // skeleton — in BC the officer rides the rotating chair. We have no
-    // chair<->officer coupling, so compose the seat's rotation onto the
-    // officer's ROOT bone, so the officer swivels in place toward the captain.
-    // The anchored translation is preserved. Only "seat" nodes are used: these
-    // turn clips ALSO bake a "Camera captain" view-path track, which is NOT the
-    // officer and must be ignored. Neck-turn / breathe / gesture clips animate
-    // only real bones, so this is a no-op for them.
-    auto contains_seat = [](const std::string& name) {
-        std::string low = name;
-        std::transform(low.begin(), low.end(), low.begin(),
-                       [](unsigned char c) { return std::tolower(c); });
-        return low.find("seat") != std::string::npos;
-    };
-    const int root = skeleton.root_bone_index;
-    if (root >= 0 && root < static_cast<int>(out.size())) {
-        glm::mat3 swivel(1.0f);
-        bool any = false;
-        for (const auto& tr : clip.tracks) {
-            if (tr.rotation.empty()) continue;
-            if (!contains_seat(tr.target_node_name)) continue;     // seat only
-            const glm::mat4 m = assets::sample_track_trs(
-                tr, t, glm::vec3(0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f), 1.0f);
-            swivel = glm::mat3(m) * swivel;
-            any = true;
-        }
-        if (any) {
-            const glm::vec3 pos = glm::vec3(out[root][3]);
-            glm::mat4 r(swivel * glm::mat3(out[root]));
-            r[3] = glm::vec4(pos, 1.0f);
-            out[root] = r;
-        }
     }
     return out;
 }
