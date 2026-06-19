@@ -2534,6 +2534,34 @@ def _viewscreen_feed_on(viewscreen_obj) -> bool:
     return bool(viewscreen_obj is not None and viewscreen_obj.IsOn())
 
 
+class ViewscreenBrightnessRamp:
+    """Brightness fade-in that accompanies the ViewOn/ViewOff sounds. The
+    viewscreen feed has a "signature" — one of ('off',), ('forward',) or
+    ('comm', set_id). Whenever the signature changes (comm appears on
+    ViewscreenOn, or reverts to forward on ViewscreenOff), the brightness
+    restarts at 0 and ramps linearly to 1 over DURATION_S. The sounds already
+    fire via TGSoundAction; this is the matching visual."""
+
+    DURATION_S = 0.3
+
+    def __init__(self):
+        self._sig = None
+        self._elapsed = 0.0
+
+    def update(self, signature, dt):
+        if signature != self._sig:
+            self._sig = signature
+            self._elapsed = 0.0
+        else:
+            self._elapsed += dt
+        b = self._elapsed / self.DURATION_S
+        if b < 0.0:
+            return 0.0
+        if b > 1.0:
+            return 1.0
+        return b
+
+
 def _active_comm_feed(controller):
     """If the bridge viewscreen's remote cam is a comm set's 'maincamera',
     return (comm_set_id, camera); else None (forward-view fallback).
