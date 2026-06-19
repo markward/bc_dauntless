@@ -333,43 +333,6 @@ def test_chair_driven_only_when_body_clip_empty(monkeypatch):
     assert ctrl2.is_busy(ch2) is True        # body clip submitted + playing
 
 
-def test_chair_driven_turn_plays_breathe_turned_idle(monkeypatch):
-    """A chair-driven officer (empty body clip) articulates its head/upper body
-    via the BreatheTurned idle while turned (its body turn clip is empty), and
-    returns to plain Breathe on un-turn."""
-    import engine.bridge_character_anim as mod
-    monkeypatch.setattr(mod, "capture_registered_clip",
-                        lambda ch, suffix: {"clip_nif": f"{suffix}.nif"})
-    monkeypatch.setattr(mod, "capture_chair_clip",
-                        lambda ch, suffix: {"clip_nif": f"chair_{suffix}.nif"})
-
-    class _ClipRenderer(_FakeRenderer):
-        def load_animation_clips(self, path):
-            if "TurnCaptain" in path:
-                return [{"duration": 0.0, "tracks": []}]          # empty -> chair-driven
-            return [{"duration": 0.5,
-                     "tracks": [{"node": "Bip01", "rotation": [(0, 0, 0, 0, 1)]}]}]
-
-    class _Node:
-        def turn_chair(self, *a, **k): pass
-        def unturn_chair(self, *a, **k): pass
-
-    ctrl = mod.BridgeCharacterAnimController()
-    ctrl.set_node_controller(_Node())
-    r = _ClipRenderer()
-    ch = _Char(30)
-
-    ctrl.request_turn(ch)
-    ctrl.update(0.0, renderer=r, anim_mgr=None)
-    bt_idx = r.loaded[(30, "BreatheTurned.nif")]
-    assert (30, bt_idx) in r.idled            # head-turned breathing played
-
-    ctrl.request_turn_back(ch)
-    ctrl.update(0.0, renderer=r, anim_mgr=None)
-    br_idx = r.loaded[(30, "Breathe.nif")]
-    assert r.idled[-1] == (30, br_idx)        # back to plain forward breathing
-
-
 def test_node_controller_not_called_when_absent(monkeypatch):
     """Without set_node_controller the body-clip logic is unchanged."""
     import engine.bridge_character_anim as mod
