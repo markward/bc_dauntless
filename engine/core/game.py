@@ -185,6 +185,12 @@ class Game(TGObject):
         from engine.audio.tg_sound import TGSoundManager
         return TGSoundManager.instance().LoadSound(path, name, loadspec)
 
+    def LoadSoundInGroup(self, path: str, name: str, group: str):
+        # Late import: engine.audio depends on the native extension which may
+        # not be ready at game.py import time.
+        from engine.audio.tg_sound import TGSoundManager
+        return TGSoundManager.instance().LoadSoundInGroup(path, name, group)
+
 
 def Game_GetCurrentPlayer():
     """Return the player ship for the current Game, or None.

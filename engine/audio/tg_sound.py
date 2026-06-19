@@ -241,6 +241,7 @@ class TGSoundManager:
 
     def __init__(self) -> None:
         self._sounds: dict[str, TGSound] = {}
+        self._groups: dict[str, set[str]] = {}
 
     @classmethod
     def instance(cls) -> "TGSoundManager":
@@ -264,6 +265,30 @@ class TGSoundManager:
         snd = TGSound(name, positional)
         self._sounds[name] = snd
         return snd
+
+    def LoadSoundInGroup(self, path: str, name: str, group: str) -> Optional[TGSound]:
+        """Load a sound and tag it as a member of `group`.
+
+        Mirrors Appc Game.LoadSoundInGroup. Bridge sounds are non-positional,
+        so we load them streamed (2D). Returns the TGSound so the SDK can chain
+        .SetVolume(); returns None on load failure.
+        """
+        snd = self.LoadSound(path, name, TGSound.LS_STREAMED)
+        if snd is not None:
+            self._groups.setdefault(group, set()).add(name)
+        return snd
+
+    def DeleteAllSoundsInGroup(self, group: str) -> None:
+        for name in self._groups.pop(group, set()):
+            snd = self._sounds.pop(name, None)
+            if snd is not None:
+                snd.Stop()
+
+    def StopAllSoundsInGroup(self, group: str) -> None:
+        for name in self._groups.get(group, set()):
+            snd = self._sounds.get(name)
+            if snd is not None:
+                snd.Stop()
 
     def duration_for(self, name: str) -> float:
         """Real decoded length (seconds) of a loaded sound, else 0.0.
