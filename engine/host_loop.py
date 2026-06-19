@@ -33,11 +33,10 @@ except (ImportError, AttributeError):
 
 from engine.audio.alert_audio import AlertAudioListener
 from engine.audio.engine_rumble import install_engine_rumble_listener
-# tg_sound import — eagerly constructs the manager singleton at host_loop
-# import time so SDK code that imports App and uses App.g_kSoundManager is
-# well-defined from frame 0. register_default_sounds is called from
-# init_audio so engine rumble + alert names resolve before first spawn.
-from engine.audio.tg_sound import TGSoundManager, register_default_sounds  # noqa: F401
+# Engine-rumble names come from LoadTacticalSounds.LoadSounds(); bridge/alert
+# names from the real LoadBridge.LoadSounds() at mission load (against a live
+# backend, since init_audio_backend() runs before the mission loads).
+from engine.audio.tg_sound import TGSoundManager  # noqa: F401
 
 # ── Per-frame imports (hoisted from function bodies; cleanup issue #2) ─────────
 # These names are used on the 60 Hz tick/render path. They were originally
@@ -89,21 +88,38 @@ def _project_root_for_cef():
     return Path(__file__).resolve().parent.parent
 
 
-def init_audio() -> None:
-    """Boot the audio subsystem. Null backend if OPEN_STBC_AUDIO=0."""
-    if _audio_mod is None:
+_audio_backend_ready = False
+
+
+def init_audio_backend() -> None:
+    """Boot the audio backend (idempotent).
+
+    Must run before the SDK's LoadBridge.Load -> LoadSounds() at mission load
+    so bridge SFX load into a live backend. Null backend if OPEN_STBC_AUDIO=0.
+    """
+    global _audio_backend_ready
+    if _audio_mod is None or _audio_backend_ready:
         return
     backend = "null" if _os_mod.environ.get("OPEN_STBC_AUDIO") == "0" else "openal"
     _audio_mod.init(backend=backend)
-    register_default_sounds()
+    _audio_backend_ready = True
+
+
+def init_audio() -> None:
+    """Finish audio setup: backend (if not already up) + event listeners."""
+    if _audio_mod is None:
+        return
+    init_audio_backend()
     install_engine_rumble_listener()
     _alert_listener.reset()
 
 
 def shutdown_audio() -> None:
+    global _audio_backend_ready
     if _audio_mod is None:
         return
     _audio_mod.shutdown()
+    _audio_backend_ready = False
 
 
 def tick_audio(*, camera_position, camera_forward, camera_up, dt, player) -> None:
@@ -2895,7 +2911,16 @@ def run(mission_name: Optional[str] = None,
         # _after_mission_loaded. No eager pre-game load — the SDK is the single
         # source of the bridge mesh.
 
+        # Bring the audio backend up BEFORE the mission loads: the mission's
+        # StartMission runs the real SDK LoadBridge.Load -> LoadSounds(), which
+        # must load bridge SFX into a live backend. Listener installs stay in
+        # init_audio() below (relocating them would change spawn-event capture).
+        init_audio_backend()
         controller.session = controller.loader.load(mission_name)
+        # The SDK's CreateAndPopulateBridgeSet plays AmbBridge at load
+        # (LoadBridge.py:213); silence it now since the initial view is space.
+        # bridge_ambient remains the sole authority on when the hum plays.
+        _bridge_ambient_set(False)
         if verbose:
             ss = controller.session
             print(f"[host_loop] mission={mission_name}", flush=True)
