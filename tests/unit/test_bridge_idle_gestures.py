@@ -22,6 +22,8 @@ class _Char:
         return self._standing
     def IsHidden(self):
         return 0
+    def IsMenuUp(self):
+        return 1 if getattr(self, "_menu_up", False) else 0
 
 
 def _builder_returns_one_clip(monkeypatch):
@@ -67,6 +69,16 @@ def test_skips_busy_character(monkeypatch):
     ctrl._busy.add(id(ch))
     sched.update(1.0, [ch], renderer=None, anim_mgr=None, controller=ctrl)
     assert ctrl.submitted == []
+
+
+def test_menu_up_officer_is_suppressed(monkeypatch):
+    _builder_returns_one_clip(monkeypatch)
+    sched = IdleGestureScheduler(random.Random(0), interval=(0.0, 0.0))
+    ctrl = _Controller()
+    ch = _Char([("Bridge.Characters.CommonAnimations.Foo",)])
+    ch._menu_up = True                       # IsMenuUp() -> 1 (see _Char below)
+    sched.update(1.0, [ch], renderer=None, anim_mgr=None, controller=ctrl)
+    assert ctrl.submitted == []              # suppressed while menu is up
 
 
 def test_build_sequence_clips_reads_sdk_getduration(monkeypatch):

@@ -76,6 +76,8 @@ class IdleGestureScheduler:
                 continue
             if ch.IsHidden():
                 continue
+            if ch.IsMenuUp():
+                continue                     # attending the captain — no idle
             key = id(ch)
             t = self._timers.get(key)
             if t is None:
