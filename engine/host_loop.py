@@ -2502,7 +2502,7 @@ def _place_one_character(controller, r, character, set_name, is_bridge,
     double-placement within a load (a fresh set rebuild enumerates fresh,
     untagged characters).
     """
-    from engine.appc.bridge_placement import capture_placement
+    from engine.appc.bridge_placement import capture_placement, capture_breathing
 
     if getattr(character, "_render_instance", None) is not None:
         return                                       # already placed this load
@@ -2538,6 +2538,22 @@ def _place_one_character(controller, r, character, set_name, is_bridge,
                     "destroy officer instance (rollback)", _e)
             raise
         character._render_instance = iid
+        # Looping breathe idle (SDK-driven), layered over the placement pose so
+        # the body breathes while the root stays at the station. Best-effort: a
+        # breathing failure must not unplace a correctly-stationed officer.
+        if hasattr(r, "play_instance_idle"):
+            try:
+                breathing = capture_breathing(character)
+                if breathing:
+                    bidx = r.load_instance_clip(iid, _abs(breathing["clip_nif"]))
+                    if bidx is not None and bidx >= 0:
+                        r.play_instance_idle(iid, bidx)
+                        from engine.bridge_character_anim import get_controller
+                        _ca = get_controller()
+                        if _ca is not None:
+                            _ca.set_idle(iid, bidx)
+            except Exception as _e:
+                dev_mode.log_swallowed("establish breathing", _e)
         if is_bridge:
             controller.officer_instances.append(iid)
         else:
