@@ -961,6 +961,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](unsigned long long h) { if (g_bridge_pass) g_bridge_pass->set_viewscreen_model(h); });
     m.def("set_viewscreen_enabled",
           [](bool on) { g_viewscreen_enabled = on; });
+    m.def("set_viewscreen_brightness",
+          [](float b) { if (g_bridge_pass) g_bridge_pass->set_viewscreen_brightness(b); },
+          py::arg("b"));
     m.def("set_viewscreen_comm_source",
           [](unsigned int set_id,
              std::tuple<float,float,float> eye,

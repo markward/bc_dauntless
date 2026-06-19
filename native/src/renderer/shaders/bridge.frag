@@ -15,6 +15,9 @@ uniform float u_alpha_test_threshold;
 // top-down like every .tga, so the feed samples upside-down without this
 // flip. Same fix as cef_composite_pass.cc. Affects the base sample only.
 uniform int u_flip_v;
+// Brightness multiplier for the viewscreen feed, used for ViewOn/ViewOff
+// fade transitions. 1.0 for all other bridge geometry (byte-identical).
+uniform float u_viewscreen_brightness;
 
 out vec4 FragColor;
 
@@ -30,5 +33,5 @@ void main() {
     // ambient — that's how red-alert dim affects walls/floor without
     // dimming the light fixtures themselves.
     vec3 light = max(u_ambient, u_emissive);
-    FragColor = vec4(base.rgb * lm * light, 1.0);
+    FragColor = vec4(base.rgb * lm * light * u_viewscreen_brightness, 1.0);
 }
