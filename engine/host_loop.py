@@ -2467,6 +2467,17 @@ def _iter_set_characters(set_obj):
     return set_obj.GetClassObjectList(CharacterClass)
 
 
+def _live_bridge_characters():
+    """Realised, visible bridge officers (each carries _render_instance set by
+    _place_one_character). Empty when no bridge set exists."""
+    import App as _App
+    bridge = _App.g_kSetManager.GetSet("bridge")
+    if bridge is None:
+        return []
+    return [c for c in _iter_set_characters(bridge)
+            if getattr(c, "_render_instance", None) is not None and not c.IsHidden()]
+
+
 def _tag_comm_instance(r, iid, comm_set_id) -> None:
     """Tag a comm instance with its set's id so the bridge pass can render the
     set into the viewscreen RTT. Guarded: renderer builds without the binding
@@ -2903,6 +2914,15 @@ def run(mission_name: Optional[str] = None,
         )
         cutscene = BridgeCutsceneController()
         set_controller(cutscene)
+
+        from engine.bridge_character_anim import (
+            BridgeCharacterAnimController, set_controller as set_char_anim,
+        )
+        from engine.bridge_idle_gestures import IdleGestureScheduler
+        import random as _random
+        char_anim = BridgeCharacterAnimController()
+        set_char_anim(char_anim)
+        idle_gestures = IdleGestureScheduler(_random.Random(0xB1D6E))
 
         # Bridge interior is created by the SDK path (LoadBridge.Load ->
         # Bridge.<name>.CreateBridgeModel) during the mission load below, then
@@ -3423,6 +3443,8 @@ def run(mission_name: Optional[str] = None,
                 # queued walk-on (the camera then never moves).
                 if had_pending_swap:
                     cutscene.reset()
+                    char_anim.reset()
+                    idle_gestures.reset()
                 controller._drain_pending_swap()
                 if had_pending_swap:
                     director.snap()
@@ -3619,6 +3641,13 @@ def run(mission_name: Optional[str] = None,
                             renderer=r,
                             anim_mgr=_App.g_kAnimationManager,
                         )
+                        idle_gestures.update(
+                            _player_dt, _live_bridge_characters(),
+                            renderer=r, anim_mgr=_App.g_kAnimationManager,
+                            controller=char_anim)
+                        char_anim.update(
+                            _player_dt, renderer=r,
+                            anim_mgr=_App.g_kAnimationManager)
                     mouse_dx, mouse_dy = _h.consume_mouse_delta() if _h else (0.0, 0.0)
                     # While paused we still drain the accumulated mouse
                     # delta (so it doesn't snap the look on resume) but
