@@ -255,7 +255,7 @@ scenegraph::ModelHandle load_model_impl(const std::string& nif_path,
     }
     auto handle = g_cache->load(nif_path, search_paths);
     g_loaded_models.push_back({std::move(canonical), std::move(handle),
-                               /*is_officer=*/false});
+                               /*is_officer=*/false, /*appended_clips=*/{}});
     return static_cast<scenegraph::ModelHandle>(g_loaded_models.size());
 }
 
@@ -967,7 +967,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   std::make_shared<assets::Model>(std::move(composed));
               g_loaded_models.push_back({std::filesystem::path(body_nif),
                                          std::move(handle),
-                                         /*is_officer=*/true});
+                                         /*is_officer=*/true, /*appended_clips=*/{}});
               return static_cast<scenegraph::ModelHandle>(g_loaded_models.size());
           },
           py::arg("body_nif"), py::arg("head_nif"),
