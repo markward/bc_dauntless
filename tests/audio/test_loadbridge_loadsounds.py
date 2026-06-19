@@ -75,3 +75,17 @@ def test_loadbridge_sounds_are_in_bridge_group(game_with_assets):
     mgr.DeleteAllSoundsInGroup("BridgeGeneric")
     assert mgr.GetSound("ViewOn") is None
     assert mgr.GetSound("InSystemWarp") is None
+
+
+def test_loadbridge_loadsounds_survives_missing_asset(game_with_assets, tmp_path):
+    # Regression guard (commit 7bac43d1): the SDK chains pSound.SetVolume()
+    # unconditionally (LoadBridge.py:379). A missing asset must yield a valid
+    # but unloaded handle, not None — so LoadSounds() must not raise.
+    import os
+    (tmp_path / "sfx" / "hail.wav").unlink()  # ViewOn asset goes missing
+    import LoadBridge
+    LoadBridge.LoadSounds()  # must not raise
+    mgr = TGSoundManager.instance()
+    view_on = mgr.GetSound("ViewOn")
+    assert view_on is not None
+    assert view_on.IsLoaded() == 0

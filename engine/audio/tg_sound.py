@@ -212,6 +212,7 @@ class TGSoundRegion:
             return
         if snd not in self._sounds:
             self._sounds.append(snd)
+        # Single-region assumption: the SDK only uses one "bridge" region, so _region backlink is overwritten.
         snd._region = self
 
     def RemoveSound(self, snd) -> None:

@@ -55,9 +55,11 @@ def test_init_audio_backend_is_idempotent(monkeypatch):
     monkeypatch.setenv("OPEN_STBC_AUDIO", "0")
     _dauntless_host = pytest.importorskip("_dauntless_host")
     from engine import host_loop
-    host_loop.init_audio_backend()
+    host_loop.shutdown_audio()  # known-False flag regardless of suite order
     _dauntless_host.audio.clear_command_log()
-    host_loop.init_audio_backend()  # second call must not re-init
-    ops = [e["op"] for e in _dauntless_host.audio.debug_command_log()]
-    assert "init" not in ops
+    host_loop.init_audio_backend()  # first call must actually init
+    assert "init" in [e["op"] for e in _dauntless_host.audio.debug_command_log()]
+    _dauntless_host.audio.clear_command_log()
+    host_loop.init_audio_backend()  # second call must be a no-op
+    assert "init" not in [e["op"] for e in _dauntless_host.audio.debug_command_log()]
     host_loop.shutdown_audio()
