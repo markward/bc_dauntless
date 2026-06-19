@@ -2680,9 +2680,9 @@ def drive_viewscreen_static_and_brightness(r, controller, ramp, dt,
     # Dev-mode change log: emit once per state change; silent every frame
     # when dev mode is off (is_enabled() is a single bool getattr, no I/O).
     if dev_mode.is_enabled():
-        _log_key = (signature, static_on, round(intensity, 2))
-        if _log_key != getattr(controller, "_vs_static_log_state", None):
-            controller._vs_static_log_state = _log_key
+        log_key = (signature, static_on)
+        if log_key != getattr(controller, "_vs_static_log_state", None):
+            controller._vs_static_log_state = log_key
             if signature[0] == "off":
                 feed_str = "off"
             elif signature[0] == "comm":

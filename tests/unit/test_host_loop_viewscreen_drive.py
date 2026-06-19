@@ -152,3 +152,23 @@ def test_logging_intensity_in_message(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "0.8" in out  # fmin
     assert "1.0" in out  # fmax
+    assert "intensity=" in out  # intensity value appears in message body
+
+
+def test_logging_stays_silent_when_only_intensity_changes(monkeypatch, capsys):
+    """Log stays silent when only intensity changes (key is feed+static, not intensity)."""
+    monkeypatch.setattr(_dev_mode, "is_enabled", lambda: True)
+    r = FakeRenderer()
+    vs = FakeVS(on=1, static_on=1, fmin=0.8, fmax=1.0)
+    ctrl = _controller(vs)
+    ramp = ViewscreenBrightnessRamp()
+
+    # First call with intensity 0.9 — should log.
+    drive_viewscreen_static_and_brightness(r, ctrl, ramp, 0.0, intensity_fn=lambda a, b: 0.9)
+    out1 = capsys.readouterr().out
+    assert "[viewscreen]" in out1
+
+    # Second call with different intensity 0.5 but same feed/static_on — should be silent.
+    drive_viewscreen_static_and_brightness(r, ctrl, ramp, 0.0, intensity_fn=lambda a, b: 0.5)
+    out2 = capsys.readouterr().out
+    assert out2 == ""
