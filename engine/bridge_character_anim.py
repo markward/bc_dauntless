@@ -9,8 +9,11 @@ ends the controller issues restore_rest_pose (the SDK's AT_DEFAULT). Reactions
 a busy character is dropped. Mirrors engine/bridge_cutscene.py.
 """
 
+from engine.appc.bridge_placement import capture_registered_clip
+
 _IDLE = 0
 _REACTION = 1
+_TURN = 1       # turn-to-captain preempts idle (0); same band as reactions
 
 # Floor for a clip with no SDK duration AND no resolvable natural length (e.g.
 # a single-frame pose clip whose duration parses as 0). Keeps it on screen
@@ -33,10 +36,12 @@ class _Action:
 
 
 class BridgeCharacterAnimController:
-    def __init__(self):
+    def __init__(self, asset_resolver=None):
         self._active = {}           # iid -> _Action
         self._dur_cache = {}        # nif_path -> real clip duration (s)
         self._idle_clips = {}       # iid -> looping breathe clip index
+        self._pending_turns = []    # [(character, turn_bool), ...]
+        self._resolve = asset_resolver or (lambda p: p)
 
     def is_busy(self, character) -> bool:
         iid = getattr(character, "_render_instance", None)
@@ -58,11 +63,25 @@ class BridgeCharacterAnimController:
         returns to when its transient queue empties (AT_DEFAULT)."""
         self._idle_clips[iid] = clip_index
 
+    def request_turn(self, character) -> None:
+        """Queue a turn-to-captain (drained on the next update, which has the
+        renderer). Called from CharacterClass.MenuUp via the registry."""
+        self._pending_turns.append((character, True))
+
+    def request_turn_back(self, character) -> None:
+        """Queue a turn-back-to-normal (CharacterClass.MenuDown)."""
+        self._pending_turns.append((character, False))
+
     def reset(self) -> None:
         self._active = {}
         self._idle_clips = {}
+        self._pending_turns = []
 
     def update(self, dt, *, renderer, anim_mgr=None) -> None:
+        if self._pending_turns:
+            pending, self._pending_turns = self._pending_turns, []
+            for character, turn in pending:
+                self._process_turn(renderer, character, turn)
         done = []
         for iid, act in self._active.items():
             if not act.started or act.index < 0:
@@ -79,6 +98,23 @@ class BridgeCharacterAnimController:
                 done.append(iid)
         for iid in done:
             self._active.pop(iid, None)
+
+    def _process_turn(self, renderer, character, turn) -> None:
+        """Swap the default idle (BreatheTurned <-> Breathe) and play the
+        turn/back transient. Best-effort: a missing clip skips that half."""
+        iid = getattr(character, "_render_instance", None)
+        if iid is None:
+            return
+        idle_suffix = "BreatheTurned" if turn else "Breathe"
+        move_suffix = "TurnCaptain" if turn else "BackCaptain"
+        idle = capture_registered_clip(character, idle_suffix)
+        if idle and hasattr(renderer, "load_instance_clip"):
+            idx = renderer.load_instance_clip(iid, self._resolve(idle["clip_nif"]))
+            if idx is not None and idx >= 0:
+                self.set_idle(iid, idx)
+        move = capture_registered_clip(character, move_suffix)
+        if move:
+            self.submit(character, [(self._resolve(move["clip_nif"]), 0.0)], priority=_TURN)
 
     def _return_to_default(self, renderer, iid) -> None:
         """Resume the looping breathe idle if one is registered; otherwise snap

@@ -156,3 +156,59 @@ def test_reset_clears_idle_registry():
     ctrl.update(0.5, renderer=r, anim_mgr=None)
     assert r.idled == []                       # registry cleared -> fallback
     assert r.restored == [10]
+
+
+def test_request_turn_swaps_idle_and_submits_turn(monkeypatch):
+    import engine.bridge_character_anim as mod
+    monkeypatch.setattr(mod, "capture_registered_clip",
+                        lambda ch, suffix: {"clip_nif": f"{suffix}.nif"})
+    ctrl = mod.BridgeCharacterAnimController()      # identity asset_resolver
+    r = _FakeRenderer()
+    ch = _Char(11)
+    ctrl.request_turn(ch)
+    ctrl.update(0.0, renderer=r, anim_mgr=None)
+    # BreatheTurned became the default idle; the TurnCaptain transient is playing.
+    bt_idx = r.loaded[(11, "BreatheTurned.nif")]
+    tc_idx = r.loaded[(11, "TurnCaptain.nif")]
+    assert ctrl._idle_clips[11] == bt_idx
+    assert r.played[-1] == (11, tc_idx)
+
+
+def test_request_turn_back_restores_normal_breathe(monkeypatch):
+    import engine.bridge_character_anim as mod
+    monkeypatch.setattr(mod, "capture_registered_clip",
+                        lambda ch, suffix: {"clip_nif": f"{suffix}.nif"})
+    ctrl = mod.BridgeCharacterAnimController()
+    r = _FakeRenderer()
+    ch = _Char(12)
+    ctrl.request_turn_back(ch)
+    ctrl.update(0.0, renderer=r, anim_mgr=None)
+    breathe_idx = r.loaded[(12, "Breathe.nif")]
+    back_idx = r.loaded[(12, "BackCaptain.nif")]
+    assert ctrl._idle_clips[12] == breathe_idx
+    assert r.played[-1] == (12, back_idx)
+
+
+def test_request_turn_missing_clips_is_graceful(monkeypatch):
+    import engine.bridge_character_anim as mod
+    monkeypatch.setattr(mod, "capture_registered_clip", lambda ch, suffix: None)
+    ctrl = mod.BridgeCharacterAnimController()
+    r = _FakeRenderer()
+    ch = _Char(13)
+    ctrl.request_turn(ch)
+    ctrl.update(0.0, renderer=r, anim_mgr=None)     # no crash; nothing submitted
+    assert 13 not in ctrl._idle_clips
+    assert r.played == []
+
+
+def test_asset_resolver_applied(monkeypatch):
+    import engine.bridge_character_anim as mod
+    monkeypatch.setattr(mod, "capture_registered_clip",
+                        lambda ch, suffix: {"clip_nif": f"{suffix}.nif"})
+    ctrl = mod.BridgeCharacterAnimController(asset_resolver=lambda p: "/abs/" + p)
+    r = _FakeRenderer()
+    ch = _Char(14)
+    ctrl.request_turn(ch)
+    ctrl.update(0.0, renderer=r, anim_mgr=None)
+    assert (14, "/abs/BreatheTurned.nif") in r.loaded
+    assert (14, "/abs/TurnCaptain.nif") in r.loaded
