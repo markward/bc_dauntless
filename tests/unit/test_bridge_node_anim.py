@@ -97,3 +97,58 @@ def test_no_bridge_instance_is_graceful():
                     renderer=r)
     ctrl.update(r)            # no crash, nothing set
     assert r.world_sets == {}
+
+
+# ---------------------------------------------------------------------------
+# Regression: _discover_seat_node must read the "node" key emitted by the
+# real native binding (host_bindings.cc:931: td["node"] = tr.target_node_name).
+# The old code only checked "target_node_name"/"name", so discovery silently
+# returned None and the seated officer was never coupled to the chair.
+# ---------------------------------------------------------------------------
+
+class _FakeRendererWithClips(_FakeRenderer):
+    """Extends _FakeRenderer with load_animation_clips returning the exact
+    shape the native C++ binding emits: tracks keyed "node", not
+    "target_node_name"."""
+    def __init__(self, seat_rest, seat_animated, clips):
+        super().__init__(seat_rest, seat_animated)
+        self._clips = clips
+
+    def load_animation_clips(self, path):
+        return self._clips
+
+
+def test_discover_seat_node_reads_native_node_key():
+    """_discover_seat_node must find the seat via the "node" key (the native
+    binding's actual output).  The camera track ("Camera captain") must be
+    skipped; "console seat 01" must be discovered and coupling must register."""
+    # Native binding shape: list of clip dicts with "tracks" list; each track
+    # has "node" (NOT "target_node_name" or "name").
+    native_clips = [
+        {
+            "tracks": [
+                {"node": "Camera captain", "rotation": [[1, 0, 0], [0, 1, 0], [0, 0, 1]]},
+                {"node": "console seat 01", "rotation": [[1, 0, 0], [0, 1, 0], [0, 0, 1]]},
+            ]
+        }
+    ]
+    seat = _trans(0, 5, 0)
+    r = _FakeRendererWithClips(seat_rest=seat, seat_animated=seat, clips=native_clips)
+    ctrl = BridgeNodeAnimController(bridge_iid_getter=lambda: 1)
+    off = _Officer(42)
+
+    # Deliberately omit "seat_node" to force real _discover_seat_node path.
+    ctrl.turn_chair(off, {"clip_nif": "c.nif"}, renderer=r)
+
+    # Officer iid 42 must be in _coupled (discovery succeeded).
+    assert 42 in ctrl._coupled, (
+        "_discover_seat_node failed to find seat node from native 'node' key; "
+        "officer not coupled (regression of old target_node_name-only lookup)"
+    )
+    assert ctrl._coupled[42]["seat_node"] == "console seat 01"
+
+    # update() must call set_world_transform (seat_rest == seat_anim -> identity).
+    ctrl.update(r)
+    assert 42 in r.world_sets, "update() did not apply coupling transform"
+    for i, v in enumerate(identity4()):
+        assert abs(r.world_sets[42][i] - v) < 1e-6

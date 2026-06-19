@@ -3702,6 +3702,7 @@ def run(mission_name: Optional[str] = None,
                         char_anim.update(
                             _player_dt, renderer=r,
                             anim_mgr=_App.g_kAnimationManager)
+                        # node_anim reads node_overrides written by r.frame() above; intentionally one frame behind — do NOT reorder.
                         node_anim.update(r)
                     mouse_dx, mouse_dy = _h.consume_mouse_delta() if _h else (0.0, 0.0)
                     # While paused we still drain the accumulated mouse

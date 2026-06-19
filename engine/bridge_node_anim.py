@@ -80,7 +80,10 @@ class BridgeNodeAnimController:
         if not clips:
             return None
         for tr in clips[0].get("tracks", []):
-            name = tr.get("target_node_name") or tr.get("name") or ""
+            # Native load_animation_clips emits the track's node under "node";
+            # the fakes historically used "target_node_name"/"name". Accept all.
+            name = (tr.get("node") or tr.get("target_node_name")
+                    or tr.get("name") or "")
             if name.lower().startswith("console seat"):
                 return name
         return None
