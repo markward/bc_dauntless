@@ -75,7 +75,7 @@ class ViewScreenObject(_LoudStub):
     """SDK viewscreen object. Core data is real (nif, render_instance, the
     RemoteCam/IsOn feed state consumed later by 5c RTT); the unbuilt
     station-menu/handler surface (SetMenu, ToggleRemoteCam,
-    AddPythonFuncHandlerForInstance, IsStaticOn, MenuDown, ...) falls through
+    AddPythonFuncHandlerForInstance, MenuDown, ...) falls through
     _LoudStub.__getattr__ as a silent no-op so missions that touch it don't
     crash. The HOST reads this object after LoadBridge.Load and fills in
     render_instance (see host_loop.realize_set), mirroring
@@ -86,6 +86,13 @@ class ViewScreenObject(_LoudStub):
         self.render_instance = None    # host fills this in
         self._remote_cam = None
         self._is_on = 0
+        # SDK static/"snow" overlay state (MissionLib.ViewscreenOn drives these
+        # when fMaxStatic > 0; ViewscreenOff calls SetStaticIsOn(0)). Recorded
+        # here and consumed by host_loop Step 5c. Menu methods stay _LoudStub.
+        self._static_icon_group = None
+        self._static_on = 0
+        self._static_min = 0.0
+        self._static_max = 0.0
 
     def GetRemoteCam(self):
         return self._remote_cam
@@ -103,6 +110,19 @@ class ViewScreenObject(_LoudStub):
 
     def IsOn(self):
         return self._is_on
+
+    def SetStaticTextureIconGroup(self, name):
+        self._static_icon_group = name
+
+    def SetStaticIsOn(self, on):
+        self._static_on = on
+
+    def IsStaticOn(self):
+        return self._static_on
+
+    def SetStaticVariation(self, fmin, fmax):
+        self._static_min = float(fmin)
+        self._static_max = float(fmax)
 
 
 class ZoomCameraObjectClass(_LoudStub):
