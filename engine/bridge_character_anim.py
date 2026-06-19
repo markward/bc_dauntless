@@ -120,6 +120,13 @@ class BridgeCharacterAnimController:
         iid = getattr(character, "_render_instance", None)
         if iid is None:
             return
+        # A menu open/close is a deliberate user action and must always take
+        # effect: evict any in-flight transient for this officer so the new
+        # turn/back is never dropped by submit's equal-priority guard. Without
+        # this, a fast open+close would drop the reverse turn while the forward
+        # turn (same priority) is still playing, leaving the officer stuck
+        # facing the captain until the next interaction.
+        self._active.pop(iid, None)
         if turn:
             # Turn toward the captain and HOLD it while the menu is open. No
             # BreatheTurned swap — that clip over the forward placement does not

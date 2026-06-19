@@ -197,6 +197,24 @@ def test_request_turn_back_restores_normal_breathe(monkeypatch):
     assert r.idled[-1] == (12, breathe_idx)
 
 
+def test_turn_back_evicts_in_flight_forward_turn(monkeypatch):
+    # Fast open+close: the forward turn is still in _active when turn-back is
+    # requested. The back must still play (not be dropped by submit's equal-
+    # priority guard), so the officer never gets stuck facing the captain.
+    import engine.bridge_character_anim as mod
+    monkeypatch.setattr(mod, "capture_registered_clip",
+                        lambda ch, suffix: {"clip_nif": f"{suffix}.nif"})
+    ctrl = mod.BridgeCharacterAnimController()
+    r = _FakeRenderer()
+    ch = _Char(20)
+    ctrl.request_turn(ch)                              # open
+    ctrl.update(0.0, renderer=r, anim_mgr=None)        # forward TurnCaptain plays
+    assert r.played[-1] == (20, r.loaded[(20, "TurnCaptain.nif")])
+    ctrl.request_turn_back(ch)                         # close while forward in-flight
+    ctrl.update(0.0, renderer=r, anim_mgr=None)
+    assert r.played[-1] == (20, r.loaded[(20, "BackCaptain.nif")])
+
+
 def test_request_turn_missing_clips_is_graceful(monkeypatch):
     import engine.bridge_character_anim as mod
     monkeypatch.setattr(mod, "capture_registered_clip", lambda ch, suffix: None)
