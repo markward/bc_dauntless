@@ -2518,8 +2518,7 @@ def _place_one_character(controller, r, character, set_name, is_bridge,
         iid = create(model)
         try:
             r.set_world_transform(iid, OFFICER_TRANSFORM)
-            r.set_instance_animation(
-                iid, 0, False, placement["sample_at_start"])
+            r.set_instance_rest_pose(iid, 0, placement["sample_at_start"])
         except Exception:
             try:
                 r.destroy_instance(iid)

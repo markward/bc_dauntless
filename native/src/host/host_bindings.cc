@@ -739,6 +739,24 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "SP2: play model.animations[clip_index] on this instance. loop=false "
           "(default) plays once and holds the last frame; the renderer rebuilds "
           "the bone palette each frame until it settles.");
+    m.def("set_instance_rest_pose",
+          [](scenegraph::InstanceId id, int clip_index, bool at_start) {
+              scenegraph::Instance::AnimationState st;
+              st.clip_index = clip_index;
+              st.loop = false;
+              st.sample_at_start = at_start;
+              st.sample_at_end = !at_start;
+              st.start_wall_time = glfwGetTime();
+              g_world.set_rest_pose(id, st);
+          },
+          py::arg("iid"), py::arg("clip_index"), py::arg("at_start") = false,
+          "Freeze an officer at the static placement pose: at_start=true holds "
+          "the clip's first frame (move-from-station clips), false holds the "
+          "last frame (stand/seated clips). No play-through.");
+    m.def("restore_rest_pose",
+          [](scenegraph::InstanceId id) { g_world.restore_rest_pose(id); },
+          py::arg("iid"),
+          "Snap the instance back to its stored rest pose (AT_DEFAULT).");
     m.def("load_animation_clips",
           [](const std::string& path) {
               py::list clips_out;

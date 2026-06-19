@@ -320,6 +320,19 @@ def set_instance_animation(iid: InstanceId, clip_index: int,
     _h.set_instance_animation(iid, clip_index, loop, sample_at_start)
 
 
+def set_instance_rest_pose(iid: InstanceId, clip_index: int,
+                           at_start: bool = False) -> None:
+    """Freeze an officer at its static placement (rest) pose. at_start holds
+    frame 0 (move-from-station clips); otherwise the last frame (stand/seated
+    clips). Faithful to the SDK's TGAnimPosition — no play-through."""
+    _h.set_instance_rest_pose(iid, clip_index, at_start)
+
+
+def restore_rest_pose(iid: InstanceId) -> None:
+    """Snap the instance back to its stored rest pose (AT_DEFAULT)."""
+    _h.restore_rest_pose(iid)
+
+
 def load_animation_clips(path: str) -> list:
     """Parse a NIF's keyframe controllers into animation clips.
 
