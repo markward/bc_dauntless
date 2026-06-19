@@ -16,48 +16,8 @@ See docs/superpowers/specs/2026-06-19-bridge-node-animation-design.md.
 from __future__ import annotations
 
 import logging
-import math
-import os
 
 _logger = logging.getLogger(__name__)
-
-# Opt-in coupling diagnostic: set BRIDGE_COUPLING_DEBUG=1 to append a per-turn /
-# per-tick trace to /tmp/bridge_coupling.log. Off by default (no production
-# impact). Used to root-cause "seat rotates but officer doesn't ride it".
-_DEBUG = bool(os.environ.get("BRIDGE_COUPLING_DEBUG"))
-_DEBUG_PATH = "/tmp/bridge_coupling.log"
-_dbg_ticks: dict = {}   # iid -> ticks already logged (cap volume)
-
-
-def _dbg(msg: str) -> None:
-    if not _DEBUG:
-        return
-    try:
-        with open(_DEBUG_PATH, "a") as fh:
-            fh.write(msg + "\n")
-    except Exception:
-        pass
-
-
-def _iid_str(iid) -> str:
-    """index:generation of an InstanceId, for spotting instance-identity drift."""
-    if iid is None:
-        return "None"
-    return f"{getattr(iid, 'index', '?')}:{getattr(iid, 'generation', '?')}"
-
-
-def _mat_summary(m) -> str:
-    """Compact description of a row-major 4x4: column scales (1.0 = no scale),
-    rotation angle from the trace, and translation."""
-    if m is None:
-        return "None"
-    cols = [(m[0], m[4], m[8]), (m[1], m[5], m[9]), (m[2], m[6], m[10])]
-    scales = [round(math.sqrt(sum(c * c for c in col)), 4) for col in cols]
-    trace = m[0] + m[5] + m[10]
-    cos_a = max(-1.0, min(1.0, (trace - 1.0) / 2.0))
-    angle = round(math.degrees(math.acos(cos_a)), 2)
-    trans = [round(m[3], 2), round(m[7], 2), round(m[11], 2)]
-    return f"scale={scales} angle={angle}deg trans={trans}"
 
 
 def identity4():
@@ -150,10 +110,6 @@ class BridgeNodeAnimController:
         iid = getattr(officer, "_render_instance", None)
         if couple and iid is not None and seat_node:
             self._coupled[iid] = {"officer": officer, "seat_node": seat_node}
-            _dbg_ticks[id(iid)] = 0
-        _dbg(f"[turn_chair] PLAY bridge={_iid_str(bridge)} couple={couple} "
-             f"officer_iid={_iid_str(iid)} seat_node={seat_node!r} "
-             f"path={path!r} coupled={iid in self._coupled}")
 
     def unturn_chair(self, officer, chair_clip, *, renderer):
         bridge = self._bridge_iid()
@@ -193,18 +149,6 @@ class BridgeNodeAnimController:
                 renderer.set_world_transform(iid, coupling)
             except Exception:
                 _logger.debug("coupling set_world_transform failed", exc_info=True)
-            if _DEBUG:
-                n = _dbg_ticks.get(id(iid), 0)
-                _dbg_ticks[id(iid)] = n + 1
-                # Log ticks 0-3 then every 6th up to ~40 (covers the full ~0.53s
-                # turn at 60fps so we see whether anim EVER leaves rest).
-                if n < 4 or (n % 6 == 0 and n <= 42):
-                    a_ang = _mat_summary(list(anim)).split("angle=")[1].split()[0]
-                    r_ang = _mat_summary(list(rest)).split("angle=")[1].split()[0]
-                    d_ang = _mat_summary(coupling).split("angle=")[1].split()[0]
-                    _dbg(f"[update] t#{n} READ bridge={_iid_str(self._bridge_iid())} "
-                         f"seat={rec['seat_node']!r} anim_ang={a_ang} "
-                         f"rest_ang={r_ang} Rdelta_ang={d_ang}")
 
     def reset(self, *, renderer=None):
         bridge = self._bridge_iid()

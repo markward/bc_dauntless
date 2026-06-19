@@ -69,9 +69,7 @@
 #endif
 
 #include <cmath>
-#include <cstdarg>
 #include <cstdint>
-#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -388,22 +386,6 @@ bool should_close() {
     return !g_window || g_window->should_close();
 }
 
-// Opt-in coupling diagnostic (BRIDGE_COUPLING_DEBUG=1) — appends to the same
-// /tmp/bridge_coupling.log the Python side uses. Rate-limited by the caller.
-// Investigative; removed once the chair-coupling bug is fixed.
-static void _coupling_dbg(const char* fmt, ...) {
-    static int enabled = -1;
-    if (enabled < 0) enabled = std::getenv("BRIDGE_COUPLING_DEBUG") ? 1 : 0;
-    if (!enabled) return;
-    std::FILE* fh = std::fopen("/tmp/bridge_coupling.log", "a");
-    if (!fh) return;
-    std::va_list args;
-    va_start(args, fmt);
-    std::vfprintf(fh, fmt, args);
-    va_end(args);
-    std::fclose(fh);
-}
-
 // Sample active bridge-node clips into each instance's node_overrides.
 // Called once per frame() after update_animations so skinned characters
 // and non-skinned bridge geometry are both up to date before any draw pass.
@@ -428,10 +410,6 @@ void update_bridge_node_anims(double now) {
         }
         if (a.reverse) t = dur - t;
         inst->node_overrides = renderer::sample_node_overrides(a.clip, *m, t);
-        static int wcount = 0;
-        if ((wcount++ % 20) == 0)
-            _coupling_dbg("[native][write] idx=%u t=%.3f override_size=%zu\n",
-                          a.id.index, t, inst->node_overrides.size());
         ++it;
     }
 }
@@ -930,13 +908,6 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   *m, node_name, in->node_overrides);
               if (idx < 0) return py::none();
               static const std::unordered_map<int, glm::mat4> kEmpty;
-              if (animated) {
-                  static int rcount = 0;
-                  if ((rcount++ % 20) == 0)
-                      _coupling_dbg("[native][read]  idx=%u node=%s "
-                                    "override_size=%zu\n", id.index,
-                                    node_name.c_str(), in->node_overrides.size());
-              }
               auto worlds = renderer::compose_node_worlds(
                   *m, in->world, animated ? in->node_overrides : kEmpty);
               const glm::mat4& w = worlds[idx];
