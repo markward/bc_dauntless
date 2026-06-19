@@ -172,27 +172,41 @@ class BridgeCharacterAnimController:
         chair_driven = not self._body_turns_officer(
             renderer, capture_registered_clip(character, "TurnCaptain"))
         if turn:
-            # Turn toward the captain and HOLD it while the menu is open. No
-            # BreatheTurned swap — that clip over the forward placement does not
-            # preserve the turn, so we hold the turn's last frame instead.
-            move = capture_registered_clip(character, "TurnCaptain")
-            if move and not chair_driven:
-                self.submit(character, [(self._resolve(move["clip_nif"]), 0.0)],
-                            priority=_TURN, hold=True)
-            # chair_driven: the chair carries the officer (below); no body clip.
+            if not chair_driven:
+                # Body-driven (Helm): turn toward the captain and HOLD it while
+                # the menu is open. No BreatheTurned swap — that clip over the
+                # forward placement does not preserve the body's turn, so we hold
+                # the turn clip's last frame instead.
+                move = capture_registered_clip(character, "TurnCaptain")
+                if move:
+                    self.submit(character, [(self._resolve(move["clip_nif"]), 0.0)],
+                                priority=_TURN, hold=True)
+            else:
+                # Chair-driven (Tactical): the body turn clip is EMPTY, so the
+                # chair carries the body (below) and the head/upper-body look at
+                # the captain comes from the BreatheTurned idle (breathing.NIF),
+                # layered over the chair-rotated body. Fall back to plain Breathe
+                # if this officer has no BreatheTurned registration.
+                if not self._switch_idle(renderer, iid, character, "BreatheTurned"):
+                    self._switch_idle(renderer, iid, character, "Breathe")
         else:
-            # Turn back: restore normal breathing as the default, then play the
-            # reverse turn, which returns to that idle on completion.
-            idle = capture_registered_clip(character, "Breathe")
-            if idle and hasattr(renderer, "load_instance_clip"):
-                idx = renderer.load_instance_clip(iid, self._resolve(idle["clip_nif"]))
-                if idx is not None and idx >= 0:
-                    self.set_idle(iid, idx)
-            move = capture_registered_clip(character, "BackCaptain")
-            if move and not chair_driven:
-                self.submit(character, [(self._resolve(move["clip_nif"]), 0.0)],
-                            priority=_TURN, hold=False)
-            # chair_driven: the chair reverse carries the officer back (below).
+            if not chair_driven:
+                # Body-driven: restore normal breathing as the default, then play
+                # the reverse turn, which returns to that idle on completion.
+                idle = capture_registered_clip(character, "Breathe")
+                if idle and hasattr(renderer, "load_instance_clip"):
+                    idx = renderer.load_instance_clip(
+                        iid, self._resolve(idle["clip_nif"]))
+                    if idx is not None and idx >= 0:
+                        self.set_idle(iid, idx)
+                move = capture_registered_clip(character, "BackCaptain")
+                if move:
+                    self.submit(character, [(self._resolve(move["clip_nif"]), 0.0)],
+                                priority=_TURN, hold=False)
+            else:
+                # Chair-driven: the chair reverse carries the body back (below);
+                # swap the idle back to plain forward Breathe and play it now.
+                self._switch_idle(renderer, iid, character, "Breathe")
         # Chair half: rotate the seat (always) + couple the officer only when
         # chair-driven (delegated to the bridge-node controller). Standing
         # officers have no chair action (capture_chair_clip -> None) -> no-op.
@@ -221,6 +235,21 @@ class BridgeCharacterAnimController:
             renderer.play_instance_idle(iid, idle)
         elif hasattr(renderer, "restore_rest_pose"):
             renderer.restore_rest_pose(iid)
+
+    def _switch_idle(self, renderer, iid, character, suffix) -> bool:
+        """Capture the SDK breathe idle `<location>+suffix`, register it as the
+        default, and play it now (looping, layered). Used for chair-driven
+        officers, whose head/upper-body articulation lives in the BreatheTurned
+        idle (their body turn clip is empty). Returns True if it played."""
+        idle = capture_registered_clip(character, suffix)
+        if not idle or not hasattr(renderer, "load_instance_clip"):
+            return False
+        idx = renderer.load_instance_clip(iid, self._resolve(idle["clip_nif"]))
+        if idx is None or idx < 0:
+            return False
+        self.set_idle(iid, idx)
+        self._return_to_default(renderer, iid)
+        return True
 
     def _start_clip(self, renderer, act, index) -> None:
         path, sdk_dur = act.clips[index]
