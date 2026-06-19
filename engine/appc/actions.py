@@ -492,6 +492,9 @@ class TGAnimAction(TGAction):
 
     def _do_play(self) -> None:
         kind = getattr(self._anim_node, "kind", None)
+        # Character gesture clips are driven by BridgeCharacterAnimController via
+        # the idle/hit schedulers (engine/bridge_character_anim.py), NOT by this
+        # action path, which stays instant-complete for headless SDK sequences.
         if kind not in ("camera", "object"):
             return
         from engine.bridge_cutscene import get_controller
