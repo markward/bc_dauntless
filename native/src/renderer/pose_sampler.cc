@@ -75,6 +75,14 @@ std::vector<glm::mat4> sample_pose_over_base(
             i < base_locals.size() ? base_locals[i] : skeleton.bones[i].local_transform;
         auto it = by_name.find(skeleton.bones[i].name);
         out[i] = pose_bone(it == by_name.end() ? nullptr : it->second, base, t);
+        // Anchor the ROOT translation to the placement: chair-turn clips (e.g.
+        // db_chair_H_face_capt) carry a Bip01 root translation that would slide
+        // the officer off the station. Keep the clip's root ROTATION (the swivel
+        // toward the captain) but take the root POSITION from the placement base.
+        // Root-less clips (breathe, neck turns) already carry the base
+        // translation here, so this is a no-op for them.
+        if (static_cast<int>(i) == skeleton.root_bone_index)
+            out[i][3] = base[3];
     }
     return out;
 }

@@ -111,3 +111,32 @@ TEST(SamplePoseOverBase, UntrackedBoneTakesBaseExactly) {
     EXPECT_EQ(out[0], base[0]);
     EXPECT_EQ(out[1], base[1]);
 }
+
+TEST(SamplePoseOverBase, ChairTurnRootRotatesButStaysAnchored) {
+    // Chair-turn clips animate the ROOT with both a rotation (the swivel) and a
+    // translation (which would slide the officer off the station). The layered
+    // sampler must apply the rotation but keep the placement translation.
+    assets::Skeleton sk;
+    assets::Bone b0; b0.name = "Bip01"; b0.parent_index = -1;
+    b0.local_transform = glm::mat4(1.0f);
+    sk.bones = {b0}; sk.root_bone_index = 0;
+
+    assets::AnimationClip g; g.name = "chair"; g.duration_seconds = 1.0f;
+    assets::AnimationClip::NodeTrack tr; tr.target_node_name = "Bip01";
+    glm::quat q = glm::angleAxis(glm::radians(90.0f), glm::vec3(0, 0, 1));   // swivel
+    tr.rotation = {{0.0f, q}, {1.0f, q}};
+    tr.translation = {{0.0f, glm::vec3(500, 500, 500)},                       // far away
+                      {1.0f, glm::vec3(500, 500, 500)}};
+    g.tracks = {tr};
+
+    std::vector<glm::mat4> base(1);
+    base[0] = glm::translate(glm::mat4(1.0f), glm::vec3(33, -104, 23));       // station
+    auto out = renderer::sample_pose_over_base(g, sk, 0.5f, base);
+    ASSERT_EQ(out.size(), 1u);
+    // Translation anchored at the station (NOT the clip's 500,500,500).
+    EXPECT_TRUE(glm::all(glm::epsilonEqual(glm::vec3(out[0][3]),
+                                           glm::vec3(33, -104, 23), 1e-3f)));
+    // But the swivel rotation IS applied (column 0 rotated toward +Y).
+    glm::vec3 col0 = glm::normalize(glm::vec3(out[0][0]));
+    EXPECT_NEAR(col0.y, 1.0f, 1e-3f);
+}
