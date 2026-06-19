@@ -48,6 +48,11 @@ def test_delete_all_sounds_in_group_removes_members(audio, tmp_path):
     assert audio.GetSound("B") is None
 
 
-def test_load_sound_in_group_missing_file_returns_none(audio, tmp_path):
+def test_load_sound_in_group_missing_file_returns_unloaded_sound(audio, tmp_path):
+    # Appc returns a valid (silent) handle even when the file is missing, so the
+    # SDK's unconditional pSound.SetVolume()/AddSound() chain (LoadBridge.py:377-
+    # 379) works headless. The sound is present-but-unloaded, never None.
     snd = audio.LoadSoundInGroup(str(tmp_path / "nope.wav"), "X", "BridgeGeneric")
-    assert snd is None
+    assert snd is not None
+    assert snd.IsLoaded() == 0
+    snd.SetVolume(1.0)  # must not raise

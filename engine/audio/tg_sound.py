@@ -266,16 +266,24 @@ class TGSoundManager:
         self._sounds[name] = snd
         return snd
 
-    def LoadSoundInGroup(self, path: str, name: str, group: str) -> Optional[TGSound]:
+    def LoadSoundInGroup(self, path: str, name: str, group: str) -> TGSound:
         """Load a sound and tag it as a member of `group`.
 
         Mirrors Appc Game.LoadSoundInGroup. Bridge sounds are non-positional,
-        so we load them streamed (2D). Returns the TGSound so the SDK can chain
-        .SetVolume(); returns None on load failure.
+        so we load them streamed (2D).
+
+        Always returns a TGSound, never None: Appc hands back a valid (silent)
+        handle even when the asset is missing or the backend is down, and the
+        SDK calls .SetVolume() / region.AddSound() on the result unconditionally
+        (LoadBridge.py:377-379). On load failure we register a real-but-unloaded
+        TGSound (Play() no-ops while _loaded is False) so that chain works
+        headless.
         """
         snd = self.LoadSound(path, name, TGSound.LS_STREAMED)
-        if snd is not None:
-            self._groups.setdefault(group, set()).add(name)
+        if snd is None:
+            snd = self._sounds.get(name) or TGSound(name, False)
+            self._sounds[name] = snd
+        self._groups.setdefault(group, set()).add(name)
         return snd
 
     def DeleteAllSoundsInGroup(self, group: str) -> None:
