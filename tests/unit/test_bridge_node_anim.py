@@ -79,13 +79,18 @@ def test_turn_chair_plays_forward_clip_on_bridge_instance():
     assert r.node_clips[-1] == (9, "/abs/c.nif", False, False)
 
 
-def test_unturn_reverses_then_reset_clears():
+def test_unturn_plays_reverse_nif_forward_then_reset_clears():
     r = _FakeRenderer(_trans(0,0,0), _trans(0,0,0))
     ctrl = BridgeNodeAnimController(bridge_iid_getter=lambda: 9)
     off = _Officer(7)
     ctrl.turn_chair(off, {"clip_nif": "c.nif", "seat_node": "s"}, renderer=r)
-    ctrl.unturn_chair(off, {"clip_nif": "c.nif", "seat_node": "s"}, renderer=r)
-    assert r.node_clips[-1] == (9, "c.nif", False, True)   # reverse
+    # unturn plays the captured BackCaptain clip (the SDK's DEDICATED reverse
+    # NIF, e.g. db_chair_H_face_capt_reverse, authored turned->rest) FORWARD,
+    # reverse=False. Passing reverse=True would double-reverse it: the first
+    # sampled frame is the clip's END (rest), snapping the seat to rest instantly
+    # ("click back"). Forward play gives a smooth turned->rest reverse.
+    ctrl.unturn_chair(off, {"clip_nif": "rev.nif", "seat_node": "s"}, renderer=r)
+    assert r.node_clips[-1] == (9, "rev.nif", False, False)   # forward, not reverse
     ctrl.reset(renderer=r)
     assert 9 in r.stopped
 

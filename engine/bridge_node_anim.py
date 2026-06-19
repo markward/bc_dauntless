@@ -16,8 +16,41 @@ See docs/superpowers/specs/2026-06-19-bridge-node-animation-design.md.
 from __future__ import annotations
 
 import logging
+import math
+import os
 
 _logger = logging.getLogger(__name__)
+
+# Opt-in coupling diagnostic: set BRIDGE_COUPLING_DEBUG=1 to append a per-turn /
+# per-tick trace to /tmp/bridge_coupling.log. Off by default (no production
+# impact). Used to root-cause "seat rotates but officer doesn't ride it".
+_DEBUG = bool(os.environ.get("BRIDGE_COUPLING_DEBUG"))
+_DEBUG_PATH = "/tmp/bridge_coupling.log"
+_dbg_ticks: dict = {}   # iid -> ticks already logged (cap volume)
+
+
+def _dbg(msg: str) -> None:
+    if not _DEBUG:
+        return
+    try:
+        with open(_DEBUG_PATH, "a") as fh:
+            fh.write(msg + "\n")
+    except Exception:
+        pass
+
+
+def _mat_summary(m) -> str:
+    """Compact description of a row-major 4x4: column scales (1.0 = no scale),
+    rotation angle from the trace, and translation."""
+    if m is None:
+        return "None"
+    cols = [(m[0], m[4], m[8]), (m[1], m[5], m[9]), (m[2], m[6], m[10])]
+    scales = [round(math.sqrt(sum(c * c for c in col)), 4) for col in cols]
+    trace = m[0] + m[5] + m[10]
+    cos_a = max(-1.0, min(1.0, (trace - 1.0) / 2.0))
+    angle = round(math.degrees(math.acos(cos_a)), 2)
+    trans = [round(m[3], 2), round(m[7], 2), round(m[11], 2)]
+    return f"scale={scales} angle={angle}deg trans={trans}"
 
 
 def identity4():
@@ -103,18 +136,28 @@ class BridgeNodeAnimController:
         iid = getattr(officer, "_render_instance", None)
         if iid is not None and seat_node:
             self._coupled[iid] = {"officer": officer, "seat_node": seat_node}
+            _dbg_ticks[iid] = 0
+        _dbg(f"[turn_chair] officer_iid={iid} seat_node={seat_node!r} "
+             f"path={path!r} coupled={iid in self._coupled} "
+             f"clips_loaded={'yes' if seat_node else 'NO-DISCOVERY'}")
 
     def unturn_chair(self, officer, chair_clip, *, renderer):
         bridge = self._bridge_iid()
         if bridge is not None and chair_clip is not None:
             try:
+                # chair_clip here is the BackCaptain action, which the SDK
+                # builds from the DEDICATED reverse NIF (e.g.
+                # db_chair_H_face_capt_reverse, authored turned->rest). BC plays
+                # it FORWARD. Passing reverse=True double-reverses it: the first
+                # sampled frame is the clip's END (rest), so the seat snaps to
+                # rest instantly ("click back"). Play it forward (reverse=False).
                 renderer.play_instance_node_clip(
-                    bridge, self._resolve(chair_clip["clip_nif"]), False, True)
+                    bridge, self._resolve(chair_clip["clip_nif"]), False, False)
             except Exception:
                 _logger.debug("unturn_chair play failed", exc_info=True)
         # Coupling continues to track the reversing seat until reset/settle;
-        # simplest correct behavior is to keep the officer coupled while the
-        # reverse plays (the seat returns to rest -> R_delta -> I -> identity).
+        # the officer rides the chair back as the reverse clip plays
+        # (turned -> rest -> R_delta -> I -> placement).
 
     def update(self, renderer):
         for iid, rec in list(self._coupled.items()):
@@ -136,6 +179,12 @@ class BridgeNodeAnimController:
                 renderer.set_world_transform(iid, coupling)
             except Exception:
                 _logger.debug("coupling set_world_transform failed", exc_info=True)
+            if _DEBUG and _dbg_ticks.get(iid, 99) < 6:
+                _dbg_ticks[iid] = _dbg_ticks.get(iid, 0) + 1
+                _dbg(f"[update] iid={iid} seat={rec['seat_node']!r}\n"
+                     f"    anim    = {_mat_summary(list(anim))}\n"
+                     f"    rest    = {_mat_summary(list(rest))}\n"
+                     f"    R_delta = {_mat_summary(coupling)}")
 
     def reset(self, *, renderer=None):
         bridge = self._bridge_iid()
