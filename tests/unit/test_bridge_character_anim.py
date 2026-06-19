@@ -158,7 +158,7 @@ def test_reset_clears_idle_registry():
     assert r.restored == [10]
 
 
-def test_request_turn_holds_glance_at_captain(monkeypatch):
+def test_request_turn_holds_facing_captain(monkeypatch):
     import engine.bridge_character_anim as mod
     monkeypatch.setattr(mod, "capture_registered_clip",
                         lambda ch, suffix: {"clip_nif": f"{suffix}.nif"})
@@ -166,12 +166,12 @@ def test_request_turn_holds_glance_at_captain(monkeypatch):
     r = _FakeRenderer()
     ch = _Char(11)
     ctrl.request_turn(ch)
-    ctrl.update(0.0, renderer=r, anim_mgr=None)        # start GlanceCaptain
-    gc_idx = r.loaded[(11, "GlanceCaptain.nif")]
+    ctrl.update(0.0, renderer=r, anim_mgr=None)        # start TurnCaptain
+    gc_idx = r.loaded[(11, "TurnCaptain.nif")]
     assert r.played[-1] == (11, gc_idx)
-    # We glance with the head clip, not the chair TurnCaptain; no idle swap.
+    # No BreatheTurned swap; we hold the turn.
     assert 11 not in ctrl._idle_clips
-    assert (11, "TurnCaptain.nif") not in r.loaded
+    assert (11, "BreatheTurned.nif") not in r.loaded
     # On completion the glance HOLDS at the captain: no return-to-default.
     ctrl.update(0.5, renderer=r, anim_mgr=None)        # 0.5 >= 0.4 floor -> done
     assert r.restored == []
@@ -179,7 +179,7 @@ def test_request_turn_holds_glance_at_captain(monkeypatch):
     assert ctrl.is_busy(ch) is False                   # action completed, popped
 
 
-def test_request_turn_back_glances_away_and_restores_breathe(monkeypatch):
+def test_request_turn_back_restores_normal_breathe(monkeypatch):
     import engine.bridge_character_anim as mod
     monkeypatch.setattr(mod, "capture_registered_clip",
                         lambda ch, suffix: {"clip_nif": f"{suffix}.nif"})
@@ -187,9 +187,9 @@ def test_request_turn_back_glances_away_and_restores_breathe(monkeypatch):
     r = _FakeRenderer()
     ch = _Char(12)
     ctrl.request_turn_back(ch)
-    ctrl.update(0.0, renderer=r, anim_mgr=None)        # start GlanceAwayCaptain
+    ctrl.update(0.0, renderer=r, anim_mgr=None)        # start BackCaptain
     breathe_idx = r.loaded[(12, "Breathe.nif")]
-    away_idx = r.loaded[(12, "GlanceAwayCaptain.nif")]
+    away_idx = r.loaded[(12, "BackCaptain.nif")]
     assert ctrl._idle_clips[12] == breathe_idx
     assert r.played[-1] == (12, away_idx)
     # On completion the look-away returns to the normal breathe idle.
@@ -218,6 +218,6 @@ def test_asset_resolver_applied(monkeypatch):
     ch = _Char(14)
     ctrl.request_turn(ch)
     ctrl.update(0.0, renderer=r, anim_mgr=None)
-    assert (14, "/abs/GlanceCaptain.nif") in r.loaded
-    # We glance (head), not the chair TurnCaptain.
-    assert (14, "/abs/TurnCaptain.nif") not in r.loaded
+    assert (14, "/abs/TurnCaptain.nif") in r.loaded
+    # Turn-to does not load BreatheTurned (it un-turns); it holds the turn.
+    assert (14, "/abs/BreatheTurned.nif") not in r.loaded

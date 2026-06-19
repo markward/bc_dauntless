@@ -536,6 +536,21 @@ class CharacterClass(ObjectClass):
     def PlayAnimationFile(self, *args) -> None:   pass
     def LookAtMe(self, *args) -> None:            pass
 
+    def GetAnimNode(self):
+        # A real anim node so the SDK builders' TGAnimActions are tagged as
+        # targeting the CHARACTER (kind="character") — distinguishable from a
+        # bridge-set node (kind="object"). A multi-action TurnCaptain sequence
+        # interleaves the officer's body clip (character node) with the chair
+        # clip (bridge node); capture picks the character action. (__dict__.get
+        # avoids TGObject.__getattr__ returning a truthy _Stub for the unset
+        # attribute.)
+        node = self.__dict__.get("_anim_node")
+        if node is None:
+            from engine.appc.anim_node import TGAnimNode
+            node = TGAnimNode(owner=self, kind="character")
+            self._anim_node = node
+        return node
+
     # ── Speaking-state queries (Phase 1: never speaking) ────────────────────
     def IsSpeaking(self) -> int:                  return 0
     def IsReadyToSpeak(self) -> int:              return 1

@@ -129,3 +129,19 @@ def test_recording_surfaces_capture_without_error(sdk_loadbridge):
     assert chars
     for off in chars:
         capture_placement(off)
+
+
+def test_turn_captain_resolves_officer_body_clip_not_chair(sdk_loadbridge):
+    # Regression: seated TurnCaptain builders interleave the officer BODY clip
+    # (db_face_capt_h on the character node) with the CHAIR clip
+    # (db_chair_H_face_capt on the bridge node, LAST). capture_registered_clip
+    # must pick the body clip, not the chair.
+    from engine.appc.bridge_placement import capture_registered_clip
+    sdk_loadbridge.Load("GalaxyBridge")
+    bridge = App.g_kSetManager.GetSet("bridge")
+    helm = App.CharacterClass_Cast(bridge.GetObject("Helm"))
+    assert capture_registered_clip(helm, "TurnCaptain") == {
+        "clip_nif": "data/animations/db_face_capt_h.nif"}
+    tac = App.CharacterClass_Cast(bridge.GetObject("Tactical"))
+    assert capture_registered_clip(tac, "TurnCaptain") == {
+        "clip_nif": "data/animations/db_face_capt_t.nif"}

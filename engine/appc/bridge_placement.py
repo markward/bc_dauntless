@@ -103,7 +103,19 @@ def capture_registered_clip(character, suffix):
         return None
     if seq is None or seq.GetNumActions() == 0:
         return None
-    action = seq.GetAction(seq.GetNumActions() - 1)
+    # Seated TurnCaptain sequences interleave the officer's BODY clip (on the
+    # character's anim node, kind="character") with the CHAIR clip (on the
+    # bridge set node, kind="object") — and the chair comes LAST. Pick the last
+    # action targeting the CHARACTER so we get the officer's actual turn clip,
+    # not the bridge chair animation. Fall back to the last action.
+    action = None
+    for i in range(seq.GetNumActions() - 1, -1, -1):
+        a = seq.GetAction(i)
+        if getattr(getattr(a, "_anim_node", None), "kind", None) == "character":
+            action = a
+            break
+    if action is None:
+        action = seq.GetAction(seq.GetNumActions() - 1)
     clip_name = getattr(action, "_clip", "") or getattr(action, "name", "")
     if not clip_name:
         return None

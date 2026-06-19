@@ -107,35 +107,36 @@ class BridgeCharacterAnimController:
             self._active.pop(iid, None)
 
     def _process_turn(self, renderer, character, turn) -> None:
-        """On menu open, the officer GLANCES at the captain (a head turn) and
-        holds it; on close, glances away and resumes normal breathing.
+        """On menu open the officer turns to face the captain and HOLDS it; on
+        close they turn back and resume normal breathing.
 
-        We use the SDK's GlanceCaptain / GlanceAwayCaptain, NOT TurnCaptain: the
-        TurnCaptain "chair turn" clips rotate a bridge-SET seat node (and bake a
-        camera path), not the officer's skeleton — they were never meant to play
-        on the officer. GlanceCaptain (MouseOver_*) is a clean, root-less
-        head/neck turn on the character, which is what the original game shows
-        on menu-open. Best-effort: a missing clip skips that half.
+        Uses the SDK's TurnCaptain / BackCaptain. For seated officers the SDK
+        builder is a multi-action sequence — the officer's BODY turn clip
+        (e.g. db_face_capt_h) plus the CHAIR clip on the bridge-set node;
+        capture_registered_clip picks the body clip (the chair-on-bridge-node
+        is a separate set animation we don't drive). Best-effort: a missing clip
+        skips that half.
         """
         iid = getattr(character, "_render_instance", None)
         if iid is None:
             return
         if turn:
-            # Glance toward the captain and HOLD the head turn while the menu is
-            # open.
-            move = capture_registered_clip(character, "GlanceCaptain")
+            # Turn toward the captain and HOLD it while the menu is open. No
+            # BreatheTurned swap — that clip over the forward placement does not
+            # preserve the turn, so we hold the turn's last frame instead.
+            move = capture_registered_clip(character, "TurnCaptain")
             if move:
                 self.submit(character, [(self._resolve(move["clip_nif"]), 0.0)],
                             priority=_TURN, hold=True)
         else:
-            # Glance away: restore normal breathing as the default, then play the
-            # look-away, which returns to that idle on completion.
+            # Turn back: restore normal breathing as the default, then play the
+            # reverse turn, which returns to that idle on completion.
             idle = capture_registered_clip(character, "Breathe")
             if idle and hasattr(renderer, "load_instance_clip"):
                 idx = renderer.load_instance_clip(iid, self._resolve(idle["clip_nif"]))
                 if idx is not None and idx >= 0:
                     self.set_idle(iid, idx)
-            move = capture_registered_clip(character, "GlanceAwayCaptain")
+            move = capture_registered_clip(character, "BackCaptain")
             if move:
                 self.submit(character, [(self._resolve(move["clip_nif"]), 0.0)],
                             priority=_TURN, hold=False)
