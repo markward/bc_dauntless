@@ -347,6 +347,13 @@ def restore_rest_pose(iid: InstanceId) -> None:
     _h.restore_rest_pose(iid)
 
 
+def play_instance_gesture(iid: InstanceId, clip_index: int) -> None:
+    """Play a transient gesture/reaction clip layered over the officer's rest
+    pose (root + un-animated bones stay at the station; only gesture-tracked
+    bones move). Plays once and holds the last frame until restore_rest_pose."""
+    _h.play_instance_gesture(iid, clip_index)
+
+
 def load_animation_clips(path: str) -> list:
     """Parse a NIF's keyframe controllers into animation clips.
 

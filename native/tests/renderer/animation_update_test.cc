@@ -1,11 +1,49 @@
 #include <gtest/gtest.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/epsilon.hpp>
+#include <glm/gtx/quaternion.hpp>
 #include <scenegraph/world.h>
 #include <assets/model.h>
 #include <renderer/animation_update.h>
 
 namespace {
+// Model with TWO clips:
+//   clip[0] = placement: root translated to (33,-104,23); j1 has no track.
+//   clip[1] = gesture:   j1 rotated 90deg-Z; root has NO track (partial).
+// Used to test layer_over_rest: the gesture should keep root at the station.
+assets::Model two_clip_layered_model() {
+    assets::Model m;
+    assets::Bone b0; b0.name = "Bip01"; b0.parent_index = -1;
+    b0.local_transform = glm::mat4(1.0f);
+    assets::Bone b1; b1.name = "j1"; b1.parent_index = 0;
+    b1.local_transform = glm::translate(glm::mat4(1.0f), glm::vec3(0, 5, 0));
+    m.skeleton.bones = {b0, b1};
+    m.skeleton.root_bone_index = 0;
+    m.skeleton.bones[0].inverse_bind_pose = glm::mat4(1.0f);
+    m.skeleton.bones[1].inverse_bind_pose = glm::inverse(b1.local_transform);
+
+    // placement clip: root translated to station; constant, no tracks needed.
+    // We use rest_locals to embed the station offset so sample_pose returns it.
+    assets::AnimationClip placement; placement.name = "place";
+    placement.duration_seconds = 1.0f;
+    placement.rest_locals["Bip01"] =
+        glm::translate(glm::mat4(1.0f), glm::vec3(33, -104, 23));
+    placement.rest_locals["j1"] = b1.local_transform;
+    // No tracks — sample_pose will return rest_locals for each bone.
+
+    // gesture clip: only j1 animated (90deg-Z); NO Bip01 track.
+    assets::AnimationClip gesture; gesture.name = "gesture";
+    gesture.duration_seconds = 1.0f;
+    assets::AnimationClip::NodeTrack tr; tr.target_node_name = "j1";
+    glm::quat q = glm::angleAxis(glm::radians(90.0f), glm::vec3(0, 0, 1));
+    tr.rotation = {{0.0f, q}, {1.0f, q}};
+    gesture.tracks = {tr};
+    // gesture.rest_locals intentionally empty — root falls back to base_locals.
+
+    m.animations = {placement, gesture};
+    return m;
+}
+
 assets::Model two_bone_model_with_clip() {
     assets::Model m;
     // skeleton: bone0 root at origin, bone1 child translated +Y by 10.
@@ -147,4 +185,45 @@ TEST(AnimationUpdate, SampleAtStartHoldsStartFrameAndSettles) {
     ASSERT_EQ(world.get(id)->bone_palette.size(), start_palette.size());
     for (std::size_t b = 0; b < start_palette.size(); ++b)
         EXPECT_EQ(world.get(id)->bone_palette[b], start_palette[b]);
+}
+
+TEST(AnimationUpdate, LayerOverRestKeepsRootAtStation) {
+    // Verifies that a gesture clip played with layer_over_rest=true keeps the
+    // root bone at the placement (rest) pose position, not at origin/bind.
+    assets::Model model = two_clip_layered_model();
+    auto lookup = [&](scenegraph::ModelHandle){ return &model; };
+
+    scenegraph::World world;
+    auto id = world.create_instance(/*model=*/1);
+
+    // Set rest pose to clip[0] (the placement clip, holds last frame = station).
+    scenegraph::Instance::AnimationState rest_st;
+    rest_st.clip_index = 0;
+    rest_st.loop = false;
+    rest_st.sample_at_end = true;  // placement clips hold last frame
+    rest_st.start_wall_time = 0.0;
+    world.set_rest_pose(id, rest_st);
+
+    // Play gesture clip[1] layered over the rest pose.
+    scenegraph::Instance::AnimationState gesture_st;
+    gesture_st.clip_index = 1;
+    gesture_st.loop = false;
+    gesture_st.layer_over_rest = true;
+    gesture_st.start_wall_time = 0.0;
+    world.set_animation(id, gesture_st);
+
+    renderer::update_animations(world, lookup, /*now=*/0.5);
+    ASSERT_TRUE(world.get(id));
+    const auto& palette = world.get(id)->bone_palette;
+    ASSERT_EQ(palette.size(), 2u);
+
+    // palette[0] = world_pose(root) * inverse_bind(root).
+    // Root's world_pose should be the station translation (33,-104,23), not origin.
+    // inverse_bind(root) = identity, so palette[0] == station_translation.
+    glm::vec4 probe(0.0f, 0.0f, 0.0f, 1.0f);
+    glm::vec4 root_world = palette[0] * probe;
+    EXPECT_TRUE(glm::all(glm::epsilonEqual(
+        glm::vec3(root_world), glm::vec3(33.0f, -104.0f, 23.0f), 1e-3f)))
+        << "Root not at station: got (" << root_world.x << "," << root_world.y
+        << "," << root_world.z << ") expected (33,-104,23)";
 }

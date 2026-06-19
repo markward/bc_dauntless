@@ -65,6 +65,7 @@ struct Instance {
         bool   sample_at_start = false;  // movement clips evaluate from t=0
         bool   sample_at_end  = false;   // rest "stand"/"seated" clips hold t=dur
         bool   settled        = false;   // non-loop clip reached its end
+        bool   layer_over_rest = false;  // gesture: sample OVER the rest pose
     };
     AnimationState animation;
 

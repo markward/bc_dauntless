@@ -25,4 +25,16 @@ std::vector<glm::mat4> sample_pose(const assets::AnimationClip& clip,
                                    const assets::Skeleton& skeleton,
                                    float t);
 
+/// Layered sample: like sample_pose, but each bone's BASE comes from
+/// `base_locals` (per-bone local transforms, same order as skeleton.bones)
+/// instead of the clip's own rest_locals/bind. Bones the clip does NOT track
+/// are copied verbatim from base_locals; tracked bones sample their track over
+/// the decomposed base_locals value (so an omitted channel — e.g. the root
+/// translation gestures never carry — falls back to base_locals, keeping the
+/// officer anchored at the placement pose). base_locals.size() must equal
+/// skeleton.bones.size().
+std::vector<glm::mat4> sample_pose_over_base(
+    const assets::AnimationClip& clip, const assets::Skeleton& skeleton,
+    float t, const std::vector<glm::mat4>& base_locals);
+
 }  // namespace renderer

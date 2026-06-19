@@ -39,7 +39,20 @@ void update_animations(scenegraph::World& world, const ModelLookup& lookup,
         } else {
             t = static_cast<float>(elapsed);
         }
-        std::vector<glm::mat4> pose = sample_pose(clip, m->skeleton, t);
+        std::vector<glm::mat4> pose;
+        if (a.layer_over_rest && inst.has_rest_pose &&
+            inst.rest_pose.clip_index >= 0 &&
+            inst.rest_pose.clip_index < static_cast<int>(m->animations.size())) {
+            const assets::AnimationClip& rest_clip =
+                m->animations[inst.rest_pose.clip_index];
+            const float rest_t =
+                inst.rest_pose.sample_at_end ? rest_clip.duration_seconds : 0.0f;
+            std::vector<glm::mat4> base_locals =
+                sample_pose(rest_clip, m->skeleton, rest_t);
+            pose = sample_pose_over_base(clip, m->skeleton, t, base_locals);
+        } else {
+            pose = sample_pose(clip, m->skeleton, t);
+        }
         inst.bone_palette = build_bone_palette(m->skeleton, &pose);
     });
 }

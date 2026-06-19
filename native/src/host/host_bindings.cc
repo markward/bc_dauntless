@@ -768,6 +768,20 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](scenegraph::InstanceId id) { g_world.restore_rest_pose(id); },
           py::arg("iid"),
           "Snap the instance back to its stored rest pose (AT_DEFAULT).");
+    m.def("play_instance_gesture",
+          [](scenegraph::InstanceId id, int clip_index) {
+              scenegraph::Instance::AnimationState st;
+              st.clip_index = clip_index;
+              st.loop = false;
+              st.layer_over_rest = true;
+              st.start_wall_time = glfwGetTime();
+              g_world.set_animation(id, st);
+          },
+          py::arg("iid"), py::arg("clip_index"),
+          "Play a transient gesture/reaction clip LAYERED over the instance's "
+          "rest pose: gesture-tracked bones override, the root and untracked "
+          "bones stay at the placement pose. Plays once and holds the last "
+          "frame until restore_rest_pose.");
     m.def("load_animation_clips",
           [](const std::string& path) {
               py::list clips_out;
