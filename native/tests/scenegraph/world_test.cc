@@ -129,4 +129,29 @@ TEST(World, CreateInstanceStampsIdOntoInstance) {
         << "create_instance must stamp the returned InstanceId onto instance.id";
 }
 
+TEST(World, RestPoseStoreAndRestore) {
+    scenegraph::World world;
+    auto id = world.create_instance(/*model=*/1);
+
+    scenegraph::Instance::AnimationState rest;
+    rest.clip_index = 0; rest.sample_at_end = true;
+    world.set_rest_pose(id, rest);
+    EXPECT_TRUE(world.get(id)->has_rest_pose);
+    EXPECT_EQ(world.get(id)->animation.clip_index, 0);
+    EXPECT_TRUE(world.get(id)->animation.sample_at_end);
+
+    // Overwrite current with a transient gesture clip.
+    scenegraph::Instance::AnimationState gesture;
+    gesture.clip_index = 5; gesture.loop = false;
+    world.set_animation(id, gesture);
+    EXPECT_EQ(world.get(id)->animation.clip_index, 5);
+
+    // Restore returns current to the stored rest pose, un-settled so it
+    // re-samples once on the next update.
+    world.restore_rest_pose(id);
+    EXPECT_EQ(world.get(id)->animation.clip_index, 0);
+    EXPECT_TRUE(world.get(id)->animation.sample_at_end);
+    EXPECT_FALSE(world.get(id)->animation.settled);
+}
+
 }  // namespace

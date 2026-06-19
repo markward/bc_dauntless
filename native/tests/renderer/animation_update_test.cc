@@ -80,6 +80,38 @@ TEST(AnimationUpdate, PlayOnceHoldRebuildsThenSettles) {
         EXPECT_EQ(world.get(id)->bone_palette[b], settled_palette[b]);
 }
 
+TEST(AnimationUpdate, SampleAtEndHoldsEndFrameAndSettlesImmediately) {
+    assets::Model model = two_bone_model_with_clip();
+    auto lookup = [&](scenegraph::ModelHandle){ return &model; };
+
+    scenegraph::World world;
+    auto id = world.create_instance(/*model=*/1);
+    scenegraph::Instance::AnimationState st;
+    st.clip_index = 0; st.start_wall_time = 100.0; st.loop = false;
+    st.sample_at_end = true;
+    world.set_animation(id, st);
+
+    // Settles on the FIRST update, no play-through, even at t just past start.
+    renderer::update_animations(world, lookup, /*now=*/100.01);
+    ASSERT_TRUE(world.get(id));
+    EXPECT_TRUE(world.get(id)->animation.settled);
+    auto end_palette = world.get(id)->bone_palette;
+    ASSERT_EQ(end_palette.size(), 2u);
+
+    // Held palette equals the t=dur pose (clip's 90deg-Z key is constant).
+    glm::mat4 j1_local = glm::translate(glm::mat4(1.0f), glm::vec3(0, 10, 0));
+    glm::quat q90 = glm::angleAxis(glm::radians(90.0f), glm::vec3(0, 0, 1));
+    glm::mat4 expect_skin = (j1_local * glm::mat4_cast(q90)) * glm::inverse(j1_local);
+    glm::vec4 probe(3.0f, 4.0f, 0.0f, 1.0f);
+    EXPECT_TRUE(glm::all(glm::epsilonEqual(end_palette[1] * probe,
+                                           expect_skin * probe, 1e-4f)));
+
+    // Freezes: a later call leaves the palette bit-identical.
+    renderer::update_animations(world, lookup, /*now=*/500.0);
+    for (std::size_t b = 0; b < end_palette.size(); ++b)
+        EXPECT_EQ(world.get(id)->bone_palette[b], end_palette[b]);
+}
+
 TEST(AnimationUpdate, SampleAtStartHoldsStartFrameAndSettles) {
     assets::Model model = two_bone_model_with_clip();
     auto lookup = [&](scenegraph::ModelHandle){ return &model; };

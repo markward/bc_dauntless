@@ -63,9 +63,13 @@ struct Instance {
         double start_wall_time = 0.0;
         bool   loop           = false;
         bool   sample_at_start = false;  // movement clips evaluate from t=0
+        bool   sample_at_end  = false;   // rest "stand"/"seated" clips hold t=dur
         bool   settled        = false;   // non-loop clip reached its end
     };
     AnimationState animation;
+
+    AnimationState rest_pose;            // the static placement pose (AT_DEFAULT)
+    bool           has_rest_pose = false;
 
     /// Per-instance persistent damage decals (object space, body frame).
     /// Runtime VFX state only — never serialized to saves.

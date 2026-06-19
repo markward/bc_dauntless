@@ -25,6 +25,12 @@ void update_animations(scenegraph::World& world, const ModelLookup& lookup,
             // holds the start frame: evaluate at t=0 and freeze immediately.
             t = 0.0f;
             a.settled = true;
+        } else if (a.sample_at_end) {
+            // Rest "stand"/"seated" clips place the officer AT the station on
+            // the LAST frame. A stationed officer holds it: evaluate at t=dur
+            // and freeze immediately — no play-through (the load-time bug fix).
+            t = dur;
+            a.settled = true;
         } else if (a.loop) {
             t = dur > 0.0f ? static_cast<float>(std::fmod(elapsed, dur)) : 0.0f;
         } else if (elapsed >= dur) {
