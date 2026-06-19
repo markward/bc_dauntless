@@ -2660,17 +2660,46 @@ def drive_viewscreen_static_and_brightness(r, controller, ramp, dt,
     r.set_viewscreen_brightness(ramp.update(signature, dt))
 
     # Static overlay (only when the SDK turned it on with a positive range).
+    static_on = False
+    intensity = 0.0
     if (vs is not None and vs.IsStaticOn()
             and getattr(vs, "_static_max", 0.0) > 0.0):
         paths = _vss.static_texture_paths(getattr(vs, "_static_icon_group", None))
         if paths and paths != getattr(controller, "_vs_static_paths_sent", None):
             r.set_viewscreen_static_source(paths)
             controller._vs_static_paths_sent = paths
-        intensity = intensity_fn(getattr(vs, "_static_min", 0.0),
-                                 getattr(vs, "_static_max", 0.0))
+        fmin = getattr(vs, "_static_min", 0.0)
+        fmax = getattr(vs, "_static_max", 0.0)
+        intensity = intensity_fn(fmin, fmax)
+        static_on = True
         r.set_viewscreen_static(True, intensity)
     else:
+        fmin = fmax = 0.0
         r.set_viewscreen_static(False, 0.0)
+
+    # Dev-mode change log: emit once per state change; silent every frame
+    # when dev mode is off (is_enabled() is a single bool getattr, no I/O).
+    if dev_mode.is_enabled():
+        _log_key = (signature, static_on, round(intensity, 2))
+        if _log_key != getattr(controller, "_vs_static_log_state", None):
+            controller._vs_static_log_state = _log_key
+            if signature[0] == "off":
+                feed_str = "off"
+            elif signature[0] == "comm":
+                feed_str = "comm:%s" % (signature[1],)
+            else:
+                feed_str = "forward"
+            if static_on:
+                print(
+                    "[viewscreen] feed=%s static=on min=%.2f max=%.2f intensity=%.2f"
+                    % (feed_str, fmin, fmax, intensity),
+                    flush=True,
+                )
+            else:
+                print(
+                    "[viewscreen] feed=%s static=off" % (feed_str,),
+                    flush=True,
+                )
 
 
 def _apply_bridge_player_visibility(r, player_iid, *, is_bridge, spv_open) -> None:
