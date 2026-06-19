@@ -128,7 +128,14 @@ class BridgeNodeAnimController:
                 return name
         return None
 
-    def turn_chair(self, officer, chair_clip, *, renderer):
+    def turn_chair(self, officer, chair_clip, *, renderer, couple=True):
+        """Play the chair clip on the bridge so the SEAT MESH rotates (always).
+        Couple the seated officer to the seat (so the officer rides the chair)
+        ONLY when `couple` is True. Body-driven officers (Helm, standing crew —
+        their db_face_capt_* clip rotates the body) pass couple=False: the seat
+        still turns, but the officer turns via its own body clip, so it is not
+        double-rotated. Chair-driven officers (Tactical — empty body clip) pass
+        couple=True so the chair carries the officer."""
         bridge = self._bridge_iid()
         if bridge is None or chair_clip is None:
             return
@@ -141,10 +148,10 @@ class BridgeNodeAnimController:
             _logger.debug("turn_chair play failed", exc_info=True)
             return
         iid = getattr(officer, "_render_instance", None)
-        if iid is not None and seat_node:
+        if couple and iid is not None and seat_node:
             self._coupled[iid] = {"officer": officer, "seat_node": seat_node}
             _dbg_ticks[id(iid)] = 0
-        _dbg(f"[turn_chair] PLAY bridge={_iid_str(bridge)} "
+        _dbg(f"[turn_chair] PLAY bridge={_iid_str(bridge)} couple={couple} "
              f"officer_iid={_iid_str(iid)} seat_node={seat_node!r} "
              f"path={path!r} coupled={iid in self._coupled}")
 

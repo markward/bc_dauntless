@@ -43,6 +43,7 @@ class BridgeCharacterAnimController:
     def __init__(self, asset_resolver=None):
         self._active = {}           # iid -> _Action
         self._dur_cache = {}        # nif_path -> real clip duration (s)
+        self._body_turns = {}       # nif_path -> bool (clip rotates the body)
         self._idle_clips = {}       # iid -> looping breathe clip index
         self._pending_turns = []    # [(character, turn_bool), ...]
         self._resolve = asset_resolver or (lambda p: p)
@@ -112,6 +113,35 @@ class BridgeCharacterAnimController:
         for iid in done:
             self._active.pop(iid, None)
 
+    def _body_turns_officer(self, renderer, move) -> bool:
+        """True if the captured body turn clip actually rotates the officer.
+        Tactical's db_face_capt_t is EMPTY (0 keys, 0 duration) -> False, so the
+        chair must carry it; Helm's db_face_capt_h rotates Bip01 ~72deg -> True.
+        Cached per NIF path. Headless / unloadable -> True (body-driven default,
+        the pre-chair behaviour, so nothing regresses without a renderer)."""
+        if not move:
+            return False
+        path = self._resolve(move["clip_nif"])
+        cached = self._body_turns.get(path)
+        if cached is not None:
+            return cached
+        fn = getattr(renderer, "load_animation_clips", None)
+        if fn is None:
+            return True
+        result = True
+        try:
+            clips = fn(path)
+            if not clips:
+                result = False
+            else:
+                c = clips[0]
+                result = (float(c.get("duration", 0.0)) > 1e-4 and
+                          any(tr.get("rotation") for tr in c.get("tracks", [])))
+        except Exception:
+            result = True
+        self._body_turns[path] = result
+        return result
+
     def _process_turn(self, renderer, character, turn) -> None:
         """On menu open the officer turns to face the captain and HOLDS it; on
         close they turn back and resume normal breathing.
@@ -133,14 +163,23 @@ class BridgeCharacterAnimController:
         # turn (same priority) is still playing, leaving the officer stuck
         # facing the captain until the next interaction.
         self._active.pop(iid, None)
+        # Decide (from the FORWARD body clip) whether this officer turns via its
+        # own BODY clip or is CHAIR-DRIVEN. BC encodes this asymmetry per station:
+        # Helm/standing crew have a real db_face_capt_* clip that rotates Bip01
+        # ~72deg (body-driven); Tactical's db_face_capt_t is EMPTY (chair-driven),
+        # so the rotating chair must carry the officer. Driving BOTH double-turns
+        # the officer. Compute once and use it consistently for turn AND unturn.
+        chair_driven = not self._body_turns_officer(
+            renderer, capture_registered_clip(character, "TurnCaptain"))
         if turn:
             # Turn toward the captain and HOLD it while the menu is open. No
             # BreatheTurned swap — that clip over the forward placement does not
             # preserve the turn, so we hold the turn's last frame instead.
             move = capture_registered_clip(character, "TurnCaptain")
-            if move:
+            if move and not chair_driven:
                 self.submit(character, [(self._resolve(move["clip_nif"]), 0.0)],
                             priority=_TURN, hold=True)
+            # chair_driven: the chair carries the officer (below); no body clip.
         else:
             # Turn back: restore normal breathing as the default, then play the
             # reverse turn, which returns to that idle on completion.
@@ -150,18 +189,20 @@ class BridgeCharacterAnimController:
                 if idx is not None and idx >= 0:
                     self.set_idle(iid, idx)
             move = capture_registered_clip(character, "BackCaptain")
-            if move:
+            if move and not chair_driven:
                 self.submit(character, [(self._resolve(move["clip_nif"]), 0.0)],
                             priority=_TURN, hold=False)
-        # Chair half: rotate the seat + couple the seated officer (delegated to
-        # the bridge-node controller). Standing officers have no chair action
-        # (capture_chair_clip returns None) -> no-op, body turn only.
+            # chair_driven: the chair reverse carries the officer back (below).
+        # Chair half: rotate the seat (always) + couple the officer only when
+        # chair-driven (delegated to the bridge-node controller). Standing
+        # officers have no chair action (capture_chair_clip -> None) -> no-op.
         node_ctrl = getattr(self, "_node_ctrl", None)
         if node_ctrl is not None:
             chair = capture_chair_clip(character, "TurnCaptain" if turn
                                        else "BackCaptain")
             if turn:
-                node_ctrl.turn_chair(character, chair, renderer=renderer)
+                node_ctrl.turn_chair(character, chair, renderer=renderer,
+                                     couple=chair_driven)
             else:
                 node_ctrl.unturn_chair(character, chair, renderer=renderer)
                 # Do NOT release coupling here: the officer must keep riding the

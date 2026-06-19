@@ -256,8 +256,8 @@ def test_node_controller_turn_chair_called_on_request_turn(monkeypatch):
         def __init__(self):
             self.turned = []
             self.unturned = []
-        def turn_chair(self, officer, chair, *, renderer):
-            self.turned.append((officer, chair))
+        def turn_chair(self, officer, chair, *, renderer, couple=True):
+            self.turned.append((officer, chair, couple))
         def unturn_chair(self, officer, chair, *, renderer):
             self.unturned.append((officer, chair))
 
@@ -278,6 +278,59 @@ def test_node_controller_turn_chair_called_on_request_turn(monkeypatch):
     assert len(node_ctrl.unturned) == 1
     assert node_ctrl.unturned[0][0] is ch
     assert node_ctrl.unturned[0][1]["clip_nif"] == "chair_BackCaptain.nif"
+
+
+def test_chair_driven_only_when_body_clip_empty(monkeypatch):
+    """The officer is coupled to the chair (couple=True) ONLY when its forward
+    body turn clip is empty (Tactical). A body that rotates the officer (Helm)
+    -> couple=False (seat mesh turns, officer turns via its own body clip), so
+    the officer is not double-rotated. Also: an empty body clip must NOT be
+    submitted to the body controller."""
+    import engine.bridge_character_anim as mod
+    monkeypatch.setattr(mod, "capture_registered_clip",
+                        lambda ch, suffix: {"clip_nif": f"{suffix}.nif"})
+    monkeypatch.setattr(mod, "capture_chair_clip",
+                        lambda ch, suffix: {"clip_nif": f"chair_{suffix}.nif"})
+
+    class _ClipRenderer(_FakeRenderer):
+        def __init__(self, empty_body):
+            super().__init__()
+            self._empty = empty_body
+        def load_animation_clips(self, path):
+            if "TurnCaptain" in path and self._empty:
+                return [{"duration": 0.0, "tracks": []}]          # empty body
+            return [{"duration": 0.5,
+                     "tracks": [{"node": "Bip01", "rotation": [(0, 0, 0, 0, 1)]}]}]
+
+    class _FakeNodeCtrl:
+        def __init__(self):
+            self.turned = []
+        def turn_chair(self, officer, chair, *, renderer, couple=True):
+            self.turned.append(couple)
+        def unturn_chair(self, officer, chair, *, renderer):
+            pass
+
+    # Empty body clip -> chair-driven (couple=True), body NOT submitted.
+    nc = _FakeNodeCtrl()
+    ctrl = mod.BridgeCharacterAnimController()
+    ctrl.set_node_controller(nc)
+    r = _ClipRenderer(empty_body=True)
+    ch = _Char(20)
+    ctrl.request_turn(ch)
+    ctrl.update(0.0, renderer=r, anim_mgr=None)
+    assert nc.turned == [True]               # coupled
+    assert ctrl.is_busy(ch) is False         # empty body clip not submitted
+
+    # Real body clip -> body-driven (couple=False), body IS submitted.
+    nc2 = _FakeNodeCtrl()
+    ctrl2 = mod.BridgeCharacterAnimController()
+    ctrl2.set_node_controller(nc2)
+    r2 = _ClipRenderer(empty_body=False)
+    ch2 = _Char(21)
+    ctrl2.request_turn(ch2)
+    ctrl2.update(0.0, renderer=r2, anim_mgr=None)
+    assert nc2.turned == [False]             # not coupled (body turns it)
+    assert ctrl2.is_busy(ch2) is True        # body clip submitted + playing
 
 
 def test_node_controller_not_called_when_absent(monkeypatch):
