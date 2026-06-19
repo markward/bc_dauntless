@@ -361,6 +361,38 @@ def play_instance_gesture(iid: InstanceId, clip_index: int) -> None:
     _h.play_instance_gesture(iid, clip_index)
 
 
+def play_instance_node_anim(iid: InstanceId, clip_index: int,
+                            loop: bool = False, reverse: bool = False) -> None:
+    """Play a non-skinned instance's embedded clip on its node hierarchy
+    (bridge doors). No-op without the host binding (headless)."""
+    fn = getattr(_h, "play_instance_node_anim", None)
+    if fn is not None:
+        fn(iid, clip_index, loop, reverse)
+
+
+def play_instance_node_clip(iid: InstanceId, path: str,
+                            loop: bool = False, reverse: bool = False) -> None:
+    """Play an external NIF clip on a non-skinned instance's node hierarchy
+    (chair turn). No-op without the host binding (headless)."""
+    fn = getattr(_h, "play_instance_node_clip", None)
+    if fn is not None:
+        fn(iid, path, loop, reverse)
+
+
+def stop_instance_node_anim(iid: InstanceId) -> None:
+    """Clear any bridge-node clip + overrides on this instance."""
+    fn = getattr(_h, "stop_instance_node_anim", None)
+    if fn is not None:
+        fn(iid)
+
+
+def instance_node_world(iid: InstanceId, node_name: str,
+                        animated: bool = True):
+    """16 floats (row-major) of the named node's world transform, or None."""
+    fn = getattr(_h, "instance_node_world", None)
+    return fn(iid, node_name, animated) if fn is not None else None
+
+
 def load_animation_clips(path: str) -> list:
     """Parse a NIF's keyframe controllers into animation clips.
 

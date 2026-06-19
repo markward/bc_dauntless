@@ -50,6 +50,7 @@
 #include <renderer/asset_path.h>
 #include <renderer/ray_trace.h>
 #include <renderer/glow_region.h>
+#include <renderer/node_anim.h>
 #include <scenegraph/world.h>
 #include <scenegraph/camera.h>
 #include <scenegraph/damage_decals.h>
@@ -196,6 +197,18 @@ struct LoadedModel {
 
 std::unique_ptr<assets::AssetCache> g_cache;
 std::vector<LoadedModel> g_loaded_models;  // index = our public ModelHandle - 1
+
+// Bridge-node animation store: active non-skinned node clips (doors, chairs).
+// Keyed by InstanceId.index.  A handful of entries at most.
+struct BridgeNodeAnim {
+    assets::AnimationClip clip;          // owned copy (embedded or external NIF)
+    scenegraph::InstanceId id;           // full id so we can call g_world.get(id)
+    double start_wall_time = 0.0;
+    bool   loop    = false;
+    bool   reverse = false;              // play t from dur -> 0
+    bool   settled = false;              // non-loop reached its end
+};
+std::unordered_map<std::uint32_t, BridgeNodeAnim> g_bridge_node_anims;
 
 // Resolve a model handle to its loaded asset (or nullptr). File-scope so both
 // frame()'s draw lookup and the get_instance_bounds binding share one path.
@@ -371,6 +384,34 @@ bool should_close() {
     return !g_window || g_window->should_close();
 }
 
+// Sample active bridge-node clips into each instance's node_overrides.
+// Called once per frame() after update_animations so skinned characters
+// and non-skinned bridge geometry are both up to date before any draw pass.
+void update_bridge_node_anims(double now) {
+    for (auto it = g_bridge_node_anims.begin(); it != g_bridge_node_anims.end(); ) {
+        auto& a = it->second;
+        scenegraph::Instance* inst = g_world.get(a.id);
+        if (!inst) { it = g_bridge_node_anims.erase(it); continue; }
+        const assets::Model* m = resolve_model(inst->model_handle);
+        if (!m) { ++it; continue; }
+
+        const float dur = a.clip.duration_seconds;
+        double elapsed = now - a.start_wall_time;
+        if (elapsed < 0.0) elapsed = 0.0;
+        float t;
+        if (a.loop) {
+            t = dur > 0.0f ? static_cast<float>(std::fmod(elapsed, dur)) : 0.0f;
+        } else if (elapsed >= dur) {
+            t = dur; a.settled = true;
+        } else {
+            t = static_cast<float>(elapsed);
+        }
+        if (a.reverse) t = dur - t;
+        inst->node_overrides = renderer::sample_node_overrides(a.clip, *m, t);
+        ++it;
+    }
+}
+
 void frame() {
     if (!g_window || !g_pipeline || !g_submitter) {
         throw std::runtime_error("_dauntless_host: frame called before init");
@@ -395,6 +436,7 @@ void frame() {
     // anything consumes it (the space skinned draw and the bridge pass). Shares
     // the `now` wall clock with draw_model / flip controllers.
     renderer::update_animations(g_world, lookup, now);
+    update_bridge_node_anims(now);
 
     const bool bridge_active = !viewer_mode && g_bridge_pass_enabled && g_bridge_pass;
     const bool viewscreen_on = bridge_active && g_viewscreen_enabled;
@@ -796,6 +838,83 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "rest pose: gesture-tracked bones override, the root and untracked "
           "bones stay at the placement pose. Plays once and holds the last "
           "frame until restore_rest_pose.");
+    // ── Bridge-node (non-skinned) animation bindings ─────────────────────────
+    m.def("play_instance_node_anim",
+          [](scenegraph::InstanceId id, int clip_index, bool loop, bool reverse) {
+              auto* in = g_world.get(id);
+              if (!in) return;
+              const assets::Model* m = resolve_model(in->model_handle);
+              if (!m || clip_index < 0 ||
+                  clip_index >= static_cast<int>(m->animations.size())) return;
+              BridgeNodeAnim a;
+              a.clip = m->animations[clip_index];      // owned copy
+              a.id   = id;
+              a.start_wall_time = glfwGetTime();
+              a.loop = loop; a.reverse = reverse;
+              g_bridge_node_anims[id.index] = std::move(a);
+          },
+          py::arg("iid"), py::arg("clip_index"), py::arg("loop") = false,
+          py::arg("reverse") = false,
+          "Play the instance model's embedded animations[clip_index] on its "
+          "node hierarchy (non-skinned; e.g. bridge doors baked into DBridge.nif).");
+
+    m.def("play_instance_node_clip",
+          [](scenegraph::InstanceId id, const std::string& path, bool loop,
+             bool reverse) {
+              auto* in = g_world.get(id);
+              if (!in) return;
+              auto clips = assets::load_animation_clips(
+                  renderer::resolve_asset_path(path));
+              if (clips.empty()) return;               // NIF had no clips
+              BridgeNodeAnim a;
+              a.clip = std::move(clips[0]);            // external chair clip
+              a.id   = id;
+              a.start_wall_time = glfwGetTime();
+              a.loop = loop; a.reverse = reverse;
+              g_bridge_node_anims[id.index] = std::move(a);
+          },
+          py::arg("iid"), py::arg("path"), py::arg("loop") = false,
+          py::arg("reverse") = false,
+          "Load an EXTERNAL NIF's first clip and play it on this instance's node "
+          "hierarchy (e.g. db_chair_*_face_capt.nif rotating a 'console seat NN' "
+          "node). The clip is held host-side; the const bridge model is never "
+          "mutated.");
+
+    m.def("stop_instance_node_anim",
+          [](scenegraph::InstanceId id) {
+              g_bridge_node_anims.erase(id.index);
+              auto* in = g_world.get(id);
+              if (in) in->node_overrides.clear();      // snap back to static
+          },
+          py::arg("iid"),
+          "Stop any bridge-node clip on this instance and clear its node "
+          "overrides (snaps the geometry back to its static pose).");
+
+    m.def("instance_node_world",
+          [](scenegraph::InstanceId id, const std::string& node_name,
+             bool animated) -> py::object {
+              auto* in = g_world.get(id);
+              if (!in) return py::none();
+              const assets::Model* m = resolve_model(in->model_handle);
+              if (!m) return py::none();
+              int idx = -1;
+              for (std::size_t i = 0; i < m->nodes.size(); ++i)
+                  if (m->nodes[i].name == node_name) { idx = static_cast<int>(i); break; }
+              if (idx < 0) return py::none();
+              static const std::unordered_map<int, glm::mat4> kEmpty;
+              auto worlds = renderer::compose_node_worlds(
+                  *m, in->world, animated ? in->node_overrides : kEmpty);
+              const glm::mat4& w = worlds[idx];
+              std::vector<float> out(16);              // ROW-MAJOR for Python
+              for (int r = 0; r < 4; ++r)
+                  for (int c = 0; c < 4; ++c) out[r * 4 + c] = w[c][r];
+              return py::cast(out);
+          },
+          py::arg("iid"), py::arg("node_name"), py::arg("animated") = true,
+          "Return the named node's world transform as 16 floats (row-major), "
+          "or None if the instance/node is absent. animated=True applies the "
+          "current node overrides; False composes the static locals (rest).");
+
     m.def("load_animation_clips",
           [](const std::string& path) {
               py::list clips_out;
