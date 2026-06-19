@@ -368,6 +368,24 @@ def clear_viewscreen_comm_source() -> None:
     _h.clear_viewscreen_comm_source()
 
 
+def set_viewscreen_static_source(paths) -> None:
+    """Register the noise texture frames (absolute paths) for the viewscreen
+    static overlay. Idempotent on the native side (cached by path)."""
+    _h.set_viewscreen_static_source(paths)
+
+
+def set_viewscreen_static(on, intensity) -> None:
+    """Enable/disable the viewscreen static overlay and set this frame's
+    intensity (0..1). Composited over the comm/forward feed in the RTT."""
+    _h.set_viewscreen_static(on, intensity)
+
+
+def set_viewscreen_brightness(b) -> None:
+    """Multiplier (0..1) applied to the viewscreen content for the
+    ViewOn/ViewOff fade. 1.0 = full brightness (no fade)."""
+    _h.set_viewscreen_brightness(b)
+
+
 def consume_mouse_delta() -> Tuple[float, float]:
     """Return (dx, dy) accumulated cursor motion in pixels since the last
     call. Reset on each call. GLFW raw mode while cursor is locked."""
