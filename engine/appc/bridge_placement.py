@@ -68,3 +68,47 @@ def capture_placement(character):
         # TGAnimPosition holds frame 0 (the at-station pose) for every clip.
         "sample_at_start": True,
     }
+
+
+def capture_breathing(character):
+    """Return the officer's looping breathe idle clip, or None.
+
+    The breathe clip is the SDK-registered "<location>Breathe" animation (e.g.
+    DBEngineerBreathe -> CommonAnimations.StandingConsole). It is the
+    authoritative idle BODY pose; the placement supplies the root (position) via
+    layering. Returns {"clip_nif": <data-root-relative path>} or None when the
+    officer has no location or no <location>Breathe registration.
+    """
+    import importlib
+    import App
+
+    location = character.GetLocation()
+    if not location:
+        return None
+    key = str(location) + "Breathe"
+    module_path = None
+    for entry in getattr(character, "_animations", []):
+        if entry and len(entry) >= 2 and str(entry[0]) == key:
+            module_path = entry[1]
+            break
+    if not module_path:
+        return None
+
+    try:
+        mod_name, func_name = module_path.rsplit(".", 1)
+        func = getattr(importlib.import_module(mod_name), func_name)
+        seq = func(character)
+    except Exception:
+        return None
+    if seq is None or seq.GetNumActions() == 0:
+        return None
+    action = seq.GetAction(seq.GetNumActions() - 1)
+    clip_name = getattr(action, "_clip", "") or getattr(action, "name", "")
+    if not clip_name:
+        return None
+
+    clip_nif = App.g_kAnimationManager.path_for(clip_name)
+    if not clip_nif:
+        _logger.warning("capture_breathing: no path recorded for clip %r", clip_name)
+        return None
+    return {"clip_nif": clip_nif}
