@@ -1,3 +1,5 @@
+**SUPERSEDED by docs/superpowers/specs/2026-06-19-bridge-node-animation-design.md (implemented 2026-06-19).**
+
 # Bridge Chair-Node Animation — Queued Follow-up
 
 **Date:** 2026-06-19

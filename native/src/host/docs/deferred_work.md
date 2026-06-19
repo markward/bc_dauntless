@@ -316,6 +316,14 @@ the list.
     animations (item 29) since the crew walks need synchronised door
     state.
 
+    **DONE (2026-06-19):** Non-skinned node-keyframe animation has
+    landed. Chairs rotate on station-select (with officer-seat
+    coupling so the officer rides the chair); walk-on doors lift via
+    the embedded DBridge.nif clip 0. Engine flares were dropped as an
+    ungrounded target — nacelle glow is handled by the glow pass, not
+    NiKeyframeController. Implemented in feat/bridge-node-animation;
+    merged to main 2026-06-19.
+
 ## Conventions worth recording
 
 (Sourced from `BRIDGE MODDING 101` tutorial — useful invariants for

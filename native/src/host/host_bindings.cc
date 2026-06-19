@@ -283,6 +283,7 @@ void init(int width, int height, const std::string& title) {
     g_submitter = std::make_unique<renderer::FrameSubmitter>();
     g_world = scenegraph::World{};
     g_loaded_models.clear();
+    g_bridge_node_anims.clear();
     g_lighting = renderer::Lighting{};
     g_bridge_lighting = renderer::Lighting{};
     g_bridge_pass_enabled = false;
@@ -329,6 +330,7 @@ void shutdown() {
     // renderer::reset_damage_decal_texture().
     renderer::reset_damage_decal_texture();
     g_loaded_models.clear();
+    g_bridge_node_anims.clear();
     g_cache.reset();
     g_world = scenegraph::World{};
     g_backdrops.clear();
