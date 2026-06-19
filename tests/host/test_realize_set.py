@@ -343,6 +343,41 @@ def test_realize_set_comm_texture_path_is_model_dir_high():
         "data/Models/Sets/StarbaseControl/High")
 
 
+def test_realize_set_comm_tears_down_prior_instances_on_swap():
+    """Mission swap re-realizes a comm set against a FRESH SetClass carrier
+    (reset_sdk_globals cleared g_kSetManager._sets, so the next load enumerates
+    new carriers). The prior load's comm instances — room geometry AND posed
+    characters, both tracked under the set name — must be destroyed and the
+    per-set list reset before re-realizing, or they orphan in the Pass::Comm
+    scenegraph and comm_instances_by_set grows unbounded. Mirrors the bridge
+    officer swap-teardown test (test_realize_set_tears_down_prior_officers...)."""
+    c = _CommCtl(); c.comm_instances_by_set = {}; c.nif_to_handle = {}
+    r = _comm_renderer()
+
+    # First load: realize a comm set (creates the room geometry instance).
+    s1 = _comm_set_with_geometry()
+    hl.realize_set(c, r, s1, is_bridge=False, comm_set_id=1)
+    first_geom = c.comm_instances_by_set["StarbaseSet"][0]
+    assert len([x for x in r.created if x[0] == "comm"]) == 1
+    # Simulate a posed character instance the first load also tracked here.
+    c.comm_instances_by_set["StarbaseSet"].append(("comm", 99))
+
+    # Swap: a brand-new SetClass carrier with the SAME set name (the old
+    # carrier was dropped when _sets was cleared). Geometry guard sees a fresh
+    # carrier (__dict__ has no render_instance) and re-realizes.
+    s2 = _comm_set_with_geometry()
+    hl.realize_set(c, r, s2, is_bridge=False, comm_set_id=1)
+
+    # Every prior instance was torn down...
+    assert first_geom in r.destroyed
+    assert ("comm", 99) in r.destroyed
+    # ...and the per-set list did NOT accumulate (only the fresh geometry iid).
+    final = c.comm_instances_by_set["StarbaseSet"]
+    assert len(final) == 1
+    assert first_geom not in final
+    assert ("comm", 99) not in final
+
+
 def test_realize_set_comm_load_failure_is_nonfatal():
     """A comm set is non-critical: a load_model failure must log+skip, not abort
     the mission load (which would take the whole bridge down with it)."""

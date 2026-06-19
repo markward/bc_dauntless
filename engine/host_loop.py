@@ -1587,6 +1587,20 @@ def reset_sdk_globals() -> None:
         # of the reset. Matches the broader reset_sdk_globals discipline
         # (each step is independently best-effort).
         pass
+    # Clear MissionLib's "viewscreen in use" flag. If a mission is swapped
+    # away mid-briefing (while its bridge viewscreen shows a comm character),
+    # g_bViewscreenOn is left at 1. On the next mission's load, the briefing's
+    # ViewscreenOn() then sees the viewscreen as already in use and enters a
+    # 2-second retry loop that never completes — the comm character (e.g. Liu
+    # in E1M1) never speaks or renders. ResetViewscreen() clears the flag
+    # (first thing it does) and re-enables the Hail/Contact menus; call it
+    # before _sets.clear() so its CallWaiting() still sees the live bridge.
+    # Best-effort, matching the surrounding reset discipline.
+    try:
+        import MissionLib
+        MissionLib.ResetViewscreen()
+    except Exception as _e:
+        dev_mode.log_swallowed("MissionLib.ResetViewscreen on swap", _e)
     App.g_kSetManager._sets.clear()
     _waypoint_registry.clear()
     App._next_event_type_id = 1200
@@ -2303,6 +2317,26 @@ def realize_set(controller, r, set_obj, *, is_bridge: bool,
             except Exception as _e:
                 dev_mode.log_swallowed("destroy bridge instance", _e)
             controller.bridge_instance = None
+        elif not is_bridge:
+            # Mission swap re-realizes this comm set against a fresh SetClass
+            # carrier (reset_sdk_globals cleared g_kSetManager._sets), so this
+            # guard is True. Tear down the prior load's comm instances for this
+            # set — room geometry AND posed characters share the per-set list —
+            # and reset it before re-realizing, or they orphan in the Pass::Comm
+            # scenegraph and comm_instances_by_set grows unbounded. Gated by the
+            # fresh-carrier geometry guard so a same-carrier re-realize (guard
+            # False) skips teardown and recreate together, staying consistent.
+            # Mirrors the bridge officer-instance teardown below.
+            _prior = controller.comm_instances_by_set.get(set_name, [])
+            if _prior and dev_mode.is_enabled():
+                print("[host_loop] comm-set %r swap: tearing down %d prior "
+                      "instance(s)" % (set_name, len(_prior)), flush=True)
+            for _iid in _prior:
+                try:
+                    r.destroy_instance(_iid)
+                except Exception as _e:
+                    dev_mode.log_swallowed("destroy comm instance (teardown)", _e)
+            controller.comm_instances_by_set[set_name] = []
 
         nif_abs = str(PROJECT_ROOT / "game" / nif)
         env = _App.g_kModelManager.env_for(nif)
