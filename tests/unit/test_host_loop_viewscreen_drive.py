@@ -23,6 +23,7 @@ class FakeVS:
         self._static_icon_group = group
     def IsOn(self): return self._on
     def IsStaticOn(self): return self._static_on
+    def GetRemoteCam(self): return None
 
 
 def _controller(vs):

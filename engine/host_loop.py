@@ -2655,10 +2655,7 @@ def drive_viewscreen_static_and_brightness(r, controller, ramp, dt,
     if vs is None or not vs.IsOn():
         signature = ("off",)
     else:
-        try:
-            feed = _active_comm_feed(controller)
-        except AttributeError:
-            feed = None
+        feed = _active_comm_feed(controller)
         signature = ("comm", feed[0]) if feed is not None else ("forward",)
     r.set_viewscreen_brightness(ramp.update(signature, dt))
 
