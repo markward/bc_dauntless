@@ -311,6 +311,20 @@ def assemble_officer(body_nif: str, head_nif: str,
                                placement_nif, sample_at_start)
 
 
+def load_instance_clip(iid: InstanceId, nif_path: str) -> int:
+    """Append a NIF's animation clips to this officer instance's model.
+
+    Returns the first new clip index (>= 1; index 0 is the placement clip baked
+    at assemble_officer time), or -1 on failure (bad iid, unreadable NIF, NIF
+    has no clips). Idempotent: repeated calls with the same path return the same
+    index without re-appending, so the Task-5 controller can call this freely
+    on every gesture start without unbounded model growth. Officer models are
+    per-instance (assemble_officer never dedupes), so this never bleeds across
+    characters.
+    """
+    return _h.load_instance_clip(iid, nif_path)
+
+
 def set_instance_animation(iid: InstanceId, clip_index: int,
                            loop: bool = False,
                            sample_at_start: bool = False) -> None:

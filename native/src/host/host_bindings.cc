@@ -182,6 +182,14 @@ std::unique_ptr<renderer::ViewscreenStaticPass> g_viewscreen_static_pass;
 struct LoadedModel {
     std::filesystem::path nif_path;
     assets::ModelHandle handle;
+    // Idempotency cache for load_instance_clip: maps the path string passed to
+    // the call → first clip index appended for that path.  Keyed by the raw
+    // path string so the lookup is exact-match (same as the dedup in
+    // load_model_impl).  Only populated for officer models assembled via
+    // assemble_officer; ordinary models loaded via load_model_impl leave this
+    // empty (load_instance_clip returns -1 for them because the shared_ptr
+    // object IS const — only assemble_officer models are non-const underneath).
+    std::unordered_map<std::string, int> appended_clips;
 };
 
 std::unique_ptr<assets::AssetCache> g_cache;
@@ -947,8 +955,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
               // cache hands out. nif_path is the body NIF for diagnostics; this
               // entry is never matched by load_model_impl's dedupe (it compares
               // against single-NIF loads), which is intended.
+              // Resolution 1: store as non-const shared_ptr so that
+              // load_instance_clip can later const_cast the pointer and append
+              // clips without UB.  The implicit conversion to ModelHandle
+              // (shared_ptr<const Model>) is valid and the externally-visible
+              // type is unchanged.
               assets::ModelHandle handle =
-                  std::make_shared<const assets::Model>(std::move(composed));
+                  std::make_shared<assets::Model>(std::move(composed));
               g_loaded_models.push_back({std::filesystem::path(body_nif),
                                          std::move(handle)});
               return static_cast<scenegraph::ModelHandle>(g_loaded_models.size());
@@ -967,6 +980,57 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "through the GPU bone palette. sample_at_start is unused here (the "
           "caller forwards it to set_instance_animation). Returns a "
           "ModelHandle.");
+
+    // Task 4: attach a gesture/reaction NIF's animation clips to an already-
+    // assembled officer model at runtime.  Returns the first new clip index so
+    // the caller can drive set_instance_animation with it.
+    //
+    // Idempotent per (model, path): if the same path has already been appended
+    // to this instance's model the stored index is returned without re-appending,
+    // so the Task-5 controller can call this freely on every gesture start.
+    m.def("load_instance_clip",
+          [](scenegraph::InstanceId id, const std::string& path) -> int {
+              auto* inst = g_world.get(id);
+              if (!inst) return -1;
+              auto h = inst->model_handle;
+              if (h == 0 || h > static_cast<scenegraph::ModelHandle>(
+                                     g_loaded_models.size())) return -1;
+              auto& lm = g_loaded_models[h - 1];
+
+              // Idempotency: if we've already appended clips from this path,
+              // return the cached first-clip index without touching the model.
+              auto it = lm.appended_clips.find(path);
+              if (it != lm.appended_clips.end()) return it->second;
+
+              // Resolution 1: assemble_officer stored a non-const Model under
+              // the const ModelHandle, so const_cast is defined behaviour here.
+              // Regular load_model_impl models are genuinely const (created by
+              // AssetCache) — const_cast on those would be UB, but appended_clips
+              // is always empty for cache-loaded models so we'd have returned
+              // above if they somehow slipped through; the check below on
+              // empty animations also guards indirectly.
+              assets::Model* m_ptr =
+                  const_cast<assets::Model*>(lm.handle.get());
+              if (!m_ptr) return -1;
+
+              int first = static_cast<int>(m_ptr->animations.size());
+              for (auto& clip :
+                       assets::load_animation_clips(
+                           renderer::resolve_asset_path(path))) {
+                  m_ptr->animations.push_back(std::move(clip));
+              }
+              if (static_cast<int>(m_ptr->animations.size()) == first)
+                  return -1;  // NIF had no clips — nothing appended
+
+              lm.appended_clips[path] = first;
+              return first;
+          },
+          py::arg("iid"), py::arg("path"),
+          "Append a NIF's animation clips to this officer instance's model. "
+          "Returns the first new clip index (>= 1 when a placement clip is at "
+          "index 0), or -1 on failure. Idempotent: repeated calls with the same "
+          "path return the same index without re-appending. Officer models are "
+          "per-instance (assemble_officer never dedupes), so this is safe.");
 
     m.def("set_bridge_camera",
           [](std::tuple<float,float,float> eye,
