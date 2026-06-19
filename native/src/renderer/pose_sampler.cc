@@ -1,9 +1,9 @@
 // native/src/renderer/pose_sampler.cc
 #include "renderer/pose_sampler.h"
 #include <algorithm>
+#include <cctype>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 
 #include <glm/gtx/quaternion.hpp>
 
@@ -86,22 +86,27 @@ std::vector<glm::mat4> sample_pose_over_base(
     }
 
     // Chair-turn remap: a seated officer's turn clip (e.g. db_chair_H_face_capt)
-    // animates the SEAT node ("console seat 01"), not the skeleton — in BC the
-    // officer rides the rotating chair. We have no chair<->officer coupling, so
-    // compose any non-skeleton ("external") rotation track onto the officer's
-    // ROOT bone, so the officer swivels in place toward the captain. The
-    // anchored translation is preserved. Neck-turn / breathe / gesture clips
-    // animate only real bones, so there are no external tracks and this is a
-    // no-op for them.
+    // rotates the SEAT node ("console seat 01"/"console seat 02"), not the
+    // skeleton — in BC the officer rides the rotating chair. We have no
+    // chair<->officer coupling, so compose the seat's rotation onto the
+    // officer's ROOT bone, so the officer swivels in place toward the captain.
+    // The anchored translation is preserved. Only "seat" nodes are used: these
+    // turn clips ALSO bake a "Camera captain" view-path track, which is NOT the
+    // officer and must be ignored. Neck-turn / breathe / gesture clips animate
+    // only real bones, so this is a no-op for them.
+    auto contains_seat = [](const std::string& name) {
+        std::string low = name;
+        std::transform(low.begin(), low.end(), low.begin(),
+                       [](unsigned char c) { return std::tolower(c); });
+        return low.find("seat") != std::string::npos;
+    };
     const int root = skeleton.root_bone_index;
     if (root >= 0 && root < static_cast<int>(out.size())) {
-        std::unordered_set<std::string> bone_names;
-        for (const auto& b : skeleton.bones) bone_names.insert(b.name);
         glm::mat3 swivel(1.0f);
         bool any = false;
         for (const auto& tr : clip.tracks) {
             if (tr.rotation.empty()) continue;
-            if (bone_names.count(tr.target_node_name)) continue;   // a real bone
+            if (!contains_seat(tr.target_node_name)) continue;     // seat only
             const glm::mat4 m = assets::sample_track_trs(
                 tr, t, glm::vec3(0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f), 1.0f);
             swivel = glm::mat3(m) * swivel;

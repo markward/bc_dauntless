@@ -126,7 +126,14 @@ TEST(SamplePoseOverBase, SeatNodeRotationRemapsOntoRootSwivel) {
     assets::AnimationClip::NodeTrack seat; seat.target_node_name = "console seat 01";
     glm::quat q = glm::angleAxis(glm::radians(90.0f), glm::vec3(0, 0, 1));
     seat.rotation = {{0.0f, q}, {1.0f, q}};
-    g.tracks = {seat};                       // ONLY the seat node, no Bip01
+    // The real turn clips also bake a "Camera captain" view-path track. It must
+    // be IGNORED — only the seat drives the officer's swivel.
+    assets::AnimationClip::NodeTrack cam; cam.target_node_name = "Camera captain";
+    glm::quat camq = glm::angleAxis(glm::radians(172.0f),
+                                    glm::normalize(glm::vec3(0.04f, 0.53f, 0.84f)));
+    cam.rotation = {{0.0f, camq}, {1.0f, camq}};
+    cam.translation = {{0.0f, glm::vec3(39, 351, 744)}, {1.0f, glm::vec3(63, 491, 443)}};
+    g.tracks = {seat, cam};                  // seat + camera; no Bip01
 
     std::vector<glm::mat4> base(1);
     base[0] = glm::translate(glm::mat4(1.0f), glm::vec3(33, -104, 23));  // station
