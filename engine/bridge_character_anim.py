@@ -23,9 +23,9 @@ _MIN_GESTURE_HOLD_S = 0.4
 
 class _Action:
     __slots__ = ("iid", "clips", "priority", "index", "elapsed", "started",
-                 "cur_duration")
+                 "cur_duration", "hold")
 
-    def __init__(self, iid, clips, priority):
+    def __init__(self, iid, clips, priority, hold=False):
         self.iid = iid
         self.clips = clips          # [(nif_path, sdk_duration), ...]
         self.priority = priority
@@ -33,6 +33,10 @@ class _Action:
         self.elapsed = 0.0
         self.started = False
         self.cur_duration = 0.0     # effective hold for the current clip
+        # hold=True: on completion HOLD the last frame instead of returning to
+        # the default idle (turn-to-captain stays facing the captain while the
+        # menu is open). The reverse turn (hold=False) returns to normal breathe.
+        self.hold = hold
 
 
 class BridgeCharacterAnimController:
@@ -47,7 +51,7 @@ class BridgeCharacterAnimController:
         iid = getattr(character, "_render_instance", None)
         return iid in self._active
 
-    def submit(self, character, clips, priority) -> None:
+    def submit(self, character, clips, priority, hold=False) -> None:
         iid = getattr(character, "_render_instance", None)
         if iid is None or not clips:
             return
@@ -56,7 +60,7 @@ class BridgeCharacterAnimController:
         cur = self._active.get(iid)
         if cur is not None and priority <= cur.priority:
             return                  # don't preempt equal/higher priority
-        self._active[iid] = _Action(iid, list(clips), priority)
+        self._active[iid] = _Action(iid, list(clips), priority, hold)
 
     def set_idle(self, iid, clip_index) -> None:
         """Register the officer's looping breathe clip — what the controller
@@ -94,7 +98,10 @@ class BridgeCharacterAnimController:
             if nxt < len(act.clips):
                 self._start_clip(renderer, act, nxt)
             else:
-                self._return_to_default(renderer, iid)
+                if not act.hold:
+                    self._return_to_default(renderer, iid)
+                # hold=True leaves the native renderer holding the last frame
+                # (the turned-to-captain pose) until the reverse turn replaces it.
                 done.append(iid)
         for iid in done:
             self._active.pop(iid, None)
@@ -105,16 +112,27 @@ class BridgeCharacterAnimController:
         iid = getattr(character, "_render_instance", None)
         if iid is None:
             return
-        idle_suffix = "BreatheTurned" if turn else "Breathe"
-        move_suffix = "TurnCaptain" if turn else "BackCaptain"
-        idle = capture_registered_clip(character, idle_suffix)
-        if idle and hasattr(renderer, "load_instance_clip"):
-            idx = renderer.load_instance_clip(iid, self._resolve(idle["clip_nif"]))
-            if idx is not None and idx >= 0:
-                self.set_idle(iid, idx)
-        move = capture_registered_clip(character, move_suffix)
-        if move:
-            self.submit(character, [(self._resolve(move["clip_nif"]), 0.0)], priority=_TURN)
+        if turn:
+            # Turn toward the captain and HOLD the turned pose while the menu is
+            # open. We do NOT swap the idle to BreatheTurned: that clip, layered
+            # over the forward placement, does not preserve the turn — so playing
+            # it on completion would snap the officer back to facing the console.
+            move = capture_registered_clip(character, "TurnCaptain")
+            if move:
+                self.submit(character, [(self._resolve(move["clip_nif"]), 0.0)],
+                            priority=_TURN, hold=True)
+        else:
+            # Turn back: restore normal breathing as the default, then play the
+            # reverse turn, which returns to that idle on completion.
+            idle = capture_registered_clip(character, "Breathe")
+            if idle and hasattr(renderer, "load_instance_clip"):
+                idx = renderer.load_instance_clip(iid, self._resolve(idle["clip_nif"]))
+                if idx is not None and idx >= 0:
+                    self.set_idle(iid, idx)
+            move = capture_registered_clip(character, "BackCaptain")
+            if move:
+                self.submit(character, [(self._resolve(move["clip_nif"]), 0.0)],
+                            priority=_TURN, hold=False)
 
     def _return_to_default(self, renderer, iid) -> None:
         """Resume the looping breathe idle if one is registered; otherwise snap

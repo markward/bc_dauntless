@@ -158,7 +158,7 @@ def test_reset_clears_idle_registry():
     assert r.restored == [10]
 
 
-def test_request_turn_swaps_idle_and_submits_turn(monkeypatch):
+def test_request_turn_holds_facing_captain(monkeypatch):
     import engine.bridge_character_anim as mod
     monkeypatch.setattr(mod, "capture_registered_clip",
                         lambda ch, suffix: {"clip_nif": f"{suffix}.nif"})
@@ -166,12 +166,18 @@ def test_request_turn_swaps_idle_and_submits_turn(monkeypatch):
     r = _FakeRenderer()
     ch = _Char(11)
     ctrl.request_turn(ch)
-    ctrl.update(0.0, renderer=r, anim_mgr=None)
-    # BreatheTurned became the default idle; the TurnCaptain transient is playing.
-    bt_idx = r.loaded[(11, "BreatheTurned.nif")]
+    ctrl.update(0.0, renderer=r, anim_mgr=None)        # start TurnCaptain
     tc_idx = r.loaded[(11, "TurnCaptain.nif")]
-    assert ctrl._idle_clips[11] == bt_idx
     assert r.played[-1] == (11, tc_idx)
+    # No BreatheTurned swap — that clip un-turns the officer over the forward
+    # placement, so we hold the turn instead.
+    assert 11 not in ctrl._idle_clips
+    assert (11, "BreatheTurned.nif") not in r.loaded
+    # On completion the turn HOLDS facing the captain: no return-to-default.
+    ctrl.update(0.5, renderer=r, anim_mgr=None)        # 0.5 >= 0.4 floor -> done
+    assert r.restored == []
+    assert r.idled == []
+    assert ctrl.is_busy(ch) is False                   # action completed, popped
 
 
 def test_request_turn_back_restores_normal_breathe(monkeypatch):
@@ -182,11 +188,14 @@ def test_request_turn_back_restores_normal_breathe(monkeypatch):
     r = _FakeRenderer()
     ch = _Char(12)
     ctrl.request_turn_back(ch)
-    ctrl.update(0.0, renderer=r, anim_mgr=None)
+    ctrl.update(0.0, renderer=r, anim_mgr=None)        # start BackCaptain
     breathe_idx = r.loaded[(12, "Breathe.nif")]
     back_idx = r.loaded[(12, "BackCaptain.nif")]
     assert ctrl._idle_clips[12] == breathe_idx
     assert r.played[-1] == (12, back_idx)
+    # On completion the reverse turn returns to the normal breathe idle.
+    ctrl.update(0.5, renderer=r, anim_mgr=None)        # complete
+    assert r.idled[-1] == (12, breathe_idx)
 
 
 def test_request_turn_missing_clips_is_graceful(monkeypatch):
@@ -210,5 +219,6 @@ def test_asset_resolver_applied(monkeypatch):
     ch = _Char(14)
     ctrl.request_turn(ch)
     ctrl.update(0.0, renderer=r, anim_mgr=None)
-    assert (14, "/abs/BreatheTurned.nif") in r.loaded
     assert (14, "/abs/TurnCaptain.nif") in r.loaded
+    # Turn-to no longer loads BreatheTurned (it un-turns); it holds the turn.
+    assert (14, "/abs/BreatheTurned.nif") not in r.loaded
