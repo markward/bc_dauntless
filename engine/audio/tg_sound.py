@@ -79,6 +79,8 @@ class TGSound:
         self._min_dist = 100.0
         self._max_dist = 100000.0
         self._loaded = _audio is not None and _audio.get_sound(name) != 0
+        self._active: list[_PlayingSound] = []
+        self._region = None  # set by TGSoundRegion.AddSound; gates launch gain
 
     def IsLoaded(self) -> int:
         return 1 if self._loaded else 0
@@ -117,20 +119,34 @@ class TGSound:
     def Play(self, attach_node: int = 0, position=None) -> Optional[_PlayingSound]:
         if not _audio or not self._loaded:
             return None
+        # Drop handles we explicitly stopped earlier so the list can't grow
+        # without bound across repeated one-shot plays.
+        self._active = [h for h in self._active if h._pid]
+        factor = self._region.filter_factor() if self._region is not None else 1.0
         pid = _audio.play(
-            name=self._name, looping=self._looping, gain=self._gain,
+            name=self._name, looping=self._looping, gain=self._gain * factor,
             category=self._category_tag, attach_node=int(attach_node),
             position=position,
         )
         if pid == 0:
             return None
+        handle = _PlayingSound(pid)
+        self._active.append(handle)
         if self._positional or attach_node != 0 or position is not None:
             _audio.set_min_max_distance(pid, self._min_dist, self._max_dist)
-        return _PlayingSound(pid)
+        return handle
 
     # No-ops kept for the wider SDK surface (callers exist; behaviour deferred).
     def PlayAndNotify(self, *_args, **_kw): return self.Play()
-    def Stop(self): pass
+    def Stop(self):
+        """Stop every handle this sound started (real Appc TGSound.Stop).
+
+        Used by region muting and to silence the SDK's load-time AmbBridge
+        play when the player isn't on the bridge.
+        """
+        for h in self._active:
+            h.Stop()
+        self._active = []
     def Pause(self): pass
     def Unpause(self): pass
     def SetSingleShot(self, *_a): pass
@@ -153,11 +169,80 @@ class TGSound:
     def IsStreamed(self): return 0
 
 
+class TGSoundRegion:
+    """Headless shim for Appc's TGSoundRegion.
+
+    A named bucket of sounds with a filter that can mute / muffle the whole
+    region. The SDK only ever uses the "bridge" region with FT_NONE
+    (LoadBridge.py:353-356), but we honour FT_MUTE/FT_MUFFLE actively so the
+    surface behaves like the original.
+    """
+
+    # Filter types. Values are ours to define — the SDK references them only
+    # symbolically (App.TGSoundRegion.FT_NONE), never as integer literals.
+    FT_NONE = 0
+    FT_MUTE = 1
+    FT_MUFFLE = 2
+
+    # FT_MUFFLE is BC's lowpass; we approximate it with a gain cut.
+    _MUFFLE_FACTOR = 0.3
+
+    def __init__(self, name: str) -> None:
+        self._name = name
+        self._filter = TGSoundRegion.FT_NONE
+        self._sounds: list[TGSound] = []
+
+    def filter_factor(self) -> float:
+        if self._filter == TGSoundRegion.FT_MUTE:
+            return 0.0
+        if self._filter == TGSoundRegion.FT_MUFFLE:
+            return TGSoundRegion._MUFFLE_FACTOR
+        return 1.0
+
+    def SetFilter(self, ft) -> None:
+        self._filter = int(ft)
+        factor = self.filter_factor()
+        for snd in self._sounds:
+            for h in snd._active:
+                if h._pid:
+                    h.SetGain(snd._gain * factor)
+
+    def AddSound(self, snd) -> None:
+        if snd is None:  # a failed LoadSoundInGroup returns None
+            return
+        if snd not in self._sounds:
+            self._sounds.append(snd)
+        # Single-region assumption: the SDK only uses one "bridge" region, so _region backlink is overwritten.
+        snd._region = self
+
+    def RemoveSound(self, snd) -> None:
+        if snd in self._sounds:
+            self._sounds.remove(snd)
+        if snd is not None and getattr(snd, "_region", None) is self:
+            snd._region = None
+
+
+_regions: dict[str, TGSoundRegion] = {}
+
+
+def TGSoundRegion_GetRegion(name: str) -> TGSoundRegion:
+    r = _regions.get(name)
+    if r is None:
+        r = TGSoundRegion(name)
+        _regions[name] = r
+    return r
+
+
+def TGSoundRegion_Create(name: str) -> TGSoundRegion:
+    return TGSoundRegion_GetRegion(name)
+
+
 class TGSoundManager:
     _instance: "Optional[TGSoundManager]" = None
 
     def __init__(self) -> None:
         self._sounds: dict[str, TGSound] = {}
+        self._groups: dict[str, set[str]] = {}
 
     @classmethod
     def instance(cls) -> "TGSoundManager":
@@ -182,6 +267,38 @@ class TGSoundManager:
         self._sounds[name] = snd
         return snd
 
+    def LoadSoundInGroup(self, path: str, name: str, group: str) -> TGSound:
+        """Load a sound and tag it as a member of `group`.
+
+        Mirrors Appc Game.LoadSoundInGroup. Bridge sounds are non-positional,
+        so we load them streamed (2D).
+
+        Always returns a TGSound, never None: Appc hands back a valid (silent)
+        handle even when the asset is missing or the backend is down, and the
+        SDK calls .SetVolume() / region.AddSound() on the result unconditionally
+        (LoadBridge.py:377-379). On load failure we register a real-but-unloaded
+        TGSound (Play() no-ops while _loaded is False) so that chain works
+        headless.
+        """
+        snd = self.LoadSound(path, name, TGSound.LS_STREAMED)
+        if snd is None:
+            snd = self._sounds.get(name) or TGSound(name, False)
+            self._sounds[name] = snd
+        self._groups.setdefault(group, set()).add(name)
+        return snd
+
+    def DeleteAllSoundsInGroup(self, group: str) -> None:
+        for name in self._groups.pop(group, set()):
+            snd = self._sounds.pop(name, None)
+            if snd is not None:
+                snd.Stop()
+
+    def StopAllSoundsInGroup(self, group: str) -> None:
+        for name in self._groups.get(group, set()):
+            snd = self._sounds.get(name)
+            if snd is not None:
+                snd.Stop()
+
     def duration_for(self, name: str) -> float:
         """Real decoded length (seconds) of a loaded sound, else 0.0.
 
@@ -203,45 +320,6 @@ class TGSoundManager:
         return None if snd is None else snd.Play()
 
 
-# Subset of sdk/Build/scripts/LoadTacticalSounds.py + LoadBridge.py LoadSounds()
-# that we need on first hearing. Quickbattle's full sound boot is not yet
-# wired into our headless host, so init_audio() registers these directly
-# until LoadTacticalSounds is properly invoked.
-_DEFAULT_3D_SOUNDS: tuple[tuple[str, str], ...] = (
-    ("sfx/engine1.wav", "Federation Engines"),
-    ("sfx/engine2.wav", "Klingon Engines"),
-    ("sfx/engine2.wav", "Romulan Engines"),
-    ("sfx/engine2.wav", "Ferengi Engines"),
-    ("sfx/engine2.wav", "Cardassian Engines"),
-    ("sfx/engine1.wav", "Kessok Engines"),
-)
-_DEFAULT_2D_SOUNDS: tuple[tuple[str, str], ...] = (
-    ("sfx/redalert.wav",       "RedAlertSound"),
-    ("sfx/yellowalert.wav",    "YellowAlertSound"),
-    ("sfx/greenalert.wav",     "GreenAlertSound"),
-    ("sfx/bridge2.loop.wav",   "AmbBridge"),
-)
-
-
-def register_default_sounds() -> None:
-    """Register engine + alert sounds with TGSoundManager.
-
-    Idempotent: existing names and missing WAV files are silently skipped.
-    Called from host_loop.init_audio() so the SDK names resolve before the
-    first ship spawn / alert transition.
-    """
-    mgr = TGSoundManager.instance()
-    for path, name in _DEFAULT_3D_SOUNDS:
-        if mgr.GetSound(name) is None:
-            mgr.LoadSound(path, name, TGSound.LS_3D)
-    for path, name in _DEFAULT_2D_SOUNDS:
-        if mgr.GetSound(name) is None:
-            # Any loadspec other than LS_3D is treated as non-positional by
-            # the shim. LS_STREAMED is the value SDK code happens to use for
-            # streamed assets, but here it just means "ambient, not 3D."
-            mgr.LoadSound(path, name, TGSound.LS_STREAMED)
-
-
 # Module-level singleton. App.py imports this name directly, which binds it
 # at App's import time — any future production code path that resets
 # TGSoundManager._instance must also rebind App.g_kSoundManager (see the
@@ -260,6 +338,7 @@ def init_audio_for_tests() -> None:
     TGSoundManager._instance = TGSoundManager()
     global g_kSoundManager
     g_kSoundManager = TGSoundManager._instance
+    _regions.clear()
     # Keep App.g_kSoundManager in sync — it was bound at import time via
     # `from engine.audio.tg_sound import g_kSoundManager` so we must push
     # the new reference into the App module's namespace directly.
@@ -275,6 +354,7 @@ def shutdown_audio_for_tests() -> None:
     TGSoundManager._instance = None
     global g_kSoundManager
     g_kSoundManager = None
+    _regions.clear()
     # Mirror init_audio_for_tests: push None into App's namespace so the
     # module-level binding doesn't silently keep a stale manager alive.
     if "App" in sys.modules:

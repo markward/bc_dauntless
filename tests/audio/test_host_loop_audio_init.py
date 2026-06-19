@@ -42,3 +42,24 @@ def test_tick_audio_pushes_listener_pose(monkeypatch):
     assert any(e["op"] == "set_listener"
                for e in _dauntless_host.audio.debug_command_log())
     host_loop.shutdown_audio()
+
+
+def test_register_default_sounds_is_gone():
+    # The hardcoded stand-in is replaced by the real LoadBridge.LoadSounds()
+    # + LoadTacticalSounds.LoadSounds() paths.
+    import engine.audio.tg_sound as tg
+    assert not hasattr(tg, "register_default_sounds")
+
+
+def test_init_audio_backend_is_idempotent(monkeypatch):
+    monkeypatch.setenv("OPEN_STBC_AUDIO", "0")
+    _dauntless_host = pytest.importorskip("_dauntless_host")
+    from engine import host_loop
+    host_loop.shutdown_audio()  # known-False flag regardless of suite order
+    _dauntless_host.audio.clear_command_log()
+    host_loop.init_audio_backend()  # first call must actually init
+    assert "init" in [e["op"] for e in _dauntless_host.audio.debug_command_log()]
+    _dauntless_host.audio.clear_command_log()
+    host_loop.init_audio_backend()  # second call must be a no-op
+    assert "init" not in [e["op"] for e in _dauntless_host.audio.debug_command_log()]
+    host_loop.shutdown_audio()

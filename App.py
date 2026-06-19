@@ -125,6 +125,7 @@ from engine.appc.actions import (
 )
 from engine.audio.tg_sound import (
     TGSound, TGSoundManager, g_kSoundManager,
+    TGSoundRegion, TGSoundRegion_GetRegion, TGSoundRegion_Create,
 )
 from engine.core.game import (
     Game, Episode, Mission, Game_GetCurrentGame, _set_current_game,
