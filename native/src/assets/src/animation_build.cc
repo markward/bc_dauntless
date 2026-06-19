@@ -10,22 +10,6 @@ namespace assets::detail {
 
 namespace {
 
-/// Find the NiNode whose controller_link points (via link IDs) at the
-/// controller at `controller_block_index`.
-const nif::NiNode* find_controller_target(
-    const nif::File& f,
-    std::uint32_t controller_block_index,
-    const LinkResolver& resolver)
-{
-    for (auto& b : f.blocks) {
-        if (auto* node = std::get_if<nif::NiNode>(&b)) {
-            auto target_idx = resolver.resolve(node->av.obj.controller_link);
-            if (target_idx == controller_block_index) return node;
-        }
-    }
-    return nullptr;
-}
-
 template <typename DataBlock>
 const DataBlock* data_at(const nif::File& f, std::uint32_t block_index) {
     if (block_index >= f.blocks.size()) return nullptr;
@@ -74,31 +58,50 @@ std::vector<AnimationClip> build_animations(const nif::File& f) {
     std::unordered_map<std::string, AnimationClip::NodeTrack> tracks_by_target;
     float clip_duration = 0.0f;
 
-    for (std::uint32_t i = 0; i < f.blocks.size(); ++i) {
-        if (auto* kc = std::get_if<nif::NiKeyframeController>(&f.blocks[i])) {
-            auto* target = find_controller_target(f, i, resolver);
-            if (!target) continue;
-            auto& track = tracks_by_target[target->av.obj.name];
-            track.target_node_name = target->av.obj.name;
-            auto data_idx = resolver.resolve(kc->data_link);
-            if (auto* kd = data_at<nif::NiKeyframeData>(f, data_idx))
-                apply_keyframe_data(track, *kd, clip_duration);
-        } else if (auto* vc = std::get_if<nif::NiVisController>(&f.blocks[i])) {
-            auto* target = find_controller_target(f, i, resolver);
-            if (!target) continue;
-            auto& track = tracks_by_target[target->av.obj.name];
-            track.target_node_name = target->av.obj.name;
-            auto data_idx = resolver.resolve(vc->data_link);
-            if (auto* vd = data_at<nif::NiVisData>(f, data_idx))
-                apply_vis_data(track, *vd, clip_duration);
-        } else if (auto* rc = std::get_if<nif::NiRollController>(&f.blocks[i])) {
-            auto* target = find_controller_target(f, i, resolver);
-            if (!target) continue;
-            auto& track = tracks_by_target[target->av.obj.name];
-            track.target_node_name = target->av.obj.name;
-            auto data_idx = resolver.resolve(rc->data_link);
-            if (auto* fd = data_at<nif::NiFloatData>(f, data_idx))
-                apply_float_data(track, *fd, clip_duration);
+    // Each NiNode references its FIRST controller via `controller_link`; further
+    // controllers chain off it through `next_controller_link`. BC v3.1 turn clips
+    // attach BOTH a NiVisController (eye blinks) AND a NiKeyframeController to a
+    // node as such a chain. We must WALK the chain, not just match a node's
+    // direct controller_link — otherwise the chained controller's data is
+    // dropped, which silently emptied db_face_capt_t (VisController head ->
+    // KeyframeController tail) and left the Tactical officer un-animated.
+    for (const auto& b : f.blocks) {
+        const auto* node = std::get_if<nif::NiNode>(&b);
+        if (!node) continue;
+        std::uint32_t idx = resolver.resolve(node->av.obj.controller_link);
+        // The track is created LAZILY, only when a real controller is found in
+        // the chain — a node whose controller_link points at a non-controller
+        // block must not fabricate an empty animation track.
+        auto get_track = [&]() -> AnimationClip::NodeTrack& {
+            auto& t = tracks_by_target[node->av.obj.name];
+            t.target_node_name = node->av.obj.name;
+            return t;
+        };
+        // Follow the controller chain; the iteration cap guards against a
+        // malformed cyclic link in a corrupt file.
+        for (int guard = 0; guard < 256 && idx < f.blocks.size(); ++guard) {
+            std::uint32_t next_link = 0;
+            if (const auto* kc = std::get_if<nif::NiKeyframeController>(&f.blocks[idx])) {
+                if (const auto* kd =
+                        data_at<nif::NiKeyframeData>(f, resolver.resolve(kc->data_link)))
+                    apply_keyframe_data(get_track(), *kd, clip_duration);
+                next_link = kc->next_controller_link;
+            } else if (const auto* vc = std::get_if<nif::NiVisController>(&f.blocks[idx])) {
+                if (const auto* vd =
+                        data_at<nif::NiVisData>(f, resolver.resolve(vc->data_link)))
+                    apply_vis_data(get_track(), *vd, clip_duration);
+                next_link = vc->next_controller_link;
+            } else if (const auto* rc = std::get_if<nif::NiRollController>(&f.blocks[idx])) {
+                if (const auto* fd =
+                        data_at<nif::NiFloatData>(f, resolver.resolve(rc->data_link)))
+                    apply_float_data(get_track(), *fd, clip_duration);
+                next_link = rc->next_controller_link;
+            } else {
+                break;      // unknown / non-controller block in the chain
+            }
+            std::uint32_t next_idx = resolver.resolve(next_link);
+            if (next_idx == idx) break;             // self-loop guard
+            idx = next_idx;
         }
     }
 

@@ -56,6 +56,49 @@ TEST(AnimationBuild, KeyframeControllerProducesClip) {
     EXPECT_FLOAT_EQ(track.translation[1].value.x, 10.0f);
 }
 
+TEST(AnimationBuild, FollowsControllerChainVisThenKeyframe) {
+    // BC v3.1 turn clips (e.g. db_face_capt_t — the Tactical officer's turn)
+    // attach a NiVisController AND a NiKeyframeController to a node as a CHAIN:
+    //   node.controller_link -> NiVisController -.next_controller_link-> NiKeyframeController
+    // BOTH controllers' data must be applied. Matching only the node's DIRECT
+    // controller_link (the chain head) orphans the chained keyframe controller
+    // and drops its rotation/translation — which silently emptied db_face_capt_t.
+    nif::File f;
+    nif::NiNode node;
+    node.av.obj.name = "Bip01 Head";
+    node.av.obj.controller_link = 1;           // -> VisController (chain head)
+    f.blocks.push_back(node);
+
+    nif::NiVisController vc;
+    vc.data_link = 2;                          // -> VisData
+    vc.next_controller_link = 3;               // -> KeyframeController (chained)
+    f.blocks.push_back(vc);
+
+    nif::NiVisData vd;
+    vd.num_keys = 1;
+    vd.keys = {{0.0f, 1}};
+    f.blocks.push_back(vd);
+
+    nif::NiKeyframeController kc;
+    kc.data_link = 4;                          // -> KeyframeData
+    f.blocks.push_back(kc);
+
+    nif::NiKeyframeData kd;
+    kd.quaternion_keys.resize(2);
+    kd.quaternion_keys[0].time = 0.0f;
+    kd.quaternion_keys[1].time = 0.5f;
+    f.blocks.push_back(kd);
+
+    auto anims = assets::detail::build_animations(f);
+    ASSERT_EQ(anims.size(), 1u);
+    ASSERT_EQ(anims[0].tracks.size(), 1u);
+    auto& track = anims[0].tracks[0];
+    EXPECT_EQ(track.target_node_name, "Bip01 Head");
+    EXPECT_EQ(track.visibility.size(), 1u);    // from the VisController (head)
+    ASSERT_EQ(track.rotation.size(), 2u);      // from the CHAINED KeyframeController
+    EXPECT_FLOAT_EQ(track.rotation[1].time, 0.5f);
+}
+
 TEST(AnimationBuild, VisControllerProducesVisibilityTrack) {
     nif::File f;
     nif::NiNode node;
