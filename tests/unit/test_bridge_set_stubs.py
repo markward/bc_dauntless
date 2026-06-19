@@ -48,10 +48,11 @@ def test_viewscreen_is_real_data_object_and_round_trips():
     bs.SetViewScreen(vs, "viewscreen")
     assert bs.GetViewScreen() is vs
     # The unbuilt menu/handler surface still no-ops via the _LoudStub catch-all
-    # (does not raise).
+    # (does not raise). IsStaticOn is now real (defaults to 0), but SetMenu
+    # and ToggleRemoteCam remain no-ops.
     assert vs.SetMenu("whatever") is None
     assert vs.ToggleRemoteCam() is None
-    assert vs.IsStaticOn() is None
+    assert vs.IsStaticOn() == 0
 
 
 def test_delete_camera_from_set():
@@ -140,3 +141,37 @@ def test_bridge_object_get_anim_node_real_and_guest_chair_safe():
     # PutGuestChairOut/In build a TGAnimPosition from the node — must work.
     pos = TGAnimPosition_Create(node, "db_guest_chair_out")
     assert pos.name == "db_guest_chair_out"
+
+
+def test_viewscreen_records_static_state():
+    from engine.appc.bridge_set import ViewScreenObject
+    vs = ViewScreenObject("viewscreen.nif")
+    # defaults: static off, no group, zero variation
+    assert vs.IsStaticOn() == 0
+    assert vs._static_icon_group is None
+    assert vs._static_min == 0.0
+    assert vs._static_max == 0.0
+    # SDK drives state on
+    vs.SetStaticTextureIconGroup("View Screen Static")
+    vs.SetStaticIsOn(1)
+    vs.SetStaticVariation(0.8, 1)
+    assert vs._static_icon_group == "View Screen Static"
+    assert vs.IsStaticOn() == 1
+    assert vs._static_min == 0.8
+    assert vs._static_max == 1.0
+
+
+def test_viewscreen_static_off_clears():
+    from engine.appc.bridge_set import ViewScreenObject
+    vs = ViewScreenObject("viewscreen.nif")
+    vs.SetStaticIsOn(1)
+    vs.SetStaticIsOn(0)
+    assert vs.IsStaticOn() == 0
+
+
+def test_viewscreen_menu_methods_still_noop():
+    # Deferred menu surface must keep falling through _LoudStub (no crash, None).
+    from engine.appc.bridge_set import ViewScreenObject
+    vs = ViewScreenObject("viewscreen.nif")
+    assert vs.SetMenu(object()) is None
+    assert vs.MenuUp() is None

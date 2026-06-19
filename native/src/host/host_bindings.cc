@@ -40,6 +40,7 @@
 #include <renderer/subsystem_pin_pass.h>
 #include <renderer/target_reticle_pass.h>
 #include <renderer/bridge_pass.h>
+#include <renderer/viewscreen_static_pass.h>
 #include <renderer/hdr_target.h>
 #include <renderer/bloom_pass.h>
 #include <renderer/resolve_pass.h>
@@ -170,6 +171,14 @@ constexpr int kViewscreenRttH = 360;
 struct CommSource { bool active = false; std::uint32_t set_id = 0; scenegraph::Camera cam; };
 CommSource g_comm_source;
 
+// Viewscreen static/"snow" overlay: composited over the viewscreen RTT after
+// the feed (comm or forward) is rendered. on/intensity are pushed per frame by
+// host_loop (intensity = SDK fMin/fMax flicker); textures come from the
+// "View Screen Static" icon group paths resolved in Python.
+struct ViewscreenStatic { bool on = false; float intensity = 0.0f; };
+ViewscreenStatic g_viewscreen_static;
+std::unique_ptr<renderer::ViewscreenStaticPass> g_viewscreen_static_pass;
+
 struct LoadedModel {
     std::filesystem::path nif_path;
     assets::ModelHandle handle;
@@ -273,6 +282,7 @@ void init(int width, int height, const std::string& title) {
     g_subsystem_pin_pass  = std::make_unique<renderer::SubsystemPinPass>();
     g_target_reticle_pass = std::make_unique<renderer::TargetReticlePass>();
     g_bridge_pass         = std::make_unique<renderer::BridgePass>();
+    g_viewscreen_static_pass = std::make_unique<renderer::ViewscreenStaticPass>();
     g_hdr_target      = std::make_unique<renderer::HdrTarget>();
     g_viewscreen_hdr  = std::make_unique<renderer::HdrTarget>();
     g_bloom_pass   = std::make_unique<renderer::BloomPass>();
@@ -326,6 +336,7 @@ void shutdown() {
     g_target_reticle = renderer::TargetReticle{};
     g_target_reticle_pass.reset();
     g_bridge_pass.reset();
+    g_viewscreen_static_pass.reset();
     g_bloom_pass.reset();
     g_fxaa_pass.reset();
     g_ldr_target.reset();
@@ -453,6 +464,13 @@ void frame() {
             vcam.aspect = static_cast<float>(kViewscreenRttW)
                         / static_cast<float>(kViewscreenRttH);
             render_space(vcam, /*for_viewscreen=*/true);
+        }
+        // Static/"snow" overlay over the feed (degraded-signal hail look).
+        if (g_viewscreen_static.on && g_viewscreen_static_pass
+                && g_viewscreen_static_pass->has_textures()) {
+            g_viewscreen_static_pass->render(
+                g_pipeline->viewscreen_static_shader(),
+                g_viewscreen_static.intensity, now);
         }
         g_bridge_pass->set_viewscreen_texture(g_viewscreen_hdr->color_texture());
     } else if (g_bridge_pass) {
@@ -961,6 +979,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](unsigned long long h) { if (g_bridge_pass) g_bridge_pass->set_viewscreen_model(h); });
     m.def("set_viewscreen_enabled",
           [](bool on) { g_viewscreen_enabled = on; });
+    m.def("set_viewscreen_brightness",
+          [](float b) { if (g_bridge_pass) g_bridge_pass->set_viewscreen_brightness(b); },
+          py::arg("b"));
     m.def("set_viewscreen_comm_source",
           [](unsigned int set_id,
              std::tuple<float,float,float> eye,
@@ -980,6 +1001,16 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("up"), py::arg("fov_y_rad"), py::arg("near"), py::arg("far"));
     m.def("clear_viewscreen_comm_source",
           []() { g_comm_source.active = false; });
+    m.def("set_viewscreen_static_source",
+          [](std::vector<std::string> paths) {
+              if (g_viewscreen_static_pass)
+                  g_viewscreen_static_pass->set_textures(paths);
+          }, py::arg("paths"));
+    m.def("set_viewscreen_static",
+          [](bool on, float intensity) {
+              g_viewscreen_static.on = on;
+              g_viewscreen_static.intensity = intensity;
+          }, py::arg("on"), py::arg("intensity"));
 
     m.def("set_camera",
           [](std::tuple<float,float,float> eye,

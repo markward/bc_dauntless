@@ -28,7 +28,8 @@ public:
     Shader& target_reticle_shader() noexcept  { return *target_reticle_; }
     Shader& bridge_shader() noexcept          { return *bridge_; }
     Shader& skinned_bridge_shader() noexcept  { return *skinned_bridge_; }
-    Shader& lightmap_shader() noexcept   { return *lightmap_; }
+    Shader& lightmap_shader() noexcept        { return *lightmap_; }
+    Shader& viewscreen_static_shader() noexcept { return *viewscreen_static_; }
 
 private:
     std::unique_ptr<Shader> opaque_;
@@ -49,6 +50,7 @@ private:
     std::unique_ptr<Shader> bridge_;
     std::unique_ptr<Shader> skinned_bridge_;
     std::unique_ptr<Shader> lightmap_;
+    std::unique_ptr<Shader> viewscreen_static_;
 };
 
 }  // namespace renderer

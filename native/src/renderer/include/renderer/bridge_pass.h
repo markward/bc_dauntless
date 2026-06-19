@@ -61,6 +61,10 @@ public:
         viewscreen_model_handle_ = model_handle;
     }
     void set_viewscreen_texture(unsigned int tex) { viewscreen_tex_ = tex; }
+    /// Set the feed brightness for ViewOn/ViewOff fade: 1.0 = full, 0.0 = black.
+    /// Applies only to the viewscreen override path; all other bridge geometry
+    /// receives u_viewscreen_brightness=1.0 (byte-identical output).
+    void set_viewscreen_brightness(float b) { viewscreen_brightness_ = b; }
 
 private:
     /// Lazily-allocated 1x1 white texture, used as a fallback for any
@@ -72,6 +76,7 @@ private:
     double wall_time_ = 0.0;
     unsigned long long viewscreen_model_handle_ = 0;
     unsigned int       viewscreen_tex_ = 0;
+    float              viewscreen_brightness_ = 1.0f;
 };
 
 }  // namespace renderer

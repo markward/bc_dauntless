@@ -95,7 +95,8 @@ void draw_mesh(const assets::Model& model,
                const glm::mat4& world,
                GLuint white_fallback,
                double wall_time,
-               GLuint base_override) {
+               GLuint base_override,
+               float vs_brightness = 1.0f) {
     shader.set_mat4("u_model", world);
     shader.set_vec3("u_emissive", mat.emissive);
     // Alpha test only fires when the material carries an NiAlphaProperty;
@@ -131,6 +132,10 @@ void draw_mesh(const assets::Model& model,
     // bottom-up, the NIF screen UVs are top-down (see bridge.frag). Set every
     // draw so it never sticks on for the surrounding bridge geometry.
     shader.set_int("u_flip_v", base_override != 0 ? 1 : 0);
+    // Brightness multiplier: only the viewscreen override path receives the
+    // per-frame fade value; all other geometry gets 1.0 (byte-identical).
+    shader.set_float("u_viewscreen_brightness",
+                     base_override != 0 ? vs_brightness : 1.0f);
     glActiveTexture(GL_TEXTURE0);
     if (base_override != 0) {
         // Viewscreen RTT feed: ignore the NIF base texture and draw the
@@ -207,7 +212,8 @@ void BridgePass::render(const scenegraph::World& world,
             const GLuint ov = (viewscreen_model_handle_ != 0
                                && mh == viewscreen_model_handle_)
                               ? viewscreen_tex_ : 0u;
-            draw_mesh(m, mesh, mat, base_shader, w, white, t, ov);
+            draw_mesh(m, mesh, mat, base_shader, w, white, t, ov,
+                      viewscreen_brightness_);
         });
     walk_bridge_meshes(world, lookup, /*want_lightmap_pass=*/true,
         pass, comm_set_id,
@@ -217,7 +223,8 @@ void BridgePass::render(const scenegraph::World& world,
             const GLuint ov = (viewscreen_model_handle_ != 0
                                && mh == viewscreen_model_handle_)
                               ? viewscreen_tex_ : 0u;
-            draw_mesh(m, mesh, mat, base_shader, w, white, t, ov);
+            draw_mesh(m, mesh, mat, base_shader, w, white, t, ov,
+                      viewscreen_brightness_);
         });
 
     // ── Sub-pass C: skinned bridge characters ──────────────────────────────

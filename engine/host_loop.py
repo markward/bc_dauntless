@@ -63,6 +63,7 @@ from engine.appc import (
     combat,
     damage_eligibility,
 )
+from engine.appc import viewscreen_static as _vss
 # combat is imported as a module (not `from combat import apply_hit`) so call
 # sites read combat.apply_hit at call time — tests monkeypatch that attribute.
 from engine.appc.sensor_detection import can_detect
@@ -2534,6 +2535,34 @@ def _viewscreen_feed_on(viewscreen_obj) -> bool:
     return bool(viewscreen_obj is not None and viewscreen_obj.IsOn())
 
 
+class ViewscreenBrightnessRamp:
+    """Brightness fade-in that accompanies the ViewOn/ViewOff sounds. The
+    viewscreen feed has a "signature" — one of ('off',), ('forward',) or
+    ('comm', set_id). Whenever the signature changes (comm appears on
+    ViewscreenOn, or reverts to forward on ViewscreenOff), the brightness
+    restarts at 0 and ramps linearly to 1 over DURATION_S. The sounds already
+    fire via TGSoundAction; this is the matching visual."""
+
+    DURATION_S = 0.3
+
+    def __init__(self):
+        self._sig = None
+        self._elapsed = 0.0
+
+    def update(self, signature, dt):
+        if signature != self._sig:
+            self._sig = signature
+            self._elapsed = 0.0
+        else:
+            self._elapsed += dt
+        b = self._elapsed / self.DURATION_S
+        if b < 0.0:
+            return 0.0
+        if b > 1.0:
+            return 1.0
+        return b
+
+
 def _active_comm_feed(controller):
     """If the bridge viewscreen's remote cam is a comm set's 'maincamera',
     return (comm_set_id, camera); else None (forward-view fallback).
@@ -2613,6 +2642,64 @@ def _comm_feed_view(cam, get_bounds):
             target = (b[0], b[1], b[2])
             up = (0.0, 0.0, 1.0)
     return eye, target, up, fov, near, far
+
+
+def drive_viewscreen_static_and_brightness(r, controller, ramp, dt,
+                                           *, intensity_fn=_vss.static_intensity):
+    """Per-frame: push the static overlay + ViewOn/ViewOff brightness fade to
+    the renderer from the SDK-driven ViewScreenObject state. Pure w.r.t. the
+    renderer/controller it's given, so it's unit-tested with fakes."""
+    vs = getattr(controller, "viewscreen_obj", None)
+
+    # Feed signature for the brightness ramp.
+    if vs is None or not vs.IsOn():
+        signature = ("off",)
+    else:
+        feed = _active_comm_feed(controller)
+        signature = ("comm", feed[0]) if feed is not None else ("forward",)
+    r.set_viewscreen_brightness(ramp.update(signature, dt))
+
+    # Static overlay (only when the SDK turned it on with a positive range).
+    static_on = False
+    intensity = 0.0
+    if (vs is not None and vs.IsStaticOn()
+            and getattr(vs, "_static_max", 0.0) > 0.0):
+        paths = _vss.static_texture_paths(getattr(vs, "_static_icon_group", None))
+        if paths and paths != getattr(controller, "_vs_static_paths_sent", None):
+            r.set_viewscreen_static_source(paths)
+            controller._vs_static_paths_sent = paths
+        fmin = getattr(vs, "_static_min", 0.0)
+        fmax = getattr(vs, "_static_max", 0.0)
+        intensity = intensity_fn(fmin, fmax)
+        static_on = True
+        r.set_viewscreen_static(True, intensity)
+    else:
+        fmin = fmax = 0.0
+        r.set_viewscreen_static(False, 0.0)
+
+    # Dev-mode change log: emit once per state change; silent every frame
+    # when dev mode is off (is_enabled() is a single bool getattr, no I/O).
+    if dev_mode.is_enabled():
+        log_key = (signature, static_on)
+        if log_key != getattr(controller, "_vs_static_log_state", None):
+            controller._vs_static_log_state = log_key
+            if signature[0] == "off":
+                feed_str = "off"
+            elif signature[0] == "comm":
+                feed_str = "comm:%s" % (signature[1],)
+            else:
+                feed_str = "forward"
+            if static_on:
+                print(
+                    "[viewscreen] feed=%s static=on min=%.2f max=%.2f intensity=%.2f"
+                    % (feed_str, fmin, fmax, intensity),
+                    flush=True,
+                )
+            else:
+                print(
+                    "[viewscreen] feed=%s static=off" % (feed_str,),
+                    flush=True,
+                )
 
 
 def _apply_bridge_player_visibility(r, player_iid, *, is_bridge, spv_open) -> None:
@@ -3644,6 +3731,13 @@ def run(mission_name: Optional[str] = None,
                                              _fov, _near, _far)
             else:
                 r.clear_viewscreen_comm_source()
+            # Static overlay + ViewOn/ViewOff brightness fade (SDK-driven).
+            _vs_ramp = getattr(controller, "_viewscreen_brightness_ramp", None)
+            if _vs_ramp is None:
+                _vs_ramp = ViewscreenBrightnessRamp()
+                controller._viewscreen_brightness_ramp = _vs_ramp
+            drive_viewscreen_static_and_brightness(
+                r, controller, _vs_ramp, _player_dt)
             _player_iid_vs = (session.ship_instances.get(player)
                               if session is not None and player is not None else None)
             _apply_bridge_player_visibility(
