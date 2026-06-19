@@ -37,6 +37,8 @@
 #include "embedded_skinned_bridge_vs.h"
 #include "embedded_lightmap_vs.h"
 #include "embedded_lightmap_fs.h"
+#include "embedded_viewscreen_static_vs.h"
+#include "embedded_viewscreen_static_fs.h"
 
 namespace renderer {
 
@@ -59,6 +61,8 @@ Pipeline::Pipeline() {
     bridge_        = std::make_unique<Shader>(shader_src::bridge_vs,        shader_src::bridge_fs);
     skinned_bridge_ = std::make_unique<Shader>(shader_src::skinned_bridge_vs, shader_src::bridge_fs);
     lightmap_   = std::make_unique<Shader>(shader_src::lightmap_vs,   shader_src::lightmap_fs);
+    viewscreen_static_ = std::make_unique<Shader>(
+        shader_src::viewscreen_static_vs, shader_src::viewscreen_static_fs);
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
     glEnable(GL_CULL_FACE);

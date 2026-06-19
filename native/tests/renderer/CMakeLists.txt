@@ -34,6 +34,7 @@ add_executable(renderer_tests
     breach_debris_test.cc
     comm_pass_test.cc
     viewscreen_brightness_test.cc
+    viewscreen_static_pass_test.cc
 )
 
 target_link_libraries(renderer_tests
