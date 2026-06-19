@@ -2,6 +2,7 @@
 #include "renderer/bridge_pass.h"
 #include "renderer/pipeline.h"
 #include "renderer/bone_palette.h"
+#include "renderer/node_anim.h"
 
 #include <glad/glad.h>
 
@@ -65,17 +66,10 @@ void walk_bridge_meshes(const scenegraph::World& world,
             // Skinned models are drawn by the skinned sub-pass only; the static
             // base shader would draw them undeformed and double-draw them.
             if (!m->skeleton.bones.empty()) return;
-            std::vector<glm::mat4> world_per_node(m->nodes.size(), glm::mat4(1.0f));
-            if (!m->nodes.empty()) {
-                world_per_node[m->root_node] =
-                    inst.world * m->nodes[m->root_node].local_transform;
-            }
+            std::vector<glm::mat4> world_per_node =
+                renderer::compose_node_worlds(*m, inst.world, inst.node_overrides);
             for (std::size_t i = 0; i < m->nodes.size(); ++i) {
                 const auto& node = m->nodes[i];
-                if (node.parent_index >= 0) {
-                    world_per_node[i] =
-                        world_per_node[node.parent_index] * node.local_transform;
-                }
                 for (int mesh_idx : node.meshes) {
                     const auto& mesh = m->meshes[mesh_idx];
                     const auto& mat = (mesh.material_index() >= 0

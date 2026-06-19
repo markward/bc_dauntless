@@ -61,6 +61,7 @@ add_library(renderer STATIC
     shader.cc
     bone_palette.cc
     pose_sampler.cc
+    node_anim.cc
     animation_update.cc
     pipeline.cc
     frame.cc

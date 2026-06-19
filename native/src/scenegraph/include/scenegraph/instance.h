@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <unordered_map>
 #include <vector>
 #include <glm/glm.hpp>
 #include "scenegraph/breach_events.h"
@@ -54,6 +55,13 @@ struct Instance {
     /// Empty = the renderer falls back to the model's bind pose. Set by the
     /// placement system; SP2 rewrites it per frame. Runtime state, not saved.
     std::vector<glm::mat4> bone_palette;
+
+    /// Per-instance node-local overrides for NON-SKINNED instances (the
+    /// bridge): node_index -> animated local_transform. Empty = every node
+    /// uses its model's static local (byte-identical to the un-animated
+    /// render). Written each frame by the bridge-node animation updater;
+    /// consulted by walk_bridge_meshes. Runtime state, never serialized.
+    std::unordered_map<int, glm::mat4> node_overrides;
 
     /// SP2 animation playback. clip_index < 0 means "not animated" (palette is
     /// left as set, or bind). The clip lives in the instance's Model::animations.
