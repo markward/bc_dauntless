@@ -182,13 +182,15 @@ std::unique_ptr<renderer::ViewscreenStaticPass> g_viewscreen_static_pass;
 struct LoadedModel {
     std::filesystem::path nif_path;
     assets::ModelHandle handle;
+    // True only for models built by assemble_officer. Those models are wrapped
+    // in a non-const shared_ptr (owned, mutable) so load_instance_clip can
+    // safely const_cast and append clips. Cache-loaded models (load_model_impl)
+    // are genuinely const; is_officer=false prevents any const_cast on them.
+    bool is_officer = false;
     // Idempotency cache for load_instance_clip: maps the path string passed to
     // the call → first clip index appended for that path.  Keyed by the raw
     // path string so the lookup is exact-match (same as the dedup in
-    // load_model_impl).  Only populated for officer models assembled via
-    // assemble_officer; ordinary models loaded via load_model_impl leave this
-    // empty (load_instance_clip returns -1 for them because the shared_ptr
-    // object IS const — only assemble_officer models are non-const underneath).
+    // load_model_impl).  Only populated for officer models (is_officer=true).
     std::unordered_map<std::string, int> appended_clips;
 };
 
@@ -252,7 +254,8 @@ scenegraph::ModelHandle load_model_impl(const std::string& nif_path,
         g_cache = std::make_unique<assets::AssetCache>(std::move(cfg));
     }
     auto handle = g_cache->load(nif_path, search_paths);
-    g_loaded_models.push_back({std::move(canonical), std::move(handle)});
+    g_loaded_models.push_back({std::move(canonical), std::move(handle),
+                               /*is_officer=*/false});
     return static_cast<scenegraph::ModelHandle>(g_loaded_models.size());
 }
 
@@ -963,7 +966,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
               assets::ModelHandle handle =
                   std::make_shared<assets::Model>(std::move(composed));
               g_loaded_models.push_back({std::filesystem::path(body_nif),
-                                         std::move(handle)});
+                                         std::move(handle),
+                                         /*is_officer=*/true});
               return static_cast<scenegraph::ModelHandle>(g_loaded_models.size());
           },
           py::arg("body_nif"), py::arg("head_nif"),
@@ -997,18 +1001,21 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                      g_loaded_models.size())) return -1;
               auto& lm = g_loaded_models[h - 1];
 
+              // Guard: only officer models (assemble_officer) own a mutable
+              // Model underneath the const ModelHandle. Cache-loaded models
+              // (load_model_impl, is_officer=false) are genuinely const —
+              // const_cast on them is undefined behaviour and must never happen.
+              if (!lm.is_officer) return -1;
+
               // Idempotency: if we've already appended clips from this path,
               // return the cached first-clip index without touching the model.
               auto it = lm.appended_clips.find(path);
               if (it != lm.appended_clips.end()) return it->second;
 
-              // Resolution 1: assemble_officer stored a non-const Model under
-              // the const ModelHandle, so const_cast is defined behaviour here.
-              // Regular load_model_impl models are genuinely const (created by
-              // AssetCache) — const_cast on those would be UB, but appended_clips
-              // is always empty for cache-loaded models so we'd have returned
-              // above if they somehow slipped through; the check below on
-              // empty animations also guards indirectly.
+              // assemble_officer stored a non-const Model under the const
+              // ModelHandle, so const_cast is defined behaviour here (the
+              // is_officer guard above ensures we never reach this for
+              // cache-loaded const models).
               assets::Model* m_ptr =
                   const_cast<assets::Model*>(lm.handle.get());
               if (!m_ptr) return -1;
