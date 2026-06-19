@@ -18,20 +18,28 @@ _playing: Optional[_PlayingSound] = None
 
 def set_active(active: bool) -> None:
     """Start the bridge ambient loop if `active` and not yet playing;
-    stop it if not `active` and currently playing. Idempotent — repeated
-    calls with the same value are no-ops.
+    stop it if not `active`. Idempotent.
+
+    On deactivate we also stop the AmbBridge sound directly (not just our own
+    handle), so the SDK's load-time play at LoadBridge.py:213 — which runs in
+    the space scene during mission load — goes silent off-bridge.
     """
     global _playing
-    if active and _playing is None:
+    if active:
+        if _playing is None:
+            snd = TGSoundManager.instance().GetSound("AmbBridge")
+            if snd is None:
+                return
+            snd.SetLooping(1)
+            snd.SetSFX()
+            _playing = snd.Play()  # non-positional (no attach_node)
+    else:
+        if _playing is not None:
+            _playing.Stop()
+            _playing = None
         snd = TGSoundManager.instance().GetSound("AmbBridge")
-        if snd is None:
-            return
-        snd.SetLooping(1)
-        snd.SetSFX()
-        _playing = snd.Play()  # non-positional (no attach_node)
-    elif not active and _playing is not None:
-        _playing.Stop()
-        _playing = None
+        if snd is not None:
+            snd.Stop()  # kill any orphan handle (e.g. SDK load-time play)
 
 
 def reset_for_tests() -> None:
