@@ -1,7 +1,12 @@
 # Tactical Officer Rigid Turn — NIF-Reader Follow-up
 
 **Date:** 2026-06-20
-**Status:** Queued follow-up (deferred from the bridge-node-animation branch).
+**Status:** RESOLVED 2026-06-20 (commit a27cbb8a). Root cause was NOT a byte-level mis-parse —
+it was a CONTROLLER-CHAIN bug in `build_animations`: BC v3.1 attaches a facial `NiVisController`
+AND the body `NiKeyframeController` to each bone as a chain (`controller_link` -> VisController
+-> `next_controller_link` -> KeyframeController), and the builder only matched a node's DIRECT
+controller_link, orphaning the chained keyframe controller. Fix walks the chain. `db_face_capt_t`
+now loads 216 rotation keys; Felix auto-reclassifies body-driven and articulates. GUI-verified.
 **Context:** The bridge node animation project (chairs + doors + officer-seat coupling)
 shipped working: chairs rotate, doors lift, the officer-seat coupling is correct, and
 Helm / standing crew / the whole E-bridge turn correctly. The ONE remaining imperfection
