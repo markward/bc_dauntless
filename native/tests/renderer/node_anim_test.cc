@@ -1,8 +1,10 @@
 #include <gtest/gtest.h>
 #include <renderer/node_anim.h>
 #include <assets/model.h>
+#include <assets/animation.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
+#include <glm/gtx/quaternion.hpp>
 
 namespace {
 // Two-node chain: root at origin, child translated +Y by 5.
@@ -50,4 +52,33 @@ TEST(ComposeNodeWorlds, InstanceWorldPremultiplies) {
     EXPECT_NEAR(w[0][3].x, 100.0f, 1e-5f);
     EXPECT_NEAR(w[1][3].x, 100.0f, 1e-5f);
     EXPECT_NEAR(w[1][3].y, 5.0f, 1e-5f);
+}
+
+TEST(SampleNodeOverrides, MatchesSeatTrackIgnoresUnknownNode) {
+    auto m = two_node();   // nodes: "root", "console seat 01"
+    assets::AnimationClip clip; clip.duration_seconds = 1.0f;
+    // Track that rotates the seat 90deg about Z across the clip.
+    assets::AnimationClip::NodeTrack seat; seat.target_node_name = "console seat 01";
+    glm::quat q = glm::angleAxis(glm::radians(90.0f), glm::vec3(0,0,1));
+    seat.rotation = {{0.0f, q}, {1.0f, q}};
+    // Track for a node that does NOT exist in the bridge (the zoom camera).
+    assets::AnimationClip::NodeTrack cam; cam.target_node_name = "Camera captain";
+    cam.translation = {{0.0f, glm::vec3(0,0,0)}, {1.0f, glm::vec3(999,0,0)}};
+    clip.tracks = {seat, cam};
+
+    auto ov = renderer::sample_node_overrides(clip, m, 1.0f);
+    // Only the seat node (index 1) gets an override; the camera track is ignored.
+    ASSERT_EQ(ov.size(), 1u);
+    ASSERT_TRUE(ov.count(1));
+    // Seat keeps its static translation (0,5,0) and gains the 90deg-Z rotation.
+    EXPECT_NEAR(ov[1][3].y, 5.0f, 1e-4f);
+    glm::vec3 col0 = glm::normalize(glm::vec3(ov[1][0]));
+    EXPECT_NEAR(col0.y, 1.0f, 1e-3f);
+}
+
+TEST(SampleNodeOverrides, EmptyClipProducesNoOverrides) {
+    auto m = two_node();
+    assets::AnimationClip clip; clip.duration_seconds = 0.0f;   // no tracks
+    auto ov = renderer::sample_node_overrides(clip, m, 0.0f);
+    EXPECT_TRUE(ov.empty());
 }
