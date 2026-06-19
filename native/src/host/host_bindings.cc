@@ -768,6 +768,20 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](scenegraph::InstanceId id) { g_world.restore_rest_pose(id); },
           py::arg("iid"),
           "Snap the instance back to its stored rest pose (AT_DEFAULT).");
+    m.def("play_instance_idle",
+          [](scenegraph::InstanceId id, int clip_index) {
+              scenegraph::Instance::AnimationState st;
+              st.clip_index = clip_index;
+              st.loop = true;
+              st.layer_over_rest = true;
+              st.start_wall_time = glfwGetTime();
+              g_world.set_animation(id, st);
+          },
+          py::arg("iid"), py::arg("clip_index"),
+          "Loop a layered idle (e.g. breathing) over the instance's rest pose: "
+          "the idle clip drives the body, the placement supplies the root + any "
+          "bones the idle doesn't track. Loops until a gesture or restore "
+          "replaces it.");
     m.def("play_instance_gesture",
           [](scenegraph::InstanceId id, int clip_index) {
               scenegraph::Instance::AnimationState st;

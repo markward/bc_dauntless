@@ -227,3 +227,41 @@ TEST(AnimationUpdate, LayerOverRestKeepsRootAtStation) {
         << "Root not at station: got (" << root_world.x << "," << root_world.y
         << "," << root_world.z << ") expected (33,-104,23)";
 }
+
+TEST(AnimationUpdate, LoopingLayeredIdleStaysAnchoredAndNeverSettles) {
+    // Breathing: clip[1] played with loop=true + layer_over_rest=true must keep
+    // the root at the placement station across cycling t, and never settle (it
+    // loops forever until replaced).
+    assets::Model model = two_clip_layered_model();
+    auto lookup = [&](scenegraph::ModelHandle){ return &model; };
+
+    scenegraph::World world;
+    auto id = world.create_instance(/*model=*/1);
+
+    scenegraph::Instance::AnimationState rest_st;
+    rest_st.clip_index = 0;
+    rest_st.sample_at_end = true;        // placement holds last frame = station
+    world.set_rest_pose(id, rest_st);
+
+    scenegraph::Instance::AnimationState idle_st;
+    idle_st.clip_index = 1;
+    idle_st.loop = true;
+    idle_st.layer_over_rest = true;
+    idle_st.start_wall_time = 0.0;
+    world.set_animation(id, idle_st);
+
+    auto root_world_at = [&](double now) {
+        renderer::update_animations(world, lookup, now);
+        return glm::vec3(world.get(id)->bone_palette[0] * glm::vec4(0,0,0,1));
+    };
+
+    // Sample within the first cycle and well past the clip duration (looped).
+    glm::vec3 r1 = root_world_at(0.3);
+    EXPECT_FALSE(world.get(id)->animation.settled);   // looping never settles
+    glm::vec3 r2 = root_world_at(50.0);
+    EXPECT_FALSE(world.get(id)->animation.settled);
+
+    // Root stays at the station at BOTH times (the idle clip has no root track).
+    EXPECT_TRUE(glm::all(glm::epsilonEqual(r1, glm::vec3(33,-104,23), 1e-3f)));
+    EXPECT_TRUE(glm::all(glm::epsilonEqual(r2, glm::vec3(33,-104,23), 1e-3f)));
+}

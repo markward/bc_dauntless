@@ -347,6 +347,13 @@ def restore_rest_pose(iid: InstanceId) -> None:
     _h.restore_rest_pose(iid)
 
 
+def play_instance_idle(iid: InstanceId, clip_index: int) -> None:
+    """Loop a layered idle (breathing) over the officer's rest pose: the idle
+    clip drives the body, the placement supplies the root. Loops until a gesture
+    or restore_rest_pose replaces it."""
+    _h.play_instance_idle(iid, clip_index)
+
+
 def play_instance_gesture(iid: InstanceId, clip_index: int) -> None:
     """Play a transient gesture/reaction clip layered over the officer's rest
     pose (root + un-animated bones stay at the station; only gesture-tracked
