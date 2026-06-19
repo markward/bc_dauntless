@@ -73,11 +73,11 @@ class BridgeCharacterAnimController:
         act.index = index
         act.elapsed = 0.0
         act.started = True
-        if not hasattr(renderer, "load_instance_clip"):
+        if not hasattr(renderer, "play_instance_gesture"):
             return
         clip_index = renderer.load_instance_clip(act.iid, path)
         if clip_index is not None and clip_index >= 0:
-            renderer.set_instance_animation(act.iid, clip_index, False)
+            renderer.play_instance_gesture(act.iid, clip_index)
 
 
 _controller = None

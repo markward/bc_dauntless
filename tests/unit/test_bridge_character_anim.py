@@ -13,7 +13,7 @@ class _FakeRenderer:
             self._next += 1
             self.loaded[key] = self._next
         return self.loaded[key]
-    def set_instance_animation(self, iid, clip_index, loop=False):
+    def play_instance_gesture(self, iid, clip_index):
         self.played.append((iid, clip_index))
     def restore_rest_pose(self, iid):
         self.restored.append(iid)
