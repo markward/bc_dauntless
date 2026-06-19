@@ -70,14 +70,15 @@ def capture_placement(character):
     }
 
 
-def capture_breathing(character):
-    """Return the officer's looping breathe idle clip, or None.
+def capture_registered_clip(character, suffix):
+    """Resolve the officer's SDK-registered "<location>"+suffix animation to its
+    clip NIF, or None.
 
-    The breathe clip is the SDK-registered "<location>Breathe" animation (e.g.
-    DBEngineerBreathe -> CommonAnimations.StandingConsole). It is the
-    authoritative idle BODY pose; the placement supplies the root (position) via
-    layering. Returns {"clip_nif": <data-root-relative path>} or None when the
-    officer has no location or no <location>Breathe registration.
+    The registered entry's module path is called as the SDK builder; the last
+    action's clip name resolves to a NIF via path_for. Used for the layered
+    idle/turn clips (suffix "Breathe", "BreatheTurned", "TurnCaptain",
+    "BackCaptain"). Returns {"clip_nif": <data-root-relative path>} or None
+    (no location / no <location>+suffix registration / unresolvable).
     """
     import importlib
     import App
@@ -85,7 +86,7 @@ def capture_breathing(character):
     location = character.GetLocation()
     if not location:
         return None
-    key = str(location) + "Breathe"
+    key = str(location) + suffix
     module_path = None
     for entry in getattr(character, "_animations", []):
         if entry and len(entry) >= 2 and str(entry[0]) == key:
@@ -109,6 +110,11 @@ def capture_breathing(character):
 
     clip_nif = App.g_kAnimationManager.path_for(clip_name)
     if not clip_nif:
-        _logger.warning("capture_breathing: no path recorded for clip %r", clip_name)
+        _logger.warning("capture_registered_clip: no path for %r (key %r)", clip_name, key)
         return None
     return {"clip_nif": clip_nif}
+
+
+def capture_breathing(character):
+    """The officer's looping breathe idle clip (SDK "<location>Breathe"), or None."""
+    return capture_registered_clip(character, "Breathe")
