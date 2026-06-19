@@ -82,3 +82,59 @@ TEST(SampleNodeOverrides, EmptyClipProducesNoOverrides) {
     auto ov = renderer::sample_node_overrides(clip, m, 0.0f);
     EXPECT_TRUE(ov.empty());
 }
+
+// --- Duplicate-name resolution (the chair-coupling bug) -------------------
+namespace {
+// Model with TWO nodes named "console seat 01" (like the real DBridge NIF),
+// at indices 1 and 2. Index 2 is the one the override lands on.
+assets::Model dup_seat() {
+    assets::Model m;
+    assets::Node root; root.name = "root"; root.parent_index = -1;
+    root.local_transform = glm::mat4(1.0f);
+    assets::Node a; a.name = "console seat 01"; a.parent_index = 0;
+    a.local_transform = glm::translate(glm::mat4(1.0f), glm::vec3(0, 5, 0));
+    assets::Node b; b.name = "console seat 01"; b.parent_index = 0;
+    b.local_transform = glm::translate(glm::mat4(1.0f), glm::vec3(0, 7, 0));
+    m.nodes = {root, a, b};
+    m.root_node = 0;
+    return m;
+}
+}
+
+TEST(ResolveOverriddenNode, PrefersTheOverriddenDuplicate) {
+    auto m = dup_seat();                 // indices 1 and 2 both "console seat 01"
+    std::unordered_map<int, glm::mat4> ov;
+    ov[2] = glm::mat4(1.0f);             // override on the SECOND duplicate
+    EXPECT_EQ(renderer::resolve_overridden_node(m, "console seat 01", ov), 2);
+}
+
+TEST(ResolveOverriddenNode, FallsBackToFirstWhenNoOverride) {
+    auto m = dup_seat();
+    std::unordered_map<int, glm::mat4> empty;
+    EXPECT_EQ(renderer::resolve_overridden_node(m, "console seat 01", empty), 1);
+}
+
+TEST(ResolveOverriddenNode, ReturnsMinusOneForUnknownName) {
+    auto m = dup_seat();
+    std::unordered_map<int, glm::mat4> empty;
+    EXPECT_EQ(renderer::resolve_overridden_node(m, "no such node", empty), -1);
+}
+
+TEST(ResolveOverriddenNode, AnimAndRestResolveToSameOverriddenNode) {
+    // The coupling reads anim (with overrides) and rest (compose ignores them,
+    // but resolution must still target the overridden node so anim/rest are the
+    // SAME node). Both calls pass the same override map to the resolver.
+    auto m = dup_seat();
+    std::unordered_map<int, glm::mat4> ov;
+    ov[2] = glm::rotate(glm::mat4(1.0f), glm::radians(60.0f), glm::vec3(0,0,1));
+    int idx = renderer::resolve_overridden_node(m, "console seat 01", ov);
+    EXPECT_EQ(idx, 2);
+    // anim world (override applied) differs from rest world (override ignored)
+    // at THAT index -> a non-identity R_delta.
+    auto anim = renderer::compose_node_worlds(m, glm::mat4(1.0f), ov);
+    std::unordered_map<int, glm::mat4> empty;
+    auto rest = renderer::compose_node_worlds(m, glm::mat4(1.0f), empty);
+    glm::vec3 anim_col0 = glm::normalize(glm::vec3(anim[idx][0]));
+    glm::vec3 rest_col0 = glm::normalize(glm::vec3(rest[idx][0]));
+    EXPECT_GT(glm::length(anim_col0 - rest_col0), 0.1f);   // they differ (rotated)
+}

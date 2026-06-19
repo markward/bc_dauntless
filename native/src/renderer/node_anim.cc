@@ -9,6 +9,22 @@
 
 namespace renderer {
 
+int resolve_overridden_node(
+    const assets::Model& model, const std::string& name,
+    const std::unordered_map<int, glm::mat4>& overrides) {
+    int first = -1;
+    for (std::size_t i = 0; i < model.nodes.size(); ++i) {
+        if (model.nodes[i].name != name) continue;
+        if (first < 0) first = static_cast<int>(i);
+        // Prefer the duplicate that actually carries an override — that is the
+        // node the clip animates (and whose mesh subtree rotates). This keeps a
+        // coupling's anim/rest reads on the same rotating node.
+        if (overrides.count(static_cast<int>(i)))
+            return static_cast<int>(i);
+    }
+    return first;
+}
+
 std::vector<glm::mat4> compose_node_worlds(
     const assets::Model& model, const glm::mat4& instance_world,
     const std::unordered_map<int, glm::mat4>& overrides) {
