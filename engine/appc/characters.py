@@ -554,8 +554,30 @@ class CharacterClass(ObjectClass):
     def UsesAnimatedSpeaking(self) -> int:
         return 1 if self._data.get("AnimatedSpeaking", False) else 0
 
-    def MenuUp(self, *args) -> None:              self._data["MenuUp"] = True
-    def MenuDown(self, *args) -> None:            self._data["MenuUp"] = False
+    def MenuUp(self, *args) -> int:
+        # SDK seam (BridgeHandlers: `if (pCharacter.MenuUp()): ...`). Set the
+        # state flag and ask the character-anim controller to turn this officer
+        # toward the captain (deferred — the controller pump has the renderer).
+        self._data["MenuUp"] = True
+        self._notify_menu(turn=True)
+        return 1
+
+    def MenuDown(self, *args) -> None:
+        self._data["MenuUp"] = False
+        self._notify_menu(turn=False)
+
+    def _notify_menu(self, turn) -> None:
+        try:
+            from engine.bridge_character_anim import get_controller
+            ctrl = get_controller()
+            if ctrl is None:
+                return
+            if turn:
+                ctrl.request_turn(self)
+            else:
+                ctrl.request_turn_back(self)
+        except Exception:
+            pass
 
     # ── Data-bag fallback for the long tail of setters/getters ──────────────
     # Catches SetGender, SetSize, SetBlinkChance, SetRandomAnimationChance,
