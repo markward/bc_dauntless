@@ -77,3 +77,36 @@ def test_handler_ignores_non_player_hits():
                                  get_characters=lambda: [_Char()], anim_mgr=None)
     handler.on_weapon_hit(_Event(other, 99.0, _Vec(1, 0, 0)))
     assert ctrl.submitted == []
+
+
+class _CharBlast:
+    """Officer whose Blast reaction is registered with a *Fly* key (as in the SDK)."""
+    def __init__(self):
+        self._render_instance = 7
+        self._animations = [
+            ("EBG2MFly", "Bridge.Characters.CommonAnimations.Blast"),
+        ]
+    def IsHidden(self): return 0
+
+
+def test_blast_resolves_via_fly_keyed_registration(monkeypatch):
+    """Blast reaction must resolve even though the SDK key ends in 'Fly', not 'Blast'.
+
+    Under the old endswith(reaction) logic this test fails because
+    'EBG2MFly'.endswith('Blast') is False.  The fix matches on the module-path
+    function name (entry[1].rsplit('.',1)[-1] == reaction) which is unambiguous.
+    """
+    import engine.bridge_hit_reactions as mod
+    monkeypatch.setattr(mod, "build_sequence_clips",
+                        lambda module_path, ch, anim_mgr: [("blast.nif", 1.2)])
+    ctrl = _Controller()
+    ship = _Ship()
+    ch = _CharBlast()
+    handler = HitReactionHandler(ctrl, get_player=lambda: ship,
+                                 get_characters=lambda: [ch], anim_mgr=None)
+    # damage >= 120 -> Blast severity
+    handler.on_weapon_hit(_Event(ship, 150.0, _Vec(5.0, 0.0, 0.0)))
+    assert len(ctrl.submitted) == 1, (
+        "Blast reaction never resolved — _resolve_key still using key suffix?"
+    )
+    assert ctrl.submitted[0][2] == 1   # reaction priority

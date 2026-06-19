@@ -64,10 +64,18 @@ class HitReactionHandler:
 
     @staticmethod
     def _resolve_key(character, reaction) -> str:
-        """Find the character's registered animation whose key ENDS WITH the
-        reaction name (keys are location-prefixed, e.g. 'DBGuestReactRight').
-        Returns the module path, or '' if the character lacks that reaction."""
+        """Find the character's registered reaction by SDK builder name.
+
+        The registered KEY is location-prefixed and artist-named (e.g. Blast is
+        keyed "<loc>Fly", not "<loc>Blast"), so matching on key suffix is
+        unreliable.  Instead we match on the module path's function name
+        (entry[1].rsplit('.', 1)[-1]), which equals select_reaction's return
+        value exactly — it IS the CommonAnimations function name.
+
+        Returns the module path (entry[1]), or '' if the character lacks it.
+        """
         for entry in getattr(character, "_animations", []):
-            if entry and len(entry) >= 2 and str(entry[0]).endswith(reaction):
+            if entry and len(entry) >= 2 and \
+                    str(entry[1]).rsplit(".", 1)[-1] == reaction:
                 return entry[1]
         return ""
