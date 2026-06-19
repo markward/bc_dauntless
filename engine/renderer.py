@@ -198,16 +198,6 @@ def set_decals_enabled(enabled: bool) -> None:
     _h.decals_set_enabled(enabled)
 
 
-def set_hull_damage_enabled(enabled: bool) -> None:
-    """Toggle hull-breach renderer pass and carve emission. Default: on after
-    init(). Flips both the C++ hull-damage pass flag (via host binding) and
-    the Python emission gate so no carve geometry is submitted when off."""
-    _h.hull_damage_set_enabled(enabled)
-    # Lazily imported to avoid circular-import at module load time.
-    from engine.appc import hit_feedback as _hf  # noqa: PLC0415
-    _hf._HULL_CARVE_ENABLED = enabled
-
-
 def set_fxaa_enabled(enabled: bool) -> None:
     """Toggle the post-process FXAA pass. Default: on after init()."""
     _h.fxaa_set_enabled(enabled)

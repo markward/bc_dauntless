@@ -134,18 +134,3 @@ def test_reset_carve_throttle_clears_state(patched):
     hit_feedback._last_carve_time.clear()
     _dispatch(host, ship, absorbed_hull=hc.MIN_CARVE_HULL + 60.0)
     assert len(host.carve_calls) == 2  # throttle was cleared
-
-
-def test_toggle_off_suppresses_carve(patched):
-    # When _HULL_CARVE_ENABLED is False, carve must not emit even if all other
-    # conditions are met.
-    host = _FakeHost()
-    ship = _Ship()
-    de.set_current(frozenset({id(ship)}))
-    old = hit_feedback._HULL_CARVE_ENABLED
-    try:
-        hit_feedback._HULL_CARVE_ENABLED = False
-        _dispatch(host, ship, absorbed_hull=hc.MIN_CARVE_HULL + 60.0)
-        assert host.carve_calls == []
-    finally:
-        hit_feedback._HULL_CARVE_ENABLED = old

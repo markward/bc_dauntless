@@ -77,16 +77,13 @@ namespace {
     void set_enabled(bool v) { g_decals_enabled = v; }
 }
 
-// Toggle for the hull-breach renderer pass (carve emission + shader clip).
-// Default on. When off: no carve geometry is submitted (Python gate in
-// hit_feedback._HULL_CARVE_ENABLED) and the breach pass is skipped entirely —
-// stock-BC path byte-identical. host_bindings.cc forward-declares set_enabled.
+// Hull-breach renderer pass (carve emission + shader clip). Always on — the
+// breach VFX is a core effect with no user-facing toggle (as in stock BC, a
+// hull breach was never something you could switch off). enabled() is retained
+// as an always-true gate so the pass call sites stay uniform with the other
+// VFX passes.
 namespace dauntless_hull_damage {
-namespace {
-    bool g_hull_damage_enabled = true;
-}
-    bool enabled() { return g_hull_damage_enabled; }
-    void set_enabled(bool v) { g_hull_damage_enabled = v; }
+    bool enabled() { return true; }
 }
 
 namespace renderer {
