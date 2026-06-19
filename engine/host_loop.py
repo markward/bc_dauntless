@@ -771,6 +771,14 @@ def _apply_alert_keys(h, player) -> None:
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
+
+def _game_asset_path(p):
+    """Resolve a game-relative asset path to an absolute path string.
+    Mirrors _place_one_character's local _abs helper; defined here so it can
+    be passed to BridgeCharacterAnimController as the asset_resolver."""
+    return str(PROJECT_ROOT / "game" / p) if p else None
+
+
 # v1 ship-gate selections — Task 25 pins these from the pick_*.py scan results.
 SHIP_GATE_MISSION = "Custom.Tutorial.Episode.M2Objects.M2Objects"
 DEFAULT_TEXTURE_SEARCH = "data/Models/SharedTextures/FedShips/High"
@@ -2936,7 +2944,7 @@ def run(mission_name: Optional[str] = None,
         )
         from engine.bridge_idle_gestures import IdleGestureScheduler
         import random as _random
-        char_anim = BridgeCharacterAnimController()
+        char_anim = BridgeCharacterAnimController(asset_resolver=_game_asset_path)
         set_char_anim(char_anim)
         idle_gestures = IdleGestureScheduler(_random.Random(0xB1D6E))
 

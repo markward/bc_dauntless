@@ -138,6 +138,34 @@ class CrewMenuPanel(Panel):
             return True
         return False
 
+    def _menu_officer(self):
+        """The CharacterClass owning the currently-open top-level menu, or None."""
+        label = self.open_menu_label()
+        if label is None:
+            return None
+        try:
+            from engine.ui import crew_menu_hotkeys
+            return crew_menu_hotkeys.resolve_character(label)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _reconcile_turn(old, new) -> None:
+        """Turn the officer losing focus back, and the one gaining focus toward
+        the captain. old/new are CharacterClass or None; identical -> no-op."""
+        if old is new:
+            return
+        if old is not None:
+            try:
+                old.MenuDown()
+            except Exception:
+                pass
+        if new is not None:
+            try:
+                new.MenuUp()
+            except Exception:
+                pass
+
     def toggle_menu(self, menu) -> None:
         """Open `menu` (closing any other), or close it if already open.
         Single-open invariant shared by hotkeys and CEF title clicks.
@@ -147,11 +175,13 @@ class CrewMenuPanel(Panel):
         if not isinstance(menu, STMenu) or not menu.IsEnabled():
             return
         wid = ensure_widget_id(menu)
+        old_officer = self._menu_officer()
         opening = self._open_menu_id != wid
         self._open_menu_id = None if self._open_menu_id == wid else wid
         # Open menu changed (toggle always closes or switches) — a reopened
         # menu starts with all submenus collapsed.
         self._expanded_ids.clear()
+        self._reconcile_turn(old_officer, self._menu_officer())
         if opening:
             self._acknowledge(menu)
 
@@ -184,8 +214,14 @@ class CrewMenuPanel(Panel):
         press in that case — see host_loop's modal ladder)."""
         if self._open_menu_id is None:
             return False
+        officer = self._menu_officer()
         self._open_menu_id = None
         self._expanded_ids.clear()
+        if officer is not None:
+            try:
+                officer.MenuDown()
+            except Exception:
+                pass
         return True
 
     def invalidate(self) -> None:
