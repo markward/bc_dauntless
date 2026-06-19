@@ -2924,6 +2924,21 @@ def run(mission_name: Optional[str] = None,
         set_char_anim(char_anim)
         idle_gestures = IdleGestureScheduler(_random.Random(0xB1D6E))
 
+        from engine.bridge_hit_reactions import HitReactionHandler
+        import App as _App
+        def _get_player():
+            g = Game_GetCurrentGame()
+            return g.GetPlayer() if g is not None else None
+        _hit_reactions = HitReactionHandler(
+            char_anim,
+            get_player=_get_player,
+            get_characters=_live_bridge_characters,
+            anim_mgr=_App.g_kAnimationManager,
+        )
+        _hit_wrapper = _App.TGPythonInstanceWrapper()
+        _hit_wrapper.SetPyWrapper(_hit_reactions)
+        controller._hit_reaction_wrapper = _hit_wrapper   # keep alive past run() scope
+
         # Bridge interior is created by the SDK path (LoadBridge.Load ->
         # Bridge.<name>.CreateBridgeModel) during the mission load below, then
         # realized into a render instance by realize_all_sets in
@@ -2992,6 +3007,14 @@ def run(mission_name: Optional[str] = None,
             # is_bridge=True; comm sets with geometry/characters as False.
             realize_all_sets(controller, r)
             _wire_target_menu_to_player_set(controller)
+            # Re-register the hit-reaction broadcast handler after every
+            # reset_sdk_globals() call (swap or initial load). The handler
+            # object (_hit_reactions) is swap-safe — it re-fetches player and
+            # characters per event via lambdas. Only the registration entry in
+            # g_kEventManager._broadcast_handlers is wiped by reset_sdk_globals,
+            # so we re-add it here via the persistent wrapper.
+            _App.g_kEventManager.AddBroadcastPythonMethodHandler(
+                _App.ET_WEAPON_HIT, _hit_wrapper, "on_weapon_hit", None)
         controller.post_load_hook = _after_mission_loaded
 
         bridge_camera  = _BridgeCamera()
