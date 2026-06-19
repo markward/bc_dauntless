@@ -69,15 +69,6 @@ _last_decal_emit: dict = {}  # (id(ship), weapon_class) -> last emit game-time
 # id(ship) only (a carve is weapon-agnostic geometry, unlike a decal class).
 _last_carve_time: dict = {}  # id(ship) -> last emit game-time
 
-# Feature toggle for hull carve emission. Driven by the "Hull breaches"
-# Modern-VFX config toggle via engine.renderer.set_hull_damage_enabled (which
-# flips this flag and the C++ render gate together). Default on.
-_HULL_CARVE_ENABLED = True
-
-
-def _hull_carve_enabled() -> bool:
-    return _HULL_CARVE_ENABLED
-
 
 def classify(*, absorbed_shields: float, absorbed_subsystem: float,
              absorbed_hull: float, sub_transition,
@@ -272,8 +263,7 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
             and hasattr(host, "hull_carve_add")):
         from engine.appc import hull_carve, damage_eligibility, damage_decals
         if (hull_carve.should_carve(absorbed_hull)
-                and damage_eligibility.is_eligible(ship)
-                and _hull_carve_enabled()):
+                and damage_eligibility.is_eligible(ship)):
             iid = ship_instances.get(ship)
             if iid is not None:
                 now = damage_decals.current_game_time()

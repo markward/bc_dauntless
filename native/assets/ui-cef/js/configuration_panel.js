@@ -25,7 +25,6 @@ function _cpFocusableList(state) {
         out.push({kind: 'ctrl', target: 'hdr'});
         out.push({kind: 'ctrl', target: 'rim'});
         out.push({kind: 'ctrl', target: 'decals'});
-        out.push({kind: 'ctrl', target: 'hull_damage'});
         out.push({kind: 'ctrl', target: 'fxaa'});
     } else if (state.selected_tab === 'gameplay') {
         out.push({kind: 'ctrl', target: 'subtitles'});
@@ -125,17 +124,6 @@ function _cpRenderGraphicsBody(state, focusables) {
           +     '<button class="cp-toggle' + (s.decals_on ? ' cp-toggle--on' : '') + '"'
           +        ' onclick="dauntlessEvent(\'configuration/toggle:decals\')">'
           +       (s.decals_on ? 'On' : 'Off')
-          +     '</button>'
-          +   '</div>'
-          + '</div>';
-
-    // Hull breaches toggle (carve emission + shader clip)
-    html += '<div class="cp-row' + (isFoc('hull_damage') ? ' cp-focused' : '') + '">'
-          +   '<div class="cp-row__label">Hull breaches</div>'
-          +   '<div class="cp-row__control">'
-          +     '<button class="cp-toggle' + (s.hull_damage_on ? ' cp-toggle--on' : '') + '"'
-          +        ' onclick="dauntlessEvent(\'configuration/toggle:hull_damage\')">'
-          +       (s.hull_damage_on ? 'On' : 'Off')
           +     '</button>'
           +   '</div>'
           + '</div>';
