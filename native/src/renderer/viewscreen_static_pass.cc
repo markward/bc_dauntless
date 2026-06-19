@@ -74,6 +74,13 @@ void ViewscreenStaticPass::render(Shader& shader, float intensity, double wall_t
     const GLboolean prev_blend = glIsEnabled(GL_BLEND);
     const GLboolean prev_depth = glIsEnabled(GL_DEPTH_TEST);
     const GLboolean prev_cull  = glIsEnabled(GL_CULL_FACE);
+    GLint prev_src_rgb = GL_ONE, prev_dst_rgb = GL_ZERO;
+    GLint prev_src_alpha = GL_ONE, prev_dst_alpha = GL_ZERO;
+    glGetIntegerv(GL_BLEND_SRC_RGB,   &prev_src_rgb);
+    glGetIntegerv(GL_BLEND_DST_RGB,   &prev_dst_rgb);
+    glGetIntegerv(GL_BLEND_SRC_ALPHA, &prev_src_alpha);
+    glGetIntegerv(GL_BLEND_DST_ALPHA, &prev_dst_alpha);
+
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_CULL_FACE);
     glEnable(GL_BLEND);
@@ -89,6 +96,10 @@ void ViewscreenStaticPass::render(Shader& shader, float intensity, double wall_t
     glDrawArrays(GL_TRIANGLES, 0, 3);
     glBindVertexArray(0);
 
+    glBlendFuncSeparate(static_cast<GLenum>(prev_src_rgb),
+                        static_cast<GLenum>(prev_dst_rgb),
+                        static_cast<GLenum>(prev_src_alpha),
+                        static_cast<GLenum>(prev_dst_alpha));
     if (!prev_blend) glDisable(GL_BLEND);
     if (prev_depth)  glEnable(GL_DEPTH_TEST);
     if (prev_cull)   glEnable(GL_CULL_FACE);
