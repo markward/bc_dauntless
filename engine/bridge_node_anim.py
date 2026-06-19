@@ -39,6 +39,13 @@ def _dbg(msg: str) -> None:
         pass
 
 
+def _iid_str(iid) -> str:
+    """index:generation of an InstanceId, for spotting instance-identity drift."""
+    if iid is None:
+        return "None"
+    return f"{getattr(iid, 'index', '?')}:{getattr(iid, 'generation', '?')}"
+
+
 def _mat_summary(m) -> str:
     """Compact description of a row-major 4x4: column scales (1.0 = no scale),
     rotation angle from the trace, and translation."""
@@ -136,10 +143,10 @@ class BridgeNodeAnimController:
         iid = getattr(officer, "_render_instance", None)
         if iid is not None and seat_node:
             self._coupled[iid] = {"officer": officer, "seat_node": seat_node}
-            _dbg_ticks[iid] = 0
-        _dbg(f"[turn_chair] officer_iid={iid} seat_node={seat_node!r} "
-             f"path={path!r} coupled={iid in self._coupled} "
-             f"clips_loaded={'yes' if seat_node else 'NO-DISCOVERY'}")
+            _dbg_ticks[id(iid)] = 0
+        _dbg(f"[turn_chair] PLAY bridge={_iid_str(bridge)} "
+             f"officer_iid={_iid_str(iid)} seat_node={seat_node!r} "
+             f"path={path!r} coupled={iid in self._coupled}")
 
     def unturn_chair(self, officer, chair_clip, *, renderer):
         bridge = self._bridge_iid()
@@ -179,12 +186,18 @@ class BridgeNodeAnimController:
                 renderer.set_world_transform(iid, coupling)
             except Exception:
                 _logger.debug("coupling set_world_transform failed", exc_info=True)
-            if _DEBUG and _dbg_ticks.get(iid, 99) < 6:
-                _dbg_ticks[iid] = _dbg_ticks.get(iid, 0) + 1
-                _dbg(f"[update] iid={iid} seat={rec['seat_node']!r}\n"
-                     f"    anim    = {_mat_summary(list(anim))}\n"
-                     f"    rest    = {_mat_summary(list(rest))}\n"
-                     f"    R_delta = {_mat_summary(coupling)}")
+            if _DEBUG:
+                n = _dbg_ticks.get(id(iid), 0)
+                _dbg_ticks[id(iid)] = n + 1
+                # Log ticks 0-3 then every 6th up to ~40 (covers the full ~0.53s
+                # turn at 60fps so we see whether anim EVER leaves rest).
+                if n < 4 or (n % 6 == 0 and n <= 42):
+                    a_ang = _mat_summary(list(anim)).split("angle=")[1].split()[0]
+                    r_ang = _mat_summary(list(rest)).split("angle=")[1].split()[0]
+                    d_ang = _mat_summary(coupling).split("angle=")[1].split()[0]
+                    _dbg(f"[update] t#{n} READ bridge={_iid_str(self._bridge_iid())} "
+                         f"seat={rec['seat_node']!r} anim_ang={a_ang} "
+                         f"rest_ang={r_ang} Rdelta_ang={d_ang}")
 
     def reset(self, *, renderer=None):
         bridge = self._bridge_iid()
