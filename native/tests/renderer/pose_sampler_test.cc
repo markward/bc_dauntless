@@ -112,6 +112,34 @@ TEST(SamplePoseOverBase, UntrackedBoneTakesBaseExactly) {
     EXPECT_EQ(out[1], base[1]);
 }
 
+TEST(SamplePoseOverBase, SeatNodeRotationRemapsOntoRootSwivel) {
+    // Real chair-turn clips (db_chair_H_face_capt) rotate a NON-skeleton seat
+    // node ("console seat 01"), not Bip01. The sampler must compose that
+    // rotation onto the officer's ROOT bone so the seated officer swivels in
+    // place, anchored at the station.
+    assets::Skeleton sk;
+    assets::Bone b0; b0.name = "Bip01"; b0.parent_index = -1;
+    b0.local_transform = glm::mat4(1.0f);
+    sk.bones = {b0}; sk.root_bone_index = 0;
+
+    assets::AnimationClip g; g.name = "chair"; g.duration_seconds = 1.0f;
+    assets::AnimationClip::NodeTrack seat; seat.target_node_name = "console seat 01";
+    glm::quat q = glm::angleAxis(glm::radians(90.0f), glm::vec3(0, 0, 1));
+    seat.rotation = {{0.0f, q}, {1.0f, q}};
+    g.tracks = {seat};                       // ONLY the seat node, no Bip01
+
+    std::vector<glm::mat4> base(1);
+    base[0] = glm::translate(glm::mat4(1.0f), glm::vec3(33, -104, 23));  // station
+    auto out = renderer::sample_pose_over_base(g, sk, 0.5f, base);
+    ASSERT_EQ(out.size(), 1u);
+    // Root swivels by the seat's 90deg-Z (col 0 toward +Y) ...
+    glm::vec3 col0 = glm::normalize(glm::vec3(out[0][0]));
+    EXPECT_NEAR(col0.y, 1.0f, 1e-3f);
+    // ... while staying anchored at the station.
+    EXPECT_TRUE(glm::all(glm::epsilonEqual(glm::vec3(out[0][3]),
+                                           glm::vec3(33, -104, 23), 1e-3f)));
+}
+
 TEST(SamplePoseOverBase, ChairTurnRootRotatesButStaysAnchored) {
     // Chair-turn clips animate the ROOT with both a rotation (the swivel) and a
     // translation (which would slide the officer off the station). The layered
