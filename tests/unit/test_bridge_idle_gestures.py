@@ -67,3 +67,30 @@ def test_skips_busy_character(monkeypatch):
     ctrl._busy.add(id(ch))
     sched.update(1.0, [ch], renderer=None, anim_mgr=None, controller=ctrl)
     assert ctrl.submitted == []
+
+
+def test_build_sequence_clips_reads_sdk_getduration(monkeypatch):
+    import sys, types
+    import engine.bridge_idle_gestures as mod
+
+    class _Action:
+        _clip = "looking_left"
+        def GetDuration(self):
+            return 2.5
+
+    class _Seq:
+        def GetNumActions(self):
+            return 1
+        def GetAction(self, i):
+            return _Action()
+
+    fake = types.ModuleType("fake_anim_mod")
+    fake.Foo = staticmethod(lambda ch: _Seq())
+    monkeypatch.setitem(sys.modules, "fake_anim_mod", fake)
+
+    class _AnimMgr:
+        def path_for(self, name):
+            return "data/animations/looking_left.nif"
+
+    clips = mod.build_sequence_clips("fake_anim_mod.Foo", object(), _AnimMgr())
+    assert clips == [("data/animations/looking_left.nif", 2.5)]

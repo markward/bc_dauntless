@@ -66,3 +66,54 @@ def test_busy_returns_true_while_acting():
     ctrl.submit(ch, [("g.nif", 2.0)], priority=0)
     ctrl.update(0.0, renderer=r, anim_mgr=None)
     assert ctrl.is_busy(ch) is True
+
+
+class _FakeRendererWithDurations(_FakeRenderer):
+    """Adds load_animation_clips so the controller can resolve a clip's real
+    length when the submitted (SDK) duration is 0."""
+    def __init__(self, durations):
+        super().__init__()
+        self._durations = durations          # path -> seconds
+    def load_animation_clips(self, path):
+        return [{"duration": self._durations.get(path, 0.0)}]
+
+
+def test_zero_sdk_duration_holds_for_real_clip_length():
+    # sdk_dur == 0 -> the controller holds for the clip's natural length
+    # (resolved via load_animation_clips), not a fixed fallback.
+    ctrl = BridgeCharacterAnimController()
+    r = _FakeRendererWithDurations({"g.nif": 2.0})
+    ch = _Char(5)
+    ctrl.submit(ch, [("g.nif", 0.0)], priority=0)
+    ctrl.update(0.0, renderer=r, anim_mgr=None)       # start
+    ctrl.update(1.0, renderer=r, anim_mgr=None)       # 1.0 < 2.0 -> still holding
+    assert ctrl.is_busy(ch)
+    assert r.restored == []
+    ctrl.update(1.1, renderer=r, anim_mgr=None)       # 2.1 >= 2.0 -> restore
+    assert r.restored == [5]
+
+
+def test_explicit_sdk_duration_is_honored_verbatim():
+    # sdk_dur > 0 wins even when shorter than any floor, and real length is
+    # NOT consulted.
+    ctrl = BridgeCharacterAnimController()
+    r = _FakeRendererWithDurations({"g.nif": 99.0})   # real length ignored
+    ch = _Char(6)
+    ctrl.submit(ch, [("g.nif", 0.3)], priority=0)
+    ctrl.update(0.0, renderer=r, anim_mgr=None)
+    ctrl.update(0.31, renderer=r, anim_mgr=None)      # 0.31 >= 0.3 -> restore
+    assert r.restored == [6]
+
+
+def test_zero_duration_unresolvable_uses_floor():
+    # sdk_dur == 0 and no resolvable real length -> the controller holds for the
+    # floor, not the very next tick.
+    ctrl = BridgeCharacterAnimController()
+    r = _FakeRenderer()                               # no load_animation_clips
+    ch = _Char(7)
+    ctrl.submit(ch, [("g.nif", 0.0)], priority=0)
+    ctrl.update(0.0, renderer=r, anim_mgr=None)
+    ctrl.update(0.2, renderer=r, anim_mgr=None)       # 0.2 < 0.4 floor -> holding
+    assert r.restored == []
+    ctrl.update(0.3, renderer=r, anim_mgr=None)       # 0.5 >= 0.4 -> restore
+    assert r.restored == [7]

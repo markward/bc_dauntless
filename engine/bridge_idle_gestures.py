@@ -32,8 +32,15 @@ def build_sequence_clips(module_path, character, anim_mgr):
         path = anim_mgr.path_for(name) if anim_mgr is not None else None
         if not path:
             continue
-        dur = getattr(action, "duration", None)
-        clips.append((path, float(dur) if dur else 1.0))
+        # The SDK's explicit per-action SetDuration (via GetDuration), or 0.0 if
+        # the action set none — the controller resolves a 0 to the clip's real
+        # length. NOT a fixed 1.0s fallback (that ignored both the SDK duration
+        # and the clip's natural length, so every gesture flashed for 1s).
+        try:
+            dur = float(action.GetDuration())
+        except Exception:
+            dur = 0.0
+        clips.append((path, dur))
     return clips
 
 

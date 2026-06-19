@@ -468,7 +468,7 @@ def TGSoundAction_Create(*args) -> TGSoundAction:
     return TGSoundAction(sound_name)
 
 
-class TGAnimAction(TGAction):
+class TGAnimAction(TGTimedAction):
     """Plays a named clip on a target's anim node.
 
     Camera (kind="camera") and bridge-object (kind="object") anim nodes route
@@ -476,6 +476,10 @@ class TGAnimAction(TGAction):
     completes the action when the clip ends (deferred). Every other target
     (character gesture clips via a _NodeStub node, or no controller
     registered) keeps the Phase-1 instant-complete behaviour.
+
+    Extends TGTimedAction so the SDK's SetDuration(...) on a gesture action
+    (e.g. CommonAnimations.ConsoleLookDown) is actually stored — the idle/hit
+    scheduler reads GetDuration() to time how long the officer holds the clip.
     """
     def __init__(self, anim_node=None, clip_name=""):
         super().__init__()
