@@ -70,18 +70,15 @@ def capture_placement(character):
     }
 
 
-def capture_registered_clip(character, suffix):
-    """Resolve the officer's SDK-registered "<location>"+suffix animation to its
-    clip NIF, or None.
+def _resolve_builder_sequence(character, suffix):
+    """Look up the SDK-registered builder for ``<location>+suffix`` and call it.
 
-    The registered entry's module path is called as the SDK builder; the last
-    action's clip name resolves to a NIF via path_for. Used for the layered
-    idle/turn clips (suffix "Breathe", "BreatheTurned", "TurnCaptain",
-    "BackCaptain"). Returns {"clip_nif": <data-root-relative path>} or None
-    (no location / no <location>+suffix registration / unresolvable).
+    Returns the resulting TGSequence if it is non-None and has at least one
+    action, else None.  Wraps the import / builder call in try/except so any
+    import error or builder exception collapses to None.
     """
     import importlib
-    import App
+    import App  # noqa: F401 — side-effects: registers path_for entries
 
     location = character.GetLocation()
     if not location:
@@ -103,6 +100,28 @@ def capture_registered_clip(character, suffix):
         return None
     if seq is None or seq.GetNumActions() == 0:
         return None
+    return seq
+
+
+def _nif_path_for_clip(clip_name):
+    """Return the data-root-relative NIF path for *clip_name*, or None/falsy."""
+    import App
+    return App.g_kAnimationManager.path_for(clip_name)
+
+
+def capture_registered_clip(character, suffix):
+    """Resolve the officer's SDK-registered "<location>"+suffix animation to its
+    clip NIF, or None.
+
+    The registered entry's module path is called as the SDK builder; the last
+    action's clip name resolves to a NIF via path_for. Used for the layered
+    idle/turn clips (suffix "Breathe", "BreatheTurned", "TurnCaptain",
+    "BackCaptain"). Returns {"clip_nif": <data-root-relative path>} or None
+    (no location / no <location>+suffix registration / unresolvable).
+    """
+    seq = _resolve_builder_sequence(character, suffix)
+    if seq is None:
+        return None
     # Seated TurnCaptain sequences interleave the officer's BODY clip (on the
     # character's anim node, kind="character") with the CHAIR clip (on the
     # bridge set node, kind="object") — and the chair comes LAST. Pick the last
@@ -120,11 +139,36 @@ def capture_registered_clip(character, suffix):
     if not clip_name:
         return None
 
-    clip_nif = App.g_kAnimationManager.path_for(clip_name)
+    clip_nif = _nif_path_for_clip(clip_name)
     if not clip_nif:
-        _logger.warning("capture_registered_clip: no path for %r (key %r)", clip_name, key)
+        _logger.warning("capture_registered_clip: no path for %r", clip_name)
         return None
     return {"clip_nif": clip_nif}
+
+
+def capture_chair_clip(character, suffix):
+    """The CHAIR clip from a multi-action TurnCaptain/BackCaptain builder: the
+    last action whose anim node is the BRIDGE node (kind=="object"), e.g.
+    db_chair_H_face_capt. Returns {"clip_nif": path} or None when the builder
+    has no object action or no resolvable path. Shares builder resolution with
+    capture_registered_clip (DRY)."""
+    seq = _resolve_builder_sequence(character, suffix)
+    if seq is None:
+        return None
+    action = None
+    for i in range(seq.GetNumActions() - 1, -1, -1):
+        a = seq.GetAction(i)
+        if getattr(getattr(a, "_anim_node", None), "kind", None) == "object":
+            action = a
+            break
+    if action is None:
+        return None
+    clip_name = getattr(action, "_clip", "") or getattr(action, "name", "")
+    path = _nif_path_for_clip(clip_name)
+    if not path:
+        _logger.warning("capture_chair_clip: no path for %r", clip_name)
+        return None
+    return {"clip_nif": path}
 
 
 def capture_breathing(character):
