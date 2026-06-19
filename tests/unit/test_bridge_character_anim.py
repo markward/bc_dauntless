@@ -239,3 +239,56 @@ def test_asset_resolver_applied(monkeypatch):
     assert (14, "/abs/TurnCaptain.nif") in r.loaded
     # Turn-to does not load BreatheTurned (it un-turns); it holds the turn.
     assert (14, "/abs/BreatheTurned.nif") not in r.loaded
+
+
+def test_node_controller_turn_chair_called_on_request_turn(monkeypatch):
+    """When a node controller is attached, turn_chair is called on request_turn
+    and unturn_chair on request_turn_back. Standing officers (chair=None) still
+    reach the node controller (it no-ops internally for None chair)."""
+    import engine.bridge_character_anim as mod
+    monkeypatch.setattr(mod, "capture_registered_clip",
+                        lambda ch, suffix: {"clip_nif": f"{suffix}.nif"})
+    # Monkeypatch capture_chair_clip: seated officer returns a dict, standing None.
+    monkeypatch.setattr(mod, "capture_chair_clip",
+                        lambda ch, suffix: {"clip_nif": f"chair_{suffix}.nif"})
+
+    class _FakeNodeCtrl:
+        def __init__(self):
+            self.turned = []
+            self.unturned = []
+        def turn_chair(self, officer, chair, *, renderer):
+            self.turned.append((officer, chair))
+        def unturn_chair(self, officer, chair, *, renderer):
+            self.unturned.append((officer, chair))
+
+    node_ctrl = _FakeNodeCtrl()
+    ctrl = mod.BridgeCharacterAnimController()
+    ctrl.set_node_controller(node_ctrl)
+    r = _FakeRenderer()
+    ch = _Char(15)
+
+    ctrl.request_turn(ch)
+    ctrl.update(0.0, renderer=r, anim_mgr=None)
+    assert len(node_ctrl.turned) == 1
+    assert node_ctrl.turned[0][0] is ch
+    assert node_ctrl.turned[0][1]["clip_nif"] == "chair_TurnCaptain.nif"
+
+    ctrl.request_turn_back(ch)
+    ctrl.update(0.0, renderer=r, anim_mgr=None)
+    assert len(node_ctrl.unturned) == 1
+    assert node_ctrl.unturned[0][0] is ch
+    assert node_ctrl.unturned[0][1]["clip_nif"] == "chair_BackCaptain.nif"
+
+
+def test_node_controller_not_called_when_absent(monkeypatch):
+    """Without set_node_controller the body-clip logic is unchanged."""
+    import engine.bridge_character_anim as mod
+    monkeypatch.setattr(mod, "capture_registered_clip",
+                        lambda ch, suffix: {"clip_nif": f"{suffix}.nif"})
+    ctrl = mod.BridgeCharacterAnimController()
+    # _node_ctrl defaults to None; no error on request_turn
+    r = _FakeRenderer()
+    ch = _Char(16)
+    ctrl.request_turn(ch)
+    ctrl.update(0.0, renderer=r, anim_mgr=None)
+    assert r.played  # body clip still plays

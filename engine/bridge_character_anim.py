@@ -9,7 +9,7 @@ ends the controller issues restore_rest_pose (the SDK's AT_DEFAULT). Reactions
 a busy character is dropped. Mirrors engine/bridge_cutscene.py.
 """
 
-from engine.appc.bridge_placement import capture_registered_clip
+from engine.appc.bridge_placement import capture_registered_clip, capture_chair_clip
 
 _IDLE = 0
 _REACTION = 1
@@ -46,6 +46,12 @@ class BridgeCharacterAnimController:
         self._idle_clips = {}       # iid -> looping breathe clip index
         self._pending_turns = []    # [(character, turn_bool), ...]
         self._resolve = asset_resolver or (lambda p: p)
+        self._node_ctrl = None      # BridgeNodeAnimController (optional)
+
+    def set_node_controller(self, ctrl) -> None:
+        """Attach a BridgeNodeAnimController that handles the chair half of
+        TurnCaptain / BackCaptain. Call once from the host after construction."""
+        self._node_ctrl = ctrl
 
     def is_busy(self, character) -> bool:
         iid = getattr(character, "_render_instance", None)
@@ -147,6 +153,24 @@ class BridgeCharacterAnimController:
             if move:
                 self.submit(character, [(self._resolve(move["clip_nif"]), 0.0)],
                             priority=_TURN, hold=False)
+        # Chair half: rotate the seat + couple the seated officer (delegated to
+        # the bridge-node controller). Standing officers have no chair action
+        # (capture_chair_clip returns None) -> no-op, body turn only.
+        node_ctrl = getattr(self, "_node_ctrl", None)
+        if node_ctrl is not None:
+            chair = capture_chair_clip(character, "TurnCaptain" if turn
+                                       else "BackCaptain")
+            if turn:
+                node_ctrl.turn_chair(character, chair, renderer=renderer)
+            else:
+                node_ctrl.unturn_chair(character, chair, renderer=renderer)
+                # Do NOT release coupling here: the officer must keep riding the
+                # seat as the reverse clip plays back. The coupling self-heals to
+                # identity when the chair settles at rest (R_delta -> I -> the
+                # officer's placement) and stays there harmlessly. Coupling is
+                # dropped only on reset() (mission swap) or when re-turned (the
+                # _coupled dict entry is overwritten). Releasing now would freeze
+                # the officer at the turned pose while the chair animates back.
 
     def _return_to_default(self, renderer, iid) -> None:
         """Resume the looping breathe idle if one is registered; otherwise snap

@@ -2942,10 +2942,16 @@ def run(mission_name: Optional[str] = None,
         from engine.bridge_character_anim import (
             BridgeCharacterAnimController, set_controller as set_char_anim,
         )
+        from engine.bridge_node_anim import BridgeNodeAnimController
         from engine.bridge_idle_gestures import IdleGestureScheduler
         import random as _random
         char_anim = BridgeCharacterAnimController(asset_resolver=_game_asset_path)
         set_char_anim(char_anim)
+        node_anim = BridgeNodeAnimController(
+            bridge_iid_getter=lambda: controller.bridge_instance,
+            asset_resolver=_game_asset_path,
+        )
+        char_anim.set_node_controller(node_anim)
         idle_gestures = IdleGestureScheduler(_random.Random(0xB1D6E))
 
         from engine.bridge_hit_reactions import HitReactionHandler
@@ -3492,6 +3498,7 @@ def run(mission_name: Optional[str] = None,
                     cutscene.reset()
                     char_anim.reset()
                     idle_gestures.reset()
+                    node_anim.reset(renderer=r)
                 controller._drain_pending_swap()
                 if had_pending_swap:
                     director.snap()
@@ -3695,6 +3702,7 @@ def run(mission_name: Optional[str] = None,
                         char_anim.update(
                             _player_dt, renderer=r,
                             anim_mgr=_App.g_kAnimationManager)
+                        node_anim.update(r)
                     mouse_dx, mouse_dy = _h.consume_mouse_delta() if _h else (0.0, 0.0)
                     # While paused we still drain the accumulated mouse
                     # delta (so it doesn't snap the look on resume) but
