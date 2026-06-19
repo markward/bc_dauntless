@@ -63,6 +63,7 @@ from engine.appc import (
     combat,
     damage_eligibility,
 )
+from engine.appc import viewscreen_static as _vss
 # combat is imported as a module (not `from combat import apply_hit`) so call
 # sites read combat.apply_hit at call time — tests monkeypatch that attribute.
 from engine.appc.sensor_detection import can_detect
@@ -2643,6 +2644,38 @@ def _comm_feed_view(cam, get_bounds):
     return eye, target, up, fov, near, far
 
 
+def drive_viewscreen_static_and_brightness(r, controller, ramp, dt,
+                                           *, intensity_fn=_vss.static_intensity):
+    """Per-frame: push the static overlay + ViewOn/ViewOff brightness fade to
+    the renderer from the SDK-driven ViewScreenObject state. Pure w.r.t. the
+    renderer/controller it's given, so it's unit-tested with fakes."""
+    vs = getattr(controller, "viewscreen_obj", None)
+
+    # Feed signature for the brightness ramp.
+    if vs is None or not vs.IsOn():
+        signature = ("off",)
+    else:
+        try:
+            feed = _active_comm_feed(controller)
+        except AttributeError:
+            feed = None
+        signature = ("comm", feed[0]) if feed is not None else ("forward",)
+    r.set_viewscreen_brightness(ramp.update(signature, dt))
+
+    # Static overlay (only when the SDK turned it on with a positive range).
+    if (vs is not None and vs.IsStaticOn()
+            and getattr(vs, "_static_max", 0.0) > 0.0):
+        paths = _vss.static_texture_paths(getattr(vs, "_static_icon_group", None))
+        if paths and paths != getattr(controller, "_vs_static_paths_sent", None):
+            r.set_viewscreen_static_source(paths)
+            controller._vs_static_paths_sent = paths
+        intensity = intensity_fn(getattr(vs, "_static_min", 0.0),
+                                 getattr(vs, "_static_max", 0.0))
+        r.set_viewscreen_static(True, intensity)
+    else:
+        r.set_viewscreen_static(False, 0.0)
+
+
 def _apply_bridge_player_visibility(r, player_iid, *, is_bridge, spv_open) -> None:
     """Hide the player ship while in bridge view so it doesn't appear on its
     own viewscreen feed (and the centre-mounted forward cam doesn't clip its
@@ -3672,6 +3705,13 @@ def run(mission_name: Optional[str] = None,
                                              _fov, _near, _far)
             else:
                 r.clear_viewscreen_comm_source()
+            # Static overlay + ViewOn/ViewOff brightness fade (SDK-driven).
+            _vs_ramp = getattr(controller, "_viewscreen_brightness_ramp", None)
+            if _vs_ramp is None:
+                _vs_ramp = ViewscreenBrightnessRamp()
+                controller._viewscreen_brightness_ramp = _vs_ramp
+            drive_viewscreen_static_and_brightness(
+                r, controller, _vs_ramp, _player_dt)
             _player_iid_vs = (session.ship_instances.get(player)
                               if session is not None and player is not None else None)
             _apply_bridge_player_visibility(
