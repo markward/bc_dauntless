@@ -366,6 +366,8 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
     from engine.appc import subsystem_cascade, warp_core_breach
     subsystem_cascade.advance(dt)
     warp_core_breach.advance(dt, host=host, ship_instances=ship_instances)
+    from engine.appc import core_breach_carve
+    core_breach_carve.advance(dt, host=host, ship_instances=ship_instances)
     subsystem_emitters.pump(ships_list, _camera_world_pos(host), dt)
     camera_shake.update(dt)
 
@@ -2086,6 +2088,8 @@ class HostController:
         subsystem_cascade.reset()
         from engine.appc import warp_core_breach
         warp_core_breach.reset()
+        from engine.appc import core_breach_carve
+        core_breach_carve.reset()
         from engine.appc import shockwaves
         shockwaves.reset()
         from engine.appc import subsystem_emitters
