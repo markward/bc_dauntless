@@ -567,3 +567,176 @@ def test_destroyed_ship_excluded_from_target_list():
     finally:
         from engine.core.game import _set_current_game
         _set_current_game(None)
+
+
+# ── Destroyed-subsystem delisting + lock handoff ─────────────────────────────
+
+def _make_phaser_aggregator_ship(name="USS Galaxy"):
+    """Build a targeted ship carrying a Phasers aggregator subsystem with
+    two child banks, registered in the bridge set so SetTarget resolves it.
+    Returns the ship."""
+    from engine.appc.ships import ShipClass_Create
+    from engine.appc.sets import SetClass
+    from engine.appc.properties import WeaponSystemProperty, PhaserProperty
+
+    ship = ShipClass_Create("Galaxy")
+    ship.SetName(name)
+    bridge = App.g_kSetManager.GetSet("bridge")
+    if bridge is None:
+        bridge = SetClass()
+        App.g_kSetManager.AddSet(bridge, "bridge")
+    bridge.AddObjectToSet(ship, name)
+
+    ps = ship.GetPropertySet()
+    phasers = WeaponSystemProperty("Phasers")
+    phasers.SetWeaponSystemType(WeaponSystemProperty.WST_PHASER)
+    ps.AddToSet("Scene Root", phasers)
+    ps.AddToSet("Scene Root", PhaserProperty("Dorsal Phaser 1"))
+    ps.AddToSet("Scene Root", PhaserProperty("Dorsal Phaser 2"))
+    ship.SetupProperties()
+    return ship
+
+
+def _resolve(ship, name):
+    from engine.ui.target_list_view import _resolve_subsystem_by_name
+    return _resolve_subsystem_by_name(ship, name)
+
+
+def test_destroyed_child_subsystem_removed_but_parent_kept():
+    """A child subsystem at zero condition drops off its parent's child
+    list, but the parent stays as long as a sibling survives."""
+    from engine.ui.target_list_view import TargetListView
+    App._reset_target_menu_singleton()
+    target_menu = App.STTargetMenu_CreateW("Targets")
+    game, player, mission = _setup_game_with_player()
+    try:
+        ship = _make_phaser_aggregator_ship()
+        target_menu.RebuildShipMenu(ship)
+
+        _resolve(ship, "Dorsal Phaser 1").SetCondition(0.0)  # destroyed
+
+        view = TargetListView()
+        script = view.render_payload()
+        state = json.loads(script[len("setTargetList("):-2])
+        row = next(r for r in state["rows"] if r["name"] == "USS Galaxy")
+        phasers = next(s for s in row["subsystems"] if s["name"] == "Phasers")
+        child_names = [c["name"] for c in phasers["children"]]
+        assert child_names == ["Dorsal Phaser 2"]
+    finally:
+        App.g_kSetManager.DeleteSet("bridge")
+        from engine.core.game import _set_current_game
+        _set_current_game(None)
+
+
+def test_parent_delisted_when_all_children_destroyed():
+    """When every child of a parent group is destroyed, the parent itself
+    drops off the target list."""
+    from engine.ui.target_list_view import TargetListView
+    App._reset_target_menu_singleton()
+    target_menu = App.STTargetMenu_CreateW("Targets")
+    game, player, mission = _setup_game_with_player()
+    try:
+        ship = _make_phaser_aggregator_ship()
+        target_menu.RebuildShipMenu(ship)
+
+        _resolve(ship, "Dorsal Phaser 1").SetCondition(0.0)
+        _resolve(ship, "Dorsal Phaser 2").SetCondition(0.0)
+
+        view = TargetListView()
+        script = view.render_payload()
+        state = json.loads(script[len("setTargetList("):-2])
+        row = next(r for r in state["rows"] if r["name"] == "USS Galaxy")
+        names = [s["name"] for s in row["subsystems"]]
+        assert "Phasers" not in names
+    finally:
+        App.g_kSetManager.DeleteSet("bridge")
+        from engine.core.game import _set_current_game
+        _set_current_game(None)
+
+
+def test_destroyed_leaf_subsystem_removed_from_list():
+    """A top-level subsystem with no children, when destroyed, drops off."""
+    from engine.ui.target_list_view import TargetListView
+    App._reset_target_menu_singleton()
+    target_menu = App.STTargetMenu_CreateW("Targets")
+    game, player, mission = _setup_game_with_player()
+    try:
+        ship = _make_targeted_ship("USS Galaxy")
+        # Pick the first top-level subsystem that has no children.
+        it = ship.StartGetSubsystemMatch(App.CT_SHIP_SUBSYSTEM)
+        leaf = None
+        sub = ship.GetNextSubsystemMatch(it)
+        while sub is not None:
+            if sub.GetNumChildSubsystems() == 0:
+                leaf = sub
+                break
+            sub = ship.GetNextSubsystemMatch(it)
+        ship.EndGetSubsystemMatch(it)
+        assert leaf is not None
+        leaf_name = leaf.GetName()
+        leaf.SetCondition(0.0)
+
+        target_menu.RebuildShipMenu(ship)
+        view = TargetListView()
+        script = view.render_payload()
+        state = json.loads(script[len("setTargetList("):-2])
+        row = next(r for r in state["rows"] if r["name"] == "USS Galaxy")
+        names = [s["name"] for s in row["subsystems"]]
+        assert leaf_name not in names
+    finally:
+        App.g_kSetManager.DeleteSet("bridge")
+        from engine.core.game import _set_current_game
+        _set_current_game(None)
+
+
+def test_locked_subsystem_destroyed_reassigns_to_next_sibling():
+    """When the locked subsystem is destroyed, the lock moves to the next
+    surviving sibling in the same group."""
+    from engine.ui.target_list_view import TargetListView
+    App._reset_target_menu_singleton()
+    target_menu = App.STTargetMenu_CreateW("Targets")
+    game, player, mission = _setup_game_with_player()
+    try:
+        ship = _make_phaser_aggregator_ship()
+        target_menu.RebuildShipMenu(ship)
+        bank1 = _resolve(ship, "Dorsal Phaser 1")
+        bank2 = _resolve(ship, "Dorsal Phaser 2")
+        player.SetTarget("USS Galaxy")
+        player.SetTargetSubsystem(bank1)
+
+        bank1.SetCondition(0.0)  # destroyed
+        view = TargetListView()
+        view.render_payload()  # drives reconciliation
+
+        assert player.GetTargetSubsystem() is bank2
+    finally:
+        App.g_kSetManager.DeleteSet("bridge")
+        from engine.core.game import _set_current_game
+        _set_current_game(None)
+
+
+def test_last_child_destroyed_clears_lock_to_ship_level():
+    """When the last surviving child in the group is destroyed, the
+    subsystem lock clears (back to ship-level targeting)."""
+    from engine.ui.target_list_view import TargetListView
+    App._reset_target_menu_singleton()
+    target_menu = App.STTargetMenu_CreateW("Targets")
+    game, player, mission = _setup_game_with_player()
+    try:
+        ship = _make_phaser_aggregator_ship()
+        target_menu.RebuildShipMenu(ship)
+        bank1 = _resolve(ship, "Dorsal Phaser 1")
+        bank2 = _resolve(ship, "Dorsal Phaser 2")
+        player.SetTarget("USS Galaxy")
+        player.SetTargetSubsystem(bank2)
+
+        bank1.SetCondition(0.0)
+        bank2.SetCondition(0.0)  # whole group gone
+        view = TargetListView()
+        view.render_payload()  # drives reconciliation
+
+        assert player.GetTargetSubsystem() is None
+    finally:
+        App.g_kSetManager.DeleteSet("bridge")
+        from engine.core.game import _set_current_game
+        _set_current_game(None)

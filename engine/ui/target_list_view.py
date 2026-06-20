@@ -111,6 +111,49 @@ def _query_subsystem_condition(ship, name: str) -> int:
         return 100
 
 
+def _query_subsystem_destroyed(ship, name: str) -> bool:
+    """True when the named subsystem is permanently destroyed (``IsDestroyed``).
+
+    Defaults to False on any resolution/getter failure so a transient lookup
+    miss never wrongly hides a live system — the mirror of
+    ``_query_subsystem_condition`` defaulting to a full bar."""
+    if ship is None or not name:
+        return False
+    sub = _resolve_subsystem_by_name(ship, name)
+    if sub is None or not hasattr(sub, "IsDestroyed"):
+        return False
+    try:
+        return bool(sub.IsDestroyed())
+    except Exception:
+        return False
+
+
+def _next_living_sibling(sub):
+    """Return the next non-destroyed sibling of ``sub`` within its parent
+    subsystem group, searching cyclically from ``sub``. Returns None when the
+    group has no surviving sibling or ``sub`` has no parent group (a top-level
+    or last-of-group subsystem) — the caller reads None as "drop the lock back
+    to ship level"."""
+    parent = sub.GetParentSubsystem() if hasattr(sub, "GetParentSubsystem") else None
+    if parent is None or not hasattr(parent, "GetNumChildSubsystems"):
+        return None
+    n = parent.GetNumChildSubsystems()
+    siblings = [parent.GetChildSubsystem(i) for i in range(n)]
+    start = next((i for i, s in enumerate(siblings) if s is sub), -1)
+    order = siblings[start + 1:] + siblings[:start + 1] if start >= 0 else siblings
+    for cand in order:
+        if cand is None or cand is sub:
+            continue
+        if hasattr(cand, "IsDestroyed"):
+            try:
+                if cand.IsDestroyed():
+                    continue
+            except Exception:
+                pass
+        return cand
+    return None
+
+
 class TargetListView(Panel):
     @property
     def name(self) -> str:
@@ -166,13 +209,33 @@ class TargetListView(Panel):
                     def _sub_entry(sub_child):
                         label = sub_child.GetLabel()
                         cond = _query_subsystem_condition(ship, label)
+                        # Destroyed children drop out of the parent's child list.
                         kids = tuple(
                             (gc.GetLabel(), _query_subsystem_condition(ship, gc.GetLabel()))
                             for gc in getattr(sub_child, "_children", ())
+                            if not _query_subsystem_destroyed(ship, gc.GetLabel())
                         )
                         expanded = (ship_name_for_keys + "/" + label) in self._expanded_subsystems
                         return (label, cond, kids, expanded)
-                    subsystems = tuple(_sub_entry(sub_child) for sub_child in child._children)
+
+                    def _keep(sub_child):
+                        # A parent group stays listed while at least one child
+                        # survives; once every child is destroyed the parent is
+                        # delisted too. A childless (leaf) row is delisted when
+                        # it is itself destroyed.
+                        menu_children = getattr(sub_child, "_children", ())
+                        if menu_children:
+                            return any(
+                                not _query_subsystem_destroyed(ship, gc.GetLabel())
+                                for gc in menu_children
+                            )
+                        return not _query_subsystem_destroyed(ship, sub_child.GetLabel())
+
+                    subsystems = tuple(
+                        _sub_entry(sub_child)
+                        for sub_child in child._children
+                        if _keep(sub_child)
+                    )
                     name = ship.GetName()
                     rows.append((
                         name,
@@ -196,7 +259,29 @@ class TargetListView(Panel):
                 selected_subsystem = target_sub.GetName()
         return (self._visible, selected, selected_subsystem, tuple(rows))
 
+    def _reconcile_subsystem_lock(self) -> None:
+        """If the player's locked subsystem has been destroyed, hand the lock
+        off to the next surviving sibling in its group; when the whole group is
+        gone, clear the lock back to ship-level targeting. Runs every tick so a
+        subsystem dying from any cause triggers the handoff."""
+        from engine.core.game import Game_GetCurrentGame
+        game = Game_GetCurrentGame()
+        player = game.GetPlayer() if game is not None else None
+        if player is None or not hasattr(player, "GetTargetSubsystem"):
+            return
+        locked = player.GetTargetSubsystem()
+        if locked is None or not hasattr(locked, "IsDestroyed"):
+            return
+        try:
+            destroyed = bool(locked.IsDestroyed())
+        except Exception:
+            return
+        if not destroyed:
+            return
+        player.SetTargetSubsystem(_next_living_sibling(locked))
+
     def render_payload(self) -> Optional[str]:
+        self._reconcile_subsystem_lock()
         snapshot = self._snapshot()
         if snapshot == self._last_snapshot:
             return None
