@@ -63,6 +63,8 @@ embed_shader(SHADER_BLOOM_DOWN_FS shaders/bloom_down.frag bloom_down_fs)
 embed_shader(SHADER_BLOOM_UP_FS shaders/bloom_up.frag bloom_up_fs)
 embed_shader(SHADER_SHOCKWAVE_VS shaders/shockwave.vert shockwave_vs)
 embed_shader(SHADER_SHOCKWAVE_FS shaders/shockwave.frag shockwave_fs)
+embed_shader(SHADER_SKYBOX_VS shaders/skybox.vert skybox_vs)
+embed_shader(SHADER_SKYBOX_FS shaders/skybox.frag skybox_fs)
 
 add_library(renderer STATIC
     window.cc
@@ -75,6 +77,7 @@ add_library(renderer STATIC
     pipeline.cc
     frame.cc
     hdr_target.cc
+    cubemap_target.cc
     ldr_target.cc
     bloom_pass.cc
     resolve_pass.cc

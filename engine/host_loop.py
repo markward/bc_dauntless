@@ -1884,12 +1884,27 @@ def _aggregate_bridge_lights():
     return aggregate_bridge_for_renderer(DEFAULT_AMBIENT, DEFAULT_DIRECTIONALS)
 
 
-def _aggregate_backdrops(pSet):
-    """Thin wrapper over engine.appc.backdrops.aggregate_for_renderer
-    that supplies PROJECT_ROOT, mirroring _aggregate_lights's wrapping
-    of aggregate_for_renderer in lights.py."""
+def _authored_backdrops(pSet):
+    """Stock-BC backdrops: this set's authored BackdropSphere objects."""
     from engine.appc.backdrops import aggregate_for_renderer
     return aggregate_for_renderer(pSet, PROJECT_ROOT)
+
+
+def _aggregate_backdrops(pSet):
+    """Backdrop descriptors for the active set.
+
+    Procedural toggle ON  -> map-driven sky (the sector model projected from
+    this system's vantage), falling back to authored backdrops if the system
+    is unmapped. Toggle OFF -> stock BC (authored backdrops).
+    """
+    name = pSet.GetName() if pSet is not None else None
+    if r.procedural_sky_enabled():
+        from engine.appc import sky_projection as sp
+        model = sp.load_sector_model()
+        vantage = sp.vantage_for_set(pSet, model)
+        if vantage is not None:
+            return sp.project_sky(vantage, model)
+    return _authored_backdrops(pSet)
 
 
 # BC's universal NIF→world scale.  Sourced from BC's ModelPropertyEditor
