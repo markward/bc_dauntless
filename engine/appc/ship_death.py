@@ -14,6 +14,8 @@ See docs/superpowers/specs/2026-06-11-ship-death-sequence-design.md.
 import engine.dev_mode as dev_mode
 
 THROES_DURATION       = 5.0   # seconds the ship coasts, dying, before removal
+WRECK_LINGER_DURATION = 5.0   # seconds a dead hull lingers, selectable in the
+                              # target list, after the throes before removal
 # Explosion VFX tunables (consumed by _spawn_explosion), kept beside
 # THROES_DURATION. Tuned by feel.
 EXPLOSION_SIZE_FACTOR   = 0.75  # per-puff size as a fraction of ship radius
@@ -49,7 +51,7 @@ def begin(ship) -> None:
         return
     if hasattr(ship, "SetDying"):
         ship.SetDying(True)
-    _active.append({"ship": ship, "time_left": THROES_DURATION})
+    _active.append({"ship": ship, "phase": "throes", "time_left": THROES_DURATION})
     _spawn_explosion(ship)
 
 
@@ -73,8 +75,10 @@ def _clear_target_locks(dying) -> None:
 
 
 def advance(dt: float) -> None:
-    """Tick every in-progress death sequence. When a timer expires, mark
-    the ship dead and remove it from its set. Prunes completed entries."""
+    """Tick every in-progress death sequence. A 'throes' entry that expires
+    becomes a dead, still-selectable wreck (the death-marker fires, but the
+    hull stays in its set and keeps its locks); a 'linger' entry that expires
+    is finally removed. Only fully-removed entries are pruned."""
     if not _active:
         return
     survivors = []
@@ -83,26 +87,46 @@ def advance(dt: float) -> None:
         if entry["time_left"] > 0.0:
             survivors.append(entry)
             continue
-        _finish(entry["ship"])
+        if entry["phase"] == "throes":
+            _mark_dead(entry["ship"])
+            entry["phase"] = "linger"
+            entry["time_left"] = WRECK_LINGER_DURATION
+            survivors.append(entry)          # wreck lingers, still selectable
+        else:  # "linger"
+            _remove(entry["ship"])           # pruned (not re-appended)
     _active[:] = survivors
 
 
-def _finish(ship) -> None:
-    """Death instant: mark dead, release locks held on the ship, broadcast
-    ET_OBJECT_DESTROYED, then remove from set. Order matters — the event
-    fires while the handle is still in the set so handlers can read the
-    ship's name/position. Locks persist through the throes (the player keeps
-    watching the wreck) and release only here, when the ship actually goes."""
+def _mark_dead(ship) -> None:
+    """End of throes: mark the ship dead and broadcast ET_OBJECT_DESTROYED so
+    mission logic and ship_lifecycle.publish_destroyed (fired by SetDead) run
+    on schedule. The hull stays in its set and keeps its target locks — it
+    lingers as a selectable wreck for WRECK_LINGER_DURATION."""
     if hasattr(ship, "SetDead"):
         ship.SetDead()
-    _clear_target_locks(ship)
     _broadcast_destroyed(ship)
+
+
+def _remove(ship) -> None:
+    """End of linger: release every lock held on the wreck, then remove it from
+    its set. Order matters — locks clear while the handle is still in the set
+    so firing ships drop their target pointers against a valid object."""
+    _clear_target_locks(ship)
     try:
         pSet = ship.GetContainingSet() if hasattr(ship, "GetContainingSet") else None
         if pSet is not None and hasattr(ship, "GetName"):
             pSet.RemoveObjectFromSet(ship.GetName())
     except Exception as _e:
         dev_mode.log_swallowed("remove dead ship from set", _e)
+
+
+def is_targetable_wreck(ship) -> bool:
+    """True while `ship` is in an in-progress death/linger sequence (dying or a
+    dead wreck not yet removed). The HUD target list uses this to keep a
+    destroyed ship selectable through the throes + linger window. Identity
+    match against the active registry; no engine calls, so it is safe to call
+    on any object."""
+    return any(entry["ship"] is ship for entry in _active)
 
 
 def _broadcast_destroyed(ship) -> None:

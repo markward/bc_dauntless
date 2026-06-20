@@ -53,13 +53,25 @@ def test_begin_is_idempotent():
     assert ship.IsDead() == 0
 
 
-def test_advance_transitions_to_dead_and_removes_after_throes():
+def test_advance_marks_dead_at_throes_but_keeps_wreck_in_set():
     s = FakeSet()
     ship = FakeShip(name="Doomed", containing_set=s)
     ship_death.begin(ship)
-    ship_death.advance(ship_death.THROES_DURATION)  # timer expires
+    ship_death.advance(ship_death.THROES_DURATION)   # throes expire
+    # Death-marker fired, but the wreck lingers — NOT removed yet.
     assert ship.IsDead() == 1
+    assert s.removed == []
+    assert ship_death.is_targetable_wreck(ship) is True
+
+
+def test_advance_removes_wreck_after_throes_plus_linger():
+    s = FakeSet()
+    ship = FakeShip(name="Doomed", containing_set=s)
+    ship_death.begin(ship)
+    ship_death.advance(ship_death.THROES_DURATION)        # -> linger
+    ship_death.advance(ship_death.WRECK_LINGER_DURATION)  # linger expires
     assert s.removed == ["Doomed"]
+    assert ship_death.is_targetable_wreck(ship) is False
 
 
 def test_advance_does_not_kill_before_throes_elapse():
@@ -70,14 +82,52 @@ def test_advance_does_not_kill_before_throes_elapse():
     assert ship.IsDying() == 1
 
 
-def test_entry_pruned_after_death():
+def test_wreck_entry_pruned_after_final_removal():
+    s = FakeSet()
+    ship = FakeShip(name="Doomed", containing_set=s)
+    ship_death.begin(ship)
+    ship_death.advance(ship_death.THROES_DURATION)
+    ship_death.advance(ship_death.WRECK_LINGER_DURATION)  # removed once
+    s.removed.clear()
+    ship_death.advance(1.0)   # entry pruned -> no second removal
+    assert s.removed == []
+
+
+def test_is_targetable_wreck_false_for_untracked_ship():
+    ship = FakeShip()
+    assert ship_death.is_targetable_wreck(ship) is False
+
+
+def test_locks_clear_only_at_final_removal(monkeypatch):
+    cleared = []
+    monkeypatch.setattr(ship_death, "_clear_target_locks",
+                        lambda s: cleared.append(s))
     ship = FakeShip()
     ship_death.begin(ship)
     ship_death.advance(ship_death.THROES_DURATION)
-    # A second advance after death must be a no-op (entry pruned, no re-removal).
-    ship._set.removed.clear()
-    ship_death.advance(1.0)
-    assert ship._set.removed == []
+    assert cleared == []                 # not cleared at throes end
+    ship_death.advance(ship_death.WRECK_LINGER_DURATION)
+    assert cleared == [ship]             # cleared only at linger end
+
+
+def test_destroyed_event_fires_at_throes_not_linger():
+    import App
+    seen = []
+    orig = App.g_kEventManager.AddEvent
+
+    def capture(evt):
+        seen.append(evt.GetEventType())
+        return orig(evt)
+    App.g_kEventManager.AddEvent = capture
+    try:
+        ship = FakeShip()
+        ship_death.begin(ship)
+        ship_death.advance(ship_death.THROES_DURATION)
+        assert App.ET_OBJECT_DESTROYED in seen   # fired at the 5s mark
+        assert ship.IsDead() == 1
+        assert ship._set.removed == []           # still in set (lingering)
+    finally:
+        App.g_kEventManager.AddEvent = orig
 
 
 def test_reset_clears_registry():
@@ -443,10 +493,11 @@ def test_descriptor_anchors_at_last_world_location_when_unresolved():
 
 # --- Target-lock release at end of death sequence ----------------------------
 def test_locks_held_through_throes_and_released_at_finish():
-    """Locks on the dying ship persist through the throes window (the player
-    keeps watching the wreck) and release at the END of the sequence — both
-    the target and the targeted-subsystem lock (which BC stores on the
-    FIRING ship). Unrelated locks survive throughout."""
+    """Locks on the dying ship persist through the throes window AND the linger
+    window (the player keeps watching the selectable wreck) and release only at
+    the END of the full sequence (throes + linger) — both the target and the
+    targeted-subsystem lock (which BC stores on the FIRING ship). Unrelated
+    locks survive throughout."""
     import App
     from engine.appc.ships import ShipClass
 
@@ -471,8 +522,14 @@ def test_locks_held_through_throes_and_released_at_finish():
         assert attacker.GetTargetSubsystem() is not None
 
         ship_death.advance(ship_death.THROES_DURATION / 2.0)
-        # Sequence complete: locks on the wreck released; unrelated kept.
+        # Throes elapsed: ship is dead and marked, but still lingering as a
+        # selectable wreck — locks persist, wreck not removed yet.
         assert victim.IsDead() == 1
+        assert attacker.GetTarget() is victim
+        assert attacker.GetTargetSubsystem() is not None
+
+        ship_death.advance(ship_death.WRECK_LINGER_DURATION)
+        # Full sequence complete: locks on the wreck released; unrelated kept.
         assert attacker.GetTarget() is None
         assert attacker.GetTargetSubsystem() is None
         assert bystander.GetTarget() is other
