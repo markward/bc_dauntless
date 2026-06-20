@@ -15,7 +15,8 @@ See docs/superpowers/specs/2026-06-20-warp-core-breach-design.md.
 import engine.dev_mode as dev_mode
 
 BREACH_DAMAGE_FACTOR   = 1.0   # centre damage = factor * core max condition
-BREACH_RADIUS_GU       = 1.3   # 10x photon torpedo DRF (0.13 GU)
+BREACH_RADIUS_GU       = 4.0   # shared AoE damage radius AND shockwave ring max
+                               # radius; tuned to the dramatic visual (was 1.3)
 BREACH_FIREBALL_FACTOR = 2.0   # fireball size vs ship radius (tuned by feel)
 
 _armed: list = []      # ships queued to detonate (FIFO)
@@ -50,7 +51,7 @@ def advance(dt: float, host=None, ship_instances=None) -> None:
 
 def detonate(ship, host=None, ship_instances=None) -> None:
     """Massive explosion at the warp core's world position: weapon-style AoE
-    damage to every ship in BREACH_RADIUS_GU + a fireball. Raise-safe."""
+    damage to every ship in BREACH_RADIUS_GU + a shockwave ring VFX. Raise-safe."""
     from engine.appc import combat
     from engine.appc.subsystems import subsystem_world_position
     from engine.appc.ship_iter import iter_ships
@@ -61,7 +62,11 @@ def detonate(ship, host=None, ship_instances=None) -> None:
     centre = subsystem_world_position(core, ship)
     magnitude = BREACH_DAMAGE_FACTOR * float(core.GetMaxCondition())
 
-    _spawn_fireball(ship, core)
+    try:
+        from engine.appc import shockwaves
+        shockwaves.spawn(centre, BREACH_RADIUS_GU, shockwaves.SHOCKWAVE_LIFETIME)
+    except Exception as _e:
+        dev_mode.log_swallowed("spawn warp core shockwave", _e)
 
     for target in list(iter_ships()):
         if target is ship:
@@ -109,32 +114,6 @@ def _impact_point(target, centre, host, ship_instances):
                         loc.z - direction.z * r_tgt)
     return _resolve_hit_point(host, ship_instances, target,
                               origin, direction, dist + r_tgt, fallback)
-
-
-def _spawn_fireball(ship, core) -> None:
-    """One large ExplosionA fireball at the core's body offset. Raise-safe —
-    VFX must never block the damage path (mirrors ship_death._spawn_explosion)."""
-    try:
-        import Effects
-        from engine.appc.math import TGPoint3
-        radius = ship.GetRadius() if hasattr(ship, "GetRadius") else 1.0
-        size = max(radius * BREACH_FIREBALL_FACTOR, 4.0)
-        pos = core.GetPosition() if hasattr(core, "GetPosition") else TGPoint3(0, 0, 0)
-        action = Effects.CreateExplosionPuffHigh(
-            2.0,                                # fLife
-            size,                               # fSize
-            ship,                               # pEmitFrom — tracks the hull
-            TGPoint3(pos.x, pos.y, pos.z),      # kEmitPos — warp core body offset
-            TGPoint3(0.0, 0.0, 1.0),            # kEmitDir
-            None,                               # pAttachTo
-        )
-        ctrl = action.GetController() if hasattr(action, "GetController") else None
-        if ctrl is not None:
-            ctrl.CreateTarget("data/Textures/Effects/ExplosionA.tga")
-        if action is not None and hasattr(action, "Play"):
-            action.Play()
-    except Exception as _e:
-        dev_mode.log_swallowed("spawn warp core fireball", _e)
 
 
 def reset() -> None:

@@ -187,3 +187,34 @@ def test_reset_clears_state(monkeypatch):
     warp_core_breach.reset()
     warp_core_breach.advance(0.0)
     assert calls == []
+
+
+def test_breach_radius_is_four_gu():
+    # Single source of truth for damage AoE and the visual ring.
+    assert warp_core_breach.BREACH_RADIUS_GU == 4.0
+
+
+def test_detonate_spawns_one_shockwave_at_core_center(monkeypatch):
+    from engine.appc import shockwaves
+    spawned = []
+    monkeypatch.setattr(shockwaves, "spawn",
+                        lambda center, max_radius, lifetime:
+                        spawned.append((center, max_radius, lifetime)))
+    # No neighbours needed; we only assert the shockwave spawn.
+    import engine.appc.ship_iter as ship_iter
+    src = _Ship("Doomed", TGPoint3(2.0, 0.0, 0.0), core=_Core(5000.0))
+    monkeypatch.setattr(ship_iter, "iter_ships", lambda *a, **k: [src])
+
+    warp_core_breach.detonate(src)
+
+    assert len(spawned) == 1
+    center, max_radius, lifetime = spawned[0]
+    # Core is at body origin on a ship at (2,0,0) with identity rotation, so the
+    # world center is the ship location.
+    assert (round(center.x, 5), round(center.y, 5), round(center.z, 5)) == (2.0, 0.0, 0.0)
+    assert max_radius == warp_core_breach.BREACH_RADIUS_GU
+    assert lifetime == shockwaves.SHOCKWAVE_LIFETIME
+
+
+def test_detonate_no_longer_has_spawn_fireball():
+    assert not hasattr(warp_core_breach, "_spawn_fireball")
