@@ -288,15 +288,16 @@ void draw_model(const assets::Model& model,
     // 2=specular, 3=damage_decal).
     {
         const bool shadows_on = active_shadow_enabled();
+        const int unit = 5;
         prog.set_int("u_shadows_enabled", shadows_on ? 1 : 0);
+        // Always assign the shadow sampler its own unit so the sampler2DShadow never collides with the base sampler2D on unit 0 (GL_INVALID_OPERATION), even when shadows are disabled.
+        prog.set_int("u_shadow_map", unit);
         if (shadows_on) {
             const ShadowLight& light = active_shadow_light();
             prog.set_mat4("u_light_view_proj", light.view_proj);
             prog.set_float("u_shadow_texel", light.texel_world_size);
-            const int unit = 5;
             glActiveTexture(GL_TEXTURE0 + unit);
             glBindTexture(GL_TEXTURE_2D, active_shadow_texture());
-            prog.set_int("u_shadow_map", unit);
             glActiveTexture(GL_TEXTURE0);  // restore default active unit
         }
     }

@@ -151,6 +151,11 @@ protected:
         glActiveTexture(GL_TEXTURE2);
         glBindTexture(GL_TEXTURE_2D, black_tex_);
         s.set_int("u_specular_map", 2);
+        // Shadows off, but the sampler2DShadow must still get its own unit (5)
+        // so it never collides with the base sampler2D on unit 0
+        // (GL_INVALID_OPERATION) — mirrors draw_model's unconditional assignment.
+        s.set_int("u_shadows_enabled", 0);
+        s.set_int("u_shadow_map", 5);
         s.set_int("u_decal_count",       0);
         s.set_float("u_decal_time",      0.0f);
         s.set_int("u_glow_region_count", 0);
