@@ -100,6 +100,7 @@ add_library(renderer STATIC
     bridge_pass.cc
     viewscreen_static_pass.cc
     light_matrix.cc
+    shadow_map_target.cc
 )
 target_include_directories(renderer
     PUBLIC include
