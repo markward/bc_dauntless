@@ -99,6 +99,7 @@ add_library(renderer STATIC
     target_reticle_pass.cc
     bridge_pass.cc
     viewscreen_static_pass.cc
+    light_matrix.cc
 )
 target_include_directories(renderer
     PUBLIC include

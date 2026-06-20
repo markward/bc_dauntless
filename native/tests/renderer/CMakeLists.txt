@@ -37,6 +37,7 @@ add_executable(renderer_tests
     comm_pass_test.cc
     viewscreen_brightness_test.cc
     viewscreen_static_pass_test.cc
+    light_matrix_test.cc
 )
 
 target_link_libraries(renderer_tests
