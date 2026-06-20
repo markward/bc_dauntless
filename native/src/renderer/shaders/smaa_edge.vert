@@ -1,4 +1,4 @@
-in vec2 a_pos;
+layout(location = 0) in vec2 a_pos;
 out vec2 v_uv;
 out vec4 v_offset[3];
 void main() {
