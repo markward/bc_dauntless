@@ -1,5 +1,6 @@
 // native/tests/renderer/backdrop_pass_test.cc
 #include <gtest/gtest.h>
+#include <vector>
 
 #include <renderer/backdrop_pass.h>
 #include <renderer/pipeline.h>
@@ -80,6 +81,38 @@ TEST_F(BackdropPassTest, ProceduralRenderProducesNoGLError) {
 
     pass.render({b}, cam, *pipeline, /*procedural=*/true, /*now=*/1.0f);
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+TEST_F(BackdropPassTest, ProceduralNebulaPaintsItsColour) {
+    renderer::BackdropPass pass;
+    scenegraph::Camera cam;
+    cam.eye = {0, 0, 0}; cam.target = {0, 1, 0}; cam.up = {0, 0, 1}; cam.aspect = 1.0f;
+
+    renderer::Backdrop b;
+    b.kind = renderer::BackdropKind::Backdrop;
+    b.proc_kind = 2;                       // nebula
+    b.color = glm::vec3(0.9f, 0.1f, 0.1f); // strongly red
+    b.coverage = 0.9f; b.seed = 3.0f;
+    b.h_span = 1.0f; b.v_span = 1.0f;
+    // point the patch down +Y (camera looks at +Y); identity rotation maps
+    // mesh (0,1,0) -> +Y, the patch centre.
+
+    glClearColor(0, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    pass.render({b}, cam, *pipeline, /*procedural=*/true, /*now=*/0.0f);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+
+    std::vector<unsigned char> px(256 * 256 * 4);
+    glReadPixels(0, 0, 256, 256, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+    // accumulate channel sums over the frame
+    long rsum = 0, gsum = 0, bsum = 0, lit = 0;
+    for (size_t i = 0; i < px.size(); i += 4) {
+        if (px[i] + px[i + 1] + px[i + 2] > 10) lit++;
+        rsum += px[i]; gsum += px[i + 1]; bsum += px[i + 2];
+    }
+    EXPECT_GT(lit, 200);          // the nebula painted a visible patch
+    EXPECT_GT(rsum, gsum * 2);    // and it reads red (its recorded colour)
+    EXPECT_GT(rsum, bsum * 2);
 }
 
 }  // namespace
