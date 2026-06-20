@@ -135,14 +135,14 @@ def _speed_label_for(ship, player_control) -> str:
       ``data/TGL/Bridge Menus.tgl`` in stock BC).
 
     ``_PlayerControl`` carries the source of truth for both readings:
-    ``impulse_level`` (-2..9 signed; clamp negatives to 0 for the
-    display) and ``_current_speed`` (the integrated GU/s value the
+    ``impulse_level`` (-2..9 signed; a negative level is reverse and shows
+    as ``R``) and ``_current_speed`` (the integrated GU/s value the
     ship-motion step applies each frame). Fall back to the ship's
     own velocity if the panel is constructed without the control
     hook (e.g. unit tests).
     """
     if player_control is not None:
-        impulse = max(0, int(getattr(player_control, "impulse_level", 0) or 0))
+        impulse = int(getattr(player_control, "impulse_level", 0) or 0)
         velocity_gups = float(getattr(player_control, "_current_speed", 0.0) or 0.0)
     else:
         impulse = 0
@@ -154,8 +154,10 @@ def _speed_label_for(ship, player_control) -> str:
             except Exception:
                 velocity_gups = 0.0
 
+    # Negative throttle is reverse — show "R" rather than the signed notch.
+    impulse_str = "R" if impulse < 0 else str(impulse)
     velocity_kph = int(abs(velocity_gups) * GUPS_TO_KPH)
-    return "Speed " + str(impulse) + " : " + str(velocity_kph) + " kph"
+    return "Speed " + impulse_str + " : " + str(velocity_kph) + " kph"
 
 
 def _species_key_for(ship) -> str:
