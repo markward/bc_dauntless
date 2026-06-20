@@ -189,16 +189,17 @@ class TargetListView(Panel):
         game = Game_GetCurrentGame()
         player = game.GetPlayer() if game is not None else None
 
-        from engine.appc.ship_death import _out_of_action
+        from engine.appc.ship_death import _out_of_action, is_targetable_wreck
         rows = []
         child = target_menu.GetFirstChild()
         while child is not None:
             if isinstance(child, STSubsystemMenu):
                 ship = child.GetShip()
-                # A ship whose death sequence has begun (dying or dead) is no
-                # longer a valid target — drop it off the list immediately.
+                # A living ship, or a destroyed ship still inside its wreck
+                # linger window, is a valid target; a ship past final removal
+                # is dropped.
                 if ship is not None and ship is not player \
-                        and not _out_of_action(ship):
+                        and (not _out_of_action(ship) or is_targetable_wreck(ship)):
                     hull_pct = _query_hull_percentage(ship)
                     shield_pct = _query_shield_percentage(ship)
                     # sub_child.GetLabel() equals the subsystem's GetName()

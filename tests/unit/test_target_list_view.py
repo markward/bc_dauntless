@@ -569,6 +569,40 @@ def test_destroyed_ship_excluded_from_target_list():
         _set_current_game(None)
 
 
+def test_destroyed_ship_lingers_in_list_then_drops_after_removal():
+    """A ship in its death/linger window stays selectable in the target list;
+    once ship_death finally removes it, it drops off."""
+    import json
+    from engine.ui.target_list_view import TargetListView
+    from engine.appc.ships import ShipClass
+    from engine.appc import ship_death
+
+    ship_death.reset()
+    App._reset_target_menu_singleton()
+    target_menu = App.STTargetMenu_CreateW("Targets")
+    game, player, mission = _setup_game_with_player()
+    try:
+        wreck = ShipClass(); wreck.SetName("Doomed")
+        target_menu.RebuildShipMenu(wreck)
+
+        # Enter the death sequence: now dying (out of action) but a wreck.
+        ship_death.begin(wreck)
+        view = TargetListView()
+        state = json.loads(view.render_payload()[len("setTargetList("):-2])
+        assert "Doomed" in [r["name"] for r in state["rows"]]   # listed as a wreck
+
+        # Run out the throes + linger -> final removal -> no longer a wreck.
+        ship_death.advance(ship_death.THROES_DURATION)
+        ship_death.advance(ship_death.WRECK_LINGER_DURATION)
+        assert ship_death.is_targetable_wreck(wreck) is False
+        state2 = json.loads(view.render_payload()[len("setTargetList("):-2])
+        assert "Doomed" not in [r["name"] for r in state2["rows"]]
+    finally:
+        ship_death.reset()
+        from engine.core.game import _set_current_game
+        _set_current_game(None)
+
+
 # ── Destroyed-subsystem delisting + lock handoff ─────────────────────────────
 
 def _make_phaser_aggregator_ship(name="USS Galaxy"):
