@@ -465,12 +465,13 @@ def test_speed_label_uses_player_control_over_ship_velocity():
     assert _speed_label_for(None, pc) == "Speed 5 : 2205 kph"
 
 
-def test_speed_label_clamps_negative_impulse_to_zero():
-    """impulse_level is signed (-2..9). Reverse displays as 0 on the
-    forward-only speed readout."""
-    pc = _FakePlayerControl(impulse_level=-1, current_speed_gups=0.5)
+def test_speed_label_shows_R_when_reversing():
+    """impulse_level is signed (-2..9). Reverse (any negative level) shows
+    'R' for the throttle notch, followed by the ship's current speed."""
+    pc = _FakePlayerControl(impulse_level=-2, current_speed_gups=0.5)
     label = _speed_label_for(None, pc)
-    assert label.startswith("Speed 0 :")
+    assert label.startswith("Speed R :")
+    assert label.endswith(" kph")
 
 
 def test_render_payload_carries_speed_label():
