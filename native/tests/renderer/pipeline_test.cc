@@ -30,6 +30,11 @@ TEST_F(PipelineTest, SunShaderCompilesAndLinks) {
     EXPECT_NE(p.sun_shader().program(), 0u);
 }
 
+TEST_F(PipelineTest, SkyboxShaderCompilesAndLinks) {
+    renderer::Pipeline p;
+    EXPECT_NE(p.skybox_shader().program(), 0u);
+}
+
 TEST_F(PipelineTest, BridgeAndLightmapShadersAvailable) {
     renderer::Pipeline p;
     EXPECT_NE(p.bridge_shader().program(), 0u);
