@@ -135,9 +135,8 @@ def test_apply_input_preserves_orbit_state_across_bridge_toggle():
     vm = _ViewModeController()
     reader = _FakeKeyReader()
 
-    # Drive a "tick" with a non-zero scroll delta. In exterior mode that
-    # would shrink cc.distance via cc.apply(); in bridge mode _apply_input
-    # must not call cc.apply() at all, so the orbit state stays frozen.
+    # Drive a "tick" in bridge mode: _apply_input must not call cc.apply()
+    # at all, so the orbit state (yaw/pitch/distance) stays frozen.
     class _NoopPlayer:
         def apply(self, *a, **k): pass
     _apply_input(vm, _NoopPlayer(), _FakeDirectorWithChase(cc),
