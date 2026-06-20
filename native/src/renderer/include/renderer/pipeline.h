@@ -31,6 +31,7 @@ public:
     Shader& lightmap_shader() noexcept        { return *lightmap_; }
     Shader& viewscreen_static_shader() noexcept { return *viewscreen_static_; }
     Shader& shadow_depth_shader() noexcept    { return *shadow_depth_; }
+    Shader& shockwave_shader() noexcept       { return *shockwave_; }
 
 private:
     std::unique_ptr<Shader> opaque_;
@@ -53,6 +54,7 @@ private:
     std::unique_ptr<Shader> lightmap_;
     std::unique_ptr<Shader> viewscreen_static_;
     std::unique_ptr<Shader> shadow_depth_;
+    std::unique_ptr<Shader> shockwave_;
 };
 
 }  // namespace renderer

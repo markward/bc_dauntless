@@ -61,6 +61,8 @@ embed_shader(SHADER_SHADOW_FS shaders/shadow.frag shadow_fs)
 embed_shader(SHADER_BLOOM_PREFILTER_FS shaders/bloom_prefilter.frag bloom_prefilter_fs)
 embed_shader(SHADER_BLOOM_DOWN_FS shaders/bloom_down.frag bloom_down_fs)
 embed_shader(SHADER_BLOOM_UP_FS shaders/bloom_up.frag bloom_up_fs)
+embed_shader(SHADER_SHOCKWAVE_VS shaders/shockwave.vert shockwave_vs)
+embed_shader(SHADER_SHOCKWAVE_FS shaders/shockwave.frag shockwave_fs)
 
 add_library(renderer STATIC
     window.cc
@@ -81,6 +83,7 @@ add_library(renderer STATIC
     backdrop_pass.cc
     sun_pass.cc
     dust_pass.cc
+    shockwave_pass.cc
     aabb.cc
     glow_region.cc
     ray_trace.cc

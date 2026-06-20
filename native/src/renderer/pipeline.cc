@@ -41,6 +41,8 @@
 #include "embedded_viewscreen_static_fs.h"
 #include "embedded_shadow_vs.h"
 #include "embedded_shadow_fs.h"
+#include "embedded_shockwave_vs.h"
+#include "embedded_shockwave_fs.h"
 
 namespace renderer {
 
@@ -67,6 +69,8 @@ Pipeline::Pipeline() {
         shader_src::viewscreen_static_vs, shader_src::viewscreen_static_fs);
     shadow_depth_ = std::make_unique<Shader>(
         shader_src::shadow_vs, shader_src::shadow_fs);
+    shockwave_ = std::make_unique<Shader>(shader_src::shockwave_vs,
+                                          shader_src::shockwave_fs);
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
     glEnable(GL_CULL_FACE);

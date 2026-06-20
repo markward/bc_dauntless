@@ -30,6 +30,7 @@
 #include <renderer/lens_flare_pass.h>
 #include <renderer/torpedo_pass.h>
 #include <renderer/hit_vfx_pass.h>
+#include <renderer/shockwave_pass.h>
 #include <renderer/particle_pass.h>
 #include <renderer/phaser_pass.h>
 #include <renderer/hologram_pass.h>
@@ -129,6 +130,7 @@ std::unique_ptr<renderer::LensFlarePass>   g_lens_flare_pass;
 std::vector<renderer::TorpedoDescriptor>   g_torpedoes;
 std::unique_ptr<renderer::TorpedoPass>     g_torpedo_pass;
 std::vector<renderer::ShockwaveDescriptor> g_shockwaves;
+std::unique_ptr<renderer::ShockwavePass>   g_shockwave_pass;
 std::vector<renderer::HitVfxDescriptor>    g_hit_vfx;
 std::unique_ptr<renderer::HitVfxPass>      g_hit_vfx_pass;
 std::vector<renderer::ParticleEmitterDescriptor> g_particle_emitters;
@@ -307,6 +309,7 @@ void init(int width, int height, const std::string& title) {
     g_dust_planets.clear();
     g_sun_pass = std::make_unique<renderer::SunPass>();
     g_dust_pass = std::make_unique<renderer::DustPass>();
+    g_shockwave_pass = std::make_unique<renderer::ShockwavePass>();
     g_shield_pass = std::make_unique<renderer::ShieldPass>();
     g_lens_flare_pass = std::make_unique<renderer::LensFlarePass>();
     g_torpedo_pass = std::make_unique<renderer::TorpedoPass>();
@@ -362,6 +365,7 @@ void shutdown() {
     g_torpedoes.clear();
     g_torpedo_pass.reset();
     g_shockwaves.clear();
+    g_shockwave_pass.reset();
     g_hit_vfx.clear();
     g_hit_vfx_pass.reset();
     g_particle_emitters.clear();
@@ -489,6 +493,8 @@ void frame() {
         if (g_torpedo_pass) g_torpedo_pass->render(g_torpedoes,    cam, *g_pipeline);
         if (g_phaser_pass)  g_phaser_pass ->render(g_phaser_beams, cam, *g_pipeline);
         if (g_hit_vfx_pass) g_hit_vfx_pass->render(g_hit_vfx, g_world, cam, *g_pipeline);
+        if (!for_viewscreen && g_shockwave_pass)
+            g_shockwave_pass->render(cam, g_shockwaves, *g_pipeline);
         // Venting jets: build per-frame descriptors from active breach events
         // and append to a combined emitter list for the particle pass.
         // Never mutate g_particle_emitters in place (Python-owned).
