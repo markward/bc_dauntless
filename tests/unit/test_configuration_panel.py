@@ -305,7 +305,7 @@ def test_right_arrow_on_fov_row_increments():
     p, kw = _make()
     p.open()
     r = _FakeReader()
-    for _ in range(5):  # focus → fov (index 4: tab, dust, specular, procedural_sky, fov)
+    for _ in range(4):  # focus → fov (index 3: tab, dust, specular, fov)
         r.press(r.keys.KEY_DOWN); p.handle_input(r)
     r.press(r.keys.KEY_RIGHT); p.handle_input(r)
     (called_rad,), _ = kw["set_fov_rad"].call_args
@@ -319,7 +319,7 @@ def test_left_arrow_on_fov_row_decrements_and_clamps():
     ))
     p.open()
     r = _FakeReader()
-    for _ in range(5):  # focus → fov (index 4, after the procedural_sky row)
+    for _ in range(4):  # focus → fov (index 3: tab, dust, specular, fov)
         r.press(r.keys.KEY_DOWN); p.handle_input(r)
     r.press(r.keys.KEY_LEFT); p.handle_input(r)
     # Still 40 (clamped), but applier still fires (consistency: every

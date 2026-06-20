@@ -278,14 +278,16 @@ class ConfigurationPanel(Panel):
 
     def _focusables(self) -> list:
         """Ordered focusable list: tab rows then controls in the
-        currently selected tab. For the only tab today (graphics):
-        [('tab','graphics'), ('ctrl','dust'), ('ctrl','specular'),
-         ('ctrl','fov'), ('ctrl','hdr'), ('ctrl','rim'), ('ctrl','decals'),
+        currently selected tab. Order mirrors the rendered rows — the
+        general toggles, then the 'Modern VFX' group (procedural_sky leads
+        it): [('tab','graphics'), ('ctrl','dust'), ('ctrl','specular'),
+         ('ctrl','fov'), ('ctrl','procedural_sky'), ('ctrl','hdr'),
+         ('ctrl','rim'), ('ctrl','shadows'), ('ctrl','decals'),
          ('ctrl','smaa')]."""
         out: list = [("tab", tid) for tid, _ in self._tabs]
         if self._selected_tab == "graphics":
-            out += [("ctrl", "dust"), ("ctrl", "specular"),
-                    ("ctrl", "procedural_sky"), ("ctrl", "fov"),
+            out += [("ctrl", "dust"), ("ctrl", "specular"), ("ctrl", "fov"),
+                    ("ctrl", "procedural_sky"),
                     ("ctrl", "hdr"), ("ctrl", "rim"), ("ctrl", "shadows"),
                     ("ctrl", "decals"), ("ctrl", "smaa")]
         elif self._selected_tab == "gameplay":

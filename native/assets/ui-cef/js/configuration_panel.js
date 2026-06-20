@@ -21,8 +21,8 @@ function _cpFocusableList(state) {
     if (state.selected_tab === 'graphics') {
         out.push({kind: 'ctrl', target: 'dust'});
         out.push({kind: 'ctrl', target: 'specular'});
-        out.push({kind: 'ctrl', target: 'procedural_sky'});
         out.push({kind: 'ctrl', target: 'fov'});
+        out.push({kind: 'ctrl', target: 'procedural_sky'});
         out.push({kind: 'ctrl', target: 'hdr'});
         out.push({kind: 'ctrl', target: 'rim'});
         out.push({kind: 'ctrl', target: 'shadows'});
@@ -81,18 +81,6 @@ function _cpRenderGraphicsBody(state, focusables) {
           +   '</div>'
           + '</div>';
 
-    // Procedural Sky toggle — On = map-driven galaxy sky; Off = original
-    // STBC authored starbox (stock BC).
-    html += '<div class="cp-row' + (isFoc('procedural_sky') ? ' cp-focused' : '') + '">'
-          +   '<div class="cp-row__label">Procedural Sky</div>'
-          +   '<div class="cp-row__control">'
-          +     '<button class="cp-toggle' + (s.procedural_sky_on ? ' cp-toggle--on' : '') + '"'
-          +        ' onclick="dauntlessEvent(\'configuration/toggle:procedural_sky\')">'
-          +       (s.procedural_sky_on ? 'On' : 'Off')
-          +     '</button>'
-          +   '</div>'
-          + '</div>';
-
     // FOV slider — listen on 'change' (released), not 'input' (every
     // pixel), so dragging doesn't flood the CEF event channel.
     html += '<div class="cp-row' + (isFoc('fov') ? ' cp-focused' : '') + '">'
@@ -108,6 +96,18 @@ function _cpRenderGraphicsBody(state, focusables) {
     // ── Modern VFX group ─────────────────────────────────────────────
     html += '<hr class="cp-divider">';
     html += '<div class="cp-group-header">Modern VFX</div>';
+
+    // Procedural Sky toggle — On = map-driven galaxy sky; Off = original
+    // STBC authored starbox (stock BC).
+    html += '<div class="cp-row' + (isFoc('procedural_sky') ? ' cp-focused' : '') + '">'
+          +   '<div class="cp-row__label">Procedural Sky</div>'
+          +   '<div class="cp-row__control">'
+          +     '<button class="cp-toggle' + (s.procedural_sky_on ? ' cp-toggle--on' : '') + '"'
+          +        ' onclick="dauntlessEvent(\'configuration/toggle:procedural_sky\')">'
+          +       (s.procedural_sky_on ? 'On' : 'Off')
+          +     '</button>'
+          +   '</div>'
+          + '</div>';
 
     // HDR toggle
     html += '<div class="cp-row' + (isFoc('hdr') ? ' cp-focused' : '') + '">'
