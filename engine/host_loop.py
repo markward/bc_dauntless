@@ -3345,6 +3345,11 @@ def run(mission_name: Optional[str] = None,
             # _apply_view_mode_side_effects mirrors the SPACE flag into
             # renderer state (bridge pass enable + cursor lock) and is
             # idempotent — only fires when the mode changed.
+            # Per-frame cursor + panel-hit state, defaulted so the scroll
+            # router (below) always has them defined — even when _h is None
+            # or neither mouse-forward branch runs this frame.
+            _mx, _my = 0, 0
+            _cursor_in_panel = False
             if _h is not None:
                 # ESC priority: mission picker first (dev only), then the
                 # developer options panel (dev only), then the ship property
@@ -3355,11 +3360,6 @@ def run(mission_name: Optional[str] = None,
                 _apply_pause_menu_side_effects(
                     pause, view_mode, _h, _modal_blockers,
                 )
-                # Per-frame cursor + panel-hit state, defaulted so the
-                # scroll router (below) has them defined regardless of which
-                # mouse-forward branch runs this frame.
-                _mx, _my = 0, 0
-                _cursor_in_panel = False
                 if pause.is_open:
                     # When a settings modal is open it consumes keyboard
                     # input — pause-menu navigation would otherwise activate
@@ -3566,6 +3566,23 @@ def run(mission_name: Optional[str] = None,
                 director.chase.set_ship_radius(_r)
                 director.tracking.set_ship_radius(_r)
 
+            # Mouse-wheel routing (runs every frame, paused or not). Scroll
+            # delta is consumed once per tick — the single consumer of the
+            # accumulator. Over a CEF surface (a pause/config modal is open,
+            # or the cursor is over a HUD panel) → scroll that panel; over
+            # open space in exterior view → step the ship throttle. Replaces
+            # the old camera scroll-zoom. Old bindings without the accumulator
+            # return 0.0 via the fallback.
+            scroll_y = _consume_scroll() if _consume_scroll is not None else 0.0
+            _route_scroll_wheel(
+                scroll_y,
+                route_to_panel=(pause.is_open or _cursor_in_panel),
+                mx=_mx, my=_my,
+                send_wheel=_cef_send_wheel,
+                player_control=player_control,
+                can_throttle=(player is not None and view_mode.is_exterior),
+            )
+
             if not pause.is_open:
                 # Dev-mode keybindings (no-op when --developer is not set).
                 # register_for_frame re-binds handlers that close over the
@@ -3592,24 +3609,7 @@ def run(mission_name: Optional[str] = None,
                         _h.cef_reload()
 
                 # Apply keyboard input to the player ship's transform and to the
-                # orbit camera. Scroll delta is consumed once per tick and routed
-                # below (panel scroll vs ship throttle); old bindings without the
-                # accumulator return 0.0 via the fallback.
-                scroll_y = _consume_scroll() if _consume_scroll is not None else 0.0
-
-                # Route the wheel: over a CEF surface (pause/config modal or
-                # cursor over a HUD panel) → scroll that panel; over open
-                # space → step the ship throttle. Replaces the old camera
-                # scroll-zoom. can_throttle mirrors the digit-key gate
-                # (exterior view + live player).
-                _route_scroll_wheel(
-                    scroll_y,
-                    route_to_panel=(pause.is_open or _cursor_in_panel),
-                    mx=_mx, my=_my,
-                    send_wheel=_cef_send_wheel,
-                    player_control=player_control,
-                    can_throttle=(player is not None and view_mode.is_exterior),
-                )
+                # orbit camera (see _apply_input below).
 
                 if player is not None and _h is not None:
                     # Alert keys (Shift+1/2/3) run before the throttle handler;
