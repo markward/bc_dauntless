@@ -123,6 +123,8 @@ renderer::Lighting g_lighting;
 // brighter than the space scene's.
 renderer::Lighting g_bridge_lighting;
 std::vector<renderer::Backdrop> g_backdrops;
+bool g_sky_dirty = true;            // cubemap needs (re)baking
+bool g_sky_last_procedural = false; // procedural-toggle state at the last frame
 std::unique_ptr<renderer::BackdropPass> g_backdrop_pass;
 std::vector<renderer::SunDescriptor> g_suns;
 std::vector<glm::vec4> g_dust_planets;   // xyz = world pos, w = radius
@@ -308,6 +310,7 @@ void init(int width, int height, const std::string& title) {
     g_bridge_lighting = renderer::Lighting{};
     g_bridge_pass_enabled = false;
     g_backdrops.clear();
+    g_sky_dirty = true;
     g_backdrop_pass = std::make_unique<renderer::BackdropPass>();
     g_suns.clear();
     g_dust_planets.clear();
@@ -357,6 +360,7 @@ void shutdown() {
     g_cache.reset();
     g_world = scenegraph::World{};
     g_backdrops.clear();
+    g_sky_dirty = true;
     g_backdrop_pass.reset();  // releases sphere + texture caches while the
                               // GL context is still alive.
     g_suns.clear();
@@ -469,6 +473,28 @@ void frame() {
     const bool bridge_active = !viewer_mode && g_bridge_pass_enabled && g_bridge_pass;
     const bool viewscreen_on = bridge_active && g_viewscreen_enabled;
 
+    // ── Cubemap sky bake (static-per-system) ───────────────────────────────
+    // The map-driven procedural sky is fixed per vantage; bake it once into a
+    // cubemap (on first sight or when the descriptor diff flagged a change) and
+    // sample it each frame instead of re-rendering 14 noise spheres. Stock-BC
+    // and the unmapped-authored fallback keep the per-frame textured path.
+    const bool sky_procedural = dauntless_procedural_sky::enabled();
+    if (sky_procedural != g_sky_last_procedural) {
+        g_sky_dirty = true;
+        g_sky_last_procedural = sky_procedural;
+    }
+    const bool sky_bakeable =
+        sky_procedural && renderer::backdrops_are_procedural(g_backdrops);
+    bool sky_use_cubemap = false;
+    if (sky_bakeable && g_backdrop_pass) {
+        if (g_sky_dirty || !g_backdrop_pass->has_cubemap()) {
+            g_backdrop_pass->bake(g_backdrops, *g_pipeline,
+                                  static_cast<float>(now));
+            g_sky_dirty = false;
+        }
+        sky_use_cubemap = g_backdrop_pass->has_cubemap();  // false if alloc failed
+    }
+
     // Renders the space scene from `cam` into the currently-bound FBO.
     // for_viewscreen=true skips the cockpit/screen-space effects that make no
     // sense on (or would corrupt state for) the viewscreen RTT: dust (camera-
@@ -476,8 +502,12 @@ void frame() {
     // space, sized to the main framebuffer), and particles. Order is otherwise
     // identical to the historical inline block.
     auto render_space = [&](const scenegraph::Camera& cam, bool for_viewscreen) {
-        g_backdrop_pass->render(g_backdrops, cam, *g_pipeline,
-                                dauntless_procedural_sky::enabled(), static_cast<float>(now));
+        if (sky_use_cubemap)
+            g_backdrop_pass->render_cubemap(cam, *g_pipeline);
+        else
+            g_backdrop_pass->render(g_backdrops, cam, *g_pipeline,
+                                    dauntless_procedural_sky::enabled(),
+                                    static_cast<float>(now));
         g_sun_pass->render(g_suns, cam, *g_pipeline, now);
         g_submitter->submit_opaque_in_pass(
             g_world, cam, *g_pipeline, lookup, g_lighting,
@@ -1416,8 +1446,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
 
     m.def("set_backdrops",
           [](const std::vector<py::dict>& descriptors) {
-              g_backdrops.clear();
-              g_backdrops.reserve(descriptors.size());
+              std::vector<renderer::Backdrop> next;
+              next.reserve(descriptors.size());
               for (const auto& d : descriptors) {
                   renderer::Backdrop b;
                   b.texture_path      = d["texture_path"].cast<std::string>();
@@ -1444,8 +1474,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
                           m9[3], m9[4], m9[5],
                           m9[6], m9[7], m9[8]);
                   }
-                  g_backdrops.push_back(std::move(b));
+                  next.push_back(std::move(b));
               }
+              if (!renderer::backdrops_equal(next, g_backdrops)) {
+                  g_sky_dirty = true;
+              }
+              g_backdrops = std::move(next);
           },
           py::arg("backdrops"),
           "Set the active set's ordered backdrop list, applied each frame().");
