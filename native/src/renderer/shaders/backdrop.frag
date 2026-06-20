@@ -49,7 +49,7 @@ void proc_main(vec3 dir, vec2 offset){
         // sky has dense drifts and sparse voids — cluster variety everywhere,
         // not only where a galaxy backdrop happens to exist.
         float field = fbm(dir*1.3 + 3.0*u_seed);
-        float dens  = mix(0.005, 0.0325, smoothstep(0.30, 0.85, field));  // -50% again (now 1/4 of original)
+        float dens  = mix(0.0015, 0.01, smoothstep(0.30, 0.85, field));  // decisive cut (~1/13 of original)
         vec3 c = proc_stars(dir, dens) + 0.55*proc_stars(dir*1.7 + 11.0, dens*0.6);
         // faint unresolved-star haze pooling in the densest drifts
         c += vec3(0.55, 0.6, 0.8) * 0.05 * smoothstep(0.62, 0.95, field);
