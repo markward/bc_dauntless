@@ -1899,9 +1899,10 @@ def _aggregate_backdrops(pSet):
     """
     if r.procedural_sky_enabled():
         from engine.appc import sky_projection as sp
-        vantage = sp.vantage_for_set(pSet)
+        model = sp.load_sector_model()
+        vantage = sp.vantage_for_set(pSet, model)
         if vantage is not None:
-            return sp.project_sky(vantage, sp.load_sector_model())
+            return sp.project_sky(vantage, model)
     return _authored_backdrops(pSet)
 
 

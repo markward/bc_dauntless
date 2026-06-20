@@ -178,3 +178,4 @@ phase if trivial, otherwise leave for a later tidy.
   (floating-origin precision, mission rescaling).
 - Rigorous nebula placement (bearing triangulation) feeding the sector model.
 - Suns/planets projected from the model (this phase: nebulae/clouds/stars).
+- Near-field→far span transition is currently a hard step (envelop span 8.0 vs. far span ~6.0 at the boundary), not a ramp. Harmless under the per-system camera-anchored vantage (static per system), but should be ramped when Phase-3 ship parallax makes the vantage continuous.

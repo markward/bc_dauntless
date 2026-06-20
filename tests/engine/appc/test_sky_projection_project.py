@@ -31,7 +31,7 @@ def test_far_nebula_direction_and_falloff():
     # forward column (cols 3,4,5 of the column-major mat3) points +X toward [200,0,0]
     fwd = far["world_rotation"][3:6]
     assert fwd[0] > 0.99
-    # dimmed by distance (colour scaled below its source 0.9 red)
+    # dimmed by distance (colour scaled below its source 0.9 blue, index 2)
     assert far["color"][2] < 0.9
     assert far["h_span"] < 8.0 and far["h_span"] > 0.0
 
