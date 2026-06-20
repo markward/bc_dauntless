@@ -115,4 +115,24 @@ TEST_F(BackdropPassTest, ProceduralNebulaPaintsItsColour) {
     EXPECT_GT(rsum, bsum * 2);
 }
 
+TEST_F(BackdropPassTest, ToggleOffDiscardsProceduralNebula) {
+    renderer::BackdropPass pass;
+    scenegraph::Camera cam;
+    cam.eye = {0,0,0}; cam.target = {0,1,0}; cam.up = {0,0,1}; cam.aspect = 1.0f;
+    renderer::Backdrop b;
+    b.kind = renderer::BackdropKind::Backdrop;
+    b.texture_path = "/dev/null";  // no texture -> stock path draws nothing
+    b.proc_kind = 2; b.color = glm::vec3(0.9f,0.1f,0.1f);
+    b.h_span = 1.0f; b.v_span = 1.0f;
+
+    glClearColor(0,0,0,1); glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    pass.render({b}, cam, *pipeline, /*procedural=*/false, /*now=*/0.0f);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    std::vector<unsigned char> px(256*256*4);
+    glReadPixels(0,0,256,256, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+    long lit = 0;
+    for (size_t i=0;i<px.size();i+=4) if (px[i]+px[i+1]+px[i+2] > 10) lit++;
+    EXPECT_EQ(lit, 0);  // off + no texture => stock path paints nothing
+}
+
 }  // namespace

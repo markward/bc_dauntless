@@ -192,6 +192,7 @@ plot anchors**, with **near-zero physics interaction**. This is the green light.
 - **Suggested staging:** (1) procedural backdrop → (2) sector/warp layer
   (graduate the map into the live nav interface) → (3) realistic intra-system
   scale, gated behind floating-origin work.
+- Procedural sky shipped on `feat/procedural-starfield` — Modern VFX toggle `procedural_sky_set_enabled`, default on.
 
 The PoC's real value: it surfaced the **stage / content / scenery** separation
 that makes this overhaul safe. Gameplay is *not* coupled to render scale here —
