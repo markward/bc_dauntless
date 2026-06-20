@@ -1870,6 +1870,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](bool enabled) { dauntless_procedural_sky::set_enabled(enabled); },
           py::arg("enabled"),
           "Toggle the procedural sky (Modern VFX). Default: on; off = stock BC.");
+    m.def("procedural_sky_enabled",
+          []() { return dauntless_procedural_sky::enabled(); },
+          "Read the procedural-sky toggle (Modern VFX). Default: on.");
     m.def("hdr_set_enabled",
           [](bool e) { dauntless_hdr::set_enabled(e); },
           py::arg("enabled"),

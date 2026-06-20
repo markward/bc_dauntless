@@ -159,6 +159,11 @@ def set_backdrops(backdrops: list) -> None:
     _h.set_backdrops(backdrops)
 
 
+def procedural_sky_enabled() -> bool:
+    """True when the procedural sky (Modern VFX) is on; False = stock BC."""
+    return _h.procedural_sky_enabled()
+
+
 def set_dust_enabled(enabled: bool) -> None:
     """Toggle the space-dust pass. Default: on after init()."""
     _h.dust_set_enabled(enabled)
