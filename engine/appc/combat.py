@@ -318,7 +318,8 @@ def _shield_face_from_hit_point(ship, hit_point) -> int:
 def apply_hit(ship, damage: float, hit_point, source, *,
               normal=None, host=None, ship_instances=None,
               weapon_type: str | None = None,
-              hardpoint_weapon=None, payload_template=None) -> None:
+              hardpoint_weapon=None, payload_template=None,
+              splash_radius: float | None = None) -> None:
     """Apply `damage` to `ship` per the spherical-splash attribution model.
 
     Flow:
@@ -343,6 +344,10 @@ def apply_hit(ship, damage: float, hit_point, source, *,
                               (used to resolve R_hit). None for legacy callers.
         payload_template    — projectile-type template (used to resolve R_hit
                               when hardpoint DRF is not set). None for phasers.
+        splash_radius       — explicit R_hit override in game units. When set,
+                              supersedes the (hardpoint_weapon, payload_template)
+                              resolution. Used by the warp-core breach to force a
+                              1.3 GU blast. None for all weapon callers.
     """
     from engine.appc.events import WeaponHitEvent
     from engine.appc import hit_feedback
@@ -350,6 +355,8 @@ def apply_hit(ship, damage: float, hit_point, source, *,
     import App
 
     r_hit = weapon_splash_radius(hardpoint_weapon, payload_template)
+    if splash_radius is not None:
+        r_hit = float(splash_radius)
 
     # -- Developer combat cheats (dev-mode only; no-ops in production). --
     # Resolve the player once, then apply: 2x player weapons (source is
