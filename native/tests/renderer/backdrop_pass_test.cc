@@ -12,6 +12,89 @@
 
 namespace {
 
+// Fixture used by the bake/sample fidelity test: skips when there is no GL
+// context but does NOT skip on missing BC assets (the test is procedural-only).
+class BackdropPassFixture : public ::testing::Test {
+protected:
+    std::unique_ptr<renderer::Window>   w;
+    std::unique_ptr<renderer::Pipeline> p;
+
+    void SetUp() override {
+        try {
+            w = std::make_unique<renderer::Window>(256, 256, "backdrop-test", false);
+        } catch (const std::runtime_error& e) {
+            GTEST_SKIP() << "no GL context: " << e.what();
+        }
+        p = std::make_unique<renderer::Pipeline>();
+    }
+    void TearDown() override {
+        p.reset();
+        w.reset();
+    }
+};
+
+// Helper: a column-major mat3 [right, fwd, up] pointing `fwd` at +Z.
+// BC convention: right = forward × up = (0,0,1)×(0,1,0) = (-1,0,0).
+// Using the correct det=+1 rotation so bake winding is preserved.
+static std::vector<float> rot_forward_pz() {
+    // right=-X (from forward×up), forward=+Z, up=+Y  (columns)
+    return {-1,0,0,  0,0,1,  0,1,0};
+}
+
+TEST_F(BackdropPassFixture, BakeCapturesDirectionalContentAndSamplesBack) {
+    // One always-on base starfield + one bright nebula pointing at +Z.
+    renderer::Backdrop base;
+    base.texture_path = "";
+    base.kind = renderer::BackdropKind::Star;
+    base.proc_kind = 0;
+    base.seed = 1.0f;
+
+    renderer::Backdrop neb;
+    neb.texture_path = "";
+    neb.kind = renderer::BackdropKind::Backdrop;
+    neb.proc_kind = 2;                       // nebula
+    neb.h_span = neb.v_span = 8.0f;          // large cap so it dominates +Z
+    neb.color = glm::vec3(0.8f, 0.3f, 0.9f);
+    neb.coverage = 0.9f;
+    neb.seed = 5.0f;
+    {
+        auto m = rot_forward_pz();
+        neb.world_rotation = glm::mat3(m[0],m[1],m[2], m[3],m[4],m[5], m[6],m[7],m[8]);
+    }
+    std::vector<renderer::Backdrop> sky = {base, neb};
+
+    renderer::BackdropPass pass;
+    ASSERT_TRUE(pass.bake(sky, *p, 0.0f));
+    EXPECT_TRUE(pass.has_cubemap());
+    EXPECT_EQ(pass.bakes_count(), 1);
+
+    auto mean_center = [&](glm::vec3 look_dir) -> double {
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glViewport(0, 0, 256, 256);
+        glClearColor(0, 0, 0, 1);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        scenegraph::Camera cam;
+        cam.eye = glm::vec3(0.0f);
+        cam.target = look_dir;
+        cam.up = glm::vec3(0, 1, 0);
+        cam.aspect = 1.0f;
+        pass.render_cubemap(cam, *p);
+        unsigned char buf[16 * 16 * 4];
+        glReadPixels(120, 120, 16, 16, GL_RGBA, GL_UNSIGNED_BYTE, buf);
+        double sum = 0;
+        for (int i = 0; i < 16 * 16; ++i)
+            sum += buf[i*4] + buf[i*4+1] + buf[i*4+2];
+        return sum / (16 * 16);
+    };
+
+    const double toward = mean_center(glm::vec3(0, 0, 1));   // at the nebula
+    const double away   = mean_center(glm::vec3(0, 0, -1));  // opposite
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+    EXPECT_GT(toward, away * 1.3)
+        << "baked nebula should make the +Z view brighter than -Z (toward="
+        << toward << " away=" << away << ")";
+}
+
 class BackdropPassTest : public ::testing::Test {
 protected:
     std::unique_ptr<renderer::Window> window;

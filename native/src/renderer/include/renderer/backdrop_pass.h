@@ -2,9 +2,11 @@
 #pragma once
 
 #include <renderer/frame.h>          // Backdrop, BackdropKind
+#include <renderer/cubemap_target.h>
 #include <assets/mesh.h>
 #include <assets/texture.h>
 
+#include <glm/glm.hpp>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -32,7 +34,30 @@ public:
                 bool procedural,
                 float now_seconds);
 
+    /// Bake `backdrops` into all 6 cubemap faces (camera at origin, 6 x 90deg
+    /// views) using the same procedural shader path as render(). Returns false
+    /// if the cubemap could not be allocated. Call once per system entry.
+    bool bake(const std::vector<Backdrop>& backdrops,
+              Pipeline& pipeline,
+              float now_seconds);
+
+    /// Draw the skybox sampling the baked cubemap by view direction into the
+    /// currently-bound framebuffer. No-op if no successful bake exists.
+    void render_cubemap(const scenegraph::Camera& camera, Pipeline& pipeline);
+
+    bool has_cubemap() const { return cubemap_.valid(); }
+    int  bakes_count() const { return bakes_count_; }
+
 private:
+    /// Shared per-sphere draw loop used by render() and bake(). Caller sets the
+    /// target framebuffer/viewport and (for bake) the per-face view/proj.
+    void draw_backdrops(const std::vector<Backdrop>& backdrops,
+                        const glm::mat4& view_no_translation,
+                        const glm::mat4& proj,
+                        Pipeline& pipeline,
+                        bool procedural,
+                        float now_seconds);
+
     /// Lazy-tessellated UV sphere keyed by target_poly_count. Most BC
     /// systems use 256; cache grows on demand if a script requests
     /// something different.
@@ -45,6 +70,10 @@ private:
 
     assets::Mesh*    ensure_sphere(int target_poly_count);
     assets::Texture* ensure_texture(const std::string& path);
+
+    CubemapTarget cubemap_;
+    int bakes_count_ = 0;
+    static constexpr int kSkyFaceSize = 1024;
 };
 
 /// True iff `backdrops` is non-empty and every entry is procedural (empty
