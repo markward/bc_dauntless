@@ -48,6 +48,11 @@ struct Backdrop {
     float v_span = 1.0f;
     glm::mat3 world_rotation = glm::mat3(1.0f);
     int target_poly_count = 256;
+    // Procedural sky (Modern VFX). Ignored when the procedural toggle is off.
+    int   proc_kind = 0;        // 0 = stars, 1 = starcloud (galaxy), 2 = nebula
+    glm::vec3 color = glm::vec3(0.5f);  // recorded dominant colour, 0..1
+    float coverage = 0.4f;      // density 0..1
+    float seed = 0.0f;          // per-backdrop stable seed
 };
 
 struct SunDescriptor {

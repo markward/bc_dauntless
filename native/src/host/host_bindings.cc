@@ -94,6 +94,10 @@ namespace dauntless_hdr {
     bool enabled();            // defined in frame.cc
     void set_enabled(bool v);  // defined in frame.cc
 }
+namespace dauntless_procedural_sky {
+    bool enabled();            // defined in frame.cc
+    void set_enabled(bool v);  // defined in frame.cc
+}
 // Forward-declared here (before the anonymous namespace) so render_space()
 // inside the anonymous namespace can read the always-on hull-breach gate.
 namespace dauntless_hull_damage {
@@ -472,7 +476,8 @@ void frame() {
     // space, sized to the main framebuffer), and particles. Order is otherwise
     // identical to the historical inline block.
     auto render_space = [&](const scenegraph::Camera& cam, bool for_viewscreen) {
-        g_backdrop_pass->render(g_backdrops, cam, *g_pipeline);
+        g_backdrop_pass->render(g_backdrops, cam, *g_pipeline,
+                                dauntless_procedural_sky::enabled(), static_cast<float>(now));
         g_sun_pass->render(g_suns, cam, *g_pipeline, now);
         g_submitter->submit_opaque_in_pass(
             g_world, cam, *g_pipeline, lookup, g_lighting,
@@ -1424,6 +1429,14 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   b.h_span            = d["h_span"].cast<float>();
                   b.v_span            = d["v_span"].cast<float>();
                   b.target_poly_count = d["target_poly_count"].cast<int>();
+                  if (d.contains("proc_kind")) {
+                      std::string pk = d["proc_kind"].cast<std::string>();
+                      b.proc_kind = (pk == "stars") ? 0 : (pk == "starcloud") ? 1 : 2;
+                      auto col = d["color"].cast<std::vector<float>>();
+                      if (col.size() == 3) b.color = glm::vec3(col[0], col[1], col[2]);
+                      b.coverage = d["coverage"].cast<float>();
+                      b.seed = d["seed"].cast<float>();
+                  }
                   auto m9 = d["world_rotation"].cast<std::vector<float>>();
                   if (m9.size() == 9) {
                       b.world_rotation = glm::mat3(
@@ -1853,6 +1866,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](bool enabled) { dauntless_rim::set_enabled(enabled); },
           py::arg("enabled"),
           "Toggle the opaque-pass Fresnel rim term. Default: on.");
+    m.def("procedural_sky_set_enabled",
+          [](bool enabled) { dauntless_procedural_sky::set_enabled(enabled); },
+          py::arg("enabled"),
+          "Toggle the procedural sky (Modern VFX). Default: on; off = stock BC.");
     m.def("hdr_set_enabled",
           [](bool e) { dauntless_hdr::set_enabled(e); },
           py::arg("enabled"),

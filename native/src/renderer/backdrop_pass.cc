@@ -70,7 +70,9 @@ assets::Texture* BackdropPass::ensure_texture(const std::string& path) {
 
 void BackdropPass::render(const std::vector<Backdrop>& backdrops,
                           const scenegraph::Camera& camera,
-                          Pipeline& pipeline) {
+                          Pipeline& pipeline,
+                          bool procedural,
+                          float now_seconds) {
     if (backdrops.empty()) return;
 
     auto& shader = pipeline.backdrop_shader();
@@ -89,7 +91,8 @@ void BackdropPass::render(const std::vector<Backdrop>& backdrops,
     for (const auto& b : backdrops) {
         assets::Mesh* sphere = ensure_sphere(b.target_poly_count);
         assets::Texture* tex = ensure_texture(b.texture_path);
-        if (!sphere || !tex) continue;
+        if (!sphere) continue;
+        if (!tex && !procedural) continue;
 
         if (b.kind == BackdropKind::Backdrop) {
             glEnable(GL_BLEND);
@@ -104,8 +107,15 @@ void BackdropPass::render(const std::vector<Backdrop>& backdrops,
         shader.set_vec2("u_tile", glm::vec2(b.h_tile, b.v_tile));
         shader.set_vec2("u_span", glm::vec2(b.h_span, b.v_span));
 
+        shader.set_int("u_procedural", procedural ? 1 : 0);
+        shader.set_int("u_proc_kind", b.proc_kind);
+        shader.set_vec3("u_color", b.color);
+        shader.set_float("u_coverage", b.coverage);
+        shader.set_float("u_seed", b.seed);
+        shader.set_float("u_time", now_seconds);
+
         glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, tex->id());
+        glBindTexture(GL_TEXTURE_2D, tex ? tex->id() : 0);
         shader.set_int("u_texture", 0);
 
         glBindVertexArray(sphere->vao());

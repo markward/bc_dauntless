@@ -7,6 +7,7 @@
 #include <scenegraph/camera.h>
 
 #include <glad/glad.h>
+#include <glm/glm.hpp>
 
 namespace {
 
@@ -31,7 +32,7 @@ TEST_F(BackdropPassTest, EmptyListProducesNoGLError) {
     cam.eye = {0, 0, 1500};
     cam.target = {0, 0, 0};
     cam.aspect = 1.0f;
-    pass.render({}, cam, *pipeline);
+    pass.render({}, cam, *pipeline, /*procedural=*/false, /*now=*/0.0f);
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 
@@ -45,7 +46,7 @@ TEST_F(BackdropPassTest, SphereCacheReusesAcrossDescriptors) {
     b1.target_poly_count = 256;
     renderer::Backdrop b2 = b1;  // same poly count
 
-    pass.render({b1, b2}, cam, *pipeline);  // both should share one sphere
+    pass.render({b1, b2}, cam, *pipeline, /*procedural=*/false, /*now=*/0.0f);  // both should share one sphere
 
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
@@ -59,7 +60,25 @@ TEST_F(BackdropPassTest, TargetPolyCountSnapsToMinimum) {
     b.target_poly_count = 1;  // below minimum
     b.texture_path = "/dev/null";
 
-    pass.render({b}, cam, *pipeline);
+    pass.render({b}, cam, *pipeline, /*procedural=*/false, /*now=*/0.0f);
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+TEST_F(BackdropPassTest, ProceduralRenderProducesNoGLError) {
+    renderer::BackdropPass pass;
+    scenegraph::Camera cam;
+    cam.aspect = 1.0f;
+
+    renderer::Backdrop b;
+    b.texture_path = "/dev/null";   // texture load fails; procedural path is data-driven
+    b.kind = renderer::BackdropKind::Backdrop;
+    b.proc_kind = 2;                // nebula
+    b.color = glm::vec3(0.6f, 0.3f, 0.7f);
+    b.coverage = 0.5f;
+    b.seed = 12.0f;
+    b.h_span = 0.3f; b.v_span = 0.3f;
+
+    pass.render({b}, cam, *pipeline, /*procedural=*/true, /*now=*/1.0f);
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 

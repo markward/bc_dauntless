@@ -28,7 +28,9 @@ public:
     /// framebuffer.
     void render(const std::vector<Backdrop>& backdrops,
                 const scenegraph::Camera& camera,
-                Pipeline& pipeline);
+                Pipeline& pipeline,
+                bool procedural,
+                float now_seconds);
 
 private:
     /// Lazy-tessellated UV sphere keyed by target_poly_count. Most BC

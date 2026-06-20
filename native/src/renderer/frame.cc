@@ -95,6 +95,13 @@ namespace dauntless_hull_damage {
     bool enabled() { return true; }
 }
 
+// Toggle for the procedural sky (Modern VFX). Default on; off = stock BC.
+namespace dauntless_procedural_sky {
+    bool g_procedural_sky_enabled = true;
+    bool enabled() { return g_procedural_sky_enabled; }
+    void set_enabled(bool v) { g_procedural_sky_enabled = v; }
+}
+
 namespace renderer {
 
 namespace {
