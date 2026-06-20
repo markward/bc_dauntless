@@ -22,7 +22,7 @@ def _make(**overrides):
         tabs=[("graphics", "Graphics")],
         initial_settings=SettingsSnapshot(
             dust_on=True, specular_on=True, hdr_on=True, rim_on=True,
-            decals_on=True, fov_deg=70,
+            decals_on=True, fov_deg=70, shadows_on=True,
         ),
         set_dust=Mock(),
         set_specular=Mock(),
@@ -32,6 +32,7 @@ def _make(**overrides):
         set_smaa=Mock(),
         set_subtitles=Mock(),
         set_fov_rad=Mock(),
+        set_shadows=Mock(),
     )
     kwargs.update(overrides)
     return ConfigurationPanel(**kwargs), kwargs
@@ -66,7 +67,7 @@ def test_initial_settings_round_trip_to_render_payload():
     assert body["settings"] == {
         "dust_on": False, "specular_on": True, "hdr_on": True, "rim_on": False,
         "decals_on": False, "smaa_on": True,
-        "subtitles_on": True, "fov_deg": 62,
+        "subtitles_on": True, "shadows_on": True, "fov_deg": 62,
     }
 
 
@@ -518,3 +519,15 @@ def test_initial_subtitles_off_round_trips():
     payload = p.render_payload()
     data = json.loads(payload[len("setConfigurationPanel("):-len(");")])
     assert data["settings"]["subtitles_on"] is False
+
+
+# ---- dynamic shadows toggle -----------------------------------------------
+
+def test_dispatch_toggle_shadows_flips_and_calls_applier():
+    p, kw = _make()
+    p.open()
+    assert p.dispatch_event("toggle:shadows") is True
+    kw["set_shadows"].assert_called_once_with(False)
+    # Second toggle flips back.
+    assert p.dispatch_event("toggle:shadows") is True
+    kw["set_shadows"].assert_called_with(True)

@@ -24,6 +24,7 @@ function _cpFocusableList(state) {
         out.push({kind: 'ctrl', target: 'fov'});
         out.push({kind: 'ctrl', target: 'hdr'});
         out.push({kind: 'ctrl', target: 'rim'});
+        out.push({kind: 'ctrl', target: 'shadows'});
         out.push({kind: 'ctrl', target: 'decals'});
         out.push({kind: 'ctrl', target: 'smaa'});
     } else if (state.selected_tab === 'gameplay') {
@@ -113,6 +114,17 @@ function _cpRenderGraphicsBody(state, focusables) {
           +     '<button class="cp-toggle' + (s.rim_on ? ' cp-toggle--on' : '') + '"'
           +        ' onclick="dauntlessEvent(\'configuration/toggle:rim\')">'
           +       (s.rim_on ? 'On' : 'Off')
+          +     '</button>'
+          +   '</div>'
+          + '</div>';
+
+    // Dynamic Shadows toggle
+    html += '<div class="cp-row' + (isFoc('shadows') ? ' cp-focused' : '') + '">'
+          +   '<div class="cp-row__label">Dynamic Shadows</div>'
+          +   '<div class="cp-row__control">'
+          +     '<button class="cp-toggle' + (s.shadows_on ? ' cp-toggle--on' : '') + '"'
+          +        ' onclick="dauntlessEvent(\'configuration/toggle:shadows\')">'
+          +       (s.shadows_on ? 'On' : 'Off')
           +     '</button>'
           +   '</div>'
           + '</div>';

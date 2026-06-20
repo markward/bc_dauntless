@@ -33,6 +33,7 @@ class SettingsSnapshot:
     fov_deg: int
     smaa_on: bool = True
     subtitles_on: bool = True
+    shadows_on: bool = True
 
 
 class ConfigurationPanel(Panel):
@@ -46,7 +47,8 @@ class ConfigurationPanel(Panel):
                  set_decals: Callable[[bool], None],
                  set_smaa: Callable[[bool], None],
                  set_subtitles: Callable[[bool], None],
-                 set_fov_rad: Callable[[float], None]):
+                 set_fov_rad: Callable[[float], None],
+                 set_shadows: Callable[[bool], None]):
         super().__init__()
         self._tabs = list(tabs)
         self._selected_tab = tabs[0][0]
@@ -59,6 +61,7 @@ class ConfigurationPanel(Panel):
             smaa_on=initial_settings.smaa_on,
             fov_deg=int(initial_settings.fov_deg),
             subtitles_on=initial_settings.subtitles_on,
+            shadows_on=initial_settings.shadows_on,
         )
         self._set_dust = set_dust
         self._set_specular = set_specular
@@ -68,6 +71,7 @@ class ConfigurationPanel(Panel):
         self._set_smaa = set_smaa
         self._set_subtitles = set_subtitles
         self._set_fov_rad = set_fov_rad
+        self._set_shadows = set_shadows
         self._visible: bool = False
         self._focused: int = -1
         self._last_pushed: Optional[tuple] = None
@@ -99,6 +103,7 @@ class ConfigurationPanel(Panel):
             self._settings.decals_on,
             self._settings.smaa_on,
             self._settings.subtitles_on,
+            self._settings.shadows_on,
             self._settings.fov_deg,
         )
         if snapshot == self._last_pushed:
@@ -119,6 +124,7 @@ class ConfigurationPanel(Panel):
                 "decals_on": self._settings.decals_on,
                 "smaa_on": self._settings.smaa_on,
                 "subtitles_on": self._settings.subtitles_on,
+                "shadows_on": self._settings.shadows_on,
                 "fov_deg": self._settings.fov_deg,
             },
         }
@@ -152,6 +158,11 @@ class ConfigurationPanel(Panel):
             new_val = not self._settings.rim_on
             self._set_rim(new_val)
             self._settings.rim_on = new_val
+            return True
+        if action == "toggle:shadows":
+            new_val = not self._settings.shadows_on
+            self._set_shadows(new_val)
+            self._settings.shadows_on = new_val
             return True
         if action == "toggle:decals":
             new_val = not self._settings.decals_on
@@ -239,6 +250,8 @@ class ConfigurationPanel(Panel):
             self.dispatch_event("toggle:decals")
         elif activate and kind == "ctrl" and target == "smaa":
             self.dispatch_event("toggle:smaa")
+        elif activate and kind == "ctrl" and target == "shadows":
+            self.dispatch_event("toggle:shadows")
         elif activate and kind == "ctrl" and target == "subtitles":
             self.dispatch_event("toggle:subtitles")
         elif activate and kind == "tab":
@@ -259,8 +272,8 @@ class ConfigurationPanel(Panel):
         out: list = [("tab", tid) for tid, _ in self._tabs]
         if self._selected_tab == "graphics":
             out += [("ctrl", "dust"), ("ctrl", "specular"), ("ctrl", "fov"),
-                    ("ctrl", "hdr"), ("ctrl", "rim"), ("ctrl", "decals"),
-                    ("ctrl", "smaa")]
+                    ("ctrl", "hdr"), ("ctrl", "rim"), ("ctrl", "shadows"),
+                    ("ctrl", "decals"), ("ctrl", "smaa")]
         elif self._selected_tab == "gameplay":
             out += [("ctrl", "subtitles")]
         return out

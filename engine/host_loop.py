@@ -3127,6 +3127,7 @@ def run(mission_name: Optional[str] = None,
                 rim_on=True,
                 decals_on=True,
                 smaa_on=True,
+                shadows_on=True,
                 fov_deg=int(round(_math.degrees(
                     director.fov_y_rad
                 ))),
@@ -3140,6 +3141,7 @@ def run(mission_name: Optional[str] = None,
             set_smaa=r.set_smaa_enabled,
             set_subtitles=_crew_speech.set_subtitles_enabled,
             set_fov_rad=director.set_fov,
+            set_shadows=r.set_shadows_enabled,
         )
 
         from engine.ui.pause_menu import default_pause_menu
