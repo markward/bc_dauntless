@@ -3262,6 +3262,7 @@ def run(mission_name: Optional[str] = None,
         # still navigates by keyboard.
         _cef_send_mouse_move  = getattr(_h, "cef_send_mouse_move",  None) if _h else None
         _cef_send_mouse_click = getattr(_h, "cef_send_mouse_click", None) if _h else None
+        _cef_send_wheel       = getattr(_h, "cef_send_mouse_wheel", None) if _h else None
         # Window-resize forwarding: re-lay-out the OSR overlay when the
         # window changes size (older builds lack it -> overlay stays at its
         # init size and stretches, the prior behaviour).
@@ -3354,6 +3355,11 @@ def run(mission_name: Optional[str] = None,
                 _apply_pause_menu_side_effects(
                     pause, view_mode, _h, _modal_blockers,
                 )
+                # Per-frame cursor + panel-hit state, defaulted so the
+                # scroll router (below) has them defined regardless of which
+                # mouse-forward branch runs this frame.
+                _mx, _my = 0, 0
+                _cursor_in_panel = False
                 if pause.is_open:
                     # When a settings modal is open it consumes keyboard
                     # input — pause-menu navigation would otherwise activate
@@ -3586,9 +3592,24 @@ def run(mission_name: Optional[str] = None,
                         _h.cef_reload()
 
                 # Apply keyboard input to the player ship's transform and to the
-                # orbit camera. Scroll delta is consumed once per tick; old
-                # bindings without the binding return 0.0 via the fallback.
+                # orbit camera. Scroll delta is consumed once per tick and routed
+                # below (panel scroll vs ship throttle); old bindings without the
+                # accumulator return 0.0 via the fallback.
                 scroll_y = _consume_scroll() if _consume_scroll is not None else 0.0
+
+                # Route the wheel: over a CEF surface (pause/config modal or
+                # cursor over a HUD panel) → scroll that panel; over open
+                # space → step the ship throttle. Replaces the old camera
+                # scroll-zoom. can_throttle mirrors the digit-key gate
+                # (exterior view + live player).
+                _route_scroll_wheel(
+                    scroll_y,
+                    route_to_panel=(pause.is_open or _cursor_in_panel),
+                    mx=_mx, my=_my,
+                    send_wheel=_cef_send_wheel,
+                    player_control=player_control,
+                    can_throttle=(player is not None and view_mode.is_exterior),
+                )
 
                 if player is not None and _h is not None:
                     # Alert keys (Shift+1/2/3) run before the throttle handler;
