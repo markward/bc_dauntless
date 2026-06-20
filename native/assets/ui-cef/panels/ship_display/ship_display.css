@@ -58,10 +58,13 @@
 }
 
 /* Target panel — flex child of #tactical-target-stack (left column).
-   Fills the column width. */
+   Fills the column width. flex:0 0 auto so it keeps its natural height and
+   never shrinks; the target list below it is the sole shrink/scroll absorber
+   when the column overflows (see target_list.css). */
 #ship-display-target {
     width: 100%;
     min-width: 0;
+    flex: 0 0 auto;
 }
 
 .ship-display[hidden] { display: none; }

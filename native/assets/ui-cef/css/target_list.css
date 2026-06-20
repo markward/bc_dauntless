@@ -30,6 +30,16 @@
        in global.css). The panel fills the zone's width and flows in its
        flex column. */
     width: 100%;
+    /* Flex column so the header stays put and the body becomes the scroll
+       region. min-height:0 lets the panel shrink below its content height
+       within #tactical-target-stack (which is overflow:hidden + height-
+       constrained) so a long target list scrolls instead of being clipped.
+       The sibling #ship-display-target is flex:0 0 auto, so this panel is
+       the sole shrink/scroll absorber. Mirrors the .mp-panel pattern in
+       global.css. */
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
     font-family: "Antonio", "Antonio-Regular", sans-serif;
     font-weight: 600;
     color: var(--bc-label-text);
@@ -50,6 +60,7 @@
 }
 
 .target-list__header {
+    flex: 0 0 auto;            /* fixed; only the body scrolls */
     background: linear-gradient(90deg, var(--bc-menu1-base), var(--bc-menu1-accent));
     color: rgb(0, 0, 0);
     padding: 3px 14px 3px 18px;
@@ -60,6 +71,13 @@
 }
 
 .target-list__body {
+    /* Scroll region: takes the panel's remaining height and scrolls when the
+       row list overflows. min-height:0 is required for the flex child to
+       shrink below its content so overflow-y actually engages. The wheel
+       reaches here via the left-column bbox forward in host_loop. */
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
     background: var(--bc-body-bg);
     border-left: 4px solid var(--bc-menu1-base);
     padding: 8px 0;
