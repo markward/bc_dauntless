@@ -142,9 +142,11 @@ void draw_mesh(const assets::Model& model,
     } else {
         glBindTexture(GL_TEXTURE_2D, white_fallback);
     }
-    // Dark-slot lightmap (BC bridge floor/door/inset lm.tga). When
-    // absent, the white fallback returns (1,1,1) so the multiply in
-    // the fragment shader has no visual effect.
+    // Dark-slot lightmap (BC bridge floor/door/inset/ceiling lm.tga). The
+    // asset pipeline clamps every bridge lightmap onto UV set 1 (the only
+    // secondary set BC bridge geometry carries), so the shader samples it
+    // at v_uv1. When absent, the white fallback returns (1,1,1) so the
+    // multiply in the fragment shader has no visual effect.
     const int dark_tex = mat.stages[
         static_cast<std::size_t>(assets::Material::StageSlot::Dark)
     ].texture_index;

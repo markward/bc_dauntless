@@ -142,30 +142,49 @@ void apply_texture_property(
 void apply_multi_texture_property(
     Material& m,
     const nif::NiMultiTextureProperty& src,
-    const std::unordered_map<std::uint32_t, int>* image_to_texture)
+    const std::unordered_map<std::uint32_t, int>* image_to_texture,
+    const std::unordered_map<std::uint32_t, std::string>* image_filename_for_link)
 {
-    // Stage→slot mapping per material_translation.md, with a UV-set-aware
-    // override: BC's bridge authoring puts the floor lightmap in stage 0
-    // of NiMultiTextureProperty but with `uv_set=1` to sample the
-    // lightmap atlas instead of the underlying carpet tile coords. These
-    // shapes ALSO inherit a separate NiTextureProperty (the carpet
-    // diffuse) on UV set 0, which apply_texture_property writes into
-    // StageSlot::Base FIRST. If we naively routed multi-tex stage 0 to
-    // Base, the lightmap would clobber the carpet diffuse and the
-    // renderer would lose the actual surface texture.
+    // Stage→slot mapping per material_translation.md, with a lightmap
+    // override. BC's bridge authoring bakes per-surface lighting into a
+    // "* lm.tga" texture sampled on a secondary UV set, but the stage it
+    // lives in is NOT consistent across bridges:
     //
-    // Workaround: when a stage 0 entry has uv_set != 0 AND Base is
-    // already populated, route it to StageSlot::Dark (the conventional
-    // NetImmerse lightmap slot). The diffuse stays in Base; the
-    // lightmap goes to Dark; both can be sampled at draw time.
+    //   - DBridge floors / EBridge floors, doors, walls, screens put the
+    //     lightmap in stage 0 (uv_set=1).
+    //   - EBridge ceiling / roof shapes put the lightmap in stage 3
+    //     (uv_set=2) — positionally the "Glow" slot.
+    //
+    // The bridge fragment shader only multiplies in the StageSlot::Dark
+    // texture, so any lightmap that lands anywhere else (e.g. Glow)
+    // renders the surface flat — losing the baked shading. Route a
+    // lightmap (recognised by its "* lm.tga" / "*_lm.tga" filename) to
+    // StageSlot::Dark regardless of which multitexture stage authored it,
+    // preserving its uv_set. The diffuse stays in Base (written first by
+    // apply_texture_property).
+    //
+    // Fallback for unnamed cases: when a stage 0 entry has uv_set != 0 AND
+    // Base is already populated, treat it as a lightmap too (the original
+    // positional heuristic, kept for content that doesn't follow the
+    // filename convention).
     using S = Material::StageSlot;
     static constexpr S slot_map[5] = {S::Base, S::Dark, S::Detail, S::Glow, S::Gloss};
     for (std::size_t i = 0; i < 5; ++i) {
         const auto& el = src.elements[i];
         if (!el.has_image) continue;
 
+        bool is_lightmap = false;
+        if (image_filename_for_link) {
+            auto fn_it = image_filename_for_link->find(el.image_link);
+            if (fn_it != image_filename_for_link->end()) {
+                is_lightmap = filename_is_lightmap(fn_it->second);
+            }
+        }
+
         S target = slot_map[i];
-        if (i == 0 && el.uv_set != 0) {
+        if (is_lightmap) {
+            target = S::Dark;
+        } else if (i == 0 && el.uv_set != 0) {
             auto& base = m.stages[static_cast<std::size_t>(S::Base)];
             if (base.texture_index >= 0) {
                 target = S::Dark;
@@ -199,7 +218,25 @@ Material build_material(const MaterialInputs& in) {
         in.texture_link_id, in.flip_image_override_for_prop,
         in.image_to_texture, in.glow_image_links, in.specular_image_links,
         in.sibling_specular_for_image);
-    if (in.multi_texture) apply_multi_texture_property(m, *in.multi_texture, in.image_to_texture);
+    if (in.multi_texture) apply_multi_texture_property(m, *in.multi_texture,
+        in.image_to_texture, in.image_filename_for_link);
+
+    // Clamp any stage that references a UV set the geometry doesn't carry
+    // to the highest available set. BC's EBridge ceiling/roof lightmaps
+    // are authored on uv_set=2 but their meshes only have 2 UV sets
+    // (indices 0,1); the original fixed-function multitexture engine
+    // clamps such an out-of-range coordinate set rather than reading past
+    // the vertex data. Without this the renderer would sample the
+    // lightmap's (0,0) texel everywhere — black on the ceiling lightmap.
+    if (in.geometry_uv_set_count > 0) {
+        const std::uint32_t max_set =
+            static_cast<std::uint32_t>(in.geometry_uv_set_count - 1);
+        for (auto& stage : m.stages) {
+            if (stage.texture_index >= 0 && stage.uv_set > max_set) {
+                stage.uv_set = max_set;
+            }
+        }
+    }
 
     // Apply BC's lightmap-filename convention. Looks up the source
     // filename for whichever NiImage actually landed in the resolved
