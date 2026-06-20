@@ -4,7 +4,7 @@
 
 #include <vector>
 
-namespace scenegraph { class Camera; }
+namespace scenegraph { struct Camera; }
 
 namespace renderer {
 
