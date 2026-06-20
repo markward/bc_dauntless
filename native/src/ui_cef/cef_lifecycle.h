@@ -68,6 +68,7 @@ void execute_javascript(const std::string& script);
 //                     button: 0=left, 1=middle, 2=right.
 void send_mouse_move(int x, int y);
 void send_mouse_click(int x, int y, int button, bool is_down);
+void send_mouse_wheel(int x, int y, int delta_y);
 
 // JS→C++ event channel. The handler is invoked with the event name
 // when JS navigates to dauntless://event/<name>. The intercept lives
