@@ -361,6 +361,9 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
     hit_vfx.update_ages(dt)
     particles.advance(dt)
     ship_death.advance(dt)
+    from engine.appc import subsystem_cascade, warp_core_breach
+    subsystem_cascade.advance(dt)
+    warp_core_breach.advance(dt, host=host, ship_instances=ship_instances)
     subsystem_emitters.pump(ships_list, _camera_world_pos(host), dt)
     camera_shake.update(dt)
 
@@ -2074,6 +2077,10 @@ class HostController:
         ship_lifecycle.reset()
         from engine.appc import ship_death
         ship_death.reset()
+        from engine.appc import subsystem_cascade
+        subsystem_cascade.reset()
+        from engine.appc import warp_core_breach
+        warp_core_breach.reset()
         from engine.appc import subsystem_emitters
         subsystem_emitters.reset_manager()
         from engine.appc import particles
