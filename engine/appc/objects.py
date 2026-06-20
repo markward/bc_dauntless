@@ -348,6 +348,27 @@ def _is_critical(subsystem) -> bool:
     return bool(subsystem.IsCritical())
 
 
+def _route_zero_crossing(ship, subsystem, crossed_zero: bool) -> None:
+    """On a subsystem crossing >0 -> 0, arm the warp-core breach (when the
+    subsystem is the ship's PowerSubsystem) or schedule the hull-death cascade
+    (when it is the hull). No-op otherwise. Kept separate from the critical ->
+    ship_death.begin path, which is unchanged.
+
+    See docs/superpowers/specs/2026-06-20-warp-core-breach-design.md.
+    """
+    if not crossed_zero:
+        return
+    power = ship.GetPowerSubsystem() if hasattr(ship, "GetPowerSubsystem") else None
+    if power is not None and subsystem is power:
+        from engine.appc import warp_core_breach
+        warp_core_breach.arm(ship)
+        return
+    hull = ship.GetHull() if hasattr(ship, "GetHull") else None
+    if hull is not None and subsystem is hull:
+        from engine.appc import subsystem_cascade
+        subsystem_cascade.schedule(ship)
+
+
 class DamageableObject(PhysicsObjectClass):
     """Placeholder — hull/shield damage state lives here in Phase 2.
 
@@ -368,7 +389,8 @@ class DamageableObject(PhysicsObjectClass):
     def DamageSystem(self, subsystem, amount: float) -> None:
         """Apply damage to a subsystem, flooring condition at zero. If the
         subsystem is critical and reaches zero, start the ship death
-        sequence (covers hull AND warp core via SetCritical(1))."""
+        sequence (covers hull AND warp core via SetCritical(1)). A >0 -> 0
+        crossing also arms the warp-core breach / schedules the hull cascade."""
         if subsystem is None:
             return
         amt = float(amount)
@@ -377,6 +399,7 @@ class DamageableObject(PhysicsObjectClass):
         cur = subsystem.GetCondition()
         new_cond = max(0.0, cur - amt)
         subsystem.SetCondition(new_cond)
+        _route_zero_crossing(self, subsystem, cur > 0.0 and new_cond <= 0.0)
         if new_cond <= 0.0 and _is_critical(subsystem) \
                 and hasattr(self, "IsDying") and hasattr(self, "IsDead") \
                 and not self.IsDying() and not self.IsDead():
@@ -386,12 +409,15 @@ class DamageableObject(PhysicsObjectClass):
     def DestroySystem(self, subsystem) -> None:
         """Force a subsystem to zero condition (mirrors SDK
         pShip.DestroySystem). Ship death is a side effect only when the
-        subsystem is critical; DestroySystem(pSensors) just zeroes sensors."""
+        subsystem is critical; DestroySystem(pSensors) just zeroes sensors. A
+        >0 -> 0 crossing arms the warp-core breach / schedules the cascade."""
         if subsystem is None:
             return
+        cur = subsystem.GetCondition()
         subsystem.SetCondition(0.0)
         if hasattr(subsystem, "SetDestroyed"):
             subsystem.SetDestroyed(True)
+        _route_zero_crossing(self, subsystem, cur > 0.0)
         if _is_critical(subsystem) \
                 and hasattr(self, "IsDying") and hasattr(self, "IsDead") \
                 and not self.IsDying() and not self.IsDead():
