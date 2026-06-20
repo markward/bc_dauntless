@@ -155,6 +155,30 @@ def test_chain_resolves_same_tick_and_terminates(monkeypatch):
     assert detonated.count(nbr) == 1
 
 
+def test_no_allegiance_filter_hits_all_ships_in_radius(monkeypatch):
+    """Regression sentinel: detonate must hit EVERY ship in radius regardless of
+    allegiance. If an allegiance gate is ever added to detonate(), this test must
+    fail."""
+    calls = _capture_apply_hit(monkeypatch)
+    src = _Ship("Doomed", TGPoint3(0, 0, 0), core=_Core(5000.0))
+    # Two in-range ships with notionally different allegiances.
+    ally = _Ship("AllyShip", TGPoint3(0.5, 0, 0), radius=0.5)
+    ally.allegiance = "Federation"
+    ally.GetAllegianceName = lambda: "Federation"
+    enemy = _Ship("EnemyShip", TGPoint3(-0.5, 0, 0), radius=0.5)
+    enemy.allegiance = "Klingon"
+    enemy.GetAllegianceName = lambda: "Klingon"
+    _patch_ships(monkeypatch, [src, ally, enemy])
+
+    warp_core_breach.arm(src)
+    warp_core_breach.advance(0.0)
+
+    hit_targets = [c[0] for c in calls]
+    assert ally in hit_targets, "Ally ship must be hit (no allegiance filter)"
+    assert enemy in hit_targets, "Enemy ship must be hit (no allegiance filter)"
+    assert src not in hit_targets, "Source ship must not hit itself"
+
+
 def test_reset_clears_state(monkeypatch):
     calls = _capture_apply_hit(monkeypatch)
     src = _Ship("Doomed", TGPoint3(0, 0, 0), core=_Core(5000.0))

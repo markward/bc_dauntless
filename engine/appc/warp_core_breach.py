@@ -19,13 +19,16 @@ BREACH_RADIUS_GU       = 1.3   # 10x photon torpedo DRF (0.13 GU)
 BREACH_FIREBALL_FACTOR = 2.0   # fireball size vs ship radius (tuned by feel)
 
 _armed: list = []      # ships queued to detonate (FIFO)
-_breached: set = set() # id(ship) that have already detonated
+# Holds the ship objects themselves (not id()) so that CPython's id-reuse cannot
+# cause a freshly-spawned ship to be silently skipped if it lands on a recycled
+# address. Identity/strong-ref semantics match how _armed already uses `is`.
+_breached: set = set()
 
 
 def arm(ship) -> None:
     """Queue `ship` to detonate. Idempotent: a ship already queued or already
     breached is ignored. This is the single-fire guarantee."""
-    if ship is None or id(ship) in _breached:
+    if ship is None or ship in _breached:
         return
     if any(s is ship for s in _armed):
         return
@@ -38,9 +41,9 @@ def advance(dt: float, host=None, ship_instances=None) -> None:
     tick. The _breached guard guarantees termination."""
     while _armed:
         ship = _armed.pop(0)
-        if id(ship) in _breached:
+        if ship in _breached:
             continue
-        _breached.add(id(ship))
+        _breached.add(ship)
         # Module-global lookup so tests can monkeypatch `detonate`.
         detonate(ship, host=host, ship_instances=ship_instances)
 
