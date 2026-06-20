@@ -95,6 +95,16 @@ struct TorpedoDescriptor {
     float       age           = 0.0f;
 };
 
+// One warp-core breach shockwave: a camera-facing ring + core flash centered
+// at world_center, expanding to max_radius over lifetime. age/lifetime drive
+// the shader animation (same age-based shape as TorpedoDescriptor).
+struct ShockwaveDescriptor {
+    glm::vec3 world_center;
+    float max_radius;
+    float age;
+    float lifetime;
+};
+
 /// Hit-VFX render descriptor.  Engine ages each entry; renderer dispatches
 /// per-tier constants (HULL / CRITICAL) based on `severity`.  `surface_normal`
 /// is (0,0,0) when no mesh trace was available (sentinel = no normal).

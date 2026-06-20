@@ -128,6 +128,7 @@ std::vector<renderer::LensFlareDescriptor> g_lens_flares;
 std::unique_ptr<renderer::LensFlarePass>   g_lens_flare_pass;
 std::vector<renderer::TorpedoDescriptor>   g_torpedoes;
 std::unique_ptr<renderer::TorpedoPass>     g_torpedo_pass;
+std::vector<renderer::ShockwaveDescriptor> g_shockwaves;
 std::vector<renderer::HitVfxDescriptor>    g_hit_vfx;
 std::unique_ptr<renderer::HitVfxPass>      g_hit_vfx_pass;
 std::vector<renderer::ParticleEmitterDescriptor> g_particle_emitters;
@@ -360,6 +361,7 @@ void shutdown() {
     g_lens_flare_pass.reset();
     g_torpedoes.clear();
     g_torpedo_pass.reset();
+    g_shockwaves.clear();
     g_hit_vfx.clear();
     g_hit_vfx_pass.reset();
     g_particle_emitters.clear();
@@ -1531,6 +1533,24 @@ PYBIND11_MODULE(_dauntless_host, m) {
           },
           py::arg("torpedoes"),
           "Set the active torpedo list, applied each frame().");
+
+    m.def("set_shockwaves",
+          [](const std::vector<py::dict>& descs) {
+              g_shockwaves.clear();
+              g_shockwaves.reserve(descs.size());
+              for (const auto& d : descs) {
+                  renderer::ShockwaveDescriptor s;
+                  auto c = d["world_center"].cast<std::tuple<float, float, float>>();
+                  s.world_center = {std::get<0>(c), std::get<1>(c), std::get<2>(c)};
+                  s.max_radius = d["max_radius"].cast<float>();
+                  s.age        = d["age"].cast<float>();
+                  s.lifetime   = d["lifetime"].cast<float>();
+                  g_shockwaves.push_back(std::move(s));
+              }
+          },
+          py::arg("shockwaves"),
+          "Replace the active warp-core breach shockwaves: a list of "
+          "((cx,cy,cz), max_radius, age, lifetime).");
 
     m.def("set_hit_vfx",
           [](const std::vector<py::dict>& descs) {
