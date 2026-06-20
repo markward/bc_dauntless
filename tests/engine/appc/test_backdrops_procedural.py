@@ -48,3 +48,12 @@ def test_unknown_texture_is_graceful(monkeypatch, tmp_path):
     out = bd.aggregate_for_renderer(_Set([b]), tmp_path)
     assert out[0]["proc_kind"] == "nebula"
     assert "color" in out[0] and "seed" in out[0]  # defaults, no crash
+
+
+def test_seed_is_deterministic():
+    # crc32("treknebula6.tga") is fixed across runs -> stable per-system sky
+    import zlib
+    expected = (zlib.crc32(b"treknebula6.tga") % 100000) / 1000.0
+    assert bd._proc_fields("treknebula6.tga")["seed"] == expected
+    # distinct textures -> distinct seeds
+    assert bd._proc_fields("galaxy4.tga")["seed"] != bd._proc_fields("treknebula6.tga")["seed"]

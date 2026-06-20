@@ -22,6 +22,7 @@ The renderer reads stored config via aggregate_for_renderer at the end
 of this module and passes a flat list to the C++ side each tick.
 """
 import json as _json
+import zlib as _zlib
 from functools import lru_cache as _lru_cache
 from pathlib import Path as _P
 
@@ -61,7 +62,7 @@ def _proc_fields(basename):
     coverage = row["coverage"] if row else 0.4
     # nebula -> vivid; starcloud dust -> keep dim; stars -> unused
     color = _display_tint(mean) if kind == "nebula" else [c / 255.0 for c in mean]
-    seed = (abs(hash(basename)) % 100000) / 1000.0  # stable per texture
+    seed = (_zlib.crc32(basename.encode("utf-8")) % 100000) / 1000.0  # stable per texture, deterministic across runs
     return {"proc_kind": kind, "color": color, "coverage": coverage, "seed": seed}
 
 
