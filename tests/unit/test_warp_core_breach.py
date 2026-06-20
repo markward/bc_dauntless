@@ -96,7 +96,7 @@ def test_no_core_ship_never_detonates(monkeypatch):
 def test_damage_scales_with_core_and_falls_off_with_distance(monkeypatch):
     calls = _capture_apply_hit(monkeypatch)
     src = _Ship("Doomed", TGPoint3(0, 0, 0), core=_Core(5000.0))
-    # near at d=0.5, R=0.5: weight = (0.5 + 1.3 - 0.5)/1.3 = 1.0 (clamped)
+    # near at d=0.5, R=0.5: weight = (0.5 + 4.0 - 0.5)/4.0 = 1.0 (clamped)
     near = _Ship("Near", TGPoint3(0.5, 0, 0), radius=0.5)
     _patch_ships(monkeypatch, [src, near])
 
@@ -111,7 +111,7 @@ def test_damage_scales_with_core_and_falls_off_with_distance(monkeypatch):
 def test_ship_outside_radius_untouched(monkeypatch):
     calls = _capture_apply_hit(monkeypatch)
     src = _Ship("Doomed", TGPoint3(0, 0, 0), core=_Core(5000.0))
-    # far at d=10, R=0.1: weight = (0.1 + 1.3 - 10)/1.3 < 0 -> 0
+    # far at d=10, R=0.1: weight = (0.1 + 4.0 - 10)/4.0 < 0 -> 0
     far = _Ship("Far", TGPoint3(10.0, 0, 0), radius=0.1)
     _patch_ships(monkeypatch, [src, far])
 

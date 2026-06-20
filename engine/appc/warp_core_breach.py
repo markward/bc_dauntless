@@ -17,7 +17,6 @@ import engine.dev_mode as dev_mode
 BREACH_DAMAGE_FACTOR   = 1.0   # centre damage = factor * core max condition
 BREACH_RADIUS_GU       = 4.0   # shared AoE damage radius AND shockwave ring max
                                # radius; tuned to the dramatic visual (was 1.3)
-BREACH_FIREBALL_FACTOR = 2.0   # fireball size vs ship radius (tuned by feel)
 
 _armed: list = []      # ships queued to detonate (FIFO)
 # Holds the ship objects themselves (not id()) so that CPython's id-reuse cannot
