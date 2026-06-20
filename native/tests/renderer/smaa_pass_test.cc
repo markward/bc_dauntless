@@ -15,7 +15,7 @@ protected:
     }
 };
 
-// A synthetic LDR input with a hard diagonal edge, fed through SMAA, must
+// A synthetic LDR input with a hard vertical edge, fed through SMAA, must
 // produce GL-error-free non-black output in the backbuffer.
 TEST_F(SmaaPassTest, RunsThreePassesErrorFreeAndProducesOutput) {
     // Build a 64x64 source texture: left half white, right half black.

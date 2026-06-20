@@ -41,9 +41,12 @@ GLuint make_lut(GLint internal_fmt, GLenum fmt, int w, int h,
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    GLint prev = 0;
+    glGetIntegerv(GL_UNPACK_ALIGNMENT, &prev);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glTexImage2D(GL_TEXTURE_2D, 0, internal_fmt, w, h, 0, fmt,
                  GL_UNSIGNED_BYTE, bytes);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, prev);
     glBindTexture(GL_TEXTURE_2D, 0);
     return tex;
 }
