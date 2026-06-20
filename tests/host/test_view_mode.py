@@ -69,7 +69,7 @@ class _RecordingInputs:
         def apply(self, player, dt, h): self.calls.append(h)
     class _FakeChase:
         def __init__(self): self.calls = 0
-        def apply(self, dt, h, scroll_y): self.calls += 1
+        def apply(self, dt, h): self.calls += 1
     class _FakeDirector:
         def __init__(self, chase): self.chase = chase
     class _Camera:
@@ -96,7 +96,7 @@ def test_apply_input_calls_both_in_exterior_mode():
     inputs = _RecordingInputs()
     reader = _FakeKeyReader()
     _apply_input(vm, inputs.player, inputs.camera,
-                 player=object(), dt=1.0/60, h=reader, scroll_y=0.0)
+                 player=object(), dt=1.0/60, h=reader)
     assert len(inputs.player.calls) == 1
     assert inputs.player.calls[0] is reader  # exterior forwards live keys
     assert inputs.camera.calls == 1
@@ -112,7 +112,7 @@ def test_apply_input_in_bridge_keeps_player_integrating_with_no_input():
     reader = _FakeKeyReader()
     reader.held.add(reader.keys.KEY_SPACE)  # held key must not reach player
     _apply_input(vm, inputs.player, inputs.camera,
-                 player=object(), dt=1.0/60, h=reader, scroll_y=0.0)
+                 player=object(), dt=1.0/60, h=reader)
     assert len(inputs.player.calls) == 1
     assert inputs.player.calls[0] is _NO_INPUT
     assert inputs.camera.calls == 0
@@ -141,7 +141,7 @@ def test_apply_input_preserves_orbit_state_across_bridge_toggle():
     class _NoopPlayer:
         def apply(self, *a, **k): pass
     _apply_input(vm, _NoopPlayer(), _FakeDirectorWithChase(cc),
-                 player=object(), dt=1.0/60, h=reader, scroll_y=99.0)
+                 player=object(), dt=1.0/60, h=reader)
     assert (cc.orbit_yaw_rad, cc.orbit_pitch_rad, cc.distance) == saved
 
 
@@ -185,7 +185,7 @@ def test_apply_input_in_bridge_keeps_ship_moving_under_real_player_control():
     # Tick a few times in bridge mode. The ship must move forward.
     for _ in range(10):
         _apply_input(vm, pc, _NoopDirector(),
-                     player=ship, dt=1.0/60, h=reader, scroll_y=0.0)
+                     player=ship, dt=1.0/60, h=reader)
 
     # Ship-Y is forward in body frame. Identity rotation → world +Y.
     # 10 ticks × (1/60 s) × 250 units/s ≈ 41.67 units along Y.

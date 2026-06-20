@@ -97,12 +97,13 @@ class _ChaseCamera:
         if self.orbit_pitch_rad < -self.PITCH_LIMIT_RAD:
             self.orbit_pitch_rad = -self.PITCH_LIMIT_RAD
 
-    def apply(self, dt: float, h, scroll_y: float) -> None:
-        """Read arrow keys + C reset + accumulated scroll, update orbit state.
+    def apply(self, dt: float, h) -> None:
+        """Read arrow keys + C reset, update orbit state.
 
         `h` is the bindings module (or fake) with key_state/key_pressed and a
-        `keys` namespace containing KEY_LEFT/RIGHT/UP/DOWN/C.
-        `scroll_y` is the total wheel delta accumulated since the last call.
+        `keys` namespace containing KEY_LEFT/RIGHT/UP/DOWN/C. Wheel zoom was
+        removed (the wheel now drives ship throttle); keyboard =/- zoom via
+        zoom_in()/zoom_out() is unchanged.
         """
         # C-key is now handled by _CameraDirector.toggle_mode; the
         # chase camera only owns orbit reset on its own dedicated
@@ -116,11 +117,6 @@ class _ChaseCamera:
 
         if self.orbit_pitch_rad >  self.PITCH_LIMIT_RAD: self.orbit_pitch_rad =  self.PITCH_LIMIT_RAD
         if self.orbit_pitch_rad < -self.PITCH_LIMIT_RAD: self.orbit_pitch_rad = -self.PITCH_LIMIT_RAD
-
-        if scroll_y != 0.0:
-            self.distance *= self.ZOOM_FACTOR_PER_NOTCH ** scroll_y
-            if self.distance < self.distance_min: self.distance = self.distance_min
-            if self.distance > self.distance_max: self.distance = self.distance_max
 
     def compute_camera(self, ship_loc, ship_rot, dt=None) -> tuple:
         """Return (eye, target, up) as 3-tuples in world space.

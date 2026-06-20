@@ -2252,7 +2252,7 @@ _NO_INPUT = _NoInputReader()
 
 
 def _apply_input(view_mode, player_control, director,
-                 *, player, dt, h, scroll_y) -> None:
+                 *, player, dt, h) -> None:
     """Per-tick input dispatch.
 
     Exterior mode drives both ship and camera from the keyboard. Bridge
@@ -2264,7 +2264,7 @@ def _apply_input(view_mode, player_control, director,
     """
     if view_mode.is_exterior:
         player_control.apply(player, dt, h)
-        director.chase.apply(dt, h, scroll_y)
+        director.chase.apply(dt, h)
     else:
         player_control.apply(player, dt, _NO_INPUT)
 
@@ -3618,8 +3618,7 @@ def run(mission_name: Optional[str] = None,
                     # see comment at the accumulator step. _apply_input fires
                     # once per render frame, so its dt is the wall delta.
                     _apply_input(view_mode, player_control, director,
-                                 player=player, dt=_player_dt, h=_h,
-                                 scroll_y=scroll_y)
+                                 player=player, dt=_player_dt, h=_h)
 
                 # Forward mouse button edges into the input manager (fire
                 # events route via g_kKeyboardBinding → TCW handlers).

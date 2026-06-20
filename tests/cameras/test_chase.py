@@ -59,7 +59,7 @@ def test_right_arrow_increases_yaw():
     reader = _FakeKeyReader()
     reader.held.add(reader.keys.KEY_RIGHT)
     for _ in range(60):
-        cc.apply(dt=1.0/60, h=reader, scroll_y=0.0)
+        cc.apply(dt=1.0/60, h=reader)
     assert cc.orbit_yaw_rad == pytest.approx(_CameraControl.TURN_RATE_RAD_PER_S, abs=1e-3)
 
 
@@ -69,7 +69,7 @@ def test_left_arrow_decreases_yaw():
     reader = _FakeKeyReader()
     reader.held.add(reader.keys.KEY_LEFT)
     for _ in range(60):
-        cc.apply(dt=1.0/60, h=reader, scroll_y=0.0)
+        cc.apply(dt=1.0/60, h=reader)
     assert cc.orbit_yaw_rad == pytest.approx(-_CameraControl.TURN_RATE_RAD_PER_S, abs=1e-3)
 
 
@@ -80,7 +80,7 @@ def test_up_arrow_increases_pitch():
     start_pitch = cc.orbit_pitch_rad
     reader.held.add(reader.keys.KEY_UP)
     for _ in range(30):
-        cc.apply(dt=1.0/60, h=reader, scroll_y=0.0)
+        cc.apply(dt=1.0/60, h=reader)
     expected = start_pitch + _CameraControl.TURN_RATE_RAD_PER_S * 0.5
     assert cc.orbit_pitch_rad == pytest.approx(expected, abs=1e-3)
 
@@ -92,7 +92,7 @@ def test_down_arrow_decreases_pitch():
     start_pitch = cc.orbit_pitch_rad
     reader.held.add(reader.keys.KEY_DOWN)
     for _ in range(30):
-        cc.apply(dt=1.0/60, h=reader, scroll_y=0.0)
+        cc.apply(dt=1.0/60, h=reader)
     expected = start_pitch - _CameraControl.TURN_RATE_RAD_PER_S * 0.5
     assert cc.orbit_pitch_rad == pytest.approx(expected, abs=1e-3)
 
@@ -104,7 +104,7 @@ def test_pitch_clamps_at_upper_limit():
     reader = _FakeKeyReader()
     reader.held.add(reader.keys.KEY_UP)
     for _ in range(600):  # 10 simulated seconds
-        cc.apply(dt=1.0/60, h=reader, scroll_y=0.0)
+        cc.apply(dt=1.0/60, h=reader)
     assert cc.orbit_pitch_rad == pytest.approx(_CameraControl.PITCH_LIMIT_RAD)
 
 
@@ -114,45 +114,8 @@ def test_pitch_clamps_at_lower_limit():
     reader = _FakeKeyReader()
     reader.held.add(reader.keys.KEY_DOWN)
     for _ in range(600):
-        cc.apply(dt=1.0/60, h=reader, scroll_y=0.0)
+        cc.apply(dt=1.0/60, h=reader)
     assert cc.orbit_pitch_rad == pytest.approx(-_CameraControl.PITCH_LIMIT_RAD)
-
-
-def test_scroll_up_zooms_in():
-    """Positive scroll_y reduces distance by 0.9^n per notch."""
-    from engine.cameras.chase import _ChaseCamera as _CameraControl
-    cc = _CameraControl()
-    reader = _FakeKeyReader()
-    initial = cc.distance
-    cc.apply(dt=1.0/60, h=reader, scroll_y=3.0)
-    expected = initial * (_CameraControl.ZOOM_FACTOR_PER_NOTCH ** 3.0)
-    assert cc.distance == pytest.approx(expected)
-
-
-def test_scroll_down_zooms_out():
-    from engine.cameras.chase import _ChaseCamera as _CameraControl
-    cc = _CameraControl()
-    reader = _FakeKeyReader()
-    initial = cc.distance
-    cc.apply(dt=1.0/60, h=reader, scroll_y=-2.0)
-    expected = initial * (_CameraControl.ZOOM_FACTOR_PER_NOTCH ** -2.0)
-    assert cc.distance == pytest.approx(expected)
-
-
-def test_distance_clamps_at_min():
-    from engine.cameras.chase import _ChaseCamera as _CameraControl
-    cc = _CameraControl()
-    reader = _FakeKeyReader()
-    cc.apply(dt=1.0/60, h=reader, scroll_y=1000.0)  # absurd zoom in
-    assert cc.distance == pytest.approx(cc.distance_min)
-
-
-def test_distance_clamps_at_max():
-    from engine.cameras.chase import _ChaseCamera as _CameraControl
-    cc = _CameraControl()
-    reader = _FakeKeyReader()
-    cc.apply(dt=1.0/60, h=reader, scroll_y=-1000.0)
-    assert cc.distance == pytest.approx(cc.distance_max)
 
 
 def test_compute_camera_at_defaults_at_origin_identity_rotation():
@@ -538,7 +501,7 @@ def test_chase_mouse_and_arrow_compose():
     reader = _FakeKeyReader()
     reader.held.add(reader.keys.KEY_RIGHT)
     seed = cc.orbit_yaw_rad
-    cc.apply(dt=1.0, h=reader, scroll_y=0.0)   # +TURN_RATE × 1.0 to yaw
+    cc.apply(dt=1.0, h=reader)   # +TURN_RATE × 1.0 to yaw
     cc.apply_mouse_delta(100.0, 0.0)            # +100 × SENSITIVITY to yaw
     expected = seed + cc.TURN_RATE_RAD_PER_S + 100.0 * cc.MOUSE_SENSITIVITY
     assert cc.orbit_yaw_rad == pytest.approx(expected)
