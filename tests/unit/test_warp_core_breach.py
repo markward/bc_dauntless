@@ -218,3 +218,17 @@ def test_detonate_spawns_one_shockwave_at_core_center(monkeypatch):
 
 def test_detonate_no_longer_has_spawn_fireball():
     assert not hasattr(warp_core_breach, "_spawn_fireball")
+
+
+def test_detonate_schedules_core_breach_carve(monkeypatch):
+    from engine.appc import core_breach_carve
+    scheduled = []
+    monkeypatch.setattr(core_breach_carve, "schedule",
+                        lambda ship: scheduled.append(ship))
+    import engine.appc.ship_iter as ship_iter
+    src = _Ship("Doomed", TGPoint3(0.0, 0.0, 0.0), core=_Core(5000.0))
+    monkeypatch.setattr(ship_iter, "iter_ships", lambda *a, **k: [src])
+
+    warp_core_breach.detonate(src)
+
+    assert scheduled == [src]

@@ -68,6 +68,12 @@ def detonate(ship, host=None, ship_instances=None) -> None:
     except Exception as _e:
         dev_mode.log_swallowed("spawn warp core shockwave", _e)
 
+    try:
+        from engine.appc import core_breach_carve
+        core_breach_carve.schedule(ship)
+    except Exception as _e:
+        dev_mode.log_swallowed("schedule core breach carve", _e)
+
     for target in list(iter_ships()):
         if target is ship:
             continue
