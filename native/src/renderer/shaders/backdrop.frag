@@ -28,6 +28,8 @@ float vnoise(vec3 p){
                mix(mix(n001,n101,f.x),mix(n011,n111,f.x),f.y), f.z);
 }
 float fbm(vec3 p){ float a=0.5,s=0.0; for(int k=0;k<5;k++){ s+=a*vnoise(p); p*=2.02; a*=0.5; } return s; }
+// Ridged turbulence — sharper filaments than fbm, for nebula wisps + dust lanes.
+float turb(vec3 p){ float a=0.5,s=0.0; for(int k=0;k<5;k++){ s+=a*abs(2.0*vnoise(p)-1.0); p*=2.03; a*=0.5; } return s; }
 
 vec3 proc_stars(vec3 dir, float density){
     vec3 g = dir*220.0; vec3 cell = floor(g);
@@ -43,7 +45,14 @@ vec3 proc_stars(vec3 dir, float density){
 
 void proc_main(vec3 dir, vec2 offset){
     if (u_proc_kind == 0) {
-        vec3 c = proc_stars(dir, 0.06) + 0.5*proc_stars(dir*1.7+11.0, 0.04);
+        // STAR SPHERE: modulate density by a low-frequency field so the whole
+        // sky has dense drifts and sparse voids — cluster variety everywhere,
+        // not only where a galaxy backdrop happens to exist.
+        float field = fbm(dir*1.3 + 3.0*u_seed);
+        float dens  = mix(0.02, 0.13, smoothstep(0.30, 0.85, field));
+        vec3 c = proc_stars(dir, dens) + 0.55*proc_stars(dir*1.7 + 11.0, dens*0.6);
+        // faint unresolved-star haze pooling in the densest drifts
+        c += vec3(0.55, 0.6, 0.8) * 0.05 * smoothstep(0.62, 0.95, field);
         frag_color = vec4(c, 1.0); return;
     }
     float rx = abs(offset.x)/max(u_span.x*0.25, 1e-3);
@@ -52,15 +61,31 @@ void proc_main(vec3 dir, vec2 offset){
     if (edge <= 0.0) discard;
     vec3 np = dir*3.0 + u_seed; float drift = u_time*0.01;
     if (u_proc_kind == 2) {
-        float n = fbm(np + vec3(drift));
-        float dens = smoothstep(1.0 - u_coverage*0.9, 1.0, n + 0.15);
-        frag_color = vec4(u_color*(0.6 + 0.8*n), dens*edge);
+        // NEBULA: filamentary structure, slight colour variety rooted in the
+        // recorded hue, and bright stellar-nursery cores.
+        float n     = fbm(np + vec3(drift));
+        float fil   = turb(np*1.7 + vec3(drift*0.6));      // wispy filaments
+        float field = mix(n, fil, 0.55);
+        float dens  = smoothstep(1.0 - u_coverage*0.9, 1.0, field + 0.15);
+        // cool dim wisps -> warm bright cores, both anchored to u_color so the
+        // recorded hue stays dominant (slight variety, not a different colour).
+        vec3 cool = u_color * vec3(0.85, 0.95, 1.15);
+        vec3 warm = u_color * vec3(1.20, 1.02, 0.85);
+        vec3 base = mix(cool, warm, smoothstep(0.30, 0.85, field)) * (0.45 + 0.95*field);
+        // stellar nursery: hot emission knots + embedded young stars in the
+        // densest cores, brightening from u_color toward white-hot.
+        float core = smoothstep(0.80, 1.0, field);
+        vec3 emission = mix(u_color*1.6, vec3(1.0, 0.96, 0.9), 0.55*core) * core;
+        vec3 young = proc_stars(dir, 0.22*core) * (1.0 + 2.5*core);
+        vec3 col = base + emission + young;
+        frag_color = vec4(col, clamp(max(dens, core)*edge, 0.0, 1.0));
     } else {
-        vec3 stars = proc_stars(dir, 0.18) * edge;
+        // STARCLOUD (galaxy): dense stars + diffuse dust glow + dark dust lanes.
+        vec3 stars = proc_stars(dir, 0.24) * edge;
         float glowN = fbm(np*0.6 + vec3(drift));
-        float lanes = smoothstep(0.55, 0.75, fbm(np*1.8));
-        float dust = (0.3 + 0.5*glowN) * (1.0 - 0.85*lanes);
-        vec3 col = stars*(1.0 - 0.85*lanes) + u_color*dust;
+        float lanes = smoothstep(0.50, 0.72, turb(np*1.8));
+        float dust = (0.32 + 0.55*glowN) * (1.0 - 0.88*lanes);
+        vec3 col = stars*(1.0 - 0.88*lanes) + u_color*dust;
         frag_color = vec4(col, max(dust*edge, length(stars)));
     }
 }
