@@ -13,7 +13,15 @@ See docs/superpowers/specs/2026-06-20-warp-core-breach-hull-carve-design.md.
 import engine.dev_mode as dev_mode
 
 GROW_DURATION            = 1.5   # seconds the hole grows to full size
-MAX_RADIUS_SHIP_FRACTION = 0.7   # full carve radius as a fraction of ship radius
+# Carve radius as a fraction of the ship BOUNDING-SPHERE radius (GetRadius(),
+# ~4 GU for a Galaxy). Kept small: the carve is a big hull WOUND, not the whole
+# ship. The weapon-hit carves the renderer is built around are ~0.25-0.5 GU.
+MAX_RADIUS_SHIP_FRACTION = 0.25
+# Hard ceiling (GU). The breach render pass degenerates into a flat cross-section
+# when a carve approaches the hull's smallest dimension (Galaxy thin axis ~0.67
+# GU half-extent), so never let the carve grow into that regime regardless of
+# ship size.
+MAX_RADIUS_GU            = 1.2
 MIN_RADIUS_GU            = 0.1   # floor so the first growing frame is visible
 
 # Registry of in-progress core breaches: each entry is {"ship": ship, "age": float}.
@@ -91,8 +99,8 @@ def _advance_one(entry, dt, host, ship_instances) -> bool:
     from engine.appc.subsystems import subsystem_world_position
     from engine.appc import damage_decals
     core_world = subsystem_world_position(core, ship)
-    radius_full = MAX_RADIUS_SHIP_FRACTION * (
-        ship.GetRadius() if hasattr(ship, "GetRadius") else 1.0)
+    radius_full = min(MAX_RADIUS_GU, MAX_RADIUS_SHIP_FRACTION * (
+        ship.GetRadius() if hasattr(ship, "GetRadius") else 1.0))
     radius = max(MIN_RADIUS_GU, radius_full * _ease_out(t))
     normal = _carve_normal(ship, core_world)
     now = damage_decals.current_game_time()

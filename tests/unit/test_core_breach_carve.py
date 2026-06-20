@@ -75,12 +75,35 @@ def test_reaches_full_radius_then_drops():
     core_breach_carve.schedule(ship)
 
     core_breach_carve.advance(core_breach_carve.GROW_DURATION, host, si)  # t=1
-    # Full radius = 0.7 * 2.0 * easeOut(1.0) = 1.4
-    assert host.carves[-1][3] == pytest.approx(1.4)
+    # Full radius = min(MAX_RADIUS_GU, 0.25 * 2.0) * easeOut(1.0) = 0.5
+    assert host.carves[-1][3] == pytest.approx(0.5)
 
     n = len(host.carves)
     core_breach_carve.advance(1.0, host, si)   # entry dropped -> no new carve
     assert len(host.carves) == n
+
+
+def test_radius_stays_within_safe_cap_for_a_capital_ship():
+    # A Galaxy's bounding-sphere GetRadius() is ~4 GU; the carve must NOT scale
+    # to several GU (the breach renderer degenerates into a flat patch when a
+    # carve approaches the hull's smallest dimension). It must stay <= the cap.
+    ship = _Ship(radius=4.0)
+    host = _Host()
+    core_breach_carve.schedule(ship)
+    core_breach_carve.advance(core_breach_carve.GROW_DURATION, host, {ship: 1})
+    radius = host.carves[-1][3]
+    assert radius <= core_breach_carve.MAX_RADIUS_GU
+    # 0.25 * 4.0 = 1.0, under the 1.2 cap.
+    assert radius == pytest.approx(1.0)
+
+
+def test_radius_hard_capped_for_an_oversized_ship():
+    ship = _Ship(radius=20.0)
+    host = _Host()
+    core_breach_carve.schedule(ship)
+    core_breach_carve.advance(core_breach_carve.GROW_DURATION, host, {ship: 1})
+    # 0.25 * 20 = 5.0, clamped to MAX_RADIUS_GU.
+    assert host.carves[-1][3] == pytest.approx(core_breach_carve.MAX_RADIUS_GU)
 
 
 def test_no_instance_emits_nothing_and_drops():
