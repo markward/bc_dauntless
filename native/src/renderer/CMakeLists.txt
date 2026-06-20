@@ -51,6 +51,13 @@ embed_shader(SHADER_RESOLVE_VS shaders/resolve.vert resolve_vs)
 embed_shader(SHADER_RESOLVE_FS shaders/resolve.frag resolve_fs)
 embed_shader(SHADER_FXAA_VS shaders/fxaa.vert fxaa_vs)
 embed_shader(SHADER_FXAA_FS shaders/fxaa.frag fxaa_fs)
+embed_shader(SHADER_SMAA_LIB   shaders/smaa_lib.glsl  smaa_lib)
+embed_shader(SHADER_SMAA_EDGE_VS   shaders/smaa_edge.vert   smaa_edge_vs)
+embed_shader(SHADER_SMAA_EDGE_FS   shaders/smaa_edge.frag   smaa_edge_fs)
+embed_shader(SHADER_SMAA_WEIGHT_VS shaders/smaa_weight.vert smaa_weight_vs)
+embed_shader(SHADER_SMAA_WEIGHT_FS shaders/smaa_weight.frag smaa_weight_fs)
+embed_shader(SHADER_SMAA_BLEND_VS  shaders/smaa_blend.vert  smaa_blend_vs)
+embed_shader(SHADER_SMAA_BLEND_FS  shaders/smaa_blend.frag  smaa_blend_fs)
 embed_shader(SHADER_BLOOM_PREFILTER_FS shaders/bloom_prefilter.frag bloom_prefilter_fs)
 embed_shader(SHADER_BLOOM_DOWN_FS shaders/bloom_down.frag bloom_down_fs)
 embed_shader(SHADER_BLOOM_UP_FS shaders/bloom_up.frag bloom_up_fs)
@@ -70,6 +77,7 @@ add_library(renderer STATIC
     bloom_pass.cc
     resolve_pass.cc
     fxaa_pass.cc
+    smaa_pass.cc
     sphere_mesh.cc
     backdrop_pass.cc
     sun_pass.cc
