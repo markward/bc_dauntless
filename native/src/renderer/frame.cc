@@ -515,4 +515,96 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
     });
 }
 
+// ── Shadow depth pre-pass ──────────────────────────────────────────────────
+
+namespace {
+
+// Position-only mirror of draw_model's node walk + per-mesh draw. Sets only
+// u_model (u_light_view_proj is set once by the caller) and issues the same
+// VAO bind + glDrawElements as draw_model. No materials, textures, decals,
+// glow, carve, or skinning: casters in Pass::Space are rim_eligible hulls,
+// which are static models — their geometry already lives in the bind-pose
+// VAOs that draw_model renders. (A skinned model handed here would draw in
+// bind pose, but no rim_eligible Space instance is skinned, so it never is.)
+void draw_model_depth_only(const assets::Model& model,
+                           const glm::mat4& world,
+                           Shader& prog) {
+    std::vector<glm::mat4> world_per_node(model.nodes.size(), glm::mat4(1.0f));
+    if (!model.nodes.empty()) {
+        world_per_node[model.root_node] =
+            world * model.nodes[model.root_node].local_transform;
+    }
+    for (std::size_t i = 0; i < model.nodes.size(); ++i) {
+        const auto& node = model.nodes[i];
+        if (node.parent_index >= 0) {
+            world_per_node[i] =
+                world_per_node[node.parent_index] * node.local_transform;
+        }
+        for (int mesh_idx : node.meshes) {
+            const auto& mesh = model.meshes[mesh_idx];
+            prog.set_mat4("u_model", world_per_node[i]);
+            glBindVertexArray(mesh.vao());
+            glDrawElements(GL_TRIANGLES, mesh.index_count(),
+                           GL_UNSIGNED_INT, nullptr);
+        }
+    }
+    glBindVertexArray(0);
+}
+
+// Frame-scoped active-shadow state. Set once per frame by host_bindings.cc and
+// read by the opaque pass (Task 6). Defaults make shadows absent until set.
+ShadowLight   g_active_shadow_light{};
+std::uint32_t g_active_shadow_tex     = 0;
+bool          g_active_shadow_enabled = false;
+
+}  // namespace
+
+void submit_shadow_depth(const scenegraph::World& world,
+                         const ShadowLight& light,
+                         Pipeline& pipeline,
+                         const FrameSubmitter::ModelLookup& lookup) {
+    // Depth-only state. Color writes off (FBO also has no color attachment).
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS);
+    glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+    glEnable(GL_CULL_FACE);
+    // Render back faces into the depth map (front-face cull) to push the
+    // depth comparison surface to the far side of each hull, reducing acne.
+    // STARTING guess for the det=-1 (X-flipped) ship basis; Task 7 tunes this
+    // empirically against a pitched hull and may flip to GL_BACK.
+    glCullFace(GL_FRONT);
+    // Slope-scaled + constant depth bias as a second acne backstop.
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(2.0f, 4.0f);
+
+    Shader& prog = pipeline.shadow_depth_shader();
+    prog.use();
+    prog.set_mat4("u_light_view_proj", light.view_proj);
+
+    world.for_each_visible_in_pass(
+        scenegraph::Pass::Space, [&](const scenegraph::Instance& inst) {
+            if (!inst.rim_eligible) return;  // ships + stations only
+            const assets::Model* m = lookup(inst.model_handle);
+            if (!m) return;
+            draw_model_depth_only(*m, inst.world, prog);
+        });
+
+    // Restore opaque-pass defaults so later passes are unaffected.
+    glDisable(GL_POLYGON_OFFSET_FILL);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glCullFace(GL_BACK);
+}
+
+void set_active_shadow(const ShadowLight& light,
+                       std::uint32_t depth_tex,
+                       bool enabled) {
+    g_active_shadow_light   = light;
+    g_active_shadow_tex     = depth_tex;
+    g_active_shadow_enabled = enabled;
+}
+
+const ShadowLight& active_shadow_light() noexcept { return g_active_shadow_light; }
+std::uint32_t      active_shadow_texture() noexcept { return g_active_shadow_tex; }
+bool               active_shadow_enabled() noexcept { return g_active_shadow_enabled; }
+
 }  // namespace renderer

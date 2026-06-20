@@ -12,6 +12,8 @@
 
 #include <scenegraph/instance.h>
 
+#include <renderer/shadow_light.h>
+
 namespace assets { struct Model; }
 namespace scenegraph { class World; struct Camera; enum class Pass : std::uint8_t;
                        class DamageDecalRing; }
@@ -251,5 +253,29 @@ private:
     std::uint32_t black_texture_ = 0;
     std::uint32_t ensure_black_texture();
 };
+
+/// Render depth-only for every visible `rim_eligible` caster in `Pass::Space`
+/// into the currently-bound depth framebuffer, using the pipeline's
+/// `shadow_depth` program and `light.view_proj` as `u_light_view_proj`. The
+/// caller must bind the shadow FBO and clear depth first, and restore the
+/// previous framebuffer afterward. GL state changed here (cull face, polygon
+/// offset, color mask) is restored to the opaque-pass defaults on exit.
+void submit_shadow_depth(const scenegraph::World& world,
+                         const ShadowLight& light,
+                         Pipeline& pipeline,
+                         const FrameSubmitter::ModelLookup& lookup);
+
+/// Stash the frame's active shadow (light matrix + depth texture id + on/off)
+/// for the opaque pass (Task 6) to sample. Passing `enabled=false` makes the
+/// opaque pass treat shadows as absent — the OFF path stays byte-identical.
+void set_active_shadow(const ShadowLight& light,
+                       std::uint32_t depth_tex,
+                       bool enabled);
+
+/// Accessors the opaque pass (Task 6) reads. `active_shadow_enabled()` gates
+/// any shadow sampling so the production path is untouched when shadows are off.
+const ShadowLight& active_shadow_light() noexcept;
+std::uint32_t      active_shadow_texture() noexcept;
+bool               active_shadow_enabled() noexcept;
 
 }  // namespace renderer

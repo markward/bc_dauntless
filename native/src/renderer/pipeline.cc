@@ -39,6 +39,8 @@
 #include "embedded_lightmap_fs.h"
 #include "embedded_viewscreen_static_vs.h"
 #include "embedded_viewscreen_static_fs.h"
+#include "embedded_shadow_vs.h"
+#include "embedded_shadow_fs.h"
 
 namespace renderer {
 
@@ -63,6 +65,8 @@ Pipeline::Pipeline() {
     lightmap_   = std::make_unique<Shader>(shader_src::lightmap_vs,   shader_src::lightmap_fs);
     viewscreen_static_ = std::make_unique<Shader>(
         shader_src::viewscreen_static_vs, shader_src::viewscreen_static_fs);
+    shadow_depth_ = std::make_unique<Shader>(
+        shader_src::shadow_vs, shader_src::shadow_fs);
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
     glEnable(GL_CULL_FACE);

@@ -47,6 +47,8 @@
 #include <renderer/ldr_target.h>
 #include <renderer/smaa_pass.h>
 #include <renderer/aabb.h>
+#include <renderer/shadow_light.h>
+#include <renderer/shadow_map_target.h>
 #include <renderer/asset_path.h>
 #include <renderer/ray_trace.h>
 #include <renderer/glow_region.h>
@@ -69,6 +71,7 @@
 #endif
 
 #include <cmath>
+#include <limits>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -94,6 +97,12 @@ namespace dauntless_hdr {
 // inside the anonymous namespace can read the always-on hull-breach gate.
 namespace dauntless_hull_damage {
     bool enabled();            // defined in frame.cc
+}
+// Toggle for sun shadow maps. Defined in frame.cc. Forward-declared here so
+// frame() can gate the shadow depth pre-pass on dauntless_shadows::enabled().
+namespace dauntless_shadows {
+    bool enabled();            // defined in frame.cc
+    void set_enabled(bool v);  // defined in frame.cc
 }
 
 namespace {
@@ -151,6 +160,10 @@ std::unique_ptr<renderer::BloomPass>       g_bloom_pass;
 std::unique_ptr<renderer::ResolvePass>     g_resolve_pass;
 std::unique_ptr<renderer::LdrTarget>       g_ldr_target;
 std::unique_ptr<renderer::SmaaPass> g_smaa_pass;
+// Sun shadow map: depth-only caster FBO rendered once per frame from the sun's
+// POV (see frame()), shared by the main view and the viewscreen RTT. Owned here
+// so its GL handles are released in shutdown() while the context is current.
+std::unique_ptr<renderer::ShadowMapTarget> g_shadow_target;
 bool g_smaa_enabled = true;   // post-process SMAA 1x; default on. Set by smaa_set_enabled.
 double g_prev_frame_time_seconds = 0.0;
 float g_decal_game_time = 0.0f;  // game-time secs for decal ember; set by damage_decals_tick
@@ -314,6 +327,8 @@ void init(int width, int height, const std::string& title) {
     g_resolve_pass = std::make_unique<renderer::ResolvePass>();
     g_ldr_target   = std::make_unique<renderer::LdrTarget>();
     g_smaa_pass    = std::make_unique<renderer::SmaaPass>();
+    g_shadow_target = std::make_unique<renderer::ShadowMapTarget>();
+    g_shadow_target->resize(2048, 2048);
     g_prev_frame_time_seconds = glfwGetTime();
 }
 
@@ -369,6 +384,7 @@ void shutdown() {
     g_resolve_pass.reset();
     g_hdr_target.reset();
     g_viewscreen_hdr.reset();
+    g_shadow_target.reset();
     g_window.reset();
     g_prev_key_state.clear();
     g_prev_mouse_state.clear();
@@ -497,6 +513,60 @@ void frame() {
             g_particle_pass->render(all_emitters, g_world, cam, *g_pipeline);
         }
     };
+
+    // ── Sun shadow map (depth-only pre-pass) ───────────────────────────────
+    // Computed once per frame from the sun's POV, BEFORE any render_space call
+    // (both the main view and the viewscreen RTT sample the same map). The box
+    // is player-centered: there is no C++ "player ship" handle, so we use the
+    // rim_eligible Space instance nearest the exterior camera's look-at point
+    // (g_camera.target) — the same point the camera orbits the player ship —
+    // as the player, and its model AABB radius (× instance scale, matching
+    // get_instance_bounds) as the bound radius. compute_light_matrix clamps the
+    // radius into [R_min, R_max] and pads the depth slab, so this is robust.
+    //
+    // OFF path: when dauntless_shadows::enabled() is false we touch no GL state
+    // and only call set_active_shadow(..., false), which makes the opaque pass
+    // (Task 6) a no-op — the production render path stays byte-identical.
+    if (dauntless_shadows::enabled() && g_shadow_target) {
+        const glm::vec3 focus = g_camera.target;
+        const scenegraph::Instance* player = nullptr;
+        float player_radius_gu = 0.0f;
+        float best_d2 = std::numeric_limits<float>::max();
+        g_world.for_each_visible_in_pass(
+            scenegraph::Pass::Space, [&](const scenegraph::Instance& inst) {
+                if (!inst.rim_eligible) return;
+                const assets::Model* m = resolve_model(inst.model_handle);
+                if (m == nullptr) return;
+                const glm::vec3 pos = glm::vec3(inst.world[3]);
+                const float d2 = glm::dot(pos - focus, pos - focus);
+                if (d2 >= best_d2) return;
+                best_d2 = d2;
+                player = &inst;
+                renderer::Aabb box = renderer::compute_model_aabb(*m);
+                const float scale = glm::length(glm::vec3(inst.world[0]));
+                player_radius_gu = glm::length(box.half_extents) * scale;
+            });
+
+        if (player != nullptr) {
+            renderer::ShadowFitParams fp;  // defaults
+            glm::vec3 light_dir = g_lighting.directional_dir_ws[0];
+            renderer::ShadowLight sl = renderer::compute_light_matrix(
+                glm::vec3(player->world[3]), player_radius_gu, light_dir, fp);
+
+            GLint prev_fbo = 0;
+            glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prev_fbo);
+            g_shadow_target->bind();   // sets the 2048² viewport
+            glClear(GL_DEPTH_BUFFER_BIT);
+            renderer::submit_shadow_depth(g_world, sl, *g_pipeline, lookup);
+            glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(prev_fbo));
+
+            renderer::set_active_shadow(sl, g_shadow_target->depth_texture(), true);
+        } else {
+            renderer::set_active_shadow({}, 0, false);
+        }
+    } else {
+        renderer::set_active_shadow({}, 0, false);
+    }
 
     // ── Viewscreen render-to-texture (bridge view, screen on) ──────────────
     // The forward space view (g_camera is already forward-from-ship in bridge
@@ -654,10 +724,7 @@ namespace dauntless_specular {
 namespace dauntless_rim {
     void set_enabled(bool v);  // defined in frame.cc
 }
-// Toggle for sun shadow maps. Defined in frame.cc.
-namespace dauntless_shadows {
-    void set_enabled(bool v);  // defined in frame.cc
-}
+// dauntless_shadows is forward-declared earlier (before frame()).
 // Toggle for the opaque-pass persistent damage decals. Defined in frame.cc.
 namespace dauntless_decals {
     void set_enabled(bool v);  // defined in frame.cc
