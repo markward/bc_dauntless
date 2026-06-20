@@ -5,9 +5,9 @@
 namespace renderer {
 
 /// One offscreen RGBA8 color target (no depth). The resolve pass renders the
-/// tonemapped LDR image here when FXAA is enabled; FxaaPass then samples
-/// color_texture() back to the backbuffer. Mirrors HdrTarget's resize/bind
-/// contract but without a depth renderbuffer.
+/// tonemapped LDR image here; SmaaPass then samples color_texture() back to
+/// the backbuffer. Mirrors HdrTarget's resize/bind contract but without a
+/// depth renderbuffer.
 class LdrTarget {
 public:
     LdrTarget() = default;

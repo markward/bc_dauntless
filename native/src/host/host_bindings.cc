@@ -45,7 +45,6 @@
 #include <renderer/bloom_pass.h>
 #include <renderer/resolve_pass.h>
 #include <renderer/ldr_target.h>
-#include <renderer/fxaa_pass.h>
 #include <renderer/smaa_pass.h>
 #include <renderer/aabb.h>
 #include <renderer/asset_path.h>
@@ -151,8 +150,6 @@ std::unique_ptr<renderer::HdrTarget>       g_viewscreen_hdr;
 std::unique_ptr<renderer::BloomPass>       g_bloom_pass;
 std::unique_ptr<renderer::ResolvePass>     g_resolve_pass;
 std::unique_ptr<renderer::LdrTarget>       g_ldr_target;
-std::unique_ptr<renderer::FxaaPass>        g_fxaa_pass;
-bool g_fxaa_enabled = true;   // post-process FXAA; default on. Set by fxaa_set_enabled.
 std::unique_ptr<renderer::SmaaPass> g_smaa_pass;
 bool g_smaa_enabled = true;   // post-process SMAA 1x; default on. Set by smaa_set_enabled.
 double g_prev_frame_time_seconds = 0.0;
@@ -316,7 +313,6 @@ void init(int width, int height, const std::string& title) {
     g_bloom_pass   = std::make_unique<renderer::BloomPass>();
     g_resolve_pass = std::make_unique<renderer::ResolvePass>();
     g_ldr_target   = std::make_unique<renderer::LdrTarget>();
-    g_fxaa_pass    = std::make_unique<renderer::FxaaPass>();
     g_smaa_pass    = std::make_unique<renderer::SmaaPass>();
     g_prev_frame_time_seconds = glfwGetTime();
 }
@@ -369,7 +365,6 @@ void shutdown() {
     g_viewscreen_static_pass.reset();
     g_bloom_pass.reset();
     g_smaa_pass.reset();
-    g_fxaa_pass.reset();
     g_ldr_target.reset();
     g_resolve_pass.reset();
     g_hdr_target.reset();
@@ -1769,10 +1764,6 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](bool enabled) { dauntless_decals::set_enabled(enabled); },
           py::arg("enabled"),
           "Enable/disable persistent hull damage decals (default on).");
-    m.def("fxaa_set_enabled",
-          [](bool enabled) { g_fxaa_enabled = enabled; },
-          py::arg("enabled"),
-          "Enable/disable the post-process FXAA pass (default on).");
     m.def("smaa_set_enabled",
           [](bool enabled) { g_smaa_enabled = enabled; },
           py::arg("enabled"),

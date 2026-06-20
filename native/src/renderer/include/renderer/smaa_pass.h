@@ -8,7 +8,7 @@ namespace renderer {
 /// (edge detection -> blend-weight calc -> neighborhood blend) over a
 /// tonemapped LDR color texture. Owns two intermediate render targets
 /// (edges RG8, weights RGBA8) and two lookup textures (AreaTex, SearchTex).
-/// Drop-in replacement for FxaaPass in the post chain.
+/// Sits in the post chain as the final anti-aliasing stage.
 class SmaaPass {
 public:
     SmaaPass();
