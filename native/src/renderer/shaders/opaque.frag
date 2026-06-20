@@ -37,6 +37,38 @@ uniform int  u_dir_light_count;
 uniform vec3 u_dir_light_dir_ws[MAX_DIR_LIGHTS];   // direction TOWARD the light
 uniform vec3 u_dir_light_color[MAX_DIR_LIGHTS];    // color × dimmer
 
+// ── Sun shadow map (PCF) ─────────────────────────────────────────────────
+// Applied ONLY to directional light index 0 (the sun). u_shadows_enabled == 0
+// is the stock path: sun_shadow_factor() returns 1.0, so the lighting math is
+// byte-identical to the pre-shadow renderer. Bound from the active-shadow state
+// in frame.cc::draw_model (Task 5/6).
+uniform int             u_shadows_enabled;   // 0/1
+uniform mat4            u_light_view_proj;
+uniform sampler2DShadow u_shadow_map;        // texture unit 5
+uniform float           u_shadow_texel;      // world units/texel (normal-offset bias)
+
+float sun_shadow_factor(vec3 world_pos, vec3 world_normal) {
+    if (u_shadows_enabled == 0) return 1.0;
+    // Normal-offset bias: push the sample point along the surface normal to
+    // suppress self-shadow acne. Task 7 tunes the 1.5 multiplier.
+    vec3 p = world_pos + world_normal * (u_shadow_texel * 1.5);
+    vec4 lc = u_light_view_proj * vec4(p, 1.0);
+    vec3 ndc = lc.xyz / lc.w;
+    // ndc.z is glm [0,1] (GLM_FORCE_DEPTH_ZERO_TO_ONE); *0.5+0.5 reproduces GL's
+    // window-depth transform applied to the stored pre-pass depth, so store and
+    // sample agree. GL clip volume is still [-1,1] (no glClipControl).
+    vec3 uvz = ndc * 0.5 + 0.5;            // NDC [-1,1] -> [0,1]
+    if (uvz.z > 1.0) return 1.0;           // beyond far plane = lit
+    float sum = 0.0;
+    vec2 texel = 1.0 / vec2(textureSize(u_shadow_map, 0));
+    for (int y = -1; y <= 1; ++y)
+        for (int x = -1; x <= 1; ++x) {
+            vec3 c = vec3(uvz.xy + vec2(x, y) * texel, uvz.z);
+            sum += texture(u_shadow_map, c);   // hardware PCF compare
+        }
+    return sum / 9.0;
+}
+
 // ── Persistent damage decals (Phase 2) ──────────────────────────────────
 const int MAX_DECALS = 24;
 uniform int   u_decal_count;                 // 0 disables the loop entirely
@@ -362,17 +394,23 @@ void main() {
         }
     }
 
+    // Shadow attenuates ONLY the sun (directional index 0). When shadows are
+    // off, sun_shadow_factor() returns 1.0, so the ×sf below is the identity
+    // and the accumulated light is byte-identical to the pre-shadow path.
+    float sun_sf = sun_shadow_factor(v_position_ws, n);
+
     vec3 lit_dir  = vec3(0.0);
     vec3 spec_acc = vec3(0.0);
     for (int i = 0; i < u_dir_light_count; ++i) {
         vec3 L  = normalize(u_dir_light_dir_ws[i]);
         float nl = max(dot(n, L), 0.0);
-        lit_dir += nl * u_dir_light_color[i];
+        float sf = (i == 0) ? sun_sf : 1.0;   // sun-only shadow
+        lit_dir += sf * nl * u_dir_light_color[i];
 
         if (u_specular_enabled != 0) {
             vec3 H = normalize(L + V);
             float s = pow(max(dot(n, H), 0.0), u_specular_power) * step(0.0, nl);
-            spec_acc += s * u_dir_light_color[i];
+            spec_acc += sf * s * u_dir_light_color[i];
         }
     }
 

@@ -280,6 +280,27 @@ void draw_model(const assets::Model& model,
         glActiveTexture(GL_TEXTURE0);  // restore default active unit
     }
 
+    // ── Sun shadow map (Task 6) ───────────────────────────────────────────
+    // Bind the active sun shadow from the Task-5 state. When shadows are off
+    // (active_shadow_enabled() == false), only u_shadows_enabled=0 is set and
+    // the opaque shader's sun_shadow_factor() returns 1.0 → the lighting math
+    // is byte-identical to the pre-shadow path. Unit 5 is free (0=base, 1=glow,
+    // 2=specular, 3=damage_decal).
+    {
+        const bool shadows_on = active_shadow_enabled();
+        prog.set_int("u_shadows_enabled", shadows_on ? 1 : 0);
+        if (shadows_on) {
+            const ShadowLight& light = active_shadow_light();
+            prog.set_mat4("u_light_view_proj", light.view_proj);
+            prog.set_float("u_shadow_texel", light.texel_world_size);
+            const int unit = 5;
+            glActiveTexture(GL_TEXTURE0 + unit);
+            glBindTexture(GL_TEXTURE_2D, active_shadow_texture());
+            prog.set_int("u_shadow_map", unit);
+            glActiveTexture(GL_TEXTURE0);  // restore default active unit
+        }
+    }
+
     // Walk nodes; each node may reference one or more meshes by index. The
     // node's local_transform is composed with parent transforms here. The
     // asset pipeline already orders nodes such that parents precede children,
