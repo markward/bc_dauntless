@@ -47,9 +47,16 @@ def advance(dt: float) -> None:
 
 
 def render_data() -> list:
-    """Return [((cx, cy, cz), max_radius, age, lifetime), ...] for the host."""
+    """Return [{"world_center": (cx,cy,cz), "max_radius": r, "age": a,
+    "lifetime": l}, ...] for the host — matching the native set_shockwaves
+    binding's py::dict keys (the set_torpedoes / set_hit_vfx idiom)."""
     return [
-        (entry["center"], entry["max_radius"], entry["age"], entry["lifetime"])
+        {
+            "world_center": entry["center"],
+            "max_radius": entry["max_radius"],
+            "age": entry["age"],
+            "lifetime": entry["lifetime"],
+        }
         for entry in _active
     ]
 

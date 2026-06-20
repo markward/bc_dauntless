@@ -16,22 +16,21 @@ def test_spawn_then_render_data_has_one_entry_at_age_zero():
     shockwaves.spawn(TGPoint3(1.0, 2.0, 3.0), 4.0, 0.7)
     data = shockwaves.render_data()
     assert len(data) == 1
-    center, max_radius, age, lifetime = data[0]
-    assert center == (1.0, 2.0, 3.0)
-    assert max_radius == 4.0
-    assert age == 0.0
-    assert lifetime == 0.7
+    assert data[0]["world_center"] == (1.0, 2.0, 3.0)
+    assert data[0]["max_radius"] == 4.0
+    assert data[0]["age"] == 0.0
+    assert data[0]["lifetime"] == 0.7
 
 
 def test_spawn_accepts_a_tuple_center():
     shockwaves.spawn((5.0, 6.0, 7.0), 4.0, 0.7)
-    assert shockwaves.render_data()[0][0] == (5.0, 6.0, 7.0)
+    assert shockwaves.render_data()[0]["world_center"] == (5.0, 6.0, 7.0)
 
 
 def test_advance_increments_age():
     shockwaves.spawn(TGPoint3(0, 0, 0), 4.0, 0.7)
     shockwaves.advance(0.1)
-    assert shockwaves.render_data()[0][2] == pytest.approx(0.1)
+    assert shockwaves.render_data()[0]["age"] == pytest.approx(0.1)
 
 
 def test_descriptor_dropped_when_age_reaches_lifetime():
