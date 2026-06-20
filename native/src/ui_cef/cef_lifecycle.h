@@ -66,8 +66,10 @@ void execute_javascript(const std::string& script);
 //   send_mouse_move:  hover / cursor tracking (e.g. for CSS :hover)
 //   send_mouse_click: left/middle/right click edge.
 //                     button: 0=left, 1=middle, 2=right.
+//   send_mouse_wheel: scroll wheel; delta_y positive scrolls up.
 void send_mouse_move(int x, int y);
 void send_mouse_click(int x, int y, int button, bool is_down);
+void send_mouse_wheel(int x, int y, int delta_y);
 
 // JS→C++ event channel. The handler is invoked with the event name
 // when JS navigates to dauntless://event/<name>. The intercept lives

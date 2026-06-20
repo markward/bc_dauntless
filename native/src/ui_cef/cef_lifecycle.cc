@@ -238,6 +238,17 @@ void send_mouse_click(int x, int y, int button, bool is_down) {
     host->SendMouseClickEvent(ev, btn, /*mouseUp=*/!is_down, /*clickCount=*/1);
 }
 
+void send_mouse_wheel(int x, int y, int delta_y) {
+    if (!g_client || !g_client->browser()) return;
+    auto host = g_client->browser()->GetHost();
+    if (!host) return;
+    CefMouseEvent ev;
+    ev.x = x;
+    ev.y = y;
+    ev.modifiers = 0;
+    host->SendMouseWheelEvent(ev, /*deltaX=*/0, /*deltaY=*/delta_y);
+}
+
 void set_event_handler(std::function<void(const std::string&)> handler) {
     if (!g_client) return;
     g_client->set_event_handler(std::move(handler));

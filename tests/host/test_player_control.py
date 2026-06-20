@@ -327,3 +327,59 @@ def test_roll_after_yaw_is_body_frame_not_world():
     # not in the X-Z plane (which would be world-frame roll around +Y).
     up = ship.GetWorldRotation().GetCol(2)
     assert abs(up.x) < 1e-3, f"up.x={up.x}, expected 0 (up should stay in Y-Z plane under body roll about -X)"
+
+
+def test_nudge_up_increments_one_notch():
+    pc = _PlayerControl()
+    pc.impulse_level = 3
+    pc.nudge_throttle(1)
+    assert pc.impulse_level == 4
+
+
+def test_nudge_up_caps_at_nine():
+    pc = _PlayerControl()
+    pc.impulse_level = 9
+    pc.nudge_throttle(1)
+    assert pc.impulse_level == 9
+
+
+def test_nudge_down_from_one_reaches_stop():
+    pc = _PlayerControl()
+    pc.impulse_level = 1
+    pc.nudge_throttle(-1)
+    assert pc.impulse_level == 0
+
+
+def test_nudge_down_from_stop_enters_reverse():
+    pc = _PlayerControl()
+    pc.impulse_level = 0
+    pc.nudge_throttle(-1)
+    assert pc.impulse_level == _PlayerControl.REVERSE_LEVEL  # -2
+
+
+def test_nudge_down_floors_at_reverse():
+    pc = _PlayerControl()
+    pc.impulse_level = _PlayerControl.REVERSE_LEVEL
+    pc.nudge_throttle(-1)
+    assert pc.impulse_level == _PlayerControl.REVERSE_LEVEL
+
+
+def test_nudge_up_from_reverse_returns_to_stop():
+    pc = _PlayerControl()
+    pc.impulse_level = _PlayerControl.REVERSE_LEVEL
+    pc.nudge_throttle(1)
+    assert pc.impulse_level == 0
+
+
+def test_nudge_multiple_notches_applies_each():
+    pc = _PlayerControl()
+    pc.impulse_level = 0
+    pc.nudge_throttle(3)
+    assert pc.impulse_level == 3
+
+
+def test_nudge_zero_is_noop():
+    pc = _PlayerControl()
+    pc.impulse_level = 5
+    pc.nudge_throttle(0)
+    assert pc.impulse_level == 5

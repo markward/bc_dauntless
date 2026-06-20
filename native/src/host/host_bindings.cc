@@ -2485,6 +2485,14 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Forward a mouse button edge to the CEF overlay. "
           "button: 0=left, 1=middle, 2=right. is_down: True for press, False for release.");
 
+    m.def("cef_send_mouse_wheel",
+          [](int x, int y, int delta_y) {
+              dauntless::ui_cef::send_mouse_wheel(x, y, delta_y);
+          },
+          py::arg("x"), py::arg("y"), py::arg("delta_y"),
+          "Forward a mouse-wheel event to the CEF overlay. "
+          "delta_y: positive scrolls up.");
+
     m.def("cef_set_event_handler",
           [](py::function callback) {
               // pybind11 manages the function's lifetime; ensure the
@@ -2545,6 +2553,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("cef_execute_javascript", [](const std::string&) {});
     m.def("cef_send_mouse_move",  [](int, int) {});
     m.def("cef_send_mouse_click", [](int, int, int, bool) {});
+    m.def("cef_send_mouse_wheel", [](int, int, int) {});
     m.def("cef_set_event_handler",[](py::function) {});
     m.def("cef_set_load_end_handler", [](py::function) {});
 #endif

@@ -892,6 +892,25 @@ class _PlayerControl:
         self._warp_boost = False
         self._drift_velocity = None   # TGPoint3 while drifting (f==0), else None
 
+    def nudge_throttle(self, notches: int) -> None:
+        """Step the discrete impulse throttle one notch per detent.
+
+        Level set: REVERSE_LEVEL (-2), 0 (stop), 1..9 (impulse). There is
+        no -1: down from 0 jumps to reverse, up from reverse returns to 0.
+        Forward caps at 9; reverse floors at REVERSE_LEVEL.
+        """
+        for _ in range(abs(int(notches))):
+            if notches > 0:
+                if self.impulse_level < 0:
+                    self.impulse_level = 0
+                elif self.impulse_level < 9:
+                    self.impulse_level += 1
+            elif notches < 0:
+                if self.impulse_level <= 0:
+                    self.impulse_level = self.REVERSE_LEVEL
+                else:
+                    self.impulse_level -= 1
+
     # ── Hardpoint accessors ──────────────────────────────────────────────────
 
     @staticmethod
@@ -2232,8 +2251,41 @@ class _NoInputReader:
 _NO_INPUT = _NoInputReader()
 
 
+# Pixels of CEF scroll per wheel detent (GLFW yoffset == 1.0). Positive
+# delta_y scrolls panel content up. Tune to feel; sign confirmed in live
+# verify.
+_WHEEL_PX_PER_NOTCH = 40
+
+
+def _route_scroll_wheel(scroll_y, *, route_to_panel, mx, my,
+                        send_wheel, player_control, can_throttle) -> None:
+    """Route one frame's accumulated mouse-wheel delta.
+
+    route_to_panel True (a pause/config modal is open, or the cursor is over
+    a HUD panel) → forward to CEF as a scaled pixel delta. Otherwise, when
+    can_throttle (exterior view + a live player), step the ship throttle one
+    impulse notch per detent. A no-op when scroll_y is 0.
+    """
+    if not scroll_y:
+        return
+    if route_to_panel:
+        if send_wheel is not None:
+            send_wheel(int(mx), int(my),
+                       int(round(scroll_y * _WHEEL_PX_PER_NOTCH)))
+        return
+    if can_throttle and player_control is not None:
+        # Throttle direction: a wheel-up gesture must INCREASE speed. The
+        # raw accumulator sign is inverted relative to that on the target
+        # platform (confirmed in live verify), so negate it here. The panel
+        # path above keeps the raw sign — CEF expects the accumulator's own
+        # direction.
+        notches = -int(round(scroll_y))
+        if notches:
+            player_control.nudge_throttle(notches)
+
+
 def _apply_input(view_mode, player_control, director,
-                 *, player, dt, h, scroll_y) -> None:
+                 *, player, dt, h) -> None:
     """Per-tick input dispatch.
 
     Exterior mode drives both ship and camera from the keyboard. Bridge
@@ -2245,7 +2297,7 @@ def _apply_input(view_mode, player_control, director,
     """
     if view_mode.is_exterior:
         player_control.apply(player, dt, h)
-        director.chase.apply(dt, h, scroll_y)
+        director.chase.apply(dt, h)
     else:
         player_control.apply(player, dt, _NO_INPUT)
 
@@ -3215,6 +3267,7 @@ def run(mission_name: Optional[str] = None,
         # still navigates by keyboard.
         _cef_send_mouse_move  = getattr(_h, "cef_send_mouse_move",  None) if _h else None
         _cef_send_mouse_click = getattr(_h, "cef_send_mouse_click", None) if _h else None
+        _cef_send_wheel       = getattr(_h, "cef_send_mouse_wheel", None) if _h else None
         # Window-resize forwarding: re-lay-out the OSR overlay when the
         # window changes size (older builds lack it -> overlay stays at its
         # init size and stretches, the prior behaviour).
@@ -3297,6 +3350,11 @@ def run(mission_name: Optional[str] = None,
             # _apply_view_mode_side_effects mirrors the SPACE flag into
             # renderer state (bridge pass enable + cursor lock) and is
             # idempotent — only fires when the mode changed.
+            # Per-frame cursor + panel-hit state, defaulted so the scroll
+            # router (below) always has them defined — even when _h is None
+            # or neither mouse-forward branch runs this frame.
+            _mx, _my = 0, 0
+            _cursor_in_panel = False
             if _h is not None:
                 # ESC priority: mission picker first (dev only), then the
                 # developer options panel (dev only), then the ship property
@@ -3513,6 +3571,23 @@ def run(mission_name: Optional[str] = None,
                 director.chase.set_ship_radius(_r)
                 director.tracking.set_ship_radius(_r)
 
+            # Mouse-wheel routing (runs every frame, paused or not). Scroll
+            # delta is consumed once per tick — the single consumer of the
+            # accumulator. Over a CEF surface (a pause/config modal is open,
+            # or the cursor is over a HUD panel) → scroll that panel; over
+            # open space in exterior view → step the ship throttle. Replaces
+            # the old camera scroll-zoom. Old bindings without the accumulator
+            # return 0.0 via the fallback.
+            scroll_y = _consume_scroll() if _consume_scroll is not None else 0.0
+            _route_scroll_wheel(
+                scroll_y,
+                route_to_panel=(pause.is_open or _cursor_in_panel),
+                mx=_mx, my=_my,
+                send_wheel=_cef_send_wheel,
+                player_control=player_control,
+                can_throttle=(player is not None and view_mode.is_exterior),
+            )
+
             if not pause.is_open:
                 # Dev-mode keybindings (no-op when --developer is not set).
                 # register_for_frame re-binds handlers that close over the
@@ -3539,9 +3614,7 @@ def run(mission_name: Optional[str] = None,
                         _h.cef_reload()
 
                 # Apply keyboard input to the player ship's transform and to the
-                # orbit camera. Scroll delta is consumed once per tick; old
-                # bindings without the binding return 0.0 via the fallback.
-                scroll_y = _consume_scroll() if _consume_scroll is not None else 0.0
+                # orbit camera (see _apply_input below).
 
                 if player is not None and _h is not None:
                     # Alert keys (Shift+1/2/3) run before the throttle handler;
@@ -3599,8 +3672,7 @@ def run(mission_name: Optional[str] = None,
                     # see comment at the accumulator step. _apply_input fires
                     # once per render frame, so its dt is the wall delta.
                     _apply_input(view_mode, player_control, director,
-                                 player=player, dt=_player_dt, h=_h,
-                                 scroll_y=scroll_y)
+                                 player=player, dt=_player_dt, h=_h)
 
                 # Forward mouse button edges into the input manager (fire
                 # events route via g_kKeyboardBinding → TCW handlers).
