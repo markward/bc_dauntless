@@ -65,6 +65,15 @@ namespace {
     void set_enabled(bool v) { g_hdr_enabled = v; }
 }
 
+// Toggle for sun shadow maps (depth pre-pass + PCF in opaque). Default on.
+namespace dauntless_shadows {
+namespace {
+    bool g_shadows_enabled = true;
+}
+    bool enabled() { return g_shadows_enabled; }
+    void set_enabled(bool v) { g_shadows_enabled = v; }
+}
+
 // Toggle for the opaque-pass persistent damage decals (Phase 2). Default on
 // so the "Modern VFX" group ships enabled. host_bindings.cc forward-declares
 // set_enabled; draw_model reads enabled() per instance and uploads

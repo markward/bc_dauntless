@@ -192,6 +192,11 @@ def set_hdr_enabled(enabled: bool) -> None:
     _h.hdr_set_enabled(enabled)
 
 
+def set_shadows_enabled(enabled: bool) -> None:
+    """Toggle sun shadow mapping (Modern VFX). Default: on after init()."""
+    _h.shadows_set_enabled(enabled)
+
+
 def set_decals_enabled(enabled: bool) -> None:
     """Toggle persistent hull damage decals (scorch/heat-glow). Default: on
     after init()."""

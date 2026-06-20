@@ -654,6 +654,10 @@ namespace dauntless_specular {
 namespace dauntless_rim {
     void set_enabled(bool v);  // defined in frame.cc
 }
+// Toggle for sun shadow maps. Defined in frame.cc.
+namespace dauntless_shadows {
+    void set_enabled(bool v);  // defined in frame.cc
+}
 // Toggle for the opaque-pass persistent damage decals. Defined in frame.cc.
 namespace dauntless_decals {
     void set_enabled(bool v);  // defined in frame.cc
@@ -1760,6 +1764,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](bool e) { dauntless_hdr::set_enabled(e); },
           py::arg("enabled"),
           "Toggle the HDR resolve (tonemap+bloom+grade). Default: on.");
+    m.def("shadows_set_enabled",
+          [](bool enabled) { dauntless_shadows::set_enabled(enabled); },
+          py::arg("enabled"),
+          "Toggle sun shadow maps. Default: on.");
     m.def("decals_set_enabled",
           [](bool enabled) { dauntless_decals::set_enabled(enabled); },
           py::arg("enabled"),
