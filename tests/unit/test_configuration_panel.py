@@ -29,7 +29,7 @@ def _make(**overrides):
         set_hdr=Mock(),
         set_rim=Mock(),
         set_decals=Mock(),
-        set_fxaa=Mock(),
+        set_smaa=Mock(),
         set_subtitles=Mock(),
         set_fov_rad=Mock(),
     )
@@ -65,7 +65,7 @@ def test_initial_settings_round_trip_to_render_payload():
     body = json.loads(payload[len("setConfigurationPanel("):-2])
     assert body["settings"] == {
         "dust_on": False, "specular_on": True, "hdr_on": True, "rim_on": False,
-        "decals_on": False, "fxaa_on": True,
+        "decals_on": False, "smaa_on": True,
         "subtitles_on": True, "fov_deg": 62,
     }
 
@@ -244,7 +244,7 @@ def test_focus_first_down_lands_on_first_focusable():
 def test_focus_first_up_lands_on_last_focusable():
     p, _ = _make()
     p.open()
-    last = len(p._focusables()) - 1  # ctrl:fxaa is the last focusable
+    last = len(p._focusables()) - 1  # ctrl:smaa is the last focusable
     r = _FakeReader()
     r.press(r.keys.KEY_UP)
     p.handle_input(r)
@@ -428,33 +428,33 @@ def test_space_on_decals_row_toggles():
     assert p._settings.decals_on is False
 
 
-# ---- fxaa toggle ----------------------------------------------------------
+# ---- smaa toggle ----------------------------------------------------------
 
-def test_toggle_fxaa_fires_applier_and_flips_state():
+def test_toggle_smaa_fires_applier_and_flips_state():
     p, kw = _make()
     p.open()
-    assert p._settings.fxaa_on is True
-    assert p.dispatch_event("toggle:fxaa") is True
-    kw["set_fxaa"].assert_called_once_with(False)
-    assert p._settings.fxaa_on is False
+    assert p._settings.smaa_on is True
+    assert p.dispatch_event("toggle:smaa") is True
+    kw["set_smaa"].assert_called_once_with(False)
+    assert p._settings.smaa_on is False
 
 
-def test_render_payload_includes_fxaa_on():
+def test_render_payload_includes_smaa_on():
     p, _ = _make()
     p.open()
     payload = json.loads(p.render_payload()[len("setConfigurationPanel("):-len(");")])
-    assert payload["settings"]["fxaa_on"] is True
+    assert payload["settings"]["smaa_on"] is True
 
 
-def test_fxaa_is_a_graphics_focusable():
+def test_smaa_is_a_graphics_focusable():
     p, _ = _make()
-    assert ("ctrl", "fxaa") in p._focusables()
+    assert ("ctrl", "smaa") in p._focusables()
 
 
-def test_space_on_fxaa_row_toggles():
+def test_space_on_smaa_row_toggles():
     p, kw = _make()
     p.open()
-    p._focused = p._focusables().index(("ctrl", "fxaa"))
+    p._focused = p._focusables().index(("ctrl", "smaa"))
 
     class _Keys:
         KEY_DOWN = 1; KEY_UP = 2; KEY_SPACE = 3; KEY_ENTER = 4
@@ -466,8 +466,17 @@ def test_space_on_fxaa_row_toggles():
             return code == _Keys.KEY_SPACE
 
     p.handle_input(_H())
-    kw["set_fxaa"].assert_called_once_with(False)
-    assert p._settings.fxaa_on is False
+    kw["set_smaa"].assert_called_once_with(False)
+    assert p._settings.smaa_on is False
+
+
+def test_dispatch_toggle_smaa_flips_and_calls_applier():
+    p, kw = _make()
+    p.open()
+    assert p.dispatch_event("toggle:smaa") is True
+    kw["set_smaa"].assert_called_once_with(False)
+    assert p.dispatch_event("toggle:smaa") is True
+    kw["set_smaa"].assert_called_with(True)
 
 
 # ---- subtitles toggle / gameplay tab --------------------------------------

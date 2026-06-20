@@ -25,7 +25,7 @@ function _cpFocusableList(state) {
         out.push({kind: 'ctrl', target: 'hdr'});
         out.push({kind: 'ctrl', target: 'rim'});
         out.push({kind: 'ctrl', target: 'decals'});
-        out.push({kind: 'ctrl', target: 'fxaa'});
+        out.push({kind: 'ctrl', target: 'smaa'});
     } else if (state.selected_tab === 'gameplay') {
         out.push({kind: 'ctrl', target: 'subtitles'});
     }
@@ -128,13 +128,13 @@ function _cpRenderGraphicsBody(state, focusables) {
           +   '</div>'
           + '</div>';
 
-    // FXAA toggle (post-process anti-aliasing)
-    html += '<div class="cp-row' + (isFoc('fxaa') ? ' cp-focused' : '') + '">'
-          +   '<div class="cp-row__label">FXAA</div>'
+    // SMAA toggle (post-process anti-aliasing)
+    html += '<div class="cp-row' + (isFoc('smaa') ? ' cp-focused' : '') + '">'
+          +   '<div class="cp-row__label">Anti-Aliasing (SMAA)</div>'
           +   '<div class="cp-row__control">'
-          +     '<button class="cp-toggle' + (s.fxaa_on ? ' cp-toggle--on' : '') + '"'
-          +        ' onclick="dauntlessEvent(\'configuration/toggle:fxaa\')">'
-          +       (s.fxaa_on ? 'On' : 'Off')
+          +     '<button class="cp-toggle' + (s.smaa_on ? ' cp-toggle--on' : '') + '"'
+          +        ' onclick="dauntlessEvent(\'configuration/toggle:smaa\')">'
+          +       (s.smaa_on ? 'On' : 'Off')
           +     '</button>'
           +   '</div>'
           + '</div>';
