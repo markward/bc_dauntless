@@ -2274,7 +2274,12 @@ def _route_scroll_wheel(scroll_y, *, route_to_panel, mx, my,
                        int(round(scroll_y * _WHEEL_PX_PER_NOTCH)))
         return
     if can_throttle and player_control is not None:
-        notches = int(round(scroll_y))
+        # Throttle direction: a wheel-up gesture must INCREASE speed. The
+        # raw accumulator sign is inverted relative to that on the target
+        # platform (confirmed in live verify), so negate it here. The panel
+        # path above keeps the raw sign — CEF expects the accumulator's own
+        # direction.
+        notches = -int(round(scroll_y))
         if notches:
             player_control.nudge_throttle(notches)
 

@@ -35,18 +35,21 @@ def test_over_panel_scales_and_signs_delta():
     assert wheel.calls == [(5, 6, -2 * _WHEEL_PX_PER_NOTCH)]
 
 
-def test_open_space_scroll_up_increments_throttle():
+# Throttle direction is negated relative to the raw accumulator (see
+# _route_scroll_wheel): a wheel-up gesture produces a negative accumulator on
+# the target platform and must INCREASE speed.
+def test_open_space_wheel_up_increments_throttle():
     pc = _PlayerControl(); pc.impulse_level = 4
     wheel = _FakeWheel()
-    _route_scroll_wheel(1.0, route_to_panel=False, mx=0, my=0,
+    _route_scroll_wheel(-1.0, route_to_panel=False, mx=0, my=0,
                         send_wheel=wheel, player_control=pc, can_throttle=True)
     assert pc.impulse_level == 5
     assert wheel.calls == []
 
 
-def test_open_space_scroll_down_decrements_throttle():
+def test_open_space_wheel_down_decrements_throttle():
     pc = _PlayerControl(); pc.impulse_level = 1
-    _route_scroll_wheel(-1.0, route_to_panel=False, mx=0, my=0,
+    _route_scroll_wheel(1.0, route_to_panel=False, mx=0, my=0,
                         send_wheel=_FakeWheel(), player_control=pc, can_throttle=True)
     assert pc.impulse_level == 0
 
@@ -59,8 +62,9 @@ def test_throttle_blocked_when_cannot_throttle():
 
 
 def test_multi_notch_open_space():
+    # Three wheel-up notches (negative accumulator) → +3 impulse.
     pc = _PlayerControl(); pc.impulse_level = 0
-    _route_scroll_wheel(3.0, route_to_panel=False, mx=0, my=0,
+    _route_scroll_wheel(-3.0, route_to_panel=False, mx=0, my=0,
                         send_wheel=_FakeWheel(), player_control=pc, can_throttle=True)
     assert pc.impulse_level == 3
 
