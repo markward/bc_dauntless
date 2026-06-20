@@ -68,6 +68,12 @@ Window::Window(int width, int height, const std::string& title, bool visible) {
         }
     });
 
+    glfwSetScrollCallback(handle_, [](GLFWwindow* w, double /*xoffset*/, double yoffset) {
+        if (auto* self = static_cast<Window*>(glfwGetWindowUserPointer(w))) {
+            self->add_scroll_y(yoffset);
+        }
+    });
+
     if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress))) {
         glfwDestroyWindow(handle_);
         handle_ = nullptr;
