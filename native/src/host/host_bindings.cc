@@ -1549,8 +1549,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
               }
           },
           py::arg("shockwaves"),
-          "Replace the active warp-core breach shockwaves: a list of "
-          "((cx,cy,cz), max_radius, age, lifetime).");
+          "Replace the active warp-core breach shockwaves: a list of dicts with "
+          "keys world_center (a (cx,cy,cz) tuple), max_radius, age, lifetime.");
 
     m.def("set_hit_vfx",
           [](const std::vector<py::dict>& descs) {
