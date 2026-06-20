@@ -892,6 +892,25 @@ class _PlayerControl:
         self._warp_boost = False
         self._drift_velocity = None   # TGPoint3 while drifting (f==0), else None
 
+    def nudge_throttle(self, notches: int) -> None:
+        """Step the discrete impulse throttle one notch per detent.
+
+        Level set: REVERSE_LEVEL (-2), 0 (stop), 1..9 (impulse). There is
+        no -1: down from 0 jumps to reverse, up from reverse returns to 0.
+        Forward caps at 9; reverse floors at REVERSE_LEVEL.
+        """
+        for _ in range(abs(int(notches))):
+            if notches > 0:
+                if self.impulse_level < 0:
+                    self.impulse_level = 0
+                elif self.impulse_level < 9:
+                    self.impulse_level += 1
+            elif notches < 0:
+                if self.impulse_level <= 0:
+                    self.impulse_level = self.REVERSE_LEVEL
+                else:
+                    self.impulse_level -= 1
+
     # ── Hardpoint accessors ──────────────────────────────────────────────────
 
     @staticmethod
