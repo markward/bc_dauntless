@@ -4,7 +4,7 @@ in vec2 v_uv;
 in vec2 v_uv1;
 
 uniform sampler2D u_base_color;
-uniform sampler2D u_dark_map;  // lightmap on UV set 1; white where absent
+uniform sampler2D u_dark_map;  // baked lightmap on UV set 1; white where absent
 uniform vec3 u_ambient;
 uniform vec3 u_emissive;       // per-material self-illumination floor
 // Sentinel < 0 disables the discard — see BridgePass::draw_mesh, which

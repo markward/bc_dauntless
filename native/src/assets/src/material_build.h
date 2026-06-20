@@ -50,6 +50,15 @@ struct MaterialInputs {
     /// images; embedded images (NiRawImageData) leave no entry.
     const std::unordered_map<std::uint32_t, std::string>* image_filename_for_link = nullptr;
 
+    /// Number of UV coordinate sets the shape's geometry actually carries
+    /// (NiTriShapeData::uv_sets.size()). Used to clamp a multitexture stage
+    /// whose authored uv_set indexes past the available sets — BC's EBridge
+    /// ceiling lightmaps reference uv_set=2 on geometry that only has sets
+    /// 0 and 1, and the original fixed-function engine clamps such an
+    /// out-of-range coordinate set to the highest available one. 0 means
+    /// "unknown / don't clamp" (callers that don't supply geometry info).
+    std::size_t geometry_uv_set_count = 0;
+
     /// Link ID of the NiTextureProperty currently in `texture` (0 if
     /// none). Looked up against flip_image_override_for_prop below.
     std::uint32_t texture_link_id = 0;

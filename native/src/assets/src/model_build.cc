@@ -497,6 +497,7 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
             tex_result.sibling_specular_for_image, resolver);
         mat_inputs.image_filename_for_link = &tex_result.image_filename_for_link;
         mat_inputs.flip_image_override_for_prop = &flip_image_override_for_prop;
+        mat_inputs.geometry_uv_set_count = data->uv_sets.size();
         Material mat = build_material(mat_inputs);
         if (mat_inputs.texture_link_id != 0) {
             auto it = flip_animation_index_for_prop.find(mat_inputs.texture_link_id);
