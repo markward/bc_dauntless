@@ -2251,6 +2251,34 @@ class _NoInputReader:
 _NO_INPUT = _NoInputReader()
 
 
+# Pixels of CEF scroll per wheel detent (GLFW yoffset == 1.0). Positive
+# delta_y scrolls panel content up. Tune to feel; sign confirmed in live
+# verify.
+_WHEEL_PX_PER_NOTCH = 40
+
+
+def _route_scroll_wheel(scroll_y, *, route_to_panel, mx, my,
+                        send_wheel, player_control, can_throttle) -> None:
+    """Route one frame's accumulated mouse-wheel delta.
+
+    route_to_panel True (a pause/config modal is open, or the cursor is over
+    a HUD panel) → forward to CEF as a scaled pixel delta. Otherwise, when
+    can_throttle (exterior view + a live player), step the ship throttle one
+    impulse notch per detent. A no-op when scroll_y is 0.
+    """
+    if not scroll_y:
+        return
+    if route_to_panel:
+        if send_wheel is not None:
+            send_wheel(int(mx), int(my),
+                       int(round(scroll_y * _WHEEL_PX_PER_NOTCH)))
+        return
+    if can_throttle and player_control is not None:
+        notches = int(round(scroll_y))
+        if notches:
+            player_control.nudge_throttle(notches)
+
+
 def _apply_input(view_mode, player_control, director,
                  *, player, dt, h) -> None:
     """Per-tick input dispatch.
