@@ -4,6 +4,7 @@ in vec3 v_pos_local;
 in vec2 v_uv;
 
 uniform sampler2D u_texture;
+uniform mat3  u_world_rotation;  // column 1 = patch-centre direction (kForward)
 uniform vec2  u_tile;
 uniform vec2  u_span;
 uniform int   u_use_alpha;   // 0 = opaque (Star), 1 = blended (Backdrop)
@@ -55,12 +56,19 @@ void proc_main(vec3 dir, vec2 offset){
         c += vec3(0.55, 0.6, 0.8) * 0.05 * smoothstep(0.62, 0.95, field);
         frag_color = vec4(c, 1.0); return;
     }
-    // Star clouds (galaxy backdrops) render 4x larger on the sky than authored —
-    // their spans are tiny vs nebulae, so they'd otherwise read as faint smudges.
-    float spanScale = (u_proc_kind == 1) ? 4.0 : 1.0;
-    float rx = abs(offset.x)/max(u_span.x*0.25*spanScale, 1e-3);
-    float ry = abs(offset.y)/max(u_span.y*0.25*spanScale, 1e-3);
-    float edge = 1.0 - smoothstep(0.6, 1.0, max(rx, ry));
+    // Star-clouds use the projected span directly. The earlier 4x multiplier
+    // (added when spans were tiny) blew each cloud up to near-full-sphere; with
+    // map-driven spans (~1.5) that produced 5 overlapping sky-wide dense fields.
+    // Angular falloff from the patch centre, computed in 3D — NOT from v_uv.
+    // The UV-based cutoff broke at the sphere's longitude seam (u:1->0) and
+    // poles, where v_uv is discontinuous; on large patches that printed hard
+    // straight lines across the sky. The angle between the fragment direction
+    // and the feature's forward axis (world_rotation column 1) has no seam or
+    // pole, so the patch is a clean circular cap.
+    vec3  fwd = normalize(vec3(u_world_rotation[1]));
+    float ang = acos(clamp(dot(dir, fwd), -1.0, 1.0));   // radians from centre
+    float R   = max(u_span.x, 1e-3) * 0.30;              // angular radius (rad)
+    float edge = 1.0 - smoothstep(0.55*R, R, ang);
     if (edge <= 0.0) discard;
     vec3 np = dir*3.0 + u_seed; float drift = u_time*0.01;
     if (u_proc_kind == 2) {
@@ -69,7 +77,7 @@ void proc_main(vec3 dir, vec2 offset){
         float n     = fbm(np + vec3(drift));
         float fil   = turb(np*1.7 + vec3(drift*0.6));      // wispy filaments
         float field = mix(n, fil, 0.55);
-        float cov   = min(1.0, u_coverage * 2.0);          // 2x nebula density
+        float cov   = min(1.0, u_coverage * 1.5);          // 1.5x (was 2x: -25% density)
         float dens  = smoothstep(1.0 - cov*0.9, 1.0, field + 0.15);
         // cool dim wisps -> warm bright cores, both anchored to u_color so the
         // recorded hue stays dominant (slight variety, not a different colour).
@@ -81,15 +89,18 @@ void proc_main(vec3 dir, vec2 offset){
         float core = smoothstep(0.80, 1.0, field);
         vec3 emission = mix(u_color*1.6, vec3(1.0, 0.96, 0.9), 0.55*core) * core;
         vec3 young = proc_stars(dir, 0.22*core) * (1.0 + 2.5*core);
-        vec3 col = base + emission + young;
+        // Scaled for additive blending — full-strength nebulae blew out to white.
+        vec3 col = (base + emission + young) * 0.40;
         frag_color = vec4(col, clamp(max(dens, core)*edge, 0.0, 1.0));
     } else {
-        // STARCLOUD (galaxy): dense stars + diffuse dust glow + dark dust lanes.
-        vec3 stars = proc_stars(dir, 0.24) * edge;
+        // STARCLOUD (galaxy): a denser-than-base star region + diffuse dust glow
+        // + dark dust lanes. Density well below the old 0.24 so several clouds
+        // don't saturate the sky into a uniform white field.
+        vec3 stars = proc_stars(dir, 0.06) * edge;
         float glowN = fbm(np*0.6 + vec3(drift));
         float lanes = smoothstep(0.50, 0.72, turb(np*1.8));
         float dust = (0.32 + 0.55*glowN) * (1.0 - 0.88*lanes);
-        vec3 col = stars*(1.0 - 0.88*lanes) + u_color*dust;
+        vec3 col = (stars*(1.0 - 0.88*lanes) + u_color*dust) * 0.45;
         frag_color = vec4(col, max(dust*edge, length(stars)));
     }
 }

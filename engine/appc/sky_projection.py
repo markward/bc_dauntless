@@ -47,9 +47,15 @@ def vantage_for_set(pSet, model=None):
 _SIZE_SCALE = 6.0       # span per (extent/distance) — apparent-size tuning
 _MIN_SPAN = 0.08
 _ENVELOP_SPAN = 8.0     # near-field: fills the sphere on the existing shader
+_STARCLOUD_MAX_SPAN = 1.5  # distant galaxies stay bounded (shader 4x-scales them)
 _REF_DIST = 120.0       # distance-falloff reference
 _DEFAULT_COVERAGE = 0.5
 _STAR_SEED = 1.0
+# Backdrop spheres are viewed from inside and fill the whole view, so coarse
+# tessellation shows as hard triangular seams (the procedural noise + patch-edge
+# discards are sampled per-fragment off the interpolated position/UV). ~128x256
+# segments → ~1.4° triangles, smooth. One mesh, cached and shared by all spheres.
+_SPHERE_TRIS = 65536
 
 
 def _sub(a, b): return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
@@ -77,30 +83,41 @@ def _base_starfield():
     return {"texture_path": "", "kind": "star", "h_tile": 1.0, "v_tile": 1.0,
             "h_span": 1.0, "v_span": 1.0,
             "world_rotation": [1.0, 0, 0, 0, 1.0, 0, 0, 0, 1.0],
-            "target_poly_count": 256,
+            "target_poly_count": _SPHERE_TRIS,
             "proc_kind": "stars", "color": [0.0, 0.0, 0.0], "coverage": 0.0, "seed": _STAR_SEED}
 
 
-def _project_feature(vantage, pos, extent, color, proc_kind, label):
+def _project_feature(vantage, pos, extent, color, proc_kind, label,
+                     can_envelop=True, max_span=_ENVELOP_SPAN):
+    """Project one feature to a backdrop descriptor.
+
+    can_envelop: only the system's own *nebula* fills the whole sphere when the
+    vantage sits inside it. Star-clouds (distant galaxies) never envelop — their
+    baked size routinely exceeds the inter-system distance, which would
+    otherwise wrap the entire sky in a dense star field.
+    max_span: caps the apparent patch size so a large/near cloud reads as a
+    bounded feature rather than filling the dome.
+    """
     d = _sub(pos, vantage)
     dist = math.sqrt(d[0]*d[0] + d[1]*d[1] + d[2]*d[2])
     if dist < 1e-3:
-        direction, near = (0.0, 1.0, 0.0), True
+        direction, near = (0.0, 1.0, 0.0), can_envelop
     else:
-        direction, near = (d[0]/dist, d[1]/dist, d[2]/dist), dist < extent
+        direction = (d[0]/dist, d[1]/dist, d[2]/dist)
+        near = can_envelop and dist < extent
     if near:
         span = _ENVELOP_SPAN
         coverage = min(1.0, _DEFAULT_COVERAGE * 2.0)
         col = list(color)
     else:
-        span = max(_MIN_SPAN, min(_ENVELOP_SPAN, _SIZE_SCALE * extent / dist))
+        span = max(_MIN_SPAN, min(max_span, _SIZE_SCALE * extent / dist))
         falloff = max(0.15, min(1.0, _REF_DIST / dist))
         col = [c * falloff for c in color]
         coverage = _DEFAULT_COVERAGE
     return {"texture_path": "", "kind": "backdrop", "h_tile": 1.0, "v_tile": 1.0,
             "h_span": span, "v_span": span,
             "world_rotation": _basis_from_forward(direction),
-            "target_poly_count": 256,
+            "target_poly_count": _SPHERE_TRIS,
             "proc_kind": proc_kind, "color": col, "coverage": coverage,
             "seed": _seed_for(label)}
 
@@ -112,5 +129,6 @@ def project_sky(vantage, model):
                                     "nebula", "neb%d" % i))
     for i, g in enumerate(model.get("starclouds", [])):
         out.append(_project_feature(vantage, g["position"], g["size"], g["color"],
-                                    "starcloud", "sc%d" % i))
+                                    "starcloud", "sc%d" % i,
+                                    can_envelop=False, max_span=_STARCLOUD_MAX_SPAN))
     return out

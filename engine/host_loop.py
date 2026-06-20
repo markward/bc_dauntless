@@ -1897,6 +1897,7 @@ def _aggregate_backdrops(pSet):
     this system's vantage), falling back to authored backdrops if the system
     is unmapped. Toggle OFF -> stock BC (authored backdrops).
     """
+    name = pSet.GetName() if pSet is not None else None
     if r.procedural_sky_enabled():
         from engine.appc import sky_projection as sp
         model = sp.load_sector_model()

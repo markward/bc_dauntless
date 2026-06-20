@@ -86,7 +86,8 @@ void BackdropPass::render(const std::vector<Backdrop>& backdrops,
 
     glDepthMask(GL_FALSE);
     glDepthFunc(GL_LEQUAL);
-    glCullFace(GL_FRONT);  // we render the inside of the sphere
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_FRONT);  // we render the inside of the sphere (empirically correct)
 
     for (const auto& b : backdrops) {
         assets::Mesh* sphere = ensure_sphere(b.target_poly_count);
@@ -96,7 +97,11 @@ void BackdropPass::render(const std::vector<Backdrop>& backdrops,
 
         if (b.kind == BackdropKind::Backdrop) {
             glEnable(GL_BLEND);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            // Additive: sky features (nebulae, galaxies) emit light over the
+            // starfield — they brighten, never darken. Alpha (ONE_MINUS_SRC_ALPHA)
+            // blended a distance-dimmed colour *over* the stars, subtracting
+            // brightness and painting hard dark wedges where patches overlapped.
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE);
             shader.set_int("u_use_alpha", 1);
         } else {
             glDisable(GL_BLEND);
