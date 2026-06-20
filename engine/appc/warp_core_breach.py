@@ -15,9 +15,9 @@ See docs/superpowers/specs/2026-06-20-warp-core-breach-design.md.
 import engine.dev_mode as dev_mode
 
 BREACH_DAMAGE_FACTOR   = 1.0   # centre damage = factor * core max condition
-BREACH_RADIUS_GU       = 20.0  # shared AoE damage radius AND shockwave ring max
+BREACH_RADIUS_GU       = 40.0  # shared AoE damage radius AND shockwave ring max
                                # radius; tuned to the dramatic visual (was 1.3,
-                               # then 4.0). ~3.5 km — a very wide blast.
+                               # then 4.0, then 20.0). ~7 km — a very wide blast.
 
 _armed: list = []      # ships queued to detonate (FIFO)
 # Holds the ship objects themselves (not id()) so that CPython's id-reuse cannot

@@ -11,7 +11,8 @@ age, lifetime).
 See docs/superpowers/specs/2026-06-20-warp-core-breach-shockwave-design.md.
 """
 
-SHOCKWAVE_LIFETIME = 0.7   # seconds — total ring/flash lifetime
+SHOCKWAVE_LIFETIME = 1.4   # seconds — total ring/flash lifetime (was 0.7;
+                           # doubled to run the expansion at ~50% speed)
 
 _active: list[dict] = []
 

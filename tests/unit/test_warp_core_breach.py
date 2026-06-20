@@ -111,8 +111,8 @@ def test_damage_scales_with_core_and_falls_off_with_distance(monkeypatch):
 def test_ship_outside_radius_untouched(monkeypatch):
     calls = _capture_apply_hit(monkeypatch)
     src = _Ship("Doomed", TGPoint3(0, 0, 0), core=_Core(5000.0))
-    # far at d=30, R=0.1: weight = (0.1 + 20.0 - 30)/20.0 < 0 -> 0
-    far = _Ship("Far", TGPoint3(30.0, 0, 0), radius=0.1)
+    # far at d=50, R=0.1: weight = (0.1 + 40.0 - 50)/40.0 < 0 -> 0
+    far = _Ship("Far", TGPoint3(50.0, 0, 0), radius=0.1)
     _patch_ships(monkeypatch, [src, far])
 
     warp_core_breach.arm(src)
@@ -189,9 +189,9 @@ def test_reset_clears_state(monkeypatch):
     assert calls == []
 
 
-def test_breach_radius_is_twenty_gu():
+def test_breach_radius_is_forty_gu():
     # Single source of truth for damage AoE and the visual ring.
-    assert warp_core_breach.BREACH_RADIUS_GU == 20.0
+    assert warp_core_breach.BREACH_RADIUS_GU == 40.0
 
 
 def test_detonate_spawns_one_shockwave_at_core_center(monkeypatch):
