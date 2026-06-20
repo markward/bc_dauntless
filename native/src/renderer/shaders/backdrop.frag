@@ -55,8 +55,11 @@ void proc_main(vec3 dir, vec2 offset){
         c += vec3(0.55, 0.6, 0.8) * 0.05 * smoothstep(0.62, 0.95, field);
         frag_color = vec4(c, 1.0); return;
     }
-    float rx = abs(offset.x)/max(u_span.x*0.25, 1e-3);
-    float ry = abs(offset.y)/max(u_span.y*0.25, 1e-3);
+    // Star clouds (galaxy backdrops) render 4x larger on the sky than authored —
+    // their spans are tiny vs nebulae, so they'd otherwise read as faint smudges.
+    float spanScale = (u_proc_kind == 1) ? 4.0 : 1.0;
+    float rx = abs(offset.x)/max(u_span.x*0.25*spanScale, 1e-3);
+    float ry = abs(offset.y)/max(u_span.y*0.25*spanScale, 1e-3);
     float edge = 1.0 - smoothstep(0.6, 1.0, max(rx, ry));
     if (edge <= 0.0) discard;
     vec3 np = dir*3.0 + u_seed; float drift = u_time*0.01;
@@ -66,7 +69,8 @@ void proc_main(vec3 dir, vec2 offset){
         float n     = fbm(np + vec3(drift));
         float fil   = turb(np*1.7 + vec3(drift*0.6));      // wispy filaments
         float field = mix(n, fil, 0.55);
-        float dens  = smoothstep(1.0 - u_coverage*0.9, 1.0, field + 0.15);
+        float cov   = min(1.0, u_coverage * 2.0);          // 2x nebula density
+        float dens  = smoothstep(1.0 - cov*0.9, 1.0, field + 0.15);
         // cool dim wisps -> warm bright cores, both anchored to u_color so the
         // recorded hue stays dominant (slight variety, not a different colour).
         vec3 cool = u_color * vec3(0.85, 0.95, 1.15);
