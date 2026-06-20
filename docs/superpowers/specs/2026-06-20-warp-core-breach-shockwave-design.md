@@ -30,7 +30,7 @@ linger" change already lets the player catch the wreck and watch this play.)
 | Puffs | **Replaced** — `_spawn_fireball` removed; no debris/smoke |
 | Orientation | **Camera-facing** billboard (rotationally symmetric ring → no spin artifact, never edge-on) |
 | Color | **White-hot** core flash → cold **blue-white** ring (warp-core energy) |
-| Ring size | **Bigger / dramatic** — fixed `SHOCKWAVE_MAX_RADIUS_GU = 4.0` (well past the 1.3 GU blast radius), tunable |
+| Ring size | **Bigger / dramatic**, and the **damage radius is raised to match it** — one value: `warp_core_breach.BREACH_RADIUS_GU` **1.3 → 4.0 GU**. The ring expands to exactly that, so the blast you see is the volume that took damage. |
 | Lifetime | `SHOCKWAVE_LIFETIME = 0.7 s` (tunable) |
 
 ## Architecture
@@ -49,10 +49,21 @@ Modeled on `engine/appc/hit_vfx.py` (transient, age-driven world VFX):
 - `reset()` — clear the registry (mission swap / test teardown).
 
 `warp_core_breach.detonate` replaces its `_spawn_fireball(ship, core)` call with
-`shockwaves.spawn(centre, SHOCKWAVE_MAX_RADIUS_GU, SHOCKWAVE_LIFETIME)` (still
+`shockwaves.spawn(centre, BREACH_RADIUS_GU, SHOCKWAVE_LIFETIME)` (still
 raise-safe). `centre` is the warp core world position already computed in
-`detonate`. The old `_spawn_fireball` and its `Effects`/`ExplosionA` use are
-deleted.
+`detonate`. Passing `BREACH_RADIUS_GU` (not a separate visual constant) is what
+keeps the ring's extent and the damage AoE identical by construction. The old
+`_spawn_fireball` and its `Effects`/`ExplosionA` use are deleted.
+
+### Damage radius bump — `engine/appc/warp_core_breach.py`
+
+`BREACH_RADIUS_GU` changes from **1.3** to **4.0**. This is the single source of
+truth for both the AoE damage radius (used by `detonate`'s `_splash_weight`
+falloff and the `apply_hit(splash_radius=...)` override) and the visual ring's
+max radius. The magnitude (`BREACH_DAMAGE_FACTOR * core.GetMaxCondition()`) is
+unchanged; only the radius grows, so the blast now reaches farther with the same
+center damage and linear falloff. The constant's comment is updated — the radius
+is now tuned to the dramatic visual, no longer "10× the photon DRF."
 
 `engine/host_loop.py`:
 - In the per-frame combat hub, advance the registry beside
@@ -103,7 +114,7 @@ Modeled on `native/src/renderer/dust_pass.{h,cc}`:
 ```
 warp_core_breach.detonate(ship)
   centre = warp core world position
-  shockwaves.spawn(centre, SHOCKWAVE_MAX_RADIUS_GU, SHOCKWAVE_LIFETIME)
+  shockwaves.spawn(centre, BREACH_RADIUS_GU, SHOCKWAVE_LIFETIME)   # ring max == damage radius
         │
         ▼  (each tick, host_loop combat hub)
 shockwaves.advance(dt)                 # age, drop expired
@@ -119,9 +130,12 @@ g_shockwave_pass->render(cam, g_shockwaves, pipeline)
 
 | Constant | Default | Meaning |
 |---|---|---|
-| `shockwaves.SHOCKWAVE_MAX_RADIUS_GU` | 4.0 | Ring max radius (well past the 1.3 GU blast) |
+| `warp_core_breach.BREACH_RADIUS_GU` | 4.0 | **Shared** AoE damage radius AND ring max radius |
 | `shockwaves.SHOCKWAVE_LIFETIME` | 0.7 s | Total ring/flash lifetime |
 | ring band width, ease-out exponent, flash duration fraction, colors | shader-side | Visual feel |
+
+There is intentionally **no** separate visual-radius constant — the ring reads
+`BREACH_RADIUS_GU` so damage and visual cannot drift apart.
 
 ## Error handling
 
@@ -136,8 +150,14 @@ g_shockwave_pass->render(cam, g_shockwaves, pipeline)
 - **Python unit tests** (real coverage, headless): `shockwaves.spawn` / `advance`
   (age increments; descriptor dropped at `age >= lifetime`) / `render_data`
   (tuple shape and values) / `reset`; and that `warp_core_breach.detonate`
-  spawns exactly one shockwave at the core center (spy on `shockwaves.spawn`)
-  and no longer calls the removed `_spawn_fireball`.
+  spawns exactly one shockwave at the core center with `max_radius ==
+  BREACH_RADIUS_GU` (spy on `shockwaves.spawn`) and no longer calls the removed
+  `_spawn_fireball`.
+- **Radius bump:** confirm the existing `test_warp_core_breach.py` AoE tests
+  still pass against `BREACH_RADIUS_GU == 4.0` (they assert against the constant
+  / use distances valid at both radii); add an assertion pinning
+  `BREACH_RADIUS_GU == 4.0` so a future edit can't silently desync damage from
+  the visual.
 - **Native:** no GL unit test (consistent with `dust_pass` and the other
   passes). Verified visually in-app by the user. The plan ensures the pass
   compiles, the shaders embed, and `frame()` renders without GL error.
@@ -153,16 +173,18 @@ g_shockwave_pass->render(cam, g_shockwaves, pipeline)
 ## Non-goals
 
 - No spherical shell, twin rings, or debris/smoke (silhouette is ring + flash).
-- No allegiance/size-scaled ring (fixed `SHOCKWAVE_MAX_RADIUS_GU`).
+- No allegiance/size-scaled ring (fixed `BREACH_RADIUS_GU`).
 - No render-to-texture / viewscreen rendering of the shockwave (main view only).
-- No change to breach gameplay (damage, radius, chains) — purely visual.
+- No change to breach **damage magnitude** or chain logic. The damage **radius**
+  does change (1.3 → 4.0 GU) to match the visual — that is the one intentional
+  gameplay change here.
 
 ## Affected files
 
 | File | Change |
 |---|---|
 | `engine/appc/shockwaves.py` | New — Python registry (spawn/advance/render_data/reset) |
-| `engine/appc/warp_core_breach.py` | Replace `_spawn_fireball` with `shockwaves.spawn` |
+| `engine/appc/warp_core_breach.py` | `BREACH_RADIUS_GU` 1.3 → 4.0; replace `_spawn_fireball` with `shockwaves.spawn(centre, BREACH_RADIUS_GU, ...)` |
 | `engine/host_loop.py` | Advance + `set_shockwaves` push + reset wiring |
 | `native/src/renderer/include/renderer/frame.h` | `ShockwaveDescriptor` |
 | `native/src/renderer/shockwave_pass.{h,cc}` | New — GL pass |
