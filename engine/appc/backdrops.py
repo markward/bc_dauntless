@@ -137,6 +137,12 @@ def aggregate_for_renderer(pSet, project_root):
                               (so the C++ glm::mat3 constructor reads each
                               BC column as a GL column directly),
             "target_poly_count": int (>= 64),
+            "proc_kind": "stars" | "starcloud" | "nebula" — procedural render kind,
+                         classified by texture basename,
+            "color": [r, g, b] floats 0..1 — recorded dominant colour
+                     (nebula = brightened, starcloud = raw dim mean),
+            "coverage": float 0..1 — density from the appearance table,
+            "seed": float — stable per-texture seed (deterministic crc32),
         }
 
     Backdrops with empty texture paths are dropped silently (script
@@ -169,6 +175,7 @@ def aggregate_for_renderer(pSet, project_root):
                     break
             else:
                 missing_paths.append(b._texture_path)
+                # Note: the procedural path also inherits this gate — a backdrop still needs its TGA present on disk (resolved above), even though the procedural renderer never decodes its pixels.
                 continue
         rot = b.GetWorldRotation()
         # Column-major flatten. The C++ side reads m9 into glm::mat3(...)
