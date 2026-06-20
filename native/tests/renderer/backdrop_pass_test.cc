@@ -135,4 +135,38 @@ TEST_F(BackdropPassTest, ToggleOffDiscardsProceduralNebula) {
     EXPECT_EQ(lit, 0);  // off + no texture => stock path paints nothing
 }
 
+static renderer::Backdrop make_proc(int proc_kind, float span) {
+    renderer::Backdrop b;
+    b.texture_path = "";
+    b.kind = renderer::BackdropKind::Backdrop;
+    b.proc_kind = proc_kind;
+    b.h_span = b.v_span = span;
+    return b;
+}
+
+TEST(BackdropHelpers, AreProceduralRequiresAllEmptyTexturePaths) {
+    std::vector<renderer::Backdrop> proc = {make_proc(0, 1.0f), make_proc(2, 1.5f)};
+    EXPECT_TRUE(renderer::backdrops_are_procedural(proc));
+
+    std::vector<renderer::Backdrop> empty;
+    EXPECT_FALSE(renderer::backdrops_are_procedural(empty));
+
+    auto mixed = proc;
+    mixed[1].texture_path = "stars.tga";   // authored entry present
+    EXPECT_FALSE(renderer::backdrops_are_procedural(mixed));
+}
+
+TEST(BackdropHelpers, EqualDetectsAnyFieldChange) {
+    std::vector<renderer::Backdrop> a = {make_proc(0, 1.0f), make_proc(2, 1.5f)};
+    auto b = a;
+    EXPECT_TRUE(renderer::backdrops_equal(a, b));
+
+    b[1].h_span = 1.6f;                    // changed span
+    EXPECT_FALSE(renderer::backdrops_equal(a, b));
+
+    auto c = a;
+    c.pop_back();                          // changed size
+    EXPECT_FALSE(renderer::backdrops_equal(a, c));
+}
+
 }  // namespace

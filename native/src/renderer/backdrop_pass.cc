@@ -136,4 +136,32 @@ void BackdropPass::render(const std::vector<Backdrop>& backdrops,
     glBindVertexArray(0);
 }
 
+bool backdrops_are_procedural(const std::vector<Backdrop>& backdrops) {
+    if (backdrops.empty()) return false;
+    for (const auto& b : backdrops) {
+        if (!b.texture_path.empty()) return false;
+    }
+    return true;
+}
+
+bool backdrops_equal(const std::vector<Backdrop>& a,
+                     const std::vector<Backdrop>& b) {
+    if (a.size() != b.size()) return false;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        const Backdrop& x = a[i];
+        const Backdrop& y = b[i];
+        if (x.texture_path != y.texture_path) return false;
+        if (x.kind != y.kind) return false;
+        if (x.h_tile != y.h_tile || x.v_tile != y.v_tile) return false;
+        if (x.h_span != y.h_span || x.v_span != y.v_span) return false;
+        if (x.world_rotation != y.world_rotation) return false;
+        if (x.target_poly_count != y.target_poly_count) return false;
+        if (x.proc_kind != y.proc_kind) return false;
+        if (x.color != y.color) return false;
+        if (x.coverage != y.coverage) return false;
+        if (x.seed != y.seed) return false;
+    }
+    return true;
+}
+
 }  // namespace renderer

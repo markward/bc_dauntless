@@ -47,4 +47,14 @@ private:
     assets::Texture* ensure_texture(const std::string& path);
 };
 
+/// True iff `backdrops` is non-empty and every entry is procedural (empty
+/// texture_path) — the map-driven sky case that the cubemap bake handles.
+bool backdrops_are_procedural(const std::vector<Backdrop>& backdrops);
+
+/// True iff `a` and `b` are the same length and every field of every entry is
+/// equal. Used to detect when the per-frame descriptor list actually changed
+/// (and the cubemap must be re-baked).
+bool backdrops_equal(const std::vector<Backdrop>& a,
+                     const std::vector<Backdrop>& b);
+
 }  // namespace renderer
