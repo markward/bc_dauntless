@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Orion Arm — Stellar Cartography (PoC)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Antonio:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; height: 100%; background: #04060d; overflow: hidden;
+    font-family: 'Antonio', sans-serif; color: #c9d6ff; }
+  #c { display: block; width: 100vw; height: 100vh; }
+  #hud { position: fixed; top: 14px; left: 16px; pointer-events: none;
+    text-shadow: 0 0 6px #000; }
+  #hud h1 { margin: 0 0 2px; font-size: 15px; letter-spacing: 3px;
+    color: #ffb454; font-weight: 700; }
+  #hud .sub { font-size: 11px; color: #6f86c9; letter-spacing: 1px; }
+  #legend { position: fixed; bottom: 14px; left: 16px; font-size: 11px;
+    line-height: 1.7; color: #8aa0d8; text-shadow: 0 0 6px #000; }
+  #legend .sw { display: inline-block; width: 11px; height: 11px;
+    margin-right: 7px; vertical-align: -1px; border-radius: 2px; }
+  #controls { position: fixed; bottom: 14px; right: 16px; font-size: 11px;
+    text-align: right; color: #5f76b8; line-height: 1.6; }
+  #controls label { color: #8aa0d8; cursor: pointer; pointer-events: auto; }
+  #sel { position: fixed; top: 14px; right: 16px; font-size: 11px;
+    text-align: right; color: #ffb454; min-width: 180px; text-shadow: 0 0 6px #000; }
+  #sel .body { color: #9fb2e6; margin-top: 4px; white-space: pre; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud">
+  <h1>ORION ARM · STELLAR CARTOGRAPHY</h1>
+  <div class="sub">local bubble · maelstrom sector · first-cut inferred layout</div>
+</div>
+<div id="sel"></div>
+<div id="legend">
+  <div><span class="sw" style="background:#ffd089"></span>System</div>
+  <div><span class="sw" style="background:#79f2b0"></span>System pinned to real star</div>
+  <div><span class="sw" style="background:#56e6ff"></span>Base · ⧊ = Starfleet starbase</div>
+  <div><span class="sw" style="background:#5b6cff"></span>Nebula (shared landmark)</div>
+  <div><span class="sw" style="background:#8a6bff"></span>Distant galaxy</div>
+  <div><span class="sw" style="background:#ff5a4d"></span>Hazard nebula</div>
+  <div><span class="sw" style="background:#ffe4a0"></span>Star cloud (dense stars)</div>
+  <div><span class="sw" style="background:#6a82bf;height:3px"></span>Mission route</div>
+</div>
+<div id="controls">
+  drag = rotate · scroll = zoom · right-drag = pan<br/>
+  click a system to focus<br/>
+  <label><input type="checkbox" id="routeToggle" checked /> show mission routes</label><br/>
+  <label><input type="checkbox" id="mpToggle" /> show multiplayer maps</label>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="map.js"></script>
+<script>
+const MAP = window.SECTOR_MAP;
+
+// ---- palette -------------------------------------------------------------
+const COL = {
+  bg: 0x04060d, grid: 0x16345c, drop: 0x1d3a63,
+  system: '#ffd089', bracket: '#ffb454', label: '#ffd9a8',
+  nebLabel: '#8fd0ff', hazLabel: '#ff9a7a',   // distinct from amber system labels
+  realBracket: '#79f2b0', realLabel: '#bfffd9', // real-star anchors (green)
+  galaxy: '#ffe4a0', galaxyLabel: '#ffeebf',   // star clouds (dense stars)
+  baseBracket: '#56e6ff', baseLabel: '#bdf3ff', // bases / starbases (cyan)
+};
+
+// ---- scene / camera / renderer ------------------------------------------
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(COL.bg);
+scene.fog = new THREE.FogExp2(COL.bg, 0.00045);
+
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth/window.innerHeight, 1, 20000);
+camera.position.set(900, 620, 1100);
+
+const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('c'), antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+
+// ---- bounds / grid plane -------------------------------------------------
+const allPts = [...MAP.systems, ...MAP.nebulae].map(o => o.position);
+const lo = [0,1,2].map(k => Math.min(...allPts.map(p => p[k])));
+const hi = [0,1,2].map(k => Math.max(...allPts.map(p => p[k])));
+const gridY = lo[1] - 90;
+const ext = Math.max(hi[0]-lo[0], hi[2]-lo[2]) * 1.4;
+const grid = new THREE.GridHelper(ext, 16, COL.grid, COL.grid);
+grid.position.set((lo[0]+hi[0])/2, gridY, (lo[2]+hi[2])/2);
+grid.material.opacity = 0.35; grid.material.transparent = true;
+scene.add(grid);
+
+// faint starfield backdrop
+(function stars(){
+  const g = new THREE.BufferGeometry(), n = 1400, a = new Float32Array(n*3);
+  for (let i=0;i<n;i++){ const r=6000, u=Math.random(), v=Math.random();
+    const th=2*Math.PI*u, ph=Math.acos(2*v-1);
+    a[i*3]=r*Math.sin(ph)*Math.cos(th); a[i*3+1]=r*Math.sin(ph)*Math.sin(th); a[i*3+2]=r*Math.cos(ph); }
+  g.setAttribute('position', new THREE.BufferAttribute(a,3));
+  scene.add(new THREE.Points(g, new THREE.PointsMaterial({color:0x4a5a86, size:2, sizeAttenuation:false, transparent:true, opacity:0.6})));
+})();
+
+// ---- canvas-sprite helpers ----------------------------------------------
+// Sprites are either 'world'-scaled (size in world units, scales with zoom) or
+// 'screen'-scaled (constant fraction of viewport height, rescaled per frame).
+let billboards = [];
+function makeSprite(canvas, size, mode){
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.minFilter = THREE.LinearFilter; tex.anisotropy = 4;
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false });
+  const sp = new THREE.Sprite(mat);
+  sp.userData.aspect = canvas.width / canvas.height;
+  if (mode === 'world'){
+    sp.scale.set(size * sp.userData.aspect, size, 1);
+  } else {
+    sp.userData.screenH = size;       // fraction of viewport height
+    billboards.push(sp);
+  }
+  return sp;
+}
+
+// Keep 'screen' sprites a constant on-screen size regardless of dolly/zoom.
+function updateBillboards(){
+  const fovK = 2 * Math.tan(camera.fov * 0.5 * Math.PI/180);
+  for (const sp of billboards){
+    const d = camera.position.distanceTo(sp.position);
+    const h = sp.userData.screenH * fovK * d;
+    sp.scale.set(h * sp.userData.aspect, h, 1);
+  }
+}
+
+// Starfleet delta insignia (gold), drawn centred at (cx,cy) with radius R.
+function drawDelta(x, cx, cy, R){
+  const apexY=cy-R, botY=cy+R*0.82, midY=cy+R*0.42, wx=R*0.74;
+  x.beginPath();
+  x.moveTo(cx, apexY);
+  x.quadraticCurveTo(cx+R*0.5, cy-R*0.05, cx+wx, botY);   // right outer
+  x.quadraticCurveTo(cx+R*0.30, cy+R*0.30, cx, midY);      // right inner
+  x.quadraticCurveTo(cx-R*0.30, cy+R*0.30, cx-wx, botY);   // left inner
+  x.quadraticCurveTo(cx-R*0.5, cy-R*0.05, cx, apexY);      // left outer
+  x.closePath();
+  x.fillStyle='#ffd27a'; x.shadowColor='#000'; x.shadowBlur=6; x.fill();
+  x.shadowBlur=0; x.lineWidth=2.5; x.strokeStyle='#7a5a1e'; x.stroke();
+  x.beginPath(); x.moveTo(cx, apexY+R*0.45);
+  x.lineTo(cx+R*0.15, botY-R*0.22); x.lineTo(cx-R*0.15, botY-R*0.22); x.closePath();
+  x.fillStyle='#fff3d6'; x.fill();
+}
+
+// system marker: bracket reticle + dot + label (Generations style).
+// Real-star anchors get a green reticle + the catalogue name as a subtitle.
+function systemSprite(sys){
+  const name=sys.name, real=sys.realStar, base=sys.base;
+  const brk = base ? COL.baseBracket : real ? COL.realBracket : COL.bracket;
+  const lblCol = base ? COL.baseLabel : real ? COL.realLabel : COL.label;
+  const W=512, H=300, cv=document.createElement('canvas'); cv.width=W; cv.height=H;
+  const x=cv.getContext('2d'); const cx=W/2, cy=H*0.30, b=46;
+  // four corner brackets (L-shapes) around the dot — Generations reticle
+  x.strokeStyle=brk; x.lineWidth=6; x.lineCap='round'; const arm=22;
+  for (const [sx,sy] of [[-1,-1],[1,-1],[-1,1],[1,1]]){
+    const ox=cx+sx*b, oy=cy+sy*b;
+    x.beginPath(); x.moveTo(ox, oy); x.lineTo(ox - sx*arm, oy);
+    x.moveTo(ox, oy); x.lineTo(ox, oy - sy*arm); x.stroke();
+  }
+  // bases get a station ring around the dot to stand out from star systems
+  if (base){
+    x.strokeStyle=brk; x.lineWidth=4; x.beginPath(); x.arc(cx,cy,33,0,7); x.stroke();
+  }
+  if (sys.starbase){
+    // soft glow + Starfleet delta to call out a starbase presence
+    const g2=x.createRadialGradient(cx,cy,0,cx,cy,30);
+    g2.addColorStop(0,hexA(brk,0.5)); g2.addColorStop(1,hexA(brk,0));
+    x.fillStyle=g2; x.beginPath(); x.arc(cx,cy,30,0,7); x.fill();
+    drawDelta(x, cx, cy, 22);
+  } else {
+    // glow dot (tinted by reticle colour)
+    const grd=x.createRadialGradient(cx,cy,0,cx,cy,26);
+    grd.addColorStop(0,'#ffffff'); grd.addColorStop(0.4,brk); grd.addColorStop(1,hexA(brk,0));
+    x.fillStyle=grd; x.beginPath(); x.arc(cx,cy,26,0,7); x.fill();
+    x.fillStyle='#fff'; x.beginPath(); x.arc(cx,cy,7,0,7); x.fill();
+    if (base){ x.strokeStyle=brk; x.lineWidth=3; x.beginPath(); x.arc(cx,cy,15,0,7); x.stroke(); }
+  }
+  // labels
+  x.textAlign='center'; x.textBaseline='middle'; x.shadowColor='#000'; x.shadowBlur=8;
+  x.font='700 40px "Antonio", sans-serif'; x.fillStyle=lblCol;
+  x.fillText(name.toUpperCase(), cx, cy + b + 42);
+  if (real){
+    x.font='600 26px "Antonio", sans-serif'; x.fillStyle=COL.realLabel; x.globalAlpha=0.85;
+    x.fillText(real.toUpperCase(), cx, cy + b + 78); x.globalAlpha=1;
+  }
+  return makeSprite(cv, 0.17, 'screen');
+}
+
+// standalone text label (used for nebulae) — own colour, fixed world size
+function textLabelSprite(text, color, screenH){
+  const f=48, pad=10, t=text.toUpperCase();
+  const meas=document.createElement('canvas').getContext('2d');
+  meas.font='700 '+f+'px "Antonio", sans-serif';
+  const W=Math.ceil(meas.measureText(t).width)+pad*2, H=f+pad*2;
+  const cv=document.createElement('canvas'); cv.width=W; cv.height=H;
+  const x=cv.getContext('2d');
+  x.font='700 '+f+'px "Antonio", sans-serif'; x.textAlign='center'; x.textBaseline='middle';
+  x.fillStyle=color; x.shadowColor='#000'; x.shadowBlur=10;
+  x.fillText(t, W/2, H/2);
+  return makeSprite(cv, screenH, 'screen');
+}
+
+// nebula patch: flat fill + border, diagonal hatch if hazard
+function nebulaSprite(neb){
+  const S=256, cv=document.createElement('canvas'); cv.width=S; cv.height=S;
+  const x=cv.getContext('2d'); const c=S/2, r=S*0.42;
+  // irregular blob path
+  x.beginPath();
+  for (let i=0;i<=40;i++){ const a=i/40*Math.PI*2;
+    const wob=1+0.12*Math.sin(a*3+neb.position[0])+0.08*Math.cos(a*5+neb.position[2]);
+    const px=c+Math.cos(a)*r*wob, py=c+Math.sin(a)*r*wob;
+    i?x.lineTo(px,py):x.moveTo(px,py); }
+  x.closePath();
+  const col=neb.hazard ? '#ff5a4d' : neb.color;
+  x.fillStyle=hexA(col, neb.hazard?0.16:0.22); x.fill();
+  x.save(); x.clip();
+  // diagonal warning bands for hazard
+  if (neb.hazard){
+    x.strokeStyle=hexA('#ff7a4d',0.55); x.lineWidth=7;
+    for (let d=-S; d<S*2; d+=22){ x.beginPath(); x.moveTo(d,0); x.lineTo(d+S,S); x.stroke(); }
+  } else {
+    x.strokeStyle=hexA(col,0.30); x.lineWidth=5;
+    for (let d=-S; d<S*2; d+=30){ x.beginPath(); x.moveTo(d,0); x.lineTo(d+S,S); x.stroke(); }
+  }
+  x.restore();
+  // border
+  x.beginPath();
+  for (let i=0;i<=40;i++){ const a=i/40*Math.PI*2;
+    const wob=1+0.12*Math.sin(a*3+neb.position[0])+0.08*Math.cos(a*5+neb.position[2]);
+    const px=c+Math.cos(a)*r*wob, py=c+Math.sin(a)*r*wob;
+    i?x.lineTo(px,py):x.moveTo(px,py); }
+  x.closePath(); x.strokeStyle=col; x.lineWidth=3; x.globalAlpha=0.9; x.stroke();
+  const sp = makeSprite(cv, neb.radius*2.4, 'world');
+  sp.material.depthWrite=false;
+  return sp;
+}
+function hexA(hex, a){
+  const n=parseInt(hex.slice(1),16); return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`;
+}
+
+// galaxy / star-cloud marker: a small non-selectable 3-star icon + label
+function galaxySprite(g){
+  const W=160, H=128, cv=document.createElement('canvas'); cv.width=W; cv.height=H;
+  const x=cv.getContext('2d');
+  function star(cx,cy,R){
+    x.beginPath();
+    for (let i=0;i<8;i++){ const a=i*Math.PI/4 - Math.PI/2; const rad=(i%2)?R*0.34:R;
+      const px=cx+Math.cos(a)*rad, py=cy+Math.sin(a)*rad; i?x.lineTo(px,py):x.moveTo(px,py); }
+    x.closePath(); x.fillStyle=COL.galaxy; x.shadowColor='#ffcf73'; x.shadowBlur=10; x.fill();
+  }
+  star(W*0.50,H*0.34,16); star(W*0.32,H*0.50,10); star(W*0.66,H*0.52,11);
+  x.shadowColor='#000'; x.shadowBlur=8; x.font='600 26px "Antonio", sans-serif';
+  x.textAlign='center'; x.textBaseline='middle'; x.fillStyle=COL.galaxyLabel; x.globalAlpha=0.9;
+  x.fillText(g.name.toUpperCase(), W/2, H*0.86);
+  return makeSprite(cv, 0.07, 'screen');
+}
+
+// ---- build the scene -----------------------------------------------------
+const pickables = [];
+const sysGroup = new THREE.Group(), nebGroup = new THREE.Group(),
+      dropGroup = new THREE.Group(), routesGroup = new THREE.Group(),
+      galaxyGroup = new THREE.Group();
+scene.add(nebGroup); scene.add(dropGroup); scene.add(routesGroup); scene.add(galaxyGroup); scene.add(sysGroup);
+
+function rebuild(){
+  const showMP = document.getElementById('mpToggle').checked;
+  const showRoutes = document.getElementById('routeToggle').checked;
+  for (const g of [sysGroup, nebGroup, dropGroup, routesGroup, galaxyGroup]) while(g.children.length) g.remove(g.children[0]);
+  pickables.length = 0;
+  billboards = [];   // screen-scaled sprites are re-registered as we rebuild
+  const visPos = {};
+
+  // star clouds (galaxy textures): small icon, non-selectable
+  if (MAP.galaxies) for (const gx of MAP.galaxies){
+    if (gx.multiplayer && !showMP) continue;
+    const sp = galaxySprite(gx);
+    sp.position.set(...gx.position);
+    galaxyGroup.add(sp);
+  }
+
+  for (const neb of MAP.nebulae){
+    if (neb.multiplayer && !showMP) continue;
+    const sp = nebulaSprite(neb);
+    sp.position.set(...neb.position);
+    nebGroup.add(sp);
+    if (neb.name){
+      const lbl = textLabelSprite(neb.name, neb.hazard ? COL.hazLabel : COL.nebLabel, 0.042);
+      lbl.position.set(neb.position[0], neb.position[1] + neb.radius * 0.55, neb.position[2]);
+      nebGroup.add(lbl);
+    }
+  }
+
+  for (const sys of MAP.systems){
+    if (sys.multiplayer && !showMP) continue;
+    const [px,py,pz] = sys.position;
+    visPos[sys.id] = sys.position;
+    const sp = systemSprite(sys);
+    sp.position.set(px,py,pz);
+    sp.userData.sys = sys;
+    sysGroup.add(sp); pickables.push(sp);
+    // drop line to grid plane
+    const lg = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(px,py,pz), new THREE.Vector3(px,gridY,pz)]);
+    dropGroup.add(new THREE.Line(lg, new THREE.LineBasicMaterial({color:COL.drop, transparent:true, opacity:0.5})));
+    // base tick on the grid
+    const tg = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(px-8,gridY,pz), new THREE.Vector3(px+8,gridY,pz)]);
+    dropGroup.add(new THREE.Line(tg, new THREE.LineBasicMaterial({color:COL.drop, transparent:true, opacity:0.7})));
+  }
+
+  // mission routes: faint connectors between co-visited systems
+  if (showRoutes && MAP.links){
+    const maxW = Math.max(0.001, ...MAP.links.map(l => l.weight));
+    for (const l of MAP.links){
+      const a = visPos[l.a], b = visPos[l.b];
+      if (!a || !b) continue;
+      const op = Math.min(0.5, 0.06 + 0.55 * (l.weight / maxW));
+      const lg = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...a), new THREE.Vector3(...b)]);
+      routesGroup.add(new THREE.Line(lg, new THREE.LineBasicMaterial({color:0x6a82bf, transparent:true, opacity:op})));
+    }
+  }
+}
+rebuild();
+document.getElementById('mpToggle').addEventListener('change', rebuild);
+document.getElementById('routeToggle').addEventListener('change', rebuild);
+
+// Canvas labels bake the font at draw time — re-bake once Antonio is ready.
+if (document.fonts && document.fonts.load){
+  Promise.all([document.fonts.load('700 40px Antonio'), document.fonts.load('400 14px Antonio')])
+    .then(() => rebuild())
+    .catch(() => {});
+}
+
+// ---- pick + focus --------------------------------------------------------
+const ray = new THREE.Raycaster(), mouse = new THREE.Vector2();
+let downXY=null;
+renderer.domElement.addEventListener('pointerdown', e => downXY=[e.clientX,e.clientY]);
+renderer.domElement.addEventListener('pointerup', e => {
+  if (!downXY) return;
+  const moved = Math.hypot(e.clientX-downXY[0], e.clientY-downXY[1]);
+  downXY=null;
+  if (moved > 5) return; // was a drag
+  mouse.x=(e.clientX/innerWidth)*2-1; mouse.y=-(e.clientY/innerHeight)*2+1;
+  ray.setFromCamera(mouse, camera);
+  const hit = ray.intersectObjects(pickables, false)[0];
+  if (hit) focusSystem(hit.object.userData.sys);
+});
+
+let flyTo=null;
+function focusSystem(sys){
+  const p = new THREE.Vector3(...sys.position);
+  flyTo = { target:p.clone(), camEnd:p.clone().add(new THREE.Vector3(180,140,260)), t:0 };
+  const nav = sys.regions.map(r =>
+    '  '+r.name+': '+r.navPoints.map(n=>n.name).join(', ')).join('\n');
+  document.getElementById('sel').innerHTML =
+    '▣ '+sys.name.toUpperCase()+'<div class="body">'+
+    sys.regions.length+' region(s)\n'+nav+'</div>';
+}
+
+// ---- loop ----------------------------------------------------------------
+addEventListener('resize', () => {
+  camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+function tick(){
+  requestAnimationFrame(tick);
+  if (flyTo){
+    flyTo.t = Math.min(1, flyTo.t + 0.04);
+    const e = 1-Math.pow(1-flyTo.t,3);
+    controls.target.lerp(flyTo.target, e);
+    camera.position.lerp(flyTo.camEnd, e*0.12);
+    if (flyTo.t>=1) flyTo=null;
+  }
+  controls.update();
+  updateBillboards();
+  renderer.render(scene, camera);
+}
+tick();
+</script>
+</body>
+</html>
