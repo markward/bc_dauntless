@@ -359,6 +359,8 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
                   hardpoint_weapon=torpedo)
 
     hit_vfx.update_ages(dt)
+    from engine.appc import shockwaves
+    shockwaves.advance(dt)
     particles.advance(dt)
     ship_death.advance(dt)
     from engine.appc import subsystem_cascade, warp_core_breach
@@ -454,6 +456,9 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
 
     if host is not None and hasattr(host, "set_torpedoes"):
         host.set_torpedoes(_build_torpedo_render_data())
+    from engine.appc import shockwaves as _shockwaves
+    if hasattr(host, "set_shockwaves"):
+        host.set_shockwaves(_shockwaves.render_data())
     if host is not None and hasattr(host, "set_hit_vfx"):
         host.set_hit_vfx(_build_hit_vfx_render_data())
     if host is not None and hasattr(host, "set_particle_emitters"):
@@ -2081,6 +2086,8 @@ class HostController:
         subsystem_cascade.reset()
         from engine.appc import warp_core_breach
         warp_core_breach.reset()
+        from engine.appc import shockwaves
+        shockwaves.reset()
         from engine.appc import subsystem_emitters
         subsystem_emitters.reset_manager()
         from engine.appc import particles
