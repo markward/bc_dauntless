@@ -164,6 +164,12 @@ def procedural_sky_enabled() -> bool:
     return _h.procedural_sky_enabled()
 
 
+def set_procedural_sky_enabled(enabled: bool) -> None:
+    """Toggle the map-driven procedural sky. On = the baked galaxy sky;
+    Off = the original STBC authored starbox (byte-identical stock BC)."""
+    _h.procedural_sky_set_enabled(enabled)
+
+
 def set_dust_enabled(enabled: bool) -> None:
     """Toggle the space-dust pass. Default: on after init()."""
     _h.dust_set_enabled(enabled)

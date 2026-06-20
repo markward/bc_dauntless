@@ -104,11 +104,17 @@ void BackdropPass::draw_backdrops(const std::vector<Backdrop>& backdrops,
 
         if (b.kind == BackdropKind::Backdrop) {
             glEnable(GL_BLEND);
-            // Additive: sky features (nebulae, galaxies) emit light over the
-            // starfield — they brighten, never darken. Alpha (ONE_MINUS_SRC_ALPHA)
-            // blended a distance-dimmed colour *over* the stars, subtracting
-            // brightness and painting hard dark wedges where patches overlapped.
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+            if (procedural) {
+                // Procedural sky features (nebulae, galaxies) emit light over the
+                // starfield — additive: they brighten, never darken. Alpha
+                // (ONE_MINUS_SRC_ALPHA) blended a distance-dimmed colour over the
+                // stars, painting hard dark wedges where patches overlapped.
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+            } else {
+                // Stock-BC authored backdrops keep the original alpha blend, so
+                // the toggle-off path is byte-identical to the original engine.
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            }
             shader.set_int("u_use_alpha", 1);
         } else {
             glDisable(GL_BLEND);

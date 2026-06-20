@@ -3213,6 +3213,7 @@ def run(mission_name: Optional[str] = None,
                 decals_on=True,
                 smaa_on=True,
                 shadows_on=True,
+                procedural_sky_on=r.procedural_sky_enabled(),
                 fov_deg=int(round(_math.degrees(
                     director.fov_y_rad
                 ))),
@@ -3227,6 +3228,7 @@ def run(mission_name: Optional[str] = None,
             set_subtitles=_crew_speech.set_subtitles_enabled,
             set_fov_rad=director.set_fov,
             set_shadows=r.set_shadows_enabled,
+            set_procedural_sky=r.set_procedural_sky_enabled,
         )
 
         from engine.ui.pause_menu import default_pause_menu

@@ -21,6 +21,7 @@ function _cpFocusableList(state) {
     if (state.selected_tab === 'graphics') {
         out.push({kind: 'ctrl', target: 'dust'});
         out.push({kind: 'ctrl', target: 'specular'});
+        out.push({kind: 'ctrl', target: 'procedural_sky'});
         out.push({kind: 'ctrl', target: 'fov'});
         out.push({kind: 'ctrl', target: 'hdr'});
         out.push({kind: 'ctrl', target: 'rim'});
@@ -76,6 +77,18 @@ function _cpRenderGraphicsBody(state, focusables) {
           +     '<button class="cp-toggle' + (s.specular_on ? ' cp-toggle--on' : '') + '"'
           +        ' onclick="dauntlessEvent(\'configuration/toggle:specular\')">'
           +       (s.specular_on ? 'On' : 'Off')
+          +     '</button>'
+          +   '</div>'
+          + '</div>';
+
+    // Procedural Sky toggle — On = map-driven galaxy sky; Off = original
+    // STBC authored starbox (stock BC).
+    html += '<div class="cp-row' + (isFoc('procedural_sky') ? ' cp-focused' : '') + '">'
+          +   '<div class="cp-row__label">Procedural Sky</div>'
+          +   '<div class="cp-row__control">'
+          +     '<button class="cp-toggle' + (s.procedural_sky_on ? ' cp-toggle--on' : '') + '"'
+          +        ' onclick="dauntlessEvent(\'configuration/toggle:procedural_sky\')">'
+          +       (s.procedural_sky_on ? 'On' : 'Off')
           +     '</button>'
           +   '</div>'
           + '</div>';
