@@ -40,6 +40,17 @@ TEST(DauntlessFilmicToggle, DefaultsOnAndRoundTrips) {
     EXPECT_TRUE(dauntless_filmic::enabled());
 }
 
+// dauntless_motion_blur toggle is declared in frame.cc; forward-declare it here.
+namespace dauntless_motion_blur { bool enabled(); void set_enabled(bool); }
+
+TEST(DauntlessMotionBlurToggle, DefaultsOnAndRoundTrips) {
+    EXPECT_TRUE(dauntless_motion_blur::enabled());      // default on
+    dauntless_motion_blur::set_enabled(false);
+    EXPECT_FALSE(dauntless_motion_blur::enabled());
+    dauntless_motion_blur::set_enabled(true);           // restore for other tests
+    EXPECT_TRUE(dauntless_motion_blur::enabled());
+}
+
 // Ambient is dimmed to 0.3 (−70%) on the exterior view when filmic is on, full
 // (×1.0) when off. The exterior-only scope is enforced at the host call site;
 // this just pins the scale the helper returns for each toggle state.

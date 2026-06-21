@@ -181,6 +181,16 @@ def set_filmic_enabled(enabled: bool) -> None:
     _h.filmic_set_enabled(enabled)
 
 
+def motion_blur_enabled() -> bool:
+    """Read the Motion Blur toggle (Modern VFX). Default: on."""
+    return _h.motion_blur_enabled()
+
+
+def set_motion_blur_enabled(enabled: bool) -> None:
+    """Toggle camera Motion Blur (Modern VFX) on the exterior view. Default: on."""
+    _h.motion_blur_set_enabled(enabled)
+
+
 def set_dust_enabled(enabled: bool) -> None:
     """Toggle the space-dust pass. Default: on after init()."""
     _h.dust_set_enabled(enabled)
