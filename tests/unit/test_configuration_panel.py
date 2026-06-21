@@ -34,6 +34,7 @@ def _make(**overrides):
         set_fov_rad=Mock(),
         set_shadows=Mock(),
         set_procedural_sky=Mock(),
+        set_filmic=Mock(),
     )
     kwargs.update(overrides)
     return ConfigurationPanel(**kwargs), kwargs
@@ -69,7 +70,7 @@ def test_initial_settings_round_trip_to_render_payload():
         "dust_on": False, "specular_on": True, "hdr_on": True, "rim_on": False,
         "decals_on": False, "smaa_on": True,
         "subtitles_on": True, "shadows_on": True, "procedural_sky_on": True,
-        "fov_deg": 62,
+        "filmic_on": True, "fov_deg": 62,
     }
 
 
@@ -305,7 +306,7 @@ def test_right_arrow_on_fov_row_increments():
     p, kw = _make()
     p.open()
     r = _FakeReader()
-    for _ in range(4):  # focus → fov (index 3: tab, dust, specular, fov)
+    for _ in range(5):  # focus → fov (index 4: tab, dust, specular, procedural_sky, fov)
         r.press(r.keys.KEY_DOWN); p.handle_input(r)
     r.press(r.keys.KEY_RIGHT); p.handle_input(r)
     (called_rad,), _ = kw["set_fov_rad"].call_args
@@ -319,7 +320,7 @@ def test_left_arrow_on_fov_row_decrements_and_clamps():
     ))
     p.open()
     r = _FakeReader()
-    for _ in range(4):  # focus → fov (index 3: tab, dust, specular, fov)
+    for _ in range(5):  # focus → fov (index 4: tab, dust, specular, procedural_sky, fov)
         r.press(r.keys.KEY_DOWN); p.handle_input(r)
     r.press(r.keys.KEY_LEFT); p.handle_input(r)
     # Still 40 (clamped), but applier still fires (consistency: every
@@ -554,3 +555,24 @@ def test_dispatch_toggle_shadows_flips_and_calls_applier():
     # Second toggle flips back.
     assert p.dispatch_event("toggle:shadows") is True
     kw["set_shadows"].assert_called_with(True)
+
+
+def test_dispatch_toggle_filmic_flips_and_calls_applier():
+    p, kw = _make()
+    p.open()
+    assert p.dispatch_event("toggle:filmic") is True
+    kw["set_filmic"].assert_called_once_with(False)
+    assert p.dispatch_event("toggle:filmic") is True
+    kw["set_filmic"].assert_called_with(True)
+
+
+def test_filmic_on_in_render_payload():
+    p, _ = _make(initial_settings=SettingsSnapshot(
+        dust_on=True, specular_on=True, hdr_on=True, rim_on=True,
+        decals_on=True, fov_deg=70, shadows_on=True,
+        procedural_sky_on=True, filmic_on=False,
+    ))
+    p.open()
+    payload = p.render_payload()
+    body = json.loads(payload[len("setConfigurationPanel("):-len(");")])
+    assert body["settings"]["filmic_on"] is False
