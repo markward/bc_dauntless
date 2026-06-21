@@ -130,10 +130,10 @@ class CrewMenuPanel(Panel):
             if not widget.IsEnabled():
                 return True
             if isinstance(widget, SortedRegionMenu):
-                # Replace inline expand with the modal: collapse any open
-                # crew menu, then open the Set Course popup. No SDK event.
-                self._open_menu_id = None
-                self._expanded_ids.clear()
+                # Replace inline expand with a modal. The helm menu stays
+                # open behind the centred popup (no _open_menu_id reset) so
+                # it shows in the background; just open the Set Course modal
+                # over it. No SDK event.
                 if self._on_set_course is not None:
                     self._on_set_course(widget)
                 return True
