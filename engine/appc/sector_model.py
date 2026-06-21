@@ -14,6 +14,20 @@ _MODEL_PATH = Path(__file__).with_name("sector_model.json")
 # Synthetic members folded under one star (mirrors the extractor).
 _MEMBER_TO_PARENT = {"drydock": "tauceti", "starbase12": "tauceti"}
 
+# SDK multiplayer menu labels "MRegion1"–"MRegion7" map to the model's
+# "multi1"–"multi7" ids (the display name is "MRegion" + digit; stripping the
+# digit would collapse them all to "mregion").
+_MEMBER_TO_PARENT.update({
+    "mregion1": "multi1", "mregion2": "multi2", "mregion3": "multi3",
+    "mregion4": "multi4", "mregion5": "multi5", "mregion6": "multi6",
+    "mregion7": "multi7",
+    # Display names with spaces that the TGL localizer returns for these ids.
+    "omega draconis": "omegadraconis",
+    "xi entrades": "xientrades",
+    "deep space": "deepspace",
+    "tau ceti": "tauceti",
+})
+
 # Display-name overrides where title-casing the id is wrong.
 _LABEL_OVERRIDES = {
     "xientrades": "Xi Entrades",

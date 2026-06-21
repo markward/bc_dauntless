@@ -19,8 +19,19 @@ def hex_to_rgb01(h):
 
 
 def build_sector_model(map_data):
-    systems = [{"id": s["id"], "position": s["position"]}
-               for s in map_data.get("systems", [])]
+    existing = {}
+    try:
+        for s in json.loads(DEFAULT_OUT.read_text()).get("systems", []):
+            if "warp_points" in s:
+                existing[s["id"]] = s["warp_points"]
+    except (OSError, ValueError):
+        pass
+    systems = []
+    for s in map_data.get("systems", []):
+        entry = {"id": s["id"], "position": s["position"]}
+        if s["id"] in existing:
+            entry["warp_points"] = existing[s["id"]]
+        systems.append(entry)
     nebulae = [{"position": n["position"], "radius": n["radius"],
                 "color": hex_to_rgb01(n["color"])}
                for n in map_data.get("nebulae", [])]

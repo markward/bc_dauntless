@@ -116,6 +116,9 @@ class TGString:
     def __bool__(self) -> bool:
         return True
 
+    def __str__(self) -> str:
+        return self._value
+
     def __repr__(self) -> str:
         return f"<TGString {self._value!r}>"
 

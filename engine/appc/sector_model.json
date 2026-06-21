@@ -6,6 +6,20 @@
         229.76,
         -166.91,
         147.91
+      ],
+      "warp_points": [
+        {
+          "id": "albirea-1",
+          "label": "Albirea 1"
+        },
+        {
+          "id": "albirea-2",
+          "label": "Albirea 2"
+        },
+        {
+          "id": "albirea-3",
+          "label": "Albirea 3"
+        }
       ]
     },
     {
@@ -14,6 +28,40 @@
         106.55,
         49.64,
         64.49
+      ],
+      "warp_points": [
+        {
+          "id": "alioth-1",
+          "label": "Alioth 1"
+        },
+        {
+          "id": "alioth-2",
+          "label": "Alioth 2"
+        },
+        {
+          "id": "alioth-3",
+          "label": "Alioth 3"
+        },
+        {
+          "id": "alioth-4",
+          "label": "Alioth 4"
+        },
+        {
+          "id": "alioth-5",
+          "label": "Alioth 5"
+        },
+        {
+          "id": "alioth-6",
+          "label": "Alioth 6"
+        },
+        {
+          "id": "alioth-7",
+          "label": "Alioth 7"
+        },
+        {
+          "id": "alioth-8",
+          "label": "Alioth 8"
+        }
       ]
     },
     {
@@ -22,6 +70,20 @@
         117.26,
         43.99,
         27.19
+      ],
+      "warp_points": [
+        {
+          "id": "artrus-1",
+          "label": "Artrus 1"
+        },
+        {
+          "id": "artrus-2",
+          "label": "Artrus 2"
+        },
+        {
+          "id": "artrus-3",
+          "label": "Artrus 3"
+        }
       ]
     },
     {
@@ -30,6 +92,28 @@
         149.9,
         8.19,
         -9.78
+      ],
+      "warp_points": [
+        {
+          "id": "ascella-1",
+          "label": "Ascella 1"
+        },
+        {
+          "id": "ascella-2",
+          "label": "Ascella 2"
+        },
+        {
+          "id": "ascella-3",
+          "label": "Ascella 3"
+        },
+        {
+          "id": "ascella-4",
+          "label": "Ascella 4"
+        },
+        {
+          "id": "ascella-5",
+          "label": "Ascella 5"
+        }
       ]
     },
     {
@@ -38,6 +122,24 @@
         123.49,
         50.83,
         -10.23
+      ],
+      "warp_points": [
+        {
+          "id": "belaruz-1",
+          "label": "Belaruz 1"
+        },
+        {
+          "id": "belaruz-2",
+          "label": "Belaruz 2"
+        },
+        {
+          "id": "belaruz-3",
+          "label": "Belaruz 3"
+        },
+        {
+          "id": "belaruz-4",
+          "label": "Belaruz 4"
+        }
       ]
     },
     {
@@ -46,6 +148,24 @@
         152.94,
         -13.44,
         60.06
+      ],
+      "warp_points": [
+        {
+          "id": "beol-1",
+          "label": "Beol 1"
+        },
+        {
+          "id": "beol-2",
+          "label": "Beol 2"
+        },
+        {
+          "id": "beol-3",
+          "label": "Beol 3"
+        },
+        {
+          "id": "beol-4",
+          "label": "Beol 4"
+        }
       ]
     },
     {
@@ -54,6 +174,16 @@
         101.41,
         8.84,
         -49.85
+      ],
+      "warp_points": [
+        {
+          "id": "biranu-1",
+          "label": "Biranu 1"
+        },
+        {
+          "id": "biranu-2",
+          "label": "Biranu 2"
+        }
       ]
     },
     {
@@ -62,6 +192,20 @@
         132.39,
         2.92,
         23.53
+      ],
+      "warp_points": [
+        {
+          "id": "cebalrai-1",
+          "label": "Cebalrai 1"
+        },
+        {
+          "id": "cebalrai-2",
+          "label": "Cebalrai 2"
+        },
+        {
+          "id": "cebalrai-3",
+          "label": "Cebalrai 3"
+        }
       ]
     },
     {
@@ -70,6 +214,16 @@
         171.75,
         98.42,
         60.1
+      ],
+      "warp_points": [
+        {
+          "id": "chambana-1",
+          "label": "Chambana 1"
+        },
+        {
+          "id": "chambana-2",
+          "label": "Chambana 2"
+        }
       ]
     },
     {
@@ -86,6 +240,24 @@
         158.97,
         -5.14,
         14.27
+      ],
+      "warp_points": [
+        {
+          "id": "geble-1",
+          "label": "Geble 1"
+        },
+        {
+          "id": "geble-2",
+          "label": "Geble 2"
+        },
+        {
+          "id": "geble-3",
+          "label": "Geble 3"
+        },
+        {
+          "id": "geble-4",
+          "label": "Geble 4"
+        }
       ]
     },
     {
@@ -94,6 +266,40 @@
         143.07,
         70.44,
         -61.02
+      ],
+      "warp_points": [
+        {
+          "id": "itari-1",
+          "label": "Itari 1"
+        },
+        {
+          "id": "itari-2",
+          "label": "Itari 2"
+        },
+        {
+          "id": "itari-3",
+          "label": "Itari 3"
+        },
+        {
+          "id": "itari-4",
+          "label": "Itari 4"
+        },
+        {
+          "id": "itari-5",
+          "label": "Itari 5"
+        },
+        {
+          "id": "itari-6",
+          "label": "Itari 6"
+        },
+        {
+          "id": "itari-7",
+          "label": "Itari 7"
+        },
+        {
+          "id": "itari-8",
+          "label": "Itari 8"
+        }
       ]
     },
     {
@@ -102,6 +308,12 @@
         252.49,
         15.28,
         52.44
+      ],
+      "warp_points": [
+        {
+          "id": "multi-1",
+          "label": "Multi 1"
+        }
       ]
     },
     {
@@ -110,6 +322,12 @@
         198.19,
         291.4,
         -500.0
+      ],
+      "warp_points": [
+        {
+          "id": "multi-2",
+          "label": "Multi 2"
+        }
       ]
     },
     {
@@ -118,6 +336,12 @@
         -209.37,
         -299.43,
         -319.05
+      ],
+      "warp_points": [
+        {
+          "id": "multi-3",
+          "label": "Multi 3"
+        }
       ]
     },
     {
@@ -126,6 +350,12 @@
         -348.49,
         158.91,
         -281.64
+      ],
+      "warp_points": [
+        {
+          "id": "multi-4",
+          "label": "Multi 4"
+        }
       ]
     },
     {
@@ -134,6 +364,12 @@
         176.25,
         97.07,
         14.99
+      ],
+      "warp_points": [
+        {
+          "id": "multi-5",
+          "label": "Multi 5"
+        }
       ]
     },
     {
@@ -142,6 +378,12 @@
         156.89,
         107.91,
         14.67
+      ],
+      "warp_points": [
+        {
+          "id": "multi-6",
+          "label": "Multi 6"
+        }
       ]
     },
     {
@@ -150,6 +392,12 @@
         348.49,
         299.43,
         500.0
+      ],
+      "warp_points": [
+        {
+          "id": "multi-7",
+          "label": "Multi 7"
+        }
       ]
     },
     {
@@ -158,6 +406,20 @@
         152.37,
         57.06,
         -11.15
+      ],
+      "warp_points": [
+        {
+          "id": "nepenthe-1",
+          "label": "Nepenthe 1"
+        },
+        {
+          "id": "nepenthe-2",
+          "label": "Nepenthe 2"
+        },
+        {
+          "id": "nepenthe-3",
+          "label": "Nepenthe 3"
+        }
       ]
     },
     {
@@ -166,6 +428,28 @@
         134.44,
         38.56,
         66.31
+      ],
+      "warp_points": [
+        {
+          "id": "omegadraconis-1",
+          "label": "OmegaDraconis 1"
+        },
+        {
+          "id": "omegadraconis-2",
+          "label": "OmegaDraconis 2"
+        },
+        {
+          "id": "omegadraconis-3",
+          "label": "OmegaDraconis 3"
+        },
+        {
+          "id": "omegadraconis-4",
+          "label": "OmegaDraconis 4"
+        },
+        {
+          "id": "omegadraconis-5",
+          "label": "OmegaDraconis 5"
+        }
       ]
     },
     {
@@ -174,6 +458,20 @@
         93.37,
         84.02,
         63.88
+      ],
+      "warp_points": [
+        {
+          "id": "ona-1",
+          "label": "Ona 1"
+        },
+        {
+          "id": "ona-2",
+          "label": "Ona 2"
+        },
+        {
+          "id": "ona-3",
+          "label": "Ona 3"
+        }
       ]
     },
     {
@@ -182,6 +480,16 @@
         115.44,
         9.45,
         19.83
+      ],
+      "warp_points": [
+        {
+          "id": "poseidon-1",
+          "label": "Poseidon 1"
+        },
+        {
+          "id": "poseidon-2",
+          "label": "Poseidon 2"
+        }
       ]
     },
     {
@@ -190,6 +498,28 @@
         209.87,
         19.38,
         39.67
+      ],
+      "warp_points": [
+        {
+          "id": "prendel-1",
+          "label": "Prendel 1"
+        },
+        {
+          "id": "prendel-2",
+          "label": "Prendel 2"
+        },
+        {
+          "id": "prendel-3",
+          "label": "Prendel 3"
+        },
+        {
+          "id": "prendel-4",
+          "label": "Prendel 4"
+        },
+        {
+          "id": "prendel-5",
+          "label": "Prendel 5"
+        }
       ]
     },
     {
@@ -198,7 +528,8 @@
         181.51,
         32.95,
         9.67
-      ]
+      ],
+      "warp_points": []
     },
     {
       "id": "savoy",
@@ -206,6 +537,20 @@
         113.1,
         98.02,
         40.57
+      ],
+      "warp_points": [
+        {
+          "id": "savoy-1",
+          "label": "Savoy 1"
+        },
+        {
+          "id": "savoy-2",
+          "label": "Savoy 2"
+        },
+        {
+          "id": "savoy-3",
+          "label": "Savoy 3"
+        }
       ]
     },
     {
@@ -214,6 +559,20 @@
         149.03,
         -21.21,
         -2.17
+      ],
+      "warp_points": [
+        {
+          "id": "serris-1",
+          "label": "Serris 1"
+        },
+        {
+          "id": "serris-2",
+          "label": "Serris 2"
+        },
+        {
+          "id": "serris-3",
+          "label": "Serris 3"
+        }
       ]
     },
     {
@@ -222,6 +581,16 @@
         57.55,
         24.04,
         31.85
+      ],
+      "warp_points": [
+        {
+          "id": "tevron-1",
+          "label": "Tevron 1"
+        },
+        {
+          "id": "tevron-2",
+          "label": "Tevron 2"
+        }
       ]
     },
     {
@@ -230,6 +599,16 @@
         183.86,
         -13.62,
         14.82
+      ],
+      "warp_points": [
+        {
+          "id": "tezle-1",
+          "label": "Tezle 1"
+        },
+        {
+          "id": "tezle-2",
+          "label": "Tezle 2"
+        }
       ]
     },
     {
@@ -238,6 +617,20 @@
         200.75,
         91.62,
         -10.89
+      ],
+      "warp_points": [
+        {
+          "id": "vesuvi-4",
+          "label": "Vesuvi 4"
+        },
+        {
+          "id": "vesuvi-5",
+          "label": "Vesuvi 5"
+        },
+        {
+          "id": "vesuvi-6",
+          "label": "Vesuvi 6"
+        }
       ]
     },
     {
@@ -246,6 +639,16 @@
         122.57,
         65.84,
         -20.42
+      ],
+      "warp_points": [
+        {
+          "id": "voltair-1",
+          "label": "Voltair 1"
+        },
+        {
+          "id": "voltair-2",
+          "label": "Voltair 2"
+        }
       ]
     },
     {
@@ -254,6 +657,28 @@
         143.01,
         29.46,
         -39.09
+      ],
+      "warp_points": [
+        {
+          "id": "xientrades-1",
+          "label": "XiEntrades 1"
+        },
+        {
+          "id": "xientrades-2",
+          "label": "XiEntrades 2"
+        },
+        {
+          "id": "xientrades-3",
+          "label": "XiEntrades 3"
+        },
+        {
+          "id": "xientrades-4",
+          "label": "XiEntrades 4"
+        },
+        {
+          "id": "xientrades-5",
+          "label": "XiEntrades 5"
+        }
       ]
     },
     {
@@ -262,6 +687,24 @@
         236.55,
         13.11,
         18.0
+      ],
+      "warp_points": [
+        {
+          "id": "yiles-1",
+          "label": "Yiles 1"
+        },
+        {
+          "id": "yiles-2",
+          "label": "Yiles 2"
+        },
+        {
+          "id": "yiles-3",
+          "label": "Yiles 3"
+        },
+        {
+          "id": "yiles-4",
+          "label": "Yiles 4"
+        }
       ]
     },
     {
