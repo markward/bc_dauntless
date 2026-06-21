@@ -35,7 +35,7 @@ TEST_F(FilmicPassTest, MidGreyCenterSurvivesWithinGrainTolerance) {
 
     unsigned char px[4] = {0,0,0,0};
     glReadPixels(32, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
-    EXPECT_NEAR(px[0], 128, 20);   // ~grey, within grain jitter
+    EXPECT_NEAR(px[0], 128, 24);   // ~grey, within grain jitter (GRAIN_STRENGTH 0.15 → ±~19 8-bit)
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 

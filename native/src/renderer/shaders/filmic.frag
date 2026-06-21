@@ -6,8 +6,8 @@ uniform float u_time;
 
 // Filmic grade strengths — eye-tunable by rebuilding (like the resolve-grade
 // consts). Applied in final display space, after tonemap + AA.
-const float GRAIN_STRENGTH    = 0.05;   // peak +/- luma jitter at midtones
-const float VIGNETTE_STRENGTH = 0.28;   // corner darkening fraction
+const float GRAIN_STRENGTH    = 0.15;   // peak +/- luma jitter at midtones
+const float VIGNETTE_STRENGTH = 0.7;    // corner darkening fraction
 const float CA_STRENGTH       = 0.005;  // chromatic split, UV units at the corner
 
 // Cheap hash noise in [0,1).
