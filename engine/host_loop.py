@@ -1286,6 +1286,39 @@ def _apply_pause_menu_side_effects(pause: "_PauseMenuController",
     pause._last_synced_is_open = target
 
 
+def _apply_crew_menu_side_effects(crew_menu_panel, view_mode, pause, h) -> None:
+    """Free the mouse cursor while a crew menu (F1-F5) is open on the
+    bridge, then re-lock on close.
+
+    On the bridge the cursor is held in mouse-look mode
+    (set_cursor_locked(True)); a crew menu is a CEF overlay the player must
+    click, so it needs a real cursor. Unlike the pause menu this does NOT
+    freeze the simulation — stock BC keeps the world running under a crew
+    menu — only the cursor lock (here) and the camera mouse-look (in the
+    bridge render block) change.
+
+    Idempotent and latched on crew_menu_panel._last_synced_cursor_free.
+    Mirrors _apply_pause_menu_side_effects: on close it invalidates the
+    view-mode latch so the next _apply_view_mode_side_effects call re-locks
+    the cursor from the current view mode. Gated on `not pause.is_open` so
+    the pause applier remains the sole cursor writer while paused (ESC
+    closes an open crew menu before the pause menu can open, so the two
+    don't normally coincide).
+    """
+    target = (view_mode.is_bridge
+              and crew_menu_panel.has_open_menu()
+              and not pause.is_open)
+    last = getattr(crew_menu_panel, "_last_synced_cursor_free", None)
+    if last == target:
+        return
+    if target:
+        h.set_cursor_locked(False)
+    else:
+        # Re-lock on close by letting the view-mode applier re-sync.
+        view_mode._last_synced_is_bridge = None
+    crew_menu_panel._last_synced_cursor_free = target
+
+
 def _dispatch_modal_esc(blockers, crew_menu_panel, pause, h) -> None:
     """ESC routing across the modal stack, in priority order.
 
@@ -3400,6 +3433,11 @@ def run(mission_name: Optional[str] = None,
                 _apply_pause_menu_side_effects(
                     pause, view_mode, _h, _modal_blockers,
                 )
+                # Crew menus (F1-F5) are unpaused CEF overlays — free the
+                # cursor while one is open so it can be clicked, then re-lock
+                # on close. Runs every frame; idempotent + latched.
+                _apply_crew_menu_side_effects(
+                    crew_menu_panel, view_mode, pause, _h)
                 if pause.is_open:
                     # When a settings modal is open it consumes keyboard
                     # input — pause-menu navigation would otherwise activate
@@ -3519,7 +3557,8 @@ def run(mission_name: Optional[str] = None,
                     _LC_H = _CEF_VIEW_H - 24 - _LC_Y  # to bottom:24
                     _cursor_in_left_column = (
                         (target_list_view.visible or sensors_panel.visible
-                         or ship_display_target.visible)
+                         or ship_display_target.visible
+                         or crew_menu_panel.has_open_menu())
                         and _LC_X <= _mx < _LC_X + _LC_W
                         and _LC_Y <= _my < _LC_Y + _LC_H
                     )
@@ -3817,6 +3856,15 @@ def run(mission_name: Optional[str] = None,
                     # skip the yaw/pitch advance so the bridge camera
                     # stays frozen alongside the rest of the world.
                     if not pause.is_open:
+                        # Zoom-to-officer still runs while a crew menu is open
+                        # (that's what frames the station). But the cursor is
+                        # freed to click the menu, so zero the mouse-look delta
+                        # — otherwise moving toward a menu row swings the view.
+                        # (set_zoom_target's zoom already suspends mouse-look
+                        # once an officer resolves; this also covers the case
+                        # where no officer resolves and the zoom stays at 0.)
+                        if crew_menu_panel.has_open_menu():
+                            mouse_dx, mouse_dy = 0.0, 0.0
                         bridge_camera.set_zoom_target(
                             _active_zoom_officer_world(crew_menu_panel, r),
                             _player_dt)
