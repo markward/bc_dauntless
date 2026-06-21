@@ -32,13 +32,16 @@ function setSettingCoursePanel(state) {
                 + escapeHtmlSC(state.message || '') + '</div>';
         } else {
             // Future: render a clickable destination list. Each row fires
-            // dauntlessEvent('setting-course/select:<id>').
+            // dauntlessEvent('setting-course/select:<id>'). The id is carried
+            // in a data attribute and read back (decoded) at click time, so a
+            // quote in the id can never break the onclick string.
             let html = '';
             for (let i = 0; i < dests.length; ++i) {
                 const d = dests[i];
-                html += '<div class="cp-row"'
-                      + ' onclick="dauntlessEvent(\'setting-course/select:'
-                      + escapeHtmlSC(d.id) + '\')">'
+                html += '<div class="cp-row" data-dest-id="'
+                      + escapeHtmlSC(d.id) + '"'
+                      + ' onclick="dauntlessEvent(\'setting-course/select:\''
+                      + ' + this.getAttribute(\'data-dest-id\'))">'
                       + '<div class="cp-row__label">'
                       + escapeHtmlSC(d.label) + '</div></div>';
             }
