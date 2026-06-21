@@ -23,13 +23,13 @@ core scene FBO). Instead, per pixel:
 1. Reconstruct a view-space ray from the inverse projection at the pixel's NDC:
    `ray_view = normalize((inverse(proj) * vec4(ndc.xy, -1, 1)).xyz)`.
 2. Place a pseudo–world point at a fixed distance **D** along it:
-   `p_world = u_cam_pos + u_distance_gu * (u_cam_rot * ray_view)`
+   `p_world = u_cam_pos + DISTANCE_GU * (u_cam_rot * ray_view)`
    (`u_cam_rot` is the current camera view→world rotation, mat3).
 3. Reproject through the **previous frame's** view-projection:
    `clip_prev = u_prev_viewproj * vec4(p_world, 1)`,
    `uv_prev = (clip_prev.xy / clip_prev.w) * 0.5 + 0.5`.
-4. Motion vector `mv = (uv - uv_prev) * u_strength`, with its length clamped to
-   `u_max_uv`.
+4. Motion vector `mv = (uv - uv_prev) * STRENGTH`, with its length clamped to
+   `MAX_UV`.
 5. Sample N taps of the scene color along `[uv - mv … uv]` and average.
 
 Properties:
@@ -39,7 +39,7 @@ Properties:
   producing the radial speed-streak. D is a live-tunable constant in **game
   units (GU)**; very-near-object parallax is the accepted approximation.
 - Reprojecting against *last frame's* matrix makes `mv` inherently per-frame, so
-  blur scales with how fast the view actually moved; `u_max_uv` caps a hard
+  blur scales with how fast the view actually moved; `MAX_UV` caps a hard
   view-snap from smearing the whole screen.
 
 ### Uniforms
@@ -51,10 +51,10 @@ Properties:
 | `u_cam_rot` (mat3) | camera view→world rotation (from `inverse(view)`) |
 | `u_cam_pos` (vec3) | camera world position |
 | `u_prev_viewproj` (mat4) | cached previous-frame `proj · view` |
-| `u_distance_gu` (float) | `kMotionBlurDistanceGU` |
-| `u_strength` (float) | `kMotionBlurStrength` |
-| `u_samples` (int) | `kMotionBlurSamples` |
-| `u_max_uv` (float) | `kMotionBlurMaxUV` |
+
+The four tuning values (`STRENGTH`, `SAMPLES`, `MAX_UV`, `DISTANCE_GU`) ship as
+named GLSL `const` at the top of `motion_blur.frag` (NOT host uniforms) — see
+Tunable constants below.
 
 ### Host-side state
 
@@ -65,13 +65,13 @@ Properties:
   has no valid previous matrix → the pass is skipped (passthrough), avoiding a
   one-frame garbage smear.
 
-### Tunable constants (named, live-tunable like the filmic grade)
+### Tunable constants (named GLSL `const` in `motion_blur.frag`, tuned by rebuilding — same as the filmic grade)
 
-- `kMotionBlurStrength` — motion-vector multiplier. Start ~`1.0`.
-- `kMotionBlurSamples` — taps along the vector. Start `8`.
-- `kMotionBlurMaxUV` — max motion-vector length in UV (fraction of screen).
+- `STRENGTH` — motion-vector multiplier. Start ~`1.0`.
+- `SAMPLES` — taps along the vector. Start `8` (keep ≥ 2).
+- `MAX_UV` — max motion-vector length in UV (fraction of screen).
   Start ~`0.05` (caps view-snap smear).
-- `kMotionBlurDistanceGU` — assumed scene distance for translation parallax.
+- `DISTANCE_GU` — assumed scene distance for translation parallax.
   Start ~`100.0` GU (tune by feel; BC ships sit tens–hundreds of GU out).
 
 ## Pipeline placement + routing refactor
