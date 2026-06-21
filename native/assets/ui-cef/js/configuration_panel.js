@@ -28,6 +28,7 @@ function _cpFocusableList(state) {
         out.push({kind: 'ctrl', target: 'shadows'});
         out.push({kind: 'ctrl', target: 'decals'});
         out.push({kind: 'ctrl', target: 'smaa'});
+        out.push({kind: 'ctrl', target: 'filmic'});
     } else if (state.selected_tab === 'gameplay') {
         out.push({kind: 'ctrl', target: 'subtitles'});
     }
@@ -160,6 +161,18 @@ function _cpRenderGraphicsBody(state, focusables) {
           +     '<button class="cp-toggle' + (s.smaa_on ? ' cp-toggle--on' : '') + '"'
           +        ' onclick="dauntlessEvent(\'configuration/toggle:smaa\')">'
           +       (s.smaa_on ? 'On' : 'Off')
+          +     '</button>'
+          +   '</div>'
+          + '</div>';
+
+    // Filmic Filter toggle — grain + vignette + chromatic aberration on the
+    // exterior view (Modern VFX).
+    html += '<div class="cp-row' + (isFoc('filmic') ? ' cp-focused' : '') + '">'
+          +   '<div class="cp-row__label">Filmic Filter</div>'
+          +   '<div class="cp-row__control">'
+          +     '<button class="cp-toggle' + (s.filmic_on ? ' cp-toggle--on' : '') + '"'
+          +        ' onclick="dauntlessEvent(\'configuration/toggle:filmic\')">'
+          +       (s.filmic_on ? 'On' : 'Off')
           +     '</button>'
           +   '</div>'
           + '</div>';

@@ -170,6 +170,17 @@ def set_procedural_sky_enabled(enabled: bool) -> None:
     _h.procedural_sky_set_enabled(enabled)
 
 
+def filmic_enabled() -> bool:
+    """Read the Filmic Filter toggle (Modern VFX). Default: on."""
+    return _h.filmic_enabled()
+
+
+def set_filmic_enabled(enabled: bool) -> None:
+    """Toggle the Filmic Filter (Modern VFX): film grain + vignette +
+    chromatic aberration on the exterior view. Default: on."""
+    _h.filmic_set_enabled(enabled)
+
+
 def set_dust_enabled(enabled: bool) -> None:
     """Toggle the space-dust pass. Default: on after init()."""
     _h.dust_set_enabled(enabled)

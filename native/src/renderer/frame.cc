@@ -102,6 +102,16 @@ namespace dauntless_procedural_sky {
     void set_enabled(bool v) { g_procedural_sky_enabled = v; }
 }
 
+namespace dauntless_filmic {
+    bool g_filmic_enabled = true;
+    bool enabled() { return g_filmic_enabled; }
+    void set_enabled(bool v) { g_filmic_enabled = v; }
+    // Ambient light is dimmed to this fraction on the exterior view when filmic
+    // is on (the exterior-only scope is enforced at the host call site).
+    constexpr float kFilmicAmbientScale = 0.3f;   // -70% ambient on exterior when filmic on
+    float ambient_scale() { return g_filmic_enabled ? kFilmicAmbientScale : 1.0f; }
+}
+
 namespace renderer {
 
 namespace {
@@ -500,7 +510,8 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
                                            const Lighting& lighting,
                                            scenegraph::Pass pass,
                                            float decal_time,
-                                           CarveFieldCache* carve_cache) {
+                                           CarveFieldCache* carve_cache,
+                                           float ambient_scale) {
     // See submit_opaque: configure the common per-frame uniforms on BOTH the
     // static and skinned programs. The static-program set is unchanged.
     auto configure_common = [&](Shader& s) {
@@ -512,7 +523,10 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
             glm::vec3(glm::inverse(camera.view_matrix())[3]);
         s.set_vec3("u_camera_pos_ws", cam_pos_ws);
 
-        s.set_vec3("u_ambient_light", lighting.ambient);
+        // ambient_scale (default 1.0) dims ambient on the exterior view when the
+        // Filmic Filter is on; the host passes the filmic scale only for the
+        // main exterior pass (1.0 for the viewscreen inset / all other callers).
+        s.set_vec3("u_ambient_light", lighting.ambient * ambient_scale);
         s.set_int("u_dir_light_count", lighting.directional_count);
         if (lighting.directional_count > 0) {
             s.set_vec3_array("u_dir_light_dir_ws",

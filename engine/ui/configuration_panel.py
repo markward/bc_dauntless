@@ -35,6 +35,7 @@ class SettingsSnapshot:
     subtitles_on: bool = True
     shadows_on: bool = True
     procedural_sky_on: bool = True
+    filmic_on: bool = True
 
 
 class ConfigurationPanel(Panel):
@@ -50,7 +51,8 @@ class ConfigurationPanel(Panel):
                  set_subtitles: Callable[[bool], None],
                  set_fov_rad: Callable[[float], None],
                  set_shadows: Callable[[bool], None],
-                 set_procedural_sky: Callable[[bool], None]):
+                 set_procedural_sky: Callable[[bool], None],
+                 set_filmic: Callable[[bool], None]):
         super().__init__()
         self._tabs = list(tabs)
         self._selected_tab = tabs[0][0]
@@ -65,6 +67,7 @@ class ConfigurationPanel(Panel):
             subtitles_on=initial_settings.subtitles_on,
             shadows_on=initial_settings.shadows_on,
             procedural_sky_on=initial_settings.procedural_sky_on,
+            filmic_on=initial_settings.filmic_on,
         )
         self._set_dust = set_dust
         self._set_specular = set_specular
@@ -76,6 +79,7 @@ class ConfigurationPanel(Panel):
         self._set_fov_rad = set_fov_rad
         self._set_shadows = set_shadows
         self._set_procedural_sky = set_procedural_sky
+        self._set_filmic = set_filmic
         self._visible: bool = False
         self._focused: int = -1
         self._last_pushed: Optional[tuple] = None
@@ -109,6 +113,7 @@ class ConfigurationPanel(Panel):
             self._settings.subtitles_on,
             self._settings.shadows_on,
             self._settings.procedural_sky_on,
+            self._settings.filmic_on,
             self._settings.fov_deg,
         )
         if snapshot == self._last_pushed:
@@ -131,6 +136,7 @@ class ConfigurationPanel(Panel):
                 "subtitles_on": self._settings.subtitles_on,
                 "shadows_on": self._settings.shadows_on,
                 "procedural_sky_on": self._settings.procedural_sky_on,
+                "filmic_on": self._settings.filmic_on,
                 "fov_deg": self._settings.fov_deg,
             },
         }
@@ -159,6 +165,11 @@ class ConfigurationPanel(Panel):
             new_val = not self._settings.procedural_sky_on
             self._set_procedural_sky(new_val)
             self._settings.procedural_sky_on = new_val
+            return True
+        if action == "toggle:filmic":
+            new_val = not self._settings.filmic_on
+            self._set_filmic(new_val)
+            self._settings.filmic_on = new_val
             return True
         if action == "toggle:hdr":
             new_val = not self._settings.hdr_on
@@ -255,6 +266,8 @@ class ConfigurationPanel(Panel):
             self.dispatch_event("toggle:specular")
         elif activate and kind == "ctrl" and target == "procedural_sky":
             self.dispatch_event("toggle:procedural_sky")
+        elif activate and kind == "ctrl" and target == "filmic":
+            self.dispatch_event("toggle:filmic")
         elif activate and kind == "ctrl" and target == "hdr":
             self.dispatch_event("toggle:hdr")
         elif activate and kind == "ctrl" and target == "rim":
@@ -283,13 +296,13 @@ class ConfigurationPanel(Panel):
         it): [('tab','graphics'), ('ctrl','dust'), ('ctrl','specular'),
          ('ctrl','fov'), ('ctrl','procedural_sky'), ('ctrl','hdr'),
          ('ctrl','rim'), ('ctrl','shadows'), ('ctrl','decals'),
-         ('ctrl','smaa')]."""
+         ('ctrl','smaa'), ('ctrl','filmic')]."""
         out: list = [("tab", tid) for tid, _ in self._tabs]
         if self._selected_tab == "graphics":
-            out += [("ctrl", "dust"), ("ctrl", "specular"), ("ctrl", "fov"),
-                    ("ctrl", "procedural_sky"),
+            out += [("ctrl", "dust"), ("ctrl", "specular"),
+                    ("ctrl", "fov"), ("ctrl", "procedural_sky"),
                     ("ctrl", "hdr"), ("ctrl", "rim"), ("ctrl", "shadows"),
-                    ("ctrl", "decals"), ("ctrl", "smaa")]
+                    ("ctrl", "decals"), ("ctrl", "smaa"), ("ctrl", "filmic")]
         elif self._selected_tab == "gameplay":
             out += [("ctrl", "subtitles")]
         return out
