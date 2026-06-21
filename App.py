@@ -70,7 +70,10 @@ from engine.appc.objects import (
     ObjectClass_GetObject, ObjectClass_GetObjectByID,
     IsNull,
 )
-from engine.appc.sets import SetClass, SetManager, SetClass_Create, SetClass_GetNull
+from engine.appc.sets import (
+    SetClass, SetManager, SetClass_Create, SetClass_GetNull,
+    SetClass_MakeDisplayName,
+)
 from engine.appc.bridge_set import (
     BridgeSet,
     BridgeSet_Create,

@@ -1,4 +1,14 @@
+import re
+
 from engine.appc.events import TGEventHandlerObject
+
+
+def SetClass_MakeDisplayName(set_name):
+    """App.SetClass_MakeDisplayName — human-readable label for a set/region
+    name. Insert a space before a trailing digit run: 'Vesuvi4' -> 'Vesuvi 4'.
+    Always a real str (never a _NamedStub), so the baked catalog and the live
+    SDK menu produce identical labels for the same set."""
+    return re.sub(r"(?<=\D)(\d+)$", r" \1", str(set_name))
 
 
 class _RendererStub:
