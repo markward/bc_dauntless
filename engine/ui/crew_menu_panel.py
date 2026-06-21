@@ -14,6 +14,7 @@ import logging
 from typing import Optional
 
 from engine.appc.characters import STButton, STMenu
+from engine.appc.tg_ui.st_widgets import SortedRegionMenu
 from engine.appc.tg_ui.widgets import ensure_widget_id
 from engine.appc.windows import TacticalControlWindow
 from engine.ui.panel import Panel
@@ -22,7 +23,7 @@ _logger = logging.getLogger(__name__)
 
 
 class CrewMenuPanel(Panel):
-    def __init__(self):
+    def __init__(self, on_set_course=None):
         super().__init__()
         # Empty-state sentinel (matches SDKMirrorPanel): a quiescent panel
         # emits nothing on the first tick; invalidate() resets to None so
@@ -36,6 +37,10 @@ class CrewMenuPanel(Panel):
         # whenever the open menu changes (a reopened menu starts collapsed,
         # matching BC).
         self._expanded_ids: set[int] = set()
+        # Injected by host_loop: opens the SettingCoursePanel when the Helm
+        # Set Course button is clicked. None -> click is a silent no-op
+        # (keeps headless construction and existing tests working).
+        self._on_set_course = on_set_course
 
     @property
     def name(self) -> str:
@@ -56,7 +61,11 @@ class CrewMenuPanel(Panel):
         return "setCrewMenus(" + payload + ");"
 
     def _snapshot_node(self, widget) -> Optional[dict]:
-        if isinstance(widget, STMenu):
+        # Set Course (the one SortedRegionMenu) is projected as a leaf
+        # button, not an expandable parent — its click opens a modal.
+        if isinstance(widget, SortedRegionMenu):
+            node_type = "button"
+        elif isinstance(widget, STMenu):
             node_type = "menu"
         elif isinstance(widget, STButton):
             node_type = "button"
@@ -72,7 +81,7 @@ class CrewMenuPanel(Panel):
             "enabled": bool(widget.IsEnabled()),
             "visible": bool(widget.IsVisible()),
         }
-        if isinstance(widget, STMenu):
+        if isinstance(widget, STMenu) and not isinstance(widget, SortedRegionMenu):
             node["expanded"] = wid in self._expanded_ids
             children = [self._snapshot_node(c) for c in widget._children]
             node["children"] = [c for c in children if c is not None]
@@ -119,6 +128,14 @@ class CrewMenuPanel(Panel):
                 _logger.info("crew-menu: stale click id %d dropped", wid)
                 return True
             if not widget.IsEnabled():
+                return True
+            if isinstance(widget, SortedRegionMenu):
+                # Replace inline expand with the modal: collapse any open
+                # crew menu, then open the Set Course popup. No SDK event.
+                self._open_menu_id = None
+                self._expanded_ids.clear()
+                if self._on_set_course is not None:
+                    self._on_set_course(widget)
                 return True
             root = self._root_of(wid)
             if isinstance(widget, STButton):
