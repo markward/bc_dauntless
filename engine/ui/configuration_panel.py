@@ -300,7 +300,7 @@ class ConfigurationPanel(Panel):
         out: list = [("tab", tid) for tid, _ in self._tabs]
         if self._selected_tab == "graphics":
             out += [("ctrl", "dust"), ("ctrl", "specular"),
-                    ("ctrl", "procedural_sky"), ("ctrl", "fov"),
+                    ("ctrl", "fov"), ("ctrl", "procedural_sky"),
                     ("ctrl", "hdr"), ("ctrl", "rim"), ("ctrl", "shadows"),
                     ("ctrl", "decals"), ("ctrl", "smaa"), ("ctrl", "filmic")]
         elif self._selected_tab == "gameplay":
