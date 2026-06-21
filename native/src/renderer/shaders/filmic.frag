@@ -30,9 +30,9 @@ void main() {
         texture(u_src, uv).g,
         texture(u_src, uv - ca).b);
 
-    // Vignette: smooth radial darkening. smoothstep(0.8,0.45,r) is 1 at center,
+    // Vignette: smooth radial darkening. 1 at center,
     // falling toward the corners (r ~= 0.707).
-    float vig = smoothstep(0.8, 0.45, r);
+    float vig = 1.0 - smoothstep(0.45, 0.8, r);
     col *= mix(1.0 - VIGNETTE_STRENGTH, 1.0, vig);
 
     // Film grain: animated hash noise, weighted toward midtones (less in deep

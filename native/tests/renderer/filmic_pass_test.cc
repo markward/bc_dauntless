@@ -87,6 +87,8 @@ TEST_F(FilmicPassTest, DrawsWhenBackfaceCullingEnabled) {
     glReadPixels(32, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
     EXPECT_GT(px[0], 80);   // would be 0 if culled
 
+    EXPECT_TRUE(glIsEnabled(GL_CULL_FACE));   // FilmicPass::draw must restore cull state
     glDisable(GL_CULL_FACE);   // leave global state clean
+    glFrontFace(GL_CCW);          // restore default winding for other tests
 }
 }  // namespace
