@@ -736,10 +736,11 @@ void frame() {
         bloom_tex = g_bloom_pass->render(g_hdr_target->color_texture(), fw, fh);
     }
 
-    // Resolve the HDR target. When SMAA is on, resolve into an LDR intermediate
-    // target and then run SMAA into the backbuffer; when off, resolve straight
-    // to the backbuffer (unchanged, zero-added-cost path). CEF composite + swap
-    // run after this so the overlay composites on top of the resolved 3D scene.
+    // Resolve the HDR target, then run any active optional LDR post passes
+    // (SMAA -> motion blur -> filmic) as a 2-target ping-pong, the last writing
+    // the backbuffer. With none active, resolve writes straight to the
+    // backbuffer (unchanged, zero-added-cost path). CEF composite + swap run
+    // after this so the overlay composites on top of the resolved 3D scene.
     const bool aa_on    = g_smaa_enabled;
     const bool exterior = !viewer_mode && !bridge_active;
     const bool filmic_on = dauntless_filmic::enabled() && exterior;
@@ -761,22 +762,26 @@ void frame() {
     if (any_post) {
         g_ldr_target2->resize(fw, fh);
 
-        // Camera matrices for the motion-blur pass (current exterior camera).
-        const glm::mat4 inv_proj = glm::inverse(g_camera.proj_matrix());
-        const glm::mat3 cam_rot  = glm::mat3(glm::inverse(g_camera.view_matrix()));
-        const glm::vec3 cam_pos  = g_camera.eye;
-
         // Active optional passes as uniform (src_tex, dst_fbo) callables.
         std::vector<std::function<void(std::uint32_t, std::uint32_t)>> passes;
         if (aa_on)
             passes.emplace_back([&](std::uint32_t s, std::uint32_t d) {
                 g_smaa_pass->draw(s, d, fw, fh);
             });
-        if (mblur_on)
-            passes.emplace_back([&](std::uint32_t s, std::uint32_t d) {
+        if (mblur_on) {
+            // Current-camera matrices for the blur, computed only when the pass
+            // actually runs. Captured by value so they outlive this scope when
+            // the ping-pong loop below invokes the lambda.
+            const glm::mat4 inv_proj = glm::inverse(g_camera.proj_matrix());
+            const glm::mat3 cam_rot  = glm::mat3(glm::inverse(g_camera.view_matrix()));
+            const glm::vec3 cam_pos  = g_camera.eye;
+            const glm::mat4 prev     = g_prev_viewproj;
+            passes.emplace_back([inv_proj, cam_rot, cam_pos, prev, fw, fh]
+                                (std::uint32_t s, std::uint32_t d) {
                 g_motion_blur_pass->draw(s, d, fw, fh, inv_proj, cam_rot,
-                                         cam_pos, g_prev_viewproj);
+                                         cam_pos, prev);
             });
+        }
         if (filmic_on)
             passes.emplace_back([&](std::uint32_t s, std::uint32_t d) {
                 g_filmic_pass->draw(s, d, fw, fh, static_cast<float>(now));
