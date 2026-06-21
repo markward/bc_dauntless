@@ -112,6 +112,14 @@ namespace dauntless_filmic {
     float ambient_scale() { return g_filmic_enabled ? kFilmicAmbientScale : 1.0f; }
 }
 
+// Toggle for camera motion blur (Modern VFX). Default on. Exterior-only;
+// host_bindings.cc gates on view + a valid previous-frame view-projection.
+namespace dauntless_motion_blur {
+    bool g_motion_blur_enabled = true;
+    bool enabled() { return g_motion_blur_enabled; }
+    void set_enabled(bool v) { g_motion_blur_enabled = v; }
+}
+
 namespace renderer {
 
 namespace {
