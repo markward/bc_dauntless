@@ -40,8 +40,9 @@ A new `FilmicPass` mirrors the existing `ResolvePass` / `SmaaPass` convention:
 - Embedded shader compiled at construction. Reuses the existing fullscreen-
   triangle vertex shader (`resolve.vert` / `SHADER_RESOLVE_VS`); only a new
   `filmic.frag` is added.
-- `draw(std::uint32_t src_tex, GLuint dest_fbo, int w, int h)` signature, same
-  shape as `SmaaPass::draw`. Sets its own viewport.
+- `draw(std::uint32_t src_tex, std::uint32_t dest_fbo, int fw, int fh, float
+  time_seconds)` signature, the `SmaaPass::draw` shape plus the `time_seconds`
+  grain-animation arg. Sets its own viewport.
 
 ### Position in the pipeline
 
