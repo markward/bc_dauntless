@@ -48,6 +48,7 @@
 #include <renderer/ldr_target.h>
 #include <renderer/smaa_pass.h>
 #include <renderer/filmic_pass.h>
+#include <renderer/motion_blur_pass.h>
 #include <renderer/aabb.h>
 #include <renderer/shadow_light.h>
 #include <renderer/shadow_map_target.h>
@@ -65,6 +66,7 @@
 #include <nif/scene_camera.h>
 
 #include <glm/gtc/type_ptr.hpp>
+#include <glm/gtc/matrix_inverse.hpp>
 #include <array>
 #include "developer_mode.h"
 
@@ -84,6 +86,7 @@
 #include <string>
 #include <tuple>
 #include <unordered_map>
+#include <functional>
 #include <vector>
 
 namespace py = pybind11;
@@ -114,6 +117,10 @@ namespace dauntless_filmic {
     bool enabled();            // defined in frame.cc
     void set_enabled(bool v);  // defined in frame.cc
     float ambient_scale();     // defined in frame.cc (0.8 when on, 1.0 when off)
+}
+namespace dauntless_motion_blur {
+    bool enabled();            // defined in frame.cc
+    void set_enabled(bool v);  // defined in frame.cc
 }
 
 namespace {
@@ -174,9 +181,12 @@ std::unique_ptr<renderer::HdrTarget>       g_viewscreen_hdr;
 std::unique_ptr<renderer::BloomPass>       g_bloom_pass;
 std::unique_ptr<renderer::ResolvePass>     g_resolve_pass;
 std::unique_ptr<renderer::LdrTarget>       g_ldr_target;
-std::unique_ptr<renderer::LdrTarget>   g_ldr_target2;   // SMAA→filmic intermediate
-std::unique_ptr<renderer::FilmicPass>  g_filmic_pass;
-std::unique_ptr<renderer::SmaaPass> g_smaa_pass;
+std::unique_ptr<renderer::LdrTarget>       g_ldr_target2;   // SMAA→filmic intermediate
+std::unique_ptr<renderer::FilmicPass>      g_filmic_pass;
+std::unique_ptr<renderer::SmaaPass>        g_smaa_pass;
+std::unique_ptr<renderer::MotionBlurPass>  g_motion_blur_pass;
+glm::mat4 g_prev_viewproj = glm::mat4(1.0f);   // previous exterior frame proj*view
+bool      g_have_prev_viewproj = false;         // false until first exterior frame
 // Sun shadow map: depth-only caster FBO rendered once per frame from the sun's
 // POV (see frame()), shared by the main view and the viewscreen RTT. Owned here
 // so its GL handles are released in shutdown() while the context is current.
@@ -348,6 +358,7 @@ void init(int width, int height, const std::string& title) {
     g_ldr_target2  = std::make_unique<renderer::LdrTarget>();
     g_filmic_pass  = std::make_unique<renderer::FilmicPass>();
     g_smaa_pass    = std::make_unique<renderer::SmaaPass>();
+    g_motion_blur_pass = std::make_unique<renderer::MotionBlurPass>();
     g_shadow_target = std::make_unique<renderer::ShadowMapTarget>();
     g_shadow_target->resize(2048, 2048);
     g_prev_frame_time_seconds = glfwGetTime();
@@ -403,6 +414,8 @@ void shutdown() {
     g_bridge_pass.reset();
     g_viewscreen_static_pass.reset();
     g_bloom_pass.reset();
+    g_motion_blur_pass.reset();
+    g_have_prev_viewproj = false;
     g_smaa_pass.reset();
     g_filmic_pass.reset();
     g_ldr_target2.reset();
@@ -727,39 +740,68 @@ void frame() {
     // target and then run SMAA into the backbuffer; when off, resolve straight
     // to the backbuffer (unchanged, zero-added-cost path). CEF composite + swap
     // run after this so the overlay composites on top of the resolved 3D scene.
-    const bool aa_on     = g_smaa_enabled;
-    // Filmic only on the main exterior space view, never bridge/viewer/viewscreen.
-    const bool filmic_on = dauntless_filmic::enabled() && !viewer_mode && !bridge_active;
+    const bool aa_on    = g_smaa_enabled;
+    const bool exterior = !viewer_mode && !bridge_active;
+    const bool filmic_on = dauntless_filmic::enabled() && exterior;
+    const bool mblur_on  = dauntless_motion_blur::enabled() && exterior
+                           && g_have_prev_viewproj;
 
-    // Resolve target: an LDR intermediate if any post stage (SMAA or filmic)
-    // follows; otherwise straight to the backbuffer (unchanged zero-cost path).
-    if (aa_on || filmic_on) {
-        g_ldr_target->resize(fw, fh);
-        g_ldr_target->bind();
-    } else {
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        glViewport(0, 0, fw, fh);
-    }
+    // Optional LDR post passes run, in order, after the HDR resolve:
+    //   SMAA -> motion blur -> filmic.
+    // Ping-pong between two LDR targets; the LAST active pass writes the
+    // backbuffer. With none active, resolve writes straight to the backbuffer
+    // (the original zero-cost path, byte-identical).
+    const bool any_post = aa_on || mblur_on || filmic_on;
+
+    if (any_post) { g_ldr_target->resize(fw, fh); g_ldr_target->bind(); }
+    else { glBindFramebuffer(GL_FRAMEBUFFER, 0); glViewport(0, 0, fw, fh); }
     g_resolve_pass->set_hdr_enabled(dauntless_hdr::enabled());
     g_resolve_pass->draw(g_hdr_target->color_texture(), bloom_tex);
 
-    if (aa_on) {
-        // With filmic following, SMAA writes into a second LDR target; otherwise
-        // straight to the backbuffer. SMAA sets its own viewport.
-        std::uint32_t smaa_dest = 0;
-        if (filmic_on) {
-            g_ldr_target2->resize(fw, fh);
-            smaa_dest = g_ldr_target2->fbo();
+    if (any_post) {
+        g_ldr_target2->resize(fw, fh);
+
+        // Camera matrices for the motion-blur pass (current exterior camera).
+        const glm::mat4 inv_proj = glm::inverse(g_camera.proj_matrix());
+        const glm::mat3 cam_rot  = glm::mat3(glm::inverse(g_camera.view_matrix()));
+        const glm::vec3 cam_pos  = g_camera.eye;
+
+        // Active optional passes as uniform (src_tex, dst_fbo) callables.
+        std::vector<std::function<void(std::uint32_t, std::uint32_t)>> passes;
+        if (aa_on)
+            passes.emplace_back([&](std::uint32_t s, std::uint32_t d) {
+                g_smaa_pass->draw(s, d, fw, fh);
+            });
+        if (mblur_on)
+            passes.emplace_back([&](std::uint32_t s, std::uint32_t d) {
+                g_motion_blur_pass->draw(s, d, fw, fh, inv_proj, cam_rot,
+                                         cam_pos, g_prev_viewproj);
+            });
+        if (filmic_on)
+            passes.emplace_back([&](std::uint32_t s, std::uint32_t d) {
+                g_filmic_pass->draw(s, d, fw, fh, static_cast<float>(now));
+            });
+
+        // resolve wrote into target[0]; ping-pong to target[1], alternating.
+        renderer::LdrTarget* targets[2] = { g_ldr_target.get(), g_ldr_target2.get() };
+        std::uint32_t cur_tex = targets[0]->color_texture();
+        int dst_idx = 1;
+        for (std::size_t i = 0; i < passes.size(); ++i) {
+            const bool last = (i + 1 == passes.size());
+            const std::uint32_t dst_fbo = last ? 0u : targets[dst_idx]->fbo();
+            passes[i](cur_tex, dst_fbo);
+            if (!last) { cur_tex = targets[dst_idx]->color_texture(); dst_idx ^= 1; }
         }
-        g_smaa_pass->draw(g_ldr_target->color_texture(), smaa_dest, fw, fh);
     }
 
-    if (filmic_on) {
-        // Source is whatever the previous final stage wrote: SMAA's output
-        // (g_ldr_target2) when AA is on, else the resolve output (g_ldr_target).
-        const std::uint32_t src = aa_on ? g_ldr_target2->color_texture()
-                                        : g_ldr_target->color_texture();
-        g_filmic_pass->draw(src, /*dest_fbo=*/0, fw, fh, static_cast<float>(now));
+    // Cache this exterior frame's view-projection for next frame's motion blur.
+    // Non-exterior frames invalidate it so re-entering the exterior view skips
+    // one frame of blur instead of smearing across the transition.
+    if (exterior) {
+        g_prev_viewproj = g_camera.proj_matrix() * g_camera.view_matrix();
+        g_have_prev_viewproj = true;
+    } else {
+        g_have_prev_viewproj = false;
     }
 
     // Snapshot tracked keys' current state BEFORE poll_events. The next
@@ -1953,6 +1995,14 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("filmic_enabled",
           []() { return dauntless_filmic::enabled(); },
           "Read the Filmic Filter toggle (Modern VFX). Default: on.");
+    m.def("motion_blur_set_enabled",
+          [](bool enabled) { dauntless_motion_blur::set_enabled(enabled); },
+          py::arg("enabled"),
+          "Toggle camera Motion Blur (Modern VFX) on the exterior view. "
+          "Default: on.");
+    m.def("motion_blur_enabled",
+          []() { return dauntless_motion_blur::enabled(); },
+          "Read the Motion Blur toggle (Modern VFX). Default: on.");
     m.def("hdr_set_enabled",
           [](bool e) { dauntless_hdr::set_enabled(e); },
           py::arg("enabled"),
