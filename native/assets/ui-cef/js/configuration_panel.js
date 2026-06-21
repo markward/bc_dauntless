@@ -29,6 +29,7 @@ function _cpFocusableList(state) {
         out.push({kind: 'ctrl', target: 'decals'});
         out.push({kind: 'ctrl', target: 'smaa'});
         out.push({kind: 'ctrl', target: 'filmic'});
+        out.push({kind: 'ctrl', target: 'motion_blur'});
     } else if (state.selected_tab === 'gameplay') {
         out.push({kind: 'ctrl', target: 'subtitles'});
     }
@@ -173,6 +174,17 @@ function _cpRenderGraphicsBody(state, focusables) {
           +     '<button class="cp-toggle' + (s.filmic_on ? ' cp-toggle--on' : '') + '"'
           +        ' onclick="dauntlessEvent(\'configuration/toggle:filmic\')">'
           +       (s.filmic_on ? 'On' : 'Off')
+          +     '</button>'
+          +   '</div>'
+          + '</div>';
+
+    // Motion Blur toggle — camera motion blur on the exterior view (Modern VFX).
+    html += '<div class="cp-row' + (isFoc('motion_blur') ? ' cp-focused' : '') + '">'
+          +   '<div class="cp-row__label">Motion Blur</div>'
+          +   '<div class="cp-row__control">'
+          +     '<button class="cp-toggle' + (s.motion_blur_on ? ' cp-toggle--on' : '') + '"'
+          +        ' onclick="dauntlessEvent(\'configuration/toggle:motion_blur\')">'
+          +       (s.motion_blur_on ? 'On' : 'Off')
           +     '</button>'
           +   '</div>'
           + '</div>';
