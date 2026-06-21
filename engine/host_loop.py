@@ -3248,6 +3248,7 @@ def run(mission_name: Optional[str] = None,
                 shadows_on=True,
                 procedural_sky_on=r.procedural_sky_enabled(),
                 filmic_on=r.filmic_enabled(),
+                motion_blur_on=r.motion_blur_enabled(),
                 fov_deg=int(round(_math.degrees(
                     director.fov_y_rad
                 ))),
@@ -3264,6 +3265,7 @@ def run(mission_name: Optional[str] = None,
             set_shadows=r.set_shadows_enabled,
             set_procedural_sky=r.set_procedural_sky_enabled,
             set_filmic=r.set_filmic_enabled,
+            set_motion_blur=r.set_motion_blur_enabled,
         )
 
         from engine.ui.pause_menu import default_pause_menu
