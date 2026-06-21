@@ -29,6 +29,17 @@ TEST(DauntlessDecalsToggle, DefaultsOnAndRoundTrips) {
     EXPECT_TRUE(dauntless_decals::enabled());
 }
 
+// dauntless_filmic toggle is declared in frame.cc; forward-declare it here.
+namespace dauntless_filmic { bool enabled(); void set_enabled(bool); }
+
+TEST(DauntlessFilmicToggle, DefaultsOnAndRoundTrips) {
+    EXPECT_TRUE(dauntless_filmic::enabled());      // default on
+    dauntless_filmic::set_enabled(false);
+    EXPECT_FALSE(dauntless_filmic::enabled());
+    dauntless_filmic::set_enabled(true);           // restore for other tests
+    EXPECT_TRUE(dauntless_filmic::enabled());
+}
+
 namespace {
 
 const std::filesystem::path kProjectRoot =

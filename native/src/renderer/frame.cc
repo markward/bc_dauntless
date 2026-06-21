@@ -102,6 +102,12 @@ namespace dauntless_procedural_sky {
     void set_enabled(bool v) { g_procedural_sky_enabled = v; }
 }
 
+namespace dauntless_filmic {
+    bool g_filmic_enabled = true;
+    bool enabled() { return g_filmic_enabled; }
+    void set_enabled(bool v) { g_filmic_enabled = v; }
+}
+
 namespace renderer {
 
 namespace {
