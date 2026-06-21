@@ -27,6 +27,7 @@ add_executable(renderer_tests
     cubemap_target_test.cc
     resolve_pass_test.cc
     filmic_pass_test.cc
+    motion_blur_pass_test.cc
     bloom_pass_test.cc
     smaa_pass_test.cc
     particle_math_test.cc

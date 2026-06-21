@@ -50,6 +50,7 @@ embed_shader(SHADER_LIGHTMAP_FS shaders/lightmap.frag lightmap_fs)
 embed_shader(SHADER_RESOLVE_VS shaders/resolve.vert resolve_vs)
 embed_shader(SHADER_RESOLVE_FS shaders/resolve.frag resolve_fs)
 embed_shader(SHADER_FILMIC_FS shaders/filmic.frag filmic_fs)
+embed_shader(SHADER_MOTION_BLUR_FS shaders/motion_blur.frag motion_blur_fs)
 embed_shader(SHADER_SMAA_LIB   shaders/smaa_lib.glsl  smaa_lib)
 embed_shader(SHADER_SMAA_EDGE_VS   shaders/smaa_edge.vert   smaa_edge_vs)
 embed_shader(SHADER_SMAA_EDGE_FS   shaders/smaa_edge.frag   smaa_edge_fs)
@@ -83,6 +84,7 @@ add_library(renderer STATIC
     bloom_pass.cc
     resolve_pass.cc
     filmic_pass.cc
+    motion_blur_pass.cc
     smaa_pass.cc
     sphere_mesh.cc
     backdrop_pass.cc
