@@ -7,7 +7,7 @@
 ## Summary
 
 When the Filmic Filter toggle is **on**, reduce the **main exterior view's**
-ambient light term to **0.2** (−80%; multiply `lighting.ambient` by `0.2`). Off →
+ambient light term to **0.3** (−70%; multiply `lighting.ambient` by `0.3`). Off →
 full ambient. Scope matches the filmic post-effect exactly: bridge interior and
 the bridge viewscreen inset keep full ambient at all times.
 
@@ -23,7 +23,7 @@ ambient is bound at scene-render time.
 1. **Helper (testable seam):** add to the `dauntless_filmic` namespace in
    `frame.cc`:
    ```cpp
-   constexpr float kFilmicAmbientScale = 0.2f;   // -80% ambient when filmic on
+   constexpr float kFilmicAmbientScale = 0.3f;   // -70% ambient when filmic on
    float ambient_scale() { return g_filmic_enabled ? kFilmicAmbientScale : 1.0f; }
    ```
 
@@ -43,7 +43,7 @@ ambient is bound at scene-render time.
 
 | View | Filmic ON | Filmic OFF |
 |---|---|---|
-| Main exterior | ambient ×0.2 + grain/vignette/CA | ambient ×1.0, no filter |
+| Main exterior | ambient ×0.3 + grain/vignette/CA | ambient ×1.0, no filter |
 | Viewscreen inset | ambient ×1.0, no filter | ambient ×1.0, no filter |
 | Bridge interior | ambient ×1.0 (separate lighting) | ambient ×1.0 |
 
@@ -52,7 +52,7 @@ exterior-only: turning Filmic off fully restores the original lighting.
 
 ## Testing
 
-- Unit-test `dauntless_filmic::ambient_scale()`: `0.2` when enabled, `1.0` when
+- Unit-test `dauntless_filmic::ambient_scale()`: `0.3` when enabled, `1.0` when
   disabled (no GL; mirrors the existing `DauntlessFilmicToggle` test).
 - Wiring (host passes scale, shader multiplies) verified by clean build + live
   check, consistent with how the host routing was verified in the filmic plan
@@ -60,6 +60,6 @@ exterior-only: turning Filmic off fully restores the original lighting.
 
 ## Decisions captured
 
-- Ambient dim = multiply by `0.2` (−80%; live-tuned), named `kFilmicAmbientScale`.
+- Ambient dim = multiply by `0.3` (−70%; live-tuned), named `kFilmicAmbientScale`.
 - Exterior-only, gated by the filmic toggle.
 - Default-`1.0f` param keeps all non-exterior render paths untouched.

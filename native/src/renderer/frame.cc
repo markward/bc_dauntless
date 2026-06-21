@@ -108,7 +108,7 @@ namespace dauntless_filmic {
     void set_enabled(bool v) { g_filmic_enabled = v; }
     // Ambient light is dimmed to this fraction on the exterior view when filmic
     // is on (the exterior-only scope is enforced at the host call site).
-    constexpr float kFilmicAmbientScale = 0.2f;   // -80% ambient on exterior when filmic on
+    constexpr float kFilmicAmbientScale = 0.3f;   // -70% ambient on exterior when filmic on
     float ambient_scale() { return g_filmic_enabled ? kFilmicAmbientScale : 1.0f; }
 }
 

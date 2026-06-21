@@ -40,12 +40,12 @@ TEST(DauntlessFilmicToggle, DefaultsOnAndRoundTrips) {
     EXPECT_TRUE(dauntless_filmic::enabled());
 }
 
-// Ambient is dimmed to 0.2 (−80%) on the exterior view when filmic is on, full
+// Ambient is dimmed to 0.3 (−70%) on the exterior view when filmic is on, full
 // (×1.0) when off. The exterior-only scope is enforced at the host call site;
 // this just pins the scale the helper returns for each toggle state.
 TEST(DauntlessFilmicToggle, AmbientScaleTracksToggle) {
     dauntless_filmic::set_enabled(true);
-    EXPECT_FLOAT_EQ(dauntless_filmic::ambient_scale(), 0.2f);
+    EXPECT_FLOAT_EQ(dauntless_filmic::ambient_scale(), 0.3f);
     dauntless_filmic::set_enabled(false);
     EXPECT_FLOAT_EQ(dauntless_filmic::ambient_scale(), 1.0f);
     dauntless_filmic::set_enabled(true);           // restore for other tests
