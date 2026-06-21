@@ -47,6 +47,7 @@
 #include <renderer/resolve_pass.h>
 #include <renderer/ldr_target.h>
 #include <renderer/smaa_pass.h>
+#include <renderer/filmic_pass.h>
 #include <renderer/aabb.h>
 #include <renderer/shadow_light.h>
 #include <renderer/shadow_map_target.h>
@@ -109,6 +110,10 @@ namespace dauntless_shadows {
     bool enabled();            // defined in frame.cc
     void set_enabled(bool v);  // defined in frame.cc
 }
+namespace dauntless_filmic {
+    bool enabled();            // defined in frame.cc
+    void set_enabled(bool v);  // defined in frame.cc
+}
 
 namespace {
 
@@ -168,6 +173,8 @@ std::unique_ptr<renderer::HdrTarget>       g_viewscreen_hdr;
 std::unique_ptr<renderer::BloomPass>       g_bloom_pass;
 std::unique_ptr<renderer::ResolvePass>     g_resolve_pass;
 std::unique_ptr<renderer::LdrTarget>       g_ldr_target;
+std::unique_ptr<renderer::LdrTarget>   g_ldr_target2;   // SMAA→filmic intermediate
+std::unique_ptr<renderer::FilmicPass>  g_filmic_pass;
 std::unique_ptr<renderer::SmaaPass> g_smaa_pass;
 // Sun shadow map: depth-only caster FBO rendered once per frame from the sun's
 // POV (see frame()), shared by the main view and the viewscreen RTT. Owned here
@@ -337,6 +344,8 @@ void init(int width, int height, const std::string& title) {
     g_bloom_pass   = std::make_unique<renderer::BloomPass>();
     g_resolve_pass = std::make_unique<renderer::ResolvePass>();
     g_ldr_target   = std::make_unique<renderer::LdrTarget>();
+    g_ldr_target2  = std::make_unique<renderer::LdrTarget>();
+    g_filmic_pass  = std::make_unique<renderer::FilmicPass>();
     g_smaa_pass    = std::make_unique<renderer::SmaaPass>();
     g_shadow_target = std::make_unique<renderer::ShadowMapTarget>();
     g_shadow_target->resize(2048, 2048);
@@ -394,6 +403,8 @@ void shutdown() {
     g_viewscreen_static_pass.reset();
     g_bloom_pass.reset();
     g_smaa_pass.reset();
+    g_filmic_pass.reset();
+    g_ldr_target2.reset();
     g_ldr_target.reset();
     g_resolve_pass.reset();
     g_hdr_target.reset();
@@ -709,8 +720,13 @@ void frame() {
     // target and then run SMAA into the backbuffer; when off, resolve straight
     // to the backbuffer (unchanged, zero-added-cost path). CEF composite + swap
     // run after this so the overlay composites on top of the resolved 3D scene.
-    const bool aa_on = g_smaa_enabled;
-    if (aa_on) {
+    const bool aa_on     = g_smaa_enabled;
+    // Filmic only on the main exterior space view, never bridge/viewer/viewscreen.
+    const bool filmic_on = dauntless_filmic::enabled() && !viewer_mode && !bridge_active;
+
+    // Resolve target: an LDR intermediate if any post stage (SMAA or filmic)
+    // follows; otherwise straight to the backbuffer (unchanged zero-cost path).
+    if (aa_on || filmic_on) {
         g_ldr_target->resize(fw, fh);
         g_ldr_target->bind();
     } else {
@@ -719,9 +735,24 @@ void frame() {
     }
     g_resolve_pass->set_hdr_enabled(dauntless_hdr::enabled());
     g_resolve_pass->draw(g_hdr_target->color_texture(), bloom_tex);
+
     if (aa_on) {
-        // SMAA writes to the backbuffer (dest_fbo = 0); it sets its own viewport.
-        g_smaa_pass->draw(g_ldr_target->color_texture(), /*dest_fbo=*/0, fw, fh);
+        // With filmic following, SMAA writes into a second LDR target; otherwise
+        // straight to the backbuffer. SMAA sets its own viewport.
+        std::uint32_t smaa_dest = 0;
+        if (filmic_on) {
+            g_ldr_target2->resize(fw, fh);
+            smaa_dest = g_ldr_target2->fbo();
+        }
+        g_smaa_pass->draw(g_ldr_target->color_texture(), smaa_dest, fw, fh);
+    }
+
+    if (filmic_on) {
+        // Source is whatever the previous final stage wrote: SMAA's output
+        // (g_ldr_target2) when AA is on, else the resolve output (g_ldr_target).
+        const std::uint32_t src = aa_on ? g_ldr_target2->color_texture()
+                                        : g_ldr_target->color_texture();
+        g_filmic_pass->draw(src, /*dest_fbo=*/0, fw, fh, static_cast<float>(now));
     }
 
     // Snapshot tracked keys' current state BEFORE poll_events. The next
@@ -1907,6 +1938,14 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("procedural_sky_enabled",
           []() { return dauntless_procedural_sky::enabled(); },
           "Read the procedural-sky toggle (Modern VFX). Default: on.");
+    m.def("filmic_set_enabled",
+          [](bool enabled) { dauntless_filmic::set_enabled(enabled); },
+          py::arg("enabled"),
+          "Toggle the Filmic Filter (Modern VFX): grain + vignette + chromatic "
+          "aberration on the exterior view. Default: on.");
+    m.def("filmic_enabled",
+          []() { return dauntless_filmic::enabled(); },
+          "Read the Filmic Filter toggle (Modern VFX). Default: on.");
     m.def("hdr_set_enabled",
           [](bool e) { dauntless_hdr::set_enabled(e); },
           py::arg("enabled"),
