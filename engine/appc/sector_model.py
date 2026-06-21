@@ -1,0 +1,70 @@
+"""Persistent galaxy data model + identity helpers.
+
+Owns sector_model.json (galaxy systems/nebulae/starclouds + the baked
+per-system warp_points catalog). The sky renderer (sky_projection.py) and the
+Set Course popup both consume this; neither depends on the other.
+"""
+import json
+import re
+from functools import lru_cache
+from pathlib import Path
+
+_MODEL_PATH = Path(__file__).with_name("sector_model.json")
+
+# Synthetic members folded under one star (mirrors the extractor).
+_MEMBER_TO_PARENT = {"drydock": "tauceti", "starbase12": "tauceti"}
+
+# Display-name overrides where title-casing the id is wrong.
+_LABEL_OVERRIDES = {
+    "xientrades": "Xi Entrades",
+    "omegadraconis": "Omega Draconis",
+    "tauceti": "Tau Ceti",
+    "deepspace": "Deep Space",
+}
+
+
+@lru_cache(maxsize=1)
+def load_sector_model():
+    try:
+        return json.loads(_MODEL_PATH.read_text())
+    except (OSError, ValueError):
+        return {"systems": [], "nebulae": [], "starclouds": []}
+
+
+def system_id_for_set(set_name):
+    name = str(set_name).lower()
+    if name in _MEMBER_TO_PARENT:
+        return _MEMBER_TO_PARENT[name]
+    base = re.sub(r"\d+$", "", name)        # "vesuvi6" -> "vesuvi"
+    return _MEMBER_TO_PARENT.get(base, base)
+
+
+def vantage_for_set(pSet, model=None):
+    if pSet is None:
+        return None
+    model = model or load_sector_model()
+    sysid = system_id_for_set(pSet.GetName())
+    for s in model.get("systems", []):
+        if s["id"] == sysid:
+            return s["position"]
+    return None
+
+
+def display_label(system_id):
+    sid = str(system_id)
+    if sid in _LABEL_OVERRIDES:
+        return _LABEL_OVERRIDES[sid]
+    return sid.replace("_", " ").title()
+
+
+def is_real_system(system_id):
+    """multi* ids are map scaffolding, not user-facing destinations."""
+    return not str(system_id).startswith("multi")
+
+
+def warp_points_for(system_id, model=None):
+    model = model or load_sector_model()
+    for s in model.get("systems", []):
+        if s["id"] == system_id:
+            return list(s.get("warp_points", []))
+    return []
