@@ -3282,9 +3282,12 @@ def run(mission_name: Optional[str] = None,
         from engine.appc.sdk_mirror_panel import SDKMirrorPanel
         sdk_mirror = SDKMirrorPanel()
         registry.register(sdk_mirror)
+        from engine.ui.setting_course_panel import SettingCoursePanel
+        setting_course_panel = SettingCoursePanel()
         from engine.ui.crew_menu_panel import CrewMenuPanel
-        crew_menu_panel = CrewMenuPanel()
+        crew_menu_panel = CrewMenuPanel(on_set_course=setting_course_panel.open)
         registry.register(crew_menu_panel)
+        registry.register(setting_course_panel)
         try:
             from engine.ui import crew_menu_hotkeys
             crew_menu_hotkeys.wire(
@@ -3396,7 +3399,8 @@ def run(mission_name: Optional[str] = None,
         # whose is_open() is False, so they never fire. One list drives
         # ESC routing, pause-menu visibility, and pause-input routing.
         _modal_blockers = [mission_picker, developer_options_panel,
-                           ship_property_viewer, configuration_panel]
+                           ship_property_viewer, configuration_panel,
+                           setting_course_panel]
 
         while not r.should_close():
             # --- Track window resizes: re-lay-out the CEF overlay at the new
