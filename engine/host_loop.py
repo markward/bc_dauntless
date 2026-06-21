@@ -1286,7 +1286,8 @@ def _apply_pause_menu_side_effects(pause: "_PauseMenuController",
     pause._last_synced_is_open = target
 
 
-def _apply_crew_menu_side_effects(crew_menu_panel, view_mode, pause, h) -> None:
+def _apply_crew_menu_side_effects(crew_menu_panel, view_mode, pause, h,
+                                  setting_course_panel=None) -> None:
     """Free the mouse cursor while a crew menu (F1-F5) is open on the
     bridge, then re-lock on close.
 
@@ -1305,8 +1306,14 @@ def _apply_crew_menu_side_effects(crew_menu_panel, view_mode, pause, h) -> None:
     closes an open crew menu before the pause menu can open, so the two
     don't normally coincide).
     """
-    target = (view_mode.is_bridge
-              and crew_menu_panel.has_open_menu()
+    # The Set Course modal is a centred CEF overlay opened from the (bridge)
+    # Helm crew menu; it needs a real cursor too. Clicking Set Course clears
+    # the open crew menu, so has_open_menu() is False while the modal is up —
+    # key the cursor-free state off the modal as well.
+    modal_open = (setting_course_panel is not None
+                  and setting_course_panel.is_open())
+    target = (((view_mode.is_bridge and crew_menu_panel.has_open_menu())
+               or modal_open)
               and not pause.is_open)
     last = getattr(crew_menu_panel, "_last_synced_cursor_free", None)
     if last == target:
@@ -3282,9 +3289,12 @@ def run(mission_name: Optional[str] = None,
         from engine.appc.sdk_mirror_panel import SDKMirrorPanel
         sdk_mirror = SDKMirrorPanel()
         registry.register(sdk_mirror)
+        from engine.ui.setting_course_panel import SettingCoursePanel
+        setting_course_panel = SettingCoursePanel()
         from engine.ui.crew_menu_panel import CrewMenuPanel
-        crew_menu_panel = CrewMenuPanel()
+        crew_menu_panel = CrewMenuPanel(on_set_course=setting_course_panel.open)
         registry.register(crew_menu_panel)
+        registry.register(setting_course_panel)
         try:
             from engine.ui import crew_menu_hotkeys
             crew_menu_hotkeys.wire(
@@ -3396,7 +3406,8 @@ def run(mission_name: Optional[str] = None,
         # whose is_open() is False, so they never fire. One list drives
         # ESC routing, pause-menu visibility, and pause-input routing.
         _modal_blockers = [mission_picker, developer_options_panel,
-                           ship_property_viewer, configuration_panel]
+                           ship_property_viewer, configuration_panel,
+                           setting_course_panel]
 
         while not r.should_close():
             # --- Track window resizes: re-lay-out the CEF overlay at the new
@@ -3441,7 +3452,8 @@ def run(mission_name: Optional[str] = None,
                 # cursor while one is open so it can be clicked, then re-lock
                 # on close. Runs every frame; idempotent + latched.
                 _apply_crew_menu_side_effects(
-                    crew_menu_panel, view_mode, pause, _h)
+                    crew_menu_panel, view_mode, pause, _h,
+                    setting_course_panel)
                 if pause.is_open:
                     # When a settings modal is open it consumes keyboard
                     # input — pause-menu navigation would otherwise activate
@@ -3584,8 +3596,13 @@ def run(mission_name: Optional[str] = None,
                         and _BR_X <= _mx < _BR_X + _BR_W
                         and _BR_Y <= _my < _BR_Y + _BR_H
                     )
+                    # The Set Course modal is a full-viewport cp-* backdrop:
+                    # any click while it's open belongs to CEF (the OK button
+                    # or the inert backdrop), never to phaser fire.
+                    _cursor_in_modal = setting_course_panel.is_open()
                     _cursor_in_panel = (
                         _cursor_in_left_column or _cursor_in_bottom_row
+                        or _cursor_in_modal
                     )
                     if _cef_send_mouse_click is not None and _cursor_in_panel:
                         if _h.mouse_button_pressed(_h.keys.MOUSE_BUTTON_LEFT):

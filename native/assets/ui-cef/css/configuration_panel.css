@@ -15,7 +15,8 @@
    Spec: docs/superpowers/specs/2026-06-05-configuration-panel-design.md */
 
 #configuration-panel,
-#developer-options-panel {
+#developer-options-panel,
+#setting-course-panel {
     display: none;
     position: fixed;
     inset: 0;
