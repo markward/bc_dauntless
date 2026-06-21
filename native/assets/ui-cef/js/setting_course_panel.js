@@ -11,12 +11,10 @@ function escapeHtmlSC(s) {
         .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-function _scRow(item, evt, extraClass) {
+function _scRow(item, evt) {
     const cls = 'sc-row'
         + (item.active ? ' sc-row--active' : '')
-        + (item.selected ? ' sc-row--selected' : '')
-        + (item.id === undefined ? '' : '')
-        + (extraClass ? ' ' + extraClass : '');
+        + (item.selected ? ' sc-row--selected' : '');
     return '<li class="' + cls + '" data-id="' + escapeHtmlSC(item.id) + '"'
         + ' onclick="dauntlessEvent(\'' + evt + ':\' + this.getAttribute(\'data-id\'))">'
         + escapeHtmlSC(item.label) + '</li>';
