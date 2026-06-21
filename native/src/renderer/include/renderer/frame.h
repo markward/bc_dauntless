@@ -252,7 +252,8 @@ public:
                                const Lighting& lighting,
                                scenegraph::Pass pass,
                                float decal_time = 0.0f,
-                               CarveFieldCache* carve_cache = nullptr);
+                               CarveFieldCache* carve_cache = nullptr,
+                               float ambient_scale = 1.0f);
 
 private:
     /// Lazily-allocated 1x1 white texture used as a fallback when a material

@@ -113,6 +113,7 @@ namespace dauntless_shadows {
 namespace dauntless_filmic {
     bool enabled();            // defined in frame.cc
     void set_enabled(bool v);  // defined in frame.cc
+    float ambient_scale();     // defined in frame.cc (0.8 when on, 1.0 when off)
 }
 
 namespace {
@@ -520,9 +521,15 @@ void frame() {
                                     dauntless_procedural_sky::enabled(),
                                     static_cast<float>(now));
         g_sun_pass->render(g_suns, cam, *g_pipeline, now);
+        // Filmic ambient dim: -20% on the main exterior view only. The
+        // viewscreen inset (for_viewscreen) and a filmic-off toggle both keep
+        // full ambient (scale 1.0).
+        const float ambient_scale =
+            (!for_viewscreen) ? dauntless_filmic::ambient_scale() : 1.0f;
         g_submitter->submit_opaque_in_pass(
             g_world, cam, *g_pipeline, lookup, g_lighting,
-            scenegraph::Pass::Space, g_decal_game_time, g_carve_cache.get());
+            scenegraph::Pass::Space, g_decal_game_time, g_carve_cache.get(),
+            ambient_scale);
         // Breach scoop pass: for each active carve sphere, draws the front-
         // face-culled sphere inner wall masked by the original hull fill
         // (triplanar Damage.tga). Runs right after the opaque hull

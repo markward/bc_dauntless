@@ -30,7 +30,7 @@ TEST(DauntlessDecalsToggle, DefaultsOnAndRoundTrips) {
 }
 
 // dauntless_filmic toggle is declared in frame.cc; forward-declare it here.
-namespace dauntless_filmic { bool enabled(); void set_enabled(bool); }
+namespace dauntless_filmic { bool enabled(); void set_enabled(bool); float ambient_scale(); }
 
 TEST(DauntlessFilmicToggle, DefaultsOnAndRoundTrips) {
     EXPECT_TRUE(dauntless_filmic::enabled());      // default on
@@ -38,6 +38,17 @@ TEST(DauntlessFilmicToggle, DefaultsOnAndRoundTrips) {
     EXPECT_FALSE(dauntless_filmic::enabled());
     dauntless_filmic::set_enabled(true);           // restore for other tests
     EXPECT_TRUE(dauntless_filmic::enabled());
+}
+
+// Ambient is dimmed 20% (×0.8) on the exterior view when filmic is on, full
+// (×1.0) when off. The exterior-only scope is enforced at the host call site;
+// this just pins the scale the helper returns for each toggle state.
+TEST(DauntlessFilmicToggle, AmbientScaleTracksToggle) {
+    dauntless_filmic::set_enabled(true);
+    EXPECT_FLOAT_EQ(dauntless_filmic::ambient_scale(), 0.8f);
+    dauntless_filmic::set_enabled(false);
+    EXPECT_FLOAT_EQ(dauntless_filmic::ambient_scale(), 1.0f);
+    dauntless_filmic::set_enabled(true);           // restore for other tests
 }
 
 namespace {
