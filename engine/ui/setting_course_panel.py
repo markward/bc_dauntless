@@ -75,19 +75,37 @@ class SettingCoursePanel(Panel):
                     "active": sid in active_systems}
                    for sid in self._systems]
         warp_points = []
+        warp_note = None
         if self._selected_system is not None:
-            active_warps = self._active_warp_labels(self._selected_system)
-            for wp in sm.warp_points_for(self._selected_system):
+            sid = self._selected_system
+            catalog = sm.warp_points_for(sid)
+            if catalog:
+                active_warps = self._active_warp_labels(sid)
+                for wp in catalog:
+                    warp_points.append({
+                        "id": wp["id"], "label": wp["label"],
+                        "active": wp["label"] in active_warps,
+                        "selected": wp["id"] == self._selected_warp,
+                    })
+            else:
+                # Systems with no sub-destinations (single-region systems like
+                # Riha) or galaxy-map backdrops not registered in the SDK menu
+                # (Deep Space, Tau Ceti): the system itself is the set-course
+                # target. Offer one row = the system, with a note so it's clear
+                # this isn't a missing list.
                 warp_points.append({
-                    "id": wp["id"], "label": wp["label"],
-                    "active": wp["label"] in active_warps,
-                    "selected": wp["id"] == self._selected_warp,
+                    "id": sid, "label": sm.display_label(sid),
+                    "active": sid in active_systems,
+                    "selected": sid == self._selected_warp,
                 })
+                warp_note = ("No separate destinations in this system — "
+                             "set course to the system itself.")
         payload = json.dumps({
             "visible": self._visible,
             "selected_system": self._selected_system,
             "systems": systems if self._visible else [],
             "warp_points": warp_points,
+            "warp_note": warp_note,
         })
         if payload == self._last_pushed:
             return None

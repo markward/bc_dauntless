@@ -37,7 +37,10 @@ function setSettingCoursePanel(state) {
     }
     const warpEl = document.getElementById('setting-course-warps');
     if (warpEl) {
-        warpEl.innerHTML = (state.warp_points || []).map(function (w) {
+        var note = state.warp_note
+            ? '<li class="sc-note">' + escapeHtmlSC(state.warp_note) + '</li>'
+            : '';
+        warpEl.innerHTML = note + (state.warp_points || []).map(function (w) {
             return _scRow(w, 'setting-course/select-warp');
         }).join('');
     }
