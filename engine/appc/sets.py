@@ -312,6 +312,14 @@ class SetClass(TGEventHandlerObject):
             return []
         return [obj for obj in self._objects.values() if isinstance(obj, class_type)]
 
+    def GetNebula(self):
+        """First CT_NEBULA object in this set, or None (SDK SetClass_GetNebula)."""
+        from App import Nebula
+        for obj in self._objects.values():
+            if isinstance(obj, Nebula):
+                return obj
+        return None
+
     def GetObjectList(self):
         """Return all objects in this set as a list.
 

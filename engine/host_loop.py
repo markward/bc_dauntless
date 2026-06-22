@@ -3203,6 +3203,38 @@ def run(mission_name: Optional[str] = None,
             current_player=lambda: (controller.session.player
                                     if controller.session is not None else None))
 
+        # Starbase warp gate (Task 4): segment-vs-mesh test against the
+        # starbase's loaded NIF via the host ray_trace_mesh binding. Returns
+        # True if the segment from->to hits the starbase mesh (occluded). Any
+        # missing piece (no bindings / no session / no instance) => False, so
+        # the warp_gates._near_starbase check degrades to "don't block".
+        from engine.appc import warp_gates as _wg
+
+        def _starbase_ray_collide(starbase, from_pt, to_pt):
+            try:
+                import _dauntless_host as _hh
+            except Exception:
+                return False
+            if controller.session is None:
+                return False
+            iid = controller.session.ship_instances.get(starbase)
+            if iid is None:
+                return False
+            import math
+            dx = to_pt[0] - from_pt[0]
+            dy = to_pt[1] - from_pt[1]
+            dz = to_pt[2] - from_pt[2]
+            dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+            if dist <= 1e-6:
+                return False
+            try:
+                hit = _hh.ray_trace_mesh(iid, from_pt, (dx, dy, dz), dist)
+            except Exception:
+                return False
+            return hit is not None
+
+        _wg.configure_gate_hooks(ray_collide=_starbase_ray_collide)
+
         # CEF Set Course popup: selecting a warp point SETS THE COURSE — record
         # the destination set-module on the SDK warp button. The player then
         # engages the warp from the Helm "Warp" button (on_warp_engage below).
@@ -3221,6 +3253,20 @@ def run(mission_name: Optional[str] = None,
         # terminates the source. execute_warp reads the button's destination.
         def on_warp_engage(button):
             from engine.appc import warp as _w
+            from engine.appc import warp_gates as _wg
+            import App
+            player = App.Game_GetCurrentPlayer()
+            if player is None and controller.session is not None:
+                player = controller.session.player
+            result = _wg.warp_gate(player)
+            if not result.allowed:
+                if dev_mode.is_enabled():
+                    print("[warp] gated: %s (line=%s)"
+                          % (result.reason or "unknown",
+                             result.deny_line or "-"), flush=True)
+                if result.deny_line is not None:
+                    _wg.speak_deny(player, result.deny_line)
+                return
             _w.execute_warp(button)
 
         # Register the bridge cutscene controller BEFORE the initial mission
