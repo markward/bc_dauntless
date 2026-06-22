@@ -51,12 +51,14 @@ def _apply_env_damage(ship, hull_per_s, shield_per_s, dt):
             new = hull.GetCondition() - hull_per_s * dt
             hull.SetCondition(new if new > 0.0 else 0.0)
     if shield_per_s > 0.0:
-        shields = ship.GetShieldSubsystem()
+        shields = getattr(ship, "GetShieldSubsystem", None)
         if shields is not None:
-            per_face = (shield_per_s * dt) / shields.NUM_SHIELDS
-            for face in range(shields.NUM_SHIELDS):
-                cur = shields.GetCurrentShields(face) - per_face
-                shields.SetCurrentShields(face, cur if cur > 0.0 else 0.0)
+            shields = shields()
+            if shields is not None:
+                per_face = (shield_per_s * dt) / shields.NUM_SHIELDS
+                for face in range(shields.NUM_SHIELDS):
+                    cur = shields.GetCurrentShields(face) - per_face
+                    shields.SetCurrentShields(face, cur if cur > 0.0 else 0.0)
 
 
 def _clamp01(v):
@@ -92,7 +94,13 @@ class NebulaTracker:
         sensor.SetBaseSensorRange(base * _clamp01(density))
 
     def _restore_sensor(self, ship):
-        """Restore ship's sensor range to saved base."""
+        """Restore ship's sensor range to saved base.
+
+        NOTE: single-nebula assumption — a ship simultaneously inside two
+        distinct-density nebulae will have its sensor restored on the first
+        exit. No target set (Vesuvi4/Multi5/Multi6) overlaps distinct nebulae,
+        so this is deferred.
+        """
         sid = id(ship)
         if sid not in self._sensor_saved:
             return

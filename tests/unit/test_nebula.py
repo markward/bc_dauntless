@@ -240,6 +240,7 @@ def test_ignore_event_opt_out_takes_no_damage():
     tracker = NebulaTracker()
     tracker.update(s, [ship], 2.0)
     assert ship.GetHull().GetCondition() == 1000.0
+    assert ship.GetShieldSubsystem().GetCurrentShields(0) == 500.0
 
 
 def test_sensor_range_scaled_on_enter_restored_on_exit():
