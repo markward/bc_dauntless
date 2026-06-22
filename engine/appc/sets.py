@@ -1,14 +1,33 @@
 import re
+from functools import lru_cache
 
 from engine.appc.events import TGEventHandlerObject
 
 
+@lru_cache(maxsize=1)
+def _systems_tgl():
+    """The Systems.TGL localization database (system + region display names),
+    or None if it can't be loaded (e.g. game/ not installed). Cached."""
+    try:
+        from engine.appc.localization import TGLocalizationManager
+        return TGLocalizationManager().Load("data/TGL/Systems.TGL")
+    except Exception:
+        return None
+
+
 def SetClass_MakeDisplayName(set_name):
     """App.SetClass_MakeDisplayName — human-readable label for a set/region
-    name. Insert a space before a trailing digit run: 'Vesuvi4' -> 'Vesuvi 4'.
-    Always a real str (never a _NamedStub), so the baked catalog and the live
-    SDK menu produce identical labels for the same set."""
-    return re.sub(r"(?<=\D)(\d+)$", r" \1", str(set_name))
+    name. Mirrors real Appc: look the set name up in Systems.TGL (e.g.
+    'Vesuvi4' -> 'Vesuvi Dust Cloud', 'Multi1' -> 'Asteroids'); fall back to
+    inserting a space before a trailing digit run ('Albirea1' -> 'Albirea 1')
+    for the planet regions that have no localized name. Always a real str (never
+    a _NamedStub), so the baked catalog and the live SDK menu produce identical
+    labels for the same set."""
+    name = str(set_name)
+    db = _systems_tgl()
+    if db is not None and db.HasString(name):
+        return str(db.GetString(name))
+    return re.sub(r"(?<=\D)(\d+)$", r" \1", name)
 
 
 class _RendererStub:
