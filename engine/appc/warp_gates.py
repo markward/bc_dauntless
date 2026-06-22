@@ -21,12 +21,15 @@ def configure_gate_hooks(ray_collide=None):
 
 
 class GateResult:
-    __slots__ = ("allowed", "deny_line", "silent")
+    __slots__ = ("allowed", "deny_line", "silent", "reason")
 
-    def __init__(self, allowed, deny_line=None, silent=False):
+    def __init__(self, allowed, deny_line=None, silent=False, reason=None):
         self.allowed = allowed
         self.deny_line = deny_line
         self.silent = silent
+        # Human-readable explanation of a block (dev-mode logging). None when
+        # allowed.
+        self.reason = reason
 
 
 def _safe(fn, ship):
@@ -112,26 +115,32 @@ def _near_starbase(ship):
 def warp_gate(ship):
     """Return a GateResult for whether `ship` may warp, in WarpPressed order."""
     if ship is None:
-        return GateResult(False, None, silent=True)
+        return GateResult(False, None, silent=True, reason="no player ship")
     try:
         # Impulse subsystem missing -> SDK CallNextHandler (proceed; not a block).
         if ship.GetImpulseEngineSubsystem() is None:
             pass
         elif _safe(_impulse_off, ship):
-            return GateResult(False, "EngineeringNeedPowerToEngines")
+            return GateResult(False, "EngineeringNeedPowerToEngines",
+                              reason="impulse engines off "
+                                     "(GetPowerPercentageWanted == 0.0)")
         # Warp subsystem missing -> SDK silent return.
         if ship.GetWarpEngineSubsystem() is None:
-            return GateResult(False, None, silent=True)
+            return GateResult(False, None, silent=True,
+                              reason="no warp engine subsystem")
         if _safe(_warp_disabled, ship):
-            return GateResult(False, "CantWarp1")
+            return GateResult(False, "CantWarp1",
+                              reason="warp engine disabled (IsDisabled)")
         if _safe(_warp_off, ship):
-            return GateResult(False, "CantWarp5")
+            return GateResult(False, "CantWarp5",
+                              reason="warp engine off (not IsOn)")
         if _safe(_in_nebula, ship):
-            return GateResult(False, "CantWarp2")
+            return GateResult(False, "CantWarp2", reason="inside a nebula")
         if _safe(_in_asteroid_field, ship):
-            return GateResult(False, "CantWarp4")
+            return GateResult(False, "CantWarp4",
+                              reason="inside an asteroid field")
         if _safe(_near_starbase, ship):
-            return GateResult(False, "CantWarp3")
+            return GateResult(False, "CantWarp3", reason="in view of Starbase 12")
         return GateResult(True, None)
     except Exception:
         # Invariant: warp_gate never raises. An internal error fails OPEN

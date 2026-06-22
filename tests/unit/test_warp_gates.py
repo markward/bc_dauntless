@@ -145,3 +145,13 @@ def test_starbase_gate_inside_point_visibility(monkeypatch):
     assert wg._near_starbase(player) is False
 
     App.g_kSetManager._sets.clear()
+
+
+def test_block_carries_human_reason():
+    # dev-mode logging needs a human-readable reason on every block.
+    r = wg.warp_gate(_Ship(_Sub(), _Sub(disabled=True)))
+    assert r.allowed is False and r.reason and "warp engine disabled" in r.reason
+    r2 = wg.warp_gate(_Ship(_Sub(), None))   # silent block still has a reason
+    assert r2.allowed is False and r2.reason == "no warp engine subsystem"
+    r3 = wg.warp_gate(None)
+    assert r3.reason == "no player ship"

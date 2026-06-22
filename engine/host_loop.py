@@ -3260,6 +3260,10 @@ def run(mission_name: Optional[str] = None,
                 player = controller.session.player
             result = _wg.warp_gate(player)
             if not result.allowed:
+                if dev_mode.is_enabled():
+                    print("[warp] gated: %s (line=%s)"
+                          % (result.reason or "unknown",
+                             result.deny_line or "-"), flush=True)
                 if result.deny_line is not None:
                     _wg.speak_deny(player, result.deny_line)
                 return
