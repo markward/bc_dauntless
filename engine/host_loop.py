@@ -901,6 +901,12 @@ class _PlayerControl:
         self._current_roll_rate  = 0.0
         self._warp_boost = False
         self._drift_velocity = None   # TGPoint3 while drifting (f==0), else None
+        # Set by the warp sequence (host) during a warp: forces the ship's speed
+        # (0 = hold during align, >0 = burst forward during transit) along its
+        # current warp-aligned heading, ignoring throttle/input. None = normal
+        # player control. The camera follows, so the dust velocity-smear adds to
+        # the warp streak.
+        self._warp_speed_override = None
 
     def nudge_throttle(self, notches: int) -> None:
         """Step the discrete impulse throttle one notch per detent.
@@ -996,6 +1002,22 @@ class _PlayerControl:
         `h` is the _dauntless_host bindings module (or any object with
         key_state, key_pressed, and `keys.KEY_*` attributes).
         """
+        # Warp override: while warping the WarpVFX manager owns the ship (the
+        # turn is applied by _warp_apply_turn). Burst forward at the override
+        # speed (or hold at 0 during align) along the current warp-aligned
+        # heading, ignoring throttle/input so the ship can't be steered mid-warp
+        # and there's a single motion path (no double-translate).
+        if self._warp_speed_override is not None:
+            s = float(self._warp_speed_override)
+            self._current_speed = s
+            if s != 0.0:
+                fwd = player.GetWorldRotation().GetCol(1)
+                p = player.GetTranslate()
+                player.SetTranslateXYZ(p.x + fwd.x * s * dt,
+                                       p.y + fwd.y * s * dt,
+                                       p.z + fwd.z * s * dt)
+                player.SetVelocity(TGPoint3(fwd.x * s, fwd.y * s, fwd.z * s))
+            return
         # 1. Throttle (one-shot edges).  R is checked before digits.
         # Shift+digit is reserved for alert-level binding (Shift+1/2/3 →
         # SetAlertLevel); suppress digit throttle while shift is held so
@@ -1787,6 +1809,11 @@ def _aggregate_suns() -> list:
 # Fraction of a sun's radius removed at peak streak (streak_intensity == 1.0).
 # 0.7 -> suns shrink to 30% radius at the tunnel's brightest. Tunable.
 _WARP_SUN_DIM = 0.7
+
+# Forward speed (GU/s) the ship bursts to during the warp transit (sells the
+# motion; the camera follows so the dust velocity-smear adds to the streak).
+# Tunable. The ship holds (speed 0) during the align beat.
+_WARP_BURST_SPEED = 5.0
 
 # Player rotation captured at align start; the slerp target is anchored to it so
 # the turn is stable across frames (cleared when the warp ends).
@@ -4476,6 +4503,12 @@ def run(mission_name: Optional[str] = None,
                 r.set_warp_travel_dir(_w.travel_dir())
                 if player is not None:
                     _warp_apply_turn(player, _w.turn_fraction(), _w.travel_dir())
+                # Ship motion: hold (0) through the align beat, then BURST forward
+                # at _WARP_BURST_SPEED through the streak transit. Driven via the
+                # _PlayerControl override (single motion path; the camera follows
+                # so the dust velocity-smear stacks on the warp drift).
+                player_control._warp_speed_override = (
+                    _WARP_BURST_SPEED if _w.streak_intensity() > 0.0 else 0.0)
                 # Dev diagnostic: track the peaks so we can confirm live that the
                 # flash / streak / turn are actually driving (the visuals are
                 # exterior-view only; this works from any view).
@@ -4493,6 +4526,7 @@ def run(mission_name: Optional[str] = None,
                 r.set_warp_streak_intensity(0.0)
                 r.set_warp_flash_intensity(0.0)
                 _warp_clear_turn()
+                player_control._warp_speed_override = None
 
             # Warp blackout (streak > 0): the whole sky goes dark — no stars,
             # nebulae, or suns — so the dust tunnel is all that's left. During

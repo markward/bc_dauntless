@@ -40,6 +40,12 @@ _T_MIN, _T_MAX, _T_BASE, _K = 2.0, 10.0, 2.0, 0.02
 _T_ALIGN_MIN, _T_ALIGN_MAX = 0.5, 8.0
 _OMEGA_FALLBACK = 0.5   # rad/s (~29 deg/s) when no impulse subsystem reports one
 
+# When the flash/whoosh occurs inside "Enter Warp.wav" (s from the clip start).
+# The clip is 2.65s; the old fixed-1.5s align stayed in sync, so the flash sits
+# ~1.5s in. The SFX is started t_align - this so the flash lands on the burst.
+# Tunable to the real clip.
+_SFX_ENTER_FLASH_AT = 1.5
+
 
 def _align_duration(ship, heading):
     """Seconds to swing onto `heading` at the ship's max angular velocity."""
@@ -138,11 +144,9 @@ class _WarpVfxBeginAction(TGAction):
             MissionLib.RemoveControl()
         except Exception:
             pass
-        try:
-            if hasattr(self._ship, "SetSpeed"):
-                self._ship.SetSpeed(0.0)
-        except Exception:
-            pass
+        # Ship motion during warp is driven by the host's _PlayerControl warp
+        # override (hold during align, burst during transit) — a ship-level
+        # SetSpeed here is inert for the player and is intentionally omitted.
         if _vfx_start is not None:
             try:
                 _vfx_start(*self._a)
@@ -367,13 +371,20 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
         t_transit = _transit_duration(src_v, dst_v)
         t_align = _align_duration(ship, heading)
         total = t_align + t_transit
-        # Align start: remove control + slow + start VFX, then play the enter
-        # SFX. The set-swap is HELD by a game-time delay = T_align + T_transit so
+        # Align start: remove control + start VFX (root @ 0). The "Enter Warp"
+        # SFX is a separate root scheduled so its in-file flash (~_SFX_ENTER_
+        # FLASH_AT into the clip) lands on the BURST (= t_align), now that the
+        # align length is angle-driven (the old fixed-1.5s align kept it in sync
+        # by luck). The set-swap is a root HELD by total = t_align + t_transit so
         # it lands when the transit ends (masked by the exit flash); placement +
-        # teardown + exit SFX + VFX-end chain after it, firing on arrival.
+        # teardown + exit SFX + VFX-end chain after the swap, firing on arrival.
         seq.AddAction(_WarpVfxBeginAction(ship, heading, t_align, t_transit))
-        seq.AppendAction(_WarpSoundAction("Enter Warp"))
-        seq.AppendAction(ChangeRenderedSetAction_Create(dest_module), total)
+        enter_delay = t_align - _SFX_ENTER_FLASH_AT
+        if enter_delay < 0.0:
+            enter_delay = 0.0
+        seq.AddAction(_WarpSoundAction("Enter Warp"), enter_delay)
+        swap = ChangeRenderedSetAction_Create(dest_module)
+        seq.AddAction(swap, total)
         seq.AppendAction(_PlacePlayerAction(ship, dest_name, placement))
         seq.AppendAction(_ArriveFinalizeAction(source, ship))
         seq.AppendAction(_WarpSoundAction("Exit Warp"))
