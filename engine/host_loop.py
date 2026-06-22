@@ -1942,6 +1942,13 @@ def _aggregate_backdrops(pSet):
         from engine.appc import sky_projection as sp
         model = sp.load_sector_model()
         vantage = sp.vantage_for_set(pSet, model)
+        # During a warp transit the WarpVFX manager animates the vantage
+        # origin->destination so the galaxy streams past. Off-parity for
+        # normal play: when no transit is active, the normal vantage is used.
+        from engine import warp_vfx as _wv
+        _w = _wv.get()
+        if vantage is not None and _w.is_active():
+            vantage = _w.vantage()
         if vantage is not None:
             return sp.project_sky(vantage, model)
     return _authored_backdrops(pSet)
@@ -4297,13 +4304,31 @@ def run(mission_name: Optional[str] = None,
             if hasattr(r, "damage_decals_tick"):
                 r.damage_decals_tick(App.g_kUtopiaModule.GetGameTime())
 
+            # Warp-VFX transit: tick the animator on the GAME clock
+            # (App.g_kUtopiaModule.GetGameTime() == g_kTimerManager.get_time(),
+            # the SAME clock the WarpSequence's TGSequence delay runs on, so the
+            # transit visuals line up with the set swap), then feed the renderer.
+            # While active the local sun/planet objects are dropped — the entry
+            # flash masks the pop — and the vantage override (in
+            # _aggregate_backdrops) streams the sky past.
+            from engine import warp_vfx as _wv
+            _w = _wv.get()
+            if _w.is_active():
+                _w.tick(App.g_kUtopiaModule.GetGameTime())
+                r.set_warp_streak_intensity(_w.streak_intensity())
+                r.set_warp_flash_intensity(_w.flash_intensity())
+                r.set_warp_travel_dir(_w.travel_dir())
+            else:
+                r.set_warp_streak_intensity(0.0)
+                r.set_warp_flash_intensity(0.0)
+
             backdrops = _aggregate_backdrops(active_set)
             r.set_backdrops(backdrops)
 
-            suns = _aggregate_suns()
+            suns = [] if _w.is_active() else _aggregate_suns()
             r.set_suns(suns)
 
-            planets = _aggregate_planets(
+            planets = [] if _w.is_active() else _aggregate_planets(
                 list(App.g_kSetManager._sets.values()))
             r.set_dust_planets(planets)
 
