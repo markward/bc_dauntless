@@ -69,11 +69,20 @@ class STWarpButton(STButton):
 
 
 class SortedRegionMenu(STMenu):
-    """Set-course region list. Sorting/pause flags recorded, unused."""
+    """Set-course region list. Sorting/pause flags recorded, unused.
 
-    def __init__(self, label: str = ""):
+    `region` is the SDK region-module string (e.g. "Systems.Vesuvi.Vesuvi4")
+    passed as the 2nd arg of SortedRegionMenu_CreateW — the warp destination
+    module. Retained so the offline catalog baker can record it.
+    """
+
+    def __init__(self, label: str = "", region=None):
         super().__init__(label)
         self._pause_sorting = 0
+        self._region = str(region) if region is not None else None
+
+    def GetRegionModule(self):
+        return self._region
 
     def ClearInfo(self, *args) -> None:
         # Region-info reset on set-course rebuild (Systems/Utils.py:70).
@@ -151,8 +160,8 @@ def STToggle_CreateW(label="", default=0, label_on="", event_on=None,
     return t
 
 
-def SortedRegionMenu_CreateW(label="", *_extra) -> SortedRegionMenu:
-    return SortedRegionMenu(str(label))
+def SortedRegionMenu_CreateW(label="", region=None, *_extra) -> SortedRegionMenu:
+    return SortedRegionMenu(str(label), region)
 
 
 def STRoundedButton_CreateW(label="", event=None, flags=0) -> STRoundedButton:
