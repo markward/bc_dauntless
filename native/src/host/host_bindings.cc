@@ -525,6 +525,12 @@ void frame() {
         }
         sky_use_cubemap = g_backdrop_pass->has_cubemap();  // false if alloc failed
     }
+    // While warp VFX is active, force the live direct path so the procedural
+    // stars streak and the animated vantage renders every frame (the baked
+    // cubemap is static and cannot show motion).
+    const bool warp_active = dauntless_warp_vfx::streak_intensity() > 0.0f
+                             || dauntless_warp_vfx::flash_intensity() > 0.0f;
+    if (warp_active) sky_use_cubemap = false;
 
     // Renders the space scene from `cam` into the currently-bound FBO.
     // for_viewscreen=true skips the cockpit/screen-space effects that make no
@@ -538,7 +544,9 @@ void frame() {
         else
             g_backdrop_pass->render(g_backdrops, cam, *g_pipeline,
                                     dauntless_procedural_sky::enabled(),
-                                    static_cast<float>(now));
+                                    static_cast<float>(now),
+                                    dauntless_warp_vfx::streak_intensity(),
+                                    dauntless_warp_vfx::travel_dir());
         g_sun_pass->render(g_suns, cam, *g_pipeline, now);
         // Filmic ambient dim: -20% on the main exterior view only. The
         // viewscreen inset (for_viewscreen) and a filmic-off toggle both keep
@@ -763,6 +771,7 @@ void frame() {
     if (any_post) { g_ldr_target->resize(fw, fh); g_ldr_target->bind(); }
     else { glBindFramebuffer(GL_FRAMEBUFFER, 0); glViewport(0, 0, fw, fh); }
     g_resolve_pass->set_hdr_enabled(dauntless_hdr::enabled());
+    g_resolve_pass->set_warp_flash(dauntless_warp_vfx::flash_intensity());
     g_resolve_pass->draw(g_hdr_target->color_texture(), bloom_tex);
 
     if (any_post) {

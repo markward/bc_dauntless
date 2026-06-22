@@ -73,11 +73,13 @@ void BackdropPass::render(const std::vector<Backdrop>& backdrops,
                           const scenegraph::Camera& camera,
                           Pipeline& pipeline,
                           bool procedural,
-                          float now_seconds) {
+                          float now_seconds,
+                          float warp_streak,
+                          glm::vec3 warp_travel) {
     if (backdrops.empty()) return;
     const glm::mat4 view_no_t = glm::mat4(glm::mat3(camera.view_matrix()));
     draw_backdrops(backdrops, view_no_t, camera.proj_matrix(),
-                   pipeline, procedural, now_seconds);
+                   pipeline, procedural, now_seconds, warp_streak, warp_travel);
 }
 
 void BackdropPass::draw_backdrops(const std::vector<Backdrop>& backdrops,
@@ -85,11 +87,15 @@ void BackdropPass::draw_backdrops(const std::vector<Backdrop>& backdrops,
                                   const glm::mat4& proj,
                                   Pipeline& pipeline,
                                   bool procedural,
-                                  float now_seconds) {
+                                  float now_seconds,
+                                  float warp_streak,
+                                  glm::vec3 warp_travel) {
     auto& shader = pipeline.backdrop_shader();
     shader.use();
     shader.set_mat4("u_view_no_translation", view_no_translation);
     shader.set_mat4("u_proj", proj);
+    shader.set_float("u_warp_streak", warp_streak);
+    shader.set_vec3("u_warp_travel", warp_travel);
 
     glDepthMask(GL_FALSE);
     glDepthFunc(GL_LEQUAL);
@@ -183,7 +189,8 @@ bool BackdropPass::bake(const std::vector<Backdrop>& backdrops,
             glm::lookAt(glm::vec3(0.0f), kFaces[i].dir, kFaces[i].up);
         const glm::mat4 view_no_t = glm::mat4(glm::mat3(view));
         draw_backdrops(backdrops, view_no_t, proj, pipeline,
-                       /*procedural=*/true, now_seconds);
+                       /*procedural=*/true, now_seconds,
+                       /*warp_streak=*/0.0f, /*warp_travel=*/glm::vec3(0.0f, 1.0f, 0.0f));
     }
     cubemap_.generate_mips();
 

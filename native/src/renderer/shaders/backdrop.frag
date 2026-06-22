@@ -14,6 +14,8 @@ uniform vec3  u_color;        // recorded dominant colour, 0..1
 uniform float u_coverage;     // density 0..1
 uniform float u_seed;
 uniform float u_time;
+uniform float u_warp_streak;        // 0..1
+uniform vec3  u_warp_travel;        // world-space travel dir (normalized)
 
 out vec4 frag_color;
 
@@ -37,7 +39,19 @@ vec3 proc_stars(vec3 dir, float density){
     vec3 rnd = hash33(cell + u_seed);
     float present = step(1.0 - density, rnd.x);
     vec3 starPos = cell + 0.2 + 0.6*hash33(cell+7.1);
-    float d = length(g - starPos);
+    vec3 delta = g - starPos;
+    if (u_warp_streak > 0.0) {
+        // Streak axis = the star's screen-radial direction from the travel
+        // vanishing point (stars stream outward as you fly forward). Compress
+        // distance along that axis so the blob elongates into a line.
+        vec3 t = normalize(u_warp_travel);
+        vec3 radial = normalize(g - dot(g, t) * t + 1e-5);
+        float along = dot(delta, radial);
+        float perp  = length(delta - along * radial);
+        float stretch = 1.0 + 6.0 * u_warp_streak;   // tunable elongation
+        delta = vec3(perp, along / stretch, 0.0);
+    }
+    float d = length(delta);
     float core = present * smoothstep(0.6, 0.0, d);
     float tw = 0.75 + 0.25*sin(u_time*(1.0+2.0*rnd.z) + rnd.y*6.2831);
     vec3 tint = mix(vec3(0.7,0.8,1.0), vec3(1.0,0.9,0.75), rnd.z);
