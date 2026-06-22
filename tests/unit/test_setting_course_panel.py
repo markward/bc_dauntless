@@ -54,6 +54,33 @@ def test_select_system_reveals_warp_points_with_active_overlay():
     assert active["active"] is True  # in the live menu
 
 
+def test_empty_system_offers_itself_with_a_note():
+    # Tau Ceti / Deep Space / Riha have no catalog warp points: the right
+    # column shows the system itself as the selectable target, plus a note.
+    p = SettingCoursePanel()
+    p.open(course_menu=_live_menu())
+    p.dispatch_event("select-system:tauceti")
+    data = _payload(p.render_payload())
+    assert data["warp_note"]  # non-empty explanation
+    assert len(data["warp_points"]) == 1
+    row = data["warp_points"][0]
+    assert row["id"] == "tauceti"
+    assert row["label"] == "Tau Ceti"
+    # And it is selectable (UI-only).
+    assert p.dispatch_event("select-warp:tauceti") is True
+    data = _payload(p.render_payload())
+    assert data["warp_points"][0]["selected"] is True
+
+
+def test_populated_system_has_no_note():
+    p = SettingCoursePanel()
+    p.open(course_menu=_live_menu())
+    p.dispatch_event("select-system:vesuvi")
+    data = _payload(p.render_payload())
+    assert data["warp_note"] is None
+    assert len(data["warp_points"]) >= 2
+
+
 def test_select_warp_records_ui_only_selection():
     p = SettingCoursePanel()
     p.open(course_menu=_live_menu())
