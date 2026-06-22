@@ -3,7 +3,7 @@ from engine.appc.events import (
     TGEvent, TGEvent_Create,
     TGBoolEvent, TGBoolEvent_Create,
     TGKeyboardEvent, ET_KEYBOARD_EVENT,
-    WeaponHitEvent, ET_WEAPON_HIT,
+    WeaponHitEvent, ET_WEAPON_HIT, ET_WARP_BUTTON_PRESSED,
     TGEventHandlerObject, TGEventManager,
     TGPythonInstanceWrapper,
 )
@@ -125,6 +125,11 @@ from engine.appc.actions import (
     TGConditionAction, TGConditionAction_Create,
     TGObjPtrEvent, TGObjPtrEvent_Create,
     TGObject_GetTGObjectPtr,
+)
+from engine.appc.warp import (
+    WarpSequence_Create,
+    ChangeRenderedSetAction_Create,
+    ChangeRenderedSetAction_CreateFromSet,
 )
 from engine.audio.tg_sound import (
     TGSound, TGSoundManager, g_kSoundManager,

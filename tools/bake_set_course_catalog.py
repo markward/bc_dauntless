@@ -32,7 +32,8 @@ def _slug(label):
 
 
 def build_catalog():
-    """Return {galaxy_system_id: [{"id","label"}, ...]} for every system."""
+    """Return {galaxy_system_id: {"module", "warp_points": [{"id","label",
+    "module"}, ...]}} for every system."""
     import App  # noqa: F401  (ensures SDK import path + App shim are set up)
     from engine.appc.windows import TacticalControlWindow
     from engine.appc.target_menu import _reset_target_menu_singleton
@@ -73,9 +74,17 @@ def build_catalog():
             sid = system_id_for_set(node.GetLabel())
             if sid not in model_ids:
                 unmatched.append((node.GetLabel(), sid))
-            wps = [{"id": _slug(c.GetLabel()), "label": c.GetLabel()}
+            wps = [{"id": _slug(c.GetLabel()), "label": c.GetLabel(),
+                    "module": getattr(c, "GetRegionModule", lambda: None)()}
                    for c in getattr(node, "_children", [])]
-            catalog.setdefault(sid, []).extend(wps)
+            entry = catalog.setdefault(
+                sid, {"module": None, "warp_points": []})
+            entry["warp_points"].extend(wps)
+            # System node's own region (used by single-region systems like Riha
+            # whose self-row is the destination).
+            node_mod = getattr(node, "GetRegionModule", lambda: None)()
+            if node_mod is not None and entry["module"] is None:
+                entry["module"] = node_mod
     _set_current_game(None)
     if failed:
         print("[catalog] %d systems failed: %s" % (len(failed), failed))
@@ -83,16 +92,18 @@ def build_catalog():
         print("[catalog] %d unmatched system ids (add overrides): %s"
               % (len(unmatched), unmatched))
     print("[catalog] %d systems, %d warp points"
-          % (len(catalog), sum(len(v) for v in catalog.values())))
+          % (len(catalog),
+             sum(len(v["warp_points"]) for v in catalog.values())))
     return catalog
 
 
 def fold_into_model(catalog, out_path=OUT):
     model = json.loads(Path(out_path).read_text())
     for s in model.get("systems", []):
-        wps = catalog.get(s["id"])
-        if wps is not None:
-            s["warp_points"] = wps
+        entry = catalog.get(s["id"])
+        if entry is not None:
+            s["warp_points"] = entry["warp_points"]
+            s["module"] = entry["module"]
     Path(out_path).write_text(json.dumps(model, indent=2) + "\n")
     return model
 

@@ -2080,6 +2080,139 @@ class MissionSession:
         self.player = None
 
 
+def _iter_ships_in_set(pSet) -> Iterable:
+    """Walk every ShipClass object held by a single set."""
+    from engine.appc.ships import ShipClass
+    for obj in _iter_set_objects(pSet):
+        if isinstance(obj, ShipClass):
+            yield obj
+
+
+def _iter_planets_in_set(pSet) -> Iterable:
+    """Walk every Planet (non-Sun) object held by a single set."""
+    from engine.appc.planet import Planet, Sun
+    for obj in _iter_set_objects(pSet):
+        if isinstance(obj, Planet) and not isinstance(obj, Sun):
+            yield obj
+
+
+def realize_set_objects(session, pSet, renderer, *, verbose: bool = False) -> None:
+    """Build render instances for ONE set's ships/planets mid-mission.
+
+    Mirrors the ship/planet instance-building loops in `_MissionLoader.load`,
+    filtered to a single set and made idempotent: any object already present in
+    `session.ship_instances` / `session.planet_instances` is skipped. That
+    idempotency is how the warp spine reuses the player's instance (the player
+    has been moved into the destination set before this runs) — its instance is
+    neither rebuilt nor leaked.
+
+    Texture-search lists and the two-layer scaling are taken directly from the
+    loader; do not diverge or the realized instances stop matching load-time
+    ones. Note `realize_set_objects` does not consult the controller-level
+    nif_to_handle cache (it has no controller here); it loads per object, which
+    is correct — the renderer dedupes identical NIFs internally.
+    """
+    r_ = renderer
+
+    shared_search = [
+        str(PROJECT_ROOT / "game" / DEFAULT_TEXTURE_SEARCH),
+        str(PROJECT_ROOT / "game" / "data" / "Models" / "SharedTextures" / "FedBases" / "High"),
+    ]
+    for ship in _iter_ships_in_set(pSet):
+        if ship in session.ship_instances:
+            continue
+        nif_path = _ship_nif_path(ship, verbose=verbose)
+        if nif_path is None:
+            continue
+        tex_search = [str(Path(nif_path).parent / "High"), *shared_search]
+        try:
+            handle = r_.load_model(nif_path, tex_search)
+        except Exception as e:
+            if verbose:
+                print(f"[host_loop]   realize: skip ship: load_model({nif_path}) "
+                      f"raised: {type(e).__name__}: {e}", flush=True)
+            continue
+        center, half_extents = r_.model_aabb(handle)
+        extent = _model_extent_from_aabb(center, half_extents)
+        if ship.GetRadius() <= 0.0:
+            try:
+                ship.SetRadius(extent * BC_MODEL_SCALE)
+            except Exception as _e:
+                dev_mode.log_swallowed("realize ship.SetRadius fallback", _e)
+        iid = r_.create_instance(handle)
+        r_.set_world_transform(iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
+        session.ship_instances[ship] = iid
+        # Fresnel rim applies to ship hulls only — planets share the opaque
+        # shader and must stay rim-free (default ineligible).
+        r_.set_rim_eligible(iid, True)
+
+        # Subsystem glow dimming (best-effort VFX); never block spawn.
+        try:
+            from engine.appc.subsystem_glow import ShipGlowController
+            session.ship_glow_controllers[iid] = ShipGlowController(r_, iid, ship)
+        except Exception as _e:
+            dev_mode.log_swallowed("realize ShipGlowController register", _e)
+
+        # Shield render state. No-op for ships without a ShieldProperty.
+        try:
+            from engine.shields import register_ship_shield
+            register_ship_shield(
+                r_, instance_id=iid, ship=ship,
+                aabb_center=center, aabb_half_extents=half_extents,
+            )
+        except Exception as e:
+            if verbose:
+                print(f"[host_loop]   realize: shield register skipped for ship: "
+                      f"{type(e).__name__}: {e}", flush=True)
+
+    planet_tex_search = str(PROJECT_ROOT / "game" / DEFAULT_PLANET_TEXTURE_SEARCH)
+    for planet in _iter_planets_in_set(pSet):
+        if planet in session.planet_instances:
+            continue
+        nif_path = _planet_nif_path(planet, verbose=verbose)
+        if nif_path is None:
+            continue
+        try:
+            handle = r_.load_model(nif_path, planet_tex_search)
+        except Exception as e:
+            if verbose:
+                print(f"[host_loop]   realize: skip planet: load_model({nif_path}) "
+                      f"raised: {type(e).__name__}: {e}", flush=True)
+            continue
+        center, half_extents = r_.model_aabb(handle)
+        extent = _model_extent_from_aabb(center, half_extents)
+        if planet.GetRadius() <= 0.0:
+            try:
+                planet.SetRadius(extent * BC_MODEL_SCALE)
+            except Exception as _e:
+                dev_mode.log_swallowed("realize planet.SetRadius fallback", _e)
+        radius = planet.GetRadius()
+        natural_scale = (radius / extent) if extent > 0.0 else 1.0
+        iid = r_.create_instance(handle)
+        r_.set_world_transform(iid, _astro_world_matrix(planet, natural_scale))
+        session.planet_instances[planet] = iid
+        session.planet_natural_scale[planet] = natural_scale
+
+
+def teardown_set_objects(session, pSet, renderer) -> None:
+    """Destroy render instances for this set's REMAINING objects and forget them.
+
+    The warp spine moves the player out of the source set before terminating it,
+    so the player is no longer enumerated here and survives. Objects outside
+    `pSet` are never touched."""
+    for ship in list(_iter_ships_in_set(pSet)):
+        iid = session.ship_instances.pop(ship, None)
+        if iid is not None:
+            renderer.destroy_instance(iid)
+            # ship_glow_controllers is keyed by instance id.
+            session.ship_glow_controllers.pop(iid, None)
+    for planet in list(_iter_planets_in_set(pSet)):
+        iid = session.planet_instances.pop(planet, None)
+        if iid is not None:
+            renderer.destroy_instance(iid)
+            session.planet_natural_scale.pop(planet, None)
+
+
 class HostController:
     """Per-process state for the running renderer + a single mission.
 
@@ -3053,6 +3186,43 @@ def run(mission_name: Optional[str] = None,
         controller.renderer = r
         controller.loader = _MissionLoader(controller, verbose=verbose)
 
+        # Warp spine render hooks (Stage 1 hard cut): the warp sequence loads
+        # the destination set then calls realize; on arrival it tears down the
+        # source set. Bound here to the live session+renderer. Unset hooks make
+        # those steps headless no-ops, so this wiring is what gives the spine a
+        # renderer.
+        from engine.appc import warp as _warp
+        def _warp_realize(pSet):
+            if controller.session is not None:
+                realize_set_objects(controller.session, pSet, controller.renderer)
+        def _warp_teardown(pSet):
+            if controller.session is not None:
+                teardown_set_objects(controller.session, pSet, controller.renderer)
+        _warp.configure_warp_hooks(
+            realize=_warp_realize, teardown=_warp_teardown,
+            current_player=lambda: (controller.session.player
+                                    if controller.session is not None else None))
+
+        # CEF Set Course popup: selecting a warp point SETS THE COURSE — record
+        # the destination set-module on the SDK warp button. The player then
+        # engages the warp from the Helm "Warp" button (on_warp_engage below).
+        def on_course_set(module):
+            import App
+            btn = App.SortedRegionMenu_GetWarpButton()
+            if btn is not None:
+                btn.SetDestination(module)
+
+        # Helm "Warp" button click -> engage the warp spine directly. Stage 1
+        # deliberately bypasses the SDK ET_WARP_BUTTON_PRESSED / WarpPressed
+        # path: WarpPressed does camera/cinematic + control work whose engine
+        # support is deferred to Stages 2-3, and it runs live before our spine
+        # could (a raise there is swallowed at the CEF boundary). Calling the
+        # spine directly loads the destination set, moves the player, and
+        # terminates the source. execute_warp reads the button's destination.
+        def on_warp_engage(button):
+            from engine.appc import warp as _w
+            _w.execute_warp(button)
+
         # Register the bridge cutscene controller BEFORE the initial mission
         # load so that TGAnimActions created during Initialize()/Briefing()
         # find a live controller and defer correctly (not instant-complete).
@@ -3290,9 +3460,11 @@ def run(mission_name: Optional[str] = None,
         sdk_mirror = SDKMirrorPanel()
         registry.register(sdk_mirror)
         from engine.ui.setting_course_panel import SettingCoursePanel
-        setting_course_panel = SettingCoursePanel()
+        setting_course_panel = SettingCoursePanel(on_course_set=on_course_set)
         from engine.ui.crew_menu_panel import CrewMenuPanel
-        crew_menu_panel = CrewMenuPanel(on_set_course=setting_course_panel.open)
+        crew_menu_panel = CrewMenuPanel(
+            on_set_course=setting_course_panel.open,
+            on_warp_engage=on_warp_engage)
         registry.register(crew_menu_panel)
         registry.register(setting_course_panel)
         try:

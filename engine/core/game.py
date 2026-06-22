@@ -209,5 +209,12 @@ def Game_GetCurrentPlayer():
 
 
 def Game_SetCurrentPlayer(player) -> None:
-    if _current_game is not None:
-        _current_game.SetCurrentPlayer(player)
+    # Setting the current player implies an active game. The real host creates
+    # a Game during mission init (host_loop _set_current_game), but direct
+    # callers (e.g. the warp end-to-end path / tests) may set a player before
+    # any Game exists. Lazily create one so the player is never silently
+    # dropped — otherwise Game_GetCurrentPlayer() would return None and the
+    # warp executor's player lookup would no-op.
+    if _current_game is None:
+        _set_current_game(Game())
+    _current_game.SetCurrentPlayer(player)

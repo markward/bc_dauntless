@@ -1,9 +1,15 @@
 """SettingCoursePanel — two-level Set Course menu.
 
 Left column lists every galaxy system (from sector_model); selecting one
-reveals its warp points (from the baked catalog) in the right column.
+reveals its warp points (from the baked catalog) in the right column. Clicking
+a warp point SETS THE COURSE — it hands the destination set-module to the host
+(which records it on the SDK warp button) and closes the popup. The player then
+engages the warp from the original SDK Helm "Warp" button. The popup never
+warps directly (Stage 1 routes the actual warp through the helm warp button →
+the warp spine).
+
 Systems and warp targets the running game currently has in its live SDK Set
-Course menu are marked active (bold). Warp-point selection is UI-only.
+Course menu are marked active (bold).
 
 Spec: docs/superpowers/specs/2026-06-21-set-course-two-level-menu-design.md
 """
@@ -17,12 +23,15 @@ from engine.ui.panel import Panel
 
 
 class SettingCoursePanel(Panel):
-    def __init__(self) -> None:
+    def __init__(self, on_course_set=None) -> None:
         super().__init__()
+        # Injected by host_loop: records the chosen destination set-module on
+        # the SDK warp button (sets the course). None -> selection is a silent
+        # no-op (keeps headless construction / existing tests working).
+        self._on_course_set = on_course_set
         self._visible = False
         self._course_menu = None
         self._selected_system: Optional[str] = None
-        self._selected_warp: Optional[str] = None
         self._last_pushed: Optional[str] = None
         self._systems = [
             s["id"] for s in sm.load_sector_model().get("systems", [])
@@ -40,7 +49,6 @@ class SettingCoursePanel(Panel):
     def open(self, course_menu=None) -> None:
         self._course_menu = course_menu
         self._selected_system = None
-        self._selected_warp = None
         self._visible = True
 
     def close(self) -> None:
@@ -69,6 +77,19 @@ class SettingCoursePanel(Panel):
                 pass
         return set()
 
+    def _module_for(self, warp_id) -> Optional[str]:
+        """Destination set-module for a warp-point id (or the empty-system
+        self-row, whose id equals the system id), or None if unavailable."""
+        sid = self._selected_system
+        if sid is None:
+            return None
+        for wp in sm.warp_points_for(sid):
+            if wp["id"] == warp_id:
+                return wp.get("module")
+        if warp_id == sid:
+            return sm.system_module(sid)
+        return None
+
     def render_payload(self) -> Optional[str]:
         active_systems = self._active_system_ids()
         systems = [{"id": sid, "label": sm.display_label(sid),
@@ -85,21 +106,25 @@ class SettingCoursePanel(Panel):
                     warp_points.append({
                         "id": wp["id"], "label": wp["label"],
                         "active": wp["label"] in active_warps,
-                        "selected": wp["id"] == self._selected_warp,
+                        "available": wp.get("module") is not None,
                     })
             else:
                 # Systems with no sub-destinations (single-region systems like
                 # Riha) or galaxy-map backdrops not registered in the SDK menu
                 # (Deep Space, Tau Ceti): the system itself is the set-course
-                # target. Offer one row = the system, with a note so it's clear
-                # this isn't a missing list.
+                # target — if it has a loadable set module.
+                sys_module = sm.system_module(sid)
                 warp_points.append({
                     "id": sid, "label": sm.display_label(sid),
                     "active": sid in active_systems,
-                    "selected": sid == self._selected_warp,
+                    "available": sys_module is not None,
                 })
-                warp_note = ("No separate destinations in this system — "
-                             "set course to the system itself.")
+                warp_note = (
+                    "No separate destinations in this system — "
+                    "set course to the system itself."
+                    if sys_module is not None else
+                    "No course destination available for this system."
+                )
         payload = json.dumps({
             "visible": self._visible,
             "selected_system": self._selected_system,
@@ -118,10 +143,17 @@ class SettingCoursePanel(Panel):
             return True
         if action.startswith("select-system:"):
             self._selected_system = action[len("select-system:"):]
-            self._selected_warp = None
             return True
-        if action.startswith("select-warp:"):
-            self._selected_warp = action[len("select-warp:"):]
+        if action.startswith("set-course:"):
+            warp_id = action[len("set-course:"):]
+            module = self._module_for(warp_id)
+            if module is None:
+                # Unavailable destination (e.g. a galaxy backdrop with no set
+                # module) — leave the popup open; the note explains why.
+                return False
+            if self._on_course_set is not None:
+                self._on_course_set(module)
+            self.close()
             return True
         return False
 

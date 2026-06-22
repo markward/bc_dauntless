@@ -6,6 +6,7 @@ from engine.core.ids import TGObject
 # Appc-side constants exposed via App.py:13834+).
 ET_KEYBOARD_EVENT: int = 0x1000
 ET_WEAPON_HIT:     int = 0x1100  # reserved range above input-event ids
+ET_WARP_BUTTON_PRESSED: int = 0x1200   # warp button activated (synthesized from CEF Set Course)
 
 
 class TGEvent(TGObject):

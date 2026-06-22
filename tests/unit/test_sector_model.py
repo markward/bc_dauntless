@@ -32,3 +32,14 @@ def test_sky_projection_reexports_still_work():
     from engine.appc import sky_projection as sp
     assert sp.load_sector_model() is sm.load_sector_model()
     assert sp.system_id_for_set("Vesuvi6") == "vesuvi"
+
+
+def test_warp_points_carry_module():
+    from engine.appc import sector_model as sm
+    wps = sm.warp_points_for("vesuvi")
+    assert any(w.get("module") == "Systems.Vesuvi.Vesuvi4" for w in wps)
+
+
+def test_system_module_for_riha():
+    from engine.appc import sector_model as sm
+    assert sm.system_module("riha") == "Systems.Riha.Riha1"
