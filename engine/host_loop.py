@@ -3203,6 +3203,36 @@ def run(mission_name: Optional[str] = None,
             current_player=lambda: (controller.session.player
                                     if controller.session is not None else None))
 
+        # CEF Set Course "Warp" click -> fire the authentic SDK warp event.
+        # Sets the SDK warp button's destination module then dispatches
+        # ET_WARP_BUTTON_PRESSED via g_kEventManager.AddEvent (inline
+        # ProcessEvent). The button's handlers run in registration order: SDK
+        # WarpPressed (camera/cinematic + MissionLib.RemoveControl) first, then
+        # our execute_warp (the warp spine) second.
+        def on_warp(module):
+            import App
+            btn = App.SortedRegionMenu_GetWarpButton()
+            if btn is None:
+                return
+            btn.SetDestination(module)
+            ev = App.TGEvent_Create()
+            ev.SetEventType(App.ET_WARP_BUTTON_PRESSED)
+            ev.SetDestination(btn)
+            App.g_kEventManager.AddEvent(ev)
+
+        # Register execute_warp as a SECOND ET_WARP_BUTTON_PRESSED handler on
+        # the SDK warp button, AFTER the SDK has created it + registered its own
+        # WarpPressed handler (during bridge CreateMenus). Called from
+        # _after_mission_loaded (post_load_hook) after every mission load.
+        # Idempotent per button via _dauntless_warp_wired.
+        def _register_warp_executor():
+            import App
+            btn = App.SortedRegionMenu_GetWarpButton()
+            if btn is not None and not getattr(btn, "_dauntless_warp_wired", False):
+                btn.AddPythonFuncHandlerForInstance(
+                    App.ET_WARP_BUTTON_PRESSED, "engine.appc.warp.execute_warp")
+                btn._dauntless_warp_wired = True
+
         # Register the bridge cutscene controller BEFORE the initial mission
         # load so that TGAnimActions created during Initialize()/Briefing()
         # find a live controller and defer correctly (not instant-complete).
@@ -3320,6 +3350,11 @@ def run(mission_name: Optional[str] = None,
             # so we re-add it here via the persistent wrapper.
             _App.g_kEventManager.AddBroadcastPythonMethodHandler(
                 _App.ET_WEAPON_HIT, _hit_wrapper, "on_weapon_hit", None)
+            # Register our warp executor as a second ET_WARP_BUTTON_PRESSED
+            # handler on the SDK warp button, now that the SDK CreateMenus path
+            # (run during loader.load) has created the button + registered its
+            # own WarpPressed handler. Idempotent per button.
+            _register_warp_executor()
         controller.post_load_hook = _after_mission_loaded
 
         bridge_camera  = _BridgeCamera()
@@ -3440,7 +3475,7 @@ def run(mission_name: Optional[str] = None,
         sdk_mirror = SDKMirrorPanel()
         registry.register(sdk_mirror)
         from engine.ui.setting_course_panel import SettingCoursePanel
-        setting_course_panel = SettingCoursePanel()
+        setting_course_panel = SettingCoursePanel(on_warp=on_warp)
         from engine.ui.crew_menu_panel import CrewMenuPanel
         crew_menu_panel = CrewMenuPanel(on_set_course=setting_course_panel.open)
         registry.register(crew_menu_panel)
