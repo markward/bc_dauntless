@@ -151,13 +151,14 @@ def test_set_menu_replaces_default():
     assert c.GetMenu() is custom
 
 
-def test_menu_get_submenu_w_auto_vivifies():
-    """SDK pattern: pCharacter.GetMenu().GetSubmenuW("Helm") on a freshly-
-    created menu returns a real submenu without explicit AddChild."""
+def test_menu_get_submenu_w_is_strict():
+    """GetSubmenuW returns the existing submenu or None (real Appc semantics);
+    explicitly-added submenus are found, absent ones are not."""
     menu = STTopLevelMenu("Top")
-    sub = menu.GetSubmenuW("Helm")
-    assert isinstance(sub, STMenu)
-    assert menu.GetSubmenuW("Helm") is sub
+    assert menu.GetSubmenuW("Helm") is None
+    helm = STMenu("Helm")
+    menu.AddChild(helm)
+    assert menu.GetSubmenuW("Helm") is helm
 
 
 def test_menu_button_round_trip():
@@ -173,11 +174,10 @@ def test_menu_button_round_trip():
 def test_menu_kill_children_clears_everything():
     menu = STMenu("Top")
     menu.AddChild(STButton_CreateW("A"))
-    menu.GetSubmenuW("Sub")  # vivify
+    menu.AddChild(STMenu("Sub"))  # explicit AddChild so it's registered
     menu.KillChildren()
-    # KillChildren wipes everything; lookups now auto-vivify fresh empty stubs.
+    # KillChildren wipes everything; nothing survives.
     assert menu.GetButtonWStrict("A") is None
-    # GetSubmenuW + GetButtonW vivified above don't survive KillChildren.
     assert "Sub" not in menu._submenus
 
 

@@ -1,17 +1,23 @@
-// Setting Course panel render fn. Driven by Python via cef_execute_javascript:
-//   setSettingCoursePanel({visible:true, title, message, destinations});
+// Two-level Set Course menu render fn. Driven by Python:
+//   setSettingCoursePanel({visible, selected_system, systems, warp_points});
 //   setSettingCoursePanel({visible:false});
-// The OK button and ESC fire dauntlessEvent('setting-course/cancel').
-// Reuses the cp-* classes from css/configuration_panel.css.
-// Spec: docs/superpowers/specs/2026-06-21-set-course-button-popup-design.md.
+// System rows fire setting-course/select-system:<id>; warp rows fire
+// setting-course/select-warp:<id>; OK/ESC fire setting-course/cancel.
+// Reuses cp-* chrome; sc-* classes add the two-column layout.
 
 function escapeHtmlSC(s) {
     return String(s)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function _scRow(item, evt) {
+    const cls = 'sc-row'
+        + (item.active ? ' sc-row--active' : '')
+        + (item.selected ? ' sc-row--selected' : '');
+    return '<li class="' + cls + '" data-id="' + escapeHtmlSC(item.id) + '"'
+        + ' onclick="dauntlessEvent(\'' + evt + ':\' + this.getAttribute(\'data-id\'))">'
+        + escapeHtmlSC(item.label) + '</li>';
 }
 
 function setSettingCoursePanel(state) {
@@ -21,32 +27,19 @@ function setSettingCoursePanel(state) {
         root.style.display = 'none';
         return;
     }
-    const header = document.getElementById('setting-course-header');
-    if (header) header.textContent = state.title || 'Set Course';
-    const body = document.getElementById('setting-course-body');
-    if (body) {
-        const dests = state.destinations || [];
-        if (dests.length === 0) {
-            // Placeholder: just the message.
-            body.innerHTML = '<div class="cp-row__label">'
-                + escapeHtmlSC(state.message || '') + '</div>';
-        } else {
-            // Future: render a clickable destination list. Each row fires
-            // dauntlessEvent('setting-course/select:<id>'). The id is carried
-            // in a data attribute and read back (decoded) at click time, so a
-            // quote in the id can never break the onclick string.
-            let html = '';
-            for (let i = 0; i < dests.length; ++i) {
-                const d = dests[i];
-                html += '<div class="cp-row" data-dest-id="'
-                      + escapeHtmlSC(d.id) + '"'
-                      + ' onclick="dauntlessEvent(\'setting-course/select:\''
-                      + ' + this.getAttribute(\'data-dest-id\'))">'
-                      + '<div class="cp-row__label">'
-                      + escapeHtmlSC(d.label) + '</div></div>';
-            }
-            body.innerHTML = html;
-        }
+    const sysEl = document.getElementById('setting-course-systems');
+    if (sysEl) {
+        sysEl.innerHTML = (state.systems || []).map(function (s) {
+            const sel = (s.id === state.selected_system);
+            return _scRow({id: s.id, label: s.label, active: s.active,
+                           selected: sel}, 'setting-course/select-system');
+        }).join('');
+    }
+    const warpEl = document.getElementById('setting-course-warps');
+    if (warpEl) {
+        warpEl.innerHTML = (state.warp_points || []).map(function (w) {
+            return _scRow(w, 'setting-course/select-warp');
+        }).join('');
     }
     root.style.display = 'flex';
 }

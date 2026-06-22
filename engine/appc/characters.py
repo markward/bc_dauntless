@@ -158,15 +158,12 @@ class STMenu(ObjectClass):
         return self._buttons.get(str(label))
 
     def GetSubmenuW(self, label) -> "STMenu | None":
-        out = self._submenus.get(str(label))
-        if out is None:
-            # Bridge menus auto-vivify submenus on first lookup so the
-            # tree-build patterns in BridgeHandlers don't need to
-            # pre-create every node.  Mirrors Appc behaviour.
-            out = STMenu(str(label))
-            self._submenus[str(label)] = out
-            self._children.append(out)
-        return out
+        # Strict: return the existing submenu or None, matching real Appc.
+        # Bridge menu trees are built by explicit Create + AddChild (which
+        # registers the child in _submenus by label, above), not by
+        # auto-vivifying on lookup. Systems/Utils.py:67 depends on
+        # None-when-absent to run its warp-point population loop.
+        return self._submenus.get(str(label))
 
     def GetSubmenu(self, label) -> "STMenu | None":
         return self.GetSubmenuW(label)

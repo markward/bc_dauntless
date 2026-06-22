@@ -96,17 +96,19 @@
     </section>
 
     <!-- Setting Course overlay (production).
-         setSettingCoursePanel({visible, title, message, destinations})
-         drives state; the OK button and ESC fire
-         dauntlessEvent('setting-course/cancel'). Reuses the cp-* modal CSS.
-         Placeholder: shows a "Setting course…" message; the destinations
-         seam will later list warp targets.
-         Spec: docs/superpowers/specs/2026-06-21-set-course-button-popup-design.md -->
+         setSettingCoursePanel({visible, selected_system, systems, warp_points})
+         drives state. Two columns: systems (left) | the selected system's
+         warp points (right). System rows fire
+         dauntlessEvent('setting-course/select-system:<id>'); warp rows fire
+         'setting-course/select-warp:<id>'; the OK button and ESC fire
+         'setting-course/cancel'. Reuses the cp-* modal CSS.
+         Spec: docs/superpowers/specs/2026-06-21-set-course-two-level-menu-design.md -->
     <section id="setting-course-panel" style="display:none">
       <div class="cp-modal">
         <div class="cp-header" id="setting-course-header">Set Course</div>
-        <div class="cp-content">
-          <div class="cp-body" id="setting-course-body"></div>
+        <div class="cp-content sc-columns">
+          <ul id="setting-course-systems" class="sc-col"></ul>
+          <ul id="setting-course-warps" class="sc-col"></ul>
         </div>
         <div class="cp-footer">
           <button class="cp-done-button"

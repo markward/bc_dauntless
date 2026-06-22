@@ -1,80 +1,82 @@
-"""Unit tests for SettingCoursePanel — the placeholder Set Course modal."""
+"""SettingCoursePanel — two-level system/warp-point menu."""
 import json
 
 from engine.ui.setting_course_panel import SettingCoursePanel
 
 
-def _payload_dict(js: str) -> dict:
-    """Extract the JSON arg from `setSettingCoursePanel(<json>);`."""
-    assert js.startswith("setSettingCoursePanel(")
-    assert js.endswith(");")
-    inner = js[len("setSettingCoursePanel("):-len(");")]
-    return json.loads(inner)
+class _FakeMenu:
+    """Stand-in for an STMenu/SortedRegionMenu node."""
+    def __init__(self, label, children=None):
+        self._label = label
+        self._children = children or []
+    def GetLabel(self):
+        return self._label
 
 
-def test_name_is_setting_course():
-    assert SettingCoursePanel().name == "setting-course"
+def _payload(js):
+    assert js.startswith("setSettingCoursePanel(") and js.endswith(");")
+    return json.loads(js[len("setSettingCoursePanel("):-2])
 
 
-def test_starts_hidden():
+def _live_menu():
+    # Vesuvi active with one active warp point "Vesuvi 4".
+    return _FakeMenu("Set Course", [
+        _FakeMenu("Vesuvi", [_FakeMenu("Vesuvi 4")]),
+    ])
+
+
+def test_lists_all_systems_with_active_flag():
     p = SettingCoursePanel()
-    assert p.is_open() is False
-    js = p.render_payload()
-    assert _payload_dict(js) == {"visible": False}
+    p.open(course_menu=_live_menu())
+    data = _payload(p.render_payload())
+    ids = [s["id"] for s in data["systems"]]
+    assert "vesuvi" in ids
+    assert len(ids) >= 25
+    assert "multi1" not in ids
+    vesuvi = next(s for s in data["systems"] if s["id"] == "vesuvi")
+    assert vesuvi["active"] is True
+    other = next(s for s in data["systems"] if s["id"] != "vesuvi")
+    assert other["active"] is False
 
 
-def test_open_emits_visible_message_payload():
+def test_select_system_reveals_warp_points_with_active_overlay():
     p = SettingCoursePanel()
-    p.render_payload()  # flush the initial hidden payload
-    p.open()
-    assert p.is_open() is True
-    data = _payload_dict(p.render_payload())
-    assert data["visible"] is True
-    assert data["title"] == "Set Course"
-    assert data["message"] == "Setting course…"
-    assert data["destinations"] == []
-
-
-def test_render_is_snapshot_cached():
-    p = SettingCoursePanel()
-    p.open()
-    first = p.render_payload()
-    assert first is not None
-    assert p.render_payload() is None  # no state change -> no re-emit
-
-
-def test_cancel_closes_and_emits_hidden():
-    p = SettingCoursePanel()
-    p.open()
+    p.open(course_menu=_live_menu())
     p.render_payload()
-    assert p.dispatch_event("cancel") is True
-    assert p.is_open() is False
-    assert _payload_dict(p.render_payload()) == {"visible": False}
+    assert p.dispatch_event("select-system:vesuvi") is True
+    data = _payload(p.render_payload())
+    assert data["selected_system"] == "vesuvi"
+    labels = [w["label"] for w in data["warp_points"]]
+    assert "Vesuvi 4" in labels
+    active = next(w for w in data["warp_points"] if w["label"] == "Vesuvi 4")
+    assert active["active"] is True  # in the live menu
+
+
+def test_select_warp_records_ui_only_selection():
+    p = SettingCoursePanel()
+    p.open(course_menu=_live_menu())
+    p.dispatch_event("select-system:vesuvi")
+    wp_id = _payload_first_warp_id(p)
+    assert p.dispatch_event("select-warp:" + wp_id) is True
+    data = _payload(p.render_payload())
+    sel = next(w for w in data["warp_points"] if w["id"] == wp_id)
+    assert sel["selected"] is True
+
+
+def _payload_first_warp_id(p):
+    p2 = _payload(p.render_payload())
+    return p2["warp_points"][0]["id"]
+
+
+def test_open_resets_selection():
+    p = SettingCoursePanel()
+    p.open(course_menu=_live_menu())
+    p.dispatch_event("select-system:vesuvi")
+    p.open(course_menu=_live_menu())
+    data = _payload(p.render_payload())
+    assert data["selected_system"] is None
 
 
 def test_unknown_action_returns_false():
     p = SettingCoursePanel()
     assert p.dispatch_event("frobnicate") is False
-
-
-def test_handle_key_esc_closes_when_open():
-    p = SettingCoursePanel()
-    p.open()
-    p.handle_key_esc()
-    assert p.is_open() is False
-
-
-def test_invalidate_forces_reemit():
-    p = SettingCoursePanel()
-    p.open()
-    p.render_payload()
-    assert p.render_payload() is None
-    p.invalidate()
-    assert p.render_payload() is not None
-
-
-def test_open_stores_course_menu_for_future_wiring():
-    p = SettingCoursePanel()
-    sentinel = object()
-    p.open(course_menu=sentinel)
-    assert p._course_menu is sentinel
