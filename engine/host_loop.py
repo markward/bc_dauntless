@@ -1788,11 +1788,6 @@ def _aggregate_suns() -> list:
 # 0.7 -> suns shrink to 30% radius at the tunnel's brightest. Tunable.
 _WARP_SUN_DIM = 0.7
 
-# Fraction of the warp `dur` budget spent on the align/turn phase (the rest is
-# the transit/streak phase). Used by the Stage-2 _vfx_start adapter until Task 3
-# reworks WarpSequence to pass explicit align/transit times.
-_WARP_ALIGN_FRACTION = 0.3
-
 # Player rotation captured at align start; the slerp target is anchored to it so
 # the turn is stable across frames (cleared when the warp ends).
 _warp_turn_start_R = None
@@ -3319,16 +3314,9 @@ def run(mission_name: Optional[str] = None,
             except Exception:
                 return None
 
-        def _vfx_start(src, dst, dur, travel):
-            # Stage-2 adapter: warp.py still calls the old 4-arg hook
-            # (src, dst, dur, travel) until Task 3 reworks WarpSequence to pass
-            # (heading, t_align, t_transit). Translate here: heading = travel,
-            # and split the distance-scaled `dur` budget into the align (turn)
-            # and transit (streak) phases.
-            heading = travel or (0.0, 1.0, 0.0)
-            total = max(0.02, float(dur))
-            t_align = total * _WARP_ALIGN_FRACTION
-            t_transit = total - t_align
+        def _vfx_start(heading, t_align, t_transit):
+            # WarpSequence (Task 3) computes the heading + explicit align/transit
+            # times; start the per-frame manager at the current game time.
             _wv.get().start(heading, t_align, t_transit,
                             App.g_kUtopiaModule.GetGameTime())
 

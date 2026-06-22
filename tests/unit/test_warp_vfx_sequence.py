@@ -9,19 +9,21 @@ def setup_function(_):
     warp.configure_warp_vfx(start=None, stop=None, enabled=None, vantage_of=None)
 
 
-def test_duration_scales_with_distance():
-    near = warp._transit_duration((0.0, 0.0, 0.0), (1.0, 0.0, 0.0))
-    far = warp._transit_duration((0.0, 0.0, 0.0), (1000.0, 0.0, 0.0))
-    assert far > near
-    assert warp._T_MIN <= near <= warp._T_MAX
-    assert warp._T_MIN <= far <= warp._T_MAX
-    # unmapped vantage -> T_BASE
-    assert warp._transit_duration(None, (1.0, 0.0, 0.0)) == warp._T_BASE
+def test_heading_is_normalized_src_to_dst():
+    h = warp._warp_heading((0.0, 0.0, 0.0), (10.0, 0.0, 0.0))
+    assert abs(h[0] - 1.0) < 1e-6 and abs(h[1]) < 1e-6
+    # unmapped -> default forward
+    assert warp._warp_heading(None, (1.0, 0.0, 0.0)) == (0.0, 1.0, 0.0)
 
 
-def test_flythrough_disabled_is_instant(monkeypatch):
-    # enabled() False -> instant Stage-1 sequence (no held swap): player warps now.
-    warp.configure_warp_vfx(enabled=lambda: False)
+def test_flythrough_on_holds_swap_and_starts_vfx():
+    started = {}
+    warp.configure_warp_vfx(
+        enabled=lambda: True,
+        start=lambda heading, t_align, t_transit: started.update(
+            align=t_align, transit=t_transit, heading=heading),
+        stop=lambda: None,
+        vantage_of=lambda key: (0.0, 0.0, 0.0))
     src = SetClass_Create(); App.g_kSetManager.AddSet(src, "Src")
     player = App.ShipClass_Create(); player.SetName("player")
     src.AddObjectToSet(player, "player")
@@ -29,17 +31,14 @@ def test_flythrough_disabled_is_instant(monkeypatch):
     mod = types.ModuleType("FakeSys.D"); mod.Initialize = lambda: (
         App.g_kSetManager.AddSet(SetClass_Create(), "D"))
     sys.modules["FakeSys.D"] = mod
-    warp.WarpSequence_Create(player, "FakeSys.D", placement=None).Play()
-    assert App.g_kSetManager.GetSet("Src") is None   # instant swap happened
+    warp.WarpSequence_Create(player, "FakeSys.D", placement="Player Start").Play()
+    assert started.get("align") == warp._T_ALIGN
+    assert started.get("transit") > 0.0
+    assert App.g_kSetManager.GetSet("Src") is src   # swap DEFERRED
 
 
-def test_flythrough_enabled_starts_vfx_and_defers_swap(monkeypatch):
-    started = {}
-    warp.configure_warp_vfx(
-        enabled=lambda: True,
-        start=lambda src, dst, dur, tdir: started.update(dur=dur),
-        stop=lambda: None,
-        vantage_of=lambda key: (0.0, 0.0, 0.0))
+def test_flythrough_off_is_instant():
+    warp.configure_warp_vfx(enabled=lambda: False)
     src = SetClass_Create(); App.g_kSetManager.AddSet(src, "Src2")
     player = App.ShipClass_Create(); player.SetName("player")
     src.AddObjectToSet(player, "player")
@@ -47,8 +46,5 @@ def test_flythrough_enabled_starts_vfx_and_defers_swap(monkeypatch):
     mod = types.ModuleType("FakeSys.D2"); mod.Initialize = lambda: (
         App.g_kSetManager.AddSet(SetClass_Create(), "D2"))
     sys.modules["FakeSys.D2"] = mod
-    seq = warp.WarpSequence_Create(player, "FakeSys.D2", placement="Player Start")
-    seq.Play()
-    # VFX started; swap is DEFERRED (held by delay) -> source still present at t=0.
-    assert "dur" in started and started["dur"] > 0.0
-    assert App.g_kSetManager.GetSet("Src2") is src
+    warp.WarpSequence_Create(player, "FakeSys.D2", placement=None).Play()
+    assert App.g_kSetManager.GetSet("Src2") is None   # instant swap
