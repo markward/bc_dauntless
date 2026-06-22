@@ -32,9 +32,37 @@ def configure_warp_hooks(realize=None, teardown=None, current_player=None):
 # on either side) => T_BASE (a short transit, no parallax).
 _T_MIN, _T_MAX, _T_BASE, _K = 2.0, 10.0, 2.0, 0.02
 
-# Align/turn phase length (s): the ship slows + swings onto the warp heading
-# before the streak transit begins. Constant (distance-independent).
-_T_ALIGN = 1.5
+# Align/turn phase: the ship slows + swings onto the warp heading before the
+# streak transit begins. The duration is derived from the actual turn angle and
+# the ship's impulse-engine max angular velocity (so the turn respects the
+# ship's real turn-rate limit — a big swing takes longer than a small one),
+# clamped so a near-zero turn still has a brief beat and a 180 isn't endless.
+_T_ALIGN_MIN, _T_ALIGN_MAX = 0.5, 8.0
+_OMEGA_FALLBACK = 0.5   # rad/s (~29 deg/s) when no impulse subsystem reports one
+
+
+def _align_duration(ship, heading):
+    """Seconds to swing onto `heading` at the ship's max angular velocity."""
+    try:
+        fwd = ship.GetWorldRotation().GetCol(1)
+        dot = fwd.x * heading[0] + fwd.y * heading[1] + fwd.z * heading[2]
+    except Exception:
+        return _T_ALIGN_MIN
+    dot = -1.0 if dot < -1.0 else (1.0 if dot > 1.0 else dot)
+    angle = math.acos(dot)            # radians, 0..pi
+    omega = 0.0
+    try:
+        ies = ship.GetImpulseEngineSubsystem()
+        if ies is not None:
+            omega = ies.GetMaxAngularVelocity()
+    except Exception:
+        omega = 0.0
+    if omega <= 1e-4:
+        omega = _OMEGA_FALLBACK
+    # The manager eases the turn with a smoothstep (peak rate ~1.5x the mean),
+    # so stretch the window by 1.5 to keep the PEAK turn rate <= omega.
+    t = 1.5 * angle / omega
+    return _T_ALIGN_MIN if t < _T_ALIGN_MIN else (_T_ALIGN_MAX if t > _T_ALIGN_MAX else t)
 
 # Host-registered VFX hooks (None => instant Stage-1 path, headless-safe).
 _vfx_start = None         # start(heading, t_align, t_transit)
@@ -337,12 +365,13 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
         dst_v = _vfx_vantage_of(dest_module) if _vfx_vantage_of else None
         heading = _warp_heading(src_v, dst_v)
         t_transit = _transit_duration(src_v, dst_v)
-        total = _T_ALIGN + t_transit
+        t_align = _align_duration(ship, heading)
+        total = t_align + t_transit
         # Align start: remove control + slow + start VFX, then play the enter
         # SFX. The set-swap is HELD by a game-time delay = T_align + T_transit so
         # it lands when the transit ends (masked by the exit flash); placement +
         # teardown + exit SFX + VFX-end chain after it, firing on arrival.
-        seq.AddAction(_WarpVfxBeginAction(ship, heading, _T_ALIGN, t_transit))
+        seq.AddAction(_WarpVfxBeginAction(ship, heading, t_align, t_transit))
         seq.AppendAction(_WarpSoundAction("Enter Warp"))
         seq.AppendAction(ChangeRenderedSetAction_Create(dest_module), total)
         seq.AppendAction(_PlacePlayerAction(ship, dest_name, placement))
