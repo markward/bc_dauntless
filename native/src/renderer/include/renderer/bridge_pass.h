@@ -66,6 +66,10 @@ public:
     /// receives u_viewscreen_brightness=1.0 (byte-identical output).
     void set_viewscreen_brightness(float b) { viewscreen_brightness_ = b; }
 
+    /// Warp boom flash mixed into the viewscreen feed only (confines the
+    /// lightspeed flash to the viewscreen when viewing the bridge). 0 = none.
+    void set_viewscreen_flash(float f) { viewscreen_flash_ = f; }
+
 private:
     /// Lazily-allocated 1x1 white texture, used as a fallback for any
     /// bridge mesh whose Base-stage texture failed to load. Same role
@@ -77,6 +81,7 @@ private:
     unsigned long long viewscreen_model_handle_ = 0;
     unsigned int       viewscreen_tex_ = 0;
     float              viewscreen_brightness_ = 1.0f;
+    float              viewscreen_flash_ = 0.0f;
 };
 
 }  // namespace renderer

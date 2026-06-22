@@ -557,7 +557,17 @@ void frame() {
             g_breach_pass->render(g_world, cam, *g_pipeline, lookup,
                                   *g_carve_cache, g_decal_game_time);
         if (g_shield_pass) g_shield_pass->submit(g_world, cam, *g_pipeline, now, lookup);
-        if (!for_viewscreen && g_dust_pass)
+        // Dust is normally skipped on the viewscreen RTT (a camera-anchored
+        // cockpit smear), but the WARP STREAK lives in this pass — so during
+        // warp (streak > 0) we DO render it onto the viewscreen so the bridge
+        // crew see the streaks too. Safe re: the dust pass's cross-frame state
+        // (prev_eye_/warp_drift_phase_): the main and viewscreen render_space
+        // calls are mutually exclusive per frame (main only when !bridge_active,
+        // viewscreen only when bridge_active), so the state advances exactly
+        // once per frame either way, and the viewscreen reuses g_camera's eye.
+        const bool warp_streaking =
+            dauntless_warp_vfx::streak_intensity() > 0.0f;
+        if (g_dust_pass && (!for_viewscreen || warp_streaking))
             g_dust_pass->render(cam, dt, *g_pipeline, g_suns, g_dust_planets,
                                 dauntless_warp_vfx::streak_intensity(),
                                 dauntless_warp_vfx::travel_dir());
@@ -731,6 +741,10 @@ void frame() {
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         if (fh > 0) g_bridge_camera.aspect = static_cast<float>(fw) / static_cast<float>(fh);
+        // Warp boom flash on the bridge is confined to the viewscreen feed (the
+        // surrounding interior must not flash); the main resolve-pass flash is
+        // suppressed below when bridge_active. 0 when not warping.
+        g_bridge_pass->set_viewscreen_flash(dauntless_warp_vfx::flash_intensity());
         g_bridge_pass->render(g_world, g_bridge_camera, *g_pipeline,
                               lookup, g_bridge_lighting);
     }
@@ -764,7 +778,11 @@ void frame() {
     if (any_post) { g_ldr_target->resize(fw, fh); g_ldr_target->bind(); }
     else { glBindFramebuffer(GL_FRAMEBUFFER, 0); glViewport(0, 0, fw, fh); }
     g_resolve_pass->set_hdr_enabled(dauntless_hdr::enabled());
-    g_resolve_pass->set_warp_flash(dauntless_warp_vfx::flash_intensity());
+    // On the bridge the warp flash is confined to the viewscreen feed (applied
+    // in the bridge pass); suppress it on the main resolve so the interior
+    // doesn't white out. Exterior view keeps the full-screen flash.
+    g_resolve_pass->set_warp_flash(
+        bridge_active ? 0.0f : dauntless_warp_vfx::flash_intensity());
     g_resolve_pass->draw(g_hdr_target->color_texture(), bloom_tex);
 
     if (any_post) {
