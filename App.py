@@ -126,6 +126,11 @@ from engine.appc.actions import (
     TGObjPtrEvent, TGObjPtrEvent_Create,
     TGObject_GetTGObjectPtr,
 )
+from engine.appc.warp import (
+    WarpSequence_Create,
+    ChangeRenderedSetAction_Create,
+    ChangeRenderedSetAction_CreateFromSet,
+)
 from engine.audio.tg_sound import (
     TGSound, TGSoundManager, g_kSoundManager,
     TGSoundRegion, TGSoundRegion_GetRegion, TGSoundRegion_Create,
