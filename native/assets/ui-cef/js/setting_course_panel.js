@@ -1,8 +1,9 @@
 // Two-level Set Course menu render fn. Driven by Python:
 //   setSettingCoursePanel({visible, selected_system, systems, warp_points});
 //   setSettingCoursePanel({visible:false});
-// System rows fire setting-course/select-system:<id>; warp rows fire
-// setting-course/select-warp:<id>; OK/ESC fire setting-course/cancel.
+// System rows fire setting-course/select-system:<id>; warp-point rows fire
+// setting-course/select-warp:<id>. The Warp button commits the selected
+// course via setting-course/warp; Cancel/ESC fire setting-course/cancel.
 // Reuses cp-* chrome; sc-* classes add the two-column layout.
 
 function escapeHtmlSC(s) {
