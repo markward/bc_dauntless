@@ -73,7 +73,40 @@ def _in_asteroid_field(ship):
 
 
 def _near_starbase(ship):
-    return False  # Task 4
+    """True if `ship` is in view of any of Starbase 12's 'Inside Visibility'
+    points (mirrors AI.Compound.DockWithStarbase.IsInViewOfInsidePoints). Only
+    applies inside the Starbase12 set, and only when the host ray-collide hook
+    is configured (live)."""
+    if _ray_collide_hook is None:
+        return False
+    import App
+    sb_set = App.g_kSetManager.GetSet("Starbase12")
+    if sb_set is None:
+        return False
+    cont = ship.GetContainingSet()
+    if cont is None or cont.GetObjID() != sb_set.GetObjID():
+        return False
+    starbase = App.ShipClass_GetObject(sb_set, "Starbase 12")
+    if starbase is None:
+        return False
+    import MissionLib
+    ship_loc = ship.GetWorldLocation()
+    i = 0
+    while True:
+        i += 1
+        vPos, _fwd, _up = MissionLib.GetPositionOrientationFromProperty(
+            starbase, "Inside Visibility " + str(i))
+        if vPos is None:
+            break
+        # point -> world space (mirrors the SDK helper exactly)
+        vPos.MultMatrixLeft(starbase.GetWorldRotation())
+        vPos.Add(starbase.GetWorldLocation())
+        # If the segment to the ship does NOT hit the starbase, the point is
+        # visible to the ship => in view => blocked.
+        if not _ray_collide_hook(starbase, (vPos.x, vPos.y, vPos.z),
+                                 (ship_loc.x, ship_loc.y, ship_loc.z)):
+            return True
+    return False
 
 
 def warp_gate(ship):

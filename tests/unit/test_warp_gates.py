@@ -66,3 +66,54 @@ def test_asteroid_gate_blocks_cantwarp4(monkeypatch):
     monkeypatch.setattr(wg, "_in_asteroid_field", lambda s: True)
     r = wg.warp_gate(_Ship(_Sub(), _Sub()))
     assert (r.allowed, r.deny_line) == (False, "CantWarp4")
+
+
+def test_starbase_gate_inside_point_visibility(monkeypatch):
+    import App
+    from engine.appc import warp_gates as wg
+    from engine.appc.sets import SetClass_Create
+
+    App.g_kSetManager._sets.clear()
+    sb_set = SetClass_Create()
+    App.g_kSetManager.AddSet(sb_set, "Starbase12")
+
+    starbase = App.ShipClass_Create()
+    starbase.SetName("Starbase 12")
+    starbase.SetTranslateXYZ(0.0, 0.0, 0.0)
+    starbase.Update(0)
+    sb_set.AddObjectToSet(starbase, "Starbase 12")
+
+    # Give the starbase one "Inside Visibility 1" position-orientation property.
+    pos = App.PositionOrientationProperty_Create("Inside Visibility 1")
+    fwd = App.TGPoint3()
+    fwd.SetXYZ(0.0, 1.0, 0.0)
+    up = App.TGPoint3()
+    up.SetXYZ(0.0, 0.0, 1.0)
+    pos.SetOrientation(fwd, up, fwd)
+    p = App.TGPoint3()
+    p.SetXYZ(5.0, 0.0, 0.0)
+    pos.SetPosition(p)
+    # Real property-set add API: TGModelPropertySet.AddToSet(node_name, prop)
+    # (engine/appc/properties.py); there is no AddProperty.
+    starbase.GetPropertySet().AddToSet("Scene Root", pos)
+
+    player = App.ShipClass_Create()
+    player.SetName("player")
+    player.SetTranslateXYZ(10.0, 0.0, 0.0)
+    player.Update(0)
+    sb_set.AddObjectToSet(player, "player")
+
+    # Hook says the segment does NOT hit the starbase -> inside point is
+    # visible -> in view -> blocked.
+    wg.configure_gate_hooks(ray_collide=lambda sb, a, b: False)
+    assert wg._near_starbase(player) is True
+
+    # Now the segment DOES hit the starbase -> point occluded -> not in view.
+    wg.configure_gate_hooks(ray_collide=lambda sb, a, b: True)
+    assert wg._near_starbase(player) is False
+
+    # No hook -> can't evaluate -> don't block.
+    wg.configure_gate_hooks(ray_collide=None)
+    assert wg._near_starbase(player) is False
+
+    App.g_kSetManager._sets.clear()
