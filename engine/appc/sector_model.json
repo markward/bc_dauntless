@@ -311,8 +311,8 @@
       ],
       "warp_points": [
         {
-          "id": "multi-1",
-          "label": "Multi 1"
+          "id": "asteroids",
+          "label": "Asteroids"
         }
       ]
     },
@@ -325,8 +325,8 @@
       ],
       "warp_points": [
         {
-          "id": "multi-2",
-          "label": "Multi 2"
+          "id": "planetorama",
+          "label": "Planetorama"
         }
       ]
     },
@@ -339,8 +339,8 @@
       ],
       "warp_points": [
         {
-          "id": "multi-3",
-          "label": "Multi 3"
+          "id": "space",
+          "label": "Space"
         }
       ]
     },
@@ -353,8 +353,8 @@
       ],
       "warp_points": [
         {
-          "id": "multi-4",
-          "label": "Multi 4"
+          "id": "sunny",
+          "label": "Sunny"
         }
       ]
     },
@@ -367,8 +367,8 @@
       ],
       "warp_points": [
         {
-          "id": "multi-5",
-          "label": "Multi 5"
+          "id": "cloudy",
+          "label": "Cloudy"
         }
       ]
     },
@@ -381,8 +381,8 @@
       ],
       "warp_points": [
         {
-          "id": "multi-6",
-          "label": "Multi 6"
+          "id": "showers",
+          "label": "Showers"
         }
       ]
     },
@@ -395,8 +395,8 @@
       ],
       "warp_points": [
         {
-          "id": "multi-7",
-          "label": "Multi 7"
+          "id": "star-system",
+          "label": "Star System"
         }
       ]
     },
@@ -620,16 +620,16 @@
       ],
       "warp_points": [
         {
-          "id": "vesuvi-4",
-          "label": "Vesuvi 4"
+          "id": "vesuvi-dust-cloud",
+          "label": "Vesuvi Dust Cloud"
         },
         {
-          "id": "vesuvi-5",
-          "label": "Vesuvi 5"
+          "id": "geki-colony",
+          "label": "Geki Colony"
         },
         {
-          "id": "vesuvi-6",
-          "label": "Vesuvi 6"
+          "id": "haven-colony",
+          "label": "Haven Colony"
         }
       ]
     },

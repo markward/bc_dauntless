@@ -64,8 +64,31 @@ def vantage_for_set(pSet, model=None):
     return None
 
 
+@lru_cache(maxsize=1)
+def _systems_tgl_labels():
+    """Case-insensitive {galaxy_id: display_name} index from Systems.TGL
+    (e.g. 'omegadraconis' -> 'Omega Draconis'), or {} if unavailable.
+    Description entries are skipped; keys are lowercased to match galaxy ids."""
+    try:
+        from engine.appc.sets import _systems_tgl
+        db = _systems_tgl()
+        strings = getattr(db, "_strings", None) or getattr(db, "strings", None)
+        if not strings:
+            return {}
+        return {k.lower(): v for k, v in strings.items()
+                if not k.endswith(" Description")}
+    except Exception:
+        return {}
+
+
 def display_label(system_id):
     sid = str(system_id)
+    # Authentic system names come from Systems.TGL (e.g. 'omegadraconis' ->
+    # 'Omega Draconis'); fall back to the override map, then to title-case,
+    # so the label still resolves when game/ (and its TGL) is absent.
+    tgl = _systems_tgl_labels().get(sid)
+    if tgl:
+        return tgl
     if sid in _LABEL_OVERRIDES:
         return _LABEL_OVERRIDES[sid]
     return sid.replace("_", " ").title()

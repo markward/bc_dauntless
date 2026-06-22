@@ -19,9 +19,11 @@ def _payload(js):
 
 
 def _live_menu():
-    # Vesuvi active with one active warp point "Vesuvi 4".
+    # Vesuvi active with one active warp point. The live SDK menu labels its
+    # warp points via SetClass_MakeDisplayName (Systems.TGL), so the active
+    # label matches the baked catalog: "Vesuvi4" -> "Vesuvi Dust Cloud".
     return _FakeMenu("Set Course", [
-        _FakeMenu("Vesuvi", [_FakeMenu("Vesuvi 4")]),
+        _FakeMenu("Vesuvi", [_FakeMenu("Vesuvi Dust Cloud")]),
     ])
 
 
@@ -47,8 +49,8 @@ def test_select_system_reveals_warp_points_with_active_overlay():
     data = _payload(p.render_payload())
     assert data["selected_system"] == "vesuvi"
     labels = [w["label"] for w in data["warp_points"]]
-    assert "Vesuvi 4" in labels
-    active = next(w for w in data["warp_points"] if w["label"] == "Vesuvi 4")
+    assert "Vesuvi Dust Cloud" in labels
+    active = next(w for w in data["warp_points"] if w["label"] == "Vesuvi Dust Cloud")
     assert active["active"] is True  # in the live menu
 
 
