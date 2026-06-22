@@ -151,3 +151,119 @@ def test_tracker_reset_clears_membership():
     # fires a fresh ENTER, never a spurious EXIT.
     tracker.update(s, [ship], 1.0)
     assert all(e[0] != "exit" for e in sink.events)
+
+
+class _FakeHull:
+    def __init__(self, cond):
+        self._c = cond
+
+    def GetCondition(self):
+        return self._c
+
+    def SetCondition(self, v):
+        self._c = v
+
+
+class _FakeShields:
+    NUM_SHIELDS = 6
+
+    def __init__(self, per_face):
+        self._f = [per_face] * self.NUM_SHIELDS
+
+    def GetCurrentShields(self, face):
+        return self._f[int(face)]
+
+    def SetCurrentShields(self, face, v):
+        self._f[int(face)] = v
+
+
+class _FakeSensor:
+    def __init__(self, base):
+        self._b = base
+
+    def GetBaseSensorRange(self):
+        return self._b
+
+    def SetBaseSensorRange(self, v):
+        self._b = v
+
+
+class _DamageableShip(_FakeShip):
+    def __init__(self, name, x, y, z, hull=1000.0, shield=500.0, sensor=2000.0):
+        super().__init__(name, x, y, z)
+        self._hull = _FakeHull(hull)
+        self._shield = _FakeShields(shield)
+        self._sensor = _FakeSensor(sensor)
+        self._handlers = {}        # event_type -> [qualified_name]
+
+    def GetHull(self):
+        return self._hull
+
+    def GetShieldSubsystem(self):
+        return self._shield
+
+    def GetSensorSubsystem(self):
+        return self._sensor
+
+    def AddPythonFuncHandlerForInstance(self, event_type, qualified_name):
+        self._handlers.setdefault(event_type, []).append(qualified_name)
+
+
+def test_environmental_damage_drains_hull_and_shields():
+    import App
+    s, n = _set_with_nebula()      # SetupDamage(150, 20)
+    ship = _DamageableShip("P", 0.0, 1500.0, 0.0, hull=1000.0, shield=500.0)
+    tracker = NebulaTracker()
+    tracker.update(s, [ship], 2.0)             # 2 s tick
+    assert ship.GetHull().GetCondition() == 1000.0 - 150.0 * 2.0
+    # 20/s * 2 s = 40 total, spread across 6 faces.
+    assert abs(ship.GetShieldSubsystem().GetCurrentShields(0)
+               - (500.0 - 40.0 / 6.0)) < 1e-6
+
+
+def test_environmental_damage_floors_at_zero():
+    import App
+    s, n = _set_with_nebula()
+    ship = _DamageableShip("P", 0.0, 1500.0, 0.0, hull=100.0, shield=1.0)
+    tracker = NebulaTracker()
+    tracker.update(s, [ship], 10.0)            # huge tick
+    assert ship.GetHull().GetCondition() == 0.0
+    assert ship.GetShieldSubsystem().GetCurrentShields(0) == 0.0
+
+
+def test_ignore_event_opt_out_takes_no_damage():
+    import App
+    s, n = _set_with_nebula()
+    ship = _DamageableShip("Rock", 0.0, 1500.0, 0.0, hull=1000.0)
+    ship.AddPythonFuncHandlerForInstance(
+        App.ET_ENVIRONMENT_DAMAGE, "MissionLib.IgnoreEvent")
+    tracker = NebulaTracker()
+    tracker.update(s, [ship], 2.0)
+    assert ship.GetHull().GetCondition() == 1000.0
+
+
+def test_sensor_range_scaled_on_enter_restored_on_exit():
+    import App
+    # Build a nebula with sensor_density 0.25 (in range).
+    s = App.SetClass_Create()
+    n = App.MetaNebula_Create(0.1, 0.1, 0.1, 100.0, 0.25,
+                              "i.tga", "e.tga")
+    n.SetupDamage(0.0, 0.0)
+    n.AddNebulaSphere(0.0, 0.0, 0.0, 100.0)
+    s.AddObjectToSet(n, "neb")
+    ship = _DamageableShip("P", 0.0, 0.0, 0.0, sensor=2000.0)
+    tracker = NebulaTracker()
+    tracker.update(s, [ship], 1.0)             # enter
+    assert ship.GetSensorSubsystem().GetBaseSensorRange() == 2000.0 * 0.25
+    ship.move_to(0.0, 5000.0, 0.0)
+    tracker.update(s, [ship], 1.0)             # exit
+    assert ship.GetSensorSubsystem().GetBaseSensorRange() == 2000.0
+
+
+def test_sensor_density_out_of_range_clamps_to_one():
+    import App
+    s, n = _set_with_nebula()                  # sensor_density 10.5
+    ship = _DamageableShip("P", 0.0, 1500.0, 0.0, sensor=2000.0)
+    tracker = NebulaTracker()
+    tracker.update(s, [ship], 1.0)
+    assert ship.GetSensorSubsystem().GetBaseSensorRange() == 2000.0
