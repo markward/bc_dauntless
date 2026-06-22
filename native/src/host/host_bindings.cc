@@ -525,13 +525,6 @@ void frame() {
         }
         sky_use_cubemap = g_backdrop_pass->has_cubemap();  // false if alloc failed
     }
-    // While warp VFX is active, force the live direct path so the procedural
-    // stars streak and the animated vantage renders every frame (the baked
-    // cubemap is static and cannot show motion).
-    const bool warp_active = dauntless_warp_vfx::streak_intensity() > 0.0f
-                             || dauntless_warp_vfx::flash_intensity() > 0.0f;
-    if (warp_active) sky_use_cubemap = false;
-
     // Renders the space scene from `cam` into the currently-bound FBO.
     // for_viewscreen=true skips the cockpit/screen-space effects that make no
     // sense on (or would corrupt state for) the viewscreen RTT: dust (camera-
@@ -544,9 +537,7 @@ void frame() {
         else
             g_backdrop_pass->render(g_backdrops, cam, *g_pipeline,
                                     dauntless_procedural_sky::enabled(),
-                                    static_cast<float>(now),
-                                    dauntless_warp_vfx::streak_intensity(),
-                                    dauntless_warp_vfx::travel_dir());
+                                    static_cast<float>(now));
         g_sun_pass->render(g_suns, cam, *g_pipeline, now);
         // Filmic ambient dim: -20% on the main exterior view only. The
         // viewscreen inset (for_viewscreen) and a filmic-off toggle both keep
@@ -567,7 +558,9 @@ void frame() {
                                   *g_carve_cache, g_decal_game_time);
         if (g_shield_pass) g_shield_pass->submit(g_world, cam, *g_pipeline, now, lookup);
         if (!for_viewscreen && g_dust_pass)
-            g_dust_pass->render(cam, dt, *g_pipeline, g_suns, g_dust_planets);
+            g_dust_pass->render(cam, dt, *g_pipeline, g_suns, g_dust_planets,
+                                dauntless_warp_vfx::streak_intensity(),
+                                dauntless_warp_vfx::travel_dir());
         if (!for_viewscreen && g_lens_flare_pass)
             g_lens_flare_pass->render(g_lens_flares, cam, *g_pipeline, fw, fh, now);
         if (g_torpedo_pass) g_torpedo_pass->render(g_torpedoes,    cam, *g_pipeline);

@@ -32,9 +32,7 @@ public:
                 const scenegraph::Camera& camera,
                 Pipeline& pipeline,
                 bool procedural,
-                float now_seconds,
-                float warp_streak = 0.0f,
-                glm::vec3 warp_travel = glm::vec3(0.0f, 1.0f, 0.0f));
+                float now_seconds);
 
     /// Bake `backdrops` into all 6 cubemap faces (camera at origin, 6 x 90deg
     /// views) using the same procedural shader path as render(). Returns false
@@ -58,9 +56,7 @@ private:
                         const glm::mat4& proj,
                         Pipeline& pipeline,
                         bool procedural,
-                        float now_seconds,
-                        float warp_streak,
-                        glm::vec3 warp_travel);
+                        float now_seconds);
 
     /// Lazy-tessellated UV sphere keyed by target_poly_count. Most BC
     /// systems use 256; cache grows on demand if a script requests
