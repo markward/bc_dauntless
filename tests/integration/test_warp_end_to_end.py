@@ -1,3 +1,12 @@
+"""End-to-end Stage-1 warp: the production direct-spine path.
+
+The Set Course popup records the destination set-module on the SDK warp button
+(host `on_course_set` -> btn.SetDestination). Clicking the Helm "Warp" button
+engages the warp spine directly (host `on_warp_engage` -> warp.execute_warp).
+Stage 1 deliberately does NOT fire the SDK ET_WARP_BUTTON_PRESSED event or run
+WarpPressed (its camera/control work is deferred to Stages 2-3, and running it
+live was the cause of a silent no-op).
+"""
 import App
 from engine.appc import warp
 from engine.appc.sets import SetClass_Create
@@ -8,17 +17,13 @@ def _waypoint(name, set_name, x):
     wp.SetTranslateXYZ(x, 0.0, 0.0); wp.Update(0)
 
 
-def test_event_fire_warps_player(monkeypatch):
+def _setup_player_and_dest():
     App.g_kSetManager._sets.clear()
     warp.configure_warp_hooks(realize=None, teardown=None)
-
-    # source set + player
     src = SetClass_Create(); App.g_kSetManager.AddSet(src, "Src")
     player = App.ShipClass_Create(); player.SetName("player")
     src.AddObjectToSet(player, "player")
     App.Game_SetCurrentPlayer(player)
-
-    # destination module
     import types, sys
     mod = types.ModuleType("FakeSys.Dst")
     def Initialize():
@@ -26,77 +31,34 @@ def test_event_fire_warps_player(monkeypatch):
         _waypoint("Player Start", "Dst", 42.0)
     mod.Initialize = Initialize
     sys.modules["FakeSys.Dst"] = mod
+    return src, player
 
-    # a warp button registered like the SDK does
+
+def test_set_course_then_warp_engage_switches_system():
+    src, player = _setup_player_and_dest()
     btn = App.STWarpButton_CreateW("Warp")
     App.SortedRegionMenu_SetWarpButton(btn)
-    btn.AddPythonFuncHandlerForInstance(App.ET_WARP_BUTTON_PRESSED,
-                                        "engine.appc.warp.execute_warp")
 
-    # host on_warp: set destination + fire event
+    # on_course_set: the popup records the chosen destination module.
     btn.SetDestination("FakeSys.Dst")
-    ev = App.TGEvent_Create()
-    ev.SetEventType(App.ET_WARP_BUTTON_PRESSED)
-    ev.SetDestination(btn)
-    App.g_kEventManager.AddEvent(ev)
+    # on_warp_engage: the Helm Warp button click engages the spine directly.
+    warp.execute_warp(btn)
 
-    assert App.g_kSetManager.GetSet("Src") is None
+    assert App.g_kSetManager.GetSet("Src") is None          # source terminated
     dst = App.g_kSetManager.GetSet("Dst")
-    assert dst.GetObject("player") is player
-    assert abs(player.GetWorldLocation().x - 42.0) < 1e-3
+    assert dst.GetObject("player") is player                # player moved in
+    assert App.g_kSetManager.GetRenderedSet().GetName() == "Dst"
+    assert abs(player.GetWorldLocation().x - 42.0) < 1e-3   # placed at Player Start
 
 
-def test_event_fire_with_real_warppressed_warps_player(monkeypatch):
-    """Production registers TWO handlers on the warp button, in order:
-    the SDK's Bridge.HelmMenuHandlers.WarpPressed (camera/cinematic +
-    MissionLib.RemoveControl) FIRST, then engine.appc.warp.execute_warp
-    SECOND (the handler that actually warps). This locks in the composed
-    two-handler control flow: WarpPressed must run without raising and
-    without aborting the handler loop, so execute_warp still warps the
-    player. Mirrors test_event_fire_warps_player but with both handlers.
-    """
-    App.g_kSetManager._sets.clear()
-    warp.configure_warp_hooks(realize=None, teardown=None)
-
-    # source set + player
-    src = SetClass_Create(); App.g_kSetManager.AddSet(src, "Src")
-    player = App.ShipClass_Create(); player.SetName("player")
-    src.AddObjectToSet(player, "player")
-    App.Game_SetCurrentPlayer(player)
-
-    # WarpPressed reads CharacterClass_GetObject(GetSet("bridge"), "Helm"/"XO");
-    # a present (empty) bridge set keeps it on the faithful path. WarpPressed
-    # tolerates a missing helm/XO character (no-character subtitle branch).
-    App.g_kSetManager.AddSet(SetClass_Create(), "bridge")
-
-    # destination module
-    import types, sys
-    mod = types.ModuleType("FakeSys.Dst")
-    def Initialize():
-        s = SetClass_Create(); App.g_kSetManager.AddSet(s, "Dst")
-        _waypoint("Player Start", "Dst", 42.0)
-    mod.Initialize = Initialize
-    sys.modules["FakeSys.Dst"] = mod
-
-    # a warp button registered like the SDK does, with BOTH production
-    # handlers in production order: SDK WarpPressed first, execute_warp second.
-    btn = App.STWarpButton_CreateW("Warp")
+def test_warp_engage_without_course_is_noop():
+    src, player = _setup_player_and_dest()
+    btn = App.STWarpButton_CreateW("Warp")  # no destination set
     App.SortedRegionMenu_SetWarpButton(btn)
-    btn.AddPythonFuncHandlerForInstance(App.ET_WARP_BUTTON_PRESSED,
-                                        "Bridge.HelmMenuHandlers.WarpPressed")
-    btn.AddPythonFuncHandlerForInstance(App.ET_WARP_BUTTON_PRESSED,
-                                        "engine.appc.warp.execute_warp")
 
-    # host on_warp: set destination + fire event
-    btn.SetDestination("FakeSys.Dst")
-    ev = App.TGEvent_Create()
-    ev.SetEventType(App.ET_WARP_BUTTON_PRESSED)
-    ev.SetDestination(btn)
-    App.g_kEventManager.AddEvent(ev)
+    warp.execute_warp(btn)
 
-    # Same end state as test_event_fire_warps_player: execute_warp still ran
-    # and warped EVEN THOUGH WarpPressed ran first.
-    assert App.g_kSetManager.GetSet("Src") is None
-    dst = App.g_kSetManager.GetSet("Dst")
-    assert dst.GetObject("player") is player
-    assert abs(player.GetWorldLocation().x - 42.0) < 1e-3
+    # No course set -> nothing happens: player stays, destination never loaded.
+    assert App.g_kSetManager.GetSet("Src") is src
+    assert App.g_kSetManager.GetSet("Dst") is None
+    assert src.GetObject("player") is player

@@ -14,7 +14,7 @@ import logging
 from typing import Optional
 
 from engine.appc.characters import STButton, STMenu
-from engine.appc.tg_ui.st_widgets import SortedRegionMenu
+from engine.appc.tg_ui.st_widgets import SortedRegionMenu, STWarpButton
 from engine.appc.tg_ui.widgets import ensure_widget_id
 from engine.appc.windows import TacticalControlWindow
 from engine.ui.panel import Panel
@@ -23,7 +23,7 @@ _logger = logging.getLogger(__name__)
 
 
 class CrewMenuPanel(Panel):
-    def __init__(self, on_set_course=None):
+    def __init__(self, on_set_course=None, on_warp_engage=None):
         super().__init__()
         # Empty-state sentinel (matches SDKMirrorPanel): a quiescent panel
         # emits nothing on the first tick; invalidate() resets to None so
@@ -41,6 +41,12 @@ class CrewMenuPanel(Panel):
         # Set Course button is clicked. None -> click is a silent no-op
         # (keeps headless construction and existing tests working).
         self._on_set_course = on_set_course
+        # Injected by host_loop: engages the warp spine when the SDK Helm
+        # "Warp" button (an STWarpButton) is clicked. Stage 1 drives the warp
+        # directly through this callback rather than firing the SDK
+        # ET_WARP_BUTTON_PRESSED event (whose WarpPressed handler does
+        # camera/control work deferred to later stages). None -> no-op.
+        self._on_warp_engage = on_warp_engage
 
     @property
     def name(self) -> str:
@@ -136,6 +142,13 @@ class CrewMenuPanel(Panel):
                 # over it. No SDK event.
                 if self._on_set_course is not None:
                     self._on_set_course(widget)
+                return True
+            if isinstance(widget, STWarpButton):
+                # The SDK Helm "Warp" button. Engage the warp spine directly
+                # (Stage 1 bypasses the SDK ET_WARP_BUTTON_PRESSED / WarpPressed
+                # path, whose camera/control work is deferred to later stages).
+                if self._on_warp_engage is not None:
+                    self._on_warp_engage(widget)
                 return True
             root = self._root_of(wid)
             if isinstance(widget, STButton):

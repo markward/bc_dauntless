@@ -210,6 +210,8 @@
 .sc-row:hover { background: rgba(173, 132, 255, 0.15); }
 .sc-row--active { font-weight: 700; color: #fff; }
 .sc-row--selected { background: rgb(37, 26, 64); }
+.sc-row--disabled { color: #6a7280; cursor: default; }
+.sc-row--disabled:hover { background: none; }
 .sc-note {
     list-style: none; padding: 4px 14px 8px; color: #8a93a3;
     font-size: 12px; font-style: italic; white-space: normal;
