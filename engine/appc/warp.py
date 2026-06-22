@@ -7,6 +7,8 @@ via module-level hooks the host registers; unset hooks make those steps no-ops
 (headless set/placement logic still runs). See
 docs/superpowers/specs/2026-06-22-warp-stage1-hard-cut-design.md.
 """
+import math
+
 from engine.appc.actions import TGAction, TGSequence
 
 # Host-registered render hooks: fn(pSet) -> None. None => skip (headless).
@@ -21,6 +23,64 @@ def configure_warp_hooks(realize=None, teardown=None, current_player=None):
     _realize_hook = realize
     _teardown_hook = teardown
     _player_hook = current_player
+
+
+# ── Warp-VFX flythrough (Stage 2) ────────────────────────────────────────────
+# Distance-based transit duration. T = clamp(T_MIN, T_MAX, T_BASE + K*dist),
+# dist in galaxy-map units between the source and destination system vantages.
+# K tuned so a mid-galaxy hop (~150 units) lands ≈ 5 s. Unmapped vantage (None
+# on either side) => T_BASE (a short transit, no parallax).
+_T_MIN, _T_MAX, _T_BASE, _K = 2.0, 10.0, 2.0, 0.02
+
+# Host-registered VFX hooks (None => instant Stage-1 path, headless-safe).
+_vfx_start = None         # start(src_vantage, dst_vantage, duration, travel_dir)
+_vfx_stop = None          # stop()
+_vfx_enabled = None       # () -> bool  (toggle AND renderer AND procedural sky)
+_vfx_vantage_of = None    # (set_or_module) -> (x, y, z) | None
+
+
+def configure_warp_vfx(start=None, stop=None, enabled=None, vantage_of=None):
+    global _vfx_start, _vfx_stop, _vfx_enabled, _vfx_vantage_of
+    _vfx_start, _vfx_stop, _vfx_enabled, _vfx_vantage_of = (
+        start, stop, enabled, vantage_of)
+
+
+def _transit_duration(src_vantage, dst_vantage):
+    """Distance-scaled transit length (s). Either vantage None => T_BASE."""
+    if src_vantage is None or dst_vantage is None:
+        return _T_BASE
+    dx = dst_vantage[0] - src_vantage[0]
+    dy = dst_vantage[1] - src_vantage[1]
+    dz = dst_vantage[2] - src_vantage[2]
+    dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+    t = _T_BASE + _K * dist
+    return _T_MIN if t < _T_MIN else (_T_MAX if t > _T_MAX else t)
+
+
+class _WarpVfxBeginAction(TGAction):
+    """Start the WarpVFX manager. Fail-open: a hook raise never blocks warp."""
+
+    def __init__(self, src_v, dst_v, dur, travel):
+        super().__init__()
+        self._a = (src_v, dst_v, dur, travel)
+
+    def _do_play(self):
+        if _vfx_start is not None:
+            try:
+                _vfx_start(*self._a)
+            except Exception:
+                pass
+
+
+class _WarpVfxEndAction(TGAction):
+    """Stop the WarpVFX manager on arrival. Fail-open."""
+
+    def _do_play(self):
+        if _vfx_stop is not None:
+            try:
+                _vfx_stop()
+            except Exception:
+                pass
 
 
 def _module_is_empty(module):
@@ -204,6 +264,30 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
         if s.GetObject(ship.GetName()) is ship:
             source = s
             break
+    # Stage 2 timed flythrough: only when the flythrough is live (toggle AND
+    # renderer AND procedural sky, via the host predicate) AND there's a real
+    # destination to fly to. The set swap is HELD by a game-time delay = the
+    # transit duration, so it lands when the transit ends (masked by the exit
+    # flash); the begin/end actions drive the WarpVFX manager. Fail-open: the
+    # begin/end hook calls are try/excepted, so a VFX failure never blocks the
+    # swap chain.
+    flythrough = (bool(_vfx_enabled and _vfx_enabled())
+                  and not _module_is_empty(dest_module))
+    if flythrough:
+        src_v = _vfx_vantage_of(source) if (_vfx_vantage_of and source) else None
+        dst_v = _vfx_vantage_of(dest_module) if _vfx_vantage_of else None
+        dur = _transit_duration(src_v, dst_v)
+        travel = (0.0, 1.0, 0.0)  # ship-forward in world (refine from rotation)
+        begin = _WarpVfxBeginAction(src_v, dst_v, dur, travel)
+        seq.AddAction(begin)
+        # Swap held until the transit completes; chain placement+teardown+end
+        # after it so they fire on arrival.
+        seq.AppendAction(ChangeRenderedSetAction_Create(dest_module), dur)
+        seq.AppendAction(_PlacePlayerAction(ship, dest_name, placement))
+        seq.AppendAction(_ArriveFinalizeAction(source, ship))
+        seq.AppendAction(_WarpVfxEndAction())
+        return seq
+
     seq.AddAction(ChangeRenderedSetAction_Create(dest_module))
     # Falsy destination => no set change/placement/teardown: the whole warp
     # degrades to "nothing happened" (BC's `if pcDestModule != None:` guard).

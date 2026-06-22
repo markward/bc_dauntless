@@ -18,6 +18,9 @@ def setup_function(_):
     # fresh set manager + registry per test
     App.g_kSetManager._sets.clear()
     warp.configure_warp_hooks(realize=None, teardown=None)
+    # Reset VFX config so these instant-path tests aren't affected by a
+    # flythrough configured in another test module (module-level singletons).
+    warp.configure_warp_vfx(start=None, stop=None, enabled=None, vantage_of=None)
 
 
 def test_change_rendered_set_loads_and_switches(monkeypatch):

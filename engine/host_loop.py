@@ -3210,6 +3210,54 @@ def run(mission_name: Optional[str] = None,
             current_player=lambda: (controller.session.player
                                     if controller.session is not None else None))
 
+        # Warp-VFX flythrough (Stage 2): when the "Warp Flythrough" toggle is on
+        # AND the procedural sky is on, WarpSequence_Create builds a timed
+        # transit whose length scales with the galaxy-map distance between the
+        # source and destination systems. The host supplies: the live-enabled
+        # predicate, the start/stop manager hooks (ticked per frame above), and a
+        # vantage resolver that maps EITHER a live source SetClass OR a
+        # destination module string to a galaxy (x, y, z).
+        from engine import warp_vfx as _wv
+        from engine.appc import sky_projection as _sp
+        from engine.appc import sector_model as _sm
+        from engine.appc import warp as _wp
+
+        def _flythrough_enabled():
+            return bool(r.warp_flythrough_enabled()) and r.procedural_sky_enabled()
+
+        def _vantage_of(key):
+            # key is a live SetClass (the source) or a module string (the
+            # destination). The destination set is NOT loaded yet at
+            # sequence-build time, so for a module string we resolve the system
+            # position straight from sector_model by its system id (module ->
+            # set name -> system_id_for_set -> system["position"]) — the same
+            # id path the Set Course catalog uses, no live set required.
+            try:
+                model = _sp.load_sector_model()
+                if hasattr(key, "GetName"):
+                    v = _sp.vantage_for_set(key, model)
+                else:
+                    set_name = _wp._set_name_from_module(key)
+                    if not set_name:
+                        return None
+                    sysid = _sm.system_id_for_set(set_name)
+                    v = None
+                    for s in model.get("systems", []):
+                        if s.get("id") == sysid:
+                            v = s.get("position")
+                            break
+                return None if v is None else (v[0], v[1], v[2])
+            except Exception:
+                return None
+
+        def _vfx_start(src, dst, dur, travel):
+            _wv.get().start(src or (0.0, 0.0, 0.0), dst or (0.0, 0.0, 0.0),
+                            dur, travel, App.g_kUtopiaModule.GetGameTime())
+
+        _wp.configure_warp_vfx(
+            start=_vfx_start, stop=_wv.get().stop,
+            enabled=_flythrough_enabled, vantage_of=_vantage_of)
+
         # Starbase warp gate (Task 4): segment-vs-mesh test against the
         # starbase's loaded NIF via the host ray_trace_mesh binding. Returns
         # True if the segment from->to hits the starbase mesh (occluded). Any
