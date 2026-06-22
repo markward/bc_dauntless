@@ -5,6 +5,7 @@ uniform sampler2D u_hdr;
 uniform sampler2D u_bloom;
 uniform float u_bloom_strength;
 uniform int u_hdr_enabled;
+uniform float u_warp_flash;   // 0 = identity (no flash)
 
 // HDR color grade — the "Muted Film" profile chosen interactively. Named
 // consts (eye-tunable by rebuilding, like the Fresnel rim consts): a slight
@@ -38,5 +39,6 @@ void main() {
     } else {
         c = clamp(c, 0.0, 1.0);   // neutral passthrough (stock look)
     }
+    c = mix(c, vec3(1.0), clamp(u_warp_flash, 0.0, 1.0));
     frag_color = vec4(c, 1.0);
 }

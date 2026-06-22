@@ -53,6 +53,7 @@ void ResolvePass::draw(std::uint32_t hdr_color_tex, std::uint32_t bloom_tex) {
     shader_->set_int("u_hdr_enabled", hdr_enabled_ ? 1 : 0);
     shader_->set_int("u_bloom", 1);
     shader_->set_float("u_bloom_strength", bloom_strength_);
+    shader_->set_float("u_warp_flash", warp_flash_);
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, hdr_color_tex);

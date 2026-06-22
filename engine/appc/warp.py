@@ -7,6 +7,8 @@ via module-level hooks the host registers; unset hooks make those steps no-ops
 (headless set/placement logic still runs). See
 docs/superpowers/specs/2026-06-22-warp-stage1-hard-cut-design.md.
 """
+import math
+
 from engine.appc.actions import TGAction, TGSequence
 
 # Host-registered render hooks: fn(pSet) -> None. None => skip (headless).
@@ -21,6 +23,110 @@ def configure_warp_hooks(realize=None, teardown=None, current_player=None):
     _realize_hook = realize
     _teardown_hook = teardown
     _player_hook = current_player
+
+
+# ── Warp-VFX flythrough (Stage 2) ────────────────────────────────────────────
+# Distance-based transit duration. T = clamp(T_MIN, T_MAX, T_BASE + K*dist),
+# dist in galaxy-map units between the source and destination system vantages.
+# K tuned so a mid-galaxy hop (~150 units) lands ≈ 5 s. Unmapped vantage (None
+# on either side) => T_BASE (a short transit, no parallax).
+_T_MIN, _T_MAX, _T_BASE, _K = 2.0, 10.0, 2.0, 0.02
+
+# Align/turn phase length (s): the ship slows + swings onto the warp heading
+# before the streak transit begins. Constant (distance-independent).
+_T_ALIGN = 1.5
+
+# Host-registered VFX hooks (None => instant Stage-1 path, headless-safe).
+_vfx_start = None         # start(heading, t_align, t_transit)
+_vfx_stop = None          # stop()
+_vfx_enabled = None       # () -> bool  (toggle AND renderer AND procedural sky)
+_vfx_vantage_of = None    # (set_or_module) -> (x, y, z) | None
+
+
+def configure_warp_vfx(start=None, stop=None, enabled=None, vantage_of=None):
+    global _vfx_start, _vfx_stop, _vfx_enabled, _vfx_vantage_of
+    _vfx_start, _vfx_stop, _vfx_enabled, _vfx_vantage_of = (
+        start, stop, enabled, vantage_of)
+
+
+def _transit_duration(src_vantage, dst_vantage):
+    """Distance-scaled transit length (s). Either vantage None => T_BASE."""
+    if src_vantage is None or dst_vantage is None:
+        return _T_BASE
+    dx = dst_vantage[0] - src_vantage[0]
+    dy = dst_vantage[1] - src_vantage[1]
+    dz = dst_vantage[2] - src_vantage[2]
+    dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+    t = _T_BASE + _K * dist
+    return _T_MIN if t < _T_MIN else (_T_MAX if t > _T_MAX else t)
+
+
+def _warp_heading(src_vantage, dst_vantage):
+    """Normalized src->dst direction (galaxy-map space). Either vantage None or
+    coincident => default ship-forward (0, 1, 0)."""
+    if src_vantage is None or dst_vantage is None:
+        return (0.0, 1.0, 0.0)
+    dx = dst_vantage[0] - src_vantage[0]
+    dy = dst_vantage[1] - src_vantage[1]
+    dz = dst_vantage[2] - src_vantage[2]
+    m = math.sqrt(dx * dx + dy * dy + dz * dz)
+    return (0.0, 1.0, 0.0) if m < 1e-6 else (dx / m, dy / m, dz / m)
+
+
+class _WarpSoundAction(TGAction):
+    """Play a registered 2D/3D SFX by name (enter/exit warp). Fail-open: a
+    missing sound / absent manager never blocks the warp chain."""
+
+    def __init__(self, name):
+        super().__init__()
+        self._name = name
+
+    def _do_play(self):
+        try:
+            import App
+            App.g_kSoundManager.PlaySound(self._name)
+        except Exception:
+            pass
+
+
+class _WarpVfxBeginAction(TGAction):
+    """Align start: remove player control, slow the ship to a stop, and start
+    the WarpVFX manager on the warp heading. Every step is fail-open — a failure
+    here never blocks the set-swap chain (control is restored on arrival by
+    _ArriveFinalizeAction regardless)."""
+
+    def __init__(self, ship, heading, t_align, t_transit):
+        super().__init__()
+        self._ship = ship
+        self._a = (heading, t_align, t_transit)
+
+    def _do_play(self):
+        try:
+            import MissionLib
+            MissionLib.RemoveControl()
+        except Exception:
+            pass
+        try:
+            if hasattr(self._ship, "SetSpeed"):
+                self._ship.SetSpeed(0.0)
+        except Exception:
+            pass
+        if _vfx_start is not None:
+            try:
+                _vfx_start(*self._a)
+            except Exception:
+                pass
+
+
+class _WarpVfxEndAction(TGAction):
+    """Stop the WarpVFX manager on arrival. Fail-open."""
+
+    def _do_play(self):
+        if _vfx_stop is not None:
+            try:
+                _vfx_stop()
+            except Exception:
+                pass
 
 
 def _module_is_empty(module):
@@ -204,6 +310,34 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
         if s.GetObject(ship.GetName()) is ship:
             source = s
             break
+    # Stage 2 timed flythrough: only when the flythrough is live (toggle AND
+    # renderer AND procedural sky, via the host predicate) AND there's a real
+    # destination to fly to. The set swap is HELD by a game-time delay = the
+    # transit duration, so it lands when the transit ends (masked by the exit
+    # flash); the begin/end actions drive the WarpVFX manager. Fail-open: the
+    # begin/end hook calls are try/excepted, so a VFX failure never blocks the
+    # swap chain.
+    flythrough = (bool(_vfx_enabled and _vfx_enabled())
+                  and not _module_is_empty(dest_module))
+    if flythrough:
+        src_v = _vfx_vantage_of(source) if (_vfx_vantage_of and source) else None
+        dst_v = _vfx_vantage_of(dest_module) if _vfx_vantage_of else None
+        heading = _warp_heading(src_v, dst_v)
+        t_transit = _transit_duration(src_v, dst_v)
+        total = _T_ALIGN + t_transit
+        # Align start: remove control + slow + start VFX, then play the enter
+        # SFX. The set-swap is HELD by a game-time delay = T_align + T_transit so
+        # it lands when the transit ends (masked by the exit flash); placement +
+        # teardown + exit SFX + VFX-end chain after it, firing on arrival.
+        seq.AddAction(_WarpVfxBeginAction(ship, heading, _T_ALIGN, t_transit))
+        seq.AppendAction(_WarpSoundAction("Enter Warp"))
+        seq.AppendAction(ChangeRenderedSetAction_Create(dest_module), total)
+        seq.AppendAction(_PlacePlayerAction(ship, dest_name, placement))
+        seq.AppendAction(_ArriveFinalizeAction(source, ship))
+        seq.AppendAction(_WarpSoundAction("Exit Warp"))
+        seq.AppendAction(_WarpVfxEndAction())
+        return seq
+
     seq.AddAction(ChangeRenderedSetAction_Create(dest_module))
     # Falsy destination => no set change/placement/teardown: the whole warp
     # degrades to "nothing happened" (BC's `if pcDestModule != None:` guard).

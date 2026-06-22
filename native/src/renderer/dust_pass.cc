@@ -166,7 +166,9 @@ void DustPass::render(const scenegraph::Camera& camera,
                       float dt_seconds,
                       Pipeline& pipeline,
                       const std::vector<SunDescriptor>& suns,
-                      const std::vector<glm::vec4>& planets) {
+                      const std::vector<glm::vec4>& planets,
+                      float warp_streak,
+                      glm::vec3 warp_travel) {
     if (!enabled_ || particle_count_ <= 0) {
         // Still update prev_eye_ tracking so we don't get a phantom huge
         // velocity on the frame after re-enabling.
@@ -231,6 +233,23 @@ void DustPass::render(const scenegraph::Camera& camera,
 
     shader.set_vec3 ("u_sun_drift", sun_drift);
     shader.set_float("u_sun_tint",  inf.sun_tint);
+
+    // Warp fly-past drift: while warping, advance an accumulator along the
+    // travel axis (mirrors the sun-drift pattern) and fold it into the
+    // toroidal wrap so particles stream PAST the near-stationary camera.
+    // At streak 0 the phase is reset to 0 so off-parity holds (no residual
+    // drift, no elongation, prism branch skipped via v_streak == 0).
+    if (warp_streak > 0.0f && dt_seconds > 0.0f && dt_seconds < kVelocityClampSeconds) {
+        warp_drift_phase_ += kWarpDriftSpeed * warp_streak * dt_seconds;  // GU/s, tunable
+        warp_drift_phase_ = std::fmod(warp_drift_phase_, 2.0f * kVolumeRadius);
+    } else if (warp_streak <= 0.0f) {
+        warp_drift_phase_ = 0.0f;
+    }
+    const glm::vec3 warp_drift =
+        -glm::normalize(warp_travel + glm::vec3(1e-5f)) * warp_drift_phase_;
+    shader.set_float("u_warp_streak", warp_streak);
+    shader.set_vec3 ("u_warp_travel", warp_travel);
+    shader.set_vec3 ("u_warp_drift",  warp_drift);
 
     int draw_count = static_cast<int>(
         std::lround(static_cast<float>(kParticleCount) * inf.density_mult));

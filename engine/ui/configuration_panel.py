@@ -37,6 +37,7 @@ class SettingsSnapshot:
     procedural_sky_on: bool = True
     filmic_on: bool = True
     motion_blur_on: bool = True
+    warp_flythrough_on: bool = True
 
 
 class ConfigurationPanel(Panel):
@@ -54,7 +55,8 @@ class ConfigurationPanel(Panel):
                  set_shadows: Callable[[bool], None],
                  set_procedural_sky: Callable[[bool], None],
                  set_filmic: Callable[[bool], None],
-                 set_motion_blur: Callable[[bool], None]):
+                 set_motion_blur: Callable[[bool], None],
+                 set_warp_flythrough: Callable[[bool], None]):
         super().__init__()
         self._tabs = list(tabs)
         self._selected_tab = tabs[0][0]
@@ -71,6 +73,7 @@ class ConfigurationPanel(Panel):
             procedural_sky_on=initial_settings.procedural_sky_on,
             filmic_on=initial_settings.filmic_on,
             motion_blur_on=initial_settings.motion_blur_on,
+            warp_flythrough_on=initial_settings.warp_flythrough_on,
         )
         self._set_dust = set_dust
         self._set_specular = set_specular
@@ -84,6 +87,7 @@ class ConfigurationPanel(Panel):
         self._set_procedural_sky = set_procedural_sky
         self._set_filmic = set_filmic
         self._set_motion_blur = set_motion_blur
+        self._set_warp_flythrough = set_warp_flythrough
         self._visible: bool = False
         self._focused: int = -1
         self._last_pushed: Optional[tuple] = None
@@ -119,6 +123,7 @@ class ConfigurationPanel(Panel):
             self._settings.procedural_sky_on,
             self._settings.filmic_on,
             self._settings.motion_blur_on,
+            self._settings.warp_flythrough_on,
             self._settings.fov_deg,
         )
         if snapshot == self._last_pushed:
@@ -143,6 +148,7 @@ class ConfigurationPanel(Panel):
                 "procedural_sky_on": self._settings.procedural_sky_on,
                 "filmic_on": self._settings.filmic_on,
                 "motion_blur_on": self._settings.motion_blur_on,
+                "warp_flythrough_on": self._settings.warp_flythrough_on,
                 "fov_deg": self._settings.fov_deg,
             },
         }
@@ -181,6 +187,11 @@ class ConfigurationPanel(Panel):
             new_val = not self._settings.motion_blur_on
             self._set_motion_blur(new_val)
             self._settings.motion_blur_on = new_val
+            return True
+        if action == "toggle:warp_flythrough":
+            new_val = not self._settings.warp_flythrough_on
+            self._set_warp_flythrough(new_val)
+            self._settings.warp_flythrough_on = new_val
             return True
         if action == "toggle:hdr":
             new_val = not self._settings.hdr_on
@@ -281,6 +292,8 @@ class ConfigurationPanel(Panel):
             self.dispatch_event("toggle:filmic")
         elif activate and kind == "ctrl" and target == "motion_blur":
             self.dispatch_event("toggle:motion_blur")
+        elif activate and kind == "ctrl" and target == "warp_flythrough":
+            self.dispatch_event("toggle:warp_flythrough")
         elif activate and kind == "ctrl" and target == "hdr":
             self.dispatch_event("toggle:hdr")
         elif activate and kind == "ctrl" and target == "rim":
@@ -309,14 +322,15 @@ class ConfigurationPanel(Panel):
         it): [('tab','graphics'), ('ctrl','dust'), ('ctrl','specular'),
          ('ctrl','fov'), ('ctrl','procedural_sky'), ('ctrl','hdr'),
          ('ctrl','rim'), ('ctrl','shadows'), ('ctrl','decals'),
-         ('ctrl','smaa'), ('ctrl','filmic'), ('ctrl','motion_blur')]."""
+         ('ctrl','smaa'), ('ctrl','filmic'), ('ctrl','motion_blur'),
+         ('ctrl','warp_flythrough')]."""
         out: list = [("tab", tid) for tid, _ in self._tabs]
         if self._selected_tab == "graphics":
             out += [("ctrl", "dust"), ("ctrl", "specular"),
                     ("ctrl", "fov"), ("ctrl", "procedural_sky"),
                     ("ctrl", "hdr"), ("ctrl", "rim"), ("ctrl", "shadows"),
                     ("ctrl", "decals"), ("ctrl", "smaa"), ("ctrl", "filmic"),
-                    ("ctrl", "motion_blur")]
+                    ("ctrl", "motion_blur"), ("ctrl", "warp_flythrough")]
         elif self._selected_tab == "gameplay":
             out += [("ctrl", "subtitles")]
         return out

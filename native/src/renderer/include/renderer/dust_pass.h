@@ -100,6 +100,10 @@ public:
     // so it ramps in over the radius-relative influence zone. Folded into
     // the toroidal wrap, so the field recycles seamlessly at any speed.
     static constexpr float kSunDriftSpeed        = 25.0f;  // GU/s at closeness 1
+    // Warp fly-past drift: particles stream PAST the (near-stationary) camera
+    // along the travel axis during warp, recycling via the toroidal wrap.
+    // Speed (GU/s) scaled by streak intensity. Tunable.
+    static constexpr float kWarpDriftSpeed       = 600.0f; // GU/s at streak 1
     static constexpr float kVelocityClampSeconds = 0.1f;        // dt guard
     static constexpr std::uint32_t kSeed         = 0xD057C0DEu;
 
@@ -115,7 +119,9 @@ public:
                 float dt_seconds,
                 Pipeline& pipeline,
                 const std::vector<SunDescriptor>& suns,
-                const std::vector<glm::vec4>& planets);
+                const std::vector<glm::vec4>& planets,
+                float warp_streak = 0.0f,
+                glm::vec3 warp_travel = glm::vec3(0.0f, 1.0f, 0.0f));
 
     void set_enabled(bool enabled) { enabled_ = enabled; }
     bool enabled() const { return enabled_; }
@@ -135,6 +141,10 @@ private:
     // so it stays precise over long sessions. Multiplied by the outward
     // direction and folded into the toroidal wrap each frame.
     float      sun_drift_phase_ = 0.0f;
+    // Accumulated warp fly-past drift distance (GU), wrapped to
+    // [0, 2*kVolumeRadius). Mirrors sun_drift_phase_; reset to 0 when not
+    // warping so off-parity (streak 0) leaves zero residual drift.
+    float      warp_drift_phase_ = 0.0f;
 
     // GL objects, populated in initialize_gl(). 0 means "not yet created".
     unsigned int vao_              = 0;

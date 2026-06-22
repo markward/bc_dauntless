@@ -1782,6 +1782,77 @@ def _aggregate_suns() -> list:
         PROJECT_ROOT, list(App.g_kSetManager._sets.values()))
 
 
+# ── Warp-VFX (Stage 2) host helpers: sun dim + cinematic ship turn ──────────
+
+# Fraction of a sun's radius removed at peak streak (streak_intensity == 1.0).
+# 0.7 -> suns shrink to 30% radius at the tunnel's brightest. Tunable.
+_WARP_SUN_DIM = 0.7
+
+# Player rotation captured at align start; the slerp target is anchored to it so
+# the turn is stable across frames (cleared when the warp ends).
+_warp_turn_start_R = None
+
+
+def _dim_suns(suns, streak):
+    """Shrink sun radius/corona_radius by (1 - DIM*streak) for the warp dim.
+
+    The sun render descriptor (engine/appc/planet.aggregate_suns_for_renderer)
+    carries no brightness field; sun_pass scales apparent brightness with the
+    on-screen radius, so radius is the only available dim lever. Returns new
+    dicts (never mutates the aggregated descriptors)."""
+    scale = 1.0 - _WARP_SUN_DIM * float(streak)
+    if scale < 0.0:
+        scale = 0.0
+    out = []
+    for s in suns:
+        d = dict(s)
+        if "radius" in d:
+            d["radius"] = d["radius"] * scale
+        if "corona_radius" in d:
+            d["corona_radius"] = d["corona_radius"] * scale
+        out.append(d)
+    return out
+
+
+def _warp_apply_turn(player, frac, heading):
+    """Slerp the player's rotation toward the warp heading by `frac` (0..1).
+
+    Builds the target rotation by keeping the captured UP (col 2) and setting
+    forward (col 1) = heading, deriving right (col 0) = forward x up — the
+    right-handed AlignToVectors construction (CLAUDE.md), replicated here on a
+    bare TGMatrix3 because AlignToVectors is an ObjectClass method, not a
+    matrix method. nlerp_rotation blends col-by-col then re-orthonormalizes."""
+    global _warp_turn_start_R
+    from engine.appc.math import TGPoint3, TGMatrix3
+    from engine.core.interpolate import nlerp_rotation
+
+    R0 = player.GetWorldRotation()
+    if _warp_turn_start_R is None:
+        _warp_turn_start_R = R0
+    start_R = _warp_turn_start_R
+
+    up = start_R.GetCol(2)
+    fwd = TGPoint3(heading[0], heading[1], heading[2])
+    fwd.Unitize()
+    # Orthogonalize up against forward, then right = forward x up (det = +1).
+    dot = fwd.Dot(up)
+    u = TGPoint3(up.x - dot * fwd.x, up.y - dot * fwd.y, up.z - dot * fwd.z)
+    u.Unitize()
+    right = fwd.Cross(u)
+    right.Unitize()
+    target = TGMatrix3()
+    target.SetCol(0, right)
+    target.SetCol(1, fwd)
+    target.SetCol(2, u)
+
+    player.SetMatrixRotation(nlerp_rotation(start_R, target, frac))
+
+
+def _warp_clear_turn():
+    global _warp_turn_start_R
+    _warp_turn_start_R = None
+
+
 def _aggregate_planets(pSets):
     """Return list[dict] {position, radius} for Planet objects across pSets,
     feeding the dust pass's proximity density scaling. Planets with
@@ -2287,6 +2358,25 @@ class HostController:
         damage_eligibility.reset()
         hit_feedback._last_carve_time.clear()
         reset_sdk_globals()
+        # A mission swap mid-warp would otherwise leak the WarpVFX manager
+        # (reset_sdk_globals zeroes the timer manager, cancelling the pending
+        # ReturnControl / stop chain). Tear it down explicitly so the next
+        # mission starts with no stale streak/flash, no stale ship turn, and
+        # control restored.
+        try:
+            from engine import warp_vfx as _wv
+            _wv.get().stop()
+        except Exception:
+            pass
+        try:
+            _warp_clear_turn()
+        except Exception:
+            pass
+        try:
+            import MissionLib
+            MissionLib.ReturnControl()
+        except Exception:
+            pass
         if self.panel_registry is not None:
             self.panel_registry.invalidate_all()
         assert self.loader is not None, "HostController.loader must be set"
@@ -3203,6 +3293,56 @@ def run(mission_name: Optional[str] = None,
             current_player=lambda: (controller.session.player
                                     if controller.session is not None else None))
 
+        # Warp-VFX flythrough (Stage 2): when the "Warp Flythrough" toggle is on
+        # AND the procedural sky is on, WarpSequence_Create builds a timed
+        # transit whose length scales with the galaxy-map distance between the
+        # source and destination systems. The host supplies: the live-enabled
+        # predicate, the start/stop manager hooks (ticked per frame above), and a
+        # vantage resolver that maps EITHER a live source SetClass OR a
+        # destination module string to a galaxy (x, y, z).
+        from engine import warp_vfx as _wv
+        from engine.appc import sky_projection as _sp
+        from engine.appc import sector_model as _sm
+        from engine.appc import warp as _wp
+
+        def _flythrough_enabled():
+            return bool(r.warp_flythrough_enabled()) and r.procedural_sky_enabled()
+
+        def _vantage_of(key):
+            # key is a live SetClass (the source) or a module string (the
+            # destination). The destination set is NOT loaded yet at
+            # sequence-build time, so for a module string we resolve the system
+            # position straight from sector_model by its system id (module ->
+            # set name -> system_id_for_set -> system["position"]) — the same
+            # id path the Set Course catalog uses, no live set required.
+            try:
+                model = _sp.load_sector_model()
+                if hasattr(key, "GetName"):
+                    v = _sp.vantage_for_set(key, model)
+                else:
+                    set_name = _wp._set_name_from_module(key)
+                    if not set_name:
+                        return None
+                    sysid = _sm.system_id_for_set(set_name)
+                    v = None
+                    for s in model.get("systems", []):
+                        if s.get("id") == sysid:
+                            v = s.get("position")
+                            break
+                return None if v is None else (v[0], v[1], v[2])
+            except Exception:
+                return None
+
+        def _vfx_start(heading, t_align, t_transit):
+            # WarpSequence (Task 3) computes the heading + explicit align/transit
+            # times; start the per-frame manager at the current game time.
+            _wv.get().start(heading, t_align, t_transit,
+                            App.g_kUtopiaModule.GetGameTime())
+
+        _wp.configure_warp_vfx(
+            start=_vfx_start, stop=_wv.get().stop,
+            enabled=_flythrough_enabled, vantage_of=_vantage_of)
+
         # Starbase warp gate (Task 4): segment-vs-mesh test against the
         # starbase's loaded NIF via the host ray_trace_mesh binding. Returns
         # True if the segment from->to hits the starbase mesh (occluded). Any
@@ -3472,6 +3612,7 @@ def run(mission_name: Optional[str] = None,
                 procedural_sky_on=r.procedural_sky_enabled(),
                 filmic_on=r.filmic_enabled(),
                 motion_blur_on=r.motion_blur_enabled(),
+                warp_flythrough_on=r.warp_flythrough_enabled(),
                 fov_deg=int(round(_math.degrees(
                     director.fov_y_rad
                 ))),
@@ -3489,6 +3630,7 @@ def run(mission_name: Optional[str] = None,
             set_procedural_sky=r.set_procedural_sky_enabled,
             set_filmic=r.set_filmic_enabled,
             set_motion_blur=r.set_motion_blur_enabled,
+            set_warp_flythrough=r.set_warp_flythrough_enabled,
         )
 
         from engine.ui.pause_menu import default_pause_menu
@@ -4295,10 +4437,37 @@ def run(mission_name: Optional[str] = None,
             if hasattr(r, "damage_decals_tick"):
                 r.damage_decals_tick(App.g_kUtopiaModule.GetGameTime())
 
+            # Warp-VFX (Stage 2 — ST dust streak): tick the animator on the GAME
+            # clock (App.g_kUtopiaModule.GetGameTime() == g_kTimerManager.get_time(),
+            # the SAME clock the WarpSequence's TGSequence delay runs on, so the
+            # transit visuals line up with the set swap), then feed the dust pass
+            # (streak/flash/travel) and apply the cinematic ship turn. The speed
+            # sensation comes from the DUST streaking along travel_dir — the
+            # backdrops and local suns/planets aggregate normally (off-parity:
+            # non-warp rendering is byte-identical when is_active() is False).
+            from engine import warp_vfx as _wv
+            _w = _wv.get()
+            if _w.is_active():
+                _w.tick(App.g_kUtopiaModule.GetGameTime())
+                r.set_warp_streak_intensity(_w.streak_intensity())
+                r.set_warp_flash_intensity(_w.flash_intensity())
+                r.set_warp_travel_dir(_w.travel_dir())
+                if player is not None:
+                    _warp_apply_turn(player, _w.turn_fraction(), _w.travel_dir())
+            else:
+                r.set_warp_streak_intensity(0.0)
+                r.set_warp_flash_intensity(0.0)
+                _warp_clear_turn()
+
             backdrops = _aggregate_backdrops(active_set)
             r.set_backdrops(backdrops)
 
             suns = _aggregate_suns()
+            if _w.is_active():
+                # Dim suns during the streak so the dust tunnel reads cleanly.
+                # The sun descriptor has no brightness field; sun_pass keys
+                # apparent brightness off radius, so shrink radius/corona_radius.
+                suns = _dim_suns(suns, _w.streak_intensity())
             r.set_suns(suns)
 
             planets = _aggregate_planets(

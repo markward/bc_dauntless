@@ -191,6 +191,32 @@ def set_motion_blur_enabled(enabled: bool) -> None:
     _h.motion_blur_set_enabled(enabled)
 
 
+def warp_flythrough_enabled() -> bool:
+    """Read the Warp Flythrough toggle (Modern VFX). Default: on."""
+    return _h.warp_flythrough_enabled()
+
+
+def set_warp_flythrough_enabled(enabled: bool) -> None:
+    """Toggle the warp flythrough VFX (Modern VFX). Off = instant hard cut."""
+    _h.warp_flythrough_set_enabled(enabled)
+
+
+def set_warp_streak_intensity(intensity: float) -> None:
+    """Set the 0..1 star-streak intensity for the warp flythrough."""
+    _h.set_warp_streak_intensity(float(intensity))
+
+
+def set_warp_flash_intensity(intensity: float) -> None:
+    """Set the 0..1 warp-flash intensity for the warp flythrough."""
+    _h.set_warp_flash_intensity(float(intensity))
+
+
+def set_warp_travel_dir(direction) -> None:
+    """Set the world-space travel direction (x, y, z) for the warp flythrough."""
+    x, y, z = direction
+    _h.set_warp_travel_dir(float(x), float(y), float(z))
+
+
 def set_dust_enabled(enabled: bool) -> None:
     """Toggle the space-dust pass. Default: on after init()."""
     _h.dust_set_enabled(enabled)

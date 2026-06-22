@@ -17,10 +17,14 @@ uniform float u_size_max;
 uniform float u_brightness_min;
 uniform float u_brightness_max;
 uniform vec3  u_sun_drift;    // accumulated outward solar-wind translation (GU)
+uniform float u_warp_streak;  // [0,1] warp streak intensity (0 = off)
+uniform vec3  u_warp_travel;  // world-space travel direction (normalized)
+uniform vec3  u_warp_drift;   // accumulated fly-past translation along travel (GU)
 
 out vec2  v_uv;
 out float v_brightness;
 out vec3  v_local;
+out float v_streak;
 
 void main() {
     // Toroidal wrap of the particle's world position into a 2R cube
@@ -31,7 +35,11 @@ void main() {
     // radially away from the nearest sun. Because it lives inside the
     // mod(), the field recycles seamlessly (no pop, no fade) exactly like
     // camera motion does — producing the animated solar-wind stream.
-    vec3 local = a_particle.xyz - u_camera_pos + u_sun_drift;
+    // u_warp_drift is also folded INTO the wrap (like u_sun_drift): it
+    // translates the field along the travel axis so particles fly PAST the
+    // (near-stationary) camera during warp, recycling seamlessly. Zero when
+    // not warping.
+    vec3 local = a_particle.xyz - u_camera_pos + u_sun_drift + u_warp_drift;
     local = mod(local + u_radius, 2.0 * u_radius) - u_radius;
     vec3 world_pos = u_camera_pos + local;
 
@@ -55,11 +63,19 @@ void main() {
     // Stretch the leading edge (a_corner.y > 0) and trailing edge along
     // the smear vector. Half the smear length on each side gives a total
     // streak length equal to |u_smear|.
-    offset += 0.5 * a_corner.y * u_smear;
+    //
+    // During warp the camera is ~stationary, so u_smear (camera-velocity
+    // based) is ~0. Add an independent world-space stretch along the travel
+    // axis so the dust elongates into streaks. The 4.0 GU base is tunable.
+    // At u_warp_streak == 0 this term is exactly +0, so off-parity holds.
+    vec3 wstretch = u_warp_streak * (4.0) * normalize(u_warp_travel + 1e-5);
+    offset += 0.5 * a_corner.y * (u_smear + wstretch);
 
     gl_Position = u_proj * u_view * vec4(world_pos + offset, 1.0);
 
     v_uv = a_uv;
     v_brightness = brightness;
     v_local = local;
+    // Leading-edge streak parameter for the prism tip (0 on the trailing half).
+    v_streak = u_warp_streak * max(a_corner.y, 0.0);
 }

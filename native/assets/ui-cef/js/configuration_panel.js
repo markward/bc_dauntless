@@ -30,6 +30,7 @@ function _cpFocusableList(state) {
         out.push({kind: 'ctrl', target: 'smaa'});
         out.push({kind: 'ctrl', target: 'filmic'});
         out.push({kind: 'ctrl', target: 'motion_blur'});
+        out.push({kind: 'ctrl', target: 'warp_flythrough'});
     } else if (state.selected_tab === 'gameplay') {
         out.push({kind: 'ctrl', target: 'subtitles'});
     }
@@ -185,6 +186,17 @@ function _cpRenderGraphicsBody(state, focusables) {
           +     '<button class="cp-toggle' + (s.motion_blur_on ? ' cp-toggle--on' : '') + '"'
           +        ' onclick="dauntlessEvent(\'configuration/toggle:motion_blur\')">'
           +       (s.motion_blur_on ? 'On' : 'Off')
+          +     '</button>'
+          +   '</div>'
+          + '</div>';
+
+    // Warp Flythrough toggle — procedural warp flythrough VFX (Modern VFX).
+    html += '<div class="cp-row' + (isFoc('warp_flythrough') ? ' cp-focused' : '') + '">'
+          +   '<div class="cp-row__label">Warp Flythrough</div>'
+          +   '<div class="cp-row__control">'
+          +     '<button class="cp-toggle' + (s.warp_flythrough_on ? ' cp-toggle--on' : '') + '"'
+          +        ' onclick="dauntlessEvent(\'configuration/toggle:warp_flythrough\')">'
+          +       (s.warp_flythrough_on ? 'On' : 'Off')
           +     '</button>'
           +   '</div>'
           + '</div>';
