@@ -50,6 +50,27 @@ def test_flash_booms_at_burst_and_exit():
     w.tick(5.9); assert w.flash_intensity() > 0.3     # exit boom near end
 
 
+def test_sky_vantage_advances_along_heading_during_transit():
+    # Vantage flies forward along the heading at `rate` u/s across the transit,
+    # held at the start during align and at the end during the decel tail.
+    w = WarpVFX()
+    w.start(heading=(0.0, 0.0, 1.0), t_align=2.0, t_transit=4.0, now=0.0,
+            vantage=(10.0, 0.0, 0.0))
+    w.tick(1.0); assert w.sky_vantage(5.0) == (10.0, 0.0, 0.0)   # align: held at start
+    w.tick(2.0); assert w.sky_vantage(5.0) == (10.0, 0.0, 0.0)   # burst: te=0
+    w.tick(4.0)                                                   # 2s into transit
+    assert w.sky_vantage(5.0) == (10.0, 0.0, 10.0)               # +rate*te along +z
+    w.tick(8.0)                                                   # past transit (exit)
+    assert w.sky_vantage(5.0) == (10.0, 0.0, 20.0)               # clamped at t_transit
+
+
+def test_sky_vantage_none_when_unmapped():
+    w = WarpVFX()
+    w.start(heading=(0.0, 0.0, 1.0), t_align=2.0, t_transit=4.0, now=0.0)  # no vantage
+    w.tick(4.0)
+    assert w.sky_vantage(5.0) is None
+
+
 def test_stop_resets():
     w = WarpVFX(); w.start((1, 0, 0), 2.0, 4.0, 0.0)
     w.stop()

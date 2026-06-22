@@ -29,6 +29,7 @@ class WarpVFX:
     def __init__(self):
         self._active = False
         self._heading = (0.0, 1.0, 0.0)
+        self._vantage = None
         self._t_align = 0.0
         self._t_transit = 0.0
         self._t0 = 0.0
@@ -38,8 +39,13 @@ class WarpVFX:
         self._flash = 0.0
         self._phase = "align"
 
-    def start(self, heading, t_align, t_transit, now):
+    def start(self, heading, t_align, t_transit, now, vantage=None):
         self._heading = tuple(heading)
+        # Galaxy-map position the procedural sky is projected from at warp start
+        # (the source system's vantage). Animated forward along the heading
+        # during transit so the distant clusters/nebulae stream past — None when
+        # the source isn't galaxy-mapped (sky stays blacked out then).
+        self._vantage = tuple(vantage) if vantage is not None else None
         self._t_align = max(0.01, float(t_align))
         self._t_transit = max(0.01, float(t_transit))
         self._t0 = float(now)
@@ -112,6 +118,24 @@ class WarpVFX:
             return 0.0
         f = _smooth((e - total) / _T_EXIT_DECEL)
         return warp_speed * (1.0 - f)
+
+    def sky_vantage(self, rate):
+        """Galaxy-map vantage to project the procedural sky from THIS frame, or
+        None if the source wasn't mapped. Advances forward along the warp heading
+        at `rate` galaxy-units/sec across the transit (held at the start during
+        align and at the end during the exit decel), so the projected clusters
+        and nebulae stream past — the "flying through the galaxy" parallax."""
+        if self._vantage is None:
+            return None
+        te = self._e - self._t_align
+        if te < 0.0:
+            te = 0.0
+        elif te > self._t_transit:
+            te = self._t_transit
+        h, v = self._heading, self._vantage
+        return (v[0] + h[0] * rate * te,
+                v[1] + h[1] * rate * te,
+                v[2] + h[2] * rate * te)
 
     def stop(self):
         self._active = False

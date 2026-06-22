@@ -184,10 +184,10 @@ class _WarpVfxBeginAction(TGAction):
     failure here never blocks the set-swap chain (control is restored on arrival
     by _ArriveFinalizeAction regardless)."""
 
-    def __init__(self, ship, heading, t_align, t_transit):
+    def __init__(self, ship, heading, t_align, t_transit, vantage=None):
         super().__init__()
         self._ship = ship
-        self._a = (heading, t_align, t_transit)
+        self._a = (heading, t_align, t_transit, vantage)
 
     def _do_play(self):
         try:
@@ -196,8 +196,8 @@ class _WarpVfxBeginAction(TGAction):
         except Exception:
             pass
         # Ship motion during warp is driven by the host's _PlayerControl warp
-        # override (hold during align, burst during transit) — a ship-level
-        # SetSpeed here is inert for the player and is intentionally omitted.
+        # speed profile — a ship-level SetSpeed here is inert for the player and
+        # is intentionally omitted.
         if _vfx_start is not None:
             try:
                 _vfx_start(*self._a)
@@ -206,9 +206,11 @@ class _WarpVfxBeginAction(TGAction):
         try:
             import engine.dev_mode as _dev
             if _dev.is_enabled():
-                h, ta, tt = self._a
+                h, ta, tt, vv = self._a
                 print("[warp] engaged: heading=(%.2f, %.2f, %.2f) "
-                      "align=%.1fs transit=%.1fs" % (h[0], h[1], h[2], ta, tt),
+                      "align=%.1fs transit=%.1fs vantage=%s"
+                      % (h[0], h[1], h[2], ta, tt,
+                         "none" if vv is None else "(%.0f,%.0f,%.0f)" % vv),
                       flush=True)
         except Exception:
             pass
@@ -496,8 +498,13 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
         # by luck). The set-swap is a root HELD by total = t_align + t_transit so
         # it lands when the transit ends (masked by the exit flash); placement +
         # teardown + exit SFX + VFX-end chain after the swap, firing on arrival.
+        # Procedural-sky vantage to fly the backdrop from during transit: the
+        # source system's galaxy position (fall back to the destination's when
+        # the source is unmapped). None => the sky stays blacked out.
+        sky_vantage = src_v if src_v is not None else dst_v
         seq.AddAction(_ClearTargetsAction(ship))
-        seq.AddAction(_WarpVfxBeginAction(ship, heading, t_align, t_transit))
+        seq.AddAction(_WarpVfxBeginAction(ship, heading, t_align, t_transit,
+                                          sky_vantage))
         enter_delay = t_align - _SFX_ENTER_FLASH_AT
         if enter_delay < 0.0:
             enter_delay = 0.0

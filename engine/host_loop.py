@@ -868,6 +868,23 @@ _WARP_LIGHT_KEY: tuple = (0.7, 0.9, 1.6)      # cool blue-white, from ahead
 _WARP_LIGHT_FILL: tuple = (0.12, 0.16, 0.30)  # dim cool, from behind
 _WARP_LIGHT_AMBIENT: tuple = (0.05, 0.07, 0.13)
 
+# Galaxy-map units/sec the procedural-sky vantage flies forward during transit.
+# Galaxy systems sit ~50-260 units apart, so ~15 u/s over a 10-20s transit
+# covers a full inter-system hop — clear cluster/nebula parallax. Tunable.
+_WARP_SKY_RATE: float = 15.0
+
+
+def _warp_transit_backdrops(wvfx):
+    """Procedural-sky backdrops projected from the warp manager's advancing
+    vantage, so the distant clusters/nebulae stream past during transit. Falls
+    back to a blacked-out sky ([]) when the source wasn't galaxy-mapped (no
+    vantage) or the procedural sky is off."""
+    vantage = wvfx.sky_vantage(_WARP_SKY_RATE)
+    if vantage is None or not r.procedural_sky_enabled():
+        return []
+    from engine.appc import sky_projection as sp
+    return sp.project_sky(vantage, sp.load_sector_model())
+
 
 def _warp_transit_lighting(travel, streak):
     """(ambient, directionals) for the in-warp scene.
@@ -3434,11 +3451,13 @@ def run(mission_name: Optional[str] = None,
             except Exception:
                 return None
 
-        def _vfx_start(heading, t_align, t_transit):
+        def _vfx_start(heading, t_align, t_transit, vantage=None):
             # WarpSequence (Task 3) computes the heading + explicit align/transit
-            # times; start the per-frame manager at the current game time.
+            # times; start the per-frame manager at the current game time. The
+            # vantage (source system's galaxy position) anchors the procedural
+            # sky so it can fly forward through the galaxy during transit.
             _wv.get().start(heading, t_align, t_transit,
-                            App.g_kUtopiaModule.GetGameTime())
+                            App.g_kUtopiaModule.GetGameTime(), vantage)
 
         _wp.configure_warp_vfx(
             start=_vfx_start, stop=_wv.get().stop,
@@ -4585,11 +4604,18 @@ def run(mission_name: Optional[str] = None,
                 _warp_clear_turn()
                 player_control._warp_speed_override = None
 
-            # Warp blackout (streak > 0): the whole sky goes dark — no stars,
-            # nebulae, or suns — so the dust tunnel is all that's left. During
-            # the align beat (active but streak 0) the scene is still shown.
+            # During warp (streak > 0) the LOCAL system is gone (suns + local
+            # objects torn down at burst), but the deep-space procedural sky
+            # stays — and flies. We re-project it each frame from a vantage that
+            # advances along the warp heading (_warp_transit_backdrops), so the
+            # distant clusters and nebulae stream past: "moving through the
+            # galaxy". During the align beat (active but streak 0) the real
+            # system is still shown normally.
             _warp_streaking = _w.is_active() and _w.streak_intensity() > 0.0
-            backdrops = [] if _warp_streaking else _aggregate_backdrops(active_set)
+            if _warp_streaking:
+                backdrops = _warp_transit_backdrops(_w)
+            else:
+                backdrops = _aggregate_backdrops(active_set)
             r.set_backdrops(backdrops)
 
             suns = [] if _warp_streaking else _aggregate_suns()
