@@ -22,18 +22,33 @@ def test_all_clear_allows():
     assert r.allowed is True and r.deny_line is None
 
 
-def test_impulse_off_blocks_with_xo_line():
+def test_impulse_off_deferred_allows_without_power_model():
+    # Power-allocation gate is deferred (no Engines power category modeled yet),
+    # so a power-wanted-0.0 ship is NOT blocked under normal play.
     r = wg.warp_gate(_Ship(_Sub(power=0.0), _Sub()))
-    assert r.allowed is False
-    assert r.deny_line == "EngineeringNeedPowerToEngines"
+    assert r.allowed is True
+
+
+def test_impulse_off_blocks_when_power_modeled(monkeypatch):
+    # The faithful logic is preserved: flip the flag and it blocks (XO line).
+    monkeypatch.setattr(wg, "_POWER_MODEL_AVAILABLE", True)
+    r = wg.warp_gate(_Ship(_Sub(power=0.0), _Sub()))
+    assert (r.allowed, r.deny_line) == (False, "EngineeringNeedPowerToEngines")
 
 
 def test_warp_disabled_blocks_cantwarp1():
+    # The damage gate is always active (IsDisabled is real, modeled state).
     r = wg.warp_gate(_Ship(_Sub(), _Sub(disabled=True)))
     assert (r.allowed, r.deny_line) == (False, "CantWarp1")
 
 
-def test_warp_off_blocks_cantwarp5():
+def test_warp_off_deferred_allows_without_power_model():
+    r = wg.warp_gate(_Ship(_Sub(), _Sub(on=False)))
+    assert r.allowed is True
+
+
+def test_warp_off_blocks_when_power_modeled(monkeypatch):
+    monkeypatch.setattr(wg, "_POWER_MODEL_AVAILABLE", True)
     r = wg.warp_gate(_Ship(_Sub(), _Sub(on=False)))
     assert (r.allowed, r.deny_line) == (False, "CantWarp5")
 
@@ -48,10 +63,19 @@ def test_no_ship_blocks_silently():
     assert r.allowed is False and r.silent is True
 
 
-def test_order_impulse_before_warp():
-    # both impulse-off and warp-disabled -> impulse (XO) line wins
+def test_order_impulse_before_warp_when_power_modeled(monkeypatch):
+    # With the power model on, both impulse-off and warp-disabled hold ->
+    # impulse (XO) line wins (WarpPressed order).
+    monkeypatch.setattr(wg, "_POWER_MODEL_AVAILABLE", True)
     r = wg.warp_gate(_Ship(_Sub(power=0.0), _Sub(disabled=True)))
     assert r.deny_line == "EngineeringNeedPowerToEngines"
+
+
+def test_power_deferred_impulse_off_falls_through_to_warp_damage():
+    # Default (power deferred): impulse-off is skipped, so a damaged warp engine
+    # is the deciding block.
+    r = wg.warp_gate(_Ship(_Sub(power=0.0), _Sub(disabled=True)))
+    assert (r.allowed, r.deny_line) == (False, "CantWarp1")
 
 
 class _RaisingShip:

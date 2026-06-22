@@ -20,6 +20,17 @@ def configure_gate_hooks(ray_collide=None):
     _ray_collide_hook = ray_collide
 
 
+# BC's power system allocates to four categories (Weapons / Shields / Sensors /
+# Engines) — there is no separate impulse-vs-warp power split. WarpPressed's
+# "impulse engines off" (GetPowerPercentageWanted == 0.0) and "warp engines off"
+# (not IsOn) checks read that Engines allocation. We don't model power
+# allocation yet, so a powered, moving ship reads power-wanted 0.0 / not-on and
+# these would false-positive (block every warp). They are DEFERRED behind this
+# flag; the predicates below keep the faithful logic. When an Engines power
+# category lands, flip this to True (both checks become "Engines power == 0").
+_POWER_MODEL_AVAILABLE = False
+
+
 class GateResult:
     __slots__ = ("allowed", "deny_line", "silent", "reason")
 
@@ -117,10 +128,11 @@ def warp_gate(ship):
     if ship is None:
         return GateResult(False, None, silent=True, reason="no player ship")
     try:
-        # Impulse subsystem missing -> SDK CallNextHandler (proceed; not a block).
-        if ship.GetImpulseEngineSubsystem() is None:
-            pass
-        elif _safe(_impulse_off, ship):
+        # Power-allocation gate (DEFERRED until an Engines power category exists
+        # — see _POWER_MODEL_AVAILABLE). SDK: impulse subsystem missing ->
+        # CallNextHandler (proceed); power-wanted 0.0 -> block.
+        if _POWER_MODEL_AVAILABLE and ship.GetImpulseEngineSubsystem() is not None \
+                and _safe(_impulse_off, ship):
             return GateResult(False, "EngineeringNeedPowerToEngines",
                               reason="impulse engines off "
                                      "(GetPowerPercentageWanted == 0.0)")
@@ -131,7 +143,8 @@ def warp_gate(ship):
         if _safe(_warp_disabled, ship):
             return GateResult(False, "CantWarp1",
                               reason="warp engine disabled (IsDisabled)")
-        if _safe(_warp_off, ship):
+        # Warp on/off is part of the same deferred power model.
+        if _POWER_MODEL_AVAILABLE and _safe(_warp_off, ship):
             return GateResult(False, "CantWarp5",
                               reason="warp engine off (not IsOn)")
         if _safe(_in_nebula, ship):
