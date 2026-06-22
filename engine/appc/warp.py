@@ -11,6 +11,13 @@ import math
 
 from engine.appc.actions import TGAction, TGSequence
 
+# Name of the temporary empty set the player occupies WHILE in warp transit.
+# The source system is torn down at burst and the player is parked here (no
+# lights, no backdrops, no other ships) until the destination swap lands — so
+# during transit nothing from the system left behind keeps simulating, firing,
+# or lighting the scene. Mirrors BC's "warp set" (project_warp_mechanism_sdk).
+_WARP_TRANSIT_SET_NAME = "_WarpTransit"
+
 # Host-registered render hooks: fn(pSet) -> None. None => skip (headless).
 _realize_hook = None
 _teardown_hook = None
@@ -28,9 +35,11 @@ def configure_warp_hooks(realize=None, teardown=None, current_player=None):
 # ── Warp-VFX flythrough (Stage 2) ────────────────────────────────────────────
 # Distance-based transit duration. T = clamp(T_MIN, T_MAX, T_BASE + K*dist),
 # dist in galaxy-map units between the source and destination system vantages.
-# K tuned so a mid-galaxy hop (~150 units) lands ≈ 5 s. Unmapped vantage (None
-# on either side) => T_BASE (a short transit, no parallax).
-_T_MIN, _T_MAX, _T_BASE, _K = 2.0, 10.0, 2.0, 0.02
+# K tuned so a mid-galaxy hop (~150 units) lands ≈ 20 s. Unmapped vantage (None
+# on either side) => T_BASE (a short transit, no parallax). Scaled 4× over the
+# original (T_MIN/T_MAX/T_BASE/K = 2/10/2/0.02) per live tuning — the streak
+# phase reads too brief at the base values.
+_T_MIN, _T_MAX, _T_BASE, _K = 8.0, 40.0, 8.0, 0.08
 
 # Align/turn phase: the ship slows + swings onto the warp heading before the
 # streak transit begins. The duration is derived from the actual turn angle and
@@ -127,11 +136,53 @@ class _WarpSoundAction(TGAction):
             pass
 
 
+def _clear_all_targets(ship) -> None:
+    """Drop every target the instant warp engages: the player's current target
+    + subsystem lock, and the whole target-list HUD (rows + persistent hint).
+
+    Warping leaves the system — there is nothing to target. Mirrors the SDK's
+    own ``ClearTargetList`` + ``ClearPersistentTarget`` pairing
+    (Multiplayer/MissionShared.py:353-354). Control is removed for the warp, so
+    no CycleTarget can re-populate the list before arrival. Fail-open: a failure
+    here never blocks the warp.
+    """
+    try:
+        if ship is not None:
+            if hasattr(ship, "SetTarget"):
+                ship.SetTarget(None)
+            if hasattr(ship, "SetTargetSubsystem"):
+                ship.SetTargetSubsystem(None)
+    except Exception:
+        pass
+    try:
+        from engine.appc.target_menu import STTargetMenu_GetTargetMenu
+        menu = STTargetMenu_GetTargetMenu()
+        if menu is not None:
+            menu.ClearTargetList()
+            menu.ClearPersistentTarget()
+    except Exception:
+        pass
+
+
+class _ClearTargetsAction(TGAction):
+    """Drop every target at warp engage. Runs on BOTH the flythrough and the
+    instant hard-cut path (added first in each), so the target list is empty
+    the instant warp begins regardless of the Modern-VFX toggle. Fail-open."""
+
+    def __init__(self, ship):
+        super().__init__()
+        self._ship = ship
+
+    def _do_play(self):
+        _clear_all_targets(self._ship)
+
+
 class _WarpVfxBeginAction(TGAction):
     """Align start: remove player control, slow the ship to a stop, and start
-    the WarpVFX manager on the warp heading. Every step is fail-open — a failure
-    here never blocks the set-swap chain (control is restored on arrival by
-    _ArriveFinalizeAction regardless)."""
+    the WarpVFX manager on the warp heading. Targets are cleared by the separate
+    _ClearTargetsAction (added alongside this one). Every step is fail-open — a
+    failure here never blocks the set-swap chain (control is restored on arrival
+    by _ArriveFinalizeAction regardless)."""
 
     def __init__(self, ship, heading, t_align, t_transit):
         super().__init__()
@@ -164,7 +215,10 @@ class _WarpVfxBeginAction(TGAction):
 
 
 class _WarpVfxEndAction(TGAction):
-    """Stop the WarpVFX manager on arrival. Fail-open."""
+    """Defensive late-stop for the WarpVFX manager. The manager self-deactivates
+    after its post-arrival decel tail (the host drives the speed glide-down to 0
+    over those final seconds); this action is scheduled to fire just after the
+    tail as a belt-and-suspenders stop. Fail-open."""
 
     def _do_play(self):
         if _vfx_stop is not None:
@@ -295,9 +349,68 @@ def _silence_ship_weapons(ship):
                     pass
 
 
+class _WarpDepartAction(TGAction):
+    """Fires at BURST (transit start): tear down the system being left behind.
+
+    Silences every source-set ship's weapon loops, moves the player into a fresh
+    empty transit set, makes that the rendered set (so lighting + backdrops fall
+    to neutral — the source sun stops lighting the scene), and deletes the source
+    set (render teardown + DeleteSet — its ships stop running AI/combat, so the
+    firing the player could hear during transit goes silent). The held
+    destination swap still lands at transit-end.
+
+    Fail-open: each step is guarded, and _ArriveFinalizeAction tears the source
+    down on arrival anyway (idempotent) if departure didn't complete."""
+
+    def __init__(self, source_set, ship):
+        super().__init__()
+        self._source = source_set
+        self._ship = ship
+
+    def _do_play(self):
+        import App
+        from engine.appc.sets import SetClass_Create
+        src = self._source
+        ship = self._ship
+        # 1. Silence looping weapon SFX on every source-set ship (incl. the
+        #    player) before the set is deleted — otherwise a bank firing at the
+        #    moment of warp loops on into transit / the new system.
+        if src is not None:
+            for obj in list(getattr(src, "_objects", {}).values()):
+                _silence_ship_weapons(obj)
+        # 2. Park the player in a fresh empty transit set and render that, so the
+        #    lighting/backdrop aggregation (which keys off the rendered/player
+        #    set) yields neutral defaults instead of the source system's sun.
+        try:
+            if App.g_kSetManager.GetSet(_WARP_TRANSIT_SET_NAME) is not None:
+                App.g_kSetManager.DeleteSet(_WARP_TRANSIT_SET_NAME)
+            transit = SetClass_Create()
+            App.g_kSetManager.AddSet(transit, _WARP_TRANSIT_SET_NAME)
+            if ship is not None:
+                for s in list(App.g_kSetManager._sets.values()):
+                    if s.GetObject(ship.GetName()) is ship:
+                        s.RemoveObjectFromSet(ship.GetName())
+                transit.AddObjectToSet(ship, ship.GetName())
+            App.g_kSetManager.MakeRenderedSet(_WARP_TRANSIT_SET_NAME)
+        except Exception:
+            pass
+        # 3. Tear the source system down (render teardown + DeleteSet). Guarded:
+        #    a failure here leaves it for _ArriveFinalizeAction to finish.
+        if src is not None:
+            try:
+                name = src.GetName()
+                if _teardown_hook is not None:
+                    _teardown_hook(src)
+                App.g_kSetManager.DeleteSet(name)
+            except Exception:
+                pass
+
+
 class _ArriveFinalizeAction(TGAction):
     """Silence weapon-fire loops, terminate the source set (render teardown +
-    DeleteSet), and return player control."""
+    DeleteSet) if it still exists, clean up the warp-transit set, and return
+    player control. Idempotent w.r.t. the source set so it is safe whether or not
+    _WarpDepartAction already tore it down."""
 
     def __init__(self, source_set, ship=None):
         super().__init__()
@@ -315,15 +428,20 @@ class _ArriveFinalizeAction(TGAction):
         if src is not None:
             for obj in list(getattr(src, "_objects", {}).values()):
                 _silence_ship_weapons(obj)
-        # No source set captured (e.g. the warp degraded to a no-op) => nothing
-        # to tear down; leave everything as-is.
-        if src is not None:
-            name = src.GetName()
-            # Only terminate if it isn't the destination (defensive).
+        # Terminate the source set — but ONLY if it still exists (the flythrough
+        # path tears it down earlier in _WarpDepartAction; this is the fallback
+        # for the instant path and for a departure that failed open).
+        if src is not None and App.g_kSetManager.GetSet(src.GetName()) is src:
             if App.g_kSetManager.GetRenderedSet() is not src:
                 if _teardown_hook is not None:
                     _teardown_hook(src)
-                App.g_kSetManager.DeleteSet(name)
+                App.g_kSetManager.DeleteSet(src.GetName())
+        # Clean up the temporary warp-transit set (flythrough only; no-op on the
+        # instant path). The player has been moved into the destination by
+        # _PlacePlayerAction, so the transit set is now empty.
+        transit = App.g_kSetManager.GetSet(_WARP_TRANSIT_SET_NAME)
+        if transit is not None and App.g_kSetManager.GetRenderedSet() is not transit:
+            App.g_kSetManager.DeleteSet(_WARP_TRANSIT_SET_NAME)
         # Undo SDK WarpPressed's RemoveControl (no-op if MissionLib absent).
         try:
             import MissionLib
@@ -378,24 +496,36 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
         # by luck). The set-swap is a root HELD by total = t_align + t_transit so
         # it lands when the transit ends (masked by the exit flash); placement +
         # teardown + exit SFX + VFX-end chain after the swap, firing on arrival.
+        seq.AddAction(_ClearTargetsAction(ship))
         seq.AddAction(_WarpVfxBeginAction(ship, heading, t_align, t_transit))
         enter_delay = t_align - _SFX_ENTER_FLASH_AT
         if enter_delay < 0.0:
             enter_delay = 0.0
         seq.AddAction(_WarpSoundAction("Enter Warp"), enter_delay)
+        # At BURST (t_align): tear down the system being left behind and park the
+        # player in an empty transit set, so during the held transit nothing from
+        # the source system keeps firing or lighting the scene.
+        seq.AddAction(_WarpDepartAction(source, ship), t_align)
         swap = ChangeRenderedSetAction_Create(dest_module)
         seq.AddAction(swap, total)
         seq.AppendAction(_PlacePlayerAction(ship, dest_name, placement))
         seq.AppendAction(_ArriveFinalizeAction(source, ship))
         seq.AppendAction(_WarpSoundAction("Exit Warp"))
-        seq.AppendAction(_WarpVfxEndAction())
+        # The manager keeps running for _T_EXIT_DECEL seconds after arrival to
+        # glide the ship from in-system warp speed down to 0; schedule the
+        # defensive stop just past that tail (the manager also self-deactivates).
+        from engine.warp_vfx import _T_EXIT_DECEL
+        seq.AppendAction(_WarpVfxEndAction(), _T_EXIT_DECEL + 0.5)
         return seq
 
-    seq.AddAction(ChangeRenderedSetAction_Create(dest_module))
     # Falsy destination => no set change/placement/teardown: the whole warp
     # degrades to "nothing happened" (BC's `if pcDestModule != None:` guard).
     # The per-action _do_play guards are the robust floor; skipping placement
-    # and source teardown here keeps the player in its current set.
+    # and source teardown here keeps the player in its current set. Targets are
+    # only cleared when a real warp actually happens (real destination).
+    if not _module_is_empty(dest_module):
+        seq.AddAction(_ClearTargetsAction(ship))
+    seq.AddAction(ChangeRenderedSetAction_Create(dest_module))
     if not _module_is_empty(dest_module):
         seq.AppendAction(_PlacePlayerAction(ship, dest_name, placement))
         seq.AppendAction(_ArriveFinalizeAction(source, ship))

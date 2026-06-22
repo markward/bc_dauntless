@@ -856,6 +856,36 @@ DEFAULT_DIRECTIONALS: list = [
     ((0.3, 1.0, 0.2), (1.0, 1.0, 1.0)),
 ]
 
+# In-warp lighting (streak phase). The system the player left is torn down, so
+# its sun is gone; the only light is the warp tunnel rushing toward the ship.
+# A bright cool key from AHEAD (down travel_dir) lights the front of the hull as
+# if by the tunnel, with a dim cool back-fill so the rear isn't black, over a low
+# cool ambient. Direction is a deliberate cinematic vector (the warp heading),
+# not a world-up reference. Biased strong for first-look calibration — dial down
+# to taste (calibrate up, then down). All three scale by streak_intensity so the
+# warp look fades in at the burst and out at the exit.
+_WARP_LIGHT_KEY: tuple = (0.7, 0.9, 1.6)      # cool blue-white, from ahead
+_WARP_LIGHT_FILL: tuple = (0.12, 0.16, 0.30)  # dim cool, from behind
+_WARP_LIGHT_AMBIENT: tuple = (0.05, 0.07, 0.13)
+
+
+def _warp_transit_lighting(travel, streak):
+    """(ambient, directionals) for the in-warp scene.
+
+    `travel` is the world-space warp heading; `streak` (0..1) fades the whole
+    rig in/out. The key light points TOWARD the travel direction (lit from where
+    the ship is flying into); the fill comes from directly behind.
+    """
+    tx, ty, tz = travel
+    m = (tx * tx + ty * ty + tz * tz) ** 0.5
+    fwd = (0.0, 1.0, 0.0) if m < 1e-6 else (tx / m, ty / m, tz / m)
+    back = (-fwd[0], -fwd[1], -fwd[2])
+    s = 0.0 if streak < 0.0 else (1.0 if streak > 1.0 else streak)
+    key = tuple(c * s for c in _WARP_LIGHT_KEY)
+    fill = tuple(c * s for c in _WARP_LIGHT_FILL)
+    amb = tuple(c * s for c in _WARP_LIGHT_AMBIENT)
+    return amb, [(fwd, key), (back, fill)]
+
 from engine.cameras import (
     CAM_BACK_RADII, CAM_UP_RADII, CAM_MIN_RADII, CAM_MAX_RADII,
     CameraMode,
@@ -1810,10 +1840,32 @@ def _aggregate_suns() -> list:
 # 0.7 -> suns shrink to 30% radius at the tunnel's brightest. Tunable.
 _WARP_SUN_DIM = 0.7
 
-# Forward speed (GU/s) the ship bursts to during the warp transit (sells the
-# motion; the camera follows so the dust velocity-smear adds to the streak).
-# Tunable. The ship holds (speed 0) during the align beat.
-_WARP_BURST_SPEED = 5.0
+# Warp ship-speed profile (see engine/warp_vfx.ship_speed for the envelope):
+#   * cruise at impulse level _WARP_ALIGN_IMPULSE_LEVEL while aligning,
+#   * ramp up to in-system warp (impulse max speed × _WARP_IN_SYSTEM_FACTOR) in
+#     the last second before the burst flash,
+#   * glide back to 0 over the 2s after arrival.
+# Both speeds are derived per-ship from the impulse engine's max speed. Tunable.
+_WARP_ALIGN_IMPULSE_LEVEL = 5.0   # of 9 throttle notches -> cruise while aligning
+_WARP_IN_SYSTEM_FACTOR = 100.0    # × impulse max speed = in-system warp speed
+_WARP_MAX_SPEED_FALLBACK = 6.3    # GU/s (Galaxy) when the IES can't be read
+
+
+def _warp_phase_speeds(player):
+    """(nominal_cruise, in_system_warp) GU/s for the warp speed profile, derived
+    from the player's impulse-engine max speed. Fail-soft to the Galaxy default
+    so the profile always has sane magnitudes."""
+    ms = 0.0
+    try:
+        ies = player.GetImpulseEngineSubsystem()
+        if ies is not None:
+            ms = ies.GetMaxSpeed()
+    except Exception:
+        ms = 0.0
+    if ms <= 0.0:
+        ms = _WARP_MAX_SPEED_FALLBACK
+    nominal = ms * (_WARP_ALIGN_IMPULSE_LEVEL / 9.0)
+    return nominal, ms * _WARP_IN_SYSTEM_FACTOR
 
 # Player rotation captured at align start; the slerp target is anchored to it so
 # the turn is stable across frames (cleared when the warp ends).
@@ -4501,14 +4553,19 @@ def run(mission_name: Optional[str] = None,
                 r.set_warp_streak_intensity(_w.streak_intensity())
                 r.set_warp_flash_intensity(_w.flash_intensity())
                 r.set_warp_travel_dir(_w.travel_dir())
-                if player is not None:
+                # Cinematic turn onto the warp heading — but NOT during the exit
+                # decel: after arrival the placement owns the ship's orientation,
+                # so forcing the warp heading would mis-aim the arrived ship.
+                if player is not None and _w.phase() != "exit":
                     _warp_apply_turn(player, _w.turn_fraction(), _w.travel_dir())
-                # Ship motion: hold (0) through the align beat, then BURST forward
-                # at _WARP_BURST_SPEED through the streak transit. Driven via the
-                # _PlayerControl override (single motion path; the camera follows
-                # so the dust velocity-smear stacks on the warp drift).
-                player_control._warp_speed_override = (
-                    _WARP_BURST_SPEED if _w.streak_intensity() > 0.0 else 0.0)
+                # Ship-speed profile (engine/warp_vfx.ship_speed): cruise at
+                # impulse-5 while aligning, ramp up to in-system warp in the last
+                # 1s before the burst flash, hold ~still (camera-wise) through the
+                # blacked-out transit, then glide warp->0 over 2s as the new
+                # system appears. Driven via the _PlayerControl override.
+                if player is not None:
+                    _nom, _wsp = _warp_phase_speeds(player)
+                    player_control._warp_speed_override = _w.ship_speed(_nom, _wsp)
                 # Dev diagnostic: track the peaks so we can confirm live that the
                 # flash / streak / turn are actually driving (the visuals are
                 # exterior-view only; this works from any view).
@@ -4537,6 +4594,14 @@ def run(mission_name: Optional[str] = None,
 
             suns = [] if _warp_streaking else _aggregate_suns()
             r.set_suns(suns)
+
+            # In-warp lighting: the system's sun is gone (torn down at burst), so
+            # replace the earlier set_lighting() with a cool warp-tunnel key from
+            # ahead. Overrides this frame's lighting only while streaking.
+            if _warp_streaking:
+                _wamb, _wdirs = _warp_transit_lighting(
+                    _w.travel_dir(), _w.streak_intensity())
+                r.set_lighting(_wamb, _wdirs)
 
             planets = _aggregate_planets(
                 list(App.g_kSetManager._sets.values()))
