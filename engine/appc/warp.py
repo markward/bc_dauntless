@@ -23,9 +23,18 @@ def configure_warp_hooks(realize=None, teardown=None, current_player=None):
     _player_hook = current_player
 
 
+def _module_is_empty(module):
+    """True when there's no destination module to load (None / empty /
+    whitespace). Mirrors BC's `if pcDestModule != None:` guard in
+    WarpSequence.SetupSequence — a falsy destination means 'no set change'."""
+    return module is None or not str(module).strip()
+
+
 def _set_name_from_module(module):
     """'Systems.Vesuvi.Vesuvi4' -> 'Vesuvi4' (mirrors WarpSequence.py)."""
-    s = str(module)
+    if _module_is_empty(module):
+        return None
+    s = str(module).strip()
     return s[s.rfind(".") + 1:] if "." in s else s
 
 
@@ -42,6 +51,11 @@ class ChangeRenderedSetAction(TGAction):
         import App
         pSet = self._set
         if pSet is None:
+            # No explicit set AND no module to load => no set change (no-op).
+            # Mirrors BC's `if pcDestModule != None:` guard. A non-empty module
+            # that fails to import/register still raises below (fail loud).
+            if _module_is_empty(self._module):
+                return
             name = _set_name_from_module(self._module)
             pSet = App.g_kSetManager.GetSet(name)
             if pSet is None:
@@ -81,11 +95,17 @@ class _PlacePlayerAction(TGAction):
     def _do_play(self):
         import App
         ship = self._ship
+        # No destination set (e.g. None warp destination) => nothing to move
+        # the player into. Degrade to a no-op: leave the ship where it is.
+        if not self._dest_name:
+            return
+        dest = App.g_kSetManager.GetSet(self._dest_name)
+        if dest is None:
+            return
         # Remove from whatever set currently holds it.
         for s in list(App.g_kSetManager._sets.values()):
             if s.GetObject(ship.GetName()) is ship:
                 s.RemoveObjectFromSet(ship.GetName())
-        dest = App.g_kSetManager.GetSet(self._dest_name)
         dest.AddObjectToSet(ship, ship.GetName())
         ship.PlaceObjectByName(self._placement)
 
@@ -101,6 +121,8 @@ class _ArriveFinalizeAction(TGAction):
     def _do_play(self):
         import App
         src = self._source
+        # No source set captured (e.g. the warp degraded to a no-op) => nothing
+        # to tear down; leave everything as-is.
         if src is not None:
             name = src.GetName()
             # Only terminate if it isn't the destination (defensive).
@@ -140,8 +162,13 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
             source = s
             break
     seq.AddAction(ChangeRenderedSetAction_Create(dest_module))
-    seq.AppendAction(_PlacePlayerAction(ship, dest_name, placement))
-    seq.AppendAction(_ArriveFinalizeAction(source))
+    # Falsy destination => no set change/placement/teardown: the whole warp
+    # degrades to "nothing happened" (BC's `if pcDestModule != None:` guard).
+    # The per-action _do_play guards are the robust floor; skipping placement
+    # and source teardown here keeps the player in its current set.
+    if not _module_is_empty(dest_module):
+        seq.AppendAction(_PlacePlayerAction(ship, dest_name, placement))
+        seq.AppendAction(_ArriveFinalizeAction(source))
     return seq
 
 

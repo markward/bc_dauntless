@@ -55,3 +55,42 @@ def test_warp_sequence_moves_player_and_terminates_source():
     # placed at Player Start
     loc = player.GetWorldLocation()
     assert abs(loc.x - 10.0) < 1e-3
+
+
+def _player_in_set(name):
+    src = _make_set(name)
+    player = App.ShipClass_Create()
+    player.SetName("player")
+    src.AddObjectToSet(player, "player")
+    return player, src
+
+
+def test_none_destination_is_noop():
+    # A None warp destination => harmless no-op: no exception, player stays in
+    # its current set, no rendered-set crash. Mirrors BC's pcDestModule guard.
+    player, src = _player_in_set("Home")
+    warp.WarpSequence_Create(player, None).Play()
+    assert App.g_kSetManager.GetSet("Home") is src        # source intact
+    assert src.GetObject("player") is player              # player unmoved
+
+
+def test_empty_destination_is_noop():
+    player, src = _player_in_set("Home2")
+    warp.WarpSequence_Create(player, "").Play()
+    assert App.g_kSetManager.GetSet("Home2") is src
+    assert src.GetObject("player") is player
+
+
+def test_whitespace_destination_is_noop():
+    player, src = _player_in_set("Home3")
+    warp.WarpSequence_Create(player, "   ").Play()
+    assert App.g_kSetManager.GetSet("Home3") is src
+    assert src.GetObject("player") is player
+
+
+def test_bad_module_still_raises():
+    # Fail loud: a non-empty but unimportable module must still raise.
+    player, _ = _player_in_set("Home4")
+    import pytest
+    with pytest.raises(Exception):
+        warp.WarpSequence_Create(player, "FakeSys.DoesNotExist").Play()
