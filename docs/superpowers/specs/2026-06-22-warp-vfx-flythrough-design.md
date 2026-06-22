@@ -63,6 +63,12 @@ seconds at warp time), covered by the toggle fallback below.
    vantage parallax (nothing to animate).
 6. **Fail-open:** a VFX error never blocks the warp — the set-swap still
    completes (same discipline as the warp spine/gates).
+7. **Distance-based duration.** The transit time scales with the 3D distance
+   between the origin and destination **on the galaxy map** (the src/dst
+   vantage positions from `sector_model`): far systems take longer to cross,
+   near ones are quick. `T = clamp(T_MIN, T_MAX, T_BASE + K * galaxy_distance)`,
+   all four constants tunable by feel. When a vantage is unmapped (no galaxy
+   coordinates), use `T_BASE`.
 
 ## Architecture
 
@@ -70,6 +76,7 @@ The warp becomes a timed transit owned by a per-frame **WarpVFX manager**, with
 the set-swap still living in the `WarpSequence`:
 
 ```
+T = clamp(T_MIN, T_MAX, T_BASE + K * |dst_vantage - src_vantage|)   # galaxy-distance scaled
 t=0:      entry warp-flash; WarpVFX.start(src_vantage, dst_vantage, T, travel_dir)
 [0, T):   per frame in the host loop — WarpVFX.tick(now):
             • vantage = lerp(src, dst, ease(progress))  -> galaxy streams past
@@ -110,10 +117,15 @@ t=T:      Stage-1 swap (ChangeRenderedSetAction -> place player -> finalize);
 ### `engine/appc/warp.py` — sequence integration
 
 - `WarpSequence_Create` (toggle ON): capture `src`/`dst` vantage via
-  `sky_projection.vantage_for_set` and a travel direction; `_WarpTransitBegin`
+  `sky_projection.vantage_for_set` and a travel direction; compute the transit
+  duration from the galaxy-map distance —
+  `T = clamp(T_MIN, T_MAX, T_BASE + K * |dst_vantage - src_vantage|)` with the
+  four constants tunable (start values e.g. `T_MIN=2.0`, `T_MAX=10.0`,
+  `T_BASE=2.0`, `K` chosen so a typical hop is ~4–5 s); `_WarpTransitBegin`
   action (start manager + entry flash), then the swap actions held by
-  `delay=duration`, then `_WarpTransitEnd` (stop manager). The warp button's
-  `warp_time` drives the duration (default ~4–5 s, tunable).
+  `delay=T`, then `_WarpTransitEnd` (stop manager). The SDK warp button's
+  `warp_time` is ignored for the flythrough duration (it was BC's fixed value);
+  unmapped vantage ⇒ `T = T_BASE`.
 - Toggle OFF or no procedural sky / no mapped vantage: emit the current instant
   sequence (Stage-1 hard cut).
 
@@ -158,9 +170,12 @@ t=T:      Stage-1 swap (ChangeRenderedSetAction -> place player -> finalize);
 **Headless (pytest):**
 - `WarpVFX` tick math: progress 0→1 over duration, eased, clamped; `vantage()`
   equals `src` at t=0 and `dst` at t≥duration; `streak/flash_intensity` envelopes.
-- Sequence: toggle ON inserts the transit and holds `duration` before the swap;
+- Sequence: toggle ON inserts the transit and holds `T` before the swap;
   toggle OFF stays the current instant sequence; the swap still fires after the
   transit (player ends in destination).
+- Distance-based duration: `T` increases monotonically with galaxy distance and
+  clamps to `[T_MIN, T_MAX]`; a far src→dst pair yields a longer `T` than a near
+  one; unmapped vantage ⇒ `T_BASE`.
 - Vantage override active only while `is_active()`; `_aggregate_backdrops` uses
   the warp vantage during transit and the set vantage otherwise.
 - No-procedural-sky path: warp completes, no parallax, no crash.
