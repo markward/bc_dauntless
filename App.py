@@ -342,7 +342,7 @@ CT_SORTED_REGION_MENU = SortedRegionMenu
 # MetaNebula factories — imported here (not at the top) so that the
 # `Nebula` base class and `CT_NEBULA` tag above are already bound when
 # engine.appc.nebula does `from App import Nebula`, avoiding a circular import.
-from engine.appc.nebula import MetaNebula, MetaNebula_Create, Nebula_Cast
+from engine.appc.nebula import MetaNebula, MetaNebula_Create, Nebula_Cast, MetaNebula_Cast
 
 # AsteroidField factories — imported here (after the bare `AsteroidField` base
 # class and `CT_ASTEROID_FIELD` tag are bound) so engine.appc.asteroid_field can
