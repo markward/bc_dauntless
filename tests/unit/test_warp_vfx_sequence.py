@@ -12,8 +12,12 @@ def setup_function(_):
 def test_heading_is_normalized_src_to_dst():
     h = warp._warp_heading((0.0, 0.0, 0.0), (10.0, 0.0, 0.0))
     assert abs(h[0] - 1.0) < 1e-6 and abs(h[1]) < 1e-6
-    # unmapped -> default forward
-    assert warp._warp_heading(None, (1.0, 0.0, 0.0)) == (0.0, 1.0, 0.0)
+    # Unmapped SOURCE (mission sets aren't galaxy-mapped) -> heading toward the
+    # destination from the galaxy origin, so the ship still turns to the system.
+    h2 = warp._warp_heading(None, (0.0, 0.0, 5.0))
+    assert abs(h2[2] - 1.0) < 1e-6 and abs(h2[0]) < 1e-6
+    # Missing DESTINATION -> default ship-forward.
+    assert warp._warp_heading((0.0, 0.0, 0.0), None) == (0.0, 1.0, 0.0)
 
 
 def test_flythrough_on_holds_swap_and_starts_vfx():

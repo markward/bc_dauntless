@@ -1792,6 +1792,13 @@ _WARP_SUN_DIM = 0.7
 # the turn is stable across frames (cleared when the warp ends).
 _warp_turn_start_R = None
 
+# True while the local scene is hidden for the warp tunnel (streak > 0). Tracked
+# so visibility is restored on the frame the streak ends.
+_warp_hidden = False
+
+# Dev-mode warp diagnostics: per-warp peak flash/streak/turn, logged on warp end.
+_warp_diag: dict = {}
+
 
 def _dim_suns(suns, streak):
     """Shrink sun radius/corona_radius by (1 - DIM*streak) for the warp dim.
@@ -3165,6 +3172,17 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
     # player is always set when a session exists, so _player_iid is a
     # real iid (never None) at runtime.
     _player_iid = session.ship_instances.get(player)
+    # Warp blackout: once we jump to lightspeed (streak > 0) the whole local
+    # scene is left behind — hide every non-player ship/station + planet so the
+    # transit is just the player in the dust tunnel. _apply re-runs while
+    # hiding (so objects realised mid-window are caught) plus the single frame
+    # we stop (to restore visibility). Off-parity: no calls when not warping.
+    global _warp_hidden
+    from engine import warp_vfx as _wv_hide
+    _wh = _wv_hide.get()
+    _warp_hide = _wh.is_active() and _wh.streak_intensity() > 0.0
+    _warp_apply_vis = _warp_hide or _warp_hidden
+    _warp_hidden = _warp_hide
     _live_ship_iids = []
     for ship, iid in session.ship_instances.items():
         _wg = session.ship_glow_controllers.get(iid)
@@ -3178,6 +3196,8 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
                 iid, _ship_world_matrix(ship, model_scale))
             continue
         _live_ship_iids.append(iid)
+        if _warp_apply_vis:
+            r.set_visible(iid, not _warp_hide)
         # NOTE: scale is read live, not interpolated — the
         # buffer only stores loc+rot. Fine for steady scale;
         # a mid-animation GetScale() change applies the
@@ -3204,6 +3224,8 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
     for planet, iid in session.planet_instances.items():
         ns = session.planet_natural_scale.get(planet, 1.0)
         r.set_world_transform(iid, _astro_world_matrix(planet, ns))
+        if _warp_apply_vis:
+            r.set_visible(iid, not _warp_hide)
 
 
 def run(mission_name: Optional[str] = None,
@@ -4454,20 +4476,32 @@ def run(mission_name: Optional[str] = None,
                 r.set_warp_travel_dir(_w.travel_dir())
                 if player is not None:
                     _warp_apply_turn(player, _w.turn_fraction(), _w.travel_dir())
+                # Dev diagnostic: track the peaks so we can confirm live that the
+                # flash / streak / turn are actually driving (the visuals are
+                # exterior-view only; this works from any view).
+                global _warp_diag
+                _warp_diag["flash"] = max(_warp_diag.get("flash", 0.0), _w.flash_intensity())
+                _warp_diag["streak"] = max(_warp_diag.get("streak", 0.0), _w.streak_intensity())
+                _warp_diag["turn"] = max(_warp_diag.get("turn", 0.0), _w.turn_fraction())
             else:
+                if _warp_diag and dev_mode.is_enabled():
+                    print("[warp] peaks: flash=%.2f streak=%.2f turn=%.2f"
+                          % (_warp_diag.get("flash", 0.0),
+                             _warp_diag.get("streak", 0.0),
+                             _warp_diag.get("turn", 0.0)), flush=True)
+                _warp_diag = {}
                 r.set_warp_streak_intensity(0.0)
                 r.set_warp_flash_intensity(0.0)
                 _warp_clear_turn()
 
-            backdrops = _aggregate_backdrops(active_set)
+            # Warp blackout (streak > 0): the whole sky goes dark — no stars,
+            # nebulae, or suns — so the dust tunnel is all that's left. During
+            # the align beat (active but streak 0) the scene is still shown.
+            _warp_streaking = _w.is_active() and _w.streak_intensity() > 0.0
+            backdrops = [] if _warp_streaking else _aggregate_backdrops(active_set)
             r.set_backdrops(backdrops)
 
-            suns = _aggregate_suns()
-            if _w.is_active():
-                # Dim suns during the streak so the dust tunnel reads cleanly.
-                # The sun descriptor has no brightness field; sun_pass keys
-                # apparent brightness off radius, so shrink radius/corona_radius.
-                suns = _dim_suns(suns, _w.streak_intensity())
+            suns = [] if _warp_streaking else _aggregate_suns()
             r.set_suns(suns)
 
             planets = _aggregate_planets(

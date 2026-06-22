@@ -62,13 +62,17 @@ def _transit_duration(src_vantage, dst_vantage):
 
 
 def _warp_heading(src_vantage, dst_vantage):
-    """Normalized src->dst direction (galaxy-map space). Either vantage None or
-    coincident => default ship-forward (0, 1, 0)."""
-    if src_vantage is None or dst_vantage is None:
+    """Normalized galaxy-map direction toward the destination system. The source
+    set is often NOT galaxy-mapped (mission sets aren't in the sector model), so
+    a None source is treated as the galaxy origin — the ship still turns toward
+    the real destination direction. Only a missing/zero destination falls back to
+    default ship-forward (0, 1, 0)."""
+    if dst_vantage is None:
         return (0.0, 1.0, 0.0)
-    dx = dst_vantage[0] - src_vantage[0]
-    dy = dst_vantage[1] - src_vantage[1]
-    dz = dst_vantage[2] - src_vantage[2]
+    sx, sy, sz = src_vantage if src_vantage is not None else (0.0, 0.0, 0.0)
+    dx = dst_vantage[0] - sx
+    dy = dst_vantage[1] - sy
+    dz = dst_vantage[2] - sz
     m = math.sqrt(dx * dx + dy * dy + dz * dz)
     return (0.0, 1.0, 0.0) if m < 1e-6 else (dx / m, dy / m, dz / m)
 
@@ -116,6 +120,15 @@ class _WarpVfxBeginAction(TGAction):
                 _vfx_start(*self._a)
             except Exception:
                 pass
+        try:
+            import engine.dev_mode as _dev
+            if _dev.is_enabled():
+                h, ta, tt = self._a
+                print("[warp] engaged: heading=(%.2f, %.2f, %.2f) "
+                      "align=%.1fs transit=%.1fs" % (h[0], h[1], h[2], ta, tt),
+                      flush=True)
+        except Exception:
+            pass
 
 
 class _WarpVfxEndAction(TGAction):
