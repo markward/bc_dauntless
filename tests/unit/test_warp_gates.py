@@ -54,6 +54,34 @@ def test_order_impulse_before_warp():
     assert r.deny_line == "EngineeringNeedPowerToEngines"
 
 
+class _RaisingShip:
+    """Ship whose subsystem accessors raise — must not propagate out of
+    warp_gate (invariant: warp_gate never raises; internal error fails open)."""
+    def __init__(self, raise_on_impulse=False, raise_on_warp=True):
+        self._ri, self._rw = raise_on_impulse, raise_on_warp
+    def GetImpulseEngineSubsystem(self):
+        if self._ri:
+            raise RuntimeError("malformed ship: impulse accessor")
+        return _Sub()
+    def GetWarpEngineSubsystem(self):
+        if self._rw:
+            raise RuntimeError("malformed ship: warp accessor")
+        return _Sub()
+    def GetContainingSet(self): return None
+
+
+def test_warp_accessor_raising_fails_open():
+    # GetWarpEngineSubsystem() raises -> warp_gate must not raise, fails open.
+    r = wg.warp_gate(_RaisingShip(raise_on_warp=True))
+    assert r.allowed is True
+
+
+def test_impulse_accessor_raising_fails_open():
+    # GetImpulseEngineSubsystem() raises -> warp_gate must not raise, fails open.
+    r = wg.warp_gate(_RaisingShip(raise_on_impulse=True, raise_on_warp=False))
+    assert r.allowed is True
+
+
 def test_nebula_gate_blocks_cantwarp2(monkeypatch):
     from engine.appc import warp_gates as wg
     monkeypatch.setattr(wg, "_in_nebula", lambda s: True)

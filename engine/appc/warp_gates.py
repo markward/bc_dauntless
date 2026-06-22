@@ -113,25 +113,30 @@ def warp_gate(ship):
     """Return a GateResult for whether `ship` may warp, in WarpPressed order."""
     if ship is None:
         return GateResult(False, None, silent=True)
-    # Impulse subsystem missing -> SDK CallNextHandler (proceed; not a block).
-    if ship.GetImpulseEngineSubsystem() is None:
-        pass
-    elif _safe(_impulse_off, ship):
-        return GateResult(False, "EngineeringNeedPowerToEngines")
-    # Warp subsystem missing -> SDK silent return.
-    if ship.GetWarpEngineSubsystem() is None:
-        return GateResult(False, None, silent=True)
-    if _safe(_warp_disabled, ship):
-        return GateResult(False, "CantWarp1")
-    if _safe(_warp_off, ship):
-        return GateResult(False, "CantWarp5")
-    if _safe(_in_nebula, ship):
-        return GateResult(False, "CantWarp2")
-    if _safe(_in_asteroid_field, ship):
-        return GateResult(False, "CantWarp4")
-    if _safe(_near_starbase, ship):
-        return GateResult(False, "CantWarp3")
-    return GateResult(True, None)
+    try:
+        # Impulse subsystem missing -> SDK CallNextHandler (proceed; not a block).
+        if ship.GetImpulseEngineSubsystem() is None:
+            pass
+        elif _safe(_impulse_off, ship):
+            return GateResult(False, "EngineeringNeedPowerToEngines")
+        # Warp subsystem missing -> SDK silent return.
+        if ship.GetWarpEngineSubsystem() is None:
+            return GateResult(False, None, silent=True)
+        if _safe(_warp_disabled, ship):
+            return GateResult(False, "CantWarp1")
+        if _safe(_warp_off, ship):
+            return GateResult(False, "CantWarp5")
+        if _safe(_in_nebula, ship):
+            return GateResult(False, "CantWarp2")
+        if _safe(_in_asteroid_field, ship):
+            return GateResult(False, "CantWarp4")
+        if _safe(_near_starbase, ship):
+            return GateResult(False, "CantWarp3")
+        return GateResult(True, None)
+    except Exception:
+        # Invariant: warp_gate never raises. An internal error fails OPEN
+        # (allow warp) so a gate bug can never wedge warp permanently shut.
+        return GateResult(True, None)
 
 
 def speak_deny(ship, line_key):
