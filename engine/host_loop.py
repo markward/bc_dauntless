@@ -3221,6 +3221,16 @@ def run(mission_name: Optional[str] = None,
         # terminates the source. execute_warp reads the button's destination.
         def on_warp_engage(button):
             from engine.appc import warp as _w
+            from engine.appc import warp_gates as _wg
+            import App
+            player = App.Game_GetCurrentPlayer()
+            if player is None and controller.session is not None:
+                player = controller.session.player
+            result = _wg.warp_gate(player)
+            if not result.allowed:
+                if result.deny_line is not None:
+                    _wg.speak_deny(player, result.deny_line)
+                return
             _w.execute_warp(button)
 
         # Register the bridge cutscene controller BEFORE the initial mission
