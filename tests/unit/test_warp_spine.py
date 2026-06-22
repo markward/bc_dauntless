@@ -94,3 +94,36 @@ def test_bad_module_still_raises():
     import pytest
     with pytest.raises(Exception):
         warp.WarpSequence_Create(player, "FakeSys.DoesNotExist").Play()
+
+
+def test_warp_silences_looping_weapon_sfx():
+    # A phaser bank firing at the moment of warp must be StopFiring()'d so its
+    # looped SFX doesn't carry into the new system.
+    class _Bank:
+        def __init__(self):
+            self.stopped = False
+        def StopFiring(self):
+            self.stopped = True
+
+    class _WSys:
+        def __init__(self, banks):
+            self._b = banks
+        def GetNumChildSubsystems(self):
+            return len(self._b)
+        def GetChildSubsystem(self, i):
+            return self._b[i]
+
+    import types, sys
+    src = _make_set("SrcW")
+    player = App.ShipClass_Create()
+    player.SetName("player")
+    src.AddObjectToSet(player, "player")
+    bank = _Bank()
+    player._phaser_system = _WSys([bank])
+
+    mod = types.ModuleType("FakeSys.DestW")
+    mod.Initialize = lambda: _make_set("DestW")
+    sys.modules["FakeSys.DestW"] = mod
+
+    warp.WarpSequence_Create(player, "FakeSys.DestW", 0.0, "Player Start").Play()
+    assert bank.stopped is True  # phaser loop silenced on warp out

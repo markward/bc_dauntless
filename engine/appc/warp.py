@@ -110,17 +110,60 @@ class _PlacePlayerAction(TGAction):
         ship.PlaceObjectByName(self._placement)
 
 
-class _ArriveFinalizeAction(TGAction):
-    """Terminate the source set (render teardown + DeleteSet) and return
-    player control."""
+def _silence_ship_weapons(ship):
+    """Stop any looping weapon-fire SFX on a ship's weapon banks.
 
-    def __init__(self, source_set):
+    Energy banks (phaser/pulse) start a looped _PlayingSound on Fire() and stop
+    it in StopFiring(). Warping out doesn't go through the normal cease-fire, so
+    a mid-fire bank would loop forever in the new system. Walk each weapon
+    system's child banks and StopFiring() any that expose it."""
+    if ship is None:
+        return
+    for getter in ("GetPhaserSystem", "GetPulseWeaponSystem",
+                   "GetTorpedoSystem", "GetTractorBeamSystem"):
+        get = getattr(ship, getter, None)
+        if not callable(get):
+            continue
+        try:
+            wsys = get()
+        except Exception:
+            continue
+        if wsys is None or not hasattr(wsys, "GetNumChildSubsystems"):
+            continue
+        try:
+            n = wsys.GetNumChildSubsystems()
+        except Exception:
+            continue
+        for i in range(n):
+            bank = wsys.GetChildSubsystem(i)
+            stop = getattr(bank, "StopFiring", None)
+            if callable(stop):
+                try:
+                    stop()
+                except Exception:
+                    pass
+
+
+class _ArriveFinalizeAction(TGAction):
+    """Silence weapon-fire loops, terminate the source set (render teardown +
+    DeleteSet), and return player control."""
+
+    def __init__(self, source_set, ship=None):
         super().__init__()
         self._source = source_set
+        self._ship = ship
 
     def _do_play(self):
         import App
         src = self._source
+        # Silence looping weapon SFX before we leave: the warping ship (which
+        # has already moved to the destination) plus every ship left behind in
+        # the source set (about to be torn down). Otherwise a phaser fired at
+        # the moment of warp loops forever in the new system.
+        _silence_ship_weapons(self._ship)
+        if src is not None:
+            for obj in list(getattr(src, "_objects", {}).values()):
+                _silence_ship_weapons(obj)
         # No source set captured (e.g. the warp degraded to a no-op) => nothing
         # to tear down; leave everything as-is.
         if src is not None:
@@ -168,7 +211,7 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
     # and source teardown here keeps the player in its current set.
     if not _module_is_empty(dest_module):
         seq.AppendAction(_PlacePlayerAction(ship, dest_name, placement))
-        seq.AppendAction(_ArriveFinalizeAction(source))
+        seq.AppendAction(_ArriveFinalizeAction(source, ship))
     return seq
 
 
