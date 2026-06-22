@@ -90,7 +90,8 @@ void draw_mesh(const assets::Model& model,
                GLuint white_fallback,
                double wall_time,
                GLuint base_override,
-               float vs_brightness = 1.0f) {
+               float vs_brightness = 1.0f,
+               float vs_flash = 0.0f) {
     shader.set_mat4("u_model", world);
     shader.set_vec3("u_emissive", mat.emissive);
     // Alpha test only fires when the material carries an NiAlphaProperty;
@@ -130,6 +131,9 @@ void draw_mesh(const assets::Model& model,
     // per-frame fade value; all other geometry gets 1.0 (byte-identical).
     shader.set_float("u_viewscreen_brightness",
                      base_override != 0 ? vs_brightness : 1.0f);
+    // Warp flash only on the viewscreen feed; 0 everywhere else.
+    shader.set_float("u_viewscreen_flash",
+                     base_override != 0 ? vs_flash : 0.0f);
     glActiveTexture(GL_TEXTURE0);
     if (base_override != 0) {
         // Viewscreen RTT feed: ignore the NIF base texture and draw the
@@ -209,7 +213,7 @@ void BridgePass::render(const scenegraph::World& world,
                                && mh == viewscreen_model_handle_)
                               ? viewscreen_tex_ : 0u;
             draw_mesh(m, mesh, mat, base_shader, w, white, t, ov,
-                      viewscreen_brightness_);
+                      viewscreen_brightness_, viewscreen_flash_);
         });
     walk_bridge_meshes(world, lookup, /*want_lightmap_pass=*/true,
         pass, comm_set_id,
@@ -220,7 +224,7 @@ void BridgePass::render(const scenegraph::World& world,
                                && mh == viewscreen_model_handle_)
                               ? viewscreen_tex_ : 0u;
             draw_mesh(m, mesh, mat, base_shader, w, white, t, ov,
-                      viewscreen_brightness_);
+                      viewscreen_brightness_, viewscreen_flash_);
         });
 
     // ── Sub-pass C: skinned bridge characters ──────────────────────────────

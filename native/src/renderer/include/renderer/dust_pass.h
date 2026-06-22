@@ -103,7 +103,7 @@ public:
     // Warp fly-past drift: particles stream PAST the (near-stationary) camera
     // along the travel axis during warp, recycling via the toroidal wrap.
     // Speed (GU/s) scaled by streak intensity. Tunable.
-    static constexpr float kWarpDriftSpeed       = 600.0f; // GU/s at streak 1
+    static constexpr float kWarpDriftSpeed       = 75.0f; // GU/s at streak 1
     static constexpr float kVelocityClampSeconds = 0.1f;        // dt guard
     static constexpr std::uint32_t kSeed         = 0xD057C0DEu;
 

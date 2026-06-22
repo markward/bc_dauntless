@@ -856,6 +856,53 @@ DEFAULT_DIRECTIONALS: list = [
     ((0.3, 1.0, 0.2), (1.0, 1.0, 1.0)),
 ]
 
+# In-warp lighting (streak phase). The system the player left is torn down, so
+# its sun is gone; the only light is the warp tunnel rushing toward the ship.
+# A bright cool key from AHEAD (down travel_dir) lights the front of the hull as
+# if by the tunnel, with a dim cool back-fill so the rear isn't black, over a low
+# cool ambient. Direction is a deliberate cinematic vector (the warp heading),
+# not a world-up reference. Biased strong for first-look calibration — dial down
+# to taste (calibrate up, then down). All three scale by streak_intensity so the
+# warp look fades in at the burst and out at the exit.
+_WARP_LIGHT_KEY: tuple = (0.7, 0.9, 1.6)      # cool blue-white, from ahead
+_WARP_LIGHT_FILL: tuple = (0.12, 0.16, 0.30)  # dim cool, from behind
+_WARP_LIGHT_AMBIENT: tuple = (0.05, 0.07, 0.13)
+
+# Galaxy-map units/sec the procedural-sky vantage flies forward during transit.
+# Galaxy systems sit ~50-260 units apart, so ~15 u/s over a 10-20s transit
+# covers a full inter-system hop — clear cluster/nebula parallax. Tunable.
+_WARP_SKY_RATE: float = 15.0
+
+
+def _warp_transit_backdrops(wvfx):
+    """Procedural-sky backdrops projected from the warp manager's advancing
+    vantage, so the distant clusters/nebulae stream past during transit. Falls
+    back to a blacked-out sky ([]) when the source wasn't galaxy-mapped (no
+    vantage) or the procedural sky is off."""
+    vantage = wvfx.sky_vantage(_WARP_SKY_RATE)
+    if vantage is None or not r.procedural_sky_enabled():
+        return []
+    from engine.appc import sky_projection as sp
+    return sp.project_sky(vantage, sp.load_sector_model())
+
+
+def _warp_transit_lighting(travel, streak):
+    """(ambient, directionals) for the in-warp scene.
+
+    `travel` is the world-space warp heading; `streak` (0..1) fades the whole
+    rig in/out. The key light points TOWARD the travel direction (lit from where
+    the ship is flying into); the fill comes from directly behind.
+    """
+    tx, ty, tz = travel
+    m = (tx * tx + ty * ty + tz * tz) ** 0.5
+    fwd = (0.0, 1.0, 0.0) if m < 1e-6 else (tx / m, ty / m, tz / m)
+    back = (-fwd[0], -fwd[1], -fwd[2])
+    s = 0.0 if streak < 0.0 else (1.0 if streak > 1.0 else streak)
+    key = tuple(c * s for c in _WARP_LIGHT_KEY)
+    fill = tuple(c * s for c in _WARP_LIGHT_FILL)
+    amb = tuple(c * s for c in _WARP_LIGHT_AMBIENT)
+    return amb, [(fwd, key), (back, fill)]
+
 from engine.cameras import (
     CAM_BACK_RADII, CAM_UP_RADII, CAM_MIN_RADII, CAM_MAX_RADII,
     CameraMode,
@@ -901,6 +948,12 @@ class _PlayerControl:
         self._current_roll_rate  = 0.0
         self._warp_boost = False
         self._drift_velocity = None   # TGPoint3 while drifting (f==0), else None
+        # Set by the warp sequence (host) during a warp: forces the ship's speed
+        # (0 = hold during align, >0 = burst forward during transit) along its
+        # current warp-aligned heading, ignoring throttle/input. None = normal
+        # player control. The camera follows, so the dust velocity-smear adds to
+        # the warp streak.
+        self._warp_speed_override = None
 
     def nudge_throttle(self, notches: int) -> None:
         """Step the discrete impulse throttle one notch per detent.
@@ -996,6 +1049,22 @@ class _PlayerControl:
         `h` is the _dauntless_host bindings module (or any object with
         key_state, key_pressed, and `keys.KEY_*` attributes).
         """
+        # Warp override: while warping the WarpVFX manager owns the ship (the
+        # turn is applied by _warp_apply_turn). Burst forward at the override
+        # speed (or hold at 0 during align) along the current warp-aligned
+        # heading, ignoring throttle/input so the ship can't be steered mid-warp
+        # and there's a single motion path (no double-translate).
+        if self._warp_speed_override is not None:
+            s = float(self._warp_speed_override)
+            self._current_speed = s
+            if s != 0.0:
+                fwd = player.GetWorldRotation().GetCol(1)
+                p = player.GetTranslate()
+                player.SetTranslateXYZ(p.x + fwd.x * s * dt,
+                                       p.y + fwd.y * s * dt,
+                                       p.z + fwd.z * s * dt)
+                player.SetVelocity(TGPoint3(fwd.x * s, fwd.y * s, fwd.z * s))
+            return
         # 1. Throttle (one-shot edges).  R is checked before digits.
         # Shift+digit is reserved for alert-level binding (Shift+1/2/3 →
         # SetAlertLevel); suppress digit throttle while shift is held so
@@ -1788,9 +1857,43 @@ def _aggregate_suns() -> list:
 # 0.7 -> suns shrink to 30% radius at the tunnel's brightest. Tunable.
 _WARP_SUN_DIM = 0.7
 
+# Warp ship-speed profile (see engine/warp_vfx.ship_speed for the envelope):
+#   * cruise at impulse level _WARP_ALIGN_IMPULSE_LEVEL while aligning,
+#   * ramp up to in-system warp (impulse max speed × _WARP_IN_SYSTEM_FACTOR) in
+#     the last second before the burst flash,
+#   * glide back to 0 over the 2s after arrival.
+# Both speeds are derived per-ship from the impulse engine's max speed. Tunable.
+_WARP_ALIGN_IMPULSE_LEVEL = 5.0   # of 9 throttle notches -> cruise while aligning
+_WARP_IN_SYSTEM_FACTOR = 100.0    # × impulse max speed = in-system warp speed
+_WARP_MAX_SPEED_FALLBACK = 6.3    # GU/s (Galaxy) when the IES can't be read
+
+
+def _warp_phase_speeds(player):
+    """(nominal_cruise, in_system_warp) GU/s for the warp speed profile, derived
+    from the player's impulse-engine max speed. Fail-soft to the Galaxy default
+    so the profile always has sane magnitudes."""
+    ms = 0.0
+    try:
+        ies = player.GetImpulseEngineSubsystem()
+        if ies is not None:
+            ms = ies.GetMaxSpeed()
+    except Exception:
+        ms = 0.0
+    if ms <= 0.0:
+        ms = _WARP_MAX_SPEED_FALLBACK
+    nominal = ms * (_WARP_ALIGN_IMPULSE_LEVEL / 9.0)
+    return nominal, ms * _WARP_IN_SYSTEM_FACTOR
+
 # Player rotation captured at align start; the slerp target is anchored to it so
 # the turn is stable across frames (cleared when the warp ends).
 _warp_turn_start_R = None
+
+# True while the local scene is hidden for the warp tunnel (streak > 0). Tracked
+# so visibility is restored on the frame the streak ends.
+_warp_hidden = False
+
+# Dev-mode warp diagnostics: per-warp peak flash/streak/turn, logged on warp end.
+_warp_diag: dict = {}
 
 
 def _dim_suns(suns, streak):
@@ -3165,6 +3268,17 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
     # player is always set when a session exists, so _player_iid is a
     # real iid (never None) at runtime.
     _player_iid = session.ship_instances.get(player)
+    # Warp blackout: once we jump to lightspeed (streak > 0) the whole local
+    # scene is left behind — hide every non-player ship/station + planet so the
+    # transit is just the player in the dust tunnel. _apply re-runs while
+    # hiding (so objects realised mid-window are caught) plus the single frame
+    # we stop (to restore visibility). Off-parity: no calls when not warping.
+    global _warp_hidden
+    from engine import warp_vfx as _wv_hide
+    _wh = _wv_hide.get()
+    _warp_hide = _wh.is_active() and _wh.streak_intensity() > 0.0
+    _warp_apply_vis = _warp_hide or _warp_hidden
+    _warp_hidden = _warp_hide
     _live_ship_iids = []
     for ship, iid in session.ship_instances.items():
         _wg = session.ship_glow_controllers.get(iid)
@@ -3178,6 +3292,8 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
                 iid, _ship_world_matrix(ship, model_scale))
             continue
         _live_ship_iids.append(iid)
+        if _warp_apply_vis:
+            r.set_visible(iid, not _warp_hide)
         # NOTE: scale is read live, not interpolated — the
         # buffer only stores loc+rot. Fine for steady scale;
         # a mid-animation GetScale() change applies the
@@ -3204,6 +3320,8 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
     for planet, iid in session.planet_instances.items():
         ns = session.planet_natural_scale.get(planet, 1.0)
         r.set_world_transform(iid, _astro_world_matrix(planet, ns))
+        if _warp_apply_vis:
+            r.set_visible(iid, not _warp_hide)
 
 
 def run(mission_name: Optional[str] = None,
@@ -3333,11 +3451,13 @@ def run(mission_name: Optional[str] = None,
             except Exception:
                 return None
 
-        def _vfx_start(heading, t_align, t_transit):
+        def _vfx_start(heading, t_align, t_transit, vantage=None):
             # WarpSequence (Task 3) computes the heading + explicit align/transit
-            # times; start the per-frame manager at the current game time.
+            # times; start the per-frame manager at the current game time. The
+            # vantage (source system's galaxy position) anchors the procedural
+            # sky so it can fly forward through the galaxy during transit.
             _wv.get().start(heading, t_align, t_transit,
-                            App.g_kUtopiaModule.GetGameTime())
+                            App.g_kUtopiaModule.GetGameTime(), vantage)
 
         _wp.configure_warp_vfx(
             start=_vfx_start, stop=_wv.get().stop,
@@ -4452,23 +4572,62 @@ def run(mission_name: Optional[str] = None,
                 r.set_warp_streak_intensity(_w.streak_intensity())
                 r.set_warp_flash_intensity(_w.flash_intensity())
                 r.set_warp_travel_dir(_w.travel_dir())
-                if player is not None:
+                # Cinematic turn onto the warp heading — but NOT during the exit
+                # decel: after arrival the placement owns the ship's orientation,
+                # so forcing the warp heading would mis-aim the arrived ship.
+                if player is not None and _w.phase() != "exit":
                     _warp_apply_turn(player, _w.turn_fraction(), _w.travel_dir())
+                # Ship-speed profile (engine/warp_vfx.ship_speed): cruise at
+                # impulse-5 while aligning, ramp up to in-system warp in the last
+                # 1s before the burst flash, hold ~still (camera-wise) through the
+                # blacked-out transit, then glide warp->0 over 2s as the new
+                # system appears. Driven via the _PlayerControl override.
+                if player is not None:
+                    _nom, _wsp = _warp_phase_speeds(player)
+                    player_control._warp_speed_override = _w.ship_speed(_nom, _wsp)
+                # Dev diagnostic: track the peaks so we can confirm live that the
+                # flash / streak / turn are actually driving (the visuals are
+                # exterior-view only; this works from any view).
+                global _warp_diag
+                _warp_diag["flash"] = max(_warp_diag.get("flash", 0.0), _w.flash_intensity())
+                _warp_diag["streak"] = max(_warp_diag.get("streak", 0.0), _w.streak_intensity())
+                _warp_diag["turn"] = max(_warp_diag.get("turn", 0.0), _w.turn_fraction())
             else:
+                if _warp_diag and dev_mode.is_enabled():
+                    print("[warp] peaks: flash=%.2f streak=%.2f turn=%.2f"
+                          % (_warp_diag.get("flash", 0.0),
+                             _warp_diag.get("streak", 0.0),
+                             _warp_diag.get("turn", 0.0)), flush=True)
+                _warp_diag = {}
                 r.set_warp_streak_intensity(0.0)
                 r.set_warp_flash_intensity(0.0)
                 _warp_clear_turn()
+                player_control._warp_speed_override = None
 
-            backdrops = _aggregate_backdrops(active_set)
+            # During warp (streak > 0) the LOCAL system is gone (suns + local
+            # objects torn down at burst), but the deep-space procedural sky
+            # stays — and flies. We re-project it each frame from a vantage that
+            # advances along the warp heading (_warp_transit_backdrops), so the
+            # distant clusters and nebulae stream past: "moving through the
+            # galaxy". During the align beat (active but streak 0) the real
+            # system is still shown normally.
+            _warp_streaking = _w.is_active() and _w.streak_intensity() > 0.0
+            if _warp_streaking:
+                backdrops = _warp_transit_backdrops(_w)
+            else:
+                backdrops = _aggregate_backdrops(active_set)
             r.set_backdrops(backdrops)
 
-            suns = _aggregate_suns()
-            if _w.is_active():
-                # Dim suns during the streak so the dust tunnel reads cleanly.
-                # The sun descriptor has no brightness field; sun_pass keys
-                # apparent brightness off radius, so shrink radius/corona_radius.
-                suns = _dim_suns(suns, _w.streak_intensity())
+            suns = [] if _warp_streaking else _aggregate_suns()
             r.set_suns(suns)
+
+            # In-warp lighting: the system's sun is gone (torn down at burst), so
+            # replace the earlier set_lighting() with a cool warp-tunnel key from
+            # ahead. Overrides this frame's lighting only while streaking.
+            if _warp_streaking:
+                _wamb, _wdirs = _warp_transit_lighting(
+                    _w.travel_dir(), _w.streak_intensity())
+                r.set_lighting(_wamb, _wdirs)
 
             planets = _aggregate_planets(
                 list(App.g_kSetManager._sets.values()))

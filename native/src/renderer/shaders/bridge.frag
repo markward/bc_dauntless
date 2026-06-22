@@ -18,6 +18,11 @@ uniform int u_flip_v;
 // Brightness multiplier for the viewscreen feed, used for ViewOn/ViewOff
 // fade transitions. 1.0 for all other bridge geometry (byte-identical).
 uniform float u_viewscreen_brightness;
+// Warp boom flash, applied ONLY to the viewscreen feed: mixes the feed toward
+// white by this amount so the lightspeed flash is confined to the viewscreen on
+// the bridge (the surrounding interior never flashes). 0.0 for all other
+// geometry (byte-identical).
+uniform float u_viewscreen_flash;
 
 out vec4 FragColor;
 
@@ -33,5 +38,7 @@ void main() {
     // ambient — that's how red-alert dim affects walls/floor without
     // dimming the light fixtures themselves.
     vec3 light = max(u_ambient, u_emissive);
-    FragColor = vec4(base.rgb * lm * light * u_viewscreen_brightness, 1.0);
+    vec3 col = base.rgb * lm * light * u_viewscreen_brightness;
+    col = mix(col, vec3(1.0), clamp(u_viewscreen_flash, 0.0, 1.0));
+    FragColor = vec4(col, 1.0);
 }

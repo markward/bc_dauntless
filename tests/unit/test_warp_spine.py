@@ -130,3 +130,82 @@ def test_warp_silences_looping_weapon_sfx():
 
     warp.WarpSequence_Create(player, "FakeSys.DestW", 0.0, "Player Start").Play()
     assert bank.stopped is True  # phaser loop silenced on warp out
+
+
+def test_depart_tears_down_source_and_parks_player_in_transit():
+    # At burst, _WarpDepartAction must: move the player into the empty transit
+    # set, make it the rendered set, and delete the source system (so its ships
+    # stop firing and its sun stops lighting the scene during transit).
+    src = _make_set("SrcDepart")
+    player = App.ShipClass_Create()
+    player.SetName("player")
+    src.AddObjectToSet(player, "player")
+    enemy = App.ShipClass_Create()
+    enemy.SetName("enemy")
+    src.AddObjectToSet(enemy, "enemy")
+
+    warp._WarpDepartAction(src, player).Play()
+
+    assert App.g_kSetManager.GetSet("SrcDepart") is None       # source torn down
+    transit = App.g_kSetManager.GetSet(warp._WARP_TRANSIT_SET_NAME)
+    assert transit is not None                                 # transit set made
+    assert transit.GetObject("player") is player               # player parked here
+    assert App.g_kSetManager.GetRenderedSet() is transit       # and it's rendered
+
+
+def test_depart_then_arrive_cleans_transit_set():
+    # The full flythrough chain: after the destination swap + placement, the
+    # arrive-finalize must delete the now-empty transit set and not double-tear
+    # the already-gone source.
+    import types, sys
+    src = _make_set("SrcFull")
+    player = App.ShipClass_Create()
+    player.SetName("player")
+    src.AddObjectToSet(player, "player")
+
+    mod = types.ModuleType("FakeSys.DestFull")
+    mod.Initialize = lambda: _make_set("DestFull")
+    sys.modules["FakeSys.DestFull"] = mod
+
+    warp._WarpDepartAction(src, player).Play()
+    warp.ChangeRenderedSetAction_Create("FakeSys.DestFull").Play()
+    warp._PlacePlayerAction(player, "DestFull", "Player Start").Play()
+    warp._ArriveFinalizeAction(src, player).Play()
+
+    assert App.g_kSetManager.GetSet(warp._WARP_TRANSIT_SET_NAME) is None  # transit cleaned
+    dest = App.g_kSetManager.GetSet("DestFull")
+    assert dest.GetObject("player") is player                            # player arrived
+
+
+def test_warp_clears_all_targets():
+    # Engaging warp must drop the player's current target + subsystem lock and
+    # empty the target-list HUD (rows + persistent hint) — nothing to target
+    # once we leave the system.
+    import types, sys
+    from engine.appc import target_menu
+
+    menu = target_menu.STTargetMenu_CreateW("targets")
+    src = _make_set("SrcT")
+    player = App.ShipClass_Create()
+    player.SetName("player")
+    src.AddObjectToSet(player, "player")
+
+    enemy = App.ShipClass_Create()
+    enemy.SetName("enemy")
+    src.AddObjectToSet(enemy, "enemy")
+    player.SetTarget(enemy)
+    player.SetTargetSubsystem(object())
+    menu.AddChild(target_menu.STSubsystemMenu(enemy, "enemy"))
+    menu.SetPersistentTarget("enemy")
+    assert len(menu._children) == 1
+
+    mod = types.ModuleType("FakeSys.DestT")
+    mod.Initialize = lambda: _make_set("DestT")
+    sys.modules["FakeSys.DestT"] = mod
+
+    warp.WarpSequence_Create(player, "FakeSys.DestT", 0.0, "Player Start").Play()
+
+    assert player.GetTarget() is None            # current target dropped
+    assert player.GetTargetSubsystem() is None   # subsystem lock dropped
+    assert menu._children == []                  # target-list rows cleared
+    assert menu.GetPersistentTarget() is None    # persistent hint cleared
