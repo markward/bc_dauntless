@@ -2358,6 +2358,25 @@ class HostController:
         damage_eligibility.reset()
         hit_feedback._last_carve_time.clear()
         reset_sdk_globals()
+        # A mission swap mid-warp would otherwise leak the WarpVFX manager
+        # (reset_sdk_globals zeroes the timer manager, cancelling the pending
+        # ReturnControl / stop chain). Tear it down explicitly so the next
+        # mission starts with no stale streak/flash, no stale ship turn, and
+        # control restored.
+        try:
+            from engine import warp_vfx as _wv
+            _wv.get().stop()
+        except Exception:
+            pass
+        try:
+            _warp_clear_turn()
+        except Exception:
+            pass
+        try:
+            import MissionLib
+            MissionLib.ReturnControl()
+        except Exception:
+            pass
         if self.panel_registry is not None:
             self.panel_registry.invalidate_all()
         assert self.loader is not None, "HostController.loader must be set"
