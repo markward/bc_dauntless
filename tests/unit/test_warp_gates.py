@@ -59,3 +59,10 @@ def test_nebula_gate_blocks_cantwarp2(monkeypatch):
     monkeypatch.setattr(wg, "_in_nebula", lambda s: True)
     r = wg.warp_gate(_Ship(_Sub(), _Sub()))
     assert (r.allowed, r.deny_line) == (False, "CantWarp2")
+
+
+def test_asteroid_gate_blocks_cantwarp4(monkeypatch):
+    from engine.appc import warp_gates as wg
+    monkeypatch.setattr(wg, "_in_asteroid_field", lambda s: True)
+    r = wg.warp_gate(_Ship(_Sub(), _Sub()))
+    assert (r.allowed, r.deny_line) == (False, "CantWarp4")

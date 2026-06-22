@@ -61,7 +61,15 @@ def _in_nebula(ship):
 
 
 def _in_asteroid_field(ship):
-    return False  # Task 3
+    import App
+    pSet = ship.GetContainingSet()
+    if pSet is None:
+        return False
+    for obj in pSet.GetClassObjectList(App.CT_ASTEROID_FIELD):
+        field = App.AsteroidField_Cast(obj)
+        if field is not None and field.IsShipInside(ship):
+            return True
+    return False
 
 
 def _near_starbase(ship):

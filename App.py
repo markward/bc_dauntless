@@ -344,6 +344,14 @@ CT_SORTED_REGION_MENU = SortedRegionMenu
 # engine.appc.nebula does `from App import Nebula`, avoiding a circular import.
 from engine.appc.nebula import MetaNebula, MetaNebula_Create, Nebula_Cast
 
+# AsteroidField factories — imported here (after the bare `AsteroidField` base
+# class and `CT_ASTEROID_FIELD` tag are bound) so engine.appc.asteroid_field can
+# do `from App import AsteroidField` without a circular import. The richer
+# subclass is an instance of the base, so CT_ASTEROID_FIELD isinstance checks
+# (GetClassObjectList) and AsteroidField_Cast still match.
+from engine.appc.asteroid_field import (
+    AsteroidField, AsteroidFieldPlacement_Create, AsteroidField_Cast)
+
 # ── Shield SDK surface ────────────────────────────────────────────────────────
 # SDK calls App.ShieldClass.NUM_SHIELDS / .FRONT_SHIELDS etc.  Map the class
 # name onto the engine's ShieldSubsystem.
