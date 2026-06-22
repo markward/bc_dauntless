@@ -10,15 +10,33 @@ Spec: docs/superpowers/specs/2026-06-21-set-course-two-level-menu-design.md
 from __future__ import annotations
 
 import json
+from functools import lru_cache
 from typing import Optional
 
 from engine.appc import sector_model as sm
 from engine.ui.panel import Panel
 
 
+@lru_cache(maxsize=1)
+def _warp_button_label() -> str:
+    """Label for the Warp button, from Bridge Menus.TGL key "Warp".
+
+    Falls back to the literal "Warp" when the TGL/game is absent (headless).
+    """
+    try:
+        from engine.appc.localization import TGLocalizationManager
+        db = TGLocalizationManager().Load("data/TGL/Bridge Menus.TGL")
+        if db is not None and db.HasString("Warp"):
+            return str(db.GetString("Warp"))
+    except Exception:
+        pass
+    return "Warp"
+
+
 class SettingCoursePanel(Panel):
-    def __init__(self) -> None:
+    def __init__(self, on_warp=None) -> None:
         super().__init__()
+        self._on_warp = on_warp
         self._visible = False
         self._course_menu = None
         self._selected_system: Optional[str] = None
@@ -69,6 +87,19 @@ class SettingCoursePanel(Panel):
                 pass
         return set()
 
+    def _selected_module(self) -> Optional[str]:
+        """Set module for the current warp selection, or None."""
+        if self._selected_system is None or self._selected_warp is None:
+            return None
+        sid = self._selected_system
+        for wp in sm.warp_points_for(sid):
+            if wp["id"] == self._selected_warp:
+                return wp.get("module")
+        # empty-system self-row: id == system id
+        if self._selected_warp == sid:
+            return sm.system_module(sid)
+        return None
+
     def render_payload(self) -> Optional[str]:
         active_systems = self._active_system_ids()
         systems = [{"id": sid, "label": sm.display_label(sid),
@@ -106,6 +137,8 @@ class SettingCoursePanel(Panel):
             "systems": systems if self._visible else [],
             "warp_points": warp_points,
             "warp_note": warp_note,
+            "can_warp": self._selected_module() is not None,
+            "warp_label": _warp_button_label(),
         })
         if payload == self._last_pushed:
             return None
@@ -122,6 +155,14 @@ class SettingCoursePanel(Panel):
             return True
         if action.startswith("select-warp:"):
             self._selected_warp = action[len("select-warp:"):]
+            return True
+        if action == "warp":
+            module = self._selected_module()
+            if module is None:
+                return False
+            if self._on_warp is not None:
+                self._on_warp(module)
+            self.close()
             return True
         return False
 

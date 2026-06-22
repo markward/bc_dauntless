@@ -109,3 +109,30 @@ def test_open_resets_selection():
 def test_unknown_action_returns_false():
     p = SettingCoursePanel()
     assert p.dispatch_event("frobnicate") is False
+
+
+def test_warp_button_fires_on_warp_with_module():
+    from engine.appc import sector_model as sm
+    expected = sm.warp_points_for("vesuvi")[0]["module"]
+    fired = {}
+    p = SettingCoursePanel(on_warp=lambda m: fired.setdefault("m", m))
+    p.open(course_menu=_live_menu())
+    p.dispatch_event("select-system:vesuvi")
+    # pick the first warp point
+    data = _payload(p.render_payload())
+    wp_id = data["warp_points"][0]["id"]
+    assert p.dispatch_event("select-warp:" + wp_id) is True
+    data = _payload(p.render_payload())
+    assert data["can_warp"] is True
+    assert p.dispatch_event("warp") is True
+    assert fired["m"] == expected
+    assert fired["m"] == "Systems.Vesuvi.Vesuvi4"  # first vesuvi warp point module
+    assert p.is_open() is False  # panel closed on warp
+
+
+def test_warp_noop_without_selection():
+    p = SettingCoursePanel(
+        on_warp=lambda m: (_ for _ in ()).throw(AssertionError("should not fire"))
+    )
+    p.open(course_menu=_live_menu())
+    assert p.dispatch_event("warp") is False

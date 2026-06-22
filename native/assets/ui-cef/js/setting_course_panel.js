@@ -44,5 +44,10 @@ function setSettingCoursePanel(state) {
             return _scRow(w, 'setting-course/select-warp');
         }).join('');
     }
+    var warpBtn = document.getElementById('setting-course-warp');
+    if (warpBtn) {
+        warpBtn.textContent = state.warp_label || 'Warp';
+        warpBtn.disabled = (state.can_warp !== true);
+    }
     root.style.display = 'flex';
 }
