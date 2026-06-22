@@ -120,6 +120,23 @@ namespace dauntless_motion_blur {
     void set_enabled(bool v) { g_motion_blur_enabled = v; }
 }
 
+// Per-frame state channel for the procedural warp flythrough (Modern VFX).
+// Plumbing only in Task 1 — frame() does not yet consume these values.
+namespace dauntless_warp_vfx {
+    bool      g_enabled = true;                  // Modern-VFX toggle (default on)
+    float     g_streak  = 0.0f;                  // 0..1 star-streak intensity
+    float     g_flash   = 0.0f;                  // 0..1 warp-flash intensity
+    glm::vec3 g_travel(0.0f, 1.0f, 0.0f);        // world-space travel direction
+    bool      enabled()           { return g_enabled; }
+    void      set_enabled(bool v) { g_enabled = v; }
+    float     streak_intensity()  { return g_streak; }
+    float     flash_intensity()   { return g_flash; }
+    glm::vec3 travel_dir()        { return g_travel; }
+    void      set_streak(float v) { g_streak = v; }
+    void      set_flash(float v)  { g_flash = v; }
+    void      set_travel(glm::vec3 v) { g_travel = v; }
+}
+
 namespace renderer {
 
 namespace {

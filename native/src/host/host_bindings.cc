@@ -122,6 +122,12 @@ namespace dauntless_motion_blur {
     bool enabled();            // defined in frame.cc
     void set_enabled(bool v);  // defined in frame.cc
 }
+namespace dauntless_warp_vfx {
+    bool enabled(); void set_enabled(bool);   // defined in frame.cc
+    float streak_intensity(); float flash_intensity();
+    glm::vec3 travel_dir();
+    void set_streak(float); void set_flash(float); void set_travel(glm::vec3);
+}
 
 namespace {
 
@@ -2008,6 +2014,25 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("motion_blur_enabled",
           []() { return dauntless_motion_blur::enabled(); },
           "Read the Motion Blur toggle (Modern VFX). Default: on.");
+    m.def("warp_flythrough_set_enabled",
+          [](bool enabled) { dauntless_warp_vfx::set_enabled(enabled); },
+          py::arg("enabled"),
+          "Toggle the procedural warp flythrough VFX (Modern VFX). Default: on.");
+    m.def("warp_flythrough_enabled",
+          []() { return dauntless_warp_vfx::enabled(); },
+          "Read the Warp Flythrough toggle (Modern VFX). Default: on.");
+    m.def("set_warp_streak_intensity",
+          [](float i) { dauntless_warp_vfx::set_streak(i); },
+          py::arg("intensity"),
+          "Set the 0..1 star-streak intensity for the warp flythrough.");
+    m.def("set_warp_flash_intensity",
+          [](float i) { dauntless_warp_vfx::set_flash(i); },
+          py::arg("intensity"),
+          "Set the 0..1 warp-flash intensity for the warp flythrough.");
+    m.def("set_warp_travel_dir",
+          [](float x, float y, float z) { dauntless_warp_vfx::set_travel(glm::vec3(x, y, z)); },
+          py::arg("x"), py::arg("y"), py::arg("z"),
+          "Set the world-space travel direction for the warp flythrough.");
     m.def("hdr_set_enabled",
           [](bool e) { dauntless_hdr::set_enabled(e); },
           py::arg("enabled"),
