@@ -105,3 +105,11 @@ def warp_points_for(system_id, model=None):
         if s["id"] == system_id:
             return list(s.get("warp_points", []))
     return []
+
+
+def system_module(system_id):
+    """Set-module name for a system's own set, or None if it has none."""
+    for s in load_sector_model().get("systems", []):
+        if s.get("id") == system_id:
+            return s.get("module")
+    return None
