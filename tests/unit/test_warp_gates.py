@@ -52,3 +52,10 @@ def test_order_impulse_before_warp():
     # both impulse-off and warp-disabled -> impulse (XO) line wins
     r = wg.warp_gate(_Ship(_Sub(power=0.0), _Sub(disabled=True)))
     assert r.deny_line == "EngineeringNeedPowerToEngines"
+
+
+def test_nebula_gate_blocks_cantwarp2(monkeypatch):
+    from engine.appc import warp_gates as wg
+    monkeypatch.setattr(wg, "_in_nebula", lambda s: True)
+    r = wg.warp_gate(_Ship(_Sub(), _Sub()))
+    assert (r.allowed, r.deny_line) == (False, "CantWarp2")

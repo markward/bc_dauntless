@@ -53,7 +53,11 @@ def _warp_off(ship):
 
 
 def _in_nebula(ship):
-    return False  # Task 2
+    pSet = ship.GetContainingSet()
+    if pSet is None:
+        return False
+    neb = pSet.GetNebula()
+    return neb is not None and bool(neb.IsObjectInNebula(ship))
 
 
 def _in_asteroid_field(ship):

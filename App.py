@@ -339,6 +339,11 @@ CT_MULTIPLAYER_GAME  = MultiplayerGame
 CT_ST_MENU           = STMenu
 CT_SORTED_REGION_MENU = SortedRegionMenu
 
+# MetaNebula factories — imported here (not at the top) so that the
+# `Nebula` base class and `CT_NEBULA` tag above are already bound when
+# engine.appc.nebula does `from App import Nebula`, avoiding a circular import.
+from engine.appc.nebula import MetaNebula, MetaNebula_Create, Nebula_Cast
+
 # ── Shield SDK surface ────────────────────────────────────────────────────────
 # SDK calls App.ShieldClass.NUM_SHIELDS / .FRONT_SHIELDS etc.  Map the class
 # name onto the engine's ShieldSubsystem.
