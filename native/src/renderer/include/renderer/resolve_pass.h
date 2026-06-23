@@ -24,7 +24,7 @@ private:
     std::unique_ptr<renderer::Shader> shader_;
     std::uint32_t vao_ = 0, vbo_ = 0;
     bool hdr_enabled_ = true;
-    float bloom_strength_ = 1.45f;  // additive bloom intensity, tuned by eye on the Galaxy scene
+    float bloom_strength_ = 1.305f;  // additive bloom intensity, tuned by eye on the Galaxy scene
     float warp_flash_ = 0.0f;       // 0 = no flash (identity); set per-frame during warp
 };
 }  // namespace renderer
