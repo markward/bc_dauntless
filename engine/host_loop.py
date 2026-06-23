@@ -3778,6 +3778,7 @@ def run(mission_name: Optional[str] = None,
                 motion_blur_on=r.motion_blur_enabled(),
                 warp_flythrough_on=r.warp_flythrough_enabled(),
                 volumetric_nebulae_on=r.volumetric_nebulae_enabled(),
+                nebula_lightning_on=r.nebula_lightning_enabled(),
                 fov_deg=int(round(_math.degrees(
                     director.fov_y_rad
                 ))),
@@ -3797,6 +3798,7 @@ def run(mission_name: Optional[str] = None,
             set_motion_blur=r.set_motion_blur_enabled,
             set_warp_flythrough=r.set_warp_flythrough_enabled,
             set_volumetric_nebulae=r.set_volumetric_nebulae_enabled,
+            set_nebula_lightning=r.set_nebula_lightning_enabled,
         )
 
         from engine.ui.pause_menu import default_pause_menu

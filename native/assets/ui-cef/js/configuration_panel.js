@@ -32,6 +32,7 @@ function _cpFocusableList(state) {
         out.push({kind: 'ctrl', target: 'motion_blur'});
         out.push({kind: 'ctrl', target: 'warp_flythrough'});
         out.push({kind: 'ctrl', target: 'volumetric_nebulae'});
+        out.push({kind: 'ctrl', target: 'nebula_lightning'});
     } else if (state.selected_tab === 'gameplay') {
         out.push({kind: 'ctrl', target: 'subtitles'});
     }
@@ -209,6 +210,17 @@ function _cpRenderGraphicsBody(state, focusables) {
           +     '<button class="cp-toggle' + (s.volumetric_nebulae_on ? ' cp-toggle--on' : '') + '"'
           +        ' onclick="dauntlessEvent(\'configuration/toggle:volumetric_nebulae\')">'
           +       (s.volumetric_nebulae_on ? 'On' : 'Off')
+          +     '</button>'
+          +   '</div>'
+          + '</div>';
+
+    // Nebula Lightning toggle — lightning render pass (Modern VFX).
+    html += '<div class="cp-row' + (isFoc('nebula_lightning') ? ' cp-focused' : '') + '">'
+          +   '<div class="cp-row__label">Nebula Lightning</div>'
+          +   '<div class="cp-row__control">'
+          +     '<button class="cp-toggle' + (s.nebula_lightning_on ? ' cp-toggle--on' : '') + '"'
+          +        ' onclick="dauntlessEvent(\'configuration/toggle:nebula_lightning\')">'
+          +       (s.nebula_lightning_on ? 'On' : 'Off')
           +     '</button>'
           +   '</div>'
           + '</div>';

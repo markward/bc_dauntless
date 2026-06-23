@@ -134,6 +134,10 @@ namespace dauntless_volumetric_nebulae {
     bool enabled();            // defined in frame.cc
     void set_enabled(bool v);  // defined in frame.cc
 }
+namespace dauntless_nebula_lightning {
+    bool enabled();            // defined in frame.cc
+    void set_enabled(bool v);  // defined in frame.cc
+}
 
 namespace {
 
@@ -2105,6 +2109,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("volumetric_nebulae_enabled",
           []() { return dauntless_volumetric_nebulae::enabled(); },
           "Read the Volumetric Nebulae toggle (Modern VFX). Default: on.");
+    m.def("nebula_lightning_set_enabled",
+          [](bool enabled) { dauntless_nebula_lightning::set_enabled(enabled); },
+          py::arg("enabled"),
+          "Toggle Nebula Lightning (Modern VFX). Default: on.");
+    m.def("nebula_lightning_enabled",
+          []() { return dauntless_nebula_lightning::enabled(); },
+          "Read the Nebula Lightning toggle (Modern VFX). Default: on.");
     m.def("set_warp_streak_intensity",
           [](float i) { dauntless_warp_vfx::set_streak(i); },
           py::arg("intensity"),

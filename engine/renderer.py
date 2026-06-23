@@ -227,6 +227,16 @@ def set_volumetric_nebulae_enabled(enabled: bool) -> None:
     _h.volumetric_nebulae_set_enabled(enabled)
 
 
+def nebula_lightning_enabled() -> bool:
+    """Read the Nebula Lightning toggle (Modern VFX). Default: on."""
+    return _h.nebula_lightning_enabled()
+
+
+def set_nebula_lightning_enabled(enabled: bool) -> None:
+    """Toggle Nebula Lightning (Modern VFX). Default: on."""
+    _h.nebula_lightning_set_enabled(enabled)
+
+
 def set_dust_enabled(enabled: bool) -> None:
     """Toggle the space-dust pass. Default: on after init()."""
     _h.dust_set_enabled(enabled)
