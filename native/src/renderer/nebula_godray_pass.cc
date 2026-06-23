@@ -52,10 +52,12 @@ void NebulaGodrayPass::render(const scenegraph::Camera& camera,
     const glm::mat4 view_proj = camera.proj_matrix() * camera.view_matrix();
 
     // ── Set up the additive composite into the currently-bound HDR target. ───
-    // Reading hdr_color_tex (a colour attachment of the bound FBO) while
-    // additively blending into it is the bloom-upsample pattern: the radial
-    // taps are offset from the destination texel, so there is no exact-texel
-    // read-modify-write feedback. No scratch target needed.
+    // Reads the HDR colour while additively blending into the SAME HDR target
+    // (same-FBO read-while-write). Per the GL spec this is technically undefined,
+    // but all tested desktop drivers return the pre-draw texel content — exactly
+    // what the radial scatter wants, and glGetError() is clean. If a future
+    // platform flags a feedback hazard, render into a half-res scratch target and
+    // composite (as nebula_volumetric_pass does) instead of reading the bound HDR.
     glEnable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_ONE);
     glDisable(GL_DEPTH_TEST);
