@@ -6,12 +6,10 @@ fading, bounded ring buffer while the player is in a nebula. Emits trail points
 churn + energize the cloud behind the ship. Pure logic, no GL. Driven entirely
 by where the ship went — no RNG.
 """
-import math
 
 SPACING = 6.0       # GU the ship must move before a new trail point is laid
 N = 24              # max trail points (matches u_wake[24]); bounds length + cost
 LIFETIME = 4.0      # seconds for a point's strength to fade 1 → 0
-FRONT_RISE = 0.2    # seconds the newest point eases in (no pop)
 
 
 class _Point:

@@ -22,13 +22,13 @@ def test_records_by_distance_not_per_tick():
     for i in range(50):
         t += 1.0 / 60.0
         w.update(True, (i * 0.1, 0.0, 0.0), t)   # 0.1 GU/tick << SPACING
-    assert len(w.trail_points()) == 1            # only the initial drop
+    assert len(w.trail_points()) == 1            # spacing prevents new points
 
 
 def test_records_a_new_point_each_spacing():
     w = NebulaWakeTracker()
     t = 0.0
-    # Jump SPACING GU each tick → a new point every tick (until the cap).
+    # Jump SPACING GU each tick → a new point every tick.
     for i in range(10):
         t += 1.0 / 60.0
         w.update(True, (i * SPACING, 0.0, 0.0), t)
@@ -42,7 +42,7 @@ def test_stationary_lays_no_trail_growth():
     for _ in range(120):
         t += 1.0 / 60.0
         w.update(True, (0.0, 0.0, 0.0), t)       # never moves
-    # No new points from standing still (the one point fades out over LIFETIME).
+    # No new points are added from standing still; the single initial point persists.
     assert len(w.trail_points()) <= 1
 
 
