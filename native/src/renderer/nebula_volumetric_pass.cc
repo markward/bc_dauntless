@@ -177,8 +177,11 @@ void NebulaVolumetricPass::render(const scenegraph::Camera& camera,
     }
 
     // Tunable dials (defaults; live-tuning per the brief — start strong).
-    march.set_float("u_step", 6.0f);
-    march.set_int("u_max_steps", 96);
+    // u_step x u_max_steps = 576 GU reach. Step widened 6->9 + count trimmed
+    // 96->64 (same reach, ~1.5x fewer steps) as a first perf pass; the dither
+    // offset + temporal hide the coarser stepping.
+    march.set_float("u_step", 9.0f);
+    march.set_int("u_max_steps", 64);
     march.set_float("u_density_scale", 0.06f);
     march.set_float("u_scatter", 1.2f);
     march.set_float("u_self_glow", 0.25f);

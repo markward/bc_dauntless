@@ -123,8 +123,15 @@ void main(){
             for(int l=0;l<u_dir_light_count;l++){
                 vec3 ld=normalize(u_dir_light_dir_ws[l]);
                 float occ=0.0;
-                for(float k=1.0;k<=u_light_steps;k+=1.0)
-                    occ+=density(p+ld*(k*u_step))*u_density_scale*u_step;
+                // Self-shadow ONLY the primary (slot 0) light. The occlusion
+                // taps are the dominant march cost (lights x taps density() evals
+                // per step); shadowing just the sun keeps the cloud's form while
+                // cutting that cost ~4x. Fill lights (and future thunder pulses)
+                // add unshadowed — visually fine for secondary light.
+                if(l==0){
+                    for(float k=1.0;k<=u_light_steps;k+=1.0)
+                        occ+=density(p+ld*(k*u_step))*u_density_scale*u_step;
+                }
                 scat+=u_dir_light_color[l]*exp(-occ);
             }
             vec3 col=(scat*u_scatter + u_rgb*u_self_glow)*dens;
