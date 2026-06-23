@@ -77,10 +77,10 @@ def _sphere_union_falloff(px, py, pz, spheres):
     return best
 
 
-def density(px, py, pz, spheres, seed, freq, gain, floor, drift_t):
+def density(px, py, pz, spheres, seed, freq, gain, density_floor, drift_t):
     bound = _sphere_union_falloff(px, py, pz, spheres)
     if bound <= 0.0:
         return 0.0
     sx, sy, sz = seed
     n = fbm(px * freq + sx + drift_t, py * freq + sy, pz * freq + sz)
-    return bound * _saturate(n * gain - floor)
+    return bound * _saturate(n * gain - density_floor)
