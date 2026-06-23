@@ -92,18 +92,19 @@ def test_discharges_expire():
             assert dis["age"] < dis["life"]
 
 
-def test_emissive_boost_idle_is_exactly_one():
+def test_emissive_boost_always_one_when_flicker_disabled():
+    # The whole-hull emissive flicker is DISABLED (FLICKER=0.0): set_emissive_scale
+    # scales the ship's glow MAPS (windows/lights), not the hull surface, so a
+    # boost flickered the wrong features. With FLICKER=0 the boost is always
+    # exactly 1.0 — the hull is never tinted by discharges (the stuck-bright
+    # guard is trivially upheld). Local crackle-sprite glow is the only lighting.
     d = HullDischargeDriver(seed=11)
     assert d.emissive_boost() == 1.0          # fresh, no discharges
-    # In a damaging cloud it rises above 1.0 at least once.
     t = 0.0
-    rose = False
     for _ in range(600):
         t += 1.0/60.0
         d.update(True, 300.0, 1.0/60.0, PTS, t)
-        if d.emissive_boost() > 1.0:
-            rose = True
-    assert rose
+        assert d.emissive_boost() == 1.0      # never rises (flicker off)
 
 
 def test_determinism_same_seed():
