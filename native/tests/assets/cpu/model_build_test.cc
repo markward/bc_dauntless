@@ -163,6 +163,47 @@ protected:
         return f;
     }
 
+    // Root node -> child node translated to (100, 0, 0) -> a NiTriShape whose
+    // verts sit near the CHILD's origin ((0,0,0),(1,0,0),(0,1,0)). The
+    // node->model bake must push the sampled surface points to ~(100, *, *),
+    // proving they're in MODEL space, not node-local (which would be ~origin).
+    nif::File file_with_translated_child_shape() {
+        nif::File f;
+        // Block 0: root NiNode -> child node (block 1)
+        nif::NiNode root;
+        root.av.obj.name = "Root";
+        root.child_links = {1};
+        f.blocks.push_back(root);
+        f.block_ids.push_back(0);
+
+        // Block 1: child NiNode translated +100 in X -> shape (block 2)
+        nif::NiNode child;
+        child.av.obj.name = "Offset";
+        child.av.translation = {100.0f, 0.0f, 0.0f};
+        child.child_links = {2};
+        f.blocks.push_back(child);
+        f.block_ids.push_back(1);
+
+        // Block 2: NiTriShape parented to the translated child
+        nif::NiTriShape sh;
+        sh.av.obj.name = "OffsetMesh";
+        sh.data_link = 3;
+        f.blocks.push_back(sh);
+        f.block_ids.push_back(2);
+
+        // Block 3: data — verts near node origin
+        nif::NiTriShapeData d;
+        d.num_vertices = 3;
+        d.has_vertices = true;
+        d.vertices = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}};
+        d.num_triangles = 1;
+        d.triangles.push_back({0, 1, 2});
+        f.blocks.push_back(d);
+        f.block_ids.push_back(3);
+
+        return f;
+    }
+
     assets::detail::ModelBuildContext make_ctx() {
         assets::detail::ModelBuildContext ctx;
         ctx.resolver = &resolver;
@@ -235,4 +276,28 @@ TEST_F(ModelBuildTest, HiddenShapesAreNotBuilt) {
     std::size_t attached = 0;
     for (const auto& n : model.nodes) attached += n.meshes.size();
     EXPECT_EQ(attached, 1u);                  // no node references the hidden box
+}
+
+// Surface points must be a non-empty sample for VFX anchoring, and the hidden
+// shape must contribute none (it's skipped before sampling).
+TEST_F(ModelBuildTest, SurfacePointsArePopulated) {
+    auto f = trivial_file_with_one_trishape();
+    auto model = assets::detail::build_model(f, make_ctx());
+    EXPECT_FALSE(model.surface_points.empty());
+}
+
+// The sampled surface points must be in MODEL space: a shape parented to a node
+// translated to (100,0,0) must produce points clustered near x≈100, NOT near
+// the node-local origin. This is the regression guard against "all points at
+// the origin" (which would re-cluster VFX at the ship core).
+TEST_F(ModelBuildTest, SurfacePointsAreModelSpace) {
+    auto f = file_with_translated_child_shape();
+    auto model = assets::detail::build_model(f, make_ctx());
+    ASSERT_FALSE(model.surface_points.empty());
+    // Every sampled vert's model-space X should be in [100, 101] (verts are
+    // 0..1 in node-local X, plus the node's +100 translation).
+    for (const auto& p : model.surface_points) {
+        EXPECT_GE(p.x, 99.5f) << "surface point not pushed by node->model bake";
+        EXPECT_LE(p.x, 101.5f);
+    }
 }

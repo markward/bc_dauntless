@@ -467,6 +467,16 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
         flip_animation_index_for_prop[prop_link_id] = anim_idx;
     }
 
+    // Surface-point sampling accumulator (SP): per-built-mesh, keep a pointer
+    // to the CPU vertices and the node index so we can sample MODEL-space hull
+    // points after the loop. We retain the vertices regardless of
+    // ctx.keep_cpu_data because the sample is cheap and we discard the rest.
+    struct ShapeVerts {
+        std::vector<MeshCpu::Vertex> verts;  // positions in `to_model` source space
+        glm::mat4 to_model{1.0f};            // source-space -> MODEL space
+    };
+    std::vector<ShapeVerts> shape_verts_for_sampling;
+
     bool any_trishape = false;
     for (std::uint32_t i = 0; i < f.blocks.size(); ++i) {
         const auto* shape = std::get_if<nif::NiTriShape>(&f.blocks[i]);
@@ -592,6 +602,28 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
             int mesh_idx = static_cast<int>(model.meshes.size());
             model.nodes[node_index].meshes.push_back(mesh_idx);
         }
+
+        // SP: stash this shape's vertices for surface-point sampling. cpu's
+        // positions are node-local with `bake` (the parent node's bind-world,
+        // identity for ships) already applied. We record the verts and the node
+        // index; the post-loop sampler transforms them to MODEL space.
+        {
+            ShapeVerts sv;
+            sv.verts = cpu.vertices;  // copy (cheap; sampled & discarded below)
+            // node->model is node_bind_world[node_index]. cpu's verts already
+            // have `bake` applied (identity for ships; node_bind_world for
+            // character shapes), so undo it: to_model = node_bind_world * inv(bake).
+            // Ships: inv(I)=I -> node_bind_world. Characters: cancels to identity
+            // (verts already in bind-model == model space). Shapes with no node
+            // (node_index < 0) stay in their own local space (to_model = inv(bake)).
+            glm::mat4 nb(1.0f);
+            if (node_index >= 0 &&
+                node_index < static_cast<int>(node_bind_world.size()))
+                nb = node_bind_world[node_index];
+            sv.to_model = nb * glm::inverse(bake);
+            shape_verts_for_sampling.push_back(std::move(sv));
+        }
+
         // Avoid copying the CPU vertex data unless retention is requested.
         if (ctx.keep_cpu_data) {
             Mesh mesh = mesh_upload(MeshCpu(cpu));
@@ -602,6 +634,41 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
         }
     }
     if (!any_trishape) throw ModelBuildError("no NiTriShape in NIF file");
+
+    // SP: sample ~96 MODEL-SPACE hull surface points spread across all shapes,
+    // roughly proportional to each shape's vertex count, deterministically
+    // (fixed per-shape stride). For VFX (hull discharges, wake) that need to
+    // anchor across the WHOLE hull — saucer rim, nacelles, pylons — not just the
+    // central subsystem mounts. Done once at load; ~96 vec3 is negligible.
+    {
+        constexpr std::size_t kTargetSamples = 96;
+        std::size_t total_verts = 0;
+        for (const auto& sv : shape_verts_for_sampling)
+            total_verts += sv.verts.size();
+        if (total_verts > 0) {
+            model.surface_points.reserve(kTargetSamples + shape_verts_for_sampling.size());
+            for (const auto& sv : shape_verts_for_sampling) {
+                if (sv.verts.empty()) continue;
+                // Proportional quota for this shape (at least 1 so every shape
+                // contributes a point — keeps nacelles/pylons represented).
+                std::size_t quota = static_cast<std::size_t>(
+                    (sv.verts.size() * kTargetSamples) / total_verts);
+                if (quota < 1) quota = 1;
+                if (quota > sv.verts.size()) quota = sv.verts.size();
+                // Fixed stride => deterministic, evenly spread across the shape.
+                const std::size_t stride =
+                    std::max<std::size_t>(1, sv.verts.size() / quota);
+                std::size_t taken = 0;
+                for (std::size_t vi = 0;
+                     vi < sv.verts.size() && taken < quota;
+                     vi += stride, ++taken) {
+                    const glm::vec3& p = sv.verts[vi].position;
+                    glm::vec4 mp = sv.to_model * glm::vec4(p, 1.0f);
+                    model.surface_points.emplace_back(mp.x, mp.y, mp.z);
+                }
+            }
+        }
+    }
 
     // 5. Animations.
     model.animations = build_animations(f);

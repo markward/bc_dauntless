@@ -4384,7 +4384,6 @@ def run(mission_name: Optional[str] = None,
                         dmg_rate = 0.0
                         hull_pts = []
                         if in_neb and player is not None:
-                            from engine.appc.subsystems import subsystem_world_position
                             pset = player.GetContainingSet()
                             if pset is not None:
                                 for obj in pset.GetClassObjectList(App.CT_NEBULA):
@@ -4392,9 +4391,20 @@ def run(mission_name: Optional[str] = None,
                                     if neb is not None and neb.IsObjectInNebula(player):
                                         dmg_rate = neb.GetDamage()[0]
                                         break
-                            for sub in player.GetSubsystems():
-                                wp = subsystem_world_position(sub, player)
-                                hull_pts.append((wp.x, wp.y, wp.z))
+                            # Anchor sparks across the WHOLE hull (saucer rim,
+                            # nacelles, pylons) via the model's surface-point
+                            # sample, not just the central subsystem mounts.
+                            _piid = (session.ship_instances.get(player)
+                                     if session is not None else None)
+                            if _piid is not None:
+                                hull_pts = r.instance_surface_points(_piid)
+                            if not hull_pts:
+                                # Fallback: subsystem mounts (central, but better
+                                # than nothing) when no surface sample is available.
+                                from engine.appc.subsystems import subsystem_world_position
+                                for sub in player.GetSubsystems():
+                                    wp = subsystem_world_position(sub, player)
+                                    hull_pts.append((wp.x, wp.y, wp.z))
                         _hull_discharge.update(in_neb, dmg_rate, TICK_DT, hull_pts, _gt)
 
                 # Collision detection + response (ships/asteroids/moons/

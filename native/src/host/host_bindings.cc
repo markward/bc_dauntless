@@ -1198,6 +1198,24 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "or None if the instance/node is absent. animated=True applies the "
           "current node overrides; False composes the static locals (rest).");
 
+    m.def("instance_surface_points",
+          [](scenegraph::InstanceId id) -> py::object {
+              auto* in = g_world.get(id);
+              if (!in) return py::none();
+              const assets::Model* mdl = resolve_model(in->model_handle);
+              if (!mdl) return py::none();
+              std::vector<std::tuple<float, float, float>> out;
+              out.reserve(mdl->surface_points.size());
+              for (const glm::vec3& p : mdl->surface_points) {
+                  glm::vec4 w = in->world * glm::vec4(p, 1.0f);  // model -> world
+                  out.emplace_back(w.x, w.y, w.z);
+              }
+              return py::cast(out);
+          },
+          py::arg("iid"),
+          "World-space sample of the instance model's hull surface points "
+          "(spread across the hull) for VFX anchoring.");
+
     m.def("load_animation_clips",
           [](const std::string& path) {
               py::list clips_out;

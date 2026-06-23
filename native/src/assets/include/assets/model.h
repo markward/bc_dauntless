@@ -44,6 +44,11 @@ struct Model {
     Skeleton                      skeleton;
     std::vector<AnimationClip>    animations;
     std::vector<TextureAnimation> texture_animations;
+    /// A small (~96) sample of MODEL-SPACE hull surface points, already
+    /// transformed out of node-local space (node->model bake applied at load).
+    /// Spread across all mesh shapes for whole-hull VFX anchoring (electrical
+    /// discharges, wake). Empty for models with no meshes. ~negligible memory.
+    std::vector<glm::vec3>        surface_points;
     std::filesystem::path         source;
 };
 
