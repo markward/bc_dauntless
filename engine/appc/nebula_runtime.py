@@ -117,8 +117,9 @@ class NebulaTracker:
             if self._inside:
                 self._inside.clear()
             # Restore sensor ranges for any ships passed in (no-nebula path).
-            for ship in ships:
-                self._restore_sensor(ship)
+            if self._sensor_saved:
+                for ship in ships:
+                    self._restore_sensor(ship)
             return
 
         for nebula in nebulae:

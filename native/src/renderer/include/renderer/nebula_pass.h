@@ -37,8 +37,9 @@ public:
     NebulaPass& operator=(const NebulaPass&) = delete;
 
     /// Draw all volumes. Caller guarantees the scene depth buffer is
-    /// populated (inside fog reads depth so hulls occlude correctly).
-    /// Early-outs when `volumes` is empty or the pass is disabled.
+    /// populated; the fog is depth-TESTED sphere geometry so hulls occlude
+    /// it (no depth sampling). Early-outs when `volumes` is empty or the
+    /// pass is disabled.
     void render(const scenegraph::Camera& camera,
                 Pipeline& pipeline,
                 const std::vector<NebulaVolume>& volumes);
