@@ -22,8 +22,10 @@ constexpr int kMaxSpheres = 8;   // matches u_spheres[8] in the shader
 // reprojection only holds up for small deltas. Generous thresholds: ghosting
 // is the failure mode, so when in doubt we throw history away.
 constexpr float kMaxEyeDeltaGu = 30.0f;    // GU of camera translation per frame
-constexpr float kTemporalWeight = 0.80f;   // history blend (<= small; biased low)
-constexpr float kDitherAmount = 1.0f;      // full one-step jitter
+constexpr float kTemporalWeight = 0.90f;   // history blend; higher → faster noise
+                                           // convergence (ghosting bounded by reset)
+constexpr float kDitherAmount = 0.5f;      // half-step jitter — less per-frame
+                                           // variance for temporal to resolve
 }  // namespace
 
 NebulaVolumetricPass::NebulaVolumetricPass() = default;

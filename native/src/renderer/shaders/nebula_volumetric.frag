@@ -149,7 +149,13 @@ void main(){
     // host RESETS history (u_temporal_weight=0) on large camera deltas / warp
     // and on the first frame, so this only fires when the camera barely moved.
     if(u_temporal_weight > 0.0){
-        vec3 cloud_p = u_eye + dir * max(t0, 0.0);
+        // Anchor at the MIDPOINT of the marched span, not the entry point. When
+        // the camera is inside the sphere t0 < 0, so max(t0,0)=0 would anchor at
+        // the eye itself — which reprojects every pixel to the same screen point,
+        // breaking per-pixel history lookup and leaving the dither noise
+        // unresolved (the "noisy while inside" bug). The midpoint is a real
+        // forward point in the cloud that reprojects correctly in or out.
+        vec3 cloud_p = u_eye + dir * (0.5 * (max(t0, 0.0) + tend));
         vec4 pc = u_prev_view_proj * vec4(cloud_p, 1.0);
         if(pc.w > 0.0){
             vec2 prev_uv = (pc.xy / pc.w) * 0.5 + 0.5;
