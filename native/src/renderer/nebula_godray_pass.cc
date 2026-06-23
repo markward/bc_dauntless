@@ -25,7 +25,7 @@ constexpr int   kSamples  = 48;
 constexpr float kDecay    = 0.96f;
 constexpr float kWeight   = 0.5f;
 constexpr float kExposure = 0.10f;
-constexpr float kJitter   = 0.006f;   // per-pixel sample-uv jitter (~6px @1080p)
+constexpr float kJitter   = 0.02f;   // per-pixel sample-uv jitter (~6px @1080p)
                                       // to break the quarter-res cloud block grid
 }  // namespace
 
