@@ -3,8 +3,12 @@
 
 #include <renderer/frame.h>
 #include <renderer/nebula_pass.h>
+#include <renderer/nebula_volumetric_pass.h>
+#include <renderer/hdr_target.h>
 #include <renderer/pipeline.h>
 #include <renderer/window.h>
+
+#include <glm/gtc/matrix_inverse.hpp>
 
 #include <scenegraph/world.h>
 #include <scenegraph/camera.h>
@@ -958,6 +962,99 @@ TEST_F(FrameTest, NebulaOutsideShellAddsAdditiveCloud) {
     // Instead we test the GL error guard and that the result is non-zero.
     EXPECT_GT(in_sum, 0)
         << "Inside camera: centre pixel should be tinted by the fog pass";
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+// Task 5: volumetric raymarch pass.
+//
+// Renders into a real HdrTarget (RGBA16F colour + sampleable depth) because
+// the pass samples the depth texture to clamp the march to hulls.
+//
+//  (a) Density+tint: camera inside a seeded sphere with the depth cleared to
+//      FAR (1.0 = no hull) must show a non-black, blue-leaning cloud at the
+//      centre, vs an all-zero no-volume control.
+//  (b) Obscuration: clearing the depth to NEAR (~0 = a hull right at the eye)
+//      collapses the march interval (scene_dist ~ 0), so the centre pixel must
+//      receive ZERO cloud contribution — the hull occludes the cloud. This is
+//      the whole point of the depth read; the player ship correctly hides the
+//      nebula behind it.
+TEST_F(FrameTest, NebulaVolumetricRendersDensityAndObscuresHull) {
+    const int kW = 256, kH = 256;
+    renderer::HdrTarget hdr;
+    hdr.resize(kW, kH);
+
+    scenegraph::Camera cam;
+    cam.eye    = glm::vec3(0.0f, 0.0f, 0.0f);   // inside the sphere
+    cam.target = glm::vec3(0.0f, 0.0f, 1.0f);
+    cam.up     = glm::vec3(0.0f, 1.0f, 0.0f);
+    cam.aspect = 1.0f;
+    cam.near   = 1.0f;
+    cam.far    = 20000.0f;
+
+    const glm::mat4 inv_vp =
+        glm::inverse(cam.proj_matrix() * cam.view_matrix());
+
+    renderer::NebulaVolume vol;
+    vol.spheres.push_back(glm::vec4(0.0f, 0.0f, 0.0f, 200.0f));
+    vol.rgb  = glm::vec3(0.5f, 0.5f, 0.7f);   // blue-leaning self-glow tint
+    vol.fbm  = glm::vec3(0.02f, 3.0f, 0.0f);  // freq, gain, floor
+    vol.seed = glm::vec3(0.0f, 0.0f, 0.0f);
+
+    renderer::Lighting lighting;
+    lighting.directional_count   = 1;
+    lighting.directional_dir_ws[0] = glm::normalize(glm::vec3(0.0f, 1.0f, 0.0f));
+    lighting.directional_color[0]  = glm::vec3(1.0f);
+
+    renderer::NebulaVolumetricPass pass;
+
+    // ── Control: empty volume list over a black HDR target → unchanged. ──────
+    hdr.bind();
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClearDepth(1.0);   // FAR: no hull
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    pass.render(cam, *p, {}, lighting, hdr.color_texture(), hdr.depth_texture(),
+                inv_vp, cam.eye, 0.0f);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    float ctrl[4] = {9, 9, 9, 9};
+    glReadPixels(128, 128, 1, 1, GL_RGBA, GL_FLOAT, ctrl);
+    EXPECT_FLOAT_EQ(ctrl[0], 0.0f) << "empty volume list altered the HDR target";
+    EXPECT_FLOAT_EQ(ctrl[1], 0.0f);
+    EXPECT_FLOAT_EQ(ctrl[2], 0.0f);
+
+    // ── (a) Density + tint: depth FAR (no hull) → cloud at centre. ───────────
+    hdr.bind();
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClearDepth(1.0);   // FAR
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    pass.render(cam, *p, {vol}, lighting, hdr.color_texture(), hdr.depth_texture(),
+                inv_vp, cam.eye, 0.0f);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    float lit[4] = {0};
+    glReadPixels(128, 128, 1, 1, GL_RGBA, GL_FLOAT, lit);
+    EXPECT_GT(lit[0] + lit[1] + lit[2], 0.0f)
+        << "centre pixel was black; volumetric march produced no cloud";
+    EXPECT_GT(lit[3], 0.0f) << "alpha (coverage) should be non-zero inside the cloud";
+    // Tint leans blue: the self-glow colour is (0.5,0.5,0.7); blue >= red.
+    EXPECT_GE(lit[2], lit[0])
+        << "cloud not blue-leaning: " << lit[0] << "," << lit[1] << "," << lit[2];
+
+    // ── (b) Obscuration: depth NEAR (hull at the eye) → no cloud. ────────────
+    hdr.bind();
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClearDepth(0.0);   // NEAR: a hull right in front of the camera occludes all
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    pass.render(cam, *p, {vol}, lighting, hdr.color_texture(), hdr.depth_texture(),
+                inv_vp, cam.eye, 0.0f);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    float occ[4] = {9, 9, 9, 9};
+    glReadPixels(128, 128, 1, 1, GL_RGBA, GL_FLOAT, occ);
+    EXPECT_FLOAT_EQ(occ[0] + occ[1] + occ[2], 0.0f)
+        << "hull (near depth) did not occlude the cloud: " << occ[0] << ","
+        << occ[1] << "," << occ[2];
+
+    // Restore the default framebuffer for any later test.
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glClearDepth(1.0);
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 

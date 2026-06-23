@@ -27,6 +27,7 @@
 #include <renderer/sun_pass.h>
 #include <renderer/dust_pass.h>
 #include <renderer/nebula_pass.h>
+#include <renderer/nebula_volumetric_pass.h>
 #include <renderer/shield_pass.h>
 #include <renderer/lens_flare_pass.h>
 #include <renderer/torpedo_pass.h>
@@ -156,6 +157,7 @@ std::unique_ptr<renderer::SunPass> g_sun_pass;
 std::unique_ptr<renderer::DustPass> g_dust_pass;
 std::vector<renderer::NebulaVolume> g_nebulae;
 std::unique_ptr<renderer::NebulaPass> g_nebula_pass;
+std::unique_ptr<renderer::NebulaVolumetricPass> g_nebula_volumetric_pass;
 std::unique_ptr<renderer::ShieldPass> g_shield_pass;
 std::vector<renderer::LensFlareDescriptor> g_lens_flares;
 std::unique_ptr<renderer::LensFlarePass>   g_lens_flare_pass;
@@ -348,6 +350,7 @@ void init(int width, int height, const std::string& title) {
     g_sun_pass = std::make_unique<renderer::SunPass>();
     g_dust_pass = std::make_unique<renderer::DustPass>();
     g_nebula_pass = std::make_unique<renderer::NebulaPass>();
+    g_nebula_volumetric_pass = std::make_unique<renderer::NebulaVolumetricPass>();
     g_nebulae.clear();
     g_shockwave_pass = std::make_unique<renderer::ShockwavePass>();
     g_shield_pass = std::make_unique<renderer::ShieldPass>();
@@ -404,6 +407,7 @@ void shutdown() {
     g_sun_pass.reset();
     g_dust_pass.reset();
     g_nebula_pass.reset();
+    g_nebula_volumetric_pass.reset();
     g_nebulae.clear();
     g_shield_pass.reset();
     g_lens_flares.clear();
@@ -582,8 +586,21 @@ void frame() {
             g_dust_pass->render(cam, dt, *g_pipeline, g_suns, g_dust_planets,
                                 dauntless_warp_vfx::streak_intensity(),
                                 dauntless_warp_vfx::travel_dir());
-        if (!for_viewscreen && g_nebula_pass)
-            g_nebula_pass->render(cam, *g_pipeline, g_nebulae);
+        if (!for_viewscreen && !g_nebulae.empty()) {
+            if (dauntless_volumetric_nebulae::enabled() && g_nebula_volumetric_pass
+                && g_hdr_target) {
+                // VOLUMETRIC (Modern VFX): raymarch the fbm field, blended
+                // into the HDR target, occluded by the scene depth texture.
+                const glm::mat4 inv_vp =
+                    glm::inverse(cam.proj_matrix() * cam.view_matrix());
+                g_nebula_volumetric_pass->render(
+                    cam, *g_pipeline, g_nebulae, g_lighting,
+                    g_hdr_target->color_texture(), g_hdr_target->depth_texture(),
+                    inv_vp, cam.eye, static_cast<float>(now));
+            } else if (g_nebula_pass) {
+                g_nebula_pass->render(cam, *g_pipeline, g_nebulae);  // V1 faithful
+            }
+        }
         if (!for_viewscreen && g_lens_flare_pass)
             g_lens_flare_pass->render(g_lens_flares, cam, *g_pipeline, fw, fh, now);
         if (g_torpedo_pass) g_torpedo_pass->render(g_torpedoes,    cam, *g_pipeline);
