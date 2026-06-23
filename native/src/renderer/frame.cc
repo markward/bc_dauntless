@@ -112,6 +112,14 @@ namespace dauntless_filmic {
     float ambient_scale() { return g_filmic_enabled ? kFilmicAmbientScale : 1.0f; }
 }
 
+// Toggle for Volumetric Nebulae (Modern VFX). Default on; Task 5 wires the
+// volumetric render path to this toggle — until then it is state-only.
+namespace dauntless_volumetric_nebulae {
+namespace { bool g_enabled = true; }
+    bool enabled() { return g_enabled; }
+    void set_enabled(bool v) { g_enabled = v; }
+}
+
 // Toggle for camera motion blur (Modern VFX). Default on. Exterior-only;
 // host_bindings.cc gates on view + a valid previous-frame view-projection.
 namespace dauntless_motion_blur {

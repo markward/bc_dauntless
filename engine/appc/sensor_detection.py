@@ -1,19 +1,47 @@
-"""Sensor-damage detection scaling.
+"""Sensor-damage detection scaling + nebula tactical concealment.
 
 A ship detects targets out to a range that scales linearly with its
 sensor subsystem's condition, and detects nothing once the sensor is
-offline (disabled at <= DisabledPercentage, or destroyed). Used by both
-the player target list and the AI candidate-selection gate.
+offline (disabled at <= DisabledPercentage, or destroyed). Dense nebulae
+further reduce effective range (CONCEAL_K) and break detection outright
+above LOCK_BREAK_T, with per-pair hysteresis. Used by both the player
+target list and the AI candidate-selection gate.
 
 See docs/superpowers/specs/2026-06-10-sensor-damage-detection-scaling-design.md
 """
 
+import App
 from engine.appc.subsystems import _is_offline, _get_xyz
+from engine.appc import nebula_density as _nd
 
 # Range used when a ship models no sensor subsystem or carries no
 # BaseSensorRange hardpoint data. Preserves the player target list's
 # historical 30000 GU reach and keeps sensor-less fixtures fully sighted.
 FALLBACK_RANGE_GU = 30000.0
+
+# ── Concealment constants ─────────────────────────────────────────────────────
+CONCEAL_K = 0.9      # effective-range reduction at full density (0→no effect, 1→blind)
+LOCK_BREAK_T = 0.28  # density above which detection fails outright. Matched to the
+                     # field dials (gain 1.2 / floor 0.5 → peak density ≈ 0.5-0.66),
+                     # so only the densest clump cores fully hide a ship.
+HYSTERESIS = 0.08    # target must drop to T-HYSTERESIS (0.20) before re-detection
+
+# Per-(observer_id, target_id) latch: a broken lock needs a margin to re-acquire.
+_broken: set = set()
+
+
+def reset_concealment_state():
+    """Clear per-(observer,target) lock-break latches. Called on mission swap
+    so a new mission's ships don't inherit stale id()-keyed latches."""
+    _broken.clear()
+
+
+def _game_time() -> float:
+    """Current game time for drift_t sampling; falls back to 0.0 in tests."""
+    try:
+        return float(App.g_kTimerManager.GetGameTime())
+    except Exception:
+        return 0.0
 
 
 def effective_sensor_range(ship) -> float:
@@ -37,12 +65,61 @@ def effective_sensor_range(ship) -> float:
     return base * sensors.GetConditionPercentage()
 
 
+def concealment_at(ship) -> float:
+    """Max nebula density [0, 1] at *ship*'s position across the ship's set.
+
+    Returns 0.0 if the ship is in no set or no nebulae are present. Sampled
+    on demand using the current game time as drift_t so the CPU field matches
+    the animated GPU field without needing host-loop reordering.
+
+    Concealment is toggle-independent: it reads the density field regardless
+    of any VFX or display setting.
+    """
+    pSet = ship.GetContainingSet() if hasattr(ship, "GetContainingSet") else None
+    if pSet is None:
+        return 0.0
+    loc = ship.GetWorldLocation() if hasattr(ship, "GetWorldLocation") else None
+    if loc is None:
+        return 0.0
+    t = _game_time()
+    best = 0.0
+    for obj in pSet.GetClassObjectList(App.CT_NEBULA):
+        neb = App.MetaNebula_Cast(obj)
+        if neb is None:
+            continue
+        spheres = neb.GetNebulaSpheres()
+        freq, gain, floor = neb.GetFbmDials()
+        d = _nd.density(loc.x, loc.y, loc.z, spheres, neb.GetSeed(),
+                        freq, gain, floor, drift_t=t * 0.01)
+        if d > best:
+            best = d
+    return best
+
+
 def can_detect(observer, target) -> bool:
     """True iff *observer* can detect *target* within its effective sensor
-    range. False when the observer is blind (range 0)."""
+    range, accounting for nebula tactical concealment.
+
+    Detection fails outright when the target's concealment exceeds
+    LOCK_BREAK_T. A broken lock latches (per-pair hysteresis) until
+    concealment drops to LOCK_BREAK_T - HYSTERESIS. When below the
+    threshold, effective range is reduced by (1 - CONCEAL_K * concealment).
+    """
     r = effective_sensor_range(observer)
     if r <= 0.0:
         return False
+
+    # ── Nebula concealment gate ───────────────────────────────────────────
+    conceal = concealment_at(target)
+    key = (id(observer), id(target))
+    thresh = LOCK_BREAK_T - (HYSTERESIS if key in _broken else 0.0)
+    if conceal >= thresh:
+        _broken.add(key)
+        return False
+    _broken.discard(key)
+    # Scale range by the concealment factor (no-op when conceal == 0).
+    r = r * (1.0 - CONCEAL_K * conceal)
+
     ox, oy, oz = _get_xyz(observer)
     tx, ty, tz = _get_xyz(target)
     dx, dy, dz = tx - ox, ty - oy, tz - oz

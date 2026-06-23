@@ -217,6 +217,16 @@ def set_warp_travel_dir(direction) -> None:
     _h.set_warp_travel_dir(float(x), float(y), float(z))
 
 
+def volumetric_nebulae_enabled() -> bool:
+    """Read the Volumetric Nebulae toggle (Modern VFX). Default: on."""
+    return _h.volumetric_nebulae_enabled()
+
+
+def set_volumetric_nebulae_enabled(enabled: bool) -> None:
+    """Toggle Volumetric Nebulae (Modern VFX). Default: on."""
+    _h.volumetric_nebulae_set_enabled(enabled)
+
+
 def set_dust_enabled(enabled: bool) -> None:
     """Toggle the space-dust pass. Default: on after init()."""
     _h.dust_set_enabled(enabled)
@@ -238,7 +248,8 @@ def set_dust_planets(planets: list) -> None:
 def set_nebulae(nebulae: list) -> None:
     """Configure the active set's MetaNebula volumes for the nebula pass.
     Each entry: {"spheres": [(x,y,z,r)...], "rgb": (r,g,b),
-    "visibility": float, "external_tex": str, "internal_tex": str}.
+    "visibility": float, "external_tex": str, "internal_tex": str,
+    "fbm": (freq, gain, floor), "seed": (sx, sy, sz)}.
     Empty list = no nebula (pass early-outs)."""
     _h.set_nebulae(nebulae)
 

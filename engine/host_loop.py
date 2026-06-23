@@ -1794,6 +1794,10 @@ def reset_sdk_globals() -> None:
     # (or mission) doesn't suppress enter-events in the next mission.
     if _nebula_tracker is not None:
         _nebula_tracker.reset()
+    # Clear concealment lock-break latches so a new mission's ships don't
+    # inherit stale id()-keyed latches from the prior mission.
+    from engine.appc.sensor_detection import reset_concealment_state
+    reset_concealment_state()
 
 
 def _init_mission(mission_module_name: str):
@@ -2013,6 +2017,8 @@ def _aggregate_nebulae(pSet):
             "visibility": neb.GetVisibility(),
             "external_tex": neb.GetExternalTexture(),
             "internal_tex": neb.GetInternalTexture(),
+            "fbm": neb.GetFbmDials(),
+            "seed": neb.GetSeed(),
         })
     return out
 
@@ -3771,6 +3777,7 @@ def run(mission_name: Optional[str] = None,
                 filmic_on=r.filmic_enabled(),
                 motion_blur_on=r.motion_blur_enabled(),
                 warp_flythrough_on=r.warp_flythrough_enabled(),
+                volumetric_nebulae_on=r.volumetric_nebulae_enabled(),
                 fov_deg=int(round(_math.degrees(
                     director.fov_y_rad
                 ))),
@@ -3789,6 +3796,7 @@ def run(mission_name: Optional[str] = None,
             set_filmic=r.set_filmic_enabled,
             set_motion_blur=r.set_motion_blur_enabled,
             set_warp_flythrough=r.set_warp_flythrough_enabled,
+            set_volumetric_nebulae=r.set_volumetric_nebulae_enabled,
         )
 
         from engine.ui.pause_menu import default_pause_menu
