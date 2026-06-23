@@ -2,29 +2,33 @@
 in vec2 v_uv;
 out vec4 frag;
 
-// Depth-aware (nearest-depth bilateral) upsample of the half-res volumetric
-// cloud into the full-res HDR target.
+// Joint-bilateral upsample of the half-res volumetric cloud into the full-res
+// HDR target.
 //
-// The cloud is premultiplied (lit, alpha). A naive bilinear upsample bleeds
-// cloud across hull silhouettes (the half-res cloud was clamped to the hull at
-// half resolution, but a full-res hull edge cuts between half-res taps). To
-// keep silhouettes crisp we sample the FULL-RES depth at this pixel and at the
-// four surrounding half-res tap centres, then pick the half-res cloud tap whose
-// depth best matches this pixel's depth. Where all four match (open space) this
-// degrades gracefully to a bilinear-ish nearest pick; at a hull edge it snaps
-// to the tap on the same surface, so the cloud never haloes past the hull.
+// The cloud is premultiplied (lit, alpha). A plain bilinear upsample is smooth
+// but bleeds cloud across hull silhouettes (the half-res march clamped to the
+// hull at low res; a full-res hull edge cuts between half-res taps). The
+// previous version avoided that by PICKING the single nearest-depth tap — but a
+// hard pick gives every full-res pixel in a low-res cell the same value, which
+// shows as a blocky 4x4 grid wherever the cloud is bright (e.g. lit by a
+// lightning flash). Instead we BILINEARLY BLEND the four surrounding half-res
+// taps, weighting each DOWN by depth mismatch: in open space all four match so
+// it is a smooth bilinear blend (the grid dissolves); at a hull edge the wrong-
+// surface taps are suppressed so the silhouette stays crisp.
 
-uniform sampler2D u_cloud;    // half-res premultiplied cloud
-uniform sampler2D u_depth;    // full-res HDR depth
-uniform vec2 u_half_texel;    // 1 / half_res
-uniform vec2 u_full_texel;    // 1 / full_res
+uniform sampler2D u_cloud;        // half-res premultiplied cloud
+uniform sampler2D u_depth;        // full-res HDR depth
+uniform vec2 u_half_texel;        // 1 / half_res
+uniform vec2 u_full_texel;        // 1 / full_res
+uniform float u_depth_sharpness;  // higher = harder depth-edge snapping
 
 void main(){
     float d_full = texture(u_depth, v_uv).r;
 
-    // Four half-res tap centres around this full-res pixel. Snap v_uv to the
-    // half-res grid, then offset by ±half a half-texel to land on tap centres.
-    vec2 hp = v_uv / u_half_texel - 0.5;     // half-res tap coordinate
+    // Four half-res tap centres around this full-res pixel + the bilinear
+    // fraction within the cell.
+    vec2 hp   = v_uv / u_half_texel - 0.5;
+    vec2 fr   = fract(hp);
     vec2 base = (floor(hp) + 0.5) * u_half_texel;
 
     vec2 offs[4] = vec2[4](
@@ -32,19 +36,26 @@ void main(){
         vec2(u_half_texel.x, 0.0),
         vec2(0.0,            u_half_texel.y),
         vec2(u_half_texel.x, u_half_texel.y));
+    float bw[4] = float[4](
+        (1.0 - fr.x) * (1.0 - fr.y),
+        fr.x         * (1.0 - fr.y),
+        (1.0 - fr.x) * fr.y,
+        fr.x         * fr.y);
 
-    vec4  best_cloud = vec4(0.0);
-    float best_err   = 1e20;
+    vec4  sum  = vec4(0.0);
+    float wsum = 0.0;
     for(int i = 0; i < 4; i++){
-        vec2 uv = base + offs[i];
-        // Depth at the half-res tap centre, read from the FULL-RES depth (the
-        // half-res march clamped to exactly this depth, so it is the right
-        // surface to compare against).
+        vec2  uv    = base + offs[i];
         float d_tap = texture(u_depth, uv).r;
-        float err = abs(d_tap - d_full);
-        if(err < best_err){ best_err = err; best_cloud = texture(u_cloud, uv); }
+        // Depth weight: 1 when the tap is on the same surface, → 0 as depths
+        // diverge (a hull edge). exp() keeps it smooth; the +1e-5 floor means
+        // if all four are rejected (thin feature) it degrades to a plain blend.
+        float dw = exp(-abs(d_tap - d_full) * u_depth_sharpness);
+        float w  = bw[i] * dw + 1e-5;
+        sum  += texture(u_cloud, uv) * w;
+        wsum += w;
     }
 
     // Premultiplied OVER: composited by GL_ONE, GL_ONE_MINUS_SRC_ALPHA.
-    frag = best_cloud;
+    frag = sum / wsum;
 }

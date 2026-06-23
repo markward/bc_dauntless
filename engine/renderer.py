@@ -227,6 +227,16 @@ def set_volumetric_nebulae_enabled(enabled: bool) -> None:
     _h.volumetric_nebulae_set_enabled(enabled)
 
 
+def nebula_lightning_enabled() -> bool:
+    """Read the Nebula Lightning toggle (Modern VFX). Default: on."""
+    return _h.nebula_lightning_enabled()
+
+
+def set_nebula_lightning_enabled(enabled: bool) -> None:
+    """Toggle Nebula Lightning (Modern VFX). Default: on."""
+    _h.nebula_lightning_set_enabled(enabled)
+
+
 def set_dust_enabled(enabled: bool) -> None:
     """Toggle the space-dust pass. Default: on after init()."""
     _h.dust_set_enabled(enabled)
@@ -252,6 +262,12 @@ def set_nebulae(nebulae: list) -> None:
     "fbm": (freq, gain, floor), "seed": (sx, sy, sz)}.
     Empty list = no nebula (pass early-outs)."""
     _h.set_nebulae(nebulae)
+
+
+def set_nebula_godrays(flashes: list) -> None:
+    """Active lightning flashes for the god-ray pass. Each: {"dir": (x,y,z),
+    "intensity": float, "color": (r,g,b)}. Empty list = no god-rays."""
+    _h.set_nebula_godrays(flashes)
 
 
 def set_specular_enabled(enabled: bool) -> None:

@@ -29,6 +29,8 @@ embed_shader(SHADER_NEBULA_SHELL_FS shaders/nebula_shell.frag nebula_shell_fs)
 embed_shader(SHADER_NEBULA_VOLUMETRIC_VS shaders/nebula_volumetric.vert nebula_volumetric_vs)
 embed_shader(SHADER_NEBULA_VOLUMETRIC_FS shaders/nebula_volumetric.frag nebula_volumetric_fs)
 embed_shader(SHADER_NEBULA_UPSAMPLE_FS shaders/nebula_upsample.frag nebula_upsample_fs)
+embed_shader(SHADER_NEBULA_GODRAY_VS shaders/nebula_godray.vert nebula_godray_vs)
+embed_shader(SHADER_NEBULA_GODRAY_FS shaders/nebula_godray.frag nebula_godray_fs)
 embed_shader(SHADER_SHIELD_VS shaders/shield.vert shield_vs)
 embed_shader(SHADER_SHIELD_FS shaders/shield.frag shield_fs)
 embed_shader(SHADER_LENS_FLARE_VS shaders/lens_flare.vert lens_flare_vs)
@@ -99,6 +101,7 @@ add_library(renderer STATIC
     dust_pass.cc
     nebula_pass.cc
     nebula_volumetric_pass.cc
+    nebula_godray_pass.cc
     shockwave_pass.cc
     aabb.cc
     glow_region.cc

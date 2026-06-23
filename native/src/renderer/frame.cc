@@ -120,6 +120,14 @@ namespace { bool g_enabled = true; }
     void set_enabled(bool v) { g_enabled = v; }
 }
 
+// Toggle for Nebula Lightning (Modern VFX). Default on; wired to the
+// lightning render pass when that pass is built.
+namespace dauntless_nebula_lightning {
+namespace { bool g_enabled = true; }
+    bool enabled() { return g_enabled; }
+    void set_enabled(bool v) { g_enabled = v; }
+}
+
 // Toggle for camera motion blur (Modern VFX). Default on. Exterior-only;
 // host_bindings.cc gates on view + a valid previous-frame view-projection.
 namespace dauntless_motion_blur {
