@@ -233,6 +233,9 @@ void NebulaVolumetricPass::render(const scenegraph::Camera& camera,
     up.set_vec2("u_full_texel",
                 glm::vec2(1.0f / static_cast<float>(full_w),
                           1.0f / static_cast<float>(full_h)));
+    // Joint-bilateral depth-edge sharpness: higher snaps harder at hull
+    // silhouettes, lower blends smoother (hides the low-res grid better).
+    up.set_float("u_depth_sharpness", 64.0f);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, half_tex_[cur_]);
     up.set_int("u_cloud", 0);

@@ -25,8 +25,9 @@ constexpr int   kSamples  = 48;
 constexpr float kDecay    = 0.96f;
 constexpr float kWeight   = 0.5f;
 constexpr float kExposure = 0.10f;
-constexpr float kJitter   = 0.02f;   // per-pixel sample-uv jitter (~6px @1080p)
-                                      // to break the quarter-res cloud block grid
+constexpr float kJitter   = 0.004f;  // small god-ray sample-uv jitter; insurance
+                                      // against residual cloud-grid amplification
+                                      // (the upsample fix is the real solution)
 }  // namespace
 
 NebulaGodrayPass::NebulaGodrayPass() = default;
