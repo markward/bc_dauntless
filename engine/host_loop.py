@@ -1798,6 +1798,8 @@ def reset_sdk_globals() -> None:
         _nebula_thunder.reset()
     if _hull_discharge is not None:
         _hull_discharge.reset()
+    if _nebula_wake is not None:
+        _nebula_wake.reset()
     # Clear concealment lock-break latches so a new mission's ships don't
     # inherit stale id()-keyed latches from the prior mission.
     from engine.appc.sensor_detection import reset_concealment_state
@@ -1916,6 +1918,7 @@ _warp_diag: dict = {}
 _nebula_tracker = None  # NebulaTracker | None
 _nebula_thunder = None  # NebulaThunderDriver | None
 _hull_discharge = None  # HullDischargeDriver | None
+_nebula_wake = None     # NebulaWakeTracker | None
 
 
 def _dim_suns(suns, streak):
@@ -4407,6 +4410,20 @@ def run(mission_name: Optional[str] = None,
                                     hull_pts.append((wp.x, wp.y, wp.z))
                         _hull_discharge.update(in_neb, dmg_rate, TICK_DT, hull_pts, _gt)
 
+                        # Nebula ship wake: record the player's path while in a nebula.
+                        # Gated by Volumetric Nebulae (the wake lives in the volumetric
+                        # cloud). Visual only.
+                        global _nebula_wake
+                        if r.volumetric_nebulae_enabled():
+                            if _nebula_wake is None:
+                                from engine.appc.nebula_wake import NebulaWakeTracker
+                                _nebula_wake = NebulaWakeTracker()
+                            _wpos = None
+                            if in_neb and player is not None:
+                                _loc = player.GetWorldLocation()
+                                _wpos = (_loc.x, _loc.y, _loc.z)
+                            _nebula_wake.update(in_neb, _wpos, _gt)
+
                 # Collision detection + response (ships/asteroids/moons/
                 # planets). Runs once per render frame after motion + player
                 # input, so every body's post-thrust position is current.
@@ -4796,6 +4813,12 @@ def run(mission_name: Optional[str] = None,
                     and not _warp_streaking):
                 discharges = _hull_discharge.active_discharges()
             r.set_hull_discharges(discharges)
+
+            wake_pts = []
+            if (_nebula_wake is not None and r.volumetric_nebulae_enabled()
+                    and not _warp_streaking):
+                wake_pts = _nebula_wake.trail_points()
+            r.set_nebula_wake(wake_pts)
 
             lens_flares = _aggregate_lens_flares()
             r.set_lens_flares(lens_flares)
