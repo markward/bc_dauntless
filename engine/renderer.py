@@ -264,6 +264,12 @@ def set_nebulae(nebulae: list) -> None:
     _h.set_nebulae(nebulae)
 
 
+def set_nebula_godrays(flashes: list) -> None:
+    """Active lightning flashes for the god-ray pass. Each: {"dir": (x,y,z),
+    "intensity": float, "color": (r,g,b)}. Empty list = no god-rays."""
+    _h.set_nebula_godrays(flashes)
+
+
 def set_specular_enabled(enabled: bool) -> None:
     """Toggle the opaque-pass specular term. Default: on after init()."""
     _h.specular_set_enabled(enabled)

@@ -4735,6 +4735,12 @@ def run(mission_name: Optional[str] = None,
             nebulae = [] if _warp_streaking else _aggregate_nebulae(active_set)
             r.set_nebulae(nebulae)
 
+            godrays = []
+            if _nebula_thunder is not None and not _warp_streaking:
+                godrays = [{"dir": f.dir, "intensity": f.intensity, "color": f.color}
+                           for f in _nebula_thunder.active_flashes()]
+            r.set_nebula_godrays(godrays)
+
             lens_flares = _aggregate_lens_flares()
             r.set_lens_flares(lens_flares)
 

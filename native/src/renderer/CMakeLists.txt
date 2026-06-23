@@ -99,6 +99,7 @@ add_library(renderer STATIC
     dust_pass.cc
     nebula_pass.cc
     nebula_volumetric_pass.cc
+    nebula_godray_pass.cc
     shockwave_pass.cc
     aabb.cc
     glow_region.cc
