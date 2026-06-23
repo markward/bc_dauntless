@@ -1790,6 +1790,10 @@ def reset_sdk_globals() -> None:
         crew_menu_hotkeys.rewire()
     except Exception as _e:
         dev_mode.log_swallowed("crew_menu_hotkeys.rewire after TCW reset", _e)
+    # Clear the nebula tracker so stale membership state from the prior set
+    # (or mission) doesn't suppress enter-events in the next mission.
+    if _nebula_tracker is not None:
+        _nebula_tracker.reset()
 
 
 def _init_mission(mission_module_name: str):
@@ -1894,6 +1898,14 @@ _warp_hidden = False
 
 # Dev-mode warp diagnostics: per-warp peak flash/streak/turn, logged on warp end.
 _warp_diag: dict = {}
+
+# Nebula membership tracker — lazy-init on first sim tick so that importing
+# this module does NOT trigger `import App` at module-load time (nebula_runtime
+# has a top-level `import App`; importing it here would perturb sound-manager
+# init order — same constraint as the other hoisted imports above).  The
+# tracker is a pure-Python singleton: cheap to construct, stateless until the
+# first tick that contains a nebula.
+_nebula_tracker = None  # NebulaTracker | None
 
 
 def _dim_suns(suns, streak):
@@ -4266,6 +4278,23 @@ def run(mission_name: Optional[str] = None,
                     _ships_this_tick, TICK_DT, host=_h,
                     ship_instances=(session.ship_instances if session is not None else None),
                 )
+
+                # Nebula membership → enter/exit events, environmental
+                # damage, sensor scaling. Sim dt (TICK_DT); gated by the
+                # enclosing `not pause.is_open` (no effects while frozen);
+                # no-op for sets without a nebula.
+                _neb_set = _resolve_active_set(player)
+                if _neb_set is not None:
+                    global _nebula_tracker
+                    if _nebula_tracker is None:
+                        from engine.appc.nebula_runtime import NebulaTracker
+                        _nebula_tracker = NebulaTracker()
+                    import App  # deferred: matches host-loop convention
+                    _nebula_tracker.update(
+                        _neb_set,
+                        _neb_set.GetClassObjectList(App.CT_SHIP),
+                        TICK_DT,
+                    )
 
                 # Collision detection + response (ships/asteroids/moons/
                 # planets). Runs once per render frame after motion + player
