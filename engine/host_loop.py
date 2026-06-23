@@ -4353,6 +4353,16 @@ def run(mission_name: Optional[str] = None,
                         _neb_set.GetClassObjectList(App.CT_SHIP),
                         TICK_DT,
                     )
+                    # Shared nebula-state locals used by ALL nebula drivers
+                    # (thunder, hull-discharge, wake).  Computed once here so
+                    # each per-toggle block can read them without duplication.
+                    player_id = id(player) if player is not None else None
+                    in_neb = player_id is not None and any(
+                        player_id in ships
+                        for ships in _nebula_tracker._inside.values()
+                    )
+                    _gt = App.g_kUtopiaModule.GetGameTime()
+
                     # Nebula lightning: tick the thunder driver while the player
                     # is in a nebula.  Visual/audio only; gated by the toggle.
                     # Lazy construct (mirrors _nebula_tracker).
@@ -4361,14 +4371,8 @@ def run(mission_name: Optional[str] = None,
                         if _nebula_thunder is None:
                             from engine.appc.nebula_thunder import NebulaThunderDriver
                             _nebula_thunder = NebulaThunderDriver()
-                        player_id = id(player) if player is not None else None
-                        in_neb = player_id is not None and any(
-                            player_id in ships
-                            for ships in _nebula_tracker._inside.values()
-                        )
                         fwd = player.GetWorldForwardTG() if player is not None else None
                         fwd_t = (fwd.x, fwd.y, fwd.z) if fwd is not None else (0.0, 1.0, 0.0)
-                        _gt = App.g_kUtopiaModule.GetGameTime()
                         _nebula_thunder.update(in_neb, TICK_DT, _gt, fwd_t)
                         for name in _nebula_thunder.pop_due_audio(_gt):
                             try:
@@ -4410,19 +4414,19 @@ def run(mission_name: Optional[str] = None,
                                     hull_pts.append((wp.x, wp.y, wp.z))
                         _hull_discharge.update(in_neb, dmg_rate, TICK_DT, hull_pts, _gt)
 
-                        # Nebula ship wake: record the player's path while in a nebula.
-                        # Gated by Volumetric Nebulae (the wake lives in the volumetric
-                        # cloud). Visual only.
-                        global _nebula_wake
-                        if r.volumetric_nebulae_enabled():
-                            if _nebula_wake is None:
-                                from engine.appc.nebula_wake import NebulaWakeTracker
-                                _nebula_wake = NebulaWakeTracker()
-                            _wpos = None
-                            if in_neb and player is not None:
-                                _loc = player.GetWorldLocation()
-                                _wpos = (_loc.x, _loc.y, _loc.z)
-                            _nebula_wake.update(in_neb, _wpos, _gt)
+                    # Nebula ship wake: record the player's path while in a nebula.
+                    # Gated by Volumetric Nebulae ONLY (spec §7: "no cloud → no
+                    # wake"), independent of the Nebula Lightning toggle.
+                    global _nebula_wake
+                    if r.volumetric_nebulae_enabled():
+                        if _nebula_wake is None:
+                            from engine.appc.nebula_wake import NebulaWakeTracker
+                            _nebula_wake = NebulaWakeTracker()
+                        _wpos = None
+                        if in_neb and player is not None:
+                            _loc = player.GetWorldLocation()
+                            _wpos = (_loc.x, _loc.y, _loc.z)
+                        _nebula_wake.update(in_neb, _wpos, _gt)
 
                 # Collision detection + response (ships/asteroids/moons/
                 # planets). Runs once per render frame after motion + player
