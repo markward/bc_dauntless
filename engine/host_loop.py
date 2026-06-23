@@ -1991,6 +1991,32 @@ def _aggregate_planets(pSets):
     return out
 
 
+def _aggregate_nebulae(pSet):
+    """Render descriptors for MetaNebula volumes in pSet (world-space GU).
+
+    Returns [] for sets without a nebula (renderer early-outs → stock BC).
+    """
+    import App
+    if pSet is None:
+        return []
+    out = []
+    for obj in pSet.GetClassObjectList(App.CT_NEBULA):
+        neb = App.MetaNebula_Cast(obj)
+        if neb is None:
+            continue
+        spheres = [tuple(s) for s in neb.GetNebulaSpheres()]
+        if not spheres:
+            continue
+        out.append({
+            "spheres": spheres,
+            "rgb": neb.GetTintRGB(),
+            "visibility": neb.GetVisibility(),
+            "external_tex": neb.GetExternalTexture(),
+            "internal_tex": neb.GetInternalTexture(),
+        })
+    return out
+
+
 def _aggregate_lens_flares() -> list:
     """Collect lens-flare descriptors in BC native world units."""
     from engine.appc.lens_flare import aggregate_lens_flares_for_renderer
@@ -4661,6 +4687,9 @@ def run(mission_name: Optional[str] = None,
             planets = _aggregate_planets(
                 list(App.g_kSetManager._sets.values()))
             r.set_dust_planets(planets)
+
+            nebulae = [] if _warp_streaking else _aggregate_nebulae(active_set)
+            r.set_nebulae(nebulae)
 
             lens_flares = _aggregate_lens_flares()
             r.set_lens_flares(lens_flares)

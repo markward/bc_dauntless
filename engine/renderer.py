@@ -235,6 +235,14 @@ def set_dust_planets(planets: list) -> None:
     _h.set_dust_planets(planets)
 
 
+def set_nebulae(nebulae: list) -> None:
+    """Configure the active set's MetaNebula volumes for the nebula pass.
+    Each entry: {"spheres": [(x,y,z,r)...], "rgb": (r,g,b),
+    "visibility": float, "external_tex": str, "internal_tex": str}.
+    Empty list = no nebula (pass early-outs)."""
+    _h.set_nebulae(nebulae)
+
+
 def set_specular_enabled(enabled: bool) -> None:
     """Toggle the opaque-pass specular term. Default: on after init()."""
     _h.specular_set_enabled(enabled)

@@ -90,6 +90,7 @@ add_library(renderer STATIC
     backdrop_pass.cc
     sun_pass.cc
     dust_pass.cc
+    nebula_pass.cc
     shockwave_pass.cc
     aabb.cc
     glow_region.cc

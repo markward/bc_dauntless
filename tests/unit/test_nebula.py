@@ -268,3 +268,24 @@ def test_sensor_density_out_of_range_clamps_to_one():
     tracker = NebulaTracker()
     tracker.update(s, [ship], 1.0)
     assert ship.GetSensorSubsystem().GetBaseSensorRange() == 2000.0
+
+
+def test_aggregate_nebulae_from_set():
+    import App
+    from engine.host_loop import _aggregate_nebulae
+    s, n = _set_with_nebula()
+    out = _aggregate_nebulae(s)
+    assert len(out) == 1
+    d = out[0]
+    assert d["spheres"] == [(0.0, 1500.0, 0.0, 1500.0)]
+    assert abs(d["rgb"][0] - 155.0 / 255.0) < 1e-6
+    assert d["visibility"] == 145.0
+    assert d["external_tex"] == "data/Backgrounds/nebulaexternal.tga"
+    assert d["internal_tex"] == "data/Backgrounds/nebulaoverlay.tga"
+
+
+def test_aggregate_nebulae_empty_when_none():
+    import App
+    from engine.host_loop import _aggregate_nebulae
+    s = App.SetClass_Create()
+    assert _aggregate_nebulae(s) == []
