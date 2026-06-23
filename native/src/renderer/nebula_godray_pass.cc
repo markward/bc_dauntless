@@ -24,7 +24,7 @@ constexpr float kAnchorPad = 0.25f;
 constexpr int   kSamples  = 48;
 constexpr float kDecay    = 0.96f;
 constexpr float kWeight   = 0.5f;
-constexpr float kExposure = 0.05f;
+constexpr float kExposure = 0.10f;
 }  // namespace
 
 NebulaGodrayPass::NebulaGodrayPass() = default;
