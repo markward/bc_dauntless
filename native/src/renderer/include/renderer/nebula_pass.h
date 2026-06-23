@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-namespace assets { class Texture; }
+namespace assets { class Texture; class Mesh; }
 namespace scenegraph { struct Camera; }
 
 namespace renderer {
@@ -53,7 +53,19 @@ private:
     bool  initialized_ = false;
     Style style_       = Style::FAITHFUL;
 
+    // Unit sphere mesh (radius 1, built lazily via build_uv_sphere — same
+    // source the sun/backdrop passes use). Scaled per-volume in the shader.
+    std::unique_ptr<assets::Mesh>    sphere_;
+    // Inside-fog overlay (nebulaoverlay.tga). Loaded once from the first
+    // volume's internal_tex; a null/zero-id texture means "no noise" but the
+    // pass still draws solid fog.
+    std::unique_ptr<assets::Texture> overlay_tex_;
+    std::string                      overlay_path_;   // path the texture loaded from
+
     void initialize_gl();
+    // Lazily load the overlay texture for `path`. No-op if already loaded
+    // (path-keyed); returns the GL texture id (0 when absent/failed).
+    unsigned int ensure_overlay(const std::string& path);
 };
 
 }  // namespace renderer

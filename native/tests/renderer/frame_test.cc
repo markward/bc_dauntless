@@ -2,6 +2,7 @@
 #include <gtest/gtest.h>
 
 #include <renderer/frame.h>
+#include <renderer/nebula_pass.h>
 #include <renderer/pipeline.h>
 #include <renderer/window.h>
 
@@ -802,6 +803,62 @@ TEST_F(FrameTest, UndamagedInstanceGlowMatchesEmptyRingBaseline) {
     EXPECT_NEAR(R_b, R_a, R_a * 0.01)
         << "Two undamaged instances rendered to different luminances; "
            "glow_flicker initial value may be wrong.  R_a=" << R_a << " R_b=" << R_b;
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+// Task 6: inside volume-geometry nebula fog. Camera at the centre of a nebula
+// sphere => the centre pixel reads the volume tint (purple-blue), while an
+// empty volume list leaves the cleared background untouched.
+TEST_F(FrameTest, NebulaInsideFogTintsCenterPurpleBlue) {
+    scenegraph::Camera cam;
+    cam.eye    = glm::vec3(0.0f, 0.0f, 0.0f);   // inside the sphere
+    cam.target = glm::vec3(0.0f, 0.0f, 1.0f);
+    cam.up     = glm::vec3(0.0f, 1.0f, 0.0f);
+    cam.aspect = 1.0f;
+
+    glViewport(0, 0, 256, 256);
+
+    renderer::NebulaPass pass;
+
+    // Control: empty volume list over a known clear colour must change nothing.
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    pass.render(cam, *p, {});   // empty => zero GL work, byte-identical
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    unsigned char control[4] = {1, 2, 3, 4};
+    glReadPixels(128, 128, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, control);
+    EXPECT_EQ(control[0], 0) << "empty nebula list altered the red channel";
+    EXPECT_EQ(control[1], 0) << "empty nebula list altered the green channel";
+    EXPECT_EQ(control[2], 0) << "empty nebula list altered the blue channel";
+
+    // Render one volume: a single sphere at the origin, radius 100, with a
+    // purple-blue tint and an inside-visibility falloff of 50 GU.
+    renderer::NebulaVolume vol;
+    vol.spheres.push_back(glm::vec4(0.0f, 0.0f, 0.0f, 100.0f));
+    vol.rgb        = glm::vec3(0.60f, 0.35f, 0.72f);
+    vol.visibility = 50.0f;
+    // internal_tex left empty: the overlay binds to texture 0 (id 0), the
+    // shader's noise mix degrades to a constant, fog still composites.
+
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    pass.render(cam, *p, {vol});
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+
+    unsigned char px[4] = {0};
+    glReadPixels(128, 128, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
+
+    // The tint is purple-blue: blue clearly dominates red and green.
+    constexpr int kThreshold = 10;  // 8-bit channels
+    EXPECT_GT(px[2], px[0] + kThreshold)
+        << "centre pixel not blue-over-red: " << int(px[0]) << ","
+        << int(px[1]) << "," << int(px[2]);
+    EXPECT_GT(px[2], px[1] + kThreshold)
+        << "centre pixel not blue-over-green: " << int(px[0]) << ","
+        << int(px[1]) << "," << int(px[2]);
+    EXPECT_GT(int(px[0]) + int(px[1]) + int(px[2]), 0)
+        << "centre pixel was black; nebula fog produced nothing";
 
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }

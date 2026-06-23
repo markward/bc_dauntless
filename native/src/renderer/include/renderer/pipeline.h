@@ -17,6 +17,7 @@ public:
     Shader& sun_shader() noexcept        { return *sun_; }
     Shader& sun_flare_shader() noexcept  { return *sun_flare_; }
     Shader& dust_shader() noexcept       { return *dust_; }
+    Shader& nebula_shader() noexcept     { return *nebula_; }
     Shader& shield_shader() noexcept     { return *shield_; }
     Shader& lens_flare_shader() noexcept { return *lens_flare_; }
     Shader& torpedo_shader() noexcept    { return *torpedo_; }
@@ -41,6 +42,7 @@ private:
     std::unique_ptr<Shader> sun_;
     std::unique_ptr<Shader> sun_flare_;
     std::unique_ptr<Shader> dust_;
+    std::unique_ptr<Shader> nebula_;
     std::unique_ptr<Shader> shield_;
     std::unique_ptr<Shader> lens_flare_;
     std::unique_ptr<Shader> torpedo_;
