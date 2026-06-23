@@ -129,6 +129,10 @@ namespace dauntless_warp_vfx {
     glm::vec3 travel_dir();
     void set_streak(float); void set_flash(float); void set_travel(glm::vec3);
 }
+namespace dauntless_volumetric_nebulae {
+    bool enabled();            // defined in frame.cc
+    void set_enabled(bool v);  // defined in frame.cc
+}
 
 namespace {
 
@@ -1661,6 +1665,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   v.visibility   = d["visibility"].cast<float>();
                   v.external_tex = d["external_tex"].cast<std::string>();
                   v.internal_tex = d["internal_tex"].cast<std::string>();
+                  auto fb = d["fbm"].cast<std::tuple<float,float,float>>();
+                  v.fbm  = glm::vec3(std::get<0>(fb), std::get<1>(fb), std::get<2>(fb));
+                  auto sd2 = d["seed"].cast<std::tuple<float,float,float>>();
+                  v.seed = glm::vec3(std::get<0>(sd2), std::get<1>(sd2), std::get<2>(sd2));
                   g_nebulae.push_back(std::move(v));
               }
           },
@@ -2073,6 +2081,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("warp_flythrough_enabled",
           []() { return dauntless_warp_vfx::enabled(); },
           "Read the Warp Flythrough toggle (Modern VFX). Default: on.");
+    m.def("volumetric_nebulae_set_enabled",
+          [](bool enabled) { dauntless_volumetric_nebulae::set_enabled(enabled); },
+          py::arg("enabled"),
+          "Toggle Volumetric Nebulae (Modern VFX). Default: on.");
+    m.def("volumetric_nebulae_enabled",
+          []() { return dauntless_volumetric_nebulae::enabled(); },
+          "Read the Volumetric Nebulae toggle (Modern VFX). Default: on.");
     m.def("set_warp_streak_intensity",
           [](float i) { dauntless_warp_vfx::set_streak(i); },
           py::arg("intensity"),

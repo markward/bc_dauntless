@@ -22,6 +22,8 @@ struct NebulaVolume {
     float       visibility = 145.0f;  // GU; inside-fog falloff distance
     std::string external_tex;         // from-outside billboard (opaque)
     std::string internal_tex;         // inside-fog overlay (alpha)
+    glm::vec3   fbm  = glm::vec3(0.0f); // (freq, gain, floor) from MetaNebula.GetFbmDials()
+    glm::vec3   seed = glm::vec3(0.0f); // (sx, sy, sz) from MetaNebula.GetSeed()
 };
 
 class NebulaPass {

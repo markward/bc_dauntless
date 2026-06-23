@@ -31,6 +31,7 @@ function _cpFocusableList(state) {
         out.push({kind: 'ctrl', target: 'filmic'});
         out.push({kind: 'ctrl', target: 'motion_blur'});
         out.push({kind: 'ctrl', target: 'warp_flythrough'});
+        out.push({kind: 'ctrl', target: 'volumetric_nebulae'});
     } else if (state.selected_tab === 'gameplay') {
         out.push({kind: 'ctrl', target: 'subtitles'});
     }
@@ -197,6 +198,17 @@ function _cpRenderGraphicsBody(state, focusables) {
           +     '<button class="cp-toggle' + (s.warp_flythrough_on ? ' cp-toggle--on' : '') + '"'
           +        ' onclick="dauntlessEvent(\'configuration/toggle:warp_flythrough\')">'
           +       (s.warp_flythrough_on ? 'On' : 'Off')
+          +     '</button>'
+          +   '</div>'
+          + '</div>';
+
+    // Volumetric Nebulae toggle — volumetric nebula render pass (Modern VFX).
+    html += '<div class="cp-row' + (isFoc('volumetric_nebulae') ? ' cp-focused' : '') + '">'
+          +   '<div class="cp-row__label">Volumetric Nebulae</div>'
+          +   '<div class="cp-row__control">'
+          +     '<button class="cp-toggle' + (s.volumetric_nebulae_on ? ' cp-toggle--on' : '') + '"'
+          +        ' onclick="dauntlessEvent(\'configuration/toggle:volumetric_nebulae\')">'
+          +       (s.volumetric_nebulae_on ? 'On' : 'Off')
           +     '</button>'
           +   '</div>'
           + '</div>';

@@ -282,6 +282,11 @@ def test_aggregate_nebulae_from_set():
     assert d["visibility"] == 145.0
     assert d["external_tex"] == "data/Backgrounds/nebulaexternal.tga"
     assert d["internal_tex"] == "data/Backgrounds/nebulaoverlay.tga"
+    # Task 4: fbm dials + seed keys are present in the payload
+    assert "fbm" in d
+    assert len(d["fbm"]) == 3
+    assert "seed" in d
+    assert len(d["seed"]) == 3
 
 
 def test_aggregate_nebulae_empty_when_none():
