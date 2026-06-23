@@ -18,6 +18,8 @@ class MetaNebula(Nebula):
         self._external_tex = external_tex
         self._spheres = []          # list of (x, y, z, radius)
         self._damage = (0.0, 0.0)   # (hull, shields) — stored, unused
+        self._fbm = (0.02, 1.6, 0.4)   # freq, gain, density_floor (tunable)
+        self._seed = None               # lazily derived from first sphere
 
     def AddNebulaSphere(self, x, y, z, radius):
         self._spheres.append((float(x), float(y), float(z), float(radius)))
@@ -54,6 +56,36 @@ class MetaNebula(Nebula):
 
     def GetDamage(self):
         return self._damage
+
+    # ── fbm dials + seed (consumed by sensor_detection.concealment_at) ──────
+
+    def SetFbmDials(self, freq, gain, floor):
+        """Override the default fbm parameters for this nebula's density field.
+
+        freq  — spatial frequency multiplier (default 0.02)
+        gain  — output gain (default 1.6; raise for denser cores)
+        floor — density_floor subtracted before saturate (default 0.4)
+        """
+        self._fbm = (float(freq), float(gain), float(floor))
+
+    def GetFbmDials(self):
+        """Return (freq, gain, density_floor) as set by SetFbmDials or defaults."""
+        return self._fbm
+
+    def GetSeed(self):
+        """Deterministic per-nebula seed tuple derived from the first sphere.
+
+        Lazily evaluated on first call; returns (0,0,0)-based seed if no
+        spheres have been added yet.
+        """
+        if self._seed is None:
+            from engine.appc.nebula_density import seed_for
+            if self._spheres:
+                cx, cy, cz, _ = self._spheres[0]
+            else:
+                cx = cy = cz = 0.0
+            self._seed = seed_for(cx, cy, cz)
+        return self._seed
 
 
 def MetaNebula_Create(r=0.0, g=0.0, b=0.0, visibility=0.0, sensor_density=0.0,
