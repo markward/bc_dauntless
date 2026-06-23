@@ -32,7 +32,7 @@ public:
     enum class Style { FAITHFUL, VOLUMETRIC };
 
     NebulaPass();
-    ~NebulaPass();
+    ~NebulaPass();  // frees quad_vao_/quad_vbo_ if initialized
     NebulaPass(const NebulaPass&) = delete;
     NebulaPass& operator=(const NebulaPass&) = delete;
 
@@ -62,10 +62,18 @@ private:
     std::unique_ptr<assets::Texture> overlay_tex_;
     std::string                      overlay_path_;   // path the texture loaded from
 
+    // Outside billboard shell (Task 7): external texture + camera-facing quad VBO.
+    std::unique_ptr<assets::Texture> external_tex_;
+    std::string                      external_path_;  // path the texture loaded from
+    unsigned int                     quad_vao_ = 0;
+    unsigned int                     quad_vbo_ = 0;
+
     void initialize_gl();
     // Lazily load the overlay texture for `path`. No-op if already loaded
     // (path-keyed); returns the GL texture id (0 when absent/failed).
     unsigned int ensure_overlay(const std::string& path);
+    // Lazily load the external billboard texture for `path`. Same guard semantics.
+    unsigned int ensure_external(const std::string& path);
 };
 
 }  // namespace renderer

@@ -16,6 +16,8 @@
 #include "embedded_dust_fs.h"
 #include "embedded_nebula_vs.h"
 #include "embedded_nebula_fs.h"
+#include "embedded_nebula_shell_vs.h"
+#include "embedded_nebula_shell_fs.h"
 #include "embedded_shield_vs.h"
 #include "embedded_shield_fs.h"
 #include "embedded_lens_flare_vs.h"
@@ -58,6 +60,7 @@ Pipeline::Pipeline() {
     sun_flare_ = std::make_unique<Shader>(shader_src::sun_flare_vs, shader_src::sun_flare_fs);
     dust_ = std::make_unique<Shader>(shader_src::dust_vs, shader_src::dust_fs);
     nebula_ = std::make_unique<Shader>(shader_src::nebula_vs, shader_src::nebula_fs);
+    nebula_shell_ = std::make_unique<Shader>(shader_src::nebula_shell_vs, shader_src::nebula_shell_fs);
     shield_ = std::make_unique<Shader>(shader_src::shield_vs, shader_src::shield_fs);
     lens_flare_ = std::make_unique<Shader>(shader_src::lens_flare_vs, shader_src::lens_flare_fs);
     torpedo_    = std::make_unique<Shader>(shader_src::torpedo_vs,    shader_src::torpedo_fs);
