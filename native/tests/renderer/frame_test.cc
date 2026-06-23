@@ -881,11 +881,8 @@ TEST_F(FrameTest, NebulaOutsideShellAddsAdditiveCloud) {
     vol.spheres.push_back(glm::vec4(0.0f, 0.0f, 0.0f, 100.0f));
     vol.rgb        = glm::vec3(0.8f, 0.7f, 0.6f);
     vol.visibility = 50.0f;
-    // external_tex left empty: ensure_external returns 0 (black texture).
-    // The shell will still draw but sample rgb=(0,0,0) → additive contribution
-    // comes from tex * rgb which is 0. We verify brightness via rim_fade and
-    // the quad being drawn — instead, use a white tint so the rgb multiplier
-    // leaves a contribution. Biasing external to white-ish already done above.
+    // Test verifies that the outside billboard shell adds an additive brightness
+    // contribution at the centre versus a no-nebula control.
 
     renderer::NebulaPass pass;
 

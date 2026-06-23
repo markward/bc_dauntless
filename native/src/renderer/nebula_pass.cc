@@ -195,7 +195,10 @@ void NebulaPass::render(const scenegraph::Camera& camera,
 
         // Additive blend: GL_ONE, GL_ONE.
         glBlendFunc(GL_ONE, GL_ONE);
-        // depth test stays enabled (GL_LEQUAL), depth-write off — already set.
+        // Make shell pass depth state explicit.
+        glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_LEQUAL);
+        glDepthMask(GL_FALSE);
         glCullFace(GL_BACK);   // billboard is a screen-facing quad; cull back
 
         glActiveTexture(GL_TEXTURE0);
@@ -215,6 +218,9 @@ void NebulaPass::render(const scenegraph::Camera& camera,
 
                 // Only draw the shell when the camera is OUTSIDE the sphere.
                 if (dist <= radius) continue;
+
+                // Guard against zero/negative-radius sphere division.
+                if (radius <= 0.0f) continue;
 
                 // Rim cross-fade: 0 at rim, 1 at 1.5*radius (rimBand = 0.5*radius).
                 const float rim_fade = glm::clamp(
