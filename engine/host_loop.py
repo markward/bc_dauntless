@@ -1794,6 +1794,10 @@ def reset_sdk_globals() -> None:
     # (or mission) doesn't suppress enter-events in the next mission.
     if _nebula_tracker is not None:
         _nebula_tracker.reset()
+    # Clear concealment lock-break latches so a new mission's ships don't
+    # inherit stale id()-keyed latches from the prior mission.
+    from engine.appc.sensor_detection import reset_concealment_state
+    reset_concealment_state()
 
 
 def _init_mission(mission_module_name: str):

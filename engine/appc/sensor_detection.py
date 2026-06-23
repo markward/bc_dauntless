@@ -28,6 +28,12 @@ HYSTERESIS = 0.1     # target must drop to T-HYSTERESIS before re-detection
 _broken: set = set()
 
 
+def reset_concealment_state():
+    """Clear per-(observer,target) lock-break latches. Called on mission swap
+    so a new mission's ships don't inherit stale id()-keyed latches."""
+    _broken.clear()
+
+
 def _game_time() -> float:
     """Current game time for drift_t sampling; falls back to 0.0 in tests."""
     try:
