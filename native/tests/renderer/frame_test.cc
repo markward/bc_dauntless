@@ -4,6 +4,7 @@
 #include <renderer/frame.h>
 #include <renderer/nebula_pass.h>
 #include <renderer/nebula_volumetric_pass.h>
+#include <renderer/nebula_godray_pass.h>
 #include <renderer/hdr_target.h>
 #include <renderer/pipeline.h>
 #include <renderer/window.h>
@@ -1220,6 +1221,112 @@ TEST_F(FrameTest, NebulaVolumetricHalfResUpsamplePreservesCloudAndDepthClamp) {
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glClearDepth(1.0);
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+// God-ray radial scatter: a bright spot near one edge + a flash whose projected
+// screen anchor lands on that spot should smear a streak from the spot toward
+// screen centre. Center-ward pixels brighten over a no-flash control; an empty
+// flash list leaves the HDR target byte-identical.
+TEST_F(FrameTest, NebulaGodrayStreaksFromAnchor) {
+    const int kW = 256, kH = 256;
+    renderer::HdrTarget hdr;
+    hdr.resize(kW, kH);
+
+    scenegraph::Camera cam;
+    cam.eye    = glm::vec3(0.0f, 0.0f, -600.0f);
+    cam.target = glm::vec3(0.0f, 0.0f,    0.0f);
+    cam.up     = glm::vec3(0.0f, 1.0f,    0.0f);
+    cam.aspect = 1.0f;
+    cam.near   = 1.0f;
+    cam.far    = 20000.0f;
+
+    const glm::mat4 view_proj = cam.proj_matrix() * cam.view_matrix();
+    const glm::mat4 inv_vp    = glm::inverse(view_proj);
+
+    // Choose an anchor near the left edge, vertically centred: NDC (-0.6, 0).
+    // Back-project to a far world point, derive the flash direction from it, and
+    // confirm the pass re-projects to the same screen anchor (the projection is
+    // exercised end-to-end, not faked).
+    const glm::vec2 ndc_anchor(-0.6f, 0.0f);
+    glm::vec4 far_clip = glm::vec4(ndc_anchor, 0.9f, 1.0f);  // far-ish NDC z
+    glm::vec4 world_h  = inv_vp * far_clip;
+    glm::vec3 world    = glm::vec3(world_h) / world_h.w;
+    const glm::vec3 flash_dir = glm::normalize(world - cam.eye);
+
+    // Anchor in [0,1] screen space (where the bright spot goes + where the
+    // streak emanates from).
+    const glm::vec2 anchor01 = ndc_anchor * 0.5f + 0.5f;  // (0.2, 0.5)
+    const int spot_px = static_cast<int>(anchor01.x * kW);  // ~51
+    const int spot_py = static_cast<int>(anchor01.y * kH);  // 128
+
+    renderer::NebulaGodrayPass pass;
+
+    auto paint_bright_spot = [&]() {
+        // Write a small bright block into the HDR colour around the anchor.
+        hdr.bind();
+        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        // Use a scissored clear to deposit a bright patch into the HDR colour
+        // attachment (no shader/mesh needed).
+        glEnable(GL_SCISSOR_TEST);
+        glScissor(spot_px - 6, spot_py - 6, 12, 12);
+        glClearColor(8.0f, 8.0f, 8.0f, 1.0f);  // HDR-bright source
+        glClear(GL_COLOR_BUFFER_BIT);
+        glDisable(GL_SCISSOR_TEST);
+        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    };
+
+    // A sample point between the anchor and screen centre — where the streak
+    // should deposit scatter.
+    const int mid_px = (spot_px + kW / 2) / 2;  // ~90
+    const int mid_py = kH / 2;                  // 128
+
+    // ── Control: empty flash list over the painted scene → byte-identical. ───
+    paint_bright_spot();
+    float before_mid[4] = {0};
+    glReadPixels(mid_px, mid_py, 1, 1, GL_RGBA, GL_FLOAT, before_mid);
+    pass.render(cam, *p, {}, hdr.color_texture());
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    float after_empty[4] = {0};
+    glReadPixels(mid_px, mid_py, 1, 1, GL_RGBA, GL_FLOAT, after_empty);
+    EXPECT_FLOAT_EQ(after_empty[0], before_mid[0])
+        << "empty flash list altered the HDR target (mid pixel)";
+    EXPECT_FLOAT_EQ(after_empty[1], before_mid[1]);
+    EXPECT_FLOAT_EQ(after_empty[2], before_mid[2]);
+
+    // ── Active flash: anchor projects onto the bright spot → streak inward. ──
+    renderer::GodrayFlash flash;
+    flash.dir       = flash_dir;
+    flash.intensity = 1.0f;
+    flash.color     = glm::vec3(1.0f);
+
+    // Confirm the pass's projection lands on our chosen anchor (sanity on the
+    // back-projection round-trip; documents the projection for live Task 6).
+    {
+        glm::vec4 clip = view_proj * glm::vec4(cam.eye + glm::normalize(flash_dir) * 1.0e6f, 1.0f);
+        ASSERT_GT(clip.w, 0.0f);
+        glm::vec2 a = (glm::vec2(clip) / clip.w) * 0.5f + 0.5f;
+        EXPECT_NEAR(a.x, anchor01.x, 0.02f) << "re-projected anchor x drifted";
+        EXPECT_NEAR(a.y, anchor01.y, 0.02f) << "re-projected anchor y drifted";
+    }
+
+    paint_bright_spot();
+    pass.render(cam, *p, {flash}, hdr.color_texture());
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    float after_flash[4] = {0};
+    glReadPixels(mid_px, mid_py, 1, 1, GL_RGBA, GL_FLOAT, after_flash);
+
+    // The mid pixel sits along the line from the bright spot toward centre; the
+    // radial march toward the anchor samples the bright block, so it must rise
+    // above the no-flash control.
+    EXPECT_GT(after_flash[0] + after_flash[1] + after_flash[2],
+              before_mid[0] + before_mid[1] + before_mid[2] + 1e-3f)
+        << "god-ray streak did not brighten the centre-ward pixel: "
+        << after_flash[0] << "," << after_flash[1] << "," << after_flash[2];
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 
