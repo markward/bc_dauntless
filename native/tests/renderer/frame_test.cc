@@ -1111,4 +1111,116 @@ TEST_F(FrameTest, NebulaVolumetricRendersDensityAndObscuresHull) {
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 
+// Task 6: the PERFORMANCE path (half-res scratch + dither + temporal +
+// depth-aware upsample). The pass now renders the march into an internal
+// half-res FBO and composites back into the HDR target via a depth-aware
+// upsample. This test asserts:
+//
+//  (a) The half-res path STILL produces cloud tint at the centre with FAR
+//      depth (the headline density render survives the half-res→upsample
+//      round-trip), and the HDR framebuffer + viewport are correctly restored
+//      (we read back from the HDR target after the pass returns).
+//
+//  (b) Toggle-off byte-identity: calling the pass with an EMPTY volume list
+//      over a pre-filled HDR target leaves every pixel of the target
+//      bit-for-bit unchanged (zero GL work on the empty early-out).
+//
+//  (c) The depth clamp still works through the half-res + upsample path: a
+//      hull in FRONT of the sphere suppresses the cloud (zero march → zero
+//      upsample contribution).
+//
+// Geometry matches the Task 5 test (eye=(0,0,-600), sphere r=200 at origin).
+TEST_F(FrameTest, NebulaVolumetricHalfResUpsamplePreservesCloudAndDepthClamp) {
+    const int kW = 256, kH = 256;
+    renderer::HdrTarget hdr;
+    hdr.resize(kW, kH);
+
+    scenegraph::Camera cam;
+    cam.eye    = glm::vec3(0.0f, 0.0f, -600.0f);
+    cam.target = glm::vec3(0.0f, 0.0f,    0.0f);
+    cam.up     = glm::vec3(0.0f, 1.0f,    0.0f);
+    cam.aspect = 1.0f;
+    cam.near   = 1.0f;
+    cam.far    = 20000.0f;
+
+    const glm::mat4 inv_vp =
+        glm::inverse(cam.proj_matrix() * cam.view_matrix());
+
+    renderer::NebulaVolume vol;
+    vol.spheres.push_back(glm::vec4(0.0f, 0.0f, 0.0f, 200.0f));
+    vol.rgb  = glm::vec3(0.5f, 0.5f, 0.7f);
+    vol.fbm  = glm::vec3(0.02f, 3.0f, 0.3f);
+    vol.seed = glm::vec3(1.3f, 2.7f, 0.5f);
+
+    renderer::Lighting lighting;
+    lighting.directional_count     = 1;
+    lighting.directional_dir_ws[0] = glm::normalize(glm::vec3(0.0f, 1.0f, 0.0f));
+    lighting.directional_color[0]  = glm::vec3(1.0f);
+
+    renderer::NebulaVolumetricPass pass;
+
+    // ── (b) Toggle-off byte-identity over a NON-trivial HDR buffer. ──────────
+    // Pre-fill the HDR target with a recognisable gradient, snapshot it, run
+    // the pass with NO volumes, snapshot again, and require bit-equality.
+    hdr.bind();
+    glClearColor(0.21f, 0.34f, 0.55f, 1.0f);   // non-zero everywhere
+    glClearDepth(1.0);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    std::vector<float> before(kW * kH * 4, 0.0f);
+    glReadPixels(0, 0, kW, kH, GL_RGBA, GL_FLOAT, before.data());
+
+    pass.render(cam, *p, {}, lighting, hdr.color_texture(), hdr.depth_texture(),
+                inv_vp, cam.eye, 0.0f);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+
+    std::vector<float> after(kW * kH * 4, 0.0f);
+    glReadPixels(0, 0, kW, kH, GL_RGBA, GL_FLOAT, after.data());
+    EXPECT_EQ(std::memcmp(before.data(), after.data(),
+                          before.size() * sizeof(float)), 0)
+        << "empty volume list mutated the HDR target (toggle-off not byte-identical)";
+
+    // ── (a) Half-res path: FAR depth → cloud tint at the centre. ────────────
+    hdr.bind();
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClearDepth(1.0);   // FAR: no hull
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    pass.render(cam, *p, {vol}, lighting, hdr.color_texture(), hdr.depth_texture(),
+                inv_vp, cam.eye, 0.0f);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+
+    // The pass must have restored the HDR FBO + full viewport; this read lands
+    // in the HDR target at full resolution.
+    float lit[4] = {0};
+    glReadPixels(kW / 2, kH / 2, 1, 1, GL_RGBA, GL_FLOAT, lit);
+    EXPECT_GT(lit[0] + lit[1] + lit[2], 0.0f)
+        << "half-res + upsample produced no cloud at centre with FAR depth";
+    EXPECT_GE(lit[2], lit[0])
+        << "cloud not blue-leaning after upsample: "
+        << lit[0] << "," << lit[1] << "," << lit[2];
+
+    // ── (c) Depth clamp through the half-res path: hull in front → no cloud. ─
+    const float z_eye_hull = -300.0f;
+    const float fn = cam.far - cam.near;
+    const float fp = cam.far + cam.near;
+    const float ndc_z = fp / fn + 2.0f * cam.far * cam.near / (fn * z_eye_hull);
+    const float hull_depth = (ndc_z + 1.0f) * 0.5f;
+
+    hdr.bind();
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClearDepth(static_cast<double>(hull_depth));
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    pass.render(cam, *p, {vol}, lighting, hdr.color_texture(), hdr.depth_texture(),
+                inv_vp, cam.eye, 0.0f);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    float occ[4] = {9, 9, 9, 9};
+    glReadPixels(kW / 2, kH / 2, 1, 1, GL_RGBA, GL_FLOAT, occ);
+    EXPECT_FLOAT_EQ(occ[0] + occ[1] + occ[2], 0.0f)
+        << "hull in front of sphere did not suppress the cloud through the "
+           "half-res upsample path: " << occ[0] << "," << occ[1] << "," << occ[2];
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glClearDepth(1.0);
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
 }  // namespace

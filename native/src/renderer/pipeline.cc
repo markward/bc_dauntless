@@ -20,6 +20,7 @@
 #include "embedded_nebula_shell_fs.h"
 #include "embedded_nebula_volumetric_vs.h"
 #include "embedded_nebula_volumetric_fs.h"
+#include "embedded_nebula_upsample_fs.h"
 #include "embedded_shield_vs.h"
 #include "embedded_shield_fs.h"
 #include "embedded_lens_flare_vs.h"
@@ -64,6 +65,8 @@ Pipeline::Pipeline() {
     nebula_ = std::make_unique<Shader>(shader_src::nebula_vs, shader_src::nebula_fs);
     nebula_shell_ = std::make_unique<Shader>(shader_src::nebula_shell_vs, shader_src::nebula_shell_fs);
     nebula_volumetric_ = std::make_unique<Shader>(shader_src::nebula_volumetric_vs, shader_src::nebula_volumetric_fs);
+    // The upsample reuses the fullscreen-triangle vertex shader (outputs v_uv).
+    nebula_upsample_ = std::make_unique<Shader>(shader_src::nebula_volumetric_vs, shader_src::nebula_upsample_fs);
     shield_ = std::make_unique<Shader>(shader_src::shield_vs, shader_src::shield_fs);
     lens_flare_ = std::make_unique<Shader>(shader_src::lens_flare_vs, shader_src::lens_flare_fs);
     torpedo_    = std::make_unique<Shader>(shader_src::torpedo_vs,    shader_src::torpedo_fs);

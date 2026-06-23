@@ -28,6 +28,23 @@ uniform float u_scatter;         // default 1.2
 uniform float u_self_glow;       // default 0.25
 uniform float u_light_steps;     // occlusion taps toward light, default 3.0
 
+// Half-res perf path (Task 6).
+uniform vec2  u_jitter;          // sub-pixel jitter (unused dir; kept for time hash)
+uniform float u_dither_amount;   // 0..1 scale on the per-pixel step offset
+
+// Temporal reprojection (conservative). When u_temporal_weight <= 0 OR the
+// reprojected UV falls off-screen, history is ignored (full current frame).
+uniform sampler2D u_prev;        // previous half-res cloud (premultiplied)
+uniform mat4  u_prev_view_proj;  // previous frame's proj*view
+uniform float u_temporal_weight; // 0 (no history) .. ~0.85 (max blend)
+uniform vec2  u_half_texel;      // 1/half_res, for off-screen guard
+
+// Cheap per-pixel hash in [0,1) for the dither step offset. Decorrelated from
+// the fbm hash so the two noises don't beat against each other.
+float dither(vec2 fc){
+    return fract(sin(dot(fc, vec2(12.9898, 78.233))) * 43758.5453);
+}
+
 // --- fbm copy of backdrop.frag / nebula_density.py (keep in sync) ---
 float hash13(vec3 p3){ p3=fract(p3*0.1031); p3+=dot(p3,p3.zyx+31.32); return fract((p3.x+p3.y)*p3.z); }
 float vnoise(vec3 p){
@@ -88,6 +105,12 @@ void main(){
     float tend=min(t1, scene_dist);              // stop at hulls
     if(tend<=t){ frag=vec4(0.0); return; }
 
+    // Dither step-offset: jitter the first sample by up to one step so the
+    // (now half-res, low step count) march doesn't band. Cheap hash on the
+    // fragment coord; u_dither_amount lets the host dial it (0 disables).
+    t += u_step * u_dither_amount * dither(gl_FragCoord.xy + u_jitter);
+    if(t>=tend){ frag=vec4(0.0); return; }
+
     float transm=1.0; vec3 lit=vec3(0.0);
     for(int s=0;s<u_max_steps;s++){
         if(t>=tend || transm<0.02) break;
@@ -111,5 +134,26 @@ void main(){
         t+=u_step;
     }
     float alpha=1.0-transm;
-    frag=vec4(lit, alpha);   // premultiplied; blended GL_ONE, GL_ONE_MINUS_SRC_ALPHA
+    vec4 cur=vec4(lit, alpha);   // premultiplied
+
+    // ── Conservative temporal reprojection ────────────────────────────────
+    // Blend with the previous half-res frame, reprojected by the previous
+    // proj*view of a representative cloud point (the march start, t0). The
+    // host RESETS history (u_temporal_weight=0) on large camera deltas / warp
+    // and on the first frame, so this only fires when the camera barely moved.
+    if(u_temporal_weight > 0.0){
+        vec3 cloud_p = u_eye + dir * max(t0, 0.0);
+        vec4 pc = u_prev_view_proj * vec4(cloud_p, 1.0);
+        if(pc.w > 0.0){
+            vec2 prev_uv = (pc.xy / pc.w) * 0.5 + 0.5;
+            // On-screen guard with a one-texel border (bilinear safety).
+            if(all(greaterThanEqual(prev_uv, u_half_texel)) &&
+               all(lessThanEqual(prev_uv, vec2(1.0) - u_half_texel))){
+                vec4 hist = texture(u_prev, prev_uv);
+                cur = mix(cur, hist, u_temporal_weight);
+            }
+        }
+    }
+
+    frag = cur;   // premultiplied (lit, alpha)
 }
