@@ -193,6 +193,7 @@ void NebulaVolumetricPass::render(const scenegraph::Camera& camera,
     march.set_float("u_light_steps", 0.0f);  // self-shadow OFF (perf): 0 occlusion
                                               // taps → 1 density() eval/step. Cloud
                                               // is flat-lit (less core form).
+    march.set_float("u_color_var", 0.6f);     // per-clump warm/cool tint variety
 
     // Perf-path dials: dither step-offset + temporal.
     // u_jitter animates the dither pattern slightly so it doesn't sit static.

@@ -27,6 +27,7 @@ uniform float u_density_scale;   // default 0.06 (extinction per GU per density)
 uniform float u_scatter;         // default 1.2
 uniform float u_self_glow;       // default 0.25
 uniform float u_light_steps;     // occlusion taps toward light, default 3.0
+uniform float u_color_var;       // 0..1 per-clump warm/cool tint variation
 
 // Half-res perf path (Task 6).
 uniform vec2  u_jitter;          // sub-pixel jitter (unused dir; kept for time hash)
@@ -134,7 +135,15 @@ void main(){
                 }
                 scat+=u_dir_light_color[l]*exp(-occ);
             }
-            vec3 col=(scat*u_scatter + u_rgb*u_self_glow)*dens;
+            // Per-clump colour variety: one cheap low-frequency noise octave
+            // (≈0.4x the density freq, so it varies clump-to-clump not within)
+            // shifts the nebula tint warm↔cool. Visual only — no gameplay/parity
+            // coupling. u_color_var dials 0 (uniform) → 1 (full variety).
+            float cvar = vnoise(p*(u_fbm.x*0.4) + u_seed.yzx + 13.0);
+            vec3 tintmul = mix(vec3(0.70,0.92,1.30), vec3(1.30,1.02,0.70),
+                               clamp(cvar,0.0,1.0));
+            vec3 base = u_rgb * mix(vec3(1.0), tintmul, u_color_var);
+            vec3 col=(scat*u_scatter + u_self_glow)*base*dens;
             lit+=transm*col*ext;
             transm*=exp(-ext);
         }
