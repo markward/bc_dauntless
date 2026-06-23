@@ -270,6 +270,13 @@ def set_nebula_godrays(flashes: list) -> None:
     _h.set_nebula_godrays(flashes)
 
 
+def set_hull_discharges(discharges: list) -> None:
+    """Active hull electrical discharges for the crackle pass. Each:
+    {"world_pos": (x,y,z), "age": float, "life": float, "size": float,
+     "color": (r,g,b)}. Empty list = none."""
+    _h.set_hull_discharges(discharges)
+
+
 def set_specular_enabled(enabled: bool) -> None:
     """Toggle the opaque-pass specular term. Default: on after init()."""
     _h.specular_set_enabled(enabled)
