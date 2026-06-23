@@ -122,8 +122,11 @@ void NebulaVolumetricPass::render(const scenegraph::Camera& camera,
     if (full_w < 1 || full_h < 1) return;   // degenerate viewport; nothing to do
 
     // Half-res scratch (½ × ½, at least 1×1). (Re)allocated on size change.
-    const int hw = std::max(1, full_w / 2);
-    const int hh = std::max(1, full_h / 2);
+    // Quarter-resolution raymarch (1/4 linear = 1/16 the pixels). The cloud is
+    // low-frequency so this holds up; the depth-aware upsample keeps hull edges
+    // crisp. (half_* members keep their name — they're just the low-res target.)
+    const int hw = std::max(1, full_w / 4);
+    const int hh = std::max(1, full_h / 4);
     ensure_half_targets(hw, hh);
 
     // ── Temporal validity ──────────────────────────────────────────────────
@@ -185,7 +188,9 @@ void NebulaVolumetricPass::render(const scenegraph::Camera& camera,
     march.set_float("u_density_scale", 0.06f);
     march.set_float("u_scatter", 1.2f);
     march.set_float("u_self_glow", 0.25f);
-    march.set_float("u_light_steps", 3.0f);
+    march.set_float("u_light_steps", 0.0f);  // self-shadow OFF (perf): 0 occlusion
+                                              // taps → 1 density() eval/step. Cloud
+                                              // is flat-lit (less core form).
 
     // Perf-path dials: dither step-offset + temporal.
     // u_jitter animates the dither pattern slightly so it doesn't sit static.
