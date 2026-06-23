@@ -5,6 +5,7 @@
 #include <renderer/nebula_pass.h>
 #include <renderer/nebula_volumetric_pass.h>
 #include <renderer/nebula_godray_pass.h>
+#include <renderer/hull_discharge_pass.h>
 #include <renderer/hdr_target.h>
 #include <renderer/pipeline.h>
 #include <renderer/window.h>
@@ -1324,6 +1325,84 @@ TEST_F(FrameTest, NebulaGodrayStreaksFromAnchor) {
               before_mid[0] + before_mid[1] + before_mid[2] + 1e-3f)
         << "god-ray streak did not brighten the centre-ward pixel: "
         << after_flash[0] << "," << after_flash[1] << "," << after_flash[2];
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+// A single hull discharge in front of the camera lights up the projected
+// centre region (additive electric billboard); an empty list leaves the
+// HDR target byte-identical (zero GL work when idle).
+TEST_F(FrameTest, HullDischargeRendersSprite) {
+    const int kW = 256, kH = 256;
+    renderer::HdrTarget hdr;
+    hdr.resize(kW, kH);
+
+    scenegraph::Camera cam;
+    cam.eye    = glm::vec3(0.0f, 0.0f, -10.0f);
+    cam.target = glm::vec3(0.0f, 0.0f,   0.0f);
+    cam.up     = glm::vec3(0.0f, 1.0f,   0.0f);
+    cam.aspect = 1.0f;
+    cam.near   = 0.1f;
+    cam.far    = 1000.0f;
+
+    // Discharge at the world origin — projects to screen centre.
+    renderer::HullDischarge d;
+    d.world_pos = glm::vec3(0.0f, 0.0f, 0.0f);
+    // age 0.01 lands unambiguously inside an "on" stutter window
+    // (int(0.01/0.03)==0); age==0.03 sits on the period boundary where the
+    // on/off gate is float-flaky, so we avoid it in the assert.
+    d.age   = 0.01f;
+    d.life  = 0.1f;
+    d.size  = 0.3f;
+    d.color = glm::vec3(0.6f, 0.8f, 1.0f);
+
+    renderer::HullDischargePass pass;
+
+    // Sum brightness over a centre region (the procedural sprite is jagged, so
+    // a single-pixel assert would be flaky — a region sum is robust).
+    auto centre_sum = [&]() -> float {
+        const int x0 = kW / 2 - 16, y0 = kH / 2 - 16;
+        std::vector<float> px(32 * 32 * 4, 0.0f);
+        glReadPixels(x0, y0, 32, 32, GL_RGBA, GL_FLOAT, px.data());
+        float s = 0.0f;
+        for (size_t i = 0; i < px.size(); i += 4)
+            s += px[i] + px[i + 1] + px[i + 2];
+        return s;
+    };
+
+    auto clear_black = [&]() {
+        hdr.bind();
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    };
+
+    // ── Control: empty discharge list over a black scene → byte-identical. ──
+    clear_black();
+    float before[4] = {0};
+    glReadPixels(kW / 2, kH / 2, 1, 1, GL_RGBA, GL_FLOAT, before);
+    pass.render(cam, *p, {});
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    float after_empty[4] = {0};
+    glReadPixels(kW / 2, kH / 2, 1, 1, GL_RGBA, GL_FLOAT, after_empty);
+    EXPECT_FLOAT_EQ(after_empty[0], before[0])
+        << "empty discharge list altered the HDR target (centre pixel)";
+    EXPECT_FLOAT_EQ(after_empty[1], before[1]);
+    EXPECT_FLOAT_EQ(after_empty[2], before[2]);
+
+    // ── No-discharge control sum vs active sum. ──
+    clear_black();
+    const float control_sum = centre_sum();
+
+    clear_black();
+    pass.render(cam, *p, {d});
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const float active_sum = centre_sum();
+
+    EXPECT_GT(active_sum, control_sum + 1e-3f)
+        << "hull discharge did not brighten the centre region: "
+        << active_sum << " vs control " << control_sum;
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);

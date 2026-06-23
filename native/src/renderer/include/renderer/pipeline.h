@@ -26,6 +26,7 @@ public:
     Shader& lens_flare_shader() noexcept { return *lens_flare_; }
     Shader& torpedo_shader() noexcept    { return *torpedo_; }
     Shader& hit_vfx_shader() noexcept    { return *hit_vfx_; }
+    Shader& hull_discharge_shader() noexcept { return *hull_discharge_; }
     Shader& phaser_shader() noexcept          { return *phaser_; }
     Shader& hologram_shader() noexcept        { return *hologram_; }
     Shader& breach_shader() noexcept          { return *breach_; }
@@ -55,6 +56,7 @@ private:
     std::unique_ptr<Shader> lens_flare_;
     std::unique_ptr<Shader> torpedo_;
     std::unique_ptr<Shader> hit_vfx_;
+    std::unique_ptr<Shader> hull_discharge_;
     std::unique_ptr<Shader> phaser_;
     std::unique_ptr<Shader> hologram_;
     std::unique_ptr<Shader> breach_;

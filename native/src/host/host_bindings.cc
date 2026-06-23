@@ -33,6 +33,7 @@
 #include <renderer/lens_flare_pass.h>
 #include <renderer/torpedo_pass.h>
 #include <renderer/hit_vfx_pass.h>
+#include <renderer/hull_discharge_pass.h>
 #include <renderer/shockwave_pass.h>
 #include <renderer/particle_pass.h>
 #include <renderer/phaser_pass.h>
@@ -174,6 +175,8 @@ std::vector<renderer::ShockwaveDescriptor> g_shockwaves;
 std::unique_ptr<renderer::ShockwavePass>   g_shockwave_pass;
 std::vector<renderer::HitVfxDescriptor>    g_hit_vfx;
 std::unique_ptr<renderer::HitVfxPass>      g_hit_vfx_pass;
+std::vector<renderer::HullDischarge>       g_hull_discharges;
+std::unique_ptr<renderer::HullDischargePass> g_hull_discharge_pass;
 std::vector<renderer::ParticleEmitterDescriptor> g_particle_emitters;
 std::unique_ptr<renderer::ParticlePass>          g_particle_pass;
 std::vector<renderer::PhaserBeamDescriptor> g_phaser_beams;
@@ -366,6 +369,7 @@ void init(int width, int height, const std::string& title) {
     g_lens_flare_pass = std::make_unique<renderer::LensFlarePass>();
     g_torpedo_pass = std::make_unique<renderer::TorpedoPass>();
     g_hit_vfx_pass = std::make_unique<renderer::HitVfxPass>();
+    g_hull_discharge_pass = std::make_unique<renderer::HullDischargePass>();
     g_particle_pass = std::make_unique<renderer::ParticlePass>();
     g_phaser_pass        = std::make_unique<renderer::PhaserPass>();
     g_hologram_pass      = std::make_unique<renderer::HologramPass>();
@@ -429,6 +433,8 @@ void shutdown() {
     g_shockwave_pass.reset();
     g_hit_vfx.clear();
     g_hit_vfx_pass.reset();
+    g_hull_discharges.clear();
+    g_hull_discharge_pass.reset();
     g_particle_emitters.clear();
     g_particle_pass.reset();
     g_phaser_beams.clear();
@@ -621,6 +627,9 @@ void frame() {
         if (g_torpedo_pass) g_torpedo_pass->render(g_torpedoes,    cam, *g_pipeline);
         if (g_phaser_pass)  g_phaser_pass ->render(g_phaser_beams, cam, *g_pipeline);
         if (g_hit_vfx_pass) g_hit_vfx_pass->render(g_hit_vfx, g_world, cam, *g_pipeline);
+        if (!for_viewscreen && dauntless_nebula_lightning::enabled()
+                && g_hull_discharge_pass && !g_hull_discharges.empty())
+            g_hull_discharge_pass->render(cam, *g_pipeline, g_hull_discharges);
         if (!for_viewscreen && g_shockwave_pass)
             g_shockwave_pass->render(cam, g_shockwaves, *g_pipeline);
         // Venting jets: build per-frame descriptors from active breach events
@@ -1188,6 +1197,24 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Return the named node's world transform as 16 floats (row-major), "
           "or None if the instance/node is absent. animated=True applies the "
           "current node overrides; False composes the static locals (rest).");
+
+    m.def("instance_surface_points",
+          [](scenegraph::InstanceId id) -> py::object {
+              auto* in = g_world.get(id);
+              if (!in) return py::none();
+              const assets::Model* mdl = resolve_model(in->model_handle);
+              if (!mdl) return py::none();
+              std::vector<std::tuple<float, float, float>> out;
+              out.reserve(mdl->surface_points.size());
+              for (const glm::vec3& p : mdl->surface_points) {
+                  glm::vec4 w = in->world * glm::vec4(p, 1.0f);  // model -> world
+                  out.emplace_back(w.x, w.y, w.z);
+              }
+              return py::cast(out);
+          },
+          py::arg("iid"),
+          "World-space sample of the instance model's hull surface points "
+          "(spread across the hull) for VFX anchoring.");
 
     m.def("load_animation_clips",
           [](const std::string& path) {
@@ -1836,6 +1863,24 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Set the active hit-VFX list, applied each frame(). Each dict has "
           "position + normal + severity + age, plus optional spark fields "
           "(instance_id, body_point, body_normal, weapon_kind, spark_count).");
+
+    m.def("set_hull_discharges",
+          [](const std::vector<py::dict>& descs) {
+              g_hull_discharges.clear();
+              g_hull_discharges.reserve(descs.size());
+              for (const auto& d : descs) {
+                  renderer::HullDischarge h;
+                  auto p = d["world_pos"].cast<std::tuple<float,float,float>>();
+                  h.world_pos = glm::vec3(std::get<0>(p), std::get<1>(p), std::get<2>(p));
+                  h.age  = d["age"].cast<float>();
+                  h.life = d["life"].cast<float>();
+                  h.size = d["size"].cast<float>();
+                  auto c = d["color"].cast<std::tuple<float,float,float>>();
+                  h.color = glm::vec3(std::get<0>(c), std::get<1>(c), std::get<2>(c));
+                  g_hull_discharges.push_back(h);
+              }
+          },
+          py::arg("discharges"), "Set active hull electrical discharges.");
 
     m.def("set_particle_emitters",
           [](const std::vector<py::dict>& descs) {

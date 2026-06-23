@@ -1796,6 +1796,8 @@ def reset_sdk_globals() -> None:
         _nebula_tracker.reset()
     if _nebula_thunder is not None:
         _nebula_thunder.reset()
+    if _hull_discharge is not None:
+        _hull_discharge.reset()
     # Clear concealment lock-break latches so a new mission's ships don't
     # inherit stale id()-keyed latches from the prior mission.
     from engine.appc.sensor_detection import reset_concealment_state
@@ -1913,6 +1915,7 @@ _warp_diag: dict = {}
 # first tick that contains a nebula.
 _nebula_tracker = None  # NebulaTracker | None
 _nebula_thunder = None  # NebulaThunderDriver | None
+_hull_discharge = None  # HullDischargeDriver | None
 
 
 def _dim_suns(suns, streak):
@@ -3327,13 +3330,26 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
     _warp_apply_vis = _warp_hide or _warp_hidden
     _warp_hidden = _warp_hide
     _live_ship_iids = []
+    # Hull-discharge emissive boost for the player: `_hull_discharge` is a
+    # module global (HullDischargeDriver | None).  Returns exactly 1.0 when
+    # idle / toggle-off / driver-None, so the hull is never left stuck bright.
+    _hd_boost = (_hull_discharge.emissive_boost()
+                 if (_hull_discharge is not None
+                     and hasattr(r, "nebula_lightning_enabled")
+                     and r.nebula_lightning_enabled())
+                 else 1.0)
     for ship, iid in session.ship_instances.items():
         _wg = session.ship_glow_controllers.get(iid)
         if _wg is not None:
             _wg.update(game_time)
         # Destroyed (dying/dead) ships lose self-illumination —
         # a dark hulk in space. Hull stays lit by external light.
-        r.set_emissive_scale(iid, 0.0 if _oa(ship) else 1.0)
+        if _oa(ship):
+            r.set_emissive_scale(iid, 0.0)
+        elif ship is player:
+            r.set_emissive_scale(iid, _hd_boost)
+        else:
+            r.set_emissive_scale(iid, 1.0)
         if iid == _player_iid:
             r.set_world_transform(
                 iid, _ship_world_matrix(ship, model_scale))
@@ -4357,6 +4373,39 @@ def run(mission_name: Optional[str] = None,
                                 TGSoundManager.instance().PlaySound(name)
                             except Exception:
                                 pass
+                        # Hull electrical discharges: crackle on the hull while
+                        # in a nebula, rate ∝ the nebula's damage.  Gated by
+                        # the Nebula Lightning toggle (shared with the flashes).
+                        # Lazy construct mirrors _nebula_thunder above.
+                        global _hull_discharge
+                        if _hull_discharge is None:
+                            from engine.appc.hull_discharge import HullDischargeDriver
+                            _hull_discharge = HullDischargeDriver()
+                        dmg_rate = 0.0
+                        hull_pts = []
+                        if in_neb and player is not None:
+                            pset = player.GetContainingSet()
+                            if pset is not None:
+                                for obj in pset.GetClassObjectList(App.CT_NEBULA):
+                                    neb = App.MetaNebula_Cast(obj)
+                                    if neb is not None and neb.IsObjectInNebula(player):
+                                        dmg_rate = neb.GetDamage()[0]
+                                        break
+                            # Anchor sparks across the WHOLE hull (saucer rim,
+                            # nacelles, pylons) via the model's surface-point
+                            # sample, not just the central subsystem mounts.
+                            _piid = (session.ship_instances.get(player)
+                                     if session is not None else None)
+                            if _piid is not None:
+                                hull_pts = r.instance_surface_points(_piid)
+                            if not hull_pts:
+                                # Fallback: subsystem mounts (central, but better
+                                # than nothing) when no surface sample is available.
+                                from engine.appc.subsystems import subsystem_world_position
+                                for sub in player.GetSubsystems():
+                                    wp = subsystem_world_position(sub, player)
+                                    hull_pts.append((wp.x, wp.y, wp.z))
+                        _hull_discharge.update(in_neb, dmg_rate, TICK_DT, hull_pts, _gt)
 
                 # Collision detection + response (ships/asteroids/moons/
                 # planets). Runs once per render frame after motion + player
@@ -4740,6 +4789,13 @@ def run(mission_name: Optional[str] = None,
                 godrays = [{"dir": f.dir, "intensity": f.intensity, "color": f.color}
                            for f in _nebula_thunder.active_flashes()]
             r.set_nebula_godrays(godrays)
+
+            discharges = []
+            if (_hull_discharge is not None
+                    and r.nebula_lightning_enabled()
+                    and not _warp_streaking):
+                discharges = _hull_discharge.active_discharges()
+            r.set_hull_discharges(discharges)
 
             lens_flares = _aggregate_lens_flares()
             r.set_lens_flares(lens_flares)

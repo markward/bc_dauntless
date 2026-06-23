@@ -39,6 +39,8 @@ embed_shader(SHADER_TORPEDO_VS shaders/torpedo.vert torpedo_vs)
 embed_shader(SHADER_TORPEDO_FS shaders/torpedo.frag torpedo_fs)
 embed_shader(SHADER_HIT_VFX_VS shaders/hit_vfx.vert hit_vfx_vs)
 embed_shader(SHADER_HIT_VFX_FS shaders/hit_vfx.frag hit_vfx_fs)
+embed_shader(SHADER_HULL_DISCHARGE_VS shaders/hull_discharge.vert hull_discharge_vs)
+embed_shader(SHADER_HULL_DISCHARGE_FS shaders/hull_discharge.frag hull_discharge_fs)
 embed_shader(SHADER_PHASER_VS shaders/phaser.vert phaser_vs)
 embed_shader(SHADER_PHASER_FS shaders/phaser.frag phaser_fs)
 embed_shader(SHADER_HOLOGRAM_VS shaders/hologram.vert hologram_vs)
@@ -112,6 +114,7 @@ add_library(renderer STATIC
     lens_flare_pass.cc
     torpedo_pass.cc
     hit_vfx_pass.cc
+    hull_discharge_pass.cc
     particle_pass.cc
     phaser_pass.cc
     hologram_pass.cc

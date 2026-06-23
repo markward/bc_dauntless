@@ -270,6 +270,13 @@ def set_nebula_godrays(flashes: list) -> None:
     _h.set_nebula_godrays(flashes)
 
 
+def set_hull_discharges(discharges: list) -> None:
+    """Active hull electrical discharges for the crackle pass. Each:
+    {"world_pos": (x,y,z), "age": float, "life": float, "size": float,
+     "color": (r,g,b)}. Empty list = none."""
+    _h.set_hull_discharges(discharges)
+
+
 def set_specular_enabled(enabled: bool) -> None:
     """Toggle the opaque-pass specular term. Default: on after init()."""
     _h.specular_set_enabled(enabled)
@@ -479,6 +486,14 @@ def instance_node_world(iid: InstanceId, node_name: str,
     """16 floats (row-major) of the named node's world transform, or None."""
     fn = getattr(_h, "instance_node_world", None)
     return fn(iid, node_name, animated) if fn is not None else None
+
+
+def instance_surface_points(iid: InstanceId):
+    """World-space sample of the instance model's hull surface points (spread
+    across the hull) for VFX anchoring. Returns a list of (x,y,z), or []."""
+    fn = getattr(_h, "instance_surface_points", None)
+    r = fn(iid) if fn is not None else None
+    return r if r else []
 
 
 def load_animation_clips(path: str) -> list:
