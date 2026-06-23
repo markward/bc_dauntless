@@ -342,7 +342,7 @@ CT_SORTED_REGION_MENU = SortedRegionMenu
 # MetaNebula factories — imported here (not at the top) so that the
 # `Nebula` base class and `CT_NEBULA` tag above are already bound when
 # engine.appc.nebula does `from App import Nebula`, avoiding a circular import.
-from engine.appc.nebula import MetaNebula, MetaNebula_Create, Nebula_Cast
+from engine.appc.nebula import MetaNebula, MetaNebula_Create, Nebula_Cast, MetaNebula_Cast
 
 # AsteroidField factories — imported here (after the bare `AsteroidField` base
 # class and `CT_ASTEROID_FIELD` tag are bound) so engine.appc.asteroid_field can
@@ -778,6 +778,13 @@ ET_CLOAK_COMPLETED          = 1071
 ET_DECLOAK_COMPLETED        = 1072
 ET_CHARACTER_MENU           = 1073
 ET_CONTACT_STARFLEET        = 1074
+
+# ── Nebula + environmental event types ────────────────────────────────────────────
+# Private to the Phase-2 engine; values extend the engine/appc/events.py private
+# range (0x1000..0x1200) and do not collide with SDK Appc-side ids.
+ET_ENTERED_NEBULA = 0x1300
+ET_EXITED_NEBULA = 0x1301
+ET_ENVIRONMENT_DAMAGE = 0x1302
 
 _next_event_type_id = 1200
 

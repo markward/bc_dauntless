@@ -22,6 +22,10 @@ embed_shader(SHADER_SUN_FLARE_VS shaders/sun_flare.vert sun_flare_vs)
 embed_shader(SHADER_SUN_FLARE_FS shaders/sun_flare.frag sun_flare_fs)
 embed_shader(SHADER_DUST_VS shaders/dust.vert dust_vs)
 embed_shader(SHADER_DUST_FS shaders/dust.frag dust_fs)
+embed_shader(SHADER_NEBULA_VS shaders/nebula.vert nebula_vs)
+embed_shader(SHADER_NEBULA_FS shaders/nebula.frag nebula_fs)
+embed_shader(SHADER_NEBULA_SHELL_VS shaders/nebula_shell.vert nebula_shell_vs)
+embed_shader(SHADER_NEBULA_SHELL_FS shaders/nebula_shell.frag nebula_shell_fs)
 embed_shader(SHADER_SHIELD_VS shaders/shield.vert shield_vs)
 embed_shader(SHADER_SHIELD_FS shaders/shield.frag shield_fs)
 embed_shader(SHADER_LENS_FLARE_VS shaders/lens_flare.vert lens_flare_vs)
@@ -90,6 +94,7 @@ add_library(renderer STATIC
     backdrop_pass.cc
     sun_pass.cc
     dust_pass.cc
+    nebula_pass.cc
     shockwave_pass.cc
     aabb.cc
     glow_region.cc

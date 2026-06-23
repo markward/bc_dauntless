@@ -37,6 +37,24 @@ class MetaNebula(Nebula):
                 return 1
         return 0
 
+    def GetTintRGB(self):
+        return self._rgb
+
+    def GetVisibility(self):
+        return self._visibility
+
+    def GetSensorDensity(self):
+        return self._sensor_density
+
+    def GetInternalTexture(self):
+        return self._internal_tex
+
+    def GetExternalTexture(self):
+        return self._external_tex
+
+    def GetDamage(self):
+        return self._damage
+
 
 def MetaNebula_Create(r=0.0, g=0.0, b=0.0, visibility=0.0, sensor_density=0.0,
                       internal_tex="", external_tex=""):
@@ -46,3 +64,7 @@ def MetaNebula_Create(r=0.0, g=0.0, b=0.0, visibility=0.0, sensor_density=0.0,
 
 def Nebula_Cast(obj):
     return obj if isinstance(obj, Nebula) else None
+
+
+def MetaNebula_Cast(obj):
+    return obj if isinstance(obj, MetaNebula) else None

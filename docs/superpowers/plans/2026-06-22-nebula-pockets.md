@@ -1008,46 +1008,84 @@ git commit -m "feat(nebula): render data plumbing + empty NebulaPass wired into 
 
 ---
 
-## Task 6: Inside depth-aware fog
+## Task 6: Inside volume-geometry fog
 
-**Goal:** When the camera is inside any sphere, composite world-space distance fog tinted by `rgb`, falloff from `visibility`, modulated by the `nebulaoverlay` texture, reading the scene depth buffer so hulls/objects recede into the murk.
+**DESIGN CHANGE (2026-06-23, approved by Mark):** The original plan sampled the
+scene **depth buffer** as a texture to fog each pixel by its distance. Our HDR
+render target stores depth in a **renderbuffer** (`GL_DEPTH_COMPONENT24` RBO,
+`hdr_target.cc:31`), which is NOT shader-sampleable, and a fullscreen pass can't
+read+write the same HDR target (feedback loop). Adding a sampleable depth texture
+was rejected in favour of the pragmatic approach below: **analytic volumetric fog
+rendered as depth-TESTED sphere geometry inside `render_space`** (like the dust
+pass) — no HDR-target change, no scene-depth sampling. Accepted limitation: a hull
+deep inside the cloud is occluded via the depth test at the sphere's surface, not
+by its own distance, so interior hulls don't individually fade by range (uniform
+interior murk + correct occlusion where the cloud meets foreground geometry). This
+is a live-tuning item.
+
+**Goal:** Render each nebula sphere as a tinted volumetric haze: the fragment
+shader analytically intersects the camera→fragment view ray with the sphere to get
+the path length through the volume, converts it to fog, tints by `rgb`, and
+alpha-composites over the scene. Depth-tested so foreground hulls occlude it.
 
 **Files:**
 - Create: `native/src/renderer/shaders/nebula.vert`, `nebula.frag`
-- Modify: `native/src/renderer/CMakeLists.txt` (`embed_shader` entries)
-- Modify: `native/src/renderer/pipeline.cc` (construct the nebula `Shader`, expose to the pass) — follow the `dust_` Shader pattern at `pipeline.cc:57`.
-- Modify: `native/src/renderer/nebula_pass.cc` (`initialize_gl` + inside-fog draw)
+- Modify: `native/src/renderer/CMakeLists.txt` (`embed_shader` entries + generated headers in the renderer target)
+- Modify: `native/src/renderer/pipeline.cc` (construct the nebula `Shader`, expose to the pass like `dust_`)
+- Modify: `native/src/renderer/nebula_pass.cc` (`initialize_gl` + the volume draw)
 - Test: C++ `FrameTest`
 
 **Interfaces:**
-- Consumes: `NebulaVolume` list, camera (for eye position + view/proj), the pipeline's depth texture, `Pipeline`'s nebula `Shader`.
-- Produces: inside-fog composite over the framebuffer.
+- Consumes: `NebulaVolume` list, camera (eye + view/proj), the pipeline's nebula `Shader` and its **unit sphere mesh** (the same `sphere_mesh` the sun/backdrop passes draw via `sphere->vao()` / `sphere->index_count()` — reach it from `pipeline` the way `sun_pass` does), the volume's `internal_tex` (`nebulaoverlay.tga`) for noise breakup.
+- Produces: per-sphere additive/alpha tinted fog composited into the HDR scene target inside `render_space`.
 
-**Approach:** a fullscreen pass. The fragment shader reconstructs world position from the depth buffer, computes whether the camera is inside the sphere union, and for inside fragments accumulates fog `= 1 - exp(-min(sceneDist, maxDist)/visibility)` tinted by `rgb`, with a low-frequency `nebulaoverlay` sample (projected by view direction) breaking up uniformity. Constants are tunable; correctness = "tinted fog appears with depth, absent when no nebula / camera outside all spheres."
+**Render technique (per sphere):** draw the unit sphere mesh scaled to
+`(centre, radius)`. Cull **front** faces (draw back faces) so the volume
+rasterizes whether the camera is inside or outside the sphere. Depth-test
+`GL_LEQUAL` with depth-write OFF (foreground hulls closer than the back surface
+occlude the fog). Alpha-blend `GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA`. The
+fragment shader does the analytic ray–sphere path-length integral; fog never
+samples scene depth.
 
-> **Live-tuning note (calibrate up then down):** start the fog strength and noise contribution a touch strong, verify in the Vesuvi4 set, then dial to taste. The constants below are the dials.
+> **Live-tuning note (calibrate up then down):** start fog density and noise a
+> touch strong, verify in Vesuvi4, then dial. `u_max_fog`, `u_noise_amount`,
+> `u_noise_scale` are the dials. The interior-hull occlusion behaviour (above) is
+> the thing to eyeball in Task 8.
 
 - [ ] **Step 1: Write/extend the C++ FrameTest (failing)**
 
-In the existing renderer `FrameTest` suite, add a test that constructs a `NebulaPass`, feeds one `NebulaVolume` (sphere at origin, radius 100, rgb (0.6,0.35,0.72), visibility 50), positions the camera at the centre, renders into the test FBO, and asserts the centre pixel is tinted toward `rgb` versus a no-nebula control render. Follow the existing `dust_pass`/`hologram_pass` FrameTest pattern for FBO setup and pixel readback.
-
-(Use the suite's existing helpers; assert `abs(pixel.b - pixel.r) > threshold` consistent with a purple tint, and that an empty-volume render leaves the control pixel unchanged.)
+In the existing renderer `FrameTest` suite, add a test that constructs a
+`NebulaPass`, feeds one `NebulaVolume` (sphere at origin, radius 100, rgb
+(0.6,0.35,0.72), visibility 50), positions the camera at the centre, renders into
+the test FBO, and asserts the centre pixel is tinted toward `rgb` versus a
+no-nebula control render. Follow the existing `dust_pass`/`sun_pass` FrameTest
+pattern for FBO + sphere-mesh setup and pixel readback. Assert
+`pixel.b > pixel.r + threshold && pixel.b > pixel.g + threshold` (a purple-blue
+tint), and that an empty-volume render leaves the control pixel unchanged. If the
+FrameTest harness cannot supply the pipeline's sphere mesh in isolation, note that
+in the report and assert via the smallest viable harness (or skip to live Task 8
+verification, documenting why) — do NOT fake a passing test.
 
 - [ ] **Step 2: Run it to verify it fails**
 
-Run: `ctest --test-dir build -R FrameTest -V` (or the suite's nebula test name)
+Run: `ctest --test-dir build -R FrameTest -V`
 Expected: FAIL (pass draws nothing yet).
 
 - [ ] **Step 3: Create `native/src/renderer/shaders/nebula.vert`**
 
 ```glsl
 #version 330 core
-// Fullscreen triangle; no vertex buffer needed (gl_VertexID trick).
-out vec2 v_uv;
+layout(location = 0) in vec3 a_pos;   // unit sphere position
+
+uniform mat4 u_view;
+uniform mat4 u_proj;
+uniform vec3 u_center;   // sphere centre (GU)
+uniform float u_radius;  // sphere radius (GU)
+
+out vec3 v_world;        // world-space position of this sphere fragment
 void main() {
-    vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
-    v_uv = p;
-    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+    v_world = u_center + a_pos * u_radius;
+    gl_Position = u_proj * u_view * vec4(v_world, 1.0);
 }
 ```
 
@@ -1055,71 +1093,60 @@ void main() {
 
 ```glsl
 #version 330 core
-in  vec2 v_uv;
+in  vec3 v_world;
 out vec4 frag;
 
-uniform sampler2D u_scene;      // scene colour
-uniform sampler2D u_depth;      // scene depth (non-linear)
 uniform sampler2D u_overlay;    // nebulaoverlay.tga (alpha noise)
-
-uniform mat4  u_inv_view_proj;  // clip -> world
 uniform vec3  u_eye;            // camera world pos (GU)
-uniform float u_near;
-uniform float u_far;
-
-// Up to 8 spheres in the union (xyz centre GU, w radius GU).
-uniform int   u_sphere_count;
-uniform vec4  u_spheres[8];
-uniform vec3  u_rgb;
+uniform vec3  u_center;         // sphere centre (GU)
+uniform float u_radius;         // sphere radius (GU)
+uniform vec3  u_rgb;            // nebula tint
 uniform float u_visibility;     // GU falloff
 // Tunable dials.
 uniform float u_max_fog;        // ceiling on fog alpha (default 0.92)
-uniform float u_noise_amount;   // overlay modulation (default 0.35)
-
-vec3 world_from_depth(vec2 uv, float d) {
-    vec4 clip = vec4(uv * 2.0 - 1.0, d * 2.0 - 1.0, 1.0);
-    vec4 w = u_inv_view_proj * clip;
-    return w.xyz / w.w;
-}
+uniform float u_noise_amount;   // overlay modulation 0..1 (default 0.35)
+uniform float u_noise_scale;    // world->uv frequency (default 0.004)
 
 void main() {
-    vec3  scene = texture(u_scene, v_uv).rgb;
-    float d     = texture(u_depth, v_uv).r;
-    vec3  wp    = world_from_depth(v_uv, d);
+    // View ray from the eye toward this back-surface fragment.
+    vec3 dir = normalize(v_world - u_eye);
+    // Analytic ray/sphere intersection (o=u_eye, d=dir, centre=u_center, R=u_radius).
+    vec3  L   = u_center - u_eye;
+    float tca = dot(L, dir);
+    float d2  = dot(L, L) - tca * tca;
+    float r2  = u_radius * u_radius;
+    if (d2 > r2) discard;                 // ray misses (shouldn't happen on the mesh)
+    float thc   = sqrt(r2 - d2);
+    float t0    = tca - thc;              // entry
+    float t1    = tca + thc;              // exit
+    float entry = max(t0, 0.0);           // clamp to camera when inside
+    float path  = max(t1 - entry, 0.0);   // GU travelled through the volume
 
-    // Inside test: camera inside the sphere union?
-    bool inside = false;
-    for (int i = 0; i < u_sphere_count; ++i) {
-        vec3 c = u_spheres[i].xyz;
-        float r = u_spheres[i].w;
-        if (dot(u_eye - c, u_eye - c) <= r * r) { inside = true; break; }
-    }
-    if (!inside) { frag = vec4(scene, 1.0); return; }
+    float fog = 1.0 - exp(-path / max(u_visibility, 1.0));
 
-    // Distance from eye to the scene fragment (GU). Background (d==1) uses
-    // the visibility horizon so the sky also fogs out fully.
-    float dist = (d >= 1.0) ? (u_visibility * 4.0) : length(wp - u_eye);
-    float fog  = 1.0 - exp(-dist / max(u_visibility, 1.0));
-
-    // Low-frequency overlay breakup, projected on screen for cheapness.
-    float n = texture(u_overlay, v_uv * 1.5).a;
+    // World-projected noise breakup (cheap planar projection of the entry point).
+    vec3  p  = u_eye + dir * entry;
+    float n  = texture(u_overlay, p.xy * u_noise_scale).a;
     fog *= (1.0 - u_noise_amount) + u_noise_amount * n;
     fog  = clamp(fog, 0.0, u_max_fog);
 
-    frag = vec4(mix(scene, u_rgb, fog), 1.0);
+    frag = vec4(u_rgb, fog);              // SRC_ALPHA blend composites the tint
 }
 ```
 
 - [ ] **Step 5: Register the shaders in `native/src/renderer/CMakeLists.txt`**
 
-Add alongside the other `embed_shader(...)` lines:
+Add alongside the other `embed_shader(...)` lines (the file lists them ~lines 14-63):
 
 ```cmake
 embed_shader(SHADER_NEBULA_VS shaders/nebula.vert nebula_vs)
 embed_shader(SHADER_NEBULA_FS shaders/nebula.frag nebula_fs)
 ```
 
-Ensure the generated `${SHADER_NEBULA_VS}`/`${SHADER_NEBULA_FS}` are added to the renderer target's sources exactly as the dust/backdrop generated headers are (match the existing pattern in that file).
+The other `${SHADER_*}` generated vars are appended to the `renderer` target's
+sources (the `add_library(renderer STATIC ...)` block / a following
+`target_sources`); add `${SHADER_NEBULA_VS}` and `${SHADER_NEBULA_FS}` exactly
+where `${SHADER_DUST_VS}`/`${SHADER_DUST_FS}` are listed.
 
 - [ ] **Step 6: Construct the nebula Shader in `pipeline.cc`**
 
@@ -1133,17 +1160,29 @@ Following `dust_` at `native/src/renderer/pipeline.cc:57`:
   ```cpp
   nebula_ = std::make_unique<Shader>(shader_src::nebula_vs, shader_src::nebula_fs);
   ```
-- expose it the same way `dust_`/`backdrop_` are reached by their passes (accessor or friend access — match the established convention in this file).
+- expose `nebula_` and the unit sphere mesh to the pass the same way `dust_`/the sphere mesh are reached by `sun_pass`/`dust_pass` (accessor or friend — match the established convention in this file).
 
-- [ ] **Step 7: Implement `initialize_gl` + inside-fog draw in `nebula_pass.cc`**
+- [ ] **Step 7: Implement `initialize_gl` + the volume draw in `nebula_pass.cc`**
 
-Replace the stub body. `initialize_gl` creates an empty VAO (fullscreen triangle needs no VBO) and loads the overlay texture from `volumes[0].internal_tex` lazily. `render`:
-- bind the pipeline's nebula shader;
-- bind scene-colour + depth textures (obtain from `pipeline` the same way other screen-space passes do — match the dust/lens-flare convention for reaching the scene/depth targets);
-- upload `u_inv_view_proj` (`inverse(proj*view)` from `camera`), `u_eye`, `u_near`/`u_far`, the sphere array (clamped to 8), `u_rgb`, `u_visibility`, and the tunable defaults `u_max_fog = 0.92f`, `u_noise_amount = 0.35f`;
-- disable depth write/test (it's a composite), draw `glDrawArrays(GL_TRIANGLES, 0, 3)`.
+Add the GL object members to `nebula_pass.h` (`std::unique_ptr<assets::Texture> overlay_tex_;` — this is where the `<memory>` include earns its place). Replace the stub body:
 
-Process volumes in a loop (one fullscreen composite per volume; for the single-nebula Vesuvi/Multi cases this is ≤ a handful). Keep the GLSL the source of truth; the constants above are the only dials.
+`initialize_gl`: lazily load the overlay texture from `volumes[0].internal_tex`
+(use the same `assets::Texture` load path the dust/sun passes use). The sphere
+geometry is the pipeline's shared mesh — no VBO of our own.
+
+`render` (only when `!volumes.empty()` and enabled): save GL state, then set
+- `glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);`
+- `glEnable(GL_DEPTH_TEST); glDepthFunc(GL_LEQUAL); glDepthMask(GL_FALSE);`
+- `glEnable(GL_CULL_FACE); glCullFace(GL_FRONT);`  // draw back faces
+Bind the pipeline's nebula shader and unit-sphere VAO. Upload `u_view`, `u_proj`
+(from `camera`), `u_eye`. Bind `overlay_tex_` to unit 0 → `u_overlay`. For each
+volume, for each sphere `(cx,cy,cz,r)`: set `u_center`,`u_radius`,`u_rgb` (volume
+tint), `u_visibility` (volume visibility), and the tunable defaults
+`u_max_fog=0.92f`, `u_noise_amount=0.35f`, `u_noise_scale=0.004f`; draw with
+`glDrawElements(GL_TRIANGLES, sphere->index_count(), GL_UNSIGNED_INT, 0)`.
+Restore GL state (cull back, depth-write on, blend off) afterward.
+
+Keep the GLSL the source of truth; the three `u_*` dials are the only knobs.
 
 - [ ] **Step 8: Reconfigure + build (shaders changed!)**
 
@@ -1161,8 +1200,8 @@ Expected: PASS — centre pixel tinted toward `rgb`; empty-volume control unchan
 - [ ] **Step 10: Commit**
 
 ```bash
-git add native/src/renderer/shaders/nebula.vert native/src/renderer/shaders/nebula.frag native/src/renderer/CMakeLists.txt native/src/renderer/pipeline.cc native/src/renderer/nebula_pass.cc native/tests/
-git commit -m "feat(nebula): inside depth-aware fog composite"
+git add native/src/renderer/shaders/nebula.vert native/src/renderer/shaders/nebula.frag native/src/renderer/CMakeLists.txt native/src/renderer/pipeline.cc native/src/renderer/nebula_pass.cc native/src/renderer/include/renderer/nebula_pass.h native/tests/
+git commit -m "feat(nebula): inside volume-geometry fog (analytic path length, depth-tested)"
 ```
 
 ---
