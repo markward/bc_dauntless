@@ -37,7 +37,14 @@ private:
     bool enabled_ = true;
     bool initialized_ = false;
     unsigned int vao_ = 0;          // empty VAO (fullscreen triangle)
+    // Scratch copy of the HDR colour. The radial march samples THIS (not the
+    // bound HDR target) so reading + additively writing the same target never
+    // happens — a same-FBO feedback loop returns tile-aligned garbage (a grid)
+    // on some GPUs. Resized to the HDR viewport on demand.
+    unsigned int scene_copy_tex_ = 0;
+    int copy_w_ = 0, copy_h_ = 0;
     void initialize_gl();
+    void ensure_scene_copy(int w, int h);
 };
 
 }  // namespace renderer

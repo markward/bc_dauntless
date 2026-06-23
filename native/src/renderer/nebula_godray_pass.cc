@@ -35,6 +35,7 @@ NebulaGodrayPass::~NebulaGodrayPass() {
     // Safe even if initialize_gl() never ran: glDeleteVertexArrays(1, &0) is a
     // no-op per the GL spec, so the lazy-init path leaves nothing to leak.
     if (vao_) glDeleteVertexArrays(1, &vao_);
+    if (scene_copy_tex_) glDeleteTextures(1, &scene_copy_tex_);
 }
 
 void NebulaGodrayPass::initialize_gl() {
@@ -42,6 +43,19 @@ void NebulaGodrayPass::initialize_gl() {
     // vertex shader, but core profile still requires a bound VAO for draws.
     glGenVertexArrays(1, &vao_);
     initialized_ = true;
+}
+
+void NebulaGodrayPass::ensure_scene_copy(int w, int h) {
+    if (scene_copy_tex_ && w == copy_w_ && h == copy_h_) return;
+    if (scene_copy_tex_) glDeleteTextures(1, &scene_copy_tex_);
+    glGenTextures(1, &scene_copy_tex_);
+    glBindTexture(GL_TEXTURE_2D, scene_copy_tex_);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_FLOAT, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    copy_w_ = w; copy_h_ = h;
 }
 
 void NebulaGodrayPass::render(const scenegraph::Camera& camera,
@@ -54,13 +68,22 @@ void NebulaGodrayPass::render(const scenegraph::Camera& camera,
 
     const glm::mat4 view_proj = camera.proj_matrix() * camera.view_matrix();
 
+    // ── Copy the live HDR colour into a scratch texture. ─────────────────────
+    // The radial march samples the scene colour AND we additively blend the
+    // result back into the same HDR target. Sampling the bound target directly
+    // is a same-FBO feedback loop — undefined per the GL spec, and on some GPUs
+    // it returns tile-aligned stale data (a visible grid). Copying first (the
+    // HDR FBO is the bound draw+read target here) lets the march read the COPY
+    // while writing the HDR — never the same texture.
+    GLint vp[4];
+    glGetIntegerv(GL_VIEWPORT, vp);
+    const int cw = vp[2] > 0 ? vp[2] : 1;
+    const int ch = vp[3] > 0 ? vp[3] : 1;
+    ensure_scene_copy(cw, ch);
+    glBindTexture(GL_TEXTURE_2D, scene_copy_tex_);
+    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, vp[0], vp[1], cw, ch);
+
     // ── Set up the additive composite into the currently-bound HDR target. ───
-    // Reads the HDR colour while additively blending into the SAME HDR target
-    // (same-FBO read-while-write). Per the GL spec this is technically undefined,
-    // but all tested desktop drivers return the pre-draw texel content — exactly
-    // what the radial scatter wants, and glGetError() is clean. If a future
-    // platform flags a feedback hazard, render into a half-res scratch target and
-    // composite (as nebula_volumetric_pass does) instead of reading the bound HDR.
     glEnable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_ONE);
     glDisable(GL_DEPTH_TEST);
@@ -71,8 +94,9 @@ void NebulaGodrayPass::render(const scenegraph::Camera& camera,
     sh.use();
 
     glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, hdr_color_tex);
+    glBindTexture(GL_TEXTURE_2D, scene_copy_tex_);  // sample the COPY, not the bound HDR
     sh.set_int("u_scene", 0);
+    (void)hdr_color_tex;  // copy is taken from the bound HDR FBO above
     sh.set_int("u_samples", kSamples);
     sh.set_float("u_decay", kDecay);
     sh.set_float("u_weight", kWeight);
