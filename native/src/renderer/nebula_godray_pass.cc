@@ -25,6 +25,8 @@ constexpr int   kSamples  = 48;
 constexpr float kDecay    = 0.96f;
 constexpr float kWeight   = 0.5f;
 constexpr float kExposure = 0.10f;
+constexpr float kJitter   = 0.006f;   // per-pixel sample-uv jitter (~6px @1080p)
+                                      // to break the quarter-res cloud block grid
 }  // namespace
 
 NebulaGodrayPass::NebulaGodrayPass() = default;
@@ -74,6 +76,7 @@ void NebulaGodrayPass::render(const scenegraph::Camera& camera,
     sh.set_float("u_decay", kDecay);
     sh.set_float("u_weight", kWeight);
     sh.set_float("u_exposure", kExposure);
+    sh.set_float("u_jitter", kJitter);
 
     glBindVertexArray(vao_);
 
