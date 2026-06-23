@@ -21,8 +21,10 @@ FALLBACK_RANGE_GU = 30000.0
 
 # ── Concealment constants ─────────────────────────────────────────────────────
 CONCEAL_K = 0.9      # effective-range reduction at full density (0→no effect, 1→blind)
-LOCK_BREAK_T = 0.6   # density above which detection fails outright
-HYSTERESIS = 0.1     # target must drop to T-HYSTERESIS before re-detection
+LOCK_BREAK_T = 0.28  # density above which detection fails outright. Matched to the
+                     # sparse-field dials (gain 1.2 / floor 0.8 → peak density ≈ 0.36),
+                     # so only the densest clump cores fully hide a ship.
+HYSTERESIS = 0.08    # target must drop to T-HYSTERESIS (0.20) before re-detection
 
 # Per-(observer_id, target_id) latch: a broken lock needs a margin to re-acquire.
 _broken: set = set()

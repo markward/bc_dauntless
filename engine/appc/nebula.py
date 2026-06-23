@@ -18,7 +18,7 @@ class MetaNebula(Nebula):
         self._external_tex = external_tex
         self._spheres = []          # list of (x, y, z, radius)
         self._damage = (0.0, 0.0)   # (hull, shields) — stored, unused
-        self._fbm = (0.02, 1.6, 0.4)   # freq, gain, density_floor (tunable)
+        self._fbm = (0.02, 1.2, 0.8)   # freq, gain, density_floor (tunable)
         self._seed = None               # lazily derived from first sphere
 
     def AddNebulaSphere(self, x, y, z, radius):
@@ -63,8 +63,8 @@ class MetaNebula(Nebula):
         """Override the default fbm parameters for this nebula's density field.
 
         freq  — spatial frequency multiplier (default 0.02)
-        gain  — output gain (default 1.6; raise for denser cores)
-        floor — density_floor subtracted before saturate (default 0.4)
+        gain  — output gain (default 1.2; raise for denser cores)
+        floor — density_floor subtracted before saturate (default 0.8)
         """
         self._fbm = (float(freq), float(gain), float(floor))
 
