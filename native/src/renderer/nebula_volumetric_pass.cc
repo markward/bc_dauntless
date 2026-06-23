@@ -109,10 +109,13 @@ void NebulaVolumetricPass::render(const scenegraph::Camera& camera,
     shader.set_int("u_depth", 0);
 
     // Composite state: premultiplied OVER blend, depth test/write OFF.
+    // Disable culling: the fullscreen triangle winding must survive regardless
+    // of whatever glFrontFace / cull-mode a prior pass left active.
     glEnable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
     glDisable(GL_DEPTH_TEST);
     glDepthMask(GL_FALSE);
+    glDisable(GL_CULL_FACE);
 
     glBindVertexArray(vao_);
     glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -121,12 +124,14 @@ void NebulaVolumetricPass::render(const scenegraph::Camera& camera,
     // ─── RESTORE CANONICAL GL STATE ──────────────────────────────────────────
     // Leave the pipeline as the next pass (lens flare / torpedo / phaser)
     // expects: blend disabled (func reset to the common src-alpha default),
-    // depth test on with LESS, depth writes on.
+    // depth test on, depth writes on, back-face culling on.
+    // NOTE: depth func is NOT touched here — the pass never changes it, so
+    // restoring it would imply false ownership and could clobber a future pass.
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glDisable(GL_BLEND);
     glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LESS);
     glDepthMask(GL_TRUE);
+    glEnable(GL_CULL_FACE);
 }
 
 }  // namespace renderer
