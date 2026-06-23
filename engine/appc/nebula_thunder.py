@@ -38,6 +38,7 @@ class Flash:
 
 class NebulaThunderDriver:
     def __init__(self, seed=1337):
+        self._seed = seed
         self._rng = random.Random(seed)
         self._flashes = []
         self._audio = []          # list of (due_time, sound_name)
@@ -47,6 +48,7 @@ class NebulaThunderDriver:
         self._flashes = []
         self._audio = []
         self._next_at = None
+        self._rng = random.Random(self._seed)
 
     # ── envelope ──────────────────────────────────────────────────────────
     def _envelope(self, flash, age):

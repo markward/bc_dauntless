@@ -4621,7 +4621,7 @@ def run(mission_name: Optional[str] = None,
                 _update_ui_for_tick(player, view_mode, session, active_set)
 
             ambient, directionals = _aggregate_lights(active_set)
-            if _nebula_thunder is not None:
+            if _nebula_thunder is not None and r.nebula_lightning_enabled():
                 flashes = _nebula_thunder.active_flashes()
                 if flashes:
                     thunder = [((f.dir[0], f.dir[1], f.dir[2]),
@@ -4736,7 +4736,7 @@ def run(mission_name: Optional[str] = None,
             r.set_nebulae(nebulae)
 
             godrays = []
-            if _nebula_thunder is not None and not _warp_streaking:
+            if _nebula_thunder is not None and not _warp_streaking and r.nebula_lightning_enabled():
                 godrays = [{"dir": f.dir, "intensity": f.intensity, "color": f.color}
                            for f in _nebula_thunder.active_flashes()]
             r.set_nebula_godrays(godrays)
