@@ -1308,11 +1308,22 @@ TEST_F(FrameTest, NebulaWakeBrightensTrail) {
         << "wake did not brighten the trail region: wake=" << wake_luma
         << " control=" << ctrl_luma;
 
-    // ── (b) Empty wake → byte-identical to the plain cloud. ──────────────────
-    // Render the plain cloud (empty wake) over a pre-filled HDR buffer, snapshot
-    // it, render again with another empty wake, and require bit-equality. This
-    // proves the wake path's added uniforms / branch leave the no-wake frame
-    // pixel-identical (the wk==0 / u_wake_count==0 early-outs).
+    // ── (b) Out-of-range wake → byte-identical to empty wake. ───────────────
+    // WHY: render A uses an empty wake list (u_wake_count==0 → wk=0 at every
+    // sample). Render B supplies wake points thousands of GU from the cloud so
+    // every march sample has dist >> u_wake_radius (8.0 GU); smoothstep returns
+    // exactly 0.0 → wk=0 → the `if(wk>0.0)` block is skipped → col += 0.0.
+    // This is a genuine regression test: the active wake branch executes (the
+    // wake_at() loop runs, smoothstep evaluates) but must produce zero effect,
+    // proving it is distance — not strength — that zeroes it. The old
+    // empty-vs-empty test could never catch a regression where the wake branch
+    // itself perturbed output, because both sides traversed identical code.
+    // Wake points use w = strength; we set w = 1.0 so the test proves distance
+    // controls the falloff, not a zeroed strength.
+    std::vector<glm::vec4> far_wake;
+    for (float z = 50000.0f; z <= 50100.0f; z += 4.0f)  // 26 pts, 50k GU away
+        far_wake.emplace_back(0.0f, 0.0f, z, 1.0f);     // xyz=world pos, w=strength
+
     renderer::NebulaVolumetricPass pass_a;
     hdr.bind();
     glClearColor(0.21f, 0.34f, 0.55f, 1.0f);
@@ -1320,10 +1331,10 @@ TEST_F(FrameTest, NebulaWakeBrightensTrail) {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     pass_a.render(cam, *p, {vol}, lighting,
                   hdr.color_texture(), hdr.depth_texture(),
-                  inv_vp, cam.eye, 0.0f, {});
+                  inv_vp, cam.eye, 0.0f, {});   // Render A: empty wake
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
-    std::vector<float> empty_a(kW * kH * 4, 0.0f);
-    glReadPixels(0, 0, kW, kH, GL_RGBA, GL_FLOAT, empty_a.data());
+    std::vector<float> buf_empty(kW * kH * 4, 0.0f);
+    glReadPixels(0, 0, kW, kH, GL_RGBA, GL_FLOAT, buf_empty.data());
 
     renderer::NebulaVolumetricPass pass_b;
     hdr.bind();
@@ -1332,15 +1343,16 @@ TEST_F(FrameTest, NebulaWakeBrightensTrail) {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     pass_b.render(cam, *p, {vol}, lighting,
                   hdr.color_texture(), hdr.depth_texture(),
-                  inv_vp, cam.eye, 0.0f, {});
+                  inv_vp, cam.eye, 0.0f, far_wake);  // Render B: out-of-range wake
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
-    std::vector<float> empty_b(kW * kH * 4, 0.0f);
-    glReadPixels(0, 0, kW, kH, GL_RGBA, GL_FLOAT, empty_b.data());
+    std::vector<float> buf_far(kW * kH * 4, 0.0f);
+    glReadPixels(0, 0, kW, kH, GL_RGBA, GL_FLOAT, buf_far.data());
 
-    EXPECT_EQ(std::memcmp(empty_a.data(), empty_b.data(),
-                          empty_a.size() * sizeof(float)), 0)
-        << "empty-wake cloud is not byte-identical across renders "
-           "(wake path mutated the no-wake frame)";
+    EXPECT_EQ(std::memcmp(buf_empty.data(), buf_far.data(),
+                          buf_empty.size() * sizeof(float)), 0)
+        << "out-of-range wake (50 000 GU from cloud, strength=1.0) produced a "
+           "different result than empty wake — the active wake_at() branch is "
+           "not a no-op when all points are beyond u_wake_radius";
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glClearDepth(1.0);
