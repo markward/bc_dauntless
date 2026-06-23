@@ -45,10 +45,10 @@ A **Python wake tracker** emits a bounded trail; the host feeds it to the volume
 
 - **Recording by distance:** drop a new trail point only when the ship has moved ~`SPACING` GU since the last (so fast/slow ships lay a comparably-spaced trail; a stationary ship lays none). Each point stores position + spawn time.
 - **Cap at `N`:** oldest points evicted — `N` bounds both trail length and per-sample shader cost.
-- **Fade:** strength ramps 1→0 over `LIFETIME` s (then dropped) — strongest right behind the ship, dying down the trail as the cloud settles. A brief front-rise eases the newest point in (no pop).
+- **Fade:** strength ramps 1→0 over `LIFETIME` s (then dropped) — strongest right behind the ship, dying down the trail as the cloud settles. (A front-rise ease-in was designed but dropped in implementation: it contradicted "strongest right behind the ship" — a rise-from-0 makes the freshest point the *dimmest* — and the shader's `smoothstep` falloff already masks any pop. Re-addable as a dial if live-tuning wants it.)
 - **Outputs/tick:** `trail_points() -> [{pos:(x,y,z), strength:float}]`, ≤ `N`, freshest first, strength pre-faded. Deterministic (driven by where the ship went; no RNG).
 - **Gating:** records only in a nebula; clears on leaving; host feeds `[]` when the toggle is off.
-- **Dials:** `SPACING`, `N`, `LIFETIME`, front-rise time.
+- **Dials:** `SPACING`, `N`, `LIFETIME`.
 
 ## 6. Churn+glow shader & feed
 
