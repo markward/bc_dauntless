@@ -29,6 +29,15 @@ uniform float u_self_glow;       // default 0.25
 uniform float u_light_steps;     // occlusion taps toward light, default 3.0
 uniform float u_color_var;       // 0..1 per-clump warm/cool tint variation
 
+// Ship-wake churn + glow dials (Task 2).
+uniform int   u_wake_count;
+uniform vec4  u_wake[24];       // xyz world pos, w = age-faded strength
+uniform float u_wake_radius;    // GU falloff radius around each trail point
+uniform float u_turb_freq;      // wake turbulence frequency
+uniform float u_turb_amt;       // wake density agitation amount
+uniform float u_swirl;          // wake turbulence advection speed (× u_time)
+uniform float u_wake_glow;      // wake self-glow lift (energized)
+
 // Half-res perf path (Task 6).
 uniform vec2  u_jitter;          // sub-pixel jitter (unused dir; kept for time hash)
 uniform float u_dither_amount;   // 0..1 scale on the per-pixel step offset
@@ -77,6 +86,16 @@ float density(vec3 p){
     return b*clamp(n*u_fbm.y - u_fbm.z, 0.0, 1.0);
 }
 
+// Strongest wake influence at p: max over the trail of strength × radial falloff.
+float wake_at(vec3 p){
+    float w = 0.0;
+    for(int i=0;i<u_wake_count;i++){
+        float d = length(p - u_wake[i].xyz);
+        w = max(w, u_wake[i].w * smoothstep(u_wake_radius, 0.0, d));
+    }
+    return w;
+}
+
 vec3 world_from_depth(vec2 uv, float d){
     vec4 c=vec4(uv*2.0-1.0, d*2.0-1.0, 1.0);
     vec4 w=u_inv_view_proj*c; return w.xyz/w.w;
@@ -117,6 +136,12 @@ void main(){
         if(t>=tend || transm<0.02) break;
         vec3 p=u_eye+dir*t;
         float dens=density(p);
+        // Ship wake: churn (agitate density) + energize (glow lift) near the trail.
+        float wk = (u_wake_count > 0) ? wake_at(p) : 0.0;
+        if(wk > 0.0){
+            float turb = fbm(p * u_turb_freq + vec3(u_time * u_swirl, 0.0, 0.0));
+            dens += wk * turb * u_turb_amt;     // stir the cloud up (don't clear)
+        }
         if(dens>0.001){
             float ext=dens*u_density_scale*u_step;
             // single-scatter from up to 4 directional lights w/ cheap occlusion
@@ -144,6 +169,8 @@ void main(){
                                clamp(cvar,0.0,1.0));
             vec3 base = u_rgb * mix(vec3(1.0), tintmul, u_color_var);
             vec3 col=(scat*u_scatter + u_self_glow)*base*dens;
+            // Energized charged-particle glow in the wake (hot blue-white).
+            col += wk * u_wake_glow * vec3(0.6,0.8,1.0) * dens;
             lit+=transm*col*ext;
             transm*=exp(-ext);
         }

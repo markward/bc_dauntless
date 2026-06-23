@@ -264,6 +264,12 @@ def set_nebulae(nebulae: list) -> None:
     _h.set_nebulae(nebulae)
 
 
+def set_nebula_wake(points: list) -> None:
+    """Player nebula wake trail points for the volumetric cloud's churn+glow.
+    Each: {"pos": (x,y,z), "strength": float}. Empty = no wake."""
+    _h.set_nebula_wake(points)
+
+
 def set_nebula_godrays(flashes: list) -> None:
     """Active lightning flashes for the god-ray pass. Each: {"dir": (x,y,z),
     "intensity": float, "color": (r,g,b)}. Empty list = no god-rays."""

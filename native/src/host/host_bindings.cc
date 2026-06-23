@@ -162,6 +162,7 @@ std::vector<glm::vec4> g_dust_planets;   // xyz = world pos, w = radius
 std::unique_ptr<renderer::SunPass> g_sun_pass;
 std::unique_ptr<renderer::DustPass> g_dust_pass;
 std::vector<renderer::NebulaVolume> g_nebulae;
+std::vector<glm::vec4> g_nebula_wake;   // xyz = world pos, w = age-faded strength
 std::unique_ptr<renderer::NebulaPass> g_nebula_pass;
 std::unique_ptr<renderer::NebulaVolumetricPass> g_nebula_volumetric_pass;
 std::vector<renderer::GodrayFlash> g_nebula_godrays;
@@ -364,6 +365,7 @@ void init(int width, int height, const std::string& title) {
     g_nebula_godray_pass = std::make_unique<renderer::NebulaGodrayPass>();
     g_nebula_godrays.clear();
     g_nebulae.clear();
+    g_nebula_wake.clear();
     g_shockwave_pass = std::make_unique<renderer::ShockwavePass>();
     g_shield_pass = std::make_unique<renderer::ShieldPass>();
     g_lens_flare_pass = std::make_unique<renderer::LensFlarePass>();
@@ -424,6 +426,7 @@ void shutdown() {
     g_nebula_godray_pass.reset();
     g_nebula_godrays.clear();
     g_nebulae.clear();
+    g_nebula_wake.clear();
     g_shield_pass.reset();
     g_lens_flares.clear();
     g_lens_flare_pass.reset();
@@ -613,7 +616,8 @@ void frame() {
                 g_nebula_volumetric_pass->render(
                     cam, *g_pipeline, g_nebulae, g_lighting,
                     g_hdr_target->color_texture(), g_hdr_target->depth_texture(),
-                    inv_vp, cam.eye, static_cast<float>(now));
+                    inv_vp, cam.eye, static_cast<float>(now),
+                    g_nebula_wake);
             } else if (g_nebula_pass) {
                 g_nebula_pass->render(cam, *g_pipeline, g_nebulae);  // V1 faithful
             }
@@ -1733,6 +1737,19 @@ PYBIND11_MODULE(_dauntless_host, m) {
           },
           py::arg("nebulae"),
           "Set the active set's MetaNebula volumes, applied each frame().");
+
+    m.def("set_nebula_wake",
+          [](const std::vector<py::dict>& pts) {
+              g_nebula_wake.clear();
+              g_nebula_wake.reserve(pts.size());
+              for (const auto& d : pts) {
+                  auto p = d["pos"].cast<std::tuple<float,float,float>>();
+                  float s = d["strength"].cast<float>();
+                  g_nebula_wake.emplace_back(std::get<0>(p), std::get<1>(p),
+                                             std::get<2>(p), s);
+              }
+          },
+          py::arg("points"), "Set the player's nebula wake trail points.");
 
     m.def("set_nebula_godrays",
           [](const std::vector<py::dict>& descs) {

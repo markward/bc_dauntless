@@ -70,7 +70,8 @@ public:
                 std::uint32_t hdr_depth_tex,
                 const glm::mat4& inv_view_proj,
                 const glm::vec3& eye,
-                float time);
+                float time,
+                const std::vector<glm::vec4>& wake);
 
 private:
     void initialize_gl();
