@@ -1794,6 +1794,8 @@ def reset_sdk_globals() -> None:
     # (or mission) doesn't suppress enter-events in the next mission.
     if _nebula_tracker is not None:
         _nebula_tracker.reset()
+    if _nebula_thunder is not None:
+        _nebula_thunder.reset()
     # Clear concealment lock-break latches so a new mission's ships don't
     # inherit stale id()-keyed latches from the prior mission.
     from engine.appc.sensor_detection import reset_concealment_state
@@ -1910,6 +1912,7 @@ _warp_diag: dict = {}
 # tracker is a pure-Python singleton: cheap to construct, stateless until the
 # first tick that contains a nebula.
 _nebula_tracker = None  # NebulaTracker | None
+_nebula_thunder = None  # NebulaThunderDriver | None
 
 
 def _dim_suns(suns, streak):
@@ -4331,6 +4334,29 @@ def run(mission_name: Optional[str] = None,
                         _neb_set.GetClassObjectList(App.CT_SHIP),
                         TICK_DT,
                     )
+                    # Nebula lightning: tick the thunder driver while the player
+                    # is in a nebula.  Visual/audio only; gated by the toggle.
+                    # Lazy construct (mirrors _nebula_tracker).
+                    global _nebula_thunder
+                    if r.nebula_lightning_enabled():
+                        if _nebula_thunder is None:
+                            from engine.appc.nebula_thunder import NebulaThunderDriver
+                            _nebula_thunder = NebulaThunderDriver()
+                        player_id = id(player) if player is not None else None
+                        in_neb = player_id is not None and any(
+                            player_id in ships
+                            for ships in _nebula_tracker._inside.values()
+                        )
+                        fwd = player.GetWorldForwardTG() if player is not None else None
+                        fwd_t = (fwd.x, fwd.y, fwd.z) if fwd is not None else (0.0, 1.0, 0.0)
+                        _gt = App.g_kUtopiaModule.GetGameTime()
+                        _nebula_thunder.update(in_neb, TICK_DT, _gt, fwd_t)
+                        for name in _nebula_thunder.pop_due_audio(_gt):
+                            try:
+                                from engine.audio.tg_sound import TGSoundManager
+                                TGSoundManager.instance().PlaySound(name)
+                            except Exception:
+                                pass
 
                 # Collision detection + response (ships/asteroids/moons/
                 # planets). Runs once per render frame after motion + player
@@ -4595,6 +4621,14 @@ def run(mission_name: Optional[str] = None,
                 _update_ui_for_tick(player, view_mode, session, active_set)
 
             ambient, directionals = _aggregate_lights(active_set)
+            if _nebula_thunder is not None:
+                flashes = _nebula_thunder.active_flashes()
+                if flashes:
+                    thunder = [((f.dir[0], f.dir[1], f.dir[2]),
+                                (f.color[0] * f.intensity, f.color[1] * f.intensity,
+                                 f.color[2] * f.intensity)) for f in flashes]
+                    keep = max(0, 4 - len(thunder))
+                    directionals = list(directionals)[:keep] + thunder[:4]
             r.set_lighting(ambient, directionals)
 
             bridge_ambient, bridge_directionals = _aggregate_bridge_lights()
