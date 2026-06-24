@@ -198,6 +198,55 @@ TEST_F(BackdropPassTest, ProceduralNebulaPaintsItsColour) {
     EXPECT_GT(rsum, bsum * 2);
 }
 
+// An enveloping nebula (camera inside its sphere) must fill the WHOLE sky,
+// including the hemisphere opposite its nominal centre direction. Without the
+// u_envelop flag the angular patch-cap discards that far hemisphere and the
+// nebula vanishes from the inside — the bug this guards against.
+TEST_F(BackdropPassTest, EnvelopNebulaFillsFarHemisphere) {
+    // The noise field depends only on the world look direction, while the
+    // angular cap depends on the angle between look-dir and the patch centre —
+    // they are independent. So we look down +Y (a direction the sibling
+    // ProceduralNebulaPaintsItsColour test proves is densely painted) but place
+    // the patch centre at -Y, putting +Y a full 180° away — well outside the
+    // ~137° cap. Without u_envelop that view is discarded; with it, the dense
+    // nebula must still render.
+    auto lit_far_hemisphere = [&](int envelop) -> long {
+        renderer::BackdropPass pass;
+        scenegraph::Camera cam;
+        cam.eye = {0, 0, 0}; cam.target = {0, 1, 0}; cam.up = {0, 0, 1};
+        cam.aspect = 1.0f;
+
+        renderer::Backdrop b;
+        b.kind = renderer::BackdropKind::Backdrop;
+        b.proc_kind = 2;                        // nebula
+        b.color = glm::vec3(0.9f, 0.1f, 0.1f);  // strongly red
+        b.coverage = 0.9f; b.seed = 3.0f;
+        b.h_span = b.v_span = 8.0f;             // envelop span -> ~137deg cap
+        b.envelop = envelop;
+        // forward (column 1) = -Y, so the +Y view sits 180deg from the centre.
+        b.world_rotation = glm::mat3(1,0,0, 0,-1,0, 0,0,-1);
+
+        glClearColor(0, 0, 0, 1);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        pass.render({b}, cam, *pipeline, /*procedural=*/true, /*now=*/0.0f);
+        EXPECT_EQ(glGetError(), GL_NO_ERROR);
+
+        std::vector<unsigned char> px(256 * 256 * 4);
+        glReadPixels(0, 0, 256, 256, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+        long lit = 0;
+        for (size_t i = 0; i < px.size(); i += 4)
+            if (px[i] + px[i + 1] + px[i + 2] > 10) lit++;
+        return lit;
+    };
+
+    const long capped    = lit_far_hemisphere(/*envelop=*/0);  // discarded
+    const long enveloped = lit_far_hemisphere(/*envelop=*/1);  // filled
+    EXPECT_EQ(capped, 0)
+        << "non-enveloping nebula must discard the hemisphere away from its centre";
+    EXPECT_GT(enveloped, 200)
+        << "enveloping nebula must paint the far hemisphere too (lit=" << enveloped << ")";
+}
+
 TEST_F(BackdropPassTest, ToggleOffDiscardsProceduralNebula) {
     renderer::BackdropPass pass;
     scenegraph::Camera cam;
@@ -246,6 +295,10 @@ TEST(BackdropHelpers, EqualDetectsAnyFieldChange) {
 
     b[1].h_span = 1.6f;                    // changed span
     EXPECT_FALSE(renderer::backdrops_equal(a, b));
+
+    auto e = a;
+    e[1].envelop = 1;                      // changed envelop flag
+    EXPECT_FALSE(renderer::backdrops_equal(a, e));
 
     auto c = a;
     c.pop_back();                          // changed size

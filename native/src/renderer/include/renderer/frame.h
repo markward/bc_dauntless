@@ -53,6 +53,10 @@ struct Backdrop {
     glm::vec3 color = glm::vec3(0.5f);  // recorded dominant colour, 0..1
     float coverage = 0.4f;      // density 0..1
     float seed = 0.0f;          // per-backdrop stable seed
+    // 1 when the camera is inside this feature's sphere: the shader drops its
+    // angular patch-cap and fills the whole sky instead of discarding the far
+    // hemisphere (which made enveloping nebulae vanish from the inside).
+    int   envelop = 0;
 };
 
 struct SunDescriptor {

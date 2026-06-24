@@ -127,6 +127,7 @@ void BackdropPass::draw_backdrops(const std::vector<Backdrop>& backdrops,
 
         shader.set_int("u_procedural", procedural ? 1 : 0);
         shader.set_int("u_proc_kind", b.proc_kind);
+        shader.set_int("u_envelop", b.envelop);
         shader.set_vec3("u_color", b.color);
         shader.set_float("u_coverage", b.coverage);
         shader.set_float("u_seed", b.seed);
@@ -250,6 +251,7 @@ bool backdrops_equal(const std::vector<Backdrop>& a,
         if (x.color != y.color) return false;
         if (x.coverage != y.coverage) return false;
         if (x.seed != y.seed) return false;
+        if (x.envelop != y.envelop) return false;
     }
     return true;
 }

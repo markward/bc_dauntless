@@ -1662,6 +1662,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
                       if (col.size() == 3) b.color = glm::vec3(col[0], col[1], col[2]);
                       b.coverage = d["coverage"].cast<float>();
                       b.seed = d["seed"].cast<float>();
+                      if (d.contains("envelop"))
+                          b.envelop = d["envelop"].cast<int>();
                   }
                   auto m9 = d["world_rotation"].cast<std::vector<float>>();
                   if (m9.size() == 9) {
