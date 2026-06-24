@@ -11,6 +11,14 @@ namespace renderer {
 
 class Pipeline;
 
+/// One wake trail point: world position, age-faded strength (0..1), and the
+/// emitting pod's size (radius). The billboard half-size is size × a dial.
+struct NebulaWakePoint {
+    glm::vec3 pos{0.0f};
+    float     strength = 0.0f;
+    float     size     = 0.0f;
+};
+
 /// Decoupled ship-wake trail (spec §8 Plan B #1). Draws each wake trail point
 /// (xyz = world pos, w = age-faded strength) as a camera-facing additive
 /// soft-glow billboard — self-luminous, independent of cloud density. A sibling
@@ -23,11 +31,11 @@ public:
     NebulaWakePass(const NebulaWakePass&)            = delete;
     NebulaWakePass& operator=(const NebulaWakePass&) = delete;
 
-    /// wake: trail points (xyz world pos, w = strength 0..1). time_s drives the
-    /// slow churn in the shader.
+    /// wake: trail points (world pos, strength 0..1, per-point size). time_s
+    /// drives the slow churn in the shader.
     void render(const scenegraph::Camera& camera,
                 Pipeline& pipeline,
-                const std::vector<glm::vec4>& wake,
+                const std::vector<NebulaWakePoint>& wake,
                 float time_s);
 
     void set_enabled(bool v) noexcept { enabled_ = v; }

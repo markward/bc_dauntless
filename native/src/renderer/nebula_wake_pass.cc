@@ -23,8 +23,8 @@ constexpr float kQuadCorners[] = {
 // and overlap heavily along the trail, so effective brightness ≈ kWakeGlow ×
 // (overlap count). kWakeGlow must stay low — perceived brightness ∝
 // kWakeGlow / SPACING (denser trail = more stacking).
-constexpr float kWakeSize   = 6.0f;                  // billboard half-size (GU) — small
-                                                     // puffs (many fine > few big discs)
+constexpr float kWakeSizeScale = 24.0f;              // billboard half-size = point.size × this
+                                                     // (pod radius is small; tune live)
 constexpr float kWakeGlow   = 0.08f;                 // per-billboard intensity (additive stack)
 constexpr float kWakeSoft   = 2.0f;                  // radial falloff exponent
 constexpr glm::vec3 kWakeColor{0.55f, 0.75f, 1.0f};  // soft blue-white
@@ -54,7 +54,7 @@ void NebulaWakePass::ensure_quad_mesh() {
 
 void NebulaWakePass::render(const scenegraph::Camera& camera,
                             Pipeline& pipeline,
-                            const std::vector<glm::vec4>& wake,
+                            const std::vector<NebulaWakePoint>& wake,
                             float time_s) {
     if (!enabled_ || wake.empty()) return;   // zero GL work when idle
     ensure_quad_mesh();
@@ -78,11 +78,10 @@ void NebulaWakePass::render(const scenegraph::Camera& camera,
 
     glBindVertexArray(quad_vao_);
     for (const auto& p : wake) {
-        const float strength = p.w;
-        if (strength <= 0.0f) continue;          // skip just-born (faded-in) points
-        shader.set_vec3 ("u_center",   glm::vec3(p));
-        shader.set_float("u_size",     kWakeSize);
-        shader.set_float("u_strength", strength);
+        if (p.strength <= 0.0f) continue;        // skip just-born (faded-in) points
+        shader.set_vec3 ("u_center",   p.pos);
+        shader.set_float("u_size",     p.size * kWakeSizeScale);
+        shader.set_float("u_strength", p.strength);
         glDrawArrays(GL_TRIANGLES, 0, 6);
     }
     glBindVertexArray(0);

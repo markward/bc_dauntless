@@ -265,8 +265,8 @@ def set_nebulae(nebulae: list) -> None:
 
 
 def set_nebula_wake(points: list) -> None:
-    """Player nebula wake trail points for the volumetric cloud's churn+glow.
-    Each: {"pos": (x,y,z), "strength": float}. Empty = no wake."""
+    """Player nebula wake trail points for the additive billboard pass.
+    Each: {"pos": (x,y,z), "strength": float, "size": float}. Empty = no wake."""
     _h.set_nebula_wake(points)
 
 

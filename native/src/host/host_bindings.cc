@@ -163,7 +163,7 @@ std::vector<glm::vec4> g_dust_planets;   // xyz = world pos, w = radius
 std::unique_ptr<renderer::SunPass> g_sun_pass;
 std::unique_ptr<renderer::DustPass> g_dust_pass;
 std::vector<renderer::NebulaVolume> g_nebulae;
-std::vector<glm::vec4> g_nebula_wake;   // xyz = world pos, w = age-faded strength
+std::vector<renderer::NebulaWakePoint> g_nebula_wake;   // world pos, faded strength, pod size
 std::unique_ptr<renderer::NebulaPass> g_nebula_pass;
 std::unique_ptr<renderer::NebulaVolumetricPass> g_nebula_volumetric_pass;
 std::vector<renderer::GodrayFlash> g_nebula_godrays;
@@ -1753,12 +1753,14 @@ PYBIND11_MODULE(_dauntless_host, m) {
               g_nebula_wake.reserve(pts.size());
               for (const auto& d : pts) {
                   auto p = d["pos"].cast<std::tuple<float,float,float>>();
-                  float s = d["strength"].cast<float>();
-                  g_nebula_wake.emplace_back(std::get<0>(p), std::get<1>(p),
-                                             std::get<2>(p), s);
+                  renderer::NebulaWakePoint wp;
+                  wp.pos      = glm::vec3(std::get<0>(p), std::get<1>(p), std::get<2>(p));
+                  wp.strength = d["strength"].cast<float>();
+                  wp.size     = d["size"].cast<float>();
+                  g_nebula_wake.push_back(wp);
               }
           },
-          py::arg("points"), "Set the player's nebula wake trail points.");
+          py::arg("points"), "Set the player's nebula wake trail points (pos, strength, size).");
 
     m.def("set_nebula_godrays",
           [](const std::vector<py::dict>& descs) {

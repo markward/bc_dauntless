@@ -1464,7 +1464,10 @@ TEST_F(FrameTest, NebulaWakeAdditiveTrail) {
     const float control_sum = centre_sum();
 
     clear_black();
-    std::vector<glm::vec4> wake = { glm::vec4(0.0f, 0.0f, 0.0f, 1.0f) };
+    // size = 0.25 so size × kWakeSizeScale (24) = 6.0 GU half-size (matches the
+    // old global kWakeSize = 6 the previous test relied on).
+    std::vector<renderer::NebulaWakePoint> wake = {
+        renderer::NebulaWakePoint{glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.25f}};
     pass.render(cam, *p, wake, 0.0f);
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
     const float active_sum = centre_sum();
