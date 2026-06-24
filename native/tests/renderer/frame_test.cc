@@ -1032,7 +1032,7 @@ TEST_F(FrameTest, NebulaVolumetricRendersDensityAndObscuresHull) {
     glClearDepth(1.0);   // FAR: no hull
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     pass.render(cam, *p, {}, lighting, hdr.color_texture(), hdr.depth_texture(),
-                inv_vp, cam.eye, 0.0f, {});
+                inv_vp, cam.eye, 0.0f);
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
     float ctrl[4] = {9, 9, 9, 9};
     glReadPixels(128, 128, 1, 1, GL_RGBA, GL_FLOAT, ctrl);
@@ -1048,7 +1048,7 @@ TEST_F(FrameTest, NebulaVolumetricRendersDensityAndObscuresHull) {
     glClearDepth(1.0);   // FAR: no hull
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     pass.render(cam, *p, {vol}, lighting, hdr.color_texture(), hdr.depth_texture(),
-                inv_vp, cam.eye, 0.0f, {});
+                inv_vp, cam.eye, 0.0f);
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
     float lit[4] = {0};
     glReadPixels(128, 128, 1, 1, GL_RGBA, GL_FLOAT, lit);
@@ -1095,7 +1095,7 @@ TEST_F(FrameTest, NebulaVolumetricRendersDensityAndObscuresHull) {
     glClearDepth(static_cast<double>(hull_depth));
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     pass.render(cam, *p, {vol}, lighting, hdr.color_texture(), hdr.depth_texture(),
-                inv_vp, cam.eye, 0.0f, {});
+                inv_vp, cam.eye, 0.0f);
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
     float occ[4] = {9, 9, 9, 9};
     glReadPixels(128, 128, 1, 1, GL_RGBA, GL_FLOAT, occ);
@@ -1172,7 +1172,7 @@ TEST_F(FrameTest, NebulaVolumetricHalfResUpsamplePreservesCloudAndDepthClamp) {
     glReadPixels(0, 0, kW, kH, GL_RGBA, GL_FLOAT, before.data());
 
     pass.render(cam, *p, {}, lighting, hdr.color_texture(), hdr.depth_texture(),
-                inv_vp, cam.eye, 0.0f, {});
+                inv_vp, cam.eye, 0.0f);
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
 
     std::vector<float> after(kW * kH * 4, 0.0f);
@@ -1187,7 +1187,7 @@ TEST_F(FrameTest, NebulaVolumetricHalfResUpsamplePreservesCloudAndDepthClamp) {
     glClearDepth(1.0);   // FAR: no hull
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     pass.render(cam, *p, {vol}, lighting, hdr.color_texture(), hdr.depth_texture(),
-                inv_vp, cam.eye, 0.0f, {});
+                inv_vp, cam.eye, 0.0f);
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
 
     // The pass must have restored the HDR FBO + full viewport; this read lands
@@ -1212,147 +1212,13 @@ TEST_F(FrameTest, NebulaVolumetricHalfResUpsamplePreservesCloudAndDepthClamp) {
     glClearDepth(static_cast<double>(hull_depth));
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     pass.render(cam, *p, {vol}, lighting, hdr.color_texture(), hdr.depth_texture(),
-                inv_vp, cam.eye, 0.0f, {});
+                inv_vp, cam.eye, 0.0f);
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
     float occ[4] = {9, 9, 9, 9};
     glReadPixels(kW / 2, kH / 2, 1, 1, GL_RGBA, GL_FLOAT, occ);
     EXPECT_FLOAT_EQ(occ[0] + occ[1] + occ[2], 0.0f)
         << "hull in front of sphere did not suppress the cloud through the "
            "half-res upsample path: " << occ[0] << "," << occ[1] << "," << occ[2];
-
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glClearDepth(1.0);
-    EXPECT_EQ(glGetError(), GL_NO_ERROR);
-}
-
-// Task 2 (Nebula Ship Wake): a wake trail point inside the cloud, on the centre
-// ray, must ENERGIZE the cloud there — the churn (density agitation) + hot
-// self-glow lift make the trail region brighter than the same cloud with no
-// wake. And the toggle-off invariant must hold: rendering with an EMPTY wake
-// list is bit-for-bit identical to rendering the plain cloud (no wake path),
-// so a no-wake frame is unchanged by this feature.
-//
-// Geometry matches the other volumetric tests (eye=(0,0,-600), sphere r=200 at
-// origin); the centre ray passes through the origin, so a wake point at the
-// origin sits on that ray inside the cloud.
-TEST_F(FrameTest, NebulaWakeBrightensTrail) {
-    const int kW = 256, kH = 256;
-    renderer::HdrTarget hdr;
-    hdr.resize(kW, kH);
-
-    // Camera INSIDE the cloud (eye at origin, the sphere centre), looking down
-    // +Z. With the eye inside, the march starts at t≈0 right at the eye, so the
-    // centre ray's samples are at small t and barely diverge laterally from the
-    // +Z axis (a 60° fov spreads only ~0.005 rad at the dead-centre texel). A
-    // wake trail laid just ahead along +Z therefore sits ON the centre ray
-    // within the pass's baked 8 GU u_wake_radius — robust to the quarter-res
-    // step/dither (vs. a 600-GU-distant cloud, where 8 GU subtends sub-pixel
-    // area and no sample lands near the trail).
-    scenegraph::Camera cam;
-    cam.eye    = glm::vec3(0.0f, 0.0f,  0.0f);
-    cam.target = glm::vec3(0.0f, 0.0f,  1.0f);
-    cam.up     = glm::vec3(0.0f, 1.0f,  0.0f);
-    cam.aspect = 1.0f;
-    cam.near   = 1.0f;
-    cam.far    = 20000.0f;
-
-    const glm::mat4 inv_vp =
-        glm::inverse(cam.proj_matrix() * cam.view_matrix());
-
-    renderer::NebulaVolume vol;
-    vol.spheres.push_back(glm::vec4(0.0f, 0.0f, 0.0f, 200.0f));
-    vol.rgb  = glm::vec3(0.5f, 0.5f, 0.7f);
-    vol.fbm  = glm::vec3(0.02f, 3.0f, 0.3f);
-    vol.seed = glm::vec3(1.3f, 2.7f, 0.5f);
-
-    renderer::Lighting lighting;
-    lighting.directional_count     = 1;
-    lighting.directional_dir_ws[0] = glm::normalize(glm::vec3(0.0f, 1.0f, 0.0f));
-    lighting.directional_color[0]  = glm::vec3(1.0f);
-
-    // Read the dead-centre pixel — its ray is the +Z axis, where the wake trail
-    // lies (zero perpendicular offset at the eye, growing only sub-GU over the
-    // near span we place the trail in).
-    auto centre_luma = [&](renderer::NebulaVolumetricPass& pass,
-                           const std::vector<glm::vec4>& wake) -> double {
-        hdr.bind();
-        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-        glClearDepth(1.0);   // FAR: no hull
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        pass.render(cam, *p, {vol}, lighting,
-                    hdr.color_texture(), hdr.depth_texture(),
-                    inv_vp, cam.eye, 0.0f, wake);
-        EXPECT_EQ(glGetError(), GL_NO_ERROR);
-        float px[4] = {0};
-        glReadPixels(kW / 2, kH / 2, 1, 1, GL_RGBA, GL_FLOAT, px);
-        return double(px[0]) + double(px[1]) + double(px[2]);
-    };
-
-    // Wake trail just ahead of the eye along the centre ray (+Z), spaced 4 GU
-    // (well under the pass's baked 8 GU u_wake_radius) so whatever sample
-    // positions the dither offset produces, at least one falls within a point's
-    // falloff. Robust to the quarter-res step/dither, not one lucky sample.
-    std::vector<glm::vec4> wake;
-    for (float z = 8.0f; z <= 100.0f; z += 4.0f)   // 24 pts (== kMaxWake)
-        wake.emplace_back(0.0f, 0.0f, z, 1.0f);
-
-    // ── (a) Wake energizes the cloud: brighter than the no-wake control. ─────
-    // Fresh pass objects each render so temporal history never blends the two.
-    renderer::NebulaVolumetricPass pass_ctrl;
-    const double ctrl_luma = centre_luma(pass_ctrl, {});
-
-    renderer::NebulaVolumetricPass pass_wake;
-    const double wake_luma = centre_luma(pass_wake, wake);
-
-    EXPECT_GT(wake_luma, ctrl_luma)
-        << "wake did not brighten the trail region: wake=" << wake_luma
-        << " control=" << ctrl_luma;
-
-    // ── (b) Out-of-range wake → byte-identical to empty wake. ───────────────
-    // WHY: render A uses an empty wake list (u_wake_count==0 → wk=0 at every
-    // sample). Render B supplies wake points thousands of GU from the cloud so
-    // every march sample has dist >> u_wake_radius (8.0 GU); smoothstep returns
-    // exactly 0.0 → wk=0 → the `if(wk>0.0)` block is skipped → col += 0.0.
-    // This is a genuine regression test: the active wake branch executes (the
-    // wake_at() loop runs, smoothstep evaluates) but must produce zero effect,
-    // proving it is distance — not strength — that zeroes it. The old
-    // empty-vs-empty test could never catch a regression where the wake branch
-    // itself perturbed output, because both sides traversed identical code.
-    // Wake points use w = strength; we set w = 1.0 so the test proves distance
-    // controls the falloff, not a zeroed strength.
-    std::vector<glm::vec4> far_wake;
-    for (float z = 50000.0f; z <= 50100.0f; z += 4.0f)  // 26 pts, 50k GU away
-        far_wake.emplace_back(0.0f, 0.0f, z, 1.0f);     // xyz=world pos, w=strength
-
-    renderer::NebulaVolumetricPass pass_a;
-    hdr.bind();
-    glClearColor(0.21f, 0.34f, 0.55f, 1.0f);
-    glClearDepth(1.0);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    pass_a.render(cam, *p, {vol}, lighting,
-                  hdr.color_texture(), hdr.depth_texture(),
-                  inv_vp, cam.eye, 0.0f, {});   // Render A: empty wake
-    ASSERT_EQ(glGetError(), GL_NO_ERROR);
-    std::vector<float> buf_empty(kW * kH * 4, 0.0f);
-    glReadPixels(0, 0, kW, kH, GL_RGBA, GL_FLOAT, buf_empty.data());
-
-    renderer::NebulaVolumetricPass pass_b;
-    hdr.bind();
-    glClearColor(0.21f, 0.34f, 0.55f, 1.0f);
-    glClearDepth(1.0);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    pass_b.render(cam, *p, {vol}, lighting,
-                  hdr.color_texture(), hdr.depth_texture(),
-                  inv_vp, cam.eye, 0.0f, far_wake);  // Render B: out-of-range wake
-    ASSERT_EQ(glGetError(), GL_NO_ERROR);
-    std::vector<float> buf_far(kW * kH * 4, 0.0f);
-    glReadPixels(0, 0, kW, kH, GL_RGBA, GL_FLOAT, buf_far.data());
-
-    EXPECT_EQ(std::memcmp(buf_empty.data(), buf_far.data(),
-                          buf_empty.size() * sizeof(float)), 0)
-        << "out-of-range wake (50 000 GU from cloud, strength=1.0) produced a "
-           "different result than empty wake — the active wake_at() branch is "
-           "not a no-op when all points are beyond u_wake_radius";
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glClearDepth(1.0);

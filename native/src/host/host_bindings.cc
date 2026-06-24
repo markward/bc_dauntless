@@ -616,8 +616,7 @@ void frame() {
                 g_nebula_volumetric_pass->render(
                     cam, *g_pipeline, g_nebulae, g_lighting,
                     g_hdr_target->color_texture(), g_hdr_target->depth_texture(),
-                    inv_vp, cam.eye, static_cast<float>(now),
-                    g_nebula_wake);
+                    inv_vp, cam.eye, static_cast<float>(now));
             } else if (g_nebula_pass) {
                 g_nebula_pass->render(cam, *g_pipeline, g_nebulae);  // V1 faithful
             }

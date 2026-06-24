@@ -17,7 +17,6 @@ namespace renderer {
 
 namespace {
 constexpr int kMaxSpheres = 8;   // matches u_spheres[8] in the shader
-constexpr int kMaxWake = 24;     // matches u_wake[24] in the shader
 
 // History is reset when the camera moves "a lot" between frames — temporal
 // reprojection only holds up for small deltas. Generous thresholds: ghosting
@@ -90,8 +89,7 @@ void NebulaVolumetricPass::render(const scenegraph::Camera& camera,
                                   std::uint32_t hdr_depth_tex,
                                   const glm::mat4& inv_view_proj,
                                   const glm::vec3& eye,
-                                  float time,
-                                  const std::vector<glm::vec4>& wake) {
+                                  float time) {
     // Stock-BC byte-identity: nothing to draw => zero GL work.
     if (volumes.empty()) return;
     if (!initialized_) initialize_gl();
@@ -171,18 +169,6 @@ void NebulaVolumetricPass::render(const scenegraph::Camera& camera,
     march.set_vec3("u_rgb", v0.rgb);
     march.set_vec3("u_fbm", v0.fbm);
     march.set_vec3("u_seed", v0.seed);
-
-    // Ship wake trail: churn + glow along the player's recent path. Empty wake
-    // (u_wake_count == 0) leaves the cloud byte-identical (shader early-out).
-    const int wake_count = std::min(static_cast<int>(wake.size()), kMaxWake);
-    march.set_int("u_wake_count", wake_count);
-    if (wake_count > 0)
-        march.set_vec4_array("u_wake", wake.data(), wake_count);
-    march.set_float("u_wake_radius", 8.0f);
-    march.set_float("u_turb_freq",  0.08f);
-    march.set_float("u_turb_amt",   0.6f);
-    march.set_float("u_swirl",      0.4f);
-    march.set_float("u_wake_glow",  0.6f);
 
     // Up to 4 directional lights.
     int nlights = std::clamp(lighting.directional_count, 0,
