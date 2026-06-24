@@ -111,6 +111,10 @@ def active_impulse_emitters(player) -> list:
             continue
         wp = subsystem_world_position(pod, player)
         radius = float(pod.GetRadius()) if hasattr(pod, "GetRadius") else 0.0
+        # key = id(pod): safe as a per-emitter handle — pods are long-lived
+        # per-mission objects, the tracker drops an emitter once its trail
+        # empties (a reused id just starts a fresh trail), and reset_sdk_globals
+        # clears the tracker on mission swap. Never used to compare across runs.
         emitters.append({"key": id(pod), "pos": (wp.x, wp.y, wp.z), "size": radius})
 
     if not emitters:

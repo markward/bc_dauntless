@@ -20,8 +20,9 @@ struct NebulaWakePoint {
 };
 
 /// Decoupled ship-wake trail (spec §8 Plan B #1). Draws each wake trail point
-/// (xyz = world pos, w = age-faded strength) as a camera-facing additive
-/// soft-glow billboard — self-luminous, independent of cloud density. A sibling
+/// (NebulaWakePoint: world pos, age-faded strength, per-point size) as a
+/// camera-facing additive soft-glow billboard — self-luminous, independent of
+/// cloud density. One trail per impulse-engine pod, sized per pod. A sibling
 /// of HullDischargePass: additive blend, depth-test ON (nearer hull occludes),
 /// depth-write OFF; GL state restored to canonical defaults before returning.
 class NebulaWakePass {
