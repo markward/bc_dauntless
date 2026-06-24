@@ -4422,11 +4422,11 @@ def run(mission_name: Optional[str] = None,
                         if _nebula_wake is None:
                             from engine.appc.nebula_wake import NebulaWakeTracker
                             _nebula_wake = NebulaWakeTracker()
-                        _wpos = None
+                        _emitters = []
                         if in_neb and player is not None:
-                            _loc = player.GetWorldLocation()
-                            _wpos = (_loc.x, _loc.y, _loc.z)
-                        _nebula_wake.update(in_neb, _wpos, _gt)
+                            from engine.appc.subsystems import active_impulse_emitters
+                            _emitters = active_impulse_emitters(player)
+                        _nebula_wake.update(in_neb, _emitters, _gt)
 
                 # Collision detection + response (ships/asteroids/moons/
                 # planets). Runs once per render frame after motion + player
