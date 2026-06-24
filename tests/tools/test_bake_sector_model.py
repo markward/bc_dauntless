@@ -14,7 +14,13 @@ def test_build_sector_model_shapes():
                       "appearance": {"swatch": {"meanColor": [89, 74, 82]}}}],
     }
     out = build_sector_model(map_data)
-    assert out["systems"] == [{"id": "vesuvi", "position": [1.0, 2.0, 3.0]}]
+    # build_sector_model back-fills `warp_points` for any system id found in the
+    # on-disk baked sector_model.json, so assert the core mapping (id/position)
+    # rather than exact dict equality — the optional enrichment key depends on
+    # the baked catalog and must not break this unit test.
+    assert len(out["systems"]) == 1
+    assert out["systems"][0]["id"] == "vesuvi"
+    assert out["systems"][0]["position"] == [1.0, 2.0, 3.0]
     neb = out["nebulae"][0]
     assert neb["position"] == [4.0, 5.0, 6.0] and neb["radius"] == 26.0
     assert neb["color"] == [0x64 / 255, 0x63 / 255, 0x92 / 255]

@@ -1,0 +1,31 @@
+# Known-acceptable test failures — the machine-checked "pre-existing" ledger.
+#
+# A failure listed here is treated as pre-existing and does NOT fail the gate.
+# Any failure NOT listed here is a REGRESSION: tools/check_test_baseline.py exits
+# non-zero and names it. This file is the single source of truth — never call a
+# failure "pre-existing" by eyeball; if it's real and unavoidable, it goes here
+# with a reason, otherwise it gets fixed. When a listed test starts passing, the
+# gate tells you to delete its line (keep the ledger honest and shrinking).
+#
+# Format: one "<suite>:<test-id>" per line. <suite> is "pytest" or "ctest".
+#   pytest id = the node id, e.g. pytest:tests/unit/test_foo.py::test_bar
+#   ctest id  = the test name,  e.g. ctest:FrameTest.Baz
+# Blank lines and lines starting with '#' are ignored.
+
+# --- C++ (ctest) ---------------------------------------------------------------
+# Scorch / phaser-heat-glow FrameTests: the decal glow renders FLAT in the
+# headless/offscreen-GL environment (macOS), so the "glow changed" asserts see
+# swing == 0. Verified a headless-GL harness artifact, not a renderer bug —
+# identical on merge-base. See memory project_cpp_ctest_not_in_run_tests and
+# docs (project_gl_context_lifecycle_gotchas). These need game/ assets to run;
+# they SKIP (not fail) where assets are absent.
+ctest:FrameTest.ScorchDecalDarkensHullAndDoesNotMirror
+ctest:FrameTest.ScorchToggleOffRendersLikeUndamaged
+ctest:FrameTest.ScorchEmberIsBrightWhenFreshAndCoolsWithGameTime
+ctest:FrameTest.ScorchGlowOscillatesWithinFlickerWindow
+ctest:FrameTest.ScorchFlickerBlacksOutThenRestoresForLongDurations
+ctest:FrameTest.PhaserHeatGlowIsTransientAndLeavesNoScar
+ctest:FrameTest.PhaserHeatGlowGlowIsMonotonicWithinFlickerWindow
+
+# --- Python (pytest) -----------------------------------------------------------
+# (none — the Python suite is expected fully green.)

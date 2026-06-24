@@ -219,3 +219,22 @@ Hard rules:
 uv sync
 uv run pytest
 ```
+
+## Test gate — both suites, machine-checked baseline
+
+`scripts/run_tests.sh` is **pytest-only** and cannot see C++ regressions. Before
+merging, run the GATE instead:
+
+```bash
+scripts/check_tests.sh        # builds C++, runs pytest + ctest, diffs failures
+```
+
+It compares every failure against `tests/known_failures.txt` (the only entries
+are the 7 headless-GL scorch/heat-glow `FrameTest`s) and **exits non-zero,
+naming any failure not in that list** — that failure is a regression this tree
+introduced, not "pre-existing". When a baselined test starts passing the gate
+tells you to delete its line. **Never call a failure "pre-existing" by eyeball;
+run the gate.** A new required arg / changed output shape means you update that
+thing's tests in the same change. Order-flaky? Run it in isolation to separate
+cross-test pollution (reset leaked globals in `tests/conftest.py`'s autouse
+`_reset_leakable_engine_globals`) from a real break.

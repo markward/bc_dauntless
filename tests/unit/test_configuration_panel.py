@@ -37,6 +37,8 @@ def _make(**overrides):
         set_filmic=Mock(),
         set_motion_blur=Mock(),
         set_warp_flythrough=Mock(),
+        set_volumetric_nebulae=Mock(),
+        set_nebula_lightning=Mock(),
     )
     kwargs.update(overrides)
     return ConfigurationPanel(**kwargs), kwargs
@@ -73,6 +75,7 @@ def test_initial_settings_round_trip_to_render_payload():
         "decals_on": False, "smaa_on": True,
         "subtitles_on": True, "shadows_on": True, "procedural_sky_on": True,
         "filmic_on": True, "motion_blur_on": True, "warp_flythrough_on": True,
+        "volumetric_nebulae_on": True, "nebula_lightning_on": True,
         "fov_deg": 62,
     }
 
