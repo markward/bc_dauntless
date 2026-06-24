@@ -4,7 +4,7 @@
 
 **Goal:** Replace the in-raymarch nebula ship wake (which rode on cloud density and read weak/strobing in sparse cloud) with a decoupled, self-luminous **additive billboard trail** spawned along the same wake path — visible regardless of cloud density, smooth where billboards overlap, and perf-decoupled from the raymarch.
 
-**Architecture:** Keep the existing wake **data path** untouched — the Python `NebulaWakeTracker` (records the trail), the `set_nebula_wake` binding, `g_nebula_wake` (`std::vector<glm::vec4>`, xyz=pos, w=strength), and the host-loop tick + per-frame feed all stay. Only the **rendering** moves: revert the raymarch hook (Task B1, restoring the plain volumetric cloud byte-for-byte), then render the trail as additive camera-facing soft-glow billboards in a new `NebulaWakePass` (Task B2, a sibling of `HullDischargePass`). Live-tune the look (Task B3). This is spec §8 **Plan B #1**.
+**Architecture:** Keep the existing wake **data path** untouched — the Python `NebulaWakeTracker` (records the trail), the `set_nebula_wake` binding, `g_nebula_wake` (`std::vector<glm::vec4>`, xyz=pos, w=strength), and the host-loop tick + per-frame feed all stay. Only the **rendering** moves: revert the raymarch hook (Task 1, restoring the plain volumetric cloud byte-for-byte), then render the trail as additive camera-facing soft-glow billboards in a new `NebulaWakePass` (Task 2, a sibling of `HullDischargePass`). Live-tune the look (Task 3). This is spec §8 **Plan B #1**.
 
 **Tech Stack:** C++/OpenGL 3.3 (renderer), GLSL, pybind11 (host bindings), Python (host loop + tracker), GoogleTest (C++ FrameTests), pytest.
 
@@ -16,14 +16,14 @@
 - **The new pass mirrors `HullDischargePass` exactly** for GL discipline: additive blend `glBlendFunc(GL_ONE, GL_ONE)`, depth-test ON (nearer hull occludes), depth-write OFF, cull OFF; restore canonical GL state (`GL_CULL_FACE` on, `glDepthMask(GL_TRUE)`, `GL_DEPTH_TEST` on, `GL_BLEND` off) before returning. Zero GL work when the list is empty.
 - **Single build tree at `build/`.** Build with `cmake -B build -S . && cmake --build build -j`; run `./build/dauntless`. Never cmake from inside `native/`, never create alternate output paths.
 - **Shader and CMake changes require `cmake -B build -S .` (reconfigure), not just `--build`.** `host_bindings.cc` is compiled into both `./build/dauntless` and the `_dauntless_host` module — a full `cmake --build build -j` rebuilds both.
-- **After Task B1, the three reverted renderer files must be byte-identical to merge-base `68505e41`** (verified with `git diff 68505e41 -- <file>` printing nothing).
+- **After Task 1, the three reverted renderer files must be byte-identical to merge-base `68505e41`** (verified with `git diff 68505e41 -- <file>` printing nothing).
 - **Pre-existing baselines (this branch adds 0 new):** ~62 pre-existing pytest failures; 7 pre-existing Scorch/Phaser C++ FrameTest failures. Prove 0 NEW, do not assert "green".
 
 ---
 
-### Task B1: Revert the in-raymarch wake hook (restore the plain volumetric cloud)
+### Task 1: Revert the in-raymarch wake hook (restore the plain volumetric cloud)
 
-Removes Task 2's raymarch churn+glow so the volumetric cloud renders exactly as it did before the wake feature. Keeps the wake data path (`g_nebula_wake`, the `set_nebula_wake` binding, the host tick/feed) — those feed the new pass in Task B2.
+Removes the in-raymarch churn+glow (commits 9c43d87e + ac6a4e1c) so the volumetric cloud renders exactly as it did before the wake feature. Keeps the wake data path (`g_nebula_wake`, the `set_nebula_wake` binding, the host tick/feed) — those feed the new pass in Task 2.
 
 **Files:**
 - Modify (revert to `68505e41`): `native/src/renderer/shaders/nebula_volumetric.frag`
@@ -34,7 +34,7 @@ Removes Task 2's raymarch churn+glow so the volumetric cloud renders exactly as 
 
 **Interfaces:**
 - Consumes: nothing new.
-- Produces: `NebulaVolumetricPass::render(...)` returns to its pre-wake signature (no `wake` parameter). `g_nebula_wake` (`std::vector<glm::vec4>`) and the `set_nebula_wake` binding remain available for Task B2.
+- Produces: `NebulaVolumetricPass::render(...)` returns to its pre-wake signature (no `wake` parameter). `g_nebula_wake` (`std::vector<glm::vec4>`) and the `set_nebula_wake` binding remain available for Task 2.
 
 - [ ] **Step 1: Revert the three pure-Task-2 renderer files to merge-base**
 
@@ -71,7 +71,7 @@ Remove the trailing `,\n                    g_nebula_wake` so the call matches t
 ```bash
 git show 68505e41:native/src/host/host_bindings.cc | grep -n -A6 'g_nebula_volumetric_pass->render'
 ```
-Edit the call to match that argument list exactly. **Do NOT** remove `g_nebula_wake` (the global at ~line 165), its `.clear()` in init/shutdown (~368, ~429), or the `set_nebula_wake` binding (~1741) — those stay for Task B2.
+Edit the call to match that argument list exactly. **Do NOT** remove `g_nebula_wake` (the global at ~line 165), its `.clear()` in init/shutdown (~368, ~429), or the `set_nebula_wake` binding (~1741) — those stay for Task 2.
 
 - [ ] **Step 4: Remove the raymarch wake FrameTest**
 
@@ -112,7 +112,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ---
 
-### Task B2: New additive wake billboard pass (`NebulaWakePass`)
+### Task 2: New additive wake billboard pass (`NebulaWakePass`)
 
 Renders `g_nebula_wake` as additive camera-facing **soft-glow** billboards — one per trail point, intensity = the point's faded strength. Self-luminous (independent of cloud density). A sibling of `HullDischargePass` with a soft-radial (not electric) shader.
 
@@ -128,7 +128,7 @@ Renders `g_nebula_wake` as additive camera-facing **soft-glow** billboards — o
 - Test: `native/tests/renderer/frame_test.cc` (`NebulaWakeAdditiveTrail`)
 
 **Interfaces:**
-- Consumes: `g_nebula_wake` (`std::vector<glm::vec4>`, xyz = world pos, w = age-faded strength, set by the existing `set_nebula_wake` binding); `dauntless_volumetric_nebulae::enabled()` (the gate); `scenegraph::Camera`; `renderer::Pipeline`.
+- Consumes: `g_nebula_wake` (`std::vector<glm::vec4>`, xyz = world pos, w = age-faded strength, set by the existing `set_nebula_wake` binding from the reverted in-raymarch work); `dauntless_volumetric_nebulae::enabled()` (the gate); `scenegraph::Camera`; `renderer::Pipeline`.
 - Produces:
   - C++ `renderer::NebulaWakePass` with `void render(const scenegraph::Camera& camera, Pipeline& pipeline, const std::vector<glm::vec4>& wake, float time_s)`, plus `set_enabled(bool)`/`enabled()`.
   - `Pipeline::nebula_wake_shader()` accessor.
@@ -472,7 +472,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ---
 
-### Task B3: Live verification + tuning (human-gated)
+### Task 3: Live verification + tuning (human-gated)
 
 Hand off to Mark to fly a nebula and tune the look. The wake is now self-luminous, so brightness is a direct dial (no density coupling). This task ends the project once Mark signs off.
 
@@ -514,8 +514,8 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ## Self-Review
 
-**Spec coverage (spec §8 Plan B #1):** "Drop the wake out of the raymarch entirely" → Task B1 (reverts the raymarch hook to byte-identical merge-base). "Render it as its own additive pass — glowing turbulent billboards/particles spawned along the trail, reuse the hit_vfx/dust_pass-style billboard infrastructure" → Task B2 (`NebulaWakePass`, a `HullDischargePass` sibling). "Zero added cost to the cloud raymarch; gated by the same toggle" → render call gated by `dauntless_volumetric_nebulae::enabled()`, no raymarch involvement. "Visually still a luminous churning trail" → soft-glow + noise churn shader; live-tuned in B3. The reused data path (tracker, binding, feed) is unchanged per the Global Constraints.
+**Spec coverage (spec §8 Plan B #1):** "Drop the wake out of the raymarch entirely" → Task 1 (reverts the raymarch hook to byte-identical merge-base). "Render it as its own additive pass — glowing turbulent billboards/particles spawned along the trail, reuse the hit_vfx/dust_pass-style billboard infrastructure" → Task 2 (`NebulaWakePass`, a `HullDischargePass` sibling). "Zero added cost to the cloud raymarch; gated by the same toggle" → render call gated by `dauntless_volumetric_nebulae::enabled()`, no raymarch involvement. "Visually still a luminous churning trail" → soft-glow + noise churn shader; live-tuned in Task 3. The reused data path (tracker, binding, feed) is unchanged per the Global Constraints.
 
 **Placeholder scan:** Steps 9 (pipeline shader construction) and the FrameTest helpers (Step 1) intentionally say "mirror the real `hull_discharge_` construction / the real frame_test helpers" rather than inventing exact lines — because those depend on the local factory/helper forms that must be read from the actual files; the symbol names (`nebula_wake_vs`/`_fs`) and the test's fixed intent (brighten; empty = byte-identical no-op) are pinned. All other steps carry complete code.
 
-**Type consistency:** `g_nebula_wake` is `std::vector<glm::vec4>` (xyz=pos, w=strength) end-to-end — produced by the kept `set_nebula_wake` binding (Task 2, retained in B1), consumed by `NebulaWakePass::render(..., const std::vector<glm::vec4>& wake, float time_s)` (B2). The pass's `render` signature, the `g_nebula_wake_pass` global type, the `nebula_wake_shader()` accessor, and the embedded symbols `nebula_wake_vs`/`nebula_wake_fs` are consistent across Steps 5-10. Uniform names (`u_view/u_proj/u_center/u_size` in the vert; `u_color/u_strength/u_glow/u_softness/u_time` in the frag) match the `shader.set_*` calls in the pass.
+**Type consistency:** `g_nebula_wake` is `std::vector<glm::vec4>` (xyz=pos, w=strength) end-to-end — produced by the kept `set_nebula_wake` binding (retained from the in-raymarch work, kept by Task 1), consumed by `NebulaWakePass::render(..., const std::vector<glm::vec4>& wake, float time_s)` (B2). The pass's `render` signature, the `g_nebula_wake_pass` global type, the `nebula_wake_shader()` accessor, and the embedded symbols `nebula_wake_vs`/`nebula_wake_fs` are consistent across Steps 5-10. Uniform names (`u_view/u_proj/u_center/u_size` in the vert; `u_color/u_strength/u_glow/u_softness/u_time` in the frag) match the `shader.set_*` calls in the pass.
