@@ -87,6 +87,41 @@ def impulse_online_fraction(ies) -> float:
     return online / float(n)
 
 
+def active_impulse_emitters(player) -> list:
+    """Active impulse-engine pods as wake emitters.
+
+    Returns ``[{"key": int, "pos": (x, y, z), "size": float}]`` — one entry per
+    ONLINE pod (not ``_is_offline``), positioned at its world mount and sized by
+    its radius. Empty when there is no player, no impulse subsystem, or the
+    master impulse subsystem is offline. When the master is online but exposes
+    no child pods, falls back to a single emitter at the master's own mount so
+    such ships still trail a wake. Read-only; safe to call every frame.
+    """
+    if player is None or not hasattr(player, "GetImpulseEngineSubsystem"):
+        return []
+    ies = player.GetImpulseEngineSubsystem()
+    if ies is None or _is_offline(ies):
+        return []
+
+    emitters = []
+    n = ies.GetNumChildSubsystems() if hasattr(ies, "GetNumChildSubsystems") else 0
+    for i in range(n):
+        pod = ies.GetChildSubsystem(i)
+        if pod is None or _is_offline(pod):
+            continue
+        wp = subsystem_world_position(pod, player)
+        radius = float(pod.GetRadius()) if hasattr(pod, "GetRadius") else 0.0
+        emitters.append({"key": id(pod), "pos": (wp.x, wp.y, wp.z), "size": radius})
+
+    if not emitters:
+        # No discoverable online pods — fall back to the master mount so the
+        # ship still trails a single wake while impulse is online.
+        wp = subsystem_world_position(ies, player)
+        radius = float(ies.GetRadius()) if hasattr(ies, "GetRadius") else 0.0
+        emitters.append({"key": id(ies), "pos": (wp.x, wp.y, wp.z), "size": radius})
+    return emitters
+
+
 class ShipSubsystem(TGEventHandlerObject):
     def __init__(self, name: str = ""):
         super().__init__()
