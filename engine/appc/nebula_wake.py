@@ -9,11 +9,18 @@ deterministic from the emitter inputs (no RNG). The renderer draws each point
 as an additive billboard sized by point["size"] × a renderer dial.
 """
 
-SPACING = 1.0       # GU a pod must move before a new trail point is laid;
-                    # fine spacing = many small puffs, small/fast per-birth steps
-N = 120             # max trail points PER EMITTER; bounds trail length + draw cost
-LIFETIME = 12.0     # seconds a point lives; at impulse this sets the trail length
-FRONT_RISE = 0.5    # seconds the newest point fades IN over (kills the pop/strobe)
+SPACING = 0.2       # GU a pod must move before a new trail point is laid; tight
+                    # enough that the soft puff cores overlap into a continuous line
+N = 200             # max trail points PER EMITTER; bounds trail length + draw cost
+LIFETIME = 6.0      # seconds a point lives; at impulse this sets the trail length
+GROWTH_MAX = 6.0    # a puff grows 1x -> GROWTH_MAX over its life, so the trail
+                    # expands + diffuses the further it is behind the ship
+FADE_POWER = 2.0    # emissive falloff exponent: strength = (1 - age/LIFETIME)^this.
+                    # >1 dims older puffs faster (so the grown tail diffuses to dark
+                    # instead of staying bright). 1.0 = linear fade.
+FRONT_RISE = 0.15   # seconds the newest point fades IN over (kills the pop/strobe).
+                    # Short so the trail starts ~at the engine nozzle (exhaust),
+                    # not a few GU behind it.
 
 
 class _Point:
@@ -84,9 +91,11 @@ class NebulaWakeTracker:
                 if age < 0.0 or age >= LIFETIME:
                     continue
                 alive.append(p)
-                fade = 1.0 - age / LIFETIME             # 1 -> 0 over the lifetime
+                fade = (1.0 - age / LIFETIME) ** FADE_POWER   # emissive: 1 -> 0, steepened
                 rise = age / FRONT_RISE if age < FRONT_RISE else 1.0  # 0 -> 1 ease-in
-                out.append({"pos": p.pos, "strength": fade * rise, "size": p.size})
+                grow = 1.0 + (GROWTH_MAX - 1.0) * (age / LIFETIME)    # 1 -> GROWTH_MAX
+                out.append({"pos": p.pos, "strength": fade * rise,
+                            "size": p.size * grow})
             st.points = alive
             if not alive and key not in active_keys:
                 dead.append(key)

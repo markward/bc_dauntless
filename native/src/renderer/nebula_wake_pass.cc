@@ -23,9 +23,11 @@ constexpr float kQuadCorners[] = {
 // and overlap heavily along the trail, so effective brightness ≈ kWakeGlow ×
 // (overlap count). kWakeGlow must stay low — perceived brightness ∝
 // kWakeGlow / SPACING (denser trail = more stacking).
-constexpr float kWakeSizeScale = 24.0f;              // billboard half-size = point.size × this
-                                                     // (pod radius is small; tune live)
-constexpr float kWakeGlow   = 0.08f;                 // per-billboard intensity (additive stack)
+constexpr float kWakeSizeScale = 1.0f;               // billboard half-size = point.size × this.
+                                                     // point.size IS the impulse pod's GetRadius()
+                                                     // (world-scale GU), so 1.0 = matched to the
+                                                     // engine. Fine-tune only; not a fudge factor.
+constexpr float kWakeGlow   = 0.075f;                // per-billboard intensity (additive stack)
 constexpr float kWakeSoft   = 2.0f;                  // radial falloff exponent
 constexpr glm::vec3 kWakeColor{0.55f, 0.75f, 1.0f};  // soft blue-white
 

@@ -1,4 +1,6 @@
-from engine.appc.nebula_wake import NebulaWakeTracker, SPACING, N, LIFETIME, FRONT_RISE
+from engine.appc.nebula_wake import (
+    NebulaWakeTracker, SPACING, N, LIFETIME, FRONT_RISE, GROWTH_MAX,
+)
 
 
 def _em(key, x, y=0.0, z=0.0, size=0.25):
@@ -29,12 +31,17 @@ def test_records_by_distance_not_per_tick():
     assert len(w.trail_points()) == 1            # only the initial drop
 
 
+# Step just over SPACING so each tick unambiguously clears the >= SPACING
+# threshold (SPACING may not be a binary-exact float, e.g. 0.2).
+_STEP = SPACING * 1.01
+
+
 def test_records_a_new_point_each_spacing():
     w = NebulaWakeTracker()
     t = 0.0
     for i in range(10):
         t += 1.0 / 60.0
-        w.update(True, [_em("a", i * SPACING)], t)
+        w.update(True, [_em("a", i * _STEP)], t)
     assert len(w.trail_points()) == 10
 
 
@@ -44,15 +51,20 @@ def test_two_emitters_are_independent():
     # Two pods at different offsets, each moving by SPACING per tick.
     for i in range(8):
         t += 1.0 / 60.0
-        w.update(True, [_em("port", i * SPACING, y=-1.0, size=0.25),
-                        _em("star", i * SPACING, y=+1.0, size=0.40)], t)
+        w.update(True, [_em("port", i * _STEP, y=-1.0, size=0.25),
+                        _em("star", i * _STEP, y=+1.0, size=0.40)], t)
     pts = w.trail_points()
     assert len(pts) == 16                          # 8 from each pod
     ys = sorted({round(p["pos"][1], 3) for p in pts})
     assert ys == [-1.0, 1.0]                        # both trails present
-    # Each pod's points carry that pod's size.
-    assert {p["size"] for p in pts if p["pos"][1] == -1.0} == {0.25}
-    assert {p["size"] for p in pts if p["pos"][1] == +1.0} == {0.40}
+    # Each pod's points carry that pod's size (the youngest puff == base size;
+    # all sizes within [base, base × GROWTH_MAX] as they grow with age).
+    port_sizes = [p["size"] for p in pts if p["pos"][1] == -1.0]
+    star_sizes = [p["size"] for p in pts if p["pos"][1] == +1.0]
+    assert abs(min(port_sizes) - 0.25) < 1e-9
+    assert abs(min(star_sizes) - 0.40) < 1e-9
+    assert all(0.25 <= s <= 0.25 * GROWTH_MAX + 1e-9 for s in port_sizes)
+    assert all(0.40 <= s <= 0.40 * GROWTH_MAX + 1e-9 for s in star_sizes)
 
 
 def test_caps_at_N_per_emitter():
@@ -64,12 +76,29 @@ def test_caps_at_N_per_emitter():
     assert len(w.trail_points()) <= N
 
 
-def test_point_carries_emitter_size():
+def test_point_size_starts_at_base_and_grows():
     w = NebulaWakeTracker()
+    # Birth (age 0): rendered size == the emitter's base size.
     w.update(True, [_em("a", 0.0, size=0.33)], 0.0)
-    w.update(True, [_em("a", SPACING, size=0.33)], 0.1)
+    born = w.trail_points()
+    assert born and abs(born[0]["size"] - 0.33) < 1e-9
+    # Aged in place to mid-life: grown, but capped under GROWTH_MAX × base.
+    w.update(True, [_em("a", 0.0, size=0.33)], LIFETIME * 0.5)
+    mid = w.trail_points()
+    assert mid and mid[0]["size"] > 0.33
+    assert mid[0]["size"] <= 0.33 * GROWTH_MAX + 1e-9
+
+
+def test_size_grows_toward_max_at_end_of_life():
+    w = NebulaWakeTracker()
+    w.update(True, [_em("a", 0.0, size=0.5)], 0.0)
+    # Near end of life the puff approaches GROWTH_MAX × base.
+    w.update(True, [_em("a", 0.0, size=0.5)], LIFETIME * 0.999)
     pts = w.trail_points()
-    assert pts and all(p["size"] == 0.33 for p in pts)
+    assert pts
+    grown = pts[0]["size"] / 0.5
+    assert grown > GROWTH_MAX * 0.95          # within 5% of full growth
+    assert grown <= GROWTH_MAX + 1e-9
 
 
 def test_strength_rises_then_fades_and_expires():
