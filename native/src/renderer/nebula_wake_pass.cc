@@ -18,10 +18,14 @@ constexpr float kQuadCorners[] = {
     -1.0f, -1.0f,  +1.0f, +1.0f,  -1.0f, +1.0f,
 };
 
-// Look dials (live-tune at Vesuvi4). Decoupled from cloud density, so these
-// directly control the wake's size/brightness/colour.
-constexpr float kWakeSize   = 22.0f;                 // billboard half-size (GU)
-constexpr float kWakeGlow   = 1.0f;                  // overall intensity
+// Look dials (live-tune). Decoupled from cloud density, so these directly
+// control the wake's size/brightness/colour. NOTE: the billboards are ADDITIVE
+// and overlap heavily along the trail, so effective brightness ≈ kWakeGlow ×
+// (overlap count). kWakeGlow must stay low — perceived brightness ∝
+// kWakeGlow / SPACING (denser trail = more stacking).
+constexpr float kWakeSize   = 6.0f;                  // billboard half-size (GU) — small
+                                                     // puffs (many fine > few big discs)
+constexpr float kWakeGlow   = 0.08f;                 // per-billboard intensity (additive stack)
 constexpr float kWakeSoft   = 2.0f;                  // radial falloff exponent
 constexpr glm::vec3 kWakeColor{0.55f, 0.75f, 1.0f};  // soft blue-white
 

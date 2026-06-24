@@ -5,8 +5,8 @@ out vec4 frag;
 uniform vec3  u_color;     // glow tint
 uniform float u_strength;  // this point's age-faded strength (0..1)
 uniform float u_glow;      // overall intensity dial
-uniform float u_softness;  // radial falloff exponent (higher = softer/tighter)
-uniform float u_time;      // for the slow churn
+uniform float u_softness;  // radial falloff exponent (higher = tighter core)
+uniform float u_time;      // for the very slow churn drift
 
 float hash(vec2 p){ return fract(sin(dot(p, vec2(41.3, 289.1))) * 43758.5453); }
 float vnoise(vec2 p){
@@ -20,8 +20,10 @@ float vnoise(vec2 p){
 void main() {
     float r = length(v_uv);
     if (r >= 1.0 || u_strength <= 0.0) { frag = vec4(0.0); return; }
-    // Soft radial falloff, modulated by a slow churn so the trail isn't a flat disc.
-    float churn   = 0.7 + 0.6 * vnoise(v_uv * 2.5 + vec2(u_time * 0.3, 0.0));
+    // Soft radial falloff with a SUBTLE, near-static churn so the trail isn't a
+    // flat disc. Kept low-amplitude + very slow drift: a strong/fast churn reads
+    // as brightness "pulsing" once many billboards stack additively.
+    float churn   = 0.9 + 0.1 * vnoise(v_uv * 2.0 + vec2(u_time * 0.03, 0.0));
     float falloff = pow(1.0 - r, u_softness);
     float e = falloff * churn * u_strength * u_glow;
     frag = vec4(u_color * e, 1.0);   // premultiplied additive (blend GL_ONE, GL_ONE)

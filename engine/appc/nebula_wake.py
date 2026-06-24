@@ -7,8 +7,10 @@ churn + energize the cloud behind the ship. Pure logic, no GL. Driven entirely
 by where the ship went — no RNG.
 """
 
-SPACING = 6.0       # GU the ship must move before a new trail point is laid
-N = 24              # max trail points (matches u_wake[24]); bounds length + cost
+SPACING = 1.0       # GU the ship must move before a new trail point is laid;
+                    # fine spacing = many small puffs, small/fast per-birth steps
+N = 120             # max trail points (no shader-array cap under Plan B's
+                    # additive billboard pass); bounds trail length + draw cost
 LIFETIME = 12.0     # seconds a point lives; at impulse this sets the trail length
 FRONT_RISE = 0.5    # seconds the newest point fades IN over (kills the leading-
                     # edge "pop"/strobe as each point is laid at full strength)

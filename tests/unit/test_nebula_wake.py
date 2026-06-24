@@ -17,11 +17,13 @@ def test_no_points_when_pos_none():
 
 def test_records_by_distance_not_per_tick():
     w = NebulaWakeTracker()
-    # Move a tiny amount each tick (< SPACING) → only the first point lands.
+    # Move a tiny amount each tick so the cumulative travel stays < SPACING
+    # (derive the step from SPACING so this holds if SPACING is retuned).
     t = 0.0
+    step = SPACING / 100.0          # 49*step = 0.49*SPACING < SPACING
     for i in range(50):
         t += 1.0 / 60.0
-        w.update(True, (i * 0.1, 0.0, 0.0), t)   # 0.1 GU/tick << SPACING
+        w.update(True, (i * step, 0.0, 0.0), t)
     assert len(w.trail_points()) == 1            # spacing prevents new points
 
 
