@@ -27,6 +27,7 @@ public:
     Shader& torpedo_shader() noexcept    { return *torpedo_; }
     Shader& hit_vfx_shader() noexcept    { return *hit_vfx_; }
     Shader& hull_discharge_shader() noexcept { return *hull_discharge_; }
+    Shader& nebula_wake_shader() noexcept { return *nebula_wake_; }
     Shader& phaser_shader() noexcept          { return *phaser_; }
     Shader& hologram_shader() noexcept        { return *hologram_; }
     Shader& breach_shader() noexcept          { return *breach_; }
@@ -57,6 +58,7 @@ private:
     std::unique_ptr<Shader> torpedo_;
     std::unique_ptr<Shader> hit_vfx_;
     std::unique_ptr<Shader> hull_discharge_;
+    std::unique_ptr<Shader> nebula_wake_;
     std::unique_ptr<Shader> phaser_;
     std::unique_ptr<Shader> hologram_;
     std::unique_ptr<Shader> breach_;

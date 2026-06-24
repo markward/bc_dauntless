@@ -6,6 +6,7 @@
 #include <renderer/nebula_volumetric_pass.h>
 #include <renderer/nebula_godray_pass.h>
 #include <renderer/hull_discharge_pass.h>
+#include <renderer/nebula_wake_pass.h>
 #include <renderer/hdr_target.h>
 #include <renderer/pipeline.h>
 #include <renderer/window.h>
@@ -1402,6 +1403,74 @@ TEST_F(FrameTest, HullDischargeRendersSprite) {
 
     EXPECT_GT(active_sum, control_sum + 1e-3f)
         << "hull discharge did not brighten the centre region: "
+        << active_sum << " vs control " << control_sum;
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+// Decoupled additive wake-trail billboards (Plan B #1). Proves (a) a wake point
+// on the view ray ADDS brightness at its screen location, and (b) an EMPTY wake
+// list renders byte-identical to never invoking the pass (off-path is a no-op).
+TEST_F(FrameTest, NebulaWakeAdditiveTrail) {
+    const int kW = 256, kH = 256;
+    renderer::HdrTarget hdr;
+    hdr.resize(kW, kH);
+
+    // Camera looking down -Z at the origin; the wake point sits on the view ray.
+    scenegraph::Camera cam;
+    cam.eye    = glm::vec3(0.0f, 0.0f, -10.0f);
+    cam.target = glm::vec3(0.0f, 0.0f,   0.0f);
+    cam.up     = glm::vec3(0.0f, 1.0f,   0.0f);
+    cam.aspect = 1.0f;
+    cam.near   = 0.1f;
+    cam.far    = 1000.0f;
+
+    renderer::NebulaWakePass pass;
+
+    auto centre_sum = [&]() -> float {
+        const int x0 = kW / 2 - 16, y0 = kH / 2 - 16;
+        std::vector<float> px(32 * 32 * 4, 0.0f);
+        glReadPixels(x0, y0, 32, 32, GL_RGBA, GL_FLOAT, px.data());
+        float s = 0.0f;
+        for (size_t i = 0; i < px.size(); i += 4)
+            s += px[i] + px[i + 1] + px[i + 2];
+        return s;
+    };
+
+    auto clear_black = [&]() {
+        hdr.bind();
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    };
+
+    // ── (b) Empty wake list -> zero GL work -> byte-identical full-buffer. ──
+    clear_black();
+    std::vector<float> without(kW * kH * 4, 0.0f);
+    glReadPixels(0, 0, kW, kH, GL_RGBA, GL_FLOAT, without.data());
+
+    pass.render(cam, *p, {}, 0.0f);   // empty list -> early return, no GL work
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+
+    std::vector<float> empty_invoked(kW * kH * 4, 0.0f);
+    glReadPixels(0, 0, kW, kH, GL_RGBA, GL_FLOAT, empty_invoked.data());
+    EXPECT_EQ(0, std::memcmp(empty_invoked.data(), without.data(),
+                             empty_invoked.size() * sizeof(empty_invoked[0])))
+        << "empty wake list altered the HDR target (must be a byte-identical no-op)";
+
+    // ── (a) A wake point at the origin (strength 1.0) brightens the centre. ──
+    clear_black();
+    const float control_sum = centre_sum();
+
+    clear_black();
+    std::vector<glm::vec4> wake = { glm::vec4(0.0f, 0.0f, 0.0f, 1.0f) };
+    pass.render(cam, *p, wake, 0.0f);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const float active_sum = centre_sum();
+
+    EXPECT_GT(active_sum, control_sum + 1e-3f)
+        << "nebula wake did not brighten the centre region: "
         << active_sum << " vs control " << control_sum;
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);

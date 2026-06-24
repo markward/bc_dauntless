@@ -34,6 +34,7 @@
 #include <renderer/torpedo_pass.h>
 #include <renderer/hit_vfx_pass.h>
 #include <renderer/hull_discharge_pass.h>
+#include <renderer/nebula_wake_pass.h>
 #include <renderer/shockwave_pass.h>
 #include <renderer/particle_pass.h>
 #include <renderer/phaser_pass.h>
@@ -178,6 +179,7 @@ std::vector<renderer::HitVfxDescriptor>    g_hit_vfx;
 std::unique_ptr<renderer::HitVfxPass>      g_hit_vfx_pass;
 std::vector<renderer::HullDischarge>       g_hull_discharges;
 std::unique_ptr<renderer::HullDischargePass> g_hull_discharge_pass;
+std::unique_ptr<renderer::NebulaWakePass> g_nebula_wake_pass;
 std::vector<renderer::ParticleEmitterDescriptor> g_particle_emitters;
 std::unique_ptr<renderer::ParticlePass>          g_particle_pass;
 std::vector<renderer::PhaserBeamDescriptor> g_phaser_beams;
@@ -372,6 +374,7 @@ void init(int width, int height, const std::string& title) {
     g_torpedo_pass = std::make_unique<renderer::TorpedoPass>();
     g_hit_vfx_pass = std::make_unique<renderer::HitVfxPass>();
     g_hull_discharge_pass = std::make_unique<renderer::HullDischargePass>();
+    g_nebula_wake_pass = std::make_unique<renderer::NebulaWakePass>();
     g_particle_pass = std::make_unique<renderer::ParticlePass>();
     g_phaser_pass        = std::make_unique<renderer::PhaserPass>();
     g_hologram_pass      = std::make_unique<renderer::HologramPass>();
@@ -438,6 +441,7 @@ void shutdown() {
     g_hit_vfx_pass.reset();
     g_hull_discharges.clear();
     g_hull_discharge_pass.reset();
+    g_nebula_wake_pass.reset();
     g_particle_emitters.clear();
     g_particle_pass.reset();
     g_phaser_beams.clear();
@@ -620,6 +624,12 @@ void frame() {
             } else if (g_nebula_pass) {
                 g_nebula_pass->render(cam, *g_pipeline, g_nebulae);  // V1 faithful
             }
+            // Decoupled additive wake trail (Plan B #1) — drawn over the cloud
+            // so the soft-glow billboards add on top of the nebula density.
+            if (dauntless_volumetric_nebulae::enabled() && g_nebula_wake_pass
+                    && !g_nebula_wake.empty())
+                g_nebula_wake_pass->render(cam, *g_pipeline, g_nebula_wake,
+                                           static_cast<float>(now));
         }
         if (!for_viewscreen && dauntless_nebula_lightning::enabled()
                 && g_nebula_godray_pass && !g_nebula_godrays.empty())
