@@ -71,6 +71,29 @@ def test_sky_vantage_none_when_unmapped():
     assert w.sky_vantage(5.0) is None
 
 
+def test_sky_vantage_arrives_at_destination_when_both_mapped():
+    # When both endpoints are galaxy-mapped the vantage interpolates src->dst and
+    # lands EXACTLY on dst at transit end, so the destination's own nebula looms
+    # ahead and envelops on arrival (continuous with the in-system projection)
+    # instead of streaming past and vanishing before exit. `rate` is ignored here.
+    w = WarpVFX()
+    w.start(heading=(0.0, 0.0, 1.0), t_align=2.0, t_transit=4.0, now=0.0,
+            vantage=(0.0, 0.0, 0.0), dst_vantage=(0.0, 0.0, 40.0))
+    w.tick(2.0); assert w.sky_vantage(5.0) == (0.0, 0.0, 0.0)     # burst: at src
+    w.tick(4.0); assert w.sky_vantage(5.0) == (0.0, 0.0, 20.0)    # half transit: midpoint
+    w.tick(6.0); assert w.sky_vantage(5.0) == (0.0, 0.0, 40.0)    # transit end: at dst
+    w.tick(8.0); assert w.sky_vantage(5.0) == (0.0, 0.0, 40.0)    # exit decel: held at dst
+
+
+def test_sky_vantage_legacy_rate_advance_when_destination_unmapped():
+    # Destination not galaxy-mapped (dst_vantage None): keep the legacy
+    # fixed-rate parallax along the heading from the source vantage.
+    w = WarpVFX()
+    w.start(heading=(0.0, 0.0, 1.0), t_align=2.0, t_transit=4.0, now=0.0,
+            vantage=(10.0, 0.0, 0.0))  # no dst_vantage
+    w.tick(4.0); assert w.sky_vantage(5.0) == (10.0, 0.0, 10.0)   # +rate*te along +z
+
+
 def test_stop_resets():
     w = WarpVFX(); w.start((1, 0, 0), 2.0, 4.0, 0.0)
     w.stop()

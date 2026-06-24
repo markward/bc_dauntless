@@ -80,7 +80,7 @@ def _align_duration(ship, heading):
     return _T_ALIGN_MIN if t < _T_ALIGN_MIN else (_T_ALIGN_MAX if t > _T_ALIGN_MAX else t)
 
 # Host-registered VFX hooks (None => instant Stage-1 path, headless-safe).
-_vfx_start = None         # start(heading, t_align, t_transit)
+_vfx_start = None         # start(heading, t_align, t_transit, vantage, dst_vantage)
 _vfx_stop = None          # stop()
 _vfx_enabled = None       # () -> bool  (toggle AND renderer AND procedural sky)
 _vfx_vantage_of = None    # (set_or_module) -> (x, y, z) | None
@@ -184,10 +184,11 @@ class _WarpVfxBeginAction(TGAction):
     failure here never blocks the set-swap chain (control is restored on arrival
     by _ArriveFinalizeAction regardless)."""
 
-    def __init__(self, ship, heading, t_align, t_transit, vantage=None):
+    def __init__(self, ship, heading, t_align, t_transit, vantage=None,
+                 dst_vantage=None):
         super().__init__()
         self._ship = ship
-        self._a = (heading, t_align, t_transit, vantage)
+        self._a = (heading, t_align, t_transit, vantage, dst_vantage)
 
     def _do_play(self):
         try:
@@ -206,11 +207,12 @@ class _WarpVfxBeginAction(TGAction):
         try:
             import engine.dev_mode as _dev
             if _dev.is_enabled():
-                h, ta, tt, vv = self._a
+                h, ta, tt, vv, dv = self._a
                 print("[warp] engaged: heading=(%.2f, %.2f, %.2f) "
-                      "align=%.1fs transit=%.1fs vantage=%s"
+                      "align=%.1fs transit=%.1fs vantage=%s dst=%s"
                       % (h[0], h[1], h[2], ta, tt,
-                         "none" if vv is None else "(%.0f,%.0f,%.0f)" % vv),
+                         "none" if vv is None else "(%.0f,%.0f,%.0f)" % vv,
+                         "none" if dv is None else "(%.0f,%.0f,%.0f)" % dv),
                       flush=True)
         except Exception:
             pass
@@ -503,8 +505,11 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
         # the source is unmapped). None => the sky stays blacked out.
         sky_vantage = src_v if src_v is not None else dst_v
         seq.AddAction(_ClearTargetsAction(ship))
+        # Pass the destination vantage too: when both endpoints are mapped the
+        # sky vantage travels src->dst and arrives, so the destination's own
+        # nebula looms ahead and envelops on exit instead of streaming past.
         seq.AddAction(_WarpVfxBeginAction(ship, heading, t_align, t_transit,
-                                          sky_vantage))
+                                          sky_vantage, dst_v))
         enter_delay = t_align - _SFX_ENTER_FLASH_AT
         if enter_delay < 0.0:
             enter_delay = 0.0
