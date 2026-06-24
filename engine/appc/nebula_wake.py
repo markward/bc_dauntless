@@ -9,7 +9,9 @@ by where the ship went — no RNG.
 
 SPACING = 6.0       # GU the ship must move before a new trail point is laid
 N = 24              # max trail points (matches u_wake[24]); bounds length + cost
-LIFETIME = 4.0      # seconds for a point's strength to fade 1 → 0
+LIFETIME = 12.0     # seconds a point lives; at impulse this sets the trail length
+FRONT_RISE = 0.5    # seconds the newest point fades IN over (kills the leading-
+                    # edge "pop"/strobe as each point is laid at full strength)
 
 
 class _Point:
@@ -59,8 +61,9 @@ class NebulaWakeTracker:
             if age < 0.0 or age >= LIFETIME:
                 continue
             alive.append(p)
-            fade = 1.0 - age / LIFETIME
-            s = fade
+            fade = 1.0 - age / LIFETIME            # 1 → 0 over the lifetime
+            rise = age / FRONT_RISE if age < FRONT_RISE else 1.0  # 0 → 1 ease-in
+            s = fade * rise
             out.append({"pos": p.pos, "strength": s})
         self._points = alive
         self._out = out

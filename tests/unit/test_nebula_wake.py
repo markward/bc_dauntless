@@ -55,16 +55,25 @@ def test_caps_at_N():
     assert len(w.trail_points()) <= N
 
 
-def test_strength_fades_and_points_expire():
+def test_strength_rises_then_fades_and_expires():
+    from engine.appc.nebula_wake import FRONT_RISE
     w = NebulaWakeTracker()
-    # Drop one point at t=0, then keep ticking in place past LIFETIME.
+    # Drop one point at t=0; it fades IN over FRONT_RISE (no pop), then fades out.
     w.update(True, (0.0, 0.0, 0.0), 0.0)
-    s0 = w.trail_points()
-    assert s0 and 0.0 < s0[0]["strength"] <= 1.0
-    # Halfway through life: strength has dropped.
-    w.update(True, (0.0, 0.0, 0.0), LIFETIME * 0.5)
-    mid = w.trail_points()
-    assert mid and mid[0]["strength"] < s0[0]["strength"]
+    born = w.trail_points()
+    assert born and born[0]["strength"] == 0.0          # invisible at birth (no pop)
+    # Within the rise window: rising, still partial.
+    w.update(True, (0.0, 0.0, 0.0), FRONT_RISE * 0.5)
+    rising = w.trail_points()
+    assert rising and 0.0 < rising[0]["strength"] < 1.0
+    # End of the rise: near peak, brighter than mid-rise.
+    w.update(True, (0.0, 0.0, 0.0), FRONT_RISE)
+    peak = w.trail_points()
+    assert peak and peak[0]["strength"] > rising[0]["strength"]
+    # Late in life: well below peak (fading out).
+    w.update(True, (0.0, 0.0, 0.0), LIFETIME * 0.9)
+    late = w.trail_points()
+    assert late and late[0]["strength"] < peak[0]["strength"]
     # Past life: the point is gone.
     w.update(True, (0.0, 0.0, 0.0), LIFETIME + 0.1)
     assert w.trail_points() == []
