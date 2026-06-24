@@ -88,6 +88,12 @@ Both scale with `wake`, so the effect is strongest right behind the ship and fad
 
 **Decision rule:** ship the in-raymarch design (§4–6) if it holds 60 Hz after the first-lever tuning; if not, fall back to **Plan B #1** (decoupled additive) as the pragmatic ship-it option, and only reach for **#2** (volume injection) if the decoupled look loses too much of the "disturbing the actual cloud" feel. The choice is made at live verification with real frame-times, not guessed now.
 
+### 8.1 Outcome — what shipped (2026-06-24)
+
+The in-raymarch design (§4–6) was built but read **weak + strobing in sparse cloud** at live verification (the glow rode on cloud density, `glow·dens`), so it was **reverted** and we shipped **Plan B #1 (decoupled additive billboard pass)** — `native/src/renderer/nebula_wake_pass.{h,cc}` + `shaders/nebula_wake.{vert,frag}`, a self-luminous sibling of `HullDischargePass`, gated by the Volumetric Nebulae toggle.
+
+It then **evolved past the original single-trail design** into **one trail per impulse-engine pod** (Mark's idea): `active_impulse_emitters(player)` walks the online (`not _is_offline`) child pods of `GetImpulseEngineSubsystem()`, each emitting its own trail anchored at the pod mount and **sized to the pod's `GetRadius()`** (per-point size through the data path). A disabled/destroyed engine stops trailing (visible damage tell). Final live-tuned look: billboards matched 1:1 to engine radius that **grow 1×→6× over a 6 s life** and fade with a **squared emissive falloff** — each trail tight+bright at the nozzle, expanding+diffusing to dark aft. Plans: `docs/superpowers/plans/2026-06-24-nebula-wake{,-planb,-per-engine}.md`.
+
 ## 9. Key risks
 
 - **Performance** (the headline) — see §8; the in-raymarch loop is the risk, with a documented two-tier Plan B.
