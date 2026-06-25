@@ -24,7 +24,11 @@ add_subdirectory(third_party/glm)
 # Use the granular Development.Embed component (CMake's modern form) — the
 # legacy "Embed" alias isn't always recognized as a standalone component
 # name. Python.framework on macOS satisfies this even when Py_ENABLE_SHARED=0.
-find_package(Python3 3.11 REQUIRED COMPONENTS Development.Embed)
+# Development.Embed → the executable embeds CPython (links the full libpython).
+# Development.Module → headers-only target (Python3::Module) for static libs that
+# get pulled into the pybind11 extension module; it must NOT link libpython, or a
+# second libpython copy crashes a statically-linked interpreter (uv standalone).
+find_package(Python3 3.11 REQUIRED COMPONENTS Development.Embed Development.Module)
 
 # pybind11 via FetchContent (vendored copies are too heavy; FetchContent caches
 # under build/_deps and is reused across configures).

@@ -11,6 +11,7 @@
     <link rel="stylesheet" href="panels/ship_display/ship_display.css">
     <link rel="stylesheet" href="panels/weapons_display/weapons_display.css">
     <link rel="stylesheet" href="css/configuration_panel.css">
+    <link rel="stylesheet" href="css/quick_battle_setup.css">
     <link rel="stylesheet" href="css/ship_property_viewer.css">
     <link rel="stylesheet" href="css/reticle_text.css">
     <link rel="stylesheet" href="css/info_box.css">
@@ -90,6 +91,34 @@
           <button class="cp-done-button"
                   onclick="dauntlessEvent('developer-options/cancel')">
             Done
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Quick Battle Setup overlay (production — NOT dev-only).
+         setQuickBattleSetup({open, selected_tab, tabs}) drives state; clicks
+         fire dauntlessEvent('quick-battle-setup/<verb>[:<arg>]'). The Close
+         button fires 'quick-battle-setup/close'; Start fires
+         'quick-battle-setup/start'. ESC routes to handle_key_esc -> close.
+         Reuses the cp-* modal CSS (configuration_panel.css). Boot opens this
+         panel instead of auto-starting the battle. T1 = shell only; the body
+         is a "(ships)" placeholder until the ship accordion task. -->
+    <section id="quick-battle-setup">
+      <div class="cp-modal">
+        <div class="cp-header">Quick Battle Setup</div>
+        <div class="cp-content">
+          <nav class="cp-tabstrip" id="qbs-tabstrip"></nav>
+          <div class="cp-body" id="qbs-body"></div>
+        </div>
+        <div class="cp-footer">
+          <button class="cp-done-button"
+                  onclick="dauntlessEvent('quick-battle-setup/close')">
+            Close
+          </button>
+          <button class="cp-done-button"
+                  onclick="dauntlessEvent('quick-battle-setup/start')">
+            Start
           </button>
         </div>
       </div>
@@ -301,6 +330,7 @@
     <script src="js/sdk_mirror.js"></script>
     <script src="js/crew_menus.js"></script>
     <script src="js/configuration_panel.js"></script>
+    <script src="js/quick_battle_setup.js"></script>
     <script src="js/developer_options.js"></script>
     <script src="js/setting_course_panel.js"></script>
     <script src="js/ship_property_viewer.js"></script>

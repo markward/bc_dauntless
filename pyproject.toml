@@ -2,7 +2,12 @@
 name = "open-stbc"
 version = "0.1.0"
 requires-python = ">=3.11"
-dependencies = []
+# pillow is the only third-party runtime import in the suite (PNG-encoder test +
+# backdrop-baking tool). Physics is in the C++ engine now, so pybullet is no
+# longer used; numpy/glfw/pyyaml are not imported anywhere in engine/tests/tools.
+dependencies = [
+    "pillow",
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]

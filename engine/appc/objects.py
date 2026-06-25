@@ -34,6 +34,11 @@ class ObjectClass(TGEventHandlerObject):
         self._position: TGPoint3 = TGPoint3(0.0, 0.0, 0.0)
         self._rotation: TGMatrix3 = TGMatrix3()   # identity
         self._containing_set = None
+        # Set via SetDeleteMe(1); the host loop removes flagged objects from
+        # their set each tick (BC's engine deletes delete-me-flagged objects).
+        # Eager init so the host's __dict__-based read never sees a TGObject
+        # __getattr__ _Stub (which is truthy and would delete everything).
+        self._delete_me: bool = False
 
     # ── Identity ──────────────────────────────────────────────────────────────
 
@@ -194,8 +199,17 @@ class ObjectClass(TGEventHandlerObject):
     def DetachObject(self, *args) -> None:
         pass
 
-    def SetDeleteMe(self, *args) -> None:
-        pass
+    def SetDeleteMe(self, flag=1) -> None:
+        # QuickBattle.EndSimulation flags every non-player ship (and torpedoes)
+        # with SetDeleteMe(1) to clear the battle; the host loop removes flagged
+        # objects from their set each tick.
+        self._delete_me = bool(flag)
+
+    def IsDeleteMe(self) -> int:
+        return 1 if self._delete_me else 0
+
+    def GetDeleteMe(self) -> int:
+        return self.IsDeleteMe()
 
     def GetNode(self):
         return None
@@ -211,6 +225,30 @@ class ObjectClass(TGEventHandlerObject):
         `GetWorldRotation().GetCol(1)` at the call site.
         """
         return self._rotation.GetCol(1)
+
+    # World-direction siblings of GetWorldForwardTG (column-vector convention:
+    # col0=right, col1=forward, col2=up). Without these, ObjectClass is a
+    # TGObject so the names fall through __getattr__ to a truthy _Stub —
+    # QuickBattle.GenerateShips does pShip.AlignToVectors(player.GetWorldBackwardTG(),
+    # player.GetWorldUpTG()), and stub "vectors" build a degenerate (zero-column)
+    # rotation that later crashes render interpolation.
+    def GetWorldBackwardTG(self) -> TGPoint3:
+        f = self._rotation.GetCol(1)
+        return TGPoint3(-f.x, -f.y, -f.z)
+
+    def GetWorldUpTG(self) -> TGPoint3:
+        return self._rotation.GetCol(2)
+
+    def GetWorldDownTG(self) -> TGPoint3:
+        u = self._rotation.GetCol(2)
+        return TGPoint3(-u.x, -u.y, -u.z)
+
+    def GetWorldRightTG(self) -> TGPoint3:
+        return self._rotation.GetCol(0)
+
+    def GetWorldLeftTG(self) -> TGPoint3:
+        r = self._rotation.GetCol(0)
+        return TGPoint3(-r.x, -r.y, -r.z)
 
     def GetContainingSetName(self) -> str:
         if self._containing_set is not None:

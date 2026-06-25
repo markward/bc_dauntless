@@ -35,6 +35,26 @@ def subtitles_enabled() -> bool:
     return _subtitles_enabled
 
 
+# Global "Disable Annoying Dialogue" flag (Configuration > Gameplay). When ON
+# (default), any line whose key is in _ANNOYING_LINE_KEYS is dropped entirely in
+# emit() — no voice, no subtitle — so the owning CharacterAction completes
+# instantly. Applied live by the configuration panel; not persisted.
+_annoying_dialogue_disabled: bool = True
+
+# Line keys silenced when _annoying_dialogue_disabled is ON. Extensible: add
+# more grating intro/tutorial line keys here as they surface.
+_ANNOYING_LINE_KEYS = frozenset({"QBExposition"})
+
+
+def set_annoying_dialogue_disabled(on: bool) -> None:
+    global _annoying_dialogue_disabled
+    _annoying_dialogue_disabled = bool(on)
+
+
+def annoying_dialogue_disabled() -> bool:
+    return _annoying_dialogue_disabled
+
+
 def _estimate_duration(text: Optional[str], wav: Optional[str]) -> float:
     """Coarse reading-speed dwell. Drives both the on-screen time and the
     bus free-up time, so they can never disagree. A voice-only line (no text,
@@ -137,6 +157,8 @@ def emit(speaker, db, line_id, priority) -> float:
     subtitles_enabled() inside the bus; text is always resolved here so the
     duration estimate (text-only lines) is unaffected by the toggle."""
     line = str(line_id)
+    if annoying_dialogue_disabled() and line in _ANNOYING_LINE_KEYS:
+        return 0.0  # silenced annoying line: no voice, no subtitle
     text = None
     if db is not None and db.HasString(line):
         t = db.GetString(line)

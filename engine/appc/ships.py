@@ -75,7 +75,9 @@ class ShipClass(DamageableObject):
         self._current_speed: float = 0.0
         self._current_angular_velocity: TGPoint3 = TGPoint3(0.0, 0.0, 0.0)
 
-    def SetAI(self, ai) -> None:
+    def SetAI(self, ai, *_extra) -> None:
+        # SDK QuickBattle.StartSimulation2 calls SetAI(ai, 0, 0); the trailing
+        # flags (bDeleteOld / bActivate) are engine-internal and ignored here.
         self._ai = ai
 
     def GetAI(self):

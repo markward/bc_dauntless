@@ -69,3 +69,44 @@ def test_lerp_transform_blends_both():
     loc, rot = lerp_transform(pl, pr, cl, cr, 0.5)
     assert (loc.x, loc.y, loc.z) == (2.0, 0.0, 0.0)
     assert abs(_det(rot) - 1.0) < 1e-6
+
+
+def _zero_mat() -> TGMatrix3:
+    m = TGMatrix3()
+    m._m = [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+    return m
+
+
+def _is_orthonormal(m: TGMatrix3) -> bool:
+    for i in range(3):
+        c = m.GetCol(i)
+        if abs(math.sqrt(c.x * c.x + c.y * c.y + c.z * c.z) - 1.0) > 1e-6:
+            return False
+    return abs(_det(m) - 1.0) < 1e-6
+
+
+def test_nlerp_degenerate_zero_matrix_does_not_crash():
+    # A freshly-spawned ship can carry a zero-column rotation; sampling it must
+    # not ZeroDivisionError and must yield a proper orthonormal matrix.
+    z = _zero_mat()
+    out = nlerp_rotation(z, z, 0.0)
+    assert _is_orthonormal(out)
+    out2 = nlerp_rotation(z, z, 0.5)
+    assert _is_orthonormal(out2)
+
+
+def test_nlerp_degenerate_forward_falls_back_to_endpoint():
+    ident = TGMatrix3()
+    z = _zero_mat()
+    # Blend a zero matrix toward identity — forward/up come from identity.
+    out = nlerp_rotation(z, ident, 0.0)   # alpha 0 -> blended == zero (degenerate)
+    assert _is_orthonormal(out)
+
+
+def test_nlerp_zero_up_column_only():
+    m = TGMatrix3()
+    m._m = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+    # Wipe the up column (col 2) to zero; forward (col 1) stays valid.
+    m.SetCol(2, TGPoint3(0.0, 0.0, 0.0))
+    out = nlerp_rotation(m, m, 0.0)
+    assert _is_orthonormal(out)

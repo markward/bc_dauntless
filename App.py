@@ -168,7 +168,7 @@ from engine.appc.characters import (
     CharacterClass_Cast, CharacterClass_GetObject,
     CharacterClass_SetVolumeForLineType, CharacterClass_GetVolumeForLineType,
     STButton, STMenu, STTopLevelMenu,
-    STButton_CreateW, STMenu_Cast, STTopLevelMenu_CreateW, STTopLevelMenu_Cast,
+    STButton_Create, STButton_CreateW, STMenu_Cast, STTopLevelMenu_CreateW, STTopLevelMenu_Cast,
 )
 # STButton size-to-text flag — TacticalMenuHandlers uses App.STBSF_SIZE_TO_TEXT.
 STBSF_SIZE_TO_TEXT = STButton.STBSF_SIZE_TO_TEXT
@@ -676,6 +676,11 @@ ET_OBJECT_DELETED = 104
 ET_ENTERED_SET = 105
 ET_OBJECT_EXPLODING = 106
 ET_OBJECT_DESTROYED = 107
+# Fired once the Game's pre-load (asset streaming) finishes. SDK Game.py binds
+# Game_SetPreLoadDoneEvent to store an event the engine posts when loading is
+# done; the QuickBattle boot chain (Game.LoadEpisode -> Episode.LoadMission)
+# uses it to drive the synchronous mission-start cascade.
+ET_PRELOAD_DONE = 108
 
 # Used by Conditions/Condition*.py — broadcast events the SDK conditions
 # subscribe to. Values arbitrary but stable; keep contiguous with the

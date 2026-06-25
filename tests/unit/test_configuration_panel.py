@@ -31,6 +31,7 @@ def _make(**overrides):
         set_decals=Mock(),
         set_smaa=Mock(),
         set_subtitles=Mock(),
+        set_disable_annoying_dialogue=Mock(),
         set_fov_rad=Mock(),
         set_shadows=Mock(),
         set_procedural_sky=Mock(),
@@ -76,6 +77,7 @@ def test_initial_settings_round_trip_to_render_payload():
         "subtitles_on": True, "shadows_on": True, "procedural_sky_on": True,
         "filmic_on": True, "motion_blur_on": True, "warp_flythrough_on": True,
         "volumetric_nebulae_on": True, "nebula_lightning_on": True,
+        "disable_annoying_dialogue_on": True,
         "fov_deg": 62,
     }
 
@@ -549,6 +551,48 @@ def test_initial_subtitles_off_round_trips():
     payload = p.render_payload()
     data = json.loads(payload[len("setConfigurationPanel("):-len(");")])
     assert data["settings"]["subtitles_on"] is False
+
+
+# ---- "Disable Annoying Dialogue" toggle / gameplay tab --------------------
+
+def test_render_payload_includes_disable_annoying_dialogue_on():
+    p, _ = _make()
+    p.open()
+    payload = p.render_payload()
+    data = json.loads(payload[len("setConfigurationPanel("):-len(");")])
+    assert data["settings"]["disable_annoying_dialogue_on"] is True
+
+
+def test_toggle_disable_annoying_dialogue_flips_and_calls_applier():
+    p, kwargs = _make()
+    p.open()
+    p.dispatch_event("toggle:disable_annoying_dialogue")
+    kwargs["set_disable_annoying_dialogue"].assert_called_once_with(False)
+    # state reflects the new value
+    payload = p.render_payload()
+    data = json.loads(payload[len("setConfigurationPanel("):-len(");")])
+    assert data["settings"]["disable_annoying_dialogue_on"] is False
+
+
+def test_gameplay_tab_focusables_include_disable_annoying_dialogue():
+    p, _ = _make(tabs=[("graphics", "Graphics"), ("gameplay", "Gameplay")])
+    p.dispatch_event("tab:gameplay")
+    focusables = p._focusables()
+    assert ("ctrl", "disable_annoying_dialogue") in focusables
+    # Subtitles stays first on the gameplay tab.
+    assert focusables.index(("ctrl", "subtitles")) \
+        < focusables.index(("ctrl", "disable_annoying_dialogue"))
+
+
+def test_initial_disable_annoying_dialogue_off_round_trips():
+    p, _ = _make(initial_settings=SettingsSnapshot(
+        dust_on=True, specular_on=True, hdr_on=True, rim_on=True,
+        decals_on=True, fov_deg=70, disable_annoying_dialogue_on=False,
+    ))
+    p.open()
+    payload = p.render_payload()
+    data = json.loads(payload[len("setConfigurationPanel("):-len(");")])
+    assert data["settings"]["disable_annoying_dialogue_on"] is False
 
 
 # ---- dynamic shadows toggle -----------------------------------------------

@@ -3,7 +3,7 @@ from engine.appc.characters import (
     CharacterClass, CharacterClass_Create, CharacterClass_Cast, CharacterClass_GetObject,
     CharacterClass_SetVolumeForLineType, CharacterClass_GetVolumeForLineType,
     STButton, STMenu, STTopLevelMenu,
-    STButton_CreateW, STTopLevelMenu_CreateW, STMenu_Cast, STTopLevelMenu_Cast,
+    STButton_Create, STButton_CreateW, STTopLevelMenu_CreateW, STMenu_Cast, STTopLevelMenu_Cast,
 )
 from engine.appc.objects import ObjectClass
 from engine.appc.sets import SetClass
@@ -248,6 +248,34 @@ def test_st_button_send_activation_event_enqueues_event():
     finally:
         App.g_kEventManager.AddEvent = real
     assert captured == [evt]
+
+
+def test_st_button_create_returns_same_type_as_create_w():
+    """QuickBattle.CreateRegionMenuButton calls App.STButton_Create(sName, pEvent);
+    it must yield the same STButton type the W (widestring) factory produces."""
+    narrow = STButton_Create("Region", None)
+    wide = STButton_CreateW("Region", None)
+    assert type(narrow) is type(wide)
+    assert isinstance(narrow, STButton)
+
+
+def test_st_button_create_round_trips_label_and_event():
+    from engine.appc.events import TGEvent
+    evt = TGEvent()
+    btn = STButton_Create("Klingon Empire", evt)
+    assert btn.GetLabel() == "Klingon Empire"
+    captured = []
+    real = App.g_kEventManager.AddEvent
+    App.g_kEventManager.AddEvent = lambda e: captured.append(e)
+    try:
+        btn.SendActivationEvent()
+    finally:
+        App.g_kEventManager.AddEvent = real
+    assert captured == [evt]
+
+
+def test_app_exposes_st_button_create():
+    assert App.STButton_Create is STButton_Create
 
 
 # ── CharacterClass_GetObject + SetClass integration ──────────────────────────

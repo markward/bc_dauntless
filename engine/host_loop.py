@@ -1357,7 +1357,8 @@ def _apply_pause_menu_side_effects(pause: "_PauseMenuController",
 
 
 def _apply_crew_menu_side_effects(crew_menu_panel, view_mode, pause, h,
-                                  setting_course_panel=None) -> None:
+                                  setting_course_panel=None,
+                                  quick_battle_setup_panel=None) -> None:
     """Free the mouse cursor while a crew menu (F1-F5) is open on the
     bridge, then re-lock on close.
 
@@ -1380,8 +1381,13 @@ def _apply_crew_menu_side_effects(crew_menu_panel, view_mode, pause, h,
     # Helm crew menu; it needs a real cursor too. Clicking Set Course clears
     # the open crew menu, so has_open_menu() is False while the modal is up —
     # key the cursor-free state off the modal as well.
-    modal_open = (setting_course_panel is not None
-                  and setting_course_panel.is_open())
+    # The Quick Battle Setup panel is the same kind of centred CEF modal and
+    # also needs a real cursor while it is open.
+    modal_open = (
+        (setting_course_panel is not None and setting_course_panel.is_open())
+        or (quick_battle_setup_panel is not None
+            and quick_battle_setup_panel.is_open())
+    )
     target = (((view_mode.is_bridge and crew_menu_panel.has_open_menu())
                or modal_open)
               and not pause.is_open)
@@ -2460,6 +2466,145 @@ def teardown_set_objects(session, pSet, renderer) -> None:
             session.planet_natural_scale.pop(planet, None)
 
 
+def _reconcile_runtime_instances(session, renderer, *,
+                                 on_player_change=None,
+                                 verbose: bool = False) -> None:
+    """Reconcile renderer instances against the set's LIVE ship roster.
+
+    Load-time realization (`_MissionLoader.load`) only realizes the ships that
+    exist at mission load. Ships created at RUNTIME — QuickBattle's player ship
+    (StartSimulation2 -> RecreatePlayer destroys+recreates the player) and
+    reinforcement spawns in other missions — never get a render instance, and
+    ships removed from the set leak their instance. This pass, run once per tick
+    before `_sync_instance_transforms`, closes both gaps with a cheap set-diff
+    over the live ship list:
+
+      * ADDITIONS — any ship now in a set but not in `session.ship_instances` is
+        realized via `realize_set_objects` (per-set, idempotent: it skips ships
+        already realized, so re-running is a no-op and models are not reloaded).
+      * REMOVALS — any ship in `session.ship_instances` no longer present in any
+        set has its instance destroyed and is dropped from the dict (the same
+        teardown `teardown_set_objects` does, but driven by the diff so it works
+        for individual despawns, not just whole-set termination).
+      * PLAYER/CAMERA — if `Game_GetCurrentGame().GetPlayer()` is a different
+        object than `session.player` (identity change, e.g. RecreatePlayer's
+        destroy+recreate), `session.player` is updated to the new ship and the
+        `on_player_change` callback (if any) fires with the new player so the
+        host can retarget the camera. The camera follows `session.player`, so
+        updating it is the retarget.
+
+    Steady state (every ship present at load, unchanged player) is a true no-op:
+    no additions, no removals, callback not fired. This keeps existing missions
+    byte-identical to the pre-reconciliation path.
+    """
+    import App
+
+    # ADDITIONS: realize every set that holds an un-realized ship. Idempotent —
+    # realize_set_objects skips ships already in session.ship_instances, so this
+    # only loads/creates instances for genuinely new ships.
+    live_ships = set()
+    for pSet in App.g_kSetManager._sets.values():
+        set_ships = list(_iter_ships_in_set(pSet))
+        live_ships.update(set_ships)
+        if any(ship not in session.ship_instances for ship in set_ships):
+            realize_set_objects(session, pSet, renderer, verbose=verbose)
+
+    # REMOVALS: any realized ship no longer in any set is destroyed and forgotten.
+    for ship in list(session.ship_instances.keys()):
+        if ship not in live_ships:
+            iid = session.ship_instances.pop(ship, None)
+            if iid is not None:
+                renderer.destroy_instance(iid)
+                # ship_glow_controllers is keyed by instance id.
+                session.ship_glow_controllers.pop(iid, None)
+
+    # PLAYER/CAMERA: detect a player identity change (covers RecreatePlayer).
+    game = Game_GetCurrentGame()
+    new_player = game.GetPlayer() if game is not None else None
+    if new_player is not None and new_player is not session.player:
+        session.player = new_player
+        if on_player_change is not None:
+            on_player_change(new_player)
+
+
+def _fire_pending_preload_done() -> None:
+    """Fire the current game's stored preload-done event once, if pending.
+
+    QuickBattle.StartSimulationAction stores a TGEvent(ET_PRELOAD_DONE,
+    destination=mission) via Game.SetPreLoadDoneEvent, trusting the engine to
+    fire it once asset preloading finishes. In dauntless asset loading is
+    synchronous, so we fire it on the next tick. The event's handler is
+    QuickBattle.StartSimulation2, which CREATES the player ship — so the host
+    loop calls this BEFORE _reconcile_runtime_instances on the same tick, and
+    the reconciliation pass then realizes the freshly-spawned ship.
+
+    Fire-once + re-entrancy safe: the slot is cleared BEFORE the event is
+    posted, so a handler that re-enters the loop (or a second call this tick)
+    sees no pending event. Everything is guarded — no game and no pending event
+    are both silent no-ops.
+    """
+    import App  # deferred: module-top `import App` is intentionally avoided.
+
+    game = Game_GetCurrentGame()
+    if game is None:
+        return
+    event = getattr(game, "_preload_done_event", None)
+    if event is None:
+        return
+    # Clear before firing: fire-once / re-entrancy safe.
+    game._preload_done_event = None
+    App.g_kEventManager.AddEvent(event)
+
+
+def _process_object_deletions() -> None:
+    """Remove objects flagged via SetDeleteMe(1) from their set.
+
+    BC's engine deletes delete-me-flagged objects every tick. QuickBattle's
+    EndSimulation ("End Combat") flags every non-player ship + torpedo this way
+    to clear the battle; without this they linger in the set and on screen.
+    After removal the per-tick reconciliation tears down their render instances.
+    Reads the flag via __dict__ (not getattr) so a TGObject __getattr__ _Stub
+    can never masquerade as a truthy flag and delete live objects."""
+    import App
+    sets = getattr(App.g_kSetManager, "_sets", None)
+    if not sets:
+        return
+    for pSet in list(sets.values()):
+        objs = getattr(pSet, "_objects", None)
+        if not objs:
+            continue
+        doomed = [name for name, obj in list(objs.items())
+                  if obj.__dict__.get("_delete_me", False)]
+        for name in doomed:
+            pSet.RemoveObjectFromSet(name)
+
+
+def _sync_quick_battle_panel(controller) -> None:
+    """Mirror the QuickBattle config dialog's open/closed state onto the CEF
+    Quick Battle Setup panel.
+
+    QuickBattle.g_bDialogUp is the SDK's "config dialog is up" flag: 0 after
+    InitGlobals (boot), 1 once OpenConfigDialog runs (the XO "Quick Battle
+    Setup" button fires ET_OPEN_DIALOG), back to 0 on CloseConfigDialog /
+    StartQuickBattle. We render our own panel instead of the SDK's g_pPane, so
+    the panel follows that flag: boot leaves it closed (the player opens it from
+    the XO menu, in cursor mode), and Close/Start close it. Fully guarded — a
+    no-op when QuickBattle isn't the active module or the panel is absent."""
+    panel = getattr(controller, "quick_battle_setup_panel", None)
+    if panel is None:
+        return
+    try:
+        import importlib
+        qb = importlib.import_module("QuickBattle.QuickBattle")
+        up = bool(getattr(qb, "g_bDialogUp", 0))
+    except Exception:
+        return
+    if up and not panel.is_open():
+        panel.open()
+    elif not up and panel.is_open():
+        panel.close()
+
+
 class HostController:
     """Per-process state for the running renderer + a single mission.
 
@@ -2582,9 +2727,89 @@ class _MissionLoader:
         self._verbose = verbose
 
     def load(self, mission_name: str) -> MissionSession:
-        import App
         _init_mission(mission_name)
-        sess = MissionSession(mission_name=mission_name)
+        return self._realize_session(MissionSession(mission_name=mission_name))
+
+    def load_quickbattle(self) -> MissionSession:
+        """Boot the REAL SDK QuickBattle entry cascade and realize its scene.
+
+        This is the headless-testable half of the no-mission-name boot path:
+        it deliberately does NOT touch GLFW/window setup. It mirrors
+        _init_mission's current-game wiring (reset_sdk_globals + a fresh
+        Game/_set_current_game), then runs QuickBattleGame.Initialize(game),
+        which cascades through Game.LoadEpisode ->
+        QuickBattleEpisode.Initialize -> Episode.LoadMission ->
+        QuickBattle.Initialize (Task 1), building the QuickBattleRegion set,
+        the GalaxyBridge, and the initial player ship.
+
+        After the cascade it injects the faithful player-only default state and
+        posts ET_START_SIMULATION to the SDK's own g_pXO via the event manager
+        — never calling StartSimulation* directly — so the SDK's 2s TGSequence,
+        StartSimulationAction/SetPreLoadDoneEvent, _fire_pending_preload_done,
+        and StartSimulation2 carry the flow. Finally it runs the same scene
+        realization walk load() uses and returns the MissionSession.
+        """
+        import App
+        from engine.core.game import Game, _set_current_game
+
+        reset_sdk_globals()
+        game = Game()
+        _set_current_game(game)
+
+        # The real game always has an Options.cfg on disk (the launcher/menu
+        # writes it). QuickBattle.BuildDialog early-returns — skipping the
+        # config-dialog buttons including g_pStartButton — when
+        # LoadConfigFile("Options.cfg") returns 0, and StartSimulation later
+        # dereferences g_pStartButton unconditionally. Headless there is no
+        # launcher, so guarantee the file exists (matching the real launch
+        # invariant) before the cascade builds the dialog.
+        if App.g_kConfigMapping.LoadConfigFile("Options.cfg") == 0:
+            App.g_kConfigMapping.SaveConfigFile("Options.cfg")
+
+        import QuickBattle.QuickBattleGame as _QBGame
+        _QBGame.Initialize(game)
+
+        self._inject_quickbattle_player_defaults()
+        return self._realize_session(MissionSession(mission_name="QuickBattle"))
+
+    @staticmethod
+    def _inject_quickbattle_player_defaults() -> None:
+        """Set the player-only QuickBattle defaults and post the faithful
+        ET_START_SIMULATION through the SDK's own globals/handlers.
+
+        Galaxy player ship + GalaxyBridge, the QuickBattleRegion as the
+        selected region, and empty enemy/friend lists (a player-only battle).
+        The event is targeted at QuickBattle.g_pXO (the SDK BuildDialog
+        registered StartSimulation there) and posted via g_kEventManager so the
+        SDK handler runs unchanged.
+        """
+        import App
+        import QuickBattle.QuickBattle as QB
+
+        QB.g_sPlayerType = "Galaxy"
+        QB.g_sBridgeType = "GalaxyBridge"
+        QB.g_sSelectedRegion = "QuickBattleRegion"
+        QB.g_kEnemyList = []
+        QB.g_kFriendList = []
+
+    def start_quickbattle(self) -> None:
+        """Post ET_START_SIMULATION to g_pXO via the SDK event manager.
+
+        Separated from load_quickbattle so the boot path can stage the menu
+        defaults before the player triggers (or the host auto-triggers) the
+        battle. Faithful: routes through g_pXO's registered StartSimulation
+        handler, never calling StartSimulation directly.
+        """
+        import App
+        import QuickBattle.QuickBattle as QB
+
+        evt = App.TGEvent_Create()
+        evt.SetEventType(QB.ET_START_SIMULATION)
+        evt.SetDestination(QB.g_pXO)
+        App.g_kEventManager.AddEvent(evt)
+
+    def _realize_session(self, sess: MissionSession) -> MissionSession:
+        import App
         r_ = self._c.renderer
 
         shared_search = [
@@ -3415,8 +3640,10 @@ def run(mission_name: Optional[str] = None,
     """Boot the renderer, init the named mission, run until the window closes
     or max_ticks is reached. Returns 0 on clean exit.
 
-    Mission resolution: ``mission_name`` argument wins; otherwise
-    ``SHIP_GATE_MISSION`` (the default M2Objects ship-gate mission).
+    Mission resolution: an explicit ``mission_name`` argument loads that single
+    mission (byte-for-byte the existing path); with no mission name the host
+    boots the REAL SDK QuickBattle entry cascade to an auto-started player-only
+    battle. ``SHIP_GATE_MISSION`` is still available to callers that pass it.
 
     Debug knobs (env vars):
       OPEN_STBC_HOST_HEADLESS=1     — hide the window (used by tests).
@@ -3429,8 +3656,12 @@ def run(mission_name: Optional[str] = None,
     import os as _os
     verbose = _os.environ.get("OPEN_STBC_HOST_VERBOSE") == "1"
     fixed_camera = _os.environ.get("OPEN_STBC_HOST_FIXED_CAMERA") == "1"
-    if mission_name is None:
-        mission_name = SHIP_GATE_MISSION
+    # No mission name => boot the REAL SDK QuickBattle entry cascade (auto-start
+    # player-only battle). A caller that passes an explicit mission_name (the
+    # test harness, dev mission picker, every existing mission) keeps the
+    # single-mission path byte-for-byte. SHIP_GATE_MISSION stays available for
+    # callers that want it explicitly.
+    boot_quickbattle = mission_name is None
 
     _setup_sdk()
 
@@ -3670,7 +3901,19 @@ def run(mission_name: Optional[str] = None,
         # must load bridge SFX into a live backend. Listener installs stay in
         # init_audio() below (relocating them would change spawn-event capture).
         init_audio_backend()
-        controller.session = controller.loader.load(mission_name)
+        if boot_quickbattle:
+            # Real SDK QuickBattle entry cascade: builds the QuickBattleRegion
+            # set, GalaxyBridge, and initial player, injects the player-only
+            # defaults. We deliberately do NOT call start_quickbattle() here —
+            # auto-posting ET_START_SIMULATION at boot fires
+            # DisableSimulationMenus (greying the SDK config button) and drops
+            # straight into the fight. Instead boot lands on the Quick Battle
+            # Setup panel (opened just below, after the panel is constructed);
+            # the player's Start there reconciles the start in a later task.
+            # start_quickbattle() itself is kept for that reconciliation.
+            controller.session = controller.loader.load_quickbattle()
+        else:
+            controller.session = controller.loader.load(mission_name)
         # The SDK's CreateAndPopulateBridgeSet plays AmbBridge at load
         # (LoadBridge.py:213); silence it now since the initial view is space.
         # bridge_ambient remains the sole authority on when the hum plays.
@@ -3828,6 +4071,7 @@ def run(mission_name: Optional[str] = None,
                     director.fov_y_rad
                 ))),
                 subtitles_on=_crew_speech.subtitles_enabled(),
+                disable_annoying_dialogue_on=_crew_speech.annoying_dialogue_disabled(),
             ),
             set_dust=r.set_dust_enabled,
             set_specular=r.set_specular_enabled,
@@ -3836,6 +4080,7 @@ def run(mission_name: Optional[str] = None,
             set_decals=r.set_decals_enabled,
             set_smaa=r.set_smaa_enabled,
             set_subtitles=_crew_speech.set_subtitles_enabled,
+            set_disable_annoying_dialogue=_crew_speech.set_annoying_dialogue_disabled,
             set_fov_rad=director.set_fov,
             set_shadows=r.set_shadows_enabled,
             set_procedural_sky=r.set_procedural_sky_enabled,
@@ -3845,6 +4090,17 @@ def run(mission_name: Optional[str] = None,
             set_volumetric_nebulae=r.set_volumetric_nebulae_enabled,
             set_nebula_lightning=r.set_nebula_lightning_enabled,
         )
+
+        # Quick Battle Setup panel — on-theme tabbed-modal shell (Ships tab).
+        # Production-visible (NOT dev-only). Boot opens this instead of
+        # auto-starting the battle (see the boot_quickbattle block above).
+        # The panel's Start drives the proven SP1 start path (start_quickbattle
+        # posts ET_START_SIMULATION to g_pXO -> StartSimulation -> ...), using
+        # whatever roster the player built via the panel's Add buttons.
+        from engine.ui.quick_battle_setup_panel import QuickBattleSetupPanel
+        quick_battle_setup_panel = QuickBattleSetupPanel(
+            on_start=lambda: controller.loader.start_quickbattle())
+        controller.quick_battle_setup_panel = quick_battle_setup_panel
 
         from engine.ui.pause_menu import default_pause_menu
         from engine.ui.panel_registry import PanelRegistry
@@ -3880,6 +4136,11 @@ def run(mission_name: Optional[str] = None,
         info_box_panel = InfoBoxPanel()
         registry.register(info_box_panel)
         registry.register(configuration_panel)
+        registry.register(quick_battle_setup_panel)
+        # The panel is NOT opened at boot: the player opens it from the XO
+        # menu's "Quick Battle Setup" button (ET_OPEN_DIALOG -> g_bDialogUp=1),
+        # which _sync_quick_battle_panel mirrors onto the panel each tick. Boot
+        # leaves the player on the bridge (in flight/cursor mode as usual).
         if dev_mode.is_enabled():
             registry.register(mission_picker)
             registry.register(developer_options_panel)
@@ -4030,7 +4291,8 @@ def run(mission_name: Optional[str] = None,
                 # on close. Runs every frame; idempotent + latched.
                 _apply_crew_menu_side_effects(
                     crew_menu_panel, view_mode, pause, _h,
-                    setting_course_panel)
+                    setting_course_panel,
+                    controller.quick_battle_setup_panel)
                 if pause.is_open:
                     # When a settings modal is open it consumes keyboard
                     # input — pause-menu navigation would otherwise activate
@@ -4173,10 +4435,14 @@ def run(mission_name: Optional[str] = None,
                         and _BR_X <= _mx < _BR_X + _BR_W
                         and _BR_Y <= _my < _BR_Y + _BR_H
                     )
-                    # The Set Course modal is a full-viewport cp-* backdrop:
-                    # any click while it's open belongs to CEF (the OK button
-                    # or the inert backdrop), never to phaser fire.
-                    _cursor_in_modal = setting_course_panel.is_open()
+                    # The Set Course and Quick Battle Setup modals are
+                    # full-viewport cp-* backdrops: any click while one is open
+                    # belongs to CEF (a button or the inert backdrop), never to
+                    # phaser fire or the bridge view below.
+                    _cursor_in_modal = (
+                        setting_course_panel.is_open()
+                        or controller.quick_battle_setup_panel.is_open()
+                    )
                     _cursor_in_panel = (
                         _cursor_in_left_column or _cursor_in_bottom_row
                         or _cursor_in_modal
@@ -4237,6 +4503,41 @@ def run(mission_name: Optional[str] = None,
                 had_pending_swap = False
 
             session = controller.session
+            # Fire QuickBattle's stored preload-done event (if pending) BEFORE
+            # reconciliation. Its handler (StartSimulation2) spawns the player
+            # ship; firing first means the reconciliation pass below realizes
+            # that ship in the same tick. Fire-once and fully guarded — a no-op
+            # for missions that never set a preload-done event.
+            _fire_pending_preload_done()
+            # Remove SetDeleteMe(1)-flagged objects from their set (QuickBattle
+            # "End Combat" clears the battle this way); the reconciliation below
+            # then tears down their render instances.
+            _process_object_deletions()
+            # Mirror the SDK config-dialog flag onto the Quick Battle Setup
+            # panel: opens it when the player clicks the XO menu's config
+            # button, closes it on Close/Start. Boot leaves it closed.
+            _sync_quick_battle_panel(controller)
+            # Per-tick realization reconciliation: realize ships created at
+            # RUNTIME (QuickBattle's RecreatePlayer, reinforcement spawns) and
+            # tear down ships removed from the set. Also retargets the camera if
+            # the player object identity changed (RecreatePlayer destroy+
+            # recreate). Runs BEFORE reading session.player below so the new
+            # player is followed this same frame. No-op for steady-state
+            # missions (all ships present at load) — see
+            # _reconcile_runtime_instances. Verbose mirrors loader verbosity.
+            if session is not None:
+                def _on_player_change(new_player, _d=director, _xb=_xform_buf):
+                    # The camera follows session.player (re-read below). Snap so
+                    # the new player doesn't lerp from the destroyed ship's pose,
+                    # and re-seed the director's ship-radius distances.
+                    _r = new_player.GetRadius()
+                    _d.chase.set_ship_radius(_r)
+                    _d.tracking.set_ship_radius(_r)
+                    _d.snap()
+                    _xb.reset_all()
+                _reconcile_runtime_instances(
+                    session, controller.renderer,
+                    on_player_change=_on_player_change, verbose=verbose)
             player = session.player if session is not None else None
             if had_pending_swap and player is not None:
                 _r = player.GetRadius()

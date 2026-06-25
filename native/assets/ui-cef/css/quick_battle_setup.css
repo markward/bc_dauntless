@@ -1,0 +1,153 @@
+/* Quick Battle Setup — on-theme tabbed modal SHELL.
+
+   Reuses the configuration panel's cp-* chrome (cp-modal, cp-header,
+   cp-content, cp-tabstrip, cp-tab, cp-body, cp-footer, cp-done-button,
+   cp-focused) — see css/configuration_panel.css. Only the wrapper backdrop
+   and a tiny placeholder rule live here; everything else is shared cp-*.
+
+   Hidden by default; setQuickBattleSetup({open:true}) flips display to 'flex'.
+   Mirrors #configuration-panel's backdrop exactly. NOT dev-only — visible in
+   normal play (boot lands here). */
+
+#quick-battle-setup {
+    display: none;
+    position: fixed;
+    inset: 0;
+    align-items: center;
+    justify-content: center;
+    /* No dim: the setup panel sits over the live bridge without greying it. */
+    background: transparent;
+    z-index: 50;
+    font-family: "Antonio", sans-serif;
+}
+
+/* Large work surface — fill 80% of the viewport. */
+#quick-battle-setup .cp-modal {
+    width: 80vw;
+    height: 80vh;
+}
+
+/* The body hosts two full-height columns that scroll internally (so the Add
+   buttons can pin to the bottom of their column); the body itself never
+   scrolls. */
+#quick-battle-setup .cp-body {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* Empty/placeholder hints. */
+.qbs-placeholder,
+.qbs-empty {
+    color: #8a93a3;
+    font-style: italic;
+    padding: 8px 4px;
+}
+
+/* Two columns: ship catalog (left) | rosters (right). Each column is a flex
+   column that fills the body height; its .qbs-scroll holds the scrolling
+   content, leaving the catalog's .qbs-actions pinned at the bottom. */
+.qbs-lists {
+    display: flex;
+    gap: 0;
+    flex: 1 1 auto;
+    min-height: 0;
+    align-items: stretch;
+}
+
+.qbs-col {
+    flex: 1 1 50%;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.qbs-scroll {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    min-height: 0;
+}
+
+.qbs-catalog { border-right: 1px solid rgba(255, 255, 255, 0.12); }
+
+.qbs-rosters .qbs-scroll { padding-left: 16px; }
+
+/* Ship-category accordion — same values as the crew-menu accordion
+   (css/crew_menus.css) so categories/ships read identically to the crew tree. */
+.qbs-row {
+    display: flex;
+    align-items: center;
+    padding: 6px 12px;
+    cursor: pointer;
+    font-size: 13px;
+    letter-spacing: 0.04em;
+    color: var(--bc-label-text, rgb(235, 225, 255));
+}
+
+.qbs-row:hover { background: rgba(216, 94, 86, 0.18); }
+
+.qbs-row[data-depth="1"] { padding-left: 12px; }
+.qbs-row[data-depth="2"] { padding-left: 44px; }
+
+.qbs-row.disabled { opacity: 0.4; cursor: default; }
+.qbs-row.disabled:hover { background: transparent; }
+
+/* Selected ship: a stronger salmon tint than hover (+ a gold inset accent so
+   it reads as a persistent selection, not a transient hover). Mirrors the
+   target-list "chosen" alpha-bump pattern; gold matches the cp-focused accent.
+   box-shadow (not border) avoids any layout shift. */
+.qbs-row--selected,
+.qbs-row--selected:hover {
+    background: rgba(216, 94, 86, 0.38);
+    box-shadow: inset 3px 0 0 rgb(255, 210, 90);
+    color: #fff;
+}
+
+/* Caret — neutral white, glyph swapped in JS (no CSS rotate; matches
+   .crew-menu__caret / .target-list__caret). */
+.qbs-caret {
+    flex: 0 0 auto;
+    width: 14px;
+    text-align: center;
+    margin-right: 8px;
+    line-height: 1;
+    color: white;
+}
+
+.qbs-row--leaf .qbs-label { margin-left: 22px; }
+
+.qbs-label { flex: 1 1 auto; }
+
+/* Add As Friendly / Add As Enemy — pinned to the bottom of the catalog column
+   (flex:0 0 auto after the flex:1 .qbs-scroll). */
+.qbs-actions {
+    flex: 0 0 auto;
+    display: flex;
+    gap: 8px;
+    padding: 10px 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.qbs-actions .cp-done-button { flex: 1 1 auto; }
+
+/* Roster lists — affiliation tints from target_list.css tokens. */
+.qbs-roster-title {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: rgba(216, 132, 80, 0.9);
+    margin: 4px 0 4px 2px;
+}
+
+.qbs-roster { margin-bottom: 10px; }
+
+.qbs-roster-row {
+    padding: 5px 10px;
+    font-size: 13px;
+    border-left: 3px solid transparent;
+    color: var(--bc-label-text, rgb(235, 225, 255));
+}
+
+.qbs-roster-row--friendly { border-left-color: var(--bc-target-friendly, rgb(80, 170, 255)); }
+.qbs-roster-row--enemy    { border-left-color: var(--bc-target-name, rgb(220, 60, 60)); }

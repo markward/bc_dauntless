@@ -107,6 +107,38 @@ class Episode(TGObject):
         # Headless: no module lifecycle management — accept and ignore.
         pass
 
+    def LoadMission(self, name: str, start_event=None) -> "Mission":
+        """Load and initialize a mission, then post its start event.
+
+        SDK chain: QuickBattleEpisode.Initialize calls
+        ``pEpisode.LoadMission("QuickBattle.QuickBattle", pMissionStartEvent)``.
+        Mirrors host_loop._init_mission: import the module, create a Mission,
+        wire it as current, run optional PreLoadAssets then Initialize, then
+        target ``start_event`` at this episode (matching the SDK, which sets the
+        event's destination to the episode) and post it to the event manager.
+        """
+        import importlib
+        import App
+
+        module = importlib.import_module(name)
+
+        mission = Mission()
+        self.SetCurrentMission(mission)
+
+        if hasattr(module, "PreLoadAssets"):
+            module.PreLoadAssets(mission)
+        module.Initialize(mission)
+
+        if start_event is not None:
+            # Mirrors _init_mission / the SDK: ET_MISSION_START targets the
+            # episode (QuickBattleEpisode sets SetDestination(pEpisode) before
+            # the load; re-assert it here so callers that don't can still rely
+            # on episode-targeted dispatch).
+            start_event.SetDestination(self)
+            App.g_kEventManager.AddEvent(start_event)
+
+        return mission
+
 
 def Game_GetDifficulty() -> int:
     return 1  # MEDIUM
@@ -155,12 +187,39 @@ class Game(TGObject):
         super().__init__()
         self._current_episode: Episode | None = None
         self._player = None
+        self._preload_done_event = None
 
     def GetCurrentEpisode(self) -> Episode | None:
         return self._current_episode
 
     def SetCurrentEpisode(self, episode: Episode) -> None:
         self._current_episode = episode
+
+    def LoadEpisode(self, name: str) -> "Episode":
+        """Load and initialize an episode.
+
+        SDK chain: QuickBattleGame.Initialize calls
+        ``pGame.LoadEpisode("QuickBattle.QuickBattleEpisode")``. Import the
+        module, create an Episode, wire it as this game's current episode, then
+        run the module's Initialize (which in turn calls LoadMission, completing
+        the synchronous Game -> Episode -> Mission cascade).
+        """
+        import importlib
+
+        module = importlib.import_module(name)
+
+        episode = Episode()
+        self.SetCurrentEpisode(episode)
+
+        module.Initialize(episode)
+
+        return episode
+
+    def SetPreLoadDoneEvent(self, event) -> None:
+        """Store the event the engine fires once pre-load (asset streaming)
+        finishes. SDK Game.SetPreLoadDoneEvent. The host main loop reads and
+        posts it later; this only stores it."""
+        self._preload_done_event = event
 
     def GetPlayer(self):
         return self._player
@@ -182,8 +241,19 @@ class Game(TGObject):
     def LoadSound(self, path: str, name: str, loadspec: int):
         # Late import: engine.audio depends on the native extension which may
         # not be ready at game.py import time.
-        from engine.audio.tg_sound import TGSoundManager
-        return TGSoundManager.instance().LoadSound(path, name, loadspec)
+        from engine.audio.tg_sound import TGSoundManager, TGSound
+        mgr = TGSoundManager.instance()
+        snd = mgr.LoadSound(path, name, loadspec)
+        # Appc Game_LoadSound never returns None — it hands back a valid (silent)
+        # handle even when the asset is missing or the backend is down, and the
+        # SDK chains .SetVolume() on the result unconditionally
+        # (LoadTacticalSounds.py:23/29). Register a real-but-unloaded TGSound so
+        # that chain works headless. Mirrors LoadSoundInGroup's contract.
+        if snd is None:
+            positional = (loadspec == TGSound.LS_3D)
+            snd = mgr.GetSound(name) or TGSound(name, positional)
+            mgr._sounds[name] = snd
+        return snd
 
     def LoadSoundInGroup(self, path: str, name: str, group: str):
         # Late import: engine.audio depends on the native extension which may
