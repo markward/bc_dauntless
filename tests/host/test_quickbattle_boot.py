@@ -201,3 +201,50 @@ def test_open_config_dialog_sets_dialog_up(monkeypatch):
     App.g_kEventManager.AddEvent(evt)
 
     assert QB.g_bDialogUp == 1
+
+
+def test_generate_ships_with_enemy_roster_completes(monkeypatch):
+    """GenerateShips runs its per-ship body for the first time once a roster is
+    non-empty (SP1 was player-only). Add one enemy and assert the spawn loop
+    completes without raising and records the ship — surfaces any missing Appc
+    surface in the per-ship path (e.g. _TGString.Append, SetDisplayName, the
+    placement/proximity calls)."""
+    import QuickBattle.QuickBattle as QB
+    hl, controller = _fresh_quickbattle_loader(monkeypatch)
+    controller.session = controller.loader.load_quickbattle()
+
+    # (sShipType, sShipName, sDestroyedMessage, sWhichAI, sWhichSide, sAINumber)
+    QB.g_kEnemyList = [
+        ("Galaxy", "Galaxy", "msg", "QuickBattle.QuickBattleAI", "Enemy", 0.5),
+    ]
+    QB.GenerateShips()
+
+    # The enemy ship was created and recorded in the global ship map.
+    assert len(QB.g_kShips) >= 1
+
+
+def test_full_start_with_enemy_runs_ai_assignment(monkeypatch):
+    """End-to-end Start with a non-empty enemy roster: drives the real
+    StartSimulation -> 2s sequence -> StartSimulation2, which runs GenerateShips
+    AND the per-ship AI assignment (import sWhichAI -> CreateAI -> pShip.SetAI)
+    and the red-alert/tactical switch. Mirrors the live flow after the player
+    clicks Add As Enemy then Start; surfaces AI/ChangeRegion shim gaps."""
+    import App
+    import QuickBattle.QuickBattle as QB
+    from engine.core.game import Game_GetCurrentGame
+
+    hl, controller = _fresh_quickbattle_loader(monkeypatch)
+    controller.loader.load_quickbattle()
+
+    # The player adds one enemy via the panel before Start.
+    QB.g_kEnemyList = [
+        ("Galaxy", "Galaxy", "msg", "QuickBattle.QuickBattleAI", "Enemy", 0.5),
+    ]
+
+    controller.loader.start_quickbattle()
+    App.g_kTimerManager.tick(3.0)          # past the 2s preload sequence
+    hl._fire_pending_preload_done()        # -> StartSimulation2
+
+    assert QB.bInSimulation == 1           # StartSimulation2 completed
+    assert len(QB.g_kShips) >= 1           # enemy spawned + recorded
+    assert Game_GetCurrentGame().GetPlayer() is not None

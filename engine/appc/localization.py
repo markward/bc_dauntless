@@ -113,6 +113,12 @@ class TGString:
     def CompareC(self, other, case_insensitive: int = 0) -> int:
         return _tgstring_compare(self._value, other, case_insensitive)
 
+    def Append(self, other) -> "TGString":
+        # Mutable handle: append in place and return self, matching the SDK
+        # idiom kString = kString.Append(kString2).
+        self._value += str(other)
+        return self
+
     def __bool__(self) -> bool:
         return True
 
@@ -145,6 +151,12 @@ class _TGString(str):
 
     def GetLength(self) -> int:
         return len(self)
+
+    def Append(self, other) -> "_TGString":
+        # _TGString is an immutable str subclass, so return a new instance with
+        # the concatenated value. SDK call sites reassign the result
+        # (kString = kString.Append(kString2)), so this matches their usage.
+        return _TGString(str(self) + str(other))
 
     def Compare(self, other, case_insensitive: int = 0) -> int:
         return _tgstring_compare(str(self), other, case_insensitive)

@@ -271,6 +271,46 @@ class _StubModule(types.ModuleType):
         return _Stub()
 
 
+class _FixImplicitRelativeImport(ast.NodeTransformer):
+    """Python 1.5 implicit relative imports: a bare ``import X`` from inside an
+    SDK package resolved to a sibling module ``X.py`` in the same package (BC
+    added each package dir to sys.path). Python 3 instead resolves it to the
+    top-level package — and when a package and a same-named sibling module
+    collide (QuickBattle/ vs QuickBattle/QuickBattle.py), ``import QuickBattle``
+    binds the *package*, so ``QuickBattle.GetCurrentAILevel()`` (QuickBattleAI)
+    raises AttributeError.
+
+    Rewrite ``import X`` -> ``from <pkg> import X`` when X is a sibling module
+    of the file being loaded. This binds the local name to the sibling module
+    exactly as BC did, without touching sys.modules[<pkg>] (so dotted imports
+    like ``import QuickBattle.QuickBattleEpisode`` still see the package)."""
+
+    def __init__(self, file_path):
+        p = Path(file_path)
+        try:
+            rel = p.relative_to(SDK_SCRIPTS)
+        except ValueError:
+            self._pkg = None
+            return
+        parent_parts = rel.parts[:-1]            # drop the filename
+        self._pkg = ".".join(parent_parts) if parent_parts else None
+        self._pkg_dir = p.parent
+        self._self_name = p.stem
+
+    def visit_Import(self, node):
+        if not self._pkg or len(node.names) != 1:
+            return node
+        alias = node.names[0]
+        name = alias.name
+        if "." in name or alias.asname is not None or name == self._self_name:
+            return node
+        if not (self._pkg_dir / (name + ".py")).exists():
+            return node
+        return ast.ImportFrom(
+            module=self._pkg, names=[ast.alias(name=name, asname=None)], level=0,
+        )
+
+
 class _AliasLoader(importlib.abc.Loader):
     def __init__(self, existing_module):
         self._module = existing_module
@@ -297,6 +337,7 @@ class _SDKLoader(importlib.abc.Loader):
             warnings.simplefilter("ignore")
             tree = ast.parse(source, filename=self.path)
             tree = _MoveGlobalsToTop().visit(tree)
+            tree = _FixImplicitRelativeImport(self.path).visit(tree)
             tree = _FixDottedImport().visit(tree)
             tree = _FixPy2Sort().visit(tree)
             tree = _FixPy2DictIterMutation().visit(tree)

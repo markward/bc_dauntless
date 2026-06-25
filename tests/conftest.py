@@ -285,6 +285,41 @@ class _AliasLoader(importlib.abc.Loader):
         pass
 
 
+class _FixImplicitRelativeImport(ast.NodeTransformer):
+    """Rewrite a bare ``import X`` to ``from <pkg> import X`` when X is a sibling
+    module of the file being loaded — BC's Python 1.5 implicit relative imports.
+    Without this, ``import QuickBattle`` from QuickBattleAI binds the QuickBattle
+    *package* instead of the sibling QuickBattle.QuickBattle module, so
+    ``QuickBattle.GetCurrentAILevel()`` raises AttributeError. Mirrors
+    tools/mission_harness._FixImplicitRelativeImport."""
+
+    def __init__(self, file_path):
+        p = Path(file_path)
+        try:
+            rel = p.relative_to(SDK_SCRIPTS)
+        except ValueError:
+            self._pkg = None
+            return
+        parent_parts = rel.parts[:-1]
+        self._pkg = ".".join(parent_parts) if parent_parts else None
+        self._pkg_dir = p.parent
+        self._self_name = p.stem
+
+    def visit_Import(self, node):
+        if not self._pkg or len(node.names) != 1:
+            return node
+        alias = node.names[0]
+        if "." in alias.name or alias.asname is not None \
+                or alias.name == self._self_name:
+            return node
+        if not (self._pkg_dir / (alias.name + ".py")).exists():
+            return node
+        return ast.ImportFrom(
+            module=self._pkg, names=[ast.alias(name=alias.name, asname=None)],
+            level=0,
+        )
+
+
 class _SDKLoader(importlib.abc.Loader):
     """Load an SDK script with Python 2 compatibility fixes applied."""
 
@@ -304,6 +339,7 @@ class _SDKLoader(importlib.abc.Loader):
             warnings.simplefilter("ignore")
             tree = ast.parse(source, filename=self.path)
         tree = _MoveGlobalsToTop().visit(tree)
+        tree = _FixImplicitRelativeImport(self.path).visit(tree)
         tree = _FixDottedImport().visit(tree)
         tree = _FixPy2Sort().visit(tree)
         tree = _FixDictKeysIter().visit(tree)
