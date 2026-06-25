@@ -1,10 +1,11 @@
 // Quick Battle Setup panel render fn. Driven by Python via
 // cef_execute_javascript:
-//   setQuickBattleSetup({open:true, selected_tab, tabs});
+//   setQuickBattleSetup({open:true, selected_tab, tabs, categories,
+//                        friendly, enemy});
 //   setQuickBattleSetup({open:false});
 // Click events fire dauntlessEvent('quick-battle-setup/<verb>[:<arg>]').
-// Reuses the cp-* classes from css/configuration_panel.css so the look
-// matches the configuration panel. T1 = shell only (Ships tab placeholder).
+// Reuses the cp-* chrome (css/configuration_panel.css) and the crew-menu
+// accordion + target-list roster tints so the look matches the rest of the UI.
 
 function escapeHtmlQBS(s) {
     return String(s)
@@ -29,13 +30,58 @@ function _qbsRenderTabstrip(state) {
     return html;
 }
 
-function _qbsRenderBody(state) {
-    // T1: placeholder only. The ship accordion / friend-enemy lists land in
-    // a later task.
-    if (state.selected_tab === 'ships') {
-        return '<div class="qbs-placeholder">(ships)</div>';
+// Ship-category accordion — mirrors the crew-menu row/caret/depth pattern.
+function _qbsRenderCategories(categories) {
+    const cats = categories || [];
+    if (!cats.length) return '<div class="qbs-placeholder">(no ships)</div>';
+    let html = '';
+    for (const cat of cats) {
+        const open = cat.expanded === true;
+        html += '<div class="qbs-row" data-depth="1"'
+              +   ' onclick="dauntlessEvent(\'quick-battle-setup/expand:' + cat.id + '\')">'
+              +   '<span class="qbs-caret">' + (open ? '▾' : '▸') + '</span>'
+              +   '<span class="qbs-label">' + escapeHtmlQBS(cat.label) + '</span>'
+              + '</div>';
+        if (!open) continue;
+        for (const ship of (cat.ships || [])) {
+            const disabled = ship.enabled === false;
+            const cls = 'qbs-row qbs-row--leaf' + (disabled ? ' disabled' : '');
+            const onclick = disabled ? ''
+                : ' onclick="dauntlessEvent(\'quick-battle-setup/click-ship:' + ship.id + '\')"';
+            html += '<div class="' + cls + '" data-depth="2"' + onclick + '>'
+                  +   '<span class="qbs-label">' + escapeHtmlQBS(ship.label) + '</span>'
+                  + '</div>';
+        }
     }
-    return '';
+    return html;
+}
+
+// Friendly / Enemy roster list — target-list affiliation tint via the kind class.
+function _qbsRenderRoster(items, kind) {
+    const list = items || [];
+    if (!list.length) return '<div class="qbs-empty">(none)</div>';
+    let html = '';
+    for (const it of list) {
+        html += '<div class="qbs-roster-row qbs-roster-row--' + kind + '">'
+              +   escapeHtmlQBS(it.label)
+              + '</div>';
+    }
+    return html;
+}
+
+function _qbsRenderBody(state) {
+    if (state.selected_tab !== 'ships') return '';
+    return '<div class="qbs-lists">'
+         +   '<div class="qbs-col qbs-catalog">'
+         +     _qbsRenderCategories(state.categories)
+         +   '</div>'
+         +   '<div class="qbs-col qbs-rosters">'
+         +     '<div class="qbs-roster-title">Friendly Ships</div>'
+         +     '<div class="qbs-roster">' + _qbsRenderRoster(state.friendly, 'friendly') + '</div>'
+         +     '<div class="qbs-roster-title">Enemy Ships</div>'
+         +     '<div class="qbs-roster">' + _qbsRenderRoster(state.enemy, 'enemy') + '</div>'
+         +   '</div>'
+         + '</div>';
 }
 
 function setQuickBattleSetup(state) {

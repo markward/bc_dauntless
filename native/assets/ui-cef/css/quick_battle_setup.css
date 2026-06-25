@@ -20,9 +20,80 @@
     font-family: "Antonio", sans-serif;
 }
 
-/* T1 placeholder body — replaced by the ship accordion in a later task. */
-.qbs-placeholder {
+/* Empty/placeholder hints. */
+.qbs-placeholder,
+.qbs-empty {
     color: #8a93a3;
     font-style: italic;
     padding: 8px 4px;
 }
+
+/* Two columns inside cp-body: ship catalog (left) | rosters (right).
+   cp-body already provides padding + vertical scroll. */
+.qbs-lists {
+    display: flex;
+    gap: 0;
+    align-items: flex-start;
+}
+
+.qbs-col { flex: 1 1 50%; min-width: 0; }
+
+.qbs-catalog { border-right: 1px solid rgba(255, 255, 255, 0.12); }
+
+.qbs-rosters { padding-left: 16px; }
+
+/* Ship-category accordion — same values as the crew-menu accordion
+   (css/crew_menus.css) so categories/ships read identically to the crew tree. */
+.qbs-row {
+    display: flex;
+    align-items: center;
+    padding: 6px 12px;
+    cursor: pointer;
+    font-size: 13px;
+    letter-spacing: 0.04em;
+    color: var(--bc-label-text, rgb(235, 225, 255));
+}
+
+.qbs-row:hover { background: rgba(216, 94, 86, 0.18); }
+
+.qbs-row[data-depth="1"] { padding-left: 12px; }
+.qbs-row[data-depth="2"] { padding-left: 44px; }
+
+.qbs-row.disabled { opacity: 0.4; cursor: default; }
+.qbs-row.disabled:hover { background: transparent; }
+
+/* Caret — neutral white, glyph swapped in JS (no CSS rotate; matches
+   .crew-menu__caret / .target-list__caret). */
+.qbs-caret {
+    flex: 0 0 auto;
+    width: 14px;
+    text-align: center;
+    margin-right: 8px;
+    line-height: 1;
+    color: white;
+}
+
+.qbs-row--leaf .qbs-label { margin-left: 22px; }
+
+.qbs-label { flex: 1 1 auto; }
+
+/* Roster lists — affiliation tints from target_list.css tokens. */
+.qbs-roster-title {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: rgba(216, 132, 80, 0.9);
+    margin: 4px 0 4px 2px;
+}
+
+.qbs-roster { margin-bottom: 10px; }
+
+.qbs-roster-row {
+    padding: 5px 10px;
+    font-size: 13px;
+    border-left: 3px solid transparent;
+    color: var(--bc-label-text, rgb(235, 225, 255));
+}
+
+.qbs-roster-row--friendly { border-left-color: var(--bc-target-friendly, rgb(80, 170, 255)); }
+.qbs-roster-row--enemy    { border-left-color: var(--bc-target-name, rgb(220, 60, 60)); }
