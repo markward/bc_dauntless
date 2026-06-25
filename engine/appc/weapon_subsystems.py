@@ -889,6 +889,9 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
         self._target = None
         self._target_offset = None
         self._cooldown_time: float = 0.0
+        # Per-shot cooldown countdown. Set to GetCooldownTime() at Fire,
+        # decremented in UpdateCharge; gates CanFire while > 0.
+        self._cooldown_remaining: float = 0.0
 
     def GetMaxCharge(self) -> float:                return self._max_charge
     def GetMinFiringCharge(self) -> float:          return self._min_firing_charge
@@ -907,6 +910,72 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
         if v < 0.0:                self._charge_level = 0.0
         elif v > self._max_charge: self._charge_level = self._max_charge
         else:                      self._charge_level = v
+
+    # ── Discrete-shot firing (overrides the beam mixin behaviour) ───────────
+    # Pulse cannons fire projectile bolts, not held beams: Fire spawns one
+    # bolt, dumps accumulated charge, and starts a per-shot cooldown. There
+    # is no looping SFX and _firing never stays True — so the mixin's
+    # UpdateCharge always takes the RECHARGE branch (see below).
+
+    def CanFire(self) -> int:
+        if self._cooldown_remaining > 0.0:
+            return 0
+        return _EnergyWeaponFireMixin.CanFire(self)
+
+    def Fire(self, target=None, offset=None) -> None:
+        if not self.CanFire():
+            return
+        prop = self.GetProperty()
+        script = prop.GetModuleName() if (prop is not None and hasattr(prop, "GetModuleName")) else ""
+        if not script:
+            return
+        import importlib
+        try:
+            mod = importlib.import_module(script)
+        except ImportError:
+            return
+        # Power gate — silent no-op if the grid can't cover the shot
+        # (matches torpedoes). Charge is NOT drained on a blocked shot.
+        if not self._debit_pulse_power(mod):
+            return
+        _spawn_projectile(self, mod, drf_override=self.GetDamageRadiusFactor())
+        # Discrete drain: dump accumulated charge + start cooldown. No held beam.
+        self._charge_level = 0.0
+        self._cooldown_remaining = self.GetCooldownTime()
+        self._armed = False  # re-arms in UpdateCharge once past the refire threshold
+
+    def _debit_pulse_power(self, mod) -> int:
+        """Bill the firing ship's PowerSubsystem for this bolt's GetPowerCost().
+
+        Mirrors TorpedoTube._debit_power: returns 1 if billed (or if the gate
+        doesn't apply — ship has no PowerSubsystem, or its PowerSubsystem has
+        no bound PowerProperty meaning a Phase-1 test stub without a power
+        plant). Returns 0 if the gate engaged and the grid couldn't cover the
+        cost — caller treats that as a silent no-op.
+        """
+        ship = self._climb_to_ship()
+        if ship is None:
+            return 1
+        ps = ship.GetPowerSubsystem() if hasattr(ship, "GetPowerSubsystem") else None
+        if ps is None or ps.GetProperty() is None:
+            return 1
+        cost = float(mod.GetPowerCost()) if hasattr(mod, "GetPowerCost") else 0.0
+        if cost <= 0.0:
+            return 1
+        return ps.StealPower(cost)
+
+    def UpdateCharge(self, dt: float) -> None:
+        if self._cooldown_remaining > 0.0:
+            self._cooldown_remaining = max(0.0, self._cooldown_remaining - dt)
+        # _firing stays False for pulse weapons, so the mixin takes the
+        # RECHARGE branch and re-arms via the existing hysteresis threshold.
+        _EnergyWeaponFireMixin.UpdateCharge(self, dt)
+
+    def StopFiring(self) -> None:
+        # Discrete weapon — no _loop_handle to silence; just clear target refs.
+        self._firing = False
+        self._target = None
+        self._target_offset = None
 
 
 class TractorBeam(_EnergyWeaponFireMixin, WeaponSystem):

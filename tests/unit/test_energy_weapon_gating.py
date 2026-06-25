@@ -143,8 +143,13 @@ def test_fire_with_empty_fire_sound_no_sfx():
         mock_mgr.return_value.GetSound.assert_not_called()
 
 
-def test_pulse_weapon_has_fire_surface():
-    """PulseWeapon shares the gating with PhaserBank."""
+def test_pulse_weapon_shares_canfire_gating():
+    """PulseWeapon shares the charge-based CanFire gating with PhaserBank.
+
+    Unlike phasers, PulseWeapon.Fire spawns a discrete projectile bolt rather
+    than holding a beam (does NOT flip _firing) — that contract is covered in
+    tests/unit/test_pulse_weapon_fire.py.  Here we only assert the shared
+    CanFire gate (parent IsOn AND charge >= MinFiringCharge)."""
     pulse = PulseWeapon("Forward Pulse")
     parent = PhaserSystem("PulseSystem")
     parent.TurnOn()
@@ -153,5 +158,21 @@ def test_pulse_weapon_has_fire_surface():
     pulse._min_firing_charge = 1.0
     pulse._charge_level = 2.0
     assert pulse.CanFire() == 1
-    pulse.Fire(None, None)
-    assert pulse.IsFiring() == 1
+    # Below the firing threshold gates CanFire off.
+    pulse._charge_level = 0.5
+    assert pulse.CanFire() == 0
+
+
+def test_pulse_weapon_fire_no_module_is_no_op():
+    """With no bound PulseWeaponProperty/module name, discrete Fire is a
+    silent no-op — no _firing flip, no crash."""
+    pulse = PulseWeapon("Forward Pulse")
+    parent = PhaserSystem("PulseSystem")
+    parent.TurnOn()
+    parent.AddChildSubsystem(pulse)
+    pulse._max_charge = 2.0
+    pulse._min_firing_charge = 1.0
+    pulse._charge_level = 2.0
+    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
+        pulse.Fire(None, None)  # must not raise
+    assert pulse.IsFiring() == 0
