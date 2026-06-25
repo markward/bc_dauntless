@@ -2460,6 +2460,67 @@ def teardown_set_objects(session, pSet, renderer) -> None:
             session.planet_natural_scale.pop(planet, None)
 
 
+def _reconcile_runtime_instances(session, renderer, *,
+                                 on_player_change=None,
+                                 verbose: bool = False) -> None:
+    """Reconcile renderer instances against the set's LIVE ship roster.
+
+    Load-time realization (`_MissionLoader.load`) only realizes the ships that
+    exist at mission load. Ships created at RUNTIME — QuickBattle's player ship
+    (StartSimulation2 -> RecreatePlayer destroys+recreates the player) and
+    reinforcement spawns in other missions — never get a render instance, and
+    ships removed from the set leak their instance. This pass, run once per tick
+    before `_sync_instance_transforms`, closes both gaps with a cheap set-diff
+    over the live ship list:
+
+      * ADDITIONS — any ship now in a set but not in `session.ship_instances` is
+        realized via `realize_set_objects` (per-set, idempotent: it skips ships
+        already realized, so re-running is a no-op and models are not reloaded).
+      * REMOVALS — any ship in `session.ship_instances` no longer present in any
+        set has its instance destroyed and is dropped from the dict (the same
+        teardown `teardown_set_objects` does, but driven by the diff so it works
+        for individual despawns, not just whole-set termination).
+      * PLAYER/CAMERA — if `Game_GetCurrentGame().GetPlayer()` is a different
+        object than `session.player` (identity change, e.g. RecreatePlayer's
+        destroy+recreate), `session.player` is updated to the new ship and the
+        `on_player_change` callback (if any) fires with the new player so the
+        host can retarget the camera. The camera follows `session.player`, so
+        updating it is the retarget.
+
+    Steady state (every ship present at load, unchanged player) is a true no-op:
+    no additions, no removals, callback not fired. This keeps existing missions
+    byte-identical to the pre-reconciliation path.
+    """
+    import App
+
+    # ADDITIONS: realize every set that holds an un-realized ship. Idempotent —
+    # realize_set_objects skips ships already in session.ship_instances, so this
+    # only loads/creates instances for genuinely new ships.
+    live_ships = set()
+    for pSet in App.g_kSetManager._sets.values():
+        set_ships = list(_iter_ships_in_set(pSet))
+        live_ships.update(set_ships)
+        if any(ship not in session.ship_instances for ship in set_ships):
+            realize_set_objects(session, pSet, renderer, verbose=verbose)
+
+    # REMOVALS: any realized ship no longer in any set is destroyed and forgotten.
+    for ship in list(session.ship_instances.keys()):
+        if ship not in live_ships:
+            iid = session.ship_instances.pop(ship, None)
+            if iid is not None:
+                renderer.destroy_instance(iid)
+                # ship_glow_controllers is keyed by instance id.
+                session.ship_glow_controllers.pop(iid, None)
+
+    # PLAYER/CAMERA: detect a player identity change (covers RecreatePlayer).
+    game = Game_GetCurrentGame()
+    new_player = game.GetPlayer() if game is not None else None
+    if new_player is not None and new_player is not session.player:
+        session.player = new_player
+        if on_player_change is not None:
+            on_player_change(new_player)
+
+
 class HostController:
     """Per-process state for the running renderer + a single mission.
 
@@ -4237,6 +4298,27 @@ def run(mission_name: Optional[str] = None,
                 had_pending_swap = False
 
             session = controller.session
+            # Per-tick realization reconciliation: realize ships created at
+            # RUNTIME (QuickBattle's RecreatePlayer, reinforcement spawns) and
+            # tear down ships removed from the set. Also retargets the camera if
+            # the player object identity changed (RecreatePlayer destroy+
+            # recreate). Runs BEFORE reading session.player below so the new
+            # player is followed this same frame. No-op for steady-state
+            # missions (all ships present at load) — see
+            # _reconcile_runtime_instances. Verbose mirrors loader verbosity.
+            if session is not None:
+                def _on_player_change(new_player, _d=director, _xb=_xform_buf):
+                    # The camera follows session.player (re-read below). Snap so
+                    # the new player doesn't lerp from the destroyed ship's pose,
+                    # and re-seed the director's ship-radius distances.
+                    _r = new_player.GetRadius()
+                    _d.chase.set_ship_radius(_r)
+                    _d.tracking.set_ship_radius(_r)
+                    _d.snap()
+                    _xb.reset_all()
+                _reconcile_runtime_instances(
+                    session, controller.renderer,
+                    on_player_change=_on_player_change, verbose=verbose)
             player = session.player if session is not None else None
             if had_pending_swap and player is not None:
                 _r = player.GetRadius()
