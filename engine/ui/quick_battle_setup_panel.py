@@ -105,24 +105,15 @@ class QuickBattleSetupPanel(Panel):
         dfs(root)
         return cats
 
-    def _read_ships(self):
-        """Walk the live QuickBattle widgets and return
-        (categories, friendly, enemy), rebuilding the id->widget map.
-        Empty lists (never raises) when the module/globals are absent."""
+    def _read_pane_categories(self, pane, ship_extra):
+        """Walk a ship-menu pane (g_pShipsPane / g_pPlayerPane) into a list of
+        {id, label, expanded, ships:[{id, label, enabled, **extra}]} and register
+        the id->widget map. `ship_extra(sid, btn)` adds per-ship flags (e.g.
+        'selected' for the enemy catalog, 'current' for the player ship)."""
         from engine.appc.characters import STButton
         from engine.appc.tg_ui.widgets import ensure_widget_id
-
-        self._id_to_widget = {}
         categories: list = []
-        friendly: list = []
-        enemy: list = []
-
-        m = self._qb()
-        if m is None:
-            return categories, friendly, enemy
-
-        ships_pane = getattr(m, "g_pShipsPane", None)
-        for cat in self._collect_categories(ships_pane):
+        for cat in self._collect_categories(pane):
             cid = ensure_widget_id(cat)
             self._id_to_widget[cid] = cat
             ships = []
@@ -130,18 +121,48 @@ class QuickBattleSetupPanel(Panel):
                 if isinstance(btn, STButton):
                     sid = ensure_widget_id(btn)
                     self._id_to_widget[sid] = btn
-                    ships.append({
+                    ship = {
                         "id": sid,
                         "label": btn.GetLabel(),
                         "enabled": bool(btn.IsEnabled()),
-                        "selected": sid == self._selected_ship_id,
-                    })
+                    }
+                    ship.update(ship_extra(sid, btn))
+                    ships.append(ship)
             categories.append({
                 "id": cid,
                 "label": cat.GetLabel(),
                 "expanded": cid in self._expanded_ids,
                 "ships": ships,
             })
+        return categories
+
+    def _read_ships(self):
+        """Walk the live QuickBattle widgets and return
+        (categories, friendly, enemy, player_ship), rebuilding the id->widget
+        map. Empty lists (never raises) when the module/globals are absent."""
+        from engine.appc.characters import STButton
+        from engine.appc.tg_ui.widgets import ensure_widget_id
+
+        self._id_to_widget = {}
+        friendly: list = []
+        enemy: list = []
+
+        m = self._qb()
+        if m is None:
+            return [], friendly, enemy, []
+
+        # Enemy/friendly catalog (Ships pane): highlight the clicked ship.
+        categories = self._read_pane_categories(
+            getattr(m, "g_pShipsPane", None),
+            lambda sid, btn: {"selected": sid == self._selected_ship_id},
+        )
+        # Player-ship catalog (Player pane): highlight the current player ship
+        # (g_sPlayerType is the ship-name string; player buttons label == name).
+        current = getattr(m, "g_sPlayerType", None)
+        player_ship = self._read_pane_categories(
+            getattr(m, "g_pPlayerPane", None),
+            lambda sid, btn: {"current": btn.GetLabel() == current},
+        )
 
         for pane, out in ((getattr(m, "g_pFriendMenu", None), friendly),
                           (getattr(m, "g_pEnemyMenu", None), enemy)):
@@ -151,7 +172,7 @@ class QuickBattleSetupPanel(Panel):
                     self._id_to_widget[bid] = btn
                     out.append({"id": bid, "label": btn.GetLabel()})
 
-        return categories, friendly, enemy
+        return categories, friendly, enemy, player_ship
 
     def widget_for_id(self, wid):
         """Resolve a snapshot-node id back to its live SDK widget (or None)."""
@@ -173,6 +194,18 @@ class QuickBattleSetupPanel(Panel):
         """Activate a QuickBattle module-global button (e.g. g_pAddEnemyButton)."""
         m = self._qb()
         self._activate_widget(getattr(m, global_name, None) if m is not None else None)
+
+    def _recreate_player_if_in_sim(self) -> None:
+        """If combat is active (bInSimulation), call the SDK's RecreatePlayer to
+        swap the player ship live to the just-selected g_sPlayerType. No-op out
+        of combat (the type is just staged for the next Start). Best-effort."""
+        m = self._qb()
+        if m is None or not getattr(m, "bInSimulation", 0):
+            return
+        try:
+            m.RecreatePlayer()
+        except Exception:
+            pass
 
     def _fire_close_dialog(self) -> None:
         """Post ET_CLOSE_DIALOG to g_pXO so the SDK closes the config dialog:
@@ -200,7 +233,7 @@ class QuickBattleSetupPanel(Panel):
         if not self._visible:
             payload = {"open": False}
         else:
-            categories, friendly, enemy = self._read_ships()
+            categories, friendly, enemy, player_ship = self._read_ships()
             payload = {
                 "open": True,
                 "selected_tab": self._selected_tab,
@@ -208,6 +241,7 @@ class QuickBattleSetupPanel(Panel):
                 "categories": categories,
                 "friendly": friendly,
                 "enemy": enemy,
+                "player_ship": player_ship,
             }
         out = "setQuickBattleSetup(" + json.dumps(payload) + ");"
         if out == self._last_pushed:
@@ -257,6 +291,16 @@ class QuickBattleSetupPanel(Panel):
                 self._selected_ship_id = int(raw)
             except ValueError:
                 pass
+            return True
+        if action.startswith("select-player-ship:"):
+            # Fire the player-ship button (ET_SELECT_PLAYER_SHIP_TYPE ->
+            # SelectPlayerShip sets g_sPlayerType). In combat, swap the player
+            # ship live via the SDK's own RecreatePlayer; out of combat it just
+            # sets the type for the next Start (stock behaviour). The host's
+            # reconciliation realizes the new ship + retargets the camera.
+            raw = action[len("select-player-ship:"):]
+            self._activate_widget(self.widget_for_id(raw))
+            self._recreate_player_if_in_sim()
             return True
         if action.startswith("tab:"):
             tab_id = action[len("tab:"):]

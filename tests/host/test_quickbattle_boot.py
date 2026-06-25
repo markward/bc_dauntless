@@ -292,3 +292,58 @@ def test_end_combat_removes_simulated_ships(monkeypatch):
     hl._process_object_deletions()           # host removes flagged objects
 
     assert _non_player_ships() == []         # simulated targets gone
+
+
+def test_player_ship_reverts_on_end_combat(monkeypatch):
+    """_sync_quickbattle_player_revert captures the player ship at combat start
+    (bInSimulation 0->1) and, on combat end (1->0), restores it + RecreatePlayer
+    if it was swapped mid-combat — so a mid-combat ship change is temporary."""
+    from types import SimpleNamespace
+    import QuickBattle.QuickBattle as QB
+
+    hl, controller = _fresh_quickbattle_loader(monkeypatch)
+    controller.loader.load_quickbattle()
+
+    recreated = []
+    monkeypatch.setattr(QB, "RecreatePlayer", lambda: recreated.append(QB.g_sPlayerType))
+    saved_type, saved_sim = QB.g_sPlayerType, QB.bInSimulation
+    ctrl = SimpleNamespace()
+    try:
+        QB.g_sPlayerType = "Galaxy"
+        QB.bInSimulation = 1
+        hl._sync_quickbattle_player_revert(ctrl)        # capture pre = Galaxy
+        assert ctrl._qb_pre_sim_player_type == "Galaxy"
+
+        QB.g_sPlayerType = "Sovereign"                  # mid-combat swap
+        QB.bInSimulation = 0
+        hl._sync_quickbattle_player_revert(ctrl)        # End Combat -> revert
+
+        assert QB.g_sPlayerType == "Galaxy"             # reverted to Start-time ship
+        assert recreated == ["Galaxy"]                  # recreated as that ship
+    finally:
+        QB.g_sPlayerType, QB.bInSimulation = saved_type, saved_sim
+
+
+def test_no_revert_when_player_ship_unchanged(monkeypatch):
+    """If the player never swapped ships mid-combat, End Combat does not fire an
+    extra RecreatePlayer."""
+    from types import SimpleNamespace
+    import QuickBattle.QuickBattle as QB
+
+    hl, controller = _fresh_quickbattle_loader(monkeypatch)
+    controller.loader.load_quickbattle()
+
+    recreated = []
+    monkeypatch.setattr(QB, "RecreatePlayer", lambda: recreated.append(QB.g_sPlayerType))
+    saved_type, saved_sim = QB.g_sPlayerType, QB.bInSimulation
+    ctrl = SimpleNamespace()
+    try:
+        QB.g_sPlayerType = "Galaxy"
+        QB.bInSimulation = 1
+        hl._sync_quickbattle_player_revert(ctrl)        # capture
+        QB.bInSimulation = 0                            # end, no swap
+        hl._sync_quickbattle_player_revert(ctrl)
+        assert QB.g_sPlayerType == "Galaxy"
+        assert recreated == []                          # no extra recreate
+    finally:
+        QB.g_sPlayerType, QB.bInSimulation = saved_type, saved_sim

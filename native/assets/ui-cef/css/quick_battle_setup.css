@@ -142,6 +142,9 @@
 
 .qbs-roster { margin-bottom: 10px; }
 
+/* Player Ship selector sits above the rosters in the right column. */
+.qbs-player-ship { margin-bottom: 10px; }
+
 .qbs-roster-row {
     padding: 5px 10px;
     font-size: 13px;

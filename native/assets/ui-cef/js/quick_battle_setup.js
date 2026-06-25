@@ -31,7 +31,10 @@ function _qbsRenderTabstrip(state) {
 }
 
 // Ship-category accordion — mirrors the crew-menu row/caret/depth pattern.
-function _qbsRenderCategories(categories) {
+// `action` is the per-ship dauntlessEvent verb ('click-ship' for the enemy
+// catalog, 'select-player-ship' for the player ship); `highlightKey` is the
+// per-ship flag that draws the row as highlighted ('selected' / 'current').
+function _qbsRenderCategories(categories, action, highlightKey) {
     const cats = categories || [];
     if (!cats.length) return '<div class="qbs-placeholder">(no ships)</div>';
     let html = '';
@@ -47,9 +50,9 @@ function _qbsRenderCategories(categories) {
             const disabled = ship.enabled === false;
             const cls = 'qbs-row qbs-row--leaf'
                 + (disabled ? ' disabled' : '')
-                + (ship.selected ? ' qbs-row--selected' : '');
+                + (ship[highlightKey] ? ' qbs-row--selected' : '');
             const onclick = disabled ? ''
-                : ' onclick="dauntlessEvent(\'quick-battle-setup/click-ship:' + ship.id + '\')"';
+                : ' onclick="dauntlessEvent(\'quick-battle-setup/' + action + ':' + ship.id + '\')"';
             html += '<div class="' + cls + '" data-depth="2"' + onclick + '>'
                   +   '<span class="qbs-label">' + escapeHtmlQBS(ship.label) + '</span>'
                   + '</div>';
@@ -75,7 +78,9 @@ function _qbsRenderBody(state) {
     if (state.selected_tab !== 'ships') return '';
     return '<div class="qbs-lists">'
          +   '<div class="qbs-col qbs-catalog">'
-         +     '<div class="qbs-scroll">' + _qbsRenderCategories(state.categories) + '</div>'
+         +     '<div class="qbs-scroll">'
+         +       _qbsRenderCategories(state.categories, 'click-ship', 'selected')
+         +     '</div>'
          +     '<div class="qbs-actions">'
          +       '<button class="cp-done-button"'
          +         ' onclick="dauntlessEvent(\'quick-battle-setup/add-friend\')">Add As Friendly</button>'
@@ -85,6 +90,10 @@ function _qbsRenderBody(state) {
          +   '</div>'
          +   '<div class="qbs-col qbs-rosters">'
          +     '<div class="qbs-scroll">'
+         +       '<div class="qbs-roster-title">Player Ship</div>'
+         +       '<div class="qbs-player-ship">'
+         +         _qbsRenderCategories(state.player_ship, 'select-player-ship', 'current')
+         +       '</div>'
          +       '<div class="qbs-roster-title">Friendly Ships</div>'
          +       '<div class="qbs-roster">' + _qbsRenderRoster(state.friendly, 'friendly') + '</div>'
          +       '<div class="qbs-roster-title">Enemy Ships</div>'
