@@ -24,8 +24,9 @@ def test_flythrough_on_holds_swap_and_starts_vfx():
     started = {}
     warp.configure_warp_vfx(
         enabled=lambda: True,
-        start=lambda heading, t_align, t_transit, vantage=None: started.update(
-            align=t_align, transit=t_transit, heading=heading, vantage=vantage),
+        start=lambda heading, t_align, t_transit, vantage=None, dst_vantage=None:
+            started.update(align=t_align, transit=t_transit, heading=heading,
+                           vantage=vantage, dst_vantage=dst_vantage),
         stop=lambda: None,
         vantage_of=lambda key: (1.0, 2.0, 3.0))
     src = SetClass_Create(); App.g_kSetManager.AddSet(src, "Src")
@@ -40,8 +41,10 @@ def test_flythrough_on_holds_swap_and_starts_vfx():
     # clamped to [_T_ALIGN_MIN, _T_ALIGN_MAX].
     assert warp._T_ALIGN_MIN <= started.get("align") <= warp._T_ALIGN_MAX
     assert started.get("transit") > 0.0
-    # The source system's vantage is handed to the VFX so the sky can fly.
+    # Both the source and destination vantages are handed to the VFX so the sky
+    # can travel src->dst and arrive (destination nebula envelops on exit).
     assert started.get("vantage") == (1.0, 2.0, 3.0)
+    assert started.get("dst_vantage") == (1.0, 2.0, 3.0)
     assert App.g_kSetManager.GetSet("Src") is src   # swap DEFERRED
 
 

@@ -23,6 +23,27 @@ def test_near_field_nebula_envelops():
     # the nebula at the vantage (distance 0 < radius) fills the sphere
     near = [d for d in out if d["proc_kind"] == "nebula" and d["h_span"] >= 8.0]
     assert len(near) == 1
+    # ...and flags itself as enveloping so the shader skips its angular cap
+    # (otherwise the nebula vanishes once the camera is inside the sphere).
+    assert near[0]["envelop"] == 1
+
+
+def test_far_nebula_not_enveloping():
+    out = sp.project_sky([0.0, 0.0, 0.0], _model())
+    far = [d for d in out if d["proc_kind"] == "nebula" and d["h_span"] < 8.0][0]
+    assert far["envelop"] == 0
+
+
+def test_starcloud_never_envelops():
+    # star-clouds pass can_envelop=False, so even a vantage inside one stays a
+    # bounded patch, never a full-sphere field.
+    # vantage [10,0,0] is inside the cloud (dist 10 < size 40) yet must not envelop
+    model = {"systems": [], "nebulae": [],
+             "starclouds": [{"position": [0.0, 0.0, 0.0], "size": 40.0,
+                             "color": [0.4, 0.4, 0.5]}]}
+    sc = [d for d in sp.project_sky([10.0, 0.0, 0.0], model)
+          if d["proc_kind"] == "starcloud"][0]
+    assert sc["envelop"] == 0
 
 
 def test_far_nebula_direction_and_falloff():
@@ -46,6 +67,7 @@ def test_descriptor_has_full_shape():
     out = sp.project_sky([0.0, 0.0, 0.0], _model())
     for d in out:
         for key in ("texture_path", "kind", "h_tile", "v_tile", "h_span", "v_span",
-                    "world_rotation", "target_poly_count", "proc_kind", "color", "coverage", "seed"):
+                    "world_rotation", "target_poly_count", "proc_kind", "color",
+                    "coverage", "seed", "envelop"):
             assert key in d, key
         assert d["texture_path"] == "" and len(d["world_rotation"]) == 9 and len(d["color"]) == 3

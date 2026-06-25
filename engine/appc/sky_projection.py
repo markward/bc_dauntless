@@ -52,7 +52,8 @@ def _base_starfield():
             "h_span": 1.0, "v_span": 1.0,
             "world_rotation": [1.0, 0, 0, 0, 1.0, 0, 0, 0, 1.0],
             "target_poly_count": _SPHERE_TRIS,
-            "proc_kind": "stars", "color": [0.0, 0.0, 0.0], "coverage": 0.0, "seed": _STAR_SEED}
+            "proc_kind": "stars", "color": [0.0, 0.0, 0.0], "coverage": 0.0,
+            "seed": _STAR_SEED, "envelop": 0}
 
 
 def _project_feature(vantage, pos, extent, color, proc_kind, label,
@@ -87,7 +88,12 @@ def _project_feature(vantage, pos, extent, color, proc_kind, label,
             "world_rotation": _basis_from_forward(direction),
             "target_poly_count": _SPHERE_TRIS,
             "proc_kind": proc_kind, "color": col, "coverage": coverage,
-            "seed": _seed_for(label)}
+            "seed": _seed_for(label),
+            # When the vantage sits inside the feature the shader's angular
+            # patch-cap would discard the far hemisphere, so the nebula would
+            # vanish exactly when it should wrap the whole sky. This flag tells
+            # the shader to drop the cap and fill the full sphere.
+            "envelop": 1 if near else 0}
 
 
 def project_sky(vantage, model):

@@ -288,8 +288,12 @@ def test_g_lighting_persists_across_frames():
         _dauntless_host.frame()
         r2 = _dauntless_host.read_pixel(cx, cy)[0]
 
-        assert r1 == r2, f"lighting did not persist: r1={r1}, r2={r2}"
-        assert r1 > 100, f"first frame should have been brightly red-lit, got r={r1}"
+        # Filmic's default-on grain adds ±1-2 of per-frame noise, so "persisted"
+        # means the second frame matches the first within that grain tolerance,
+        # not bit-exact (pre-filmic this was r1 == r2). And its 0.2 exterior
+        # ambient scale (tune 3da52160) dims the absolute value to ~50/255.
+        assert abs(int(r1) - int(r2)) <= 3, f"lighting did not persist: r1={r1}, r2={r2}"
+        assert r1 > 30, f"first frame should have been red-lit, got r={r1}"
     finally:
         _dauntless_host.destroy_instance(iid)
         _dauntless_host.shutdown()
@@ -344,8 +348,12 @@ def test_g_lighting_resets_on_shutdown():
     rA, gA, bA, _ = _render_one_frame(
         lambda: _dauntless_host.set_lighting((1.0, 0.0, 0.0), [])
     )
-    assert rA > 100, "session A should have been red-lit"
-    assert rA > gA + 50, "session A red should dominate green"
+    # Filmic's default-on exterior ambient scale (0.2, tune commit 3da52160)
+    # dims the absolute value — a 1.0 red ambient renders ~50/255, not >200.
+    # The intent is unchanged: the pixel must be clearly red-lit and red must
+    # dominate green; assert on that with margin, not a pre-filmic magnitude.
+    assert rA > 30, f"session A should have been red-lit (rA={rA} gA={gA} bA={bA})"
+    assert rA > gA + 30, f"session A red should dominate green (rA={rA} gA={gA})"
 
     # Session B: no set_lighting — must NOT reuse session A's red ambient.
     rB, gB, bB, _ = _render_one_frame(set_lighting_call=None)

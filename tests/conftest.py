@@ -606,6 +606,18 @@ def _reset_leakable_engine_globals():
         st_widgets._reset_module_state()
     except Exception:
         pass
+    # Warp module hooks: host_loop.run() installs realize/teardown/VFX closures
+    # on the warp module globals and never clears them. A later warp test then
+    # picks up the host loop's leaked _vfx_enabled() and takes the flythrough
+    # path (warp.py:485) instead of the direct spine, so the source set is never
+    # terminated synchronously (test_warp_end_to_end "GetSet('Src') is not None").
+    # Reset to the un-hooked default; tests that need hooks install their own.
+    try:
+        from engine.appc import warp
+        warp.configure_warp_hooks(realize=None, teardown=None, current_player=None)
+        warp.configure_warp_vfx(start=None, stop=None, enabled=None, vantage_of=None)
+    except Exception:
+        pass
 
 
 @pytest.fixture(autouse=True)

@@ -10,6 +10,7 @@ uniform vec2  u_span;
 uniform int   u_use_alpha;   // 0 = opaque (Star), 1 = blended (Backdrop)
 uniform int   u_procedural;   // 0 = stock texture path, 1 = procedural
 uniform int   u_proc_kind;    // 0 = stars, 1 = starcloud (galaxy), 2 = nebula
+uniform int   u_envelop;      // 1 = camera inside this feature: fill the whole sky
 uniform vec3  u_color;        // recorded dominant colour, 0..1
 uniform float u_coverage;     // density 0..1
 uniform float u_seed;
@@ -66,11 +67,20 @@ void proc_main(vec3 dir, vec2 offset){
     // straight lines across the sky. The angle between the fragment direction
     // and the feature's forward axis (world_rotation column 1) has no seam or
     // pole, so the patch is a clean circular cap.
-    vec3  fwd = normalize(vec3(u_world_rotation[1]));
-    float ang = acos(clamp(dot(dir, fwd), -1.0, 1.0));   // radians from centre
-    float R   = max(u_span.x, 1e-3) * 0.30;              // angular radius (rad)
-    float edge = 1.0 - smoothstep(0.55*R, R, ang);
-    if (edge <= 0.0) discard;
+    // Angular falloff from the patch centre — but ONLY when the feature is a
+    // bounded patch in the distance. When the camera is INSIDE the feature's
+    // sphere (u_envelop), there is no "centre direction": the feature wraps the
+    // whole sky, so the cap is dropped and edge stays 1.0 everywhere. Without
+    // this, the far hemisphere (ang > R) discarded and the nebula vanished from
+    // the inside — the exact opposite of being engulfed.
+    float edge = 1.0;
+    if (u_envelop == 0) {
+        vec3  fwd = normalize(vec3(u_world_rotation[1]));
+        float ang = acos(clamp(dot(dir, fwd), -1.0, 1.0));   // radians from centre
+        float R   = max(u_span.x, 1e-3) * 0.30;              // angular radius (rad)
+        edge = 1.0 - smoothstep(0.55*R, R, ang);
+        if (edge <= 0.0) discard;
+    }
     vec3 np = dir*3.0 + u_seed; float drift = u_time*0.01;
     if (u_proc_kind == 2) {
         // NEBULA: filamentary structure, slight colour variety rooted in the

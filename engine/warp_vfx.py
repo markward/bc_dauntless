@@ -30,6 +30,7 @@ class WarpVFX:
         self._active = False
         self._heading = (0.0, 1.0, 0.0)
         self._vantage = None
+        self._dst_vantage = None
         self._t_align = 0.0
         self._t_transit = 0.0
         self._t0 = 0.0
@@ -39,13 +40,19 @@ class WarpVFX:
         self._flash = 0.0
         self._phase = "align"
 
-    def start(self, heading, t_align, t_transit, now, vantage=None):
+    def start(self, heading, t_align, t_transit, now, vantage=None,
+              dst_vantage=None):
         self._heading = tuple(heading)
         # Galaxy-map position the procedural sky is projected from at warp start
-        # (the source system's vantage). Animated forward along the heading
-        # during transit so the distant clusters/nebulae stream past — None when
-        # the source isn't galaxy-mapped (sky stays blacked out then).
+        # (the source system's vantage). None when the source isn't
+        # galaxy-mapped (sky stays blacked out then).
         self._vantage = tuple(vantage) if vantage is not None else None
+        # Destination system's vantage. When known, the projection vantage
+        # travels src -> dst across the transit and ARRIVES on dst, so the
+        # destination's own nebula looms ahead and envelops on exit (continuous
+        # with the in-system sky). When None, fall back to the legacy fixed-rate
+        # parallax along the heading.
+        self._dst_vantage = tuple(dst_vantage) if dst_vantage is not None else None
         self._t_align = max(0.01, float(t_align))
         self._t_transit = max(0.01, float(t_transit))
         self._t0 = float(now)
@@ -126,13 +133,25 @@ class WarpVFX:
         align and at the end during the exit decel), so the projected clusters
         and nebulae stream past — the "flying through the galaxy" parallax."""
         if self._vantage is None:
-            return None
+            # No source vantage: sit statically at the destination if mapped,
+            # else blacked out.
+            return self._dst_vantage
         te = self._e - self._t_align
         if te < 0.0:
             te = 0.0
         elif te > self._t_transit:
             te = self._t_transit
-        h, v = self._heading, self._vantage
+        v = self._vantage
+        if self._dst_vantage is not None:
+            # Travel src -> dst, arriving on dst exactly at transit end so the
+            # destination nebula looms ahead and envelops on arrival rather than
+            # streaming past. `rate` is unused on this path.
+            d, f = self._dst_vantage, te / self._t_transit
+            return (v[0] + (d[0] - v[0]) * f,
+                    v[1] + (d[1] - v[1]) * f,
+                    v[2] + (d[2] - v[2]) * f)
+        # Legacy: destination unmapped — fixed-rate parallax along the heading.
+        h = self._heading
         return (v[0] + h[0] * rate * te,
                 v[1] + h[1] * rate * te,
                 v[2] + h[2] * rate * te)
