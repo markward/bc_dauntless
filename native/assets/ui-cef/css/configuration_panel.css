@@ -146,6 +146,18 @@
     background: rgb(173, 132, 255);
 }
 
+/* Three-way segmented control (AI Difficulty). Buttons size to their
+   label rather than the fixed 48px of a binary toggle. */
+.cp-segmented {
+    display: flex;
+    gap: 4px;
+}
+
+.cp-segmented .cp-toggle {
+    width: auto;
+    padding: 0 12px;
+}
+
 .cp-slider {
     width: 200px;
     accent-color: rgb(147, 103, 255);

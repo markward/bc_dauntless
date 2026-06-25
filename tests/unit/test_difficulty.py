@@ -31,3 +31,40 @@ def test_set_default_resets_to_one():
     game_mod.Game_SetDefaultDifficultyMultipliers()
     assert App.Game_GetOffensiveDifficultyMultiplier() == 1.0
     assert App.Game_GetDefensiveDifficultyMultiplier() == 1.0
+
+
+def test_default_difficulty_is_medium():
+    assert App.Game_GetDifficulty() == 1
+
+
+def test_set_difficulty_round_trip():
+    try:
+        App.Game_SetDifficulty(0)
+        assert App.Game_GetDifficulty() == 0
+        App.Game_SetDifficulty(2)
+        assert App.Game_GetDifficulty() == 2
+    finally:
+        App.Game_SetDifficulty(1)
+
+
+def test_set_difficulty_clamps_out_of_range():
+    try:
+        App.Game_SetDifficulty(99)
+        assert App.Game_GetDifficulty() == 2
+        App.Game_SetDifficulty(-5)
+        assert App.Game_GetDifficulty() == 0
+    finally:
+        App.Game_SetDifficulty(1)
+
+
+def test_difficulty_drives_active_multiplier_index():
+    """Game_GetDifficulty() selects which multiplier the accessors return."""
+    App.Game_SetDifficultyMultipliers(1.5, 1.2, 1.0, 0.7, 0.85, 0.95)
+    try:
+        App.Game_SetDifficulty(0)
+        assert App.Game_GetOffensiveDifficultyMultiplier() == 1.5
+        App.Game_SetDifficulty(2)
+        assert App.Game_GetDefensiveDifficultyMultiplier() == 0.95
+    finally:
+        App.Game_SetDifficulty(1)
+        game_mod.Game_SetDefaultDifficultyMultipliers()

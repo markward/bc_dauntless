@@ -32,6 +32,7 @@ def _make(**overrides):
         set_smaa=Mock(),
         set_subtitles=Mock(),
         set_disable_annoying_dialogue=Mock(),
+        set_ai_difficulty=Mock(),
         set_fov_rad=Mock(),
         set_shadows=Mock(),
         set_procedural_sky=Mock(),
@@ -78,6 +79,7 @@ def test_initial_settings_round_trip_to_render_payload():
         "filmic_on": True, "motion_blur_on": True, "warp_flythrough_on": True,
         "volumetric_nebulae_on": True, "nebula_lightning_on": True,
         "disable_annoying_dialogue_on": True,
+        "ai_difficulty": 1,
         "fov_deg": 62,
     }
 
@@ -669,3 +671,62 @@ def test_warp_flythrough_on_in_render_payload():
     payload = p.render_payload()
     body = json.loads(payload[len("setConfigurationPanel("):-len(");")])
     assert body["settings"]["warp_flythrough_on"] is False
+
+
+# ---- AI difficulty (Gameplay tab) ---------------------------------------
+
+def test_dispatch_ai_difficulty_sets_and_applies():
+    p, kw = _make()
+    p.open()
+    assert p.dispatch_event("ai_difficulty:2") is True
+    kw["set_ai_difficulty"].assert_called_once_with(2)
+    assert p._settings.ai_difficulty == 2
+
+
+def test_dispatch_ai_difficulty_clamps_high():
+    p, kw = _make()
+    p.open()
+    p.dispatch_event("ai_difficulty:9")
+    kw["set_ai_difficulty"].assert_called_once_with(2)
+    assert p._settings.ai_difficulty == 2
+
+
+def test_dispatch_ai_difficulty_clamps_low():
+    p, kw = _make()
+    p.open()
+    p.dispatch_event("ai_difficulty:-3")
+    kw["set_ai_difficulty"].assert_called_once_with(0)
+    assert p._settings.ai_difficulty == 0
+
+
+def test_dispatch_ai_difficulty_garbage_returns_false():
+    p, kw = _make()
+    p.open()
+    assert p.dispatch_event("ai_difficulty:nope") is False
+    kw["set_ai_difficulty"].assert_not_called()
+
+
+def test_ai_difficulty_in_render_payload():
+    p, _ = _make(initial_settings=SettingsSnapshot(
+        dust_on=True, specular_on=True, hdr_on=True, rim_on=True,
+        decals_on=True, fov_deg=70, shadows_on=True, ai_difficulty=2,
+    ))
+    p.open()
+    payload = p.render_payload()
+    body = json.loads(payload[len("setConfigurationPanel("):-len(");")])
+    assert body["settings"]["ai_difficulty"] == 2
+
+
+def test_ai_difficulty_initial_clamped_in_constructor():
+    p, _ = _make(initial_settings=SettingsSnapshot(
+        dust_on=True, specular_on=True, hdr_on=True, rim_on=True,
+        decals_on=True, fov_deg=70, shadows_on=True, ai_difficulty=99,
+    ))
+    assert p._settings.ai_difficulty == 2
+
+
+def test_ai_difficulty_is_a_gameplay_focusable():
+    p, _ = _make(tabs=[("graphics", "Graphics"), ("gameplay", "Gameplay")])
+    p.dispatch_event("tab:gameplay")
+    focusables = p._focusables()
+    assert ("ctrl", "ai_difficulty") in focusables
