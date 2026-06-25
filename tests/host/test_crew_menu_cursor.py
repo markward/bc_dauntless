@@ -89,3 +89,23 @@ def test_no_unlock_when_paused():
     menu = _FakeCrewMenu(True)
     _apply_crew_menu_side_effects(menu, vm, pause, h)
     assert h.cursor_lock_calls == []
+
+
+class _FakeModal:
+    def __init__(self, open_):
+        self._open = open_
+
+    def is_open(self) -> bool:
+        return self._open
+
+
+def test_open_quick_battle_setup_frees_cursor():
+    """The Quick Battle Setup modal (opened from the XO menu) frees the cursor
+    even with no crew menu open, so its buttons are clickable."""
+    from engine.host_loop import _apply_crew_menu_side_effects
+    vm, h, pause = _bridge_vm(), _RecordingRenderer(), _unpaused()
+    menu = _FakeCrewMenu(False)        # no crew menu open
+    qbs = _FakeModal(True)             # QB setup panel open
+    _apply_crew_menu_side_effects(menu, vm, pause, h,
+                                  quick_battle_setup_panel=qbs)
+    assert h.cursor_lock_calls == [False]

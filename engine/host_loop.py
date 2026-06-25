@@ -1357,7 +1357,8 @@ def _apply_pause_menu_side_effects(pause: "_PauseMenuController",
 
 
 def _apply_crew_menu_side_effects(crew_menu_panel, view_mode, pause, h,
-                                  setting_course_panel=None) -> None:
+                                  setting_course_panel=None,
+                                  quick_battle_setup_panel=None) -> None:
     """Free the mouse cursor while a crew menu (F1-F5) is open on the
     bridge, then re-lock on close.
 
@@ -1380,8 +1381,13 @@ def _apply_crew_menu_side_effects(crew_menu_panel, view_mode, pause, h,
     # Helm crew menu; it needs a real cursor too. Clicking Set Course clears
     # the open crew menu, so has_open_menu() is False while the modal is up —
     # key the cursor-free state off the modal as well.
-    modal_open = (setting_course_panel is not None
-                  and setting_course_panel.is_open())
+    # The Quick Battle Setup panel is the same kind of centred CEF modal and
+    # also needs a real cursor while it is open.
+    modal_open = (
+        (setting_course_panel is not None and setting_course_panel.is_open())
+        or (quick_battle_setup_panel is not None
+            and quick_battle_setup_panel.is_open())
+    )
     target = (((view_mode.is_bridge and crew_menu_panel.has_open_menu())
                or modal_open)
               and not pause.is_open)
@@ -4262,7 +4268,8 @@ def run(mission_name: Optional[str] = None,
                 # on close. Runs every frame; idempotent + latched.
                 _apply_crew_menu_side_effects(
                     crew_menu_panel, view_mode, pause, _h,
-                    setting_course_panel)
+                    setting_course_panel,
+                    controller.quick_battle_setup_panel)
                 if pause.is_open:
                     # When a settings modal is open it consumes keyboard
                     # input — pause-menu navigation would otherwise activate
@@ -4405,10 +4412,14 @@ def run(mission_name: Optional[str] = None,
                         and _BR_X <= _mx < _BR_X + _BR_W
                         and _BR_Y <= _my < _BR_Y + _BR_H
                     )
-                    # The Set Course modal is a full-viewport cp-* backdrop:
-                    # any click while it's open belongs to CEF (the OK button
-                    # or the inert backdrop), never to phaser fire.
-                    _cursor_in_modal = setting_course_panel.is_open()
+                    # The Set Course and Quick Battle Setup modals are
+                    # full-viewport cp-* backdrops: any click while one is open
+                    # belongs to CEF (a button or the inert backdrop), never to
+                    # phaser fire or the bridge view below.
+                    _cursor_in_modal = (
+                        setting_course_panel.is_open()
+                        or controller.quick_battle_setup_panel.is_open()
+                    )
                     _cursor_in_panel = (
                         _cursor_in_left_column or _cursor_in_bottom_row
                         or _cursor_in_modal
