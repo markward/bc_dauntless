@@ -76,6 +76,26 @@ def test_unrecognised_child_logged_once(caplog):
     assert len(matching) == 1
 
 
+def test_tgobject_child_without_snapshot_is_not_serialized():
+    """A bare TGObject child (e.g. QuickBattle's g_pPane TGPane on the
+    TopWindow) must be treated as unrecognised, NOT serialized.
+
+    TGObject.__getattr__ returns a _Stub for any attribute, so a naive
+    hasattr(child, "_snapshot") is always True and calling the stub yields a
+    _Stub that json.dumps cannot serialize. The panel must detect a *real*
+    _snapshot via the MRO."""
+    _seed_subtitle()
+    from engine.core.ids import TGObject
+    pane = TGObject()  # no real _snapshot — only the __getattr__ stub
+    top_window._the_top_window.AddChild(pane, 0.0, 0.0)
+    p = SDKMirrorPanel()
+    # Must not raise (the bug raised TypeError inside json.dumps because the
+    # stubbed _snapshot() returned a non-serializable _Stub). Only the
+    # subtitle entry is present; the bare TGObject contributes nothing.
+    out = p.render_payload()
+    assert out is None  # subtitle is off → quiescent, no payload, no raise
+
+
 def test_invalidate_forces_reemit():
     sw = _seed_subtitle()
     sw.SetOn()

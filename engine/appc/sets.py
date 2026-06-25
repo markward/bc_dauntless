@@ -368,6 +368,13 @@ class SetManager:
             return None
         return self._sets.get(self._rendered_set_name)
 
+    def ClearRenderedSet(self) -> None:
+        # SDK QuickBattleGame.Initialize calls this before loading the initial
+        # episode to drop whatever set was on the viewscreen (e.g. the main
+        # menu). Headless: just clear the rendered-set focus; GetRenderedSet
+        # then returns None until the next MakeRenderedSet.
+        self._rendered_set_name = None
+
     def MakeRenderedSet(self, name: str) -> None:
         # Switches the camera/render focus to the named set.  Phase 1 has no
         # renderer, but the SDK CameraScriptActions.ChangeRenderedSet calls

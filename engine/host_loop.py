@@ -2672,9 +2672,89 @@ class _MissionLoader:
         self._verbose = verbose
 
     def load(self, mission_name: str) -> MissionSession:
-        import App
         _init_mission(mission_name)
-        sess = MissionSession(mission_name=mission_name)
+        return self._realize_session(MissionSession(mission_name=mission_name))
+
+    def load_quickbattle(self) -> MissionSession:
+        """Boot the REAL SDK QuickBattle entry cascade and realize its scene.
+
+        This is the headless-testable half of the no-mission-name boot path:
+        it deliberately does NOT touch GLFW/window setup. It mirrors
+        _init_mission's current-game wiring (reset_sdk_globals + a fresh
+        Game/_set_current_game), then runs QuickBattleGame.Initialize(game),
+        which cascades through Game.LoadEpisode ->
+        QuickBattleEpisode.Initialize -> Episode.LoadMission ->
+        QuickBattle.Initialize (Task 1), building the QuickBattleRegion set,
+        the GalaxyBridge, and the initial player ship.
+
+        After the cascade it injects the faithful player-only default state and
+        posts ET_START_SIMULATION to the SDK's own g_pXO via the event manager
+        — never calling StartSimulation* directly — so the SDK's 2s TGSequence,
+        StartSimulationAction/SetPreLoadDoneEvent, _fire_pending_preload_done,
+        and StartSimulation2 carry the flow. Finally it runs the same scene
+        realization walk load() uses and returns the MissionSession.
+        """
+        import App
+        from engine.core.game import Game, _set_current_game
+
+        reset_sdk_globals()
+        game = Game()
+        _set_current_game(game)
+
+        # The real game always has an Options.cfg on disk (the launcher/menu
+        # writes it). QuickBattle.BuildDialog early-returns — skipping the
+        # config-dialog buttons including g_pStartButton — when
+        # LoadConfigFile("Options.cfg") returns 0, and StartSimulation later
+        # dereferences g_pStartButton unconditionally. Headless there is no
+        # launcher, so guarantee the file exists (matching the real launch
+        # invariant) before the cascade builds the dialog.
+        if App.g_kConfigMapping.LoadConfigFile("Options.cfg") == 0:
+            App.g_kConfigMapping.SaveConfigFile("Options.cfg")
+
+        import QuickBattle.QuickBattleGame as _QBGame
+        _QBGame.Initialize(game)
+
+        self._inject_quickbattle_player_defaults()
+        return self._realize_session(MissionSession(mission_name="QuickBattle"))
+
+    @staticmethod
+    def _inject_quickbattle_player_defaults() -> None:
+        """Set the player-only QuickBattle defaults and post the faithful
+        ET_START_SIMULATION through the SDK's own globals/handlers.
+
+        Galaxy player ship + GalaxyBridge, the QuickBattleRegion as the
+        selected region, and empty enemy/friend lists (a player-only battle).
+        The event is targeted at QuickBattle.g_pXO (the SDK BuildDialog
+        registered StartSimulation there) and posted via g_kEventManager so the
+        SDK handler runs unchanged.
+        """
+        import App
+        import QuickBattle.QuickBattle as QB
+
+        QB.g_sPlayerType = "Galaxy"
+        QB.g_sBridgeType = "GalaxyBridge"
+        QB.g_sSelectedRegion = "QuickBattleRegion"
+        QB.g_kEnemyList = []
+        QB.g_kFriendList = []
+
+    def start_quickbattle(self) -> None:
+        """Post ET_START_SIMULATION to g_pXO via the SDK event manager.
+
+        Separated from load_quickbattle so the boot path can stage the menu
+        defaults before the player triggers (or the host auto-triggers) the
+        battle. Faithful: routes through g_pXO's registered StartSimulation
+        handler, never calling StartSimulation directly.
+        """
+        import App
+        import QuickBattle.QuickBattle as QB
+
+        evt = App.TGEvent_Create()
+        evt.SetEventType(QB.ET_START_SIMULATION)
+        evt.SetDestination(QB.g_pXO)
+        App.g_kEventManager.AddEvent(evt)
+
+    def _realize_session(self, sess: MissionSession) -> MissionSession:
+        import App
         r_ = self._c.renderer
 
         shared_search = [
@@ -3505,8 +3585,10 @@ def run(mission_name: Optional[str] = None,
     """Boot the renderer, init the named mission, run until the window closes
     or max_ticks is reached. Returns 0 on clean exit.
 
-    Mission resolution: ``mission_name`` argument wins; otherwise
-    ``SHIP_GATE_MISSION`` (the default M2Objects ship-gate mission).
+    Mission resolution: an explicit ``mission_name`` argument loads that single
+    mission (byte-for-byte the existing path); with no mission name the host
+    boots the REAL SDK QuickBattle entry cascade to an auto-started player-only
+    battle. ``SHIP_GATE_MISSION`` is still available to callers that pass it.
 
     Debug knobs (env vars):
       OPEN_STBC_HOST_HEADLESS=1     — hide the window (used by tests).
@@ -3519,8 +3601,12 @@ def run(mission_name: Optional[str] = None,
     import os as _os
     verbose = _os.environ.get("OPEN_STBC_HOST_VERBOSE") == "1"
     fixed_camera = _os.environ.get("OPEN_STBC_HOST_FIXED_CAMERA") == "1"
-    if mission_name is None:
-        mission_name = SHIP_GATE_MISSION
+    # No mission name => boot the REAL SDK QuickBattle entry cascade (auto-start
+    # player-only battle). A caller that passes an explicit mission_name (the
+    # test harness, dev mission picker, every existing mission) keeps the
+    # single-mission path byte-for-byte. SHIP_GATE_MISSION stays available for
+    # callers that want it explicitly.
+    boot_quickbattle = mission_name is None
 
     _setup_sdk()
 
@@ -3760,7 +3846,17 @@ def run(mission_name: Optional[str] = None,
         # must load bridge SFX into a live backend. Listener installs stay in
         # init_audio() below (relocating them would change spawn-event capture).
         init_audio_backend()
-        controller.session = controller.loader.load(mission_name)
+        if boot_quickbattle:
+            # Real SDK QuickBattle entry cascade: builds the QuickBattleRegion
+            # set, GalaxyBridge, and initial player, injects the player-only
+            # defaults, then posts ET_START_SIMULATION through the SDK's own
+            # g_pXO handler. The 2s TGSequence / StartSimulationAction /
+            # SetPreLoadDoneEvent / _fire_pending_preload_done /
+            # StartSimulation2 / reconciliation carry the rest.
+            controller.session = controller.loader.load_quickbattle()
+            controller.loader.start_quickbattle()
+        else:
+            controller.session = controller.loader.load(mission_name)
         # The SDK's CreateAndPopulateBridgeSet plays AmbBridge at load
         # (LoadBridge.py:213); silence it now since the initial view is space.
         # bridge_ambient remains the sole authority on when the hum plays.

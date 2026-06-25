@@ -164,8 +164,12 @@ def SortedRegionMenu_CreateW(label="", region=None, *_extra) -> SortedRegionMenu
     return SortedRegionMenu(str(label), region)
 
 
-def STRoundedButton_CreateW(label="", event=None, flags=0) -> STRoundedButton:
-    return STRoundedButton(str(label), event, flags)
+def STRoundedButton_CreateW(label="", event=None, flags=0, *_extra) -> STRoundedButton:
+    # SDK QuickBattle.CreateBridgeMenuButton calls this as
+    # STRoundedButton_CreateW(pName, pEvent, fWidth, fHeight) — width/height are
+    # layout-only and ignored headless (absorbed by *_extra, with the existing
+    # 3-arg flags form still honoured for other call sites).
+    return STRoundedButton(str(label), event, flags if not _extra else 0)
 
 
 def STSubPane_Create(*args) -> STSubPane:

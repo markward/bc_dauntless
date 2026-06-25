@@ -44,7 +44,7 @@ class SDKMirrorPanel(Panel):
                 entries.append(snap)
 
         for (child, _x, _y) in tw._children:
-            if hasattr(child, "_snapshot"):
+            if self._has_real_snapshot(child):
                 entries.append(child._snapshot())
             else:
                 self._log_unrecognised_once(type(child).__name__)
@@ -67,6 +67,22 @@ class SDKMirrorPanel(Panel):
         # blank — even a quiescent (empty) payload must fire once to
         # confirm the empty state to the freshly loaded JS.
         self._last_pushed = None
+
+    @staticmethod
+    def _has_real_snapshot(child) -> bool:
+        """True only if `child` defines a genuine `_snapshot` method.
+
+        A plain `hasattr(child, "_snapshot")` is fooled by every TGObject:
+        `TGObject.__getattr__` returns a `_Stub` for any attribute name, so
+        `hasattr` is always True and calling the stub yields a `_Stub` that is
+        not JSON-serializable. QuickBattle.BuildDialog adds a bare `TGPane`
+        (g_pPane) to the TopWindow, which surfaced exactly this. Mirror
+        `TGSequence._has_real_start`: walk the MRO for a real definition.
+        """
+        for cls in type(child).__mro__:
+            if "_snapshot" in cls.__dict__:
+                return True
+        return False
 
     def _log_unrecognised_once(self, type_name: str) -> None:
         if type_name in self._logged_unrecognised:

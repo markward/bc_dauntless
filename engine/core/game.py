@@ -241,8 +241,19 @@ class Game(TGObject):
     def LoadSound(self, path: str, name: str, loadspec: int):
         # Late import: engine.audio depends on the native extension which may
         # not be ready at game.py import time.
-        from engine.audio.tg_sound import TGSoundManager
-        return TGSoundManager.instance().LoadSound(path, name, loadspec)
+        from engine.audio.tg_sound import TGSoundManager, TGSound
+        mgr = TGSoundManager.instance()
+        snd = mgr.LoadSound(path, name, loadspec)
+        # Appc Game_LoadSound never returns None — it hands back a valid (silent)
+        # handle even when the asset is missing or the backend is down, and the
+        # SDK chains .SetVolume() on the result unconditionally
+        # (LoadTacticalSounds.py:23/29). Register a real-but-unloaded TGSound so
+        # that chain works headless. Mirrors LoadSoundInGroup's contract.
+        if snd is None:
+            positional = (loadspec == TGSound.LS_3D)
+            snd = mgr.GetSound(name) or TGSound(name, positional)
+            mgr._sounds[name] = snd
+        return snd
 
     def LoadSoundInGroup(self, path: str, name: str, group: str):
         # Late import: engine.audio depends on the native extension which may
