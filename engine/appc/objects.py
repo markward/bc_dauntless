@@ -212,6 +212,30 @@ class ObjectClass(TGEventHandlerObject):
         """
         return self._rotation.GetCol(1)
 
+    # World-direction siblings of GetWorldForwardTG (column-vector convention:
+    # col0=right, col1=forward, col2=up). Without these, ObjectClass is a
+    # TGObject so the names fall through __getattr__ to a truthy _Stub —
+    # QuickBattle.GenerateShips does pShip.AlignToVectors(player.GetWorldBackwardTG(),
+    # player.GetWorldUpTG()), and stub "vectors" build a degenerate (zero-column)
+    # rotation that later crashes render interpolation.
+    def GetWorldBackwardTG(self) -> TGPoint3:
+        f = self._rotation.GetCol(1)
+        return TGPoint3(-f.x, -f.y, -f.z)
+
+    def GetWorldUpTG(self) -> TGPoint3:
+        return self._rotation.GetCol(2)
+
+    def GetWorldDownTG(self) -> TGPoint3:
+        u = self._rotation.GetCol(2)
+        return TGPoint3(-u.x, -u.y, -u.z)
+
+    def GetWorldRightTG(self) -> TGPoint3:
+        return self._rotation.GetCol(0)
+
+    def GetWorldLeftTG(self) -> TGPoint3:
+        r = self._rotation.GetCol(0)
+        return TGPoint3(-r.x, -r.y, -r.z)
+
     def GetContainingSetName(self) -> str:
         if self._containing_set is not None:
             return self._containing_set.GetName()

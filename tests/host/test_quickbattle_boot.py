@@ -222,6 +222,19 @@ def test_generate_ships_with_enemy_roster_completes(monkeypatch):
     # The enemy ship was created and recorded in the global ship map.
     assert len(QB.g_kShips) >= 1
 
+    # Its rotation must be non-degenerate: GenerateShips aligns the enemy to the
+    # player's backward/up via GetWorldBackwardTG/GetWorldUpTG, which must return
+    # real vectors (not _Stubs) so the forward column isn't zero — a zero column
+    # later crashes render interpolation.
+    import App
+    for iShipID in QB.g_kShips:
+        pShip = App.ShipClass_Cast(App.TGObject_GetTGObjectPtr(iShipID))
+        if pShip is None:
+            continue
+        fwd = pShip.GetWorldRotation().GetCol(1)
+        assert fwd.x * fwd.x + fwd.y * fwd.y + fwd.z * fwd.z > 1e-6, \
+            "enemy forward column is degenerate"
+
 
 def test_full_start_with_enemy_runs_ai_assignment(monkeypatch):
     """End-to-end Start with a non-empty enemy roster: drives the real
