@@ -51,6 +51,7 @@ void FilmicPass::draw(std::uint32_t src_tex, std::uint32_t dest_fbo,
     shader_->use();
     shader_->set_int("u_src", 0);
     shader_->set_float("u_time", time_seconds);
+    shader_->set_float("u_fb_height", static_cast<float>(fh));
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, src_tex);
