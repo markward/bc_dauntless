@@ -207,3 +207,30 @@ def test_fire_plays_launch_sound():
         cannon.Fire(target="enemy", offset="hit")
         mock_mgr.return_value.PlaySound.assert_called_with("Klingon Disruptor")
     _active.clear()
+
+
+def test_stock_values_re_arm_and_refire_after_recharge():
+    """Regression: with the STOCK BoP charge margin (MaxCharge 3.8,
+    MinFiringCharge 3.6) a cannon must re-arm and fire again after it
+    recharges.  The phaser re-arm hysteresis (MinFiringCharge + 0.20*MaxCharge
+    = 4.36 > MaxCharge) would strand the cannon armed-once; PulseWeapon sets
+    REFIRE_HEADROOM_FRACTION = 0.0 so it re-arms at exactly MinFiringCharge,
+    with the per-shot cooldown providing anti-flutter instead."""
+    _active.clear()
+    cannon = _pulse_weapon()
+    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
+        cannon.Fire(target="enemy", offset="hit")
+        assert len(_active) == 1                      # first shot
+        assert cannon._charge_level == 0.0
+        assert cannon.CanFire() == 0                  # on cooldown + uncharged
+
+        # Recharge to full: 3.8 charge / 0.4 per-sec ≈ 9.5s. Step in 0.5s
+        # ticks well past that; cooldown (0.2s) clears in the first tick.
+        for _ in range(40):
+            cannon.UpdateCharge(0.5)
+
+        assert cannon._charge_level >= cannon._min_firing_charge
+        assert cannon.CanFire() == 1                  # re-armed at MinFiringCharge
+        cannon.Fire(target="enemy", offset="hit")
+        assert len(_active) == 2                      # second shot fired
+    _active.clear()

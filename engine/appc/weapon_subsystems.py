@@ -1022,6 +1022,15 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
     # is no looping SFX and _firing never stays True — so the mixin's
     # UpdateCharge always takes the RECHARGE branch (see below).
 
+    # Re-arm at exactly MinFiringCharge — no phaser-style headroom. Stock
+    # pulse cannons have a tiny charge margin (BoP: MaxCharge 3.8,
+    # MinFiringCharge 3.6); the phaser default (0.20·MaxCharge) would push
+    # the refire threshold to 4.36 > MaxCharge, so the cannon could fire
+    # exactly once and never re-arm. For pulse weapons the per-shot cooldown
+    # (SetCooldownTime, BoP 0.2s) is the anti-flutter mechanism, not charge
+    # hysteresis — so RechargeRate alone governs cadence (~9s from empty).
+    REFIRE_HEADROOM_FRACTION = 0.0
+
     def CanFire(self) -> int:
         if self._cooldown_remaining > 0.0:
             return 0
