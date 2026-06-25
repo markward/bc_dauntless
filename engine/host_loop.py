@@ -2556,6 +2556,29 @@ def _fire_pending_preload_done() -> None:
     App.g_kEventManager.AddEvent(event)
 
 
+def _process_object_deletions() -> None:
+    """Remove objects flagged via SetDeleteMe(1) from their set.
+
+    BC's engine deletes delete-me-flagged objects every tick. QuickBattle's
+    EndSimulation ("End Combat") flags every non-player ship + torpedo this way
+    to clear the battle; without this they linger in the set and on screen.
+    After removal the per-tick reconciliation tears down their render instances.
+    Reads the flag via __dict__ (not getattr) so a TGObject __getattr__ _Stub
+    can never masquerade as a truthy flag and delete live objects."""
+    import App
+    sets = getattr(App.g_kSetManager, "_sets", None)
+    if not sets:
+        return
+    for pSet in list(sets.values()):
+        objs = getattr(pSet, "_objects", None)
+        if not objs:
+            continue
+        doomed = [name for name, obj in list(objs.items())
+                  if obj.__dict__.get("_delete_me", False)]
+        for name in doomed:
+            pSet.RemoveObjectFromSet(name)
+
+
 def _sync_quick_battle_panel(controller) -> None:
     """Mirror the QuickBattle config dialog's open/closed state onto the CEF
     Quick Battle Setup panel.
@@ -4486,6 +4509,10 @@ def run(mission_name: Optional[str] = None,
             # that ship in the same tick. Fire-once and fully guarded — a no-op
             # for missions that never set a preload-done event.
             _fire_pending_preload_done()
+            # Remove SetDeleteMe(1)-flagged objects from their set (QuickBattle
+            # "End Combat" clears the battle this way); the reconciliation below
+            # then tears down their render instances.
+            _process_object_deletions()
             # Mirror the SDK config-dialog flag onto the Quick Battle Setup
             # panel: opens it when the player clicks the XO menu's config
             # button, closes it on Close/Start. Boot leaves it closed.

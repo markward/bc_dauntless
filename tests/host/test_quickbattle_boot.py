@@ -261,3 +261,34 @@ def test_full_start_with_enemy_runs_ai_assignment(monkeypatch):
     assert QB.bInSimulation == 1           # StartSimulation2 completed
     assert len(QB.g_kShips) >= 1           # enemy spawned + recorded
     assert Game_GetCurrentGame().GetPlayer() is not None
+
+
+def test_end_combat_removes_simulated_ships(monkeypatch):
+    """EndSimulation ("End Combat") flags every non-player ship with
+    SetDeleteMe(1); the host's _process_object_deletions then removes them from
+    the set (and reconciliation tears down their render instances). Verifies the
+    targets actually leave the scene when combat ends."""
+    import App
+    import QuickBattle.QuickBattle as QB
+
+    hl, controller = _fresh_quickbattle_loader(monkeypatch)
+    controller.loader.load_quickbattle()
+    QB.g_kEnemyList = [
+        ("Galaxy", "Galaxy", "msg", "QuickBattle.QuickBattleAI", "Enemy", 0.5),
+    ]
+    controller.loader.start_quickbattle()
+    App.g_kTimerManager.tick(3.0)
+    hl._fire_pending_preload_done()          # StartSimulation2 spawns the enemy
+    assert QB.bInSimulation == 1
+
+    def _non_player_ships():
+        return [s for s in QB.g_pSet.GetClassObjectList(App.CT_DAMAGEABLE_OBJECT)
+                if s.GetName() != "Player"]
+
+    assert len(_non_player_ships()) >= 1
+
+    QB.EndSimulation()                       # End Combat
+    assert QB.bInSimulation == 0
+    hl._process_object_deletions()           # host removes flagged objects
+
+    assert _non_player_ships() == []         # simulated targets gone

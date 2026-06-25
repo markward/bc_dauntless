@@ -34,6 +34,11 @@ class ObjectClass(TGEventHandlerObject):
         self._position: TGPoint3 = TGPoint3(0.0, 0.0, 0.0)
         self._rotation: TGMatrix3 = TGMatrix3()   # identity
         self._containing_set = None
+        # Set via SetDeleteMe(1); the host loop removes flagged objects from
+        # their set each tick (BC's engine deletes delete-me-flagged objects).
+        # Eager init so the host's __dict__-based read never sees a TGObject
+        # __getattr__ _Stub (which is truthy and would delete everything).
+        self._delete_me: bool = False
 
     # ── Identity ──────────────────────────────────────────────────────────────
 
@@ -194,8 +199,17 @@ class ObjectClass(TGEventHandlerObject):
     def DetachObject(self, *args) -> None:
         pass
 
-    def SetDeleteMe(self, *args) -> None:
-        pass
+    def SetDeleteMe(self, flag=1) -> None:
+        # QuickBattle.EndSimulation flags every non-player ship (and torpedoes)
+        # with SetDeleteMe(1) to clear the battle; the host loop removes flagged
+        # objects from their set each tick.
+        self._delete_me = bool(flag)
+
+    def IsDeleteMe(self) -> int:
+        return 1 if self._delete_me else 0
+
+    def GetDeleteMe(self) -> int:
+        return self.IsDeleteMe()
 
     def GetNode(self):
         return None
