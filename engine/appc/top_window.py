@@ -36,6 +36,7 @@ class _TopWindow:
         self._options_disabled: bool = False
         self._last_rendered_set = None
         self._children: list[tuple[object, float, float]] = []
+        self._focus = None
         from engine.appc.windows import _SubtitleWindow
         self._main_windows: dict[int, object] = {
             MWT_SUBTITLE: _SubtitleWindow(),
@@ -132,6 +133,30 @@ class _TopWindow:
 
     def GetChildren(self) -> list:
         return [c for (c, _, _) in self._children]
+
+    # ── Focus + z-order ────────────────────────────────────────
+    # Unlike the TGObject widgets, _TopWindow is a plain class with no
+    # __getattr__ stub, so missing methods raise AttributeError. QuickBattle's
+    # OpenConfigDialog/CloseConfigDialog/StartQuickBattle call these to raise
+    # the config pane and restore focus; we have no rendered z-order or focus
+    # ring, so focus is a stored value and the moves reorder _children.
+    def GetFocus(self):
+        return self._focus
+
+    def SetFocus(self, child) -> None:
+        self._focus = child
+
+    def MoveToFront(self, child) -> None:
+        entry = next((e for e in self._children if e[0] is child), None)
+        if entry is not None:
+            self._children.remove(entry)
+            self._children.append(entry)
+
+    def MoveToBack(self, child) -> None:
+        entry = next((e for e in self._children if e[0] is child), None)
+        if entry is not None:
+            self._children.remove(entry)
+            self._children.insert(0, entry)
 
     # ── Geometry ───────────────────────────────────────────────
     def _window_size(self) -> tuple[int, int]:

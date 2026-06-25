@@ -180,3 +180,24 @@ def test_boot_does_not_auto_start_or_auto_open(monkeypatch):
         assert panel.is_open() is False
     finally:
         QB.g_bDialogUp = saved
+
+
+def test_open_config_dialog_sets_dialog_up(monkeypatch):
+    """Firing the XO config button's event (ET_OPEN_DIALOG -> OpenConfigDialog)
+    runs to completion through the shims and sets g_bDialogUp = 1, which is what
+    _sync_quick_battle_panel mirrors to open the CEF panel. Guards the
+    _TopWindow focus/z-order surface (GetFocus/SetFocus/MoveToFront) that
+    OpenConfigDialog walks."""
+    import App
+    import QuickBattle.QuickBattle as QB
+
+    hl, controller = _fresh_quickbattle_loader(monkeypatch)
+    controller.session = controller.loader.load_quickbattle()
+    assert QB.g_bDialogUp == 0
+
+    evt = App.TGEvent_Create()
+    evt.SetEventType(QB.ET_OPEN_DIALOG)
+    evt.SetDestination(QB.g_pXO)
+    App.g_kEventManager.AddEvent(evt)
+
+    assert QB.g_bDialogUp == 1
