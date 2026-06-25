@@ -457,6 +457,21 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
                           weapon_type="phaser",
                           hardpoint_weapon=bank)
 
+    # Held-trigger pulse weapons (disruptors/cannons): re-fire eligible cannons
+    # as they recharge while the trigger stays down — mirrors the phaser
+    # retry_held_fire above. No damage routing here: pulse bolts are spawned
+    # into projectiles._active by PulseWeapon.Fire and handled by the torpedo
+    # hit loop / render push above. Stop on a system that flipped offline.
+    for ship in ships_list:
+        psys = ship.GetPulseWeaponSystem() if hasattr(ship, "GetPulseWeaponSystem") else None
+        if psys is None:
+            continue
+        if _is_offline(psys):
+            psys.StopFiring()
+            continue
+        if hasattr(psys, "retry_held_fire"):
+            psys.retry_held_fire()
+
     if host is not None and hasattr(host, "set_torpedoes"):
         host.set_torpedoes(_build_torpedo_render_data())
     from engine.appc import shockwaves as _shockwaves
