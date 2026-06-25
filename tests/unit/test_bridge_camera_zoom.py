@@ -58,6 +58,25 @@ def test_mouse_look_suspended_while_zooming():
     assert bc.yaw_rad == y0
 
 
+def test_zoom_from_behind_and_up_stays_roll_free():
+    """Regression: zooming to a station from a facing-behind, pitched-up view
+    must leave the camera level (no roll). The eased forward used to keep the
+    pre-zoom up vector, tilting the horizon at the station."""
+    bc = _BridgeCamera()
+    bc.yaw_rad = math.pi          # facing behind
+    bc.pitch_rad = 0.3            # looking slightly up
+    bc.set_zoom_target((10.0, 0.0, 0.0), dt=10.0)   # station off to the side
+    eye, target, up, _ = bc.compute_camera()
+    fwd = (target[0] - eye[0], target[1] - eye[1], target[2] - eye[2])
+    # Roll-free ⇔ up has no component along the camera's right axis
+    # (right = fwd × worldZ). Equivalently up lies in the fwd/worldZ plane.
+    right = (fwd[1] * 1.0 - fwd[2] * 0.0,
+             fwd[2] * 0.0 - fwd[0] * 1.0,
+             fwd[0] * 0.0 - fwd[1] * 0.0)
+    roll = sum(u * r for u, r in zip(up, right))
+    assert roll == pytest.approx(0.0, abs=1e-6)
+
+
 def test_zoom_t_clamps_to_unit_interval():
     bc = _BridgeCamera()
     bc.set_zoom_target((10.0, 0.0, 0.0), dt=100.0)

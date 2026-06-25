@@ -1640,6 +1640,25 @@ class _BridgeCamera:
                 bl = _math.sqrt(bx*bx + by*by + bz*bz)
                 if bl > 1e-6:
                     local_fwd = (bx/bl, by/bl, bz/bl)
+                    # Re-derive a roll-free up for the eased forward. Easing only
+                    # the forward leaves local_up frozen at its pre-zoom (yawed/
+                    # pitched) orientation, so it no longer lies in the new
+                    # forward's vertical plane and the camera rolls. Rebuilding up
+                    # from forward against bridge-up (+Z) keeps the horizon level
+                    # throughout the zoom and at the station, matching free-look.
+                    zr = (
+                        local_fwd[1]*1.0 - local_fwd[2]*0.0,
+                        local_fwd[2]*0.0 - local_fwd[0]*1.0,
+                        local_fwd[0]*0.0 - local_fwd[1]*0.0,
+                    )
+                    zrl = _math.sqrt(zr[0]**2 + zr[1]**2 + zr[2]**2)
+                    if zrl > 1e-6:
+                        zr = (zr[0]/zrl, zr[1]/zrl, zr[2]/zrl)
+                        local_up = (
+                            zr[1]*local_fwd[2] - zr[2]*local_fwd[1],
+                            zr[2]*local_fwd[0] - zr[0]*local_fwd[2],
+                            zr[0]*local_fwd[1] - zr[1]*local_fwd[0],
+                        )
             fov = self.FOV_Y_RAD * self._lerp(_BRIDGE_ZOOM_MAX, _BRIDGE_ZOOM_MIN, e)
 
         target = (eye[0] + local_fwd[0], eye[1] + local_fwd[1], eye[2] + local_fwd[2])
