@@ -179,24 +179,19 @@ def _stub_qb_module():
     enemy_menu.AddChild(_ship_button("BOP"))
     enemy_menu.AddChild(_ship_button("Warbird"))
 
-    # Player pane: same shape as the ships pane (GeneratePlayerShipMenu).
-    player_pane = STSubPane()
-    p_window = STStylizedWindow_CreateW("StylizedWindow", "NoMinimize", "Player")
-    player_menu = STSubPane()
-    p_window.AddChild(player_menu)
-    player_pane.AddChild(p_window, 0.0, 0.0)
-    p_fed = STCharacterMenu("Fed Ships")
-    p_fed.AddChild(_ship_button("Galaxy"))      # current (g_sPlayerType below)
-    p_fed.AddChild(_ship_button("Sovereign"))
-    player_menu.AddChild(p_fed)
-
     return SimpleNamespace(
         g_pShipsPane=ships_pane,
         g_pFriendMenu=friend_menu,
         g_pEnemyMenu=enemy_menu,
-        g_pPlayerPane=player_pane,
         g_sPlayerType="Galaxy",
         bInSimulation=0,
+        # SelectShipType stores the clicked ship's type int here; the friendly
+        # table maps it to the ship NAME (index [0]) — what Set As Player Ship
+        # assigns to g_sPlayerType.
+        g_iSelectedShipType=-1,
+        g_dFriendlyShipTypeToDetails={
+            9: ["Sovereign", "Sovereign", "x", "QuickBattleFriendlyAI", "Friendly"],
+        },
         g_pAddFriendButton=_ship_button("Add As Friendly"),
         g_pAddEnemyButton=_ship_button("Add As Enemy"),
         ET_CLOSE_DIALOG=4242,
@@ -336,49 +331,43 @@ def test_add_friend_activates_add_friend_button(qb_panel):
     assert fired == [True]
 
 
-# ---- Player Ship selector + mid-combat swap -------------------------------
+# ---- Player ship: current display + Set As Player Ship action -------------
 
-def test_player_ship_categories_in_payload(qb_panel):
-    body = _body(qb_panel.render_payload())
-    cats = body["player_ship"]
-    assert [c["label"] for c in cats] == ["Fed Ships"]
-    assert [s["label"] for s in cats[0]["ships"]] == ["Galaxy", "Sovereign"]
+def test_current_player_ship_name_in_payload(qb_panel):
+    # g_sPlayerType is the singular current player ship name.
+    assert _body(qb_panel.render_payload())["player_ship"] == "Galaxy"
 
 
-def test_current_player_ship_flagged(qb_panel):
-    # g_sPlayerType == "Galaxy" -> the Galaxy row is current, Sovereign is not.
-    ships = _body(qb_panel.render_payload())["player_ship"][0]["ships"]
-    galaxy = next(s for s in ships if s["label"] == "Galaxy")
-    sovereign = next(s for s in ships if s["label"] == "Sovereign")
-    assert galaxy["current"] is True
-    assert sovereign["current"] is False
-
-
-def test_absent_player_pane_renders_empty(qb_panel):
-    qb_panel._qb_module.g_pPlayerPane = None
-    assert _body(qb_panel.render_payload())["player_ship"] == []
-
-
-def test_select_player_ship_out_of_combat_only_activates(qb_panel):
-    sid = _body(qb_panel.render_payload())["player_ship"][0]["ships"][1]["id"]
-    fired = _spy_activation(qb_panel.widget_for_id(sid))
+def test_set_player_assigns_selected_ship(qb_panel):
+    # Selected catalog ship int 9 maps to "Sovereign" in the friendly table.
+    qb_panel._qb_module.g_iSelectedShipType = 9
     recreated = []
     qb_panel._qb_module.RecreatePlayer = lambda: recreated.append(True)
     qb_panel._qb_module.bInSimulation = 0
-    assert qb_panel.dispatch_event("select-player-ship:" + str(sid)) is True
-    assert fired == [True]            # g_sPlayerType set via the button
-    assert recreated == []            # no live swap out of combat
+    assert qb_panel.dispatch_event("set-player") is True
+    assert qb_panel._qb_module.g_sPlayerType == "Sovereign"
+    assert recreated == []                 # no live swap out of combat
 
 
-def test_select_player_ship_in_combat_recreates(qb_panel):
-    sid = _body(qb_panel.render_payload())["player_ship"][0]["ships"][1]["id"]
-    fired = _spy_activation(qb_panel.widget_for_id(sid))
+def test_set_player_in_combat_recreates(qb_panel):
+    qb_panel._qb_module.g_iSelectedShipType = 9
     recreated = []
     qb_panel._qb_module.RecreatePlayer = lambda: recreated.append(True)
     qb_panel._qb_module.bInSimulation = 1
-    assert qb_panel.dispatch_event("select-player-ship:" + str(sid)) is True
-    assert fired == [True]
-    assert recreated == [True]        # live swap via RecreatePlayer
+    assert qb_panel.dispatch_event("set-player") is True
+    assert qb_panel._qb_module.g_sPlayerType == "Sovereign"
+    assert recreated == [True]             # live swap via RecreatePlayer
+
+
+def test_set_player_noop_for_nonflyable_selection(qb_panel):
+    # A selection not in the friendly table (e.g. a starbase) can't be flown.
+    qb_panel._qb_module.g_iSelectedShipType = 999
+    recreated = []
+    qb_panel._qb_module.RecreatePlayer = lambda: recreated.append(True)
+    qb_panel._qb_module.bInSimulation = 1
+    assert qb_panel.dispatch_event("set-player") is True
+    assert qb_panel._qb_module.g_sPlayerType == "Galaxy"   # unchanged
+    assert recreated == []
 
 
 def test_start_with_callback_fires_and_closes():

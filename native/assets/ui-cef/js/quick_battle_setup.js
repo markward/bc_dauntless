@@ -76,6 +76,8 @@ function _qbsRenderRoster(items, kind) {
 
 function _qbsRenderBody(state) {
     if (state.selected_tab !== 'ships') return '';
+    const player = state.player_ship
+        ? escapeHtmlQBS(state.player_ship) : '(none)';
     return '<div class="qbs-lists">'
          +   '<div class="qbs-col qbs-catalog">'
          +     '<div class="qbs-scroll">'
@@ -86,14 +88,14 @@ function _qbsRenderBody(state) {
          +         ' onclick="dauntlessEvent(\'quick-battle-setup/add-friend\')">Add As Friendly</button>'
          +       '<button class="cp-done-button"'
          +         ' onclick="dauntlessEvent(\'quick-battle-setup/add-enemy\')">Add As Enemy</button>'
+         +       '<button class="cp-done-button"'
+         +         ' onclick="dauntlessEvent(\'quick-battle-setup/set-player\')">Set As Player Ship</button>'
          +     '</div>'
          +   '</div>'
          +   '<div class="qbs-col qbs-rosters">'
          +     '<div class="qbs-scroll">'
          +       '<div class="qbs-roster-title">Player Ship</div>'
-         +       '<div class="qbs-player-ship">'
-         +         _qbsRenderCategories(state.player_ship, 'select-player-ship', 'current')
-         +       '</div>'
+         +       '<div class="qbs-player-ship">' + player + '</div>'
          +       '<div class="qbs-roster-title">Friendly Ships</div>'
          +       '<div class="qbs-roster">' + _qbsRenderRoster(state.friendly, 'friendly') + '</div>'
          +       '<div class="qbs-roster-title">Enemy Ships</div>'

@@ -138,8 +138,10 @@ class QuickBattleSetupPanel(Panel):
 
     def _read_ships(self):
         """Walk the live QuickBattle widgets and return
-        (categories, friendly, enemy, player_ship), rebuilding the id->widget
-        map. Empty lists (never raises) when the module/globals are absent."""
+        (categories, friendly, enemy, player_ship_name), rebuilding the
+        id->widget map. The single Ships catalog feeds all three assignments
+        (friendly/enemy/player); the player ship is the singular g_sPlayerType
+        name. Empty/None (never raises) when the module/globals are absent."""
         from engine.appc.characters import STButton
         from engine.appc.tg_ui.widgets import ensure_widget_id
 
@@ -149,19 +151,12 @@ class QuickBattleSetupPanel(Panel):
 
         m = self._qb()
         if m is None:
-            return [], friendly, enemy, []
+            return [], friendly, enemy, None
 
-        # Enemy/friendly catalog (Ships pane): highlight the clicked ship.
+        # The one ship catalog (Ships pane); highlight the clicked ship.
         categories = self._read_pane_categories(
             getattr(m, "g_pShipsPane", None),
             lambda sid, btn: {"selected": sid == self._selected_ship_id},
-        )
-        # Player-ship catalog (Player pane): highlight the current player ship
-        # (g_sPlayerType is the ship-name string; player buttons label == name).
-        current = getattr(m, "g_sPlayerType", None)
-        player_ship = self._read_pane_categories(
-            getattr(m, "g_pPlayerPane", None),
-            lambda sid, btn: {"current": btn.GetLabel() == current},
         )
 
         for pane, out in ((getattr(m, "g_pFriendMenu", None), friendly),
@@ -172,7 +167,9 @@ class QuickBattleSetupPanel(Panel):
                     self._id_to_widget[bid] = btn
                     out.append({"id": bid, "label": btn.GetLabel()})
 
-        return categories, friendly, enemy, player_ship
+        # The current player ship (singular). g_sPlayerType is the ship NAME.
+        player_ship_name = getattr(m, "g_sPlayerType", None)
+        return categories, friendly, enemy, player_ship_name
 
     def widget_for_id(self, wid):
         """Resolve a snapshot-node id back to its live SDK widget (or None)."""
@@ -194,6 +191,27 @@ class QuickBattleSetupPanel(Panel):
         """Activate a QuickBattle module-global button (e.g. g_pAddEnemyButton)."""
         m = self._qb()
         self._activate_widget(getattr(m, global_name, None) if m is not None else None)
+
+    def _set_player_from_selection(self) -> None:
+        """Set the player ship to the currently-selected catalog ship.
+
+        g_iSelectedShipType is the ship-type int set by SelectShipType when the
+        ship was clicked. g_dFriendlyShipTypeToDetails[int][0] is the ship NAME
+        (exactly what SelectPlayerShip assigns to g_sPlayerType). No-op when
+        nothing is selected or the ship isn't flyable (not in the friendly
+        table — e.g. a starbase). Swaps live in combat via RecreatePlayer."""
+        m = self._qb()
+        if m is None:
+            return
+        sel = getattr(m, "g_iSelectedShipType", None)
+        details = getattr(m, "g_dFriendlyShipTypeToDetails", None)
+        try:
+            if details is None or sel not in details:
+                return
+            m.g_sPlayerType = details[sel][0]
+        except Exception:
+            return
+        self._recreate_player_if_in_sim()
 
     def _recreate_player_if_in_sim(self) -> None:
         """If combat is active (bInSimulation), call the SDK's RecreatePlayer to
@@ -241,7 +259,7 @@ class QuickBattleSetupPanel(Panel):
                 "categories": categories,
                 "friendly": friendly,
                 "enemy": enemy,
-                "player_ship": player_ship,
+                "player_ship": player_ship,   # current player ship NAME (or null)
             }
         out = "setQuickBattleSetup(" + json.dumps(payload) + ");"
         if out == self._last_pushed:
@@ -272,6 +290,15 @@ class QuickBattleSetupPanel(Panel):
         if action == "add-enemy":
             self._activate_qb_button("g_pAddEnemyButton")
             return True
+        if action == "set-player":
+            # Assign the currently-selected catalog ship as the player ship.
+            # SelectShipType already set g_iSelectedShipType (the ship-type int)
+            # when the ship was clicked — the same int Add As Enemy/Friend use.
+            # Set g_sPlayerType from it (as SelectPlayerShip does), then swap live
+            # in combat. No-op for a non-flyable selection (e.g. a starbase isn't
+            # in the friendly table) or no selection.
+            self._set_player_from_selection()
+            return True
         if action.startswith("expand:"):
             try:
                 wid = int(action[len("expand:"):])
@@ -291,16 +318,6 @@ class QuickBattleSetupPanel(Panel):
                 self._selected_ship_id = int(raw)
             except ValueError:
                 pass
-            return True
-        if action.startswith("select-player-ship:"):
-            # Fire the player-ship button (ET_SELECT_PLAYER_SHIP_TYPE ->
-            # SelectPlayerShip sets g_sPlayerType). In combat, swap the player
-            # ship live via the SDK's own RecreatePlayer; out of combat it just
-            # sets the type for the next Start (stock behaviour). The host's
-            # reconciliation realizes the new ship + retargets the camera.
-            raw = action[len("select-player-ship:"):]
-            self._activate_widget(self.widget_for_id(raw))
-            self._recreate_player_if_in_sim()
             return True
         if action.startswith("tab:"):
             tab_id = action[len("tab:"):]
