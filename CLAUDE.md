@@ -238,3 +238,9 @@ run the gate.** A new required arg / changed output shape means you update that
 thing's tests in the same change. Order-flaky? Run it in isolation to separate
 cross-test pollution (reset leaked globals in `tests/conftest.py`'s autouse
 `_reset_leakable_engine_globals`) from a real break.
+
+## Executing plans
+
+When asked to execute a plan in `docs/plans/`, dispatch one `tdd-engineer`
+subagent per task in order, run the full suite and commit between tasks, and
+stop on any BLOCKED.
