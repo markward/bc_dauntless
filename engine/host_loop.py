@@ -2631,8 +2631,9 @@ def _sync_quickbattle_player_revert(controller) -> None:
             qb.g_sPlayerType = pre
             try:
                 qb.RecreatePlayer()
-            except Exception:
-                pass
+            except Exception as _e:
+                import engine.dev_mode as _dev
+                _dev.log_swallowed("quickbattle player-ship revert", _e)
         controller._qb_pre_sim_player_type = None
 
 
