@@ -220,6 +220,17 @@ def STButton_CreateW(label="", event=None, flags=0) -> STButton:
     return STButton(str(label), event, flags)
 
 
+def STButton_Create(label="", event=None, flags=0) -> STButton:
+    """Narrow-string sibling of STButton_CreateW — same STButton, plain str label.
+
+    QuickBattle.CreateRegionMenuButton (sdk/.../QuickBattle.py:1100) calls
+    App.STButton_Create(sName, pEvent).  Appc's STButton_Create / STButton_CreateW
+    differ only in label width; both return the same STButton.  Delegate so there's
+    one construction path.
+    """
+    return STButton_CreateW(label, event, flags)
+
+
 def STMenu_Cast(obj):
     """Return obj as an STMenu, or pass through if it's a duck-typed stub.
 
