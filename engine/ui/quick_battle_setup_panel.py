@@ -41,6 +41,8 @@ class QuickBattleSetupPanel(Panel):
         self._last_pushed: Optional[str] = None
         # Category widget ids that are currently expanded (default collapsed).
         self._expanded_ids: Set[int] = set()
+        # The ship row the player last clicked (highlighted in the accordion).
+        self._selected_ship_id: Optional[int] = None
         # Rebuilt each render: snapshot-node id -> live SDK widget.
         self._id_to_widget: Dict[int, object] = {}
         # The QuickBattle script module (source of g_pShipsPane / g_pFriendMenu
@@ -132,6 +134,7 @@ class QuickBattleSetupPanel(Panel):
                         "id": sid,
                         "label": btn.GetLabel(),
                         "enabled": bool(btn.IsEnabled()),
+                        "selected": sid == self._selected_ship_id,
                     })
             categories.append({
                 "id": cid,
@@ -246,8 +249,14 @@ class QuickBattleSetupPanel(Panel):
         if action.startswith("click-ship:"):
             # Fire the ship button's SDK event (ET_SELECT_SHIP_TYPE -> the
             # mission's SelectShipType handler) so the SDK tracks the selection
-            # that Add As Friendly/Enemy then acts on.
-            self._activate_widget(self.widget_for_id(action[len("click-ship:"):]))
+            # that Add As Friendly/Enemy then acts on, and record it so the
+            # accordion highlights the clicked row.
+            raw = action[len("click-ship:"):]
+            self._activate_widget(self.widget_for_id(raw))
+            try:
+                self._selected_ship_id = int(raw)
+            except ValueError:
+                pass
             return True
         if action.startswith("tab:"):
             tab_id = action[len("tab:"):]

@@ -288,6 +288,28 @@ def test_click_ship_fires_button_activation(qb_panel):
     assert fired == [True]
 
 
+def test_click_ship_marks_it_selected(qb_panel):
+    body = _body(qb_panel.render_payload())
+    ships = body["categories"][0]["ships"]
+    # Nothing selected initially.
+    assert all(s["selected"] is False for s in ships)
+    target = ships[1]
+    qb_panel.dispatch_event("click-ship:" + str(target["id"]))
+    body2 = _body(qb_panel.render_payload())
+    ships2 = body2["categories"][0]["ships"]
+    assert ships2[1]["selected"] is True
+    assert ships2[0]["selected"] is False
+
+
+def test_selecting_another_ship_moves_the_highlight(qb_panel):
+    ships = _body(qb_panel.render_payload())["categories"][0]["ships"]
+    qb_panel.dispatch_event("click-ship:" + str(ships[0]["id"]))
+    qb_panel.dispatch_event("click-ship:" + str(ships[1]["id"]))
+    ships2 = _body(qb_panel.render_payload())["categories"][0]["ships"]
+    assert ships2[0]["selected"] is False
+    assert ships2[1]["selected"] is True
+
+
 def test_add_enemy_activates_add_enemy_button(qb_panel):
     fired = _spy_activation(qb_panel._qb_module.g_pAddEnemyButton)
     assert qb_panel.dispatch_event("add-enemy") is True

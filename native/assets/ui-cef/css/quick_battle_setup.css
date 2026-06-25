@@ -62,6 +62,17 @@
 .qbs-row.disabled { opacity: 0.4; cursor: default; }
 .qbs-row.disabled:hover { background: transparent; }
 
+/* Selected ship: a stronger salmon tint than hover (+ a gold inset accent so
+   it reads as a persistent selection, not a transient hover). Mirrors the
+   target-list "chosen" alpha-bump pattern; gold matches the cp-focused accent.
+   box-shadow (not border) avoids any layout shift. */
+.qbs-row--selected,
+.qbs-row--selected:hover {
+    background: rgba(216, 94, 86, 0.38);
+    box-shadow: inset 3px 0 0 rgb(255, 210, 90);
+    color: #fff;
+}
+
 /* Caret — neutral white, glyph swapped in JS (no CSS rotate; matches
    .crew-menu__caret / .target-list__caret). */
 .qbs-caret {

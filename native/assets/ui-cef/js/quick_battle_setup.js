@@ -45,7 +45,9 @@ function _qbsRenderCategories(categories) {
         if (!open) continue;
         for (const ship of (cat.ships || [])) {
             const disabled = ship.enabled === false;
-            const cls = 'qbs-row qbs-row--leaf' + (disabled ? ' disabled' : '');
+            const cls = 'qbs-row qbs-row--leaf'
+                + (disabled ? ' disabled' : '')
+                + (ship.selected ? ' qbs-row--selected' : '');
             const onclick = disabled ? ''
                 : ' onclick="dauntlessEvent(\'quick-battle-setup/click-ship:' + ship.id + '\')"';
             html += '<div class="' + cls + '" data-depth="2"' + onclick + '>'
