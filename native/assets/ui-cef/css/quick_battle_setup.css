@@ -15,9 +15,25 @@
     inset: 0;
     align-items: center;
     justify-content: center;
-    background: rgba(0, 0, 0, 0.55);
+    /* No dim: the setup panel sits over the live bridge without greying it. */
+    background: transparent;
     z-index: 50;
     font-family: "Antonio", sans-serif;
+}
+
+/* Large work surface — fill 80% of the viewport. */
+#quick-battle-setup .cp-modal {
+    width: 80vw;
+    height: 80vh;
+}
+
+/* The body hosts two full-height columns that scroll internally (so the Add
+   buttons can pin to the bottom of their column); the body itself never
+   scrolls. */
+#quick-battle-setup .cp-body {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
 }
 
 /* Empty/placeholder hints. */
@@ -28,19 +44,34 @@
     padding: 8px 4px;
 }
 
-/* Two columns inside cp-body: ship catalog (left) | rosters (right).
-   cp-body already provides padding + vertical scroll. */
+/* Two columns: ship catalog (left) | rosters (right). Each column is a flex
+   column that fills the body height; its .qbs-scroll holds the scrolling
+   content, leaving the catalog's .qbs-actions pinned at the bottom. */
 .qbs-lists {
     display: flex;
     gap: 0;
-    align-items: flex-start;
+    flex: 1 1 auto;
+    min-height: 0;
+    align-items: stretch;
 }
 
-.qbs-col { flex: 1 1 50%; min-width: 0; }
+.qbs-col {
+    flex: 1 1 50%;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.qbs-scroll {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    min-height: 0;
+}
 
 .qbs-catalog { border-right: 1px solid rgba(255, 255, 255, 0.12); }
 
-.qbs-rosters { padding-left: 16px; }
+.qbs-rosters .qbs-scroll { padding-left: 16px; }
 
 /* Ship-category accordion — same values as the crew-menu accordion
    (css/crew_menus.css) so categories/ships read identically to the crew tree. */
@@ -88,11 +119,14 @@
 
 .qbs-label { flex: 1 1 auto; }
 
-/* Add As Friendly / Add As Enemy action row under the catalog. */
+/* Add As Friendly / Add As Enemy — pinned to the bottom of the catalog column
+   (flex:0 0 auto after the flex:1 .qbs-scroll). */
 .qbs-actions {
+    flex: 0 0 auto;
     display: flex;
     gap: 8px;
-    padding: 10px 12px 4px;
+    padding: 10px 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .qbs-actions .cp-done-button { flex: 1 1 auto; }

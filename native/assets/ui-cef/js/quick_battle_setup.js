@@ -75,7 +75,7 @@ function _qbsRenderBody(state) {
     if (state.selected_tab !== 'ships') return '';
     return '<div class="qbs-lists">'
          +   '<div class="qbs-col qbs-catalog">'
-         +     _qbsRenderCategories(state.categories)
+         +     '<div class="qbs-scroll">' + _qbsRenderCategories(state.categories) + '</div>'
          +     '<div class="qbs-actions">'
          +       '<button class="cp-done-button"'
          +         ' onclick="dauntlessEvent(\'quick-battle-setup/add-friend\')">Add As Friendly</button>'
@@ -84,10 +84,12 @@ function _qbsRenderBody(state) {
          +     '</div>'
          +   '</div>'
          +   '<div class="qbs-col qbs-rosters">'
-         +     '<div class="qbs-roster-title">Friendly Ships</div>'
-         +     '<div class="qbs-roster">' + _qbsRenderRoster(state.friendly, 'friendly') + '</div>'
-         +     '<div class="qbs-roster-title">Enemy Ships</div>'
-         +     '<div class="qbs-roster">' + _qbsRenderRoster(state.enemy, 'enemy') + '</div>'
+         +     '<div class="qbs-scroll">'
+         +       '<div class="qbs-roster-title">Friendly Ships</div>'
+         +       '<div class="qbs-roster">' + _qbsRenderRoster(state.friendly, 'friendly') + '</div>'
+         +       '<div class="qbs-roster-title">Enemy Ships</div>'
+         +       '<div class="qbs-roster">' + _qbsRenderRoster(state.enemy, 'enemy') + '</div>'
+         +     '</div>'
          +   '</div>'
          + '</div>';
 }
