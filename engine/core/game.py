@@ -140,8 +140,23 @@ class Episode(TGObject):
         return mission
 
 
+# ── Global AI / game difficulty ────────────────────────────────────────────────
+# Game_GetDifficulty() returns the active difficulty index (0=EASY, 1=MEDIUM,
+# 2=HARD). It drives both the AI behaviour-flag prefix in AI.Compound.BasicAttack
+# (Easy_/""/Hard_) and the offensive/defensive multiplier accessors below, so it
+# is the single knob behind the Configuration > Gameplay > AI Difficulty setting.
+# Defaults to MEDIUM to match the original engine's headless behaviour.
+_difficulty: int = 1  # MEDIUM
+
+
 def Game_GetDifficulty() -> int:
-    return 1  # MEDIUM
+    return _difficulty
+
+
+def Game_SetDifficulty(level: int) -> None:
+    """Set the global difficulty index, clamped to [EASY, HARD] (0..2)."""
+    global _difficulty
+    _difficulty = max(0, min(2, int(level)))
 
 
 # ── Difficulty multipliers ─────────────────────────────────────────────────────

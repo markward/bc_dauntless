@@ -137,7 +137,7 @@ from engine.audio.tg_sound import (
 )
 from engine.core.game import (
     Game, Episode, Mission, Game_GetCurrentGame, _set_current_game,
-    Game_GetDifficulty,
+    Game_GetDifficulty, Game_SetDifficulty,
     Game_SetDifficultyMultipliers, Game_SetDefaultDifficultyMultipliers,
     Game_GetOffensiveDifficultyMultiplier, Game_GetDefensiveDifficultyMultiplier,
     Game_GetCurrentPlayer, Game_SetCurrentPlayer,

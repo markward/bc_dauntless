@@ -36,6 +36,7 @@ function _cpFocusableList(state) {
     } else if (state.selected_tab === 'gameplay') {
         out.push({kind: 'ctrl', target: 'subtitles'});
         out.push({kind: 'ctrl', target: 'disable_annoying_dialogue'});
+        out.push({kind: 'ctrl', target: 'ai_difficulty'});
     }
     return out;
 }
@@ -252,6 +253,21 @@ function _cpRenderGameplayBody(state, focusables) {
           +       (s.disable_annoying_dialogue_on ? 'On' : 'Off')
           +     '</button>'
           + '</div>';
+
+    // AI Difficulty — three-way segmented control (Easy / Medium / Hard).
+    // Clicking a segment sends configuration/ai_difficulty:<index>.
+    const aiLabels = ['Easy', 'Medium', 'Hard'];
+    const ai = (typeof s.ai_difficulty === 'number') ? s.ai_difficulty : 1;
+    html += '<div class="cp-row' + (isFoc('ai_difficulty') ? ' cp-focused' : '') + '">'
+          +     '<span class="cp-label">AI Difficulty</span>'
+          +     '<div class="cp-segmented">';
+    for (let i = 0; i < aiLabels.length; ++i) {
+        html += '<button class="cp-toggle' + (ai === i ? ' cp-toggle--on' : '') + '"'
+              +    ' onclick="dauntlessEvent(\'configuration/ai_difficulty:' + i + '\')">'
+              +    aiLabels[i]
+              + '</button>';
+    }
+    html += '</div></div>';
     return html;
 }
 

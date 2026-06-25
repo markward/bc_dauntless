@@ -594,6 +594,13 @@ def _reset_leakable_engine_globals():
         App._next_event_type_id = 1200
     except Exception:
         pass
+    # Global AI/game difficulty is now a mutable module global (set via the
+    # Configuration > Gameplay > AI Difficulty control). Reset to MEDIUM so a
+    # test that changes it can't leak into another test's multiplier accessors.
+    try:
+        App.Game_SetDifficulty(1)
+    except Exception:
+        pass
     # Audio singleton: the audio tests' teardown (shutdown_audio_for_tests)
     # leaves TGSoundManager._instance and App.g_kSoundManager as None. A later
     # bridge load then calls App.g_kSoundManager.GetSound(...) -> AttributeError

@@ -22,6 +22,9 @@ FOV_MIN  = 40
 FOV_MAX  = 80
 FOV_STEP = 5
 
+# AI difficulty index (0=Easy, 1=Medium, 2=Hard) — mirrors App.Game_GetDifficulty.
+AI_DIFFICULTY_LABELS = ("Easy", "Medium", "Hard")
+
 
 @dataclass
 class SettingsSnapshot:
@@ -34,6 +37,7 @@ class SettingsSnapshot:
     smaa_on: bool = True
     subtitles_on: bool = True
     disable_annoying_dialogue_on: bool = True
+    ai_difficulty: int = 1
     shadows_on: bool = True
     procedural_sky_on: bool = True
     filmic_on: bool = True
@@ -55,6 +59,7 @@ class ConfigurationPanel(Panel):
                  set_smaa: Callable[[bool], None],
                  set_subtitles: Callable[[bool], None],
                  set_disable_annoying_dialogue: Callable[[bool], None],
+                 set_ai_difficulty: Callable[[int], None],
                  set_fov_rad: Callable[[float], None],
                  set_shadows: Callable[[bool], None],
                  set_procedural_sky: Callable[[bool], None],
@@ -76,6 +81,7 @@ class ConfigurationPanel(Panel):
             fov_deg=int(initial_settings.fov_deg),
             subtitles_on=initial_settings.subtitles_on,
             disable_annoying_dialogue_on=initial_settings.disable_annoying_dialogue_on,
+            ai_difficulty=max(0, min(2, int(initial_settings.ai_difficulty))),
             shadows_on=initial_settings.shadows_on,
             procedural_sky_on=initial_settings.procedural_sky_on,
             filmic_on=initial_settings.filmic_on,
@@ -92,6 +98,7 @@ class ConfigurationPanel(Panel):
         self._set_smaa = set_smaa
         self._set_subtitles = set_subtitles
         self._set_disable_annoying_dialogue = set_disable_annoying_dialogue
+        self._set_ai_difficulty = set_ai_difficulty
         self._set_fov_rad = set_fov_rad
         self._set_shadows = set_shadows
         self._set_procedural_sky = set_procedural_sky
@@ -132,6 +139,7 @@ class ConfigurationPanel(Panel):
             self._settings.smaa_on,
             self._settings.subtitles_on,
             self._settings.disable_annoying_dialogue_on,
+            self._settings.ai_difficulty,
             self._settings.shadows_on,
             self._settings.procedural_sky_on,
             self._settings.filmic_on,
@@ -160,6 +168,7 @@ class ConfigurationPanel(Panel):
                 "smaa_on": self._settings.smaa_on,
                 "subtitles_on": self._settings.subtitles_on,
                 "disable_annoying_dialogue_on": self._settings.disable_annoying_dialogue_on,
+                "ai_difficulty": self._settings.ai_difficulty,
                 "shadows_on": self._settings.shadows_on,
                 "procedural_sky_on": self._settings.procedural_sky_on,
                 "filmic_on": self._settings.filmic_on,
@@ -255,6 +264,16 @@ class ConfigurationPanel(Panel):
             new_val = not self._settings.disable_annoying_dialogue_on
             self._set_disable_annoying_dialogue(new_val)
             self._settings.disable_annoying_dialogue_on = new_val
+            return True
+        if action.startswith("ai_difficulty:"):
+            raw = action[len("ai_difficulty:"):]
+            try:
+                level = int(raw)
+            except ValueError:
+                return False
+            level = max(0, min(2, level))
+            self._set_ai_difficulty(level)
+            self._settings.ai_difficulty = level
             return True
         if action.startswith("fov:"):
             raw = action[len("fov:"):]
@@ -354,6 +373,12 @@ class ConfigurationPanel(Panel):
             if _pressed(k_left):
                 self.dispatch_event("fov:" + str(self._settings.fov_deg - FOV_STEP))
 
+        if kind == "ctrl" and target == "ai_difficulty":
+            if _pressed(k_right):
+                self.dispatch_event("ai_difficulty:" + str(self._settings.ai_difficulty + 1))
+            if _pressed(k_left):
+                self.dispatch_event("ai_difficulty:" + str(self._settings.ai_difficulty - 1))
+
     def _focusables(self) -> list:
         """Ordered focusable list: tab rows then controls in the
         currently selected tab. Order mirrors the rendered rows — the
@@ -374,5 +399,6 @@ class ConfigurationPanel(Panel):
                     ("ctrl", "volumetric_nebulae"), ("ctrl", "nebula_lightning")]
         elif self._selected_tab == "gameplay":
             out += [("ctrl", "subtitles"),
-                    ("ctrl", "disable_annoying_dialogue")]
+                    ("ctrl", "disable_annoying_dialogue"),
+                    ("ctrl", "ai_difficulty")]
         return out
