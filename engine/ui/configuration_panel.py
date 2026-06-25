@@ -33,6 +33,7 @@ class SettingsSnapshot:
     fov_deg: int
     smaa_on: bool = True
     subtitles_on: bool = True
+    disable_annoying_dialogue_on: bool = True
     shadows_on: bool = True
     procedural_sky_on: bool = True
     filmic_on: bool = True
@@ -53,6 +54,7 @@ class ConfigurationPanel(Panel):
                  set_decals: Callable[[bool], None],
                  set_smaa: Callable[[bool], None],
                  set_subtitles: Callable[[bool], None],
+                 set_disable_annoying_dialogue: Callable[[bool], None],
                  set_fov_rad: Callable[[float], None],
                  set_shadows: Callable[[bool], None],
                  set_procedural_sky: Callable[[bool], None],
@@ -73,6 +75,7 @@ class ConfigurationPanel(Panel):
             smaa_on=initial_settings.smaa_on,
             fov_deg=int(initial_settings.fov_deg),
             subtitles_on=initial_settings.subtitles_on,
+            disable_annoying_dialogue_on=initial_settings.disable_annoying_dialogue_on,
             shadows_on=initial_settings.shadows_on,
             procedural_sky_on=initial_settings.procedural_sky_on,
             filmic_on=initial_settings.filmic_on,
@@ -88,6 +91,7 @@ class ConfigurationPanel(Panel):
         self._set_decals = set_decals
         self._set_smaa = set_smaa
         self._set_subtitles = set_subtitles
+        self._set_disable_annoying_dialogue = set_disable_annoying_dialogue
         self._set_fov_rad = set_fov_rad
         self._set_shadows = set_shadows
         self._set_procedural_sky = set_procedural_sky
@@ -127,6 +131,7 @@ class ConfigurationPanel(Panel):
             self._settings.decals_on,
             self._settings.smaa_on,
             self._settings.subtitles_on,
+            self._settings.disable_annoying_dialogue_on,
             self._settings.shadows_on,
             self._settings.procedural_sky_on,
             self._settings.filmic_on,
@@ -154,6 +159,7 @@ class ConfigurationPanel(Panel):
                 "decals_on": self._settings.decals_on,
                 "smaa_on": self._settings.smaa_on,
                 "subtitles_on": self._settings.subtitles_on,
+                "disable_annoying_dialogue_on": self._settings.disable_annoying_dialogue_on,
                 "shadows_on": self._settings.shadows_on,
                 "procedural_sky_on": self._settings.procedural_sky_on,
                 "filmic_on": self._settings.filmic_on,
@@ -245,6 +251,11 @@ class ConfigurationPanel(Panel):
             self._set_subtitles(new_val)
             self._settings.subtitles_on = new_val
             return True
+        if action == "toggle:disable_annoying_dialogue":
+            new_val = not self._settings.disable_annoying_dialogue_on
+            self._set_disable_annoying_dialogue(new_val)
+            self._settings.disable_annoying_dialogue_on = new_val
+            return True
         if action.startswith("fov:"):
             raw = action[len("fov:"):]
             try:
@@ -332,6 +343,8 @@ class ConfigurationPanel(Panel):
             self.dispatch_event("toggle:shadows")
         elif activate and kind == "ctrl" and target == "subtitles":
             self.dispatch_event("toggle:subtitles")
+        elif activate and kind == "ctrl" and target == "disable_annoying_dialogue":
+            self.dispatch_event("toggle:disable_annoying_dialogue")
         elif activate and kind == "tab":
             self.dispatch_event("tab:" + target)
 
@@ -360,5 +373,6 @@ class ConfigurationPanel(Panel):
                     ("ctrl", "motion_blur"), ("ctrl", "warp_flythrough"),
                     ("ctrl", "volumetric_nebulae"), ("ctrl", "nebula_lightning")]
         elif self._selected_tab == "gameplay":
-            out += [("ctrl", "subtitles")]
+            out += [("ctrl", "subtitles"),
+                    ("ctrl", "disable_annoying_dialogue")]
         return out

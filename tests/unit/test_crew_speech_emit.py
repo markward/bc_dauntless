@@ -57,3 +57,50 @@ def test_emit_none_db_is_safe():
     crew_speech.bus().reset()
     crew_speech.emit("Eng", None, "ge119", CSP_NORMAL)
     assert _subtitle()._snapshot(now=0.0) is None
+
+
+# ---- "Disable Annoying Dialogue" gate (Configuration > Gameplay) ----------
+
+def test_annoying_dialogue_disabled_default_is_true():
+    assert crew_speech.annoying_dialogue_disabled() is True
+
+
+def test_emit_annoying_line_dropped_when_disabled(monkeypatch):
+    top_window.reset_for_tests()
+    crew_speech.bus().reset()
+    db = TGLocalizationDatabase("x.tgl", strings={"QBExposition": "Our ship..."})
+    calls = []
+    monkeypatch.setattr(crew_speech.bus(), "speak",
+                        lambda *a, **k: calls.append(a) or 9.9)
+    # Default is ON (suppress) -> 0.0, no subtitle, bus.speak never called.
+    assert crew_speech.emit("XO", db, "QBExposition", CSP_NORMAL) == 0.0
+    assert calls == []
+    assert _subtitle()._snapshot(now=0.0) is None
+
+
+def test_emit_annoying_line_plays_when_flag_disabled(monkeypatch):
+    top_window.reset_for_tests()
+    crew_speech.bus().reset()
+    db = TGLocalizationDatabase("x.tgl", strings={"QBExposition": "Our ship..."})
+    calls = []
+    monkeypatch.setattr(crew_speech.bus(), "speak",
+                        lambda *a, **k: calls.append(a) or 9.9)
+    crew_speech.set_annoying_dialogue_disabled(False)
+    try:
+        assert crew_speech.emit("XO", db, "QBExposition", CSP_NORMAL) == 9.9
+        assert len(calls) == 1
+    finally:
+        crew_speech.set_annoying_dialogue_disabled(True)
+
+
+def test_emit_non_annoying_line_unaffected_by_flag(monkeypatch):
+    top_window.reset_for_tests()
+    crew_speech.bus().reset()
+    db = TGLocalizationDatabase("x.tgl", strings={"SomeOtherLine": "Shields up"})
+    calls = []
+    monkeypatch.setattr(crew_speech.bus(), "speak",
+                        lambda *a, **k: calls.append(a) or 4.4)
+    # Flag ON (suppress annoying) but this key is not annoying -> normal.
+    assert crew_speech.annoying_dialogue_disabled() is True
+    assert crew_speech.emit("XO", db, "SomeOtherLine", CSP_NORMAL) == 4.4
+    assert len(calls) == 1

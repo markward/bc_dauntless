@@ -35,6 +35,7 @@ function _cpFocusableList(state) {
         out.push({kind: 'ctrl', target: 'nebula_lightning'});
     } else if (state.selected_tab === 'gameplay') {
         out.push({kind: 'ctrl', target: 'subtitles'});
+        out.push({kind: 'ctrl', target: 'disable_annoying_dialogue'});
     }
     return out;
 }
@@ -240,6 +241,15 @@ function _cpRenderGameplayBody(state, focusables) {
           +     '<button class="cp-toggle' + (s.subtitles_on ? ' cp-toggle--on' : '') + '"'
           +        ' onclick="dauntlessEvent(\'configuration/toggle:subtitles\')">'
           +       (s.subtitles_on ? 'On' : 'Off')
+          +     '</button>'
+          + '</div>';
+
+    // Disable Annoying Dialogue toggle
+    html += '<div class="cp-row' + (isFoc('disable_annoying_dialogue') ? ' cp-focused' : '') + '">'
+          +     '<span class="cp-label">Disable Annoying Dialogue</span>'
+          +     '<button class="cp-toggle' + (s.disable_annoying_dialogue_on ? ' cp-toggle--on' : '') + '"'
+          +        ' onclick="dauntlessEvent(\'configuration/toggle:disable_annoying_dialogue\')">'
+          +       (s.disable_annoying_dialogue_on ? 'On' : 'Off')
           +     '</button>'
           + '</div>';
     return html;
