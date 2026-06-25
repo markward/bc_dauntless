@@ -80,10 +80,36 @@ class Torpedo(TGObject):
         self._flares_size_a  = float(flares_a)
         self._flares_size_b  = float(flares_b)
 
+    def CreateDisruptorModel(self, outer_shell_color, outer_core_color,
+                             length, radius) -> None:
+        """Populate the bolt's render fields for a pulse-weapon shot.
+
+        BC builds a procedural capsule; we map the shell/core colors and
+        length/radius onto the existing core+glow textured-quad fields so a
+        disruptor bolt rides the same torpedo render pass
+        (_build_torpedo_render_data).  length -> size_a (along travel),
+        radius -> size_b (cross-section).  No flares on pulse bolts.
+        """
+        self._core_texture   = "data/Textures/Tactical/TorpedoCore.tga"
+        self._core_color     = outer_core_color
+        self._core_size_a    = float(length)
+        self._core_size_b    = float(radius)
+        self._glow_texture   = "data/Textures/Tactical/TorpedoGlow.tga"
+        self._glow_color     = outer_shell_color
+        self._glow_size_a    = float(length) * 1.5
+        self._glow_size_b    = float(radius) * 2.0
+        self._glow_size_c    = 0.0
+        self._flares_texture = ""
+        self._flares_color   = None
+        self._num_flares     = 0
+        self._flares_size_a  = 0.0
+        self._flares_size_b  = 0.0
+
     def SetDamage(self, v) -> None:               self._damage = float(v)
     def SetDamageRadiusFactor(self, v) -> None:   self._damage_radius_factor = float(v)
     def GetDamageRadiusFactor(self) -> float:     return self._damage_radius_factor
     def SetGuidanceLifetime(self, v) -> None:     self._guidance_lifetime = float(v)
+    def SetLifetime(self, v) -> None:             self._ttl = float(v)
     def SetMaxAngularAccel(self, v) -> None:      self._max_angular_accel = float(v)
     def SetNetType(self, v) -> None:              pass  # multiplayer; ignored in PR 2b
 
