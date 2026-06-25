@@ -749,10 +749,18 @@ class ShipClass(DamageableObject):
                     self._copy_powered_subsystem_fields(prop, receiver)
                     receiver.SetProperty(prop)
                     if wst is not None: receiver.SetWeaponSystemType(wst)
-                    # Phaser-only extras (no-op for other receivers).
-                    if wst == WeaponSystemProperty.WST_PHASER:
+                    # SingleFire flows to any system that models it. Phasers
+                    # and pulse cannons both honour SetSingleFire (phasers
+                    # round-robin one bank, pulse cannons one cannon when set;
+                    # both fire all eligible when clear). Hardpoints call
+                    # SetSingleFire on the WeaponSystemProperty (e.g.
+                    # birdofprey.py DisruptorCannons.SetSingleFire(0),
+                    # warbird.py DisruptorCannons.SetSingleFire(1)).
+                    if hasattr(receiver, "SetSingleFire"):
                         sf = prop.GetSingleFire()
                         if sf is not None: receiver.SetSingleFire(sf)
+                    # AimedWeapon is phaser-only.
+                    if wst == WeaponSystemProperty.WST_PHASER:
                         aw = prop.GetAimedWeapon()
                         if aw is not None: receiver.SetAimedWeapon(aw)
             elif isinstance(prop, PowerProperty):

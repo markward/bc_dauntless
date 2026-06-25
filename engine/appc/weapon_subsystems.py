@@ -818,7 +818,112 @@ class PhaserSystem(WeaponSystem):
 
 
 class PulseWeaponSystem(WeaponSystem):
-    pass
+    """Pulse-weapon (disruptor/cannon) aggregator.
+
+    Like PhaserSystem but its emitters fire discrete projectile bolts (no
+    beam, no global range gate — projectile lifetime bounds range). Honors
+    SingleFire: round-robin one cannon when set, fire all eligible cannons
+    when clear. Held-fire is driven per-frame by retry_held_fire from
+    host_loop._advance_combat.
+    """
+    def __init__(self, name: str = ""):
+        super().__init__(name)
+        self._single_fire: int = 0
+        self._fire_held: bool = False
+        self._held_target = None
+        self._held_offset = None
+
+    def GetSingleFire(self) -> int:        return self._single_fire
+    def SetSingleFire(self, v) -> None:    self._single_fire = int(v)
+
+    def StartFiring(self, target=None, offset=None) -> None:
+        """Dispatch — fires pulse cannons per SingleFire mode.
+
+        SingleFire(1) round-robins one eligible cannon per trigger;
+        SingleFire(0) fires every eligible cannon together. Sets
+        _fire_held so retry_held_fire() re-engages cannons as they
+        clear cooldown + recharge while the trigger stays down.
+
+        No range gate (unlike PhaserSystem): a pulse bolt's lifetime
+        bounds its range, so the only fire gates are arc + charge +
+        cooldown.
+        """
+        if not self.IsOn() or target is None:
+            return
+        # Disabled-weapons gate: parent aggregates child IsDisabled (Project 2).
+        if _is_offline(self):
+            return
+        self._fire_held = True
+        self._held_target = target
+        self._held_offset = offset
+        self._currently_firing = []
+        self._dispatch_one_or_all(target, offset, self.GetParentShip())
+
+    def StopFiring(self, *args) -> None:
+        self._fire_held = False
+        self._held_target = None
+        self._held_offset = None
+        super().StopFiring(*args)
+
+    def retry_held_fire(self) -> None:
+        """Re-attempt firing while the trigger is held. Cannons that are
+        still on cooldown / under-charged are skipped by their own
+        CanFire(); this just re-runs the dispatch each frame so cannons
+        re-engage as they recover."""
+        if not self._fire_held or self._held_target is None:
+            return
+        if not self.IsOn():
+            return
+        # Disabled-weapons gate: system flipped disabled mid-burst — stop
+        # cleanly (clears _fire_held + walks _currently_firing).
+        if _is_offline(self):
+            self.StopFiring()
+            return
+        target = self._held_target
+        if hasattr(target, "IsDead") and target.IsDead():
+            self.StopFiring()
+            return
+        self._dispatch_one_or_all(target, self._held_offset, self.GetParentShip())
+
+    def _dispatch_one_or_all(self, target, offset, ship) -> None:
+        """SingleFire: fire one eligible cannon starting from the round-robin
+        cursor, then advance the cursor. Otherwise fire every eligible
+        cannon simultaneously.
+
+        Aim is resolved per-cannon via _resolve_bank_aim_world so each
+        cannon's arc gate sees the direction from its own mount Position
+        to the target — mirrors PhaserSystem._dispatch_one_or_all.
+        """
+        n = self.GetNumWeapons()
+        if n == 0:
+            return
+        if self._single_fire:
+            start = self._next_emitter_index % n
+            for delta in range(n):
+                idx = (start + delta) % n
+                cannon = self.GetWeapon(idx)
+                if cannon is None:
+                    continue
+                aim_world = _resolve_bank_aim_world(cannon, target)
+                if not _emitter_in_arc(cannon, ship, aim_world):
+                    continue
+                if hasattr(cannon, "CanFire") and cannon.CanFire():
+                    cannon.Fire(target, offset)
+                    self._currently_firing.append(idx)
+                    self._next_emitter_index = (idx + 1) % n
+                    return
+            return
+        # Multi-fire — every eligible cannon engages.
+        for i in range(n):
+            cannon = self.GetWeapon(i)
+            if cannon is None:
+                continue
+            aim_world = _resolve_bank_aim_world(cannon, target)
+            if not _emitter_in_arc(cannon, ship, aim_world):
+                continue
+            if hasattr(cannon, "CanFire") and cannon.CanFire():
+                cannon.Fire(target, offset)
+                self._currently_firing.append(i)
 
 
 class TractorBeamSystem(WeaponSystem):
