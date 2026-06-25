@@ -292,3 +292,101 @@ def test_end_combat_removes_simulated_ships(monkeypatch):
     hl._process_object_deletions()           # host removes flagged objects
 
     assert _non_player_ships() == []         # simulated targets gone
+
+
+def test_player_ship_reverts_to_original_on_end_combat(monkeypatch):
+    """_sync_quickbattle_player_revert captures the original (pre-pick) ship ONCE
+    and, on End Combat (1->0), reverts to it — so a ship picked for QuickBattle
+    (config OR combat) never leaves the player stuck on it."""
+    from types import SimpleNamespace
+    import QuickBattle.QuickBattle as QB
+
+    hl, controller = _fresh_quickbattle_loader(monkeypatch)
+    controller.loader.load_quickbattle()
+
+    recreated = []
+    monkeypatch.setattr(QB, "RecreatePlayer", lambda: recreated.append(QB.g_sPlayerType))
+    saved_type, saved_sim = QB.g_sPlayerType, QB.bInSimulation
+    ctrl = SimpleNamespace()
+    try:
+        QB.g_sPlayerType = "Galaxy"
+        QB.bInSimulation = 0
+        hl._sync_quickbattle_player_revert(ctrl)        # first tick: capture original
+        assert ctrl._qb_original_player_type == "Galaxy"
+
+        QB.bInSimulation = 1                            # combat starts
+        hl._sync_quickbattle_player_revert(ctrl)
+        QB.g_sPlayerType = "Sovereign"                 # picked a ship for the sim
+        QB.bInSimulation = 0                           # End Combat
+        hl._sync_quickbattle_player_revert(ctrl)       # -> revert to original
+
+        assert QB.g_sPlayerType == "Galaxy"            # back to the original ship
+        assert recreated == ["Galaxy"]
+    finally:
+        QB.g_sPlayerType, QB.bInSimulation = saved_type, saved_sim
+
+
+def test_no_revert_when_player_ship_unchanged(monkeypatch):
+    """If the player never picked a different ship, End Combat does not fire an
+    extra RecreatePlayer."""
+    from types import SimpleNamespace
+    import QuickBattle.QuickBattle as QB
+
+    hl, controller = _fresh_quickbattle_loader(monkeypatch)
+    controller.loader.load_quickbattle()
+
+    recreated = []
+    monkeypatch.setattr(QB, "RecreatePlayer", lambda: recreated.append(QB.g_sPlayerType))
+    saved_type, saved_sim = QB.g_sPlayerType, QB.bInSimulation
+    ctrl = SimpleNamespace()
+    try:
+        QB.g_sPlayerType = "Galaxy"
+        QB.bInSimulation = 0
+        hl._sync_quickbattle_player_revert(ctrl)        # capture original
+        QB.bInSimulation = 1
+        hl._sync_quickbattle_player_revert(ctrl)
+        QB.bInSimulation = 0                            # end, no pick
+        hl._sync_quickbattle_player_revert(ctrl)
+        assert QB.g_sPlayerType == "Galaxy"
+        assert recreated == []                          # no extra recreate
+    finally:
+        QB.g_sPlayerType, QB.bInSimulation = saved_type, saved_sim
+
+
+def test_player_ship_reverts_through_real_end_combat(monkeypatch):
+    """Drive the REAL flow (no mocks): start combat as Galaxy, swap to Sovereign
+    mid-combat, run the real EndSimulation, then the revert sync — the live
+    player ship must come back as Galaxy (a fresh player object recreated)."""
+    import App
+    import QuickBattle.QuickBattle as QB
+    from engine.core.game import Game_GetCurrentGame
+
+    hl, controller = _fresh_quickbattle_loader(monkeypatch)
+    controller.loader.load_quickbattle()
+    hl._sync_quickbattle_player_revert(controller)  # boot tick: capture original
+    assert controller._qb_original_player_type == "Galaxy"
+
+    QB.g_kEnemyList = [
+        ("Galaxy", "Galaxy", "msg", "QuickBattle.QuickBattleAI", "Enemy", 0.5),
+    ]
+    controller.loader.start_quickbattle()
+    App.g_kTimerManager.tick(3.0)
+    hl._fire_pending_preload_done()                 # StartSimulation2: in sim, Galaxy
+    hl._sync_quickbattle_player_revert(controller)
+    assert QB.bInSimulation == 1
+
+    # Pick Sovereign for the sim (real RecreatePlayer).
+    QB.g_sPlayerType = "Sovereign"
+    QB.RecreatePlayer()
+    assert QB.g_sPlayerType == "Sovereign"
+
+    # End Combat (real EndSimulation -> bInSimulation=0, recreates as Sovereign).
+    QB.EndSimulation()
+    assert QB.bInSimulation == 0
+    player_after_end = Game_GetCurrentGame().GetPlayer()
+
+    hl._sync_quickbattle_player_revert(controller)  # revert to original
+    assert QB.g_sPlayerType == "Galaxy"
+    player_after_revert = Game_GetCurrentGame().GetPlayer()
+    assert player_after_revert is not None
+    assert player_after_revert is not player_after_end   # revert recreated the player

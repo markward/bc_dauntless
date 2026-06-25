@@ -2605,6 +2605,38 @@ def _sync_quick_battle_panel(controller) -> None:
         panel.close()
 
 
+def _sync_quickbattle_player_revert(controller) -> None:
+    """Revert to the player's original ship when combat ends.
+
+    The player's ship outside the simulation is captured ONCE (the boot
+    QuickBattle default, before they pick anything). Every "Set As Player Ship"
+    pick — in config OR mid-combat — is temporary: when bInSimulation goes 1->0
+    (End Combat, panel or XO menu), restore g_sPlayerType to the original and
+    RecreatePlayer so the player is never left stuck on the ship they flew in
+    the sim. Fully guarded — a no-op when QuickBattle isn't active or the ship
+    is already the original."""
+    try:
+        import importlib
+        qb = importlib.import_module("QuickBattle.QuickBattle")
+        in_sim = bool(getattr(qb, "bInSimulation", 0))
+    except Exception:
+        return
+    # Capture the original (pre-pick) ship once, on the first tick.
+    if not hasattr(controller, "_qb_original_player_type"):
+        controller._qb_original_player_type = getattr(qb, "g_sPlayerType", None)
+    last = getattr(controller, "_qb_last_in_sim", False)
+    controller._qb_last_in_sim = in_sim
+    if last and not in_sim:                 # End Combat
+        orig = controller._qb_original_player_type
+        if orig is not None and getattr(qb, "g_sPlayerType", None) != orig:
+            qb.g_sPlayerType = orig
+            try:
+                qb.RecreatePlayer()
+            except Exception as _e:
+                import engine.dev_mode as _dev
+                _dev.log_swallowed("quickbattle player-ship revert", _e)
+
+
 class HostController:
     """Per-process state for the running renderer + a single mission.
 
@@ -4519,6 +4551,9 @@ def run(mission_name: Optional[str] = None,
             # panel: opens it when the player clicks the XO menu's config
             # button, closes it on Close/Start. Boot leaves it closed.
             _sync_quick_battle_panel(controller)
+            # Capture the player ship at combat start; revert to it on End
+            # Combat (so a mid-combat ship swap is temporary).
+            _sync_quickbattle_player_revert(controller)
             # Per-tick realization reconciliation: realize ships created at
             # RUNTIME (QuickBattle's RecreatePlayer, reinforcement spawns) and
             # tear down ships removed from the set. Also retargets the camera if
