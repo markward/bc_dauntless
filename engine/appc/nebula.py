@@ -18,7 +18,7 @@ class MetaNebula(Nebula):
         self._external_tex = external_tex
         self._spheres = []          # list of (x, y, z, radius)
         self._damage = (0.0, 0.0)   # (hull, shields) — stored, unused
-        self._fbm = (0.02, 1.2, 0.5)   # freq, gain, density_floor (tunable)
+        self._fbm = (0.02, 1.5, 0.30)  # freq, gain, density_floor (tunable)
         self._seed = None               # lazily derived from first sphere
 
     def AddNebulaSphere(self, x, y, z, radius):
