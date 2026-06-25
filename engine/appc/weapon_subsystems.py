@@ -198,6 +198,94 @@ def _resolve_fire_sound(prop) -> str:
     return prop.GetFireSound() or ""
 
 
+def _spawn_projectile(emitter, mod, *, drf_override=0.0):
+    """Spawn an in-flight projectile from `emitter` using SDK module `mod`.
+
+    Shared by torpedo tubes and pulse-weapon cannons. Builds a Torpedo at the
+    emitter's world position, runs mod.Create to populate visuals/behaviour,
+    applies drf_override (the launcher's DamageRadiusFactor) when > 0, computes
+    homing velocity toward the firing ship's live target lock (else dumbfire
+    along the emitter/ship forward), registers it, and plays mod.GetLaunchSound.
+    Returns the Torpedo, or None if mod is unusable.
+    """
+    from engine.appc.projectiles import Torpedo, register
+    from engine.appc.math import TGPoint3
+    from engine.audio.tg_sound import TGSoundManager
+
+    torp = Torpedo()
+    source_ship = emitter._climb_to_ship()
+    torp._source_ship = source_ship
+    torp._position = emitter._emitter_world_position()
+
+    mod.Create(torp)
+
+    # §3.2 DRF override: if the launching tube has a non-zero
+    # DamageRadiusFactor (set by the hardpoint script, e.g.
+    # galaxy.py ForwardTorpedo1.SetDamageRadiusFactor(0.20)),
+    # it overrides the payload value set by mod.Create above.
+    # host_loop passes the torpedo as hardpoint_weapon to apply_hit,
+    # so torp._damage_radius_factor must carry the launcher value.
+    if drf_override > 0.0:
+        torp._damage_radius_factor = drf_override
+
+    launch_speed = float(mod.GetLaunchSpeed()) if hasattr(mod, "GetLaunchSpeed") else 0.0
+
+    target_ship = source_ship.GetTarget() if source_ship is not None else None
+    if (target_ship is not None
+            and hasattr(target_ship, "IsDead") and not target_ship.IsDead()):
+        target_sub = (source_ship.GetTargetSubsystem()
+                      if hasattr(source_ship, "GetTargetSubsystem") else None)
+        aim_target = target_sub if target_sub is not None else target_ship
+        aim_pt = aim_target.GetWorldLocation()
+        direction = aim_pt - torp._position
+        length = direction.Length()
+        if length > 1e-6:
+            torp._velocity = TGPoint3(
+                direction.x / length * launch_speed,
+                direction.y / length * launch_speed,
+                direction.z / length * launch_speed,
+            )
+        torp._target_ship = target_ship
+        torp._target_subsystem = target_sub
+    else:
+        # The catch-all __getattr__ on TGObject returns a _Stub for any
+        # missing attribute, so hasattr is misleading.  Probe for a valid
+        # TGPoint3 explicitly via the type — defensive against the shim.
+        forward = None
+        try:
+            got = emitter.GetDirection()
+            if isinstance(got, TGPoint3):
+                forward = got
+        except Exception:
+            forward = None
+        if forward is None:
+            forward = TGPoint3(0.0, 1.0, 0.0)
+        world_fwd = TGPoint3(forward.x, forward.y, forward.z)
+        if source_ship is not None and hasattr(source_ship, "GetWorldRotation"):
+            rot = source_ship.GetWorldRotation()
+            # Same shim caveat — only use if it's a real TGMatrix3.
+            from engine.appc.math import TGMatrix3
+            if isinstance(rot, TGMatrix3):
+                world_fwd.MultMatrixLeft(rot)
+        length = world_fwd.Length()
+        if length > 1e-6:
+            torp._velocity = TGPoint3(
+                world_fwd.x / length * launch_speed,
+                world_fwd.y / length * launch_speed,
+                world_fwd.z / length * launch_speed,
+            )
+        torp._target_ship = None
+
+    register(torp)
+
+    if hasattr(mod, "GetLaunchSound"):
+        sound_name = mod.GetLaunchSound()
+        if sound_name:
+            TGSoundManager.instance().PlaySound(sound_name)
+
+    return torp
+
+
 class _EnergyWeaponFireMixin:
     """Shared Fire/CanFire/StopFiring/UpdateCharge for PhaserBank / PulseWeapon
     / TractorBeam.  Per-emitter state initialised by _init_energy_weapon_state.
@@ -964,81 +1052,7 @@ class TorpedoTube(WeaponSystem):
         except ImportError:
             return
 
-        from engine.appc.projectiles import Torpedo, register
-        from engine.appc.math import TGPoint3
-        from engine.audio.tg_sound import TGSoundManager
-
-        torp = Torpedo()
-        source_ship = self._climb_to_ship()
-        torp._source_ship = source_ship
-        torp._position = self._emitter_world_position()
-
-        mod.Create(torp)
-
-        # §3.2 DRF override: if the launching tube has a non-zero
-        # DamageRadiusFactor (set by the hardpoint script, e.g.
-        # galaxy.py ForwardTorpedo1.SetDamageRadiusFactor(0.20)),
-        # it overrides the payload value set by mod.Create above.
-        # host_loop passes the torpedo as hardpoint_weapon to apply_hit,
-        # so torp._damage_radius_factor must carry the launcher value.
-        tube_drf = self.GetDamageRadiusFactor()
-        if tube_drf > 0.0:
-            torp._damage_radius_factor = tube_drf
-
-        launch_speed = float(mod.GetLaunchSpeed()) if hasattr(mod, "GetLaunchSpeed") else 0.0
-
-        target_ship = source_ship.GetTarget() if source_ship is not None else None
-        if (target_ship is not None
-                and hasattr(target_ship, "IsDead") and not target_ship.IsDead()):
-            target_sub = (source_ship.GetTargetSubsystem()
-                          if hasattr(source_ship, "GetTargetSubsystem") else None)
-            aim_target = target_sub if target_sub is not None else target_ship
-            aim_pt = aim_target.GetWorldLocation()
-            direction = aim_pt - torp._position
-            length = direction.Length()
-            if length > 1e-6:
-                torp._velocity = TGPoint3(
-                    direction.x / length * launch_speed,
-                    direction.y / length * launch_speed,
-                    direction.z / length * launch_speed,
-                )
-            torp._target_ship = target_ship
-            torp._target_subsystem = target_sub
-        else:
-            # The catch-all __getattr__ on TGObject returns a _Stub for any
-            # missing attribute, so hasattr is misleading.  Probe for a valid
-            # TGPoint3 explicitly via the type — defensive against the shim.
-            forward = None
-            try:
-                got = self.GetDirection()
-                if isinstance(got, TGPoint3):
-                    forward = got
-            except Exception:
-                forward = None
-            if forward is None:
-                forward = TGPoint3(0.0, 1.0, 0.0)
-            world_fwd = TGPoint3(forward.x, forward.y, forward.z)
-            if source_ship is not None and hasattr(source_ship, "GetWorldRotation"):
-                rot = source_ship.GetWorldRotation()
-                # Same shim caveat — only use if it's a real TGMatrix3.
-                from engine.appc.math import TGMatrix3
-                if isinstance(rot, TGMatrix3):
-                    world_fwd.MultMatrixLeft(rot)
-            length = world_fwd.Length()
-            if length > 1e-6:
-                torp._velocity = TGPoint3(
-                    world_fwd.x / length * launch_speed,
-                    world_fwd.y / length * launch_speed,
-                    world_fwd.z / length * launch_speed,
-                )
-            torp._target_ship = None
-
-        register(torp)
-
-        if hasattr(mod, "GetLaunchSound"):
-            sound_name = mod.GetLaunchSound()
-            if sound_name:
-                TGSoundManager.instance().PlaySound(sound_name)
+        _spawn_projectile(self, mod, drf_override=self.GetDamageRadiusFactor())
 
     def StopFiring(self) -> None:
         self._firing = False
