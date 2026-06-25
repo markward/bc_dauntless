@@ -50,6 +50,7 @@ from engine.audio.tg_sound import TGSoundManager  # noqa: F401
 from engine.audio.engine_rumble import update_positions, set_muted as _rumble_set_muted
 from engine.audio.bridge_ambient import set_active as _bridge_ambient_set
 from engine.ui import crew_menu_hotkeys
+from engine.ui import bridge_officer_picking
 from engine.core.game import Game_GetCurrentGame
 from engine.appc import (
     projectiles,
@@ -3959,6 +3960,10 @@ def run(mission_name: Optional[str] = None,
         from engine.core.timestep import step_accumulator
         _previous_real_time = time.monotonic()
         _accumulator = 0.0
+        # True while a bridge-officer left-click is held (press was intercepted
+        # for the crew menu); used to swallow the matching release edge so it
+        # never leaks to phaser fire. See the officer-pick block below.
+        _bridge_left_pick_active = False
         from engine.core.transform_buffer import TransformBuffer
         _xform_buf = TransformBuffer()
 
@@ -4340,6 +4345,24 @@ def run(mission_name: Optional[str] = None,
                     # once per render frame, so its dt is the wall delta.
                     _apply_input(view_mode, player_control, director,
                                  player=player, dt=_player_dt, h=_h)
+
+                # Bridge crew-menu click. On the bridge the cursor is locked for
+                # mouse-look, so the player AIMS by looking: the reticle is
+                # screen centre.
+                #   - No menu open: centre an officer and left-click → open that
+                #     officer's crew menu (else the click falls through to
+                #     _poll_mouse_buttons and fires phasers).
+                #   - Menu open: the cursor is freed for the CEF menu; a click on
+                #     the menu itself is consumed earlier by the CEF panel
+                #     forwarding, so any left press we still see here is OFF the
+                #     menu → close it.
+                # mouse_button_pressed consumes the edge, so we only call it once
+                # we've decided to intercept — leaving genuine empty-space clicks
+                # to fire phasers.
+                if view_mode.is_bridge and not pause.is_open and _h is not None:
+                    _bridge_left_pick_active = bridge_officer_picking.handle_click(
+                        _h, r, bridge_camera, crew_menu_panel,
+                        _bridge_left_pick_active)
 
                 # Forward mouse button edges into the input manager (fire
                 # events route via g_kKeyboardBinding → TCW handlers).
