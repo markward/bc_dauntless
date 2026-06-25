@@ -2521,6 +2521,35 @@ def _reconcile_runtime_instances(session, renderer, *,
             on_player_change(new_player)
 
 
+def _fire_pending_preload_done() -> None:
+    """Fire the current game's stored preload-done event once, if pending.
+
+    QuickBattle.StartSimulationAction stores a TGEvent(ET_PRELOAD_DONE,
+    destination=mission) via Game.SetPreLoadDoneEvent, trusting the engine to
+    fire it once asset preloading finishes. In dauntless asset loading is
+    synchronous, so we fire it on the next tick. The event's handler is
+    QuickBattle.StartSimulation2, which CREATES the player ship — so the host
+    loop calls this BEFORE _reconcile_runtime_instances on the same tick, and
+    the reconciliation pass then realizes the freshly-spawned ship.
+
+    Fire-once + re-entrancy safe: the slot is cleared BEFORE the event is
+    posted, so a handler that re-enters the loop (or a second call this tick)
+    sees no pending event. Everything is guarded — no game and no pending event
+    are both silent no-ops.
+    """
+    import App  # deferred: module-top `import App` is intentionally avoided.
+
+    game = Game_GetCurrentGame()
+    if game is None:
+        return
+    event = getattr(game, "_preload_done_event", None)
+    if event is None:
+        return
+    # Clear before firing: fire-once / re-entrancy safe.
+    game._preload_done_event = None
+    App.g_kEventManager.AddEvent(event)
+
+
 class HostController:
     """Per-process state for the running renderer + a single mission.
 
@@ -4298,6 +4327,12 @@ def run(mission_name: Optional[str] = None,
                 had_pending_swap = False
 
             session = controller.session
+            # Fire QuickBattle's stored preload-done event (if pending) BEFORE
+            # reconciliation. Its handler (StartSimulation2) spawns the player
+            # ship; firing first means the reconciliation pass below realizes
+            # that ship in the same tick. Fire-once and fully guarded — a no-op
+            # for missions that never set a preload-done event.
+            _fire_pending_preload_done()
             # Per-tick realization reconciliation: realize ships created at
             # RUNTIME (QuickBattle's RecreatePlayer, reinforcement spawns) and
             # tear down ships removed from the set. Also retargets the camera if
