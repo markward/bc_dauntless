@@ -183,7 +183,16 @@ def _stub_qb_module():
         g_pShipsPane=ships_pane,
         g_pFriendMenu=friend_menu,
         g_pEnemyMenu=enemy_menu,
+        g_pAddFriendButton=_ship_button("Add As Friendly"),
+        g_pAddEnemyButton=_ship_button("Add As Enemy"),
     )
+
+
+def _spy_activation(button):
+    """Replace a button's SendActivationEvent with a recorder; return the log."""
+    fired = []
+    button.SendActivationEvent = lambda: fired.append(True)
+    return fired
 
 
 @pytest.fixture
@@ -261,11 +270,48 @@ def test_expand_only_re_emits_on_change(qb_panel):
     assert qb_panel.render_payload() is not None  # expand changed snapshot
 
 
-def test_click_ship_event_is_handled_noop(qb_panel):
+def test_click_ship_event_is_handled(qb_panel):
     body = _body(qb_panel.render_payload())
     ship_id = body["categories"][0]["ships"][0]["id"]
-    # Click-to-SDK is the NEXT task; the event must still be handled (True).
     assert qb_panel.dispatch_event("click-ship:" + str(ship_id)) is True
+
+
+# ---- T3: dispatch back to the SDK (SendActivationEvent) --------------------
+
+def test_click_ship_fires_button_activation(qb_panel):
+    body = _body(qb_panel.render_payload())
+    ship_id = body["categories"][0]["ships"][0]["id"]
+    fired = _spy_activation(qb_panel.widget_for_id(ship_id))
+    qb_panel.dispatch_event("click-ship:" + str(ship_id))
+    assert fired == [True]
+
+
+def test_add_enemy_activates_add_enemy_button(qb_panel):
+    fired = _spy_activation(qb_panel._qb_module.g_pAddEnemyButton)
+    assert qb_panel.dispatch_event("add-enemy") is True
+    assert fired == [True]
+
+
+def test_add_friend_activates_add_friend_button(qb_panel):
+    fired = _spy_activation(qb_panel._qb_module.g_pAddFriendButton)
+    assert qb_panel.dispatch_event("add-friend") is True
+    assert fired == [True]
+
+
+def test_start_with_callback_fires_and_closes():
+    calls = []
+    p = QuickBattleSetupPanel(on_start=lambda: calls.append("start"))
+    p.open()
+    assert p.dispatch_event("start") is True
+    assert calls == ["start"]
+    assert p.is_open() is False
+
+
+def test_start_without_callback_stays_open(panel):
+    panel.open()
+    assert panel.dispatch_event("start") is True
+    # No callback wired -> handled no-op; the panel does not close.
+    assert panel.is_open() is True
 
 
 # ---- guard: QuickBattle globals absent ------------------------------------

@@ -157,6 +157,20 @@ class QuickBattleSetupPanel(Panel):
         except (TypeError, ValueError):
             return None
 
+    @staticmethod
+    def _activate_widget(widget) -> None:
+        """Fire a widget's SDK activation event (best-effort, never raises)."""
+        if widget is not None and hasattr(widget, "SendActivationEvent"):
+            try:
+                widget.SendActivationEvent()
+            except Exception:
+                pass
+
+    def _activate_qb_button(self, global_name: str) -> None:
+        """Activate a QuickBattle module-global button (e.g. g_pAddEnemyButton)."""
+        m = self._qb()
+        self._activate_widget(getattr(m, global_name, None) if m is not None else None)
+
     # ── Render / dispatch ─────────────────────────────────────────────────────
 
     def render_payload(self) -> Optional[str]:
@@ -183,10 +197,19 @@ class QuickBattleSetupPanel(Panel):
             self.close()
             return True
         if action == "start":
-            # Real Start wiring (reconcile with start_quickbattle) is a later
-            # task. The seam is the on_start callback; absence is a no-op.
+            # Start drives the real flow via the on_start seam (the host wires
+            # it to start_quickbattle -> ET_START_SIMULATION) and closes the
+            # config screen, mirroring StartQuickBattle's g_pPane hide. With no
+            # callback wired it stays a handled no-op.
             if self._on_start is not None:
                 self._on_start()
+                self.close()
+            return True
+        if action == "add-friend":
+            self._activate_qb_button("g_pAddFriendButton")
+            return True
+        if action == "add-enemy":
+            self._activate_qb_button("g_pAddEnemyButton")
             return True
         if action.startswith("expand:"):
             try:
@@ -197,8 +220,10 @@ class QuickBattleSetupPanel(Panel):
                 else self._expanded_ids.add(wid)
             return True
         if action.startswith("click-ship:"):
-            # Click-to-SDK (SendActivationEvent) is the next task; for now the
-            # event is accepted (handled) but does nothing.
+            # Fire the ship button's SDK event (ET_SELECT_SHIP_TYPE -> the
+            # mission's SelectShipType handler) so the SDK tracks the selection
+            # that Add As Friendly/Enemy then acts on.
+            self._activate_widget(self.widget_for_id(action[len("click-ship:"):]))
             return True
         if action.startswith("tab:"):
             tab_id = action[len("tab:"):]

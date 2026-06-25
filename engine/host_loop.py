@@ -4039,10 +4039,12 @@ def run(mission_name: Optional[str] = None,
         # Quick Battle Setup panel — on-theme tabbed-modal shell (Ships tab).
         # Production-visible (NOT dev-only). Boot opens this instead of
         # auto-starting the battle (see the boot_quickbattle block above).
-        # Start wiring (reconcile with loader.start_quickbattle) is a later
-        # task; for now Start is a handled no-op seam.
+        # The panel's Start drives the proven SP1 start path (start_quickbattle
+        # posts ET_START_SIMULATION to g_pXO -> StartSimulation -> ...), using
+        # whatever roster the player built via the panel's Add buttons.
         from engine.ui.quick_battle_setup_panel import QuickBattleSetupPanel
-        quick_battle_setup_panel = QuickBattleSetupPanel()
+        quick_battle_setup_panel = QuickBattleSetupPanel(
+            on_start=lambda: controller.loader.start_quickbattle())
         controller.quick_battle_setup_panel = quick_battle_setup_panel
 
         from engine.ui.pause_menu import default_pause_menu

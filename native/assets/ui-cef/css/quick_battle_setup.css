@@ -77,6 +77,15 @@
 
 .qbs-label { flex: 1 1 auto; }
 
+/* Add As Friendly / Add As Enemy action row under the catalog. */
+.qbs-actions {
+    display: flex;
+    gap: 8px;
+    padding: 10px 12px 4px;
+}
+
+.qbs-actions .cp-done-button { flex: 1 1 auto; }
+
 /* Roster lists — affiliation tints from target_list.css tokens. */
 .qbs-roster-title {
     font-size: 12px;

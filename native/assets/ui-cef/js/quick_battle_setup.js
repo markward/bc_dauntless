@@ -74,6 +74,12 @@ function _qbsRenderBody(state) {
     return '<div class="qbs-lists">'
          +   '<div class="qbs-col qbs-catalog">'
          +     _qbsRenderCategories(state.categories)
+         +     '<div class="qbs-actions">'
+         +       '<button class="cp-done-button"'
+         +         ' onclick="dauntlessEvent(\'quick-battle-setup/add-friend\')">Add As Friendly</button>'
+         +       '<button class="cp-done-button"'
+         +         ' onclick="dauntlessEvent(\'quick-battle-setup/add-enemy\')">Add As Enemy</button>'
+         +     '</div>'
          +   '</div>'
          +   '<div class="qbs-col qbs-rosters">'
          +     '<div class="qbs-roster-title">Friendly Ships</div>'
