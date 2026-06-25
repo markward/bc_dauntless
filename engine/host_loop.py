@@ -2550,6 +2550,32 @@ def _fire_pending_preload_done() -> None:
     App.g_kEventManager.AddEvent(event)
 
 
+def _sync_quick_battle_panel(controller) -> None:
+    """Mirror the QuickBattle config dialog's open/closed state onto the CEF
+    Quick Battle Setup panel.
+
+    QuickBattle.g_bDialogUp is the SDK's "config dialog is up" flag: 0 after
+    InitGlobals (boot), 1 once OpenConfigDialog runs (the XO "Quick Battle
+    Setup" button fires ET_OPEN_DIALOG), back to 0 on CloseConfigDialog /
+    StartQuickBattle. We render our own panel instead of the SDK's g_pPane, so
+    the panel follows that flag: boot leaves it closed (the player opens it from
+    the XO menu, in cursor mode), and Close/Start close it. Fully guarded — a
+    no-op when QuickBattle isn't the active module or the panel is absent."""
+    panel = getattr(controller, "quick_battle_setup_panel", None)
+    if panel is None:
+        return
+    try:
+        import importlib
+        qb = importlib.import_module("QuickBattle.QuickBattle")
+        up = bool(getattr(qb, "g_bDialogUp", 0))
+    except Exception:
+        return
+    if up and not panel.is_open():
+        panel.open()
+    elif not up and panel.is_open():
+        panel.close()
+
+
 class HostController:
     """Per-process state for the running renderer + a single mission.
 
@@ -4082,11 +4108,10 @@ def run(mission_name: Optional[str] = None,
         registry.register(info_box_panel)
         registry.register(configuration_panel)
         registry.register(quick_battle_setup_panel)
-        # Boot lands on the Quick Battle Setup screen instead of auto-starting
-        # the battle. Opened here (after construction) because the boot cascade
-        # ran earlier in run(), before the panels existed.
-        if boot_quickbattle:
-            quick_battle_setup_panel.open()
+        # The panel is NOT opened at boot: the player opens it from the XO
+        # menu's "Quick Battle Setup" button (ET_OPEN_DIALOG -> g_bDialogUp=1),
+        # which _sync_quick_battle_panel mirrors onto the panel each tick. Boot
+        # leaves the player on the bridge (in flight/cursor mode as usual).
         if dev_mode.is_enabled():
             registry.register(mission_picker)
             registry.register(developer_options_panel)
@@ -4450,6 +4475,10 @@ def run(mission_name: Optional[str] = None,
             # that ship in the same tick. Fire-once and fully guarded — a no-op
             # for missions that never set a preload-done event.
             _fire_pending_preload_done()
+            # Mirror the SDK config-dialog flag onto the Quick Battle Setup
+            # panel: opens it when the player clicks the XO menu's config
+            # button, closes it on Close/Start. Boot leaves it closed.
+            _sync_quick_battle_panel(controller)
             # Per-tick realization reconciliation: realize ships created at
             # RUNTIME (QuickBattle's RecreatePlayer, reinforcement spawns) and
             # tear down ships removed from the set. Also retargets the camera if

@@ -142,31 +142,41 @@ def test_start_simulation_event_schedules_sequence(monkeypatch):
     assert game.GetPlayer() is not None
 
 
-def test_boot_opens_setup_panel_and_does_not_auto_start(monkeypatch):
-    """The boot seam loads the QuickBattle cascade and OPENS the Quick Battle
-    Setup panel WITHOUT auto-posting ET_START_SIMULATION.
+def test_boot_does_not_auto_start_or_auto_open(monkeypatch):
+    """The boot seam loads the QuickBattle cascade WITHOUT auto-posting
+    ET_START_SIMULATION and WITHOUT auto-opening the setup panel.
 
-    Driving the full run() (GLFW/window) is impractical headlessly, so this
-    asserts the seam the boot path now uses: load_quickbattle() builds the
-    scene but does NOT enter the simulation (no start_quickbattle()), and the
-    setup panel opens. Mirrors the host_loop change: boot drops the auto-start
-    and calls quick_battle_setup_panel.open() instead.
+    Boot leaves g_bDialogUp == 0 (config dialog not up), so
+    _sync_quick_battle_panel keeps the panel closed; the player opens it from
+    the XO menu (OpenConfigDialog -> g_bDialogUp = 1). This test drives that
+    sync directly against the real QuickBattle flag.
     """
+    from types import SimpleNamespace
     import QuickBattle.QuickBattle as QB
     from engine.ui.quick_battle_setup_panel import QuickBattleSetupPanel
 
     hl, controller = _fresh_quickbattle_loader(monkeypatch)
-
-    # Boot half: load the cascade. Critically, NO start_quickbattle().
     controller.session = controller.loader.load_quickbattle()
 
-    # No ET_START_SIMULATION was posted at boot: the SDK never entered the
-    # simulation-loading path, so bInSimulation is still 0.
+    # No ET_START_SIMULATION at boot; SDK never entered the sim-loading path.
     assert QB.bInSimulation == 0
+    # And the config dialog is not up after boot.
+    assert getattr(QB, "g_bDialogUp", 0) == 0
 
-    # Boot opens the setup panel instead (the host_loop opens the constructed
-    # panel under `if boot_quickbattle:`).
     panel = QuickBattleSetupPanel()
-    assert panel.is_open() is False
-    panel.open()
-    assert panel.is_open() is True
+    fake_controller = SimpleNamespace(quick_battle_setup_panel=panel)
+    saved = QB.g_bDialogUp
+    try:
+        # Boot state (flag 0): sync leaves the panel closed.
+        hl._sync_quick_battle_panel(fake_controller)
+        assert panel.is_open() is False
+        # Player clicks the XO config button -> OpenConfigDialog sets the flag.
+        QB.g_bDialogUp = 1
+        hl._sync_quick_battle_panel(fake_controller)
+        assert panel.is_open() is True
+        # Close/Start clears it -> sync hides the panel.
+        QB.g_bDialogUp = 0
+        hl._sync_quick_battle_panel(fake_controller)
+        assert panel.is_open() is False
+    finally:
+        QB.g_bDialogUp = saved

@@ -171,6 +171,26 @@ class QuickBattleSetupPanel(Panel):
         m = self._qb()
         self._activate_widget(getattr(m, global_name, None) if m is not None else None)
 
+    def _fire_close_dialog(self) -> None:
+        """Post ET_CLOSE_DIALOG to g_pXO so the SDK closes the config dialog:
+        clears g_bDialogUp (which _sync_quick_battle_panel mirrors to hide this
+        panel) and re-enables the XO config button so it can reopen. Best-effort."""
+        m = self._qb()
+        if m is None:
+            return
+        et = getattr(m, "ET_CLOSE_DIALOG", None)
+        xo = getattr(m, "g_pXO", None)
+        if et is None or xo is None:
+            return
+        try:
+            import App
+            evt = App.TGEvent_Create()
+            evt.SetEventType(et)
+            evt.SetDestination(xo)
+            App.g_kEventManager.AddEvent(evt)
+        except Exception:
+            pass
+
     # ── Render / dispatch ─────────────────────────────────────────────────────
 
     def render_payload(self) -> Optional[str]:
@@ -194,14 +214,18 @@ class QuickBattleSetupPanel(Panel):
 
     def dispatch_event(self, action: str) -> bool:
         if action == "close":
+            # Faithful close: ET_CLOSE_DIALOG clears g_bDialogUp + re-enables the
+            # XO config button. _sync_quick_battle_panel then hides this panel.
+            self._fire_close_dialog()
             self.close()
             return True
         if action == "start":
             # Start drives the real flow via the on_start seam (the host wires
-            # it to start_quickbattle -> ET_START_SIMULATION) and closes the
-            # config screen, mirroring StartQuickBattle's g_pPane hide. With no
+            # it to start_quickbattle -> ET_START_SIMULATION); close the dialog
+            # first so g_bDialogUp clears and the panel doesn't reopen. With no
             # callback wired it stays a handled no-op.
             if self._on_start is not None:
+                self._fire_close_dialog()
                 self._on_start()
                 self.close()
             return True

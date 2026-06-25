@@ -185,6 +185,8 @@ def _stub_qb_module():
         g_pEnemyMenu=enemy_menu,
         g_pAddFriendButton=_ship_button("Add As Friendly"),
         g_pAddEnemyButton=_ship_button("Add As Enemy"),
+        ET_CLOSE_DIALOG=4242,
+        g_pXO=object(),
     )
 
 
@@ -312,6 +314,32 @@ def test_start_without_callback_stays_open(panel):
     assert panel.dispatch_event("start") is True
     # No callback wired -> handled no-op; the panel does not close.
     assert panel.is_open() is True
+
+
+def test_close_fires_close_dialog_event(qb_panel, monkeypatch):
+    import App
+    posted = []
+    monkeypatch.setattr(App.g_kEventManager, "AddEvent", lambda e: posted.append(e))
+    qb_panel.dispatch_event("close")
+    assert qb_panel.is_open() is False
+    assert len(posted) == 1
+    assert posted[0].GetEventType() == qb_panel._qb_module.ET_CLOSE_DIALOG
+    assert posted[0].GetDestination() is qb_panel._qb_module.g_pXO
+
+
+def test_start_fires_close_dialog_then_callback(monkeypatch):
+    import App
+    posted = []
+    monkeypatch.setattr(App.g_kEventManager, "AddEvent", lambda e: posted.append(e))
+    calls = []
+    p = QuickBattleSetupPanel(on_start=lambda: calls.append("start"))
+    p._qb_module = _stub_qb_module()
+    p.open()
+    assert p.dispatch_event("start") is True
+    assert calls == ["start"]
+    assert p.is_open() is False
+    # ET_CLOSE_DIALOG was posted so g_bDialogUp clears (panel won't reopen).
+    assert any(e.GetEventType() == p._qb_module.ET_CLOSE_DIALOG for e in posted)
 
 
 # ---- guard: QuickBattle globals absent ------------------------------------
