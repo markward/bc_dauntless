@@ -100,6 +100,24 @@ def _resolve_label(tgl_key: str) -> str:
     return label
 
 
+def open_menu_for_label(panel, label) -> bool:
+    """Toggle the top-level menu whose title is `label` via panel.toggle_menu.
+    Returns True if a menu was found. Shared by the F-key handler and the
+    bridge-officer click picker (engine/ui/bridge_officer_picking.py) so both
+    open menus through the one canonical path (turn-to-captain + acknowledge +
+    single-open invariant all live in toggle_menu)."""
+    if panel is None or label is None:
+        return False
+    from engine.appc.windows import TacticalControlWindow
+    tcw = TacticalControlWindow.GetInstance()
+    menu = tcw.FindMenu(label)
+    if menu is None:
+        _logger.info("crew-menu: no '%s' menu to toggle", label)
+        return False
+    panel.toggle_menu(menu)
+    return True
+
+
 def _on_talk_to(dest, event) -> None:
     """Instance handler: toggle the menu matching the event type."""
     panel = _wired_panel
@@ -108,10 +126,4 @@ def _on_talk_to(dest, event) -> None:
     label = _label_cache.get(event.GetEventType())
     if label is None:
         return
-    from engine.appc.windows import TacticalControlWindow
-    tcw = TacticalControlWindow.GetInstance()
-    menu = tcw.FindMenu(label)
-    if menu is None:
-        _logger.info("crew-menu hotkey: no '%s' menu to toggle", label)
-        return
-    panel.toggle_menu(menu)
+    open_menu_for_label(panel, label)
