@@ -3849,12 +3849,14 @@ def run(mission_name: Optional[str] = None,
         if boot_quickbattle:
             # Real SDK QuickBattle entry cascade: builds the QuickBattleRegion
             # set, GalaxyBridge, and initial player, injects the player-only
-            # defaults, then posts ET_START_SIMULATION through the SDK's own
-            # g_pXO handler. The 2s TGSequence / StartSimulationAction /
-            # SetPreLoadDoneEvent / _fire_pending_preload_done /
-            # StartSimulation2 / reconciliation carry the rest.
+            # defaults. We deliberately do NOT call start_quickbattle() here —
+            # auto-posting ET_START_SIMULATION at boot fires
+            # DisableSimulationMenus (greying the SDK config button) and drops
+            # straight into the fight. Instead boot lands on the Quick Battle
+            # Setup panel (opened just below, after the panel is constructed);
+            # the player's Start there reconciles the start in a later task.
+            # start_quickbattle() itself is kept for that reconciliation.
             controller.session = controller.loader.load_quickbattle()
-            controller.loader.start_quickbattle()
         else:
             controller.session = controller.loader.load(mission_name)
         # The SDK's CreateAndPopulateBridgeSet plays AmbBridge at load
@@ -4034,6 +4036,15 @@ def run(mission_name: Optional[str] = None,
             set_nebula_lightning=r.set_nebula_lightning_enabled,
         )
 
+        # Quick Battle Setup panel — on-theme tabbed-modal shell (Ships tab).
+        # Production-visible (NOT dev-only). Boot opens this instead of
+        # auto-starting the battle (see the boot_quickbattle block above).
+        # Start wiring (reconcile with loader.start_quickbattle) is a later
+        # task; for now Start is a handled no-op seam.
+        from engine.ui.quick_battle_setup_panel import QuickBattleSetupPanel
+        quick_battle_setup_panel = QuickBattleSetupPanel()
+        controller.quick_battle_setup_panel = quick_battle_setup_panel
+
         from engine.ui.pause_menu import default_pause_menu
         from engine.ui.panel_registry import PanelRegistry
         pause_menu = default_pause_menu(
@@ -4068,6 +4079,12 @@ def run(mission_name: Optional[str] = None,
         info_box_panel = InfoBoxPanel()
         registry.register(info_box_panel)
         registry.register(configuration_panel)
+        registry.register(quick_battle_setup_panel)
+        # Boot lands on the Quick Battle Setup screen instead of auto-starting
+        # the battle. Opened here (after construction) because the boot cascade
+        # ran earlier in run(), before the panels existed.
+        if boot_quickbattle:
+            quick_battle_setup_panel.open()
         if dev_mode.is_enabled():
             registry.register(mission_picker)
             registry.register(developer_options_panel)

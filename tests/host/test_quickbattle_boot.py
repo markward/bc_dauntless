@@ -140,3 +140,33 @@ def test_start_simulation_event_schedules_sequence(monkeypatch):
     assert QB.bInSimulation == 1  # StartSimulation2 ran
     # StartSimulation2 -> RecreatePlayer left a live player on the Game.
     assert game.GetPlayer() is not None
+
+
+def test_boot_opens_setup_panel_and_does_not_auto_start(monkeypatch):
+    """The boot seam loads the QuickBattle cascade and OPENS the Quick Battle
+    Setup panel WITHOUT auto-posting ET_START_SIMULATION.
+
+    Driving the full run() (GLFW/window) is impractical headlessly, so this
+    asserts the seam the boot path now uses: load_quickbattle() builds the
+    scene but does NOT enter the simulation (no start_quickbattle()), and the
+    setup panel opens. Mirrors the host_loop change: boot drops the auto-start
+    and calls quick_battle_setup_panel.open() instead.
+    """
+    import QuickBattle.QuickBattle as QB
+    from engine.ui.quick_battle_setup_panel import QuickBattleSetupPanel
+
+    hl, controller = _fresh_quickbattle_loader(monkeypatch)
+
+    # Boot half: load the cascade. Critically, NO start_quickbattle().
+    controller.session = controller.loader.load_quickbattle()
+
+    # No ET_START_SIMULATION was posted at boot: the SDK never entered the
+    # simulation-loading path, so bInSimulation is still 0.
+    assert QB.bInSimulation == 0
+
+    # Boot opens the setup panel instead (the host_loop opens the constructed
+    # panel under `if boot_quickbattle:`).
+    panel = QuickBattleSetupPanel()
+    assert panel.is_open() is False
+    panel.open()
+    assert panel.is_open() is True

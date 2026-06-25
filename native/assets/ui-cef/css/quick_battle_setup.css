@@ -1,0 +1,28 @@
+/* Quick Battle Setup — on-theme tabbed modal SHELL.
+
+   Reuses the configuration panel's cp-* chrome (cp-modal, cp-header,
+   cp-content, cp-tabstrip, cp-tab, cp-body, cp-footer, cp-done-button,
+   cp-focused) — see css/configuration_panel.css. Only the wrapper backdrop
+   and a tiny placeholder rule live here; everything else is shared cp-*.
+
+   Hidden by default; setQuickBattleSetup({open:true}) flips display to 'flex'.
+   Mirrors #configuration-panel's backdrop exactly. NOT dev-only — visible in
+   normal play (boot lands here). */
+
+#quick-battle-setup {
+    display: none;
+    position: fixed;
+    inset: 0;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 50;
+    font-family: "Antonio", sans-serif;
+}
+
+/* T1 placeholder body — replaced by the ship accordion in a later task. */
+.qbs-placeholder {
+    color: #8a93a3;
+    font-style: italic;
+    padding: 8px 4px;
+}
