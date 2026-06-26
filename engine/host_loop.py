@@ -249,6 +249,23 @@ def _poll_mouse_buttons(host) -> None:
 _fn_key_prev: dict = {}
 
 
+def _poll_key_table(host, keymap) -> None:
+    """Edge-detect each (glfw_key, WC_code) in `keymap` and forward rising/
+    falling edges to g_kInputManager.OnKeyDown/OnKeyUp.  Shares the module
+    _fn_key_prev level cache so every polled key derives both edges from
+    key_state (the host exposes key_pressed for rising edges but no
+    key_released)."""
+    import App  # deferred: module-top import reorders sound-manager init
+    for glfw_key, wc in keymap:
+        down = bool(host.key_state(glfw_key))
+        was_down = _fn_key_prev.get(glfw_key, False)
+        if down and not was_down:
+            App.g_kInputManager.OnKeyDown(wc)
+        elif was_down and not down:
+            App.g_kInputManager.OnKeyUp(wc)
+        _fn_key_prev[glfw_key] = down
+
+
 def _poll_function_keys(host) -> None:
     """Forward F1-F5 edges into g_kInputManager (WC_F1..F5).
 
@@ -262,20 +279,13 @@ def _poll_function_keys(host) -> None:
     if keys is None or not hasattr(keys, "KEY_F1"):
         return
     import App  # deferred: module-top import reorders sound-manager init
-    for glfw_key, wc in (
+    _poll_key_table(host, (
         (keys.KEY_F1, App.WC_F1),
         (keys.KEY_F2, App.WC_F2),
         (keys.KEY_F3, App.WC_F3),
         (keys.KEY_F4, App.WC_F4),
         (keys.KEY_F5, App.WC_F5),
-    ):
-        down = bool(host.key_state(glfw_key))
-        was_down = _fn_key_prev.get(glfw_key, False)
-        if down and not was_down:
-            App.g_kInputManager.OnKeyDown(wc)
-        elif was_down and not down:
-            App.g_kInputManager.OnKeyUp(wc)
-        _fn_key_prev[glfw_key] = down
+    ))
 
 
 def _poll_fire_keys(host) -> None:
@@ -284,8 +294,8 @@ def _poll_fire_keys(host) -> None:
     F → ET_INPUT_FIRE_PRIMARY (phasers), X → SECONDARY (torpedoes),
     G → TERTIARY (disruptors/pulse weapons).  The SDK binds these in
     DefaultKeyboardBinding.py:96-103 and TacticalInterfaceHandlers routes
-    them to FireWeapons → StartFiring.  Edge-detected like _poll_function_keys
-    (keydown=1/keyup=0 drive the held-fire StartFiring/StopFiring pair).
+    them to FireWeapons → StartFiring (keydown=1/keyup=0 drive the held-fire
+    StartFiring/StopFiring pair).
 
     Firing still requires a selected target — FireWeapons no-ops when
     pShip.GetTarget() is None.
@@ -296,18 +306,11 @@ def _poll_fire_keys(host) -> None:
     if keys is None or not hasattr(keys, "KEY_G"):
         return
     import App  # deferred: module-top import reorders sound-manager init
-    for glfw_key, wc in (
+    _poll_key_table(host, (
         (keys.KEY_F, App.WC_F),
         (keys.KEY_X, App.WC_X),
         (keys.KEY_G, App.WC_G),
-    ):
-        down = bool(host.key_state(glfw_key))
-        was_down = _fn_key_prev.get(glfw_key, False)
-        if down and not was_down:
-            App.g_kInputManager.OnKeyDown(wc)
-        elif was_down and not down:
-            App.g_kInputManager.OnKeyUp(wc)
-        _fn_key_prev[glfw_key] = down
+    ))
 
 
 def _advance_weapons(ships, dt: float) -> None:
@@ -494,15 +497,12 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
     # as they recharge while the trigger stays down — mirrors the phaser
     # retry_held_fire above. No damage routing here: pulse bolts are spawned
     # into projectiles._active by PulseWeapon.Fire and handled by the torpedo
-    # hit loop / render push above. Stop on a system that flipped offline.
+    # hit loop / render push above. retry_held_fire self-stops if the system
+    # is offline or the target died, and no-ops unless the trigger is held.
     for ship in ships_list:
-        psys = ship.GetPulseWeaponSystem() if hasattr(ship, "GetPulseWeaponSystem") else None
-        if psys is None:
-            continue
-        if _is_offline(psys):
-            psys.StopFiring()
-            continue
-        if hasattr(psys, "retry_held_fire"):
+        psys = (ship.GetPulseWeaponSystem()
+                if hasattr(ship, "GetPulseWeaponSystem") else None)
+        if psys is not None:
             psys.retry_held_fire()
 
     if host is not None and hasattr(host, "set_torpedoes"):
