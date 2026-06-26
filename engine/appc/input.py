@@ -11,42 +11,85 @@ from engine.appc.events import (
 )
 
 
-# ── Constants — mirror SDK App.py keyboard constants ────────────────────────
-WC_LBUTTON: int = 0x01
-WC_RBUTTON: int = 0x02
-WC_MBUTTON: int = 0x04
-KY_LBUTTON: int = 0x01
-KY_RBUTTON: int = 0x02
-KY_MBUTTON: int = 0x04
-# Function keys — Windows VK_F1..F5 values (KeyConfig.MapScancodes
-# registers them; DefaultKeyboardBinding.py:121-125 binds them to
-# ET_INPUT_TALK_TO_*). KY_ mirrors WC_ like the mouse buttons above.
-# F6-F12 remain stubs (int()=0): their registrations/bindings collapse
-# onto key 0, last-write-wins, and nothing polls key 0 — give them real
-# VK codes here when a consumer lands.
-WC_F1: int = 0x70
-WC_F2: int = 0x71
-WC_F3: int = 0x72
-WC_F4: int = 0x73
-WC_F5: int = 0x74
-KY_F1: int = 0x70
-KY_F2: int = 0x71
-KY_F3: int = 0x72
-KY_F4: int = 0x73
-KY_F5: int = 0x74
-# Weapon-fire letter keys — Windows VK values (= ASCII uppercase). The SDK
-# binds these to ET_INPUT_FIRE_PRIMARY/SECONDARY/TERTIARY in
-# DefaultKeyboardBinding.py:96-103 (F=phasers, X=torpedoes, G=disruptors/
-# pulse) and KeyConfig.MapScancodes registers them. Without real values here
-# every letter key resolves to App._NamedStub → int()==0, so all three fire
-# bindings collapse onto key 0 (last-write-wins) and keyboard fire is dead.
-# KY_ mirrors WC_ as with the mouse/F-key entries above.
-WC_F: int = 0x46
-WC_G: int = 0x47
-WC_X: int = 0x58
-KY_F: int = 0x46
-KY_G: int = 0x47
-KY_X: int = 0x58
+# ── Keyboard constants — generated WC_/KY_ table ────────────────────────────
+# BC's input is name-addressed: KeyConfig.MapScancodes registers each key under
+# App.WC_<name>, DefaultKeyboardBinding binds (WC_code, keystate) → ET_*, and
+# the host pollers call OnKeyDown(App.WC_<name>).  Any name NOT defined here
+# resolves through App.py's module __getattr__ to a _NamedStub whose int() is 0,
+# so every undefined key registers/binds under slot 0 (last-write-wins) and goes
+# dead — the bug class that once silenced Klingon disruptor fire (WC_G → 0).
+#
+# This table defines every BASE single key KeyConfig references so none can
+# collapse: real Windows VK codes where they exist, else a synthesized 0x100+
+# band (value is arbitrary-but-stable — only internal consistency matters, since
+# registration, binding, and polling all reference the same App.WC_<name>).
+# Distinctness holds by construction: letters 0x41-0x5A, digits 0x30-0x39, the
+# VK ranges below (all ≤ 0xFE), and the synth band (≥ 0x100) never overlap.
+#
+# Intentionally absent: the CTRL_/ALT_/CAPS_ modifier variants (WC_CTRL_Q,
+# WC_ALT_1, WC_CAPS_K, …).  They have no wired consumer yet, so they stay stubs
+# and get real codes when one lands.  App.py's module __getattr__ has a WC_/KY_
+# fallback that surfaces every name defined here as App.WC_*/App.KY_*.
+
+def _def_key(name: str, code: int) -> None:
+    globals()["WC_" + name] = code
+    globals()["KY_" + name] = code
+
+
+# Mouse buttons — real VK codes.
+_def_key("LBUTTON", 0x01)
+_def_key("RBUTTON", 0x02)
+_def_key("MBUTTON", 0x04)
+
+# Letters A-Z and digits 0-9 — Windows VK == ASCII uppercase / digit.  This
+# covers the weapon-fire letters F/X/G (= 0x46/0x58/0x47) the SDK binds to
+# ET_INPUT_FIRE_PRIMARY/SECONDARY/TERTIARY (DefaultKeyboardBinding.py:96-103).
+for _vk in list(range(ord("A"), ord("Z") + 1)) + list(range(ord("0"), ord("9") + 1)):
+    _def_key(chr(_vk), _vk)
+
+# Function keys F1-F12 — VK_F1 (0x70) .. VK_F12 (0x7B).
+for _fn in range(1, 13):
+    _def_key("F%d" % _fn, 0x70 + (_fn - 1))
+
+# Numpad digits NUMPAD0-9 — VK_NUMPAD0 (0x60) .. VK_NUMPAD9 (0x69).
+for _np in range(10):
+    _def_key("NUMPAD%d" % _np, 0x60 + _np)
+
+# Named keys with real Windows VK codes (US layout).
+_VK_NAMED = {
+    # navigation / editing
+    "ESCAPE": 0x1B, "SPACE": 0x20, "TAB": 0x09, "RETURN": 0x0D,
+    "BACKSPACE": 0x08, "INSERT": 0x2D, "DELETE": 0x2E,
+    "HOME": 0x24, "END": 0x23, "PAGEUP": 0x21, "PAGEDOWN": 0x22,
+    "LEFT": 0x25, "UP": 0x26, "RIGHT": 0x27, "DOWN": 0x28,
+    # modifiers / locks
+    "SHIFT": 0x10, "CTRL": 0x11, "ALT": 0x12,
+    "CAPSLOCK": 0x14, "NUMLOCK": 0x90, "SCROLL": 0x91,
+    "PAUSE": 0x13, "PRINTSCREEN": 0x2C,
+    # OEM punctuation
+    "MINUS": 0xBD, "EQUALS": 0xBB, "BACKQUOTE": 0xC0,
+    "OPEN_BRACKET": 0xDB, "CLOSE_BRACKET": 0xDD, "BACKSLASH": 0xDC,
+    "SEMICOLON": 0xBA, "QUOTE": 0xDE,
+    "COMMA": 0xBC, "PERIOD": 0xBE, "SLASH": 0xBF,
+    # numpad operators
+    "MULTIPLY": 0x6A, "ADD": 0x6B, "SEPARATOR": 0x6C,
+    "SUBTRACT": 0x6D, "DECIMAL": 0x6E, "DIVIDE": 0x6F,
+}
+for _nm, _code in _VK_NAMED.items():
+    _def_key(_nm, _code)
+
+# Base keys the SDK binds that have no standalone Windows VK code (shifted
+# symbols, numpad-enter, scroll-wheel, AltGr).  Synthesized 0x100+ band.
+_SYNTH_NAMED = (
+    "TILDE", "EXCLAMATION", "AT_SIGN", "NUMBER_SIGN", "DOLLAR_SIGN", "PERCENT",
+    "CARRET", "AMPERSAND", "ASTERISK", "OPEN_PAREN", "CLOSE_PAREN",
+    "UNDERSCORE", "PLUS", "CURLY_BRACE_OPEN", "CURLY_BRACE_CLOSE",
+    "COLON", "DOUBLE_QUOTE", "LESS_THAN", "GREATER_THAN", "QUESTION",
+    "NUMPADENTER", "ALTGR", "SCROLL_WHEEL_UP", "SCROLL_WHEEL_DOWN",
+)
+for _idx, _nm in enumerate(_SYNTH_NAMED):
+    _def_key(_nm, 0x100 + _idx)
+
 KS_KEYDOWN   = TGKeyboardEvent.KS_KEYDOWN
 KS_KEYUP     = TGKeyboardEvent.KS_KEYUP
 KS_KEYREPEAT = TGKeyboardEvent.KS_KEYREPEAT

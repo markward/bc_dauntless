@@ -7,6 +7,7 @@ from engine.appc.events import (
     TGEventHandlerObject, TGEventManager,
     TGPythonInstanceWrapper,
 )
+from engine.appc import input as _input_consts   # keyboard WC_/KY_ table source
 from engine.appc.input import (
     TGInputManager, KeyboardBinding,
     WC_LBUTTON, WC_RBUTTON, WC_MBUTTON,
@@ -1498,4 +1499,14 @@ class _NamedStub(_Stub):
 
 
 def __getattr__(name):
+    # Keyboard constants live in engine.appc.input (the generated WC_/KY_ table).
+    # Surface any name it defines as App.WC_*/App.KY_* so the explicit import
+    # list can never drift a key into a _NamedStub (int()==0) dead slot.  Every
+    # other absent symbol — and any WC_/KY_ name the table omits (the unwired
+    # CTRL_/ALT_/CAPS_ modifier variants) — still falls through to _NamedStub.
+    if name[:3] in ("WC_", "KY_"):
+        val = getattr(_input_consts, name, None)
+        if isinstance(val, int):
+            globals()[name] = val   # memoize: future lookups skip __getattr__
+            return val
     return _NamedStub(name)
