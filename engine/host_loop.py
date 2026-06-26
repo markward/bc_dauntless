@@ -229,12 +229,13 @@ def _poll_mouse_buttons(host) -> None:
     if host is None or not hasattr(host, "mouse_button_pressed"):
         return
     import App  # deferred: module-top import reorders sound-manager init
-    # PR 2c re-enables left-click (phasers) alongside right-click
-    # (torpedoes).  Middle-click is still out of scope — tractor beam is
-    # deferred to a future PR.
+    # Left-click → phasers (primary), right-click → torpedoes (secondary),
+    # middle-click → disruptors/pulse weapons (tertiary).  Matches the SDK's
+    # DefaultKeyboardBinding mouse bindings (WC_LBUTTON/RBUTTON/MBUTTON).
     for glfw_btn, wc in (
-        (host.keys.MOUSE_BUTTON_LEFT,  App.WC_LBUTTON),
-        (host.keys.MOUSE_BUTTON_RIGHT, App.WC_RBUTTON),
+        (host.keys.MOUSE_BUTTON_LEFT,   App.WC_LBUTTON),
+        (host.keys.MOUSE_BUTTON_RIGHT,  App.WC_RBUTTON),
+        (host.keys.MOUSE_BUTTON_MIDDLE, App.WC_MBUTTON),
     ):
         if host.mouse_button_pressed(glfw_btn):
             App.g_kInputManager.OnKeyDown(wc)
@@ -267,6 +268,38 @@ def _poll_function_keys(host) -> None:
         (keys.KEY_F3, App.WC_F3),
         (keys.KEY_F4, App.WC_F4),
         (keys.KEY_F5, App.WC_F5),
+    ):
+        down = bool(host.key_state(glfw_key))
+        was_down = _fn_key_prev.get(glfw_key, False)
+        if down and not was_down:
+            App.g_kInputManager.OnKeyDown(wc)
+        elif was_down and not down:
+            App.g_kInputManager.OnKeyUp(wc)
+        _fn_key_prev[glfw_key] = down
+
+
+def _poll_fire_keys(host) -> None:
+    """Forward the weapon-fire keys F/X/G into g_kInputManager.
+
+    F → ET_INPUT_FIRE_PRIMARY (phasers), X → SECONDARY (torpedoes),
+    G → TERTIARY (disruptors/pulse weapons).  The SDK binds these in
+    DefaultKeyboardBinding.py:96-103 and TacticalInterfaceHandlers routes
+    them to FireWeapons → StartFiring.  Edge-detected like _poll_function_keys
+    (keydown=1/keyup=0 drive the held-fire StartFiring/StopFiring pair).
+
+    Firing still requires a selected target — FireWeapons no-ops when
+    pShip.GetTarget() is None.
+    """
+    if host is None or not hasattr(host, "key_state"):
+        return
+    keys = getattr(host, "keys", None)
+    if keys is None or not hasattr(keys, "KEY_G"):
+        return
+    import App  # deferred: module-top import reorders sound-manager init
+    for glfw_key, wc in (
+        (keys.KEY_F, App.WC_F),
+        (keys.KEY_X, App.WC_X),
+        (keys.KEY_G, App.WC_G),
     ):
         down = bool(host.key_state(glfw_key))
         was_down = _fn_key_prev.get(glfw_key, False)
@@ -4721,6 +4754,7 @@ def run(mission_name: Optional[str] = None,
                 # events route via g_kKeyboardBinding → TCW handlers).
                 _poll_mouse_buttons(_h)
                 _poll_function_keys(_h)
+                _poll_fire_keys(_h)
 
                 # Advance weapon charge / reload for every ship in every
                 # active set.  Runs after AI/physics (approximate — the host

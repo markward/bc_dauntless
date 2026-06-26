@@ -2608,6 +2608,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
     keys.attr("KEY_Q") = GLFW_KEY_Q;
     keys.attr("KEY_E") = GLFW_KEY_E;
     keys.attr("KEY_R") = GLFW_KEY_R;
+    keys.attr("KEY_F") = GLFW_KEY_F;  // primary fire (phasers)
+    keys.attr("KEY_G") = GLFW_KEY_G;  // tertiary fire (disruptors/pulse)
+    keys.attr("KEY_X") = GLFW_KEY_X;  // secondary fire (torpedoes)
     keys.attr("KEY_I") = GLFW_KEY_I;
     keys.attr("KEY_0") = GLFW_KEY_0;
     keys.attr("KEY_1") = GLFW_KEY_1;
