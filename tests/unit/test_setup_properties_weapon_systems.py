@@ -46,6 +46,21 @@ def test_pulse_and_tractor_dispatch():
 
     assert ship.GetPulseWeaponSystem().GetNormalPowerPerSecond() == 100.0
     assert ship.GetTractorBeamSystem().GetNormalPowerPerSecond() == 75.0
+    # SingleFire from the WeaponSystemProperty must propagate to the pulse
+    # system (birdofprey.py / warbird.py call SetSingleFire on the pulse
+    # WeaponSystemProperty; the SetupProperties dispatch copies it through).
+    assert ship.GetPulseWeaponSystem().GetSingleFire() == 1
+
+
+def test_pulse_single_fire_zero_propagates():
+    """SetSingleFire(0) on a pulse hardpoint (birdofprey.py DisruptorCannons)
+    must land on the system as 0 — fire-all-eligible mode."""
+    ship = ShipClass_Create("BoP")
+    p = _make_ws("Disruptor Cannons", WeaponSystemProperty.WST_PULSE,
+                 power=80.0, single_fire=0)
+    ship.GetPropertySet().AddToSet("Scene Root", p)
+    ship.SetupProperties()
+    assert ship.GetPulseWeaponSystem().GetSingleFire() == 0
 
 
 def test_setup_properties_clears_subsystem_slots_with_no_backing_property():

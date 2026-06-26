@@ -34,6 +34,19 @@ KY_F2: int = 0x71
 KY_F3: int = 0x72
 KY_F4: int = 0x73
 KY_F5: int = 0x74
+# Weapon-fire letter keys — Windows VK values (= ASCII uppercase). The SDK
+# binds these to ET_INPUT_FIRE_PRIMARY/SECONDARY/TERTIARY in
+# DefaultKeyboardBinding.py:96-103 (F=phasers, X=torpedoes, G=disruptors/
+# pulse) and KeyConfig.MapScancodes registers them. Without real values here
+# every letter key resolves to App._NamedStub → int()==0, so all three fire
+# bindings collapse onto key 0 (last-write-wins) and keyboard fire is dead.
+# KY_ mirrors WC_ as with the mouse/F-key entries above.
+WC_F: int = 0x46
+WC_G: int = 0x47
+WC_X: int = 0x58
+KY_F: int = 0x46
+KY_G: int = 0x47
+KY_X: int = 0x58
 KS_KEYDOWN   = TGKeyboardEvent.KS_KEYDOWN
 KS_KEYUP     = TGKeyboardEvent.KS_KEYUP
 KS_KEYREPEAT = TGKeyboardEvent.KS_KEYREPEAT

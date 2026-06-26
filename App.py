@@ -13,6 +13,8 @@ from engine.appc.input import (
     KY_LBUTTON, KY_RBUTTON, KY_MBUTTON,
     WC_F1, WC_F2, WC_F3, WC_F4, WC_F5,
     KY_F1, KY_F2, KY_F3, KY_F4, KY_F5,
+    WC_F, WC_G, WC_X,
+    KY_F, KY_G, KY_X,
     KS_KEYDOWN, KS_KEYUP, KS_KEYREPEAT, KS_NORMAL,
     init_input_pipeline, register_input_handlers,
 )

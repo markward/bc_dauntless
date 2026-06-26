@@ -198,6 +198,116 @@ def _resolve_fire_sound(prop) -> str:
     return prop.GetFireSound() or ""
 
 
+def _debit_ship_power(emitter, cost) -> int:
+    """Bill `cost` against the firing ship's PowerSubsystem.
+
+    Returns 1 if billed in full, or if the gate doesn't apply — no ship, no
+    PowerSubsystem, or a PowerSubsystem with no bound PowerProperty (a Phase-1
+    test stub without a power plant), or cost <= 0.  Returns 0 only when the
+    grid engaged and combined available + main battery couldn't cover the cost;
+    callers treat that as a silent no-op.  Shared by TorpedoTube (per-shot ammo
+    cost) and PulseWeapon (per-bolt module cost).
+    """
+    ship = emitter._climb_to_ship()
+    if ship is None:
+        return 1
+    ps = ship.GetPowerSubsystem() if hasattr(ship, "GetPowerSubsystem") else None
+    if ps is None or ps.GetProperty() is None:
+        return 1
+    cost = float(cost)
+    if cost <= 0.0:
+        return 1
+    return ps.StealPower(cost)
+
+
+def _spawn_projectile(emitter, mod, *, drf_override=0.0):
+    """Spawn an in-flight projectile from `emitter` using SDK module `mod`.
+
+    Shared by torpedo tubes and pulse-weapon cannons. Builds a Torpedo at the
+    emitter's world position, runs mod.Create to populate visuals/behaviour,
+    applies drf_override (the launcher's DamageRadiusFactor) when > 0, computes
+    homing velocity toward the firing ship's live target lock (else dumbfire
+    along the emitter/ship forward), registers it, and plays mod.GetLaunchSound.
+    Returns the Torpedo, or None if mod is unusable.
+    """
+    from engine.appc.projectiles import Torpedo, register
+    from engine.appc.math import TGPoint3
+    from engine.audio.tg_sound import TGSoundManager
+
+    torp = Torpedo()
+    source_ship = emitter._climb_to_ship()
+    torp._source_ship = source_ship
+    torp._position = emitter._emitter_world_position()
+
+    mod.Create(torp)
+
+    # §3.2 DRF override: if the launching tube has a non-zero
+    # DamageRadiusFactor (set by the hardpoint script, e.g.
+    # galaxy.py ForwardTorpedo1.SetDamageRadiusFactor(0.20)),
+    # it overrides the payload value set by mod.Create above.
+    # host_loop passes the torpedo as hardpoint_weapon to apply_hit,
+    # so torp._damage_radius_factor must carry the launcher value.
+    if drf_override > 0.0:
+        torp._damage_radius_factor = drf_override
+
+    launch_speed = float(mod.GetLaunchSpeed()) if hasattr(mod, "GetLaunchSpeed") else 0.0
+
+    target_ship = source_ship.GetTarget() if source_ship is not None else None
+    if (target_ship is not None
+            and hasattr(target_ship, "IsDead") and not target_ship.IsDead()):
+        target_sub = (source_ship.GetTargetSubsystem()
+                      if hasattr(source_ship, "GetTargetSubsystem") else None)
+        aim_target = target_sub if target_sub is not None else target_ship
+        aim_pt = aim_target.GetWorldLocation()
+        direction = aim_pt - torp._position
+        length = direction.Length()
+        if length > 1e-6:
+            torp._velocity = TGPoint3(
+                direction.x / length * launch_speed,
+                direction.y / length * launch_speed,
+                direction.z / length * launch_speed,
+            )
+        torp._target_ship = target_ship
+        torp._target_subsystem = target_sub
+    else:
+        # The catch-all __getattr__ on TGObject returns a _Stub for any
+        # missing attribute, so hasattr is misleading.  Probe for a valid
+        # TGPoint3 explicitly via the type — defensive against the shim.
+        forward = None
+        try:
+            got = emitter.GetDirection()
+            if isinstance(got, TGPoint3):
+                forward = got
+        except Exception:
+            forward = None
+        if forward is None:
+            forward = TGPoint3(0.0, 1.0, 0.0)
+        world_fwd = TGPoint3(forward.x, forward.y, forward.z)
+        if source_ship is not None and hasattr(source_ship, "GetWorldRotation"):
+            rot = source_ship.GetWorldRotation()
+            # Same shim caveat — only use if it's a real TGMatrix3.
+            from engine.appc.math import TGMatrix3
+            if isinstance(rot, TGMatrix3):
+                world_fwd.MultMatrixLeft(rot)
+        length = world_fwd.Length()
+        if length > 1e-6:
+            torp._velocity = TGPoint3(
+                world_fwd.x / length * launch_speed,
+                world_fwd.y / length * launch_speed,
+                world_fwd.z / length * launch_speed,
+            )
+        torp._target_ship = None
+
+    register(torp)
+
+    if hasattr(mod, "GetLaunchSound"):
+        sound_name = mod.GetLaunchSound()
+        if sound_name:
+            TGSoundManager.instance().PlaySound(sound_name)
+
+    return torp
+
+
 class _EnergyWeaponFireMixin:
     """Shared Fire/CanFire/StopFiring/UpdateCharge for PhaserBank / PulseWeapon
     / TractorBeam.  Per-emitter state initialised by _init_energy_weapon_state.
@@ -570,7 +680,133 @@ class TorpedoSystem(WeaponSystem):
 PHASER_MAX_RANGE_GU = 700.0
 
 
-class PhaserSystem(WeaponSystem):
+class _HeldFireWeaponSystem(WeaponSystem):
+    """Shared held-fire dispatch for energy-emitter aggregators
+    (PhaserSystem, PulseWeaponSystem).
+
+    Holds the SingleFire mode and the held-trigger state, and implements
+    StartFiring / StopFiring / retry_held_fire / _dispatch_one_or_all.  The
+    per-frame combat tick calls retry_held_fire so banks/cannons re-engage
+    as they recharge while the trigger stays down.
+
+    SingleFire(1): one eligible emitter fires per trigger, round-robin via
+    _next_emitter_index.  SingleFire(0): every eligible emitter engages.
+
+    Subclasses override _can_engage(ship, target) to add a fire-range gate
+    (phasers do; pulse weapons don't — a bolt's lifetime bounds its range).
+    """
+    def __init__(self, name: str = ""):
+        super().__init__(name)
+        self._single_fire: int = 0
+        self._fire_held: bool = False
+        self._held_target = None
+        self._held_offset = None
+
+    def GetSingleFire(self) -> int:                 return self._single_fire
+    def SetSingleFire(self, v) -> None:             self._single_fire = int(v)
+
+    def _can_engage(self, ship, target) -> bool:
+        """Fire-range gate hook. Default: no gate. PhaserSystem overrides."""
+        return True
+
+    def StartFiring(self, target=None, offset=None) -> None:
+        if not self.IsOn() or target is None:
+            return
+        # Disabled-weapons gate: parent aggregates child IsDisabled (Project 2).
+        # When all emitters are disabled the parent flips disabled and we bail.
+        if _is_offline(self):
+            return
+        ship = self.GetParentShip()
+        if not self._can_engage(ship, target):
+            return
+        self._fire_held = True
+        self._held_target = target
+        self._held_offset = offset
+        self._currently_firing = []
+        self._dispatch_one_or_all(target, offset, ship)
+
+    def StopFiring(self, *args) -> None:
+        self._fire_held = False
+        self._held_target = None
+        self._held_offset = None
+        super().StopFiring(*args)
+
+    def retry_held_fire(self) -> None:
+        """Re-attempt firing while the trigger is held.  In SingleFire mode
+        only re-fires when no emitter is currently firing — preserving the
+        one-at-a-time cadence (a no-op for discrete pulse cannons, which
+        never stay IsFiring).  In multi-fire mode tops up any emitter that
+        climbed back past its CanFire threshold."""
+        if not self._fire_held or self._held_target is None:
+            return
+        if not self.IsOn():
+            return
+        # Disabled-weapons gate: system flipped disabled mid-burst — stop
+        # cleanly (clears _fire_held + walks _currently_firing).
+        if _is_offline(self):
+            self.StopFiring()
+            return
+        ship = self.GetParentShip()
+        target = self._held_target
+        if hasattr(target, "IsDead") and target.IsDead():
+            self.StopFiring()
+            return
+        if not self._can_engage(ship, target):
+            # Target drifted out of range during a held burst — stop the held
+            # state entirely; re-engaging requires a fresh trigger.
+            self.StopFiring()
+            return
+        if self._single_fire:
+            # If any emitter is still firing, don't dispatch another — wait
+            # for the active one to deplete before the round-robin advances.
+            for i in range(self.GetNumWeapons()):
+                emitter = self.GetWeapon(i)
+                if emitter is not None and emitter.IsFiring():
+                    return
+        self._dispatch_one_or_all(target, self._held_offset, ship)
+
+    def _dispatch_one_or_all(self, target, offset, ship) -> None:
+        """SingleFire: fire one eligible emitter starting from the round-robin
+        cursor, then advance the cursor.  Otherwise fire every eligible
+        emitter simultaneously.
+
+        Aim is resolved per-emitter via _resolve_bank_aim_world so each
+        emitter's arc gate sees the direction from its own mount Position
+        to the target — see research doc § Bug F.
+        """
+        n = self.GetNumWeapons()
+        if n == 0:
+            return
+        if self._single_fire:
+            start = self._next_emitter_index % n
+            for delta in range(n):
+                idx = (start + delta) % n
+                emitter = self.GetWeapon(idx)
+                if emitter is None:
+                    continue
+                aim_world = _resolve_bank_aim_world(emitter, target)
+                if not _emitter_in_arc(emitter, ship, aim_world):
+                    continue
+                if hasattr(emitter, "CanFire") and emitter.CanFire():
+                    emitter.Fire(target, offset)
+                    self._currently_firing.append(idx)
+                    self._next_emitter_index = (idx + 1) % n
+                    return
+            return
+        # Multi-emitter — every eligible one engages.
+        for i in range(n):
+            emitter = self.GetWeapon(i)
+            if emitter is None:
+                continue
+            aim_world = _resolve_bank_aim_world(emitter, target)
+            if not _emitter_in_arc(emitter, ship, aim_world):
+                continue
+            if hasattr(emitter, "CanFire") and emitter.CanFire():
+                emitter.Fire(target, offset)
+                self._currently_firing.append(i)
+
+
+class PhaserSystem(_HeldFireWeaponSystem):
     # Power-level constants from sdk/.../App.py:6444-6446.
     PP_LOW = 0
     PP_HIGH = 1
@@ -578,14 +814,7 @@ class PhaserSystem(WeaponSystem):
     def __init__(self, name: str = ""):
         super().__init__(name)
         self._power_level = self.PP_HIGH
-        self._single_fire: int = 0
         self._aimed_weapon: int = 0
-        # True while the player is holding LBUTTON.  Set by StartFiring,
-        # cleared by StopFiring.  The per-frame combat tick retries banks
-        # that have re-charged above MinFiringCharge while held.
-        self._fire_held: bool = False
-        self._held_target = None
-        self._held_offset = None
 
     def SetPowerLevel(self, level) -> None:
         self._power_level = int(level)
@@ -593,10 +822,11 @@ class PhaserSystem(WeaponSystem):
     def GetPowerLevel(self) -> int:
         return self._power_level
 
-    def GetSingleFire(self) -> int:                 return self._single_fire
-    def SetSingleFire(self, v) -> None:             self._single_fire = int(v)
     def GetAimedWeapon(self) -> int:                return self._aimed_weapon
     def SetAimedWeapon(self, v) -> None:            self._aimed_weapon = int(v)
+
+    def _can_engage(self, ship, target) -> bool:
+        return self._target_in_system_range(ship, target)
 
     def _target_in_system_range(self, ship, target) -> bool:
         """True iff `target` is within global phaser fire range
@@ -621,115 +851,16 @@ class PhaserSystem(WeaponSystem):
         dist_sq = dx*dx + dy*dy + dz*dz
         return dist_sq <= PHASER_MAX_RANGE_GU * PHASER_MAX_RANGE_GU
 
-    def StartFiring(self, target=None, offset=None) -> None:
-        """Dispatch — fires the next eligible PhaserBank.
 
-        Galaxy and most stock BC ships set SetSingleFire(1) on their
-        phaser system, meaning only one bank is firing at any given
-        moment; depletion cycles to the next ready bank.  When
-        SetSingleFire(0) every eligible bank fires simultaneously.
+class PulseWeaponSystem(_HeldFireWeaponSystem):
+    """Pulse-weapon (disruptor/cannon) aggregator.
 
-        Sets _fire_held so retry_held_fire() can re-fire banks as they
-        recharge while the trigger stays down.
-        """
-        if not self.IsOn() or target is None:
-            return
-        # Disabled-weapons gate: parent aggregates child IsDisabled (Project 2).
-        # When all banks are disabled the parent flips disabled and we bail.
-        # Spec §4.2.
-        if _is_offline(self):
-            return
-        ship = self.GetParentShip()
-        if not self._target_in_system_range(ship, target):
-            return
-        self._fire_held = True
-        self._held_target = target
-        self._held_offset = offset
-        self._currently_firing = []
-        self._dispatch_one_or_all(target, offset, ship)
-
-    def StopFiring(self, *args) -> None:
-        self._fire_held = False
-        self._held_target = None
-        self._held_offset = None
-        super().StopFiring(*args)
-
-    def retry_held_fire(self) -> None:
-        """Re-attempt firing while LBUTTON is held.  In SingleFire mode
-        only re-fires when no bank is currently firing — preserving the
-        one-bank-at-a-time cadence.  In multi-fire mode tops up any
-        bank that climbed back past its CanFire threshold."""
-        if not self._fire_held or self._held_target is None:
-            return
-        if not self.IsOn():
-            return
-        # Disabled-weapons gate: system flipped disabled mid-burst —
-        # stop firing cleanly (clears _fire_held + walks _currently_firing
-        # to call bank.StopFiring on each). Spec §4.2.
-        if _is_offline(self):
-            self.StopFiring()
-            return
-        ship = self.GetParentShip()
-        target = self._held_target
-        if hasattr(target, "IsDead") and target.IsDead():
-            self.StopFiring()
-            return
-        if not self._target_in_system_range(ship, target):
-            # Target has drifted out of range during a held-fire burst.
-            # Stop the held state entirely — re-engaging requires a fresh trigger.
-            self.StopFiring()
-            return
-        if self._single_fire:
-            # If any bank is still firing, don't dispatch another — wait
-            # for the active bank to deplete before round-robin advances.
-            for i in range(self.GetNumWeapons()):
-                bank = self.GetWeapon(i)
-                if bank is not None and bank.IsFiring():
-                    return
-        self._dispatch_one_or_all(target, self._held_offset, ship)
-
-    def _dispatch_one_or_all(self, target, offset, ship) -> None:
-        """SingleFire: fire one eligible bank starting from the round-robin
-        cursor, then advance the cursor.  Otherwise fire every eligible
-        bank simultaneously.
-
-        Aim is resolved per-bank via _resolve_bank_aim_world so each
-        bank's arc gate sees the direction from its own mount Position
-        to the target — see research doc § Bug F.
-        """
-        n = self.GetNumWeapons()
-        if n == 0:
-            return
-        if self._single_fire:
-            start = self._next_emitter_index % n
-            for delta in range(n):
-                idx = (start + delta) % n
-                bank = self.GetWeapon(idx)
-                if bank is None:
-                    continue
-                aim_world = _resolve_bank_aim_world(bank, target)
-                if not _emitter_in_arc(bank, ship, aim_world):
-                    continue
-                if hasattr(bank, "CanFire") and bank.CanFire():
-                    bank.Fire(target, offset)
-                    self._currently_firing.append(idx)
-                    self._next_emitter_index = (idx + 1) % n
-                    return
-            return
-        # Multi-bank — every eligible bank engages.
-        for i in range(n):
-            bank = self.GetWeapon(i)
-            if bank is None:
-                continue
-            aim_world = _resolve_bank_aim_world(bank, target)
-            if not _emitter_in_arc(bank, ship, aim_world):
-                continue
-            if hasattr(bank, "CanFire") and bank.CanFire():
-                bank.Fire(target, offset)
-                self._currently_firing.append(i)
-
-
-class PulseWeaponSystem(WeaponSystem):
+    Inherits the held-fire dispatch from _HeldFireWeaponSystem.  Unlike
+    PhaserSystem its emitters fire discrete projectile bolts and it keeps the
+    base's no-op _can_engage (no fire-range gate — a bolt's lifetime bounds
+    its range, so the only fire gates are arc + charge + cooldown).  Held-fire
+    is driven per-frame by retry_held_fire from host_loop._advance_combat.
+    """
     pass
 
 
@@ -801,6 +932,9 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
         self._target = None
         self._target_offset = None
         self._cooldown_time: float = 0.0
+        # Per-shot cooldown countdown. Set to GetCooldownTime() at Fire,
+        # decremented in UpdateCharge; gates CanFire while > 0.
+        self._cooldown_remaining: float = 0.0
 
     def GetMaxCharge(self) -> float:                return self._max_charge
     def GetMinFiringCharge(self) -> float:          return self._min_firing_charge
@@ -819,6 +953,66 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
         if v < 0.0:                self._charge_level = 0.0
         elif v > self._max_charge: self._charge_level = self._max_charge
         else:                      self._charge_level = v
+
+    # ── Discrete-shot firing (overrides the beam mixin behaviour) ───────────
+    # Pulse cannons fire projectile bolts, not held beams: Fire spawns one
+    # bolt, dumps accumulated charge, and starts a per-shot cooldown. There
+    # is no looping SFX and _firing never stays True — so the mixin's
+    # UpdateCharge always takes the RECHARGE branch (see below).
+
+    # Re-arm at exactly MinFiringCharge — no phaser-style headroom. Stock
+    # pulse cannons have a tiny charge margin (BoP: MaxCharge 3.8,
+    # MinFiringCharge 3.6); the phaser default (0.20·MaxCharge) would push
+    # the refire threshold to 4.36 > MaxCharge, so the cannon could fire
+    # exactly once and never re-arm. For pulse weapons the per-shot cooldown
+    # (SetCooldownTime, BoP 0.2s) is the anti-flutter mechanism, not charge
+    # hysteresis — so RechargeRate alone governs cadence (~9s from empty).
+    REFIRE_HEADROOM_FRACTION = 0.0
+
+    def CanFire(self) -> int:
+        if self._cooldown_remaining > 0.0:
+            return 0
+        return _EnergyWeaponFireMixin.CanFire(self)
+
+    def Fire(self, target=None, offset=None) -> None:
+        if not self.CanFire():
+            return
+        prop = self.GetProperty()
+        script = prop.GetModuleName() if (prop is not None and hasattr(prop, "GetModuleName")) else ""
+        if not script:
+            return
+        import importlib
+        try:
+            mod = importlib.import_module(script)
+        except ImportError:
+            return
+        # Power gate — silent no-op if the grid can't cover the shot
+        # (matches torpedoes). Charge is NOT drained on a blocked shot.
+        if not self._debit_pulse_power(mod):
+            return
+        _spawn_projectile(self, mod, drf_override=self.GetDamageRadiusFactor())
+        # Discrete drain: dump accumulated charge + start cooldown. No held beam.
+        self._charge_level = 0.0
+        self._cooldown_remaining = self.GetCooldownTime()
+        self._armed = False  # re-arms in UpdateCharge once past the refire threshold
+
+    def _debit_pulse_power(self, mod) -> int:
+        """Bill the firing ship's PowerSubsystem for this bolt's GetPowerCost()."""
+        cost = float(mod.GetPowerCost()) if hasattr(mod, "GetPowerCost") else 0.0
+        return _debit_ship_power(self, cost)
+
+    def UpdateCharge(self, dt: float) -> None:
+        if self._cooldown_remaining > 0.0:
+            self._cooldown_remaining = max(0.0, self._cooldown_remaining - dt)
+        # _firing stays False for pulse weapons, so the mixin takes the
+        # RECHARGE branch and re-arms via the existing hysteresis threshold.
+        _EnergyWeaponFireMixin.UpdateCharge(self, dt)
+
+    def StopFiring(self) -> None:
+        # Discrete weapon — no _loop_handle to silence; just clear target refs.
+        self._firing = False
+        self._target = None
+        self._target_offset = None
 
 
 class TractorBeam(_EnergyWeaponFireMixin, WeaponSystem):
@@ -911,21 +1105,7 @@ class TorpedoTube(WeaponSystem):
         self._firing = False
 
     def _debit_power(self) -> int:
-        """Bill the firing ship's PowerSubsystem for this shot's cost.
-
-        Returns 1 if billed in full (or if the gate doesn't apply —
-        ship has no PowerSubsystem, or its PowerSubsystem has no bound
-        PowerProperty meaning this is a Phase-1 test stub without a
-        power plant).  Returns 0 if the gate engaged and combined
-        available + main battery couldn't cover the cost — caller
-        treats that as a silent no-op.
-        """
-        ship = self._climb_to_ship()
-        if ship is None:
-            return 1
-        ps = ship.GetPowerSubsystem() if hasattr(ship, "GetPowerSubsystem") else None
-        if ps is None or ps.GetProperty() is None:
-            return 1
+        """Bill the firing ship's PowerSubsystem for this shot's ammo cost."""
         parent = self.GetParentSubsystem()
         ammo = parent.GetCurrentAmmoType() if (
             parent is not None and hasattr(parent, "GetCurrentAmmoType")
@@ -933,9 +1113,7 @@ class TorpedoTube(WeaponSystem):
         cost = float(ammo.GetPowerCost()) if (
             ammo is not None and hasattr(ammo, "GetPowerCost")
         ) else 0.0
-        if cost <= 0.0:
-            return 1
-        return ps.StealPower(cost)
+        return _debit_ship_power(self, cost)
 
     def _spawn_torpedo(self) -> None:
         """Look up the parent system's GetTorpedoScript(0), import the SDK
@@ -964,81 +1142,7 @@ class TorpedoTube(WeaponSystem):
         except ImportError:
             return
 
-        from engine.appc.projectiles import Torpedo, register
-        from engine.appc.math import TGPoint3
-        from engine.audio.tg_sound import TGSoundManager
-
-        torp = Torpedo()
-        source_ship = self._climb_to_ship()
-        torp._source_ship = source_ship
-        torp._position = self._emitter_world_position()
-
-        mod.Create(torp)
-
-        # §3.2 DRF override: if the launching tube has a non-zero
-        # DamageRadiusFactor (set by the hardpoint script, e.g.
-        # galaxy.py ForwardTorpedo1.SetDamageRadiusFactor(0.20)),
-        # it overrides the payload value set by mod.Create above.
-        # host_loop passes the torpedo as hardpoint_weapon to apply_hit,
-        # so torp._damage_radius_factor must carry the launcher value.
-        tube_drf = self.GetDamageRadiusFactor()
-        if tube_drf > 0.0:
-            torp._damage_radius_factor = tube_drf
-
-        launch_speed = float(mod.GetLaunchSpeed()) if hasattr(mod, "GetLaunchSpeed") else 0.0
-
-        target_ship = source_ship.GetTarget() if source_ship is not None else None
-        if (target_ship is not None
-                and hasattr(target_ship, "IsDead") and not target_ship.IsDead()):
-            target_sub = (source_ship.GetTargetSubsystem()
-                          if hasattr(source_ship, "GetTargetSubsystem") else None)
-            aim_target = target_sub if target_sub is not None else target_ship
-            aim_pt = aim_target.GetWorldLocation()
-            direction = aim_pt - torp._position
-            length = direction.Length()
-            if length > 1e-6:
-                torp._velocity = TGPoint3(
-                    direction.x / length * launch_speed,
-                    direction.y / length * launch_speed,
-                    direction.z / length * launch_speed,
-                )
-            torp._target_ship = target_ship
-            torp._target_subsystem = target_sub
-        else:
-            # The catch-all __getattr__ on TGObject returns a _Stub for any
-            # missing attribute, so hasattr is misleading.  Probe for a valid
-            # TGPoint3 explicitly via the type — defensive against the shim.
-            forward = None
-            try:
-                got = self.GetDirection()
-                if isinstance(got, TGPoint3):
-                    forward = got
-            except Exception:
-                forward = None
-            if forward is None:
-                forward = TGPoint3(0.0, 1.0, 0.0)
-            world_fwd = TGPoint3(forward.x, forward.y, forward.z)
-            if source_ship is not None and hasattr(source_ship, "GetWorldRotation"):
-                rot = source_ship.GetWorldRotation()
-                # Same shim caveat — only use if it's a real TGMatrix3.
-                from engine.appc.math import TGMatrix3
-                if isinstance(rot, TGMatrix3):
-                    world_fwd.MultMatrixLeft(rot)
-            length = world_fwd.Length()
-            if length > 1e-6:
-                torp._velocity = TGPoint3(
-                    world_fwd.x / length * launch_speed,
-                    world_fwd.y / length * launch_speed,
-                    world_fwd.z / length * launch_speed,
-                )
-            torp._target_ship = None
-
-        register(torp)
-
-        if hasattr(mod, "GetLaunchSound"):
-            sound_name = mod.GetLaunchSound()
-            if sound_name:
-                TGSoundManager.instance().PlaySound(sound_name)
+        _spawn_projectile(self, mod, drf_override=self.GetDamageRadiusFactor())
 
     def StopFiring(self) -> None:
         self._firing = False

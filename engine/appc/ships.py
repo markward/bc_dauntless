@@ -547,7 +547,21 @@ class ShipClass(DamageableObject):
     # ready when that wiring lands.
     def GetWeaponSystemGroup(self, eGroup: int):
         if eGroup == ShipClass.WG_PRIMARY:
-            return self._phaser_system
+            # Primary fire is phasers. When the ship has no phaser banks
+            # (e.g. the Klingon Bird of Prey, whose main energy weapon is
+            # its disruptors) fall back to the pulse-weapon system so
+            # primary fire — left mouse / F — drives the disruptors. Every
+            # ship is handed a default-empty PhaserSystem by the ships
+            # factory, so the test is "no banks" (GetNumWeapons() == 0),
+            # not "is None". Only callers are the SDK FireWeapons handlers,
+            # so this affects firing only. A ship that has both (e.g.
+            # vorcha: disruptor beams + cannons) keeps phasers on primary.
+            phasers = self._phaser_system
+            if phasers is None or phasers.GetNumWeapons() == 0:
+                pulse = self._pulse_weapon_system
+                if pulse is not None and pulse.GetNumWeapons() > 0:
+                    return pulse
+            return phasers
         if eGroup == ShipClass.WG_SECONDARY:
             return self._torpedo_system
         if eGroup == ShipClass.WG_TERTIARY:
@@ -749,10 +763,18 @@ class ShipClass(DamageableObject):
                     self._copy_powered_subsystem_fields(prop, receiver)
                     receiver.SetProperty(prop)
                     if wst is not None: receiver.SetWeaponSystemType(wst)
-                    # Phaser-only extras (no-op for other receivers).
-                    if wst == WeaponSystemProperty.WST_PHASER:
+                    # SingleFire flows to any system that models it. Phasers
+                    # and pulse cannons both honour SetSingleFire (phasers
+                    # round-robin one bank, pulse cannons one cannon when set;
+                    # both fire all eligible when clear). Hardpoints call
+                    # SetSingleFire on the WeaponSystemProperty (e.g.
+                    # birdofprey.py DisruptorCannons.SetSingleFire(0),
+                    # warbird.py DisruptorCannons.SetSingleFire(1)).
+                    if hasattr(receiver, "SetSingleFire"):
                         sf = prop.GetSingleFire()
                         if sf is not None: receiver.SetSingleFire(sf)
+                    # AimedWeapon is phaser-only.
+                    if wst == WeaponSystemProperty.WST_PHASER:
                         aw = prop.GetAimedWeapon()
                         if aw is not None: receiver.SetAimedWeapon(aw)
             elif isinstance(prop, PowerProperty):

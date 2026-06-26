@@ -602,12 +602,19 @@ class PulseWeaponProperty(EnergyWeaponProperty):
     def __init__(self, name: str = ""):
         super().__init__(name)
         self._cooldown_time: float = 0.0
+        self._module_name: str = ""
 
     def GetCooldownTime(self) -> float:
         return self._cooldown_time
 
     def SetCooldownTime(self, v) -> None:
         self._cooldown_time = float(v)
+
+    def GetModuleName(self) -> str:
+        return self._module_name
+
+    def SetModuleName(self, v) -> None:
+        self._module_name = str(v)
 
 
 class TractorBeamProperty(EnergyWeaponProperty):

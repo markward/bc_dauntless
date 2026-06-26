@@ -53,3 +53,46 @@ def test_returns_none_when_group_not_on_ship():
     ship = ShipClass_Create("Bare")
     ship.SetupProperties()
     assert ship.GetWeaponSystemGroup(ShipClass.WG_PRIMARY) is None
+
+
+# ── Primary → pulse fallback for phaserless ships (e.g. Bird of Prey) ────────
+
+def _ship_with_systems(*, phaser_banks, pulse_cannons):
+    """Ship whose phaser/pulse systems have the given child-emitter counts."""
+    from engine.appc.subsystems import (
+        PhaserSystem, PulseWeaponSystem, PhaserBank, PulseWeapon,
+    )
+    ship = ShipClass_Create("X")
+    phasers = PhaserSystem("Phasers")
+    for i in range(phaser_banks):
+        phasers.AddChildSubsystem(PhaserBank(f"Bank{i}"))
+    pulse = PulseWeaponSystem("Pulse")
+    for i in range(pulse_cannons):
+        pulse.AddChildSubsystem(PulseWeapon(f"Cannon{i}"))
+    ship.SetPhaserSystem(phasers)
+    ship.SetPulseWeaponSystem(pulse)
+    return ship
+
+
+def test_primary_falls_back_to_pulse_when_no_phaser_banks():
+    # Bird-of-Prey shape: zero phaser banks, two disruptor cannons.
+    ship = _ship_with_systems(phaser_banks=0, pulse_cannons=2)
+    assert ship.GetWeaponSystemGroup(ShipClass.WG_PRIMARY) is ship.GetPulseWeaponSystem()
+
+
+def test_primary_keeps_phasers_when_ship_has_both():
+    # Vorcha shape: has phaser banks AND pulse cannons → primary stays phasers.
+    ship = _ship_with_systems(phaser_banks=2, pulse_cannons=2)
+    assert ship.GetWeaponSystemGroup(ShipClass.WG_PRIMARY) is ship.GetPhaserSystem()
+
+
+def test_primary_returns_empty_phasers_when_no_pulse_either():
+    # No phasers and no pulse: return the (empty) phaser system, not pulse.
+    ship = _ship_with_systems(phaser_banks=0, pulse_cannons=0)
+    assert ship.GetWeaponSystemGroup(ShipClass.WG_PRIMARY) is ship.GetPhaserSystem()
+
+
+def test_tertiary_still_returns_pulse_on_phaserless_ship():
+    # The fallback doesn't disturb the tertiary mapping.
+    ship = _ship_with_systems(phaser_banks=0, pulse_cannons=2)
+    assert ship.GetWeaponSystemGroup(ShipClass.WG_TERTIARY) is ship.GetPulseWeaponSystem()

@@ -229,12 +229,13 @@ def _poll_mouse_buttons(host) -> None:
     if host is None or not hasattr(host, "mouse_button_pressed"):
         return
     import App  # deferred: module-top import reorders sound-manager init
-    # PR 2c re-enables left-click (phasers) alongside right-click
-    # (torpedoes).  Middle-click is still out of scope — tractor beam is
-    # deferred to a future PR.
+    # Left-click → phasers (primary), right-click → torpedoes (secondary),
+    # middle-click → disruptors/pulse weapons (tertiary).  Matches the SDK's
+    # DefaultKeyboardBinding mouse bindings (WC_LBUTTON/RBUTTON/MBUTTON).
     for glfw_btn, wc in (
-        (host.keys.MOUSE_BUTTON_LEFT,  App.WC_LBUTTON),
-        (host.keys.MOUSE_BUTTON_RIGHT, App.WC_RBUTTON),
+        (host.keys.MOUSE_BUTTON_LEFT,   App.WC_LBUTTON),
+        (host.keys.MOUSE_BUTTON_RIGHT,  App.WC_RBUTTON),
+        (host.keys.MOUSE_BUTTON_MIDDLE, App.WC_MBUTTON),
     ):
         if host.mouse_button_pressed(glfw_btn):
             App.g_kInputManager.OnKeyDown(wc)
@@ -246,6 +247,23 @@ def _poll_mouse_buttons(host) -> None:
 # rising edges but no key_released; deriving both edges from key_state keeps
 # the pair symmetric). Module-level so tests can reset it.
 _fn_key_prev: dict = {}
+
+
+def _poll_key_table(host, keymap) -> None:
+    """Edge-detect each (glfw_key, WC_code) in `keymap` and forward rising/
+    falling edges to g_kInputManager.OnKeyDown/OnKeyUp.  Shares the module
+    _fn_key_prev level cache so every polled key derives both edges from
+    key_state (the host exposes key_pressed for rising edges but no
+    key_released)."""
+    import App  # deferred: module-top import reorders sound-manager init
+    for glfw_key, wc in keymap:
+        down = bool(host.key_state(glfw_key))
+        was_down = _fn_key_prev.get(glfw_key, False)
+        if down and not was_down:
+            App.g_kInputManager.OnKeyDown(wc)
+        elif was_down and not down:
+            App.g_kInputManager.OnKeyUp(wc)
+        _fn_key_prev[glfw_key] = down
 
 
 def _poll_function_keys(host) -> None:
@@ -261,20 +279,38 @@ def _poll_function_keys(host) -> None:
     if keys is None or not hasattr(keys, "KEY_F1"):
         return
     import App  # deferred: module-top import reorders sound-manager init
-    for glfw_key, wc in (
+    _poll_key_table(host, (
         (keys.KEY_F1, App.WC_F1),
         (keys.KEY_F2, App.WC_F2),
         (keys.KEY_F3, App.WC_F3),
         (keys.KEY_F4, App.WC_F4),
         (keys.KEY_F5, App.WC_F5),
-    ):
-        down = bool(host.key_state(glfw_key))
-        was_down = _fn_key_prev.get(glfw_key, False)
-        if down and not was_down:
-            App.g_kInputManager.OnKeyDown(wc)
-        elif was_down and not down:
-            App.g_kInputManager.OnKeyUp(wc)
-        _fn_key_prev[glfw_key] = down
+    ))
+
+
+def _poll_fire_keys(host) -> None:
+    """Forward the weapon-fire keys F/X/G into g_kInputManager.
+
+    F → ET_INPUT_FIRE_PRIMARY (phasers), X → SECONDARY (torpedoes),
+    G → TERTIARY (disruptors/pulse weapons).  The SDK binds these in
+    DefaultKeyboardBinding.py:96-103 and TacticalInterfaceHandlers routes
+    them to FireWeapons → StartFiring (keydown=1/keyup=0 drive the held-fire
+    StartFiring/StopFiring pair).
+
+    Firing still requires a selected target — FireWeapons no-ops when
+    pShip.GetTarget() is None.
+    """
+    if host is None or not hasattr(host, "key_state"):
+        return
+    keys = getattr(host, "keys", None)
+    if keys is None or not hasattr(keys, "KEY_G"):
+        return
+    import App  # deferred: module-top import reorders sound-manager init
+    _poll_key_table(host, (
+        (keys.KEY_F, App.WC_F),
+        (keys.KEY_X, App.WC_X),
+        (keys.KEY_G, App.WC_G),
+    ))
 
 
 def _advance_weapons(ships, dt: float) -> None:
@@ -456,6 +492,18 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
                           host=host, ship_instances=ship_instances,
                           weapon_type="phaser",
                           hardpoint_weapon=bank)
+
+    # Held-trigger pulse weapons (disruptors/cannons): re-fire eligible cannons
+    # as they recharge while the trigger stays down — mirrors the phaser
+    # retry_held_fire above. No damage routing here: pulse bolts are spawned
+    # into projectiles._active by PulseWeapon.Fire and handled by the torpedo
+    # hit loop / render push above. retry_held_fire self-stops if the system
+    # is offline or the target died, and no-ops unless the trigger is held.
+    for ship in ships_list:
+        psys = (ship.GetPulseWeaponSystem()
+                if hasattr(ship, "GetPulseWeaponSystem") else None)
+        if psys is not None:
+            psys.retry_held_fire()
 
     if host is not None and hasattr(host, "set_torpedoes"):
         host.set_torpedoes(_build_torpedo_render_data())
@@ -4706,6 +4754,7 @@ def run(mission_name: Optional[str] = None,
                 # events route via g_kKeyboardBinding → TCW handlers).
                 _poll_mouse_buttons(_h)
                 _poll_function_keys(_h)
+                _poll_fire_keys(_h)
 
                 # Advance weapon charge / reload for every ship in every
                 # active set.  Runs after AI/physics (approximate — the host
