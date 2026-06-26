@@ -547,7 +547,21 @@ class ShipClass(DamageableObject):
     # ready when that wiring lands.
     def GetWeaponSystemGroup(self, eGroup: int):
         if eGroup == ShipClass.WG_PRIMARY:
-            return self._phaser_system
+            # Primary fire is phasers. When the ship has no phaser banks
+            # (e.g. the Klingon Bird of Prey, whose main energy weapon is
+            # its disruptors) fall back to the pulse-weapon system so
+            # primary fire — left mouse / F — drives the disruptors. Every
+            # ship is handed a default-empty PhaserSystem by the ships
+            # factory, so the test is "no banks" (GetNumWeapons() == 0),
+            # not "is None". Only callers are the SDK FireWeapons handlers,
+            # so this affects firing only. A ship that has both (e.g.
+            # vorcha: disruptor beams + cannons) keeps phasers on primary.
+            phasers = self._phaser_system
+            if phasers is None or phasers.GetNumWeapons() == 0:
+                pulse = self._pulse_weapon_system
+                if pulse is not None and pulse.GetNumWeapons() > 0:
+                    return pulse
+            return phasers
         if eGroup == ShipClass.WG_SECONDARY:
             return self._torpedo_system
         if eGroup == ShipClass.WG_TERTIARY:
