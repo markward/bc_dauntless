@@ -313,6 +313,38 @@ def _poll_fire_keys(host) -> None:
     ))
 
 
+_tractor_toggle_prev: bool = False
+
+
+def _poll_tractor_toggle(host) -> None:
+    """Forward the Alt+T tractor-beam toggle chord into the toggle event.
+
+    BC binds WC_ALT_T (DefaultKeyboardBinding.py:42) → ET_OTHER_BEAM_TOGGLE_CLICKED,
+    but the Alt-modifier WC constants are unwired in our input pipeline (input.py
+    intentionally leaves the ALT_ variants as stubs).  So we detect the chord
+    directly off the host key state and post the toggle event to the tactical
+    control window, where TacticalInterfaceHandlers registered
+    BridgeHandlers.ToggleTractorBeam (which flips the beam toggle and re-fires to
+    App._TacWeaponsCtrl → StartFiring/StopFiring on the player's tractor).
+
+    Rising-edge only: one toggle per press.  No-ops on a stale binary whose
+    `keys` submodule predates KEY_T (graceful — tractor stays toggle-via-UI).
+    """
+    global _tractor_toggle_prev
+    if host is None or not hasattr(host, "key_state"):
+        return
+    keys = getattr(host, "keys", None)
+    if keys is None or not hasattr(keys, "KEY_T"):
+        return
+    alt = (bool(host.key_state(keys.KEY_LEFT_ALT))
+           or bool(host.key_state(keys.KEY_RIGHT_ALT)))
+    chord = alt and bool(host.key_state(keys.KEY_T))
+    if chord and not _tractor_toggle_prev:
+        import App  # deferred: module-top import reorders sound-manager init
+        App.ToggleTractorFromInput()
+    _tractor_toggle_prev = chord
+
+
 def _advance_weapons(ships, dt: float) -> None:
     """Per-frame charge / reload advancement for every weapon emitter.
 
@@ -505,6 +537,20 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
         if psys is not None:
             psys.retry_held_fire()
 
+    # Tractor beams (hold/tow/pull/push/dock): sustain the held grab beam as the
+    # target stays in range, then apply the mode's physics to the target.
+    # retry_held_fire keeps one sustained beam (SingleFire) and self-stops if the
+    # system is offline / target died / target left range; advance_tractors moves
+    # the target (and reciprocally the source) via direct position displacement.
+    # Both no-op for ships without a firing tractor (production stays identical).
+    for ship in ships_list:
+        tsys = (ship.GetTractorBeamSystem()
+                if hasattr(ship, "GetTractorBeamSystem") else None)
+        if tsys is not None and hasattr(tsys, "retry_held_fire"):
+            tsys.retry_held_fire()
+    from engine.appc import tractor as _tractor
+    _tractor.advance_tractors(ships_list, dt)
+
     if host is not None and hasattr(host, "set_torpedoes"):
         host.set_torpedoes(_build_torpedo_render_data())
     from engine.appc import shockwaves as _shockwaves
@@ -516,6 +562,9 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
         host.set_particle_emitters(_build_particle_render_data(ship_instances))
     if host is not None and hasattr(host, "set_phaser_beams"):
         host.set_phaser_beams(_build_phaser_beam_render_data(
+            ships_list, host=host, ship_instances=ship_instances))
+    if host is not None and hasattr(host, "set_tractor_beams"):
+        host.set_tractor_beams(_build_tractor_beam_render_data(
             ships_list, host=host, ship_instances=ship_instances))
 
 
@@ -642,16 +691,90 @@ def _build_particle_render_data(ship_instances=None):
 PHASER_BEAM_WIDTH_MUTATOR = 3.0
 
 
+def _beam_descriptor_pair(ship, bank, host, ship_instances):
+    """Build the (outer-shell, inner-core) beam descriptor pair for one firing
+    energy emitter — a phaser bank OR a tractor emitter.  Both inherit the same
+    beam visual getters (NumSides / MainRadius / shell+core colours / texture
+    speed / taper) from PhaserProperty, and the same strip/point emit geometry,
+    so the render build is identical; only the parent system differs (handled
+    by the callers).  Returns [] when the bank has no target.
+
+    When `host` + `ship_instances` are supplied, the beam endpoint is clipped
+    to the mesh-trace surface point so the visible beam ends on the target's
+    hull rather than at its bounding-sphere centre.
+    """
+    target = bank._target
+    if target is None:
+        return []
+    target_sub = (ship.GetTargetSubsystem()
+                  if hasattr(ship, "GetTargetSubsystem") else None)
+    if target_sub is not None and hasattr(target_sub, "GetWorldLocation"):
+        target_pos = target_sub.GetWorldLocation()
+    else:
+        target_pos = target.GetWorldLocation()
+    # Strip emit point for curved phaser banks; point emitters (tractors,
+    # Length 0) collapse this to the emitter mount world position.
+    emitter_pos = bank._strip_emit_position(target_pos)
+    dx = target_pos.x - emitter_pos.x
+    dy = target_pos.y - emitter_pos.y
+    dz = target_pos.z - emitter_pos.z
+    raw_length = (dx * dx + dy * dy + dz * dz) ** 0.5
+    beam_length = raw_length
+    beam_end = target_pos
+    if raw_length > 1e-6 and host is not None and ship_instances is not None:
+        aim_unit = TGPoint3(dx / raw_length, dy / raw_length, dz / raw_length)
+        clipped, _clipped_normal = combat._resolve_hit_point(
+            host=host, ship_instances=ship_instances, ship=target,
+            ray_origin=emitter_pos,
+            ray_direction=aim_unit,
+            max_dist=raw_length * 1.5,
+            fallback_point=beam_end,
+        )
+        if clipped is not None:
+            beam_end = clipped
+            cdx = beam_end.x - emitter_pos.x
+            cdy = beam_end.y - emitter_pos.y
+            cdz = beam_end.z - emitter_pos.z
+            beam_length = (cdx * cdx + cdy * cdy + cdz * cdz) ** 0.5
+    tile_per_unit = bank.GetLengthTextureTilePerUnit()
+    u_tiles = max(1.0, beam_length * tile_per_unit) if tile_per_unit > 0 else 1.0
+    # SDK four-channel-colour layout (galaxy.py phaser :418-431, tractor :869-877)
+    # is OuterShell / InnerShell / OuterCore / InnerCore.  We approximate with
+    # two concentric beams: the outer shell (the dominant tint — orange for
+    # phasers, blue for tractors) and a thinner inner-core sheen.  The inner
+    # uses reduced alpha (0.35) so its additive contribution is a subtle
+    # highlight rather than a saturating wash.
+    mut = PHASER_BEAM_WIDTH_MUTATOR
+    core_scale   = bank.GetCoreScale() or 0.50
+    outer_half   = (bank.GetPhaserWidth() or 0.30) * mut
+    inner_half   = (bank.GetMainRadius() or 0.15) * core_scale * mut
+    taper_radius = (bank.GetTaperRadius() or 0.01) * mut
+    outer_color  = bank.GetOuterShellColor()
+    ic = bank.GetInnerCoreColor()
+    inner_color = (ic[0], ic[1], ic[2], 0.35)
+    common = {
+        "emitter":          (emitter_pos.x, emitter_pos.y, emitter_pos.z),
+        "target":           (beam_end.x,    beam_end.y,    beam_end.z),
+        "u_tiles":          float(u_tiles),
+        "num_sides":        int(bank.GetNumSides() or 6),
+        "taper_radius":     float(taper_radius),
+        "taper_ratio":      float(bank.GetTaperRatio() or 0.25),
+        "taper_min_length": float(bank.GetTaperMinLength() or 5.0),
+        "taper_max_length": float(bank.GetTaperMaxLength() or 30.0),
+        "perimeter_tile":   float(bank.GetPerimeterTile() or 1.0),
+        "texture_speed":    float(bank.GetTextureSpeed() or 0.0),
+    }
+    return [
+        {**common, "color": outer_color, "width": float(outer_half)},
+        {**common, "color": inner_color, "width": float(inner_half)},
+    ]
+
+
 def _build_phaser_beam_render_data(ships, host=None, ship_instances=None):
     """Snapshot active phaser beams for the renderer.
 
-    Walks every ship's PhaserSystem; for each bank IsFiring()=1, yields
-    {emitter, target, color, width}.  Color is Federation amber (default
-    until per-faction beam color is wired); width is a small constant.
-
-    When `host` + `ship_instances` are supplied, each beam's endpoint is
-    clipped to the mesh-trace surface point so the visible beam ends on
-    the target's hull rather than at its bounding-sphere centre.
+    Walks every ship's PhaserSystem; for each bank IsFiring()=1, yields the
+    outer-shell + inner-core descriptor pair via _beam_descriptor_pair.
     """
     out = []
     for ship in ships:
@@ -662,79 +785,53 @@ def _build_phaser_beam_render_data(ships, host=None, ship_instances=None):
             bank = sys_.GetWeapon(i)
             if bank is None or not bank.IsFiring():
                 continue
-            target = bank._target
-            if target is None:
+            out.extend(_beam_descriptor_pair(ship, bank, host, ship_instances))
+    return out
+
+
+# Tractor beam funnels OUT toward the captured target — the target end flares to
+# this multiple of the body radius (the shader widens the target-end taper
+# instead of pinching it).
+TRACTOR_BEAM_END_WIDTH_SCALE = 1.25
+
+# Brightness scale on the tractor beam colour (additive blend) — dims the beam
+# without touching the hardpoint hue.
+TRACTOR_BEAM_BRIGHTNESS = 0.5
+
+
+def _build_tractor_beam_render_data(ships, host=None, ship_instances=None):
+    """Snapshot active tractor beams for the renderer.
+
+    Mirrors _build_phaser_beam_render_data but walks each ship's
+    TractorBeamSystem.  Tractor emitters are TractorBeamProperty-backed and
+    inherit the full beam visual surface from PhaserProperty, so the descriptor
+    build is shared (_beam_descriptor_pair) — the Galaxy hardpoint's blue
+    colours / TractorBeam.tga / 12 sides come straight off the emitter.
+    Rendered by the same weapon-agnostic beam pass (g_phaser_pass) via the
+    set_tractor_beams host binding.
+
+    Tractor beams keep the emitter taper-in and normal body width, but flare the
+    TARGET end out to TRACTOR_BEAM_END_WIDTH_SCALE × the body radius (the shader
+    reads end_width_scale to make the target-end taper widen instead of pinch).
+    """
+    out = []
+    for ship in ships:
+        sys_ = (ship.GetTractorBeamSystem()
+                if hasattr(ship, "GetTractorBeamSystem") else None)
+        if sys_ is None:
+            continue
+        for i in range(sys_.GetNumWeapons()):
+            bank = sys_.GetWeapon(i)
+            if bank is None or not bank.IsFiring():
                 continue
-            target_sub = (ship.GetTargetSubsystem()
-                          if hasattr(ship, "GetTargetSubsystem") else None)
-            if target_sub is not None and hasattr(target_sub, "GetWorldLocation"):
-                target_pos = target_sub.GetWorldLocation()
-            else:
-                target_pos = target.GetWorldLocation()
-            emitter_pos = bank._strip_emit_position(target_pos)
-            dx = target_pos.x - emitter_pos.x
-            dy = target_pos.y - emitter_pos.y
-            dz = target_pos.z - emitter_pos.z
-            raw_length = (dx * dx + dy * dy + dz * dz) ** 0.5
-            beam_length = raw_length
-            beam_end = target_pos
-            # Clip the visible beam to the same mesh-trace point that
-            # _advance_combat feeds into apply_hit / shield_hit, so the
-            # rendered beam terminates on the hull surface (not at the
-            # bounding-sphere centre).
-            if raw_length > 1e-6 and host is not None and ship_instances is not None:
-                aim_unit = TGPoint3(dx / raw_length,
-                                    dy / raw_length,
-                                    dz / raw_length)
-                clipped, _clipped_normal = combat._resolve_hit_point(
-                    host=host, ship_instances=ship_instances, ship=target,
-                    ray_origin=emitter_pos,
-                    ray_direction=aim_unit,
-                    max_dist=raw_length * 1.5,
-                    fallback_point=beam_end,
-                )
-                if clipped is not None:
-                    beam_end = clipped
-                    cdx = beam_end.x - emitter_pos.x
-                    cdy = beam_end.y - emitter_pos.y
-                    cdz = beam_end.z - emitter_pos.z
-                    beam_length = (cdx * cdx + cdy * cdy + cdz * cdz) ** 0.5
-            tile_per_unit = bank.GetLengthTextureTilePerUnit()
-            u_tiles = max(1.0, beam_length * tile_per_unit) if tile_per_unit > 0 else 1.0
-            # SDK four-channel-colour layout (per galaxy.py:418-431) is
-            # OuterShell / InnerShell / OuterCore / InnerCore.  We
-            # approximate with two concentric beams: the outer shell
-            # (orange halo) and a thinner inner-core sheen (white-hot
-            # streak).  The inner uses reduced alpha (0.35) so its
-            # additive contribution is a subtle highlight rather than
-            # a saturating wash — the outer's orange remains the
-            # dominant tint.
-            mut = PHASER_BEAM_WIDTH_MUTATOR
-            core_scale   = bank.GetCoreScale() or 0.50
-            outer_half   = (bank.GetPhaserWidth() or 0.30) * mut
-            inner_half   = (bank.GetMainRadius() or 0.15) * core_scale * mut
-            taper_radius = (bank.GetTaperRadius() or 0.01) * mut
-            outer_color  = bank.GetOuterShellColor()
-            ic = bank.GetInnerCoreColor()
-            inner_color = (ic[0], ic[1], ic[2], 0.35)
-            common = {
-                "emitter":          (emitter_pos.x, emitter_pos.y, emitter_pos.z),
-                "target":           (beam_end.x,    beam_end.y,    beam_end.z),
-                "u_tiles":          float(u_tiles),
-                "num_sides":        int(bank.GetNumSides() or 6),
-                "taper_radius":     float(taper_radius),
-                "taper_ratio":      float(bank.GetTaperRatio() or 0.25),
-                "taper_min_length": float(bank.GetTaperMinLength() or 5.0),
-                "taper_max_length": float(bank.GetTaperMaxLength() or 30.0),
-                "perimeter_tile":   float(bank.GetPerimeterTile() or 1.0),
-                "texture_speed":    float(bank.GetTextureSpeed() or 0.0),
-            }
-            out.append({**common,
-                         "color": outer_color,
-                         "width": float(outer_half)})
-            out.append({**common,
-                         "color": inner_color,
-                         "width": float(inner_half)})
+            for d in _beam_descriptor_pair(ship, bank, host, ship_instances):
+                d["end_width_scale"] = TRACTOR_BEAM_END_WIDTH_SCALE
+                c = d["color"]
+                d["color"] = (c[0] * TRACTOR_BEAM_BRIGHTNESS,
+                              c[1] * TRACTOR_BEAM_BRIGHTNESS,
+                              c[2] * TRACTOR_BEAM_BRIGHTNESS,
+                              c[3])
+                out.append(d)
     return out
 
 
@@ -4755,6 +4852,7 @@ def run(mission_name: Optional[str] = None,
                 _poll_mouse_buttons(_h)
                 _poll_function_keys(_h)
                 _poll_fire_keys(_h)
+                _poll_tractor_toggle(_h)
 
                 # Advance weapon charge / reload for every ship in every
                 # active set.  Runs after AI/physics (approximate — the host

@@ -148,6 +148,7 @@ void PhaserPass::render(const std::vector<PhaserBeamDescriptor>& beams,
         shader.set_float("u_perimeter_tile",   b.perimeter_tile);
         shader.set_float("u_texture_speed",    b.texture_speed);
         shader.set_float("u_tiles",            b.u_tiles > 0.0f ? b.u_tiles : 1.0f);
+        shader.set_float("u_end_width_scale",  b.end_width_scale > 0.0f ? b.end_width_scale : 1.0f);
         glDrawArrays(GL_TRIANGLES, vert_offset, n * 6);
         vert_offset += n * 6;
     }

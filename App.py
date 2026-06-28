@@ -1268,6 +1268,117 @@ def TacWeaponsCtrl_Create(width=0.0, height=0.0) -> "_DisplayWidget":
     return _DisplayWidget("TacWeaponsCtrl")
 
 
+class _BeamToggle:
+    """Tractor-beam on/off toggle button state.
+
+    BridgeHandlers.ToggleTractorBeam flips this between 0 and 1 on each click;
+    the TacWeaponsCtrl reads it to decide whether to engage or disengage the
+    beam.  Stands in for BC's C++ toggle widget.
+    """
+    def __init__(self):
+        self._state = 0
+
+    def GetState(self) -> int:
+        return self._state
+
+    def SetState(self, s) -> None:
+        self._state = int(s)
+
+
+class _TacWeaponsCtrl(TGEventHandlerObject):
+    """Headless stand-in for BC's C++ TacWeaponsCtrl tactical-weapons widget.
+
+    In stock BC this compiled widget owns the tractor beam-toggle button and,
+    when ET_OTHER_BEAM_TOGGLE_CLICKED reaches it (re-fired by
+    BridgeHandlers.ToggleTractorBeam after flipping the toggle state), engages
+    or disengages the player's tractor beam.  Our renderer has no such C++
+    widget, so we reproduce exactly that behaviour here — the missing link that
+    makes the toggle → StartFiring path reach the tractor system.
+    """
+    def __init__(self):
+        super().__init__()
+        self._beam_toggle = _BeamToggle()
+        self.AddPythonFuncHandlerForInstance(
+            ET_OTHER_BEAM_TOGGLE_CLICKED, "App._tac_weapons_beam_toggled")
+
+    def GetBeamToggle(self) -> "_BeamToggle":
+        return self._beam_toggle
+
+
+_g_tac_weapons_ctrl = None
+
+
+def TacWeaponsCtrl_GetTacWeaponsCtrl() -> "_TacWeaponsCtrl":
+    global _g_tac_weapons_ctrl
+    if _g_tac_weapons_ctrl is None:
+        _g_tac_weapons_ctrl = _TacWeaponsCtrl()
+    return _g_tac_weapons_ctrl
+
+
+def _tac_weapons_beam_toggled(pObject, pEvent):
+    """Engage/disengage the player's tractor beam to match the toggle state.
+
+    Mirrors TacticalInterfaceHandlers.FireWeapons (StartFiring with the current
+    target / StopFiring), but driven by the beam toggle rather than a held fire
+    key.  Tractor lives in its own WG_TRACTOR group, untouched by the
+    WG_PRIMARY→pulse fallback.
+    """
+    toggle = pObject.GetBeamToggle()
+    import MissionLib
+    player = MissionLib.GetPlayer()
+    if player is None:
+        return
+    tractor = player.GetWeaponSystemGroup(ShipClass.WG_TRACTOR)
+    if tractor is None:
+        return
+    if toggle.GetState():
+        target = player.GetTarget()
+        if target is None:
+            # Nothing to grab — snap the toggle back off so the button state
+            # matches the (non-)firing reality.
+            toggle.SetState(0)
+            return
+        # The tractor is a manual-control system (the alert-level power policy
+        # leaves it OFF by design — ships.py _apply_alert_power); the beam
+        # toggle IS its power switch.  Power it on before firing, else
+        # StartFiring bails on `not self.IsOn()`.
+        if hasattr(tractor, "TurnOn"):
+            tractor.TurnOn()
+        tractor.StartFiring(target, None)
+    else:
+        tractor.StopFiring()
+        if hasattr(tractor, "TurnOff"):
+            tractor.TurnOff()
+
+
+def ToggleTractorFromInput():
+    """Flip the tractor beam toggle and engage/disengage directly.
+
+    The keyboard path uses this instead of re-posting ET_OTHER_BEAM_TOGGLE_CLICKED
+    through the tactical window: in the live engine the SDK
+    BridgeHandlers.ToggleTractorBeam chain (window handler resolution +
+    CallNextHandler + event re-fire) does not reliably reach the
+    TacWeaponsCtrl, so we drive the same TacWeaponsCtrl logic here with no
+    indirection.
+    """
+    ctrl = TacWeaponsCtrl_GetTacWeaponsCtrl()
+    toggle = ctrl.GetBeamToggle()
+    new_state = 0 if toggle.GetState() else 1
+    toggle.SetState(new_state)
+    # The player has no UI to pick a tractor mode, so a manual grab uses PULL:
+    # draw the target in to its standoff and hold it there (the intuitive
+    # tractor-beam behaviour).  Mission/AI scripts still drive HOLD/TOW/DOCK on
+    # NPC ships via SetMode directly.
+    if new_state:
+        import MissionLib
+        player = MissionLib.GetPlayer()
+        if player is not None:
+            tr = player.GetWeaponSystemGroup(ShipClass.WG_TRACTOR)
+            if tr is not None and hasattr(tr, "SetMode"):
+                tr.SetMode(TractorBeamSystem.TBS_PULL)
+    _tac_weapons_beam_toggled(ctrl, None)
+
+
 def EngRepairPane_Create(width=0.0, height=0.0, n=0) -> "_DisplayWidget":
     pane = _DisplayWidget("EngRepairPane")
     # Pre-seed one child (index 0 = DIVIDER) so GetNthChild(DIVIDER).Layout() works.
