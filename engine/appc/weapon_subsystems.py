@@ -679,6 +679,67 @@ class TorpedoSystem(WeaponSystem):
 # damage falloff shape, not the firing gate.
 PHASER_MAX_RANGE_GU = 700.0
 
+# Tractor-beam engagement range.  BC's tractor emitters carry a per-bank
+# MaxDamageDistance ≈ 118-120 GU (galaxy.py AftTractor2 = 118, vorcha = 120);
+# unlike phasers there is no single engine-wide constant, so we gate the whole
+# system on a representative 120 GU.  A target drifting past this ends the held
+# beam (retry_held_fire calls StopFiring via _can_engage), matching phasers.
+TRACTOR_MAX_RANGE_GU = 120.0
+
+
+# A tractor grips only when the target's shields hold less than this fraction
+# of their aggregate maximum (i.e. effectively down).  Active shields deflect.
+TRACTOR_SHIELD_DOWN_FRACTION = 0.05
+
+
+def _target_tractorable(target) -> bool:
+    """True iff a tractor beam can grip `target`: its shields are NOT actively
+    protecting it — not equipped, offline (lowered), disabled (damaged), or
+    depleted.  Active, charged shields deflect the beam (BC behaviour).
+
+    Legacy fixtures with no shield API are gripple (returns True).
+    """
+    if target is None:
+        return False
+    getter = getattr(target, "GetShieldSubsystem", None)
+    if getter is None:
+        return True  # no shield API at all (non-ship targets / test stubs)
+    shields = getter()
+    if shields is None:
+        return True  # not equipped
+    if hasattr(shields, "IsDisabled") and shields.IsDisabled():
+        return True  # disabled (damaged out)
+    if hasattr(shields, "IsOn") and not shields.IsOn():
+        return True  # offline / lowered
+    # Online + undamaged: blocked only while the shields still hold charge.
+    n = getattr(shields, "NUM_SHIELDS", 6)
+    try:
+        total_max = sum(shields.GetMaxShields(f) for f in range(n))
+        if total_max <= 0.0:
+            return True  # equipped subsystem but no shield facings
+        total_cur = sum(shields.GetCurrentShields(f) for f in range(n))
+        return (total_cur / total_max) < TRACTOR_SHIELD_DOWN_FRACTION
+    except Exception:
+        return False  # can't read charge — assume up (deflects)
+
+
+def _target_within_range_gu(ship, target, max_range_gu: float) -> bool:
+    """True iff `target` is within `max_range_gu` game units of `ship`.
+
+    Shared fire-range gate for energy-weapon aggregators.  Legacy fixture
+    support: if either object lacks GetWorldLocation, returns True so
+    non-positional tests keep their previous behaviour.
+    """
+    if ship is None or target is None:
+        return False
+    if not hasattr(ship, "GetWorldLocation") or not hasattr(target, "GetWorldLocation"):
+        return True
+    sp = ship.GetWorldLocation()
+    tp = target.GetWorldLocation()
+    dx, dy, dz = tp.x - sp.x, tp.y - sp.y, tp.z - sp.z
+    dist_sq = dx*dx + dy*dy + dz*dz
+    return dist_sq <= max_range_gu * max_range_gu
+
 
 class _HeldFireWeaponSystem(WeaponSystem):
     """Shared held-fire dispatch for energy-emitter aggregators
@@ -841,15 +902,7 @@ class PhaserSystem(_HeldFireWeaponSystem):
         GetWorldLocation, returns True so non-positional tests keep
         their previous behaviour.
         """
-        if ship is None or target is None:
-            return False
-        if not hasattr(ship, "GetWorldLocation") or not hasattr(target, "GetWorldLocation"):
-            return True
-        sp = ship.GetWorldLocation()
-        tp = target.GetWorldLocation()
-        dx, dy, dz = tp.x - sp.x, tp.y - sp.y, tp.z - sp.z
-        dist_sq = dx*dx + dy*dy + dz*dz
-        return dist_sq <= PHASER_MAX_RANGE_GU * PHASER_MAX_RANGE_GU
+        return _target_within_range_gu(ship, target, PHASER_MAX_RANGE_GU)
 
 
 class PulseWeaponSystem(_HeldFireWeaponSystem):
@@ -864,7 +917,22 @@ class PulseWeaponSystem(_HeldFireWeaponSystem):
     pass
 
 
-class TractorBeamSystem(WeaponSystem):
+class TractorBeamSystem(_HeldFireWeaponSystem):
+    """Tractor-beam aggregator.
+
+    Shares the held-fire dispatch with PhaserSystem / PulseWeaponSystem: a
+    tractor is a UI *toggle* (StartFiring = engage, StopFiring = toggle-off),
+    and retry_held_fire (driven from host_loop._advance_combat) sustains the
+    beam while the target stays in range.  The hardpoints set SingleFire(1),
+    so the SingleFire branch keeps exactly one beam locked on the target.
+
+    Unlike phasers/pulse, a firing tractor does NOT auto-stop on charge
+    depletion (TractorBeam.UpdateCharge sustains it), and per frame
+    engine.appc.tractor.advance_tractors applies the mode's physics to the
+    target.  `_engage_state` caches per-mode engagement geometry (the captured
+    HOLD world-point / TOW body-frame offset); it is invalidated on StopFiring
+    and on any mode change.
+    """
     # Tractor-beam mode constants from sdk/.../App.py:6774-6779.
     # SDK consumers: Preprocessors.py, AI/PlainAI/Warp.py, TowAway.py, etc.
     TBS_HOLD          = 0
@@ -877,15 +945,76 @@ class TractorBeamSystem(WeaponSystem):
     def __init__(self, name: str = ""):
         super().__init__(name)
         self._mode = self.TBS_HOLD
+        self._engage_state = None
 
     def GetMode(self) -> int:
         return self._mode
 
     def SetMode(self, mode) -> None:
-        self._mode = int(mode)
+        new_mode = int(mode)
+        if new_mode != self._mode:
+            # A mode switch invalidates any captured engagement geometry
+            # (e.g. HOLD's pinned world-point or TOW's body-frame offset).
+            self._engage_state = None
+        self._mode = new_mode
 
     def IsTryingToFire(self) -> int:
         return self.IsFiring()
+
+    def _can_engage(self, ship, target) -> bool:
+        # Range gate AND shield gate: a tractor grips only targets whose shields
+        # are down (disabled / offline / not equipped / depleted).
+        return (_target_within_range_gu(ship, target, TRACTOR_MAX_RANGE_GU)
+                and _target_tractorable(target))
+
+    def retry_held_fire(self) -> None:
+        """Per-frame held-fire maintenance with arc/shield re-acquisition.
+
+        Unlike the base (which drops the whole held state when the target leaves
+        range), a tractor stays ENGAGED until the player toggles it off: if the
+        firing emitter swings out of arc on a tight turn — or the target raises
+        shields / drifts out of range — the beam switches off but `_fire_held`
+        is kept, so it re-fires automatically from any in-arc emitter the moment
+        the geometry allows again.
+        """
+        if not self._fire_held or self._held_target is None:
+            return
+        if not self.IsOn():
+            return
+        if _is_offline(self):
+            self.StopFiring()           # system disabled — fully disengage
+            return
+        ship = self.GetParentShip()
+        target = self._held_target
+        if hasattr(target, "IsDead") and target.IsDead():
+            self.StopFiring()           # target gone — fully disengage
+            return
+        engageable = self._can_engage(ship, target)   # range + shields
+        # Drop any emitter that can no longer hold the beam (out of range /
+        # shields up / rotated out of arc).  Keep _fire_held so it re-acquires.
+        for i in range(self.GetNumWeapons()):
+            em = self.GetWeapon(i)
+            if em is None or not em.IsFiring():
+                continue
+            aim = _resolve_bank_aim_world(em, target)
+            if (not engageable) or (not _emitter_in_arc(em, ship, aim)):
+                em.StopFiring()
+                try:
+                    self._currently_firing.remove(i)
+                except ValueError:
+                    pass
+        if not engageable:
+            return
+        # Re-dispatch one eligible in-arc emitter if none is currently firing.
+        for i in range(self.GetNumWeapons()):
+            em = self.GetWeapon(i)
+            if em is not None and em.IsFiring():
+                return
+        self._dispatch_one_or_all(target, self._held_offset, ship)
+
+    def StopFiring(self, *args) -> None:
+        self._engage_state = None
+        super().StopFiring(*args)
 
 
 class PhaserBank(_EnergyWeaponFireMixin, WeaponSystem):
@@ -1045,6 +1174,34 @@ class TractorBeam(_EnergyWeaponFireMixin, WeaponSystem):
         if v < 0.0:                self._charge_level = 0.0
         elif v > self._max_charge: self._charge_level = self._max_charge
         else:                      self._charge_level = v
+
+    def UpdateCharge(self, dt: float) -> None:
+        """Sustained-hold charge model — overrides the phaser/pulse
+        discharge-to-zero auto-stop.
+
+        A tractor holds CONTINUOUSLY while engaged (you can pin a ship
+        indefinitely), so a firing tractor must not deplete to 0 and stop the
+        way a phaser bank does.  While firing we drain slowly toward — but
+        never below — MinFiringCharge (so the beam stays armed and CanFire
+        keeps returning true), gated by parent power: if the line goes down
+        the beam drops.  When idle we fall back to the mixin's normal
+        recharge + re-arm hysteresis.
+        """
+        if self._firing:
+            parent = self.GetParentSubsystem()
+            if parent is None or not parent.IsOn():
+                # Power loss stops the beam (routes through StopFiring so the
+                # looped SFX handle is silenced).
+                self.StopFiring()
+                return
+            floor = self._min_firing_charge
+            if self._charge_level > floor:
+                self._charge_level = max(
+                    floor, self._charge_level - self._normal_discharge_rate * dt
+                )
+            # _armed stays set while sustaining — no depletion auto-stop.
+            return
+        super().UpdateCharge(dt)
 
 
 class TorpedoTube(WeaponSystem):

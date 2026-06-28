@@ -183,6 +183,9 @@ std::unique_ptr<renderer::NebulaWakePass> g_nebula_wake_pass;
 std::vector<renderer::ParticleEmitterDescriptor> g_particle_emitters;
 std::unique_ptr<renderer::ParticlePass>          g_particle_pass;
 std::vector<renderer::PhaserBeamDescriptor> g_phaser_beams;
+// Tractor beams reuse the weapon-agnostic PhaserBeamDescriptor + PhaserPass —
+// only the data list is separate (honest naming; rendered by g_phaser_pass).
+std::vector<renderer::PhaserBeamDescriptor> g_tractor_beams;
 std::vector<renderer::PhaserBeamDescriptor> g_spv_overlay_beams;
 std::unique_ptr<renderer::PhaserPass>      g_phaser_pass;
 renderer::HologramShip                       g_hologram_ship;
@@ -445,6 +448,7 @@ void shutdown() {
     g_particle_emitters.clear();
     g_particle_pass.reset();
     g_phaser_beams.clear();
+    g_tractor_beams.clear();
     g_spv_overlay_beams.clear();
     g_phaser_pass.reset();
     g_subsystem_pins.clear();
@@ -639,6 +643,7 @@ void frame() {
             g_lens_flare_pass->render(g_lens_flares, cam, *g_pipeline, fw, fh, now);
         if (g_torpedo_pass) g_torpedo_pass->render(g_torpedoes,    cam, *g_pipeline);
         if (g_phaser_pass)  g_phaser_pass ->render(g_phaser_beams, cam, *g_pipeline);
+        if (g_phaser_pass)  g_phaser_pass ->render(g_tractor_beams, cam, *g_pipeline);
         if (g_hit_vfx_pass) g_hit_vfx_pass->render(g_hit_vfx, g_world, cam, *g_pipeline);
         if (!for_viewscreen && dauntless_nebula_lightning::enabled()
                 && g_hull_discharge_pass && !g_hull_discharges.empty())
@@ -972,6 +977,7 @@ static renderer::PhaserBeamDescriptor beam_from_dict(const py::dict& d) {
     b.taper_max_length = d.contains("taper_max_length") ? d["taper_max_length"].cast<float>() : 30.0f;
     b.perimeter_tile   = d.contains("perimeter_tile")   ? d["perimeter_tile"].cast<float>()   : 1.0f;
     b.texture_speed    = d.contains("texture_speed")    ? d["texture_speed"].cast<float>()    : 0.0f;
+    b.end_width_scale  = d.contains("end_width_scale")  ? d["end_width_scale"].cast<float>()  : 1.0f;
     return b;
 }
 
@@ -1977,6 +1983,17 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("beams"),
           "Set the active phaser-beam list, applied each frame().");
 
+    m.def("set_tractor_beams",
+          [](const std::vector<py::dict>& descs) {
+              g_tractor_beams.clear();
+              g_tractor_beams.reserve(descs.size());
+              for (const auto& d : descs)
+                  g_tractor_beams.push_back(beam_from_dict(d));
+          },
+          py::arg("beams"),
+          "Set the active tractor-beam list (rendered by the shared beam pass), "
+          "applied each frame().");
+
     m.def("set_spv_overlay_beams",
           [](const std::vector<py::dict>& descs) {
               g_spv_overlay_beams.clear();
@@ -2611,6 +2628,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
     keys.attr("KEY_F") = GLFW_KEY_F;  // primary fire (phasers)
     keys.attr("KEY_G") = GLFW_KEY_G;  // tertiary fire (disruptors/pulse)
     keys.attr("KEY_X") = GLFW_KEY_X;  // secondary fire (torpedoes)
+    keys.attr("KEY_T")         = GLFW_KEY_T;          // tractor toggle (with Alt)
+    keys.attr("KEY_LEFT_ALT")  = GLFW_KEY_LEFT_ALT;   // Alt modifier
+    keys.attr("KEY_RIGHT_ALT") = GLFW_KEY_RIGHT_ALT;
     keys.attr("KEY_I") = GLFW_KEY_I;
     keys.attr("KEY_0") = GLFW_KEY_0;
     keys.attr("KEY_1") = GLFW_KEY_1;

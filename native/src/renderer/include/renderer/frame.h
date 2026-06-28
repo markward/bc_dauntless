@@ -195,6 +195,8 @@ struct PhaserBeamDescriptor {
     float     taper_max_length; // SetTaperMaxLength
     float     perimeter_tile;   // SetPerimeterTile — V-axis texture repeats around prism
     float     texture_speed;    // SetTextureSpeed — U-axis scroll wu/sec
+    float     end_width_scale = 1.0f;  // radius multiplier at the target end
+                                       // (1.0 = uniform; tractors funnel out)
 };
 
 /// Draw a single model instance. Picks the skinned program when the model has

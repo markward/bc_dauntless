@@ -617,7 +617,17 @@ class PulseWeaponProperty(EnergyWeaponProperty):
         self._module_name = str(v)
 
 
-class TractorBeamProperty(EnergyWeaponProperty):
+class TractorBeamProperty(PhaserProperty):
+    """Tractor-beam emitter template.
+
+    BC renders a tractor as a textured beam exactly like a phaser (galaxy.py's
+    AftTractor2 sets NumSides / MainRadius / the four shell+core colours /
+    TractorBeam.tga / TextureSpeed — the same beam-visual surface phasers use),
+    so this inherits PhaserProperty's coercing colour setters and typed beam
+    getters.  Ship building routes by *exact* property type (ships.py
+    _CHILD_DISPATCH uses ``type(prop) is prop_cls``), so being a PhaserProperty
+    subclass does NOT mis-route a tractor emitter into a phaser bank.
+    """
     pass
 
 
