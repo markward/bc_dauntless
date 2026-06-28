@@ -36,6 +36,14 @@
     overflow: hidden;
 }
 
+/* Start is disabled until a ship is added to a roster — dim it and block the
+   pointer so it visibly can't be clicked. */
+#quick-battle-setup .cp-done-button:disabled {
+    opacity: 0.4;
+    cursor: default;
+    pointer-events: none;
+}
+
 /* Empty/placeholder hints. */
 .qbs-placeholder,
 .qbs-empty {
@@ -154,7 +162,11 @@
 }
 
 .qbs-roster-row {
-    padding: 5px 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 4px 10px;
     font-size: 13px;
     border-left: 3px solid transparent;
     color: var(--bc-label-text, rgb(235, 225, 255));
@@ -162,3 +174,55 @@
 
 .qbs-roster-row--friendly { border-left-color: var(--bc-target-friendly, rgb(80, 170, 255)); }
 .qbs-roster-row--enemy    { border-left-color: var(--bc-target-name, rgb(220, 60, 60)); }
+
+.qbs-roster-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Stacked-quantity controls: [−] N [+]  [×]. Compact glyph buttons that reuse
+   the salmon hover/selection palette of the catalog rows. */
+.qbs-qty {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.qbs-qty-count {
+    min-width: 18px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    color: #fff;
+}
+
+.qbs-qty-btn {
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    line-height: 18px;
+    font-size: 14px;
+    text-align: center;
+    color: var(--bc-label-text, rgb(235, 225, 255));
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+.qbs-qty-btn:hover {
+    background: rgba(216, 94, 86, 0.38);
+    color: #fff;
+}
+
+/* Remove-all sits slightly apart and reads red on hover. */
+.qbs-qty-remove {
+    margin-left: 6px;
+}
+
+.qbs-qty-remove:hover {
+    background: rgba(220, 60, 60, 0.45);
+}

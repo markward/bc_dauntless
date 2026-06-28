@@ -30,12 +30,6 @@ def test_initially_closed(panel):
     assert panel.is_open() is False
 
 
-def test_default_selected_tab_is_ships(panel):
-    panel.open()
-    body = _body(panel.render_payload())
-    assert body["selected_tab"] == "ships"
-
-
 def test_open_close_round_trip(panel):
     panel.open()
     assert panel.is_open() is True
@@ -44,18 +38,6 @@ def test_open_close_round_trip(panel):
 
 
 # ---- dispatch_event -------------------------------------------------------
-
-def test_dispatch_tab_ships_selects_tab(panel):
-    panel.open()
-    assert panel.dispatch_event("tab:ships") is True
-    body = _body(panel.render_payload())
-    assert body["selected_tab"] == "ships"
-
-
-def test_dispatch_unknown_tab_returns_false(panel):
-    panel.open()
-    assert panel.dispatch_event("tab:nope") is False
-
 
 def test_dispatch_close_closes(panel):
     panel.open()
@@ -66,6 +48,7 @@ def test_dispatch_close_closes(panel):
 def test_dispatch_start_returns_true_and_calls_callback(panel):
     calls = []
     p = QuickBattleSetupPanel(on_start=lambda: calls.append("start"))
+    p._qb_module = _stub_qb_module()       # non-empty roster -> Start is live
     p.open()
     assert p.dispatch_event("start") is True
     assert calls == ["start"]
@@ -88,8 +71,9 @@ def test_render_payload_shape(panel):
     panel.open()
     body = _body(panel.render_payload())
     assert body["open"] is True
-    assert body["selected_tab"] == "ships"
-    assert body["tabs"] == [{"id": "ships", "label": "Ships"}]
+    # The single-pane layout dropped the tab strip — no tabs/selected_tab keys.
+    assert "tabs" not in body
+    assert "selected_tab" not in body
 
 
 def test_render_payload_dedups(panel):
@@ -191,9 +175,17 @@ def _stub_qb_module():
         g_iSelectedShipType=-1,
         g_dFriendlyShipTypeToDetails={
             9: ["Sovereign", "Sovereign", "x", "QuickBattleFriendlyAI", "Friendly"],
+            3: ["Galaxy", "Galaxy", "x", "QuickBattleFriendlyAI", "Friendly"],
+        },
+        # Enemy type->details table; details[1] is the GetString key used as the
+        # roster label (no g_pMissionDatabase here -> key resolves to itself).
+        g_dEnemyShipTypeToDetails={
+            7: ["BOP", "BOP", "x", "QuickBattleAI", "Enemy"],
+            8: ["Warbird", "Warbird", "x", "QuickBattleAI", "Enemy"],
         },
         g_pAddFriendButton=_ship_button("Add As Friendly"),
         g_pAddEnemyButton=_ship_button("Add As Enemy"),
+        g_pDeleteButton=_ship_button("Delete"),
         ET_CLOSE_DIALOG=4242,
         g_pXO=object(),
     )
@@ -228,9 +220,27 @@ def test_ships_payload_has_categories_with_nested_ships(qb_panel):
 
 
 def test_ships_payload_has_friend_and_enemy_lists(qb_panel):
+    # Rosters are stacked by label into {label, count} (count 1 each here).
     body = _body(qb_panel.render_payload())
-    assert [s["label"] for s in body["friendly"]] == ["Galaxy"]
-    assert [s["label"] for s in body["enemy"]] == ["BOP", "Warbird"]
+    assert body["friendly"] == [{"label": "Galaxy", "count": 1}]
+    assert body["enemy"] == [
+        {"label": "BOP", "count": 1},
+        {"label": "Warbird", "count": 1},
+    ]
+
+
+def test_roster_stacks_identical_ships_with_a_tally(qb_panel):
+    # Add two more BOPs to the enemy menu -> a single 'BOP ×3' row, with the
+    # first-seen order (BOP before Warbird) preserved.
+    enemy = qb_panel._qb_module.g_pEnemyMenu
+    enemy.AddChild(_ship_button("BOP"))
+    enemy.AddChild(_ship_button("BOP"))
+    qb_panel.invalidate()
+    body = _body(qb_panel.render_payload())
+    assert body["enemy"] == [
+        {"label": "BOP", "count": 3},
+        {"label": "Warbird", "count": 1},
+    ]
 
 
 def test_categories_collapsed_by_default(qb_panel):
@@ -331,6 +341,89 @@ def test_add_friend_activates_add_friend_button(qb_panel):
     assert fired == [True]
 
 
+# ---- stacked-roster quantity controls (inc / dec / remove) ----------------
+
+def test_roster_inc_enemy_sets_type_and_fires_add(qb_panel):
+    # 'BOP' reverse-maps to enemy type 7; inc sets it and fires Add As Enemy.
+    fired = _spy_activation(qb_panel._qb_module.g_pAddEnemyButton)
+    assert qb_panel.dispatch_event("roster-inc:enemy:BOP") is True
+    assert qb_panel._qb_module.g_iSelectedShipType == 7
+    assert fired == [True]
+
+
+def test_roster_inc_friendly_sets_type_and_fires_add(qb_panel):
+    fired = _spy_activation(qb_panel._qb_module.g_pAddFriendButton)
+    assert qb_panel.dispatch_event("roster-inc:friendly:Galaxy") is True
+    assert qb_panel._qb_module.g_iSelectedShipType == 3
+    assert fired == [True]
+
+
+def test_roster_inc_unresolvable_label_is_noop(qb_panel):
+    fired = _spy_activation(qb_panel._qb_module.g_pAddEnemyButton)
+    # Not in the enemy table -> no type set, add button not fired.
+    assert qb_panel.dispatch_event("roster-inc:enemy:Nonesuch") is True
+    assert qb_panel._qb_module.g_iSelectedShipType == -1
+    assert fired == []
+
+
+def test_roster_dec_selects_target_then_fires_delete(qb_panel):
+    # dec selects the first matching roster button (SelectEnemy), then Delete.
+    bop_btn = qb_panel._qb_module.g_pEnemyMenu.GetFirstChild()
+    selected = _spy_activation(bop_btn)
+    deleted = _spy_activation(qb_panel._qb_module.g_pDeleteButton)
+    assert qb_panel.dispatch_event("roster-dec:enemy:BOP") is True
+    assert selected == [True]
+    assert deleted == [True]
+
+
+def test_roster_dec_no_match_does_not_fire_delete(qb_panel):
+    deleted = _spy_activation(qb_panel._qb_module.g_pDeleteButton)
+    assert qb_panel.dispatch_event("roster-dec:enemy:Nonesuch") is True
+    assert deleted == []
+
+
+def test_roster_remove_deletes_each_copy(qb_panel):
+    # Three BOPs -> remove-all drives Delete once per copy (bounded by count;
+    # the stub doesn't actually pop, so the bound is what stops the loop).
+    enemy = qb_panel._qb_module.g_pEnemyMenu
+    enemy.AddChild(_ship_button("BOP"))
+    enemy.AddChild(_ship_button("BOP"))
+    deleted = _spy_activation(qb_panel._qb_module.g_pDeleteButton)
+    assert qb_panel.dispatch_event("roster-remove:enemy:BOP") is True
+    assert deleted == [True, True, True]
+
+
+def test_roster_action_url_decodes_label(qb_panel):
+    # Labels with spaces arrive percent-encoded from the JS side.
+    enemy = qb_panel._qb_module.g_pEnemyMenu
+    spaced = _ship_button("Negh Var")
+    enemy.AddChild(spaced)
+    qb_panel._qb_module.g_dEnemyShipTypeToDetails[11] = [
+        "Negh Var", "Negh Var", "x", "QuickBattleAI", "Enemy"]
+    fired = _spy_activation(qb_panel._qb_module.g_pAddEnemyButton)
+    assert qb_panel.dispatch_event("roster-inc:enemy:Negh%20Var") is True
+    assert qb_panel._qb_module.g_iSelectedShipType == 11
+    assert fired == [True]
+
+
+def test_roster_action_url_decodes_apostrophe_label(qb_panel):
+    # Apostrophe names (e.g. "Vor'cha") arrive as %27 from the JS side so the
+    # apostrophe can't terminate the onclick string literal; unquote restores it.
+    enemy = qb_panel._qb_module.g_pEnemyMenu
+    enemy.AddChild(_ship_button("Vor'cha"))
+    qb_panel._qb_module.g_dEnemyShipTypeToDetails[12] = [
+        "Vorcha", "Vor'cha", "x", "QuickBattleAI", "Enemy"]
+    deleted = _spy_activation(qb_panel._qb_module.g_pDeleteButton)
+    assert qb_panel.dispatch_event("roster-dec:enemy:Vor%27cha") is True
+    assert deleted == [True]
+
+
+def test_roster_unknown_side_returns_false(qb_panel):
+    assert qb_panel.dispatch_event("roster-inc:bogus:BOP") is False
+    assert qb_panel.dispatch_event("roster-dec:bogus:BOP") is False
+    assert qb_panel.dispatch_event("roster-remove:bogus:BOP") is False
+
+
 # ---- Player ship: current display + Set As Player Ship action -------------
 
 def test_current_player_ship_name_in_payload(qb_panel):
@@ -373,6 +466,7 @@ def test_set_player_noop_for_nonflyable_selection(qb_panel):
 def test_start_with_callback_fires_and_closes():
     calls = []
     p = QuickBattleSetupPanel(on_start=lambda: calls.append("start"))
+    p._qb_module = _stub_qb_module()       # non-empty roster -> Start is live
     p.open()
     assert p.dispatch_event("start") is True
     assert calls == ["start"]
@@ -434,3 +528,32 @@ def test_absent_qb_globals_renders_empty_lists(panel):
     assert body["categories"] == []
     assert body["friendly"] == []
     assert body["enemy"] == []
+
+
+# ---- Start gating: disabled until a ship is on a roster -------------------
+
+def test_can_start_true_when_roster_has_ships(qb_panel):
+    # The stub seeds friendly=[Galaxy], enemy=[BOP, Warbird].
+    assert _body(qb_panel.render_payload())["can_start"] is True
+
+
+def test_can_start_false_when_rosters_empty(panel):
+    panel._qb_module = SimpleNamespace(
+        g_pShipsPane=None, g_pFriendMenu=STSubPane(), g_pEnemyMenu=STSubPane())
+    panel.open()
+    body = _body(panel.render_payload())
+    assert body["friendly"] == []
+    assert body["enemy"] == []
+    assert body["can_start"] is False
+
+
+def test_start_is_noop_when_rosters_empty():
+    calls = []
+    p = QuickBattleSetupPanel(on_start=lambda: calls.append("start"))
+    p._qb_module = SimpleNamespace(
+        g_pFriendMenu=STSubPane(), g_pEnemyMenu=STSubPane())
+    p.open()
+    # Even with a callback wired, an empty roster makes Start a handled no-op.
+    assert p.dispatch_event("start") is True
+    assert calls == []
+    assert p.is_open() is True
