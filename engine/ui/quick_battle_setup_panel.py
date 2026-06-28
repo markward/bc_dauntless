@@ -19,7 +19,7 @@ configuration panel.
 from __future__ import annotations
 
 import json
-from typing import Callable, Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, Optional, Set
 
 from engine.ui.panel import Panel
 
@@ -31,9 +31,6 @@ class QuickBattleSetupPanel(Panel):
 
     def __init__(self, on_start: Optional[Callable[[], None]] = None) -> None:
         super().__init__()
-        # Single Ships tab for the first pass; later tasks add more.
-        self._tabs: List[Tuple[str, str]] = [("ships", "Ships")]
-        self._selected_tab = "ships"
         # Start wiring is a later task — keep a clear seam. When unset, Start
         # is still "handled" (returns True) but does nothing.
         self._on_start = on_start
@@ -141,17 +138,14 @@ class QuickBattleSetupPanel(Panel):
         (categories, friendly, enemy, player_ship_name), rebuilding the
         id->widget map. The single Ships catalog feeds all three assignments
         (friendly/enemy/player); the player ship is the singular g_sPlayerType
-        name. Empty/None (never raises) when the module/globals are absent."""
-        from engine.appc.characters import STButton
-        from engine.appc.tg_ui.widgets import ensure_widget_id
-
+        name. Friendly/enemy rosters are stacked by ship label into
+        [{label, count}] (shopping-basket tally). Empty/None (never raises)
+        when the module/globals are absent."""
         self._id_to_widget = {}
-        friendly: list = []
-        enemy: list = []
 
         m = self._qb()
         if m is None:
-            return [], friendly, enemy, None
+            return [], [], [], None
 
         # The one ship catalog (Ships pane); highlight the clicked ship.
         categories = self._read_pane_categories(
@@ -159,17 +153,42 @@ class QuickBattleSetupPanel(Panel):
             lambda sid, btn: {"selected": sid == self._selected_ship_id},
         )
 
-        for pane, out in ((getattr(m, "g_pFriendMenu", None), friendly),
-                          (getattr(m, "g_pEnemyMenu", None), enemy)):
-            for btn in self._child_widgets(pane):
-                if isinstance(btn, STButton):
-                    bid = ensure_widget_id(btn)
-                    self._id_to_widget[bid] = btn
-                    out.append({"id": bid, "label": btn.GetLabel()})
+        friendly = self._read_roster(getattr(m, "g_pFriendMenu", None))
+        enemy = self._read_roster(getattr(m, "g_pEnemyMenu", None))
 
         # The current player ship (singular). g_sPlayerType is the ship NAME.
         player_ship_name = getattr(m, "g_sPlayerType", None)
         return categories, friendly, enemy, player_ship_name
+
+    def _read_roster(self, pane) -> list:
+        """Walk a roster pane's STButton children and stack identical ships by
+        label into [{label, count}], preserving first-seen order. Roster
+        mutations re-walk the live pane by label, so no id is emitted here."""
+        from engine.appc.characters import STButton
+        order: list = []
+        counts: Dict[str, int] = {}
+        for btn in self._child_widgets(pane):
+            if isinstance(btn, STButton):
+                label = btn.GetLabel()
+                if label not in counts:
+                    counts[label] = 0
+                    order.append(label)
+                counts[label] += 1
+        return [{"label": label, "count": counts[label]} for label in order]
+
+    def _has_roster_ships(self) -> bool:
+        """True if either roster pane currently holds at least one ship button.
+        Walks the live SDK menus so it reflects the latest add/remove (never
+        raises; False when the module/menus are absent)."""
+        from engine.appc.characters import STButton
+        m = self._qb()
+        if m is None:
+            return False
+        for name in ("g_pFriendMenu", "g_pEnemyMenu"):
+            for btn in self._child_widgets(getattr(m, name, None)):
+                if isinstance(btn, STButton):
+                    return True
+        return False
 
     def widget_for_id(self, wid):
         """Resolve a snapshot-node id back to its live SDK widget (or None)."""
@@ -191,6 +210,94 @@ class QuickBattleSetupPanel(Panel):
         """Activate a QuickBattle module-global button (e.g. g_pAddEnemyButton)."""
         m = self._qb()
         self._activate_widget(getattr(m, global_name, None) if m is not None else None)
+
+    # ── Roster mutation (stacked friendly/enemy lists) ────────────────────────
+
+    # side -> (roster-menu global, add-button global, type->details table global)
+    _ROSTER_SIDES = {
+        "friendly": ("g_pFriendMenu", "g_pAddFriendButton", "g_dFriendlyShipTypeToDetails"),
+        "enemy": ("g_pEnemyMenu", "g_pAddEnemyButton", "g_dEnemyShipTypeToDetails"),
+    }
+
+    def _first_roster_button(self, side: str, label: str):
+        """First live roster button on `side` whose GetLabel() == label (or None).
+        Re-walks the live SDK pane so it survives RebuildMenu's KillChildren."""
+        from engine.appc.characters import STButton
+        m = self._qb()
+        spec = self._ROSTER_SIDES.get(side)
+        if m is None or spec is None:
+            return None
+        for btn in self._child_widgets(getattr(m, spec[0], None)):
+            if isinstance(btn, STButton) and btn.GetLabel() == label:
+                return btn
+        return None
+
+    def _label_to_type(self, side: str, label: str):
+        """Reverse-map a roster label to its ship-type int via the side's
+        type->details table (details[1] is the GetString key for the label).
+        Returns None when the module/table is absent or no entry matches."""
+        m = self._qb()
+        spec = self._ROSTER_SIDES.get(side)
+        if m is None or spec is None:
+            return None
+        details = getattr(m, spec[2], None)
+        db = getattr(m, "g_pMissionDatabase", None)
+        if details is None:
+            return None
+        try:
+            for type_int, data in details.items():
+                key = data[1]
+                resolved = db.GetString(key) if db is not None else key
+                if resolved == label:
+                    return type_int
+        except Exception:
+            return None
+        return None
+
+    def _roster_add_one(self, side: str, label: str) -> None:
+        """Add one more ship of `label` to `side` via the SDK add path: set
+        g_iSelectedShipType to the resolved type, then activate the add button
+        (AddShipAsFriend/Enemy). No-op when the type can't be resolved."""
+        m = self._qb()
+        spec = self._ROSTER_SIDES.get(side)
+        if m is None or spec is None:
+            return
+        type_int = self._label_to_type(side, label)
+        if type_int is None:
+            return
+        try:
+            m.g_iSelectedShipType = type_int
+        except Exception:
+            return
+        self._activate_qb_button(spec[1])
+
+    def _roster_remove_one(self, side: str, label: str) -> bool:
+        """Remove one ship of `label` from `side`: select its first live roster
+        button (ET_SELECT_FRIEND/ENEMY), then activate g_pDeleteButton (Delete).
+        Returns True if a matching button was found and removal was driven."""
+        btn = self._first_roster_button(side, label)
+        if btn is None:
+            return False
+        self._activate_widget(btn)
+        self._activate_qb_button("g_pDeleteButton")
+        return True
+
+    def _roster_remove_all(self, side: str, label: str) -> None:
+        """Remove every ship of `label` from `side`. Re-walks the live pane each
+        pass (Delete -> RebuildMenu KillChildren invalidates prior refs);
+        bounded by the current count so a stuck removal can't loop forever."""
+        m = self._qb()
+        spec = self._ROSTER_SIDES.get(side)
+        if m is None or spec is None:
+            return
+        from engine.appc.characters import STButton
+        bound = sum(
+            1 for btn in self._child_widgets(getattr(m, spec[0], None))
+            if isinstance(btn, STButton) and btn.GetLabel() == label
+        )
+        for _ in range(bound):
+            if not self._roster_remove_one(side, label):
+                break
 
     def _set_player_from_selection(self) -> None:
         """Set the player ship to the currently-selected catalog ship.
@@ -254,12 +361,13 @@ class QuickBattleSetupPanel(Panel):
             categories, friendly, enemy, player_ship = self._read_ships()
             payload = {
                 "open": True,
-                "selected_tab": self._selected_tab,
-                "tabs": [{"id": tid, "label": label} for tid, label in self._tabs],
                 "categories": categories,
                 "friendly": friendly,
                 "enemy": enemy,
                 "player_ship": player_ship,   # current player ship NAME (or null)
+                # Start is disabled until at least one ship is on a roster
+                # (mirrors the SDK enabling Start once g_kFriend/EnemyList fills).
+                "can_start": bool(friendly or enemy),
             }
         out = "setQuickBattleSetup(" + json.dumps(payload) + ");"
         if out == self._last_pushed:
@@ -278,8 +386,10 @@ class QuickBattleSetupPanel(Panel):
             # Start drives the real flow via the on_start seam (the host wires
             # it to start_quickbattle -> ET_START_SIMULATION); close the dialog
             # first so g_bDialogUp clears and the panel doesn't reopen. With no
-            # callback wired it stays a handled no-op.
-            if self._on_start is not None:
+            # callback wired it stays a handled no-op. Defensively gated on a
+            # non-empty roster (the JS also disables the button) so an empty
+            # battle can't be launched.
+            if self._on_start is not None and self._has_roster_ships():
                 self._fire_close_dialog()
                 self._on_start()
                 self.close()
@@ -319,13 +429,36 @@ class QuickBattleSetupPanel(Panel):
             except ValueError:
                 pass
             return True
-        if action.startswith("tab:"):
-            tab_id = action[len("tab:"):]
-            if any(tid == tab_id for tid, _ in self._tabs):
-                self._selected_tab = tab_id
-                return True
-            return False
+        if action.startswith("roster-inc:"):
+            side, label = self._parse_roster_action(action[len("roster-inc:"):])
+            if side is None:
+                return False
+            self._roster_add_one(side, label)
+            return True
+        if action.startswith("roster-dec:"):
+            side, label = self._parse_roster_action(action[len("roster-dec:"):])
+            if side is None:
+                return False
+            self._roster_remove_one(side, label)
+            return True
+        if action.startswith("roster-remove:"):
+            side, label = self._parse_roster_action(action[len("roster-remove:"):])
+            if side is None:
+                return False
+            self._roster_remove_all(side, label)
+            return True
         return False
+
+    @staticmethod
+    def _parse_roster_action(arg: str):
+        """Split a 'roster-*' arg of the form '<side>:<url-encoded-label>' into
+        (side, label). Returns (None, '') for an unknown side or malformed arg
+        so dispatch_event can reject it."""
+        from urllib.parse import unquote
+        side, sep, raw = arg.partition(":")
+        if not sep or side not in QuickBattleSetupPanel._ROSTER_SIDES:
+            return None, ""
+        return side, unquote(raw)
 
     def invalidate(self) -> None:
         self._last_pushed = None

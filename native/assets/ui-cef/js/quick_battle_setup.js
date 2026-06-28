@@ -1,7 +1,6 @@
 // Quick Battle Setup panel render fn. Driven by Python via
 // cef_execute_javascript:
-//   setQuickBattleSetup({open:true, selected_tab, tabs, categories,
-//                        friendly, enemy});
+//   setQuickBattleSetup({open:true, categories, friendly, enemy, player_ship});
 //   setQuickBattleSetup({open:false});
 // Click events fire dauntlessEvent('quick-battle-setup/<verb>[:<arg>]').
 // Reuses the cp-* chrome (css/configuration_panel.css) and the crew-menu
@@ -14,20 +13,6 @@ function escapeHtmlQBS(s) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
-}
-
-function _qbsRenderTabstrip(state) {
-    let html = '';
-    for (let i = 0; i < state.tabs.length; ++i) {
-        const t = state.tabs[i];
-        const isActive = t.id === state.selected_tab;
-        const cls = 'cp-tab' + (isActive ? ' cp-tab--active' : '');
-        html += '<div class="' + cls + '"'
-              +   ' onclick="dauntlessEvent(\'quick-battle-setup/tab:' + t.id + '\')">'
-              +     escapeHtmlQBS(t.label)
-              + '</div>';
-    }
-    return html;
 }
 
 // Ship-category accordion — mirrors the crew-menu row/caret/depth pattern.
@@ -61,21 +46,41 @@ function _qbsRenderCategories(categories, action, highlightKey) {
     return html;
 }
 
-// Friendly / Enemy roster list — target-list affiliation tint via the kind class.
+// Friendly / Enemy roster list — stacked "shopping-basket" rows. Each group is
+// {label, count}; controls drive roster-inc/dec/remove with side + label.
+// kind is 'friendly' | 'enemy' (the SDK side and the affiliation tint class).
+// At count 1 the [−] slot is rendered as [×] (decrement removes the stack).
 function _qbsRenderRoster(items, kind) {
     const list = items || [];
     if (!list.length) return '<div class="qbs-empty">(none)</div>';
     let html = '';
     for (const it of list) {
+        // encodeURIComponent leaves "'" literal, which would terminate the
+        // single-quoted JS string inside the onclick attribute (breaking every
+        // button for apostrophe names like "Vor'cha"); encode it as %27 too,
+        // which Python's unquote decodes back.
+        const arg = kind + ':' + encodeURIComponent(it.label).replace(/'/g, '%27');
+        const decGlyph = it.count <= 1 ? '×' : '−';   // × at 1, − otherwise
         html += '<div class="qbs-roster-row qbs-roster-row--' + kind + '">'
-              +   escapeHtmlQBS(it.label)
+              +   '<span class="qbs-roster-label">' + escapeHtmlQBS(it.label) + '</span>'
+              +   '<span class="qbs-qty">'
+              +     '<button class="qbs-qty-btn"'
+              +       ' onclick="dauntlessEvent(\'quick-battle-setup/roster-dec:' + arg + '\')">'
+              +       decGlyph + '</button>'
+              +     '<span class="qbs-qty-count">' + it.count + '</span>'
+              +     '<button class="qbs-qty-btn"'
+              +       ' onclick="dauntlessEvent(\'quick-battle-setup/roster-inc:' + arg + '\')">'
+              +       '+</button>'
+              +     '<button class="qbs-qty-btn qbs-qty-remove"'
+              +       ' onclick="dauntlessEvent(\'quick-battle-setup/roster-remove:' + arg + '\')">'
+              +       '×</button>'
+              +   '</span>'
               + '</div>';
     }
     return html;
 }
 
 function _qbsRenderBody(state) {
-    if (state.selected_tab !== 'ships') return '';
     const player = state.player_ship
         ? escapeHtmlQBS(state.player_ship) : '(none)';
     return '<div class="qbs-lists">'
@@ -112,9 +117,10 @@ function setQuickBattleSetup(state) {
         root.style.display = 'none';
         return;
     }
-    const tabstrip = document.getElementById('qbs-tabstrip');
-    if (tabstrip) tabstrip.innerHTML = _qbsRenderTabstrip(state);
     const body = document.getElementById('qbs-body');
     if (body) body.innerHTML = _qbsRenderBody(state);
+    // Start is disabled until at least one ship sits on a roster.
+    const startBtn = document.getElementById('qbs-start-button');
+    if (startBtn) startBtn.disabled = state.can_start !== true;
     root.style.display = 'flex';
 }
