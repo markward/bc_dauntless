@@ -229,3 +229,35 @@
     font-size: 12px; font-style: italic; white-space: normal;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08); margin-bottom: 4px;
 }
+
+/* Controls tab — rebind rows reuse cp-row/cp-toggle. The key button is wider
+   and monospace so multi-char key names ("PageDown") read cleanly. */
+.cp-row__key {
+    min-width: 72px;
+    font-family: "Consolas", "Menlo", monospace;
+    letter-spacing: 0.04em;
+}
+
+/* "Press a key…" capture overlay — covers the whole panel above its modal. */
+.cp-capture-modal {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.6);
+    z-index: 60;
+}
+.cp-capture-box {
+    min-width: 320px;
+    padding: 22px 28px;
+    background: rgb(20, 22, 28);
+    border: 1px solid rgb(147, 103, 255);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7);
+    text-align: center;
+}
+.cp-capture-title { font-size: 16px; color: #fff; margin-bottom: 6px; }
+.cp-capture-hint { font-size: 12px; color: #8a93a3; }
+.cp-capture-msg {
+    margin-top: 12px; font-size: 13px; color: rgb(255, 170, 90);
+}

@@ -266,50 +266,46 @@ def _poll_key_table(host, keymap) -> None:
         _fn_key_prev[glfw_key] = down
 
 
-def _poll_function_keys(host) -> None:
-    """Forward F1-F5 edges into g_kInputManager (WC_F1..F5).
+def _poll_function_keys(host, input_map) -> None:
+    """Forward the crew-talk keys (F1-F5 by default) into g_kInputManager.
 
-    From there the SDK pipeline (KeyConfig registration +
-    DefaultKeyboardBinding bindings) produces ET_INPUT_TALK_TO_* events —
-    see docs/superpowers/specs/2026-06-12-bridge-menu-hotkeys-design.md.
+    The physical key for each crew-talk action comes from `input_map`; the
+    WC_F1..F5 code feeding the BC binding stays fixed, so DefaultKeyboardBinding's
+    WC_F1→ET_INPUT_TALK_TO_* mapping is unchanged — only which key drives each
+    WC slot is remappable.  See docs/superpowers/specs/2026-06-12-bridge-menu-hotkeys-design.md.
     """
     if host is None or not hasattr(host, "key_state"):
         return
-    keys = getattr(host, "keys", None)
-    if keys is None or not hasattr(keys, "KEY_F1"):
-        return
     import App  # deferred: module-top import reorders sound-manager init
     _poll_key_table(host, (
-        (keys.KEY_F1, App.WC_F1),
-        (keys.KEY_F2, App.WC_F2),
-        (keys.KEY_F3, App.WC_F3),
-        (keys.KEY_F4, App.WC_F4),
-        (keys.KEY_F5, App.WC_F5),
+        (input_map.code("talk_helm"),        App.WC_F1),
+        (input_map.code("talk_tactical"),    App.WC_F2),
+        (input_map.code("talk_xo"),          App.WC_F3),
+        (input_map.code("talk_science"),     App.WC_F4),
+        (input_map.code("talk_engineering"), App.WC_F5),
     ))
 
 
-def _poll_fire_keys(host) -> None:
-    """Forward the weapon-fire keys F/X/G into g_kInputManager.
+def _poll_fire_keys(host, input_map) -> None:
+    """Forward the weapon-fire keys (F/X/G by default) into g_kInputManager.
 
-    F → ET_INPUT_FIRE_PRIMARY (phasers), X → SECONDARY (torpedoes),
-    G → TERTIARY (disruptors/pulse weapons).  The SDK binds these in
-    DefaultKeyboardBinding.py:96-103 and TacticalInterfaceHandlers routes
-    them to FireWeapons → StartFiring (keydown=1/keyup=0 drive the held-fire
-    StartFiring/StopFiring pair).
+    Primary → ET_INPUT_FIRE_PRIMARY (phasers), Secondary → SECONDARY (torpedoes),
+    Tertiary → TERTIARY (disruptors/pulse weapons).  The physical key for each
+    comes from `input_map`; the WC_F/WC_X/WC_G codes feeding the BC binding stay
+    fixed (DefaultKeyboardBinding.py:96-103 maps them to the fire events, and
+    TacticalInterfaceHandlers routes those to FireWeapons → StartFiring with
+    keydown=1/keyup=0).
 
     Firing still requires a selected target — FireWeapons no-ops when
     pShip.GetTarget() is None.
     """
     if host is None or not hasattr(host, "key_state"):
         return
-    keys = getattr(host, "keys", None)
-    if keys is None or not hasattr(keys, "KEY_G"):
-        return
     import App  # deferred: module-top import reorders sound-manager init
     _poll_key_table(host, (
-        (keys.KEY_F, App.WC_F),
-        (keys.KEY_X, App.WC_X),
-        (keys.KEY_G, App.WC_G),
+        (input_map.code("fire_primary"),   App.WC_F),
+        (input_map.code("fire_secondary"), App.WC_X),
+        (input_map.code("fire_tertiary"),  App.WC_G),
     ))
 
 
@@ -1086,7 +1082,14 @@ class _PlayerControl:
     # full WarpSequence machinery. Forward only — no reverse boost.
     WARP_BOOST_FACTOR = 100.0
 
-    def __init__(self):
+    def __init__(self, input_map=None):
+        # Single source of truth for action → physical key.  Defaults to a
+        # fresh InputMap (stock keys, no file) so headless tests that build
+        # _PlayerControl() keep the W/S/A/D/Q/E/R/0 defaults.
+        if input_map is None:
+            from engine.input_map import InputMap
+            input_map = InputMap()
+        self._input_map = input_map
         self.impulse_level = 0  # signed: -2..9; 0 = stop
         self._current_speed = 0.0
         self._current_pitch_rate = 0.0
@@ -1238,9 +1241,9 @@ class _PlayerControl:
                 f"[host_loop] in-system warp {'ON' if self._warp_boost else 'OFF'}",
                 flush=True,
             )
-        if h.key_pressed(h.keys.KEY_R) and not (_super_held or _ctrl_held):
+        if h.key_pressed(self._input_map.code("reverse")) and not (_super_held or _ctrl_held):
             self.impulse_level = self.REVERSE_LEVEL
-        elif h.key_pressed(h.keys.KEY_0):
+        elif h.key_pressed(self._input_map.code("full_stop")):
             self.impulse_level = 0
         elif not _shift_held(h):
             digit_codes = [
@@ -1307,12 +1310,13 @@ class _PlayerControl:
             ang_rate = self.TURN_RATE_RAD_PER_S
             ang_step = self.FALLBACK_MAX_ACCEL * dt
         pitch_target = 0.0; yaw_target = 0.0; roll_target = 0.0
-        if h.key_state(h.keys.KEY_W): pitch_target -= ang_rate
-        if h.key_state(h.keys.KEY_S): pitch_target += ang_rate
-        if h.key_state(h.keys.KEY_A): yaw_target   -= ang_rate
-        if h.key_state(h.keys.KEY_D): yaw_target   += ang_rate
-        if h.key_state(h.keys.KEY_Q): roll_target  += ang_rate
-        if h.key_state(h.keys.KEY_E): roll_target  -= ang_rate
+        im = self._input_map
+        if h.key_state(im.code("pitch_down")): pitch_target -= ang_rate
+        if h.key_state(im.code("pitch_up")):   pitch_target += ang_rate
+        if h.key_state(im.code("yaw_left")):   yaw_target   -= ang_rate
+        if h.key_state(im.code("yaw_right")):  yaw_target   += ang_rate
+        if h.key_state(im.code("roll_left")):  roll_target  += ang_rate
+        if h.key_state(im.code("roll_right")): roll_target  -= ang_rate
         if em.has_angular:
             pitch_target = _cap_keep(pitch_target, self._current_pitch_rate, em.max_ang_vel)
             yaw_target   = _cap_keep(yaw_target,   self._current_yaw_rate,   em.max_ang_vel)
@@ -1596,6 +1600,32 @@ def _dispatch_modal_pause_input(blockers, pause_menu, h) -> None:
     _script = pause_menu.render_payload()
     if _script is not None:
         h.cef_execute_javascript(_script)
+
+
+def _handle_controls_capture(panel, h) -> None:
+    """Owns the keyboard while the Controls tab is capturing a key.
+
+    Scans the bindable GLFW codes and forwards the first press as
+    configuration/bind:<action>:<KEY>; Esc sends capture_cancel.  The panel's
+    handle_input early-returns during capture, and the caller skips the modal
+    ESC/close dispatch, so this is the sole consumer of the press.
+    """
+    action_id = getattr(panel, "capturing_action", None)
+    if action_id is None or h is None:
+        return
+    keys = getattr(h, "keys", None)
+    esc = getattr(keys, "KEY_ESCAPE", None) if keys is not None else None
+    if esc is not None and h.key_pressed(esc):
+        panel.dispatch_event("capture_cancel")
+        return
+    from engine.input_map import GLFW_KEYS
+    for name, code in GLFW_KEYS.items():
+        try:
+            if h.key_pressed(code):
+                panel.dispatch_event("bind:%s:%s" % (action_id, name))
+                return
+        except Exception:
+            continue
 
 
 def _forward_mouse_to_cef(h, send_mouse_move, view_w, view_h) -> tuple:
@@ -4104,7 +4134,14 @@ def run(mission_name: Optional[str] = None,
                   f"{len(ss.planet_instances)} planets)", flush=True)
 
         # Per-tick player input → ship-transform integrator.
-        player_control = _PlayerControl()
+        # Central action → physical-key map, loaded from Keybindings.cfg (falls
+        # back to defaults for missing/unknown entries).  _PlayerControl, the
+        # camera handler, the fire/function pollers, and the Configuration →
+        # Controls tab all read/edit this single instance.
+        from engine.input_map import InputMap
+        input_map = InputMap()
+        input_map.load()
+        player_control = _PlayerControl(input_map)
         from engine.cameras import _CameraDirector
         director       = _CameraDirector()
         z_held_prev = False
@@ -4229,7 +4266,8 @@ def run(mission_name: Optional[str] = None,
         )
         from engine.appc import crew_speech as _crew_speech
         configuration_panel = ConfigurationPanel(
-            tabs=[("graphics", "Graphics"), ("gameplay", "Gameplay")],
+            tabs=[("graphics", "Graphics"), ("gameplay", "Gameplay"),
+                  ("controls", "Controls")],
             initial_settings=SettingsSnapshot(
                 dust_on=True,
                 specular_on=True,
@@ -4268,6 +4306,7 @@ def run(mission_name: Optional[str] = None,
             set_warp_flythrough=r.set_warp_flythrough_enabled,
             set_volumetric_nebulae=r.set_volumetric_nebulae_enabled,
             set_nebula_lightning=r.set_nebula_lightning_enabled,
+            input_map=input_map,
         )
 
         # Quick Battle Setup panel — on-theme tabbed-modal shell (Ships tab).
@@ -4461,7 +4500,13 @@ def run(mission_name: Optional[str] = None,
                 # viewer (dev only), then the configuration panel, then the
                 # crew menu, otherwise the pause menu toggle. All four modal
                 # blockers close on ESC and return the user to the pause menu.
-                _dispatch_modal_esc(_modal_blockers, crew_menu_panel, pause, _h)
+                # Controls-tab key capture owns the keyboard (incl. Esc) while
+                # active; skip the normal modal-ESC dispatch so Esc cancels the
+                # capture instead of closing the Configuration panel.
+                if configuration_panel.capturing_action is not None:
+                    _handle_controls_capture(configuration_panel, _h)
+                else:
+                    _dispatch_modal_esc(_modal_blockers, crew_menu_panel, pause, _h)
                 _apply_pause_menu_side_effects(
                     pause, view_mode, _h, _modal_blockers,
                 )
@@ -4780,29 +4825,29 @@ def run(mission_name: Optional[str] = None,
                     # the player has a valid target). key_pressed fires once per
                     # key-down event (not while held). Gate on exterior view so
                     # the mode cannot flip silently while the bridge is active.
-                    if view_mode.is_exterior and _h.key_pressed(_h.keys.KEY_C):
+                    if view_mode.is_exterior and _h.key_pressed(input_map.code("camera_cycle")):
                         director.toggle_mode(player=player)
                     # Z-key: ZoomTarget framing while held. Held-state (not
                     # press-edge) so the camera enters/exits as the key state
                     # changes. The `not director.tracking.zoom_target_active`
                     # retry guard lets a Z-held-during-target-acquisition
                     # succeed on whichever frame the target appears.
-                    z_held_now = view_mode.is_exterior and _h.key_state(_h.keys.KEY_Z)
+                    z_held_now = view_mode.is_exterior and _h.key_state(input_map.code("camera_zoom_target"))
                     if z_held_now and not director.tracking.zoom_target_active:
                         director.start_zoom_target(player=player)
                     elif z_held_prev and not z_held_now:
                         director.end_zoom_target()
                     z_held_prev = z_held_now
                     # =/- sticky zoom: press-edge (OS auto-repeat for hold).
-                    if view_mode.is_exterior and _h.key_pressed(_h.keys.KEY_EQUAL):
+                    if view_mode.is_exterior and _h.key_pressed(input_map.code("camera_zoom_in")):
                         director.zoom_in()
-                    if view_mode.is_exterior and _h.key_pressed(_h.keys.KEY_MINUS):
+                    if view_mode.is_exterior and _h.key_pressed(input_map.code("camera_zoom_out")):
                         director.zoom_out()
                     # V-key: Reverse Chase while held. Same hold-state
                     # edge detection as Z, with a retry guard so a
                     # V-held-during-mode-transition succeeds on the
                     # next eligible frame.
-                    v_held_now = view_mode.is_exterior and _h.key_state(_h.keys.KEY_V)
+                    v_held_now = view_mode.is_exterior and _h.key_state(input_map.code("camera_reverse_chase"))
                     if v_held_now and not director.chase.reverse_active:
                         director.start_reverse()
                     elif v_held_prev and not v_held_now:
@@ -4850,8 +4895,8 @@ def run(mission_name: Optional[str] = None,
                 # Forward mouse button edges into the input manager (fire
                 # events route via g_kKeyboardBinding → TCW handlers).
                 _poll_mouse_buttons(_h)
-                _poll_function_keys(_h)
-                _poll_fire_keys(_h)
+                _poll_function_keys(_h, input_map)
+                _poll_fire_keys(_h, input_map)
                 _poll_tractor_toggle(_h)
 
                 # Advance weapon charge / reload for every ship in every

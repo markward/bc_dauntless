@@ -67,7 +67,8 @@ class ConfigurationPanel(Panel):
                  set_motion_blur: Callable[[bool], None],
                  set_warp_flythrough: Callable[[bool], None],
                  set_volumetric_nebulae: Callable[[bool], None],
-                 set_nebula_lightning: Callable[[bool], None]):
+                 set_nebula_lightning: Callable[[bool], None],
+                 input_map=None):
         super().__init__()
         self._tabs = list(tabs)
         self._selected_tab = tabs[0][0]
@@ -107,6 +108,11 @@ class ConfigurationPanel(Panel):
         self._set_warp_flythrough = set_warp_flythrough
         self._set_volumetric_nebulae = set_volumetric_nebulae
         self._set_nebula_lightning = set_nebula_lightning
+        # Controls tab: action → physical-key remapping (engine.input_map.InputMap).
+        # Optional so existing construction/tests without a controls tab still work.
+        self._input_map = input_map
+        self._capturing_action: Optional[str] = None  # action_id mid key-capture
+        self._controls_message: str = ""              # transient conflict/info text
         self._visible: bool = False
         self._focused: int = -1
         self._last_pushed: Optional[tuple] = None
@@ -118,19 +124,40 @@ class ConfigurationPanel(Panel):
     def is_open(self) -> bool:
         return self._visible
 
+    @property
+    def capturing_action(self) -> Optional[str]:
+        """The action_id awaiting a key (host loop scans keys when set)."""
+        return self._capturing_action
+
     def open(self) -> None:
         self._visible = True
 
     def close(self) -> None:
         self._visible = False
         self._focused = -1
+        self._capturing_action = None
+        self._controls_message = ""
+
+    def _controls_rows(self) -> list:
+        """[{id, label, category, key}] for the Controls tab, in ACTIONS order."""
+        if self._input_map is None:
+            return []
+        from engine.input_map import ACTIONS
+        return [{"id": aid, "label": label, "category": cat,
+                 "key": self._input_map.name(aid)}
+                for (aid, label, cat, _default) in ACTIONS]
 
     def render_payload(self) -> Optional[str]:
+        controls_rows = self._controls_rows()
+        controls_sig = tuple((r["id"], r["key"]) for r in controls_rows)
         snapshot = (
             self._visible,
             tuple(self._tabs),
             self._selected_tab,
             self._focused,
+            controls_sig,
+            self._capturing_action,
+            self._controls_message,
             self._settings.dust_on,
             self._settings.specular_on,
             self._settings.hdr_on,
@@ -159,6 +186,12 @@ class ConfigurationPanel(Panel):
             "tabs": [{"id": tid, "label": label} for tid, label in self._tabs],
             "selected_tab": self._selected_tab,
             "focused": self._focused,
+            "controls": controls_rows,
+            "capturing_action": self._capturing_action,
+            "capturing_label": (self._input_map.label(self._capturing_action)
+                                if (self._capturing_action and self._input_map)
+                                else ""),
+            "controls_message": self._controls_message,
             "settings": {
                 "dust_on": self._settings.dust_on,
                 "specular_on": self._settings.specular_on,
@@ -189,6 +222,48 @@ class ConfigurationPanel(Panel):
         # engine state, exception propagates to the caller).
         if action == "cancel":
             self.close()
+            return True
+        # ── Controls tab: action → physical-key remapping ────────────────────
+        if action.startswith("rebind:"):
+            if self._input_map is None:
+                return False
+            self._capturing_action = action[len("rebind:"):]
+            self._controls_message = ""
+            return True
+        if action == "capture_cancel":
+            self._capturing_action = None
+            self._controls_message = ""
+            return True
+        if action == "controls_reset":
+            if self._input_map is None:
+                return False
+            self._input_map.reset()
+            self._input_map.save()
+            self._capturing_action = None
+            self._controls_message = ""
+            return True
+        if action.startswith("bind:"):
+            # "bind:<action_id>:<key_name>" — apply a captured key.
+            if self._input_map is None:
+                return False
+            rest = action[len("bind:"):]
+            action_id, _, key_name = rest.partition(":")
+            if not action_id or not key_name:
+                return False
+            from engine.input_map import GLFW_KEYS, RESERVED
+            if key_name in RESERVED or key_name not in GLFW_KEYS:
+                self._controls_message = "%s can't be bound" % (key_name,)
+                return True  # stay in capture so the user can try another key
+            owner = self._input_map.action_for(key_name)
+            if owner is not None and owner != action_id:
+                # Block + warn: leave both bindings unchanged.
+                self._controls_message = "%s is already bound to %s" % (
+                    key_name, self._input_map.label(owner))
+                return True
+            self._input_map.set(action_id, key_name)
+            self._input_map.save()
+            self._capturing_action = None
+            self._controls_message = ""
             return True
         if action == "toggle:dust":
             new_val = not self._settings.dust_on
@@ -289,6 +364,8 @@ class ConfigurationPanel(Panel):
             tab_id = action[len("tab:"):]
             if any(tid == tab_id for tid, _ in self._tabs):
                 self._selected_tab = tab_id
+                self._capturing_action = None   # leaving the tab cancels capture
+                self._controls_message = ""
                 return True
             return False
         return False
@@ -308,6 +385,10 @@ class ConfigurationPanel(Panel):
         Missing optional keys (e.g. KEY_LEFT/RIGHT on older bindings)
         degrade silently."""
         if not self._visible:
+            return
+        # While capturing a key the host loop owns the keyboard (it scans for the
+        # bound key); don't let panel nav consume those presses.
+        if self._capturing_action is not None:
             return
         keys = h.keys
         focusables = self._focusables()
@@ -364,6 +445,10 @@ class ConfigurationPanel(Panel):
             self.dispatch_event("toggle:subtitles")
         elif activate and kind == "ctrl" and target == "disable_annoying_dialogue":
             self.dispatch_event("toggle:disable_annoying_dialogue")
+        elif activate and kind == "ctrl" and target == "controls_reset":
+            self.dispatch_event("controls_reset")
+        elif activate and kind == "rebind":
+            self.dispatch_event("rebind:" + target)
         elif activate and kind == "tab":
             self.dispatch_event("tab:" + target)
 
@@ -401,4 +486,8 @@ class ConfigurationPanel(Panel):
             out += [("ctrl", "subtitles"),
                     ("ctrl", "disable_annoying_dialogue"),
                     ("ctrl", "ai_difficulty")]
+        elif self._selected_tab == "controls" and self._input_map is not None:
+            from engine.input_map import ACTION_IDS
+            out += [("rebind", aid) for aid in ACTION_IDS]
+            out += [("ctrl", "controls_reset")]
         return out
