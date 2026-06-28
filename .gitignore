@@ -322,6 +322,7 @@ cache/
 # source.
 /Options.cfg
 /BCTickLog.cfg
+/Keybindings.cfg
 
 # EXCEPTIONS — force-include these even if caught by rules above
 # =============================================================================

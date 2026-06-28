@@ -7,23 +7,25 @@ from engine.host_loop import _PlayerControl
 
 
 class _FakeKeys:
-    KEY_W = 1
-    KEY_S = 2
-    KEY_A = 3
-    KEY_D = 4
-    KEY_Q = 5
-    KEY_E = 6
-    KEY_R = 7
-    KEY_0 = 10
-    KEY_1 = 11
-    KEY_2 = 12
-    KEY_3 = 13
-    KEY_4 = 14
-    KEY_5 = 15
-    KEY_6 = 16
-    KEY_7 = 17
-    KEY_8 = 18
-    KEY_9 = 19
+    # Real GLFW key codes: _PlayerControl now reads flight/reverse/full-stop
+    # keys via InputMap (which stores GLFW ints), so the fake must match.
+    KEY_W = 87
+    KEY_S = 83
+    KEY_A = 65
+    KEY_D = 68
+    KEY_Q = 81
+    KEY_E = 69
+    KEY_R = 82
+    KEY_0 = 48
+    KEY_1 = 49
+    KEY_2 = 50
+    KEY_3 = 51
+    KEY_4 = 52
+    KEY_5 = 53
+    KEY_6 = 54
+    KEY_7 = 55
+    KEY_8 = 56
+    KEY_9 = 57
 
 
 class _FakeKeyReader:

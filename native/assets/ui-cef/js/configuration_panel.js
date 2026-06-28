@@ -37,6 +37,9 @@ function _cpFocusableList(state) {
         out.push({kind: 'ctrl', target: 'subtitles'});
         out.push({kind: 'ctrl', target: 'disable_annoying_dialogue'});
         out.push({kind: 'ctrl', target: 'ai_difficulty'});
+    } else if (state.selected_tab === 'controls') {
+        (state.controls || []).forEach(c => out.push({kind: 'rebind', target: c.id}));
+        out.push({kind: 'ctrl', target: 'controls_reset'});
     }
     return out;
 }
@@ -271,10 +274,75 @@ function _cpRenderGameplayBody(state, focusables) {
     return html;
 }
 
+// Controls tab — one rebind row per action, grouped by category, plus a
+// Reset to Defaults row. The key button fires configuration/rebind:<action>,
+// which puts Python into capture; the host loop then scans for the pressed key
+// and sends configuration/bind:<action>:<KEY>.
+function _cpRenderControlsBody(state, focusables) {
+    const focused = focusables[state.focused] || {};
+    const isRebindFoc = (id) => focused.kind === 'rebind' && focused.target === id;
+    const rows = state.controls || [];
+    let html = '';
+    let lastCat = null;
+    for (let i = 0; i < rows.length; ++i) {
+        const c = rows[i];
+        if (c.category !== lastCat) {
+            if (lastCat !== null) html += '<hr class="cp-divider">';
+            html += '<div class="cp-group-header">' + escapeHtmlCP(c.category) + '</div>';
+            lastCat = c.category;
+        }
+        const capturing = state.capturing_action === c.id;
+        const keyTxt = capturing ? '…' : (c.key || '—');
+        html += '<div class="cp-row' + (isRebindFoc(c.id) ? ' cp-focused' : '') + '">'
+              +     '<span class="cp-label">' + escapeHtmlCP(c.label) + '</span>'
+              +     '<button class="cp-toggle cp-row__key' + (capturing ? ' cp-toggle--on' : '') + '"'
+              +        ' onclick="dauntlessEvent(\'configuration/rebind:' + c.id + '\')">'
+              +       escapeHtmlCP(keyTxt)
+              +     '</button>'
+              + '</div>';
+    }
+    const isResetFoc = focused.kind === 'ctrl' && focused.target === 'controls_reset';
+    html += '<hr class="cp-divider">';
+    html += '<div class="cp-row' + (isResetFoc ? ' cp-focused' : '') + '">'
+          +     '<span class="cp-label">Reset to Defaults</span>'
+          +     '<button class="cp-toggle"'
+          +        ' onclick="dauntlessEvent(\'configuration/controls_reset\')">Reset</button>'
+          + '</div>';
+    return html;
+}
+
+// "Press a key…" capture overlay, created/removed on demand so we don't have to
+// reserve a slot in hello.html. Shown whenever Python is mid-capture.
+function _cpUpdateCaptureOverlay(state) {
+    const root = document.getElementById('configuration-panel');
+    if (!root) return;
+    let ov = document.getElementById('cp-capture-overlay');
+    if (!state || !state.capturing_action) {
+        if (ov) ov.remove();
+        return;
+    }
+    if (!ov) {
+        ov = document.createElement('div');
+        ov.id = 'cp-capture-overlay';
+        ov.className = 'cp-capture-modal';
+        root.appendChild(ov);
+    }
+    ov.innerHTML =
+        '<div class="cp-capture-box">'
+      +   '<div class="cp-capture-title">Press a key for '
+      +       escapeHtmlCP(state.capturing_label || '') + '</div>'
+      +   '<div class="cp-capture-hint">Esc to cancel</div>'
+      +   (state.controls_message
+            ? '<div class="cp-capture-msg">' + escapeHtmlCP(state.controls_message) + '</div>'
+            : '')
+      + '</div>';
+}
+
 function setConfigurationPanel(state) {
     const root = document.getElementById('configuration-panel');
     if (!root) return;
     if (!state || state.visible !== true) {
+        _cpUpdateCaptureOverlay(null);
         root.style.display = 'none';
         return;
     }
@@ -287,9 +355,12 @@ function setConfigurationPanel(state) {
             body.innerHTML = _cpRenderGraphicsBody(state, focusables);
         } else if (state.selected_tab === 'gameplay') {
             body.innerHTML = _cpRenderGameplayBody(state, focusables);
+        } else if (state.selected_tab === 'controls') {
+            body.innerHTML = _cpRenderControlsBody(state, focusables);
         } else {
             body.innerHTML = '';
         }
     }
+    _cpUpdateCaptureOverlay(state);
     root.style.display = 'flex';
 }
