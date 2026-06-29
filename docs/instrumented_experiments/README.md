@@ -1,10 +1,25 @@
 # Instrumented experiments
 
 Per-question runbooks for instrumentation we want to carry out *inside the
-running BC game* (stbc.exe with our `tools/appc_logger.py`-style snippet
-appended to `App.py`). Each experiment is a self-contained markdown file
+running BC game* (stbc.exe). Each experiment is a self-contained markdown file
 that a fresh Claude session can pick up, run on a Windows machine with BC
 installed, and analyse without re-deriving the setup from scratch.
+
+## Two instrumentation approaches
+
+- **Approach 1 — `App.py` snippet + `SaveConfigFile`.** Append a
+  `tools/appc_logger.py`-style snippet to `App.py`; it can only hook
+  `GetGameTime` and dump downsampled rows to a `.cfg`. Blind, statistical, and
+  the only write path that works from inside the snippet. Older experiments use
+  this.
+- **Approach 2 — the game's Python dev console.** Drive the *same embedded
+  Python 1.5* interactively from BC's dev console: live read-back of return
+  values and **deterministic, scripted** state setup (call `AddDamage`/setters
+  directly instead of flying-and-firing). Far cleaner for anything that can be
+  driven by direct API calls. The Python-1.5 syntax constraints below still
+  apply. See
+  [2026-06-29-weapon-exchange-console-probe.md](2026-06-29-weapon-exchange-console-probe.md)
+  for the first approach-2 runbook.
 
 ## Convention
 
@@ -58,8 +73,11 @@ Status meanings:
 
 | File | Status | Topic |
 |------|--------|-------|
+| [2026-06-29-weapon-exchange-console-probe.md](2026-06-29-weapon-exchange-console-probe.md) | PENDING | **#1 question** — what curve converts range→damage, and how does a hit split across shield/subsystem/hull? (+ charge unit). Uses **approach 2** (dev console); subsumes the two combat experiments below. |
 | [2026-05-12-system-scale-investigation.md](2026-05-12-system-scale-investigation.md) | PENDING | What unit/scale convention does BC's C++ engine use for ships vs planets vs suns? |
 | [2026-05-26-radar-range-calibration.md](2026-05-26-radar-range-calibration.md) | PENDING | What world-space radius does the bottom-left radar disc represent in stock BC? |
+| [2026-05-15-damage-routing-investigation.md](2026-05-15-damage-routing-investigation.md) | PENDING | (subsumed by the console probe above) Damage falloff + shield/subsystem/hull routing via App.py-snippet fly-and-fire. |
+| [2026-05-15-phaser-charge-dynamics.md](2026-05-15-phaser-charge-dynamics.md) | PENDING | (subsumed by the console probe above) Phaser discharge/recharge rates, units, thresholds via App.py-snippet sampling. |
 
 ## Constraints inherited from `CLAUDE.md`
 
