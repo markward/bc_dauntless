@@ -1,0 +1,119 @@
+/* AI Inspector overlay (developer-only).
+   Reuses the cp-* modal chrome from configuration_panel.css for the header/
+   footer/backdrop; this file adds the AI-tree-specific styling.
+
+   Visual language matches the cp-* palette:
+   - "Antonio" display font, maroon→orange header
+   - dark near-black body, status color coding for ACTIVE/DONE/DORMANT/INVALID
+   Modeled on BC's AIActiveLogView.py socket monitor. */
+
+#ai-inspector-panel {
+    /* Hidden until setAIInspector({visible:true}) sets display:flex. The
+       .dev-only class keeps it out of production builds entirely. */
+    display: none;
+}
+
+#ai-inspector-panel .cp-modal {
+    /* Roomier than the config modal — AI trees are tall. */
+    max-width: 720px;
+    width: 80vw;
+}
+
+#ai-inspector-body {
+    overflow-y: auto;
+    max-height: 70vh;
+    font-family: "Consolas", "Menlo", monospace;
+    font-size: 13px;
+    color: #ddd;
+    padding: 8px 12px;
+}
+
+.ai-empty,
+.ai-ship__noai {
+    color: #888;
+    font-style: italic;
+    padding: 4px 0;
+}
+
+.ai-ship {
+    margin-bottom: 14px;
+}
+
+.ai-ship__name {
+    font-family: "Antonio", sans-serif;
+    text-transform: uppercase;
+    color: #ffd;
+    border-bottom: 1px solid #553;
+    padding-bottom: 2px;
+    margin-bottom: 4px;
+    letter-spacing: 0.05em;
+}
+
+.ai-tree {
+    list-style: none;
+    margin: 0;
+    padding-left: 16px;
+    border-left: 1px dotted #444;
+}
+
+.ai-tree--root {
+    border-left: none;
+    padding-left: 0;
+}
+
+.ai-node {
+    margin: 1px 0;
+}
+
+.ai-node__row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.ai-node__name {
+    color: #fff;
+    font-weight: bold;
+}
+
+.ai-node__type {
+    color: #8ab;
+}
+
+.ai-node__status {
+    font-weight: bold;
+    font-size: 11px;
+    padding: 0 4px;
+    border-radius: 2px;
+}
+
+.ai-status--active  { color: #6f6; }
+.ai-status--done    { color: #888; }
+.ai-status--dormant { color: #cb6; }
+.ai-status--invalid { color: #f66; }
+.ai-status--other   { color: #aaa; }
+
+.ai-node__focus {
+    color: #fc6;
+    font-size: 11px;
+}
+
+.ai-node__prio {
+    color: #9af;
+    font-size: 11px;
+}
+
+.ai-node__active {
+    color: #6f6;
+}
+
+.ai-node__detail,
+.ai-node__cond {
+    color: #9a9;
+    font-size: 12px;
+    padding-left: 16px;
+}
+
+.ai-node__cond {
+    color: #c9a;
+}

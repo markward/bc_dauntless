@@ -13,6 +13,7 @@
     <link rel="stylesheet" href="css/configuration_panel.css">
     <link rel="stylesheet" href="css/quick_battle_setup.css">
     <link rel="stylesheet" href="css/ship_property_viewer.css">
+    <link rel="stylesheet" href="css/ai_inspector.css">
     <link rel="stylesheet" href="css/reticle_text.css">
     <link rel="stylesheet" href="css/info_box.css">
 </head>
@@ -91,6 +92,28 @@
           <button class="cp-done-button"
                   onclick="dauntlessEvent('developer-options/cancel')">
             Done
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- AI Inspector overlay (developer-only).
+         setAIInspector({visible, ships:[{ship_name, tree|null}, ...]}) drives
+         state; the close button + ESC fire dauntlessEvent('ai-inspector/cancel').
+         The .dev-only class keeps it hidden outside --developer; the panel is
+         also only registered with the PanelRegistry under --developer (W4.T2).
+         Reuses the cp-* modal CSS (configuration_panel.css); AI-tree specifics
+         live in css/ai_inspector.css. Modeled on BC's AIActiveLogView.py. -->
+    <section id="ai-inspector-panel" class="dev-only">
+      <div class="cp-modal">
+        <div class="cp-header">AI Inspector</div>
+        <div class="cp-content">
+          <div class="cp-body" id="ai-inspector-body"></div>
+        </div>
+        <div class="cp-footer">
+          <button class="cp-done-button"
+                  onclick="dauntlessEvent('ai-inspector/cancel')">
+            Close
           </button>
         </div>
       </div>
@@ -333,6 +356,7 @@
     <script src="js/developer_options.js"></script>
     <script src="js/setting_course_panel.js"></script>
     <script src="js/ship_property_viewer.js"></script>
+    <script src="js/ai_inspector.js"></script>
     <script src="js/info_box.js"></script>
 </body>
 </html>
