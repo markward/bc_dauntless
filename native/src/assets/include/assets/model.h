@@ -3,6 +3,7 @@
 
 #include <filesystem>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -50,6 +51,17 @@ struct Model {
     /// discharges, wake). Empty for models with no meshes. ~negligible memory.
     std::vector<glm::vec3>        surface_points;
     std::filesystem::path         source;
+
+    /// Index of the first grafted HEAD mesh in `meshes` (-1 if none). Head
+    /// meshes are appended last by compose_officer_model, so the head set is
+    /// [head_mesh_begin, meshes.size()). Used by the lip-sync face sink to
+    /// blend only the head meshes' base texture.
+    int                           head_mesh_begin = -1;
+    /// Officer FACE-texture set: slot name ("a","e","u","blink1","blink2",
+    /// "eyesclosed") -> index into `textures`. Populated by
+    /// compose_officer_model from the character's facial images; empty for
+    /// non-officer models. "neutral" is implicit (the head's own base texture).
+    std::unordered_map<std::string, int> face_textures;
 };
 
 }  // namespace assets

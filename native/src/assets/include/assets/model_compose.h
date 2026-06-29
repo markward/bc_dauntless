@@ -20,7 +20,9 @@
 
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -108,11 +110,17 @@ bool set_base_texture(Model& model, std::span<const int> mesh_indices,
 /// default; a missing/unreadable path logs a warning and leaves the default.
 /// The body override targets every material on the body's own (pre-graft)
 /// meshes; the head override targets only the grafted head meshes.
+/// `face_images` (optional): per-officer lip-sync face textures, slot name
+/// ("a","e","u","blink1","blink2","eyesclosed") -> .tga path. Each is uploaded
+/// into the composed model and recorded in Model::face_textures; missing/bad
+/// images are warned and skipped. Also sets Model::head_mesh_begin. Empty =>
+/// no face textures (lip-sync simply no-ops for that officer).
 Model compose_officer_model(
     const std::filesystem::path& body_nif,
     const std::filesystem::path& body_tex,
     const std::filesystem::path& head_nif,
     const std::filesystem::path& head_tex,
-    std::string_view attach_bone);
+    std::string_view attach_bone,
+    const std::map<std::string, std::filesystem::path>& face_images = {});
 
 }  // namespace assets

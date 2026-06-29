@@ -91,7 +91,11 @@ void draw_mesh(const assets::Model& model,
                double wall_time,
                GLuint base_override,
                float vs_brightness = 1.0f,
-               float vs_flash = 0.0f) {
+               float vs_flash = 0.0f,
+               bool face_blend = false,
+               GLuint face_a = 0,
+               GLuint face_b = 0,
+               float face_mix = 0.0f) {
     shader.set_mat4("u_model", world);
     shader.set_vec3("u_emissive", mat.emissive);
     // Alpha test only fires when the material carries an NiAlphaProperty;
@@ -134,8 +138,20 @@ void draw_mesh(const assets::Model& model,
     // Warp flash only on the viewscreen feed; 0 everywhere else.
     shader.set_float("u_viewscreen_flash",
                      base_override != 0 ? vs_flash : 0.0f);
+    // Officer lip-sync face blend (set every draw so it never sticks).
+    shader.set_int("u_face_blend", face_blend ? 1 : 0);
+    if (face_blend) shader.set_float("u_face_mix", face_mix);
     glActiveTexture(GL_TEXTURE0);
-    if (base_override != 0) {
+    if (face_blend) {
+        // unit0 = face_tex_a (or the head's own base texture when 0 = neutral);
+        // unit2 = face_tex_b (or the same as unit0). The frag lerps by u_face_mix.
+        const GLuint a = face_a ? face_a
+            : (base_tex >= 0 ? model.textures[base_tex].id() : white_fallback);
+        const GLuint b = face_b ? face_b : a;
+        glBindTexture(GL_TEXTURE_2D, a);
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, b);
+    } else if (base_override != 0) {
         // Viewscreen RTT feed: ignore the NIF base texture and draw the
         // offscreen scene full-bright (BC's emissive=(1,1,1) screen
         // convention -> FragColor = feed, unaffected by bridge ambient).
@@ -246,6 +262,7 @@ void BridgePass::render(const scenegraph::World& world,
     skin_shader.set_vec3("u_ambient", lighting.ambient);
     skin_shader.set_int("u_base_color", 0);
     skin_shader.set_int("u_dark_map", 1);
+    skin_shader.set_int("u_face_b", 2);  // lip-sync second face texture
     skin_shader.set_float("u_alpha_test_threshold", 0.5f);
 
     world.for_each_visible_in_pass(pass,
@@ -267,7 +284,15 @@ void BridgePass::render(const scenegraph::World& world,
                     const auto& mesh = m->meshes[mesh_idx];
                     const auto& mat = (mesh.material_index() >= 0
                         ? m->materials[mesh.material_index()] : assets::Material{});
-                    draw_mesh(*m, mesh, mat, skin_shader, inst.world, white, t, 0u);
+                    // Lip-sync: blend the head meshes' face texture when this
+                    // officer has an active face override. Body meshes and
+                    // non-speaking officers take the byte-identical normal path.
+                    const bool is_head = m->head_mesh_begin >= 0
+                                         && mesh_idx >= m->head_mesh_begin;
+                    const bool face = inst.face_active && is_head;
+                    draw_mesh(*m, mesh, mat, skin_shader, inst.world, white, t, 0u,
+                              1.0f, 0.0f, face, inst.face_tex_a, inst.face_tex_b,
+                              inst.face_mix);
                 }
             }
         });

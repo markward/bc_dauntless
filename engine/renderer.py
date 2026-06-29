@@ -402,14 +402,27 @@ def set_comm_set_id(iid: "InstanceId", set_id: int) -> None:
 
 def assemble_officer(body_nif: str, head_nif: str,
                      body_tex=None, head_tex=None,
-                     placement_nif=None, sample_at_start: bool = False) -> int:
+                     placement_nif=None, sample_at_start: bool = False,
+                     face_images=None) -> int:
     """SP3: compose a bridge officer from a body NIF + head NIF (head grafted
     onto the body's 'Bip01 Head' bone), overriding the body/head Base textures,
     and load placement_nif's clip into the composed model's animations[0].
     Returns a ModelHandle. The caller plays the clip via set_instance_animation.
+
+    face_images (optional): {slot: tga_path} lip-sync face textures, slots
+    'a'/'e'/'u'/'blink1'/'blink2'/'eyesclosed'; uploaded for set_officer_face.
     """
     return _h.assemble_officer(body_nif, head_nif, body_tex, head_tex,
-                               placement_nif, sample_at_start)
+                               placement_nif, sample_at_start,
+                               face_images or {})
+
+
+def set_officer_face(iid: InstanceId, slot_a: str, slot_b: str, mix: float) -> None:
+    """Lip-sync: blend an officer's head face texture between two slots by mix.
+    Slots: 'neutral','a','e','u','blink1','blink2','eyesclosed'. No-op without
+    an engine/renderer (hasattr-guarded), mirroring the other r.* wrappers."""
+    if hasattr(_h, "set_officer_face"):
+        _h.set_officer_face(iid, slot_a, slot_b, float(mix))
 
 
 def load_instance_clip(iid: InstanceId, nif_path: str) -> int:

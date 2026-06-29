@@ -84,6 +84,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <map>
 #include <fstream>
 #include <iterator>
 #include <memory>
@@ -1070,6 +1071,30 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("id"), py::arg("matrices"),
           "Set an instance's skinning palette (list of column-major mat4 as "
           "16 floats). Empty list restores the model's bind pose.");
+    m.def("set_officer_face",
+          [](scenegraph::InstanceId id, const std::string& slot_a,
+             const std::string& slot_b, float mix) {
+              scenegraph::Instance* in = g_world.get(id);
+              if (!in) return;
+              const assets::Model* m = resolve_model(in->model_handle);
+              if (!m) return;
+              // Resolve a slot name to a GL texture id. "neutral" (or any
+              // unknown slot) -> 0, which the renderer falls back to the head's
+              // own base texture for.
+              auto gid = [&](const std::string& slot) -> std::uint32_t {
+                  if (slot == "neutral") return 0u;
+                  auto it = m->face_textures.find(slot);
+                  return it != m->face_textures.end()
+                      ? m->textures[static_cast<std::size_t>(it->second)].id()
+                      : 0u;
+              };
+              g_world.set_officer_face(id, gid(slot_a), gid(slot_b), mix);
+          },
+          py::arg("id"), py::arg("slot_a"), py::arg("slot_b"), py::arg("mix"),
+          "Lip-sync: blend an officer instance's head face texture between two "
+          "slots ('neutral','a','e','u','blink1','blink2','eyesclosed') by mix "
+          "in [0,1]. 'neutral' = the head's own base texture. No-op for a bad "
+          "id or a non-officer model.");
     m.def("set_instance_animation",
           [](scenegraph::InstanceId id, int clip_index, bool loop,
              bool sample_at_start) {
@@ -1389,7 +1414,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("assemble_officer",
           [](const std::string& body_nif, const std::string& head_nif,
              const py::object& body_tex, const py::object& head_tex,
-             const py::object& placement_nif, bool sample_at_start)
+             const py::object& placement_nif, bool sample_at_start,
+             const py::dict& face_images)
               -> scenegraph::ModelHandle {
               if (!g_window) {
                   throw std::runtime_error(
@@ -1402,10 +1428,18 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   return std::filesystem::path(o.cast<std::string>());
               };
 
+              // Lip-sync face textures: {slot: path}. None values skipped.
+              std::map<std::string, std::filesystem::path> faces;
+              for (auto item : face_images) {
+                  if (item.second.is_none()) continue;
+                  faces[item.first.cast<std::string>()] =
+                      std::filesystem::path(item.second.cast<std::string>());
+              }
+
               assets::Model composed = assets::compose_officer_model(
                   body_nif, as_path(body_tex),
                   head_nif, as_path(head_tex),
-                  "Bip01 Head");
+                  "Bip01 Head", faces);
 
               // SP2: keep the skeleton; load the placement clip so the
               // per-frame animation updater can pose it through the GPU bone
@@ -1441,6 +1475,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("body_tex") = py::none(), py::arg("head_tex") = py::none(),
           py::arg("placement_nif") = py::none(),
           py::arg("sample_at_start") = false,
+          py::arg("face_images") = py::dict(),
           "Developer/SP3: compose a bridge officer from a body NIF + head NIF, "
           "grafting the head onto the body's 'Bip01 Head' node. "
           "body_tex/head_tex are per-officer skin .tga FILE paths (str) that "

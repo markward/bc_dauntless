@@ -8,7 +8,7 @@ class _FakeRenderer:
         self.rest_calls = []
         self.anim_calls = []
 
-    def assemble_officer(self, *a):
+    def assemble_officer(self, *a, **k):  # **k absorbs face_images
         return 1                      # ModelHandle
     def create_bridge_instance(self, model):
         return 42                     # InstanceId

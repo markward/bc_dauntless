@@ -21,6 +21,8 @@ public:
     void set_comm_set_id(InstanceId id, std::uint32_t set_id);
     void set_rim_eligible(InstanceId id, bool eligible);
     void set_emissive_scale(InstanceId id, float scale);
+    void set_officer_face(InstanceId id, std::uint32_t tex_a,
+                          std::uint32_t tex_b, float mix);
 
     bool is_valid(InstanceId id) const noexcept;
     Instance* get(InstanceId id) noexcept;
