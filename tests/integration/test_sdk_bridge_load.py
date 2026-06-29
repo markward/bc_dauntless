@@ -105,14 +105,30 @@ def test_sdk_load_runs_end_to_end_and_populates_crew(sdk_loadbridge):
               if bridge.GetObject(n) is not None]
     assert len(extras) == 3
 
-    # The SDK-created maincamera carries the captain pose; ConfigureCharacters'
-    # SetTranslateXYZ override won (z=61.934944, not the 50.0 from create), and
-    # the zoom params are the GalaxyBridge values. These real-state checks prove
-    # the SDK bridge-load path ran end-to-end.
+    # The SDK-created maincamera carries the captain pose and the pushed
+    # GalaxyBridgeCaptain camera MODE. ConfigureCharacters' SetTranslateXYZ
+    # override won on .position (z=61.934944 — the popped-mode/cutscene anchor),
+    # but the SEATED captain eye is the mode's BasePosition (z=50.0 from
+    # GetBaseCameraPosition). Both, plus the zoom params, prove the SDK
+    # bridge-load path ran end-to-end.
     cam = bridge.GetCamera("maincamera")
     assert cam is not None
     assert cam.position == (0.683736, 86.978439, 61.934944)
+    assert cam.base_position == (0.683736, 86.978439, 50.0)
     assert (cam.GetMinZoom(), cam.GetMaxZoom(), cam.GetZoomTime()) == (0.64, 1.0, 0.375)
+
+    # GalaxyBridge.CreateBridgeModel pushed the GalaxyBridgeCaptain
+    # PlaceByDirection mode (CameraModes.py): its BasePosition is the seated eye
+    # (z=50, NOT the .position override) and its Movement/angles drive the
+    # turn-away nudge. This is what the host harvests to drive _BridgeCamera.
+    mode = cam.GetCurrentCameraMode()
+    assert mode is not None
+    base = mode.GetAttrPoint("BasePosition")
+    assert (base.x, base.y, base.z) == (0.683736, 86.978439, 50.0)
+    mov = mode.GetAttrPoint("Movement")
+    assert (mov.x, mov.y, mov.z) == (0.0, -15.0, 15.0)
+    assert mode.GetAttrFloat("StartMoveAngle") == 1.25
+    assert mode.GetAttrFloat("EndMoveAngle") == 2.5
 
     # The SDK-created bridge object carries the bridge NIF for the host to
     # realize (mesh selection is config-driven, not hardcoded).

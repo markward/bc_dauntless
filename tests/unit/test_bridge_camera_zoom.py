@@ -10,10 +10,13 @@ _SAVED = {}
 
 
 def setup_function(_):
-    for k in ("_BRIDGE_CAMERA_EYE", "_BRIDGE_ZOOM_MIN", "_BRIDGE_ZOOM_MAX",
-              "_BRIDGE_ZOOM_TIME"):
+    for k in ("_BRIDGE_CAMERA_EYE", "_BRIDGE_CAMERA_MOVE", "_BRIDGE_ZOOM_MIN",
+              "_BRIDGE_ZOOM_MAX", "_BRIDGE_ZOOM_TIME"):
         _SAVED[k] = getattr(hl, k)
     hl._BRIDGE_CAMERA_EYE = (0.0, 0.0, 0.0)
+    # No PlaceByDirection raise in these fixed-eye zoom tests (the raise has its
+    # own coverage in tests/host/test_bridge_camera.py).
+    hl._BRIDGE_CAMERA_MOVE = None
     hl._BRIDGE_ZOOM_MIN = 0.64
     hl._BRIDGE_ZOOM_MAX = 1.0
     hl._BRIDGE_ZOOM_TIME = 0.375

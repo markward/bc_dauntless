@@ -984,6 +984,14 @@ OFFICER_TRANSFORM = list(IDENTITY_MAT4)
 # The zoom params are FOV multipliers + seconds consumed by _BridgeCamera's
 # zoom state machine.
 _BRIDGE_CAMERA_EYE: tuple = (0.683736, 86.978439, 50.0)
+# Captain camera-mode "place by direction" movement, harvested from the SDK
+# GalaxyBridgeCaptain mode (CameraModes.py): ((mx, my, mz), start_rad, end_rad)
+# or None. Applied by _eye_offset as a gradual lift as the view turns off
+# bridge-forward: the eye eases out (forward -Y + up +Z) over the SDK angle band
+# — matching the original's rise on turn. None → no movement (e.g. Sovereign).
+_BRIDGE_CAMERA_MOVE: tuple = None
+# Feel knob over the SDK movement magnitude (SDK = 1.0). Tune to taste.
+_BRIDGE_CAMERA_MOVE_SCALE: float = 1.0
 _BRIDGE_ZOOM_MIN: float = 1.0     # SDK GetMinZoom — zoomed-in FOV factor
 _BRIDGE_ZOOM_MAX: float = 1.0     # SDK GetMaxZoom — captain FOV factor
 _BRIDGE_ZOOM_TIME: float = 0.0    # SDK GetZoomTime — ease duration (seconds)
@@ -1706,7 +1714,7 @@ class _BridgeCamera:
     # PoC starting values; tuned by feel during visual verification.
     NEAR              = 1.0
     FAR               = 800.0
-    FOV_Y_RAD         = _math.radians(60.0)
+    FOV_Y_RAD         = _math.radians(45.0)   # tuned to the original bridge feel
     MOUSE_SENSITIVITY = 0.0015          # rad per pixel
     PITCH_LIMIT_RAD   = _math.radians(85)
 
@@ -1732,9 +1740,37 @@ class _BridgeCamera:
         self._anim_pose = None
 
     def _eye_offset(self) -> tuple:
-        """Captain's-chair eye, taken from the SDK maincamera at mission load
-        (module global _BRIDGE_CAMERA_EYE), config-driven for every bridge."""
-        return _BRIDGE_CAMERA_EYE
+        """Captain's-chair eye for the current horizontal facing. Base is the
+        SDK GalaxyBridgeCaptain mode's BasePosition (= GetBaseCameraPosition,
+        z=50), harvested at mission load into _BRIDGE_CAMERA_EYE.
+
+        Applies the SDK PlaceByDirection Movement as a gradual lift as the view
+        turns away from forward: eye = base + Movement * frac, where frac
+        smoothsteps over [StartMoveAngle, EndMoveAngle] by the horizontal angle
+        of the look direction off bridge-forward (-Y), scaled by the feel knob
+        _BRIDGE_CAMERA_MOVE_SCALE. Facing the viewscreen (angle 0) → no lift;
+        turning toward the rear eases the eye up (+Z) and forward (-Y). Matches
+        the original's gradual rise on turn. None movement → static base."""
+        base = _BRIDGE_CAMERA_EYE
+        move = _BRIDGE_CAMERA_MOVE
+        if move is None:
+            return base
+        (mx, my, mz), start, end = move
+        # Horizontal angle from forward: forward (toward viewscreen) is
+        # bridge-local -Y; our forward at yaw is (-sin yaw, cos yaw, 0), so the
+        # deviation from facing-forward is |wrap_to_pi(yaw - pi)| in [0, pi]
+        # (= 0 at yaw=pi facing the viewscreen, = pi at yaw=0 facing the rear).
+        horiz = abs(self.yaw_rad % (2.0 * _math.pi) - _math.pi)
+        if horiz <= start:
+            band = 0.0
+        elif end > start and horiz >= end:
+            band = 1.0
+        elif end > start:
+            band = 0.5 - 0.5 * _math.cos(_math.pi * (horiz - start) / (end - start))
+        else:
+            band = 1.0 if horiz > start else 0.0
+        frac = band * _BRIDGE_CAMERA_MOVE_SCALE
+        return (base[0] + mx * frac, base[1] + my * frac, base[2] + mz * frac)
 
     @staticmethod
     def _smoothstep(t: float) -> float:
@@ -1783,10 +1819,10 @@ class _BridgeCamera:
 
     def compute_camera(self) -> tuple:
         """Return (eye, target, up, fov_y_rad). Captain view is mouse-look at
-        the SDK eye + base FOV. When an officer is selected the look direction
+        the SDK eye (which lifts gradually as the view turns off-forward, see
+        _eye_offset) + base FOV. When an officer is selected the look direction
         eases toward that officer's world position and the FOV narrows toward
-        FOV_Y_RAD * min_zoom, both over the SDK zoom time. The camera never
-        leaves the chair (eye is fixed)."""
+        FOV_Y_RAD * min_zoom, both over the SDK zoom time."""
         if self._anim_pose is not None:
             eye, target, up = self._anim_pose
             return eye, target, up, self.FOV_Y_RAD * _BRIDGE_ZOOM_MAX
@@ -4170,12 +4206,33 @@ def run(mission_name: Optional[str] = None,
             # still-unimplemented SDK surface is visible.
             # Step 5a: take the captain's-chair eye + zoom params from the SDK
             # maincamera (config-driven; replaces the hardcoded offsets table).
-            global _BRIDGE_CAMERA_EYE, _BRIDGE_ZOOM_MIN, _BRIDGE_ZOOM_MAX, _BRIDGE_ZOOM_TIME
+            global _BRIDGE_CAMERA_EYE, _BRIDGE_CAMERA_MOVE
+            global _BRIDGE_ZOOM_MIN, _BRIDGE_ZOOM_MAX, _BRIDGE_ZOOM_TIME
             import App as _App
             _bridge = _App.g_kSetManager.GetSet("bridge")
             _cam = _bridge.GetCamera("maincamera") if _bridge is not None else None
             if _cam is not None and hasattr(_cam, "position"):
-                _BRIDGE_CAMERA_EYE = _cam.position
+                # The seated captain eye is the bridge's pushed camera MODE's
+                # BasePosition, NOT the camera's .position. GalaxyBridge pushes a
+                # PlaceByDirection mode whose BasePosition (= GetBaseCameraPosition,
+                # z=50) is the eye; .position is the ConfigureCharacters override
+                # (z=61.93) used only when the mode is popped (cutscenes).
+                # Sovereign pushes no mode and base_position == .position.
+                _mode = (_cam.GetCurrentCameraMode()
+                         if hasattr(_cam, "GetCurrentCameraMode") else None)
+                _base = _mode.GetAttrPoint("BasePosition") if _mode is not None else None
+                if _base is not None:                  # PlaceByDirection captain mode
+                    _BRIDGE_CAMERA_EYE = (_base.x, _base.y, _base.z)
+                    _mov = _mode.GetAttrPoint("Movement")
+                    if _mov is not None:
+                        _BRIDGE_CAMERA_MOVE = ((_mov.x, _mov.y, _mov.z),
+                                               _mode.GetAttrFloat("StartMoveAngle"),
+                                               _mode.GetAttrFloat("EndMoveAngle"))
+                    else:
+                        _BRIDGE_CAMERA_MOVE = None
+                else:                                  # no mode (e.g. Sovereign)
+                    _BRIDGE_CAMERA_EYE = getattr(_cam, "base_position", None) or _cam.position
+                    _BRIDGE_CAMERA_MOVE = None
                 _BRIDGE_ZOOM_MIN = _cam.GetMinZoom()
                 _BRIDGE_ZOOM_MAX = _cam.GetMaxZoom()
                 _BRIDGE_ZOOM_TIME = _cam.GetZoomTime()

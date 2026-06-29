@@ -127,22 +127,33 @@ class ViewScreenObject(_LoudStub):
 
 class ZoomCameraObjectClass(_LoudStub):
     """SDK bridge camera ("maincamera"). Core data is real (captain-chair
-    position, angle-axis orientation, zoom min/max/time); the engine's
-    camera-mode + zoom-transform surface (GetNamedCameraMode, PushCameraMode,
-    Update, ToggleZoom, Zoom, IsZoomed, LookForward, ...) stays a silent
-    _LoudStub no-op — that geometry lived in Appc and is not reconstructed
-    here. The host reads `position` + the zoom getters after LoadBridge.Load to
-    drive _BridgeCamera (see host_loop). Kept a _LoudStub (unlike
-    BridgeObjectClass) precisely because that camera-mode surface is large and
-    not built."""
+    position, angle-axis orientation, zoom min/max/time) plus the captain
+    camera-MODE stack the bridge config pushes.
+
+    Two distinct positions, for two purposes (see CLAUDE.md / camera plan):
+      - `base_position` — the create-time captain base, == the bridge's
+        GetBaseCameraPosition(). It is the BasePosition of the GalaxyBridgeCaptain
+        PlaceByDirection mode and the seated-captain free-look eye. NEVER mutated.
+      - `position` — overridden by ConfigureCharacters() (GalaxyBridge z=61.93)
+        and used only when the captain mode is POPPED (e.g. the E1M1 captain
+        walk-on cutscene). SetTranslateXYZ moves this one.
+
+    The real camera-mode surface (GetNamedCameraMode/PushCameraMode/PopCameraMode/
+    GetCurrentCameraMode) runs the SDK's CameraModes.<name>(self) builder and keeps
+    a mode stack; the host harvests the active mode after LoadBridge.Load to drive
+    _BridgeCamera. The remaining zoom/transform surface (ToggleZoom, Zoom,
+    IsZoomed, LookForward, Update, ...) stays a silent _LoudStub no-op — that
+    geometry lived in Appc and is not reconstructed here."""
     def __init__(self, x, y, z, qw, qx, qy, qz, name):
         self.position = (x, y, z)
+        self.base_position = (x, y, z)   # create-time captain base; never mutated
         self.orientation = (qw, qx, qy, qz)   # angle, axis-x, axis-y, axis-z
         self._name = name
         self._min_zoom = 1.0
         self._max_zoom = 1.0
         self._zoom_time = 0.0
         self._anim_node = None   # lazily created TGAnimNode (kind="camera")
+        self._mode_stack = []    # captain camera-mode stack (PushCameraMode)
 
     def GetAnimNode(self):
         # Real recording node (kind="camera"): the cutscene controller reads
@@ -160,6 +171,57 @@ class ZoomCameraObjectClass(_LoudStub):
     def GetMaxZoom(self):  return self._max_zoom
     def GetZoomTime(self): return self._zoom_time
     def SetTranslateXYZ(self, x, y, z): self.position = (x, y, z)
+
+    # ── Captain camera-mode stack ──────────────────────────────────────────────
+    # Real replacement for the _LoudStub no-ops so the bridge config's
+    # PushCameraMode(GetNamedCameraMode("GalaxyBridgeCaptain")) (GalaxyBridge.py:66)
+    # actually runs the SDK CameraModes.GalaxyBridgeCaptain(self) builder. The host
+    # harvests the active mode's PlaceByDirection attrs after LoadBridge.Load to
+    # drive _BridgeCamera. AddModeHierarchy and the zoom-transform surface stay
+    # _LoudStub no-ops.
+
+    def GetNamedCameraMode(self, name, *args):
+        """Resolve a named camera mode by running CameraModes.<name>(self), the
+        BC convention (the only bridge name used is "GalaxyBridgeCaptain"). The
+        builder calls App.CameraMode_Create + SetAttr*, returning a populated
+        mode object. Returns None when no such builder exists."""
+        try:
+            import CameraModes
+        except ImportError:
+            return None
+        fn = getattr(CameraModes, name, None)
+        if fn is None:
+            return None
+        mode = fn(self)
+        if mode is not None:
+            mode._named = name   # so PopCameraMode(name) can match
+        return mode
+
+    def PushCameraMode(self, mode):
+        if mode is None:
+            return None
+        self._mode_stack.append(mode)
+        return None
+
+    def PopCameraMode(self, mode=None):
+        if not self._mode_stack:
+            return None
+        if mode is None:
+            return self._mode_stack.pop()
+        # Named/object pop: remove the matching mode wherever it sits. `mode` is
+        # either a mode object (compare identity / GetObjID) or a name string
+        # (E1M1 PopCameraMode("GalaxyBridgeCaptain"); match the tagged _named).
+        for i in range(len(self._mode_stack) - 1, -1, -1):
+            entry = self._mode_stack[i]
+            if entry is mode \
+                    or (isinstance(mode, str) and getattr(entry, "_named", None) == mode) \
+                    or (hasattr(mode, "GetObjID") and hasattr(entry, "GetObjID")
+                        and entry.GetObjID() == mode.GetObjID()):
+                return self._mode_stack.pop(i)
+        return None
+
+    def GetCurrentCameraMode(self, *args):
+        return self._mode_stack[-1] if self._mode_stack else None
 
 
 class _NiFrustum:
