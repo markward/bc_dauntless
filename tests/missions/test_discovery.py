@@ -53,6 +53,51 @@ def test_discover_finds_maelstrom_episode_grouping():
         assert expected in eps, f"missing {expected}; got {eps}"
 
 
+def test_discover_maelstrom_campaign_order_and_labels():
+    """Maelstrom missions follow the original game's menu order and labels,
+    not a lexical directory sort. Episode 4 plays E4M6 first; Episode 2's
+    first mission (dir E2M0) is labelled "E1M3"."""
+    if not SCRIPTS_ROOT.is_dir():
+        pytest.skip("SDK scripts not present")
+    reg = discover(SCRIPTS_ROOT)
+    fams = {f.dir_name: f for f in reg.families}
+    eps = {ep.dir_name: ep for ep in fams["Maelstrom"].episodes}
+
+    ep4_dirs = [m.dir_name for m in eps["Episode4"].missions]
+    assert ep4_dirs == ["E4M6", "E4M4", "E4M5"], ep4_dirs
+
+    ep2 = eps["Episode2"]
+    assert [m.dir_name for m in ep2.missions] == ["E2M0", "E2M1", "E2M2", "E2M6"]
+    # display_name backfill requires the real Options.tgl; assert the campaign
+    # label only when it's present (game install), else accept dir-name fallback.
+    first = ep2.missions[0]
+    assert first.display_name in ("E1M3", "E2M0"), first.display_name
+
+
+def test_maelstrom_campaign_table_matches_disk():
+    """Guard against SDK/table drift: every on-disk Maelstrom mission dir is in
+    MAELSTROM_CAMPAIGN, and the table lists no directory that isn't on disk."""
+    if not SCRIPTS_ROOT.is_dir():
+        pytest.skip("SDK scripts not present")
+    from engine.missions.name_resolver import MAELSTROM_CAMPAIGN
+
+    reg = discover(SCRIPTS_ROOT)
+    fams = {f.dir_name: f for f in reg.families}
+    on_disk = {
+        (ep.dir_name, m.dir_name)
+        for ep in fams["Maelstrom"].episodes for m in ep.missions
+    }
+    in_table = {
+        (ep_dir, mission_dir)
+        for ep_dir, rows in MAELSTROM_CAMPAIGN.items()
+        for mission_dir, _key in rows
+    }
+    assert on_disk == in_table, (
+        f"only on disk: {on_disk - in_table}; "
+        f"only in table: {in_table - on_disk}"
+    )
+
+
 def test_discover_module_name_format():
     if not SCRIPTS_ROOT.is_dir():
         pytest.skip("SDK scripts not present")

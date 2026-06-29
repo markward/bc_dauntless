@@ -51,13 +51,27 @@ def test_maelstrom_episode_lookup(fake_tgl):
 
 
 def test_maelstrom_mission_lookup(fake_tgl):
-    fake_tgl["Maelstrom/Maelstrom.tgl"] = TGLFile(strings={
-        "E1M1Title": "Shakedown",
+    # Maelstrom labels come from Options.tgl, keyed via the campaign table:
+    # directory E2M0 displays as Options.tgl["E2M1"] == "E1M3" (the original
+    # game's campaign numbering), and E2M6 displays as Options.tgl["E2M4"].
+    fake_tgl["Options.tgl"] = TGLFile(strings={
+        "E1M1": "E1M1",
+        "E2M1": "E1M3",
+        "E2M4": "E2M3",
     })
     assert resolve_mission(
         "Maelstrom", "Episode1", "E1M1",
         "Maelstrom.Episode1.E1M1.E1M1",
-    ) == "Shakedown"
+    ) == "E1M1"
+    assert resolve_mission(
+        "Maelstrom", "Episode2", "E2M0",
+        "Maelstrom.Episode2.E2M0.E2M0",
+    ) == "E1M3"
+    assert resolve_mission(
+        "Maelstrom", "Episode2", "E2M6",
+        "Maelstrom.Episode2.E2M6.E2M6",
+    ) == "E2M3"
+    # A directory absent from the campaign table falls back to its dir name.
     assert resolve_mission(
         "Maelstrom", "Episode2", "E2M99",
         "Maelstrom.Episode2.E2M99.E2M99",

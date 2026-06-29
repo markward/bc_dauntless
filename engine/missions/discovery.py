@@ -73,14 +73,22 @@ def discover(scripts_root: Path | str) -> MissionRegistry:
             by_family.setdefault(family_name, {}).setdefault(
                 episode_dir, []).append(entry)
 
+    from engine.missions import name_resolver as nr
+
     reg = MissionRegistry()
     for family_name, episodes in by_family.items():
         fam = FamilyEntry(dir_name=family_name)
         for episode_dir, missions in episodes.items():
-            ep = EpisodeEntry(
-                dir_name=episode_dir,
-                missions=sorted(missions, key=lambda m: m.dir_name),
-            )
+            if family_name == "Maelstrom":
+                # Faithful campaign order from the original game's menu table;
+                # dir_name is the tiebreaker for any off-table directory.
+                ordered = sorted(missions, key=lambda m: (
+                    nr.maelstrom_order_index(episode_dir, m.dir_name),
+                    m.dir_name,
+                ))
+            else:
+                ordered = sorted(missions, key=lambda m: m.dir_name)
+            ep = EpisodeEntry(dir_name=episode_dir, missions=ordered)
             fam.episodes.append(ep)
         fam.episodes.sort(key=lambda e: e.dir_name)
         reg.families.append(fam)
