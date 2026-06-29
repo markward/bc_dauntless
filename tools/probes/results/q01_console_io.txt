@@ -1,0 +1,26 @@
+-- python host -------------------------------------------------
+sys.version = 1.5.2 (#0, Jan 17 2002, 03:24:04) [MSC 32 bit (Intel)]
+sys.path = ['.\\Scripts', '.', 'C:\\projects\\open_stbc\\game', 'scripts/Icons']
+sys.stdout type = <type 'StringO'>
+has getvalue = 1
+-- App module surface ------------------------------------------
+App.g_kSystemWrapper = <C TGSystemWrapperClass instance at _99c6b0_p_TGSystemWrapperClass>
+App.g_kUtopiaModule = <C UtopiaModule instance at _97fa00_p_UtopiaModule>
+App.g_kConfigMapping = <C TGConfigMapping instance at _99c860_p_TGConfigMapping>
+App.g_kMusicManager exists = 1
+App.DamageableObject exists = 1
+App.TGPoint3 exists = 1
+-- frame counters ----------------------------------------------
+frame (GetUpdateNumber) = 1561156
+game_time (GetGameTime) = 19.25
+real_time (GetRealTime) = 2247609.75
+-- player ship -------------------------------------------------
+Game_GetCurrentPlayer() = <C ShipClass instance at _c9a9880_p_ShipClass>
+player.GetName() = player
+loc type = <type 'instance'>
+loc x = 145.744888306
+loc y = -89.577583313
+loc z = 0.0
+player.GetTarget() = None
+-- TGPoint3 construction ---------------------------------------
+TGPoint3 ctor FAILED = <type 'string'>: new_TGPoint3 requires exactly 0 arguments; 3 given

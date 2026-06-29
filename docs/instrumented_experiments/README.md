@@ -17,9 +17,8 @@ installed, and analyse without re-deriving the setup from scratch.
   values and **deterministic, scripted** state setup (call `AddDamage`/setters
   directly instead of flying-and-firing). Far cleaner for anything that can be
   driven by direct API calls. The Python-1.5 syntax constraints below still
-  apply. See
-  [2026-06-29-weapon-exchange-console-probe.md](2026-06-29-weapon-exchange-console-probe.md)
-  for the first approach-2 runbook.
+  apply. **Operational details:** [console-probe-workflow.md](console-probe-workflow.md).
+  First runbook: [2026-06-29-weapon-exchange-console-probe.md](2026-06-29-weapon-exchange-console-probe.md).
 
 ## Convention
 
