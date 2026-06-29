@@ -435,6 +435,18 @@ class ShipClass(DamageableObject):
         self._warp_consumed = True
         return 1
 
+    def IsDoingInSystemWarp(self) -> int:
+        """Whether the ship is mid in-system-warp (the SDK
+        ShipClass.IsDoingInSystemWarp query). AvoidObstacles uses this to
+        skip collision steering during a warp, because the warp check does
+        its own clearance (Preprocessors.py:1692-1693).
+
+        Our InSystemWarp model is a stateless teleport, so there is no
+        multi-tick warp animation to observe; this returns the explicit
+        ``_doing_in_system_warp`` flag (default 0). Tests and any future
+        animated-warp pass can set it."""
+        return 1 if self.__dict__.get("_doing_in_system_warp", False) else 0
+
     def StopInSystemWarp(self) -> None:
         """Clear the consumed-warp flag so a fresh warp can fire.
 
