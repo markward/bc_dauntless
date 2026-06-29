@@ -1,0 +1,17 @@
+-- POST pass -- intensity LIGHT (PP_LOW) -----------------------
+d_game_time = 4.75
+intensity_during_run = 0
+-- subsystem deltas (any signal change = damage detected) ------
+CHANGED sensors = d_cond=136.25 d_combined%=0.0170312523842 d_damage=136.25
+CHANGED torpedoes = d_cond=0.0 d_combined%=0.0588541030884 d_damage=0.0
+d_hull = 0.0
+-- face deltas (started at 0) ----------------------------------
+face_0  pre=0.00  post=28.42  delta = -28.416
+face_1  pre=0.00  post=28.42  delta = -28.416
+face_2  pre=0.00  post=28.42  delta = -28.416
+face_3  pre=0.00  post=28.42  delta = -28.416
+face_4  pre=0.00  post=28.42  delta = -28.416
+face_5  pre=0.00  post=28.42  delta = -28.416
+face_delta_sum (negative = regen) = -170.494186401
+-- Q5 finding (LIGHT intensity) --------------------------------
+Q5 LIGHT CONCLUSION = LIGHT INTENSITY -> SUBSYSTEM-ONLY?  d_hull=0.000, total sub=136.250. Inspect data.

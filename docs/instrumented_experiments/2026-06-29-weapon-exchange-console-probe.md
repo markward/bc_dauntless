@@ -1,6 +1,6 @@
 # The #1 question: what BC's C++ actually does to a target when a weapon hits
 
-Status: IN-PROGRESS  (Q1 + Q3 + Q4 closed via q02/q03/q04; Q5-Q7 open; Q8-Q10 deferred to approach 1)
+Status: IN-PROGRESS  (Q1 + Q3 + Q4 + Q5 closed via q02..q05; Q6-Q7 open; Q8-Q10 deferred to approach 1)
 Author: 2026-06-29 session (instrumentation approach 2)
 Created: 2026-06-29
 Closed:  —
@@ -331,12 +331,14 @@ writes nothing to disk unless you used the `SaveConfigFile` fallback in Part A.
 
 ## Findings
 
-Captured 2026-06-29 across four probes:
+Captured 2026-06-29 across six probes:
 
 - [`q01_console_io.txt`](../../tools/probes/results/q01_console_io.txt) — console namespace + API verification
 - [`q02_addamage_falloff.txt`](../../tools/probes/results/q02_addamage_falloff.txt) — `AddDamage` primitive
 - [`q03_weapon_fire_diff.txt`](../../tools/probes/results/q03_weapon_fire_diff.txt) — weapon-fire snapshot diff
 - [`q04_shield_bleedthrough.txt`](../../tools/probes/results/q04_shield_bleedthrough.txt) — shield routing model
+- [`q05a_face_zero_full.txt`](../../tools/probes/results/q05a_face_zero_full.txt) — face-at-zero routing, FULL intensity
+- [`q05b_face_zero_light.txt`](../../tools/probes/results/q05b_face_zero_light.txt) — face-at-zero routing, LIGHT intensity
 
 ### Headline: two distinct damage primitives
 
@@ -355,14 +357,25 @@ This explains why `engine/appc/combat.py:apply_hit`'s strict-cascade model is co
 - **Q2 — DEFERRED.** `AddDamage` takes a scene NODE, not a TGPoint3 (`Effects.py:691` literally comments *"INVALID NiAVObject wrapper"*). Position can't be varied by mutating coordinates; would need to iterate sub-nodes or use `target.GetRandomPointOnModel()` for statistical sampling. Low priority — AddDamage is the explosion path, not the weapon path.
 - **Q3 ✓** — AddDamage bypasses shields (q02: 1000 hull / 0 shield across 6 radii). Weapon-fire path routes through shields (q03: 715 shield / 180 hull over a 35 sec fire window).
 - **Q4 ✓** — **STRICT CASCADE, no bleed-through fraction.** With every face reset to max and weapons fired for ~9 sec, hull damage was exactly **0.0**; all 136.6 of delivered damage stayed on the faces. q03's 80/20 split was therefore a face briefly depleting mid-window, not a constant bleed-through.
-- **Q5 — OPEN.** Next probe: `sh.SetCurShields(face, 0.0)`, fire, observe hull vs locked-subsystem split.
+- **Q5 ✓** — **The phaser intensity setting is load-bearing for routing.** With all shield faces at 0 and *no* deliberate subsystem lock (just targeting the ship body), routing depends entirely on `PhaserSystem.GetPowerLevel()`:
+
+  | Intensity | hull Δ | top-subsystem Δ | Split |
+  |---|---|---|---|
+  | FULL  (PP_HIGH = 2) | 375 | sensors -342 | ~52% hull / 48% sub |
+  | LIGHT (PP_LOW  = 0) | **0** | sensors -136 | **0% hull / 100% sub** |
+
+  Two structural findings under this:
+  - Without a deliberate lock, all subsystem damage went to **sensors** on this target (Galaxy-1). Whether that's a fixed routing default or "closest subsystem to hit point" is the next thing to disentangle (q06/q07 with deliberate locks will tell us).
+  - The damage signal is on **`GetDamage()` (parent counter)** and **`GetCombinedConditionPercentage()` (child rollup)**, NOT on `GetCondition()` of the top-level named subsystems alone. q05 v1 missed this and reported all-zero subsystem damage; the walked-children probe sees it correctly.
 - **Q6 — OPEN.** Next probe: `player.SetTargetSubsystem(...)` + shields-up fire, look for sub-condition delta through the shield.
-- **Q7 — OPEN.** Combine Q5's face-at-zero setup with Q6's subsystem lock; measure hull-vs-subsystem ratio.
+- **Q7 — OPEN.** Combine Q5's face-at-zero setup with Q6's subsystem lock; does locking change *which* subsystem takes damage (vs the sensors default), or the hull-vs-subsystem split?
 - **Q8 / Q9 / Q10 — DEFERRED to approach 1.** q03 proved snapshot-diff can't measure discharge: the bank fully recharges between PRE and POST snapshots (`d_charge = 0` over 35 sec). Per-tick polling via an `App.py` snippet (see `tools/charge_logger.py` for the pattern) is the right tool.
 
 ### Bonus findings (not in original question set)
 
 - **`AddDamage` radius is a *splash* parameter, not a falloff axis at the centre.** Same 1000 damage delivered at r=0.1 and r=120 when hit-node = ship centre. Radius likely matters only when the hit point is offset from centre and the splash sphere intersects different parts of the hull — not yet measured.
 - **Weapons deliver non-zero damage beyond `MaxDamageDistance`.** q04 fired at range 117 GU (≈ 2× `MaxDamageDistance = 60 GU`) and still delivered ~15 DPS to shields. Either the linear `(1 - d/R)` falloff isn't hard-capped, or torpedoes (longer range envelope) contributed. A dedicated **range-falloff probe** is the highest-value remaining follow-up — it directly verifies / replaces the curve in `engine/host_loop.py:_phaser_damage_for_tick`.
+- **`ShipSubsystem.SetCondition(0)` cleanly disables target engines / weapons** (`setup_disable_target.py`). Verified on Galaxy-1 and Marauder-1; impulse, warp, phasers, torpedoes, pulse all zero on demand. Stays disabled until the target dies or scene resets. This is the test-control primitive we needed for all subsequent A/B probes.
+- **Shield face regen rate is ~6.7 pts/sec per face** (Galaxy-1, observed over 4.25 / 4.75 sec windows in q05a/q05b). Means any "face-at-zero" experiment has a shrinking window the moment you unpause.
 </content>
 </invoke>

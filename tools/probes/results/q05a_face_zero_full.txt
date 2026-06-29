@@ -1,0 +1,17 @@
+-- POST pass -- intensity FULL (PP_HIGH) -----------------------
+d_game_time = 4.25
+intensity_during_run = 2
+-- subsystem deltas (any signal change = damage detected) ------
+CHANGED sensors = d_cond=342.0 d_combined%=0.0427500009537 d_damage=342.0
+CHANGED torpedoes = d_cond=0.0 d_combined%=0.103402793407 d_damage=0.0
+d_hull = 375.0
+-- face deltas (started at 0) ----------------------------------
+face_0  pre=0.00  post=28.44  delta = -28.438
+face_1  pre=0.00  post=28.44  delta = -28.438
+face_2  pre=0.00  post=28.44  delta = -28.438
+face_3  pre=0.00  post=28.44  delta = -28.438
+face_4  pre=0.00  post=28.44  delta = -28.438
+face_5  pre=0.00  post=28.44  delta = -28.438
+face_delta_sum (negative = regen) = -170.626846313
+-- Q5 finding (FULL intensity) ---------------------------------
+Q5 FULL CONCLUSION = FULL INTENSITY -> HULL+SUBSYSTEMS SPLIT.  hull=375.000 (52%), sub total=342.000 (48%).  Top subsystem: sensors (-342.000).
