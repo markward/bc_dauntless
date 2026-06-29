@@ -24,12 +24,22 @@ uniform float u_viewscreen_brightness;
 // geometry (byte-identical).
 uniform float u_viewscreen_flash;
 
+// Officer lip-sync face blend (default off). When u_face_blend != 0 the head
+// mesh samples u_base_color (= face_tex_a) and u_face_b (= face_tex_b) and
+// lerps them by u_face_mix, so the mouth cross-fades between viseme textures.
+// 0 for all other geometry (byte-identical).
+uniform sampler2D u_face_b;
+uniform float u_face_mix;
+uniform int u_face_blend;
+
 out vec4 FragColor;
 
 void main() {
     vec2 base_uv = v_uv;
     if (u_flip_v != 0) base_uv.y = 1.0 - base_uv.y;
     vec4 base = texture(u_base_color, base_uv);
+    if (u_face_blend != 0)
+        base = mix(base, texture(u_face_b, base_uv), clamp(u_face_mix, 0.0, 1.0));
     if (base.a < u_alpha_test_threshold) discard;
     vec3 lm = texture(u_dark_map, v_uv1).rgb;
     // Per-material emissive sets a floor on the lighting term.

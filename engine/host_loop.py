@@ -3520,11 +3520,25 @@ def _place_one_character(controller, r, character, set_name, is_bridge,
         if not ap.get("body_nif"):
             return
 
+        # Lip-sync face textures: map the character's registered SDK facial
+        # images to the renderer's viseme/blink slot names. _abs resolves each
+        # game-relative .tga path. Absent images simply leave fewer slots.
+        _facial = getattr(character, "_facial_images", {}) or {}
+        _slot_of = {"SpeakA": "a", "SpeakE": "e", "SpeakU": "u",
+                    "Blink0": "blink1", "Blink1": "blink2", "Blink2": "eyesclosed"}
+        face_images = {slot: _abs(_facial[k])
+                       for k, slot in _slot_of.items() if _facial.get(k)}
+        if __import__("os").environ.get("LIPSYNC_DEBUG", "0") != "0":
+            import sys as _sys
+            print(f"[lipsync] assemble name={getattr(character, '_character_name', '?')!r} "
+                  f"faces={list(face_images)}", file=_sys.stderr)
+
         model = r.assemble_officer(
             _abs(ap.get("body_nif")), _abs(ap.get("head_nif")),
             _abs(ap.get("body_tex")), _abs(ap.get("head_tex")),
             _abs(placement["clip_nif"]),
             placement["sample_at_start"],
+            face_images=face_images,
         )
         iid = create(model)
         try:
@@ -4117,6 +4131,12 @@ def run(mission_name: Optional[str] = None,
         )
         char_anim.set_node_controller(node_anim)
         idle_gestures = IdleGestureScheduler(_random.Random(0xB1D6E))
+
+        # Lip-sync: drives officer mouth visemes from .LIP timing via crew-speech
+        # (engine/lip_sync_runtime.py). Resolves the speaking officer by name
+        # against the live bridge characters; idle blinks the rest.
+        from engine.lip_sync_runtime import LipSyncRuntime
+        lip_runtime = LipSyncRuntime(r, _live_bridge_characters)
 
         from engine.bridge_hit_reactions import HitReactionHandler
         import App as _App
@@ -4776,6 +4796,7 @@ def run(mission_name: Optional[str] = None,
                     char_anim.reset()
                     idle_gestures.reset()
                     node_anim.reset(renderer=r)
+                    lip_runtime.clear()
                 controller._drain_pending_swap()
                 if had_pending_swap:
                     director.snap()
@@ -5142,6 +5163,10 @@ def run(mission_name: Optional[str] = None,
                         char_anim.update(
                             _player_dt, renderer=r,
                             anim_mgr=_App.g_kAnimationManager)
+                        try:
+                            lip_runtime.update()
+                        except Exception as _e:
+                            dev_mode.log_swallowed("lip-sync update", _e)
                         # node_anim reads node_overrides written by r.frame() above; intentionally one frame behind — do NOT reorder.
                         node_anim.update(r)
                     mouse_dx, mouse_dy = _h.consume_mouse_delta() if _h else (0.0, 0.0)

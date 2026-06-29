@@ -55,6 +55,31 @@ def annoying_dialogue_disabled() -> bool:
     return _annoying_dialogue_disabled
 
 
+# Speech-start observers (the lip-sync cue source). Each accepted line notifies
+# every listener with (speaker, wav_or_None, duration, now). Decoupled from
+# rendering so the bus stays audio/GL-free and testable; listeners must never
+# raise (failures are swallowed). BridgeCharacterAnimController subscribes here.
+_speech_listeners: list = []
+
+
+def add_speech_listener(fn) -> None:
+    if fn not in _speech_listeners:
+        _speech_listeners.append(fn)
+
+
+def remove_speech_listener(fn) -> None:
+    if fn in _speech_listeners:
+        _speech_listeners.remove(fn)
+
+
+def _notify_speech(speaker, wav, duration, now) -> None:
+    for fn in list(_speech_listeners):
+        try:
+            fn(speaker, wav, duration, now)
+        except Exception:
+            pass
+
+
 def _estimate_duration(text: Optional[str], wav: Optional[str]) -> float:
     """Coarse reading-speed dwell. Drives both the on-screen time and the
     bus free-up time, so they can never disagree. A voice-only line (no text,
@@ -114,6 +139,8 @@ class CrewSpeechBus:
         self._active_expiry = now + duration
         if text:
             self._route_subtitle(str(speaker), str(text), duration)
+        # Cue lip-sync (and any other observers) for this accepted line.
+        _notify_speech(str(speaker), str(wav) if wav else None, duration, now)
         return duration
 
     # -- Best-effort routing (never raises) ----------------------------------

@@ -231,7 +231,8 @@ Model compose_officer_model(
     const std::filesystem::path& body_tex,
     const std::filesystem::path& head_nif,
     const std::filesystem::path& head_tex,
-    std::string_view attach_bone) {
+    std::string_view attach_bone,
+    const std::map<std::string, fs::path>& face_images) {
     PathResolver resolver;
 
     // Each NIF's *default* (embedded-basename) textures resolve against the
@@ -267,6 +268,27 @@ Model compose_officer_model(
     // kept (set_base_texture is the no-crash guard).
     set_base_texture(body, body_mesh_indices, body_tex);
     set_base_texture(body, head_mesh_indices, head_tex);
+
+    // Lip-sync face sink: record the head-mesh range, then upload the
+    // per-officer viseme/blink face textures into the model keyed by slot.
+    // Best-effort — a missing/bad image is warned and skipped (never crashes
+    // composition); lip-sync simply has fewer slots to blend.
+    if (!head_mesh_indices.empty()) {
+        body.head_mesh_begin = *std::min_element(head_mesh_indices.begin(),
+                                                 head_mesh_indices.end());
+    }
+    for (const auto& [slot, path] : face_images) {
+        if (path.empty()) continue;
+        try {
+            Texture tex = default_tga_loader(path);
+            body.face_textures[slot] = static_cast<int>(body.textures.size());
+            body.textures.push_back(std::move(tex));
+        } catch (const std::exception& e) {
+            std::fprintf(stderr,
+                         "compose_officer_model: face image '%s' (%s) skipped\n",
+                         path.string().c_str(), e.what());
+        }
+    }
 
     body.source = body_nif;
     return body;

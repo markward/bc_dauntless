@@ -56,6 +56,17 @@ struct Instance {
     /// placement system; SP2 rewrites it per frame. Runtime state, not saved.
     std::vector<glm::mat4> bone_palette;
 
+    /// Per-instance officer FACE override (lip-sync). When face_active, the
+    /// bridge sub-pass blends the HEAD meshes' base texture between face_tex_a
+    /// and face_tex_b by face_mix (0 = a, 1 = b). A 0 id falls back to the
+    /// head's own base texture (= neutral), so ("neutral","neutral",0) renders
+    /// byte-identically to the un-overridden head. Off (face_active=false) for
+    /// every officer that never speaks. Runtime state, never serialized.
+    bool          face_active = false;
+    std::uint32_t face_tex_a  = 0;  // GL texture id
+    std::uint32_t face_tex_b  = 0;  // GL texture id
+    float         face_mix    = 0.0f;
+
     /// Per-instance node-local overrides for NON-SKINNED instances (the
     /// bridge): node_index -> animated local_transform. Empty = every node
     /// uses its model's static local (byte-identical to the un-animated

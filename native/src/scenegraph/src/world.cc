@@ -36,6 +36,16 @@ void World::set_bone_palette(InstanceId id, std::vector<glm::mat4> palette) {
     if (auto* inst = get(id)) inst->bone_palette = std::move(palette);
 }
 
+void World::set_officer_face(InstanceId id, std::uint32_t tex_a,
+                             std::uint32_t tex_b, float mix) {
+    if (auto* inst = get(id)) {
+        inst->face_active = true;
+        inst->face_tex_a = tex_a;
+        inst->face_tex_b = tex_b;
+        inst->face_mix = mix;
+    }
+}
+
 void World::set_animation(InstanceId id, Instance::AnimationState state) {
     if (Instance* in = get(id)) { in->animation = state; in->animation.settled = false; }
 }
