@@ -236,6 +236,7 @@ void BreachPass::draw_instance(std::uintptr_t instance_key,
 
     for (const auto& s : carve.slots()) {
         if (!s.active) continue;
+        if (s.radius <= 0.0f) continue;   // sub-iso accumulation: invisible
         draw_scoop(s.center_body, s.radius, s.surface_normal,
                    fe.tex3d, fill.origin, fill.cell, fill.dims,
                    world_xf, camera, pipeline,
@@ -298,6 +299,7 @@ void BreachPass::render(const scenegraph::World& world,
 
             for (const auto& s : inst.carve.slots()) {
                 if (!s.active) continue;
+                if (s.radius <= 0.0f) continue;   // sub-iso accumulation: invisible
 
                 // Find the nearest active breach event for this carve slot.
                 float breach_age = scenegraph::kRimLife + 1.f;  // default: cold

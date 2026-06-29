@@ -253,17 +253,18 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
                     time=now,
                 )
 
-    # 5. Hull carve (breach): heavier than scorch; eligible ships only; throttled.
-    # Same hull-absorbing, mesh-normal, renderer-present, committed-hit gating
-    # as the decal, PLUS: the hit must clear MIN_CARVE_HULL and the target must
-    # be damage-eligible (player + capped nearest/largest; see
-    # engine.appc.damage_eligibility).
+    # 5. Hull carve (breach): deposit field strength; eligible ships only;
+    # throttled. Same hull-absorbing, mesh-normal, renderer-present, committed-hit
+    # gating as the decal, PLUS the target must be damage-eligible (player +
+    # capped nearest/largest; see engine.appc.damage_eligibility). There is NO
+    # per-hit magnitude gate: the C++ field accumulates strength and only shows a
+    # carve once the running total crosses the iso, so sustained light fire
+    # eventually breaches (BC's additive metaball field).
     if (absorbed_hull > 0.0 and normal is not None and persist_decal
             and host is not None and ship_instances is not None
             and hasattr(host, "hull_carve_add")):
         from engine.appc import hull_carve, damage_eligibility, damage_decals
-        if (hull_carve.should_carve(absorbed_hull)
-                and damage_eligibility.is_eligible(ship)):
+        if damage_eligibility.is_eligible(ship):
             iid = ship_instances.get(ship)
             if iid is not None:
                 now = damage_decals.current_game_time()
@@ -274,7 +275,8 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
                         iid,
                         (point.x, point.y, point.z),
                         (normal.x, normal.y, normal.z),
-                        hull_carve.carve_radius_gu(radius),
+                        hull_carve.carve_influ_gu(radius),
+                        hull_carve.carve_strength(absorbed_hull),
                         now,
                     )
 

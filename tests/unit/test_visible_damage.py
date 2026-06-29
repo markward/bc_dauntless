@@ -20,10 +20,12 @@ class _Ship:
 
 class _Host:
     def __init__(self):
-        self.carves = []  # (iid, point, normal, radius, time)
+        self.carves = []  # (iid, point, normal, influ, strength, time, floor)
 
-    def hull_carve_add(self, iid, point, normal, radius, time):
-        self.carves.append((iid, point, normal, radius, time))
+    def hull_carve_add(self, iid, point, normal, influ, strength, time,
+                       floor_radius=0.0):
+        self.carves.append((iid, point, normal, influ, strength, time,
+                            floor_radius))
 
 
 @pytest.fixture(autouse=True)
@@ -42,14 +44,16 @@ def test_body_volume_emits_world_point_and_floored_radius():
     visible_damage.advance(0.0, host, {ship: 7})
 
     assert len(host.carves) == 1
-    iid, point, normal, radius, _t = host.carves[0]
+    iid, point, normal, influ, strength, _t, floor = host.carves[0]
     assert iid == 7
     # Identity rotation, ship at origin -> world point == body point.
     assert point == pytest.approx((1.0, 0.0, 0.0))
     # Outward radial normal (unit).
     assert normal == pytest.approx((1.0, 0.0, 0.0))
-    # radius = max(floor, influRad).
-    assert radius == pytest.approx(max(MIN_CARVE_RADIUS_GU, 0.5))
+    # influRad passed through; authored strength carried; floor = max(MIN, influRad).
+    assert influ == pytest.approx(0.5)
+    assert strength == pytest.approx(300.0)
+    assert floor == pytest.approx(max(MIN_CARVE_RADIUS_GU, 0.5))
 
 
 def test_body_volume_respects_ship_position_and_rotation():
@@ -60,19 +64,19 @@ def test_body_volume_respects_ship_position_and_rotation():
     visible_damage.queue_body_volume(ship, 1.0, 0.0, 0.0, 0.5, 300.0)
     visible_damage.advance(0.0, host, {ship: 1})
 
-    _iid, point, normal, _r, _t = host.carves[0]
+    _iid, point, normal, _influ, _s, _t, _floor = host.carves[0]
     assert point == pytest.approx((10.0, -4.0, 2.0))   # loc + R.(1,0,0)
     assert normal == pytest.approx((0.0, 1.0, 0.0))
 
 
-def test_radius_modifier_scales_emitted_radius():
+def test_radius_modifier_scales_emitted_floor():
     ship = _Ship(radius_mod=2.0)
     host = _Host()
     visible_damage.queue_body_volume(ship, 1.0, 0.0, 0.0, 0.5, 300.0)
     visible_damage.advance(0.0, host, {ship: 1})
 
-    _iid, _p, _n, radius, _t = host.carves[0]
-    assert radius == pytest.approx(max(MIN_CARVE_RADIUS_GU, 0.5) * 2.0)
+    _iid, _p, _n, _influ, _s, _t, floor = host.carves[0]
+    assert floor == pytest.approx(max(MIN_CARVE_RADIUS_GU, 0.5) * 2.0)
 
 
 # ── Deferral until the render instance is realized ──────────────────────────
@@ -122,10 +126,12 @@ def test_world_carve_passes_point_through_with_radial_normal():
     visible_damage.queue_world_carve(ship, TGPoint3(13.0, 4.0, 0.0), 0.6, 600.0)
     visible_damage.advance(0.0, host, {ship: 2})
 
-    _iid, point, normal, radius, _t = host.carves[0]
+    _iid, point, normal, influ, strength, _t, floor = host.carves[0]
     assert point == pytest.approx((13.0, 4.0, 0.0))   # already world-space
     assert normal == pytest.approx((0.6, 0.8, 0.0))   # unit (point - loc)
-    assert radius == pytest.approx(max(MIN_CARVE_RADIUS_GU, 0.6))
+    assert influ == pytest.approx(0.6)
+    assert strength == pytest.approx(600.0)           # fDamage carried as strength
+    assert floor == pytest.approx(max(MIN_CARVE_RADIUS_GU, 0.6))
 
 
 # ── clear / reset ───────────────────────────────────────────────────────────

@@ -36,20 +36,22 @@ _pending: list[dict] = []
 
 def queue_body_volume(ship, x, y, z, influRad, strength=0.0) -> None:
     """Queue an authored body-frame damage sphere (SDK AddObjectDamageVolume).
-    `strength` is accepted for fidelity but unused in Gap 1."""
+    `influRad` is the metaball influence radius (merge proximity + size floor);
+    `strength` is the BC field strength (300/600) that also accumulates with
+    nearby combat damage."""
     if ship is None:
         return
     _pending.append({
         "ship": ship, "kind": "body",
         "pt": (float(x), float(y), float(z)),
-        "radius": float(influRad), "age": 0.0,
+        "influ": float(influRad), "strength": float(strength), "age": 0.0,
     })
 
 
 def queue_world_carve(ship, pEmitPos, fRadius, fDamage=0.0) -> None:
     """Queue a runtime world-space carve (DamageableObject.AddDamage, e.g.
-    Effects.DeathExplosionDamage). `fDamage` is unused in Gap 1; `pEmitPos` is a
-    world-space point object (NiPoint3/TGPoint3 with .x/.y/.z)."""
+    Effects.DeathExplosionDamage). `pEmitPos` is a world-space point object
+    (NiPoint3/TGPoint3 with .x/.y/.z); `fDamage` is the BC field strength."""
     if ship is None or pEmitPos is None:
         return
     try:
@@ -58,7 +60,7 @@ def queue_world_carve(ship, pEmitPos, fRadius, fDamage=0.0) -> None:
         return
     _pending.append({
         "ship": ship, "kind": "world",
-        "pt": wp, "radius": float(fRadius), "age": 0.0,
+        "pt": wp, "influ": float(fRadius), "strength": float(fDamage), "age": 0.0,
     })
 
 
@@ -108,14 +110,21 @@ def _advance_one(entry, dt, host, ship_instances) -> bool:
 
     from engine.appc.hull_carve import MIN_CARVE_RADIUS_GU
     from engine.appc import damage_decals
-    radius = max(MIN_CARVE_RADIUS_GU, entry["radius"]) * _radius_mod(ship)
+    influ = entry["influ"]
+    strength = entry["strength"]
+    # Authored / runtime carves carry their own size: a floor (so the wreck is
+    # visible at spawn regardless of the strength curve) plus the strength, which
+    # also accumulates with nearby combat damage in the C++ field.
+    floor = max(MIN_CARVE_RADIUS_GU, influ) * _radius_mod(ship)
     now = damage_decals.current_game_time()
     host.hull_carve_add(
         iid,
         (world_pt.x, world_pt.y, world_pt.z),
         (normal.x, normal.y, normal.z),
-        radius,
+        influ,
+        strength,
         now,
+        floor,
     )
     return False   # emitted once -> drop
 

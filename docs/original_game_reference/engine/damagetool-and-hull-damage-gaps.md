@@ -134,20 +134,27 @@ the existing `host.hull_carve_add` (**no native change**).
 picker → **Developer → Damage Preview** (`engine/dev_missions/damage_preview.py`) spawns
 a stock-pre-damaged Akira ~6 GU dead-ahead.
 
-### Gap 2 — we discard "strength"; phaser dribble can't accumulate into a breach ✓ verified live
-**This is the hull-damage-relevant phaser finding.** BC's metaball field *sums*: many
-weak hits at one spot eventually cross the iso threshold → spontaneous breach. We
-hard-gate on `MIN_CARVE_HULL = 60.0` (`engine/appc/hull_carve.py:15`), and the
-`HullCarve` slot has **no `strength` field** and `hull_carve_add` takes **no strength
-arg** (both confirmed). Effect: sustained phaser fire below 60 absorbed-hull-per-tick
-**never breaches**, regardless of total damage delivered — BC would have breached.
-Fix:
-- Add `float strength` to the `HullCarve` slot (`hull_carve.h:12`).
-- `hull_carve_add` takes `strength`; the slot **accumulates** it on merge.
-- Drop `MIN_CARVE_HULL`; replace with an iso-threshold on the merged-strength field.
-  Effective carve radius = `f(strength)` until it crosses the visible threshold.
-- Calibration anchor: authored `strength = 750 × influRad`; runtime damage maps
-  `strength ∝ absorbed_hull`.
+### Gap 2 — strength accumulation: phaser dribble builds into a breach ✅ IMPLEMENTED
+**The hull-damage-relevant phaser finding.** BC's metaball field *sums*: many weak hits
+at one spot eventually cross the iso → spontaneous breach. Previously we hard-gated on a
+per-hit `MIN_CARVE_HULL = 60`, so sustained light fire never breached. Now implemented as
+BC's additive field:
+- `HullCarve` (`native/.../hull_carve.h`) gains `strength` (accumulated) + `influ_radius`
+  (merge proximity); `HullCarveField::add` accumulates strength on merge and returns the
+  slot. Visible `radius` is derived from the running total via
+  `hull_carve_strength_to_radius_gu` — **0 below the iso** (300), then linear (anchored to
+  BC's tiers: 300→0.4 GU, 600→1.0 GU), clamped at 1.5 GU.
+- `hull_carve_add` binding takes `(influ_radius, strength, time, floor_radius=0)`; the
+  visible radius = `max(floor, strength→radius)`, never shrinking. The breach VFX event
+  fires only when a carve newly appears or grows, so sub-iso accumulation is silent.
+  Renderer skips `radius<=0` slots (`frame.cc`, `breach_pass.cc`).
+- `hit_feedback` drops the per-hit gate and deposits `strength = absorbed_hull ×
+  STRENGTH_PER_HULL` (5.0; so a ~60-hull hit reaches the iso in one shot, preserving the
+  old strong-hit feel) with `influ = carve_influ_gu(splash)`; floor 0 (invisible until
+  accumulated). `core_breach` + authored `visible_damage` pass a `floor` (guaranteed size)
+  and carry their own strength (authored 300/600), so they integrate with combat
+  accumulation. Tuning knobs (`STRENGTH_PER_HULL`, influ floor) live in
+  `engine/appc/hull_carve.py`; the iso/curve are C++ constants (`kHullCarve*`).
 
 ### Gap 3 — two-tier carve radii drift from BC's authored values ✓ verified live
 BC authoring (constant across ships): small **0.4 GU**, large **1.0 GU**. Ours:

@@ -1,34 +1,49 @@
 #include <gtest/gtest.h>
 #include <scenegraph/hull_carve.h>
+using scenegraph::HullCarve;
 using scenegraph::HullCarveField;
 
-TEST(HullCarveField, AddMergeEvict) {
+TEST(HullCarveField, AccumulatesStrengthOnMerge) {
     HullCarveField f;
     EXPECT_EQ(f.count(), 0u);
-    f.add({0,0,0}, 2.0f, {0,0,1});
+    HullCarve& a = f.add({0, 0, 0}, 2.0f, 100.0f, {0, 0, 1});
     EXPECT_EQ(f.count(), 1u);
-    // Within kMergeFactor*radius (0.5*2=1.0): merges, grows radius, no new slot.
-    f.add({0.5f,0,0}, 3.0f, {0,0,1});
+    EXPECT_FLOAT_EQ(a.strength, 100.0f);
+    // Within kMergeFactor*influ (0.5*2=1.0): merges, accumulates strength,
+    // widens influ to the max, moves to the freshest centre.
+    HullCarve& b = f.add({0.5f, 0, 0}, 3.0f, 250.0f, {0, 0, 1});
     EXPECT_EQ(f.count(), 1u);
-    EXPECT_FLOAT_EQ(f.slots()[0].radius, 3.0f);   // grew to the wider re-hit
+    EXPECT_FLOAT_EQ(b.strength, 350.0f);     // 100 + 250
+    EXPECT_FLOAT_EQ(b.influ_radius, 3.0f);   // widened to max
     // Far apart: new slot.
-    f.add({100,0,0}, 2.0f, {0,0,1});
+    f.add({100, 0, 0}, 2.0f, 50.0f, {0, 0, 1});
     EXPECT_EQ(f.count(), 2u);
 }
 
-TEST(HullCarveField, EvictsWhenFull) {
+TEST(HullCarveField, EvictsSmallestRadiusWhenFull) {
     HullCarveField f;
-    for (std::size_t i = 0; i < HullCarveField::kMaxCarves; ++i)
-        f.add({float(i)*1000.f, 0, 0}, 5.0f, {0,0,1});   // all far apart, all radius 5
+    for (std::size_t i = 0; i < HullCarveField::kMaxCarves; ++i) {
+        HullCarve& c = f.add({float(i) * 1000.f, 0, 0}, 5.0f, 10.0f, {0, 0, 1});
+        c.radius = 5.0f;   // caller owns the visible radius
+    }
     EXPECT_EQ(f.count(), HullCarveField::kMaxCarves);
-    f.add({999000.f, 0, 0}, 50.0f, {0,0,1});    // far away, large -> evicts a slot
-    EXPECT_EQ(f.count(), HullCarveField::kMaxCarves);  // still capped, not grown
+    f.add({999000.f, 0, 0}, 5.0f, 10.0f, {0, 0, 1});  // far away -> evicts a slot
+    EXPECT_EQ(f.count(), HullCarveField::kMaxCarves);  // still capped
+}
+
+TEST(HullCarveStrengthCurve, IsoGatesVisibility) {
+    using scenegraph::hull_carve_strength_to_radius_gu;
+    EXPECT_FLOAT_EQ(hull_carve_strength_to_radius_gu(0.0f), 0.0f);
+    EXPECT_FLOAT_EQ(hull_carve_strength_to_radius_gu(299.0f), 0.0f);   // below iso
+    EXPECT_FLOAT_EQ(hull_carve_strength_to_radius_gu(300.0f), 0.4f);   // BC minor tier
+    EXPECT_FLOAT_EQ(hull_carve_strength_to_radius_gu(600.0f), 1.0f);   // BC breach tier
+    EXPECT_LE(hull_carve_strength_to_radius_gu(100000.0f), 1.5f);      // clamp
 }
 
 #include <scenegraph/instance.h>
 TEST(Instance, HasCarveField) {
     scenegraph::Instance inst;
     EXPECT_EQ(inst.carve.count(), 0u);
-    inst.carve.add({1,2,3}, 4.0f, {0,0,1});
+    inst.carve.add({1, 2, 3}, 4.0f, 10.0f, {0, 0, 1});
     EXPECT_EQ(inst.carve.count(), 1u);
 }
