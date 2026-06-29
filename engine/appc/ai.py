@@ -459,16 +459,28 @@ def SequenceAI_Create(pShip=None, name: str = "") -> SequenceAI:
 class RandomAI(ArtificialIntelligence):
     """SDK App.py:5019 — sibling of PriorityListAI/SequenceAI.
 
-    Phase 1 behavior: deterministic — picks `_ais[0]` for Update. Real
-    random selection is deferred to D2 / behavior-layer slices."""
+    Picks one child at random and ticks it each frame; when that child
+    reaches US_DONE it re-picks a new random child on the next tick
+    (docs/original_game_reference/gameplay/ai-architecture.md, RandomAI
+    section: "Picks one child at random; on completion, picks another").
+    Typically wraps several maneuver children inside a forever-looping
+    SequenceAI (sdk/.../AI/Compound/Parts/NoSensorsEvasive.py:47-52,
+    sdk/.../QuickBattle/QuickBattleAI.py:51-58). Dispatch lives in
+    ai_driver._tick_random."""
 
     def __init__(self, pShip=None, name: str = ""):
         super().__init__(pShip, name)
         self._ais: list = []
+        # The child currently being ticked; re-picked when it reaches DONE.
+        self._current_child = None
 
     def AddAI(self, ai) -> None:
         """SDK Appc.RandomAI_AddAI — append a child AI."""
         self._ais.append(ai)
+
+    def GetAIs(self) -> list:
+        """Return the child AI list (used by the AI inspector)."""
+        return self._ais
 
 
 def RandomAI_Create(pShip, name: str = "") -> RandomAI:

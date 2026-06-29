@@ -1,6 +1,8 @@
+import random
+
 from engine.appc.ai import (
     ArtificialIntelligence, PlainAI, PriorityListAI, SequenceAI,
-    ConditionalAI, PreprocessingAI, TGCondition,
+    ConditionalAI, PreprocessingAI, RandomAI, TGCondition,
 )
 from engine.appc.ai_driver import tick_ai
 from engine.appc.ships import ShipClass
@@ -195,3 +197,94 @@ def test_preprocessing_done_marks_preprocess_done_but_keeps_dispatching():
     tick_ai(pp, game_time=1.0)
     assert inst.calls == preprocess_calls_after_first_tick  # not re-called
     assert leaf.calls == 2  # but contained AI is dispatched again
+
+
+def test_random_ai_ticks_a_child():
+    """A RandomAI is no longer inert: one tick picks and ticks a child.
+
+    SDK semantics (docs/.../ai-architecture.md RandomAI): picks one child
+    at random and runs it. Proves the missing dispatch branch is wired.
+    """
+    random.seed(0)
+    leaves = [_FakeLeaf(next_update=0.0) for _ in range(4)]
+    children = [_make_plain(ShipClass(), leaf) for leaf in leaves]
+    rai = RandomAI(ShipClass(), "R")
+    for child in children:
+        rai.AddAI(child)
+    tick_ai(rai, game_time=0.01)
+    # Exactly one child was ticked (the random pick).
+    assert sum(leaf.calls for leaf in leaves) == 1
+    # RandomAI stays active while a child runs (infinite maneuver picker).
+    assert rai._status == ArtificialIntelligence.US_ACTIVE
+
+
+def test_random_ai_repicks_after_child_done():
+    """When the current child reaches US_DONE, the next tick re-picks a new
+    random child (SDK: 'on completion, picks another'). The RandomAI itself
+    does NOT terminate."""
+    random.seed(0)
+    # All children report DONE immediately so we exercise the re-pick path.
+    leaves = [
+        _FakeLeaf(next_update=0.0, status=ArtificialIntelligence.US_DONE)
+        for _ in range(4)
+    ]
+    children = [_make_plain(ShipClass(), leaf) for leaf in leaves]
+    rai = RandomAI(ShipClass(), "R")
+    for child in children:
+        rai.AddAI(child)
+    tick_ai(rai, game_time=0.01)   # pick + tick child -> child DONE
+    first_pick = rai._current_child
+    assert sum(leaf.calls for leaf in leaves) == 1
+    tick_ai(rai, game_time=0.02)   # child was DONE -> re-pick + tick again
+    assert sum(leaf.calls for leaf in leaves) == 2
+    # RandomAI never terminates just because one child finished.
+    assert rai._status == ArtificialIntelligence.US_ACTIVE
+    assert first_pick is not None
+
+
+def test_random_ai_repick_rearms_a_previously_done_child():
+    """A re-selected child is reset to US_ACTIVE before being ticked, so a
+    child that finished earlier can run again (single-element RandomAI makes
+    the re-pick deterministic without seeding)."""
+    leaf = _FakeLeaf(next_update=0.0)  # reports ACTIVE on Update
+    child = _make_plain(ShipClass(), leaf)
+    rai = RandomAI(ShipClass(), "R")
+    rai.AddAI(child)
+    tick_ai(rai, game_time=0.01)
+    child._status = ArtificialIntelligence.US_DONE  # simulate completion
+    tick_ai(rai, game_time=0.02)                    # re-pick re-arms it
+    assert child._status == ArtificialIntelligence.US_ACTIVE
+    assert leaf.calls == 2
+
+
+def test_random_ai_repick_is_seeded_deterministic():
+    """With a seeded RNG the picks are reproducible — guards against the
+    branch silently no-op'ing."""
+    random.seed(1)
+    leaves = [_FakeLeaf(next_update=0.0) for _ in range(3)]
+    children = [_make_plain(ShipClass(), leaf) for leaf in leaves]
+    rai = RandomAI(ShipClass(), "R")
+    for child in children:
+        rai.AddAI(child)
+    random.seed(1)
+    expected = random.choice(children)
+    random.seed(1)
+    tick_ai(rai, game_time=0.01)
+    assert rai._current_child is expected
+
+
+def test_random_ai_empty_is_done():
+    """A RandomAI with no children completes immediately."""
+    rai = RandomAI(ShipClass(), "R")
+    status = tick_ai(rai, game_time=0.01)
+    assert status == ArtificialIntelligence.US_DONE
+    assert rai._status == ArtificialIntelligence.US_DONE
+
+
+def test_random_ai_get_ais_returns_children():
+    """GetAIs() accessor exposes the child list for an AI inspector."""
+    rai = RandomAI(ShipClass(), "R")
+    a = _make_plain(ShipClass(), _FakeLeaf())
+    b = _make_plain(ShipClass(), _FakeLeaf())
+    rai.AddAI(a); rai.AddAI(b)
+    assert rai.GetAIs() == [a, b]

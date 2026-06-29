@@ -16,10 +16,11 @@ _next_update_time field; the driver consults it each tick. This keeps
 Step 3 testable independently of the TimeSliceProcess scheduler (Step 2).
 """
 import inspect
+import random
 
 from engine.appc.ai import (
     ArtificialIntelligence, PlainAI, PriorityListAI, SequenceAI,
-    ConditionalAI, PreprocessingAI, BuilderAI,
+    ConditionalAI, PreprocessingAI, BuilderAI, RandomAI,
 )
 
 US_ACTIVE = ArtificialIntelligence.US_ACTIVE
@@ -50,6 +51,8 @@ def tick_ai(ai, game_time: float) -> int:
         return _tick_priority_list(ai, game_time)
     if isinstance(ai, SequenceAI):
         return _tick_sequence(ai, game_time)
+    if isinstance(ai, RandomAI):
+        return _tick_random(ai, game_time)
     if isinstance(ai, PlainAI):
         return _tick_plain(ai, game_time)
     return ai._status
@@ -163,6 +166,34 @@ def _tick_sequence(ai: SequenceAI, game_time: float) -> int:
         ai._current_index = idx
         if idx >= len(ai._ais):
             ai._status = US_DONE
+    return ai._status
+
+
+def _tick_random(ai: RandomAI, game_time: float) -> int:
+    """Pick one child at random and tick it; re-pick when it finishes.
+
+    SDK semantics (docs/.../ai-architecture.md, RandomAI): "Picks one child
+    at random; on completion, picks another." RandomAI is used as an
+    infinite maneuver picker inside a forever-looping SequenceAI
+    (sdk/.../QuickBattle/QuickBattleAI.py:51-58,
+    sdk/.../AI/Compound/Parts/NoSensorsEvasive.py:47-52), so the RandomAI
+    itself stays US_ACTIVE while a child runs and does NOT terminate just
+    because one child reached US_DONE — it re-picks on the next tick.
+
+    An empty RandomAI has nothing to run and completes immediately.
+    """
+    if not ai._ais:
+        ai._status = US_DONE
+        return ai._status
+    child = ai._current_child
+    if child is None or child._status == US_DONE:
+        child = random.choice(ai._ais)
+        # Reset the freshly-picked child to ACTIVE so a previously-DONE
+        # child runs again (mirrors how the SDK re-arms a re-selected child).
+        child._status = US_ACTIVE
+        ai._current_child = child
+    tick_ai(child, game_time)
+    ai._status = US_ACTIVE
     return ai._status
 
 
