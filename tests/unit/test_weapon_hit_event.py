@@ -90,3 +90,23 @@ def test_weapon_hit_event_normal_round_trip():
     evt.SetNormal(n)
     out = evt.GetNormal()
     assert out is n  # identity, not a copy
+
+
+def test_weapon_hit_event_is_hull_hit_defaults_to_zero():
+    """ConditionAttacked/AttackedBy call IsHullHit(); a freshly-built event
+    (shields-absorbed by default) must report 0."""
+    evt = WeaponHitEvent()
+    assert evt.IsHullHit() == 0
+
+
+def test_weapon_hit_event_set_hull_hit_true():
+    evt = WeaponHitEvent()
+    evt.SetHullHit(True)
+    assert evt.IsHullHit() == 1
+
+
+def test_weapon_hit_event_set_hull_hit_false():
+    evt = WeaponHitEvent()
+    evt.SetHullHit(True)
+    evt.SetHullHit(False)
+    assert evt.IsHullHit() == 0
