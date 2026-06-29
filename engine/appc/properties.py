@@ -857,7 +857,20 @@ class WarpEngineProperty(PoweredSubsystemProperty):
 # (sdk/.../ships/Hardpoints/*).  Powered subsystem with a single domain-specific
 # attribute (CloakStrength) plus the inherited subsystem fields.
 class CloakingSubsystemProperty(PoweredSubsystemProperty):
-    pass
+    # CloakStrength rates how well the device cloaks (warbird.py sets 100.0).
+    # The ship loader maps it to the cloak's transition duration — a fully-rated
+    # device (100) cloaks in the canonical CLOAK_TRANSITION_DURATION; a weaker
+    # device is proportionally slower. Defaults to 100.0 so an undeclared value
+    # yields the canonical timing.
+    def __init__(self, name: str = "") -> None:
+        super().__init__(name)
+        self._cloak_strength: float = 100.0
+
+    def SetCloakStrength(self, v) -> None:
+        self._cloak_strength = float(v)
+
+    def GetCloakStrength(self) -> float:
+        return self._cloak_strength
 
 
 # ── Factory functions ─────────────────────────────────────────────────────────

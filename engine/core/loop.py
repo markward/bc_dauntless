@@ -52,6 +52,11 @@ class GameLoop:
             ps = ship.GetPowerSubsystem()
             if ps is not None:
                 ps.Update(TICK_DELTA)
+            # Advance any in-progress cloak/decloak transition so it completes
+            # (CloakShip preprocessor sets the intent; the timer lives here).
+            cl = ship.GetCloakingSubsystem()
+            if cl is not None:
+                cl.Update(TICK_DELTA)
 
     def advance(self, n: int) -> None:
         for _ in range(n):

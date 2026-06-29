@@ -216,6 +216,7 @@ from engine.appc.subsystems import (
     SensorSubsystem, ImpulseEngineSubsystem, WarpEngineSubsystem,
     WarpEngineSubsystem_GetWarpEffectTime, WarpEngineSubsystem_SetWarpEffectTime,
     ShieldSubsystem,
+    CloakingSubsystem,
 )
 from engine.appc.float_range_watcher import FloatRangeWatcher
 from engine.appc.properties import (
@@ -468,6 +469,19 @@ def ShieldSubsystem_Cast(obj):
     """Lenient pass-through used by shield-watcher conditions; returns obj if
     it's a ShieldSubsystem, else None (mirrors ShieldClass_Cast above)."""
     return obj if isinstance(obj, ShieldSubsystem) else None
+
+
+def CloakingSubsystem_Create(name):
+    """Construct a runtime cloaking device. Mirrors the Appc.new_* subsystem
+    factory; the SDK reaches a ship's cloak via pShip.GetCloakingSubsystem(),
+    but mission/setup code may build one directly."""
+    return CloakingSubsystem(name)
+
+
+def CloakingSubsystem_Cast(obj):
+    """Lenient pass-through used by CloakShip / FedAttack cloak doctrines;
+    returns obj if it's a CloakingSubsystem, else None."""
+    return obj if isinstance(obj, CloakingSubsystem) else None
 
 
 def PulseWeapon_Cast(obj):
