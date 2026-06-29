@@ -41,6 +41,29 @@ def _record(label, value):
     _log.append(line)
     print line
 
+def _try(label, fn, args):
+    """Call fn(*args).  For top-level functions where the callable is already
+    resolved (App.Game_GetCurrentPlayer, App.ShipClass_Cast).  Bare except
+    also catches Python 1.5 string exceptions."""
+    try:
+        return apply(fn, args)
+    except:
+        _record(label + " FAILED",
+                "exc_type=%s exc_value=%s" % (str(sys.exc_type), str(sys.exc_value)))
+        return None
+
+def _call(label, obj, name, args):
+    """Resolve obj.<name> and call it with args.  Use this for any method
+    reached through a SWIG-wrapped object -- _try("label", obj.method, args)
+    evaluates the lookup BEFORE _try runs, so attribute errors escape the
+    safety net.  _call does the getattr inside the try."""
+    try:
+        return apply(getattr(obj, name), args)
+    except:
+        _record(label + " FAILED",
+                "exc_type=%s exc_value=%s" % (str(sys.exc_type), str(sys.exc_value)))
+        return None
+
 def _section(title):
     """Heading line in the result log."""
     bar = "-- " + str(title) + " " + ("-" * max(1, 60 - len(str(title))))

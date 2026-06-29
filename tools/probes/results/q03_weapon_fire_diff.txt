@@ -1,0 +1,24 @@
+-- POST pass ---------------------------------------------------
+post.frame = 391266
+post.game_time = 154.25
+post.real_time = 2250896.0
+post.charge = 5.0
+post.shield_total = 7605.62988281
+post.faces = [1600.0, 201.758422852, 1600.0, 1600.0, 1003.8717041, 1600.0]
+post.hull = 3595.27587891
+post.range = 40.7393836975
+-- diffs -------------------------------------------------------
+d_frame = 2299
+d_game_time = 35.0
+d_real_time = 38.25
+d_charge = 0.0
+d_shield_total = 715.913085938
+d_hull = 180.883300781
+d_face_0 = 0.0
+d_face_1 = 119.784454346
+d_face_2 = 0.0
+d_face_3 = 0.0
+d_face_4 = 596.128295898
+d_face_5 = 0.0
+-- findings ----------------------------------------------------
+note = bank charge did not drain -- weapon didn't fire. arc/range/fire-key issue? (d_chg=0.000 post.is_firing=0 post.can_fire=1)

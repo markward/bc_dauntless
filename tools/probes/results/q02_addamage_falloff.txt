@@ -1,0 +1,33 @@
+-- environment -------------------------------------------------
+frame = 2027562
+game_time = 35.0
+player = Player
+-- target identity ---------------------------------------------
+raw target.repr = <C ObjectClass instance at _a54f008_p_ObjectClass>
+raw target.GetName = Keldon-1
+cast = ShipClass
+downcast target.repr = <C ShipClass instance at _a54f008_p_ShipClass>
+-- setup -------------------------------------------------------
+num_shield_faces = 6
+max_shield_face0 = 5500.0
+weapon cast = EnergyWeapon
+phaser0.MaxDamage = 250.0
+phaser0.MaxDamageDistance (R) = 60.0
+target.GetNiObject = <C NiAVObject instance at _d21baec_p_NiAVObject>
+-- baseline ----------------------------------------------------
+shield_total_after_reset = 18700.0
+hull = 6000.0
+-- radius sweep (DAMAGE=1000.0, node=centre) -------------------
+columns = radius shield_pre shield_post shield_d  hull_pre hull_post hull_d
+hit r=0.10 = 18700.000 -> 18700.000  d=   0.000   6000.000 -> 5000.000  d=1000.000
+hit r=1.00 = 18700.000 -> 18700.000  d=   0.000   5000.000 -> 4000.000  d=1000.000
+hit r=5.00 = 18700.000 -> 18700.000  d=   0.000   4000.000 -> 3000.000  d=1000.000
+hit r=30.00 = 18700.000 -> 18700.000  d=   0.000   3000.000 -> 2000.000  d=1000.000
+hit r=60.00 = 18700.000 -> 18700.000  d=   0.000   2000.000 -> 1000.000  d=1000.000
+hit r=120.00 = 18700.000 -> 18700.000  d=   0.000   1000.000 ->   0.000  d=1000.000
+-- analysis ----------------------------------------------------
+Q1 delivered_at_r=1.00 = 1000.0
+Q1 requested_damage = 1000.0
+Q1 anchor_ratio = 1.0
+Q3 routing = BYPASSES shields (csd=0.000, chd=1000.000)
+Q2 status = DEFERRED -- AddDamage takes a node not a position; q03 needed for distance sweep

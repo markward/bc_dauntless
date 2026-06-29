@@ -1,0 +1,19 @@
+-- POST pass ---------------------------------------------------
+post.frame = 11237560
+post.game_time = 410.5
+post.faces = [5417.22460938, 1100.0, 3246.21875, 2200.0, 3300.0, 3300.0]
+post.shield_total = 18563.4433594
+post.hull = 6000.0
+post.range = 117.064598083
+-- diffs -------------------------------------------------------
+d_game_time = 9.25
+d_shield_total = 136.556640625
+d_hull = 0.0
+face_0  pre=5500.00  post=5417.22  delta = 82.775
+face_1  pre=1100.00  post=1100.00  delta = 0.000
+face_2  pre=3300.00  post=3246.22  delta = 53.781
+face_3  pre=2200.00  post=2200.00  delta = 0.000
+face_4  pre=3300.00  post=3300.00  delta = 0.000
+face_5  pre=3300.00  post=3300.00  delta = 0.000
+-- Q4 finding --------------------------------------------------
+Q4 CONCLUSION = STRICT CASCADE plausible -- hull untouched. Face deltas were 136.557 total, hull stayed flat.

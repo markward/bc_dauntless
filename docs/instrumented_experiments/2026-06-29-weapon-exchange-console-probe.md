@@ -1,6 +1,6 @@
 # The #1 question: what BC's C++ actually does to a target when a weapon hits
 
-Status: PENDING
+Status: IN-PROGRESS  (Q1 + Q3 + Q4 closed via q02/q03/q04; Q5-Q7 open; Q8-Q10 deferred to approach 1)
 Author: 2026-06-29 session (instrumentation approach 2)
 Created: 2026-06-29
 Closed:  —
@@ -331,17 +331,38 @@ writes nothing to disk unless you used the `SaveConfigFile` fallback in Part A.
 
 ## Findings
 
-*(Pending the console session — fill in once captured.)*
+Captured 2026-06-29 across four probes:
 
-- **Q1** — Full-damage anchor at centre: _TBD_
-- **Q2** — Falloff shape (linear / quadratic / capped / stepped): _TBD_
-- **Q3** — Does `AddDamage` route through shields?: _TBD_
-- **Q4** — Shield-face absorption fraction pre-depletion: _TBD_
-- **Q5** — Subsystem vs hull split post-depletion: _TBD_
-- **Q6** — Subsystem-lock bleed-through while shielded: _TBD_
-- **Q7** — Subsystem-lock priority unshielded (ratio): _TBD_
-- **Q8** — Discharge rate **unit** (per-tick vs per-second) + value: _TBD_
-- **Q9** — Recharge rate unit + value: _TBD_
-- **Q10** — Fire / auto-stop / restart thresholds (hysteresis): _TBD_
+- [`q01_console_io.txt`](../../tools/probes/results/q01_console_io.txt) — console namespace + API verification
+- [`q02_addamage_falloff.txt`](../../tools/probes/results/q02_addamage_falloff.txt) — `AddDamage` primitive
+- [`q03_weapon_fire_diff.txt`](../../tools/probes/results/q03_weapon_fire_diff.txt) — weapon-fire snapshot diff
+- [`q04_shield_bleedthrough.txt`](../../tools/probes/results/q04_shield_bleedthrough.txt) — shield routing model
+
+### Headline: two distinct damage primitives
+
+Approach 2 confirmed BC's C++ exposes **two independent damage-routing paths**:
+
+| Primitive | Caller | Routing |
+|---|---|---|
+| `DamageableObject.AddDamage(node, radius, damage)` | explosions / collisions / death bursts (SDK: `DeathExplosionDamage`, `Effects.py:689`) | **Bypasses shields entirely** — always goes straight to hull |
+| Weapon-fire path (internal Appc, not directly callable from Python) | normal phaser/torp combat fire | **Strict cascade through shields** — facing shield until it reaches zero, then hull |
+
+This explains why `engine/appc/combat.py:apply_hit`'s strict-cascade model is correct in spirit but only describes one of the two paths. Splash damage from explosions needs a separate code path that bypasses shields entirely.
+
+### Per-question status
+
+- **Q1 ✓** — AddDamage at the centre node delivers exactly the requested damage (ratio 1.0, verified at radii 0.1, 1, 5, 30, 60, 120 — all delivered 1000.0 hull damage). Radius does not affect delivered damage when the hit node is the ship centre.
+- **Q2 — DEFERRED.** `AddDamage` takes a scene NODE, not a TGPoint3 (`Effects.py:691` literally comments *"INVALID NiAVObject wrapper"*). Position can't be varied by mutating coordinates; would need to iterate sub-nodes or use `target.GetRandomPointOnModel()` for statistical sampling. Low priority — AddDamage is the explosion path, not the weapon path.
+- **Q3 ✓** — AddDamage bypasses shields (q02: 1000 hull / 0 shield across 6 radii). Weapon-fire path routes through shields (q03: 715 shield / 180 hull over a 35 sec fire window).
+- **Q4 ✓** — **STRICT CASCADE, no bleed-through fraction.** With every face reset to max and weapons fired for ~9 sec, hull damage was exactly **0.0**; all 136.6 of delivered damage stayed on the faces. q03's 80/20 split was therefore a face briefly depleting mid-window, not a constant bleed-through.
+- **Q5 — OPEN.** Next probe: `sh.SetCurShields(face, 0.0)`, fire, observe hull vs locked-subsystem split.
+- **Q6 — OPEN.** Next probe: `player.SetTargetSubsystem(...)` + shields-up fire, look for sub-condition delta through the shield.
+- **Q7 — OPEN.** Combine Q5's face-at-zero setup with Q6's subsystem lock; measure hull-vs-subsystem ratio.
+- **Q8 / Q9 / Q10 — DEFERRED to approach 1.** q03 proved snapshot-diff can't measure discharge: the bank fully recharges between PRE and POST snapshots (`d_charge = 0` over 35 sec). Per-tick polling via an `App.py` snippet (see `tools/charge_logger.py` for the pattern) is the right tool.
+
+### Bonus findings (not in original question set)
+
+- **`AddDamage` radius is a *splash* parameter, not a falloff axis at the centre.** Same 1000 damage delivered at r=0.1 and r=120 when hit-node = ship centre. Radius likely matters only when the hit point is offset from centre and the splash sphere intersects different parts of the hull — not yet measured.
+- **Weapons deliver non-zero damage beyond `MaxDamageDistance`.** q04 fired at range 117 GU (≈ 2× `MaxDamageDistance = 60 GU`) and still delivered ~15 DPS to shields. Either the linear `(1 - d/R)` falloff isn't hard-capped, or torpedoes (longer range envelope) contributed. A dedicated **range-falloff probe** is the highest-value remaining follow-up — it directly verifies / replaces the curve in `engine/host_loop.py:_phaser_damage_for_tick`.
 </content>
 </invoke>

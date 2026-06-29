@@ -78,6 +78,7 @@ every probe file because the host is genuinely Python 1.5.
 | No `import X as Y` | Python 1.6+ syntax | `import X` then `Y = X` |
 | No f-strings | Python 3.6+ syntax | `"%s %d" % (s, n)` |
 | No `True` / `False` | added in Python 2.3 | `1` / `0` |
+| No `x if cond else y` ternary | Python 2.5+ syntax | explicit `if/else` block, or `(cond and x) or y` |
 | `except SomeError, e:` (comma, not `as`) | Python 1.5 syntax | always use comma form |
 | `print` is a *statement* | Python 2.x and below | `print x` not `print(x)` |
 | No `os`, `socket`, `mmap`, `_winreg`, `msvcrt`, `select`, `tempfile`, `posix` | not compiled into the static build | use `__import__('name')` if unsure; guard with `try: ... except ImportError:` |
@@ -98,11 +99,16 @@ What **does** work: `sys`, `time`, `struct`, `App`, partial `nt` (no I/O),
    accompanying `g_kXYZ = XYZPtr(Appc.globals.g_kXYZ)` at the end of the
    file is the one you call methods on.
 
-2. **String exceptions.** Python 1.5 can `raise "some message"` — the raised
-   object is a string, which has no `__class__`, so
-   `except Exception, e: e.__class__.__name__` blows up the error handler
-   itself. Use the template's `_exc_name(e)` helper, which falls back to
-   `type(e)` when `__class__` is missing.
+2. **String exceptions, and `except Exception:` doesn't catch them.** Python
+   1.5 `raise "GetShields"` produces a *string* exception that is **not** a
+   subclass of `Exception`. Two consequences:
+   - `except Exception, e: e.__class__.__name__` blows the error handler up
+     (strings have no `__class__`). Use `_exc_name(e)`.
+   - `except Exception, e:` lets string exceptions propagate through. For
+     any individual SWIG call that might fail this way, use a bare
+     `except:` and inspect `sys.exc_type` / `sys.exc_value` (as `_try()`
+     does in q02). Reserve `except Exception, ...` for the *outer* probe
+     wrapper where any leak is fine.
 
 3. **TGPoint3 construction.** `App.TGPoint3(x, y, z)` fails with
    `new_TGPoint3 requires exactly 0 arguments; 3 given`. The SWIG ctor is
@@ -113,6 +119,71 @@ What **does** work: `sys`, `time`, `struct`, `App`, partial `nt` (no I/O),
    ```
    Or reuse a live point via `obj.GetWorldLocation()` and mutate its
    `.x`/`.y`/`.z`.
+
+4. **SWIG downcasting — `GetTarget()` returns `ObjectClass*`, not the
+   subclass.** `_player.GetTarget()` hands back a `<C ObjectClass instance>`.
+   The Python wrapper exposes *only* the base-class methods; touching
+   `GetShields`/`GetHull`/`AddDamage` raises **`AttributeError` at the
+   attribute lookup itself** (because they're not in the dispatch table for
+   the base class). Always downcast before using ship methods:
+   ```python
+   raw = _player.GetTarget()
+   target = App.ShipClass_Cast(raw)             # for ship methods
+   # or  App.DamageableObject_Cast(raw)         # for AddDamage / GetHull
+   # or  App.ObjectClass_Cast(raw)              # base, almost always already wrapped
+   ```
+   The cast factories live at module scope: `App.ShipClass_Cast`,
+   `App.DamageableObject_Cast`, `App.ObjectClass_Cast`,
+   `App.EnergyWeapon_Cast` (for `GetMaxDamageDistance` / `GetMaxDamage`).
+   They return `None` if the cast is invalid (e.g. casting a planet to
+   ShipClass), so always fall back from most-derived to base, and check
+   for `None` before use. This is the rule the SDK itself uses (`pDamageable
+   = App.DamageableObject_Cast(TGObject)` in `sdk/Build/scripts/Effects.py:642`).
+
+5. **`_try("label", obj.method, args)` is *unsafe* — use `_call("label",
+   obj, "method", args)` for object methods.** Argument evaluation order:
+   Python resolves `obj.method` *before* calling `_try`, so a missing-method
+   `AttributeError` escapes the try/except inside `_try` and aborts the
+   probe. Use `_call` (provided by the template) which does the `getattr`
+   *inside* the safe block:
+   ```python
+   def _call(label, obj, name, args):
+       try:
+           return apply(getattr(obj, name), args)
+       except:
+           _record(label + " FAILED", ...)
+           return None
+   ```
+   Keep `_try` for top-level functions (`App.Game_GetCurrentPlayer`,
+   `App.ShipClass_Cast`) where the callable is a module attribute already
+   resolved. Use `_call` for everything reached through a SWIG-wrapped
+   object.
+
+6. **Prefer passive observation to programmatic mutation. Triggering combat
+   primitives directly can crash the game.** Discovered the hard way in q03:
+   calling `Weapon.SetFiring(1)` / `WeaponSystem.StartFiring()` while paused,
+   then unpausing, crashed BC. Bypassing the normal target-acquisition
+   pipeline (`UpdateTargetList`, arc checks, target-list state) leaves the
+   weapon half-initialised; unpausing asks the engine to discharge against
+   inconsistent state and it asserts/null-derefs. **Default to snapshot →
+   operator-driven action → snapshot.** Save the setter calls for safe
+   primitives whose dependencies are documented (e.g. `sh.SetCurShields(i, v)`
+   is fine — it just edits a value). When in doubt, observe rather than drive.
+
+7. **`AddDamage(node, radius, damage)` — first arg is a scene node, not a
+   position.** Despite the SDK using `pEmitPos` as the variable name
+   (`Effects.py:698`), the C++ signature requires `_p_NiAVObject`.
+   `Effects.py:691-692` confirms it with the comment *"INVALID NiAVObject
+   wrapper"*. Passing a `TGPoint3` raises `Type error. Expected _p_NiAVObject`.
+   The SWIG type-check is strict — **`obj.GetNode()` (returns `NiNodePtr`,
+   App.py:3800) is REJECTED** despite the C++ inheritance. Use
+   **`obj.GetNiObject()` (returns `NiAVObjectPtr`, App.py:3806)** instead.
+   For varying the hit *location* on the ship, **`obj.GetRandomPointOnModel()`
+   (App.py:3904)** returns a different `NiAVObject` per call — sample points
+   on the model surface, suitable for statistical position sweeps. Damage
+   location is parameterised by *which node you pass*, not by a position
+   vector — varying "hit position" requires picking different nodes, not
+   mutating coordinates.
 
 ## The two pollution traps and how to avoid them
 
