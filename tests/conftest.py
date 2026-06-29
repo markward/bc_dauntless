@@ -621,6 +621,7 @@ def _reset_leakable_engine_globals():
         ("engine.appc.projectiles", "_active"),
         ("engine.appc.hit_vfx", "_active"),
         ("engine.appc.ship_death", "_active"),
+        ("engine.appc.visible_damage", "_pending"),
     ):
         try:
             _m = sys.modules.get(_mod)

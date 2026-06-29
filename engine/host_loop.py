@@ -433,6 +433,8 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
     warp_core_breach.advance(dt, host=host, ship_instances=ship_instances)
     from engine.appc import core_breach_carve
     core_breach_carve.advance(dt, host=host, ship_instances=ship_instances)
+    from engine.appc import visible_damage
+    visible_damage.advance(dt, host=host, ship_instances=ship_instances)
     subsystem_emitters.pump(ships_list, _camera_world_pos(host), dt)
     camera_shake.update(dt)
 
@@ -2934,6 +2936,8 @@ class HostController:
         warp_core_breach.reset()
         from engine.appc import core_breach_carve
         core_breach_carve.reset()
+        from engine.appc import visible_damage
+        visible_damage.reset()
         from engine.appc import shockwaves
         shockwaves.reset()
         from engine.appc import subsystem_emitters
@@ -4316,7 +4320,25 @@ def run(mission_name: Optional[str] = None,
                     from pathlib import Path
                     project_root = Path(__file__).resolve().parent.parent
                     sdk_scripts = project_root / "sdk" / "Build" / "scripts"
-                    _picker_registry_cache[0] = _missions.discover(sdk_scripts)
+                    reg = _missions.discover(sdk_scripts)
+                    # Dev-only synthetic family: in-repo preview missions that
+                    # don't live under sdk/. The single "." episode is collapsed
+                    # by the picker so the mission rows sit directly under
+                    # "Developer".
+                    from engine.missions import (
+                        FamilyEntry, EpisodeEntry, MissionEntry)
+                    reg.families.append(FamilyEntry(
+                        dir_name="Developer", display_name="Developer",
+                        episodes=[EpisodeEntry(
+                            dir_name=".", display_name="Developer",
+                            missions=[MissionEntry(
+                                module_name="engine.dev_missions.damage_preview",
+                                dir_name="Damage Preview",
+                                display_name="Damage Preview",
+                            )],
+                        )],
+                    ))
+                    _picker_registry_cache[0] = reg
                 return _picker_registry_cache[0]
 
             def _on_pick_mission(module_name: str) -> None:

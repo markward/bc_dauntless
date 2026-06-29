@@ -420,6 +420,11 @@ class DamageableObject(PhysicsObjectClass):
         super().__init__()
         from engine.appc.properties import TGModelPropertySet
         self._property_set = TGModelPropertySet()
+        # Per-ship visible-damage scale (SetVisibleDamage*Modifier, from
+        # loadspacehelper hardpoint stats). Radius mod is applied to emitted
+        # carves now; strength mod is stored-only until Gap 2 plumbs strength.
+        self._vis_dmg_radius_mod: float = 1.0
+        self._vis_dmg_strength_mod: float = 1.0
 
     def GetPropertySet(self):
         return self._property_set
@@ -447,6 +452,50 @@ class DamageableObject(PhysicsObjectClass):
         it directly does not error. Mirrors ``GetRadius()``.
         """
         return self.GetRadius()
+
+    # ── Visible (geometry) damage ───────────────────────────────────────────────
+    # BC's DamageTool authored hull wrecks as body-frame damage spheres. These
+    # methods route authored + runtime visible damage into our hull-carve
+    # renderer via engine.appc.visible_damage (deferred until the ship's render
+    # instance is realized). See
+    # docs/original_game_reference/engine/damagetool-and-hull-damage-gaps.md.
+
+    def AddObjectDamageVolume(self, x, y, z, influRad, strength) -> None:
+        """Authored body-frame damage sphere (SDK pre-wreck Damage*.py scripts)."""
+        from engine.appc import visible_damage
+        visible_damage.queue_body_volume(self, x, y, z, influRad, strength)
+
+    def AddDamage(self, pEmitPos, fRadius, fDamage) -> None:
+        """Runtime world-space carve (Effects.DeathExplosionDamage). `pEmitPos`
+        is a world-space point (e.g. GetRandomPointOnModel)."""
+        from engine.appc import visible_damage
+        visible_damage.queue_world_carve(self, pEmitPos, fRadius, fDamage)
+
+    def DamageRefresh(self, *args) -> None:
+        """Re-polygonize authored damage. No-op: our breach renderer is
+        per-frame, so carves are already live."""
+        return None
+
+    def RemoveVisibleDamage(self) -> None:
+        """Clear visible damage (Actions/ShipScriptActions.py). Drops PENDING
+        volumes only; clearing already-emitted carves needs a native
+        HullCarveField::clear() + binding (Gap-1 follow-up)."""
+        from engine.appc import visible_damage
+        visible_damage.clear_for(self)
+
+    def SetVisibleDamageRadiusModifier(self, value) -> None:
+        """Per-ship visible-damage radius scale (loadspacehelper hardpoint stats)."""
+        try:
+            self._vis_dmg_radius_mod = float(value)
+        except (TypeError, ValueError):
+            pass
+
+    def SetVisibleDamageStrengthModifier(self, value) -> None:
+        """Per-ship visible-damage strength scale. Stored-only until Gap 2."""
+        try:
+            self._vis_dmg_strength_mod = float(value)
+        except (TypeError, ValueError):
+            pass
 
     def DamageSystem(self, subsystem, amount: float) -> None:
         """Apply damage to a subsystem, flooring condition at zero. If the
