@@ -101,6 +101,35 @@ def _target_alive(obj):
         return False
 
 
+class PlaceByDirectionMode(CameraMode):
+    """Bridge captain camera mode (CameraModes.GalaxyBridgeCaptain). A pure
+    attribute bag holding the SDK's PlaceByDirection params — BasePosition,
+    Movement, StartMoveAngle, EndMoveAngle — set via SetAttrPoint/SetAttrFloat.
+
+    Unlike the in-space modes it has no live Update(): it isn't part of the
+    cutscene stack. The bridge camera (host_loop._BridgeCamera) harvests these
+    attrs and computes eye = BasePosition + Movement * frac(horizontal angle),
+    so _ideal() is unused (returns None → IsValid()==0, which nothing probes)."""
+
+    def __init__(self, kind="PlaceByDirection"):
+        super().__init__()
+        self.kind = kind
+
+    def _ideal(self):
+        return None
+
+
+def CameraMode_Create(kind, pCamera=None):
+    """App.CameraMode_Create shim. The SDK's CameraModes.* builders call this
+    with a mode-type string (e.g. "PlaceByDirection") then fill attrs via
+    SetAttrFloat/SetAttrPoint. Returns an attr-bag mode tagged with `kind`;
+    `pCamera` is accepted (the SDK passes it) but unused — these modes are
+    evaluated by their consumer, not bound to the camera here. The in-space
+    cutscene path does NOT route through here (it uses
+    CameraObjectClass._MODE_FACTORY)."""
+    return PlaceByDirectionMode(kind)
+
+
 class LockedMode(CameraMode):
     """Camera locked to a fixed pose in the target's local frame (LockedView /
     LockedViewAnyAngle). Position/Forward/Up are target-local; the spherical

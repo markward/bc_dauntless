@@ -83,19 +83,58 @@ def test_zoom_camera_is_real_data_object_and_round_trips():
                                        1.570796, -0.000665, -0.087559, 0.996159,
                                        "maincamera")
     assert cam.position == (0.683736, 86.978439, 50.0)
+    assert cam.base_position == (0.683736, 86.978439, 50.0)
     assert cam.orientation == (1.570796, -0.000665, -0.087559, 0.996159)
     # Zoom params round-trip through the getters.
     cam.SetMinZoom(0.64); cam.SetMaxZoom(1.0); cam.SetZoomTime(0.375)
     assert cam.GetMinZoom() == 0.64
     assert cam.GetMaxZoom() == 1.0
     assert cam.GetZoomTime() == 0.375
-    # ConfigureCharacters overrides the position via SetTranslateXYZ.
+    # ConfigureCharacters overrides .position (the popped-mode/cutscene anchor)
+    # via SetTranslateXYZ; base_position (the captain mode BasePosition) is kept.
     cam.SetTranslateXYZ(0.683736, 86.978439, 61.934944)
     assert cam.position == (0.683736, 86.978439, 61.934944)
-    # The unbuilt camera-mode / zoom-animation surface still no-ops via _LoudStub.
-    assert cam.PushCameraMode(cam.GetNamedCameraMode("GalaxyBridgeCaptain")) is None
+    assert cam.base_position == (0.683736, 86.978439, 50.0)
+    # The remaining zoom-animation surface still no-ops via _LoudStub.
     assert cam.ToggleZoom(0.0) is None
     assert cam.Update(0.0) is None
+
+
+def test_zoom_camera_mode_stack_round_trips():
+    # The captain camera-mode stack is real: push/current/pop by object and by
+    # name (E1M1 does PopCameraMode("GalaxyBridgeCaptain")).
+    from engine.appc.camera_modes import CameraMode_Create
+    cam = ZoomCameraObjectClass_Create(0, 0, 0, 0, 0, 0, 1, "maincamera")
+    assert cam.GetCurrentCameraMode() is None
+    mode = CameraMode_Create("PlaceByDirection", cam)
+    mode._named = "GalaxyBridgeCaptain"
+    assert cam.PushCameraMode(mode) is None
+    assert cam.GetCurrentCameraMode() is mode
+    assert cam.PopCameraMode("GalaxyBridgeCaptain") is mode
+    assert cam.GetCurrentCameraMode() is None
+    # Pushing None is a no-op (GalaxyBridge pushes GetNamedCameraMode(...) which
+    # is None when no builder exists).
+    assert cam.PushCameraMode(None) is None
+    assert cam.GetCurrentCameraMode() is None
+
+
+def test_camera_mode_create_holds_place_by_direction_attrs():
+    # App.CameraMode_Create returns an attr-bag the SDK CameraModes.* builders
+    # fill; the host harvests BasePosition/Movement/angles from it.
+    from engine.appc.camera_modes import CameraMode_Create
+    from engine.appc.math import TGPoint3
+    mode = CameraMode_Create("PlaceByDirection", None)
+    assert mode.kind == "PlaceByDirection"
+    mode.SetAttrPoint("BasePosition", TGPoint3(0.683736, 86.978439, 50.0))
+    mode.SetAttrPoint("Movement", TGPoint3(0.0, -15.0, 15.0))
+    mode.SetAttrFloat("StartMoveAngle", 1.25)
+    mode.SetAttrFloat("EndMoveAngle", 2.5)
+    base = mode.GetAttrPoint("BasePosition")
+    assert (base.x, base.y, base.z) == (0.683736, 86.978439, 50.0)
+    mov = mode.GetAttrPoint("Movement")
+    assert (mov.x, mov.y, mov.z) == (0.0, -15.0, 15.0)
+    assert mode.GetAttrFloat("StartMoveAngle") == 1.25
+    assert mode.GetAttrFloat("EndMoveAngle") == 2.5
 
 
 def test_zoom_camera_get_object_returns_added_camera():
