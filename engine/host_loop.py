@@ -1465,6 +1465,27 @@ class _NullPicker:
 
 _NULL_PICKER = _NullPicker()
 
+
+def _register_ai_inspector(registry):
+    """Register the dev-only AI Inspector panel + its pause-menu row.
+
+    Mirrors the inline DeveloperOptionsPanel / ShipPropertyViewerPanel
+    registration: the panel is only constructed under the developer flag, so
+    production never builds it and the render path stays byte-identical. When
+    dev mode is off this is a no-op that returns the shared _NULL_PICKER stub
+    (is_open() -> False) so the modal-blocker list degrades cleanly.
+
+    Returns the panel (real AIInspectorPanel under --developer, else
+    _NULL_PICKER) so the caller can add it to _modal_blockers for ESC routing.
+    """
+    if not dev_mode.is_enabled():
+        return _NULL_PICKER
+    from engine.ui.ai_inspector_panel import AIInspectorPanel
+    panel = AIInspectorPanel()
+    registry.register(panel)
+    dev_mode.register_dev_pause_menu_entry("AI Inspector…", panel.open)
+    return panel
+
 # Install the real particle backend so Spec B plume state machine drives
 # actual SDK smoke controllers.  set_backend() only stores the reference and
 # sets _manager = None — no simulation side-effects at import time.
@@ -4333,6 +4354,17 @@ def run(mission_name: Optional[str] = None,
                 "Ship Property Viewer", ship_property_viewer.open,
             )
 
+        # AI Inspector — dev-only live AI-tree inspector modal. Registers its
+        # pause-menu row + the panel into `registry` (created below). Done via
+        # a helper so the registration is unit-testable; a no-op returning
+        # _NULL_PICKER in production. Menu entry must be added before
+        # default_pause_menu() snapshots dev_pause_menu_entries(), so the
+        # registry is constructed (empty) ahead of the pause menu and gets its
+        # legacy handler wired afterwards.
+        from engine.ui.panel_registry import PanelRegistry
+        registry = PanelRegistry()
+        ai_inspector = _register_ai_inspector(registry)
+
         # Configuration panel — production-visible pause-menu modal
         # exposing the Graphics tab (dust, specular, FOV). Settings
         # apply live; no persistence in this iteration. Construction
@@ -4398,13 +4430,15 @@ def run(mission_name: Optional[str] = None,
         controller.quick_battle_setup_panel = quick_battle_setup_panel
 
         from engine.ui.pause_menu import default_pause_menu
-        from engine.ui.panel_registry import PanelRegistry
         pause_menu = default_pause_menu(
             on_exit=pause.request_quit,
             on_configuration=configuration_panel.open,
             on_resume=pause.close,
         )
-        registry = PanelRegistry(legacy_handler=pause_menu.dispatch_event)
+        # `registry` was created earlier (before the pause menu) so dev panels
+        # could register their menu rows ahead of the snapshot; wire its legacy
+        # handler now that pause_menu exists.
+        registry._legacy = pause_menu.dispatch_event
         controller.panel_registry = registry  # expose to _drain_pending_swap
         registry.register(target_list_view)
         registry.register(sensors_panel)
@@ -4539,8 +4573,8 @@ def run(mission_name: Optional[str] = None,
         # whose is_open() is False, so they never fire. One list drives
         # ESC routing, pause-menu visibility, and pause-input routing.
         _modal_blockers = [mission_picker, developer_options_panel,
-                           ship_property_viewer, configuration_panel,
-                           setting_course_panel]
+                           ship_property_viewer, ai_inspector,
+                           configuration_panel, setting_course_panel]
 
         while not r.should_close():
             # --- Track window resizes: re-lay-out the CEF overlay at the new

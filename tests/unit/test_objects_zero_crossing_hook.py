@@ -97,3 +97,21 @@ def test_destroy_system_on_warp_core_arms_breach(monkeypatch):
     ship = _Ship(hull, power)
     ship.DestroySystem(power)         # forced 100 -> 0, crosses
     assert ship is armed[0]
+
+
+# ── Cloned-model warp radius (ConditionInRange consumer) ────────────────────
+
+def test_has_cloned_model_returns_zero():
+    """ConditionInRange's warp branch gates GetClonedModelRadius behind
+    HasClonedModel(); Dauntless has no cloned-model override yet, so it
+    returns 0 and callers fall back to GetRadius()."""
+    obj = DamageableObject()
+    assert obj.HasClonedModel() == 0
+
+
+def test_get_cloned_model_radius_equals_get_radius():
+    """The placeholder GetClonedModelRadius mirrors GetRadius so a direct
+    caller (ConditionInRange) gets a sane radius rather than an error."""
+    obj = DamageableObject()
+    obj.SetRadius(42.5)
+    assert obj.GetClonedModelRadius() == obj.GetRadius() == 42.5

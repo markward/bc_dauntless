@@ -1,45 +1,120 @@
-"""AI ship collision avoidance — reimplements the original Appc autopilot's
-obstacle avoidance.
+"""AI ship collision avoidance — full port of the SDK AvoidObstacles
+preprocessor (sdk/Build/scripts/AI/Preprocessors.py:1621-2009).
 
 The SDK movement scripts (BaseAI / CircleObject / IntelligentCircleObject)
 only ever command a *desired heading + impulse fraction* via pCodeAI /
-SetImpulse. In stock Bridge Commander the C++ autopilot integrated that
-command together with obstacle avoidance, which is why ramming an AI ship
-was so hard at every difficulty. Our Phase-1 ship_motion integrator simply
-follows the commanded vector, so that avoidance was missing entirely.
+SetImpulse. In stock Bridge Commander the per-AI ``AvoidObstacles``
+preprocessor sat in front of that AI and, when a collision was imminent,
+overrode the heading + throttle to steer clear — which is why ramming an AI
+ship was so hard. Our Phase-1 ship_motion integrator simply follows the
+commanded vector, so that avoidance was missing entirely.
 
-This pass restores it. Once per tick, after tick_all_ai has written each
-ship's heading and before tick_all_ship_motion integrates, every
-AI-controlled ship that is on an imminent collision course with another
-body has its heading overridden to steer clear. It runs for ALL AI ships at
-ALL times, independent of difficulty/AI mode — a safety reflex that takes
-priority over normal maneuvering, exactly as the user requested.
+This module restores the FULL SDK behaviour. It is a direct port of
+``AvoidObstacles`` (``NeedToAvoid`` ~1769-1842, ``AvoidObjects`` ~1844-1924,
+``CalculateDirectionAppeal`` ~1926-1993, ``IsDirectionSafe`` ~1995-2009),
+with the one architectural difference noted below.
 
-Gating: only ships with an attached AI (GetAI() is not None) are steered.
-The player ship is driven by _PlayerControl with GetAI() == None, so it is
-never auto-avoided. Threats are every other collidable (ships + planets);
-the avoider always keeps its commanded forward thrust and only its turn is
-overridden.
+Architecture note — global routine vs PreprocessingAI
+-----------------------------------------------------
+The SDK ``AvoidObstacles.Update`` returns ``PS_SKIP_ACTIVE`` while it is
+actively overriding the course (suppressing the contained AI) and
+``PS_NORMAL`` otherwise. Dauntless runs avoidance as a single global
+per-tick routine (``tick_collision_avoidance``) called from
+engine/core/loop.py AFTER ``tick_all_ai`` and BEFORE
+``tick_all_ship_motion`` — not as a per-AI PreprocessingAI. Because it runs
+after the AI has written its heading/throttle, "actively overriding" is the
+global-routine analog of ``PS_SKIP_ACTIVE``: while evading, this routine
+fully owns the ship's heading + thrust for that tick (it wins by running
+last). We record that state per ship (``is_overriding``) so the behaviour is
+observable/testable; not overriding == ``PS_NORMAL``.
+
+Gating: only ships with an attached AI (``GetAI()`` is not None) are steered.
+The player ship is driven by _PlayerControl with ``GetAI() == None``, so it
+is never auto-avoided.
 """
 import math
+import random
 
 from engine.appc.math import TGPoint3
 from engine.appc.objects import PhysicsObjectClass
 
-# Look-ahead window: only react to collisions predicted within this many
-# seconds. Short enough that ships don't swerve around distant traffic,
-# long enough that a limited turn rate can still clear the obstacle.
-# Capital ships turn slowly, so this needs real lead time — at a ~6 GU/s
-# closing speed, 12 s is ~70 GU of warning.
-AVOID_HORIZON_S = 12.0
+# ── SDK AvoidObstacles tunables (Preprocessors.py:1622-1665) ────────────────
 
-# Extra clearance added to the combined radii when deciding whether a
-# predicted closest approach counts as "imminent" (game units).
-AVOID_MARGIN_GU = 25.0
+# How far into the future we anticipate collisions (SDK fPredictionTime).
+AVOID_PREDICTION_TIME_S = 15.0
 
-# Impulse fraction commanded along the escape heading during evasion. Full
-# ahead — this is an emergency maneuver that overrides the AI's throttle.
-AVOID_SPEED_FRACTION = 1.0
+# Minimum radius around the predicted position to search for incoming
+# objects (SDK fMinimumRadius; "225 is about 40km").
+AVOID_MINIMUM_RADIUS_GU = 225.0
+
+# Personal space as a multiple of the ship's own radius (SDK fPersonalSpace).
+AVOID_PERSONAL_SPACE_MULT = 2.5
+
+# Re-evaluate at most this often when no threat is imminent (SDK
+# fMaximumUpdateDelay); every tick (0.0, SDK fMinimumUpdateDelay) while
+# actively evading.
+AVOID_MAX_UPDATE_DELAY_S = 0.25
+AVOID_MIN_UPDATE_DELAY_S = 0.0
+
+# Impulse fraction along model-forward when the current forward is safe
+# (SDK fSpeed = 1.0 if bFacingSafe else 0.0).
+AVOID_SAFE_SPEED = 1.0
+AVOID_UNSAFE_SPEED = 0.0
+
+# Object class types we never bother avoiding (SDK lDontAvoidTypes). Resolved
+# to engine classes lazily (App import) so module import stays cheap.
+_DONT_AVOID_TYPE_NAMES = (
+    "CT_PROXIMITY_CHECK",
+    "CT_DEBRIS",
+    "CT_TORPEDO",
+    "CT_ASTEROID_FIELD",
+    "CT_NEBULA",
+)
+
+# Deterministic RNG for the 8 sampled candidate flee directions
+# (Preprocessors.py:1903-1912 uses App.TGPoint3_GetRandomUnitVector). A fixed
+# seed makes evasion reproducible so tests can assert identical trajectories;
+# the rest of the engine likewise seeds stdlib random where determinism
+# matters (see engine/appc/particles.py). Seed 0xC0111DE ("collide").
+_AVOID_RNG_SEED = 0xC0111DE
+_rng = random.Random(_AVOID_RNG_SEED)
+
+# Per-ship avoidance state, keyed by id(ship): last evaluation game-time, the
+# cached (heading, speed) decision, and whether we are actively overriding
+# (the PS_SKIP_ACTIVE analog). Survives across ticks; cleared by
+# reset_avoidance_state().
+_ship_state: dict = {}
+
+# Monotonic game clock advanced per tick (sum of dt), used for the adaptive
+# update-delay cadence. Reset by reset_avoidance_state().
+_clock_s = 0.0
+
+
+def reset_avoidance_state() -> None:
+    """Clear all per-ship state and reseed the RNG. Call between independent
+    runs/missions so cadence and sampled directions are reproducible."""
+    global _clock_s
+    _ship_state.clear()
+    _clock_s = 0.0
+    _rng.seed(_AVOID_RNG_SEED)
+
+
+def is_overriding(ship) -> bool:
+    """Whether avoidance is currently overriding `ship`'s course this tick
+    (the global-routine analog of the SDK's PS_SKIP_ACTIVE). Observable for
+    tests/HUD."""
+    st = _ship_state.get(id(ship))
+    return bool(st and st.get("overriding"))
+
+
+def _dont_avoid_types():
+    import App
+    out = []
+    for name in _DONT_AVOID_TYPE_NAMES:
+        cls = getattr(App, name, None)
+        if isinstance(cls, type):
+            out.append(cls)
+    return tuple(out)
 
 
 def _world_velocity(obj) -> TGPoint3:
@@ -57,132 +132,355 @@ def _world_velocity(obj) -> TGPoint3:
     return v
 
 
-def _perpendicular(v: TGPoint3) -> TGPoint3:
-    """A unit vector perpendicular to v (for head-on escapes where the
-    miss vector is degenerate). Cross with whichever world axis is least
-    aligned to v to avoid a near-zero cross product."""
-    ax = abs(v.x); ay = abs(v.y); az = abs(v.z)
-    if ax <= ay and ax <= az:
-        axis = TGPoint3(1.0, 0.0, 0.0)
-    elif ay <= az:
-        axis = TGPoint3(0.0, 1.0, 0.0)
-    else:
-        axis = TGPoint3(0.0, 0.0, 1.0)
-    # cross(v, axis)
-    cx = v.y * axis.z - v.z * axis.y
-    cy = v.z * axis.x - v.x * axis.z
-    cz = v.x * axis.y - v.y * axis.x
-    out = TGPoint3(cx, cy, cz)
-    length = out.Length()
-    if length < 1e-9:
-        return TGPoint3(1.0, 0.0, 0.0)
-    return TGPoint3(out.x / length, out.y / length, out.z / length)
+def _unitize(v: TGPoint3):
+    """Return (unit_vector, length). Length 0 ⇒ returns (zero, 0.0)."""
+    n = v.Length()
+    if n < 1e-12:
+        return TGPoint3(0.0, 0.0, 0.0), 0.0
+    return TGPoint3(v.x / n, v.y / n, v.z / n), n
 
 
-def _evasion_heading(pa, va, ra, pb, vb, rb):
-    """Return a world-space unit heading that steers A clear of B, or None
-    if no collision is imminent within the look-ahead window.
+def _perpendicular_component(v: TGPoint3, axis: TGPoint3) -> TGPoint3:
+    """Component of v perpendicular to axis: v - (v·â)â (SDK
+    TGPoint3.GetPerpendicularComponent)."""
+    a, alen = _unitize(axis)
+    if alen == 0.0:
+        return TGPoint3(v.x, v.y, v.z)
+    d = v.x * a.x + v.y * a.y + v.z * a.z
+    return TGPoint3(v.x - d * a.x, v.y - d * a.y, v.z - d * a.z)
 
-    Trigger is *time to enter the danger zone* (separation reaching
-    ra + rb + margin), not time to closest approach: for a head-on
-    approach the spheres overlap well before the closest-approach instant,
-    so triggering on CPA gives far too little warning. We solve
-    |dp + dv·t| = safety for the earliest t > 0; if that entry is within
-    the horizon (or the bodies are already inside safety), A is steered
-    away from B's predicted closest-approach position (or perpendicular to
-    the closing line for a dead-on approach).
+
+def _random_unit_vector() -> TGPoint3:
+    """Uniform random unit vector from the seeded RNG (analog of
+    App.TGPoint3_GetRandomUnitVector)."""
+    while True:
+        x = _rng.uniform(-1.0, 1.0)
+        y = _rng.uniform(-1.0, 1.0)
+        z = _rng.uniform(-1.0, 1.0)
+        n2 = x * x + y * y + z * z
+        if 1e-6 < n2 <= 1.0:
+            n = math.sqrt(n2)
+            return TGPoint3(x / n, y / n, z / n)
+
+
+# ── NeedToAvoid (Preprocessors.py:1769-1842) ────────────────────────────────
+
+
+def _need_to_avoid(pa, va, personal_space, pb, vb, rb) -> bool:
+    """Whether the ship at pa (velocity va) with the given personal-space
+    radius must avoid the obstacle at pb (velocity vb, radius rb).
+
+    Direct port: already-inside-personal-space ⇒ avoid; otherwise solve the
+    relative-velocity quadratic for the soonest non-negative hit time and
+    avoid if it falls within fPredictionTime."""
+    # Already within personal space + their radius?
+    dx = pb.x - pa.x; dy = pb.y - pa.y; dz = pb.z - pa.z
+    dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+    if dist < (personal_space + rb):
+        return True
+
+    # Relative velocity (ours minus theirs) and the collision quadratic.
+    vdx = va.x - vb.x; vdy = va.y - vb.y; vdz = va.z - vb.z
+    a = vdx * vdx + vdy * vdy + vdz * vdz
+    if a <= 0.0:
+        return False  # no relative motion: already handled the overlap case
+
+    # vPosDiff = ship - object  (note the sign vs dp above)
+    px = pa.x - pb.x; py = pa.y - pb.y; pz = pa.z - pb.z
+    b = 2.0 * (px * vdx + py * vdy + pz * vdz)
+    radius_sum = personal_space + rb
+    c = -(radius_sum * radius_sum) + (px * px + py * py + pz * pz)
+
+    hit_time = -1.0
+    sqrt_part = b * b - 4.0 * a * c
+    if sqrt_part >= 0.0:
+        sq = math.sqrt(sqrt_part)
+        t1 = (-b + sq) / (2.0 * a)
+        t2 = (-b - sq) / (2.0 * a)
+        # SDK four-case root selection: take the soonest non-negative root.
+        if t1 < t2:
+            hit_time = t1 if t1 >= 0.0 else t2
+        else:
+            hit_time = t2 if t2 >= 0.0 else t1
+
+    if hit_time >= 0.0 and hit_time < AVOID_PREDICTION_TIME_S:
+        return True
+    return False
+
+
+# ── CalculateDirectionAppeal (Preprocessors.py:1926-1993) ───────────────────
+
+
+def _calculate_direction_appeal(forward, test_dir, dir_info) -> float:
+    """Score a candidate flee direction against every obstacle's direction
+    info. Direct port of CalculateDirectionAppeal.
+
+    dir_info entries: (vDirection, vVelocity, fBlockedDot, fFavorability),
+    where vDirection is the unit ship→obstacle direction.
     """
-    # Relative position / velocity of B as seen from A.
-    dpx = pb.x - pa.x; dpy = pb.y - pa.y; dpz = pb.z - pa.z
-    dvx = vb.x - va.x; dvy = vb.y - va.y; dvz = vb.z - va.z
+    overall = 0.0
+    for vDirection, vVelocity, blocked_dot, favorability in dir_info:
+        dot = (test_dir.x * vDirection.x + test_dir.y * vDirection.y
+               + test_dir.z * vDirection.z)
 
-    dv2 = dvx * dvx + dvy * dvy + dvz * dvz
-    if dv2 < 1e-9:
-        return None  # no relative motion: not closing
+        if dot >= blocked_dot:
+            # Inside the blocked cone: full favorability (and SDK 'continue's,
+            # skipping the velocity/forward terms for this obstacle).
+            # NOTE: matches the SDK's `continue` — fAppeal is set but not added.
+            continue
+        else:
+            if dot >= 0.0:
+                try:
+                    appeal = favorability - (2.0 * favorability
+                                             * (blocked_dot - dot) / blocked_dot)
+                except ZeroDivisionError:
+                    appeal = -favorability
+            else:
+                appeal = (favorability * dot * 0.5) + (favorability * (1.0 + dot))
 
-    safety = ra + rb + AVOID_MARGIN_GU
-    dp2 = dpx * dpx + dpy * dpy + dpz * dpz
-    dp_dot_dv = dpx * dvx + dpy * dvy + dpz * dvz
+        overall += appeal * 2.0
 
-    # Earliest time the separation reaches `safety`. Roots of
-    # dv2·t² + 2(dp·dv)·t + (dp2 - safety²) = 0.
-    c = dp2 - safety * safety
-    if c <= 0.0:
-        t_enter = 0.0  # already within the danger zone
-    else:
-        if dp_dot_dv >= 0.0:
-            return None  # receding (or parallel): never enters
-        disc = dp_dot_dv * dp_dot_dv - dv2 * c
-        if disc <= 0.0:
-            return None  # closest approach still clears safety
-        t_enter = (-dp_dot_dv - math.sqrt(disc)) / dv2
-        if t_enter > AVOID_HORIZON_S:
-            return None  # not imminent yet
+        # Similar calculations against the obstacle's velocity.
+        vel_dir, _ = _unitize(vVelocity)
+        if (vel_dir.x * vel_dir.x + vel_dir.y * vel_dir.y
+                + vel_dir.z * vel_dir.z) > 0.0625:
+            vdot = (vel_dir.x * test_dir.x + vel_dir.y * test_dir.y
+                    + vel_dir.z * test_dir.z)
+            appeal = (abs(vdot) - 0.5) * 2.0 * favorability
+            overall += appeal
 
-    # Steer away from where B will be at closest approach.
-    t_cpa = -dp_dot_dv / dv2
-    if t_cpa < 0.0:
-        t_cpa = 0.0
-    mx = dpx + dvx * t_cpa
-    my = dpy + dvy * t_cpa
-    mz = dpz + dvz * t_cpa
-    miss = math.sqrt(mx * mx + my * my + mz * mz)
-    if miss > 1e-3:
-        return TGPoint3(-mx / miss, -my / miss, -mz / miss)
-    return _perpendicular(TGPoint3(dvx, dvy, dvz))
+            # Avoid moving in front of the obstacle: compare the perpendicular
+            # components (the SDK's `if 1:` branch is always taken).
+            test_perp = _perpendicular_component(test_dir, vVelocity)
+            dir_perp = _perpendicular_component(vDirection, vVelocity)
+            test_perp, _ = _unitize(test_perp)
+            dir_perp, _ = _unitize(dir_perp)
+            pdot = (test_perp.x * dir_perp.x + test_perp.y * dir_perp.y
+                    + test_perp.z * dir_perp.z)
+            appeal = pdot * favorability
+            overall += appeal
+
+        # A little goodness for staying near our forward vector.
+        overall += (forward.x * vDirection.x + forward.y * vDirection.y
+                    + forward.z * vDirection.z) * 0.1
+
+    return overall
 
 
-def tick_collision_avoidance() -> None:
-    """Override the heading of every AI ship on an imminent collision
-    course. Call once per tick after tick_all_ai, before
-    tick_all_ship_motion."""
+def _is_direction_safe(test_dir, dir_info) -> bool:
+    """Whether test_dir points clear of every obstacle's blocked cone (SDK
+    IsDirectionSafe)."""
+    for vDirection, _vVelocity, blocked_dot, _favorability in dir_info:
+        dot = (test_dir.x * vDirection.x + test_dir.y * vDirection.y
+               + test_dir.z * vDirection.z)
+        if dot >= blocked_dot:
+            return False
+    return True
+
+
+# ── AvoidObjects (Preprocessors.py:1844-1924) ───────────────────────────────
+
+
+def _avoid_objects(ship, forward, avoid_list, previous_heading=None):
+    """Given the ship, its world-forward, and the obstacles to avoid (each a
+    (pb, vb, rb) tuple), return (heading, speed) or (None, None). Direct port
+    of AvoidObjects + the appeal search.
+
+    `previous_heading`, when supplied, is also entered into the appeal contest.
+    The SDK re-rolls 8 fresh random directions every evasion tick, which makes
+    the chosen heading thrash and prevents a committed escape under a fast
+    turn rate. Re-testing the heading we're already flying lets a still-good
+    choice win, so the ship commits to one arc instead of jittering — the same
+    spirit as the SDK testing the current forward direction."""
+    if not avoid_list:
+        return None, None
+
+    ship_loc = ship.GetWorldLocation()
+    ship_r = ship.GetRadius()
+
+    dir_info = []
+    for pb, vb, rb in avoid_list:
+        vd = TGPoint3(pb.x - ship_loc.x, pb.y - ship_loc.y, pb.z - ship_loc.z)
+        unit, distance = _unitize(vd)
+        if distance <= 0.0:
+            # Co-located: can't pick a direction away from it.
+            continue
+        blocked_angle = math.atan((rb + ship_r) / distance)
+        blocked_dot = math.cos(blocked_angle)
+        favorability = -AVOID_MINIMUM_RADIUS_GU / distance
+        dir_info.append((unit, TGPoint3(vb.x, vb.y, vb.z),
+                         blocked_dot, favorability))
+
+    if not dir_info:
+        return None, None
+
+    flee_dir = None
+    flee_appeal = -1.0e20
+
+    # First, test the opposite of each obstacle direction.
+    for vDirection, _vel, _bd, _fav in dir_info:
+        test = TGPoint3(-vDirection.x, -vDirection.y, -vDirection.z)
+        appeal = _calculate_direction_appeal(forward, test, dir_info)
+        if appeal > flee_appeal:
+            flee_appeal = appeal
+            flee_dir = test
+
+    # Then 8 sampled random directions from the seeded RNG.
+    for _ in range(8):
+        test = _random_unit_vector()
+        appeal = _calculate_direction_appeal(forward, test, dir_info)
+        if appeal > flee_appeal:
+            flee_appeal = appeal
+            flee_dir = test
+
+    # Finally, re-test the heading we are already committed to (if any) so a
+    # working escape keeps winning instead of being abandoned for a fresh
+    # random sample each tick.
+    if previous_heading is not None:
+        appeal = _calculate_direction_appeal(forward, previous_heading, dir_info)
+        if appeal >= flee_appeal:
+            flee_appeal = appeal
+            flee_dir = TGPoint3(previous_heading.x, previous_heading.y,
+                                previous_heading.z)
+
+    # Speed depends on whether our CURRENT forward is safe.
+    facing_safe = _is_direction_safe(forward, dir_info)
+    speed = AVOID_SAFE_SPEED if facing_safe else AVOID_UNSAFE_SPEED
+
+    return flee_dir, speed
+
+
+# ── TestCourseOverride (Preprocessors.py:1713-1767) ─────────────────────────
+
+
+def _test_course_override(ship, previous_heading=None):
+    """Build the avoid list for `ship` and return the (heading, speed)
+    override, or (None, None). Direct port of TestCourseOverride."""
+    pSet = ship.GetContainingSet()
+    if pSet is None:
+        return None, None
+
+    ship_loc = ship.GetWorldLocation()
+    ship_vel = _world_velocity(ship)
+    ship_r = ship.GetRadius()
+
+    # Predict our location fPredictionTime ahead (acceleration ~= 0, so this
+    # is p + v·t, matching GetPredictedPosition with a = 0).
+    predicted = TGPoint3(
+        ship_loc.x + ship_vel.x * AVOID_PREDICTION_TIME_S,
+        ship_loc.y + ship_vel.y * AVOID_PREDICTION_TIME_S,
+        ship_loc.z + ship_vel.z * AVOID_PREDICTION_TIME_S,
+    )
+    travel = TGPoint3(predicted.x - ship_loc.x,
+                      predicted.y - ship_loc.y,
+                      predicted.z - ship_loc.z).Length()
+
+    personal_space = ship_r * AVOID_PERSONAL_SPACE_MULT
+    check_radius = travel + personal_space
+    if check_radius < AVOID_MINIMUM_RADIUS_GU:
+        check_radius = AVOID_MINIMUM_RADIUS_GU
+
+    from engine.appc.ship_iter import iter_set_objects
+    blacklist = _dont_avoid_types()
+
+    avoid_list = []
+    for other in iter_set_objects(pSet):
+        if other is ship:
+            continue
+        # Type filtering: skip blacklisted class types (SDK NeedToAvoid first
+        # check, via IsTypeOf against lDontAvoidTypes). We read the obstacle's
+        # type with isinstance against the engine's CT_* classes.
+        if isinstance(other, blacklist):
+            continue
+        try:
+            ob_loc = other.GetWorldLocation()
+            ob_r = float(other.GetRadius())
+        except Exception:
+            continue
+        if ob_r <= 0.0:
+            continue
+        # Prefilter: only objects within check_radius of the predicted
+        # position (SDK GetNearObjects).
+        dx = ob_loc.x - predicted.x
+        dy = ob_loc.y - predicted.y
+        dz = ob_loc.z - predicted.z
+        if (dx * dx + dy * dy + dz * dz) > (check_radius * check_radius):
+            continue
+        ob_vel = _world_velocity(other)
+        if _need_to_avoid(ship_loc, ship_vel, personal_space,
+                          ob_loc, ob_vel, ob_r):
+            avoid_list.append((TGPoint3(ob_loc.x, ob_loc.y, ob_loc.z),
+                               ob_vel, ob_r))
+
+    return _avoid_objects(ship, ship.GetWorldForwardTG(), avoid_list,
+                          previous_heading=previous_heading)
+
+
+# ── Per-tick driver (loop.py call site — do NOT rename) ─────────────────────
+
+
+def tick_collision_avoidance(dt: float = 1.0 / 60.0) -> None:
+    """Override the heading + thrust of every AI ship on an imminent
+    collision course. Call once per tick after tick_all_ai, before
+    tick_all_ship_motion.
+
+    Adaptive cadence (SDK Update/GetNextUpdateTime): when not actively
+    evading, a ship is only re-evaluated every fMaximumUpdateDelay (0.25 s);
+    while overriding, it re-evaluates every tick (fMinimumUpdateDelay = 0.0).
+    Between evaluations the cached decision is re-applied while overriding."""
+    global _clock_s
+    _clock_s += dt
+
     from engine.appc.ships import ShipClass
     from engine.appc.collisions import iter_collidables
 
-    bodies = []
+    live_ids = set()
     for obj in iter_collidables():
-        try:
-            center = obj.GetWorldLocation()
-            radius = obj.GetRadius()
-        except Exception:
-            continue
-        bodies.append((obj, TGPoint3(center.x, center.y, center.z),
-                       float(radius), _world_velocity(obj)))
-
-    for obj, pa, ra, va in bodies:
         if not isinstance(obj, ShipClass):
             continue
         if obj.GetAI() is None:        # player / uncontrolled: never auto-steer
             continue
+        live_ids.add(id(obj))
 
-        # Pick the most urgent threat (smallest predicted miss). Evaluate
-        # every other body and keep the evasion heading for the nearest
-        # imminent collision.
-        best_heading = None
-        best_dist2 = 1e36
-        for other, pb, rb, vb in bodies:
-            if other is obj:
-                continue
-            heading = _evasion_heading(pa, va, ra, pb, vb, rb)
-            if heading is None:
-                continue
-            d2 = ((pb.x - pa.x) ** 2 + (pb.y - pa.y) ** 2 + (pb.z - pa.z) ** 2)
-            if d2 < best_dist2:
-                best_dist2 = d2
-                best_heading = heading
+        st = _ship_state.setdefault(
+            id(obj), {"last_eval": -1e18, "heading": None,
+                      "speed": None, "overriding": False})
 
-        if best_heading is not None:
-            # Urgent evasive maneuver — overrides whatever heading AND
-            # throttle the AI set this tick (it runs after tick_all_ai, so
-            # it wins). The AI's commanded speed in combat is frequently
-            # ~0 ("stop and turn"), so avoidance must engage the engines
-            # itself or the ship just pivots in place.
-            #
-            # Turn the nose toward the escape heading and thrust along the
-            # nose (model forward), like every other ship — ship_motion
-            # drives velocity along the ship's facing, so a WORLD-space
-            # thrust here makes the hull "magically" strafe sideways. Nose
-            # thrust + turn banks the ship away on a natural arc.
-            obj.TurnTowardDirection(best_heading)
-            obj.SetImpulse(AVOID_SPEED_FRACTION, TGPoint3(0.0, 1.0, 0.0),
+        # In-system warp: never override; the warp check does its own
+        # clearance (Preprocessors.py:1692-1693).
+        try:
+            in_warp = obj.IsDoingInSystemWarp()
+        except Exception:
+            in_warp = 0
+        if in_warp:
+            st["overriding"] = False
+            st["heading"] = None
+            st["speed"] = None
+            st["last_eval"] = _clock_s
+            continue
+
+        delay = (AVOID_MIN_UPDATE_DELAY_S if st["overriding"]
+                 else AVOID_MAX_UPDATE_DELAY_S)
+        due = (_clock_s - st["last_eval"]) >= delay
+
+        if due:
+            prev = st["heading"] if st["overriding"] else None
+            heading, speed = _test_course_override(obj, previous_heading=prev)
+            st["last_eval"] = _clock_s
+            st["heading"] = heading
+            st["speed"] = speed
+            st["overriding"] = heading is not None
+
+        if st["overriding"] and st["heading"] is not None:
+            # Actively evading — owns heading + thrust this tick (the
+            # PS_SKIP_ACTIVE analog; runs after tick_all_ai so it wins).
+            # Turn the nose toward the escape heading and thrust along model
+            # forward; ship_motion drives velocity along the ship's facing,
+            # so a model-space thrust banks the ship away on a natural arc.
+            obj.TurnTowardDirection(st["heading"])
+            obj.SetImpulse(st["speed"], TGPoint3(0.0, 1.0, 0.0),
                            PhysicsObjectClass.DIRECTION_MODEL_SPACE)
+
+    # Drop state for ships that left play so the dict can't grow unbounded.
+    for dead in [k for k in _ship_state if k not in live_ids]:
+        del _ship_state[dead]

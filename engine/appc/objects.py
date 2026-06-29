@@ -424,6 +424,30 @@ class DamageableObject(PhysicsObjectClass):
     def GetPropertySet(self):
         return self._property_set
 
+    def HasClonedModel(self) -> int:
+        """Whether this object has a cloned model carrying a separate
+        warp-stretch radius override.
+
+        Consumed by ``sdk/Build/scripts/Conditions/ConditionInRange.py``
+        (warp branch, ~lines 211-212): it only consults
+        ``GetClonedModelRadius()`` when this returns truthy, otherwise it
+        keeps the value from ``GetRadius()``. Dauntless has no cloned-model
+        warp-radius override yet, so this returns 0 and callers fall back to
+        ``GetRadius()`` — the correct behaviour for normal play and warp
+        alike until cloned-model support lands.
+        """
+        return 0
+
+    def GetClonedModelRadius(self) -> float:
+        """The cloned-model (unstretched) warp radius.
+
+        Faithful placeholder for the same ConditionInRange consumer: since
+        ``HasClonedModel()`` returns 0 this is never reached via that gate,
+        but it must exist and return a sane radius so any caller that invokes
+        it directly does not error. Mirrors ``GetRadius()``.
+        """
+        return self.GetRadius()
+
     def DamageSystem(self, subsystem, amount: float) -> None:
         """Apply damage to a subsystem, flooring condition at zero. If the
         subsystem is critical and reaches zero, start the ship death

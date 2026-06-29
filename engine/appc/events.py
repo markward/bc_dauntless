@@ -95,10 +95,15 @@ class WeaponHitEvent(TGEvent):
 
     Inherits TGEvent's _source / Set/GetSource for the firing ship; the
     weapon-specific surface adds target, damage, hit-point, subsystem,
-    surface normal, and splash radius (the radius the attribution
-    resolver used for this hit).
+    surface normal, splash radius (the radius the attribution resolver
+    used for this hit), and a hull-vs-shield flag.
+
+    `IsHullHit()` returns 1 when the hit reached the hull and 0 when the
+    shield facing absorbed it. SDK conditions Conditions/ConditionAttacked
+    and Conditions/ConditionAttackedBy read it to split hull damage from
+    shield damage (1 → AddShipDamage, 0 → AddShieldDamage).
     """
-    def __init__(self):
+    def __init__(self, is_hull_hit=False):
         super().__init__()
         self._event_type = ET_WEAPON_HIT
         self._target = None
@@ -107,6 +112,7 @@ class WeaponHitEvent(TGEvent):
         self._subsystem = None
         self._normal = None
         self._radius: float = 0.0
+        self._is_hull_hit: int = 1 if is_hull_hit else 0
 
     def GetTarget(self):              return self._target
     def SetTarget(self, tgt) -> None: self._target = tgt
@@ -120,6 +126,12 @@ class WeaponHitEvent(TGEvent):
     def SetNormal(self, n) -> None:   self._normal = n
     def GetRadius(self) -> float:     return self._radius
     def SetRadius(self, r) -> None:   self._radius = float(r)
+
+    def IsHullHit(self) -> int:
+        """1 if the hit reached the hull, 0 if shields absorbed it.
+        Read by Conditions/ConditionAttacked + ConditionAttackedBy."""
+        return self._is_hull_hit
+    def SetHullHit(self, v) -> None:  self._is_hull_hit = 1 if v else 0
 
     def GetFiringObject(self):
         """SDK alias for GetSource() — SelectTarget's DamageEvent

@@ -246,6 +246,25 @@ class Game(TGObject):
     GetCurrentPlayer = GetPlayer
     SetCurrentPlayer = SetPlayer
 
+    def GetPlayerSet(self):
+        """Return the App set containing the player ship, or None.
+
+        SDK Conditions/FriendliesInPlayerSetStronger.py:88 calls
+        ``pSet = pGame.GetPlayerSet()`` (null-guarded) to scope its friendly /
+        enemy strength tally to the player's current set. We resolve the set
+        from the player ship's ``GetContainingSet()`` (ObjectClass tracks the
+        set it was added to via SetClass.AddObjectToSet). With no player ship —
+        or a player not in any set — return None, matching the SDK's tolerance
+        of a None result.
+        """
+        player = self.GetCurrentPlayer()
+        if player is None:
+            return None
+        get_set = getattr(player, "GetContainingSet", None)
+        if get_set is None:
+            return None
+        return get_set()
+
     def GetPlayerGroup(self):
         # SDK App.py:3712 — returns an ObjectGroup of ships owned by the player.
         # BridgeHandlers/HelmMenuHandlers.AddFleetCommandHandlers call this to

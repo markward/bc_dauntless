@@ -64,3 +64,24 @@ def test_game_set_and_get_player():
     sentinel = object()
     g.SetPlayer(sentinel)
     assert g.GetPlayer() is sentinel
+
+
+def test_game_get_player_set_returns_player_ships_set():
+    # SDK Conditions/FriendliesInPlayerSetStronger.py:88 calls
+    # pGame.GetPlayerSet() to find the set the player ship is in.
+    import App
+    from engine.appc.ships import ShipClass
+
+    pSet = App.SetClass_Create()
+    pSet.SetName("S")
+    player = ShipClass()
+    pSet.AddObjectToSet(player, "Player")
+
+    g = Game()
+    g.SetPlayer(player)
+    assert g.GetPlayerSet() is pSet
+
+
+def test_game_get_player_set_none_when_no_player():
+    g = Game()
+    assert g.GetPlayerSet() is None

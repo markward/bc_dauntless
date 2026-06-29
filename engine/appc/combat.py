@@ -469,8 +469,11 @@ def apply_hit(ship, damage: float, hit_point, source, *,
     except Exception as _e:
         dev_mode.log_swallowed("hit_feedback.dispatch", _e)
 
-    # 5. Broadcast WeaponHitEvent.
-    evt = WeaponHitEvent()
+    # 5. Broadcast WeaponHitEvent. The hull-vs-shield flag reuses the
+    #    `post_shield > 0` branch above: any damage left after the facing
+    #    absorbed its share reached the hull. Read by Conditions/
+    #    ConditionAttacked + ConditionAttackedBy via IsHullHit().
+    evt = WeaponHitEvent(is_hull_hit=(post_shield > 0.0))
     evt.SetSource(source)
     evt.SetTarget(ship)
     evt.SetDamage(damage)
