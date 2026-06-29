@@ -71,5 +71,5 @@ void main() {
     }
 
     if (alpha < 0.001) discard;
-    frag_color = vec4(color, alpha);
+    frag_color = vec4(color, alpha * 0.75);  // 25% opacity reduction for shield impacts
 }
