@@ -1360,6 +1360,21 @@ class CloakingSubsystem(PoweredSubsystem):
         return 1 if self._cloak_state in (self.CLOAK_CLOAKING,
                                           self.CLOAK_CLOAKED) else 0
 
+    def GetTransitionFraction(self) -> float:
+        """Visual cloak progress in [0, 1]: 0 = fully visible (DECLOAKED),
+        1 = fully hidden (CLOAKED).  Ramps with the transition timer during
+        CLOAKING (0→1) and back down during DECLOAKING (1→0).  The renderer
+        drives the refraction / chromatic-dispersion strength off this — it is a
+        pure read of the state machine and has no gameplay effect."""
+        if self._cloak_state == self.CLOAK_DECLOAKED:
+            return 0.0
+        if self._cloak_state == self.CLOAK_CLOAKED:
+            return 1.0
+        dur = self._transition_duration if self._transition_duration > 0.0 else 1.0
+        f = self._transition_elapsed / dur
+        f = 0.0 if f < 0.0 else (1.0 if f > 1.0 else f)
+        return f if self._cloak_state == self.CLOAK_CLOAKING else (1.0 - f)
+
     # ── Per-tick transition advance (game-loop subsystem update pass) ────────
 
     def Update(self, dt: float) -> None:

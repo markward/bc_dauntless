@@ -40,6 +40,7 @@ public:
     Shader& shadow_depth_shader() noexcept    { return *shadow_depth_; }
     Shader& shockwave_shader() noexcept       { return *shockwave_; }
     Shader& skybox_shader() noexcept          { return *skybox_; }
+    Shader& cloak_refraction_shader() noexcept { return *cloak_refraction_; }
 
 private:
     std::unique_ptr<Shader> opaque_;
@@ -71,6 +72,7 @@ private:
     std::unique_ptr<Shader> shadow_depth_;
     std::unique_ptr<Shader> shockwave_;
     std::unique_ptr<Shader> skybox_;
+    std::unique_ptr<Shader> cloak_refraction_;
 };
 
 }  // namespace renderer

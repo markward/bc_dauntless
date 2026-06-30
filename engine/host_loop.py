@@ -371,6 +371,47 @@ def _poll_cloak_toggle(host) -> None:
     _cloak_toggle_prev = chord
 
 
+def _push_cloak_refraction(r, session, player) -> None:
+    """Per-frame cloak VFX wiring.
+
+    For each cloak-capable ship: hide the opaque hull only when *fully* cloaked
+    (the refractive shell — or, for enemies, nothing — takes over), and push a
+    ``(instance_id, frac)`` entry so the renderer draws the refraction +
+    chromatic-dispersion shell.  Pushed for ships mid-transition and for the
+    player's own fully-cloaked ship (a faint shimmer so the pilot can place it);
+    a fully-cloaked enemy is hidden and not pushed, so it is truly invisible.
+
+    Visibility is recomputed from the live cloak state every frame, so any
+    decloak — including an InstantDecloak that skips the DECLOAKING state —
+    restores the hull with no leaked bookkeeping."""
+    if session is None:
+        return
+    ships = getattr(session, "ship_instances", None)
+    if not ships:
+        r.set_cloak_ships([])
+        return
+    cloak_list = []
+    for ship, iid in list(ships.items()):
+        getter = getattr(ship, "GetCloakingSubsystem", None)
+        if getter is None:
+            continue
+        cloak = getter()
+        if cloak is None:
+            continue
+        cloaked = bool(cloak.IsCloaked())
+        try:
+            r.set_visible(iid, not cloaked)
+        except Exception as _e:
+            dev_mode.log_swallowed("cloak set_visible", _e)
+        frac = cloak.GetTransitionFraction()
+        if frac <= 0.0:
+            continue                          # fully decloaked: no shell
+        if cloaked and ship is not player:
+            continue                          # fully-cloaked enemy: invisible
+        cloak_list.append((iid, frac))
+    r.set_cloak_ships(cloak_list)
+
+
 def _advance_weapons(ships, dt: float) -> None:
     """Per-frame charge / reload advancement for every weapon emitter.
 
@@ -5585,6 +5626,8 @@ def run(mission_name: Optional[str] = None,
 
             lens_flares = _aggregate_lens_flares()
             r.set_lens_flares(lens_flares)
+
+            _push_cloak_refraction(r, session, player)
 
             if verbose and ticks == 0:
                 print(f"[host_loop] tick 0 camera eye={eye} target={target}", flush=True)
