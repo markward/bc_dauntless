@@ -57,11 +57,17 @@ def update_target_list_visibility(target_menu, ships, player, range_units: float
     if range_units is None:
         from engine.appc.sensor_detection import effective_sensor_range
         range_units = effective_sensor_range(player)
+    from engine.appc.sensor_detection import is_hidden_by_cloak
     px, py, pz = _get_xyz(player)
     range_sq = range_units * range_units
     for ship in ships:
         row = target_menu.GetObjectEntry(ship)
         if row is None or not isinstance(row, STSubsystemMenu):
+            continue
+        # A fully cloaked ship is invisible regardless of range — both the
+        # radar panel and the target-list view hide NotVisible rows.
+        if is_hidden_by_cloak(ship):
+            row.SetNotVisible()
             continue
         sx, sy, sz = _get_xyz(ship)
         dx, dy, dz = sx - px, sy - py, sz - pz
