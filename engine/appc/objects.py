@@ -466,10 +466,28 @@ class DamageableObject(PhysicsObjectClass):
         visible_damage.queue_body_volume(self, x, y, z, influRad, strength)
 
     def AddDamage(self, pEmitPos, fRadius, fDamage) -> None:
-        """Runtime world-space carve (Effects.DeathExplosionDamage). `pEmitPos`
-        is a world-space point (e.g. GetRandomPointOnModel)."""
+        """SDK ``DamageableObject_AddDamage(pEmitPos, fRadius, fDamage)`` — the
+        explosion / collision damage primitive (Effects.DeathExplosionDamage,
+        mission ``*.AddDamage(...)``). Two faithful effects:
+
+        1. Deposits the visible world-space hull carve (`pEmitPos` is a
+           world-space point, e.g. GetRandomPointOnModel).
+        2. Deals GAMEPLAY damage to hull/subsystems BYPASSING shields —
+           verified by dev-console probe q02 (hull dropped, faces untouched),
+           unlike normal weapon fire which strict-cascades through shields.
+
+        The gameplay half runs only for full ships (``ShipClass`` carries the
+        hull/shield/subsystem surface ``apply_hit`` needs); bare damageable
+        props (wrecks, debris) just carve.
+        """
         from engine.appc import visible_damage
         visible_damage.queue_world_carve(self, pEmitPos, fRadius, fDamage)
+        from engine.appc.ships import ShipClass
+        if isinstance(self, ShipClass) and all(
+                hasattr(pEmitPos, ax) for ax in ("x", "y", "z")):
+            from engine.appc import combat
+            combat.apply_hit(self, float(fDamage), pEmitPos, source=None,
+                             splash_radius=float(fRadius), bypass_shields=True)
 
     def DamageRefresh(self, *args) -> None:
         """Re-polygonize authored damage. No-op: our breach renderer is

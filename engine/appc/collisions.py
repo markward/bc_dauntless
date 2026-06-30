@@ -174,7 +174,8 @@ def _respond_pair(a: "_Body", b: "_Body", host, ship_instances):
             b.center, TGPoint3(-nx, -ny, -nz), dist, contact)
         apply_hit(a.obj, damage, pt_a, source=b.obj,
                   normal=(mesh_n_a if mesh_n_a is not None else TGPoint3(nx, ny, nz)),
-                  host=host, ship_instances=ship_instances, weapon_type=None)
+                  host=host, ship_instances=ship_instances, weapon_type=None,
+                  bypass_shields=True)  # kinetic impact: AddDamage primitive, skips shields
     if b.is_movable:
         eff_rb = b.radius * COLLISION_RADIUS_SCALE
         fb_b = TGPoint3(b.center.x - nx * eff_rb,
@@ -185,7 +186,8 @@ def _respond_pair(a: "_Body", b: "_Body", host, ship_instances):
             a.center, TGPoint3(nx, ny, nz), dist, fb_b)
         apply_hit(b.obj, damage, pt_b, source=a.obj,
                   normal=(mesh_n_b if mesh_n_b is not None else TGPoint3(-nx, -ny, -nz)),
-                  host=host, ship_instances=ship_instances, weapon_type=None)
+                  host=host, ship_instances=ship_instances, weapon_type=None,
+                  bypass_shields=True)  # kinetic impact: AddDamage primitive, skips shields
 
     return (a.obj, b.obj, contact, v_rel)
 

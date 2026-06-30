@@ -92,6 +92,7 @@ def detonate(ship, host=None, ship_instances=None) -> None:
                 target, magnitude * w, point, source=ship,
                 normal=normal, host=host, ship_instances=ship_instances,
                 weapon_type="torpedo", splash_radius=BREACH_RADIUS_GU,
+                bypass_shields=True,  # explosion: AddDamage primitive, skips shields
             )
         except Exception as _e:
             dev_mode.log_swallowed("warp core breach apply_hit", _e)
