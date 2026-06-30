@@ -189,8 +189,10 @@ TEST_F(BreachPassGLTest, SolidFillDrawsScoopInterior) {
     voxel::VoxelVolume fill = solid_fill();
 
     scenegraph::HullCarveField carve;
-    carve.add(glm::vec3(0.f, 0.f, 0.f), 1.5f,
-              glm::vec3(0.f, 0.f, 1.f));  // sphere at origin, r=1.5, +Z normal
+    // sphere at origin, +Z normal; set the visible radius (the host binding
+    // normally derives it from accumulated strength).
+    carve.add(glm::vec3(0.f, 0.f, 0.f), 1.5f, 600.f,
+              glm::vec3(0.f, 0.f, 1.f)).radius = 1.5f;
 
     scenegraph::Camera cam = cam_looking_at_origin();
 
@@ -215,7 +217,8 @@ TEST_F(BreachPassGLTest, EmptyFillDiscardsAllScoopFragments) {
     voxel::VoxelVolume fill = empty_fill();
 
     scenegraph::HullCarveField carve;
-    carve.add(glm::vec3(0.f, 0.f, 0.f), 1.5f, glm::vec3(0.f, 0.f, 1.f));
+    carve.add(glm::vec3(0.f, 0.f, 0.f), 1.5f, 600.f,
+              glm::vec3(0.f, 0.f, 1.f)).radius = 1.5f;
 
     scenegraph::Camera cam = cam_looking_at_origin();
 
@@ -260,7 +263,8 @@ TEST_F(BreachPassGLTest, NoCarvesDrawsNothing) {
 // strictly larger.
 TEST_F(BreachPassGLTest, HotBreachBrighterThanCold) {
     scenegraph::HullCarveField carve;
-    carve.add(glm::vec3(0.f, 0.f, 0.f), 1.5f, glm::vec3(0.f, 0.f, 1.f));
+    carve.add(glm::vec3(0.f, 0.f, 0.f), 1.5f, 600.f,
+              glm::vec3(0.f, 0.f, 1.f)).radius = 1.5f;
     scenegraph::Camera cam = cam_looking_at_origin();
 
     // ── Cold render (age well past kRimLife → heat = 0, no emissive) ────────

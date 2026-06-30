@@ -68,6 +68,18 @@ _last_decal_emit: dict = {}  # (id(ship), weapon_class) -> last emit game-time
 # Hull-carve emission throttle, parallel to _last_decal_emit. Keyed by
 # id(ship) only (a carve is weapon-agnostic geometry, unlike a decal class).
 _last_carve_time: dict = {}  # id(ship) -> last emit game-time
+_pending_carve_strength: dict = {}  # id(ship) -> strength accumulated since last emit
+
+
+def _vis_dmg_mod(ship, attr: str) -> float:
+    """Per-ship visible-damage multiplier (SetVisibleDamage{Radius,Strength}Modifier,
+    from loadspacehelper hardpoint stats), default 1.0. Guards the TGObject
+    _Stub fallback."""
+    try:
+        m = float(getattr(ship, attr, 1.0))
+    except (TypeError, ValueError):
+        return 1.0
+    return m if m > 0.0 else 1.0
 
 
 def classify(*, absorbed_shields: float, absorbed_subsystem: float,
@@ -253,29 +265,48 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
                     time=now,
                 )
 
-    # 5. Hull carve (breach): heavier than scorch; eligible ships only; throttled.
-    # Same hull-absorbing, mesh-normal, renderer-present, committed-hit gating
-    # as the decal, PLUS: the hit must clear MIN_CARVE_HULL and the target must
-    # be damage-eligible (player + capped nearest/largest; see
-    # engine.appc.damage_eligibility).
+    # 5. Hull carve (breach): deposit field strength; eligible ships only;
+    # throttled. Same hull-absorbing, mesh-normal, renderer-present, committed-hit
+    # gating as the decal, PLUS the target must be damage-eligible (player +
+    # capped nearest/largest; see engine.appc.damage_eligibility). There is NO
+    # per-hit magnitude gate: the C++ field accumulates strength and only shows a
+    # carve once the running total crosses the iso, so sustained light fire
+    # eventually breaches (BC's additive metaball field).
     if (absorbed_hull > 0.0 and normal is not None and persist_decal
             and host is not None and ship_instances is not None
             and hasattr(host, "hull_carve_add")):
         from engine.appc import hull_carve, damage_eligibility, damage_decals
-        if (hull_carve.should_carve(absorbed_hull)
-                and damage_eligibility.is_eligible(ship)):
+        if damage_eligibility.is_eligible(ship):
             iid = ship_instances.get(ship)
             if iid is not None:
                 now = damage_decals.current_game_time()
                 ship_key = id(ship)
+                # Accumulate strength across the throttle window and flush the
+                # SUM, so the (perf) throttle doesn't discard the ~14 of 15 ticks
+                # between emits. Otherwise sustained light fire (a phaser absorbs
+                # only a few hull/tick) loses almost all its damage and never
+                # reaches the iso. Deposit at the latest hit point; the C++ field
+                # merges it with nearby carves.
+                _pending_carve_strength[ship_key] = (
+                    _pending_carve_strength.get(ship_key, 0.0)
+                    + hull_carve.carve_strength(absorbed_hull)
+                    * _vis_dmg_mod(ship, "_vis_dmg_strength_mod"))
                 if now - _last_carve_time.get(ship_key, -1e9) >= hull_carve.CARVE_EMIT_INTERVAL:
                     _last_carve_time[ship_key] = now
+                    strength = _pending_carve_strength.pop(ship_key, 0.0)
+                    # Carve size is ABSOLUTE (a weapon makes the same hole on any
+                    # hull — no scaling by ship size). The only per-ship scale is
+                    # BC's authored DamageRadMod (default 1.0; big structures set
+                    # it larger).
                     host.hull_carve_add(
                         iid,
                         (point.x, point.y, point.z),
                         (normal.x, normal.y, normal.z),
-                        hull_carve.carve_radius_gu(radius),
+                        hull_carve.carve_influ_gu(radius),
+                        strength,
                         now,
+                        0.0,        # floor: combat carves are strength-gated
+                        _vis_dmg_mod(ship, "_vis_dmg_radius_mod"),
                     )
 
 

@@ -301,6 +301,7 @@ void draw_model(const assets::Model& model,
             int ns = 0;
             for (const auto& s : carve.slots()) {
                 if (!s.active) continue;
+                if (s.radius <= 0.0f) continue;   // sub-iso accumulation: invisible
                 if (ns >= kMaxCarves) break;
                 spheres[ns] = glm::vec4(s.center_body, s.radius);
                 normals[ns] = s.surface_normal;

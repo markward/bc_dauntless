@@ -28,10 +28,14 @@ class _Ship:
 
 class _Host:
     def __init__(self):
-        self.carves = []  # (iid, point, normal, radius, time)
+        self.carves = []  # (iid, point, normal, influ, strength, time, floor)
 
-    def hull_carve_add(self, iid, point, normal, radius, time):
-        self.carves.append((iid, point, normal, radius, time))
+    def hull_carve_add(self, iid, point, normal, influ, strength, time,
+                       floor_radius=0.0):
+        # Core breach passes influ == floor == the eased radius (index [3]),
+        # strength 0 — it carries its own size rather than accumulating.
+        self.carves.append((iid, point, normal, influ, strength, time,
+                            floor_radius))
 
 
 @pytest.fixture(autouse=True)

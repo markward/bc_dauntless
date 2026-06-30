@@ -1,25 +1,30 @@
+import pytest
+
 from engine.appc import hull_carve
 
 
-def test_should_carve_threshold():
-    assert hull_carve.should_carve(70.0) is True   # input bumped 50→70 (threshold raised to 60)
-    assert hull_carve.should_carve(5.0) is False
+def test_strength_scales_with_absorbed_hull():
+    # strength = absorbed_hull * STRENGTH_PER_HULL (1:1) — accumulates gradually
+    # rather than a single moderate hit one-shotting a breach.
+    assert hull_carve.carve_strength(0.0) == 0.0
+    assert hull_carve.carve_strength(60.0) == pytest.approx(60.0 * hull_carve.STRENGTH_PER_HULL)
+    # Monotonic and never negative.
+    assert hull_carve.carve_strength(-5.0) == 0.0
+    assert hull_carve.carve_strength(120.0) > hull_carve.carve_strength(60.0)
 
 
-def test_carve_radius_floored_and_scaled():
-    assert hull_carve.carve_radius_gu(0.0) == hull_carve.MIN_CARVE_RADIUS_GU
-    assert hull_carve.carve_radius_gu(1.0) >= hull_carve.MIN_CARVE_RADIUS_GU
+def test_influ_floored_and_scaled():
+    # Merge influence is floored so clustered light fire accumulates even with a
+    # tiny weapon splash, and scales above the floor.
+    assert hull_carve.carve_influ_gu(0.0) == hull_carve.CARVE_INFLU_MIN_GU
+    big = hull_carve.carve_influ_gu(10.0)
+    assert big >= hull_carve.CARVE_INFLU_MIN_GU
+    assert big == max(hull_carve.CARVE_INFLU_MIN_GU,
+                      10.0 * hull_carve.CARVE_INFLU_SCALE)
 
 
-def test_toned_down_values():
-    # Tone-down (Mark: 2a effect too strong): smaller holes, carve less readily.
-    assert hull_carve.CARVE_RADIUS_SCALE <= 1.0      # was 1.5 -> smaller holes
-    assert hull_carve.MIN_CARVE_HULL >= 60.0         # was 40  -> carve less readily
-
-
-def test_carve_radius_still_scales_and_floors():
-    # floor still applies, scaling still monotonic
-    assert hull_carve.carve_radius_gu(0.0) == hull_carve.MIN_CARVE_RADIUS_GU
-    big = hull_carve.carve_radius_gu(10.0)
-    assert big >= hull_carve.MIN_CARVE_RADIUS_GU
-    assert big == max(hull_carve.MIN_CARVE_RADIUS_GU, 10.0 * hull_carve.CARVE_RADIUS_SCALE)
+def test_constants_sane():
+    assert hull_carve.STRENGTH_PER_HULL > 0.0
+    assert hull_carve.CARVE_INFLU_MIN_GU > 0.0
+    assert hull_carve.MIN_CARVE_RADIUS_GU > 0.0
+    assert hull_carve.CARVE_EMIT_INTERVAL > 0.0
