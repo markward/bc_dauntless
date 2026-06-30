@@ -21,19 +21,24 @@ from engine.appc.lip_data import parse_lip, lip_path_for, LipSegment
 from engine.appc.lip_visemes import load_viseme_table
 from engine.lip_sync import LipSyncController, BlinkScheduler
 
-# Many BC voice lines ship no .LIP (e.g. ~half the XO bank). The original engine
-# falls back to a generic open/close "lip flap" for the line's duration. Mirror
-# that: alternate an open viseme (code 32 -> 'e') with neutral every half-cycle.
-_FLAP_PERIOD = 0.18  # seconds per open or closed half-cycle
+# Many BC voice lines ship no .LIP (e.g. ~half the XO bank). Per BC's own docs
+# (sdk/lipsync.html): "If there is no .LIP file, the game will use some random
+# phonemes instead." Mirror that — pick random speaking codes (varied mouth
+# shapes) for the line's duration rather than a mechanical open/close. The
+# controller's cross-fade smooths the random transitions.
+_FLAP_PERIOD_RANGE = (0.10, 0.18)  # seconds per random phoneme
 
 
-def _flap_segments(duration: float):
-    segs, t, i = [], 0.0, 0
+def _random_phoneme_segments(duration: float, rng, codes, period_range=_FLAP_PERIOD_RANGE):
+    """Contiguous LipSegments over `duration`, each a random code from `codes`
+    with a random length in `period_range` (last segment clamped to fit)."""
+    if not codes:
+        return []
+    segs, t = [], 0.0
     while t < duration - 1e-3:
-        d = min(_FLAP_PERIOD, duration - t)
-        segs.append(LipSegment(32 if (i % 2 == 0) else 0, t, d))
+        d = min(rng.uniform(*period_range), duration - t)
+        segs.append(LipSegment(rng.choice(codes), t, d))
         t += d
-        i += 1
     return segs
 
 # crew_speech hands us the DB-stored voice filename, which is game-relative
@@ -57,8 +62,14 @@ class LipSyncRuntime:
     def __init__(self, renderer, get_characters, rng=None):
         self._r = renderer
         self._get_characters = get_characters  # () -> iterable of CharacterClass
-        self._ctrl = LipSyncController(sink=self._sink, table=load_viseme_table())
+        self._table = load_viseme_table()
+        self._ctrl = LipSyncController(sink=self._sink, table=self._table)
+        # Codes that actually move the mouth (exclude pure-neutral codes 0/121),
+        # drawn from for the random-phoneme no-.LIP fallback.
+        self._speaking_codes = [c for c, w in self._table.items()
+                                if w != {"neutral": 1.0}]
         self._blink = BlinkScheduler(rng=(rng or random.Random(0xB11E)).random)
+        self._flap_rng = random.Random(0xF1A9)  # random-phoneme fallback stream
         self._name_iid: dict = {}   # name -> iid cache (officers are stable per load)
         self._blinking: set = set()  # officers currently mid-blink (for neutral restore)
         crew_speech.add_speech_listener(self._on_speech)
@@ -91,12 +102,14 @@ class LipSyncRuntime:
                 segs = parse_lip(lip)
             except Exception:
                 segs = []
-        # A VOICE line with no phoneme data -> generic flap for its duration
-        # (BC's fallback), so the mouth still moves while the officer talks. A
-        # text-only line (no wav) never animates the mouth.
+        # A VOICE line with no phoneme data -> random phonemes for its duration
+        # (BC's documented fallback, sdk/lipsync.html), so the mouth moves with
+        # varied shapes while the officer talks. A text-only line (no wav) never
+        # animates the mouth.
         flap = False
         if not segs and wav and duration and duration > 0.0:
-            segs = _flap_segments(float(duration))
+            segs = _random_phoneme_segments(
+                float(duration), self._flap_rng, self._speaking_codes)
             flap = bool(segs)
         if _DEBUG:
             iid = self._resolve(str(speaker))
