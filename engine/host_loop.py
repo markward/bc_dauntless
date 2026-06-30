@@ -372,12 +372,18 @@ def _phaser_damage_for_tick(max_damage: float,
                              max_damage_distance: float,
                              dist: float,
                              dt: float) -> float:
-    """Phaser damage with inverse-square falloff scaled by MaxDamageDistance.
+    """Phaser damage: plateau within MaxDamageDistance, then R/d decay.
 
-    `damage = MaxDamage / (1 + (dist / MaxDamageDistance)**2) * dt`. At
-    dist=MaxDamageDistance the damage is half MaxDamage; falls off as
-    1/dist² in the far field. Returns 0 if MaxDamageDistance is 0
+    Verified against the real BC engine via dev-console instrumentation
+    (docs/instrumented_experiments/2026-06-29-weapon-exchange-console-probe.md,
+    probe q09). Damage is FULL while `dist <= MaxDamageDistance` (R), then
+    decays inverse-linearly as `MaxDamage * (R / dist)` beyond R — so a shot
+    still deals ~30% at ~2.9*R. The curve is continuous at dist=R (both
+    branches give `MaxDamage * dt`). Returns 0 if MaxDamageDistance is 0
     (uninitialized property).
+
+    This replaced the earlier inverse-square `MaxDamage/(1+(dist/R)**2)`
+    guess, which under-damaged at every range beyond ~0.5*R.
 
     No hard distance cutoff here — the system-level fire gate
     (PhaserSystem at PHASER_MAX_RANGE_GU = 700 GU ≈ 122.5 km) prevents
@@ -385,8 +391,9 @@ def _phaser_damage_for_tick(max_damage: float,
     the engine already decided to take."""
     if max_damage_distance <= 0.0:
         return 0.0
-    k = dist / max_damage_distance
-    return max_damage / (1.0 + k * k) * dt
+    if dist <= max_damage_distance:
+        return max_damage * dt                       # plateau within R
+    return max_damage * (max_damage_distance / dist) * dt   # R/d beyond
 
 
 def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
