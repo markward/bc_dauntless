@@ -1,22 +1,31 @@
-"""LipSyncRuntime: game-relative wav resolution, the generic flap fallback for
-lines that ship no .LIP, and the speech->sink cue path. The pure controller is
-covered in test_lip_sync_controller; this exercises the BC-specific glue.
+"""LipSyncRuntime: game-relative wav resolution, the random-phoneme fallback for
+lines that ship no .LIP (BC's documented behavior, sdk/lipsync.html), and the
+speech->sink cue path. The pure controller is covered in
+test_lip_sync_controller; this exercises the BC-specific glue.
 """
-from engine.lip_sync_runtime import LipSyncRuntime, _flap_segments, _abs_sfx, _GAME_DIR
+import random
+
+from engine.lip_sync_runtime import (
+    LipSyncRuntime, _random_phoneme_segments, _abs_sfx, _GAME_DIR,
+)
+
+_CODES = [32, 37, 50, 66, 113]   # representative speaking codes
 
 
-def test_flap_segments_alternate_open_closed_and_cover_duration():
-    segs = _flap_segments(1.5)
+def test_random_phoneme_segments_contiguous_cover_and_in_set():
+    rng = random.Random(1234)
+    segs = _random_phoneme_segments(1.5, rng, _CODES)
     assert len(segs) >= 2
-    assert [s.code for s in segs[:4]] == [32, 0, 32, 0]   # open/closed alternation
-    # contiguous and covering the whole line
-    for a, b in zip(segs, segs[1:]):
+    assert all(s.code in _CODES for s in segs)             # drawn from the set
+    for a, b in zip(segs, segs[1:]):                       # contiguous
         assert abs(a.end - b.start) < 1e-6
-    assert abs(segs[-1].end - 1.5) < 0.01
+    assert abs(segs[-1].end - 1.5) < 0.01                  # covers the duration
+    assert len({s.code for s in segs}) > 1                 # random, not constant
 
 
-def test_flap_segments_empty_for_zero_duration():
-    assert _flap_segments(0.0) == []
+def test_random_phoneme_segments_empty_for_zero_duration_or_no_codes():
+    assert _random_phoneme_segments(0.0, random.Random(0), _CODES) == []
+    assert _random_phoneme_segments(1.0, random.Random(0), []) == []
 
 
 def test_abs_sfx_resolves_game_relative():
