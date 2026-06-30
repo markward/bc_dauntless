@@ -25,9 +25,9 @@ class _Host:
         self.carves = []  # (iid, point, normal, influ, strength, time, floor)
 
     def hull_carve_add(self, iid, point, normal, influ, strength, time,
-                       floor_radius=0.0, strength_size_ref=0.0):
+                       floor_radius=0.0, radius_modifier=1.0):
         self.carves.append((iid, point, normal, influ, strength, time,
-                            floor_radius, strength_size_ref))
+                            floor_radius, radius_modifier))
 
 
 @pytest.fixture(autouse=True)

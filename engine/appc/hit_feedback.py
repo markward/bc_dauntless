@@ -294,12 +294,10 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
                 if now - _last_carve_time.get(ship_key, -1e9) >= hull_carve.CARVE_EMIT_INTERVAL:
                     _last_carve_time[ship_key] = now
                     strength = _pending_carve_strength.pop(ship_key, 0.0)
-                    # Scale the breach to the hull: the C++ curve returns a
-                    # fraction of this ship-radius ref, so a starbase breach
-                    # dwarfs a shuttle's. Per-ship radius modifier folds in here.
-                    size_ref = (
-                        (ship.GetRadius() if hasattr(ship, "GetRadius") else 0.0)
-                        * _vis_dmg_mod(ship, "_vis_dmg_radius_mod"))
+                    # Carve size is ABSOLUTE (a weapon makes the same hole on any
+                    # hull — no scaling by ship size). The only per-ship scale is
+                    # BC's authored DamageRadMod (default 1.0; big structures set
+                    # it larger).
                     host.hull_carve_add(
                         iid,
                         (point.x, point.y, point.z),
@@ -308,7 +306,7 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
                         strength,
                         now,
                         0.0,        # floor: combat carves are strength-gated
-                        size_ref,
+                        _vis_dmg_mod(ship, "_vis_dmg_radius_mod"),
                     )
 
 

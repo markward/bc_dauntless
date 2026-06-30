@@ -20,16 +20,16 @@ class _FakeHost:
     def __init__(self):
         self.carve_calls = []
 
-    # Match the host_bindings.cc py::arg names (floor_radius, strength_size_ref
-    # default to 0).
+    # Match the host_bindings.cc py::arg names (floor_radius default 0,
+    # radius_modifier default 1).
     def hull_carve_add(self, instance_id, world_point, world_normal,
                        influ_radius, strength, time, floor_radius=0.0,
-                       strength_size_ref=0.0):
+                       radius_modifier=1.0):
         self.carve_calls.append(dict(
             instance_id=instance_id, world_point=world_point,
             world_normal=world_normal, influ_radius=influ_radius,
             strength=strength, time=time, floor_radius=floor_radius,
-            strength_size_ref=strength_size_ref))
+            radius_modifier=radius_modifier))
 
 
 class _Hull:
@@ -83,9 +83,23 @@ def test_deposit_on_eligible_hull_hit(patched):
     assert call["influ_radius"] == pytest.approx(hc.carve_influ_gu(0.2))
     assert call["strength"] == pytest.approx(hc.carve_strength(100.0))
     assert call["time"] == 100.0
-    # Carve scales to the hull: size ref = ship radius (mods default 1.0).
-    assert call["strength_size_ref"] == pytest.approx(2.0)
+    # Absolute carve size: the only per-ship scale is DamageRadMod (default 1.0).
+    assert call["radius_modifier"] == pytest.approx(1.0)
     assert call["floor_radius"] == pytest.approx(0.0)  # combat carves strength-gated
+
+
+def test_respects_sdk_damage_modifiers(patched):
+    # BC's per-ship DamageRadMod / DamageStrMod (set by loadspacehelper on big
+    # structures) scale the carve radius and the deposited strength respectively.
+    host = _FakeHost()
+    ship = _Ship()
+    ship._vis_dmg_radius_mod = 8.0      # DamageRadMod (bigger holes)
+    ship._vis_dmg_strength_mod = 0.125  # DamageStrMod (tankier: accumulates slower)
+    de.set_current(frozenset({id(ship)}))
+    _dispatch(host, ship, absorbed_hull=100.0)
+    call = host.carve_calls[0]
+    assert call["radius_modifier"] == pytest.approx(8.0)
+    assert call["strength"] == pytest.approx(hc.carve_strength(100.0) * 0.125)
 
 
 def test_light_hit_still_deposits(patched):

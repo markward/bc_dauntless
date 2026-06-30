@@ -115,12 +115,12 @@ def _advance_one(entry, dt, host, ship_instances) -> bool:
     # Authored / runtime carves carry their own size: a floor (so the wreck is
     # visible at spawn regardless of the strength curve) plus the strength, which
     # also accumulates with nearby combat damage in the C++ field.
-    floor = max(MIN_CARVE_RADIUS_GU, influ) * _radius_mod(ship)
+    rad_mod = _radius_mod(ship)
+    floor = max(MIN_CARVE_RADIUS_GU, influ) * rad_mod
     now = damage_decals.current_game_time()
-    # Ship radius scales the strength->fraction curve so authored strength
-    # integrates with combat accumulation at the hull's scale; the authored
+    # Carve sizes are absolute; the only per-ship scale is BC's DamageRadMod
+    # (applied to both the authored `floor` and the strength curve). The authored
     # `floor` still guarantees the wreck's visible size.
-    size_ref = ship.GetRadius() if hasattr(ship, "GetRadius") else 0.0
     host.hull_carve_add(
         iid,
         (world_pt.x, world_pt.y, world_pt.z),
@@ -129,7 +129,7 @@ def _advance_one(entry, dt, host, ship_instances) -> bool:
         strength,
         now,
         floor,
-        size_ref,
+        rad_mod,
     )
     return False   # emitted once -> drop
 

@@ -7,31 +7,30 @@
 
 namespace scenegraph {
 
-// ── Strength → carve size, as a FRACTION of the ship's bounding radius ───────
+// ── Strength → ABSOLUTE carve radius (game units) ────────────────────────────
 // BC's DamageTool authored hull damage as an additive metaball field: strength
 // accumulates spatially and a hole only appears once the summed field crosses
 // an iso level. We mirror that — a carve stays invisible until accumulated
 // strength (1:1 absorbed-hull) reaches kHullCarveStrengthIso, then EMERGES SMALL
-// and grows with continued damage. The curve returns a FRACTION OF THE SHIP'S
-// RADIUS (not an absolute size), so the same damage makes a proportionally-sized
-// hole on a shuttle and a starbase; the caller multiplies by the ship radius
-// (GU). The small fraction at the iso (vs a chunky pop) keeps the onset gradual,
-// not all-or-nothing. See
+// and grows with continued damage. The radius is ABSOLUTE (game units), NOT a
+// fraction of the ship: a weapon carves the same physical hole whether it hits a
+// shuttle or a starbase (so a hole is a bigger fraction of a small hull — correct
+// physically). Per-ship scaling is BC's authored `DamageRadMod` multiplier
+// (default 1.0; only the big fixed structures set it), applied by the caller. See
 // docs/original_game_reference/engine/damagetool-and-hull-damage-gaps.md.
-inline constexpr float kHullCarveStrengthIso         = 150.0f;       // absorbed-hull before geometry starts breaking
-inline constexpr float kHullCarveFractionAtIso       = 0.0028125f;   // of ship radius at the iso
-inline constexpr float kHullCarveFractionPerStrength = 0.0000469f;   // per strength above iso
-inline constexpr float kHullCarveFractionMax         = 0.0234375f;   // full breach = 2.34% of ship radius
+inline constexpr float kHullCarveStrengthIso       = 150.0f;   // absorbed-hull before geometry starts breaking
+inline constexpr float kHullCarveRadiusAtIso       = 0.03f;    // GU at the iso (emerges small)
+inline constexpr float kHullCarveRadiusPerStrength = 0.0006f;  // GU per strength above iso
+inline constexpr float kHullCarveRadiusMaxGu       = 0.3f;     // clamp (a heavily-worked breach)
 
-/// Carve size as a fraction of the ship's bounding radius for an accumulated
-/// field strength. 0 below the iso (invisible), then linear to a clamp. Pure;
-/// the caller multiplies by the ship radius (GU) and divides by the instance
-/// scale to get model units.
-inline float hull_carve_strength_to_fraction(float strength) {
+/// Absolute carve radius (game units) for an accumulated field strength. 0 below
+/// the iso (invisible), then linear to a clamp. Pure; the caller multiplies by
+/// the per-ship DamageRadMod and divides by the instance scale for model units.
+inline float hull_carve_strength_to_radius_gu(float strength) {
     if (strength < kHullCarveStrengthIso) return 0.0f;
-    const float f = kHullCarveFractionAtIso
-                  + (strength - kHullCarveStrengthIso) * kHullCarveFractionPerStrength;
-    return f < kHullCarveFractionMax ? f : kHullCarveFractionMax;
+    const float r = kHullCarveRadiusAtIso
+                  + (strength - kHullCarveStrengthIso) * kHullCarveRadiusPerStrength;
+    return r < kHullCarveRadiusMaxGu ? r : kHullCarveRadiusMaxGu;
 }
 
 /// One carve sphere, body frame, model units. A carve never ages out; it only

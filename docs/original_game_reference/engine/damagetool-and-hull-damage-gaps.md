@@ -165,16 +165,23 @@ Fix: a calibration pass against BC's 0.4 / 1.0 GU baseline. Eye-tuned values may
 still be right for our HDR/modern look — but worth knowing how far we drifted from
 authored intent.
 
-### Gap 4 — per-ship damage scaling ✅ IMPLEMENTED
-Combat carves now scale with **hull size**: the C++ strength curve returns a *fraction
-of the ship's bounding radius* (`hull_carve_strength_to_fraction`, full breach =
-`kHullCarveFractionMax` ≈ 25% of radius), and `hit_feedback` passes `ship.GetRadius()`
-as the `strength_size_ref` to `hull_carve_add` — so the same damage makes a
-proportionally-sized hole on a shuttle vs a starbase (fixes "breaches too big on small
-ships"). BC's per-class `SetVisibleDamageRadiusModifier` /
-`SetVisibleDamageStrengthModifier` (from `loadspacehelper` hardpoint stats) are wired on
-top: the radius mod folds into `size_ref`, the strength mod scales the deposited
-strength. (Note: the older `ShipProperty.SetDamageResolution` per-ship value — Galaxy 10,
+### Gap 4 — per-ship damage modifiers ✅ IMPLEMENTED (SDK-faithful, absolute sizes)
+Carve sizes are **absolute** (game units) — a weapon makes the same physical hole on any
+hull, so a hole is a bigger *fraction* of a small ship (correct). The C++ strength curve
+returns an absolute radius (`hull_carve_strength_to_radius_gu`, clamp `kHullCarveRadiusMaxGu`).
+The **only** per-ship scaling is BC's authored `SetVisibleDamageRadiusModifier` /
+`SetVisibleDamageStrengthModifier` (from `loadspacehelper` hardpoint stats): the radius mod
+is passed to `hull_carve_add` as `radius_modifier` (multiplies the carve radius), the
+strength mod scales the deposited strength. **Only 10 fixed structures set them** — all
+with `DamageRadMod` 5–15 (bigger holes) and reciprocal `DamageStrMod` ≈ 1/RadMod (tankier:
+strength accumulates slower); every combat ship defaults to 1.0.
+
+(History: a `GetRadius()`-proportional scaling was tried first — `fraction-of-radius` curve
+— but it's physically wrong (impacts don't shrink on smaller targets) and double-counted
+size for the 10 stations that already set `DamageRadMod`; reverted to absolute + the SDK
+modifier on 2026-06-30.)
+
+(Note: the older `ShipProperty.SetDamageResolution` per-ship value — Galaxy 10,
 Akira 8, kessokmine 2 … — is still stored-but-unused in `engine/appc/ships.py:460`; it is
 BC's `SetSurfaceDamageRes`, the carve **granularity** knob, complementary to these
 modifiers.)
