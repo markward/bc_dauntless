@@ -27,6 +27,11 @@ constexpr const char* kArrowFile = "game/data/Icons/TargetArrow.tga";
 constexpr float kCornerSizePx    = 24.0f;
 constexpr float kCrosshairSizePx = 40.0f;
 
+// Global apparent-size multiplier. Sets the new baseline a touch below the
+// midpoint between the old 1x ("too big") and old Retina ("too small")
+// apparent sizes. Tune to taste — single knob for the whole reticule.
+constexpr float kReticleScale = 0.70f;
+
 // Chrome palette (rgb 0..1, a = alpha scale). From the UI config-panel gradient.
 constexpr glm::vec4 kBoxTint      {0.847f, 0.518f, 0.314f, 1.0f};  // orange #d88450
 constexpr glm::vec4 kCrosshairTint{1.000f, 0.860f, 0.000f, 1.0f};  // yellow
@@ -104,7 +109,8 @@ void TargetReticlePass::ensure_textures() {
 
 void TargetReticlePass::render(const TargetReticle& reticle,
                                const scenegraph::Camera& camera,
-                               Pipeline& pipeline) {
+                               Pipeline& pipeline,
+                               float device_scale_factor) {
     if (!reticle.visible) return;
     ensure_quad();
     ensure_textures();
@@ -130,8 +136,10 @@ void TargetReticlePass::render(const TargetReticle& reticle,
     glGetIntegerv(GL_VIEWPORT, vp_rect);
     const float viewport_h = (vp_rect[3] > 0) ? static_cast<float>(vp_rect[3]) : 1.0f;
     const glm::vec3 eye = camera.eye;
+    const float dsf = (device_scale_factor > 0.0f) ? device_scale_factor : 1.0f;
     auto world_for_px = [&](const glm::vec3& at, float px) {
-        return glm::length(at - eye) * (2.0f * px * tan_half / viewport_h);
+        const float p = px * kReticleScale * dsf;
+        return glm::length(at - eye) * (2.0f * p * tan_half / viewport_h);
     };
 
     glEnable(GL_BLEND);

@@ -814,8 +814,15 @@ void frame() {
         const float dsf = (win_h > 0) ? static_cast<float>(fb_h) / static_cast<float>(win_h) : 1.0f;
         g_subsystem_pin_pass->render(g_subsystem_pins, g_camera, *g_pipeline, dsf);
     }
-    if (g_target_reticle_pass && g_target_reticle.visible)
-        g_target_reticle_pass->render(g_target_reticle, g_camera, *g_pipeline);
+    if (g_target_reticle_pass && g_target_reticle.visible) {
+        // Same device-pixel ratio the subsystem pins use, so the reticule
+        // keeps a constant apparent size on HiDPI/Retina displays.
+        int fb_w = 0, fb_h = 0, win_w = 0, win_h = 0;
+        g_window->framebuffer_size(&fb_w, &fb_h);
+        g_window->window_size(&win_w, &win_h);
+        const float dsf = (win_h > 0) ? static_cast<float>(fb_h) / static_cast<float>(win_h) : 1.0f;
+        g_target_reticle_pass->render(g_target_reticle, g_camera, *g_pipeline, dsf);
+    }
 
     // ── Bridge pass ──────────────────────────────────────────────────────
     // Renders bridge-tagged instances with the bridge camera, after a
