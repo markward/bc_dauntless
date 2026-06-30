@@ -80,6 +80,8 @@ embed_shader(SHADER_SHOCKWAVE_VS shaders/shockwave.vert shockwave_vs)
 embed_shader(SHADER_SHOCKWAVE_FS shaders/shockwave.frag shockwave_fs)
 embed_shader(SHADER_SKYBOX_VS shaders/skybox.vert skybox_vs)
 embed_shader(SHADER_SKYBOX_FS shaders/skybox.frag skybox_fs)
+embed_shader(SHADER_CLOAK_REFRACTION_VS shaders/cloak_refraction.vert cloak_refraction_vs)
+embed_shader(SHADER_CLOAK_REFRACTION_FS shaders/cloak_refraction.frag cloak_refraction_fs)
 
 add_library(renderer STATIC
     window.cc
@@ -121,6 +123,7 @@ add_library(renderer STATIC
     particle_pass.cc
     phaser_pass.cc
     hologram_pass.cc
+    cloak_pass.cc
     breach_venting.cc
     breach_debris.cc
     breach_pass.cc

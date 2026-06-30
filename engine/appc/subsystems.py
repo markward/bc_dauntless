@@ -1019,6 +1019,15 @@ class ShieldSubsystem(PoweredSubsystem):
             return
         if not self.IsOn():
             return
+        # Cloak gate: while the ship is cloaked or mid-cloak its shields are
+        # down (BC drops shields on cloak), so suppress regen — StartCloaking
+        # already zeroed the faces; this keeps them collapsed until decloak.
+        ship = self._climb_to_ship() if hasattr(self, "_climb_to_ship") else None
+        if ship is not None:
+            cloak = (ship.GetCloakingSubsystem()
+                     if hasattr(ship, "GetCloakingSubsystem") else None)
+            if cloak is not None and cloak.IsTryingToCloak():
+                return
         dt = float(dt)
         for f in range(self.NUM_SHIELDS):
             mx = self._max_shields[f]
@@ -1173,6 +1182,19 @@ class PowerSubsystem(ShipSubsystem):
             if not hasattr(sub, "GetNormalPowerPerSecond"):
                 continue
             total += float(sub.GetNormalPowerPerSecond() or 0.0)
+
+        # Cloak is metered separately: it draws its NormalPowerPerSecond only
+        # while the ship is trying to stay hidden (CLOAKING or CLOAKED), not on
+        # the PoweredSubsystem on/off flag.  BC drains the cloak for the whole
+        # duration the device is engaged (warbird authors 1000 power/sec).
+        cloak_getter = getattr(ship, "GetCloakingSubsystem", None)
+        if cloak_getter is not None:
+            cloak = cloak_getter()
+            if (cloak is not None
+                    and hasattr(cloak, "IsTryingToCloak")
+                    and cloak.IsTryingToCloak()
+                    and hasattr(cloak, "GetNormalPowerPerSecond")):
+                total += float(cloak.GetNormalPowerPerSecond() or 0.0)
         return total
 
     def Update(self, dt: float) -> None:
@@ -1286,31 +1308,39 @@ class CloakingSubsystem(PoweredSubsystem):
 
     def StartCloaking(self) -> None:
         """Begin cloaking.  No-op if already CLOAKED or CLOAKING; from
-        DECLOAKED or mid-DECLOAKING this (re)starts the fade-out."""
+        DECLOAKED or mid-DECLOAKING this (re)starts the fade-out and broadcasts
+        ET_CLOAK_BEGINNING (BC fires the BEGINNING event at transition start —
+        Bridge/PowerDisplay.py:340, E2M0/E2M1)."""
         if self._cloak_state in (self.CLOAK_CLOAKED, self.CLOAK_CLOAKING):
             return
         self._cloak_state = self.CLOAK_CLOAKING
         self._transition_elapsed = 0.0
+        self._fire("ET_CLOAK_BEGINNING")
+        self._collapse_shields()
 
     def StopCloaking(self) -> None:
         """Begin decloaking.  No-op if already DECLOAKED or DECLOAKING; from
-        CLOAKED or mid-CLOAKING this (re)starts the fade-in."""
+        CLOAKED or mid-CLOAKING this (re)starts the fade-in and broadcasts
+        ET_DECLOAK_BEGINNING (SelectTarget re-rates the contact on this event —
+        Preprocessors.py)."""
         if self._cloak_state in (self.CLOAK_DECLOAKED, self.CLOAK_DECLOAKING):
             return
         self._cloak_state = self.CLOAK_DECLOAKING
         self._transition_elapsed = 0.0
+        self._fire("ET_DECLOAK_BEGINNING")
 
     def InstantCloak(self) -> None:
-        """Jump straight to CLOAKED with no transition; fire ET_CLOAK_COMPLETED."""
+        """Jump straight to CLOAKED with no transition; fire ET_CLOAK_COMPLETED.
+        No BEGINNING event — there is no transition to begin (matches BC)."""
         self._cloak_state = self.CLOAK_CLOAKED
         self._transition_elapsed = 0.0
-        self._fire_completion(self.CLOAK_CLOAKED)
+        self._fire("ET_CLOAK_COMPLETED")
 
     def InstantDecloak(self) -> None:
         """Jump straight to DECLOAKED with no transition; fire ET_DECLOAK_COMPLETED."""
         self._cloak_state = self.CLOAK_DECLOAKED
         self._transition_elapsed = 0.0
-        self._fire_completion(self.CLOAK_DECLOAKED)
+        self._fire("ET_DECLOAK_COMPLETED")
 
     # ── State predicates (read by CloakShip.CheckCloak + doctrines) ──────────
 
@@ -1329,6 +1359,21 @@ class CloakingSubsystem(PoweredSubsystem):
         DECLOAKING / DECLOAKED both express the intent to be visible."""
         return 1 if self._cloak_state in (self.CLOAK_CLOAKING,
                                           self.CLOAK_CLOAKED) else 0
+
+    def GetTransitionFraction(self) -> float:
+        """Visual cloak progress in [0, 1]: 0 = fully visible (DECLOAKED),
+        1 = fully hidden (CLOAKED).  Ramps with the transition timer during
+        CLOAKING (0→1) and back down during DECLOAKING (1→0).  The renderer
+        drives the refraction / chromatic-dispersion strength off this — it is a
+        pure read of the state machine and has no gameplay effect."""
+        if self._cloak_state == self.CLOAK_DECLOAKED:
+            return 0.0
+        if self._cloak_state == self.CLOAK_CLOAKED:
+            return 1.0
+        dur = self._transition_duration if self._transition_duration > 0.0 else 1.0
+        f = self._transition_elapsed / dur
+        f = 0.0 if f < 0.0 else (1.0 if f > 1.0 else f)
+        return f if self._cloak_state == self.CLOAK_CLOAKING else (1.0 - f)
 
     # ── Per-tick transition advance (game-loop subsystem update pass) ────────
 
@@ -1349,7 +1394,7 @@ class CloakingSubsystem(PoweredSubsystem):
                 self._cloak_state = self.CLOAK_DECLOAKED
                 self._transition_elapsed = 0.0
                 if was_cloaked:
-                    self._fire_completion(self.CLOAK_DECLOAKED)
+                    self._fire("ET_DECLOAK_COMPLETED")
             return
 
         if self._cloak_state not in (self.CLOAK_CLOAKING, self.CLOAK_DECLOAKING):
@@ -1362,29 +1407,51 @@ class CloakingSubsystem(PoweredSubsystem):
         if self._cloak_state == self.CLOAK_CLOAKING:
             self._cloak_state = self.CLOAK_CLOAKED
             self._transition_elapsed = 0.0
-            self._fire_completion(self.CLOAK_CLOAKED)
+            self._fire("ET_CLOAK_COMPLETED")
         else:  # CLOAK_DECLOAKING
             self._cloak_state = self.CLOAK_DECLOAKED
             self._transition_elapsed = 0.0
-            self._fire_completion(self.CLOAK_DECLOAKED)
+            self._fire("ET_DECLOAK_COMPLETED")
 
-    # ── Completion event emission ────────────────────────────────────────────
+    # ── Shield coupling ───────────────────────────────────────────────────────
 
-    def _fire_completion(self, terminal_state: int) -> None:
-        """Broadcast ET_CLOAK_COMPLETED / ET_DECLOAK_COMPLETED with this
-        subsystem as the source — mirrors ship_death._broadcast_destroyed.
-        Raise-safe so a missing event manager never breaks the state machine."""
+    def _collapse_shields(self) -> None:
+        """Drop the owning ship's shields to zero the instant the cloak engages.
+
+        BC forces shields down on cloak (you cannot cloak with shields up), and
+        this fires for every trigger path — player toggle, AI doctrine, or
+        mission script — because they all funnel through StartCloaking.  The
+        per-tick ShieldSubsystem.Update cloak gate then keeps them collapsed
+        until decloak.  Raise-safe: a bare cloak with no parent ship (or a ship
+        with no shields) simply does nothing."""
+        try:
+            ship = self._climb_to_ship() if hasattr(self, "_climb_to_ship") else None
+            if ship is None:
+                return
+            shields = (ship.GetShieldSubsystem()
+                       if hasattr(ship, "GetShieldSubsystem") else None)
+            if shields is None:
+                return
+            for face in range(shields.NUM_SHIELDS):
+                shields.SetCurrentShields(face, 0.0)
+        except Exception as _e:
+            dev_mode.log_swallowed("cloak shield collapse", _e)
+
+    # ── Cloak event emission ─────────────────────────────────────────────────
+
+    def _fire(self, event_attr: str) -> None:
+        """Broadcast a cloak event (``ET_CLOAK_BEGINNING`` / ``ET_CLOAK_COMPLETED``
+        / ``ET_DECLOAK_BEGINNING`` / ``ET_DECLOAK_COMPLETED``) with this subsystem
+        as the source — mirrors ship_death._broadcast_destroyed.  Raise-safe so a
+        missing event manager never breaks the state machine."""
         try:
             import App
             evt = App.TGEvent_Create()
-            if terminal_state == self.CLOAK_CLOAKED:
-                evt.SetEventType(App.ET_CLOAK_COMPLETED)
-            else:
-                evt.SetEventType(App.ET_DECLOAK_COMPLETED)
+            evt.SetEventType(getattr(App, event_attr))
             evt.SetSource(self)
             App.g_kEventManager.AddEvent(evt)
         except Exception as _e:
-            dev_mode.log_swallowed("cloak completion broadcast", _e)
+            dev_mode.log_swallowed("cloak event broadcast", _e)
 
 
 # ── Module-level WarpEngineSubsystem helpers ─────────────────────────────────

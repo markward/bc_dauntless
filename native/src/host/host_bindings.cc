@@ -39,6 +39,7 @@
 #include <renderer/particle_pass.h>
 #include <renderer/phaser_pass.h>
 #include <renderer/hologram_pass.h>
+#include <renderer/cloak_pass.h>
 #include <renderer/breach_pass.h>
 #include <renderer/breach_venting.h>  // venting descriptor builder
 #include <renderer/breach_debris.h>  // debris descriptor builder
@@ -191,6 +192,11 @@ std::vector<renderer::PhaserBeamDescriptor> g_spv_overlay_beams;
 std::unique_ptr<renderer::PhaserPass>      g_phaser_pass;
 renderer::HologramShip                       g_hologram_ship;
 std::unique_ptr<renderer::HologramPass>      g_hologram_pass;
+// Cloaking ships drawn as refractive shells this frame (set each frame from
+// Python via set_cloak_ships). The pass bends + chromatically disperses the
+// scene behind each hull; empty list → zero GL work.
+std::vector<renderer::CloakShipDescriptor>   g_cloak_ships;
+std::unique_ptr<renderer::CloakRefractionPass> g_cloak_pass;
 std::unique_ptr<renderer::BreachPass>        g_breach_pass;
 // Shared static original-fill cache: the UNCARVED hull fill + its GL_R8 3D
 // texture are built once per hull source path (not per-instance) and consumed
@@ -382,6 +388,7 @@ void init(int width, int height, const std::string& title) {
     g_particle_pass = std::make_unique<renderer::ParticlePass>();
     g_phaser_pass        = std::make_unique<renderer::PhaserPass>();
     g_hologram_pass      = std::make_unique<renderer::HologramPass>();
+    g_cloak_pass         = std::make_unique<renderer::CloakRefractionPass>();
     g_breach_pass        = std::make_unique<renderer::BreachPass>();
     g_carve_cache        = std::make_unique<renderer::CarveFieldCache>();
     // The breach pass lazily loads its own animated interior texture
@@ -456,6 +463,8 @@ void shutdown() {
     g_hologram_ship = renderer::HologramShip{};
     g_hologram_only_mode = false;
     g_hologram_pass.reset();
+    g_cloak_ships.clear();
+    g_cloak_pass.reset();
     g_breach_pass.reset();   // releases the sphere mesh + fill textures while the GL context lives
     g_carve_cache.reset();   // releases the carved-fill 3D textures (GL alive)
     g_subsystem_pin_pass.reset();
@@ -784,6 +793,12 @@ void frame() {
     if (!viewer_mode && !bridge_active) {
         render_space(g_camera, /*for_viewscreen=*/false);
     }
+
+    // Cloak refraction: bend + chromatically disperse the scene behind each
+    // cloaking hull. Runs after render_space (the HDR target holds the lit
+    // scene and is still bound) and only in the real space view.
+    if (!viewer_mode && !bridge_active && g_cloak_pass && !g_cloak_ships.empty())
+        g_cloak_pass->render(g_cloak_ships, g_world, g_camera, *g_pipeline, lookup);
 
     if (g_hologram_pass && g_hologram_ship.active)
         g_hologram_pass->render(g_hologram_ship, g_world, g_camera, *g_pipeline, lookup);
@@ -2063,6 +2078,30 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("clear_hologram_ship",
           []() { g_hologram_ship = renderer::HologramShip{}; },
           "Clear the hologram overlay (deactivates it). Takes effect next frame().");
+    m.def("set_cloak_ships",
+          [](const std::vector<std::pair<scenegraph::InstanceId, float>>& ships) {
+              g_cloak_ships.clear();
+              g_cloak_ships.reserve(ships.size());
+              for (const auto& s : ships)
+                  g_cloak_ships.push_back({s.first, s.second});
+          },
+          py::arg("ships"),
+          "Set the cloaking ships drawn as refractive shells this frame. Each "
+          "entry is (instance_id, frac) where frac in [0,1] is cloak progress "
+          "(0 = visible, 1 = fully cloaked). Replaces the prior list; pass an "
+          "empty list to draw none. Takes effect next frame().");
+    m.def("set_cloak_dials",
+          [](float strength, float dispersion, std::array<float, 3> tint) {
+              if (g_cloak_pass) {
+                  g_cloak_pass->set_strength(strength);
+                  g_cloak_pass->set_dispersion(dispersion);
+                  g_cloak_pass->set_tint({tint[0], tint[1], tint[2]});
+              }
+          },
+          py::arg("strength"), py::arg("dispersion"),
+          py::arg("tint") = std::array<float, 3>{0.20f, 0.85f, 0.55f},
+          "Live-tune the cloak refraction: max screen-space offset (strength), "
+          "prism split (dispersion), and rim tint (r,g,b).");
     m.def("set_hologram_only_mode",
           [](bool enabled, std::array<float, 3> bg) {
               g_hologram_only_mode = enabled;

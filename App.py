@@ -741,6 +741,10 @@ ET_AI_INTERNAL_PROX_EVENT = 205
 # uncloaks. Value picked outside the Slice A 200-203 range; 204/205 are
 # taken by ET_OBJECT_GROUP_CHANGED / ET_AI_INTERNAL_PROX_EVENT.
 ET_DECLOAK_BEGINNING = 206
+# Cloak-beginning sibling of ET_DECLOAK_BEGINNING. BC fires this at the START
+# of a cloak transition (the COMPLETED events fire at the end). Consumed by
+# Bridge/PowerDisplay.py:340 (cloak power readout) and missions E2M0/E2M1.
+ET_CLOAK_BEGINNING = 207
 
 # ── Input event types — used by DefaultKeyboardBinding + TacticalInterfaceHandlers
 # Values are stable arbitrary integers well above the Phase-1 event range.
@@ -822,6 +826,10 @@ ET_CLOAK_COMPLETED          = 1071
 ET_DECLOAK_COMPLETED        = 1072
 ET_CHARACTER_MENU           = 1073
 ET_CONTACT_STARFLEET        = 1074
+# Fired when something rams a cloaked ship (a cloaked hull is still physically
+# present). BC's HelmMenuHandlers.CloakedCollision plays a "collided with a
+# cloaked ship" line off this event.
+ET_CLOAKED_COLLISION        = 1075
 
 # ── FloatRangeWatcher condition event ─────────────────────────────────────────
 # Crossing event broadcast by a power subsystem's battery watcher when the
@@ -1343,11 +1351,35 @@ class _TacWeaponsCtrl(TGEventHandlerObject):
     def __init__(self):
         super().__init__()
         self._beam_toggle = _BeamToggle()
+        self._cloak_toggle = _BeamToggle()
         self.AddPythonFuncHandlerForInstance(
             ET_OTHER_BEAM_TOGGLE_CLICKED, "App._tac_weapons_beam_toggled")
+        self.AddPythonFuncHandlerForInstance(
+            ET_OTHER_CLOAK_TOGGLE_CLICKED, "App._tac_weapons_cloak_toggled")
 
     def GetBeamToggle(self) -> "_BeamToggle":
         return self._beam_toggle
+
+    def GetCloakToggle(self):
+        """The cloak toggle button — or None when the player ship has no
+        cloaking device.  BC's BridgeHandlers.ToggleCloak calls
+        pWeapons.GetCloakToggle() and returns early on None ("Not all ships can
+        cloak…"), so a non-cloak ship sees no cloak control at all."""
+        import MissionLib
+        player = MissionLib.GetPlayer()
+        if player is None or player.GetCloakingSubsystem() is None:
+            return None
+        return self._cloak_toggle
+
+    def RefreshCloakToggle(self) -> None:
+        """Resync the cloak toggle button to the device's actual intent so a
+        forced decloak (damaged cloak) or a scripted cloak is reflected in the
+        button / power-display state — mirrors BC TacWeaponsCtrl.RefreshCloakToggle."""
+        import MissionLib
+        player = MissionLib.GetPlayer()
+        cloak = player.GetCloakingSubsystem() if player is not None else None
+        engaged = cloak is not None and bool(cloak.IsTryingToCloak())
+        self._cloak_toggle.SetState(1 if engaged else 0)
 
 
 _g_tac_weapons_ctrl = None
@@ -1422,6 +1454,53 @@ def ToggleTractorFromInput():
             if tr is not None and hasattr(tr, "SetMode"):
                 tr.SetMode(TractorBeamSystem.TBS_PULL)
     _tac_weapons_beam_toggled(ctrl, None)
+
+
+def _tac_weapons_cloak_toggled(pObject, pEvent):
+    """Engage/disengage the player's cloak to match the toggle state — the
+    engine-side stand-in for BC's C++ TacWeaponsCtrl cloak handling.
+
+    BC's BridgeHandlers.ToggleCloak flips the toggle button then re-fires
+    ET_OTHER_CLOAK_TOGGLE_CLICKED to this control; the control acts on the
+    toggle state (StartCloaking when on, StopCloaking when off).  The state
+    machine no-ops a redundant call, so an already-cloaked ship is unaffected
+    by a spurious "on".
+    """
+    toggle = pObject._cloak_toggle
+    import MissionLib
+    player = MissionLib.GetPlayer()
+    if player is None:
+        return
+    cloak = player.GetCloakingSubsystem()
+    if cloak is None:
+        toggle.SetState(0)
+        return
+    if toggle.GetState():
+        cloak.StartCloaking()
+    else:
+        cloak.StopCloaking()
+
+
+def ToggleCloakFromInput():
+    """Flip the cloak toggle and engage/disengage directly (keyboard path).
+
+    Mirrors ToggleTractorFromInput: the SDK BridgeHandlers.ToggleCloak window
+    chain (handler resolution + CallNextHandler + event re-fire) does not
+    reliably reach the TacWeaponsCtrl in our host, so the Alt+C poller drives
+    the same logic here with no indirection.  No-op when the player ship has no
+    cloaking device.  Resyncs the toggle to the device's real state before
+    flipping, so a forced decloak (damaged cloak) doesn't leave the button stuck
+    "on" and swallow the next press.
+    """
+    import MissionLib
+    player = MissionLib.GetPlayer()
+    if player is None or player.GetCloakingSubsystem() is None:
+        return
+    ctrl = TacWeaponsCtrl_GetTacWeaponsCtrl()
+    ctrl.RefreshCloakToggle()
+    toggle = ctrl._cloak_toggle
+    toggle.SetState(0 if toggle.GetState() else 1)
+    _tac_weapons_cloak_toggled(ctrl, None)
 
 
 def EngRepairPane_Create(width=0.0, height=0.0, n=0) -> "_DisplayWidget":

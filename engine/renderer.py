@@ -655,6 +655,31 @@ def clear_hologram_ship() -> None:
     _h.clear_hologram_ship()
 
 
+# ── Cloak refraction ─────────────────────────────────────────────────────────
+
+def set_cloak_ships(ships) -> None:
+    """Set the cloaking ships drawn as refractive shells this frame.
+
+    ``ships`` is a list of ``(instance_id, frac)`` where ``frac`` in [0, 1] is
+    cloak progress (0 = visible, 1 = fully cloaked). The pass bends and
+    chromatically disperses the scene behind each hull. An empty list draws
+    none. No-op on a stale binary that predates the binding."""
+    fn = getattr(_h, "set_cloak_ships", None)
+    if fn is None:
+        return
+    fn([(iid, float(frac)) for iid, frac in ships])
+
+
+def set_cloak_dials(strength: float = 0.04, dispersion: float = 0.50,
+                    tint=(0.20, 0.85, 0.55)) -> None:
+    """Live-tune the cloak refraction: max screen-space offset (strength),
+    prism split (dispersion), and rim tint. No-op on a stale binary."""
+    fn = getattr(_h, "set_cloak_dials", None)
+    if fn is None:
+        return
+    fn(float(strength), float(dispersion), tuple(tint))
+
+
 def set_subsystem_pins(pins: list) -> None:
     """Set the subsystem pin billboard list.
 

@@ -461,6 +461,26 @@ class _EnergyWeaponFireMixin:
         return ps.StealPower(cost)
 
 
+def _cloak_blocks_fire(weapon_system) -> bool:
+    """True when the owning ship is cloaked or mid-cloak, so it cannot fire.
+
+    BC forces all weapons offline for as long as the cloak is engaged — you
+    sacrifice offence for invisibility.  ``IsTryingToCloak()`` is true for both
+    CLOAKING (fading out) and CLOAKED; a DECLOAKING ship is already committed to
+    reappearing and may fire.  Cheap and raise-safe: ships with no cloak (the
+    common case) climb to a None subsystem and fall straight through.
+    """
+    ship = (weapon_system.GetParentShip()
+            if hasattr(weapon_system, "GetParentShip") else None)
+    if ship is None:
+        return False
+    getter = getattr(ship, "GetCloakingSubsystem", None)
+    if getter is None:
+        return False
+    cloak = getter()
+    return cloak is not None and bool(cloak.IsTryingToCloak())
+
+
 class WeaponSystem(PoweredSubsystem):
     """Weapon system — has firing state and an optional target.
 
@@ -539,6 +559,9 @@ class WeaponSystem(PoweredSubsystem):
         # Disabled-weapons gate: when every child reports disabled (Project 2
         # aggregation), the parent IsDisabled is 1 — block fire. Spec §4.2.
         if _is_offline(self):
+            return
+        # Cloak gate: a cloaked / cloaking ship cannot fire (BC rule).
+        if _cloak_blocks_fire(self):
             return
         n = self.GetNumWeapons()
         if n == 0:
@@ -777,6 +800,9 @@ class _HeldFireWeaponSystem(WeaponSystem):
         # Disabled-weapons gate: parent aggregates child IsDisabled (Project 2).
         # When all emitters are disabled the parent flips disabled and we bail.
         if _is_offline(self):
+            return
+        # Cloak gate: a cloaked / cloaking ship cannot fire (BC rule).
+        if _cloak_blocks_fire(self):
             return
         ship = self.GetParentShip()
         if not self._can_engage(ship, target):

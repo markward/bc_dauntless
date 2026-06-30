@@ -153,6 +153,13 @@ def _bootstrap_firing_pipeline() -> None:
     from engine.appc.sensor_detection import install_ai_sensor_gate
     install_ai_sensor_gate()
 
+    # Interim: route cloak-capable ships to the working non-cloak attack
+    # doctrine (the SDK CloakAttack tree doesn't drive SelectTarget in our
+    # engine yet, so cloak ships otherwise park). Idempotent. Remove once the
+    # CloakAttack doctrine is wired. See engine/appc/cloak_ai_fallback.py.
+    from engine.appc.cloak_ai_fallback import install_cloak_attack_fallback
+    install_cloak_attack_fallback()
+
     import App
 
     # Default destination for fire events.
@@ -339,6 +346,77 @@ def _poll_tractor_toggle(host) -> None:
         import App  # deferred: module-top import reorders sound-manager init
         App.ToggleTractorFromInput()
     _tractor_toggle_prev = chord
+
+
+_cloak_toggle_prev: bool = False
+
+
+def _poll_cloak_toggle(host) -> None:
+    """Forward the Alt+C cloak toggle chord into the cloak toggle event.
+
+    BC binds WC_ALT_C (DefaultKeyboardBinding.py:43) → ET_OTHER_CLOAK_TOGGLE_CLICKED,
+    but the Alt-modifier WC constants are unwired in our input pipeline, so detect
+    the chord directly off the host key state and drive App.ToggleCloakFromInput()
+    (which no-ops for ships without a cloaking device).  Mirrors
+    _poll_tractor_toggle exactly.
+
+    Rising-edge only: one toggle per press.  No-ops on a stale binary whose
+    `keys` submodule predates KEY_C (graceful — cloak stays toggle-via-UI).
+    """
+    global _cloak_toggle_prev
+    if host is None or not hasattr(host, "key_state"):
+        return
+    keys = getattr(host, "keys", None)
+    if keys is None or not hasattr(keys, "KEY_C"):
+        return
+    alt = (bool(host.key_state(keys.KEY_LEFT_ALT))
+           or bool(host.key_state(keys.KEY_RIGHT_ALT)))
+    chord = alt and bool(host.key_state(keys.KEY_C))
+    if chord and not _cloak_toggle_prev:
+        import App  # deferred: module-top import reorders sound-manager init
+        App.ToggleCloakFromInput()
+    _cloak_toggle_prev = chord
+
+
+def _push_cloak_refraction(r, session, player) -> None:
+    """Per-frame cloak VFX wiring.
+
+    For each cloak-capable ship: hide the opaque hull only when *fully* cloaked
+    (the refractive shell — or, for enemies, nothing — takes over), and push a
+    ``(instance_id, frac)`` entry so the renderer draws the refraction +
+    chromatic-dispersion shell.  Pushed for ships mid-transition and for the
+    player's own fully-cloaked ship (a faint shimmer so the pilot can place it);
+    a fully-cloaked enemy is hidden and not pushed, so it is truly invisible.
+
+    Visibility is recomputed from the live cloak state every frame, so any
+    decloak — including an InstantDecloak that skips the DECLOAKING state —
+    restores the hull with no leaked bookkeeping."""
+    if session is None:
+        return
+    ships = getattr(session, "ship_instances", None)
+    if not ships:
+        r.set_cloak_ships([])
+        return
+    cloak_list = []
+    for ship, iid in list(ships.items()):
+        getter = getattr(ship, "GetCloakingSubsystem", None)
+        if getter is None:
+            continue
+        cloak = getter()
+        if cloak is None:
+            continue
+        cloaked = bool(cloak.IsCloaked())
+        try:
+            r.set_visible(iid, not cloaked)
+        except Exception as _e:
+            dev_mode.log_swallowed("cloak set_visible", _e)
+        frac = cloak.GetTransitionFraction()
+        if frac <= 0.0:
+            continue                          # fully decloaked: no shell
+        if cloaked and ship is not player:
+            continue                          # fully-cloaked enemy: invisible
+        cloak_list.append((iid, frac))
+    r.set_cloak_ships(cloak_list)
 
 
 def _advance_weapons(ships, dt: float) -> None:
@@ -5047,6 +5125,7 @@ def run(mission_name: Optional[str] = None,
                 _poll_function_keys(_h, input_map)
                 _poll_fire_keys(_h, input_map)
                 _poll_tractor_toggle(_h)
+                _poll_cloak_toggle(_h)
 
                 # Advance weapon charge / reload for every ship in every
                 # active set.  Runs after AI/physics (approximate — the host
@@ -5554,6 +5633,8 @@ def run(mission_name: Optional[str] = None,
 
             lens_flares = _aggregate_lens_flares()
             r.set_lens_flares(lens_flares)
+
+            _push_cloak_refraction(r, session, player)
 
             if verbose and ticks == 0:
                 print(f"[host_loop] tick 0 camera eye={eye} target={target}", flush=True)
