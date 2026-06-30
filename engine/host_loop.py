@@ -2946,6 +2946,7 @@ class HostController:
         particles.reset()
         damage_eligibility.reset()
         hit_feedback._last_carve_time.clear()
+        hit_feedback._pending_carve_strength.clear()
         reset_sdk_globals()
         # A mission swap mid-warp would otherwise leak the WarpVFX manager
         # (reset_sdk_globals zeroes the timer manager, cancelling the pending

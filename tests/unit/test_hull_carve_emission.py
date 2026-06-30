@@ -44,9 +44,11 @@ def patched(monkeypatch):
     # Deterministic clock; clear per-ship throttle and eligibility between tests.
     monkeypatch.setattr(dd, "current_game_time", lambda: 100.0)
     hit_feedback._last_carve_time.clear()
+    hit_feedback._pending_carve_strength.clear()
     de.reset()
     yield monkeypatch
     hit_feedback._last_carve_time.clear()
+    hit_feedback._pending_carve_strength.clear()
     de.reset()
 
 
@@ -127,6 +129,27 @@ def test_deposit_throttled_per_ship(patched):
     _dispatch(host, ship, absorbed_hull=100.0)
     _dispatch(host, ship, absorbed_hull=100.0)
     assert len(host.carve_calls) == 1
+
+
+def test_strength_accumulates_across_throttle_window(patched):
+    # The perf throttle must not discard damage: light hits within one window
+    # accumulate, and the next emit after the window deposits the SUM. (Without
+    # this, sustained phaser fire — a few hull/tick — never reaches the iso.)
+    host = _FakeHost()
+    ship = _Ship()
+    de.set_current(frozenset({id(ship)}))
+    clock = [100.0]
+    patched.setattr(dd, "current_game_time", lambda: clock[0])
+    _dispatch(host, ship, absorbed_hull=10.0)           # first emit flushes
+    assert len(host.carve_calls) == 1
+    for _ in range(4):                                  # same window: throttled
+        _dispatch(host, ship, absorbed_hull=10.0)
+    assert len(host.carve_calls) == 1
+    clock[0] += hc.CARVE_EMIT_INTERVAL + 0.01           # next window
+    _dispatch(host, ship, absorbed_hull=10.0)
+    assert len(host.carve_calls) == 2
+    # Deposit carries the 4 throttled hits + this one (the first was popped).
+    assert host.carve_calls[1]["strength"] == pytest.approx(hc.carve_strength(10.0) * 5)
 
 
 def test_headless_host_none_is_safe(patched):

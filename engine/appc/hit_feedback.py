@@ -68,6 +68,7 @@ _last_decal_emit: dict = {}  # (id(ship), weapon_class) -> last emit game-time
 # Hull-carve emission throttle, parallel to _last_decal_emit. Keyed by
 # id(ship) only (a carve is weapon-agnostic geometry, unlike a decal class).
 _last_carve_time: dict = {}  # id(ship) -> last emit game-time
+_pending_carve_strength: dict = {}  # id(ship) -> strength accumulated since last emit
 
 
 def classify(*, absorbed_shields: float, absorbed_subsystem: float,
@@ -269,14 +270,24 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
             if iid is not None:
                 now = damage_decals.current_game_time()
                 ship_key = id(ship)
+                # Accumulate strength across the throttle window and flush the
+                # SUM, so the (perf) throttle doesn't discard the ~14 of 15 ticks
+                # between emits. Otherwise sustained light fire (a phaser absorbs
+                # only a few hull/tick) loses almost all its damage and never
+                # reaches the iso. Deposit at the latest hit point; the C++ field
+                # merges it with nearby carves.
+                _pending_carve_strength[ship_key] = (
+                    _pending_carve_strength.get(ship_key, 0.0)
+                    + hull_carve.carve_strength(absorbed_hull))
                 if now - _last_carve_time.get(ship_key, -1e9) >= hull_carve.CARVE_EMIT_INTERVAL:
                     _last_carve_time[ship_key] = now
+                    strength = _pending_carve_strength.pop(ship_key, 0.0)
                     host.hull_carve_add(
                         iid,
                         (point.x, point.y, point.z),
                         (normal.x, normal.y, normal.z),
                         hull_carve.carve_influ_gu(radius),
-                        hull_carve.carve_strength(absorbed_hull),
+                        strength,
                         now,
                     )
 
