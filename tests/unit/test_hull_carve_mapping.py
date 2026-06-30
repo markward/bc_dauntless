@@ -4,11 +4,10 @@ from engine.appc import hull_carve
 
 
 def test_strength_scales_with_absorbed_hull():
-    # strength = absorbed_hull * STRENGTH_PER_HULL; a ~60-hull hit reaches the
-    # C++ iso (300) in one shot, matching the old per-hit carve threshold.
+    # strength = absorbed_hull * STRENGTH_PER_HULL (1:1) — accumulates gradually
+    # rather than a single moderate hit one-shotting a breach.
     assert hull_carve.carve_strength(0.0) == 0.0
     assert hull_carve.carve_strength(60.0) == pytest.approx(60.0 * hull_carve.STRENGTH_PER_HULL)
-    assert hull_carve.carve_strength(60.0) == pytest.approx(300.0)
     # Monotonic and never negative.
     assert hull_carve.carve_strength(-5.0) == 0.0
     assert hull_carve.carve_strength(120.0) > hull_carve.carve_strength(60.0)

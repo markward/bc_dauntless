@@ -14,11 +14,14 @@ to a breach instead of being hard-gated out per hit. Constants here are
 eye-calibration knobs (tunable without a native rebuild).
 """
 
-# Field strength deposited per unit of absorbed hull damage. The C++ iso is 300
-# strength; at 5x, a single hit that absorbs ~60 hull (the old per-hit carve
-# threshold) deposits 300 -> breaches on that hit, while lighter fire accumulates
-# toward the iso over several hits. Tune this to make breaching readier/harder.
-STRENGTH_PER_HULL = 5.0
+# Field strength deposited per unit of absorbed hull damage. 1:1 — strength is
+# just accumulated absorbed-hull, so geometry damage builds up GRADUALLY over
+# sustained fire instead of a single moderate hit one-shotting a full breach
+# (which read as all-or-nothing). Heavy hits still deposit proportionally more.
+# The C++ curve (kHullCarve* in native/.../hull_carve.h) maps accumulated
+# strength -> visible radius, emerging small at the iso and growing. Raise this
+# to make geometry damage appear readier per hit.
+STRENGTH_PER_HULL = 1.0
 
 # Merge-influence radius (GU): how close repeated hits must land to accumulate
 # into the same carve. Floored so phaser hits clustered around a subsystem build

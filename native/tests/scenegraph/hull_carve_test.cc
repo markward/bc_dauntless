@@ -31,12 +31,15 @@ TEST(HullCarveField, EvictsSmallestRadiusWhenFull) {
     EXPECT_EQ(f.count(), HullCarveField::kMaxCarves);  // still capped
 }
 
-TEST(HullCarveStrengthCurve, IsoGatesVisibility) {
+TEST(HullCarveStrengthCurve, IsoGatesThenGrowsSmoothly) {
     using scenegraph::hull_carve_strength_to_radius_gu;
     EXPECT_FLOAT_EQ(hull_carve_strength_to_radius_gu(0.0f), 0.0f);
-    EXPECT_FLOAT_EQ(hull_carve_strength_to_radius_gu(299.0f), 0.0f);   // below iso
-    EXPECT_FLOAT_EQ(hull_carve_strength_to_radius_gu(300.0f), 0.4f);   // BC minor tier
-    EXPECT_FLOAT_EQ(hull_carve_strength_to_radius_gu(600.0f), 1.0f);   // BC breach tier
+    EXPECT_FLOAT_EQ(hull_carve_strength_to_radius_gu(149.0f), 0.0f);   // below iso: invisible
+    // At the iso the carve emerges SMALL (no chunky pop), then grows.
+    EXPECT_FLOAT_EQ(hull_carve_strength_to_radius_gu(150.0f),
+                    scenegraph::kHullCarveRadiusAtIso);
+    EXPECT_GT(hull_carve_strength_to_radius_gu(450.0f),
+              hull_carve_strength_to_radius_gu(300.0f));               // monotonic growth
     EXPECT_LE(hull_carve_strength_to_radius_gu(100000.0f), 1.5f);      // clamp
 }
 

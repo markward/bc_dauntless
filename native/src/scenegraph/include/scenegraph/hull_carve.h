@@ -11,13 +11,13 @@ namespace scenegraph {
 // BC's DamageTool authored hull damage as an additive metaball field: strength
 // accumulates spatially and a hole only appears once the summed field crosses
 // an iso level. We mirror that — a carve stays invisible until accumulated
-// strength reaches kHullCarveStrengthIso, then its radius grows with strength.
-// Anchored to BC's two authored tiers: strength 300 -> 0.4 GU (minor surface),
-// 600 -> 1.0 GU (breach). See
+// strength (1:1 absorbed-hull) reaches kHullCarveStrengthIso, then EMERGES SMALL
+// and grows with continued damage. The small radius at the iso (vs a chunky
+// pop) keeps the onset gradual, not all-or-nothing. See
 // docs/original_game_reference/engine/damagetool-and-hull-damage-gaps.md.
-inline constexpr float kHullCarveStrengthIso       = 300.0f;
-inline constexpr float kHullCarveRadiusAtIso       = 0.4f;    // GU at the iso
-inline constexpr float kHullCarveRadiusPerStrength = 0.002f;  // GU per strength above iso
+inline constexpr float kHullCarveStrengthIso       = 150.0f;  // absorbed-hull before geometry starts breaking
+inline constexpr float kHullCarveRadiusAtIso       = 0.12f;   // small initial dent at the iso (no pop)
+inline constexpr float kHullCarveRadiusPerStrength = 0.0024f; // GU per strength above iso
 inline constexpr float kHullCarveRadiusMaxGu       = 1.5f;    // clamp
 
 /// Visible carve radius (game units) for an accumulated field strength. 0 below
