@@ -145,27 +145,73 @@ def _refresh_conditional_status(ai: ConditionalAI) -> None:
 
 
 def _tick_sequence(ai: SequenceAI, game_time: float) -> int:
-    """Tick the current child; on DONE, advance index inline.
+    """Run the sequence's first eligible child, advancing past finished ones.
 
-    If the index walks off the end, set the sequence DONE on the same tick
-    (loop_count handling is deliberately out of scope for this slice —
-    SetLoopCount works as a data getter/setter, but no looping in the
-    driver yet; revisit when Compound.BasicAttack arrives).
+    Each tick: starting at the current index, refresh any ConditionalAI child's
+    status (mirroring _tick_priority_list — condition scripts update
+    asynchronously from proximity/timer events, so a stale cached status would
+    wedge the sequence), skip US_DONE children to reach the first eligible one,
+    and tick it. A US_DORMANT child *holds* the sequence in place: the SDK
+    sequences in Compound.CloakAttack use SetSkipDormant(0), so a dormant
+    child blocks rather than being skipped.
+
+    Looping: SetLoopCount(-1) marks a forever-loop (Compound.CloakAttack's
+    OuterSequence/Sequence, the QuickBattle maneuver loops). When the index
+    walks off the end of a forever-loop we wrap to 0 and re-arm the children to
+    US_ACTIVE so the sub-sequence re-runs (this is what lets the cloak/decloak
+    cadence repeat rather than stalling with every child latched DONE). A
+    non-looping sequence latches US_DONE when it walks off the end, as before.
     """
     if not ai._ais:
         ai._status = US_DONE
         return ai._status
+    n = len(ai._ais)
+    looping = int(getattr(ai, "_loop_count", 1)) < 0
     idx = getattr(ai, "_current_index", 0)
-    if idx >= len(ai._ais):
+
+    def _wrap_or_finish(i):
+        """Index walked off the end: wrap+re-arm a forever-loop, else finish.
+
+        Returns the new index to keep scanning from, or None if the sequence
+        is finished (status already set to US_DONE)."""
+        if looping:
+            for child in ai._ais:
+                child._status = US_ACTIVE
+            return 0
+        ai._current_index = i
         ai._status = US_DONE
-        return ai._status
-    child = ai._ais[idx]
-    tick_ai(child, game_time)
-    if child._status == US_DONE:
-        idx += 1
+        return None
+
+    # Bound the scan so a list of all-DONE children can't spin forever.
+    for _ in range(n + 1):
+        if idx >= n:
+            idx = _wrap_or_finish(idx)
+            if idx is None:
+                return ai._status
+        child = ai._ais[idx]
+        if isinstance(child, ConditionalAI):
+            _refresh_conditional_status(child)
+        if child._status == US_DORMANT:
+            ai._current_index = idx
+            ai._status = US_ACTIVE
+            return ai._status
+        if child._status == US_DONE:
+            idx += 1
+            continue
+        tick_ai(child, game_time)
+        if child._status == US_DONE:
+            idx += 1
+            if idx >= n:
+                idx = _wrap_or_finish(idx)
+                if idx is None:
+                    return ai._status
         ai._current_index = idx
-        if idx >= len(ai._ais):
-            ai._status = US_DONE
+        ai._status = US_ACTIVE
+        return ai._status
+    # Scan exhausted without an eligible child (all DONE). A forever-loop
+    # re-runs from the top next tick; a finite sequence is finished.
+    ai._current_index = 0
+    ai._status = US_ACTIVE if looping else US_DONE
     return ai._status
 
 

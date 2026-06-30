@@ -1,10 +1,11 @@
 # Follow-up: proper CloakAttack AI doctrine support
 
-**Status:** open. Interim fallback shipped (`be4b02ca`); this is the real fix.
+**Status:** ✅ resolved. Interim fallback (`be4b02ca`) removed; the real
+doctrine now drives. Two driver defects fixed on `feat/cloak-attack-doctrine`.
 
 ## Problem
 
-Cloak-capable AI ships (warbird, bird-of-prey, the Dominion craft, …) do not
+Cloak-capable AI ships (warbird, bird-of-prey, the Dominion craft, …) did not
 attack *or* tactically cloak. BC's `QuickBattle/QuickBattleAI.py` builds every
 enemy with `AI.Compound.BasicAttack.CreateAI(pShip, …, UseCloaking = 1)`, and
 `BasicAttack.CreateAI` routes any ship with `GetCloakingSubsystem()` truthy to
@@ -17,53 +18,73 @@ enemy with `AI.Compound.BasicAttack.CreateAI(pShip, …, UseCloaking = 1)`, and
 `CloakAttack` is a `BuilderAI` that should cloak, approach, decloak, fire, and
 recloak.
 
-## Root cause (verified, not from the cloak feature work)
+## Root cause (verified by headless reproduction)
 
-Reproduced headlessly (build `BasicAttack.CreateAI(cloakship, ["Tgt"],
-UseCloaking=1)`, tick `engine.appc.ai_driver.tick_ai`) and confirmed **identical
-on `main`** — so this predates phases A–E (it came in with W5.T2 wiring
-`GetCloakingSubsystem()` onto ships).
+> ⚠️ An earlier draft of this doc blamed `SelectTarget`'s target-propagation
+> cadence / focus (`CallSetTargetFunctions` / `AddSetTargetTree` / re-select
+> timing). **That was wrong.** Reproducing headlessly
+> (`BasicAttack.CreateAI(cloakship, ["Tgt"], UseCloaking=1)` driven through
+> `engine.core.loop.GameLoop.tick()`) pinned **two** distinct defects, neither
+> in `SelectTarget`:
 
-Equip the test ship with sensors + impulse + phasers (else `NoSensorsEvasive`
-and `Intercept` fire/raise on missing subsystems and mask the real issue).
+### Defect 1 — empty target group (the "never attacks" half)
 
-Dispatch trace (cloak vs plain), both reach `FleeAttackOrFollow` (PriorityList)
-→ `SelectTarget` (prio 3, above `FollowTargetThroughWarp`; prio 1/2 =
-WarpBeforeDeath / NoSensorsEvasive are dormant on a healthy ship):
+`engine/appc/objects.py:ObjectGroup_ForceToGroup` flattened only **one** level
+of list/tuple nesting. SDK compound AIs splat the targets positional through
+`*lpTargets` once per routing hop, and the cloak path
+(`BasicAttack → CloakAttackWrapper → BasicAttack → CloakAttack`) nests deeper
+than the non-cloak path. So `ForceToGroup` received a more deeply nested arg and
+stringified the inner list into a bogus name — the group ended up
+`_names = ["['Tgt']"]` instead of `['Tgt']`. Then
+`GetActiveObjectTupleInSet` returned `()`, `SelectTarget.FindGoodTarget()`
+returned `None`, and `SelectTarget` returned its `eNoTargetPreprocessStatus`
+(`PS_SKIP_DORMANT`) — so the attack subtree never ticked.
 
-- **plain (NonFedAttack):** `… → SelectTarget → PriorityList → ConditionalAI(LongRange) → FirePulseOnly → MoveIn` — descends into the attack tree, **sets the ship's target**.
-- **cloak (CloakAttack):** `… → SelectTarget` … **stops**. `SelectTarget` is
-  reached with `has_focus=True` and CodeAISet init done, but it **never
-  propagates a target onto the ship**, so it returns its `eNoTargetPreprocessStatus
-  = PS_SKIP_DORMANT`, and `_tick_preprocessing` therefore never ticks the
-  contained attack subtree (`SetContainedAI(pFire)`). The ship drifts.
+`NonFedAttack`/`FedAttack` only *looked* fine because they additionally call
+`ForceCurrentTargetString(sInitialTarget)` (preset `sCurrentTarget`, which the
+driver pushes onto the ship in `_ensure_select_target_initialized`); the
+`CloakAttack` tree omits that call and relied entirely on the (broken)
+`FindGoodTarget()` path.
 
-So the `SelectTarget` preprocessor *class* works in one tree and not the other,
-with the dispatch prefix identical — the difference is how the heavier
-`CloakAttack` tree drives target selection/propagation
-(`SelectTarget.CallSetTargetFunctions` / `AddSetTargetTree` reaching the ship,
-the per-tick re-select cadence, or a focus/CodeAISet nuance specific to this
-tree). That is the thing to fix.
+**Fix:** `ObjectGroup_ForceToGroup` recurses — it returns an `ObjectGroup` found
+at any depth (preserving `ObjectGroupWithInfo` identity), else flattens nested
+sequences to individual leaf names.
 
-## Goal
+### Defect 2 — SequenceAI never advanced (the "never cloaks" half)
 
-`CloakAttack` runs end-to-end in `engine/appc/ai_driver.py`: cloak ships acquire
-a target, and the `CloakShip`/decloak-to-fire logic engages the cloak (drawing
-on the now-faithful subsystem: events, power, weapons-lockout-while-cloaked,
-shields-down, sensor invisibility from phases A–E). Net behaviour: AI ships
-that both **attack and tactically cloak**.
+The `CloakShip` preprocessor lives deep in the tree behind looping `SequenceAI`s
+(`OuterSequence` / `Sequence`, both `SetLoopCount(-1)`) gated by range/timer
+`ConditionalAI`s (`FarEnough_TimeNotPassed`, `TooClose_ShortTime`,
+`NeedPower_OrTimeShort`). `engine/appc/ai_driver.py:_tick_sequence` only advanced
+on a child reporting `US_DONE`, never **refreshed** a `ConditionalAI` child's
+status (unlike `_tick_priority_list`, which calls `_refresh_conditional_status`),
+and never **looped**. So `OuterSequence` stuck on its first child
+(`FarEnough_TimeNotPassed`, ACTIVE for the first 15 s) and never reached the
+`TooClose → … → Cloak` branch.
 
-## When done
+**Fix:** `_tick_sequence` now refreshes ConditionalAI children, advances past
+`US_DONE` children, holds on `US_DORMANT` (SetSkipDormant(0) semantics), and
+wraps + re-arms on `SetLoopCount(-1)` forever-loops.
 
-Delete the `install_cloak_attack_fallback()` call in `engine/host_loop.py` and
-the `engine/appc/cloak_ai_fallback.py` module (+ its test), so cloak ships use
-the real doctrine again. The faithful gameplay underneath (phases A–E) already
-makes cloaking *mean* something, so this should "just work" visually once the
-doctrine drives the cloak.
+## Verified behaviour
+
+With both fixes, a fully-equipped attacker (sensors + impulse + phasers +
+**power**) acquires its target on tick 0 and engages the cloak at **t ≈ 15 s**
+(`IsCloaking()` true) — exactly when the approach timer expires and the sequence
+reaches `NeedPower_OrTimeShort`(DONE, power ≥ 80 %) → `Cloak` / `CloakShip(1)`.
+Pinned by `tests/unit/test_cloak_attack_doctrine.py` (drives the real
+`GameLoop`: timers + proximity + cloak transitions).
+
+## Done
+
+- `install_cloak_attack_fallback()` call removed from `engine/host_loop.py`.
+- `engine/appc/cloak_ai_fallback.py` and `tests/unit/test_cloak_ai_fallback.py`
+  deleted. Cloak ships now use the real doctrine.
 
 ## Key files
-- `sdk/Build/scripts/AI/Compound/CloakAttack.py` (BuilderAI tree; `BuilderCreate29` = SelectTarget, `BuilderCreate32` = FleeAttackOrFollow)
+- `engine/appc/objects.py` (`ObjectGroup_ForceToGroup` — defect 1)
+- `engine/appc/ai_driver.py` (`_tick_sequence`, `_refresh_conditional_status` — defect 2)
+- `sdk/Build/scripts/AI/Compound/CloakAttack.py` (BuilderAI tree; `BuilderCreate29` = SelectTarget, `BuilderCreate22` = Cloak/`CloakShip(1)`, `BuilderCreate32` = FleeAttackOrFollow)
 - `sdk/Build/scripts/AI/Compound/CloakAttackWrapper.py`, `BasicAttack.py`, `NonFedAttack.py`
-- `sdk/Build/scripts/AI/Preprocessors.py` (`SelectTarget`)
-- `engine/appc/ai_driver.py` (`_tick_preprocessing`, `_tick_priority_list`, `_tick_builder`)
-- `engine/appc/cloak_ai_fallback.py` (interim shim to remove)
+- `sdk/Build/scripts/AI/Preprocessors.py` (`SelectTarget`, `CloakShip`)
+- `tests/unit/test_cloak_attack_doctrine.py` (end-to-end coverage)
