@@ -18,10 +18,10 @@ namespace scenegraph {
 // (GU). The small fraction at the iso (vs a chunky pop) keeps the onset gradual,
 // not all-or-nothing. See
 // docs/original_game_reference/engine/damagetool-and-hull-damage-gaps.md.
-inline constexpr float kHullCarveStrengthIso         = 150.0f;    // absorbed-hull before geometry starts breaking
-inline constexpr float kHullCarveFractionAtIso       = 0.0075f;   // of ship radius at the iso
-inline constexpr float kHullCarveFractionPerStrength = 0.000125f; // per strength above iso
-inline constexpr float kHullCarveFractionMax         = 0.0625f;   // full breach = 6.25% of ship radius
+inline constexpr float kHullCarveStrengthIso         = 150.0f;     // absorbed-hull before geometry starts breaking
+inline constexpr float kHullCarveFractionAtIso       = 0.00375f;   // of ship radius at the iso
+inline constexpr float kHullCarveFractionPerStrength = 0.0000625f; // per strength above iso
+inline constexpr float kHullCarveFractionMax         = 0.03125f;   // full breach = 3.125% of ship radius
 
 /// Carve size as a fraction of the ship's bounding radius for an accumulated
 /// field strength. 0 below the iso (invisible), then linear to a clamp. Pure;
