@@ -1317,6 +1317,7 @@ class CloakingSubsystem(PoweredSubsystem):
         self._transition_elapsed = 0.0
         self._fire("ET_CLOAK_BEGINNING")
         self._collapse_shields()
+        self._stop_weapons()
 
     def StopCloaking(self) -> None:
         """Begin decloaking.  No-op if already DECLOAKED or DECLOAKING; from
@@ -1436,6 +1437,30 @@ class CloakingSubsystem(PoweredSubsystem):
                 shields.SetCurrentShields(face, 0.0)
         except Exception as _e:
             dev_mode.log_swallowed("cloak shield collapse", _e)
+
+    def _stop_weapons(self) -> None:
+        """Force the owning ship's weapons offline the instant the cloak engages.
+
+        ``_cloak_blocks_fire`` (weapon_subsystems) already blocks *new* fire
+        while IsTryingToCloak, but an already-firing beam keeps going until
+        something calls StopFiring — so a ship that cloaks mid-volley would keep
+        shooting.  BC drops weapons offline on cloak, so actively stop every
+        weapon system here (same trigger path as the shield collapse — player
+        toggle, AI doctrine, and mission scripts all funnel through
+        StartCloaking).  Raise-safe: a bare cloak with no parent ship simply
+        does nothing."""
+        try:
+            ship = self._climb_to_ship() if hasattr(self, "_climb_to_ship") else None
+            if ship is None:
+                return
+            for getter in ("GetPhaserSystem", "GetPulseWeaponSystem",
+                           "GetTorpedoSystem"):
+                fn = getattr(ship, getter, None)
+                system = fn() if callable(fn) else None
+                if system is not None and hasattr(system, "StopFiring"):
+                    system.StopFiring()
+        except Exception as _e:
+            dev_mode.log_swallowed("cloak weapons stop", _e)
 
     # ── Cloak event emission ─────────────────────────────────────────────────
 

@@ -153,6 +153,11 @@ def _bootstrap_firing_pipeline() -> None:
     from engine.appc.sensor_detection import install_ai_sensor_gate
     install_ai_sensor_gate()
 
+    # Prune cloaked ships from the player target menu (and drop a lock on a
+    # ship that just cloaked). Idempotent; re-armed by reset_sdk_globals.
+    from engine.appc.target_menu import install_cloak_target_menu_gate
+    install_cloak_target_menu_gate()
+
     import App
 
     # Default destination for fire events.
@@ -2070,6 +2075,16 @@ def reset_sdk_globals() -> None:
     if hasattr(App.g_kEventManager, "_method_handlers"):
         App.g_kEventManager._method_handlers.clear()
     register_input_handlers(App.g_kEventManager)
+    # The cloak → target-menu broadcast handlers were just wiped; re-arm them
+    # against the fresh handler tables (mirrors register_input_handlers above).
+    try:
+        from engine.appc.target_menu import (
+            reset_cloak_target_menu_gate, install_cloak_target_menu_gate,
+        )
+        reset_cloak_target_menu_gate()
+        install_cloak_target_menu_gate()
+    except Exception as _e:
+        dev_mode.log_swallowed("re-arm cloak target-menu gate on reset", _e)
     # Reset the TopWindow shim so cutscene/fade/view/input flags don't
     # bleed across missions or in-process swaps. See
     # docs/superpowers/specs/2026-06-03-top-window-shim-design.md.
