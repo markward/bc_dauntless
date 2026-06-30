@@ -190,15 +190,18 @@ class TargetListView(Panel):
         player = game.GetPlayer() if game is not None else None
 
         from engine.appc.ship_death import _out_of_action, is_targetable_wreck
+        from engine.appc.sensor_detection import is_hidden_by_cloak
         rows = []
         child = target_menu.GetFirstChild()
         while child is not None:
             if isinstance(child, STSubsystemMenu):
                 ship = child.GetShip()
                 # A living ship, or a destroyed ship still inside its wreck
-                # linger window, is a valid target; a ship past final removal
-                # is dropped.
+                # linger window, is a valid target; a ship past final removal —
+                # or one that is fully cloaked — is dropped (same per-render
+                # road the destruction filter uses).
                 if ship is not None and ship is not player \
+                        and not is_hidden_by_cloak(ship) \
                         and (not _out_of_action(ship) or is_targetable_wreck(ship)):
                     hull_pct = _query_hull_percentage(ship)
                     shield_pct = _query_shield_percentage(ship)

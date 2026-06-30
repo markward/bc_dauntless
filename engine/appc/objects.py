@@ -699,36 +699,57 @@ def ObjectGroup_ForceToGroup(arg) -> ObjectGroup:
     Flee.py:33, etc.) pass either a list of object names or an already-built
     ObjectGroup; the helper hands back a usable ObjectGroup either way.
 
-    Also unwrap a single-element tuple/list whose only element is already an
-    ObjectGroup — `AI.Preprocessors.SelectTarget.__init__` collects its arg
-    via `*pTargetGroup` and then forwards the resulting tuple here. The real
-    SDK helper unwraps that tuple so the ObjectGroupWithInfo identity (and
+    Also unwrap an ObjectGroup nested at *any* depth inside tuples/lists —
+    `AI.Preprocessors.SelectTarget.__init__` collects its arg via
+    `*pTargetGroup` and then forwards the resulting tuple here. The real
+    SDK helper unwraps that wrapping so the ObjectGroupWithInfo identity (and
     its priority dict) is preserved. Without this unwrap the priority/info
     factor in `GetTargetRating` always reads as 0.
+
+    Name lists are flattened to arbitrary depth. SDK compound AIs splat the
+    targets positional through `*lpTargets` once per routing hop, so the
+    nesting depth depends on the path: a direct
+    ``BasicAttack.CreateAI(pShip, ["Galaxy 2"])`` arrives as
+    ``(["Galaxy 2"],)``, but the cloak path
+    (``BasicAttack → CloakAttackWrapper → BasicAttack → CloakAttack``) wraps it
+    deeper. Recursing instead of flattening exactly one level turns every leaf
+    into an individual name rather than stringifying an inner list into a bogus
+    name like ``"['Galaxy 2']"`` (which the AI never resolves to a real object,
+    leaving its target group empty).
     """
     if isinstance(arg, ObjectGroup):
         return arg
-    if isinstance(arg, (tuple, list)) and len(arg) == 1 and isinstance(arg[0], ObjectGroup):
-        return arg[0]
+    nested_group = _find_nested_group(arg)
+    if nested_group is not None:
+        return nested_group
     group = ObjectGroup()
+    _add_leaf_names(group, arg)
+    return group
+
+
+def _find_nested_group(arg):
+    """Return the first ObjectGroup reachable through nested tuples/lists, else None."""
+    if isinstance(arg, ObjectGroup):
+        return arg
+    if isinstance(arg, (tuple, list)):
+        for item in arg:
+            found = _find_nested_group(item)
+            if found is not None:
+                return found
+    return None
+
+
+def _add_leaf_names(group: "ObjectGroup", arg) -> None:
+    """Recursively AddName(str(leaf)) for every scalar leaf in a nested name list."""
+    if arg is None:
+        return
     if isinstance(arg, str):
         group.AddName(arg)
-    elif arg is not None:
-        for name in arg:
-            # SDK mission scripts (M3Gameflow EnemyAI/FriendlyAI) pass a
-            # single list literal as the targets positional arg, e.g.
-            # ``BasicAttack.CreateAI(pShip, ["Galaxy 2"])``. Compound.
-            # BasicAttack splats that into ``*lpTargets`` and forwards
-            # to FedAttack/NonFedAttack as ``lpTargets = (["Galaxy 2"],)``.
-            # Flatten one level so the nested list becomes individual
-            # names instead of ``"['Galaxy 2']"`` (a string the AI never
-            # resolves to a real object).
-            if isinstance(name, (tuple, list)):
-                for inner in name:
-                    group.AddName(str(inner))
-            else:
-                group.AddName(str(name))
-    return group
+    elif isinstance(arg, (tuple, list)):
+        for item in arg:
+            _add_leaf_names(group, item)
+    else:
+        group.AddName(str(arg))
 
 
 def ObjectGroup_FromModule(module_name: str, attr_name: str) -> ObjectGroup:

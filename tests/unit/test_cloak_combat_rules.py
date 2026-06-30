@@ -69,6 +69,20 @@ def test_cloaking_ship_cannot_fire():
     assert sys_._currently_firing == []
 
 
+def test_engaging_cloak_stops_active_fire():
+    """A ship already firing when it cloaks must go silent immediately — the
+    StartFiring gate only blocks *new* fire, so StartCloaking actively stops the
+    weapons (else a ship that cloaks mid-volley keeps shooting)."""
+    ship, sys_ = _cloak_ship()
+    target = _target()
+    sys_.StartFiring(target=target)
+    assert any(sys_.GetWeapon(i).IsFiring() == 1 for i in range(4))
+    ship.GetCloakingSubsystem().StartCloaking()
+    for i in range(4):
+        assert sys_.GetWeapon(i).IsFiring() == 0
+    assert sys_._currently_firing == []
+
+
 def test_fully_cloaked_ship_cannot_fire():
     ship, sys_ = _cloak_ship()
     target = _target()

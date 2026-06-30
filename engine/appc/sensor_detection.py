@@ -96,6 +96,20 @@ def concealment_at(ship) -> float:
     return best
 
 
+def is_hidden_by_cloak(target) -> bool:
+    """True iff *target* is fully cloaked and therefore invisible to everyone.
+
+    Range-independent companion to ``can_detect``'s cloak gate, for the
+    player-facing surfaces that don't run a full sensor check: the target
+    list, the radar, and the player's weapon lock all need to drop a contact
+    the instant it finishes cloaking. Gate on IsCloaked() (fully hidden), not
+    IsTryingToCloak() — a mid-cloak ship stays visible until the fade
+    completes, matching can_detect and the SDK SelectTarget.FindGoodTarget."""
+    cloak = (target.GetCloakingSubsystem()
+             if hasattr(target, "GetCloakingSubsystem") else None)
+    return cloak is not None and bool(cloak.IsCloaked())
+
+
 def can_detect(observer, target) -> bool:
     """True iff *observer* can detect *target* within its effective sensor
     range, accounting for nebula tactical concealment.

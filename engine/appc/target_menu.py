@@ -300,6 +300,8 @@ def unwire_from_bridge_set(bridge_set) -> None:
     bridge_set.unsubscribe(_on_bridge_set_event)
 
 
+# ── Cloak → target-menu gate ─────────────────────────────────────────────────
+#
 def resolve_affiliation(ship, mission) -> str:
     """Mission groups override static ship-property affiliation.
 
