@@ -10,11 +10,14 @@ HullCarve& HullCarveField::add(const glm::vec3& center_body, float influ_radius,
     for (auto& c : slots_) {
         if (!c.active) continue;
         if (glm::length(center_body - c.center_body) <= merge_dist) {
-            c.strength += strength;                          // accumulate
+            c.strength += strength;                          // accumulate IN PLACE
             c.influ_radius = std::max(c.influ_radius, influ_radius);
-            c.center_body = center_body;                     // freshest center
-            // Keep the existing slot's surface_normal + visible radius (the
-            // caller re-derives radius from the grown strength, monotonically).
+            // Do NOT move center_body to the new hit. A swept beam must lay down
+            // a LINE of carves (a gouge), not drag one carve along the hull — so
+            // only near-coincident re-hits (within merge_dist) deepen this carve
+            // in place; a hit beyond merge_dist takes a fresh slot below. Keep
+            // the slot's surface_normal + visible radius (the caller re-derives
+            // radius from the grown strength, monotonically).
             c.seq = next_seq_++;                             // refresh age
             return c;
         }

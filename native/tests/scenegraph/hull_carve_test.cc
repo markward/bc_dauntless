@@ -15,6 +15,9 @@ TEST(HullCarveField, AccumulatesStrengthOnMerge) {
     EXPECT_EQ(f.count(), 1u);
     EXPECT_FLOAT_EQ(b.strength, 350.0f);     // 100 + 250
     EXPECT_FLOAT_EQ(b.influ_radius, 3.0f);   // widened to max
+    // Center does NOT slide to the new hit — the carve deepens in place so a
+    // swept beam leaves a gouge, not one sliding sphere.
+    EXPECT_FLOAT_EQ(b.center_body.x, 0.0f);
     // Far apart: new slot.
     f.add({100, 0, 0}, 2.0f, 50.0f, {0, 0, 1});
     EXPECT_EQ(f.count(), 2u);

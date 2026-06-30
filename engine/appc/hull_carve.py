@@ -23,10 +23,12 @@ eye-calibration knobs (tunable without a native rebuild).
 # to make geometry damage appear readier per hit.
 STRENGTH_PER_HULL = 1.0
 
-# Merge-influence radius (GU): how close repeated hits must land to accumulate
-# into the same carve. Floored so phaser hits clustered around a subsystem build
-# up together even when the weapon's splash is tiny.
-CARVE_INFLU_MIN_GU = 0.5
+# Merge-influence radius (GU): how close two hits must land to deepen the SAME
+# carve (in place) rather than start a new one. Kept SMALL so a swept beam lays
+# down a line of distinct carves (a gouge) instead of all the hits collapsing
+# into one — only near-coincident re-hits deepen. Raise it to merge more readily
+# (fewer, fatter carves); lower it for a finer gouge.
+CARVE_INFLU_MIN_GU = 0.18
 CARVE_INFLU_SCALE = 1.0
 
 # Visible-radius floor (GU) for carves that carry their own size (authored
@@ -34,9 +36,12 @@ CARVE_INFLU_SCALE = 1.0
 # strength crossing the C++ iso.
 MIN_CARVE_RADIUS_GU = 0.25
 
-# Game-time seconds between deposits emitted on one ship, so a continuous beam
-# cannot spam the field (mirrors hit_feedback.DECAL_EMIT_INTERVAL).
-CARVE_EMIT_INTERVAL = 0.25
+# Game-time seconds between deposits emitted on one ship (perf + breach-VFX cap).
+# Strength is accumulated between emits so no damage is lost; a smaller interval
+# lays a DENSER gouge under a sweeping beam (more carve points along the line) at
+# the cost of more hull_carve_add calls + breach events. Raise it if a sweep
+# sprays too much debris.
+CARVE_EMIT_INTERVAL = 0.1
 
 
 def carve_strength(absorbed_hull: float) -> float:
