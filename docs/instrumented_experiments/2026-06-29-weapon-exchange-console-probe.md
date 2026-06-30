@@ -1,6 +1,6 @@
 # The #1 question: what BC's C++ actually does to a target when a weapon hits
 
-Status: IN-PROGRESS  (Q1 + Q3 + Q4 + Q5 closed via q02..q05; Q6-Q7 open; Q8-Q10 deferred to approach 1)
+Status: IN-PROGRESS  (Q1, Q3, Q4, Q5, Q6 closed via q02..q07; Q7 provisional pending geometric-disambiguation probe; Q2 deferred; Q8-Q10 deferred to approach 1)
 Author: 2026-06-29 session (instrumentation approach 2)
 Created: 2026-06-29
 Closed:  —
@@ -331,14 +331,17 @@ writes nothing to disk unless you used the `SaveConfigFile` fallback in Part A.
 
 ## Findings
 
-Captured 2026-06-29 across six probes:
+Captured 2026-06-29 / 2026-06-30 across nine probes:
 
 - [`q01_console_io.txt`](../../tools/probes/results/q01_console_io.txt) — console namespace + API verification
 - [`q02_addamage_falloff.txt`](../../tools/probes/results/q02_addamage_falloff.txt) — `AddDamage` primitive
 - [`q03_weapon_fire_diff.txt`](../../tools/probes/results/q03_weapon_fire_diff.txt) — weapon-fire snapshot diff
 - [`q04_shield_bleedthrough.txt`](../../tools/probes/results/q04_shield_bleedthrough.txt) — shield routing model
-- [`q05a_face_zero_full.txt`](../../tools/probes/results/q05a_face_zero_full.txt) — face-at-zero routing, FULL intensity
-- [`q05b_face_zero_light.txt`](../../tools/probes/results/q05b_face_zero_light.txt) — face-at-zero routing, LIGHT intensity
+- [`q05a_face_zero_full.txt`](../../tools/probes/results/q05a_face_zero_full.txt) — face-at-zero routing, FULL intensity, no lock
+- [`q05b_face_zero_light.txt`](../../tools/probes/results/q05b_face_zero_light.txt) — face-at-zero routing, LIGHT intensity, no lock
+- [`q06_lock_shielded.txt`](../../tools/probes/results/q06_lock_shielded.txt) — shielded + subsystem lock
+- [`q07a_lock_face_zero_full.txt`](../../tools/probes/results/q07a_lock_face_zero_full.txt) — face-at-zero + lock, FULL intensity
+- [`q07b_lock_face_zero_light.txt`](../../tools/probes/results/q07b_lock_face_zero_light.txt) — face-at-zero + lock, LIGHT intensity
 
 ### Headline: two distinct damage primitives
 
@@ -365,10 +368,21 @@ This explains why `engine/appc/combat.py:apply_hit`'s strict-cascade model is co
   | LIGHT (PP_LOW  = 0) | **0** | sensors -136 | **0% hull / 100% sub** |
 
   Two structural findings under this:
-  - Without a deliberate lock, all subsystem damage went to **sensors** on this target (Galaxy-1). Whether that's a fixed routing default or "closest subsystem to hit point" is the next thing to disentangle (q06/q07 with deliberate locks will tell us).
+  - **Subsystem routing is geometric.** All subsystem damage went to **sensors** in q05/q07 because the operator fired from in front of the Galaxy-1, and the sensor array is the forward-mounted subsystem closest to the phaser impact points. *Sensors is not a fixed default* — damage routes to whichever subsystem's hardpoints lie nearest the impact, so the answer depends on angle on target. A follow-up probe firing from above/below/behind would map this explicitly.
   - The damage signal is on **`GetDamage()` (parent counter)** and **`GetCombinedConditionPercentage()` (child rollup)**, NOT on `GetCondition()` of the top-level named subsystems alone. q05 v1 missed this and reported all-zero subsystem damage; the walked-children probe sees it correctly.
-- **Q6 — OPEN.** Next probe: `player.SetTargetSubsystem(...)` + shields-up fire, look for sub-condition delta through the shield.
-- **Q7 — OPEN.** Combine Q5's face-at-zero setup with Q6's subsystem lock; does locking change *which* subsystem takes damage (vs the sensors default), or the hull-vs-subsystem split?
+- **Q6 ✓** — **Subsystem locks do NOT bypass intact shields.** q06 with all faces at max, FULL intensity, `power` deliberately locked (verified via readback): the facing face took 184 damage and **nothing else moved** — hull = 0, locked `power` subsystem = 0 damage. Strict cascade holds; the lock confers no penetrating power.
+- **Q7 ⚠️ PROVISIONAL** — **The lock had no observable effect, but the test wasn't sensitive to it.** With face@0 and `power` deliberately locked, damage still routed to `sensors` (same geometric outcome as no-lock q05):
+
+  | Probe | hull% | sub% | top sub | locked sub Δ |
+  |---|---|---|---|---|
+  | q05a (no lock, FULL)  | 52% | 48% | sensors (-342) | n/a |
+  | q07a (locked, FULL)   | 54% | 46% | sensors (-191) | power (-0) |
+  | q05b (no lock, LIGHT) | 0%  | 100% | sensors (-136) | n/a |
+  | q07b (locked, LIGHT)  | 0%  | 100% | sensors (-58)  | power (-0) |
+
+  **Critical caveat:** because subsystem routing is geometric (see Q5 finding above), firing from the front is *always* going to hit forward-mounted subsystems like sensors regardless of what we lock. To distinguish "lock doesn't redirect fire" from "lock works but power isn't in the impact path", a follow-up needs to lock a subsystem that is **geometrically far from the impact angle** — e.g. lock impulse engines (rear-mounted on a Galaxy) while firing from in front. If damage still goes to sensors, the lock truly is inert. If it suddenly jumps to impulse, the lock *does* redirect fire and Q7 needs reopening.
+
+  There's also the secondary question of whether `player.SetTargetSubsystem()` from Python engages the same machinery as an in-game UI lock issued through the bridge officer. Both questions resolve with a focused follow-up probe.
 - **Q8 / Q9 / Q10 — DEFERRED to approach 1.** q03 proved snapshot-diff can't measure discharge: the bank fully recharges between PRE and POST snapshots (`d_charge = 0` over 35 sec). Per-tick polling via an `App.py` snippet (see `tools/charge_logger.py` for the pattern) is the right tool.
 
 ### Bonus findings (not in original question set)
