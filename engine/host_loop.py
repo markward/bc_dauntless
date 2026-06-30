@@ -153,6 +153,13 @@ def _bootstrap_firing_pipeline() -> None:
     from engine.appc.sensor_detection import install_ai_sensor_gate
     install_ai_sensor_gate()
 
+    # Interim: route cloak-capable ships to the working non-cloak attack
+    # doctrine (the SDK CloakAttack tree doesn't drive SelectTarget in our
+    # engine yet, so cloak ships otherwise park). Idempotent. Remove once the
+    # CloakAttack doctrine is wired. See engine/appc/cloak_ai_fallback.py.
+    from engine.appc.cloak_ai_fallback import install_cloak_attack_fallback
+    install_cloak_attack_fallback()
+
     import App
 
     # Default destination for fire events.
