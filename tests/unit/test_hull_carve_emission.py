@@ -20,13 +20,16 @@ class _FakeHost:
     def __init__(self):
         self.carve_calls = []
 
-    # Match the host_bindings.cc py::arg names (floor_radius defaults to 0).
+    # Match the host_bindings.cc py::arg names (floor_radius, strength_size_ref
+    # default to 0).
     def hull_carve_add(self, instance_id, world_point, world_normal,
-                       influ_radius, strength, time, floor_radius=0.0):
+                       influ_radius, strength, time, floor_radius=0.0,
+                       strength_size_ref=0.0):
         self.carve_calls.append(dict(
             instance_id=instance_id, world_point=world_point,
             world_normal=world_normal, influ_radius=influ_radius,
-            strength=strength, time=time, floor_radius=floor_radius))
+            strength=strength, time=time, floor_radius=floor_radius,
+            strength_size_ref=strength_size_ref))
 
 
 class _Hull:
@@ -37,6 +40,9 @@ class _Hull:
 class _Ship:
     def GetHull(self):
         return _Hull()
+
+    def GetRadius(self):
+        return 2.0
 
 
 @pytest.fixture
@@ -77,6 +83,9 @@ def test_deposit_on_eligible_hull_hit(patched):
     assert call["influ_radius"] == pytest.approx(hc.carve_influ_gu(0.2))
     assert call["strength"] == pytest.approx(hc.carve_strength(100.0))
     assert call["time"] == 100.0
+    # Carve scales to the hull: size ref = ship radius (mods default 1.0).
+    assert call["strength_size_ref"] == pytest.approx(2.0)
+    assert call["floor_radius"] == pytest.approx(0.0)  # combat carves strength-gated
 
 
 def test_light_hit_still_deposits(patched):

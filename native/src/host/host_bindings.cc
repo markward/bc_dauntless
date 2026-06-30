@@ -2466,7 +2466,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
              std::tuple<float, float, float> world_point,
              std::tuple<float, float, float> world_normal,
              float influ_radius, float strength, float /*time*/,
-             float floor_radius) {
+             float floor_radius, float strength_size_ref) {
               auto* inst = g_world.get(id);
               if (inst == nullptr) return;  // stale id — drop silently
               const glm::vec3 pw(std::get<0>(world_point),
@@ -2501,8 +2501,14 @@ PYBIND11_MODULE(_dauntless_host, m) {
               scenegraph::HullCarve& c =
                   inst->carve.add(pb, influ_model, strength, nb);
               const float prev_radius = c.radius;
-              const float vis_model =
-                  scenegraph::hull_carve_strength_to_radius_gu(c.strength) * inv_s;
+              // Strength -> a fraction of the ship's bounding radius, so the
+              // hole is proportional to the hull (a starbase breach dwarfs a
+              // shuttle's). strength_size_ref is the ship radius in GU (0 -> the
+              // strength contributes nothing; only the floor shows).
+              const float vis_gu =
+                  scenegraph::hull_carve_strength_to_fraction(c.strength)
+                  * strength_size_ref;
+              const float vis_model = vis_gu * inv_s;
               c.radius = std::max(c.radius, std::max(floor_model, vis_model));
 
               // Breach event (transient VFX: debris, venting, rim) only when the
@@ -2527,15 +2533,17 @@ PYBIND11_MODULE(_dauntless_host, m) {
           },
           py::arg("instance_id"), py::arg("world_point"), py::arg("world_normal"),
           py::arg("influ_radius"), py::arg("strength"), py::arg("time"),
-          py::arg("floor_radius") = 0.0f,
+          py::arg("floor_radius") = 0.0f, py::arg("strength_size_ref") = 0.0f,
           "Deposit hull-damage strength onto a ship instance (BC additive "
           "metaball field). World-space point + normal are transformed to body "
           "frame (model units). influ_radius is the merge proximity; strength "
           "accumulates; the visible carve radius = max(floor_radius, "
-          "strength->radius curve), never shrinking. floor_radius guarantees a "
-          "size for authored / core-breach carves (combat hits pass 0 and stay "
-          "invisible until accumulated strength crosses the iso). time is "
-          "accepted for call-shape symmetry with damage_decal_add but unused.");
+          "strength->fraction-of-radius * strength_size_ref), never shrinking. "
+          "strength_size_ref is the ship's bounding radius (GU) so combat carves "
+          "scale with hull size; floor_radius guarantees a size for authored / "
+          "core-breach carves (combat hits pass floor 0 and stay invisible until "
+          "accumulated strength crosses the iso). time is accepted for call-shape "
+          "symmetry with damage_decal_add but unused.");
 
     m.def("compute_capsule_region",
           [](scenegraph::InstanceId id,

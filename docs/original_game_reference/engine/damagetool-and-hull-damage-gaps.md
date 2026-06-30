@@ -142,8 +142,9 @@ BC's additive field:
 - `HullCarve` (`native/.../hull_carve.h`) gains `strength` (accumulated) + `influ_radius`
   (merge proximity); `HullCarveField::add` accumulates strength on merge and returns the
   slot. Visible `radius` is derived from the running total via
-  `hull_carve_strength_to_radius_gu` — **0 below the iso** (300), then linear (anchored to
-  BC's tiers: 300→0.4 GU, 600→1.0 GU), clamped at 1.5 GU.
+  `hull_carve_strength_to_fraction` — **0 below the iso** (150), then a *fraction of the
+  ship's bounding radius* (emerges small, grows to ≈25% of radius), so carves scale with
+  hull size (see Gap 4). The host scales by `ship_radius` and the instance scale.
 - `hull_carve_add` binding takes `(influ_radius, strength, time, floor_radius=0)`; the
   visible radius = `max(floor, strength→radius)`, never shrinking. The breach VFX event
   fires only when a carve newly appears or grows, so sub-iso accumulation is silent.
@@ -164,13 +165,17 @@ Fix: a calibration pass against BC's 0.4 / 1.0 GU baseline. Eye-tuned values may
 still be right for our HDR/modern look — but worth knowing how far we drifted from
 authored intent.
 
-### Gap 4 — no per-ship damage modifiers
-BC's `SetVisibleDamageRadiusModifier` / `SetVisibleDamageStrengthModifier` let bigger
-hulls show proportionally smaller damage (a Galaxy shouldn't look like a fighter at
-the same hit). Plumb scalar multipliers from the Python ship through to
-`hull_carve.carve_radius_gu()` (and Gap 2's strength); wire to hardpoint scripts.
-(Note: the older `ShipProperty.SetDamageResolution` per-ship value — Galaxy 10, Akira
-8, kessokmine 2 … — is also stored-but-unused in `engine/appc/ships.py:460`; it is
+### Gap 4 — per-ship damage scaling ✅ IMPLEMENTED
+Combat carves now scale with **hull size**: the C++ strength curve returns a *fraction
+of the ship's bounding radius* (`hull_carve_strength_to_fraction`, full breach =
+`kHullCarveFractionMax` ≈ 25% of radius), and `hit_feedback` passes `ship.GetRadius()`
+as the `strength_size_ref` to `hull_carve_add` — so the same damage makes a
+proportionally-sized hole on a shuttle vs a starbase (fixes "breaches too big on small
+ships"). BC's per-class `SetVisibleDamageRadiusModifier` /
+`SetVisibleDamageStrengthModifier` (from `loadspacehelper` hardpoint stats) are wired on
+top: the radius mod folds into `size_ref`, the strength mod scales the deposited
+strength. (Note: the older `ShipProperty.SetDamageResolution` per-ship value — Galaxy 10,
+Akira 8, kessokmine 2 … — is still stored-but-unused in `engine/appc/ships.py:460`; it is
 BC's `SetSurfaceDamageRes`, the carve **granularity** knob, complementary to these
 modifiers.)
 

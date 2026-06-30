@@ -31,16 +31,18 @@ TEST(HullCarveField, EvictsSmallestRadiusWhenFull) {
     EXPECT_EQ(f.count(), HullCarveField::kMaxCarves);  // still capped
 }
 
-TEST(HullCarveStrengthCurve, IsoGatesThenGrowsSmoothly) {
-    using scenegraph::hull_carve_strength_to_radius_gu;
-    EXPECT_FLOAT_EQ(hull_carve_strength_to_radius_gu(0.0f), 0.0f);
-    EXPECT_FLOAT_EQ(hull_carve_strength_to_radius_gu(149.0f), 0.0f);   // below iso: invisible
+TEST(HullCarveStrengthCurve, IsoGatesThenGrowsAsFractionOfRadius) {
+    using scenegraph::hull_carve_strength_to_fraction;
+    EXPECT_FLOAT_EQ(hull_carve_strength_to_fraction(0.0f), 0.0f);
+    EXPECT_FLOAT_EQ(hull_carve_strength_to_fraction(149.0f), 0.0f);    // below iso: invisible
     // At the iso the carve emerges SMALL (no chunky pop), then grows.
-    EXPECT_FLOAT_EQ(hull_carve_strength_to_radius_gu(150.0f),
-                    scenegraph::kHullCarveRadiusAtIso);
-    EXPECT_GT(hull_carve_strength_to_radius_gu(450.0f),
-              hull_carve_strength_to_radius_gu(300.0f));               // monotonic growth
-    EXPECT_LE(hull_carve_strength_to_radius_gu(100000.0f), 1.5f);      // clamp
+    EXPECT_FLOAT_EQ(hull_carve_strength_to_fraction(150.0f),
+                    scenegraph::kHullCarveFractionAtIso);
+    EXPECT_GT(hull_carve_strength_to_fraction(450.0f),
+              hull_carve_strength_to_fraction(300.0f));                // monotonic growth
+    // A full breach is capped at a fraction of the ship radius.
+    EXPECT_FLOAT_EQ(hull_carve_strength_to_fraction(100000.0f),
+                    scenegraph::kHullCarveFractionMax);
 }
 
 #include <scenegraph/instance.h>

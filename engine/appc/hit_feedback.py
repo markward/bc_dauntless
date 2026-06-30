@@ -71,6 +71,17 @@ _last_carve_time: dict = {}  # id(ship) -> last emit game-time
 _pending_carve_strength: dict = {}  # id(ship) -> strength accumulated since last emit
 
 
+def _vis_dmg_mod(ship, attr: str) -> float:
+    """Per-ship visible-damage multiplier (SetVisibleDamage{Radius,Strength}Modifier,
+    from loadspacehelper hardpoint stats), default 1.0. Guards the TGObject
+    _Stub fallback."""
+    try:
+        m = float(getattr(ship, attr, 1.0))
+    except (TypeError, ValueError):
+        return 1.0
+    return m if m > 0.0 else 1.0
+
+
 def classify(*, absorbed_shields: float, absorbed_subsystem: float,
              absorbed_hull: float, sub_transition,
              subsystem, hull) -> Severity:
@@ -278,10 +289,17 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
                 # merges it with nearby carves.
                 _pending_carve_strength[ship_key] = (
                     _pending_carve_strength.get(ship_key, 0.0)
-                    + hull_carve.carve_strength(absorbed_hull))
+                    + hull_carve.carve_strength(absorbed_hull)
+                    * _vis_dmg_mod(ship, "_vis_dmg_strength_mod"))
                 if now - _last_carve_time.get(ship_key, -1e9) >= hull_carve.CARVE_EMIT_INTERVAL:
                     _last_carve_time[ship_key] = now
                     strength = _pending_carve_strength.pop(ship_key, 0.0)
+                    # Scale the breach to the hull: the C++ curve returns a
+                    # fraction of this ship-radius ref, so a starbase breach
+                    # dwarfs a shuttle's. Per-ship radius modifier folds in here.
+                    size_ref = (
+                        (ship.GetRadius() if hasattr(ship, "GetRadius") else 0.0)
+                        * _vis_dmg_mod(ship, "_vis_dmg_radius_mod"))
                     host.hull_carve_add(
                         iid,
                         (point.x, point.y, point.z),
@@ -289,6 +307,8 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
                         hull_carve.carve_influ_gu(radius),
                         strength,
                         now,
+                        0.0,        # floor: combat carves are strength-gated
+                        size_ref,
                     )
 
 

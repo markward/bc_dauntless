@@ -117,6 +117,10 @@ def _advance_one(entry, dt, host, ship_instances) -> bool:
     # also accumulates with nearby combat damage in the C++ field.
     floor = max(MIN_CARVE_RADIUS_GU, influ) * _radius_mod(ship)
     now = damage_decals.current_game_time()
+    # Ship radius scales the strength->fraction curve so authored strength
+    # integrates with combat accumulation at the hull's scale; the authored
+    # `floor` still guarantees the wreck's visible size.
+    size_ref = ship.GetRadius() if hasattr(ship, "GetRadius") else 0.0
     host.hull_carve_add(
         iid,
         (world_pt.x, world_pt.y, world_pt.z),
@@ -125,6 +129,7 @@ def _advance_one(entry, dt, host, ship_instances) -> bool:
         strength,
         now,
         floor,
+        size_ref,
     )
     return False   # emitted once -> drop
 
