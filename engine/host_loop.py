@@ -341,6 +341,36 @@ def _poll_tractor_toggle(host) -> None:
     _tractor_toggle_prev = chord
 
 
+_cloak_toggle_prev: bool = False
+
+
+def _poll_cloak_toggle(host) -> None:
+    """Forward the Alt+C cloak toggle chord into the cloak toggle event.
+
+    BC binds WC_ALT_C (DefaultKeyboardBinding.py:43) → ET_OTHER_CLOAK_TOGGLE_CLICKED,
+    but the Alt-modifier WC constants are unwired in our input pipeline, so detect
+    the chord directly off the host key state and drive App.ToggleCloakFromInput()
+    (which no-ops for ships without a cloaking device).  Mirrors
+    _poll_tractor_toggle exactly.
+
+    Rising-edge only: one toggle per press.  No-ops on a stale binary whose
+    `keys` submodule predates KEY_C (graceful — cloak stays toggle-via-UI).
+    """
+    global _cloak_toggle_prev
+    if host is None or not hasattr(host, "key_state"):
+        return
+    keys = getattr(host, "keys", None)
+    if keys is None or not hasattr(keys, "KEY_C"):
+        return
+    alt = (bool(host.key_state(keys.KEY_LEFT_ALT))
+           or bool(host.key_state(keys.KEY_RIGHT_ALT)))
+    chord = alt and bool(host.key_state(keys.KEY_C))
+    if chord and not _cloak_toggle_prev:
+        import App  # deferred: module-top import reorders sound-manager init
+        App.ToggleCloakFromInput()
+    _cloak_toggle_prev = chord
+
+
 def _advance_weapons(ships, dt: float) -> None:
     """Per-frame charge / reload advancement for every weapon emitter.
 
@@ -5047,6 +5077,7 @@ def run(mission_name: Optional[str] = None,
                 _poll_function_keys(_h, input_map)
                 _poll_fire_keys(_h, input_map)
                 _poll_tractor_toggle(_h)
+                _poll_cloak_toggle(_h)
 
                 # Advance weapon charge / reload for every ship in every
                 # active set.  Runs after AI/physics (approximate — the host
