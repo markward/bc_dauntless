@@ -1,0 +1,9 @@
+-- POST pass ---------------------------------------------------
+lock_was = impulse
+d_game_time = 8.25
+-- subsystem deltas (any non-zero = damage detected) -----------
+CHANGED sensors = d_cond=290.844726563 d_combined%=0.0363556146622 d_damage=290.844726563
+CHANGED tractor = d_cond=0.0 d_combined%=0.0579023361206 d_damage=0.0
+d_hull = 334.845703125
+-- Q7-disambiguation finding (locked = impulse, FULL) ----------
+Q7 DISAMBIGUATION = LOCK IS INERT.  Locked rear sub 'impulse' was untouched (d_damage=0). Damage went to 'sensors' (-290.845) -- a forward-mounted subsystem, same as q07.  Confirms the lock truly does not redirect weapon fire.
