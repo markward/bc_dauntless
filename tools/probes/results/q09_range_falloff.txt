@@ -1,0 +1,14 @@
+-- POST pass -- recording sample -------------------------------
+d_game_time = 4.25
+d_shield = 331.578125
+d_hull = 0.0
+raw_damage_total = 331.578125
+DPS = 78.0183792114
+-- accumulated samples -----------------------------------------
+sample[0]  range_GU=172.39  range_km=30.17 = DPS=24.80  raw=111.6  t=4.50
+sample[1]  range_GU=142.40  range_km=24.92 = DPS=29.45  raw=125.1  t=4.25
+sample[2]  range_GU=113.47  range_km=19.86 = DPS=36.23  raw=163.0  t=4.50
+sample[3]  range_GU=85.72  range_km=15.00 = DPS=57.69  raw=245.2  t=4.25
+sample[4]  range_GU=57.21  range_km=10.01 = DPS=82.89  raw=331.6  t=4.00
+sample[5]  range_GU=28.55  range_km=5.00 = DPS=74.06  raw=296.2  t=4.00
+sample[6]  range_GU=28.55  range_km=5.00 = DPS=78.02  raw=331.6  t=4.25

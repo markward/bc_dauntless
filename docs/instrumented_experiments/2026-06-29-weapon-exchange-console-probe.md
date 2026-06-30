@@ -343,6 +343,7 @@ Captured 2026-06-29 / 2026-06-30 across nine probes:
 - [`q07a_lock_face_zero_full.txt`](../../tools/probes/results/q07a_lock_face_zero_full.txt) — face-at-zero + lock, FULL intensity
 - [`q07b_lock_face_zero_light.txt`](../../tools/probes/results/q07b_lock_face_zero_light.txt) — face-at-zero + lock, LIGHT intensity
 - [`q08_lock_rear_subsystem.txt`](../../tools/probes/results/q08_lock_rear_subsystem.txt) — Q7 disambiguation: lock rear-mounted impulse engines, fire from front
+- [`q09_range_falloff.txt`](../../tools/probes/results/q09_range_falloff.txt) — range/DPS falloff curve, 7 samples from 5 km to 30 km
 
 ### Headline: two distinct damage primitives
 
@@ -388,7 +389,18 @@ This explains why `engine/appc/combat.py:apply_hit`'s strict-cascade model is co
 ### Bonus findings (not in original question set)
 
 - **`AddDamage` radius is a *splash* parameter, not a falloff axis at the centre.** Same 1000 damage delivered at r=0.1 and r=120 when hit-node = ship centre. Radius likely matters only when the hit point is offset from centre and the splash sphere intersects different parts of the hull — not yet measured.
-- **Weapons deliver non-zero damage beyond `MaxDamageDistance`.** q04 fired at range 117 GU (≈ 2× `MaxDamageDistance = 60 GU`) and still delivered ~15 DPS to shields. Either the linear `(1 - d/R)` falloff isn't hard-capped, or torpedoes (longer range envelope) contributed. A dedicated **range-falloff probe** is the highest-value remaining follow-up — it directly verifies / replaces the curve in `engine/host_loop.py:_phaser_damage_for_tick`.
+- **Weapons deliver non-zero damage beyond `MaxDamageDistance`.** q04 hinted at this; q09 confirmed and mapped the curve.  Seven samples from 5 km to 30 km against a stationary Galaxy-1:
+
+  | Range (km) | Range/R | DPS | Ratio to peak | Linear-cap pred |
+  |---|---|---|---|---|
+  | 30.17 | 2.87× | 24.80 | 0.30 | 0.00 (capped) |
+  | 24.92 | 2.37× | 29.45 | 0.36 | 0.00 |
+  | 19.86 | 1.89× | 36.23 | 0.44 | 0.00 |
+  | 15.00 | 1.43× | 57.69 | 0.70 | 0.00 |
+  | 10.01 | 0.95× | **82.89 (peak)** | 1.00 | 0.05 |
+  | 5.00  | 0.48× | 74-78 | ~0.92 | 0.52 |
+
+  Two structural findings: damage **plateaus within R** (5 km and 10 km within ~10% despite 2× range difference) AND **decays approximately as `R/d` beyond R** (predicted ratios 0.70/0.50/0.40/0.33 vs observed 0.70/0.43/0.35/0.30 — fit within 5-15%). The current engine model `max(0, 1 - d/R)` is qualitatively wrong; replace `engine/host_loop.py:_phaser_damage_for_tick` with a plateau-within-R + `R/d`-beyond-R curve.
 - **`ShipSubsystem.SetCondition(0)` cleanly disables target engines / weapons** (`setup_disable_target.py`). Verified on Galaxy-1 and Marauder-1; impulse, warp, phasers, torpedoes, pulse all zero on demand. Stays disabled until the target dies or scene resets. This is the test-control primitive we needed for all subsequent A/B probes.
 - **Shield face regen rate is ~6.7 pts/sec per face** (Galaxy-1, observed over 4.25 / 4.75 sec windows in q05a/q05b). Means any "face-at-zero" experiment has a shrinking window the moment you unpause.
 </content>
