@@ -741,6 +741,10 @@ ET_AI_INTERNAL_PROX_EVENT = 205
 # uncloaks. Value picked outside the Slice A 200-203 range; 204/205 are
 # taken by ET_OBJECT_GROUP_CHANGED / ET_AI_INTERNAL_PROX_EVENT.
 ET_DECLOAK_BEGINNING = 206
+# Cloak-beginning sibling of ET_DECLOAK_BEGINNING. BC fires this at the START
+# of a cloak transition (the COMPLETED events fire at the end). Consumed by
+# Bridge/PowerDisplay.py:340 (cloak power readout) and missions E2M0/E2M1.
+ET_CLOAK_BEGINNING = 207
 
 # ── Input event types — used by DefaultKeyboardBinding + TacticalInterfaceHandlers
 # Values are stable arbitrary integers well above the Phase-1 event range.
@@ -822,6 +826,10 @@ ET_CLOAK_COMPLETED          = 1071
 ET_DECLOAK_COMPLETED        = 1072
 ET_CHARACTER_MENU           = 1073
 ET_CONTACT_STARFLEET        = 1074
+# Fired when something rams a cloaked ship (a cloaked hull is still physically
+# present). BC's HelmMenuHandlers.CloakedCollision plays a "collided with a
+# cloaked ship" line off this event.
+ET_CLOAKED_COLLISION        = 1075
 
 # ── FloatRangeWatcher condition event ─────────────────────────────────────────
 # Crossing event broadcast by a power subsystem's battery watcher when the

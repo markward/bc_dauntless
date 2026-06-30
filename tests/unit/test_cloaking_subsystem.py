@@ -19,22 +19,31 @@ the ET_CLOAK_COMPLETED / ET_DECLOAK_COMPLETED completion events.
 """
 import App
 
-from engine.appc.subsystems import CloakingSubsystem
+from engine.appc.subsystems import CloakingSubsystem, PowerSubsystem
 
 
 class _CapturedEvents:
-    """Registers global broadcast handlers for the cloak completion events and
-    records which ones fired (with their source), so a test can assert that a
-    completion event was emitted exactly once via App.g_kEventManager."""
+    """Registers global broadcast handlers for the cloak BEGINNING and COMPLETED
+    events and records which ones fired (with their source), so a test can assert
+    that each was emitted exactly once via App.g_kEventManager.  BC fires the
+    BEGINNING event at transition start and the COMPLETED event at the end."""
 
     def __init__(self):
         self.cloak = []
         self.decloak = []
+        self.cloak_begin = []
+        self.decloak_begin = []
         App.g_kEventManager.AddBroadcastPythonFuncHandler(
             App.ET_CLOAK_COMPLETED, self, __name__ + "._on_cloak"
         )
         App.g_kEventManager.AddBroadcastPythonFuncHandler(
             App.ET_DECLOAK_COMPLETED, self, __name__ + "._on_decloak"
+        )
+        App.g_kEventManager.AddBroadcastPythonFuncHandler(
+            App.ET_CLOAK_BEGINNING, self, __name__ + "._on_cloak_begin"
+        )
+        App.g_kEventManager.AddBroadcastPythonFuncHandler(
+            App.ET_DECLOAK_BEGINNING, self, __name__ + "._on_decloak_begin"
         )
 
 
@@ -44,6 +53,14 @@ def _on_cloak(handler, event):
 
 def _on_decloak(handler, event):
     handler.decloak.append(event.GetSource())
+
+
+def _on_cloak_begin(handler, event):
+    handler.cloak_begin.append(event.GetSource())
+
+
+def _on_decloak_begin(handler, event):
+    handler.decloak_begin.append(event.GetSource())
 
 
 def _make_capture():
@@ -172,3 +189,85 @@ def test_disabled_subsystem_does_not_complete_cloak_and_forces_decloak():
     cloak.Update(cloak._transition_duration + 0.01)
     assert cloak.IsCloaked() == 0
     assert cap.cloak == []
+
+
+# ── BEGINNING events fire at transition start (BC: PowerDisplay / E2 missions) ──
+
+def test_start_cloaking_fires_beginning_once():
+    cap = _make_capture()
+    cloak = CloakingSubsystem("Cloak")
+    cloak.StartCloaking()
+    assert len(cap.cloak_begin) == 1
+    assert cap.cloak_begin[0] is cloak
+    # Still mid-transition: no COMPLETED yet, and BEGINNING does not re-fire.
+    cloak.Update(cloak._transition_duration * 0.5)
+    assert len(cap.cloak_begin) == 1
+    assert cap.cloak == []
+
+
+def test_stop_cloaking_fires_decloak_beginning_once():
+    cap = _make_capture()
+    cloak = CloakingSubsystem("Cloak")
+    cloak.InstantCloak()
+    cloak.StopCloaking()
+    assert len(cap.decloak_begin) == 1
+    assert cap.decloak_begin[0] is cloak
+
+
+def test_noop_start_does_not_fire_beginning():
+    cap = _make_capture()
+    cloak = CloakingSubsystem("Cloak")
+    cloak.InstantCloak()            # already CLOAKED
+    cloak.StartCloaking()          # no-op
+    assert cap.cloak_begin == []
+    # Re-calling StartCloaking mid-CLOAKING must not re-fire BEGINNING either.
+    cloak2 = CloakingSubsystem("Cloak")
+    cap2 = _make_capture()
+    cloak2.StartCloaking()
+    cloak2.StartCloaking()
+    assert len(cap2.cloak_begin) == 1
+
+
+def test_instant_transitions_fire_no_beginning():
+    cap = _make_capture()
+    cloak = CloakingSubsystem("Cloak")
+    cloak.InstantCloak()
+    cloak.InstantDecloak()
+    # Instant jumps have no transition to "begin" — only COMPLETED events.
+    assert cap.cloak_begin == []
+    assert cap.decloak_begin == []
+    assert len(cap.cloak) == 1
+    assert len(cap.decloak) == 1
+
+
+# ── Cloak power drain — only while trying-to-cloak ────────────────────────────
+
+class _StubShip:
+    """Minimal ship exposing only GetCloakingSubsystem, so PowerSubsystem's
+    _compute_idle_drain walks the cloak branch (the other _IDLE_DRAIN_SLOTS
+    getters are absent and skipped via getattr default)."""
+
+    def __init__(self, cloak):
+        self._cloak = cloak
+
+    def GetCloakingSubsystem(self):
+        return self._cloak
+
+
+def test_cloak_drains_power_only_while_trying_to_cloak():
+    cloak = CloakingSubsystem("Cloak")
+    cloak.SetNormalPowerPerSecond(1000.0)   # warbird authors 1000 power/sec
+    power = PowerSubsystem("Power")
+    power.SetParentShip(_StubShip(cloak))
+
+    # Decloaked: cloak draws nothing.
+    assert power._compute_idle_drain() == 0.0
+    # CLOAKING (fading out) — trying to cloak, so it draws.
+    cloak.StartCloaking()
+    assert power._compute_idle_drain() == 1000.0
+    # CLOAKED — still engaged, still draws.
+    cloak.InstantCloak()
+    assert power._compute_idle_drain() == 1000.0
+    # DECLOAKING (fading back in) — no longer trying, drain stops.
+    cloak.StopCloaking()
+    assert power._compute_idle_drain() == 0.0
