@@ -1019,6 +1019,15 @@ class ShieldSubsystem(PoweredSubsystem):
             return
         if not self.IsOn():
             return
+        # Cloak gate: while the ship is cloaked or mid-cloak its shields are
+        # down (BC drops shields on cloak), so suppress regen — StartCloaking
+        # already zeroed the faces; this keeps them collapsed until decloak.
+        ship = self._climb_to_ship() if hasattr(self, "_climb_to_ship") else None
+        if ship is not None:
+            cloak = (ship.GetCloakingSubsystem()
+                     if hasattr(ship, "GetCloakingSubsystem") else None)
+            if cloak is not None and cloak.IsTryingToCloak():
+                return
         dt = float(dt)
         for f in range(self.NUM_SHIELDS):
             mx = self._max_shields[f]
@@ -1307,6 +1316,7 @@ class CloakingSubsystem(PoweredSubsystem):
         self._cloak_state = self.CLOAK_CLOAKING
         self._transition_elapsed = 0.0
         self._fire("ET_CLOAK_BEGINNING")
+        self._collapse_shields()
 
     def StopCloaking(self) -> None:
         """Begin decloaking.  No-op if already DECLOAKED or DECLOAKING; from
@@ -1387,6 +1397,30 @@ class CloakingSubsystem(PoweredSubsystem):
             self._cloak_state = self.CLOAK_DECLOAKED
             self._transition_elapsed = 0.0
             self._fire("ET_DECLOAK_COMPLETED")
+
+    # ── Shield coupling ───────────────────────────────────────────────────────
+
+    def _collapse_shields(self) -> None:
+        """Drop the owning ship's shields to zero the instant the cloak engages.
+
+        BC forces shields down on cloak (you cannot cloak with shields up), and
+        this fires for every trigger path — player toggle, AI doctrine, or
+        mission script — because they all funnel through StartCloaking.  The
+        per-tick ShieldSubsystem.Update cloak gate then keeps them collapsed
+        until decloak.  Raise-safe: a bare cloak with no parent ship (or a ship
+        with no shields) simply does nothing."""
+        try:
+            ship = self._climb_to_ship() if hasattr(self, "_climb_to_ship") else None
+            if ship is None:
+                return
+            shields = (ship.GetShieldSubsystem()
+                       if hasattr(ship, "GetShieldSubsystem") else None)
+            if shields is None:
+                return
+            for face in range(shields.NUM_SHIELDS):
+                shields.SetCurrentShields(face, 0.0)
+        except Exception as _e:
+            dev_mode.log_swallowed("cloak shield collapse", _e)
 
     # ── Cloak event emission ─────────────────────────────────────────────────
 

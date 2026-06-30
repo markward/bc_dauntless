@@ -105,6 +105,15 @@ def can_detect(observer, target) -> bool:
     concealment drops to LOCK_BREAK_T - HYSTERESIS. When below the
     threshold, effective range is reduced by (1 - CONCEAL_K * concealment).
     """
+    # ── Cloak gate ────────────────────────────────────────────────────────
+    # A fully cloaked target is undetectable — the SDK SelectTarget drops a
+    # contact on ET_CLOAK_COMPLETED. Mid-cloak (CLOAKING) stays visible until
+    # the transition finishes, so gate on IsCloaked(), not IsTryingToCloak().
+    cloak = (target.GetCloakingSubsystem()
+             if hasattr(target, "GetCloakingSubsystem") else None)
+    if cloak is not None and cloak.IsCloaked():
+        return False
+
     r = effective_sensor_range(observer)
     if r <= 0.0:
         return False

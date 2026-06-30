@@ -189,7 +189,36 @@ def _respond_pair(a: "_Body", b: "_Body", host, ship_instances):
                   host=host, ship_instances=ship_instances, weapon_type=None,
                   bypass_shields=True)  # kinetic impact: AddDamage primitive, skips shields
 
+    # A cloaked hull is still physically present: BC fires ET_CLOAKED_COLLISION
+    # when something rams one (HelmMenuHandlers.CloakedCollision plays a line).
+    _emit_cloaked_collision(a.obj, b.obj)
+
     return (a.obj, b.obj, contact, v_rel)
+
+
+def _emit_cloaked_collision(obj_a, obj_b) -> None:
+    """Broadcast ET_CLOAKED_COLLISION when either party to a collision is a
+    cloaked or cloaking ship.  Raise-safe; the source is the cloaked ship."""
+    import App
+    for cloaked, other in ((obj_a, obj_b), (obj_b, obj_a)):
+        getter = getattr(cloaked, "GetCloakingSubsystem", None)
+        if getter is None:
+            continue
+        try:
+            cloak = getter()
+        except Exception:
+            continue
+        if cloak is None or not cloak.IsTryingToCloak():
+            continue
+        try:
+            evt = App.TGEvent_Create()
+            evt.SetEventType(App.ET_CLOAKED_COLLISION)
+            evt.SetSource(cloaked)
+            evt.SetDestination(other)
+            App.g_kEventManager.AddEvent(evt)
+        except Exception:
+            pass
+        return  # one event per collision is enough
 
 
 def _apply_overlay_all(objects, dt: float) -> None:
