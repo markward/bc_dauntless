@@ -4,23 +4,28 @@
 
 namespace scenegraph {
 
-void HullCarveField::add(const glm::vec3& center_body, float radius,
-                         const glm::vec3& surface_normal) {
-    const float merge_dist = kMergeFactor * radius;
+HullCarve& HullCarveField::add(const glm::vec3& center_body, float influ_radius,
+                               float strength, const glm::vec3& surface_normal) {
+    const float merge_dist = kMergeFactor * influ_radius;
     for (auto& c : slots_) {
         if (!c.active) continue;
         if (glm::length(center_body - c.center_body) <= merge_dist) {
-            c.radius = std::max(c.radius, radius);
-            c.center_body = center_body;   // freshest center
-            // Keep the existing slot's surface_normal on merge-grow.
-            c.seq = next_seq_++;           // refresh age
-            return;
+            c.strength += strength;                          // accumulate IN PLACE
+            c.influ_radius = std::max(c.influ_radius, influ_radius);
+            // Do NOT move center_body to the new hit. A swept beam must lay down
+            // a LINE of carves (a gouge), not drag one carve along the hull — so
+            // only near-coincident re-hits (within merge_dist) deepen this carve
+            // in place; a hit beyond merge_dist takes a fresh slot below. Keep
+            // the slot's surface_normal + visible radius (the caller re-derives
+            // radius from the grown strength, monotonically).
+            c.seq = next_seq_++;                             // refresh age
+            return c;
         }
     }
     HullCarve* target = nullptr;
     for (auto& c : slots_) { if (!c.active) { target = &c; break; } }
     if (target == nullptr) {
-        // Evict the smallest carve; tie-break on oldest (smallest seq).
+        // Evict the smallest visible carve; tie-break on oldest (smallest seq).
         HullCarve* victim = &slots_[0];
         for (auto& c : slots_) {
             if (c.radius < victim->radius ||
@@ -30,8 +35,10 @@ void HullCarveField::add(const glm::vec3& center_body, float radius,
         }
         target = victim;
     }
-    *target = HullCarve{center_body, radius, surface_normal,
-                        next_seq_++, /*active=*/true};
+    *target = HullCarve{center_body, influ_radius, strength,
+                        /*radius=*/0.0f, surface_normal, next_seq_++,
+                        /*active=*/true};
+    return *target;
 }
 
 std::size_t HullCarveField::count() const {

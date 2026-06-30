@@ -2465,7 +2465,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](scenegraph::InstanceId id,
              std::tuple<float, float, float> world_point,
              std::tuple<float, float, float> world_normal,
-             float radius, float /*time*/) {
+             float influ_radius, float strength, float /*time*/,
+             float floor_radius, float radius_modifier) {
               auto* inst = g_world.get(id);
               if (inst == nullptr) return;  // stale id — drop silently
               const glm::vec3 pw(std::get<0>(world_point),
@@ -2488,13 +2489,34 @@ PYBIND11_MODULE(_dauntless_host, m) {
               // s = |world's X column| = the uniform NIF->world scale baked into
               // inst->world (same derivation as damage_decal_add).
               const float s = glm::length(glm::vec3(inst->world[0]));
-              const float radius_model = (s > 0.0f) ? radius / s : radius;
-              inst->carve.add(pb, radius_model, nb);
-              // Breach event: transient VFX ring (debris, venting, rim).
-              // Seed: deterministic hash of center_body to avoid per-frame
-              // re-rolling; XOR with a counter grown per push to decorrelate
-              // closely-spaced simultaneous breaches on the same ship.
-              {
+              const float inv_s = (s > 0.0f) ? 1.0f / s : 1.0f;
+              const float influ_model = influ_radius * inv_s;
+              const float floor_model = floor_radius * inv_s;
+
+              // Accumulate strength; derive the visible radius from the grown
+              // total (BC's additive metaball field) but never shrink, and never
+              // below the caller's floor (authored / core-breach carves want a
+              // guaranteed size; combat hits pass floor 0 and stay invisible
+              // until the accumulated strength crosses the iso).
+              scenegraph::HullCarve& c =
+                  inst->carve.add(pb, influ_model, strength, nb);
+              const float prev_radius = c.radius;
+              // Strength -> an ABSOLUTE carve radius (GU): a weapon carves the
+              // same hole whatever it hits, so no scaling by hull size.
+              // radius_modifier is BC's per-ship DamageRadMod (default 1.0; only
+              // big fixed structures set it bigger).
+              const float vis_gu =
+                  scenegraph::hull_carve_strength_to_radius_gu(c.strength)
+                  * radius_modifier;
+              const float vis_model = vis_gu * inv_s;
+              c.radius = std::max(c.radius, std::max(floor_model, vis_model));
+
+              // Breach event (transient VFX: debris, venting, rim) only when the
+              // carve newly appears or visibly grows — sub-iso accumulation is
+              // silent, so phaser dribble doesn't spray debris before it breaches.
+              if (c.radius > prev_radius + 1e-4f && c.radius > 0.0f) {
+                  // Seed: deterministic hash of center_body XOR a per-push
+                  // counter, to decorrelate closely-spaced breaches on one ship.
                   static std::uint64_t s_counter = 0;
                   const auto bx = static_cast<std::uint64_t>(
                       static_cast<std::uint32_t>(pb.x * 1000.f));
@@ -2505,17 +2527,24 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   const std::uint64_t seed =
                       (bx * 2654435761ull) ^ (by * 805459861ull) ^
                       (bz * 3674653429ull) ^ (++s_counter * 6364136223846793005ull);
-                  inst->breach_events.push(pb, radius_model, nb,
+                  inst->breach_events.push(pb, c.radius, nb,
                                            g_decal_game_time, seed);
               }
           },
           py::arg("instance_id"), py::arg("world_point"), py::arg("world_normal"),
-          py::arg("radius"), py::arg("time"),
-          "Push a hull-carve sphere onto a ship instance. World-space impact point "
-          "and surface normal are transformed to body frame (model units). The "
-          "body-frame normal is stored in the breach event for accurate venting "
-          "jet direction. time is accepted for call-shape symmetry with "
-          "damage_decal_add but is unused.");
+          py::arg("influ_radius"), py::arg("strength"), py::arg("time"),
+          py::arg("floor_radius") = 0.0f, py::arg("radius_modifier") = 1.0f,
+          "Deposit hull-damage strength onto a ship instance (BC additive "
+          "metaball field). World-space point + normal are transformed to body "
+          "frame (model units). influ_radius is the merge proximity; strength "
+          "accumulates; the visible carve radius = max(floor_radius, "
+          "strength->absolute-GU curve * radius_modifier), never shrinking. "
+          "radius_modifier is BC's per-ship DamageRadMod (default 1.0); carve "
+          "sizes are absolute (a weapon makes the same hole on any hull). "
+          "floor_radius guarantees a size for authored / core-breach carves "
+          "(combat hits pass floor 0 and stay invisible until accumulated "
+          "strength crosses the iso). time is accepted for call-shape symmetry "
+          "with damage_decal_add but unused.");
 
     m.def("compute_capsule_region",
           [](scenegraph::InstanceId id,

@@ -216,7 +216,9 @@ from engine.appc.subsystems import (
     SensorSubsystem, ImpulseEngineSubsystem, WarpEngineSubsystem,
     WarpEngineSubsystem_GetWarpEffectTime, WarpEngineSubsystem_SetWarpEffectTime,
     ShieldSubsystem,
+    CloakingSubsystem,
 )
+from engine.appc.float_range_watcher import FloatRangeWatcher
 from engine.appc.properties import (
     TGModelProperty,
     TGModelPropertyManager, TGModelPropertySet,
@@ -454,6 +456,39 @@ def ShipSubsystem_Cast(obj):
 def TorpedoTube_Cast(obj):
     """SDK Preprocessors.py:455 — `pTube = App.TorpedoTube_Cast(pWeaponSystem.GetChildSubsystem(iChild))`."""
     return obj if isinstance(obj, TorpedoTube) else None
+
+
+def PowerSubsystem_Cast(obj):
+    """SDK Conditions/ConditionPowerBelow.py:91 —
+    `pPower = App.PowerSubsystem_Cast( App.TGObject_GetTGObjectPtr(self.idPower) )`."""
+    from engine.appc.subsystems import PowerSubsystem
+    return obj if isinstance(obj, PowerSubsystem) else None
+
+
+def ShieldSubsystem_Cast(obj):
+    """Lenient pass-through used by shield-watcher conditions; returns obj if
+    it's a ShieldSubsystem, else None (mirrors ShieldClass_Cast above)."""
+    return obj if isinstance(obj, ShieldSubsystem) else None
+
+
+def CloakingSubsystem_Create(name):
+    """Construct a runtime cloaking device. Mirrors the Appc.new_* subsystem
+    factory; the SDK reaches a ship's cloak via pShip.GetCloakingSubsystem(),
+    but mission/setup code may build one directly."""
+    return CloakingSubsystem(name)
+
+
+def CloakingSubsystem_Cast(obj):
+    """Lenient pass-through used by CloakShip / FedAttack cloak doctrines;
+    returns obj if it's a CloakingSubsystem, else None."""
+    return obj if isinstance(obj, CloakingSubsystem) else None
+
+
+def PulseWeapon_Cast(obj):
+    """SDK Conditions/ConditionPulseReady.py:133 —
+    `pWeapon = App.PulseWeapon_Cast(pPulseSystem.GetChildSubsystem(iChild))`."""
+    from engine.appc.subsystems import PulseWeapon
+    return obj if isinstance(obj, PulseWeapon) else None
 
 
 # ── FuzzyLogic ───────────────────────────────────────────────────────────────
@@ -787,6 +822,15 @@ ET_CLOAK_COMPLETED          = 1071
 ET_DECLOAK_COMPLETED        = 1072
 ET_CHARACTER_MENU           = 1073
 ET_CONTACT_STARFLEET        = 1074
+
+# ── FloatRangeWatcher condition event ─────────────────────────────────────────
+# Crossing event broadcast by a power subsystem's battery watcher when the
+# main/backup battery fraction crosses a registered threshold. The SDK
+# allocates this via UtopiaModule_GetNextEventType (Conditions/
+# ConditionPowerBelow.py:21); Dauntless assigns its own stable ET_* int in
+# the 1060-1099 bridge/condition block, above the input range and below the
+# Game_GetNextEventType allocator floor (1200).
+ET_POWER_FRACTION_CHANGED   = 1075
 
 # ── Nebula + environmental event types ────────────────────────────────────────────
 # Private to the Phase-2 engine; values extend the engine/appc/events.py private

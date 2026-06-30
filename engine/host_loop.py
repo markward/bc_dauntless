@@ -433,6 +433,8 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
     warp_core_breach.advance(dt, host=host, ship_instances=ship_instances)
     from engine.appc import core_breach_carve
     core_breach_carve.advance(dt, host=host, ship_instances=ship_instances)
+    from engine.appc import visible_damage
+    visible_damage.advance(dt, host=host, ship_instances=ship_instances)
     subsystem_emitters.pump(ships_list, _camera_world_pos(host), dt)
     camera_shake.update(dt)
 
@@ -1464,6 +1466,27 @@ class _NullPicker:
 
 
 _NULL_PICKER = _NullPicker()
+
+
+def _register_ai_inspector(registry):
+    """Register the dev-only AI Inspector panel + its pause-menu row.
+
+    Mirrors the inline DeveloperOptionsPanel / ShipPropertyViewerPanel
+    registration: the panel is only constructed under the developer flag, so
+    production never builds it and the render path stays byte-identical. When
+    dev mode is off this is a no-op that returns the shared _NULL_PICKER stub
+    (is_open() -> False) so the modal-blocker list degrades cleanly.
+
+    Returns the panel (real AIInspectorPanel under --developer, else
+    _NULL_PICKER) so the caller can add it to _modal_blockers for ESC routing.
+    """
+    if not dev_mode.is_enabled():
+        return _NULL_PICKER
+    from engine.ui.ai_inspector_panel import AIInspectorPanel
+    panel = AIInspectorPanel()
+    registry.register(panel)
+    dev_mode.register_dev_pause_menu_entry("AI Inspector…", panel.open)
+    return panel
 
 # Install the real particle backend so Spec B plume state machine drives
 # actual SDK smoke controllers.  set_backend() only stores the reference and
@@ -2913,6 +2936,8 @@ class HostController:
         warp_core_breach.reset()
         from engine.appc import core_breach_carve
         core_breach_carve.reset()
+        from engine.appc import visible_damage
+        visible_damage.reset()
         from engine.appc import shockwaves
         shockwaves.reset()
         from engine.appc import subsystem_emitters
@@ -2921,6 +2946,7 @@ class HostController:
         particles.reset()
         damage_eligibility.reset()
         hit_feedback._last_carve_time.clear()
+        hit_feedback._pending_carve_strength.clear()
         reset_sdk_globals()
         # A mission swap mid-warp would otherwise leak the WarpVFX manager
         # (reset_sdk_globals zeroes the timer manager, cancelling the pending
@@ -4295,7 +4321,25 @@ def run(mission_name: Optional[str] = None,
                     from pathlib import Path
                     project_root = Path(__file__).resolve().parent.parent
                     sdk_scripts = project_root / "sdk" / "Build" / "scripts"
-                    _picker_registry_cache[0] = _missions.discover(sdk_scripts)
+                    reg = _missions.discover(sdk_scripts)
+                    # Dev-only synthetic family: in-repo preview missions that
+                    # don't live under sdk/. The single "." episode is collapsed
+                    # by the picker so the mission rows sit directly under
+                    # "Developer".
+                    from engine.missions import (
+                        FamilyEntry, EpisodeEntry, MissionEntry)
+                    reg.families.append(FamilyEntry(
+                        dir_name="Developer", display_name="Developer",
+                        episodes=[EpisodeEntry(
+                            dir_name=".", display_name="Developer",
+                            missions=[MissionEntry(
+                                module_name="engine.dev_missions.damage_preview",
+                                dir_name="Damage Preview",
+                                display_name="Damage Preview",
+                            )],
+                        )],
+                    ))
+                    _picker_registry_cache[0] = reg
                 return _picker_registry_cache[0]
 
             def _on_pick_mission(module_name: str) -> None:
@@ -4332,6 +4376,17 @@ def run(mission_name: Optional[str] = None,
             dev_mode.register_dev_pause_menu_entry(
                 "Ship Property Viewer", ship_property_viewer.open,
             )
+
+        # AI Inspector — dev-only live AI-tree inspector modal. Registers its
+        # pause-menu row + the panel into `registry` (created below). Done via
+        # a helper so the registration is unit-testable; a no-op returning
+        # _NULL_PICKER in production. Menu entry must be added before
+        # default_pause_menu() snapshots dev_pause_menu_entries(), so the
+        # registry is constructed (empty) ahead of the pause menu and gets its
+        # legacy handler wired afterwards.
+        from engine.ui.panel_registry import PanelRegistry
+        registry = PanelRegistry()
+        ai_inspector = _register_ai_inspector(registry)
 
         # Configuration panel — production-visible pause-menu modal
         # exposing the Graphics tab (dust, specular, FOV). Settings
@@ -4398,13 +4453,15 @@ def run(mission_name: Optional[str] = None,
         controller.quick_battle_setup_panel = quick_battle_setup_panel
 
         from engine.ui.pause_menu import default_pause_menu
-        from engine.ui.panel_registry import PanelRegistry
         pause_menu = default_pause_menu(
             on_exit=pause.request_quit,
             on_configuration=configuration_panel.open,
             on_resume=pause.close,
         )
-        registry = PanelRegistry(legacy_handler=pause_menu.dispatch_event)
+        # `registry` was created earlier (before the pause menu) so dev panels
+        # could register their menu rows ahead of the snapshot; wire its legacy
+        # handler now that pause_menu exists.
+        registry._legacy = pause_menu.dispatch_event
         controller.panel_registry = registry  # expose to _drain_pending_swap
         registry.register(target_list_view)
         registry.register(sensors_panel)
@@ -4539,8 +4596,8 @@ def run(mission_name: Optional[str] = None,
         # whose is_open() is False, so they never fire. One list drives
         # ESC routing, pause-menu visibility, and pause-input routing.
         _modal_blockers = [mission_picker, developer_options_panel,
-                           ship_property_viewer, configuration_panel,
-                           setting_course_panel]
+                           ship_property_viewer, ai_inspector,
+                           configuration_panel, setting_course_panel]
 
         while not r.should_close():
             # --- Track window resizes: re-lay-out the CEF overlay at the new

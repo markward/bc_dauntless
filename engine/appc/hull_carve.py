@@ -1,36 +1,55 @@
 """Pure mappings for the hull-carve (breach) trigger.
 
-No host / renderer dependency: absorbed hull damage -> should-carve bool,
-weapon splash radius -> carve radius (GU). The C++ hull-carve pass owns the
-actual geometry; this module only computes the scalar inputs the emission
-path in engine.appc.hit_feedback feeds to host.hull_carve_add.
+No host / renderer dependency. Combat damage -> field strength, weapon splash
+-> merge-influence radius (GU). The C++ hull-carve field (native/src/scenegraph)
+accumulates strength and derives the visible carve radius from it; this module
+only computes the scalar inputs the emission path in engine.appc.hit_feedback
+feeds to host.hull_carve_add.
 
-Carving 2a is a centered sphere: no depth/direction logic here.
-Constants are eye-calibration tuning knobs.
+BC's DamageTool authored damage as an additive metaball field: strength
+accumulates spatially and a hole appears once the summed field crosses an iso
+level (the strength->radius curve + iso live in C++ — see
+native/.../hull_carve.h). So sustained weak fire (phaser dribble) now builds up
+to a breach instead of being hard-gated out per hit. Constants here are
+eye-calibration knobs (tunable without a native rebuild).
 """
 
-# Absorbed hull damage below this leaves only a scorch decal, no carve.
-# Raised from 40 → 60 (Mark 2a feedback: effect triggered too readily; set
-# between the phaser dribble and a solid torpedo hit to carve less readily).
-MIN_CARVE_HULL = 60.0
+# Field strength deposited per unit of absorbed hull damage. 1:1 — strength is
+# just accumulated absorbed-hull, so geometry damage builds up GRADUALLY over
+# sustained fire instead of a single moderate hit one-shotting a full breach
+# (which read as all-or-nothing). Heavy hits still deposit proportionally more.
+# The C++ curve (kHullCarve* in native/.../hull_carve.h) maps accumulated
+# strength -> visible radius, emerging small at the iso and growing. Raise this
+# to make geometry damage appear readier per hit.
+STRENGTH_PER_HULL = 1.0
 
-# Carve radius = splash radius (GU) * scale, with a floor so a carve always
-# has some extent. 0.25 GU floor = 25 model units (~14% of hull radius).
-# Toned down from 1.5 → 1.0 (Mark 2a feedback: holes too big).
-CARVE_RADIUS_SCALE = 1.0
+# Merge-influence radius (GU): how close two hits must land to deepen the SAME
+# carve (in place) rather than start a new one. Kept SMALL so a swept beam lays
+# down a line of distinct carves (a gouge) instead of all the hits collapsing
+# into one — only near-coincident re-hits deepen. Raise it to merge more readily
+# (fewer, fatter carves); lower it for a finer gouge.
+CARVE_INFLU_MIN_GU = 0.18
+CARVE_INFLU_SCALE = 1.0
+
+# Visible-radius floor (GU) for carves that carry their own size (authored
+# wrecks, core breach) — combat hits pass floor 0 and rely on accumulated
+# strength crossing the C++ iso.
 MIN_CARVE_RADIUS_GU = 0.25
 
-# Game-time seconds between carves emitted on one ship, so a continuous beam
-# cannot saturate the carve field (mirrors hit_feedback.DECAL_EMIT_INTERVAL).
-CARVE_EMIT_INTERVAL = 0.25
+# Game-time seconds between deposits emitted on one ship (perf + breach-VFX cap).
+# Strength is accumulated between emits so no damage is lost; a smaller interval
+# lays a DENSER gouge under a sweeping beam (more carve points along the line) at
+# the cost of more hull_carve_add calls + breach events. Raise it if a sweep
+# sprays too much debris.
+CARVE_EMIT_INTERVAL = 0.1
 
 
-def should_carve(absorbed_hull: float) -> bool:
-    """True iff this hit is heavy enough to carve geometry (vs scorch only)."""
-    return float(absorbed_hull) >= MIN_CARVE_HULL
+def carve_strength(absorbed_hull: float) -> float:
+    """Field strength deposited by a hit that absorbed `absorbed_hull` hull."""
+    return max(0.0, float(absorbed_hull)) * STRENGTH_PER_HULL
 
 
-def carve_radius_gu(splash_radius_gu: float) -> float:
-    """Scale the gameplay splash radius (GU) to a carve radius (GU), floored
-    so the carve sphere always has some extent."""
-    return max(MIN_CARVE_RADIUS_GU, float(splash_radius_gu) * CARVE_RADIUS_SCALE)
+def carve_influ_gu(splash_radius_gu: float) -> float:
+    """Merge-influence radius (GU) for a hit, floored so clustered fire
+    accumulates even with a tiny weapon splash."""
+    return max(CARVE_INFLU_MIN_GU, float(splash_radius_gu) * CARVE_INFLU_SCALE)

@@ -105,12 +105,17 @@ def _advance_one(entry, dt, host, ship_instances) -> bool:
     normal = _carve_normal(ship, core_world)
     now = damage_decals.current_game_time()
 
+    # Core breach carries its own size: pass the eased radius as both the merge
+    # influence and the visible floor, with strength 0 (it's a self-destruct
+    # wound, not accumulated combat damage). floor keeps it visible as it grows.
     host.hull_carve_add(
         iid,
         (core_world.x, core_world.y, core_world.z),
         (normal.x, normal.y, normal.z),
-        radius,
+        radius,   # influ
+        0.0,      # strength
         now,
+        radius,   # floor (guaranteed visible radius)
     )
     return t < 1.0   # drop once the full-size carve has been emitted
 

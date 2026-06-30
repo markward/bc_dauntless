@@ -51,6 +51,34 @@ Texture default_tga_loader(const fs::path& tga_path) {
     return upload_image(img, /*generate_mipmaps=*/true);  // assets::upload_image
 }
 
+// BC quirk: a few characters (e.g. Felix) register facial-image filenames that
+// omit the canonical "_head" infix — Felix.py asks for "Felix_blink1.tga" but
+// the shipped file is "felix_head_blink1.tga". Reconstruct the canonical name by
+// inserting "_head" after the first underscore-delimited token of the stem.
+// Returns an empty path when no sensible variant exists (no token boundary, or
+// the name is already canonical).
+fs::path head_infix_variant(const fs::path& p) {
+    const std::string stem = p.stem().string();        // "Felix_blink1"
+    const auto us = stem.find('_');
+    if (us == std::string::npos) return {};            // no token boundary
+    if (stem.compare(us, 6, "_head_") == 0) return {}; // already canonical
+    const std::string alt = stem.substr(0, us) + "_head" + stem.substr(us);
+    return p.parent_path() / (alt + p.extension().string());
+}
+
+// Load a per-officer face texture, tolerating the non-canonical filenames a few
+// SDK characters register: try the literal path first, then the "_head"-infix
+// variant. Throws (propagating the failure) only when neither resolves.
+Texture load_face_texture(const fs::path& path) {
+    try {
+        return default_tga_loader(path);
+    } catch (const std::exception&) {
+        const fs::path alt = head_infix_variant(path);
+        if (!alt.empty()) return default_tga_loader(alt);  // may rethrow
+        throw;                                             // no variant
+    }
+}
+
 int find_bone(const Skeleton& sk, std::string_view name) {
     for (std::size_t i = 0; i < sk.bones.size(); ++i)
         if (sk.bones[i].name == name) return static_cast<int>(i);
@@ -280,7 +308,7 @@ Model compose_officer_model(
     for (const auto& [slot, path] : face_images) {
         if (path.empty()) continue;
         try {
-            Texture tex = default_tga_loader(path);
+            Texture tex = load_face_texture(path);
             body.face_textures[slot] = static_cast<int>(body.textures.size());
             body.textures.push_back(std::move(tex));
         } catch (const std::exception& e) {

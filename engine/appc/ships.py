@@ -30,6 +30,10 @@ class ShipClass(DamageableObject):
         self._shield_subsystem = None
         self._power_subsystem = None
         self._repair_subsystem = None
+        # Cloaking device — None on most ships (only birdofprey, warbird,
+        # vorcha, sunbuster, kessok*, matankeldon declare one). Created on
+        # demand by SetupProperties when a CloakingSubsystemProperty is found.
+        self._cloaking_subsystem = None
         # ObjectEmitter mount markers (shuttle bay, probe launcher, etc.) — not
         # subsystems: no condition, not targetable.  Populated by SetupProperties
         # Pass 6; starts empty.
@@ -431,6 +435,18 @@ class ShipClass(DamageableObject):
         self._warp_consumed = True
         return 1
 
+    def IsDoingInSystemWarp(self) -> int:
+        """Whether the ship is mid in-system-warp (the SDK
+        ShipClass.IsDoingInSystemWarp query). AvoidObstacles uses this to
+        skip collision steering during a warp, because the warp check does
+        its own clearance (Preprocessors.py:1692-1693).
+
+        Our InSystemWarp model is a stateless teleport, so there is no
+        multi-tick warp animation to observe; this returns the explicit
+        ``_doing_in_system_warp`` flag (default 0). Tests and any future
+        animated-warp pass can set it."""
+        return 1 if self.__dict__.get("_doing_in_system_warp", False) else 0
+
     def StopInSystemWarp(self) -> None:
         """Clear the consumed-warp flag so a fresh warp can fire.
 
@@ -579,10 +595,13 @@ class ShipClass(DamageableObject):
     def GetRepairSubsystem(self):                 return self._repair_subsystem
     def SetRepairSubsystem(self, s) -> None:      self._repair_subsystem = self._attach_subsystem(s)
     def GetCloakingSubsystem(self):
-        """Returns None — Phase 1 ships have no cloaking subsystem.
-        SDK FedAttack/NonFedAttack gate cloak usage on this being
-        truthy; None keeps the non-cloak path active."""
-        return None
+        """Return the ship's cloaking device, or None if it has none.
+        SDK CloakShip.CheckCloak (Preprocessors.py:2111) and the
+        FedAttack/NonFedAttack doctrines gate cloak usage on this being
+        truthy; None keeps the non-cloak path active for ships with no
+        CloakingSubsystemProperty in their hardpoint."""
+        return self._cloaking_subsystem
+    def SetCloakingSubsystem(self, s) -> None: self._cloaking_subsystem = self._attach_subsystem(s)
     def GetHull(self):                            return self._hull
     def SetHull(self, h) -> None:                 self._hull = h
 
@@ -605,6 +624,7 @@ class ShipClass(DamageableObject):
             self._shield_subsystem,
             self._power_subsystem,
             self._repair_subsystem,
+            self._cloaking_subsystem,
             self._hull,
         ) if s is not None]
 
@@ -632,6 +652,7 @@ class ShipClass(DamageableObject):
             self._shield_subsystem,
             self._power_subsystem,
             self._repair_subsystem,
+            self._cloaking_subsystem,
             self._hull,
         ):
             if sub is not None and sub.GetProperty() is prop:
@@ -653,8 +674,10 @@ class ShipClass(DamageableObject):
             HullProperty, SensorProperty, ShieldProperty,
             WeaponSystemProperty, TorpedoTubeProperty,
             PowerProperty, RepairSubsystemProperty,
+            CloakingSubsystemProperty,
         )
-        from engine.appc.subsystems import HullSubsystem
+        from engine.appc.subsystems import HullSubsystem, CloakingSubsystem
+        from engine.appc.subsystems import CLOAK_TRANSITION_DURATION
         import App
 
         def _copy_name(prop, receiver):
@@ -798,6 +821,27 @@ class ShipClass(DamageableObject):
                     _copy_name(prop, rs)
                     self._copy_powered_subsystem_fields(prop, rs)
                     rs.SetProperty(prop)
+            elif isinstance(prop, CloakingSubsystemProperty):
+                # Cloak is create-on-demand: most ships have no cloak so the
+                # factory does NOT pre-allocate one (unlike shields/power/etc.).
+                # A CloakingSubsystemProperty in the set means this hull is
+                # cloak-capable — build the subsystem and attach it. Idempotent
+                # on re-run: reuse the existing instance bound to this property.
+                cl = self._cloaking_subsystem
+                if cl is None or cl.GetProperty() is not prop:
+                    cl = CloakingSubsystem(prop.GetName() or "Cloaking Device")
+                    self.SetCloakingSubsystem(cl)
+                _copy_name(prop, cl)
+                self._copy_powered_subsystem_fields(prop, cl)
+                cl.SetProperty(prop)
+                # CloakStrength -> transition duration: strength 100 = canonical
+                # CLOAK_TRANSITION_DURATION; duration scales inversely with
+                # strength (a weaker device cloaks proportionally slower).
+                strength = prop.GetCloakStrength()
+                if strength is not None and float(strength) > 0.0:
+                    cl._transition_duration = (
+                        CLOAK_TRANSITION_DURATION * 100.0 / float(strength)
+                    )
 
         # Pass 2 — seed torpedo tubes (idempotent).
         ts = self._torpedo_system
@@ -1089,7 +1133,7 @@ class ShipClass(DamageableObject):
         import App
         from engine.appc.subsystems import (
             ShipSubsystem, WeaponSystem, SensorSubsystem, ImpulseEngineSubsystem,
-            WarpEngineSubsystem, ShieldSubsystem, HullSubsystem,
+            WarpEngineSubsystem, ShieldSubsystem, HullSubsystem, CloakingSubsystem,
         )
         if match_type is None:
             return iter(())
@@ -1098,7 +1142,8 @@ class ShipClass(DamageableObject):
             self._warp_engine_subsystem, self._torpedo_system,
             self._phaser_system, self._pulse_weapon_system,
             self._tractor_beam_system, self._shield_subsystem,
-            self._power_subsystem, self._repair_subsystem, self._hull,
+            self._power_subsystem, self._repair_subsystem,
+            self._cloaking_subsystem, self._hull,
         ]
         # SDK CT_* constants → subsystem class. SDK callers commonly pass
         # one of CT_WEAPON_SYSTEM (FireScript), CT_SENSOR_SUBSYSTEM
@@ -1118,6 +1163,8 @@ class ShipClass(DamageableObject):
             target_class = ShieldSubsystem
         elif match_type is App.CT_HULL_SUBSYSTEM:
             target_class = HullSubsystem
+        elif match_type is App.CT_CLOAKING_SUBSYSTEM:
+            target_class = CloakingSubsystem
         elif match_type is App.CT_SHIP_SUBSYSTEM:
             # ShipSubsystem is the base class — every subsystem matches.
             target_class = ShipSubsystem

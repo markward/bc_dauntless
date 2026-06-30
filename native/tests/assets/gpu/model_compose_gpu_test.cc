@@ -213,3 +213,46 @@ TEST_F(ModelComposeGpuTest, OverridesBodyAndHeadBaseTextures) {
 
     EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
 }
+
+// A few SDK characters (Felix) register facial-image filenames missing the
+// canonical "_head" infix — Felix.py asks for "Felix_blink1.tga" but the shipped
+// file is "felix_head_blink1.tga". compose_officer_model must self-heal these via
+// the "_head"-infix fallback so the slot still loads (and the boot log stays
+// quiet). A genuinely bogus name must still skip gracefully.
+TEST_F(ModelComposeGpuTest, FaceTextureHeadInfixFallback) {
+    const fs::path root = OPEN_STBC_PROJECT_ROOT;
+    const fs::path body_dir =
+        root / "game/data/Models/Characters/Bodies/BodyMaleL";
+    const fs::path body_nif = body_dir / "BodyMaleL.NIF";
+    const fs::path head_dir =
+        root / "game/data/Models/Characters/Heads/HeadFelix";
+    const fs::path head_nif = head_dir / "Felix_head.NIF";
+
+    if (!fs::exists(body_nif) || !fs::exists(head_nif) ||
+        !fs::exists(head_dir / "felix_head_blink1.tga"))
+        GTEST_SKIP() << "Felix character assets not installed";
+
+    // "blink1": registered the non-canonical way Felix.py does (no "_head"),
+    // so the literal path is missing and only the fallback can resolve it.
+    // "a": already canonical, resolves on the literal path.
+    // "bogus": no real file under either name — must skip, not throw.
+    const std::map<std::string, fs::path> face_images = {
+        {"blink1", head_dir / "Felix_blink1.tga"},     // -> felix_head_blink1.tga
+        {"a", head_dir / "Felix_head_a.tga"},
+        {"bogus", head_dir / "Felix_nope.tga"},
+    };
+
+    assets::Model composed = assets::compose_officer_model(
+        body_nif, /*body_tex=*/{}, head_nif, /*head_tex=*/{}, "Bip01 Head",
+        face_images);
+
+    // Fallback fired: the non-canonical blink slot resolved to the real file.
+    EXPECT_TRUE(composed.face_textures.count("blink1"))
+        << "'_head'-infix fallback failed to resolve Felix_blink1.tga";
+    // Canonical slot resolves normally.
+    EXPECT_TRUE(composed.face_textures.count("a"));
+    // Genuinely missing name skips gracefully (no slot, no crash).
+    EXPECT_FALSE(composed.face_textures.count("bogus"));
+
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+}

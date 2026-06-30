@@ -16,6 +16,7 @@ expected method surface rather than a NamedStub.
 import math as _math
 
 from engine.appc.events import TGEventHandlerObject
+from engine.appc.float_range_watcher import FloatRangeWatcher
 from engine.appc.math import TGPoint3, TGMatrix3
 import engine.dev_mode as dev_mode
 
@@ -926,6 +927,17 @@ class ShieldSubsystem(PoweredSubsystem):
         self._max_shields:       list[float] = [0.0] * self.NUM_SHIELDS
         self._current_shields:   list[float] = [0.0] * self.NUM_SHIELDS
         self._charge_per_second: list[float] = [0.0] * self.NUM_SHIELDS
+        # Per-face FloatRangeWatchers handed to
+        # Conditions/ConditionSingleShieldBelow.py:110 (GetShieldWatcher(side));
+        # each watches its face FRACTION (current / max), driven from Update.
+        self._shield_watchers: list = [
+            FloatRangeWatcher() for _ in range(self.NUM_SHIELDS)
+        ]
+
+    def GetShieldWatcher(self, face: int):
+        """FloatRangeWatcher on a single face's FRACTION
+        (Conditions/ConditionSingleShieldBelow.py:110, eWhichShield)."""
+        return self._shield_watchers[int(face)]
 
     def GetMaxShields(self, face: int) -> float:
         return self._max_shields[int(face)]
@@ -941,7 +953,12 @@ class ShieldSubsystem(PoweredSubsystem):
         return self._current_shields[int(face)]
 
     def SetCurrentShields(self, face: int, value: float) -> None:
-        self._current_shields[int(face)] = float(value)
+        f = int(face)
+        self._current_shields[f] = float(value)
+        # Keep the face watcher's value fresh so a Condition reading
+        # GetWatchedVariable() right after a damage write sees the new
+        # fraction (ConditionSingleShieldBelow.py:122 reads it at setup).
+        self._shield_watchers[f]._update(self.GetSingleShieldPercentage(f))
 
     def SetCurShields(self, face: int, value: float) -> None:
         """SDK-facing alias of SetCurrentShields (matches Appc method name)."""
@@ -1011,6 +1028,11 @@ class ShieldSubsystem(PoweredSubsystem):
             if new > mx:
                 new = mx
             self._current_shields[f] = new
+        # Drive each face watcher with its FRACTION so
+        # Conditions/ConditionSingleShieldBelow.py fires its
+        # ET_AI_SHIELD_WATCHER crossing event.
+        for f in range(self.NUM_SHIELDS):
+            self._shield_watchers[f]._update(self.GetSingleShieldPercentage(f))
 
     def ApplyDamage(self, face: int, amount: float) -> float:
         """Drain current shields on the face; return damage overflow.
@@ -1054,6 +1076,10 @@ class PowerSubsystem(ShipSubsystem):
         self._available_power: float = 0.0
         self._main_battery_power: float = 0.0
         self._backup_battery_power: float = 0.0
+        # FloatRangeWatchers handed to Conditions/ConditionPowerBelow.py:44-46;
+        # each watches its battery FRACTION (power / limit), driven from Update.
+        self._main_battery_watcher = FloatRangeWatcher()
+        self._backup_battery_watcher = FloatRangeWatcher()
 
     def GetAvailablePower(self) -> float:           return self._available_power
     def SetAvailablePower(self, v) -> None:         self._available_power = float(v)
@@ -1061,6 +1087,31 @@ class PowerSubsystem(ShipSubsystem):
     def SetMainBatteryPower(self, v) -> None:       self._main_battery_power = float(v)
     def GetBackupBatteryPower(self) -> float:       return self._backup_battery_power
     def SetBackupBatteryPower(self, v) -> None:     self._backup_battery_power = float(v)
+
+    def GetMainBatteryLimit(self) -> float:
+        """Main-battery cap from the PowerProperty (App.py:5743).
+
+        ConditionPowerBelow.py:79 divides GetMainBatteryPower() by this to
+        seed its initial state; 0.0 when no property is wired."""
+        prop = self.GetProperty()
+        return float(prop.GetMainBatteryLimit() or 0.0) if prop is not None else 0.0
+
+    def GetBackupBatteryLimit(self) -> float:
+        """Backup-battery cap from the PowerProperty (App.py:5744).
+
+        Used by ConditionPowerBelow.py:77 for the reserve-only initial state."""
+        prop = self.GetProperty()
+        return float(prop.GetBackupBatteryLimit() or 0.0) if prop is not None else 0.0
+
+    def GetMainBatteryWatcher(self):
+        """FloatRangeWatcher on the main-battery FRACTION
+        (Conditions/ConditionPowerBelow.py:46)."""
+        return self._main_battery_watcher
+
+    def GetBackupBatteryWatcher(self):
+        """FloatRangeWatcher on the backup-battery FRACTION
+        (Conditions/ConditionPowerBelow.py:44, bReserveOnly path)."""
+        return self._backup_battery_watcher
 
     def AddPower(self, amount) -> None:
         self._available_power += float(amount)
@@ -1132,6 +1183,7 @@ class PowerSubsystem(ShipSubsystem):
         main_cap = float(prop.GetMainBatteryLimit() or 0.0)
         idle_drain = self._compute_idle_drain()
 
+        backup_cap = float(prop.GetBackupBatteryLimit() or 0.0)
         gen = output * dt
         drain = idle_drain * dt
         net = gen - drain
@@ -1141,19 +1193,28 @@ class PowerSubsystem(ShipSubsystem):
                 main_cap, self._main_battery_power + net
             )
             self._available_power = net
-            return
+        else:
+            # Deficit — pull from main, then backup.  Subsystems still
+            # "run" (we don't simulate brown-out yet); the only observable
+            # is a drained reserve.
+            deficit = -net
+            from_main = min(deficit, self._main_battery_power)
+            self._main_battery_power -= from_main
+            remaining = deficit - from_main
+            if remaining > 0.0:
+                from_backup = min(remaining, self._backup_battery_power)
+                self._backup_battery_power -= from_backup
+            self._available_power = 0.0
 
-        # Deficit — pull from main, then backup.  Subsystems still
-        # "run" (we don't simulate brown-out yet); the only observable
-        # is a drained reserve.
-        deficit = -net
-        from_main = min(deficit, self._main_battery_power)
-        self._main_battery_power -= from_main
-        remaining = deficit - from_main
-        if remaining > 0.0:
-            from_backup = min(remaining, self._backup_battery_power)
-            self._backup_battery_power -= from_backup
-        self._available_power = 0.0
+        # Drive the FloatRangeWatchers with each battery's FRACTION so
+        # Conditions/ConditionPowerBelow.py fires its ET_POWER_FRACTION_CHANGED
+        # crossing event (guard divide-by-zero → 0.0).
+        self._main_battery_watcher._update(
+            self._main_battery_power / main_cap if main_cap > 0.0 else 0.0
+        )
+        self._backup_battery_watcher._update(
+            self._backup_battery_power / backup_cap if backup_cap > 0.0 else 0.0
+        )
 
 
 class RepairSubsystem(PoweredSubsystem):
@@ -1162,6 +1223,168 @@ class RepairSubsystem(PoweredSubsystem):
     state; Phase 1 ships only need the slot + property back-ref so the
     targets panel reflects the hardpoint."""
     pass
+
+
+# Default cloak/decloak transition length in seconds.  W5.T2 will overwrite
+# the per-instance ``_transition_duration`` from the CloakingSubsystemProperty
+# (CloakStrength); this module constant is the fallback for tests and ships
+# built without the hardpoint property flow.
+CLOAK_TRANSITION_DURATION: float = 3.0
+
+
+class CloakingSubsystem(PoweredSubsystem):
+    """Cloaking device — the four-state cloak/decloak transition machine.
+
+    Driven entirely through the method surface the SDK CloakShip preprocessor
+    relies on (sdk/Build/scripts/AI/Preprocessors.py:2068, CheckCloak; also the
+    FedAttack / NonFedAttack / CloakAttack doctrines and the CloakShip
+    preprocessor):
+
+        pCloak = pOurShip.GetCloakingSubsystem()
+        if self.bCloakOn:
+            if (not pCloak.IsCloaked()) and (not pCloak.IsCloaking()):
+                pCloak.StartCloaking()
+        else:
+            if pCloak.IsCloaked():
+                pCloak.StopCloaking()
+
+    States:
+
+    * ``CLOAK_DECLOAKED``  — fully visible (initial state).
+    * ``CLOAK_CLOAKING``   — fading out; transition in progress.
+    * ``CLOAK_CLOAKED``    — fully invisible.
+    * ``CLOAK_DECLOAKING`` — fading back in; transition in progress.
+
+    The transition timer (``_transition_elapsed``) is advanced from the
+    per-tick ``Update(dt)`` (the same hook ShieldSubsystem / PowerSubsystem use,
+    walked from the game loop's subsystem update pass).  On crossing
+    ``_transition_duration`` the machine snaps to CLOAKED / DECLOAKED and
+    broadcasts the matching completion event (ET_CLOAK_COMPLETED /
+    ET_DECLOAK_COMPLETED) via ``App.g_kEventManager`` — the same emission path
+    used by ship_death._broadcast_destroyed.
+
+    A disabled / destroyed cloaking device (PoweredSubsystem.IsDisabled() /
+    IsDestroyed()) cannot hold or finish a cloak: while disabled it is forced
+    back toward DECLOAKED rather than completing a pending cloak.  Logic only —
+    the renderer hologram/fade VFX is out of scope for this task.
+    """
+
+    CLOAK_DECLOAKED  = 0
+    CLOAK_CLOAKING   = 1
+    CLOAK_CLOAKED    = 2
+    CLOAK_DECLOAKING = 3
+
+    def __init__(self, name: str = ""):
+        super().__init__(name)
+        self._cloak_state: int = self.CLOAK_DECLOAKED
+        self._transition_elapsed: float = 0.0
+        # Per-instance so W5.T2 can set it from CloakStrength; defaults to the
+        # module constant.
+        self._transition_duration: float = CLOAK_TRANSITION_DURATION
+
+    # ── Intent (called by the SDK CloakShip preprocessor) ────────────────────
+
+    def StartCloaking(self) -> None:
+        """Begin cloaking.  No-op if already CLOAKED or CLOAKING; from
+        DECLOAKED or mid-DECLOAKING this (re)starts the fade-out."""
+        if self._cloak_state in (self.CLOAK_CLOAKED, self.CLOAK_CLOAKING):
+            return
+        self._cloak_state = self.CLOAK_CLOAKING
+        self._transition_elapsed = 0.0
+
+    def StopCloaking(self) -> None:
+        """Begin decloaking.  No-op if already DECLOAKED or DECLOAKING; from
+        CLOAKED or mid-CLOAKING this (re)starts the fade-in."""
+        if self._cloak_state in (self.CLOAK_DECLOAKED, self.CLOAK_DECLOAKING):
+            return
+        self._cloak_state = self.CLOAK_DECLOAKING
+        self._transition_elapsed = 0.0
+
+    def InstantCloak(self) -> None:
+        """Jump straight to CLOAKED with no transition; fire ET_CLOAK_COMPLETED."""
+        self._cloak_state = self.CLOAK_CLOAKED
+        self._transition_elapsed = 0.0
+        self._fire_completion(self.CLOAK_CLOAKED)
+
+    def InstantDecloak(self) -> None:
+        """Jump straight to DECLOAKED with no transition; fire ET_DECLOAK_COMPLETED."""
+        self._cloak_state = self.CLOAK_DECLOAKED
+        self._transition_elapsed = 0.0
+        self._fire_completion(self.CLOAK_DECLOAKED)
+
+    # ── State predicates (read by CloakShip.CheckCloak + doctrines) ──────────
+
+    def IsCloaked(self) -> int:
+        return 1 if self._cloak_state == self.CLOAK_CLOAKED else 0
+
+    def IsCloaking(self) -> int:
+        return 1 if self._cloak_state == self.CLOAK_CLOAKING else 0
+
+    def IsDecloaking(self) -> int:
+        return 1 if self._cloak_state == self.CLOAK_DECLOAKING else 0
+
+    def IsTryingToCloak(self) -> int:
+        """True whenever the cloak is "on" — i.e. the intent is to be cloaked.
+        That is CLOAKING (fading out toward cloaked) or already CLOAKED.
+        DECLOAKING / DECLOAKED both express the intent to be visible."""
+        return 1 if self._cloak_state in (self.CLOAK_CLOAKING,
+                                          self.CLOAK_CLOAKED) else 0
+
+    # ── Per-tick transition advance (game-loop subsystem update pass) ────────
+
+    def Update(self, dt: float) -> None:
+        """Advance an in-progress cloak/decloak transition.
+
+        A disabled / destroyed device cannot complete or hold a cloak: when
+        offline it is forced back toward DECLOAKED (a pending CLOAKING is
+        abandoned, a finished CLOAKED snaps off).  Otherwise, when the elapsed
+        transition time reaches ``_transition_duration`` the machine snaps to
+        the terminal state and broadcasts its completion event.
+        """
+        offline = bool(self.IsDisabled()) or bool(self.IsDestroyed())
+        if offline:
+            # Forced decloak: a disabled cloak cannot keep the ship hidden.
+            if self._cloak_state in (self.CLOAK_CLOAKING, self.CLOAK_CLOAKED):
+                was_cloaked = self._cloak_state == self.CLOAK_CLOAKED
+                self._cloak_state = self.CLOAK_DECLOAKED
+                self._transition_elapsed = 0.0
+                if was_cloaked:
+                    self._fire_completion(self.CLOAK_DECLOAKED)
+            return
+
+        if self._cloak_state not in (self.CLOAK_CLOAKING, self.CLOAK_DECLOAKING):
+            return
+
+        self._transition_elapsed += float(dt)
+        if self._transition_elapsed < self._transition_duration:
+            return
+
+        if self._cloak_state == self.CLOAK_CLOAKING:
+            self._cloak_state = self.CLOAK_CLOAKED
+            self._transition_elapsed = 0.0
+            self._fire_completion(self.CLOAK_CLOAKED)
+        else:  # CLOAK_DECLOAKING
+            self._cloak_state = self.CLOAK_DECLOAKED
+            self._transition_elapsed = 0.0
+            self._fire_completion(self.CLOAK_DECLOAKED)
+
+    # ── Completion event emission ────────────────────────────────────────────
+
+    def _fire_completion(self, terminal_state: int) -> None:
+        """Broadcast ET_CLOAK_COMPLETED / ET_DECLOAK_COMPLETED with this
+        subsystem as the source — mirrors ship_death._broadcast_destroyed.
+        Raise-safe so a missing event manager never breaks the state machine."""
+        try:
+            import App
+            evt = App.TGEvent_Create()
+            if terminal_state == self.CLOAK_CLOAKED:
+                evt.SetEventType(App.ET_CLOAK_COMPLETED)
+            else:
+                evt.SetEventType(App.ET_DECLOAK_COMPLETED)
+            evt.SetSource(self)
+            App.g_kEventManager.AddEvent(evt)
+        except Exception as _e:
+            dev_mode.log_swallowed("cloak completion broadcast", _e)
 
 
 # ── Module-level WarpEngineSubsystem helpers ─────────────────────────────────

@@ -16,6 +16,7 @@ bottom of subsystems.py guarantees the normal load order).
 import math as _math
 
 from engine.appc.math import TGPoint3, TGMatrix3
+from engine.appc.float_range_watcher import FloatRangeWatcher
 from engine.appc.subsystems import (
     ShipSubsystem,
     PoweredSubsystem,
@@ -1064,6 +1065,10 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
         # Per-shot cooldown countdown. Set to GetCooldownTime() at Fire,
         # decremented in UpdateCharge; gates CanFire while > 0.
         self._cooldown_remaining: float = 0.0
+        # FloatRangeWatcher handed to Conditions/ConditionPulseReady.py:163
+        # (GetChargeWatcher()); watches the charge FRACTION (charge / max_charge)
+        # so the condition's MinFiringCharge/MaxCharge threshold lines up.
+        self._charge_watcher = FloatRangeWatcher()
 
     def GetMaxCharge(self) -> float:                return self._max_charge
     def GetMinFiringCharge(self) -> float:          return self._min_firing_charge
@@ -1071,6 +1076,11 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
     def GetRechargeRate(self) -> float:             return self._recharge_rate
     def GetChargeLevel(self) -> float:              return self._charge_level
     def GetCooldownTime(self) -> float:             return self._cooldown_time
+
+    def GetChargeWatcher(self):
+        """FloatRangeWatcher on the charge FRACTION
+        (Conditions/ConditionPulseReady.py:163)."""
+        return self._charge_watcher
 
     def GetChargePercentage(self) -> float:
         if self._max_charge <= 0.0:
@@ -1136,6 +1146,10 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
         # _firing stays False for pulse weapons, so the mixin takes the
         # RECHARGE branch and re-arms via the existing hysteresis threshold.
         _EnergyWeaponFireMixin.UpdateCharge(self, dt)
+        # Drive the charge watcher with the charge FRACTION so
+        # Conditions/ConditionPulseReady.py fires its ET_CHARGE_TOGGLE
+        # crossing event (guard divide-by-zero → 0.0).
+        self._charge_watcher._update(self.GetChargePercentage())
 
     def StopFiring(self) -> None:
         # Discrete weapon — no _loop_handle to silence; just clear target refs.
