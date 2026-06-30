@@ -88,6 +88,23 @@ std::string sibling_specular_filename(std::string_view fname) {
     return stem + "_specular" + ext;
 }
 
+/// Given a base/diffuse/glow texture filename, produce the sibling PBR-map
+/// filename for `suffix` ("_normal", "_rough", "_metal"). Strips a trailing
+/// "_glow" from the stem first (so a glow texture pairs with the same maps as
+/// its hull-diffuse sibling), then appends the suffix before the extension.
+std::string sibling_pbr_filename(std::string_view fname, std::string_view suffix) {
+    auto dot = fname.find_last_of('.');
+    std::string stem(dot == std::string_view::npos ? fname : fname.substr(0, dot));
+    std::string ext (dot == std::string_view::npos ? std::string{} : std::string(fname.substr(dot)));
+    if (stem.size() >= 5) {
+        std::string tail = stem.substr(stem.size() - 5);
+        std::transform(tail.begin(), tail.end(), tail.begin(),
+            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (tail == "_glow") stem.resize(stem.size() - 5);
+    }
+    return stem + std::string(suffix) + ext;
+}
+
 struct TextureLoadResult {
     std::unordered_map<std::uint32_t, int> image_to_texture;
     std::unordered_set<std::uint32_t>      glow_image_links;
@@ -100,6 +117,13 @@ struct TextureLoadResult {
     /// each one with a sibling spec map at load time. We replicate that
     /// here so the spec pass has something to bind on stock assets.
     std::unordered_map<std::uint32_t, int> sibling_specular_for_image;
+    /// PBR spike: NIF link_id of a base/diffuse/glow NiImage -> Model::textures
+    /// index of a sibling "<base>_normal/_rough/_metal.tga" discovered on disk.
+    /// Same AddLOD-stand-in mechanism as sibling_specular_for_image. Stock BC
+    /// ships none, so these stay empty and the PBR shader uses global knobs.
+    std::unordered_map<std::uint32_t, int> sibling_normal_for_image;
+    std::unordered_map<std::uint32_t, int> sibling_rough_for_image;
+    std::unordered_map<std::uint32_t, int> sibling_metal_for_image;
     /// NIF link ID -> source filename (NiImage::file_name) for external
     /// images. Used by material_build's lightmap-pass predicate.
     std::unordered_map<std::uint32_t, std::string> image_filename_for_link;
@@ -187,6 +211,35 @@ TextureLoadResult load_all_textures(
                 // No sibling on disk — silently skip. Most ships don't
                 // ship spec masks. The spec contribution then falls
                 // through to black_fallback in the renderer.
+            }
+        }
+
+        // PBR spike: probe sibling normal/roughness/metalness maps with the
+        // same AddLOD stand-in. Modder-supplied; stock BC has none, so these
+        // almost always miss and the PBR shader falls back to global knobs.
+        if (img->use_external != 0 && !filename_is_specular(img->file_name)) {
+            const struct { const char* suffix;
+                           std::unordered_map<std::uint32_t, int>* map; }
+                probes[] = {
+                    {"_normal", &out.sibling_normal_for_image},
+                    {"_rough",  &out.sibling_rough_for_image},
+                    {"_metal",  &out.sibling_metal_for_image},
+                };
+            for (const auto& probe : probes) {
+                const std::string sibling_name =
+                    sibling_pbr_filename(img->file_name, probe.suffix);
+                try {
+                    auto sibling_path =
+                        ctx.resolver->resolve(sibling_name, ctx.texture_search_paths);
+                    auto sibling_bytes = read_file(sibling_path);
+                    Image sibling_decoded = decode_tga(sibling_bytes);
+                    Texture sibling_tex = upload(sibling_decoded, true);
+                    (*probe.map)[link_id] =
+                        static_cast<int>(model.textures.size());
+                    model.textures.push_back(std::move(sibling_tex));
+                } catch (const std::exception&) {
+                    // No sibling on disk — silently skip.
+                }
             }
         }
     }
@@ -507,6 +560,9 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
             tex_result.sibling_specular_for_image, resolver);
         mat_inputs.image_filename_for_link = &tex_result.image_filename_for_link;
         mat_inputs.flip_image_override_for_prop = &flip_image_override_for_prop;
+        mat_inputs.sibling_normal_for_image = &tex_result.sibling_normal_for_image;
+        mat_inputs.sibling_rough_for_image  = &tex_result.sibling_rough_for_image;
+        mat_inputs.sibling_metal_for_image  = &tex_result.sibling_metal_for_image;
         mat_inputs.geometry_uv_set_count = data->uv_sets.size();
         Material mat = build_material(mat_inputs);
         if (mat_inputs.texture_link_id != 0) {

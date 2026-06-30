@@ -73,7 +73,10 @@ void apply_texture_property(
     const std::unordered_map<std::uint32_t, int>* image_to_texture,
     const std::unordered_set<std::uint32_t>* glow_image_links,
     const std::unordered_set<std::uint32_t>* specular_image_links,
-    const std::unordered_map<std::uint32_t, int>* sibling_specular_for_image)
+    const std::unordered_map<std::uint32_t, int>* sibling_specular_for_image,
+    const std::unordered_map<std::uint32_t, int>* sibling_normal_for_image,
+    const std::unordered_map<std::uint32_t, int>* sibling_rough_for_image,
+    const std::unordered_map<std::uint32_t, int>* sibling_metal_for_image)
 {
     // Single-texture v3.x property — usually populates the Base stage.
     //
@@ -137,6 +140,21 @@ void apply_texture_property(
             gloss.apply_mode    = 2;
         }
     }
+
+    // PBR spike: same sibling-probe binding for modder normal/roughness/
+    // metalness maps. Each lands in its own StageSlot; absent on stock BC.
+    auto bind_sibling = [&](const std::unordered_map<std::uint32_t, int>* map,
+                            Material::StageSlot slot) {
+        if (!map) return;
+        auto it = map->find(effective_image_link);
+        if (it == map->end()) return;
+        auto& stage = m.stages[static_cast<std::size_t>(slot)];
+        stage.texture_index = it->second;
+        stage.apply_mode    = 2;
+    };
+    bind_sibling(sibling_normal_for_image, Material::StageSlot::Normal);
+    bind_sibling(sibling_rough_for_image,  Material::StageSlot::Roughness);
+    bind_sibling(sibling_metal_for_image,  Material::StageSlot::Metalness);
 }
 
 void apply_multi_texture_property(
@@ -217,7 +235,9 @@ Material build_material(const MaterialInputs& in) {
     if (in.texture) apply_texture_property(m, *in.texture,
         in.texture_link_id, in.flip_image_override_for_prop,
         in.image_to_texture, in.glow_image_links, in.specular_image_links,
-        in.sibling_specular_for_image);
+        in.sibling_specular_for_image,
+        in.sibling_normal_for_image, in.sibling_rough_for_image,
+        in.sibling_metal_for_image);
     if (in.multi_texture) apply_multi_texture_property(m, *in.multi_texture,
         in.image_to_texture, in.image_filename_for_link);
 

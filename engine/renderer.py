@@ -293,6 +293,39 @@ def set_rim_enabled(enabled: bool) -> None:
     _h.rim_set_enabled(enabled)
 
 
+def set_pbr_enabled(enabled: bool) -> None:
+    """Toggle the PBR (Cook-Torrance GGX) ship path. Default: off (stock
+    Blinn-Phong). PBR spike — driven from Dev Options > Rendering."""
+    fn = getattr(_h, "pbr_set_enabled", None)
+    if fn is not None:
+        fn(bool(enabled))
+
+
+def pbr_enabled() -> bool:
+    """Whether the PBR ship path is active (False on a stale binary)."""
+    fn = getattr(_h, "pbr_enabled", None)
+    return bool(fn()) if fn is not None else False
+
+
+def set_pbr_dials(metalness: float = 0.0, roughness_bias: float = 0.0,
+                  reflection_intensity: float = 1.0,
+                  normal_strength: float = 1.0) -> None:
+    """Live-tune the PBR ship look: global metalness (0..1), additive
+    roughness bias (-0.5..1), ambient-reflection intensity (0..4), and
+    normal-map strength (0..4)."""
+    fn = getattr(_h, "pbr_set_dials", None)
+    if fn is not None:
+        fn(float(metalness), float(roughness_bias),
+           float(reflection_intensity), float(normal_strength))
+
+
+def pbr_dials() -> tuple:
+    """Current (metalness, roughness_bias, reflection_intensity,
+    normal_strength); knob defaults on a stale binary."""
+    fn = getattr(_h, "pbr_dials", None)
+    return tuple(fn()) if fn is not None else (0.0, 0.0, 1.0, 1.0)
+
+
 def set_hdr_enabled(enabled: bool) -> None:
     """Toggle the HDR resolve (tonemap+bloom+grade). Default: on after init()."""
     _h.hdr_set_enabled(enabled)

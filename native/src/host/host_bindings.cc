@@ -966,6 +966,17 @@ namespace dauntless_specular {
 namespace dauntless_rim {
     void set_enabled(bool v);  // defined in frame.cc
 }
+// PBR spike: toggle + live knobs for the ship opaque pass. Defined in frame.cc.
+namespace dauntless_pbr {
+    bool  enabled();
+    void  set_enabled(bool v);
+    float metalness();
+    float roughness_bias();
+    float reflection_intensity();
+    float normal_strength();
+    void  set_dials(float metalness, float roughness_bias,
+                    float reflection_intensity, float normal_strength);
+}
 // dauntless_shadows is forward-declared earlier (before frame()).
 // Toggle for the opaque-pass persistent damage decals. Defined in frame.cc.
 namespace dauntless_decals {
@@ -2265,6 +2276,34 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](bool enabled) { dauntless_rim::set_enabled(enabled); },
           py::arg("enabled"),
           "Toggle the opaque-pass Fresnel rim term. Default: on.");
+    m.def("pbr_set_enabled",
+          [](bool enabled) { dauntless_pbr::set_enabled(enabled); },
+          py::arg("enabled"),
+          "Toggle the PBR (Cook-Torrance GGX) ship path. Default: off "
+          "(stock Blinn-Phong). PBR spike — Dev Options > Rendering.");
+    m.def("pbr_enabled",
+          []() { return dauntless_pbr::enabled(); },
+          "Whether the PBR ship path is active.");
+    m.def("pbr_set_dials",
+          [](float metalness, float roughness_bias,
+             float reflection_intensity, float normal_strength) {
+              dauntless_pbr::set_dials(metalness, roughness_bias,
+                                       reflection_intensity, normal_strength);
+          },
+          py::arg("metalness"), py::arg("roughness_bias"),
+          py::arg("reflection_intensity"), py::arg("normal_strength"),
+          "Live-tune the PBR ship look: global metalness 0..1, additive "
+          "roughness bias -0.5..1, ambient-reflection intensity 0..4, and "
+          "normal-map strength 0..4.");
+    m.def("pbr_dials",
+          []() {
+              return py::make_tuple(dauntless_pbr::metalness(),
+                                    dauntless_pbr::roughness_bias(),
+                                    dauntless_pbr::reflection_intensity(),
+                                    dauntless_pbr::normal_strength());
+          },
+          "Current (metalness, roughness_bias, reflection_intensity, "
+          "normal_strength) for Dev Options panel re-sync.");
     m.def("procedural_sky_set_enabled",
           [](bool enabled) { dauntless_procedural_sky::set_enabled(enabled); },
           py::arg("enabled"),

@@ -113,12 +113,19 @@ def test_render_payload_shape(panel):
     p.open()
     body = _body(p.render_payload())
     assert body["visible"] is True
-    assert body["tabs"] == [{"id": "combat", "label": "Combat"}]
+    assert body["tabs"] == [
+        {"id": "combat", "label": "Combat"},
+        {"id": "rendering", "label": "Rendering"},
+    ]
     assert body["selected_tab"] == "combat"
     assert body["focused"] == -1  # nothing keyboard-focused on first paint
+    # Combat cheats + PBR-spike (Rendering tab) knobs. Without the host
+    # extension (headless tests) the PBR mirror stays at its defaults.
     assert body["settings"] == {
         "god_mode": False, "double_weapons": False, "no_npc_shields": False,
         "disable_collisions": False,
+        "pbr_enabled": False, "pbr_metalness": 0.0, "pbr_roughness_bias": 0.0,
+        "pbr_reflection": 1.0, "pbr_normal_strength": 1.0,
     }
 
 
@@ -188,11 +195,40 @@ def test_focusables_order(panel):
     p, _ = panel
     assert p._focusables() == [
         ("tab", "combat"),
+        ("tab", "rendering"),
         ("ctrl", "god_mode"),
         ("ctrl", "double_weapons"),
         ("ctrl", "no_npc_shields"),
         ("ctrl", "disable_collisions"),
     ]
+
+
+def test_focusables_rendering_tab(panel):
+    p, _ = panel
+    p.dispatch_event("tab:rendering")
+    assert p._focusables() == [
+        ("tab", "combat"),
+        ("tab", "rendering"),
+        ("ctrl", "pbr"),
+        ("ctrl", "pbr_metalness"),
+        ("ctrl", "pbr_roughness_bias"),
+        ("ctrl", "pbr_reflection"),
+        ("ctrl", "pbr_normal_strength"),
+    ]
+
+
+def test_dispatch_pbr_slider_clamps_and_mirrors(panel):
+    # Slider events parse + clamp even without the host extension (the
+    # renderer setter is a no-op then, but the local mirror still updates).
+    p, _ = panel
+    p.open()
+    assert p.dispatch_event("pbr_metalness:0.4") is True
+    assert p._pbr_metalness == 0.4
+    assert p.dispatch_event("pbr_metalness:5.0") is True   # clamps to 1.0
+    assert p._pbr_metalness == 1.0
+    assert p.dispatch_event("pbr_roughness_bias:-9") is True  # clamps to -0.5
+    assert p._pbr_roughness_bias == -0.5
+    assert p.dispatch_event("pbr_metalness:bogus") is False
 
 
 def test_space_on_god_mode_row_toggles(panel):

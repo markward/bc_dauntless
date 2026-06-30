@@ -59,6 +59,36 @@ TEST(DauntlessMotionBlurToggle, DefaultsOnAndRoundTrips) {
     EXPECT_TRUE(dauntless_motion_blur::enabled());
 }
 
+// dauntless_pbr toggle + knobs are declared in frame.cc; forward-declare here.
+namespace dauntless_pbr {
+    bool  enabled(); void set_enabled(bool);
+    float metalness(); float roughness_bias();
+    float reflection_intensity(); float normal_strength();
+    void  set_dials(float, float, float, float);
+}
+
+TEST(DauntlessPbrToggle, DefaultsOffAndRoundTrips) {
+    EXPECT_FALSE(dauntless_pbr::enabled());     // default OFF (stock Blinn-Phong)
+    dauntless_pbr::set_enabled(true);
+    EXPECT_TRUE(dauntless_pbr::enabled());
+    dauntless_pbr::set_enabled(false);          // restore for other tests
+    EXPECT_FALSE(dauntless_pbr::enabled());
+}
+
+TEST(DauntlessPbrToggle, DialsClampToRanges) {
+    dauntless_pbr::set_dials(5.0f, 5.0f, 99.0f, 99.0f);
+    EXPECT_FLOAT_EQ(dauntless_pbr::metalness(), 1.0f);          // [0,1]
+    EXPECT_FLOAT_EQ(dauntless_pbr::roughness_bias(), 1.0f);     // [-0.5,1]
+    EXPECT_FLOAT_EQ(dauntless_pbr::reflection_intensity(), 4.0f);  // [0,4]
+    EXPECT_FLOAT_EQ(dauntless_pbr::normal_strength(), 4.0f);    // [0,4]
+    dauntless_pbr::set_dials(-5.0f, -5.0f, -5.0f, -5.0f);
+    EXPECT_FLOAT_EQ(dauntless_pbr::metalness(), 0.0f);
+    EXPECT_FLOAT_EQ(dauntless_pbr::roughness_bias(), -0.5f);
+    EXPECT_FLOAT_EQ(dauntless_pbr::reflection_intensity(), 0.0f);
+    EXPECT_FLOAT_EQ(dauntless_pbr::normal_strength(), 0.0f);
+    dauntless_pbr::set_dials(0.0f, 0.0f, 1.0f, 1.0f);           // restore defaults
+}
+
 // Ambient is dimmed to 0.3 (−70%) on the exterior view when filmic is on, full
 // (×1.0) when off. The exterior-only scope is enforced at the host call site;
 // this just pins the scale the helper returns for each toggle state.
@@ -282,6 +312,105 @@ TEST_F(FrameTest, SpecularShipRendersWithDirectionalLight) {
         << "Expected the Keldon to render at all (non-zero pixels under a "
            "directional light) — this is a pipeline smoke test, not a proof "
            "that the specular term contributes. See test docstring.";
+}
+
+TEST_F(FrameTest, PbrEnabledGalaxyRendersWithoutGLError) {
+    // PBR spike: with dauntless_pbr enabled, the Galaxy renders through the
+    // Cook-Torrance GGX branch. Smoke test — completes without GL errors and
+    // the saucer covers a lit center pixel. Restores the toggle afterward so
+    // the rest of the suite runs the stock Blinn-Phong path.
+    auto model_h = cache->load(kGalaxyNif, kGalaxyTex);
+
+    scenegraph::World world;
+    auto iid = world.create_instance(
+        reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
+    world.set_world_transform(iid, glm::mat4(1.0f));
+
+    scenegraph::Camera cam;
+    cam.eye = glm::vec3(0.0f, 0.0f, 1500.0f);
+    cam.target = glm::vec3(0.0f, 0.0f, 0.0f);
+    cam.aspect = 1.0f;
+
+    glViewport(0, 0, 256, 256);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    dauntless_pbr::set_enabled(true);
+    dauntless_pbr::set_dials(0.3f, 0.0f, 1.0f, 1.0f);  // some metalness to exercise F0
+    renderer::FrameSubmitter submitter;
+    renderer::Lighting lighting;
+    lighting.ambient            = glm::vec3(0.1f, 0.1f, 0.1f);
+    lighting.directional_count  = 1;
+    lighting.directional_dir_ws[0] = glm::vec3(0.0f, 0.0f, 1.0f);
+    lighting.directional_color[0]  = glm::vec3(1.0f, 1.0f, 1.0f);
+    submitter.submit_opaque(world, cam, *p,
+        [model_h](scenegraph::ModelHandle h) -> const assets::Model* {
+            return reinterpret_cast<const assets::Model*>(h);
+        }, lighting);
+    dauntless_pbr::set_enabled(false);                 // restore stock path
+    dauntless_pbr::set_dials(0.0f, 0.0f, 1.0f, 1.0f);
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+    unsigned char pixel[4] = {0};
+    glReadPixels(128, 128, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
+    EXPECT_GT(pixel[0] + pixel[1] + pixel[2], 0)
+        << "center pixel was black; PBR opaque pass produced nothing";
+}
+
+TEST_F(FrameTest, PbrEnabledSpecularShipRendersWithoutGLError) {
+    // PBR + a ship that ships _specular maps (Keldon): exercises the spec-mask
+    // modulation path in pbr_shade. Smoke test only.
+    const std::filesystem::path keldon_nif =
+        kProjectRoot / "game" / "data" / "Models" / "Ships" / "Keldon" / "Keldon.nif";
+    const std::filesystem::path keldon_tex =
+        kProjectRoot / "game" / "data" / "Models" / "SharedTextures" / "CardShips" / "High";
+    if (!std::filesystem::is_regular_file(keldon_nif)) {
+        GTEST_SKIP() << "BC asset not available at " << keldon_nif;
+    }
+    if (!std::filesystem::is_directory(keldon_tex)) {
+        GTEST_SKIP() << "BC texture dir not available at " << keldon_tex;
+    }
+
+    auto model_h = cache->load(keldon_nif, keldon_tex);
+
+    scenegraph::World world;
+    auto iid = world.create_instance(
+        reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
+    world.set_world_transform(iid, glm::mat4(1.0f));
+
+    scenegraph::Camera cam;
+    cam.eye    = glm::vec3(0.0f, 0.0f, 800.0f);
+    cam.target = glm::vec3(0.0f, 0.0f, 0.0f);
+    cam.aspect = 1.0f;
+
+    glViewport(0, 0, 256, 256);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    dauntless_pbr::set_enabled(true);
+    renderer::FrameSubmitter submitter;
+    renderer::Lighting lighting;
+    lighting.ambient            = glm::vec3(0.1f, 0.1f, 0.1f);
+    lighting.directional_count  = 1;
+    lighting.directional_dir_ws[0] = glm::vec3(0.0f, 0.0f, 1.0f);
+    lighting.directional_color[0]  = glm::vec3(1.0f, 1.0f, 1.0f);
+    submitter.submit_opaque(world, cam, *p,
+        [model_h](scenegraph::ModelHandle h) -> const assets::Model* {
+            return reinterpret_cast<const assets::Model*>(h);
+        }, lighting);
+    dauntless_pbr::set_enabled(false);                 // restore stock path
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+    int max_total = 0;
+    for (int dx = -40; dx <= 40; dx += 20) {
+        for (int dy = -40; dy <= 40; dy += 20) {
+            unsigned char px[4] = {0};
+            glReadPixels(128 + dx, 128 + dy, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
+            int t = px[0] + px[1] + px[2];
+            if (t > max_total) max_total = t;
+        }
+    }
+    EXPECT_GT(max_total, 0) << "Expected the Keldon to render under PBR.";
 }
 
 TEST_F(FrameTest, DecalUploadPipelineRunsWithoutGLError) {

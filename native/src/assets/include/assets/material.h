@@ -27,8 +27,16 @@ struct Material {
     ///   Gloss — populated when a NiImage filename ends in "_specular"
     ///           or "_spec". Standalone per-texel specular mask; does
     ///           NOT dual-bind with Base.
+    ///
+    /// PBR spike slots (populated by sibling-file probes in model_build.cc,
+    /// same mechanism as Gloss): a NiImage's base texture is probed on disk
+    /// for "<base>_normal.tga" / "_rough.tga" / "_metal.tga". These let
+    /// modders ship tangent-space normal, roughness, and metalness maps for
+    /// new ships; stock BC has none, so the slots stay empty and the PBR
+    /// shader falls back to the global Dev Options knobs.
     enum class StageSlot {
         Base = 0, Dark, Detail, Gloss, Glow, Bump, Decal0, Decal1, Decal2,
+        Normal, Roughness, Metalness,
         Count
     };
 

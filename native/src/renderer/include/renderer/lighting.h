@@ -53,4 +53,23 @@ inline float rim_strength_from_material(const glm::vec3& specular, float glossin
     return s * (0.25f + 0.75f * g);
 }
 
+/// Map BC's normalized glossiness [0,1] to a PERCEPTUAL roughness [0.04,1] for
+/// the PBR ship path (the shader squares this to the GGX α = roughness²). BC
+/// authors low glossiness (corpus 0.0–0.30, 4.0 outlier), so a simple linear
+/// inverse keeps typical hulls semi-matte by default — a safe first look that
+/// doesn't read as "broken chrome" before any environment reflection exists.
+/// We deliberately do NOT try to match the Blinn-Phong lobe (that produced
+/// near-mirror defaults); the look is meant to be tuned live, not inherited.
+///
+///   gloss=0.00 -> r=0.90   gloss=0.12 -> r=0.66
+///   gloss=0.30 -> r=0.30   gloss=1.00 -> r=0.04 (clamped)
+///
+/// `bias` is the additive live knob (Dev Options "roughness bias" slider):
+/// positive mattes every hull, negative tightens highlights toward glossy.
+/// Result clamped to [0.04, 1.0]; the 0.04 floor keeps the GGX NDF finite.
+inline float roughness_from_glossiness(float g, float bias = 0.0f) {
+    g = std::clamp(g, 0.0f, 1.0f);
+    return std::clamp(0.9f - 2.0f * g + bias, 0.04f, 1.0f);
+}
+
 }  // namespace renderer

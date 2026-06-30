@@ -16,6 +16,25 @@ uniform vec3 u_specular_color;
 uniform float u_specular_power;
 uniform int u_specular_enabled;
 
+// ── PBR spike (default off) ──────────────────────────────────────────────
+// When u_pbr_enabled != 0, main() runs a Cook-Torrance GGX branch instead of
+// the Blinn-Phong path below. Everything is gated by uniform control flow so
+// the PBR-off render is byte-identical to the stock shader. Per-ship maps
+// (normal/roughness/metalness) are optional; absent ones fall back to the
+// global knobs (set live from Dev Options > Rendering).
+uniform int   u_pbr_enabled;
+uniform float u_pbr_roughness;             // base perceptual roughness (gloss-derived + bias)
+uniform float u_pbr_metalness;             // global metalness when no _metal map
+uniform float u_pbr_reflection_intensity;  // analytic ambient-env specular scale (no IBL yet)
+uniform float u_pbr_normal_strength;       // tangent-space normal perturbation scale
+uniform sampler2D u_normal_map;      // unit 4
+uniform sampler2D u_roughness_map;   // unit 6
+uniform sampler2D u_metalness_map;   // unit 7
+uniform int u_has_normal_map;
+uniform int u_has_roughness_map;
+uniform int u_has_metalness_map;
+uniform int u_has_specular_map;      // distinguishes "no spec map" from a black mask
+
 // Fresnel rim light. u_rim_strength == 0.0 disables the term (set per
 // draw by frame.cc: the global dauntless_rim toggle AND per-instance
 // rim_eligible AND material specular). Tinted by the accumulated
@@ -336,6 +355,111 @@ void apply_damage_decals(vec3 p_body, vec3 n_body,
     }
 }
 
+// ── PBR (Cook-Torrance GGX) helpers ──────────────────────────────────────
+const float PBR_PI = 3.14159265359;
+
+float pbr_D_GGX(float NdotH, float a) {        // Trowbridge-Reitz NDF
+    float a2 = a * a;
+    float d  = NdotH * NdotH * (a2 - 1.0) + 1.0;
+    return a2 / max(PBR_PI * d * d, 1e-7);
+}
+float pbr_G_SchlickGGX(float NdotX, float k) {
+    return NdotX / (NdotX * (1.0 - k) + k);
+}
+float pbr_G_Smith(float NdotV, float NdotL, float rough) {
+    float k = (rough + 1.0);
+    k = k * k / 8.0;                            // direct-lighting remap
+    return pbr_G_SchlickGGX(NdotV, k) * pbr_G_SchlickGGX(NdotL, k);
+}
+vec3 pbr_F_Schlick(float cosT, vec3 F0) {
+    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosT, 0.0, 1.0), 5.0);
+}
+
+// Tangent-space normal mapping without precomputed tangents: derive the TBN
+// from screen-space derivatives of world position + UV (Mikkelsen). Spike
+// stand-in until baked vertex tangents land.
+vec3 pbr_perturb_normal(vec3 N, vec2 uv, vec3 map_n) {
+    vec3 dp1 = dFdx(v_position_ws);
+    vec3 dp2 = dFdy(v_position_ws);
+    vec2 duv1 = dFdx(uv);
+    vec2 duv2 = dFdy(uv);
+    vec3 dp2perp = cross(dp2, N);
+    vec3 dp1perp = cross(N, dp1);
+    vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+    vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+    float invmax = inversesqrt(max(dot(T, T), dot(B, B)));
+    mat3 TBN = mat3(T * invmax, B * invmax, N);
+    return normalize(TBN * map_n);
+}
+
+// Full PBR shade: returns linear radiance for the surface (diffuse + specular
+// from the directional lights + an analytic ambient/env term). Folds the spec
+// lobe in, so the caller leaves the legacy spec/rim terms at zero. albedo is
+// already linear (sRGB-decoded); n_geom/V are world-space; sun_sf is the sun
+// shadow factor for light index 0.
+vec3 pbr_shade(vec3 n_geom, vec3 V, vec3 albedo, float sun_sf) {
+    vec3 N = n_geom;
+    if (u_has_normal_map != 0) {
+        vec3 map_n = texture(u_normal_map, v_uv).xyz * 2.0 - 1.0;
+        map_n.xy *= u_pbr_normal_strength;
+        N = pbr_perturb_normal(n_geom, v_uv, normalize(map_n));
+    }
+
+    float roughness = (u_has_roughness_map != 0)
+        ? clamp(texture(u_roughness_map, v_uv).r, 0.04, 1.0)
+        : u_pbr_roughness;
+    float metalness = (u_has_metalness_map != 0)
+        ? texture(u_metalness_map, v_uv).r
+        : u_pbr_metalness;
+    // Existing _specular map (if any) modulates the specular response —
+    // preserves the artist intent that bright spec-mask = shinier panels.
+    float spec_mask = 1.0;
+    if (u_has_specular_map != 0) {
+        vec3 sm = texture(u_specular_map, v_uv).rgb;
+        spec_mask = max(max(sm.r, sm.g), sm.b);
+    }
+
+    float a  = roughness * roughness;          // perceptual roughness -> GGX α
+    vec3  F0 = mix(vec3(0.04), albedo, metalness);
+    float NdotV = max(dot(N, V), 1e-4);
+
+    vec3 Lo = vec3(0.0);
+    for (int i = 0; i < u_dir_light_count; ++i) {
+        vec3 L = normalize(u_dir_light_dir_ws[i]);
+        float NdotL = max(dot(N, L), 0.0);
+        if (NdotL <= 0.0) continue;
+        vec3 H = normalize(L + V);
+        float NdotH = max(dot(N, H), 0.0);
+        float VdotH = max(dot(V, H), 0.0);
+        float sf = (i == 0) ? sun_sf : 1.0;
+
+        float D = pbr_D_GGX(NdotH, a);
+        float G = pbr_G_Smith(NdotV, NdotL, roughness);
+        vec3  F = pbr_F_Schlick(VdotH, F0);
+        vec3 spec = (D * G) * F / max(4.0 * NdotV * NdotL, 1e-4);
+        spec *= spec_mask;
+
+        // NOTE: no 1/π on the diffuse. BC's directional light colors are LDR
+        // values used as direct multipliers everywhere else (the stock path
+        // does (ambient + lit_dir)·albedo with no 1/π). Dividing here makes
+        // the forward lighting ~3× dimmer than the ambient term and the hull
+        // reads as ambient-only. Folding the π into the (LDR) light is the
+        // standard real-time convention and matches the engine's light scale.
+        vec3 kd = (vec3(1.0) - F) * (1.0 - metalness);
+        vec3 diff = kd * albedo;
+        Lo += (diff + spec) * u_dir_light_color[i] * NdotL * sf;
+    }
+
+    // Ambient + analytic environment specular (no cubemap IBL yet): keeps
+    // metals from going black in empty space. reflection_intensity is the
+    // live knob; the env "color" is just the scene ambient for now.
+    vec3 ambient_diff = u_ambient_light * albedo * (1.0 - metalness);
+    vec3 Fr = pbr_F_Schlick(NdotV, F0);
+    vec3 ambient_spec = u_ambient_light * Fr * u_pbr_reflection_intensity * spec_mask;
+    Lo += ambient_diff + ambient_spec;
+    return Lo;
+}
+
 out vec4 frag_color;
 
 void main() {
@@ -399,23 +523,43 @@ void main() {
     // and the accumulated light is byte-identical to the pre-shadow path.
     float sun_sf = sun_shadow_factor(v_position_ws, n);
 
-    vec3 lit_dir  = vec3(0.0);
-    vec3 spec_acc = vec3(0.0);
-    for (int i = 0; i < u_dir_light_count; ++i) {
-        vec3 L  = normalize(u_dir_light_dir_ws[i]);
-        float nl = max(dot(n, L), 0.0);
-        float sf = (i == 0) ? sun_sf : 1.0;   // sun-only shadow
-        lit_dir += sf * nl * u_dir_light_color[i];
+    vec4 base = texture(u_base_color, v_uv);
 
-        if (u_specular_enabled != 0) {
-            vec3 H = normalize(L + V);
-            float s = pow(max(dot(n, H), 0.0), u_specular_power) * step(0.0, nl);
-            spec_acc += sf * s * u_dir_light_color[i];
+    vec3 lit;
+    vec3 spec = vec3(0.0);
+    vec3 rim  = vec3(0.0);
+
+    if (u_pbr_enabled != 0) {
+        // PBR branch: sRGB-decode the base to linear albedo; the GGX specular
+        // and Fresnel edge fold into `lit`, so the legacy spec/rim terms stay
+        // zero. Output is linear radiance (the HDR resolve tonemaps it).
+        vec3 albedo = pow(base.rgb, vec3(2.2)) * u_diffuse_color;
+        lit = pbr_shade(n, V, albedo, sun_sf);
+    } else {
+        // ── Stock Blinn-Phong (unchanged; PBR-off path is byte-identical) ──
+        vec3 lit_dir  = vec3(0.0);
+        vec3 spec_acc = vec3(0.0);
+        for (int i = 0; i < u_dir_light_count; ++i) {
+            vec3 L  = normalize(u_dir_light_dir_ws[i]);
+            float nl = max(dot(n, L), 0.0);
+            float sf = (i == 0) ? sun_sf : 1.0;   // sun-only shadow
+            lit_dir += sf * nl * u_dir_light_color[i];
+
+            if (u_specular_enabled != 0) {
+                vec3 H = normalize(L + V);
+                float s = pow(max(dot(n, H), 0.0), u_specular_power) * step(0.0, nl);
+                spec_acc += sf * s * u_dir_light_color[i];
+            }
+        }
+        lit = (u_ambient_light + lit_dir) * u_diffuse_color * base.rgb;
+        spec = (u_specular_enabled != 0)
+            ? spec_acc * u_specular_color * texture(u_specular_map, v_uv).rgb
+            : vec3(0.0);
+        if (u_rim_strength > 0.0) {
+            float f = pow(1.0 - max(dot(n, V), 0.0), RIM_POWER);
+            rim = RIM_GAIN * f * lit_dir * u_rim_strength;
         }
     }
-
-    vec4 base = texture(u_base_color, v_uv);
-    vec3 lit  = (u_ambient_light + lit_dir) * u_diffuse_color * base.rgb;
 
     // Body-frame normal for object-space decals.
     vec3 n_body = normalize(mat3(u_ship_world_inv) * v_normal_ws);
@@ -428,15 +572,6 @@ void main() {
 
     vec4 glow = texture(u_glow_map, v_uv);
     float gf = clamp(glow_flicker, 0.0, FLICKER_MAX);
-    vec3 spec = (u_specular_enabled != 0)
-        ? spec_acc * u_specular_color * texture(u_specular_map, v_uv).rgb
-        : vec3(0.0);
-
-    vec3 rim = vec3(0.0);
-    if (u_rim_strength > 0.0) {
-        float f = pow(1.0 - max(dot(n, V), 0.0), RIM_POWER);
-        rim = RIM_GAIN * f * lit_dir * u_rim_strength;
-    }
 
     float nac = 1.0;
     if (u_glow_region_count > 0) {

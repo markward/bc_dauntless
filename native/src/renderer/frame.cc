@@ -74,6 +74,41 @@ namespace {
     void set_enabled(bool v) { g_shadows_enabled = v; }
 }
 
+// PBR spike toggle + live-tunable knobs for the ship opaque pass. Default
+// OFF: when disabled, opaque.frag runs the unchanged Blinn-Phong path, so the
+// stock render and existing FrameTests are byte-identical. host_bindings.cc
+// forward-declares these; frame.cc reads them per ship draw and uploads
+// u_pbr_* uniforms. Knobs are the Dev Options "Rendering" sliders:
+//   metalness            global metal fraction for hulls with no _metal map
+//   roughness_bias       additive bias into roughness_from_glossiness()
+//   reflection_intensity scales the analytic ambient-env specular (no IBL yet)
+//   normal_strength      scales the tangent-space normal-map perturbation
+namespace dauntless_pbr {
+namespace {
+    bool  g_enabled = false;
+    float g_metalness = 0.0f;
+    float g_roughness_bias = 0.0f;
+    float g_reflection_intensity = 1.0f;
+    float g_normal_strength = 1.0f;
+    float clampf(float v, float lo, float hi) {
+        return v < lo ? lo : (v > hi ? hi : v);
+    }
+}
+    bool  enabled() { return g_enabled; }
+    void  set_enabled(bool v) { g_enabled = v; }
+    float metalness() { return g_metalness; }
+    float roughness_bias() { return g_roughness_bias; }
+    float reflection_intensity() { return g_reflection_intensity; }
+    float normal_strength() { return g_normal_strength; }
+    void  set_dials(float metalness, float roughness_bias,
+                    float reflection_intensity, float normal_strength) {
+        g_metalness = clampf(metalness, 0.0f, 1.0f);
+        g_roughness_bias = clampf(roughness_bias, -0.5f, 1.0f);
+        g_reflection_intensity = clampf(reflection_intensity, 0.0f, 4.0f);
+        g_normal_strength = clampf(normal_strength, 0.0f, 4.0f);
+    }
+}
+
 // Toggle for the opaque-pass persistent damage decals (Phase 2). Default on
 // so the "Modern VFX" group ships enabled. host_bindings.cc forward-declares
 // set_enabled; draw_model reads enabled() per instance and uploads
@@ -441,6 +476,59 @@ void draw_model(const assets::Model& model,
                 ? renderer::rim_strength_from_material(mat.specular, mat.glossiness)
                 : 0.0f;
             prog.set_float("u_rim_strength", rim);
+
+            // ── PBR spike (default off) ────────────────────────────────────
+            // When dauntless_pbr is enabled, opaque.frag runs a Cook-Torrance
+            // GGX branch instead of Blinn-Phong. Bind the optional per-ship
+            // maps (normal/roughness/metalness) to units 4/6/7 — units 3 and 5
+            // are damage and shadow — with has-map flags so a ship with no map
+            // falls back to the global knob values. Base roughness reuses the
+            // tested roughness_from_glossiness() helper (+ live bias knob), so
+            // the PBR remap stays in one place.
+            if (dauntless_pbr::enabled()) {
+                const int normal_tex = mat.stages[
+                    static_cast<std::size_t>(assets::Material::StageSlot::Normal)
+                ].texture_index;
+                glActiveTexture(GL_TEXTURE4);
+                glBindTexture(GL_TEXTURE_2D,
+                    normal_tex >= 0 ? model.textures[normal_tex].id() : white_fallback);
+                prog.set_int("u_normal_map", 4);
+                prog.set_int("u_has_normal_map", normal_tex >= 0 ? 1 : 0);
+
+                const int rough_tex = mat.stages[
+                    static_cast<std::size_t>(assets::Material::StageSlot::Roughness)
+                ].texture_index;
+                glActiveTexture(GL_TEXTURE6);
+                glBindTexture(GL_TEXTURE_2D,
+                    rough_tex >= 0 ? model.textures[rough_tex].id() : white_fallback);
+                prog.set_int("u_roughness_map", 6);
+                prog.set_int("u_has_roughness_map", rough_tex >= 0 ? 1 : 0);
+
+                const int metal_tex = mat.stages[
+                    static_cast<std::size_t>(assets::Material::StageSlot::Metalness)
+                ].texture_index;
+                glActiveTexture(GL_TEXTURE7);
+                glBindTexture(GL_TEXTURE_2D,
+                    metal_tex >= 0 ? model.textures[metal_tex].id() : white_fallback);
+                prog.set_int("u_metalness_map", 7);
+                prog.set_int("u_has_metalness_map", metal_tex >= 0 ? 1 : 0);
+
+                // spec_tex resolved above; in PBR the _specular mask is an
+                // optional reflectance modulator, so we need to distinguish
+                // "no map" (black_fallback) from a genuinely black mask.
+                prog.set_int("u_has_specular_map", spec_tex >= 0 ? 1 : 0);
+                prog.set_int  ("u_pbr_enabled", 1);
+                prog.set_float("u_pbr_roughness",
+                    renderer::roughness_from_glossiness(
+                        mat.glossiness, dauntless_pbr::roughness_bias()));
+                prog.set_float("u_pbr_metalness", dauntless_pbr::metalness());
+                prog.set_float("u_pbr_reflection_intensity",
+                    dauntless_pbr::reflection_intensity());
+                prog.set_float("u_pbr_normal_strength", dauntless_pbr::normal_strength());
+                glActiveTexture(GL_TEXTURE0);  // restore default active unit
+            } else {
+                prog.set_int("u_pbr_enabled", 0);
+            }
 
             glBindVertexArray(mesh.vao());
             glDrawElements(GL_TRIANGLES, mesh.index_count(), GL_UNSIGNED_INT, nullptr);

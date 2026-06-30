@@ -23,6 +23,12 @@ function _doFocusableList(state) {
         out.push({kind: 'ctrl', target: 'double_weapons'});
         out.push({kind: 'ctrl', target: 'no_npc_shields'});
         out.push({kind: 'ctrl', target: 'disable_collisions'});
+    } else if (state.selected_tab === 'rendering') {
+        out.push({kind: 'ctrl', target: 'pbr'});
+        out.push({kind: 'ctrl', target: 'pbr_metalness'});
+        out.push({kind: 'ctrl', target: 'pbr_roughness_bias'});
+        out.push({kind: 'ctrl', target: 'pbr_reflection'});
+        out.push({kind: 'ctrl', target: 'pbr_normal_strength'});
     }
     return out;
 }
@@ -72,6 +78,41 @@ function _doRenderCombatBody(state, focusables) {
     return html;
 }
 
+// Slider row matching the configuration panel's FOV control. `onchange`
+// (released), not `oninput`, so dragging doesn't flood the event channel.
+function _doSliderRow(label, key, value, min, max, step, fmt, focused) {
+    return '<div class="cp-row' + (focused ? ' cp-focused' : '') + '">'
+         +   '<div class="cp-row__label">' + escapeHtmlDO(label) + '</div>'
+         +   '<div class="cp-row__control">'
+         +     '<input class="cp-slider" type="range"'
+         +        ' min="' + min + '" max="' + max + '" step="' + step + '"'
+         +        ' value="' + value + '"'
+         +        ' onchange="dauntlessEvent(\'developer-options/' + key + ':\' + this.value)">'
+         +     '<span class="cp-slider-value">' + fmt(value) + '</span>'
+         +   '</div>'
+         + '</div>';
+}
+
+function _doRenderRenderingBody(state, focusables) {
+    const focused = focusables[state.focused] || {};
+    const isFoc = (target) => focused.kind === 'ctrl' && focused.target === target;
+    const s = state.settings;
+    const pct = (v) => Math.round(v * 100) + '%';
+    const num = (v) => Number(v).toFixed(2);
+    let html = '';
+    html += _doToggleRow('PBR Shading (Cook-Torrance)', 'pbr',
+                         s.pbr_enabled, isFoc('pbr'));
+    html += _doSliderRow('Metalness', 'pbr_metalness', s.pbr_metalness,
+                         0, 1, 0.05, pct, isFoc('pbr_metalness'));
+    html += _doSliderRow('Roughness Bias', 'pbr_roughness_bias', s.pbr_roughness_bias,
+                         -0.5, 1, 0.05, num, isFoc('pbr_roughness_bias'));
+    html += _doSliderRow('Reflection Intensity', 'pbr_reflection', s.pbr_reflection,
+                         0, 4, 0.1, num, isFoc('pbr_reflection'));
+    html += _doSliderRow('Normal Strength', 'pbr_normal_strength', s.pbr_normal_strength,
+                         0, 4, 0.1, num, isFoc('pbr_normal_strength'));
+    return html;
+}
+
 function setDeveloperOptions(state) {
     const root = document.getElementById('developer-options-panel');
     if (!root) return;
@@ -86,6 +127,8 @@ function setDeveloperOptions(state) {
     if (body) {
         body.innerHTML = (state.selected_tab === 'combat')
             ? _doRenderCombatBody(state, focusables)
+            : (state.selected_tab === 'rendering')
+            ? _doRenderRenderingBody(state, focusables)
             : '';
     }
     root.style.display = 'flex';

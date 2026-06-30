@@ -42,6 +42,13 @@ struct MaterialInputs {
     /// suffix arg until full AddLOD threading lands.
     const std::unordered_map<std::uint32_t, int>* sibling_specular_for_image = nullptr;
 
+    /// PBR spike: same sibling-probe mechanism as sibling_specular_for_image,
+    /// but for modder-supplied "<base>_normal/_rough/_metal.tga" maps. Bound
+    /// to StageSlot::Normal / Roughness / Metalness. Empty on stock BC assets.
+    const std::unordered_map<std::uint32_t, int>* sibling_normal_for_image = nullptr;
+    const std::unordered_map<std::uint32_t, int>* sibling_rough_for_image  = nullptr;
+    const std::unordered_map<std::uint32_t, int>* sibling_metal_for_image  = nullptr;
+
     /// Maps NIF link ID of a NiImage → its source filename
     /// (NiImage::file_name). Used by build_material to apply BC's
     /// `_lm.tga` lightmap-pass filename predicate without having to
