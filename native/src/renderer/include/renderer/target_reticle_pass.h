@@ -37,7 +37,8 @@ public:
 
     void render(const TargetReticle& reticle,
                 const scenegraph::Camera& camera,
-                Pipeline& pipeline);
+                Pipeline& pipeline,
+                float device_scale_factor = 1.0f);
 
 private:
     void ensure_quad();
