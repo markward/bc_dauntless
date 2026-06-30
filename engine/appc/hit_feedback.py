@@ -138,7 +138,8 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
              absorbed_hull: float, sub_transition,
              host=None, ship_instances=None,
              weapon_type: str | None = None, radius: float = 0.0,
-             persist_decal: bool = True) -> None:
+             persist_decal: bool = True,
+             allow_hull_carve: bool = True) -> None:
     """Per-impact fan-out: VFX + audio + camera shake.
 
     Severity is computed via classify(...). Exactly one visual fires per
@@ -272,8 +273,11 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
     # per-hit magnitude gate: the C++ field accumulates strength and only shows a
     # carve once the running total crosses the iso, so sustained light fire
     # eventually breaches (BC's additive metaball field).
-    if (absorbed_hull > 0.0 and normal is not None and persist_decal
-            and host is not None and ship_instances is not None
+    # `allow_hull_carve` is False for LIGHT (PP_LOW) phaser fire: the hull is
+    # not structurally damaged, so the scorch decal above still fires but no
+    # voxel breach is carved (and nothing accumulates into the field).
+    if (allow_hull_carve and absorbed_hull > 0.0 and normal is not None
+            and persist_decal and host is not None and ship_instances is not None
             and hasattr(host, "hull_carve_add")):
         from engine.appc import hull_carve, damage_eligibility, damage_decals
         if damage_eligibility.is_eligible(ship):

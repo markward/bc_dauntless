@@ -177,7 +177,8 @@ def test_app_module_exposes_subsystem_classes_and_constants():
     assert App.WarpEngineSubsystem.WES_NOT_WARPING == 0
     assert App.TractorBeamSystem.TBS_TOW == 1
     assert App.PhaserSystem.PP_LOW == 0
-    assert App.PhaserSystem.PP_HIGH == 1
+    assert App.PhaserSystem.PP_MEDIUM == 1
+    assert App.PhaserSystem.PP_HIGH == 2
 
 
 # ── WarpEngineSubsystem_GetWarpEffectTime module-level wrapper ───────────────

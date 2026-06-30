@@ -523,12 +523,19 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
                     max_dist=(dist * 1.5 if dist > 1e-6 else 0.0),
                     fallback_point=target_pos,
                 )
+                # LIGHT (PP_LOW) phaser power is "disable, don't destroy":
+                # damage routes to subsystems only, the hull takes no condition
+                # damage and is not voxel-carved (verified by dev-console probe).
+                # `sys_` is the firing PhaserSystem; read PP_LOW off it directly.
+                damage_hull = (sys_.GetPowerLevel() != sys_.PP_LOW
+                               if hasattr(sys_, "GetPowerLevel") else True)
                 combat.apply_hit(target, damage, impact_point,
                           source=ship,
                           normal=impact_normal,
                           host=host, ship_instances=ship_instances,
                           weapon_type="phaser",
-                          hardpoint_weapon=bank)
+                          hardpoint_weapon=bank,
+                          damage_hull=damage_hull)
 
     # Held-trigger pulse weapons (disruptors/cannons): re-fire eligible cannons
     # as they recharge while the trigger stays down — mirrors the phaser

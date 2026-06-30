@@ -869,9 +869,13 @@ class _HeldFireWeaponSystem(WeaponSystem):
 
 
 class PhaserSystem(_HeldFireWeaponSystem):
-    # Power-level constants from sdk/.../App.py:6444-6446.
+    # Power-level constants from sdk/.../App.py:6444-6446 (three levels).
+    # Values confirmed against the real BC engine (dev-console probe: HIGH=2,
+    # LOW=0). PP_LOW is the "disable, don't destroy" mode — it deals no hull
+    # damage, only subsystem damage (see combat.apply_hit `damage_hull`).
     PP_LOW = 0
-    PP_HIGH = 1
+    PP_MEDIUM = 1
+    PP_HIGH = 2
 
     def __init__(self, name: str = ""):
         super().__init__(name)

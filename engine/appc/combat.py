@@ -319,7 +319,9 @@ def apply_hit(ship, damage: float, hit_point, source, *,
               normal=None, host=None, ship_instances=None,
               weapon_type: str | None = None,
               hardpoint_weapon=None, payload_template=None,
-              splash_radius: float | None = None) -> None:
+              splash_radius: float | None = None,
+              damage_hull: bool = True,
+              bypass_shields: bool = False) -> None:
     """Apply `damage` to `ship` per the spherical-splash attribution model.
 
     Flow:
@@ -348,6 +350,20 @@ def apply_hit(ship, damage: float, hit_point, source, *,
                               supersedes the (hardpoint_weapon, payload_template)
                               resolution. Used by the warp-core breach to force a
                               1.3 GU blast. None for all weapon callers.
+        damage_hull         — when False, the hull takes NO condition damage
+                              (subsystems still take their weighted share). This
+                              is the LIGHT (PP_LOW) phaser "disable, don't
+                              destroy" mode verified by dev-console probe. The
+                              hull is still flagged as struck for cosmetic
+                              feedback (scorch decal, severity, audio), but the
+                              persistent hull carve is suppressed. Defaults True
+                              (FULL / torpedo / collision / explosion).
+        bypass_shields      — when True, skip the shield cascade entirely and
+                              route full damage to hull/subsystems. This is the
+                              `AddDamage` explosion/collision primitive verified
+                              by dev-console probe (shields do not absorb a warp-
+                              core breach or a ramming impact). Defaults False
+                              (normal weapon fire cascades through shields).
     """
     from engine.appc.events import WeaponHitEvent
     from engine.appc import hit_feedback
@@ -392,6 +408,10 @@ def apply_hit(ship, damage: float, hit_point, source, *,
     # absorbing, so full damage reaches the hull/subsystems.
     if _cheats.disable_npc_shields_active() and not _target_is_player:
         shields_online = False
+    # Explosion / collision primitive (AddDamage): bypass the shield cascade
+    # entirely — full damage reaches the hull/subsystems, shield faces untouched.
+    if bypass_shields:
+        shields_online = False
     if shields_online and hasattr(shields, "ApplyDamage"):
         face = _shield_face_from_hit_point(ship, hit_point)
         before = remaining
@@ -414,9 +434,14 @@ def apply_hit(ship, damage: float, hit_point, source, *,
     hull = ship.GetHull() if hasattr(ship, "GetHull") else None
 
     if post_shield > 0.0:
-        # 2. Hull always takes full post-shield damage.
+        # 2. Hull takes full post-shield damage — UNLESS damage_hull is False
+        #    (LIGHT phaser: subsystems only, hull HP untouched). `absorbed_hull`
+        #    is still set so the hull reads as struck for cosmetic feedback
+        #    (scorch decal, severity, audio); only the condition mutation and
+        #    the hull carve (gated separately below via allow_hull_carve) are
+        #    suppressed.
         if hull is not None and hasattr(ship, "DamageSystem"):
-            if _commit:
+            if _commit and damage_hull:
                 ship.DamageSystem(hull, post_shield)
             absorbed_hull = post_shield
 
@@ -465,6 +490,7 @@ def apply_hit(ship, damage: float, hit_point, source, *,
             weapon_type=weapon_type,
             radius=r_hit,
             persist_decal=_commit,
+            allow_hull_carve=damage_hull,
         )
     except Exception as _e:
         dev_mode.log_swallowed("hit_feedback.dispatch", _e)
