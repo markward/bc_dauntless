@@ -3,7 +3,10 @@
 
 #include <nif/block.h>
 
+#include <cstdint>
 #include <filesystem>
+#include <fstream>
+#include <vector>
 #include <unistd.h>
 
 namespace fs = std::filesystem;
@@ -204,6 +207,119 @@ protected:
         return f;
     }
 
+    // Root -> NiTriShape carrying a NiMaterialProperty + a NiTextureProperty
+    // whose external NiImage is `hull_ID.tga` (a registry-style name containing
+    // "ID"). The image binds to the material's Base stage. Used to exercise the
+    // BC ReplaceTexture swap. Identity link IDs (no block_ids) so links == index.
+    nif::File file_with_textured_shape() {
+        nif::File f;
+        // Block 0: root NiNode -> shape (1)
+        nif::NiNode root;
+        root.av.obj.name = "Root";
+        root.child_links = {1};
+        f.blocks.push_back(root);
+        // Block 1: NiTriShape, data (2), properties material(3) + texture(4)
+        nif::NiTriShape tri;
+        tri.av.obj.name = "Saucer";
+        tri.data_link = 2;
+        tri.av.property_links = {3, 4};
+        f.blocks.push_back(tri);
+        // Block 2: NiTriShapeData
+        nif::NiTriShapeData d;
+        d.num_vertices = 3;
+        d.has_vertices = true;
+        d.vertices = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}};
+        d.has_uv = true;
+        d.uv_sets.push_back({{0, 0}, {1, 0}, {0, 1}});
+        d.num_triangles = 1;
+        d.triangles.push_back({0, 1, 2});
+        f.blocks.push_back(d);
+        // Block 3: NiMaterialProperty
+        nif::NiMaterialProperty mp;
+        f.blocks.push_back(mp);
+        // Block 4: NiTextureProperty -> image (5)
+        nif::NiTextureProperty tex;
+        tex.image_link = 5;
+        f.blocks.push_back(tex);
+        // Block 5: external NiImage named with a registry "ID" substring.
+        nif::NiImage img;
+        img.use_external = 1;
+        img.file_name = "hull_ID.tga";
+        f.blocks.push_back(img);
+        return f;
+    }
+
+    // Two textured shapes: "Saucer" bound to `hull_ID.tga` (uppercase registry
+    // tag) and "Bridge" bound to `hull_bridge.tga` (lowercase "id" inside
+    // "bridge"). A case-sensitive "ID" swap must touch ONLY the saucer; a
+    // case-fold would wrongly paint the registry onto the bridge too (the real
+    // Galaxy has `Ent-D_topdish_ID_glow.tga` AND `Ent-D_Bridge-n-Stuff_glow.tga`).
+    nif::File file_with_id_and_bridge_shapes() {
+        nif::File f;
+        nif::NiNode root;               // block 0
+        root.av.obj.name = "Root";
+        root.child_links = {1, 6};
+        f.blocks.push_back(root);
+
+        auto add_textured_shape = [&](const char* shape_name,
+                                      std::uint32_t data, std::uint32_t matp,
+                                      std::uint32_t texp, std::uint32_t img,
+                                      const char* tga) {
+            nif::NiTriShape tri;
+            tri.av.obj.name = shape_name;
+            tri.data_link = data;
+            tri.av.property_links = {matp, texp};
+            f.blocks.push_back(tri);
+            nif::NiTriShapeData d;
+            d.num_vertices = 3;
+            d.has_vertices = true;
+            d.vertices = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}};
+            d.has_uv = true;
+            d.uv_sets.push_back({{0, 0}, {1, 0}, {0, 1}});
+            d.num_triangles = 1;
+            d.triangles.push_back({0, 1, 2});
+            f.blocks.push_back(d);
+            f.blocks.push_back(nif::NiMaterialProperty{});
+            nif::NiTextureProperty tex;
+            tex.image_link = img;
+            f.blocks.push_back(tex);
+            nif::NiImage im;
+            im.use_external = 1;
+            im.file_name = tga;
+            f.blocks.push_back(im);
+        };
+        // blocks 1..5 (Saucer) and 6..10 (Bridge), identity link ids.
+        add_textured_shape("Saucer", 2, 3, 4, 5, "hull_ID.tga");
+        add_textured_shape("Bridge", 7, 8, 9, 10, "hull_bridge.tga");
+        return f;
+    }
+
+    // Minimal valid 2x1 24-bit uncompressed TGA (see texture_decode_test).
+    static std::vector<std::uint8_t> valid_tga() {
+        return {0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 1, 0, 24, 0,
+                0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00};
+    }
+    void write_tga(const std::string& name) {
+        auto bytes = valid_tga();
+        std::ofstream out(tmp_dir / name, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(bytes.data()),
+                  static_cast<std::streamsize>(bytes.size()));
+    }
+
+    // Index of the sole material's Base-stage texture, or -2 if no material.
+    static int base_texture_index(const assets::Model& m) {
+        if (m.materials.empty()) return -2;
+        return base_index_of(m, 0);
+    }
+    // Base-stage texture index for material `i` (-2 if out of range).
+    static int base_index_of(const assets::Model& m, std::size_t i) {
+        if (i >= m.materials.size()) return -2;
+        return m.materials[i]
+            .stages[static_cast<std::size_t>(
+                assets::Material::StageSlot::Base)]
+            .texture_index;
+    }
+
     assets::detail::ModelBuildContext make_ctx() {
         assets::detail::ModelBuildContext ctx;
         ctx.resolver = &resolver;
@@ -300,4 +416,83 @@ TEST_F(ModelBuildTest, SurfacePointsAreModelSpace) {
         EXPECT_GE(p.x, 99.5f) << "surface point not pushed by node->model bake";
         EXPECT_LE(p.x, 101.5f);
     }
+}
+
+// --- Federation registry / hull-name texture swap (BC ReplaceTexture) -------
+
+// Baseline: with no replacements the textured shape binds its lone image to the
+// Base stage (index 0), and exactly one texture is loaded.
+TEST_F(ModelBuildTest, NoReplacementBindsOriginalTexture) {
+    write_tga("hull_ID.tga");
+    auto f = file_with_textured_shape();
+    auto model = assets::detail::build_model(f, make_ctx());
+    EXPECT_EQ(model.textures.size(), 1u);
+    EXPECT_EQ(base_texture_index(model), 0);
+}
+
+// A replacement whose old-substring matches the NIF texture's basename appends
+// the new texture and repoints the material stage to it.
+TEST_F(ModelBuildTest, MatchingReplacementRepointsStage) {
+    write_tga("hull_ID.tga");
+    write_tga("Dauntless.tga");
+    auto f = file_with_textured_shape();
+    auto ctx = make_ctx();
+    ctx.texture_replacements.push_back(
+        {"ID", (tmp_dir / "Dauntless.tga").string()});
+    auto model = assets::detail::build_model(f, ctx);
+
+    // One appended texture; Base stage now points at it (not the original 0).
+    ASSERT_EQ(model.textures.size(), 2u);
+    EXPECT_EQ(base_texture_index(model), 1);
+}
+
+// A replacement matching no texture leaves the model byte-for-byte as if no
+// replacement were requested (warn-and-skip, never crash a spawn).
+TEST_F(ModelBuildTest, NonMatchingReplacementLeavesModelUntouched) {
+    write_tga("hull_ID.tga");
+    write_tga("Dauntless.tga");
+    auto f = file_with_textured_shape();
+    auto ctx = make_ctx();
+    ctx.texture_replacements.push_back(
+        {"NOPE", (tmp_dir / "Dauntless.tga").string()});
+    auto model = assets::detail::build_model(f, ctx);
+
+    EXPECT_EQ(model.textures.size(), 1u);
+    EXPECT_EQ(base_texture_index(model), 0);
+}
+
+// A matching old-substring but an unloadable replacement path must also leave
+// the model untouched rather than throwing.
+TEST_F(ModelBuildTest, MissingReplacementFileLeavesModelUntouched) {
+    write_tga("hull_ID.tga");
+    auto f = file_with_textured_shape();
+    auto ctx = make_ctx();
+    ctx.texture_replacements.push_back(
+        {"ID", (tmp_dir / "does_not_exist.tga").string()});
+    auto model = assets::detail::build_model(f, ctx);
+
+    EXPECT_EQ(model.textures.size(), 1u);
+    EXPECT_EQ(base_texture_index(model), 0);
+}
+
+// The match is CASE-SENSITIVE: a "ID" swap repoints only `hull_ID.tga`
+// (uppercase), never `hull_bridge.tga` (lowercase "id" in "bridge"). Guards the
+// real-Galaxy bug where a case-fold painted the registry onto the bridge module.
+TEST_F(ModelBuildTest, ReplacementMatchIsCaseSensitive) {
+    write_tga("hull_ID.tga");
+    write_tga("hull_bridge.tga");
+    write_tga("Dauntless.tga");
+    auto f = file_with_id_and_bridge_shapes();
+    auto ctx = make_ctx();
+    ctx.texture_replacements.push_back(
+        {"ID", (tmp_dir / "Dauntless.tga").string()});
+    auto model = assets::detail::build_model(f, ctx);
+
+    ASSERT_EQ(model.materials.size(), 2u);
+    // Original textures: hull_ID.tga=0 (Saucer), hull_bridge.tga=1 (Bridge).
+    // Dauntless appended at 2; ONLY the Saucer's Base is repointed to it.
+    const int saucer_base = base_index_of(model, 0);
+    const int bridge_base = base_index_of(model, 1);
+    EXPECT_EQ(saucer_base, 2) << "uppercase-ID texture must be swapped";
+    EXPECT_EQ(bridge_base, 1) << "lowercase-id 'bridge' texture must be UNTOUCHED";
 }

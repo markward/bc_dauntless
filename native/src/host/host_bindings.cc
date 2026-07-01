@@ -261,6 +261,11 @@ std::unique_ptr<renderer::ViewscreenStaticPass> g_viewscreen_static_pass;
 struct LoadedModel {
     std::filesystem::path nif_path;
     assets::ModelHandle handle;
+    // Federation registry / hull-name swap key (BC ReplaceTexture). Empty for
+    // the common no-replacement load. Part of the dedupe identity so two ships
+    // of the same class with DIFFERENT registries get distinct handles, while
+    // same-registry hulls collapse onto one.
+    std::string replacements_key;
     // True only for models built by assemble_officer. Those models are wrapped
     // in a non-const shared_ptr (owned, mutable) so load_instance_clip can
     // safely const_cast and append clips. Cache-loaded models (load_model_impl)
@@ -308,8 +313,10 @@ std::unique_ptr<renderer::Pipeline> g_pipeline;
 // static destruction order which would run after the Window is gone.
 std::unique_ptr<renderer::FrameSubmitter> g_submitter;
 
-scenegraph::ModelHandle load_model_impl(const std::string& nif_path,
-                                        const py::object& texture_search_path) {
+scenegraph::ModelHandle load_model_impl(
+    const std::string& nif_path,
+    const py::object& texture_search_path,
+    const py::object& texture_replacements) {
     if (!g_window) {
         throw std::runtime_error("load_model: init must be called first (asset upload needs a GL context)");
     }
@@ -327,12 +334,29 @@ scenegraph::ModelHandle load_model_impl(const std::string& nif_path,
         }
     }
 
-    // Dedupe by nif_path: callers that load the same NIF for multiple ships
-    // get the same handle and the underlying assets::AssetCache::load isn't
-    // even called a second time.
+    // Federation registry / hull-name swaps: a list of (old_substring,
+    // new_texture) pairs. None / empty leaves the model byte-identical.
+    std::vector<assets::TextureReplacement> replacements;
+    std::string rep_key;
+    if (!texture_replacements.is_none()) {
+        for (auto item : texture_replacements) {
+            auto pair = item.cast<py::sequence>();
+            assets::TextureReplacement r;
+            r.old_substring = pair[0].cast<std::string>();
+            r.new_texture   = pair[1].cast<std::string>();
+            rep_key += r.old_substring + '=' + r.new_texture + ';';
+            replacements.push_back(std::move(r));
+        }
+    }
+
+    // Dedupe by (nif_path, replacements): callers that load the same NIF +
+    // registry for multiple ships get the same handle and the underlying
+    // assets::AssetCache::load isn't even called a second time. Distinct
+    // registries on the same NIF correctly produce distinct handles.
     std::filesystem::path canonical = nif_path;
     for (std::size_t i = 0; i < g_loaded_models.size(); ++i) {
-        if (g_loaded_models[i].nif_path == canonical) {
+        if (g_loaded_models[i].nif_path == canonical &&
+            g_loaded_models[i].replacements_key == rep_key) {
             return static_cast<scenegraph::ModelHandle>(i + 1);
         }
     }
@@ -344,9 +368,12 @@ scenegraph::ModelHandle load_model_impl(const std::string& nif_path,
         cfg.keep_cpu_data = true;
         g_cache = std::make_unique<assets::AssetCache>(std::move(cfg));
     }
-    auto handle = g_cache->load(nif_path, search_paths);
-    g_loaded_models.push_back({std::move(canonical), std::move(handle),
-                               /*is_officer=*/false, /*appended_clips=*/{}});
+    auto handle = g_cache->load(nif_path, search_paths, replacements);
+    LoadedModel lm;
+    lm.nif_path         = std::move(canonical);
+    lm.handle           = std::move(handle);
+    lm.replacements_key = std::move(rep_key);
+    g_loaded_models.push_back(std::move(lm));
     return static_cast<scenegraph::ModelHandle>(g_loaded_models.size());
 }
 
@@ -1047,7 +1074,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("should_close", &should_close);
     m.def("frame", &frame);
     m.def("load_model", &load_model_impl,
-          py::arg("nif_path"), py::arg("texture_search_path"));
+          py::arg("nif_path"), py::arg("texture_search_path"),
+          py::arg("texture_replacements") = py::none());
     m.def("parse_set_camera", &parse_set_camera_impl,
           "Extract the embedded camera (frustum + world transform) from a set "
           "NIF, or None. Parse-only; no GL context required.");
@@ -1369,7 +1397,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](const std::string& nif_path) {
               std::filesystem::path tex_dir =
                   std::filesystem::path(nif_path).parent_path();
-              auto handle = load_model_impl(nif_path, py::cast(tex_dir.string()));
+              auto handle = load_model_impl(nif_path, py::cast(tex_dir.string()),
+                                            py::none());
               auto id = g_world.create_instance(handle);
 
               // The host owns the cameras + pass state, so it places the
@@ -1488,9 +1517,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
               // type is unchanged.
               assets::ModelHandle handle =
                   std::make_shared<assets::Model>(std::move(composed));
-              g_loaded_models.push_back({std::filesystem::path(body_nif),
-                                         std::move(handle),
-                                         /*is_officer=*/true, /*appended_clips=*/{}});
+              LoadedModel lm;
+              lm.nif_path   = std::filesystem::path(body_nif);
+              lm.handle     = std::move(handle);
+              lm.is_officer = true;
+              g_loaded_models.push_back(std::move(lm));
               return static_cast<scenegraph::ModelHandle>(g_loaded_models.size());
           },
           py::arg("body_nif"), py::arg("head_nif"),

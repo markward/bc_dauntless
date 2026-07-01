@@ -78,6 +78,25 @@ class ObjectClass(TGEventHandlerObject):
     def SetDisplayName(self, name: str) -> None:
         self._name = name
 
+    def ReplaceTexture(self, new_texture_path: str, old_texture_name: str) -> None:
+        """BC ObjectClass::ReplaceTexture — swap a texture on this object's model.
+
+        Used pervasively to render a Federation hull's registry / ship name
+        ("Dauntless", "Sovereign", ...): `old_texture_name` ("ID") is matched
+        against the NIF's embedded texture basenames and replaced with the TGA at
+        `new_texture_path` (game/-relative). Because our renderer bakes the swap
+        into the Model at load time (a per-registry cache variant), the request
+        is QUEUED here and consumed when the ship's render instance is built — see
+        engine.appc.registry_texture and the two ship-build loops in
+        engine.host_loop. It therefore takes effect the next time the instance is
+        (re)built; every SDK caller (mission Initialize, the MissionLib
+        ship-change path, QuickBattle setup) issues it before realization, so the
+        named hull shows on first appearance. Was previously a silent __getattr__
+        `_Stub` no-op (why every Federation hull rendered as the default
+        Enterprise registry)."""
+        from engine.appc import registry_texture
+        registry_texture.queue_replace(self, new_texture_path, old_texture_name)
+
     # ── Set membership ────────────────────────────────────────────────────────
 
     def GetContainingSet(self):

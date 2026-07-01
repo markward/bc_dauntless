@@ -43,7 +43,36 @@ ModelHandle AssetCache::load(const fs::path& nif_path,
 
 ModelHandle AssetCache::load(const fs::path& nif_path,
                              const std::vector<fs::path>& search_paths) {
-    auto canon = fs::weakly_canonical(nif_path).string();
+    return load(nif_path, search_paths, {});
+}
+
+namespace {
+
+// Stable, collision-resistant suffix appended to the NIF-path cache key so a
+// distinct registry yields a distinct entry while same-registry hulls share.
+// An empty list yields an empty suffix => byte-identical key to the legacy
+// no-replacement path.
+std::string replacements_key(
+    const std::vector<TextureReplacement>& reps) {
+    if (reps.empty()) return {};
+    std::string key = "|rep:";
+    for (const auto& r : reps) {
+        key += r.old_substring;
+        key += '=';
+        key += r.new_texture;
+        key += ';';
+    }
+    return key;
+}
+
+}  // namespace
+
+ModelHandle AssetCache::load(
+    const fs::path& nif_path,
+    const std::vector<fs::path>& search_paths,
+    const std::vector<TextureReplacement>& texture_replacements) {
+    auto canon = fs::weakly_canonical(nif_path).string()
+                 + replacements_key(texture_replacements);
     auto it = impl_->entries.find(canon);
     if (it != impl_->entries.end()) {
         if (auto live = it->second.live.lock()) {
@@ -64,6 +93,7 @@ ModelHandle AssetCache::load(const fs::path& nif_path,
     ctx.texture_uploader      = impl_->config.texture_uploader;
     ctx.mesh_uploader         = impl_->config.mesh_uploader;
     ctx.keep_cpu_data         = impl_->config.keep_cpu_data;
+    ctx.texture_replacements  = texture_replacements;
 
     auto model = std::make_shared<const Model>(detail::build_model(file, ctx));
 

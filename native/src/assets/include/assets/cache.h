@@ -51,6 +51,15 @@ public:
     ModelHandle load(const std::filesystem::path& nif_path,
                      const std::vector<std::filesystem::path>& texture_search_paths);
 
+    /// Load with Federation registry / hull-name texture swaps applied
+    /// (BC ObjectClass::ReplaceTexture). The replacement list is folded into
+    /// the cache key, so distinct registries on the same NIF yield distinct
+    /// model variants while same-registry hulls share one. An empty list is
+    /// equivalent to the plain overload.
+    ModelHandle load(const std::filesystem::path& nif_path,
+                     const std::vector<std::filesystem::path>& texture_search_paths,
+                     const std::vector<TextureReplacement>& texture_replacements);
+
     void evict(const std::filesystem::path& nif_path);
     void evict_unused();
 

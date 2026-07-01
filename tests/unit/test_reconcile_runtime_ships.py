@@ -22,7 +22,7 @@ class _FakeRenderer:
         self.create_calls = 0
         self.destroyed = []
 
-    def load_model(self, path, search):
+    def load_model(self, path, search, texture_replacements=None):
         self.load_calls += 1
         return 100
 
@@ -187,6 +187,75 @@ def test_reconcile_retargets_camera_on_player_swap(monkeypatch):
     # The new player is realized like any runtime spawn.
     assert new_player in sess.ship_instances
 
+    _set_current_game(None)
+    App.g_kSetManager.DeleteAllSets()
+
+
+def test_reconcile_applies_qb_federation_default_registry(monkeypatch):
+    """In a QuickBattle session the (late-created) Federation player ship gets
+    its class-default registry applied and baked in when reconciliation realizes
+    it — Galaxy -> Dauntless — so the hull reads a name, not the stock
+    Enterprise. Covers the RecreatePlayer late-spawn path."""
+    from engine import host_loop as hl
+    from engine.core.game import Game, _set_current_game
+    from engine.appc import registry_texture
+    _force_nif(monkeypatch, hl)
+    registry_texture.reset()
+    App.g_kSetManager.DeleteAllSets()
+    s = _make_set("S")
+    App.g_kSetManager.MakeRenderedSet("S")
+    player = _add_ship(s, "player")
+    player.SetScript("ships.Galaxy")
+
+    game = Game()
+    game.SetPlayer(player)
+    _set_current_game(game)
+
+    sess = hl.MissionSession(mission_name="QuickBattle")
+    r = _FakeRenderer()
+    assert not registry_texture.has_replacements(player)
+
+    hl._reconcile_runtime_instances(sess, r)
+
+    assert player in sess.ship_instances
+    reps = registry_texture.replacements_for(player)
+    assert len(reps) == 1
+    assert reps[0][0] == "ID"
+    assert reps[0][1].lower().endswith("dauntless.tga")
+
+    registry_texture.reset()
+    _set_current_game(None)
+    App.g_kSetManager.DeleteAllSets()
+
+
+def test_reconcile_no_qb_default_outside_quickbattle(monkeypatch):
+    """A non-QuickBattle mission session must NOT auto-apply a registry to its
+    Federation player — campaign missions drive registries via scripted
+    ReplaceTexture, and the default would override their intent."""
+    from engine import host_loop as hl
+    from engine.core.game import Game, _set_current_game
+    from engine.appc import registry_texture
+    _force_nif(monkeypatch, hl)
+    registry_texture.reset()
+    App.g_kSetManager.DeleteAllSets()
+    s = _make_set("S")
+    App.g_kSetManager.MakeRenderedSet("S")
+    player = _add_ship(s, "player")
+    player.SetScript("ships.Galaxy")
+
+    game = Game()
+    game.SetPlayer(player)
+    _set_current_game(game)
+
+    sess = hl.MissionSession(mission_name="Maelstrom.E1M1")
+    r = _FakeRenderer()
+
+    hl._reconcile_runtime_instances(sess, r)
+
+    assert player in sess.ship_instances
+    assert not registry_texture.has_replacements(player)
+
+    registry_texture.reset()
     _set_current_game(None)
     App.g_kSetManager.DeleteAllSets()
 
