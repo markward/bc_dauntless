@@ -117,7 +117,10 @@ def read_weapon_config(ship) -> dict:
     tractor_on = False
     if tractor_present:
         try:
-            tractor_on = bool(tractor.IsFiring())
+            # The toggle reflects the persistent ENGAGE intent (IsEngaged),
+            # NOT the instantaneous IsFiring beam state — it stays "On" even
+            # when the beam momentarily isn't gripping (out of range / shields).
+            tractor_on = bool(tractor.IsEngaged())
         except Exception:
             tractor_on = False
 
@@ -220,7 +223,10 @@ def toggle_tractor(ship) -> None:
     if tractor is None:
         return
     try:
-        if tractor.IsFiring():
+        # Toggle the persistent ENGAGE intent (not the instantaneous beam):
+        # engaged → disengage; otherwise engage on the current target (the
+        # tractor's StartFiring is a no-op without one).
+        if tractor.IsEngaged():
             tractor.StopFiring()
         else:
             target = ship.GetTarget() if hasattr(ship, "GetTarget") else None

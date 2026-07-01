@@ -16,6 +16,7 @@ from engine.appc.subsystems import (
     CloakingSubsystem,
     PhaserSystem,
     PhaserBank,
+    ShieldSubsystem,
     TorpedoSystem,
     TorpedoTube,
     TractorBeamSystem,
@@ -82,9 +83,15 @@ def _attach_cloak(ship):
     return cloak
 
 
-def _target():
+def _target(*, shields_up=False, pos=(0, 40, 0)):
     t = ShipClass_Create("Enemy")
-    t.SetWorldLocation(TGPoint3(0, 40, 0))
+    t.SetWorldLocation(TGPoint3(*pos))
+    if shields_up:
+        shields = ShieldSubsystem("Shields")
+        shields.TurnOn()
+        for f in range(ShieldSubsystem.NUM_SHIELDS):
+            shields.SetMaxShields(f, 1000.0)   # seeds current to max
+        t.SetShieldSubsystem(shields)
     return t
 
 
@@ -246,14 +253,54 @@ def test_toggle_phaser_intensity_absent_no_crash():
 # ── toggle_tractor ──────────────────────────────────────────────────────────
 
 def test_toggle_tractor_on_then_off():
+    # Toggle flips the persistent ENGAGE intent (IsEngaged), not the
+    # instantaneous IsFiring beam state.
     ship = _bare_ship()
     parent = _attach_tractor(ship)
     ship._target = _target()
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
         weapon_config.toggle_tractor(ship)
-        assert parent.IsFiring() == 1
+        assert parent.IsEngaged() == 1
         weapon_config.toggle_tractor(ship)
-        assert parent.IsFiring() == 0
+        assert parent.IsEngaged() == 0
+
+
+def test_toggle_tractor_engages_shielded_target():
+    # A shielded in-range target still ENGAGES (the beam fires; the pull is
+    # deflected elsewhere) — the toggle must go on.
+    ship = _bare_ship()
+    parent = _attach_tractor(ship)
+    ship._target = _target(shields_up=True)
+    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
+        weapon_config.toggle_tractor(ship)
+        assert parent.IsEngaged() == 1
+
+
+def test_tractor_on_follows_engaged_intent():
+    # tractor_on reflects IsEngaged() (the sticky intent), NOT IsFiring().  Use
+    # an OUT-OF-RANGE target so the intent is held (IsEngaged=1) while the beam
+    # isn't currently gripping (IsFiring=0) — the exact case the old IsFiring
+    # read got wrong.
+    ship = _bare_ship()
+    parent = _attach_tractor(ship)
+    ship._target = _target(pos=(0, 5000, 0))   # far beyond TRACTOR_MAX_RANGE_GU
+    assert weapon_config.read_weapon_config(ship)["tractor_on"] is False
+    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
+        weapon_config.toggle_tractor(ship)
+    assert parent.IsFiring() == 0                         # out of range → not gripping
+    assert weapon_config.read_weapon_config(ship)["tractor_on"] is True  # but engaged
+    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
+        weapon_config.toggle_tractor(ship)
+    assert weapon_config.read_weapon_config(ship)["tractor_on"] is False
+
+
+def test_toggle_tractor_no_target_no_op():
+    ship = _bare_ship()
+    parent = _attach_tractor(ship)
+    # ship has no _target → GetTarget returns None; StartFiring is a no-op.
+    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
+        weapon_config.toggle_tractor(ship)
+    assert parent.IsEngaged() == 0
 
 
 def test_toggle_tractor_absent_no_crash():

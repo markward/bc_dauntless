@@ -1177,6 +1177,33 @@ class TractorBeamSystem(_HeldFireWeaponSystem):
     def IsTryingToFire(self) -> int:
         return self.IsFiring()
 
+    def IsEngaged(self) -> int:
+        """The persistent toggle *intent*, independent of the instantaneous
+        IsFiring() beam state.  The HUD / F2 menu tractor toggle reflects THIS:
+        while engaged the beam auto-fires whenever the target is in range (and
+        re-acquires each frame via retry_held_fire), so the button stays "On"
+        even if the beam momentarily isn't gripping."""
+        return 1 if self._fire_held else 0
+
+    def StartFiring(self, target=None, offset=None) -> None:
+        """Record the held ENGAGE intent even when the target isn't immediately
+        grippable, so retry_held_fire re-acquires the beam when the geometry
+        allows.  (Mirrors the base _HeldFireWeaponSystem.StartFiring but records
+        intent BEFORE the engageability check instead of bailing.)"""
+        if not self.IsOn() or target is None:
+            return
+        if _is_offline(self):
+            return
+        if _cloak_blocks_fire(self):
+            return
+        self._fire_held = True
+        self._held_target = target
+        self._held_offset = offset
+        ship = self.GetParentShip()
+        if self._can_engage(ship, target):
+            self._currently_firing = []
+            self._dispatch_one_or_all(target, offset, ship)
+
     def _can_engage(self, ship, target) -> bool:
         # Range gate AND shield gate: a tractor grips only targets whose shields
         # are down (disabled / offline / not equipped / depleted).
