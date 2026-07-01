@@ -158,19 +158,20 @@ def read_weapon_config(ship) -> dict:
 
 
 def _distinct_torpedo_type_names(torps) -> list[str]:
-    """Ordered, de-duplicated ammo-type names across the live slots.
+    """Ordered, de-duplicated names of the SELECTABLE ammo types.
 
-    Iterates the SDK ``range(GetNumAmmoTypes())`` and collects each slot's
-    ``GetAmmoName()``.  A hull may load the same type into several slots, so we
-    dedupe by name while preserving slot order — the result is the exact set of
-    types the player can cycle between (drives the "Type" control / F2 "Use
-    {type} Torpedoes" row)."""
+    Only types with rounds available count (BC gates on
+    GetNumAvailableTorpsToType > 0 — AI/Preprocessors.py:537), so a
+    declared-but-empty slot like PhasedPlasma (SetMaxTorpedoes 0) is excluded in
+    missions as well as QuickBattle.  A hull may load the same type into several
+    slots, so we dedupe by name while preserving slot order — the result is the
+    exact set the player can cycle between (the "Type" control / F2 row)."""
     names: list[str] = []
     try:
-        n = torps.GetNumAmmoTypes()
+        slots = torps.GetSelectableAmmoSlots()
     except Exception:
         return names
-    for i in range(n):
+    for i in slots:
         try:
             ammo = torps.GetAmmoType(i)
             name = ammo.GetAmmoName() if ammo is not None else None

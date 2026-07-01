@@ -919,6 +919,31 @@ class TorpedoSystem(WeaponSystem):
         if ammo is not None and hasattr(ammo, "SetAvailable"):
             ammo.SetAvailable(ammo.GetMaxTorpedoes())
 
+    def IsAmmoTypeSelectable(self, slot) -> bool:
+        """Whether the type at ``slot`` can be selected/cycled to.
+
+        BC gates the torpedo-type selector on availability, NOT declaration:
+        ``GetNumAvailableTorpsToType(iType) > 0`` (AI/Preprocessors.py:537
+        ChooseTorpType; the C++ HUD cycler uses the same rule).  So a slot
+        declared with SetMaxTorpedoes(slot, 0) — e.g. a Sovereign's PhasedPlasma
+        — is present in GetNumAmmoTypes() but never selectable, in missions as
+        well as QuickBattle (which additionally hard-removes it).
+
+        Our synthetic UNLIMITED types (the undeclared-max fallback for legacy /
+        test hulls) report 0 available but represent an inexhaustible supply, so
+        they always count as selectable."""
+        ammo = self.GetAmmoType(slot)
+        if ammo is None:
+            return False
+        if getattr(ammo, "_unlimited", False):
+            return True
+        return self.GetNumAvailableTorpsToType(slot) > 0
+
+    def GetSelectableAmmoSlots(self) -> list:
+        """Sorted slots the player can actually select — the live Type menu."""
+        return [s for s in sorted(self._ammo_by_slot.keys())
+                if self.IsAmmoTypeSelectable(s)]
+
     def GetCurrentAmmoTypeNumber(self) -> int:
         """SDK App.py:5977 — index of the selected ammo type."""
         return self.GetCurrentAmmoSlot()
@@ -974,11 +999,13 @@ class TorpedoSystem(WeaponSystem):
             self._selected_slot = slot
 
     def CycleAmmoType(self) -> None:
-        """Advance the selection to the next populated slot (sorted keys,
-        wraps).  No-op with 0 or 1 populated slots."""
-        if len(self._ammo_by_slot) <= 1:
+        """Advance the selection to the next SELECTABLE slot (available > 0 or
+        unlimited; sorted, wraps).  No-op with 0 or 1 selectable slots — so an
+        empty declared type (e.g. PhasedPlasma, max 0) is skipped, never landed
+        on."""
+        slots = self.GetSelectableAmmoSlots()
+        if len(slots) <= 1:
             return
-        slots = sorted(self._ammo_by_slot.keys())
         current = self.GetCurrentAmmoSlot()
         try:
             idx = slots.index(current)

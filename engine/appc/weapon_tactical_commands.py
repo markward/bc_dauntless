@@ -103,12 +103,11 @@ def _next_torpedo_type_name(ship) -> str:
     if torps is None:
         return ""
     try:
-        n = torps.GetNumAmmoTypes()
+        # Only SELECTABLE slots (available > 0 or unlimited) — mirrors
+        # CycleAmmoType, so an empty type like PhasedPlasma is never offered.
+        slots = torps.GetSelectableAmmoSlots()
     except Exception:
         return ""
-    # Populated slots via the public API (mirrors CycleAmmoType's sorted-slot
-    # advance without reaching into private state).
-    slots = [i for i in range(n) if torps.GetAmmoType(i) is not None]
     if len(slots) <= 1:
         return ""
     try:

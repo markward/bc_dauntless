@@ -72,6 +72,23 @@ def test_quickbattle_prune_leaves_photon_and_quantum():
     assert "PhotonTorpedo2" not in cfg["torp_types"]  # the leaf-leak bug
 
 
+def test_mission_path_hides_empty_phased_without_prune():
+    """A MISSION (e.g. E3M1) never runs QuickBattle's RemoveAmmoType, yet the
+    empty PhasedPlasma slot (SetMaxTorpedoes 0) must NOT appear in the Type
+    selector — BC gates on availability, not removal.  This is the E3M1 bug:
+    the slot stays in GetNumAmmoTypes() but is unselectable."""
+    ship = _sovereign_like_ship()
+    ts = ship.GetTorpedoSystem()
+    # No _quickbattle_prune — mission path.
+    assert ts.GetNumAmmoTypes() == 3               # slot still declared...
+    assert ts.GetSelectableAmmoSlots() == [0, 1]   # ...but Phased not selectable
+
+    cfg = weapon_config.read_weapon_config(ship)
+    assert cfg["torp_types"] == ["Photon", "Quantum"]
+    assert "Phased" not in cfg["torp_types"]
+    assert "PhasedPlasma" not in cfg["torp_types"]
+
+
 def test_e3m1_style_save_load_round_trip():
     """E3M1 SaveTorpCount/RestoreTorpCount: read counts, expend some, re-load the
     difference.  The reserve must track and nothing may raise."""

@@ -158,6 +158,51 @@ def test_ammo_type_number_aliases_current_slot():
     assert t.GetAmmoTypeNumber() == 1
 
 
+# ── Selectability filter (empty types hidden, incl. in missions) ──────────────
+
+def test_empty_declared_type_not_selectable():
+    """A declared-but-empty slot (SetMaxTorpedoes 0, e.g. PhasedPlasma) is
+    present in GetNumAmmoTypes() but never selectable — BC gates on availability
+    (GetNumAvailableTorpsToType > 0), so it's hidden in missions too, not only
+    QuickBattle where it's also hard-removed."""
+    t = TorpedoSystem("Torpedoes")
+    t.AddAmmoType(TorpedoAmmoType("Photon", max_torpedoes=200))
+    t.AddAmmoType(TorpedoAmmoType("Quantum", max_torpedoes=60))
+    t.AddAmmoType(TorpedoAmmoType("Phased", max_torpedoes=0))
+    assert t.GetNumAmmoTypes() == 3
+    assert t.GetSelectableAmmoSlots() == [0, 1]
+    assert t.IsAmmoTypeSelectable(2) is False
+
+
+def test_depleted_type_drops_out_of_selectable():
+    t = _system_with_finite_types()  # Photon 200, Quantum 60
+    t.LoadAmmoType(1, -60)           # fire every Quantum
+    assert t.IsAmmoTypeSelectable(1) is False
+    assert t.GetSelectableAmmoSlots() == [0]
+
+
+def test_unlimited_type_is_selectable_despite_zero_available():
+    """Undeclared-max (unlimited) types report 0 available but are an
+    inexhaustible supply — they must stay selectable."""
+    t = TorpedoSystem("Torpedoes")
+    t.AddAmmoType(TorpedoAmmoType("Photon"))  # unlimited
+    assert t.GetNumAvailableTorpsToType(0) == 0
+    assert t.IsAmmoTypeSelectable(0) is True
+    assert t.GetSelectableAmmoSlots() == [0]
+
+
+def test_cycle_skips_empty_type():
+    t = TorpedoSystem("Torpedoes")
+    t.AddAmmoType(TorpedoAmmoType("Photon", max_torpedoes=200))
+    t.AddAmmoType(TorpedoAmmoType("Quantum", max_torpedoes=60))
+    t.AddAmmoType(TorpedoAmmoType("Phased", max_torpedoes=0))  # empty
+    assert t.GetCurrentAmmoType().GetAmmoName() == "Photon"
+    t.CycleAmmoType()
+    assert t.GetCurrentAmmoType().GetAmmoName() == "Quantum"
+    t.CycleAmmoType()  # wraps to Photon, never lands on Phased
+    assert t.GetCurrentAmmoType().GetAmmoName() == "Photon"
+
+
 # ── Fire -> reserve wiring ────────────────────────────────────────────────────
 
 def _firing_system_with_reserve(max_torpedoes):
