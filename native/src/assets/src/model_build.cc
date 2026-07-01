@@ -12,9 +12,11 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <fstream>
 #include <functional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -363,6 +365,91 @@ int find_parent_node_index(
     return -1;
 }
 
+/// Apply BC `ObjectClass::ReplaceTexture(new_path, old_substring)` semantics at
+/// build time. For each requested replacement, every Model::textures index
+/// whose source NIF basename contains `old_substring` (CASE-SENSITIVE) is
+/// matched; the replacement TGA is decoded + uploaded once, appended, and every
+/// Material stage that pointed at a matched index is repointed to it. Because
+/// the stage *slot* (e.g. Glow for a `_glow` registry texture) was fixed during
+/// material build, repointing preserves the original draw semantics — a Galaxy
+/// saucer's registry glow simply renders a different name.
+///
+/// The match is CASE-SENSITIVE on purpose: BC's registry textures spell the tag
+/// uppercase (`Ent-D_topdish_ID_glow.tga`, `Ent-E-dishtopbottomID_glow.tga`) and
+/// scripts pass "ID". A case-insensitive match would also hit `Ent-D_Bridge-...`
+/// ("id" inside "Bridge"), painting the registry onto the bridge module too.
+///
+/// A replacement that matches nothing, or whose new TGA can't be loaded, leaves
+/// the model untouched (warn-and-skip), so a bad registry never crashes a spawn.
+void apply_texture_replacements(
+    Model& model,
+    const TextureLoadResult& tex_result,
+    const ModelBuildContext& ctx)
+{
+    if (ctx.texture_replacements.empty()) return;
+    auto upload = ctx.texture_uploader
+        ? ctx.texture_uploader
+        : TextureUploaderFn(&assets::upload_image);
+
+    // Model::textures index -> source NIF basename (external images only).
+    std::unordered_map<int, std::string> source_for_index;
+    for (const auto& [link_id, tex_idx] : tex_result.image_to_texture) {
+        auto it = tex_result.image_filename_for_link.find(link_id);
+        if (it != tex_result.image_filename_for_link.end())
+            source_for_index[tex_idx] =
+                fs::path(it->second).filename().string();
+    }
+
+    for (const auto& rep : ctx.texture_replacements) {
+        std::unordered_set<int> matched;
+        for (const auto& [tex_idx, base] : source_for_index) {
+            // Case-sensitive substring (see the function comment): BC's "ID"
+            // tag is uppercase; a case-fold would also hit "...Bridge..." etc.
+            if (!rep.old_substring.empty() &&
+                base.find(rep.old_substring) != std::string::npos)
+                matched.insert(tex_idx);
+        }
+        if (matched.empty()) {
+            std::fprintf(stderr,
+                "apply_texture_replacements: no texture matching '%s' in %s; "
+                "leaving model untouched\n",
+                rep.old_substring.c_str(), model.source.string().c_str());
+            continue;
+        }
+
+        // Resolve the replacement by BASENAME against the model's texture
+        // search dirs (case-insensitive), exactly like the NIF's own textures.
+        // BC's ReplaceTexture paths omit the LOD subdir ("FedShips/Dauntless.tga"
+        // when the file is really in FedShips/High/), and SetTextureSharePath +
+        // the engine's LOD pick supply it — the search dirs already include the
+        // per-ship + shared High/ dirs, so resolving by basename does the same.
+        Texture tex;
+        try {
+            auto path = ctx.resolver->resolve(rep.new_texture,
+                                              ctx.texture_search_paths);
+            auto bytes = read_file(path);
+            Image decoded = decode_tga(bytes);
+            tex = upload(decoded, /*generate_mipmaps=*/true);
+        } catch (const std::exception& e) {
+            std::fprintf(stderr,
+                "apply_texture_replacements: failed to load '%s' (%s); "
+                "leaving model untouched\n",
+                rep.new_texture.c_str(), e.what());
+            continue;
+        }
+        const int new_index = static_cast<int>(model.textures.size());
+        model.textures.push_back(std::move(tex));
+
+        for (auto& mat : model.materials) {
+            for (auto& stage : mat.stages) {
+                if (stage.texture_index >= 0 &&
+                    matched.count(stage.texture_index))
+                    stage.texture_index = new_index;
+            }
+        }
+    }
+}
+
 }  // namespace
 
 Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
@@ -672,6 +759,10 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
 
     // 5. Animations.
     model.animations = build_animations(f);
+
+    // 6. Federation registry / hull-name texture swaps (BC ReplaceTexture).
+    //    No-op when ctx.texture_replacements is empty (the common case).
+    apply_texture_replacements(model, tex_result, ctx);
 
     return model;
 }

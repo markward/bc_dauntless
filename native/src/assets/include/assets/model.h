@@ -16,6 +16,22 @@
 
 namespace assets {
 
+/// A BC `ObjectClass::ReplaceTexture(new, old)` request, baked into a model at
+/// build time to render a Federation ship's registry / hull-name. `old_substring`
+/// is matched (CASE-SENSITIVE — BC's "ID" tag is uppercase, and a case-fold would
+/// also hit "...Bridge...") against each NIF texture's embedded basename;
+/// `new_texture` is the replacement TGA, resolved by basename against the
+/// model's texture search dirs (case-insensitive) exactly like the NIF's own
+/// textures — so a BC-style path that omits the LOD subdir
+/// ("FedShips/Dauntless.tga" for a file really in FedShips/High/) still resolves.
+/// Participates in the AssetCache key so each distinct registry yields a distinct
+/// model variant while same-registry hulls still share one. See model_build.cc
+/// `apply_texture_replacements`.
+struct TextureReplacement {
+    std::string old_substring;
+    std::string new_texture;
+};
+
 struct Node {
     std::string       name;
     int               parent_index = -1;

@@ -21,6 +21,10 @@ struct ModelBuildContext {
     TextureUploaderFn                   texture_uploader; // empty -> calls upload_image
     MeshUploaderFn                      mesh_uploader;    // empty -> calls upload_mesh
     bool                                keep_cpu_data = false;
+    /// Per-registry hull-name swaps (Federation ship registry textures).
+    /// Empty for the overwhelming majority of models; an empty list makes
+    /// build_model byte-identical to the no-replacement path.
+    std::vector<TextureReplacement>     texture_replacements;
 };
 
 class ModelBuildError : public std::runtime_error {

@@ -26,8 +26,13 @@ def frame() -> None:
     _h.frame()
 
 
-def load_model(nif_path: str, texture_search_path: str) -> int:
-    return _h.load_model(nif_path, texture_search_path)
+def load_model(nif_path: str, texture_search_path,
+               texture_replacements=None) -> int:
+    """Load (and cache) a NIF model. `texture_replacements`, when given, is a
+    list of (old_substring, new_abs_path) pairs baking BC ReplaceTexture swaps
+    into a distinct per-registry model variant (Federation hull names). None /
+    empty is byte-identical to the plain load."""
+    return _h.load_model(nif_path, texture_search_path, texture_replacements)
 
 
 def create_instance(model: int) -> InstanceId:

@@ -2446,6 +2446,26 @@ def _ship_nif_path(ship, *, verbose: bool = False) -> Optional[str]:
     return str(abs_path)
 
 
+def _ship_texture_replacements(ship):
+    """BC ReplaceTexture swaps queued for `ship` (Federation registry / hull
+    name), as `[(old_substring, new_abs_path), ...]`, or None when none are
+    pending. Passed to renderer.load_model to bake a per-registry model variant.
+    """
+    from engine.appc import registry_texture
+    reps = registry_texture.replacements_for(ship)
+    return reps or None
+
+
+def _ship_load_key(nif_path, reps):
+    """Model-cache key for a ship load. Bare NIF path when no registry swap
+    (byte-identical to the legacy key, so non-fed ships + planets are
+    unaffected); NIF path + a stable registry suffix otherwise, so two hulls of
+    the same class with DIFFERENT registries don't collapse onto one handle."""
+    if not reps:
+        return nif_path
+    return nif_path + "|" + ";".join(f"{old}={new}" for old, new in reps)
+
+
 def _resolve_active_set(player):
     """Return the SetClass whose lights & backdrops apply to the rendered
     scene. Order:
@@ -2697,8 +2717,9 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False) -> No
         if nif_path is None:
             continue
         tex_search = [str(Path(nif_path).parent / "High"), *shared_search]
+        reps = _ship_texture_replacements(ship)
         try:
-            handle = r_.load_model(nif_path, tex_search)
+            handle = r_.load_model(nif_path, tex_search, reps)
         except Exception as e:
             if verbose:
                 print(f"[host_loop]   realize: skip ship: load_model({nif_path}) "
@@ -2817,6 +2838,21 @@ def _reconcile_runtime_instances(session, renderer, *,
     byte-identical to the pre-reconciliation path.
     """
     import App
+
+    # QuickBattle creates/recreates the player ship LATE (StartSimulation2 ->
+    # RecreatePlayer destroy+recreate), so the rendered player often isn't the
+    # one load_quickbattle saw. Apply BC's Federation "default NCC" registry to
+    # the current player just before the ADD loop realizes it, so its hull reads
+    # a name (Galaxy -> Dauntless) rather than the stock Enterprise. Guarded to a
+    # QB session + a not-yet-realized player with no registry already queued, so
+    # it runs once per player and never overrides a scripted swap.
+    if session.mission_name == "QuickBattle":
+        from engine.appc import registry_texture
+        _g = Game_GetCurrentGame()
+        _p = _g.GetPlayer() if _g is not None else None
+        if (_p is not None and _p not in session.ship_instances
+                and not registry_texture.has_replacements(_p)):
+            registry_texture.apply_class_default(_p)
 
     # ADDITIONS: realize every set that holds an un-realized ship. Idempotent —
     # realize_set_objects skips ships already in session.ship_instances, so this
@@ -3023,6 +3059,8 @@ class HostController:
         core_breach_carve.reset()
         from engine.appc import visible_damage
         visible_damage.reset()
+        from engine.appc import registry_texture
+        registry_texture.reset()
         from engine.appc import shockwaves
         shockwaves.reset()
         from engine.appc import subsystem_emitters
@@ -3123,6 +3161,20 @@ class _MissionLoader:
         import QuickBattle.QuickBattleGame as _QBGame
         _QBGame.Initialize(game)
 
+        # BC gives a Federation player ship a default registry / hull name
+        # ("Dauntless" for a Galaxy, etc. — MissionLib's "default NCC"). QuickBattle
+        # runs no script ReplaceTexture, so apply the class default here (before
+        # realization) so the player's hull reads a name rather than the stock
+        # Enterprise registry. Non-Federation players map to nothing and are left
+        # unchanged. Queued on the ship, consumed by _realize_session's loader.
+        try:
+            from engine.appc import registry_texture
+            _qb_player = game.GetPlayer()
+            if _qb_player is not None:
+                registry_texture.apply_class_default(_qb_player)
+        except Exception as _e:
+            dev_mode.log_swallowed("QB registry default", _e)
+
         self._inject_quickbattle_player_defaults()
         return self._realize_session(MissionSession(mission_name="QuickBattle"))
 
@@ -3178,18 +3230,25 @@ class _MissionLoader:
             # assets (Sovereign, FedStarbase) plus the shared FedShips/FedBases
             # directories (Galaxy and many others ship nothing locally).
             tex_search = [str(Path(nif_path).parent / "High"), *shared_search]
-            handle = self._c.nif_to_handle.get(nif_path)
+            # Federation registry / hull-name swaps make the same NIF a distinct
+            # model, so the handle cache is keyed by (nif, registry). The extent
+            # is pure geometry — identical across registries — so it stays keyed
+            # by nif_path.
+            reps = _ship_texture_replacements(ship)
+            load_key = _ship_load_key(nif_path, reps)
+            handle = self._c.nif_to_handle.get(load_key)
             if handle is None:
                 try:
-                    handle = r_.load_model(nif_path, tex_search)
+                    handle = r_.load_model(nif_path, tex_search, reps)
                 except Exception as e:
                     if self._verbose:
                         print(f"[host_loop]   skip ship: load_model({nif_path}) raised: "
                               f"{type(e).__name__}: {e}", flush=True)
                     continue
-                self._c.nif_to_handle[nif_path] = handle
-                center, half_extents = r_.model_aabb(handle)
-                self._c.nif_to_extent[nif_path] = _model_extent_from_aabb(center, half_extents)
+                self._c.nif_to_handle[load_key] = handle
+                if nif_path not in self._c.nif_to_extent:
+                    center, half_extents = r_.model_aabb(handle)
+                    self._c.nif_to_extent[nif_path] = _model_extent_from_aabb(center, half_extents)
             extent = self._c.nif_to_extent.get(nif_path, 1.0)
             # Seed a gameplay GetRadius() for shim ships that lack one
             # (camera-follow distance, AI threat range, splash damage).
