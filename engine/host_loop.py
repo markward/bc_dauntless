@@ -3716,6 +3716,31 @@ def _live_bridge_characters():
             if getattr(c, "_render_instance", None) is not None and not c.IsHidden()]
 
 
+def _sync_comm_character_visibility(controller, r) -> None:
+    """Drive each realized comm-set character's instance visibility from its SDK
+    IsHidden() flag.
+
+    Comm characters are assembled up front but start hidden (SetHidden(1) in the
+    mission setup). MissionLib.ViewscreenOn un-hides just the hailing character
+    (SetHidden(0)) at runtime; this per-frame sync turns that flag into actual
+    renderer visibility, so the hailing character appears on the viewscreen and
+    the rest of the room's characters stay hidden. Cheap: a handful of
+    characters across the mission's comm sets."""
+    import App as _App
+    for set_name in getattr(controller, "comm_set_ids", {}):
+        s = _App.g_kSetManager.GetSet(set_name)
+        if s is None:
+            continue
+        for ch in _iter_set_characters(s):
+            iid = getattr(ch, "_render_instance", None)
+            if iid is None:
+                continue
+            try:
+                r.set_visible(iid, not ch.IsHidden())
+            except Exception as _e:
+                dev_mode.log_swallowed("comm char visibility sync", _e)
+
+
 def _tag_comm_instance(r, iid, comm_set_id) -> None:
     """Tag a comm instance with its set's id so the bridge pass can render the
     set into the viewscreen RTT. set_comm_set_id is a REQUIRED renderer binding
@@ -3751,7 +3776,18 @@ def _place_one_character(controller, r, character, set_name, is_bridge,
 
     try:
         placement = capture_placement(character)
-        if not placement or placement["hidden"]:
+        if not placement:
+            return
+        # Bridge officers explicitly hidden (e.g. E1M1 Picard waiting in the
+        # turbolift) stay unplaced. Comm-set characters are different: the SDK
+        # mission setup hides them at load (SetHidden(1)) and dynamically
+        # un-hides just the hailing one at runtime via
+        # MissionLib.ViewscreenOn -> SetHidden(0). We must therefore build their
+        # skinned instance up front (start it invisible) and drive its
+        # visibility from IsHidden() each frame — see
+        # _sync_comm_character_visibility. Otherwise the room renders on the
+        # viewscreen but the character never does (Soams / Admiral Liu missing).
+        if placement["hidden"] and is_bridge:
             return
         ap = character.appearance()
         if not ap.get("body_nif"):
@@ -3789,6 +3825,15 @@ def _place_one_character(controller, r, character, set_name, is_bridge,
                     "destroy officer instance (rollback)", _e)
             raise
         character._render_instance = iid
+        # Comm characters assembled while hidden start invisible; the per-frame
+        # _sync_comm_character_visibility reveals them when the SDK un-hides them
+        # for a hail. (Bridge hidden characters returned above, so this only
+        # fires for comm sets.)
+        if placement["hidden"]:
+            try:
+                r.set_visible(iid, False)
+            except Exception as _e:
+                dev_mode.log_swallowed("comm char initial hide", _e)
         # Looping breathe idle (SDK-driven), layered over the placement pose so
         # the body breathes while the root stays at the station. Best-effort: a
         # breathing failure must not unplace a correctly-stationed officer.
@@ -5581,6 +5626,10 @@ def run(mission_name: Optional[str] = None,
             # so it doesn't show on its own screen.
             _vs_obj = getattr(controller, "viewscreen_obj", None)
             r.set_viewscreen_enabled(_viewscreen_feed_on(_vs_obj))
+            # Reveal/hide comm-set characters per their SDK IsHidden() flag
+            # (MissionLib.ViewscreenOn un-hides the hailing one) before the RTT
+            # renders the set.
+            _sync_comm_character_visibility(controller, r)
             # Comm-set feed: if the viewscreen's remote cam belongs to a comm
             # set, render that set into the RTT from its maincamera; otherwise
             # the RTT keeps the forward space view.

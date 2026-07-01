@@ -491,7 +491,17 @@ class CharacterClass(ObjectClass):
     def IsStateSet(self, state) -> int:
         return 1 if self._coerce_state(state) in self._states else 0
 
-    def SetHidden(self, *args) -> None:           self._states.add(self.CS_HIDDEN)
+    def SetHidden(self, hidden=1) -> None:
+        # BC-faithful: SetHidden(iHidden) sets OR clears the flag. The SDK relies
+        # on SetHidden(0) to REVEAL a character — MissionLib.ViewscreenOn hides an
+        # entire look-at set then SetHidden(0)s just the hailing one so it shows on
+        # the viewscreen (Soams / Admiral Liu). The old bare `add(CS_HIDDEN)`
+        # ignored the argument, so SetHidden(0) never un-hid and those characters
+        # stayed invisible forever.
+        if hidden:
+            self._states.add(self.CS_HIDDEN)
+        else:
+            self._states.discard(self.CS_HIDDEN)
     def IsHidden(self) -> int:                    return 1 if self.CS_HIDDEN in self._states else 0
     def SetStanding(self, value=None) -> None:
         # SetStanding(SITTING_ONLY) etc. — also toggles CS_STANDING when called bare.
@@ -684,10 +694,16 @@ def CharacterClass_GetObject(pSet, name) -> "CharacterClass | None":
         if isinstance(obj, CharacterClass):
             return obj
         if obj is None:
-            char = CharacterClass()
-            char.SetCharacterName(name_str)
-            pSet.AddObjectToSet(char, name_str)
-            return char
+            # BC-faithful: a real set with no character under this name returns
+            # NULL, exactly like Appc's CharacterClass_GetObject. This is what
+            # makes the ubiquitous SDK get-or-create idiom work —
+            #     pChar = App.CharacterClass_GetObject(pSet, name)
+            #     if not pChar: pChar = <Module>.CreateCharacter(pSet); ...
+            # (e.g. E1M2.CreatePicard). Vivifying a blank CharacterClass here
+            # returned a truthy placeholder that defeated the `if not pChar`
+            # guard, so the real create+SetLocation never ran and the character
+            # rendered as a hollow, unplaced object (Picard never appeared).
+            return None
         # Non-Character squats the name; don't overwrite, return cached/free.
     # Free-floating character — cache by name so repeat lookups stick.
     cached = _free_characters.get(name_str)
