@@ -184,7 +184,7 @@ class BridgeCharacterAnimController:
             # Turn back: restore normal breathing as the default, then play the
             # reverse turn, which returns to that idle on completion.
             idle = capture_registered_clip(character, "Breathe")
-            if idle and hasattr(renderer, "load_instance_clip"):
+            if idle:
                 idx = renderer.load_instance_clip(iid, self._resolve(idle["clip_nif"]))
                 if idx is not None and idx >= 0:
                     self.set_idle(iid, idx)
@@ -217,9 +217,9 @@ class BridgeCharacterAnimController:
         """Resume the looping breathe idle if one is registered; otherwise snap
         to the static rest pose (officer with no breathe registration)."""
         idle = self._idle_clips.get(iid)
-        if idle is not None and hasattr(renderer, "play_instance_idle"):
+        if idle is not None:
             renderer.play_instance_idle(iid, idle)
-        elif hasattr(renderer, "restore_rest_pose"):
+        else:
             renderer.restore_rest_pose(iid)
 
     def _start_clip(self, renderer, act, index) -> None:
@@ -236,8 +236,6 @@ class BridgeCharacterAnimController:
         else:
             real = self._real_duration(renderer, path)
             act.cur_duration = real if real > 0 else _MIN_GESTURE_HOLD_S
-        if not hasattr(renderer, "play_instance_gesture"):
-            return
         clip_index = renderer.load_instance_clip(act.iid, path)
         if clip_index is not None and clip_index >= 0:
             renderer.play_instance_gesture(act.iid, clip_index)
@@ -248,13 +246,12 @@ class BridgeCharacterAnimController:
         if path in self._dur_cache:
             return self._dur_cache[path]
         dur = 0.0
-        if hasattr(renderer, "load_animation_clips"):
-            try:
-                clips = renderer.load_animation_clips(path)
-                if clips:
-                    dur = float(clips[0].get("duration", 0.0) or 0.0)
-            except Exception:
-                dur = 0.0
+        try:
+            clips = renderer.load_animation_clips(path)
+            if clips:
+                dur = float(clips[0].get("duration", 0.0) or 0.0)
+        except Exception:
+            dur = 0.0
         self._dur_cache[path] = dur
         return dur
 

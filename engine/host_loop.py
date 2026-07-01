@@ -3696,10 +3696,10 @@ def realize_all_sets(controller, r) -> None:
     for name, s in list(mgr.iter_sets()):          # use the manager's set map
         if name == "bridge":
             realize_set(controller, r, s, is_bridge=True)
-        elif hasattr(r, "create_comm_instance") and (
-                s.GetBackgroundModelNIF() is not None or _iter_set_characters(s)):
-            # hasattr guard: skip comm-set realization cleanly against a stale
-            # renderer build that predates the create_comm_instance binding.
+        elif (s.GetBackgroundModelNIF() is not None or _iter_set_characters(s)):
+            # create_comm_instance is a REQUIRED renderer binding (validated at
+            # boot), so it is always present; realize any set with a background
+            # or characters.
             # Allocate a stable small positive id for this comm set so its
             # instances can be tagged + the viewscreen RTT can render it.
             comm_set_id = controller.comm_set_ids.get(name)
@@ -3731,15 +3731,14 @@ def _live_bridge_characters():
 
 def _tag_comm_instance(r, iid, comm_set_id) -> None:
     """Tag a comm instance with its set's id so the bridge pass can render the
-    set into the viewscreen RTT. Guarded: renderer builds without the binding
-    (and the FakeRenderer in unit tests) silently skip the tag."""
+    set into the viewscreen RTT. set_comm_set_id is a REQUIRED renderer binding
+    (validated at boot), so it is always present."""
     if comm_set_id is None:
         return
-    if hasattr(r, "set_comm_set_id"):
-        try:
-            r.set_comm_set_id(iid, comm_set_id)
-        except Exception as _e:
-            dev_mode.log_swallowed("set_comm_set_id", _e)
+    try:
+        r.set_comm_set_id(iid, comm_set_id)
+    except Exception as _e:
+        dev_mode.log_swallowed("set_comm_set_id", _e)
 
 
 def _place_one_character(controller, r, character, set_name, is_bridge,
@@ -3806,19 +3805,19 @@ def _place_one_character(controller, r, character, set_name, is_bridge,
         # Looping breathe idle (SDK-driven), layered over the placement pose so
         # the body breathes while the root stays at the station. Best-effort: a
         # breathing failure must not unplace a correctly-stationed officer.
-        if hasattr(r, "play_instance_idle"):
-            try:
-                breathing = capture_breathing(character)
-                if breathing:
-                    bidx = r.load_instance_clip(iid, _abs(breathing["clip_nif"]))
-                    if bidx is not None and bidx >= 0:
-                        r.play_instance_idle(iid, bidx)
-                        from engine.bridge_character_anim import get_controller
-                        _ca = get_controller()
-                        if _ca is not None:
-                            _ca.set_idle(iid, bidx)
-            except Exception as _e:
-                dev_mode.log_swallowed("establish breathing", _e)
+        # play_instance_idle is a REQUIRED renderer binding (always present).
+        try:
+            breathing = capture_breathing(character)
+            if breathing:
+                bidx = r.load_instance_clip(iid, _abs(breathing["clip_nif"]))
+                if bidx is not None and bidx >= 0:
+                    r.play_instance_idle(iid, bidx)
+                    from engine.bridge_character_anim import get_controller
+                    _ca = get_controller()
+                    if _ca is not None:
+                        _ca.set_idle(iid, bidx)
+        except Exception as _e:
+            dev_mode.log_swallowed("establish breathing", _e)
         if is_bridge:
             controller.officer_instances.append(iid)
         else:
@@ -4091,7 +4090,6 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
     # idle / toggle-off / driver-None, so the hull is never left stuck bright.
     _hd_boost = (_hull_discharge.emissive_boost()
                  if (_hull_discharge is not None
-                     and hasattr(r, "nebula_lightning_enabled")
                      and r.nebula_lightning_enabled())
                  else 1.0)
     for ship, iid in session.ship_instances.items():
@@ -5683,9 +5681,9 @@ def run(mission_name: Optional[str] = None,
 
             # Age every ship's persistent damage-decal ring on the same game
             # clock used for decal birth_time (engine.appc.damage_decals).
-            # hasattr-guarded so an older _dauntless_host.so still runs.
-            if hasattr(r, "damage_decals_tick"):
-                r.damage_decals_tick(App.g_kUtopiaModule.GetGameTime())
+            # damage_decals_tick is a REQUIRED renderer binding (validated at
+            # boot), so it is always present — no guard needed.
+            r.damage_decals_tick(App.g_kUtopiaModule.GetGameTime())
 
             # Warp-VFX (Stage 2 — ST dust streak): tick the animator on the GAME
             # clock (App.g_kUtopiaModule.GetGameTime() == g_kTimerManager.get_time(),

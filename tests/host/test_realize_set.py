@@ -248,11 +248,12 @@ def test_realize_all_sets_assigns_stable_comm_set_ids_and_tags_instances(monkeyp
             assert (iid, sid) in r.tagged
 
 
-def test_realize_all_sets_skips_comm_set_when_renderer_lacks_create_comm_instance(monkeypatch):
-    """Renderer without create_comm_instance must not reach realize_set for comm
-    sets — it would crash with AttributeError (the guard introduced to fix the
-    feat/comm-set-viewscreen crash during live E1M1 load).  The bridge set
-    is unaffected."""
+def test_realize_all_sets_realizes_comm_set(monkeypatch):
+    """create_comm_instance is a REQUIRED renderer binding (validated at boot),
+    so realize_all_sets always reaches realize_set for a comm set with geometry.
+    The old hasattr(r, 'create_comm_instance') skip-guard is gone (it was dead
+    defensive cruft — a missing REQUIRED binding is a loud boot failure, not a
+    silent skip). Both the bridge set and the comm set are realized."""
     import App as _App
     from engine.appc.sets import SetClass
     from engine.appc.bridge_set import BridgeObjectClass
@@ -260,7 +261,8 @@ def test_realize_all_sets_skips_comm_set_when_renderer_lacks_create_comm_instanc
     _App.g_kSetManager._sets.clear()
     seen = []
     monkeypatch.setattr(hl, "realize_set",
-                        lambda c, r, s, *, is_bridge: seen.append((s.GetName(), is_bridge)))
+                        lambda c, r, s, *a, **k: seen.append(
+                            (s.GetName(), k.get("is_bridge"))))
 
     bridge = SetClass(); bridge.SetName("bridge")
     bridge.AddObjectToSet(BridgeObjectClass("b.nif"), "bridge")
@@ -268,15 +270,14 @@ def test_realize_all_sets_skips_comm_set_when_renderer_lacks_create_comm_instanc
     _App.g_kSetManager.AddSet(bridge, "bridge")
     _App.g_kSetManager.AddSet(comm, "StarbaseSet")
 
-    # Renderer WITHOUT create_comm_instance (simulates a build without comm support).
-    class _RendererNoComm:
-        pass
+    class _Ctl:
+        comm_set_ids = {}
 
-    hl.realize_all_sets(object(), _RendererNoComm())
+    hl.realize_all_sets(_Ctl(), _FakeRenderer())
 
-    # Bridge realized; comm set skipped — no AttributeError.
+    # Bridge realized; comm set now realized too (REQUIRED binding always present).
     assert ("bridge", True) in seen
-    assert ("StarbaseSet", False) not in seen
+    assert ("StarbaseSet", False) in seen
 
 
 # ── Comm-set (remote/look-at set) realization regressions ────────────────────
