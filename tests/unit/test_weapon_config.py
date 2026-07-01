@@ -132,6 +132,16 @@ def test_single_ammo_type_not_cyclable():
     assert cfg["torp_types_cyclable"] is False
 
 
+def test_same_type_in_multiple_slots_not_cyclable():
+    # A hull that loads Photon into two slots carries ONE distinct type, so the
+    # Type control / "Use {type} Torpedoes" menu row must stay hidden — even
+    # though GetNumAmmoTypes() (slot count) is 2.
+    ship = _bare_ship()
+    _attach_torpedoes(ship, num_tubes=2, ammo_names=("Photon", "Photon"))
+    cfg = weapon_config.read_weapon_config(ship)
+    assert cfg["torp_types_cyclable"] is False
+
+
 def test_spread_options_reflect_tube_count():
     ship = _bare_ship()
     _attach_torpedoes(ship, num_tubes=4, ammo_names=("Photon",))

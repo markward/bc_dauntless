@@ -69,6 +69,22 @@ def test_photon_torpedo_ammo_stamps_power_cost():
     assert ammo.GetPowerCost() == 20.0
 
 
+def test_bound_slot_named_canonically_not_by_leaf():
+    """A slot bound to the PhotonTorpedo projectile class must read as the
+    canonical "Photon" (what MissionLib matches and what unbound tubes fall
+    back to), NOT the class leaf "PhotonTorpedo". Otherwise a Photon-only hull
+    with mixed scripted + unbound tubes reports two distinct types and the
+    "Use {type} Torpedoes" control wrongly appears."""
+    from engine.appc.ships import _resolve_torpedo_ammo
+    from engine.appc.properties import TorpedoSystemProperty
+    ts_prop = TorpedoSystemProperty("Torpedoes")
+    ts_prop.SetTorpedoScript(0, "Tactical.Projectiles.PhotonTorpedo")
+    bound = _resolve_torpedo_ammo(ts_prop, 0)          # scripted slot
+    unbound = _resolve_torpedo_ammo(ts_prop, 1)        # no script -> fallback
+    assert bound.GetAmmoName() == "Photon"
+    assert unbound.GetAmmoName() == "Photon"           # identical -> one type
+
+
 def test_unresolved_script_defaults_to_photon_cost():
     """Resolver fallback ammo (Photon) also exposes the Photon power
     cost — keeps the per-fire gate from short-circuiting on the

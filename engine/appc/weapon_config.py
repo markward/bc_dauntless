@@ -90,7 +90,9 @@ def read_weapon_config(ship) -> dict:
                 torp_type = ""
         torp_count = _torpedo_count(torps)
         try:
-            torp_types_cyclable = torps.GetNumAmmoTypes() > 1
+            # DISTINCT type names, not slot count: a hull can load the same type
+            # (e.g. Photon) into several slots, so GetNumAmmoTypes() over-reports.
+            torp_types_cyclable = torps.GetNumDistinctAmmoTypes() > 1
         except Exception:
             torp_types_cyclable = False
         try:
