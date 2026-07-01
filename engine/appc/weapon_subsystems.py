@@ -927,27 +927,6 @@ class TorpedoSystem(WeaponSystem):
         """SDK App.py:5985 alias used by Bridge handlers."""
         return self.GetCurrentAmmoSlot()
 
-    def GetNumDistinctAmmoTypes(self) -> int:
-        """Count of DISTINCT loaded ammo types — keyed by GetAmmoName() when
-        available, else by the raw slot value (int AT_* constant).
-
-        GetNumAmmoTypes() counts populated SLOTS, and a hull commonly loads the
-        same type (e.g. Photon) into more than one slot, so slot-count
-        over-reports the choices the player can actually cycle between.  The
-        UI "cyclable"/"Use {type} Torpedoes" gate keys off THIS."""
-        keys = set()
-        for ammo in self._ammo_by_slot.values():
-            if ammo is None:
-                continue
-            name = None
-            if hasattr(ammo, "GetAmmoName"):
-                try:
-                    name = ammo.GetAmmoName()
-                except Exception:
-                    name = None
-            keys.add(name if name else ammo)
-        return len(keys)
-
     def AddAmmoType(self, ammo_type) -> None:
         # Append into the next free slot.  Mission code uses either AddAmmoType
         # (during hardpoint setup) or SetAmmoType (during mission to override).

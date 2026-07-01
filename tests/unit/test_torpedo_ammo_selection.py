@@ -18,20 +18,6 @@ def _system_with_two_types():
     return t
 
 
-def test_distinct_ammo_types_counts_names_not_slots():
-    # Same type loaded into two slots — one distinct type (NOT cyclable),
-    # even though GetNumAmmoTypes() (slot count) reports 2.
-    t = TorpedoSystem("Torpedoes")
-    t.AddAmmoType(TorpedoAmmoType("Photon", power_cost=20.0))
-    t.AddAmmoType(TorpedoAmmoType("Photon", power_cost=20.0))
-    assert t.GetNumAmmoTypes() == 2
-    assert t.GetNumDistinctAmmoTypes() == 1
-
-
-def test_distinct_ammo_types_two_names():
-    assert _system_with_two_types().GetNumDistinctAmmoTypes() == 2
-
-
 def test_default_current_ammo_is_lowest_slot():
     t = _system_with_two_types()
     assert t.GetCurrentAmmoType().GetAmmoName() == "Photon"

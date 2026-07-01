@@ -114,6 +114,7 @@ def test_torpedoes_present_and_fields():
     assert cfg["has_torpedoes"] is True
     assert cfg["torp_type"] == "Photon"          # lowest slot by default
     assert cfg["torp_count"] == 250              # 2 tubes × 125
+    assert cfg["torp_types"] == ["Photon", "Quantum"]  # the live menu
     assert cfg["torp_types_cyclable"] is True    # two ammo types
     assert cfg["has_any_config"] is True
 
@@ -139,6 +140,7 @@ def test_same_type_in_multiple_slots_not_cyclable():
     ship = _bare_ship()
     _attach_torpedoes(ship, num_tubes=2, ammo_names=("Photon", "Photon"))
     cfg = weapon_config.read_weapon_config(ship)
+    assert cfg["torp_types"] == ["Photon"]       # deduped to one distinct type
     assert cfg["torp_types_cyclable"] is False
 
 

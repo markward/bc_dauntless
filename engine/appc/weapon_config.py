@@ -78,6 +78,7 @@ def read_weapon_config(ship) -> dict:
     has_torpedoes = torps is not None
     torp_type = ""
     torp_count = 0
+    torp_types: list[str] = []
     torp_types_cyclable = False
     spread = 1
     spread_options = [1]
@@ -89,12 +90,12 @@ def read_weapon_config(ship) -> dict:
             except Exception:
                 torp_type = ""
         torp_count = _torpedo_count(torps)
-        try:
-            # DISTINCT type names, not slot count: a hull can load the same type
-            # (e.g. Photon) into several slots, so GetNumAmmoTypes() over-reports.
-            torp_types_cyclable = torps.GetNumDistinctAmmoTypes() > 1
-        except Exception:
-            torp_types_cyclable = False
+        # The live ammo model IS the menu: after the SDK curates it
+        # (QuickBattle.RemoveAmmoType prunes PhasedPlasma), the distinct
+        # GetAmmoName()s across the loaded slots are exactly the selectable
+        # types — no string surgery, no UI-side filtering.  Cyclable when >1.
+        torp_types = _distinct_torpedo_type_names(torps)
+        torp_types_cyclable = len(torp_types) > 1
         try:
             spread = int(torps.GetSpread())
         except Exception:
@@ -142,6 +143,7 @@ def read_weapon_config(ship) -> dict:
         "has_torpedoes": has_torpedoes,
         "torp_type": torp_type,
         "torp_count": torp_count,
+        "torp_types": torp_types,
         "torp_types_cyclable": torp_types_cyclable,
         "spread": spread,
         "spread_options": spread_options,
@@ -153,6 +155,30 @@ def read_weapon_config(ship) -> dict:
         "cloak_on": cloak_on,
         "has_any_config": has_any_config,
     }
+
+
+def _distinct_torpedo_type_names(torps) -> list[str]:
+    """Ordered, de-duplicated ammo-type names across the live slots.
+
+    Iterates the SDK ``range(GetNumAmmoTypes())`` and collects each slot's
+    ``GetAmmoName()``.  A hull may load the same type into several slots, so we
+    dedupe by name while preserving slot order — the result is the exact set of
+    types the player can cycle between (drives the "Type" control / F2 "Use
+    {type} Torpedoes" row)."""
+    names: list[str] = []
+    try:
+        n = torps.GetNumAmmoTypes()
+    except Exception:
+        return names
+    for i in range(n):
+        try:
+            ammo = torps.GetAmmoType(i)
+            name = ammo.GetAmmoName() if ammo is not None else None
+        except Exception:
+            name = None
+        if name and name not in names:
+            names.append(name)
+    return names
 
 
 def _torpedo_count(torps) -> int:
