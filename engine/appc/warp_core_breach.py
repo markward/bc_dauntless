@@ -36,7 +36,7 @@ def arm(ship) -> None:
     _armed.append(ship)
 
 
-def advance(dt: float, host=None, ship_instances=None) -> None:
+def advance(dt: float, ship_instances=None) -> None:
     """Drain the armed queue, detonating each ship. Non-recursive: a detonation
     may arm further ships (chains), which this while-loop picks up in the same
     tick. The _breached guard guarantees termination."""
@@ -46,10 +46,10 @@ def advance(dt: float, host=None, ship_instances=None) -> None:
             continue
         _breached.add(ship)
         # Module-global lookup so tests can monkeypatch `detonate`.
-        detonate(ship, host=host, ship_instances=ship_instances)
+        detonate(ship, ship_instances=ship_instances)
 
 
-def detonate(ship, host=None, ship_instances=None) -> None:
+def detonate(ship, ship_instances=None) -> None:
     """Massive explosion at the warp core's world position: weapon-style AoE
     damage to every ship in BREACH_RADIUS_GU + a shockwave ring VFX. Raise-safe."""
     from engine.appc import combat
@@ -86,11 +86,11 @@ def detonate(ship, host=None, ship_instances=None) -> None:
         w = combat._splash_weight(r_tgt, BREACH_RADIUS_GU, d)
         if w <= 0.0:
             continue
-        point, normal = _impact_point(target, centre, host, ship_instances)
+        point, normal = _impact_point(target, centre, ship_instances)
         try:
             combat.apply_hit(
                 target, magnitude * w, point, source=ship,
-                normal=normal, host=host, ship_instances=ship_instances,
+                normal=normal, ship_instances=ship_instances,
                 weapon_type="torpedo", splash_radius=BREACH_RADIUS_GU,
                 bypass_shields=True,  # explosion: AddDamage primitive, skips shields
             )
@@ -98,10 +98,10 @@ def detonate(ship, host=None, ship_instances=None) -> None:
             dev_mode.log_swallowed("warp core breach apply_hit", _e)
 
 
-def _impact_point(target, centre, host, ship_instances):
+def _impact_point(target, centre, ship_instances):
     """Return (point, normal) on `target`'s hull, traced from `centre` toward
     the target centre. Falls back to the sphere-facing point (normal None)
-    when no host/renderer instance is available (headless / tests)."""
+    when no renderer instance is available (headless / tests)."""
     from engine.appc.math import TGPoint3
     from engine.appc.combat import _resolve_hit_point
     loc = target.GetWorldLocation()
@@ -119,7 +119,7 @@ def _impact_point(target, centre, host, ship_instances):
     fallback = TGPoint3(loc.x - direction.x * r_tgt,
                         loc.y - direction.y * r_tgt,
                         loc.z - direction.z * r_tgt)
-    return _resolve_hit_point(host, ship_instances, target,
+    return _resolve_hit_point(ship_instances, target,
                               origin, direction, dist + r_tgt, fallback)
 
 

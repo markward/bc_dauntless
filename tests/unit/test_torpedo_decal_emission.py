@@ -11,6 +11,7 @@ the torpedo path must do the same. These tests pin that contract.
 """
 import pytest
 
+from engine import host_io
 from engine.appc.math import TGPoint3
 from engine.appc.projectiles import Torpedo, register, update_all, _active
 
@@ -48,7 +49,8 @@ class _Hull:
 
 
 class _Host:
-    """Renderer-host stub: a successful mesh trace + a recording decal sink."""
+    """host_io spy holder: a successful mesh trace + a recording decal sink,
+    installed onto the host_io wrappers by the `host` fixture."""
     def __init__(self, normal):
         self._normal = normal          # 3-tuple, as the real binding returns
         self.decal_calls = []
@@ -57,11 +59,25 @@ class _Host:
         # (point, normal, t) — same shape the real binding returns.
         return ((5.0, 0.0, 0.0), self._normal, 5.0)
 
-    def damage_decal_add(self, *, instance_id, world_point, world_normal,
+    def damage_decal_add(self, instance_id, world_point, world_normal,
                          radius, intensity, weapon_class, time):
         self.decal_calls.append(dict(
             instance_id=instance_id, world_point=world_point,
             world_normal=world_normal, weapon_class=weapon_class))
+
+
+@pytest.fixture
+def make_host(monkeypatch):
+    """Return a factory that installs an _Host spy onto the host_io wrappers
+    (ray_trace_mesh + damage_decal_add) and returns it. world_to_body → None
+    so the spark path never hits the strict real native binding."""
+    def _factory(normal):
+        h = _Host(normal=normal)
+        monkeypatch.setattr(host_io, "ray_trace_mesh", h.ray_trace_mesh)
+        monkeypatch.setattr(host_io, "damage_decal_add", h.damage_decal_add)
+        monkeypatch.setattr(host_io, "world_to_body", lambda *a, **k: None)
+        return h
+    return _factory
 
 
 def _torp(src):
@@ -76,15 +92,14 @@ def _torp(src):
     return t
 
 
-def test_update_all_forwards_resolved_hit_normal():
+def test_update_all_forwards_resolved_hit_normal(make_host):
     """update_all must return the mesh normal, not discard it."""
     src = _FakeShip(-100, 0, 0)
     target = _FakeShip(5, 0, 0, radius=10.0)
     _torp(src)
-    host = _Host(normal=(0.0, 0.0, 1.0))
+    make_host(normal=(0.0, 0.0, 1.0))
 
-    hits = update_all(0.1, [src, target],
-                      host=host, ship_instances={target: "IID"})
+    hits = update_all(0.1, [src, target], ship_instances={target: "IID"})
 
     assert len(hits) == 1
     rec = hits[0]
@@ -96,7 +111,7 @@ def test_update_all_forwards_resolved_hit_normal():
     assert abs(normal.z - 1.0) < 1e-6
 
 
-def test_torpedo_path_emits_decal_end_to_end():
+def test_torpedo_path_emits_decal_end_to_end(make_host):
     """The full torpedo hit path (update_all -> apply_hit) emits a decal."""
     from engine.appc.combat import apply_hit
     from engine.appc import damage_decals as dd
@@ -104,17 +119,16 @@ def test_torpedo_path_emits_decal_end_to_end():
     src = _FakeShip(-100, 0, 0)
     target = _FakeShip(5, 0, 0, radius=10.0)
     torp = _torp(src)
-    host = _Host(normal=(0.0, 0.0, 1.0))
+    host = make_host(normal=(0.0, 0.0, 1.0))
     ship_instances = {target: "IID"}
 
-    hits = update_all(0.1, [src, target],
-                      host=host, ship_instances=ship_instances)
+    hits = update_all(0.1, [src, target], ship_instances=ship_instances)
 
     # Replicate host_loop._advance_combat's torpedo loop (the fixed form).
     for torpedo, ship, hit_point, hit_normal in hits:
         apply_hit(ship, torpedo._damage, hit_point,
                   source=torpedo._source_ship,
-                  normal=hit_normal, host=host, ship_instances=ship_instances,
+                  normal=hit_normal, ship_instances=ship_instances,
                   weapon_type="torpedo", hardpoint_weapon=torpedo)
 
     assert len(host.decal_calls) == 1, "torpedo hull hit did not emit a decal"

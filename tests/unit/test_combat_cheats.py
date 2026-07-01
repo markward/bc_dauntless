@@ -138,6 +138,7 @@ def test_cheats_are_noops_when_dev_mode_off(env):
 
 def test_god_mode_player_gets_no_persistent_decal(env, monkeypatch):
     player, _ = env
+    from engine import host_io
     import engine.dev_combat_cheats as cheats
     from engine.appc import damage_decals as dd
     # Deterministic clock so the decal path is fully exercised if (and only
@@ -145,16 +146,17 @@ def test_god_mode_player_gets_no_persistent_decal(env, monkeypatch):
     monkeypatch.setattr(dd, "current_game_time", lambda: 42.0)
     cheats.set_god_mode(True)
 
-    class _Host:
-        def __init__(self):
-            self.decals = []
-        def damage_decal_add(self, **kw):
-            self.decals.append(kw)
+    # The scorch decal routes through host_io.damage_decal_add; capture it there.
+    # world_to_body → None so the spark path never hits the strict real binding.
+    decals = []
+    monkeypatch.setattr(host_io, "damage_decal_add",
+                        lambda *a, **k: decals.append((a, k)))
+    monkeypatch.setattr(host_io, "world_to_body", lambda *a, **k: None)
+    monkeypatch.setattr(host_io, "hull_carve_add", lambda *a, **k: None)
 
-    host = _Host()
     # Drain a face so the hit would reach the hull (the decal path) absent god mode.
     player.GetShields().SetCurrentShields(0, 0.0)
     apply_hit(player, 500.0, TGPoint3(0, 10, 0), source=None,
-              normal=TGPoint3(0, 1, 0), host=host, ship_instances={player: 1})
-    assert host.decals == []                            # god mode: no scar
+              normal=TGPoint3(0, 1, 0), ship_instances={player: 1})
+    assert decals == []                                 # god mode: no scar
     assert player.GetHull().GetCondition() == 2000.0    # and no damage taken

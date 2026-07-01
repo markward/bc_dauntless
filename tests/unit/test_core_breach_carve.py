@@ -1,6 +1,12 @@
-"""Tests for the warp-core breach hull carve (engine/appc/core_breach_carve.py)."""
+"""Tests for the warp-core breach hull carve (engine/appc/core_breach_carve.py).
+
+The carve emit routes through engine.host_io.hull_carve_add; these tests patch
+that wrapper with a call-capturing spy (host_io owns the single guard point)
+rather than injecting a raw host= module (Task 4 of the host_io façade
+refactor). advance() no longer takes a host arg."""
 import pytest
 
+from engine import host_io
 from engine.appc import core_breach_carve
 from engine.appc.math import TGMatrix3, TGPoint3
 
@@ -26,16 +32,27 @@ class _Ship:
     def GetPowerSubsystem(self): return self._core
 
 
-class _Host:
+class _CarveSpy:
+    """Positional-arg capture matching host_io.hull_carve_add's signature.
+    Core breach passes influ == floor == the eased radius (index [3]),
+    strength 0 — it carries its own size rather than accumulating."""
+
     def __init__(self):
         self.carves = []  # (iid, point, normal, influ, strength, time, floor)
 
-    def hull_carve_add(self, iid, point, normal, influ, strength, time,
-                       floor_radius=0.0):
-        # Core breach passes influ == floor == the eased radius (index [3]),
-        # strength 0 — it carries its own size rather than accumulating.
+    def __call__(self, iid, point, normal, influ, strength, time,
+                 floor_radius=0.0, radius_modifier=1.0):
         self.carves.append((iid, point, normal, influ, strength, time,
                             floor_radius))
+
+
+@pytest.fixture
+def host(monkeypatch):
+    """Patch host_io.hull_carve_add with a call-capturing spy; return the spy
+    (kept named `host` so the existing assertions read `host.carves`)."""
+    spy = _CarveSpy()
+    monkeypatch.setattr(host_io, "hull_carve_add", spy)
+    return spy
 
 
 @pytest.fixture(autouse=True)
@@ -45,14 +62,13 @@ def _clean():
     core_breach_carve.reset()
 
 
-def test_advance_emits_carve_at_core_with_growing_radius():
+def test_advance_emits_carve_at_core_with_growing_radius(host):
     ship = _Ship(radius=2.0)
-    host = _Host()
     si = {ship: 7}
     core_breach_carve.schedule(ship)
 
-    core_breach_carve.advance(0.15, host, si)
-    core_breach_carve.advance(0.45, host, si)   # age now 0.6
+    core_breach_carve.advance(0.15, si)
+    core_breach_carve.advance(0.45, si)   # age now 0.6
 
     assert len(host.carves) == 2
     # Same instance id, centered at the core world position (ship at origin,
@@ -63,84 +79,76 @@ def test_advance_emits_carve_at_core_with_growing_radius():
     assert host.carves[1][3] > host.carves[0][3]
 
 
-def test_carve_normal_points_from_centre_through_core():
+def test_carve_normal_points_from_centre_through_core(host):
     ship = _Ship(radius=2.0)
-    host = _Host()
     core_breach_carve.schedule(ship)
-    core_breach_carve.advance(0.1, host, {ship: 1})
+    core_breach_carve.advance(0.1, {ship: 1})
     nx, ny, nz = host.carves[0][2]
     assert (round(nx, 5), round(ny, 5), round(nz, 5)) == (1.0, 0.0, 0.0)
 
 
-def test_reaches_full_radius_then_drops():
+def test_reaches_full_radius_then_drops(host):
     ship = _Ship(radius=2.0)
-    host = _Host()
     si = {ship: 1}
     core_breach_carve.schedule(ship)
 
-    core_breach_carve.advance(core_breach_carve.GROW_DURATION, host, si)  # t=1
+    core_breach_carve.advance(core_breach_carve.GROW_DURATION, si)  # t=1
     # Full radius = min(MAX_RADIUS_GU, 0.25 * 2.0) * easeOut(1.0) = 0.5
     assert host.carves[-1][3] == pytest.approx(0.5)
 
     n = len(host.carves)
-    core_breach_carve.advance(1.0, host, si)   # entry dropped -> no new carve
+    core_breach_carve.advance(1.0, si)   # entry dropped -> no new carve
     assert len(host.carves) == n
 
 
-def test_radius_stays_within_safe_cap_for_a_capital_ship():
+def test_radius_stays_within_safe_cap_for_a_capital_ship(host):
     # A Galaxy's bounding-sphere GetRadius() is ~4 GU; the carve must NOT scale
     # to several GU (the breach renderer degenerates into a flat patch when a
     # carve approaches the hull's smallest dimension). It must stay <= the cap.
     ship = _Ship(radius=4.0)
-    host = _Host()
     core_breach_carve.schedule(ship)
-    core_breach_carve.advance(core_breach_carve.GROW_DURATION, host, {ship: 1})
+    core_breach_carve.advance(core_breach_carve.GROW_DURATION, {ship: 1})
     radius = host.carves[-1][3]
     assert radius <= core_breach_carve.MAX_RADIUS_GU
     # 0.25 * 4.0 = 1.0, under the 1.2 cap.
     assert radius == pytest.approx(1.0)
 
 
-def test_radius_hard_capped_for_an_oversized_ship():
+def test_radius_hard_capped_for_an_oversized_ship(host):
     ship = _Ship(radius=20.0)
-    host = _Host()
     core_breach_carve.schedule(ship)
-    core_breach_carve.advance(core_breach_carve.GROW_DURATION, host, {ship: 1})
+    core_breach_carve.advance(core_breach_carve.GROW_DURATION, {ship: 1})
     # 0.25 * 20 = 5.0, clamped to MAX_RADIUS_GU.
     assert host.carves[-1][3] == pytest.approx(core_breach_carve.MAX_RADIUS_GU)
 
 
-def test_no_instance_emits_nothing_and_drops():
+def test_no_instance_emits_nothing_and_drops(host):
     ship = _Ship()
-    host = _Host()
     core_breach_carve.schedule(ship)
-    core_breach_carve.advance(0.1, host, {})   # ship not in ship_instances
+    core_breach_carve.advance(0.1, {})   # ship not in ship_instances
     assert host.carves == []
-    core_breach_carve.advance(0.1, host, {ship: 1})  # already dropped
+    core_breach_carve.advance(0.1, {ship: 1})  # already dropped
     assert host.carves == []
 
 
-def test_ship_without_core_is_not_scheduled():
+def test_ship_without_core_is_not_scheduled(host):
     ship = _Ship(core=None)
-    host = _Host()
     core_breach_carve.schedule(ship)
-    core_breach_carve.advance(0.1, host, {ship: 1})
+    core_breach_carve.advance(0.1, {ship: 1})
     assert host.carves == []
 
 
-def test_schedule_is_idempotent():
+def test_schedule_is_idempotent(host):
     ship = _Ship()
-    host = _Host()
     core_breach_carve.schedule(ship)
     core_breach_carve.schedule(ship)
-    core_breach_carve.advance(0.1, host, {ship: 1})
+    core_breach_carve.advance(0.1, {ship: 1})
     assert len(host.carves) == 1   # one entry, one carve this tick
 
 
-def test_reset_clears_registry():
+def test_reset_clears_registry(host):
     ship = _Ship()
-    host = _Host()
     core_breach_carve.schedule(ship)
     core_breach_carve.reset()
-    core_breach_carve.advance(0.1, host, {ship: 1})
+    core_breach_carve.advance(0.1, {ship: 1})
     assert host.carves == []

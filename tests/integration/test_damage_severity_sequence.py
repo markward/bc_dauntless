@@ -8,6 +8,7 @@ impact) and asserts the severity sequence.
 """
 import pytest
 
+from engine import host_io
 from engine.appc import combat, hit_feedback, hit_vfx, camera_shake
 from engine.appc.hit_feedback import Severity
 from engine.appc.math import TGPoint3
@@ -73,19 +74,20 @@ class _Ship:
         # the routing, not the hull condition).
 
 
-class _FakeHost:
+class _ShieldHitSpy:
     """Captures only what mutual-exclusivity needs (instance_id + point).
-    rgba and intensity are accepted to satisfy the kwarg signature but
-    not stored — this test doesn't assert against them."""
+    Positional-arg signature matching host_io.shield_hit; rgba/intensity are
+    accepted but not stored — this test doesn't assert against them."""
     def __init__(self):
         self.shield_hit_calls = []
-    def shield_hit(self, *, instance_id, point, rgba, intensity):
+    def __call__(self, instance_id, point, rgba=(0.0, 0.0, 0.0, 0.0),
+                 intensity=1.0):
         self.shield_hit_calls.append({"point": point, "instance_id": instance_id})
 
 
 @pytest.fixture
 def setup(monkeypatch):
-    """Build ship + host + camera-shake calls."""
+    """Build ship + host_io shield-hit spy + camera-shake calls."""
     hit_vfx._active.clear()
     camera_shake.reset()
 
@@ -93,7 +95,13 @@ def setup(monkeypatch):
     shields = _Shield(front_charge=100.0)
     sensors = _Sensors()
     ship = _Ship(hull, shields, sensors)
-    host = _FakeHost()
+    # Route the shield flash through the host_io spy; neutralize the sibling
+    # wrappers so the decal / carve / spark paths never hit the real native.
+    host = _ShieldHitSpy()
+    monkeypatch.setattr(host_io, "shield_hit", host)
+    monkeypatch.setattr(host_io, "world_to_body", lambda *a, **k: None)
+    monkeypatch.setattr(host_io, "damage_decal_add", lambda *a, **k: None)
+    monkeypatch.setattr(host_io, "hull_carve_add", lambda *a, **k: None)
     ship_instances = {ship: 42}
 
     class _StubSnd:
@@ -177,7 +185,7 @@ def test_severity_sequence_shield_then_hull_then_critical(setup):
         combat.apply_hit(ship, damage=30.0, hit_point=point,
                           source=None,
                           normal=TGPoint3(0.0, 1.0, 0.0),
-                          host=host, ship_instances=ship_instances)
+                          ship_instances=ship_instances)
         snap_after = hit_vfx.snapshot()
         actual.append(_severity_for_last_push(host_before, host,
                                                 snap_before, snap_after))
@@ -196,7 +204,7 @@ def test_camera_shake_fires_only_when_target_is_player(setup, monkeypatch):
         combat.apply_hit(ship, damage=30.0, hit_point=TGPoint3(0, 1, 0),
                           source=None,
                           normal=None,
-                          host=host, ship_instances=ship_instances)
+                          ship_instances=ship_instances)
     energy_when_player = camera_shake.get_energy()
     assert energy_when_player > 0.0
 
@@ -215,5 +223,5 @@ def test_camera_shake_fires_only_when_target_is_player(setup, monkeypatch):
         combat.apply_hit(ship, damage=30.0, hit_point=TGPoint3(0, 1, 0),
                           source=None,
                           normal=None,
-                          host=host, ship_instances=ship_instances)
+                          ship_instances=ship_instances)
     assert camera_shake.get_energy() == 0.0

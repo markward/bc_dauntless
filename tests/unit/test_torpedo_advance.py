@@ -161,21 +161,21 @@ def test_homing_past_guidance_lifetime_stops_steering():
     assert t._velocity.x == initial_vx
 
 
-def test_torpedo_uses_host_ray_trace_mesh_when_supplied():
-    """When host + ship_instances are supplied, hit_point comes from the
-    mesh trace, not the post-advance position."""
+def test_torpedo_uses_host_ray_trace_mesh_when_supplied(monkeypatch):
+    """When ship_instances is supplied, hit_point comes from the mesh trace
+    (host_io.ray_trace_mesh), not the post-advance position."""
+    from engine import host_io
     src = _FakeShip(-100, 0, 0)
     target = _FakeShip(5, 0, 0, radius=10.0)
     t = _torp_at(0, 0, 0, 10, 0, 0, src=src)
 
-    class FakeHost:
-        def ray_trace_mesh(self, iid, origin, direction, max_dist):
-            return ((7.0, 7.0, 7.0), (0.0, 0.0, -1.0), 1.0)
+    monkeypatch.setattr(
+        host_io, "ray_trace_mesh",
+        lambda iid, origin, direction, max_dist: ((7.0, 7.0, 7.0), (0.0, 0.0, -1.0), 1.0))
 
     instance_sentinel = object()
     hits = update_all(
         dt=0.1, all_ships=[src, target],
-        host=FakeHost(),
         ship_instances={target: instance_sentinel},
     )
     assert len(hits) == 1

@@ -18,6 +18,8 @@ crash never suppresses mission-side event handlers.
 import time
 from enum import IntEnum
 
+from engine import host_io
+
 
 class Severity(IntEnum):
     SHIELD = 0
@@ -136,7 +138,7 @@ def _audio_should_play(ship, severity: Severity) -> bool:
 def dispatch(*, ship, source, point, normal, damage, subsystem,
              absorbed_shields: float, absorbed_subsystem: float,
              absorbed_hull: float, sub_transition,
-             host=None, ship_instances=None,
+             ship_instances=None,
              weapon_type: str | None = None, radius: float = 0.0,
              persist_decal: bool = True,
              allow_hull_carve: bool = True) -> None:
@@ -147,7 +149,11 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
     Audio fires for every severity. Camera shake fires only when
     ship == Game_GetCurrentGame().GetPlayer().
 
-    Headless-safe: host=None silently skips shield_hit;
+    Native hit/damage touches route through the engine.host_io façade,
+    which no-ops when the native module is absent (headless): no `host`
+    handle is threaded in. `ship_instances` maps ship→renderer instance id;
+    when None or the ship is unmapped, the renderer-anchored effects
+    (shield flash, sparks, decal, carve) are skipped.
     App.g_kSoundManager=None silently skips audio.
 
     `weapon_type` is "phaser" / "torpedo" / None. Used by _play_audio to
@@ -172,18 +178,17 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
 
     # 1. Visual — mutually exclusive.
     if severity == Severity.SHIELD:
-        if host is not None and ship_instances is not None \
-                and hasattr(host, "shield_hit"):
+        if ship_instances is not None:
             iid = ship_instances.get(ship)
             if iid is not None:
                 # rgba=(0,0,0,0) is the documented sentinel that tells the
                 # shield_pass to substitute the ship's registered
-                # ShieldGlowColor — see host.shield_register's default_color.
-                host.shield_hit(
-                    instance_id=iid,
-                    point=(point.x, point.y, point.z),
-                    rgba=(0.0, 0.0, 0.0, 0.0),
-                    intensity=1.0,
+                # ShieldGlowColor — see shield_register's default_color.
+                host_io.shield_hit(
+                    iid,
+                    (point.x, point.y, point.z),
+                    (0.0, 0.0, 0.0, 0.0),
+                    1.0,
                 )
     else:
         # HULL or CRITICAL — hit_vfx.spawn handles both, filtered by severity.
@@ -193,18 +198,18 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
             absorbed_hull=absorbed_hull)
         body_point = body_normal = None
         instance_id = None
-        # Bail to flash-only (no sparks) when any of: no host (headless),
-        # no instance map, no surface normal (sphere-entry fallback), the
-        # host can't convert, the ship has no instance, or the id is stale.
+        # Bail to flash-only (no sparks) when any of: no instance map, no
+        # surface normal (sphere-entry fallback), the world→body conversion
+        # fails (native absent / stale id), or the ship has no instance.
         # Sparks need a hull anchor; the impact-flash billboard fires regardless.
-        if (spark_count > 0 and host is not None and ship_instances is not None
-                and normal is not None and hasattr(host, "world_to_body")):
+        if (spark_count > 0 and ship_instances is not None
+                and normal is not None):
             instance_id = ship_instances.get(ship)
             if instance_id is not None:
-                conv = host.world_to_body(
-                    instance_id=instance_id,
-                    world_point=(point.x, point.y, point.z),
-                    world_normal=(normal.x, normal.y, normal.z))
+                conv = host_io.world_to_body(
+                    instance_id,
+                    (point.x, point.y, point.z),
+                    (normal.x, normal.y, normal.z))
                 if conv is not None:
                     body_point, body_normal = conv
                 else:
@@ -246,8 +251,7 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
     # `persist_decal` is False under god mode: the transient spark/shake above
     # still fire (severity is unchanged), but no permanent scar is written.
     if (persist_decal and absorbed_hull > 0.0 and normal is not None
-            and host is not None and ship_instances is not None
-            and hasattr(host, "damage_decal_add")):
+            and ship_instances is not None):
         iid = ship_instances.get(ship)
         if iid is not None:
             from engine.appc import damage_decals
@@ -256,14 +260,14 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
             key = (id(ship), wclass)
             if now - _last_decal_emit.get(key, -1e9) >= DECAL_EMIT_INTERVAL:
                 _last_decal_emit[key] = now
-                host.damage_decal_add(
-                    instance_id=iid,
-                    world_point=(point.x, point.y, point.z),
-                    world_normal=(normal.x, normal.y, normal.z),
-                    radius=float(radius) * damage_decals.decal_radius_scale(wclass),
-                    intensity=damage_decals.decal_intensity(absorbed_hull),
-                    weapon_class=wclass,
-                    time=now,
+                host_io.damage_decal_add(
+                    iid,
+                    (point.x, point.y, point.z),
+                    (normal.x, normal.y, normal.z),
+                    float(radius) * damage_decals.decal_radius_scale(wclass),
+                    damage_decals.decal_intensity(absorbed_hull),
+                    wclass,
+                    now,
                 )
 
     # 5. Hull carve (breach): deposit field strength; eligible ships only;
@@ -277,8 +281,7 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
     # not structurally damaged, so the scorch decal above still fires but no
     # voxel breach is carved (and nothing accumulates into the field).
     if (allow_hull_carve and absorbed_hull > 0.0 and normal is not None
-            and persist_decal and host is not None and ship_instances is not None
-            and hasattr(host, "hull_carve_add")):
+            and persist_decal and ship_instances is not None):
         from engine.appc import hull_carve, damage_eligibility, damage_decals
         if damage_eligibility.is_eligible(ship):
             iid = ship_instances.get(ship)
@@ -302,7 +305,7 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
                     # hull — no scaling by ship size). The only per-ship scale is
                     # BC's authored DamageRadMod (default 1.0; big structures set
                     # it larger).
-                    host.hull_carve_add(
+                    host_io.hull_carve_add(
                         iid,
                         (point.x, point.y, point.z),
                         (normal.x, normal.y, normal.z),

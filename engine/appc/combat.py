@@ -6,6 +6,7 @@ subsystem → hull bleed, then broadcasts WeaponHitEvent so mission
 handlers (FriendlyFireHandler etc.) see the hit.
 """
 from engine.appc.math import TGPoint3
+from engine import host_io
 import engine.dev_mode as dev_mode
 
 
@@ -81,7 +82,7 @@ def weapon_splash_radius(hardpoint_weapon, payload_template) -> float:
     return PHASER_DEFAULT_DAMAGE_RADIUS
 
 
-def _resolve_hit_point(host, ship_instances, ship,
+def _resolve_hit_point(ship_instances, ship,
                        ray_origin, ray_direction,
                        max_dist: float, fallback_point):
     """Three-tier hit-point fallback. Returns ``(point, normal)``.
@@ -90,32 +91,31 @@ def _resolve_hit_point(host, ship_instances, ship,
     succeeded; sphere-entry and fallback paths return ``normal=None``.
 
     Tiers:
-    1. Mesh trace via ``host.ray_trace_mesh`` (requires both host and
-       a renderer InstanceId for this ship). Returns the surface point
-       and the surface normal.
+    1. Mesh trace via ``host_io.ray_trace_mesh`` (requires a renderer
+       InstanceId for this ship). Returns the surface point and the
+       surface normal.
     2. Bounding-sphere entry. No normal available.
     3. ``fallback_point`` passed by the caller (torpedo position or
        phaser target_pos). No normal.
     """
-    if host is None or ray_direction is None:
+    if ray_direction is None:
         return fallback_point, None
     iid = ship_instances.get(ship) if ship_instances is not None else None
     if iid is None:
         return fallback_point, None
-    if hasattr(host, "ray_trace_mesh"):
-        try:
-            result = host.ray_trace_mesh(
-                iid,
-                (ray_origin.x, ray_origin.y, ray_origin.z),
-                (ray_direction.x, ray_direction.y, ray_direction.z),
-                max_dist,
-            )
-        except Exception:
-            # Native trace errors must not kill a combat tick; degrade to sphere entry.
-            result = None
-        if result is not None:
-            (px, py, pz), (nx, ny, nz), _t = result
-            return TGPoint3(px, py, pz), TGPoint3(nx, ny, nz)
+    try:
+        result = host_io.ray_trace_mesh(
+            iid,
+            (ray_origin.x, ray_origin.y, ray_origin.z),
+            (ray_direction.x, ray_direction.y, ray_direction.z),
+            max_dist,
+        )
+    except Exception:
+        # Native trace errors must not kill a combat tick; degrade to sphere entry.
+        result = None
+    if result is not None:
+        (px, py, pz), (nx, ny, nz), _t = result
+        return TGPoint3(px, py, pz), TGPoint3(nx, ny, nz)
     center = ship.GetWorldLocation()
     radius = ship.GetRadius() if hasattr(ship, "GetRadius") else 0.0
     entry = ray_sphere_entry(ray_origin, ray_direction, max_dist,
@@ -316,7 +316,7 @@ def _shield_face_from_hit_point(ship, hit_point) -> int:
 
 
 def apply_hit(ship, damage: float, hit_point, source, *,
-              normal=None, host=None, ship_instances=None,
+              normal=None, ship_instances=None,
               weapon_type: str | None = None,
               hardpoint_weapon=None, payload_template=None,
               splash_radius: float | None = None,
@@ -339,7 +339,9 @@ def apply_hit(ship, damage: float, hit_point, source, *,
     Kwargs:
         normal              — TGPoint3 surface normal at hit_point (mesh
                               trace), or None.
-        host, ship_instances — passed to hit_feedback.dispatch.
+        ship_instances       — ship→renderer-instance map, passed to
+                              hit_feedback.dispatch. Native touches route
+                              through host_io, not a raw host handle.
         weapon_type         — "phaser" / "torpedo" / None. Used by dispatch
                               for audio routing.
         hardpoint_weapon    — WeaponProperty on the firing ship's hardpoint
@@ -486,7 +488,7 @@ def apply_hit(ship, damage: float, hit_point, source, *,
             absorbed_subsystem=absorbed_subsystem_total,
             absorbed_hull=absorbed_hull,
             sub_transition=primary_transition,
-            host=host, ship_instances=ship_instances,
+            ship_instances=ship_instances,
             weapon_type=weapon_type,
             radius=r_hit,
             persist_decal=_commit,

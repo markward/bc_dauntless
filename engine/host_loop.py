@@ -487,13 +487,14 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
     broadcasts WeaponHitEvent), ages out expired VFX, and pushes current
     torpedo + hit-VFX lists to the renderer.
 
-    `host` is the _dauntless_host module (the binding from
-    host_bindings.cc).  When None (headless tests), the renderer pushes
-    are skipped — combat logic still runs.
+    `host` is the raw _dauntless_host module. All hit/damage/VFX native
+    touches now route through the engine.host_io façade (which no-ops when
+    headless), so `host` is threaded solely to feed _camera_world_pos (a
+    dead get_camera_world_pos binding — Task 7 removes it and this param).
 
     `ship_instances` maps ship → renderer instance id; passed through to
-    apply_hit so hit_feedback.dispatch can fire host.shield_hit on the
-    SHIELD severity path.
+    apply_hit so hit_feedback.dispatch can fire the shield flash (via
+    host_io.shield_hit) on the SHIELD severity path.
     """
     ships_list = list(ships)
 
@@ -504,12 +505,12 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
 
     hits = projectiles.update_all(
         dt, ships_list,
-        host=host, ship_instances=ship_instances,
+        ship_instances=ship_instances,
     )
     for torpedo, ship, hit_point, hit_normal in hits:
         combat.apply_hit(ship, torpedo._damage, hit_point,
                   source=torpedo._source_ship,
-                  normal=hit_normal, host=host, ship_instances=ship_instances,
+                  normal=hit_normal, ship_instances=ship_instances,
                   weapon_type="torpedo",
                   hardpoint_weapon=torpedo)
 
@@ -520,11 +521,11 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
     ship_death.advance(dt)
     from engine.appc import subsystem_cascade, warp_core_breach
     subsystem_cascade.advance(dt)
-    warp_core_breach.advance(dt, host=host, ship_instances=ship_instances)
+    warp_core_breach.advance(dt, ship_instances=ship_instances)
     from engine.appc import core_breach_carve
-    core_breach_carve.advance(dt, host=host, ship_instances=ship_instances)
+    core_breach_carve.advance(dt, ship_instances=ship_instances)
     from engine.appc import visible_damage
-    visible_damage.advance(dt, host=host, ship_instances=ship_instances)
+    visible_damage.advance(dt, ship_instances=ship_instances)
     subsystem_emitters.pump(ships_list, _camera_world_pos(host), dt)
     camera_shake.update(dt)
 
@@ -600,7 +601,7 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
             )
             if damage > 0:
                 impact_point, impact_normal = combat._resolve_hit_point(
-                    host=host, ship_instances=ship_instances, ship=target,
+                    ship_instances=ship_instances, ship=target,
                     ray_origin=emitter_pos,
                     ray_direction=(aim_unit if dist > 1e-6 else None),
                     max_dist=(dist * 1.5 if dist > 1e-6 else 0.0),
@@ -615,7 +616,7 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
                 combat.apply_hit(target, damage, impact_point,
                           source=ship,
                           normal=impact_normal,
-                          host=host, ship_instances=ship_instances,
+                          ship_instances=ship_instances,
                           weapon_type="phaser",
                           hardpoint_weapon=bank,
                           damage_hull=damage_hull)
@@ -647,19 +648,19 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
     _tractor.advance_tractors(ships_list, dt)
 
     # Per-frame VFX descriptor lists route through the host_io façade, which
-    # no-ops when the native module is absent (headless). `host` is still the
-    # raw _dauntless_host module here — it stays threaded because the hit/damage
-    # bindings (ray_trace_mesh, shield_hit, world_to_body, …) above/inside the
-    # _build_* helpers still consume it directly.
+    # no-ops when the native module is absent (headless). The hit/damage
+    # bindings (ray_trace_mesh, shield_hit, world_to_body, …) inside the
+    # _build_* helpers and the combat/carve advances now route through
+    # host_io too, so nothing below consumes the raw `host` module.
     host_io.set_torpedoes(_build_torpedo_render_data())
     from engine.appc import shockwaves as _shockwaves
     host_io.set_shockwaves(_shockwaves.render_data())
     host_io.set_hit_vfx(_build_hit_vfx_render_data())
     host_io.set_particle_emitters(_build_particle_render_data(ship_instances))
     host_io.set_phaser_beams(_build_phaser_beam_render_data(
-        ships_list, host=host, ship_instances=ship_instances))
+        ships_list, ship_instances=ship_instances))
     host_io.set_tractor_beams(_build_tractor_beam_render_data(
-        ships_list, host=host, ship_instances=ship_instances))
+        ships_list, ship_instances=ship_instances))
 
 
 def _color_tuple(color):
@@ -785,7 +786,7 @@ def _build_particle_render_data(ship_instances=None):
 PHASER_BEAM_WIDTH_MUTATOR = 3.0
 
 
-def _beam_descriptor_pair(ship, bank, host, ship_instances):
+def _beam_descriptor_pair(ship, bank, ship_instances):
     """Build the (outer-shell, inner-core) beam descriptor pair for one firing
     energy emitter — a phaser bank OR a tractor emitter.  Both inherit the same
     beam visual getters (NumSides / MainRadius / shell+core colours / texture
@@ -793,9 +794,10 @@ def _beam_descriptor_pair(ship, bank, host, ship_instances):
     so the render build is identical; only the parent system differs (handled
     by the callers).  Returns [] when the bank has no target.
 
-    When `host` + `ship_instances` are supplied, the beam endpoint is clipped
-    to the mesh-trace surface point so the visible beam ends on the target's
-    hull rather than at its bounding-sphere centre.
+    When `ship_instances` is supplied, the beam endpoint is clipped to the
+    mesh-trace surface point (via host_io.ray_trace_mesh inside
+    combat._resolve_hit_point) so the visible beam ends on the target's hull
+    rather than at its bounding-sphere centre.
     """
     target = bank._target
     if target is None:
@@ -815,10 +817,10 @@ def _beam_descriptor_pair(ship, bank, host, ship_instances):
     raw_length = (dx * dx + dy * dy + dz * dz) ** 0.5
     beam_length = raw_length
     beam_end = target_pos
-    if raw_length > 1e-6 and host is not None and ship_instances is not None:
+    if raw_length > 1e-6 and ship_instances is not None:
         aim_unit = TGPoint3(dx / raw_length, dy / raw_length, dz / raw_length)
         clipped, _clipped_normal = combat._resolve_hit_point(
-            host=host, ship_instances=ship_instances, ship=target,
+            ship_instances=ship_instances, ship=target,
             ray_origin=emitter_pos,
             ray_direction=aim_unit,
             max_dist=raw_length * 1.5,
@@ -864,7 +866,7 @@ def _beam_descriptor_pair(ship, bank, host, ship_instances):
     ]
 
 
-def _build_phaser_beam_render_data(ships, host=None, ship_instances=None):
+def _build_phaser_beam_render_data(ships, ship_instances=None):
     """Snapshot active phaser beams for the renderer.
 
     Walks every ship's PhaserSystem; for each bank IsFiring()=1, yields the
@@ -879,7 +881,7 @@ def _build_phaser_beam_render_data(ships, host=None, ship_instances=None):
             bank = sys_.GetWeapon(i)
             if bank is None or not bank.IsFiring():
                 continue
-            out.extend(_beam_descriptor_pair(ship, bank, host, ship_instances))
+            out.extend(_beam_descriptor_pair(ship, bank, ship_instances))
     return out
 
 
@@ -893,7 +895,7 @@ TRACTOR_BEAM_END_WIDTH_SCALE = 1.25
 TRACTOR_BEAM_BRIGHTNESS = 0.5
 
 
-def _build_tractor_beam_render_data(ships, host=None, ship_instances=None):
+def _build_tractor_beam_render_data(ships, ship_instances=None):
     """Snapshot active tractor beams for the renderer.
 
     Mirrors _build_phaser_beam_render_data but walks each ship's
@@ -918,7 +920,7 @@ def _build_tractor_beam_render_data(ships, host=None, ship_instances=None):
             bank = sys_.GetWeapon(i)
             if bank is None or not bank.IsFiring():
                 continue
-            for d in _beam_descriptor_pair(ship, bank, host, ship_instances):
+            for d in _beam_descriptor_pair(ship, bank, ship_instances):
                 d["end_width_scale"] = TRACTOR_BEAM_END_WIDTH_SCALE
                 c = d["color"]
                 d["color"] = (c[0] * TRACTOR_BEAM_BRIGHTNESS,
@@ -4295,17 +4297,13 @@ def run(mission_name: Optional[str] = None,
             enabled=_flythrough_enabled, vantage_of=_vantage_of)
 
         # Starbase warp gate (Task 4): segment-vs-mesh test against the
-        # starbase's loaded NIF via the host ray_trace_mesh binding. Returns
-        # True if the segment from->to hits the starbase mesh (occluded). Any
-        # missing piece (no bindings / no session / no instance) => False, so
-        # the warp_gates._near_starbase check degrades to "don't block".
+        # starbase's loaded NIF via host_io.ray_trace_mesh. Returns True if the
+        # segment from->to hits the starbase mesh (occluded). Any missing piece
+        # (no bindings / no session / no instance) => False, so the
+        # warp_gates._near_starbase check degrades to "don't block".
         from engine.appc import warp_gates as _wg
 
         def _starbase_ray_collide(starbase, from_pt, to_pt):
-            try:
-                import _dauntless_host as _hh
-            except Exception:
-                return False
             if controller.session is None:
                 return False
             iid = controller.session.ship_instances.get(starbase)
@@ -4319,7 +4317,7 @@ def run(mission_name: Optional[str] = None,
             if dist <= 1e-6:
                 return False
             try:
-                hit = _hh.ray_trace_mesh(iid, from_pt, (dx, dy, dz), dist)
+                hit = host_io.ray_trace_mesh(iid, from_pt, (dx, dy, dz), dist)
             except Exception:
                 return False
             return hit is not None
@@ -5389,7 +5387,7 @@ def run(mission_name: Optional[str] = None,
                 # real-time motion, so it advances/decays on real elapsed time,
                 # not the fixed sim TICK_DT.
                 collisions.tick_collisions(
-                    _player_dt, host=_h,
+                    _player_dt,
                     ship_instances=(session.ship_instances if session is not None else None),
                 )
 
