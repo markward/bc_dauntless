@@ -48,6 +48,17 @@ def test_ebridge_science_stand_clip_holds_frame_zero():
     assert p["sample_at_start"] is True
 
 
+def test_seated_misceng_location_holds_frame_zero():
+    # Seated comm-set characters (e.g. E1M2's Soams, location "MiscEngSeated2")
+    # resolve to the MiscEng seated placement clip, held at frame 0 like every
+    # other placement. This path was never visually verified before the Soams
+    # head-in-chest bug; lock the capture contract.
+    p = capture_placement(_char("MiscEngSeated2"))
+    assert p is not None
+    assert p["clip_nif"] == "data/animations/MiscEng02.NIF"
+    assert p["sample_at_start"] is True
+
+
 def test_l1_moving_location_is_hidden():
     p = capture_placement(_char("DBL1M"))
     assert p is not None

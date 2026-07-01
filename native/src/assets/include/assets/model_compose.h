@@ -40,10 +40,13 @@ namespace assets {
 ///     move-only RAII owner of its GL handle — it cannot be copied, so the
 ///     head is cannibalized; callers pass an owned head they no longer need);
 ///   * returns one ready-to-upload MeshCpu per head mesh that had cpu_data,
-///     with every vertex rigid-bound to the attach bone (bone_indices
-///     (idx,0,0,0), bone_weights (255,0,0,0)), material_index pointing at the
-///     appended material, and node_index set to the node the GL mesh must be
-///     registered on.
+///     with every vertex re-based by the attach-bone bind-world delta (body −
+///     head) so the head sits on the BODY's neck rather than the head NIF's own
+///     (a different-height "Bip01 Head" would otherwise drop the head into the
+///     shoulders), then rigid-bound to the attach bone (bone_indices (idx,0,0,0),
+///     bone_weights (255,0,0,0)), material_index pointing at the appended
+///     material, and node_index set to the node the GL mesh must be registered
+///     on. The re-base is zero when the skeletons' binds agree.
 /// Returns an empty vector and leaves `body` unchanged when `attach_bone` is
 /// not found in body.skeleton, or when the head has no graftable meshes.
 /// `out_node_index` (if non-null) receives the body node index the new meshes

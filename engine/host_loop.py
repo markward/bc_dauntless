@@ -3733,6 +3733,26 @@ def _live_bridge_characters():
             if getattr(c, "_render_instance", None) is not None and not c.IsHidden()]
 
 
+def _live_speech_characters(controller):
+    """Every realised character lip-sync may need to drive: the player-bridge
+    officers PLUS the comm-set characters (a hailing Soams / Admiral on the
+    viewscreen). The lip-sync resolver matches the crew-speech speaker by name
+    against this list, so a comm speaker omitted here gets subtitles + audio but
+    a frozen mouth (its viseme textures are uploaded; only the driver misses it).
+    Comm characters are included whenever they carry a render instance —
+    visibility is handled by the renderer, and only the named speaker is ever
+    driven, so a momentarily-hidden instance is harmless."""
+    import App as _App
+    chars = list(_live_bridge_characters())
+    for set_name in getattr(controller, "comm_set_ids", {}):
+        s = _App.g_kSetManager.GetSet(set_name)
+        if s is None:
+            continue
+        chars.extend(c for c in _iter_set_characters(s)
+                     if getattr(c, "_render_instance", None) is not None)
+    return chars
+
+
 def _sync_comm_character_visibility(controller, r) -> None:
     """Drive each realized comm-set character's instance visibility from its SDK
     IsHidden() flag.
@@ -4443,9 +4463,13 @@ def run(mission_name: Optional[str] = None,
 
         # Lip-sync: drives officer mouth visemes from .LIP timing via crew-speech
         # (engine/lip_sync_runtime.py). Resolves the speaking officer by name
-        # against the live bridge characters; idle blinks the rest.
+        # against the live characters; idle blinks the rest. Uses
+        # _live_speech_characters so BOTH player-bridge officers AND comm-set
+        # characters (e.g. a hailing Soams on the viewscreen) get driven —
+        # otherwise a comm speaker gets subtitles + audio but a frozen mouth.
         from engine.lip_sync_runtime import LipSyncRuntime
-        lip_runtime = LipSyncRuntime(r, _live_bridge_characters)
+        lip_runtime = LipSyncRuntime(
+            r, lambda: _live_speech_characters(controller))
 
         from engine.bridge_hit_reactions import HitReactionHandler
         import App as _App

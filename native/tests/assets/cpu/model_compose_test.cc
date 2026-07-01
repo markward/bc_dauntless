@@ -8,6 +8,8 @@
 #include <assets/skeleton.h>
 #include <assets/texture.h>
 
+#include <glm/gtc/matrix_transform.hpp>
+
 namespace {
 
 // Minimal body Model: a 2-bone skeleton (root + "Bip01 Head"), one node, one
@@ -244,6 +246,56 @@ TEST(SetBaseTextureCpu, EmptyPathAndLoadFailureAreNoOps) {
         assets::set_base_texture(m, mesh_indices, "missing.tga", throwing));
     EXPECT_EQ(m.textures.size(), tex_before);
     EXPECT_EQ(m.materials[0].stages[base].texture_index, orig);
+}
+
+// The head NIF and body NIF are separate character templates whose skeletons
+// may place "Bip01 Head" at different bind heights. The grafted head verts must
+// be re-based by the attach-bone bind-world delta (body − head) so the head
+// lands on the BODY's neck instead of telescoping into the shoulders (the Soams
+// "negative neck" / head-in-chest bug). When the two binds agree the shift is 0.
+TEST(GraftHeadCpu, RebasesHeadToBodyAttachBoneBindHeight) {
+    const auto base_slot =
+        static_cast<std::size_t>(assets::Material::StageSlot::Base);
+
+    // Body: "Bip01 Head" bind-world at Z = 10 (inverse_bind = translate -10).
+    assets::Model body;
+    assets::Bone broot; broot.name = "Bip01"; broot.parent_index = -1;
+    assets::Bone bhead; bhead.name = "Bip01 Head"; bhead.parent_index = 0;
+    bhead.inverse_bind_pose =
+        glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -10.0f));
+    body.skeleton.bones = {broot, bhead};
+    body.skeleton.root_bone_index = 0;
+    assets::Node bnode; bnode.name = "Bip01 Head"; bnode.parent_index = -1;
+    body.nodes = {bnode}; body.root_node = 0;
+    body.textures.emplace_back(0, 1, 1, false);
+    body.materials.emplace_back();
+
+    // Head: "Bip01 Head" bind-world at Z = 4; one mesh vertex at (1, 2, 3).
+    assets::Model head;
+    assets::Bone hroot; hroot.name = "Bip01"; hroot.parent_index = -1;
+    assets::Bone hhead; hhead.name = "Bip01 Head"; hhead.parent_index = 0;
+    hhead.inverse_bind_pose =
+        glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -4.0f));
+    head.skeleton.bones = {hroot, hhead};
+    head.skeleton.root_bone_index = 0;
+    head.textures.emplace_back(0, 1, 1, false);
+    assets::Material mat; mat.stages[base_slot].texture_index = 0;
+    head.materials.push_back(mat);
+    assets::MeshCpu hc; hc.vertices.resize(1);
+    hc.vertices[0].position = glm::vec3(1.0f, 2.0f, 3.0f);
+    hc.indices = {0, 0, 0}; hc.material_index = 0;
+    assets::Mesh hm(0, 0, 0, 3, 0, -1); hm.set_cpu_data(hc);
+    head.meshes.push_back(std::move(hm));
+    assets::Node hn; hn.name = "head"; hn.parent_index = -1;
+    head.nodes = {hn}; head.root_node = 0; head.nodes[0].meshes.push_back(0);
+
+    std::vector<assets::MeshCpu> grafted =
+        assets::graft_head_cpu(body, head, "Bip01 Head");
+    ASSERT_EQ(grafted.size(), 1u);
+    // rebase = body(10) − head(4) = +6 in Z: vertex (1,2,3) -> (1,2,9).
+    EXPECT_FLOAT_EQ(grafted[0].vertices[0].position.x, 1.0f);
+    EXPECT_FLOAT_EQ(grafted[0].vertices[0].position.y, 2.0f);
+    EXPECT_FLOAT_EQ(grafted[0].vertices[0].position.z, 9.0f);
 }
 
 TEST(GraftHeadCpu, MissingBoneLeavesBodyUnchanged) {

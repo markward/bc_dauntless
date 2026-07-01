@@ -147,12 +147,37 @@ std::vector<MeshCpu> graft_head_cpu(Model& body, Model& head,
         body.materials.push_back(std::move(copy));
     }
 
+    // Re-base offset: the head NIF and body NIF are SEPARATE character templates
+    // whose skeletons need not share the same attach-bone (Bip01 Head) bind
+    // height. The head verts are baked in the HEAD NIF's bind-model space but
+    // posed by the BODY's Bip01 Head palette, so a bind-height mismatch renders
+    // the grafted head off the neck — the head telescopes into the shoulders
+    // ("negative neck" / head-in-chest). BC bodies (e.g. BodyMaleM) carry only a
+    // neck stump, so the character head NIF is meant to sit exactly on the body's
+    // Bip01 Head. Shift the head verts by the attach-bone bind-world delta
+    // (body − head) so the head lands where the body's neck expects it. Zero when
+    // the skeletons agree (identity binds -> no shift), so single-NIF grafts and
+    // the CPU unit tests are unaffected.
+    glm::vec3 rebase(0.0f);
+    {
+        const int head_attach = find_bone(head.skeleton, attach_bone);
+        if (head_attach >= 0) {
+            const glm::vec3 body_p(glm::inverse(
+                body.skeleton.bones[attach_idx].inverse_bind_pose)[3]);
+            const glm::vec3 head_p(glm::inverse(
+                head.skeleton.bones[head_attach].inverse_bind_pose)[3]);
+            rebase = body_p - head_p;
+        }
+    }
+
     // Build one rigid-bound MeshCpu per graftable head mesh.
     std::vector<MeshCpu> out;
     out.reserve(graftable.size());
     for (const MeshCpu* src : graftable) {
         MeshCpu cpu = *src;  // deep copy of vertices/indices/extra_uvs
         for (auto& v : cpu.vertices) {
+            // Align the head NIF's head onto the body's Bip01 Head (see rebase).
+            v.position += rebase;
             // The head NIF builds its verts already in character-bind-model
             // space (the head sits at its character head height), so binding to
             // the head bone with weight 1 lets the body's bone palette pose it
