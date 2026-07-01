@@ -666,7 +666,8 @@ class TorpedoAmmoType:
     MissionLib.SetTotalTorpsAtStarbase / LoadTorpedoes lookup pattern, which
     compares ``pTorpType.GetAmmoName() == "Photon"``.
     """
-    def __init__(self, name: str, launch_speed: float = 0.0, power_cost: float = 0.0):
+    def __init__(self, name: str, launch_speed: float = 0.0, power_cost: float = 0.0,
+                 max_torpedoes=None, script=None):
         self._name = name
         # SDK TorpedoRun.py:130 / StationaryAttack.py:78 use launch speed to
         # predict the torpedo's intercept point.  Real BC tunes this per ammo
@@ -676,9 +677,55 @@ class TorpedoAmmoType:
         # the C++ Appc engine also bills it from PowerSubsystem each shot.
         # Sourced from the projectile script's GetPowerCost() at seed time.
         self._power_cost = float(power_cost)
+        # Projectile module path (SDK App.py:9574 TorpedoAmmoType.GetTorpedoScript),
+        # read by AI/Preprocessors.py:566,714.
+        self._script = script
+        # ── Reserve accounting (SDK GetMaxTorpedoes / GetNumAvailableTorpsToType).
+        # max_torpedoes is the hardpoint's SetMaxTorpedoes(slot, n) for this slot.
+        # ``None`` marks an UNDECLARED slot (legacy hulls / the Photon fallback):
+        # the reserve is inert — no fire gate, no decrement — so those firing
+        # paths stay byte-identical.  A declared int (incl. 0) is finite; the type
+        # spawns fully loaded (ships are combat-ready; IsFullyLoaded true at start).
+        self._unlimited = max_torpedoes is None
+        self._max_torpedoes = 0 if max_torpedoes is None else int(max_torpedoes)
+        self._available = self._max_torpedoes
 
     def GetAmmoName(self) -> str:
         return self._name
+
+    def GetMaxTorpedoes(self) -> int:
+        """SDK App.py:9572 — this type's capacity (MissionLib.IsFullyLoaded /
+        SetMaxTorpsForPlayer compare against it)."""
+        return self._max_torpedoes
+
+    def SetMaxTorpedoes(self, n) -> None:
+        # Declaring a max makes the type finite (App.py:9573).
+        self._max_torpedoes = int(n)
+        self._unlimited = False
+        if self._available > self._max_torpedoes:
+            self._available = self._max_torpedoes
+
+    def GetTorpedoScript(self):
+        return self._script
+
+    def SetTorpedoScript(self, script) -> None:
+        self._script = script
+
+    def GetAvailable(self) -> int:
+        """Rounds currently loaded for this type — the value the system exposes
+        as GetNumAvailableTorpsToType(slot)."""
+        return self._available
+
+    def SetAvailable(self, n) -> None:
+        n = int(n)
+        self._available = n if self._unlimited else max(0, min(n, self._max_torpedoes))
+
+    def AddAvailable(self, delta) -> None:
+        """Load (+) or expend (-) rounds, clamped to [0, max].  No-op for an
+        unlimited (undeclared-max) type."""
+        if self._unlimited:
+            return
+        self._available = max(0, min(self._available + int(delta), self._max_torpedoes))
 
     def GetLaunchSpeed(self) -> float:
         """SDK TorpedoRun.py:130 — used to predict torpedo intercept points."""
@@ -766,6 +813,14 @@ class TorpedoSystem(WeaponSystem):
             return
         ship = self.GetParentShip()
 
+        # Reserve gate: a finite ammo type (hardpoint-declared max) with no
+        # rounds left cannot fire.  Unlimited/undeclared types never gate, so
+        # the legacy firing path stays byte-identical.
+        ammo = self.GetCurrentAmmoType()
+        finite = ammo is not None and not getattr(ammo, "_unlimited", True)
+        if finite and ammo.GetAvailable() <= 0:
+            return
+
         # Pre-scan eligible tubes in round-robin order (same aim/arc/CanFire
         # gates the base StartFiring applies per emitter).
         eligible: list[int] = []
@@ -784,39 +839,93 @@ class TorpedoSystem(WeaponSystem):
                 eligible.append(idx)
 
         effective = min(self.GetSpread(), len(eligible))
+        # Can't launch more torpedoes than are loaded for a finite type.
+        if finite:
+            effective = min(effective, ammo.GetAvailable())
+
+        # Torpedoes launched this trigger = growth of _currently_firing across
+        # the fire, whichever branch runs (base appends 1, spread appends N).
+        fired_before = len(self._currently_firing)
+
         if effective <= 1:
             # Straight single shot — unchanged.
             super().StartFiring(target, offset)
-            return
+        else:
+            # World divergence axes from the ship rotation (column-vector
+            # convention: GetCol(0)=starboard, GetCol(2)=up).  A shim rotation
+            # (not a real TGMatrix3) has no usable axes → fall back to a single
+            # straight shot rather than crash.
+            rot = ship.GetWorldRotation() if (
+                ship is not None and hasattr(ship, "GetWorldRotation")) else None
+            if not isinstance(rot, TGMatrix3):
+                super().StartFiring(target, offset)
+            else:
+                right = rot.GetCol(0)
+                up = rot.GetCol(2)
+                axes = [
+                    right,
+                    TGPoint3(-right.x, -right.y, -right.z),
+                    up,
+                    TGPoint3(-up.x, -up.y, -up.z),
+                ]
+                for k in range(effective):
+                    idx = eligible[k]
+                    emitter = self.GetWeapon(idx)
+                    emitter.Fire(target, offset,
+                                 spread_unit=axes[k], homing_delay=_SPREAD_DELAY)
+                    self._currently_firing.append(idx)
+                    self._next_emitter_index = (idx + 1) % n
 
-        # World divergence axes from the ship rotation (column-vector
-        # convention: GetCol(0)=starboard, GetCol(2)=up).  A shim rotation
-        # (not a real TGMatrix3) has no usable axes → fall back to a single
-        # straight shot rather than crash.
-        rot = ship.GetWorldRotation() if (
-            ship is not None and hasattr(ship, "GetWorldRotation")) else None
-        if not isinstance(rot, TGMatrix3):
-            super().StartFiring(target, offset)
-            return
-        right = rot.GetCol(0)
-        up = rot.GetCol(2)
-        axes = [
-            right,
-            TGPoint3(-right.x, -right.y, -right.z),
-            up,
-            TGPoint3(-up.x, -up.y, -up.z),
-        ]
-
-        for k in range(effective):
-            idx = eligible[k]
-            emitter = self.GetWeapon(idx)
-            emitter.Fire(target, offset,
-                         spread_unit=axes[k], homing_delay=_SPREAD_DELAY)
-            self._currently_firing.append(idx)
-            self._next_emitter_index = (idx + 1) % n
+        # Expend one round of the current type per torpedo actually launched.
+        if finite:
+            consumed = len(self._currently_firing) - fired_before
+            if consumed > 0:
+                ammo.AddAvailable(-consumed)
 
     def GetNumAmmoTypes(self) -> int:
         return len(self._ammo_by_slot)
+
+    # ── SDK ammo-type curation surface (all int-slot indexed) ─────────────────
+    # QuickBattle.py:2924 prunes, missions (E3M1) load, MissionLib iterates.
+    def RemoveAmmoType(self, slot) -> None:
+        """Drop the ammo type at ``slot`` (QuickBattle.py:2924 removes every
+        slot past index 1 to strip PhasedPlasma).  QuickBattle removes top-down
+        within a single snapshot loop, so no interior gap survives for stock
+        hulls and GetNumAmmoTypes()==len stays contiguous."""
+        slot = int(slot)
+        if slot in self._ammo_by_slot:
+            del self._ammo_by_slot[slot]
+            if self._selected_slot == slot:
+                self._selected_slot = None
+
+    def LoadAmmoType(self, slot, count) -> None:
+        """Load (+) / unload (-) ``count`` rounds into the type at ``slot``
+        (E3M1.py, MissionLib.LoadTorpedoes).  Clamped to [0, max] by the type."""
+        ammo = self.GetAmmoType(slot)
+        if ammo is not None and hasattr(ammo, "AddAvailable"):
+            ammo.AddAvailable(int(count))
+
+    def GetNumAvailableTorpsToType(self, slot) -> int:
+        """Rounds currently loaded for the type at ``slot`` (E3M1.py:2888,
+        MissionLib.IsFullyLoaded).  0 when the slot is absent."""
+        ammo = self.GetAmmoType(slot)
+        if ammo is not None and hasattr(ammo, "GetAvailable"):
+            return ammo.GetAvailable()
+        return 0
+
+    def FillAmmoType(self, slot) -> None:
+        """Top the type at ``slot`` back up to its max (SDK App.py:5981)."""
+        ammo = self.GetAmmoType(slot)
+        if ammo is not None and hasattr(ammo, "SetAvailable"):
+            ammo.SetAvailable(ammo.GetMaxTorpedoes())
+
+    def GetCurrentAmmoTypeNumber(self) -> int:
+        """SDK App.py:5977 — index of the selected ammo type."""
+        return self.GetCurrentAmmoSlot()
+
+    def GetAmmoTypeNumber(self) -> int:
+        """SDK App.py:5985 alias used by Bridge handlers."""
+        return self.GetCurrentAmmoSlot()
 
     def GetNumDistinctAmmoTypes(self) -> int:
         """Count of DISTINCT loaded ammo types — keyed by GetAmmoName() when
