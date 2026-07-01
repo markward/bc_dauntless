@@ -23,8 +23,19 @@
 //       charge_ratio:  float,          // 0..1, mixed into the icon colour
 //       in_firing_arc: bool            // target is in arc + in range; adds
 //                                      // .is-in-arc to draw a fine stroke
-//     }, ...]
+//     }, ...],
+//     config: {                        // weapon-settings block (weapon_config.py)
+//       show_settings, has_any_config,
+//       has_torpedoes, torp_type, torp_count, torp_types_cyclable,
+//       spread, spread_options,
+//       has_phasers, phaser_intensity,
+//       tractor_present, tractor_on, cloak_present, cloak_on
+//     }
 //   }
+//
+// The hamburger (weapons/toggle-view) flips between the status view and the
+// settings view; each settings control fires weapons/<action>
+// (cycle-type | cycle-spread | cycle-intensity | toggle-tractor | toggle-cloak).
 
 (function () {
     "use strict";
@@ -87,6 +98,76 @@
         }
     }
 
+    function escHtml(s) {
+        return String(s == null ? "" : s)
+            .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    function spreadWord(n) {
+        return n === 4 ? "Quad" : (n === 2 ? "Dual" : "Single");
+    }
+
+    // Build the weapon-settings view markup from the config block. Sections
+    // gate on subsystem presence (mirrors read_weapon_config): no torpedo
+    // launchers -> no Torpedoes section; no phasers -> no Phasers section; a
+    // lone Tractor/Cloak button flexes to fill the row.
+    function buildSettingsHtml(cfg) {
+        var html = "";
+        if (cfg.has_torpedoes) {
+            var typeCls = "torp-btn torp-btn--type"
+                        + (cfg.torp_types_cyclable ? "" : " torp-btn--static");
+            var typeAct = cfg.torp_types_cyclable ? ' data-act="cycle-type"' : "";
+            html += '<div class="section-head"><span>Torpedoes</span></div>'
+                  + '<div class="section-rule"></div>'
+                  + '<div class="torp-row">'
+                  +   '<div class="' + typeCls + '"' + typeAct + '>'
+                  +     '<span class="name">' + escHtml(cfg.torp_type) + '</span>'
+                  +     '<span class="qty">(' + (cfg.torp_count | 0) + ')</span>'
+                  +   '</div>'
+                  +   '<div class="torp-btn torp-btn--spread" data-act="cycle-spread">'
+                  +     '<span class="spread">' + spreadWord(cfg.spread) + '</span>'
+                  +   '</div>'
+                  + '</div>';
+        }
+        if (cfg.has_phasers) {
+            html += '<div class="section-head"><span>Phasers</span></div>'
+                  + '<div class="section-rule"></div>'
+                  + '<div class="cfg-row" data-act="cycle-intensity">'
+                  +   '<span class="label">Intensity</span>'
+                  +   '<span class="value">' + escHtml(cfg.phaser_intensity) + '</span>'
+                  +   '<span class="caret">‹ ›</span>'
+                  + '</div>';
+        }
+        var sys = "";
+        if (cfg.tractor_present) {
+            sys += '<div class="sys-btn' + (cfg.tractor_on ? " sys-btn--on" : "") + '" data-act="toggle-tractor">'
+                 +   '<span class="label">Tractor</span><span class="value">' + (cfg.tractor_on ? "On" : "Off") + '</span>'
+                 + '</div>';
+        }
+        if (cfg.cloak_present) {
+            sys += '<div class="sys-btn' + (cfg.cloak_on ? " sys-btn--on" : "") + '" data-act="toggle-cloak">'
+                 +   '<span class="label">Cloak</span><span class="value">' + (cfg.cloak_on ? "On" : "Off") + '</span>'
+                 + '</div>';
+        }
+        if (sys) {
+            html += '<div style="height:6px;"></div><div class="sys-row">' + sys + '</div>';
+        }
+        return html;
+    }
+
+    // Wire every [data-act] control to fire the matching weapons/<action>
+    // event back to Python (which mutates the shared weapon_config state).
+    function wireSettingsActions(container) {
+        var els = container.querySelectorAll("[data-act]");
+        for (var i = 0; i < els.length; i++) {
+            (function (el) {
+                el.onclick = function () {
+                    dauntlessEvent("weapons/" + el.getAttribute("data-act"));
+                };
+            })(els[i]);
+        }
+    }
+
     window.setWeaponsDisplay = function (state) {
         var root = document.getElementById("weapons-display");
         if (!root) { return; }
@@ -105,5 +186,29 @@
         if (sil) { setSilhouette(sil, state.silhouette_url || null); }
 
         renderWeaponIcons(root, state.weapon_icons);
+
+        // ── Weapon-settings view ────────────────────────────────────────
+        var cfg = state.config || {};
+        var btn = root.querySelector('[data-bind="mode-btn"]');
+        var viewStatus = root.querySelector('[data-bind="view-status"]');
+        var viewSettings = root.querySelector('[data-bind="view-settings"]');
+        var open = !!cfg.show_settings && !!cfg.has_any_config;
+
+        // Hamburger only appears when there's something to configure.
+        if (btn) { btn.hidden = !cfg.has_any_config; }
+        var tip = root.querySelector('[data-bind="mode-tip"]');
+        if (tip) { tip.textContent = open ? "Hide settings" : "Weapon settings"; }
+
+        if (viewSettings) {
+            if (open) {
+                viewSettings.innerHTML = buildSettingsHtml(cfg);
+                wireSettingsActions(viewSettings);
+                viewSettings.hidden = false;
+            } else {
+                viewSettings.hidden = true;
+                viewSettings.innerHTML = "";
+            }
+        }
+        if (viewStatus) { viewStatus.hidden = open; }
     };
 })();

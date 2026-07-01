@@ -60,6 +60,7 @@ class STButton(TGPane):
         self._chosen = False
 
     def GetLabel(self) -> str:                    return self._label
+    def SetLabel(self, label) -> None:            self._label = str(label)
     def SetEnabled(self, *args) -> None:          self._enabled = True
     def SetDisabled(self, *args) -> None:         self._enabled = False
     def IsEnabled(self) -> int:                   return 1 if self._enabled else 0

@@ -1,6 +1,7 @@
 """ShipClass.SetAlertLevel flips weapon groups (phasers/torpedoes/pulse)
-on at RED, off at GREEN/YELLOW. Tractor is NOT toggled by alert level —
-it stays under manual control (BC behaviour).
+on at RED, off at GREEN/YELLOW. The tractor is NOT toggled by alert level —
+it's powered on when equipped and available at ALL alert levels (its beam is
+operated by a separate manual toggle, StartFiring/StopFiring).
 """
 from engine.appc.ships import ShipClass, ShipClass_Create
 from engine.appc.properties import WeaponSystemProperty
@@ -42,12 +43,15 @@ def test_red_alert_turns_pulse_on():
     assert ship.GetPulseWeaponSystem().IsOn() == 1
 
 
-def test_red_alert_leaves_tractor_untouched():
-    """Tractor is operated by a separate UI toggle, not alert level."""
+def test_tractor_powered_at_all_alert_levels():
+    """The tractor is equipped-on and alert level never toggles it — so the
+    player can engage the beam at green, yellow or red alert."""
     ship = _galaxy_loadout()
-    assert ship.GetTractorBeamSystem().IsOn() == 0
+    assert ship.GetTractorBeamSystem().IsOn() == 1   # powered on when equipped
     ship.SetAlertLevel(ShipClass.RED_ALERT)
-    assert ship.GetTractorBeamSystem().IsOn() == 0
+    assert ship.GetTractorBeamSystem().IsOn() == 1   # untouched at red
+    ship.SetAlertLevel(ShipClass.GREEN_ALERT)
+    assert ship.GetTractorBeamSystem().IsOn() == 1   # still on at green
 
 
 def test_green_alert_turns_phasers_off():

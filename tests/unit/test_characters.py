@@ -250,6 +250,15 @@ def test_st_button_send_activation_event_enqueues_event():
     assert captured == [evt]
 
 
+def test_st_button_set_label_updates_get_label():
+    """Tactical-menu weapon commands (weapon_tactical_commands) rebuild their
+    labels each tick to reflect current state (e.g. Engage <-> Disengage Cloak)."""
+    btn = STButton_CreateW("Engage Cloak", None)
+    assert btn.GetLabel() == "Engage Cloak"
+    btn.SetLabel("Disengage Cloak")
+    assert btn.GetLabel() == "Disengage Cloak"
+
+
 def test_st_button_create_returns_same_type_as_create_w():
     """QuickBattle.CreateRegionMenuButton calls App.STButton_Create(sName, pEvent);
     it must yield the same STButton type the W (widestring) factory produces."""

@@ -67,6 +67,7 @@ from engine.appc import (
     hit_feedback,
     combat,
     damage_eligibility,
+    weapon_tactical_commands,
 )
 from engine.appc import viewscreen_static as _vss
 # combat is imported as a module (not `from combat import apply_hit`) so call
@@ -4946,6 +4947,12 @@ def run(mission_name: Optional[str] = None,
                     update_target_list_visibility(
                         _menu, _player_set.GetObjectList(), _player
                     )
+                # Surface 2 of weapons-config: reconcile the equipment-gated
+                # weapon/defense command rows on the F2 Tactical menu. Idempotent
+                # + raise-safe + early-out when no Tactical menu exists, so it's
+                # cheap every tick and self-heals the per-bridge-load rebuild.
+                if _player is not None:
+                    weapon_tactical_commands.sync(_player)
                 # Drop the player's weapon lock the instant its target finishes
                 # cloaking: you can't hold a lock on (or fire torpedoes at) a
                 # ship you can no longer see. FireWeapons no-ops with no target,

@@ -24,7 +24,7 @@ class Torpedo(TGObject):
         "_position", "_velocity", "_age", "_ttl",
         "_damage", "_damage_radius_factor",
         "_target_ship", "_target_subsystem",
-        "_guidance_lifetime", "_max_angular_accel",
+        "_guidance_lifetime", "_max_angular_accel", "_homing_start_age",
         "_source_ship", "_id",
         "_core_texture", "_core_color", "_core_size_a", "_core_size_b",
         "_glow_texture", "_glow_color", "_glow_size_a", "_glow_size_b", "_glow_size_c",
@@ -44,6 +44,11 @@ class Torpedo(TGObject):
         self._target_subsystem = None
         self._guidance_lifetime = 0.0
         self._max_angular_accel = 0.0
+        # Age (s) at which homing begins.  0.0 = home immediately (every
+        # non-spread torp).  Spread volleys set this to _SPREAD_DELAY so the
+        # torp flies straight along its fanned-out launch direction first,
+        # then curves toward the target over the remaining guidance window.
+        self._homing_start_age = 0.0
         self._source_ship = None
         self._id = 0
         self._core_texture   = ""
@@ -154,7 +159,8 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
 
     for t in list(_active):
         # 1. Steer if homing within guidance window.
-        if t._target_ship is not None and t._age < t._guidance_lifetime:
+        if (t._target_ship is not None
+                and t._homing_start_age <= t._age < t._guidance_lifetime):
             _steer_toward(t, t._target_ship, dt)
         # 2. Advance position + age.
         prev_pos = t._position

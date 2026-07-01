@@ -317,17 +317,34 @@
             <span class="bc-panel__title" data-bind="speed-label">Speed 0 : 0 kph</span>
           </header>
           <div class="bc-panel__body">
-            <div class="weapons-display__silhouette-stack">
-              <!-- The inner pane stays at the SDK's natural 130x110 px
-                   so icon positions land at literal (x_px, y_px); the
-                   outer stack drives visual size via CSS transform: scale.
-                   See weapons_display.css for the scale knob. -->
-              <div class="weapons-display__pane">
-                <div class="weapons-display__weapons weapons--below" data-bind="weapons-below"></div>
-                <img class="weapons-display__silhouette" data-bind="silhouette" alt="" hidden>
-                <div class="weapons-display__weapons weapons--above" data-bind="weapons-above"></div>
+            <!-- Hamburger flips status <-> weapon settings. Hidden until the
+                 config block reports the ship has something to configure.
+                 setWeaponsDisplay populates the settings view + toggles views. -->
+            <span class="mode-btn" data-bind="mode-btn"
+                  onclick="dauntlessEvent('weapons/toggle-view')" hidden>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"
+                   stroke="currentColor" stroke-width="1.9" stroke-linecap="round">
+                <path d="M2.5 4.5 H13.5"/><path d="M2.5 8 H13.5"/><path d="M2.5 11.5 H13.5"/>
+              </svg>
+              <span class="tip" data-bind="mode-tip">Weapon settings</span>
+            </span>
+
+            <div class="view-status" data-bind="view-status">
+              <div class="weapons-display__silhouette-stack">
+                <!-- The inner pane stays at the SDK's natural 130x110 px
+                     so icon positions land at literal (x_px, y_px); the
+                     outer stack drives visual size via CSS transform: scale.
+                     See weapons_display.css for the scale knob. -->
+                <div class="weapons-display__pane">
+                  <div class="weapons-display__weapons weapons--below" data-bind="weapons-below"></div>
+                  <img class="weapons-display__silhouette" data-bind="silhouette" alt="" hidden>
+                  <div class="weapons-display__weapons weapons--above" data-bind="weapons-above"></div>
+                </div>
               </div>
             </div>
+
+            <!-- Weapon settings — built by setWeaponsDisplay from state.config. -->
+            <div class="view-settings" data-bind="view-settings" hidden></div>
           </div>
         </section>
     </div>

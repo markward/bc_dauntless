@@ -555,7 +555,17 @@ class ShipClass(DamageableObject):
     def GetPulseWeaponSystem(self):               return self._pulse_weapon_system
     def SetPulseWeaponSystem(self, s) -> None:    self._pulse_weapon_system = self._attach_subsystem(s)
     def GetTractorBeamSystem(self):               return self._tractor_beam_system
-    def SetTractorBeamSystem(self, s) -> None:    self._tractor_beam_system = self._attach_subsystem(s)
+    def SetTractorBeamSystem(self, s) -> None:
+        self._tractor_beam_system = self._attach_subsystem(s)
+        # The tractor is a manual toggle available at ALL alert levels — unlike
+        # the phaser/torpedo/pulse weapons, which SetAlertLevel powers on only at
+        # red alert. Power it on when equipped so the player can engage it any
+        # time; StartFiring/StopFiring is the actual on/off (a powered but
+        # unfired tractor has no effect — advance_tractors only acts on firing
+        # beams). A default-empty system with no emitters stays a harmless no-op.
+        if self._tractor_beam_system is not None and hasattr(
+                self._tractor_beam_system, "TurnOn"):
+            self._tractor_beam_system.TurnOn()
 
     # ── Weapon-group lookup by WG_* enum ─────────────────────────────────────
     # Matches sdk/.../TacticalInterfaceHandlers.py:387-405 dispatch.  PR 2's
@@ -1220,10 +1230,18 @@ def _resolve_torpedo_ammo(ts_prop, slot: int):
                                power_cost=PHOTON_POWER_COST)
     try:
         leaf = script_name.split(".")[-1]
+        # Canonical ammo-type name: MissionLib matches GetAmmoName() against the
+        # bare type ("Photon", "Quantum" — MissionLib.py:2958+), and the
+        # unbound-slot fallback above uses "Photon". Strip the projectile class's
+        # "Torpedo" suffix so a bound slot ("PhotonTorpedo") reads identically to
+        # the fallback/canonical ("Photon"); otherwise a Photon-only hull with
+        # some scripted + some unbound tubes looks like it carries two distinct
+        # types and the Type control / "Use {type} Torpedoes" row wrongly appears.
+        name = leaf[:-len("Torpedo")] if leaf.endswith("Torpedo") else leaf
         mod = __import__(script_name, None, None, [leaf])
         launch_speed = float(mod.GetLaunchSpeed()) if hasattr(mod, "GetLaunchSpeed") else PHOTON_LAUNCH_SPEED
         power_cost = float(mod.GetPowerCost()) if hasattr(mod, "GetPowerCost") else 0.0
-        return TorpedoAmmoType(leaf, launch_speed=launch_speed, power_cost=power_cost)
+        return TorpedoAmmoType(name, launch_speed=launch_speed, power_cost=power_cost)
     except Exception:
         return TorpedoAmmoType("Photon",
                                launch_speed=PHOTON_LAUNCH_SPEED,
