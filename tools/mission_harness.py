@@ -473,7 +473,13 @@ def setup_sdk() -> None:
         "Bridge.ScienceCharacterHandlers",
         "Bridge.EngineerCharacterHandlers",
         "BridgeHandlers",
-        "Actions.MissionScriptActions",
+        # NOTE: Actions.MissionScriptActions must NOT be stubbed. It is a tiny
+        # real module (imports only App + MissionLib; one function, ChangeToBridge)
+        # that cutscene/briefing TGSequences call. As a _StubModule its
+        # ChangeToBridge returns a truthy _Stub, which makes TGScriptAction defer
+        # forever — stalling every briefing (E1M2 FirstHaven, etc.) after its
+        # ChangeToBridge step, before any dialogue/viewscreen/goal fires. The
+        # real module completes cleanly.
     ]
     for _stub_name in _plain_stubs:
         if _stub_name not in sys.modules:
