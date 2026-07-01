@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Weapons — combined status + config panel</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Antonio:wght@100;300;400;500;600;700&display=swap');
+
+  body {
+    background:#0a0a10; color:#e8e4f2; margin:0; padding:28px;
+    font-family:'Antonio', sans-serif;
+  }
+  h2 { font-weight:600; letter-spacing:1px; }
+  .subtitle { color:#a9a2c4; font-size:13px; max-width:760px; line-height:1.5; }
+  .stage {
+    display:flex; gap:32px; flex-wrap:wrap; align-items:flex-start;
+    background:#000; padding:32px; border-radius:6px; margin-top:18px;
+  }
+  .caption { color:#8f88ac; font-size:12px; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; }
+
+  /* ── Panel chrome (shared vocabulary, from 00-panel-chrome / 04) ── */
+  .panel { width:250px; }
+  .panel-header {
+    background:linear-gradient(90deg, rgb(216,94,86) 0%, rgb(216,132,80) 100%);
+    color:#000; font-size:14px; padding:4px 14px; font-weight:600;
+    border-radius:0 14px 0 0; letter-spacing:0.12em; text-transform:uppercase;
+    display:flex; justify-content:space-between; align-items:center;
+  }
+  .panel-header .chevron { font-size:11px; opacity:0.8; }
+  .header-left { display:flex; align-items:center; gap:9px; }
+
+  /* Square icon-only mode toggle floating in the panel body's top-right corner.
+     The impact icon alone signals the phaser mode; a tooltip names it on hover. */
+  .mode-btn {
+    position:absolute; top:8px; right:8px; z-index:10;
+    width:26px; height:26px; box-sizing:border-box;
+    display:inline-flex; align-items:center; justify-content:center;
+    background:rgba(246,147,204,0.22); border:none;
+    border-radius:4px; color:rgb(245,240,255); cursor:pointer;
+  }
+  .mode-btn:hover { background:rgba(246,147,204,0.42); }
+  .mode-btn svg { display:block; }
+  .mode-btn .tip {
+    position:absolute; top:calc(100% + 6px); right:-2px;
+    background:rgba(10,10,16,0.96); color:rgb(235,225,255);
+    font-family:'Antonio', sans-serif; font-weight:400;
+    font-size:11px; letter-spacing:0.5px; text-transform:none; white-space:nowrap;
+    padding:4px 8px; border-radius:4px; border:1px solid rgba(255,255,255,0.15);
+    opacity:0; pointer-events:none; transition:opacity 120ms ease; z-index:30;
+  }
+  .mode-btn:hover .tip { opacity:1; }
+
+  [hidden] { display:none !important; }
+  .panel-body {
+    position:relative;
+    background:rgba(10,10,16,0.85);
+    border-left:4px solid rgb(216,94,86);
+    padding:8px 14px 12px 12px;
+  }
+
+  /* ── Status block (top half — icon silhouette + phaser arcs) ── */
+  .status-block {
+    position:relative; height:132px; margin:2px auto 4px;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .ship-silhouette { opacity:0.85; }
+  .arc {
+    position:absolute; border:6px solid; border-radius:50%;
+    width:150px; height:110px; box-sizing:border-box;
+    clip-path: polygon(0 0,100% 0,100% 42%,0 42%); /* dorsal cap */
+    opacity:0.9;
+  }
+  .arc.charged  { border-color:rgb(184,255,0); }   /* g_kSubsystemFillColor */
+  .arc.midcharge{ border-color:rgb(240,145,0); }
+  .status-speed {
+    text-align:center; color:rgb(220,210,255); font-size:12px;
+    letter-spacing:1.5px; text-transform:uppercase; padding-top:2px;
+  }
+
+  /* ── Divider between status and config ── */
+  .section-rule { height:1px; background:rgb(216,94,86); opacity:0.4; margin:6px 0 4px; }
+
+  /* ── Section subheader ── */
+  .section-head {
+    display:flex; justify-content:space-between; align-items:center;
+    color:rgb(255,154,2); font-size:11px; font-weight:600;
+    text-transform:uppercase; letter-spacing:1px; padding:6px 0 2px;
+  }
+
+  /* ── Rows (config controls) ── */
+  .row {
+    display:flex; align-items:center;
+    color:rgb(235,225,255); font-size:13px; padding:5px 12px; margin:2px 0;
+    letter-spacing:0.5px; cursor:pointer;
+  }
+  .row .icon { line-height:0; margin-right:8px; color:rgb(235,225,255); display:inline-flex; }
+  .row .label { flex:1; color:rgb(235,225,255); }
+  .row .value { color:rgb(235,225,255); letter-spacing:0.8px; }
+  .row .caret { color:rgb(180,178,200); font-size:11px; margin-left:8px; opacity:0.8; }
+
+  /* Cycle row (in a section) = Menu3 pink */
+  .row-cycle {
+    background:rgba(246,147,204,0.35);
+    border-left:3px solid rgb(207,96,159);
+  }
+  /* Toggle row (standalone) = Menu1 salmon */
+  .row-toggle {
+    background:rgba(216,94,86,0.45);
+    border-left:3px solid rgb(216,94,86);
+  }
+  /* Non-interactive (e.g. Type on a single-type hull) */
+  .row-static {
+    background:rgba(120,120,140,0.14);
+    border-left:3px solid rgba(180,180,200,0.35);
+    cursor:default;
+  }
+  .row-static .caret { display:none; }
+
+  /* ── Torpedoes row: two buttons (type+qty | spread) ── */
+  .torp-row { display:flex; gap:6px; margin:2px 0; }
+  .torp-btn {
+    background:rgba(246,147,204,0.35);
+    border-left:3px solid rgb(207,96,159);
+    color:rgb(235,225,255); font-size:13px; letter-spacing:0.5px;
+    padding:6px 12px; cursor:pointer; display:flex; align-items:center; gap:8px;
+  }
+  .torp-btn--type { flex:1; }                 /* name + qty, takes the space */
+  .torp-btn--spread { justify-content:center; min-width:66px; } /* just the word */
+  /* single-type hull → type button non-interactive */
+  .torp-btn--static {
+    background:rgba(120,120,140,0.14);
+    border-left:3px solid rgba(180,180,200,0.35);
+    cursor:default;
+  }
+
+  /* ── System toggles row: Tractor | Cloak side by side (~50/50) ──
+     A lone button (hull missing one device) fills the row via flex:1. */
+  .sys-row { display:flex; gap:6px; margin:2px 0; }
+  .sys-btn {
+    flex:1;
+    display:flex; align-items:center; justify-content:space-between; gap:8px;
+    background:rgba(216,94,86,0.45);
+    border-left:3px solid rgb(216,94,86);
+    color:rgb(235,225,255); font-size:13px; letter-spacing:0.5px;
+    padding:6px 12px; cursor:pointer;
+  }
+  /* ON → fill the button with the left-border colour; value text stays neutral. */
+  .sys-btn--on { background:rgb(216,94,86); }
+
+  .value-off  { color:rgb(153,153,153); font-style:italic; }
+  .value-on   { color:rgb(184,255,0); }
+
+  .note { color:#8f88ac; font-size:12px; line-height:1.5; max-width:760px; margin-top:22px; }
+  .note code { color:#e8b96a; }
+  .note h3 { color:#d6d0ff; font-size:13px; letter-spacing:0.5px; margin-bottom:6px; }
+</style>
+</head>
+<body>
+
+<h2>Weapons — combined status + config panel (04b)</h2>
+<p class="subtitle">
+  One panel, two views. By default it shows the status view exactly as today (silhouette +
+  phaser arcs + speed) plus a hamburger toggle in the top-left of the body. Click the hamburger
+  and the status view is replaced by the weapon-settings view — Torpedoes (Type/Spread), Phasers
+  (Intensity), and the Tractor/Cloak toggles. Two hull states shown so the availability-gating
+  reads clearly. <em>Click the hamburger in each panel below to flip it.</em>
+</p>
+
+<div class="stage">
+
+  <!-- ============ SOVEREIGN: multi-type torps + cloak ============ -->
+  <div>
+    <div class="caption">Sovereign — Photon + Quantum, cloak-equipped</div>
+    <div class="panel">
+      <div class="panel-header"><span>Weapons</span><span class="chevron">▼</span></div>
+      <div class="panel-body">
+
+        <!-- hamburger toggle: flips between status view and weapon settings -->
+        <span class="mode-btn" onclick="toggleSettings(this)">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round">
+            <path d="M2.5 4.5 H13.5"/><path d="M2.5 8 H13.5"/><path d="M2.5 11.5 H13.5"/>
+          </svg>
+          <span class="tip">Weapon settings</span>
+        </span>
+
+        <!-- STATUS VIEW (default): icon silhouette + phaser arcs, as today -->
+        <div class="view-status">
+          <div class="status-block">
+            <div class="arc charged"></div>
+            <svg class="ship-silhouette" width="120" height="70" viewBox="0 0 120 70">
+              <ellipse cx="60" cy="26" rx="34" ry="15" fill="#c9c9d4"/>
+              <rect x="52" y="34" width="16" height="26" rx="3" fill="#b6b6c2"/>
+              <rect x="24" y="48" width="10" height="20" rx="3" fill="#a9a9b6"/>
+              <rect x="86" y="48" width="10" height="20" rx="3" fill="#a9a9b6"/>
+            </svg>
+          </div>
+          <div class="status-speed">Speed 4 : 3969 kph</div>
+        </div>
+
+        <!-- SETTINGS VIEW: hidden by default, revealed by the hamburger -->
+        <div class="view-settings" hidden>
+          <div class="section-head"><span>Torpedoes</span></div>
+          <div class="section-rule"></div>
+          <div class="torp-row">
+            <div class="torp-btn torp-btn--type"><span class="name">Quantum</span><span class="qty">(250)</span></div>
+            <div class="torp-btn torp-btn--spread"><span class="spread">Quad</span></div>
+          </div>
+
+          <div class="section-head" style="padding-top:8px;"><span>Phasers</span></div>
+          <div class="section-rule"></div>
+          <div class="row row-cycle"><span class="label">Intensity</span><span class="value">Full</span><span class="caret">‹ ›</span></div>
+
+          <div style="height:6px;"></div>
+          <div class="sys-row">
+            <div class="sys-btn sys-btn--on"><span class="label">Tractor</span><span class="value">On</span></div>
+            <div class="sys-btn"><span class="label">Cloak</span><span class="value">Off</span></div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ GALAXY: photon-only, no cloak ============ -->
+  <div>
+    <div class="caption">Galaxy — Photon only, no cloak</div>
+    <div class="panel">
+      <div class="panel-header"><span>Weapons</span><span class="chevron">▼</span></div>
+      <div class="panel-body">
+
+        <!-- hamburger toggle: flips between status view and weapon settings -->
+        <span class="mode-btn" onclick="toggleSettings(this)">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round">
+            <path d="M2.5 4.5 H13.5"/><path d="M2.5 8 H13.5"/><path d="M2.5 11.5 H13.5"/>
+          </svg>
+          <span class="tip">Weapon settings</span>
+        </span>
+
+        <!-- STATUS VIEW (default) -->
+        <div class="view-status">
+          <div class="status-block">
+            <div class="arc midcharge"></div>
+            <svg class="ship-silhouette" width="120" height="70" viewBox="0 0 120 70">
+              <ellipse cx="60" cy="24" rx="36" ry="16" fill="#c9c9d4"/>
+              <rect x="53" y="32" width="14" height="30" rx="3" fill="#b6b6c2"/>
+              <rect x="26" y="46" width="9" height="22" rx="3" fill="#a9a9b6"/>
+              <rect x="85" y="46" width="9" height="22" rx="3" fill="#a9a9b6"/>
+            </svg>
+          </div>
+          <div class="status-speed">Speed 0 : 0 kph</div>
+        </div>
+
+        <!-- SETTINGS VIEW: hidden by default -->
+        <div class="view-settings" hidden>
+          <div class="section-head"><span>Torpedoes</span></div>
+          <div class="section-rule"></div>
+          <!-- single-type hull → type button static (no cycle); spread still cycles -->
+          <div class="torp-row">
+            <div class="torp-btn torp-btn--type torp-btn--static"><span class="name">Photon</span><span class="qty">(250)</span></div>
+            <div class="torp-btn torp-btn--spread"><span class="spread">Single</span></div>
+          </div>
+
+          <div class="section-head" style="padding-top:8px;"><span>Phasers</span></div>
+          <div class="section-rule"></div>
+          <div class="row row-cycle"><span class="label">Intensity</span><span class="value">Light</span><span class="caret">‹ ›</span></div>
+
+          <div style="height:6px;"></div>
+          <!-- no Cloak on this hull → the lone Tractor button fills the row -->
+          <div class="sys-row">
+            <div class="sys-btn"><span class="label">Tractor</span><span class="value">Off</span></div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="note">
+  <h3>Behaviour &amp; colour mapping</h3>
+  <ul>
+    <li><strong>Hamburger toggle (top-left of the body)</strong> — by default the panel shows the
+      <strong>status view</strong> exactly as today (60%-scaled ship silhouette + per-mount
+      phaser-arc icons + speed label); the only addition is the hamburger. Clicking it hides the
+      status view and reveals the <strong>weapon-settings view</strong> below; clicking again flips
+      back. Tooltip on hover ("Weapon settings" / "Hide settings").</li>
+    <li><strong>Torpedoes row = two buttons.</strong> Button 1 (<code>torp-btn--type</code>) shows
+      the selected type + remaining quantity, e.g. <em>Photon (250)</em> — click cycles carried
+      types (Photon, Quantum…). On a single-type hull it renders <code>torp-btn--static</code>
+      (grey, not clickable). Button 2 (<code>torp-btn--spread</code>) shows just the spread word —
+      <em>Single / Dual / Quad</em> — click cycles the options the loadout can fire; drives the
+      volley count + fan-out pattern.</li>
+    <li><strong>Intensity</strong> (<code>row-cycle</code>, under the <em>Phasers</em> heading) — cycles
+      Full / Light on every hull (<code>PhaserSystem.SetPowerLevel</code> PP_HIGH / PP_LOW).</li>
+    <li><strong>Tractor &amp; Cloak</strong> (<code>sys-row</code>, salmon Menu1) — two On/Off buttons
+      sharing one row, ~50/50. Each button renders only when its subsystem is equipped; if the hull
+      has just one (e.g. Galaxy has a tractor but no cloak), the remaining button fills the row at
+      100% width via <code>flex:1</code>.</li>
+    <li><strong>Toggle state</strong>: no coloured value text — an <em>On</em> device fills its button
+      with the salmon border colour (<code>sys-btn--on</code>); <em>Off</em> shows the translucent
+      salmon base. Value text stays neutral in both states.</li>
+    <li><strong>Section gating (whole sections, not just rows):</strong>
+      <ul>
+        <li>The <em>Torpedoes</em> section (heading + type/spread row) renders only if the ship has
+          at least one torpedo launcher.</li>
+        <li>The <em>Phasers</em> section (heading + Intensity row) renders only if the ship has
+          phasers.</li>
+        <li>Each of Tractor / Cloak renders only if that subsystem is equipped (already shown).</li>
+        <li>If a ship has nothing to configure at all, the hamburger toggle isn't shown.</li>
+      </ul>
+    </li>
+  </ul>
+  <p>Layer rule (from 04): rows inside a labelled section drop to Menu3 pink; standalone toggles
+  stay at the panel's Menu1 salmon — colour alone signals “section sub-control” vs “top-level toggle”.</p>
+</div>
+
+<script>
+  // Hamburger flips the panel between the status view (default, as today) and
+  // the weapon-settings view. The runtime CEF panel will do the same show/hide.
+  function toggleSettings(btn) {
+    var body = btn.closest('.panel-body');
+    var status = body.querySelector('.view-status');
+    var settings = body.querySelector('.view-settings');
+    var tip = btn.querySelector('.tip');
+    if (settings.hasAttribute('hidden')) {
+      settings.removeAttribute('hidden');
+      status.setAttribute('hidden', '');
+      if (tip) tip.textContent = 'Hide settings';
+    } else {
+      settings.setAttribute('hidden', '');
+      status.removeAttribute('hidden');
+      if (tip) tip.textContent = 'Weapon settings';
+    }
+  }
+</script>
+</body>
+</html>
+</content>
