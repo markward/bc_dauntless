@@ -93,10 +93,37 @@ TEST_F(GalaxyRegressionFixture, MaterialCountAndBaseTextureIdentity) {
     }
     std::fprintf(stderr, "]\n");
 
-    // Pinned values captured 2026-05-15 against main af5c616.
+    // Galaxy's material count is structural (10 texturing properties) — stable
+    // regardless of the local asset install.
     EXPECT_EQ(mat_count, 10u);
-    const std::vector<int> expected_bases = {0, 2, 4, 5, 6, 7, 8, 9, 10, 11};
-    EXPECT_EQ(base_indices, expected_bases);
+
+    // Base-stage identity invariant (machine-independent). We deliberately do
+    // NOT pin exact index values: load_all_textures inserts an extra texture
+    // for every base whose "<name>_specular.tga" AddLOD sibling happens to
+    // exist on disk (model_build.cc), which shifts every later base index.
+    // Those spec siblings are OPTIONAL, per-machine assets (game/ is gitignored),
+    // so an exact pin — captured 2026-05-15 as {0,2,4,5,6,7,8,9,10,11} on an
+    // install that had two Ent-D spec maps — spuriously fails on installs
+    // without them (this one yields the sibling-free {0,1,...,9}).
+    //
+    // What the property-link inheritance walk must guarantee, and what this
+    // now asserts, is: every material resolves a real Base texture (never the
+    // -1 unresolved sentinel), and the bases stay in strictly increasing,
+    // one-per-material order (no reordering, no two materials collapsing onto
+    // the same texture). Sibling insertions only widen the gaps; they never
+    // break monotonicity.
+    const std::size_t tex_count = model->textures.size();
+    int prev = -1;
+    for (std::size_t i = 0; i < base_indices.size(); ++i) {
+        const int idx = base_indices[i];
+        EXPECT_GE(idx, 0) << "material " << i << " has no Base texture "
+                             "(unresolved link — inheritance walk regression)";
+        EXPECT_LT(idx, static_cast<int>(tex_count))
+            << "material " << i << " Base index out of range";
+        EXPECT_GT(idx, prev) << "base indices not strictly increasing at "
+                                "material " << i << " (reorder/duplicate regression)";
+        prev = idx;
+    }
 }
 
 // End-to-end integration: DBridge.NIF should produce 145 materials, of
