@@ -48,6 +48,34 @@ def test_reset_rearms_ship_display_slots():
     assert ship_display._create_count == 0
 
 
+def test_reset_rewires_tactical_fire_handlers_to_fresh_tcw():
+    """Weapon-fire input must still route to TacticalInterfaceHandlers after a
+    mission swap recreates the TCW. Regression: reset_sdk_globals recreated the
+    TCW singleton but never re-ran TacticalInterfaceHandlers.Initialize, so the
+    fresh window had no ET_INPUT_FIRE_PRIMARY handler — F/X/G silently died in
+    every mission swapped in after the boot QuickBattle (which registered on the
+    original instance). Also guards single registration (double dispatch = 2)."""
+    import TacticalInterfaceHandlers
+
+    reset_sdk_globals()
+    fresh = TacticalControlWindow.GetInstance()
+
+    calls = []
+    orig = TacticalInterfaceHandlers.FireWeapons
+    TacticalInterfaceHandlers.FireWeapons = \
+        lambda pShip, bFiring, eGroup: calls.append((bFiring, eGroup))
+    try:
+        evt = App.TGBoolEvent_Create()
+        evt.SetEventType(App.ET_INPUT_FIRE_PRIMARY)
+        evt.SetBool(1)
+        evt.SetDestination(fresh)
+        App.g_kEventManager.AddEvent(evt)
+    finally:
+        TacticalInterfaceHandlers.FireWeapons = orig
+
+    assert calls == [(1, App.ShipClass.WG_PRIMARY)]   # fired exactly once
+
+
 def test_reset_rewires_hotkeys_to_fresh_tcw():
     from engine.ui import crew_menu_hotkeys
     from engine.ui.crew_menu_panel import CrewMenuPanel

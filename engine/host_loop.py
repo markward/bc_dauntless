@@ -185,14 +185,13 @@ def _bootstrap_firing_pipeline() -> None:
         print(f"[host_loop] WARNING: DefaultKeyboardBinding.Initialize() failed: {_e}",
               flush=True)
 
-    # Wire TacticalInterfaceHandlers' fire-event handlers onto the TCW so
-    # ET_INPUT_FIRE_PRIMARY/SECONDARY/TERTIARY route to FireWeapons.
-    try:
-        import TacticalInterfaceHandlers
-        TacticalInterfaceHandlers.Initialize(tcw)
-    except Exception as _e:
-        print(f"[host_loop] WARNING: TacticalInterfaceHandlers.Initialize() failed: {_e}",
-              flush=True)
+    # NOTE: TacticalInterfaceHandlers.Initialize (fire / targeting / camera /
+    # turn handlers on the TCW) is deliberately NOT called here. The TCW
+    # singleton is recreated by reset_sdk_globals on every mission (re)load,
+    # which orphans any handlers registered on the boot instance; so that
+    # function is the sole registrar, re-wiring the fresh TCW each load. Doing
+    # it here too would double-register on the boot mission (double fire per
+    # keypress).
 
     # Load weapon SFX via the SDK's canonical sound script — no hard-coded
     # names anywhere in the engine.  "Galaxy Phaser Start"/"Loop", "Photon
@@ -2129,8 +2128,26 @@ def reset_sdk_globals() -> None:
         ship_display._reset_for_bridge_teardown()
         # Re-point keyboard dispatch at the fresh singleton — the old
         # instance was just orphaned and still held the default destination.
-        App.g_kKeyboardBinding.SetDefaultDestination(
-            _TCW.GetInstance())
+        _fresh_tcw = _TCW.GetInstance()
+        App.g_kKeyboardBinding.SetDefaultDestination(_fresh_tcw)
+        # Re-register the tactical input handlers (fire / targeting / camera /
+        # turn) on the fresh TCW. BC's native engine wires these when it
+        # creates the tactical window; we recreate the window singleton on
+        # every mission (re)load just above, so the handlers must be re-applied
+        # here or every TCW-routed keyboard control silently dies after the
+        # load — most visibly weapon fire (ET_INPUT_FIRE_PRIMARY -> FireWeapons).
+        # That is exactly why firing worked in the boot QuickBattle but not in
+        # any mission swapped in afterward; the direct host-loop pollers (ship
+        # turn, camera, Shift+alert) kept working, which masked the gap. This is
+        # now the SOLE registrar — _bootstrap_firing_pipeline no longer calls
+        # Initialize — so handlers register exactly once per TCW (no double
+        # dispatch).
+        try:
+            import TacticalInterfaceHandlers
+            TacticalInterfaceHandlers.Initialize(_fresh_tcw)
+        except Exception as _e_tih:
+            dev_mode.log_swallowed(
+                "TacticalInterfaceHandlers.Initialize after TCW reset", _e_tih)
         from engine.ui import crew_menu_hotkeys
         crew_menu_hotkeys.rewire()
     except Exception as _e:
