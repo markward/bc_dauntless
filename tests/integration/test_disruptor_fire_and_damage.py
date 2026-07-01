@@ -104,7 +104,7 @@ def test_held_disruptor_fire_damages_target_through_apply_hit():
         # 55 GU/s over 40 GU ≈ 0.73 s; step well past impact.
         for _ in range(40):
             _advance_weapons([ship, target], 0.05)
-            _advance_combat([ship, target], dt=0.05, host=None, ship_instances=None)
+            _advance_combat([ship, target], dt=0.05, ship_instances=None)
 
     hull_after = target._hull.GetCondition()
     assert hull_after < hull_before, (
@@ -144,7 +144,7 @@ def test_held_trigger_refires_via_advance_combat_hook():
         # _advance_combat) is the ONLY thing that can re-fire it.
         for _ in range(80):
             _advance_weapons([ship, target], 0.1)
-            _advance_combat([ship, target], dt=0.1, host=None, ship_instances=None)
+            _advance_combat([ship, target], dt=0.1, ship_instances=None)
 
     assert spawn_count["n"] > 1, (
         "held trigger should re-fire over time via the _advance_combat hook; "

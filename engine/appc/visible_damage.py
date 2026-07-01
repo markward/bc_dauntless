@@ -7,8 +7,8 @@ damage sphere — and `Effects.DeathExplosionDamage` calls the runtime sibling
 `pShip.AddDamage(pEmitPos, fRadius, fDamage)`. `DamageableObject` routes both
 here.
 
-The carve emitter (`host.hull_carve_add`) needs the renderer `host` and the
-ship->instance-id map, which only exist in the host-loop tick. But the authored
+The carve emitter (`host_io.hull_carve_add`) needs the ship->instance-id map,
+which only exists in the host-loop tick. But the authored
 calls arrive during a mission's `Initialize`, BEFORE the set's render instances
 are realized (the ship has no `iid` yet). So we QUEUE each request and DRAIN it
 per-tick from `advance()` once the ship's instance is realized — the same
@@ -22,6 +22,7 @@ sphere position + radius drive a Gap-1 carve.
 See docs/original_game_reference/engine/damagetool-and-hull-damage-gaps.md.
 """
 import engine.dev_mode as dev_mode
+from engine import host_io
 from engine.appc.math import TGPoint3, TGMatrix3
 
 # Pending requests linger at most this long (game seconds) waiting for the
@@ -78,7 +79,7 @@ def reset() -> None:
     _pending.clear()
 
 
-def advance(dt=0.0, host=None, ship_instances=None) -> None:
+def advance(dt=0.0, ship_instances=None) -> None:
     """Emit queued volumes for any ship whose render instance is now realized;
     keep the rest until they realize or age out. Raise-safe per entry."""
     if not _pending:
@@ -86,7 +87,7 @@ def advance(dt=0.0, host=None, ship_instances=None) -> None:
     survivors = []
     for entry in _pending:
         try:
-            keep = _advance_one(entry, float(dt), host, ship_instances)
+            keep = _advance_one(entry, float(dt), ship_instances)
         except Exception as _e:
             dev_mode.log_swallowed("visible damage advance", _e)
             keep = False
@@ -95,12 +96,12 @@ def advance(dt=0.0, host=None, ship_instances=None) -> None:
     _pending[:] = survivors
 
 
-def _advance_one(entry, dt, host, ship_instances) -> bool:
+def _advance_one(entry, dt, ship_instances) -> bool:
     """Emit one entry if its ship is realized (returns False -> drop it), else
     age it and keep it until MAX_PENDING_AGE."""
     ship = entry["ship"]
     iid = ship_instances.get(ship) if ship_instances is not None else None
-    if iid is None or host is None or not hasattr(host, "hull_carve_add"):
+    if iid is None:
         entry["age"] += dt
         return entry["age"] < MAX_PENDING_AGE
 
@@ -121,7 +122,7 @@ def _advance_one(entry, dt, host, ship_instances) -> bool:
     # Carve sizes are absolute; the only per-ship scale is BC's DamageRadMod
     # (applied to both the authored `floor` and the strength curve). The authored
     # `floor` still guarantees the wreck's visible size.
-    host.hull_carve_add(
+    host_io.hull_carve_add(
         iid,
         (world_pt.x, world_pt.y, world_pt.z),
         (normal.x, normal.y, normal.z),

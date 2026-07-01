@@ -170,7 +170,7 @@ def test_advance_combat_stops_disabled_system_mid_tick():
     original = combat_mod.apply_hit
     combat_mod.apply_hit = lambda *a, **kw: calls.append((a, kw))
     try:
-        _advance_combat([ship, target], dt=1.0/60, host=None,
+        _advance_combat([ship, target], dt=1.0/60,
                         ship_instances=None)
     finally:
         combat_mod.apply_hit = original
@@ -203,7 +203,7 @@ def _run_advance_combat(ship, target):
     original = combat_mod.apply_hit
     combat_mod.apply_hit = lambda *a, **kw: calls.append((a, kw))
     try:
-        _advance_combat([ship, target], dt=1.0 / 60, host=None,
+        _advance_combat([ship, target], dt=1.0 / 60,
                         ship_instances=None)
     finally:
         combat_mod.apply_hit = original

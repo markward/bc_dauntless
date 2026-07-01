@@ -1,10 +1,14 @@
 """dispatch — severity routing + mutual exclusivity + player gate.
 
-Mocks host.shield_hit, hit_vfx.spawn, audio, camera shake; asserts each
-fires for the right severity and only for the right severity.
+Native hit/damage touches route through engine.host_io; these tests patch the
+host_io.shield_hit / world_to_body wrappers (the single guard point) rather
+than injecting a raw host= module (Task 4 of the host_io façade refactor).
+hit_vfx.spawn, audio, camera shake are mocked as before; each is asserted to
+fire for the right severity and only for the right severity.
 """
 import pytest
 
+from engine import host_io
 from engine.appc import hit_feedback, hit_vfx, camera_shake
 from engine.appc.hit_feedback import Severity
 from engine.appc.math import TGPoint3
@@ -27,14 +31,39 @@ class _Ship:
     def GetHull(self): return self._hull
 
 
-class _FakeHost:
+class _ShieldHitSpy:
+    """Positional-arg capture matching host_io.shield_hit
+    (instance_id, point, rgba, intensity)."""
+
     def __init__(self):
         self.shield_hit_calls = []
-    def shield_hit(self, *, instance_id, point, rgba, intensity):
+
+    def __call__(self, instance_id, point, rgba=(0.0, 0.0, 0.0, 0.0),
+                 intensity=1.0):
         self.shield_hit_calls.append({
             "instance_id": instance_id, "point": point,
             "rgba": rgba, "intensity": intensity,
         })
+
+
+@pytest.fixture
+def host(monkeypatch):
+    """Patch host_io.shield_hit with a call-capturing spy; return the spy
+    (kept named `host` so the existing assertions read `host.shield_hit_calls`)."""
+    spy = _ShieldHitSpy()
+    monkeypatch.setattr(host_io, "shield_hit", spy)
+    return spy
+
+
+@pytest.fixture(autouse=True)
+def _isolate_host_io(monkeypatch):
+    """Neutralize the sibling host_io hit/damage wrappers so the spark / decal /
+    carve paths never reach the strict real native binding (which rejects the
+    small-int / no-op iids these unit tests use). world_to_body → None (flash
+    only, no spark anchor unless a test overrides it); the rest → no-op."""
+    monkeypatch.setattr(host_io, "world_to_body", lambda *a, **k: None)
+    monkeypatch.setattr(host_io, "damage_decal_add", lambda *a, **k: None)
+    monkeypatch.setattr(host_io, "hull_carve_add", lambda *a, **k: None)
 
 
 @pytest.fixture(autouse=True)
@@ -85,13 +114,12 @@ def spy(monkeypatch):
 
 # ── SHIELD ──────────────────────────────────────────────────────────────────
 
-def test_shield_severity_torpedo_plays_weapon_explosion(spy):
+def test_shield_severity_torpedo_plays_weapon_explosion(host, spy):
     """Torpedo-on-shields plays g_lsWeaponExplosions (matching SDK
     Effects.TorpedoShieldHit). host.shield_hit also fires for the
     bubble splash."""
     hull = _HullMarker()
     ship = _Ship(hull)
-    host = _FakeHost()
     ship_instances = {ship: 42}
     point = TGPoint3(1.0, 2.0, 3.0)
 
@@ -100,7 +128,7 @@ def test_shield_severity_torpedo_plays_weapon_explosion(spy):
         damage=30.0, subsystem=hull,
         absorbed_shields=30.0, absorbed_subsystem=0.0, absorbed_hull=0.0,
         sub_transition=None,
-        host=host, ship_instances=ship_instances,
+        ship_instances=ship_instances,
         weapon_type="torpedo",
     )
 
@@ -115,13 +143,12 @@ def test_shield_severity_torpedo_plays_weapon_explosion(spy):
     assert spy["audio"][0]["position"] == (1.0, 2.0, 3.0)
 
 
-def test_shield_severity_phaser_is_silent(spy):
+def test_shield_severity_phaser_is_silent(host, spy):
     """Phaser-on-shields plays no audio (stock BC has no
     PhaserShieldHit handler). host.shield_hit still fires for the
     visual bubble splash."""
     hull = _HullMarker()
     ship = _Ship(hull)
-    host = _FakeHost()
     ship_instances = {ship: 42}
     point = TGPoint3(0.0, 0.0, 0.0)
 
@@ -130,7 +157,7 @@ def test_shield_severity_phaser_is_silent(spy):
         damage=30.0, subsystem=hull,
         absorbed_shields=30.0, absorbed_subsystem=0.0, absorbed_hull=0.0,
         sub_transition=None,
-        host=host, ship_instances=ship_instances,
+        ship_instances=ship_instances,
         weapon_type="phaser",
     )
 
@@ -139,11 +166,10 @@ def test_shield_severity_phaser_is_silent(spy):
     assert spy["mgr"].last_lookup is None    # GetSound not called
 
 
-def test_shield_severity_unknown_weapon_is_silent(spy):
+def test_shield_severity_unknown_weapon_is_silent(host, spy):
     """weapon_type=None falls into the safe-default path: no audio."""
     hull = _HullMarker()
     ship = _Ship(hull)
-    host = _FakeHost()
     ship_instances = {ship: 42}
 
     hit_feedback.dispatch(
@@ -151,7 +177,7 @@ def test_shield_severity_unknown_weapon_is_silent(spy):
         normal=None, damage=30.0, subsystem=hull,
         absorbed_shields=30.0, absorbed_subsystem=0.0, absorbed_hull=0.0,
         sub_transition=None,
-        host=host, ship_instances=ship_instances,
+        ship_instances=ship_instances,
     )
 
     assert len(host.shield_hit_calls) == 1
@@ -160,10 +186,9 @@ def test_shield_severity_unknown_weapon_is_silent(spy):
 
 # ── HULL ────────────────────────────────────────────────────────────────────
 
-def test_hull_severity_fires_hit_vfx_not_shield_hit(spy):
+def test_hull_severity_fires_hit_vfx_not_shield_hit(host, spy):
     hull = _HullMarker()
     ship = _Ship(hull)
-    host = _FakeHost()
     ship_instances = {ship: 42}
     point = TGPoint3(0.0, 0.0, 0.0)
     normal = TGPoint3(0.0, 0.0, -1.0)
@@ -173,7 +198,7 @@ def test_hull_severity_fires_hit_vfx_not_shield_hit(spy):
         damage=30.0, subsystem=hull,
         absorbed_shields=0.0, absorbed_subsystem=0.0, absorbed_hull=30.0,
         sub_transition=None,
-        host=host, ship_instances=ship_instances,
+        ship_instances=ship_instances,
     )
 
     assert host.shield_hit_calls == []
@@ -188,11 +213,10 @@ def test_hull_severity_fires_hit_vfx_not_shield_hit(spy):
 
 # ── CRITICAL ───────────────────────────────────────────────────────────────
 
-def test_critical_severity_fires_hit_vfx_critical(spy):
+def test_critical_severity_fires_hit_vfx_critical(host, spy):
     hull = _HullMarker()
     sensors = _Sub("sensors")
     ship = _Ship(hull)
-    host = _FakeHost()
     ship_instances = {ship: 42}
     point = TGPoint3(0.0, 0.0, 0.0)
     normal = TGPoint3(1.0, 0.0, 0.0)
@@ -202,7 +226,7 @@ def test_critical_severity_fires_hit_vfx_critical(spy):
         damage=80.0, subsystem=sensors,
         absorbed_shields=0.0, absorbed_subsystem=80.0, absorbed_hull=0.0,
         sub_transition="disabled",
-        host=host, ship_instances=ship_instances,
+        ship_instances=ship_instances,
     )
 
     assert host.shield_hit_calls == []
@@ -216,10 +240,9 @@ def test_critical_severity_fires_hit_vfx_critical(spy):
 
 # ── Player gate ────────────────────────────────────────────────────────────
 
-def test_camera_shake_fires_when_ship_is_player(spy, monkeypatch):
+def test_camera_shake_fires_when_ship_is_player(host, spy, monkeypatch):
     hull = _HullMarker()
     ship = _Ship(hull)
-    host = _FakeHost()
     ship_instances = {ship: 42}
 
     # Make Game_GetCurrentGame().GetPlayer() return our ship.
@@ -233,18 +256,17 @@ def test_camera_shake_fires_when_ship_is_player(spy, monkeypatch):
         damage=50.0, subsystem=hull,
         absorbed_shields=0.0, absorbed_subsystem=0.0, absorbed_hull=50.0,
         sub_transition=None,
-        host=host, ship_instances=ship_instances,
+        ship_instances=ship_instances,
     )
 
     assert len(spy["kicks"]) == 1
     assert spy["kicks"][0]["damage"] == pytest.approx(50.0)
 
 
-def test_camera_shake_does_not_fire_for_non_player_target(spy, monkeypatch):
+def test_camera_shake_does_not_fire_for_non_player_target(host, spy, monkeypatch):
     hull = _HullMarker()
     ship = _Ship(hull)
     other_player = _Ship(hull)
-    host = _FakeHost()
     ship_instances = {ship: 42}
 
     import App
@@ -257,19 +279,18 @@ def test_camera_shake_does_not_fire_for_non_player_target(spy, monkeypatch):
         damage=50.0, subsystem=hull,
         absorbed_shields=0.0, absorbed_subsystem=0.0, absorbed_hull=50.0,
         sub_transition=None,
-        host=host, ship_instances={ship: 42},
+        ship_instances={ship: 42},
     )
 
     assert spy["kicks"] == []
 
 
-def test_shield_severity_does_not_kick_camera_shake_even_for_player(spy, monkeypatch):
+def test_shield_severity_does_not_kick_camera_shake_even_for_player(host, spy, monkeypatch):
     """Shields-up is by design a deflection; no camera shake should
     fire even when the player is the recipient. Camera shake is
     reserved for HULL and CRITICAL severities."""
     hull = _HullMarker()
     ship = _Ship(hull)
-    host = _FakeHost()
     ship_instances = {ship: 42}
 
     import App
@@ -282,7 +303,7 @@ def test_shield_severity_does_not_kick_camera_shake_even_for_player(spy, monkeyp
         damage=50.0, subsystem=hull,
         absorbed_shields=50.0, absorbed_subsystem=0.0, absorbed_hull=0.0,
         sub_transition=None,
-        host=host, ship_instances=ship_instances,
+        ship_instances=ship_instances,
         weapon_type="torpedo",
     )
 
@@ -293,8 +314,9 @@ def test_shield_severity_does_not_kick_camera_shake_even_for_player(spy, monkeyp
 
 # ── Headless robustness ───────────────────────────────────────────────────
 
-def test_dispatch_with_none_host_does_not_call_shield_hit(spy):
-    """host=None means no renderer; dispatch must not raise."""
+def test_dispatch_with_no_instances_does_not_call_shield_hit(spy):
+    """ship_instances=None means no renderer instance map; dispatch must skip
+    the shield flash (host_io.shield_hit is never reached) and not raise."""
     hull = _HullMarker()
     ship = _Ship(hull)
     hit_feedback.dispatch(
@@ -302,27 +324,26 @@ def test_dispatch_with_none_host_does_not_call_shield_hit(spy):
         damage=30.0, subsystem=hull,
         absorbed_shields=30.0, absorbed_subsystem=0.0, absorbed_hull=0.0,
         sub_transition=None,
-        host=None, ship_instances=None,
+        ship_instances=None,
     )
-    # No exception; SHIELD severity tried to fire shield_hit but no host
-    # to call it on. hit_vfx still empty (SHIELD never spawns hit_vfx).
+    # No exception; SHIELD severity had no instance map so shield_hit was
+    # skipped. hit_vfx still empty (SHIELD never spawns hit_vfx).
     assert hit_vfx.snapshot() == []
 
 
-def test_dispatch_with_no_sound_manager_is_silent(spy, monkeypatch):
+def test_dispatch_with_no_sound_manager_is_silent(host, spy, monkeypatch):
     """App.g_kSoundManager = None — audio path falls through silently."""
     import App
     monkeypatch.setattr(App, "g_kSoundManager", None, raising=False)
 
     hull = _HullMarker()
     ship = _Ship(hull)
-    host = _FakeHost()
     hit_feedback.dispatch(
         ship=ship, source=None, point=TGPoint3(0,0,0), normal=None,
         damage=30.0, subsystem=hull,
         absorbed_shields=0.0, absorbed_subsystem=0.0, absorbed_hull=30.0,
         sub_transition=None,
-        host=host, ship_instances={ship: 42},
+        ship_instances={ship: 42},
     )
     # Audio silently dropped — no exception.
     # hit_vfx still pushed.
@@ -331,20 +352,19 @@ def test_dispatch_with_no_sound_manager_is_silent(spy, monkeypatch):
 
 # ── Audio throttle ─────────────────────────────────────────────────────────
 
-def test_audio_throttle_drops_rapid_repeats_on_same_ship(spy):
+def test_audio_throttle_drops_rapid_repeats_on_same_ship(host, spy):
     """Two HULL hits on the same ship within the contact-gap window
     produce only one audio play (the second is part of the same contact
     burst). The visual + camera-shake paths still fire on both."""
     hull = _HullMarker()
     ship = _Ship(hull)
-    host = _FakeHost()
     ship_instances = {ship: 42}
 
     kwargs = dict(
         ship=ship, source=None, point=TGPoint3(0.0, 0.0, 0.0),
         normal=None, damage=30.0, subsystem=hull,
         absorbed_shields=0.0, absorbed_subsystem=0.0, absorbed_hull=30.0,
-        sub_transition=None, host=host, ship_instances=ship_instances,
+        sub_transition=None, ship_instances=ship_instances,
     )
     hit_feedback.dispatch(**kwargs)
     hit_feedback.dispatch(**kwargs)
@@ -355,19 +375,18 @@ def test_audio_throttle_drops_rapid_repeats_on_same_ship(spy):
     assert len(spy["audio"]) == 1
 
 
-def test_audio_throttle_separate_ships_not_throttled(spy):
+def test_audio_throttle_separate_ships_not_throttled(host, spy):
     """Two different ships taking HULL hits within 100ms BOTH play."""
     hull = _HullMarker()
     ship_a = _Ship(hull)
     ship_b = _Ship(hull)
-    host = _FakeHost()
     ship_instances = {ship_a: 1, ship_b: 2}
 
     base = dict(
         source=None, point=TGPoint3(0.0, 0.0, 0.0), normal=None,
         damage=30.0, subsystem=hull,
         absorbed_shields=0.0, absorbed_subsystem=0.0, absorbed_hull=30.0,
-        sub_transition=None, host=host, ship_instances=ship_instances,
+        sub_transition=None, ship_instances=ship_instances,
     )
     hit_feedback.dispatch(ship=ship_a, **base)
     hit_feedback.dispatch(ship=ship_b, **base)
@@ -375,19 +394,18 @@ def test_audio_throttle_separate_ships_not_throttled(spy):
     assert len(spy["audio"]) == 2
 
 
-def test_audio_throttle_separate_severities_not_throttled(spy):
+def test_audio_throttle_separate_severities_not_throttled(host, spy):
     """Same ship, SHIELD (torpedo) then HULL in quick succession — different
     keys, both play. weapon_type="torpedo" is needed for SHIELD audio; HULL
     fires regardless of weapon_type."""
     hull = _HullMarker()
     ship = _Ship(hull)
-    host = _FakeHost()
     ship_instances = {ship: 42}
 
     base = dict(
         ship=ship, source=None, point=TGPoint3(0.0, 0.0, 0.0),
         normal=None, damage=30.0, subsystem=hull,
-        host=host, ship_instances=ship_instances,
+        ship_instances=ship_instances,
     )
     # SHIELD hit — torpedo so audio fires.
     hit_feedback.dispatch(
@@ -403,7 +421,7 @@ def test_audio_throttle_separate_severities_not_throttled(spy):
     assert len(spy["audio"]) == 2
 
 
-def test_audio_edge_trigger_fires_again_after_contact_gap(spy, monkeypatch):
+def test_audio_edge_trigger_fires_again_after_contact_gap(host, spy, monkeypatch):
     """After a gap exceeding _AUDIO_CONTACT_GAP_S, a fresh hit on the
     same (ship, severity) plays audio again — this is what
     distinguishes edge-trigger from rate-limit semantics."""
@@ -416,14 +434,13 @@ def test_audio_edge_trigger_fires_again_after_contact_gap(spy, monkeypatch):
 
     hull = _HullMarker()
     ship = _Ship(hull)
-    host = _FakeHost()
     ship_instances = {ship: 42}
 
     kwargs = dict(
         ship=ship, source=None, point=TGPoint3(0.0, 0.0, 0.0),
         normal=None, damage=30.0, subsystem=hull,
         absorbed_shields=0.0, absorbed_subsystem=0.0, absorbed_hull=30.0,
-        sub_transition=None, host=host, ship_instances=ship_instances,
+        sub_transition=None, ship_instances=ship_instances,
     )
 
     # First contact — plays.
@@ -447,7 +464,7 @@ def test_audio_edge_trigger_fires_again_after_contact_gap(spy, monkeypatch):
     assert len(spy["audio"]) == 2
 
 
-def test_audio_continuous_dispatch_at_60hz_plays_once(spy, monkeypatch):
+def test_audio_continuous_dispatch_at_60hz_plays_once(host, spy, monkeypatch):
     """60 dispatches at 60Hz (1 second of continuous fire) produce
     exactly one audio play — the first."""
     import time
@@ -458,14 +475,13 @@ def test_audio_continuous_dispatch_at_60hz_plays_once(spy, monkeypatch):
 
     hull = _HullMarker()
     ship = _Ship(hull)
-    host = _FakeHost()
     ship_instances = {ship: 42}
 
     kwargs = dict(
         ship=ship, source=None, point=TGPoint3(0.0, 0.0, 0.0),
         normal=None, damage=30.0, subsystem=hull,
         absorbed_shields=0.0, absorbed_subsystem=0.0, absorbed_hull=30.0,
-        sub_transition=None, host=host, ship_instances=ship_instances,
+        sub_transition=None, ship_instances=ship_instances,
     )
 
     dt = 1.0 / 60.0
@@ -479,14 +495,18 @@ def test_audio_continuous_dispatch_at_60hz_plays_once(spy, monkeypatch):
 
 # ── Spark burst wiring ─────────────────────────────────────────────────────
 
-def test_heavy_hull_hit_spawns_sparks_with_body_anchor():
+def test_heavy_hull_hit_spawns_sparks_with_body_anchor(monkeypatch):
     """A torpedo hit exceeding SPARK_HULL_THRESHOLD should populate
-    instance_id, body_point, and weapon_kind in the hit_vfx descriptor."""
+    instance_id, body_point, and weapon_kind in the hit_vfx descriptor.
+
+    The world→body conversion routes through host_io.world_to_body; override
+    the autouse no-op with a fake that returns a body anchor so sparks fire."""
     from engine.appc.hit_feedback import SPARK_HULL_THRESHOLD
 
-    class _FakeHostWithBodyConv:
-        def world_to_body(self, *, instance_id, world_point, world_normal):
-            return ((1.0, 2.0, 3.0), (0.0, 0.0, 1.0))
+    def _fake_world_to_body(instance_id, world_point, world_normal):
+        return ((1.0, 2.0, 3.0), (0.0, 0.0, 1.0))
+
+    monkeypatch.setattr(host_io, "world_to_body", _fake_world_to_body)
 
     hull = _HullMarker()
     ship = _Ship(hull)
@@ -499,7 +519,7 @@ def test_heavy_hull_hit_spawns_sparks_with_body_anchor():
         damage=200.0, subsystem=hull,
         absorbed_shields=0.0, absorbed_subsystem=0.0,
         absorbed_hull=SPARK_HULL_THRESHOLD + 50.0, sub_transition=None,
-        host=_FakeHostWithBodyConv(), ship_instances=ship_instances,
+        ship_instances=ship_instances,
         weapon_type="torpedo", radius=5.0)
 
     snap = hit_vfx.snapshot()
@@ -525,7 +545,7 @@ def test_light_hull_hit_spawns_no_sparks():
         damage=5.0, subsystem=hull,
         absorbed_shields=0.0, absorbed_subsystem=0.0,
         absorbed_hull=SPARK_HULL_THRESHOLD - 1.0, sub_transition=None,
-        host=None, ship_instances=None, weapon_type="phaser", radius=2.0)
+        ship_instances=None, weapon_type="phaser", radius=2.0)
 
     snap = hit_vfx.snapshot()
     assert len(snap) == 1

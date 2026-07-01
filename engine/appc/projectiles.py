@@ -133,17 +133,18 @@ def expire(torpedo: Torpedo) -> None:
         pass
 
 
-def update_all(dt: float, all_ships, *, host=None, ship_instances=None) -> list[tuple]:
+def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
     """Advance every active torpedo by dt.  Returns list of
     (torpedo, hit_ship, hit_point, hit_normal) tuples that connected this tick.
     Expired torpedoes (TTL or impact) are removed from _active.
 
-    `host` and `ship_instances` are forwarded to combat._resolve_hit_point;
-    when omitted (headless tests, no renderer), hit_point degrades to the
-    torpedo's post-advance position and hit_normal is None — matching the
-    pre-project behaviour. `hit_normal` is the mesh surface normal (a TGPoint3)
-    when the trace succeeds, else None; callers forward it to apply_hit so the
-    persistent damage decal can render (a None normal suppresses the decal).
+    `ship_instances` is forwarded to combat._resolve_hit_point (the mesh
+    trace routes through host_io); when omitted (headless tests, no renderer),
+    hit_point degrades to the torpedo's post-advance position and hit_normal
+    is None — matching the pre-project behaviour. `hit_normal` is the mesh
+    surface normal (a TGPoint3) when the trace succeeds, else None; callers
+    forward it to apply_hit so the persistent damage decal can render (a None
+    normal suppresses the decal).
     """
     from engine.appc.combat import (sphere_hit, _resolve_hit_point)
     from engine.appc.math import TGPoint3
@@ -199,7 +200,7 @@ def update_all(dt: float, all_ships, *, host=None, ship_instances=None) -> list[
                     ray_origin = prev_pos
                     ray_max = seg_len
                 hit_point, hit_normal = _resolve_hit_point(
-                    host=host, ship_instances=ship_instances, ship=ship,
+                    ship_instances=ship_instances, ship=ship,
                     ray_origin=ray_origin,
                     ray_direction=aim_unit,
                     max_dist=ray_max,

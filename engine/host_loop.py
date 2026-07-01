@@ -14,6 +14,7 @@ from typing import Any, Callable, Iterable, Optional
 import os as _os_mod
 
 from engine import renderer as r
+from engine import host_io
 from engine.appc.ship_iter import (
     iter_set_objects as _iter_set_objects,
     iter_ships as _iter_ships,
@@ -226,11 +227,12 @@ def _bootstrap_firing_pipeline() -> None:
 def _poll_mouse_buttons(host) -> None:
     """Forward host-side mouse rising/falling edges into g_kInputManager.
 
-    `host` is the _dauntless_host module (the binding from host_bindings.cc).
-    No-op when host doesn't expose the button-poll methods (e.g. headless
-    test setup that imports host_loop without a window).
+    `host` supplies the `keys` constant submodule (button codes). The
+    button-edge queries route through host_io, which no-ops safely when the
+    native module is absent (e.g. headless test setup without a window).
+    No-op when host lacks the `keys` submodule.
     """
-    if host is None or not hasattr(host, "mouse_button_pressed"):
+    if host is None or not hasattr(host, "keys"):
         return
     import App  # deferred: module-top import reorders sound-manager init
     # Left-click → phasers (primary), right-click → torpedoes (secondary),
@@ -241,9 +243,9 @@ def _poll_mouse_buttons(host) -> None:
         (host.keys.MOUSE_BUTTON_RIGHT,  App.WC_RBUTTON),
         (host.keys.MOUSE_BUTTON_MIDDLE, App.WC_MBUTTON),
     ):
-        if host.mouse_button_pressed(glfw_btn):
+        if host_io.mouse_button_pressed(glfw_btn):
             App.g_kInputManager.OnKeyDown(wc)
-        if host.mouse_button_released(glfw_btn):
+        if host_io.mouse_button_released(glfw_btn):
             App.g_kInputManager.OnKeyUp(wc)
 
 
@@ -253,15 +255,15 @@ def _poll_mouse_buttons(host) -> None:
 _fn_key_prev: dict = {}
 
 
-def _poll_key_table(host, keymap) -> None:
+def _poll_key_table(keymap) -> None:
     """Edge-detect each (glfw_key, WC_code) in `keymap` and forward rising/
     falling edges to g_kInputManager.OnKeyDown/OnKeyUp.  Shares the module
     _fn_key_prev level cache so every polled key derives both edges from
-    key_state (the host exposes key_pressed for rising edges but no
+    host_io.key_state (the host exposes key_pressed for rising edges but no
     key_released)."""
     import App  # deferred: module-top import reorders sound-manager init
     for glfw_key, wc in keymap:
-        down = bool(host.key_state(glfw_key))
+        down = bool(host_io.key_state(glfw_key))
         was_down = _fn_key_prev.get(glfw_key, False)
         if down and not was_down:
             App.g_kInputManager.OnKeyDown(wc)
@@ -277,11 +279,14 @@ def _poll_function_keys(host, input_map) -> None:
     WC_F1..F5 code feeding the BC binding stays fixed, so DefaultKeyboardBinding's
     WC_F1→ET_INPUT_TALK_TO_* mapping is unchanged — only which key drives each
     WC slot is remappable.  See docs/superpowers/specs/2026-06-12-bridge-menu-hotkeys-design.md.
+
+    `host` is unused (key reads route through host_io, which no-ops safely when
+    the native module is absent); kept in the signature for callsite symmetry
+    with the other pollers.
     """
-    if host is None or not hasattr(host, "key_state"):
-        return
+    del host  # noqa: F841 — key reads go through host_io, not this handle.
     import App  # deferred: module-top import reorders sound-manager init
-    _poll_key_table(host, (
+    _poll_key_table((
         (input_map.code("talk_helm"),        App.WC_F1),
         (input_map.code("talk_tactical"),    App.WC_F2),
         (input_map.code("talk_xo"),          App.WC_F3),
@@ -302,11 +307,14 @@ def _poll_fire_keys(host, input_map) -> None:
 
     Firing still requires a selected target — FireWeapons no-ops when
     pShip.GetTarget() is None.
+
+    `host` is unused (key reads route through host_io, which no-ops safely when
+    the native module is absent); kept in the signature for callsite symmetry
+    with the other pollers.
     """
-    if host is None or not hasattr(host, "key_state"):
-        return
+    del host  # noqa: F841 — key reads go through host_io, not this handle.
     import App  # deferred: module-top import reorders sound-manager init
-    _poll_key_table(host, (
+    _poll_key_table((
         (input_map.code("fire_primary"),   App.WC_F),
         (input_map.code("fire_secondary"), App.WC_X),
         (input_map.code("fire_tertiary"),  App.WC_G),
@@ -331,14 +339,14 @@ def _poll_tractor_toggle(host) -> None:
     `keys` submodule predates KEY_T (graceful — tractor stays toggle-via-UI).
     """
     global _tractor_toggle_prev
-    if host is None or not hasattr(host, "key_state"):
+    if host is None:
         return
     keys = getattr(host, "keys", None)
     if keys is None or not hasattr(keys, "KEY_T"):
         return
-    alt = (bool(host.key_state(keys.KEY_LEFT_ALT))
-           or bool(host.key_state(keys.KEY_RIGHT_ALT)))
-    chord = alt and bool(host.key_state(keys.KEY_T))
+    alt = (bool(host_io.key_state(keys.KEY_LEFT_ALT))
+           or bool(host_io.key_state(keys.KEY_RIGHT_ALT)))
+    chord = alt and bool(host_io.key_state(keys.KEY_T))
     if chord and not _tractor_toggle_prev:
         import App  # deferred: module-top import reorders sound-manager init
         App.ToggleTractorFromInput()
@@ -361,14 +369,14 @@ def _poll_cloak_toggle(host) -> None:
     `keys` submodule predates KEY_C (graceful — cloak stays toggle-via-UI).
     """
     global _cloak_toggle_prev
-    if host is None or not hasattr(host, "key_state"):
+    if host is None:
         return
     keys = getattr(host, "keys", None)
     if keys is None or not hasattr(keys, "KEY_C"):
         return
-    alt = (bool(host.key_state(keys.KEY_LEFT_ALT))
-           or bool(host.key_state(keys.KEY_RIGHT_ALT)))
-    chord = alt and bool(host.key_state(keys.KEY_C))
+    alt = (bool(host_io.key_state(keys.KEY_LEFT_ALT))
+           or bool(host_io.key_state(keys.KEY_RIGHT_ALT)))
+    chord = alt and bool(host_io.key_state(keys.KEY_C))
     if chord and not _cloak_toggle_prev:
         import App  # deferred: module-top import reorders sound-manager init
         App.ToggleCloakFromInput()
@@ -471,7 +479,7 @@ def _phaser_damage_for_tick(max_damage: float,
     return max_damage * (max_damage_distance / dist) * dt   # R/d beyond
 
 
-def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
+def _advance_combat(ships, dt: float, ship_instances=None) -> None:
     """Per-frame torpedo motion + collision + damage + renderer push.
 
     Walks the active torpedo registry, advances motion, routes hits
@@ -479,13 +487,12 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
     broadcasts WeaponHitEvent), ages out expired VFX, and pushes current
     torpedo + hit-VFX lists to the renderer.
 
-    `host` is the _dauntless_host module (the binding from
-    host_bindings.cc).  When None (headless tests), the renderer pushes
-    are skipped — combat logic still runs.
+    All hit/damage/VFX native touches route through the engine.host_io
+    façade (which no-ops when headless), so no raw host module is needed.
 
     `ship_instances` maps ship → renderer instance id; passed through to
-    apply_hit so hit_feedback.dispatch can fire host.shield_hit on the
-    SHIELD severity path.
+    apply_hit so hit_feedback.dispatch can fire the shield flash (via
+    host_io.shield_hit) on the SHIELD severity path.
     """
     ships_list = list(ships)
 
@@ -496,12 +503,12 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
 
     hits = projectiles.update_all(
         dt, ships_list,
-        host=host, ship_instances=ship_instances,
+        ship_instances=ship_instances,
     )
     for torpedo, ship, hit_point, hit_normal in hits:
         combat.apply_hit(ship, torpedo._damage, hit_point,
                   source=torpedo._source_ship,
-                  normal=hit_normal, host=host, ship_instances=ship_instances,
+                  normal=hit_normal, ship_instances=ship_instances,
                   weapon_type="torpedo",
                   hardpoint_weapon=torpedo)
 
@@ -512,12 +519,12 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
     ship_death.advance(dt)
     from engine.appc import subsystem_cascade, warp_core_breach
     subsystem_cascade.advance(dt)
-    warp_core_breach.advance(dt, host=host, ship_instances=ship_instances)
+    warp_core_breach.advance(dt, ship_instances=ship_instances)
     from engine.appc import core_breach_carve
-    core_breach_carve.advance(dt, host=host, ship_instances=ship_instances)
+    core_breach_carve.advance(dt, ship_instances=ship_instances)
     from engine.appc import visible_damage
-    visible_damage.advance(dt, host=host, ship_instances=ship_instances)
-    subsystem_emitters.pump(ships_list, _camera_world_pos(host), dt)
+    visible_damage.advance(dt, ship_instances=ship_instances)
+    subsystem_emitters.pump(ships_list, None, dt)
     camera_shake.update(dt)
 
     # Continuous phaser damage tick.  Each ship's PhaserSystem has banks
@@ -592,7 +599,7 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
             )
             if damage > 0:
                 impact_point, impact_normal = combat._resolve_hit_point(
-                    host=host, ship_instances=ship_instances, ship=target,
+                    ship_instances=ship_instances, ship=target,
                     ray_origin=emitter_pos,
                     ray_direction=(aim_unit if dist > 1e-6 else None),
                     max_dist=(dist * 1.5 if dist > 1e-6 else 0.0),
@@ -607,7 +614,7 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
                 combat.apply_hit(target, damage, impact_point,
                           source=ship,
                           normal=impact_normal,
-                          host=host, ship_instances=ship_instances,
+                          ship_instances=ship_instances,
                           weapon_type="phaser",
                           hardpoint_weapon=bank,
                           damage_hull=damage_hull)
@@ -638,21 +645,20 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
     from engine.appc import tractor as _tractor
     _tractor.advance_tractors(ships_list, dt)
 
-    if host is not None and hasattr(host, "set_torpedoes"):
-        host.set_torpedoes(_build_torpedo_render_data())
+    # Per-frame VFX descriptor lists route through the host_io façade, which
+    # no-ops when the native module is absent (headless). The hit/damage
+    # bindings (ray_trace_mesh, shield_hit, world_to_body, …) inside the
+    # _build_* helpers and the combat/carve advances now route through
+    # host_io too, so nothing below consumes the raw `host` module.
+    host_io.set_torpedoes(_build_torpedo_render_data())
     from engine.appc import shockwaves as _shockwaves
-    if host is not None and hasattr(host, "set_shockwaves"):
-        host.set_shockwaves(_shockwaves.render_data())
-    if host is not None and hasattr(host, "set_hit_vfx"):
-        host.set_hit_vfx(_build_hit_vfx_render_data())
-    if host is not None and hasattr(host, "set_particle_emitters"):
-        host.set_particle_emitters(_build_particle_render_data(ship_instances))
-    if host is not None and hasattr(host, "set_phaser_beams"):
-        host.set_phaser_beams(_build_phaser_beam_render_data(
-            ships_list, host=host, ship_instances=ship_instances))
-    if host is not None and hasattr(host, "set_tractor_beams"):
-        host.set_tractor_beams(_build_tractor_beam_render_data(
-            ships_list, host=host, ship_instances=ship_instances))
+    host_io.set_shockwaves(_shockwaves.render_data())
+    host_io.set_hit_vfx(_build_hit_vfx_render_data())
+    host_io.set_particle_emitters(_build_particle_render_data(ship_instances))
+    host_io.set_phaser_beams(_build_phaser_beam_render_data(
+        ships_list, ship_instances=ship_instances))
+    host_io.set_tractor_beams(_build_tractor_beam_render_data(
+        ships_list, ship_instances=ship_instances))
 
 
 def _color_tuple(color):
@@ -778,7 +784,7 @@ def _build_particle_render_data(ship_instances=None):
 PHASER_BEAM_WIDTH_MUTATOR = 3.0
 
 
-def _beam_descriptor_pair(ship, bank, host, ship_instances):
+def _beam_descriptor_pair(ship, bank, ship_instances):
     """Build the (outer-shell, inner-core) beam descriptor pair for one firing
     energy emitter — a phaser bank OR a tractor emitter.  Both inherit the same
     beam visual getters (NumSides / MainRadius / shell+core colours / texture
@@ -786,9 +792,10 @@ def _beam_descriptor_pair(ship, bank, host, ship_instances):
     so the render build is identical; only the parent system differs (handled
     by the callers).  Returns [] when the bank has no target.
 
-    When `host` + `ship_instances` are supplied, the beam endpoint is clipped
-    to the mesh-trace surface point so the visible beam ends on the target's
-    hull rather than at its bounding-sphere centre.
+    When `ship_instances` is supplied, the beam endpoint is clipped to the
+    mesh-trace surface point (via host_io.ray_trace_mesh inside
+    combat._resolve_hit_point) so the visible beam ends on the target's hull
+    rather than at its bounding-sphere centre.
     """
     target = bank._target
     if target is None:
@@ -808,10 +815,10 @@ def _beam_descriptor_pair(ship, bank, host, ship_instances):
     raw_length = (dx * dx + dy * dy + dz * dz) ** 0.5
     beam_length = raw_length
     beam_end = target_pos
-    if raw_length > 1e-6 and host is not None and ship_instances is not None:
+    if raw_length > 1e-6 and ship_instances is not None:
         aim_unit = TGPoint3(dx / raw_length, dy / raw_length, dz / raw_length)
         clipped, _clipped_normal = combat._resolve_hit_point(
-            host=host, ship_instances=ship_instances, ship=target,
+            ship_instances=ship_instances, ship=target,
             ray_origin=emitter_pos,
             ray_direction=aim_unit,
             max_dist=raw_length * 1.5,
@@ -857,7 +864,7 @@ def _beam_descriptor_pair(ship, bank, host, ship_instances):
     ]
 
 
-def _build_phaser_beam_render_data(ships, host=None, ship_instances=None):
+def _build_phaser_beam_render_data(ships, ship_instances=None):
     """Snapshot active phaser beams for the renderer.
 
     Walks every ship's PhaserSystem; for each bank IsFiring()=1, yields the
@@ -872,7 +879,7 @@ def _build_phaser_beam_render_data(ships, host=None, ship_instances=None):
             bank = sys_.GetWeapon(i)
             if bank is None or not bank.IsFiring():
                 continue
-            out.extend(_beam_descriptor_pair(ship, bank, host, ship_instances))
+            out.extend(_beam_descriptor_pair(ship, bank, ship_instances))
     return out
 
 
@@ -886,7 +893,7 @@ TRACTOR_BEAM_END_WIDTH_SCALE = 1.25
 TRACTOR_BEAM_BRIGHTNESS = 0.5
 
 
-def _build_tractor_beam_render_data(ships, host=None, ship_instances=None):
+def _build_tractor_beam_render_data(ships, ship_instances=None):
     """Snapshot active tractor beams for the renderer.
 
     Mirrors _build_phaser_beam_render_data but walks each ship's
@@ -911,7 +918,7 @@ def _build_tractor_beam_render_data(ships, host=None, ship_instances=None):
             bank = sys_.GetWeapon(i)
             if bank is None or not bank.IsFiring():
                 continue
-            for d in _beam_descriptor_pair(ship, bank, host, ship_instances):
+            for d in _beam_descriptor_pair(ship, bank, ship_instances):
                 d["end_width_scale"] = TRACTOR_BEAM_END_WIDTH_SCALE
                 c = d["color"]
                 d["color"] = (c[0] * TRACTOR_BEAM_BRIGHTNESS,
@@ -933,18 +940,6 @@ def _all_ships_for_tick():
         return _iter_ships()
     except Exception:
         return iter(())
-
-
-def _camera_world_pos(host):
-    """Best-effort camera world position for plume distance culling; None if
-    unavailable (culling then disabled, cap still applies)."""
-    if host is not None and hasattr(host, "get_camera_world_pos"):
-        try:
-            p = host.get_camera_world_pos()
-            return (p[0], p[1], p[2])
-        except Exception:
-            return None
-    return None
 
 
 def _extract_ypr(R) -> tuple:
@@ -3687,10 +3682,10 @@ def realize_all_sets(controller, r) -> None:
     for name, s in list(mgr.iter_sets()):          # use the manager's set map
         if name == "bridge":
             realize_set(controller, r, s, is_bridge=True)
-        elif hasattr(r, "create_comm_instance") and (
-                s.GetBackgroundModelNIF() is not None or _iter_set_characters(s)):
-            # hasattr guard: skip comm-set realization cleanly against a stale
-            # renderer build that predates the create_comm_instance binding.
+        elif (s.GetBackgroundModelNIF() is not None or _iter_set_characters(s)):
+            # create_comm_instance is a REQUIRED renderer binding (validated at
+            # boot), so it is always present; realize any set with a background
+            # or characters.
             # Allocate a stable small positive id for this comm set so its
             # instances can be tagged + the viewscreen RTT can render it.
             comm_set_id = controller.comm_set_ids.get(name)
@@ -3722,15 +3717,14 @@ def _live_bridge_characters():
 
 def _tag_comm_instance(r, iid, comm_set_id) -> None:
     """Tag a comm instance with its set's id so the bridge pass can render the
-    set into the viewscreen RTT. Guarded: renderer builds without the binding
-    (and the FakeRenderer in unit tests) silently skip the tag."""
+    set into the viewscreen RTT. set_comm_set_id is a REQUIRED renderer binding
+    (validated at boot), so it is always present."""
     if comm_set_id is None:
         return
-    if hasattr(r, "set_comm_set_id"):
-        try:
-            r.set_comm_set_id(iid, comm_set_id)
-        except Exception as _e:
-            dev_mode.log_swallowed("set_comm_set_id", _e)
+    try:
+        r.set_comm_set_id(iid, comm_set_id)
+    except Exception as _e:
+        dev_mode.log_swallowed("set_comm_set_id", _e)
 
 
 def _place_one_character(controller, r, character, set_name, is_bridge,
@@ -3797,19 +3791,19 @@ def _place_one_character(controller, r, character, set_name, is_bridge,
         # Looping breathe idle (SDK-driven), layered over the placement pose so
         # the body breathes while the root stays at the station. Best-effort: a
         # breathing failure must not unplace a correctly-stationed officer.
-        if hasattr(r, "play_instance_idle"):
-            try:
-                breathing = capture_breathing(character)
-                if breathing:
-                    bidx = r.load_instance_clip(iid, _abs(breathing["clip_nif"]))
-                    if bidx is not None and bidx >= 0:
-                        r.play_instance_idle(iid, bidx)
-                        from engine.bridge_character_anim import get_controller
-                        _ca = get_controller()
-                        if _ca is not None:
-                            _ca.set_idle(iid, bidx)
-            except Exception as _e:
-                dev_mode.log_swallowed("establish breathing", _e)
+        # play_instance_idle is a REQUIRED renderer binding (always present).
+        try:
+            breathing = capture_breathing(character)
+            if breathing:
+                bidx = r.load_instance_clip(iid, _abs(breathing["clip_nif"]))
+                if bidx is not None and bidx >= 0:
+                    r.play_instance_idle(iid, bidx)
+                    from engine.bridge_character_anim import get_controller
+                    _ca = get_controller()
+                    if _ca is not None:
+                        _ca.set_idle(iid, bidx)
+        except Exception as _e:
+            dev_mode.log_swallowed("establish breathing", _e)
         if is_bridge:
             controller.officer_instances.append(iid)
         else:
@@ -4082,7 +4076,6 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
     # idle / toggle-off / driver-None, so the hull is never left stuck bright.
     _hd_boost = (_hull_discharge.emissive_boost()
                  if (_hull_discharge is not None
-                     and hasattr(r, "nebula_lightning_enabled")
                      and r.nebula_lightning_enabled())
                  else 1.0)
     for ship, iid in session.ship_instances.items():
@@ -4178,6 +4171,16 @@ def run(mission_name: Optional[str] = None,
     # silently-dead feature mid-mission. strict under --developer: a developer
     # wants to be stopped cold; production logs loudly and keeps running.
     r.validate_bindings(strict=dev_mode.is_enabled())
+    # Same check for the non-render façade (engine.host_io): host_bindings.cc
+    # compiles into both build/dauntless and the _dauntless_host module, so a
+    # forgotten `cmake --build` can leave the window/input/VFX/damage surface
+    # stale exactly as it can the renderer surface. Validate both façades at the
+    # same boot point so a missing REQUIRED host_io binding fails loudly here
+    # (strict under --developer; ERROR-logged in production) rather than as a
+    # silently-dead feature mid-mission. verify_keys() likewise catches the host
+    # `keys` submodule diverging from engine.input_map's table.
+    host_io.validate_bindings(strict=dev_mode.is_enabled())
+    host_io.verify_keys()
     # Initialise the CEF UI overlay. Resolves index.html relative
     # to the project root (two parents up from this file). _CEF_VIEW_W/H
     # are reused by the pause-menu mouse-forwarding path to scale
@@ -4191,9 +4194,8 @@ def run(mission_name: Optional[str] = None,
     # and text reads as soft/blurry.
     _cef_dsf = 1.0
     try:
-        import _dauntless_host as _h_init
-        _fb_w, _fb_h = _h_init.framebuffer_size()
-        _win_w, _win_h = _h_init.window_size()
+        _fb_w, _fb_h = host_io.framebuffer_size()
+        _win_w, _win_h = host_io.window_size()
         if _win_w > 0:
             _cef_dsf = float(_fb_w) / float(_win_w)
     except Exception as _e:
@@ -4289,17 +4291,13 @@ def run(mission_name: Optional[str] = None,
             enabled=_flythrough_enabled, vantage_of=_vantage_of)
 
         # Starbase warp gate (Task 4): segment-vs-mesh test against the
-        # starbase's loaded NIF via the host ray_trace_mesh binding. Returns
-        # True if the segment from->to hits the starbase mesh (occluded). Any
-        # missing piece (no bindings / no session / no instance) => False, so
-        # the warp_gates._near_starbase check degrades to "don't block".
+        # starbase's loaded NIF via host_io.ray_trace_mesh. Returns True if the
+        # segment from->to hits the starbase mesh (occluded). Any missing piece
+        # (no bindings / no session / no instance) => False, so the
+        # warp_gates._near_starbase check degrades to "don't block".
         from engine.appc import warp_gates as _wg
 
         def _starbase_ray_collide(starbase, from_pt, to_pt):
-            try:
-                import _dauntless_host as _hh
-            except Exception:
-                return False
             if controller.session is None:
                 return False
             iid = controller.session.ship_instances.get(starbase)
@@ -4313,7 +4311,7 @@ def run(mission_name: Optional[str] = None,
             if dist <= 1e-6:
                 return False
             try:
-                hit = _hh.ray_trace_mesh(iid, from_pt, (dx, dy, dz), dist)
+                hit = host_io.ray_trace_mesh(iid, from_pt, (dx, dy, dz), dist)
             except Exception:
                 return False
             return hit is not None
@@ -4829,8 +4827,8 @@ def run(mission_name: Optional[str] = None,
             # scaling and the panel-corner layout math below.
             if _cef_resize is not None and _h is not None:
                 try:
-                    _fbw, _fbh = _h.framebuffer_size()
-                    _wnw, _wnh = _h.window_size()
+                    _fbw, _fbh = host_io.framebuffer_size()
+                    _wnw, _wnh = host_io.window_size()
                     _delta = _compute_cef_resize(
                         _fbw, _fbh, _wnw, _wnh,
                         _CEF_VIEW_W, _CEF_VIEW_H, _cef_dsf)
@@ -4895,9 +4893,9 @@ def run(mission_name: Optional[str] = None,
                             _h, _cef_send_mouse_move,
                             _CEF_VIEW_W, _CEF_VIEW_H)
                     if _cef_send_mouse_click is not None:
-                        if _h.mouse_button_pressed(_h.keys.MOUSE_BUTTON_LEFT):
+                        if host_io.mouse_button_pressed(_h.keys.MOUSE_BUTTON_LEFT):
                             _cef_send_mouse_click(_mx, _my, 0, True)
-                        if _h.mouse_button_released(_h.keys.MOUSE_BUTTON_LEFT):
+                        if host_io.mouse_button_released(_h.keys.MOUSE_BUTTON_LEFT):
                             _cef_send_mouse_click(_mx, _my, 0, False)
                     if pause.quit_requested:
                         break
@@ -5038,9 +5036,9 @@ def run(mission_name: Optional[str] = None,
                         or _cursor_in_modal
                     )
                     if _cef_send_mouse_click is not None and _cursor_in_panel:
-                        if _h.mouse_button_pressed(_h.keys.MOUSE_BUTTON_LEFT):
+                        if host_io.mouse_button_pressed(_h.keys.MOUSE_BUTTON_LEFT):
                             _cef_send_mouse_click(_mx, _my, 0, True)
-                        if _h.mouse_button_released(_h.keys.MOUSE_BUTTON_LEFT):
+                        if host_io.mouse_button_released(_h.keys.MOUSE_BUTTON_LEFT):
                             _cef_send_mouse_click(_mx, _my, 0, False)
 
             # --- Sim advance: fixed-timestep accumulator ---
@@ -5164,19 +5162,19 @@ def run(mission_name: Optional[str] = None,
                 if _h is not None and dev_mode.is_enabled():
                     dev_keybindings.register_for_frame(_h, session, player)
                     for key, _desc in dev_mode.keybinding_descriptions():
-                        if _h.key_pressed(key):
+                        if host_io.key_pressed(key):
                             dev_mode.dispatch_dev_key(key)
 
                 # F12: toggle CEF DevTools for the UI overlay.
-                if _h is not None and _h.key_pressed(_h.keys.KEY_F12):
+                if _h is not None and host_io.key_pressed(_h.keys.KEY_F12):
                     _h.cef_toggle_devtools()
 
                 # Cmd+R / Ctrl+R: hot-reload the CEF overlay's HTML.
                 # Reload only when Cmd (macOS) or Ctrl (Linux/Windows) is held;
                 # bare R is reverse-thrust and must not be intercepted.
-                if _h is not None and _h.key_pressed(_h.keys.KEY_R):
-                    _cmd_held = _h.key_state(_h.keys.KEY_LEFT_SUPER) if hasattr(_h.keys, "KEY_LEFT_SUPER") else False
-                    _ctrl_held = _h.key_state(_h.keys.KEY_LEFT_CONTROL) if hasattr(_h.keys, "KEY_LEFT_CONTROL") else False
+                if _h is not None and host_io.key_pressed(_h.keys.KEY_R):
+                    _cmd_held = host_io.key_state(_h.keys.KEY_LEFT_SUPER) if hasattr(_h.keys, "KEY_LEFT_SUPER") else False
+                    _ctrl_held = host_io.key_state(_h.keys.KEY_LEFT_CONTROL) if hasattr(_h.keys, "KEY_LEFT_CONTROL") else False
                     if _cmd_held or _ctrl_held:
                         _h.cef_reload()
 
@@ -5192,29 +5190,29 @@ def run(mission_name: Optional[str] = None,
                     # the player has a valid target). key_pressed fires once per
                     # key-down event (not while held). Gate on exterior view so
                     # the mode cannot flip silently while the bridge is active.
-                    if view_mode.is_exterior and _h.key_pressed(input_map.code("camera_cycle")):
+                    if view_mode.is_exterior and host_io.key_pressed(input_map.code("camera_cycle")):
                         director.toggle_mode(player=player)
                     # Z-key: ZoomTarget framing while held. Held-state (not
                     # press-edge) so the camera enters/exits as the key state
                     # changes. The `not director.tracking.zoom_target_active`
                     # retry guard lets a Z-held-during-target-acquisition
                     # succeed on whichever frame the target appears.
-                    z_held_now = view_mode.is_exterior and _h.key_state(input_map.code("camera_zoom_target"))
+                    z_held_now = view_mode.is_exterior and host_io.key_state(input_map.code("camera_zoom_target"))
                     if z_held_now and not director.tracking.zoom_target_active:
                         director.start_zoom_target(player=player)
                     elif z_held_prev and not z_held_now:
                         director.end_zoom_target()
                     z_held_prev = z_held_now
                     # =/- sticky zoom: press-edge (OS auto-repeat for hold).
-                    if view_mode.is_exterior and _h.key_pressed(input_map.code("camera_zoom_in")):
+                    if view_mode.is_exterior and host_io.key_pressed(input_map.code("camera_zoom_in")):
                         director.zoom_in()
-                    if view_mode.is_exterior and _h.key_pressed(input_map.code("camera_zoom_out")):
+                    if view_mode.is_exterior and host_io.key_pressed(input_map.code("camera_zoom_out")):
                         director.zoom_out()
                     # V-key: Reverse Chase while held. Same hold-state
                     # edge detection as Z, with a retry guard so a
                     # V-held-during-mode-transition succeeds on the
                     # next eligible frame.
-                    v_held_now = view_mode.is_exterior and _h.key_state(input_map.code("camera_reverse_chase"))
+                    v_held_now = view_mode.is_exterior and host_io.key_state(input_map.code("camera_reverse_chase"))
                     if v_held_now and not director.chase.reverse_active:
                         director.start_reverse()
                     elif v_held_prev and not v_held_now:
@@ -5227,10 +5225,10 @@ def run(mission_name: Optional[str] = None,
                     # press.
                     mouse_dx_exterior, mouse_dy_exterior = 0.0, 0.0
                     if view_mode.is_exterior:
-                        mouse_dx_exterior, mouse_dy_exterior = _h.consume_mouse_delta()
+                        mouse_dx_exterior, mouse_dy_exterior = host_io.consume_mouse_delta()
                     shift_held = view_mode.is_exterior and (
-                        _h.key_state(_h.keys.KEY_LEFT_SHIFT) or
-                        _h.key_state(_h.keys.KEY_RIGHT_SHIFT)
+                        host_io.key_state(_h.keys.KEY_LEFT_SHIFT) or
+                        host_io.key_state(_h.keys.KEY_RIGHT_SHIFT)
                     )
                     if shift_held and director.mode is CameraMode.CHASE:
                         director.chase.apply_mouse_delta(
@@ -5276,7 +5274,7 @@ def run(mission_name: Optional[str] = None,
                 _ships_this_tick = list(_all_ships_for_tick())
                 _advance_weapons(_ships_this_tick, TICK_DT)
                 _advance_combat(
-                    _ships_this_tick, TICK_DT, host=_h,
+                    _ships_this_tick, TICK_DT,
                     ship_instances=(session.ship_instances if session is not None else None),
                 )
 
@@ -5383,7 +5381,7 @@ def run(mission_name: Optional[str] = None,
                 # real-time motion, so it advances/decays on real elapsed time,
                 # not the fixed sim TICK_DT.
                 collisions.tick_collisions(
-                    _player_dt, host=_h,
+                    _player_dt,
                     ship_instances=(session.ship_instances if session is not None else None),
                 )
 
@@ -5459,7 +5457,7 @@ def run(mission_name: Optional[str] = None,
                             dev_mode.log_swallowed("lip-sync update", _e)
                         # node_anim reads node_overrides written by r.frame() above; intentionally one frame behind — do NOT reorder.
                         node_anim.update(r)
-                    mouse_dx, mouse_dy = _h.consume_mouse_delta() if _h else (0.0, 0.0)
+                    mouse_dx, mouse_dy = host_io.consume_mouse_delta()
                     # While paused we still drain the accumulated mouse
                     # delta (so it doesn't snap the look on resume) but
                     # skip the yaw/pitch advance so the bridge camera
@@ -5669,9 +5667,9 @@ def run(mission_name: Optional[str] = None,
 
             # Age every ship's persistent damage-decal ring on the same game
             # clock used for decal birth_time (engine.appc.damage_decals).
-            # hasattr-guarded so an older _dauntless_host.so still runs.
-            if hasattr(r, "damage_decals_tick"):
-                r.damage_decals_tick(App.g_kUtopiaModule.GetGameTime())
+            # damage_decals_tick is a REQUIRED renderer binding (validated at
+            # boot), so it is always present — no guard needed.
+            r.damage_decals_tick(App.g_kUtopiaModule.GetGameTime())
 
             # Warp-VFX (Stage 2 — ST dust streak): tick the animator on the GAME
             # clock (App.g_kUtopiaModule.GetGameTime() == g_kTimerManager.get_time(),

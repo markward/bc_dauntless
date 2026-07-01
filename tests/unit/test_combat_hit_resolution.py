@@ -1,6 +1,12 @@
-"""ray_sphere_entry + _resolve_hit_point fallback chain."""
+"""ray_sphere_entry + _resolve_hit_point fallback chain.
+
+The mesh trace routes through engine.host_io.ray_trace_mesh; these tests patch
+that wrapper (host_io owns the single guard point) rather than injecting a raw
+host= module (Task 4 of the host_io façade refactor). _resolve_hit_point no
+longer takes a host arg."""
 import pytest
 
+from engine import host_io
 from engine.appc.math import TGPoint3
 from engine.appc.combat import ray_sphere_entry, _resolve_hit_point
 
@@ -60,22 +66,24 @@ class _FakeShip:
     def GetRadius(self): return self._r
 
 
-class _FakeHost:
-    """Minimal host stub: ray_trace_mesh returns a preconfigured value."""
+class _TraceSpy:
+    """host_io.ray_trace_mesh spy: returns a preconfigured value and records
+    each call (positional-arg signature)."""
     def __init__(self, result):
         self._result = result
         self.calls = []
-    def ray_trace_mesh(self, instance_id, origin, direction, max_dist):
+    def __call__(self, instance_id, origin, direction, max_dist):
         self.calls.append((instance_id, origin, direction, max_dist))
         return self._result
 
 
-def test_resolve_returns_mesh_hit_when_trace_succeeds():
+def test_resolve_returns_mesh_hit_when_trace_succeeds(monkeypatch):
     ship = _FakeShip(0, 0, 0)
     fallback = TGPoint3(99, 99, 99)
-    host = _FakeHost(result=((1.0, 2.0, 3.0), (0.0, 0.0, -1.0), 5.0))
+    monkeypatch.setattr(host_io, "ray_trace_mesh",
+                        _TraceSpy(result=((1.0, 2.0, 3.0), (0.0, 0.0, -1.0), 5.0)))
     p, n = _resolve_hit_point(
-        host=host, ship_instances={ship: object()}, ship=ship,
+        ship_instances={ship: object()}, ship=ship,
         ray_origin=TGPoint3(0, 0, -10),
         ray_direction=TGPoint3(0, 0, 1),
         max_dist=20.0,
@@ -90,12 +98,12 @@ def test_resolve_returns_mesh_hit_when_trace_succeeds():
     assert n.z == pytest.approx(-1.0)
 
 
-def test_resolve_falls_back_to_sphere_entry_when_trace_misses():
+def test_resolve_falls_back_to_sphere_entry_when_trace_misses(monkeypatch):
     ship = _FakeShip(0, 0, 0, r=2.0)
     fallback = TGPoint3(99, 99, 99)
-    host = _FakeHost(result=None)
+    monkeypatch.setattr(host_io, "ray_trace_mesh", _TraceSpy(result=None))
     p, n = _resolve_hit_point(
-        host=host, ship_instances={ship: object()}, ship=ship,
+        ship_instances={ship: object()}, ship=ship,
         ray_origin=TGPoint3(0, 0, -10),
         ray_direction=TGPoint3(0, 0, 1),
         max_dist=20.0,
@@ -106,13 +114,14 @@ def test_resolve_falls_back_to_sphere_entry_when_trace_misses():
     assert n is None
 
 
-def test_resolve_returns_fallback_when_host_is_none():
+def test_resolve_returns_fallback_when_ray_direction_is_none():
     ship = _FakeShip(0, 0, 0)
     fallback = TGPoint3(99, 99, 99)
+    # ray_direction=None => "degrade to fallback" (stationary-tick path).
     p, n = _resolve_hit_point(
-        host=None, ship_instances=None, ship=ship,
+        ship_instances=None, ship=ship,
         ray_origin=TGPoint3(0, 0, -10),
-        ray_direction=TGPoint3(0, 0, 1),
+        ray_direction=None,
         max_dist=20.0,
         fallback_point=fallback,
     )
@@ -120,12 +129,13 @@ def test_resolve_returns_fallback_when_host_is_none():
     assert n is None
 
 
-def test_resolve_returns_fallback_when_ship_instances_missing():
+def test_resolve_returns_fallback_when_ship_instances_missing(monkeypatch):
     ship = _FakeShip(0, 0, 0)
     fallback = TGPoint3(99, 99, 99)
-    host = _FakeHost(result=((1.0, 2.0, 3.0), (0.0, 0.0, -1.0), 5.0))
+    spy = _TraceSpy(result=((1.0, 2.0, 3.0), (0.0, 0.0, -1.0), 5.0))
+    monkeypatch.setattr(host_io, "ray_trace_mesh", spy)
     p, n = _resolve_hit_point(
-        host=host, ship_instances={}, ship=ship,  # ship not in map
+        ship_instances={}, ship=ship,  # ship not in map
         ray_origin=TGPoint3(0, 0, -10),
         ray_direction=TGPoint3(0, 0, 1),
         max_dist=20.0,
@@ -133,17 +143,17 @@ def test_resolve_returns_fallback_when_ship_instances_missing():
     )
     assert p is fallback
     assert n is None
-    assert host.calls == []  # binding must not be called without an iid
+    assert spy.calls == []  # binding must not be called without an iid
 
 
-def test_resolve_returns_fallback_when_binding_missing():
-    """If host exists but lacks ray_trace_mesh (older build), fall through."""
-    class HostWithoutTrace:
-        pass
+def test_resolve_falls_back_to_sphere_when_trace_returns_none(monkeypatch):
+    """When the host_io trace returns None (headless / no mesh hit), fall
+    through to the bounding-sphere entry."""
     ship = _FakeShip(0, 0, 0, r=2.0)
     fallback = TGPoint3(99, 99, 99)
+    monkeypatch.setattr(host_io, "ray_trace_mesh", lambda *a, **k: None)
     p, n = _resolve_hit_point(
-        host=HostWithoutTrace(), ship_instances={ship: object()}, ship=ship,
+        ship_instances={ship: object()}, ship=ship,
         ray_origin=TGPoint3(0, 0, -10),
         ray_direction=TGPoint3(0, 0, 1),
         max_dist=20.0,
@@ -154,12 +164,12 @@ def test_resolve_returns_fallback_when_binding_missing():
     assert n is None
 
 
-def test_resolve_falls_back_to_caller_point_when_sphere_also_misses():
+def test_resolve_falls_back_to_caller_point_when_sphere_also_misses(monkeypatch):
     ship = _FakeShip(0, 0, 0, r=2.0)
     fallback = TGPoint3(99, 99, 99)
-    host = _FakeHost(result=None)
+    monkeypatch.setattr(host_io, "ray_trace_mesh", _TraceSpy(result=None))
     p, n = _resolve_hit_point(
-        host=host, ship_instances={ship: object()}, ship=ship,
+        ship_instances={ship: object()}, ship=ship,
         # Ray that misses the bounding sphere entirely.
         ray_origin=TGPoint3(100, 100, -10),
         ray_direction=TGPoint3(0, 0, 1),

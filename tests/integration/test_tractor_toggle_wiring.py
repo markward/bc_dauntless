@@ -149,26 +149,33 @@ class _Host:
     def key_state(self, code): return 1 if code in self._down else 0
 
 
-def test_alt_t_chord_toggles_rising_edge_only():
+def test_alt_t_chord_toggles_rising_edge_only(monkeypatch):
     import engine.host_loop as hl
+    from engine import host_io
     hl._tractor_toggle_prev = False
+
+    def _poll(host):
+        # The poller reads host.keys.* for constants but routes key_state
+        # through host_io; point host_io._h at the same fake for each call.
+        monkeypatch.setattr(host_io, "_h", host)
+        hl._poll_tractor_toggle(host)
 
     calls = []
     real = App.ToggleTractorFromInput
     try:
         App.ToggleTractorFromInput = lambda: calls.append(1)
         # T alone (no Alt) → nothing.
-        hl._poll_tractor_toggle(_Host({_Keys.KEY_T}))
+        _poll(_Host({_Keys.KEY_T}))
         assert calls == []
         # Alt held + T pressed → one toggle on the rising edge.
-        hl._poll_tractor_toggle(_Host({_Keys.KEY_T, _Keys.KEY_LEFT_ALT}))
+        _poll(_Host({_Keys.KEY_T, _Keys.KEY_LEFT_ALT}))
         assert len(calls) == 1
         # Chord still held → no repeat.
-        hl._poll_tractor_toggle(_Host({_Keys.KEY_T, _Keys.KEY_LEFT_ALT}))
+        _poll(_Host({_Keys.KEY_T, _Keys.KEY_LEFT_ALT}))
         assert len(calls) == 1
         # Release, press again → a second toggle.
-        hl._poll_tractor_toggle(_Host(set()))
-        hl._poll_tractor_toggle(_Host({_Keys.KEY_T, _Keys.KEY_RIGHT_ALT}))
+        _poll(_Host(set()))
+        _poll(_Host({_Keys.KEY_T, _Keys.KEY_RIGHT_ALT}))
         assert len(calls) == 2
     finally:
         App.ToggleTractorFromInput = real

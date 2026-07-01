@@ -2,7 +2,7 @@
 """Warp-core breach hull carve: one big growing voxel hole at the warp core.
 
 warp_core_breach.detonate schedules a carve on the exploding ship; advance()
-grows it over GROW_DURATION and emits it each tick via host.hull_carve_add at
+grows it over GROW_DURATION and emits it each tick via host_io.hull_carve_add at
 the warp core's world position. The core sits inside the hull, so a carve there
 punches a hole through and exposes the interior — the self-destruction the
 breach AoE skips (it skips the source ship). Reuses the existing carve binding
@@ -11,6 +11,7 @@ and render pass; no native changes.
 See docs/superpowers/specs/2026-06-20-warp-core-breach-hull-carve-design.md.
 """
 import engine.dev_mode as dev_mode
+from engine import host_io
 
 GROW_DURATION            = 1.5   # seconds the hole grows to full size
 # Carve radius as a fraction of the ship BOUNDING-SPHERE radius (GetRadius(),
@@ -64,7 +65,7 @@ def _carve_normal(ship, core_world):
     return TGPoint3(0.0, 0.0, 1.0)
 
 
-def advance(dt: float, host=None, ship_instances=None) -> None:
+def advance(dt: float, ship_instances=None) -> None:
     """Grow + emit each active core-breach carve. Drops an entry when it reaches
     full size or its ship is no longer rendered. Raise-safe per entry."""
     if not _active:
@@ -72,7 +73,7 @@ def advance(dt: float, host=None, ship_instances=None) -> None:
     survivors = []
     for entry in _active:
         try:
-            keep = _advance_one(entry, dt, host, ship_instances)
+            keep = _advance_one(entry, dt, ship_instances)
         except Exception as _e:
             dev_mode.log_swallowed("core breach carve advance", _e)
             keep = False
@@ -81,7 +82,7 @@ def advance(dt: float, host=None, ship_instances=None) -> None:
     _active[:] = survivors
 
 
-def _advance_one(entry, dt, host, ship_instances) -> bool:
+def _advance_one(entry, dt, ship_instances) -> bool:
     """Advance one entry; emit its carve. Returns True to keep it active, False
     to drop it (full size reached, or the ship is no longer rendered)."""
     ship = entry["ship"]
@@ -89,7 +90,7 @@ def _advance_one(entry, dt, host, ship_instances) -> bool:
     t = min(1.0, entry["age"] / GROW_DURATION)
 
     iid = ship_instances.get(ship) if ship_instances is not None else None
-    if iid is None or host is None or not hasattr(host, "hull_carve_add"):
+    if iid is None:
         return False
 
     core = ship.GetPowerSubsystem() if hasattr(ship, "GetPowerSubsystem") else None
@@ -108,7 +109,7 @@ def _advance_one(entry, dt, host, ship_instances) -> bool:
     # Core breach carries its own size: pass the eased radius as both the merge
     # influence and the visible floor, with strength 0 (it's a self-destruct
     # wound, not accumulated combat damage). floor keeps it visible as it grows.
-    host.hull_carve_add(
+    host_io.hull_carve_add(
         iid,
         (core_world.x, core_world.y, core_world.z),
         (normal.x, normal.y, normal.z),

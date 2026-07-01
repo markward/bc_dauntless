@@ -7,6 +7,7 @@ remap takes effect end-to-end through the poller without touching the BC
 WC→ET binding table.
 """
 import App
+from engine import host_io
 from engine.host_loop import _poll_fire_keys, _fn_key_prev
 from engine.input_map import InputMap, GLFW_KEYS
 
@@ -29,6 +30,8 @@ def test_default_fire_key_forwards_wc_f(monkeypatch):
     monkeypatch.setattr(App.g_kInputManager, "OnKeyDown",
                         lambda wc: calls.append(wc))
     host = _FakeHost()
+    # Key reads route through host_io.key_state; point that at the fake host.
+    monkeypatch.setattr(host_io, "_h", host)
     host.down.add(GLFW_KEYS["F"])
     _poll_fire_keys(host, im)
     assert App.WC_F in calls
@@ -43,6 +46,7 @@ def test_remapped_fire_key_forwards_wc_f_and_old_is_silent(monkeypatch):
     monkeypatch.setattr(App.g_kInputManager, "OnKeyUp", lambda wc: None)
 
     host = _FakeHost()
+    monkeypatch.setattr(host_io, "_h", host)
     # Old key F: no longer forwards primary fire.
     host.down.add(GLFW_KEYS["F"])
     _poll_fire_keys(host, im)

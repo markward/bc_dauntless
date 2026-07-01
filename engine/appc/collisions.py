@@ -94,7 +94,7 @@ def _ke_damage(inv_sum: float, v_rel: float) -> float:
     return COLLISION_DAMAGE_COEFF * 0.5 * mu * v_rel * v_rel
 
 
-def _respond_pair(a: "_Body", b: "_Body", host, ship_instances):
+def _respond_pair(a: "_Body", b: "_Body", ship_instances=None):
     """Resolve one body pair. On an approaching overlap: inject a
     mass-weighted impulse into each movable body's overlay, de-penetrate
     positions, and apply KE damage via combat.apply_hit. Returns the
@@ -170,11 +170,11 @@ def _respond_pair(a: "_Body", b: "_Body", host, ship_instances):
                        a.center.z + nz * eff_ra)
     if a.is_movable:
         pt_a, mesh_n_a = _resolve_hit_point(
-            host, ship_instances, a.obj,
+            ship_instances, a.obj,
             b.center, TGPoint3(-nx, -ny, -nz), dist, contact)
         apply_hit(a.obj, damage, pt_a, source=b.obj,
                   normal=(mesh_n_a if mesh_n_a is not None else TGPoint3(nx, ny, nz)),
-                  host=host, ship_instances=ship_instances, weapon_type=None,
+                  ship_instances=ship_instances, weapon_type=None,
                   bypass_shields=True)  # kinetic impact: AddDamage primitive, skips shields
     if b.is_movable:
         eff_rb = b.radius * COLLISION_RADIUS_SCALE
@@ -182,11 +182,11 @@ def _respond_pair(a: "_Body", b: "_Body", host, ship_instances):
                         b.center.y - ny * eff_rb,
                         b.center.z - nz * eff_rb)
         pt_b, mesh_n_b = _resolve_hit_point(
-            host, ship_instances, b.obj,
+            ship_instances, b.obj,
             a.center, TGPoint3(nx, ny, nz), dist, fb_b)
         apply_hit(b.obj, damage, pt_b, source=a.obj,
                   normal=(mesh_n_b if mesh_n_b is not None else TGPoint3(-nx, -ny, -nz)),
-                  host=host, ship_instances=ship_instances, weapon_type=None,
+                  ship_instances=ship_instances, weapon_type=None,
                   bypass_shields=True)  # kinetic impact: AddDamage primitive, skips shields
 
     # A cloaked hull is still physically present: BC fires ET_CLOAKED_COLLISION
@@ -241,7 +241,7 @@ def _apply_overlay_all(objects, dt: float) -> None:
         cv.z *= decay
 
 
-def resolve_collisions(objects, host=None, ship_instances=None):
+def resolve_collisions(objects, ship_instances=None):
     """Snapshot every object into a _Body and resolve all unordered pairs.
     Returns the list of collision tuples from _respond_pair (for tests /
     debugging). De-penetration mutates positions in place; with n small and
@@ -251,7 +251,7 @@ def resolve_collisions(objects, host=None, ship_instances=None):
     hits = []
     for i in range(len(bodies)):
         for k in range(i + 1, len(bodies)):
-            hit = _respond_pair(bodies[i], bodies[k], host, ship_instances)
+            hit = _respond_pair(bodies[i], bodies[k], ship_instances)
             if hit is not None:
                 hits.append(hit)
     return hits
@@ -272,7 +272,7 @@ def iter_collidables():
                 yield obj
 
 
-def tick_collisions(dt: float, host=None, ship_instances=None):
+def tick_collisions(dt: float, ship_instances=None):
     """Per-frame entry point: consume overlays for every collidable, then
     detect + resolve all overlapping pairs. Returns the list of collision
     tuples. Call once per render frame after motion + player input have run.
@@ -285,4 +285,4 @@ def tick_collisions(dt: float, host=None, ship_instances=None):
     from engine.dev_combat_cheats import disable_collisions_active
     if disable_collisions_active():
         return []
-    return resolve_collisions(objects, host=host, ship_instances=ship_instances)
+    return resolve_collisions(objects, ship_instances=ship_instances)

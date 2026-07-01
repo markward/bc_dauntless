@@ -92,7 +92,7 @@ def test_symmetric_head_on_equal_opposite_impulse():
     a = _ship(0.0, 1000.0, +10.0)
     b = _ship(1.5, 1000.0, -10.0)  # overlapping (dist 1.5 < r 1 + r 1)
     ba, bb = _resolve_body(a), _resolve_body(b)
-    hit = _respond_pair(ba, bb, host=None, ship_instances=None)
+    hit = _respond_pair(ba, bb)
     assert hit is not None
     # Equal masses -> equal & opposite overlays along +/-x.
     assert a._collision_velocity.x == pytest.approx(-b._collision_velocity.x)
@@ -104,8 +104,7 @@ def test_mismatched_mass_light_ship_recoils_more():
     from engine.appc.collisions import _resolve_body, _respond_pair
     light = _ship(0.0, 1000.0, +10.0)
     heavy = _ship(1.5, 5000.0, -10.0)
-    _respond_pair(_resolve_body(light), _resolve_body(heavy),
-                  host=None, ship_instances=None)
+    _respond_pair(_resolve_body(light), _resolve_body(heavy))
     assert abs(light._collision_velocity.x) > abs(heavy._collision_velocity.x)
 
 
@@ -115,8 +114,7 @@ def test_ship_vs_immovable_planet_bounces_planet_fixed():
     planet = Planet_Create(2.0, "")
     planet.SetTranslateXYZ(2.3, 0.0, 0.0)  # dist 2.3 < 0.8*(1+2) = 2.4 scaled boundary
     pre = planet.GetTranslate().x
-    _respond_pair(_resolve_body(ship), _resolve_body(planet),
-                  host=None, ship_instances=None)
+    _respond_pair(_resolve_body(ship), _resolve_body(planet))
     assert ship._collision_velocity.x < 0.0          # ship recoils
     assert planet.GetTranslate().x == pytest.approx(pre)  # planet unmoved
     assert _overlay_vec(planet) is None              # planet got no impulse
@@ -126,8 +124,7 @@ def test_receding_pair_is_ignored():
     from engine.appc.collisions import _resolve_body, _respond_pair, _overlay_vec
     a = _ship(0.0, 1000.0, -10.0)   # moving away from b
     b = _ship(1.5, 1000.0, +10.0)
-    hit = _respond_pair(_resolve_body(a), _resolve_body(b),
-                        host=None, ship_instances=None)
+    hit = _respond_pair(_resolve_body(a), _resolve_body(b))
     assert hit is None
     assert _overlay_vec(a) is None and _overlay_vec(b) is None
 
@@ -136,8 +133,7 @@ def test_non_overlapping_pair_is_ignored():
     from engine.appc.collisions import _resolve_body, _respond_pair
     a = _ship(0.0, 1000.0, +10.0)
     b = _ship(50.0, 1000.0, -10.0)  # far apart
-    assert _respond_pair(_resolve_body(a), _resolve_body(b),
-                         host=None, ship_instances=None) is None
+    assert _respond_pair(_resolve_body(a), _resolve_body(b)) is None
 
 
 def test_radius_scale_allows_closer_approach_before_trigger():
@@ -147,8 +143,7 @@ def test_radius_scale_allows_closer_approach_before_trigger():
     from engine.appc.collisions import _resolve_body, _respond_pair, _overlay_vec
     a = _ship(0.0, 1000.0, +10.0)
     b = _ship(1.7, 1000.0, -10.0)  # 1.6 < dist 1.7 < 2.0
-    hit = _respond_pair(_resolve_body(a), _resolve_body(b),
-                        host=None, ship_instances=None)
+    hit = _respond_pair(_resolve_body(a), _resolve_body(b))
     assert hit is None
     assert _overlay_vec(a) is None and _overlay_vec(b) is None
 
@@ -161,17 +156,18 @@ def test_respond_pair_invokes_apply_hit_for_both_ships(monkeypatch):
     from engine.appc.collisions import _resolve_body, _respond_pair
     a = _ship(0.0, 1000.0, +10.0)
     b = _ship(1.5, 1000.0, -10.0)
-    _respond_pair(_resolve_body(a), _resolve_body(b),
-                  host=None, ship_instances=None)
+    _respond_pair(_resolve_body(a), _resolve_body(b))
     assert len(calls) == 2
     assert {id(a), id(b)} == {id(calls[0][0]), id(calls[1][0])}
     assert all(dmg > 0.0 for _, dmg in calls)
 
 
 def test_contact_point_refined_to_mesh_when_host_present(monkeypatch):
-    """With a renderer host + instance ids, each ship's collision damage lands
-    on ITS OWN mesh surface (via combat.ray_trace_mesh) with the mesh normal,
-    not the bounding-sphere point — mirroring the weapons hit path."""
+    """With renderer instance ids, each ship's collision damage lands on ITS
+    OWN mesh surface (via host_io.ray_trace_mesh) with the mesh normal, not the
+    bounding-sphere point — mirroring the weapons hit path. Task 4: the mesh
+    trace routes through host_io, so we patch host_io.ray_trace_mesh."""
+    from engine import host_io
     import engine.appc.combat as combat
     captured = []
     monkeypatch.setattr(
@@ -179,18 +175,19 @@ def test_contact_point_refined_to_mesh_when_host_present(monkeypatch):
         lambda ship, dmg, hit_point, source=None, *, normal=None, **k:
             captured.append((ship, hit_point, normal)))
 
-    class _FakeHost:
-        def ray_trace_mesh(self, iid, origin, direction, max_dist):
-            # Encode which ship was traced in the surface point's x (= iid),
-            # and return a distinctive mesh normal.
-            return ((float(iid), 7.0, 7.0), (0.0, 0.0, 1.0), 0.5)
+    def _fake_trace(iid, origin, direction, max_dist):
+        # Encode which ship was traced in the surface point's x (= iid),
+        # and return a distinctive mesh normal.
+        return ((float(iid), 7.0, 7.0), (0.0, 0.0, 1.0), 0.5)
+
+    monkeypatch.setattr(host_io, "ray_trace_mesh", _fake_trace)
 
     from engine.appc.collisions import _resolve_body, _respond_pair
     a = _ship(0.0, 1000.0, +10.0)
     b = _ship(1.5, 1000.0, -10.0)
     insts = {a: 11, b: 22}
     _respond_pair(_resolve_body(a), _resolve_body(b),
-                  host=_FakeHost(), ship_instances=insts)
+                  ship_instances=insts)
 
     pts = {id(ship): hp for ship, hp, _n in captured}
     # Each ship's contact point came from its OWN mesh trace (iid-encoded x).
@@ -277,7 +274,7 @@ def test_tick_collisions_resolves_live_set_pair():
     b = _ship(1.5, 1000.0, -10.0)
     pSet.AddObjectToSet(a, "A")
     pSet.AddObjectToSet(b, "B")
-    hits = tick_collisions(1.0 / 60.0, host=None, ship_instances=None)
+    hits = tick_collisions(1.0 / 60.0)
     assert len(hits) == 1
     assert a._collision_velocity.x < 0.0 and b._collision_velocity.x > 0.0
 
@@ -297,7 +294,7 @@ def test_tick_collisions_disabled_flag_suppresses_all_effects():
         b = _ship(1.5, 1000.0, -10.0)
         pSet.AddObjectToSet(a, "A")
         pSet.AddObjectToSet(b, "B")
-        hits = tick_collisions(1.0 / 60.0, host=None, ship_instances=None)
+        hits = tick_collisions(1.0 / 60.0, ship_instances=None)
         assert hits == []                  # no pair resolved
         assert _overlay_vec(a) is None      # no impulse injected
         assert _overlay_vec(b) is None
@@ -321,7 +318,7 @@ def test_tick_collisions_disabled_still_decays_existing_overlay():
         a = _ship(0.0, 1000.0, 0.0)
         a._collision_velocity = TGPoint3(5.0, 0.0, 0.0)
         pSet.AddObjectToSet(a, "A")
-        tick_collisions(1.0 / 60.0, host=None, ship_instances=None)
+        tick_collisions(1.0 / 60.0, ship_instances=None)
         # Overlay path runs before the gate, so the existing overlay decays.
         assert _overlay_vec(a).x < 5.0
     finally:

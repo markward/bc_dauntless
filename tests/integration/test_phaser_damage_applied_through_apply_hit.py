@@ -44,7 +44,7 @@ def test_held_fire_decreases_target_shield(galaxy_red):
     front_before = target.GetShields().GetCurrentShields(0)
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
         sys_.StartFiring(target)
-        _advance_combat([ship, target], dt=0.1, host=None, ship_instances=None)
+        _advance_combat([ship, target], dt=0.1, ship_instances=None)
     front_after = target.GetShields().GetCurrentShields(0)
     assert front_after < front_before, (
         f"Held-fire should decrement front shield; before={front_before}, after={front_after}"
@@ -73,16 +73,18 @@ def test_target_drifts_out_of_arc_bank_auto_stops(galaxy_red):
     target.SetWorldLocation(TGPoint3(p.x, p.y - 50.0, p.z))
 
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
-        _advance_combat([ship, target], dt=0.1, host=None, ship_instances=None)
+        _advance_combat([ship, target], dt=0.1, ship_instances=None)
     firing_after = sum(sys_.GetWeapon(i).IsFiring() for i in range(sys_.GetNumWeapons()))
     assert firing_after == 0, (
         f"Out-of-arc auto-stop; before={firing_before}, after={firing_after}"
     )
 
 
-def test_phaser_hit_point_comes_from_host_ray_trace_mesh(galaxy_red):
-    """When a host is supplied with ray_trace_mesh, apply_hit receives
-    the surface point, not target.GetWorldLocation()."""
+def test_phaser_hit_point_comes_from_host_ray_trace_mesh(galaxy_red, monkeypatch):
+    """When host_io.ray_trace_mesh returns a surface point, apply_hit receives
+    it, not target.GetWorldLocation(). Task 4: the mesh trace routes through
+    host_io, so the test patches that wrapper."""
+    from engine import host_io
     ship = galaxy_red
     sys_ = ship.GetPhaserSystem()
     for i in range(sys_.GetNumWeapons()):
@@ -96,30 +98,22 @@ def test_phaser_hit_point_comes_from_host_ray_trace_mesh(galaxy_red):
 
     SURFACE_POINT = (1.5, 47.25, -2.0)  # Distinct from target_pos.
 
-    class FakeHost:
-        def __init__(self):
-            self.shield_hits = []
-        def ray_trace_mesh(self, iid, origin, direction, max_dist):
-            return (SURFACE_POINT, (0.0, -1.0, 0.0), 1.0)
-        def shield_hit(self, instance_id, point, rgba, intensity):
-            self.shield_hits.append(point)
-        def __getattr__(self, name):
-            return lambda *a, **kw: None
+    monkeypatch.setattr(
+        host_io, "ray_trace_mesh",
+        lambda iid, origin, direction, max_dist: (SURFACE_POINT, (0.0, -1.0, 0.0), 1.0))
 
     captured = {}
     import engine.appc.combat as combat
 
     def spy(ship_, damage, hit_point, source, subsystem=None,
-            *, normal=None, host=None, ship_instances=None, **kwargs):
+            *, normal=None, ship_instances=None, **kwargs):
         captured["hit_point"] = hit_point
 
     sentinel = object()
-    host = FakeHost()
     with patch.object(combat, "apply_hit", spy), \
          patch("engine.audio.tg_sound.TGSoundManager.instance"):
         sys_.StartFiring(target)
         _advance_combat([ship, target], dt=0.1,
-                        host=host,
                         ship_instances={target: sentinel})
 
     assert "hit_point" in captured, "apply_hit was never called"
@@ -146,31 +140,30 @@ def test_phaser_beam_render_endpoint_clipped_to_mesh(galaxy_red):
 
     SURFACE_POINT = (1.5, 47.25, -2.0)  # Distinct from target centre.
 
-    class FakeHost:
-        def __init__(self):
-            self.beam_data = None
-        def ray_trace_mesh(self, iid, origin, direction, max_dist):
-            return (SURFACE_POINT, (0.0, -1.0, 0.0), 1.0)
-        def shield_hit(self, instance_id, point, rgba, intensity):
-            pass
-        def set_phaser_beams(self, data):
-            self.beam_data = list(data)
-        def __getattr__(self, name):
-            return lambda *a, **kw: None
+    from engine import host_io
+
+    beam_data = None
+
+    def _capture_beams(data):
+        nonlocal beam_data
+        beam_data = list(data)
+
+    def _fake_trace(iid, origin, direction, max_dist):
+        return (SURFACE_POINT, (0.0, -1.0, 0.0), 1.0)
 
     sentinel = object()
-    host = FakeHost()
-    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
+    with patch("engine.audio.tg_sound.TGSoundManager.instance"), \
+         patch.object(host_io, "set_phaser_beams", _capture_beams), \
+         patch.object(host_io, "ray_trace_mesh", _fake_trace):
         sys_.StartFiring(target)
         _advance_combat([ship, target], dt=0.1,
-                        host=host,
                         ship_instances={target: sentinel})
 
-    # set_phaser_beams should have been called with at least one entry.
-    assert host.beam_data is not None
-    assert len(host.beam_data) >= 1
+    # host_io.set_phaser_beams should have been called with at least one entry.
+    assert beam_data is not None
+    assert len(beam_data) >= 1
     # Every entry's target must equal SURFACE_POINT (the clipped endpoint).
-    for entry in host.beam_data:
+    for entry in beam_data:
         end = entry["target"]
         assert end[0] == pytest.approx(SURFACE_POINT[0])
         assert end[1] == pytest.approx(SURFACE_POINT[1])

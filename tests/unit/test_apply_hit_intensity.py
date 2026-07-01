@@ -12,6 +12,7 @@ We model that with apply_hit(damage_hull=False):
 """
 import pytest
 
+from engine import host_io
 from engine.appc.combat import apply_hit
 from engine.appc import hit_feedback
 from engine.appc import damage_decals as dd
@@ -100,20 +101,19 @@ class _Pt:
         self.x, self.y, self.z = x, y, z
 
 
-class _CarveDecalHost:
-    """Captures both the scorch decal and the structural carve calls.
-    hull_carve_add mirrors the live host_bindings arity (point, normal,
-    influ, strength, time, floor, rad_mod)."""
+class _CarveDecalSpy:
+    """Captures both the scorch decal and the structural carve calls via the
+    host_io wrappers (positional-arg signatures)."""
     def __init__(self):
         self.decal_calls = []
         self.carve_calls = []
 
-    def damage_decal_add(self, *, instance_id, world_point, world_normal,
+    def damage_decal_add(self, instance_id, world_point, world_normal,
                          radius, intensity, weapon_class, time):
         self.decal_calls.append(instance_id)
 
     def hull_carve_add(self, iid, point, normal, influ, strength, time,
-                       floor, rad_mod):
+                       floor=0.0, rad_mod=1.0):
         self.carve_calls.append(iid)
 
 
@@ -125,6 +125,18 @@ class _Hull:
 class _Ship:
     def GetHull(self):
         return _Hull()
+
+
+@pytest.fixture
+def host(monkeypatch):
+    """Patch host_io.damage_decal_add + hull_carve_add with capturing spies,
+    plus world_to_body → None (no spark path). Returns the spy holder (kept
+    named `host` so the assertions read `host.decal_calls` / `host.carve_calls`)."""
+    spy = _CarveDecalSpy()
+    monkeypatch.setattr(host_io, "damage_decal_add", spy.damage_decal_add)
+    monkeypatch.setattr(host_io, "hull_carve_add", spy.hull_carve_add)
+    monkeypatch.setattr(host_io, "world_to_body", lambda *a, **k: None)
+    return spy
 
 
 @pytest.fixture
@@ -141,31 +153,29 @@ def carve_env(monkeypatch):
     de.reset()
 
 
-def _dispatch(host, ship, *, allow_hull_carve):
+def _dispatch(ship, *, allow_hull_carve):
     hit_feedback.dispatch(
         ship=ship, source=None, point=_Pt(1, 2, 3), normal=_Pt(0, 0, 1),
         damage=10.0, subsystem=None,
         absorbed_shields=0.0, absorbed_subsystem=0.0,
         absorbed_hull=60.0, sub_transition=None,
-        host=host, ship_instances={ship: "IID"},
+        ship_instances={ship: "IID"},
         weapon_type="phaser", radius=0.2, persist_decal=True,
         allow_hull_carve=allow_hull_carve,
     )
 
 
-def test_light_hit_scorches_but_does_not_carve(carve_env):
-    host = _CarveDecalHost()
+def test_light_hit_scorches_but_does_not_carve(carve_env, host):
     ship = _Ship()
     de.set_current(frozenset({id(ship)}))
-    _dispatch(host, ship, allow_hull_carve=False)
+    _dispatch(ship, allow_hull_carve=False)
     assert host.decal_calls == ["IID"]   # scorch decal still fires
     assert host.carve_calls == []        # but no structural breach
 
 
-def test_full_hit_scorches_and_carves(carve_env):
-    host = _CarveDecalHost()
+def test_full_hit_scorches_and_carves(carve_env, host):
     ship = _Ship()
     de.set_current(frozenset({id(ship)}))
-    _dispatch(host, ship, allow_hull_carve=True)
+    _dispatch(ship, allow_hull_carve=True)
     assert host.decal_calls == ["IID"]
     assert host.carve_calls == ["IID"]
