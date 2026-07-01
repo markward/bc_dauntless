@@ -49,7 +49,7 @@ def test_drift_astern_auto_stops_all_forward_banks(galaxy_red):
     target.SetWorldLocation(TGPoint3(0, -50.0, 0))
 
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
-        _advance_combat([ship, target], dt=0.1, host=None, ship_instances=None)
+        _advance_combat([ship, target], dt=0.1, ship_instances=None)
     firing_after = sum(sys_.GetWeapon(i).IsFiring() for i in range(sys_.GetNumWeapons()))
     assert firing_after == 0, (
         f"Bank should auto-stop on aft drift; "

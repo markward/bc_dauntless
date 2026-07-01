@@ -52,7 +52,6 @@ def test_torpedo_hit_uses_mesh_trace_point(monkeypatch):
 
     with patch.object(combat, "apply_hit", spy):
         _advance_combat([src, target], dt=0.1,
-                        host=None,
                         ship_instances={target: sentinel})
 
     assert "hit_point" in captured, "apply_hit was never called"

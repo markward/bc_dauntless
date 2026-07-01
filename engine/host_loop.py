@@ -479,7 +479,7 @@ def _phaser_damage_for_tick(max_damage: float,
     return max_damage * (max_damage_distance / dist) * dt   # R/d beyond
 
 
-def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
+def _advance_combat(ships, dt: float, ship_instances=None) -> None:
     """Per-frame torpedo motion + collision + damage + renderer push.
 
     Walks the active torpedo registry, advances motion, routes hits
@@ -487,10 +487,8 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
     broadcasts WeaponHitEvent), ages out expired VFX, and pushes current
     torpedo + hit-VFX lists to the renderer.
 
-    `host` is the raw _dauntless_host module. All hit/damage/VFX native
-    touches now route through the engine.host_io façade (which no-ops when
-    headless), so `host` is threaded solely to feed _camera_world_pos (a
-    dead get_camera_world_pos binding — Task 7 removes it and this param).
+    All hit/damage/VFX native touches route through the engine.host_io
+    façade (which no-ops when headless), so no raw host module is needed.
 
     `ship_instances` maps ship → renderer instance id; passed through to
     apply_hit so hit_feedback.dispatch can fire the shield flash (via
@@ -526,7 +524,7 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
     core_breach_carve.advance(dt, ship_instances=ship_instances)
     from engine.appc import visible_damage
     visible_damage.advance(dt, ship_instances=ship_instances)
-    subsystem_emitters.pump(ships_list, _camera_world_pos(host), dt)
+    subsystem_emitters.pump(ships_list, None, dt)
     camera_shake.update(dt)
 
     # Continuous phaser damage tick.  Each ship's PhaserSystem has banks
@@ -942,18 +940,6 @@ def _all_ships_for_tick():
         return _iter_ships()
     except Exception:
         return iter(())
-
-
-def _camera_world_pos(host):
-    """Best-effort camera world position for plume distance culling; None if
-    unavailable (culling then disabled, cap still applies)."""
-    if host is not None and hasattr(host, "get_camera_world_pos"):
-        try:
-            p = host.get_camera_world_pos()
-            return (p[0], p[1], p[2])
-        except Exception:
-            return None
-    return None
 
 
 def _extract_ypr(R) -> tuple:
@@ -5288,7 +5274,7 @@ def run(mission_name: Optional[str] = None,
                 _ships_this_tick = list(_all_ships_for_tick())
                 _advance_weapons(_ships_this_tick, TICK_DT)
                 _advance_combat(
-                    _ships_this_tick, TICK_DT, host=_h,
+                    _ships_this_tick, TICK_DT,
                     ship_instances=(session.ship_instances if session is not None else None),
                 )
 

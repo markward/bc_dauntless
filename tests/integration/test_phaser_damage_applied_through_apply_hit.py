@@ -44,7 +44,7 @@ def test_held_fire_decreases_target_shield(galaxy_red):
     front_before = target.GetShields().GetCurrentShields(0)
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
         sys_.StartFiring(target)
-        _advance_combat([ship, target], dt=0.1, host=None, ship_instances=None)
+        _advance_combat([ship, target], dt=0.1, ship_instances=None)
     front_after = target.GetShields().GetCurrentShields(0)
     assert front_after < front_before, (
         f"Held-fire should decrement front shield; before={front_before}, after={front_after}"
@@ -73,7 +73,7 @@ def test_target_drifts_out_of_arc_bank_auto_stops(galaxy_red):
     target.SetWorldLocation(TGPoint3(p.x, p.y - 50.0, p.z))
 
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
-        _advance_combat([ship, target], dt=0.1, host=None, ship_instances=None)
+        _advance_combat([ship, target], dt=0.1, ship_instances=None)
     firing_after = sum(sys_.GetWeapon(i).IsFiring() for i in range(sys_.GetNumWeapons()))
     assert firing_after == 0, (
         f"Out-of-arc auto-stop; before={firing_before}, after={firing_after}"
@@ -114,7 +114,6 @@ def test_phaser_hit_point_comes_from_host_ray_trace_mesh(galaxy_red, monkeypatch
          patch("engine.audio.tg_sound.TGSoundManager.instance"):
         sys_.StartFiring(target)
         _advance_combat([ship, target], dt=0.1,
-                        host=None,
                         ship_instances={target: sentinel})
 
     assert "hit_point" in captured, "apply_hit was never called"
@@ -158,7 +157,6 @@ def test_phaser_beam_render_endpoint_clipped_to_mesh(galaxy_red):
          patch.object(host_io, "ray_trace_mesh", _fake_trace):
         sys_.StartFiring(target)
         _advance_combat([ship, target], dt=0.1,
-                        host=None,
                         ship_instances={target: sentinel})
 
     # host_io.set_phaser_beams should have been called with at least one entry.

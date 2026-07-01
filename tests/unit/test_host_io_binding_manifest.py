@@ -108,7 +108,7 @@ def test_manifest_matches_facade_references():
 
 
 def test_optional_is_empty_for_now():
-    # get_camera_world_pos is being deleted in a later task, not tracked here;
+    # get_camera_world_pos (the only past optional binding) has been deleted;
     # there are no optional bindings yet. Lock that so a future addition is
     # a deliberate manifest edit, not an accident.
     assert host_io._OPTIONAL_BINDINGS == frozenset()

@@ -196,7 +196,7 @@ def test_effect_runs_through_advance_combat():
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
         for _ in range(120):
             _advance_weapons([ship, target], _DT)
-            _advance_combat([ship, target], dt=_DT, host=None, ship_instances=None)
+            _advance_combat([ship, target], dt=_DT, ship_instances=None)
     assert _dist(ship, target) < start - 1.0
 
 
