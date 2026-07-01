@@ -25,6 +25,16 @@ from engine.appc.subsystems import (
 )
 
 
+# ── Torpedo spread-volley tuning (Python, no rebuild) ───────────────────────
+# Divergence angle for spread volleys: each fanned torp launches this far off
+# the base aim (tangent of 15°), so a Dual/Quad spread visibly splays before
+# converging.  _SPREAD_DELAY is the hold-before-homing duration (s): the torp
+# flies straight along its fanned launch direction, then homing engages and it
+# curves back onto the target — a deferred fan then converge.
+_SPREAD_DIVERGENCE_TAN = _math.tan(_math.radians(15.0))  # ≈0.268
+_SPREAD_DELAY = 0.4
+
+
 def _resolve_aim_world(ship, target):
     """Unit vector in world space from ship → target, or ship-forward if no target."""
     if (ship is not None and target is not None
@@ -221,7 +231,8 @@ def _debit_ship_power(emitter, cost) -> int:
     return ps.StealPower(cost)
 
 
-def _spawn_projectile(emitter, mod, *, drf_override=0.0):
+def _spawn_projectile(emitter, mod, *, drf_override=0.0,
+                      spread_unit=None, homing_delay=0.0):
     """Spawn an in-flight projectile from `emitter` using SDK module `mod`.
 
     Shared by torpedo tubes and pulse-weapon cannons. Builds a Torpedo at the
@@ -230,6 +241,12 @@ def _spawn_projectile(emitter, mod, *, drf_override=0.0):
     homing velocity toward the firing ship's live target lock (else dumbfire
     along the emitter/ship forward), registers it, and plays mod.GetLaunchSound.
     Returns the Torpedo, or None if mod is unusable.
+
+    `spread_unit` (a world-space unit TGPoint3) tilts the launch direction
+    sideways by _SPREAD_DIVERGENCE_TAN for a fan-out volley; `homing_delay`
+    (s) is stamped onto the torp so homing is suppressed until it has flown
+    straight along the fanned direction for that long.  Defaults (None / 0.0)
+    keep every non-spread shot byte-identical.
     """
     from engine.appc.projectiles import Torpedo, register
     from engine.appc.math import TGPoint3
@@ -298,6 +315,33 @@ def _spawn_projectile(emitter, mod, *, drf_override=0.0):
                 world_fwd.z / length * launch_speed,
             )
         torp._target_ship = None
+
+    # Spread fan-out: tilt the launch direction sideways along spread_unit,
+    # preserving the launch speed magnitude.  Skipped (velocity unchanged) if
+    # no divergence requested, the velocity is degenerate, or the tilted
+    # vector collapses to zero.
+    if spread_unit is not None:
+        speed = torp._velocity.Length()
+        if speed > 1e-6:
+            base = TGPoint3(
+                torp._velocity.x / speed,
+                torp._velocity.y / speed,
+                torp._velocity.z / speed,
+            )
+            new = TGPoint3(
+                base.x + _SPREAD_DIVERGENCE_TAN * spread_unit.x,
+                base.y + _SPREAD_DIVERGENCE_TAN * spread_unit.y,
+                base.z + _SPREAD_DIVERGENCE_TAN * spread_unit.z,
+            )
+            new_len = new.Length()
+            if new_len > 1e-6:
+                torp._velocity = TGPoint3(
+                    new.x / new_len * speed,
+                    new.y / new_len * speed,
+                    new.z / new_len * speed,
+                )
+
+    torp._homing_start_age = float(homing_delay)
 
     register(torp)
 
@@ -659,6 +703,111 @@ class TorpedoSystem(WeaponSystem):
         # mission scripts use to swap loadouts (E2M0 sets Birds-of-Prey to
         # AT_TWO photon torpedoes).  GetNumAmmoTypes counts populated slots.
         self._ammo_by_slot: dict = {}
+        # Selected torpedo spread: how many tubes fire per trigger.
+        # Single=1 (default), Dual=2, Quad=4.  Pure selection state — the
+        # firing path does not consult it yet (future work).
+        self._spread: int = 1
+
+    # ── Spread selection state ─────────────────────────────────────────────
+    # NOTE: the tube-count heuristic below is the v1 rule for "options the
+    # loadout can fire".  BC's authored FiringChainString / firing groups are
+    # a later refinement; until a body needs them, tube count is faithful.
+    def GetSpreadOptions(self) -> list:
+        """Spread counts this loadout can fire, derived from tube count.
+
+        Single (1) is always available.  Dual (2) needs >=2 tubes, Quad (4)
+        needs >=4 tubes.  Returned sorted ascending, e.g. [1], [1, 2] or
+        [1, 2, 4]."""
+        n = self.GetNumWeapons()
+        options = [1]
+        if n >= 2:
+            options.append(2)
+        if n >= 4:
+            options.append(4)
+        return options
+
+    def GetSpread(self) -> int:
+        """Current torpedo spread — tubes fired per trigger (Single=1,
+        Dual=2, Quad=4).  Defaults to Single."""
+        return self._spread
+
+    def SetSpread(self, n) -> None:
+        """Select the torpedo spread (Single=1 / Dual=2 / Quad=4).
+
+        Silently clamps to a supported option: if ``n`` is not in
+        GetSpreadOptions() the current value is left unchanged."""
+        n = int(n)
+        if n in self.GetSpreadOptions():
+            self._spread = n
+
+    def StartFiring(self, target=None, offset=None) -> None:
+        """Fire GetSpread() torpedoes as a fan-out volley in one trigger.
+
+        Single(1) delegates to the base round-robin single shot (byte-identical
+        to the pre-spread path).  Dual(2)/Quad(4) pre-scan the eligible tubes,
+        clamp the count to how many are actually ready+in-arc, then fire the
+        first N with per-shot world divergence axes (±right / ±up) and a
+        _SPREAD_DELAY hold-before-homing so the volley splays then converges.
+        """
+        if not self.IsOn():
+            return
+        if _is_offline(self):
+            return
+        if _cloak_blocks_fire(self):
+            return
+        n = self.GetNumWeapons()
+        if n == 0:
+            return
+        ship = self.GetParentShip()
+
+        # Pre-scan eligible tubes in round-robin order (same aim/arc/CanFire
+        # gates the base StartFiring applies per emitter).
+        eligible: list[int] = []
+        start = self._next_emitter_index % n
+        for delta in range(n):
+            idx = (start + delta) % n
+            emitter = self.GetWeapon(idx)
+            if emitter is None:
+                continue
+            aim_world = (_resolve_bank_aim_world(emitter, target)
+                         if target is not None
+                         else _resolve_aim_world(ship, None))
+            if not _emitter_in_arc(emitter, ship, aim_world):
+                continue
+            if hasattr(emitter, "CanFire") and emitter.CanFire():
+                eligible.append(idx)
+
+        effective = min(self.GetSpread(), len(eligible))
+        if effective <= 1:
+            # Straight single shot — unchanged.
+            super().StartFiring(target, offset)
+            return
+
+        # World divergence axes from the ship rotation (column-vector
+        # convention: GetCol(0)=starboard, GetCol(2)=up).  A shim rotation
+        # (not a real TGMatrix3) has no usable axes → fall back to a single
+        # straight shot rather than crash.
+        rot = ship.GetWorldRotation() if (
+            ship is not None and hasattr(ship, "GetWorldRotation")) else None
+        if not isinstance(rot, TGMatrix3):
+            super().StartFiring(target, offset)
+            return
+        right = rot.GetCol(0)
+        up = rot.GetCol(2)
+        axes = [
+            right,
+            TGPoint3(-right.x, -right.y, -right.z),
+            up,
+            TGPoint3(-up.x, -up.y, -up.z),
+        ]
+
+        for k in range(effective):
+            idx = eligible[k]
+            emitter = self.GetWeapon(idx)
+            emitter.Fire(target, offset,
+                         spread_unit=axes[k], homing_delay=_SPREAD_DELAY)
+            self._currently_firing.append(idx)
+            self._next_emitter_index = (idx + 1) % n
 
     def GetNumAmmoTypes(self) -> int:
         return len(self._ammo_by_slot)
@@ -1282,7 +1431,8 @@ class TorpedoTube(WeaponSystem):
         on = parent is not None and parent.IsOn()
         return 1 if (on and self._num_ready > 0) else 0
 
-    def Fire(self, target=None, offset=None) -> None:
+    def Fire(self, target=None, offset=None, *,
+             spread_unit=None, homing_delay=0.0) -> None:
         if not self.CanFire():
             return
         if not self._debit_power():
@@ -1298,8 +1448,10 @@ class TorpedoTube(WeaponSystem):
         import time as _time
         self._last_fire_time = _time.monotonic()
 
-        # PR 2b: spawn the projectile via the bound SDK script.
-        self._spawn_torpedo()
+        # PR 2b: spawn the projectile via the bound SDK script.  spread_unit /
+        # homing_delay are only non-default when the parent TorpedoSystem is
+        # firing a Dual/Quad spread volley.
+        self._spawn_torpedo(spread_unit=spread_unit, homing_delay=homing_delay)
 
         # Discrete-shot — auto-stop after launch.  WeaponSystem's
         # _currently_firing list still tracks us until StopFiring is called.
@@ -1316,7 +1468,7 @@ class TorpedoTube(WeaponSystem):
         ) else 0.0
         return _debit_ship_power(self, cost)
 
-    def _spawn_torpedo(self) -> None:
+    def _spawn_torpedo(self, *, spread_unit=None, homing_delay=0.0) -> None:
         """Look up the parent system's GetTorpedoScript(0), import the SDK
         projectile module, instantiate a Torpedo, call <module>.Create(t)
         to populate visuals + behaviour, compute initial velocity (homing
@@ -1343,7 +1495,8 @@ class TorpedoTube(WeaponSystem):
         except ImportError:
             return
 
-        _spawn_projectile(self, mod, drf_override=self.GetDamageRadiusFactor())
+        _spawn_projectile(self, mod, drf_override=self.GetDamageRadiusFactor(),
+                          spread_unit=spread_unit, homing_delay=homing_delay)
 
     def StopFiring(self) -> None:
         self._firing = False

@@ -643,6 +643,19 @@ def _reset_leakable_engine_globals():
                 getattr(_m, _attr).clear()
         except Exception:
             pass
+    # Global TGObject id -> object registry (engine.core.ids._registry). Every
+    # TGObject.__init__ inserts itself and nothing removes it, so the table grows
+    # for the whole session. Some SDK object lookups (ObjectClass_GetObject ->
+    # get_object_by_id) and the character get-or-create idiom assume an id is
+    # *absent* until vivified; a leaked object squatting that id makes a fresh
+    # test see a stale/foreign object (auto-vivify returns non-None of the wrong
+    # class). Clearing between tests restores per-test isolation. The _counter is
+    # left monotonic so ids never repeat within a run.
+    try:
+        from engine.core import ids as _ids
+        _ids._registry.clear()
+    except Exception:
+        pass
     # UI singletons rebuilt per bridge load.
     try:
         from engine.sdk_ui.widgets import ship_display
