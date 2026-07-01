@@ -3,11 +3,117 @@
 Re-exports the binding functions with type hints. Application code should
 import from here, not from _dauntless_host directly.
 """
+import logging
 from typing import Tuple
 
 import _dauntless_host as _h
 
+_logger = logging.getLogger(__name__)
+
 InstanceId = _h.InstanceId
+
+
+# ── Native-binding manifest ──────────────────────────────────────────────────
+# The set of _dauntless_host bindings this façade expects. `host_bindings.cc`
+# compiles into *both* build/dauntless and the _dauntless_host module, so a
+# forgotten `cmake --build` leaves a stale .so where an entire feature silently
+# no-ops while every test stays green. validate_bindings() (below) checks the
+# live module against this manifest at real-host boot to catch that loudly.
+#
+# The manifest is hand-maintained but kept honest by
+# tests/unit/test_renderer_binding_manifest.py, which derives ground truth from
+# this file's own `_h.NAME` / `getattr(_h, "NAME")` references — you cannot add
+# or remove a wrapper without updating the manifest, or the gate goes red.
+#
+# REQUIRED: called hard (`_h.NAME(...)`). A missing one is a broken/stale build —
+#   the façade crashes the moment that code path runs. `InstanceId` (a type,
+#   resolved at the import above) is deliberately excluded: its absence already
+#   hard-fails `import`, so it needs no manifest entry.
+_REQUIRED_BINDINGS = frozenset({
+    "add_sphere_region", "assemble_officer", "bridge_pass_set_enabled",
+    "cef_composite", "cef_initialize", "cef_pump", "cef_reload", "cef_shutdown",
+    "cef_toggle_devtools", "clear_hologram_ship", "clear_subsystem_pins",
+    "clear_viewscreen_comm_source", "compute_capsule_region",
+    "consume_mouse_delta", "create_bridge_instance", "create_comm_instance",
+    "create_instance", "damage_decals_tick", "decals_set_enabled",
+    "destroy_instance", "dust_set_density", "dust_set_enabled", "filmic_enabled",
+    "filmic_set_enabled", "frame", "get_instance_bounds",
+    "get_instance_head_center", "hdr_set_enabled", "init", "load_animation_clips",
+    "load_instance_clip", "load_model", "model_aabb", "motion_blur_enabled",
+    "motion_blur_set_enabled", "nebula_lightning_enabled",
+    "nebula_lightning_set_enabled", "play_instance_gesture", "play_instance_idle",
+    "procedural_sky_enabled", "procedural_sky_set_enabled", "restore_rest_pose",
+    "rim_set_enabled", "set_backdrops", "set_bridge_camera", "set_bridge_lighting",
+    "set_bridge_wall_time", "set_camera", "set_comm_set_id", "set_cursor_locked",
+    "set_dust_planets", "set_emissive_scale", "set_glow_region_dim",
+    "set_hologram_only_mode", "set_hologram_ship", "set_hull_discharges",
+    "set_instance_animation", "set_instance_rest_pose", "set_lens_flares",
+    "set_lighting", "set_nebula_godrays", "set_nebula_wake", "set_nebulae",
+    "set_rim_eligible", "set_subsystem_pins", "set_suns",
+    "set_viewscreen_brightness", "set_viewscreen_comm_source",
+    "set_viewscreen_enabled", "set_viewscreen_model", "set_viewscreen_static",
+    "set_viewscreen_static_source", "set_visible", "set_warp_flash_intensity",
+    "set_warp_streak_intensity", "set_warp_travel_dir", "set_world_transform",
+    "shadows_set_enabled", "shield_hit", "shield_register", "shield_unregister",
+    "should_close", "shutdown", "smaa_set_enabled", "specular_set_enabled",
+    "volumetric_nebulae_enabled", "volumetric_nebulae_set_enabled",
+    "warp_flythrough_enabled", "warp_flythrough_set_enabled",
+})
+
+# OPTIONAL: soft-guarded (`getattr(_h, "NAME", None)` / `hasattr(_h, "NAME")`).
+# These degrade to no-ops by design and may be legitimately absent in a minimal
+# or headless build config — so a missing one is warned (under --developer),
+# never fatal. `set_officer_face` also appears as a hard `_h.set_officer_face`
+# call *inside* its own hasattr guard, so it is optional despite that inner ref.
+_OPTIONAL_BINDINGS = frozenset({
+    "cef_execute_javascript", "clear_spv_overlay_beams", "clear_target_reticle",
+    "instance_node_world", "instance_surface_points", "play_instance_node_anim",
+    "play_instance_node_clip", "set_cloak_dials", "set_cloak_ships",
+    "set_officer_face", "set_spv_overlay_beams", "set_target_reticle",
+    "spawn_test_character", "stop_instance_node_anim",
+})
+
+
+def validate_bindings(*, strict: bool = False) -> list[str]:
+    """Check the live `_h` module against the binding manifest at real-host boot.
+
+    Returns the sorted list of every missing binding name (empty == clean) so it
+    is assertable without scraping log output. Catches a stale/incomplete .so
+    loudly at startup rather than as a silently-dead feature mid-mission.
+
+    Required-missing → logged at ERROR (always); raises RuntimeError if `strict`.
+    Optional-missing → logged at WARNING (only under --developer); never raises.
+
+    Invoked only from the real-host boot path (host_loop.run, right after
+    r.init). Unit tests that monkeypatch `renderer._h` never call it, so their
+    partial fakes are never inspected; and it never runs at import time.
+    """
+    missing_required = sorted(n for n in _REQUIRED_BINDINGS if not hasattr(_h, n))
+    missing_optional = sorted(n for n in _OPTIONAL_BINDINGS if not hasattr(_h, n))
+
+    if missing_required:
+        _logger.error(
+            "_dauntless_host is missing required binding(s) — stale/incomplete "
+            "native module; rebuild with `cmake --build build -j`: %s",
+            ", ".join(missing_required),
+        )
+    if missing_optional:
+        # Lazy import avoids any import-order coupling; dev_mode imports
+        # _dauntless_host, not renderer, so there is no cycle either way.
+        from engine import dev_mode
+        if dev_mode.is_enabled():
+            _logger.warning(
+                "_dauntless_host is missing optional binding(s) — the matching "
+                "features will silently no-op: %s",
+                ", ".join(missing_optional),
+            )
+
+    if missing_required and strict:
+        raise RuntimeError(
+            "missing required _dauntless_host bindings (rebuild the native "
+            "module with `cmake --build build -j`): " + ", ".join(missing_required)
+        )
+    return sorted(set(missing_required) | set(missing_optional))
 
 
 def init(width: int, height: int, title: str) -> None:
