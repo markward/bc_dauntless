@@ -32,7 +32,7 @@ from engine.appc.subsystems import (
 # flies straight along its fanned launch direction, then homing engages and it
 # curves back onto the target — a deferred fan then converge.
 _SPREAD_DIVERGENCE_TAN = _math.tan(_math.radians(15.0))  # ≈0.268
-_SPREAD_DELAY = 0.4
+_SPREAD_DELAY = 0.2
 
 
 def _resolve_aim_world(ship, target):
