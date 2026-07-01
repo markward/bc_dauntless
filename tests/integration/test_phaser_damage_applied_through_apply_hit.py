@@ -147,30 +147,39 @@ def test_phaser_beam_render_endpoint_clipped_to_mesh(galaxy_red):
     SURFACE_POINT = (1.5, 47.25, -2.0)  # Distinct from target centre.
 
     class FakeHost:
-        def __init__(self):
-            self.beam_data = None
+        """Carries only the hit/damage bindings still threaded via host=
+        (ray_trace_mesh clips the beam endpoint; shield_hit is a no-op).
+        The set_phaser_beams publish now routes through host_io, so it is
+        captured there, not on this object."""
         def ray_trace_mesh(self, iid, origin, direction, max_dist):
             return (SURFACE_POINT, (0.0, -1.0, 0.0), 1.0)
         def shield_hit(self, instance_id, point, rgba, intensity):
             pass
-        def set_phaser_beams(self, data):
-            self.beam_data = list(data)
         def __getattr__(self, name):
             return lambda *a, **kw: None
 
+    from engine import host_io
+
+    beam_data = None
+
+    def _capture_beams(data):
+        nonlocal beam_data
+        beam_data = list(data)
+
     sentinel = object()
     host = FakeHost()
-    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
+    with patch("engine.audio.tg_sound.TGSoundManager.instance"), \
+         patch.object(host_io, "set_phaser_beams", _capture_beams):
         sys_.StartFiring(target)
         _advance_combat([ship, target], dt=0.1,
                         host=host,
                         ship_instances={target: sentinel})
 
-    # set_phaser_beams should have been called with at least one entry.
-    assert host.beam_data is not None
-    assert len(host.beam_data) >= 1
+    # host_io.set_phaser_beams should have been called with at least one entry.
+    assert beam_data is not None
+    assert len(beam_data) >= 1
     # Every entry's target must equal SURFACE_POINT (the clipped endpoint).
-    for entry in host.beam_data:
+    for entry in beam_data:
         end = entry["target"]
         assert end[0] == pytest.approx(SURFACE_POINT[0])
         assert end[1] == pytest.approx(SURFACE_POINT[1])

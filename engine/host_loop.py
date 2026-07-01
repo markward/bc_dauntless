@@ -646,21 +646,20 @@ def _advance_combat(ships, dt: float, host=None, ship_instances=None) -> None:
     from engine.appc import tractor as _tractor
     _tractor.advance_tractors(ships_list, dt)
 
-    if host is not None and hasattr(host, "set_torpedoes"):
-        host.set_torpedoes(_build_torpedo_render_data())
+    # Per-frame VFX descriptor lists route through the host_io façade, which
+    # no-ops when the native module is absent (headless). `host` is still the
+    # raw _dauntless_host module here — it stays threaded because the hit/damage
+    # bindings (ray_trace_mesh, shield_hit, world_to_body, …) above/inside the
+    # _build_* helpers still consume it directly.
+    host_io.set_torpedoes(_build_torpedo_render_data())
     from engine.appc import shockwaves as _shockwaves
-    if host is not None and hasattr(host, "set_shockwaves"):
-        host.set_shockwaves(_shockwaves.render_data())
-    if host is not None and hasattr(host, "set_hit_vfx"):
-        host.set_hit_vfx(_build_hit_vfx_render_data())
-    if host is not None and hasattr(host, "set_particle_emitters"):
-        host.set_particle_emitters(_build_particle_render_data(ship_instances))
-    if host is not None and hasattr(host, "set_phaser_beams"):
-        host.set_phaser_beams(_build_phaser_beam_render_data(
-            ships_list, host=host, ship_instances=ship_instances))
-    if host is not None and hasattr(host, "set_tractor_beams"):
-        host.set_tractor_beams(_build_tractor_beam_render_data(
-            ships_list, host=host, ship_instances=ship_instances))
+    host_io.set_shockwaves(_shockwaves.render_data())
+    host_io.set_hit_vfx(_build_hit_vfx_render_data())
+    host_io.set_particle_emitters(_build_particle_render_data(ship_instances))
+    host_io.set_phaser_beams(_build_phaser_beam_render_data(
+        ships_list, host=host, ship_instances=ship_instances))
+    host_io.set_tractor_beams(_build_tractor_beam_render_data(
+        ships_list, host=host, ship_instances=ship_instances))
 
 
 def _color_tuple(color):

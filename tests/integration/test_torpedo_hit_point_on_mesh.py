@@ -17,9 +17,9 @@ class _CapturingHost:
     def ray_trace_mesh(self, iid, origin, direction, max_dist):
         return (self.SURFACE_POINT, (0.0, 0.0, -1.0), 1.0)
     def __getattr__(self, name):
-        # set_torpedoes / set_hit_vfx / set_phaser_beams are touched by
-        # _advance_combat; provide silent no-op accessors so the call
-        # doesn't raise.
+        # The per-frame VFX setters (set_torpedoes / set_hit_vfx / …) now
+        # route through host_io, so they no longer touch this host object;
+        # this no-op covers any other host= binding _advance_combat reads.
         return lambda *a, **kw: None
 
 
