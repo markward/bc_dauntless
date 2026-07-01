@@ -555,7 +555,17 @@ class ShipClass(DamageableObject):
     def GetPulseWeaponSystem(self):               return self._pulse_weapon_system
     def SetPulseWeaponSystem(self, s) -> None:    self._pulse_weapon_system = self._attach_subsystem(s)
     def GetTractorBeamSystem(self):               return self._tractor_beam_system
-    def SetTractorBeamSystem(self, s) -> None:    self._tractor_beam_system = self._attach_subsystem(s)
+    def SetTractorBeamSystem(self, s) -> None:
+        self._tractor_beam_system = self._attach_subsystem(s)
+        # The tractor is a manual toggle available at ALL alert levels — unlike
+        # the phaser/torpedo/pulse weapons, which SetAlertLevel powers on only at
+        # red alert. Power it on when equipped so the player can engage it any
+        # time; StartFiring/StopFiring is the actual on/off (a powered but
+        # unfired tractor has no effect — advance_tractors only acts on firing
+        # beams). A default-empty system with no emitters stays a harmless no-op.
+        if self._tractor_beam_system is not None and hasattr(
+                self._tractor_beam_system, "TurnOn"):
+            self._tractor_beam_system.TurnOn()
 
     # ── Weapon-group lookup by WG_* enum ─────────────────────────────────────
     # Matches sdk/.../TacticalInterfaceHandlers.py:387-405 dispatch.  PR 2's
