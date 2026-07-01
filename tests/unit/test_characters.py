@@ -110,6 +110,16 @@ def test_set_hidden_flips_is_hidden():
     assert c.IsHidden() == 1
 
 
+def test_set_hidden_honors_argument_and_can_reveal():
+    # BC-faithful: SetHidden(0) REVEALS. MissionLib.ViewscreenOn hides a look-at
+    # set then SetHidden(0)s the hailing character to show it on the viewscreen.
+    c = CharacterClass_Create()
+    c.SetHidden(1)
+    assert c.IsHidden() == 1
+    c.SetHidden(0)
+    assert c.IsHidden() == 0
+
+
 def test_set_standing_no_arg_flips_state():
     c = CharacterClass_Create()
     c.SetStanding()
@@ -298,17 +308,37 @@ def test_get_object_finds_character_in_set():
     assert CharacterClass_GetObject(pSet, "Tactical") is tactical
 
 
-def test_get_object_auto_vivifies_when_missing():
-    """SDK callers chain pCharacter.GetMenu() / .ClearAnimations() without
-    null-guarding; CharacterClass_GetObject must hand back a real character
-    even when the set hasn't been populated (headless harness)."""
+def test_get_object_returns_none_when_missing_in_real_set():
+    """BC-faithful: a real set with no character under the name returns None,
+    exactly like Appc's CharacterClass_GetObject. This is what makes the
+    ubiquitous SDK get-or-create idiom work (see the test below). It must NOT
+    vivify a hollow placeholder into the set."""
     pSet = SetClass()
     pSet.SetName("bridge")
-    out = CharacterClass_GetObject(pSet, "Tactical")
-    assert isinstance(out, CharacterClass)
-    assert out.GetCharacterName() == "Tactical"
-    # Subsequent calls return the same instance (now registered in the set).
-    assert CharacterClass_GetObject(pSet, "Tactical") is out
+    assert CharacterClass_GetObject(pSet, "Tactical") is None
+    # Nothing was registered as a side-effect of the failed lookup.
+    assert pSet.GetObject("Tactical") is None
+
+
+def test_get_object_supports_get_or_create_idiom():
+    """The SDK's near-universal pattern (e.g. E1M2.CreatePicard):
+
+        pChar = App.CharacterClass_GetObject(pSet, name)
+        if not pChar:
+            pChar = <Module>.CreateCharacter(pSet)
+            pChar.SetLocation(...)
+
+    A truthy vivified placeholder used to defeat the `if not pChar` guard, so
+    the real create + SetLocation never ran (Picard rendered hollow/unplaced)."""
+    pSet = SetClass()
+    pSet.SetName("bridge")
+    pChar = CharacterClass_GetObject(pSet, "Picard")
+    assert not pChar  # guard must fire -> caller creates the real character
+    if not pChar:
+        pChar = CharacterClass_Create()
+        pSet.AddObjectToSet(pChar, "Picard")
+    # Now the real character is found on subsequent lookups.
+    assert CharacterClass_GetObject(pSet, "Picard") is pChar
 
 
 def test_get_object_does_not_overwrite_non_character_in_set():

@@ -379,6 +379,99 @@ def test_realize_set_comm_tears_down_prior_instances_on_swap():
     assert ("comm", 99) not in final
 
 
+# ── Hidden comm-set characters (Soams / Admiral Liu) ─────────────────────────
+# Comm characters are hidden at load (mission SetHidden(1)) and un-hidden at
+# runtime by MissionLib.ViewscreenOn -> SetHidden(0) when they hail. They must be
+# assembled up front (invisible) and revealed per-frame from IsHidden(), else the
+# room renders on the viewscreen but the character never does.
+
+class _OfficerRenderer(_FakeRenderer):
+    """Fake renderer implementing the skinned-officer assembly surface."""
+    def __init__(self):
+        super().__init__()
+        self.visible = {}
+        self.set_comm_set_id = lambda *a, **k: None
+    def assemble_officer(self, *a, **k):
+        iid = ("model", self._next); self._next += 1; return iid
+    def set_instance_rest_pose(self, iid, idx, at_start): pass
+    def set_visible(self, iid, vis): self.visible[iid] = vis
+    def load_instance_clip(self, iid, nif): return -1
+    def play_instance_idle(self, iid, idx): pass
+
+
+def _stub_placement(monkeypatch, hidden):
+    import engine.appc.bridge_placement as bp
+    monkeypatch.setattr(bp, "capture_placement",
+                        lambda ch: {"clip_nif": "data/animations/MiscEng02.NIF",
+                                    "hidden": hidden, "sample_at_start": True})
+    monkeypatch.setattr(bp, "capture_breathing", lambda ch: None)
+
+
+def _hidden_comm_character(name="Soams"):
+    from engine.appc.characters import CharacterClass
+    ch = CharacterClass("body.nif", "head.nif")
+    ch.SetCharacterName(name)
+    ch.SetHidden(1)
+    return ch
+
+
+class _PlaceCtl:
+    officer_instances = []
+    comm_instances_by_set = {}
+
+
+def test_place_one_hidden_comm_character_is_assembled_but_invisible(monkeypatch):
+    _stub_placement(monkeypatch, hidden=True)
+    ch = _hidden_comm_character()
+    c = _PlaceCtl(); c.comm_instances_by_set = {}
+    r = _OfficerRenderer()
+
+    hl._place_one_character(c, r, ch, "MiscEng", is_bridge=False, comm_set_id=1)
+
+    iid = ch._render_instance
+    assert iid is not None, "hidden comm character must still be assembled"
+    assert r.visible[iid] is False, "it must start invisible until the hail"
+
+
+def test_place_one_hidden_bridge_character_is_skipped(monkeypatch):
+    # Bridge officers explicitly hidden (E1M1 Picard in the turbolift) stay
+    # unplaced — the comm-only exception must not leak to the bridge.
+    _stub_placement(monkeypatch, hidden=True)
+    ch = _hidden_comm_character("Picard")
+    c = _PlaceCtl(); c.comm_instances_by_set = {}; c.officer_instances = []
+    r = _OfficerRenderer()
+
+    hl._place_one_character(c, r, ch, "bridge", is_bridge=True)
+
+    assert getattr(ch, "_render_instance", None) is None
+    assert r.created == [] and r.visible == {}
+
+
+def test_sync_comm_character_visibility_tracks_is_hidden(monkeypatch):
+    import App as _App
+    from engine.appc.sets import SetClass
+
+    _App.g_kSetManager._sets.clear()
+    s = SetClass(); s.SetName("MiscEng")
+    ch = _hidden_comm_character()
+    ch._render_instance = ("model", 7)
+    s.AddObjectToSet(ch, "Soams")
+    _App.g_kSetManager.AddSet(s, "MiscEng")
+
+    class _C:
+        comm_set_ids = {"MiscEng": 1}
+    c = _C(); r = _OfficerRenderer()
+
+    # Hidden -> instance invisible.
+    hl._sync_comm_character_visibility(c, r)
+    assert r.visible[("model", 7)] is False
+
+    # ViewscreenOn un-hides the hailing character -> next sync reveals it.
+    ch.SetHidden(0)
+    hl._sync_comm_character_visibility(c, r)
+    assert r.visible[("model", 7)] is True
+
+
 def test_realize_set_comm_load_failure_is_nonfatal():
     """A comm set is non-critical: a load_model failure must log+skip, not abort
     the mission load (which would take the whole bridge down with it)."""
