@@ -103,17 +103,19 @@ def _next_torpedo_type_name(ship) -> str:
     if torps is None:
         return ""
     try:
-        slots = sorted(torps._ammo_by_slot.keys())
+        n = torps.GetNumAmmoTypes()
     except Exception:
         return ""
+    # Populated slots via the public API (mirrors CycleAmmoType's sorted-slot
+    # advance without reaching into private state).
+    slots = [i for i in range(n) if torps.GetAmmoType(i) is not None]
     if len(slots) <= 1:
         return ""
     try:
-        current = torps.GetCurrentAmmoSlot()
-        idx = slots.index(current)
+        idx = slots.index(torps.GetCurrentAmmoSlot())
     except Exception:
         idx = 0
-    nxt = torps._ammo_by_slot.get(slots[(idx + 1) % len(slots)])
+    nxt = torps.GetAmmoType(slots[(idx + 1) % len(slots)])
     if nxt is None or not hasattr(nxt, "GetAmmoName"):
         return ""
     try:
