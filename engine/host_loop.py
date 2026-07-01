@@ -4187,6 +4187,16 @@ def run(mission_name: Optional[str] = None,
     # silently-dead feature mid-mission. strict under --developer: a developer
     # wants to be stopped cold; production logs loudly and keeps running.
     r.validate_bindings(strict=dev_mode.is_enabled())
+    # Same check for the non-render façade (engine.host_io): host_bindings.cc
+    # compiles into both build/dauntless and the _dauntless_host module, so a
+    # forgotten `cmake --build` can leave the window/input/VFX/damage surface
+    # stale exactly as it can the renderer surface. Validate both façades at the
+    # same boot point so a missing REQUIRED host_io binding fails loudly here
+    # (strict under --developer; ERROR-logged in production) rather than as a
+    # silently-dead feature mid-mission. verify_keys() likewise catches the host
+    # `keys` submodule diverging from engine.input_map's table.
+    host_io.validate_bindings(strict=dev_mode.is_enabled())
+    host_io.verify_keys()
     # Initialise the CEF UI overlay. Resolves index.html relative
     # to the project root (two parents up from this file). _CEF_VIEW_W/H
     # are reused by the pause-menu mouse-forwarding path to scale

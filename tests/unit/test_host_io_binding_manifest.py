@@ -181,3 +181,85 @@ def test_validate_not_invoked_at_module_scope():
                   and isinstance(node.value.func, ast.Name)
                   and node.value.func.id == "validate_bindings")
         assert not called, "validate_bindings() is called at module scope"
+
+
+# ── 4. verify_keys() safety ───────────────────────────────────────────────────
+
+def test_verify_keys_no_raise_when_keys_match(monkeypatch, caplog):
+    # The boot path calls verify_keys() unconditionally after validate_bindings().
+    # It must be safe (non-fatal) when the host `keys` submodule agrees with
+    # engine.input_map's table — mismatches are logged, never raised.
+    from engine import input_map
+
+    class _MatchingKeys:
+        # Every attribute resolves to input_map's own expected code, so
+        # verify_against_host finds zero mismatches.
+        def __getattr__(self, attr):
+            for name, code in input_map.GLFW_KEYS.items():
+                if input_map._host_key_attr(name) == attr:
+                    return code
+            raise AttributeError(attr)
+
+    fake = _full_fake()
+    fake.keys = _MatchingKeys()
+    monkeypatch.setattr(host_io, "_h", fake)
+
+    with caplog.at_level(logging.WARNING, logger="engine.host_io"):
+        host_io.verify_keys()  # must not raise
+    assert "disagrees" not in caplog.text
+
+
+def test_verify_keys_no_raise_when_headless(monkeypatch):
+    # _h is None (not built / headless) — verify_keys must be a silent no-op.
+    monkeypatch.setattr(host_io, "_h", None)
+    host_io.verify_keys()  # must not raise
+
+
+# ── 5. Boot wiring: run() validates the host_io façade at the same point ──────
+
+def test_run_boot_path_validates_host_io_facade():
+    # Task 5's wiring: host_loop.run() must validate the host_io façade at boot
+    # right next to the renderer façade, so a stale/incomplete .so missing a
+    # REQUIRED host_io binding fails loudly at boot instead of no-opping
+    # mid-mission. Assert the boot path calls both host_io.validate_bindings and
+    # host_io.verify_keys (AST, so a comment mention wouldn't satisfy it), and
+    # that they sit adjacent to the renderer's r.validate_bindings check.
+    import pathlib as _pathlib
+    from engine import host_loop
+
+    src = _pathlib.Path(host_loop.__file__).read_text()
+    tree = ast.parse(src)
+
+    run_fn = next(
+        (n for n in ast.walk(tree)
+         if isinstance(n, ast.FunctionDef) and n.name == "run"),
+        None,
+    )
+    assert run_fn is not None, "host_loop.run() not found"
+
+    def _facade_call(node):
+        """Return ('facade', 'method') for a `<name>.<method>(...)` call stmt."""
+        if not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)):
+            return None
+        fn = node.value.func
+        if (isinstance(fn, ast.Attribute) and isinstance(fn.value, ast.Name)):
+            return (fn.value.id, fn.attr)
+        return None
+
+    calls = [c for c in (_facade_call(n) for n in run_fn.body) if c is not None]
+
+    assert ("r", "validate_bindings") in calls, (
+        "renderer façade boot validation went missing from run()"
+    )
+    assert ("host_io", "validate_bindings") in calls, (
+        "run() must call host_io.validate_bindings() at boot"
+    )
+    assert ("host_io", "verify_keys") in calls, (
+        "run() must call host_io.verify_keys() at boot"
+    )
+
+    # Both host_io checks must sit immediately after the renderer check, so the
+    # two façades are validated at the same boot point.
+    r_idx = calls.index(("r", "validate_bindings"))
+    assert calls[r_idx + 1] == ("host_io", "validate_bindings")
+    assert calls[r_idx + 2] == ("host_io", "verify_keys")

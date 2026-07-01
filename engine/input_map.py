@@ -153,19 +153,10 @@ class InputMap:
     def verify_against_host(self, host_keys) -> list:
         """Return a list of (name, expected, host) mismatches vs host.keys.
 
-        GLFW codes are stable, but this guards against the host submodule ever
-        diverging (e.g. an editing slip in host_bindings.cc).  Non-fatal —
-        callers log the result.
+        Thin method form of the module-level verify_against_host (verification
+        uses only module state, no instance). Kept for existing callers.
         """
-        mismatches = []
-        for name, code in GLFW_KEYS.items():
-            attr = _host_key_attr(name)
-            if attr is None:
-                continue
-            host_code = getattr(host_keys, attr, None)
-            if host_code is not None and host_code != code:
-                mismatches.append((name, code, host_code))
-        return mismatches
+        return verify_against_host(host_keys)
 
 
 def _host_key_attr(name: str) -> Optional[str]:
@@ -175,6 +166,26 @@ def _host_key_attr(name: str) -> Optional[str]:
     if name.isalnum():           # letters/digits/F-keys
         return "KEY_" + name
     return None
+
+
+def verify_against_host(host_keys) -> list:
+    """Module-level twin of InputMap.verify_against_host.
+
+    The key-code table (GLFW_KEYS) and the name→host-attr mapping are both
+    module state, so verification needs no InputMap instance. host_io.verify_keys
+    calls this at real-host boot to catch the host `keys` submodule diverging
+    from engine.input_map's table (e.g. an editing slip in host_bindings.cc).
+    Returns a list of (name, expected, host) mismatches; empty == in sync.
+    """
+    mismatches = []
+    for name, code in GLFW_KEYS.items():
+        attr = _host_key_attr(name)
+        if attr is None:
+            continue
+        host_code = getattr(host_keys, attr, None)
+        if host_code is not None and host_code != code:
+            mismatches.append((name, code, host_code))
+    return mismatches
 
 
 # Punctuation/nav display names → host.keys attribute (host_bindings.cc names).
