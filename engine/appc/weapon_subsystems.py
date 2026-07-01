@@ -707,6 +707,12 @@ class TorpedoSystem(WeaponSystem):
         # Single=1 (default), Dual=2, Quad=4.  Pure selection state — the
         # firing path does not consult it yet (future work).
         self._spread: int = 1
+        # Selected ammo slot.  None == "lowest populated slot" (the historical
+        # default); an int selects that slot when it is populated.  UI type
+        # cycling (weapon_config.cycle_torpedo_type) drives this via
+        # SetCurrentAmmoSlot / CycleAmmoType so both the readout and the
+        # per-shot power cost track the chosen type.
+        self._selected_slot = None
 
     # ── Spread selection state ─────────────────────────────────────────────
     # NOTE: the tube-count heuristic below is the v1 rule for "options the
@@ -833,13 +839,43 @@ class TorpedoSystem(WeaponSystem):
         """SDK TorpedoRun.py:130 / StationaryAttack.py:78 — returns the
         currently-selected ammo type, or None if no ammo configured.
 
-        Phase 1 semantics: returns the lowest-numbered loaded slot's ammo.
-        Real BC tracks a separate "selected" slot via UI cycling; until a
-        body needs that distinction, lowest-slot is a faithful default."""
+        Returns the selected slot's ammo when SetCurrentAmmoSlot / CycleAmmoType
+        has chosen a populated slot; otherwise falls back to the lowest-numbered
+        loaded slot (the historical default, preserved so pre-selection callers
+        are byte-identical)."""
         if not self._ammo_by_slot:
             return None
-        lowest_slot = min(self._ammo_by_slot.keys())
-        return self._ammo_by_slot[lowest_slot]
+        return self._ammo_by_slot[self.GetCurrentAmmoSlot()]
+
+    def GetCurrentAmmoSlot(self) -> int:
+        """The effective ammo slot: the explicit selection when set and
+        populated, else the lowest populated slot.  Returns -1 when no ammo
+        is loaded at all."""
+        if not self._ammo_by_slot:
+            return -1
+        if self._selected_slot is not None and self._selected_slot in self._ammo_by_slot:
+            return self._selected_slot
+        return min(self._ammo_by_slot.keys())
+
+    def SetCurrentAmmoSlot(self, slot) -> None:
+        """Select the given ammo slot.  Ignored silently when the slot is not
+        populated (leaves the current selection unchanged)."""
+        slot = int(slot)
+        if slot in self._ammo_by_slot:
+            self._selected_slot = slot
+
+    def CycleAmmoType(self) -> None:
+        """Advance the selection to the next populated slot (sorted keys,
+        wraps).  No-op with 0 or 1 populated slots."""
+        if len(self._ammo_by_slot) <= 1:
+            return
+        slots = sorted(self._ammo_by_slot.keys())
+        current = self.GetCurrentAmmoSlot()
+        try:
+            idx = slots.index(current)
+        except ValueError:
+            idx = 0
+        self._selected_slot = slots[(idx + 1) % len(slots)]
 
 
 # Global phaser fire-range gate. Reconstructed from disassembly:

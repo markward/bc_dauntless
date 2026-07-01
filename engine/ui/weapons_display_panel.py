@@ -39,10 +39,24 @@ from __future__ import annotations
 import json
 from typing import Optional
 
+from engine.appc import weapon_config
 from engine.ui import ship_icons, weapon_icons
 from engine.ui.panel import Panel
 from engine.ui.species_icons import stem_for_species
 from engine.units import GUPS_TO_KPH
+
+
+# JS event action → shared weapon_config mutator name.  Resolved on the
+# weapon_config module at call time (not bound here) so tests can spy on the
+# helper via patch().  toggle-view is handled separately — it flips panel-local
+# UI state, not a subsystem.
+_CONFIG_ACTIONS = {
+    "cycle-type": "cycle_torpedo_type",
+    "cycle-spread": "cycle_torpedo_spread",
+    "cycle-intensity": "toggle_phaser_intensity",
+    "toggle-tractor": "toggle_tractor",
+    "toggle-cloak": "toggle_cloak",
+}
 
 
 # Stock WeaponsDisplay.py:80,278 iterates only phaser + pulse weapons
@@ -69,19 +83,22 @@ class WeaponsDisplayPanel(Panel):
         # snapshot path; in that mode the header shows 0 : 0 kph.
         self._player_control = player_control
         self._last_snapshot: Optional[tuple] = None
+        # Whether the weapon-settings view (vs the status silhouette) is shown.
+        self._settings_open: bool = False
 
     # ── Snapshot ────────────────────────────────────────────────────────
     def _snapshot(self) -> tuple:
         if not self._visible:
-            return (False, "", "", None, ())
+            return (False, "", "", None, (), ())
         player = _get_player()
         if player is None:
-            return (False, "", "", None, ())
+            return (False, "", "", None, (), ())
         name = player.GetName() if hasattr(player, "GetName") else ""
         species_key = _species_key_for(player)
         speed_label = _speed_label_for(player, self._player_control)
         icons_frozen = _frozen_icon_descriptors(player)
-        return (True, name, speed_label, species_key, icons_frozen)
+        config_frozen = _frozen_config(player, self._settings_open)
+        return (True, name, speed_label, species_key, icons_frozen, config_frozen)
 
     # ── Panel framework ─────────────────────────────────────────────────
     def render_payload(self) -> Optional[str]:
@@ -89,7 +106,7 @@ class WeaponsDisplayPanel(Panel):
         if snap == self._last_snapshot:
             return None
         self._last_snapshot = snap
-        visible, ship_name, speed_label, species_key, _icons_frozen = snap
+        visible, ship_name, speed_label, species_key, _icons_frozen, _config_frozen = snap
         player = _get_player() if visible else None
         payload = {
             "visible": visible,
@@ -97,12 +114,25 @@ class WeaponsDisplayPanel(Panel):
             "speed_label": speed_label,
             "silhouette_url": ship_icons.icon_path_for_species(species_key or ""),
             "weapon_icons": list(_resolve_icon_descriptors(player)),
+            "config": _config_payload(player, self._settings_open),
         }
         return "setWeaponsDisplay(" + json.dumps(payload) + ");"
 
     def dispatch_event(self, action: str) -> bool:
-        # Static read-only display. No interactive elements.
-        return False
+        # toggle-view is pure panel-local UI state (works even with no player).
+        if action == "toggle-view":
+            self._settings_open = not self._settings_open
+            self.invalidate()
+            return True
+        handler_name = _CONFIG_ACTIONS.get(action)
+        if handler_name is None:
+            return False
+        player = _get_player()
+        if player is None:
+            return False
+        getattr(weapon_config, handler_name)(player)
+        self.invalidate()
+        return True
 
     def invalidate(self) -> None:
         self._last_snapshot = None
@@ -351,6 +381,31 @@ def _resolve_icon_descriptors(ship) -> tuple:
             if desc is not None:
                 out.append(desc)
     return tuple(out)
+
+
+def _config_payload(ship, settings_open: bool) -> dict:
+    """The weapon-config block sent to JS: the shared snapshot plus the
+    panel-local open/closed state of the settings view."""
+    cfg = dict(weapon_config.read_weapon_config(ship))
+    cfg["show_settings"] = bool(settings_open)
+    return cfg
+
+
+def _frozen_config(ship, settings_open: bool) -> tuple:
+    """Hashable form of the config block for snapshot equality — mirrors
+    _frozen_icon_descriptors so a config change (type/spread/intensity/toggle
+    or opening the settings view) re-emits the payload, and steady state does
+    not."""
+    cfg = _config_payload(ship, settings_open)
+    return (
+        cfg["show_settings"],
+        cfg["has_any_config"],
+        cfg["has_torpedoes"], cfg["torp_type"], cfg["torp_count"],
+        cfg["torp_types_cyclable"], cfg["spread"], tuple(cfg["spread_options"]),
+        cfg["has_phasers"], cfg["phaser_intensity"],
+        cfg["tractor_present"], cfg["tractor_on"],
+        cfg["cloak_present"], cfg["cloak_on"],
+    )
 
 
 def _frozen_icon_descriptors(ship) -> tuple:

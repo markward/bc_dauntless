@@ -235,3 +235,75 @@
        covers the inner stroke half), but with clip-path now hiding
        the outer half, that combination leaves no stroke visible. */
 }
+
+/* ── Weapon-settings view (hamburger flip) ─────────────────────────────
+   Ported from docs/ui_designs/04b-weapons-combined-config.html. The body
+   default-shows the status view; the hamburger flips to a settings view
+   (Torpedoes type/spread, Phasers intensity, Tractor|Cloak toggles). All
+   scoped under .weapons-display so nothing leaks to other panels. */
+.weapons-display .bc-panel__body { position: relative; }
+.weapons-display [hidden] { display: none !important; }
+
+/* Square icon-only hamburger, top-right of the body. */
+.weapons-display .mode-btn {
+    position: absolute; top: 8px; right: 8px; z-index: 10;
+    width: 26px; height: 26px; box-sizing: border-box;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: rgba(246, 147, 204, 0.22); border: none; border-radius: 4px;
+    color: rgb(245, 240, 255); cursor: pointer;
+}
+.weapons-display .mode-btn:hover { background: rgba(246, 147, 204, 0.42); }
+.weapons-display .mode-btn svg { display: block; }
+.weapons-display .mode-btn .tip {
+    position: absolute; top: calc(100% + 6px); right: -2px;
+    background: rgba(10, 10, 16, 0.96); color: rgb(235, 225, 255);
+    font-family: "Antonio", "Antonio-Regular", sans-serif; font-weight: 400;
+    font-size: 11px; letter-spacing: 0.5px; white-space: nowrap;
+    padding: 4px 8px; border-radius: 4px; border: 1px solid rgba(255, 255, 255, 0.15);
+    opacity: 0; pointer-events: none; transition: opacity 120ms ease; z-index: 30;
+}
+.weapons-display .mode-btn:hover .tip { opacity: 1; }
+
+/* Section headers + divider (gold subhead, salmon rule). */
+.weapons-display .section-head {
+    display: flex; justify-content: space-between; align-items: center;
+    color: rgb(255, 154, 2); font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 1px; padding: 6px 0 2px;
+}
+.weapons-display .section-rule { height: 1px; background: rgb(216, 94, 86); opacity: 0.4; margin: 0 0 4px; }
+
+/* Cycle row (Intensity) — pink Menu3. */
+.weapons-display .cfg-row {
+    display: flex; align-items: center; color: rgb(235, 225, 255);
+    font-size: 13px; padding: 5px 12px; margin: 2px 0; letter-spacing: 0.5px;
+    cursor: pointer;
+    background: rgba(246, 147, 204, 0.35); border-left: 3px solid rgb(207, 96, 159);
+}
+.weapons-display .cfg-row .label { flex: 1; }
+.weapons-display .cfg-row .value { letter-spacing: 0.8px; }
+.weapons-display .cfg-row .caret { color: rgb(180, 178, 200); font-size: 11px; margin-left: 8px; opacity: 0.8; }
+
+/* Torpedoes row — two buttons [ type (qty) ] [ spread ]. */
+.weapons-display .torp-row { display: flex; gap: 6px; margin: 2px 0; }
+.weapons-display .torp-btn {
+    background: rgba(246, 147, 204, 0.35); border-left: 3px solid rgb(207, 96, 159);
+    color: rgb(235, 225, 255); font-size: 13px; letter-spacing: 0.5px;
+    padding: 6px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px;
+}
+.weapons-display .torp-btn--type { flex: 1; }
+.weapons-display .torp-btn--spread { justify-content: center; min-width: 66px; }
+.weapons-display .torp-btn--static {
+    background: rgba(120, 120, 140, 0.14); border-left: 3px solid rgba(180, 180, 200, 0.35);
+    cursor: default;
+}
+
+/* System toggles row — Tractor | Cloak, ~50/50; a lone button fills 100%.
+   ON fills the button with the salmon border colour; values stay neutral. */
+.weapons-display .sys-row { display: flex; gap: 6px; margin: 2px 0; }
+.weapons-display .sys-btn {
+    flex: 1; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    background: rgba(216, 94, 86, 0.45); border-left: 3px solid rgb(216, 94, 86);
+    color: rgb(235, 225, 255); font-size: 13px; letter-spacing: 0.5px;
+    padding: 6px 12px; cursor: pointer;
+}
+.weapons-display .sys-btn--on { background: rgb(216, 94, 86); }
