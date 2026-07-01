@@ -809,7 +809,39 @@ class WeaponSystemProperty(PoweredSubsystemProperty):
 
 
 class TorpedoSystemProperty(WeaponSystemProperty):
-    pass
+    """Torpedo weapon system + its ammo-slot declaration.
+
+    BC hardpoints declare the selectable ammo types on this property
+    (sovereign.py:627-633): per slot ``SetMaxTorpedoes(slot, max)`` +
+    ``SetTorpedoScript(slot, "Tactical.Projectiles.<X>")``, then one
+    ``SetNumAmmoTypes(N)``.  SetupProperties reads this back to seed one
+    TorpedoAmmoType per DECLARED slot.
+
+    These are explicit (not the base data-bag magic) so ``GetNumAmmoTypes``
+    defaults to 0 and ``GetMaxTorpedoes`` can return ``None`` for an undeclared
+    slot — the seeding path treats that ``None`` as "undeclared / unlimited"
+    (no reserve gate), while a declared max of 0 (e.g. PhasedPlasma) stays a
+    real, empty slot.
+    """
+
+    def __init__(self, name: str = ""):
+        super().__init__(name)
+        self._num_ammo_types: int = 0
+        self._max_by_slot: dict[int, int] = {}
+
+    def SetNumAmmoTypes(self, n) -> None:
+        self._num_ammo_types = int(n)
+
+    def GetNumAmmoTypes(self) -> int:
+        return self._num_ammo_types
+
+    def SetMaxTorpedoes(self, slot, max_torpedoes) -> None:
+        self._max_by_slot[int(slot)] = int(max_torpedoes)
+
+    def GetMaxTorpedoes(self, slot):
+        # Returns the declared int (incl. 0), or None when this slot was never
+        # declared — the seeding path's "undeclared / unlimited" signal.
+        return self._max_by_slot.get(int(slot))
 
 
 # Ship template — top-level data container for ship-class definitions
