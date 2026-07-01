@@ -14,6 +14,7 @@ from typing import Any, Callable, Iterable, Optional
 import os as _os_mod
 
 from engine import renderer as r
+from engine import host_io
 from engine.appc.ship_iter import (
     iter_set_objects as _iter_set_objects,
     iter_ships as _iter_ships,
@@ -226,11 +227,12 @@ def _bootstrap_firing_pipeline() -> None:
 def _poll_mouse_buttons(host) -> None:
     """Forward host-side mouse rising/falling edges into g_kInputManager.
 
-    `host` is the _dauntless_host module (the binding from host_bindings.cc).
-    No-op when host doesn't expose the button-poll methods (e.g. headless
-    test setup that imports host_loop without a window).
+    `host` supplies the `keys` constant submodule (button codes). The
+    button-edge queries route through host_io, which no-ops safely when the
+    native module is absent (e.g. headless test setup without a window).
+    No-op when host lacks the `keys` submodule.
     """
-    if host is None or not hasattr(host, "mouse_button_pressed"):
+    if host is None or not hasattr(host, "keys"):
         return
     import App  # deferred: module-top import reorders sound-manager init
     # Left-click → phasers (primary), right-click → torpedoes (secondary),
@@ -241,9 +243,9 @@ def _poll_mouse_buttons(host) -> None:
         (host.keys.MOUSE_BUTTON_RIGHT,  App.WC_RBUTTON),
         (host.keys.MOUSE_BUTTON_MIDDLE, App.WC_MBUTTON),
     ):
-        if host.mouse_button_pressed(glfw_btn):
+        if host_io.mouse_button_pressed(glfw_btn):
             App.g_kInputManager.OnKeyDown(wc)
-        if host.mouse_button_released(glfw_btn):
+        if host_io.mouse_button_released(glfw_btn):
             App.g_kInputManager.OnKeyUp(wc)
 
 
@@ -253,15 +255,15 @@ def _poll_mouse_buttons(host) -> None:
 _fn_key_prev: dict = {}
 
 
-def _poll_key_table(host, keymap) -> None:
+def _poll_key_table(keymap) -> None:
     """Edge-detect each (glfw_key, WC_code) in `keymap` and forward rising/
     falling edges to g_kInputManager.OnKeyDown/OnKeyUp.  Shares the module
     _fn_key_prev level cache so every polled key derives both edges from
-    key_state (the host exposes key_pressed for rising edges but no
+    host_io.key_state (the host exposes key_pressed for rising edges but no
     key_released)."""
     import App  # deferred: module-top import reorders sound-manager init
     for glfw_key, wc in keymap:
-        down = bool(host.key_state(glfw_key))
+        down = bool(host_io.key_state(glfw_key))
         was_down = _fn_key_prev.get(glfw_key, False)
         if down and not was_down:
             App.g_kInputManager.OnKeyDown(wc)
@@ -277,11 +279,14 @@ def _poll_function_keys(host, input_map) -> None:
     WC_F1..F5 code feeding the BC binding stays fixed, so DefaultKeyboardBinding's
     WC_F1→ET_INPUT_TALK_TO_* mapping is unchanged — only which key drives each
     WC slot is remappable.  See docs/superpowers/specs/2026-06-12-bridge-menu-hotkeys-design.md.
+
+    `host` is unused (key reads route through host_io, which no-ops safely when
+    the native module is absent); kept in the signature for callsite symmetry
+    with the other pollers.
     """
-    if host is None or not hasattr(host, "key_state"):
-        return
+    del host  # noqa: F841 — key reads go through host_io, not this handle.
     import App  # deferred: module-top import reorders sound-manager init
-    _poll_key_table(host, (
+    _poll_key_table((
         (input_map.code("talk_helm"),        App.WC_F1),
         (input_map.code("talk_tactical"),    App.WC_F2),
         (input_map.code("talk_xo"),          App.WC_F3),
@@ -302,11 +307,14 @@ def _poll_fire_keys(host, input_map) -> None:
 
     Firing still requires a selected target — FireWeapons no-ops when
     pShip.GetTarget() is None.
+
+    `host` is unused (key reads route through host_io, which no-ops safely when
+    the native module is absent); kept in the signature for callsite symmetry
+    with the other pollers.
     """
-    if host is None or not hasattr(host, "key_state"):
-        return
+    del host  # noqa: F841 — key reads go through host_io, not this handle.
     import App  # deferred: module-top import reorders sound-manager init
-    _poll_key_table(host, (
+    _poll_key_table((
         (input_map.code("fire_primary"),   App.WC_F),
         (input_map.code("fire_secondary"), App.WC_X),
         (input_map.code("fire_tertiary"),  App.WC_G),
@@ -331,14 +339,14 @@ def _poll_tractor_toggle(host) -> None:
     `keys` submodule predates KEY_T (graceful — tractor stays toggle-via-UI).
     """
     global _tractor_toggle_prev
-    if host is None or not hasattr(host, "key_state"):
+    if host is None:
         return
     keys = getattr(host, "keys", None)
     if keys is None or not hasattr(keys, "KEY_T"):
         return
-    alt = (bool(host.key_state(keys.KEY_LEFT_ALT))
-           or bool(host.key_state(keys.KEY_RIGHT_ALT)))
-    chord = alt and bool(host.key_state(keys.KEY_T))
+    alt = (bool(host_io.key_state(keys.KEY_LEFT_ALT))
+           or bool(host_io.key_state(keys.KEY_RIGHT_ALT)))
+    chord = alt and bool(host_io.key_state(keys.KEY_T))
     if chord and not _tractor_toggle_prev:
         import App  # deferred: module-top import reorders sound-manager init
         App.ToggleTractorFromInput()
@@ -361,14 +369,14 @@ def _poll_cloak_toggle(host) -> None:
     `keys` submodule predates KEY_C (graceful — cloak stays toggle-via-UI).
     """
     global _cloak_toggle_prev
-    if host is None or not hasattr(host, "key_state"):
+    if host is None:
         return
     keys = getattr(host, "keys", None)
     if keys is None or not hasattr(keys, "KEY_C"):
         return
-    alt = (bool(host.key_state(keys.KEY_LEFT_ALT))
-           or bool(host.key_state(keys.KEY_RIGHT_ALT)))
-    chord = alt and bool(host.key_state(keys.KEY_C))
+    alt = (bool(host_io.key_state(keys.KEY_LEFT_ALT))
+           or bool(host_io.key_state(keys.KEY_RIGHT_ALT)))
+    chord = alt and bool(host_io.key_state(keys.KEY_C))
     if chord and not _cloak_toggle_prev:
         import App  # deferred: module-top import reorders sound-manager init
         App.ToggleCloakFromInput()
@@ -4191,9 +4199,8 @@ def run(mission_name: Optional[str] = None,
     # and text reads as soft/blurry.
     _cef_dsf = 1.0
     try:
-        import _dauntless_host as _h_init
-        _fb_w, _fb_h = _h_init.framebuffer_size()
-        _win_w, _win_h = _h_init.window_size()
+        _fb_w, _fb_h = host_io.framebuffer_size()
+        _win_w, _win_h = host_io.window_size()
         if _win_w > 0:
             _cef_dsf = float(_fb_w) / float(_win_w)
     except Exception as _e:
@@ -4829,8 +4836,8 @@ def run(mission_name: Optional[str] = None,
             # scaling and the panel-corner layout math below.
             if _cef_resize is not None and _h is not None:
                 try:
-                    _fbw, _fbh = _h.framebuffer_size()
-                    _wnw, _wnh = _h.window_size()
+                    _fbw, _fbh = host_io.framebuffer_size()
+                    _wnw, _wnh = host_io.window_size()
                     _delta = _compute_cef_resize(
                         _fbw, _fbh, _wnw, _wnh,
                         _CEF_VIEW_W, _CEF_VIEW_H, _cef_dsf)
@@ -4895,9 +4902,9 @@ def run(mission_name: Optional[str] = None,
                             _h, _cef_send_mouse_move,
                             _CEF_VIEW_W, _CEF_VIEW_H)
                     if _cef_send_mouse_click is not None:
-                        if _h.mouse_button_pressed(_h.keys.MOUSE_BUTTON_LEFT):
+                        if host_io.mouse_button_pressed(_h.keys.MOUSE_BUTTON_LEFT):
                             _cef_send_mouse_click(_mx, _my, 0, True)
-                        if _h.mouse_button_released(_h.keys.MOUSE_BUTTON_LEFT):
+                        if host_io.mouse_button_released(_h.keys.MOUSE_BUTTON_LEFT):
                             _cef_send_mouse_click(_mx, _my, 0, False)
                     if pause.quit_requested:
                         break
@@ -5038,9 +5045,9 @@ def run(mission_name: Optional[str] = None,
                         or _cursor_in_modal
                     )
                     if _cef_send_mouse_click is not None and _cursor_in_panel:
-                        if _h.mouse_button_pressed(_h.keys.MOUSE_BUTTON_LEFT):
+                        if host_io.mouse_button_pressed(_h.keys.MOUSE_BUTTON_LEFT):
                             _cef_send_mouse_click(_mx, _my, 0, True)
-                        if _h.mouse_button_released(_h.keys.MOUSE_BUTTON_LEFT):
+                        if host_io.mouse_button_released(_h.keys.MOUSE_BUTTON_LEFT):
                             _cef_send_mouse_click(_mx, _my, 0, False)
 
             # --- Sim advance: fixed-timestep accumulator ---
@@ -5164,19 +5171,19 @@ def run(mission_name: Optional[str] = None,
                 if _h is not None and dev_mode.is_enabled():
                     dev_keybindings.register_for_frame(_h, session, player)
                     for key, _desc in dev_mode.keybinding_descriptions():
-                        if _h.key_pressed(key):
+                        if host_io.key_pressed(key):
                             dev_mode.dispatch_dev_key(key)
 
                 # F12: toggle CEF DevTools for the UI overlay.
-                if _h is not None and _h.key_pressed(_h.keys.KEY_F12):
+                if _h is not None and host_io.key_pressed(_h.keys.KEY_F12):
                     _h.cef_toggle_devtools()
 
                 # Cmd+R / Ctrl+R: hot-reload the CEF overlay's HTML.
                 # Reload only when Cmd (macOS) or Ctrl (Linux/Windows) is held;
                 # bare R is reverse-thrust and must not be intercepted.
-                if _h is not None and _h.key_pressed(_h.keys.KEY_R):
-                    _cmd_held = _h.key_state(_h.keys.KEY_LEFT_SUPER) if hasattr(_h.keys, "KEY_LEFT_SUPER") else False
-                    _ctrl_held = _h.key_state(_h.keys.KEY_LEFT_CONTROL) if hasattr(_h.keys, "KEY_LEFT_CONTROL") else False
+                if _h is not None and host_io.key_pressed(_h.keys.KEY_R):
+                    _cmd_held = host_io.key_state(_h.keys.KEY_LEFT_SUPER) if hasattr(_h.keys, "KEY_LEFT_SUPER") else False
+                    _ctrl_held = host_io.key_state(_h.keys.KEY_LEFT_CONTROL) if hasattr(_h.keys, "KEY_LEFT_CONTROL") else False
                     if _cmd_held or _ctrl_held:
                         _h.cef_reload()
 
@@ -5192,29 +5199,29 @@ def run(mission_name: Optional[str] = None,
                     # the player has a valid target). key_pressed fires once per
                     # key-down event (not while held). Gate on exterior view so
                     # the mode cannot flip silently while the bridge is active.
-                    if view_mode.is_exterior and _h.key_pressed(input_map.code("camera_cycle")):
+                    if view_mode.is_exterior and host_io.key_pressed(input_map.code("camera_cycle")):
                         director.toggle_mode(player=player)
                     # Z-key: ZoomTarget framing while held. Held-state (not
                     # press-edge) so the camera enters/exits as the key state
                     # changes. The `not director.tracking.zoom_target_active`
                     # retry guard lets a Z-held-during-target-acquisition
                     # succeed on whichever frame the target appears.
-                    z_held_now = view_mode.is_exterior and _h.key_state(input_map.code("camera_zoom_target"))
+                    z_held_now = view_mode.is_exterior and host_io.key_state(input_map.code("camera_zoom_target"))
                     if z_held_now and not director.tracking.zoom_target_active:
                         director.start_zoom_target(player=player)
                     elif z_held_prev and not z_held_now:
                         director.end_zoom_target()
                     z_held_prev = z_held_now
                     # =/- sticky zoom: press-edge (OS auto-repeat for hold).
-                    if view_mode.is_exterior and _h.key_pressed(input_map.code("camera_zoom_in")):
+                    if view_mode.is_exterior and host_io.key_pressed(input_map.code("camera_zoom_in")):
                         director.zoom_in()
-                    if view_mode.is_exterior and _h.key_pressed(input_map.code("camera_zoom_out")):
+                    if view_mode.is_exterior and host_io.key_pressed(input_map.code("camera_zoom_out")):
                         director.zoom_out()
                     # V-key: Reverse Chase while held. Same hold-state
                     # edge detection as Z, with a retry guard so a
                     # V-held-during-mode-transition succeeds on the
                     # next eligible frame.
-                    v_held_now = view_mode.is_exterior and _h.key_state(input_map.code("camera_reverse_chase"))
+                    v_held_now = view_mode.is_exterior and host_io.key_state(input_map.code("camera_reverse_chase"))
                     if v_held_now and not director.chase.reverse_active:
                         director.start_reverse()
                     elif v_held_prev and not v_held_now:
@@ -5227,10 +5234,10 @@ def run(mission_name: Optional[str] = None,
                     # press.
                     mouse_dx_exterior, mouse_dy_exterior = 0.0, 0.0
                     if view_mode.is_exterior:
-                        mouse_dx_exterior, mouse_dy_exterior = _h.consume_mouse_delta()
+                        mouse_dx_exterior, mouse_dy_exterior = host_io.consume_mouse_delta()
                     shift_held = view_mode.is_exterior and (
-                        _h.key_state(_h.keys.KEY_LEFT_SHIFT) or
-                        _h.key_state(_h.keys.KEY_RIGHT_SHIFT)
+                        host_io.key_state(_h.keys.KEY_LEFT_SHIFT) or
+                        host_io.key_state(_h.keys.KEY_RIGHT_SHIFT)
                     )
                     if shift_held and director.mode is CameraMode.CHASE:
                         director.chase.apply_mouse_delta(
@@ -5459,7 +5466,7 @@ def run(mission_name: Optional[str] = None,
                             dev_mode.log_swallowed("lip-sync update", _e)
                         # node_anim reads node_overrides written by r.frame() above; intentionally one frame behind — do NOT reorder.
                         node_anim.update(r)
-                    mouse_dx, mouse_dy = _h.consume_mouse_delta() if _h else (0.0, 0.0)
+                    mouse_dx, mouse_dy = host_io.consume_mouse_delta()
                     # While paused we still drain the accumulated mouse
                     # delta (so it doesn't snap the look on resume) but
                     # skip the yaw/pitch advance so the bridge camera
