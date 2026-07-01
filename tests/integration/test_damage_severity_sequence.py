@@ -67,7 +67,7 @@ class _Ship:
     def GetWorldLocation(self): return self._loc
     def GetSubsystems(self):
         return [self._sensors]
-    def DamageSystem(self, sub, amount):
+    def DamageSystem(self, sub, amount, source=None):
         if isinstance(sub, _Sensors):
             sub.condition = max(0.0, sub.condition - float(amount))
         # Hull DamageSystem is a no-op for this test (we only care about

@@ -58,7 +58,7 @@ class _FakeShip:
     def IsDying(self): return 1 if self._dying else 0
     def SetDying(self, v): self._dying = bool(v)
 
-    def DamageSystem(self, subsystem, amount):
+    def DamageSystem(self, subsystem, amount, source=None):
         if subsystem is None: return
         new = max(0.0, subsystem.GetCondition() - float(amount))
         subsystem.SetCondition(new)

@@ -444,7 +444,7 @@ def apply_hit(ship, damage: float, hit_point, source, *,
         #    suppressed.
         if hull is not None and hasattr(ship, "DamageSystem"):
             if _commit and damage_hull:
-                ship.DamageSystem(hull, post_shield)
+                ship.DamageSystem(hull, post_shield, source)
             absorbed_hull = post_shield
 
         # 3. Each non-hull subsystem within the splash sphere takes a
@@ -469,7 +469,7 @@ def apply_hit(ship, damage: float, hit_point, source, *,
             if hasattr(ship, "DamageSystem"):
                 before_flags = _subsystem_state_flags(sub)
                 if _commit:
-                    ship.DamageSystem(sub, amount)
+                    ship.DamageSystem(sub, amount, source)
                 absorbed_subsystem_total += amount
                 after_flags = _subsystem_state_flags(sub)
                 transition = _diff_state(before_flags, after_flags)

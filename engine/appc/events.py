@@ -139,6 +139,33 @@ class WeaponHitEvent(TGEvent):
         return self.GetSource()
 
 
+class ObjectExplodingEvent(TGEvent):
+    """Object-started-exploding event.  Broadcast by engine.appc.ship_death
+    when a ship begins its death throes (ET_OBJECT_EXPLODING).  Mission scripts
+    subscribe (per-mission or broadcast) to detect kills — e.g.
+    MissionLib.ObjectStartedExploding reads GetFiringPlayerID() to detect the
+    player destroying a friendly and raise ET_FRIENDLY_FIRE_GAME_OVER.
+
+    Mirrors the SDK's ObjectExplodingEvent (sdk/.../App.py:6284+), which — like
+    WeaponHitEvent, and unlike the base TGEvent — carries a firing-player-id.
+    That id is the killer ship's GetObjID() (BC compares it against
+    pPlayer.GetObjID()); NULL_ID (0) means no attributable killer.
+    """
+    def __init__(self):
+        super().__init__()
+        self._firing_player_id: int = 0
+
+    def SetFiringPlayerID(self, player_id) -> None:
+        self._firing_player_id = int(player_id)
+
+    def GetFiringPlayerID(self) -> int:
+        return self._firing_player_id
+
+
+def ObjectExplodingEvent_Create() -> ObjectExplodingEvent:
+    return ObjectExplodingEvent()
+
+
 def _resolve_handler(qualified_name: str):
     """Resolve 'module.func' to the callable, or None if not found."""
     dot = qualified_name.rfind(".")

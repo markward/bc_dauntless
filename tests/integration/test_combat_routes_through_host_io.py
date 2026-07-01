@@ -44,7 +44,7 @@ class _Ship:
     def GetShields(self): return self._shields
     def GetWorldLocation(self): return self._loc
     def GetSubsystems(self): return []
-    def DamageSystem(self, sub, amount): pass
+    def DamageSystem(self, sub, amount, source=None): pass
 
 
 def test_apply_hit_shield_hit_routes_through_host_io(monkeypatch):

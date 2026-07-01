@@ -402,6 +402,184 @@ def test_death_broadcasts_object_destroyed_once():
     App.g_kEventManager.RemoveAllInstanceHandlers()
 
 
+# --- ET_OBJECT_EXPLODING broadcast (BC "started exploding") ------------------
+def test_app_defines_object_exploding_constant():
+    import App
+    assert isinstance(App.ET_OBJECT_EXPLODING, int)
+    assert App.ET_OBJECT_EXPLODING != App.ET_OBJECT_DESTROYED
+
+
+def test_begin_broadcasts_object_exploding_immediately():
+    """BC fires ET_OBJECT_EXPLODING the instant the throes start — this is the
+    event E1M2 (and 23 other SDK missions) subscribe to for kill-detection.
+    It must fire at begin(), before any advance()."""
+    import App
+    seen = []
+    orig = App.g_kEventManager.AddEvent
+
+    def capture(evt):
+        seen.append(evt.GetEventType())
+        return orig(evt)
+    App.g_kEventManager.AddEvent = capture
+    try:
+        ship = FakeShip(name="Debris1")
+        ship_death.begin(ship)
+        # EXPLODING fires at throes-start, before ET_OBJECT_DESTROYED (removal).
+        assert App.ET_OBJECT_EXPLODING in seen
+        assert App.ET_OBJECT_DESTROYED not in seen
+    finally:
+        App.g_kEventManager.AddEvent = orig
+
+
+def test_exploding_reaches_broadcast_func_handler_with_destination():
+    """The E1M2 ObjectDestroyed pattern: a func-broadcast handler on
+    ET_OBJECT_EXPLODING that reads pEvent.GetDestination() to identify the
+    dying ship. Verifies the event carries destination == the ship."""
+    import App
+    import sys
+
+    fired = {"count": 0, "dest_name": None}
+
+    mod = sys.modules[__name__]
+
+    def _on_exploding(pMission, pEvent):
+        fired["count"] += 1
+        dest = pEvent.GetDestination()
+        fired["dest_name"] = dest.GetName() if dest is not None else None
+
+    mod._on_exploding = _on_exploding
+    try:
+        App.g_kEventManager.AddBroadcastPythonFuncHandler(
+            App.ET_OBJECT_EXPLODING, object(), __name__ + "._on_exploding")
+        ship = FakeShip(name="Debris3")
+        ship_death.begin(ship)
+        assert fired["count"] == 1
+        assert fired["dest_name"] == "Debris3"
+    finally:
+        App.g_kEventManager.RemoveAllInstanceHandlers()
+        App.g_kEventManager._broadcast_handlers.clear()
+        del mod._on_exploding
+
+
+# --- Death script (SDK SetDeathScript) --------------------------------------
+# Module-level probe target for RunDeathScript resolution (SDK death-script
+# signature: def Func(TGObject) — a single arg, the dying object).
+_death_probe_calls = []
+
+
+def _death_probe(obj):
+    _death_probe_calls.append(obj)
+
+
+def _death_probe_raises(obj):
+    raise RuntimeError("boom in death script")
+
+
+def test_ship_class_run_death_script_calls_target_with_ship():
+    from engine.appc.ships import ShipClass
+    _death_probe_calls.clear()
+    ship = ShipClass()
+    ship.SetDeathScript(__name__ + "._death_probe")
+    assert ship.GetDeathScript() == __name__ + "._death_probe"
+    ship.RunDeathScript()
+    assert _death_probe_calls == [ship]     # called once, sole arg = the ship
+
+
+def test_ship_class_run_death_script_none_is_noop():
+    from engine.appc.ships import ShipClass
+    ship = ShipClass()
+    assert ship.GetDeathScript() is None
+    ship.RunDeathScript()                   # must not raise
+
+
+def test_ship_class_run_death_script_swallows_raise():
+    from engine.appc.ships import ShipClass
+    ship = ShipClass()
+    ship.SetDeathScript(__name__ + "._death_probe_raises")
+    ship.RunDeathScript()                   # exception swallowed, no propagation
+
+
+def test_begin_invokes_run_death_script_once():
+    """ship_death.begin() runs the object's authored death script at throes
+    start (the SDK moment BC calls RunDeathScript)."""
+    class DeathScriptShip(FakeShip):
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            self.ran = 0
+        def RunDeathScript(self):
+            self.ran += 1
+
+    ship = DeathScriptShip(name="Debris1")
+    ship_death.begin(ship)
+    assert ship.ran == 1
+
+
+def test_begin_skips_run_death_script_when_absent():
+    """A ship without RunDeathScript (e.g. non-ship object) is handled
+    gracefully — begin() must not raise."""
+    ship = FakeShip(name="Rock")          # plain FakeShip has no RunDeathScript
+    ship_death.begin(ship)                # must not raise
+    assert ship.IsDying() == 1
+
+
+# --- Firing-player-id on the explosion event --------------------------------
+class FakeAttacker:
+    """Minimal killer: only needs GetObjID (BC's firing-player-id is the
+    firing ship's object id)."""
+    def __init__(self, obj_id):
+        self._id = obj_id
+    def GetObjID(self):
+        return self._id
+
+
+def _capture_exploding_event(run):
+    """Run `run()` while capturing the ObjectExplodingEvent that ship_death
+    broadcasts. Returns the captured event (or None)."""
+    import App
+    captured = {"evt": None}
+    orig = App.g_kEventManager.AddEvent
+
+    def capture(evt):
+        if evt.GetEventType() == App.ET_OBJECT_EXPLODING:
+            captured["evt"] = evt
+        return orig(evt)
+    App.g_kEventManager.AddEvent = capture
+    try:
+        run()
+    finally:
+        App.g_kEventManager.AddEvent = orig
+    return captured["evt"]
+
+
+def test_exploding_event_carries_killer_firing_player_id():
+    import App
+    attacker = FakeAttacker(4242)
+    ship = FakeShip(name="Victim")
+    evt = _capture_exploding_event(lambda: ship_death.begin(ship, killer=attacker))
+    assert evt is not None
+    assert evt.GetFiringPlayerID() == 4242
+
+
+def test_exploding_event_null_id_when_unattributed():
+    import App
+    ship = FakeShip(name="Victim")
+    evt = _capture_exploding_event(lambda: ship_death.begin(ship))
+    assert evt is not None
+    assert evt.GetFiringPlayerID() == App.NULL_ID
+
+
+def test_damage_system_threads_killer_into_exploding_event():
+    """End-to-end: a fatal DamageSystem hit attributes the kill on the
+    exploding event via the source (firing ship)."""
+    target = FakeDamageable()             # critical hull + real lifecycle flags
+    attacker = FakeAttacker(7777)
+    evt = _capture_exploding_event(
+        lambda: target.DamageSystem(target.GetHull(), 100.0, attacker))
+    assert evt is not None
+    assert target.IsDying() == 1
+    assert evt.GetFiringPlayerID() == 7777
+
+
 # --- Sprite-sheet explosion animation ---------------------------------------
 def test_anim_controller_texture_cells_default_and_set():
     """AnimTSParticleController defaults to a 1x1 grid (whole texture); the

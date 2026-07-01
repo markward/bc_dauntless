@@ -43,15 +43,27 @@ def _out_of_action(ship) -> bool:
     return dying or dead
 
 
-def begin(ship) -> None:
+def begin(ship, killer=None) -> None:
     """Start the death sequence for `ship`. Idempotent: a ship already
     dying or dead is ignored (covers a second critical subsystem dropping
-    mid-throes)."""
+    mid-throes).
+
+    `killer` is the firing ship that dealt the fatal blow (None for scripted /
+    unattributed kills); it flows onto the ET_OBJECT_EXPLODING event as the
+    firing-player-id so mission friendly-fire logic can attribute the kill."""
     if ship is None or _out_of_action(ship):
         return
     if hasattr(ship, "SetDying"):
         ship.SetDying(True)
     _active.append({"ship": ship, "phase": "throes", "time_left": THROES_DURATION})
+    # Run the mission's authored death script (SDK SetDeathScript) before the
+    # generic fireball, so authored debris VFX/sound lead. Raise-safe.
+    if hasattr(ship, "RunDeathScript"):
+        try:
+            ship.RunDeathScript()
+        except Exception as _e:
+            dev_mode.log_swallowed("run death script from begin", _e)
+    _broadcast_exploding(ship, killer)
     _spawn_explosion(ship)
 
 
@@ -127,6 +139,33 @@ def is_targetable_wreck(ship) -> bool:
     match against the active registry; no engine calls, so it is safe to call
     on any object."""
     return any(entry["ship"] is ship for entry in _active)
+
+
+def _broadcast_exploding(ship, killer=None) -> None:
+    """Fire ET_OBJECT_EXPLODING the instant the death throes begin — BC's
+    "object started exploding" event, the one mission kill-detection listens
+    on (24 SDK missions, e.g. E1M2's ObjectDestroyed handler that clears the
+    debris/asteroid goals). ET_OBJECT_DESTROYED comes later, at removal; the
+    two are NOT interchangeable, so a mission subscribed only to EXPLODING
+    hangs forever without this. source == destination == ship, so both
+    func-broadcast handlers (read GetSource) and per-instance handlers
+    (dispatched via GetDestination) receive it.
+
+    The event carries the firing-player-id (the killer ship's GetObjID, or
+    NULL_ID when unattributed) so MissionLib.ObjectStartedExploding can detect
+    the player destroying a friendly and raise ET_FRIENDLY_FIRE_GAME_OVER.
+    Raise-safe."""
+    try:
+        import App
+        evt = App.ObjectExplodingEvent_Create()
+        evt.SetEventType(App.ET_OBJECT_EXPLODING)
+        evt.SetSource(ship)
+        evt.SetDestination(ship)
+        killer_id = killer.GetObjID() if killer is not None else App.NULL_ID
+        evt.SetFiringPlayerID(killer_id)
+        App.g_kEventManager.AddEvent(evt)
+    except Exception as _e:
+        dev_mode.log_swallowed("broadcast ET_OBJECT_EXPLODING", _e)
 
 
 def _broadcast_destroyed(ship) -> None:

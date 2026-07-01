@@ -1201,6 +1201,38 @@ class ShipClass(DamageableObject):
         invoke this for symmetry with the native Appc iterator API."""
         pass
 
+    # --- Death script (SDK App.py:5476-5478) --------------------------------
+    # Missions attach a per-object death callback:
+    #   pObject.SetDeathScript(__name__ + ".AsteroidExploding")
+    # BC's engine runs it (single arg = the dying object) when the object
+    # begins dying — our ship_death.begin() calls RunDeathScript there.
+    def SetDeathScript(self, qualified_name) -> None:
+        """Store a "module.func" death callback, invoked once when the ship
+        begins its death throes."""
+        self._death_script = qualified_name
+
+    def GetDeathScript(self):
+        """Return the stored death-script name, or None if none set. Read via
+        __dict__ because TGObject.__getattr__ returns a truthy _Stub for
+        missing attrs (the shim idiom)."""
+        return self.__dict__.get("_death_script")
+
+    def RunDeathScript(self) -> None:
+        """Resolve and call the stored death script with this ship as the sole
+        argument (SDK signature: def Func(TGObject)). Raise-safe: a stubbed VFX
+        helper inside the script must never abort the death sequence."""
+        name = self.__dict__.get("_death_script")
+        if not name or not isinstance(name, str):
+            return
+        from engine.appc.events import _resolve_handler
+        fn = _resolve_handler(name)
+        if fn is None:
+            return
+        try:
+            fn(self)
+        except Exception as _e:
+            dev_mode.log_swallowed("run death script " + name, _e)
+
 
 def _resolve_torpedo_ammo(ts_prop, slot: int):
     """Build the TorpedoAmmoType for declared ammo ``slot`` from the hardpoint's

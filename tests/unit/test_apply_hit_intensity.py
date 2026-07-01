@@ -55,7 +55,7 @@ class _FakeShip(App.TGEventHandlerObject):
     def GetWorldRotation(self): return self._rot
     def GetShields(self):       return None  # unshielded for these tests
 
-    def DamageSystem(self, sub, amount):
+    def DamageSystem(self, sub, amount, source=None):
         self.damage_log.append((sub.name, amount))
         sub._condition = max(0.0, sub._condition - amount)
 

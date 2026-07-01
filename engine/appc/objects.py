@@ -534,11 +534,15 @@ class DamageableObject(PhysicsObjectClass):
         except (TypeError, ValueError):
             pass
 
-    def DamageSystem(self, subsystem, amount: float) -> None:
+    def DamageSystem(self, subsystem, amount: float, source=None) -> None:
         """Apply damage to a subsystem, flooring condition at zero. If the
         subsystem is critical and reaches zero, start the ship death
         sequence (covers hull AND warp core via SetCritical(1)). A >0 -> 0
-        crossing also arms the warp-core breach / schedules the hull cascade."""
+        crossing also arms the warp-core breach / schedules the hull cascade.
+
+        `source` (SDK-compatible optional 3rd arg — real callers pass 2) is the
+        firing ship; combat.apply_hit threads it in so a fatal blow attributes
+        the kill on the ET_OBJECT_EXPLODING event (friendly-fire detection)."""
         if subsystem is None:
             return
         amt = float(amount)
@@ -552,7 +556,7 @@ class DamageableObject(PhysicsObjectClass):
                 and hasattr(self, "IsDying") and hasattr(self, "IsDead") \
                 and not self.IsDying() and not self.IsDead():
             from engine.appc import ship_death
-            ship_death.begin(self)
+            ship_death.begin(self, killer=source)
 
     def DestroySystem(self, subsystem) -> None:
         """Force a subsystem to zero condition (mirrors SDK

@@ -40,7 +40,7 @@ class _FakeShip:
     def IsDead(self): return 0
     def GetShields(self): return None              # offline -> full hull damage
     def GetHull(self): return self._hull
-    def DamageSystem(self, sub, amt): self.damaged.append((sub, amt))
+    def DamageSystem(self, sub, amt, source=None): self.damaged.append((sub, amt))
     def GetNumChildSubsystems(self): return 0      # no subsystems to iterate
 
 
