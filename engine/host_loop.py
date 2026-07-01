@@ -4100,6 +4100,12 @@ def run(mission_name: Optional[str] = None,
     from engine.appc import camera_shake
 
     r.init(1280, 720, "open_stbc")
+    # Verify the native module exposes every binding the renderer façade calls.
+    # Catches a stale/incomplete .so at boot (a recurring hazard — host_bindings
+    # compiles into both this module and build/dauntless) instead of as a
+    # silently-dead feature mid-mission. strict under --developer: a developer
+    # wants to be stopped cold; production logs loudly and keeps running.
+    r.validate_bindings(strict=dev_mode.is_enabled())
     # Initialise the CEF UI overlay. Resolves index.html relative
     # to the project root (two parents up from this file). _CEF_VIEW_W/H
     # are reused by the pause-menu mouse-forwarding path to scale
