@@ -14,7 +14,11 @@ from typing import Any, Callable, Iterable, Optional
 import os as _os_mod
 
 from engine import renderer as r
-from engine.appc.ship_iter import iter_set_objects as _iter_set_objects, iter_ships as _iter_ships
+from engine.appc.ship_iter import (
+    iter_set_objects as _iter_set_objects,
+    iter_ships as _iter_ships,
+    iter_active_ships as _iter_active_ships,
+)
 import engine.dev_keybindings as dev_keybindings
 import engine.dev_mode as dev_mode
 from engine.dev_mission_picker import MissionPicker
@@ -2151,6 +2155,46 @@ def reset_sdk_globals() -> None:
     reset_concealment_state()
 
 
+def _episode_tgl_path(mission_module_name: str) -> Optional[str]:
+    """Derive the episode-level TGL path from a mission module name, matching the
+    string the episode's own SetDatabase uses. e.g.
+    ``Maelstrom.Episode1.E1M2.E1M2`` -> ``data/TGL/Maelstrom/Episode 1/Episode1.tgl``
+    (package ``Episode1`` -> display ``Episode 1``, keeping the file name
+    ``Episode1.tgl``). Returns None for module names too short to carry a
+    family+episode."""
+    import re
+    parts = mission_module_name.split(".")
+    if len(parts) < 3:
+        return None
+    family, episode_pkg = parts[0], parts[1]
+    display = re.sub(r"(?<=[A-Za-z])(?=\d)", " ", episode_pkg)   # Episode1 -> Episode 1
+    return "data/TGL/%s/%s/%s.tgl" % (family, display, episode_pkg)
+
+
+def _init_episode_context(episode, mission_module_name: str) -> None:
+    """Set the episode-level TGL so goals resolve to localized text.
+
+    BC boots an episode via Game.LoadEpisode -> Episode.Initialize, which calls
+    ``pEpisode.SetDatabase(<episode tgl>)`` before loading the default mission.
+    The dev picker loads a specific mission directly and skips that cascade, so
+    the episode DB is never set and goals fall back to raw string ids
+    (``E1DestroyDebrisGoal`` instead of ``Clear Debris``). We restore just the DB
+    by deriving its path (see _episode_tgl_path) and loading it — no episode
+    Initialize, so none of its side effects (music, sound, event-handler,
+    real-bridge-module imports) leak into the process. Best-effort: a missing or
+    unreadable TGL leaves goals labelled by raw id and never blocks the load."""
+    path = _episode_tgl_path(mission_module_name)
+    if path is None:
+        return
+    try:
+        import App
+        db = App.g_kLocalizationManager.Load(path)
+        if db is not None:
+            episode.SetDatabase(db)
+    except Exception as e:
+        dev_mode.log_swallowed("episode DB init", e)
+
+
 def _init_mission(mission_module_name: str):
     """Initialize a mission via the same path gameloop_harness uses.
 
@@ -2169,6 +2213,13 @@ def _init_mission(mission_module_name: str):
     game.SetCurrentEpisode(episode)
     _set_current_game(game)
 
+    # Establish episode-level context (esp. the episode TGL) BEFORE the mission's
+    # Initialize, so goals registered during the opening cutscene resolve to
+    # their localized text ("Clear Debris") rather than the raw string id
+    # ("E1DestroyDebrisGoal"). The dev picker loads a mission directly, skipping
+    # the episode cascade that BC's Game.LoadEpisode would run.
+    _init_episode_context(episode, mission_module_name)
+
     mod = importlib.import_module(mission_module_name)
     if hasattr(mod, "PreLoadAssets"):
         mod.PreLoadAssets(mission)
@@ -2182,21 +2233,32 @@ def _init_mission(mission_module_name: str):
     return mission, episode, game, mod
 
 
-def _iter_planets(*, verbose: bool = False) -> Iterable:
-    """Walk every Planet (non-Sun) in every active set."""
+def _live_sets() -> list:
+    """The set(s) whose astro bodies belong in the world scene: just the active
+    space set (the one the player occupies) when determinable, else every set
+    (legacy fallback). Mirrors iter_ships' active-set filtering so the player at
+    Serris 3 doesn't see other systems' planets/suns bleed into the scene."""
+    from engine.appc.ship_iter import active_set
+    act = active_set()
+    if act is not None:
+        return [act]
     import App
+    return list(App.g_kSetManager._sets.values())
+
+
+def _iter_planets(*, verbose: bool = False) -> Iterable:
+    """Walk every Planet (non-Sun) in the active set (see _live_sets)."""
     from engine.appc.planet import Planet, Sun
-    for set_name, pSet in App.g_kSetManager._sets.items():
+    for pSet in _live_sets():
         for obj in _iter_set_objects(pSet):
             if isinstance(obj, Planet) and not isinstance(obj, Sun):
                 yield obj
 
 
 def _iter_suns() -> Iterable:
-    """Walk every Sun in every active set."""
-    import App
+    """Walk every Sun in the active set (see _live_sets)."""
     from engine.appc.planet import Sun
-    for pSet in App.g_kSetManager._sets.values():
+    for pSet in _live_sets():
         for obj in _iter_set_objects(pSet):
             if isinstance(obj, Sun):
                 yield obj
@@ -2205,9 +2267,7 @@ def _iter_suns() -> Iterable:
 def _aggregate_suns() -> list:
     """Collect sun render descriptors in BC native world units."""
     from engine.appc.planet import aggregate_suns_for_renderer
-    import App
-    return aggregate_suns_for_renderer(
-        PROJECT_ROOT, list(App.g_kSetManager._sets.values()))
+    return aggregate_suns_for_renderer(PROJECT_ROOT, _live_sets())
 
 
 # ── Warp-VFX (Stage 2) host helpers: sun dim + cinematic ship turn ──────────
@@ -2854,17 +2914,29 @@ def _reconcile_runtime_instances(session, renderer, *,
                 and not registry_texture.has_replacements(_p)):
             registry_texture.apply_class_default(_p)
 
-    # ADDITIONS: realize every set that holds an un-realized ship. Idempotent —
-    # realize_set_objects skips ships already in session.ship_instances, so this
-    # only loads/creates instances for genuinely new ships.
-    live_ships = set()
-    for pSet in App.g_kSetManager._sets.values():
-        set_ships = list(_iter_ships_in_set(pSet))
-        live_ships.update(set_ships)
-        if any(ship not in session.ship_instances for ship in set_ships):
-            realize_set_objects(session, pSet, renderer, verbose=verbose)
+    # ADDITIONS: realize un-realized ships in the ACTIVE set only. BC keeps one
+    # space set live at a time; realizing every set here would re-bleed other
+    # systems' ships (the Serris2 Cardassians, the Vesuvi6 Facility, Starbase 12)
+    # into the player's scene the tick after load. Idempotent — realize_set_objects
+    # skips ships already in session.ship_instances. When no active set is
+    # determinable (no player yet) fall back to the legacy all-sets reconcile.
+    from engine.appc.ship_iter import active_set as _active_set
+    act = _active_set()
+    if act is not None:
+        live_ships = set(_iter_ships_in_set(act))
+        if any(ship not in session.ship_instances for ship in live_ships):
+            realize_set_objects(session, act, renderer, verbose=verbose)
+    else:
+        live_ships = set()
+        for pSet in App.g_kSetManager._sets.values():
+            set_ships = list(_iter_ships_in_set(pSet))
+            live_ships.update(set_ships)
+            if any(ship not in session.ship_instances for ship in set_ships):
+                realize_set_objects(session, pSet, renderer, verbose=verbose)
 
-    # REMOVALS: any realized ship no longer in any set is destroyed and forgotten.
+    # REMOVALS: any realized ship not in the live (active-set) roster is destroyed
+    # and forgotten — covers both despawns and ships left behind when the player
+    # warps to another set.
     for ship in list(session.ship_instances.keys()):
         if ship not in live_ships:
             iid = session.ship_instances.pop(ship, None)
@@ -3222,7 +3294,7 @@ class _MissionLoader:
             str(PROJECT_ROOT / "game" / DEFAULT_TEXTURE_SEARCH),
             str(PROJECT_ROOT / "game" / "data" / "Models" / "SharedTextures" / "FedBases" / "High"),
         ]
-        for ship in _iter_ships(verbose=self._verbose):
+        for ship in _iter_active_ships(verbose=self._verbose):
             nif_path = _ship_nif_path(ship, verbose=self._verbose)
             if nif_path is None:
                 continue

@@ -713,6 +713,13 @@ ET_MISSION_START = 102
 ET_EPISODE_START = 103
 ET_OBJECT_DELETED = 104
 ET_ENTERED_SET = 105
+# Fired when an object leaves a set (RemoveObjectFromSet/DeleteObjectFromSet, or
+# a warp moving a ship between sets). Carries the LEFT set's name as a CString
+# (TGStringEvent) because by dispatch time the object's containing-set may
+# already point elsewhere — SDK ExitSet handlers read pEvent.GetCString() for the
+# set name (E2M2.ExitSet, et al.). Not present in the original ET_* dump; value
+# picked to stay contiguous with this block and not collide.
+ET_EXITED_SET = 109
 ET_OBJECT_EXPLODING = 106
 ET_OBJECT_DESTROYED = 107
 # Fired once the Game's pre-load (asset streaming) finishes. SDK Game.py binds

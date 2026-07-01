@@ -494,7 +494,10 @@ def pytest_configure(config):
         "Bridge.ScienceCharacterHandlers",
         "Bridge.EngineerCharacterHandlers",
         "BridgeHandlers",
-        "Actions.MissionScriptActions",
+        # Actions.MissionScriptActions intentionally NOT stubbed — see the
+        # matching note in tools/mission_harness.py. Stubbing it makes
+        # ChangeToBridge return a truthy _Stub, which defers the TGScriptAction
+        # forever and stalls every briefing/cutscene sequence after that step.
     ]
     for _stub_name in _plain_stubs:
         if _stub_name not in sys.modules:
@@ -592,6 +595,17 @@ def _reset_leakable_engine_globals():
         pass
     try:
         App._next_event_type_id = 1200
+    except Exception:
+        pass
+    # Current game/player: a mission-load or warp test that calls
+    # _set_current_game / Game_SetCurrentPlayer leaks the game (and its player)
+    # into later tests. iter_ships/active_set now key world-scene iteration off
+    # Game_GetCurrentPlayer()'s containing set, so a leaked player silently
+    # filters an unrelated test's sets down to the wrong one. Clear it so each
+    # test starts with no active game unless it sets one up.
+    try:
+        from engine.core.game import _set_current_game
+        _set_current_game(None)
     except Exception:
         pass
     # Global AI/game difficulty is now a mutable module global (set via the

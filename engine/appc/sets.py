@@ -139,6 +139,12 @@ class SetClass(TGEventHandlerObject):
         if isinstance(obj, ShipClass):
             ship_lifecycle.publish_added(obj)
         self._fire("added", obj, identifier)
+        # BC broadcasts ET_ENTERED_SET whenever a ship is added to a set. Mission
+        # region state machines (E2M2.EnterSet -> TrackPlayer, etc.) hang off it;
+        # without it every set-transition-gated beat and viewscreen cutscene stays
+        # dead. _containing_set is already set above so EnterSet's
+        # GetContainingSet().GetName() resolves. See _broadcast_set_transition.
+        self._broadcast_set_transition(obj, entered=True)
         return True
 
     def GetObject(self, name: str):
@@ -148,13 +154,47 @@ class SetClass(TGEventHandlerObject):
         obj = self._objects.get(name)
         if obj is not None:
             self._fire("removed", obj, name)
+            self._broadcast_set_transition(obj, entered=False)
         return self._objects.pop(name, None)
 
     def DeleteObjectFromSet(self, name: str) -> None:
         obj = self._objects.get(name)
         if obj is not None:
             self._fire("removed", obj, name)
+            self._broadcast_set_transition(obj, entered=False)
         self._objects.pop(name, None)
+
+    def _broadcast_set_transition(self, obj, *, entered: bool) -> None:
+        """Post ET_ENTERED_SET / ET_EXITED_SET for a ship joining/leaving this
+        set, mirroring BC's set-membership broadcasts that drive mission region
+        state machines.
+
+        Only ShipClass objects broadcast (BC's ET_*_SET handlers all cast the
+        destination via ShipClass_Cast and bail on None — grids, waypoints, and
+        characters never trigger region logic). The exit event carries this set's
+        name as a CString because ExitSet reads pEvent.GetCString() (the object's
+        containing-set may already point at its next set by dispatch time).
+
+        The internal warp-transit set (an engine artifact BC has no equivalent
+        for) is suppressed so a warp doesn't inject a spurious region entry/exit
+        between the real source and destination sets.
+        """
+        from engine.appc.ships import ShipClass
+        if not isinstance(obj, ShipClass):
+            return
+        from engine.appc.warp import _WARP_TRANSIT_SET_NAME
+        if self._name == _WARP_TRANSIT_SET_NAME:
+            return
+        import App
+        if entered:
+            event = App.TGEvent_Create()
+            event.SetEventType(App.ET_ENTERED_SET)
+        else:
+            event = App.TGStringEvent_Create()
+            event.SetEventType(App.ET_EXITED_SET)
+            event.SetString(self._name)
+        event.SetDestination(obj)
+        App.g_kEventManager.AddEvent(event)
 
     def IsLocationEmptyTG(self, point, radius: float, flag: int = 1) -> int:
         """Phase 1 stub — always reports the location as empty."""

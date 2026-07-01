@@ -94,12 +94,73 @@ class Episode(TGObject):
     def __init__(self):
         super().__init__()
         self._current_mission: Mission | None = None
+        # Episode-level localization DB (Episode2.py:40 sets it via
+        # SetDatabase); goal label lookups resolve through it. None until set.
+        self._database = None
+        # Registered mission objectives, in registration order. RegisterGoal
+        # appends; RemoveGoal marks disabled. Recreated per mission (a fresh
+        # Episode is built in host_loop._init_mission each load), so goals never
+        # leak across a swap.
+        self._goals: list[str] = []
+        self._disabled_goals: set[str] = set()
 
     def GetCurrentMission(self) -> Mission | None:
         return self._current_mission
 
     def SetCurrentMission(self, mission: Mission) -> None:
         self._current_mission = mission
+
+    def SetDatabase(self, db):
+        """Load (or store) the episode's localization DB and return it. Mirrors
+        Mission.SetDatabase. SDK: Episode2.Initialize does
+        ``pEpisode.SetDatabase("data/TGL/Maelstrom/Episode 2/Episode2.tgl")``;
+        MissionLib.RemoveGoal reads it back via GetDatabase() to label goal
+        buttons."""
+        if isinstance(db, str):
+            try:
+                import App
+                self._database = App.g_kLocalizationManager.Load(db)
+            except Exception:
+                self._database = None
+        else:
+            self._database = db
+        return self._database
+
+    def GetDatabase(self):
+        return self._database
+
+    # ── Mission goals / objectives ──────────────────────────────────────────
+    # BC's Appc.Episode_RegisterGoal/RemoveGoal add/disable buttons in the XO
+    # "Objectives" bridge submenu (MissionLib.AddGoal -> RegisterGoal). Our
+    # Episode never implemented them, so goals silently vanished. See
+    # engine.appc.mission_goals for the submenu wiring.
+    def RegisterGoal(self, goal_id) -> None:
+        goal_id = str(goal_id)
+        if goal_id not in self._goals:
+            self._goals.append(goal_id)
+        self._disabled_goals.discard(goal_id)
+        from engine.appc import mission_goals
+        mission_goals.add_goal_button(self._goal_label(goal_id))
+
+    def RemoveGoal(self, goal_id) -> None:
+        goal_id = str(goal_id)
+        self._disabled_goals.add(goal_id)
+        from engine.appc import mission_goals
+        mission_goals.disable_goal_button(self._goal_label(goal_id))
+
+    def GetNumGoals(self) -> int:
+        return len(self._goals)
+
+    def GetGoals(self) -> list[str]:
+        """Active (non-disabled) goal string IDs, in registration order."""
+        return [g for g in self._goals if g not in self._disabled_goals]
+
+    def _goal_label(self, goal_id: str) -> str:
+        from engine.appc import mission_goals
+        mission_db = (self._current_mission.GetDatabase()
+                      if self._current_mission is not None else None)
+        # Episode DB first (RemoveGoal keys off it), then mission DB, then raw.
+        return mission_goals.goal_label(goal_id, self._database, mission_db)
 
     def AddPersistentModule(self, module_name: str) -> None:
         # SDK Episode.AddPersistentModule(name) — prevents module unload between
