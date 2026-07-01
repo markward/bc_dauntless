@@ -42,7 +42,9 @@ GALAXY = {
     "shield_charge_front": 11.0,
     "has_phasers": True,
     "phaser_template": "Phasers",
-    "has_torpedoes": True, "torpedo_tube_count": 6,
+    # Galaxy declares ONE ammo type (galaxy.py:1011 SetNumAmmoTypes(1)) across
+    # its 6 tubes — ammo TYPES are decoupled from tube count.
+    "has_torpedoes": True, "torpedo_ammo_type_names": ["Photon"],
 }
 
 DRYDOCK = {
@@ -117,7 +119,8 @@ NEBULA = {
     "has_sensor": True, "sensor_template": "SensorArray",
     "has_shields": True, "shield_template": "ShieldGenerator",
     "has_phasers": True, "phaser_template": "Phasers",
-    "has_torpedoes": True, "torpedo_tube_count": 6,
+    # Nebula: one declared ammo type (nebula.py:159 SetNumAmmoTypes(1)).
+    "has_torpedoes": True, "torpedo_ammo_type_names": ["Photon"],
 }
 
 AKIRA = {
@@ -131,7 +134,9 @@ AKIRA = {
     "has_sensor": True, "sensor_template": "SensorArray",
     "has_shields": True, "shield_template": "ShieldGenerator",
     "has_phasers": True, "phaser_template": "Phasers",
-    "has_torpedoes": True, "torpedo_tube_count": 6,
+    # Akira declares TWO ammo types (akira.py:161 SetNumAmmoTypes(2)):
+    # Photon (slot 0) + Quantum (slot 1), named by each module's GetName().
+    "has_torpedoes": True, "torpedo_ammo_type_names": ["Photon", "Quantum"],
 }
 
 FEDOUTPOST = {
@@ -262,16 +267,17 @@ def test_e1m1_ship_identity(sdk_setup, clean_state, expected):
     # ── Torpedoes (conditional) ──
     if expected.get("has_torpedoes"):
         ts = ship.GetTorpedoSystem()
-        assert ts.GetNumAmmoTypes() == expected["torpedo_tube_count"]
-        for i in range(expected["torpedo_tube_count"]):
+        # BC seeds one ammo TYPE per hardpoint-declared slot (SetNumAmmoTypes),
+        # NOT one per tube.  Names come from each projectile module's GetName().
+        names = expected["torpedo_ammo_type_names"]
+        assert ts.GetNumAmmoTypes() == len(names)
+        assert [ts.GetAmmoType(i).GetAmmoName() for i in range(len(names))] == names
+        for i in range(len(names)):
             ammo = ts.GetAmmoType(i)
             assert ammo is not None
-            # Real hardpoints (galaxy.py:1010 etc.) register a
-            # TorpedoSystemProperty.SetTorpedoScript; the per-slot
-            # TorpedoAmmoType reads launch_speed from that script.
-            # The contract we lock here is "non-zero launch speed" —
-            # the specific value belongs in projectile-specific tests
-            # (see tests/integration/test_torpedo_ammo_launch_speed.py).
+            # Each per-slot TorpedoAmmoType reads launch_speed from its script;
+            # the contract we lock here is "non-zero launch speed" so
+            # FireScript.PredictTargetLocation never divides by zero.
             assert ammo.GetLaunchSpeed() > 0.0
     else:
         # Ships without a WeaponSystemProperty(WST_TORPEDO) in their

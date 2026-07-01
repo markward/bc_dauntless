@@ -853,7 +853,7 @@ class ShipClass(DamageableObject):
                         CLOAK_TRANSITION_DURATION * 100.0 / float(strength)
                     )
 
-        # Pass 2 — seed torpedo tubes (idempotent).
+        # Pass 2 — seed one torpedo ammo type per DECLARED ammo slot (idempotent).
         ts = self._torpedo_system
         if ts is not None and ts.GetNumAmmoTypes() == 0:
             tube_count = sum(
@@ -861,25 +861,26 @@ class ShipClass(DamageableObject):
                 for prop in self.GetPropertySet().GetPropertyList()
                 if isinstance(prop, TorpedoTubeProperty)
             )
-            # Look up each slot's torpedo script from the bound
-            # TorpedoSystemProperty (galaxy.py:1010 sets slot 0 to
-            # "Tactical.Projectiles.PhotonTorpedo"), import it, and
-            # read GetLaunchSpeed() — so GetCurrentAmmoType() exposes
-            # the real launch speed.
+            # BC declares a ship's selectable ammo as SLOTS on the
+            # TorpedoSystemProperty (sovereign.py:609+ — per slot SetTorpedoScript
+            # + SetMaxTorpedoes, then SetNumAmmoTypes(N)), NOT one type per tube.
+            # Seed range(N), naming each by the projectile module's GetName()
+            # (Photon/Quantum/Phased) and carrying its declared max as the reserve.
+            # The SDK then curates this list at runtime with ZERO UI-side
+            # filtering: QuickBattle.RemoveAmmoType prunes PhasedPlasma; missions
+            # LoadAmmoType top up. Tubes are launchers and matter only for spread
+            # (GetSpreadOptions) — ammo TYPES are an independent declaration.
             #
-            # Why this matters: FireScript.GetWeaponInfo reads
-            # GetCurrentAmmoType().GetLaunchSpeed() and feeds the
-            # result into PredictTargetLocation, which divides
-            # distance by speed. The previous code seeded every slot
-            # with the shared App.AT_ONE stub (launch_speed=0),
-            # triggering ZeroDivisionError mid-tick the moment a
-            # FireScript dispatched at a torp system — silently
-            # killing all enemy weapons fire.
-            from engine.appc.subsystems import TorpedoAmmoType
+            # Legacy/undeclared hulls (no SetNumAmmoTypes, or a plain
+            # WeaponSystemProperty) fall back to a single unlimited Photon type
+            # when they have tubes — preserving the non-zero launch speed the
+            # ZeroDivisionError guard in FireScript.PredictTargetLocation needs.
             ts_prop = ts.GetProperty()
-            for slot in range(tube_count):
-                ammo = _resolve_torpedo_ammo(ts_prop, slot)
-                ts.AddAmmoType(ammo)
+            declared = ts_prop.GetNumAmmoTypes() if ts_prop is not None else None
+            if not declared or declared <= 0:
+                declared = 1 if tube_count > 0 else 0
+            for slot in range(declared):
+                ts.AddAmmoType(_resolve_torpedo_ammo(ts_prop, slot))
 
         # Pass 3 — drop slots the hardpoint never claimed.  ShipClass_Create
         # pre-allocates every subsystem so SDK callers can chain
@@ -1202,50 +1203,64 @@ class ShipClass(DamageableObject):
 
 
 def _resolve_torpedo_ammo(ts_prop, slot: int):
-    """Build a TorpedoAmmoType for ``slot`` with launch_speed read from
-    the configured projectile script.
+    """Build the TorpedoAmmoType for declared ammo ``slot`` from the hardpoint's
+    TorpedoSystemProperty.
 
-    The TorpedoSystemProperty stores ``{slot: "Tactical.Projectiles.<Name>"}``
-    populated by hardpoint setup (galaxy.py:1010,
-    galor.py:168, etc.). Each projectile module exposes a
-    ``GetLaunchSpeed()`` function. We import lazily and call it.
+    Per slot the property stores the projectile script
+    (``SetTorpedoScript(slot, "Tactical.Projectiles.<X>")``, sovereign.py:609+)
+    and a capacity (``SetMaxTorpedoes(slot, n)``).  Each projectile module
+    exposes ``GetName()`` — the canonical ammo name MissionLib matches on
+    (PhotonTorpedo2→"Photon", QuantumTorpedo→"Quantum", PhasedPlasma→"Phased") —
+    plus ``GetLaunchSpeed()`` and ``GetPowerCost()``.  We import lazily and read
+    all three.
 
-    Falls back to ``("Photon", 19.0)`` — the most common ammo — if the
-    property has no script registered for this slot or the lookup
-    fails. Photon's 19 GU/s is what stock BC uses for any ship that
-    hasn't overridden the slot, so it's a safer default than 0 (which
-    causes a divide-by-zero in FireScript.PredictTargetLocation).
+    The name comes from ``GetName()``, NOT the module leaf: the leaf
+    "PhotonTorpedo2" doesn't end in "Torpedo" and "PhasedPlasma" isn't a torpedo
+    at all, so a leaf-strip heuristic leaks those raw into the Type selector —
+    the bug this fixes.  ``declared_max`` is the property's SetMaxTorpedoes(slot):
+    an int (incl. 0) when declared, or ``None`` (undeclared → unlimited reserve).
+
+    Falls back to ``("Photon", 19.0)`` with an unlimited reserve if the slot has
+    no script or the import fails — Photon's 19 GU/s avoids the divide-by-zero in
+    FireScript.PredictTargetLocation that a launch_speed of 0 would cause.
     """
     from engine.appc.subsystems import TorpedoAmmoType
-    # Photon defaults — used both for the unbound-slot path and any
-    # import failure.  PowerCost 20.0 matches PhotonTorpedo.py:65.
+    # Photon defaults — used for the unbound-slot path and any import failure.
+    # PowerCost 20.0 matches PhotonTorpedo.py:65.
     PHOTON_LAUNCH_SPEED = 19.0
     PHOTON_POWER_COST = 20.0
     script_name = None
-    if ts_prop is not None and hasattr(ts_prop, "GetTorpedoScript"):
-        script_name = ts_prop.GetTorpedoScript(slot)
+    declared_max = None
+    if ts_prop is not None:
+        if hasattr(ts_prop, "GetTorpedoScript"):
+            script_name = ts_prop.GetTorpedoScript(slot)
+        if hasattr(ts_prop, "GetMaxTorpedoes"):
+            # None on a plain WeaponSystemProperty (magic getter) or an
+            # undeclared slot → unlimited reserve.
+            declared_max = ts_prop.GetMaxTorpedoes(slot)
     if not script_name:
         return TorpedoAmmoType("Photon",
                                launch_speed=PHOTON_LAUNCH_SPEED,
-                               power_cost=PHOTON_POWER_COST)
+                               power_cost=PHOTON_POWER_COST,
+                               max_torpedoes=declared_max)
     try:
         leaf = script_name.split(".")[-1]
-        # Canonical ammo-type name: MissionLib matches GetAmmoName() against the
-        # bare type ("Photon", "Quantum" — MissionLib.py:2958+), and the
-        # unbound-slot fallback above uses "Photon". Strip the projectile class's
-        # "Torpedo" suffix so a bound slot ("PhotonTorpedo") reads identically to
-        # the fallback/canonical ("Photon"); otherwise a Photon-only hull with
-        # some scripted + some unbound tubes looks like it carries two distinct
-        # types and the Type control / "Use {type} Torpedoes" row wrongly appears.
-        name = leaf[:-len("Torpedo")] if leaf.endswith("Torpedo") else leaf
         mod = __import__(script_name, None, None, [leaf])
+        if hasattr(mod, "GetName"):
+            name = mod.GetName()
+        else:
+            # Fallback only if the module has no GetName(): strip the projectile
+            # class's "Torpedo" suffix so "PhotonTorpedo" reads as "Photon".
+            name = leaf[:-len("Torpedo")] if leaf.endswith("Torpedo") else leaf
         launch_speed = float(mod.GetLaunchSpeed()) if hasattr(mod, "GetLaunchSpeed") else PHOTON_LAUNCH_SPEED
         power_cost = float(mod.GetPowerCost()) if hasattr(mod, "GetPowerCost") else 0.0
-        return TorpedoAmmoType(name, launch_speed=launch_speed, power_cost=power_cost)
+        return TorpedoAmmoType(name, launch_speed=launch_speed, power_cost=power_cost,
+                               max_torpedoes=declared_max, script=script_name)
     except Exception:
         return TorpedoAmmoType("Photon",
                                launch_speed=PHOTON_LAUNCH_SPEED,
-                               power_cost=PHOTON_POWER_COST)
+                               power_cost=PHOTON_POWER_COST,
+                               max_torpedoes=declared_max)
 
 
 def ShipClass_Create(class_name: str = "") -> ShipClass:
