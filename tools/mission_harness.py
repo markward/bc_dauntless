@@ -142,32 +142,42 @@ class _FixPy2Sort(ast.NodeTransformer):
         return node
 
 
-class _FixPy2DictIterMutation(ast.NodeTransformer):
-    """Wrap ``for X in someDict.keys():`` (and ``.values()`` / ``.items()``)
-    in ``list(...)``.
+class _FixPy2DictView(ast.NodeTransformer):
+    """Wrap every no-arg ``someDict.keys()`` / ``.values()`` / ``.items()``
+    call in ``list(...)``.
 
-    Python 1.5 and 2.x returned a list from these methods, so SDK code that
-    ``del``-s entries mid-loop worked. Python 3 returns a view and raises
-    ``RuntimeError: dictionary changed size during iteration``. Wrapping
-    the call in ``list(...)`` makes the SDK pattern compatible without
-    forking SDK files. Observed bite site: AI/Preprocessors.py:871
-    (FireScript.ChooseTargetSubsystem prunes stale subsystem ratings).
+    Python 1.5 and 2.x returned a **list** from these methods; Python 3 returns
+    a view object. SDK code relies on the list semantics in two ways:
+
+    * ``del``-ing entries mid-loop worked (Py3 view raises
+      ``RuntimeError: dictionary changed size during iteration``). Observed bite
+      site: AI/Preprocessors.py:871 (FireScript.ChooseTargetSubsystem prunes
+      stale subsystem ratings).
+    * calling list methods on the result — ``lAsteroids = d.keys(); lAsteroids.sort()``
+      (E1M2.py:3016-3017), ``d.keys()[0]`` indexing, ``.append``, etc. (Py3 view
+      has no ``.sort()`` / ``__getitem__``).
+
+    Wrapping the *call itself* (rather than only for-loop iterables) makes both
+    patterns compatible without forking SDK files. This subsumes the older
+    for-loop-only transform: a loop iterable ``d.keys()`` becomes
+    ``list(d.keys())`` here, preserving the mid-loop-``del`` fidelity.
     """
 
     _DICT_METHODS = ("keys", "values", "items")
 
-    def visit_For(self, node):
+    def visit_Call(self, node):
         self.generic_visit(node)
         if (
-            isinstance(node.iter, ast.Call)
-            and isinstance(node.iter.func, ast.Attribute)
-            and node.iter.func.attr in self._DICT_METHODS
-            and not node.iter.args
-            and not node.iter.keywords
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr in self._DICT_METHODS
+            and not node.args
+            and not node.keywords
         ):
-            node.iter = ast.Call(
+            # Return a fresh wrapper node (not re-visited) — same
+            # infinite-recursion guarantee _FixPy2Sort relies on.
+            return ast.Call(
                 func=ast.Name(id="list", ctx=ast.Load()),
-                args=[node.iter],
+                args=[node],
                 keywords=[],
             )
         return node
@@ -340,7 +350,7 @@ class _SDKLoader(importlib.abc.Loader):
             tree = _FixImplicitRelativeImport(self.path).visit(tree)
             tree = _FixDottedImport().visit(tree)
             tree = _FixPy2Sort().visit(tree)
-            tree = _FixPy2DictIterMutation().visit(tree)
+            tree = _FixPy2DictView().visit(tree)
             ast.fix_missing_locations(tree)
             code = compile(tree, self.path, "exec")
         module.__dict__.setdefault('apply', lambda f, a=(), kw={}: f(*a, **kw))
