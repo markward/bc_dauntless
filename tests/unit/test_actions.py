@@ -794,3 +794,87 @@ def test_character_nonspeak_action_completes_inline():
     a = CharacterAction(None, CharacterAction.AT_TURN, None)
     a.Play()
     assert not a.IsPlaying()                    # non-speak: unchanged, inline
+
+
+# ── Completed TGSequence id invalidation (MissionLib master-sequence contract) ──
+#
+# The original engine destroys a finished TGSequence, so its object id stops
+# resolving. MissionLib.QueueActionToPlay relies on this: it stores the master
+# sequence's id and appends every subsequent queued action onto it *until* the
+# id goes invalid, at which point the next call starts a fresh, playing master.
+# If a completed sequence's id kept resolving, every action queued after the
+# first master completed would be appended onto a dead sequence and never fire
+# (E1M2: Director Soams's viewscreen hail was silently dropped).
+
+def test_completed_sequence_id_no_longer_resolves():
+    s = App.TGSequence_Create()
+    s.AddAction(App.TGAction_CreateNull())     # instantaneous -> completes inline
+    sid = s.GetObjID()
+    assert App.TGObject_GetTGObjectPtr(sid) is s   # resolvable while alive
+    s.Play()
+    assert not s.IsPlaying()                        # drained + completed
+    assert App.TGObject_GetTGObjectPtr(sid) is None # id invalidated on completion
+
+
+def test_playing_sequence_id_still_resolves():
+    s = App.TGSequence_Create()
+    cond = App.TGConditionAction_Create()          # stays pending (no condition)
+    s.AddAction(cond)
+    sid = s.GetObjID()
+    s.Play()
+    assert s.IsPlaying()                            # still waiting on cond
+    assert App.TGObject_GetTGObjectPtr(sid) is s    # resolvable while playing
+
+
+def test_replayed_sequence_id_resolves_again_then_reinvalidates():
+    s = App.TGSequence_Create()
+    s.AddAction(App.TGAction_CreateNull())
+    sid = s.GetObjID()
+    s.Play()
+    assert App.TGObject_GetTGObjectPtr(sid) is None  # invalid after first run
+    s.Restart()                                      # re-launch (Play again)
+    # Restart runs an instantaneous member and completes again, re-invalidating.
+    assert App.TGObject_GetTGObjectPtr(sid) is None
+
+
+def test_aborted_sequence_id_no_longer_resolves():
+    s = App.TGSequence_Create()
+    cond = App.TGConditionAction_Create()          # keeps the sequence playing
+    s.AddAction(cond)
+    sid = s.GetObjID()
+    s.Play()
+    assert App.TGObject_GetTGObjectPtr(sid) is s
+    s.Abort()
+    assert App.TGObject_GetTGObjectPtr(sid) is None
+
+
+def test_queueactiontoplay_starts_fresh_master_after_previous_completes(monkeypatch):
+    """MissionLib.QueueActionToPlay must open a NEW playing master once the
+    previous master has completed (its id gone invalid) — not append onto the
+    dead one. This is the exact contract E1M2's Soams hail depends on."""
+    import MissionLib
+    from engine.core.game import Game, _set_current_game
+    from engine.appc.ships import ShipClass_Create
+
+    # A live, non-dying player so QueueActionToPlay does not take its skip path.
+    game = Game()
+    player = ShipClass_Create("Galaxy")
+    player.SetName("player")
+    game.SetPlayer(player)
+    _set_current_game(game)
+    monkeypatch.setattr(MissionLib, "g_idMasterSequenceObj", App.NULL_ID,
+                        raising=False)
+    try:
+        # First queued action -> creates master A, plays it. A's sole member is
+        # instantaneous, so A completes and its id is invalidated.
+        MissionLib.QueueActionToPlay(App.TGAction_CreateNull())
+        master_a = MissionLib.g_idMasterSequenceObj
+        assert App.TGObject_GetTGObjectPtr(master_a) is None  # A completed+gone
+
+        # Second queued action must NOT append onto the dead A: it starts a
+        # fresh master B and plays it.
+        MissionLib.QueueActionToPlay(App.TGAction_CreateNull())
+        master_b = MissionLib.g_idMasterSequenceObj
+        assert master_b != master_a          # a genuinely new master was created
+    finally:
+        _set_current_game(None)

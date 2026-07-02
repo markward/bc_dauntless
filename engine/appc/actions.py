@@ -13,7 +13,7 @@ docs/superpowers/specs/2026-06-11-action-sequence-timing-design.md.
 """
 import sys
 from engine.appc.events import TGEventHandlerObject, TGEvent
-from engine.core.ids import get_object_by_id
+from engine.core.ids import get_object_by_id, register, unregister
 
 # Private event types used only by the TGSequence scheduler. They are delivered
 # directly to the owning sequence via event destination routing and never reach
@@ -255,6 +255,11 @@ class TGSequence(TGAction):
         self._launch("Start")
 
     def _launch(self, verb: str) -> None:
+        # A sequence that completed once was unregistered from the id registry
+        # (Completed below). Re-register on (re)launch so a replayed/Restart-ed
+        # sequence is resolvable by id while it is playing, and invalid again
+        # only once it completes. Idempotent for a first launch.
+        register(self)
         self._playing = True
         self._verb = verb
         self._completed_actions = set()
@@ -373,6 +378,17 @@ class TGSequence(TGAction):
             return
         self.Completed()
 
+    def Completed(self) -> None:
+        # Fire completion events, then invalidate our object id so
+        # App.TGObject_GetTGObjectPtr() returns None for us — mirroring the
+        # original engine destroying a finished sequence. MissionLib's master
+        # sequence (QueueActionToPlay) depends on this: once the current master
+        # completes its id must go invalid so the next queued action starts a
+        # fresh, playing master instead of appending onto a dead one. Event
+        # routing is unaffected (completion events hold object refs, not ids).
+        super().Completed()
+        unregister(self.GetObjID())
+
     def _schedule_timer(self, step: "_Step") -> None:
         import App
         use_real = bool(getattr(step.action, "IsUseRealTime",
@@ -394,6 +410,10 @@ class TGSequence(TGAction):
             mgr.RemoveTimer(timer)
         self._pending_timers = []
         self._playing = False
+        # A torn-down master sequence (e.g. MissionLib.DeleteQueuedActions, or a
+        # mission swap) must also free its id so the next QueueActionToPlay
+        # starts fresh rather than appending onto the aborted master.
+        unregister(self.GetObjID())
 
     def Stop(self) -> None:
         for mgr, _step, timer in self._pending_timers:
@@ -406,6 +426,7 @@ class TGSequence(TGAction):
             else:
                 action.Abort()
         self._playing = False
+        unregister(self.GetObjID())
 
 
 def TGSequence_Create() -> TGSequence:

@@ -8,6 +8,25 @@ def get_object_by_id(obj_id: int) -> "TGObject | None":
     return _registry.get(obj_id)
 
 
+def unregister(obj_id: int) -> None:
+    """Drop an object from the id registry so get_object_by_id() (and thus
+    App.TGObject_GetTGObjectPtr) returns None for it.
+
+    Mirrors the original engine destroying a finished TGObject: some SDK code
+    (notably MissionLib.QueueActionToPlay) stores a TGSequence's id and relies
+    on that id becoming invalid once the sequence completes, so the next lookup
+    returns null and a fresh master sequence is started. See
+    engine/appc/actions.py TGSequence for the sole current caller.
+    """
+    _registry.pop(obj_id, None)
+
+
+def register(obj: "TGObject") -> None:
+    """Re-add an object to the id registry (e.g. a completed sequence that is
+    replayed). Idempotent."""
+    _registry[obj.GetObjID()] = obj
+
+
 class _Stub:
     """Recursive stub: attribute access and calls return another _Stub.
 

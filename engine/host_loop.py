@@ -2106,6 +2106,14 @@ def reset_sdk_globals() -> None:
     try:
         import MissionLib
         MissionLib.ResetViewscreen()
+        # Drop any master action sequence carried over from the previous
+        # mission. QueueActionToPlay stores the master's id in
+        # g_idMasterSequenceObj and appends every subsequent queued action onto
+        # it; a stalled/leftover master from the prior mission would otherwise
+        # swallow the next mission's queued cutscene/comm sequences. Completed
+        # masters already invalidate their id (TGSequence.Completed), so this is
+        # a belt-and-suspenders reset for a master left mid-play at swap time.
+        MissionLib.g_idMasterSequenceObj = App.NULL_ID
     except Exception as _e:
         dev_mode.log_swallowed("MissionLib.ResetViewscreen on swap", _e)
     App.g_kSetManager._sets.clear()
