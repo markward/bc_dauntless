@@ -271,3 +271,57 @@ def test_cloak_drains_power_only_while_trying_to_cloak():
     # DECLOAKING (fading back in) — no longer trying, drain stops.
     cloak.StopCloaking()
     assert power._compute_idle_drain() == 0.0
+
+
+# ── Cloak transition SFX ──────────────────────────────────────────────────────
+
+class _FakeSound:
+    def __init__(self):
+        self.plays = []
+
+    def Play(self, attach_node=0, position=None):
+        self.plays.append(position)
+
+
+class _FakeSoundManager:
+    """Records GetSound lookups and hands back a fake sound per name."""
+
+    def __init__(self):
+        self.requested = []
+        self.sounds = {"Cloak": _FakeSound(), "Uncloak": _FakeSound()}
+
+    def GetSound(self, name):
+        self.requested.append(name)
+        return self.sounds.get(name)
+
+
+def _install_fake_sound_manager(monkeypatch):
+    mgr = _FakeSoundManager()
+    monkeypatch.setattr(App, "g_kSoundManager", mgr, raising=False)
+    return mgr
+
+
+def test_start_cloaking_plays_cloak_sfx(monkeypatch):
+    mgr = _install_fake_sound_manager(monkeypatch)
+    cloak = CloakingSubsystem("Cloak")
+    cloak.StartCloaking()
+    assert "Cloak" in mgr.requested
+    assert len(mgr.sounds["Cloak"].plays) == 1
+
+
+def test_stop_cloaking_plays_uncloak_sfx(monkeypatch):
+    mgr = _install_fake_sound_manager(monkeypatch)
+    cloak = CloakingSubsystem("Cloak")
+    cloak.InstantCloak()                     # jump to cloaked (silent)
+    cloak.StopCloaking()                     # the transition that should sound
+    assert "Uncloak" in mgr.requested
+    assert len(mgr.sounds["Uncloak"].plays) == 1
+
+
+def test_instant_transitions_are_silent(monkeypatch):
+    mgr = _install_fake_sound_manager(monkeypatch)
+    cloak = CloakingSubsystem("Cloak")
+    cloak.InstantCloak()
+    cloak.InstantDecloak()
+    # No transition sweep played for the instant (no-transition) jumps.
+    assert mgr.requested == []

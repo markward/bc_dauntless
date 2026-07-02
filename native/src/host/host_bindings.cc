@@ -825,7 +825,9 @@ void frame() {
     // cloaking hull. Runs after render_space (the HDR target holds the lit
     // scene and is still bound) and only in the real space view.
     if (!viewer_mode && !bridge_active && g_cloak_pass && !g_cloak_ships.empty())
-        g_cloak_pass->render(g_cloak_ships, g_world, g_camera, *g_pipeline, lookup);
+        g_cloak_pass->render(g_cloak_ships, g_world, g_camera, *g_pipeline, lookup,
+                             static_cast<float>(now), g_lighting,
+                             dauntless_filmic::ambient_scale());
 
     if (g_hologram_pass && g_hologram_ship.active)
         g_hologram_pass->render(g_hologram_ship, g_world, g_camera, *g_pipeline, lookup);
@@ -2129,17 +2131,33 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "(0 = visible, 1 = fully cloaked). Replaces the prior list; pass an "
           "empty list to draw none. Takes effect next frame().");
     m.def("set_cloak_dials",
-          [](float strength, float dispersion, std::array<float, 3> tint) {
+          [](float strength, float dispersion, std::array<float, 3> tint,
+             float opacity_floor, float opacity_ceiling, float shimmer_amp,
+             float shimmer_speed, float vertex_wobble, float normal_bias) {
               if (g_cloak_pass) {
                   g_cloak_pass->set_strength(strength);
                   g_cloak_pass->set_dispersion(dispersion);
                   g_cloak_pass->set_tint({tint[0], tint[1], tint[2]});
+                  g_cloak_pass->set_opacity_floor(opacity_floor);
+                  g_cloak_pass->set_opacity_ceiling(opacity_ceiling);
+                  g_cloak_pass->set_shimmer_amp(shimmer_amp);
+                  g_cloak_pass->set_shimmer_speed(shimmer_speed);
+                  g_cloak_pass->set_vertex_wobble(vertex_wobble);
+                  g_cloak_pass->set_normal_bias(normal_bias);
               }
           },
           py::arg("strength"), py::arg("dispersion"),
           py::arg("tint") = std::array<float, 3>{0.20f, 0.85f, 0.55f},
-          "Live-tune the cloak refraction: max screen-space offset (strength), "
-          "prism split (dispersion), and rim tint (r,g,b).");
+          py::arg("opacity_floor") = 0.10f,
+          py::arg("opacity_ceiling") = 0.50f,
+          py::arg("shimmer_amp") = 0.010f,
+          py::arg("shimmer_speed") = 6.0f,
+          py::arg("vertex_wobble") = 0.05f,
+          py::arg("normal_bias") = 1.0f,
+          "Live-tune the cloak: max screen-space refraction offset (strength), "
+          "prism split (dispersion), rim tint (r,g,b), glow-keyed opacity "
+          "floor/ceiling, animated screen-space shimmer amp/speed, vertex-wobble "
+          "amplitude (game units), and normal_bias (0 = flat, 1 = grazing).");
     m.def("set_hologram_only_mode",
           [](bool enabled, std::array<float, 3> bg) {
               g_hologram_only_mode = enabled;

@@ -386,12 +386,20 @@ def _poll_cloak_toggle(host) -> None:
 def _push_cloak_refraction(r, session, player) -> None:
     """Per-frame cloak VFX wiring.
 
-    For each cloak-capable ship: hide the opaque hull only when *fully* cloaked
-    (the refractive shell — or, for enemies, nothing — takes over), and push a
-    ``(instance_id, frac)`` entry so the renderer draws the refraction +
-    chromatic-dispersion shell.  Pushed for ships mid-transition and for the
-    player's own fully-cloaked ship (a faint shimmer so the pilot can place it);
-    a fully-cloaked enemy is hidden and not pushed, so it is truly invisible.
+    For each cloak-capable ship: hide the opaque hull the moment cloaking
+    *begins* (``frac > 0``) and hand the hull over to the cloak pass, which
+    re-draws it as a translucent, glow-keyed, refracting shell.  Because the
+    shell owns the hull for the whole transition, its opacity fades gradually
+    (no instant pop at ``frac == 1``) and it shimmers/wobbles as it engages.
+
+    Push list:
+      * ``frac <= 0`` — fully decloaked: hull visible, not pushed.
+      * ``0 < frac < 1`` — transition (any ship): hull hidden, pushed so it
+        shimmers and fades out.
+      * ``frac >= 1`` **player** — pushed at ``1.0`` (the player keeps a faint,
+        glow-keyed textured hull so the pilot can place the ship).
+      * ``frac >= 1`` **enemy** — hidden and NOT pushed: truly invisible,
+        preserving BC stealth gameplay.
 
     Visibility is recomputed from the live cloak state every frame, so any
     decloak — including an InstantDecloak that skips the DECLOAKING state —
@@ -410,15 +418,16 @@ def _push_cloak_refraction(r, session, player) -> None:
         cloak = getter()
         if cloak is None:
             continue
-        cloaked = bool(cloak.IsCloaked())
+        frac = cloak.GetTransitionFraction()
+        # Hull leaves the opaque pass as soon as cloaking begins; the cloak
+        # shell renders it (translucent, fading) for the whole frac > 0 range.
         try:
-            r.set_visible(iid, not cloaked)
+            r.set_visible(iid, frac <= 0.0)
         except Exception as _e:
             dev_mode.log_swallowed("cloak set_visible", _e)
-        frac = cloak.GetTransitionFraction()
         if frac <= 0.0:
             continue                          # fully decloaked: no shell
-        if cloaked and ship is not player:
+        if bool(cloak.IsCloaked()) and ship is not player:
             continue                          # fully-cloaked enemy: invisible
         cloak_list.append((iid, frac))
     r.set_cloak_ships(cloak_list)
