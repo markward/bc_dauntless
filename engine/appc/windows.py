@@ -28,10 +28,9 @@ class TacticalControlWindow(TGEventHandlerObject):
             cls._instance = cls()
         return cls._instance
 
-    def CallNextHandler(self, _evt) -> None:
-        """SDK handlers call pObject.CallNextHandler(pEvent) for chain
-        propagation.  Without a parent window chain we no-op."""
-        return None
+    # CallNextHandler is inherited from TGEventHandlerObject (advances the LIFO
+    # instance-handler chain). Previously a no-op, which silently dropped
+    # chain propagation.
 
     def AddChild(self, child, x: float = 0.0, y: float = 0.0, *_extra) -> None:
         self._children.append((child, float(x), float(y)))

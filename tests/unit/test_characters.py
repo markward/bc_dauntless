@@ -191,15 +191,16 @@ def test_menu_kill_children_clears_everything():
     assert "Sub" not in menu._submenus
 
 
-def test_menu_get_button_w_auto_vivifies():
-    """SDK callers (BridgeUtils.GetDockButton via MissionLib.CallWaiting)
-    chain pMenu.GetButtonW("Dock").SetEnabled() without null-guarding —
-    so GetButtonW must hand back a real STButton even on an empty menu."""
+def test_menu_get_button_w_returns_none_when_absent():
+    """GetButtonW is faithful to Appc: None for a missing button, the real
+    button once present. SDK code depends on None-when-absent as an existence
+    check (HelmMenuHandlers.CreateHailButton / AddHailButton dedupe, ExitedSet
+    removal, MissionLib goal buttons); an earlier auto-vivifying version broke
+    all of those AND injected event-less stub buttons into the Hail submenu."""
     menu = STMenu("Top")
-    btn = menu.GetButtonW("Dock")
-    assert isinstance(btn, STButton)
-    assert btn.GetLabel() == "Dock"
-    # Subsequent lookups return the same instance.
+    assert menu.GetButtonW("Dock") is None
+    btn = STButton_CreateW("Dock")
+    menu.AddChild(btn)
     assert menu.GetButtonW("Dock") is btn
 
 

@@ -140,19 +140,18 @@ class STMenu(ObjectClass):
             self._submenus[child.GetLabel()] = child
 
     def GetButtonW(self, label) -> "STButton | None":
-        # Caller passes either str or _TGString; coerce for dict lookup.
-        # Auto-vivify a stub button when missing — mirrors GetSubmenuW
-        # auto-vivification so mission scripts that chain
-        #   pMenu.GetButtonW("Dock").SetEnabled()
-        # without null-guarding (E1M1.IntroduceKiska, BridgeUtils.GetDockButton
-        # via MissionLib.CallWaiting) don't crash on the empty headless menu.
-        key = str(label)
-        btn = self._buttons.get(key)
-        if btn is None:
-            btn = STButton(key)
-            self._buttons[key] = btn
-            self._children.append(btn)
-        return btn
+        # Faithful to Appc: return the existing button or None. The SDK relies
+        # on None-when-absent as an EXISTENCE CHECK in many places — e.g.
+        # HelmMenuHandlers.CreateHailButton (`if pButton: return None` to skip
+        # re-adding), the AddHailButton dedupe, ExitedSet's remove path
+        # (`if pShipButton: # remove it`), and MissionLib goal buttons. A prior
+        # auto-vivifying implementation broke all of those: it never reported a
+        # button as absent AND injected empty, event-less stub buttons into the
+        # menu — which is exactly why the Helm "Hail" submenu filled with
+        # non-hailable junk (one stub per identified object's display name) and
+        # clicking them did nothing. Callers that chain on the result already
+        # null-guard (grep: no inline `.GetButtonW(x).method()` in the SDK).
+        return self._buttons.get(str(label))
 
     def GetButtonWStrict(self, label) -> "STButton | None":
         """Strict variant — returns None when no button with that label exists."""
@@ -198,11 +197,9 @@ class STMenu(ObjectClass):
     def SetFocus(self, *args) -> None:            self._focus = True
     def IsTypeOf(self, type_id) -> int:           return 0
     def Close(self, *args) -> None:               pass
-    def CallNextHandler(self, _evt) -> None:
-        # SDK handlers end with pMenu.CallNextHandler(pEvent) for chain
-        # propagation (e.g. HelmMenuHandlers.AllStop:1524). No parent
-        # window chain headless — explicit no-op instead of __getattr__ stub.
-        pass
+    # CallNextHandler is inherited from TGEventHandlerObject, which advances
+    # the LIFO handler chain (SDK handlers end with pMenu.CallNextHandler to
+    # pass control to the next/older handler; e.g. HelmMenuHandlers.AllStop).
 
 
 class STTopLevelMenu(STMenu):

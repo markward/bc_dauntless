@@ -395,6 +395,11 @@ class SetManager:
     def GetNumSets(self) -> int:
         return len(self._sets)
 
+    def GetAllSets(self) -> list:
+        """Every registered set (SWIG surface). SDK MissionLib.SetDisplayNames
+        and other campaign-wide passes iterate this."""
+        return list(self._sets.values())
+
     def iter_sets(self):
         """(name, SetClass) pairs for every registered set.
 

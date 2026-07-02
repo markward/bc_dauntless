@@ -144,7 +144,7 @@ class TGPane(TGEventHandlerObject):
     def InteriorChangedSize(self, *args) -> None:  pass
     def SetNoFocus(self, *args) -> None:      pass
     def SetFocus(self, *args) -> None:        pass
-    def CallNextHandler(self, _evt) -> None:  pass
+    # CallNextHandler inherited from TGEventHandlerObject (LIFO chain advance).
     def SetNotMinimized(self, *args) -> None: pass
     def AlignTo(self, *args) -> None:         pass
     def SetPosition(self, *args) -> None:     pass

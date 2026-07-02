@@ -2166,6 +2166,9 @@ def reset_sdk_globals() -> None:
     # inherit stale id()-keyed latches from the prior mission.
     from engine.appc.sensor_detection import reset_concealment_state
     reset_concealment_state()
+    # Force the next tick to re-run sensor identification for the new mission.
+    global _last_identify_gt
+    _last_identify_gt = None
 
 
 def _episode_tgl_path(mission_module_name: str) -> Optional[str]:
@@ -2182,6 +2185,41 @@ def _episode_tgl_path(mission_module_name: str) -> Optional[str]:
     family, episode_pkg = parts[0], parts[1]
     display = re.sub(r"(?<=[A-Za-z])(?=\d)", " ", episode_pkg)   # Episode1 -> Episode 1
     return "data/TGL/%s/%s/%s.tgl" % (family, display, episode_pkg)
+
+
+def _campaign_tgl_path(mission_module_name: str) -> Optional[str]:
+    """Derive the campaign-level TGL path from a mission module name, matching
+    the string the campaign's own SetDatabase uses (Maelstrom.py:40 does
+    ``pGame.SetDatabase("data/TGL/Maelstrom/Maelstrom.tgl")``). e.g.
+    ``Maelstrom.Episode1.E1M2.E1M2`` -> ``data/TGL/Maelstrom/Maelstrom.tgl``.
+    This DB holds cross-episode object display names (Haven, Facility, Moon).
+    Returns None for module names too short to carry a family."""
+    parts = mission_module_name.split(".")
+    if len(parts) < 2:
+        return None
+    family = parts[0]
+    return "data/TGL/%s/%s.tgl" % (family, family)
+
+
+def _init_campaign_context(game, mission_module_name: str) -> None:
+    """Set the campaign-level (game) TGL so object display names resolve.
+
+    BC boots the campaign via Game.LoadEpisode, whose campaign module Initialize
+    calls ``pGame.SetDatabase(<campaign tgl>)``. The dev picker skips that
+    cascade, so the game DB is never set and object display names (Haven ->
+    "Vesuvi 6 - Haven", Facility -> "Haven Facility") fall back to raw names.
+    Mirrors _init_episode_context: derive + load the DB only, no campaign
+    Initialize side effects. Best-effort."""
+    path = _campaign_tgl_path(mission_module_name)
+    if path is None:
+        return
+    try:
+        import App
+        db = App.g_kLocalizationManager.Load(path)
+        if db is not None:
+            game.SetDatabase(db)
+    except Exception as e:
+        dev_mode.log_swallowed("campaign DB init", e)
 
 
 def _init_episode_context(episode, mission_module_name: str) -> None:
@@ -2231,12 +2269,20 @@ def _init_mission(mission_module_name: str):
     # their localized text ("Clear Debris") rather than the raw string id
     # ("E1DestroyDebrisGoal"). The dev picker loads a mission directly, skipping
     # the episode cascade that BC's Game.LoadEpisode would run.
+    _init_campaign_context(game, mission_module_name)
     _init_episode_context(episode, mission_module_name)
 
     mod = importlib.import_module(mission_module_name)
     if hasattr(mod, "PreLoadAssets"):
         mod.PreLoadAssets(mission)
     mod.Initialize(mission)
+
+    # Register localized object display names now that the mission's objects
+    # exist and the campaign/episode/mission TGLs are loaded — before the
+    # per-tick sensor identification builds Hail buttons / target rows off
+    # GetDisplayName().
+    from engine.appc import display_names
+    display_names.apply_display_names()
 
     start_evt = TGEvent()
     start_evt.SetEventType(App.ET_MISSION_START)
@@ -2335,6 +2381,9 @@ _warp_diag: dict = {}
 # first tick that contains a nebula.
 _nebula_tracker = None  # NebulaTracker | None
 _nebula_thunder = None  # NebulaThunderDriver | None
+# Game-time of the last sensor-identification sweep (throttle ~4 Hz). None
+# until the first sweep; reset on mission swap so a new mission re-identifies.
+_last_identify_gt = None  # float | None
 _hull_discharge = None  # HullDischargeDriver | None
 _nebula_wake = None     # NebulaWakeTracker | None
 
@@ -5370,6 +5419,20 @@ def run(mission_name: Optional[str] = None,
                     _ships_this_tick, TICK_DT,
                     ship_instances=(session.ship_instances if session is not None else None),
                 )
+
+                # Sensor contact identification → drives the SDK bridge Hail /
+                # scan buttons + unlocks target-info panels (all gate on
+                # IsObjectKnown). Throttled ~4 Hz; cheap once contacts are known.
+                # Sim-gated by the enclosing `not pause.is_open`.
+                if player is not None:
+                    import App  # deferred: matches host-loop convention
+                    global _last_identify_gt
+                    _now_gt = App.g_kUtopiaModule.GetGameTime()
+                    if (_last_identify_gt is None
+                            or _now_gt - _last_identify_gt >= 0.25):
+                        _last_identify_gt = _now_gt
+                        from engine.appc import sensor_identification
+                        sensor_identification.identify_contacts(player)
 
                 # Nebula membership → enter/exit events, environmental
                 # damage, sensor scaling. Sim dt (TICK_DT); gated by the

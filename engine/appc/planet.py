@@ -26,7 +26,6 @@ class Planet(ObjectClass):
         self.SetRadius(radius)
         self._model_path = model_path
         self._atmosphere_radius: float = 0.0
-        self._hailable: bool = False
         self._env_shield_damage: float = 0.0
         self._env_hull_damage: float = 0.0
         # Attached objects — moons, stations, etc. parented to the planet's
@@ -56,14 +55,10 @@ class Planet(ObjectClass):
     def GetEnvironmentalHullDamage(self) -> float:
         return self._env_hull_damage
 
-    # ── Hailable flag ───────────────────────────────────────────────────────
-    # Mission scripts (E1M2.py:2346, E2M1.py:685, E7M6.py:1429) toggle this
-    # to enable/disable the bridge "Hail" menu option targeting the planet.
-    def SetHailable(self, value) -> None:
-        self._hailable = bool(value)
-
-    def IsHailable(self) -> int:
-        return 1 if self._hailable else 0
+    # Hailable state (SetHailable / IsHailable) is inherited from ObjectClass,
+    # which fires ET_HAILABLE_CHANGE on change so the SDK bridge builds/removes
+    # the Helm "Hail" button. Mission scripts (E1M2.py:2346, E2M1.py:685,
+    # E7M6.py:1429) toggle it to offer the planet as a hail target.
 
     # ── Object attachment ───────────────────────────────────────────────────
     def AttachObject(self, obj, *args) -> None:

@@ -190,6 +190,16 @@ class Episode(TGObject):
             module.PreLoadAssets(mission)
         module.Initialize(mission)
 
+        # Register localized object display names (campaign/episode/mission TGLs
+        # -> GetDisplayName) so the Hail menu + target list show "Vesuvi 6 -
+        # Haven" / "Haven Facility" rather than raw internal names. Mirrors the
+        # dev-picker path in host_loop._init_mission.
+        try:
+            from engine.appc import display_names
+            display_names.apply_display_names()
+        except Exception:
+            pass
+
         if start_event is not None:
             # Mirrors _init_mission / the SDK: ET_MISSION_START targets the
             # episode (QuickBattleEpisode sets SetDestination(pEpisode) before
@@ -264,6 +274,28 @@ class Game(TGObject):
         self._current_episode: Episode | None = None
         self._player = None
         self._preload_done_event = None
+        self._database = None
+
+    def SetDatabase(self, db):
+        """Load (or store) the campaign-level localization database and return
+        it. SDK: the campaign module's Initialize calls
+        ``pGame.SetDatabase("data/TGL/Maelstrom/Maelstrom.tgl")``
+        (Maelstrom.py:40). This DB holds cross-episode object display names
+        (Haven -> "Vesuvi 6 - Haven", Facility -> "Haven Facility"); the
+        display-name pass reads it back via GetDatabase(). Mirrors
+        Episode/Mission.SetDatabase."""
+        if isinstance(db, str):
+            try:
+                import App
+                self._database = App.g_kLocalizationManager.Load(db)
+            except Exception:
+                self._database = None
+        else:
+            self._database = db
+        return self._database
+
+    def GetDatabase(self):
+        return self._database
 
     def GetCurrentEpisode(self) -> Episode | None:
         return self._current_episode
