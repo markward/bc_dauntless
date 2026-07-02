@@ -1,11 +1,13 @@
 """Phase E — per-frame cloak refraction wiring (_push_cloak_refraction).
 
-The GL refraction + chromatic-dispersion pass itself is validated by the native
-build (the Pipeline constructor compiles cloak_refraction.{vert,frag}) and is
-verified visually in the live GUI. This pins the Python side that feeds it: for
-each cloak-capable ship, hide the opaque hull only when fully cloaked, and push
+The GL refraction + chromatic-dispersion + glow-keyed translucent-hull pass
+itself is validated by the native build (the Pipeline constructor compiles
+cloak_refraction.{vert,frag}) and is verified visually in the live GUI. This
+pins the Python side that feeds it: for each cloak-capable ship, hide the opaque
+hull the moment cloaking begins (frac > 0) — the translucent cloak shell then
+owns the hull for the whole transition so its opacity fades gradually — and push
 a (instance_id, frac) shell entry for transitioning ships and the player's own
-cloaked ship — while a fully-cloaked enemy is hidden and NOT pushed (invisible).
+cloaked ship, while a fully-cloaked enemy is hidden and NOT pushed (invisible).
 """
 import App  # noqa: F401  (loads the engine shim)
 
@@ -64,12 +66,14 @@ def test_decloaked_ship_visible_and_not_pushed():
     assert r.cloak_ships == []
 
 
-def test_cloaking_ship_visible_and_pushed_with_frac():
+def test_cloaking_ship_hidden_and_pushed_with_frac():
     r = _FakeRenderer()
     ship = _FakeShip(_cloaking_half())
     session = _FakeSession({ship: 7})
     _push_cloak_refraction(r, session, player=None)
-    assert r.visible[7] is True                 # hull still drawn mid-transition
+    # Opaque hull leaves the render as soon as cloaking begins; the cloak shell
+    # now draws the (fading) hull for the whole transition.
+    assert r.visible[7] is False
     assert len(r.cloak_ships) == 1
     iid, frac = r.cloak_ships[0]
     assert iid == 7

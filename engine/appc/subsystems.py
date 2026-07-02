@@ -1295,7 +1295,7 @@ class RepairSubsystem(PoweredSubsystem):
 # the per-instance ``_transition_duration`` from the CloakingSubsystemProperty
 # (CloakStrength); this module constant is the fallback for tests and ships
 # built without the hardpoint property flow.
-CLOAK_TRANSITION_DURATION: float = 3.0
+CLOAK_TRANSITION_DURATION: float = 4.5
 
 
 class CloakingSubsystem(PoweredSubsystem):
@@ -1360,6 +1360,7 @@ class CloakingSubsystem(PoweredSubsystem):
         self._cloak_state = self.CLOAK_CLOAKING
         self._transition_elapsed = 0.0
         self._fire("ET_CLOAK_BEGINNING")
+        self._play_cloak_sfx("Cloak")
         self._collapse_shields()
         self._stop_weapons()
 
@@ -1373,6 +1374,7 @@ class CloakingSubsystem(PoweredSubsystem):
         self._cloak_state = self.CLOAK_DECLOAKING
         self._transition_elapsed = 0.0
         self._fire("ET_DECLOAK_BEGINNING")
+        self._play_cloak_sfx("Uncloak")
 
     def InstantCloak(self) -> None:
         """Jump straight to CLOAKED with no transition; fire ET_CLOAK_COMPLETED.
@@ -1505,6 +1507,34 @@ class CloakingSubsystem(PoweredSubsystem):
                     system.StopFiring()
         except Exception as _e:
             dev_mode.log_swallowed("cloak weapons stop", _e)
+
+    # ── Cloak transition SFX ─────────────────────────────────────────────────
+
+    def _play_cloak_sfx(self, name: str) -> None:
+        """Play the cloak/decloak transition sound as a 3D one-shot at the owning
+        ship.  ``name`` is the sound-manager key — "Cloak" (sfx/cloak on.wav) or
+        "Uncloak" (sfx/cloak off.wav), both loaded by LoadTacticalSounds.  Fires
+        for every transition path (player toggle, AI doctrine, mission script)
+        because they all funnel through StartCloaking / StopCloaking; the
+        no-transition InstantCloak / InstantDecloak jumps stay silent (BC plays
+        the sweep only on an actual transition).  Raise-safe: no sound manager
+        (headless / tests) or a parentless cloak simply does nothing."""
+        try:
+            import App
+            mgr = getattr(App, "g_kSoundManager", None)
+            if mgr is None:
+                return
+            snd = mgr.GetSound(name)
+            if snd is None:
+                return
+            ship = self._climb_to_ship() if hasattr(self, "_climb_to_ship") else None
+            if ship is not None and hasattr(ship, "GetWorldLocation"):
+                loc = ship.GetWorldLocation()
+                snd.Play(position=(loc.x, loc.y, loc.z))
+            else:
+                snd.Play()
+        except Exception as _e:
+            dev_mode.log_swallowed("cloak sfx", _e)
 
     # ── Cloak event emission ─────────────────────────────────────────────────
 

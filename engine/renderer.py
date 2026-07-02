@@ -782,13 +782,23 @@ def set_cloak_ships(ships) -> None:
 
 
 def set_cloak_dials(strength: float = 0.04, dispersion: float = 0.50,
-                    tint=(0.20, 0.85, 0.55)) -> None:
-    """Live-tune the cloak refraction: max screen-space offset (strength),
-    prism split (dispersion), and rim tint. No-op on a stale binary."""
+                    tint=(0.20, 0.85, 0.55), opacity_floor: float = 0.10,
+                    opacity_ceiling: float = 0.50, shimmer_amp: float = 0.010,
+                    shimmer_speed: float = 6.0, vertex_wobble: float = 0.05,
+                    normal_bias: float = 1.0) -> None:
+    """Live-tune the cloak. ``strength`` = max screen-space refraction offset,
+    ``dispersion`` = prism split, ``tint`` = rim glow (r,g,b). The cloaked hull
+    keeps its textures with the glow map keying opacity between ``opacity_floor``
+    (dark hull) and ``opacity_ceiling`` (glowing surfaces). ``shimmer_amp`` /
+    ``shimmer_speed`` drive an animated screen-space wobble; ``vertex_wobble``
+    (game units) displaces the silhouette; ``normal_bias`` in [0,1] weights the
+    refraction toward grazing surfaces. No-op on a stale binary."""
     fn = getattr(_h, "set_cloak_dials", None)
     if fn is None:
         return
-    fn(float(strength), float(dispersion), tuple(tint))
+    fn(float(strength), float(dispersion), tuple(tint), float(opacity_floor),
+       float(opacity_ceiling), float(shimmer_amp), float(shimmer_speed),
+       float(vertex_wobble), float(normal_bias))
 
 
 def set_subsystem_pins(pins: list) -> None:
