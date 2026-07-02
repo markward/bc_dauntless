@@ -15,6 +15,14 @@ class ShipClass(DamageableObject):
 
     def __init__(self):
         super().__init__()
+        # Ships default to HAILABLE in native Appc — missions call
+        # SetHailable(FALSE) to REMOVE specific ships from the bridge Hail menu
+        # (E1M2 debris/asteroids; E3/E6 hulks, probes, transports, Keldon,
+        # Warbird — 21 such calls across the SDK vs only planets/stations that
+        # opt IN via SetHailable(TRUE)). Overrides ObjectClass's default of
+        # non-hailable set by super().__init__(). This is why E1M2's "Facility"
+        # (a FedOutpost ship) is hailable without any explicit call.
+        self._hailable = True
         self._ai = None
         self._net_type: int = 0
         # Subsystem slots — None until populated by hardpoint loader.
@@ -611,6 +619,23 @@ class ShipClass(DamageableObject):
         truthy; None keeps the non-cloak path active for ships with no
         CloakingSubsystemProperty in their hardpoint."""
         return self._cloaking_subsystem
+
+    def IsCloaked(self) -> int:
+        """1 if the ship's cloak has fully engaged, else 0. Ships with no
+        cloaking subsystem are never cloaked. SDK ShipClass.IsCloaked.
+
+        Must be a real 0/1, not a truthy __getattr__ _Stub: HelmMenuHandlers.
+        ShipIdentified gates hail-button creation on `not pShip.IsCloaked()`, so
+        a stub suppressed the Hail button for every non-cloaking ship/station —
+        e.g. E1M2's "Haven Facility" never appeared."""
+        cloak = self._cloaking_subsystem
+        return 1 if (cloak is not None and cloak.IsCloaked()) else 0
+
+    def IsTryingToCloak(self) -> int:
+        """1 while the ship's cloak is mid-transition (cloaking), else 0.
+        SDK ShipClass.IsTryingToCloak."""
+        cloak = self._cloaking_subsystem
+        return 1 if (cloak is not None and cloak.IsTryingToCloak()) else 0
     def SetCloakingSubsystem(self, s) -> None: self._cloaking_subsystem = self._attach_subsystem(s)
     def GetHull(self):                            return self._hull
     def SetHull(self, h) -> None:                 self._hull = h

@@ -27,6 +27,14 @@ class ObjectClass(TGEventHandlerObject):
     def __init__(self):
         super().__init__()
         self._name: str = ""
+        # Localized display name, distinct from the internal _name. BC keeps
+        # these separate: _name is the identity key (set membership / group
+        # AddName / mission GetName() checks / target selection) while the
+        # display name is the localized label shown in the Hail menu and target
+        # list. MUST NOT alias _name — writing the display name onto _name
+        # reclassifies the object (breaks friendly/enemy grouping and target
+        # selection) and breaks mission logic that matches GetName().
+        self._display_name: str = ""
         self._script: str = ""
         self._radius: float = 0.0
         self._scale: float = 1.0
@@ -39,6 +47,10 @@ class ObjectClass(TGEventHandlerObject):
         # Eager init so the host's __dict__-based read never sees a TGObject
         # __getattr__ _Stub (which is truthy and would delete everything).
         self._delete_me: bool = False
+        # Whether the bridge "Hail" menu offers this object as a target. Eager
+        # init (not a __getattr__ _Stub) so IsHailable / the change-guard read
+        # a real bool. See SetHailable for the ET_HAILABLE_CHANGE broadcast.
+        self._hailable: bool = False
 
     # ── Identity ──────────────────────────────────────────────────────────────
 
@@ -73,10 +85,38 @@ class ObjectClass(TGEventHandlerObject):
         self._hidden = bool(hidden)
 
     def GetDisplayName(self) -> str:
-        return self._name
+        # Falls back to the internal name when no display name has been set —
+        # matching Appc, where an object's display name defaults to its name.
+        return self._display_name if self._display_name else self._name
 
     def SetDisplayName(self, name: str) -> None:
-        self._name = name
+        self._display_name = str(name)
+
+    # ── Hailable state ────────────────────────────────────────────────────────
+    # BC's C++ ObjectClass::SetHailable fires ET_HAILABLE_CHANGE, which the SDK
+    # bridge relies on: Bridge/HelmMenuHandlers.HailableChange adds (bool=1) or
+    # removes (bool=0) the object's per-target button under the Helm "Hail"
+    # menu. Mission scripts toggle this at runtime (E1M2 FirstHavenHail makes
+    # the Haven colony hailable only after the asteroids are cleared), so the
+    # broadcast — not just the flag — is what makes the hail button appear.
+    def SetHailable(self, value) -> None:
+        new_value = bool(value)
+        if new_value == self._hailable:
+            return
+        self._hailable = new_value
+        try:
+            import App
+            evt = App.TGBoolEvent_Create()
+            evt.SetEventType(App.ET_HAILABLE_CHANGE)
+            evt.SetSource(self)
+            evt.SetBool(1 if new_value else 0)
+            App.g_kEventManager.AddEvent(evt)
+        except Exception as _e:
+            import engine.dev_mode as dev_mode
+            dev_mode.log_swallowed("SetHailable broadcast", _e)
+
+    def IsHailable(self) -> int:
+        return 1 if self._hailable else 0
 
     def ReplaceTexture(self, new_texture_path: str, old_texture_name: str) -> None:
         """BC ObjectClass::ReplaceTexture — swap a texture on this object's model.

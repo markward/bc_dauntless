@@ -181,8 +181,12 @@ def _resolve_handler(qualified_name: str):
 class TGEventHandlerObject(TGObject):
     def __init__(self):
         super().__init__()
-        # {event_type: [qualified_handler_name, ...]}
+        # {event_type: [qualified_handler_name, ...]}  (registration order)
         self._handlers: dict[int, list[str]] = {}
+        # In-flight dispatch frames (one per nested ProcessEvent on this
+        # object) so CallNextHandler can advance the handler chain. Eager init
+        # so TGObject.__getattr__ never vends a truthy _Stub for it.
+        self._dispatch_stack: list = []
 
     def AddPythonFuncHandlerForInstance(self, event_type: int, qualified_name: str) -> None:
         self._handlers.setdefault(event_type, []).append(qualified_name)
@@ -196,10 +200,52 @@ class TGEventHandlerObject(TGObject):
         self._handlers.clear()
 
     def ProcessEvent(self, event: TGEvent) -> None:
-        for name in self._handlers.get(event.GetEventType(), []):
-            fn = _resolve_handler(name)
-            if fn is not None:
-                fn(self, event)
+        """Dispatch through this object's instance-handler chain, BC-faithfully.
+
+        BC's handler chain is LIFO: the MOST-RECENTLY-registered handler runs
+        first, and control passes to the next (older) handler ONLY when a
+        handler calls ``pObject.CallNextHandler(pEvent)``. A handler that
+        returns without calling it STOPS the chain. This is load-bearing: on
+        the Helm menu both HelmMenuHandlers.Hail (registered first, at bridge
+        load) and E1M2.HailHandler (registered later, at mission init) handle
+        ET_HAIL. HailHandler runs first, handles "Haven"/"Facility", and
+        returns without CallNextHandler — so the generic Hail "no response"
+        never fires and the mission's Soams sequence runs cleanly. Running all
+        handlers forward (the old behaviour) let both fire, so hailing the
+        colony played "no response" and stepped on the mission dialogue."""
+        names = self._handlers.get(event.GetEventType(), [])
+        if not names:
+            return
+        frame = [list(reversed(names)), 0, event]   # [chain, next_index, event]
+        self._dispatch_stack.append(frame)
+        try:
+            self._invoke_next_handler(frame)
+        finally:
+            self._dispatch_stack.pop()
+
+    def _invoke_next_handler(self, frame) -> None:
+        chain, index, event = frame[0], frame[1], frame[2]
+        if index >= len(chain):
+            return
+        frame[1] = index + 1
+        fn = _resolve_handler(chain[index])
+        if fn is None:
+            # Unresolvable handler (module/func gone) — skip to the next rather
+            # than silently stalling the chain (which would drop the default).
+            self._invoke_next_handler(frame)
+            return
+        # Exceptions propagate: the gameloop harness relies on a crashing
+        # handler surfacing as a loop failure (test_loop_fail_bad_timer), and
+        # button-click dispatch swallows+logs at SendActivationEvent.
+        fn(self, event)
+
+    def CallNextHandler(self, event=None) -> None:
+        """Pass control to the next (older) handler in the chain currently
+        dispatching on this object. No-op outside a dispatch — SDK handlers
+        call it defensively, and it's the chain terminator when the current
+        handler is the oldest."""
+        if self._dispatch_stack:
+            self._invoke_next_handler(self._dispatch_stack[-1])
 
 
 class TGPythonInstanceWrapper(TGEventHandlerObject):

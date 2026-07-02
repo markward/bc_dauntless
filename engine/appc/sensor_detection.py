@@ -36,6 +36,27 @@ def reset_concealment_state():
     _broken.clear()
 
 
+def _cloak_subsystem(target):
+    """The target's cloaking subsystem, or None if it has none.
+
+    Resolves ``GetCloakingSubsystem`` via the target's *class*, not the
+    instance: ``TGObject.__getattr__`` vends a truthy ``_Stub`` for any method
+    a class doesn't define, so a plain ``target.GetCloakingSubsystem()`` on a
+    non-ship (planet, station) returns a stub whose ``.IsCloaked()`` is also
+    truthy — which would wrongly treat every planet as cloaked and hide it from
+    the sensors. Only ShipClass defines the real method; everything else has no
+    cloak.
+    """
+    getter = getattr(type(target), "GetCloakingSubsystem", None)
+    if getter is None:
+        return None
+    try:
+        cloak = getter(target)
+    except Exception:
+        return None
+    return cloak if cloak is not None else None
+
+
 def _game_time() -> float:
     """Current game time for drift_t sampling; falls back to 0.0 in tests."""
     try:
@@ -105,8 +126,7 @@ def is_hidden_by_cloak(target) -> bool:
     the instant it finishes cloaking. Gate on IsCloaked() (fully hidden), not
     IsTryingToCloak() — a mid-cloak ship stays visible until the fade
     completes, matching can_detect and the SDK SelectTarget.FindGoodTarget."""
-    cloak = (target.GetCloakingSubsystem()
-             if hasattr(target, "GetCloakingSubsystem") else None)
+    cloak = _cloak_subsystem(target)
     return cloak is not None and bool(cloak.IsCloaked())
 
 
@@ -123,8 +143,7 @@ def can_detect(observer, target) -> bool:
     # A fully cloaked target is undetectable — the SDK SelectTarget drops a
     # contact on ET_CLOAK_COMPLETED. Mid-cloak (CLOAKING) stays visible until
     # the transition finishes, so gate on IsCloaked(), not IsTryingToCloak().
-    cloak = (target.GetCloakingSubsystem()
-             if hasattr(target, "GetCloakingSubsystem") else None)
+    cloak = _cloak_subsystem(target)
     if cloak is not None and cloak.IsCloaked():
         return False
 
