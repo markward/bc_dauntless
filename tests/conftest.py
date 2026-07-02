@@ -659,6 +659,21 @@ def _reset_leakable_engine_globals():
         _ids._registry.clear()
     except Exception:
         pass
+    # Pending timers on the game-time and wall-clock timer managers. A test that
+    # loads a mission and plays a TGSequence (e.g. E1M2's ScanComplete dialogue,
+    # which schedules deferred EnableScanMenu / clear-flag actions) leaves live
+    # timers in g_kTimerManager. The next test that advances time (tick) fires
+    # them against now-reset singletons — e.g. a leaked EnableScanMenu hits a
+    # rebuilt TacticalControlWindow whose FindMenu returns None. Nothing should
+    # inherit a prior test's pending timers; tests set up and pump their own
+    # within one test, so clearing between tests is safe.
+    for _mgr_name in ("g_kTimerManager", "g_kRealtimeTimerManager"):
+        try:
+            _mgr = getattr(App, _mgr_name, None)
+            if _mgr is not None and hasattr(_mgr, "_timers"):
+                _mgr._timers.clear()
+        except Exception:
+            pass
     # UI singletons rebuilt per bridge load.
     try:
         from engine.sdk_ui.widgets import ship_display

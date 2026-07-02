@@ -227,7 +227,10 @@ class TGSequence(TGAction):
         """Add a parallel/explicit-dependency step. With no extra args the
         action is a root (fires at sequence start)."""
         dependency, delay = _parse_extra(extra)
-        self._steps.append(_Step(action, dependency, delay))
+        step = _Step(action, dependency, delay)
+        self._steps.append(step)
+        if self._playing:
+            self._attach_midflight(step)
 
     def AppendAction(self, action: TGAction, *extra) -> None:
         """Append a step chained to the previously added action. An explicit
@@ -235,7 +238,26 @@ class TGSequence(TGAction):
         dependency, delay = _parse_extra(extra)
         if dependency is None and self._steps:
             dependency = self._steps[-1].action
-        self._steps.append(_Step(action, dependency, delay))
+        step = _Step(action, dependency, delay)
+        self._steps.append(step)
+        if self._playing:
+            self._attach_midflight(step)
+
+    def _attach_midflight(self, step: "_Step") -> None:
+        """Wire up a step appended AFTER the sequence started playing.
+
+        MissionLib.QueueActionToPlay appends onto the currently-playing master
+        sequence, so these late steps must be integrated live: subscribe to the
+        new action's completion (otherwise the master never learns it finished —
+        and any step chained onto it never starts), and begin it now if its
+        dependency has already completed (or it's a root). If the dependency is
+        still pending, the normal _on_dependency_complete pass will begin it once
+        that dependency finishes (it re-scans _steps, which now includes this
+        one)."""
+        self._subscribe_completion(step.action)
+        dep = step.dependency
+        if dep is None or id(dep) in self._completed_actions:
+            self._begin_step(step)
 
     def GetNumActions(self) -> int:
         return len(self._steps)

@@ -27,19 +27,70 @@ from engine.appc.sensor_detection import can_detect
 import engine.dev_mode as dev_mode
 
 
+def _identify_one(sensors, obj) -> bool:
+    """Identify a single contact to *sensors*: localize its display name, mark
+    it known, and broadcast ``ET_SENSORS_SHIP_IDENTIFIED`` once.
+
+    Shared by the passive per-tick sweep (``identify_contacts``), the active
+    area scan (``identify_all_in_set`` / ``SensorSubsystem.ScanAllObjects``) and
+    the single-target scan (``SensorSubsystem.IdentifyObject``). De-dupes on
+    ``IsObjectKnown`` so the three paths can never double-fire for one contact.
+
+    Returns True if *obj* was newly identified, False if it was already known,
+    None/invalid, or *sensors* is None."""
+    if sensors is None or obj is None:
+        return False
+    try:
+        if sensors.IsObjectKnown(obj):
+            return False
+    except Exception:
+        return False
+
+    # Localize the contact's display name before it gets a Hail button / target
+    # row (both read GetDisplayName). Covers objects created after the
+    # mission-load batch pass (e.g. a system set that loads on warp-in).
+    try:
+        from engine.appc import display_names
+        display_names.apply_display_name(obj)
+    except Exception as _e:
+        dev_mode.log_swallowed("identify display-name", _e)
+
+    sensors.AddKnownObject(obj)
+    try:
+        evt = App.TGEvent_Create()
+        evt.SetEventType(App.ET_SENSORS_SHIP_IDENTIFIED)
+        # The SDK's ShipIdentified reads pEvent.GetDestination() as the
+        # identified object.
+        evt.SetDestination(obj)
+        App.g_kEventManager.AddEvent(evt)
+    except Exception as _e:
+        dev_mode.log_swallowed("sensor identify broadcast", _e)
+    return True
+
+
+def _resolve_sensors_and_set(player):
+    """Return ``(sensors, pSet)`` for *player*, or ``(None, None)`` if either the
+    sensor subsystem or a set with GetObjectList is unavailable. Shared by the
+    passive sweep and the active area scan."""
+    if player is None:
+        return None, None
+    sensors = (player.GetSensorSubsystem()
+               if hasattr(player, "GetSensorSubsystem") else None)
+    if sensors is None:
+        return None, None
+    pSet = (player.GetContainingSet()
+            if hasattr(player, "GetContainingSet") else None)
+    if pSet is None or not hasattr(pSet, "GetObjectList"):
+        return None, None
+    return sensors, pSet
+
+
 def identify_contacts(player) -> None:
     """Identify newly-detectable contacts in *player*'s set to the player's
     sensors, firing ET_SENSORS_SHIP_IDENTIFIED for each. Cheap on steady state:
     only objects not already known and inside sensor range do any work."""
-    if player is None:
-        return
-    sensors = (player.GetSensorSubsystem()
-               if hasattr(player, "GetSensorSubsystem") else None)
+    sensors, pSet = _resolve_sensors_and_set(player)
     if sensors is None:
-        return
-    pSet = (player.GetContainingSet()
-            if hasattr(player, "GetContainingSet") else None)
-    if pSet is None or not hasattr(pSet, "GetObjectList"):
         return
 
     try:
@@ -80,22 +131,61 @@ def identify_contacts(player) -> None:
         if not detectable:
             continue
 
-        # Localize the contact's display name before it gets a Hail button /
-        # target row (both read GetDisplayName). Covers objects created after
-        # the mission-load batch pass (e.g. a system set that loads on warp-in).
-        try:
-            from engine.appc import display_names
-            display_names.apply_display_name(obj)
-        except Exception as _e:
-            dev_mode.log_swallowed("identify display-name", _e)
+        _identify_one(sensors, obj)
 
-        sensors.AddKnownObject(obj)
+
+def identify_all_in_set(player) -> int:
+    """Active area scan: identify EVERY ship/station/planet in *player*'s set,
+    ignoring sensor range — an active scan reveals the whole area, which is what
+    distinguishes it from the passive per-tick sweep (``identify_contacts``).
+
+    Reuses the same per-contact core (``_identify_one``), which de-dupes on
+    ``IsObjectKnown``: contacts already identified in-range by the passive sweep
+    are skipped, so the two paths never double-fire; the active scan only *adds*
+    the out-of-range contacts. Returns the count newly identified.
+
+    Drives ``SensorSubsystem.ScanAllObjects`` (Science menu "Scan Area" and
+    E1M2's ScanComplete)."""
+    sensors, pSet = _resolve_sensors_and_set(player)
+    if sensors is None:
+        return 0
+
+    try:
+        player_id = player.GetObjID()
+    except Exception:
+        player_id = None
+
+    # Same contact filter as the passive sweep — ships/stations + celestial
+    # bodies only, never lights / placement markers / grids.
+    from engine.appc.ships import ShipClass
+    from engine.appc.planet import Planet
+
+    count = 0
+    for obj in pSet.GetObjectList():
+        if obj is None or obj is player:
+            continue
+        if not isinstance(obj, (ShipClass, Planet)):
+            continue
         try:
-            evt = App.TGEvent_Create()
-            evt.SetEventType(App.ET_SENSORS_SHIP_IDENTIFIED)
-            # The SDK's ShipIdentified reads pEvent.GetDestination() as the
-            # identified object.
-            evt.SetDestination(obj)
-            App.g_kEventManager.AddEvent(evt)
-        except Exception as _e:
-            dev_mode.log_swallowed("sensor identify broadcast", _e)
+            if player_id is not None and obj.GetObjID() == player_id:
+                continue
+        except Exception:
+            continue
+        if _identify_one(sensors, obj):
+            count += 1
+    return count
+
+
+def ScanAllObjectsAction(pAction, iShipID) -> int:
+    """TGScriptAction entry played by the ``ScanAllObjects`` sequence.
+
+    Re-looks up the scanning ship by id (SDK idiom, matching
+    ``Actions.ShipScriptActions.ScanObject``) and identifies every contact in
+    its set. Returns 0 so ``TGScriptAction.Play`` auto-completes the action."""
+    try:
+        ship = App.TGObject_GetTGObjectPtr(iShipID)
+        if ship is not None:
+            identify_all_in_set(ship)
+    except Exception as _e:
+        dev_mode.log_swallowed("ScanAllObjectsAction", _e)
+    return 0

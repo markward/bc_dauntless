@@ -21,7 +21,7 @@ class STSubsystemMenu(STMenu):
     """
 
     def __init__(self, ship, label: str = ""):
-        super().__init__(label or (ship.GetName() if ship else ""))
+        super().__init__(label or (ship.GetDisplayName() if ship else ""))
         self._ship = ship
         self._affiliation: str = "UNKNOWN"
 
@@ -150,7 +150,12 @@ class STTargetMenu(STTopLevelMenu):
             return
         row = self.GetObjectEntry(ship)
         if row is None:
-            row = STSubsystemMenu(ship, ship.GetName())
+            # Target-list label uses the localized display name ("USS Sovereign",
+            # "Galor"), not the raw internal identifier ("player",
+            # "Cardassian_Galor1"). The hail list already does this; the target
+            # list regressed to identifiers once sensor-identification began
+            # populating it. Affiliation/group lookups still key off GetName().
+            row = STSubsystemMenu(ship, ship.GetDisplayName())
             self.AddChild(row)
         row.KillChildren()
         kIter = ship.StartGetSubsystemMatch(_App.CT_SHIP_SUBSYSTEM)

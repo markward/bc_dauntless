@@ -22,22 +22,6 @@ from engine.ui.panel import Panel
 _logger = logging.getLogger(__name__)
 
 
-def _is_dialogue_button(widget) -> bool:
-    """True when a menu button's activation produces its own crew dialogue —
-    Hail (Kiska "Hailing frequencies open" + the mission comm) or Communicate.
-    For these the generic per-click acknowledgement must be suppressed so it
-    doesn't preempt the single-channel crew speech. Reads _event via __dict__
-    to avoid TGObject.__getattr__ vending a truthy stub."""
-    evt = widget.__dict__.get("_event")
-    if evt is None:
-        return False
-    try:
-        import App
-        return evt.GetEventType() in (App.ET_HAIL, App.ET_COMMUNICATE)
-    except Exception:
-        return False
-
-
 class CrewMenuPanel(Panel):
     def __init__(self, on_set_course=None, on_warp_engage=None):
         super().__init__()
@@ -169,8 +153,16 @@ class CrewMenuPanel(Panel):
             root = self._root_of(wid)
             if isinstance(widget, STButton):
                 # Original engine order: per-button activation event, then
-                # ET_ST_BUTTON_CLICKED at the owning top-level menu (the SDK
-                # registers BridgeMenus.ButtonClicked there for click sounds).
+                # ET_ST_BUTTON_CLICKED at the owning top-level menu, where the
+                # SDK's Bridge.BridgeMenus.ButtonClicked turns the officer back
+                # to face front. That handler speaks NOTHING — its per-officer
+                # SayLine acks are commented out in stock BC (BridgeMenus.py:84).
+                # So we fire no generic acknowledgement on a click either;
+                # officers greet only when a menu is opened (see toggle_menu).
+                # Buttons that should speak do so through their own SDK handlers
+                # (Hail -> Kiska's line, alert -> XO, Scan Area -> Miguel's
+                # ScanComplete). Firing a generic ack here doubled up with — and,
+                # being single-channel, preempted — that real dialogue.
                 widget.SendActivationEvent()
                 if root is not None:
                     import App
@@ -179,14 +171,6 @@ class CrewMenuPanel(Panel):
                     clicked.SetDestination(root)
                     clicked.SetSource(widget)
                     App.g_kEventManager.AddEvent(clicked)
-                    # Suppress the generic "aye sir" acknowledgement for buttons
-                    # that produce their OWN crew dialogue — Hail (Kiska's
-                    # "Hailing frequencies open" + the mission's Soams comm) and
-                    # Communicate. Crew speech is single-channel, so the ack
-                    # (fired right after SendActivationEvent) would preempt that
-                    # dialogue and the player would hear only "aye sir".
-                    if not _is_dialogue_button(widget):
-                        self._acknowledge(root)
             # Menu nodes open/close client-side in CEF; no SDK event needed.
             return True
         return False

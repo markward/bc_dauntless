@@ -80,7 +80,7 @@ def test_update_ignores_subsystems_that_are_off():
 
     sensor = ship.GetSensorSubsystem()
     sensor.SetNormalPowerPerSecond(200.0)
-    # Default off — do not TurnOn.
+    sensor.TurnOff()   # sensors default ON; force off to exercise the skip path
 
     ps.Update(1.0)
     assert ps.GetAvailablePower() == 1000.0
