@@ -124,40 +124,43 @@ class _FixPy2Sort(ast.NodeTransformer):
 
 
 class _FixDictKeysIter(ast.NodeTransformer):
-    """Wrap dict.keys()/items()/values() in list() when used as a for-loop iter.
+    """Wrap every no-arg dict.keys()/items()/values() call in list().
 
-    Python 2 `dict.keys()` returned a list — safe to iterate while
-    mutating the dict via `del d[key]`. Python 3 returns a view that
-    raises RuntimeError on mutation during iteration. SDK code uses the
-    Py2 idiom in several modules (e.g. FireScript.ChooseTargetSubsystem,
-    OutputEventTypes, TimingGraph). Wrap the call in list() so the
-    iteration takes a snapshot before any mutation.
+    Python 2 `dict.keys()` returned a **list**; Python 3 returns a view.
+    SDK code relies on the list semantics two ways:
 
-    Only rewrites argument-free .keys()/.items()/.values() calls that
-    appear directly as the iter of a `for` loop — leaves all other
-    contexts untouched.
+    * iterating while mutating the dict via `del d[key]` (Py3 view raises
+      RuntimeError) — FireScript.ChooseTargetSubsystem, OutputEventTypes,
+      TimingGraph.
+    * calling list methods on the result — `lAsteroids = d.keys();
+      lAsteroids.sort()` (E1M2.CreateMovingAsteroids), `d.keys()[0]`,
+      `.append`, etc. (Py3 view has no `.sort()` / `__getitem__`).
+
+    Wrapping the *call itself* (rather than only for-loop iterables) covers
+    both patterns. This subsumes the older for-loop-only rewrite: a loop
+    iterable `d.keys()` becomes `list(d.keys())` here, preserving the
+    snapshot-before-mutation fidelity. Keep in sync with
+    tools/mission_harness.py:_FixPy2DictView (the runtime-host copy).
     """
 
     _DICT_VIEW_METHODS = frozenset({"keys", "items", "values"})
 
-    def visit_For(self, node):
+    def visit_Call(self, node):
         self.generic_visit(node)
-        iter_node = node.iter
         if (
-            isinstance(iter_node, ast.Call)
-            and isinstance(iter_node.func, ast.Attribute)
-            and iter_node.func.attr in self._DICT_VIEW_METHODS
-            and not iter_node.args
-            and not iter_node.keywords
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr in self._DICT_VIEW_METHODS
+            and not node.args
+            and not node.keywords
         ):
             wrapped = ast.Call(
                 func=ast.Name(id="list", ctx=ast.Load()),
-                args=[iter_node],
+                args=[node],
                 keywords=[],
             )
-            ast.copy_location(wrapped, iter_node)
+            ast.copy_location(wrapped, node)
             ast.fix_missing_locations(wrapped)
-            node.iter = wrapped
+            return wrapped
         return node
 
 

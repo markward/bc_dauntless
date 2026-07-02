@@ -490,6 +490,25 @@ class ShipClass(DamageableObject):
     def GetDeathExplosionSound(self) -> str:            return self._death_explosion_sound
     def SetDeathExplosionSound(self, v) -> None:        self._death_explosion_sound = str(v)
 
+    def GetShipProperty(self):
+        """Return this ship's ShipProperty from its property set, or None.
+
+        SWIG surface App.py:5418. Absent here, ``GetShipProperty()`` fell
+        through TGObject.__getattr__ to a truthy _Stub, so
+        Effects.GetDeathExplosionSound() -> getattr(mod, _Stub) raised
+        ``TypeError: attribute name must be string, not '_Stub'`` inside the
+        AsteroidExploding death script (swallowed by RunDeathScript). Mirrors
+        the ShipProperty selection in the SetupProperties copy loop below.
+        """
+        from engine.appc.properties import ShipProperty
+        ps = self.GetPropertySet()
+        if ps is None:
+            return None
+        for prop in ps.GetPropertyList():
+            if isinstance(prop, ShipProperty):
+                return prop
+        return None
+
     # ── Alert level ──────────────────────────────────────────────────────────
     # SDK callers: MissionLib.py:605 (reset to GREEN at mission start),
     # BridgeHandlers.py:1442 (bridge crew behavior keys off this).
