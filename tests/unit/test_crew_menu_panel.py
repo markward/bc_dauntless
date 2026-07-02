@@ -344,9 +344,11 @@ def test_closing_menu_fires_no_acknowledgement():
     assert sub._snapshot(now=0.0) is None
 
 
-def test_clicking_command_button_fires_acknowledgement():
-    # Order-issue ack: clicking a command (leaf) button speaks the owning
-    # officer's acknowledgement via the root menu's label.
+def test_clicking_command_button_fires_no_acknowledgement():
+    # BC-faithful: clicking a bridge-menu button speaks nothing. The SDK's
+    # BridgeMenus.ButtonClicked only turns the officer back (its SayLine acks
+    # are commented out); officers greet only when a menu is opened. Buttons
+    # that should speak do so via their own SDK handlers.
     from engine.appc import top_window, crew_speech
     top_window.reset_for_tests()
     crew_speech.bus().reset()
@@ -355,6 +357,4 @@ def test_clicking_command_button_fires_acknowledgement():
     panel.render_payload()                          # builds the widget-id map
     panel.dispatch_event(f"click:{ensure_widget_id(btn)}")
     sub = App.TopWindow_GetTopWindow().FindMainWindow(App.MWT_SUBTITLE)
-    snap = sub._snapshot(now=0.0)
-    assert snap is not None
-    assert snap["speaker"] == "Helm"
+    assert sub._snapshot(now=0.0) is None

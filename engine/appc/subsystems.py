@@ -809,6 +809,15 @@ class HullSubsystem(ShipSubsystem):
 class SensorSubsystem(PoweredSubsystem):
     def __init__(self, name: str = ""):
         super().__init__(name)
+        # Sensors are ON during normal operation — unlike weapons (powered only
+        # at RED alert) a functioning sensor array is always running; BC only
+        # reports IsOn()==0 when the subsystem is destroyed/disabled. The base
+        # PoweredSubsystem defaults _is_on False (right for weapons), so override
+        # it here. Without this, SDK gates that check pSensors.IsOn() short-
+        # circuit: e.g. E1M2's ScanHandler bails to the generic "Scan Area"
+        # acknowledgement instead of running the mission scan (nothing in the
+        # engine's ship-power path ever turned sensors on).
+        self._is_on: bool = True
         self._base_sensor_range: float = 0.0
         self._max_probes: int = 0
         # Objects whose existence is known to the sensor system.
@@ -845,6 +854,41 @@ class SensorSubsystem(PoweredSubsystem):
             self._known_objects.discard(obj.GetObjID())
         except Exception as _e:
             dev_mode.log_swallowed("RemoveKnownObject", _e)
+
+    def ScanAllObjects(self):
+        """Active area scan (Science menu "Scan Area").
+
+        The SDK's ``ScienceMenuHandlers.Scan`` and ``E1M2.ScanComplete`` do
+        ``pSeq = pSensors.ScanAllObjects(); pSeq.Play()`` — E1M2 with no None
+        guard — so this must ALWAYS return a real, playable ``TGSequence``.
+
+        The sequence carries a single script action that, when played, identifies
+        every contact in the scanning ship's set (see
+        ``sensor_identification.identify_all_in_set``). Deferring the work into
+        the played action matches the SDK contract that playing the sequence *is*
+        the scan; it also de-dupes against the passive per-tick sweep."""
+        import App
+        seq = App.TGSequence_Create()
+        ship = self.GetParentShip()
+        if ship is None and hasattr(self, "_climb_to_ship"):
+            ship = self._climb_to_ship()
+        if ship is not None:
+            try:
+                action = App.TGScriptAction_Create(
+                    "engine.appc.sensor_identification",
+                    "ScanAllObjectsAction", ship.GetObjID())
+                seq.AddAction(action)
+            except Exception as _e:
+                dev_mode.log_swallowed("ScanAllObjects build", _e)
+        return seq
+
+    def IdentifyObject(self, pTarget) -> None:
+        """Single-target scan (Science menu "Scan Object" via
+        ``Actions.ShipScriptActions.ScanObject``): mark *pTarget* known and
+        broadcast ``ET_SENSORS_SHIP_IDENTIFIED`` once. De-duped, so re-scanning
+        an already-known contact is a no-op."""
+        from engine.appc import sensor_identification
+        sensor_identification._identify_one(self, pTarget)
 
 
 class ImpulseEngineSubsystem(PoweredSubsystem):
