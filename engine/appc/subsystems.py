@@ -1510,14 +1510,26 @@ class CloakingSubsystem(PoweredSubsystem):
 
     def _fire(self, event_attr: str) -> None:
         """Broadcast a cloak event (``ET_CLOAK_BEGINNING`` / ``ET_CLOAK_COMPLETED``
-        / ``ET_DECLOAK_BEGINNING`` / ``ET_DECLOAK_COMPLETED``) with this subsystem
-        as the source — mirrors ship_death._broadcast_destroyed.  Raise-safe so a
-        missing event manager never breaks the state machine."""
+        / ``ET_DECLOAK_BEGINNING`` / ``ET_DECLOAK_COMPLETED``) with the owning
+        ship as both source AND destination — mirrors
+        ship_death._broadcast_destroyed.  Raise-safe so a missing event manager
+        never breaks the state machine.
+
+        The destination MUST be the ship: SelectTarget registers its cloak-drop
+        handler with ``AddBroadcastPythonMethodHandler(ET_CLOAK_COMPLETED, ...,
+        pNewTarget)`` (Preprocessors.py), and the event manager only fires that
+        handler when ``event.GetDestination() is pNewTarget`` (the ship). A
+        subsystem-sourced event with no destination silently skips the handler,
+        so the AI never drops a target that cloaks. Falls back to ``self`` for a
+        parentless subsystem (unit fixtures) to preserve the old source."""
         try:
             import App
+            ship = self.GetParentShip() if hasattr(self, "GetParentShip") else None
+            owner = ship if ship is not None else self
             evt = App.TGEvent_Create()
             evt.SetEventType(getattr(App, event_attr))
-            evt.SetSource(self)
+            evt.SetSource(owner)
+            evt.SetDestination(owner)
             App.g_kEventManager.AddEvent(evt)
         except Exception as _e:
             dev_mode.log_swallowed("cloak event broadcast", _e)
