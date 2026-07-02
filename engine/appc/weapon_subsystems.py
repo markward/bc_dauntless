@@ -525,6 +525,34 @@ def _cloak_blocks_fire(weapon_system) -> bool:
     return cloak is not None and bool(cloak.IsTryingToCloak())
 
 
+def _target_undetectable(weapon_system, target) -> bool:
+    """True when the firing ship cannot detect *target* (fully cloaked, nebula
+    lock-break, or degraded/offline sensors).
+
+    Mirrors the authoritative per-tick chokepoint in host_loop._advance_combat
+    (``can_detect(ship, target)`` → ``bank.StopFiring()``) at the *fire-
+    initiation* points, so the warm-up SFX never starts on a shot the damage
+    tick would immediately drop. Without this gate, an AI (or held trigger)
+    re-firing every tick at a cloaked target produces a start/stop/restart SFX
+    loop — the "ship's horn" bug.
+
+    Raise-safe and cheap: a positionless / sensorless fixture reads back the
+    fallback sensor range from ``can_detect`` and is therefore detectable, so
+    non-cloak tests are unaffected. A weapon with no resolvable parent ship is
+    treated as detectable (no gate)."""
+    if target is None:
+        return False
+    ship = (weapon_system.GetParentShip()
+            if hasattr(weapon_system, "GetParentShip") else None)
+    if ship is None:
+        return False
+    try:
+        from engine.appc.sensor_detection import can_detect
+        return not can_detect(ship, target)
+    except Exception:
+        return False
+
+
 class WeaponSystem(PoweredSubsystem):
     """Weapon system — has firing state and an optional target.
 
@@ -606,6 +634,10 @@ class WeaponSystem(PoweredSubsystem):
             return
         # Cloak gate: a cloaked / cloaking ship cannot fire (BC rule).
         if _cloak_blocks_fire(self):
+            return
+        # Detectability gate: never fire (nor play warm-up SFX) at a target the
+        # ship can't detect — cloaked, nebula-hidden, or out of sensor range.
+        if _target_undetectable(self, target):
             return
         n = self.GetNumWeapons()
         if n == 0:
@@ -1125,6 +1157,10 @@ class _HeldFireWeaponSystem(WeaponSystem):
         # Cloak gate: a cloaked / cloaking ship cannot fire (BC rule).
         if _cloak_blocks_fire(self):
             return
+        # Detectability gate: don't start a held burst (nor its warm-up SFX) at
+        # a target the ship can't detect. See _target_undetectable.
+        if _target_undetectable(self, target):
+            return
         ship = self.GetParentShip()
         if not self._can_engage(ship, target):
             return
@@ -1158,6 +1194,13 @@ class _HeldFireWeaponSystem(WeaponSystem):
         ship = self.GetParentShip()
         target = self._held_target
         if hasattr(target, "IsDead") and target.IsDead():
+            self.StopFiring()
+            return
+        # Detectability gate: the target cloaked / slipped into a nebula / left
+        # sensor range mid-burst — stop the held state entirely so the warm-up
+        # SFX doesn't restart every tick (the "ship's horn" loop). Re-engaging
+        # requires a fresh trigger (or a fresh AI StartFiring once detectable).
+        if _target_undetectable(self, target):
             self.StopFiring()
             return
         if not self._can_engage(ship, target):
