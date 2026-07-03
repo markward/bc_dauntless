@@ -168,16 +168,43 @@ class STTargetMenu(STTopLevelMenu):
     def _add_subsystem_row(self, parent_row, sub):
         """Add a row for `sub` under `parent_row`, then recurse into its
         child subsystems so aggregators (Phasers, Impulse Engines, Tractors,
-        ...) become expandable parents of their leaves. Mirrors the canonical
-        SDK MissionLib.HideSubsystem recursion pattern."""
-        label = sub.GetName() if hasattr(sub, "GetName") else ""
-        sub_row = STMenu(label)
-        parent_row.AddChild(sub_row)
+        ...) become expandable parents of their leaves.
+
+        Filters like BC's native RebuildShipMenu, mirroring
+        AI/Preprocessors.GetTargetableSubsystems:
+
+        * The **hull** is never a subsystem row — it is the ship-level bar.
+          (An asteroid's hull property is Targetable(1), so it must be
+          excluded by type, not by the targetable flag.)
+        * A **targetable** subsystem gets a row; its children recurse under it.
+        * A **non-targetable** subsystem gets NO row, but its children still
+          recurse at the PARENT level — so a targetable weapon bank under a
+          non-targetable "Torpedoes"/"Phasers" group is promoted, while an
+          inert asteroid's Shield Generator / Power Plant (Targetable(0), no
+          children) simply vanishes.
+        """
+        from engine.appc.subsystems import HullSubsystem
+        if isinstance(sub, HullSubsystem):
+            return
+        targetable = True
+        if hasattr(sub, "IsTargetable"):
+            try:
+                targetable = bool(sub.IsTargetable())
+            except Exception:
+                targetable = True
         n = sub.GetNumChildSubsystems() if hasattr(sub, "GetNumChildSubsystems") else 0
+        if targetable:
+            label = sub.GetName() if hasattr(sub, "GetName") else ""
+            sub_row = STMenu(label)
+            parent_row.AddChild(sub_row)
+            recurse_into = sub_row
+        else:
+            # Not a row itself, but promote any targetable descendants.
+            recurse_into = parent_row
         for i in range(n):
             child = sub.GetChildSubsystem(i)
             if child is not None:
-                self._add_subsystem_row(sub_row, child)
+                self._add_subsystem_row(recurse_into, child)
 
     def RebuildShipMenus(self, source_set=None) -> None:
         """Bulk rebuild. Never called from SDK Python; included so the

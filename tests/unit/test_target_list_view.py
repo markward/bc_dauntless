@@ -389,6 +389,31 @@ def test_view_payload_shield_pct_is_integer_percent_not_ratio():
         state = json.loads(body)
         row = next(r for r in state["rows"] if r["name"] == "Full-shields")
         assert row["shields"] == 100
+        assert row["has_shields"] is True
+    finally:
+        App.g_kSetManager.DeleteSet("bridge")
+        from engine.core.game import _set_current_game
+        _set_current_game(None)
+
+
+def test_view_payload_flags_shieldless_target():
+    """A ship whose shield faces all have MaxShields==0 (e.g. an asteroid)
+    reports has_shields=False so the view can drop the shield bar, even
+    though GetShieldPercentage() returns the AI's 'not a factor' 1.0."""
+    from engine.ui.target_list_view import TargetListView
+
+    App._reset_target_menu_singleton()
+    target_menu = App.STTargetMenu_CreateW("Targets")
+    game, player, mission = _setup_game_with_player()
+    try:
+        ship = _make_targeted_ship("Inert-rock")  # ShipClass_Create → shields max 0
+        target_menu.RebuildShipMenu(ship)
+
+        view = TargetListView()
+        script = view.render_payload()
+        state = json.loads(script[len("setTargetList("):-2])
+        row = next(r for r in state["rows"] if r["name"] == "Inert-rock")
+        assert row["has_shields"] is False
     finally:
         App.g_kSetManager.DeleteSet("bridge")
         from engine.core.game import _set_current_game
