@@ -488,7 +488,19 @@ void main() {
     vec3 glow_rgb = (hue_deg > 0.0) ? hue_rotate(glow.rgb, radians(hue_deg))
                                     : glow.rgb;
     vec3 self_illum = u_emissive_scale * (u_emissive_color + glow_rgb * glow.a * gf * nac * region_gain);
-    vec3 final_color = lit + self_illum + spec + rim + decal_emissive;
+
+    // Emissive surfaces are light SOURCES, not mirrors. Suppress the reflective
+    // diffuse + specular terms where the glow map emits, so a sunlit glow strip
+    // (nacelle bussards, windows) doesn't stack reflection on top of its own
+    // emission and blow past the bloom / lens-flare threshold — the "why is the
+    // nacelle lensing only when it faces the sun" artefact. Keyed on the glow
+    // map's own LUMINANCE (not glow.a alone: the no-glow-map fallback is opaque
+    // black, alpha=1, so alpha is not a reliable emissive mask). Non-emissive
+    // hull (glow.rgb == 0) yields refl_mask == 1 → byte-identical to before.
+    float emit_lum  = dot(glow.rgb, vec3(0.2126, 0.7152, 0.0722)) * glow.a;
+    float refl_mask = 1.0 - clamp(emit_lum, 0.0, 1.0);
+    vec3 final_color = lit * refl_mask + self_illum + spec * refl_mask
+                     + rim + decal_emissive;
 
     frag_color = vec4(final_color, 1.0);
 }
