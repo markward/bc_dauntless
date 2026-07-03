@@ -334,6 +334,23 @@ class Game(TGObject):
 
     def SetPlayer(self, player) -> None:
         self._player = player
+        # BC fires ET_SET_PLAYER when the current player is assigned so the
+        # HelmMenuHandlers broadcast handlers (OrbitMenuPlayerChanged et al.)
+        # (re)wire per-player state and repopulate the Orbit/Nav menus from the
+        # player's set. By the time the SDK calls SetPlayer the ship is already
+        # in its set (MissionLib.CreatePlayerShip: CreateShip-into-set THEN
+        # SetPlayer), so OrbitMenuPlayerChanged -> SetupOrbitMenuFromSet
+        # (GetPlayerSet()) populates immediately. Guarded: during early boot /
+        # tests the event surface may be absent — repopulation re-runs on the
+        # next SetPlayer / mission swap.
+        if player is not None:
+            try:
+                import App
+                evt = App.TGEvent_Create()
+                evt.SetEventType(App.ET_SET_PLAYER)
+                App.g_kEventManager.AddEvent(evt)
+            except Exception:
+                pass
 
     # SDK uses both spellings; GetCurrentPlayer is the module-exposed form.
     GetCurrentPlayer = GetPlayer

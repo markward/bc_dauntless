@@ -695,6 +695,21 @@ class ConditionEventCreator(TGConditionHandler):
         self._conditions.append(cond)
         cond.AddHandler(self)
 
+    def RemoveCondition(self, cond: TGCondition) -> None:
+        """Detach a previously-added condition. SDK DynamicMusic.RemoveConditions
+        drops mission/player-scoped conditions when the mission or player changes
+        (e.g. StandardCombatMusic.PlayerChanged re-runs on ET_SET_PLAYER). Mirror
+        AddCondition: forget the condition and unhook this handler from it.
+        Tolerant of a condition that was never added / already removed."""
+        try:
+            self._conditions.remove(cond)
+        except ValueError:
+            pass
+        try:
+            cond.RemoveHandler(self)
+        except Exception as _e:
+            dev_mode.log_swallowed("RemoveCondition detach", _e)
+
     def GetConditions(self) -> list:
         return list(self._conditions)
 

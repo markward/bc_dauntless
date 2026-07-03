@@ -729,6 +729,13 @@ ET_OBJECT_DESTROYED = 107
 # done; the QuickBattle boot chain (Game.LoadEpisode -> Episode.LoadMission)
 # uses it to drive the synchronous mission-start cascade.
 ET_PRELOAD_DONE = 108
+# Fired by Game.SetPlayer (engine/core/game.py) when the current player ship is
+# assigned. The SDK HelmMenuHandlers register broadcast handlers on it
+# (OrbitMenuPlayerChanged, SetPlayer, the fleet-command PlayerChanged handlers)
+# to (re)wire per-player state and repopulate the Orbit/Nav menus from the
+# player's set. Not present in the original ET_* dump; value picked to stay
+# contiguous with this block and not collide.
+ET_SET_PLAYER = 110
 
 # Used by Conditions/Condition*.py — broadcast events the SDK conditions
 # subscribe to. Values arbitrary but stable; keep contiguous with the
