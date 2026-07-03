@@ -248,6 +248,70 @@ def test_st_menu_openable_round_trip():
     assert menu.IsOpenable() == 1
 
 
+def test_st_menu_set_activation_event_stores_event():
+    # BC's E1M2 orbit/hail tutorial calls pSubmenu.SetActivationEvent(pEvent)
+    # to arm a menu with the event it broadcasts when opened.
+    from engine.appc.events import TGEvent
+    evt = TGEvent()
+    menu = STMenu("Orbit Planet")
+    menu.SetActivationEvent(evt)
+    assert menu._event is evt
+
+
+def test_st_menu_send_activation_event_enqueues_stored_event():
+    from engine.appc.events import TGEvent
+    evt = TGEvent()
+    menu = STMenu("Orbit Planet")
+    menu.SetActivationEvent(evt)
+    captured = []
+    real = App.g_kEventManager.AddEvent
+    App.g_kEventManager.AddEvent = lambda e: captured.append(e)
+    try:
+        menu.SendActivationEvent()
+    finally:
+        App.g_kEventManager.AddEvent = real
+    assert captured == [evt]
+
+
+def test_st_menu_send_activation_event_is_noop_without_event():
+    # A menu with no armed event (the common case) broadcasts nothing on open.
+    menu = STMenu("Helm")
+    captured = []
+    real = App.g_kEventManager.AddEvent
+    App.g_kEventManager.AddEvent = lambda e: captured.append(e)
+    try:
+        menu.SendActivationEvent()
+    finally:
+        App.g_kEventManager.AddEvent = real
+    assert captured == []
+
+
+_menu_open_events = []
+
+
+def _record_menu_open(dest, event):
+    _menu_open_events.append((dest, event.GetEventType()))
+
+
+def test_st_menu_activation_event_routes_to_parent_destination_handler():
+    # Mirrors E1M2's contract: the activation event's destination is the PARENT
+    # Helm menu, which holds the AddPythonFuncHandlerForInstance handler. Firing
+    # the submenu's activation event must reach that parent-registered handler.
+    _menu_open_events.clear()
+    parent = STMenu("Helm")
+    parent.AddPythonFuncHandlerForInstance(
+        App.ET_ALL_STOP, __name__ + "._record_menu_open")
+
+    submenu = STMenu("Orbit Planet")
+    evt = App.TGIntEvent_Create()
+    evt.SetEventType(App.ET_ALL_STOP)
+    evt.SetDestination(parent)
+    submenu.SetActivationEvent(evt)
+
+    submenu.SendActivationEvent()
+    assert _menu_open_events == [(parent, App.ET_ALL_STOP)]
+
+
 # ── STButton ─────────────────────────────────────────────────────────────────
 
 def test_st_button_enabled_round_trip():

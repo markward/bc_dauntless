@@ -131,8 +131,20 @@ class STMenu(ObjectClass):
         self._openable = True
         self._visible = True
         self._focus = False
+        self._event = None
 
     def GetLabel(self) -> str:                    return self._label
+
+    def SetActivationEvent(self, evt) -> None:
+        self._event = evt
+
+    def SendActivationEvent(self) -> None:
+        if self._event is not None:
+            try:
+                import App
+                App.g_kEventManager.AddEvent(self._event)
+            except Exception as _e:
+                dev_mode.log_swallowed("character SendActivationEvent", _e)
     def AddChild(self, child, *args) -> None:
         self._children.append(child)
         if isinstance(child, STButton):

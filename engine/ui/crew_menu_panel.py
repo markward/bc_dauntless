@@ -110,6 +110,7 @@ class CrewMenuPanel(Panel):
                     self._expanded_ids.discard(wid)
                 else:
                     self._expanded_ids.add(wid)
+                    widget.SendActivationEvent()   # BC broadcasts activation event on open
             return True
         if action.startswith("toggle:"):
             try:
@@ -222,6 +223,7 @@ class CrewMenuPanel(Panel):
         self._reconcile_turn(old_officer, self._menu_officer())
         if opening:
             self._acknowledge(menu)
+            menu.SendActivationEvent()   # BC broadcasts activation event on open
 
     def _acknowledge(self, menu) -> None:
         """Fire the owning officer's spoken acknowledgement. A resolution miss

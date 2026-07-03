@@ -280,6 +280,38 @@ def test_expand_toggles_node_and_flag():
     assert data["menus"][0]["children"][0]["expanded"] is False
 
 
+_opened = []
+
+
+def _record_submenu_open(dest, event):
+    _opened.append((dest, event.GetEventType()))
+
+
+def test_expand_open_fires_submenu_activation_event():
+    # BC broadcasts a submenu's activation event when it OPENS. E1M2 arms the
+    # Orbit/Hail submenus this way, with the event destined for the PARENT Helm
+    # menu that holds the handler.
+    _opened.clear()
+    helm, setcourse = _build_helm_with_submenu()
+    evt = App.TGIntEvent_Create()
+    evt.SetEventType(App.ET_ALL_STOP)
+    evt.SetDestination(helm)
+    setcourse.SetActivationEvent(evt)
+    helm.AddPythonFuncHandlerForInstance(
+        App.ET_ALL_STOP, __name__ + "._record_submenu_open")
+
+    panel = CrewMenuPanel()
+    panel.toggle_menu(helm)
+    panel.render_payload()                # build _widgets_by_id
+    sc_id = ensure_widget_id(setcourse)
+
+    panel.dispatch_event(f"expand:{sc_id}")           # open -> fires
+    assert _opened == [(helm, App.ET_ALL_STOP)]
+
+    panel.dispatch_event(f"expand:{sc_id}")           # collapse -> no fire
+    assert _opened == [(helm, App.ET_ALL_STOP)]
+
+
 def test_expand_stale_and_malformed_dropped():
     helm, setcourse = _build_helm_with_submenu()
     panel = CrewMenuPanel()
