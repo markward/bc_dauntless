@@ -30,7 +30,7 @@ TEST_F(ResolvePassTest, PassthroughPreservesColorWithinTolerance) {
     renderer::ResolvePass resolve;
     resolve.set_hdr_enabled(false);
     // bloom_tex arg: HDR-off branch ignores it; reuse the hdr color tex as dummy.
-    resolve.draw(hdr.color_texture(), hdr.color_texture());
+    resolve.draw(hdr.color_texture(), hdr.color_texture(), hdr.color_texture());
 
     unsigned char px[4] = {0,0,0,0};
     glReadPixels(32, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
@@ -66,7 +66,7 @@ TEST_F(ResolvePassTest, HdrOnPreservesMidtoneBrightness) {
 
     renderer::ResolvePass r;
     r.set_hdr_enabled(true);
-    r.draw(hdr.color_texture(), bloom_dummy.color_texture());
+    r.draw(hdr.color_texture(), bloom_dummy.color_texture(), bloom_dummy.color_texture());
 
     unsigned char on[4] = {0,0,0,0};
     glReadPixels(32, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, on);
@@ -98,7 +98,7 @@ TEST_F(ResolvePassTest, HdrOnSoftShoulderRollsTopOfRange) {
 
     renderer::ResolvePass r;
     r.set_hdr_enabled(true);
-    r.draw(hdr.color_texture(), bloom_dummy.color_texture());
+    r.draw(hdr.color_texture(), bloom_dummy.color_texture(), bloom_dummy.color_texture());
 
     unsigned char on[4] = {0,0,0,0};
     glReadPixels(32, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, on);
@@ -115,7 +115,7 @@ TEST_F(ResolvePassTest, PassthroughClampsHighlightsWhenHdrOff) {
     glClearColor(0,0,0,1); glClear(GL_COLOR_BUFFER_BIT);
     renderer::ResolvePass r; r.set_hdr_enabled(false);
     // bloom_tex arg: HDR-off branch ignores it; reuse the hdr color tex as dummy.
-    r.draw(hdr.color_texture(), hdr.color_texture());
+    r.draw(hdr.color_texture(), hdr.color_texture(), hdr.color_texture());
     unsigned char off[4]; glReadPixels(32,32,1,1,GL_RGBA,GL_UNSIGNED_BYTE,off);
     EXPECT_EQ(off[0], 255);   // passthrough clamps 1.5 -> 1.0 -> 255
 }
@@ -143,7 +143,7 @@ TEST_F(ResolvePassTest, DrawsWhenBackfaceCullingEnabled) {
 
     renderer::ResolvePass resolve;
     resolve.set_hdr_enabled(false);
-    resolve.draw(hdr.color_texture(), hdr.color_texture());
+    resolve.draw(hdr.color_texture(), hdr.color_texture(), hdr.color_texture());
 
     unsigned char px[4] = {0,0,0,0};
     glReadPixels(32, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);

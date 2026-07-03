@@ -33,6 +33,7 @@ function _cpFocusableList(state) {
         out.push({kind: 'ctrl', target: 'warp_flythrough'});
         out.push({kind: 'ctrl', target: 'volumetric_nebulae'});
         out.push({kind: 'ctrl', target: 'nebula_lightning'});
+        out.push({kind: 'ctrl', target: 'hdr_lens_flare'});
     } else if (state.selected_tab === 'gameplay') {
         out.push({kind: 'ctrl', target: 'subtitles'});
         out.push({kind: 'ctrl', target: 'disable_annoying_dialogue'});
@@ -226,6 +227,18 @@ function _cpRenderGraphicsBody(state, focusables) {
           +     '<button class="cp-toggle' + (s.nebula_lightning_on ? ' cp-toggle--on' : '') + '"'
           +        ' onclick="dauntlessEvent(\'configuration/toggle:nebula_lightning\')">'
           +       (s.nebula_lightning_on ? 'On' : 'Off')
+          +     '</button>'
+          +   '</div>'
+          + '</div>';
+
+    // Modern Lens Flares toggle — image-based screen-space lens flare (Modern
+    // VFX). When on, the classic per-sun billboard flares are suppressed.
+    html += '<div class="cp-row' + (isFoc('hdr_lens_flare') ? ' cp-focused' : '') + '">'
+          +   '<div class="cp-row__label">Modern Lens Flares</div>'
+          +   '<div class="cp-row__control">'
+          +     '<button class="cp-toggle' + (s.hdr_lens_flare_on ? ' cp-toggle--on' : '') + '"'
+          +        ' onclick="dauntlessEvent(\'configuration/toggle:hdr_lens_flare\')">'
+          +       (s.hdr_lens_flare_on ? 'On' : 'Off')
           +     '</button>'
           +   '</div>'
           + '</div>';

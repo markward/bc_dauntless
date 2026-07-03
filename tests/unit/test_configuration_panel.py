@@ -41,6 +41,7 @@ def _make(**overrides):
         set_warp_flythrough=Mock(),
         set_volumetric_nebulae=Mock(),
         set_nebula_lightning=Mock(),
+        set_hdr_lens_flare=Mock(),
     )
     kwargs.update(overrides)
     return ConfigurationPanel(**kwargs), kwargs
@@ -78,6 +79,7 @@ def test_initial_settings_round_trip_to_render_payload():
         "subtitles_on": True, "shadows_on": True, "procedural_sky_on": True,
         "filmic_on": True, "motion_blur_on": True, "warp_flythrough_on": True,
         "volumetric_nebulae_on": True, "nebula_lightning_on": True,
+        "hdr_lens_flare_on": True,
         "disable_annoying_dialogue_on": True,
         "ai_difficulty": 1,
         "fov_deg": 62,

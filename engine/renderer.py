@@ -39,7 +39,8 @@ _REQUIRED_BINDINGS = frozenset({
     "create_instance", "damage_decals_tick", "decals_set_enabled",
     "destroy_instance", "dust_set_density", "dust_set_enabled", "filmic_enabled",
     "filmic_set_enabled", "frame", "get_instance_bounds",
-    "get_instance_head_center", "hdr_set_enabled", "init", "load_animation_clips",
+    "get_instance_head_center", "hdr_lens_flare_enabled",
+    "hdr_lens_flare_set_enabled", "hdr_set_enabled", "init", "load_animation_clips",
     "load_instance_clip", "load_model", "model_aabb", "motion_blur_enabled",
     "motion_blur_set_enabled", "nebula_lightning_enabled",
     "nebula_lightning_set_enabled", "play_instance_gesture", "play_instance_idle",
@@ -409,6 +410,17 @@ def set_rim_enabled(enabled: bool) -> None:
 def set_hdr_enabled(enabled: bool) -> None:
     """Toggle the HDR resolve (tonemap+bloom+grade). Default: on after init()."""
     _h.hdr_set_enabled(enabled)
+
+
+def hdr_lens_flare_enabled() -> bool:
+    """Read the Modern Lens Flares toggle (Modern VFX). Default: on."""
+    return bool(_h.hdr_lens_flare_enabled())
+
+
+def set_hdr_lens_flare_enabled(enabled: bool) -> None:
+    """Toggle image-based Modern Lens Flares (Modern VFX). Default: on. When on,
+    the classic per-sun billboard flares are suppressed by the host loop."""
+    _h.hdr_lens_flare_set_enabled(enabled)
 
 
 def set_shadows_enabled(enabled: bool) -> None:

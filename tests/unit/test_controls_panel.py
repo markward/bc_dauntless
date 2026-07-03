@@ -28,6 +28,7 @@ def _make(tmp_path):
         set_fov_rad=Mock(), set_shadows=Mock(), set_procedural_sky=Mock(),
         set_filmic=Mock(), set_motion_blur=Mock(), set_warp_flythrough=Mock(),
         set_volumetric_nebulae=Mock(), set_nebula_lightning=Mock(),
+        set_hdr_lens_flare=Mock(),
         input_map=im,
     )
     return panel, im

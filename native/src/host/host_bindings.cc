@@ -31,6 +31,7 @@
 #include <renderer/nebula_godray_pass.h>
 #include <renderer/shield_pass.h>
 #include <renderer/lens_flare_pass.h>
+#include <renderer/lens_flare_hdr_pass.h>
 #include <renderer/torpedo_pass.h>
 #include <renderer/hit_vfx_pass.h>
 #include <renderer/hull_discharge_pass.h>
@@ -102,6 +103,10 @@ namespace py = pybind11;
 // Forward-declared here (before the anonymous namespace) so frame() inside
 // the anonymous namespace can call dauntless_hdr::enabled().
 namespace dauntless_hdr {
+    bool enabled();            // defined in frame.cc
+    void set_enabled(bool v);  // defined in frame.cc
+}
+namespace dauntless_hdr_lens_flare {
     bool enabled();            // defined in frame.cc
     void set_enabled(bool v);  // defined in frame.cc
 }
@@ -217,6 +222,7 @@ std::unique_ptr<renderer::BridgePass>      g_bridge_pass;
 std::unique_ptr<renderer::HdrTarget>       g_hdr_target;
 std::unique_ptr<renderer::HdrTarget>       g_viewscreen_hdr;
 std::unique_ptr<renderer::BloomPass>       g_bloom_pass;
+std::unique_ptr<renderer::LensFlareHdrPass> g_lens_flare_hdr_pass;  // image-based screen-space flare
 std::unique_ptr<renderer::ResolvePass>     g_resolve_pass;
 std::unique_ptr<renderer::LdrTarget>       g_ldr_target;
 std::unique_ptr<renderer::LdrTarget>       g_ldr_target2;   // SMAA→filmic intermediate
@@ -427,6 +433,7 @@ void init(int width, int height, const std::string& title) {
     g_hdr_target      = std::make_unique<renderer::HdrTarget>();
     g_viewscreen_hdr  = std::make_unique<renderer::HdrTarget>();
     g_bloom_pass   = std::make_unique<renderer::BloomPass>();
+    g_lens_flare_hdr_pass = std::make_unique<renderer::LensFlareHdrPass>();
     g_resolve_pass = std::make_unique<renderer::ResolvePass>();
     g_ldr_target   = std::make_unique<renderer::LdrTarget>();
     g_ldr_target2  = std::make_unique<renderer::LdrTarget>();
@@ -500,6 +507,7 @@ void shutdown() {
     g_bridge_pass.reset();
     g_viewscreen_static_pass.reset();
     g_bloom_pass.reset();
+    g_lens_flare_hdr_pass.reset();
     g_motion_blur_pass.reset();
     g_have_prev_viewproj = false;
     g_smaa_pass.reset();
@@ -899,15 +907,28 @@ void frame() {
     // (the original zero-cost path, byte-identical).
     const bool any_post = aa_on || mblur_on || filmic_on;
 
+    // Image-based ("modern") lens flare: generate a half-res flare texture from
+    // the bloom bright-buffer and composite it in the resolve. Exterior-only
+    // (no flares on the bridge interior), and only when HDR + the toggle are on
+    // (the toggle also suppresses the classic billboard flares in host_loop).
+    std::uint32_t lens_flare_tex = g_hdr_target->color_texture();  // dummy when off
+    float lens_flare_strength = 0.0f;
+    if (dauntless_hdr::enabled() && dauntless_hdr_lens_flare::enabled()
+            && exterior && g_lens_flare_hdr_pass) {
+        lens_flare_tex = g_lens_flare_hdr_pass->render(bloom_tex, fw, fh);
+        lens_flare_strength = 0.125f;   // additive flare intensity; eye-calibrated (-75% from 0.5)
+    }
+
     if (any_post) { g_ldr_target->resize(fw, fh); g_ldr_target->bind(); }
     else { glBindFramebuffer(GL_FRAMEBUFFER, 0); glViewport(0, 0, fw, fh); }
     g_resolve_pass->set_hdr_enabled(dauntless_hdr::enabled());
+    g_resolve_pass->set_lens_flare_strength(lens_flare_strength);
     // On the bridge the warp flash is confined to the viewscreen feed (applied
     // in the bridge pass); suppress it on the main resolve so the interior
     // doesn't white out. Exterior view keeps the full-screen flash.
     g_resolve_pass->set_warp_flash(
         bridge_active ? 0.0f : dauntless_warp_vfx::flash_intensity());
-    g_resolve_pass->draw(g_hdr_target->color_texture(), bloom_tex);
+    g_resolve_pass->draw(g_hdr_target->color_texture(), bloom_tex, lens_flare_tex);
 
     if (any_post) {
         g_ldr_target2->resize(fw, fh);
@@ -2381,6 +2402,14 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](bool e) { dauntless_hdr::set_enabled(e); },
           py::arg("enabled"),
           "Toggle the HDR resolve (tonemap+bloom+grade). Default: on.");
+    m.def("hdr_lens_flare_set_enabled",
+          [](bool enabled) { dauntless_hdr_lens_flare::set_enabled(enabled); },
+          py::arg("enabled"),
+          "Toggle the image-based Modern Lens Flares (Modern VFX). Default: on; "
+          "off restores the classic per-sun billboard flares (stock BC).");
+    m.def("hdr_lens_flare_enabled",
+          []() { return dauntless_hdr_lens_flare::enabled(); },
+          "Read the Modern Lens Flares toggle (Modern VFX). Default: on.");
     m.def("shadows_set_enabled",
           [](bool enabled) { dauntless_shadows::set_enabled(enabled); },
           py::arg("enabled"),

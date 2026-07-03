@@ -35,7 +35,8 @@ ResolvePass::~ResolvePass() {
     // shader_ is RAII — no glDeleteProgram needed here.
 }
 
-void ResolvePass::draw(std::uint32_t hdr_color_tex, std::uint32_t bloom_tex) {
+void ResolvePass::draw(std::uint32_t hdr_color_tex, std::uint32_t bloom_tex,
+                       std::uint32_t lens_flare_tex) {
     // Save GL state we clobber so 3D passes on the next frame see unchanged config.
     const GLboolean prev_cull       = glIsEnabled(GL_CULL_FACE);
     const GLboolean prev_depth_test = glIsEnabled(GL_DEPTH_TEST);
@@ -54,6 +55,8 @@ void ResolvePass::draw(std::uint32_t hdr_color_tex, std::uint32_t bloom_tex) {
     shader_->set_int("u_bloom", 1);
     shader_->set_float("u_bloom_strength", bloom_strength_);
     shader_->set_float("u_warp_flash", warp_flash_);
+    shader_->set_int("u_lens_flare", 2);
+    shader_->set_float("u_lens_flare_strength", lens_flare_strength_);
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, hdr_color_tex);
@@ -61,11 +64,16 @@ void ResolvePass::draw(std::uint32_t hdr_color_tex, std::uint32_t bloom_tex) {
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, bloom_tex);
 
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, lens_flare_tex);
+
     glBindVertexArray(vao_);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     glBindVertexArray(0);
 
     glUseProgram(0);
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, 0);
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, 0);
     glActiveTexture(GL_TEXTURE0);
