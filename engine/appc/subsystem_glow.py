@@ -24,7 +24,7 @@ IMPULSE_AFT_AXIS = (0.0, -1.0, 0.0)
 # Impulse boost volume: a cylinder from each engine centre running aft
 # (IMPULSE_AFT_AXIS) for IMPULSE_CYLINDER_LEN game units, radius = the
 # subsystem's own radius. Tunable, no rebuild.
-IMPULSE_CYLINDER_LEN = 20.0
+IMPULSE_CYLINDER_LEN = 2.0
 
 # Impulse-glow power/speed scaling (Mark's "sell the movement" pass). Driven by
 # the *commanded* impulse throttle (player notch / AI speed setpoint), NOT
