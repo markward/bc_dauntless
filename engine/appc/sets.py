@@ -370,6 +370,16 @@ class SetClass(TGEventHandlerObject):
         """
         return list(self._objects.values())
 
+    def GetNavPoints(self):
+        """Nav points defined in this set (SDK SetClass_GetNavPoints), consumed
+        by HelmMenuHandlers.SetupNavPointsMenuFromSet. Headless models no
+        nav-point objects yet, so return an empty list — a real, ITERABLE
+        result. Must not fall through __getattr__ (which vends a non-iterable
+        _RendererStub and crashes the SDK's `for pNavPoint in lNavPoints` loop,
+        a path now reached once Game.SetPlayer fires ET_SET_PLAYER and the Helm
+        orbit/nav handlers repopulate)."""
+        return []
+
 
 class SetManager:
     def __init__(self):

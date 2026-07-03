@@ -113,6 +113,33 @@ def test_non_contact_objects_are_not_identified():
     assert _identified == []
 
 
+def test_force_object_identified_marks_planet_known():
+    """SDK HelmMenuHandlers.SetupOrbitMenuFromSet calls
+    pSensors.ForceObjectIdentified(pPlanet) so orbitable planets are targetable.
+    Reuses the identification store (ignores range) and fires the event once."""
+    _subscribe()
+    s, player, sensors = _player_in_set()
+    haven = Planet_Create(200.0, "colony.nif")
+    haven.SetTranslateXYZ(999999.0, 0.0, 0.0)   # far away — range is ignored
+    s.AddObjectToSet(haven, "Haven")
+
+    sensors.ForceObjectIdentified(haven)
+    assert sensors.IsObjectKnown(haven) == 1
+    assert haven in _identified
+    assert _identified.count(haven) == 1
+
+    # De-dupe: a second force is a no-op.
+    sensors.ForceObjectIdentified(haven)
+    assert _identified.count(haven) == 1
+
+
+def test_force_object_identified_none_safe():
+    _subscribe()
+    s, player, sensors = _player_in_set()
+    sensors.ForceObjectIdentified(None)   # must not raise
+    assert _identified == []
+
+
 def test_no_sensor_subsystem_is_noop():
     _subscribe()
     s = SetClass()

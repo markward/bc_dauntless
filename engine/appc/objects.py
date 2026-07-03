@@ -54,6 +54,14 @@ class ObjectClass(TGEventHandlerObject):
 
     # ── Identity ──────────────────────────────────────────────────────────────
 
+    def IsTypeOf(self, cls) -> int:
+        # SDK runtime class check: pObject.IsTypeOf(CT_X). CT_ constants are
+        # classes (CT_PLANET=Planet, CT_SUN=Sun). `cls` may be a fall-through
+        # _NamedStub for an unmapped CT_, so guard with isinstance(cls, type).
+        # Sun(Planet): a Sun IsTypeOf CT_PLANET and CT_SUN; a plain Planet
+        # IsTypeOf CT_SUN is 0 — this is what filters suns out of the orbit menu.
+        return 1 if isinstance(cls, type) and isinstance(self, cls) else 0
+
     def GetName(self) -> str:
         return self._name
 

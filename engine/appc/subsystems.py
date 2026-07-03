@@ -915,6 +915,14 @@ class SensorSubsystem(PoweredSubsystem):
         from engine.appc import sensor_identification
         sensor_identification._identify_one(self, pTarget)
 
+    def ForceObjectIdentified(self, pTarget) -> None:
+        """SDK ``HelmMenuHandlers.SetupOrbitMenuFromSet`` marks orbitable
+        planets identified so the player can target them (all planets are
+        automatically targetable). Reuses the sensor-identification store;
+        None-safe and de-duped (a no-op if *pTarget* is None or already known)."""
+        from engine.appc import sensor_identification
+        sensor_identification._identify_one(self, pTarget)
+
 
 class ImpulseEngineSubsystem(PoweredSubsystem):
     """Live impulse-engine state.  Speed/accel limits come from the
