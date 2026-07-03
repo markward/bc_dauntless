@@ -2720,6 +2720,47 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Store a sphere glow region at a hardpoint (game units / body frame). "
           "Returns the region index, or -1 on failure (stale id, no slot).");
 
+    m.def("add_cylinder_region",
+          [](scenegraph::InstanceId id,
+             std::tuple<float, float, float> center,
+             std::tuple<float, float, float> axis,
+             float radius, float length) -> int {
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return -1;
+              // center/radius/length are game units -> model frame; axis is a
+              // direction (normalize, no scale).
+              const float s = glm::length(glm::vec3(inst->world[0]));
+              const float inv = (s > 0.0f) ? 1.0f / s : 1.0f;
+              const glm::vec3 c(std::get<0>(center) * inv,
+                                std::get<1>(center) * inv,
+                                std::get<2>(center) * inv);
+              glm::vec3 a(std::get<0>(axis), std::get<1>(axis), std::get<2>(axis));
+              const float alen = glm::length(a);
+              a = (alen > 1e-6f) ? (a / alen) : glm::vec3(0.0f, 1.0f, 0.0f);
+              for (std::size_t i = 0; i < inst->glow_regions.size(); ++i) {
+                  if (inst->glow_regions[i].active) continue;
+                  auto& n = inst->glow_regions[i];
+                  n.center = c;
+                  n.axis = a;                 // cylinder axis (aft dir)
+                  n.radius = radius * inv;
+                  n.aft = 0.0f;               // from the centre...
+                  n.fore = length * inv;      // ...forward along axis for length
+                  n.dim_target = 1.0f;
+                  n.disable_time = -1.0f;
+                  n.flicker = 0.0f;
+                  n.gain = 1.0f;
+                  n.gain_axis = glm::vec3(0.0f);
+                  n.active = true;
+                  return static_cast<int>(i);
+              }
+              return -1;  // no free slot
+          },
+          py::arg("instance_id"), py::arg("center"), py::arg("axis"),
+          py::arg("radius"), py::arg("length"),
+          "Store a cylinder glow region: from center along axis (unit dir) for "
+          "length, radius wide (all game units / body frame; aft=0, fore=length). "
+          "Returns the region index, or -1 on failure.");
+
     m.def("set_glow_region_dim",
           [](scenegraph::InstanceId id, int region_index,
              float dim_target, float disable_time, float flicker) {

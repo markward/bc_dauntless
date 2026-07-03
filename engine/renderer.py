@@ -30,7 +30,8 @@ InstanceId = _h.InstanceId
 #   resolved at the import above) is deliberately excluded: its absence already
 #   hard-fails `import`, so it needs no manifest entry.
 _REQUIRED_BINDINGS = frozenset({
-    "add_sphere_region", "assemble_officer", "bridge_pass_set_enabled",
+    "add_cylinder_region", "add_sphere_region",
+    "assemble_officer", "bridge_pass_set_enabled",
     "cef_composite", "cef_initialize", "cef_pump", "cef_reload", "cef_shutdown",
     "cef_toggle_devtools", "clear_hologram_ship", "clear_subsystem_pins",
     "clear_viewscreen_comm_source", "compute_capsule_region",
@@ -449,6 +450,15 @@ def add_sphere_region(instance_id: InstanceId, center, radius: float) -> int:
     -1 on failure. Used for impulse engines and sensor arrays (compact spots);
     warp nacelles use compute_capsule_region for their elongated shape."""
     return _h.add_sphere_region(instance_id, tuple(center), float(radius))
+
+
+def add_cylinder_region(instance_id: InstanceId, center, axis, radius: float,
+                        length: float) -> int:
+    """Store a cylinder glow region from center along axis (unit dir) for
+    length, radius wide (all game units / body frame; aft=0, fore=length).
+    Returns the region index (>=0) or -1 on failure."""
+    return _h.add_cylinder_region(instance_id, tuple(center), tuple(axis),
+                                  float(radius), float(length))
 
 
 def set_glow_region_dim(instance_id: InstanceId, region_index: int,

@@ -9,20 +9,6 @@ docs/superpowers/specs/2026-06-10-subsystem-glow-dimming-design.md.
 """
 
 import math
-import os
-import sys
-
-# TEMP impulse-glow instrumentation. Set DAUNTLESS_GLOW_DEBUG=1 before launching
-# ./build/dauntless to trace region creation + per-frame gain on stderr. Remove
-# once the effect is confirmed wired.
-_GLOW_DEBUG = os.environ.get("DAUNTLESS_GLOW_DEBUG", "") not in ("", "0")
-
-
-def _dbg(msg: str) -> None:
-    if _GLOW_DEBUG:
-        sys.stderr.write("[IMPULSE_GLOW] " + msg + "\n")
-        sys.stderr.flush()
-
 
 HEALTHY = "healthy"
 DISABLED = "disabled"
@@ -35,9 +21,10 @@ WARP_AXIS = (0.0, 1.0, 0.0)
 # brightening to faces whose normal points this way, so only the aft engine
 # faces glow (not the whole sphere around the hardpoint).
 IMPULSE_AFT_AXIS = (0.0, -1.0, 0.0)
-# The engine pods carry a tight hardpoint radius (~0.25 GU); widen the boost
-# sphere so it covers the visible impulse strip. Tunable, no rebuild.
-IMPULSE_RADIUS_SCALE = 3.0
+# Impulse boost volume: a cylinder from each engine centre running aft
+# (IMPULSE_AFT_AXIS) for IMPULSE_CYLINDER_LEN game units, radius = the
+# subsystem's own radius. Tunable, no rebuild.
+IMPULSE_CYLINDER_LEN = 20.0
 
 # Impulse-glow power/speed scaling (Mark's "sell the movement" pass). Driven by
 # the *commanded* impulse throttle (player notch / AI speed setpoint), NOT
@@ -195,7 +182,6 @@ class ShipGlowController:
         self._regions = []  # dicts: sub, idx, prev, etime, boost
         self._eased_frac = 0.0    # smoothed commanded throttle (0..1)
         self._last_now = None     # game-time of the previous update (for dt)
-        self._dbg_target = None   # last logged raw throttle target
 
         # Warp nacelles -> capsule regions (fit the elongated shape).
         for pod in warp_pods(ship.GetWarpEngineSubsystem()):
@@ -210,35 +196,31 @@ class ShipGlowController:
                 {"sub": pod, "idx": idx, "prev": HEALTHY, "etime": -1.0,
                  "boost": False})
 
-        # Impulse engines -> one boost sphere per engine pod (Port/Star/Center),
-        # not the parent category node. Sensor array -> a plain (non-boost)
-        # sphere. Boost spheres are widened by IMPULSE_RADIUS_SCALE and, in the
-        # shader, gated to aft-facing faces (IMPULSE_AFT_AXIS) so only the
-        # exhaust faces brighten.
-        specs = [(pod, True, IMPULSE_RADIUS_SCALE)
-                 for pod in impulse_engines(ship.GetImpulseEngineSubsystem())]
-        specs.append((ship.GetSensorSubsystem(), False, 1.0))
-        for sub, boost, rscale in specs:
-            pos = _position_tuple(sub)
-            if boost:
-                _dbg("ctrl iid=%r impulse pod=%r pos=%r radius=%r"
-                     % (instance_id,
-                        (sub.GetName() if hasattr(sub, "GetName") else None),
-                        pos, (_radius(sub) * rscale) if sub else None))
+        # Impulse engines -> one boost CYLINDER per engine pod (Port/Star/Center),
+        # running aft from the engine centre, radius = the pod's own radius. The
+        # shader still gates to aft-facing faces (IMPULSE_AFT_AXIS) so only the
+        # exhaust faces brighten. Sensor array -> a plain (non-boost) sphere.
+        for pod in impulse_engines(ship.GetImpulseEngineSubsystem()):
+            pos = _position_tuple(pod)
             if pos is None:
                 continue
-            idx = self._r.add_sphere_region(instance_id, pos, _radius(sub) * rscale)
-            if boost:
-                _dbg("ctrl iid=%r impulse pod region idx=%d (>=0 active)"
-                     % (instance_id, idx))
+            idx = self._r.add_cylinder_region(
+                instance_id, pos, IMPULSE_AFT_AXIS, _radius(pod),
+                IMPULSE_CYLINDER_LEN)
             if idx < 0:
                 continue
             self._regions.append(
-                {"sub": sub, "idx": idx, "prev": HEALTHY, "etime": -1.0,
-                 "boost": boost})
-        if not any(r["boost"] for r in self._regions):
-            _dbg("ctrl iid=%r NO IMPULSE BOOST REGION created (effect will not "
-                 "show for this ship)" % (instance_id,))
+                {"sub": pod, "idx": idx, "prev": HEALTHY, "etime": -1.0,
+                 "boost": True})
+
+        _sensor = ship.GetSensorSubsystem()
+        _spos = _position_tuple(_sensor)
+        if _spos is not None:
+            _sidx = self._r.add_sphere_region(instance_id, _spos, _radius(_sensor))
+            if _sidx >= 0:
+                self._regions.append(
+                    {"sub": _sensor, "idx": _sidx, "prev": HEALTHY,
+                     "etime": -1.0, "boost": False})
 
     def update(self, now: float, throttle_frac=None) -> None:
         """Push dim/edge/flicker each frame; brighten the impulse region by the
@@ -258,11 +240,6 @@ class ShipGlowController:
                      if IMPULSE_EASE_TAU > 0.0 else 1.0)
             self._eased_frac += (target - self._eased_frac) * alpha
         self._last_now = now
-
-        if _GLOW_DEBUG and round(target, 2) != self._dbg_target:
-            self._dbg_target = round(target, 2)
-            _dbg("update iid=%r throttle_frac=%r target=%.2f eased=%.2f"
-                 % (self._iid, throttle_frac, target, self._eased_frac))
 
         for reg in self._regions:
             sub = reg["sub"]

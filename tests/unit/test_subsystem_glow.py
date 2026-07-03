@@ -105,6 +105,7 @@ class _FakeRenderer:
         self._results = list(results)
         self.capsule_calls = []
         self.sphere_calls = []
+        self.cylinder_calls = []
         self.dim_calls = []
         self.gain_calls = []
     def compute_capsule_region(self, iid, center, axis, radius):
@@ -113,27 +114,30 @@ class _FakeRenderer:
     def add_sphere_region(self, iid, center, radius):
         self.sphere_calls.append((iid, center, radius))
         return self._results.pop(0)
+    def add_cylinder_region(self, iid, center, axis, radius, length):
+        self.cylinder_calls.append((iid, center, axis, radius, length))
+        return self._results.pop(0)
     def set_glow_region_dim(self, iid, idx, dim_target, edge_time, flicker):
         self.dim_calls.append((iid, idx, dim_target, edge_time, flicker))
     def set_glow_region_gain(self, iid, idx, gain, gate_axis=(0.0, 0.0, 0.0)):
         self.gain_calls.append((iid, idx, gain, gate_axis))
 
 
-def test_controller_registers_capsule_for_warp_and_spheres_for_impulse_sensor():
+def test_controller_registers_capsule_warp_cylinder_impulse_sphere_sensor():
     warp = _WarpAgg([_Pod(_Point(-3.0, 1.0, 0.0))])
     impulse = _Pod(_Point(0.0, -0.98, -0.45), radius=0.25)
     sensor = _Pod(_Point(0.0, -0.45, -0.5), radius=0.28)
     ship = _Ship(warp, impulse, sensor)
-    rend = _FakeRenderer(results=[0, 1, 2])  # capsule, impulse sphere, sensor sphere
+    rend = _FakeRenderer(results=[0, 1, 2])  # capsule, impulse cylinder, sensor sphere
 
     ctrl = sg.ShipGlowController(rend, instance_id=7, ship=ship)
 
     assert rend.capsule_calls == [(7, (-3.0, 1.0, 0.0), sg.WARP_AXIS, 2.0)]
-    # Impulse sphere widened by IMPULSE_RADIUS_SCALE; sensor sphere unscaled.
-    assert rend.sphere_calls == [
-        (7, (0.0, -0.98, -0.45), 0.25 * sg.IMPULSE_RADIUS_SCALE),
-        (7, (0.0, -0.45, -0.5), 0.28),
+    # Impulse -> aft-running cylinder at the pod radius; sensor -> plain sphere.
+    assert rend.cylinder_calls == [
+        (7, (0.0, -0.98, -0.45), sg.IMPULSE_AFT_AXIS, 0.25, sg.IMPULSE_CYLINDER_LEN),
     ]
+    assert rend.sphere_calls == [(7, (0.0, -0.45, -0.5), 0.28)]
     assert len(ctrl._regions) == 3
 
 
@@ -290,14 +294,15 @@ def test_controller_registers_boost_region_per_impulse_pod():
     center = _ImpulseSub(_Point(0.0, -1.10, -0.08), max_speed=10.0)
     impulse = _ImpAgg([port, star, center])
     ship = _AIShip(None, impulse, None, setpoint=(10.0, (0, 1, 0), 0))
-    rend = _FakeRenderer(results=[0, 1, 2])  # three impulse spheres
+    rend = _FakeRenderer(results=[0, 1, 2])  # three impulse cylinders
     ctrl = sg.ShipGlowController(rend, instance_id=7, ship=ship)
-    # one widened boost sphere per pod, at each pod position
-    rs = 0.25 * sg.IMPULSE_RADIUS_SCALE
-    assert rend.sphere_calls == [
-        (7, (-1.22, -0.20, 0.32), rs),
-        (7, (1.22, -0.20, 0.32), rs),
-        (7, (0.0, -1.10, -0.08), rs),
+    # one aft-running boost cylinder per pod, at each pod position + radius
+    ln = sg.IMPULSE_CYLINDER_LEN
+    ax = sg.IMPULSE_AFT_AXIS
+    assert rend.cylinder_calls == [
+        (7, (-1.22, -0.20, 0.32), ax, 0.25, ln),
+        (7, (1.22, -0.20, 0.32), ax, 0.25, ln),
+        (7, (0.0, -1.10, -0.08), ax, 0.25, ln),
     ]
     assert sum(1 for r in ctrl._regions if r["boost"]) == 3
     # driving at full throttle pushes a full-gain call per pod
