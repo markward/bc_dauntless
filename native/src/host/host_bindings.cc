@@ -2739,6 +2739,20 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "of the last state-change edge (<0 = healthy), and the flicker flag "
           "(1 = disabled/continuous flicker, 0 = solid settle to dim_target).");
 
+    m.def("set_glow_region_gain",
+          [](scenegraph::InstanceId id, int region_index, float gain) {
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return;
+              if (region_index < 0 ||
+                  region_index >= static_cast<int>(inst->glow_regions.size())) return;
+              auto& n = inst->glow_regions[static_cast<std::size_t>(region_index)];
+              if (!n.active) return;
+              n.gain = gain;
+          },
+          py::arg("instance_id"), py::arg("region_index"), py::arg("gain"),
+          "Update a glow region's brightness gain (1.0 = untouched, >1 brightens "
+          "the glow inside the region for impulse engine power/speed; feeds HDR).");
+
     m.def("world_to_body",
           [](scenegraph::InstanceId id,
              std::tuple<float, float, float> world_point,

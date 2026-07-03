@@ -121,6 +121,7 @@ struct Instance {
         float     dim_target = 1.0f;
         float     disable_time = -1.0f;
         float     flicker = 0.0f;   // 1 = disabled (continuous flicker), 0 = solid settle
+        float     gain = 1.0f;      // >1 brightens glow inside the region (impulse power/speed)
         bool      active = false;
     };
     std::array<GlowRegion, kMaxGlowRegions> glow_regions{};
