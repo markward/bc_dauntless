@@ -129,6 +129,7 @@ add_library(renderer STATIC
     breach_pass.cc
     carve_field_cache.cc
     subsystem_pin_pass.cc
+    debug_volume_pass.cc
     target_reticle_pass.cc
     bridge_pass.cc
     viewscreen_static_pass.cc
