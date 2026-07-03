@@ -7,17 +7,19 @@ from engine.appc import warp_core_breach, subsystem_cascade
 
 
 class _Sub:
-    def __init__(self, name, cond=100.0, critical=False):
+    def __init__(self, name, cond=100.0, critical=False, targetable=True):
         self.name = name
         self._c = cond
         self._max = cond
         self._crit = critical
+        self._targetable = targetable
         self._destroyed = False
 
     def GetCondition(self):    return self._c
     def SetCondition(self, v): self._c = v
     def GetMaxCondition(self): return self._max
     def IsCritical(self):      return 1 if self._crit else 0
+    def IsTargetable(self):    return 1 if self._targetable else 0
     def SetDestroyed(self, v): self._destroyed = bool(v)
     def IsDestroyed(self):     return self._destroyed
 
@@ -97,6 +99,27 @@ def test_destroy_system_on_warp_core_arms_breach(monkeypatch):
     ship = _Ship(hull, power)
     ship.DestroySystem(power)         # forced 100 -> 0, crosses
     assert ship is armed[0]
+
+
+def test_non_targetable_power_plant_does_not_breach(monkeypatch):
+    """An asteroid's hidden Power Plant (SetTargetable(0)) must not throw a
+    warp-core explosion when the death cascade zeroes it."""
+    armed, scheduled = _spy(monkeypatch)
+    hull = _Sub("Hull", cond=100.0)
+    power = _Sub("Power Plant", cond=50.0, targetable=False)
+    ship = _Ship(hull, power)
+    ship.DamageSystem(power, 50.0)    # 50 -> 0, crosses, but not targetable
+    assert armed == []
+    assert scheduled == []
+
+
+def test_non_targetable_power_plant_via_destroy_does_not_breach(monkeypatch):
+    armed, _ = _spy(monkeypatch)
+    hull = _Sub("Hull", cond=100.0)
+    power = _Sub("Power Plant", cond=100.0, targetable=False)
+    ship = _Ship(hull, power)
+    ship.DestroySystem(power)         # forced kill (cascade path), still no breach
+    assert armed == []
 
 
 # ── Cloned-model warp radius (ConditionInRange consumer) ────────────────────
