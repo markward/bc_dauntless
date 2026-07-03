@@ -95,11 +95,16 @@ class CrewSpeechBus:
         self._active_priority: int = -1
         self._active_expiry: float = 0.0
         self._active_handle = None   # _PlayingSound of the line on the channel
+        # Game-time each character last spoke, keyed by character name. Backs
+        # CharacterClass.GetLastTalkTime (BC's engine-internal talk-time stamp);
+        # only accepted lines write here. See last_talk_time() below.
+        self._last_talk: dict = {}
 
     def reset(self) -> None:
         self._stop_active_voice()
         self._active_priority = -1
         self._active_expiry = 0.0
+        self._last_talk.clear()
 
     def _stop_active_voice(self) -> None:
         """Stop whatever voice currently holds the channel (best-effort)."""
@@ -141,6 +146,11 @@ class CrewSpeechBus:
             self._route_subtitle(str(speaker), str(text), duration)
         # Cue lip-sync (and any other observers) for this accepted line.
         _notify_speech(str(speaker), str(wav) if wav else None, duration, now)
+        # Stamp when this character last spoke (game time, not the wall clock
+        # `now`) so CharacterClass.GetLastTalkTime can gate idle chatter. Only
+        # accepted lines reach here — a priority-dropped line (above) must not
+        # reset the timestamp.
+        self._last_talk[str(speaker)] = _game_time()
         return duration
 
     # -- Best-effort routing (never raises) ----------------------------------
@@ -174,6 +184,29 @@ class CrewSpeechBus:
         except Exception as _e:
             dev_mode.log_swallowed("play crew speech sound", _e)
             return 0.0, None
+
+
+def _game_time() -> float:
+    """Current game time (App.g_kUtopiaModule.GetGameTime), best-effort -> 0.0.
+
+    Game time — NOT the wall clock — because GetLastTalkTime is compared against
+    App.g_kUtopiaModule.GetGameTime() by the SDK. Guarded so the speech bus never
+    raises in headless/early-boot contexts where App isn't ready."""
+    try:
+        import App
+        return float(App.g_kUtopiaModule.GetGameTime())
+    except Exception:
+        return 0.0
+
+
+def last_talk_time(speaker) -> float:
+    """Game-time the named character last spoke; 0.0 if never (BC default).
+
+    Backs CharacterClass.GetLastTalkTime. 0.0 mirrors BC's initial state ("no
+    recent speech history"), so `GetGameTime() - GetLastTalkTime()` yields the
+    full elapsed game time and idle-chatter gates (>30s) pass once enough time
+    has elapsed while spoke-recently throttles (<5s) pass immediately."""
+    return bus()._last_talk.get(str(speaker), 0.0)
 
 
 def emit(speaker, db, line_id, priority) -> float:
