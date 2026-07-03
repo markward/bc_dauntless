@@ -568,6 +568,15 @@ class CharacterClass(ObjectClass):
         return node
 
     # ── Speaking-state queries (Phase 1: never speaking) ────────────────────
+    # NOTE: this explicit method must exist — the Get* data-bag in __getattr__
+    # (below) would otherwise intercept GetLastTalkTime and return None, so the
+    # SDK idiom `GetGameTime() - GetLastTalkTime()` becomes `float - None`
+    # (TypeError, swallowed by event dispatch) and the idle-chatter gate is
+    # silently defeated. The bus stamps _last_talk on every accepted line.
+    def GetLastTalkTime(self) -> float:
+        from engine.appc import crew_speech
+        return crew_speech.last_talk_time(self._character_name)
+
     def IsSpeaking(self) -> int:                  return 0
     def IsReadyToSpeak(self) -> int:              return 1
     def IsAnimating(self) -> int:                 return 0
