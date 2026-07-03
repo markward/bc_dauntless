@@ -236,6 +236,18 @@ def test_st_top_level_menu_cast_passes_through():
     assert STTopLevelMenu_Cast(None) is None
 
 
+def test_st_menu_openable_round_trip():
+    # A fresh menu is openable by default (BC explicitly SetNotOpenable's the
+    # two it wants closed). Guards against the truthy-_Stub regression where an
+    # unimplemented IsOpenable() reported a not-openable menu as openable.
+    menu = STMenu("X")
+    assert menu.IsOpenable() == 1
+    menu.SetNotOpenable()
+    assert menu.IsOpenable() == 0
+    menu.SetOpenable()
+    assert menu.IsOpenable() == 1
+
+
 # ── STButton ─────────────────────────────────────────────────────────────────
 
 def test_st_button_enabled_round_trip():

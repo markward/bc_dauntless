@@ -128,6 +128,7 @@ class STMenu(ObjectClass):
         self._buttons: dict = {}
         self._submenus: dict = {}
         self._enabled = True
+        self._openable = True
         self._visible = True
         self._focus = False
 
@@ -186,6 +187,9 @@ class STMenu(ObjectClass):
     def SetEnabled(self, *args) -> None:          self._enabled = True
     def SetDisabled(self, *args) -> None:         self._enabled = False
     def IsEnabled(self) -> int:                   return 1 if self._enabled else 0
+    def SetOpenable(self, *args) -> None:         self._openable = True
+    def SetNotOpenable(self, *args) -> None:      self._openable = False
+    def IsOpenable(self) -> int:                  return 1 if self._openable else 0
     def SetVisible(self, *args) -> None:          self._visible = True
     def SetNotVisible(self, *args) -> None:       self._visible = False
     def IsVisible(self) -> int:                   return 1 if self._visible else 0
