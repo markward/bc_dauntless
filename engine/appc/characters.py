@@ -252,6 +252,14 @@ def STTopLevelMenu_CreateW(label="") -> STTopLevelMenu:
     return STTopLevelMenu(str(label))
 
 
+def STMenu_CreateW(label="", *_extra) -> STMenu:
+    return STMenu(str(label))
+
+
+def STMenu_Create(label="", *_extra) -> STMenu:
+    return STMenu(str(label))
+
+
 def STTopLevelMenu_Cast(obj):
     """Same lenient pass-through as STMenu_Cast — see its docstring."""
     if isinstance(obj, STTopLevelMenu):
