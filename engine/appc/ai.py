@@ -223,6 +223,13 @@ class ArtificialIntelligence:
         # the base no-op (see below) — registration storage lives here so
         # the call site doesn't care about node type.
         self._external_functions: dict = {}
+        # Per-node update cadence (game seconds). The driver consults this to
+        # decide whether a node's own Update runs this tick (see
+        # ai_driver._tick_plain / _tick_preprocessing). Starts at 0.0 so the
+        # very first driver tick (game_time >= 0) always runs. Lives on the
+        # base so every node type — not just PlainAI — can be rescheduled by
+        # ForceUpdate. Interior nodes that don't self-gate simply ignore it.
+        self._next_update_time: float = 0.0
         type(self)._allocate_id(self)
 
     @classmethod
@@ -302,6 +309,30 @@ class ArtificialIntelligence:
     def GetExternalFunctions(self) -> dict:
         return dict(self._external_functions)
 
+    # ── Forced reschedule ────────────────────────────────────────────────────
+    def ForceUpdate(self) -> None:
+        """Re-run this AI on the next driver tick that reaches it, instead of
+        waiting for its scheduled cadence.
+
+        BC semantics (Appc.PreprocessingAI_ForceUpdate): a *reschedule*, NOT a
+        synchronous re-tick. SelectTarget calls ``self.pCodeAI.ForceUpdate()``
+        from its event handlers (TargetGone / ObjectDecloaked / OurShipEnteredSet
+        / TargetEnteredSet / TargetListChanged, AI/Preprocessors.py:1277-1302) so
+        the ship re-picks a target the instant its current one cloaks / leaves the
+        set / dies, rather than after the 5s ``fNormalUpdateTime`` cadence.
+
+        Resetting ``_next_update_time`` to 0.0 (<= every real game_time) is
+        sufficient — no parent/root propagation is needed. The AI tree dispatches
+        to contained/children every driver tick regardless of a node's own
+        cadence, so a node on the active path is *reached* every tick; its own
+        gate is all that stands between it and re-running. (Caveat: this cannot
+        revive a node that has already latched US_DORMANT and is therefore
+        skipped by its parent priority list — e.g. re-acquiring a *decloaking*
+        target. The drop-on-cloak path is unaffected: the node is still US_ACTIVE
+        at the moment it is forced.)
+        """
+        self._next_update_time = 0.0
+
 
 # ── PlainAI ──────────────────────────────────────────────────────────────────
 
@@ -310,11 +341,10 @@ class PlainAI(ArtificialIntelligence):
         super().__init__(pShip, name)
         self._script_module: str = ""
         self._script_instance = None
-        # _external_functions inherited from ArtificialIntelligence base.
-        # Driver bookkeeping — first Update fires when game_time >= 0.0,
-        # i.e. on the very first AI tick. Updated by ai_driver after each
-        # Update() call using the script's GetNextUpdateTime().
-        self._next_update_time: float = 0.0
+        # _external_functions and _next_update_time inherited from the
+        # ArtificialIntelligence base. _tick_plain gates on _next_update_time
+        # (first Update fires at game_time >= 0.0) and reschedules it after each
+        # Update() using the script's GetNextUpdateTime().
 
     def SetScriptModule(self, module_name: str) -> None:
         """Import AI.PlainAI.<module_name> and instantiate <module_name>(pCodeAI=self).
@@ -514,6 +544,11 @@ class PreprocessingAI(ArtificialIntelligence):
         # which returns PS_DONE unconditionally) would kill the whole
         # subtree on the first tick.
         self._preprocess_done: bool = False
+        # Last PS_* result from the preprocessor's Update, so cadence-skipped
+        # ticks (game_time < _next_update_time) can reproduce its effect
+        # instead of blindly dispatching the contained AI. See
+        # ai_driver._tick_preprocessing.
+        self._last_preprocess_status: int = PreprocessingAI.PS_NORMAL
 
     def SetContainedAI(self, ai) -> None:
         self._contained_ai = ai
@@ -560,7 +595,11 @@ class PreprocessingAI(ArtificialIntelligence):
             self._preprocessing_instance = _AIScriptInstance(self)
         return self._preprocessing_instance
 
-    def ForceUpdate(self) -> None:                  pass
+    # ForceUpdate inherited from ArtificialIntelligence (resets
+    # _next_update_time so the next tick re-runs this node's preprocessor).
+    # ForceDormantStatus / ForceStatusChange remain stubs — used only by
+    # SelectTarget's bUpdatingTargetInfo work-spreading path, which we run
+    # synchronously rather than across frames.
     def ForceDormantStatus(self, *args) -> None:    pass
     def ForceStatusChange(self, *args) -> None:     pass
 
