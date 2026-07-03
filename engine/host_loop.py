@@ -4795,6 +4795,7 @@ def run(mission_name: Optional[str] = None,
                 warp_flythrough_on=r.warp_flythrough_enabled(),
                 volumetric_nebulae_on=r.volumetric_nebulae_enabled(),
                 nebula_lightning_on=r.nebula_lightning_enabled(),
+                hdr_lens_flare_on=r.hdr_lens_flare_enabled(),
                 fov_deg=int(round(_math.degrees(
                     director.fov_y_rad
                 ))),
@@ -4819,6 +4820,7 @@ def run(mission_name: Optional[str] = None,
             set_warp_flythrough=r.set_warp_flythrough_enabled,
             set_volumetric_nebulae=r.set_volumetric_nebulae_enabled,
             set_nebula_lightning=r.set_nebula_lightning_enabled,
+            set_hdr_lens_flare=r.set_hdr_lens_flare_enabled,
             input_map=input_map,
         )
 
@@ -5955,7 +5957,10 @@ def run(mission_name: Optional[str] = None,
                 wake_pts = _nebula_wake.trail_points()
             r.set_nebula_wake(wake_pts)
 
-            lens_flares = _aggregate_lens_flares()
+            # The image-based Modern Lens Flares and the classic per-sun billboard
+            # flares are mutually exclusive: when the modern flare is on, suppress
+            # the billboards so only the screen-space flare renders.
+            lens_flares = [] if r.hdr_lens_flare_enabled() else _aggregate_lens_flares()
             r.set_lens_flares(lens_flares)
 
             _push_cloak_refraction(r, session, player)

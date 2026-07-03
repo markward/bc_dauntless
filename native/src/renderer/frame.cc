@@ -65,6 +65,19 @@ namespace {
     void set_enabled(bool v) { g_hdr_enabled = v; }
 }
 
+// Toggle for the image-based ("modern") lens flare (Modern VFX). Default on;
+// off = stock BC (the classic per-sun billboard flares, which the host loop
+// suppresses while this is on). host_bindings.cc forward-declares set_enabled;
+// frame() gates the LensFlareHdrPass + the resolve's lens-flare composite on
+// enabled() && dauntless_hdr::enabled() && exterior.
+namespace dauntless_hdr_lens_flare {
+namespace {
+    bool g_enabled = true;
+}
+    bool enabled() { return g_enabled; }
+    void set_enabled(bool v) { g_enabled = v; }
+}
+
 // Toggle for sun shadow maps (depth pre-pass + PCF in opaque). Default on.
 namespace dauntless_shadows {
 namespace {

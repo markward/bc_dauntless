@@ -45,6 +45,7 @@ class SettingsSnapshot:
     warp_flythrough_on: bool = True
     volumetric_nebulae_on: bool = True
     nebula_lightning_on: bool = True
+    hdr_lens_flare_on: bool = True
 
 
 class ConfigurationPanel(Panel):
@@ -68,6 +69,7 @@ class ConfigurationPanel(Panel):
                  set_warp_flythrough: Callable[[bool], None],
                  set_volumetric_nebulae: Callable[[bool], None],
                  set_nebula_lightning: Callable[[bool], None],
+                 set_hdr_lens_flare: Callable[[bool], None],
                  input_map=None):
         super().__init__()
         self._tabs = list(tabs)
@@ -90,6 +92,7 @@ class ConfigurationPanel(Panel):
             warp_flythrough_on=initial_settings.warp_flythrough_on,
             volumetric_nebulae_on=initial_settings.volumetric_nebulae_on,
             nebula_lightning_on=initial_settings.nebula_lightning_on,
+            hdr_lens_flare_on=initial_settings.hdr_lens_flare_on,
         )
         self._set_dust = set_dust
         self._set_specular = set_specular
@@ -108,6 +111,7 @@ class ConfigurationPanel(Panel):
         self._set_warp_flythrough = set_warp_flythrough
         self._set_volumetric_nebulae = set_volumetric_nebulae
         self._set_nebula_lightning = set_nebula_lightning
+        self._set_hdr_lens_flare = set_hdr_lens_flare
         # Controls tab: action → physical-key remapping (engine.input_map.InputMap).
         # Optional so existing construction/tests without a controls tab still work.
         self._input_map = input_map
@@ -174,6 +178,7 @@ class ConfigurationPanel(Panel):
             self._settings.warp_flythrough_on,
             self._settings.volumetric_nebulae_on,
             self._settings.nebula_lightning_on,
+            self._settings.hdr_lens_flare_on,
             self._settings.fov_deg,
         )
         if snapshot == self._last_pushed:
@@ -209,6 +214,7 @@ class ConfigurationPanel(Panel):
                 "warp_flythrough_on": self._settings.warp_flythrough_on,
                 "volumetric_nebulae_on": self._settings.volumetric_nebulae_on,
                 "nebula_lightning_on": self._settings.nebula_lightning_on,
+                "hdr_lens_flare_on": self._settings.hdr_lens_flare_on,
                 "fov_deg": self._settings.fov_deg,
             },
         }
@@ -304,6 +310,11 @@ class ConfigurationPanel(Panel):
             new_val = not self._settings.nebula_lightning_on
             self._set_nebula_lightning(new_val)
             self._settings.nebula_lightning_on = new_val
+            return True
+        if action == "toggle:hdr_lens_flare":
+            new_val = not self._settings.hdr_lens_flare_on
+            self._set_hdr_lens_flare(new_val)
+            self._settings.hdr_lens_flare_on = new_val
             return True
         if action == "toggle:hdr":
             new_val = not self._settings.hdr_on
@@ -431,6 +442,8 @@ class ConfigurationPanel(Panel):
             self.dispatch_event("toggle:volumetric_nebulae")
         elif activate and kind == "ctrl" and target == "nebula_lightning":
             self.dispatch_event("toggle:nebula_lightning")
+        elif activate and kind == "ctrl" and target == "hdr_lens_flare":
+            self.dispatch_event("toggle:hdr_lens_flare")
         elif activate and kind == "ctrl" and target == "hdr":
             self.dispatch_event("toggle:hdr")
         elif activate and kind == "ctrl" and target == "rim":
@@ -481,7 +494,8 @@ class ConfigurationPanel(Panel):
                     ("ctrl", "hdr"), ("ctrl", "rim"), ("ctrl", "shadows"),
                     ("ctrl", "decals"), ("ctrl", "smaa"), ("ctrl", "filmic"),
                     ("ctrl", "motion_blur"), ("ctrl", "warp_flythrough"),
-                    ("ctrl", "volumetric_nebulae"), ("ctrl", "nebula_lightning")]
+                    ("ctrl", "volumetric_nebulae"), ("ctrl", "nebula_lightning"),
+                    ("ctrl", "hdr_lens_flare")]
         elif self._selected_tab == "gameplay":
             out += [("ctrl", "subtitles"),
                     ("ctrl", "disable_annoying_dialogue"),
