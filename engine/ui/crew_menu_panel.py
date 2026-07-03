@@ -89,6 +89,7 @@ class CrewMenuPanel(Panel):
         }
         if isinstance(widget, STMenu) and not isinstance(widget, SortedRegionMenu):
             node["expanded"] = wid in self._expanded_ids
+            node["openable"] = bool(widget.IsOpenable())
             children = [self._snapshot_node(c) for c in widget._children]
             node["children"] = [c for c in children if c is not None]
         return node

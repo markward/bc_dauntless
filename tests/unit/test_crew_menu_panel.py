@@ -134,6 +134,33 @@ def test_nested_submenu_snapshot_depth():
     assert warp_node["children"][0]["type"] == "button"
 
 
+def test_snapshot_reports_openable_state():
+    from engine.appc.characters import STMenu
+    helm, btn = _build_helm_with_button()
+
+    # A populated-but-not-openable submenu (BC's initial Orbit/NavPoints state):
+    # openable must be reported False so CEF never shows an expand affordance.
+    closed = STMenu("Orbit Planet")
+    closed.AddChild(App.STButton_CreateW("Earth", None))
+    closed.SetNotOpenable()
+    helm.AddChild(closed)
+
+    # A populated openable submenu stays openable == True.
+    open_menu = STMenu("Communicate")
+    open_menu.AddChild(App.STButton_CreateW("Hail", None))
+    helm.AddChild(open_menu)
+
+    panel = CrewMenuPanel()
+    payload = panel.render_payload()
+    data = json.loads(payload[len("setCrewMenus("):-2])
+    nodes = data["menus"][0]["children"]
+
+    closed_node = [n for n in nodes if n["label"] == "Orbit Planet"][0]
+    open_node = [n for n in nodes if n["label"] == "Communicate"][0]
+    assert closed_node["openable"] is False
+    assert open_node["openable"] is True
+
+
 def test_menu_click_is_clean_noop():
     _clicks.clear()
     helm, btn = _build_helm_with_button()

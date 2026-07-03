@@ -43,7 +43,7 @@ function renderCrewMenu(menu) {
 function appendCrewRows(body, nodes, depth) {
   for (const node of nodes) {
     if (node.visible === false) continue;
-    const hasChildren = node.type === "menu" && (node.children || []).length > 0;
+    const hasChildren = node.type === "menu" && node.openable !== false && (node.children || []).length > 0;
 
     const row = document.createElement("div");
     row.className = "crew-menu__row" + (node.enabled ? "" : " disabled") +
