@@ -46,6 +46,7 @@ _REQUIRED_BINDINGS = frozenset({
     "rim_set_enabled", "set_backdrops", "set_bridge_camera", "set_bridge_lighting",
     "set_bridge_wall_time", "set_camera", "set_comm_set_id", "set_cursor_locked",
     "set_dust_planets", "set_emissive_scale", "set_glow_region_dim",
+    "set_glow_region_gain",
     "set_hologram_only_mode", "set_hologram_ship", "set_hull_discharges",
     "set_instance_animation", "set_instance_rest_pose", "set_lens_flares",
     "set_lighting", "set_nebula_godrays", "set_nebula_wake", "set_nebulae",
@@ -458,6 +459,13 @@ def set_glow_region_dim(instance_id: InstanceId, region_index: int,
     flicker, 0 = solid settle)."""
     _h.set_glow_region_dim(instance_id, int(region_index),
                            float(dim_target), float(disable_time), float(flicker))
+
+
+def set_glow_region_gain(instance_id: InstanceId, region_index: int,
+                         gain: float) -> None:
+    """Update a glow region's brightness gain. 1.0 = untouched; >1 brightens the
+    glow inside the region (impulse engine power/speed) and feeds HDR bloom."""
+    _h.set_glow_region_gain(instance_id, int(region_index), float(gain))
 
 
 # ── Shield pass ─────────────────────────────────────────────────────────────

@@ -8,12 +8,73 @@ region geometry and the shader attenuation; this module only decides *when* and
 docs/superpowers/specs/2026-06-10-subsystem-glow-dimming-design.md.
 """
 
+import math
+
 HEALTHY = "healthy"
 DISABLED = "disabled"
 DESTROYED = "destroyed"
 
 # Capsule axis for warp nacelles: ship-forward is model +Y (column-vector).
 WARP_AXIS = (0.0, 1.0, 0.0)
+
+# Impulse-glow power/speed scaling (Mark's "sell the movement" pass). Driven by
+# the *commanded* impulse throttle (player notch / AI speed setpoint), NOT
+# measured velocity, so warp/collision/drift never brighten the engines. All
+# tunable here with no rebuild; biased slightly strong (calibrate up then down).
+GAIN_IDLE = 1.0      # powered but stopped -> base glow (matches legacy brightness)
+GAIN_MAX = 4.0       # full throttle -> ~4x brighter (feeds HDR bloom)
+PULSE_FREQ_HZ = 0.4  # slow throb rate
+PULSE_AMP = 0.15     # peak pulse fraction at full throttle (scales with speed)
+
+
+def _clamp01(x: float) -> float:
+    return 0.0 if x < 0.0 else (1.0 if x > 1.0 else x)
+
+
+def _is_on(sub) -> bool:
+    """Powered? Default True when the sub has no power model (region exists)."""
+    if sub is None or not hasattr(sub, "IsOn"):
+        return True
+    return bool(sub.IsOn())
+
+
+def commanded_impulse_frac(ship, throttle_override=None) -> float:
+    """Commanded impulse throttle as a 0..1 fraction.
+
+    `throttle_override` (the player's notch fraction, supplied by the host loop)
+    wins when given. Otherwise derive from the AI speed setpoint
+    (`GetSpeedSetpoint()[0]`) over the impulse subsystem's max speed. Returns 0.0
+    when there is no command or no usable max speed (never divides by zero). This
+    is the *commanded* throttle, so it excludes warp/collision/drift velocity.
+    """
+    if throttle_override is not None:
+        return _clamp01(float(throttle_override))
+    sp = ship.GetSpeedSetpoint() if hasattr(ship, "GetSpeedSetpoint") else None
+    if not sp:
+        return 0.0
+    commanded = abs(float(sp[0]))
+    ies = (ship.GetImpulseEngineSubsystem()
+           if hasattr(ship, "GetImpulseEngineSubsystem") else None)
+    max_speed = float(ies.GetMaxSpeed()) if ies is not None else 0.0
+    if max_speed <= 0.0:
+        return 0.0
+    return _clamp01(commanded / max_speed)
+
+
+def impulse_gain(frac: float, now: float, powered: bool) -> float:
+    """Glow brightness gain for the impulse region.
+
+    Unpowered / disabled / destroyed -> 1.0 (no boost; the dim state machine owns
+    those). Powered -> base ramps GAIN_IDLE..GAIN_MAX with commanded throttle,
+    times a slow pulse whose amplitude grows with speed (steady at rest).
+    """
+    if not powered:
+        return 1.0
+    frac = _clamp01(frac)
+    base = GAIN_IDLE + (GAIN_MAX - GAIN_IDLE) * frac
+    amp = PULSE_AMP * frac
+    pulse = 1.0 + amp * math.sin(2.0 * math.pi * PULSE_FREQ_HZ * now)
+    return base * pulse
 
 
 def glow_state(sub) -> str:
@@ -96,7 +157,8 @@ class ShipGlowController:
     def __init__(self, renderer, instance_id, ship):
         self._r = renderer
         self._iid = instance_id
-        self._regions = []  # dicts: sub, idx, prev, etime
+        self._ship = ship
+        self._regions = []  # dicts: sub, idx, prev, etime, boost
 
         # Warp nacelles -> capsule regions (fit the elongated shape).
         for pod in warp_pods(ship.GetWarpEngineSubsystem()):
@@ -108,11 +170,13 @@ class ShipGlowController:
             if idx < 0:
                 continue
             self._regions.append(
-                {"sub": pod, "idx": idx, "prev": HEALTHY, "etime": -1.0})
+                {"sub": pod, "idx": idx, "prev": HEALTHY, "etime": -1.0,
+                 "boost": False})
 
         # Impulse + sensors -> sphere regions (compact hardpoint spots).
-        for sub in (ship.GetImpulseEngineSubsystem(),
-                    ship.GetSensorSubsystem()):
+        # Only the impulse region is power/speed-brightened ("boost").
+        for sub, boost in ((ship.GetImpulseEngineSubsystem(), True),
+                           (ship.GetSensorSubsystem(), False)):
             pos = _position_tuple(sub)
             if pos is None:
                 continue
@@ -120,14 +184,24 @@ class ShipGlowController:
             if idx < 0:
                 continue
             self._regions.append(
-                {"sub": sub, "idx": idx, "prev": HEALTHY, "etime": -1.0})
+                {"sub": sub, "idx": idx, "prev": HEALTHY, "etime": -1.0,
+                 "boost": boost})
 
-    def update(self, now: float) -> None:
-        """Read each region's live state and push dim/edge/flicker for `now`."""
+    def update(self, now: float, throttle_frac=None) -> None:
+        """Push dim/edge/flicker each frame; brighten the impulse region by
+        commanded throttle (+ slow pulse). `throttle_frac` is the player's notch
+        fraction from the host loop; None -> derive from the AI speed setpoint."""
         for reg in self._regions:
-            state = glow_state(reg["sub"])
+            sub = reg["sub"]
+            state = glow_state(sub)
             etime = glow_edge(reg["prev"], state, reg["etime"], now)
             dim, flick = dim_and_flicker(state)
             self._r.set_glow_region_dim(self._iid, reg["idx"], dim, etime, flick)
             reg["prev"] = state
             reg["etime"] = etime
+            if reg["boost"]:
+                powered = (state == HEALTHY) and _is_on(sub)
+                frac = (commanded_impulse_frac(self._ship, throttle_frac)
+                        if powered else 0.0)
+                gain = impulse_gain(frac, now, powered)
+                self._r.set_glow_region_gain(self._iid, reg["idx"], gain)

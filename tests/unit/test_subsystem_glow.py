@@ -93,6 +93,7 @@ class _FakeRenderer:
         self.capsule_calls = []
         self.sphere_calls = []
         self.dim_calls = []
+        self.gain_calls = []
     def compute_capsule_region(self, iid, center, axis, radius):
         self.capsule_calls.append((iid, center, axis, radius))
         return self._results.pop(0)
@@ -101,6 +102,8 @@ class _FakeRenderer:
         return self._results.pop(0)
     def set_glow_region_dim(self, iid, idx, dim_target, edge_time, flicker):
         self.dim_calls.append((iid, idx, dim_target, edge_time, flicker))
+    def set_glow_region_gain(self, iid, idx, gain):
+        self.gain_calls.append((iid, idx, gain))
 
 
 def test_controller_registers_capsule_for_warp_and_spheres_for_impulse_sensor():
@@ -149,3 +152,108 @@ def test_controller_drives_three_state_across_edges():
     impulse.destroyed = False
     ctrl.update(now=40.0)
     assert rend.dim_calls[-1] == (7, 0, 1.0, -1.0, 0.0)
+
+
+# ── impulse power/speed scaling + slow pulse ────────────────────────────────
+
+class _ImpulseSub(_Pod):
+    """Impulse sub with a power switch and a max speed (for AI frac)."""
+    def __init__(self, pos, radius=0.25, on=True, max_speed=10.0):
+        super().__init__(pos, radius)
+        self._on, self._max_speed = on, max_speed
+    def IsOn(self): return self._on
+    def GetMaxSpeed(self): return self._max_speed
+
+
+class _AIShip(_Ship):
+    """Ship exposing an AI speed setpoint (no player throttle override)."""
+    def __init__(self, warp, impulse, sensor, setpoint=None):
+        super().__init__(warp, impulse, sensor)
+        self._setpoint = setpoint
+    def GetSpeedSetpoint(self): return self._setpoint
+
+
+def test_commanded_impulse_frac_override_wins_and_clamps():
+    ship = _Ship(warp=None, impulse=None, sensor=None)
+    assert sg.commanded_impulse_frac(ship, 0.5) == 0.5
+    assert sg.commanded_impulse_frac(ship, 2.0) == 1.0   # clamped high
+    assert sg.commanded_impulse_frac(ship, -1.0) == 0.0  # clamped low
+
+
+def test_commanded_impulse_frac_from_ai_setpoint():
+    impulse = _ImpulseSub(_Point(0.0, 0.0, 0.0), max_speed=10.0)
+    # commanded 5 / max 10 -> 0.5; direction/frame slots ignored
+    ship = _AIShip(None, impulse, None, setpoint=(5.0, (0, 1, 0), 0))
+    assert sg.commanded_impulse_frac(ship) == 0.5
+    # over max clamps to 1.0; reverse (negative) uses magnitude
+    ship._setpoint = (25.0, (0, 1, 0), 0)
+    assert sg.commanded_impulse_frac(ship) == 1.0
+    ship._setpoint = (-5.0, (0, -1, 0), 0)
+    assert sg.commanded_impulse_frac(ship) == 0.5
+
+
+def test_commanded_impulse_frac_missing_or_zero_max_is_zero():
+    # no setpoint, no override -> 0
+    ship = _AIShip(None, _ImpulseSub(_Point(0, 0, 0)), None, setpoint=None)
+    assert sg.commanded_impulse_frac(ship) == 0.0
+    # zero max speed -> no divide-by-zero, 0
+    ship2 = _AIShip(None, _ImpulseSub(_Point(0, 0, 0), max_speed=0.0), None,
+                    setpoint=(5.0, (0, 1, 0), 0))
+    assert sg.commanded_impulse_frac(ship2) == 0.0
+
+
+def test_impulse_gain_ramps_idle_to_max_when_powered():
+    # now=0 -> sin term is 0, so gain == base (no pulse contribution)
+    assert sg.impulse_gain(0.0, 0.0, powered=True) == sg.GAIN_IDLE
+    assert sg.impulse_gain(1.0, 0.0, powered=True) == sg.GAIN_MAX
+    mid = sg.impulse_gain(0.5, 0.0, powered=True)
+    assert sg.GAIN_IDLE < mid < sg.GAIN_MAX
+
+
+def test_impulse_gain_unpowered_is_exactly_one():
+    # unpowered / disabled / destroyed never boost, at any throttle or phase
+    for now in (0.0, 1.3, 7.7):
+        for frac in (0.0, 0.5, 1.0):
+            assert sg.impulse_gain(frac, now, powered=False) == 1.0
+
+
+def test_impulse_gain_pulse_bounded_and_steady_at_rest():
+    # at rest (frac 0) the pulse amplitude is 0 -> perfectly steady
+    for now in (0.0, 0.6, 1.25, 3.3):
+        assert sg.impulse_gain(0.0, now, powered=True) == sg.GAIN_IDLE
+    # under way the gain stays within base*(1 +/- amp) across a phase sweep
+    frac = 1.0
+    base = sg.GAIN_IDLE + (sg.GAIN_MAX - sg.GAIN_IDLE) * frac
+    amp = sg.PULSE_AMP * frac
+    lo, hi = base * (1.0 - amp), base * (1.0 + amp)
+    for k in range(40):
+        now = k * 0.1
+        g = sg.impulse_gain(frac, now, powered=True)
+        assert lo - 1e-9 <= g <= hi + 1e-9
+
+
+def test_controller_pushes_gain_only_for_impulse_region():
+    warp = _WarpAgg([_Pod(_Point(-3.0, 1.0, 0.0))])
+    impulse = _ImpulseSub(_Point(0.0, -0.98, -0.45), on=True, max_speed=10.0)
+    sensor = _Pod(_Point(0.0, -0.45, -0.5), radius=0.28)
+    ship = _AIShip(warp, impulse, sensor, setpoint=(10.0, (0, 1, 0), 0))
+    rend = _FakeRenderer(results=[0, 1, 2])  # capsule, impulse sphere, sensor sphere
+
+    ctrl = sg.ShipGlowController(rend, instance_id=7, ship=ship)
+    ctrl.update(now=0.0)
+
+    # exactly one gain push, on the impulse region index (1), at full throttle
+    assert len(rend.gain_calls) == 1
+    iid, idx, gain = rend.gain_calls[0]
+    assert (iid, idx) == (7, 1)
+    assert abs(gain - sg.GAIN_MAX) < 1e-9
+
+
+def test_controller_no_boost_when_impulse_unpowered():
+    impulse = _ImpulseSub(_Point(0.0, -0.98, -0.45), on=False, max_speed=10.0)
+    ship = _AIShip(None, impulse, None, setpoint=(10.0, (0, 1, 0), 0))
+    rend = _FakeRenderer(results=[0])
+    ctrl = sg.ShipGlowController(rend, instance_id=7, ship=ship)
+    ctrl.update(now=0.0)
+    # region still exists and gets a gain call, but gain is 1.0 (no boost)
+    assert rend.gain_calls == [(7, 0, 1.0)]
