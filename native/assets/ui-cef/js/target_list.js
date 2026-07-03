@@ -73,8 +73,13 @@ function setTargetList(state) {
         const chosen = (selected === name) ? ' target-list__row--chosen' : '';
         const expanded = !!row.expanded;
         const expandedCls = expanded ? ' target-list__row--expanded' : '';
-        const hull = (typeof row.hull === 'number') ? row.hull : 100;
-        const shields = (typeof row.shields === 'number') ? row.shields : 0;
+        const clampPct = function (v) { return Math.max(0, Math.min(100, v)); };
+        const hull = clampPct((typeof row.hull === 'number') ? row.hull : 100);
+        const shields = clampPct((typeof row.shields === 'number') ? row.shields : 0);
+        // Inert targets (asteroids) carry no real shields — omit the bar
+        // entirely and let the hull bar occupy the far-right slot. Default to
+        // showing the bar when the flag is absent (older payloads).
+        const hasShields = (row.has_shields !== false);
         const nameHtml = escapeHtml(name);
         const toggleAttr = clickAttr('target/' + name + '/__toggle__');
         const targetAttr = clickAttr('target/' + name);
@@ -97,8 +102,10 @@ function setTargetList(state) {
               +   '<span class="target-list__bars">'
               +     '<span class="target-list__bar target-list__bar--hull"'
               +     ' style="--bar-pct:' + hull + '%"></span>'
-              +     '<span class="target-list__bar target-list__bar--shields"'
-              +     ' style="--bar-pct:' + shields + '%"></span>'
+              +     (hasShields
+                     ? '<span class="target-list__bar target-list__bar--shields"'
+                       + ' style="--bar-pct:' + shields + '%"></span>'
+                     : '')
               +   '</span>'
               + '</div>';
 

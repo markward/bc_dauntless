@@ -149,6 +149,11 @@
     display: flex;
     gap: 4px;
     align-items: center;
+    /* Fixed width of two bars + gap, right-justified, so a target with no
+       shield bar leaves the hull bar in the far-right slot (nudged right)
+       rather than shifting the whole group. */
+    width: 68px;
+    justify-content: flex-end;
 }
 
 .target-list__bar {

@@ -86,6 +86,24 @@ def _query_shield_percentage(ship) -> int:
         return 0
 
 
+def _query_has_shields(ship) -> bool:
+    """True only when the ship carries a shield subsystem with real capacity.
+
+    Inert hulls (asteroids) still get a ShieldSubsystem, but with all six faces
+    at MaxShields=0 — GetShieldPercentage() then reports 1.0 ("shields not a
+    factor" for the AI), which would render a full bar. HasShields() lets the
+    view suppress the shield bar entirely for those targets."""
+    if ship is None or not hasattr(ship, "GetShields"):
+        return False
+    shields = ship.GetShields()
+    if shields is None or not hasattr(shields, "HasShields"):
+        return False
+    try:
+        return bool(shields.HasShields())
+    except Exception:
+        return False
+
+
 def _query_subsystem_condition(ship, name: str) -> int:
     """Return the named subsystem's condition as an integer percentage
     0-100. Prefers GetCombinedConditionPercentage so parent weapon
@@ -205,6 +223,7 @@ class TargetListView(Panel):
                         and (not _out_of_action(ship) or is_targetable_wreck(ship)):
                     hull_pct = _query_hull_percentage(ship)
                     shield_pct = _query_shield_percentage(ship)
+                    has_shields = _query_has_shields(ship)
                     # sub_child.GetLabel() equals the subsystem's GetName()
                     # by construction in STSubsystemMenu.RebuildShipMenu, so
                     # the label is a valid lookup key for the name-based
@@ -247,6 +266,7 @@ class TargetListView(Panel):
                         child.IsVisible(),
                         hull_pct,
                         shield_pct,
+                        has_shields,
                         subsystems,
                         name in self._expanded_ships,
                     ))
@@ -301,6 +321,7 @@ class TargetListView(Panel):
                     "affiliation": aff,
                     "hull": hull,
                     "shields": shields,
+                    "has_shields": has_shields,
                     "subsystems": [
                         {"name": s_name, "condition": s_cond,
                          "expanded": s_expanded,
@@ -310,7 +331,7 @@ class TargetListView(Panel):
                     ],
                     "expanded": expanded,
                 }
-                for (name, aff, is_vis, hull, shields, subs, expanded) in rows
+                for (name, aff, is_vis, hull, shields, has_shields, subs, expanded) in rows
                 if is_vis
             ],
         }

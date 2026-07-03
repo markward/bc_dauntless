@@ -198,7 +198,12 @@ class ShipSubsystem(TGEventHandlerObject):
         self._arc_set: bool = False
         # Shared identity fields populated by SetupProperties.
         self._critical: int = 0
-        self._targetable: int = 0
+        # Default targetable so a subsystem whose hardpoint never set the flag
+        # still shows/targets; SetupProperties copies the property's value on
+        # top (SubsystemProperty defaults to 1 as well). IsTargetable() reads
+        # this field — a hardpoint SetTargetable(0) (e.g. an asteroid's Shield
+        # Generator / Power Plant) is what hides a subsystem from the menu.
+        self._targetable: int = 1
         self._primary: int = 0
         self._disabled_percentage: float = 0.25
         # Explicit damage/destroyed flags.  SetDamaged/SetDestroyed let tests
@@ -395,6 +400,21 @@ class ShipSubsystem(TGEventHandlerObject):
         self._condition = max(0.0, float(value))
 
     def GetMaxCondition(self) -> float:
+        # The property template is the authoritative max-condition, mirroring
+        # BC's C++ subsystems which delegate max to their property. This matters
+        # when a mission mutates the max AFTER load via the property — e.g. E1M2
+        # CreateDebris does pHull.GetProperty().SetMaxCondition(300) then
+        # SetCondition(300) to peg an asteroid at full health. Properties are
+        # SHARED templates (one per ship class), so per-ship current condition
+        # stays in self._condition while the (per-class) max comes from here.
+        prop = self._property
+        if prop is not None:
+            try:
+                pm = prop.GetMaxCondition()
+            except Exception:
+                pm = None
+            if pm is not None and float(pm) > 0.0:
+                return float(pm)
         return self._max_condition
 
     def SetMaxCondition(self, value: float) -> None:
@@ -406,9 +426,12 @@ class ShipSubsystem(TGEventHandlerObject):
         self._max_condition = v
 
     def GetConditionPercentage(self) -> float:
-        if self._max_condition <= 0:
+        mx = self.GetMaxCondition()
+        if mx <= 0:
             return 0.0
-        return self._condition / self._max_condition
+        # Clamp: a mission may set condition above the (possibly lowered) max;
+        # 100% is the ship's intended full health, never an overflowing bar.
+        return max(0.0, min(1.0, self._condition / mx))
 
     def GetCombinedConditionPercentage(self) -> float:
         # SDK aggregates self + child subsystems; Phase 1 ships have no
@@ -416,10 +439,10 @@ class ShipSubsystem(TGEventHandlerObject):
         return self.GetConditionPercentage()
 
     def GetDamage(self) -> float:
-        return self._max_condition - self._condition
+        return max(0.0, self.GetMaxCondition() - self._condition)
 
     def GetRepairPointsNeeded(self) -> int:
-        return int(self._max_condition - self._condition)
+        return int(max(0.0, self.GetMaxCondition() - self._condition))
 
     def GetRadius(self) -> float:
         return self._radius
@@ -701,11 +724,13 @@ class ShipSubsystem(TGEventHandlerObject):
 
     def IsTargetable(self) -> int:
         """SDK Preprocessors.py:953-954, 829 — AI iterates subsystems and
-        only adds those reporting IsTargetable()=1 to the rating list.
-        Phase 1 treats every ShipSubsystem as targetable; subclasses /
-        property-driven overrides can return 0 once they need to model
-        un-targetable internals (e.g. crew quarters)."""
-        return 1
+        only adds those reporting IsTargetable()=1 to the rating list; the
+        target-menu builder (RebuildShipMenu) likewise hides untargetable
+        subsystems. The flag is copied from the hardpoint property in
+        SetupProperties (SubsystemProperty.SetTargetable). An asteroid's
+        Shield Generator / Power Plant set SetTargetable(0), so they never
+        appear in the target list."""
+        return 1 if self._targetable else 0
 
     def IsDisabled(self) -> int:
         """SDK Preprocessors.py:823, 974 — condition has fallen at or below
@@ -982,6 +1007,17 @@ class ShieldSubsystem(PoweredSubsystem):
         """FloatRangeWatcher on a single face's FRACTION
         (Conditions/ConditionSingleShieldBelow.py:110, eWhichShield)."""
         return self._shield_watchers[int(face)]
+
+    def HasShields(self) -> int:
+        """True only when at least one face has real shield capacity.
+
+        Unshielded hulls (e.g. asteroids, whose ShieldProperty declares all six
+        faces at MaxShields=0) still get a ShieldSubsystem so SDK code can chain
+        GetShields() without null-guarding, but they have no actual shields. The
+        target list uses this to suppress the shield bar rather than showing the
+        100% that GetShieldPercentage() reports for a zero-max shield (that 1.0
+        is deliberate — it tells the AI 'shields are not a factor here')."""
+        return 1 if sum(self._max_shields) > 0.0 else 0
 
     def GetMaxShields(self, face: int) -> float:
         return self._max_shields[int(face)]

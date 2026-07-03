@@ -445,6 +445,15 @@ def _is_critical(subsystem) -> bool:
     return bool(subsystem.IsCritical())
 
 
+def _is_targetable(subsystem) -> bool:
+    """True when a subsystem is targetable. Guarded so subsystems without
+    IsTargetable (fakes/stubs) read as True — preserving the historical
+    behaviour where every power plant breached."""
+    if subsystem is None or not hasattr(subsystem, "IsTargetable"):
+        return True
+    return bool(subsystem.IsTargetable())
+
+
 def _route_zero_crossing(ship, subsystem, crossed_zero: bool) -> None:
     """On a subsystem crossing >0 -> 0, arm the warp-core breach (when the
     subsystem is the ship's PowerSubsystem) or schedule the hull-death cascade
@@ -457,8 +466,13 @@ def _route_zero_crossing(ship, subsystem, crossed_zero: bool) -> None:
         return
     power = ship.GetPowerSubsystem() if hasattr(ship, "GetPowerSubsystem") else None
     if power is not None and subsystem is power:
-        from engine.appc import warp_core_breach
-        warp_core_breach.arm(ship)
+        # Only a real, targetable power plant / warp core breaches. Inert
+        # objects (asteroids) carry a hidden, non-targetable Power Plant
+        # (SetTargetable(0)); when the death cascade zeroes it, it must NOT
+        # throw a warp-core explosion with its unique VFX + splash damage.
+        if _is_targetable(power):
+            from engine.appc import warp_core_breach
+            warp_core_breach.arm(ship)
         return
     hull = ship.GetHull() if hasattr(ship, "GetHull") else None
     if hull is not None and subsystem is hull:

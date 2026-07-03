@@ -861,6 +861,8 @@ class ShipClass(DamageableObject):
                     ps.SetProperty(prop)
                     mc = prop.GetMaxCondition()
                     if mc is not None: ps.SetMaxCondition(mc)
+                    tg = prop.GetTargetable()
+                    if tg is not None: ps.SetTargetable(tg)
                     # Seed battery pools to full so a fresh ship can fire
                     # before the first per-tick refill (matches the SDK
                     # WarpCore which the C++ side initialises at full
@@ -1015,6 +1017,8 @@ class ShipClass(DamageableObject):
                 child.SetProperty(prop)
                 mc = prop.GetMaxCondition()
                 if mc is not None: child.SetMaxCondition(mc)
+                tg = prop.GetTargetable()
+                if tg is not None: child.SetTargetable(tg)
 
                 if isinstance(child, PhaserBank):
                     _copy_energy_weapon_fields(child, prop)
@@ -1090,6 +1094,11 @@ class ShipClass(DamageableObject):
             return
         mc = prop.GetMaxCondition()
         if mc is not None: subsystem.SetMaxCondition(mc)
+        # Targetable drives target-menu visibility (RebuildShipMenu) + AI
+        # subsystem rating; must come from the hardpoint (e.g. an asteroid's
+        # Shield Generator sets SetTargetable(0)), not the engine default.
+        tg = prop.GetTargetable()
+        if tg is not None: subsystem.SetTargetable(tg)
         np = prop.GetNormalPowerPerSecond()
         if np is not None: subsystem.SetNormalPowerPerSecond(np)
         # DisabledPercentage drives IsDisabled() — must come from the hardpoint

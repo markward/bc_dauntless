@@ -5,7 +5,11 @@ from engine.appc.subsystems import ShipSubsystem
 def test_defaults():
     s = ShipSubsystem("Test")
     assert s.GetCritical() == 0
-    assert s.GetTargetable() == 0
+    # Targetable defaults to 1 (matches SubsystemProperty's default and the
+    # prior IsTargetable()==1 behavior). SetupProperties copies the hardpoint's
+    # value on top; only an explicit SetTargetable(0) hides a subsystem.
+    assert s.GetTargetable() == 1
+    assert s.IsTargetable() == 1
     assert s.GetPrimary() == 0
     assert s.GetDisabledPercentage() == 0.25
 
