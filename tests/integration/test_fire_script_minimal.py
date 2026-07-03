@@ -103,8 +103,15 @@ def test_select_target_plus_fire_script_starts_weapon_firing():
 
     # 6 ticks: SelectTarget picks (tick 1), then FireScript cycle
     # iLastUpdate -2 -> -1 -> 0 -> 1 -> -2 -> -1.
+    #
+    # Step 0.25s (> FireScript's 0.2s GetNextUpdateTime cadence) so each tick
+    # unambiguously clears the gate and FireScript's Update advances every tick.
+    # A 0.2s stride would land exactly on the cadence boundary and be
+    # floating-point fragile now that ai_driver._tick_preprocessing gates the
+    # preprocessor's own Update. (SelectTarget runs once at t=0 then gates on
+    # its 5s cadence; the target never changes, so that's fine.)
     for i in range(6):
-        tick_ai(pp_select, game_time=float(i) * 0.2)
+        tick_ai(pp_select, game_time=float(i) * 0.25)
 
     # Some firing must have happened on at least one weapon system.
     # PhaserSystem.StartFiring sets _fire_held=True and appends to

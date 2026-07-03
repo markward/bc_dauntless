@@ -354,12 +354,20 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
         cache = ai._preprocess_arity_cache
 
     arity = cache[2]
-    # Skip calling the preprocessor's Update once it has reported PS_DONE.
-    # SDK semantics: PS_DONE means "this preprocessor's job is finished",
-    # not "the whole subtree is done". An "Unused"-style preprocessor like
-    # ManagePower returns PS_DONE unconditionally (AI/Preprocessors.py:2148)
-    # and would otherwise kill the wrapper subtree on tick 1.
-    if not ai._preprocess_done:
+    # Cadence gate: run the preprocessor's own Update only when it is due
+    # (game_time >= _next_update_time), mirroring _tick_plain and BC's C++
+    # dispatcher, which honours every node's GetNextUpdateTime. The contained
+    # AI still dispatches every tick (below) — only the preprocessor's own
+    # decision-making is gated. ForceUpdate() resets _next_update_time to 0.0
+    # so an asynchronous event (e.g. a target cloaking) re-runs the
+    # preprocessor on the very next tick instead of after its full cadence.
+    #
+    # Skip calling Update once the preprocessor has reported PS_DONE. SDK
+    # semantics: PS_DONE means "this preprocessor's job is finished", not "the
+    # whole subtree is done". An "Unused"-style preprocessor like ManagePower
+    # returns PS_DONE unconditionally (AI/Preprocessors.py:2148) and would
+    # otherwise kill the wrapper subtree on tick 1.
+    if not ai._preprocess_done and game_time >= ai._next_update_time:
         bound = getattr(inst, method)
         if arity >= 1:
             result = bound(game_time + 1.0)
@@ -368,6 +376,18 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
 
         if result is None:
             result = PS_NORMAL
+        ai._last_preprocess_status = result
+
+        # Reschedule from the preprocessor's own cadence. Default 0.0 (every
+        # tick) when GetNextUpdateTime is absent — synthetic test fixtures and
+        # simple preprocessors keep their historical every-tick behaviour, so
+        # only real SDK preprocessors (SelectTarget 5s, FireScript 0.2s,
+        # AlertLevel 60s, ManagePower 3s) actually gate.
+        next_update_fn = getattr(inst, "GetNextUpdateTime", None)
+        nxt = next_update_fn() if callable(next_update_fn) else None
+        interval = float(nxt) if nxt is not None else 0.0
+        ai._next_update_time = game_time + interval
+
         if result == PS_DONE:
             # Remember not to call Update again; do NOT mark the wrapper
             # US_DONE. Fall through to contained_ai dispatch.
@@ -379,6 +399,20 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
             ai._status = US_ACTIVE
             return ai._status
         # PS_NORMAL falls through to contained_ai dispatch below.
+    elif not ai._preprocess_done:
+        # Cadence-skipped tick: the preprocessor didn't run this tick, so
+        # reproduce its last decision rather than blindly dispatching. A
+        # targetless SelectTarget that reported PS_SKIP_DORMANT must stay
+        # dormant (not run its combat list against a None target) until its
+        # next scheduled update or a ForceUpdate.
+        last = ai._last_preprocess_status
+        if last == PS_SKIP_DORMANT:
+            ai._status = US_DORMANT
+            return ai._status
+        if last == PS_SKIP_ACTIVE:
+            ai._status = US_ACTIVE
+            return ai._status
+        # PS_NORMAL (or never-run) falls through to contained_ai dispatch.
 
     ai._status = US_ACTIVE
     if ai._contained_ai is not None:
