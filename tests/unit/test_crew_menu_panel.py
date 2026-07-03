@@ -358,3 +358,40 @@ def test_clicking_command_button_fires_no_acknowledgement():
     panel.dispatch_event(f"click:{ensure_widget_id(btn)}")
     sub = App.TopWindow_GetTopWindow().FindMainWindow(App.MWT_SUBTITLE)
     assert sub._snapshot(now=0.0) is None
+
+
+def test_stmenu_createw_returns_real_menu():
+    # Regression: App.STMenu_CreateW / STMenu_Create must return a real STMenu,
+    # not App.py's _NamedStub fall-through. The Helm "Orbit Planet"/"Nav Points"
+    # items (HelmMenuHandlers.CreateMenus) depend on this.
+    from engine.appc.characters import STMenu
+    assert isinstance(App.STMenu_CreateW("Orbit Planet"), STMenu)
+    assert isinstance(App.STMenu_Create("Tutorial"), STMenu)
+    # Wide variant preserves its label.
+    assert App.STMenu_CreateW("Orbit Planet").GetLabel() == "Orbit Planet"
+
+
+def test_stmenu_createw_roundtrips_via_addchild():
+    # AddChild only registers real STMenu children in _submenus (isinstance
+    # check), so GetSubmenuW round-trips only when the factory returns a menu.
+    parent = STTopLevelMenu("Helm")
+    child = App.STMenu_CreateW("Orbit Planet")
+    parent.AddChild(child)
+    assert parent.GetSubmenuW("Orbit Planet") is child
+
+
+def test_stmenu_createw_child_renders_as_menu_node():
+    # The whole point of the fix: an empty STMenu child built via
+    # STMenu_CreateW renders as a "menu" node, not dropped as unrecognised.
+    tcw = TacticalControlWindow.GetInstance()
+    helm = STTopLevelMenu("Helm")
+    orbit = App.STMenu_CreateW("Orbit Planet")
+    helm.AddChild(orbit)
+    tcw.AddMenuToList(helm)
+
+    panel = CrewMenuPanel()
+    data = json.loads(panel.render_payload()[len("setCrewMenus("):-2])
+    orbit_node = data["menus"][0]["children"][0]
+    assert orbit_node["label"] == "Orbit Planet"
+    assert orbit_node["type"] == "menu"
+    assert orbit_node["children"] == []
