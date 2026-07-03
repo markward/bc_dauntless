@@ -23,8 +23,10 @@ private:
     void rebuild(int fw, int fh);
     void destroy();
     int fw_ = 0, fh_ = 0;
-    std::uint32_t fbo_ = 0, tex_ = 0;   // half-res RGBA16F target
-    std::uint32_t vao_ = 0, vbo_ = 0;   // fullscreen triangle
+    std::uint32_t fbo_ = 0, tex_ = 0;         // half-res RGBA16F target (ghosts+halo)
+    std::uint32_t blur_fbo_ = 0, blur_tex_ = 0;  // ping target for separable blur
+    std::uint32_t vao_ = 0, vbo_ = 0;         // fullscreen triangle
     std::unique_ptr<Shader> shader_;
+    std::unique_ptr<Shader> blur_shader_;
 };
 }  // namespace renderer

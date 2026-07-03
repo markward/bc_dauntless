@@ -15,11 +15,12 @@ out vec4 frag_color;
 
 uniform sampler2D u_src;   // bloom mip0: blurred HDR bright buffer
 
+// Eye-calibrated constants (locked in after live tuning). Rebuild to change.
 const int   GHOSTS     = 5;      // number of ghost samples
-const float GHOST_DISP = 0.34;   // ghost spacing (fraction toward centre)
-const float HALO_WIDTH = 0.47;   // halo ring radius (UV units)
-const float CHROMA     = 0.011;  // chromatic dispersion magnitude (UV units)
-const float FALLOFF    = 2.2;    // radial edge falloff exponent
+const float GHOST_DISP = 0.5;    // ghost spacing (fraction toward centre)
+const float HALO_WIDTH = 0.68;   // halo ring radius (UV units)
+const float CHROMA     = 0.003;  // chromatic dispersion magnitude (UV units)
+const float FALLOFF    = 5.0;    // radial edge falloff exponent
 
 // Sample the source with a per-channel offset along `dir` for chromatic
 // dispersion (the classic coloured-fringe look on ghosts and the halo).

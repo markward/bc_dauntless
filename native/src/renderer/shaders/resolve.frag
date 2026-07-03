@@ -51,7 +51,8 @@ void main() {
         c += u_bloom_strength * texture(u_bloom, v_uv).rgb;      // additive bloom glow
         if (u_lens_flare_strength > 0.0) {                       // image-based lens flare
             vec3 lf = texture(u_lens_flare, v_uv).rgb;
-            lf *= 0.7 + 0.6 * lens_dirt(v_uv);                  // subtle lens-dirt reveal
+            // Subtle lens-dirt reveal (0.3 blend, locked in after live tuning).
+            lf *= mix(1.0, 0.7 + 0.6 * lens_dirt(v_uv), 0.3);
             c += u_lens_flare_strength * lf;
         }
         float l = dot(c, vec3(0.2126, 0.7152, 0.0722));          // luma

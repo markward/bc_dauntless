@@ -11,8 +11,8 @@ out vec4 frag_color;
 // incidental hull brights (windows, running lights). This gives bloom and the
 // image-based lens flare real headroom; the resolve tonemap's soft shoulder
 // rolls the on-screen disc back toward white, so the sun still reads white, not
-// blown out. Eye-calibrated — rebuild to change.
-const float SUN_HDR_BOOST = 10.0;
+// blown out. Eye-calibrated (locked in after live tuning) — rebuild to change.
+const float SUN_HDR_BOOST = 5.0;
 
 void main() {
     vec4 tex = texture(u_texture, v_uv);

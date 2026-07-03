@@ -10,15 +10,19 @@
 #include <renderer/shader.h>
 
 #include <glad/glad.h>
+#include <glm/glm.hpp>
 
 #include "embedded_resolve_vs.h"
 #include "embedded_lens_flare_hdr_fs.h"
+#include "embedded_lens_flare_blur_fs.h"
 
 namespace renderer {
 
 LensFlareHdrPass::LensFlareHdrPass()
     : shader_(std::make_unique<Shader>(shader_src::resolve_vs,
-                                       shader_src::lens_flare_hdr_fs)) {
+                                       shader_src::lens_flare_hdr_fs)),
+      blur_shader_(std::make_unique<Shader>(shader_src::resolve_vs,
+                                            shader_src::lens_flare_blur_fs)) {
     // Fullscreen-triangle: one triangle covering [-1,3]² clipspace.
     const float verts[] = { -1.0f, -1.0f,   3.0f, -1.0f,   -1.0f,  3.0f };
     glGenVertexArrays(1, &vao_);
@@ -38,11 +42,32 @@ LensFlareHdrPass::~LensFlareHdrPass() {
     if (vao_) glDeleteVertexArrays(1, &vao_);
 }
 
+namespace {
+// Create a half-res RGBA16F color target (tex + fbo).
+void make_target(int w, int h, std::uint32_t& tex, std::uint32_t& fbo) {
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_FLOAT, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    glGenFramebuffers(1, &fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                           GL_TEXTURE_2D, tex, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+}  // namespace
+
 void LensFlareHdrPass::destroy() {
     if (tex_) glDeleteTextures(1, &tex_);
     if (fbo_) glDeleteFramebuffers(1, &fbo_);
-    tex_ = 0;
-    fbo_ = 0;
+    if (blur_tex_) glDeleteTextures(1, &blur_tex_);
+    if (blur_fbo_) glDeleteFramebuffers(1, &blur_fbo_);
+    tex_ = fbo_ = blur_tex_ = blur_fbo_ = 0;
     fw_ = 0;
     fh_ = 0;
 }
@@ -55,20 +80,8 @@ void LensFlareHdrPass::rebuild(int fw, int fh) {
     if (w < 1) w = 1;
     if (h < 1) h = 1;
 
-    glGenTextures(1, &tex_);
-    glBindTexture(GL_TEXTURE_2D, tex_);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_FLOAT, nullptr);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glBindTexture(GL_TEXTURE_2D, 0);
-
-    glGenFramebuffers(1, &fbo_);
-    glBindFramebuffer(GL_FRAMEBUFFER, fbo_);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                           GL_TEXTURE_2D, tex_, 0);
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    make_target(w, h, tex_, fbo_);
+    make_target(w, h, blur_tex_, blur_fbo_);
 
     fw_ = fw;
     fh_ = fh;
@@ -97,6 +110,27 @@ std::uint32_t LensFlareHdrPass::render(std::uint32_t bloom_mip0_tex, int fw, int
     shader_->set_int("u_src", 0);
     glBindVertexArray(vao_);
     glDrawArrays(GL_TRIANGLES, 0, 3);
+
+    // ── Separable Gaussian blur (radius baked in the shader): softens the
+    //    ghosts/halo. tex_ →(H)→ blur_tex_ →(V)→ tex_.
+    const int w = fw / 2 > 0 ? fw / 2 : 1;
+    const int h = fh / 2 > 0 ? fh / 2 : 1;
+    blur_shader_->use();
+    blur_shader_->set_int("u_src", 0);
+    glActiveTexture(GL_TEXTURE0);
+
+    // Horizontal: tex_ → blur_tex_
+    glBindFramebuffer(GL_FRAMEBUFFER, blur_fbo_);
+    glBindTexture(GL_TEXTURE_2D, tex_);
+    blur_shader_->set_vec2("u_dir", glm::vec2(1.0f / static_cast<float>(w), 0.0f));
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+
+    // Vertical: blur_tex_ → tex_
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo_);
+    glBindTexture(GL_TEXTURE_2D, blur_tex_);
+    blur_shader_->set_vec2("u_dir", glm::vec2(0.0f, 1.0f / static_cast<float>(h)));
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+
     glBindVertexArray(0);
 
     if (prev_cull)       glEnable(GL_CULL_FACE);

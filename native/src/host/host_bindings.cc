@@ -916,7 +916,7 @@ void frame() {
     if (dauntless_hdr::enabled() && dauntless_hdr_lens_flare::enabled()
             && exterior && g_lens_flare_hdr_pass) {
         lens_flare_tex = g_lens_flare_hdr_pass->render(bloom_tex, fw, fh);
-        lens_flare_strength = 0.125f;   // additive flare intensity; eye-calibrated (-75% from 0.5)
+        lens_flare_strength = 0.1f;   // additive flare intensity (locked in)
     }
 
     if (any_post) { g_ldr_target->resize(fw, fh); g_ldr_target->bind(); }
