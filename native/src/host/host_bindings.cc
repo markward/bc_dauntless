@@ -2720,6 +2720,47 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Store a sphere glow region at a hardpoint (game units / body frame). "
           "Returns the region index, or -1 on failure (stale id, no slot).");
 
+    m.def("add_cylinder_region",
+          [](scenegraph::InstanceId id,
+             std::tuple<float, float, float> center,
+             std::tuple<float, float, float> axis,
+             float radius, float length) -> int {
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return -1;
+              // center/radius/length are game units -> model frame; axis is a
+              // direction (normalize, no scale).
+              const float s = glm::length(glm::vec3(inst->world[0]));
+              const float inv = (s > 0.0f) ? 1.0f / s : 1.0f;
+              const glm::vec3 c(std::get<0>(center) * inv,
+                                std::get<1>(center) * inv,
+                                std::get<2>(center) * inv);
+              glm::vec3 a(std::get<0>(axis), std::get<1>(axis), std::get<2>(axis));
+              const float alen = glm::length(a);
+              a = (alen > 1e-6f) ? (a / alen) : glm::vec3(0.0f, 1.0f, 0.0f);
+              for (std::size_t i = 0; i < inst->glow_regions.size(); ++i) {
+                  if (inst->glow_regions[i].active) continue;
+                  auto& n = inst->glow_regions[i];
+                  n.center = c;
+                  n.axis = a;                 // cylinder axis (aft dir)
+                  n.radius = radius * inv;
+                  n.aft = 0.0f;               // from the centre...
+                  n.fore = length * inv;      // ...forward along axis for length
+                  n.dim_target = 1.0f;
+                  n.disable_time = -1.0f;
+                  n.flicker = 0.0f;
+                  n.gain = 1.0f;
+                  n.gain_axis = glm::vec3(0.0f);
+                  n.active = true;
+                  return static_cast<int>(i);
+              }
+              return -1;  // no free slot
+          },
+          py::arg("instance_id"), py::arg("center"), py::arg("axis"),
+          py::arg("radius"), py::arg("length"),
+          "Store a cylinder glow region: from center along axis (unit dir) for "
+          "length, radius wide (all game units / body frame; aft=0, fore=length). "
+          "Returns the region index, or -1 on failure.");
+
     m.def("set_glow_region_dim",
           [](scenegraph::InstanceId id, int region_index,
              float dim_target, float disable_time, float flicker) {
@@ -2738,6 +2779,29 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Update a glow region's live dim target [0,1], the game-time seconds "
           "of the last state-change edge (<0 = healthy), and the flicker flag "
           "(1 = disabled/continuous flicker, 0 = solid settle to dim_target).");
+
+    m.def("set_glow_region_gain",
+          [](scenegraph::InstanceId id, int region_index, float gain,
+             std::tuple<float, float, float> gate_axis) {
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return;
+              if (region_index < 0 ||
+                  region_index >= static_cast<int>(inst->glow_regions.size())) return;
+              auto& n = inst->glow_regions[static_cast<std::size_t>(region_index)];
+              if (!n.active) return;
+              n.gain = gain;
+              // Gate axis is a direction (model space) — normalize, no scale.
+              glm::vec3 a(std::get<0>(gate_axis), std::get<1>(gate_axis),
+                          std::get<2>(gate_axis));
+              const float len = glm::length(a);
+              n.gain_axis = (len > 1e-6f) ? (a / len) : glm::vec3(0.0f);
+          },
+          py::arg("instance_id"), py::arg("region_index"), py::arg("gain"),
+          py::arg("gate_axis") = std::make_tuple(0.0f, 0.0f, 0.0f),
+          "Update a glow region's brightness gain (1.0 = untouched, >1 brightens "
+          "the glow inside the region for impulse engine power/speed; feeds HDR). "
+          "gate_axis (model-space dir, 0 = none) restricts the gain to faces "
+          "whose normal points along it (aft impulse faces only).");
 
     m.def("world_to_body",
           [](scenegraph::InstanceId id,

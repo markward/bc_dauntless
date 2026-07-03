@@ -30,7 +30,8 @@ InstanceId = _h.InstanceId
 #   resolved at the import above) is deliberately excluded: its absence already
 #   hard-fails `import`, so it needs no manifest entry.
 _REQUIRED_BINDINGS = frozenset({
-    "add_sphere_region", "assemble_officer", "bridge_pass_set_enabled",
+    "add_cylinder_region", "add_sphere_region",
+    "assemble_officer", "bridge_pass_set_enabled",
     "cef_composite", "cef_initialize", "cef_pump", "cef_reload", "cef_shutdown",
     "cef_toggle_devtools", "clear_hologram_ship", "clear_subsystem_pins",
     "clear_viewscreen_comm_source", "compute_capsule_region",
@@ -46,6 +47,7 @@ _REQUIRED_BINDINGS = frozenset({
     "rim_set_enabled", "set_backdrops", "set_bridge_camera", "set_bridge_lighting",
     "set_bridge_wall_time", "set_camera", "set_comm_set_id", "set_cursor_locked",
     "set_dust_planets", "set_emissive_scale", "set_glow_region_dim",
+    "set_glow_region_gain",
     "set_hologram_only_mode", "set_hologram_ship", "set_hull_discharges",
     "set_instance_animation", "set_instance_rest_pose", "set_lens_flares",
     "set_lighting", "set_nebula_godrays", "set_nebula_wake", "set_nebulae",
@@ -450,6 +452,15 @@ def add_sphere_region(instance_id: InstanceId, center, radius: float) -> int:
     return _h.add_sphere_region(instance_id, tuple(center), float(radius))
 
 
+def add_cylinder_region(instance_id: InstanceId, center, axis, radius: float,
+                        length: float) -> int:
+    """Store a cylinder glow region from center along axis (unit dir) for
+    length, radius wide (all game units / body frame; aft=0, fore=length).
+    Returns the region index (>=0) or -1 on failure."""
+    return _h.add_cylinder_region(instance_id, tuple(center), tuple(axis),
+                                  float(radius), float(length))
+
+
 def set_glow_region_dim(instance_id: InstanceId, region_index: int,
                         dim_target: float, disable_time: float,
                         flicker: float) -> None:
@@ -458,6 +469,16 @@ def set_glow_region_dim(instance_id: InstanceId, region_index: int,
     flicker, 0 = solid settle)."""
     _h.set_glow_region_dim(instance_id, int(region_index),
                            float(dim_target), float(disable_time), float(flicker))
+
+
+def set_glow_region_gain(instance_id: InstanceId, region_index: int,
+                         gain: float, gate_axis=(0.0, 0.0, 0.0)) -> None:
+    """Update a glow region's brightness gain. 1.0 = untouched; >1 brightens the
+    glow inside the region (impulse engine power/speed) and feeds HDR bloom.
+    `gate_axis` (model-space direction, 0 = none) restricts the boost to faces
+    whose normal points along it — used to glow only the aft impulse faces."""
+    _h.set_glow_region_gain(instance_id, int(region_index), float(gain),
+                            tuple(gate_axis))
 
 
 # ── Shield pass ─────────────────────────────────────────────────────────────

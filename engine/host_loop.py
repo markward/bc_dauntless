@@ -4183,7 +4183,7 @@ def _wire_target_menu_to_player_set(controller) -> None:
 
 
 def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
-                              game_time, model_scale) -> None:
+                              game_time, model_scale, player_control=None) -> None:
     """Push ship + planet world transforms to the renderer for one frame.
 
     Player ship: pushed live (it is integrated per render frame on
@@ -4227,10 +4227,18 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
                  if (_hull_discharge is not None
                      and r.nebula_lightning_enabled())
                  else 1.0)
+    # Player's commanded impulse notch (1-9) as a 0..1 fraction; drives the
+    # impulse-glow boost for the player ship (AI ships derive their own from the
+    # speed setpoint inside the controller). abs() so reverse still brightens.
+    _player_throttle_frac = None
+    if player_control is not None:
+        _lvl = getattr(player_control, "impulse_level", 0) or 0
+        _player_throttle_frac = min(abs(int(_lvl)), 9) / 9.0
     for ship, iid in session.ship_instances.items():
         _wg = session.ship_glow_controllers.get(iid)
         if _wg is not None:
-            _wg.update(game_time)
+            _wg.update(game_time,
+                       _player_throttle_frac if ship is player else None)
         # Destroyed (dying/dead) ships lose self-illumination —
         # a dark hulk in space. Hull stays lit by external light.
         if _oa(ship):
@@ -5577,7 +5585,8 @@ def run(mission_name: Optional[str] = None,
                     # (engine.appc.damage_decals). Read once per frame.
                     _sync_instance_transforms(
                         r, session, player, _xform_buf, _interp_alpha,
-                        App.g_kUtopiaModule.GetGameTime(), BC_MODEL_SCALE)
+                        App.g_kUtopiaModule.GetGameTime(), BC_MODEL_SCALE,
+                        player_control=player_control)
 
             # --- Render (always runs, including while paused) ---
             # Camera: orbit + zoom around the player ship (or origin fallback).
