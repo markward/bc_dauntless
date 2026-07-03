@@ -111,7 +111,9 @@ struct Instance {
     /// Per-instance glow capsules (body frame, model units).
     /// Runtime VFX state only — never serialized. Fixed cap: a ship has at
     /// most a handful of glow regions.
-    static constexpr std::size_t kMaxGlowRegions = 4;
+    // Cap covers a ship's full glow set: warp nacelles + several impulse
+    // engine pods + sensor array, with headroom for multi-hardpoint ships.
+    static constexpr std::size_t kMaxGlowRegions = 12;
     struct GlowRegion {
         glm::vec3 center{0.0f};
         glm::vec3 axis{0.0f, 1.0f, 0.0f};
@@ -122,6 +124,7 @@ struct Instance {
         float     disable_time = -1.0f;
         float     flicker = 0.0f;   // 1 = disabled (continuous flicker), 0 = solid settle
         float     gain = 1.0f;      // >1 brightens glow inside the region (impulse power/speed)
+        glm::vec3 gain_axis{0.0f};  // aft dir (model space); non-zero gates gain to faces facing it
         bool      active = false;
     };
     std::array<GlowRegion, kMaxGlowRegions> glow_regions{};

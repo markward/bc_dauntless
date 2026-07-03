@@ -40,6 +40,18 @@ def test_glow_edge_tracks_state_changes():
     assert sg.glow_edge(sg.DESTROYED, sg.HEALTHY, 15.0, 25.0) == -1.0
 
 
+def test_impulse_engines_children_then_aggregator_then_empty():
+    class _Agg:
+        def __init__(self, kids): self._kids = kids
+        def GetNumChildSubsystems(self): return len(self._kids)
+        def GetChildSubsystem(self, i): return self._kids[i]
+    kids = ["port", "star", "center"]
+    assert sg.impulse_engines(_Agg(kids)) == kids
+    agg = _Agg([])
+    assert sg.impulse_engines(agg) == [agg]  # no children -> the parent itself
+    assert sg.impulse_engines(None) == []
+
+
 def test_warp_pods_children_then_aggregator_then_empty():
     class _Agg:
         def __init__(self, kids):
@@ -71,6 +83,7 @@ class _Pod:
     def GetRadius(self): return self._radius
     def IsDisabled(self): return self.disabled
     def IsDestroyed(self): return self.destroyed
+    def GetNumChildSubsystems(self): return 0  # leaf; impulse_engines -> [self]
 
 
 class _WarpAgg:
@@ -102,8 +115,8 @@ class _FakeRenderer:
         return self._results.pop(0)
     def set_glow_region_dim(self, iid, idx, dim_target, edge_time, flicker):
         self.dim_calls.append((iid, idx, dim_target, edge_time, flicker))
-    def set_glow_region_gain(self, iid, idx, gain):
-        self.gain_calls.append((iid, idx, gain))
+    def set_glow_region_gain(self, iid, idx, gain, gate_axis=(0.0, 0.0, 0.0)):
+        self.gain_calls.append((iid, idx, gain, gate_axis))
 
 
 def test_controller_registers_capsule_for_warp_and_spheres_for_impulse_sensor():
@@ -116,8 +129,9 @@ def test_controller_registers_capsule_for_warp_and_spheres_for_impulse_sensor():
     ctrl = sg.ShipGlowController(rend, instance_id=7, ship=ship)
 
     assert rend.capsule_calls == [(7, (-3.0, 1.0, 0.0), sg.WARP_AXIS, 2.0)]
+    # Impulse sphere widened by IMPULSE_RADIUS_SCALE; sensor sphere unscaled.
     assert rend.sphere_calls == [
-        (7, (0.0, -0.98, -0.45), 0.25),
+        (7, (0.0, -0.98, -0.45), 0.25 * sg.IMPULSE_RADIUS_SCALE),
         (7, (0.0, -0.45, -0.5), 0.28),
     ]
     assert len(ctrl._regions) == 3
@@ -242,18 +256,62 @@ def test_controller_pushes_gain_only_for_impulse_region():
     ctrl = sg.ShipGlowController(rend, instance_id=7, ship=ship)
     ctrl.update(now=0.0)
 
-    # exactly one gain push, on the impulse region index (1), at full throttle
+    # exactly one gain push, on the impulse region index (1), at full throttle,
+    # gated to the aft axis so only exhaust faces brighten
     assert len(rend.gain_calls) == 1
-    iid, idx, gain = rend.gain_calls[0]
+    iid, idx, gain, gate = rend.gain_calls[0]
     assert (iid, idx) == (7, 1)
     assert abs(gain - sg.GAIN_MAX) < 1e-9
+    assert gate == sg.IMPULSE_AFT_AXIS
 
 
-def test_controller_no_boost_when_impulse_unpowered():
+def test_controller_boost_ignores_ison_flag():
+    # ImpulseEngineSubsystem.IsOn() is always False in practice, so the boost
+    # must NOT depend on it: a healthy engine at full throttle still brightens.
     impulse = _ImpulseSub(_Point(0.0, -0.98, -0.45), on=False, max_speed=10.0)
     ship = _AIShip(None, impulse, None, setpoint=(10.0, (0, 1, 0), 0))
     rend = _FakeRenderer(results=[0])
     ctrl = sg.ShipGlowController(rend, instance_id=7, ship=ship)
     ctrl.update(now=0.0)
-    # region still exists and gets a gain call, but gain is 1.0 (no boost)
-    assert rend.gain_calls == [(7, 0, 1.0)]
+    iid, idx, gain, _gate = rend.gain_calls[0]
+    assert (iid, idx) == (7, 0)
+    assert abs(gain - sg.GAIN_MAX) < 1e-9
+
+
+def test_controller_registers_boost_region_per_impulse_pod():
+    class _ImpAgg:
+        # Parent category node: holds max speed; pods are its children.
+        def __init__(self, kids): self._kids = kids
+        def GetNumChildSubsystems(self): return len(self._kids)
+        def GetChildSubsystem(self, i): return self._kids[i]
+        def GetMaxSpeed(self): return 10.0
+    port = _ImpulseSub(_Point(-1.22, -0.20, 0.32), max_speed=10.0)
+    star = _ImpulseSub(_Point(1.22, -0.20, 0.32), max_speed=10.0)
+    center = _ImpulseSub(_Point(0.0, -1.10, -0.08), max_speed=10.0)
+    impulse = _ImpAgg([port, star, center])
+    ship = _AIShip(None, impulse, None, setpoint=(10.0, (0, 1, 0), 0))
+    rend = _FakeRenderer(results=[0, 1, 2])  # three impulse spheres
+    ctrl = sg.ShipGlowController(rend, instance_id=7, ship=ship)
+    # one widened boost sphere per pod, at each pod position
+    rs = 0.25 * sg.IMPULSE_RADIUS_SCALE
+    assert rend.sphere_calls == [
+        (7, (-1.22, -0.20, 0.32), rs),
+        (7, (1.22, -0.20, 0.32), rs),
+        (7, (0.0, -1.10, -0.08), rs),
+    ]
+    assert sum(1 for r in ctrl._regions if r["boost"]) == 3
+    # driving at full throttle pushes a full-gain call per pod
+    ctrl.update(now=0.0)
+    assert len(rend.gain_calls) == 3
+    assert all(abs(g - sg.GAIN_MAX) < 1e-9 for (_i, _x, g, _ax) in rend.gain_calls)
+
+
+def test_controller_no_boost_when_impulse_disabled():
+    # Disabled/destroyed -> the dim state machine owns it; no brightness boost.
+    impulse = _ImpulseSub(_Point(0.0, -0.98, -0.45), max_speed=10.0)
+    impulse.disabled = True
+    ship = _AIShip(None, impulse, None, setpoint=(10.0, (0, 1, 0), 0))
+    rend = _FakeRenderer(results=[0])
+    ctrl = sg.ShipGlowController(rend, instance_id=7, ship=ship)
+    ctrl.update(now=0.0)
+    assert rend.gain_calls == [(7, 0, 1.0, sg.IMPULSE_AFT_AXIS)]

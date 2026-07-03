@@ -125,7 +125,7 @@ float vnoise3(vec3 p){
 }
 
 // ── Warp-nacelle glow dimming ───────────────────────────────────────────
-const int MAX_GLOW_REGIONS = 4;
+const int MAX_GLOW_REGIONS = 12;
 uniform int  u_glow_region_count;            // 0 disables the loop entirely
 uniform vec4 u_glow_region_a[MAX_GLOW_REGIONS];  // center.xyz, radius (model units)
 uniform vec4 u_glow_region_b[MAX_GLOW_REGIONS];  // axis.xyz, aft
@@ -174,7 +174,28 @@ float stutter(float age) {
 // dim_target, with a brief flicker for the first GLOW_FLICKER_SECS after
 // the disable edge (reuses stutter()). p_body is the body-frame fragment
 // position; now is the game clock (u_decal_time).
-float glow_region_mult(vec3 p_body, float now, out float gain) {
+// Aft-face gate: impulse gain applies only to faces whose normal points along
+// the region's gate axis (aft). smoothstep band gives a soft edge so the glow
+// strip fades in rather than hard-cutting. Side/forward faces stay at gain 1.0.
+const float GLOW_GATE_LO = 0.15;   // dot(n, aft) below this -> no boost
+const float GLOW_GATE_HI = 0.75;   // dot(n, aft) above this -> full boost
+
+// Hue shift as the engine lights up: GLOW_HUE_PER_GAIN degrees per unit of gain
+// above 1, capped at GLOW_HUE_MAX_DEG. With GAIN_MAX=2 (region_gain-1 reaches
+// 1.0 at full throttle) -> +10 deg on the HSL wheel (red exhaust warms toward
+// orange). Keep PER_GAIN scaled to hit the cap at GAIN_MAX-1.
+const float GLOW_HUE_PER_GAIN = 10.0;
+const float GLOW_HUE_MAX_DEG  = 10.0;
+
+// Luma-axis (grey-axis) hue rotation via Rodrigues — the standard cheap shader
+// hue rotate. `ang` in radians; small angles only (perceptually fine here).
+vec3 hue_rotate(vec3 c, float ang) {
+    const vec3 k = vec3(0.57735027);   // 1/sqrt(3), the (1,1,1) grey axis
+    float cs = cos(ang), sn = sin(ang);
+    return c * cs + cross(k, c) * sn + k * dot(k, c) * (1.0 - cs);
+}
+
+float glow_region_mult(vec3 p_body, vec3 n_body, float now, out float gain) {
     float mult = 1.0;
     gain = 1.0;   // >1 inside a powered impulse region; healthy engines still brighten
     for (int i = 0; i < u_glow_region_count; ++i) {
@@ -194,7 +215,14 @@ float glow_region_mult(vec3 p_body, float now, out float gain) {
         if (t < aft || t > fore) continue;
         // Gain applies regardless of health — a moving healthy engine is exactly
         // the case we brighten — so read it before the healthy short-circuit.
-        gain = max(gain, u_glow_region_d[i].x);
+        // gate_axis (u_glow_region_d.yzw) restricts the boost to aft-facing
+        // faces; zero axis = whole-region (legacy, e.g. sensor).
+        float rgain = u_glow_region_d[i].x;
+        vec3  gate  = u_glow_region_d[i].yzw;
+        float nfac  = 1.0;
+        if (dot(gate, gate) > 1e-6)
+            nfac = smoothstep(GLOW_GATE_LO, GLOW_GATE_HI, dot(n_body, gate));
+        gain = max(gain, mix(1.0, rgain, nfac));
         float flick  = u_glow_region_c[i].w;   // 1 = disabled (continuous), 0 = destroyed
         if (dtime < 0.0) continue;             // healthy
 
@@ -446,14 +474,20 @@ void main() {
     float nac = 1.0;
     float region_gain = 1.0;
     if (u_glow_region_count > 0) {
-        nac = glow_region_mult(p_body, u_decal_time, region_gain);  // reuse existing body-frame pos
+        nac = glow_region_mult(p_body, n_body, u_decal_time, region_gain);  // body-frame pos + normal
     }
 
     // Self-illumination (material emissive + window/light glow map) scales by
     // u_emissive_scale so a destroyed ship goes dark; diffuse-lit, specular,
     // rim, and damage-decal embers are external/transient and stay. region_gain
-    // (>1) drives the impulse glow with engine power/speed; HDR bloom picks it up.
-    vec3 self_illum = u_emissive_scale * (u_emissive_color + glow.rgb * glow.a * gf * nac * region_gain);
+    // (>1) drives the impulse glow with engine power/speed; HDR bloom picks it
+    // up. A subtle hue shift tracks the same boost so the exhaust warms as it
+    // powers up (only where boosted: hue_deg is 0 when region_gain == 1).
+    float hue_deg = clamp(GLOW_HUE_PER_GAIN * (region_gain - 1.0),
+                          0.0, GLOW_HUE_MAX_DEG);
+    vec3 glow_rgb = (hue_deg > 0.0) ? hue_rotate(glow.rgb, radians(hue_deg))
+                                    : glow.rgb;
+    vec3 self_illum = u_emissive_scale * (u_emissive_color + glow_rgb * glow.a * gf * nac * region_gain);
     vec3 final_color = lit + self_illum + spec + rim + decal_emissive;
 
     frag_color = vec4(final_color, 1.0);

@@ -462,10 +462,13 @@ def set_glow_region_dim(instance_id: InstanceId, region_index: int,
 
 
 def set_glow_region_gain(instance_id: InstanceId, region_index: int,
-                         gain: float) -> None:
+                         gain: float, gate_axis=(0.0, 0.0, 0.0)) -> None:
     """Update a glow region's brightness gain. 1.0 = untouched; >1 brightens the
-    glow inside the region (impulse engine power/speed) and feeds HDR bloom."""
-    _h.set_glow_region_gain(instance_id, int(region_index), float(gain))
+    glow inside the region (impulse engine power/speed) and feeds HDR bloom.
+    `gate_axis` (model-space direction, 0 = none) restricts the boost to faces
+    whose normal points along it — used to glow only the aft impulse faces."""
+    _h.set_glow_region_gain(instance_id, int(region_index), float(gain),
+                            tuple(gate_axis))
 
 
 # ── Shield pass ─────────────────────────────────────────────────────────────

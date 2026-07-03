@@ -2740,7 +2740,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "(1 = disabled/continuous flicker, 0 = solid settle to dim_target).");
 
     m.def("set_glow_region_gain",
-          [](scenegraph::InstanceId id, int region_index, float gain) {
+          [](scenegraph::InstanceId id, int region_index, float gain,
+             std::tuple<float, float, float> gate_axis) {
               auto* inst = g_world.get(id);
               if (inst == nullptr) return;
               if (region_index < 0 ||
@@ -2748,10 +2749,18 @@ PYBIND11_MODULE(_dauntless_host, m) {
               auto& n = inst->glow_regions[static_cast<std::size_t>(region_index)];
               if (!n.active) return;
               n.gain = gain;
+              // Gate axis is a direction (model space) — normalize, no scale.
+              glm::vec3 a(std::get<0>(gate_axis), std::get<1>(gate_axis),
+                          std::get<2>(gate_axis));
+              const float len = glm::length(a);
+              n.gain_axis = (len > 1e-6f) ? (a / len) : glm::vec3(0.0f);
           },
           py::arg("instance_id"), py::arg("region_index"), py::arg("gain"),
+          py::arg("gate_axis") = std::make_tuple(0.0f, 0.0f, 0.0f),
           "Update a glow region's brightness gain (1.0 = untouched, >1 brightens "
-          "the glow inside the region for impulse engine power/speed; feeds HDR).");
+          "the glow inside the region for impulse engine power/speed; feeds HDR). "
+          "gate_axis (model-space dir, 0 = none) restricts the gain to faces "
+          "whose normal points along it (aft impulse faces only).");
 
     m.def("world_to_body",
           [](scenegraph::InstanceId id,
