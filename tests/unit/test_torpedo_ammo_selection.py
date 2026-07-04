@@ -60,6 +60,46 @@ def test_cycle_no_ammo_no_crash():
     assert t.GetCurrentAmmoType() is None
 
 
+# ── SetAmmoType selects a slot by index (SDK AI/Preprocessors ChooseTorpType) ──
+# Regression: SetAmmoType used to STORE its first arg into the slot table, so
+# the AI's SetAmmoType(iChosenAmmo) clobbered the slot-0 TorpedoAmmoType with
+# an int and the next GetCurrentAmmoType().GetLaunchSpeed() crashed
+# (AttributeError on Akira-class ships, which declare 2 ammo types).
+
+def test_set_ammo_type_selects_slot_by_index():
+    t = _system_with_two_types()
+    t.SetAmmoType(1)
+    assert t.GetAmmoTypeNumber() == 1
+    ammo = t.GetCurrentAmmoType()
+    assert isinstance(ammo, TorpedoAmmoType)
+    assert ammo.GetAmmoName() == "Quantum"
+
+
+def test_set_ammo_type_never_clobbers_slot_table():
+    t = _system_with_two_types()
+    photon = t.GetAmmoType(0)
+    quantum = t.GetAmmoType(1)
+    t.SetAmmoType(1)
+    t.SetAmmoType(0)
+    assert t.GetAmmoType(0) is photon
+    assert t.GetAmmoType(1) is quantum
+
+
+def test_set_ammo_type_two_arg_form_selects_too():
+    # ShipScriptActions.py:400 / E2M0.py:720 pass a second arg (always 0).
+    t = _system_with_two_types()
+    t.SetAmmoType(1, 0)
+    assert t.GetCurrentAmmoType().GetAmmoName() == "Quantum"
+
+
+def test_set_ammo_type_unpopulated_slot_is_noop():
+    # test_player.py pins the E2M0 pattern on a bare ship; same contract here:
+    # selecting a slot that holds no ammo leaves the selection unchanged.
+    t = _system_with_two_types()
+    t.SetAmmoType(7)
+    assert t.GetCurrentAmmoSlot() == 0
+
+
 # ── Ammo-type reserve state (SDK GetMaxTorpedoes / GetNumAvailableTorpsToType) ──
 
 def test_ammo_type_seeds_available_to_declared_max():

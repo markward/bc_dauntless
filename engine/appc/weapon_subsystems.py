@@ -778,9 +778,9 @@ class TorpedoAmmoType:
 class TorpedoSystem(WeaponSystem):
     def __init__(self, name: str = ""):
         super().__init__(name)
-        # Keyed slot table — `SetAmmoType(slot, ammo)` is the SDK setter
-        # mission scripts use to swap loadouts (E2M0 sets Birds-of-Prey to
-        # AT_TWO photon torpedoes).  GetNumAmmoTypes counts populated slots.
+        # Keyed slot table, populated by AddAmmoType during hardpoint setup.
+        # SetAmmoType(index) SELECTS a slot (mission/AI ammo switching);
+        # it never writes here.  GetNumAmmoTypes counts populated slots.
         self._ammo_by_slot: dict = {}
         # Selected torpedo spread: how many tubes fire per trigger.
         # Single=1 (default), Dual=2, Quad=4.  Pure selection state — the
@@ -985,18 +985,19 @@ class TorpedoSystem(WeaponSystem):
         return self.GetCurrentAmmoSlot()
 
     def AddAmmoType(self, ammo_type) -> None:
-        # Append into the next free slot.  Mission code uses either AddAmmoType
-        # (during hardpoint setup) or SetAmmoType (during mission to override).
+        # Append into the next free slot.  This is the only writer of the
+        # slot table (hardpoint setup); SetAmmoType merely selects a slot.
         self._ammo_by_slot[len(self._ammo_by_slot)] = ammo_type
 
-    def SetAmmoType(self, ammo_or_slot, slot_or_ammo=None) -> None:
-        # SDK signature: SetAmmoType(ammo_type, slot).  E2M0 calls
-        # `pTorps.SetAmmoType(App.AT_TWO, 0)`.  Both args are ints so we
-        # don't need to disambiguate by type — first arg = ammo, second = slot.
-        if slot_or_ammo is None:
-            self._ammo_by_slot[0] = ammo_or_slot
-        else:
-            self._ammo_by_slot[int(slot_or_ammo)] = ammo_or_slot
+    def SetAmmoType(self, ammo_index, _reload_arg=0) -> None:
+        # SDK semantics: SELECT the ammo type at index `ammo_index` (0-based,
+        # same domain as GetAmmoTypeNumber / range(GetNumAmmoTypes())).  Never
+        # a store — hardpoint setup populates slots via AddAmmoType.  Call
+        # sites: AI/Preprocessors.py:548,640 (int index from ChooseTorpType),
+        # ShipScriptActions.py:400, MissionLib.py:611, E2M0.py:720
+        # (App.AT_TWO = 1).  Second arg is always 0 in the SDK (reload
+        # time/flag) — accepted, ignored.
+        self.SetCurrentAmmoSlot(int(ammo_index))
 
     def GetAmmoType(self, slot: int):
         return self._ammo_by_slot.get(int(slot))
