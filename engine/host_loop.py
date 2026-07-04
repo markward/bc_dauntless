@@ -5888,12 +5888,26 @@ def run(mission_name: Optional[str] = None,
                      i == ship_property_viewer.selected_index)
                     for i, d in enumerate(ship_property_viewer.descriptors())
                 ])
-                # Phaser strip (always) + firing-arc (selected) overlay.
+                # Phaser strip (always) + firing-arc (selected) overlay; the
+                # Weapon Arcs toggle adds envelopes for EVERY arc weapon.
                 from engine.ui.phaser_overlay import build_phaser_overlay
                 r.set_spv_overlay_beams(
-                    build_phaser_overlay(player,
-                                         ship_property_viewer.selected_name())
+                    build_phaser_overlay(
+                        player,
+                        ship_property_viewer.selected_name(),
+                        show_all_arcs=ship_property_viewer.show_weapon_arcs)
                 )
+                # Glow regions as orange wireframe cylinders (debug volume
+                # pass): the toggle shows every subsystem's; with it off, a
+                # selected subsystem still reveals its own (mirroring the
+                # selected-pin firing arc).
+                from engine.ui.glow_region_overlay import (
+                    build_glow_region_overlay,
+                )
+                r.set_debug_cylinders(build_glow_region_overlay(
+                    player,
+                    selected_name=ship_property_viewer.selected_name(),
+                    show_all=ship_property_viewer.show_glow_regions))
                 # The gameplay target reticle is hidden while the viewer owns
                 # the frame; it returns on close via the else branch below.
                 r.clear_target_reticle()
@@ -5907,6 +5921,7 @@ def run(mission_name: Optional[str] = None,
                     r.clear_hologram_ship()
                     r.clear_subsystem_pins()
                     r.clear_spv_overlay_beams()
+                    r.clear_debug_cylinders()
                     r.set_hologram_only_mode(False, (0.0, 0.0, 0.0))
                     _spv_hidden_iid = None
                 r.set_camera(eye=eye, target=target, up=up_vec,

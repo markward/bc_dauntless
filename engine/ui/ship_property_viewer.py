@@ -109,8 +109,15 @@ def _mat_vec4(m, v):
 
 def build_descriptors(ship) -> List[dict]:
     """One descriptor per subsystem that has a 3D mount. Subsystems with no
-    GetPosition() are skipped (cannot be placed in space)."""
+    GetPosition() are skipped (cannot be placed in space).
+
+    `parent_index` links a child pod/bank/tube to its aggregator's descriptor
+    index (the subsystem-list accordion groups on it); None for top-level
+    categories and for children whose parent has no mount (the enumeration
+    yields parents before their children, so the parent is always already
+    indexed when it exists)."""
     out: List[dict] = []
+    index_of: dict = {}   # id(subsystem) -> descriptor index
     for sub in _iter_subsystems(ship):
         local = sub.GetPosition() if hasattr(sub, "GetPosition") else None
         if local is None:
@@ -119,11 +126,16 @@ def build_descriptors(ship) -> List[dict]:
         # returns None, which would otherwise place its pin at the origin.
         w = subsystem_world_position(sub, ship)
         props = _properties_for(sub, local)
+        parent = getattr(sub, "GetParentSubsystem", lambda: None)()
+        index_of[id(sub)] = len(out)
         out.append({
             "name":       props["name"],
             "icon_id":    _icon_id_for(sub),
             "world_pos":  (w.x, w.y, w.z),
             "state":      _state_for(sub),
+            "targetable": _targetable_for(sub),
+            "condition_pct": _condition_pct_for(sub),
+            "parent_index": index_of.get(id(parent)) if parent is not None else None,
             "properties": props,
         })
     # Object emitters — non-damageable mount markers (shuttle bay, probe
@@ -142,6 +154,9 @@ def build_descriptors(ship) -> List[dict]:
             "world_pos":  (w.x, w.y, w.z),
             "state":      "mount",
             "kind":       "mount",
+            "targetable": False,
+            "condition_pct": None,
+            "parent_index": None,
             "properties": {"name": em.GetName(),
                            "emitted_type": em.GetEmittedObjectType()},
         })
@@ -185,6 +200,29 @@ def _state_for(sub) -> str:
     if _is("IsDamaged"):
         return "damaged"
     return "healthy"
+
+
+def _targetable_for(sub) -> bool:
+    """True when the AI/target-menu would list this subsystem (hardpoint
+    SetTargetable flag). Missing method (stub objects) → False."""
+    m = getattr(sub, "IsTargetable", None)
+    if m is None:
+        return False
+    try:
+        return bool(m())
+    except Exception:
+        return False
+
+
+def _condition_pct_for(sub):
+    """Condition as an int percentage 0..100, or None when unavailable."""
+    m = getattr(sub, "GetConditionPercentage", None)
+    if m is None:
+        return None
+    try:
+        return int(round(float(m()) * 100.0))
+    except Exception:
+        return None
 
 
 def _properties_for(sub, pos) -> dict:

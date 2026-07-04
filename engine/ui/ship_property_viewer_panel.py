@@ -33,6 +33,15 @@ MAX_DISTANCE = 1.0e5
 # click (pin pick) rather than an orbit drag.
 CLICK_SLOP_PX = 4.0
 
+# CEF chrome geometry in logical points — MUST match ship_property_viewer.css.
+# Mouse input inside these regions belongs to the CEF overlay: presses there
+# never start an orbit drag or a pin pick, and the wheel is left in the host
+# accumulator so host_loop's scroll router forwards it to CEF (scrolling the
+# subsystem list) instead of zooming the camera.
+TITLEBAR_H_PT = 34        # .spv-titlebar height
+LEFT_COL_X1_PT = 268      # #spv-left right edge (left 12 + width 248 + pad 8)
+LEFT_COL_Y0_PT = 44       # #spv-left top
+
 
 class ShipPropertyViewerPanel(Panel):
     def __init__(self, ship_getter: Callable[[], object]) -> None:
@@ -42,6 +51,13 @@ class ShipPropertyViewerPanel(Panel):
         self._descriptors: List[dict] = []
         self.selected_index: Optional[int] = None
         self.camera: Optional[OrbitCamera] = None
+        # Titlebar overlay toggles — both off by default, reset every open.
+        self.show_glow_regions = False
+        self.show_weapon_arcs = False
+        # Names of aggregator subsystems whose child rows are expanded in the
+        # left-column list (accordion, like the target list). Collapsed by
+        # default; reset every open.
+        self._expanded_groups: set = set()
         self._last_pushed: Optional[tuple] = None
         # Left-drag tracking (panel-local edge detection so we don't steal
         # the CEF mouse-release edge — see handle_input).
@@ -49,6 +65,7 @@ class ShipPropertyViewerPanel(Panel):
         self._drag_last: Optional[tuple] = None   # (x, y) previous cursor
         self._press_pos: Optional[tuple] = None   # (x, y) where press began
         self._drag_dist = 0.0                     # accumulated |motion| px
+        self._chrome_press = False                # press began over CEF chrome
 
     @property
     def name(self) -> str:
@@ -62,6 +79,9 @@ class ShipPropertyViewerPanel(Panel):
         ship = self._ship_getter()
         self._descriptors = build_descriptors(ship) if ship is not None else []
         self.selected_index = None
+        self.show_glow_regions = False
+        self.show_weapon_arcs = False
+        self._expanded_groups = set()
         target = self._fit_target()
         self.camera = OrbitCamera(target=target, distance=self._fit_distance(target))
         self._visible = True
@@ -70,11 +90,15 @@ class ShipPropertyViewerPanel(Panel):
         self._visible = False
         self._descriptors = []
         self.selected_index = None
+        self.show_glow_regions = False
+        self.show_weapon_arcs = False
+        self._expanded_groups = set()
         self.camera = None
         self._lmb_down = False
         self._drag_last = None
         self._press_pos = None
         self._drag_dist = 0.0
+        self._chrome_press = False
 
     def frame_to_bounds(self, center, radius: float) -> None:
         """Point the orbit camera at `center` and pull back so the model's
@@ -133,7 +157,9 @@ class ShipPropertyViewerPanel(Panel):
         return d["name"] if d else None
 
     def render_payload(self) -> Optional[str]:
-        snapshot = (self._visible, len(self._descriptors), self.selected_index)
+        snapshot = (self._visible, len(self._descriptors), self.selected_index,
+                    self.show_glow_regions, self.show_weapon_arcs,
+                    tuple(sorted(self._expanded_groups)))
         if snapshot == self._last_pushed:
             return None
         self._last_pushed = snapshot
@@ -147,8 +173,42 @@ class ShipPropertyViewerPanel(Panel):
             "visible": True,
             "pin_count": len(self._descriptors),
             "selected": selected,
+            "selected_index": self.selected_index,
+            "show_glow": self.show_glow_regions,
+            "show_arcs": self.show_weapon_arcs,
+            "subsystems": self._subsystem_rows(),
         }
         return "setShipPropertyViewer(" + json.dumps(payload) + ");"
+
+    def _subsystem_rows(self) -> List[dict]:
+        """Left-column subsystem list as a two-level accordion: top-level
+        category rows with their child pods/banks/tubes nested under them
+        (parent_index links, mirroring the ship's aggregator structure).
+        Every row carries `index` — its pin-descriptor index — so a row
+        click can fire select_pin:<index> regardless of nesting."""
+        def _row(i: int, d: dict) -> dict:
+            return {
+                "index": i,
+                "name": d.get("name", ""),
+                "targetable": bool(d.get("targetable", False)),
+                "condition_pct": d.get("condition_pct"),
+                "kind": d.get("kind", "subsystem"),
+                "children": [],
+            }
+        rows: List[dict] = []
+        by_index: dict = {}
+        for i, d in enumerate(self._descriptors):
+            row = _row(i, d)
+            by_index[i] = row
+            parent = by_index.get(d.get("parent_index"))
+            if parent is not None:
+                parent["children"].append(row)
+            else:
+                rows.append(row)
+        for row in rows:
+            if row["children"]:
+                row["expanded"] = row["name"] in self._expanded_groups
+        return rows
 
     def invalidate(self) -> None:
         self._last_pushed = None
@@ -233,10 +293,17 @@ class ShipPropertyViewerPanel(Panel):
             except (TypeError, ValueError, ZeroDivisionError):
                 dsf = 1.0
 
+        x, y = cursor_pos()
+        over_chrome = self._cursor_over_chrome(x, y, dsf)
+        over_left_col = self._cursor_over_left_column(x, y, dsf)
+
         # Zoom: drain the wheel accumulator even when no other input so a
-        # later open doesn't inherit stale scroll.
+        # later open doesn't inherit stale scroll — EXCEPT over the left
+        # column, where the accumulator is deliberately left alone so
+        # host_loop's scroll router (the frame's later consumer) forwards
+        # the wheel to CEF and the subsystem list scrolls.
         consume_scroll = getattr(h, "consume_scroll_y", None)
-        if consume_scroll is not None:
+        if consume_scroll is not None and not over_left_col:
             self.apply_zoom(consume_scroll())
 
         # Keyboard zoom: = / - notch zoom, matching the external view.
@@ -249,18 +316,20 @@ class ShipPropertyViewerPanel(Panel):
             if k_min is not None and kp(k_min):
                 self.zoom_by_factor(1.0 / ZOOM_KEY_FACTOR)
 
-        x, y = cursor_pos()
         down = btn_state(left)
 
         if down and not self._lmb_down:
-            # Press edge.
+            # Press edge. A press over the CEF chrome (titlebar / left
+            # column) belongs to the overlay — never starts an orbit drag
+            # and never picks on release (CEF fires the row/button event).
             self._lmb_down = True
+            self._chrome_press = over_chrome
             self._drag_last = (x, y)
             self._press_pos = (x, y)
             self._drag_dist = 0.0
         elif down and self._lmb_down:
             # Drag: orbit by the per-frame cursor delta.
-            if self._drag_last is not None:
+            if self._drag_last is not None and not self._chrome_press:
                 dx = x - self._drag_last[0]
                 dy = y - self._drag_last[1]
                 self.apply_orbit(dx, dy)
@@ -269,15 +338,37 @@ class ShipPropertyViewerPanel(Panel):
         elif (not down) and self._lmb_down:
             # Release edge: a near-stationary press+release is a click → pick.
             self._lmb_down = False
-            if self._drag_dist <= CLICK_SLOP_PX:
+            if self._drag_dist <= CLICK_SLOP_PX and not self._chrome_press:
                 self.pick_at(x, y, fb_size(), dsf)
             self._drag_last = None
             self._press_pos = None
             self._drag_dist = 0.0
+            self._chrome_press = False
+
+    @staticmethod
+    def _cursor_over_left_column(x: float, y: float, dsf: float) -> bool:
+        """Cursor (framebuffer px) inside the left tool/subsystem column."""
+        s = dsf or 1.0
+        return (x / s) <= LEFT_COL_X1_PT and (y / s) >= LEFT_COL_Y0_PT
+
+    @classmethod
+    def _cursor_over_chrome(cls, x: float, y: float, dsf: float) -> bool:
+        """Cursor (framebuffer px) over any CEF chrome region (titlebar or
+        left column) whose clicks the overlay owns."""
+        s = dsf or 1.0
+        return (y / s) <= TITLEBAR_H_PT or cls._cursor_over_left_column(x, y, dsf)
 
     def dispatch_event(self, action: str) -> bool:
         if action == "cancel":
             self.close()
+            return True
+        if action == "toggle_glow_regions":
+            self.show_glow_regions = not self.show_glow_regions
+            self._last_pushed = None  # re-push so the button state updates
+            return True
+        if action == "toggle_weapon_arcs":
+            self.show_weapon_arcs = not self.show_weapon_arcs
+            self._last_pushed = None
             return True
         if action.startswith("select_pin:"):
             try:
@@ -286,9 +377,26 @@ class ShipPropertyViewerPanel(Panel):
                 return False
             if 0 <= idx < len(self._descriptors):
                 self.selected_index = idx
+                # Reveal the selection in the list: expand its group so a
+                # 3D pin click never lands on a hidden row.
+                pi = self._descriptors[idx].get("parent_index")
+                if pi is not None and 0 <= pi < len(self._descriptors):
+                    self._expanded_groups.add(
+                        self._descriptors[pi].get("name", ""))
                 self._last_pushed = None  # force re-push of popover
                 return True
             return False
+        if action.startswith("toggle_group:"):
+            try:
+                idx = int(action.split(":", 1)[1])
+            except ValueError:
+                return False
+            if not (0 <= idx < len(self._descriptors)):
+                return False
+            name = self._descriptors[idx].get("name", "")
+            self._expanded_groups.symmetric_difference_update({name})
+            self._last_pushed = None
+            return True
         if action == "deselect":
             if self.selected_index is None:
                 return False

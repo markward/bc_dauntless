@@ -181,3 +181,74 @@ def test_overlay_arc_only_for_selected_bank():
 
 def test_overlay_empty_for_none_ship():
     assert po.build_phaser_overlay(None, selected_name="DorsalPhaser1") == []
+
+
+# ── show_all_arcs (Ship Property Viewer "Weapon Arcs" toggle) ──────────────
+
+def _pulse_cannon(name="PulseCannon", length=0.0):
+    from engine.appc.properties import PulseWeaponProperty
+    from engine.appc.weapon_subsystems import PulseWeapon
+    w = PulseWeapon(name)
+    prop = PulseWeaponProperty(name)
+    prop.SetPosition(0.0, 2.0, 0.0)
+    prop.SetOrientation(TGPoint3(0.0, 1.0, 0.0), TGPoint3(0.0, 0.0, 1.0))
+    prop.SetLength(length)
+    prop.SetArcWidthAngles(-0.5, 0.5)
+    prop.SetArcHeightAngles(-0.3, 0.3)
+    w.SetProperty(prop)
+    return w
+
+
+class _ShipWithWeapons(_StubShip):
+    def __init__(self, banks=(), pulses=(), radius=10.0):
+        from engine.appc.weapon_subsystems import PhaserSystem, PulseWeaponSystem
+        super().__init__(list(banks) + list(pulses))
+        self._radius = radius
+        self._phaser_sys = PhaserSystem("PhaserSystem")
+        for b in banks:
+            self._phaser_sys.AddChildSubsystem(b)
+        self._pulse_sys = PulseWeaponSystem("PulseWeaponSystem")
+        for p in pulses:
+            self._pulse_sys.AddChildSubsystem(p)
+    def GetRadius(self): return self._radius
+    def GetPhaserSystem(self): return self._phaser_sys
+    def GetPulseWeaponSystem(self): return self._pulse_sys
+
+
+def test_show_all_arcs_covers_every_arc_weapon():
+    bank = _galaxy_dorsal1_bank("DorsalPhaser1")
+    pulse = _pulse_cannon("PulseCannon", length=0.0)
+    ship = _ShipWithWeapons(banks=[bank], pulses=[pulse])
+    bank._parent_ship = ship
+    pulse._parent_ship = ship
+    beams = po.build_phaser_overlay(ship, show_all_arcs=True)
+    # One arc per weapon: phaser (Length=1.69) + pulse (Length=0 → fallback).
+    assert sum(1 for x in beams if x["color"] == po.ARC_COLOR) \
+        == 2 * 4 * po.ARC_SAMPLES
+
+
+def test_show_all_arcs_length_zero_uses_ship_radius_fallback():
+    pulse = _pulse_cannon("PulseCannon", length=0.0)
+    ship = _ShipWithWeapons(pulses=[pulse], radius=10.0)
+    pulse._parent_ship = ship
+    beams = po.build_phaser_overlay(ship, show_all_arcs=True)
+    arcs = [x for x in beams if x["color"] == po.ARC_COLOR]
+    assert arcs, "Length=0 weapon must still draw via the fallback radius"
+    pos = (0.0, 2.0, 0.0)
+    expected = po.ARC_FALLBACK_FRAC * 10.0
+    for b in arcs:
+        assert _dist(b["emitter"], pos) == pytest.approx(expected, abs=1e-5)
+
+
+def test_show_all_arcs_fallback_floors_at_minimum():
+    assert po._arc_fallback_radius(_StubShip([])) == po.ARC_FALLBACK_MIN
+
+
+def test_show_all_arcs_off_is_byte_identical_to_today():
+    bank = _galaxy_dorsal1_bank("DorsalPhaser1")
+    ship = _ShipWithWeapons(banks=[bank])
+    bank._parent_ship = ship
+    off = po.build_phaser_overlay(ship, selected_name="DorsalPhaser1",
+                                  banks=[bank])
+    legacy = po.build_strip_beams([bank], ship) + po.build_arc_beams(bank, ship)
+    assert off == legacy

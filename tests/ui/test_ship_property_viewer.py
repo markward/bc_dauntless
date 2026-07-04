@@ -225,3 +225,52 @@ def test_selected_name_returns_selected_descriptor_name():
     assert p.selected_name() == "VentralPhaser1"
     p.selected_index = 99                     # out of range → None
     assert p.selected_name() is None
+
+
+def test_build_descriptors_carries_targetable_and_condition(monkeypatch):
+    import engine.ui.ship_property_viewer as spv
+    monkeypatch.setattr(spv, "_icon_id_for", lambda sub: 2)
+    monkeypatch.setattr(spv, "_iter_subsystems", lambda ship: list(ship))
+
+    class _Full(_StubSubsystem):
+        def IsTargetable(self): return 1
+        def GetConditionPercentage(self): return 0.42
+
+    class _Hidden(_StubSubsystem):
+        def IsTargetable(self): return 0
+        def GetConditionPercentage(self): return 1.0
+
+    ship = _StubShip([_Full("Phaser", (0, 1, 0), 2),
+                      _Hidden("Power Plant", (0, 0, 0), 6)])
+    descs = build_descriptors(ship)
+    assert descs[0]["targetable"] is True
+    assert descs[0]["condition_pct"] == 42
+    assert descs[1]["targetable"] is False
+    assert descs[1]["condition_pct"] == 100
+    # Stub without either method: safe defaults, still listed.
+    plain = _StubShip([_StubSubsystem("Bare", (0, 0, 0), 6)])
+    d = build_descriptors(plain)[0]
+    assert d["targetable"] is False
+    assert d["condition_pct"] is None
+
+
+def test_build_descriptors_links_children_to_parent(monkeypatch):
+    import engine.ui.ship_property_viewer as spv
+    monkeypatch.setattr(spv, "_icon_id_for", lambda sub: 2)
+
+    parent = _StubSubsystem("Warp Engines", (0.0, -2.0, 0.0), 4)
+    port = _StubSubsystem("Port Nacelle", (-3.0, -2.0, 0.0), 4)
+    star = _StubSubsystem("Star Nacelle", (3.0, -2.0, 0.0), 4)
+    orphan = _StubSubsystem("Sensor Array", (0.0, 2.0, 0.0), 5)
+    for child in (port, star):
+        child.GetParentSubsystem = lambda p=parent: p
+    # Enumeration yields parents before their children (mirrors
+    # _iter_damage_subsystems).
+    monkeypatch.setattr(spv, "_iter_subsystems",
+                        lambda ship: [parent, port, star, orphan])
+    ship = _StubShip([parent, port, star, orphan])
+    descs = build_descriptors(ship)
+    assert descs[0]["parent_index"] is None          # aggregator
+    assert descs[1]["parent_index"] == 0             # port -> Warp Engines
+    assert descs[2]["parent_index"] == 0             # star -> Warp Engines
+    assert descs[3]["parent_index"] is None          # unrelated top-level

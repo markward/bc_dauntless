@@ -70,10 +70,12 @@ _REQUIRED_BINDINGS = frozenset({
 # never fatal. `set_officer_face` also appears as a hard `_h.set_officer_face`
 # call *inside* its own hasattr guard, so it is optional despite that inner ref.
 _OPTIONAL_BINDINGS = frozenset({
-    "cef_execute_javascript", "clear_spv_overlay_beams", "clear_target_reticle",
+    "cef_execute_javascript", "clear_debug_cylinders", "clear_spv_overlay_beams",
+    "clear_target_reticle",
     "instance_node_world", "instance_surface_points", "play_instance_node_anim",
     "play_instance_node_clip", "set_cloak_dials", "set_cloak_ships",
-    "set_officer_face", "set_spv_overlay_beams", "set_target_reticle",
+    "set_debug_cylinders", "set_officer_face", "set_spv_overlay_beams",
+    "set_target_reticle",
     "spawn_test_character", "stop_instance_node_anim",
 })
 
@@ -872,6 +874,26 @@ def set_spv_overlay_beams(beams: list) -> None:
 def clear_spv_overlay_beams() -> None:
     """Clear the SPV phaser overlay beams. Takes effect next frame()."""
     fn = getattr(_h, "clear_spv_overlay_beams", None)
+    if fn is not None:
+        fn()
+
+
+def set_debug_cylinders(cylinders: list) -> None:
+    """Set the world-space debug wireframe cylinders (SPV glow-region overlay).
+
+    `cylinders` is a list of dicts — center, axis, radius, length, color —
+    built by engine.ui.glow_region_overlay. Rendered depth-test-off in
+    viewer_mode only. No-ops silently if the host binding is unavailable
+    (headless / pre-rebuild).
+    """
+    fn = getattr(_h, "set_debug_cylinders", None)
+    if fn is not None:
+        fn(cylinders)
+
+
+def clear_debug_cylinders() -> None:
+    """Clear the debug wireframe cylinders. Takes effect next frame()."""
+    fn = getattr(_h, "clear_debug_cylinders", None)
     if fn is not None:
         fn()
 

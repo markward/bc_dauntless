@@ -241,7 +241,9 @@ def test_handle_input_click_on_empty_space_deselects(monkeypatch):
     p.camera = OrbitCamera(target=(0, 0, 0), distance=20.0)
     p.selected_index = 0  # pretend something was selected
     h = _FakeHost()
-    h._cursor = (5.0, 5.0); h._down = True
+    # Empty 3D area — right of the left column, below the titlebar (clicks
+    # inside those chrome regions belong to CEF and never reach the pick).
+    h._cursor = (600.0, 300.0); h._down = True
     p.handle_input(h)
     h._down = False
     p.handle_input(h)
@@ -297,3 +299,194 @@ def test_frame_to_bounds_ignores_nonpositive_radius():
     p.frame_to_bounds((9.0, 9.0, 9.0), 0.0)   # bad radius → no change
     assert p.camera.target == (1.0, 2.0, 3.0)
     assert p.camera.distance == 42.0
+
+
+# ── titlebar overlay toggles (Glow Regions / Weapon Arcs) ──────────────────
+
+def test_toggles_start_off_and_payload_carries_them():
+    p = ShipPropertyViewerPanel(ship_getter=lambda: None)
+    p.open()
+    assert p.show_glow_regions is False
+    assert p.show_weapon_arcs is False
+    data = _payload_data(p.render_payload())
+    assert data["show_glow"] is False
+    assert data["show_arcs"] is False
+
+
+def test_toggle_events_flip_flags_and_repush():
+    p = ShipPropertyViewerPanel(ship_getter=lambda: None)
+    p.open()
+    p.render_payload()                                  # settle the snapshot
+    assert p.render_payload() is None                   # diffed out
+    assert p.dispatch_event("toggle_glow_regions") is True
+    data = _payload_data(p.render_payload())            # toggle → re-push
+    assert data["show_glow"] is True and data["show_arcs"] is False
+    assert p.dispatch_event("toggle_weapon_arcs") is True
+    data = _payload_data(p.render_payload())
+    assert data["show_arcs"] is True
+    # Toggling back off flips + re-pushes again.
+    assert p.dispatch_event("toggle_glow_regions") is True
+    assert _payload_data(p.render_payload())["show_glow"] is False
+
+
+def test_toggles_reset_on_reopen_and_close():
+    p = ShipPropertyViewerPanel(ship_getter=lambda: None)
+    p.open()
+    p.dispatch_event("toggle_glow_regions")
+    p.dispatch_event("toggle_weapon_arcs")
+    p.close()
+    assert p.show_glow_regions is False
+    assert p.show_weapon_arcs is False
+    p.open()
+    assert p.show_glow_regions is False
+    assert p.show_weapon_arcs is False
+
+
+# ── left-column subsystem list payload ─────────────────────────────────────
+
+def test_payload_lists_subsystems_with_targetable_and_condition(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    fake = [
+        {"name": "Phaser 1", "icon_id": 2, "world_pos": (0, 1, 0),
+         "state": "healthy", "targetable": True, "condition_pct": 88,
+         "properties": {"name": "Phaser 1"}},
+        {"name": "Shuttle Bay", "icon_id": 6, "world_pos": (0, 0, 1),
+         "state": "mount", "kind": "mount", "targetable": False,
+         "condition_pct": None, "properties": {"name": "Shuttle Bay"}},
+    ]
+    monkeypatch.setattr(mod, "build_descriptors", lambda ship: fake)
+    p = ShipPropertyViewerPanel(ship_getter=lambda: object())
+    p.open()
+    data = _payload_data(p.render_payload())
+    subs = data["subsystems"]
+    assert [s["name"] for s in subs] == ["Phaser 1", "Shuttle Bay"]
+    assert subs[0]["targetable"] is True and subs[0]["condition_pct"] == 88
+    assert subs[1]["targetable"] is False and subs[1]["condition_pct"] is None
+    assert subs[1]["kind"] == "mount"
+    assert data["selected_index"] is None
+    p.dispatch_event("select_pin:1")
+    assert _payload_data(p.render_payload())["selected_index"] == 1
+
+
+# ── CEF chrome regions own their mouse input ───────────────────────────────
+
+def test_wheel_over_left_column_is_left_for_cef():
+    p = _open_panel_for_input()
+    host = _FakeHost()
+    host._scroll = 2.0
+    host._cursor = (100.0, 300.0)          # inside the left column
+    d0 = p.camera.distance
+    p.handle_input(host)
+    assert p.camera.distance == d0         # no zoom...
+    assert host._scroll == 2.0             # ...and accumulator untouched
+
+
+def test_wheel_outside_left_column_still_zooms():
+    p = _open_panel_for_input()
+    host = _FakeHost()
+    host._scroll = 2.0
+    host._cursor = (600.0, 300.0)          # open 3D area
+    d0 = p.camera.distance
+    p.handle_input(host)
+    assert p.camera.distance < d0
+    assert host._scroll == 0.0
+
+
+def test_press_over_chrome_never_orbits_or_picks(monkeypatch):
+    p = _open_panel_for_input()
+    host = _FakeHost()
+    picked = []
+    monkeypatch.setattr(p, "pick_at", lambda *a, **k: picked.append(a))
+    yaw0 = p.camera.yaw
+    # Press inside the left column, drag, release — all ignored.
+    host._cursor = (100.0, 300.0); host._down = True
+    p.handle_input(host)
+    host._cursor = (150.0, 350.0)
+    p.handle_input(host)
+    assert p.camera.yaw == yaw0
+    host._down = False
+    p.handle_input(host)
+    assert picked == []
+    # Titlebar press is chrome too.
+    host._cursor = (600.0, 10.0); host._down = True
+    p.handle_input(host)
+    host._down = False
+    p.handle_input(host)
+    assert picked == []
+    # A press in the open 3D area still picks on release.
+    host._cursor = (600.0, 300.0); host._down = True
+    p.handle_input(host)
+    host._down = False
+    p.handle_input(host)
+    assert len(picked) == 1
+
+
+def _open_panel_for_input():
+    from engine.ui.ship_property_viewer import OrbitCamera as _Cam
+    p = ShipPropertyViewerPanel(ship_getter=lambda: None)
+    p.open()
+    p.camera = _Cam(target=(0, 0, 0), distance=100.0)
+    return p
+
+
+# ── grouped (accordion) subsystem list ─────────────────────────────────────
+
+_GROUPED = [
+    {"name": "Warp Engines", "icon_id": 4, "world_pos": (0, -2, 0),
+     "state": "healthy", "targetable": True, "condition_pct": 100,
+     "parent_index": None, "properties": {"name": "Warp Engines"}},
+    {"name": "Port Nacelle", "icon_id": 4, "world_pos": (-3, -2, 0),
+     "state": "healthy", "targetable": True, "condition_pct": 75,
+     "parent_index": 0, "properties": {"name": "Port Nacelle"}},
+    {"name": "Star Nacelle", "icon_id": 4, "world_pos": (3, -2, 0),
+     "state": "healthy", "targetable": True, "condition_pct": 75,
+     "parent_index": 0, "properties": {"name": "Star Nacelle"}},
+    {"name": "Sensor Array", "icon_id": 5, "world_pos": (0, 2, 0),
+     "state": "healthy", "targetable": True, "condition_pct": 100,
+     "parent_index": None, "properties": {"name": "Sensor Array"}},
+]
+
+
+def _open_grouped(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors", lambda ship: _GROUPED)
+    p = ShipPropertyViewerPanel(ship_getter=lambda: object())
+    p.open()
+    return p
+
+
+def test_payload_nests_children_under_parent_collapsed_by_default(monkeypatch):
+    p = _open_grouped(monkeypatch)
+    subs = _payload_data(p.render_payload())["subsystems"]
+    assert [s["name"] for s in subs] == ["Warp Engines", "Sensor Array"]
+    warp = subs[0]
+    assert warp["index"] == 0
+    assert warp["expanded"] is False
+    assert [c["name"] for c in warp["children"]] == ["Port Nacelle", "Star Nacelle"]
+    assert [c["index"] for c in warp["children"]] == [1, 2]
+    assert "expanded" not in subs[1]        # childless rows carry no flag
+
+
+def test_toggle_group_expands_and_collapses(monkeypatch):
+    p = _open_grouped(monkeypatch)
+    assert p.dispatch_event("toggle_group:0") is True
+    assert _payload_data(p.render_payload())["subsystems"][0]["expanded"] is True
+    assert p.dispatch_event("toggle_group:0") is True
+    assert _payload_data(p.render_payload())["subsystems"][0]["expanded"] is False
+    assert p.dispatch_event("toggle_group:99") is False
+
+
+def test_select_pin_reveals_its_group(monkeypatch):
+    p = _open_grouped(monkeypatch)
+    p.dispatch_event("select_pin:2")        # Star Nacelle, inside collapsed group
+    data = _payload_data(p.render_payload())
+    assert data["selected_index"] == 2
+    assert data["subsystems"][0]["expanded"] is True
+
+
+def test_expansion_resets_on_reopen(monkeypatch):
+    p = _open_grouped(monkeypatch)
+    p.dispatch_event("toggle_group:0")
+    p.close()
+    p.open()
+    assert _payload_data(p.render_payload())["subsystems"][0]["expanded"] is False
