@@ -13,19 +13,11 @@
 # Blank lines and lines starting with '#' are ignored.
 
 # --- C++ (ctest) ---------------------------------------------------------------
-# Scorch / phaser-heat-glow FrameTests: the decal glow renders FLAT in the
-# headless/offscreen-GL environment (macOS), so the "glow changed" asserts see
-# swing == 0. Verified a headless-GL harness artifact, not a renderer bug —
-# identical on merge-base. See memory project_cpp_ctest_not_in_run_tests and
-# docs (project_gl_context_lifecycle_gotchas). These need game/ assets to run;
-# they SKIP (not fail) where assets are absent.
-ctest:FrameTest.ScorchDecalDarkensHullAndDoesNotMirror
-ctest:FrameTest.ScorchToggleOffRendersLikeUndamaged
-ctest:FrameTest.ScorchEmberIsBrightWhenFreshAndCoolsWithGameTime
-ctest:FrameTest.ScorchGlowOscillatesWithinFlickerWindow
-ctest:FrameTest.ScorchFlickerBlacksOutThenRestoresForLongDurations
-ctest:FrameTest.PhaserHeatGlowIsTransientAndLeavesNoScar
-ctest:FrameTest.PhaserHeatGlowGlowIsMonotonicWithinFlickerWindow
+# (none — the C++ suite is expected fully green. The 7 scorch/heat-glow
+# FrameTests formerly listed here were never a headless-GL artifact: commit
+# 5739e1b5 un-negated the shader's decal normal gate to dot(n_body, dn) and the
+# tests kept seeding inward -Z normals, zeroing every decal term. Fixed by
+# seeding outward normals, matching ray_trace's shooter-facing convention.)
 
 # --- Python (pytest) -----------------------------------------------------------
 # (none — the Python suite is expected fully green.)
