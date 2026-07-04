@@ -686,6 +686,14 @@ def _reset_leakable_engine_globals():
                 _mgr._timers.clear()
         except Exception:
             pass
+    # Skip-candidate registry tracks actions whose deferred-completion timers
+    # live in the managers just cleared above; drop it in lockstep so a leaked
+    # action can't be "skipped" (Completed against reset singletons) later.
+    try:
+        from engine.appc import actions as _appc_actions
+        _appc_actions.reset_deferred_playing()
+    except Exception:
+        pass
     # UI singletons rebuilt per bridge load.
     try:
         from engine.sdk_ui.widgets import ship_display

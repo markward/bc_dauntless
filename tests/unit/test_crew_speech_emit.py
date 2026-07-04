@@ -104,3 +104,67 @@ def test_emit_non_annoying_line_unaffected_by_flag(monkeypatch):
     assert crew_speech.annoying_dialogue_disabled() is True
     assert crew_speech.emit("XO", db, "SomeOtherLine", CSP_NORMAL) == 4.4
     assert len(calls) == 1
+
+
+# ── skip_current (Backspace dialogue skip) ───────────────────────────────────
+
+class _FakeVoiceHandle:
+    def __init__(self):
+        self.stopped = False
+
+    def Stop(self):
+        self.stopped = True
+
+
+def test_skip_current_stops_voice_frees_channel_clears_subtitle(monkeypatch):
+    top_window.reset_for_tests()
+    crew_speech.bus().reset()
+    b = crew_speech.bus()
+    handle = _FakeVoiceHandle()
+    monkeypatch.setattr(type(b), "_play_voice",
+                        lambda self, wav: (5.0, handle), raising=True)
+
+    assert b.speak("Tactical", "Shields holding", "line.wav",
+                   CSP_NORMAL, now=100.0) == 5.0
+    assert _subtitle()._snapshot(now=0.0)["speech"] == "Shields holding"
+    # Channel is held: a lower-priority line is dropped while the line lives.
+    assert b.speak("Helm", "Aye", None, CSP_NORMAL - 1, now=101.0) == 0.0
+
+    b.skip_current(now=101.0)
+
+    assert handle.stopped                        # voice cut mid-line
+    assert _subtitle()._snapshot(now=0.0) is None  # subtitle gone immediately
+    # Channel freed: the same lower-priority line is accepted now.
+    assert b.speak("Helm", "Aye", None, CSP_NORMAL - 1, now=101.0) > 0.0
+
+
+def test_skip_current_notifies_listeners_speech_ended(monkeypatch):
+    crew_speech.bus().reset()
+    b = crew_speech.bus()
+    monkeypatch.setattr(type(b), "_play_voice",
+                        lambda self, wav: (5.0, _FakeVoiceHandle()),
+                        raising=True)
+    cues = []
+    listener = lambda speaker, wav, dur, now: cues.append((speaker, wav, dur))
+    crew_speech.add_speech_listener(listener)
+    try:
+        b.speak("Tactical", "Shields holding", "line.wav",
+                CSP_NORMAL, now=100.0)
+        b.skip_current(now=101.0)
+    finally:
+        crew_speech.remove_speech_listener(listener)
+    # Start cue for the line, then the skip cue (empty speaker, no wav, 0s).
+    assert cues[0][0] == "Tactical"
+    assert cues[-1] == ("", None, 0.0)
+
+
+def test_skip_current_noop_when_idle():
+    crew_speech.bus().reset()
+    cues = []
+    listener = lambda *a: cues.append(a)
+    crew_speech.add_speech_listener(listener)
+    try:
+        crew_speech.bus().skip_current(now=50.0)   # must not raise
+    finally:
+        crew_speech.remove_speech_listener(listener)
+    assert cues == []                              # no phantom skip cue

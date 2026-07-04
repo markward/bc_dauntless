@@ -97,3 +97,9 @@ def test_load_missing_file_uses_defaults(tmp_path):
     im = InputMap(config_mapping=TGConfigMapping(), filename=path)
     im.load()
     assert im.name("fire_primary") == "F"
+
+
+def test_skip_dialogue_default_backspace():
+    im = InputMap()
+    assert im.name("skip_dialogue") == "Backspace"
+    assert im.code("skip_dialogue") == GLFW_KEYS["Backspace"]

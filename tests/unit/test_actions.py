@@ -878,3 +878,180 @@ def test_queueactiontoplay_starts_fresh_master_after_previous_completes(monkeypa
         assert master_b != master_a          # a genuinely new master was created
     finally:
         _set_current_game(None)
+
+
+# ── Skip (Backspace → TGActionManager_SkipEvents) ────────────────────────────
+
+class _FakeVoiceHandle:
+    def __init__(self):
+        self.stopped = False
+
+    def Stop(self):
+        self.stopped = True
+
+
+def test_skippable_flag_roundtrip():
+    a = TGAction()
+    assert not a.IsSkippable()               # SDK default: not skippable
+    a.SetSkippable(1)
+    assert a.IsSkippable()
+    a.SetSkippable(0)
+    assert not a.IsSkippable()
+
+
+def test_skip_cancels_deferred_timer_and_completes_once():
+    a = TGAction()
+    done = []
+    real_completed = a.Completed
+    a.Completed = lambda: (done.append(True), real_completed())  # type: ignore
+    a._playing = True
+    a._complete_after(0.5)
+    a.Skip()
+    assert done == [True]                    # completed immediately
+    _advance_real_time(1.0)
+    assert done == [True]                    # timer cancelled: no re-fire
+
+
+def test_skip_events_stops_audio_and_advances_sequence(monkeypatch):
+    from engine.audio.tg_sound import TGSoundManager
+    handle = _FakeVoiceHandle()
+    monkeypatch.setattr(TGSoundManager, "duration_for",
+                        lambda self, name: 5.0, raising=True)
+    monkeypatch.setattr(TGSoundManager, "PlaySound",
+                        lambda self, name: handle, raising=True)
+
+    sound = App.TGSoundAction_Create("VoiceLine")
+    sound.SetSkippable(1)                    # MissionLib.py:699 pattern
+    follower = TGAction()
+    played = []
+    real_play = follower.Play
+    follower.Play = lambda: (played.append(True), real_play())  # type: ignore
+
+    seq = TGSequence_Create()
+    seq.AddAction(sound)
+    seq.AddAction(follower, sound)
+    seq.Play()
+    assert sound.IsPlaying()
+    assert played == []                      # gated on the 5s line
+
+    App.TGActionManager_SkipEvents()
+
+    assert handle.stopped                    # audio cut mid-line
+    assert not sound.IsPlaying()
+    assert played == [True]                  # chained step advanced immediately
+
+
+def test_skip_events_leaves_unskippable_actions_playing(monkeypatch):
+    from engine.audio.tg_sound import TGSoundManager
+    handle = _FakeVoiceHandle()
+    monkeypatch.setattr(TGSoundManager, "duration_for",
+                        lambda self, name: 5.0, raising=True)
+    monkeypatch.setattr(TGSoundManager, "PlaySound",
+                        lambda self, name: handle, raising=True)
+
+    sound = App.TGSoundAction_Create("Ambience")   # never SetSkippable(1)
+    sound.Play()
+    assert sound.IsPlaying()
+
+    App.TGActionManager_SkipEvents()
+
+    assert sound.IsPlaying()                 # untouched
+    assert not handle.stopped
+    sound.Abort()                            # cleanup (also stops audio)
+    assert handle.stopped
+
+
+def test_skip_events_noop_when_nothing_playing():
+    from engine.appc.actions import reset_deferred_playing
+    reset_deferred_playing()
+    App.TGActionManager_SkipEvents()         # must not raise
+
+
+def test_action_manager_skips_objptr_on_action_skip():
+    target = TGAction()
+    skipped = []
+    target.Skip = lambda: skipped.append(True)   # type: ignore
+
+    ev = App.TGObjPtrEvent_Create()
+    ev.SetEventType(App.ET_ACTION_SKIP)
+    ev.SetObjPtr(target)
+    App.g_kTGActionManager.ProcessEvent(ev)
+
+    assert skipped == [True]
+
+
+def test_sequence_skip_stops_inflight_children_without_launching_rest(monkeypatch):
+    from engine.audio.tg_sound import TGSoundManager
+    handle = _FakeVoiceHandle()
+    monkeypatch.setattr(TGSoundManager, "duration_for",
+                        lambda self, name: 5.0, raising=True)
+    monkeypatch.setattr(TGSoundManager, "PlaySound",
+                        lambda self, name: handle, raising=True)
+
+    sound = App.TGSoundAction_Create("WinMovieLine")
+    follower = TGAction()
+    played = []
+    real_play = follower.Play
+    follower.Play = lambda: (played.append(True), real_play())  # type: ignore
+
+    seq = TGSequence_Create()
+    seq.AddAction(sound)
+    seq.AddAction(follower, sound)
+    seq.Play()
+
+    seq.Skip()                               # E8M2 win-movie pattern
+
+    assert handle.stopped                    # in-flight child silenced
+    assert not seq.IsPlaying()               # sequence over now
+    assert played == []                      # later steps NOT launched by skip
+
+
+def test_skip_events_does_not_silence_the_follow_on_line(monkeypatch):
+    """Regression: Backspace on a chained dialogue sequence.
+
+    Skipping line A's action completes it inline, which starts line B during
+    TGActionManager_SkipEvents. The bus skip must run BEFORE the action loop
+    — issued after, it silenced the freshly-started B while B's action still
+    ran its full duration (skip muted the dialogue without shortening the
+    wait)."""
+    from engine.appc import crew_speech
+    from engine.appc.localization import TGLocalizationDatabase
+    from engine.appc import top_window
+
+    top_window.reset_for_tests()
+    crew_speech.bus().reset()
+    b = crew_speech.bus()
+    handles = []
+
+    def fake_play(self, wav):
+        h = _FakeVoiceHandle()
+        handles.append(h)
+        return (5.0, h)
+
+    monkeypatch.setattr(type(b), "_play_voice", fake_play, raising=True)
+    db = TGLocalizationDatabase(
+        "x.tgl",
+        strings={"L1": "line one", "L2": "line two"},
+        sounds={"L1": "l1.wav", "L2": "l2.wav"},
+    )
+    line_a = App.CharacterAction_Create(
+        None, App.CharacterAction.AT_SAY_LINE, "L1", None, 0, db)
+    line_b = App.CharacterAction_Create(
+        None, App.CharacterAction.AT_SAY_LINE, "L2", None, 0, db)
+    seq = TGSequence_Create()
+    seq.AddAction(line_a)
+    seq.AppendAction(line_b, line_a)
+    seq.Play()
+    assert len(handles) == 1                 # only A's voice started
+
+    App.TGActionManager_SkipEvents()
+
+    assert not line_a.IsPlaying()
+    assert line_b.IsPlaying()                # B advanced immediately...
+    assert len(handles) == 2
+    assert handles[0].stopped                # ...A's voice was cut
+    assert not handles[1].stopped            # ...and B's voice keeps playing
+    import App as _App
+    sub = _App.TopWindow_GetTopWindow().FindMainWindow(_App.MWT_SUBTITLE)
+    snap = sub._snapshot(now=0.0)
+    assert snap is not None and snap["speech"] == "line two"

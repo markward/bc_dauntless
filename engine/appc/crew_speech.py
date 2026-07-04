@@ -116,6 +116,28 @@ class CrewSpeechBus:
             except Exception:
                 pass
 
+    def skip_current(self, now=None) -> None:
+        """Cut the live line short (Backspace skip): silence the voice, free
+        the channel so the next line is accepted immediately, drop the
+        on-screen subtitle, and cue listeners (lip-sync) that speech ended.
+        No-op when nothing is live."""
+        if now is None:
+            now = time.monotonic()
+        line_live = now < self._active_expiry or self._active_handle is not None
+        self._stop_active_voice()
+        self._active_expiry = 0.0
+        self._active_priority = -1
+        if not line_live:
+            return
+        try:
+            import App
+            sub = App.TopWindow_GetTopWindow().FindMainWindow(App.MWT_SUBTITLE)
+            if sub is not None and hasattr(sub, "clear_crew_line"):
+                sub.clear_crew_line()
+        except Exception:
+            pass
+        _notify_speech("", None, 0.0, now)
+
     def speak(self, speaker, text, wav, priority, now=None) -> float:
         """Arbitrate one line. Returns its duration in seconds (0.0 if dropped).
         The returned value also drives the subtitle dwell and the bus free-up,
