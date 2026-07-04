@@ -8,7 +8,7 @@ def _identity():
     R = TGMatrix3(); R.MakeIdentity(); return R
 
 
-def _ship(loc, vel=(0.0, 0.0, 0.0), name="Target", radius=5.0):
+def _ship(loc, vel=(0.0, 0.0, 0.0), name="Target", radius=5.0, display_name=""):
     class _Ship:
         def __init__(self):
             self._t = None; self._sub = None
@@ -17,6 +17,9 @@ def _ship(loc, vel=(0.0, 0.0, 0.0), name="Target", radius=5.0):
         def GetRadius(self): return radius
         def GetVelocity(self, space=0): return TGPoint3(*vel)
         def GetName(self): return name
+        # Mirrors ObjectClass.GetDisplayName: localized label, falling back
+        # to the internal name when none is set.
+        def GetDisplayName(self): return display_name if display_name else name
         def GetTarget(self): return self._t
         def GetTargetSubsystem(self): return self._sub
     return _Ship()
@@ -64,6 +67,38 @@ def test_text_name_is_subsystem_when_locked():
     p = _ship(TGPoint3(0, -200, 0)); p._t = tgt; p._sub = sub
     out = build_reticle_text(p, _cam_facing_target(), (1280, 720))
     assert out["name"] == "Port Nacelle"
+
+
+def test_text_name_is_target_display_name():
+    # The reticle label must match the rest of the UI (Hail menu, target
+    # list), which reads GetDisplayName — Haven's internal name is "Haven"
+    # but its localized label is "Vesuvi 6 - Haven".
+    tgt = _ship(TGPoint3(0, 0, 0), name="Haven", display_name="Vesuvi 6 - Haven")
+    p = _ship(TGPoint3(0, -200, 0)); p._t = tgt
+    out = build_reticle_text(p, _cam_facing_target(), (1280, 720))
+    assert out["name"] == "Vesuvi 6 - Haven"
+
+
+def test_text_name_is_subsystem_display_name():
+    # The subsystem branch also reads GetDisplayName. A stock ShipSubsystem's
+    # display name equals its internal name, so distinguish them via an
+    # in-test subclass.
+    class _LocalizedSub(ShipSubsystem):
+        def GetDisplayName(self):
+            return "Port Nacelle"
+    tgt = _ship(TGPoint3(0, 0, 0), name="Warbird")
+    sub = _LocalizedSub("sub_key"); sub.SetParentShip(tgt)
+    p = _ship(TGPoint3(0, -200, 0)); p._t = tgt; p._sub = sub
+    out = build_reticle_text(p, _cam_facing_target(), (1280, 720))
+    assert out["name"] == "Port Nacelle"
+
+
+def test_text_name_falls_back_to_internal_name():
+    # A target with no display name set still labels with _name — never blank.
+    tgt = _ship(TGPoint3(0, 0, 0), name="Warbird")
+    p = _ship(TGPoint3(0, -200, 0)); p._t = tgt
+    out = build_reticle_text(p, _cam_facing_target(), (1280, 720))
+    assert out["name"] == "Warbird"
 
 
 def test_text_hidden_when_target_behind_camera():
