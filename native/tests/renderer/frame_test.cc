@@ -319,7 +319,7 @@ TEST_F(FrameTest, DecalUploadPipelineRunsWithoutGLError) {
 
     // Seed a scorch decal at center. The shader now reads it — just verify no
     // GL errors and the draw completes without crashing.
-    world.get(iid)->decals.add(glm::vec3(0, 0, 0), glm::vec3(0, 0, -1),
+    world.get(iid)->decals.add(glm::vec3(0, 0, 0), glm::vec3(0, 0, 1),
                                /*radius=*/200.0f, /*intensity=*/1.0f,
                                scenegraph::WeaponClass::Scorch, /*now=*/0.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -382,7 +382,8 @@ TEST_F(FrameTest, ScorchDecalDarkensHullAndDoesNotMirror) {
     //   - Screen center x≈137, spans ~18 screen pixels on each side.
     //   - Covers most of the right block (body X -60..+180).
     //   - Left block edge (body X≈-67) is 127 GU from seed, just outside radius.
-    //   - NIF normals are inward; shader uses dot(-n_body, dn) for the falloff.
+    //   - Camera-facing saucer-top fragments have OUTWARD n_body (+Z); the
+    //     shader falloff gates on dot(n_body, dn), so dn must be outward too.
     auto model_h = cache->load(kGalaxyNif, kGalaxyTex);
     auto lut = [model_h](scenegraph::ModelHandle h) -> const assets::Model* {
         return reinterpret_cast<const assets::Model*>(h); };
@@ -406,14 +407,19 @@ TEST_F(FrameTest, ScorchDecalDarkensHullAndDoesNotMirror) {
     auto i1 = w1.create_instance(reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
     w1.set_world_transform(i1, glm::mat4(1.0f));
     // point_body = (60, 0, 20): +X half, top face, near-surface Z.
-    // normal_body = (0, 0, -1): the decal normal must match the convention of
-    // the reconstructed fragment normal n_body (the raw NIF vertex normal here,
-    // which points inward). The shader compares dot(n_body, dn) > 0, exactly as
-    // the live ray_trace -> world_dir_to_body pipeline produces a dn aligned
-    // with the surface's vertex normal. (Seeding an outward +Z here would be
-    // rejected by the falloff -- the bug that hid all in-game decals.)
+    // normal_body = (0, 0, +1): OUTWARD — the decal normal must match the
+    // convention of the reconstructed fragment normal n_body, which on the
+    // camera-facing saucer top points outward (+Z). The shader gates on
+    // dot(n_body, dn) > NORMAL_MIN, and the live path matches: ray_trace flips
+    // its hit normal against the incoming ray (ray_trace.cc), so a shot from
+    // outside always seeds an outward, shooter-facing dn. (These tests
+    // originally seeded inward -Z for the pre-5739e1b5 dot(-n_body, dn) gate;
+    // when that commit un-negated the shader gate to fix in-game decals, the
+    // stale inward seeds made every decal term render as exactly zero here —
+    // mis-baselined for a while in tests/known_failures.txt as a headless-GL
+    // artifact.)
     // radius 120 GU — covers most of the right sample block.
-    w1.get(i1)->decals.add(glm::vec3(60.0f, 0.0f, 20.0f), glm::vec3(0, 0, -1),
+    w1.get(i1)->decals.add(glm::vec3(60.0f, 0.0f, 20.0f), glm::vec3(0, 0, 1),
                            /*radius=*/120.0f, /*intensity=*/1.0f,
                            scenegraph::WeaponClass::Scorch, 0.0f);
     // Sample at decal_time = 65 s: past the transient glow-flicker window
@@ -446,7 +452,7 @@ TEST_F(FrameTest, ScorchToggleOffRendersLikeUndamaged) {
     scenegraph::World w;
     auto iid = w.create_instance(reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
     w.set_world_transform(iid, glm::mat4(1.0f));
-    w.get(iid)->decals.add(glm::vec3(60.0f, 0.0f, 20.0f), glm::vec3(0, 0, -1),
+    w.get(iid)->decals.add(glm::vec3(60.0f, 0.0f, 20.0f), glm::vec3(0, 0, 1),
                            120.0f, 1.0f, scenegraph::WeaponClass::Scorch, 0.0f);
 
     // decal_time = 65 s isolates the permanent soot deposit from the transient
@@ -476,7 +482,7 @@ TEST_F(FrameTest, ScorchEmberIsBrightWhenFreshAndCoolsWithGameTime) {
     auto iid = w.create_instance(reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
     w.set_world_transform(iid, glm::mat4(1.0f));
     // birth_time = 0; ember keyed on (u_decal_time - birth_time).
-    w.get(iid)->decals.add(glm::vec3(60, 0, 20), glm::vec3(0, 0, -1),
+    w.get(iid)->decals.add(glm::vec3(60, 0, 20), glm::vec3(0, 0, 1),
                            120.0f, 1.0f, scenegraph::WeaponClass::Scorch, 0.0f);
 
     render_galaxy(w, *p, lut, /*decal_time=*/0.2f);   // fresh: hot ember
@@ -508,7 +514,7 @@ TEST_F(FrameTest, PhaserHeatGlowIsTransientAndLeavesNoScar) {
     scenegraph::World w;
     auto iid = w.create_instance(reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
     w.set_world_transform(iid, glm::mat4(1.0f));
-    w.get(iid)->decals.add(glm::vec3(60, 0, 20), glm::vec3(0, 0, -1),
+    w.get(iid)->decals.add(glm::vec3(60, 0, 20), glm::vec3(0, 0, 1),
                            120.0f, 1.0f, scenegraph::WeaponClass::HeatGlow, 0.0f);
 
     render_galaxy(w, *p, lut, /*decal_time=*/0.1f);   // fresh glow
@@ -602,7 +608,7 @@ TEST_F(FrameTest, ScorchGlowOscillatesWithinFlickerWindow) {
     scenegraph::World w1;
     auto i1 = w1.create_instance(reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
     w1.set_world_transform(i1, glm::mat4(1.0f));
-    w1.get(i1)->decals.add(glm::vec3(60.0f, 0.0f, 20.0f), glm::vec3(0, 0, -1),
+    w1.get(i1)->decals.add(glm::vec3(60.0f, 0.0f, 20.0f), glm::vec3(0, 0, 1),
                             /*radius=*/120.0f, /*intensity=*/0.25f,
                             scenegraph::WeaponClass::Scorch, /*birth_time=*/0.0f);
 
@@ -681,7 +687,7 @@ TEST_F(FrameTest, ScorchFlickerBlacksOutThenRestoresForLongDurations) {
         auto iid = w.create_instance(
             reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
         w.set_world_transform(iid, glm::mat4(1.0f));
-        w.get(iid)->decals.add(glm::vec3(60.0f, 0.0f, 20.0f), glm::vec3(0, 0, -1),
+        w.get(iid)->decals.add(glm::vec3(60.0f, 0.0f, 20.0f), glm::vec3(0, 0, 1),
                                120.0f, 0.25f, scenegraph::WeaponClass::Scorch, birth);
         render_galaxy_zero_ambient(w, *p, lut, decal_time);
         dauntless_decals::set_enabled(true);
@@ -743,7 +749,7 @@ TEST_F(FrameTest, PhaserHeatGlowGlowIsMonotonicWithinFlickerWindow) {
     scenegraph::World w;
     auto iid = w.create_instance(reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
     w.set_world_transform(iid, glm::mat4(1.0f));
-    w.get(iid)->decals.add(glm::vec3(60.0f, 0.0f, 20.0f), glm::vec3(0, 0, -1),
+    w.get(iid)->decals.add(glm::vec3(60.0f, 0.0f, 20.0f), glm::vec3(0, 0, 1),
                             /*radius=*/120.0f, /*intensity=*/0.25f,
                             scenegraph::WeaponClass::HeatGlow, /*birth_time=*/0.0f);
 
