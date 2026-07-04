@@ -339,7 +339,11 @@ def _resolve_ship_for_role(role: str):
     if player_sensors_offline():
         return None
     target = player.GetTarget() if hasattr(player, "GetTarget") else None
-    return target
+    # The SDK resolves the target via ShipClass_GetObjectByID and renders
+    # nothing when it isn't a ship (ShieldsDisplay.py:349) — a targeted
+    # planet or sun must not draw as a 0%-hull ship.
+    from engine.appc.ships import ShipClass_Cast
+    return ShipClass_Cast(target)
 
 
 def _affiliation_for(ship, player) -> str:
