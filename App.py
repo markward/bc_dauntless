@@ -766,6 +766,13 @@ ET_CLOAK_BEGINNING = 207
 # stable orbit is achieved. Consumed by mission listeners (E1M2.OrbitingHaven
 # sets g_bPlayerInOrbit) and Conditions/ConditionPlayerOrbitting.
 ET_AI_ORBITTING = 208
+# Fired when a ship's installed AI ends: cleared (ClearAI), replaced
+# (SetAI over an existing tree), or the root tree completes (US_DONE).
+# TGIntEvent: GetInt() = the ended AI's GetID(), destination = the ship.
+# Consumed by Conditions/ConditionPlayerOrbitting.OrbitDone ("player left
+# orbit" → HelmMenuHandlers.Orbitting plays the KiskaLeaveOrbit line) and
+# Bridge/HelmCharacterHandlers.AIDone.
+ET_AI_DONE = 209
 
 # ── Input event types — used by DefaultKeyboardBinding + TacticalInterfaceHandlers
 # Values are stable arbitrary integers well above the Phase-1 event range.

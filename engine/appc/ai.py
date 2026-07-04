@@ -694,6 +694,12 @@ class ConditionEventCreator(TGConditionHandler):
     def AddCondition(self, cond: TGCondition) -> None:
         self._conditions.append(cond)
         cond.AddHandler(self)
+        # Observing a condition activates it: TGCondition.SetStatus only
+        # notifies handlers while _active, and conditions default inactive.
+        # Without this, MissionLib.CallFunctionWhenConditionChanges wiring
+        # (e.g. HelmMenuHandlers' g_pPlayerOrbitting → the "entering/leaving
+        # orbit" helm lines) records status flips but never fires the event.
+        cond.SetActive()
 
     def RemoveCondition(self, cond: TGCondition) -> None:
         """Detach a previously-added condition. SDK DynamicMusic.RemoveConditions

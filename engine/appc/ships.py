@@ -99,18 +99,29 @@ class ShipClass(DamageableObject):
         # flags (bDeleteOld / bActivate) are engine-internal and ignored here.
         # A change of orders aborts any in-flight in-system warp — the transit
         # belongs to the AI that requested it (SDK Intercept owns the warp and
-        # cancels via StopInSystemWarp on LostFocus).
+        # cancels via StopInSystemWarp on LostFocus) — and announces the old
+        # tree's end via ET_AI_DONE (ConditionPlayerOrbitting's leave-orbit
+        # trigger; HelmCharacterHandlers.AIDone).
+        old = self._ai
         self._ai = ai
         self._insystem_warp_transit = None
+        if old is not None and old is not ai:
+            from engine.appc.ai_driver import fire_ai_done
+            fire_ai_done(self, old)
 
     def ClearAI(self, *_extra) -> None:
         # SDK callers: pPlayer.ClearAI() (MissionLib.SetPlayerAI(ctrl, None))
         # and pShip.ClearAI(0, pOldAI) (HelmMenuHandlers fleet override); the
         # flags (bDelete / pOldAI) are engine-internal and ignored here.
         # Must be overridden here: the ObjectClass.ClearAI stub is a no-op and
-        # would leave the installed AI driving the ship forever.
+        # would leave the installed AI driving the ship forever. Announces the
+        # ended tree via ET_AI_DONE, like SetAI above.
+        old = self._ai
         self._ai = None
         self._insystem_warp_transit = None
+        if old is not None:
+            from engine.appc.ai_driver import fire_ai_done
+            fire_ai_done(self, old)
 
     def GetAI(self):
         return self._ai

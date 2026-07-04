@@ -72,3 +72,41 @@ def test_click_haven_completes_enter_orbit_goal():
     # OrbitingHaven flips the goal flag.
     GameLoop().advance(3)
     assert mod.g_bPlayerInOrbit == 1
+
+
+def test_orbit_enter_and_leave_play_helm_dialogue(monkeypatch):
+    """The helm officer announces orbit transitions (SDK chain:
+    HelmMenuHandlers.SetPlayer builds g_pPlayerOrbitting —
+    ConditionPlayerOrbitting tracks ET_AI_ORBITTING/ET_AI_DONE — and
+    MissionLib.CallFunctionWhenConditionChanges redirects status flips to
+    HelmMenuHandlers.Orbitting → AnnounceOrbit → helm SAY_LINE
+    "EnteringOrbit" on enter, "KiskaLeaveOrbit" on leave)."""
+    _fresh_world()
+    mission, episode, game, mod = host_loop._init_mission(E1M2_MODULE)
+
+    import MissionLib
+    player = MissionLib.GetPlayer()
+    pSet = App.g_kSetManager.GetSet("Vesuvi6")
+    haven = pSet.GetObject("Haven")
+    loc = haven.GetWorldLocation()
+    player.SetTranslateXYZ(loc.x, loc.y + haven.GetRadius() + 100.0, loc.z)
+    mod.g_bMissionWinCalled = 1
+
+    spoken = []
+    from engine.appc import crew_speech
+    monkeypatch.setattr(
+        crew_speech, "emit",
+        lambda name, db, line, pri, *a, **k: (spoken.append(line), 0.0)[1])
+
+    orbit_menu, haven_button = _find_orbit_menu_and_haven_button(haven)
+    App.g_kEventManager.AddEvent(haven_button._event)
+
+    # AnnounceOrbit runs via a TGSequence with a 0.5 s delay — tick past it.
+    GameLoop().advance(120)
+    assert "EnteringOrbit" in spoken, f"no enter-orbit line; spoken={spoken}"
+
+    # Breaking orbit (order cleared — same path manual cancel takes) fires
+    # ET_AI_DONE → condition drops → the leave line plays.
+    player.ClearAI()
+    GameLoop().advance(120)
+    assert "KiskaLeaveOrbit" in spoken, f"no leave-orbit line; spoken={spoken}"

@@ -574,6 +574,31 @@ def _activate_builder(ai: BuilderAI) -> None:
         ai._status = US_DONE
 
 
+def fire_ai_done(ship, ai) -> None:
+    """Broadcast ET_AI_DONE for an AI that just ended on `ship`.
+
+    BC fires this when a ship's AI is destroyed/replaced or completes;
+    listeners key on GetInt() == the ended AI's id with the ship as the
+    event destination (Conditions/ConditionPlayerOrbitting.OrbitDone
+    registers a method-broadcast handler with target=pPlayer, and
+    Bridge/HelmCharacterHandlers.AIDone is an instance handler on the
+    player). Skips AIs without a GetID (bare test doubles)."""
+    get_id = getattr(ai, "GetID", None)
+    if not callable(get_id):
+        return
+    try:
+        import App
+        evt = App.TGIntEvent_Create()
+        evt.SetEventType(App.ET_AI_DONE)
+        evt.SetInt(int(get_id()))
+        evt.SetSource(ship)
+        evt.SetDestination(ship)
+        App.g_kEventManager.AddEvent(evt)
+    except Exception as _e:
+        from engine import dev_mode
+        dev_mode.log_swallowed("fire ET_AI_DONE", _e)
+
+
 def tick_all_ai(game_time: float) -> None:
     """Iterate every ship and tick its attached AI subtree.
 
@@ -584,4 +609,9 @@ def tick_all_ai(game_time: float) -> None:
     for ship in iter_ships():
         ai = ship.GetAI() if hasattr(ship, "GetAI") else None
         if ai is not None:
-            tick_ai(ai, game_time)
+            status = tick_ai(ai, game_time)
+            # Root-tree completion fires ET_AI_DONE once (SDK: the engine
+            # announces an AI's end so orbit/helm state can react).
+            if status == US_DONE and not getattr(ai, "_done_event_fired", False):
+                ai._done_event_fired = True
+                fire_ai_done(ship, ai)
