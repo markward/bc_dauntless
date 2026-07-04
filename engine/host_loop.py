@@ -5874,7 +5874,9 @@ def run(mission_name: Optional[str] = None,
                 r.set_camera(eye=eye, target=target, up=up_vec,
                              fov_y_rad=director.fov_y_rad,
                              near=1.0, far=5000.0)
-                if player is not None:
+                # Reticle is an exterior-view HUD element; in bridge view it
+                # would draw over the bridge scene.
+                if player is not None and view_mode.is_exterior:
                     r.set_target_reticle(build_target_reticle(player))
                     _rcam = _ReticleCam(eye=eye, target=target, up=up_vec,
                                         fov_y_rad=director.fov_y_rad,
