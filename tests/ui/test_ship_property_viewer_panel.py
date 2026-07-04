@@ -297,3 +297,44 @@ def test_frame_to_bounds_ignores_nonpositive_radius():
     p.frame_to_bounds((9.0, 9.0, 9.0), 0.0)   # bad radius → no change
     assert p.camera.target == (1.0, 2.0, 3.0)
     assert p.camera.distance == 42.0
+
+
+# ── titlebar overlay toggles (Glow Regions / Weapon Arcs) ──────────────────
+
+def test_toggles_start_off_and_payload_carries_them():
+    p = ShipPropertyViewerPanel(ship_getter=lambda: None)
+    p.open()
+    assert p.show_glow_regions is False
+    assert p.show_weapon_arcs is False
+    data = _payload_data(p.render_payload())
+    assert data["show_glow"] is False
+    assert data["show_arcs"] is False
+
+
+def test_toggle_events_flip_flags_and_repush():
+    p = ShipPropertyViewerPanel(ship_getter=lambda: None)
+    p.open()
+    p.render_payload()                                  # settle the snapshot
+    assert p.render_payload() is None                   # diffed out
+    assert p.dispatch_event("toggle_glow_regions") is True
+    data = _payload_data(p.render_payload())            # toggle → re-push
+    assert data["show_glow"] is True and data["show_arcs"] is False
+    assert p.dispatch_event("toggle_weapon_arcs") is True
+    data = _payload_data(p.render_payload())
+    assert data["show_arcs"] is True
+    # Toggling back off flips + re-pushes again.
+    assert p.dispatch_event("toggle_glow_regions") is True
+    assert _payload_data(p.render_payload())["show_glow"] is False
+
+
+def test_toggles_reset_on_reopen_and_close():
+    p = ShipPropertyViewerPanel(ship_getter=lambda: None)
+    p.open()
+    p.dispatch_event("toggle_glow_regions")
+    p.dispatch_event("toggle_weapon_arcs")
+    p.close()
+    assert p.show_glow_regions is False
+    assert p.show_weapon_arcs is False
+    p.open()
+    assert p.show_glow_regions is False
+    assert p.show_weapon_arcs is False

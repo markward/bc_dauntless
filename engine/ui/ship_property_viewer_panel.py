@@ -42,6 +42,9 @@ class ShipPropertyViewerPanel(Panel):
         self._descriptors: List[dict] = []
         self.selected_index: Optional[int] = None
         self.camera: Optional[OrbitCamera] = None
+        # Titlebar overlay toggles — both off by default, reset every open.
+        self.show_glow_regions = False
+        self.show_weapon_arcs = False
         self._last_pushed: Optional[tuple] = None
         # Left-drag tracking (panel-local edge detection so we don't steal
         # the CEF mouse-release edge — see handle_input).
@@ -62,6 +65,8 @@ class ShipPropertyViewerPanel(Panel):
         ship = self._ship_getter()
         self._descriptors = build_descriptors(ship) if ship is not None else []
         self.selected_index = None
+        self.show_glow_regions = False
+        self.show_weapon_arcs = False
         target = self._fit_target()
         self.camera = OrbitCamera(target=target, distance=self._fit_distance(target))
         self._visible = True
@@ -70,6 +75,8 @@ class ShipPropertyViewerPanel(Panel):
         self._visible = False
         self._descriptors = []
         self.selected_index = None
+        self.show_glow_regions = False
+        self.show_weapon_arcs = False
         self.camera = None
         self._lmb_down = False
         self._drag_last = None
@@ -133,7 +140,8 @@ class ShipPropertyViewerPanel(Panel):
         return d["name"] if d else None
 
     def render_payload(self) -> Optional[str]:
-        snapshot = (self._visible, len(self._descriptors), self.selected_index)
+        snapshot = (self._visible, len(self._descriptors), self.selected_index,
+                    self.show_glow_regions, self.show_weapon_arcs)
         if snapshot == self._last_pushed:
             return None
         self._last_pushed = snapshot
@@ -147,6 +155,8 @@ class ShipPropertyViewerPanel(Panel):
             "visible": True,
             "pin_count": len(self._descriptors),
             "selected": selected,
+            "show_glow": self.show_glow_regions,
+            "show_arcs": self.show_weapon_arcs,
         }
         return "setShipPropertyViewer(" + json.dumps(payload) + ");"
 
@@ -278,6 +288,14 @@ class ShipPropertyViewerPanel(Panel):
     def dispatch_event(self, action: str) -> bool:
         if action == "cancel":
             self.close()
+            return True
+        if action == "toggle_glow_regions":
+            self.show_glow_regions = not self.show_glow_regions
+            self._last_pushed = None  # re-push so the button state updates
+            return True
+        if action == "toggle_weapon_arcs":
+            self.show_weapon_arcs = not self.show_weapon_arcs
+            self._last_pushed = None
             return True
         if action.startswith("select_pin:"):
             try:

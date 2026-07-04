@@ -46,6 +46,7 @@
 #include <renderer/breach_debris.h>  // debris descriptor builder
 #include <renderer/carve_field_cache.h>
 #include <renderer/subsystem_pin_pass.h>
+#include <renderer/debug_volume_pass.h>
 #include <renderer/target_reticle_pass.h>
 #include <renderer/bridge_pass.h>
 #include <renderer/viewscreen_static_pass.h>
@@ -216,6 +217,11 @@ std::unique_ptr<renderer::BreachPass>        g_breach_pass;
 std::unique_ptr<renderer::CarveFieldCache>   g_carve_cache;
 std::vector<renderer::SubsystemPin>          g_subsystem_pins;
 std::unique_ptr<renderer::SubsystemPinPass>  g_subsystem_pin_pass;
+// Developer debug overlay (Ship Property Viewer "Glow Regions" toggle):
+// world-space wireframe cylinders set each frame from Python. Empty list →
+// zero GL work; only rendered in viewer_mode.
+std::vector<renderer::DebugCylinder>         g_debug_cylinders;
+std::unique_ptr<renderer::DebugVolumePass>   g_debug_volume_pass;
 renderer::TargetReticle                      g_target_reticle;
 std::unique_ptr<renderer::TargetReticlePass> g_target_reticle_pass;
 // "Hologram-only" frame mode: when on (set by the Ship Property Viewer while
@@ -433,6 +439,7 @@ void init(int width, int height, const std::string& title) {
     // The breach pass lazily loads its own animated interior texture
     // (game/data/Damage1..4.tga) on first draw — no host wiring needed.
     g_subsystem_pin_pass  = std::make_unique<renderer::SubsystemPinPass>();
+    g_debug_volume_pass   = std::make_unique<renderer::DebugVolumePass>();
     g_target_reticle_pass = std::make_unique<renderer::TargetReticlePass>();
     g_bridge_pass         = std::make_unique<renderer::BridgePass>();
     g_viewscreen_static_pass = std::make_unique<renderer::ViewscreenStaticPass>();
@@ -508,6 +515,8 @@ void shutdown() {
     g_breach_pass.reset();   // releases the sphere mesh + fill textures while the GL context lives
     g_carve_cache.reset();   // releases the carved-fill 3D textures (GL alive)
     g_subsystem_pin_pass.reset();
+    g_debug_cylinders.clear();
+    g_debug_volume_pass.reset();
     g_target_reticle = renderer::TargetReticle{};
     g_target_reticle_pass.reset();
     g_bridge_pass.reset();
@@ -849,6 +858,8 @@ void frame() {
     if (viewer_mode && g_phaser_pass && !g_spv_overlay_beams.empty())
         g_phaser_pass->render(g_spv_overlay_beams, g_camera, *g_pipeline,
                               /*depth_test=*/false);
+    if (viewer_mode && g_debug_volume_pass && !g_debug_cylinders.empty())
+        g_debug_volume_pass->render(g_debug_cylinders, g_camera);
     if (g_subsystem_pin_pass && !g_subsystem_pins.empty()) {
         // Device-pixel ratio = framebuffer / logical window height, so pins
         // keep a constant apparent size on HiDPI/Retina displays.
@@ -2147,6 +2158,38 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("clear_spv_overlay_beams",
           []() { g_spv_overlay_beams.clear(); },
           "Clear the SPV phaser overlay beams. Takes effect next frame().");
+
+    m.def("set_debug_cylinders",
+          [](const std::vector<py::dict>& descs) {
+              g_debug_cylinders.clear();
+              g_debug_cylinders.reserve(descs.size());
+              for (const auto& d : descs) {
+                  renderer::DebugCylinder c;
+                  if (d.contains("center")) {
+                      auto v = d["center"].cast<std::array<float, 3>>();
+                      c.center = {v[0], v[1], v[2]};
+                  }
+                  if (d.contains("axis")) {
+                      auto v = d["axis"].cast<std::array<float, 3>>();
+                      c.axis = {v[0], v[1], v[2]};
+                  }
+                  if (d.contains("radius")) c.radius = d["radius"].cast<float>();
+                  if (d.contains("length")) c.length = d["length"].cast<float>();
+                  if (d.contains("color")) {
+                      auto v = d["color"].cast<std::array<float, 3>>();
+                      c.color = {v[0], v[1], v[2]};
+                  }
+                  g_debug_cylinders.push_back(c);
+              }
+          },
+          py::arg("cylinders"),
+          "Set the world-space debug wireframe cylinders (Ship Property Viewer "
+          "glow-region overlay; rendered depth-test-off in viewer_mode only). "
+          "Each dict: center, axis, radius, length, color. Applied each frame().");
+
+    m.def("clear_debug_cylinders",
+          []() { g_debug_cylinders.clear(); },
+          "Clear the debug wireframe cylinders. Takes effect next frame().");
 
     m.def("set_hologram_ship",
           [](scenegraph::InstanceId iid,

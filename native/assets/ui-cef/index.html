@@ -180,6 +180,11 @@
     <div id="spv-root" class="spv-root dev-only">
       <div class="spv-titlebar">
         <span class="spv-title">Ship Property Viewer</span>
+        <button id="spv-toggle-glow" class="spv-toggle"
+                onclick="shipPropertyViewerToggle('toggle_glow_regions')">Glow Regions</button>
+        <button id="spv-toggle-arcs" class="spv-toggle"
+                onclick="shipPropertyViewerToggle('toggle_weapon_arcs')">Weapon Arcs</button>
+        <span class="spv-spacer"></span>
         <span id="spv-pincount" class="spv-pincount"></span>
         <button class="spv-close" onclick="shipPropertyViewerClose()">&#x2715;</button>
       </div>

@@ -20,6 +20,11 @@ STRIP_SAMPLES = 24       # arc segments per strip rim sweep
 ARC_SAMPLES = 24         # polyline segments per firing-arc edge
 ARC_RADIUS_SCALE = 1.0   # firing-arc radius = Length * this (faithful = 1.0)
 BEAM_WIDTH = 0.02        # thin overlay line half-width (game units)
+# Arc radius for weapons whose Length is 0 (pulse/tractor mounts have no
+# emitter strip): a fraction of the ship's bounding radius, floored so tiny
+# ships still show a readable envelope.
+ARC_FALLBACK_FRAC = 0.5
+ARC_FALLBACK_MIN = 1.0   # game units
 
 # Colours (RGBA).
 STRIP_COLOR = (1.0, 1.0, 0.0, 1.0)   # yellow
@@ -119,11 +124,15 @@ def _arc_direction(fwd: Vec3, up: Vec3, right: Vec3,
     )
 
 
-def build_arc_beams(bank, ship) -> List[dict]:
+def build_arc_beams(bank, ship, fallback_radius: float = 0.0) -> List[dict]:
     """Cyan wireframe of a bank's firing envelope: 4 swept edges of the
     yaw×pitch rectangle at radius = Length × ARC_RADIUS_SCALE around the
-    mount Position."""
+    mount Position. Weapons with Length 0 (pulse/tractor mounts) use
+    `fallback_radius` instead; 0 (the default) skips them — today's
+    selected-pin behavior."""
     length = float(bank.GetLength()) * ARC_RADIUS_SCALE
+    if length <= 0.0:
+        length = float(fallback_radius)
     if length <= 0.0:
         return []
     pos, fwd, up, right = _bank_world_frame(bank, ship)
@@ -159,10 +168,34 @@ def phaser_banks(ship) -> "List[PhaserBank]":
     return [s for s in _iter_subsystems(ship) if isinstance(s, PhaserBank)]
 
 
+def arc_weapons(ship) -> List:
+    """All arc-bearing weapon subsystems on `ship`: phaser banks, pulse
+    weapons, and tractor beams (torpedo tubes carry no arc angles)."""
+    from engine.appc.weapon_subsystems import PhaserBank, PulseWeapon, TractorBeam
+    from engine.ui.ship_property_viewer import _iter_subsystems
+    return [s for s in _iter_subsystems(ship)
+            if isinstance(s, (PhaserBank, PulseWeapon, TractorBeam))]
+
+
+def _arc_fallback_radius(ship) -> float:
+    """Envelope radius for Length-0 weapons: a fraction of the ship's
+    bounding radius, floored at ARC_FALLBACK_MIN game units."""
+    r = 0.0
+    if hasattr(ship, "GetRadius"):
+        try:
+            r = float(ship.GetRadius() or 0.0)
+        except (TypeError, ValueError):
+            r = 0.0
+    return max(ARC_FALLBACK_MIN, r * ARC_FALLBACK_FRAC)
+
+
 def build_phaser_overlay(ship, selected_name: Optional[str] = None,
-                         banks: Optional[List] = None) -> List[dict]:
+                         banks: Optional[List] = None,
+                         show_all_arcs: bool = False) -> List[dict]:
     """Yellow strips for every phaser bank, plus a cyan firing arc for the
     bank whose GetName() matches `selected_name` (if it is a phaser bank).
+    With `show_all_arcs`, also a cyan arc for EVERY arc-bearing weapon
+    (phaser/pulse/tractor; Length-0 mounts use a ship-radius fallback).
     Pass `banks` to bypass enumeration (tests / pre-fetched lists).
     selected_name=None or "" both suppress the arc."""
     if ship is None:
@@ -170,6 +203,11 @@ def build_phaser_overlay(ship, selected_name: Optional[str] = None,
     if banks is None:
         banks = phaser_banks(ship)
     beams = build_strip_beams(banks, ship)
+    if show_all_arcs:
+        fallback = _arc_fallback_radius(ship)
+        for weapon in arc_weapons(ship):
+            beams += build_arc_beams(weapon, ship, fallback_radius=fallback)
+        return beams
     if selected_name:
         sel = next((b for b in banks if b.GetName() == selected_name), None)
         if sel is not None:

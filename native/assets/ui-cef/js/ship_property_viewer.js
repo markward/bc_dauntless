@@ -31,6 +31,15 @@ window.setShipPropertyViewer = function (data) {
         count.textContent = (data.pin_count || 0) + ' subsystems';
     }
 
+    var glowBtn = document.getElementById('spv-toggle-glow');
+    if (glowBtn) {
+        glowBtn.classList.toggle('active', data.show_glow === true);
+    }
+    var arcsBtn = document.getElementById('spv-toggle-arcs');
+    if (arcsBtn) {
+        arcsBtn.classList.toggle('active', data.show_arcs === true);
+    }
+
     var pop = document.getElementById('spv-popover');
     if (!pop) return;
     if (data.selected) {
@@ -58,4 +67,12 @@ window.setShipPropertyViewer = function (data) {
 // to PanelRegistry, which routes to ShipPropertyViewerPanel.dispatch_event.
 window.shipPropertyViewerClose = function () {
     dauntlessEvent('ship-property-viewer/cancel');
+};
+
+// Titlebar overlay toggles (Glow Regions / Weapon Arcs) → Python flips the
+// flag and re-pushes the payload, which round-trips back here as
+// data.show_glow / data.show_arcs so the .active button state always mirrors
+// the panel's real state.
+window.shipPropertyViewerToggle = function (action) {
+    dauntlessEvent('ship-property-viewer/' + action);
 };
