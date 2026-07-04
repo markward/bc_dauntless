@@ -6,9 +6,21 @@ glow regions at construction and pushes state each frame. The C++ side owns the
 region geometry and the shader attenuation; this module only decides *when* and
 *how* a region dims. See
 docs/superpowers/specs/2026-06-10-subsystem-glow-dimming-design.md.
+
+Impulse glow volumes are driven by BAKED hardpoint data: each impulse pod's
+property template carries indexed GlowRegion* fields (authored in hardpoint
+files or engine/appc/hardpoint_overrides.py — see README "Information for
+modders"). All state VFX (dim, flicker, throttle gain) operate on whatever
+regions the hardpoint defines. A pod with no valid baked regions falls back to
+the legacy derivation (cylinder running aft from the hardpoint), per pod.
 """
 
+import logging
 import math
+
+from engine.appc.properties import read_indexed_setter_args
+
+_log = logging.getLogger(__name__)
 
 HEALTHY = "healthy"
 DISABLED = "disabled"
@@ -166,6 +178,85 @@ def _radius(sub) -> float:
     return 1.0
 
 
+def baked_glow_regions(prop) -> list:
+    """Raw baked GlowRegion entries from a property template's data-bag.
+
+    Indexed 0..N; iteration stops at the first index with no
+    ``SetGlowRegionShape(i, ...)`` call. Returns [] for None/unbaked props.
+    """
+    if prop is None:
+        return []
+    out = []
+    i = 0
+    while True:
+        shape = read_indexed_setter_args(prop, "GlowRegionShape", i)
+        if shape is None:
+            return out
+        out.append({
+            "index": i,
+            "shape": shape[0],
+            "position": read_indexed_setter_args(prop, "GlowRegionPosition", i),
+            "axis": read_indexed_setter_args(prop, "GlowRegionAxis", i),
+            "radius": read_indexed_setter_args(prop, "GlowRegionRadius", i),
+            "extent": read_indexed_setter_args(prop, "GlowRegionExtent", i),
+            "scale": read_indexed_setter_args(prop, "GlowRegionScale", i),
+        })
+        i += 1
+
+
+def resolve_baked_region(raw: dict, default_pos):
+    """Normalize one raw baked entry to a renderer op, or None if unusable.
+
+    Ops: ('sphere', center, radius)
+         ('cylinder', center, unit_axis, radius, length)  # centre pre-shifted
+                                                          # by the aft extent
+    Position defaults to the pod's hardpoint position. Shape names are
+    case-insensitive. 'Box' is authored-valid but has no renderer shape yet —
+    treated as unusable (caller warns + falls back) until Box rendering lands.
+    """
+    shape = str(raw.get("shape", "")).lower()
+    pos = raw.get("position") or default_pos
+    if pos is None or len(pos) != 3:
+        return None
+    if shape == "sphere":
+        r = raw.get("radius")
+        if not r or float(r[0]) <= 0.0:
+            return None
+        return ("sphere", tuple(pos), float(r[0]))
+    if shape == "cylinder":
+        axis, r, extent = raw.get("axis"), raw.get("radius"), raw.get("extent")
+        if axis is None or len(axis) != 3 or not r or float(r[0]) <= 0.0 \
+                or extent is None or len(extent) != 2:
+            return None
+        aft, fore = float(extent[0]), float(extent[1])
+        norm = math.sqrt(sum(float(a) * float(a) for a in axis))
+        if fore <= aft or norm <= 0.0:
+            return None
+        u = tuple(float(a) / norm for a in axis)
+        center = tuple(float(p) + u[k] * aft for k, p in enumerate(pos))
+        return ("cylinder", center, u, float(r[0]), fore - aft)
+    return None
+
+
+def baked_region_ops(prop, default_pos, pod_name="") -> list:
+    """Resolved renderer ops for a property's baked regions.
+
+    Unusable entries (malformed, or 'Box' pending renderer support) are
+    dropped with one warning each; an empty result means the caller should
+    use its legacy fallback for this pod.
+    """
+    ops = []
+    for raw in baked_glow_regions(prop):
+        op = resolve_baked_region(raw, default_pos)
+        if op is None:
+            _log.warning(
+                "glow region %s[%d] (%r) skipped: malformed or unsupported "
+                "shape", pod_name, raw["index"], raw.get("shape"))
+            continue
+        ops.append(op)
+    return ops
+
+
 class ShipGlowController:
     """Per-ship: register glow regions once, push state each frame.
 
@@ -196,13 +287,34 @@ class ShipGlowController:
                 {"sub": pod, "idx": idx, "prev": HEALTHY, "etime": -1.0,
                  "boost": False})
 
-        # Impulse engines -> one boost CYLINDER per engine pod (Port/Star/Center),
-        # running aft from the engine centre, radius = the pod's own radius. The
-        # shader still gates to aft-facing faces (IMPULSE_AFT_AXIS) so only the
-        # exhaust faces brighten. Sensor array -> a plain (non-boost) sphere.
+        # Impulse engines -> regions BAKED in the pod's hardpoint property
+        # (GlowRegion* fields; see baked_region_ops). Every baked region on an
+        # impulse pod is a boost region: dim/flicker AND the throttle gain all
+        # drive the authored volume. The shader still gates the gain to
+        # aft-facing faces (IMPULSE_AFT_AXIS) so only the exhaust faces
+        # brighten. A pod with no usable baked regions falls back to the
+        # legacy derivation: a cylinder from the engine centre running aft,
+        # radius = the pod's own radius. Sensor array -> a plain (non-boost)
+        # sphere.
         for pod in impulse_engines(ship.GetImpulseEngineSubsystem()):
             pos = _position_tuple(pod)
             if pos is None:
+                continue
+            prop = pod.GetProperty() if hasattr(pod, "GetProperty") else None
+            ops = baked_region_ops(prop, pos, getattr(pod, "GetName", str)())
+            if ops:
+                for op in ops:
+                    if op[0] == "sphere":
+                        idx = self._r.add_sphere_region(
+                            instance_id, op[1], op[2])
+                    else:  # cylinder
+                        idx = self._r.add_cylinder_region(
+                            instance_id, op[1], op[2], op[3], op[4])
+                    if idx < 0:
+                        continue
+                    self._regions.append(
+                        {"sub": pod, "idx": idx, "prev": HEALTHY,
+                         "etime": -1.0, "boost": True})
                 continue
             idx = self._r.add_cylinder_region(
                 instance_id, pos, IMPULSE_AFT_AXIS, _radius(pod),

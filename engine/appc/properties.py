@@ -111,6 +111,27 @@ def _copy_point(p):
     return TGPoint3(p.x, p.y, p.z)
 
 
+def read_indexed_setter_args(prop, field: str, index) -> tuple | None:
+    """Trailing args of the last ``Set<field>(index, *args)`` call, as a tuple.
+
+    Inverts the data-bag storage convention: ``Set<F>(*args)`` is stored under
+    key ``(F, args[:-1])`` with value ``args[-1]``, so multi-component setters
+    (``SetGlowRegionPosition(0, x, y, z)``) are NOT retrievable via
+    ``Get<F>(0)`` — this helper scans the bag instead. Works uniformly for
+    single-value setters too (``SetGlowRegionShape(0, "Box")`` -> ``("Box",)``).
+    Returns None when the field was never set for that index. Last write wins
+    (dict insertion order).
+    """
+    data = getattr(prop, "_data", None)
+    if not data:
+        return None
+    found = None
+    for (f, key), val in data.items():
+        if f == field and key and key[0] == index:
+            found = tuple(key[1:]) + (val,)
+    return found
+
+
 def _hashable_key(args: tuple) -> tuple:
     """Convert a tuple of args into a hashable key.
 
