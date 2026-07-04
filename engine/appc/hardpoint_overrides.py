@@ -124,6 +124,13 @@ def _GenericTemplate(find):
 ############################################
 
 def _akira(find):
+    # Sensor glow: baked sphere at the sensor-array hardpoint (federation
+    # ships only; non-fed ships bake no sensor volume => no sensor glow).
+    sa = find("Sensor Array")
+    if sa is not None:
+        sa.SetGlowRegionShape(0, "Sphere")
+        sa.SetGlowRegionRadius(0, 0.17)
+
     # Warp glow: formula starting point (0.375*R radius,
     # +/-3.125*R extent; tools/bake_warp_glow.py) -- hand-tune per nacelle.
     for name, radius, aft, fore in (
@@ -159,6 +166,13 @@ def _akira(find):
 ############################################
 
 def _ambassador(find):
+    # Sensor glow: baked sphere at the sensor-array hardpoint (federation
+    # ships only; non-fed ships bake no sensor volume => no sensor glow).
+    sa = find("Sensor Array")
+    if sa is not None:
+        sa.SetGlowRegionShape(0, "Sphere")
+        sa.SetGlowRegionRadius(0, 0.4)
+
     # Warp glow: formula starting point (0.375*R radius,
     # +/-3.125*R extent; tools/bake_warp_glow.py) -- hand-tune per nacelle.
     for name, radius, aft, fore in (
@@ -656,6 +670,13 @@ def _matankeldon(find):
 ############################################
 
 def _nebula(find):
+    # Sensor glow: baked sphere at the sensor-array hardpoint (federation
+    # ships only; non-fed ships bake no sensor volume => no sensor glow).
+    sa = find("Sensor Array")
+    if sa is not None:
+        sa.SetGlowRegionShape(0, "Sphere")
+        sa.SetGlowRegionRadius(0, 0.25)
+
     # Warp glow: formula starting point (0.375*R radius,
     # +/-3.125*R extent; tools/bake_warp_glow.py) -- hand-tune per nacelle.
     for name, radius, aft, fore in (
@@ -827,6 +848,13 @@ def _shuttle(find):
 ############################################
 
 def _sovereign(find):
+    # Sensor glow: baked sphere at the sensor-array hardpoint (federation
+    # ships only; non-fed ships bake no sensor volume => no sensor glow).
+    sa = find("Sensor Array")
+    if sa is not None:
+        sa.SetGlowRegionShape(0, "Sphere")
+        sa.SetGlowRegionRadius(0, 0.25)
+
     # Warp glow: formula starting point (0.375*R radius,
     # +/-3.125*R extent; tools/bake_warp_glow.py) -- hand-tune per nacelle.
     for name, radius, aft, fore in (

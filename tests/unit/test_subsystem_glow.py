@@ -77,10 +77,9 @@ class _Point:
 
 class _Pod:
     """Leaf pod. By default carries a standard baked aft-cylinder glow region
-    (mirroring the bake-tool sections every stock ship has) — warp AND impulse
-    glow ONLY come from baked hardpoint data now. Pass baked=False for a pod
-    whose hardpoint bakes nothing (=> no glow). The sensor path never consults
-    GetProperty."""
+    (mirroring the bake-tool sections every stock ship has) — warp, impulse,
+    AND sensor glow ONLY come from baked hardpoint data now. Pass baked=False
+    for a pod whose hardpoint bakes nothing (=> no glow)."""
     def __init__(self, pos, radius=2.0, baked=True):
         self._pos, self._radius = pos, radius
         self._baked = baked
@@ -136,25 +135,26 @@ class _FakeRenderer:
         self.gain_calls.append((iid, idx, gain, gate_axis))
 
 
-def test_controller_registers_baked_warp_baked_impulse_sphere_sensor():
+def test_controller_registers_baked_warp_impulse_and_sensor():
     warp = _WarpAgg([_Pod(_Point(-3.0, 1.0, 0.0), radius=1.2)])
     impulse = _Pod(_Point(0.0, -0.98, -0.45), radius=0.25)
     sensor = _Pod(_Point(0.0, -0.45, -0.5), radius=0.28)
     ship = _Ship(warp, impulse, sensor)
-    rend = _FakeRenderer(results=[0, 1, 2])  # warp cyl, impulse cyl, sensor sphere
+    rend = _FakeRenderer(results=[0, 1, 2])  # warp cyl, impulse cyl, sensor cyl
 
     ctrl = sg.ShipGlowController(rend, instance_id=7, ship=ship)
 
-    # Warp AND impulse register their pods' BAKED regions (no fit/derivation);
-    # sensor -> plain sphere at the hardpoint.
+    # Warp, impulse AND sensor all register their subsystems' BAKED regions
+    # (no fit/derivation of any kind).
     assert rend.cylinder_calls == [
         (7, (-3.0, 1.0, 0.0), sg.IMPULSE_AFT_AXIS, 1.2, 2.0),
         (7, (0.0, -0.98, -0.45), sg.IMPULSE_AFT_AXIS, 0.25, 2.0),
+        (7, (0.0, -0.45, -0.5), sg.IMPULSE_AFT_AXIS, 0.28, 2.0),
     ]
-    assert rend.sphere_calls == [(7, (0.0, -0.45, -0.5), 0.28)]
+    assert rend.sphere_calls == []
     assert len(ctrl._regions) == 3
-    # warp region is not a boost region; impulse is
-    assert [r["boost"] for r in ctrl._regions[:2]] == [False, True]
+    # only the impulse region is a boost region
+    assert [r["boost"] for r in ctrl._regions] == [False, True, False]
 
 
 def test_controller_drives_three_state_across_edges():
@@ -538,3 +538,30 @@ def test_controller_unbaked_warp_pod_gets_no_glow_vfx():
     ctrl = sg.ShipGlowController(rend, instance_id=7, ship=ship)
     assert rend.cylinder_calls == [] and rend.sphere_calls == []
     assert ctrl._regions == []
+
+
+def test_controller_unbaked_sensor_gets_no_glow_vfx():
+    """Sensor glow is hardpoint-only too (baked for the five federation ships;
+    everyone else bakes nothing => no sensor glow, no derivation)."""
+    sensor = _Pod(_Point(0.0, -0.45, -0.5), radius=0.28, baked=False)
+    ship = _Ship(None, None, sensor)
+    rend = _FakeRenderer(results=[])
+    ctrl = sg.ShipGlowController(rend, instance_id=7, ship=ship)
+    assert rend.sphere_calls == [] and rend.cylinder_calls == []
+    assert ctrl._regions == []
+
+
+def test_controller_baked_sensor_sphere_dims_but_never_boosts():
+    prop = _baked_prop(
+        ("SetGlowRegionShape", 0, "Sphere"),
+        ("SetGlowRegionRadius", 0, 0.28),
+    )
+    sensor = _BakedPod(_Point(0.0, -0.45, -0.5), prop=prop, name="Sensor Array")
+    ship = _Ship(None, None, sensor)
+    rend = _FakeRenderer(results=[3])
+    ctrl = sg.ShipGlowController(rend, instance_id=7, ship=ship)
+    assert rend.sphere_calls == [(7, (0.0, -0.45, -0.5), 0.28)]
+    assert ctrl._regions[0]["boost"] is False
+    ctrl.update(now=0.0)
+    assert rend.dim_calls == [(7, 3, 1.0, -1.0, 0.0)]
+    assert rend.gain_calls == []   # sensors never get the throttle boost

@@ -7,13 +7,15 @@ region geometry and the shader attenuation; this module only decides *when* and
 *how* a region dims. See
 docs/superpowers/specs/2026-06-10-subsystem-glow-dimming-design.md.
 
-Warp and impulse glow volumes are driven by BAKED hardpoint data: each pod's
-property template carries indexed GlowRegion* fields (authored in hardpoint
-files or engine/appc/hardpoint_overrides.py — see README "Information for
-modders"). All state VFX (dim, flicker, impulse throttle gain) operate on
-whatever regions the hardpoint defines. The hardpoint is the single source of
-truth: a pod that bakes nothing gets no glow VFX at all (the old runtime
-capsule fit and cylinder derivations are gone).
+ALL glow volumes (warp, impulse, sensor) are driven by BAKED hardpoint data:
+each subsystem's property template carries indexed GlowRegion* fields
+(authored in hardpoint files or engine/appc/hardpoint_overrides.py — see
+README "Information for modders"). All state VFX (dim, flicker, impulse
+throttle gain) operate on whatever regions the hardpoint defines. The
+hardpoint is the single source of truth: a subsystem that bakes nothing gets
+no glow VFX at all (the old runtime capsule fit / cylinder / sensor-sphere
+derivations are gone). Sensor volumes are currently baked only for the five
+federation ships (ambassador, akira, nebula, galaxy, sovereign).
 """
 
 import logging
@@ -259,9 +261,9 @@ def baked_region_ops(prop, default_pos, pod_name="") -> list:
 class ShipGlowController:
     """Per-ship: register glow regions once, push state each frame.
 
-    Warp and impulse pods register their BAKED hardpoint regions (no
-    in-engine derivation); the sensor array gets a sphere at its hardpoint.
-    Holds (subsystem, region_index, prev_state, edge_time) per region.
+    Warp pods, impulse pods, and the sensor array all register their BAKED
+    hardpoint regions (no in-engine derivation). Holds
+    (subsystem, region_index, prev_state, edge_time) per region.
     `renderer` is engine.renderer (injected for testability).
     """
 
@@ -273,15 +275,15 @@ class ShipGlowController:
         self._eased_frac = 0.0    # smoothed commanded throttle (0..1)
         self._last_now = None     # game-time of the previous update (for dt)
 
-        # Warp nacelles and impulse engines both take their glow volumes
-        # ONLY from baked hardpoint data (GlowRegion* fields; see
-        # baked_region_ops). The hardpoint is the single source of truth: a
-        # pod that bakes nothing gets NO glow VFX (the old runtime capsule
-        # fit / cylinder derivations are gone). Impulse regions are boost
-        # regions — dim/flicker AND the throttle gain drive the authored
-        # volume, with the shader gating gain to aft-facing faces
-        # (IMPULSE_AFT_AXIS). Warp regions dim/flicker only.
-        # Sensor array -> a plain (non-boost) sphere.
+        # Warp nacelles, impulse engines, and the sensor array ALL take their
+        # glow volumes ONLY from baked hardpoint data (GlowRegion* fields;
+        # see baked_region_ops). The hardpoint is the single source of truth:
+        # a subsystem that bakes nothing gets NO glow VFX (the old runtime
+        # capsule fit / cylinder / sensor-sphere derivations are gone).
+        # Impulse regions are boost regions — dim/flicker AND the throttle
+        # gain drive the authored volume, with the shader gating gain to
+        # aft-facing faces (IMPULSE_AFT_AXIS). Warp/sensor regions
+        # dim/flicker only.
         for pod in warp_pods(ship.GetWarpEngineSubsystem()):
             self._register_baked(pod, boost=False)
 
@@ -289,13 +291,8 @@ class ShipGlowController:
             self._register_baked(pod, boost=True)
 
         _sensor = ship.GetSensorSubsystem()
-        _spos = _position_tuple(_sensor)
-        if _spos is not None:
-            _sidx = self._r.add_sphere_region(instance_id, _spos, _radius(_sensor))
-            if _sidx >= 0:
-                self._regions.append(
-                    {"sub": _sensor, "idx": _sidx, "prev": HEALTHY,
-                     "etime": -1.0, "boost": False})
+        if _sensor is not None:
+            self._register_baked(_sensor, boost=False)
 
     def _register_baked(self, pod, boost: bool) -> None:
         """Register every baked glow region on `pod`'s hardpoint property."""
