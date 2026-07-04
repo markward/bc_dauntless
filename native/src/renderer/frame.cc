@@ -52,6 +52,11 @@ namespace {
 }
     bool enabled() { return g_rim_enabled; }
     void set_enabled(bool v) { g_rim_enabled = v; }
+
+    // Applied to Instance::rim_strength (SpecularCoef / the 0.1 default)
+    // before it reaches the shader: authored values read too bright at
+    // face value (tune-by-eye).
+    constexpr float kStrengthScale = 0.5f;
 }
 
 // Toggle for the HDR resolve pass (tonemap + bloom + grade). Default on.
@@ -549,7 +554,7 @@ void FrameSubmitter::submit_opaque(const scenegraph::World& world,
         const assets::Model* m = lookup(inst.model_handle);
         const float rim_strength =
             (dauntless_rim::enabled() && inst.rim_eligible)
-                ? inst.rim_strength : 0.0f;
+                ? inst.rim_strength * dauntless_rim::kStrengthScale : 0.0f;
         std::vector<glm::mat4> palette;
         if (m && !m->skeleton.bones.empty())
             palette = build_bone_palette(m->skeleton, /*local_pose=*/nullptr);
@@ -606,7 +611,7 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
         const assets::Model* m = lookup(inst.model_handle);
         const float rim_strength =
             (dauntless_rim::enabled() && inst.rim_eligible)
-                ? inst.rim_strength : 0.0f;
+                ? inst.rim_strength * dauntless_rim::kStrengthScale : 0.0f;
         std::vector<glm::mat4> palette;
         if (m && !m->skeleton.bones.empty())
             palette = build_bone_palette(m->skeleton, /*local_pose=*/nullptr);
