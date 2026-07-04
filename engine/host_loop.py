@@ -5897,15 +5897,17 @@ def run(mission_name: Optional[str] = None,
                         ship_property_viewer.selected_name(),
                         show_all_arcs=ship_property_viewer.show_weapon_arcs)
                 )
-                # Glow Regions toggle: baked hardpoint glow volumes as
-                # orange wireframe cylinders (debug volume pass).
-                if ship_property_viewer.show_glow_regions:
-                    from engine.ui.glow_region_overlay import (
-                        build_glow_region_overlay,
-                    )
-                    r.set_debug_cylinders(build_glow_region_overlay(player))
-                else:
-                    r.clear_debug_cylinders()
+                # Glow regions as orange wireframe cylinders (debug volume
+                # pass): the toggle shows every subsystem's; with it off, a
+                # selected subsystem still reveals its own (mirroring the
+                # selected-pin firing arc).
+                from engine.ui.glow_region_overlay import (
+                    build_glow_region_overlay,
+                )
+                r.set_debug_cylinders(build_glow_region_overlay(
+                    player,
+                    selected_name=ship_property_viewer.selected_name(),
+                    show_all=ship_property_viewer.show_glow_regions))
                 # The gameplay target reticle is hidden while the viewer owns
                 # the frame; it returns on close via the else branch below.
                 r.clear_target_reticle()

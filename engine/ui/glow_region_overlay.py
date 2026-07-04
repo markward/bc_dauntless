@@ -53,8 +53,14 @@ def _cylinder(center: Vec3, axis: Vec3, radius: float, length: float) -> dict:
     }
 
 
-def build_glow_region_overlay(ship) -> List[dict]:
-    """World-space DebugCylinder dicts for every baked glow region on `ship`.
+def build_glow_region_overlay(ship, selected_name: str = None,
+                              show_all: bool = True) -> List[dict]:
+    """World-space DebugCylinder dicts for baked glow regions on `ship`.
+
+    `show_all` (the Glow Regions toggle) draws every subsystem's regions;
+    otherwise only the subsystem whose GetName() matches `selected_name`
+    contributes — so selecting a subsystem always reveals its own glow
+    volume, mirroring the selected-pin firing arc. Both off → [].
 
     Cylinder regions map directly (baked_region_ops pre-shifts the centre by
     the aft extent). Sphere regions are drawn as their circumscribing cylinder
@@ -63,6 +69,8 @@ def build_glow_region_overlay(ship) -> List[dict]:
     """
     if ship is None or not hasattr(ship, "GetWorldLocation"):
         return []
+    if not show_all and not selected_name:
+        return []
     from engine.ui.ship_property_viewer import _iter_subsystems
 
     ship_pos = ship.GetWorldLocation()
@@ -70,9 +78,11 @@ def build_glow_region_overlay(ship) -> List[dict]:
 
     out: List[dict] = []
     for sub in _iter_subsystems(ship):
+        name = sub.GetName() if hasattr(sub, "GetName") else ""
+        if not show_all and name != selected_name:
+            continue
         pos = _position_tuple(sub)
         prop = sub.GetProperty() if hasattr(sub, "GetProperty") else None
-        name = sub.GetName() if hasattr(sub, "GetName") else ""
         for op in baked_region_ops(prop, pos, name):
             if op[0] == "cylinder":
                 _kind, center, axis, radius, length = op

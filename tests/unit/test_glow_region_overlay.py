@@ -123,3 +123,42 @@ def test_authored_position_overrides_hardpoint_position():
     out = build_glow_region_overlay(ship)
     assert len(out) == 1
     assert out[0]["center"] == pytest.approx((5.0, 6.0, 7.0))
+
+
+class _TwoPodShip(_Ship):
+    """Two mounted pods under one damage-source getter."""
+    def __init__(self, pod_a, pod_b):
+        super().__init__(pod_a)
+        self._pod_b = pod_b
+    def GetWarpEngineSubsystem(self): return self._pod_b
+
+
+def test_selected_subsystem_shows_only_its_regions():
+    a = _Pod(_Point(1.0, 0.0, 0.0), _cylinder_prop(), name="Port Impulse")
+    b = _Pod(_Point(-1.0, 0.0, 0.0), _cylinder_prop(), name="Star Impulse")
+    ship = _TwoPodShip(a, b)
+    out = build_glow_region_overlay(ship, selected_name="Star Impulse",
+                                    show_all=False)
+    assert len(out) == 1
+    assert out[0]["center"] == pytest.approx((-1.0, 0.0, 0.0))
+
+
+def test_toggle_off_and_no_selection_yields_nothing():
+    ship = _Ship(_Pod(_Point(1.0, 2.0, 3.0), _cylinder_prop()))
+    assert build_glow_region_overlay(ship, selected_name=None,
+                                     show_all=False) == []
+
+
+def test_show_all_ignores_selection_filter():
+    a = _Pod(_Point(1.0, 0.0, 0.0), _cylinder_prop(), name="Port Impulse")
+    b = _Pod(_Point(-1.0, 0.0, 0.0), _cylinder_prop(), name="Star Impulse")
+    ship = _TwoPodShip(a, b)
+    out = build_glow_region_overlay(ship, selected_name="Star Impulse",
+                                    show_all=True)
+    assert len(out) == 2
+
+
+def test_selected_subsystem_without_regions_yields_nothing():
+    ship = _Ship(_Pod(_Point(1.0, 2.0, 3.0), prop=None, name="Bare"))
+    assert build_glow_region_overlay(ship, selected_name="Bare",
+                                     show_all=False) == []
