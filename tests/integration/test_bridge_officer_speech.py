@@ -54,20 +54,20 @@ def _fresh_world():
     return game
 
 
-@pytest.fixture
-def bridge_world(monkeypatch):
-    """Real SDK bridge + menus + a player (with a planet) — mission-load order:
-    LoadBridge.Load first, then the player appears and ET_SET_PLAYER populates
-    the orbit menu, then (in the tests) configure_bridge_officers."""
+def _loaded_world(monkeypatch):
+    """Fresh world with the real SDK bridge + menus loaded, no player yet."""
     game = _fresh_world()
     # MissionLib.SetPlayerAI -> TacticalMenuHandlers.UpdateOrders reads orders-
     # display globals only created by the full TacticalControlWindow build;
     # stub the same seam tests/unit/test_helm_orbit_menu.py stubs.
     import Bridge.TacticalMenuHandlers as T
     monkeypatch.setattr(T, "UpdateOrders", lambda *a, **k: None)
-
     LoadBridge.Load("GalaxyBridge")
+    return game
 
+
+def _make_player_world():
+    """A player ship (healthy sensors/engines) in a set with planet Haven."""
     s = SetClass()
     player = ShipClass_Create("Galaxy")
     for sub in (player.GetSensorSubsystem(),
@@ -80,6 +80,16 @@ def bridge_world(monkeypatch):
     haven.SetName("Haven")
     haven.SetDisplayName("Haven")
     s.AddObjectToSet(haven, "Haven")
+    return s, player, haven
+
+
+@pytest.fixture
+def bridge_world(monkeypatch):
+    """Real SDK bridge + menus + a player (with a planet) — mission-load order:
+    LoadBridge.Load first, then the player appears and ET_SET_PLAYER populates
+    the orbit menu, then (in the tests) configure_bridge_officers."""
+    game = _loaded_world(monkeypatch)
+    s, player, haven = _make_player_world()
     game.SetPlayer(player)   # ET_SET_PLAYER -> orbit menu populates
     try:
         yield game, player, haven
@@ -107,8 +117,17 @@ def _capture_speech(monkeypatch):
     monkeypatch.setattr(
         crew_speech, "emit",
         lambda speaker, db, line, priority, *a, **k:
-            calls.append((speaker, str(line))) or 1.0)
+            calls.append((speaker, str(line), db)) or 1.0)
     return calls
+
+
+def _spoke(calls, speaker, line):
+    """True when the line was emitted WITH a database that resolves it —
+    emit() with db=None (or a db missing the key) produces no text and no
+    wav, i.e. live silence, so a bare emit call is not enough."""
+    return any(s == speaker and l == line
+               and db is not None and db.HasString(line)
+               for s, l, db in calls)
 
 
 def test_et_report_is_real_and_unique():
@@ -152,8 +171,9 @@ def test_all_stop_click_speaks_kiska_yes(bridge_world, monkeypatch):
 
     _button(_helm_menu(), "All Stop").SendActivationEvent()
 
-    assert any(speaker == "Kiska" and re.fullmatch(r"KiskaYes[1-4]", line)
-               for speaker, line in calls), calls
+    assert any(s == "Kiska" and re.fullmatch(r"KiskaYes[1-4]", l)
+               and db is not None and db.HasString(l)
+               for s, l, db in calls), calls
 
 
 def test_report_click_speaks_engine_status(bridge_world, monkeypatch):
@@ -169,8 +189,8 @@ def test_report_click_speaks_engine_status(bridge_world, monkeypatch):
 
     # The report sequence's later lines play after the first line's duration;
     # asserting the first (impulse status) proves the whole chain fired.
-    assert ("Kiska", "ImpulseEnginesFunctional") in calls, calls
-    assert not any(line == "KiskaNothingToAdd" for _, line in calls), calls
+    assert _spoke(calls, "Kiska", "ImpulseEnginesFunctional"), calls
+    assert not any(l == "KiskaNothingToAdd" for _, l, _db in calls), calls
 
 
 def test_orbit_click_installs_ai_and_speaks_standard_orbit(bridge_world,
@@ -191,7 +211,7 @@ def test_orbit_click_installs_ai_and_speaks_standard_orbit(bridge_world,
     assert ai is not None
     assert ai.GetName() == "OrbitAvoidObstacles"
     assert player.GetTarget() is haven
-    assert ("Kiska", "StandardOrbit") in calls, calls
+    assert _spoke(calls, "Kiska", "StandardOrbit"), calls
 
 
 def test_course_set_announcement_speaks_ready_to_warp(bridge_world,
@@ -205,7 +225,50 @@ def test_course_set_announcement_speaks_ready_to_warp(bridge_world,
 
     announce_course_set()
 
-    assert ("Kiska", "gh075") in calls, calls
+    assert _spoke(calls, "Kiska", "gh075"), calls
+
+
+def test_quickbattle_late_player_wires_officers_via_set_player(monkeypatch):
+    """The LIVE boot path: QuickBattle creates the player AFTER mission load
+    (StartSimulation2 -> RecreatePlayer -> CreatePlayerShip -> SetPlayer) and
+    recreates it on every battle restart. The post-load hook therefore can't
+    configure directly (no player yet) — it registers OnSetPlayer on the
+    ET_SET_PLAYER broadcast, exactly as replicated here."""
+    game = _loaded_world(monkeypatch)
+    try:
+        # What host_loop's post-load hook does when GetPlayer() is None: only
+        # the broadcast registration. Unconditional import mirrors the hook —
+        # _resolve_handler finds handlers via sys.modules, it never imports.
+        import engine.bridge_officers  # noqa: F401
+        App.g_kEventManager.AddBroadcastPythonFuncHandler(
+            App.ET_SET_PLAYER, None, "engine.bridge_officers.OnSetPlayer")
+        helm = _helm_menu()
+        assert helm._handlers.get(App.ET_ALL_STOP, []).count(
+            _HELM_HANDLERS + ".AllStop") == 0   # nothing wired at load
+
+        s, player, haven = _make_player_world()
+        game.SetPlayer(player)                  # battle start
+
+        assert helm._handlers.get(App.ET_ALL_STOP, []).count(
+            _HELM_HANDLERS + ".AllStop") == 1
+
+        # Battle restart: a NEW player ship, SetPlayer again — officers
+        # re-wire to it without double registration.
+        s2, player2, _ = _make_player_world()
+        game.SetPlayer(player2)
+        assert helm._handlers.get(App.ET_ALL_STOP, []).count(
+            _HELM_HANDLERS + ".AllStop") == 1
+        assert helm._handlers.get(App.ET_COMMUNICATE, []).count(
+            "engine.bridge_officers.CommunicateToReport") == 1
+
+        calls = _capture_speech(monkeypatch)
+        _button(helm, "All Stop").SendActivationEvent()
+        assert any(s == "Kiska" and re.fullmatch(r"KiskaYes[1-4]", l)
+                   and db is not None and db.HasString(l)
+                   for s, l, db in calls), calls
+    finally:
+        App.g_kSetManager._sets.clear()
+        _set_current_game(None)
 
 
 def test_one_station_raising_does_not_silence_the_others(bridge_world,

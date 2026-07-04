@@ -4886,12 +4886,22 @@ def run(mission_name: Optional[str] = None,
             # officer's menu-acknowledgement handlers (per-character guarded —
             # one station's unimplemented Appc surface must not silence the
             # rest). Must run per load: reset_sdk_globals recreates the TCW,
-            # bridge and menus, dropping every prior registration.
+            # bridge and menus, dropping every prior registration. Two
+            # triggers: configure now if the player already exists (story
+            # missions create it during loader.load()), AND on ET_SET_PLAYER —
+            # the boot QuickBattle creates the player only at battle start
+            # (StartSimulation2 -> RecreatePlayer -> CreatePlayerShip ->
+            # SetPlayer) and recreates it on every restart. The import is
+            # unconditional: _resolve_handler only finds broadcast handlers
+            # whose module is already in sys.modules.
+            from engine.bridge_officers import configure_bridge_officers
             import MissionLib as _MissionLib
             _player = _MissionLib.GetPlayer()
             if _bridge is not None and _player is not None:
-                from engine.bridge_officers import configure_bridge_officers
                 configure_bridge_officers(_bridge, _player)
+            _App.g_kEventManager.AddBroadcastPythonFuncHandler(
+                _App.ET_SET_PLAYER, None,
+                "engine.bridge_officers.OnSetPlayer")
             # Re-register the hit-reaction broadcast handler after every
             # reset_sdk_globals() call (swap or initial load). The handler
             # object (_hit_reactions) is swap-safe — it re-fetches player and

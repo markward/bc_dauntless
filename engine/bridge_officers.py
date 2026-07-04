@@ -98,6 +98,25 @@ def CommunicateToReport(pMenu, pEvent):
     pMenu.CallNextHandler(pEvent)
 
 
+def OnSetPlayer(pObject, pEvent):
+    """ET_SET_PLAYER broadcast handler — (re)configure officers for the player.
+
+    Registered per mission load by host_loop's post-load hook. This, not the
+    load-time call, is the path the boot QuickBattle actually takes: QB creates
+    the player LATE (StartSimulation2 -> RecreatePlayer -> CreatePlayerShip ->
+    SetPlayer, after ET_PRELOAD_DONE) and recreates it on every battle restart,
+    so the officers must re-wire to the new ship each time — which is also
+    stock-BC behaviour (ConfigureForShip takes pShip; Appc re-ran it on player
+    assignment).
+    """
+    import App
+    game = App.Game_GetCurrentGame()
+    player = game.GetPlayer() if game is not None else None
+    bridge = App.g_kSetManager.GetSet("bridge")
+    if bridge is not None and player is not None:
+        configure_bridge_officers(bridge, player)
+
+
 def announce_course_set() -> None:
     """Fire ET_SET_COURSE (non-intercept) at the Helm menu.
 
