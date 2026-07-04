@@ -1515,3 +1515,8 @@ def LoadPropertySet(pObj):
 	prop = App.g_kModelPropertyManager.FindByName("Shuttle Bay 2", App.TGModelPropertyManager.LOCAL_TEMPLATES)
 	if (prop != None):
 		pObj.AddToSet("Scene Root", prop)
+
+# Dauntless: project-root shadow modules bypass the SDK-loader override hook
+# (engine/appc/sdk_overrides.py), so apply hardpoint overrides explicitly.
+import engine.appc.hardpoint_overrides as _dauntless_hardpoint_overrides
+_dauntless_hardpoint_overrides.apply("sovereign")

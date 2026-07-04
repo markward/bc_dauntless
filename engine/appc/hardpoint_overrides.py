@@ -66,18 +66,21 @@ def _galaxy(find):
             p.SetGlowRegionRadius(0, 0.45)
             p.SetGlowRegionExtent(0, -2.0, 2.0)
 
-    # Impulse vents: boxes shifted ~0.8 GU aft of the hardpoint so the volume
-    # trails the exhaust.
-    for name, pos in (
-        ("Port Impulse", (-1.22, -1.00, 0.32)),
-        ("Star Impulse", (1.22, -1.00, 0.32)),
-        ("Center Impulse", (0.00, -1.90, -0.08)),
+    # Impulse vents: baked cylinders matching the runtime defaults (centre
+    # defaults to the hardpoint position, running aft for 2 GU). Starting
+    # point for hand-tuning — e.g. swap a vent to a Box once Box rendering
+    # lands.
+    for name, radius in (
+        ("Port Impulse", 0.25),
+        ("Star Impulse", 0.25),
+        ("Center Impulse", 0.25),
     ):
         p = find(name)
         if p is not None:
-            p.SetGlowRegionShape(0, "Box")
-            p.SetGlowRegionPosition(0, pos[0], pos[1], pos[2])
-            p.SetGlowRegionScale(0, 0.30, 1.00, 0.12)
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, 0.0, 2.0)
 
     sa = find("Sensor Array")
     if sa is not None:
@@ -86,6 +89,550 @@ def _galaxy(find):
         sa.SetGlowRegionRadius(0, 0.28)
 
 
+############################################
+# GenericTemplate — baked impulse glow (tools/bake_impulse_glow.py)
+############################################
+
+def _GenericTemplate(find):
+    for name, radius in (
+        ("Impulse Engine", 0.25),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, 0.0, 2.0)
+
+############################################
+# akira — baked impulse glow (tools/bake_impulse_glow.py)
+############################################
+
+def _akira(find):
+    for name, radius in (
+        ("Port Impulse", 0.23),
+        ("Star Impulse", 0.23),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, 0.0, 2.0)
+
+############################################
+# ambassador — baked impulse glow (tools/bake_impulse_glow.py)
+############################################
+
+def _ambassador(find):
+    for name, radius in (
+        ("Port Impulse", 0.3),
+        ("Star Impulse", 0.3),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, 0.0, 2.0)
+
+############################################
+# birdofprey — baked impulse glow (tools/bake_impulse_glow.py)
+############################################
+
+def _birdofprey(find):
+    for name, radius in (
+        ("Impulse Engine", 0.15),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, 0.0, 2.0)
+
+############################################
+# bombfreighter — baked impulse glow (tools/bake_impulse_glow.py)
+############################################
+
+def _bombfreighter(find):
+    for name, radius in (
+        ("Port Impulse", 0.2),
+        ("Star Impulse", 0.2),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, 0.0, 2.0)
+
+############################################
+# cardfreighter — baked impulse glow (tools/bake_impulse_glow.py)
+############################################
+
+def _cardfreighter(find):
+    for name, radius in (
+        ("Port Impulse", 0.2),
+        ("Star Impulse", 0.2),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, 0.0, 2.0)
+
+############################################
+# cardhybrid — baked impulse glow (tools/bake_impulse_glow.py)
+############################################
+
+def _cardhybrid(find):
+    for name, radius in (
+        ("Port Impulse", 0.3),
+        ("Star Impulse", 0.3),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, 0.0, 2.0)
+
+############################################
+# commarray — baked impulse glow (tools/bake_impulse_glow.py)
+############################################
+
+def _commarray(find):
+    for name, radius in (
+        ("Impulse", 2.0),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, 0.0, 2.0)
+
+############################################
+# commlight — baked impulse glow (tools/bake_impulse_glow.py)
+############################################
+
+def _commlight(find):
+    for name, radius in (
+        ("Impulse", 0.5),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, 0.0, 2.0)
+
+############################################
+# e2m0warbird — baked impulse glow (tools/bake_impulse_glow.py)
+############################################
+
+def _e2m0warbird(find):
+    for name, radius in (
+        ("Port Impulse", 0.7),
+        ("Star Impulse", 0.7),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, 0.0, 2.0)
+
+############################################
+# enterprise — baked impulse glow (tools/bake_impulse_glow.py)
+############################################
+
+def _enterprise(find):
+    for name, radius in (
+        ("Port Impulse", 0.25),
+        ("Star Impulse", 0.25),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, 0.0, 2.0)
+
+############################################
+# escapepod — baked impulse glow (tools/bake_impulse_glow.py)
+############################################
+
+def _escapepod(find):
+    for name, radius in (
+        ("Port Impulse", 0.02),
+        ("Star Impulse", 0.02),
+        ("Center Impulse", 0.02),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, 0.0, 2.0)
+
+############################################
+# freighter — baked impulse glow (tools/bake_impulse_glow.py)
+############################################
+
+def _freighter(find):
+    for name, radius in (
+        ("Port Impulse", 0.4),
+        ("Star Impulse", 0.4),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, 0.0, 2.0)
+
+############################################
+# galor — baked impulse glow (tools/bake_impulse_glow.py)
+############################################
+
+def _galor(find):
+    for name, radius in (
+        ("Port Impulse", 0.2),
+        ("Star Impulse", 0.2),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, 0.0, 2.0)
+
+############################################
+# geronimo — baked impulse glow (tools/bake_impulse_glow.py)
+############################################
+
+def _geronimo(find):
+    for name, radius in (
+        ("Port Impulse", 0.23),
+        ("Star Impulse", 0.23),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, 0.0, 2.0)
+
+############################################
+# keldon — baked impulse glow (tools/bake_impulse_glow.py)
+############################################
+
+def _keldon(find):
+    for name, radius in (
+        ("Engine 1", 0.3),
+        ("Engine 2", 0.3),
+        ("Engine 3", 0.25),
+        ("Engine 4", 0.25),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, 0.0, 2.0)
+
+############################################
+# kessokheavy — baked impulse glow (tools/bake_impulse_glow.py)
+############################################
+
+def _kessokheavy(find):
+    for name, radius in (
+        ("Port Impulse", 1.2),
+        ("Star Impulse", 1.2),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, 0.0, 2.0)
+
+############################################
+# kessoklight — baked impulse glow (tools/bake_impulse_glow.py)
+############################################
+
+def _kessoklight(find):
+    for name, radius in (
+        ("Port Impulse", 0.25),
+        ("Star Impulse", 0.25),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, 0.0, 2.0)
+
+############################################
+# kessokmine — baked impulse glow (tools/bake_impulse_glow.py)
+############################################
+
+def _kessokmine(find):
+    for name, radius in (
+        ("Impulse Engine 1", 0.17),
+        ("Impulse Engine 2", 0.17),
+        ("Impulse Engine 3", 0.17),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, 0.0, 2.0)
+
+############################################
+# marauder — baked impulse glow (tools/bake_impulse_glow.py)
+############################################
+
+def _marauder(find):
+    for name, radius in (
+        ("Star Impulse", 0.12),
+        ("Port Impulse", 0.12),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, 0.0, 2.0)
+
+############################################
+# matankeldon — baked impulse glow (tools/bake_impulse_glow.py)
+############################################
+
+def _matankeldon(find):
+    for name, radius in (
+        ("Engine 1", 0.3),
+        ("Engine 2", 0.3),
+        ("Engine 3", 0.25),
+        ("Engine 4", 0.25),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, 0.0, 2.0)
+
+############################################
+# nebula — baked impulse glow (tools/bake_impulse_glow.py)
+############################################
+
+def _nebula(find):
+    for name, radius in (
+        ("Port Impulse", 0.3),
+        ("Star Impulse", 0.3),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, 0.0, 2.0)
+
+############################################
+# peregrine — baked impulse glow (tools/bake_impulse_glow.py)
+############################################
+
+def _peregrine(find):
+    for name, radius in (
+        ("Port Impulse", 0.25),
+        ("Star Impulse", 0.25),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, 0.0, 2.0)
+
+############################################
+# probe — baked impulse glow (tools/bake_impulse_glow.py)
+############################################
+
+def _probe(find):
+    for name, radius in (
+        ("Impulse", 0.02),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, 0.0, 2.0)
+
+############################################
+# probe2 — baked impulse glow (tools/bake_impulse_glow.py)
+############################################
+
+def _probe2(find):
+    for name, radius in (
+        ("Impulse", 0.02),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, 0.0, 2.0)
+
+############################################
+# rankuf — baked impulse glow (tools/bake_impulse_glow.py)
+############################################
+
+def _rankuf(find):
+    for name, radius in (
+        ("Impulse Engine", 0.15),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, 0.0, 2.0)
+
+############################################
+# shuttle — baked impulse glow (tools/bake_impulse_glow.py)
+############################################
+
+def _shuttle(find):
+    for name, radius in (
+        ("Port Impulse", 0.03),
+        ("Star Impulse", 0.03),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, 0.0, 2.0)
+
+############################################
+# sovereign — baked impulse glow (tools/bake_impulse_glow.py)
+############################################
+
+def _sovereign(find):
+    for name, radius in (
+        ("Port Impulse", 0.25),
+        ("Star Impulse", 0.25),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, 0.0, 2.0)
+
+############################################
+# sunbuster — baked impulse glow (tools/bake_impulse_glow.py)
+############################################
+
+def _sunbuster(find):
+    for name, radius in (
+        ("Impulse 1", 1.2),
+        ("Impulse 2", 1.2),
+        ("Impulse 3", 1.2),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, 0.0, 2.0)
+
+############################################
+# transport — baked impulse glow (tools/bake_impulse_glow.py)
+############################################
+
+def _transport(find):
+    for name, radius in (
+        ("Port Impulse", 0.25),
+        ("Star Impulse", 0.25),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, 0.0, 2.0)
+
+############################################
+# vorcha — baked impulse glow (tools/bake_impulse_glow.py)
+############################################
+
+def _vorcha(find):
+    for name, radius in (
+        ("Port Impulse", 0.25),
+        ("Star Impulse", 0.25),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, 0.0, 2.0)
+
+############################################
+# warbird — baked impulse glow (tools/bake_impulse_glow.py)
+############################################
+
+def _warbird(find):
+    for name, radius in (
+        ("Port Impulse", 0.23),
+        ("Star Impulse", 0.23),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, 0.0, 2.0)
+
 OVERRIDES = {
     "galaxy": _galaxy,
+    "GenericTemplate": _GenericTemplate,
+    "akira": _akira,
+    "ambassador": _ambassador,
+    "birdofprey": _birdofprey,
+    "bombfreighter": _bombfreighter,
+    "cardfreighter": _cardfreighter,
+    "cardhybrid": _cardhybrid,
+    "commarray": _commarray,
+    "commlight": _commlight,
+    "e2m0warbird": _e2m0warbird,
+    "enterprise": _enterprise,
+    "escapepod": _escapepod,
+    "freighter": _freighter,
+    "galor": _galor,
+    "geronimo": _geronimo,
+    "keldon": _keldon,
+    "kessokheavy": _kessokheavy,
+    "kessoklight": _kessoklight,
+    "kessokmine": _kessokmine,
+    "marauder": _marauder,
+    "matankeldon": _matankeldon,
+    "nebula": _nebula,
+    "peregrine": _peregrine,
+    "probe": _probe,
+    "probe2": _probe2,
+    "rankuf": _rankuf,
+    "shuttle": _shuttle,
+    "sovereign": _sovereign,
+    "sunbuster": _sunbuster,
+    "transport": _transport,
+    "vorcha": _vorcha,
+    "warbird": _warbird,
 }

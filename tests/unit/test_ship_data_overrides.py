@@ -174,3 +174,74 @@ def test_real_galaxy_reload_reapplies_overrides():
     assert fresh is not None and fresh is not first
     assert fresh.GetGlowRegionShape(0) == "Cylinder"
     assert fresh.GetGlowRegionRadius(0) == 0.45
+
+
+# ------------------------------------------------- baked impulse sections
+
+def _load_real_hardpoint(leaf):
+    mh.setup_sdk()
+    App.g_kModelPropertyManager.ClearLocalTemplates()
+    sys.modules.pop(f"ships.Hardpoints.{leaf}", None)
+    return importlib.import_module(f"ships.Hardpoints.{leaf}")
+
+
+def _find(name):
+    return App.g_kModelPropertyManager.FindByName(
+        name, App.TGModelPropertyManager.LOCAL_TEMPLATES)
+
+
+def test_baked_impulse_extraction_matches_runtime_pod_rule():
+    """extract_impulse_pods mirrors subsystem_glow.impulse_engines(): EP_IMPULSE
+    children win; aggregator-only ships fall back to ImpulseEngineProperty."""
+    from engine.appc.properties import EngineProperty, ImpulseEngineProperty
+    from tools.bake_impulse_glow import extract_impulse_pods
+
+    _load_real_galaxy_hardpoint()
+    pods = extract_impulse_pods(App.g_kModelPropertyManager,
+                                EngineProperty, ImpulseEngineProperty)
+    assert pods == [("Port Impulse", 0.25), ("Star Impulse", 0.25),
+                    ("Center Impulse", 0.25)]
+
+    class _FakeMgr:
+        pass
+
+    agg = ImpulseEngineProperty("Impulse Engines")
+    agg.SetRadius(0.5)
+    fake = _FakeMgr()
+    fake._local = {"Impulse Engines": agg}
+    assert extract_impulse_pods(fake, EngineProperty, ImpulseEngineProperty) \
+        == [("Impulse Engines", 0.5)]
+
+
+def test_baked_galaxy_impulse_is_cylinder():
+    _load_real_galaxy_hardpoint()
+    for name in ("Port Impulse", "Star Impulse", "Center Impulse"):
+        p = _find(name)
+        assert p is not None
+        assert p.GetGlowRegionShape(0) == "Cylinder", name
+        assert p.GetGlowRegionRadius(0) == 0.25, name
+        assert p._data[("GlowRegionExtent", (0, 0.0))] == 2.0, name
+
+
+def test_baked_akira_section_applies_on_real_load():
+    _load_real_hardpoint("akira")
+    p = _find("Port Impulse")
+    assert p is not None
+    assert p.GetGlowRegionShape(0) == "Cylinder"
+    assert p.GetGlowRegionRadius(0) == 0.23  # akira's authored hardpoint radius
+
+
+def test_sovereign_root_shadow_applies_via_explicit_call():
+    """ships/Hardpoints/sovereign.py bypasses the SDK-loader hook (root shadow)
+    and calls hardpoint_overrides.apply itself at module bottom."""
+    _load_real_hardpoint("sovereign")
+    p = _find("Port Impulse")
+    assert p is not None
+    assert p.GetGlowRegionShape(0) == "Cylinder"
+
+
+def test_every_override_leaf_has_a_hardpoint_file():
+    from tools.bake_impulse_glow import ROOT_HARDPOINTS, SDK_HARDPOINTS
+    for leaf in hardpoint_overrides.OVERRIDES:
+        assert (SDK_HARDPOINTS / f"{leaf}.py").exists() \
+            or (ROOT_HARDPOINTS / f"{leaf}.py").exists(), leaf
