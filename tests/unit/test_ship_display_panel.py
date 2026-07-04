@@ -577,6 +577,21 @@ def test_range_and_speed_to_returns_km_and_kph():
     assert speed_kph == pytest.approx(3969.0, rel=1e-6)
 
 
+def test_range_and_speed_to_is_surface_distance():
+    """BC's readout is the distance to the target's bounding sphere
+    (confirmed live: orbiting Haven, radius 90 GU, at the authored
+    radius+150 orbit the original game reads ~25 km = 150 GU surface
+    distance). 240 GU centres − 90 radius = 150 GU = 26.25 km."""
+    from engine.ui.ship_display_panel import _range_and_speed_to
+    player = ShipClass()
+    player.SetTranslate(TGPoint3(0.0, 0.0, 0.0))
+    target = ShipClass()
+    target.SetTranslate(TGPoint3(240.0, 0.0, 0.0))
+    target.SetRadius(90.0)
+    range_km, _speed = _range_and_speed_to(target, player)
+    assert range_km == pytest.approx(26.25, rel=1e-6)
+
+
 def test_range_and_speed_to_returns_none_on_missing_player():
     from engine.ui.ship_display_panel import _range_and_speed_to
     target = ShipClass()

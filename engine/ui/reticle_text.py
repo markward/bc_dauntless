@@ -46,14 +46,21 @@ def build_reticle_text(player, camera, viewport) -> dict:
     pc = player.GetWorldLocation()
     dx, dy, dz = centre.x - pc.x, centre.y - pc.y, centre.z - pc.z
     dist_gu = (dx * dx + dy * dy + dz * dz) ** 0.5
+    radius = target.GetRadius() if hasattr(target, "GetRadius") else 0.0
+    # BC's range readout is the distance to the target's BOUNDING SPHERE,
+    # not to its centre. Confirmed against the original game by orbiting
+    # Haven (radius 90 GU): BC reads ~25 km, which is the authored
+    # CircleObject radius+150 GU orbit measured from the surface
+    # (150 GU ≈ 26 km); a centre-distance readout would say 42 km, and the
+    # planet itself renders wider than 25 km. Negligible for small ships,
+    # decisive for planets/stations.
+    dist_gu = dist_gu - radius if dist_gu > radius else 0.0
     vel = target.GetVelocity() if hasattr(target, "GetVelocity") else None
     speed_gu = (vel.x * vel.x + vel.y * vel.y + vel.z * vel.z) ** 0.5 if vel else 0.0
 
     sub = _valid_subsystem(player)
     name = sub.GetName() if sub is not None else target.GetName()
     line2 = "%.2f km / %.0f kph" % (dist_gu * GU_TO_KM, speed_gu * GUPS_TO_KPH)
-
-    radius = target.GetRadius() if hasattr(target, "GetRadius") else 0.0
     up = camera.up()
     top    = (centre.x + up[0] * radius, centre.y + up[1] * radius, centre.z + up[2] * radius)
     bottom = (centre.x - up[0] * radius, centre.y - up[1] * radius, centre.z - up[2] * radius)

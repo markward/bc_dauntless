@@ -530,6 +530,12 @@ def _range_and_speed_to(ship, player):
 
     Positions and velocities are read in BC's internal game units (GU);
     convert to km / kph at this display boundary via engine.units.
+
+    Range is the distance to the target's BOUNDING SPHERE, not its centre —
+    BC's readout convention (confirmed live: orbiting Haven, radius 90 GU,
+    the original game reads ~25 km = the authored radius+150 GU orbit
+    measured from the surface). Negligible for small ships, decisive for
+    planets/stations.
     """
     from engine.units import GU_TO_KM, GUPS_TO_KPH
     try:
@@ -538,6 +544,8 @@ def _range_and_speed_to(ship, player):
         p1 = player.GetTranslate(); p2 = ship.GetTranslate()
         dx = p1.x - p2.x; dy = p1.y - p2.y; dz = p1.z - p2.z
         rng_gu = (dx*dx + dy*dy + dz*dz) ** 0.5
+        radius = ship.GetRadius() if hasattr(ship, "GetRadius") else 0.0
+        rng_gu = rng_gu - radius if rng_gu > radius else 0.0
         range_km = rng_gu * GU_TO_KM
         vel = ship.GetVelocityTG() if hasattr(ship, "GetVelocityTG") else None
         if vel is None:
