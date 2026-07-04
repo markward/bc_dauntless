@@ -65,9 +65,12 @@ def test_factory_populates_default_subsystems():
     assert ship.GetTractorBeamSystem() is not None
     assert ship.GetPulseWeaponSystem() is not None
     assert ship.GetImpulseEngineSubsystem() is not None
-    # SetAmmoType chain (E2M0 line 720) must not raise.
+    # SetAmmoType chain (E2M0 line 720) must not raise.  It's a slot
+    # SELECTION — on a bare ship with no ammo loaded it's a silent no-op,
+    # never a write into the slot table.
     ship.GetTorpedoSystem().SetAmmoType(2, 0)
-    assert ship.GetTorpedoSystem().GetAmmoType(0) == 2
+    assert ship.GetTorpedoSystem().GetAmmoType(0) is None
+    assert ship.GetTorpedoSystem().GetCurrentAmmoType() is None
 
 
 def test_player_subsystem_set_then_get_round_trip():

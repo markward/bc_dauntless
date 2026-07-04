@@ -610,17 +610,17 @@ def AIScriptAssist_TorpIsIncoming(pShip, pTorp, fDangerTimeThreshold):
 
 
 # ── App.AT_* ammo-type constants ─────────────────────────────────────────────
-# SDK code treats these as TorpedoAmmoType instances (objects with GetAmmoName)
-# rather than plain ints — MissionLib.SetTotalTorpsAtStarbase iterates the
-# torpedo system and compares ``pTorpType.GetAmmoName() == "Photon"``.
-# Standard BC ammo names: AT_ONE = "Photon", AT_TWO = "Quantum"; later
-# slots are placeholders used by other missions.
-from engine.appc.subsystems import TorpedoAmmoType as _TorpedoAmmoType
-AT_ONE   = _TorpedoAmmoType("Photon")
-AT_TWO   = _TorpedoAmmoType("Quantum")
-AT_THREE = _TorpedoAmmoType("TriCobalt")
-AT_FOUR  = _TorpedoAmmoType("Plasma")
-AT_FIVE  = _TorpedoAmmoType("Polaron")
+# Plain int ammo-type indices, matching the real Appc.AT_* enum.  The SDK's
+# only uses are as the first arg of TorpedoSystem.SetAmmoType — a 0-based
+# slot selection in the same domain as GetAmmoTypeNumber() and
+# range(GetNumAmmoTypes()) (AI/Preprocessors.py:548,640 pass raw indices to
+# the same call; E2M0.py:720 selects the Sovereign's slot-1 Quantum via
+# AT_TWO).
+AT_ONE   = 0
+AT_TWO   = 1
+AT_THREE = 2
+AT_FOUR  = 3
+AT_FIVE  = 4
 
 # ── Numeric constants ──────────────────────────────────────────────────────────
 NULL_ID = 0
