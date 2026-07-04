@@ -86,11 +86,42 @@ class ShipClass(DamageableObject):
         self._target_angular_velocity_setpoint = None
         self._current_speed: float = 0.0
         self._current_angular_velocity: TGPoint3 = TGPoint3(0.0, 0.0, 0.0)
+        # Active in-system-warp transit: (target, drop_distance) while the
+        # ship is cruising toward a warp drop point, else None. Written by
+        # InSystemWarp, advanced per tick by ship_motion._step_in_system_warp,
+        # aborted by StopInSystemWarp / SetAI / ClearAI. Eager-init (real
+        # attr, not the truthy TGObject __getattr__ _Stub) — the integrator
+        # branches on it every tick.
+        self._insystem_warp_transit = None
 
     def SetAI(self, ai, *_extra) -> None:
         # SDK QuickBattle.StartSimulation2 calls SetAI(ai, 0, 0); the trailing
         # flags (bDeleteOld / bActivate) are engine-internal and ignored here.
+        # A change of orders aborts any in-flight in-system warp — the transit
+        # belongs to the AI that requested it (SDK Intercept owns the warp and
+        # cancels via StopInSystemWarp on LostFocus) — and announces the old
+        # tree's end via ET_AI_DONE (ConditionPlayerOrbitting's leave-orbit
+        # trigger; HelmCharacterHandlers.AIDone).
+        old = self._ai
         self._ai = ai
+        self._insystem_warp_transit = None
+        if old is not None and old is not ai:
+            from engine.appc.ai_driver import fire_ai_done
+            fire_ai_done(self, old)
+
+    def ClearAI(self, *_extra) -> None:
+        # SDK callers: pPlayer.ClearAI() (MissionLib.SetPlayerAI(ctrl, None))
+        # and pShip.ClearAI(0, pOldAI) (HelmMenuHandlers fleet override); the
+        # flags (bDelete / pOldAI) are engine-internal and ignored here.
+        # Must be overridden here: the ObjectClass.ClearAI stub is a no-op and
+        # would leave the installed AI driving the ship forever. Announces the
+        # ended tree via ET_AI_DONE, like SetAI above.
+        old = self._ai
+        self._ai = None
+        self._insystem_warp_transit = None
+        if old is not None:
+            from engine.appc.ai_driver import fire_ai_done
+            fire_ai_done(self, old)
 
     def GetAI(self):
         return self._ai
@@ -223,10 +254,16 @@ class ShipClass(DamageableObject):
              between projections of sf and st onto the plane
              perpendicular to primary_to. Add roll * primary_to to
              the angular velocity.
-          3. Clamp per-axis magnitude to GetMaxAngularVelocity()
+          3. Cap the commanded magnitude at √(2·MaxAngularAccel·θ) so
+             the ship can always decelerate into alignment instead of
+             overshooting and hunting.
+          4. Convert the world-frame axis·angle vector to BODY frame
+             (v_body = Rᵀ·v_world) — the integrator treats the setpoint
+             as body-frame pitch/roll/yaw rates.
+          5. Clamp per-axis magnitude to GetMaxAngularVelocity()
              (FALLBACK_MAX_ACCEL when the IES isn't populated).
-          4. SetTargetAngularVelocityDirect(angular_velocity).
-          5. Return total_angle / max_angular_velocity (loose
+          6. SetTargetAngularVelocityDirect(angular_velocity).
+          7. Return total_angle / max_angular_velocity (loose
              estimate; TurnToOrientation uses it only when
              bDoneOnLineup=1, and that's gated separately).
         """
@@ -304,9 +341,42 @@ class ShipClass(DamageableObject):
             av_y += pt.y * roll_angle
             av_z += pt.z * roll_angle
 
-        # 3. Clamp per-axis to MaxAngularVelocity. Uses the same
-        # IES-populated guard as ship_motion._effective_motion.
+        # 3. Deceleration-aware magnitude. The raw command (|ω| = remaining
+        # angle per second) saturates at MaxAngularVelocity for any large
+        # angle; with a finite MaxAngularAccel the integrator then can't
+        # shed that rate before alignment and the nose overshoots and hunts
+        # (±MaxAngVel²/2·MaxAngAccel each swing — ±19° for a Galaxy). Cap
+        # the command at √(2·a·θ), the highest rate from which the ship can
+        # still stop within the remaining angle; near alignment the
+        # proportional θ/s command is already below the cap and gives the
+        # smooth terminal taper.
         ies = self.GetImpulseEngineSubsystem()
+        total_angle = (av_x * av_x + av_y * av_y + av_z * av_z) ** 0.5
+        max_aa = ies.GetMaxAngularAccel() if ies is not None else 0.0
+        if max_aa and max_aa > 0.0 and total_angle > 1e-9:
+            stop_cap = _math.sqrt(2.0 * max_aa * total_angle)
+            if stop_cap < total_angle:
+                k = stop_cap / total_angle
+                av_x *= k; av_y *= k; av_z *= k
+
+        # 4. World → body frame. The integrator (ship_motion.
+        # _integrate_rotation) interprets the setpoint as BODY-frame rates
+        # (pitch about body X, roll about body Y, yaw about body Z,
+        # post-multiplied R·Δ). The axis·angle vector built above is WORLD
+        # frame; feeding it through unconverted is only correct near
+        # identity attitude — at an arbitrary attitude the ship turns about
+        # the wrong axes, re-aims, and hunts forever (live symptom: the
+        # nose waves in circles and never lands on the target).
+        # v_body = Rᵀ·v_world; with column-vector R the rows of Rᵀ are the
+        # body axes, so each body component is a column dot product.
+        R = self.GetWorldRotation()
+        c0, c1, c2 = R.GetCol(0), R.GetCol(1), R.GetCol(2)
+        b_x = c0.x * av_x + c0.y * av_y + c0.z * av_z
+        b_y = c1.x * av_x + c1.y * av_y + c1.z * av_z
+        b_z = c2.x * av_x + c2.y * av_y + c2.z * av_z
+
+        # 5. Clamp per-axis to MaxAngularVelocity. Uses the same
+        # IES-populated guard as ship_motion._effective_motion.
         if ies is not None and ies.GetMaxAngularVelocity() > 0.0:
             max_av = ies.GetMaxAngularVelocity()
         else:
@@ -315,18 +385,17 @@ class ShipClass(DamageableObject):
             if v > m: return m
             if v < -m: return -m
             return v
-        av_x = _clamp(av_x, max_av)
-        av_y = _clamp(av_y, max_av)
-        av_z = _clamp(av_z, max_av)
+        b_x = _clamp(b_x, max_av)
+        b_y = _clamp(b_y, max_av)
+        b_z = _clamp(b_z, max_av)
 
-        # 4. Write the setpoint.
-        result = TGPoint3(av_x, av_y, av_z)
-        self.SetTargetAngularVelocityDirect(result)
+        # 6. Write the setpoint (body frame).
+        self.SetTargetAngularVelocityDirect(TGPoint3(b_x, b_y, b_z))
 
-        # 5. ETA estimate.
-        total_angle = abs(primary_angle) + abs(roll_angle)
+        # 7. ETA estimate.
+        eta_angle = abs(primary_angle) + abs(roll_angle)
         if max_av > 1e-9:
-            return float(total_angle / max_av)
+            return float(eta_angle / max_av)
         return 0.0
 
     def TurnTowardDirection(self, direction_vec) -> float:
@@ -383,42 +452,58 @@ class ShipClass(DamageableObject):
         zero = TGPoint3(0.0, 0.0, 0.0)
         self.TurnDirectionsToDirections(forward, diff, zero, zero)
 
+    # In-system warp transit speed = this factor × the ship's impulse
+    # MaxSpeed — deliberately the same 100× as the player's Ctrl+I boost
+    # (_PlayerControl.WARP_BOOST_FACTOR) so AI-ordered warps and manual
+    # boosts cross a system at the same rate. BC's microwarp is a visible
+    # multi-second cruise, never an instant teleport.
+    IN_SYSTEM_WARP_SPEED_FACTOR = 100.0
+    # Base speed for ships without a populated IES (bare test rigs) —
+    # parallels _PlayerControl.IMPULSE_UNIT legacy fallback.
+    IN_SYSTEM_WARP_FALLBACK_BASE = 50.0
+    # The ship must be pointing at the target (within ~10°) before the warp
+    # engages — BC ships visibly turn onto the warp vector first, and the
+    # caller (SDK Intercept.Update) keeps steering via TurnTowardLocation
+    # until we accept.
+    IN_SYSTEM_WARP_FACING_COS = 0.985
+
     def InSystemWarp(self, target, distance) -> int:
-        """Teleport-to-near-target sub-light warp.
+        """Begin (or report) a sub-light warp toward `target`.
 
-        Stateless model: if target is None or the ship is already within
-        `distance` of the target, return 0 without moving. Otherwise
-        compute unit dir = (target - ship).normalize(), translate the
-        ship to (target − unit_dir · distance), and return 1.
+        Multi-frame transit model: when the ship is beyond `distance` of the
+        target AND its nose is on the target (IN_SYSTEM_WARP_FACING_COS),
+        record a transit (target, drop_distance) and return 1. The per-tick
+        integrator (ship_motion._step_in_system_warp) then cruises the ship
+        in a straight line at IN_SYSTEM_WARP_SPEED_FACTOR × MaxSpeed until
+        it reaches (target − unit_dir · distance), where the transit ends
+        and `_warp_consumed` latches. While a transit is active this returns
+        1 without re-engaging (SDK bWarping semantics — Intercept skips its
+        normal speed control during the warp).
 
-        ``_current_speed`` is left untouched. Intercept.Update calls
-        this every AI tick when ``fMaximumSpeed == 1e20`` (BasicAttack's
-        default), and once a ship is rotating (Slice H wired
-        TurnTowardDirection), it routinely drifts a few cm across the
-        warp threshold from one tick to the next. Resetting speed on
-        each crossing would clobber the integrator's acceleration ramp
-        — the symptom user reported as "ships barely move, no firing"
-        even after the speed/scale fix landed in Slice I.
-        Semantically the teleport is "instant transit," not "stop"; if
-        the AI body wants the ship to slow down, the speed setpoint it
-        writes on the next tick will pull current_speed down through
-        the normal ramp.
+        Not facing yet → return 0 and do nothing: the SDK caller keeps
+        turning the ship (TurnTowardLocation runs every Intercept update)
+        and re-calls until we accept.
 
-        SDK callers (Intercept.Update) invoke this each AI tick. The
-        stateless model converges: one teleport per warp request,
-        subsequent ticks find distance ≤ fDistance and return 0.
+        ``_current_speed`` is left untouched throughout. Intercept.Update
+        calls this every AI tick when ``fMaximumSpeed == 1e20``
+        (BasicAttack's default), and once a ship is rotating it routinely
+        drifts a few cm across the warp threshold from one tick to the
+        next. Resetting speed on each crossing would clobber the
+        integrator's acceleration ramp — the "ships barely move, no firing"
+        symptom from Slice I.
 
-        Visual streaks / camera flash / multi-frame animation will hook
-        in via a later renderer-side warp pass. The kinematic teleport
-        stays correct; visuals stack on top.
+        The `_warp_consumed` latch keeps the historical convergence
+        contract: one warp per StopInSystemWarp cycle, so boundary drifts
+        or target switches don't re-warp the ship (see
+        tests/unit/test_in_system_warp_preserves_speed.py).
         """
         if target is None:
             return 0
+        if self._insystem_warp_transit is not None:
+            return 1
         if self.__dict__.get("_warp_consumed", False):
-            # Already warped at least once since the last
-            # StopInSystemWarp — return 0 so the AI body drives normal
-            # motion instead of re-teleporting (even if target switches
-            # or distance drifts outside the threshold).
+            # Already warped since the last StopInSystemWarp — the AI body
+            # drives normal motion now.
             return 0
         ship_loc = self.GetWorldLocation()
         target_loc = target.GetWorldLocation()
@@ -433,14 +518,12 @@ class ShipClass(DamageableObject):
             # boundary drifts don't bounce the ship back to the surface.
             self._warp_consumed = True
             return 0
-        # Unit dir ship → target, then arrival = target − unit · distance.
-        diff.Scale(1.0 / d)
-        self.SetTranslateXYZ(
-            target_loc.x - diff.x * distance,
-            target_loc.y - diff.y * distance,
-            target_loc.z - diff.z * distance,
-        )
-        self._warp_consumed = True
+        # Facing gate: nose must be on the target before the jump.
+        fwd = self.GetWorldRotation().GetCol(1)
+        cos_face = (fwd.x * diff.x + fwd.y * diff.y + fwd.z * diff.z) / d
+        if cos_face < self.IN_SYSTEM_WARP_FACING_COS:
+            return 0
+        self._insystem_warp_transit = (target, float(distance))
         return 1
 
     def IsDoingInSystemWarp(self) -> int:
@@ -449,19 +532,22 @@ class ShipClass(DamageableObject):
         skip collision steering during a warp, because the warp check does
         its own clearance (Preprocessors.py:1692-1693).
 
-        Our InSystemWarp model is a stateless teleport, so there is no
-        multi-tick warp animation to observe; this returns the explicit
-        ``_doing_in_system_warp`` flag (default 0). Tests and any future
-        animated-warp pass can set it."""
+        True while a transit recorded by InSystemWarp is still being
+        advanced by the integrator. The explicit ``_doing_in_system_warp``
+        flag remains honoured for tests / future warp-VFX passes."""
+        if self._insystem_warp_transit is not None:
+            return 1
         return 1 if self.__dict__.get("_doing_in_system_warp", False) else 0
 
     def StopInSystemWarp(self) -> None:
-        """Clear the consumed-warp flag so a fresh warp can fire.
+        """Abort any active transit and clear the consumed-warp latch so a
+        fresh warp can fire.
 
-        SDK Intercept.LostFocus calls this; in stock Appc it cancels
-        the multi-tick warp animation. We model it as "drop the lock,"
-        letting the next InSystemWarp call retrigger normally.
+        SDK Intercept.LostFocus calls this; in stock Appc it cancels the
+        multi-tick warp animation. Ours drops both the in-flight transit
+        and the lock, letting the next InSystemWarp call retrigger.
         """
+        self._insystem_warp_transit = None
         self.__dict__.pop("_warp_consumed", None)
 
     def SetNetType(self, net_type: int) -> None:

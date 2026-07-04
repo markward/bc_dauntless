@@ -15,9 +15,13 @@ The per-tick rotation delta is built as pitch/yaw/roll matrices and
 post-multiplied into the world rotation (`_integrate_rotation`) — matches the
 `_PlayerControl.apply` body-frame-delta convention.
 
-Ships whose setpoints are still None are skipped entirely so the player ship
-(driven by `engine/host_loop.py:_PlayerControl` directly on the transform) is
-left alone.
+Ships whose setpoints are still None are skipped entirely — the player ship
+under manual control (driven by `engine/host_loop.py:_PlayerControl` directly
+on the transform) and freshly-spawned props never enter the integrator. When a
+helm AI is installed on the player (Orbit Planet, All Stop, ...), the AI
+writes setpoints and the player integrates here like any other ship;
+_PlayerControl.apply() yields for exactly that case (gated on player.GetAI())
+so the two integrators never fight over the transform.
 """
 from dataclasses import dataclass
 
@@ -113,13 +117,20 @@ def _ramp_toward(current: float, target: float, step: float) -> float:
 def _step_ship_motion(ship, dt: float) -> None:
     """Advance one ship's transform by one tick.
 
-    Skips entirely when no setpoint has ever been written so the player ship
-    (driven via `_PlayerControl`) and freshly-spawned non-AI props are left
-    alone. Otherwise: at engine-fraction f in (0, 1] flies under f-scaled
+    Skips entirely when no setpoint has ever been written so the manually
+    flown player ship (driven via `_PlayerControl`, which yields to this
+    integrator whenever a helm AI is installed) and freshly-spawned non-AI
+    props are left alone. Otherwise: at engine-fraction f in (0, 1] flies under f-scaled
     limits with a non-braking cap; at f == 0 drifts on inertia (frozen
     world-space velocity + residual angular momentum). Spec
     docs/superpowers/specs/2026-06-10-impulse-engine-degradation-design.md.
     """
+    # An active in-system-warp transit overrides normal setpoint motion:
+    # the ship cruises straight at the warp drop point until arrival.
+    if getattr(ship, "_insystem_warp_transit", None) is not None:
+        _step_in_system_warp(ship, dt)
+        return
+
     sp = getattr(ship, "_speed_setpoint", None)
     av = getattr(ship, "_target_angular_velocity_setpoint", None)
     if sp is None and av is None:
@@ -211,6 +222,62 @@ def _step_ship_motion(ship, dt: float) -> None:
     cav.z = _ramp_toward(cav.z, tz, ang_step)
 
     _integrate_rotation(ship, dt)
+
+
+def _step_in_system_warp(ship, dt: float) -> None:
+    """Advance one tick of an in-system-warp transit (see
+    ShipClass.InSystemWarp). Straight-line cruise toward
+    (target − unit_dir · drop_distance) at IN_SYSTEM_WARP_SPEED_FACTOR ×
+    the ship's impulse MaxSpeed. On arrival the transit clears and
+    `_warp_consumed` latches so the AI body resumes normal motion; the
+    published velocity drops back to the ship's pre-warp `_current_speed`
+    along the approach line (the warp is "instant transit", not a change
+    of impulse state). Rotation is frozen during the cruise — the facing
+    gate ensured the nose is already on the warp vector."""
+    from engine.appc.ships import ShipClass
+    target, drop = ship._insystem_warp_transit
+    target_loc = (
+        target.GetWorldLocation()
+        if hasattr(target, "GetWorldLocation") else None
+    )
+    if target_loc is None:
+        ship._insystem_warp_transit = None
+        ship._warp_consumed = True
+        return
+    p = ship.GetTranslate()
+    dx = target_loc.x - p.x
+    dy = target_loc.y - p.y
+    dz = target_loc.z - p.z
+    d = (dx * dx + dy * dy + dz * dz) ** 0.5
+    if d <= max(float(drop), 1e-9):
+        ship._insystem_warp_transit = None
+        ship._warp_consumed = True
+        return
+    ux, uy, uz = dx / d, dy / d, dz / d
+
+    getter = getattr(ship, "GetImpulseEngineSubsystem", None)
+    ies = getter() if getter is not None else None
+    base = ies.GetMaxSpeed() if ies is not None else 0.0
+    if base <= 0.0:
+        base = ShipClass.IN_SYSTEM_WARP_FALLBACK_BASE
+    warp_speed = ShipClass.IN_SYSTEM_WARP_SPEED_FACTOR * base
+
+    remaining = d - float(drop)
+    step = warp_speed * dt
+    if step >= remaining:
+        # Arrival: place exactly on the drop edge, end the transit.
+        ship.SetTranslateXYZ(
+            target_loc.x - ux * float(drop),
+            target_loc.y - uy * float(drop),
+            target_loc.z - uz * float(drop),
+        )
+        ship._insystem_warp_transit = None
+        ship._warp_consumed = True
+        s = ship._current_speed
+        ship.SetVelocity(TGPoint3(ux * s, uy * s, uz * s))
+    else:
+        ship.SetTranslateXYZ(p.x + ux * step, p.y + uy * step, p.z + uz * step)
+        ship.SetVelocity(TGPoint3(ux * warp_speed, uy * warp_speed, uz * warp_speed))
 
 
 def _integrate_rotation(ship, dt: float) -> None:

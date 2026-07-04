@@ -761,6 +761,18 @@ ET_DECLOAK_BEGINNING = 206
 # of a cloak transition (the COMPLETED events fire at the end). Consumed by
 # Bridge/PowerDisplay.py:340 (cloak power readout) and missions E2M0/E2M1.
 ET_CLOAK_BEGINNING = 207
+# Fired by AI/Player/OrbitPlanet.StartingOrbit (source=player ship,
+# destination=planet) as soon as the orbit AI's sequence starts — NOT after a
+# stable orbit is achieved. Consumed by mission listeners (E1M2.OrbitingHaven
+# sets g_bPlayerInOrbit) and Conditions/ConditionPlayerOrbitting.
+ET_AI_ORBITTING = 208
+# Fired when a ship's installed AI ends: cleared (ClearAI), replaced
+# (SetAI over an existing tree), or the root tree completes (US_DONE).
+# TGIntEvent: GetInt() = the ended AI's GetID(), destination = the ship.
+# Consumed by Conditions/ConditionPlayerOrbitting.OrbitDone ("player left
+# orbit" → HelmMenuHandlers.Orbitting plays the KiskaLeaveOrbit line) and
+# Bridge/HelmCharacterHandlers.AIDone.
+ET_AI_DONE = 209
 
 # ── Input event types — used by DefaultKeyboardBinding + TacticalInterfaceHandlers
 # Values are stable arbitrary integers well above the Phase-1 event range.
@@ -846,6 +858,10 @@ ET_CONTACT_STARFLEET        = 1074
 # present). BC's HelmMenuHandlers.CloakedCollision plays a "collided with a
 # cloaked ship" line off this event.
 ET_CLOAKED_COLLISION        = 1075
+# Helm "Orbit Planet" button event. SetupOrbitMenuFromSet builds one STButton
+# per planet whose activation event is (type=ET_ORBIT_PLANET, source=planet,
+# dest=orbit menu); HelmMenuHandlers.OrbitPlanet handles it on the menu.
+ET_ORBIT_PLANET             = 1076
 
 # ── FloatRangeWatcher condition event ─────────────────────────────────────────
 # Crossing event broadcast by a power subsystem's battery watcher when the

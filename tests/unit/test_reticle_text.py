@@ -36,14 +36,26 @@ def test_text_hidden_without_target():
 
 
 def test_text_name_and_line2_from_ship():
-    # Target 200 GU ahead, moving 1.0 GU/s. 200*0.175 = 35.00 km; 1*630 = 630 kph.
+    # Target 205 GU ahead with radius 5 → surface distance 200 GU (BC's
+    # readout is to the bounding sphere). 200*0.175 = 35.00 km; 1*630 = 630 kph.
     tgt = _ship(TGPoint3(0, 0, 0), vel=(1.0, 0.0, 0.0), name="Warbird")
-    p = _ship(TGPoint3(0, -200, 0)); p._t = tgt
+    p = _ship(TGPoint3(0, -205, 0)); p._t = tgt
     out = build_reticle_text(p, _cam_facing_target(), (1280, 720))
     assert out["visible"] is True
     assert out["name"] == "Warbird"
     assert out["line2"] == "35.00 km / 630 kph"
     assert 0 <= out["name_xy"][0] <= 1280 and 0 <= out["name_xy"][1] <= 720
+
+
+def test_range_is_surface_distance_for_planet():
+    """BC's readout convention, confirmed live: orbiting Haven (radius
+    90 GU) at the authored radius+150 GU CircleObject band, the original
+    game reads ~25 km — the SURFACE distance (150 GU = 26.25 km), while a
+    centre-distance readout would claim 42 km."""
+    haven = _ship(TGPoint3(0, 0, 0), name="Haven", radius=90.0)
+    p = _ship(TGPoint3(0, -240, 0)); p._t = haven   # orbit: 240 GU centres
+    out = build_reticle_text(p, _cam_facing_target(), (1280, 720))
+    assert out["line2"].startswith("26.25 km")
 
 
 def test_text_name_is_subsystem_when_locked():

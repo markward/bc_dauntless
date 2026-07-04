@@ -72,19 +72,31 @@ def _hostile_player_distance(player, hostile):
     return (dx * dx + dy * dy + dz * dz) ** 0.5
 
 
-def test_intercept_warp_brings_hostile_close_on_first_ai_tick():
-    """After the first AI Update, the hostile must be within the warp
-    radius (default fInSystemWarpDistance = 295). Starting distance is
-    5000; one warp call should drop the hostile to ~295."""
+def test_intercept_warp_brings_hostile_to_warp_radius():
+    """The in-system warp closes the 5000 GU gap to the warp drop radius
+    (default fInSystemWarpDistance = 295) — but as a real transit, not a
+    teleport: the hostile starts facing +Y with the player dead astern, so
+    it must first turn onto the target (the warp's facing gate), then
+    cruise the transit at 100 × MaxSpeed. Assert both halves: no
+    first-tick teleport, arrival within a few seconds."""
     player, hostile, pai = _setup_intercept_scene()
     loop = GameLoop()
-    # The AI driver fires the first PlainAI Update on the very first
-    # tick (game_time >= _next_update_time == 0).
     loop.tick()
     dist = _hostile_player_distance(player, hostile)
-    # Default fInSystemWarpDistance is 295; allow a small ε for FP.
-    assert dist == pytest.approx(295.0, abs=1.0), (
-        f"first-tick warp did not arrive at warp radius; distance={dist}"
+    assert dist > 1000.0, (
+        f"warp must be a multi-tick transit, not a teleport; distance={dist}"
+    )
+    # Turn (~2.5 s at 1.5 rad/s) + transit (~0.4 s at 12000 GU/s): 10 s is
+    # a comfortable ceiling.
+    arrived_at = None
+    for tick in range(TICK_RATE * 10):
+        loop.tick()
+        if _hostile_player_distance(player, hostile) <= 296.0:
+            arrived_at = tick
+            break
+    assert arrived_at is not None, (
+        f"hostile never reached the warp radius; "
+        f"distance={_hostile_player_distance(player, hostile)}"
     )
 
 
