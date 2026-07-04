@@ -30,9 +30,11 @@ Data-bag read-back quirk: TGModelProperty stores Set<F>(*args) under key
 via prop._data or by passing the same leading args (e.g.
 GetGlowRegionExtent(0, -2.0) -> 2.0). GetGlowRegionShape(i) works directly.
 
-Known gap: project-root shadow hardpoints (e.g. ships/Hardpoints/sovereign.py)
-load through the normal import machinery, not _SDKLoader, so the hook does not
-fire for them. A shadow that needs overrides calls
+Known gap: a project-root shadow hardpoint (none exist today — the last one,
+ships/Hardpoints/sovereign.py, was replaced by this file's sovereign section)
+would load through the normal import machinery, not _SDKLoader, so the hook
+would not fire for it. Prefer an override section here over a shadow; if a
+shadow is ever unavoidable, it must call
 `engine.appc.hardpoint_overrides.apply("<leaf>")` itself at module bottom.
 """
 
@@ -106,6 +108,7 @@ def _GenericTemplate(find):
 
 ############################################
 # akira — baked impulse glow (tools/bake_impulse_glow.py)
+#         + hull-conforming shield silhouette
 ############################################
 
 def _akira(find):
@@ -119,6 +122,12 @@ def _akira(find):
             p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
             p.SetGlowRegionRadius(0, radius)
             p.SetGlowRegionExtent(0, 0.0, 2.0)
+
+    # Dauntless extension: hull-conforming shield silhouette (engine/shields.py
+    # -> shield_pass.cc). Stock BC's Appc treats SetSkinShielding as a no-op.
+    sg = find("Shield Generator")
+    if sg is not None:
+        sg.SetSkinShielding(1)
 
 ############################################
 # ambassador — baked impulse glow (tools/bake_impulse_glow.py)
@@ -522,6 +531,8 @@ def _shuttle(find):
 
 ############################################
 # sovereign — baked impulse glow (tools/bake_impulse_glow.py)
+#             + hull-conforming shield silhouette (was the deleted
+#             ships/Hardpoints/sovereign.py root-shadow fork, b743949c)
 ############################################
 
 def _sovereign(find):
@@ -535,6 +546,12 @@ def _sovereign(find):
             p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
             p.SetGlowRegionRadius(0, radius)
             p.SetGlowRegionExtent(0, 0.0, 2.0)
+
+    # Dauntless extension: hull-conforming shield silhouette (engine/shields.py
+    # -> shield_pass.cc). Stock BC's Appc treats SetSkinShielding as a no-op.
+    sg = find("Shield Generator")
+    if sg is not None:
+        sg.SetSkinShielding(1)
 
 ############################################
 # sunbuster — baked impulse glow (tools/bake_impulse_glow.py)

@@ -231,13 +231,15 @@ def test_baked_akira_section_applies_on_real_load():
     assert p.GetGlowRegionRadius(0) == 0.23  # akira's authored hardpoint radius
 
 
-def test_sovereign_root_shadow_applies_via_explicit_call():
-    """ships/Hardpoints/sovereign.py bypasses the SDK-loader hook (root shadow)
-    and calls hardpoint_overrides.apply itself at module bottom."""
+def test_sovereign_sdk_hardpoint_gets_baked_glow_and_skin_shield():
+    """Sovereign loads from the SDK tree (the root-shadow fork was deleted);
+    the loader hook applies its section: baked impulse glow + skin shielding."""
     _load_real_hardpoint("sovereign")
     p = _find("Port Impulse")
     assert p is not None
     assert p.GetGlowRegionShape(0) == "Cylinder"
+    sg = _find("Shield Generator")
+    assert sg is not None and sg.GetSkinShielding() == 1
 
 
 def test_every_override_leaf_has_a_hardpoint_file():
