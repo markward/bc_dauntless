@@ -939,6 +939,16 @@ class ImpulseEngineSubsystem(PoweredSubsystem):
 
     def __init__(self, name: str = ""):
         super().__init__(name)
+        # Engines run from spawn — same rationale as SensorSubsystem above:
+        # the PoweredSubsystem off/0.0 default is right for weapons (RED-alert
+        # powered), but BC ships fly under engine power from creation, and SDK
+        # gates read that state: HelmCharacterHandlers.OrbitPlanet and
+        # {Helm,}MenuHandlers.SetCourse divert to the XO "need power to
+        # engines" warning when GetPowerPercentageWanted() == 0.0, and
+        # WarpPressed blocks warp when the warp engines are not IsOn()
+        # (currently deferred in warp_gates for exactly this false-positive).
+        self._is_on = True
+        self._power_percentage_wanted = 1.0
         self._max_speed = 0.0
         self._max_accel = 0.0
         self._max_angular_velocity = 0.0
@@ -970,6 +980,10 @@ class WarpEngineSubsystem(PoweredSubsystem):
 
     def __init__(self, name: str = ""):
         super().__init__(name)
+        # Powered from spawn, like ImpulseEngineSubsystem — see the comment
+        # there (SDK engines-off gates false-positive on the weapons default).
+        self._is_on = True
+        self._power_percentage_wanted = 1.0
         self._warp_sequence = None
         self._warp_effect_time = 0.0
         self._warp_state = self.WES_NOT_WARPING
