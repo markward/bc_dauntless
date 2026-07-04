@@ -108,6 +108,35 @@ def test_orbit_ai_out_of_range_fires_only_on_arrival():
     assert cap.events[0].GetDestination() is haven
 
 
+def test_orbit_ai_flies_player_while_player_control_runs():
+    """Layer 4b core regression: the idle _PlayerControl used to zero the
+    player's velocity every frame and skip translation, freezing the ship in
+    place (rotating but never moving) the moment a helm AI was installed.
+    Run the real loop AND the per-frame player-control pass together — the
+    ship must genuinely move under the orbit AI, with a live velocity."""
+    from engine.host_loop import _PlayerControl, _NO_INPUT
+
+    pSet, ship, haven = _ship_and_planet(distance=350.0)   # inside 400 gate
+    import AI.Player.OrbitPlanet
+    ship.SetAI(AI.Player.OrbitPlanet.CreateAI(ship, haven))
+
+    pc = _PlayerControl()
+    loop = GameLoop()
+    start = ship.GetTranslate()
+    p0 = (start.x, start.y, start.z)
+    for _ in range(120):                                   # 2 s of game time
+        loop.tick()
+        pc.apply(ship, 1.0 / 60.0, _NO_INPUT)              # per-frame input pass
+
+    p = ship.GetTranslate()
+    moved = ((p.x - p0[0]) ** 2 + (p.y - p0[1]) ** 2 + (p.z - p0[2]) ** 2) ** 0.5
+    assert moved > 1.0, "player ship never translated under the orbit AI"
+    v = ship.GetVelocity()
+    speed = (v.x * v.x + v.y * v.y + v.z * v.z) ** 0.5
+    assert speed > 0.0, "player velocity was zeroed by the idle player control"
+    assert ship.GetAI() is not None
+
+
 def test_orbit_ai_sequence_advances_into_circle_object_without_raising():
     """After StartingOrbit reports DONE the Sequence advances to the real SDK
     CircleObject leaf. tick_all_ai does not swallow exceptions, so a crash in

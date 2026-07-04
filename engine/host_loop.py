@@ -1206,6 +1206,17 @@ class _PlayerControl:
         # player control. The camera follows, so the dust velocity-smear adds to
         # the warp streak.
         self._warp_speed_override = None
+        # True while a helm AI (player.GetAI() non-None) owns ship motion —
+        # apply() then skips the whole ship-motion path (translation AND
+        # rotation) and the AI setpoints + _step_ship_motion integrate the
+        # transform instead. Tracked so both handoff edges can re-sync state
+        # (manual→AI: seed the ship-side integrator; AI→manual: resume from
+        # the ship's actual motion with no velocity snap).
+        self._ai_owned = False
+        # Scroll-wheel throttle nudges arrive outside apply() (see
+        # _route_scroll_wheel); latch them so a nudge while an AI owns the
+        # ship counts as manual input and cancels the AI next apply().
+        self._manual_throttle_nudge = False
 
     def nudge_throttle(self, notches: int) -> None:
         """Step the discrete impulse throttle one notch per detent.
@@ -1225,6 +1236,8 @@ class _PlayerControl:
                     self.impulse_level = self.REVERSE_LEVEL
                 else:
                     self.impulse_level -= 1
+        if notches:
+            self._manual_throttle_nudge = True
 
     # ── Hardpoint accessors ──────────────────────────────────────────────────
 
@@ -1293,6 +1306,99 @@ class _PlayerControl:
         delta = R_pitch.MultMatrix(R_yaw).MultMatrix(R_roll)
         player.SetMatrixRotation(R.MultMatrix(delta))
 
+    # ── Helm-AI ownership handoff ────────────────────────────────────────────
+    #
+    # When a helm AI is installed on the player (MissionLib.SetPlayerAI —
+    # Orbit Planet, All Stop/Stay, Intercept...), the AI's setpoints +
+    # engine/appc/ship_motion._step_ship_motion own BOTH translation and
+    # rotation; apply() must not run its ship-motion path or it clobbers the
+    # integrator (unconditional SetVelocity at the bottom of apply() zeroes
+    # the AI-set velocity; _apply_body_rotation fights the AI's angular
+    # setpoints). The rate mapping between the two integrators: ship
+    # ._current_angular_velocity applies (x, z, y) about (X, Z, Y) with no
+    # negation (_integrate_rotation), while _apply_body_rotation negates yaw
+    # and roll — so pitch ≡ cav.x, yaw ≡ −cav.z, roll ≡ −cav.y.
+
+    def _detect_manual_flight_input(self, h) -> bool:
+        """True when the player is actively flying this tick: a throttle edge
+        (reverse / full stop / digit, honoring the same modifier guards as
+        the normal throttle path) or any held rotation key. Used only while
+        an AI owns the ship — BC semantics: a manual helm input overrides
+        the current order."""
+        im = self._input_map
+        keys = getattr(h, "keys", None)
+        _super_held = (
+            h.key_state(keys.KEY_LEFT_SUPER)
+            if keys is not None and hasattr(keys, "KEY_LEFT_SUPER") else False
+        )
+        _ctrl_held = (
+            h.key_state(keys.KEY_LEFT_CONTROL)
+            if keys is not None and hasattr(keys, "KEY_LEFT_CONTROL") else False
+        )
+        if h.key_pressed(im.code("reverse")) and not (_super_held or _ctrl_held):
+            return True
+        if h.key_pressed(im.code("full_stop")):
+            return True
+        if keys is not None and not _shift_held(h):
+            digit_codes = (
+                keys.KEY_1, keys.KEY_2, keys.KEY_3, keys.KEY_4, keys.KEY_5,
+                keys.KEY_6, keys.KEY_7, keys.KEY_8, keys.KEY_9,
+            )
+            for code in digit_codes:
+                if h.key_pressed(code):
+                    return True
+        for action in ("pitch_down", "pitch_up", "yaw_left", "yaw_right",
+                       "roll_left", "roll_right"):
+            if h.key_state(im.code(action)):
+                return True
+        return False
+
+    def _sync_ship_integrator_from_control(self, player) -> None:
+        """Manual → AI handoff: seed the ship-side integrator state
+        (ship._current_speed / ._current_angular_velocity) from the
+        player-control state so the AI ramp starts from the ship's actual
+        motion instead of a stale value from a previous AI period."""
+        player._current_speed = self._current_speed
+        cav = getattr(player, "_current_angular_velocity", None)
+        if cav is not None:
+            cav.x = self._current_pitch_rate
+            cav.z = -self._current_yaw_rate
+            cav.y = -self._current_roll_rate
+
+    def _sync_control_from_ship(self, player) -> None:
+        """AI → manual handoff: resume player control from the ship's actual
+        motion so there is no velocity/rotation snap. Speed is the published
+        velocity projected onto ship-forward (manual flight is always along
+        facing); angular rates map through the yaw/roll negation (see the
+        section comment above). The AI's setpoints are cleared so
+        _step_ship_motion disengages and stops double-driving the ship."""
+        fwd = player.GetWorldRotation().GetCol(1)
+        v = player.GetVelocity()
+        self._current_speed = v.x * fwd.x + v.y * fwd.y + v.z * fwd.z
+        cav = getattr(player, "_current_angular_velocity", None)
+        if cav is not None:
+            self._current_pitch_rate = cav.x
+            self._current_yaw_rate   = -cav.z
+            self._current_roll_rate  = -cav.y
+        player._speed_setpoint = None
+        player._target_angular_velocity_setpoint = None
+
+    def _cancel_player_ai(self, player) -> None:
+        """Clear the player's helm AI (BC: manual input overrides the current
+        order). Mirrors the SDK cancel path — MissionLib.SetPlayerAI(ctrl,
+        None) → pPlayer.ClearAI() + g_sPlayerShipController update — without
+        importing MissionLib from the engine: clear the AI directly and
+        best-effort sync the SDK-visible controller global when the module
+        is already loaded (TacticalInterfaceHandlers / BridgeHandlers gate
+        manual-fire paths on it being None/'Captain')."""
+        player.ClearAI()
+        ml = sys.modules.get("MissionLib")
+        if ml is not None and hasattr(ml, "g_sPlayerShipController"):
+            try:
+                ml.g_sPlayerShipController = None
+            except Exception as _e:
+                dev_mode.log_swallowed("sync g_sPlayerShipController", _e)
+
     # ── Per-tick step ────────────────────────────────────────────────────────
 
     def apply(self, player, dt: float, h) -> None:
@@ -1317,6 +1423,30 @@ class _PlayerControl:
                                        p.z + fwd.z * s * dt)
                 player.SetVelocity(TGPoint3(fwd.x * s, fwd.y * s, fwd.z * s))
             return
+        # Helm-AI ownership arbitration (see section comment above apply()).
+        nudged = self._manual_throttle_nudge
+        self._manual_throttle_nudge = False
+        ai = player.GetAI() if hasattr(player, "GetAI") else None
+        if ai is not None:
+            if nudged or self._detect_manual_flight_input(h):
+                # BC: a manual helm input overrides the current order —
+                # cancel the AI, resume from the ship's actual motion, and
+                # fall through so this same tick's input registers.
+                self._cancel_player_ai(player)
+                self._sync_control_from_ship(player)
+                self._ai_owned = False
+            else:
+                # AI owns ship motion — skip the entire ship-motion path
+                # (the camera update lives in _apply_input and still runs).
+                if not self._ai_owned:
+                    self._ai_owned = True
+                    self._sync_ship_integrator_from_control(player)
+                return
+        elif self._ai_owned:
+            # AI released the conn (order finished / cleared) — resume
+            # manual control from the ship's actual motion, no snap.
+            self._sync_control_from_ship(player)
+            self._ai_owned = False
         # 1. Throttle (one-shot edges).  R is checked before digits.
         # Shift+digit is reserved for alert-level binding (Shift+1/2/3 →
         # SetAlertLevel); suppress digit throttle while shift is held so

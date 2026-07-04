@@ -92,6 +92,14 @@ class ShipClass(DamageableObject):
         # flags (bDeleteOld / bActivate) are engine-internal and ignored here.
         self._ai = ai
 
+    def ClearAI(self, *_extra) -> None:
+        # SDK callers: pPlayer.ClearAI() (MissionLib.SetPlayerAI(ctrl, None))
+        # and pShip.ClearAI(0, pOldAI) (HelmMenuHandlers fleet override); the
+        # flags (bDelete / pOldAI) are engine-internal and ignored here.
+        # Must be overridden here: the ObjectClass.ClearAI stub is a no-op and
+        # would leave the installed AI driving the ship forever.
+        self._ai = None
+
     def GetAI(self):
         return self._ai
 

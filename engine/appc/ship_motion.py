@@ -15,9 +15,13 @@ The per-tick rotation delta is built as pitch/yaw/roll matrices and
 post-multiplied into the world rotation (`_integrate_rotation`) — matches the
 `_PlayerControl.apply` body-frame-delta convention.
 
-Ships whose setpoints are still None are skipped entirely so the player ship
-(driven by `engine/host_loop.py:_PlayerControl` directly on the transform) is
-left alone.
+Ships whose setpoints are still None are skipped entirely — the player ship
+under manual control (driven by `engine/host_loop.py:_PlayerControl` directly
+on the transform) and freshly-spawned props never enter the integrator. When a
+helm AI is installed on the player (Orbit Planet, All Stop, ...), the AI
+writes setpoints and the player integrates here like any other ship;
+_PlayerControl.apply() yields for exactly that case (gated on player.GetAI())
+so the two integrators never fight over the transform.
 """
 from dataclasses import dataclass
 
@@ -113,9 +117,10 @@ def _ramp_toward(current: float, target: float, step: float) -> float:
 def _step_ship_motion(ship, dt: float) -> None:
     """Advance one ship's transform by one tick.
 
-    Skips entirely when no setpoint has ever been written so the player ship
-    (driven via `_PlayerControl`) and freshly-spawned non-AI props are left
-    alone. Otherwise: at engine-fraction f in (0, 1] flies under f-scaled
+    Skips entirely when no setpoint has ever been written so the manually
+    flown player ship (driven via `_PlayerControl`, which yields to this
+    integrator whenever a helm AI is installed) and freshly-spawned non-AI
+    props are left alone. Otherwise: at engine-fraction f in (0, 1] flies under f-scaled
     limits with a non-braking cap; at f == 0 drifts on inertia (frozen
     world-space velocity + residual angular momentum). Spec
     docs/superpowers/specs/2026-06-10-impulse-engine-degradation-design.md.

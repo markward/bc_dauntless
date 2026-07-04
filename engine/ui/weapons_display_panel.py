@@ -164,25 +164,39 @@ def _speed_label_for(ship, player_control) -> str:
       ``"Speed"`` and ``"kph"`` strings come from
       ``data/TGL/Bridge Menus.tgl`` in stock BC).
 
-    ``_PlayerControl`` carries the source of truth for both readings:
-    ``impulse_level`` (-2..9 signed; a negative level is reverse and shows
-    as ``R``) and ``_current_speed`` (the integrated GU/s value the
-    ship-motion step applies each frame). Fall back to the ship's
-    own velocity if the panel is constructed without the control
-    hook (e.g. unit tests).
+    ``_PlayerControl`` carries the source of truth for both readings under
+    manual flight: ``impulse_level`` (-2..9 signed; a negative level is
+    reverse and shows as ``R``) and ``_current_speed`` (the integrated GU/s
+    value the ship-motion step applies each frame). When a helm AI owns the
+    ship (``ship.GetAI()`` non-None — Orbit Planet, All Stop, ...),
+    ``_current_speed`` is parked at its handoff value and the AI drives the
+    ship through ``_step_ship_motion``, so the velocity reading comes from
+    the ship's real published velocity instead. Fall back to the ship's own
+    velocity too if the panel is constructed without the control hook
+    (e.g. unit tests).
     """
+    def _ship_velocity_gups(s) -> float:
+        if s is None or not hasattr(s, "GetVelocity"):
+            return 0.0
+        try:
+            v = s.GetVelocity()
+            return (v.x * v.x + v.y * v.y + v.z * v.z) ** 0.5
+        except Exception:
+            return 0.0
+
     if player_control is not None:
         impulse = int(getattr(player_control, "impulse_level", 0) or 0)
-        velocity_gups = float(getattr(player_control, "_current_speed", 0.0) or 0.0)
+        under_ai = False
+        if ship is not None:
+            get_ai = getattr(type(ship), "GetAI", None)
+            under_ai = callable(get_ai) and ship.GetAI() is not None
+        if under_ai:
+            velocity_gups = _ship_velocity_gups(ship)
+        else:
+            velocity_gups = float(getattr(player_control, "_current_speed", 0.0) or 0.0)
     else:
         impulse = 0
-        velocity_gups = 0.0
-        if ship is not None and hasattr(ship, "GetVelocity"):
-            try:
-                v = ship.GetVelocity()
-                velocity_gups = (v.x * v.x + v.y * v.y + v.z * v.z) ** 0.5
-            except Exception:
-                velocity_gups = 0.0
+        velocity_gups = _ship_velocity_gups(ship)
 
     # Negative throttle is reverse — show "R" rather than the signed notch.
     impulse_str = "R" if impulse < 0 else str(impulse)
