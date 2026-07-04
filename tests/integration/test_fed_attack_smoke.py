@@ -75,8 +75,16 @@ def test_fed_attack_create_ai_drives_combat(game_context):
     )
     assert builder._activation_failed is False
 
+    # Step the motion integrator alongside the AI, as the real loop does:
+    # Intercept's first decision engages an in-system-warp transit (target
+    # 500 GU out > the 295 GU drop radius) and faithfully skips its speed
+    # control while warping (SDK bWarping) — the setpoint arrives on the
+    # first AI update after the transit completes.
+    from engine.appc.ship_motion import _step_ship_motion
     for i in range(1, 11):
         tick_ai(builder, game_time=0.01 + i * 0.25)
+        for _ in range(15):                      # 0.25 s of motion per AI tick
+            _step_ship_motion(ours, 1.0 / 60.0)
 
     assert ours._speed_setpoint is not None, (
         "after 10 ticks, FedAttack should have written a speed setpoint"

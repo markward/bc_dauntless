@@ -1382,6 +1382,9 @@ class _PlayerControl:
             self._current_roll_rate  = -cav.y
         player._speed_setpoint = None
         player._target_angular_velocity_setpoint = None
+        # Taking the conn also aborts any AI-initiated in-system-warp
+        # transit (BC: touching the helm cancels the autopilot's warp).
+        player._insystem_warp_transit = None
 
     def _cancel_player_ai(self, player) -> None:
         """Clear the player's helm AI (BC: manual input overrides the current

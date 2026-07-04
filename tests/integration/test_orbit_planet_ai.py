@@ -85,10 +85,11 @@ def test_orbit_ai_start_fires_et_ai_orbitting_when_in_range():
 def test_orbit_ai_out_of_range_fires_only_on_arrival():
     """Faithful gating: far from the planet, CloseEnough (ConditionInRange) is
     DORMANT so the AI's first decision picks the FlyToPlanet branch and no
-    orbit-start event fires. Once motion runs, Intercept in-system-warps the
-    ship to ~295 GU of the target (its default warp distance, inside the 400 GU
-    gate) and the event fires on arrival — a distant click means "fly there,
-    then orbit", never "instantly orbiting"."""
+    orbit-start event fires. Once motion runs, Intercept turns the ship onto
+    the target (the in-system warp's facing gate), cruises the warp transit to
+    ~295 GU of the target (Intercept's default drop distance, inside the
+    400 GU gate), and the event fires on arrival — a distant click means
+    "turn, fly there, then orbit", never "instantly orbiting"."""
     pSet, ship, haven = _ship_and_planet(distance=5000.0)  # outside 400
     cap = _capture_orbitting()
 
@@ -101,8 +102,10 @@ def test_orbit_ai_out_of_range_fires_only_on_arrival():
     tick_ai(root, 0.0)
     assert cap.events == []
 
-    # Full loop (AI + motion): Intercept closes the distance; event on arrival.
-    GameLoop().advance(5)
+    # Full loop (AI + motion): the ship starts facing +Y, the planet is at
+    # -Y — a 180° turn precedes the warp, then the transit flies ~4700 GU.
+    # 300 ticks = 5 s covers both comfortably at this rig's fallback rates.
+    GameLoop().advance(300)
     assert cap.events
     assert cap.events[0].GetSource() is ship
     assert cap.events[0].GetDestination() is haven

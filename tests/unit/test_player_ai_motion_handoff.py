@@ -195,6 +195,27 @@ def test_scroll_throttle_nudge_cancels_ai():
     assert player.GetAI() is None
 
 
+def test_manual_takeover_aborts_in_system_warp_transit():
+    """Cancelling the AI mid-warp must also abort the warp transit —
+    otherwise the integrator keeps flying the ship across the system
+    after the player took the conn."""
+    pc = _PlayerControl()
+    player = _player_with_ies()
+    target = ShipClass()
+    target.SetTranslateXYZ(0.0, 5000.0, 0.0)
+    player.SetAI(object())
+    pc.apply(player, _DT, _Host())
+    assert player.InSystemWarp(target, 295.0) == 1   # facing +Y, engages
+
+    h = _Host()
+    h._pressed.add(h.keys.KEY_5)                     # manual takeover
+    pc.apply(player, _DT, h)
+
+    assert player.GetAI() is None
+    assert player._insystem_warp_transit is None
+    assert player.IsDoingInSystemWarp() == 0
+
+
 def test_manual_to_ai_handoff_seeds_ship_integrator():
     """Symmetric edge: when the AI takes over mid-flight, the ship-side ramp
     must start from the player's actual speed, not a stale value."""
