@@ -252,6 +252,56 @@ def test_target_role_no_target_returns_invisible():
         _teardown_game()
 
 
+def test_target_role_planet_target_renders_empty():
+    """SDK renders nothing for a non-ship target (ShieldsDisplay.py:349) —
+    a targeted planet must yield the panel's empty state, not 0% bars."""
+    from engine.appc.planet import Planet
+    from engine.ui.ship_display_panel import (
+        ShipDisplayPanel, ROLE_TARGET, _resolve_ship_for_role,
+    )
+    _, player, _ = _setup_game_with_player()
+    try:
+        planet = Planet()
+        planet.SetName("Haven")
+        player.SetTarget(planet)
+        assert _resolve_ship_for_role(ROLE_TARGET) is None
+        panel = ShipDisplayPanel(ROLE_TARGET)
+        snap = panel._snapshot()
+        assert snap[10] is False          # visible
+        assert snap[1] == ""              # ship_name
+        assert snap[2] == "NONE"          # affiliation
+    finally:
+        _teardown_game()
+
+
+def test_target_role_sun_target_renders_empty():
+    from engine.appc.planet import Sun
+    from engine.ui.ship_display_panel import (
+        ShipDisplayPanel, ROLE_TARGET, _resolve_ship_for_role,
+    )
+    _, player, _ = _setup_game_with_player()
+    try:
+        player.SetTarget(Sun())
+        assert _resolve_ship_for_role(ROLE_TARGET) is None
+        snap = ShipDisplayPanel(ROLE_TARGET)._snapshot()
+        assert snap[10] is False
+    finally:
+        _teardown_game()
+
+
+def test_player_role_unaffected_by_planet_target():
+    """The player panel always resolves the player, even while a
+    non-ship object is targeted."""
+    from engine.appc.planet import Planet
+    from engine.ui.ship_display_panel import ROLE_PLAYER, _resolve_ship_for_role
+    _, player, _ = _setup_game_with_player()
+    try:
+        player.SetTarget(Planet())
+        assert _resolve_ship_for_role(ROLE_PLAYER) is player
+    finally:
+        _teardown_game()
+
+
 def test_shield_face_indices_match_subsystem_constants():
     """Snapshot face order is FRONT, REAR, TOP, BOTTOM, LEFT, RIGHT —
     i.e. ShieldSubsystem.FRONT_SHIELDS..RIGHT_SHIELDS (0..5)."""
