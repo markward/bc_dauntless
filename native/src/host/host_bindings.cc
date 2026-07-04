@@ -161,6 +161,11 @@ renderer::Lighting g_lighting;
 // ambient is authored on its own SetClass and is typically much
 // brighter than the space scene's.
 renderer::Lighting g_bridge_lighting;
+// Ambient multiplier for the bridge INTERIOR only (red-alert dim). Applied
+// where the main bridge pass renders, never to the comm-set RTT feed — the
+// viewscreen shows another ship's room, whose lighting must not follow our
+// alert level.
+float g_bridge_ambient_scale = 1.0f;
 std::vector<renderer::Backdrop> g_backdrops;
 bool g_sky_dirty = true;            // cubemap needs (re)baking
 bool g_sky_last_procedural = false; // procedural-toggle state at the last frame
@@ -397,6 +402,7 @@ void init(int width, int height, const std::string& title) {
     g_bridge_node_anims.clear();
     g_lighting = renderer::Lighting{};
     g_bridge_lighting = renderer::Lighting{};
+    g_bridge_ambient_scale = 1.0f;
     g_bridge_pass_enabled = false;
     g_backdrops.clear();
     g_sky_dirty = true;
@@ -527,6 +533,7 @@ void shutdown() {
     // from the previous session.
     g_lighting = renderer::Lighting{};
     g_bridge_lighting = renderer::Lighting{};
+    g_bridge_ambient_scale = 1.0f;
     g_bridge_pass_enabled = false;
     g_viewscreen_enabled = false;
 }
@@ -877,8 +884,13 @@ void frame() {
         // surrounding interior must not flash); the main resolve-pass flash is
         // suppressed below when bridge_active. 0 when not warping.
         g_bridge_pass->set_viewscreen_flash(dauntless_warp_vfx::flash_intensity());
+        // Red-alert dim applies to the interior render only; the comm-set
+        // RTT above uses the unscaled g_bridge_lighting so the viewscreen
+        // feed's brightness stays constant across alert levels.
+        renderer::Lighting interior = g_bridge_lighting;
+        interior.ambient *= g_bridge_ambient_scale;
         g_bridge_pass->render(g_world, g_bridge_camera, *g_pipeline,
-                              lookup, g_bridge_lighting);
+                              lookup, interior);
     }
 
     // Compute bloom from the HDR target while the HDR FBO is still in use.
@@ -1756,6 +1768,14 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Set the bridge pass's lighting state, applied each frame() when "
           "the bridge pass is enabled. Separate from set_lighting (which "
           "feeds the space scene).");
+
+    m.def("set_bridge_ambient_scale",
+          [](float s) { g_bridge_ambient_scale = s; },
+          py::arg("scale"),
+          "Ambient multiplier for the bridge INTERIOR render only (red-alert "
+          "dim). The comm-set viewscreen feed always renders with the "
+          "unscaled bridge lighting, so viewscreen brightness stays constant "
+          "across alert levels. Default 1.0.");
 
     m.def("set_bridge_wall_time",
           [](double t) { if (g_bridge_pass) g_bridge_pass->set_wall_time(t); },

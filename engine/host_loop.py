@@ -5986,16 +5986,21 @@ def run(mission_name: Optional[str] = None,
             r.set_lighting(ambient, directionals)
 
             bridge_ambient, bridge_directionals = _aggregate_bridge_lights()
-            # Red-alert dim: bridge ambient scales to 50% when the
-            # player ship is at red alert. Matches BC's red-alert
-            # bridge lighting (dimmer overall while the red emergency
-            # strip lights pulse — that pulse is deferred work).
+            # Red-alert dim: bridge INTERIOR ambient scales to 50% when the
+            # player ship is at red alert. Matches BC's red-alert bridge
+            # lighting (dimmer overall while the red emergency strip lights
+            # pulse — that pulse is deferred work). Sent as a separate scale
+            # (not baked into the ambient) so the comm-set viewscreen feed —
+            # the other ship's room — keeps constant brightness across alert
+            # levels.
+            _bridge_dim = 1.0
             if player is not None:
                 try:
                     if player.GetAlertLevel() == 2:  # ShipClass.RED_ALERT
-                        bridge_ambient = tuple(c * 0.5 for c in bridge_ambient)
+                        _bridge_dim = 0.5
                 except Exception as _e:
                     dev_mode.log_swallowed("red-alert bridge-dim probe", _e)
+            r.set_bridge_ambient_scale(_bridge_dim)
             r.set_bridge_lighting(bridge_ambient, bridge_directionals)
             # BC's NiFlipController observes *game time*, not wall time
             # — controllers advance with g_kTimerManager (which the

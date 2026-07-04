@@ -45,7 +45,8 @@ _REQUIRED_BINDINGS = frozenset({
     "motion_blur_set_enabled", "nebula_lightning_enabled",
     "nebula_lightning_set_enabled", "play_instance_gesture", "play_instance_idle",
     "procedural_sky_enabled", "procedural_sky_set_enabled", "restore_rest_pose",
-    "rim_set_enabled", "set_backdrops", "set_bridge_camera", "set_bridge_lighting",
+    "rim_set_enabled", "set_backdrops", "set_bridge_ambient_scale",
+    "set_bridge_camera", "set_bridge_lighting",
     "set_bridge_wall_time", "set_camera", "set_comm_set_id", "set_cursor_locked",
     "set_dust_planets", "set_emissive_scale", "set_glow_region_dim",
     "set_glow_region_gain",
@@ -206,6 +207,14 @@ def set_bridge_lighting(ambient: Tuple[float, float, float],
     Stock BC bridges author only ambient (directionals empty).
     """
     _h.set_bridge_lighting(ambient, directionals)
+
+
+def set_bridge_ambient_scale(scale: float) -> None:
+    """Ambient multiplier for the bridge interior render only (red-alert
+    dim). The comm-set viewscreen feed always renders with the unscaled
+    bridge lighting, so viewscreen brightness stays constant across alert
+    levels."""
+    _h.set_bridge_ambient_scale(float(scale))
 
 
 def set_bridge_wall_time(t: float) -> None:
