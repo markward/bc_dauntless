@@ -88,3 +88,8 @@ def test_ship_without_tractor_yields_nothing():
     plain.SetWorldLocation(TGPoint3(0, 0, 0))
     out = _build_tractor_beam_render_data([plain])
     assert out == []
+
+
+def test_dim_color_scales_rgb_leaves_alpha():
+    from engine.host_loop import _dim_color
+    assert _dim_color((1.0, 0.5, 0.25, 0.35), 0.75) == (0.75, 0.375, 0.1875, 0.35)

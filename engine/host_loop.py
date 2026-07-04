@@ -698,6 +698,11 @@ def _resolve_game_texture(path: str) -> str:
     return str(abs_path)
 
 
+def _dim_color(c, scale):
+    """Scale a color tuple's RGB by `scale`, leaving alpha untouched."""
+    return (c[0] * scale, c[1] * scale, c[2] * scale, c[3])
+
+
 def _build_torpedo_render_data():
     """Convert projectiles._active into the dict shape set_torpedoes expects."""
     out = []
@@ -705,16 +710,19 @@ def _build_torpedo_render_data():
         out.append({
             "position":      (t._position.x, t._position.y, t._position.z),
             "core_texture":  _resolve_game_texture(t._core_texture),
-            "core_color":    _color_tuple(t._core_color),
+            "core_color":    _dim_color(_color_tuple(t._core_color),
+                                        TORPEDO_BRIGHTNESS),
             "core_size_a":   t._core_size_a,
             "core_size_b":   t._core_size_b,
             "glow_texture":  _resolve_game_texture(t._glow_texture),
-            "glow_color":    _color_tuple(t._glow_color),
+            "glow_color":    _dim_color(_color_tuple(t._glow_color),
+                                        TORPEDO_BRIGHTNESS),
             "glow_size_a":   t._glow_size_a,
             "glow_size_b":   t._glow_size_b,
             "glow_size_c":   t._glow_size_c,
             "flares_texture": _resolve_game_texture(t._flares_texture),
-            "flares_color":  _color_tuple(t._flares_color),
+            "flares_color":  _dim_color(_color_tuple(t._flares_color),
+                                        TORPEDO_BRIGHTNESS),
             "num_flares":    t._num_flares,
             "flares_size_a": t._flares_size_a,
             "flares_size_b": t._flares_size_b,
@@ -791,6 +799,14 @@ def _build_particle_render_data(ship_instances=None):
 # nominal; the right long-term fix is a focused instrumentation pass
 # that reads back beam render geometry from the live engine.
 PHASER_BEAM_WIDTH_MUTATOR = 3.0
+
+# Brightness scale on phaser beam colours (additive blend) — dims the beam
+# without touching the hardpoint hue. Mirrors TRACTOR_BEAM_BRIGHTNESS below.
+PHASER_BEAM_BRIGHTNESS = 0.75
+
+# Brightness scale on torpedo/bolt layer colours (core, glow, flares) —
+# projectiles read too hot against the HDR pipeline (tune-by-eye).
+TORPEDO_BRIGHTNESS = 0.75
 
 
 def _beam_descriptor_pair(ship, bank, ship_instances):
@@ -888,7 +904,13 @@ def _build_phaser_beam_render_data(ships, ship_instances=None):
             bank = sys_.GetWeapon(i)
             if bank is None or not bank.IsFiring():
                 continue
-            out.extend(_beam_descriptor_pair(ship, bank, ship_instances))
+            for d in _beam_descriptor_pair(ship, bank, ship_instances):
+                c = d["color"]
+                d["color"] = (c[0] * PHASER_BEAM_BRIGHTNESS,
+                              c[1] * PHASER_BEAM_BRIGHTNESS,
+                              c[2] * PHASER_BEAM_BRIGHTNESS,
+                              c[3])
+                out.append(d)
     return out
 
 
