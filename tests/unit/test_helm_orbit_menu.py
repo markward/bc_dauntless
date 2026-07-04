@@ -81,6 +81,53 @@ def test_setup_orbit_menu_empty_set_is_not_openable():
     assert orbit.IsEnabled() == 0
 
 
+def test_click_haven_button_runs_orbit_planet_handler(monkeypatch):
+    """Clicking the Haven button (SendActivationEvent) dispatches the button's
+    stored (type=ET_ORBIT_PLANET, source=planet, dest=orbit menu) event to the
+    menu's registered SDK OrbitPlanet handler, which gives the player the
+    AI.Player.OrbitPlanet tree and targets the planet (Layer 4a)."""
+    # MissionLib.SetPlayerAI calls Bridge.TacticalMenuHandlers.UpdateOrders(0),
+    # which reads UI globals only defined once the TacticalControlWindow builds
+    # CreateOrdersStatusDisplay (TacticalControlWindow.py:184) — present at real
+    # mission load, absent in this bare fixture. Stub the seam MissionLib uses.
+    import Bridge.TacticalMenuHandlers as T
+    monkeypatch.setattr(T, "UpdateOrders", lambda *a, **k: None)
+
+    s = SetClass()
+    player = ShipClass_Create("Galaxy")
+    sensors = SensorSubsystem("Sensors")
+    sensors._condition = 100.0
+    sensors._max_condition = 100.0
+    player.SetSensorSubsystem(sensors)
+    s.AddObjectToSet(player, "player")
+    haven = Planet_Create(200.0, "colony.nif")
+    haven.SetName("Haven")
+    haven.SetDisplayName("Haven")
+    s.AddObjectToSet(haven, "Haven")
+    game = Game()
+    _set_current_game(game)
+
+    # Register the real SDK handlers before the player exists (mission-load
+    # ordering), then let ET_SET_PLAYER populate the orbit menu.
+    H.ET_SET_NAVPOINT_TARGET = App.Game_GetNextEventType()
+    orbit = App.STMenu_CreateW("Orbit Planet")
+    nav = App.STMenu_CreateW("Nav Points")
+    H.SetupOrbitAndNavMenuHandlers(orbit, nav)
+    game.SetPlayer(player)
+
+    assert len(orbit._children) == 1
+    button = orbit._children[0]
+    assert button.GetLabel() == "Haven"
+    assert player.GetAI() is None
+
+    button.SendActivationEvent()
+
+    ai = player.GetAI()
+    assert ai is not None
+    assert ai.GetName() == "OrbitAvoidObstacles"   # CreateAI's root PreprocessingAI
+    assert player.GetTarget() is haven
+
+
 def test_set_player_event_repopulates_orbit_menu():
     """Game.SetPlayer fires ET_SET_PLAYER -> OrbitMenuPlayerChanged repopulates
     the orbit menu from the player's set (the real mission-load trigger)."""
