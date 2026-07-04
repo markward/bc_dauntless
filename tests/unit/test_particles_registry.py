@@ -68,6 +68,26 @@ def test_snapshot_attached_uses_resolver():
     assert d["emit_pos"] == (0.0, 1.0, 0.0)   # body-frame, resolved in the pass
 
 
+def test_explosion_a_color_keys_get_brightness_boost():
+    P.reset()
+    c = _smoke()
+    c.CreateTarget("data/Textures/Effects/ExplosionA.tga")
+    c.AddColorKey(0.0, 1.0, 0.5, 0.25)
+    P.EffectAction_Create(c).Start()
+    d = P.snapshot_descriptors()[0]
+    assert d["color_keys"] == [(0.0, 2.0, 1.0, 0.5)]
+    assert c._color_keys == [(0.0, 1.0, 0.5, 0.25)]  # stored keys untouched
+
+
+def test_non_boosted_texture_color_keys_pass_through():
+    P.reset()
+    c = _smoke()   # ExplosionB — not in the brightness table
+    c.AddColorKey(0.0, 1.0, 0.5, 0.25)
+    P.EffectAction_Create(c).Start()
+    d = P.snapshot_descriptors()[0]
+    assert d["color_keys"] == [(0.0, 1.0, 0.5, 0.25)]
+
+
 def test_reset_clears_active():
     P.reset()
     P.EffectAction_Create(_smoke()).Start()

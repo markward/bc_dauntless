@@ -19,6 +19,14 @@ _KNOWN_SHEET_TEXTURES = {
     "explosionb.tga": (8, 8),
 }
 
+# Per-texture brightness boost, by lowercase basename. Applied to the color
+# keys at descriptor time so it covers every emitter using the texture (SDK
+# Effects factories and our own) without editing the gitignored SDK tree.
+# ExplosionA reads too dim against the HDR pipeline (tune-by-eye).
+_TEXTURE_BRIGHTNESS = {
+    "explosiona.tga": 2.0,
+}
+
 
 class AnimTSParticleController:
     def __init__(self):
@@ -42,6 +50,7 @@ class AnimTSParticleController:
         self._rv_cone = 0.0
         self._rv_speed = 0.0
         self._blend_mode = 0   # 0 = alpha (A1), 1 = additive
+        self._brightness = 1.0  # per-texture boost, set by CreateTarget
         # Texture-sheet animation grid. 1x1 = whole texture (default; hit VFX,
         # plumes). >1 means the texture is an N-column (frames) x M-row
         # (variants) sprite sheet; the renderer steps a per-particle cell
@@ -79,6 +88,7 @@ class AnimTSParticleController:
         cells = _KNOWN_SHEET_TEXTURES.get(base)
         if cells is not None:
             self._atlas_cols, self._atlas_rows = cells
+        self._brightness = _TEXTURE_BRIGHTNESS.get(base, 1.0)
     def SetTextureCells(self, cols, rows):
         """Declare the target texture as a `cols` x `rows` sprite sheet:
         `cols` animation frames per variant, `rows` variants. Default 1x1
@@ -242,7 +252,9 @@ def _descriptor_for(c, resolve_attach):
         "random_velocity_speed": float(c._rv_speed),
         "damping":           float(getattr(c, "_damping", 0.0)),
         "tail_length":       float(getattr(c, "_tail_length", 0.0)),
-        "color_keys":        list(c._color_keys),
+        "color_keys":        [(t, r * c._brightness, g * c._brightness,
+                               b * c._brightness)
+                              for (t, r, g, b) in c._color_keys],
         "alpha_keys":        list(c._alpha_keys),
         "size_keys":         list(c._size_keys),
         "texture_path":      c._texture_path,
