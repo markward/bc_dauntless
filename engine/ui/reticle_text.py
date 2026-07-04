@@ -59,7 +59,7 @@ def build_reticle_text(player, camera, viewport) -> dict:
     speed_gu = (vel.x * vel.x + vel.y * vel.y + vel.z * vel.z) ** 0.5 if vel else 0.0
 
     sub = _valid_subsystem(player)
-    name = sub.GetName() if sub is not None else target.GetName()
+    name = sub.GetDisplayName() if sub is not None else target.GetDisplayName()
     line2 = "%.2f km / %.0f kph" % (dist_gu * GU_TO_KM, speed_gu * GUPS_TO_KPH)
     up = camera.up()
     top    = (centre.x + up[0] * radius, centre.y + up[1] * radius, centre.z + up[2] * radius)

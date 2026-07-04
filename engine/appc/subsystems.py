@@ -238,6 +238,15 @@ class ShipSubsystem(TGEventHandlerObject):
     def SetName(self, name: str) -> None:
         self._name = name
 
+    def GetDisplayName(self) -> str:
+        # SDK: Appc.ShipSubsystem_GetDisplayName (App.py:5591) — localized
+        # TGString. Our subsystem _names are already the human-readable
+        # hardpoint names ("Port Nacelle"), so return _name, matching the
+        # ObjectClass.GetDisplayName fallback. Must be defined here (not
+        # inherited): ShipSubsystem extends TGEventHandlerObject, not
+        # ObjectClass, and TGObject.__getattr__ would vend a _Stub.
+        return self._name
+
     def GetProperty(self):
         return self._property
 

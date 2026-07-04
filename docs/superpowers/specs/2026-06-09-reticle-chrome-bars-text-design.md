@@ -115,8 +115,10 @@ def build_reticle_text(player, camera, viewport):
     camera: object exposing eye()/target/up()/fov_y_rad/near/far (a thin adapter
     over the gameplay camera params host_loop already computes). viewport: (w,h)."""
 ```
-- `name` = `player.GetTargetSubsystem().GetName()` if a valid subsystem is
-  locked (reuse `_valid_subsystem`), else `target.GetName()`.
+- `name` = `player.GetTargetSubsystem().GetDisplayName()` if a valid subsystem
+  is locked (reuse `_valid_subsystem`), else `target.GetDisplayName()` — the
+  localized display name used everywhere else in the UI (Hail menu, target
+  list), falling back to the internal name when none is set.
 - `line2 = "%.2f km / %.0f kph" % (dist_gu*GU_TO_KM, speed_gu*GUPS_TO_KPH)` where
   `dist_gu = |target_center − player_center|`,
   `speed_gu = |target.GetVelocity()|`.
