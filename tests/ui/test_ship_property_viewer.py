@@ -252,3 +252,25 @@ def test_build_descriptors_carries_targetable_and_condition(monkeypatch):
     d = build_descriptors(plain)[0]
     assert d["targetable"] is False
     assert d["condition_pct"] is None
+
+
+def test_build_descriptors_links_children_to_parent(monkeypatch):
+    import engine.ui.ship_property_viewer as spv
+    monkeypatch.setattr(spv, "_icon_id_for", lambda sub: 2)
+
+    parent = _StubSubsystem("Warp Engines", (0.0, -2.0, 0.0), 4)
+    port = _StubSubsystem("Port Nacelle", (-3.0, -2.0, 0.0), 4)
+    star = _StubSubsystem("Star Nacelle", (3.0, -2.0, 0.0), 4)
+    orphan = _StubSubsystem("Sensor Array", (0.0, 2.0, 0.0), 5)
+    for child in (port, star):
+        child.GetParentSubsystem = lambda p=parent: p
+    # Enumeration yields parents before their children (mirrors
+    # _iter_damage_subsystems).
+    monkeypatch.setattr(spv, "_iter_subsystems",
+                        lambda ship: [parent, port, star, orphan])
+    ship = _StubShip([parent, port, star, orphan])
+    descs = build_descriptors(ship)
+    assert descs[0]["parent_index"] is None          # aggregator
+    assert descs[1]["parent_index"] == 0             # port -> Warp Engines
+    assert descs[2]["parent_index"] == 0             # star -> Warp Engines
+    assert descs[3]["parent_index"] is None          # unrelated top-level

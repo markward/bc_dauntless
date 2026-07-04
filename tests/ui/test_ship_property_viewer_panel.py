@@ -427,3 +427,66 @@ def _open_panel_for_input():
     p.open()
     p.camera = _Cam(target=(0, 0, 0), distance=100.0)
     return p
+
+
+# ── grouped (accordion) subsystem list ─────────────────────────────────────
+
+_GROUPED = [
+    {"name": "Warp Engines", "icon_id": 4, "world_pos": (0, -2, 0),
+     "state": "healthy", "targetable": True, "condition_pct": 100,
+     "parent_index": None, "properties": {"name": "Warp Engines"}},
+    {"name": "Port Nacelle", "icon_id": 4, "world_pos": (-3, -2, 0),
+     "state": "healthy", "targetable": True, "condition_pct": 75,
+     "parent_index": 0, "properties": {"name": "Port Nacelle"}},
+    {"name": "Star Nacelle", "icon_id": 4, "world_pos": (3, -2, 0),
+     "state": "healthy", "targetable": True, "condition_pct": 75,
+     "parent_index": 0, "properties": {"name": "Star Nacelle"}},
+    {"name": "Sensor Array", "icon_id": 5, "world_pos": (0, 2, 0),
+     "state": "healthy", "targetable": True, "condition_pct": 100,
+     "parent_index": None, "properties": {"name": "Sensor Array"}},
+]
+
+
+def _open_grouped(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors", lambda ship: _GROUPED)
+    p = ShipPropertyViewerPanel(ship_getter=lambda: object())
+    p.open()
+    return p
+
+
+def test_payload_nests_children_under_parent_collapsed_by_default(monkeypatch):
+    p = _open_grouped(monkeypatch)
+    subs = _payload_data(p.render_payload())["subsystems"]
+    assert [s["name"] for s in subs] == ["Warp Engines", "Sensor Array"]
+    warp = subs[0]
+    assert warp["index"] == 0
+    assert warp["expanded"] is False
+    assert [c["name"] for c in warp["children"]] == ["Port Nacelle", "Star Nacelle"]
+    assert [c["index"] for c in warp["children"]] == [1, 2]
+    assert "expanded" not in subs[1]        # childless rows carry no flag
+
+
+def test_toggle_group_expands_and_collapses(monkeypatch):
+    p = _open_grouped(monkeypatch)
+    assert p.dispatch_event("toggle_group:0") is True
+    assert _payload_data(p.render_payload())["subsystems"][0]["expanded"] is True
+    assert p.dispatch_event("toggle_group:0") is True
+    assert _payload_data(p.render_payload())["subsystems"][0]["expanded"] is False
+    assert p.dispatch_event("toggle_group:99") is False
+
+
+def test_select_pin_reveals_its_group(monkeypatch):
+    p = _open_grouped(monkeypatch)
+    p.dispatch_event("select_pin:2")        # Star Nacelle, inside collapsed group
+    data = _payload_data(p.render_payload())
+    assert data["selected_index"] == 2
+    assert data["subsystems"][0]["expanded"] is True
+
+
+def test_expansion_resets_on_reopen(monkeypatch):
+    p = _open_grouped(monkeypatch)
+    p.dispatch_event("toggle_group:0")
+    p.close()
+    p.open()
+    assert _payload_data(p.render_payload())["subsystems"][0]["expanded"] is False

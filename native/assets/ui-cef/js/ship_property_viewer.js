@@ -101,29 +101,60 @@ var SPV_EYE_SHUT =
   + '<path d="M2 12 C 5.5 17.5, 18.5 17.5, 22 12"/>'
   + '<path d="M6 15.5l-1.8 2.4M12 17v3M18 15.5l1.8 2.4"/></svg>';
 
-// Render the left-column subsystem list. Rows are index-aligned with the
-// pin descriptors, so row i selects pin i.
-function renderSPVSubsystemList(subs, selectedIndex) {
+// Accordion caret: expand/collapse a category row's children without
+// selecting the category (the caret's onclick stops propagation).
+window.shipPropertyViewerGroupToggle = function (index) {
+    dauntlessEvent('ship-property-viewer/toggle_group:' + index);
+};
+
+// One list row (category or child). row.index is the pin-descriptor index.
+function spvRowHtml(row, selectedIndex, isChild) {
+    var chosen = (selectedIndex === row.index);
+    var eye = row.targetable ? SPV_EYE_OPEN : SPV_EYE_SHUT;
+    var eyeCls = row.targetable ? '' : ' spv-sys-row__eye--shut';
+    var bar = (typeof row.condition_pct === 'number')
+        ? '<span class="spv-sys-row__bar" style="--bar-pct:'
+          + Math.max(0, Math.min(100, row.condition_pct)) + '%"></span>'
+        : '';
+    var hasChildren = (row.children || []).length > 0;
+    var lead;
+    if (hasChildren) {
+        // Glyph swap (▾/▸), not CSS rotation — see target_list.js on CEF
+        // layer promotion hurting text crispness.
+        lead = '<span class="spv-sys-caret"'
+             +   ' onclick="event.stopPropagation();'
+             +   'shipPropertyViewerGroupToggle(' + row.index + ')">'
+             +   (row.expanded ? '&#9662;' : '&#9656;') + '</span>';
+    } else {
+        lead = '<span class="spv-sys-caret spv-sys-caret--none"></span>';
+    }
+    return '<div class="spv-sys-row' + (isChild ? ' spv-sys-row--child' : '')
+         +   (chosen ? ' spv-sys-row--chosen' : '') + '"'
+         +   ' onclick="shipPropertyViewerRow(' + row.index + ', ' + chosen + ')">'
+         +   lead
+         +   '<span class="spv-sys-row__name">' + escapeHtmlSPV(row.name || '') + '</span>'
+         +   bar
+         +   '<span class="spv-sys-row__eye' + eyeCls + '"'
+         +   ' title="' + (row.targetable ? 'Targetable' : 'Not targetable') + '">'
+         +   eye + '</span>'
+         + '</div>';
+}
+
+// Render the left-column subsystem list: category rows with their child
+// pods/banks/tubes nested under them (collapsible, like the target list).
+function renderSPVSubsystemList(rows, selectedIndex) {
     var body = document.getElementById('spv-syslist-body');
     if (!body) return;
     var html = '';
-    for (var i = 0; i < subs.length; i++) {
-        var sub = subs[i] || {};
-        var chosen = (selectedIndex === i);
-        var eye = sub.targetable ? SPV_EYE_OPEN : SPV_EYE_SHUT;
-        var eyeCls = sub.targetable ? '' : ' spv-sys-row__eye--shut';
-        var bar = (typeof sub.condition_pct === 'number')
-            ? '<span class="spv-sys-row__bar" style="--bar-pct:'
-              + Math.max(0, Math.min(100, sub.condition_pct)) + '%"></span>'
-            : '';
-        html += '<div class="spv-sys-row' + (chosen ? ' spv-sys-row--chosen' : '') + '"'
-              +   ' onclick="shipPropertyViewerRow(' + i + ', ' + chosen + ')">'
-              +   '<span class="spv-sys-row__name">' + escapeHtmlSPV(sub.name || '') + '</span>'
-              +   bar
-              +   '<span class="spv-sys-row__eye' + eyeCls + '"'
-              +   ' title="' + (sub.targetable ? 'Targetable' : 'Not targetable') + '">'
-              +   eye + '</span>'
-              + '</div>';
+    for (var i = 0; i < rows.length; i++) {
+        var row = rows[i] || {};
+        html += spvRowHtml(row, selectedIndex, false);
+        if (row.expanded) {
+            var kids = row.children || [];
+            for (var j = 0; j < kids.length; j++) {
+                html += spvRowHtml(kids[j] || {}, selectedIndex, true);
+            }
+        }
     }
     body.innerHTML = html;
 }

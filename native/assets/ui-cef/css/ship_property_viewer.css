@@ -135,11 +135,35 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 3px 10px 3px 14px;
+    padding: 3px 10px 3px 10px;
     cursor: pointer;
     font-size: 13px;
     letter-spacing: 0.04em;
     color: rgba(235, 225, 255, 0.85);
+}
+
+/* Child rows (pods / banks / tubes) indent past the category caret and
+   render slightly subordinate, like .target-list__sub. */
+.spv-sys-row--child {
+    padding-left: 30px;
+    color: rgba(235, 225, 255, 0.70);
+}
+
+/* Accordion caret (categories with children). Glyph content is swapped by
+   the JS (▸/▾) — no CSS transforms (CEF layer promotion blurs row text). */
+.spv-sys-caret {
+    flex: 0 0 auto;
+    display: inline-block;
+    width: 14px;
+    text-align: center;
+    font-size: 14px;
+    line-height: 1;
+    color: white;
+    cursor: pointer;
+}
+
+.spv-sys-caret--none {
+    cursor: inherit;
 }
 
 .spv-sys-row:hover {

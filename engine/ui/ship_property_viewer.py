@@ -109,8 +109,15 @@ def _mat_vec4(m, v):
 
 def build_descriptors(ship) -> List[dict]:
     """One descriptor per subsystem that has a 3D mount. Subsystems with no
-    GetPosition() are skipped (cannot be placed in space)."""
+    GetPosition() are skipped (cannot be placed in space).
+
+    `parent_index` links a child pod/bank/tube to its aggregator's descriptor
+    index (the subsystem-list accordion groups on it); None for top-level
+    categories and for children whose parent has no mount (the enumeration
+    yields parents before their children, so the parent is always already
+    indexed when it exists)."""
     out: List[dict] = []
+    index_of: dict = {}   # id(subsystem) -> descriptor index
     for sub in _iter_subsystems(ship):
         local = sub.GetPosition() if hasattr(sub, "GetPosition") else None
         if local is None:
@@ -119,6 +126,8 @@ def build_descriptors(ship) -> List[dict]:
         # returns None, which would otherwise place its pin at the origin.
         w = subsystem_world_position(sub, ship)
         props = _properties_for(sub, local)
+        parent = getattr(sub, "GetParentSubsystem", lambda: None)()
+        index_of[id(sub)] = len(out)
         out.append({
             "name":       props["name"],
             "icon_id":    _icon_id_for(sub),
@@ -126,6 +135,7 @@ def build_descriptors(ship) -> List[dict]:
             "state":      _state_for(sub),
             "targetable": _targetable_for(sub),
             "condition_pct": _condition_pct_for(sub),
+            "parent_index": index_of.get(id(parent)) if parent is not None else None,
             "properties": props,
         })
     # Object emitters — non-damageable mount markers (shuttle bay, probe
@@ -146,6 +156,7 @@ def build_descriptors(ship) -> List[dict]:
             "kind":       "mount",
             "targetable": False,
             "condition_pct": None,
+            "parent_index": None,
             "properties": {"name": em.GetName(),
                            "emitted_type": em.GetEmittedObjectType()},
         })

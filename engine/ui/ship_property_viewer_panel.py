@@ -54,6 +54,10 @@ class ShipPropertyViewerPanel(Panel):
         # Titlebar overlay toggles — both off by default, reset every open.
         self.show_glow_regions = False
         self.show_weapon_arcs = False
+        # Names of aggregator subsystems whose child rows are expanded in the
+        # left-column list (accordion, like the target list). Collapsed by
+        # default; reset every open.
+        self._expanded_groups: set = set()
         self._last_pushed: Optional[tuple] = None
         # Left-drag tracking (panel-local edge detection so we don't steal
         # the CEF mouse-release edge — see handle_input).
@@ -77,6 +81,7 @@ class ShipPropertyViewerPanel(Panel):
         self.selected_index = None
         self.show_glow_regions = False
         self.show_weapon_arcs = False
+        self._expanded_groups = set()
         target = self._fit_target()
         self.camera = OrbitCamera(target=target, distance=self._fit_distance(target))
         self._visible = True
@@ -87,6 +92,7 @@ class ShipPropertyViewerPanel(Panel):
         self.selected_index = None
         self.show_glow_regions = False
         self.show_weapon_arcs = False
+        self._expanded_groups = set()
         self.camera = None
         self._lmb_down = False
         self._drag_last = None
@@ -152,7 +158,8 @@ class ShipPropertyViewerPanel(Panel):
 
     def render_payload(self) -> Optional[str]:
         snapshot = (self._visible, len(self._descriptors), self.selected_index,
-                    self.show_glow_regions, self.show_weapon_arcs)
+                    self.show_glow_regions, self.show_weapon_arcs,
+                    tuple(sorted(self._expanded_groups)))
         if snapshot == self._last_pushed:
             return None
         self._last_pushed = snapshot
@@ -169,17 +176,39 @@ class ShipPropertyViewerPanel(Panel):
             "selected_index": self.selected_index,
             "show_glow": self.show_glow_regions,
             "show_arcs": self.show_weapon_arcs,
-            # Left-column subsystem list: index-aligned with the pin
-            # descriptors so a row click can fire select_pin:<index>.
-            "subsystems": [
-                {"name": d.get("name", ""),
-                 "targetable": bool(d.get("targetable", False)),
-                 "condition_pct": d.get("condition_pct"),
-                 "kind": d.get("kind", "subsystem")}
-                for d in self._descriptors
-            ],
+            "subsystems": self._subsystem_rows(),
         }
         return "setShipPropertyViewer(" + json.dumps(payload) + ");"
+
+    def _subsystem_rows(self) -> List[dict]:
+        """Left-column subsystem list as a two-level accordion: top-level
+        category rows with their child pods/banks/tubes nested under them
+        (parent_index links, mirroring the ship's aggregator structure).
+        Every row carries `index` — its pin-descriptor index — so a row
+        click can fire select_pin:<index> regardless of nesting."""
+        def _row(i: int, d: dict) -> dict:
+            return {
+                "index": i,
+                "name": d.get("name", ""),
+                "targetable": bool(d.get("targetable", False)),
+                "condition_pct": d.get("condition_pct"),
+                "kind": d.get("kind", "subsystem"),
+                "children": [],
+            }
+        rows: List[dict] = []
+        by_index: dict = {}
+        for i, d in enumerate(self._descriptors):
+            row = _row(i, d)
+            by_index[i] = row
+            parent = by_index.get(d.get("parent_index"))
+            if parent is not None:
+                parent["children"].append(row)
+            else:
+                rows.append(row)
+        for row in rows:
+            if row["children"]:
+                row["expanded"] = row["name"] in self._expanded_groups
+        return rows
 
     def invalidate(self) -> None:
         self._last_pushed = None
@@ -348,9 +377,26 @@ class ShipPropertyViewerPanel(Panel):
                 return False
             if 0 <= idx < len(self._descriptors):
                 self.selected_index = idx
+                # Reveal the selection in the list: expand its group so a
+                # 3D pin click never lands on a hidden row.
+                pi = self._descriptors[idx].get("parent_index")
+                if pi is not None and 0 <= pi < len(self._descriptors):
+                    self._expanded_groups.add(
+                        self._descriptors[pi].get("name", ""))
                 self._last_pushed = None  # force re-push of popover
                 return True
             return False
+        if action.startswith("toggle_group:"):
+            try:
+                idx = int(action.split(":", 1)[1])
+            except ValueError:
+                return False
+            if not (0 <= idx < len(self._descriptors)):
+                return False
+            name = self._descriptors[idx].get("name", "")
+            self._expanded_groups.symmetric_difference_update({name})
+            self._last_pushed = None
+            return True
         if action == "deselect":
             if self.selected_index is None:
                 return False
