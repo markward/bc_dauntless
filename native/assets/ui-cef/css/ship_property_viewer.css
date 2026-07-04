@@ -46,42 +46,151 @@
     font-weight: 600;
     letter-spacing: 1.5px;
     text-transform: uppercase;
-}
-
-/* Pushes the pin-count + close button to the right edge, keeping the
-   title and the overlay toggle buttons together at the top-left. */
-.spv-spacer {
     flex: 1;
 }
 
-/* Overlay toggle buttons (Glow Regions / Weapon Arcs). Same chrome as the
-   close button; .active marks the overlay as on. */
-.spv-toggle {
-    background: rgba(0, 0, 0, 0.25);
-    border: 1px solid rgba(255, 230, 160, 0.4);
-    color: #ffd;
-    font-family: inherit;
-    font-size: 11px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    height: 22px;
-    padding: 0 10px;
-    cursor: pointer;
+/* ── Left column: tool grid + subsystem list ───────────────────────────
+   Geometry (top/left/width) is mirrored by TITLEBAR_H_PT / LEFT_COL_X1_PT /
+   LEFT_COL_Y0_PT in engine/ui/ship_property_viewer_panel.py so the host
+   knows which mouse input belongs to this chrome — keep them in sync. */
+#spv-left {
+    position: absolute;
+    top: 44px;                 /* LEFT_COL_Y0_PT */
+    left: 12px;
+    bottom: 12px;
+    width: 248px;              /* right edge 260px < LEFT_COL_X1_PT (268) */
     display: flex;
-    align-items: center;
-    line-height: 1;
-    transition: background-color 80ms linear;
+    flex-direction: column;
+    gap: 8px;
+    pointer-events: none;      /* children restore auto */
+}
+
+/* Square icon tool buttons. A single row today; grid-auto-flow keeps it a
+   grid as more tools land. .active marks the overlay as on. */
+#spv-tools {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, 40px);
+    gap: 6px;
     pointer-events: auto;
 }
 
-.spv-toggle:hover {
-    background: rgba(0, 0, 0, 0.5);
+.spv-tool {
+    width: 40px;
+    height: 40px;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 230, 160, 0.4);
+    color: #ffd;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    transition: background-color 80ms linear;
 }
 
-.spv-toggle.active {
+.spv-tool:hover {
+    background: rgba(0, 0, 0, 0.6);
+}
+
+.spv-tool.active {
     background: rgba(255, 214, 90, 0.85);
     border-color: rgba(255, 240, 180, 0.9);
     color: rgb(40, 24, 8);
+}
+
+/* Subsystem list — same visual language as the target list panel
+   (css/target_list.css): gradient header, near-black scrollable body with
+   a maroon left rail, condition bars. */
+#spv-syslist {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    pointer-events: auto;
+    font-weight: 600;
+    -webkit-font-smoothing: antialiased;
+}
+
+.spv-syslist__header {
+    flex: 0 0 auto;
+    background: linear-gradient(90deg, rgb(216, 94, 86), rgb(216, 132, 80));
+    color: rgb(0, 0, 0);
+    padding: 3px 14px 3px 18px;
+    border-top-right-radius: 14px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 14px;
+}
+
+.spv-syslist__body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    background: rgba(10, 10, 16, 0.97);
+    border-left: 4px solid rgb(216, 94, 86);
+    padding: 6px 0;
+}
+
+.spv-sys-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 10px 3px 14px;
+    cursor: pointer;
+    font-size: 13px;
+    letter-spacing: 0.04em;
+    color: rgba(235, 225, 255, 0.85);
+}
+
+.spv-sys-row:hover {
+    background: rgba(255, 255, 175, 0.10);
+}
+
+.spv-sys-row--chosen {
+    background: rgba(255, 214, 90, 0.25);
+    color: rgb(235, 225, 255);
+}
+
+.spv-sys-row--chosen:hover {
+    background: rgba(255, 214, 90, 0.30);
+}
+
+.spv-sys-row__name {
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Condition bar — mirrors .target-list__sub-bar sizing. */
+.spv-sys-row__bar {
+    --bar-pct: 0%;
+    flex: 0 0 auto;
+    width: 24px;
+    height: 6px;
+    background: rgba(40, 40, 40, 0.6);
+    position: relative;
+}
+
+.spv-sys-row__bar::after {
+    content: "";
+    display: block;
+    height: 100%;
+    width: var(--bar-pct);
+    background: rgb(255, 200, 60);
+    transition: width 120ms linear;
+}
+
+/* Eye glyph: open = targetable, shut = untargetable (dimmed). */
+.spv-sys-row__eye {
+    flex: 0 0 auto;
+    width: 16px;
+    height: 16px;
+    color: rgba(235, 225, 255, 0.9);
+}
+
+.spv-sys-row__eye--shut {
+    color: rgba(235, 225, 255, 0.35);
 }
 
 .spv-pincount {

@@ -40,6 +40,10 @@ window.setShipPropertyViewer = function (data) {
         arcsBtn.classList.toggle('active', data.show_arcs === true);
     }
 
+    renderSPVSubsystemList(data.subsystems || [],
+                           (typeof data.selected_index === 'number')
+                               ? data.selected_index : null);
+
     var pop = document.getElementById('spv-popover');
     if (!pop) return;
     if (data.selected) {
@@ -69,10 +73,57 @@ window.shipPropertyViewerClose = function () {
     dauntlessEvent('ship-property-viewer/cancel');
 };
 
-// Titlebar overlay toggles (Glow Regions / Weapon Arcs) → Python flips the
+// Tool-grid overlay toggles (Glow Regions / Weapon Arcs) → Python flips the
 // flag and re-pushes the payload, which round-trips back here as
 // data.show_glow / data.show_arcs so the .active button state always mirrors
 // the panel's real state.
 window.shipPropertyViewerToggle = function (action) {
     dauntlessEvent('ship-property-viewer/' + action);
 };
+
+// Subsystem-list row click: select that pin; clicking the already-selected
+// row deselects (mirrors clicking empty space in the 3D view).
+window.shipPropertyViewerRow = function (index, chosen) {
+    dauntlessEvent('ship-property-viewer/' +
+                   (chosen ? 'deselect' : ('select_pin:' + index)));
+};
+
+// Eye glyphs: open = targetable, shut = untargetable. Inline SVG so the
+// colour follows the row's currentColor.
+var SPV_EYE_OPEN =
+    '<svg viewBox="0 0 24 24" width="16" height="16" fill="none"'
+  + ' stroke="currentColor" stroke-width="2" stroke-linejoin="round">'
+  + '<path d="M2 12 C 5.5 6.5, 18.5 6.5, 22 12 C 18.5 17.5, 5.5 17.5, 2 12 Z"/>'
+  + '<circle cx="12" cy="12" r="3"/></svg>';
+var SPV_EYE_SHUT =
+    '<svg viewBox="0 0 24 24" width="16" height="16" fill="none"'
+  + ' stroke="currentColor" stroke-width="2" stroke-linecap="round">'
+  + '<path d="M2 12 C 5.5 17.5, 18.5 17.5, 22 12"/>'
+  + '<path d="M6 15.5l-1.8 2.4M12 17v3M18 15.5l1.8 2.4"/></svg>';
+
+// Render the left-column subsystem list. Rows are index-aligned with the
+// pin descriptors, so row i selects pin i.
+function renderSPVSubsystemList(subs, selectedIndex) {
+    var body = document.getElementById('spv-syslist-body');
+    if (!body) return;
+    var html = '';
+    for (var i = 0; i < subs.length; i++) {
+        var sub = subs[i] || {};
+        var chosen = (selectedIndex === i);
+        var eye = sub.targetable ? SPV_EYE_OPEN : SPV_EYE_SHUT;
+        var eyeCls = sub.targetable ? '' : ' spv-sys-row__eye--shut';
+        var bar = (typeof sub.condition_pct === 'number')
+            ? '<span class="spv-sys-row__bar" style="--bar-pct:'
+              + Math.max(0, Math.min(100, sub.condition_pct)) + '%"></span>'
+            : '';
+        html += '<div class="spv-sys-row' + (chosen ? ' spv-sys-row--chosen' : '') + '"'
+              +   ' onclick="shipPropertyViewerRow(' + i + ', ' + chosen + ')">'
+              +   '<span class="spv-sys-row__name">' + escapeHtmlSPV(sub.name || '') + '</span>'
+              +   bar
+              +   '<span class="spv-sys-row__eye' + eyeCls + '"'
+              +   ' title="' + (sub.targetable ? 'Targetable' : 'Not targetable') + '">'
+              +   eye + '</span>'
+              + '</div>';
+    }
+    body.innerHTML = html;
+}

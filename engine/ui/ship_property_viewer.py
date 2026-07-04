@@ -124,6 +124,8 @@ def build_descriptors(ship) -> List[dict]:
             "icon_id":    _icon_id_for(sub),
             "world_pos":  (w.x, w.y, w.z),
             "state":      _state_for(sub),
+            "targetable": _targetable_for(sub),
+            "condition_pct": _condition_pct_for(sub),
             "properties": props,
         })
     # Object emitters — non-damageable mount markers (shuttle bay, probe
@@ -142,6 +144,8 @@ def build_descriptors(ship) -> List[dict]:
             "world_pos":  (w.x, w.y, w.z),
             "state":      "mount",
             "kind":       "mount",
+            "targetable": False,
+            "condition_pct": None,
             "properties": {"name": em.GetName(),
                            "emitted_type": em.GetEmittedObjectType()},
         })
@@ -185,6 +189,29 @@ def _state_for(sub) -> str:
     if _is("IsDamaged"):
         return "damaged"
     return "healthy"
+
+
+def _targetable_for(sub) -> bool:
+    """True when the AI/target-menu would list this subsystem (hardpoint
+    SetTargetable flag). Missing method (stub objects) → False."""
+    m = getattr(sub, "IsTargetable", None)
+    if m is None:
+        return False
+    try:
+        return bool(m())
+    except Exception:
+        return False
+
+
+def _condition_pct_for(sub):
+    """Condition as an int percentage 0..100, or None when unavailable."""
+    m = getattr(sub, "GetConditionPercentage", None)
+    if m is None:
+        return None
+    try:
+        return int(round(float(m()) * 100.0))
+    except Exception:
+        return None
 
 
 def _properties_for(sub, pos) -> dict:

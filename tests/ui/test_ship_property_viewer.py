@@ -225,3 +225,30 @@ def test_selected_name_returns_selected_descriptor_name():
     assert p.selected_name() == "VentralPhaser1"
     p.selected_index = 99                     # out of range → None
     assert p.selected_name() is None
+
+
+def test_build_descriptors_carries_targetable_and_condition(monkeypatch):
+    import engine.ui.ship_property_viewer as spv
+    monkeypatch.setattr(spv, "_icon_id_for", lambda sub: 2)
+    monkeypatch.setattr(spv, "_iter_subsystems", lambda ship: list(ship))
+
+    class _Full(_StubSubsystem):
+        def IsTargetable(self): return 1
+        def GetConditionPercentage(self): return 0.42
+
+    class _Hidden(_StubSubsystem):
+        def IsTargetable(self): return 0
+        def GetConditionPercentage(self): return 1.0
+
+    ship = _StubShip([_Full("Phaser", (0, 1, 0), 2),
+                      _Hidden("Power Plant", (0, 0, 0), 6)])
+    descs = build_descriptors(ship)
+    assert descs[0]["targetable"] is True
+    assert descs[0]["condition_pct"] == 42
+    assert descs[1]["targetable"] is False
+    assert descs[1]["condition_pct"] == 100
+    # Stub without either method: safe defaults, still listed.
+    plain = _StubShip([_StubSubsystem("Bare", (0, 0, 0), 6)])
+    d = build_descriptors(plain)[0]
+    assert d["targetable"] is False
+    assert d["condition_pct"] is None

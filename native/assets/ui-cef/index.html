@@ -180,13 +180,38 @@
     <div id="spv-root" class="spv-root dev-only">
       <div class="spv-titlebar">
         <span class="spv-title">Ship Property Viewer</span>
-        <button id="spv-toggle-glow" class="spv-toggle"
-                onclick="shipPropertyViewerToggle('toggle_glow_regions')">Glow Regions</button>
-        <button id="spv-toggle-arcs" class="spv-toggle"
-                onclick="shipPropertyViewerToggle('toggle_weapon_arcs')">Weapon Arcs</button>
-        <span class="spv-spacer"></span>
         <span id="spv-pincount" class="spv-pincount"></span>
         <button class="spv-close" onclick="shipPropertyViewerClose()">&#x2715;</button>
+      </div>
+      <!-- Left column: square tool buttons (a grid as more functions land)
+           above a target-list-style subsystem list for the viewed ship.
+           Row clicks select the matching pin (select_pin:<index>); the eye
+           glyph shows the hardpoint Targetable flag. Geometry (top/left/
+           width) is mirrored by TITLEBAR_H_PT / LEFT_COL_* in
+           ship_property_viewer_panel.py — keep them in sync. -->
+      <div id="spv-left">
+        <div id="spv-tools">
+          <button id="spv-toggle-glow" class="spv-tool" title="Show glow regions"
+                  onclick="shipPropertyViewerToggle('toggle_glow_regions')">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none"
+                 stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <circle cx="12" cy="12" r="4"/>
+              <path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2.1 2.1M16.9 16.9L19 19M19 5l-2.1 2.1M7.1 16.9L5 19"/>
+            </svg>
+          </button>
+          <button id="spv-toggle-arcs" class="spv-tool" title="Show weapon arcs"
+                  onclick="shipPropertyViewerToggle('toggle_weapon_arcs')">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none"
+                 stroke="currentColor" stroke-width="2" stroke-linejoin="round">
+              <path d="M12 21 L5 7 A9.5 9.5 0 0 1 19 7 Z"/>
+              <path d="M12 21 L12 11" stroke-dasharray="2 2"/>
+            </svg>
+          </button>
+        </div>
+        <div id="spv-syslist">
+          <div class="spv-syslist__header">Subsystems</div>
+          <div id="spv-syslist-body" class="spv-syslist__body"></div>
+        </div>
       </div>
       <div id="spv-popover" class="spv-popover"></div>
     </div>

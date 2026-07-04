@@ -241,7 +241,9 @@ def test_handle_input_click_on_empty_space_deselects(monkeypatch):
     p.camera = OrbitCamera(target=(0, 0, 0), distance=20.0)
     p.selected_index = 0  # pretend something was selected
     h = _FakeHost()
-    h._cursor = (5.0, 5.0); h._down = True
+    # Empty 3D area — right of the left column, below the titlebar (clicks
+    # inside those chrome regions belong to CEF and never reach the pick).
+    h._cursor = (600.0, 300.0); h._down = True
     p.handle_input(h)
     h._down = False
     p.handle_input(h)
@@ -338,3 +340,90 @@ def test_toggles_reset_on_reopen_and_close():
     p.open()
     assert p.show_glow_regions is False
     assert p.show_weapon_arcs is False
+
+
+# ── left-column subsystem list payload ─────────────────────────────────────
+
+def test_payload_lists_subsystems_with_targetable_and_condition(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    fake = [
+        {"name": "Phaser 1", "icon_id": 2, "world_pos": (0, 1, 0),
+         "state": "healthy", "targetable": True, "condition_pct": 88,
+         "properties": {"name": "Phaser 1"}},
+        {"name": "Shuttle Bay", "icon_id": 6, "world_pos": (0, 0, 1),
+         "state": "mount", "kind": "mount", "targetable": False,
+         "condition_pct": None, "properties": {"name": "Shuttle Bay"}},
+    ]
+    monkeypatch.setattr(mod, "build_descriptors", lambda ship: fake)
+    p = ShipPropertyViewerPanel(ship_getter=lambda: object())
+    p.open()
+    data = _payload_data(p.render_payload())
+    subs = data["subsystems"]
+    assert [s["name"] for s in subs] == ["Phaser 1", "Shuttle Bay"]
+    assert subs[0]["targetable"] is True and subs[0]["condition_pct"] == 88
+    assert subs[1]["targetable"] is False and subs[1]["condition_pct"] is None
+    assert subs[1]["kind"] == "mount"
+    assert data["selected_index"] is None
+    p.dispatch_event("select_pin:1")
+    assert _payload_data(p.render_payload())["selected_index"] == 1
+
+
+# ── CEF chrome regions own their mouse input ───────────────────────────────
+
+def test_wheel_over_left_column_is_left_for_cef():
+    p = _open_panel_for_input()
+    host = _FakeHost()
+    host._scroll = 2.0
+    host._cursor = (100.0, 300.0)          # inside the left column
+    d0 = p.camera.distance
+    p.handle_input(host)
+    assert p.camera.distance == d0         # no zoom...
+    assert host._scroll == 2.0             # ...and accumulator untouched
+
+
+def test_wheel_outside_left_column_still_zooms():
+    p = _open_panel_for_input()
+    host = _FakeHost()
+    host._scroll = 2.0
+    host._cursor = (600.0, 300.0)          # open 3D area
+    d0 = p.camera.distance
+    p.handle_input(host)
+    assert p.camera.distance < d0
+    assert host._scroll == 0.0
+
+
+def test_press_over_chrome_never_orbits_or_picks(monkeypatch):
+    p = _open_panel_for_input()
+    host = _FakeHost()
+    picked = []
+    monkeypatch.setattr(p, "pick_at", lambda *a, **k: picked.append(a))
+    yaw0 = p.camera.yaw
+    # Press inside the left column, drag, release — all ignored.
+    host._cursor = (100.0, 300.0); host._down = True
+    p.handle_input(host)
+    host._cursor = (150.0, 350.0)
+    p.handle_input(host)
+    assert p.camera.yaw == yaw0
+    host._down = False
+    p.handle_input(host)
+    assert picked == []
+    # Titlebar press is chrome too.
+    host._cursor = (600.0, 10.0); host._down = True
+    p.handle_input(host)
+    host._down = False
+    p.handle_input(host)
+    assert picked == []
+    # A press in the open 3D area still picks on release.
+    host._cursor = (600.0, 300.0); host._down = True
+    p.handle_input(host)
+    host._down = False
+    p.handle_input(host)
+    assert len(picked) == 1
+
+
+def _open_panel_for_input():
+    from engine.ui.ship_property_viewer import OrbitCamera as _Cam
+    p = ShipPropertyViewerPanel(ship_getter=lambda: None)
+    p.open()
+    p.camera = _Cam(target=(0, 0, 0), distance=100.0)
+    return p
