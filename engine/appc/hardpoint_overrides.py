@@ -96,6 +96,18 @@ def _galaxy(find):
 ############################################
 
 def _GenericTemplate(find):
+    # Warp glow: formula starting point (0.375*R radius,
+    # +/-3.125*R extent; tools/bake_warp_glow.py) -- hand-tune per nacelle.
+    for name, radius, aft, fore in (
+        ("Warp Engine", 0.0938, -0.7812, 0.7812),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, aft, fore)
+
     for name, radius in (
         ("Impulse Engine", 0.25),
     ):
@@ -112,6 +124,19 @@ def _GenericTemplate(find):
 ############################################
 
 def _akira(find):
+    # Warp glow: formula starting point (0.375*R radius,
+    # +/-3.125*R extent; tools/bake_warp_glow.py) -- hand-tune per nacelle.
+    for name, radius, aft, fore in (
+        ("Port Warp", 0.375, -3.125, 3.125),
+        ("Star Warp", 0.375, -3.125, 3.125),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, aft, fore)
+
     for name, radius in (
         ("Port Impulse", 0.23),
         ("Star Impulse", 0.23),
@@ -134,6 +159,19 @@ def _akira(find):
 ############################################
 
 def _ambassador(find):
+    # Warp glow: formula starting point (0.375*R radius,
+    # +/-3.125*R extent; tools/bake_warp_glow.py) -- hand-tune per nacelle.
+    for name, radius, aft, fore in (
+        ("Port Warp", 0.3, -2.5, 2.5),
+        ("Star Warp", 0.3, -2.5, 2.5),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, aft, fore)
+
     for name, radius in (
         ("Port Impulse", 0.3),
         ("Star Impulse", 0.3),
@@ -150,6 +188,19 @@ def _ambassador(find):
 ############################################
 
 def _birdofprey(find):
+    # Warp glow: formula starting point (0.375*R radius,
+    # +/-3.125*R extent; tools/bake_warp_glow.py) -- hand-tune per nacelle.
+    for name, radius, aft, fore in (
+        ("Port Warp", 0.0638, -0.5312, 0.5312),
+        ("Star Warp", 0.0638, -0.5312, 0.5312),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, aft, fore)
+
     for name, radius in (
         ("Impulse Engine", 0.15),
     ):
@@ -165,6 +216,18 @@ def _birdofprey(find):
 ############################################
 
 def _bombfreighter(find):
+    # Warp glow: formula starting point (0.375*R radius,
+    # +/-3.125*R extent; tools/bake_warp_glow.py) -- hand-tune per nacelle.
+    for name, radius, aft, fore in (
+        ("Warp", 0.2625, -2.1875, 2.1875),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, aft, fore)
+
     for name, radius in (
         ("Port Impulse", 0.2),
         ("Star Impulse", 0.2),
@@ -181,6 +244,18 @@ def _bombfreighter(find):
 ############################################
 
 def _cardfreighter(find):
+    # Warp glow: formula starting point (0.375*R radius,
+    # +/-3.125*R extent; tools/bake_warp_glow.py) -- hand-tune per nacelle.
+    for name, radius, aft, fore in (
+        ("Warp", 0.2625, -2.1875, 2.1875),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, aft, fore)
+
     for name, radius in (
         ("Port Impulse", 0.2),
         ("Star Impulse", 0.2),
@@ -197,6 +272,20 @@ def _cardfreighter(find):
 ############################################
 
 def _cardhybrid(find):
+    # Warp glow: formula starting point (0.375*R radius,
+    # +/-3.125*R extent; tools/bake_warp_glow.py) -- hand-tune per nacelle.
+    for name, radius, aft, fore in (
+        ("Port Warp", 0.525, -4.375, 4.375),
+        ("Star Warp", 0.525, -4.375, 4.375),
+        ("Center Warp", 0.45, -3.75, 3.75),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, aft, fore)
+
     for name, radius in (
         ("Port Impulse", 0.3),
         ("Star Impulse", 0.3),
@@ -243,6 +332,19 @@ def _commlight(find):
 ############################################
 
 def _e2m0warbird(find):
+    # Warp glow: formula starting point (0.375*R radius,
+    # +/-3.125*R extent; tools/bake_warp_glow.py) -- hand-tune per nacelle.
+    for name, radius, aft, fore in (
+        ("Port Warp", 0.375, -3.125, 3.125),
+        ("Star Warp", 0.375, -3.125, 3.125),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, aft, fore)
+
     for name, radius in (
         ("Port Impulse", 0.7),
         ("Star Impulse", 0.7),
@@ -259,6 +361,19 @@ def _e2m0warbird(find):
 ############################################
 
 def _enterprise(find):
+    # Warp glow: formula starting point (0.375*R radius,
+    # +/-3.125*R extent; tools/bake_warp_glow.py) -- hand-tune per nacelle.
+    for name, radius, aft, fore in (
+        ("Port Warp", 0.375, -3.125, 3.125),
+        ("Star Warp", 0.375, -3.125, 3.125),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, aft, fore)
+
     for name, radius in (
         ("Port Impulse", 0.25),
         ("Star Impulse", 0.25),
@@ -292,6 +407,18 @@ def _escapepod(find):
 ############################################
 
 def _freighter(find):
+    # Warp glow: formula starting point (0.375*R radius,
+    # +/-3.125*R extent; tools/bake_warp_glow.py) -- hand-tune per nacelle.
+    for name, radius, aft, fore in (
+        ("Warp Engine", 0.1875, -1.5625, 1.5625),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, aft, fore)
+
     for name, radius in (
         ("Port Impulse", 0.4),
         ("Star Impulse", 0.4),
@@ -308,6 +435,18 @@ def _freighter(find):
 ############################################
 
 def _galor(find):
+    # Warp glow: formula starting point (0.375*R radius,
+    # +/-3.125*R extent; tools/bake_warp_glow.py) -- hand-tune per nacelle.
+    for name, radius, aft, fore in (
+        ("Warp Engine 1", 0.1875, -1.5625, 1.5625),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, aft, fore)
+
     for name, radius in (
         ("Port Impulse", 0.2),
         ("Star Impulse", 0.2),
@@ -324,6 +463,19 @@ def _galor(find):
 ############################################
 
 def _geronimo(find):
+    # Warp glow: formula starting point (0.375*R radius,
+    # +/-3.125*R extent; tools/bake_warp_glow.py) -- hand-tune per nacelle.
+    for name, radius, aft, fore in (
+        ("Port Warp", 0.375, -3.125, 3.125),
+        ("Star Warp", 0.375, -3.125, 3.125),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, aft, fore)
+
     for name, radius in (
         ("Port Impulse", 0.23),
         ("Star Impulse", 0.23),
@@ -340,6 +492,18 @@ def _geronimo(find):
 ############################################
 
 def _keldon(find):
+    # Warp glow: formula starting point (0.375*R radius,
+    # +/-3.125*R extent; tools/bake_warp_glow.py) -- hand-tune per nacelle.
+    for name, radius, aft, fore in (
+        ("Warp Engine 1", 0.1875, -1.5625, 1.5625),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, aft, fore)
+
     for name, radius in (
         ("Engine 1", 0.3),
         ("Engine 2", 0.3),
@@ -358,6 +522,19 @@ def _keldon(find):
 ############################################
 
 def _kessokheavy(find):
+    # Warp glow: formula starting point (0.375*R radius,
+    # +/-3.125*R extent; tools/bake_warp_glow.py) -- hand-tune per nacelle.
+    for name, radius, aft, fore in (
+        ("Star Warp", 0.9375, -7.8125, 7.8125),
+        ("Port Warp", 0.9375, -7.8125, 7.8125),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, aft, fore)
+
     for name, radius in (
         ("Port Impulse", 1.2),
         ("Star Impulse", 1.2),
@@ -374,6 +551,19 @@ def _kessokheavy(find):
 ############################################
 
 def _kessoklight(find):
+    # Warp glow: formula starting point (0.375*R radius,
+    # +/-3.125*R extent; tools/bake_warp_glow.py) -- hand-tune per nacelle.
+    for name, radius, aft, fore in (
+        ("Port Warp", 0.375, -3.125, 3.125),
+        ("Star Warp", 0.375, -3.125, 3.125),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, aft, fore)
+
     for name, radius in (
         ("Port Impulse", 0.25),
         ("Star Impulse", 0.25),
@@ -407,6 +597,19 @@ def _kessokmine(find):
 ############################################
 
 def _marauder(find):
+    # Warp glow: formula starting point (0.375*R radius,
+    # +/-3.125*R extent; tools/bake_warp_glow.py) -- hand-tune per nacelle.
+    for name, radius, aft, fore in (
+        ("Star Warp", 0.225, -1.875, 1.875),
+        ("Port Warp", 0.225, -1.875, 1.875),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, aft, fore)
+
     for name, radius in (
         ("Star Impulse", 0.12),
         ("Port Impulse", 0.12),
@@ -423,6 +626,18 @@ def _marauder(find):
 ############################################
 
 def _matankeldon(find):
+    # Warp glow: formula starting point (0.375*R radius,
+    # +/-3.125*R extent; tools/bake_warp_glow.py) -- hand-tune per nacelle.
+    for name, radius, aft, fore in (
+        ("Warp Engine 1", 0.1875, -1.5625, 1.5625),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, aft, fore)
+
     for name, radius in (
         ("Engine 1", 0.3),
         ("Engine 2", 0.3),
@@ -441,6 +656,19 @@ def _matankeldon(find):
 ############################################
 
 def _nebula(find):
+    # Warp glow: formula starting point (0.375*R radius,
+    # +/-3.125*R extent; tools/bake_warp_glow.py) -- hand-tune per nacelle.
+    for name, radius, aft, fore in (
+        ("Port Warp", 0.2063, -1.7188, 1.7188),
+        ("Star Warp", 0.2063, -1.7188, 1.7188),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, aft, fore)
+
     for name, radius in (
         ("Port Impulse", 0.3),
         ("Star Impulse", 0.3),
@@ -457,6 +685,19 @@ def _nebula(find):
 ############################################
 
 def _peregrine(find):
+    # Warp glow: formula starting point (0.375*R radius,
+    # +/-3.125*R extent; tools/bake_warp_glow.py) -- hand-tune per nacelle.
+    for name, radius, aft, fore in (
+        ("Port Warp", 0.1875, -1.5625, 1.5625),
+        ("Star Warp", 0.1875, -1.5625, 1.5625),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, aft, fore)
+
     for name, radius in (
         ("Port Impulse", 0.25),
         ("Star Impulse", 0.25),
@@ -473,6 +714,18 @@ def _peregrine(find):
 ############################################
 
 def _probe(find):
+    # Warp glow: formula starting point (0.375*R radius,
+    # +/-3.125*R extent; tools/bake_warp_glow.py) -- hand-tune per nacelle.
+    for name, radius, aft, fore in (
+        ("Warp", 0.0094, -0.0781, 0.0781),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, aft, fore)
+
     for name, radius in (
         ("Impulse", 0.02),
     ):
@@ -488,6 +741,18 @@ def _probe(find):
 ############################################
 
 def _probe2(find):
+    # Warp glow: formula starting point (0.375*R radius,
+    # +/-3.125*R extent; tools/bake_warp_glow.py) -- hand-tune per nacelle.
+    for name, radius, aft, fore in (
+        ("Warp", 0.0094, -0.0781, 0.0781),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, aft, fore)
+
     for name, radius in (
         ("Impulse", 0.02),
     ):
@@ -503,6 +768,19 @@ def _probe2(find):
 ############################################
 
 def _rankuf(find):
+    # Warp glow: formula starting point (0.375*R radius,
+    # +/-3.125*R extent; tools/bake_warp_glow.py) -- hand-tune per nacelle.
+    for name, radius, aft, fore in (
+        ("Port Warp", 0.0638, -0.5312, 0.5312),
+        ("Star Warp", 0.0638, -0.5312, 0.5312),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, aft, fore)
+
     for name, radius in (
         ("Impulse Engine", 0.15),
     ):
@@ -518,6 +796,19 @@ def _rankuf(find):
 ############################################
 
 def _shuttle(find):
+    # Warp glow: formula starting point (0.375*R radius,
+    # +/-3.125*R extent; tools/bake_warp_glow.py) -- hand-tune per nacelle.
+    for name, radius, aft, fore in (
+        ("Port Warp", 0.0112, -0.0938, 0.0938),
+        ("Star Warp", 0.0112, -0.0938, 0.0938),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, aft, fore)
+
     for name, radius in (
         ("Port Impulse", 0.03),
         ("Star Impulse", 0.03),
@@ -536,6 +827,19 @@ def _shuttle(find):
 ############################################
 
 def _sovereign(find):
+    # Warp glow: formula starting point (0.375*R radius,
+    # +/-3.125*R extent; tools/bake_warp_glow.py) -- hand-tune per nacelle.
+    for name, radius, aft, fore in (
+        ("Port Warp", 0.375, -3.125, 3.125),
+        ("Star Warp", 0.375, -3.125, 3.125),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, aft, fore)
+
     for name, radius in (
         ("Port Impulse", 0.25),
         ("Star Impulse", 0.25),
@@ -558,6 +862,20 @@ def _sovereign(find):
 ############################################
 
 def _sunbuster(find):
+    # Warp glow: formula starting point (0.375*R radius,
+    # +/-3.125*R extent; tools/bake_warp_glow.py) -- hand-tune per nacelle.
+    for name, radius, aft, fore in (
+        ("Warp 1", 0.7875, -6.5625, 6.5625),
+        ("Warp 2", 0.7875, -6.5625, 6.5625),
+        ("Warp 3", 0.7875, -6.5625, 6.5625),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, aft, fore)
+
     for name, radius in (
         ("Impulse 1", 1.2),
         ("Impulse 2", 1.2),
@@ -575,6 +893,19 @@ def _sunbuster(find):
 ############################################
 
 def _transport(find):
+    # Warp glow: formula starting point (0.375*R radius,
+    # +/-3.125*R extent; tools/bake_warp_glow.py) -- hand-tune per nacelle.
+    for name, radius, aft, fore in (
+        ("Port Warp", 0.225, -1.875, 1.875),
+        ("Star Warp", 0.225, -1.875, 1.875),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, aft, fore)
+
     for name, radius in (
         ("Port Impulse", 0.25),
         ("Star Impulse", 0.25),
@@ -591,6 +922,19 @@ def _transport(find):
 ############################################
 
 def _vorcha(find):
+    # Warp glow: formula starting point (0.375*R radius,
+    # +/-3.125*R extent; tools/bake_warp_glow.py) -- hand-tune per nacelle.
+    for name, radius, aft, fore in (
+        ("Port Warp", 0.225, -1.875, 1.875),
+        ("Star Warp", 0.225, -1.875, 1.875),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, aft, fore)
+
     for name, radius in (
         ("Port Impulse", 0.25),
         ("Star Impulse", 0.25),
@@ -607,6 +951,19 @@ def _vorcha(find):
 ############################################
 
 def _warbird(find):
+    # Warp glow: formula starting point (0.375*R radius,
+    # +/-3.125*R extent; tools/bake_warp_glow.py) -- hand-tune per nacelle.
+    for name, radius, aft, fore in (
+        ("Port Warp", 0.5625, -4.6875, 4.6875),
+        ("Star Warp", 0.5625, -4.6875, 4.6875),
+    ):
+        p = find(name)
+        if p is not None:
+            p.SetGlowRegionShape(0, "Cylinder")
+            p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
+            p.SetGlowRegionRadius(0, radius)
+            p.SetGlowRegionExtent(0, aft, fore)
+
     for name, radius in (
         ("Port Impulse", 0.23),
         ("Star Impulse", 0.23),

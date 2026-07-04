@@ -7,13 +7,13 @@ region geometry and the shader attenuation; this module only decides *when* and
 *how* a region dims. See
 docs/superpowers/specs/2026-06-10-subsystem-glow-dimming-design.md.
 
-Impulse glow volumes are driven by BAKED hardpoint data: each impulse pod's
+Warp and impulse glow volumes are driven by BAKED hardpoint data: each pod's
 property template carries indexed GlowRegion* fields (authored in hardpoint
 files or engine/appc/hardpoint_overrides.py — see README "Information for
-modders"). All state VFX (dim, flicker, throttle gain) operate on whatever
-regions the hardpoint defines. The hardpoint is the single source of truth: a
-pod that bakes nothing gets no impulse glow VFX at all (there is no in-engine
-derivation fallback).
+modders"). All state VFX (dim, flicker, impulse throttle gain) operate on
+whatever regions the hardpoint defines. The hardpoint is the single source of
+truth: a pod that bakes nothing gets no glow VFX at all (the old runtime
+capsule fit and cylinder derivations are gone).
 """
 
 import logging
@@ -26,9 +26,6 @@ _log = logging.getLogger(__name__)
 HEALTHY = "healthy"
 DISABLED = "disabled"
 DESTROYED = "destroyed"
-
-# Capsule axis for warp nacelles: ship-forward is model +Y (column-vector).
-WARP_AXIS = (0.0, 1.0, 0.0)
 
 # Impulse exhaust faces point aft = model -Y. The shader gates the impulse
 # brightening to faces whose normal points this way, so only the aft engine
@@ -262,10 +259,10 @@ def baked_region_ops(prop, default_pos, pod_name="") -> list:
 class ShipGlowController:
     """Per-ship: register glow regions once, push state each frame.
 
-    Capsule region per warp pod (elongated nacelles); sphere region for the
-    impulse engine and the sensor array (compact spots). Holds
-    (subsystem, region_index, prev_state, edge_time) per region. `renderer` is
-    engine.renderer (injected for testability).
+    Warp and impulse pods register their BAKED hardpoint regions (no
+    in-engine derivation); the sensor array gets a sphere at its hardpoint.
+    Holds (subsystem, region_index, prev_state, edge_time) per region.
+    `renderer` is engine.renderer (injected for testability).
     """
 
     def __init__(self, renderer, instance_id, ship):
@@ -276,44 +273,20 @@ class ShipGlowController:
         self._eased_frac = 0.0    # smoothed commanded throttle (0..1)
         self._last_now = None     # game-time of the previous update (for dt)
 
-        # Warp nacelles -> capsule regions (fit the elongated shape).
+        # Warp nacelles and impulse engines both take their glow volumes
+        # ONLY from baked hardpoint data (GlowRegion* fields; see
+        # baked_region_ops). The hardpoint is the single source of truth: a
+        # pod that bakes nothing gets NO glow VFX (the old runtime capsule
+        # fit / cylinder derivations are gone). Impulse regions are boost
+        # regions — dim/flicker AND the throttle gain drive the authored
+        # volume, with the shader gating gain to aft-facing faces
+        # (IMPULSE_AFT_AXIS). Warp regions dim/flicker only.
+        # Sensor array -> a plain (non-boost) sphere.
         for pod in warp_pods(ship.GetWarpEngineSubsystem()):
-            pos = _position_tuple(pod)
-            if pos is None:
-                continue
-            idx = self._r.compute_capsule_region(
-                instance_id, pos, WARP_AXIS, _radius(pod))
-            if idx < 0:
-                continue
-            self._regions.append(
-                {"sub": pod, "idx": idx, "prev": HEALTHY, "etime": -1.0,
-                 "boost": False})
+            self._register_baked(pod, boost=False)
 
-        # Impulse engines -> regions BAKED in the pod's hardpoint property
-        # (GlowRegion* fields; see baked_region_ops). The hardpoint is the
-        # single source of truth: a pod that bakes nothing gets NO impulse
-        # glow VFX (no in-engine derivation). Every baked region on an
-        # impulse pod is a boost region: dim/flicker AND the throttle gain
-        # all drive the authored volume. The shader still gates the gain to
-        # aft-facing faces (IMPULSE_AFT_AXIS) so only the exhaust faces
-        # brighten. Sensor array -> a plain (non-boost) sphere.
         for pod in impulse_engines(ship.GetImpulseEngineSubsystem()):
-            pos = _position_tuple(pod)
-            if pos is None:
-                continue
-            prop = pod.GetProperty() if hasattr(pod, "GetProperty") else None
-            for op in baked_region_ops(prop, pos,
-                                       getattr(pod, "GetName", str)()):
-                if op[0] == "sphere":
-                    idx = self._r.add_sphere_region(instance_id, op[1], op[2])
-                else:  # cylinder
-                    idx = self._r.add_cylinder_region(
-                        instance_id, op[1], op[2], op[3], op[4])
-                if idx < 0:
-                    continue
-                self._regions.append(
-                    {"sub": pod, "idx": idx, "prev": HEALTHY,
-                     "etime": -1.0, "boost": True})
+            self._register_baked(pod, boost=True)
 
         _sensor = ship.GetSensorSubsystem()
         _spos = _position_tuple(_sensor)
@@ -323,6 +296,24 @@ class ShipGlowController:
                 self._regions.append(
                     {"sub": _sensor, "idx": _sidx, "prev": HEALTHY,
                      "etime": -1.0, "boost": False})
+
+    def _register_baked(self, pod, boost: bool) -> None:
+        """Register every baked glow region on `pod`'s hardpoint property."""
+        pos = _position_tuple(pod)
+        if pos is None:
+            return
+        prop = pod.GetProperty() if hasattr(pod, "GetProperty") else None
+        for op in baked_region_ops(prop, pos, getattr(pod, "GetName", str)()):
+            if op[0] == "sphere":
+                idx = self._r.add_sphere_region(self._iid, op[1], op[2])
+            else:  # cylinder
+                idx = self._r.add_cylinder_region(
+                    self._iid, op[1], op[2], op[3], op[4])
+            if idx < 0:
+                continue
+            self._regions.append(
+                {"sub": pod, "idx": idx, "prev": HEALTHY, "etime": -1.0,
+                 "boost": boost})
 
     def update(self, now: float, throttle_frac=None) -> None:
         """Push dim/edge/flicker each frame; brighten the impulse region by the

@@ -34,7 +34,7 @@ _REQUIRED_BINDINGS = frozenset({
     "assemble_officer", "bridge_pass_set_enabled",
     "cef_composite", "cef_initialize", "cef_pump", "cef_reload", "cef_shutdown",
     "cef_toggle_devtools", "clear_hologram_ship", "clear_subsystem_pins",
-    "clear_viewscreen_comm_source", "compute_capsule_region",
+    "clear_viewscreen_comm_source",
     "consume_mouse_delta", "create_bridge_instance", "create_comm_instance",
     "create_instance", "damage_decals_tick", "decals_set_enabled",
     "destroy_instance", "dust_set_density", "dust_set_enabled", "filmic_enabled",
@@ -445,22 +445,11 @@ def set_rim_eligible(instance_id: InstanceId, eligible: bool) -> None:
     _h.set_rim_eligible(instance_id, eligible)
 
 
-def compute_capsule_region(instance_id: InstanceId,
-                           center, axis, radius: float) -> int:
-    """Fit and store a warp-nacelle glow capsule on the instance.
-
-    center/axis are 3-tuples in game units / body frame; radius in game units.
-    Returns the region index (>=0) or -1 on failure.
-    """
-    return _h.compute_capsule_region(
-        instance_id, tuple(center), tuple(axis), float(radius))
-
-
 def add_sphere_region(instance_id: InstanceId, center, radius: float) -> int:
     """Store a sphere glow region at a hardpoint. center is a 3-tuple in game
     units / body frame; radius in game units. Returns the region index (>=0) or
-    -1 on failure. Used for impulse engines and sensor arrays (compact spots);
-    warp nacelles use compute_capsule_region for their elongated shape."""
+    -1 on failure. Used for sensor arrays and baked hardpoint spheres; warp and
+    impulse volumes are baked cylinders (see engine/appc/subsystem_glow.py)."""
     return _h.add_sphere_region(instance_id, tuple(center), float(radius))
 
 

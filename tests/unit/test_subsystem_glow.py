@@ -76,11 +76,11 @@ class _Point:
 
 
 class _Pod:
-    """Leaf pod. By default carries the standard baked aft-cylinder glow
-    region (mirroring the tools/bake_impulse_glow.py section every stock ship
-    has) — impulse glow ONLY comes from baked hardpoint data now. Pass
-    baked=False for a pod whose hardpoint bakes nothing (=> no impulse glow).
-    Warp/sensor paths never consult GetProperty."""
+    """Leaf pod. By default carries a standard baked aft-cylinder glow region
+    (mirroring the bake-tool sections every stock ship has) — warp AND impulse
+    glow ONLY come from baked hardpoint data now. Pass baked=False for a pod
+    whose hardpoint bakes nothing (=> no glow). The sensor path never consults
+    GetProperty."""
     def __init__(self, pos, radius=2.0, baked=True):
         self._pos, self._radius = pos, radius
         self._baked = baked
@@ -120,14 +120,10 @@ class _Ship:
 class _FakeRenderer:
     def __init__(self, results):
         self._results = list(results)
-        self.capsule_calls = []
         self.sphere_calls = []
         self.cylinder_calls = []
         self.dim_calls = []
         self.gain_calls = []
-    def compute_capsule_region(self, iid, center, axis, radius):
-        self.capsule_calls.append((iid, center, axis, radius))
-        return self._results.pop(0)
     def add_sphere_region(self, iid, center, radius):
         self.sphere_calls.append((iid, center, radius))
         return self._results.pop(0)
@@ -140,22 +136,25 @@ class _FakeRenderer:
         self.gain_calls.append((iid, idx, gain, gate_axis))
 
 
-def test_controller_registers_capsule_warp_cylinder_impulse_sphere_sensor():
-    warp = _WarpAgg([_Pod(_Point(-3.0, 1.0, 0.0))])
+def test_controller_registers_baked_warp_baked_impulse_sphere_sensor():
+    warp = _WarpAgg([_Pod(_Point(-3.0, 1.0, 0.0), radius=1.2)])
     impulse = _Pod(_Point(0.0, -0.98, -0.45), radius=0.25)
     sensor = _Pod(_Point(0.0, -0.45, -0.5), radius=0.28)
     ship = _Ship(warp, impulse, sensor)
-    rend = _FakeRenderer(results=[0, 1, 2])  # capsule, impulse cylinder, sensor sphere
+    rend = _FakeRenderer(results=[0, 1, 2])  # warp cyl, impulse cyl, sensor sphere
 
     ctrl = sg.ShipGlowController(rend, instance_id=7, ship=ship)
 
-    assert rend.capsule_calls == [(7, (-3.0, 1.0, 0.0), sg.WARP_AXIS, 2.0)]
-    # Impulse -> the pod's BAKED aft-running cylinder; sensor -> plain sphere.
+    # Warp AND impulse register their pods' BAKED regions (no fit/derivation);
+    # sensor -> plain sphere at the hardpoint.
     assert rend.cylinder_calls == [
+        (7, (-3.0, 1.0, 0.0), sg.IMPULSE_AFT_AXIS, 1.2, 2.0),
         (7, (0.0, -0.98, -0.45), sg.IMPULSE_AFT_AXIS, 0.25, 2.0),
     ]
     assert rend.sphere_calls == [(7, (0.0, -0.45, -0.5), 0.28)]
     assert len(ctrl._regions) == 3
+    # warp region is not a boost region; impulse is
+    assert [r["boost"] for r in ctrl._regions[:2]] == [False, True]
 
 
 def test_controller_drives_three_state_across_edges():
@@ -528,3 +527,14 @@ def test_controller_survives_garbage_baked_values(caplog):
     assert "Center Impulse" in caplog.text and "skipped" in caplog.text
     assert rend.sphere_calls == [(7, (0.0, 0.0, 0.0), 0.3)]
     assert len(ctrl._regions) == 1
+
+
+def test_controller_unbaked_warp_pod_gets_no_glow_vfx():
+    """Warp glow is hardpoint-only too: no baked regions -> no warp glow, and
+    no capsule fit exists anymore."""
+    warp = _WarpAgg([_Pod(_Point(-3.0, 1.0, 0.0), baked=False)])
+    ship = _Ship(warp, None, None)
+    rend = _FakeRenderer(results=[])
+    ctrl = sg.ShipGlowController(rend, instance_id=7, ship=ship)
+    assert rend.cylinder_calls == [] and rend.sphere_calls == []
+    assert ctrl._regions == []
