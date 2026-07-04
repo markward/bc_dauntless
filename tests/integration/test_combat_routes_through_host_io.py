@@ -72,7 +72,8 @@ def test_apply_hit_shield_hit_routes_through_host_io(monkeypatch):
     # (0,0,0,0) is the sentinel that tells the shield pass to use the ship's
     # registered ShieldGlowColor.
     assert rgba == (0.0, 0.0, 0.0, 0.0)
-    assert intensity == 1.0
+    from engine.appc.hit_feedback import SHIELD_IMPACT_INTENSITY
+    assert intensity == SHIELD_IMPACT_INTENSITY
 
 
 def test_apply_hit_shield_flash_skipped_without_instance(monkeypatch):

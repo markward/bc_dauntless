@@ -33,11 +33,12 @@ def test_fire_debug_hit_sends_to_host():
     import engine.shields as s
     host = MagicMock()
     s.fire_debug_hit(host, instance_id=42, world_point=(1.0, 2.0, 3.0))
+    from engine.appc.hit_feedback import SHIELD_IMPACT_INTENSITY
     host.shield_hit.assert_called_once_with(
         instance_id=42,
         point=(1.0, 2.0, 3.0),
         rgba=(0.0, 0.0, 0.0, 0.0),
-        intensity=1.0,
+        intensity=SHIELD_IMPACT_INTENSITY,
     )
 
 

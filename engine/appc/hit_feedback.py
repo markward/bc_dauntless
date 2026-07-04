@@ -34,6 +34,10 @@ class Severity(IntEnum):
 # renderer only renders the count it is told.
 SPARK_HULL_THRESHOLD = 80.0   # game-units of hull damage in one hit (tune-by-eye)
 
+# Peak brightness of the shield impact flash (seed intensity handed to the
+# shield_pass; it decays exponentially from here). 1.0 was too hot (tune-by-eye).
+SHIELD_IMPACT_INTENSITY = 0.5
+
 SPARK_KIND_PHASER = 0    # cool white-blue, fewer, tight cone
 SPARK_KIND_TORPEDO = 1   # hot orange, more, wide cone (also disruptor/default)
 
@@ -188,7 +192,7 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
                     iid,
                     (point.x, point.y, point.z),
                     (0.0, 0.0, 0.0, 0.0),
-                    1.0,
+                    SHIELD_IMPACT_INTENSITY,
                 )
     else:
         # HULL or CRITICAL — hit_vfx.spawn handles both, filtered by severity.

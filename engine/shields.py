@@ -86,9 +86,10 @@ def _point_tuple(p):
 def fire_debug_hit(host, instance_id, world_point):
     """Push a synthetic hit at world_point. Color (0,0,0,0) signals the
     renderer to use the ship's registered default ShieldGlowColor."""
+    from engine.appc.hit_feedback import SHIELD_IMPACT_INTENSITY
     host.shield_hit(
         instance_id=instance_id,
         point=_point_tuple(world_point),
         rgba=(0.0, 0.0, 0.0, 0.0),
-        intensity=1.0,
+        intensity=SHIELD_IMPACT_INTENSITY,
     )

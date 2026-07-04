@@ -136,6 +136,7 @@ def test_shield_severity_torpedo_plays_weapon_explosion(host, spy):
     call = host.shield_hit_calls[0]
     assert call["instance_id"] == 42
     assert call["point"] == (1.0, 2.0, 3.0)
+    assert call["intensity"] == hit_feedback.SHIELD_IMPACT_INTENSITY
     # No hit_vfx descriptor pushed.
     assert hit_vfx.snapshot() == []
     import LoadTacticalSounds
