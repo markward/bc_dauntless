@@ -24,11 +24,25 @@ _ET_SEQ_TIMER_FIRED    = 0x5E02   # a delay timer elapsed -> launch the pending 
 _ET_ACTION_DEFERRED_COMPLETE = 0x5E03  # realtime timer elapsed -> self.Completed()
 
 
+# Actions currently gating on a deferred completion (audio/time). This is the
+# candidate set for TGActionManager_SkipEvents: exactly the actions whose
+# _complete_after scheduled a realtime timer that hasn't fired yet. Condition
+# gates (TGConditionAction) and controller-driven anims never defer through
+# _complete_after, so they can never be skipped by accident. Cleared on mission
+# swap alongside the timer managers (host_loop.reset_sdk_globals).
+_deferred_playing: "set[TGAction]" = set()
+
+
+def reset_deferred_playing() -> None:
+    _deferred_playing.clear()
+
+
 class TGAction(TGEventHandlerObject):
     def __init__(self):
         super().__init__()
         self._completed_events: list[TGEvent] = []
         self._playing: bool = False
+        self._skippable: bool = False
         self._deferred_timer = None   # (manager, TGTimer) while a deferral is pending
 
     def IsPlaying(self) -> bool:
@@ -39,6 +53,10 @@ class TGAction(TGEventHandlerObject):
 
     def Completed(self) -> None:
         self._playing = False
+        # An action can be completed externally (g_kTGActionManager routes
+        # ET_ACTION_COMPLETED to owner.Completed()) while its deferred timer is
+        # still pending — drop it from the skip candidate set either way.
+        _deferred_playing.discard(self)
         import App
         events = list(self._completed_events)
         self._completed_events.clear()
@@ -63,6 +81,7 @@ class TGAction(TGEventHandlerObject):
         timer.SetEvent(ev)
         mgr.AddTimer(timer)
         self._deferred_timer = (mgr, timer)
+        _deferred_playing.add(self)
 
     def _cancel_deferred_timer(self) -> None:
         rec = self._deferred_timer
@@ -70,6 +89,7 @@ class TGAction(TGEventHandlerObject):
             mgr, timer = rec
             mgr.RemoveTimer(timer)
             self._deferred_timer = None
+        _deferred_playing.discard(self)
 
     def Play(self) -> None:
         self._playing = True
@@ -82,6 +102,7 @@ class TGAction(TGEventHandlerObject):
     def ProcessEvent(self, event) -> None:
         if event.GetEventType() == _ET_ACTION_DEFERRED_COMPLETE:
             self._deferred_timer = None
+            _deferred_playing.discard(self)
             self.Completed()
             return
         super().ProcessEvent(event)
@@ -91,6 +112,10 @@ class TGAction(TGEventHandlerObject):
         self._cancel_deferred_timer()
 
     def Skip(self) -> None:
+        # Cancel any pending deferred completion so it can't fire a second
+        # Completed() after the skip, then complete now — dependents advance
+        # immediately (the original engine's TGAction::Skip semantics).
+        self._cancel_deferred_timer()
         self.Completed()
 
     def GetSequence(self) -> "TGSequence | None":
@@ -100,10 +125,10 @@ class TGAction(TGEventHandlerObject):
         return False
 
     def SetSkippable(self, skippable: bool) -> None:
-        pass
+        self._skippable = bool(skippable)
 
     def IsSkippable(self) -> bool:
-        return True
+        return self._skippable
 
     def SetUseRealTime(self, use_real_time: bool) -> None:
         pass
@@ -437,6 +462,26 @@ class TGSequence(TGAction):
         # starts fresh rather than appending onto the aborted master.
         unregister(self.GetObjID())
 
+    def Skip(self) -> None:
+        # Mission scripts skip whole sequences (E8M2 win movie, E4M6, E3M2):
+        # cancel pending step timers, skip every in-flight child so its audio
+        # stops and its completion events fire, and complete the sequence NOW.
+        # Steps are marked started first because a child's inline completion
+        # event would otherwise launch its dependents mid-skip.
+        for mgr, _step, timer in self._pending_timers:
+            mgr.RemoveTimer(timer)
+        self._pending_timers = []
+        in_flight = [s.action for s in self._steps
+                     if s.started and id(s.action) not in self._completed_actions]
+        for step in self._steps:
+            step.started = True
+        for action in in_flight:
+            try:
+                action.Skip()
+            except Exception:
+                pass
+        self.Completed()
+
     def Stop(self) -> None:
         for mgr, _step, timer in self._pending_timers:
             mgr.RemoveTimer(timer)
@@ -478,6 +523,7 @@ class TGSoundAction(TGTimedAction):
     def __init__(self, sound_name: str = "") -> None:
         super().__init__()
         self._sound_name = sound_name
+        self._handle = None   # _PlayingSound while our launch is (maybe) audible
 
     def SetName(self, name: str) -> None:
         self._sound_name = name
@@ -500,9 +546,27 @@ class TGSoundAction(TGTimedAction):
         # Late import: tg_sound pulls in the native audio extension; keep this
         # module light at startup since actions is loaded very early via App.py.
         # Play() is overridden (above) to gate completion on the sound's real
-        # duration; this _do_play just starts playback.
+        # duration; this _do_play just starts playback. The handle is kept so
+        # Skip/Abort can silence the audio mid-line.
         from engine.audio.tg_sound import TGSoundManager
-        TGSoundManager.instance().PlaySound(self._sound_name)
+        self._handle = TGSoundManager.instance().PlaySound(self._sound_name)
+
+    def _stop_audio(self) -> None:
+        h = self._handle
+        self._handle = None
+        if h is not None:
+            try:
+                h.Stop()
+            except Exception:
+                pass
+
+    def Skip(self) -> None:
+        self._stop_audio()
+        super().Skip()
+
+    def Abort(self) -> None:
+        self._stop_audio()
+        super().Abort()
 
 
 def TGSoundAction_Create(*args) -> TGSoundAction:
@@ -626,10 +690,18 @@ class TGActionManager(TGEventHandlerObject):
         # ET_ACTION_COMPLETED here with the OWNER action as the ObjPtr. Route it
         # to the owner so the sequence step gated on the owner advances.
         import App
-        if event.GetEventType() == App.ET_ACTION_COMPLETED:
+        et = event.GetEventType()
+        if et == App.ET_ACTION_COMPLETED:
             owner = event.GetObjPtr() if isinstance(event, TGObjPtrEvent) else None
             if owner is not None and hasattr(owner, "Completed"):
                 owner.Completed()
+                return
+        # MissionLib posts ET_ACTION_SKIP here (ObjPtr = action) when the player
+        # is dying, so queued dialogue/sequences are skipped rather than played.
+        if et == App.ET_ACTION_SKIP:
+            target = event.GetObjPtr() if isinstance(event, TGObjPtrEvent) else None
+            if target is not None and hasattr(target, "Skip"):
+                target.Skip()
                 return
         super().ProcessEvent(event)
 
@@ -652,6 +724,33 @@ def TGActionManager_UnregisterAction(name: str) -> None:
 def TGActionManager_FindAction(name: str):
     import App
     return App.g_kTGActionManager.FindAction(name)
+
+
+def TGActionManager_SkipEvents() -> None:
+    """Skip every currently-playing skippable action (Backspace in BC).
+
+    Appc entry point called by TacticalInterfaceHandlers.SkipEvents when the
+    ET_INPUT_SKIP_EVENTS key fires. Candidates are the actions gating on a
+    deferred completion (_deferred_playing); only those flagged skippable —
+    MissionLib marks dialogue sounds SetSkippable(1); CharacterAction speak
+    types default skippable — are skipped, so timed non-dialogue actions are
+    untouched. The crew-speech channel is also freed directly so a voice line
+    playing outside any sequence (acknowledgements, idle chatter) is cut too.
+
+    Order matters: the bus skip MUST come before the action loop. Skipping a
+    dialogue action completes it inline, which advances its sequence and
+    starts the NEXT line during the loop — a bus skip issued afterwards would
+    silence that fresh line while its action still runs to full duration
+    (skip appears to mute the dialogue but not shorten the wait).
+    """
+    from engine.appc import crew_speech
+    crew_speech.bus().skip_current()
+    for action in list(_deferred_playing):
+        try:
+            if action.IsSkippable():
+                action.Skip()
+        except Exception:
+            pass
 
 
 # ── TGCreditAction ──────────────────────────────────────────────────────────

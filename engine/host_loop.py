@@ -383,6 +383,36 @@ def _poll_cloak_toggle(host) -> None:
     _cloak_toggle_prev = chord
 
 
+_skip_dialogue_prev: bool = False
+
+
+def _poll_skip_dialogue(host, input_map) -> None:
+    """Backspace (remappable: skip_dialogue) skips the current dialogue line.
+
+    BC binds WC_BACKSPACE → ET_INPUT_SKIP_EVENTS (DefaultKeyboardBinding.py:120)
+    and every interface handler routes that to TacticalInterfaceHandlers.SkipEvents,
+    which calls App.TGActionManager_SkipEvents().  Our engine doesn't run the SDK
+    keyboard-binding path, so poll the physical key here: broadcast the SDK event
+    (any mission-registered ET_INPUT_SKIP_EVENTS handler still hears it) and call
+    the Appc endpoint directly.  A double SkipEvents from both paths is harmless —
+    the second call finds nothing left to skip.
+
+    Rising-edge only.  The callsite sits inside the `not pause.is_open` sim block,
+    so Backspace typed into pause-menu panels (Controls remap capture, config
+    fields) never skips dialogue.
+    """
+    global _skip_dialogue_prev
+    del host  # noqa: F841 — key reads go through host_io, not this handle.
+    down = bool(host_io.key_state(input_map.code("skip_dialogue")))
+    if down and not _skip_dialogue_prev:
+        import App  # deferred: module-top import reorders sound-manager init
+        ev = App.TGEvent_Create()
+        ev.SetEventType(App.ET_INPUT_SKIP_EVENTS)
+        App.g_kEventManager.AddEvent(ev)
+        App.TGActionManager_SkipEvents()
+    _skip_dialogue_prev = down
+
+
 def _push_cloak_refraction(r, session, player) -> None:
     """Per-frame cloak VFX wiring.
 
@@ -2226,6 +2256,11 @@ def reset_sdk_globals() -> None:
     App.g_kTimerManager._timers.clear()
     App.g_kRealtimeTimerManager._time = 0.0
     App.g_kRealtimeTimerManager._timers.clear()
+    # Deferred-completion timers just died with the managers above; drop the
+    # matching skip-candidate registry so Backspace can't "skip" stale actions
+    # from the prior mission.
+    from engine.appc import actions as _appc_actions
+    _appc_actions.reset_deferred_playing()
     # Clear the event manager's handler tables so stale handlers from the
     # prior mission don't fire against the new mission's state. SDK
     # conditions register handlers on g_kEventManager during mission init.
@@ -5604,6 +5639,7 @@ def run(mission_name: Optional[str] = None,
                 _poll_fire_keys(_h, input_map)
                 _poll_tractor_toggle(_h)
                 _poll_cloak_toggle(_h)
+                _poll_skip_dialogue(_h, input_map)
 
                 # Advance weapon charge / reload for every ship in every
                 # active set.  Runs after AI/physics (approximate — the host

@@ -76,6 +76,7 @@ ACTIONS: tuple = (
     ("talk_xo",              "Talk to First Officer",    "Crew",     "F3"),
     ("talk_science",         "Talk to Science",          "Crew",     "F4"),
     ("talk_engineering",     "Talk to Engineering",      "Crew",     "F5"),
+    ("skip_dialogue",        "Skip Dialogue Line",       "Crew",     "Backspace"),
 )
 
 ACTION_IDS: tuple = tuple(a[0] for a in ACTIONS)

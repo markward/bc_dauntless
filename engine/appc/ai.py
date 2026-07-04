@@ -1170,6 +1170,14 @@ class CharacterAction(TGAction):
         self._priority = int(priority)
         self._sub_priority: int = 0
         self._use_name_and_set: bool = False
+        # Spoken lines are skippable by default (Backspace →
+        # TGActionManager_SkipEvents), matching BC where dialogue lines skip
+        # without the SDK marking each CharacterAction explicitly.
+        if self._action_type in (self.AT_SPEAK_LINE,
+                                 self.AT_SPEAK_LINE_NO_FLAP_LIPS,
+                                 self.AT_SAY_LINE,
+                                 self.AT_SAY_LINE_AFTER_TURN):
+            self._skippable = True
 
     def GetActionType(self) -> int:           return self._action_type
     def GetDetail(self):                      return self._detail
@@ -1204,6 +1212,19 @@ class CharacterAction(TGAction):
             name = ""
         return crew_speech.emit(name, self._database, self._detail,
                                 self._priority) or 0.0
+
+    def Skip(self) -> None:
+        # Our line is the one holding the crew-speech channel (single-channel
+        # bus): cut its voice + subtitle before completing so the audio stops
+        # with the action instead of playing out under the next line. Non-speak
+        # action types complete inline and never own the channel — leave it be.
+        if self._action_type in (self.AT_SPEAK_LINE,
+                                 self.AT_SPEAK_LINE_NO_FLAP_LIPS,
+                                 self.AT_SAY_LINE,
+                                 self.AT_SAY_LINE_AFTER_TURN):
+            from engine.appc import crew_speech
+            crew_speech.bus().skip_current()
+        super().Skip()
 
 
 def CharacterAction_Create(

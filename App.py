@@ -124,7 +124,7 @@ from engine.appc.actions import (
     SubtitleAction, SubtitleAction_Create,
     TGActionManager,
     TGActionManager_RegisterAction, TGActionManager_UnregisterAction,
-    TGActionManager_FindAction,
+    TGActionManager_FindAction, TGActionManager_SkipEvents,
     TGCreditAction, TGCreditAction_Create,
     TGCreditAction_SetDefaultColor, TGCreditAction_GetDefaultColor,
     TGConditionAction, TGConditionAction_Create,
@@ -711,6 +711,9 @@ g_kSystemWrapper = _SystemWrapper()
 # Only the subset needed for Phase 1.  Add more as SDK scripts demand them.
 ET_AI_TIMER = 100
 ET_ACTION_COMPLETED = 101
+# Posted to g_kTGActionManager (ObjPtr = action) to skip an action outright —
+# MissionLib.py:4863/4871 uses it to drop queued dialogue when the player dies.
+ET_ACTION_SKIP = 111
 ET_MISSION_START = 102
 ET_EPISODE_START = 103
 ET_OBJECT_DELETED = 104

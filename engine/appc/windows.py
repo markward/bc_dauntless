@@ -207,6 +207,11 @@ class _SubtitleWindow:
             str(speaker), str(text), time.monotonic() + float(duration),
         )
 
+    def clear_crew_line(self) -> None:
+        # Skip (Backspace) cuts the line short: drop the subtitle immediately
+        # instead of letting it dwell to its original expiry.
+        self._crew_line = None
+
     def _add_text(self, text: str, duration_s: float) -> None:
         self._active_texts.append((str(text), time.monotonic() + float(duration_s)))
 

@@ -95,6 +95,13 @@ class LipSyncRuntime:
 
     # -- crew-speech cue ----------------------------------------------------
     def _on_speech(self, speaker, wav, duration, now):
+        # Skip cue (CrewSpeechBus.skip_current): the line was cut short, so
+        # stop the mouth now instead of flapping to the original duration. An
+        # empty speaker + no wav + zero duration never occurs for a real line
+        # (durations are floored at 2s and speakers are always named).
+        if not speaker and wav is None and (not duration or duration <= 0.0):
+            self._ctrl.clear()
+            return
         lip = lip_path_for(_abs_sfx(wav)) if wav else None
         segs = []
         if lip:
