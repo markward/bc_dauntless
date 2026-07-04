@@ -1377,6 +1377,14 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("id"), py::arg("eligible"),
           "Mark an instance as a ship hull eligible for the Fresnel rim "
           "term. Default false (planets stay rim-free).");
+    m.def("set_rim_strength",
+          [](scenegraph::InstanceId id, float strength) {
+              g_world.set_rim_strength(id, strength);
+          },
+          py::arg("id"), py::arg("strength"),
+          "Fresnel rim intensity for a rim-eligible instance. Authored by "
+          "the hardpoint stats' 'SpecularCoef'; defaults to 0.1 when the "
+          "ship does not define one.");
     m.def("set_emissive_scale",
           [](scenegraph::InstanceId id, float scale) {
               g_world.set_emissive_scale(id, scale);

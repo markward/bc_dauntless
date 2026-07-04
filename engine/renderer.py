@@ -52,7 +52,7 @@ _REQUIRED_BINDINGS = frozenset({
     "set_hologram_only_mode", "set_hologram_ship", "set_hull_discharges",
     "set_instance_animation", "set_instance_rest_pose", "set_lens_flares",
     "set_lighting", "set_nebula_godrays", "set_nebula_wake", "set_nebulae",
-    "set_rim_eligible", "set_subsystem_pins", "set_suns",
+    "set_rim_eligible", "set_rim_strength", "set_subsystem_pins", "set_suns",
     "set_viewscreen_brightness", "set_viewscreen_comm_source",
     "set_viewscreen_enabled", "set_viewscreen_model", "set_viewscreen_static",
     "set_viewscreen_static_source", "set_visible", "set_warp_flash_intensity",
@@ -443,6 +443,18 @@ def set_rim_eligible(instance_id: InstanceId, eligible: bool) -> None:
     """Mark a ship-hull instance as eligible for the Fresnel rim term.
     Planets are left ineligible so they don't receive a metallic rim."""
     _h.set_rim_eligible(instance_id, eligible)
+
+
+# Rim intensity for ships whose hardpoint stats don't author 'SpecularCoef'.
+# Must match the Instance::rim_strength default in scenegraph/instance.h.
+DEFAULT_RIM_STRENGTH = 0.1
+
+
+def set_rim_strength(instance_id: InstanceId, strength: float) -> None:
+    """Fresnel rim intensity for a rim-eligible instance. Sourced from the
+    hardpoint stats' optional 'SpecularCoef' key (via ShipClass.SetSpecularKs);
+    ships without one use DEFAULT_RIM_STRENGTH."""
+    _h.set_rim_strength(instance_id, float(strength))
 
 
 def add_sphere_region(instance_id: InstanceId, center, radius: float) -> int:

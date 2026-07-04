@@ -70,6 +70,11 @@ class ShipClass(DamageableObject):
         self._model_filename: str = ""
         self._stationary: int = 0
         self._death_explosion_sound: str = ""
+        # Fresnel-rim intensity, from the hardpoint stats' optional
+        # 'SpecularCoef' key (loadspacehelper calls SetSpecularKs when the
+        # ship's GetShipStats() defines it). None = not authored; the
+        # renderer-side default applies (see host_loop rim registration).
+        self._specular_ks = None
         # Alert level — GREEN at spawn matches MissionLib.py:605, which
         # explicitly resets the player to GREEN_ALERT on mission start.
         # BC's BridgeHandlers.SetAlertLevel forwards the event to the
@@ -575,6 +580,10 @@ class ShipClass(DamageableObject):
     def SetStationary(self, v) -> None:                 self._stationary = int(v)
     def GetDeathExplosionSound(self) -> str:            return self._death_explosion_sound
     def SetDeathExplosionSound(self, v) -> None:        self._death_explosion_sound = str(v)
+    # SWIG surface: loadspacehelper.py:85 forwards the hardpoint stats'
+    # optional 'SpecularCoef'. Was a silent _Stub no-op before this existed.
+    def GetSpecularKs(self):                            return self._specular_ks
+    def SetSpecularKs(self, v) -> None:                 self._specular_ks = float(v)
 
     def GetShipProperty(self):
         """Return this ship's ShipProperty from its property set, or None.

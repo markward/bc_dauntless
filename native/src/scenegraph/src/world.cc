@@ -83,6 +83,10 @@ void World::set_rim_eligible(InstanceId id, bool eligible) {
     if (auto* inst = get(id)) inst->rim_eligible = eligible;
 }
 
+void World::set_rim_strength(InstanceId id, float strength) {
+    if (auto* inst = get(id)) inst->rim_strength = strength;
+}
+
 void World::set_emissive_scale(InstanceId id, float scale) {
     if (auto* inst = get(id)) inst->emissive_scale = scale;
 }

@@ -15,21 +15,3 @@ TEST(Lighting, GlossinessToSpecularPowerPinnedValues) {
     // Clamp on negative
     EXPECT_FLOAT_EQ(glossiness_to_specular_power(-1.0f),  48.0f);
 }
-
-TEST(Lighting, RimStrengthFromMaterialPinnedValues) {
-    using renderer::rim_strength_from_material;
-    // No specular -> no rim, regardless of gloss.
-    EXPECT_FLOAT_EQ(rim_strength_from_material({0.0f, 0.0f, 0.0f}, 0.0f), 0.0f);
-    EXPECT_FLOAT_EQ(rim_strength_from_material({0.0f, 0.0f, 0.0f}, 1.0f), 0.0f);
-    // Full white specular: gloss scales 0.25 (matte) -> 1.0 (glossy).
-    EXPECT_FLOAT_EQ(rim_strength_from_material({1.0f, 1.0f, 1.0f}, 0.0f), 0.25f);
-    EXPECT_FLOAT_EQ(rim_strength_from_material({1.0f, 1.0f, 1.0f}, 1.0f), 1.0f);
-    // Mid specular, mid gloss: 0.5 * (0.25 + 0.75*0.5) = 0.3125.
-    EXPECT_FLOAT_EQ(rim_strength_from_material({0.5f, 0.5f, 0.5f}, 0.5f), 0.3125f);
-    // Strength uses the brightest specular channel (max), not luminance.
-    EXPECT_FLOAT_EQ(rim_strength_from_material({0.2f, 0.8f, 0.1f}, 1.0f), 0.8f);
-    // Clamp out-of-range BC outliers (gloss=4.0 appears in the corpus).
-    EXPECT_FLOAT_EQ(rim_strength_from_material({2.0f, 2.0f, 2.0f}, 4.0f), 1.0f);
-    // Clamp negatives.
-    EXPECT_FLOAT_EQ(rim_strength_from_material({-1.0f, -1.0f, -1.0f}, -1.0f), 0.0f);
-}

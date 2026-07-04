@@ -45,6 +45,11 @@ struct Instance {
     /// planet-atmosphere effect will add its own per-instance params.
     bool rim_eligible = false;
 
+    /// Fresnel rim intensity for rim_eligible instances. Authored per-ship
+    /// by the hardpoint stats' 'SpecularCoef' key; ships without one keep
+    /// this default.
+    float rim_strength = 0.1f;
+
     /// Scales the ship's self-illumination (material emissive + glow map) at
     /// draw time. 1.0 = normal; 0.0 = no self-light, used for destroyed ships
     /// so a dead hull goes dark in space (diffuse-lit, specular, and rim

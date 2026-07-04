@@ -216,7 +216,7 @@ void draw_model(const assets::Model& model,
                 Shader& skinned_shader,
                 std::uint32_t white_fallback,
                 std::uint32_t black_fallback,
-                bool rim_active,
+                float rim_strength,
                 const scenegraph::DamageDecalRing& decals,
                 const std::array<scenegraph::Instance::GlowRegion,
                                  scenegraph::Instance::kMaxGlowRegions>& glow_regions,
@@ -453,10 +453,7 @@ void draw_model(const assets::Model& model,
                 renderer::glossiness_to_specular_power(mat.glossiness));
             prog.set_int("u_specular_enabled",
                            dauntless_specular::enabled() ? 1 : 0);
-            const float rim = rim_active
-                ? renderer::rim_strength_from_material(mat.specular, mat.glossiness)
-                : 0.0f;
-            prog.set_float("u_rim_strength", rim);
+            prog.set_float("u_rim_strength", rim_strength);
 
             glBindVertexArray(mesh.vao());
             glDrawElements(GL_TRIANGLES, mesh.index_count(), GL_UNSIGNED_INT, nullptr);
@@ -550,12 +547,14 @@ void FrameSubmitter::submit_opaque(const scenegraph::World& world,
 
     world.for_each_visible([&](const scenegraph::Instance& inst) {
         const assets::Model* m = lookup(inst.model_handle);
-        const bool rim_active = dauntless_rim::enabled() && inst.rim_eligible;
+        const float rim_strength =
+            (dauntless_rim::enabled() && inst.rim_eligible)
+                ? inst.rim_strength : 0.0f;
         std::vector<glm::mat4> palette;
         if (m && !m->skeleton.bones.empty())
             palette = build_bone_palette(m->skeleton, /*local_pose=*/nullptr);
         if (m) draw_model(*m, inst.world, shader, pipeline.skinned_shader(),
-                          white, black, rim_active,
+                          white, black, rim_strength,
                           inst.decals, inst.glow_regions, decal_time,
                           inst.emissive_scale, palette, inst.carve);
     });
@@ -605,12 +604,14 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
 
     world.for_each_visible_in_pass(pass, [&](const scenegraph::Instance& inst) {
         const assets::Model* m = lookup(inst.model_handle);
-        const bool rim_active = dauntless_rim::enabled() && inst.rim_eligible;
+        const float rim_strength =
+            (dauntless_rim::enabled() && inst.rim_eligible)
+                ? inst.rim_strength : 0.0f;
         std::vector<glm::mat4> palette;
         if (m && !m->skeleton.bones.empty())
             palette = build_bone_palette(m->skeleton, /*local_pose=*/nullptr);
         if (m) draw_model(*m, inst.world, shader, pipeline.skinned_shader(),
-                          white, black, rim_active,
+                          white, black, rim_strength,
                           inst.decals, inst.glow_regions, decal_time,
                           inst.emissive_scale, palette, inst.carve);
     });

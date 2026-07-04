@@ -48,6 +48,9 @@ class _FakeRenderer:
     def set_rim_eligible(self, iid, b):
         pass
 
+    def set_rim_strength(self, iid, s):
+        pass
+
 
 def _fresh_quickbattle_loader(monkeypatch):
     """Build a HostController + _MissionLoader wired to a fake renderer, with

@@ -2862,6 +2862,20 @@ def _world_matrix_from(loc, rot, s: float) -> list:
     ]
 
 
+def _rim_strength_for(ship) -> float:
+    """Fresnel rim intensity for a ship instance: the hardpoint stats'
+    'SpecularCoef' when authored (captured by ShipClass.SetSpecularKs via
+    loadspacehelper), else DEFAULT_RIM_STRENGTH."""
+    from engine.renderer import DEFAULT_RIM_STRENGTH
+    try:
+        ks = ship.GetSpecularKs()
+        if ks is not None:
+            return float(ks)
+    except Exception as _e:
+        dev_mode.log_swallowed("rim GetSpecularKs probe", _e)
+    return DEFAULT_RIM_STRENGTH
+
+
 def _ship_world_matrix(ship, natural_scale: float) -> list:
     """Row-major TRS mat4 for a ship.
 
@@ -3010,6 +3024,7 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False) -> No
         # Fresnel rim applies to ship hulls only — planets share the opaque
         # shader and must stay rim-free (default ineligible).
         r_.set_rim_eligible(iid, True)
+        r_.set_rim_strength(iid, _rim_strength_for(ship))
 
         # Subsystem glow dimming (best-effort VFX); never block spawn.
         try:
@@ -3549,6 +3564,7 @@ class _MissionLoader:
             # Fresnel rim applies to ship hulls only — planets share the
             # opaque shader and must stay rim-free (default ineligible).
             r_.set_rim_eligible(iid, True)
+            r_.set_rim_strength(iid, _rim_strength_for(ship))
 
             # Subsystem glow dimming (best-effort VFX). Ships missing a warp /
             # impulse / sensor subsystem simply register fewer regions; any
