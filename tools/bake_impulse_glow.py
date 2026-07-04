@@ -2,10 +2,10 @@
 
 Scaffolding tool: for every hardpoint file (SDK + project-root shadows) it
 extracts the impulse engine templates and emits a per-ship override section
-whose values reproduce today's runtime behaviour exactly — a cylinder from the
-hardpoint position running aft (model -Y) for IMPULSE_CYLINDER_LEN game units,
-radius = the hardpoint radius (region centre is omitted: the schema defaults it
-to the hardpoint position). The sections are a STARTING POINT for hand-tuning;
+whose values reproduce the pre-baked runtime behaviour exactly — a cylinder
+from the hardpoint position running aft (model -Y) for 2 game units, radius =
+the hardpoint radius (region centre is omitted: the schema defaults it to the
+hardpoint position). The sections are a STARTING POINT for hand-tuning;
 this tool never overwrites a ship that already has a section (edit or delete
 the section by hand instead).
 
