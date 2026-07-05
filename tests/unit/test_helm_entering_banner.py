@@ -74,3 +74,7 @@ def test_object_entered_destination_set_shows_banner_without_crash():
     # into the subtitle main window.
     sub = App.TopWindow_GetTopWindow().FindMainWindow(App.MWT_SUBTITLE)
     assert len(sub._active_texts) == 1
+    # And it names the destination system — SetClass.GetDisplayName must fill
+    # the TGString out-param (was a _RendererStub no-op: bare "Entering").
+    banner_text = sub._active_texts[0][0]
+    assert "Vesuvi System" in banner_text

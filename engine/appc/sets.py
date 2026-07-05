@@ -148,6 +148,20 @@ class SetClass(TGEventHandlerObject):
     def SetName(self, name: str) -> None:
         self._name = name
 
+    def GetDisplayName(self, out_string=None):
+        """SDK out-param idiom: ``kName = App.TGString();
+        pSet.GetDisplayName(kName)`` (HelmMenuHandlers.py:405 "Entering
+        <system>" banner, BridgeHandlers.py:1403 helm tooltip). Derived from
+        the set name via SetClass_MakeDisplayName (Systems.TGL lookup, digit
+        fallback), matching real Appc. Previously fell through __getattr__ to
+        a _RendererStub, which silently left the out-param untouched."""
+        from engine.appc.localization import TGString
+        name = SetClass_MakeDisplayName(self._name)
+        if out_string is not None:
+            out_string.SetString(name)
+            return out_string
+        return TGString(name)
+
     def GetEffectRoot(self) -> SetEffectRoot:
         """SDK SetClass_GetEffectRoot (App.py:3536) — the node transient VFX
         (debris, explosions, sparks) are parented to. Lazy, cached: one stable
