@@ -50,6 +50,15 @@ def _overlay_vec(obj):
     return obj.__dict__.get("_collision_velocity")
 
 
+def _collisions_enabled(obj):
+    """Per-object DamageableObject.SetCollisionsOn flag; default True.
+
+    Same obj.__dict__ pattern as _overlay_vec: the flag is only ever set as an
+    instance attribute, and getattr would hit TGObject.__getattr__'s truthy
+    _Stub on objects that never had it set (e.g. Planet)."""
+    return obj.__dict__.get("_collisions_on", True)
+
+
 def _ensure_overlay(obj):
     """Get-or-create the mutable overlay vector (called only on impulse inject)."""
     cv = obj.__dict__.get("_collision_velocity")
@@ -279,10 +288,13 @@ def tick_collisions(dt: float, ship_instances=None):
 
     When the dev-only Disable Collisions toggle is active, existing knockback
     overlays still decay (above) but no new pair is detected or resolved, so
-    impulse, de-penetration, and collision damage are all suppressed."""
+    impulse, de-penetration, and collision damage are all suppressed. An
+    object with SetCollisionsOn(0) gets the same treatment individually: it is
+    excluded from pair resolution but its existing overlay still plays out."""
     objects = list(iter_collidables())
     _apply_overlay_all(objects, dt)
     from engine.dev_combat_cheats import disable_collisions_active
     if disable_collisions_active():
         return []
-    return resolve_collisions(objects, ship_instances=ship_instances)
+    return resolve_collisions([o for o in objects if _collisions_enabled(o)],
+                              ship_instances=ship_instances)

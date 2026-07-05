@@ -598,6 +598,20 @@ class DamageableObject(PhysicsObjectClass):
         """
         return self.GetRadius()
 
+    def SetCollisionsOn(self, bOn) -> None:
+        """SDK ``DamageableObject_SetCollisionsOn`` (App.py:5356): toggle this
+        object's participation in collision detection. Missions disable it on
+        dying/cutscene/warping objects (e.g. the E1M2 exploding asteroid,
+        Warp.py warp-out) and re-enable afterwards. Honoured by
+        ``engine.appc.collisions.tick_collisions``.
+        """
+        self._collisions_on = bool(bOn)
+
+    def CanCollide(self) -> int:
+        """SDK ``DamageableObject_CanCollide`` (App.py:5354): whether this
+        object currently participates in collisions. Default TRUE."""
+        return 1 if self.__dict__.get("_collisions_on", True) else 0
+
     # ── Visible (geometry) damage ───────────────────────────────────────────────
     # BC's DamageTool authored hull wrecks as body-frame damage spheres. These
     # methods route authored + runtime visible damage into our hull-carve

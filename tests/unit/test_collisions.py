@@ -303,6 +303,88 @@ def test_tick_collisions_disabled_flag_suppresses_all_effects():
         _dauntless_host.developer_mode = original_dev
 
 
+def _live_pair():
+    """Approaching, overlapping ship pair registered in a live set."""
+    pSet = App.SetClass_Create()
+    App.g_kSetManager.AddSet(pSet, "test")
+    a = _ship(0.0, 1000.0, +10.0)
+    b = _ship(1.5, 1000.0, -10.0)
+    pSet.AddObjectToSet(a, "A")
+    pSet.AddObjectToSet(b, "B")
+    return a, b
+
+
+def test_set_collisions_on_false_excludes_object_from_resolution(monkeypatch):
+    import engine.appc.combat as combat
+    calls = []
+    monkeypatch.setattr(combat, "apply_hit", lambda *a, **k: calls.append(1))
+    from engine.appc.collisions import tick_collisions, _overlay_vec
+    a, b = _live_pair()
+    b.SetCollisionsOn(0)
+    hits = tick_collisions(1.0 / 60.0)
+    assert hits == []                   # no pair resolved
+    assert _overlay_vec(a) is None      # no impulse injected on either side
+    assert _overlay_vec(b) is None
+    assert calls == []                  # no collision damage applied
+
+
+def test_set_collisions_on_true_restores_resolution():
+    from engine.appc.collisions import tick_collisions
+    a, b = _live_pair()
+    b.SetCollisionsOn(0)
+    assert tick_collisions(1.0 / 60.0) == []
+    b.SetCollisionsOn(1)
+    hits = tick_collisions(1.0 / 60.0)
+    assert len(hits) == 1
+    assert a._collision_velocity.x < 0.0 and b._collision_velocity.x > 0.0
+
+
+def test_can_collide_tracks_set_collisions_on():
+    from engine.appc.objects import DamageableObject
+    obj = DamageableObject()
+    assert obj.CanCollide() == 1        # default TRUE
+    obj.SetCollisionsOn(0)
+    assert obj.CanCollide() == 0
+    obj.SetCollisionsOn(1)
+    assert obj.CanCollide() == 1
+
+
+def test_set_collisions_on_safe_on_bare_object():
+    # Pure flag: no set membership, no radius, no physics body required.
+    from engine.appc.objects import DamageableObject
+    obj = DamageableObject()
+    obj.SetCollisionsOn(0)
+    obj.SetCollisionsOn(1)
+
+
+def test_disabled_object_still_decays_existing_overlay():
+    from engine.appc.collisions import tick_collisions, _overlay_vec
+    pSet = App.SetClass_Create()
+    App.g_kSetManager.AddSet(pSet, "test")
+    a = _ship(0.0, 1000.0, 0.0)
+    a._collision_velocity = TGPoint3(5.0, 0.0, 0.0)
+    pSet.AddObjectToSet(a, "A")
+    a.SetCollisionsOn(0)
+    tick_collisions(1.0 / 60.0)
+    # Overlay application runs before the per-object filter, so an existing
+    # knockback still plays out and decays (same semantics as the dev toggle).
+    assert a.GetTranslate().x > 0.0
+    assert _overlay_vec(a).x < 5.0
+
+
+def test_disabling_one_object_leaves_other_pairs_colliding():
+    from engine.appc.collisions import tick_collisions, _overlay_vec
+    a, b = _live_pair()
+    pSet = App.g_kSetManager.GetSet("test")
+    c = _ship(0.75, 1000.0, 0.0)  # overlaps both a and b
+    pSet.AddObjectToSet(c, "C")
+    c.SetCollisionsOn(0)
+    hits = tick_collisions(1.0 / 60.0)
+    assert len(hits) == 1               # a-b still resolves; c excluded
+    assert {id(hits[0][0]), id(hits[0][1])} == {id(a), id(b)}
+    assert _overlay_vec(c) is None
+
+
 def test_tick_collisions_disabled_still_decays_existing_overlay():
     import _dauntless_host
     import engine.dev_combat_cheats as cheats
