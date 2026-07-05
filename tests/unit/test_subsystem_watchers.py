@@ -17,7 +17,7 @@ actually pushes the right quantity into its watcher each tick / on value
 change, so the registered crossing event fires.
 """
 from engine.appc.float_range_watcher import FloatRangeWatcher
-from engine.appc.subsystems import PowerSubsystem, ShieldSubsystem
+from engine.appc.subsystems import HullSubsystem, PowerSubsystem, ShieldSubsystem
 from engine.appc.weapon_subsystems import PulseWeapon
 from engine.appc.properties import PowerProperty
 from engine.appc.ships import ShipClass_Create
@@ -151,6 +151,125 @@ def test_shield_update_drives_face_fraction_into_watcher():
 
     assert w.GetWatchedVariable() == 0.3
     assert mgr.fired, "shield watcher did not fire on downward crossing"
+
+
+# ── Shield: combined watcher (index 6 / NUM_SHIELDS) ─────────────────────────
+# Bridge/Characters/Brex.py:107 and EngineerCharacterHandlers.py both call
+# pShip.GetShields().GetShieldWatcher(6) — BC's COMBINED/overall shields
+# watcher — and register FRW_BELOW checks at 5%..75% on it.
+
+def test_shield_watcher_index_6_is_combined_watcher():
+    sh = ShieldSubsystem("Shields")
+    combined = sh.GetShieldWatcher(ShieldSubsystem.NUM_SHIELDS)
+    assert isinstance(combined, FloatRangeWatcher)
+    assert sh.GetShieldWatcher(ShieldSubsystem.NUM_SHIELDS) is combined
+    for face in range(ShieldSubsystem.NUM_SHIELDS):
+        assert combined is not sh.GetShieldWatcher(face)
+
+
+def test_shield_combined_percentage_watcher_is_watcher_6():
+    sh = ShieldSubsystem("Shields")
+    assert sh.GetCombinedPercentageWatcher() is sh.GetShieldWatcher(
+        ShieldSubsystem.NUM_SHIELDS)
+
+
+def test_combined_shield_watcher_fires_on_downward_crossing():
+    """SetCurrentShields drives the combined FRACTION (total cur / total max)
+    into watcher 6, firing a registered FRW_BELOW check when it crosses —
+    the Brex.ConfigureForShip pattern (TGFloatEvent at fRange thresholds)."""
+    sh = ShieldSubsystem("Shields")
+    sh.SetMaxShields(ShieldSubsystem.FRONT_SHIELDS, 100.0)
+    sh.SetMaxShields(ShieldSubsystem.REAR_SHIELDS, 100.0)
+    sh.SetCurrentShields(ShieldSubsystem.FRONT_SHIELDS, 100.0)
+    sh.SetCurrentShields(ShieldSubsystem.REAR_SHIELDS, 100.0)
+    w = sh.GetShieldWatcher(ShieldSubsystem.NUM_SHIELDS)
+    assert w.GetWatchedVariable() == 1.0
+
+    mgr = _FiringManager()
+    w._event_manager = mgr
+    ev = _RecordingEvent()
+    w.AddRangeCheck(0.5, FloatRangeWatcher.FRW_BELOW, ev)
+
+    # Combined -> 100/200 = 0.5: touches but does not cross below.
+    sh.SetCurrentShields(ShieldSubsystem.FRONT_SHIELDS, 0.0)
+    assert w.GetWatchedVariable() == 0.5
+    assert not mgr.fired
+
+    # Combined -> 60/200 = 0.3: crosses below 0.5, fires with the fraction.
+    sh.SetCurrentShields(ShieldSubsystem.REAR_SHIELDS, 60.0)
+    assert w.GetWatchedVariable() == 0.3
+    assert mgr.fired, "combined shield watcher did not fire on crossing"
+    assert ev.floats[-1] == 0.3
+
+
+def test_combined_shield_watcher_catches_up_on_update_after_apply_damage():
+    """ApplyDamage mutates faces directly without touching watchers (per-face
+    behaviour); the combined watcher catches up on the next Update, exactly
+    like the per-face ones."""
+    sh = ShieldSubsystem("Shields")
+    sh.SetMaxShields(ShieldSubsystem.FRONT_SHIELDS, 100.0)
+    sh.SetMaxShields(ShieldSubsystem.REAR_SHIELDS, 100.0)
+    sh.SetCurrentShields(ShieldSubsystem.FRONT_SHIELDS, 100.0)
+    sh.SetCurrentShields(ShieldSubsystem.REAR_SHIELDS, 100.0)
+    sh.TurnOn()
+    w = sh.GetShieldWatcher(ShieldSubsystem.NUM_SHIELDS)
+    assert w.GetWatchedVariable() == 1.0
+
+    sh.ApplyDamage(ShieldSubsystem.FRONT_SHIELDS, 100.0)
+    assert w.GetWatchedVariable() == 1.0  # stale until Update, like per-face
+    sh.Update(0.0)
+    assert w.GetWatchedVariable() == 0.5
+
+
+# ── Hull / base subsystem: GetCombinedPercentageWatcher ──────────────────────
+# Bridge/Characters/Brex.py:108 calls pShip.GetHull().
+# GetCombinedPercentageWatcher() and registers FRW_BELOW checks on it. The
+# watcher is lazily created on the base subsystem (any subsystem the SDK
+# asks) and tracks GetConditionPercentage(). All _condition mutations route
+# through SetCondition / SetMaxCondition (combat damage at
+# engine/appc/objects.py:693,709 calls SetCondition), so driving those two
+# covers the combat path.
+
+def test_combined_percentage_watcher_lazy_and_stable():
+    hull = HullSubsystem("Hull")
+    w = hull.GetCombinedPercentageWatcher()
+    assert isinstance(w, FloatRangeWatcher)
+    assert hull.GetCombinedPercentageWatcher() is w
+
+
+def test_combined_percentage_watcher_seeded_with_condition_percentage():
+    hull = HullSubsystem("Hull")
+    hull.SetMaxCondition(100.0)   # seeds current to 100 (SDK App.py:5601)
+    hull.SetCondition(40.0)
+    w = hull.GetCombinedPercentageWatcher()
+    assert w.GetWatchedVariable() == 0.4
+
+
+def test_set_condition_drives_combined_percentage_watcher():
+    hull = HullSubsystem("Hull")
+    hull.SetMaxCondition(100.0)
+    w = hull.GetCombinedPercentageWatcher()
+    assert w.GetWatchedVariable() == 1.0
+
+    mgr = _FiringManager()
+    w._event_manager = mgr
+    ev = _RecordingEvent()
+    w.AddRangeCheck(0.5, FloatRangeWatcher.FRW_BELOW, ev)
+
+    hull.SetCondition(30.0)   # 0.3 < 0.5: downward crossing
+    assert w.GetWatchedVariable() == 0.3
+    assert mgr.fired, "hull combined watcher did not fire on crossing"
+    assert ev.floats[-1] == 0.3
+
+
+def test_set_max_condition_drives_combined_percentage_watcher():
+    hull = HullSubsystem("Hull")
+    hull.SetMaxCondition(100.0)
+    hull.SetCondition(80.0)
+    w = hull.GetCombinedPercentageWatcher()
+    assert w.GetWatchedVariable() == 0.8
+    hull.SetMaxCondition(200.0)   # condition stays 80 -> fraction 0.4
+    assert w.GetWatchedVariable() == 0.4
 
 
 # ── Pulse: drive charge fraction ─────────────────────────────────────────────

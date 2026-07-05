@@ -492,6 +492,32 @@ def test_subtitle_window_seeded_after_init():
     assert isinstance(sub, _SubtitleWindow)
 
 
+def test_options_window_seeded_after_init():
+    """Real BC always has an Options main window in the Appc UI hierarchy, so
+    SDK code dereferences FindMainWindow(MWT_OPTIONS) without a None check
+    (Bridge/HelmMenuHandlers.ObjectEnteredSet:407 crashed on warp set-entry).
+    We render no SDK Options window, so it reports never-visible."""
+    from engine.appc import top_window
+    from engine.appc.windows import _OptionsWindow
+    top_window.reset_for_tests()
+    opts = top_window._the_top_window.FindMainWindow(top_window.MWT_OPTIONS)
+    assert isinstance(opts, _OptionsWindow)
+    assert opts.IsCompletelyVisible() == 0
+    assert opts.IsVisible() == 0
+
+
+def test_app_find_main_window_options_is_not_none():
+    """The SDK path: App.TopWindow_GetTopWindow().FindMainWindow(App.MWT_OPTIONS)
+    must never return None — HelmMenuHandlers calls IsCompletelyVisible() on it
+    unconditionally."""
+    import App
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    opts = App.TopWindow_GetTopWindow().FindMainWindow(App.MWT_OPTIONS)
+    assert opts is not None
+    assert opts.IsCompletelyVisible() == 0
+
+
 def test_reset_for_tests_replaces_subtitle_singleton():
     from engine.appc import top_window
     sub_before = top_window._the_top_window.FindMainWindow(top_window.MWT_SUBTITLE)

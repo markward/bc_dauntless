@@ -276,6 +276,43 @@ static renderer::Backdrop make_proc(int proc_kind, float span) {
     return b;
 }
 
+// Procedural (map-driven) backdrops intentionally carry an empty
+// texture_path — the shader paints them; there is no file to open. Logging
+// "[backdrop] failed to open ''" for them every bake/render is pure noise.
+TEST_F(BackdropPassTest, EmptyTexturePathDoesNotLogOpenFailure) {
+    renderer::BackdropPass pass;
+    scenegraph::Camera cam;
+    cam.aspect = 1.0f;
+
+    renderer::Backdrop b = make_proc(/*proc_kind=*/2, /*span=*/1.0f);
+
+    testing::internal::CaptureStderr();
+    pass.render({b}, cam, *pipeline, /*procedural=*/true, /*now=*/0.0f);
+    const std::string err = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(err.find("failed to open"), std::string::npos)
+        << "empty (procedural) texture_path must not log an open failure: "
+        << err;
+}
+
+// The open-failure log is load-bearing for genuinely-missing authored
+// textures — a non-empty unreadable path must still report it.
+TEST_F(BackdropPassTest, MissingNonEmptyTexturePathStillLogsOpenFailure) {
+    renderer::BackdropPass pass;
+    scenegraph::Camera cam;
+    cam.aspect = 1.0f;
+
+    renderer::Backdrop b;
+    b.texture_path = "/nonexistent/backdrop-test-missing.tga";
+
+    testing::internal::CaptureStderr();
+    pass.render({b}, cam, *pipeline, /*procedural=*/false, /*now=*/0.0f);
+    const std::string err = testing::internal::GetCapturedStderr();
+    EXPECT_NE(err.find(
+                  "failed to open '/nonexistent/backdrop-test-missing.tga'"),
+              std::string::npos)
+        << "missing non-empty texture path must still log: " << err;
+}
+
 TEST(BackdropHelpers, AreProceduralRequiresAllEmptyTexturePaths) {
     std::vector<renderer::Backdrop> proc = {make_proc(0, 1.0f), make_proc(2, 1.5f)};
     EXPECT_TRUE(renderer::backdrops_are_procedural(proc));

@@ -37,6 +37,10 @@ assets::Mesh* BackdropPass::ensure_sphere(int target_poly_count) {
 }
 
 assets::Texture* BackdropPass::ensure_texture(const std::string& path) {
+    // Procedural (map-driven) backdrops intentionally carry an empty
+    // texture_path — nothing to load, and logging an open failure for
+    // them every bake/render is pure noise.
+    if (path.empty()) return nullptr;
     auto it = texture_cache_.find(path);
     if (it != texture_cache_.end()) {
         // id() == 0 means a sentinel from a previous failed load.

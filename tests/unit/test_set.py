@@ -240,3 +240,30 @@ def test_set_unrelated_renderer_methods_still_stub():
     # SetBackgroundModel is now implemented — call succeeds and records state.
     pSet.SetBackgroundModel("data/Models/Sets/X.nif", 0, 0, 0)
     assert pSet.GetBackgroundModelNIF() == "data/Models/Sets/X.nif"
+
+
+def test_set_get_display_name_fills_out_param():
+    """SDK idiom (HelmMenuHandlers.py:405, BridgeHandlers.py:1403):
+    kName = App.TGString(); pSet.GetDisplayName(kName). Previously fell
+    through __getattr__ to a _RendererStub, so the "Entering <system>"
+    banner showed no system name."""
+    from engine.appc.localization import TGString
+    from engine.appc.sets import SetClass_MakeDisplayName
+
+    s = SetClass()
+    s.SetName("Albirea1")
+    k = App.TGString()
+    s.GetDisplayName(k)
+    assert str(k) == SetClass_MakeDisplayName("Albirea1")
+    assert str(k) == "Albirea 1"  # trailing-digit fallback is deterministic
+    assert isinstance(k, TGString)
+
+
+def test_set_get_display_name_no_arg_returns_tgstring():
+    from engine.appc.localization import TGString
+
+    s = SetClass()
+    s.SetName("Vesuvi System")
+    got = s.GetDisplayName()
+    assert isinstance(got, TGString)
+    assert str(got) == "Vesuvi System"

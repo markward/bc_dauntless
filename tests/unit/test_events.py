@@ -145,3 +145,88 @@ def test_remove_broadcast_handler():
     del sys.modules["_test_broadcast_3"]
 
     assert called == []
+
+
+def test_raising_func_broadcast_handler_logs_and_continues(capsys):
+    """BC is log-and-continue: one raising broadcast handler must not
+    unwind the tick. The traceback goes to stderr (with a line naming
+    the handler + event type) and the remaining handlers still run."""
+    called = []
+    mod = types.ModuleType("_test_broadcast_raise")
+    def bad(pObj, pEv):
+        raise RuntimeError("boom in func handler")
+    mod.bad = bad
+    mod.good = lambda pObj, pEv: called.append(True)
+    sys.modules["_test_broadcast_raise"] = mod
+
+    em = TGEventManager()
+    listener = TGEventHandlerObject()
+    em.AddBroadcastPythonFuncHandler(ET_TEST, listener, "_test_broadcast_raise.bad")
+    em.AddBroadcastPythonFuncHandler(ET_TEST, listener, "_test_broadcast_raise.good")
+
+    ev = TGEvent_Create()
+    ev.SetEventType(ET_TEST)
+    em.AddEvent(ev)  # must NOT raise
+
+    assert called == [True], "handler after the raising one did not run"
+    err = capsys.readouterr().err
+    assert "_test_broadcast_raise.bad" in err
+    assert str(ET_TEST) in err
+    assert "RuntimeError" in err
+    assert "boom in func handler" in err
+    assert "Traceback" in err
+
+    del sys.modules["_test_broadcast_raise"]
+
+
+def test_raising_method_broadcast_handler_logs_and_continues(capsys):
+    """Same log-and-continue guarantee for the method-broadcast path."""
+    from engine.appc.events import TGPythonInstanceWrapper
+
+    called = []
+
+    class BadSpy:
+        def Hit(self, evt):
+            raise RuntimeError("boom in method handler")
+
+    class GoodSpy:
+        def Hit(self, evt):
+            called.append(True)
+
+    bad_wrapper = TGPythonInstanceWrapper()
+    bad_wrapper.SetPyWrapper(BadSpy())
+    good_wrapper = TGPythonInstanceWrapper()
+    good_wrapper.SetPyWrapper(GoodSpy())
+
+    em = TGEventManager()
+    em.AddBroadcastPythonMethodHandler(ET_TEST, bad_wrapper, "Hit")
+    em.AddBroadcastPythonMethodHandler(ET_TEST, good_wrapper, "Hit")
+
+    ev = TGEvent_Create()
+    ev.SetEventType(ET_TEST)
+    em.AddEvent(ev)  # must NOT raise
+
+    assert called == [True], "handler after the raising one did not run"
+    err = capsys.readouterr().err
+    assert "Hit" in err
+    assert "BadSpy" in err
+    assert str(ET_TEST) in err
+    assert "RuntimeError" in err
+    assert "boom in method handler" in err
+    assert "Traceback" in err
+
+
+def test_destination_process_event_exception_still_propagates():
+    """The destination ProcessEvent dispatch at the top of AddEvent is NOT
+    guarded — engine-internal actions rely on exceptions propagating."""
+    class ExplodingDest(TGEventHandlerObject):
+        def ProcessEvent(self, event):
+            raise RuntimeError("destination boom")
+
+    em = TGEventManager()
+    ev = TGEvent_Create()
+    ev.SetEventType(ET_TEST)
+    ev.SetDestination(ExplodingDest())
+
+    with pytest.raises(RuntimeError, match="destination boom"):
+        em.AddEvent(ev)

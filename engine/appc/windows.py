@@ -259,6 +259,31 @@ def SubtitleWindow_Cast(obj):
     return None
 
 
+# ── OptionsWindow ───────────────────────────────────────────────────────────
+
+class _OptionsWindow:
+    """Never-visible stand-in for BC's Options main window.
+
+    In real BC the Options main window always exists in the Appc UI hierarchy,
+    so SDK code dereferences FindMainWindow(MWT_OPTIONS) without a None check —
+    Bridge/HelmMenuHandlers.ObjectEnteredSet:407 crashed on warp set-entry when
+    our _TopWindow returned None. Dauntless renders no SDK Options window
+    (options live in the CEF configuration panel), so it is never visible:
+    returning 0 from IsCompletelyVisible both avoids the None crash and enables
+    the SDK "Entering <system>" banner, which is gated on
+    ``pOptions.IsCompletelyVisible() == 0``.
+
+    Plain class, no __getattr__ catch-all — matching _TopWindow's philosophy
+    that unimplemented methods should raise loudly, not silently no-op.
+    """
+
+    def IsCompletelyVisible(self) -> int:
+        return 0
+
+    def IsVisible(self) -> int:
+        return 0
+
+
 # ── STStylizedWindow ────────────────────────────────────────────────────────
 # Centred LCARS-framed content panel in BC; dauntless re-styles as a centred
 # modal panel via #sdk-stylized-stack. SDK pixel coords (parent/x/y/w/h) are

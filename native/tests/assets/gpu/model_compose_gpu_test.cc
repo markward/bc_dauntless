@@ -214,6 +214,41 @@ TEST_F(ModelComposeGpuTest, OverridesBodyAndHeadBaseTextures) {
     EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
 }
 
+// Four SDK characters (Admiral_Liu, Barel, CardCapt, Korbus) register their
+// blink frame as "*_eyes_closed.tga", a filename that ships nowhere under
+// game/data — the real file is "*_eyesclosed.tga" (or "*_eyes_close.tga" for
+// Brex). compose_officer_model must resolve the SDK-registered name to the
+// on-disk spelling so those characters keep their blink frame.
+TEST_F(ModelComposeGpuTest, FaceTextureEyesClosedSpellingFallback) {
+    const fs::path root = OPEN_STBC_PROJECT_ROOT;
+    const fs::path body_dir =
+        root / "game/data/Models/Characters/Bodies/BodyMaleL";
+    const fs::path body_nif = body_dir / "BodyMaleL.NIF";
+    const fs::path head_dir =
+        root / "game/data/Models/Characters/Heads/HeadLiu";
+    const fs::path head_nif = head_dir / "liu_head.NIF";
+
+    if (!fs::exists(body_nif) || !fs::exists(head_nif) ||
+        !fs::exists(head_dir / "liu_head_eyesclosed.tga"))
+        GTEST_SKIP() << "Liu character assets not installed";
+
+    // Registered exactly as Admiral_Liu.py does ("Liu_head_eyes_closed.tga");
+    // only the spelling fallback can resolve it to liu_head_eyesclosed.tga.
+    const std::map<std::string, fs::path> face_images = {
+        {"blink2", head_dir / "Liu_head_eyes_closed.tga"},
+    };
+
+    assets::Model composed = assets::compose_officer_model(
+        body_nif, /*body_tex=*/{}, head_nif, /*head_tex=*/{}, "Bip01 Head",
+        face_images);
+
+    EXPECT_TRUE(composed.face_textures.count("blink2"))
+        << "'eyes_closed' spelling fallback failed to resolve "
+           "liu_head_eyesclosed.tga";
+
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+}
+
 // A few SDK characters (Felix) register facial-image filenames missing the
 // canonical "_head" infix — Felix.py asks for "Felix_blink1.tga" but the shipped
 // file is "felix_head_blink1.tga". compose_officer_model must self-heal these via

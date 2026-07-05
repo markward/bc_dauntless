@@ -75,6 +75,12 @@ def _make_player_world():
                 player.GetWarpEngineSubsystem()):
         sub._condition = 100.0
         sub._max_condition = 100.0
+    # Real ships always carry a hull (SetupProperties builds it from the
+    # hardpoint HullProperty); Brex.ConfigureForShip dereferences it.
+    from engine.appc.subsystems import HullSubsystem
+    hull = HullSubsystem("Hull")
+    hull.SetMaxCondition(100.0)
+    player.SetHull(hull)
     s.AddObjectToSet(player, "player")
     haven = Planet_Create(200.0, "colony.nif")
     haven.SetName("Haven")
@@ -136,6 +142,85 @@ def test_et_report_is_real_and_unique():
                if n.startswith("ET_") and n != "ET_REPORT"
                and isinstance(v, int) and v == App.ET_REPORT]
     assert clashes == []
+
+
+# The 14 event ids Brex/EngineerCharacterHandlers register broadcast handlers
+# under AND stamp onto watcher range-check events (names verbatim from
+# EngineerCharacterHandlers.AttachMenuToEngineer's registrations). They must
+# be real, stable, distinct ints: App's module-level __getattr__ returns a
+# FRESH _NamedStub per access, so a handler registered under one access never
+# matches an event fired under another.
+_ENGINEER_ETS = (
+    "ET_TACTICAL_SHIELD_LEVEL_CHANGE",
+    "ET_TACTICAL_HULL_LEVEL_CHANGE",
+) + tuple("ET_TACTICAL_SHIELD_%d_LEVEL_CHANGE" % i for i in range(6)) + (
+    "ET_MAIN_BATTERY_LEVEL_CHANGE",
+    "ET_BACKUP_BATTERY_LEVEL_CHANGE",
+    "ET_SUBSYSTEM_DISABLED",
+    "ET_SUBSYSTEM_DESTROYED",
+    "ET_REPAIR_COMPLETED",
+    "ET_REPAIR_CANNOT_BE_COMPLETED",
+)
+
+
+def test_engineer_event_constants_are_real_distinct_ints():
+    values = {}
+    for name in _ENGINEER_ETS:
+        v = getattr(App, name)
+        assert type(v) is int, "%s is %r, not int" % (name, type(v))
+        assert getattr(App, name) == v   # stable across accesses
+        values[name] = v
+    assert len(set(values.values())) == len(values), values
+
+    # Distinct from every other ET_* int in App and in the engine's private
+    # event-id ranges (engine/appc/events.py).
+    from engine.appc import events as appc_events
+    others = {}
+    for mod in (App, appc_events):
+        for n, v in vars(mod).items():
+            if (n.startswith("ET_") and isinstance(v, int)
+                    and n not in _ENGINEER_ETS):
+                others[n] = v
+    clashes = [(n, o) for n, v in values.items()
+               for o, ov in others.items() if ov == v]
+    assert clashes == []
+
+
+def test_configure_wires_brex_without_error(bridge_world):
+    """Brex.ConfigureForShip used to die on GetShieldWatcher(6) (only 6
+    per-face watchers -> IndexError, swallowed by the per-station guard) and
+    would then have hit GetHull().GetCombinedPercentageWatcher() -> None. Both
+    watchers now exist, so Brex wires his shield/hull status thresholds."""
+    game, player, haven = bridge_world
+    results = configure_bridge_officers(
+        App.g_kSetManager.GetSet("bridge"), player)
+    assert results["Brex"] is None, results["Brex"]
+
+    # Brex registered his FRW_BELOW thresholds (0.05..0.75, 7 per watcher —
+    # Brex.py:110-123; EngineerCharacterHandlers adds its own copy on top).
+    shields = player.GetShields().GetShieldWatcher(6)
+    hull = player.GetHull().GetCombinedPercentageWatcher()
+    assert len(shields._checks) >= 7
+    assert len(hull._checks) >= 7
+
+    # End-to-end id match: the broadcast handler AttachMenuToEngineer
+    # registered listens under the SAME int the watcher range-check events
+    # will fire with — the property _NamedStub-per-access breaks.
+    eng = "Bridge.EngineerCharacterHandlers"
+    for et_name, watcher, handler in (
+            ("ET_TACTICAL_SHIELD_LEVEL_CHANGE", shields, ".ShieldLevelChange"),
+            ("ET_TACTICAL_HULL_LEVEL_CHANGE", hull, ".HullLevelChange"),
+            ("ET_MAIN_BATTERY_LEVEL_CHANGE",
+             player.GetPowerSubsystem().GetMainBatteryWatcher(),
+             ".MainBatteryLevelChange"),
+            ("ET_BACKUP_BATTERY_LEVEL_CHANGE",
+             player.GetPowerSubsystem().GetBackupBatteryWatcher(),
+             ".BackupBatteryLevelChange")):
+        et = getattr(App, et_name)
+        registered = App.g_kEventManager._broadcast_handlers.get(et, [])
+        assert any(qn == eng + handler for _dest, qn in registered), et_name
+        assert any(ev.GetEventType() == et
+                   for _t, _d, ev in watcher._checks.values()), et_name
 
 
 def test_configure_registers_helm_handlers(bridge_world):

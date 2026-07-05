@@ -1,4 +1,5 @@
 import sys
+import traceback
 from engine.core.ids import TGObject
 
 # Event type IDs.  SDK uses int constants from App.py; here we pick a stable
@@ -348,6 +349,12 @@ class TGEventManager(TGObject):
     RemoveBroadcastHandlerForInstance = RemoveBroadcastHandler
 
     def AddEvent(self, event: TGEvent) -> None:
+        # Destination dispatch is deliberately UNguarded: engine-internal
+        # actions rely on ProcessEvent exceptions propagating (see
+        # test_loop_fail_bad_timer). Broadcast dispatch below is
+        # log-and-continue, matching original BC: embedded CPython printed
+        # the traceback and the engine kept ticking, so one broken SDK
+        # handler never killed the loop.
         dest = event.GetDestination()
         if dest is not None and isinstance(dest, TGEventHandlerObject):
             dest.ProcessEvent(event)
@@ -355,7 +362,10 @@ class TGEventManager(TGObject):
         for bd, name in self._broadcast_handlers.get(event.GetEventType(), []):
             fn = _resolve_handler(name)
             if fn is not None:
-                fn(bd, event)
+                try:
+                    fn(bd, event)
+                except Exception:
+                    self._log_broadcast_failure(name, event)
         # Method-broadcast handlers (new).
         for wrapper, method_name, target in self._method_handlers.get(
             event.GetEventType(), []
@@ -366,4 +376,22 @@ class TGEventManager(TGObject):
             if py is not None:
                 method = getattr(py, method_name, None)
                 if method is not None:
-                    method(event)
+                    try:
+                        method(event)
+                    except Exception:
+                        self._log_broadcast_failure(
+                            "%s.%s" % (type(py).__name__, method_name), event
+                        )
+
+    @staticmethod
+    def _log_broadcast_failure(handler_desc: str, event: TGEvent) -> None:
+        """Print the active exception's full traceback to stderr, prefixed
+        with a line pinpointing the failing handler + event type. Always on
+        (never dev-mode-gated): a silently-swallowed handler crash is worse
+        than a noisy log."""
+        print(
+            "[events] broadcast handler %r raised for event type %s "
+            "— continuing" % (handler_desc, event.GetEventType()),
+            file=sys.stderr,
+        )
+        traceback.print_exc(file=sys.stderr)
