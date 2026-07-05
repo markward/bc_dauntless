@@ -2,9 +2,12 @@
 
 Each torpedo costs ``GetCurrentAmmoType().GetPowerCost()`` (Photon=20,
 Quantum=30, Klingon=40, etc.).  When the firing ship's PowerSubsystem
-can't cover the cost via StealPower (available + main battery), the
+can't cover the cost via StealPower (main battery only — Task 2), the
 launch is a silent no-op: tube stays loaded, no torpedo spawns, no
 sound plays.
+
+Task 2 changed StealPower to be main-battery-only (returns float amount
+taken).  Tests reflect the new semantics.
 
 Test ships without a bound PowerProperty (the most common Phase-1
 fixture: ``ShipClass_Create("Test")`` without a hardpoint) bypass the
@@ -57,37 +60,43 @@ def _wire_galaxy_like_torp(ship, *, with_power_property=True,
 
 
 def test_fire_succeeds_when_power_covers_cost():
+    """StealPower now drains main battery (Task 2); fixture puts power there."""
     _active.clear()
     ship = ShipClass_Create("Test")
-    tube = _wire_galaxy_like_torp(ship, available=100.0, main_battery=0.0)
+    tube = _wire_galaxy_like_torp(ship, available=0.0, main_battery=100.0)
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
         tube.Fire(target=None, offset=None)
     assert tube.GetNumReady() == 0
     assert len(_active) == 1
-    # 20-cost photon drained from available.
-    assert ship.GetPowerSubsystem().GetAvailablePower() == 80.0
+    # 20-cost photon drained from main battery.
+    assert ship.GetPowerSubsystem().GetMainBatteryPower() == 80.0
     _active.clear()
 
 
 def test_fire_silent_no_op_when_power_insufficient():
-    """Insufficient power: tube stays loaded, no torpedo spawned, no
-    fire-time stamped — same shape as the 'empty tube' silent path so
-    higher-level fire dispatch keeps round-robining cleanly."""
+    """Main battery empty → StealPower returns 0.0 (falsy) → no fire.
+
+    Tube stays loaded, no torpedo spawned, no fire-time stamped.
+    Note: partial steal IS possible (Task 2 semantics) but a 20-unit
+    torpedo with only 5 units in main takes only 5 (a partial steal
+    which is truthy), so the gate fires.  To test the empty case we
+    set main_battery=0 explicitly."""
     _active.clear()
     import math
     ship = ShipClass_Create("Test")
-    tube = _wire_galaxy_like_torp(ship, available=5.0, main_battery=0.0)
+    tube = _wire_galaxy_like_torp(ship, available=0.0, main_battery=0.0)
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
         tube.Fire(target=None, offset=None)
     assert tube.GetNumReady() == 1
     assert len(_active) == 0
     assert tube.GetLastFireTime() == -math.inf
-    # Power untouched (no partial drain).
-    assert ship.GetPowerSubsystem().GetAvailablePower() == 5.0
+    # Power untouched (main was already 0).
+    assert ship.GetPowerSubsystem().GetMainBatteryPower() == 0.0
     _active.clear()
 
 
 def test_fire_falls_through_to_main_battery():
+    """Main battery has plenty → fires and drains main (unchanged path)."""
     _active.clear()
     ship = ShipClass_Create("Test")
     tube = _wire_galaxy_like_torp(ship, available=0.0, main_battery=1000.0)

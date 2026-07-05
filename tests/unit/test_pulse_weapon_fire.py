@@ -178,14 +178,15 @@ def test_fire_silent_no_op_when_power_insufficient():
 
 
 def test_fire_succeeds_when_power_covers_cost():
+    """StealPower drains main battery (Task 2); put power there."""
     _active.clear()
-    cannon = _pulse_weapon(with_power_property=True, available=100.0, main_battery=0.0)
+    cannon = _pulse_weapon(with_power_property=True, available=0.0, main_battery=100.0)
     ship = cannon._climb_to_ship()
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
         cannon.Fire(target="enemy", offset="hit")
     assert len(_active) == 1
-    # PowerCost 10 drained from available.
-    assert ship.GetPowerSubsystem().GetAvailablePower() == 90.0
+    # PowerCost 10 drained from main battery.
+    assert ship.GetPowerSubsystem().GetMainBatteryPower() == 90.0
     _active.clear()
 
 

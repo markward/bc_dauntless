@@ -5,8 +5,11 @@ Model: each charge unit refilled costs ``POWER_COST_PER_CHARGE`` power.
 Per tick:
 
 * `would_refill = recharge_rate * dt`, capped at headroom.
-* `StealPower(would_refill * POWER_COST_PER_CHARGE)` — if it fails,
+* `StealPower(would_refill * POWER_COST_PER_CHARGE)` — if it returns 0.0,
   no refill that tick (bank stays at current level).
+
+Task 2 changed StealPower to drain main battery only (float return).
+Tests now use main_battery as the power source for recharge billing.
 
 Brings energy weapons in line with torpedoes: once the grid bottoms
 out, banks stop recharging and fire stops as soon as the existing
@@ -47,8 +50,9 @@ def _wire_phaser_bank(ship, *, with_power_property=True,
 
 
 def test_recharge_proceeds_when_grid_has_power():
+    """StealPower drains main battery (Task 2); put power there."""
     ship = ShipClass_Create("Test")
-    bank = _wire_phaser_bank(ship, available=100.0)
+    bank = _wire_phaser_bank(ship, main_battery=100.0)
     before = bank._charge_level
     bank.UpdateCharge(1.0)  # 1 second; would refill by recharge_rate*dt = 0.08
     assert bank._charge_level > before
@@ -56,15 +60,16 @@ def test_recharge_proceeds_when_grid_has_power():
 
 
 def test_recharge_bills_the_grid():
+    """StealPower drains from main battery (Task 2 semantics)."""
     ship = ShipClass_Create("Test")
-    bank = _wire_phaser_bank(ship, available=100.0)
+    bank = _wire_phaser_bank(ship, main_battery=100.0)
     bank.UpdateCharge(1.0)  # 0.08 charge × 1.0 cost = 0.08 power
     ps = ship.GetPowerSubsystem()
-    assert abs(ps.GetAvailablePower() - (100.0 - 0.08)) < 1e-6
+    assert abs(ps.GetMainBatteryPower() - (100.0 - 0.08)) < 1e-6
 
 
 def test_recharge_skips_when_grid_dry():
-    """available + main both zero → StealPower fails → bank stays put."""
+    """main battery zero → StealPower returns 0.0 (falsy) → bank stays put."""
     ship = ShipClass_Create("Test")
     bank = _wire_phaser_bank(ship, available=0.0, main_battery=0.0)
     before = bank._charge_level
@@ -73,6 +78,7 @@ def test_recharge_skips_when_grid_dry():
 
 
 def test_recharge_falls_back_to_main_battery():
+    """Main battery path unchanged — still drains main."""
     ship = ShipClass_Create("Test")
     bank = _wire_phaser_bank(ship, available=0.0, main_battery=1000.0)
     before = bank._charge_level
@@ -85,23 +91,23 @@ def test_recharge_falls_back_to_main_battery():
 def test_recharge_capped_at_max_charge_no_overcharge_billed():
     """Bank already at MaxCharge → no headroom → no refill billed."""
     ship = ShipClass_Create("Test")
-    bank = _wire_phaser_bank(ship, available=100.0)
+    bank = _wire_phaser_bank(ship, main_battery=100.0)
     bank._charge_level = bank._max_charge
     bank.UpdateCharge(1.0)
     assert bank._charge_level == bank._max_charge
     ps = ship.GetPowerSubsystem()
-    assert ps.GetAvailablePower() == 100.0
+    assert ps.GetMainBatteryPower() == 100.0
 
 
 def test_recharge_billed_only_for_actual_refill_near_cap():
     """Headroom 0.05, would-be refill 0.08 → bill only the 0.05 actually used."""
     ship = ShipClass_Create("Test")
-    bank = _wire_phaser_bank(ship, available=100.0)
+    bank = _wire_phaser_bank(ship, main_battery=100.0)
     bank._charge_level = bank._max_charge - 0.05
     bank.UpdateCharge(1.0)
     assert abs(bank._charge_level - bank._max_charge) < 1e-6
     ps = ship.GetPowerSubsystem()
-    assert abs(ps.GetAvailablePower() - (100.0 - 0.05)) < 1e-6
+    assert abs(ps.GetMainBatteryPower() - (100.0 - 0.05)) < 1e-6
 
 
 def test_recharge_no_property_bypasses_gate():

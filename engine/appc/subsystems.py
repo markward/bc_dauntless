@@ -1293,19 +1293,25 @@ class PowerSubsystem(ShipSubsystem):
       each tick.  Weapons drain this first.
     * **main battery** — capped reserve (PowerProperty.MainBatteryLimit)
       that absorbs surplus and surrenders it when available runs out.
-    * **backup battery** — emergency reserve.  Reserved for the per-tick
-      flow implementation; the runtime arithmetic ops here treat it as
-      passive storage only.
+    * **backup battery** — emergency reserve drained only via
+      StealPowerFromReserve (backup-only path).
 
-    Arithmetic ops do NOT partial-drain: callers (TorpedoTube.Fire,
-    PhaserBank power debit, etc.) treat a return of 0 as "did not have
-    enough power, do nothing" and a return of 1 as "billed in full".
+    StealPower / StealPowerFromReserve return the float amount actually
+    taken (partial drain semantics, reservoir-specific).  0.0 is falsy
+    so callers in weapon_subsystems.py that test ``if ps.StealPower(cost)``
+    still work correctly.
     """
     def __init__(self, name: str = ""):
         super().__init__(name)
         self._available_power: float = 0.0
         self._main_battery_power: float = 0.0
         self._backup_battery_power: float = 0.0
+        # Conduit / interval tracking (Task 2: battery/conduit surface).
+        self._main_conduit_current: float = 0.0
+        self._backup_conduit_current: float = 0.0
+        self._interval_elapsed: float = 0.0
+        self._power_dispensed: float = 0.0
+        self._power_wanted_total: float = 0.0
         # FloatRangeWatchers handed to Conditions/ConditionPowerBelow.py:44-46;
         # each watches its battery FRACTION (power / limit), driven from Update.
         self._main_battery_watcher = FloatRangeWatcher()
@@ -1318,20 +1324,68 @@ class PowerSubsystem(ShipSubsystem):
     def GetBackupBatteryPower(self) -> float:       return self._backup_battery_power
     def SetBackupBatteryPower(self, v) -> None:     self._backup_battery_power = float(v)
 
+    def SetProperty(self, prop) -> None:
+        """Override to fill batteries to their limits on bind (BC FUN_005636D0).
+
+        Ships spawn with batteries full so they can fire / shield before the
+        first per-tick refill.  Delegates the rest of the property-mirror work
+        to the ShipSubsystem base implementation."""
+        super().SetProperty(prop)
+        if prop is not None:
+            self._main_battery_power = float(prop.GetMainBatteryLimit() or 0.0)
+            self._backup_battery_power = float(prop.GetBackupBatteryLimit() or 0.0)
+
+    def _prop_f(self, getter_name: str) -> float:
+        """Read a float from the PowerProperty; returns 0.0 when no property
+        is bound or the getter returns None (unset data-bag key)."""
+        prop = self.GetProperty()
+        if prop is None:
+            return 0.0
+        return float(getattr(prop, getter_name)() or 0.0)
+
     def GetMainBatteryLimit(self) -> float:
         """Main-battery cap from the PowerProperty (App.py:5743).
 
         ConditionPowerBelow.py:79 divides GetMainBatteryPower() by this to
         seed its initial state; 0.0 when no property is wired."""
-        prop = self.GetProperty()
-        return float(prop.GetMainBatteryLimit() or 0.0) if prop is not None else 0.0
+        return self._prop_f("GetMainBatteryLimit")
 
     def GetBackupBatteryLimit(self) -> float:
         """Backup-battery cap from the PowerProperty (App.py:5744).
 
         Used by ConditionPowerBelow.py:77 for the reserve-only initial state."""
-        prop = self.GetProperty()
-        return float(prop.GetBackupBatteryLimit() or 0.0) if prop is not None else 0.0
+        return self._prop_f("GetBackupBatteryLimit")
+
+    def GetPowerOutput(self) -> float:
+        """Rated output scaled by condition (BC health-scaling asymmetry).
+
+        The EPS plant delivers less power when damaged — scaled by
+        GetConditionPercentage() just like GetMainConduitCapacity."""
+        return self._prop_f("GetPowerOutput") * self.GetConditionPercentage()
+
+    def GetMaxMainConduitCapacity(self) -> float:
+        """Raw (undamaged) main conduit capacity from the PowerProperty."""
+        return self._prop_f("GetMainConduitCapacity")
+
+    def GetMainConduitCapacity(self) -> float:
+        """Health-scaled main conduit capacity (BC asymmetry: main scales,
+        backup does not)."""
+        return self._prop_f("GetMainConduitCapacity") * self.GetConditionPercentage()
+
+    def GetBackupConduitCapacity(self) -> float:
+        """Backup conduit capacity — deliberately NOT health-scaled (BC asymmetry).
+
+        The backup EPS path is hardened; it maintains its rated throughput
+        even when the warp core is damaged."""
+        return self._prop_f("GetBackupConduitCapacity")
+
+    def GetPowerDispensed(self) -> float:
+        """Total power dispensed to consumers this tick (filled by Task 4)."""
+        return self._power_dispensed
+
+    def GetPowerWanted(self) -> float:
+        """Sum of power wanted by all consumers this tick (filled by Task 4)."""
+        return self._power_wanted_total
 
     def GetMainBatteryWatcher(self):
         """FloatRangeWatcher on the main-battery FRACTION
@@ -1353,23 +1407,26 @@ class PowerSubsystem(ShipSubsystem):
         self._available_power -= amt
         return 1
 
-    def StealPower(self, amount) -> int:
-        amt = float(amount)
-        if amt > self._available_power + self._main_battery_power:
-            return 0
-        from_avail = min(amt, self._available_power)
-        self._available_power -= from_avail
-        self._main_battery_power -= (amt - from_avail)
-        return 1
+    def StealPower(self, amount) -> float:
+        """Drain up to `amount` from the main battery; return the float amount
+        actually taken.  Main-battery-only — does not touch available or backup.
 
-    def StealPowerFromReserve(self, amount) -> int:
-        amt = float(amount)
-        if amt > self._available_power + self._main_battery_power:
-            return 0
-        from_main = min(amt, self._main_battery_power)
-        self._main_battery_power -= from_main
-        self._available_power -= (amt - from_main)
-        return 1
+        Returns 0.0 when the main battery is empty (falsy, matches caller
+        boolean checks in weapon_subsystems.py).  Partial steals return the
+        amount taken (truthy) so the caller can act on whatever was available.
+        Task 4 will replace these call sites with a full conduit/allocation
+        model; this bridge form keeps the API surface live."""
+        take = min(float(amount), self._main_battery_power)
+        self._main_battery_power -= take
+        return take
+
+    def StealPowerFromReserve(self, amount) -> float:
+        """Drain up to `amount` from the backup battery; return the float
+        amount actually taken.  Backup-battery-only — does not touch available
+        or main.  0.0 return is falsy; positive return is truthy."""
+        take = min(float(amount), self._backup_battery_power)
+        self._backup_battery_power -= take
+        return take
 
     # ── Per-tick flow ─────────────────────────────────────────────────────
     # Walked from GameLoop.tick. Sums idle drain across the parent ship's
