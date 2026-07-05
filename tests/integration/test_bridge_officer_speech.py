@@ -236,12 +236,10 @@ def test_quickbattle_late_player_wires_officers_via_set_player(monkeypatch):
     ET_SET_PLAYER broadcast, exactly as replicated here."""
     game = _loaded_world(monkeypatch)
     try:
-        # What host_loop's post-load hook does when GetPlayer() is None: only
-        # the broadcast registration. Unconditional import mirrors the hook —
-        # _resolve_handler finds handlers via sys.modules, it never imports.
-        import engine.bridge_officers  # noqa: F401
-        App.g_kEventManager.AddBroadcastPythonFuncHandler(
-            App.ET_SET_PLAYER, None, "engine.bridge_officers.OnSetPlayer")
+        # The exact post-load wiring host_loop runs: with no player yet this
+        # is just the ET_SET_PLAYER broadcast registration.
+        from engine.bridge_officers import wire_after_mission_load
+        wire_after_mission_load()
         helm = _helm_menu()
         assert helm._handlers.get(App.ET_ALL_STOP, []).count(
             _HELM_HANDLERS + ".AllStop") == 0   # nothing wired at load

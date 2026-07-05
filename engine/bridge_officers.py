@@ -98,6 +98,25 @@ def CommunicateToReport(pMenu, pEvent):
     pMenu.CallNextHandler(pEvent)
 
 
+def wire_after_mission_load() -> None:
+    """The post-load officer wiring — called by host_loop's
+    _after_mission_loaded (and by the host-level tests, so the tested path IS
+    the live path). Two triggers: configure now when the player already
+    exists (story missions create it during loader.load()), and on
+    ET_SET_PLAYER for players created later (the boot QuickBattle spawns the
+    ship at battle start and on every restart). Broadcast registration must
+    re-run per load: reset_sdk_globals wipes it.
+    """
+    import App
+    import MissionLib
+    bridge = App.g_kSetManager.GetSet("bridge")
+    player = MissionLib.GetPlayer()
+    if bridge is not None and player is not None:
+        configure_bridge_officers(bridge, player)
+    App.g_kEventManager.AddBroadcastPythonFuncHandler(
+        App.ET_SET_PLAYER, None, __name__ + ".OnSetPlayer")
+
+
 def OnSetPlayer(pObject, pEvent):
     """ET_SET_PLAYER broadcast handler — (re)configure officers for the player.
 

@@ -145,13 +145,26 @@ def test_default_speaking_queries():
 
 # ── Menu wiring ──────────────────────────────────────────────────────────────
 
-def test_get_menu_auto_vivifies():
+def test_get_menu_null_handle_until_set():
+    """Appc null-pointer semantics: an unattached character's GetMenu() is a
+    FALSY null handle (AttachMenuTo*'s `if (pChar.GetMenu()):` detach-guard
+    skips — the old truthy auto-vivified orphan sent re-attach down the
+    detach branch, crashing on missing submenus) that is still fully
+    dereferenceable (MissionLib.DetachCrewMenus calls DetachMenuFrom*
+    unconditionally, and those bodies chain GetSubmenuW/RemoveHandler on it)."""
+    from engine.appc.characters import STTopLevelMenu_CreateNull
     c = CharacterClass_Create()
     c.SetCharacterName("Tactical")
-    menu = c.GetMenu()
-    assert isinstance(menu, STTopLevelMenu)
-    # Same instance on subsequent calls so handler registration sticks.
-    assert c.GetMenu() is menu
+    null = c.GetMenu()
+    assert not null
+    # DetachMenuFromHelm's chain must no-op, not crash.
+    null.GetSubmenuW("Orbit Planet").RemoveHandlerForInstance(1076, "x.y")
+    assert null.GetButtonW("Report") is None
+    # DetachMenuFrom* re-null via SetMenu(STTopLevelMenu_CreateNull()).
+    c.SetMenu(STTopLevelMenu("Custom"))
+    assert c.GetMenu()
+    c.SetMenu(STTopLevelMenu_CreateNull())
+    assert not c.GetMenu()
 
 
 def test_set_menu_replaces_default():

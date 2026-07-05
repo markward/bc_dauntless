@@ -174,7 +174,7 @@ from engine.appc.characters import (
     CharacterClass_SetVolumeForLineType, CharacterClass_GetVolumeForLineType,
     STButton, STMenu, STTopLevelMenu,
     STButton_Create, STButton_CreateW, STMenu_Cast, STMenu_Create, STMenu_CreateW,
-    STTopLevelMenu_CreateW, STTopLevelMenu_Cast,
+    STTopLevelMenu_CreateW, STTopLevelMenu_Cast, STTopLevelMenu_CreateNull,
 )
 # STButton size-to-text flag — TacticalMenuHandlers uses App.STBSF_SIZE_TO_TEXT.
 STBSF_SIZE_TO_TEXT = STButton.STBSF_SIZE_TO_TEXT

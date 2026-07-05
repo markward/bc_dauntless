@@ -51,12 +51,14 @@ def objectives_submenu():
     if pXO is None:
         return None
     menu = pXO.GetMenu()
-    if menu is None or not hasattr(menu, "GetSubmenuW"):
+    # Falsy covers both None and the NULL menu handle (an unattached XO's
+    # GetMenu returns the falsy-but-dereferenceable _NULL_MENU).
+    if not menu or not hasattr(menu, "GetSubmenuW"):
         return None
     sub = menu.GetSubmenuW(objectives_label())
     # GetSubmenuW returns None (real miss) or an STMenu; never a _Stub here
     # because GetMenu already gave a real menu.
-    return sub if (sub is not None and hasattr(sub, "GetButtonW")) else None
+    return sub if (sub and hasattr(sub, "GetButtonW")) else None
 
 
 def goal_label(goal_id, *databases):

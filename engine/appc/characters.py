@@ -443,13 +443,18 @@ class CharacterClass(ObjectClass):
     # ── Menu ────────────────────────────────────────────────────────────────
     def SetMenu(self, menu) -> None:              self._menu = menu
 
-    def GetMenu(self) -> STTopLevelMenu:
-        # Auto-vivify so the SDK pattern
-        #   pCharacter.GetMenu().GetSubmenuW("Helm")
-        # works on a freshly-created character without an explicit SetMenu.
-        if self._menu is None:
-            self._menu = STTopLevelMenu(self._character_name)
-        return self._menu
+    def GetMenu(self):
+        # Faithful to Appc: an unattached character holds a NULL menu handle —
+        # a SWIG wrapper that is FALSY in `if (pChar.GetMenu()):` yet still
+        # dereferenceable. Both properties are load-bearing in the SDK:
+        # AttachMenuTo* uses the falsiness to skip its self-detach on a fresh
+        # character (the old auto-vivified orphan was truthy, so re-attach
+        # after DetachCrewMenus took the detach branch against an empty orphan
+        # and crashed on the missing "Orbit Planet" submenu), while
+        # MissionLib.DetachCrewMenus calls DetachMenuFrom* UNCONDITIONALLY and
+        # those bodies call pMenu.RemoveHandlerForInstance / GetSubmenuW on
+        # whatever GetMenu returned — so a bare None crashes them.
+        return self._menu if self._menu is not None else _NULL_MENU
 
     # ── Body/face/animation registration ────────────────────────────────────
     def ReplaceBodyAndHead(self, body_tex: str, head_tex: str) -> None:
@@ -777,3 +782,31 @@ def CharacterClass_SetVolumeForLineType(line_type, volume) -> None:
 
 def CharacterClass_GetVolumeForLineType(line_type) -> float:
     return _volume_for_line_type.get(int(line_type), 1.0)
+
+
+class _NullMenuClass(STTopLevelMenu):
+    """The NULL menu handle — falsy like a SWIG null pointer, but with the
+    full (inert) menu surface so SDK code that dereferences it without a
+    null-check (DetachMenuFrom*'s RemoveHandlerForInstance / GetSubmenuW
+    chains) no-ops instead of crashing. See CharacterClass.GetMenu."""
+
+    def __bool__(self) -> bool:
+        return False
+
+    def GetSubmenuW(self, label):
+        return self          # chainable: null menu's submenus are null menus
+
+    GetSubmenu = GetSubmenuW
+
+    def GetButtonW(self, label):
+        return None
+
+
+_NULL_MENU = _NullMenuClass("<null menu>")
+
+
+def STTopLevelMenu_CreateNull():
+    """SDK: DetachMenuFrom* assigns this via SetMenu to drop a character's
+    menu pointer ("this doesn't destroy the menu, just removes the
+    character's pointer to it")."""
+    return _NULL_MENU
