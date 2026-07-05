@@ -95,6 +95,16 @@ bool set_base_texture(Model& model, std::span<const int> mesh_indices,
                       const std::filesystem::path& tga_path,
                       const TgaTextureLoaderFn& loader = {});
 
+/// Candidate on-disk paths for an SDK-registered face-texture filename, in
+/// resolution order: the literal path first, then filename-spelling variants
+/// ("eyes_closed" -> "eyesclosed" / "eyes_close" — four SDK characters register
+/// a "*_eyes_closed.tga" that ships nowhere; the on-disk convention is
+/// "*_eyesclosed.tga", or "*_eyes_close.tga" for Brex), then the "_head"-infix
+/// variant of each (the Felix/Korbus quirk). Pure — no file I/O. Never empty;
+/// front() is always `path`.
+std::vector<std::filesystem::path> face_texture_candidates(
+    const std::filesystem::path& path);
+
 /// Host-facing one-shot: load `body_nif` (skinned) and `head_nif` from disk
 /// (each model's NIF-default textures resolved against its own NIF directory,
 /// exactly like the AssetCache path), graft the head onto the body's

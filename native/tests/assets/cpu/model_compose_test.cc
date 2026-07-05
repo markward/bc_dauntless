@@ -10,6 +10,9 @@
 
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <algorithm>
+#include <filesystem>
+
 namespace {
 
 // Minimal body Model: a 2-bone skeleton (root + "Bip01 Head"), one node, one
@@ -296,6 +299,72 @@ TEST(GraftHeadCpu, RebasesHeadToBodyAttachBoneBindHeight) {
     EXPECT_FLOAT_EQ(grafted[0].vertices[0].position.x, 1.0f);
     EXPECT_FLOAT_EQ(grafted[0].vertices[0].position.y, 2.0f);
     EXPECT_FLOAT_EQ(grafted[0].vertices[0].position.z, 9.0f);
+}
+
+// Four SDK characters (Admiral_Liu, Barel, CardCapt, Korbus) register their
+// blink frame as "*_eyes_closed.tga", but no such file ships anywhere under
+// game/data — the on-disk convention is "*_eyesclosed.tga" (28 heads) or
+// "*_eyes_close.tga" (Brex). face_texture_candidates must yield the literal
+// path first, then the spelling variants, then the "_head"-infix variant of
+// each, so load_face_texture can resolve every real file with one loop.
+TEST(FaceTextureCandidates, LiteralPathComesFirst) {
+    const std::filesystem::path p = "/heads/HeadLiu/Liu_head_eyes_closed.tga";
+    const auto cands = assets::face_texture_candidates(p);
+    ASSERT_FALSE(cands.empty());
+    EXPECT_EQ(cands.front(), p);
+}
+
+TEST(FaceTextureCandidates, RewritesEyesClosedToEyesclosed) {
+    const auto cands = assets::face_texture_candidates(
+        "/heads/HeadLiu/Liu_head_eyes_closed.tga");
+    EXPECT_NE(std::find(cands.begin(), cands.end(),
+                        std::filesystem::path(
+                            "/heads/HeadLiu/Liu_head_eyesclosed.tga")),
+              cands.end())
+        << "'eyes_closed' -> 'eyesclosed' spelling variant missing";
+}
+
+TEST(FaceTextureCandidates, RewritesEyesClosedToEyesClose) {
+    // Brex's on-disk spelling drops the trailing 'd'.
+    const auto cands = assets::face_texture_candidates(
+        "/heads/HeadBrex/Brex_head_eyes_closed.tga");
+    EXPECT_NE(std::find(cands.begin(), cands.end(),
+                        std::filesystem::path(
+                            "/heads/HeadBrex/Brex_head_eyes_close.tga")),
+              cands.end())
+        << "'eyes_closed' -> 'eyes_close' (Brex) spelling variant missing";
+}
+
+TEST(FaceTextureCandidates, SpellingVariantComposesWithHeadInfix) {
+    // Korbus stacks both quirks: "Korbus_eyes_closed.tga" must reach
+    // "Korbus_head_eyesclosed.tga" (spelling rewrite + "_head" infix).
+    const auto cands = assets::face_texture_candidates(
+        "/heads/HeadKorbus/Korbus_eyes_closed.tga");
+    EXPECT_NE(std::find(cands.begin(), cands.end(),
+                        std::filesystem::path(
+                            "/heads/HeadKorbus/Korbus_head_eyesclosed.tga")),
+              cands.end())
+        << "spelling variant did not compose with the '_head'-infix variant";
+}
+
+TEST(FaceTextureCandidates, KeepsExistingHeadInfixFallback) {
+    // The pre-existing Felix quirk: literal + "_head"-infix variant only.
+    const auto cands = assets::face_texture_candidates(
+        "/heads/HeadFelix/Felix_blink1.tga");
+    EXPECT_NE(std::find(cands.begin(), cands.end(),
+                        std::filesystem::path(
+                            "/heads/HeadFelix/Felix_head_blink1.tga")),
+              cands.end());
+}
+
+TEST(FaceTextureCandidates, CanonicalNameYieldsOnlyTheLiteral) {
+    // Already-canonical name with no eyes-closed token: no invented variants,
+    // so a genuinely-missing file still fails (no false positives).
+    const auto cands = assets::face_texture_candidates(
+        "/heads/HeadFelix/Felix_head_nope.tga");
+    ASSERT_EQ(cands.size(), 1u);
+    EXPECT_EQ(cands.front(),
+              std::filesystem::path("/heads/HeadFelix/Felix_head_nope.tga"));
 }
 
 TEST(GraftHeadCpu, MissingBoneLeavesBodyUnchanged) {

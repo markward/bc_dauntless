@@ -1,9 +1,11 @@
 // native/src/assets/src/model_compose.cc
 #include <assets/model_compose.h>
 
+#include <cctype>
 #include <cstdio>
 #include <fstream>
 #include <set>
+#include <string_view>
 #include <utility>
 
 #include <algorithm>
@@ -67,16 +69,19 @@ fs::path head_infix_variant(const fs::path& p) {
 }
 
 // Load a per-officer face texture, tolerating the non-canonical filenames a few
-// SDK characters register: try the literal path first, then the "_head"-infix
-// variant. Throws (propagating the failure) only when neither resolves.
+// SDK characters register: try each face_texture_candidates() path in order
+// (literal, spelling variants, "_head"-infix variant of each). Throws
+// (propagating the failure) only when none resolves.
 Texture load_face_texture(const fs::path& path) {
-    try {
-        return default_tga_loader(path);
-    } catch (const std::exception&) {
-        const fs::path alt = head_infix_variant(path);
-        if (!alt.empty()) return default_tga_loader(alt);  // may rethrow
-        throw;                                             // no variant
+    const std::vector<fs::path> candidates = face_texture_candidates(path);
+    for (std::size_t i = 0; i + 1 < candidates.size(); ++i) {
+        try {
+            return default_tga_loader(candidates[i]);
+        } catch (const std::exception&) {
+            // fall through to the next candidate
+        }
     }
+    return default_tga_loader(candidates.back());  // last one may throw
 }
 
 int find_bone(const Skeleton& sk, std::string_view name) {
@@ -95,6 +100,48 @@ int choose_attach_node(const Model& body, std::string_view attach_bone) {
 }
 
 }  // namespace
+
+std::vector<fs::path> face_texture_candidates(const fs::path& path) {
+    std::vector<fs::path> out;
+    auto push = [&](const fs::path& c) {
+        if (c.empty()) return;
+        if (std::find(out.begin(), out.end(), c) == out.end())
+            out.push_back(c);
+    };
+
+    push(path);
+
+    // Spelling variants: four SDK characters (Admiral_Liu, Barel, CardCapt,
+    // Korbus) register "*_eyes_closed.tga", which ships nowhere under
+    // game/data — the on-disk convention is "*_eyesclosed.tga" (28 heads) or
+    // "*_eyes_close.tga" (Brex). Match case-insensitively; splice the fix into
+    // the original stem (the surrounding case doesn't matter on the
+    // case-insensitive game-data filesystems we target).
+    const std::string stem = path.stem().string();
+    std::string lower = stem;
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+                   [](unsigned char c) {
+                       return static_cast<char>(std::tolower(c));
+                   });
+    constexpr std::string_view kSdkTypo = "eyes_closed";
+    const auto pos = lower.find(kSdkTypo);
+    if (pos != std::string::npos) {
+        for (const char* fix : {"eyesclosed", "eyes_close"}) {
+            std::string alt = stem;
+            alt.replace(pos, kSdkTypo.size(), fix);
+            push(path.parent_path() / (alt + path.extension().string()));
+        }
+    }
+
+    // The "_head"-infix variant of each spelling (Felix quirk; Korbus needs it
+    // COMPOSED with the spelling rewrite: "Korbus_eyes_closed.tga" ->
+    // "Korbus_head_eyesclosed.tga").
+    const std::size_t spelled = out.size();
+    for (std::size_t i = 0; i < spelled; ++i)
+        push(head_infix_variant(out[i]));
+
+    return out;
+}
 
 std::vector<MeshCpu> graft_head_cpu(Model& body, Model& head,
                                     std::string_view attach_bone,
