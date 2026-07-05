@@ -37,9 +37,10 @@ class _TopWindow:
         self._last_rendered_set = None
         self._children: list[tuple[object, float, float]] = []
         self._focus = None
-        from engine.appc.windows import _SubtitleWindow
+        from engine.appc.windows import _OptionsWindow, _SubtitleWindow
         self._main_windows: dict[int, object] = {
             MWT_SUBTITLE: _SubtitleWindow(),
+            MWT_OPTIONS: _OptionsWindow(),
         }
         self._handler_registrations: list[tuple[int, str]] = []
 
