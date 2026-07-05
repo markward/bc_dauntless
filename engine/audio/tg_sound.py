@@ -315,9 +315,9 @@ class TGSoundManager:
     def GetSound(self, name: str) -> Optional[TGSound]:
         return self._sounds.get(name)
 
-    def PlaySound(self, name: str) -> Optional[_PlayingSound]:
+    def PlaySound(self, name: str, position=None) -> Optional[_PlayingSound]:
         snd = self._sounds.get(name)
-        return None if snd is None else snd.Play()
+        return None if snd is None else snd.Play(position=position)
 
 
 # Module-level singleton. App.py imports this name directly, which binds it

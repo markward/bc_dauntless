@@ -524,12 +524,41 @@ class TGSoundAction(TGTimedAction):
         super().__init__()
         self._sound_name = sound_name
         self._handle = None   # _PlayingSound while our launch is (maybe) audible
+        self._node = None     # spatial anchor from SetNode (see _node_position)
 
     def SetName(self, name: str) -> None:
         self._sound_name = name
 
     def GetName(self) -> str:
         return self._sound_name
+
+    def SetNode(self, node) -> None:
+        # SDK pattern: pSound.SetNode(pObject.GetNode()) anchors playback to
+        # that object so it spatializes at the object's location. In the
+        # deferred model GetNode() returns an _ObjectNodeRef (weak handle to
+        # the object) rather than a scene node; anything unresolvable falls
+        # back to non-positional playback.
+        self._node = node
+
+    def _node_position(self):
+        """World position (x, y, z) from the SetNode anchor, or None.
+
+        Resolved at Play time — the object may move between SetNode and the
+        sequence firing this action. Coordinates must be real numbers: a
+        chainable stub node would coerce to 0.0 and silently pin the sound to
+        the origin, which is worse than the non-positional fallback."""
+        if self._node is None:
+            return None
+        try:
+            loc = self._node.GetWorldLocation()
+            if loc is None:
+                return None
+            x, y, z = loc.x, loc.y, loc.z
+            if not all(isinstance(c, (int, float)) for c in (x, y, z)):
+                return None
+            return (float(x), float(y), float(z))
+        except Exception:
+            return None
 
     def Play(self) -> None:
         # Override (not _do_play) so completion is gated on the sound's real
@@ -549,7 +578,14 @@ class TGSoundAction(TGTimedAction):
         # duration; this _do_play just starts playback. The handle is kept so
         # Skip/Abort can silence the audio mid-line.
         from engine.audio.tg_sound import TGSoundManager
-        self._handle = TGSoundManager.instance().PlaySound(self._sound_name)
+        pos = self._node_position()
+        if pos is None:
+            # Exact legacy call — keeps non-anchored sounds byte-identical
+            # (and old single-arg PlaySound fakes in tests working).
+            self._handle = TGSoundManager.instance().PlaySound(self._sound_name)
+        else:
+            self._handle = TGSoundManager.instance().PlaySound(
+                self._sound_name, position=pos)
 
     def _stop_audio(self) -> None:
         h = self._handle

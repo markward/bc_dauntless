@@ -9,6 +9,7 @@ ObjectGroup        — named membership list (friendly/enemy/neutral groups)
 
 import math
 import random
+import weakref
 
 from engine.appc.events import TGEventHandlerObject
 from engine.appc.math import TGPoint3, TGMatrix3
@@ -24,6 +25,25 @@ class _NodeStub:
         return True
     def __repr__(self):
         return "<_NodeStub>"
+
+
+class _ObjectNodeRef(_NodeStub):
+    """GetNode() result in the deferred-renderer model: no scene graph exists,
+    so the "node" is a weak handle back to the owning object. Consumers that
+    need spatial anchoring (TGSoundAction.SetNode → positional playback)
+    resolve GetWorldLocation(); everything else inherits _NodeStub
+    chainability. Weak so a queued sound/effect action never keeps a dead
+    ship alive."""
+    def __init__(self, owner):
+        self._owner = weakref.ref(owner)
+
+    def GetWorldLocation(self):
+        owner = self._owner()
+        return None if owner is None else owner.GetWorldLocation()
+
+    def __repr__(self):
+        owner = self._owner()
+        return "<_ObjectNodeRef %r>" % (owner.GetName() if owner else None)
 
 
 class ObjectClass(TGEventHandlerObject):
@@ -320,7 +340,10 @@ class ObjectClass(TGEventHandlerObject):
         return self.IsDeleteMe()
 
     def GetNode(self):
-        return None
+        # Deferred renderer: no scene-graph node to hand out. Return a weak
+        # handle to self so SDK patterns like pSound.SetNode(pObj.GetNode())
+        # can resolve a world position for positional playback.
+        return _ObjectNodeRef(self)
 
     def GetAnimNode(self) -> "_NodeStub":
         return _NodeStub()

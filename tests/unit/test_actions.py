@@ -765,6 +765,111 @@ def test_sound_action_zero_duration_completes_inline(monkeypatch):
     assert not a.IsPlaying()                    # inline (synchronous preserved)
 
 
+# ── TGSoundAction.SetNode positional playback ────────────────────────────────
+
+def _capture_play_sound(monkeypatch):
+    """Log (name, position) for every PlaySound call; complete inline."""
+    from engine.audio.tg_sound import TGSoundManager
+    calls = []
+
+    def fake_play(self, name, position=None):
+        calls.append((name, position))
+        return None
+
+    monkeypatch.setattr(TGSoundManager, "PlaySound", fake_play, raising=True)
+    monkeypatch.setattr(TGSoundManager, "duration_for",
+                        lambda self, name: 0.0, raising=True)
+    return calls
+
+
+def test_sound_action_set_node_is_real_method():
+    # Regression: SetNode used to fall through TGObject.__getattr__ to a
+    # truthy _Stub — a silent no-op (E1M2 asteroid-death explosion played
+    # non-positionally).
+    from engine.core.ids import _Stub
+    a = App.TGSoundAction_Create("Boom")
+    assert not isinstance(a.SetNode, _Stub)
+    node = object()
+    a.SetNode(node)
+    assert a._node is node
+
+
+def test_object_get_node_resolves_world_location():
+    from engine.appc.objects import ObjectClass
+    obj = ObjectClass()
+    obj.SetTranslateXYZ(10.0, 20.0, 30.0)
+    node = obj.GetNode()
+    loc = node.GetWorldLocation()
+    assert (loc.x, loc.y, loc.z) == (10.0, 20.0, 30.0)
+
+
+def test_object_node_ref_is_weak():
+    # The id registry (engine/core/ids._registry) holds every TGObject
+    # strongly until unregister — mirror real teardown before the GC check.
+    import gc
+    from engine.appc.objects import ObjectClass
+    from engine.core.ids import unregister
+    obj = ObjectClass()
+    node = obj.GetNode()
+    unregister(obj.GetObjID())
+    del obj
+    gc.collect()
+    assert node.GetWorldLocation() is None
+
+
+def test_sound_action_plays_at_node_position_snapshotted_at_play(monkeypatch):
+    from engine.appc.objects import ObjectClass
+    calls = _capture_play_sound(monkeypatch)
+    obj = ObjectClass()
+    obj.SetTranslateXYZ(1.0, 2.0, 3.0)
+    a = App.TGSoundAction_Create("Boom")
+    a.SetNode(obj.GetNode())
+    obj.SetTranslateXYZ(4.0, 5.0, 6.0)   # moves before the sequence fires
+    a.Play()
+    assert calls == [("Boom", (4.0, 5.0, 6.0))]
+
+
+def test_sound_action_without_node_plays_non_positional(monkeypatch):
+    calls = _capture_play_sound(monkeypatch)
+    a = App.TGSoundAction_Create("Boom")
+    a.Play()
+    assert calls == [("Boom", None)]
+
+
+def test_sound_action_none_node_plays_non_positional(monkeypatch):
+    calls = _capture_play_sound(monkeypatch)
+    a = App.TGSoundAction_Create("Boom")
+    a.SetNode(None)                       # GetNode() of a nodeless object
+    a.Play()
+    assert calls == [("Boom", None)]
+
+
+def test_sound_action_stub_node_falls_back_non_positional(monkeypatch):
+    # A chainable _Stub's coords coerce to 0.0 — must NOT pin the sound to
+    # the world origin; fall back to non-positional instead.
+    from engine.core.ids import _Stub
+    calls = _capture_play_sound(monkeypatch)
+    a = App.TGSoundAction_Create("Boom")
+    a.SetNode(_Stub())
+    a.Play()
+    assert calls == [("Boom", None)]
+
+
+def test_sound_action_dead_node_owner_plays_non_positional(monkeypatch):
+    import gc
+    from engine.appc.objects import ObjectClass
+    calls = _capture_play_sound(monkeypatch)
+    from engine.core.ids import unregister
+    obj = ObjectClass()
+    a = App.TGSoundAction_Create("Boom")
+    a.SetNode(obj.GetNode())
+    unregister(obj.GetObjID())
+    del obj
+    gc.collect()
+    a.Play()
+    assert calls == [("Boom", None)]
+
+
 # ── CharacterAction speak-type deferral ──────────────────────────────────────
 
 def test_character_speak_action_defers_by_duration(monkeypatch):
