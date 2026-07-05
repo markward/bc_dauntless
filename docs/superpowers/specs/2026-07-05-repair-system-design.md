@@ -2,6 +2,9 @@
 
 **Date:** 2026-07-05
 **Status:** Approved (Approach A — faithful in-engine RepairSubsystem)
+**Depends on:** `2026-07-05-power-management-system-design.md` — implemented
+first. Repair joins the consumer-draw model, per-ship update loop, and
+Engineering-display CEF surface that the power feature establishes.
 
 ## Goal
 
@@ -135,16 +138,21 @@ refs (faithful *semantics*; we don't replicate the C++ node pool).
      real `RepairCompleted` handler dereferences, with a test running the
      actual SDK handler).
   - **No power-efficiency term** — the RE-verified formula scales only by
-    the bay's own health. Power draw stays as today
-    (`_IDLE_DRAIN_SLOTS` in `PowerSubsystem`).
+    the bay's own health. The repair bay registers as an ordinary mode-0
+    power consumer (per the power-management spec §1.2) drawing its
+    authored `NormalPowerPerSecond`; the resulting `efficiency` value is
+    **not** applied to repair rate (both specs agree — power spec lists
+    repair under "Out of scope" for efficiency effects).
+  - **`IsOn()` defaults true** (RE layout `+0x9C` inits to 1) — the bay
+    draws power and ticks without ever being switched on.
 - **Priority toggle.** Instance handler for `ET_REPAIR_INCREASE_PRIORITY`
   (obj-ptr event carrying the target subsystem): if `IsBeingRepaired(sub)` →
   move to tail (demote); else → move to head (promote). Stock's binary
   toggle, not move-up-one.
-- **Tick integration.** `RepairSubsystem.Update(dt)` joins the existing
-  per-tick subsystem update loop (alongside shields/power/cloak) for every
-  simulated ship (`iter_ships`, sim scope — AI ships repair themselves, as
-  stock). Respects `frame_dt = 0` pause for free.
+- **Tick integration.** `RepairSubsystem.Update(dt)` joins the per-ship
+  subsystem update loop that the power-management feature wires via
+  `iter_ships` (sim scope — AI ships repair themselves, as stock).
+  Respects `frame_dt = 0` pause for free.
 - **`MaxRepairPoints` / `NumRepairTeams`** read from the bound
   `RepairSubsystemProperty` (data-bag accessors already round-trip hardpoint
   authoring). Defaults when unauthored: 0 points / 0 teams (a ship without an
@@ -170,9 +178,12 @@ refs (faithful *semantics*; we don't replicate the C++ node pool).
 
 `App.EngRepairPane_Create(width, height, rows)` returns a real pane object
 (new `engine/ui/eng_repair_pane.py`) instead of a bare `_DisplayWidget`,
-rendered by the Engineering crew menu's CEF panel — the same
-SDK-creates-widget / CEF-renders split as `ShipDisplayPanel`. Stock
-`EngineerMenuHandlers.py:84` attaches it unmodified.
+rendered by the Engineering-display CEF surface that the power-management
+UI establishes (power spec §3) — the same SDK-creates-widget / CEF-renders
+split as `ShipDisplayPanel` and the power grid. Stock
+`EngineerMenuHandlers.py:84` attaches it unmodified; repair rows and the
+power sliders are siblings on the same Engineering display, showing and
+hiding together with the SDK engineering flow.
 
 Three areas, mirroring stock's `EngRepairPane`:
 
