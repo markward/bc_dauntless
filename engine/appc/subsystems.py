@@ -1429,11 +1429,15 @@ class PowerSubsystem(ShipSubsystem):
         return take
 
     # ── Per-tick flow ─────────────────────────────────────────────────────
-    # Walked from GameLoop.tick. Sums idle drain across the parent ship's
-    # powered subsystems, applies generation, and routes surplus / deficit
-    # through the battery pools. The available pool is refilled to the
-    # tick's surplus so weapons can spend it via DeductPower / StealPower
-    # within the same tick.
+    # BC uses a 1-second interval tick (FUN_005636D0 / 0x892E20 constant).
+    # Elapsed game-time accumulates each call; when it crosses POWER_INTERVAL
+    # the reactor fires: generate output*elapsed into batteries (main first,
+    # spill to backup, discard), then compute conduit budgets from the new
+    # battery levels and health-scaled capacity.  Between intervals the conduit
+    # budgets are unchanged; the watcher fractions are updated every call so
+    # the FloatRangeWatcher fires promptly on StealPower drains between ticks.
+
+    POWER_INTERVAL: float = 1.0   # seconds of game time; BC constant 0x892E20
 
     _IDLE_DRAIN_SLOTS = (
         "GetSensorSubsystem", "GetImpulseEngineSubsystem",
@@ -1444,6 +1448,8 @@ class PowerSubsystem(ShipSubsystem):
     )
 
     def _compute_idle_drain(self) -> float:
+        # NOTE: _compute_idle_drain is present but unused after the Task 3
+        # interval-tick rewrite; Task 4's consumer pump will replace it.
         ship = self.GetParentShip()
         if ship is None:
             return 0.0
@@ -1475,37 +1481,38 @@ class PowerSubsystem(ShipSubsystem):
                 total += float(cloak.GetNormalPowerPerSecond() or 0.0)
         return total
 
+    def _add_power_to_batteries(self, amount: float) -> None:
+        """Main first (capped), spill to backup (capped), discard the rest."""
+        main_cap = self.GetMainBatteryLimit()
+        backup_cap = self.GetBackupBatteryLimit()
+        room = main_cap - self._main_battery_power
+        take = min(amount, max(room, 0.0))
+        self._main_battery_power += take
+        spill = amount - take
+        room = backup_cap - self._backup_battery_power
+        self._backup_battery_power += min(spill, max(room, 0.0))
+
     def Update(self, dt: float) -> None:
         prop = self.GetProperty()
         if prop is None:
             return
-        output = float(prop.GetPowerOutput() or 0.0)
-        main_cap = float(prop.GetMainBatteryLimit() or 0.0)
-        idle_drain = self._compute_idle_drain()
-
-        backup_cap = float(prop.GetBackupBatteryLimit() or 0.0)
-        gen = output * dt
-        drain = idle_drain * dt
-        net = gen - drain
-
-        if net >= 0.0:
-            self._main_battery_power = min(
-                main_cap, self._main_battery_power + net
-            )
-            self._available_power = net
-        else:
-            # Deficit — pull from main, then backup.  Subsystems still
-            # "run" (we don't simulate brown-out yet); the only observable
-            # is a drained reserve.
-            deficit = -net
-            from_main = min(deficit, self._main_battery_power)
-            self._main_battery_power -= from_main
-            remaining = deficit - from_main
-            if remaining > 0.0:
-                from_backup = min(remaining, self._backup_battery_power)
-                self._backup_battery_power -= from_backup
-            self._available_power = 0.0
-
+        dt = float(dt)
+        self._interval_elapsed += dt
+        if self._interval_elapsed >= self.POWER_INTERVAL:
+            elapsed = self._interval_elapsed
+            self._interval_elapsed = 0.0
+            self._power_dispensed = 0.0
+            if not _is_offline(self):
+                self._add_power_to_batteries(self.GetPowerOutput() * elapsed)
+            main_max = self.GetMainConduitCapacity() * elapsed
+            backup_max = self.GetBackupConduitCapacity() * elapsed
+            self._main_conduit_current = min(self._main_battery_power, main_max)
+            self._backup_conduit_current = min(self._backup_battery_power, backup_max)
+            self._available_power = (self._main_conduit_current
+                                     + self._backup_conduit_current)
+        self._pump_consumers(dt)     # Task 4 fills this in
+        main_cap = self.GetMainBatteryLimit()
+        backup_cap = self.GetBackupBatteryLimit()
         # Drive the FloatRangeWatchers with each battery's FRACTION so
         # Conditions/ConditionPowerBelow.py fires its ET_POWER_FRACTION_CHANGED
         # crossing event (guard divide-by-zero → 0.0).
@@ -1515,6 +1522,9 @@ class PowerSubsystem(ShipSubsystem):
         self._backup_battery_watcher._update(
             self._backup_battery_power / backup_cap if backup_cap > 0.0 else 0.0
         )
+
+    def _pump_consumers(self, dt: float) -> None:
+        pass   # Task 4
 
 
 class RepairSubsystem(PoweredSubsystem):

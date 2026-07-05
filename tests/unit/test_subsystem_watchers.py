@@ -85,7 +85,12 @@ def test_charge_watcher_getter_returns_stable_watcher():
 
 def test_power_update_drives_main_battery_fraction_into_watcher():
     """Draining the main battery below a registered fraction fires the
-    crossing event with the fraction (matches ConditionPowerBelow)."""
+    crossing event with the fraction (matches ConditionPowerBelow).
+
+    Task 3 note: idle drain is not active yet (Task 4); we use StealPower
+    to lower the battery directly, then call Update to push the new fraction
+    into the watcher.
+    """
     ship = ShipClass_Create("Test")
     ps = ship.GetPowerSubsystem()
     _bind_power_property(ps, output=0.0, main_cap=1000.0)
@@ -100,11 +105,10 @@ def test_power_update_drives_main_battery_fraction_into_watcher():
     ev = _RecordingEvent()
     w.AddRangeCheck(0.5, FloatRangeWatcher.FRW_BELOW, ev)
 
-    # Drain a big idle load so the next tick takes the fraction below 0.5.
-    sensor = ship.GetSensorSubsystem()
-    sensor.SetNormalPowerPerSecond(800.0)
-    sensor.TurnOn()
-    ps.Update(1.0)  # 1000 - 800 = 200 -> fraction 0.2 < 0.5
+    # Drain directly to 200 so fraction becomes 0.2 < 0.5.
+    ps.StealPower(800.0)
+    assert ps.GetMainBatteryPower() == 200.0
+    ps.Update(1.0)  # pushes fraction 0.2 into watcher
 
     assert ps.GetMainBatteryWatcher().GetWatchedVariable() == 0.2
     assert mgr.fired, "main battery watcher did not fire on downward crossing"
@@ -299,8 +303,12 @@ def test_pulse_update_drives_charge_fraction_into_watcher():
 
 def test_condition_power_below_flips_status_on_drain():
     """End-to-end: a real ConditionPowerBelow against a ship's PowerSubsystem
-    starts at status 0 (full battery) and flips to 1 once Update drains the
-    main battery below the fraction."""
+    starts at status 0 (full battery) and flips to 1 once battery falls
+    below the fraction.
+
+    Task 3 note: idle drain is not active yet (Task 4); we use StealPower
+    to lower the battery, then call Update to push the watcher crossing.
+    """
     from engine.appc.ai import ConditionScript_Create
 
     ship = ShipClass_Create("PowerTarget")
@@ -317,9 +325,8 @@ def test_condition_power_below_flips_status_on_drain():
     assert cs._instance is not None, cs._init_error
     assert cs.GetStatus() == 0  # battery full, above fraction
 
-    sensor = ship.GetSensorSubsystem()
-    sensor.SetNormalPowerPerSecond(800.0)
-    sensor.TurnOn()
+    # Drain directly to 200 (fraction 0.2 < 0.5) then let Update push the watcher.
+    ps.StealPower(800.0)
     ps.Update(1.0)  # fraction -> 0.2, crosses below 0.5
 
     assert cs.GetStatus() == 1
