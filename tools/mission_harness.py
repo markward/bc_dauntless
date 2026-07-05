@@ -489,11 +489,15 @@ def setup_sdk() -> None:
 
     _plain_stubs = [
         "imp",  # removed in Python 3.12; loadspacehelper imports but never uses it
-        "Bridge.TacticalCharacterHandlers",
-        "Bridge.HelmCharacterHandlers",
-        "Bridge.XOCharacterHandlers",
-        "Bridge.ScienceCharacterHandlers",
-        "Bridge.EngineerCharacterHandlers",
+        # NOTE: the five Bridge.*CharacterHandlers are REAL modules now — they
+        # carry the per-officer menu acknowledgements (AttachMenuTo*, run by
+        # engine/bridge_officers.configure_bridge_officers) and the
+        # DetachMenuFrom* calls MissionLib.DetachCrewMenus makes inside
+        # CreatePlayerShip. Stubbing them silently no-ops AttachMenuToHelm —
+        # the live-silence bug of 2026-07-05: integration tests popped the
+        # stubs (real modules, speech worked) while the live harness kept them
+        # (no registration, no speech). Keep this list and tests/conftest.py's
+        # twin in sync.
         "BridgeHandlers",
         # NOTE: Actions.MissionScriptActions must NOT be stubbed. It is a tiny
         # real module (imports only App + MissionLib; one function, ChangeToBridge)

@@ -503,11 +503,9 @@ def pytest_configure(config):
     # rather than raising AttributeError.
     _plain_stubs = [
         "imp",  # removed in Python 3.12; loadspacehelper imports but never uses it
-        "Bridge.TacticalCharacterHandlers",
-        "Bridge.HelmCharacterHandlers",
-        "Bridge.XOCharacterHandlers",
-        "Bridge.ScienceCharacterHandlers",
-        "Bridge.EngineerCharacterHandlers",
+        # The five Bridge.*CharacterHandlers are REAL modules (officer menu
+        # acknowledgements + DetachCrewMenus path) — see the matching note in
+        # tools/mission_harness.py. Keep both lists in sync.
         "BridgeHandlers",
         # Actions.MissionScriptActions intentionally NOT stubbed — see the
         # matching note in tools/mission_harness.py. Stubbing it makes

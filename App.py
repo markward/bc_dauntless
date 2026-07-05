@@ -174,7 +174,7 @@ from engine.appc.characters import (
     CharacterClass_SetVolumeForLineType, CharacterClass_GetVolumeForLineType,
     STButton, STMenu, STTopLevelMenu,
     STButton_Create, STButton_CreateW, STMenu_Cast, STMenu_Create, STMenu_CreateW,
-    STTopLevelMenu_CreateW, STTopLevelMenu_Cast,
+    STTopLevelMenu_CreateW, STTopLevelMenu_Cast, STTopLevelMenu_CreateNull,
 )
 # STButton size-to-text flag — TacticalMenuHandlers uses App.STBSF_SIZE_TO_TEXT.
 STBSF_SIZE_TO_TEXT = STButton.STBSF_SIZE_TO_TEXT
@@ -865,6 +865,12 @@ ET_CLOAKED_COLLISION        = 1075
 # per planet whose activation event is (type=ET_ORBIT_PLANET, source=planet,
 # dest=orbit menu); HelmMenuHandlers.OrbitPlanet handles it on the menu.
 ET_ORBIT_PLANET             = 1076
+# Helm "Report" button event — HelmCharacterHandlers.AttachMenuToHelm registers
+# Report/SetCourse/HelmDock/AllStop on the Helm top-level menu; Report is the
+# only one of the four without a pre-existing static int here. 1077 is the first
+# free value in this block (1075 is intentionally shared by ET_CLOAKED_COLLISION
+# and ET_POWER_FRACTION_CHANGED; everything else through 1076 is taken).
+ET_REPORT                   = 1077
 
 # ── FloatRangeWatcher condition event ─────────────────────────────────────────
 # Crossing event broadcast by a power subsystem's battery watcher when the

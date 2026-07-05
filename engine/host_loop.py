@@ -4689,6 +4689,14 @@ def run(mission_name: Optional[str] = None,
             btn = App.SortedRegionMenu_GetWarpButton()
             if btn is not None:
                 btn.SetDestination(module)
+            # Stock BC's SortedRegionMenu course buttons fired ET_SET_COURSE
+            # at the Helm menu (Kiska's "ready to warp" ack); the CEF modal
+            # replaced that menu, so fire it here.
+            try:
+                from engine.bridge_officers import announce_course_set
+                announce_course_set()
+            except Exception as _e:
+                dev_mode.log_swallowed("announce course set", _e)
 
         # Helm "Warp" button click -> engage the warp spine directly. Stage 1
         # deliberately bypasses the SDK ET_WARP_BUTTON_PRESSED / WarpPressed
@@ -4874,6 +4882,15 @@ def run(mission_name: Optional[str] = None,
             # is_bridge=True; comm sets with geometry/characters as False.
             realize_all_sets(controller, r)
             _wire_target_menu_to_player_set(controller)
+            # SDK LoadBridge.ConfigureForShip equivalent: attach each bridge
+            # officer's menu-acknowledgement handlers (per-character guarded —
+            # one station's unimplemented Appc surface must not silence the
+            # rest). Must run per load: reset_sdk_globals recreates the TCW,
+            # bridge and menus, dropping every prior registration. The whole
+            # block lives in engine/bridge_officers so the host-level tests
+            # exercise the exact code the live boot runs.
+            from engine.bridge_officers import wire_after_mission_load
+            wire_after_mission_load()
             # Re-register the hit-reaction broadcast handler after every
             # reset_sdk_globals() call (swap or initial load). The handler
             # object (_hit_reactions) is swap-safe — it re-fetches player and

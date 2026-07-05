@@ -1210,7 +1210,15 @@ class CharacterAction(TGAction):
             name = self._character
         else:
             name = ""
-        return crew_speech.emit(name, self._database, self._detail,
+        db = self._database
+        if db is None and cc is not None:
+            # BC's SAY_LINE with no explicit database speaks from the
+            # character's own assigned DB — SDK call sites rely on it
+            # (HelmCharacterHandlers.OrbitPlanet/SetCourse pass db=None).
+            # Without the fallback the line resolves to no text and no wav
+            # and the bus stays silent.
+            db = cc.GetDatabase()
+        return crew_speech.emit(name, db, self._detail,
                                 self._priority) or 0.0
 
     def Skip(self) -> None:
