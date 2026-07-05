@@ -216,7 +216,18 @@ def _descriptor_for(c, resolve_attach):
     emit_vel_world = (0.0, 0.0, 0.0)
     emit_pos = _vec3(c._emit_pos)
     emit_dir = _vec3(c._emit_dir, default=(0.0, -1.0, 0.0))
-    if c._emit_from is not None:
+    if c._emit_from is not None and not hasattr(c._emit_from, "GetWorldLocation") \
+            and (hasattr(c._emit_from, "x")
+                 or (isinstance(c._emit_from, (tuple, list))
+                     and len(c._emit_from) == 3)):
+        # SetEmitFromObject was handed a bare point, not an object — the SDK
+        # overload used by the death-scatter paths (Effects.CreateDebrisSparks
+        # / CreateDebrisExplosion with pObject.GetRandomPointOnModel()). Use it
+        # directly as the world-frame anchor, same semantics as the wreck-site
+        # branch below. Previously this fell through resolve_attach, the
+        # GetWorldLocation fallback raised, and the emitter sat at the origin.
+        emit_pos = _vec3(c._emit_from)
+    elif c._emit_from is not None:
         r = resolve_attach(c._emit_from) if resolve_attach is not None else None
         if r is not None:
             instance_id = r.get("instance_id")
