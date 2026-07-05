@@ -71,7 +71,11 @@ def test_recharge_fills_main_then_spills_to_backup_then_discards():
     _run_ticks(ps, 60)   # first interval fires at tick 60
 
     assert ps.GetMainBatteryPower() == 500.0    # capped at limit
-    assert ps.GetBackupBatteryPower() <= 300.0  # capped at limit
+    # Spill to backup = generated - main_fill = (1000 * _ELAPSED_FIRST) - 500.0,
+    # then capped at backup limit of 300.0.
+    expected_spill = (1000.0 * _ELAPSED_FIRST) - 500.0
+    expected_in_backup = min(expected_spill, 300.0)
+    assert abs(ps.GetBackupBatteryPower() - expected_in_backup) < 0.001
 
     # Run two more seconds — caps hold, overflow discarded
     _run_seconds(ps, 2.0)
@@ -159,7 +163,7 @@ def test_conduit_budget_capped_by_battery_level():
 
     elapsed = _ELAPSED_FIRST
     # main_conduit_current = min(50, 1200 * elapsed) = 50
-    # backup_conduit_current = min(10000, 200 * elapsed) ≈ 200
+    # backup_conduit_current = min(10000, 200 * elapsed) = 200 * _ELAPSED_FIRST ≈ 200.017
     expected_backup = min(10000.0, 200.0 * elapsed)
     assert abs(ps.GetAvailablePower() - (50.0 + expected_backup)) < 0.001
 

@@ -1500,10 +1500,18 @@ class PowerSubsystem(ShipSubsystem):
         self._interval_elapsed += dt
         if self._interval_elapsed >= self.POWER_INTERVAL:
             elapsed = self._interval_elapsed
+            # Reset to zero (not -= POWER_INTERVAL) so every interval window
+            # accumulates the identical IEEE-754 tick sum: [0, POWER_INTERVAL).
+            # Tests mirror this exact float path via _accum_elapsed() arithmetic.
             self._interval_elapsed = 0.0
             self._power_dispensed = 0.0
             if not _is_offline(self):
                 self._add_power_to_batteries(self.GetPowerOutput() * elapsed)
+            # Deliberate asymmetry: recharge is gated on reactor-offline, but
+            # conduit budgets (capacity*elapsed) are computed UNCONDITIONALLY.
+            # BC-faithful per docs/original_game_reference/gameplay/ship-subsystems.md:122-127
+            # (ComputeAvailablePower is an unconditional sibling step; batteries
+            # still deliver through conduits even when the reactor is down).
             main_max = self.GetMainConduitCapacity() * elapsed
             backup_max = self.GetBackupConduitCapacity() * elapsed
             self._main_conduit_current = min(self._main_battery_power, main_max)
