@@ -816,8 +816,19 @@ class ShipSubsystem(TGEventHandlerObject):
         return 1.0
 
 
+# BC draw modes (ship-subsystems.md:164-189).  Per-class assignment below;
+# tractor is deliberately mode 0 (manual/UI say Main; RE doc's mode-1 claim
+# treated as mislabel — see spec "Decisions" §2).
+PSM_MAIN_FIRST = 0
+PSM_BACKUP_FIRST = 1
+PSM_BACKUP_ONLY = 2
+
+
 class PoweredSubsystem(ShipSubsystem):
     """Powered subsystem — consumes power, has a target power level."""
+
+    POWER_MODE = PSM_MAIN_FIRST
+
     def __init__(self, name: str = ""):
         super().__init__(name)
         self._normal_power = 0.0
@@ -827,7 +838,12 @@ class PoweredSubsystem(ShipSubsystem):
         # ship is unpowered until ShipClass.SetAlertLevel(RED) or a mission
         # script explicitly turns systems on.
         self._is_on: bool = False
-        self._power_percentage_wanted: float = 0.0
+        self._power_percentage_wanted: float = 1.0   # BC spawns at 100%
+        self._power_wanted: float = 0.0              # per-tick demand  (+0x8C)
+        self._power_received: float = 0.0            # per-tick receipt (+0x88)
+        self._efficiency: float = 1.0                # received/wanted  (+0x94)
+        self._power_factor: float = 1.0              # received/(normal*dt) (+0x98)
+        self._power_source = None
 
     def GetNormalPowerPerSecond(self) -> float:
         return self._normal_power
@@ -844,8 +860,59 @@ class PoweredSubsystem(ShipSubsystem):
     def TurnOn(self) -> None:                              self._is_on = True
     def TurnOff(self) -> None:                             self._is_on = False
     def IsOn(self) -> int:                                 return 1 if self._is_on else 0
-    def SetPowerPercentageWanted(self, pct) -> None:       self._power_percentage_wanted = float(pct)
+
+    def SetPowerPercentageWanted(self, pct) -> None:
+        pct = float(pct)
+        if pct < 0.0:
+            pct = 0.0
+        if pct > 1.25:
+            pct = 1.25
+        old = self._power_percentage_wanted
+        self._power_percentage_wanted = pct
+        # BC FUN_00562430: rescale current demand in place.
+        if old != 0.0:
+            self._power_wanted = self._power_wanted * pct / old
+        self._fire("ET_SUBSYSTEM_POWER_CHANGED")
+
     def GetPowerPercentageWanted(self) -> float:           return self._power_percentage_wanted
+    def GetPowerWanted(self) -> float:                     return self._power_wanted
+    def SetPowerWanted(self, v) -> None:                   self._power_wanted = float(v)
+    def GetNormalPowerWanted(self) -> float:               return self._normal_power
+    def GetPowerReceived(self) -> float:                   return self._power_received
+    def GetPowerPercentage(self) -> float:                 return self._efficiency
+    def GetNormalPowerPercentage(self) -> float:           return self._power_factor
+    def SetPowerSource(self, src) -> None:                 self._power_source = src
+
+    def Turn(self, on) -> None:
+        if on:
+            self.TurnOn()
+        else:
+            self.TurnOff()
+
+    def _wants_power(self) -> bool:
+        return bool(self._is_on)
+
+    # ── Subsystem event emission ─────────────────────────────────────────────
+
+    def _fire(self, event_attr: str) -> None:
+        """Broadcast a subsystem event with the owning ship as both source AND
+        destination — mirrors ship_death._broadcast_destroyed.  Raise-safe so
+        a missing event manager never breaks the state machine.
+
+        The destination MUST be the ship: target-scoped method handlers
+        (Preprocessors.py) only fire when ``event.GetDestination() is pTarget``.
+        Falls back to ``self`` for a parentless subsystem (unit fixtures)."""
+        try:
+            import App
+            ship = self.GetParentShip() if hasattr(self, "GetParentShip") else None
+            owner = ship if ship is not None else self
+            evt = App.TGEvent_Create()
+            evt.SetEventType(getattr(App, event_attr))
+            evt.SetSource(owner)
+            evt.SetDestination(owner)
+            App.g_kEventManager.AddEvent(evt)
+        except Exception as _e:
+            dev_mode.log_swallowed("subsystem event broadcast", _e)
 
 
 class HullSubsystem(ShipSubsystem):
@@ -1646,33 +1713,8 @@ class CloakingSubsystem(PoweredSubsystem):
         except Exception as _e:
             dev_mode.log_swallowed("cloak sfx", _e)
 
-    # ── Cloak event emission ─────────────────────────────────────────────────
-
-    def _fire(self, event_attr: str) -> None:
-        """Broadcast a cloak event (``ET_CLOAK_BEGINNING`` / ``ET_CLOAK_COMPLETED``
-        / ``ET_DECLOAK_BEGINNING`` / ``ET_DECLOAK_COMPLETED``) with the owning
-        ship as both source AND destination — mirrors
-        ship_death._broadcast_destroyed.  Raise-safe so a missing event manager
-        never breaks the state machine.
-
-        The destination MUST be the ship: SelectTarget registers its cloak-drop
-        handler with ``AddBroadcastPythonMethodHandler(ET_CLOAK_COMPLETED, ...,
-        pNewTarget)`` (Preprocessors.py), and the event manager only fires that
-        handler when ``event.GetDestination() is pNewTarget`` (the ship). A
-        subsystem-sourced event with no destination silently skips the handler,
-        so the AI never drops a target that cloaks. Falls back to ``self`` for a
-        parentless subsystem (unit fixtures) to preserve the old source."""
-        try:
-            import App
-            ship = self.GetParentShip() if hasattr(self, "GetParentShip") else None
-            owner = ship if ship is not None else self
-            evt = App.TGEvent_Create()
-            evt.SetEventType(getattr(App, event_attr))
-            evt.SetSource(owner)
-            evt.SetDestination(owner)
-            App.g_kEventManager.AddEvent(evt)
-        except Exception as _e:
-            dev_mode.log_swallowed("cloak event broadcast", _e)
+    # _fire is inherited from PoweredSubsystem — cloak events use the same
+    # ship-as-destination broadcast seam as ET_SUBSYSTEM_POWER_CHANGED.
 
 
 # ── Module-level WarpEngineSubsystem helpers ─────────────────────────────────

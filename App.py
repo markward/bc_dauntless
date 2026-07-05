@@ -926,6 +926,10 @@ ET_SUBSYSTEM_DISABLED             = 0x131A
 ET_SUBSYSTEM_DESTROYED            = 0x131B
 ET_REPAIR_COMPLETED               = 0x131C
 ET_REPAIR_CANNOT_BE_COMPLETED     = 0x131D
+# Posted by PoweredSubsystem.SetPowerPercentageWanted on every slider change.
+# BC FUN_00562430 broadcasts this so the power-display HUD and the engineer's
+# FloatRangeWatcher conditions can react to manual slider adjustments.
+ET_SUBSYSTEM_POWER_CHANGED        = 0x131E
 
 _next_event_type_id = 1200
 
