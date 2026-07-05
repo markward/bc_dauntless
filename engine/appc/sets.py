@@ -268,7 +268,15 @@ class SetClass(TGEventHandlerObject):
     # rather than dropping into fresh stubs each call.
     def GetProximityManager(self):
         if not hasattr(self, "_proximity_manager") or self._proximity_manager is None:
-            from engine.appc.planet import ProximityManager
+            # Lazy import can raise at interpreter shutdown: GC'd SDK
+            # conditions (ConditionInRange.__del__) call RemoveAndDelete →
+            # GetProximityManager after sys.meta_path is torn down
+            # ("ImportError: sys.meta_path is None"). Degrade to None —
+            # the shutdown-time caller (ai.py RemoveAndDelete) null-checks.
+            try:
+                from engine.appc.planet import ProximityManager
+            except ImportError:
+                return None
             self._proximity_manager = ProximityManager(self)
         return self._proximity_manager
 

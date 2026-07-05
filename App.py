@@ -462,8 +462,14 @@ def TorpedoTube_Cast(obj):
 
 def PowerSubsystem_Cast(obj):
     """SDK Conditions/ConditionPowerBelow.py:91 —
-    `pPower = App.PowerSubsystem_Cast( App.TGObject_GetTGObjectPtr(self.idPower) )`."""
-    from engine.appc.subsystems import PowerSubsystem
+    `pPower = App.PowerSubsystem_Cast( App.TGObject_GetTGObjectPtr(self.idPower) )`.
+    Called from ConditionPowerBelow.__del__, so the lazy import must degrade
+    to None once the interpreter tears down the import system
+    (`ImportError: sys.meta_path is None`); the __del__ null-checks."""
+    try:
+        from engine.appc.subsystems import PowerSubsystem
+    except ImportError:
+        return None
     return obj if isinstance(obj, PowerSubsystem) else None
 
 
@@ -488,8 +494,13 @@ def CloakingSubsystem_Cast(obj):
 
 def PulseWeapon_Cast(obj):
     """SDK Conditions/ConditionPulseReady.py:133 —
-    `pWeapon = App.PulseWeapon_Cast(pPulseSystem.GetChildSubsystem(iChild))`."""
-    from engine.appc.subsystems import PulseWeapon
+    `pWeapon = App.PulseWeapon_Cast(pPulseSystem.GetChildSubsystem(iChild))`.
+    Reachable from ConditionPulseReady.__del__ (via GetWeapons), so the lazy
+    import degrades to None at interpreter shutdown like PowerSubsystem_Cast."""
+    try:
+        from engine.appc.subsystems import PulseWeapon
+    except ImportError:
+        return None
     return obj if isinstance(obj, PulseWeapon) else None
 
 
