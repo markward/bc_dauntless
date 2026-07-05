@@ -138,6 +138,11 @@ class ShipSubsystem(TGEventHandlerObject):
         self._children: list["ShipSubsystem"] = []
         self._condition = 1.0
         self._max_condition = 1.0
+        # Lazily-created FloatRangeWatcher on GetConditionPercentage(),
+        # handed out by GetCombinedPercentageWatcher() (Bridge/Characters/
+        # Brex.py:108 registers hull-status thresholds on it). Lazy so the
+        # thousands of subsystems that never hand one out pay nothing.
+        self._combined_watcher = None
         self._radius = 0.0
         self._position = TGPoint3(0.0, 0.0, 0.0)
         # Body-space mounting axes — defaults match the SDK convention
@@ -407,6 +412,7 @@ class ShipSubsystem(TGEventHandlerObject):
     def SetCondition(self, value: float) -> None:
         """Floor at zero. DamageSystem (Task 4) routes hits through here."""
         self._condition = max(0.0, float(value))
+        self._condition_changed()
 
     def GetMaxCondition(self) -> float:
         # The property template is the authoritative max-condition, mirroring
@@ -433,6 +439,16 @@ class ShipSubsystem(TGEventHandlerObject):
         if self._condition == self._max_condition:
             self._condition = v
         self._max_condition = v
+        self._condition_changed()
+
+    def _condition_changed(self) -> None:
+        """Push the fresh condition FRACTION into the combined watcher (if one
+        was ever handed out) so its registered threshold crossings fire.
+        Called from every _condition/_max_condition mutation path — all
+        writes route through SetCondition/SetMaxCondition (combat damage in
+        engine/appc/objects.py calls SetCondition)."""
+        if self._combined_watcher is not None:
+            self._combined_watcher._update(self.GetConditionPercentage())
 
     def GetConditionPercentage(self) -> float:
         mx = self.GetMaxCondition()
@@ -678,7 +694,16 @@ class ShipSubsystem(TGEventHandlerObject):
         return None
 
     def GetCombinedPercentageWatcher(self):
-        return None
+        """FloatRangeWatcher on this subsystem's condition FRACTION
+        (GetConditionPercentage). Lazily created, seeded with the current
+        fraction so the first mutation is measured from real state.
+        SDK consumer: pShip.GetHull().GetCombinedPercentageWatcher()
+        (Bridge/Characters/Brex.py:108, EngineerCharacterHandlers.py) —
+        but the base-class implementation serves ANY subsystem asked."""
+        if self._combined_watcher is None:
+            self._combined_watcher = FloatRangeWatcher(
+                self.GetConditionPercentage())
+        return self._combined_watcher
 
     # ── Child-subsystem walking ──────────────────────────────────────────────
     # SDK consumers iterate child subsystems via GetNumChildSubsystems +
@@ -1027,17 +1052,28 @@ class ShieldSubsystem(PoweredSubsystem):
         self._max_shields:       list[float] = [0.0] * self.NUM_SHIELDS
         self._current_shields:   list[float] = [0.0] * self.NUM_SHIELDS
         self._charge_per_second: list[float] = [0.0] * self.NUM_SHIELDS
-        # Per-face FloatRangeWatchers handed to
-        # Conditions/ConditionSingleShieldBelow.py:110 (GetShieldWatcher(side));
-        # each watches its face FRACTION (current / max), driven from Update.
+        # FloatRangeWatchers handed to SDK consumers. Indices 0..5 are the
+        # per-face watchers (Conditions/ConditionSingleShieldBelow.py:110,
+        # GetShieldWatcher(side)), each watching its face FRACTION
+        # (current / max). Index 6 (NUM_SHIELDS) is BC's COMBINED/overall
+        # shields watcher (Bridge/Characters/Brex.py:107 GetShieldWatcher(6)),
+        # watching GetShieldPercentage(). All driven from SetCurrentShields
+        # and Update.
         self._shield_watchers: list = [
-            FloatRangeWatcher() for _ in range(self.NUM_SHIELDS)
+            FloatRangeWatcher() for _ in range(self.NUM_SHIELDS + 1)
         ]
 
     def GetShieldWatcher(self, face: int):
-        """FloatRangeWatcher on a single face's FRACTION
-        (Conditions/ConditionSingleShieldBelow.py:110, eWhichShield)."""
+        """FloatRangeWatcher on a face's FRACTION for faces 0..5
+        (Conditions/ConditionSingleShieldBelow.py:110, eWhichShield);
+        index 6 (NUM_SHIELDS) is the COMBINED shields watcher on
+        GetShieldPercentage() (Bridge/Characters/Brex.py:107)."""
         return self._shield_watchers[int(face)]
+
+    def GetCombinedPercentageWatcher(self):
+        """The COMBINED shields watcher — same object as GetShieldWatcher(6).
+        SDK consumer: EngineerCharacterHandlers hull/shield status parity."""
+        return self._shield_watchers[self.NUM_SHIELDS]
 
     def HasShields(self) -> int:
         """True only when at least one face has real shield capacity.
@@ -1070,6 +1106,9 @@ class ShieldSubsystem(PoweredSubsystem):
         # GetWatchedVariable() right after a damage write sees the new
         # fraction (ConditionSingleShieldBelow.py:122 reads it at setup).
         self._shield_watchers[f]._update(self.GetSingleShieldPercentage(f))
+        # The combined watcher tracks the same mutation.
+        self._shield_watchers[self.NUM_SHIELDS]._update(
+            self.GetShieldPercentage())
 
     def SetCurShields(self, face: int, value: float) -> None:
         """SDK-facing alias of SetCurrentShields (matches Appc method name)."""
@@ -1150,9 +1189,13 @@ class ShieldSubsystem(PoweredSubsystem):
             self._current_shields[f] = new
         # Drive each face watcher with its FRACTION so
         # Conditions/ConditionSingleShieldBelow.py fires its
-        # ET_AI_SHIELD_WATCHER crossing event.
+        # ET_AI_SHIELD_WATCHER crossing event; the combined watcher (index
+        # NUM_SHIELDS) follows with the overall fraction — this is also where
+        # both catch up after direct ApplyDamage face mutations.
         for f in range(self.NUM_SHIELDS):
             self._shield_watchers[f]._update(self.GetSingleShieldPercentage(f))
+        self._shield_watchers[self.NUM_SHIELDS]._update(
+            self.GetShieldPercentage())
 
     def ApplyDamage(self, face: int, amount: float) -> float:
         """Drain current shields on the face; return damage overflow.

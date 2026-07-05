@@ -888,6 +888,34 @@ ET_ENTERED_NEBULA = 0x1300
 ET_EXITED_NEBULA = 0x1301
 ET_ENVIRONMENT_DAMAGE = 0x1302
 
+# ── Engineer status-report event types ────────────────────────────────────────
+# Registered by Bridge/EngineerCharacterHandlers.AttachMenuToEngineer and
+# stamped onto FloatRangeWatcher range-check events by Brex.ConfigureForShip
+# (Bridge/Characters/Brex.py:107-142). These MUST be real distinct ints:
+# App's module-level __getattr__ returns a fresh _NamedStub per access, so a
+# handler registered under one access would never match an event fired under
+# another. Values continue the private 0x13xx block above.
+ET_TACTICAL_SHIELD_LEVEL_CHANGE   = 0x1310
+ET_TACTICAL_HULL_LEVEL_CHANGE     = 0x1311
+ET_TACTICAL_SHIELD_0_LEVEL_CHANGE = 0x1312
+ET_TACTICAL_SHIELD_1_LEVEL_CHANGE = 0x1313
+ET_TACTICAL_SHIELD_2_LEVEL_CHANGE = 0x1314
+ET_TACTICAL_SHIELD_3_LEVEL_CHANGE = 0x1315
+ET_TACTICAL_SHIELD_4_LEVEL_CHANGE = 0x1316
+ET_TACTICAL_SHIELD_5_LEVEL_CHANGE = 0x1317
+# Battery-fraction thresholds (stamped onto GetMain/BackupBatteryWatcher
+# range-check events) plus the subsystem/repair report ids the same
+# AttachMenuToEngineer call registers broadcast handlers under. The
+# subsystem/repair four have no engine-side emitter yet — defining them as
+# real ints gives those registrations a stable identity for when emission
+# lands. Names verbatim from EngineerCharacterHandlers.py.
+ET_MAIN_BATTERY_LEVEL_CHANGE      = 0x1318
+ET_BACKUP_BATTERY_LEVEL_CHANGE    = 0x1319
+ET_SUBSYSTEM_DISABLED             = 0x131A
+ET_SUBSYSTEM_DESTROYED            = 0x131B
+ET_REPAIR_COMPLETED               = 0x131C
+ET_REPAIR_CANNOT_BE_COMPLETED     = 0x131D
+
 _next_event_type_id = 1200
 
 
