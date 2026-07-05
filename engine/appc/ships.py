@@ -1,5 +1,6 @@
 from engine.appc.objects import DamageableObject
 from engine.appc.math import TGPoint3
+from engine.appc.subsystems import PoweredSubsystem
 import engine.dev_mode as dev_mode
 
 
@@ -38,6 +39,11 @@ class ShipClass(DamageableObject):
         self._shield_subsystem = None
         self._power_subsystem = None
         self._repair_subsystem = None
+        # Powered consumers in attach order — this list IS the BC draw priority
+        # (mirrors BC's linked list of powered subsystems).  PowerSubsystem's
+        # per-interval pump walks it in order so earlier-attached systems get
+        # first claim on the conduit budget.  Populated by _attach_subsystem.
+        self._powered_consumers: list = []
         # Cloaking device — None on most ships (only birdofprey, warbird,
         # vorcha, sunbuster, kessok*, matankeldon declare one). Created on
         # demand by SetupProperties when a CloakingSubsystemProperty is found.
@@ -659,10 +665,25 @@ class ShipClass(DamageableObject):
 
     def _attach_subsystem(self, s):
         """Wire a freshly-attached subsystem back to this ship so emitters
-        can climb the parent chain to reach the ShipClass at fire-time."""
+        can climb the parent chain to reach the ShipClass at fire-time.
+
+        Powered subsystems are also registered as power consumers in attach
+        order (the BC draw priority) so PowerSubsystem's per-interval pump can
+        walk them.  PowerSubsystem itself inherits ShipSubsystem (it generates
+        power, not consumes it) so it is never registered here."""
         if s is not None and hasattr(s, "SetParentShip"):
             s.SetParentShip(self)
+        if isinstance(s, PoweredSubsystem) and s not in self._powered_consumers:
+            self._powered_consumers.append(s)   # attach order = BC draw priority
         return s
+
+    def AddPoweredConsumer(self, subsystem) -> None:
+        """Register a PoweredSubsystem as a power consumer (public alias of the
+        attach-order registration in _attach_subsystem).  Wires the parent ship
+        back-ref too so a consumer added this way can climb to the ship.  Used
+        by tests and any call site that attaches a consumer outside the typed
+        Set*Subsystem slots."""
+        self._attach_subsystem(subsystem)
 
     def GetSensorSubsystem(self):                 return self._sensor_subsystem
     def SetSensorSubsystem(self, s) -> None:      self._sensor_subsystem = self._attach_subsystem(s)

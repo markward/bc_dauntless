@@ -1345,6 +1345,22 @@ class TractorBeamSystem(_HeldFireWeaponSystem):
         self._mode = self.TBS_HOLD
         self._engage_state = None
 
+    def _wants_power(self) -> bool:
+        """The tractor siphons power only while a beam is actually held (a
+        powered-but-idle tractor draws nothing — PowerDisplay's siphon
+        semantics).  It keeps the inherited PSM_MAIN_FIRST mode; the gate is the
+        firing state, not the alert-driven on/off flag."""
+        return bool(self.IsOn()) and self._any_child_firing()
+
+    def _any_child_firing(self) -> bool:
+        """True if any child tractor-beam emitter is currently firing.  Same
+        child-weapon walk PowerDisplay.HandleTractor uses."""
+        for i in range(self.GetNumWeapons()):
+            em = self.GetWeapon(i)
+            if em is not None and em.IsFiring():
+                return True
+        return False
+
     def GetMode(self) -> int:
         return self._mode
 
@@ -1630,6 +1646,15 @@ class TractorBeam(_EnergyWeaponFireMixin, WeaponSystem):
             if parent is None or not parent.IsOn():
                 # Power loss stops the beam (routes through StopFiring so the
                 # looped SFX handle is silenced).
+                self.StopFiring()
+                return
+            # Power starvation: the parent system draws through PowerSubsystem's
+            # consumer model now (Task 4); when the grid can't feed the tractor
+            # its efficiency collapses to zero while it still wants power, so the
+            # beam drops (replaces the old per-tick StealPower gate).
+            if (hasattr(parent, "GetPowerPercentage")
+                    and parent.GetPowerPercentage() <= 0.0
+                    and parent.GetNormalPowerWanted() > 0.0):
                 self.StopFiring()
                 return
             floor = self._min_firing_charge

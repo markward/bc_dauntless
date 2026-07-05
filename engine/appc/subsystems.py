@@ -892,6 +892,39 @@ class PoweredSubsystem(ShipSubsystem):
     def _wants_power(self) -> bool:
         return bool(self._is_on)
 
+    def _update_power(self, dt: float, power) -> None:
+        """Draw this consumer's per-tick demand from ``power`` and record the
+        fed state.  Writes _power_wanted / _power_received / _efficiency
+        (received/wanted → GetPowerPercentage) and _power_factor
+        (received/normal → GetNormalPowerPercentage).
+
+        A consumer that doesn't want power (off / not engaged) is fully zeroed.
+        A "free" consumer (authored 0 pw/s — e.g. warp engines) wants nothing
+        yet runs at full function (efficiency 1.0, factor 1.0)."""
+        dt = float(dt)
+        if dt <= 0.0:
+            return
+        if not self._wants_power():
+            self._power_wanted = 0.0
+            self._power_received = 0.0
+            self._efficiency = 0.0
+            self._power_factor = 0.0
+            return
+        base = self._normal_power * dt
+        if base <= 0.0:
+            # Free consumer (authored 0 pw/s, e.g. warp engines): full function.
+            self._power_wanted = 0.0
+            self._power_received = 0.0
+            self._efficiency = 1.0
+            self._power_factor = 1.0
+            return
+        wanted = base * self._power_percentage_wanted
+        self._power_wanted = wanted
+        received = power._draw(wanted, self.POWER_MODE) if wanted > 0.0 else 0.0
+        self._power_received = received
+        self._efficiency = received / wanted if wanted > 0.0 else 1.0
+        self._power_factor = received / base
+
     # ── Subsystem event emission ─────────────────────────────────────────────
 
     def _fire(self, event_attr: str) -> None:
@@ -1439,48 +1472,6 @@ class PowerSubsystem(ShipSubsystem):
 
     POWER_INTERVAL: float = 1.0   # seconds of game time; BC constant 0x892E20
 
-    _IDLE_DRAIN_SLOTS = (
-        "GetSensorSubsystem", "GetImpulseEngineSubsystem",
-        "GetWarpEngineSubsystem", "GetShieldSubsystem",
-        "GetPhaserSystem", "GetTorpedoSystem",
-        "GetPulseWeaponSystem", "GetTractorBeamSystem",
-        "GetRepairSubsystem",
-    )
-
-    def _compute_idle_drain(self) -> float:
-        # NOTE: _compute_idle_drain is present but unused after the Task 3
-        # interval-tick rewrite; Task 4's consumer pump will replace it.
-        ship = self.GetParentShip()
-        if ship is None:
-            return 0.0
-        total = 0.0
-        for getter_name in self._IDLE_DRAIN_SLOTS:
-            getter = getattr(ship, getter_name, None)
-            if getter is None:
-                continue
-            sub = getter()
-            if sub is None:
-                continue
-            if not hasattr(sub, "IsOn") or not sub.IsOn():
-                continue
-            if not hasattr(sub, "GetNormalPowerPerSecond"):
-                continue
-            total += float(sub.GetNormalPowerPerSecond() or 0.0)
-
-        # Cloak is metered separately: it draws its NormalPowerPerSecond only
-        # while the ship is trying to stay hidden (CLOAKING or CLOAKED), not on
-        # the PoweredSubsystem on/off flag.  BC drains the cloak for the whole
-        # duration the device is engaged (warbird authors 1000 power/sec).
-        cloak_getter = getattr(ship, "GetCloakingSubsystem", None)
-        if cloak_getter is not None:
-            cloak = cloak_getter()
-            if (cloak is not None
-                    and hasattr(cloak, "IsTryingToCloak")
-                    and cloak.IsTryingToCloak()
-                    and hasattr(cloak, "GetNormalPowerPerSecond")):
-                total += float(cloak.GetNormalPowerPerSecond() or 0.0)
-        return total
-
     def _add_power_to_batteries(self, amount: float) -> None:
         """Main first (capped), spill to backup (capped), discard the rest."""
         main_cap = self.GetMainBatteryLimit()
@@ -1532,7 +1523,60 @@ class PowerSubsystem(ShipSubsystem):
         )
 
     def _pump_consumers(self, dt: float) -> None:
-        pass   # Task 4
+        """Per-frame consumer draw pass.  Walks the ship's powered consumers in
+        attach order (= BC draw priority) and lets each draw its per-tick demand
+        from the conduit budget + battery via _draw.  _power_wanted_total sums
+        the demand for the WeaponsDisplay / diagnostics readout.
+
+        Called every Update (not just on the interval tick) so between-interval
+        frames still deplete the seeded conduit budget smoothly."""
+        ship = self.GetParentShip()
+        consumers = getattr(ship, "_powered_consumers", None) if ship is not None else None
+        if not consumers:
+            return
+        self._power_wanted_total = 0.0
+        for consumer in consumers:
+            consumer._update_power(dt, self)
+            self._power_wanted_total += consumer.GetPowerWanted()
+
+    def _draw(self, amount: float, mode: int) -> float:
+        """Depletes conduit budget AND battery to satisfy up to ``amount``,
+        honouring the consumer's draw mode.  Returns the amount actually drawn.
+
+        * PSM_MAIN_FIRST — main conduit/battery first, backup for the shortfall.
+        * PSM_BACKUP_FIRST — backup first, main for the shortfall.
+        * PSM_BACKUP_ONLY — backup only, no fallback (cloak: off the main grid).
+
+        Accumulates into _power_dispensed for GetPowerDispensed()."""
+        if amount <= 0.0:
+            return 0.0
+        got = 0.0
+        if mode == PSM_MAIN_FIRST:
+            got += self._draw_main(amount)
+            got += self._draw_backup(amount - got)
+        elif mode == PSM_BACKUP_FIRST:
+            got += self._draw_backup(amount)
+            got += self._draw_main(amount - got)
+        else:  # PSM_BACKUP_ONLY — no fallback
+            got += self._draw_backup(amount)
+        self._power_dispensed += got
+        return got
+
+    def _draw_main(self, amount: float) -> float:
+        take = min(amount, self._main_conduit_current, self._main_battery_power)
+        if take <= 0.0:
+            return 0.0
+        self._main_conduit_current -= take
+        self._main_battery_power -= take
+        return take
+
+    def _draw_backup(self, amount: float) -> float:
+        take = min(amount, self._backup_conduit_current, self._backup_battery_power)
+        if take <= 0.0:
+            return 0.0
+        self._backup_conduit_current -= take
+        self._backup_battery_power -= take
+        return take
 
 
 class RepairSubsystem(PoweredSubsystem):
@@ -1591,6 +1635,11 @@ class CloakingSubsystem(PoweredSubsystem):
     CLOAK_CLOAKING   = 1
     CLOAK_CLOAKED    = 2
     CLOAK_DECLOAKING = 3
+
+    # Cloak runs off the backup grid only — it is locked off the main conduit
+    # so cloaking never starves the ship's other systems of main-battery power
+    # (docs/original_game_reference/gameplay/ship-subsystems.md:185).
+    POWER_MODE = PSM_BACKUP_ONLY
 
     def __init__(self, name: str = ""):
         super().__init__(name)
@@ -1658,6 +1707,14 @@ class CloakingSubsystem(PoweredSubsystem):
         DECLOAKING / DECLOAKED both express the intent to be visible."""
         return 1 if self._cloak_state in (self.CLOAK_CLOAKING,
                                           self.CLOAK_CLOAKED) else 0
+
+    def _wants_power(self) -> bool:
+        """The cloak draws power only while the ship is trying to stay hidden
+        (CLOAKING or CLOAKED) — NOT on the PoweredSubsystem on/off flag.  BC
+        drains the cloak for the whole duration the device is engaged (warbird
+        authors 1000 power/sec).  This replaces the old PowerSubsystem.
+        _compute_idle_drain cloak special-case."""
+        return bool(self.IsTryingToCloak())
 
     def GetTransitionFraction(self) -> float:
         """Visual cloak progress in [0, 1]: 0 = fully visible (DECLOAKED),
