@@ -46,6 +46,30 @@ class _RendererStub:
         return "<_RendererStub>"
 
 
+class SetEffectRoot:
+    """The set's effect-attach node — returned by SetClass.GetEffectRoot().
+
+    SDK contract (all 9 call sites, e.g. Effects.py:616/784, E1M2.py:3111):
+    only ever passed to a particle controller's AttachEffect(root); no method
+    is ever called ON it. Controllers store it in _attach_node, which the
+    renderer does not read — this object exists for identity/fidelity (one
+    stable handle per set, mirroring the NiNodePtr the real engine returns)
+    and as the hook for future set-scoped effect lifetime. Deliberately NOT
+    a scene-graph node, and deliberately has NO __getattr__ fallback (a
+    permissive fallback is how this was silently broken before).
+    """
+    __slots__ = ("_set",)
+
+    def __init__(self, owner_set):
+        self._set = owner_set
+
+    def GetSet(self):
+        return self._set
+
+    def __repr__(self):
+        return "<SetEffectRoot %r>" % (self._set.GetName(),)
+
+
 class SetClass(TGEventHandlerObject):
     def __init__(self):
         super().__init__()
@@ -76,6 +100,8 @@ class SetClass(TGEventHandlerObject):
         self._lens_flares: 'list["LensFlare"]' = []
         # Subscriber list for add/remove notifications. See subscribe().
         self._subscribers: list = []
+        # Lazily-created SetEffectRoot handle. See GetEffectRoot().
+        self._effect_root: "SetEffectRoot | None" = None
 
     def subscribe(self, callback) -> None:
         """Register a callback notified on every AddObjectToSet /
@@ -121,6 +147,16 @@ class SetClass(TGEventHandlerObject):
 
     def SetName(self, name: str) -> None:
         self._name = name
+
+    def GetEffectRoot(self) -> SetEffectRoot:
+        """SDK SetClass_GetEffectRoot (App.py:3536) — the node transient VFX
+        (debris, explosions, sparks) are parented to. Lazy, cached: one stable
+        SetEffectRoot per set for the set's lifetime (NiNodePtr semantics —
+        the same handle every call). Previously fell through __getattr__ to a
+        fresh _RendererStub per call."""
+        if self._effect_root is None:
+            self._effect_root = SetEffectRoot(self)
+        return self._effect_root
 
     def SetRegionModule(self, module_name: str) -> None:
         pass
