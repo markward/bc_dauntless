@@ -132,3 +132,25 @@ def test_fire_without_power_subsystem_bypasses_gate():
         tube.Fire(target=None, offset=None)
     assert len(_active) == 1
     _active.clear()
+
+
+def test_partial_steal_fires_interim_until_task4():
+    """Pins the interim partial-steal gate: BC is all-or-nothing; Task 4's
+    consumer-draw model must flip this test.
+
+    With main battery holding LESS than the torpedo's power cost but more
+    than zero, firing SUCCEEDS (partial steal is truthy).  BC's real
+    semantics: torpedo costs 20 power; main battery has only 5 → no fire
+    (all-or-nothing).  Task 4 replaces these call sites with proper
+    allocation semantics.
+    """
+    _active.clear()
+    ship = ShipClass_Create("Test")
+    tube = _wire_galaxy_like_torp(ship, available=0.0, main_battery=5.0)
+    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
+        tube.Fire(target=None, offset=None)
+    # Partial steal is truthy, so fire succeeds even though main < cost.
+    assert len(_active) == 1
+    # Only 5 units stolen (all that was available).
+    assert ship.GetPowerSubsystem().GetMainBatteryPower() == 0.0
+    _active.clear()
