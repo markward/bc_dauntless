@@ -214,11 +214,14 @@ def _debit_ship_power(emitter, cost) -> int:
 
     Returns the float amount actually stolen (0.0 when main battery is empty,
     which is falsy and blocks the caller; partial steals are truthy and permit
-    fire until Task 4's consumer-draw model replaces this interim gate).
+    fire until the fire-debit allocation rework replaces this interim gate).
     Falls through as truthy (bypass) when the gate doesn't apply — no ship, no
     PowerSubsystem, or a PowerSubsystem with no bound PowerProperty (a Phase-1
-    test stub without a power plant), or cost <= 0.  Shared by TorpedoTube
-    (per-shot ammo cost) and PulseWeapon (per-bolt module cost).
+    test stub without a power plant), or cost <= 0.  Weapons also draw
+    NormalPowerPerSecond continuously as registered consumers since the
+    consumer-draw model landed — per-shot debits double-count on top of that
+    draw.  Shared by TorpedoTube (per-shot ammo cost) and PulseWeapon
+    (per-bolt module cost).
     """
     ship = emitter._climb_to_ship()
     if ship is None:
@@ -490,8 +493,8 @@ class _EnergyWeaponFireMixin:
         """Steal POWER_COST_PER_CHARGE × charge_amount from the firing ship's
         main battery via StealPower.  Returns the float amount actually stolen
         (0.0 when main battery is empty, which is falsy and blocks recharge;
-        partial steals are truthy and permit recharge until Task 4's
-        consumer-draw model replaces this interim gate).  Falls through as
+        partial steals are truthy and permit recharge until the fire-debit
+        allocation rework replaces this interim gate).  Falls through as
         truthy (bypass) when the gate doesn't apply — ship has no PowerSubsystem,
         or its PowerSubsystem has no bound PowerProperty (a Phase-1 test stub
         without a power plant)."""

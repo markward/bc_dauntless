@@ -1447,8 +1447,9 @@ class PowerSubsystem(ShipSubsystem):
         Returns 0.0 when the main battery is empty (falsy, matches caller
         boolean checks in weapon_subsystems.py).  Partial steals return the
         amount taken (truthy) so the caller can act on whatever was available.
-        Task 4 will replace these call sites with a full conduit/allocation
-        model; this bridge form keeps the API surface live."""
+        A future fire-debit allocation rework will replace these call sites
+        with a full conduit/allocation model; this bridge form keeps the API
+        surface live."""
         take = min(float(amount), self._main_battery_power)
         self._main_battery_power -= take
         return take

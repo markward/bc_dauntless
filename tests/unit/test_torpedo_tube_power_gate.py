@@ -135,14 +135,15 @@ def test_fire_without_power_subsystem_bypasses_gate():
 
 
 def test_partial_steal_fires_interim_until_task4():
-    """Pins the interim partial-steal gate: BC is all-or-nothing; Task 4's
-    consumer-draw model must flip this test.
+    """Pins the interim partial-steal gate: BC is all-or-nothing per shot only
+    via charge/reload — the fire-debit StealPower path is a dauntless legacy
+    mechanism.
 
     With main battery holding LESS than the torpedo's power cost but more
     than zero, firing SUCCEEDS (partial steal is truthy).  BC's real
     semantics: torpedo costs 20 power; main battery has only 5 → no fire
-    (all-or-nothing).  Task 4 replaces these call sites with proper
-    allocation semantics.
+    (all-or-nothing).  A future fire-debit allocation rework must flip this
+    test.
     """
     _active.clear()
     ship = ShipClass_Create("Test")
