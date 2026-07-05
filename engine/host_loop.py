@@ -68,6 +68,7 @@ from engine.appc import (
     combat,
     damage_eligibility,
     weapon_tactical_commands,
+    render_instances,
 )
 from engine.appc import viewscreen_static as _vss
 # combat is imported as a module (not `from combat import apply_hit`) so call
@@ -2261,6 +2262,9 @@ def reset_sdk_globals() -> None:
     # from the prior mission.
     from engine.appc import actions as _appc_actions
     _appc_actions.reset_deferred_playing()
+    # Drop the object→render-instance mirror; the instances themselves are
+    # torn down with the set, and the next mission's realize loops repopulate.
+    render_instances.reset()
     # Clear the event manager's handler tables so stale handlers from the
     # prior mission don't fire against the new mission's state. SDK
     # conditions register handlers on g_kEventManager during mission init.
@@ -3078,6 +3082,7 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False) -> No
         iid = r_.create_instance(handle)
         r_.set_world_transform(iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
         session.ship_instances[ship] = iid
+        render_instances.register(ship, iid)
         # Fresnel rim applies to ship hulls only — planets share the opaque
         # shader and must stay rim-free (default ineligible).
         r_.set_rim_eligible(iid, True)
@@ -3618,6 +3623,7 @@ class _MissionLoader:
             iid = r_.create_instance(handle)
             r_.set_world_transform(iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
             sess.ship_instances[ship] = iid
+            render_instances.register(ship, iid)
             # Fresnel rim applies to ship hulls only — planets share the
             # opaque shader and must stay rim-free (default ineligible).
             r_.set_rim_eligible(iid, True)

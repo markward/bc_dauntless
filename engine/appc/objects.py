@@ -7,6 +7,9 @@ DamageableObject   — placeholder for hull/shield state (Phase 2)
 ObjectGroup        — named membership list (friendly/enemy/neutral groups)
 """
 
+import math
+import random
+
 from engine.appc.events import TGEventHandlerObject
 from engine.appc.math import TGPoint3, TGMatrix3
 
@@ -174,6 +177,44 @@ class ObjectClass(TGEventHandlerObject):
 
     def GetWorldLocation(self) -> TGPoint3:
         return TGPoint3(self._position.x, self._position.y, self._position.z)
+
+    def GetRandomPointOnModel(self) -> TGPoint3:
+        """BC ObjectClass::GetRandomPointOnModel — random world-space point on
+        this object's model surface. The SDK's death-effect scatter primitive:
+        Effects.py seeds each debris explosion / spark burst and the death
+        AddDamage at a fresh sample (E1M2 asteroids, E7M1 freighter, E3M2
+        probe), so repeated calls must vary. Was previously a silent
+        __getattr__ `_Stub` no-op, so death debris emitted from a bogus
+        position instead of the hull.
+
+        Prefers the render instance's baked hull surface points (already
+        world-transformed — the same sample the nebula hull discharges use);
+        headless or instance-less objects fall back to a uniform random point
+        on the bounding sphere (GetRadius() is already world-scale), and a
+        radius-less object degrades to its world location."""
+        from engine.appc import render_instances
+        iid = render_instances.instance_for(self)
+        if iid is not None:
+            try:
+                from engine import renderer
+                pts = renderer.instance_surface_points(iid)
+            except Exception:
+                pts = []
+            if pts:
+                x, y, z = pts[random.randrange(len(pts))]
+                return TGPoint3(float(x), float(y), float(z))
+        center = self.GetWorldLocation()
+        radius = self.GetRadius()
+        if radius <= 0.0:
+            return center
+        dx = random.gauss(0.0, 1.0)
+        dy = random.gauss(0.0, 1.0)
+        dz = random.gauss(0.0, 1.0)
+        norm = math.sqrt(dx * dx + dy * dy + dz * dz)
+        if norm < 1e-12:
+            return center
+        k = radius / norm
+        return TGPoint3(center.x + dx * k, center.y + dy * k, center.z + dz * k)
 
     # ── Rotation ──────────────────────────────────────────────────────────────
 
