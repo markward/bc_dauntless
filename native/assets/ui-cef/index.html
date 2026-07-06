@@ -16,6 +16,7 @@
     <link rel="stylesheet" href="css/ai_inspector.css">
     <link rel="stylesheet" href="css/reticle_text.css">
     <link rel="stylesheet" href="css/info_box.css">
+    <link rel="stylesheet" href="css/engineering_power.css">
 </head>
 <body>
     <!-- Target reticle text labels (name above box, range/speed below),
@@ -216,6 +217,38 @@
       <div id="spv-popover" class="spv-popover"></div>
     </div>
 
+    <!-- Engineering power-grid panel — fixed top-right HUD overlay.
+         setEngineeringPower({...}) drives state; slider inputs fire
+         dauntlessEvent('engpower:set:<group>:<value>'). Hidden when
+         payload.visible === false (no player / no power subsystem).
+         Spec: docs/superpowers/sdd/task-13-brief.md -->
+    <div id="engpower-root" style="display:none">
+      <div class="ep-title">Power Transmission Grid</div>
+      <div class="ep-power-bar-wrap">
+        <div class="ep-band" id="ep-band-blue"></div>
+        <div class="ep-band" id="ep-band-yellow"></div>
+        <div class="ep-band" id="ep-band-red"></div>
+        <div id="ep-power-fill"></div>
+      </div>
+      <div id="ep-sliders"></div>
+      <div class="ep-columns">
+        <div class="ep-col">
+          <span class="ep-col-name">Warp Core</span>
+          <span class="ep-col-val" id="ep-col-warpcore">—</span>
+        </div>
+        <div class="ep-col">
+          <span class="ep-col-name">Main</span>
+          <span class="ep-col-val" id="ep-col-main">—</span>
+        </div>
+        <div class="ep-col">
+          <span class="ep-col-name">Backup</span>
+          <span class="ep-col-val" id="ep-col-backup">—</span>
+        </div>
+      </div>
+      <div id="ep-siphon-tractor" class="ep-siphon ep-siphon--absent">Tractor: Off</div>
+      <div id="ep-siphon-cloak"   class="ep-siphon ep-siphon--absent">Cloak: Off</div>
+    </div>
+
     <!-- Tactical-view layout zones. All panels are flex children of one
          of these two containers; no panel uses absolute/fixed positioning
          of its own. Order in DOM is also visual order.
@@ -405,5 +438,6 @@
     <script src="js/ship_property_viewer.js"></script>
     <script src="js/ai_inspector.js"></script>
     <script src="js/info_box.js"></script>
+    <script src="js/engineering_power.js"></script>
 </body>
 </html>

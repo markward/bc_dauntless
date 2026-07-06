@@ -1,0 +1,140 @@
+/* Engineering power-grid panel — top-right fixed overlay.
+   Spec: docs/superpowers/sdd/task-13-brief.md */
+
+#engpower-root {
+    position: fixed;
+    top: 8px;
+    right: 8px;
+    width: 240px;
+    background: rgba(0, 0, 0, 0.72);
+    border: 1px solid #2a6090;
+    border-radius: 4px;
+    color: #cde;
+    font-family: monospace;
+    font-size: 11px;
+    padding: 6px 8px;
+    pointer-events: auto;
+    z-index: 50;
+}
+
+#engpower-root .ep-title {
+    text-align: center;
+    font-size: 12px;
+    font-weight: bold;
+    color: #7bf;
+    margin-bottom: 6px;
+    letter-spacing: 0.04em;
+}
+
+/* --- Power Used bar --- */
+.ep-power-bar-wrap {
+    position: relative;
+    height: 10px;
+    background: #111;
+    border: 1px solid #335;
+    border-radius: 2px;
+    margin-bottom: 6px;
+    overflow: hidden;
+}
+
+.ep-band {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    opacity: 0.35;
+}
+
+#ep-band-blue   { left: 0;   background: #38f; }
+#ep-band-yellow { left: 0;   background: #fb0; }
+#ep-band-red    { left: 0;   background: #f44; }
+
+#ep-power-fill {
+    position: absolute;
+    top: 1px;
+    left: 0;
+    height: calc(100% - 2px);
+    background: rgba(100, 200, 255, 0.55);
+    border-radius: 1px;
+    transition: width 0.1s linear;
+}
+
+/* --- Sliders --- */
+.ep-slider-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 4px;
+}
+
+.ep-slider-label {
+    width: 80px;
+    flex-shrink: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: #acd;
+}
+
+.ep-slider-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    accent-color: #38f;
+    cursor: pointer;
+}
+
+.ep-slider-pct {
+    width: 34px;
+    text-align: right;
+    color: #8cf;
+}
+
+/* --- Columns --- */
+.ep-columns {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 6px;
+    margin-bottom: 4px;
+    padding: 4px 0;
+    border-top: 1px solid #335;
+}
+
+.ep-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    flex: 1 1 0;
+    gap: 2px;
+}
+
+.ep-col-name {
+    font-size: 9px;
+    color: #89a;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.ep-col-val {
+    font-size: 12px;
+    font-weight: bold;
+    color: #7bf;
+}
+
+#ep-col-warpcore { color: #5cf; }
+#ep-col-main     { color: #fb0; }
+#ep-col-backup   { color: #f66; }
+
+/* --- Siphon lines --- */
+.ep-siphon {
+    font-size: 10px;
+    color: #fb0;
+    padding: 1px 0;
+}
+
+.ep-siphon--absent {
+    color: #444;
+}
+
+.ep-siphon--active {
+    color: #ff0;
+    font-weight: bold;
+}

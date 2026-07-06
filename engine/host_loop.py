@@ -5138,6 +5138,18 @@ def run(mission_name: Optional[str] = None,
         weapons_display = WeaponsDisplayPanel(player_control=player_control)
         registry.register(weapons_display)
 
+        # Engineering power-grid panel — live power state: sliders, Power Used
+        # bar, column gauges, and tractor/cloak siphon lines.  Always registered
+        # (production panel, not dev-only); the panel emits {"visible":False}
+        # when there is no player so the JS root hides itself.
+        from engine.ui.engineering_power_panel import EngineeringPowerPanel
+        def _engpower_get_player():
+            g = Game_GetCurrentGame()
+            return g.GetPlayer() if g is not None else None
+        engineering_power_panel = EngineeringPowerPanel(
+            get_player=_engpower_get_player)
+        registry.register(engineering_power_panel)
+
         # Bindings older than the orbit-camera change won't expose
         # consume_scroll_y; fall back to a zero-delta lambda so host_loop
         # still runs against an old _dauntless_host.so without rebuilding.
