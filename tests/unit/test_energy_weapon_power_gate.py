@@ -100,8 +100,8 @@ def test_recharge_capped_near_max_charge():
     assert ps.GetMainBatteryPower() == 100.0
 
 
-def test_recharge_no_property_bypasses_gate():
-    """Test fixture without a bound PowerProperty refills normally."""
+def test_recharge_without_power_property_still_works():
+    """Test fixture without a bound PowerProperty refills normally (no gate)."""
     ship = ShipClass_Create("Test")
     bank = _wire_phaser_bank(ship, with_power_property=False)
     before = bank._charge_level

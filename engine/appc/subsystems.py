@@ -1322,17 +1322,16 @@ class PowerSubsystem(ShipSubsystem):
 
     Three pools mirror Appc (App.py:5739-5754):
 
-    * **available** — instantaneous surplus from generation, refilled
-      each tick.  Weapons drain this first.
+    * **available** — per-interval conduit-budget sum (budget-at-interval-start),
+      refilled each tick.  Consumers draw against conduit counters.
     * **main battery** — capped reserve (PowerProperty.MainBatteryLimit)
       that absorbs surplus and surrenders it when available runs out.
     * **backup battery** — emergency reserve drained only via
       StealPowerFromReserve (backup-only path).
 
-    StealPower / StealPowerFromReserve return the float amount actually
-    taken (partial drain semantics, reservoir-specific).  0.0 is falsy
-    so callers in weapon_subsystems.py that test ``if ps.StealPower(cost)``
-    still work correctly.
+    StealPower / StealPowerFromReserve are SDK API surface for direct
+    reservoir drains (main-only / backup-only, return amount taken, float
+    0.0 falsy).  Engine has no callers — SDK scripts and tests only.
     """
     def __init__(self, name: str = ""):
         super().__init__(name)
@@ -1448,12 +1447,9 @@ class PowerSubsystem(ShipSubsystem):
         """Drain up to `amount` from the main battery; return the float amount
         actually taken.  Main-battery-only — does not touch available or backup.
 
-        Returns 0.0 when the main battery is empty (falsy, matches caller
-        boolean checks in weapon_subsystems.py).  Partial steals return the
-        amount taken (truthy) so the caller can act on whatever was available.
-        A future fire-debit allocation rework will replace these call sites
-        with a full conduit/allocation model; this bridge form keeps the API
-        surface live."""
+        Returns 0.0 when the main battery is empty (falsy).  Partial steals
+        return the amount taken (truthy).  SDK API surface; engine has no
+        callers."""
         take = min(float(amount), self._main_battery_power)
         self._main_battery_power -= take
         return take

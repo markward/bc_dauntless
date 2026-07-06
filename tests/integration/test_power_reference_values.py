@@ -63,7 +63,7 @@ def _galaxy_with_authored_power():
 
     Consumers are registered in BC attachment order (matches the hardpoint
     script order): impulse, sensors, shields, phasers, torps, warp, engineering.
-    Tractor is attached last (PSM_BACKUP_FIRST) so tests can enable it
+    Tractor is attached last (PSM_MAIN_FIRST, the default) so tests can enable it
     selectively.
     """
     ship = ShipClass_Create("Galaxy")
@@ -96,7 +96,8 @@ def _galaxy_with_authored_power():
     _consumer("Torpedo Tubes",    _DRAW_TORPS)
     _consumer("Warp Engines",     _DRAW_WARP)       # authored 0 pw/s — free
     _consumer("Engineering",      _DRAW_ENGINEERING)
-    tractor = _consumer("Tractor Beam", _DRAW_TRACTOR, mode=PSM_BACKUP_FIRST, is_on=False)
+    # Tractor uses default PSM_MAIN_FIRST (spec decision §2); is_on=False in these tests
+    tractor = _consumer("Tractor Beam", _DRAW_TRACTOR, is_on=False)
 
     return ship, tractor
 
