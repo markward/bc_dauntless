@@ -266,3 +266,43 @@ def test_self_repair_bay_queued_on_itself():
     before = bay.GetCondition()
     bay.Update(1.0)
     assert bay.GetCondition() > before
+
+
+def _queued_bay(teams=2, n=4):
+    bay = _bay(teams=teams)
+    subs = [_sub(name="s%d" % i, condition=100.0) for i in range(n)]
+    for s in subs:
+        bay.AddToRepairList(s)
+    return bay, subs
+
+
+def test_toggle_demotes_active_to_tail():
+    bay, subs = _queued_bay()
+    bay.HandleIncreasePriority(subs[0])          # active (idx 0 < teams 2)
+    assert bay._queue[-1] is subs[0]
+    assert bay.IsBeingRepaired(subs[0]) == 0
+
+
+def test_toggle_promotes_waiting_to_head():
+    bay, subs = _queued_bay()
+    bay.HandleIncreasePriority(subs[3])          # waiting
+    assert bay._queue[0] is subs[3]
+    assert bay.IsBeingRepaired(subs[3]) == 1
+
+
+def test_toggle_unqueued_is_noop():
+    bay, subs = _queued_bay()
+    before = list(bay._queue)
+    bay.HandleIncreasePriority(_sub(condition=1.0))
+    assert bay._queue == before
+
+
+def test_priority_event_routes_to_toggle():
+    import App
+    bay, subs = _queued_bay()
+    evt = App.TGObjPtrEvent_Create()
+    evt.SetEventType(App.ET_REPAIR_INCREASE_PRIORITY)
+    evt.SetDestination(bay)
+    evt.SetObjPtr(subs[3])
+    App.g_kEventManager.AddEvent(evt)
+    assert bay._queue[0] is subs[3]

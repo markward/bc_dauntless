@@ -1837,6 +1837,17 @@ class RepairSubsystem(PoweredSubsystem):
         # id(sub) values already notified ET_REPAIR_CANNOT_BE_COMPLETED
         # (destroyed-while-queued fires once, not per tick).
         self._cannot_complete_notified: set = set()
+        # ET_REPAIR_INCREASE_PRIORITY posted with destination=this bay
+        # (EngRepairPane click) routes to the toggle via the instance-
+        # handler chain. Lazy-guarded: during App's own import the constant
+        # isn't there yet; runtime construction always has App loaded.
+        try:
+            import App
+            self.AddPythonFuncHandlerForInstance(
+                App.ET_REPAIR_INCREASE_PRIORITY,
+                "engine.appc.subsystems.HandleRepairPriorityEvent")
+        except Exception as _e:
+            dev_mode.log_swallowed("repair priority handler registration", _e)
 
     # ── Property readers (RepairSubsystemProperty data-bag) ────────────────
     def GetMaxRepairPoints(self) -> float:
@@ -1950,6 +1961,20 @@ class RepairSubsystem(PoweredSubsystem):
             App.g_kEventManager.AddEvent(evt)
         except Exception as _e:
             dev_mode.log_swallowed("repair event broadcast", _e)
+
+    def HandleIncreasePriority(self, sub) -> None:
+        """Stock's binary toggle (FUN_00565B50), NOT move-up-one: an entry
+        within the first NumRepairTeams nodes (actively repaired) demotes
+        to tail; a waiting entry promotes to head; unqueued is a no-op."""
+        idx = next((i for i, s in enumerate(self._queue) if s is sub), None)
+        if idx is None:
+            return
+        active = idx < self.GetNumRepairTeams()
+        del self._queue[idx]
+        if active:
+            self._queue.append(sub)
+        else:
+            self._queue.insert(0, sub)
 
 
 # Default cloak/decloak transition length in seconds.  W5.T2 will overwrite
@@ -2294,6 +2319,15 @@ def _get_xyz(ship) -> tuple:
         except Exception as _e:
             dev_mode.log_swallowed("ship position via _position attr", _e)
     return (0.0, 0.0, 0.0)
+
+
+def HandleRepairPriorityEvent(pObject, pEvent):
+    """Instance handler for ET_REPAIR_INCREASE_PRIORITY on a RepairSubsystem.
+    Signature matches TGEventHandlerObject dispatch: fn(dest_object, event)."""
+    sub = pEvent.GetObjPtr() if hasattr(pEvent, "GetObjPtr") else None
+    if isinstance(pObject, RepairSubsystem) and sub is not None:
+        pObject.HandleIncreasePriority(sub)
+    pObject.CallNextHandler(pEvent)
 
 
 # ── Weapon subsystem hierarchy (split out into engine.appc.weapon_subsystems) ──
