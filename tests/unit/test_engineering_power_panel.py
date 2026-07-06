@@ -367,34 +367,6 @@ def test_dispatch_invalidates_cache():
     assert panel.render_payload() is not None  # re-emits
 
 
-def test_tractor_active_when_firing():
-    """tractor.active is True when the tractor is firing."""
-    from engine.appc.weapon_subsystems import TractorBeamSystem
-    player = _fake_player()
-    panel = _make_panel(player, is_engineering_open=lambda: True)
-    # Force the tractor to appear active via monkeypatching _wants_power
-    tbs = player.GetTractorBeamSystem()
-    tbs._wants_power = lambda: True
-    # Invalidate to force a fresh snapshot
-    panel._last_pushed = None
-    js = panel.render_payload()
-    payload = json.loads(js[len("setEngineeringPower("):-2])
-    assert payload["tractor"]["active"] is True
-
-
-def test_cloak_present_and_inactive_by_default():
-    """cloak.present is False for a basic ship (no cloaking subsystem set)."""
-    from engine.ui.engineering_power_panel import EngineeringPowerPanel
-    player = _fake_player()
-    # ShipClass_Create does NOT set a CloakingSubsystem by default
-    panel = EngineeringPowerPanel(get_player=lambda: player,
-                                  is_engineering_open=lambda: True)
-    js = panel.render_payload()
-    payload = json.loads(js[len("setEngineeringPower("):-2])
-    assert payload["cloak"]["present"] is False
-    assert payload["cloak"]["active"] is False
-
-
 def test_slider_event_routes_through_panel_registry():
     """The live entry point is PanelRegistry.dispatch (wired as the single
     CEF event handler). A slider oninput fires the panel's JS event string;

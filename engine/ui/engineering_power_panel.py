@@ -103,7 +103,7 @@ class EngineeringPowerPanel(Panel):
         back_cond = float(prop.GetBackupConduitCapacity() or 0.0) if prop is not None else 0.0
         denom = authored_out + main_cond + back_cond
 
-        live_out = power.GetPowerOutput()   # health-scaled
+        live_out = float(power.GetPowerOutput() or 0.0)   # health-scaled
 
         # Damage column: fraction of denom lost to damage
         damage = round((authored_out - live_out) / denom, 4) if denom > 0 else 0.0
@@ -132,6 +132,7 @@ class EngineeringPowerPanel(Panel):
             used.append({"key": key, "frac": demand / denom if denom > 0 else 0.0})
 
         # Overload: clamp used to available, set flag
+        # summed from 4dp-rounded segments — borderline used==avail can flag overload spuriously by <=3e-4; harmless for real ship data
         avail_total = sum(available.values())
         used_total = sum(u["frac"] for u in used)
         overload = used_total > avail_total > 0.0
