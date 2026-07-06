@@ -242,3 +242,35 @@ def test_advance_combat_stops_firing_when_sensors_offline():
     assert calls == []  # no damage applied
     for i in range(4):
         assert sys_.GetWeapon(i).IsFiring() == 0
+
+
+def test_advance_combat_stops_firing_when_weapons_powered_off():
+    """Power slider to 0% calls TurnOff().  Already-firing phaser banks must
+    be stopped by the _advance_combat loop (not just prevented from starting).
+
+    Root cause: the existing gate is ``_is_offline`` (disabled OR destroyed),
+    which does NOT check ``IsOn()``.  A powered-down but otherwise healthy
+    system kept dealing damage until charge ran out naturally.
+    """
+    from engine.appc.ships import ShipClass_Create
+    ship, sys_ = _firing_phaser_system()
+    target = ShipClass_Create("Galaxy")
+    target.SetTranslateXYZ(0.0, 100.0, 0.0)  # straight ahead
+
+    # System is ON and healthy — start firing.
+    assert sys_.IsOn() == 1
+    sys_.StartFiring(target=target)
+    assert any(sys_.GetWeapon(i).IsFiring() == 1 for i in range(4)), \
+        "pre-condition: at least one bank must be firing before power-off"
+
+    # Power slider to 0% → TurnOff.  System is healthy (not disabled).
+    sys_.TurnOff()
+    assert sys_.IsOn() == 0
+    assert sys_.IsDisabled() == 0  # confirm: _is_offline would NOT catch this
+
+    calls = _run_advance_combat(ship, target)
+    # No damage must have been applied and all banks must be stopped.
+    assert calls == [], "apply_hit must not be called while weapons are powered off"
+    for i in range(4):
+        assert sys_.GetWeapon(i).IsFiring() == 0, \
+            f"bank {i} still firing after weapons powered off"

@@ -580,7 +580,11 @@ def _advance_combat(ships, dt: float, ship_instances=None) -> None:
         # the system flips disabled mid-tick (incoming hit during the
         # previous frame's damage routing), stop any active banks and
         # skip the damage loop for this ship. Spec §4.2.
-        if _is_offline(sys_):
+        # Power-off gate: a system turned off via the power slider (IsOn()==0)
+        # must also stop any already-firing banks immediately.  _is_offline
+        # only checks IsDisabled/IsDestroyed and does NOT cover the powered-
+        # down case, so we gate on IsOn() here as a separate check.
+        if _is_offline(sys_) or not sys_.IsOn():
             sys_.StopFiring()
             continue
         # While LBUTTON is held, re-fire banks that recharged above the
