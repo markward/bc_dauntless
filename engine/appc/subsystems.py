@@ -1349,6 +1349,8 @@ class PowerSubsystem(ShipSubsystem):
         # each watches its battery FRACTION (power / limit), driven from Update.
         self._main_battery_watcher = FloatRangeWatcher()
         self._backup_battery_watcher = FloatRangeWatcher()
+        # Task 5: breach guard — fires exactly once when the reactor is destroyed.
+        self._breach_fired: bool = False
 
     def GetAvailablePower(self) -> float:           return self._available_power
     def SetAvailablePower(self, v) -> None:         self._available_power = float(v)
@@ -1484,7 +1486,31 @@ class PowerSubsystem(ShipSubsystem):
         room = backup_cap - self._backup_battery_power
         self._backup_battery_power += min(spill, max(room, 0.0))
 
+    def _trigger_breach(self) -> None:
+        """Called once when the reactor is destroyed (Task 5 — manual p.16).
+
+        Arms the warp-core breach explosion via warp_core_breach.arm().
+        The explosion detonates during the next warp_core_breach.advance()
+        call (driven by the game loop) and deals AoE damage to neighbours.
+        Raise-safe: a missing parent ship or import error must never crash
+        the power tick."""
+        try:
+            from engine.appc import warp_core_breach
+            ship = self.GetParentShip()
+            if ship is not None:
+                warp_core_breach.arm(ship)
+        except Exception as _e:
+            import engine.dev_mode as dev_mode
+            dev_mode.log_swallowed("warp core breach trigger", _e)
+
     def Update(self, dt: float) -> None:
+        # Task 5: on the first tick after the reactor is destroyed, arm the
+        # warp-core breach (manual p.16: "Reaching 0% causes a warp-core
+        # breach and destroys the ship").  _breach_fired is a single-fire
+        # guard so that a destroyed-but-still-ticked subsystem only arms once.
+        if self.IsDestroyed() and not self._breach_fired:
+            self._breach_fired = True
+            self._trigger_breach()
         prop = self.GetProperty()
         if prop is None:
             return
