@@ -1350,6 +1350,8 @@ class PowerSubsystem(ShipSubsystem):
         self._main_battery_watcher = FloatRangeWatcher()
         self._backup_battery_watcher = FloatRangeWatcher()
         # Task 5: breach guard — fires exactly once when the reactor is destroyed.
+        # TODO(save): persist _breach_fired in __getstate__/__setstate__ —
+        # reload mid-breach re-arms on a dying ship.
         self._breach_fired: bool = False
 
     def GetAvailablePower(self) -> float:           return self._available_power
@@ -1487,18 +1489,31 @@ class PowerSubsystem(ShipSubsystem):
         self._backup_battery_power += min(spill, max(room, 0.0))
 
     def _trigger_breach(self) -> None:
-        """Called once when the reactor is destroyed (Task 5 — manual p.16).
+        """Called once when the reactor is destroyed (Task 5 — manual p.16:
+        "Reaching 0% causes a warp-core breach and destroys the ship").
 
-        Arms the warp-core breach explosion via warp_core_breach.arm().
-        The explosion detonates during the next warp_core_breach.advance()
-        call (driven by the game loop) and deals AoE damage to neighbours.
+        Two effects, matching the objects.py:695-699 critical-subsystem
+        pattern:
+
+        * warp_core_breach.arm(ship) — queues the AoE explosion, detonated
+          on the next warp_core_breach.advance() (driven by the game loop).
+          detonate() skips the source ship, so arming alone never kills it.
+        * ship_death.begin(ship) — starts the source ship's own death
+          sequence, guarded on IsDying()/IsDead() so a ship already dying
+          (e.g. the hull-zero cascade already began it) is untouched.
+
         Raise-safe: a missing parent ship or import error must never crash
         the power tick."""
         try:
             from engine.appc import warp_core_breach
             ship = self.GetParentShip()
-            if ship is not None:
-                warp_core_breach.arm(ship)
+            if ship is None:
+                return
+            warp_core_breach.arm(ship)
+            if hasattr(ship, "IsDying") and hasattr(ship, "IsDead") \
+                    and not ship.IsDying() and not ship.IsDead():
+                from engine.appc import ship_death
+                ship_death.begin(ship)
         except Exception as _e:
             import engine.dev_mode as dev_mode
             dev_mode.log_swallowed("warp core breach trigger", _e)

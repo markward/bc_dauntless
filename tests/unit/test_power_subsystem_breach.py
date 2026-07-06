@@ -50,17 +50,55 @@ def test_destroyed_reactor_arms_breach():
     )
 
 
+def test_destroyed_reactor_breaches_ship():
+    """Manual p.16: reaching 0% warp core destroys the SHIP — even with no
+    hull cascade in play (direct core destruction in isolation).  detonate()
+    skips the source ship, so PowerSubsystem must start the death sequence
+    itself via ship_death.begin()."""
+    from engine.appc import ship_death
+    ship, power, _ = _powered_ship()
+    ship_death.reset()
+    try:
+        power.SetCondition(0.0)
+        for _ in range(120):
+            power.Update(1.0 / 60.0)
+        assert ship.IsDying() or ship.IsDead(), (
+            "a destroyed warp core must destroy the ship itself"
+        )
+    finally:
+        ship_death.reset()
+
+
 def test_destroyed_reactor_arms_only_once():
-    """_breach_fired guard: repeated Update() calls arm the ship at most once."""
+    """_breach_fired guard: repeated Update() calls arm the ship exactly once."""
     ship, power, _ = _powered_ship()
     power.SetCondition(0.0)
     for _ in range(120):
         power.Update(1.0 / 60.0)
-    # After draining _armed via advance the ship must be in _breached exactly once.
-    # Here we just check it was not queued more than once.
-    total = (warp_core_breach._armed.count(ship)
-             + (1 if ship in warp_core_breach._breached else 0))
-    assert total <= 1, "_breach_fired guard must prevent double-arming"
+    assert warp_core_breach._armed.count(ship) == 1, (
+        "_breach_fired guard must prevent double-arming"
+    )
+
+
+def test_breach_does_not_restart_death_of_dying_ship():
+    """A ship already dying (e.g. hull-zero cascade already ran
+    ship_death.begin) must not have its death sequence restarted by the
+    reactor guard — begin() is idempotent, and the guard must not enqueue a
+    second sequence."""
+    from engine.appc import ship_death
+    ship, power, _ = _powered_ship()
+    ship_death.reset()
+    try:
+        ship_death.begin(ship)
+        assert ship.IsDying()
+        entries_before = len(ship_death._active)
+        power.SetCondition(0.0)
+        power.Update(1.0 / 60.0)
+        assert len(ship_death._active) == entries_before, (
+            "breach trigger must not enqueue a second death sequence"
+        )
+    finally:
+        ship_death.reset()
 
 
 def test_healthy_reactor_does_not_arm_breach():
