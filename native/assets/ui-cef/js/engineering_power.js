@@ -16,13 +16,26 @@ var _epDragging = null;       // key of row currently being dragged
 var _epRafPending = false;    // animation-frame throttle for drag events
 var _epPendingEvent = null;   // event string queued for next rAF
 
-// ── Colour map ──────────────────────────────────────────────────────────────
-var _EP_COLOURS = {
-    weapons: 'rgb(207,139,76)',
-    engines: 'rgb(199,76,200)',
-    sensors: 'rgb(201,203,76)',
-    shields: 'rgb(150,129,222)'
-};
+// ── Siphon line ─────────────────────────────────────────────────────────────
+// The .cline-on / .cline-off classes only swap solid-vs-dashed geometry; the
+// colour must be set inline for BOTH states, or a class swap leaves the new
+// state colourless (dashed → currentColor near-black; solid → transparent).
+function _epSetLine(lineEl, present, active, colour, offColour) {
+    if (!lineEl) return;
+    if (!present) { lineEl.style.display = 'none'; return; }
+    lineEl.style.display = '';
+    if (active) {
+        lineEl.className = 'cline-on';
+        lineEl.style.background = colour;
+        lineEl.style.boxShadow = '0 0 5px ' + colour;
+        lineEl.style.borderColor = '';
+    } else {
+        lineEl.className = 'cline-off';
+        lineEl.style.background = 'transparent';
+        lineEl.style.boxShadow = 'none';
+        lineEl.style.borderColor = offColour;
+    }
+}
 
 // ── Drag handling ───────────────────────────────────────────────────────────
 
@@ -41,7 +54,7 @@ function _epOnPointerDown(e) {
     if (!key) return;
     track.setPointerCapture(e.pointerId);
     _epDragging = key;
-    _epApplyDrag(track, key, e.offsetX);
+    _epApplyDrag(track, key, e.clientX);
 }
 
 function _epOnPointerMove(e) {
@@ -49,16 +62,20 @@ function _epOnPointerMove(e) {
     var track = e.currentTarget;
     var key = track.parentElement ? track.parentElement.getAttribute('data-key') : null;
     if (key !== _epDragging) return;
-    _epApplyDrag(track, key, e.offsetX);
+    _epApplyDrag(track, key, e.clientX);
 }
 
 function _epOnPointerUp(e) {
     _epDragging = null;
 }
 
-function _epApplyDrag(track, key, offsetX) {
-    var w = track.getBoundingClientRect().width;
+function _epApplyDrag(track, key, clientX) {
+    var rect = track.getBoundingClientRect();
+    var w = rect.width;
     if (!w) return;
+    // Position from the track's left edge, NOT e.offsetX — offsetX is relative
+    // to the child under the pointer (thumb/mark sliver) and would jump to 0.
+    var offsetX = clientX - rect.left;
     var raw = offsetX / w;                // 0..1 maps to 0..100% of track
     var pct = raw * 1.25;                 // track spans 0..125%
     pct = Math.max(0, Math.min(1.25, pct));
@@ -168,7 +185,6 @@ function setEngineeringPower(p) {
     var lblWc = document.getElementById('ep-lbl-wc');
     var lblMn = document.getElementById('ep-lbl-mn');
     var lblRs = document.getElementById('ep-lbl-rs');
-    var barsColEl = document.getElementById('ep-avail-wc');
     // Estimate pixel width from %-of-barsCol; use a minimum px threshold
     var totalWidth = 540 - 28; // approx bars-col px (540px panel minus dmg col ~8.9%)
     if (lblWc) {
@@ -223,18 +239,8 @@ function setEngineeringPower(p) {
     if (tractorToggle) {
         tractorToggle.style.display = tractor.present ? '' : 'none';
     }
-    if (tractorLine) {
-        // cline-on (solid+glow) when active, else cline-off (dashed)
-        if (tractor.present && tractor.active) {
-            tractorLine.className = 'cline-on';
-            tractorLine.style.display = '';
-        } else if (tractor.present) {
-            tractorLine.className = 'cline-off';
-            tractorLine.style.display = '';
-        } else {
-            tractorLine.style.display = 'none';
-        }
-    }
+    _epSetLine(tractorLine, tractor.present, tractor.active,
+               'rgb(180,157,64)', 'rgba(180,157,64,0.55)');
     if (tractorState) {
         if (tractor.active) {
             tractorState.textContent = 'On';
@@ -253,17 +259,8 @@ function setEngineeringPower(p) {
     if (cloakToggle) {
         cloakToggle.style.display = cloak.present ? '' : 'none';
     }
-    if (cloakLine) {
-        if (cloak.present && cloak.active) {
-            cloakLine.className = 'cline-on';
-            cloakLine.style.display = '';
-        } else if (cloak.present) {
-            cloakLine.className = 'cline-off';
-            cloakLine.style.display = '';
-        } else {
-            cloakLine.style.display = 'none';
-        }
-    }
+    _epSetLine(cloakLine, cloak.present, cloak.active,
+               'rgb(208,87,42)', 'rgba(208,87,42,0.55)');
     if (cloakState) {
         if (cloak.active) {
             cloakState.textContent = 'On';
@@ -282,5 +279,10 @@ function _epUpdateBattery(name, batt) {
     var pctEl   = document.getElementById('ep-ppct-'   + name);
     if (fillEl)  fillEl.style.height  = chargePct + '%';
     if (pctEl)   pctEl.textContent    = chargePct + '%';
-    if (drainEl) drainEl.style.display = batt.draining ? '' : 'none';
+    if (drainEl) {
+        drainEl.style.display = batt.draining ? '' : 'none';
+        // Sit just inside the fill's top surface (fill rises from the bottom,
+        // so its top edge is at (100 - charge)% from the top of the column).
+        drainEl.style.top = 'calc(' + (100 - chargePct) + '% + 2px)';
+    }
 }
