@@ -54,6 +54,11 @@ from engine.appc.tg_ui.st_widgets import (
     STSubPane, STSubPane_Create, STSubPane_Cast,
     STButton_Cast, STStylizedWindow_Cast,
 )
+from engine.appc.tg_ui.eng_power import (
+    EngPowerCtrl, EngPowerCtrl_Create, EngPowerCtrl_GetPowerCtrl, EngPowerCtrl_Cast,
+    EngPowerDisplay, EngPowerDisplay_Create, EngPowerDisplay_GetPowerDisplay,
+    EngPowerDisplay_Cast,
+)
 from engine.appc.radar import (
     RadarDisplay_Create, RadarDisplay_Cast,
     RadarScope_Create, RadarBlip_Create,
@@ -1633,12 +1638,8 @@ def EngRepairPane_Create(width=0.0, height=0.0, n=0) -> "_DisplayWidget":
     return pane
 
 
-def EngPowerDisplay_Create(width=0.0, height=0.0) -> "_DisplayWidget":
-    return _DisplayWidget("EngPowerDisplay")
-
-
-def EngPowerCtrl_GetPowerCtrl() -> "_DisplayWidget":
-    return _DisplayWidget("EngPowerCtrl")
+# EngPowerDisplay_Create, EngPowerCtrl_GetPowerCtrl and related names are
+# imported from engine.appc.tg_ui.eng_power at the top of this module.
 
 
 # ── Stub call tracker ─────────────────────────────────────────────────────────

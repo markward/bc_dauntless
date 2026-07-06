@@ -31,9 +31,25 @@ def test_numeric_bar_and_fill_gauge():
 
 def test_app_globals_engineering_colors():
     assert App.globals.DEFAULT_ST_INDENT_HORIZ > 0.0
+    assert App.globals.DEFAULT_ST_INDENT_VERT > 0.0
     c = App.globals.g_kEngineeringMainPowerColor
     assert hasattr(c, "r") and hasattr(c, "a")
     assert App.g_kEngineeringMainPowerColor is c
     for name in ("WarpCore", "MainPower", "BackupPower", "Engines", "Shields",
                  "Weapons", "Sensors", "Cloak", "Tractor", "CtrlBkgndLine"):
         assert getattr(App.globals, "g_kEngineering%sColor" % name) is not None
+
+
+def test_numeric_bar_set_color_and_fill_gauge_colors():
+    """SetColor/SetEmptyColor/SetFillColor must accept a NiColorA without raising."""
+    from engine.appc.tg_ui.eng_power import STNumericBar, STFillGauge
+    color = App.NiColorA_BLACK
+    bar = STNumericBar()
+    bar.SetColor(color)   # call-and-no-throw
+    g = STFillGauge()
+    g.SetEmptyColor(color)
+    g.SetFillColor(color)
+
+
+def test_sttiled_icon_cast_rejects_non_icon():
+    assert App.STTiledIcon_Cast(object()) is None
