@@ -1683,6 +1683,17 @@ class EngRepairPaneWidget(_DisplayWidget):
         super().__init__("EngRepairPane")
         self._pane_width, self._pane_height, self._pane_rows = width, height, rows
 
+    def IsVisible(self) -> int:
+        # _DisplayWidget defines no IsVisible; its __getattr__ catch-all
+        # (line ~1380) would return a lambda giving None -> bool(None) ->
+        # False, which crew_menus.js treats as "skip this node entirely"
+        # (visible === false check runs before the node.type check) -- the
+        # pane would never render. The pane genuinely IS visible whenever it
+        # exists as a child of the open Engineering menu, so this always
+        # returns the SDK integer-bool true (1), matching the convention
+        # used by sibling widgets (e.g. engine/appc/characters.py:69).
+        return 1
+
 
 def EngRepairPane_Create(width=0.0, height=0.0, n=0) -> "EngRepairPaneWidget":
     pane = EngRepairPaneWidget(width, height, n)

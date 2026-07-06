@@ -85,6 +85,29 @@ def test_click_action_posts_priority_event(monkeypatch):
     assert bay._queue[0] is reg[waiting_id]               # promoted to head
 
 
+def test_snapshot_node_projects_repair_pane_visible_true():
+    """Regression guard: EngRepairPaneWidget has no real IsVisible tracking
+    (it subclasses _DisplayWidget, which has none), so
+    CrewMenuPanel._snapshot_node's `bool(widget.IsVisible())` used to
+    silently collapse to False via _DisplayWidget.__getattr__'s
+    lambda-returns-None catch-all. crew_menus.js skips any node with
+    visible === false before it ever inspects node.type, so the pane never
+    rendered. EngRepairPaneWidget.IsVisible() must return a truthy value."""
+    from engine.ui.crew_menu_panel import CrewMenuPanel
+
+    ship = _ship_with_queue()
+    ship.GetSensorSubsystem().SetCondition(4000.0)        # queued (active)
+    ship.GetWarpEngineSubsystem().SetCondition(4000.0)    # queued (waiting)
+
+    widget = App.EngRepairPane_Create(1.0, 0.4, 3)
+    panel = CrewMenuPanel()
+    node = panel._snapshot_node(widget)
+
+    assert node["type"] == "repair-pane"
+    assert node["visible"] is True
+    assert set(("repair", "waiting", "destroyed")) <= set(node)
+
+
 def test_current_player_resolves_real_object_not_stub():
     """Stub-audit: the resolved player for the repair-pane branches must be
     a real ship, never App._NamedStub (Game_GetCurrentPlayer() silently
