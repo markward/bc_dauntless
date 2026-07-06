@@ -217,37 +217,170 @@
       <div id="spv-popover" class="spv-popover"></div>
     </div>
 
-    <!-- Engineering power-grid panel — fixed top-right HUD overlay.
-         setEngineeringPower({...}) drives state; slider inputs fire
-         dauntlessEvent('engpower/set:<group>:<value>'). Hidden when
-         payload.visible === false (no player / no power subsystem).
-         Spec: docs/superpowers/sdd/task-13-brief.md -->
+    <!-- Engineering power-grid panel — fixed top-right HUD overlay (v28 design).
+         setEngineeringPower({visible, sliders, grid, batteries, tractor, cloak})
+         drives state via JS update-only rendering (no innerHTML rebuilds).
+         Drag events: dauntlessEvent('engpower/set:<key>:<pct>').
+         Toggle clicks: dauntlessEvent('engpower/toggle:tractor|cloak').
+         Hidden when payload.visible !== true (no player / no power subsystem /
+         Engineering menu closed).
+         Spec: docs/superpowers/sdd/task-3-brief.md -->
     <div id="engpower-root" style="display:none">
-      <div class="ep-title">Power Transmission Grid</div>
-      <div class="ep-power-bar-wrap">
-        <div class="ep-band" id="ep-band-blue"></div>
-        <div class="ep-band" id="ep-band-yellow"></div>
-        <div class="ep-band" id="ep-band-red"></div>
-        <div id="ep-power-fill"></div>
-      </div>
-      <div id="ep-sliders"></div>
-      <div class="ep-columns">
-        <div class="ep-col">
-          <span class="ep-col-name">Warp Core</span>
-          <span class="ep-col-val" id="ep-col-warpcore">—</span>
+      <div class="bc-body">
+        <!-- Slider rows: 4 fixed rows, present toggled by JS -->
+        <div class="row" data-key="weapons" id="ep-row-weapons">
+          <span class="lbl">Weapons</span>
+          <div class="track" id="ep-track-weapons"
+               style="background:rgba(207,139,76,.25)">
+            <div class="fill" id="ep-fill-weapons"
+                 style="background:rgb(207,139,76); width:80%"></div>
+            <div class="mark100"></div>
+            <div class="thumbline" id="ep-thumb-weapons" style="left:80%"></div>
+          </div>
+          <span class="pct" id="ep-pct-weapons"
+                style="color:rgb(207,139,76)">100%</span>
         </div>
-        <div class="ep-col">
-          <span class="ep-col-name">Main</span>
-          <span class="ep-col-val" id="ep-col-main">—</span>
+        <div class="row" data-key="engines" id="ep-row-engines">
+          <span class="lbl">Engines</span>
+          <div class="track" id="ep-track-engines"
+               style="background:rgba(199,76,200,.25)">
+            <div class="fill" id="ep-fill-engines"
+                 style="background:rgb(199,76,200); width:80%"></div>
+            <div class="mark100"></div>
+            <div class="thumbline" id="ep-thumb-engines" style="left:80%"></div>
+          </div>
+          <span class="pct" id="ep-pct-engines"
+                style="color:rgb(199,76,200)">100%</span>
         </div>
-        <div class="ep-col">
-          <span class="ep-col-name">Backup</span>
-          <span class="ep-col-val" id="ep-col-backup">—</span>
+        <div class="row" data-key="sensors" id="ep-row-sensors">
+          <span class="lbl">Sensor Array</span>
+          <div class="track" id="ep-track-sensors"
+               style="background:rgba(201,203,76,.25)">
+            <div class="fill" id="ep-fill-sensors"
+                 style="background:rgb(201,203,76); width:80%"></div>
+            <div class="mark100"></div>
+            <div class="thumbline" id="ep-thumb-sensors" style="left:80%"></div>
+          </div>
+          <span class="pct" id="ep-pct-sensors"
+                style="color:rgb(201,203,76)">100%</span>
         </div>
-      </div>
-      <div id="ep-siphon-tractor" class="ep-siphon ep-siphon--absent">Tractor: Off</div>
-      <div id="ep-siphon-cloak"   class="ep-siphon ep-siphon--absent">Cloak: Off</div>
-    </div>
+        <div class="row" data-key="shields" id="ep-row-shields">
+          <span class="lbl">Shields</span>
+          <div class="track" id="ep-track-shields"
+               style="background:rgba(150,129,222,.25)">
+            <div class="fill" id="ep-fill-shields"
+                 style="background:rgb(150,129,222); width:80%"></div>
+            <div class="mark100"></div>
+            <div class="thumbline" id="ep-thumb-shields" style="left:80%"></div>
+          </div>
+          <span class="pct" id="ep-pct-shields"
+                style="color:rgb(150,129,222)">100%</span>
+        </div>
+
+        <!-- Tick row: 0% / 50% / 100% / 125% -->
+        <div class="ticks">
+          <span>0%</span>
+          <span id="ep-tick-50" style="left:40%">50%</span>
+          <span style="left:80%; color:#cfcde4">100%</span>
+          <span>125%</span>
+        </div>
+
+        <!-- Grid: damage column + used bar + available bar + bticks + labels -->
+        <div class="grid-wrap">
+          <div class="dmg-col" id="ep-dmg-col"></div>
+          <div class="bars-col">
+            <div class="used-bar" id="ep-used-bar">
+              <div class="u-weap" id="ep-used-weapons" style="width:0%"></div>
+              <div class="u-eng"  id="ep-used-engines"  style="width:0%"></div>
+              <div class="u-sens" id="ep-used-sensors"  style="width:0%"></div>
+              <div class="u-shld" id="ep-used-shields"  style="width:0%"></div>
+            </div>
+            <div class="pu-rel">
+              <div class="pu-bar">
+                <div class="pu-wc" id="ep-avail-wc" style="width:0%"></div>
+                <div class="pu-mn" id="ep-avail-mn" style="width:0%"></div>
+                <div class="pu-rs" id="ep-avail-rs" style="width:0%"></div>
+              </div>
+              <!-- bticks: left edge / warp-core boundary / main boundary / right edge -->
+              <div class="btick" id="ep-btick-0"
+                   style="left:0; background:rgb(72,145,237);"></div>
+              <div class="btick" id="ep-btick-wc"
+                   style="left:0; background:rgb(72,145,237);"></div>
+              <div class="btick" id="ep-btick-mn"
+                   style="left:0; background:rgb(210,185,80);"></div>
+              <div class="btick" id="ep-btick-rs"
+                   style="right:0; background:rgb(230,105,55);"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Label row beneath the grid -->
+        <div class="pu-labels" id="ep-pu-labels">
+          <span id="ep-lbl-dmg"  style="width:8.9%"></span>
+          <span id="ep-lbl-wc"   style="color:rgb(72,145,237)">WARP CORE</span>
+          <span id="ep-lbl-mn"   style="color:rgb(180,157,64)">MAIN</span>
+          <span id="ep-lbl-rs"   style="color:rgb(208,87,42)">RESERVE</span>
+        </div>
+
+        <!-- Bottom group: MAIN battery | toggle col | RESERVE battery -->
+        <div class="bgroup">
+
+          <!-- Main battery pillar -->
+          <div class="pillar" id="ep-pillar-main" style="width:100px;">
+            <div class="pbump" style="width:30px; border-color:rgba(180,157,64,.4)"></div>
+            <div class="pcol"  style="width:75px; border:1px solid rgba(180,157,64,.4)">
+              <div class="pfill" id="ep-pfill-main"
+                   style="background:rgb(180,157,64); height:0%"></div>
+              <div class="pdrain" id="ep-pdrain-main"
+                   style="color:#1a1a24; display:none">&#9660;</div>
+            </div>
+            <div class="pname">MAIN BATTERY</div>
+            <div class="ppct" id="ep-ppct-main"
+                 style="color:rgb(180,157,64)">0%</div>
+          </div>
+
+          <!-- Toggle column: tractor + cloak -->
+          <div class="toggle-col">
+            <!-- Tractor siphon line (left side → toggle) -->
+            <div class="cline-on" id="ep-tractor-line"
+                 style="left:-14px; right:calc(50% + 84px); top:23px;
+                        background:rgb(180,157,64);
+                        box-shadow:0 0 5px rgb(180,157,64); display:none"></div>
+            <!-- Cloak siphon line (toggle → right side) -->
+            <div class="cline-off" id="ep-cloak-line"
+                 style="left:calc(50% + 84px); right:-20px; top:60px;
+                        border-color:rgba(208,87,42,0.55); display:none"></div>
+            <!-- Tractor toggle button -->
+            <div class="btoggle" id="ep-toggle-tractor"
+                 style="top:12px; display:none"
+                 onclick="dauntlessEvent('engpower/toggle:tractor')">
+              Tractor <span id="ep-tractor-state" style="color:#666">Off</span>
+            </div>
+            <!-- Cloak toggle button -->
+            <div class="btoggle" id="ep-toggle-cloak"
+                 style="top:49px; display:none"
+                 onclick="dauntlessEvent('engpower/toggle:cloak')">
+              Cloak <span id="ep-cloak-state" style="color:#666">Off</span>
+            </div>
+          </div>
+
+          <!-- Reserve battery pillar -->
+          <div class="pillar" id="ep-pillar-reserve" style="width:86px;">
+            <div class="pbump" style="width:22px; border-color:rgba(208,87,42,.4)"></div>
+            <div class="pcol"  style="width:50px; border:1px solid rgba(208,87,42,.4)">
+              <div class="pfill" id="ep-pfill-reserve"
+                   style="background:rgb(208,87,42); height:0%"></div>
+              <div class="pdrain" id="ep-pdrain-reserve"
+                   style="color:#1a1a24; display:none">&#9660;</div>
+            </div>
+            <div class="pname">RESERVE POWER</div>
+            <div class="ppct" id="ep-ppct-reserve"
+                 style="color:rgb(208,87,42)">0%</div>
+          </div>
+
+        </div><!-- /.bgroup -->
+      </div><!-- /.bc-body -->
+    </div><!-- /#engpower-root -->
 
     <!-- Tactical-view layout zones. All panels are flex children of one
          of these two containers; no panel uses absolute/fixed positioning

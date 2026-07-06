@@ -5458,14 +5458,15 @@ def run(mission_name: Optional[str] = None,
                         and _BR_Y <= _my < _BR_Y + _BR_H
                     )
                     # Top-right corner (#engpower-root): position:fixed;
-                    # top:8px; right:8px; width:240px. The Engineering
-                    # power-grid panel lives here; its sliders are only
-                    # clickable if clicks over this box reach CEF. Gated on
-                    # is_showing() (player + power present) so the box doesn't
+                    # top:8px; right:8px; width:540px (v28 redesign — wider
+                    # grid + battery pillars). The Engineering power-grid panel
+                    # lives here; its rows are only clickable if clicks over
+                    # this box reach CEF. Gated on is_showing() (player + power
+                    # present + Engineering menu open) so the box doesn't
                     # swallow clicks / phaser fire when the panel is hidden.
-                    # Height is generous — the grid grows with slider/siphon
-                    # rows; anything above the tactical panels is fine.
-                    _TR_W, _TR_H = 240 + 16, 360   # +16 for CSS padding/border
+                    # Height covers sliders (4×~24px) + grid (~55px) + bgroup
+                    # (~140px) + padding — 420px is generous but safe.
+                    _TR_W, _TR_H = 540 + 16, 420   # +16 for CSS padding/border
                     _TR_X = _CEF_VIEW_W - 8 - _TR_W
                     _TR_Y = 8
                     _cursor_in_top_right = (

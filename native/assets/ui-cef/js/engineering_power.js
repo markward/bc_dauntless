@@ -1,137 +1,286 @@
-// Engineering Power-Transmission-Grid panel.
+// Engineering Power-Transmission-Grid panel — v28 design.
 // Driven by Python via cef_execute_javascript:
-//   setEngineeringPower({visible:true, sliders, power_used, columns, tractor, cloak});
+//   setEngineeringPower({visible, sliders, grid, batteries, tractor, cloak});
 //   setEngineeringPower({visible:false});
-// Slider drag events fire dauntlessEvent('engpower/set:<group>:<value>').
-// The 'engpower/' prefix routes through PanelRegistry.dispatch to this panel;
-// a colon-only prefix ('engpower:...') would fall through to the legacy pause
-// handler and never reach Python (slider snaps back to 100% on next tick).
-// Spec: docs/superpowers/sdd/task-13-brief.md
+// Slider drag: dauntlessEvent('engpower/set:<key>:<pct>')
+// Toggle click: dauntlessEvent('engpower/toggle:tractor'|'engpower/toggle:cloak')
+// Spec: docs/superpowers/sdd/task-3-brief.md
+//
+// Rendering contract:
+//   - Update-only: never rebuild innerHTML; all elements are static skeleton.
+//   - _epDragging: while dragging a row, setEngineeringPower skips that row.
+//   - Grid normalisation: total span = damage + availTotal; each segment's
+//     display width = value / (damage + availTotal) expressed as a %.
 
-function _epEscape(s) {
-    return String(s)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
-}
+var _epDragging = null;       // key of row currently being dragged
+var _epRafPending = false;    // animation-frame throttle for drag events
+var _epPendingEvent = null;   // event string queued for next rAF
 
-function _epPct(frac) {
-    return (frac * 100) + '%';
-}
+// ── Colour map ──────────────────────────────────────────────────────────────
+var _EP_COLOURS = {
+    weapons: 'rgb(207,139,76)',
+    engines: 'rgb(199,76,200)',
+    sensors: 'rgb(201,203,76)',
+    shields: 'rgb(150,129,222)'
+};
 
-// Key set of the currently-built slider DOM, e.g. "weapons,engines,...".
-// Sliders are (re)built only when this changes; per-payload updates touch
-// input.value + the % label only, so a mid-drag slider never snaps back
-// (the panel pumps every tick — a full innerHTML rebuild would reset the
-// thumb continuously while the user drags).
-var _epSliderKeys = null;
+// ── Drag handling ───────────────────────────────────────────────────────────
 
-function _epBuildSliders(sliders) {
-    var slBody = document.getElementById('ep-sliders');
-    if (!slBody) return;
-    var html = '';
-    for (var i = 0; i < sliders.length; i++) {
-        var sl = sliders[i];
-        var key = _epEscape(sl.key);
-        html += '<div class="ep-slider-row" data-key="' + key + '">'
-              +   '<span class="ep-slider-label">' + _epEscape(sl.label) + '</span>'
-              +   '<input type="range" min="0" max="1.25" step="0.05"'
-              +          ' value="' + (sl.pct || 0) + '"'
-              +          ' class="ep-slider-input"'
-              +          ' oninput="this.nextElementSibling.textContent=Math.round(this.value*100)+\'%\';'
-              +                    'dauntlessEvent(\'engpower/set:' + key + ':\'+this.value)">'
-              +   '<span class="ep-slider-pct">' + Math.round((sl.pct || 0) * 100) + '%</span>'
-              + '</div>';
-    }
-    slBody.innerHTML = html;
-}
-
-function _epUpdateSliders(sliders) {
-    var slBody = document.getElementById('ep-sliders');
-    if (!slBody) return;
-    for (var i = 0; i < sliders.length; i++) {
-        var sl = sliders[i];
-        var row = slBody.querySelector('.ep-slider-row[data-key="' + sl.key + '"]');
-        if (!row) continue;
-        var input = row.querySelector('.ep-slider-input');
-        var pctEl = row.querySelector('.ep-slider-pct');
-        // Never write to the input the user is mid-drag on — the payload
-        // echo would fight the thumb.
-        if (input && input !== document.activeElement) {
-            input.value = sl.pct || 0;
-            if (pctEl) pctEl.textContent = Math.round((sl.pct || 0) * 100) + '%';
-        }
+function _epFireDragEvent() {
+    _epRafPending = false;
+    if (_epPendingEvent) {
+        dauntlessEvent(_epPendingEvent);
+        _epPendingEvent = null;
     }
 }
 
-function setEngineeringPower(payload) {
+function _epOnPointerDown(e) {
+    var track = e.currentTarget;
+    var row = track.parentElement;
+    var key = row ? row.getAttribute('data-key') : null;
+    if (!key) return;
+    track.setPointerCapture(e.pointerId);
+    _epDragging = key;
+    _epApplyDrag(track, key, e.offsetX);
+}
+
+function _epOnPointerMove(e) {
+    if (!_epDragging) return;
+    var track = e.currentTarget;
+    var key = track.parentElement ? track.parentElement.getAttribute('data-key') : null;
+    if (key !== _epDragging) return;
+    _epApplyDrag(track, key, e.offsetX);
+}
+
+function _epOnPointerUp(e) {
+    _epDragging = null;
+}
+
+function _epApplyDrag(track, key, offsetX) {
+    var w = track.getBoundingClientRect().width;
+    if (!w) return;
+    var raw = offsetX / w;                // 0..1 maps to 0..100% of track
+    var pct = raw * 1.25;                 // track spans 0..125%
+    pct = Math.max(0, Math.min(1.25, pct));
+    pct = Math.round(pct / 0.05) * 0.05; // snap 0.05
+
+    // Local echo: fill + thumb + label
+    var fillPct = (pct / 1.25 * 100).toFixed(2) + '%';
+    var fill  = document.getElementById('ep-fill-' + key);
+    var thumb = document.getElementById('ep-thumb-' + key);
+    var pctEl = document.getElementById('ep-pct-' + key);
+    if (fill)  fill.style.width  = fillPct;
+    if (thumb) thumb.style.left  = fillPct;
+    if (pctEl) pctEl.textContent = Math.round(pct * 100) + '%';
+
+    // Throttle to one event per animation frame
+    _epPendingEvent = 'engpower/set:' + key + ':' + pct.toFixed(2);
+    if (!_epRafPending) {
+        _epRafPending = true;
+        requestAnimationFrame(_epFireDragEvent);
+    }
+}
+
+// ── Wire up drag listeners once the DOM is ready ────────────────────────────
+(function _epWireDrag() {
+    var keys = ['weapons', 'engines', 'sensors', 'shields'];
+    for (var i = 0; i < keys.length; i++) {
+        (function(key) {
+            var track = document.getElementById('ep-track-' + key);
+            if (!track) return;
+            track.addEventListener('pointerdown', _epOnPointerDown);
+            track.addEventListener('pointermove', _epOnPointerMove);
+            track.addEventListener('pointerup',   _epOnPointerUp);
+        })(keys[i]);
+    }
+})();
+
+// ── Main update function ────────────────────────────────────────────────────
+
+function setEngineeringPower(p) {
     var root = document.getElementById('engpower-root');
     if (!root) return;
-    if (!payload || payload.visible !== true) {
+    if (!p || p.visible !== true) {
         root.style.display = 'none';
         return;
     }
     root.style.display = '';
 
-    // --- Power Used bar: sequential zones (power-system.md §"The Power Used
-    // Bar") — blue [0..blue], yellow [blue..blue+yellow], red
-    // [blue+yellow..blue+yellow+red]. The fill bar on top is the active reading.
-    var pu = payload.power_used || {};
-    var bands = pu.bands || {};
-    var blue = bands.blue || 0;
-    var yellow = bands.yellow || 0;
-    var red = bands.red || 0;
-    var bBlue = document.getElementById('ep-band-blue');
-    var bYellow = document.getElementById('ep-band-yellow');
-    var bRed = document.getElementById('ep-band-red');
-    var bFill = document.getElementById('ep-power-fill');
-    if (bBlue) {
-        bBlue.style.left = '0%';
-        bBlue.style.width = _epPct(blue);
-    }
-    if (bYellow) {
-        bYellow.style.left = _epPct(blue);
-        bYellow.style.width = _epPct(yellow);
-    }
-    if (bRed) {
-        bRed.style.left = _epPct(blue + yellow);
-        bRed.style.width = _epPct(red);
-    }
-    if (bFill) bFill.style.width = _epPct(pu.fraction || 0);
-
-    // --- Sliders: build once per key set; then value-only updates ---
-    var sliders = payload.sliders || [];
-    var keys = sliders.map(function (s) { return s.key; }).join(',');
-    if (keys !== _epSliderKeys) {
-        _epBuildSliders(sliders);
-        _epSliderKeys = keys;
-    } else {
-        _epUpdateSliders(sliders);
+    // ── Sliders ──────────────────────────────────────────────────────────────
+    var sliders = p.sliders || [];
+    for (var i = 0; i < sliders.length; i++) {
+        var sl  = sliders[i];
+        var key = sl.key;
+        // Skip the row being dragged (payload echo would fight the thumb)
+        if (key === _epDragging) continue;
+        var pct = sl.pct || 0;
+        var row = document.getElementById('ep-row-' + key);
+        if (row) {
+            row.style.display = sl.present === false ? 'none' : '';
+        }
+        var fillPct = (pct / 1.25 * 100).toFixed(2) + '%';
+        var fill  = document.getElementById('ep-fill-' + key);
+        var thumb = document.getElementById('ep-thumb-' + key);
+        var pctEl = document.getElementById('ep-pct-' + key);
+        if (fill)  fill.style.width  = fillPct;
+        if (thumb) thumb.style.left  = fillPct;
+        if (pctEl) pctEl.textContent = Math.round(pct * 100) + '%';
     }
 
-    // --- Columns ---
-    var cols = payload.columns || {};
-    var cWarp   = document.getElementById('ep-col-warpcore');
-    var cMain   = document.getElementById('ep-col-main');
-    var cBackup = document.getElementById('ep-col-backup');
-    if (cWarp)   cWarp.textContent   = Math.round((cols.warp_core || 0) * 100) + '%';
-    if (cMain)   cMain.textContent   = Math.round((cols.main      || 0) * 100) + '%';
-    if (cBackup) cBackup.textContent = Math.round((cols.backup    || 0) * 100) + '%';
+    // ── Grid ─────────────────────────────────────────────────────────────────
+    var grid = p.grid || {};
+    var avail = grid.available || {};
+    var dmgFrac  = grid.damage        || 0;
+    var wcFrac   = avail.warp_core    || 0;
+    var mnFrac   = avail.main         || 0;
+    var rsFrac   = avail.reserve      || 0;
+    var D = dmgFrac + wcFrac + mnFrac + rsFrac;  // normalise denominator
+    if (D <= 0) D = 1;
 
-    // --- Siphon lines: tractor + cloak ---
-    var tractor = payload.tractor || {};
-    var cloak   = payload.cloak   || {};
-    var tEl = document.getElementById('ep-siphon-tractor');
-    var cEl = document.getElementById('ep-siphon-cloak');
-    if (tEl) {
-        tEl.className = 'ep-siphon' + (tractor.present ? '' : ' ep-siphon--absent')
-                                    + (tractor.active  ? ' ep-siphon--active' : '');
-        tEl.textContent = 'Tractor: ' + (tractor.active ? 'On' : 'Off');
+    // Damage column width
+    var dmgCol = document.getElementById('ep-dmg-col');
+    if (dmgCol) dmgCol.style.width = (dmgFrac / D * 100).toFixed(2) + '%';
+
+    // Available (pu) bar segment widths
+    // These are fractions of the BARS-COL (i.e. of D-dmgFrac)
+    var barsD = D - dmgFrac;
+    if (barsD <= 0) barsD = 1;
+    var wcPct = (wcFrac / barsD * 100).toFixed(2) + '%';
+    var mnPct = (mnFrac / barsD * 100).toFixed(2) + '%';
+    var rsPct = (rsFrac / barsD * 100).toFixed(2) + '%';
+    var wcEl = document.getElementById('ep-avail-wc');
+    var mnEl = document.getElementById('ep-avail-mn');
+    var rsEl = document.getElementById('ep-avail-rs');
+    if (wcEl) wcEl.style.width = wcPct;
+    if (mnEl) mnEl.style.width = mnPct;
+    if (rsEl) rsEl.style.width = rsPct;
+
+    // btick positions: left edge at 0%, wc boundary, mn boundary, rs right edge
+    var wcBoundary = (wcFrac / barsD * 100).toFixed(2) + '%';
+    var mnBoundary = ((wcFrac + mnFrac) / barsD * 100).toFixed(2) + '%';
+    var btickWc = document.getElementById('ep-btick-wc');
+    var btickMn = document.getElementById('ep-btick-mn');
+    if (btickWc) btickWc.style.left = 'calc(' + wcBoundary + ' - 1px)';
+    if (btickMn) btickMn.style.left = 'calc(' + mnBoundary + ' - 1px)';
+
+    // Label-row span widths (fade a label below 40 px via opacity 0)
+    // dmg label stays at 8.9% (matches static CSS); remaining three are dynamic
+    var lblWc = document.getElementById('ep-lbl-wc');
+    var lblMn = document.getElementById('ep-lbl-mn');
+    var lblRs = document.getElementById('ep-lbl-rs');
+    var barsColEl = document.getElementById('ep-avail-wc');
+    // Estimate pixel width from %-of-barsCol; use a minimum px threshold
+    var totalWidth = 540 - 28; // approx bars-col px (540px panel minus dmg col ~8.9%)
+    if (lblWc) {
+        var wcPx = wcFrac / barsD * totalWidth;
+        lblWc.style.width = wcPct;
+        lblWc.style.opacity = wcPx < 40 ? '0' : '1';
     }
-    if (cEl) {
-        cEl.className = 'ep-siphon' + (cloak.present ? '' : ' ep-siphon--absent')
-                                    + (cloak.active  ? ' ep-siphon--active' : '');
-        cEl.textContent = 'Cloak: ' + (cloak.active ? 'On' : 'Off');
+    if (lblMn) {
+        var mnPx = mnFrac / barsD * totalWidth;
+        lblMn.style.width = mnPct;
+        lblMn.style.opacity = mnPx < 40 ? '0' : '1';
     }
+    if (lblRs) {
+        var rsPx = rsFrac / barsD * totalWidth;
+        lblRs.style.width = rsPct;
+        lblRs.style.opacity = rsPx < 40 ? '0' : '1';
+    }
+
+    // Used bar segments — normalised against barsD
+    var usedArr = grid.used || [];
+    var usedMap = {};
+    for (var j = 0; j < usedArr.length; j++) {
+        usedMap[usedArr[j].key] = usedArr[j].frac || 0;
+    }
+    var usedKeys = ['weapons', 'engines', 'sensors', 'shields'];
+    for (var k = 0; k < usedKeys.length; k++) {
+        var uk = usedKeys[k];
+        var uEl = document.getElementById('ep-used-' + uk);
+        if (uEl) uEl.style.width = (( usedMap[uk] || 0) / barsD * 100).toFixed(2) + '%';
+    }
+
+    // Overload tint
+    var usedBar = document.getElementById('ep-used-bar');
+    if (usedBar) {
+        if (grid.overload) {
+            usedBar.classList.add('overload');
+        } else {
+            usedBar.classList.remove('overload');
+        }
+    }
+
+    // ── Batteries ────────────────────────────────────────────────────────────
+    var batts = p.batteries || {};
+    _epUpdateBattery('main',    batts.main    || {});
+    _epUpdateBattery('reserve', batts.reserve || {});
+
+    // ── Tractor ──────────────────────────────────────────────────────────────
+    var tractor = p.tractor || {};
+    var tractorToggle = document.getElementById('ep-toggle-tractor');
+    var tractorLine   = document.getElementById('ep-tractor-line');
+    var tractorState  = document.getElementById('ep-tractor-state');
+    if (tractorToggle) {
+        tractorToggle.style.display = tractor.present ? '' : 'none';
+    }
+    if (tractorLine) {
+        // cline-on (solid+glow) when active, else cline-off (dashed)
+        if (tractor.present && tractor.active) {
+            tractorLine.className = 'cline-on';
+            tractorLine.style.display = '';
+        } else if (tractor.present) {
+            tractorLine.className = 'cline-off';
+            tractorLine.style.display = '';
+        } else {
+            tractorLine.style.display = 'none';
+        }
+    }
+    if (tractorState) {
+        if (tractor.active) {
+            tractorState.textContent = 'On';
+            tractorState.style.color = 'rgb(180,157,64)';
+        } else {
+            tractorState.textContent = 'Off';
+            tractorState.style.color = '#666';
+        }
+    }
+
+    // ── Cloak ────────────────────────────────────────────────────────────────
+    var cloak = p.cloak || {};
+    var cloakToggle = document.getElementById('ep-toggle-cloak');
+    var cloakLine   = document.getElementById('ep-cloak-line');
+    var cloakState  = document.getElementById('ep-cloak-state');
+    if (cloakToggle) {
+        cloakToggle.style.display = cloak.present ? '' : 'none';
+    }
+    if (cloakLine) {
+        if (cloak.present && cloak.active) {
+            cloakLine.className = 'cline-on';
+            cloakLine.style.display = '';
+        } else if (cloak.present) {
+            cloakLine.className = 'cline-off';
+            cloakLine.style.display = '';
+        } else {
+            cloakLine.style.display = 'none';
+        }
+    }
+    if (cloakState) {
+        if (cloak.active) {
+            cloakState.textContent = 'On';
+            cloakState.style.color = 'rgb(208,87,42)';
+        } else {
+            cloakState.textContent = 'Off';
+            cloakState.style.color = '#666';
+        }
+    }
+}
+
+function _epUpdateBattery(name, batt) {
+    var chargePct = Math.round((batt.charge || 0) * 100);
+    var fillEl  = document.getElementById('ep-pfill-'  + name);
+    var drainEl = document.getElementById('ep-pdrain-' + name);
+    var pctEl   = document.getElementById('ep-ppct-'   + name);
+    if (fillEl)  fillEl.style.height  = chargePct + '%';
+    if (pctEl)   pctEl.textContent    = chargePct + '%';
+    if (drainEl) drainEl.style.display = batt.draining ? '' : 'none';
 }
