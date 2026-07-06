@@ -498,3 +498,29 @@ def _make_panel(player=None, is_engineering_open=None):
     if is_engineering_open is not None:
         kwargs["is_engineering_open"] = is_engineering_open
     return EngineeringPowerPanel(**kwargs)
+
+
+# ── tractor/cloak toggle dispatch tests ────────────────────────────────────────
+
+def test_toggle_tractor_routes_to_weapon_config(monkeypatch):
+    panel, player = _panel_with_player()
+    calls = []
+    import engine.appc.weapon_config as wc
+    monkeypatch.setattr(wc, "toggle_tractor", lambda ship: calls.append(ship))
+    assert panel.dispatch_event("toggle:tractor") is True
+    assert calls == [player]
+
+
+def test_toggle_cloak_routes_to_weapon_config(monkeypatch):
+    panel, player = _panel_with_player()
+    calls = []
+    import engine.appc.weapon_config as wc
+    monkeypatch.setattr(wc, "toggle_cloak", lambda ship: calls.append(ship))
+    assert panel.dispatch_event("toggle:cloak") is True
+    assert calls == [player]
+
+
+def test_toggle_without_player_is_owned_noop():
+    from engine.ui.engineering_power_panel import EngineeringPowerPanel
+    panel = EngineeringPowerPanel(get_player=lambda: None, is_engineering_open=lambda: True)
+    assert panel.dispatch_event("toggle:tractor") is True

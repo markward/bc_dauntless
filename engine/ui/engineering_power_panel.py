@@ -213,7 +213,22 @@ class EngineeringPowerPanel(Panel):
 
     def dispatch_event(self, action: str) -> bool:
         # PanelRegistry routes "engpower/<action>" here with the "engpower/"
-        # prefix already stripped, so ``action`` is "set:<group>:<value>".
+        # prefix already stripped, so ``action`` is "set:<group>:<value>" or
+        # "toggle:tractor" / "toggle:cloak".
+
+        # Handle tractor/cloak toggles
+        if action in ("toggle:tractor", "toggle:cloak"):
+            player = self._get_player()
+            if player is not None:
+                from engine.appc import weapon_config
+                if action == "toggle:tractor":
+                    weapon_config.toggle_tractor(player)
+                else:
+                    weapon_config.toggle_cloak(player)
+                self._last_pushed = None
+            return True
+
+        # Handle slider events (set:group:pct)
         parts = action.split(":")
         if len(parts) != 3 or parts[0] != "set":
             return False
