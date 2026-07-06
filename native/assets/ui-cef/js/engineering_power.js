@@ -14,7 +14,52 @@ function _epEscape(s) {
 }
 
 function _epPct(frac) {
-    return Math.round(frac * 100) + '%';
+    return (frac * 100) + '%';
+}
+
+// Key set of the currently-built slider DOM, e.g. "weapons,engines,...".
+// Sliders are (re)built only when this changes; per-payload updates touch
+// input.value + the % label only, so a mid-drag slider never snaps back
+// (the panel pumps every tick — a full innerHTML rebuild would reset the
+// thumb continuously while the user drags).
+var _epSliderKeys = null;
+
+function _epBuildSliders(sliders) {
+    var slBody = document.getElementById('ep-sliders');
+    if (!slBody) return;
+    var html = '';
+    for (var i = 0; i < sliders.length; i++) {
+        var sl = sliders[i];
+        var key = _epEscape(sl.key);
+        html += '<div class="ep-slider-row" data-key="' + key + '">'
+              +   '<span class="ep-slider-label">' + _epEscape(sl.label) + '</span>'
+              +   '<input type="range" min="0" max="1.25" step="0.05"'
+              +          ' value="' + (sl.pct || 0) + '"'
+              +          ' class="ep-slider-input"'
+              +          ' oninput="this.nextElementSibling.textContent=Math.round(this.value*100)+\'%\';'
+              +                    'dauntlessEvent(\'engpower:set:' + key + ':\'+this.value)">'
+              +   '<span class="ep-slider-pct">' + Math.round((sl.pct || 0) * 100) + '%</span>'
+              + '</div>';
+    }
+    slBody.innerHTML = html;
+}
+
+function _epUpdateSliders(sliders) {
+    var slBody = document.getElementById('ep-sliders');
+    if (!slBody) return;
+    for (var i = 0; i < sliders.length; i++) {
+        var sl = sliders[i];
+        var row = slBody.querySelector('.ep-slider-row[data-key="' + sl.key + '"]');
+        if (!row) continue;
+        var input = row.querySelector('.ep-slider-input');
+        var pctEl = row.querySelector('.ep-slider-pct');
+        // Never write to the input the user is mid-drag on — the payload
+        // echo would fight the thumb.
+        if (input && input !== document.activeElement) {
+            input.value = sl.pct || 0;
+            if (pctEl) pctEl.textContent = Math.round((sl.pct || 0) * 100) + '%';
+        }
+    }
 }
 
 function setEngineeringPower(payload) {
@@ -26,37 +71,40 @@ function setEngineeringPower(payload) {
     }
     root.style.display = '';
 
-    // --- Power Used bar ---
+    // --- Power Used bar: sequential zones (power-system.md §"The Power Used
+    // Bar") — blue [0..blue], yellow [blue..blue+yellow], red
+    // [blue+yellow..blue+yellow+red]. The fill bar on top is the active reading.
     var pu = payload.power_used || {};
     var bands = pu.bands || {};
+    var blue = bands.blue || 0;
+    var yellow = bands.yellow || 0;
+    var red = bands.red || 0;
     var bBlue = document.getElementById('ep-band-blue');
     var bYellow = document.getElementById('ep-band-yellow');
     var bRed = document.getElementById('ep-band-red');
     var bFill = document.getElementById('ep-power-fill');
-    if (bBlue)   bBlue.style.width   = _epPct(bands.blue   || 0);
-    if (bYellow) bYellow.style.width = _epPct(bands.yellow || 0);
-    if (bRed)    bRed.style.width    = _epPct(bands.red    || 0);
-    if (bFill)   bFill.style.width   = _epPct(pu.fraction  || 0);
+    if (bBlue) {
+        bBlue.style.left = '0%';
+        bBlue.style.width = _epPct(blue);
+    }
+    if (bYellow) {
+        bYellow.style.left = _epPct(blue);
+        bYellow.style.width = _epPct(yellow);
+    }
+    if (bRed) {
+        bRed.style.left = _epPct(blue + yellow);
+        bRed.style.width = _epPct(red);
+    }
+    if (bFill) bFill.style.width = _epPct(pu.fraction || 0);
 
-    // --- Sliders ---
-    var slBody = document.getElementById('ep-sliders');
-    if (slBody) {
-        var html = '';
-        var sliders = payload.sliders || [];
-        for (var i = 0; i < sliders.length; i++) {
-            var sl = sliders[i];
-            var pctLabel = Math.round((sl.pct || 0) * 100) + '%';
-            html += '<div class="ep-slider-row">'
-                  +   '<span class="ep-slider-label">' + _epEscape(sl.label) + '</span>'
-                  +   '<input type="range" min="0" max="1.25" step="0.05"'
-                  +          ' value="' + (sl.pct || 0) + '"'
-                  +          ' class="ep-slider-input"'
-                  +          ' oninput="this.nextElementSibling.textContent=Math.round(this.value*100)+\'%\';'
-                  +                    'dauntlessEvent(\'engpower:set:' + _epEscape(sl.key) + ':\'+this.value)">'
-                  +   '<span class="ep-slider-pct">' + pctLabel + '</span>'
-                  + '</div>';
-        }
-        slBody.innerHTML = html;
+    // --- Sliders: build once per key set; then value-only updates ---
+    var sliders = payload.sliders || [];
+    var keys = sliders.map(function (s) { return s.key; }).join(',');
+    if (keys !== _epSliderKeys) {
+        _epBuildSliders(sliders);
+        _epSliderKeys = keys;
+    } else {
+        _epUpdateSliders(sliders);
     }
 
     // --- Columns ---
@@ -64,9 +112,9 @@ function setEngineeringPower(payload) {
     var cWarp   = document.getElementById('ep-col-warpcore');
     var cMain   = document.getElementById('ep-col-main');
     var cBackup = document.getElementById('ep-col-backup');
-    if (cWarp)   cWarp.textContent   = _epPct(cols.warp_core || 0);
-    if (cMain)   cMain.textContent   = _epPct(cols.main      || 0);
-    if (cBackup) cBackup.textContent = _epPct(cols.backup    || 0);
+    if (cWarp)   cWarp.textContent   = Math.round((cols.warp_core || 0) * 100) + '%';
+    if (cMain)   cMain.textContent   = Math.round((cols.main      || 0) * 100) + '%';
+    if (cBackup) cBackup.textContent = Math.round((cols.backup    || 0) * 100) + '%';
 
     // --- Siphon lines: tractor + cloak ---
     var tractor = payload.tractor || {};

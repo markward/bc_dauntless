@@ -44,9 +44,11 @@
     opacity: 0.35;
 }
 
-#ep-band-blue   { left: 0;   background: #38f; }
-#ep-band-yellow { left: 0;   background: #fb0; }
-#ep-band-red    { left: 0;   background: #f44; }
+/* Band zones are sequential; JS sets left + width explicitly
+   (blue [0..b], yellow [b..b+y], red [b+y..b+y+r]). */
+#ep-band-blue   { background: #38f; }
+#ep-band-yellow { background: #fb0; }
+#ep-band-red    { background: #f44; }
 
 #ep-power-fill {
     position: absolute;

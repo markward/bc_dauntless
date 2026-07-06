@@ -104,6 +104,8 @@ class EngineeringPowerPanel(Panel):
             pct = float(raw)
         except ValueError:
             return True
+        if group not in {key for key, _l, _g in _GROUPS}:
+            return True   # groups only come from our own sliders; early-out keeps no-op events cheap
         for key, _label, getters in _GROUPS:
             if key == group:
                 for sys in self._systems(player, getters):

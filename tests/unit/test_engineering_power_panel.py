@@ -107,6 +107,17 @@ def test_dispatch_unknown_event_returns_false():
     assert panel.dispatch_event("engpower:bogus") is False
 
 
+def test_dispatch_unknown_group_early_outs_without_cache_bust():
+    """A well-formed engpower:set event for a group we don't publish is
+    handled (True) but must NOT invalidate the render cache — no state
+    changed, so no re-emit."""
+    panel = _make_panel()
+    panel.render_payload()                  # prime cache
+    assert panel.render_payload() is None   # deduped
+    assert panel.dispatch_event("engpower:set:bogusgroup:0.5") is True
+    assert panel.render_payload() is None   # still deduped: no cache bust
+
+
 def test_dispatch_invalidates_cache():
     """After dispatch_event, render_payload re-emits (cache cleared)."""
     player = _fake_player()
