@@ -401,10 +401,12 @@ class _EnergyWeaponFireMixin:
                 self.StopFiring()
         else:
             parent = self.GetParentSubsystem()
-            if parent is not None and parent.IsOn():
+            if parent is None or parent.IsOn():
+                factor = (parent.GetNormalPowerPercentage()
+                          if parent is not None else 1.0)
                 headroom = self._max_charge - self._charge_level
                 if headroom > 0.0:
-                    want = min(self._recharge_rate * dt, headroom)
+                    want = min(self._recharge_rate * factor * dt, headroom)
                     self._charge_level += want
             # Re-arm once we cleared the headroom threshold.
             if not self._armed:
@@ -1717,7 +1719,12 @@ class TorpedoTube(WeaponSystem):
     def UpdateReload(self, dt: float) -> None:
         if self._num_ready >= self._max_ready:
             return
+        parent = self.GetParentSubsystem()
+        factor = (parent.GetNormalPowerPercentage()
+                  if parent is not None else 1.0)
+        if factor <= 0.0:
+            return
         import time as _time
-        if _time.monotonic() - self._last_fire_time >= self._reload_delay:
+        if _time.monotonic() - self._last_fire_time >= self._reload_delay / factor:
             self._num_ready += 1
             self._last_fire_time = _time.monotonic()

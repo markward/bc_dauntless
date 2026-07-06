@@ -1,13 +1,12 @@
-"""TorpedoTube.Fire — power model after Task 4b.
+"""TorpedoTube.Fire — power model after Task 4b (IOU closed by Task 8).
 
 Task 4b decision: BC has no per-shot battery debit.  Weapon energy cost is the
 continuous NormalPowerPerSecond consumer draw (landed in Task 4).  Charge/reload
-rates are the gameplay gate — Task 8 makes those power-factor-scaled.
+rates are the gameplay gate — scaled by power factor (Task 8, now landed).
 
-NOTE (transitional): until Task 8 lands, a fully-unpowered ship can still fire
-loaded tubes because there is no per-shot debit and charge/reload mechanics are
-not yet power-factor-scaled.  Task 8's factor-scaled charge/reload closes that
-gap (no recharge/reload at factor 0).
+Task 8 closed the transitional gap: a fully-unpowered ship (factor 0) can still
+fire an already-loaded tube (BC-faithful — a chambered torpedo launches), but
+it cannot RELOAD unpowered (UpdateReload returns early at factor <= 0).
 
 The per-shot debit path (_debit_ship_power / _debit_power) was removed in Task
 4b.  These tests confirm:
