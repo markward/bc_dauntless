@@ -76,12 +76,14 @@ def test_payload_shape_and_diffing(monkeypatch):
 def test_slider_event_sets_group_and_refreshes():
     player = _fake_player()
     panel = _make_panel(player)
-    assert panel.dispatch_event("engpower:set:weapons:0.75")
+    # dispatch_event receives the post-slash action (PanelRegistry strips the
+    # "engpower/" prefix before calling it).
+    assert panel.dispatch_event("set:weapons:0.75")
     for sys in (player.GetPhaserSystem(), player.GetTorpedoSystem(),
                 player.GetPulseWeaponSystem()):
         if sys:
             assert abs(sys.GetPowerPercentageWanted() - 0.75) < 1e-9
-    assert panel.dispatch_event("engpower:set:engines:1.25")
+    assert panel.dispatch_event("set:engines:1.25")
     assert abs(player.GetWarpEngineSubsystem().GetPowerPercentageWanted() - 1.25) < 1e-9
     assert not panel.dispatch_event("other:noise")
 
@@ -183,7 +185,7 @@ def test_snapshot_transitions_on_menu_toggle():
 def test_dispatch_unknown_event_returns_false():
     panel = _make_panel()
     assert panel.dispatch_event("other:noise") is False
-    assert panel.dispatch_event("engpower:bogus") is False
+    assert panel.dispatch_event("bogus") is False
 
 
 def test_dispatch_unknown_group_early_outs_without_cache_bust():
@@ -193,7 +195,7 @@ def test_dispatch_unknown_group_early_outs_without_cache_bust():
     panel = _make_panel()
     panel.render_payload()                  # prime cache
     assert panel.render_payload() is None   # deduped
-    assert panel.dispatch_event("engpower:set:bogusgroup:0.5") is True
+    assert panel.dispatch_event("set:bogusgroup:0.5") is True
     assert panel.render_payload() is None   # still deduped: no cache bust
 
 
@@ -203,7 +205,7 @@ def test_dispatch_invalidates_cache():
     panel = _make_panel(player)
     panel.render_payload()          # prime cache
     assert panel.render_payload() is None  # deduped
-    panel.dispatch_event("engpower:set:weapons:0.5")
+    panel.dispatch_event("set:weapons:0.5")
     assert panel.render_payload() is not None  # re-emits
 
 
@@ -233,6 +235,36 @@ def test_cloak_present_and_inactive_by_default():
     payload = json.loads(js[len("setEngineeringPower("):-2])
     assert payload["cloak"]["present"] is False
     assert payload["cloak"]["active"] is False
+
+
+def test_slider_event_routes_through_panel_registry():
+    """The live entry point is PanelRegistry.dispatch (wired as the single
+    CEF event handler). A slider oninput fires the panel's JS event string;
+    delivering that SAME string through dispatch() must reach the panel and
+    change the subsystem pct.
+
+    This is the test that catches the reset-to-100% bug: the earlier tests
+    called panel.dispatch_event directly, bypassing the slash-prefix routing
+    layer, so a colon-only event string (never routed to the panel, snapping
+    back on the next render tick) went unnoticed.
+    """
+    from engine.ui.panel_registry import PanelRegistry
+    player = _fake_player()
+    panel = _make_panel(player, is_engineering_open=lambda: True)
+    legacy_calls = []
+    reg = PanelRegistry(legacy_handler=legacy_calls.append)
+    reg.register(panel)
+
+    # The exact string the slider oninput sends via dauntlessEvent(...).
+    handled = reg.dispatch("engpower/set:weapons:0.5")
+
+    assert handled is True
+    # It reached the panel, not the legacy pause-menu handler.
+    assert legacy_calls == []
+    for sys in (player.GetPhaserSystem(), player.GetTorpedoSystem(),
+                player.GetPulseWeaponSystem()):
+        if sys:
+            assert abs(sys.GetPowerPercentageWanted() - 0.5) < 1e-9
 
 
 # ── helpers ────────────────────────────────────────────────────────────────────

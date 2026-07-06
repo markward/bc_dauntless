@@ -2,7 +2,10 @@
 // Driven by Python via cef_execute_javascript:
 //   setEngineeringPower({visible:true, sliders, power_used, columns, tractor, cloak});
 //   setEngineeringPower({visible:false});
-// Slider drag events fire dauntlessEvent('engpower:set:<group>:<value>').
+// Slider drag events fire dauntlessEvent('engpower/set:<group>:<value>').
+// The 'engpower/' prefix routes through PanelRegistry.dispatch to this panel;
+// a colon-only prefix ('engpower:...') would fall through to the legacy pause
+// handler and never reach Python (slider snaps back to 100% on next tick).
 // Spec: docs/superpowers/sdd/task-13-brief.md
 
 function _epEscape(s) {
@@ -37,7 +40,7 @@ function _epBuildSliders(sliders) {
               +          ' value="' + (sl.pct || 0) + '"'
               +          ' class="ep-slider-input"'
               +          ' oninput="this.nextElementSibling.textContent=Math.round(this.value*100)+\'%\';'
-              +                    'dauntlessEvent(\'engpower:set:' + key + ':\'+this.value)">'
+              +                    'dauntlessEvent(\'engpower/set:' + key + ':\'+this.value)">'
               +   '<span class="ep-slider-pct">' + Math.round((sl.pct || 0) * 100) + '%</span>'
               + '</div>';
     }

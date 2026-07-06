@@ -129,10 +129,12 @@ class EngineeringPowerPanel(Panel):
         return "setEngineeringPower(" + json.dumps(snap) + ");"
 
     def dispatch_event(self, action: str) -> bool:
+        # PanelRegistry routes "engpower/<action>" here with the "engpower/"
+        # prefix already stripped, so ``action`` is "set:<group>:<value>".
         parts = action.split(":")
-        if len(parts) != 4 or parts[0] != "engpower" or parts[1] != "set":
+        if len(parts) != 3 or parts[0] != "set":
             return False
-        group, raw = parts[2], parts[3]
+        group, raw = parts[1], parts[2]
         player = self._get_player()
         if player is None:
             return True
