@@ -63,6 +63,8 @@ def _effective_motion(ship, f: float) -> "_EffectiveMotion":
     """Resolve a ship's impulse limits scaled by online-fraction f."""
     getter = getattr(ship, "GetImpulseEngineSubsystem", None)
     ies = getter() if getter is not None else None
+    power_factor = ies.GetNormalPowerPercentage() if ies is not None else 1.0
+    f = f * power_factor
     raw_speed = ies.GetMaxSpeed() if ies is not None else 0.0
     raw_ang_vel = ies.GetMaxAngularVelocity() if ies is not None else 0.0
     has_lin = raw_speed > 0.0
