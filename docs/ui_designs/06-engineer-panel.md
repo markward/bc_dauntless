@@ -73,15 +73,27 @@ Below the slider rows: labels at 0 % / 50 % / 100 % / 125 % positioned at their 
 
 ## USED / AVAILABLE bar pair
 
-Two bars stacked with a 14 px gap, sharing one horizontal axis. A **damage column** (red diagonal hatch) spans the full height of BOTH bars at the left; the usable axis starts after it.
+Two bars stacked with a 14 px gap, sharing one full-width horizontal axis.
+A **damage hatch** (red diagonal) spans the right side of BOTH bars — the slice
+of bandwidth lost to reactor damage. The usable axis (warp-core + main + reserve)
+occupies the left portion; used bar and available bar both start at `left:0`.
 
-### Damage column
+**Faithful axis (PowerDisplay.py:734,681-689):**
+`D = GetMaxMainConduitCapacity() + GetBackupConduitCapacity()` (~1400 Galaxy).
+Four grid pieces are fractions of D and sum to 1.0:
+`warp_core + main + reserve + damage = 1.0`.
+Reserve-drain threshold (`reserve_threshold = GetMainConduitCapacity()/D ≈ 0.8571`):
+when the used bar crosses this mark, the ship draws from reserve/backup power.
 
-Width = `(authored_output − live_output) / D` as a fraction of total bar width. Styled identically to the OFFLINE segment in the old 07 grid: diagonal-hatched `rgb(170, 25, 25)` on `rgb(80, 17, 17)`.
+### Damage hatch (right)
+
+Rendered at the right edge of the grid. Width = `(GetMaxMainConduitCapacity() − GetMainConduitCapacity()) / D`. Zero when the reactor is healthy. Styled as diagonal-hatched `rgb(170, 25, 25)` on `rgb(80, 17, 17)`.
 
 ### USED bar (28 px)
 
-Stacked segments in the four groups' identity colours, proportional to demand. When total used exceeds total available (overload), the entire used fill takes a damage-red tint and is clamped to the available extent.
+Stacked segments in the four groups' identity colours, proportional to demand.
+When total used exceeds D (overload: `used_total > 1.0`), the entire used fill
+takes a damage-red tint and is clamped to the full-bar width (1.0).
 
 ### AVAILABLE bar (14 px)
 
@@ -148,11 +160,14 @@ Centred between the two battery glyphs: Tractor above Cloak, 12 px apart. State 
 
 Python payload produced by `EngineeringPowerPanel._snapshot()` in `engine/ui/engineering_power_panel.py`.
 
-### Shared denominator
+### Shared denominator (faithful conduit-bandwidth axis)
 
-`D = authored_output + main_conduit_cap + backup_conduit_cap`
+`D = GetMaxMainConduitCapacity() + GetBackupConduitCapacity()`
 
-Raw property values (Galaxy class: 2400 total).
+RAW conduit-bandwidth values (Galaxy class: 1200+200=1400). Faithful to
+`PowerDisplay.py:734` `fMaxBandwidth`. **Supersedes the initial 2400-denominator
+contract** which placed the reserve threshold at ~42%, making all-125% draw
+invisible as a reserve-zone event.
 
 ### Payload shape
 
@@ -160,25 +175,26 @@ Raw property values (Galaxy class: 2400 total).
 {
     "visible": True,
     "sliders": [
-        {"key": "weapons",  "label": "Weapons",      "pct": 115.0, "present": True},
-        {"key": "engines",  "label": "Engines",       "pct": 100.0, "present": True},
-        {"key": "sensors",  "label": "Sensor Array",  "pct":  60.0, "present": True},
-        {"key": "shields",  "label": "Shields",       "pct": 110.0, "present": True},
+        {"key": "weapons",  "label": "Weapons",      "pct": 1.15, "present": True},
+        {"key": "engines",  "label": "Engines",       "pct": 1.00, "present": True},
+        {"key": "sensors",  "label": "Sensor Array",  "pct": 0.60, "present": True},
+        {"key": "shields",  "label": "Shields",       "pct": 1.10, "present": True},
     ],
     "grid": {
-        "damage":    0.04,   # (authored_output − live_output) / D
+        "damage":    0.0,    # (GetMaxMainConduitCapacity() − GetMainConduitCapacity()) / D; 0 when healthy
         "available": {
-            "warp_core": 0.50,  # live_output / D
-            "main":      0.27,  # main_conduit_cap × main_charge_fraction / D
-            "reserve":   0.15,  # backup_conduit_cap × backup_charge_fraction / D
+            "warp_core": 0.7143,  # GetPowerOutput() / D  (health-scaled)
+            "main":      0.1429,  # max(0, GetMainConduitCapacity() − GetPowerOutput()) / D
+            "reserve":   0.1429,  # GetBackupConduitCapacity() / D  (RAW)
         },
+        "reserve_threshold": 0.8571,  # GetMainConduitCapacity() / D  (used bar crossing = reserve draining)
         "used": [
             {"key": "weapons", "frac": 0.30},  # Σ GetNormalPowerWanted()×GetPowerPercentageWanted() / D
             {"key": "engines", "frac": 0.28},
             {"key": "sensors", "frac": 0.10},
             {"key": "shields", "frac": 0.22},
         ],
-        "overload": False,  # True when sum(used fracs) > sum(available fracs)
+        "overload": False,  # True when sum(used fracs) > 1.0 (exceeds total D)
     },
     "batteries": {
         "main":    {"charge": 0.67, "draining": True},   # GetMainBatteryPower()/limit; draining = net delta < 0
@@ -191,21 +207,23 @@ Raw property values (Galaxy class: 2400 total).
 
 ### Formula table
 
-| Element | Formula |
-|---|---|
-| `grid.damage` | `(authored_output − live_output) / D` |
-| `grid.available.warp_core` | `live_output / D` |
-| `grid.available.main` | `main_conduit_cap × main_charge_fraction / D` |
-| `grid.available.reserve` | `backup_conduit_cap × backup_charge_fraction / D` |
-| `grid.used[i].frac` | `Σ GetNormalPowerWanted() × GetPowerPercentageWanted() / D` per group |
-| `grid.overload` | `sum(used fracs) > sum(available fracs)` — used fracs clamped to available total when True |
-| `batteries.main.charge` | `GetMainBatteryPower() / GetMainBatteryLimit()` |
-| `batteries.reserve.charge` | `GetBackupBatteryPower() / GetBackupBatteryLimit()` |
-| `batteries.*.draining` | net battery delta over last power interval < 0 |
-| `tractor.active` | existing `_wants_power()` firing state |
-| `cloak.active` | `IsTryingToCloak()` |
+| Element | Formula | Notes |
+|---|---|---|
+| `grid.damage` | `(GetMaxMainConduitCapacity() − GetMainConduitCapacity()) / D` | 0 healthy; grows with reactor damage |
+| `grid.available.warp_core` | `GetPowerOutput() / D` | health-scaled |
+| `grid.available.main` | `max(0, GetMainConduitCapacity() − GetPowerOutput()) / D` | corridor; health-scaled |
+| `grid.available.reserve` | `GetBackupConduitCapacity() / D` | RAW; ~0.1429 Galaxy |
+| `grid.reserve_threshold` | `GetMainConduitCapacity() / D` | ~0.8571 healthy; bar crossing = reserve draining |
+| `grid.used[i].frac` | `Σ GetNormalPowerWanted() × GetPowerPercentageWanted() / D` per group | same D |
+| `grid.overload` | `sum(used fracs) > 1.0` — used fracs clamped to 1.0 when True | |
+| `batteries.main.charge` | `GetMainBatteryPower() / GetMainBatteryLimit()` | independent of grid bands |
+| `batteries.reserve.charge` | `GetBackupBatteryPower() / GetBackupBatteryLimit()` | |
+| `batteries.*.draining` | net battery delta over last power interval < 0 | |
+| `tractor.active` | existing `_wants_power()` firing state | |
+| `cloak.active` | `IsTryingToCloak()` | |
 
 Note: tractor and cloak drain are shown by the siphon lines and falling battery pillars only — they are deliberately excluded from the USED demand segments.
+Available segments are **threshold bands** — they move only with reactor damage, NOT battery charge. Battery charge is shown exclusively by pillar fills.
 
 ## Interactions
 

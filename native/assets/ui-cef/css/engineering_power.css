@@ -94,14 +94,29 @@
     transform: none;
 }
 
-/* ── Grid (damage + bars) ──────────────────────────────────────────────────── */
+/* ── Grid (bars + damage at right) ─────────────────────────────────────────
+   Faithful conduit-bandwidth axis: bars-col spans the full width; damage
+   hatch appended at the right as an overlay (position: absolute, right: 0).
+   Used bar and available bar both start at left:0 (same D axis).
+   JS sets dmg-col width = grid.damage * 100%; bars-col keeps flex:1. */
 #engpower-root .grid-wrap {
     display: flex;
     margin-top: 22px;
+    position: relative;
 }
 
+#engpower-root .bars-col {
+    flex: 1;
+    position: relative;
+}
+
+/* Damage hatch — right-aligned overlay spanning full grid height */
 #engpower-root .dmg-col {
-    width: 8.9%;
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: 0;
+    width: 0%;
     background: repeating-linear-gradient(
         45deg,
         rgb(170,25,25),
@@ -110,19 +125,14 @@
         rgb(80,17,17) 8px
     );
     border: 1px solid rgb(40,35,50);
-    border-right: none;
-    border-radius: 2px 0 0 2px;
-}
-
-#engpower-root .bars-col {
-    flex: 1;
-    position: relative;
+    border-radius: 0 2px 2px 0;
+    pointer-events: none;
 }
 
 #engpower-root .used-bar {
     height: 28px;
     border: 1px solid rgb(40,35,50);
-    border-radius: 0 2px 2px 0;
+    border-radius: 2px;
     overflow: hidden;
     display: flex;
     background: rgba(255,255,255,0.05);
@@ -137,7 +147,7 @@
 #engpower-root .pu-bar {
     height: 14px;
     border: 1px solid rgb(40,35,50);
-    border-radius: 0 2px 2px 0;
+    border-radius: 2px;
     overflow: hidden;
     display: flex;
 }

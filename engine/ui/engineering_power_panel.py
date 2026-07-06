@@ -95,34 +95,50 @@ class EngineeringPowerPanel(Panel):
             sliders.append({"key": key, "label": label, "pct": round(pct, 4),
                             "present": present})
 
-        # ── Grid fractions (v2) ───────────────────────────────────────────────
-        # Shared denominator D = authored_output + main_conduit_cap + backup_conduit_cap
-        prop = power.GetProperty()
-        authored_out = float(prop.GetPowerOutput() or 0.0) if prop is not None else 0.0
-        main_cond = float(prop.GetMainConduitCapacity() or 0.0) if prop is not None else 0.0
-        back_cond = float(prop.GetBackupConduitCapacity() or 0.0) if prop is not None else 0.0
-        denom = authored_out + main_cond + back_cond
+        # ── Grid fractions (faithful conduit-bandwidth axis) ─────────────────
+        # Denominator D = GetMaxMainConduitCapacity() + GetBackupConduitCapacity()
+        # (RAW property values — conduit bandwidth, ~1400 for Galaxy).
+        # Faithful to PowerDisplay.py:734 fMaxBandwidth = MaxMain + Backup.
+        # Available segments are THRESHOLD bands (move only with reactor damage,
+        # not battery charge); battery charge shown separately in pillar fills.
+        max_main = float(power.GetMaxMainConduitCapacity() or 0.0)   # raw
+        backup = float(power.GetBackupConduitCapacity() or 0.0)       # raw
+        denom = max_main + backup   # ~1400 healthy
 
-        live_out = float(power.GetPowerOutput() or 0.0)   # health-scaled
+        live_out = float(power.GetPowerOutput() or 0.0)       # health-scaled
+        main_cond = float(power.GetMainConduitCapacity() or 0.0)  # health-scaled
 
-        # Damage column: fraction of denom lost to damage
-        damage = round((authored_out - live_out) / denom, 4) if denom > 0 else 0.0
+        if denom > 0:
+            # Four grid pieces, fractions of D, sum to 1.0:
+            # warp_core = live output threshold
+            # main      = corridor between output and main-conduit capacity
+            # reserve   = backup conduit band
+            # damage    = main throughput lost to reactor damage
+            warp_core_frac = round(live_out / denom, 4)
+            main_frac_avail = round(max(0.0, main_cond - live_out) / denom, 4)
+            reserve_frac = round(backup / denom, 4)
+            damage = round((max_main - main_cond) / denom, 4)
+            # reserve_threshold: used bar crossing this = reserve draining (~0.8571 healthy)
+            reserve_threshold = round(main_cond / denom, 4)
+        else:
+            warp_core_frac = main_frac_avail = reserve_frac = damage = 0.0
+            reserve_threshold = 0.0
 
-        # Battery charge fractions
+        available = {
+            "warp_core": warp_core_frac,
+            "main":      main_frac_avail,
+            "reserve":   reserve_frac,
+        }
+
+        # Battery charge fractions (for pillar fills — independent of grid bands)
         main_limit = power.GetMainBatteryLimit()
         res_limit = power.GetBackupBatteryLimit()
         main_batt = power.GetMainBatteryPower()
         res_batt = power.GetBackupBatteryPower()
-        main_frac = main_batt / main_limit if main_limit > 0 else 0.0
-        res_frac = res_batt / res_limit if res_limit > 0 else 0.0
+        main_batt_frac = main_batt / main_limit if main_limit > 0 else 0.0
+        res_batt_frac = res_batt / res_limit if res_limit > 0 else 0.0
 
-        available = {
-            "warp_core": round(live_out / denom, 4) if denom > 0 else 0.0,
-            "main": round(main_cond * main_frac / denom, 4) if denom > 0 else 0.0,
-            "reserve": round(back_cond * res_frac / denom, 4) if denom > 0 else 0.0,
-        }
-
-        # Used segments per group: Σ(normal × pct) / D
+        # Used segments per group: Σ(normal × pct) / D  (same denominator — the fix)
         used = []
         for key, _label, getters in _GROUPS:
             demand = sum(
@@ -131,13 +147,11 @@ class EngineeringPowerPanel(Panel):
             )
             used.append({"key": key, "frac": demand / denom if denom > 0 else 0.0})
 
-        # Overload: clamp used to available, set flag
-        # summed from 4dp-rounded segments — borderline used==avail can flag overload spuriously by <=3e-4; harmless for real ship data
-        avail_total = sum(available.values())
+        # Overload: used_total > 1.0 (demand exceeds total bandwidth); clamp to 1.0
         used_total = sum(u["frac"] for u in used)
-        overload = used_total > avail_total > 0.0
+        overload = used_total > 1.0 and denom > 0
         if overload:
-            scale = avail_total / used_total
+            scale = 1.0 / used_total
             for u in used:
                 u["frac"] *= scale
         for u in used:
@@ -151,8 +165,8 @@ class EngineeringPowerPanel(Panel):
             self._batt_prev[batt_key] = new_val
 
         batteries = {
-            "main":    {"charge": round(main_frac, 4), "draining": self._batt_dir["main"]},
-            "reserve": {"charge": round(res_frac, 4),  "draining": self._batt_dir["reserve"]},
+            "main":    {"charge": round(main_batt_frac, 4), "draining": self._batt_dir["main"]},
+            "reserve": {"charge": round(res_batt_frac, 4),  "draining": self._batt_dir["reserve"]},
         }
 
         # ── Tractor / cloak presence ──────────────────────────────────────────
@@ -167,6 +181,7 @@ class EngineeringPowerPanel(Panel):
             "grid": {
                 "damage": damage,
                 "available": available,
+                "reserve_threshold": reserve_threshold,
                 "used": used,
                 "overload": overload,
             },

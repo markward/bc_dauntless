@@ -67,29 +67,44 @@ salmon left stripe + translucent dark body (`--bc-panel-bg`) only.
    (the remaining toggle centres alone; neither present → the toggle
    column renders empty).
 
-## Data contract (approved "to start" — tune from live play)
+## Data contract (faithful conduit-bandwidth axis — supersedes initial "2400" contract)
 
 All values from existing engine getters; computed in
 `EngineeringPowerPanel._snapshot()` (Python), rendered verbatim by JS.
 
-**Shared denominator** `D = authored_output + main_conduit_cap +
-backup_conduit_cap` (raw property values; Galaxy 2400).
+**Supersession note:** the initial contract used `D = authored_output +
+main_conduit_cap + backup_conduit_cap` (~2400 Galaxy), which placed the
+reserve-drain threshold at ~42% — all-125% draw appeared inside the "main"
+band, not the reserve zone. The faithful axis below is taken directly from
+`PowerDisplay.py:734,681-689`.
 
-| Element | Formula |
-|---|---|
-| Damage column width | `(authored_output − live_output) / D` (live = health-scaled `GetPowerOutput()`) |
-| AVAILABLE · WARP CORE | `live_output / D` |
-| AVAILABLE · MAIN | `main_conduit_cap × main_charge_fraction / D` |
-| AVAILABLE · RESERVE | `backup_conduit_cap × backup_charge_fraction / D` |
-| USED segments | per group `Σ GetNormalPowerWanted() × GetPowerPercentageWanted() / D` — the SDK `PowerDisplay.Update` demand math; **tractor/cloak deliberately excluded** (their drains are shown by siphon lines + falling pillars) |
-| USED overload | clamp total at the available extent; when clamped, the used fill takes the damage-red tint |
-| Pillar fills | `GetMainBatteryPower()/limit`, `GetBackupBatteryPower()/limit` |
-| Drain ▼ | net battery delta over the last power interval < 0 |
-| Tractor On | existing `_wants_power()` firing state; Cloak On = `IsTryingToCloak()` |
+**Shared denominator** `D = GetMaxMainConduitCapacity() + GetBackupConduitCapacity()`
+(RAW conduit-bandwidth values; Galaxy 1200+200=1400). Faithful to
+`PowerDisplay.py:734` `fMaxBandwidth = GetMaxMainConduitCapacity() + GetBackupConduitCapacity()`.
 
-Note: available battery segments shrink as reservoirs drain (deliverable
-degrades with charge); the whole coloured region contracts as the ship
-loses supply. The v28 mockup's proportions are illustrative, not to scale.
+**Reserve-drain threshold** `reserve_threshold = GetMainConduitCapacity() / D`
+(health-scaled; ≈0.8571 healthy for Galaxy). The used bar crossing this threshold
+means the ship is drawing from backup/reserve power — the live bug was this
+threshold invisible on the old 2400 axis.
+
+| Element | Formula | Note |
+|---|---|---|
+| Damage column (right hatch) | `(GetMaxMainConduitCapacity() − GetMainConduitCapacity()) / D` | RAW max minus health-scaled; 0 when healthy |
+| AVAILABLE · WARP CORE | `GetPowerOutput() / D` | health-scaled |
+| AVAILABLE · MAIN | `max(0, GetMainConduitCapacity() − GetPowerOutput()) / D` | corridor between output and conduit capacity; health-scaled |
+| AVAILABLE · RESERVE | `GetBackupConduitCapacity() / D` | RAW backup band; constant width unless backup conduit also damaged |
+| reserve_threshold | `GetMainConduitCapacity() / D` | ~0.8571 healthy; used bar crossing = reserve draining |
+| Four pieces sum to 1.0 | warp_core + main + reserve + damage = 1.0 | |
+| USED segments | per group `Σ GetNormalPowerWanted() × GetPowerPercentageWanted() / D` (same D) | SDK `PowerDisplay.Update` demand math; tractor/cloak excluded (shown by siphon lines) |
+| USED overload | `used_total > 1.0` → clamp all fracs to sum to 1.0; box-shadow tint | demand exceeds total conduit bandwidth |
+| Pillar fills | `GetMainBatteryPower()/limit`, `GetBackupBatteryPower()/limit` | independent of grid bands |
+| Drain ▼ | net battery delta over the last interval < 0 | |
+| Tractor On | `_wants_power()` firing state; Cloak On = `IsTryingToCloak()` | |
+
+Note: available segments are now **threshold bands** — they move only with reactor
+damage, NOT with battery charge. Battery charge is shown exclusively by pillar fills.
+The v28 mockup's proportions are illustrative; the faithful axis corrects the reserve
+threshold to 0.8571 (was visually undetectable at ~42% on the old axis).
 
 ## Interaction
 

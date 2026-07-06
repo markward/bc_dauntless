@@ -1,16 +1,19 @@
-// Engineering Power-Transmission-Grid panel — v28 design.
+// Engineering Power-Transmission-Grid panel — faithful conduit-bandwidth axis.
 // Driven by Python via cef_execute_javascript:
 //   setEngineeringPower({visible, sliders, grid, batteries, tractor, cloak});
 //   setEngineeringPower({visible:false});
 // Slider drag: dauntlessEvent('engpower/set:<key>:<pct>')
 // Toggle click: dauntlessEvent('engpower/toggle:tractor'|'engpower/toggle:cloak')
-// Spec: docs/superpowers/sdd/task-3-brief.md
+// Spec: docs/superpowers/specs/2026-07-06-power-panel-redesign-design.md
 //
-// Rendering contract:
-//   - Update-only: never rebuild innerHTML; all elements are static skeleton.
-//   - _epDragging: while dragging a row, setEngineeringPower skips that row.
-//   - Grid normalisation: total span = damage + availTotal; each segment's
-//     display width = value / (damage + availTotal) expressed as a %.
+// Grid layout (faithful to PowerDisplay.py:734,681-689):
+//   D = GetMaxMainConduitCapacity + GetBackupConduitCapacity  (~1400 Galaxy)
+//   Four pieces, fractions of D, sum to 1.0, rendered left-to-right:
+//     [warp_core][main][reserve][damage-hatch at right]
+//   Used bar overlays the full width axis starting at left:0 — segments are
+//   already true fractions of D, set directly as widths.
+//   reserve_threshold (main_cond/D ≈ 0.8571) marks where used bar enters reserve.
+//   No barsD re-normalisation — Python emits true full-width fractions.
 
 var _epDragging = null;       // key of row currently being dragged
 var _epRafPending = false;    // animation-frame throttle for drag events
@@ -144,66 +147,70 @@ function setEngineeringPower(p) {
         if (pctEl) pctEl.textContent = Math.round(pct * 100) + '%';
     }
 
-    // ── Grid ─────────────────────────────────────────────────────────────────
+    // ── Grid (faithful conduit-bandwidth axis) ────────────────────────────────
+    // Python emits true fractions of D (=MaxMain+Backup). Four pieces sum to 1.0:
+    //   available.warp_core + available.main + available.reserve + damage = 1.0
+    // Layout: [warp_core][main][reserve][damage-hatch] left-to-right.
+    // Used bar starts at left:0; segment widths are already fractions of D.
+    // No barsD re-normalisation needed.
     var grid = p.grid || {};
     var avail = grid.available || {};
-    var dmgFrac  = grid.damage        || 0;
-    var wcFrac   = avail.warp_core    || 0;
-    var mnFrac   = avail.main         || 0;
-    var rsFrac   = avail.reserve      || 0;
-    var D = dmgFrac + wcFrac + mnFrac + rsFrac;  // normalise denominator
-    if (D <= 0) D = 1;
+    var wcFrac   = avail.warp_core || 0;
+    var mnFrac   = avail.main      || 0;
+    var rsFrac   = avail.reserve   || 0;
+    var dmgFrac  = grid.damage     || 0;
+    var rsThr    = grid.reserve_threshold || (wcFrac + mnFrac);  // fallback
 
-    // Damage column width
-    var dmgCol = document.getElementById('ep-dmg-col');
-    if (dmgCol) dmgCol.style.width = (dmgFrac / D * 100).toFixed(2) + '%';
+    // Available bar: segments are fractions of full axis width (D), set directly.
+    // Running offsets: warp_core starts at 0; main after warp_core; reserve after main.
+    var wcPct = (wcFrac * 100).toFixed(2) + '%';
+    var mnPct = (mnFrac * 100).toFixed(2) + '%';
+    var rsPct = (rsFrac * 100).toFixed(2) + '%';
+    var dmgPct = (dmgFrac * 100).toFixed(2) + '%';
 
-    // Available (pu) bar segment widths
-    // These are fractions of the BARS-COL (i.e. of D-dmgFrac)
-    var barsD = D - dmgFrac;
-    if (barsD <= 0) barsD = 1;
-    var wcPct = (wcFrac / barsD * 100).toFixed(2) + '%';
-    var mnPct = (mnFrac / barsD * 100).toFixed(2) + '%';
-    var rsPct = (rsFrac / barsD * 100).toFixed(2) + '%';
-    var wcEl = document.getElementById('ep-avail-wc');
-    var mnEl = document.getElementById('ep-avail-mn');
-    var rsEl = document.getElementById('ep-avail-rs');
-    if (wcEl) wcEl.style.width = wcPct;
-    if (mnEl) mnEl.style.width = mnPct;
-    if (rsEl) rsEl.style.width = rsPct;
+    var wcEl  = document.getElementById('ep-avail-wc');
+    var mnEl  = document.getElementById('ep-avail-mn');
+    var rsEl  = document.getElementById('ep-avail-rs');
+    var dmgEl = document.getElementById('ep-dmg-col');
+    if (wcEl)  wcEl.style.width  = wcPct;
+    if (mnEl)  mnEl.style.width  = mnPct;
+    if (rsEl)  rsEl.style.width  = rsPct;
+    // Damage hatch at the right: width = dmgFrac of full bar
+    if (dmgEl) dmgEl.style.width = dmgPct;
 
-    // btick positions: left edge at 0%, wc boundary, mn boundary, rs right edge
-    var wcBoundary = (wcFrac / barsD * 100).toFixed(2) + '%';
-    var mnBoundary = ((wcFrac + mnFrac) / barsD * 100).toFixed(2) + '%';
+    // Boundary ticks: warp/main boundary at wcFrac, main/reserve boundary at wcFrac+mnFrac.
+    // These are positions on the full axis (0..1 → 0%..100% of the bars-col).
+    var wcBoundaryPct  = (wcFrac * 100).toFixed(2) + '%';
+    var mnBoundaryPct  = ((wcFrac + mnFrac) * 100).toFixed(2) + '%';
     var btickWc = document.getElementById('ep-btick-wc');
     var btickMn = document.getElementById('ep-btick-mn');
-    if (btickWc) btickWc.style.left = 'calc(' + wcBoundary + ' - 1px)';
-    if (btickMn) btickMn.style.left = 'calc(' + mnBoundary + ' - 1px)';
+    if (btickWc) btickWc.style.left = 'calc(' + wcBoundaryPct  + ' - 1px)';
+    if (btickMn) btickMn.style.left = 'calc(' + mnBoundaryPct  + ' - 1px)';
 
-    // Label-row span widths (fade a label below 40 px via opacity 0)
-    // dmg label stays at 8.9% (matches static CSS); remaining three are dynamic
+    // Label-row span widths — each label centred under its segment.
+    // Widths are fractions of the full axis; fade label below 40 px.
+    var totalWidth = 540 - 28; // approx bars-col px (panel 540px; approx padding)
     var lblWc = document.getElementById('ep-lbl-wc');
     var lblMn = document.getElementById('ep-lbl-mn');
     var lblRs = document.getElementById('ep-lbl-rs');
-    // Estimate pixel width from %-of-barsCol; use a minimum px threshold
-    var totalWidth = 540 - 28; // approx bars-col px (540px panel minus dmg col ~8.9%)
     if (lblWc) {
-        var wcPx = wcFrac / barsD * totalWidth;
-        lblWc.style.width = wcPct;
+        var wcPx = wcFrac * totalWidth;
+        lblWc.style.width   = wcPct;
         lblWc.style.opacity = wcPx < 40 ? '0' : '1';
     }
     if (lblMn) {
-        var mnPx = mnFrac / barsD * totalWidth;
-        lblMn.style.width = mnPct;
+        var mnPx = mnFrac * totalWidth;
+        lblMn.style.width   = mnPct;
         lblMn.style.opacity = mnPx < 40 ? '0' : '1';
     }
     if (lblRs) {
-        var rsPx = rsFrac / barsD * totalWidth;
-        lblRs.style.width = rsPct;
+        var rsPx = rsFrac * totalWidth;
+        lblRs.style.width   = rsPct;
         lblRs.style.opacity = rsPx < 40 ? '0' : '1';
     }
 
-    // Used bar segments — normalised against barsD
+    // Used bar segments — fractions of D already; set widths directly (no barsD division).
+    // Used bar starts at left:0 (full axis), so segments run left-to-right with no inset.
     var usedArr = grid.used || [];
     var usedMap = {};
     for (var j = 0; j < usedArr.length; j++) {
@@ -213,7 +220,8 @@ function setEngineeringPower(p) {
     for (var k = 0; k < usedKeys.length; k++) {
         var uk = usedKeys[k];
         var uEl = document.getElementById('ep-used-' + uk);
-        if (uEl) uEl.style.width = (( usedMap[uk] || 0) / barsD * 100).toFixed(2) + '%';
+        // Segment width = frac * 100% of full bar axis
+        if (uEl) uEl.style.width = ((usedMap[uk] || 0) * 100).toFixed(2) + '%';
     }
 
     // Overload tint

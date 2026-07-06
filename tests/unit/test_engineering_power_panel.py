@@ -130,43 +130,105 @@ def test_payload_shape_and_diffing():
 
 
 def test_grid_fractions_healthy_full_batteries():
+    """Faithful conduit-bandwidth axis: D = max_main_conduit + backup_conduit = 1400.
+    Available segments are THRESHOLD bands (not charge-scaled); four pieces sum to 1.0.
+    reserve_threshold = main_cond / D marks where used bar enters reserve zone.
+    """
     panel = _panel()
     p = _payload(panel)
-    D = 1000.0 + 1200.0 + 200.0
+    # D = GetMaxMainConduitCapacity() + GetBackupConduitCapacity() = 1200 + 200 = 1400
+    D = 1200.0 + 200.0
     assert p["grid"]["damage"] == 0.0
+    # warp_core = GetPowerOutput() / D = 1000 / 1400
     assert abs(p["grid"]["available"]["warp_core"] - round(1000.0 / D, 4)) < 1e-9
-    assert abs(p["grid"]["available"]["main"] - round(1200.0 / D, 4)) < 1e-9
+    # main = (GetMainConduitCapacity() - GetPowerOutput()) / D = (1200 - 1000) / 1400
+    assert abs(p["grid"]["available"]["main"] - round((1200.0 - 1000.0) / D, 4)) < 1e-9
+    # reserve = GetBackupConduitCapacity() / D = 200 / 1400
     assert abs(p["grid"]["available"]["reserve"] - round(200.0 / D, 4)) < 1e-9
+    # four pieces sum to 1.0: warp_core + main + reserve + damage = 1.0
+    total = (p["grid"]["available"]["warp_core"] + p["grid"]["available"]["main"] +
+             p["grid"]["available"]["reserve"] + p["grid"]["damage"])
+    assert abs(total - 1.0) < 1e-3
     assert [u["key"] for u in p["grid"]["used"]] == ["weapons", "engines", "sensors", "shields"]
     assert p["grid"]["overload"] is False
+    # reserve_threshold = GetMainConduitCapacity() / D = 1200 / 1400 ≈ 0.8571
+    assert abs(p["grid"]["reserve_threshold"] - round(1200.0 / D, 4)) < 1e-9
 
 
 def test_damage_column_from_core_condition():
+    """At 50% reactor health: output=500, main_cond=600; damage=(1200-600)/1400."""
     panel, power = _panel_with_power()
     power.SetCondition(power.GetMaxCondition() * 0.5)     # 50% health
     p = _payload(panel)
-    D = 2400.0
-    assert abs(p["grid"]["damage"] - round(500.0 / D, 4)) < 1e-9
+    D = 1200.0 + 200.0  # 1400 (RAW conduit values, unchanged by damage)
+    # damage = (max_main - main_cond) / D = (1200 - 600) / 1400
+    assert abs(p["grid"]["damage"] - round((1200.0 - 600.0) / D, 4)) < 1e-9
+    # warp_core = output / D = 500 / 1400
     assert abs(p["grid"]["available"]["warp_core"] - round(500.0 / D, 4)) < 1e-9
 
 
-def test_available_battery_segments_shrink_with_charge():
+def test_available_segments_not_charge_scaled():
+    """Available segments are THRESHOLD bands — they do NOT shrink with battery charge.
+    Only reactor damage moves them. Battery charge is shown by pillar fills only.
+    """
     panel, power = _panel_with_power()
     power.SetMainBatteryPower(125000.0)                   # 50% charge
     p = _payload(panel)
-    assert abs(p["grid"]["available"]["main"] - round(1200.0 * 0.5 / 2400.0, 4)) < 1e-9
+    D = 1200.0 + 200.0  # 1400
+    # available.main should still be (main_cond - output)/D = (1200-1000)/1400
+    # NOT 1200 * 0.5 / 1400 as the old battery-scaled formula produced
+    assert abs(p["grid"]["available"]["main"] - round((1200.0 - 1000.0) / D, 4)) < 1e-9
 
 
-def test_used_overload_clamps_and_flags():
+def test_used_overload_clamps_to_full_bar_not_avail():
+    """Overload: demand > D (used_total > 1.0); clamps fracs to sum to 1.0, not avail_total."""
     panel, player = _panel_with_player()
     for key, _label, getters in _GROUPS:                  # crank demand way past supply
         for s in _systems(player, getters):
             s.SetNormalPowerPerSecond(5000.0)
     p = _payload(panel)
     used_total = sum(u["frac"] for u in p["grid"]["used"])
-    avail_total = sum(p["grid"]["available"].values())
     assert p["grid"]["overload"] is True
-    assert abs(used_total - avail_total) < 1e-3
+    # Clamped to 1.0 (full bar), not avail_total
+    assert abs(used_total - 1.0) < 1e-3
+
+
+def test_keystone_all_125pct_used_exceeds_reserve_threshold():
+    """THE KEYSTONE TEST: with realistic BC-scale normal power values and all four
+    sliders at 125%, used_total ≈ 1312.5/1400 = 0.9375 > reserve_threshold 0.8571.
+
+    This is the live bug pinned: on the old 2400-denominator axis all-125% drew
+    only ~55% (hidden in 'main' band); on the faithful 1400-denominator axis it
+    visibly enters the reserve zone.
+
+    Normal power setup mirrors the brief: individual system normals sum to 1050
+    (weapons 3×150=450, engines 2×200=400, sensors 100, shields 100).
+    At 125%: 1050 * 1.25 = 1312.5, so used_total = 1312.5/1400 = 0.9375.
+    """
+    panel, player = _panel_with_player()
+    # Set realistic BC-scale normal power values (sum to 1050 at 100%)
+    for s in _systems(player, ("GetPhaserSystem", "GetTorpedoSystem", "GetPulseWeaponSystem")):
+        s.SetNormalPowerPerSecond(150.0)
+    for s in _systems(player, ("GetImpulseEngineSubsystem", "GetWarpEngineSubsystem")):
+        s.SetNormalPowerPerSecond(200.0)
+    player.GetSensorSubsystem().SetNormalPowerPerSecond(100.0)
+    player.GetShields().SetNormalPowerPerSecond(100.0)
+    # Set all sliders to 125%
+    for key, _label, getters in _GROUPS:
+        for s in _systems(player, getters):
+            s.SetPowerPercentageWanted(1.25)
+    p = _payload(panel)
+    used_total = sum(u["frac"] for u in p["grid"]["used"])
+    reserve_threshold = p["grid"]["reserve_threshold"]
+    # Expected: 1312.5 / 1400 = 0.9375 > reserve_threshold 1200/1400 = 0.8571
+    assert abs(used_total - round(1312.5 / 1400.0, 4)) < 1e-3, (
+        f"used_total={used_total:.4f} expected ≈ {round(1312.5/1400.0, 4)}"
+    )
+    assert used_total > reserve_threshold, (
+        f"all-125% used_total={used_total:.4f} must exceed reserve_threshold={reserve_threshold:.4f}"
+    )
+    # And sanity: 1312.5 < 1400 so no overload
+    assert p["grid"]["overload"] is False
 
 
 def test_battery_draining_trend():

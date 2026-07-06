@@ -285,9 +285,13 @@
           <span>125%</span>
         </div>
 
-        <!-- Grid: damage column + used bar + available bar + bticks + labels -->
+        <!-- Grid: full-width axis with damage hatch at right.
+             Faithful conduit-bandwidth axis: D = MaxMain + Backup (~1400 Galaxy).
+             Used bar and available bar both start at left:0 on the full axis.
+             Damage hatch occupies the rightmost slice (bandwidth lost to damage).
+             Layout: [warp_core][main][reserve][damage-hatch] left-to-right.
+             JS sets all widths directly from Python-emitted fractions of D. -->
         <div class="grid-wrap">
-          <div class="dmg-col" id="ep-dmg-col"></div>
           <div class="bars-col">
             <div class="used-bar" id="ep-used-bar">
               <div class="u-weap" id="ep-used-weapons" style="width:0%"></div>
@@ -301,7 +305,7 @@
                 <div class="pu-mn" id="ep-avail-mn" style="width:0%"></div>
                 <div class="pu-rs" id="ep-avail-rs" style="width:0%"></div>
               </div>
-              <!-- bticks: left edge / warp-core boundary / main boundary / right edge -->
+              <!-- bticks: warp-core/main boundary + main/reserve boundary -->
               <div class="btick" id="ep-btick-0"
                    style="left:0; background:rgb(72,145,237);"></div>
               <div class="btick" id="ep-btick-wc"
@@ -312,11 +316,14 @@
                    style="right:0; background:rgb(230,105,55);"></div>
             </div>
           </div>
+          <!-- Damage hatch at the right: bandwidth lost to reactor damage.
+               Width set by JS from grid.damage (fraction of D).
+               Overlaps both used-bar and pu-bar full height (absolute). -->
+          <div class="dmg-col" id="ep-dmg-col" style="width:0%"></div>
         </div>
 
-        <!-- Label row beneath the grid -->
+        <!-- Label row beneath the grid: WARP CORE / MAIN / RESERVE aligned to segments -->
         <div class="pu-labels" id="ep-pu-labels">
-          <span id="ep-lbl-dmg"  style="width:8.9%"></span>
           <span id="ep-lbl-wc"   style="color:rgb(72,145,237)">WARP CORE</span>
           <span id="ep-lbl-mn"   style="color:rgb(180,157,64)">MAIN</span>
           <span id="ep-lbl-rs"   style="color:rgb(208,87,42)">RESERVE</span>
