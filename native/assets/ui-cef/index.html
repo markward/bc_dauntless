@@ -292,6 +292,11 @@
              Layout: [warp_core][main][reserve][damage-hatch] left-to-right.
              JS sets all widths directly from Python-emitted fractions of D. -->
         <div class="grid-wrap">
+          <!-- Damage hatch on the LEFT: bandwidth lost to reactor damage.
+               Width (flex-basis) set by JS from grid.damage (fraction of D).
+               Spans both used-bar and pu-bar height; bars-col holds the
+               remaining (1 - damage) width and its segments re-normalise to it. -->
+          <div class="dmg-col" id="ep-dmg-col" style="flex-basis:0%"></div>
           <div class="bars-col">
             <div class="used-bar" id="ep-used-bar">
               <div class="u-weap" id="ep-used-weapons" style="width:0%"></div>
@@ -316,10 +321,6 @@
                    style="right:0; background:rgb(230,105,55);"></div>
             </div>
           </div>
-          <!-- Damage hatch at the right: bandwidth lost to reactor damage.
-               Width set by JS from grid.damage (fraction of D).
-               Overlaps both used-bar and pu-bar full height (absolute). -->
-          <div class="dmg-col" id="ep-dmg-col" style="width:0%"></div>
         </div>
 
         <!-- Label row beneath the grid: WARP CORE / MAIN / RESERVE aligned to segments -->

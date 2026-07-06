@@ -94,29 +94,22 @@
     transform: none;
 }
 
-/* ── Grid (bars + damage at right) ─────────────────────────────────────────
-   Faithful conduit-bandwidth axis: bars-col spans the full width; damage
-   hatch appended at the right as an overlay (position: absolute, right: 0).
-   Used bar and available bar both start at left:0 (same D axis).
-   JS sets dmg-col width = grid.damage * 100%; bars-col keeps flex:1. */
+/* ── Grid (damage at left + bars) ──────────────────────────────────────────
+   Faithful conduit-bandwidth axis. The damage hatch is a LEFT flex column
+   (bandwidth lost to reactor damage); bars-col holds the remaining
+   (1 - damage) width. JS sets dmg-col flex-basis = grid.damage * 100% and
+   re-normalises the band/used widths by (1 - damage) so they fill bars-col.
+   The reserve-threshold reading is preserved (the (1-damage) factor cancels). */
 #engpower-root .grid-wrap {
     display: flex;
+    align-items: stretch;
     margin-top: 22px;
-    position: relative;
 }
 
-#engpower-root .bars-col {
-    flex: 1;
-    position: relative;
-}
-
-/* Damage hatch — right-aligned overlay spanning full grid height */
+/* Damage hatch — LEFT flex column spanning full grid height */
 #engpower-root .dmg-col {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    right: 0;
-    width: 0%;
+    flex: 0 0 0%;
+    align-self: stretch;
     background: repeating-linear-gradient(
         45deg,
         rgb(170,25,25),
@@ -125,8 +118,14 @@
         rgb(80,17,17) 8px
     );
     border: 1px solid rgb(40,35,50);
-    border-radius: 0 2px 2px 0;
+    border-right: none;
+    border-radius: 2px 0 0 2px;
     pointer-events: none;
+}
+
+#engpower-root .bars-col {
+    flex: 1;
+    position: relative;
 }
 
 #engpower-root .used-bar {

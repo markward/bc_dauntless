@@ -147,70 +147,67 @@ function setEngineeringPower(p) {
         if (pctEl) pctEl.textContent = Math.round(pct * 100) + '%';
     }
 
-    // ── Grid (faithful conduit-bandwidth axis) ────────────────────────────────
+    // ── Grid (faithful conduit-bandwidth axis; damage on the LEFT) ────────────
     // Python emits true fractions of D (=MaxMain+Backup). Four pieces sum to 1.0:
     //   available.warp_core + available.main + available.reserve + damage = 1.0
-    // Layout: [warp_core][main][reserve][damage-hatch] left-to-right.
-    // Used bar starts at left:0; segment widths are already fractions of D.
-    // No barsD re-normalisation needed.
+    // The damage hatch is the LEFT column (flex-basis = damage). bars-col holds
+    // the remaining (1 - damage); its band + used widths re-normalise to barsD
+    // so they fill bars-col. The reserve-threshold reading survives because the
+    // (1-damage) factor cancels in "used_total vs warp_core+main".
     var grid = p.grid || {};
     var avail = grid.available || {};
     var wcFrac   = avail.warp_core || 0;
     var mnFrac   = avail.main      || 0;
     var rsFrac   = avail.reserve   || 0;
     var dmgFrac  = grid.damage     || 0;
-    var rsThr    = grid.reserve_threshold || (wcFrac + mnFrac);  // fallback
 
-    // Available bar: segments are fractions of full axis width (D), set directly.
-    // Running offsets: warp_core starts at 0; main after warp_core; reserve after main.
-    var wcPct = (wcFrac * 100).toFixed(2) + '%';
-    var mnPct = (mnFrac * 100).toFixed(2) + '%';
-    var rsPct = (rsFrac * 100).toFixed(2) + '%';
-    var dmgPct = (dmgFrac * 100).toFixed(2) + '%';
+    // Damage column: left flex-basis of the full grid width.
+    var dmgEl = document.getElementById('ep-dmg-col');
+    if (dmgEl) dmgEl.style.flexBasis = (dmgFrac * 100).toFixed(2) + '%';
+
+    // Re-normalise the band/used widths into bars-col (= 1 - damage of full).
+    var barsD = 1 - dmgFrac;
+    if (barsD <= 0) barsD = 1;
+    var wcN = wcFrac / barsD, mnN = mnFrac / barsD, rsN = rsFrac / barsD;
+    var wcPct = (wcN * 100).toFixed(2) + '%';
+    var mnPct = (mnN * 100).toFixed(2) + '%';
+    var rsPct = (rsN * 100).toFixed(2) + '%';
 
     var wcEl  = document.getElementById('ep-avail-wc');
     var mnEl  = document.getElementById('ep-avail-mn');
     var rsEl  = document.getElementById('ep-avail-rs');
-    var dmgEl = document.getElementById('ep-dmg-col');
     if (wcEl)  wcEl.style.width  = wcPct;
     if (mnEl)  mnEl.style.width  = mnPct;
     if (rsEl)  rsEl.style.width  = rsPct;
-    // Damage hatch at the right: width = dmgFrac of full bar
-    if (dmgEl) dmgEl.style.width = dmgPct;
 
-    // Boundary ticks: warp/main boundary at wcFrac, main/reserve boundary at wcFrac+mnFrac.
-    // These are positions on the full axis (0..1 → 0%..100% of the bars-col).
-    var wcBoundaryPct  = (wcFrac * 100).toFixed(2) + '%';
-    var mnBoundaryPct  = ((wcFrac + mnFrac) * 100).toFixed(2) + '%';
+    // Boundary ticks: positions within bars-col (already normalised).
+    var wcBoundaryPct  = (wcN * 100).toFixed(2) + '%';
+    var mnBoundaryPct  = ((wcN + mnN) * 100).toFixed(2) + '%';
     var btickWc = document.getElementById('ep-btick-wc');
     var btickMn = document.getElementById('ep-btick-mn');
     if (btickWc) btickWc.style.left = 'calc(' + wcBoundaryPct  + ' - 1px)';
     if (btickMn) btickMn.style.left = 'calc(' + mnBoundaryPct  + ' - 1px)';
 
-    // Label-row span widths — each label centred under its segment.
-    // Widths are fractions of the full axis; fade label below 40 px.
-    var totalWidth = 540 - 28; // approx bars-col px (panel 540px; approx padding)
+    // Label-row span widths — each label centred under its segment (of bars-col).
+    var totalWidth = (540 - 28) * barsD; // approx bars-col px after the damage inset
     var lblWc = document.getElementById('ep-lbl-wc');
     var lblMn = document.getElementById('ep-lbl-mn');
     var lblRs = document.getElementById('ep-lbl-rs');
     if (lblWc) {
-        var wcPx = wcFrac * totalWidth;
         lblWc.style.width   = wcPct;
-        lblWc.style.opacity = wcPx < 40 ? '0' : '1';
+        lblWc.style.opacity = (wcN * totalWidth) < 40 ? '0' : '1';
     }
     if (lblMn) {
-        var mnPx = mnFrac * totalWidth;
         lblMn.style.width   = mnPct;
-        lblMn.style.opacity = mnPx < 40 ? '0' : '1';
+        lblMn.style.opacity = (mnN * totalWidth) < 40 ? '0' : '1';
     }
     if (lblRs) {
-        var rsPx = rsFrac * totalWidth;
         lblRs.style.width   = rsPct;
-        lblRs.style.opacity = rsPx < 40 ? '0' : '1';
+        lblRs.style.opacity = (rsN * totalWidth) < 40 ? '0' : '1';
     }
 
-    // Used bar segments — fractions of D already; set widths directly (no barsD division).
-    // Used bar starts at left:0 (full axis), so segments run left-to-right with no inset.
+    // Used bar segments — re-normalised into bars-col (same barsD as the bands),
+    // so "used bar crosses the main→reserve boundary" reads correctly under damage.
     var usedArr = grid.used || [];
     var usedMap = {};
     for (var j = 0; j < usedArr.length; j++) {
@@ -220,8 +217,7 @@ function setEngineeringPower(p) {
     for (var k = 0; k < usedKeys.length; k++) {
         var uk = usedKeys[k];
         var uEl = document.getElementById('ep-used-' + uk);
-        // Segment width = frac * 100% of full bar axis
-        if (uEl) uEl.style.width = ((usedMap[uk] || 0) * 100).toFixed(2) + '%';
+        if (uEl) uEl.style.width = ((usedMap[uk] || 0) / barsD * 100).toFixed(2) + '%';
     }
 
     // Overload tint
