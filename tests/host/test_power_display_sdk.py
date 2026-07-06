@@ -89,12 +89,31 @@ def test_adjust_power_throttles_proportionally_with_floor(qb_booted_player):
     for s in systems:
         if s:
             s.SetPowerPercentageWanted(1.25)
-    # Shrink the conduits so demand > supply, then run the SDK auto-balance.
+    # Force a REAL deficit: shrink the ship's conduit capacities so total
+    # demand at 1.25 clearly exceeds GetMainConduitCapacity() +
+    # GetBackupConduitCapacity(). Without this the SDK deficit gate
+    # (PowerDisplay.py:917, fires only when deficit > 1% of demand) never
+    # runs and every assertion below passes vacuously at 1.25. Conduit
+    # getters are health-scaled but the QB ship is at full health, so raw
+    # property values are what AdjustPower sees. No restore needed — the
+    # QB fixture rebuilds the player per test.
+    power = player.GetPowerSubsystem()
+    prop = power.GetProperty()
+    demand = sum(s.GetNormalPowerWanted() * 1.25 for s in systems if s)
+    assert demand > 0.0
+    prop.SetMainConduitCapacity(demand * 0.3)
+    prop.SetBackupConduitCapacity(demand * 0.1)
+    assert (power.GetMainConduitCapacity() + power.GetBackupConduitCapacity()
+            < demand * 0.99)                 # the deficit gate MUST fire
     App.EngPowerCtrl_Create(200.0)
     for s in systems:                       # bars must exist for AdjustPower
         if s:
             App.EngPowerCtrl_GetPowerCtrl().GetBarForSubsystem(s)
     PD.AdjustPower(systems)
+    throttled = [s for s in systems
+                 if s and s.GetNormalPowerWanted() > 0.0
+                 and s.GetPowerPercentageWanted() < 1.25 - 1e-9]
+    assert throttled, "deficit branch never fired — every slider still at 1.25"
     for s in systems:
         if s and s.GetNormalPowerWanted() > 0.0:
             assert s.GetPowerPercentageWanted() >= 0.2 - 1e-9   # 20% floor
