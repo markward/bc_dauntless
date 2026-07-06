@@ -1674,9 +1674,20 @@ def ToggleCloakFromInput():
     _tac_weapons_cloak_toggled(ctrl, None)
 
 
-def EngRepairPane_Create(width=0.0, height=0.0, n=0) -> "_DisplayWidget":
-    pane = _DisplayWidget("EngRepairPane")
-    # Pre-seed one child (index 0 = DIVIDER) so GetNthChild(DIVIDER).Layout() works.
+class EngRepairPaneWidget(_DisplayWidget):
+    """The live repair-queue pane. Created by the unmodified SDK
+    (EngineerMenuHandlers.py:84) and added as a child of the Engineering
+    menu; CrewMenuPanel detects this class and projects the queue via
+    engine.ui.eng_repair_pane.repair_pane_snapshot."""
+    def __init__(self, width=0.0, height=0.0, rows=0):
+        super().__init__("EngRepairPane")
+        self._pane_width, self._pane_height, self._pane_rows = width, height, rows
+
+
+def EngRepairPane_Create(width=0.0, height=0.0, n=0) -> "EngRepairPaneWidget":
+    pane = EngRepairPaneWidget(width, height, n)
+    # Pre-seed one child (index 0 = DIVIDER) so GetNthChild(DIVIDER).Layout()
+    # keeps working (SDK layout path).
     from engine.appc.tg_ui.widgets import TGPane
     pane.AddChild(TGPane())
     return pane

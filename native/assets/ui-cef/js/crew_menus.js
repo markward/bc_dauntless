@@ -43,6 +43,12 @@ function renderCrewMenu(menu) {
 function appendCrewRows(body, nodes, depth) {
   for (const node of nodes) {
     if (node.visible === false) continue;
+
+    if (node.type === "repair-pane") {
+      body.appendChild(renderRepairPane(node));
+      continue;
+    }
+
     const hasChildren = node.type === "menu" && node.openable !== false && (node.children || []).length > 0;
 
     const row = document.createElement("div");
@@ -75,4 +81,35 @@ function appendCrewRows(body, nodes, depth) {
       appendCrewRows(body, node.children, depth + 1);
     }
   }
+}
+
+// EngRepairPane projection — three titled areas (REPAIRING/WAITING/
+// DESTROYED). REPAIRING and WAITING rows are clickable and fire
+// crew-menu/repair:<id> (Task 7's ET_REPAIR_INCREASE_PRIORITY toggle);
+// DESTROYED rows are inert (subsystem isn't in the repair queue at all).
+function renderRepairPane(node) {
+  const pane = document.createElement("div");
+  pane.className = "crew-repair-pane";
+  const areas = [
+    ["REPAIRING", node.repair, true],
+    ["WAITING", node.waiting, true],
+    ["DESTROYED", node.destroyed, false],
+  ];
+  for (const [title, rows, clickable] of areas) {
+    if (!rows || !rows.length) continue;
+    const h = document.createElement("div");
+    h.className = "crew-repair-area-title";
+    h.textContent = title;
+    pane.appendChild(h);
+    for (const r of rows) {
+      const row = document.createElement("div");
+      row.className = "crew-repair-row" + (clickable ? "" : " inert");
+      row.textContent = r.label + " — " + r.pct + "%";
+      if (clickable) {
+        row.onclick = () => dauntlessEvent("crew-menu/repair:" + r.id);
+      }
+      pane.appendChild(row);
+    }
+  }
+  return pane;
 }

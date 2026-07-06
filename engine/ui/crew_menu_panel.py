@@ -22,6 +22,24 @@ from engine.ui.panel import Panel
 _logger = logging.getLogger(__name__)
 
 
+def _current_player():
+    """Return the current player ship, or None.
+
+    NOTE: this is deliberately NOT ``App.Game_GetCurrentPlayer()`` — that
+    module function calls ``Game.GetCurrentPlayer()``, a method Game never
+    defines (only ``GetPlayer()`` exists); TGObject.__getattr__ absorbs the
+    typo into a truthy ``_Stub()`` instead of raising, so the "existing"
+    call silently returns a fake player forever. Mirrors
+    engine/ui/ship_display_panel.py:_get_player().
+    """
+    try:
+        from engine.core.game import Game_GetCurrentGame
+        game = Game_GetCurrentGame()
+        return game.GetPlayer() if game is not None else None
+    except Exception:
+        return None
+
+
 class CrewMenuPanel(Panel):
     def __init__(self, on_set_course=None, on_warp_engage=None):
         super().__init__()
@@ -69,6 +87,15 @@ class CrewMenuPanel(Panel):
     def _snapshot_node(self, widget) -> Optional[dict]:
         # Set Course (the one SortedRegionMenu) is projected as a leaf
         # button, not an expandable parent — its click opens a modal.
+        import App as _App
+        if isinstance(widget, _App.EngRepairPaneWidget):
+            from engine.ui.eng_repair_pane import repair_pane_snapshot
+            wid = ensure_widget_id(widget)
+            self._widgets_by_id[wid] = widget
+            areas = repair_pane_snapshot(_current_player(), self._widgets_by_id.__setitem__)
+            return {"id": wid, "type": "repair-pane",
+                    "label": "Damage Control", "enabled": True,
+                    "visible": bool(widget.IsVisible()), **areas}
         if isinstance(widget, SortedRegionMenu):
             node_type = "button"
         elif isinstance(widget, STMenu):
@@ -174,6 +201,26 @@ class CrewMenuPanel(Panel):
                     clicked.SetSource(widget)
                     App.g_kEventManager.AddEvent(clicked)
             # Menu nodes open/close client-side in CEF; no SDK event needed.
+            return True
+        if action.startswith("repair:"):
+            try:
+                wid = int(action[len("repair:"):])
+            except ValueError:
+                _logger.info("crew-menu: malformed repair action %r", action)
+                return True
+            sub = self._widgets_by_id.get(wid)
+            player = _current_player()
+            bay = player.GetRepairSubsystem() if player is not None else None
+            if sub is None or bay is None:
+                _logger.info("crew-menu: stale repair id %d dropped", wid)
+                return True
+            import App
+            evt = App.TGObjPtrEvent_Create()
+            evt.SetEventType(App.ET_REPAIR_INCREASE_PRIORITY)
+            evt.SetDestination(bay)
+            evt.SetObjPtr(sub)
+            App.g_kEventManager.AddEvent(evt)
+            self._last_pushed = None      # force re-render with new order
             return True
         return False
 
