@@ -127,6 +127,12 @@ def active_impulse_emitters(player) -> list:
     return emitters
 
 
+# Threshold states for the disabled/destroyed/operational event machine.
+_THRESHOLD_OPERATIONAL = 0
+_THRESHOLD_DISABLED    = 1
+_THRESHOLD_DESTROYED   = 2
+
+
 class ShipSubsystem(TGEventHandlerObject):
     def __init__(self, name: str = ""):
         super().__init__()
@@ -211,6 +217,11 @@ class ShipSubsystem(TGEventHandlerObject):
         self._targetable: int = 1
         self._primary: int = 0
         self._disabled_percentage: float = 0.25
+        # Current threshold state; transitions fire ET_SUBSYSTEM_DISABLED /
+        # DESTROYED / OPERATIONAL (stock BC posts these from C++
+        # ShipSubsystem::SetCondition; EngineerCharacterHandlers +
+        # AI Conditions consume them).
+        self._threshold_state: int = _THRESHOLD_OPERATIONAL
         # Repair-time divisor mirrored from the hardpoint property
         # (SubsystemProperty.SetRepairComplexity — every stock hardpoint
         # authors it). Higher = slower repair. Default 1.0 = neutral.
@@ -447,12 +458,31 @@ class ShipSubsystem(TGEventHandlerObject):
 
     def _condition_changed(self) -> None:
         """Push the fresh condition FRACTION into the combined watcher (if one
-        was ever handed out) so its registered threshold crossings fire.
+        was ever handed out) so its registered threshold crossings fire, then
+        advance the disabled/destroyed/operational state machine.
         Called from every _condition/_max_condition mutation path — all
         writes route through SetCondition/SetMaxCondition (combat damage in
         engine/appc/objects.py calls SetCondition)."""
         if self._combined_watcher is not None:
             self._combined_watcher._update(self.GetConditionPercentage())
+        new_state = self._threshold_state_now()
+        old_state = self._threshold_state
+        if new_state != old_state:
+            self._threshold_state = new_state
+            if new_state == _THRESHOLD_DESTROYED:
+                self._fire_threshold_event("ET_SUBSYSTEM_DESTROYED")
+            elif new_state == _THRESHOLD_DISABLED and old_state == _THRESHOLD_OPERATIONAL:
+                self._fire_threshold_event("ET_SUBSYSTEM_DISABLED")
+            elif new_state == _THRESHOLD_OPERATIONAL:
+                self._fire_threshold_event("ET_SUBSYSTEM_OPERATIONAL")
+            # destroyed -> disabled (partial repair from zero) is silent.
+
+    def _threshold_state_now(self) -> int:
+        if self._condition <= 0.0 and self._max_condition > 0.0:
+            return _THRESHOLD_DESTROYED
+        if self.IsDisabled():
+            return _THRESHOLD_DISABLED
+        return _THRESHOLD_OPERATIONAL
 
     def GetConditionPercentage(self) -> float:
         mx = self.GetMaxCondition()
@@ -719,6 +749,36 @@ class ShipSubsystem(TGEventHandlerObject):
             self._combined_watcher = FloatRangeWatcher(
                 self.GetConditionPercentage())
         return self._combined_watcher
+
+    def _owning_ship(self):
+        """Resolve the ship owning this subsystem. Top-level subsystems have
+        _parent_ship set by ShipClass._attach_subsystem; child subsystems
+        (AddChildSubsystem) only have _parent_subsystem — walk up."""
+        obj, hops = self, 0
+        while obj is not None and hops < 16:
+            ship = getattr(obj, "_parent_ship", None)
+            if ship is not None:
+                return ship
+            obj = getattr(obj, "_parent_subsystem", None)
+            hops += 1
+        return None
+
+    def _fire_threshold_event(self, event_attr: str) -> None:
+        """Broadcast a threshold event: source=this subsystem, destination=
+        owning ship (EngineerCharacterHandlers filters destination against the
+        player; AI Conditions match the ship). Raise-safe, same pattern as
+        CloakingSubsystem._fire — a missing event manager never breaks
+        condition mutation (unit fixtures mutate subsystems with no App)."""
+        try:
+            import App
+            ship = self._owning_ship()
+            evt = App.TGEvent_Create()
+            evt.SetEventType(getattr(App, event_attr))
+            evt.SetSource(self)
+            evt.SetDestination(ship if ship is not None else self)
+            App.g_kEventManager.AddEvent(evt)
+        except Exception as _e:
+            dev_mode.log_swallowed("subsystem threshold event", _e)
 
     # ── Child-subsystem walking ──────────────────────────────────────────────
     # SDK consumers iterate child subsystems via GetNumChildSubsystems +
