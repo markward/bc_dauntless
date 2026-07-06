@@ -3,9 +3,6 @@ The CEF Engineering panel snapshots live subsystem state directly; these
 exist so Bridge/PowerDisplay.py runs unmodified."""
 from engine.appc.tg_ui.widgets import TGPane
 
-import logging as _logging
-_logger = _logging.getLogger(__name__)
-
 
 class STNumericBar(TGPane):
     def __init__(self):
@@ -93,9 +90,20 @@ class EngPowerDisplay(TGPane):
 
     def __init__(self, width: float = 0.0, height: float = 0.0):
         super().__init__(width, height)
+        # In BC the display is always mounted inside a window, so
+        # PowerDisplay.Init's final `GetParent().Resize(...)` (SDK line 275)
+        # never sees None. Headless has no window tree; give it a benign
+        # container pane so Init runs to completion instead of raising there
+        # (that raise aborted every ET_SET_PLAYER re-init and left the QB helm
+        # menu half-wired — the 2026-07 power-branch regression).
+        self._parent_pane = TGPane()
+        self._parent_pane.AddChild(self, 0.0, 0.0, 0)
 
     def CreateBatteryGauge(self, which) -> "STFillGauge":
         return STFillGauge(which)
+
+    def GetParent(self):
+        return self._parent_pane
 
     def GetConceptualParent(self):
         return None

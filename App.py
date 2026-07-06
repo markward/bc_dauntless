@@ -1221,6 +1221,10 @@ class _AppcGlobals:
     g_kEngineeringCloakColor         = NiColorA(0.95, 0.55, 0.20, 1.0)
     g_kEngineeringTractorColor       = NiColorA(0.95, 0.40, 0.55, 1.0)
     g_kEngineeringCtrlBkgndLineColor = NiColorA(0.30, 0.30, 0.30, 1.0)
+    # LCARS interface-chrome border (QuickBattle ship-menu bar, StylizedWindow
+    # frames). SDK App.py exports it at globals scope; exact Appc RGBA is not
+    # recoverable, so a neutral LCARS-blue placeholder — headless never renders it.
+    g_kInterfaceBorderColor          = NiColorA(0.60, 0.70, 1.00, 1.0)
 
 
 globals = _AppcGlobals()
@@ -1235,6 +1239,7 @@ g_kEngineeringSensorsColor       = globals.g_kEngineeringSensorsColor
 g_kEngineeringCloakColor         = globals.g_kEngineeringCloakColor
 g_kEngineeringTractorColor       = globals.g_kEngineeringTractorColor
 g_kEngineeringCtrlBkgndLineColor = globals.g_kEngineeringCtrlBkgndLineColor
+g_kInterfaceBorderColor          = globals.g_kInterfaceBorderColor
 
 # ── Ship species constants ────────────────────────────────────────────────────
 # Used by WeaponsDisplay.SetShipIcon and other art routines.  Exact Appc values

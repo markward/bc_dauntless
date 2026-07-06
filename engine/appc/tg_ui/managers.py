@@ -84,7 +84,17 @@ class TGIconManager:
         self._groups[group.GetName()] = group
 
     def GetIconGroup(self, name):
-        return self._groups.get(str(name))
+        # Auto-vivify: BC always has the current LCARS group registered, so SDK
+        # layout code (PowerDisplay.CreatePowerRulers -> GetIconScreenHeight)
+        # treats GetIconGroup as never-None. A missing name returning None would
+        # crash the SDK; instead materialise an empty group whose screen-metric
+        # queries return 0.0 (headless has no pixel layout).
+        name = str(name)
+        group = self._groups.get(name)
+        if group is None:
+            group = TGIconGroup(name)
+            self._groups[name] = group
+        return group
 
     # Canned 1024x768 — single source of truth is graphics_mode's singleton;
     # duplicated value here because the SDK asks both objects.

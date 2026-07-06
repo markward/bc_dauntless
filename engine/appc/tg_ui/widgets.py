@@ -158,11 +158,19 @@ class TGIcon(TGPane):
         self._group_name = str(group_name)
         self._icon_id = int(icon_id)
         self._color = color
+        # BC sizes an icon to its artwork on creation, so GetWidth/GetHeight are
+        # never 0. Headless has no artwork; use a unit square so SDK ratio math
+        # (UIHelpers.CreateCurve: fIWidth / fIHeight) is well-defined (=1.0)
+        # rather than a ZeroDivisionError (Resize is inert like all TGPane
+        # geometry, so 1.0 is what layout math sees).
+        self._width = 1.0
+        self._height = 1.0
 
     def GetIconGroupName(self) -> str:  return self._group_name
     def GetIconID(self) -> int:         return self._icon_id
     def SetColor(self, color) -> None:  self._color = color
     def SetIconNum(self, n) -> None:    self._icon_id = int(n)
+    def SizeToArtwork(self, *args) -> None:  pass
 
 
 class TGParagraph(TGPane):

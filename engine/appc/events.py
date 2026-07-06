@@ -358,17 +358,24 @@ class TGEventManager(TGObject):
         dest = event.GetDestination()
         if dest is not None and isinstance(dest, TGEventHandlerObject):
             dest.ProcessEvent(event)
-        # Func-broadcast handlers (existing).
-        for bd, name in self._broadcast_handlers.get(event.GetEventType(), []):
+        # Func-broadcast handlers (existing). Iterate a SNAPSHOT of the list:
+        # SDK handlers re-register themselves mid-dispatch (PowerDisplay.
+        # HandleSetPlayer -> Init -> RemoveEventHandlers/AddEventHandlers);
+        # mutating the live list shifts later entries left, so the iterator
+        # skips the next sibling (bridge_officers.OnSetPlayer — the QB
+        # helm-wiring regression) and revisits the re-appended self instead.
+        for bd, name in list(
+            self._broadcast_handlers.get(event.GetEventType(), [])
+        ):
             fn = _resolve_handler(name)
             if fn is not None:
                 try:
                     fn(bd, event)
                 except Exception:
                     self._log_broadcast_failure(name, event)
-        # Method-broadcast handlers (new).
-        for wrapper, method_name, target in self._method_handlers.get(
-            event.GetEventType(), []
+        # Method-broadcast handlers (new). Snapshot for the same reason.
+        for wrapper, method_name, target in list(
+            self._method_handlers.get(event.GetEventType(), [])
         ):
             if target is not None and event.GetDestination() is not target:
                 continue

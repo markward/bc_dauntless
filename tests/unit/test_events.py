@@ -230,3 +230,45 @@ def test_destination_process_event_exception_still_propagates():
 
     with pytest.raises(RuntimeError, match="destination boom"):
         em.AddEvent(ev)
+
+
+def test_broadcast_handler_reregistering_itself_does_not_skip_siblings():
+    """A broadcast handler that removes + re-adds ITSELF mid-dispatch (the SDK
+    PowerDisplay.HandleSetPlayer -> Init -> RemoveEventHandlers/AddEventHandlers
+    pattern) must not skip sibling handlers registered after it.
+
+    Regression: AddEvent iterated the LIVE handler list; the self-removal
+    shifted every later entry left one slot, so the iterator skipped the next
+    sibling (bridge_officers.OnSetPlayer — the QB helm-wiring live bug) and
+    revisited the re-appended self instead."""
+    order = []
+
+    mod = types.ModuleType("_test_broadcast_reentrant")
+    listener = TGEventHandlerObject()
+    sibling = TGEventHandlerObject()
+    em = TGEventManager()
+
+    def reregister(pObj, pEv):
+        order.append("reregister")
+        em.RemoveBroadcastHandler(
+            ET_TEST, listener, "_test_broadcast_reentrant.reregister")
+        em.AddBroadcastPythonFuncHandler(
+            ET_TEST, listener, "_test_broadcast_reentrant.reregister")
+
+    mod.reregister = reregister
+    mod.sib = lambda pObj, pEv: order.append("sibling")
+    sys.modules["_test_broadcast_reentrant"] = mod
+    try:
+        em.AddBroadcastPythonFuncHandler(
+            ET_TEST, listener, "_test_broadcast_reentrant.reregister")
+        em.AddBroadcastPythonFuncHandler(
+            ET_TEST, sibling, "_test_broadcast_reentrant.sib")
+
+        ev = TGEvent_Create()
+        ev.SetEventType(ET_TEST)
+        em.AddEvent(ev)
+
+        # Each handler fires exactly once, in registration order.
+        assert order == ["reregister", "sibling"]
+    finally:
+        del sys.modules["_test_broadcast_reentrant"]
