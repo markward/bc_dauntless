@@ -120,3 +120,53 @@ def test_add_subsystem_is_the_sdk_alias():
     damaged = _sub(condition=400.0)
     assert bay.AddSubsystem(damaged) == 1
     assert bay.IsBeingRepaired(damaged) == 1
+
+
+# ── Task 5: auto-enqueue on damage ───────────────────────────────────────────
+
+def _damaged_ship():
+    from engine.appc.ships import ShipClass_Create
+    from engine.appc.properties import RepairSubsystemProperty
+    ship = ShipClass_Create("AutoQ")
+    prop = RepairSubsystemProperty("Engineering")
+    prop.SetMaxRepairPoints(50.0)
+    prop.SetNumRepairTeams(3)
+    ship.GetRepairSubsystem().SetProperty(prop)
+    ship.GetSensorSubsystem().SetMaxCondition(8000.0)
+    return ship
+
+
+def test_damage_auto_enqueues_subsystem():
+    ship = _damaged_ship()
+    sensors = ship.GetSensorSubsystem()
+    sensors.SetCondition(4000.0)                      # damage
+    assert ship.GetRepairSubsystem().IsBeingRepaired(sensors) == 1
+
+
+def test_repair_increase_does_not_enqueue():
+    ship = _damaged_ship()
+    sensors = ship.GetSensorSubsystem()
+    sensors.SetCondition(4000.0)
+    ship.GetRepairSubsystem()._queue.clear()
+    sensors.Repair(100.0)                             # increase only
+    assert ship.GetRepairSubsystem()._queue == []
+
+
+def test_destroying_hit_does_not_enqueue():
+    ship = _damaged_ship()
+    sensors = ship.GetSensorSubsystem()
+    sensors.SetCondition(0.0)                         # straight to destroyed
+    assert ship.GetRepairSubsystem()._queue == []
+
+
+def test_bay_enqueues_itself_when_damaged():
+    ship = _damaged_ship()
+    bay = ship.GetRepairSubsystem()
+    bay.SetMaxCondition(8000.0)
+    bay.SetCondition(4000.0)
+    assert any(s is bay for s in bay._queue)
+
+
+def test_orphan_subsystem_damage_is_safe():
+    s = _sub(condition=500.0)     # no ship anywhere
+    s.SetCondition(100.0)         # must not raise

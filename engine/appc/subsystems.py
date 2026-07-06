@@ -425,9 +425,28 @@ class ShipSubsystem(TGEventHandlerObject):
         return self._condition
 
     def SetCondition(self, value: float) -> None:
-        """Floor at zero. DamageSystem (Task 4) routes hits through here."""
+        """Floor at zero. Combat damage routes through here (see
+        engine/appc/objects.py). A decrease below max auto-enqueues this
+        subsystem on the owning ship's repair bay — the synchronous
+        equivalent of stock's ET_SUBSYSTEM_HIT -> RepairSubsystem::
+        HandleHitEvent chain. AddToRepairList owns all validation
+        (duplicate / destroyed / undamaged reject)."""
+        old = self._condition
         self._condition = max(0.0, float(value))
         self._condition_changed()
+        if self._condition < old:
+            self._auto_enqueue_for_repair()
+
+    def _auto_enqueue_for_repair(self) -> None:
+        ship = self._owning_ship()
+        if ship is None:
+            return
+        try:
+            bay = ship.GetRepairSubsystem()
+            if bay is not None and hasattr(bay, "AddToRepairList"):
+                bay.AddToRepairList(self)
+        except Exception as _e:
+            dev_mode.log_swallowed("repair auto-enqueue", _e)
 
     def GetMaxCondition(self) -> float:
         # The property template is the authoritative max-condition, mirroring
