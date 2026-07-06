@@ -1683,6 +1683,10 @@ class CloakingSubsystem(PoweredSubsystem):
     # (docs/original_game_reference/gameplay/ship-subsystems.md:185).
     POWER_MODE = PSM_BACKUP_ONLY
 
+    # Power starvation: backup battery dry → device disengages
+    # (ship-subsystems.md:187-189). Exact BC threshold unknown; tune from live play (ship-subsystems.md:187-189)
+    AUTO_DECLOAK_EFFICIENCY = 0.25
+
     def __init__(self, name: str = ""):
         super().__init__(name)
         self._cloak_state: int = self.CLOAK_DECLOAKED
@@ -1807,16 +1811,14 @@ class CloakingSubsystem(PoweredSubsystem):
         offline = bool(self.IsDisabled()) or bool(self.IsDestroyed())
         if offline:
             # Forced decloak: a disabled cloak cannot keep the ship hidden.
-            if self._cloak_state in (self.CLOAK_CLOAKING, self.CLOAK_CLOAKED):
-                self._force_decloak()
+            self._force_decloak()
             return
 
         # Power starvation: backup battery dry → device disengages
         # (ship-subsystems.md:187-189).  Exact BC threshold unknown; 0.25 chosen
         # — tune from live play, keep as a named constant.
-        AUTO_DECLOAK_EFFICIENCY = 0.25
         if (self.IsTryingToCloak() and self.GetNormalPowerWanted() > 0.0
-                and self.GetPowerPercentage() < AUTO_DECLOAK_EFFICIENCY):
+                and self.GetPowerPercentage() < self.AUTO_DECLOAK_EFFICIENCY):
             self._force_decloak()
             return
 

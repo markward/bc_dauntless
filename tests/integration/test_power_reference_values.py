@@ -152,6 +152,11 @@ def test_galaxy_drain_time_matches_bc():
 
     expected_drain_time = _MAIN_BATTERY / deficit   # = 250000 / 51 ≈ 4902.0 s
 
+    # Precondition: SetProperty fills batteries (BC spawn)
+    assert power.GetMainBatteryPower() == 250000.0, (
+        "main battery must start at 250000.0 (BC spawn default)"
+    )
+
     dt = 1.0   # one tick = one second; interval fires on every Update call
     seconds = 0.0
     max_seconds = expected_drain_time * 2.0   # safety cap (never reached)
