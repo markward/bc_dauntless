@@ -1283,7 +1283,7 @@ class ShieldSubsystem(PoweredSubsystem):
             mx = self._max_shields[f]
             if mx == 0.0:
                 continue
-            new = self._current_shields[f] + self._charge_per_second[f] * dt
+            new = self._current_shields[f] + self._charge_per_second[f] * self.GetNormalPowerPercentage() * dt
             if new > mx:
                 new = mx
             self._current_shields[f] = new
