@@ -402,8 +402,8 @@ class _EnergyWeaponFireMixin:
         else:
             parent = self.GetParentSubsystem()
             if parent is None or parent.IsOn():
-                factor = (parent.GetNormalPowerPercentage()
-                          if parent is not None else 1.0)
+                factor = max(0.0, parent.GetNormalPowerPercentage()
+                             if parent is not None else 1.0)
                 headroom = self._max_charge - self._charge_level
                 if headroom > 0.0:
                     want = min(self._recharge_rate * factor * dt, headroom)
@@ -1605,6 +1605,12 @@ class TractorBeam(_EnergyWeaponFireMixin, WeaponSystem):
                 )
             # _armed stays set while sustaining — no depletion auto-stop.
             return
+        # Idle fall-through note: an idle TractorBeamSystem doesn't want power
+        # (_wants_power False -> factor zeroed by the pump), so the mixin's
+        # factor-scaled recharge is 0 while idle. Harmless by design: the firing
+        # sustain path never drains below _min_firing_charge, StopFiring keeps
+        # _armed set, and CanFire passes at the floor — charge above the floor
+        # has no gameplay effect for tractors.
         super().UpdateCharge(dt)
 
 
