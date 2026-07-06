@@ -225,7 +225,7 @@ class EngineeringPowerPanel(Panel):
                     weapon_config.toggle_tractor(player)
                 else:
                     weapon_config.toggle_cloak(player)
-                self._last_pushed = None
+            self._last_pushed = None
             return True
 
         # Handle slider events (set:group:pct)

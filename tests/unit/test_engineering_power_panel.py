@@ -509,6 +509,7 @@ def test_toggle_tractor_routes_to_weapon_config(monkeypatch):
     monkeypatch.setattr(wc, "toggle_tractor", lambda ship: calls.append(ship))
     assert panel.dispatch_event("toggle:tractor") is True
     assert calls == [player]
+    assert panel._last_pushed is None
 
 
 def test_toggle_cloak_routes_to_weapon_config(monkeypatch):
@@ -524,3 +525,9 @@ def test_toggle_without_player_is_owned_noop():
     from engine.ui.engineering_power_panel import EngineeringPowerPanel
     panel = EngineeringPowerPanel(get_player=lambda: None, is_engineering_open=lambda: True)
     assert panel.dispatch_event("toggle:tractor") is True
+
+
+def test_foreign_action_returns_false():
+    """Unrecognized actions must return False (contract: not handled)."""
+    panel = _panel()
+    assert panel.dispatch_event("unknown:action") is False
