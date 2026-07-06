@@ -83,10 +83,30 @@ def _call(label, obj, name, args):
                 "exc_type=%s exc_value=%s" % (str(sys.exc_type), str(sys.exc_value)))
         return None
 
+def _quiet_call(obj, name, args):
+    # Like _call but swallows failures silently (no FAILED line). Used for
+    # optional readings whose absence we don't care about.
+    try:
+        return apply(getattr(obj, name), args)
+    except:
+        return None
+
 def _section(title):
     bar = "-- " + str(title) + " " + ("-" * max(1, 60 - len(str(title))))
     _log.append(bar)
     print bar
+
+def _join(parts, sep):
+    # Python 1.5 has no str.join method and no guaranteed string module in
+    # this static build -- hand-roll the join with + and a while loop.
+    s = ""
+    i = 0
+    while i < len(parts):
+        if i > 0:
+            s = s + sep
+        s = s + parts[i]
+        i = i + 1
+    return s
 
 def _flush():
     n = len(_log)
@@ -126,15 +146,21 @@ def _power_snapshot(label):
     output = _call(label + ".output", pwr, "GetPowerOutput",        ())
     avail  = _call(label + ".avail",  pwr, "GetAvailablePower",     ())
     disp   = _call(label + ".disp",   pwr, "GetPowerDispensed",     ())
-    wanted = _call(label + ".wanted", pwr, "GetPowerWanted",        ())
+    # GetPowerWanted needs an arg we don't have; not one of Q1-Q4, so read it
+    # quietly and let it be None (renders as 0.0) rather than spamming FAILED.
+    wanted = _quiet_call(pwr, "GetPowerWanted",        ())
     mcon   = _call(label + ".mcon",   pwr, "GetMainConduitCapacity", ())
     bcon   = _call(label + ".bcon",   pwr, "GetBackupConduitCapacity", ())
     condpct = _call(label + ".condpct", pwr, "GetConditionPercentage", ())
 
     gt = _call(label + ".gt", App.g_kUtopiaModule, "GetGameTime", ())
 
-    # 7 slider subsystems (read via PoweredSubsystem.GetPowerPercentageWanted)
+    # 7 slider subsystems (read via PoweredSubsystem.GetPowerPercentageWanted).
+    # Build BOTH the labelled list (_sliders, for the human snapshot) and the
+    # bare-value list (_svals, for the compact row) in one pass -- Python 1.5
+    # has no str.split, so we must never reconstruct values from the labels.
     _sliders = []
+    _svals = []
     for _sname, _getter in (
             ("impulse", "GetImpulseEngineSubsystem"),
             ("warp",    "GetWarpEngineSubsystem"),
@@ -147,13 +173,16 @@ def _power_snapshot(label):
         _sub = _call(label + "." + _sname, p, _getter, ())
         if _sub is None:
             _sliders.append(_sname + "=NA")
+            _svals.append("NA")
         else:
             _pct = _call(label + "." + _sname + ".pct", _sub,
                          "GetPowerPercentageWanted", ())
             if _pct is None:
                 _sliders.append(_sname + "=NA")
+                _svals.append("NA")
             else:
                 _sliders.append("%s=%.2f" % (_sname, _pct))
+                _svals.append("%.2f" % _pct)
 
     # Tractor IsFiring
     _trac_str = "NA"
@@ -181,17 +210,18 @@ def _power_snapshot(label):
                 (output or 0.0), (avail or 0.0), (disp or 0.0),
                 (wanted or 0.0), (mcon or 0.0), (bcon or 0.0),
                 (condpct or 0.0), _trac_str,
-                " ".join(_sliders)
+                _join(_sliders, " ")
             ))
 
     # Also record per-sample row for the collect.py-parseable section
+    # (_svals was built alongside _sliders above -- no splitting needed.)
     _samples.append(
         "%.2f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.3f %s %s" % (
             (gt or 0.0), (main or 0.0), (backup or 0.0),
             (output or 0.0), (avail or 0.0), (disp or 0.0),
             (wanted or 0.0), (mcon or 0.0), (bcon or 0.0),
             (condpct or 0.0), _trac_str,
-            " ".join([_s.split("=")[1] for _s in _sliders])
+            _join(_svals, " ")
         )
     )
 

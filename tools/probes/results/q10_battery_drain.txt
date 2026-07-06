@@ -1,0 +1,134 @@
+-- environment -------------------------------------------------
+python_version = 1.5.2 (#0, Jan 17 2002, 03:24:04) [MSC 32 bit (Intel)]
+frame = 3948
+game_time = 61.0
+instructions = call setup() -> engage tractor -> sample() x N -> release tractor + green alert -> sample() x N -> finish()
+-- setup -------------------------------------------------------
+info = setting RED_ALERT + all sliders to 1.25
+alert = RED_ALERT set
+slider.impulse = set to 1.25
+slider.warp = set to 1.25
+slider.shields = set to 1.25
+slider.phasers = set to 1.25
+slider.torps = set to 1.25
+slider.pulse = subsystem not found
+slider.sensors = set to 1.25
+-- baseline snapshot (pre-tractor) -----------------------------
+t0.snapshot = gt=61.00 main=246873.2 backup=79694.6 output=1000.0 avail=1400.0 disp=901.0 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=0 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+instruction = now engage tractor via UI, then call sample() every 5-10 s
+s1.snapshot = gt=67.25 main=245374.2 backup=78965.5 output=1000.0 avail=1400.0 disp=1304.1 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=0 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+s2.snapshot = gt=77.50 main=239962.0 backup=77883.1 output=1000.0 avail=1400.0 disp=362.2 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+s3.snapshot = gt=85.25 main=233270.4 backup=77010.0 output=1000.0 avail=1400.0 disp=1003.8 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+s4.snapshot = gt=91.25 main=228408.5 backup=76282.2 output=1000.0 avail=1400.0 disp=1065.7 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+s5.snapshot = gt=97.50 main=224055.4 backup=75657.2 output=1000.0 avail=1400.0 disp=403.1 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+s6.snapshot = gt=103.50 main=219255.4 backup=75032.5 output=1000.0 avail=1400.0 disp=403.1 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+s7.snapshot = gt=114.50 main=210558.2 backup=73784.2 output=1000.0 avail=1400.0 disp=300.3 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+s8.snapshot = gt=124.00 main=202696.0 backup=72661.6 output=1000.0 avail=1400.0 disp=662.5 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+s9.snapshot = gt=132.50 main=196189.8 backup=71828.3 output=1000.0 avail=1400.0 disp=403.1 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+s10.snapshot = gt=140.25 main=189342.9 backup=70995.5 output=1000.0 avail=1400.0 disp=1304.1 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+s11.snapshot = gt=149.25 main=182142.9 backup=69914.1 output=1000.0 avail=1400.0 disp=1304.1 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+s12.snapshot = gt=161.00 main=173126.3 backup=68728.6 output=1000.0 avail=1400.0 disp=901.0 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+s13.snapshot = gt=168.75 main=167135.7 backup=67895.4 output=1000.0 avail=1400.0 disp=641.6 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+s14.snapshot = gt=177.00 main=160223.5 backup=67021.3 output=1000.0 avail=1400.0 disp=1003.8 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+s15.snapshot = gt=186.00 main=153323.8 backup=65878.0 output=1000.0 avail=1400.0 disp=703.5 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+s16.snapshot = gt=194.25 main=146411.6 backup=65003.9 output=1000.0 avail=1400.0 disp=1304.1 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+s17.snapshot = gt=204.75 main=138305.0 backup=63962.4 output=1000.0 avail=1400.0 disp=806.6 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+s18.snapshot = gt=214.50 main=131002.5 backup=62776.9 output=1000.0 avail=1400.0 disp=259.1 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+s19.snapshot = gt=224.00 main=122994.9 backup=61799.6 output=1000.0 avail=1400.0 disp=901.0 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+s20.snapshot = gt=233.50 main=115792.8 backup=60758.2 output=1000.0 avail=1400.0 disp=403.1 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+s21.snapshot = gt=242.50 main=108633.8 backup=59779.9 output=1000.0 avail=1400.0 disp=362.2 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+s22.snapshot = gt=251.50 main=100796.0 backup=58636.6 output=1000.0 avail=1400.0 disp=1366.0 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+s23.snapshot = gt=261.00 main=93529.4 backup=57762.5 output=1000.0 avail=1400.0 disp=901.0 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+s24.snapshot = gt=269.75 main=86738.8 backup=56825.1 output=1000.0 avail=1400.0 disp=641.6 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+s25.snapshot = gt=278.75 main=79476.6 backup=55785.0 output=1000.0 avail=1400.0 disp=703.8 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+s26.snapshot = gt=287.25 main=72373.4 backup=54807.7 output=1000.0 avail=1400.0 disp=1106.9 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+s27.snapshot = gt=297.50 main=64861.6 backup=53725.0 output=1000.0 avail=1400.0 disp=403.1 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+s28.snapshot = gt=306.50 main=57661.3 backup=52788.0 output=1000.0 avail=1400.0 disp=403.5 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+s29.snapshot = gt=314.00 main=51099.1 backup=51914.8 output=1000.0 avail=1400.0 disp=1065.7 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+s30.snapshot = gt=322.25 main=44549.2 backup=50937.5 output=1000.0 avail=1400.0 disp=1065.7 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+s31.snapshot = gt=331.50 main=37796.1 backup=50000.2 output=1000.0 avail=1400.0 disp=403.1 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+s32.snapshot = gt=341.00 main=29695.5 backup=49021.9 output=1000.0 avail=1400.0 disp=1003.8 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+s33.snapshot = gt=351.00 main=21995.8 backup=47774.5 output=1000.0 avail=1400.0 disp=703.5 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+s34.snapshot = gt=360.75 main=14383.2 backup=46795.9 output=1000.0 avail=1400.0 disp=600.3 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+s35.snapshot = gt=369.50 main=7530.1 backup=45858.9 output=1000.0 avail=1400.0 disp=403.5 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+s36.snapshot = gt=377.75 main=2179.8 backup=44922.9 output=1000.0 avail=1400.0 disp=703.8 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=0 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+s37.snapshot = gt=382.00 main=1318.2 backup=44423.9 output=1000.0 avail=1400.0 disp=765.3 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=0 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+s38.snapshot = gt=391.75 main=399.3 backup=43162.3 output=1000.0 avail=1200.0 disp=600.7 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=0 sliders=[impulse=1.25 warp=1.25 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.25]
+s39.snapshot = gt=402.00 main=6113.7 backup=42717.2 output=1000.0 avail=1800.0 disp=89.8 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=0 sliders=[impulse=0.40 warp=0.40 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=0.45]
+s40.snapshot = gt=414.50 main=13804.2 backup=42717.2 output=1000.0 avail=2200.0 disp=104.9 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=0.40 warp=0.40 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=0.45]
+s41.snapshot = gt=422.75 main=16979.7 backup=42717.2 output=1000.0 avail=1400.0 disp=35.3 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=0.40 warp=0.40 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=0.45]
+s42.snapshot = gt=432.00 main=19450.3 backup=42717.2 output=1000.0 avail=1800.0 disp=70.0 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=0.40 warp=0.40 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=0.45]
+s43.snapshot = gt=442.50 main=23030.9 backup=42717.2 output=1000.0 avail=1400.0 disp=15.2 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=0.40 warp=0.40 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=0.45]
+s44.snapshot = gt=453.25 main=25426.9 backup=42717.2 output=1000.0 avail=2200.0 disp=84.8 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=0.40 warp=0.40 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=0.45]
+s45.snapshot = gt=463.00 main=28562.1 backup=42717.2 output=1000.0 avail=1800.0 disp=70.0 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=0.40 warp=0.40 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=0.45]
+s46.snapshot = gt=472.50 main=31088.7 backup=42717.2 output=1000.0 avail=1800.0 disp=82.8 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.00 warp=1.00 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.00]
+s47.snapshot = gt=482.00 main=31987.0 backup=42717.2 output=1000.0 avail=1800.0 disp=165.3 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.00 warp=1.00 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.00]
+s48.snapshot = gt=490.75 main=33533.6 backup=42717.2 output=1000.0 avail=1400.0 disp=132.7 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.00 warp=1.00 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.00]
+s49.snapshot = gt=497.75 main=34561.2 backup=42717.2 output=1000.0 avail=1800.0 disp=165.3 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.00 warp=1.00 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.00]
+s50.snapshot = gt=505.50 main=36005.8 backup=42717.2 output=1000.0 avail=1800.0 disp=82.8 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.00 warp=1.00 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.00]
+s51.snapshot = gt=515.25 main=36671.3 backup=42717.2 output=1000.0 avail=1800.0 disp=248.2 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=1 sliders=[impulse=1.00 warp=1.00 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.00]
+s52.snapshot = gt=524.50 main=43002.1 backup=42717.2 output=1000.0 avail=1400.0 disp=82.8 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=0 sliders=[impulse=1.00 warp=1.00 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.00]
+s53.snapshot = gt=533.75 main=49682.9 backup=42717.2 output=1000.0 avail=1400.0 disp=165.3 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=0 sliders=[impulse=1.00 warp=1.00 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.00]
+s54.snapshot = gt=545.00 main=57866.8 backup=42717.2 output=1000.0 avail=2200.0 disp=165.7 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=0 sliders=[impulse=1.00 warp=1.00 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.00]
+s55.snapshot = gt=553.00 main=63878.6 backup=42717.2 output=1000.0 avail=1800.0 disp=83.2 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=0 sliders=[impulse=1.00 warp=1.00 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.00]
+s56.snapshot = gt=563.50 main=72228.4 backup=42717.2 output=1000.0 avail=1800.0 disp=82.5 wanted=0.0 mcon=1200.0 bcon=200.0 condpct=1.000 tractor=0 sliders=[impulse=1.00 warp=1.00 shields=1.25 phasers=1.25 torps=1.25 pulse=NA sensors=1.00]
+-- sample rows (compact -- one per sample() call) --------------
+sample_fields = game_time main backup output avail disp wanted mcon bcon condpct tractor impulse warp shields phasers torps pulse sensors
+sample_0 = 61.00 246873.2 79694.6 1000.0 1400.0 901.0 0.0 1200.0 200.0 1.000 0 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_1 = 67.25 245374.2 78965.5 1000.0 1400.0 1304.1 0.0 1200.0 200.0 1.000 0 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_2 = 77.50 239962.0 77883.1 1000.0 1400.0 362.2 0.0 1200.0 200.0 1.000 1 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_3 = 85.25 233270.4 77010.0 1000.0 1400.0 1003.8 0.0 1200.0 200.0 1.000 1 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_4 = 91.25 228408.5 76282.2 1000.0 1400.0 1065.7 0.0 1200.0 200.0 1.000 1 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_5 = 97.50 224055.4 75657.2 1000.0 1400.0 403.1 0.0 1200.0 200.0 1.000 1 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_6 = 103.50 219255.4 75032.5 1000.0 1400.0 403.1 0.0 1200.0 200.0 1.000 1 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_7 = 114.50 210558.2 73784.2 1000.0 1400.0 300.3 0.0 1200.0 200.0 1.000 1 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_8 = 124.00 202696.0 72661.6 1000.0 1400.0 662.5 0.0 1200.0 200.0 1.000 1 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_9 = 132.50 196189.8 71828.3 1000.0 1400.0 403.1 0.0 1200.0 200.0 1.000 1 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_10 = 140.25 189342.9 70995.5 1000.0 1400.0 1304.1 0.0 1200.0 200.0 1.000 1 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_11 = 149.25 182142.9 69914.1 1000.0 1400.0 1304.1 0.0 1200.0 200.0 1.000 1 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_12 = 161.00 173126.3 68728.6 1000.0 1400.0 901.0 0.0 1200.0 200.0 1.000 1 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_13 = 168.75 167135.7 67895.4 1000.0 1400.0 641.6 0.0 1200.0 200.0 1.000 1 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_14 = 177.00 160223.5 67021.3 1000.0 1400.0 1003.8 0.0 1200.0 200.0 1.000 1 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_15 = 186.00 153323.8 65878.0 1000.0 1400.0 703.5 0.0 1200.0 200.0 1.000 1 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_16 = 194.25 146411.6 65003.9 1000.0 1400.0 1304.1 0.0 1200.0 200.0 1.000 1 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_17 = 204.75 138305.0 63962.4 1000.0 1400.0 806.6 0.0 1200.0 200.0 1.000 1 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_18 = 214.50 131002.5 62776.9 1000.0 1400.0 259.1 0.0 1200.0 200.0 1.000 1 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_19 = 224.00 122994.9 61799.6 1000.0 1400.0 901.0 0.0 1200.0 200.0 1.000 1 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_20 = 233.50 115792.8 60758.2 1000.0 1400.0 403.1 0.0 1200.0 200.0 1.000 1 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_21 = 242.50 108633.8 59779.9 1000.0 1400.0 362.2 0.0 1200.0 200.0 1.000 1 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_22 = 251.50 100796.0 58636.6 1000.0 1400.0 1366.0 0.0 1200.0 200.0 1.000 1 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_23 = 261.00 93529.4 57762.5 1000.0 1400.0 901.0 0.0 1200.0 200.0 1.000 1 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_24 = 269.75 86738.8 56825.1 1000.0 1400.0 641.6 0.0 1200.0 200.0 1.000 1 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_25 = 278.75 79476.6 55785.0 1000.0 1400.0 703.8 0.0 1200.0 200.0 1.000 1 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_26 = 287.25 72373.4 54807.7 1000.0 1400.0 1106.9 0.0 1200.0 200.0 1.000 1 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_27 = 297.50 64861.6 53725.0 1000.0 1400.0 403.1 0.0 1200.0 200.0 1.000 1 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_28 = 306.50 57661.3 52788.0 1000.0 1400.0 403.5 0.0 1200.0 200.0 1.000 1 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_29 = 314.00 51099.1 51914.8 1000.0 1400.0 1065.7 0.0 1200.0 200.0 1.000 1 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_30 = 322.25 44549.2 50937.5 1000.0 1400.0 1065.7 0.0 1200.0 200.0 1.000 1 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_31 = 331.50 37796.1 50000.2 1000.0 1400.0 403.1 0.0 1200.0 200.0 1.000 1 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_32 = 341.00 29695.5 49021.9 1000.0 1400.0 1003.8 0.0 1200.0 200.0 1.000 1 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_33 = 351.00 21995.8 47774.5 1000.0 1400.0 703.5 0.0 1200.0 200.0 1.000 1 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_34 = 360.75 14383.2 46795.9 1000.0 1400.0 600.3 0.0 1200.0 200.0 1.000 1 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_35 = 369.50 7530.1 45858.9 1000.0 1400.0 403.5 0.0 1200.0 200.0 1.000 1 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_36 = 377.75 2179.8 44922.9 1000.0 1400.0 703.8 0.0 1200.0 200.0 1.000 0 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_37 = 382.00 1318.2 44423.9 1000.0 1400.0 765.3 0.0 1200.0 200.0 1.000 0 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_38 = 391.75 399.3 43162.3 1000.0 1200.0 600.7 0.0 1200.0 200.0 1.000 0 1.25 1.25 1.25 1.25 1.25 NA 1.25
+sample_39 = 402.00 6113.7 42717.2 1000.0 1800.0 89.8 0.0 1200.0 200.0 1.000 0 0.40 0.40 1.25 1.25 1.25 NA 0.45
+sample_40 = 414.50 13804.2 42717.2 1000.0 2200.0 104.9 0.0 1200.0 200.0 1.000 1 0.40 0.40 1.25 1.25 1.25 NA 0.45
+sample_41 = 422.75 16979.7 42717.2 1000.0 1400.0 35.3 0.0 1200.0 200.0 1.000 1 0.40 0.40 1.25 1.25 1.25 NA 0.45
+sample_42 = 432.00 19450.3 42717.2 1000.0 1800.0 70.0 0.0 1200.0 200.0 1.000 1 0.40 0.40 1.25 1.25 1.25 NA 0.45
+sample_43 = 442.50 23030.9 42717.2 1000.0 1400.0 15.2 0.0 1200.0 200.0 1.000 1 0.40 0.40 1.25 1.25 1.25 NA 0.45
+sample_44 = 453.25 25426.9 42717.2 1000.0 2200.0 84.8 0.0 1200.0 200.0 1.000 1 0.40 0.40 1.25 1.25 1.25 NA 0.45
+sample_45 = 463.00 28562.1 42717.2 1000.0 1800.0 70.0 0.0 1200.0 200.0 1.000 1 0.40 0.40 1.25 1.25 1.25 NA 0.45
+sample_46 = 472.50 31088.7 42717.2 1000.0 1800.0 82.8 0.0 1200.0 200.0 1.000 1 1.00 1.00 1.25 1.25 1.25 NA 1.00
+sample_47 = 482.00 31987.0 42717.2 1000.0 1800.0 165.3 0.0 1200.0 200.0 1.000 1 1.00 1.00 1.25 1.25 1.25 NA 1.00
+sample_48 = 490.75 33533.6 42717.2 1000.0 1400.0 132.7 0.0 1200.0 200.0 1.000 1 1.00 1.00 1.25 1.25 1.25 NA 1.00
+sample_49 = 497.75 34561.2 42717.2 1000.0 1800.0 165.3 0.0 1200.0 200.0 1.000 1 1.00 1.00 1.25 1.25 1.25 NA 1.00
+sample_50 = 505.50 36005.8 42717.2 1000.0 1800.0 82.8 0.0 1200.0 200.0 1.000 1 1.00 1.00 1.25 1.25 1.25 NA 1.00
+sample_51 = 515.25 36671.3 42717.2 1000.0 1800.0 248.2 0.0 1200.0 200.0 1.000 1 1.00 1.00 1.25 1.25 1.25 NA 1.00
+sample_52 = 524.50 43002.1 42717.2 1000.0 1400.0 82.8 0.0 1200.0 200.0 1.000 0 1.00 1.00 1.25 1.25 1.25 NA 1.00
+sample_53 = 533.75 49682.9 42717.2 1000.0 1400.0 165.3 0.0 1200.0 200.0 1.000 0 1.00 1.00 1.25 1.25 1.25 NA 1.00
+sample_54 = 545.00 57866.8 42717.2 1000.0 2200.0 165.7 0.0 1200.0 200.0 1.000 0 1.00 1.00 1.25 1.25 1.25 NA 1.00
+sample_55 = 553.00 63878.6 42717.2 1000.0 1800.0 83.2 0.0 1200.0 200.0 1.000 0 1.00 1.00 1.25 1.25 1.25 NA 1.00
+sample_56 = 563.50 72228.4 42717.2 1000.0 1800.0 82.5 0.0 1200.0 200.0 1.000 0 1.00 1.00 1.25 1.25 1.25 NA 1.00
+sample_count = 57

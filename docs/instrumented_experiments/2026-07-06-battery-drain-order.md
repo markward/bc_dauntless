@@ -1,9 +1,9 @@
 # Battery drain order — concurrent conduit-overflow vs reserve-last-resort
 
-Status: PENDING
+Status: CLOSED
 Author: 2026-07-06 session
 Created: 2026-07-06
-Closed:  —
+Closed:  2026-07-06
 
 ## Goal
 
@@ -254,4 +254,103 @@ Delete `game/BCTickLog.cfg` once analyzed.
 
 ## Findings
 
-*(filled in once the experiment runs)*
+**Run:** 2026-07-06, Galaxy vs. stationary asteroid (tractor target), 57 samples
+over ~500 game-seconds. Raw data: `tools/probes/results/q10_battery_drain.txt`.
+The operator additionally varied sliders mid-run and let the tractor auto-toggle,
+giving load-variation and recharge data beyond the original plan.
+
+### Answers to the four questions
+
+- **Q1 — Drain order: CONCURRENT (conduit-overflow). CONFIRMED.**
+  Reserve falls from the very first sample while main is still near-full
+  (s0 main 246,873 / backup 79,694 → s31 main 37,796 / backup 50,000). Reserve
+  drops ~30,000 while main still holds six figures. The player-manual
+  "reserve is a last resort" story is **refuted**; the C++ engine drains the
+  stack concurrently. The dauntless model's `_compute_available_power` structure
+  (both conduit budgets available every interval) is validated.
+
+- **Q2 — Rates (per game-second):**
+
+  | Phase | Main | Reserve |
+  |---|---|---|
+  | Pre-tractor, all sliders 1.25 (s0→s1) | −240 | −117 |
+  | Tractor held, all 1.25 (s10→s20) | **−789** | **−110** |
+  | Recharge, tractor off, sliders 1.00 (s52→s56) | +749 | 0 (frozen) |
+  | Recharge, tractor on, sliders 0.40 (s40→s45) | +304 | 0 (frozen) |
+
+  Two deltas vs. the doc's ~−200/−200 prediction: (a) **main drains ~4× faster
+  than predicted** (~−790, not −200) — the model's rate constant is wrong; and
+  (b) **reserve drain is ~constant ~110/s whether or not the tractor fires**
+  (117 → 110). The tractor's entire extra load (~+550/s) is served by **main**,
+  never reserve (see §Power-source stack).
+
+- **Q3 — Slider auto-throttle: NONE. CONFIRMED.** Sliders held exactly where set
+  and only moved on manual operator input (s39 → 0.40; s46 → 1.00). When main
+  crashed to ~1% (s36–38) the engine did **not** throttle sliders — it **shed
+  the tractor** (auto-off). AdjustPower is inert on the host, as the model assumes.
+
+- **Q4 — Recharge order: MAIN FIRST, sequential (stronger than predicted).**
+  Once load dropped and the ship went power-positive, main climbed 399 → 72,228
+  but **reserve froze at 42,717.2 for the entire back half (s39→s56)** and never
+  recharged in-window. Recharge is **not** concurrent: warp-core output refills
+  main fully before touching reserve. Drain is concurrent; recharge is sequential
+  — a real **asymmetry**.
+
+### Power-source stack (from the in-game Power Transmission Grid UI)
+
+The Engineering panel draws the three power sources as bracket stacks, top to
+bottom in draw/priority order, with a live percentage under each:
+
+1. **Warp Core** (blue) — the reactor. Its percentage tracks the **warp-core
+   subsystem repair state**, not a draining reservoir; at 100% health it supplies
+   full output (the constant `output=1000.0/s` for the Galaxy in this capture).
+   Engine implication: `output` must be modelled as `f(warp_core_condition)`,
+   not a constant.
+2. **Main Battery** (yellow) — second in the stack.
+3. **Reserve Power** (orange) — last.
+
+General consumers draw **top-down** through the stack (warp core output first,
+overflow into main, then reserve) and the batteries **recharge top-down** (main
+fully before reserve). This is exactly the observed concurrent-drain /
+sequential-recharge behaviour. UI cross-check: screenshot `100%/6%/61%` = warp
+core full, main nearly empty, reserve 61% — the "main empties while reserve
+holds" signature.
+
+**Dedicated-source consumers** bind to one stack level and cannot draw elsewhere:
+
+- **Tractor → Main Battery only** (cannot touch warp core or reserve). This is
+  why reserve drain is independent of the tractor and the tractor's load lands
+  entirely on main.
+- **Cloak → Reserve Power only** (cannot touch warp core or main), per the
+  cloak-capable ship's power panel.
+
+### Correction to the RE: `powerMode` is a source-stack index, not "backup-first"
+
+The Background section asserted `TractorBeamSystem` `powerMode = 1`
+(`FUN_00582080`) meant **backup-first**. Both the UI and the measured data show
+the tractor is **main-only**, contradicting that reading. The consistent
+reinterpretation:
+
+> **`powerMode` is an index into the source stack: `0 = warp core,
+> 1 = main battery, 2 = reserve`.**
+
+This makes tractor `powerMode=1` = **main battery** (matches), and **predicts
+cloak `powerMode = 2` = reserve** (matches the cloak→reserve UI fact). Falsifiable
+— confirm by reading the cloak subsystem's `powerMode` in the hardpoint/RE data.
+
+### Follow-ups (do not block closing this experiment)
+
+1. **Main drain-rate constant is ~4× too low** in the dauntless model — retune
+   against the −790/s (tractor, all-1.25) and +749/s (recharge, no tractor)
+   figures.
+2. **Confirm `powerMode`-as-index** by grepping the cloak subsystem's `powerMode`
+   in `sdk/.../ships/Hardpoints/` and the RE notes; update
+   `ship-subsystems.md` §Power-and-reactor to replace the "backup-first" wording.
+3. **Model `output` as a function of warp-core repair state**, not a constant.
+
+### Bonus behaviour (operator-driven, tractor auto-toggle)
+
+The tractor auto-cut at main ≈ 2,179 (~0.9%) and auto-restarted once main
+recovered to ~13,800 (~5.6%) — **gated on the main battery only** (reserve was a
+healthy ~53% throughout and irrelevant to the decision). Under power starvation
+the engine **sheds consumers, never throttles sliders**, consistent with Q3.
