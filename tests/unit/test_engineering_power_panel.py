@@ -1,7 +1,8 @@
-"""TDD tests for EngineeringPowerPanel (Task 13).
+"""TDD tests for EngineeringPowerPanel (Task 13 / payload v2).
 
-Panel renders live power-grid state: sliders per group, banded Power Used bar,
-Warp Core / Main / Reserve columns, and tractor/cloak siphon lines.
+Panel renders live power-grid state: sliders per group, grid fractions
+(damage/available/used), battery pillars with drain trend, tractor/cloak
+presence. Payload v2 schema per docs/superpowers/specs/2026-07-06-power-panel-redesign-design.md.
 """
 import json
 
@@ -10,23 +11,27 @@ from engine.appc.subsystems import (
     PowerSubsystem, PoweredSubsystem,
 )
 from engine.appc.properties import PowerProperty
+from engine.ui.engineering_power_panel import _GROUPS
 
 
 def _fake_player():
-    """Ship with full power subsystem + all seven group systems populated."""
+    """Ship with full power subsystem + all seven group systems populated.
+
+    Power authored values: output=1000, main_conduit=1200, backup_conduit=200,
+    main_battery_limit=250000, backup_battery_limit=80000 (full charge on init).
+    Battery levels set to full by SetProperty (fills to limit).
+    """
     ship = App.ShipClass_Create("TestShip")
 
-    # Power plant
+    # Power plant — authored values per brief
     power = PowerSubsystem("Warp Core")
     prop = PowerProperty("Warp Core")
     prop.SetPowerOutput(1000.0)
-    prop.SetMainBatteryLimit(800.0)
-    prop.SetBackupBatteryLimit(200.0)
+    prop.SetMainBatteryLimit(250000.0)
+    prop.SetBackupBatteryLimit(80000.0)
     prop.SetMainConduitCapacity(1200.0)
     prop.SetBackupConduitCapacity(200.0)
-    power.SetProperty(prop)
-    power.SetMainBatteryPower(400.0)
-    power.SetBackupBatteryPower(100.0)
+    power.SetProperty(prop)   # fills batteries to limits
     ship.SetPowerSubsystem(power)
 
     # The systems all come pre-set by ShipClass_Create, so we just make sure
@@ -55,22 +60,175 @@ def _fake_player():
     return ship
 
 
-def test_payload_shape_and_diffing(monkeypatch):
-    panel = _make_panel(is_engineering_open=lambda: True)
+# ── v2 payload helpers ────────────────────────────────────────────────────────
+
+def _panel():
+    """Panel with open engineering menu and full _fake_player."""
+    return _make_panel(is_engineering_open=lambda: True)
+
+
+def _panel_with_power():
+    """Return (panel, power_subsystem) so tests can mutate power state."""
+    player = _fake_player()
+    panel = _make_panel(player, is_engineering_open=lambda: True)
+    return panel, player.GetPowerSubsystem()
+
+
+def _panel_with_player(tractor_weapons=None):
+    """Return (panel, player) so tests can mutate any subsystem."""
+    player = _fake_player()
+    if tractor_weapons is not None:
+        tbs = player.GetTractorBeamSystem()
+        # Clear existing child weapons down to desired count
+        while tbs.GetNumWeapons() > tractor_weapons:
+            tbs.RemoveSubsystem(tbs.GetNthChildSubsystem(0))
+    panel = _make_panel(player, is_engineering_open=lambda: True)
+    return panel, player
+
+
+def _payload(panel):
+    js = panel.render_payload()
+    assert js is not None
+    assert js.startswith("setEngineeringPower(")
+    return json.loads(js[len("setEngineeringPower("):-2])
+
+
+def _systems(player, getters):
+    out = []
+    for g in getters:
+        getter = getattr(player, g, None)
+        sys = getter() if getter else None
+        if sys is not None:
+            out.append(sys)
+    return out
+
+
+# ── v2 payload tests ──────────────────────────────────────────────────────────
+
+def test_payload_shape_and_diffing():
+    """v2 payload has grid/batteries/sliders/tractor/cloak; old power_used/columns absent."""
+    panel = _panel()
     js = panel.render_payload()
     assert js is not None
     assert js.startswith("setEngineeringPower(")
     payload = json.loads(js[len("setEngineeringPower("):-2])
-    # columns must be a dict with the three keys
-    assert set(payload["columns"]) == {"warp_core", "main", "backup"}
+    # v2 keys present
+    assert "grid" in payload
+    assert "batteries" in payload
+    assert "sliders" in payload
+    assert "tractor" in payload
+    assert "cloak" in payload
+    # old v1 keys absent
+    assert "power_used" not in payload
+    assert "columns" not in payload
     # sliders ordered weapons/engines/sensors/shields
     assert [s["key"] for s in payload["sliders"]] == [
         "weapons", "engines", "sensors", "shields"]
-    assert 0.0 <= payload["power_used"]["fraction"] <= 1.0
-    assert set(payload["power_used"]["bands"]) == {"blue", "yellow", "red"}
     assert payload["tractor"]["active"] in (True, False)
     # unchanged state => no re-send
     assert panel.render_payload() is None
+
+
+def test_grid_fractions_healthy_full_batteries():
+    panel = _panel()
+    p = _payload(panel)
+    D = 1000.0 + 1200.0 + 200.0
+    assert p["grid"]["damage"] == 0.0
+    assert abs(p["grid"]["available"]["warp_core"] - round(1000.0 / D, 4)) < 1e-9
+    assert abs(p["grid"]["available"]["main"] - round(1200.0 / D, 4)) < 1e-9
+    assert abs(p["grid"]["available"]["reserve"] - round(200.0 / D, 4)) < 1e-9
+    assert [u["key"] for u in p["grid"]["used"]] == ["weapons", "engines", "sensors", "shields"]
+    assert p["grid"]["overload"] is False
+
+
+def test_damage_column_from_core_condition():
+    panel, power = _panel_with_power()
+    power.SetCondition(power.GetMaxCondition() * 0.5)     # 50% health
+    p = _payload(panel)
+    D = 2400.0
+    assert abs(p["grid"]["damage"] - round(500.0 / D, 4)) < 1e-9
+    assert abs(p["grid"]["available"]["warp_core"] - round(500.0 / D, 4)) < 1e-9
+
+
+def test_available_battery_segments_shrink_with_charge():
+    panel, power = _panel_with_power()
+    power.SetMainBatteryPower(125000.0)                   # 50% charge
+    p = _payload(panel)
+    assert abs(p["grid"]["available"]["main"] - round(1200.0 * 0.5 / 2400.0, 4)) < 1e-9
+
+
+def test_used_overload_clamps_and_flags():
+    panel, player = _panel_with_player()
+    for key, _label, getters in _GROUPS:                  # crank demand way past supply
+        for s in _systems(player, getters):
+            s.SetNormalPowerPerSecond(5000.0)
+    p = _payload(panel)
+    used_total = sum(u["frac"] for u in p["grid"]["used"])
+    avail_total = sum(p["grid"]["available"].values())
+    assert p["grid"]["overload"] is True
+    assert abs(used_total - avail_total) < 1e-3
+
+
+def test_battery_draining_trend():
+    panel, power = _panel_with_power()
+    _payload(panel)                                       # snapshot 1: baseline
+    power.SetMainBatteryPower(power.GetMainBatteryPower() - 500.0)
+    panel._last_pushed = None                             # force re-snapshot
+    p = _payload(panel)
+    assert p["batteries"]["main"]["draining"] is True
+    assert p["batteries"]["reserve"]["draining"] is False
+
+
+def test_tractor_presence_requires_emitters():
+    panel, player = _panel_with_player(tractor_weapons=0)
+    assert _payload(panel)["tractor"]["present"] is False
+
+
+def test_shields_label_renamed():
+    p = _payload(_panel())
+    assert [s["label"] for s in p["sliders"]] == ["Weapons", "Engines", "Sensor Array", "Shields"]
+
+
+def test_batteries_charge_fractions():
+    """Batteries in payload carry correct charge fractions."""
+    panel, power = _panel_with_power()
+    # Full batteries after SetProperty
+    p = _payload(panel)
+    assert abs(p["batteries"]["main"]["charge"] - 1.0) < 1e-9
+    assert abs(p["batteries"]["reserve"]["charge"] - 1.0) < 1e-9
+    # Half charge on main
+    power.SetMainBatteryPower(125000.0)
+    panel._last_pushed = None
+    p2 = _payload(panel)
+    assert abs(p2["batteries"]["main"]["charge"] - 0.5) < 1e-9
+
+
+def test_tractor_active_when_firing():
+    """tractor.active is True when the tractor is firing."""
+    from engine.appc.weapon_subsystems import TractorBeamSystem
+    player = _fake_player()
+    panel = _make_panel(player, is_engineering_open=lambda: True)
+    # Force the tractor to appear active via monkeypatching _wants_power
+    tbs = player.GetTractorBeamSystem()
+    tbs._wants_power = lambda: True
+    # Invalidate to force a fresh snapshot
+    panel._last_pushed = None
+    js = panel.render_payload()
+    payload = json.loads(js[len("setEngineeringPower("):-2])
+    assert payload["tractor"]["active"] is True
+
+
+def test_cloak_present_and_inactive_by_default():
+    """cloak.present is False for a basic ship (no cloaking subsystem set)."""
+    from engine.ui.engineering_power_panel import EngineeringPowerPanel
+    player = _fake_player()
+    # ShipClass_Create does NOT set a CloakingSubsystem by default
+    panel = EngineeringPowerPanel(get_player=lambda: player,
+                                  is_engineering_open=lambda: True)
+    js = panel.render_payload()
+    payload = json.loads(js[len("setEngineeringPower("):-2])
+    assert payload["cloak"]["present"] is False
+    assert payload["cloak"]["active"] is False
 
 
 def test_slider_event_sets_group_and_refreshes():

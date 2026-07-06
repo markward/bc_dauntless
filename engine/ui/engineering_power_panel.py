@@ -17,7 +17,7 @@ _GROUPS = (
     ("weapons", "Weapons", ("GetPhaserSystem", "GetTorpedoSystem", "GetPulseWeaponSystem")),
     ("engines", "Engines", ("GetImpulseEngineSubsystem", "GetWarpEngineSubsystem")),
     ("sensors", "Sensor Array", ("GetSensorSubsystem",)),
-    ("shields", "Shield Generator", ("GetShields",)),
+    ("shields", "Shields", ("GetShields",)),
 )
 
 
@@ -58,6 +58,10 @@ class EngineeringPowerPanel(Panel):
         # unit tests that only exercise dispatch/slider logic).
         self._is_engineering_open = is_engineering_open
         self._last_pushed = None
+        # Battery trend tracking (v2): persist direction across snapshots so
+        # draining=True persists until the value reverses.
+        self._batt_prev = {}
+        self._batt_dir = {"main": False, "reserve": False}
 
     @property
     def name(self) -> str:
@@ -81,40 +85,92 @@ class EngineeringPowerPanel(Panel):
             return {"visible": False}
         if not self._engineering_is_open():
             return {"visible": False}
+
+        # ── Sliders ───────────────────────────────────────────────────────────
         sliders = []
-        total_draw = 0.0
         for key, label, getters in _GROUPS:
             systems = self._systems(player, getters)
             pct = systems[0].GetPowerPercentageWanted() if systems else 0.0
             present = bool(systems)
-            for s in systems:
-                total_draw += s.GetNormalPowerWanted() * s.GetPowerPercentageWanted()
             sliders.append({"key": key, "label": label, "pct": round(pct, 4),
                             "present": present})
-        bandwidth = power.GetMaxMainConduitCapacity() + power.GetBackupConduitCapacity()
-        output = power.GetPowerOutput()
-        main_cap = power.GetMainBatteryLimit()
-        backup_cap = power.GetBackupBatteryLimit()
+
+        # ── Grid fractions (v2) ───────────────────────────────────────────────
+        # Shared denominator D = authored_output + main_conduit_cap + backup_conduit_cap
+        prop = power.GetProperty()
+        authored_out = float(prop.GetPowerOutput() or 0.0) if prop is not None else 0.0
+        main_cond = float(prop.GetMainConduitCapacity() or 0.0) if prop is not None else 0.0
+        back_cond = float(prop.GetBackupConduitCapacity() or 0.0) if prop is not None else 0.0
+        denom = authored_out + main_cond + back_cond
+
+        live_out = power.GetPowerOutput()   # health-scaled
+
+        # Damage column: fraction of denom lost to damage
+        damage = round((authored_out - live_out) / denom, 4) if denom > 0 else 0.0
+
+        # Battery charge fractions
+        main_limit = power.GetMainBatteryLimit()
+        res_limit = power.GetBackupBatteryLimit()
+        main_batt = power.GetMainBatteryPower()
+        res_batt = power.GetBackupBatteryPower()
+        main_frac = main_batt / main_limit if main_limit > 0 else 0.0
+        res_frac = res_batt / res_limit if res_limit > 0 else 0.0
+
+        available = {
+            "warp_core": round(live_out / denom, 4) if denom > 0 else 0.0,
+            "main": round(main_cond * main_frac / denom, 4) if denom > 0 else 0.0,
+            "reserve": round(back_cond * res_frac / denom, 4) if denom > 0 else 0.0,
+        }
+
+        # Used segments per group: Σ(normal × pct) / D
+        used = []
+        for key, _label, getters in _GROUPS:
+            demand = sum(
+                s.GetNormalPowerWanted() * s.GetPowerPercentageWanted()
+                for s in self._systems(player, getters)
+            )
+            used.append({"key": key, "frac": demand / denom if denom > 0 else 0.0})
+
+        # Overload: clamp used to available, set flag
+        avail_total = sum(available.values())
+        used_total = sum(u["frac"] for u in used)
+        overload = used_total > avail_total > 0.0
+        if overload:
+            scale = avail_total / used_total
+            for u in used:
+                u["frac"] *= scale
+        for u in used:
+            u["frac"] = round(u["frac"], 4)
+
+        # ── Battery trend ─────────────────────────────────────────────────────
+        for batt_key, new_val in (("main", main_batt), ("reserve", res_batt)):
+            prev = self._batt_prev.get(batt_key)
+            if prev is not None and new_val != prev:
+                self._batt_dir[batt_key] = (new_val < prev)
+            self._batt_prev[batt_key] = new_val
+
+        batteries = {
+            "main":    {"charge": round(main_frac, 4), "draining": self._batt_dir["main"]},
+            "reserve": {"charge": round(res_frac, 4),  "draining": self._batt_dir["reserve"]},
+        }
+
+        # ── Tractor / cloak presence ──────────────────────────────────────────
         tractor = player.GetTractorBeamSystem()
         cloak = player.GetCloakingSubsystem()
+        tractor_present = tractor is not None and tractor.GetNumWeapons() > 0
         tractor_active = bool(tractor is not None and tractor._wants_power())
+
         return {
             "visible": True,
-            "power_used": {
-                "fraction": round(min(total_draw / bandwidth, 1.0) if bandwidth > 0 else 0.0, 4),
-                "bands": {
-                    "blue": round(min(output / bandwidth, 1.0) if bandwidth > 0 else 0.0, 4),
-                    "yellow": round(power.GetMainConduitCapacity() / bandwidth if bandwidth > 0 else 0.0, 4),
-                    "red": round(power.GetBackupConduitCapacity() / bandwidth if bandwidth > 0 else 0.0, 4),
-                },
-            },
             "sliders": sliders,
-            "columns": {
-                "warp_core": round(power.GetConditionPercentage(), 4),
-                "main": round(power.GetMainBatteryPower() / main_cap if main_cap > 0 else 0.0, 4),
-                "backup": round(power.GetBackupBatteryPower() / backup_cap if backup_cap > 0 else 0.0, 4),
+            "grid": {
+                "damage": damage,
+                "available": available,
+                "used": used,
+                "overload": overload,
             },
-            "tractor": {"present": tractor is not None, "active": tractor_active},
+            "batteries": batteries,
+            "tractor": {"present": tractor_present, "active": tractor_active},
             "cloak": {"present": cloak is not None,
                       "active": bool(cloak is not None and cloak.IsTryingToCloak())},
         }
