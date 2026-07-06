@@ -3,7 +3,6 @@
 
 def test_gameloop_ticks_repair(monkeypatch):
     from engine.core.loop import GameLoop, TICK_DELTA
-    import engine.appc.ship_iter as ship_iter
 
     ticked = []
 

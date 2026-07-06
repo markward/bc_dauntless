@@ -109,10 +109,10 @@ def test_snapshot_node_projects_repair_pane_visible_true():
 
 
 def test_current_player_resolves_real_object_not_stub():
-    """Stub-audit: the resolved player for the repair-pane branches must be
-    a real ship, never App._NamedStub (Game_GetCurrentPlayer() silently
-    returns a truthy stub here because Game only implements GetPlayer(),
-    not GetCurrentPlayer() -- see engine/core/game.py)."""
+    """Stub-audit guard: _current_player() must resolve to a real ship
+    object for the repair-pane branches, never App._NamedStub -- mirrors
+    Task 1's no-stub discipline (see engine/ui/crew_menu_panel.py:_current_player
+    and engine/ui/ship_display_panel.py:_get_player)."""
     from engine.core.game import Game, _set_current_game
     from engine.ui.crew_menu_panel import _current_player
 

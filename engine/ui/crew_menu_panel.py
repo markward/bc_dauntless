@@ -25,12 +25,9 @@ _logger = logging.getLogger(__name__)
 def _current_player():
     """Return the current player ship, or None.
 
-    NOTE: this is deliberately NOT ``App.Game_GetCurrentPlayer()`` — that
-    module function calls ``Game.GetCurrentPlayer()``, a method Game never
-    defines (only ``GetPlayer()`` exists); TGObject.__getattr__ absorbs the
-    typo into a truthy ``_Stub()`` instead of raising, so the "existing"
-    call silently returns a fake player forever. Mirrors
-    engine/ui/ship_display_panel.py:_get_player().
+    Mirrors the established engine/ui/ship_display_panel.py:_get_player()
+    pattern: resolve the current game via Game_GetCurrentGame() and return
+    game.GetPlayer() if game else None, guarded against any lookup failure.
     """
     try:
         from engine.core.game import Game_GetCurrentGame
