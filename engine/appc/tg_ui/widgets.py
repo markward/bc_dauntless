@@ -265,6 +265,46 @@ class TGIconGroup:
         return 0.0
 
 
+class _TGRect:
+    def GetLeft(self) -> float:   return 0.0
+    def GetTop(self) -> float:    return 0.0
+    def GetRight(self) -> float:  return 0.0
+    def GetBottom(self) -> float: return 0.0
+
+
+class TGFrame(TGPane):
+    """Bordered frame — records colour/stretch; geometry inert like TGPane."""
+    NO_STRETCH_LR = 1
+
+    def __init__(self, group_name: str = "", icon_id: int = 0):
+        super().__init__()
+        self._group_name = str(group_name)
+        self._icon_id = int(icon_id)
+        self._ni_color = None
+        self._edge_stretch = 0
+
+    def GetInnerRect(self) -> _TGRect:       return _TGRect()
+    def SetNiColor(self, *rgba) -> None:     self._ni_color = rgba
+    def SetEdgeStretch(self, mode) -> None:  self._edge_stretch = int(mode)
+
+
+class STTiledIcon(TGIcon):
+    """Tiling icon widget — records tiling/tile-size per direction; draws nothing."""
+    DIRECTION_X = 0
+    DIRECTION_Y = 1
+
+    def __init__(self, group_name: str = "", icon_id: int = 0, color=None):
+        super().__init__(group_name, icon_id, color)
+        self._tiling = {}
+        self._tile_size = {}
+
+    def SetTiling(self, direction, n) -> None:
+        self._tiling[int(direction)] = n
+
+    def SetTileSize(self, direction, size) -> None:
+        self._tile_size[int(direction)] = float(size)
+
+
 # ── Factories + lenient casts (engine/appc convention) ───────────────────────
 
 def TGPane_Create(width=0.0, height=0.0) -> TGPane:
@@ -293,3 +333,19 @@ def TGParagraph_CreateW(text="", scale=1.0, color=None, *_extra) -> TGParagraph:
 
 def TGParagraph_Cast(obj):
     return obj if isinstance(obj, TGParagraph) else None
+
+
+def TGFrame_Create(group_name="", icon_id=0) -> TGFrame:
+    return TGFrame(group_name, icon_id)
+
+
+def TGFrame_Cast(obj):
+    return obj if isinstance(obj, TGFrame) else None
+
+
+def STTiledIcon_Create(group_name="", icon_id=0, color=None, *_extra) -> STTiledIcon:
+    return STTiledIcon(group_name, icon_id, color)
+
+
+def STTiledIcon_Cast(obj):
+    return obj if isinstance(obj, STTiledIcon) else None

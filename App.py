@@ -30,6 +30,8 @@ from engine.appc.tg_ui.widgets import (
     TGIcon, TGIcon_Create, TGIcon_Cast,
     TGParagraph, TGParagraph_Create, TGParagraph_CreateW, TGParagraph_Cast,
     TGIconGroup,
+    TGFrame, TGFrame_Create, TGFrame_Cast,
+    STTiledIcon, STTiledIcon_Create, STTiledIcon_Cast,
     WC_BACKSPACE, WC_TAB, WC_LINEFEED, WC_RETURN, WC_SPACE, WC_CURSOR,
 )
 from engine.appc.tg_ui.managers import (
@@ -1193,6 +1195,42 @@ g_kSTMenu2NormalBase    = NiColorA(0.5, 0.5, 0.5, 1.0)
 g_kSTMenu2HighlightedBase = NiColorA(0.8, 0.8, 0.8, 1.0)
 g_kSTMenu2Disabled      = NiColorA(0.3, 0.3, 0.3, 0.5)
 
+# ── App.globals — Appc.globals namespace (SDK App.py:13178). PowerDisplay and
+# the engineering UI read indents + colours through it; colour values are
+# LCARS approximations from the original UI (cosmetic — CEF restyles).
+# NOTE: assigning globals = _AppcGlobals() shadows the builtin inside this
+# module.  Capture _py_globals first so __getattr__'s memoize path still works.
+_py_globals = globals  # preserve builtin before shadowing
+
+
+class _AppcGlobals:
+    DEFAULT_ST_INDENT_HORIZ = 5.0
+    DEFAULT_ST_INDENT_VERT = 5.0
+    g_kEngineeringWarpCoreColor      = NiColorA(0.25, 0.47, 1.00, 1.0)  # blue
+    g_kEngineeringMainPowerColor     = NiColorA(1.00, 0.80, 0.20, 1.0)  # yellow
+    g_kEngineeringBackupPowerColor   = NiColorA(1.00, 0.30, 0.15, 1.0)  # red
+    g_kEngineeringEnginesColor       = NiColorA(0.85, 0.45, 0.95, 1.0)
+    g_kEngineeringShieldsColor       = NiColorA(0.65, 0.55, 0.95, 1.0)
+    g_kEngineeringWeaponsColor       = NiColorA(0.95, 0.60, 0.25, 1.0)
+    g_kEngineeringSensorsColor       = NiColorA(0.95, 0.90, 0.30, 1.0)
+    g_kEngineeringCloakColor         = NiColorA(0.95, 0.55, 0.20, 1.0)
+    g_kEngineeringTractorColor       = NiColorA(0.95, 0.40, 0.55, 1.0)
+    g_kEngineeringCtrlBkgndLineColor = NiColorA(0.30, 0.30, 0.30, 1.0)
+
+
+globals = _AppcGlobals()
+# SDK App.py re-exports the colours at module level (lines 13994-14003).
+g_kEngineeringWarpCoreColor      = globals.g_kEngineeringWarpCoreColor
+g_kEngineeringMainPowerColor     = globals.g_kEngineeringMainPowerColor
+g_kEngineeringBackupPowerColor   = globals.g_kEngineeringBackupPowerColor
+g_kEngineeringEnginesColor       = globals.g_kEngineeringEnginesColor
+g_kEngineeringShieldsColor       = globals.g_kEngineeringShieldsColor
+g_kEngineeringWeaponsColor       = globals.g_kEngineeringWeaponsColor
+g_kEngineeringSensorsColor       = globals.g_kEngineeringSensorsColor
+g_kEngineeringCloakColor         = globals.g_kEngineeringCloakColor
+g_kEngineeringTractorColor       = globals.g_kEngineeringTractorColor
+g_kEngineeringCtrlBkgndLineColor = globals.g_kEngineeringCtrlBkgndLineColor
+
 # ── Ship species constants ────────────────────────────────────────────────────
 # Used by WeaponsDisplay.SetShipIcon and other art routines.  Exact Appc values
 # are not available; we use unique sentinel integers — they are only ever passed
@@ -1826,6 +1864,6 @@ def __getattr__(name):
     if name[:3] in ("WC_", "KY_"):
         val = getattr(_input_consts, name, None)
         if isinstance(val, int):
-            globals()[name] = val   # memoize: future lookups skip __getattr__
+            _py_globals()[name] = val   # memoize: future lookups skip __getattr__
             return val
     return _NamedStub(name)
