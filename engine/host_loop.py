@@ -1300,20 +1300,28 @@ class _PlayerControl:
         return getter() if getter else None
 
     def GetTargetSpeed(self, player) -> float:
-        """Convert impulse_level into the throttle-commanded target speed
-        against the ship's BASE MaxSpeed (unscaled). Degradation caps are
-        applied by the keep-rule clamp in apply(), so a ship above its
-        reduced cap is not braked. Forward speed is multiplied by
-        WARP_BOOST_FACTOR when the in-system warp toggle is on (Ctrl+I);
-        reverse is unaffected.
+        """Convert impulse_level into the throttle-commanded target speed,
+        scaled by the impulse engine power factor so the command and the
+        _effective_motion cap agree.
+
+        Throttle is a fraction of the *effective* (power-scaled) max speed:
+        at 125 % power, full throttle targets 1.25 × authored MaxSpeed; at
+        50 % power, full throttle targets 0.5 × authored MaxSpeed. The
+        _cap_keep clamp in apply() still prevents over-driving, but now the
+        command reaches the boosted cap instead of stopping at raw MaxSpeed.
+
+        Forward speed is additionally multiplied by WARP_BOOST_FACTOR when
+        the in-system warp toggle is on (Ctrl+I); reverse is unaffected.
         """
         ies = self._get_ies(player)
-        max_speed = ies.GetMaxSpeed() if ies is not None else 0.0
+        raw_max = ies.GetMaxSpeed() if ies is not None else 0.0
+        power_factor = ies.GetNormalPowerPercentage() if ies is not None else 1.0
+        effective_max = raw_max * power_factor
         boost = self.WARP_BOOST_FACTOR if self._warp_boost else 1.0
-        if max_speed > 0.0:
+        if raw_max > 0.0:
             if self.impulse_level >= 0:
-                return (self.impulse_level / 9.0) * max_speed * boost
-            return -self.REVERSE_FRACTION * max_speed
+                return (self.impulse_level / 9.0) * effective_max * boost
+            return -self.REVERSE_FRACTION * effective_max
         if self.impulse_level >= 0:
             return self.impulse_level * self.IMPULSE_UNIT * boost
         return self.impulse_level * self.IMPULSE_UNIT
