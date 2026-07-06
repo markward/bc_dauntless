@@ -1773,6 +1773,24 @@ class CloakingSubsystem(PoweredSubsystem):
         f = 0.0 if f < 0.0 else (1.0 if f > 1.0 else f)
         return f if self._cloak_state == self.CLOAK_CLOAKING else (1.0 - f)
 
+    # ── Forced-decloak helper ────────────────────────────────────────────────
+
+    def _force_decloak(self) -> None:
+        """Snap the cloak state to DECLOAKED immediately, firing
+        ET_DECLOAK_COMPLETED if the device was fully CLOAKED.
+
+        Shared by the offline path (disabled/destroyed device) and the
+        power-starvation path (backup battery exhausted).  Only acts when
+        IsTryingToCloak() — i.e. CLOAKING or CLOAKED; calling it in any
+        other state is a no-op."""
+        if self._cloak_state not in (self.CLOAK_CLOAKING, self.CLOAK_CLOAKED):
+            return
+        was_cloaked = self._cloak_state == self.CLOAK_CLOAKED
+        self._cloak_state = self.CLOAK_DECLOAKED
+        self._transition_elapsed = 0.0
+        if was_cloaked:
+            self._fire("ET_DECLOAK_COMPLETED")
+
     # ── Per-tick transition advance (game-loop subsystem update pass) ────────
 
     def Update(self, dt: float) -> None:
@@ -1780,19 +1798,26 @@ class CloakingSubsystem(PoweredSubsystem):
 
         A disabled / destroyed device cannot complete or hold a cloak: when
         offline it is forced back toward DECLOAKED (a pending CLOAKING is
-        abandoned, a finished CLOAKED snaps off).  Otherwise, when the elapsed
-        transition time reaches ``_transition_duration`` the machine snaps to
-        the terminal state and broadcasts its completion event.
+        abandoned, a finished CLOAKED snaps off).  Power starvation (backup
+        battery exhausted, efficiency < AUTO_DECLOAK_EFFICIENCY) also forces
+        decloak.  Otherwise, when the elapsed transition time reaches
+        ``_transition_duration`` the machine snaps to the terminal state and
+        broadcasts its completion event.
         """
         offline = bool(self.IsDisabled()) or bool(self.IsDestroyed())
         if offline:
             # Forced decloak: a disabled cloak cannot keep the ship hidden.
             if self._cloak_state in (self.CLOAK_CLOAKING, self.CLOAK_CLOAKED):
-                was_cloaked = self._cloak_state == self.CLOAK_CLOAKED
-                self._cloak_state = self.CLOAK_DECLOAKED
-                self._transition_elapsed = 0.0
-                if was_cloaked:
-                    self._fire("ET_DECLOAK_COMPLETED")
+                self._force_decloak()
+            return
+
+        # Power starvation: backup battery dry → device disengages
+        # (ship-subsystems.md:187-189).  Exact BC threshold unknown; 0.25 chosen
+        # — tune from live play, keep as a named constant.
+        AUTO_DECLOAK_EFFICIENCY = 0.25
+        if (self.IsTryingToCloak() and self.GetNormalPowerWanted() > 0.0
+                and self.GetPowerPercentage() < AUTO_DECLOAK_EFFICIENCY):
+            self._force_decloak()
             return
 
         if self._cloak_state not in (self.CLOAK_CLOAKING, self.CLOAK_DECLOAKING):
