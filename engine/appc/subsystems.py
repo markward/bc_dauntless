@@ -211,6 +211,10 @@ class ShipSubsystem(TGEventHandlerObject):
         self._targetable: int = 1
         self._primary: int = 0
         self._disabled_percentage: float = 0.25
+        # Repair-time divisor mirrored from the hardpoint property
+        # (SubsystemProperty.SetRepairComplexity — every stock hardpoint
+        # authors it). Higher = slower repair. Default 1.0 = neutral.
+        self._repair_complexity: float = 1.0
         # Explicit damage/destroyed flags.  SetDamaged/SetDestroyed let tests
         # and the damage system force these states independently of _condition;
         # the predicate methods also fall back to condition-based derivation so
@@ -468,6 +472,17 @@ class ShipSubsystem(TGEventHandlerObject):
 
     def GetRepairPointsNeeded(self) -> int:
         return int(max(0.0, self.GetMaxCondition() - self._condition))
+
+    def Repair(self, points) -> None:
+        """SDK App.py:5671 — add repair points to condition, clamped to
+        [current, max]. Routed through SetCondition so the condition
+        watchers and threshold state machine react."""
+        if points is None:
+            return
+        points = float(points)
+        if points <= 0.0:
+            return
+        self.SetCondition(min(self.GetMaxCondition(), self._condition + points))
 
     def GetRadius(self) -> float:
         return self._radius
@@ -741,6 +756,11 @@ class ShipSubsystem(TGEventHandlerObject):
     def SetPrimary(self, v) -> None:                    self._primary = int(v)
     def GetDisabledPercentage(self) -> float:           return self._disabled_percentage
     def SetDisabledPercentage(self, v) -> None:         self._disabled_percentage = float(v)
+
+    def GetRepairComplexity(self) -> float:            return self._repair_complexity
+    def SetRepairComplexity(self, v) -> None:
+        v = float(v)
+        self._repair_complexity = v if v > 0.0 else 1.0
 
     # ── Runtime predicates consumed by AI/Preprocessors.py ───────────────────
     # SDK App.py:5652-5657 — native methods on ShipSubsystem.  Phase 1 stubs
