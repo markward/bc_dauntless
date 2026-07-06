@@ -1,125 +1,215 @@
 # 06 — Engineer panel
 
-Visual reference: [06-engineer-panel.html](06-engineer-panel.html)
+Visual reference: [06-engineer-panel.html](06-engineer-panel.html) (v28 locked mockup)
 
-The F5 Engineer panel. The most information-dense panel in the bridge UI. Composes:
-
-1. **POWER USED stacked bar** (see [07-power-transmission-grid](07-power-transmission-grid.md)) — top of panel body
-2. **System rows** — Weapons / Engines / Sensor Array / Shield Generator, each with a percentage fill bar and identifying colour
-3. **Pillar gauges** — Warp Core / Main Battery / Reserve Power, vertical bars
-4. **Toggle bar** — Tractor (purple) + Cloak (orange), bottom row
+The F5 Engineering panel. Shows power allocation sliders, the used/available bar pair, battery-glyph pillars, and siphon-line toggles for tractor beam and cloak. Updated to the v28 redesign (2026-07-06); see "Deviations from old canon" below.
 
 ## Structure
 
 ```
-┌─ POWER TRANSMISSION GRID ────────────────────────────▼┐
-║                                                       │
-║  POWER USED                                           │
-║  ┌─────────────────────────────────────────────────┐  │
-║  │ ▓▓ blue ████ yellow ███ orange ████             │  │  ← stacked bar (see #07)
-║  │ off  warp core    main         reserve          │  │
-║  └─────────────────────────────────────────────────┘  │
-║                                                       │
-║  ● Weapons       ████████████░░░░░░    115%           │  ← system row
-║  ● Engines       ████████████░░░░░░    100%           │
-║  ● Sensor Array  ██████░░░░░░░░░░░░     60%           │
-║  ● Shield Gen    ████████████████░░    110%           │
-║                                                       │
-║       0%        50%       100%      125%              │  ← tick marks
-║                                                       │
-║          ┌─┐           ┌─┐           ┌─┐              │  ← pillar gauges
-║          │█│           │█│           │█│              │
-║          │█│           │█│           │█│              │
-║          │ │           │█│ ▼         │█│              │
-║          │ │           │█│           │█│              │
-║       WARP CORE    MAIN BATTERY  RESERVE POWER        │
-║       70% (max)       65%          100%               │
-║                                                       │
-║   ┌─ Tractor   On ─┐  ┌─ Cloak    Off ─┐              │
-└───┴─────────────────┴──┴────────────────┴─────────────┘
+┌────────────────────────────────────────────────────────────┐ ← no header; 4px salmon left stripe only
+║  Weapons    ████████████████░░░░░░░  115%                   │ ← slider row (drag anywhere on track)
+║  Engines    ███████████████████░░░░  100%                   │
+║  Sensor Array ██████████░░░░░░░░░░░   60%                   │
+║  Shields    ████████████████████░░░  110%                   │
+║                                                             │
+║  0%         50%          100%        125%                   │ ← tick row (0/40/80/100% of track width)
+║                                                             │
+║  ┌─────────────────────────────────────────────────────┐   │ ← USED bar (28px)
+║  │▓▓▓▓│ ████ weapons ████ engines ████ sensors ██ sh.. │   │   damage col + stacked demand segments
+║  └─────────────────────────────────────────────────────┘   │
+║  ┌─────────────────────────────────────────────────────┐   │ ← AVAILABLE bar (14px, 14px below USED)
+║  │▓▓▓▓│ ████████ WARP CORE │ ████ MAIN │ ████ RESERVE │   │   damage col + 3 source segments + ticks
+║  └─────────────────────────────────────────────────────┘   │
+║        WARP CORE              MAIN           RESERVE        │ ← segment label row (fades <40px wide)
+║                                                             │
+║  ┌──────────┐   [Tractor On ] ←──── solid/glow  ┌────────┐ │ ← bottom row
+║  │   MAIN   │   [Cloak   Off] - - - dashed - - →│RESERVE │ │
+║  │  battery │                                    │battery │ │
+║  │  (75px)  │                                    │ (50px) │ │
+║  │   █████  │                                    │  ████  │ │
+║  │   ████▼  │                                    │        │ │
+║  │    67%   │                                    │  100%  │ │
+║  └──────────┘                                    └────────┘ │
+└────────────────────────────────────────────────────────────┘
 ```
 
-Panel width: 540 px in the mockup (wider than other panels).
+Panel width: ~540 px, top-right, visible only while the Engineering crew menu is open.
 
-## System rows
+## Deviations from old canon (v27 → v28)
 
-Each row identifies a powered subsystem with its **canonical SDK colour** (`g_kEngineering*Color`). Four subsystems:
+| Old (pre-v28) | New (v28) |
+|---|---|
+| Panel header bar present | **Headerless** — chrome is the 4 px salmon left stripe only |
+| System rows had colour-dot indicators | No colour dots; subsystem identity colour on the track and percentage text only |
+| Single POWER USED bar (14 px, four buckets inc. OFFLINE) | **USED/AVAILABLE bar pair** — two stacked bars sharing one axis; USED 28 px + AVAILABLE 14 px; damage column spans both |
+| WARP CORE, MAIN, RESERVE pillar gauges (three vertical bars) | Warp-core pillar **removed**; only MAIN (75 px) and RESERVE (50 px) battery glyphs remain |
+| MAIN and RESERVE pillars same width | MAIN **1.5× wider** (75 px vs 50 px) |
+| No pillar battery iconography | Each battery glyph has a rounded **terminal bump** on top; fill bottom-up in battery colour; ▼ inside fill when net flow is negative |
+| Tractor/Cloak toggles as plain rows | Toggles sit **between** the batteries; **siphon lines** connect each toggle to its battery (MAIN ← Tractor, RESERVE → Cloak); solid + glow when On, dashed when Off |
+| Tractor and Cloak always rendered | **Conditional presence** — Tractor renders only when hardpoints include a tractor emitter; Cloak renders only when ship has a cloaking subsystem |
+| Subsystem labelled "Shield Generator" | Labelled **"Shields"** |
+
+## Slider rows
+
+Four rows: Weapons / Engines / Sensor Array / Shields.
+
+Grid layout: `[100 px label] [1fr track] [50 px %]`.
+
+The row IS the slider — drag anywhere on the 10 px track; `cursor: ew-resize`. Track styled as a 25%-opacity tint of the subsystem identity colour. A 3 px white glowing **thumb line** marks the set point. A faint 1 px hairline sits at the **80 % track position** (= 100 % power; track spans 0–125 % pre-scaled: `width = pct/125`). Percentage text in identity colour, tabular numerics.
+
+### Subsystem identity colours
 
 | Subsystem | Token | Value |
 |---|---|---|
 | Weapons | `--bc-weapons` | `rgb(207, 139, 76)` (orange) |
 | Engines | `--bc-engines` | `rgb(199, 76, 200)` (magenta) |
 | Sensor Array | `--bc-sensors` | `rgb(201, 203, 76)` (olive) |
-| Shield Generator | `--bc-shields` | `rgb(150, 129, 222)` (lavender) |
+| Shields | `--bc-shields` | `rgb(150, 129, 222)` (lavender) |
 
-### Row anatomy
+## Tick row
 
-- Grid layout: `[110 px label] [1fr bar] [50 px percentage]`
-- Label colour: `--bc-row-text-bright`
-- Bar: 10 px tall, no border, fill in the subsystem identity colour
-- Bar background (empty track): dark tint of the identity colour at ~25% opacity
-- Percentage text: tabular numerics, right-aligned, identity-colour
-- Each row has a colour-dot indicator (the identifying colour as a 6 px square) at the left
+Below the slider rows: labels at 0 % / 50 % / 100 % / 125 % positioned at their TRUE track fractions (0 / 40 % / 80 % / 100 % of track width). 100 % label brightened. Font: Antonio 10 px, weight 400, `--bc-row-text-dim`. Spans exactly the track column.
 
-### Bar fill semantics
+## USED / AVAILABLE bar pair
 
-- 0–100% renders normally
-- 100–125% is the "boost" range — the bar overshoots its track. Either:
-  - **Visual overflow** (current implementation): bar extends past 100% mark
-  - **Pre-scaled** (recommended): map `pct → pct/125 × 100` so the thumb stays inside the 100%-wide track and the value labels read true. The Python widget should do this scaling, not bridge.js.
+Two bars stacked with a 14 px gap, sharing one horizontal axis. A **damage column** (red diagonal hatch) spans the full height of BOTH bars at the left; the usable axis starts after it.
 
-## Percentage tick marks
+### Damage column
 
-Below the four system rows, a horizontal axis with labels at 0%, 50%, 100%, 125%:
-- Font: Antonio 10 px, weight 400
-- Colour: `--bc-row-text-dim`
-- 1 px hairline at the tick positions
+Width = `(authored_output − live_output) / D` as a fraction of total bar width. Styled identically to the OFFLINE segment in the old 07 grid: diagonal-hatched `rgb(170, 25, 25)` on `rgb(80, 17, 17)`.
 
-## Pillar gauges
+### USED bar (28 px)
 
-Three vertical bars at the bottom representing **power sources** (not consumers):
+Stacked segments in the four groups' identity colours, proportional to demand. When total used exceeds total available (overload), the entire used fill takes a damage-red tint and is clamped to the available extent.
 
-| Pillar | Token | Value | Note |
-|---|---|---|---|
-| Warp Core | `--bc-warp-core` | `rgb(22, 105, 207)` (blue) | Damage cap: any fraction above ~70% may be unavailable due to damage — show as a hatched overlay at the top of the bar |
-| Main Battery | `--bc-main-battery` | `rgb(180, 157, 64)` (yellow) | When draining: show a downward `▼` indicator inside the fill, near the current drain level |
-| Reserve Power | `--bc-reserve-power` | `rgb(208, 87, 42)` (orange) | Solid fill, no special indicators |
+### AVAILABLE bar (14 px)
 
-### Pillar anatomy
+Three contiguous segments:
 
-- Width: 50 px, Height: 80 px
-- Track background: `rgba(15, 12, 35, 0.9)`, 1 px solid border in the pillar's colour at 40% opacity
-- Fill: bottom-up, fill height = percentage
-- Name label: Antonio 10 px, weight 600, in `--bc-row-text-dim`, below the bar
-- Percent label: Antonio 11 px, weight 600, in the pillar's identity colour, below the name
-- Optional suffix (e.g. "(max)" on Warp Core when at capacity): same font, in `--bc-row-text-dim`
+| Segment | Token | Value |
+|---|---|---|
+| WARP CORE | `--bc-warp-core` | `rgb(22, 105, 207)` (blue) |
+| MAIN | `--bc-main-battery` | `rgb(180, 157, 64)` (yellow-olive) |
+| RESERVE | `--bc-reserve-power` | `rgb(208, 87, 42)` (red-orange) |
 
-## Toggle bar (Tractor / Cloak)
+At each segment boundary: a 2 px **boundary tick** in a brightened variant of the segment colour, flush with the bar's bottom edge, extending 5 px above only.
 
-Two side-by-side rows at the very bottom of the panel:
+### Segment label row
 
-| Toggle | Token | Active colour | Inactive colour |
-|---|---|---|---|
-| Tractor | `--bc-tractor` | `rgb(150, 129, 222)` (lavender / Shield-Gen tone) | muted grey |
-| Cloak | `--bc-cloak` | `rgb(235, 128, 21)` (vivid orange) | muted grey |
+Below the AVAILABLE bar, segment names: WARP CORE / MAIN / RESERVE. Each label centred under its segment; label width tracks the segment width. **Narrow-segment rule:** when a segment is below 40 px wide the label fades to `opacity: 0` rather than overflowing. No OFFLINE label (damage is a column, not a bucket).
 
-Each row: label on the left in `--bc-row-text-bright`, "On" / "Off" state text on the right in the active colour (or `--bc-subsystem-disabled` when off).
+## Battery glyphs (bottom row)
 
-Clicks fire `Engineer.ToggleTractor` / `Engineer.ToggleCloak` events.
+Full-width row: `MAIN glyph | centred toggle stack | RESERVE glyph`.
+
+### MAIN battery (left)
+
+- Width: 75 px (1.5× Reserve)
+- Height: 80 px (track body)
+- Rounded-corner rectangle; fill clipped inside; small centred rounded **terminal bump** on top
+- Charge fill bottom-up in `--bc-main-battery` `rgb(180, 157, 64)`
+- Name ("MAIN") + percentage centred beneath
+- ▼ inside the fill when net battery flow this interval is negative (draining)
+
+### RESERVE battery (right)
+
+- Width: 50 px
+- Same geometry, fill colour `--bc-reserve-power` `rgb(208, 87, 42)`
+
+### Shared battery tokens
+
+| Element | Token | Value |
+|---|---|---|
+| Battery track bg | `--bc-panel-bg` (dark) | `rgba(15, 12, 35, 0.9)` |
+| Battery border | battery colour at 40% opacity | — |
+| Drain indicator | `▼` glyph in battery colour, centred in fill | — |
+
+## Toggle stack + siphon lines
+
+Centred between the two battery glyphs: Tractor above Cloak, 12 px apart. State text ("On" / "Off") in the battery colour when active, `--bc-subsystem-disabled` (grey) when off.
+
+### Siphon lines
+
+- **Tractor → MAIN** (line goes leftward from the toggle to the MAIN glyph edge)
+- **Cloak → RESERVE** (line goes rightward to the RESERVE glyph edge)
+- Line colour = the battery's identity colour
+- **Solid + glow when On; dashed when Off**
+- Lines are rendered under the opaque battery glyph (terminate visually at the glyph edge)
+
+### Conditional presence
+
+- Tractor row + siphon line render only when `GetTractorBeamSystem()` is non-null and returns ≥ 1 weapon
+- Cloak row + siphon line render only when `GetCloakingSubsystem()` is non-null
+- If one is absent: the remaining toggle centres alone in the toggle column
+- If both absent: toggle column renders empty (no rows)
 
 ## SDK runtime contract
 
+Python payload produced by `EngineeringPowerPanel._snapshot()` in `engine/ui/engineering_power_panel.py`.
+
+### Shared denominator
+
+`D = authored_output + main_conduit_cap + backup_conduit_cap`
+
+Raw property values (Galaxy class: 2400 total).
+
+### Payload shape
+
 ```python
-pEng = App.EngPowerDisplay_Create(parent, ...)
-pEng.SetSubsystemPercent("weapons", 115)
-pEng.SetSubsystemPercent("engines", 100)
-pEng.SetSubsystemPercent("sensor_array", 60)
-pEng.SetSubsystemPercent("shield_gen", 110)
-pEng.SetPillar("warp_core", 70, suffix="(max)")
-pEng.SetPillar("main_battery", 65, drain=True)
-pEng.SetPillar("reserve_power", 100)
-pEng.SetTractor(True)
-pEng.SetCloak(False)
-# Power-used stacked bar is updated automatically from the SDK's
-# power-flow ledger; see #07 for its data shape.
+{
+    "visible": True,
+    "sliders": [
+        {"key": "weapons",  "label": "Weapons",      "pct": 115.0, "present": True},
+        {"key": "engines",  "label": "Engines",       "pct": 100.0, "present": True},
+        {"key": "sensors",  "label": "Sensor Array",  "pct":  60.0, "present": True},
+        {"key": "shields",  "label": "Shields",       "pct": 110.0, "present": True},
+    ],
+    "grid": {
+        "damage":    0.04,   # (authored_output − live_output) / D
+        "available": {
+            "warp_core": 0.50,  # live_output / D
+            "main":      0.27,  # main_conduit_cap × main_charge_fraction / D
+            "reserve":   0.15,  # backup_conduit_cap × backup_charge_fraction / D
+        },
+        "used": [
+            {"key": "weapons", "frac": 0.30},  # Σ GetNormalPowerWanted()×GetPowerPercentageWanted() / D
+            {"key": "engines", "frac": 0.28},
+            {"key": "sensors", "frac": 0.10},
+            {"key": "shields", "frac": 0.22},
+        ],
+        "overload": False,  # True when sum(used fracs) > sum(available fracs)
+    },
+    "batteries": {
+        "main":    {"charge": 0.67, "draining": True},   # GetMainBatteryPower()/limit; draining = net delta < 0
+        "reserve": {"charge": 1.00, "draining": False},
+    },
+    "tractor": {"present": True,  "active": True},   # present = has emitter; active = _wants_power()
+    "cloak":   {"present": False, "active": False},  # absent on Galaxy (no cloaking subsystem)
+}
 ```
+
+### Formula table
+
+| Element | Formula |
+|---|---|
+| `grid.damage` | `(authored_output − live_output) / D` |
+| `grid.available.warp_core` | `live_output / D` |
+| `grid.available.main` | `main_conduit_cap × main_charge_fraction / D` |
+| `grid.available.reserve` | `backup_conduit_cap × backup_charge_fraction / D` |
+| `grid.used[i].frac` | `Σ GetNormalPowerWanted() × GetPowerPercentageWanted() / D` per group |
+| `grid.overload` | `sum(used fracs) > sum(available fracs)` — used fracs clamped to available total when True |
+| `batteries.main.charge` | `GetMainBatteryPower() / GetMainBatteryLimit()` |
+| `batteries.reserve.charge` | `GetBackupBatteryPower() / GetBackupBatteryLimit()` |
+| `batteries.*.draining` | net battery delta over last power interval < 0 |
+| `tractor.active` | existing `_wants_power()` firing state |
+| `cloak.active` | `IsTryingToCloak()` |
+
+Note: tractor and cloak drain are shown by the siphon lines and falling battery pillars only — they are deliberately excluded from the USED demand segments.
+
+## Interactions
+
+- **Slider drag** → `engpower/set:<group>:<value>` → `Bridge.EngineerMenuHandlers.SetPowerToSubsystem` (0 % ⇒ TurnOff etc. — unchanged)
+- **Tractor toggle click** → `engpower/toggle:tractor` → `weapon_config.toggle_tractor(player)`
+- **Cloak toggle click** → `engpower/toggle:cloak` → `weapon_config.toggle_cloak(player)`
+- Drag-safe update rules retained (build-once DOM; skip `document.activeElement`)
