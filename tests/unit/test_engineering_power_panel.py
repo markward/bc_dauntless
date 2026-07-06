@@ -267,6 +267,57 @@ def test_slider_event_routes_through_panel_registry():
             assert abs(sys.GetPowerPercentageWanted() - 0.5) < 1e-9
 
 
+def test_slider_zero_turns_shields_off():
+    """Setting shields to 0% must TurnOff() the shield generator (BC SDK
+    SetPowerToSubsystem:  if pct == 0.0 → TurnOff)."""
+    player = _fake_player()
+    shields = player.GetShields()
+    shields.TurnOn()
+    assert shields.IsOn() == 1
+    panel = _make_panel(player)
+    panel.dispatch_event("set:shields:0")
+    assert shields.IsOn() == 0, "shields should be off after pct=0 dispatch"
+
+
+def test_slider_zero_turns_weapons_off():
+    """All weapons systems in the group must TurnOff when group slider goes to 0."""
+    player = _fake_player()
+    for sys in (player.GetPhaserSystem(), player.GetTorpedoSystem(),
+                player.GetPulseWeaponSystem()):
+        if sys:
+            sys.TurnOn()
+            assert sys.IsOn() == 1
+    panel = _make_panel(player)
+    panel.dispatch_event("set:weapons:0")
+    for sys in (player.GetPhaserSystem(), player.GetTorpedoSystem(),
+                player.GetPulseWeaponSystem()):
+        if sys:
+            assert sys.IsOn() == 0, f"{sys} should be off after weapons pct=0"
+
+
+def test_slider_nonzero_turns_shields_on_when_off():
+    """Raising shields from 0% must TurnOn() the shield generator (BC SDK
+    SetPowerToSubsystem:  if not IsOn() and pct > 0 → TurnOn)."""
+    player = _fake_player()
+    shields = player.GetShields()
+    shields.TurnOff()
+    assert shields.IsOn() == 0
+    panel = _make_panel(player)
+    panel.dispatch_event("set:shields:0.75")
+    assert shields.IsOn() == 1, "shields should be on after pct=0.75 when previously off"
+    assert abs(shields.GetPowerPercentageWanted() - 0.75) < 1e-9
+
+
+def test_slider_nonzero_does_not_turn_off_when_already_on():
+    """A non-zero slider on an already-ON subsystem must NOT call TurnOff."""
+    player = _fake_player()
+    shields = player.GetShields()
+    shields.TurnOn()
+    panel = _make_panel(player)
+    panel.dispatch_event("set:shields:0.5")
+    assert shields.IsOn() == 1, "shields should still be on after non-zero pct"
+
+
 # ── helpers ────────────────────────────────────────────────────────────────────
 
 def _make_panel(player=None, is_engineering_open=None):

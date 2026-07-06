@@ -21,6 +21,32 @@ _GROUPS = (
 )
 
 
+def _set_power_to_subsystem(sys, pct):
+    """Apply the BC canonical SetPowerToSubsystem semantics to one subsystem.
+
+    Mirrors sdk/Build/scripts/Bridge/EngineerMenuHandlers.py:442-452:
+      1. SetPowerPercentageWanted(pct)           — also fires ET_SUBSYSTEM_POWER_CHANGED
+      2. TurnOn() if IsOn()==0 and pct > 0.0    — re-enable when raising from 0
+      3. TurnOff() if pct == 0.0                — disable when dragging to zero
+
+    Prefers the SDK module directly when importable (live runtime, host tests).
+    Falls back to an inline replica that is byte-equivalent in behaviour for
+    plain unit-test contexts where the SDK finder may not have been initialised.
+    NOTE: SetPowerPercentageWanted already posts ET_SUBSYSTEM_POWER_CHANGED; the
+    SDK path posts a second TGFloatEvent with the float value — harmless duplicate.
+    """
+    try:
+        import Bridge.EngineerMenuHandlers as _EMH
+        _EMH.SetPowerToSubsystem(sys, pct)
+    except (ImportError, AttributeError):
+        # Inline replica of EngineerMenuHandlers.py:442-452
+        sys.SetPowerPercentageWanted(pct)
+        if not sys.IsOn() and pct > 0.0:
+            sys.TurnOn()
+        if pct == 0.0:
+            sys.TurnOff()
+
+
 class EngineeringPowerPanel(Panel):
     def __init__(self, get_player, is_engineering_open=None):
         super().__init__()
@@ -147,7 +173,7 @@ class EngineeringPowerPanel(Panel):
         for key, _label, getters in _GROUPS:
             if key == group:
                 for sys in self._systems(player, getters):
-                    sys.SetPowerPercentageWanted(pct)   # clamps internally
+                    _set_power_to_subsystem(sys, pct)
                 break
         import App
         ctrl = App.EngPowerCtrl_GetPowerCtrl()
