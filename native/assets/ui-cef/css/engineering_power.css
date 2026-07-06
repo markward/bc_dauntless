@@ -1,6 +1,6 @@
 /* Engineering power-grid panel — v28 design.
    All rules namespaced under #engpower-root.
-   CSS values lifted verbatim from docs/ui_designs/06-engineer-panel-v2.html.
+   CSS values lifted verbatim from docs/ui_designs/06-engineer-panel.html.
    Spec: docs/superpowers/sdd/task-3-brief.md */
 
 #engpower-root {
@@ -246,10 +246,10 @@
     right: 0;
 }
 
-/* Drain indicator inside the fill */
+/* Drain indicator inside the fill — `top` is set inline by JS
+   (_epUpdateBattery) to track the live fill surface; no static top here. */
 #engpower-root .pdrain {
     position: absolute;
-    top: 32%;
     left: 0;
     right: 0;
     text-align: center;

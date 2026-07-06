@@ -2,7 +2,7 @@
 
 **Date**: 2026-07-06
 **Status**: Approved (visual design locked interactively — 28 previz iterations)
-**Canonical mockup**: `docs/ui_designs/06-engineer-panel-v2.html` (v28 from the
+**Canonical mockup**: `docs/ui_designs/06-engineer-panel.html` (v28 from the
 previz session; supersedes `06-engineer-panel.html` + `07-power-transmission-grid.html`)
 **Scope**: presentation + panel payload only. The EPS simulation
 (`feat/power-management` branch) is untouched.
@@ -122,7 +122,7 @@ loses supply. The v28 mockup's proportions are illustrative, not to scale.
   tractor/cloak presence & absence collapsing); toggle-action dispatch.
 - Host: existing engpower routing/menu-gating tests stay green (payload
   keys change — update in the same commit).
-- Live verify: visual parity with `06-engineer-panel-v2.html`, drag
+- Live verify: visual parity with `06-engineer-panel.html`, drag
   behaviour, siphon line states, conditional presence on a non-cloak ship
   (Galaxy: tractor only) vs a warbird (both).
 
