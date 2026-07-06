@@ -209,31 +209,6 @@ def _resolve_fire_sound(prop) -> str:
     return prop.GetFireSound() or ""
 
 
-def _debit_ship_power(emitter, cost) -> int:
-    """Steal `cost` from the firing ship's main battery via StealPower.
-
-    Returns the float amount actually stolen (0.0 when main battery is empty,
-    which is falsy and blocks the caller; partial steals are truthy and permit
-    fire until the fire-debit allocation rework replaces this interim gate).
-    Falls through as truthy (bypass) when the gate doesn't apply — no ship, no
-    PowerSubsystem, or a PowerSubsystem with no bound PowerProperty (a Phase-1
-    test stub without a power plant), or cost <= 0.  Weapons also draw
-    NormalPowerPerSecond continuously as registered consumers since the
-    consumer-draw model landed — per-shot debits double-count on top of that
-    draw.  Shared by TorpedoTube (per-shot ammo cost) and PulseWeapon
-    (per-bolt module cost).
-    """
-    ship = emitter._climb_to_ship()
-    if ship is None:
-        return 1
-    ps = ship.GetPowerSubsystem() if hasattr(ship, "GetPowerSubsystem") else None
-    if ps is None or ps.GetProperty() is None:
-        return 1
-    cost = float(cost)
-    if cost <= 0.0:
-        return 1
-    return ps.StealPower(cost)
-
 
 def _spawn_projectile(emitter, mod, *, drf_override=0.0,
                       spread_unit=None, homing_delay=0.0):
@@ -373,15 +348,6 @@ class _EnergyWeaponFireMixin:
     # fraction × MaxCharge before CanFire returns true again.
     REFIRE_HEADROOM_FRACTION = 0.20
 
-    # Power debited per charge unit recovered during UpdateCharge.  BC's
-    # SDK has no per-charge cost field on EnergyWeaponProperty — this is
-    # engine-side, tunable.  1.0 means 1 power unit per 1 charge unit;
-    # Galaxy's 8 phaser banks × 0.08/s recharge × 1.0 = 0.64 power/s
-    # while all eight refill in parallel, vs the warp core's 1000/s
-    # output — negligible while the grid is healthy, but enough to
-    # halt recharge once the main battery bottoms out.
-    POWER_COST_PER_CHARGE = 1.0
-
     def CanFire(self) -> int:
         parent = self.GetParentSubsystem()
         on = parent is not None and parent.IsOn()
@@ -439,8 +405,7 @@ class _EnergyWeaponFireMixin:
                 headroom = self._max_charge - self._charge_level
                 if headroom > 0.0:
                     want = min(self._recharge_rate * dt, headroom)
-                    if self._bill_recharge(want):
-                        self._charge_level += want
+                    self._charge_level += want
             # Re-arm once we cleared the headroom threshold.
             if not self._armed:
                 refire_threshold = (self._min_firing_charge
@@ -488,26 +453,6 @@ class _EnergyWeaponFireMixin:
             return 0
         getter = getattr(parent_ship, "GetSceneNodeId", None)
         return int(getter()) if getter else 0
-
-    def _bill_recharge(self, charge_amount: float) -> int:
-        """Steal POWER_COST_PER_CHARGE × charge_amount from the firing ship's
-        main battery via StealPower.  Returns the float amount actually stolen
-        (0.0 when main battery is empty, which is falsy and blocks recharge;
-        partial steals are truthy and permit recharge until the fire-debit
-        allocation rework replaces this interim gate).  Falls through as
-        truthy (bypass) when the gate doesn't apply — ship has no PowerSubsystem,
-        or its PowerSubsystem has no bound PowerProperty (a Phase-1 test stub
-        without a power plant)."""
-        if charge_amount <= 0.0:
-            return 1
-        ship = self._climb_to_ship()
-        if ship is None:
-            return 1
-        ps = ship.GetPowerSubsystem() if hasattr(ship, "GetPowerSubsystem") else None
-        if ps is None or ps.GetProperty() is None:
-            return 1
-        cost = float(charge_amount) * self.POWER_COST_PER_CHARGE
-        return ps.StealPower(cost)
 
 
 def _cloak_blocks_fire(weapon_system) -> bool:
@@ -1568,20 +1513,11 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
             mod = importlib.import_module(script)
         except ImportError:
             return
-        # Power gate — silent no-op if the grid can't cover the shot
-        # (matches torpedoes). Charge is NOT drained on a blocked shot.
-        if not self._debit_pulse_power(mod):
-            return
         _spawn_projectile(self, mod, drf_override=self.GetDamageRadiusFactor())
         # Discrete drain: dump accumulated charge + start cooldown. No held beam.
         self._charge_level = 0.0
         self._cooldown_remaining = self.GetCooldownTime()
         self._armed = False  # re-arms in UpdateCharge once past the refire threshold
-
-    def _debit_pulse_power(self, mod) -> int:
-        """Bill the firing ship's PowerSubsystem for this bolt's GetPowerCost()."""
-        cost = float(mod.GetPowerCost()) if hasattr(mod, "GetPowerCost") else 0.0
-        return _debit_ship_power(self, cost)
 
     def UpdateCharge(self, dt: float) -> None:
         if self._cooldown_remaining > 0.0:
@@ -1708,12 +1644,6 @@ class TorpedoTube(WeaponSystem):
              spread_unit=None, homing_delay=0.0) -> None:
         if not self.CanFire():
             return
-        if not self._debit_power():
-            # Insufficient power: silent no-op (matches BC — UI never
-            # pops a "low power" dialog mid-combat, the tube just
-            # doesn't fire).  Tube stays loaded; higher-level dispatch
-            # may round-robin to a different tube or AI may retry.
-            return
         self._firing = True
         self._target = target
         self._target_offset = offset
@@ -1729,17 +1659,6 @@ class TorpedoTube(WeaponSystem):
         # Discrete-shot — auto-stop after launch.  WeaponSystem's
         # _currently_firing list still tracks us until StopFiring is called.
         self._firing = False
-
-    def _debit_power(self) -> int:
-        """Bill the firing ship's PowerSubsystem for this shot's ammo cost."""
-        parent = self.GetParentSubsystem()
-        ammo = parent.GetCurrentAmmoType() if (
-            parent is not None and hasattr(parent, "GetCurrentAmmoType")
-        ) else None
-        cost = float(ammo.GetPowerCost()) if (
-            ammo is not None and hasattr(ammo, "GetPowerCost")
-        ) else 0.0
-        return _debit_ship_power(self, cost)
 
     def _spawn_torpedo(self, *, spread_unit=None, homing_delay=0.0) -> None:
         """Look up the parent system's GetTorpedoScript(0), import the SDK

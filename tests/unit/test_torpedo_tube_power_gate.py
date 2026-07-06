@@ -1,21 +1,22 @@
-"""TorpedoTube.Fire — per-fire power gate.
+"""TorpedoTube.Fire — power model after Task 4b.
 
-Each torpedo costs ``GetCurrentAmmoType().GetPowerCost()`` (Photon=20,
-Quantum=30, Klingon=40, etc.).  When the firing ship's PowerSubsystem
-can't cover the cost via StealPower (main battery only — Task 2), the
-launch is a silent no-op: tube stays loaded, no torpedo spawns, no
-sound plays.
+Task 4b decision: BC has no per-shot battery debit.  Weapon energy cost is the
+continuous NormalPowerPerSecond consumer draw (landed in Task 4).  Charge/reload
+rates are the gameplay gate — Task 8 makes those power-factor-scaled.
 
-Task 2 changed StealPower to be main-battery-only (returns float amount
-taken).  Tests reflect the new semantics.
+NOTE (transitional): until Task 8 lands, a fully-unpowered ship can still fire
+loaded tubes because there is no per-shot debit and charge/reload mechanics are
+not yet power-factor-scaled.  Task 8's factor-scaled charge/reload closes that
+gap (no recharge/reload at factor 0).
 
-Test ships without a bound PowerProperty (the most common Phase-1
-fixture: ``ShipClass_Create("Test")`` without a hardpoint) bypass the
-gate entirely — keeps the existing torpedo fixtures from regressing
-just because a default-construction PowerSubsystem sits there at zero
-power.
+The per-shot debit path (_debit_ship_power / _debit_power) was removed in Task
+4b.  These tests confirm:
+  - Fire succeeds when tubes are loaded, regardless of battery level.
+  - The main battery level is NOT changed by a torpedo fire.
+  - Fire is still gated on tube charge/reload state and system power state.
 """
 from unittest.mock import patch
+import math
 
 import App
 from engine.appc.math import TGPoint3
@@ -30,7 +31,8 @@ from engine.appc.projectiles import _active
 def _wire_galaxy_like_torp(ship, *, with_power_property=True,
                             available=0.0, main_battery=0.0):
     """Build a Photon-armed TorpedoSystem on ``ship`` and optionally bind
-    a PowerProperty so the new gate engages.  Returns the loaded tube."""
+    a PowerProperty so the consumer-draw model is active.  Returns the
+    loaded tube."""
     parent = TorpedoSystem("Torpedoes")
     parent.TurnOn()
     parent_prop = WeaponSystemProperty("Torpedoes")
@@ -38,7 +40,7 @@ def _wire_galaxy_like_torp(ship, *, with_power_property=True,
     parent.SetProperty(parent_prop)
     ship._torpedo_system = parent
     parent._parent_ship = ship
-    # Stamp an ammo type so the per-fire gate can read the cost.
+    # Stamp an ammo type so the (now-removed) per-fire gate had a cost to read.
     from engine.appc.subsystems import TorpedoAmmoType
     parent.AddAmmoType(TorpedoAmmoType("Photon", launch_speed=19.0, power_cost=20.0))
     ship.SetWorldLocation(TGPoint3(0, 0, 0))
@@ -59,58 +61,79 @@ def _wire_galaxy_like_torp(ship, *, with_power_property=True,
     return tube
 
 
-def test_fire_succeeds_when_power_covers_cost():
-    """StealPower now drains main battery (Task 2); fixture puts power there."""
+def test_fire_does_not_debit_battery_per_shot():
+    """With nearly-empty main battery, firing a loaded torpedo does NOT
+    change the battery level and the shot SUCCEEDS (no per-shot drain).
+
+    This is the inverse of the old test_partial_steal_fires_interim_until_task4
+    — the per-shot debit path has been removed (Task 4b).
+    """
+    _active.clear()
+    ship = ShipClass_Create("Test")
+    # Battery well below the old 20-unit photon cost
+    tube = _wire_galaxy_like_torp(ship, available=0.0, main_battery=5.0)
+    battery_before = ship.GetPowerSubsystem().GetMainBatteryPower()
+    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
+        tube.Fire(target=None, offset=None)
+    # Shot fired (tube was loaded)
+    assert len(_active) == 1
+    # Battery NOT changed by the fire
+    assert ship.GetPowerSubsystem().GetMainBatteryPower() == battery_before
+    _active.clear()
+
+
+def test_fire_succeeds_loaded_tube_any_battery():
+    """A loaded tube fires regardless of main battery level — gate is
+    charge/reload state only, not power level."""
+    _active.clear()
+    ship = ShipClass_Create("Test")
+    tube = _wire_galaxy_like_torp(ship, available=0.0, main_battery=0.0)
+    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
+        tube.Fire(target=None, offset=None)
+    assert tube.GetNumReady() == 0
+    assert len(_active) == 1
+    _active.clear()
+
+
+def test_fire_leaves_battery_untouched():
+    """Battery stays at its pre-fire value after a successful shot."""
     _active.clear()
     ship = ShipClass_Create("Test")
     tube = _wire_galaxy_like_torp(ship, available=0.0, main_battery=100.0)
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
         tube.Fire(target=None, offset=None)
-    assert tube.GetNumReady() == 0
     assert len(_active) == 1
-    # 20-cost photon drained from main battery.
-    assert ship.GetPowerSubsystem().GetMainBatteryPower() == 80.0
+    assert ship.GetPowerSubsystem().GetMainBatteryPower() == 100.0
     _active.clear()
 
 
-def test_fire_silent_no_op_when_power_insufficient():
-    """Main battery empty → StealPower returns 0.0 (falsy) → no fire.
-
-    Tube stays loaded, no torpedo spawned, no fire-time stamped.
-    Note: partial steal IS possible (Task 2 semantics) but a 20-unit
-    torpedo with only 5 units in main takes only 5 (a partial steal
-    which is truthy), so the gate fires.  To test the empty case we
-    set main_battery=0 explicitly."""
-    _active.clear()
-    import math
-    ship = ShipClass_Create("Test")
-    tube = _wire_galaxy_like_torp(ship, available=0.0, main_battery=0.0)
-    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
-        tube.Fire(target=None, offset=None)
-    assert tube.GetNumReady() == 1
-    assert len(_active) == 0
-    assert tube.GetLastFireTime() == -math.inf
-    # Power untouched (main was already 0).
-    assert ship.GetPowerSubsystem().GetMainBatteryPower() == 0.0
-    _active.clear()
-
-
-def test_fire_falls_through_to_main_battery():
-    """Main battery has plenty → fires and drains main (unchanged path)."""
+def test_fire_blocked_when_tube_unloaded():
+    """Tube must not fire when num_ready == 0 — reload gate unchanged."""
     _active.clear()
     ship = ShipClass_Create("Test")
     tube = _wire_galaxy_like_torp(ship, available=0.0, main_battery=1000.0)
+    tube._num_ready = 0
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
         tube.Fire(target=None, offset=None)
-    assert len(_active) == 1
-    assert ship.GetPowerSubsystem().GetMainBatteryPower() == 980.0
+    assert len(_active) == 0
     _active.clear()
 
 
-def test_fire_without_power_property_bypasses_gate():
-    """Test fixture without a PowerProperty bound (common Phase-1 case)
-    must not trip the gate — keeps unrelated tests from regressing on
-    a stub PowerSubsystem at zero power."""
+def test_fire_blocked_when_system_off():
+    """TorpedoSystem turned off → CanFire returns 0 → no fire."""
+    _active.clear()
+    ship = ShipClass_Create("Test")
+    tube = _wire_galaxy_like_torp(ship, available=0.0, main_battery=1000.0)
+    tube.GetParentSubsystem().TurnOff()
+    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
+        tube.Fire(target=None, offset=None)
+    assert len(_active) == 0
+    _active.clear()
+
+
+def test_fire_without_power_property_still_works():
+    """Test fixture without a PowerProperty bound fires normally —
+    no power plant means no consumer-draw gate either."""
     _active.clear()
     ship = ShipClass_Create("Test")
     tube = _wire_galaxy_like_torp(ship, with_power_property=False)
@@ -121,9 +144,8 @@ def test_fire_without_power_property_bypasses_gate():
 
 
 def test_fire_without_power_subsystem_bypasses_gate():
-    """A ship whose PowerSubsystem was scrubbed (no hardpoint registered
-    a PowerProperty) still fires — gate only applies when the ship has
-    a power plant."""
+    """A ship whose PowerSubsystem was scrubbed still fires — gate only
+    applies when the ship has a power plant."""
     _active.clear()
     ship = ShipClass_Create("Test")
     tube = _wire_galaxy_like_torp(ship, with_power_property=False)
@@ -131,27 +153,4 @@ def test_fire_without_power_subsystem_bypasses_gate():
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
         tube.Fire(target=None, offset=None)
     assert len(_active) == 1
-    _active.clear()
-
-
-def test_partial_steal_fires_interim_until_task4():
-    """Pins the interim partial-steal gate: BC is all-or-nothing per shot only
-    via charge/reload — the fire-debit StealPower path is a dauntless legacy
-    mechanism.
-
-    With main battery holding LESS than the torpedo's power cost but more
-    than zero, firing SUCCEEDS (partial steal is truthy).  BC's real
-    semantics: torpedo costs 20 power; main battery has only 5 → no fire
-    (all-or-nothing).  A future fire-debit allocation rework must flip this
-    test.
-    """
-    _active.clear()
-    ship = ShipClass_Create("Test")
-    tube = _wire_galaxy_like_torp(ship, available=0.0, main_battery=5.0)
-    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
-        tube.Fire(target=None, offset=None)
-    # Partial steal is truthy, so fire succeeds even though main < cost.
-    assert len(_active) == 1
-    # Only 5 units stolen (all that was available).
-    assert ship.GetPowerSubsystem().GetMainBatteryPower() == 0.0
     _active.clear()
