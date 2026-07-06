@@ -170,3 +170,99 @@ def test_bay_enqueues_itself_when_damaged():
 def test_orphan_subsystem_damage_is_safe():
     s = _sub(condition=500.0)     # no ship anywhere
     s.SetCondition(100.0)         # must not raise
+
+
+# ── Task 6: Update(dt) — RE-verified tick, completion, cannot-complete ──────
+
+def test_tick_formula_matches_re_worked_example():
+    # Sovereign: 50 pts, healthy bay, 2 queued, 30fps tick (dt=0.033):
+    # raw=1.65, perItem=0.825; phaser c=3.0 -> +0.275; tractor c=7.0 -> +0.118
+    bay = _bay(points=50.0, teams=3)
+    phaser  = _sub(name="Phasers", max_condition=1000.0, condition=500.0,
+                   complexity=3.0)
+    tractor = _sub(name="Tractor", max_condition=1000.0, condition=500.0,
+                   complexity=7.0)
+    bay.AddToRepairList(phaser)
+    bay.AddToRepairList(tractor)
+    bay.Update(0.033)
+    assert abs(phaser.GetCondition()  - 500.275) < 1e-6
+    assert abs(tractor.GetCondition() - (500.0 + 0.825 / 7.0)) < 1e-6
+
+
+def test_bay_health_scales_output():
+    bay = _bay(points=50.0, teams=3)
+    bay.SetCondition(4000.0)                    # 50% bay health
+    target = _sub(condition=500.0, complexity=1.0)
+    bay.AddToRepairList(target)
+    bay.Update(1.0)
+    # raw = 50 * 0.5 * 1.0 = 25, one item -> +25
+    assert abs(target.GetCondition() - 525.0) < 1e-6
+
+
+def test_destroyed_bay_repairs_nothing():
+    bay = _bay()
+    target = _sub(condition=500.0)
+    bay.AddToRepairList(target)
+    bay.SetCondition(0.0)
+    bay.Update(1.0)
+    assert target.GetCondition() == 500.0
+
+
+def test_team_cap_and_divisor_with_queue_longer_than_teams():
+    bay = _bay(points=60.0, teams=2)
+    subs = [_sub(name="s%d" % i, condition=100.0, complexity=1.0)
+            for i in range(3)]
+    for s in subs:
+        bay.AddToRepairList(s)
+    bay.Update(1.0)
+    # raw=60, divisor=min(3,2)=2, perItem=30: first two get +30, third waits
+    assert abs(subs[0].GetCondition() - 130.0) < 1e-6
+    assert abs(subs[1].GetCondition() - 130.0) < 1e-6
+    assert subs[2].GetCondition() == 100.0
+
+
+def test_completion_removes_and_fires(monkeypatch):
+    import App
+    fired = []
+    monkeypatch.setattr(App.g_kEventManager, "AddEvent",
+                        lambda e: fired.append(e))
+    bay = _bay(points=50.0, teams=3)
+    nearly = _sub(condition=999.9, complexity=1.0)
+    bay.AddToRepairList(nearly)
+    bay.Update(1.0)
+    assert nearly.GetCondition() == 1000.0
+    assert not any(s is nearly for s in bay._queue)
+    assert App.ET_REPAIR_COMPLETED in [e.GetEventType() for e in fired]
+
+
+def test_destroyed_while_queued_skipped_notified_once(monkeypatch):
+    import App
+    fired = []
+    monkeypatch.setattr(App.g_kEventManager, "AddEvent",
+                        lambda e: fired.append(e))
+    bay = _bay(points=50.0, teams=2)
+    doomed = _sub(name="doomed", condition=500.0)
+    other  = _sub(name="other",  condition=500.0, complexity=1.0)
+    bay.AddToRepairList(doomed)
+    bay.AddToRepairList(other)
+    doomed._condition = 0.0                     # destroyed in place, bypass hooks
+    bay.Update(1.0)
+    bay.Update(1.0)
+    cannot = [e for e in fired
+              if e.GetEventType() == App.ET_REPAIR_CANNOT_BE_COMPLETED]
+    assert len(cannot) == 1                     # once, not per tick
+    assert cannot[0].GetSource() is doomed
+    assert any(s is doomed for s in bay._queue)  # skipped, NOT removed
+    # 'other' still got a full team's share on EACH tick (doomed consumes no
+    # team and doesn't shrink the divisor): raw=50*1*1=50, divisor=min(2,2)=2
+    # -> +25/tick, two ticks -> 500 + 25 + 25 = 550.
+    assert abs(other.GetCondition() - 550.0) < 1e-6
+
+
+def test_self_repair_bay_queued_on_itself():
+    bay = _bay(points=50.0, teams=3)
+    bay.SetCondition(4000.0)                    # auto-enqueue needs a ship; add manually
+    bay.AddToRepairList(bay)
+    before = bay.GetCondition()
+    bay.Update(1.0)
+    assert bay.GetCondition() > before

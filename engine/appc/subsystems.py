@@ -1885,6 +1885,52 @@ class RepairSubsystem(PoweredSubsystem):
         n = self.GetNumRepairTeams()
         return 1 if any(s is sub for s in self._queue[:n]) else 0
 
+    def Update(self, dt) -> None:
+        """The RE-verified repair tick (ship-subsystems.md §Repair):
+
+            raw     = MaxRepairPoints * bayConditionPct * dt
+            perItem = raw / min(queueCount, NumRepairTeams)
+            gain_i  = perItem / target_i.RepairComplexity
+
+        Walks from the head assigning up to NumRepairTeams teams to
+        non-destroyed entries. Destroyed entries are skipped (stay queued,
+        per stock), fire ET_REPAIR_CANNOT_BE_COMPLETED once, and consume
+        no team. Completion removes the entry and fires
+        ET_REPAIR_COMPLETED. NO power-efficiency term — output scales
+        only by the bay's own health (spec + power spec agree)."""
+        if dt is None or dt <= 0.0 or not self._queue:
+            return
+        if self.GetCondition() <= 0.0:
+            return
+        teams = self.GetNumRepairTeams()
+        points = self.GetMaxRepairPoints()
+        if teams <= 0 or points <= 0.0:
+            return
+        raw = points * self.GetConditionPercentage() * float(dt)
+        per_item = raw / min(len(self._queue), teams)
+        assigned = 0
+        completed = []
+        for sub in list(self._queue):
+            if assigned >= teams:
+                break
+            if sub.GetCondition() <= 0.0:
+                if id(sub) not in self._cannot_complete_notified:
+                    self._cannot_complete_notified.add(id(sub))
+                    self._fire_repair_event(
+                        "ET_REPAIR_CANNOT_BE_COMPLETED", sub)
+                continue
+            self._cannot_complete_notified.discard(id(sub))
+            assigned += 1
+            complexity = sub.GetRepairComplexity()
+            if complexity <= 0.0:
+                complexity = 1.0
+            sub.Repair(per_item / complexity)
+            if sub.GetCondition() >= sub.GetMaxCondition():
+                completed.append(sub)
+        for sub in completed:
+            self._queue = [s for s in self._queue if s is not sub]
+            self._fire_repair_event("ET_REPAIR_COMPLETED", sub)
+
     # ── Event emission ──────────────────────────────────────────────────────
     def _fire_repair_event(self, event_attr: str, sub, dest=None) -> None:
         """TGObjPtrEvent with source=sub AND objptr=sub: the SDK
