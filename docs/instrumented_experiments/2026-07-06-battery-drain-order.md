@@ -338,11 +338,35 @@ This makes tractor `powerMode=1` = **main battery** (matches), and **predicts
 cloak `powerMode = 2` = reserve** (matches the cloak→reserve UI fact). Falsifiable
 — confirm by reading the cloak subsystem's `powerMode` in the hardpoint/RE data.
 
+### Model corrections applied (2026-07-06)
+
+Status: **DONE** (2026-07-06). The measured split was reproduced in the dauntless
+model and pinned by `tests/integration/test_power_reference_values.py::
+test_q10_red_alert_sliders_125_tractor_held_split` (main −800.0/s, backup
+−113.75/s, ±2%). Two changes closed the follow-up:
+
+1. **Tractor is a direct main-battery siphon.** `TractorBeamSystem` sets
+   `DRAWS_DIRECT_FROM_MAIN = True`; `PoweredSubsystem._update_power` branches on
+   that flag to `power.StealPower(normal_power·dt)` — bypassing the conduit
+   budget and UNSCALED by the slider (measured 600 flat with sliders 1.25). This
+   is what makes main drain ~−800/s (the "~4× too low" follow-up): the model's
+   old ~−200 figure came from routing the tractor through the conduit; the
+   direct siphon lands the full 600/s on main on top of the −200/s conduit
+   deficit. `PSM_MAIN_FIRST`/`PSM_DIRECT_MAIN` are documented in
+   `engine/appc/subsystems.py`.
+2. **Battery-limited conduit getters.** `GetMainConduitCapacity()` /
+   `GetBackupConduitCapacity()` now clamp the rated capacity by the remaining
+   battery charge (`min(battery, rated·condPct)`), so SDK `AdjustPower` engages
+   as a battery runs dry (the s38→s39 impulse/warp/sensor throttle). The
+   per-interval budget tick keeps the rated (un-clamped) view internally so the
+   clamp is applied exactly once.
+
+Recharge is unchanged — the model's fill-main-first was already exact (q10 Q4).
+
 ### Follow-ups (do not block closing this experiment)
 
-1. **Main drain-rate constant is ~4× too low** in the dauntless model — retune
-   against the −790/s (tractor, all-1.25) and +749/s (recharge, no tractor)
-   figures.
+1. ~~**Main drain-rate constant is ~4× too low**~~ — RESOLVED 2026-07-06 by the
+   direct main-battery siphon above.
 2. **Confirm `powerMode`-as-index** by grepping the cloak subsystem's `powerMode`
    in `sdk/.../ships/Hardpoints/` and the RE notes; update
    `ship-subsystems.md` §Power-and-reactor to replace the "backup-first" wording.

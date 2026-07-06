@@ -816,18 +816,36 @@ class ShipSubsystem(TGEventHandlerObject):
         return 1.0
 
 
-# BC draw modes (ship-subsystems.md:164-189).  Per-class assignment below;
-# tractor is deliberately mode 0 (manual/UI say Main; RE doc's mode-1 claim
-# treated as mislabel — see spec "Decisions" §2).
+# BC draw modes (ship-subsystems.md:164-189).  Per-class assignment below.
+#
+# The spec's "tractor = mode 0" decision (docs/superpowers/specs/
+# 2026-07-05-power-management-system-design.md §Decisions 2) is SUPERSEDED by
+# measured ground truth (q10 — tools/probes/results/q10_battery_drain.txt): the
+# manual/UI were right that the tractor pulls from the MAIN battery, but neither
+# the RE doc's mode-1 (backup-first) row NOR the mode-0 conduit path describes
+# the gameplay draw correctly. The tractor does a DIRECT main-battery steal that
+# bypasses the conduit budget entirely and is unscaled by the slider — see
+# PSM_DIRECT_MAIN / TractorBeamSystem.DRAWS_DIRECT_FROM_MAIN below.
 PSM_MAIN_FIRST = 0
 PSM_BACKUP_FIRST = 1
 PSM_BACKUP_ONLY = 2
+# q10: a dedicated-source consumer that siphons the main battery directly,
+# bypassing the per-interval conduit budget and UNSCALED by the power-slider
+# percentage (measured 600 flat with sliders 1.25, not 600*1.25). Used by
+# TractorBeamSystem via the DRAWS_DIRECT_FROM_MAIN class flag, which is what
+# _update_power actually branches on.
+PSM_DIRECT_MAIN = 3
 
 
 class PoweredSubsystem(ShipSubsystem):
     """Powered subsystem — consumes power, has a target power level."""
 
     POWER_MODE = PSM_MAIN_FIRST
+    # q10 (tools/probes/results/q10_battery_drain.txt): a subsystem whose draw
+    # is a DIRECT main-battery steal — bypasses the conduit budget and is NOT
+    # scaled by _power_percentage_wanted. Only TractorBeamSystem sets this True;
+    # every conduit-routed consumer leaves it False and uses power._draw().
+    DRAWS_DIRECT_FROM_MAIN = False
 
     def __init__(self, name: str = ""):
         super().__init__(name)
@@ -917,6 +935,20 @@ class PoweredSubsystem(ShipSubsystem):
             self._power_received = 0.0
             self._efficiency = 1.0
             self._power_factor = 1.0
+            return
+        if self.DRAWS_DIRECT_FROM_MAIN:
+            # q10 direct siphon: the demand reported to PowerDisplay is still the
+            # slider-scaled figure (so the readout math is unchanged), but the
+            # ACTUAL draw is a flat StealPower(base) from the main battery —
+            # bypassing the conduit budget and unscaled by the slider (measured
+            # 600 flat with sliders 1.25). efficiency/factor come from
+            # received/base so the StopFiring starvation gate still engages when
+            # the main battery runs dry.
+            self._power_wanted = base * self._power_percentage_wanted
+            received = power.StealPower(base) if base > 0.0 else 0.0
+            self._power_received = received
+            self._efficiency = received / base if base > 0.0 else 1.0
+            self._power_factor = received / base
             return
         wanted = base * self._power_percentage_wanted
         self._power_wanted = wanted
@@ -1427,21 +1459,44 @@ class PowerSubsystem(ShipSubsystem):
         GetConditionPercentage() just like GetMainConduitCapacity."""
         return self._prop_f("GetPowerOutput") * self.GetConditionPercentage()
 
+    # Two views of conduit capacity (q10):
+    #   * The RATED view (_rated_*) is the physical throughput the EPS conduit
+    #     can carry per second: authored capacity, main health-scaled. The
+    #     per-interval budget tick uses THIS so the seeded budget is
+    #     min(battery, rated*condPct*elapsed) — the battery clamp lives in the
+    #     tick's min, not double-applied here.
+    #   * The SDK-facing getters (GetMainConduitCapacity /
+    #     GetBackupConduitCapacity) additionally clamp by the remaining battery
+    #     charge so SDK AdjustPower / IsPowerDraining / PowerDisplay.Update see
+    #     the deliverable capacity shrink as a battery runs dry — this is what
+    #     drove the original's observed impulse/warp/sensor throttle at ~1% main
+    #     (q10 s38->s39).
+
+    def _rated_main_conduit_capacity(self) -> float:
+        """Health-scaled main conduit throughput (no battery clamp).  Internal
+        per-interval budget input."""
+        return self._prop_f("GetMainConduitCapacity") * self.GetConditionPercentage()
+
+    def _rated_backup_conduit_capacity(self) -> float:
+        """Backup conduit throughput — NOT health-scaled (BC asymmetry: the
+        backup EPS path is hardened).  Internal per-interval budget input."""
+        return self._prop_f("GetBackupConduitCapacity")
+
     def GetMaxMainConduitCapacity(self) -> float:
-        """Raw (undamaged) main conduit capacity from the PowerProperty."""
+        """Raw (undamaged, un-clamped) main conduit capacity from the
+        PowerProperty — AdjustPower's ceiling reference."""
         return self._prop_f("GetMainConduitCapacity")
 
     def GetMainConduitCapacity(self) -> float:
-        """Health-scaled main conduit capacity (BC asymmetry: main scales,
-        backup does not)."""
-        return self._prop_f("GetMainConduitCapacity") * self.GetConditionPercentage()
+        """SDK-facing main conduit capacity: health-scaled AND battery-limited
+        (q10). Returns min(main_battery, rated*conditionPct) so AdjustPower
+        engages once the main battery runs dry."""
+        return min(self._main_battery_power, self._rated_main_conduit_capacity())
 
     def GetBackupConduitCapacity(self) -> float:
-        """Backup conduit capacity — deliberately NOT health-scaled (BC asymmetry).
-
-        The backup EPS path is hardened; it maintains its rated throughput
-        even when the warp core is damaged."""
-        return self._prop_f("GetBackupConduitCapacity")
+        """SDK-facing backup conduit capacity: battery-limited, NOT health-scaled
+        (BC asymmetry). Returns min(backup_battery, rated_backup) (q10)."""
+        return min(self._backup_battery_power, self._rated_backup_conduit_capacity())
 
     def GetPowerDispensed(self) -> float:
         """Total power dispensed to consumers this tick (filled by Task 4)."""
@@ -1580,8 +1635,12 @@ class PowerSubsystem(ShipSubsystem):
             # BC-faithful per docs/original_game_reference/gameplay/ship-subsystems.md:122-127
             # (ComputeAvailablePower is an unconditional sibling step; batteries
             # still deliver through conduits even when the reactor is down).
-            main_max = self.GetMainConduitCapacity() * elapsed
-            backup_max = self.GetBackupConduitCapacity() * elapsed
+            # Per-interval budget = min(battery, rated*condPct*elapsed). Use the
+            # RATED (un-clamped) capacity here so the battery clamp is applied
+            # exactly once (in the min below), not double-applied via the
+            # battery-limited SDK getters. See the two-views comment above.
+            main_max = self._rated_main_conduit_capacity() * elapsed
+            backup_max = self._rated_backup_conduit_capacity() * elapsed
             self._main_conduit_current = min(self._main_battery_power, main_max)
             self._backup_conduit_current = min(self._backup_battery_power, backup_max)
             self._available_power = (self._main_conduit_current

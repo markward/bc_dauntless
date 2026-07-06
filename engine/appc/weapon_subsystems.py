@@ -1281,6 +1281,14 @@ class TractorBeamSystem(_HeldFireWeaponSystem):
     HOLD world-point / TOW body-frame offset); it is invalidated on StopFiring
     and on any mode change.
     """
+    # q10 ground truth (tools/probes/results/q10_battery_drain.txt): the tractor
+    # is a DIRECT main-battery siphon — it bypasses the conduit budget and is
+    # unscaled by the power slider (measured 600/s flat with sliders at 1.25).
+    # This supersedes the spec's "tractor = conduit mode 0" decision; the manual
+    # was right that it draws from Main, the RE doc's mode-1 (backup-first) row
+    # is wrong-in-effect. _update_power branches on this flag instead of _draw.
+    DRAWS_DIRECT_FROM_MAIN = True
+
     # Tractor-beam mode constants from sdk/.../App.py:6774-6779.
     # SDK consumers: Preprocessors.py, AI/PlainAI/Warp.py, TowAway.py, etc.
     TBS_HOLD          = 0
@@ -1298,8 +1306,8 @@ class TractorBeamSystem(_HeldFireWeaponSystem):
     def _wants_power(self) -> bool:
         """The tractor siphons power only while a beam is actually held (a
         powered-but-idle tractor draws nothing — PowerDisplay's siphon
-        semantics).  It keeps the inherited PSM_MAIN_FIRST mode; the gate is the
-        firing state, not the alert-driven on/off flag."""
+        semantics).  The draw is a DIRECT main-battery steal (DRAWS_DIRECT_FROM_MAIN,
+        q10); the gate here is the firing state, not the alert-driven on/off flag."""
         return bool(self.IsOn()) and self._any_child_firing()
 
     def _any_child_firing(self) -> bool:

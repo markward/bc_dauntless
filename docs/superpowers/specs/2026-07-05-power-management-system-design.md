@@ -33,6 +33,22 @@ power-grid UI.
    treated as a mislabel. All three draw modes are implemented and the
    per-class assignment is a single data constant, so flipping tractor to
    mode 1 later is a one-line change if live behaviour disproves this.
+
+   > **Post-script (q10, 2026-07-06 — SUPERSEDED).** The instrumented
+   > battery-drain experiment
+   > (`docs/instrumented_experiments/2026-07-06-battery-drain-order.md`,
+   > `tools/probes/results/q10_battery_drain.txt`) supersedes the mode-0
+   > decision. The tractor does **not** route through any conduit mode: it is a
+   > **direct main-battery siphon** (`StealPower`), bypassing the conduit budget
+   > and **unscaled** by the power slider (measured 600/s flat with sliders at
+   > 1.25, not 600×1.25). The manual/UI's "draws from Main" was correct; both the
+   > RE doc's mode-1 (backup-first) row and this mode-0 conduit decision are
+   > wrong-in-effect. Implemented as `TractorBeamSystem.DRAWS_DIRECT_FROM_MAIN`
+   > (`engine/appc/subsystems.py` / `weapon_subsystems.py`), pinned by
+   > `tests/integration/test_power_reference_values.py::
+   > test_q10_red_alert_sliders_125_tractor_held_split`. The same experiment
+   > added battery-limited conduit-capacity getters so SDK `AdjustPower`
+   > throttles once a battery runs dry.
 3. **SDK-driven UI.** `Bridge/PowerDisplay.py` runs unmodified against
    Python widget shims; a CEF panel renders the shim state. Follows the
    crew-menu precedent and the "SDK drives everything" project rule.

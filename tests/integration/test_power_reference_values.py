@@ -173,3 +173,100 @@ def test_galaxy_drain_time_matches_bc():
         f"drain time {seconds:.1f} s must be within 5% of expected "
         f"{expected_drain_time:.1f} s (deficit={deficit} pw/s)"
     )
+
+
+# ── q10 instrumented-ground-truth replication ────────────────────────────────
+
+def test_q10_red_alert_sliders_125_tractor_held_split():
+    """Reproduce the q10 instrumented measurement (Galaxy, RED alert, all seven
+    sliders at 1.25, tractor held) and pin the concurrent drain split:
+
+        main    ~= -800/s
+        backup  ~= -113.75/s
+
+    (tools/probes/results/q10_battery_drain.txt; the adjudicated s10->s20 window
+    measured main ~= -789/s, backup ~= -110/s; the exact model-derived figures
+    below are -800 / -113.75 within 2%.)
+
+    Full decomposition (Galaxy authored: output 1000/s, main conduit cap 1200/s,
+    backup conduit cap 200/s; conduit consumer draws sum to 1051/s):
+
+      1. Conduit slider demand at 1.25:
+             1051 * 1.25                       = 1313.75 /s
+      2. Main conduit caps at its rated 1200/s; the overflow spills to backup:
+             main conduit draw                 = 1200.00 /s
+             backup conduit draw (overflow)    = 1313.75 - 1200 = 113.75 /s
+      3. The warp core outputs 1000/s, refilling the MAIN battery first:
+             net main from conduits            = 1000 (in) - 1200 (out) = -200 /s
+             net backup from conduits          =            - 113.75    /s
+      4. The TRACTOR draws its 600/s DIRECTLY from the main battery, bypassing
+         the conduits and UNSCALED by the 1.25 slider (q10: measured 600 flat,
+         not 600*1.25 = 750):
+             net main total                    = -200 - 600  = -800.00 /s
+             net backup total                  =              -113.75 /s
+
+    The batteries start full (250k / 80k) so no clamp fires during the window;
+    this is the pure sub-ceiling regime the getter change does not perturb.
+    """
+    from engine.appc.subsystems import (
+        TractorBeamSystem, PowerSubsystem, PoweredSubsystem,
+    )
+    from engine.appc.properties import PowerProperty
+
+    ship = ShipClass_Create("Galaxy")
+
+    power = PowerSubsystem("Warp Core")
+    prop = PowerProperty("Warp Core")
+    prop.SetPowerOutput(_OUTPUT)
+    prop.SetMainBatteryLimit(_MAIN_BATTERY)
+    prop.SetBackupBatteryLimit(_BACKUP_BATTERY)
+    prop.SetMainConduitCapacity(_MAIN_CONDUIT)
+    prop.SetBackupConduitCapacity(_BACKUP_CONDUIT)
+    power.SetProperty(prop)
+    ship.SetPowerSubsystem(power)
+
+    # Seven conduit consumers, all sliders at 1.25 (PSM_MAIN_FIRST default).
+    for name, draw in (
+        ("Impulse Engines",  _DRAW_IMPULSE),
+        ("Sensor Array",     _DRAW_SENSORS),
+        ("Shield Generator", _DRAW_SHIELDS),
+        ("Phasers",          _DRAW_PHASERS),
+        ("Torpedo Tubes",    _DRAW_TORPS),
+        ("Warp Engines",     _DRAW_WARP),
+        ("Engineering",      _DRAW_ENGINEERING),
+    ):
+        c = PoweredSubsystem(name)
+        c.SetNormalPowerPerSecond(draw)
+        c.SetPowerPercentageWanted(1.25)     # red-alert slider boost
+        c.TurnOn()
+        ship.AddPoweredConsumer(c)
+
+    # Tractor: direct main-battery siphon, held (DRAWS_DIRECT_FROM_MAIN).
+    tractor = TractorBeamSystem("Tractor Beam")
+    tractor.SetNormalPowerPerSecond(_DRAW_TRACTOR)
+    tractor.SetPowerPercentageWanted(1.25)   # slider does NOT scale the siphon
+    tractor.TurnOn()
+    tractor._any_child_firing = lambda: True  # beam held
+    ship.AddPoweredConsumer(tractor)
+
+    # Seed the first interval budget, then measure a clean window well before any
+    # battery empties.  dt=1.0 -> one interval per Update.
+    power.Update(1.0)
+    main0 = power.GetMainBatteryPower()
+    backup0 = power.GetBackupBatteryPower()
+    window = 10
+    for _ in range(window):
+        power.Update(1.0)
+    main_rate = (power.GetMainBatteryPower() - main0) / window
+    backup_rate = (power.GetBackupBatteryPower() - backup0) / window
+
+    assert abs(main_rate - (-800.0)) <= 0.02 * 800.0, (
+        f"main drain must be ~-800/s (q10); got {main_rate:.2f}/s"
+    )
+    assert abs(backup_rate - (-113.75)) <= 0.02 * 113.75, (
+        f"backup drain must be ~-113.75/s (q10 overflow); got {backup_rate:.2f}/s"
+    )
+
+    # q10 Q1: backup drains CONCURRENTLY with main (overflow model), not last.
+    assert backup_rate < 0.0
+    assert power.GetMainBatteryPower() > 0.0   # main still holds charge
