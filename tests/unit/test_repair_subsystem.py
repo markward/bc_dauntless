@@ -306,3 +306,18 @@ def test_priority_event_routes_to_toggle():
     evt.SetObjPtr(subs[3])
     App.g_kEventManager.AddEvent(evt)
     assert bay._queue[0] is subs[3]
+
+
+# ── Task 9: dev quick-repair helper ─────────────────────────────────────────
+
+def test_repair_ship_fully_restores_everything_and_clears_queue():
+    from engine.appc.subsystems import repair_ship_fully
+    ship = _damaged_ship()
+    sensors = ship.GetSensorSubsystem()
+    sensors.SetCondition(100.0)              # damaged + auto-enqueued
+    bay = ship.GetRepairSubsystem()
+    assert bay._queue
+    repair_ship_fully(ship)
+    assert sensors.GetCondition() == sensors.GetMaxCondition()
+    assert bay._queue == []
+    repair_ship_fully(None)                  # must not raise

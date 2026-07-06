@@ -2330,6 +2330,36 @@ def HandleRepairPriorityEvent(pObject, pEvent):
     pObject.CallNextHandler(pEvent)
 
 
+def repair_ship_fully(ship) -> None:
+    """Dev/debug full repair — mirrors sdk Actions/ShipScriptActions.py
+    RepairShipFully: every subsystem back to max condition. Also clears
+    the repair queue (nothing left to fix). Safe on None/partial ships."""
+    if ship is None:
+        return
+    getters = (
+        "GetHull", "GetShieldSubsystem", "GetSensorSubsystem",
+        "GetImpulseEngineSubsystem", "GetWarpEngineSubsystem",
+        "GetPowerSubsystem", "GetRepairSubsystem", "GetTorpedoSystem",
+        "GetPhaserSystem", "GetPulseWeaponSystem", "GetTractorBeamSystem",
+        "GetCloakingSubsystem",
+    )
+    for name in getters:
+        try:
+            sub = getattr(ship, name, lambda: None)()
+            if sub is None:
+                continue
+            sub.SetCondition(sub.GetMaxCondition())
+            for i in range(sub.GetNumChildSubsystems()):
+                child = sub.GetChildSubsystem(i)
+                if child is not None:
+                    child.SetCondition(child.GetMaxCondition())
+        except Exception as _e:
+            dev_mode.log_swallowed("repair_ship_fully", _e)
+    bay = getattr(ship, "GetRepairSubsystem", lambda: None)()
+    if bay is not None and hasattr(bay, "_queue"):
+        bay._queue.clear()
+
+
 # ── Weapon subsystem hierarchy (split out into engine.appc.weapon_subsystems) ──
 # The weapon classes are part of this module's public surface; they were moved to
 # engine.appc.weapon_subsystems purely to shrink this file. ~30 call sites do
