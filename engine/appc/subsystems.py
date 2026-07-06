@@ -816,8 +816,37 @@ class ShipSubsystem(TGEventHandlerObject):
         return 1.0
 
 
+# BC draw modes (ship-subsystems.md:164-189).  Per-class assignment below.
+#
+# The spec's "tractor = mode 0" decision (docs/superpowers/specs/
+# 2026-07-05-power-management-system-design.md §Decisions 2) is SUPERSEDED by
+# measured ground truth (q10 — tools/probes/results/q10_battery_drain.txt): the
+# manual/UI were right that the tractor pulls from the MAIN battery, but neither
+# the RE doc's mode-1 (backup-first) row NOR the mode-0 conduit path describes
+# the gameplay draw correctly. The tractor does a DIRECT main-battery steal that
+# bypasses the conduit budget entirely and is unscaled by the slider — see
+# PSM_DIRECT_MAIN / TractorBeamSystem.DRAWS_DIRECT_FROM_MAIN below.
+PSM_MAIN_FIRST = 0
+PSM_BACKUP_FIRST = 1
+PSM_BACKUP_ONLY = 2
+# q10: a dedicated-source consumer that siphons the main battery directly,
+# bypassing the per-interval conduit budget and UNSCALED by the power-slider
+# percentage (measured 600 flat with sliders 1.25, not 600*1.25). Used by
+# TractorBeamSystem via the DRAWS_DIRECT_FROM_MAIN class flag, which is what
+# _update_power actually branches on.
+PSM_DIRECT_MAIN = 3
+
+
 class PoweredSubsystem(ShipSubsystem):
     """Powered subsystem — consumes power, has a target power level."""
+
+    POWER_MODE = PSM_MAIN_FIRST
+    # q10 (tools/probes/results/q10_battery_drain.txt): a subsystem whose draw
+    # is a DIRECT main-battery steal — bypasses the conduit budget and is NOT
+    # scaled by _power_percentage_wanted. Only TractorBeamSystem sets this True;
+    # every conduit-routed consumer leaves it False and uses power._draw().
+    DRAWS_DIRECT_FROM_MAIN = False
+
     def __init__(self, name: str = ""):
         super().__init__(name)
         self._normal_power = 0.0
@@ -827,7 +856,12 @@ class PoweredSubsystem(ShipSubsystem):
         # ship is unpowered until ShipClass.SetAlertLevel(RED) or a mission
         # script explicitly turns systems on.
         self._is_on: bool = False
-        self._power_percentage_wanted: float = 0.0
+        self._power_percentage_wanted: float = 1.0   # BC spawns at 100%
+        self._power_wanted: float = 0.0              # per-tick demand  (+0x8C)
+        self._power_received: float = 0.0            # per-tick receipt (+0x88)
+        self._efficiency: float = 1.0                # received/wanted  (+0x94)
+        self._power_factor: float = 1.0              # received/(normal*dt) (+0x98)
+        self._power_source = None
 
     def GetNormalPowerPerSecond(self) -> float:
         return self._normal_power
@@ -844,8 +878,106 @@ class PoweredSubsystem(ShipSubsystem):
     def TurnOn(self) -> None:                              self._is_on = True
     def TurnOff(self) -> None:                             self._is_on = False
     def IsOn(self) -> int:                                 return 1 if self._is_on else 0
-    def SetPowerPercentageWanted(self, pct) -> None:       self._power_percentage_wanted = float(pct)
+
+    def SetPowerPercentageWanted(self, pct) -> None:
+        pct = float(pct)
+        if pct < 0.0:
+            pct = 0.0
+        if pct > 1.25:
+            pct = 1.25
+        old = self._power_percentage_wanted
+        self._power_percentage_wanted = pct
+        # BC FUN_00562430: rescale current demand in place.
+        if old != 0.0:
+            self._power_wanted = self._power_wanted * pct / old
+        self._fire("ET_SUBSYSTEM_POWER_CHANGED")
+
     def GetPowerPercentageWanted(self) -> float:           return self._power_percentage_wanted
+    def GetPowerWanted(self) -> float:                     return self._power_wanted
+    def SetPowerWanted(self, v) -> None:                   self._power_wanted = float(v)
+    def GetNormalPowerWanted(self) -> float:               return self._normal_power
+    def GetPowerReceived(self) -> float:                   return self._power_received
+    def GetPowerPercentage(self) -> float:                 return self._efficiency
+    def GetNormalPowerPercentage(self) -> float:           return self._power_factor
+    def SetPowerSource(self, src) -> None:                 self._power_source = src
+
+    def Turn(self, on) -> None:
+        if on:
+            self.TurnOn()
+        else:
+            self.TurnOff()
+
+    def _wants_power(self) -> bool:
+        return bool(self._is_on)
+
+    def _update_power(self, dt: float, power) -> None:
+        """Draw this consumer's per-tick demand from ``power`` and record the
+        fed state.  Writes _power_wanted / _power_received / _efficiency
+        (received/wanted → GetPowerPercentage) and _power_factor
+        (received/normal → GetNormalPowerPercentage).
+
+        A consumer that doesn't want power (off / not engaged) is fully zeroed.
+        A "free" consumer (authored 0 pw/s — e.g. warp engines) wants nothing
+        yet runs at full function (efficiency 1.0, factor 1.0)."""
+        dt = float(dt)
+        if dt <= 0.0:
+            return
+        if not self._wants_power():
+            self._power_wanted = 0.0
+            self._power_received = 0.0
+            self._efficiency = 0.0
+            self._power_factor = 0.0
+            return
+        base = self._normal_power * dt
+        if base <= 0.0:
+            # Free consumer (authored 0 pw/s, e.g. warp engines): full function.
+            self._power_wanted = 0.0
+            self._power_received = 0.0
+            self._efficiency = 1.0
+            self._power_factor = 1.0
+            return
+        if self.DRAWS_DIRECT_FROM_MAIN:
+            # q10 direct siphon: the demand reported to PowerDisplay is still the
+            # slider-scaled figure (so the readout math is unchanged), but the
+            # ACTUAL draw is a flat StealPower(base) from the main battery —
+            # bypassing the conduit budget and unscaled by the slider (measured
+            # 600 flat with sliders 1.25). efficiency/factor come from
+            # received/base so the StopFiring starvation gate still engages when
+            # the main battery runs dry.
+            self._power_wanted = base * self._power_percentage_wanted
+            received = power.StealPower(base) if base > 0.0 else 0.0
+            self._power_received = received
+            self._efficiency = received / base if base > 0.0 else 1.0
+            self._power_factor = received / base
+            return
+        wanted = base * self._power_percentage_wanted
+        self._power_wanted = wanted
+        received = power._draw(wanted, self.POWER_MODE) if wanted > 0.0 else 0.0
+        self._power_received = received
+        self._efficiency = received / wanted if wanted > 0.0 else 1.0
+        self._power_factor = received / base
+
+    # ── Subsystem event emission ─────────────────────────────────────────────
+
+    def _fire(self, event_attr: str) -> None:
+        """Broadcast a subsystem event with the owning ship as both source AND
+        destination — mirrors ship_death._broadcast_destroyed.  Raise-safe so
+        a missing event manager never breaks the state machine.
+
+        The destination MUST be the ship: target-scoped method handlers
+        (Preprocessors.py) only fire when ``event.GetDestination() is pTarget``.
+        Falls back to ``self`` for a parentless subsystem (unit fixtures)."""
+        try:
+            import App
+            ship = self.GetParentShip() if hasattr(self, "GetParentShip") else None
+            owner = ship if ship is not None else self
+            evt = App.TGEvent_Create()
+            evt.SetEventType(getattr(App, event_attr))
+            evt.SetSource(owner)
+            evt.SetDestination(owner)
+            App.g_kEventManager.AddEvent(evt)
+        except Exception as _e:
+            dev_mode.log_swallowed("subsystem event broadcast", _e)
 
 
 class HullSubsystem(ShipSubsystem):
@@ -1121,6 +1253,34 @@ class ShieldSubsystem(PoweredSubsystem):
         shield-bias orbit positioning."""
         return self.GetCurrentShields(face)
 
+    # ── Override TurnOff/TurnOn to carry face-state semantics ────────────────
+    # Any path that powers shields down (alert→GREEN, slider→0%, future
+    # ShieldsDown SDK handler) must produce identical face state.  Putting
+    # the logic here means the caller just calls TurnOff()/TurnOn() and the
+    # face drain/raise follows automatically — no duplication in callers.
+
+    def TurnOff(self) -> None:
+        """Power down the shield generator and drain all faces to zero.
+
+        Mirrors BC's behaviour when the XO drops shields: every face
+        reading goes to 0 immediately (not gradual) so the status widget
+        and combat path both see dead shields.
+        """
+        super().TurnOff()
+        for f in range(self.NUM_SHIELDS):
+            self.SetCurrentShields(f, 0.0)
+
+    def TurnOn(self) -> None:
+        """Power up the shield generator and snap all faces to max.
+
+        Mirrors BC's behaviour when the XO raises shields: every face is
+        immediately at full charge — Phase 1 simplification of BC's
+        gradual charge-up time.
+        """
+        super().TurnOn()
+        for f in range(self.NUM_SHIELDS):
+            self.SetCurrentShields(f, self._max_shields[f])
+
     def GetSingleShieldPercentage(self, face: int) -> float:
         """current/max for the face; 0.0 when max==0 (unshielded face).
 
@@ -1183,7 +1343,7 @@ class ShieldSubsystem(PoweredSubsystem):
             mx = self._max_shields[f]
             if mx == 0.0:
                 continue
-            new = self._current_shields[f] + self._charge_per_second[f] * dt
+            new = self._current_shields[f] + self._charge_per_second[f] * self.GetNormalPowerPercentage() * dt
             if new > mx:
                 new = mx
             self._current_shields[f] = new
@@ -1222,27 +1382,36 @@ class PowerSubsystem(ShipSubsystem):
 
     Three pools mirror Appc (App.py:5739-5754):
 
-    * **available** — instantaneous surplus from generation, refilled
-      each tick.  Weapons drain this first.
+    * **available** — per-interval conduit-budget sum (budget-at-interval-start),
+      refilled each tick.  Consumers draw against conduit counters.
     * **main battery** — capped reserve (PowerProperty.MainBatteryLimit)
       that absorbs surplus and surrenders it when available runs out.
-    * **backup battery** — emergency reserve.  Reserved for the per-tick
-      flow implementation; the runtime arithmetic ops here treat it as
-      passive storage only.
+    * **backup battery** — emergency reserve drained only via
+      StealPowerFromReserve (backup-only path).
 
-    Arithmetic ops do NOT partial-drain: callers (TorpedoTube.Fire,
-    PhaserBank power debit, etc.) treat a return of 0 as "did not have
-    enough power, do nothing" and a return of 1 as "billed in full".
+    StealPower / StealPowerFromReserve are SDK API surface for direct
+    reservoir drains (main-only / backup-only, return amount taken, float
+    0.0 falsy).  Engine has no callers — SDK scripts and tests only.
     """
     def __init__(self, name: str = ""):
         super().__init__(name)
         self._available_power: float = 0.0
         self._main_battery_power: float = 0.0
         self._backup_battery_power: float = 0.0
+        # Conduit / interval tracking (Task 2: battery/conduit surface).
+        self._main_conduit_current: float = 0.0
+        self._backup_conduit_current: float = 0.0
+        self._interval_elapsed: float = 0.0
+        self._power_dispensed: float = 0.0
+        self._power_wanted_total: float = 0.0
         # FloatRangeWatchers handed to Conditions/ConditionPowerBelow.py:44-46;
         # each watches its battery FRACTION (power / limit), driven from Update.
         self._main_battery_watcher = FloatRangeWatcher()
         self._backup_battery_watcher = FloatRangeWatcher()
+        # Task 5: breach guard — fires exactly once when the reactor is destroyed.
+        # TODO(save): persist _breach_fired in __getstate__/__setstate__ —
+        # reload mid-breach re-arms on a dying ship.
+        self._breach_fired: bool = False
 
     def GetAvailablePower(self) -> float:           return self._available_power
     def SetAvailablePower(self, v) -> None:         self._available_power = float(v)
@@ -1251,20 +1420,91 @@ class PowerSubsystem(ShipSubsystem):
     def GetBackupBatteryPower(self) -> float:       return self._backup_battery_power
     def SetBackupBatteryPower(self, v) -> None:     self._backup_battery_power = float(v)
 
+    def SetProperty(self, prop) -> None:
+        """Override to fill batteries to their limits on bind (BC FUN_005636D0).
+
+        Ships spawn with batteries full so they can fire / shield before the
+        first per-tick refill.  Delegates the rest of the property-mirror work
+        to the ShipSubsystem base implementation."""
+        super().SetProperty(prop)
+        if prop is not None:
+            self._main_battery_power = float(prop.GetMainBatteryLimit() or 0.0)
+            self._backup_battery_power = float(prop.GetBackupBatteryLimit() or 0.0)
+
+    def _prop_f(self, getter_name: str) -> float:
+        """Read a float from the PowerProperty; returns 0.0 when no property
+        is bound or the getter returns None (unset data-bag key)."""
+        prop = self.GetProperty()
+        if prop is None:
+            return 0.0
+        return float(getattr(prop, getter_name)() or 0.0)
+
     def GetMainBatteryLimit(self) -> float:
         """Main-battery cap from the PowerProperty (App.py:5743).
 
         ConditionPowerBelow.py:79 divides GetMainBatteryPower() by this to
         seed its initial state; 0.0 when no property is wired."""
-        prop = self.GetProperty()
-        return float(prop.GetMainBatteryLimit() or 0.0) if prop is not None else 0.0
+        return self._prop_f("GetMainBatteryLimit")
 
     def GetBackupBatteryLimit(self) -> float:
         """Backup-battery cap from the PowerProperty (App.py:5744).
 
         Used by ConditionPowerBelow.py:77 for the reserve-only initial state."""
-        prop = self.GetProperty()
-        return float(prop.GetBackupBatteryLimit() or 0.0) if prop is not None else 0.0
+        return self._prop_f("GetBackupBatteryLimit")
+
+    def GetPowerOutput(self) -> float:
+        """Rated output scaled by condition (BC health-scaling asymmetry).
+
+        The EPS plant delivers less power when damaged — scaled by
+        GetConditionPercentage() just like GetMainConduitCapacity."""
+        return self._prop_f("GetPowerOutput") * self.GetConditionPercentage()
+
+    # Two views of conduit capacity (q10):
+    #   * The RATED view (_rated_*) is the physical throughput the EPS conduit
+    #     can carry per second: authored capacity, main health-scaled. The
+    #     per-interval budget tick uses THIS so the seeded budget is
+    #     min(battery, rated*condPct*elapsed) — the battery clamp lives in the
+    #     tick's min, not double-applied here.
+    #   * The SDK-facing getters (GetMainConduitCapacity /
+    #     GetBackupConduitCapacity) additionally clamp by the remaining battery
+    #     charge so SDK AdjustPower / IsPowerDraining / PowerDisplay.Update see
+    #     the deliverable capacity shrink as a battery runs dry — this is what
+    #     drove the original's observed impulse/warp/sensor throttle at ~1% main
+    #     (q10 s38->s39).
+
+    def _rated_main_conduit_capacity(self) -> float:
+        """Health-scaled main conduit throughput (no battery clamp).  Internal
+        per-interval budget input."""
+        return self._prop_f("GetMainConduitCapacity") * self.GetConditionPercentage()
+
+    def _rated_backup_conduit_capacity(self) -> float:
+        """Backup conduit throughput — NOT health-scaled (BC asymmetry: the
+        backup EPS path is hardened).  Internal per-interval budget input."""
+        return self._prop_f("GetBackupConduitCapacity")
+
+    def GetMaxMainConduitCapacity(self) -> float:
+        """Raw (undamaged, un-clamped) main conduit capacity from the
+        PowerProperty — AdjustPower's ceiling reference."""
+        return self._prop_f("GetMainConduitCapacity")
+
+    def GetMainConduitCapacity(self) -> float:
+        """SDK-facing main conduit capacity: health-scaled AND battery-limited
+        (q10). Returns min(main_battery, rated*conditionPct) so AdjustPower
+        engages once the main battery runs dry."""
+        return min(self._main_battery_power, self._rated_main_conduit_capacity())
+
+    def GetBackupConduitCapacity(self) -> float:
+        """SDK-facing backup conduit capacity: battery-limited, NOT health-scaled
+        (BC asymmetry). Returns min(backup_battery, rated_backup) (q10)."""
+        return min(self._backup_battery_power, self._rated_backup_conduit_capacity())
+
+    def GetPowerDispensed(self) -> float:
+        """Total power dispensed to consumers this tick (filled by Task 4)."""
+        return self._power_dispensed
+
+    def GetPowerWanted(self) -> float:
+        """Sum of power wanted by all consumers this tick (filled by Task 4)."""
+        return self._power_wanted_total
 
     def GetMainBatteryWatcher(self):
         """FloatRangeWatcher on the main-battery FRACTION
@@ -1286,102 +1526,128 @@ class PowerSubsystem(ShipSubsystem):
         self._available_power -= amt
         return 1
 
-    def StealPower(self, amount) -> int:
-        amt = float(amount)
-        if amt > self._available_power + self._main_battery_power:
-            return 0
-        from_avail = min(amt, self._available_power)
-        self._available_power -= from_avail
-        self._main_battery_power -= (amt - from_avail)
-        return 1
+    def StealPower(self, amount) -> float:
+        """Drain up to `amount` from the main battery; return the float amount
+        actually taken.  Main-battery-only — does not touch available or backup.
 
-    def StealPowerFromReserve(self, amount) -> int:
-        amt = float(amount)
-        if amt > self._available_power + self._main_battery_power:
-            return 0
-        from_main = min(amt, self._main_battery_power)
-        self._main_battery_power -= from_main
-        self._available_power -= (amt - from_main)
-        return 1
+        Returns 0.0 when the main battery is empty (falsy).  Partial steals
+        return the amount taken (truthy).  SDK API surface; engine has no
+        callers."""
+        take = min(float(amount), self._main_battery_power)
+        self._main_battery_power -= take
+        return take
+
+    def StealPowerFromReserve(self, amount) -> float:
+        """Drain up to `amount` from the backup battery; return the float
+        amount actually taken.  Backup-battery-only — does not touch available
+        or main.  0.0 return is falsy; positive return is truthy."""
+        take = min(float(amount), self._backup_battery_power)
+        self._backup_battery_power -= take
+        return take
 
     # ── Per-tick flow ─────────────────────────────────────────────────────
-    # Walked from GameLoop.tick. Sums idle drain across the parent ship's
-    # powered subsystems, applies generation, and routes surplus / deficit
-    # through the battery pools. The available pool is refilled to the
-    # tick's surplus so weapons can spend it via DeductPower / StealPower
-    # within the same tick.
+    # BC uses a 1-second interval tick (FUN_005636D0 / 0x892E20 constant).
+    # Elapsed game-time accumulates each call; when it crosses POWER_INTERVAL
+    # the reactor fires: generate output*elapsed into batteries (main first,
+    # spill to backup, discard), then compute conduit budgets from the new
+    # battery levels and health-scaled capacity.  Between intervals the conduit
+    # budgets are unchanged; the watcher fractions are updated every call so
+    # the FloatRangeWatcher fires promptly on StealPower drains between ticks.
 
-    _IDLE_DRAIN_SLOTS = (
-        "GetSensorSubsystem", "GetImpulseEngineSubsystem",
-        "GetWarpEngineSubsystem", "GetShieldSubsystem",
-        "GetPhaserSystem", "GetTorpedoSystem",
-        "GetPulseWeaponSystem", "GetTractorBeamSystem",
-        "GetRepairSubsystem",
-    )
+    POWER_INTERVAL: float = 1.0   # seconds of game time; BC constant 0x892E20
 
-    def _compute_idle_drain(self) -> float:
-        ship = self.GetParentShip()
-        if ship is None:
-            return 0.0
-        total = 0.0
-        for getter_name in self._IDLE_DRAIN_SLOTS:
-            getter = getattr(ship, getter_name, None)
-            if getter is None:
-                continue
-            sub = getter()
-            if sub is None:
-                continue
-            if not hasattr(sub, "IsOn") or not sub.IsOn():
-                continue
-            if not hasattr(sub, "GetNormalPowerPerSecond"):
-                continue
-            total += float(sub.GetNormalPowerPerSecond() or 0.0)
+    def _add_power_to_batteries(self, amount: float) -> None:
+        """Main first (capped), spill to backup (capped), discard the rest."""
+        main_cap = self.GetMainBatteryLimit()
+        backup_cap = self.GetBackupBatteryLimit()
+        room = main_cap - self._main_battery_power
+        take = min(amount, max(room, 0.0))
+        self._main_battery_power += take
+        spill = amount - take
+        room = backup_cap - self._backup_battery_power
+        self._backup_battery_power += min(spill, max(room, 0.0))
 
-        # Cloak is metered separately: it draws its NormalPowerPerSecond only
-        # while the ship is trying to stay hidden (CLOAKING or CLOAKED), not on
-        # the PoweredSubsystem on/off flag.  BC drains the cloak for the whole
-        # duration the device is engaged (warbird authors 1000 power/sec).
-        cloak_getter = getattr(ship, "GetCloakingSubsystem", None)
-        if cloak_getter is not None:
-            cloak = cloak_getter()
-            if (cloak is not None
-                    and hasattr(cloak, "IsTryingToCloak")
-                    and cloak.IsTryingToCloak()
-                    and hasattr(cloak, "GetNormalPowerPerSecond")):
-                total += float(cloak.GetNormalPowerPerSecond() or 0.0)
-        return total
+    def _trigger_breach(self) -> None:
+        """Called once when the reactor is destroyed (Task 5 — manual p.16:
+        "Reaching 0% causes a warp-core breach and destroys the ship").
+
+        Gate parity with objects.py:_route_zero_crossing: only a TARGETABLE
+        power plant may breach.  Inert objects (asteroids) carry a hidden,
+        non-targetable Power Plant (SetTargetable(0)); when the death cascade
+        zeroes it, it must NOT throw a warp-core explosion with its unique VFX
+        + splash damage.  ``_breach_fired`` is still set so we do not
+        re-evaluate every tick — the plant is marked "handled" even though
+        no breach is emitted.
+
+        Two effects (targetable path only), matching the
+        objects.py:695-699 critical-subsystem pattern:
+
+        * warp_core_breach.arm(ship) — queues the AoE explosion, detonated
+          on the next warp_core_breach.advance() (driven by the game loop).
+          detonate() skips the source ship, so arming alone never kills it.
+        * ship_death.begin(ship) — starts the source ship's own death
+          sequence, guarded on IsDying()/IsDead() so a ship already dying
+          (e.g. the hull-zero cascade already began it) is untouched.
+
+        Raise-safe: a missing parent ship or import error must never crash
+        the power tick."""
+        try:
+            from engine.appc.objects import _is_targetable
+            if not _is_targetable(self):
+                return
+            from engine.appc import warp_core_breach
+            ship = self.GetParentShip()
+            if ship is None:
+                return
+            warp_core_breach.arm(ship)
+            if hasattr(ship, "IsDying") and hasattr(ship, "IsDead") \
+                    and not ship.IsDying() and not ship.IsDead():
+                from engine.appc import ship_death
+                ship_death.begin(ship)
+        except Exception as _e:
+            import engine.dev_mode as dev_mode
+            dev_mode.log_swallowed("warp core breach trigger", _e)
 
     def Update(self, dt: float) -> None:
+        # Task 5: on the first tick after the reactor is destroyed, arm the
+        # warp-core breach (manual p.16: "Reaching 0% causes a warp-core
+        # breach and destroys the ship").  _breach_fired is a single-fire
+        # guard so that a destroyed-but-still-ticked subsystem only arms once.
+        if self.IsDestroyed() and not self._breach_fired:
+            self._breach_fired = True
+            self._trigger_breach()
         prop = self.GetProperty()
         if prop is None:
             return
-        output = float(prop.GetPowerOutput() or 0.0)
-        main_cap = float(prop.GetMainBatteryLimit() or 0.0)
-        idle_drain = self._compute_idle_drain()
-
-        backup_cap = float(prop.GetBackupBatteryLimit() or 0.0)
-        gen = output * dt
-        drain = idle_drain * dt
-        net = gen - drain
-
-        if net >= 0.0:
-            self._main_battery_power = min(
-                main_cap, self._main_battery_power + net
-            )
-            self._available_power = net
-        else:
-            # Deficit — pull from main, then backup.  Subsystems still
-            # "run" (we don't simulate brown-out yet); the only observable
-            # is a drained reserve.
-            deficit = -net
-            from_main = min(deficit, self._main_battery_power)
-            self._main_battery_power -= from_main
-            remaining = deficit - from_main
-            if remaining > 0.0:
-                from_backup = min(remaining, self._backup_battery_power)
-                self._backup_battery_power -= from_backup
-            self._available_power = 0.0
-
+        dt = float(dt)
+        self._interval_elapsed += dt
+        if self._interval_elapsed >= self.POWER_INTERVAL:
+            elapsed = self._interval_elapsed
+            # Reset to zero (not -= POWER_INTERVAL) so every interval window
+            # accumulates the identical IEEE-754 tick sum: [0, POWER_INTERVAL).
+            # Tests mirror this exact float path via _accum_elapsed() arithmetic.
+            self._interval_elapsed = 0.0
+            self._power_dispensed = 0.0
+            if not _is_offline(self):
+                self._add_power_to_batteries(self.GetPowerOutput() * elapsed)
+            # Deliberate asymmetry: recharge is gated on reactor-offline, but
+            # conduit budgets (capacity*elapsed) are computed UNCONDITIONALLY.
+            # BC-faithful per docs/original_game_reference/gameplay/ship-subsystems.md:122-127
+            # (ComputeAvailablePower is an unconditional sibling step; batteries
+            # still deliver through conduits even when the reactor is down).
+            # Per-interval budget = min(battery, rated*condPct*elapsed). Use the
+            # RATED (un-clamped) capacity here so the battery clamp is applied
+            # exactly once (in the min below), not double-applied via the
+            # battery-limited SDK getters. See the two-views comment above.
+            main_max = self._rated_main_conduit_capacity() * elapsed
+            backup_max = self._rated_backup_conduit_capacity() * elapsed
+            self._main_conduit_current = min(self._main_battery_power, main_max)
+            self._backup_conduit_current = min(self._backup_battery_power, backup_max)
+            self._available_power = (self._main_conduit_current
+                                     + self._backup_conduit_current)
+        self._pump_consumers(dt)     # Task 4 fills this in
+        main_cap = self.GetMainBatteryLimit()
+        backup_cap = self.GetBackupBatteryLimit()
         # Drive the FloatRangeWatchers with each battery's FRACTION so
         # Conditions/ConditionPowerBelow.py fires its ET_POWER_FRACTION_CHANGED
         # crossing event (guard divide-by-zero → 0.0).
@@ -1391,6 +1657,62 @@ class PowerSubsystem(ShipSubsystem):
         self._backup_battery_watcher._update(
             self._backup_battery_power / backup_cap if backup_cap > 0.0 else 0.0
         )
+
+    def _pump_consumers(self, dt: float) -> None:
+        """Per-frame consumer draw pass.  Walks the ship's powered consumers in
+        attach order (= BC draw priority) and lets each draw its per-tick demand
+        from the conduit budget + battery via _draw.  _power_wanted_total sums
+        the demand for the WeaponsDisplay / diagnostics readout.
+
+        Called every Update (not just on the interval tick) so between-interval
+        frames still deplete the seeded conduit budget smoothly."""
+        ship = self.GetParentShip()
+        consumers = getattr(ship, "_powered_consumers", None) if ship is not None else None
+        if not consumers:
+            return
+        self._power_wanted_total = 0.0
+        for consumer in consumers:
+            consumer._update_power(dt, self)
+            self._power_wanted_total += consumer.GetPowerWanted()
+
+    def _draw(self, amount: float, mode: int) -> float:
+        """Depletes conduit budget AND battery to satisfy up to ``amount``,
+        honouring the consumer's draw mode.  Returns the amount actually drawn.
+
+        * PSM_MAIN_FIRST — main conduit/battery first, backup for the shortfall.
+        * PSM_BACKUP_FIRST — backup first, main for the shortfall.
+        * PSM_BACKUP_ONLY — backup only, no fallback (cloak: off the main grid).
+
+        Accumulates into _power_dispensed for GetPowerDispensed()."""
+        if amount <= 0.0:
+            return 0.0
+        got = 0.0
+        if mode == PSM_MAIN_FIRST:
+            got += self._draw_main(amount)
+            got += self._draw_backup(amount - got)
+        elif mode == PSM_BACKUP_FIRST:
+            got += self._draw_backup(amount)
+            got += self._draw_main(amount - got)
+        else:  # PSM_BACKUP_ONLY — no fallback
+            got += self._draw_backup(amount)
+        self._power_dispensed += got
+        return got
+
+    def _draw_main(self, amount: float) -> float:
+        take = min(amount, self._main_conduit_current, self._main_battery_power)
+        if take <= 0.0:
+            return 0.0
+        self._main_conduit_current -= take
+        self._main_battery_power -= take
+        return take
+
+    def _draw_backup(self, amount: float) -> float:
+        take = min(amount, self._backup_conduit_current, self._backup_battery_power)
+        if take <= 0.0:
+            return 0.0
+        self._backup_conduit_current -= take
+        self._backup_battery_power -= take
+        return take
 
 
 class RepairSubsystem(PoweredSubsystem):
@@ -1449,6 +1771,15 @@ class CloakingSubsystem(PoweredSubsystem):
     CLOAK_CLOAKING   = 1
     CLOAK_CLOAKED    = 2
     CLOAK_DECLOAKING = 3
+
+    # Cloak runs off the backup grid only — it is locked off the main conduit
+    # so cloaking never starves the ship's other systems of main-battery power
+    # (docs/original_game_reference/gameplay/ship-subsystems.md:185).
+    POWER_MODE = PSM_BACKUP_ONLY
+
+    # Power starvation: backup battery dry → device disengages
+    # (ship-subsystems.md:187-189). Exact BC threshold unknown; tune from live play (ship-subsystems.md:187-189)
+    AUTO_DECLOAK_EFFICIENCY = 0.25
 
     def __init__(self, name: str = ""):
         super().__init__(name)
@@ -1517,6 +1848,14 @@ class CloakingSubsystem(PoweredSubsystem):
         return 1 if self._cloak_state in (self.CLOAK_CLOAKING,
                                           self.CLOAK_CLOAKED) else 0
 
+    def _wants_power(self) -> bool:
+        """The cloak draws power only while the ship is trying to stay hidden
+        (CLOAKING or CLOAKED) — NOT on the PoweredSubsystem on/off flag.  BC
+        drains the cloak for the whole duration the device is engaged (warbird
+        authors 1000 power/sec).  This replaces the old PowerSubsystem.
+        _compute_idle_drain cloak special-case."""
+        return bool(self.IsTryingToCloak())
+
     def GetTransitionFraction(self) -> float:
         """Visual cloak progress in [0, 1]: 0 = fully visible (DECLOAKED),
         1 = fully hidden (CLOAKED).  Ramps with the transition timer during
@@ -1532,6 +1871,24 @@ class CloakingSubsystem(PoweredSubsystem):
         f = 0.0 if f < 0.0 else (1.0 if f > 1.0 else f)
         return f if self._cloak_state == self.CLOAK_CLOAKING else (1.0 - f)
 
+    # ── Forced-decloak helper ────────────────────────────────────────────────
+
+    def _force_decloak(self) -> None:
+        """Snap the cloak state to DECLOAKED immediately, firing
+        ET_DECLOAK_COMPLETED if the device was fully CLOAKED.
+
+        Shared by the offline path (disabled/destroyed device) and the
+        power-starvation path (backup battery exhausted).  Only acts when
+        IsTryingToCloak() — i.e. CLOAKING or CLOAKED; calling it in any
+        other state is a no-op."""
+        if self._cloak_state not in (self.CLOAK_CLOAKING, self.CLOAK_CLOAKED):
+            return
+        was_cloaked = self._cloak_state == self.CLOAK_CLOAKED
+        self._cloak_state = self.CLOAK_DECLOAKED
+        self._transition_elapsed = 0.0
+        if was_cloaked:
+            self._fire("ET_DECLOAK_COMPLETED")
+
     # ── Per-tick transition advance (game-loop subsystem update pass) ────────
 
     def Update(self, dt: float) -> None:
@@ -1539,19 +1896,24 @@ class CloakingSubsystem(PoweredSubsystem):
 
         A disabled / destroyed device cannot complete or hold a cloak: when
         offline it is forced back toward DECLOAKED (a pending CLOAKING is
-        abandoned, a finished CLOAKED snaps off).  Otherwise, when the elapsed
-        transition time reaches ``_transition_duration`` the machine snaps to
-        the terminal state and broadcasts its completion event.
+        abandoned, a finished CLOAKED snaps off).  Power starvation (backup
+        battery exhausted, efficiency < AUTO_DECLOAK_EFFICIENCY) also forces
+        decloak.  Otherwise, when the elapsed transition time reaches
+        ``_transition_duration`` the machine snaps to the terminal state and
+        broadcasts its completion event.
         """
         offline = bool(self.IsDisabled()) or bool(self.IsDestroyed())
         if offline:
             # Forced decloak: a disabled cloak cannot keep the ship hidden.
-            if self._cloak_state in (self.CLOAK_CLOAKING, self.CLOAK_CLOAKED):
-                was_cloaked = self._cloak_state == self.CLOAK_CLOAKED
-                self._cloak_state = self.CLOAK_DECLOAKED
-                self._transition_elapsed = 0.0
-                if was_cloaked:
-                    self._fire("ET_DECLOAK_COMPLETED")
+            self._force_decloak()
+            return
+
+        # Power starvation: backup battery dry → device disengages
+        # (ship-subsystems.md:187-189).  Exact BC threshold unknown; 0.25 chosen
+        # — tune from live play, keep as a named constant.
+        if (self.IsTryingToCloak() and self.GetNormalPowerWanted() > 0.0
+                and self.GetPowerPercentage() < self.AUTO_DECLOAK_EFFICIENCY):
+            self._force_decloak()
             return
 
         if self._cloak_state not in (self.CLOAK_CLOAKING, self.CLOAK_DECLOAKING):
@@ -1646,33 +2008,8 @@ class CloakingSubsystem(PoweredSubsystem):
         except Exception as _e:
             dev_mode.log_swallowed("cloak sfx", _e)
 
-    # ── Cloak event emission ─────────────────────────────────────────────────
-
-    def _fire(self, event_attr: str) -> None:
-        """Broadcast a cloak event (``ET_CLOAK_BEGINNING`` / ``ET_CLOAK_COMPLETED``
-        / ``ET_DECLOAK_BEGINNING`` / ``ET_DECLOAK_COMPLETED``) with the owning
-        ship as both source AND destination — mirrors
-        ship_death._broadcast_destroyed.  Raise-safe so a missing event manager
-        never breaks the state machine.
-
-        The destination MUST be the ship: SelectTarget registers its cloak-drop
-        handler with ``AddBroadcastPythonMethodHandler(ET_CLOAK_COMPLETED, ...,
-        pNewTarget)`` (Preprocessors.py), and the event manager only fires that
-        handler when ``event.GetDestination() is pNewTarget`` (the ship). A
-        subsystem-sourced event with no destination silently skips the handler,
-        so the AI never drops a target that cloaks. Falls back to ``self`` for a
-        parentless subsystem (unit fixtures) to preserve the old source."""
-        try:
-            import App
-            ship = self.GetParentShip() if hasattr(self, "GetParentShip") else None
-            owner = ship if ship is not None else self
-            evt = App.TGEvent_Create()
-            evt.SetEventType(getattr(App, event_attr))
-            evt.SetSource(owner)
-            evt.SetDestination(owner)
-            App.g_kEventManager.AddEvent(evt)
-        except Exception as _e:
-            dev_mode.log_swallowed("cloak event broadcast", _e)
+    # _fire is inherited from PoweredSubsystem — cloak events use the same
+    # ship-as-destination broadcast seam as ET_SUBSYSTEM_POWER_CHANGED.
 
 
 # ── Module-level WarpEngineSubsystem helpers ─────────────────────────────────

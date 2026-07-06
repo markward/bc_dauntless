@@ -1,18 +1,12 @@
-"""PowerSubsystem.Update — per-tick generation + idle-drain pass.
+"""PowerSubsystem.Update — interval-tick semantics (generation + caps).
 
-Each tick the PowerSubsystem:
+Rewritten in Task 3 to match BC's 1-second interval model.  Drain was part
+of the old per-dt net-energy model; Task 4 introduces the consumer pump that
+replaces it.  These tests cover generation, battery caps, conduit budgets,
+and the no-property guard.
 
-* Generates `PowerOutput * dt` worth of power.
-* Sums `NormalPowerPerSecond * dt` across every PoweredSubsystem on the
-  parent ship that is currently on, and treats that as the idle drain.
-* Net surplus tops up the main battery (capped at MainBatteryLimit) and
-  also seeds `available_power` so weapons / ad-hoc consumers can spend
-  it within the same tick.
-* Net deficit drains main battery (then backup); `available_power`
-  bottoms out at zero.
-
-This is the per-tick flow consumers (TorpedoTube.Fire in slice 5) sit on
-top of; the per-fire gate uses StealPower against available + main.
+Note: `Update(1.0)` passes dt=1.0 which is ≥ POWER_INTERVAL (1.0 s), so the
+interval fires in a single call.  elapsed = 1.0.
 """
 from engine.appc.subsystems import (
     PowerSubsystem, PoweredSubsystem, SensorSubsystem,
@@ -21,108 +15,87 @@ from engine.appc.properties import PowerProperty
 from engine.appc.ships import ShipClass_Create
 
 
-def _bind_property(ps, *, output, main_cap, backup_cap=0.0, main_conduit=1200.0):
+def _bind_property(ps, *, output, main_cap, backup_cap=0.0, main_conduit=1200.0,
+                   backup_conduit=0.0):
     prop = PowerProperty("WarpCore")
     prop.SetPowerOutput(output)
     prop.SetMainBatteryLimit(main_cap)
     prop.SetBackupBatteryLimit(backup_cap)
     prop.SetMainConduitCapacity(main_conduit)
+    prop.SetBackupConduitCapacity(backup_conduit)
     ps.SetProperty(prop)
     return prop
 
 
 def test_update_with_no_parent_ship_grows_battery_by_generation():
-    """No parent ship = zero idle drain.  One second of generation
-    deposits full output into main battery and into the available
-    pool."""
+    """No consumers.  One 1-second interval deposits full output into battery."""
     ps = PowerSubsystem("WarpCore")
     _bind_property(ps, output=1000.0, main_cap=10000.0)
     ps.SetMainBatteryPower(0.0)
     ps.Update(1.0)
     assert ps.GetMainBatteryPower() == 1000.0
+    # Available = conduit budget: min(1000, 1200 * 1.0) = 1000
     assert ps.GetAvailablePower() == 1000.0
 
 
 def test_update_caps_main_battery_at_limit():
+    """Generation that would exceed main-battery cap is stopped at the cap."""
     ps = PowerSubsystem("WarpCore")
     _bind_property(ps, output=1000.0, main_cap=500.0)
     ps.SetMainBatteryPower(400.0)
     ps.Update(1.0)
-    # Net surplus 1000 would push to 1400 but cap is 500.
+    # 1000 generated → room=100 → main capped at 500
     assert ps.GetMainBatteryPower() == 500.0
 
 
-def test_update_subtracts_idle_drain_from_powered_subsystems():
-    """A PoweredSubsystem that's on with NormalPowerPerSecond=200
-    drains the generation by 200/s.  Net 1000-200=800 banked + made
-    available."""
-    ship = ShipClass_Create("Test")
-    ps = ship.GetPowerSubsystem()
+def test_update_generation_spills_to_backup():
+    """Surplus beyond main cap spills to backup battery (BC fill order)."""
+    ps = PowerSubsystem("WarpCore")
+    _bind_property(ps, output=1500.0, main_cap=500.0, backup_cap=5000.0,
+                   main_conduit=9999.0, backup_conduit=9999.0)
+    ps.SetMainBatteryPower(0.0)
+    ps.SetBackupBatteryPower(0.0)
+    ps.Update(1.0)
+    # 1500 generated → 500 fills main, 1000 spills to backup
+    assert ps.GetMainBatteryPower() == 500.0
+    assert ps.GetBackupBatteryPower() == 1000.0
+
+
+def test_update_generation_overflow_discarded():
+    """Generation that fills both batteries leaves the rest discarded."""
+    ps = PowerSubsystem("WarpCore")
+    _bind_property(ps, output=2000.0, main_cap=500.0, backup_cap=300.0,
+                   main_conduit=9999.0, backup_conduit=9999.0)
+    ps.SetMainBatteryPower(0.0)
+    ps.SetBackupBatteryPower(0.0)
+    ps.Update(1.0)
+    # 2000 → main capped at 500, backup capped at 300, 1200 discarded
+    assert ps.GetMainBatteryPower() == 500.0
+    assert ps.GetBackupBatteryPower() == 300.0
+
+
+def test_update_conduit_budget_limits_available():
+    """Available power is bounded by conduit capacity * elapsed, not raw battery."""
+    ps = PowerSubsystem("WarpCore")
+    _bind_property(ps, output=5000.0, main_cap=50000.0, main_conduit=300.0)
+    ps.SetMainBatteryPower(0.0)
+    ps.Update(1.0)
+    # Battery = 5000; conduit can only pass 300/s; available = 300
+    assert ps.GetAvailablePower() == 300.0
+
+
+def test_update_no_recharge_when_destroyed():
+    """Destroyed reactor (condition=0) produces no power."""
+    ps = PowerSubsystem("WarpCore")
     _bind_property(ps, output=1000.0, main_cap=10000.0)
     ps.SetMainBatteryPower(0.0)
-
-    sensor = ship.GetSensorSubsystem()
-    sensor.SetNormalPowerPerSecond(200.0)
-    sensor.TurnOn()
-
+    ps.SetCondition(0.0)   # triggers IsDestroyed() == 1
     ps.Update(1.0)
-    assert ps.GetAvailablePower() == 800.0
-    assert ps.GetMainBatteryPower() == 800.0
-
-
-def test_update_ignores_subsystems_that_are_off():
-    """An off subsystem contributes zero to idle drain — full output
-    flows to battery."""
-    ship = ShipClass_Create("Test")
-    ps = ship.GetPowerSubsystem()
-    _bind_property(ps, output=1000.0, main_cap=10000.0)
-    ps.SetMainBatteryPower(0.0)
-
-    sensor = ship.GetSensorSubsystem()
-    sensor.SetNormalPowerPerSecond(200.0)
-    sensor.TurnOff()   # sensors default ON; force off to exercise the skip path
-
-    ps.Update(1.0)
-    assert ps.GetAvailablePower() == 1000.0
-
-
-def test_update_with_deficit_drains_main_battery():
-    """Idle drain 1500/s vs output 1000/s → 500/s deficit, taken from
-    main battery; available bottoms at zero."""
-    ship = ShipClass_Create("Test")
-    ps = ship.GetPowerSubsystem()
-    _bind_property(ps, output=1000.0, main_cap=10000.0)
-    ps.SetMainBatteryPower(5000.0)
-
-    sensor = ship.GetSensorSubsystem()
-    sensor.SetNormalPowerPerSecond(1500.0)
-    sensor.TurnOn()
-
-    ps.Update(1.0)
-    assert ps.GetMainBatteryPower() == 4500.0
-    assert ps.GetAvailablePower() == 0.0
-
-
-def test_update_deficit_falls_back_to_backup_when_main_empty():
-    ship = ShipClass_Create("Test")
-    ps = ship.GetPowerSubsystem()
-    _bind_property(ps, output=0.0, main_cap=10000.0, backup_cap=80000.0)
-    ps.SetMainBatteryPower(100.0)
-    ps.SetBackupBatteryPower(80000.0)
-
-    sensor = ship.GetSensorSubsystem()
-    sensor.SetNormalPowerPerSecond(500.0)
-    sensor.TurnOn()
-
-    ps.Update(1.0)
-    # 500 deficit: 100 from main, 400 from backup.
     assert ps.GetMainBatteryPower() == 0.0
-    assert ps.GetBackupBatteryPower() == 79600.0
 
 
 def test_update_no_property_is_a_noop():
-    """A ship without a wired PowerProperty (test stub) gracefully skips
-    Update — nothing to read generation from."""
+    """A ship without a wired PowerProperty gracefully skips Update."""
     ps = PowerSubsystem("WarpCore")
     ps.SetMainBatteryPower(500.0)
     ps.Update(1.0)

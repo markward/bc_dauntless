@@ -38,6 +38,9 @@ def GraphicsModeInfo_GetCurrentMode() -> GraphicsModeInfo:
     return _current_mode
 
 
-def TGUIModule_PixelAlignValue(value):
-    """Identity — pixel alignment is meaningless without a pixel grid."""
+def TGUIModule_PixelAlignValue(value, *_axis):
+    """Identity — pixel alignment is meaningless without a pixel grid.
+
+    SDK callers pass an optional axis flag as a 2nd arg (PowerDisplay
+    CreateLegendElbows: PixelAlignValue(v, 0)); it is ignored headless."""
     return value

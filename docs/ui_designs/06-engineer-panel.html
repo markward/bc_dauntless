@@ -1,228 +1,101 @@
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Antonio:wght@100;300;400;500;600;700&display=swap');
-  .antonio { font-family: 'Antonio', sans-serif; }
+  @import url('https://fonts.googleapis.com/css2?family=Antonio:wght@400;600&display=swap');
+  .bc { font-family: 'Antonio', 'Arial Narrow', sans-serif; background: rgba(10,10,16,0.92); border-left: 4px solid rgb(216,94,86); }
+  .bc-body { padding: 12px 14px; }
+  .grid-wrap { display: flex; }
+  .dmg-col { width: 8.9%; background: repeating-linear-gradient(45deg, rgb(170,25,25), rgb(170,25,25) 4px, rgb(80,17,17) 4px, rgb(80,17,17) 8px);
+    border: 1px solid rgb(40,35,50); border-right: none; border-radius: 2px 0 0 2px; }
+  .bars-col { flex: 1; position: relative; }
+  .used-bar { height: 28px; border: 1px solid rgb(40,35,50); border-radius: 0 2px 2px 0; overflow: hidden; display: flex; background: rgba(255,255,255,0.05); margin-bottom: 14px; }
+  .pu-bar { height: 14px; border: 1px solid rgb(40,35,50); border-radius: 0 2px 2px 0; overflow: hidden; display: flex; }
+  .pu-wc { background: rgb(22,105,207); } .pu-mn { background: rgb(180,157,64); } .pu-rs { background: rgb(208,87,42); }
+  .u-weap { background: rgb(207,139,76); } .u-eng { background: rgb(199,76,200); } .u-sens { background: rgb(201,203,76); } .u-shld { background: rgb(150,129,222); }
+  .pu-rel { position: relative; }
+  .btick { position: absolute; top: -5px; bottom: 0; width: 2px; }
+  .pu-labels { display: flex; font-size: 9px; letter-spacing: .6px; margin-top: 6px; }
+  .pu-labels span { text-align: center; white-space: nowrap; }
+  .row { display: grid; grid-template-columns: 100px 1fr 50px; align-items: center; gap: 8px; margin: 7px 0; }
+  .row .lbl { color: #e8e6f0; font-size: 12px; }
+  .track { height: 10px; position: relative; cursor: ew-resize; }
+  .fill { height: 100%; }
+  .pct { font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; }
+  .ticks { position: relative; height: 14px; color: #8886a0; font-size: 10px; margin: 4px 0 0 108px; margin-right: 58px; }
+  .ticks span { position: absolute; transform: translateX(-50%); }
+  .ticks span:first-child { left: 0; transform: none; }
+  .ticks span:last-child { right: 0; left: auto; transform: none; }
+  /* bottom group spans full width: MAIN | toggles (centred) | RESERVE */
+  .bgroup { display: flex; align-items: flex-start; margin-top: 16px; }
+  .toggle-col { flex: 1; position: relative; height: 120px; }
+  .btoggle { position: absolute; left: 50%; transform: translateX(-50%); width: 170px; display: flex; justify-content: space-between; padding: 4px 10px; background: rgba(30,28,44,.7); color: #e8e6f0; font-size: 12px; box-sizing: border-box; }
+  .cline-on { position: absolute; height: 2px; }
+  .cline-off { position: absolute; height: 0; border-top: 2px dashed; }
+  .pillar { display: flex; flex-direction: column; align-items: center; }
+  .pcol { height: 80px; background: rgb(13,11,26); position: relative; border-radius: 6px; overflow: hidden; }
+  .pbump { height: 7px; border: 1px solid; border-bottom: none; border-radius: 3px 3px 0 0; background: rgb(13,11,26); }
+  .pfill { position: absolute; bottom: 0; left: 0; right: 0; }
+  .pname { color: #8886a0; font-size: 10px; font-weight: 600; margin-top: 3px; text-align: center; }
+  .ppct { font-size: 11px; font-weight: 600; text-align: center; }
+  .thumbline { position: absolute; top: -3px; bottom: -3px; width: 3px; background: #fff; box-shadow: 0 0 4px #fff; }
+  .mark100 { position: absolute; top: -2px; bottom: -2px; left: 80%; width: 1px; background: rgba(255,255,255,0.28); }
 </style>
 
-<h2>Engineering view — wrapped up</h2>
-<p class="subtitle">All locked-in elements assembled: Engineering left panel + Power Transmission Grid right panel. Bridge mid-combat scenario: warp core lightly damaged, main battery draining under load, tractor engaged.</p>
+<h2>v28 — used bar corners squared again</h2>
+<p class="subtitle">Used bar back to square (flush with the damage column); battery pillars keep their rounded bodies and terminal bumps.</p>
 
 <div class="mockup">
-  <div class="mockup-header">Engineering — mid-combat state</div>
-  <div class="mockup-body" style="background:#000; padding:32px; display:flex; gap:32px; justify-content:center; align-items:flex-start;">
+  <div class="mockup-header">Power Transmission Grid — v28</div>
+  <div class="mockup-body" style="background:#1a1a24; padding:16px;">
+    <div class="bc" style="max-width:540px; margin:0 auto;">
+      <div class="bc-body" style="padding-top:10px;">
+        <div class="row"><span class="lbl">Weapons</span><div class="track" style="background:rgba(207,139,76,.25)"><div class="fill" style="background:rgb(207,139,76); width:92%"></div><div class="mark100"></div><div class="thumbline" style="left:92%"></div></div><span class="pct" style="color:rgb(207,139,76)">115%</span></div>
+        <div class="row"><span class="lbl">Engines</span><div class="track" style="background:rgba(199,76,200,.25)"><div class="fill" style="background:rgb(199,76,200); width:80%"></div><div class="mark100"></div><div class="thumbline" style="left:80%"></div></div><span class="pct" style="color:rgb(199,76,200)">100%</span></div>
+        <div class="row"><span class="lbl">Sensor Array</span><div class="track" style="background:rgba(201,203,76,.25)"><div class="fill" style="background:rgb(201,203,76); width:48%"></div><div class="mark100"></div><div class="thumbline" style="left:48%"></div></div><span class="pct" style="color:rgb(201,203,76)">60%</span></div>
+        <div class="row"><span class="lbl">Shields</span><div class="track" style="background:rgba(150,129,222,.25)"><div class="fill" style="background:rgb(150,129,222); width:88%"></div><div class="mark100"></div><div class="thumbline" style="left:88%"></div></div><span class="pct" style="color:rgb(150,129,222)">110%</span></div>
+        <div class="ticks"><span>0%</span><span style="left:40%">50%</span><span style="left:80%; color:#cfcde4">100%</span><span>125%</span></div>
 
-    <!-- ============== Engineering crew menu (left) ============== -->
-    <div class="antonio" style="width:240px;">
-      <div style="background:linear-gradient(90deg, rgb(216,94,86) 0%, rgb(216,132,80) 100%); color:#ffd; font-size:14px; padding:6px 16px; font-weight:600; border-radius:0 14px 0 0; letter-spacing:2px; text-transform:uppercase;">
-        Engineering
-      </div>
-      <div style="background:rgba(10,10,16,0.85); border-left:4px solid rgb(216,94,86); padding:8px 6px;">
-
-        <!-- Report (only crew option) -->
-        <div style="display:flex;align-items:center;color:rgb(235,225,255);font-size:13px;padding:6px 12px;margin:2px 0;border-left:3px solid rgb(173,132,255);background:rgb(43,33,64);font-weight:400;">
-          <span style="margin-right:10px;color:rgb(173,132,255);">▸</span>Report
-        </div>
-
-        <!-- Repair team assignments — one team assigned mid-combat -->
-        <div style="display:flex;align-items:center;color:rgb(216,132,80);font-size:11px;padding:5px 12px;margin:6px 0 2px 0;font-weight:600;text-transform:uppercase;letter-spacing:1px;">Repair team assignments</div>
-        <div style="height:1px; background:rgb(216,94,86); margin:0 8px 4px 8px; opacity:0.4;"></div>
-        <!-- Row tints from the subsystem being repaired: g_kEngineeringWarpCoreColor -->
-        <div style="display:flex;align-items:center;color:rgb(180,210,255);font-size:12px;padding:4px 12px;margin:1px 0;border-left:3px solid rgb(22,105,207);background:rgba(22,105,207,0.22);">
-          <span style="margin-right:8px;color:rgb(22,105,207);">▸</span>Warp Core
-        </div>
-        <div style="display:flex;align-items:center;color:rgb(110,110,110);font-size:12px;padding:4px 12px;margin:1px 0;border-left:3px solid rgb(64,64,64);background:rgb(16,16,16);font-style:italic;">— available —</div>
-        <div style="display:flex;align-items:center;color:rgb(110,110,110);font-size:12px;padding:4px 12px;margin:1px 0;border-left:3px solid rgb(64,64,64);background:rgb(16,16,16);font-style:italic;">— available —</div>
-
-        <!-- Damaged systems -->
-        <div style="display:flex;align-items:center;color:rgb(216,132,80);font-size:11px;padding:5px 12px;margin:8px 0 2px 0;font-weight:600;text-transform:uppercase;letter-spacing:1px;">Damaged systems</div>
-        <div style="height:1px; background:rgb(216,94,86); margin:0 8px 4px 8px; opacity:0.4;"></div>
-        <!-- Row tints from the damaged subsystem: g_kEngineeringWarpCoreColor -->
-        <div style="display:flex;align-items:center;color:rgb(180,210,255);font-size:12px;padding:4px 12px;margin:1px 0;border-left:3px solid rgb(22,105,207);background:rgba(22,105,207,0.22);">
-          <span style="margin-right:8px;color:rgb(22,105,207);">▸</span>Warp Core
-        </div>
-
-        <!-- Destroyed systems -->
-        <div style="display:flex;align-items:center;color:rgb(216,132,80);font-size:11px;padding:5px 12px;margin:8px 0 2px 0;font-weight:600;text-transform:uppercase;letter-spacing:1px;">Destroyed systems</div>
-        <div style="height:1px; background:rgb(216,94,86); margin:0 8px 4px 8px; opacity:0.4;"></div>
-        <div style="display:flex;align-items:center;color:rgb(110,110,110);font-size:12px;padding:4px 12px;margin:1px 0;border-left:3px solid rgb(64,64,64);background:rgb(16,16,16);font-style:italic;">— none —</div>
-      </div>
-    </div>
-
-    <!-- ============== Power Transmission Grid (right) ============== -->
-    <div class="antonio" style="width:520px;">
-      <div style="background:linear-gradient(90deg, rgb(216,94,86) 0%, rgb(216,132,80) 100%); color:#ffd; font-size:14px; padding:6px 16px; font-weight:600; border-radius:0 14px 0 0; letter-spacing:2px; text-transform:uppercase; display:flex; justify-content:space-between; align-items:center;">
-        <span>Power Transmission Grid</span>
-        <span style="font-size:11px; opacity:0.85;">▼</span>
-      </div>
-
-      <div style="background:rgba(10,10,16,0.85); border-left:4px solid rgb(216,94,86); padding:14px 18px;">
-
-        <!-- Power Used bar -->
-        <div style="color:rgb(180,180,200); font-size:11px; padding:2px 0 6px 0; text-transform:uppercase; letter-spacing:1px;">Power Used</div>
-        <div style="position:relative; height:18px;">
-          <!-- Source-zone backgrounds. Offline derives from g_kSubsystemEmptyColor rgb(170,25,25) -->
-          <div style="position:absolute; inset:0; display:flex;">
-            <div style="width:16.5%; background:rgba(60,10,10,0.6); background-image:repeating-linear-gradient(45deg, transparent, transparent 4px, rgba(170,25,25,0.45) 4px, rgba(170,25,25,0.45) 8px);"></div>
-            <div style="width:38.5%; background:rgba(22,105,207,0.18);"></div>
-            <div style="width:27%; background:rgba(180,157,64,0.18);"></div>
-            <div style="width:18%; background:rgba(208,87,42,0.18);"></div>
-          </div>
-          <div style="position:absolute; left:16.5%; top:0; bottom:0; width:1px; background:rgba(220,60,60,0.6);"></div>
-          <div style="position:absolute; left:55%; top:0; bottom:0; width:1px; background:rgba(255,255,255,0.15);"></div>
-          <div style="position:absolute; left:82%; top:0; bottom:0; width:1px; background:rgba(255,255,255,0.15);"></div>
-          <!-- 65% demand stack starting at right edge of offline (16.5%) -->
-          <div style="position:absolute; left:16.5%; width:65%; top:0; bottom:0; display:flex;">
-            <div style="width:28%; background:rgb(207,139,76);"></div>
-            <div style="width:25%; background:rgb(199,76,200);"></div>
-            <div style="width:20%; background:rgb(201,203,76);"></div>
-            <div style="width:27%; background:rgb(150,129,222);"></div>
+        <div style="height:22px"></div>
+        <div class="grid-wrap">
+          <div class="dmg-col"></div>
+          <div class="bars-col">
+            <div class="used-bar">
+              <div class="u-weap" style="width:37%"></div>
+              <div class="u-eng" style="width:20%"></div>
+              <div class="u-sens" style="width:8%"></div>
+              <div class="u-shld" style="width:22%"></div>
+            </div>
+            <div class="pu-rel">
+              <div class="pu-bar"><div class="pu-wc" style="width:55%"></div><div class="pu-mn" style="width:28%"></div><div class="pu-rs" style="width:17%"></div></div>
+              <div class="btick" style="left:0; background:rgb(72,145,237);"></div>
+              <div class="btick" style="left:calc(55% - 1px); background:rgb(72,145,237);"></div>
+              <div class="btick" style="left:calc(83% - 1px); background:rgb(210,185,80);"></div>
+              <div class="btick" style="right:0; background:rgb(230,105,55);"></div>
+            </div>
           </div>
         </div>
-        <!-- Bottom colour-key border. Offline = g_kSubsystemEmptyColor -->
-        <div style="display:flex; height:3px; margin-top:1px;">
-          <div style="width:16.5%; background:rgb(170,25,25);"></div>
-          <div style="width:38.5%; background:rgb(22,105,207);"></div>
-          <div style="width:27%; background:rgb(180,157,64);"></div>
-          <div style="width:18%; background:rgb(208,87,42);"></div>
-        </div>
-        <div style="display:flex; font-size:9px; text-transform:uppercase; letter-spacing:0.6px; margin-top:4px;">
-          <div style="width:16.5%; text-align:center; color:rgb(170,25,25);">Offline</div>
-          <div style="width:38.5%; text-align:center; color:rgb(22,105,207);">Warp Core</div>
-          <div style="width:27%; text-align:center; color:rgb(180,157,64);">Main</div>
-          <div style="width:18%; text-align:center; color:rgb(208,87,42);">Reserve</div>
+        <div class="pu-labels">
+          <span style="width:8.9%"></span>
+          <span style="width:50.1%; color:rgb(72,145,237)">WARP CORE</span>
+          <span style="width:25.5%; color:rgb(180,157,64)">MAIN</span>
+          <span style="width:15.5%; color:rgb(208,87,42)">RESERVE</span>
         </div>
 
-        <!-- Per-subsystem sliders -->
-        <div style="margin-top:16px;">
-          <!-- Weapons -->
-          <div style="display:flex; align-items:center; height:24px; margin:5px 0; background:rgba(207,139,76,0.22); border-left:4px solid rgb(207,139,76);">
-            <div style="width:140px; color:rgb(255,210,170); font-size:13px; padding-left:10px;">Weapons</div>
-            <div style="flex:1; height:8px; background:rgba(255,210,170,0.25); position:relative; margin-right:10px;">
-              <div style="position:absolute; left:80%; top:-3px; bottom:-3px; width:1px; background:rgba(255,255,255,0.4);"></div>
-              <div style="position:absolute; left:0; top:0; height:100%; width:90%; background:rgba(255,210,170,0.5);"></div>
-              <div style="position:absolute; left:90%; transform:translateX(-50%); top:-4px; bottom:-4px; width:5px; background:rgb(255,210,170);"></div>
-            </div>
-            <div style="width:48px; text-align:right; color:rgb(255,210,170); font-size:13px; padding-right:10px;">115%</div>
+        <div class="bgroup">
+          <div class="pillar" style="width:100px;">
+            <div class="pbump" style="width:30px; border-color:rgba(180,157,64,.4)"></div><div class="pcol" style="width:75px; border:1px solid rgba(180,157,64,.4)"><div class="pfill" style="background:rgb(180,157,64); height:65%"></div><div style="position:absolute;top:32%;left:0;right:0;text-align:center;color:#1a1a24;font-size:10px">▼</div></div>
+            <div class="pname">MAIN BATTERY</div><div class="ppct" style="color:rgb(180,157,64)">65%</div>
           </div>
-          <!-- Engines -->
-          <div style="display:flex; align-items:center; height:24px; margin:5px 0; background:rgba(199,76,200,0.22); border-left:4px solid rgb(199,76,200);">
-            <div style="width:140px; color:rgb(255,180,255); font-size:13px; padding-left:10px;">Engines</div>
-            <div style="flex:1; height:8px; background:rgba(255,180,255,0.25); position:relative; margin-right:10px;">
-              <div style="position:absolute; left:80%; top:-3px; bottom:-3px; width:1px; background:rgba(255,255,255,0.4);"></div>
-              <div style="position:absolute; left:0; top:0; height:100%; width:80%; background:rgba(255,180,255,0.5);"></div>
-              <div style="position:absolute; left:80%; transform:translateX(-50%); top:-4px; bottom:-4px; width:5px; background:rgb(255,180,255);"></div>
-            </div>
-            <div style="width:48px; text-align:right; color:rgb(255,180,255); font-size:13px; padding-right:10px;">100%</div>
+          <div class="toggle-col">
+            <div class="cline-on" style="left:-14px; right:calc(50% + 84px); top:23px; background:rgb(180,157,64); box-shadow:0 0 5px rgb(180,157,64);"></div>
+            <div class="cline-off" style="left:calc(50% + 84px); right:-20px; top:60px; border-color:rgba(208,87,42,0.55);"></div>
+            <div class="btoggle" style="top:12px;">Tractor <span style="color:rgb(180,157,64)">On</span></div>
+            <div class="btoggle" style="top:49px;">Cloak <span style="color:#666">Off</span></div>
           </div>
-          <!-- Sensor Array -->
-          <div style="display:flex; align-items:center; height:24px; margin:5px 0; background:rgba(201,203,76,0.22); border-left:4px solid rgb(201,203,76);">
-            <div style="width:140px; color:rgb(240,245,180); font-size:13px; padding-left:10px;">Sensor Array</div>
-            <div style="flex:1; height:8px; background:rgba(240,245,180,0.25); position:relative; margin-right:10px;">
-              <div style="position:absolute; left:80%; top:-3px; bottom:-3px; width:1px; background:rgba(255,255,255,0.4);"></div>
-              <div style="position:absolute; left:0; top:0; height:100%; width:48%; background:rgba(240,245,180,0.5);"></div>
-              <div style="position:absolute; left:48%; transform:translateX(-50%); top:-4px; bottom:-4px; width:5px; background:rgb(240,245,180);"></div>
-            </div>
-            <div style="width:48px; text-align:right; color:rgb(240,245,180); font-size:13px; padding-right:10px;">60%</div>
-          </div>
-          <!-- Shield Generator -->
-          <div style="display:flex; align-items:center; height:24px; margin:5px 0; background:rgba(150,129,222,0.22); border-left:4px solid rgb(150,129,222);">
-            <div style="width:140px; color:rgb(220,210,255); font-size:13px; padding-left:10px;">Shield Generator</div>
-            <div style="flex:1; height:8px; background:rgba(220,210,255,0.25); position:relative; margin-right:10px;">
-              <div style="position:absolute; left:80%; top:-3px; bottom:-3px; width:1px; background:rgba(255,255,255,0.4);"></div>
-              <div style="position:absolute; left:0; top:0; height:100%; width:88%; background:rgba(220,210,255,0.5);"></div>
-              <div style="position:absolute; left:88%; transform:translateX(-50%); top:-4px; bottom:-4px; width:5px; background:rgb(220,210,255);"></div>
-            </div>
-            <div style="width:48px; text-align:right; color:rgb(220,210,255); font-size:13px; padding-right:10px;">110%</div>
-          </div>
-
-          <div style="display:flex; align-items:center; margin-top:4px;">
-            <div style="width:140px;"></div>
-            <div style="flex:1; display:flex; justify-content:space-between; color:rgb(110,110,110); font-size:10px; padding-right:10px;">
-              <span>0%</span><span>50%</span><span style="color:rgb(180,180,180);">100%</span><span>125%</span>
-            </div>
-            <div style="width:48px;"></div>
-          </div>
-        </div>
-
-        <!-- Source columns with dependent toggles underneath -->
-        <div style="margin-top:18px; padding-top:14px; border-top:1px solid rgba(216,94,86,0.4);">
-          <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px;">
-
-            <!-- Warp Core column (damaged) -->
-            <div style="display:flex; flex-direction:column; align-items:center;">
-              <div style="width:22px; height:60px; position:relative; border:1.5px solid rgb(22,105,207); background:rgba(22,105,207,0.15);">
-                <div style="position:absolute; top:0; left:0; right:0; height:30%; background:rgba(60,10,10,0.6); background-image:repeating-linear-gradient(45deg, transparent, transparent 3px, rgba(170,25,25,0.55) 3px, rgba(170,25,25,0.55) 6px);"></div>
-                <div style="position:absolute; top:30%; left:-2px; right:-2px; height:2px; background:rgb(220,60,60);"></div>
-                <div style="position:absolute; bottom:0; left:0; right:0; height:70%; background:rgb(22,105,207);"></div>
-              </div>
-              <div style="color:rgb(220,210,255); font-size:10px; text-transform:uppercase; letter-spacing:0.6px; margin-top:4px;">Warp Core</div>
-              <div style="color:rgb(255,180,80); font-size:12px;">70% (max)</div>
-            </div>
-
-            <!-- Main Battery column with Tractor below -->
-            <div style="display:flex; flex-direction:column; align-items:center;">
-              <div style="width:22px; height:60px; position:relative; border:1.5px solid rgb(180,157,64); background:rgba(180,157,64,0.15);">
-                <div style="position:absolute; bottom:0; left:0; right:0; height:65%; background:rgb(180,157,64);"></div>
-                <div style="position:absolute; bottom:-12px; left:50%; transform:translateX(-50%); color:rgb(255,180,80); font-size:11px;">▼</div>
-              </div>
-              <div style="color:rgb(220,210,255); font-size:10px; text-transform:uppercase; letter-spacing:0.6px; margin-top:4px;">Main Battery</div>
-              <div style="color:rgb(255,180,80); font-size:12px;">65% ▼</div>
-              <div style="width:2px; height:14px; background:rgb(180,157,64); opacity:0.6; margin:2px 0;"></div>
-              <div style="width:100%; display:flex; justify-content:space-between; align-items:center; padding:5px 10px; background:rgba(150,129,222,0.18); border-left:3px solid rgb(150,129,222); border-top:1px solid rgb(180,157,64); box-sizing:border-box;">
-                <span style="color:rgb(220,210,255); font-size:12px;">Tractor</span>
-                <span style="color:rgb(120,200,120); font-size:12px; text-transform:uppercase; letter-spacing:1px;">On</span>
-              </div>
-            </div>
-
-            <!-- Reserve Power column with Cloak below -->
-            <div style="display:flex; flex-direction:column; align-items:center;">
-              <div style="width:22px; height:60px; position:relative; border:1.5px solid rgb(208,87,42); background:rgba(208,87,42,0.15);">
-                <div style="position:absolute; bottom:0; left:0; right:0; height:100%; background:rgb(208,87,42);"></div>
-              </div>
-              <div style="color:rgb(220,210,255); font-size:10px; text-transform:uppercase; letter-spacing:0.6px; margin-top:4px;">Reserve Power</div>
-              <div style="color:rgb(255,204,0); font-size:12px;">100%</div>
-              <div style="width:2px; height:14px; background:rgb(208,87,42); opacity:0.6; margin:2px 0;"></div>
-              <div style="width:100%; display:flex; justify-content:space-between; align-items:center; padding:5px 10px; background:rgba(235,128,21,0.18); border-left:3px solid rgb(235,128,21); border-top:1px solid rgb(208,87,42); box-sizing:border-box;">
-                <span style="color:rgb(220,210,255); font-size:12px;">Cloak</span>
-                <span style="color:rgb(110,110,110); font-size:12px; text-transform:uppercase; letter-spacing:1px;">Off</span>
-              </div>
-            </div>
-
+          <div class="pillar" style="width:86px;">
+            <div class="pbump" style="width:22px; border-color:rgba(208,87,42,.4)"></div><div class="pcol" style="width:50px; border:1px solid rgba(208,87,42,.4)"><div class="pfill" style="background:rgb(208,87,42); height:100%"></div></div>
+            <div class="pname">RESERVE POWER</div><div class="ppct" style="color:rgb(208,87,42)">100%</div>
           </div>
         </div>
       </div>
     </div>
-
   </div>
-</div>
-
-<div class="section">
-  <h3>Everything in one frame</h3>
-  <ul>
-    <li><strong>Left panel</strong> — Engineering crew menu with Report row + three section stacks (Repair / Damaged / Destroyed). Warp Core is currently being repaired (one of three repair teams assigned).</li>
-    <li><strong>Right panel</strong> — Power Transmission Grid:
-      <ul>
-        <li>Power Used bar with Offline section on the left (warp core damaged to 70% max output), demand stack drawing through warp core + into main battery</li>
-        <li>Colour-key border stripe identifying each zone</li>
-        <li>Four subsystem sliders with per-row tinted track/thumb derived from SDK identity colours (Weapons boosted to 115%, Sensors throttled to 60%, Shields 110%)</li>
-        <li>Three source-gauge columns with dependent toggle rows underneath: Tractor under Main Battery (engaged, with drain ▼ arrow on the gauge), Cloak under Reserve Power (off)</li>
-      </ul>
-    </li>
-    <li><strong>Reading the combat state</strong>: Warp Core taking damage but still producing 70%; main battery draining under load + tractor engagement; engineer has boosted weapons and shields, dropped sensors to compensate; reserve still full as last-resort buffer.</li>
-  </ul>
-</div>
-
-<div class="section">
-  <h3>All colours sourced from SDK</h3>
-  <p>Every coloured element traces to a <code>LoadInterface.SetupColors()</code> definition:</p>
-  <ul>
-    <li>Header gradient: <code>g_kSTMenu1NormalBase</code> + <code>hue_shift(+20°)</code></li>
-    <li>Body left-edge: <code>g_kSTMenu1NormalBase</code></li>
-    <li>Section headers: <code>hue_shift(g_kSTMenu1NormalBase, +20°)</code></li>
-    <li>Slider rows: <code>g_kEngineeringWeapons/Engines/Sensors/ShieldsColor</code> + tinted variants</li>
-    <li>Source gauges: <code>g_kEngineeringWarpCore/MainPower/BackupPowerColor</code></li>
-    <li>Tractor / Cloak accents: <code>g_kEngineeringTractor/CloakColor</code></li>
-    <li>Power-Used colour-key border: same as source gauges + Offline derived from <code>g_kSubsystemEmptyColor</code></li>
-    <li>Repair / Damaged / Destroyed rows tint from the subsystem they represent (e.g. a damaged Warp Core row uses <code>g_kEngineeringWarpCoreColor</code>, not a fixed accent)</li>
-  </ul>
-  <p>Mod overrides via <code>LoadInterface.SetupColors</code> recolour the entire panel coherently.</p>
 </div>

@@ -209,27 +209,6 @@ def _resolve_fire_sound(prop) -> str:
     return prop.GetFireSound() or ""
 
 
-def _debit_ship_power(emitter, cost) -> int:
-    """Bill `cost` against the firing ship's PowerSubsystem.
-
-    Returns 1 if billed in full, or if the gate doesn't apply — no ship, no
-    PowerSubsystem, or a PowerSubsystem with no bound PowerProperty (a Phase-1
-    test stub without a power plant), or cost <= 0.  Returns 0 only when the
-    grid engaged and combined available + main battery couldn't cover the cost;
-    callers treat that as a silent no-op.  Shared by TorpedoTube (per-shot ammo
-    cost) and PulseWeapon (per-bolt module cost).
-    """
-    ship = emitter._climb_to_ship()
-    if ship is None:
-        return 1
-    ps = ship.GetPowerSubsystem() if hasattr(ship, "GetPowerSubsystem") else None
-    if ps is None or ps.GetProperty() is None:
-        return 1
-    cost = float(cost)
-    if cost <= 0.0:
-        return 1
-    return ps.StealPower(cost)
-
 
 def _spawn_projectile(emitter, mod, *, drf_override=0.0,
                       spread_unit=None, homing_delay=0.0):
@@ -369,15 +348,6 @@ class _EnergyWeaponFireMixin:
     # fraction × MaxCharge before CanFire returns true again.
     REFIRE_HEADROOM_FRACTION = 0.20
 
-    # Power debited per charge unit recovered during UpdateCharge.  BC's
-    # SDK has no per-charge cost field on EnergyWeaponProperty — this is
-    # engine-side, tunable.  1.0 means 1 power unit per 1 charge unit;
-    # Galaxy's 8 phaser banks × 0.08/s recharge × 1.0 = 0.64 power/s
-    # while all eight refill in parallel, vs the warp core's 1000/s
-    # output — negligible while the grid is healthy, but enough to
-    # halt recharge once the main battery bottoms out.
-    POWER_COST_PER_CHARGE = 1.0
-
     def CanFire(self) -> int:
         parent = self.GetParentSubsystem()
         on = parent is not None and parent.IsOn()
@@ -431,12 +401,13 @@ class _EnergyWeaponFireMixin:
                 self.StopFiring()
         else:
             parent = self.GetParentSubsystem()
-            if parent is not None and parent.IsOn():
+            if parent is None or parent.IsOn():
+                factor = max(0.0, parent.GetNormalPowerPercentage()
+                             if parent is not None else 1.0)
                 headroom = self._max_charge - self._charge_level
                 if headroom > 0.0:
-                    want = min(self._recharge_rate * dt, headroom)
-                    if self._bill_recharge(want):
-                        self._charge_level += want
+                    want = min(self._recharge_rate * factor * dt, headroom)
+                    self._charge_level += want
             # Re-arm once we cleared the headroom threshold.
             if not self._armed:
                 refire_threshold = (self._min_firing_charge
@@ -484,25 +455,6 @@ class _EnergyWeaponFireMixin:
             return 0
         getter = getattr(parent_ship, "GetSceneNodeId", None)
         return int(getter()) if getter else 0
-
-    def _bill_recharge(self, charge_amount: float) -> int:
-        """Charge POWER_COST_PER_CHARGE × charge_amount against the firing
-        ship's PowerSubsystem.  Returns 1 if billed (or if the gate
-        doesn't apply — ship has no PowerSubsystem, or its
-        PowerSubsystem has no bound PowerProperty meaning a Phase-1
-        test stub without a power plant).  Returns 0 if the gate
-        engaged and the grid couldn't cover it — UpdateCharge skips
-        the refill that tick."""
-        if charge_amount <= 0.0:
-            return 1
-        ship = self._climb_to_ship()
-        if ship is None:
-            return 1
-        ps = ship.GetPowerSubsystem() if hasattr(ship, "GetPowerSubsystem") else None
-        if ps is None or ps.GetProperty() is None:
-            return 1
-        cost = float(charge_amount) * self.POWER_COST_PER_CHARGE
-        return ps.StealPower(cost)
 
 
 def _cloak_blocks_fire(weapon_system) -> bool:
@@ -1329,6 +1281,14 @@ class TractorBeamSystem(_HeldFireWeaponSystem):
     HOLD world-point / TOW body-frame offset); it is invalidated on StopFiring
     and on any mode change.
     """
+    # q10 ground truth (tools/probes/results/q10_battery_drain.txt): the tractor
+    # is a DIRECT main-battery siphon — it bypasses the conduit budget and is
+    # unscaled by the power slider (measured 600/s flat with sliders at 1.25).
+    # This supersedes the spec's "tractor = conduit mode 0" decision; the manual
+    # was right that it draws from Main, the RE doc's mode-1 (backup-first) row
+    # is wrong-in-effect. _update_power branches on this flag instead of _draw.
+    DRAWS_DIRECT_FROM_MAIN = True
+
     # Tractor-beam mode constants from sdk/.../App.py:6774-6779.
     # SDK consumers: Preprocessors.py, AI/PlainAI/Warp.py, TowAway.py, etc.
     TBS_HOLD          = 0
@@ -1342,6 +1302,22 @@ class TractorBeamSystem(_HeldFireWeaponSystem):
         super().__init__(name)
         self._mode = self.TBS_HOLD
         self._engage_state = None
+
+    def _wants_power(self) -> bool:
+        """The tractor siphons power only while a beam is actually held (a
+        powered-but-idle tractor draws nothing — PowerDisplay's siphon
+        semantics).  The draw is a DIRECT main-battery steal (DRAWS_DIRECT_FROM_MAIN,
+        q10); the gate here is the firing state, not the alert-driven on/off flag."""
+        return bool(self.IsOn()) and self._any_child_firing()
+
+    def _any_child_firing(self) -> bool:
+        """True if any child tractor-beam emitter is currently firing.  Same
+        child-weapon walk PowerDisplay.HandleTractor uses."""
+        for i in range(self.GetNumWeapons()):
+            em = self.GetWeapon(i)
+            if em is not None and em.IsFiring():
+                return True
+        return False
 
     def GetMode(self) -> int:
         return self._mode
@@ -1547,20 +1523,11 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
             mod = importlib.import_module(script)
         except ImportError:
             return
-        # Power gate — silent no-op if the grid can't cover the shot
-        # (matches torpedoes). Charge is NOT drained on a blocked shot.
-        if not self._debit_pulse_power(mod):
-            return
         _spawn_projectile(self, mod, drf_override=self.GetDamageRadiusFactor())
         # Discrete drain: dump accumulated charge + start cooldown. No held beam.
         self._charge_level = 0.0
         self._cooldown_remaining = self.GetCooldownTime()
         self._armed = False  # re-arms in UpdateCharge once past the refire threshold
-
-    def _debit_pulse_power(self, mod) -> int:
-        """Bill the firing ship's PowerSubsystem for this bolt's GetPowerCost()."""
-        cost = float(mod.GetPowerCost()) if hasattr(mod, "GetPowerCost") else 0.0
-        return _debit_ship_power(self, cost)
 
     def UpdateCharge(self, dt: float) -> None:
         if self._cooldown_remaining > 0.0:
@@ -1630,6 +1597,15 @@ class TractorBeam(_EnergyWeaponFireMixin, WeaponSystem):
                 # looped SFX handle is silenced).
                 self.StopFiring()
                 return
+            # Power starvation: the parent system draws through PowerSubsystem's
+            # consumer model now (Task 4); when the grid can't feed the tractor
+            # its efficiency collapses to zero while it still wants power, so the
+            # beam drops (replaces the old per-tick StealPower gate).
+            if (hasattr(parent, "GetPowerPercentage")
+                    and parent.GetPowerPercentage() <= 0.0
+                    and parent.GetNormalPowerWanted() > 0.0):
+                self.StopFiring()
+                return
             floor = self._min_firing_charge
             if self._charge_level > floor:
                 self._charge_level = max(
@@ -1637,6 +1613,12 @@ class TractorBeam(_EnergyWeaponFireMixin, WeaponSystem):
                 )
             # _armed stays set while sustaining — no depletion auto-stop.
             return
+        # Idle fall-through note: an idle TractorBeamSystem doesn't want power
+        # (_wants_power False -> factor zeroed by the pump), so the mixin's
+        # factor-scaled recharge is 0 while idle. Harmless by design: the firing
+        # sustain path never drains below _min_firing_charge, StopFiring keeps
+        # _armed set, and CanFire passes at the floor — charge above the floor
+        # has no gameplay effect for tractors.
         super().UpdateCharge(dt)
 
 
@@ -1678,12 +1660,6 @@ class TorpedoTube(WeaponSystem):
              spread_unit=None, homing_delay=0.0) -> None:
         if not self.CanFire():
             return
-        if not self._debit_power():
-            # Insufficient power: silent no-op (matches BC — UI never
-            # pops a "low power" dialog mid-combat, the tube just
-            # doesn't fire).  Tube stays loaded; higher-level dispatch
-            # may round-robin to a different tube or AI may retry.
-            return
         self._firing = True
         self._target = target
         self._target_offset = offset
@@ -1699,17 +1675,6 @@ class TorpedoTube(WeaponSystem):
         # Discrete-shot — auto-stop after launch.  WeaponSystem's
         # _currently_firing list still tracks us until StopFiring is called.
         self._firing = False
-
-    def _debit_power(self) -> int:
-        """Bill the firing ship's PowerSubsystem for this shot's ammo cost."""
-        parent = self.GetParentSubsystem()
-        ammo = parent.GetCurrentAmmoType() if (
-            parent is not None and hasattr(parent, "GetCurrentAmmoType")
-        ) else None
-        cost = float(ammo.GetPowerCost()) if (
-            ammo is not None and hasattr(ammo, "GetPowerCost")
-        ) else 0.0
-        return _debit_ship_power(self, cost)
 
     def _spawn_torpedo(self, *, spread_unit=None, homing_delay=0.0) -> None:
         """Look up the parent system's GetTorpedoScript(0), import the SDK
@@ -1768,7 +1733,12 @@ class TorpedoTube(WeaponSystem):
     def UpdateReload(self, dt: float) -> None:
         if self._num_ready >= self._max_ready:
             return
+        parent = self.GetParentSubsystem()
+        factor = (parent.GetNormalPowerPercentage()
+                  if parent is not None else 1.0)
+        if factor <= 0.0:
+            return
         import time as _time
-        if _time.monotonic() - self._last_fire_time >= self._reload_delay:
+        if _time.monotonic() - self._last_fire_time >= self._reload_delay / factor:
             self._num_ready += 1
             self._last_fire_time = _time.monotonic()

@@ -13,6 +13,11 @@ Flags:
   --capture    After a successful --recompile game run, call this to save
                the freshly compiled App.pyc as App.pyc.bak and re-apply
                the timestamp trick for future launches.
+
+  --power      Install the power-drain snippet (tools/appc_power_logger.py)
+               instead of the default tick/event snippet (tools/appc_logger.py).
+               Combine with --recompile / --capture as usual, e.g.
+                 uv run python tools/setup.py --power --recompile
 """
 import os
 import pathlib
@@ -24,6 +29,8 @@ PROJECT_ROOT = pathlib.Path(__file__).parent.parent
 GAME_SCRIPTS = PROJECT_ROOT / "game" / "scripts"
 SDK_APP = PROJECT_ROOT / "sdk" / "Build" / "scripts" / "App.py"
 SHIM_SNIPPET = PROJECT_ROOT / "tools" / "appc_logger.py"
+POWER_SNIPPET = PROJECT_ROOT / "tools" / "appc_power_logger.py"
+_snippet_path = SHIM_SNIPPET  # overridden by --power in main()
 DEST_APP = GAME_SCRIPTS / "App.py"
 DEST_PYC = GAME_SCRIPTS / "App.pyc"
 DEST_PYC_BAK = GAME_SCRIPTS / "App.pyc.bak"
@@ -32,7 +39,7 @@ DEST_PYC_BAK = GAME_SCRIPTS / "App.pyc.bak"
 def build_combined() -> bytes:
     log_path = str(GAME_SCRIPTS / "tick_log.txt").replace("\\", "\\\\")
     err_path = str(GAME_SCRIPTS / "appc_error.txt").replace("\\", "\\\\")
-    snippet = SHIM_SNIPPET.read_text(encoding="utf-8")
+    snippet = _snippet_path.read_text(encoding="utf-8")
     snippet = snippet.replace('"LOG_PATH"', '"%s"' % log_path)
     snippet = snippet.replace('"ERR_PATH"', '"%s"' % err_path)
     app_source = SDK_APP.read_bytes()
@@ -59,8 +66,15 @@ def apply_timestamp_trick(combined: bytes) -> None:
 
 
 def main() -> None:
+    global _snippet_path
     recompile = "--recompile" in sys.argv
     capture = "--capture" in sys.argv
+    power = "--power" in sys.argv
+    if power:
+        _snippet_path = POWER_SNIPPET
+        print(f"Snippet:   {POWER_SNIPPET.name} (power-drain instrumentation)")
+    else:
+        print(f"Snippet:   {SHIM_SNIPPET.name} (tick/event instrumentation)")
 
     if not GAME_SCRIPTS.exists():
         print("game/scripts/ not found - is the game installed in game/?")

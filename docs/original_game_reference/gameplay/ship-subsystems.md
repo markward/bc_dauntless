@@ -181,12 +181,29 @@ Per-mode subsystem assignments (verified by exhaustive search for
 | ShieldGenerator          | 0    | inherited                            |
 | WarpEngineSubsystem      | 0    | inherited                            |
 | RepairSubsystem          | 0    | inherited                            |
-| **TractorBeamSystem**    | **1**| `FUN_00582080` — backup-first        |
+| **TractorBeamSystem**    | **1**| direct **main-battery** siphon (q10) |
 | **CloakingSubsystem**    | **2**| `FUN_0055E2B0` — backup-only         |
 
 Cloaking is the only subsystem that's locked off the main grid: when
 the backup battery is depleted, the cloak's `efficiency` drops below
 the auto-decloak threshold and the device disengages.
+
+> **Correction (q10, 2026-07-06).** The `powerMode = 1` byte on
+> `TractorBeamSystem` was originally read here as "backup-first"
+> (`FUN_00582080`). The instrumented battery-drain experiment
+> (`docs/instrumented_experiments/2026-07-06-battery-drain-order.md`,
+> `tools/probes/results/q10_battery_drain.txt`) shows the gameplay draw is a
+> **direct MAIN-battery siphon**: at RED alert with all sliders at 1.25 the
+> tractor's 600/s lands entirely on the main battery (main −800/s, reserve
+> −113.75/s from conduit overflow only), and the reserve drain is independent of
+> whether the tractor fires. The draw is also **unscaled by the power slider**
+> (600 flat, not 600×1.25). The mode byte may still exist in the binary, but the
+> effective draw path is `StealPower(main)` — the manual/UI were right that the
+> tractor pulls from Main; the "backup-first" reading is wrong-in-effect. The
+> in-game Power Transmission Grid also renders a dedicated **Tractor → Main
+> Battery** siphon line, and reinterprets `powerMode` as a source-stack index
+> (`0 = warp core, 1 = main, 2 = reserve`), consistent with cloak = reserve.
+> Dauntless models this via `TractorBeamSystem.DRAWS_DIRECT_FROM_MAIN`.
 
 A separate code path in `ShieldClass::Update` calls
 `DrawFromBackupBattery` directly (bypassing `powerMode`) when the
@@ -337,10 +354,20 @@ Per-second tick (FUN_00563780 — Powered master):
 
 Per-frame (FUN_00562470 — each consumer):
   DEMAND    : normalPowerPerSecond * pctWanted * dt
-  DRAW      : per powerMode (main-first / backup-first / backup-only)
+  DRAW      : per powerMode (main-first / backup-only)
+              — EXCEPT the tractor, which does a DIRECT main-battery siphon
+                (StealPower), bypassing the conduit budget and UNSCALED by
+                pctWanted (q10: 600/s flat with sliders 1.25)
   RATIO     : efficiency = received / wanted   (0.0–1.0)
   EFFECT    : subsystem behaviour scales by efficiency
 ```
+
+**Direct-siphon note (q10, 2026-07-06).** The `DRAW` step above is the
+conduit-routed path for ordinary consumers. The **tractor** is a dedicated-source
+consumer that draws directly from the main battery (`StealPower`), not through
+the conduit budget, and its draw is not scaled by the power slider. See the
+`powerMode` correction above and
+`docs/instrumented_experiments/2026-07-06-battery-drain-order.md`.
 
 ### Low-power behaviour
 

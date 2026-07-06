@@ -10,6 +10,10 @@ MaxCharge 3.8, MinFiringCharge 3.6, RechargeRate 0.4/s, NormalDischargeRate
 1.0/s, SetCooldownTime(0.2), MaxDamage 200, ModuleName
 "Tactical.Projectiles.PulseDisruptor".  The module: PowerCost=10, Damage=220,
 Lifetime=8.0, LaunchSpeed=55, LaunchSound="Klingon Disruptor".
+
+Task 4b: no per-shot battery debit.  Firing always succeeds when CanFire is
+true (charge >= MinFiringCharge and no cooldown active), regardless of battery
+level.  The main battery is NOT touched by Fire().
 """
 from unittest.mock import patch
 
@@ -30,8 +34,8 @@ def _pulse_weapon(*, module_name=_MODULE, with_power_property=False,
     """Build a PulseWeapon under a powered PulseWeaponSystem on a ship.
 
     Seeds the cannon's charge fields to the BoP PortCannon values and fills
-    charge to MaxCharge so CanFire is true.  Optionally binds a PowerProperty
-    so the per-shot power gate engages.  Returns the PulseWeapon.
+    charge to MaxCharge so CanFire is true.  Optionally binds a PowerProperty.
+    Returns the PulseWeapon.
     """
     ship = ShipClass_Create("Test")
     ship.SetWorldLocation(TGPoint3(0, 0, 0))
@@ -163,29 +167,30 @@ def test_fire_empty_module_name_silent_no_op():
     _active.clear()
 
 
-# ── Power gate ──────────────────────────────────────────────────────────────
+# ── Power gate (Task 4b: no per-shot debit) ──────────────────────────────────
 
-def test_fire_silent_no_op_when_power_insufficient():
+def test_fire_succeeds_regardless_of_battery():
+    """Battery at zero → fire still succeeds (no per-shot debit)."""
     _active.clear()
-    cannon = _pulse_weapon(with_power_property=True, available=5.0, main_battery=0.0)
-    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
-        cannon.Fire(target="enemy", offset="hit")
-    assert len(_active) == 0
-    # Charge NOT drained, no cooldown started.
-    assert cannon._charge_level == 3.8
-    assert cannon._cooldown_remaining == 0.0
-    _active.clear()
-
-
-def test_fire_succeeds_when_power_covers_cost():
-    _active.clear()
-    cannon = _pulse_weapon(with_power_property=True, available=100.0, main_battery=0.0)
+    cannon = _pulse_weapon(with_power_property=True, available=0.0, main_battery=0.0)
     ship = cannon._climb_to_ship()
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
         cannon.Fire(target="enemy", offset="hit")
     assert len(_active) == 1
-    # PowerCost 10 drained from available.
-    assert ship.GetPowerSubsystem().GetAvailablePower() == 90.0
+    # Battery NOT changed by Fire
+    assert ship.GetPowerSubsystem().GetMainBatteryPower() == 0.0
+    _active.clear()
+
+
+def test_fire_does_not_drain_battery():
+    """Main battery with plenty of power — still not drained per shot."""
+    _active.clear()
+    cannon = _pulse_weapon(with_power_property=True, available=0.0, main_battery=100.0)
+    ship = cannon._climb_to_ship()
+    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
+        cannon.Fire(target="enemy", offset="hit")
+    assert len(_active) == 1
+    assert ship.GetPowerSubsystem().GetMainBatteryPower() == 100.0
     _active.clear()
 
 

@@ -580,7 +580,11 @@ def _advance_combat(ships, dt: float, ship_instances=None) -> None:
         # the system flips disabled mid-tick (incoming hit during the
         # previous frame's damage routing), stop any active banks and
         # skip the damage loop for this ship. Spec §4.2.
-        if _is_offline(sys_):
+        # Power-off gate: a system turned off via the power slider (IsOn()==0)
+        # must also stop any already-firing banks immediately.  _is_offline
+        # only checks IsDisabled/IsDestroyed and does NOT cover the powered-
+        # down case, so we gate on IsOn() here as a separate check.
+        if _is_offline(sys_) or not sys_.IsOn():
             sys_.StopFiring()
             continue
         # While LBUTTON is held, re-fire banks that recharged above the
@@ -1300,20 +1304,28 @@ class _PlayerControl:
         return getter() if getter else None
 
     def GetTargetSpeed(self, player) -> float:
-        """Convert impulse_level into the throttle-commanded target speed
-        against the ship's BASE MaxSpeed (unscaled). Degradation caps are
-        applied by the keep-rule clamp in apply(), so a ship above its
-        reduced cap is not braked. Forward speed is multiplied by
-        WARP_BOOST_FACTOR when the in-system warp toggle is on (Ctrl+I);
-        reverse is unaffected.
+        """Convert impulse_level into the throttle-commanded target speed,
+        scaled by the impulse engine power factor so the command and the
+        _effective_motion cap agree.
+
+        Throttle is a fraction of the *effective* (power-scaled) max speed:
+        at 125 % power, full throttle targets 1.25 × authored MaxSpeed; at
+        50 % power, full throttle targets 0.5 × authored MaxSpeed. The
+        _cap_keep clamp in apply() still prevents over-driving, but now the
+        command reaches the boosted cap instead of stopping at raw MaxSpeed.
+
+        Forward speed is additionally multiplied by WARP_BOOST_FACTOR when
+        the in-system warp toggle is on (Ctrl+I); reverse is unaffected.
         """
         ies = self._get_ies(player)
-        max_speed = ies.GetMaxSpeed() if ies is not None else 0.0
+        raw_max = ies.GetMaxSpeed() if ies is not None else 0.0
+        power_factor = ies.GetNormalPowerPercentage() if ies is not None else 1.0
+        effective_max = raw_max * power_factor
         boost = self.WARP_BOOST_FACTOR if self._warp_boost else 1.0
-        if max_speed > 0.0:
+        if raw_max > 0.0:
             if self.impulse_level >= 0:
-                return (self.impulse_level / 9.0) * max_speed * boost
-            return -self.REVERSE_FRACTION * max_speed
+                return (self.impulse_level / 9.0) * effective_max * boost
+            return -self.REVERSE_FRACTION * effective_max
         if self.impulse_level >= 0:
             return self.impulse_level * self.IMPULSE_UNIT * boost
         return self.impulse_level * self.IMPULSE_UNIT
@@ -5138,6 +5150,30 @@ def run(mission_name: Optional[str] = None,
         weapons_display = WeaponsDisplayPanel(player_control=player_control)
         registry.register(weapons_display)
 
+        # Engineering power-grid panel — live power state: sliders, Power Used
+        # bar, column gauges, and tractor/cloak siphon lines.  Always registered
+        # (production panel, not dev-only); the panel emits {"visible":False}
+        # when there is no player or when the Engineering crew menu is not open.
+        from engine.ui.engineering_power_panel import EngineeringPowerPanel
+        def _engpower_get_player():
+            g = Game_GetCurrentGame()
+            return g.GetPlayer() if g is not None else None
+        # Resolve the Engineering menu label once (TGL: "Engineering" key in
+        # Bridge Menus.tgl; headless fallback returns the key itself).
+        try:
+            _eng_tgl = App.g_kLocalizationManager.Load(
+                "data/TGL/Bridge Menus.tgl")
+            _eng_label = str(_eng_tgl.GetString("Engineering"))
+            App.g_kLocalizationManager.Unload(_eng_tgl)
+        except Exception:
+            _eng_label = "Engineering"
+        def _engpower_is_engineering_open():
+            return crew_menu_panel.open_menu_label() == _eng_label
+        engineering_power_panel = EngineeringPowerPanel(
+            get_player=_engpower_get_player,
+            is_engineering_open=_engpower_is_engineering_open)
+        registry.register(engineering_power_panel)
+
         # Bindings older than the orbit-camera change won't expose
         # consume_scroll_y; fall back to a zero-delta lambda so host_loop
         # still runs against an old _dauntless_host.so without rebuilding.
@@ -5421,6 +5457,23 @@ def run(mission_name: Optional[str] = None,
                         and _BR_X <= _mx < _BR_X + _BR_W
                         and _BR_Y <= _my < _BR_Y + _BR_H
                     )
+                    # Top-right corner (#engpower-root): position:fixed;
+                    # top:8px; right:8px; width:540px (v28 redesign — wider
+                    # grid + battery pillars). The Engineering power-grid panel
+                    # lives here; its rows are only clickable if clicks over
+                    # this box reach CEF. Gated on is_showing() (player + power
+                    # present + Engineering menu open) so the box doesn't
+                    # swallow clicks / phaser fire when the panel is hidden.
+                    # Height covers sliders (4×~24px) + grid (~55px) + bgroup
+                    # (~140px) + padding — 420px is generous but safe.
+                    _TR_W, _TR_H = 540 + 16, 420   # +16 for CSS padding/border
+                    _TR_X = _CEF_VIEW_W - 8 - _TR_W
+                    _TR_Y = 8
+                    _cursor_in_top_right = (
+                        engineering_power_panel.is_showing()
+                        and _TR_X <= _mx < _TR_X + _TR_W
+                        and _TR_Y <= _my < _TR_Y + _TR_H
+                    )
                     # The Set Course and Quick Battle Setup modals are
                     # full-viewport cp-* backdrops: any click while one is open
                     # belongs to CEF (a button or the inert backdrop), never to
@@ -5431,6 +5484,7 @@ def run(mission_name: Optional[str] = None,
                     )
                     _cursor_in_panel = (
                         _cursor_in_left_column or _cursor_in_bottom_row
+                        or _cursor_in_top_right
                         or _cursor_in_modal
                     )
                     if _cef_send_mouse_click is not None and _cursor_in_panel:

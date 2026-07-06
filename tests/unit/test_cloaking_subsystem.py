@@ -19,7 +19,7 @@ the ET_CLOAK_COMPLETED / ET_DECLOAK_COMPLETED completion events.
 """
 import App
 
-from engine.appc.subsystems import CloakingSubsystem, PowerSubsystem
+from engine.appc.subsystems import CloakingSubsystem
 
 
 class _CapturedEvents:
@@ -240,37 +240,31 @@ def test_instant_transitions_fire_no_beginning():
     assert len(cap.decloak) == 1
 
 
-# ── Cloak power drain — only while trying-to-cloak ────────────────────────────
+# ── Cloak power draw — only while trying-to-cloak ─────────────────────────────
+# Task 4 replaced PowerSubsystem._compute_idle_drain with the consumer-draw
+# model: the cloak special-case now lives on CloakingSubsystem._wants_power,
+# which the PowerSubsystem consumer pump consults each interval.  The cloak
+# also runs off the backup grid only (POWER_MODE = PSM_BACKUP_ONLY).
 
-class _StubShip:
-    """Minimal ship exposing only GetCloakingSubsystem, so PowerSubsystem's
-    _compute_idle_drain walks the cloak branch (the other _IDLE_DRAIN_SLOTS
-    getters are absent and skipped via getattr default)."""
-
-    def __init__(self, cloak):
-        self._cloak = cloak
-
-    def GetCloakingSubsystem(self):
-        return self._cloak
-
-
-def test_cloak_drains_power_only_while_trying_to_cloak():
+def test_cloak_wants_power_only_while_trying_to_cloak():
+    from engine.appc.subsystems import PSM_BACKUP_ONLY
     cloak = CloakingSubsystem("Cloak")
     cloak.SetNormalPowerPerSecond(1000.0)   # warbird authors 1000 power/sec
-    power = PowerSubsystem("Power")
-    power.SetParentShip(_StubShip(cloak))
 
-    # Decloaked: cloak draws nothing.
-    assert power._compute_idle_drain() == 0.0
-    # CLOAKING (fading out) — trying to cloak, so it draws.
+    # Locked off the main grid — draws from backup only.
+    assert cloak.POWER_MODE == PSM_BACKUP_ONLY
+
+    # Decloaked: cloak wants no power.
+    assert cloak._wants_power() is False
+    # CLOAKING (fading out) — trying to cloak, so it wants power.
     cloak.StartCloaking()
-    assert power._compute_idle_drain() == 1000.0
-    # CLOAKED — still engaged, still draws.
+    assert cloak._wants_power() is True
+    # CLOAKED — still engaged, still wants power.
     cloak.InstantCloak()
-    assert power._compute_idle_drain() == 1000.0
-    # DECLOAKING (fading back in) — no longer trying, drain stops.
+    assert cloak._wants_power() is True
+    # DECLOAKING (fading back in) — no longer trying, draw stops.
     cloak.StopCloaking()
-    assert power._compute_idle_drain() == 0.0
+    assert cloak._wants_power() is False
 
 
 # ── Cloak transition SFX ──────────────────────────────────────────────────────

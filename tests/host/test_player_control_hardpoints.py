@@ -46,6 +46,75 @@ def _galaxy_like_ship():
     return ship
 
 
+# ── Power-factor: commanded speed scales with engine power ───────────────────
+
+def test_boost_power_raises_commanded_speed():
+    """At 125 % engine power, level-9 throttle targets 1.25 × MaxSpeed.
+
+    BC manual: >100 % engine power raises max impulse speed.  Before the fix,
+    GetTargetSpeed returned (lvl/9) × raw_max (no power factor), so boosting
+    the cap via _effective_motion never translated into a higher command and
+    the ship was capped at raw MaxSpeed.
+    """
+    pc = _PlayerControl()
+    ship = _galaxy_like_ship()
+    ies = ship.GetImpulseEngineSubsystem()
+    ies._power_factor = 1.25          # simulate 125 % engine power
+    reader = _Reader()
+    reader.pressed_once.add(reader.keys.KEY_9)
+    pc.apply(ship, dt=1.0/60, h=reader)
+    assert abs(pc.GetTargetSpeed(ship) - 6.3 * 1.25) < 1e-9, (
+        f"Expected {6.3*1.25}, got {pc.GetTargetSpeed(ship)}"
+    )
+
+
+def test_reduced_power_lowers_commanded_speed():
+    """At 50 % engine power, level-9 throttle targets 0.5 × MaxSpeed.
+
+    Ensures the power factor is applied symmetrically in both directions.
+    """
+    pc = _PlayerControl()
+    ship = _galaxy_like_ship()
+    ies = ship.GetImpulseEngineSubsystem()
+    ies._power_factor = 0.5
+    reader = _Reader()
+    reader.pressed_once.add(reader.keys.KEY_9)
+    pc.apply(ship, dt=1.0/60, h=reader)
+    assert abs(pc.GetTargetSpeed(ship) - 6.3 * 0.5) < 1e-9, (
+        f"Expected {6.3*0.5}, got {pc.GetTargetSpeed(ship)}"
+    )
+
+
+def test_normal_power_unchanged():
+    """At exactly 100 % power the commanded speed is unchanged (regression guard)."""
+    pc = _PlayerControl()
+    ship = _galaxy_like_ship()
+    ies = ship.GetImpulseEngineSubsystem()
+    ies._power_factor = 1.0
+    reader = _Reader()
+    reader.pressed_once.add(reader.keys.KEY_9)
+    pc.apply(ship, dt=1.0/60, h=reader)
+    assert abs(pc.GetTargetSpeed(ship) - 6.3) < 1e-9
+
+
+def test_boost_power_converges_above_raw_max_speed():
+    """With 125 % power the ship actually reaches 1.25 × MaxSpeed after
+    sufficient time (not just the command — the integrated speed must exceed
+    raw MaxSpeed).
+    """
+    pc = _PlayerControl()
+    ship = _galaxy_like_ship()   # MaxSpeed=6.3, MaxAccel=1.5
+    ies = ship.GetImpulseEngineSubsystem()
+    ies._power_factor = 1.25
+    reader = _Reader()
+    reader.pressed_once.add(reader.keys.KEY_9)
+    for _ in range(60 * 30):   # 30 s — well past convergence
+        pc.apply(ship, dt=1.0/60, h=reader)
+    assert abs(pc.GetCurrentSpeed() - 6.3 * 1.25) < 1e-2, (
+        f"Expected {6.3*1.25:.3f}, got {pc.GetCurrentSpeed():.3f}"
+    )
+
+
 # ── Throttle target speed ─────────────────────────────────────────────────────
 
 def test_throttle_level_9_targets_max_speed():

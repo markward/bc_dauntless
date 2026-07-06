@@ -103,6 +103,19 @@ Where `MaxMain` is `warp_core_output + main_battery_drain_rate`, and
 does not give numeric drain rates; those are engine constants (see
 [`ship-subsystems.md`](ship-subsystems.md)).
 
+> **Instrumented correction (q10, 2026-07-06).** The manual's band sequence
+> reads as "reserve is a last resort, drawn only after main empties." The
+> instrumented battery-drain experiment
+> ([`docs/instrumented_experiments/2026-07-06-battery-drain-order.md`](../../instrumented_experiments/2026-07-06-battery-drain-order.md),
+> `tools/probes/results/q10_battery_drain.txt`) shows this is **not** how the
+> C++ engine drains: the **reserve battery drains CONCURRENTLY with main** the
+> moment total conduit demand exceeds the main conduit ceiling (the overflow
+> spills onto the reserve conduit — measured reserve −113.75/s while main still
+> held six figures). Drain is concurrent; only **recharge** is sequential
+> (main refills fully before reserve). The "Red band" therefore means *demand
+> above the main conduit ceiling* (reserve overflow), not *main battery
+> emptied*.
+
 ---
 
 ## Power Allocation Sliders

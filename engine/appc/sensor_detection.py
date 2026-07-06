@@ -83,7 +83,7 @@ def effective_sensor_range(ship) -> float:
     base = sensors.GetBaseSensorRange()
     if base <= 0.0:
         return FALLBACK_RANGE_GU
-    return base * sensors.GetConditionPercentage()
+    return base * sensors.GetConditionPercentage() * sensors.GetNormalPowerPercentage()
 
 
 def concealment_at(ship) -> float:

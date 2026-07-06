@@ -1,17 +1,19 @@
-"""Energy weapons (PhaserBank / PulseWeapon / TractorBeam) bill the
-firing ship's PowerSubsystem each recharge tick.
+"""Energy weapons (PhaserBank / PulseWeapon / TractorBeam) — charge model
+after Task 4b.
 
-Model: each charge unit refilled costs ``POWER_COST_PER_CHARGE`` power.
-Per tick:
+Task 4b decision: BC has no per-shot battery debit.  The continuous
+NormalPowerPerSecond consumer draw (Task 4) covers energy cost.  PhaserBank
+recharge is unconditional — UpdateCharge adds want to _charge_level directly
+without calling the grid.
 
-* `would_refill = recharge_rate * dt`, capped at headroom.
-* `StealPower(would_refill * POWER_COST_PER_CHARGE)` — if it fails,
-  no refill that tick (bank stays at current level).
+The old _bill_recharge helper that called StealPower on every recharge tick
+has been removed.  Consequences:
+  - Recharge always proceeds when the parent system is on and the bank has
+    headroom, regardless of battery level.
+  - The main battery is NOT touched by UpdateCharge.
 
-Brings energy weapons in line with torpedoes: once the grid bottoms
-out, banks stop recharging and fire stops as soon as the existing
-charge depletes.  Test fixtures without a bound PowerProperty bypass
-the gate, same convention as TorpedoTube.
+Task 8 will make recharge rate power-factor-scaled; at factor 0 (fully
+unpowered) the rate goes to 0 so banks stop recharging automatically.
 """
 from unittest.mock import patch
 
@@ -46,66 +48,60 @@ def _wire_phaser_bank(ship, *, with_power_property=True,
     return bank
 
 
-def test_recharge_proceeds_when_grid_has_power():
+def test_recharge_proceeds_when_system_on():
+    """Recharge increments charge level unconditionally (no grid query)."""
     ship = ShipClass_Create("Test")
-    bank = _wire_phaser_bank(ship, available=100.0)
+    bank = _wire_phaser_bank(ship, main_battery=100.0)
     before = bank._charge_level
     bank.UpdateCharge(1.0)  # 1 second; would refill by recharge_rate*dt = 0.08
     assert bank._charge_level > before
     assert abs(bank._charge_level - (before + 0.08)) < 1e-6
 
 
-def test_recharge_bills_the_grid():
+def test_recharge_does_not_touch_battery():
+    """UpdateCharge must NOT drain the main battery (no _bill_recharge)."""
     ship = ShipClass_Create("Test")
-    bank = _wire_phaser_bank(ship, available=100.0)
-    bank.UpdateCharge(1.0)  # 0.08 charge × 1.0 cost = 0.08 power
+    bank = _wire_phaser_bank(ship, main_battery=100.0)
+    bank.UpdateCharge(1.0)
     ps = ship.GetPowerSubsystem()
-    assert abs(ps.GetAvailablePower() - (100.0 - 0.08)) < 1e-6
+    assert ps.GetMainBatteryPower() == 100.0
 
 
-def test_recharge_skips_when_grid_dry():
-    """available + main both zero → StealPower fails → bank stays put."""
+def test_recharge_proceeds_with_empty_battery():
+    """Battery at zero — recharge still fills the bank (removed grid gate)."""
     ship = ShipClass_Create("Test")
     bank = _wire_phaser_bank(ship, available=0.0, main_battery=0.0)
     before = bank._charge_level
     bank.UpdateCharge(1.0)
-    assert bank._charge_level == before
-
-
-def test_recharge_falls_back_to_main_battery():
-    ship = ShipClass_Create("Test")
-    bank = _wire_phaser_bank(ship, available=0.0, main_battery=1000.0)
-    before = bank._charge_level
-    bank.UpdateCharge(1.0)
     assert bank._charge_level > before
-    ps = ship.GetPowerSubsystem()
-    assert abs(ps.GetMainBatteryPower() - (1000.0 - 0.08)) < 1e-6
 
 
-def test_recharge_capped_at_max_charge_no_overcharge_billed():
-    """Bank already at MaxCharge → no headroom → no refill billed."""
+def test_recharge_capped_at_max_charge():
+    """Bank already at MaxCharge → no headroom → charge level unchanged."""
     ship = ShipClass_Create("Test")
-    bank = _wire_phaser_bank(ship, available=100.0)
+    bank = _wire_phaser_bank(ship, main_battery=100.0)
     bank._charge_level = bank._max_charge
     bank.UpdateCharge(1.0)
     assert bank._charge_level == bank._max_charge
+    # Battery still untouched
     ps = ship.GetPowerSubsystem()
-    assert ps.GetAvailablePower() == 100.0
+    assert ps.GetMainBatteryPower() == 100.0
 
 
-def test_recharge_billed_only_for_actual_refill_near_cap():
-    """Headroom 0.05, would-be refill 0.08 → bill only the 0.05 actually used."""
+def test_recharge_capped_near_max_charge():
+    """Headroom 0.05, would-be refill 0.08 → only 0.05 added (cap logic)."""
     ship = ShipClass_Create("Test")
-    bank = _wire_phaser_bank(ship, available=100.0)
+    bank = _wire_phaser_bank(ship, main_battery=100.0)
     bank._charge_level = bank._max_charge - 0.05
     bank.UpdateCharge(1.0)
     assert abs(bank._charge_level - bank._max_charge) < 1e-6
+    # Battery untouched regardless of capping
     ps = ship.GetPowerSubsystem()
-    assert abs(ps.GetAvailablePower() - (100.0 - 0.05)) < 1e-6
+    assert ps.GetMainBatteryPower() == 100.0
 
 
-def test_recharge_no_property_bypasses_gate():
-    """Test fixture without a bound PowerProperty refills normally."""
+def test_recharge_without_power_property_still_works():
+    """Test fixture without a bound PowerProperty refills normally (no gate)."""
     ship = ShipClass_Create("Test")
     bank = _wire_phaser_bank(ship, with_power_property=False)
     before = bank._charge_level

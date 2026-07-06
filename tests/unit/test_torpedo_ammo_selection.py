@@ -1,9 +1,9 @@
 """TorpedoSystem selected-ammo-slot support.
 
 Adds a settable "selected slot" so UI type-cycling changes which ammo type
-GetCurrentAmmoType() returns (and therefore which power cost firing debits).
-The default (no selection) must stay byte-identical to the pre-existing
-"lowest populated slot" behaviour so older tests remain green.
+GetCurrentAmmoType() returns.  The default (no selection) must stay
+byte-identical to the pre-existing "lowest populated slot" behaviour so older
+tests remain green.
 """
 from unittest.mock import patch
 
@@ -320,9 +320,10 @@ def test_unlimited_reserve_never_decrements_on_fire():
     projectiles._active.clear()
 
 
-def test_firing_debits_selected_type_power_cost():
-    """The tube's _debit_power reads parent.GetCurrentAmmoType().GetPowerCost().
-    Selecting slot 1 (Quantum, cost 30) must debit 30, not 20."""
+def test_fire_uses_selected_ammo_slot():
+    """Selecting slot 1 (Quantum) means GetCurrentAmmoType() at fire-time
+    returns Quantum.  Task 4b removed the per-shot battery debit, so this
+    test verifies slot selection is honoured (not a cost debit)."""
     from engine.appc.ships import ShipClass_Create
     from engine.appc.math import TGPoint3
     from engine.appc.properties import WeaponSystemProperty
@@ -342,14 +343,12 @@ def test_firing_debits_selected_type_power_cost():
     tube._num_ready = 1
     parent.AddChildSubsystem(tube)
 
-    billed = {}
+    # The selected ammo slot is correct before fire
+    assert parent.GetCurrentAmmoType().GetAmmoName() == "Quantum"
+    assert parent.GetCurrentAmmoType().GetPowerCost() == 30.0
 
-    def _fake_debit(emitter, cost):
-        billed["cost"] = cost
-        return 1
-
-    with patch("engine.appc.weapon_subsystems._debit_ship_power", _fake_debit), \
-         patch("engine.audio.tg_sound.TGSoundManager.instance"):
+    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
         tube.Fire(target=None, offset=None)
 
-    assert billed["cost"] == 30.0
+    # Tube fired (no power-gate blocks it — Task 4b: no per-shot debit)
+    assert tube.GetNumReady() == 0

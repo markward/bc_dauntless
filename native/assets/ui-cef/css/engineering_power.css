@@ -1,0 +1,280 @@
+/* Engineering power-grid panel — v28 design.
+   All rules namespaced under #engpower-root.
+   CSS values lifted verbatim from docs/ui_designs/06-engineer-panel.html.
+   Spec: docs/superpowers/sdd/task-3-brief.md */
+
+#engpower-root {
+    position: fixed;
+    top: 8px;
+    right: 8px;
+    width: 540px;
+    font-family: 'Antonio', 'Arial Narrow', sans-serif;
+    background: rgba(10,10,16,0.92);
+    border-left: 4px solid rgb(216,94,86);
+    pointer-events: auto;
+    z-index: 50;
+}
+
+/* bc-body padding */
+#engpower-root .bc-body {
+    padding: 10px 14px 12px;
+}
+
+/* ── Slider rows ──────────────────────────────────────────────────────────── */
+#engpower-root .row {
+    display: grid;
+    grid-template-columns: 100px 1fr 50px;
+    align-items: center;
+    gap: 8px;
+    margin: 7px 0;
+}
+
+#engpower-root .row .lbl {
+    color: #e8e6f0;
+    font-size: 12px;
+}
+
+#engpower-root .track {
+    height: 10px;
+    position: relative;
+    cursor: ew-resize;
+}
+
+#engpower-root .fill {
+    height: 100%;
+}
+
+#engpower-root .pct {
+    font-size: 12px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+#engpower-root .thumbline {
+    position: absolute;
+    top: -3px;
+    bottom: -3px;
+    width: 3px;
+    background: #fff;
+    box-shadow: 0 0 4px #fff;
+}
+
+#engpower-root .mark100 {
+    position: absolute;
+    top: -2px;
+    bottom: -2px;
+    left: 80%;
+    width: 1px;
+    background: rgba(255,255,255,0.28);
+}
+
+/* ── Tick row ─────────────────────────────────────────────────────────────── */
+#engpower-root .ticks {
+    position: relative;
+    height: 14px;
+    color: #8886a0;
+    font-size: 10px;
+    margin: 4px 0 0 108px;
+    margin-right: 58px;
+}
+
+#engpower-root .ticks span {
+    position: absolute;
+    transform: translateX(-50%);
+}
+
+#engpower-root .ticks span:first-child {
+    left: 0;
+    transform: none;
+}
+
+#engpower-root .ticks span:last-child {
+    right: 0;
+    left: auto;
+    transform: none;
+}
+
+/* ── Grid (damage at left + bars) ──────────────────────────────────────────
+   Faithful conduit-bandwidth axis. The damage hatch is a LEFT flex column
+   (bandwidth lost to reactor damage); bars-col holds the remaining
+   (1 - damage) width. JS sets dmg-col flex-basis = grid.damage * 100% and
+   re-normalises the band/used widths by (1 - damage) so they fill bars-col.
+   The reserve-threshold reading is preserved (the (1-damage) factor cancels). */
+#engpower-root .grid-wrap {
+    display: flex;
+    align-items: stretch;
+    margin-top: 22px;
+}
+
+/* Damage hatch — LEFT flex column spanning full grid height */
+#engpower-root .dmg-col {
+    flex: 0 0 0%;
+    align-self: stretch;
+    background: repeating-linear-gradient(
+        45deg,
+        rgb(170,25,25),
+        rgb(170,25,25) 4px,
+        rgb(80,17,17) 4px,
+        rgb(80,17,17) 8px
+    );
+    border: 1px solid rgb(40,35,50);
+    border-right: none;
+    border-radius: 2px 0 0 2px;
+    pointer-events: none;
+}
+
+#engpower-root .bars-col {
+    flex: 1;
+    position: relative;
+}
+
+#engpower-root .used-bar {
+    height: 28px;
+    border: 1px solid rgb(40,35,50);
+    border-radius: 2px;
+    overflow: hidden;
+    display: flex;
+    background: rgba(255,255,255,0.05);
+    margin-bottom: 14px;
+}
+
+/* Overload tint on the used bar */
+#engpower-root .used-bar.overload {
+    box-shadow: inset 0 0 0 1px rgb(200,40,40);
+}
+
+#engpower-root .pu-bar {
+    height: 14px;
+    border: 1px solid rgb(40,35,50);
+    border-radius: 2px;
+    overflow: hidden;
+    display: flex;
+}
+
+/* Used-bar segment colours */
+#engpower-root .u-weap { background: rgb(207,139,76); }
+#engpower-root .u-eng  { background: rgb(199,76,200); }
+#engpower-root .u-sens { background: rgb(201,203,76); }
+#engpower-root .u-shld { background: rgb(150,129,222); }
+
+/* Available (power-unit) bar colours */
+#engpower-root .pu-wc { background: rgb(22,105,207); }
+#engpower-root .pu-mn { background: rgb(180,157,64); }
+#engpower-root .pu-rs { background: rgb(208,87,42); }
+
+#engpower-root .pu-rel {
+    position: relative;
+}
+
+#engpower-root .btick {
+    position: absolute;
+    top: -5px;
+    bottom: 0;
+    width: 2px;
+}
+
+#engpower-root .pu-labels {
+    display: flex;
+    font-size: 9px;
+    letter-spacing: .6px;
+    margin-top: 6px;
+}
+
+#engpower-root .pu-labels span {
+    text-align: center;
+    white-space: nowrap;
+}
+
+/* ── Bottom bgroup ─────────────────────────────────────────────────────────── */
+#engpower-root .bgroup {
+    display: flex;
+    align-items: flex-start;
+    margin-top: 16px;
+}
+
+/* Toggle column */
+#engpower-root .toggle-col {
+    flex: 1;
+    position: relative;
+    height: 120px;
+}
+
+#engpower-root .btoggle {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 170px;
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 10px;
+    background: rgba(30,28,44,.7);
+    color: #e8e6f0;
+    font-size: 12px;
+    box-sizing: border-box;
+    cursor: pointer;
+}
+
+#engpower-root .cline-on {
+    position: absolute;
+    height: 2px;
+}
+
+#engpower-root .cline-off {
+    position: absolute;
+    height: 0;
+    border-top: 2px dashed;
+}
+
+/* Battery pillars */
+#engpower-root .pillar {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+#engpower-root .pcol {
+    height: 80px;
+    background: rgb(13,11,26);
+    position: relative;
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+#engpower-root .pbump {
+    height: 7px;
+    border: 1px solid;
+    border-bottom: none;
+    border-radius: 3px 3px 0 0;
+    background: rgb(13,11,26);
+}
+
+#engpower-root .pfill {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+}
+
+/* Drain indicator inside the fill — `top` is set inline by JS
+   (_epUpdateBattery) to track the live fill surface; no static top here. */
+#engpower-root .pdrain {
+    position: absolute;
+    left: 0;
+    right: 0;
+    text-align: center;
+    font-size: 10px;
+}
+
+#engpower-root .pname {
+    color: #8886a0;
+    font-size: 10px;
+    font-weight: 600;
+    margin-top: 3px;
+    text-align: center;
+}
+
+#engpower-root .ppct {
+    font-size: 11px;
+    font-weight: 600;
+    text-align: center;
+}

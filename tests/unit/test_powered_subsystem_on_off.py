@@ -9,7 +9,9 @@ from engine.appc.subsystems import PoweredSubsystem
 def test_powered_subsystem_default_state():
     p = PoweredSubsystem("Test")
     assert p.IsOn() == 0
-    assert p.GetPowerPercentageWanted() == 0.0
+    # BC spawns every consumer at 100% wanted power (updated from old 0.0 shim
+    # default — Task 1 of the power-management plan).
+    assert p.GetPowerPercentageWanted() == 1.0
 
 
 def test_turn_on_then_is_on():
