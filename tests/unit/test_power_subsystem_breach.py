@@ -120,3 +120,37 @@ def test_no_parent_ship_does_not_raise():
     power.SetProperty(prop)
     power.SetCondition(0.0)
     power.Update(1.0 / 60.0)  # must not raise
+
+
+def test_non_targetable_power_plant_does_not_arm_breach():
+    """An asteroid carries a hidden Power Plant with SetTargetable(0). When
+    the death cascade zeroes it, PowerSubsystem.Update must NOT arm a
+    warp-core breach (and must NOT start ship death).  This mirrors the
+    identical gate in objects.py:_route_zero_crossing.
+
+    The _breach_fired flag is still set (so we do not re-evaluate every
+    tick), but the arm + ship_death paths must be skipped.
+    """
+    from engine.appc import ship_death
+    ship, power, _ = _powered_ship()
+    ship_death.reset()
+    try:
+        # Mark the power plant as non-targetable — exactly what asteroid
+        # hardpoints do (SetTargetable(0)).
+        power.SetTargetable(0)
+        power.SetCondition(0.0)   # IsDestroyed() == 1
+        for _ in range(120):
+            power.Update(1.0 / 60.0)
+        # No breach must be armed or detonated.
+        assert ship not in warp_core_breach._armed, (
+            "non-targetable power plant must not arm warp_core_breach"
+        )
+        assert ship not in warp_core_breach._breached, (
+            "non-targetable power plant must not detonate warp_core_breach"
+        )
+        # Ship must NOT be dying or dead (no ship_death.begin called).
+        assert not (ship.IsDying() or ship.IsDead()), (
+            "non-targetable power plant must not trigger ship death"
+        )
+    finally:
+        ship_death.reset()

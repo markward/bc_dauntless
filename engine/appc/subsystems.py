@@ -1488,8 +1488,16 @@ class PowerSubsystem(ShipSubsystem):
         """Called once when the reactor is destroyed (Task 5 — manual p.16:
         "Reaching 0% causes a warp-core breach and destroys the ship").
 
-        Two effects, matching the objects.py:695-699 critical-subsystem
-        pattern:
+        Gate parity with objects.py:_route_zero_crossing: only a TARGETABLE
+        power plant may breach.  Inert objects (asteroids) carry a hidden,
+        non-targetable Power Plant (SetTargetable(0)); when the death cascade
+        zeroes it, it must NOT throw a warp-core explosion with its unique VFX
+        + splash damage.  ``_breach_fired`` is still set so we do not
+        re-evaluate every tick — the plant is marked "handled" even though
+        no breach is emitted.
+
+        Two effects (targetable path only), matching the
+        objects.py:695-699 critical-subsystem pattern:
 
         * warp_core_breach.arm(ship) — queues the AoE explosion, detonated
           on the next warp_core_breach.advance() (driven by the game loop).
@@ -1501,6 +1509,9 @@ class PowerSubsystem(ShipSubsystem):
         Raise-safe: a missing parent ship or import error must never crash
         the power tick."""
         try:
+            from engine.appc.objects import _is_targetable
+            if not _is_targetable(self):
+                return
             from engine.appc import warp_core_breach
             ship = self.GetParentShip()
             if ship is None:
