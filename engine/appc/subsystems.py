@@ -1796,11 +1796,95 @@ class PowerSubsystem(ShipSubsystem):
 
 
 class RepairSubsystem(PoweredSubsystem):
-    """Engineering / damage-control subsystem.  SDK App.py:6639 has
-    RepairSubsystem(PoweredSubsystem) with internal repair-allocation
-    state; Phase 1 ships only need the slot + property back-ref so the
-    targets panel reflects the hardpoint."""
-    pass
+    """Engineering / damage-control subsystem — the per-ship repair queue.
+
+    SDK surface (App.py:6639-6662): AddSubsystem, AddToRepairList,
+    IsBeingRepaired, plus the inherited ShipSubsystem/PoweredSubsystem
+    methods. Queue semantics + tick formula are RE-verified
+    (docs/original_game_reference/gameplay/ship-subsystems.md §Repair):
+    duplicates rejected, destroyed (condition<=0) rejected, undamaged
+    rejected; first NumRepairTeams entries are "being repaired".
+    """
+
+    def __init__(self, name: str = ""):
+        super().__init__(name)
+        # RE layout: +0x9C (isOn) inits to 1 — the bay ticks and draws
+        # power without ever being switched on.
+        self._is_on = True
+        # Ordered repair queue (head = active). Python list of subsystem
+        # refs; identity comparisons throughout (TGObject __eq__ is not
+        # trusted).
+        self._queue: list = []
+        # id(sub) values already notified ET_REPAIR_CANNOT_BE_COMPLETED
+        # (destroyed-while-queued fires once, not per tick).
+        self._cannot_complete_notified: set = set()
+
+    # ── Property readers (RepairSubsystemProperty data-bag) ────────────────
+    def GetMaxRepairPoints(self) -> float:
+        prop = self._property
+        if prop is not None:
+            v = prop.GetMaxRepairPoints()
+            if v is not None:
+                return float(v)
+        return 0.0
+
+    def GetNumRepairTeams(self) -> int:
+        prop = self._property
+        if prop is not None:
+            v = prop.GetNumRepairTeams()
+            if v is not None:
+                return int(v)
+        return 0
+
+    # ── Queue ───────────────────────────────────────────────────────────────
+    def AddToRepairList(self, sub) -> int:
+        """Queue a damaged subsystem for repair. Returns 1 on add, 0 on
+        reject (None / duplicate / destroyed / undamaged) — mirrors stock
+        AddSubsystem which walks the list before insertion and explicitly
+        checks condition > 0."""
+        if sub is None or sub is True or sub is False:
+            return 0
+        if not hasattr(sub, "GetCondition"):
+            return 0
+        if any(s is sub for s in self._queue):
+            return 0
+        cond = sub.GetCondition()
+        if cond <= 0.0:
+            return 0
+        if cond >= sub.GetMaxCondition():
+            return 0
+        self._queue.append(sub)
+        self._fire_repair_event("ET_ADD_TO_REPAIR_LIST", sub, dest=self)
+        return 1
+
+    # SDK exposes both spellings for the same insert (App.py:6660-6661).
+    AddSubsystem = AddToRepairList
+
+    def IsBeingRepaired(self, sub) -> int:
+        """True iff sub is within the first NumRepairTeams queue entries —
+        stock walks exactly that many nodes (FUN_00565890)."""
+        n = self.GetNumRepairTeams()
+        return 1 if any(s is sub for s in self._queue[:n]) else 0
+
+    # ── Event emission ──────────────────────────────────────────────────────
+    def _fire_repair_event(self, event_attr: str, sub, dest=None) -> None:
+        """TGObjPtrEvent with source=sub AND objptr=sub: the SDK
+        RepairCompleted handler dereferences BOTH GetSource() and
+        GetObjPtr() (EngineerCharacterHandlers.py:294-336). dest defaults
+        to the owning ship (player filtering)."""
+        try:
+            import App
+            if dest is None:
+                ship = self._owning_ship()
+                dest = ship if ship is not None else self
+            evt = App.TGObjPtrEvent_Create()
+            evt.SetEventType(getattr(App, event_attr))
+            evt.SetSource(sub)
+            evt.SetObjPtr(sub)
+            evt.SetDestination(dest)
+            App.g_kEventManager.AddEvent(evt)
+        except Exception as _e:
+            dev_mode.log_swallowed("repair event broadcast", _e)
 
 
 # Default cloak/decloak transition length in seconds.  W5.T2 will overwrite

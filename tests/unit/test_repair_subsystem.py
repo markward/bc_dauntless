@@ -48,3 +48,75 @@ def test_setup_properties_seeds_repair_complexity():
     ship.GetPropertySet().AddToSet("Scene Root", prop)
     ship.SetupProperties()
     assert ship.GetSensorSubsystem().GetRepairComplexity() == 4.0
+
+
+# ── Task 4: RepairSubsystem queue core ──────────────────────────────────────
+
+from engine.appc.subsystems import RepairSubsystem
+
+
+def _bay(points=50.0, teams=3):
+    from engine.appc.properties import RepairSubsystemProperty
+    bay = RepairSubsystem("Engineering")
+    bay.SetMaxCondition(8000.0)
+    prop = RepairSubsystemProperty("Engineering")
+    prop.SetMaxRepairPoints(points)   # data-bag setters, as hardpoints do
+    prop.SetNumRepairTeams(teams)
+    bay.SetProperty(prop)
+    return bay
+
+
+def test_bay_is_on_by_default():
+    assert RepairSubsystem("Engineering").IsOn() == 1
+
+
+def test_property_readers_with_and_without_property():
+    assert _bay(50.0, 3).GetMaxRepairPoints() == 50.0
+    assert _bay(50.0, 3).GetNumRepairTeams() == 3
+    bare = RepairSubsystem("Engineering")
+    assert bare.GetMaxRepairPoints() == 0.0
+    assert bare.GetNumRepairTeams() == 0
+
+
+def test_add_accepts_damaged_rejects_dup_destroyed_undamaged():
+    bay = _bay()
+    damaged = _sub(condition=400.0)
+    assert bay.AddToRepairList(damaged) == 1
+    assert bay.AddToRepairList(damaged) == 0          # duplicate
+    assert bay.AddToRepairList(_sub(condition=0.0)) == 0    # destroyed
+    assert bay.AddToRepairList(_sub()) == 0           # undamaged (full)
+    assert bay.AddToRepairList(None) == 0
+    assert len(bay._queue) == 1
+
+
+def test_add_fires_add_to_repair_list_event(monkeypatch):
+    import App
+    fired = []
+    monkeypatch.setattr(App.g_kEventManager, "AddEvent",
+                        lambda evt: fired.append(evt))
+    bay = _bay()
+    damaged = _sub(condition=400.0)
+    bay.AddToRepairList(damaged)
+    assert [e.GetEventType() for e in fired] == [App.ET_ADD_TO_REPAIR_LIST]
+    assert fired[0].GetSource() is damaged
+    assert fired[0].GetObjPtr() is damaged
+    assert fired[0].GetDestination() is bay
+
+
+def test_is_being_repaired_is_first_num_teams_entries():
+    bay = _bay(teams=2)
+    subs = [_sub(name="s%d" % i, condition=100.0) for i in range(4)]
+    for s in subs:
+        bay.AddToRepairList(s)
+    assert bay.IsBeingRepaired(subs[0]) == 1
+    assert bay.IsBeingRepaired(subs[1]) == 1
+    assert bay.IsBeingRepaired(subs[2]) == 0    # waiting
+    assert bay.IsBeingRepaired(subs[3]) == 0
+    assert bay.IsBeingRepaired(_sub(condition=1.0)) == 0  # not queued
+
+
+def test_add_subsystem_is_the_sdk_alias():
+    bay = _bay()
+    damaged = _sub(condition=400.0)
+    assert bay.AddSubsystem(damaged) == 1
+    assert bay.IsBeingRepaired(damaged) == 1
