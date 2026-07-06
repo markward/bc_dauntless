@@ -85,6 +85,20 @@ class EngineeringPowerPanel(Panel):
                       "active": bool(cloak is not None and cloak.IsTryingToCloak())},
         }
 
+    def is_showing(self) -> bool:
+        """True when the panel is rendering its grid (player + power present).
+
+        The host loop gates CEF click-forwarding on this so clicks over the
+        panel's top-right region reach the sliders instead of falling through
+        to the game world. Mirrors crew_menu_panel.has_open_menu(). When it
+        returns False the JS root has hidden itself, so there is nothing to
+        click.
+        """
+        player = self._get_player()
+        if player is None:
+            return False
+        return player.GetPowerSubsystem() is not None
+
     def render_payload(self):
         snap = self._snapshot()
         if snap == self._last_pushed:

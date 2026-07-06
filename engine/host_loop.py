@@ -5433,6 +5433,22 @@ def run(mission_name: Optional[str] = None,
                         and _BR_X <= _mx < _BR_X + _BR_W
                         and _BR_Y <= _my < _BR_Y + _BR_H
                     )
+                    # Top-right corner (#engpower-root): position:fixed;
+                    # top:8px; right:8px; width:240px. The Engineering
+                    # power-grid panel lives here; its sliders are only
+                    # clickable if clicks over this box reach CEF. Gated on
+                    # is_showing() (player + power present) so the box doesn't
+                    # swallow clicks / phaser fire when the panel is hidden.
+                    # Height is generous — the grid grows with slider/siphon
+                    # rows; anything above the tactical panels is fine.
+                    _TR_W, _TR_H = 240 + 16, 360   # +16 for CSS padding/border
+                    _TR_X = _CEF_VIEW_W - 8 - _TR_W
+                    _TR_Y = 8
+                    _cursor_in_top_right = (
+                        engineering_power_panel.is_showing()
+                        and _TR_X <= _mx < _TR_X + _TR_W
+                        and _TR_Y <= _my < _TR_Y + _TR_H
+                    )
                     # The Set Course and Quick Battle Setup modals are
                     # full-viewport cp-* backdrops: any click while one is open
                     # belongs to CEF (a button or the inert backdrop), never to
@@ -5443,6 +5459,7 @@ def run(mission_name: Optional[str] = None,
                     )
                     _cursor_in_panel = (
                         _cursor_in_left_column or _cursor_in_bottom_row
+                        or _cursor_in_top_right
                         or _cursor_in_modal
                     )
                     if _cef_send_mouse_click is not None and _cursor_in_panel:

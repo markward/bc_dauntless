@@ -101,6 +101,22 @@ def test_name_is_engpower():
     assert panel.name == "engpower"
 
 
+def test_is_showing_false_without_player():
+    """Clickable-state contract: the host loop gates click-forwarding on
+    is_showing(), mirroring crew_menu_panel.has_open_menu(). No player =>
+    the JS root hides itself => the panel is not clickable."""
+    from engine.ui.engineering_power_panel import EngineeringPowerPanel
+    panel = EngineeringPowerPanel(get_player=lambda: None)
+    assert panel.is_showing() is False
+
+
+def test_is_showing_true_with_powered_player():
+    """A player with a power subsystem renders the panel, so clicks over its
+    top-right region must be forwarded to CEF (is_showing() True)."""
+    panel = _make_panel()
+    assert panel.is_showing() is True
+
+
 def test_dispatch_unknown_event_returns_false():
     panel = _make_panel()
     assert panel.dispatch_event("other:noise") is False
