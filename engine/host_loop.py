@@ -5141,13 +5141,25 @@ def run(mission_name: Optional[str] = None,
         # Engineering power-grid panel — live power state: sliders, Power Used
         # bar, column gauges, and tractor/cloak siphon lines.  Always registered
         # (production panel, not dev-only); the panel emits {"visible":False}
-        # when there is no player so the JS root hides itself.
+        # when there is no player or when the Engineering crew menu is not open.
         from engine.ui.engineering_power_panel import EngineeringPowerPanel
         def _engpower_get_player():
             g = Game_GetCurrentGame()
             return g.GetPlayer() if g is not None else None
+        # Resolve the Engineering menu label once (TGL: "Engineering" key in
+        # Bridge Menus.tgl; headless fallback returns the key itself).
+        try:
+            _eng_tgl = App.g_kLocalizationManager.Load(
+                "data/TGL/Bridge Menus.tgl")
+            _eng_label = str(_eng_tgl.GetString("Engineering"))
+            App.g_kLocalizationManager.Unload(_eng_tgl)
+        except Exception:
+            _eng_label = "Engineering"
+        def _engpower_is_engineering_open():
+            return crew_menu_panel.open_menu_label() == _eng_label
         engineering_power_panel = EngineeringPowerPanel(
-            get_player=_engpower_get_player)
+            get_player=_engpower_get_player,
+            is_engineering_open=_engpower_is_engineering_open)
         registry.register(engineering_power_panel)
 
         # Bindings older than the orbit-camera change won't expose

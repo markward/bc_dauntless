@@ -22,9 +22,15 @@ _GROUPS = (
 
 
 class EngineeringPowerPanel(Panel):
-    def __init__(self, get_player):
+    def __init__(self, get_player, is_engineering_open=None):
         super().__init__()
         self._get_player = get_player
+        # Callable[[], bool] — True when the Engineering crew menu is the open
+        # top-level station menu.  When None the panel always hides (the host
+        # loop passes a live crew_menu_panel check; None is the safe fallback
+        # when the panel is constructed without the crew-menu context, e.g. in
+        # unit tests that only exercise dispatch/slider logic).
+        self._is_engineering_open = is_engineering_open
         self._last_pushed = None
 
     @property
@@ -46,6 +52,8 @@ class EngineeringPowerPanel(Panel):
             return {"visible": False}
         power = player.GetPowerSubsystem()
         if power is None:
+            return {"visible": False}
+        if not self._engineering_is_open():
             return {"visible": False}
         sliders = []
         total_draw = 0.0
@@ -85,8 +93,20 @@ class EngineeringPowerPanel(Panel):
                       "active": bool(cloak is not None and cloak.IsTryingToCloak())},
         }
 
+    def _engineering_is_open(self) -> bool:
+        """True when the Engineering crew menu is the currently open station menu.
+
+        Delegates to the injected ``is_engineering_open`` callable when one was
+        provided; otherwise returns False (safe default — no crew-menu context
+        means the panel must stay hidden).
+        """
+        if self._is_engineering_open is None:
+            return False
+        return bool(self._is_engineering_open())
+
     def is_showing(self) -> bool:
-        """True when the panel is rendering its grid (player + power present).
+        """True when the panel is rendering its grid: player present, power
+        present, AND the Engineering crew menu is the currently open station menu.
 
         The host loop gates CEF click-forwarding on this so clicks over the
         panel's top-right region reach the sliders instead of falling through
@@ -94,6 +114,8 @@ class EngineeringPowerPanel(Panel):
         returns False the JS root has hidden itself, so there is nothing to
         click.
         """
+        if not self._engineering_is_open():
+            return False
         player = self._get_player()
         if player is None:
             return False
