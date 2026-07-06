@@ -480,6 +480,37 @@ def PowerSubsystem_Cast(obj):
     return obj if isinstance(obj, PowerSubsystem) else None
 
 
+def SensorSubsystem_Cast(obj):
+    """EngineerCharacterHandlers.AnnounceSystemDisabled:924 —
+    `App.SensorSubsystem_Cast(pSource)` decides the "SensorsDisabled" line."""
+    from engine.appc.subsystems import SensorSubsystem
+    return obj if isinstance(obj, SensorSubsystem) else None
+
+
+def ImpulseEngineSubsystem_Cast(obj):
+    from engine.appc.subsystems import ImpulseEngineSubsystem
+    return obj if isinstance(obj, ImpulseEngineSubsystem) else None
+
+
+def WarpEngineSubsystem_Cast(obj):
+    from engine.appc.subsystems import WarpEngineSubsystem
+    return obj if isinstance(obj, WarpEngineSubsystem) else None
+
+
+def RepairSubsystem_Cast(obj):
+    from engine.appc.subsystems import RepairSubsystem
+    return obj if isinstance(obj, RepairSubsystem) else None
+
+
+def TractorBeamProjector_Cast(obj):
+    """SDK class = the individual tractor projector. Our engine models the
+    projector as TractorBeam (weapon_subsystems.py:1583) under a
+    TractorBeamSystem; the disabled/destroyed event source may be either,
+    so match both — the announce line is the same ("TractorDisabled")."""
+    from engine.appc.weapon_subsystems import TractorBeam, TractorBeamSystem
+    return obj if isinstance(obj, (TractorBeam, TractorBeamSystem)) else None
+
+
 def ShieldSubsystem_Cast(obj):
     """Lenient pass-through used by shield-watcher conditions; returns obj if
     it's a ShieldSubsystem, else None (mirrors ShieldClass_Cast above)."""
@@ -937,6 +968,14 @@ ET_REPAIR_CANNOT_BE_COMPLETED     = 0x131D
 # BC FUN_00562430 broadcasts this so the power-display HUD and the engineer's
 # FloatRangeWatcher conditions can react to manual slider adjustments.
 ET_SUBSYSTEM_POWER_CHANGED        = 0x131E
+# Repaired back above the disabled threshold. Consumed by the AI Conditions
+# classes (ConditionSystemDisabled/ConditionTorpsReady/ConditionPulseReady
+# register broadcast handlers for it) as well as the engineer report path.
+ET_SUBSYSTEM_OPERATIONAL          = 0x131F
+# EngRepairPane click -> binary head/tail toggle on the repair queue.
+ET_REPAIR_INCREASE_PRIORITY       = 0x1320
+# A damaged subsystem entered the repair queue.
+ET_ADD_TO_REPAIR_LIST             = 0x1321
 
 _next_event_type_id = 1200
 
