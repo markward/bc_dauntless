@@ -649,15 +649,11 @@ class ShipClass(DamageableObject):
             shields_on = (self._alert_level in
                           (ShipClass.YELLOW_ALERT, ShipClass.RED_ALERT))
             if shields_on:
-                shields.TurnOn()
+                shields.TurnOn()          # TurnOn override snaps faces to max
                 shields.SetPowerPercentageWanted(1.0)
-                for f in range(shields.NUM_SHIELDS):
-                    shields.SetCurrentShields(f, shields.GetMaxShields(f))
             else:
-                shields.TurnOff()
+                shields.TurnOff()         # TurnOff override drains faces to 0
                 shields.SetPowerPercentageWanted(0.0)
-                for f in range(shields.NUM_SHIELDS):
-                    shields.SetCurrentShields(f, 0.0)
 
     # ── Subsystem accessors ──────────────────────────────────────────────────
     # Mirror sdk/.../App.py:5394-5455.  Loaders that need to populate these

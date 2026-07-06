@@ -318,6 +318,46 @@ def test_slider_nonzero_does_not_turn_off_when_already_on():
     assert shields.IsOn() == 1, "shields should still be on after non-zero pct"
 
 
+def test_slider_zero_shields_drains_all_faces_to_zero():
+    """engpower set:shields:0 on charged shields must set every face to 0.
+
+    This is alert-drop parity: the status widget reads face charge, so
+    powered-down shields must visibly show 0%, not stuck at 100%.
+    """
+    player = _fake_player()
+    shields = player.GetShields()
+    # Seed with max charge on all faces.
+    for f in range(shields.NUM_SHIELDS):
+        shields.SetMaxShields(f, 1000.0)
+        shields.SetCurrentShields(f, 1000.0)
+    shields.TurnOn()
+    panel = _make_panel(player)
+    panel.dispatch_event("set:shields:0")
+    assert shields.IsOn() == 0
+    for f in range(shields.NUM_SHIELDS):
+        assert shields.GetCurShields(f) == 0.0, (
+            f"face {f} should be drained after slider→0; got {shields.GetCurShields(f)}"
+        )
+
+
+def test_slider_raise_from_zero_snaps_faces_to_max():
+    """engpower set:shields:0.75 when shields are off must snap every face
+    to max — same raise semantics as the alert-level raise path."""
+    player = _fake_player()
+    shields = player.GetShields()
+    for f in range(shields.NUM_SHIELDS):
+        shields.SetMaxShields(f, 1000.0)
+        shields.SetCurrentShields(f, 0.0)
+    shields.TurnOff()
+    panel = _make_panel(player)
+    panel.dispatch_event("set:shields:0.75")
+    assert shields.IsOn() == 1
+    for f in range(shields.NUM_SHIELDS):
+        assert shields.GetCurShields(f) == shields.GetMaxShields(f), (
+            f"face {f} should snap to max on raise; got {shields.GetCurShields(f)}"
+        )
+
+
 # ── helpers ────────────────────────────────────────────────────────────────────
 
 def _make_panel(player=None, is_engineering_open=None):

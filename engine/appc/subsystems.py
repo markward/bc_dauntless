@@ -1221,6 +1221,34 @@ class ShieldSubsystem(PoweredSubsystem):
         shield-bias orbit positioning."""
         return self.GetCurrentShields(face)
 
+    # ── Override TurnOff/TurnOn to carry face-state semantics ────────────────
+    # Any path that powers shields down (alert→GREEN, slider→0%, future
+    # ShieldsDown SDK handler) must produce identical face state.  Putting
+    # the logic here means the caller just calls TurnOff()/TurnOn() and the
+    # face drain/raise follows automatically — no duplication in callers.
+
+    def TurnOff(self) -> None:
+        """Power down the shield generator and drain all faces to zero.
+
+        Mirrors BC's behaviour when the XO drops shields: every face
+        reading goes to 0 immediately (not gradual) so the status widget
+        and combat path both see dead shields.
+        """
+        super().TurnOff()
+        for f in range(self.NUM_SHIELDS):
+            self.SetCurrentShields(f, 0.0)
+
+    def TurnOn(self) -> None:
+        """Power up the shield generator and snap all faces to max.
+
+        Mirrors BC's behaviour when the XO raises shields: every face is
+        immediately at full charge — Phase 1 simplification of BC's
+        gradual charge-up time.
+        """
+        super().TurnOn()
+        for f in range(self.NUM_SHIELDS):
+            self.SetCurrentShields(f, self._max_shields[f])
+
     def GetSingleShieldPercentage(self, face: int) -> float:
         """current/max for the face; 0.0 when max==0 (unshielded face).
 
