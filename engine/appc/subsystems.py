@@ -2031,9 +2031,15 @@ class CloakingSubsystem(PoweredSubsystem):
     # (docs/original_game_reference/gameplay/ship-subsystems.md:185).
     POWER_MODE = PSM_BACKUP_ONLY
 
-    # Power starvation: backup battery dry → device disengages
-    # (ship-subsystems.md:187-189). Exact BC threshold unknown; tune from live play (ship-subsystems.md:187-189)
-    AUTO_DECLOAK_EFFICIENCY = 0.25
+    # Power starvation: the cloak runs off the BACKUP battery; when that reserve
+    # is exhausted the device can no longer hold the cloak (ship-subsystems.md:
+    # 187-189). Gate on the reserve LEVEL, not instantaneous conduit efficiency:
+    # efficiency (received/wanted) legitimately dips to 0 whenever the per-second
+    # backup-conduit budget is momentarily spent — and for the whole first-second
+    # warm-up — which would spuriously force-decloak a ship whose reserve is
+    # nearly full (the 2026-07-07 "cloak then immediately decloak" bug). Threshold
+    # 0.0 = strictly dry; tune from live play.
+    MIN_RESERVE_TO_HOLD_CLOAK = 0.0
 
     def __init__(self, name: str = ""):
         super().__init__(name)
@@ -2042,6 +2048,12 @@ class CloakingSubsystem(PoweredSubsystem):
         # Per-instance so W5.T2 can set it from CloakStrength; defaults to the
         # module constant.
         self._transition_duration: float = CLOAK_TRANSITION_DURATION
+        # Backup-battery level snapshotted each frame in _update_power (which has
+        # the PowerSubsystem in hand). Update()'s starvation guard reads this so
+        # it keys on true reserve depletion, not per-frame conduit efficiency.
+        # inf until the first power pump, so a cold-started cloak is never
+        # decloaked before its reserve has even been sampled.
+        self._backup_reserve: float = float("inf")
 
     # ── Intent (called by the SDK CloakShip preprocessor) ────────────────────
 
@@ -2102,6 +2114,15 @@ class CloakingSubsystem(PoweredSubsystem):
         return 1 if self._cloak_state in (self.CLOAK_CLOAKING,
                                           self.CLOAK_CLOAKED) else 0
 
+    def _update_power(self, dt: float, power) -> None:
+        """Draw as a normal backup-only consumer, then snapshot the reserve
+        level so Update()'s starvation guard keys on the BATTERY, not the
+        conduit-throttled per-frame efficiency (see MIN_RESERVE_TO_HOLD_CLOAK).
+        Runs each frame from PowerSubsystem._pump_consumers, before this
+        subsystem's Update() (engine/core/loop.py ticks power then cloak)."""
+        super()._update_power(dt, power)
+        self._backup_reserve = power.GetBackupBatteryPower()
+
     def _wants_power(self) -> bool:
         """The cloak draws power only while the ship is trying to stay hidden
         (CLOAKING or CLOAKED) — NOT on the PoweredSubsystem on/off flag.  BC
@@ -2151,10 +2172,9 @@ class CloakingSubsystem(PoweredSubsystem):
         A disabled / destroyed device cannot complete or hold a cloak: when
         offline it is forced back toward DECLOAKED (a pending CLOAKING is
         abandoned, a finished CLOAKED snaps off).  Power starvation (backup
-        battery exhausted, efficiency < AUTO_DECLOAK_EFFICIENCY) also forces
-        decloak.  Otherwise, when the elapsed transition time reaches
-        ``_transition_duration`` the machine snaps to the terminal state and
-        broadcasts its completion event.
+        reserve battery exhausted) also forces decloak.  Otherwise, when the
+        elapsed transition time reaches ``_transition_duration`` the machine
+        snaps to the terminal state and broadcasts its completion event.
         """
         offline = bool(self.IsDisabled()) or bool(self.IsDestroyed())
         if offline:
@@ -2162,11 +2182,12 @@ class CloakingSubsystem(PoweredSubsystem):
             self._force_decloak()
             return
 
-        # Power starvation: backup battery dry → device disengages
-        # (ship-subsystems.md:187-189).  Exact BC threshold unknown; 0.25 chosen
-        # — tune from live play, keep as a named constant.
+        # Power starvation: the backup RESERVE battery is dry → the device can
+        # no longer hold the cloak.  Keyed on the reserve level (snapshotted in
+        # _update_power), NOT per-frame conduit efficiency — see
+        # MIN_RESERVE_TO_HOLD_CLOAK for why efficiency was the wrong signal.
         if (self.IsTryingToCloak() and self.GetNormalPowerWanted() > 0.0
-                and self.GetPowerPercentage() < self.AUTO_DECLOAK_EFFICIENCY):
+                and self._backup_reserve <= self.MIN_RESERVE_TO_HOLD_CLOAK):
             self._force_decloak()
             return
 

@@ -95,7 +95,7 @@ def test_free_cloak_is_never_force_decloaked():
 
 def test_full_backup_battery_does_not_decloak():
     """A cloaked ship with a full backup battery and output >= draw must
-    remain cloaked: efficiency is 1.0, well above AUTO_DECLOAK_EFFICIENCY.
+    remain cloaked: the reserve never runs dry.
 
     The power subsystem is pre-seeded for 2 seconds before the cloak starts
     so the conduit budgets are non-zero when the starvation check first runs.
@@ -124,6 +124,37 @@ def test_full_backup_battery_does_not_decloak():
     assert cloak.IsTryingToCloak() == 1, (
         "well-fed cloak (full backup battery) must NOT be force-decloaked"
     )
+
+
+def test_high_draw_cloak_with_full_reserve_stays_cloaked():
+    """Regression (2026-07-07 'cloak then immediately decloak'): a Warbird-style
+    cloak draws 1000 pw/s but the backup conduit only supplies ~200 pw/s, so the
+    per-frame power *efficiency* oscillates to 0 as the per-second conduit budget
+    is spent and refills — and is 0 for the whole first-second warm-up. The old
+    guard keyed on that instantaneous efficiency and force-decloaked on frame 1
+    even though the reserve BATTERY was full. The starvation guard must key on
+    the reserve level, not conduit efficiency, so a full-reserve ship stays
+    cloaked despite a heavily throttled conduit.
+
+    No conduit pre-seed and no InstantCloak here — the ship must survive the
+    warm-up window from a cold StartCloaking, exactly as it does in game.
+    """
+    ship, power = _powered_ship()
+    cloak = CloakingSubsystem("Cloaking Device")
+    cloak.SetNormalPowerPerSecond(1000.0)   # >> backup conduit 200 → eff oscillates to 0
+    ship.AddPoweredConsumer(cloak)
+    power.SetBackupBatteryPower(80000.0)     # full reserve, reactor refills it
+
+    cloak.StartCloaking()
+
+    for _ in range(600):                     # 10 s from a cold start
+        power.Update(1.0 / 60.0)
+        cloak.Update(1.0 / 60.0)
+
+    assert cloak.IsTryingToCloak() == 1, (
+        "full-reserve cloak must stay cloaked despite conduit-throttled efficiency"
+    )
+    assert power.GetBackupBatteryPower() > 0.0, "reserve should not have emptied"
 
 
 class _DeclOakCapture:
