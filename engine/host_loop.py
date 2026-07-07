@@ -2814,7 +2814,7 @@ def _ship_load_key(nif_path, reps):
 def _resolve_active_set(player):
     """Return the SetClass whose lights & backdrops apply to the rendered
     scene. Order:
-      1. g_kSetManager.GetRenderedSet() — set explicitly via
+      1. g_kSetManager.get_explicit_rendered_set() — set explicitly via
          MissionLib.MakeRenderedSet during scene transitions.
       2. The set containing the player ship — Phase 1 fallback.
       3. None — caller falls through to per-system defaults
@@ -2824,7 +2824,7 @@ def _resolve_active_set(player):
     is 'live' so backdrop-only sets (rare but legal) are picked up.
     """
     import App
-    rendered = App.g_kSetManager.GetRenderedSet()
+    rendered = App.g_kSetManager.get_explicit_rendered_set()
     if rendered is not None and (
         getattr(rendered, "_lights", None) or
         getattr(rendered, "_backdrops", None)
@@ -3821,7 +3821,7 @@ def _active_cutscene_camera():
     cameras, and dead-target modes all return None and the director resumes.
     """
     import App as _App
-    rendered = _App.g_kSetManager.GetRenderedSet()
+    rendered = _App.g_kSetManager.get_explicit_rendered_set()
     if rendered is None:
         return None
     get_active = getattr(rendered, "GetActiveCamera", None)

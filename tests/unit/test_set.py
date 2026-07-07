@@ -313,3 +313,27 @@ def test_rendered_set_bridge_flag_without_bridge_set_falls_back():
     mgr.AddSet(space, "Vesuvi6")
     mgr.MakeRenderedSet("Vesuvi6")
     assert mgr.GetRenderedSet() is space
+
+
+def test_resolve_active_set_ignores_bridge_visibility():
+    # Exterior lighting must key off the explicit rendered set even while
+    # the player is on the bridge (bridge sets have their own lights; the
+    # exterior scene must not inherit them).
+    import App
+    import engine.appc.top_window as top_window
+    from engine.appc.sets import SetClass
+    from engine.host_loop import _resolve_active_set
+
+    top_window.reset_for_tests()                      # bridge visible
+    App.g_kSetManager._sets.clear()
+    App.g_kSetManager._rendered_set_name = None
+
+    bridge = SetClass()
+    bridge._lights = [object()]                       # bridge has lights
+    space = SetClass()
+    space._lights = [object()]
+    App.g_kSetManager.AddSet(bridge, "bridge")
+    App.g_kSetManager.AddSet(space, "Vesuvi6")
+    App.g_kSetManager.MakeRenderedSet("Vesuvi6")
+
+    assert _resolve_active_set(None) is space
