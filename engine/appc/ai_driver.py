@@ -33,8 +33,36 @@ PS_SKIP_DORMANT = PreprocessingAI.PS_SKIP_DORMANT
 PS_DONE = PreprocessingAI.PS_DONE
 
 
+# Focus-loss lifecycle state. tick_ai is single-threaded (one ship at a time),
+# so module-level scratch is safe. _reached_this_tick collects the
+# PreprocessingAI nodes reached (== focused) during the current root tick.
+_focus_depth = 0
+_reached_this_tick: list = []
+
+
 def tick_ai(ai, game_time: float) -> int:
-    """Tick one AI subtree at the given game time. Returns the resulting status."""
+    """Tick one AI subtree; reconcile preprocessor focus at the root call.
+
+    The outermost tick_ai call (one per ship, from tick_all_ai) is the root: it
+    collects which PreprocessingAI nodes were reached (== on the active path ==
+    focused) this tick, then dispatches LostFocus() to any node that was focused
+    last tick but not this one. Recursive calls into children just dispatch."""
+    global _focus_depth, _reached_this_tick
+    is_root = _focus_depth == 0
+    if is_root:
+        _reached_this_tick = []
+    _focus_depth += 1
+    try:
+        status = _dispatch_ai(ai, game_time)
+    finally:
+        _focus_depth -= 1
+    if is_root and ai is not None:
+        _reconcile_focus(ai, _reached_this_tick)
+    return status
+
+
+def _dispatch_ai(ai, game_time: float) -> int:
+    """Type-dispatch one AI node (the former body of tick_ai)."""
     if ai is None:
         return US_DONE
     # Inert-coast gate: a dying/dead ship issues no new orders.
@@ -57,6 +85,30 @@ def tick_ai(ai, game_time: float) -> int:
     if isinstance(ai, PlainAI):
         return _tick_plain(ai, game_time)
     return ai._status
+
+
+def _reconcile_focus(root_ai, reached) -> None:
+    """Dispatch LostFocus() to preprocessors focused last tick but not this one.
+
+    Identity-based: `reached` holds the PreprocessingAI nodes ticked this root
+    tick. Any node in the root's previous focused set that is not among them has
+    left the active dispatch path."""
+    reached_ids = {id(n) for n in reached}
+    for node in getattr(root_ai, "_focused_preprocessors", ()):
+        if id(node) not in reached_ids:
+            _dispatch_lost_focus(node)
+    root_ai._focused_preprocessors = list(reached)
+
+
+def _dispatch_lost_focus(node) -> None:
+    """Call the preprocessor instance's LostFocus() (if any) and clear the
+    node's focus latches so a later re-entry re-fires GotFocus()."""
+    inst = getattr(node, "_preprocessing_instance", None)
+    lost = getattr(inst, "LostFocus", None) if inst is not None else None
+    if callable(lost):
+        lost()
+    node._has_focus = False
+    node.__dict__["_got_focus_called"] = False
 
 
 def _tick_plain(ai: PlainAI, game_time: float) -> int:
@@ -387,6 +439,11 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
     # before the preprocessor's Update runs below, since SelectTarget
     # queries HasFocus mid-Update.
     ai._has_focus = True
+
+    # Focus-loss lifecycle: record that this preprocessor was reached (focused)
+    # this tick, so the root reconciliation (see tick_ai / _reconcile_focus) can
+    # LostFocus() any node that drops off the active path next tick.
+    _reached_this_tick.append(ai)
 
     # GotFocus dispatch — SDK preprocessors put side-effecting init in
     # GotFocus (sdk/.../AI/Preprocessors.py:2047 AlertLevel,
