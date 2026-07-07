@@ -992,7 +992,14 @@ def ObjectClass_GetObjectByID(pSet, obj_id) -> "ObjectClass | None":
     App.SetClass_GetNull(), idTarget)`` — a None pSet means "search the
     null set", which in Appc semantics scans the global object table.
     Phase 1 routes through ``engine.core.ids.get_object_by_id``.
+
+    A None obj_id yields None (no object), matching real Appc's null-id
+    semantics. SDK callers pass None for an unset target — e.g.
+    Conditions/ConditionIncomingTorps.CheckTorpedo queries an as-yet-unset
+    iTargetID and relies on a falsy return — so this must not raise.
     """
+    if obj_id is None:
+        return None
     from engine.core.ids import get_object_by_id
     obj = get_object_by_id(int(obj_id))
     return obj if isinstance(obj, ObjectClass) else None
