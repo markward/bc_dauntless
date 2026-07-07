@@ -151,8 +151,13 @@ def _make_attacker_and_target_with_warp_core():
     ours = ShipClass(); pSet.AddObjectToSet(ours, "Ours")
     target = ShipClass(); pSet.AddObjectToSet(target, "Target")
 
-    # Warp core: critical + targetable → highest FireScript rating
-    # (IsCritical x6 beats the shield's type-rating of 5).
+    # Warp core is the ONLY targetable subsystem: the shield is attached
+    # (so the ship has more than one subsystem) but marked non-targetable,
+    # so ChooseTargetSubsystem's rating pass has exactly one candidate and
+    # picks it deterministically — independent of the rating-math
+    # subtleties (RateSubsystemForTargeting's type-rating term only fires
+    # when the subsystem has a bound _property, which neither of these
+    # bare subsystems has; see engine/appc/subsystems.py IsTypeOf).
     warp_core = PowerSubsystem("Warp Core")
     warp_core.SetMaxCondition(7000.0)
     warp_core.SetCritical(1)
@@ -161,7 +166,7 @@ def _make_attacker_and_target_with_warp_core():
 
     shield = ShieldSubsystem("Shield")
     shield.SetMaxCondition(500.0)
-    shield.SetTargetable(1)
+    shield.SetTargetable(0)
     target.SetShieldSubsystem(shield)
 
     ours.SetTarget(target)
@@ -179,8 +184,13 @@ def test_real_firescript_choice_reaches_ship_target_subsystem():
 
     # Run the real rating path, then the driver hook.
     inst.ChooseTargetSubsystem(target)
-    assert inst.idTargetedSubsystem is not None      # rating picked something
+    assert inst.idTargetedSubsystem is not None      # the SDK made a choice
     _sync_fire_script_target_subsystem(inst)
 
-    chosen = ours.GetTargetSubsystem()
-    assert chosen is warp_core                        # critical wins
+    # The hook must deliver EXACTLY the SDK's choice onto the firing ship,
+    # and — since the warp core is the sole targetable subsystem — that
+    # choice must be the warp core.
+    resolved = App.ShipSubsystem_Cast(
+        App.TGObject_GetTGObjectPtr(inst.idTargetedSubsystem))
+    assert ours.GetTargetSubsystem() is resolved
+    assert ours.GetTargetSubsystem() is warp_core
