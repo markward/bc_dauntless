@@ -267,3 +267,49 @@ def test_set_get_display_name_no_arg_returns_tgstring():
     got = s.GetDisplayName()
     assert isinstance(got, TGString)
     assert str(got) == "Vesuvi System"
+
+
+def _fresh_manager_with_bridge():
+    import App
+    from engine.appc.sets import SetManager, SetClass
+    mgr = SetManager()
+    bridge = SetClass()
+    space = SetClass()
+    mgr.AddSet(bridge, "bridge")
+    mgr.AddSet(space, "Vesuvi6")
+    return mgr, bridge, space
+
+
+def test_rendered_set_is_bridge_while_bridge_visible():
+    import engine.appc.top_window as top_window
+    top_window.reset_for_tests()                      # bridge visible (default)
+    mgr, bridge, space = _fresh_manager_with_bridge()
+    mgr.MakeRenderedSet("Vesuvi6")
+    # SDK-facing: on the bridge, the bridge IS the rendered set
+    # (MissionLib.EndCutscene's restore conditional, MissionLib.py:790).
+    assert mgr.GetRenderedSet() is bridge
+    # Engine-internal: the explicit MakeRenderedSet target is unaffected.
+    assert mgr.get_explicit_rendered_set() is space
+
+
+def test_rendered_set_follows_explicit_when_tactical():
+    import engine.appc.top_window as top_window
+    top_window.reset_for_tests()
+    top_window.TopWindow_GetTopWindow().ForceTacticalVisible()
+    mgr, bridge, space = _fresh_manager_with_bridge()
+    mgr.MakeRenderedSet("Vesuvi6")
+    assert mgr.GetRenderedSet() is space
+    assert mgr.get_explicit_rendered_set() is space
+
+
+def test_rendered_set_bridge_flag_without_bridge_set_falls_back():
+    # Headless harnesses have no "bridge" set registered; the flag must
+    # not make GetRenderedSet return None-forever.
+    import engine.appc.top_window as top_window
+    top_window.reset_for_tests()                      # bridge visible
+    from engine.appc.sets import SetManager, SetClass
+    mgr = SetManager()
+    space = SetClass()
+    mgr.AddSet(space, "Vesuvi6")
+    mgr.MakeRenderedSet("Vesuvi6")
+    assert mgr.GetRenderedSet() is space

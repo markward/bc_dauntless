@@ -477,6 +477,24 @@ class SetManager:
         return self._sets.items()
 
     def GetRenderedSet(self) -> "SetClass | None":
+        # BC semantics (SDK-facing): while the bridge is visible the bridge
+        # IS the rendered set — MissionLib.EndCutscene compares
+        # str(GetSet("bridge")) against str(GetRenderedSet()) to decide
+        # whether to restore bridge or tactical view (MissionLib.py:790),
+        # and E1M1 relies on the same comparison. Engine-internal code that
+        # needs the explicit MakeRenderedSet target (exterior lighting,
+        # in-space cutscene camera, warp guards) must use
+        # get_explicit_rendered_set() instead.
+        from engine.appc.top_window import bridge_flag
+        if bridge_flag():
+            bridge = self._sets.get("bridge")
+            if bridge is not None:
+                return bridge
+        return self.get_explicit_rendered_set()
+
+    def get_explicit_rendered_set(self) -> "SetClass | None":
+        """Raw MakeRenderedSet-name lookup, ignoring the bridge-visible
+        flag. Engine-internal surface — not part of the SDK App API."""
         if self._rendered_set_name is None:
             return None
         return self._sets.get(self._rendered_set_name)
