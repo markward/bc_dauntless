@@ -127,6 +127,12 @@ def active_impulse_emitters(player) -> list:
     return emitters
 
 
+# Threshold states for the disabled/destroyed/operational event machine.
+_THRESHOLD_OPERATIONAL = 0
+_THRESHOLD_DISABLED    = 1
+_THRESHOLD_DESTROYED   = 2
+
+
 class ShipSubsystem(TGEventHandlerObject):
     def __init__(self, name: str = ""):
         super().__init__()
@@ -211,6 +217,15 @@ class ShipSubsystem(TGEventHandlerObject):
         self._targetable: int = 1
         self._primary: int = 0
         self._disabled_percentage: float = 0.25
+        # Current threshold state; transitions fire ET_SUBSYSTEM_DISABLED /
+        # DESTROYED / OPERATIONAL (stock BC posts these from C++
+        # ShipSubsystem::SetCondition; EngineerCharacterHandlers +
+        # AI Conditions consume them).
+        self._threshold_state: int = _THRESHOLD_OPERATIONAL
+        # Repair-time divisor mirrored from the hardpoint property
+        # (SubsystemProperty.SetRepairComplexity — every stock hardpoint
+        # authors it). Higher = slower repair. Default 1.0 = neutral.
+        self._repair_complexity: float = 1.0
         # Explicit damage/destroyed flags.  SetDamaged/SetDestroyed let tests
         # and the damage system force these states independently of _condition;
         # the predicate methods also fall back to condition-based derivation so
@@ -410,9 +425,28 @@ class ShipSubsystem(TGEventHandlerObject):
         return self._condition
 
     def SetCondition(self, value: float) -> None:
-        """Floor at zero. DamageSystem (Task 4) routes hits through here."""
+        """Floor at zero. Combat damage routes through here (see
+        engine/appc/objects.py). A decrease below max auto-enqueues this
+        subsystem on the owning ship's repair bay — the synchronous
+        equivalent of stock's ET_SUBSYSTEM_HIT -> RepairSubsystem::
+        HandleHitEvent chain. AddToRepairList owns all validation
+        (duplicate / destroyed / undamaged reject)."""
+        old = self._condition
         self._condition = max(0.0, float(value))
         self._condition_changed()
+        if self._condition < old:
+            self._auto_enqueue_for_repair()
+
+    def _auto_enqueue_for_repair(self) -> None:
+        ship = self._owning_ship()
+        if ship is None:
+            return
+        try:
+            bay = ship.GetRepairSubsystem()
+            if bay is not None and hasattr(bay, "AddToRepairList"):
+                bay.AddToRepairList(self)
+        except Exception as _e:
+            dev_mode.log_swallowed("repair auto-enqueue", _e)
 
     def GetMaxCondition(self) -> float:
         # The property template is the authoritative max-condition, mirroring
@@ -443,12 +477,31 @@ class ShipSubsystem(TGEventHandlerObject):
 
     def _condition_changed(self) -> None:
         """Push the fresh condition FRACTION into the combined watcher (if one
-        was ever handed out) so its registered threshold crossings fire.
+        was ever handed out) so its registered threshold crossings fire, then
+        advance the disabled/destroyed/operational state machine.
         Called from every _condition/_max_condition mutation path — all
         writes route through SetCondition/SetMaxCondition (combat damage in
         engine/appc/objects.py calls SetCondition)."""
         if self._combined_watcher is not None:
             self._combined_watcher._update(self.GetConditionPercentage())
+        new_state = self._threshold_state_now()
+        old_state = self._threshold_state
+        if new_state != old_state:
+            self._threshold_state = new_state
+            if new_state == _THRESHOLD_DESTROYED:
+                self._fire_threshold_event("ET_SUBSYSTEM_DESTROYED")
+            elif new_state == _THRESHOLD_DISABLED and old_state == _THRESHOLD_OPERATIONAL:
+                self._fire_threshold_event("ET_SUBSYSTEM_DISABLED")
+            elif new_state == _THRESHOLD_OPERATIONAL:
+                self._fire_threshold_event("ET_SUBSYSTEM_OPERATIONAL")
+            # destroyed -> disabled (partial repair from zero) is silent.
+
+    def _threshold_state_now(self) -> int:
+        if self.IsDestroyed():
+            return _THRESHOLD_DESTROYED
+        if self.IsDisabled():
+            return _THRESHOLD_DISABLED
+        return _THRESHOLD_OPERATIONAL
 
     def GetConditionPercentage(self) -> float:
         mx = self.GetMaxCondition()
@@ -468,6 +521,17 @@ class ShipSubsystem(TGEventHandlerObject):
 
     def GetRepairPointsNeeded(self) -> int:
         return int(max(0.0, self.GetMaxCondition() - self._condition))
+
+    def Repair(self, points) -> None:
+        """SDK App.py:5671 — add repair points to condition, clamped to
+        [current, max]. Routed through SetCondition so the condition
+        watchers and threshold state machine react."""
+        if points is None:
+            return
+        points = float(points)
+        if points <= 0.0:
+            return
+        self.SetCondition(min(self.GetMaxCondition(), self._condition + points))
 
     def GetRadius(self) -> float:
         return self._radius
@@ -705,6 +769,36 @@ class ShipSubsystem(TGEventHandlerObject):
                 self.GetConditionPercentage())
         return self._combined_watcher
 
+    def _owning_ship(self):
+        """Resolve the ship owning this subsystem. Top-level subsystems have
+        _parent_ship set by ShipClass._attach_subsystem; child subsystems
+        (AddChildSubsystem) only have _parent_subsystem — walk up."""
+        obj, hops = self, 0
+        while obj is not None and hops < 16:
+            ship = getattr(obj, "_parent_ship", None)
+            if ship is not None:
+                return ship
+            obj = getattr(obj, "_parent_subsystem", None)
+            hops += 1
+        return None
+
+    def _fire_threshold_event(self, event_attr: str) -> None:
+        """Broadcast a threshold event: source=this subsystem, destination=
+        owning ship (EngineerCharacterHandlers filters destination against the
+        player; AI Conditions match the ship). Raise-safe, same pattern as
+        CloakingSubsystem._fire — a missing event manager never breaks
+        condition mutation (unit fixtures mutate subsystems with no App)."""
+        try:
+            import App
+            ship = self._owning_ship()
+            evt = App.TGEvent_Create()
+            evt.SetEventType(getattr(App, event_attr))
+            evt.SetSource(self)
+            evt.SetDestination(ship if ship is not None else self)
+            App.g_kEventManager.AddEvent(evt)
+        except Exception as _e:
+            dev_mode.log_swallowed("subsystem threshold event", _e)
+
     # ── Child-subsystem walking ──────────────────────────────────────────────
     # SDK consumers iterate child subsystems via GetNumChildSubsystems +
     # GetChildSubsystem(i) (e.g. E2M2 PrepMarauder, E5M2 CreateGeronimo).
@@ -741,6 +835,11 @@ class ShipSubsystem(TGEventHandlerObject):
     def SetPrimary(self, v) -> None:                    self._primary = int(v)
     def GetDisabledPercentage(self) -> float:           return self._disabled_percentage
     def SetDisabledPercentage(self, v) -> None:         self._disabled_percentage = float(v)
+
+    def GetRepairComplexity(self) -> float:            return self._repair_complexity
+    def SetRepairComplexity(self, v) -> None:
+        v = float(v)
+        self._repair_complexity = v if v > 0.0 else 1.0
 
     # ── Runtime predicates consumed by AI/Preprocessors.py ───────────────────
     # SDK App.py:5652-5657 — native methods on ShipSubsystem.  Phase 1 stubs
@@ -1716,11 +1815,166 @@ class PowerSubsystem(ShipSubsystem):
 
 
 class RepairSubsystem(PoweredSubsystem):
-    """Engineering / damage-control subsystem.  SDK App.py:6639 has
-    RepairSubsystem(PoweredSubsystem) with internal repair-allocation
-    state; Phase 1 ships only need the slot + property back-ref so the
-    targets panel reflects the hardpoint."""
-    pass
+    """Engineering / damage-control subsystem — the per-ship repair queue.
+
+    SDK surface (App.py:6639-6662): AddSubsystem, AddToRepairList,
+    IsBeingRepaired, plus the inherited ShipSubsystem/PoweredSubsystem
+    methods. Queue semantics + tick formula are RE-verified
+    (docs/original_game_reference/gameplay/ship-subsystems.md §Repair):
+    duplicates rejected, destroyed (condition<=0) rejected, undamaged
+    rejected; first NumRepairTeams entries are "being repaired".
+    """
+
+    def __init__(self, name: str = ""):
+        super().__init__(name)
+        # RE layout: +0x9C (isOn) inits to 1 — the bay ticks and draws
+        # power without ever being switched on.
+        self._is_on = True
+        # Ordered repair queue (head = active). Python list of subsystem
+        # refs; identity comparisons throughout (TGObject __eq__ is not
+        # trusted).
+        self._queue: list = []
+        # id(sub) values already notified ET_REPAIR_CANNOT_BE_COMPLETED
+        # (destroyed-while-queued fires once, not per tick).
+        self._cannot_complete_notified: set = set()
+        # ET_REPAIR_INCREASE_PRIORITY posted with destination=this bay
+        # (EngRepairPane click) routes to the toggle via the instance-
+        # handler chain. Lazy-guarded: during App's own import the constant
+        # isn't there yet; runtime construction always has App loaded.
+        try:
+            import App
+            self.AddPythonFuncHandlerForInstance(
+                App.ET_REPAIR_INCREASE_PRIORITY,
+                "engine.appc.subsystems.HandleRepairPriorityEvent")
+        except Exception as _e:
+            dev_mode.log_swallowed("repair priority handler registration", _e)
+
+    # ── Property readers (RepairSubsystemProperty data-bag) ────────────────
+    def GetMaxRepairPoints(self) -> float:
+        prop = self._property
+        if prop is not None:
+            v = prop.GetMaxRepairPoints()
+            if v is not None:
+                return float(v)
+        return 0.0
+
+    def GetNumRepairTeams(self) -> int:
+        prop = self._property
+        if prop is not None:
+            v = prop.GetNumRepairTeams()
+            if v is not None:
+                return int(v)
+        return 0
+
+    # ── Queue ───────────────────────────────────────────────────────────────
+    def AddToRepairList(self, sub) -> int:
+        """Queue a damaged subsystem for repair. Returns 1 on add, 0 on
+        reject (None / duplicate / destroyed / undamaged) — mirrors stock
+        AddSubsystem which walks the list before insertion and explicitly
+        checks condition > 0."""
+        if sub is None or sub is True or sub is False:
+            return 0
+        if not hasattr(sub, "GetCondition"):
+            return 0
+        if any(s is sub for s in self._queue):
+            return 0
+        cond = sub.GetCondition()
+        if cond <= 0.0:
+            return 0
+        if cond >= sub.GetMaxCondition():
+            return 0
+        self._queue.append(sub)
+        self._fire_repair_event("ET_ADD_TO_REPAIR_LIST", sub, dest=self)
+        return 1
+
+    # SDK exposes both spellings for the same insert (App.py:6660-6661).
+    AddSubsystem = AddToRepairList
+
+    def IsBeingRepaired(self, sub) -> int:
+        """True iff sub is within the first NumRepairTeams queue entries —
+        stock walks exactly that many nodes (FUN_00565890)."""
+        n = self.GetNumRepairTeams()
+        return 1 if any(s is sub for s in self._queue[:n]) else 0
+
+    def Update(self, dt) -> None:
+        """The RE-verified repair tick (ship-subsystems.md §Repair):
+
+            raw     = MaxRepairPoints * bayConditionPct * dt
+            perItem = raw / min(queueCount, NumRepairTeams)
+            gain_i  = perItem / target_i.RepairComplexity
+
+        Walks from the head assigning up to NumRepairTeams teams to
+        non-destroyed entries. Destroyed entries are skipped (stay queued,
+        per stock), fire ET_REPAIR_CANNOT_BE_COMPLETED once, and consume
+        no team. Completion removes the entry and fires
+        ET_REPAIR_COMPLETED. NO power-efficiency term — output scales
+        only by the bay's own health (spec + power spec agree)."""
+        if dt is None or dt <= 0.0 or not self._queue:
+            return
+        if self.GetCondition() <= 0.0:
+            return
+        teams = self.GetNumRepairTeams()
+        points = self.GetMaxRepairPoints()
+        if teams <= 0 or points <= 0.0:
+            return
+        raw = points * self.GetConditionPercentage() * float(dt)
+        per_item = raw / min(len(self._queue), teams)
+        assigned = 0
+        completed = []
+        for sub in list(self._queue):
+            if assigned >= teams:
+                break
+            if sub.GetCondition() <= 0.0:
+                if id(sub) not in self._cannot_complete_notified:
+                    self._cannot_complete_notified.add(id(sub))
+                    self._fire_repair_event(
+                        "ET_REPAIR_CANNOT_BE_COMPLETED", sub)
+                continue
+            self._cannot_complete_notified.discard(id(sub))
+            assigned += 1
+            complexity = sub.GetRepairComplexity()
+            if complexity <= 0.0:
+                complexity = 1.0
+            sub.Repair(per_item / complexity)
+            if sub.GetCondition() >= sub.GetMaxCondition():
+                completed.append(sub)
+        for sub in completed:
+            self._queue = [s for s in self._queue if s is not sub]
+            self._fire_repair_event("ET_REPAIR_COMPLETED", sub)
+
+    # ── Event emission ──────────────────────────────────────────────────────
+    def _fire_repair_event(self, event_attr: str, sub, dest=None) -> None:
+        """TGObjPtrEvent with source=sub AND objptr=sub: the SDK
+        RepairCompleted handler dereferences BOTH GetSource() and
+        GetObjPtr() (EngineerCharacterHandlers.py:294-336). dest defaults
+        to the owning ship (player filtering)."""
+        try:
+            import App
+            if dest is None:
+                ship = self._owning_ship()
+                dest = ship if ship is not None else self
+            evt = App.TGObjPtrEvent_Create()
+            evt.SetEventType(getattr(App, event_attr))
+            evt.SetSource(sub)
+            evt.SetObjPtr(sub)
+            evt.SetDestination(dest)
+            App.g_kEventManager.AddEvent(evt)
+        except Exception as _e:
+            dev_mode.log_swallowed("repair event broadcast", _e)
+
+    def HandleIncreasePriority(self, sub) -> None:
+        """Stock's binary toggle (FUN_00565B50), NOT move-up-one: an entry
+        within the first NumRepairTeams nodes (actively repaired) demotes
+        to tail; a waiting entry promotes to head; unqueued is a no-op."""
+        idx = next((i for i, s in enumerate(self._queue) if s is sub), None)
+        if idx is None:
+            return
+        active = idx < self.GetNumRepairTeams()
+        del self._queue[idx]
+        if active:
+            self._queue.append(sub)
+        else:
+            self._queue.insert(0, sub)
 
 
 # Default cloak/decloak transition length in seconds.  W5.T2 will overwrite
@@ -2065,6 +2319,45 @@ def _get_xyz(ship) -> tuple:
         except Exception as _e:
             dev_mode.log_swallowed("ship position via _position attr", _e)
     return (0.0, 0.0, 0.0)
+
+
+def HandleRepairPriorityEvent(pObject, pEvent):
+    """Instance handler for ET_REPAIR_INCREASE_PRIORITY on a RepairSubsystem.
+    Signature matches TGEventHandlerObject dispatch: fn(dest_object, event)."""
+    sub = pEvent.GetObjPtr() if hasattr(pEvent, "GetObjPtr") else None
+    if isinstance(pObject, RepairSubsystem) and sub is not None:
+        pObject.HandleIncreasePriority(sub)
+    pObject.CallNextHandler(pEvent)
+
+
+def repair_ship_fully(ship) -> None:
+    """Dev/debug full repair — mirrors sdk Actions/ShipScriptActions.py
+    RepairShipFully: every subsystem back to max condition. Also clears
+    the repair queue (nothing left to fix). Safe on None/partial ships."""
+    if ship is None:
+        return
+    getters = (
+        "GetHull", "GetShieldSubsystem", "GetSensorSubsystem",
+        "GetImpulseEngineSubsystem", "GetWarpEngineSubsystem",
+        "GetPowerSubsystem", "GetRepairSubsystem", "GetTorpedoSystem",
+        "GetPhaserSystem", "GetPulseWeaponSystem", "GetTractorBeamSystem",
+        "GetCloakingSubsystem",
+    )
+    for name in getters:
+        try:
+            sub = getattr(ship, name, lambda: None)()
+            if sub is None:
+                continue
+            sub.SetCondition(sub.GetMaxCondition())
+            for i in range(sub.GetNumChildSubsystems()):
+                child = sub.GetChildSubsystem(i)
+                if child is not None:
+                    child.SetCondition(child.GetMaxCondition())
+        except Exception as _e:
+            dev_mode.log_swallowed("repair_ship_fully", _e)
+    bay = getattr(ship, "GetRepairSubsystem", lambda: None)()
+    if bay is not None and hasattr(bay, "_queue"):
+        bay._queue.clear()
 
 
 # ── Weapon subsystem hierarchy (split out into engine.appc.weapon_subsystems) ──

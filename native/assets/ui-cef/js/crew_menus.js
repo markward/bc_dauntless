@@ -43,6 +43,12 @@ function renderCrewMenu(menu) {
 function appendCrewRows(body, nodes, depth) {
   for (const node of nodes) {
     if (node.visible === false) continue;
+
+    if (node.type === "repair-pane") {
+      body.appendChild(renderRepairPane(node));
+      continue;
+    }
+
     const hasChildren = node.type === "menu" && node.openable !== false && (node.children || []).length > 0;
 
     const row = document.createElement("div");
@@ -75,4 +81,60 @@ function appendCrewRows(body, nodes, depth) {
       appendCrewRows(body, node.children, depth + 1);
     }
   }
+}
+
+// EngRepairPane projection — three titled areas (REPAIRING/WAITING/
+// DESTROYED). REPAIRING and WAITING rows are clickable and fire
+// crew-menu/repair:<id> (Task 7's ET_REPAIR_INCREASE_PRIORITY toggle);
+// DESTROYED rows are inert (subsystem isn't in the repair queue at all).
+function renderRepairPane(node) {
+  const pane = document.createElement("div");
+  pane.className = "crew-repair-pane";
+  // kind drives the styling: the repair-team area reads loudest (active teal
+  // marker + rule), damaged is muted-but-clickable, destroyed is inert. BC
+  // repairs several systems in parallel (up to the ship's repair-team count),
+  // so the whole top group is "currently being worked", not a single row.
+  // Header strings are the original BC labels from Bridge Menus.TGL
+  // (REPAIR_AREA_LABEL / WAITING_AREA_LABEL / DESTROYED_AREA_LABEL).
+  const areas = [
+    ["Repair team assignments:", node.repair, true, "repairing"],
+    ["Damaged systems:", node.waiting, true, "waiting"],
+    ["Destroyed systems:", node.destroyed, false, "destroyed"],
+  ];
+  const waitingCount = (node.waiting || []).length;
+  for (const [title, rows, clickable, kind] of areas) {
+    if (!rows || !rows.length) continue;
+    const h = document.createElement("div");
+    h.className = "crew-repair-area-title crew-repair-area-title--" + kind;
+    h.textContent = title;
+    pane.appendChild(h);
+    // Hint under the repair-team header: explain the click affordance, but
+    // only when there are damaged systems to promote.
+    if (kind === "repairing" && waitingCount) {
+      const hint = document.createElement("div");
+      hint.className = "crew-repair-hint";
+      hint.textContent = "click a damaged system to prioritize";
+      pane.appendChild(hint);
+    }
+    for (const r of rows) {
+      const row = document.createElement("div");
+      row.className = "crew-repair-row crew-repair-row--" + kind +
+                      (clickable ? "" : " inert");
+      // Fixed-width marker slot on every row keeps labels aligned; only
+      // actively-repaired rows light it.
+      const mark = document.createElement("span");
+      mark.className = "crew-repair-mark";
+      mark.textContent = kind === "repairing" ? "●" : "";   // ● when active
+      row.appendChild(mark);
+      const label = document.createElement("span");
+      label.className = "crew-repair-label";
+      label.textContent = r.label + " — " + r.pct + "%";
+      row.appendChild(label);
+      if (clickable) {
+        row.onclick = () => dauntlessEvent("crew-menu/repair:" + r.id);
+      }
+      pane.appendChild(row);
+    }
+  }
+  return pane;
 }

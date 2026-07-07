@@ -25,6 +25,7 @@ def _isolate_registries():
 
 class _Keys:
     KEY_F7 = 296
+    KEY_F9 = 298
     KEY_F10 = 299
     KEY_LEFT_BRACKET = 91
     KEY_RIGHT_BRACKET = 93
@@ -96,3 +97,33 @@ def test_right_bracket_noop_without_target_or_on_self():
     _handler_for(_Keys.KEY_RIGHT_BRACKET)()
     assert player.IsDying() == 0
     ship_death.reset()
+
+
+def test_f9_quick_repairs_player_ship():
+    """Task 9: F9 wires to repair_ship_fully(player) — a real ship (not the
+    minimal _Ship fake above, which lacks the subsystem getters) so the
+    handler exercises the actual dev-key -> repair_ship_fully plumbing."""
+    from engine.appc.ships import ShipClass_Create
+    from engine.appc.properties import RepairSubsystemProperty
+
+    player = ShipClass_Create("F9Player")
+    prop = RepairSubsystemProperty("Engineering")
+    prop.SetMaxRepairPoints(50.0)
+    prop.SetNumRepairTeams(3)
+    player.GetRepairSubsystem().SetProperty(prop)
+    player.GetSensorSubsystem().SetMaxCondition(8000.0)
+    sensors = player.GetSensorSubsystem()
+    sensors.SetCondition(100.0)              # damaged + auto-enqueued
+    bay = player.GetRepairSubsystem()
+    assert bay._queue
+
+    register_for_frame(_FakeHost(), session=None, player=player)
+    _handler_for(_Keys.KEY_F9)()
+
+    assert sensors.GetCondition() == sensors.GetMaxCondition()
+    assert bay._queue == []
+
+
+def test_f9_quick_repair_noop_without_player():
+    register_for_frame(_FakeHost(), session=None, player=None)
+    _handler_for(_Keys.KEY_F9)()   # must not raise

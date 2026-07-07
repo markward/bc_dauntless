@@ -135,3 +135,15 @@ def register_for_frame(_h, session, player) -> None:
         _h.keys.KEY_F7, _toggle_test_character,
         "Spawn/despawn skinned test character (SP1) — F7",
     )
+
+    # F9: quick-repair the player ship (stock BC's Caps+R debug binding,
+    # ET_INPUT_DEBUG_QUICK_REPAIR -> TacticalInterfaceHandlers.RepairShip).
+    # Live-verify lever for the repair feature: damage, watch the queue
+    # fill + Brex speak, F9, watch it all clear.
+    def _quick_repair() -> None:
+        from engine.appc.subsystems import repair_ship_fully
+        repair_ship_fully(player)
+
+    dev_mode.register_dev_keybinding(
+        _h.keys.KEY_F9, _quick_repair, "Quick-repair player ship (dev) — F9"
+    )

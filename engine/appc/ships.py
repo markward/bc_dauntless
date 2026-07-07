@@ -913,6 +913,7 @@ class ShipClass(DamageableObject):
                             (prop.GetPrimary,             receiver.SetPrimary),
                             (prop.GetRadius,              receiver.SetRadius),
                             (prop.GetDisabledPercentage,  receiver.SetDisabledPercentage),
+                            (prop.GetRepairComplexity,    receiver.SetRepairComplexity),
                         ):
                             v = src()
                             if v is not None: setter(v)
@@ -1178,6 +1179,7 @@ class ShipClass(DamageableObject):
                 (prop.GetPrimary,            pod.SetPrimary),
                 (prop.GetRadius,             pod.SetRadius),
                 (prop.GetDisabledPercentage, pod.SetDisabledPercentage),
+                (prop.GetRepairComplexity,   pod.SetRepairComplexity),
             ):
                 v = src()
                 if v is not None:
@@ -1218,6 +1220,8 @@ class ShipClass(DamageableObject):
         # powered subsystem's "disabled" gate matches the game and the UI.
         dp = prop.GetDisabledPercentage()
         if dp is not None: subsystem.SetDisabledPercentage(dp)
+        rc = prop.GetRepairComplexity()
+        if rc is not None: subsystem.SetRepairComplexity(rc)
 
     # ── Targeting ────────────────────────────────────────────────────────────
     def GetTarget(self):                          return self._target

@@ -57,6 +57,11 @@ class GameLoop:
             cl = ship.GetCloakingSubsystem()
             if cl is not None:
                 cl.Update(TICK_DELTA)
+            # Repair bay: advance the repair queue (RE tick — see
+            # RepairSubsystem.Update). AI ships repair themselves too.
+            rs = ship.GetRepairSubsystem()
+            if rs is not None:
+                rs.Update(TICK_DELTA)
 
     def advance(self, n: int) -> None:
         for _ in range(n):

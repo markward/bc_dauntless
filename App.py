@@ -480,6 +480,37 @@ def PowerSubsystem_Cast(obj):
     return obj if isinstance(obj, PowerSubsystem) else None
 
 
+def SensorSubsystem_Cast(obj):
+    """EngineerCharacterHandlers.AnnounceSystemDisabled:924 —
+    `App.SensorSubsystem_Cast(pSource)` decides the "SensorsDisabled" line."""
+    from engine.appc.subsystems import SensorSubsystem
+    return obj if isinstance(obj, SensorSubsystem) else None
+
+
+def ImpulseEngineSubsystem_Cast(obj):
+    from engine.appc.subsystems import ImpulseEngineSubsystem
+    return obj if isinstance(obj, ImpulseEngineSubsystem) else None
+
+
+def WarpEngineSubsystem_Cast(obj):
+    from engine.appc.subsystems import WarpEngineSubsystem
+    return obj if isinstance(obj, WarpEngineSubsystem) else None
+
+
+def RepairSubsystem_Cast(obj):
+    from engine.appc.subsystems import RepairSubsystem
+    return obj if isinstance(obj, RepairSubsystem) else None
+
+
+def TractorBeamProjector_Cast(obj):
+    """SDK class = the individual tractor projector. Our engine models the
+    projector as TractorBeam (weapon_subsystems.py:1583) under a
+    TractorBeamSystem; the disabled/destroyed event source may be either,
+    so match both — the announce line is the same ("TractorDisabled")."""
+    from engine.appc.weapon_subsystems import TractorBeam, TractorBeamSystem
+    return obj if isinstance(obj, (TractorBeam, TractorBeamSystem)) else None
+
+
 def ShieldSubsystem_Cast(obj):
     """Lenient pass-through used by shield-watcher conditions; returns obj if
     it's a ShieldSubsystem, else None (mirrors ShieldClass_Cast above)."""
@@ -937,6 +968,14 @@ ET_REPAIR_CANNOT_BE_COMPLETED     = 0x131D
 # BC FUN_00562430 broadcasts this so the power-display HUD and the engineer's
 # FloatRangeWatcher conditions can react to manual slider adjustments.
 ET_SUBSYSTEM_POWER_CHANGED        = 0x131E
+# Repaired back above the disabled threshold. Consumed by the AI Conditions
+# classes (ConditionSystemDisabled/ConditionTorpsReady/ConditionPulseReady
+# register broadcast handlers for it) as well as the engineer report path.
+ET_SUBSYSTEM_OPERATIONAL          = 0x131F
+# EngRepairPane click -> binary head/tail toggle on the repair queue.
+ET_REPAIR_INCREASE_PRIORITY       = 0x1320
+# A damaged subsystem entered the repair queue.
+ET_ADD_TO_REPAIR_LIST             = 0x1321
 
 _next_event_type_id = 1200
 
@@ -1635,9 +1674,31 @@ def ToggleCloakFromInput():
     _tac_weapons_cloak_toggled(ctrl, None)
 
 
-def EngRepairPane_Create(width=0.0, height=0.0, n=0) -> "_DisplayWidget":
-    pane = _DisplayWidget("EngRepairPane")
-    # Pre-seed one child (index 0 = DIVIDER) so GetNthChild(DIVIDER).Layout() works.
+class EngRepairPaneWidget(_DisplayWidget):
+    """The live repair-queue pane. Created by the unmodified SDK
+    (EngineerMenuHandlers.py:84) and added as a child of the Engineering
+    menu; CrewMenuPanel detects this class and projects the queue via
+    engine.ui.eng_repair_pane.repair_pane_snapshot."""
+    def __init__(self, width=0.0, height=0.0, rows=0):
+        super().__init__("EngRepairPane")
+        self._pane_width, self._pane_height, self._pane_rows = width, height, rows
+
+    def IsVisible(self) -> int:
+        # _DisplayWidget defines no IsVisible; its __getattr__ catch-all
+        # (line ~1380) would return a lambda giving None -> bool(None) ->
+        # False, which crew_menus.js treats as "skip this node entirely"
+        # (visible === false check runs before the node.type check) -- the
+        # pane would never render. The pane genuinely IS visible whenever it
+        # exists as a child of the open Engineering menu, so this always
+        # returns the SDK integer-bool true (1), matching the convention
+        # used by sibling widgets (e.g. engine/appc/characters.py:69).
+        return 1
+
+
+def EngRepairPane_Create(width=0.0, height=0.0, n=0) -> "EngRepairPaneWidget":
+    pane = EngRepairPaneWidget(width, height, n)
+    # Pre-seed one child (index 0 = DIVIDER) so GetNthChild(DIVIDER).Layout()
+    # keeps working (SDK layout path).
     from engine.appc.tg_ui.widgets import TGPane
     pane.AddChild(TGPane())
     return pane
