@@ -273,6 +273,12 @@ def resolve_collisions(objects, ship_instances=None):
     hits = []
     for i in range(len(bodies)):
         for k in range(i + 1, len(bodies)):
+            a_obj, b_obj = bodies[i].obj, bodies[k].obj
+            # Per-pair mask (DamageableObject.EnableCollisionsWith). Symmetric:
+            # either side disabling the other exempts the pair.
+            if (b_obj.GetObjID() in _collision_disabled_ids(a_obj)
+                    or a_obj.GetObjID() in _collision_disabled_ids(b_obj)):
+                continue
             hit = _respond_pair(bodies[i], bodies[k], ship_instances)
             if hit is not None:
                 hits.append(hit)

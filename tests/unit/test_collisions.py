@@ -461,3 +461,33 @@ def test_enable_collisions_with_is_idempotent():
     a.EnableCollisionsWith(b, 1)
     a.EnableCollisionsWith(b, 1)          # remove twice: no error
     assert _collision_disabled_ids(a) == set()
+
+
+def test_resolve_collisions_skips_disabled_pair_either_direction():
+    from engine.appc.collisions import resolve_collisions
+    # Two overlapping, approaching ships that WOULD collide.
+    a = _ship(0.0, 100.0, +10.0, radius=2.0)
+    b = _ship(1.5, 100.0, -10.0, radius=2.0)
+
+    # Disable from a's side only; skip must still be symmetric.
+    a.EnableCollisionsWith(b, 0)
+    hits = resolve_collisions([a, b])
+    assert hits == []
+    assert a.__dict__.get("_collision_velocity") is None
+    assert b.__dict__.get("_collision_velocity") is None
+
+
+def test_resolve_collisions_disabled_pair_leaves_other_pairs_colliding():
+    from engine.appc.collisions import resolve_collisions
+    # radius 2 each: boundary 0.8*(2+2)=3.2. Positions 0/1.6/3.2 make a-b and
+    # b-c overlap (dist 1.6 < 3.2) while a-c sits exactly on the boundary
+    # (dist 3.2, excluded), so only the two adjacent pairs are candidates.
+    # Velocities a:+10, b:0, c:-10 make BOTH adjacent pairs approaching.
+    a = _ship(0.0, 100.0, +10.0, radius=2.0)
+    b = _ship(1.6, 100.0, 0.0, radius=2.0)
+    c = _ship(3.2, 100.0, -10.0, radius=2.0)
+    a.EnableCollisionsWith(b, 0)               # only a<->b disabled
+    hits = resolve_collisions([a, b, c])
+    pairs = {frozenset((id(x), id(y))) for (x, y, *_rest) in hits}
+    assert frozenset((id(a), id(b))) not in pairs   # skipped
+    assert frozenset((id(b), id(c))) in pairs        # still collides
