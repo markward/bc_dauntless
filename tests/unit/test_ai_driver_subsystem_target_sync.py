@@ -4,11 +4,13 @@ SetTargetSubsystem, so the aim sites that read ship.GetTargetSubsystem()
 (host_loop phaser tick, weapon_subsystems torpedo launch) actually honor
 the AI's choice. See docs/superpowers/specs/2026-07-07-npc-subsystem-targeting-design.md.
 """
+import pytest
+
 import App
 from engine.appc.ai import PreprocessingAI, PreprocessingAI_Create
 from engine.appc.ai_driver import tick_ai, _sync_fire_script_target_subsystem
 from engine.appc.ships import ShipClass
-from engine.appc.subsystems import ShieldSubsystem
+from engine.appc.subsystems import PowerSubsystem, ShieldSubsystem
 
 
 class _FireScriptLike:
@@ -133,3 +135,52 @@ def test_sync_only_writes_on_change(monkeypatch):
     _sync_fire_script_target_subsystem(inst)   # first: writes
     _sync_fire_script_target_subsystem(inst)   # second: no change
     assert calls["n"] == 1
+
+
+@pytest.fixture(autouse=True)
+def _isolate_sets():
+    App.g_kSetManager._sets.clear()
+    yield
+    App.g_kSetManager._sets.clear()
+
+
+def _make_attacker_and_target_with_warp_core():
+    pSet = App.SetClass_Create(); pSet.SetName("S")
+    App.g_kSetManager._sets["S"] = pSet
+
+    ours = ShipClass(); pSet.AddObjectToSet(ours, "Ours")
+    target = ShipClass(); pSet.AddObjectToSet(target, "Target")
+
+    # Warp core: critical + targetable → highest FireScript rating
+    # (IsCritical x6 beats the shield's type-rating of 5).
+    warp_core = PowerSubsystem("Warp Core")
+    warp_core.SetMaxCondition(7000.0)
+    warp_core.SetCritical(1)
+    warp_core.SetTargetable(1)
+    target.SetPowerSubsystem(warp_core)
+
+    shield = ShieldSubsystem("Shield")
+    shield.SetMaxCondition(500.0)
+    shield.SetTargetable(1)
+    target.SetShieldSubsystem(shield)
+
+    ours.SetTarget(target)
+    return ours, target, warp_core
+
+
+def test_real_firescript_choice_reaches_ship_target_subsystem():
+    from AI.Preprocessors import FireScript
+    ours, target, warp_core = _make_attacker_and_target_with_warp_core()
+
+    inst = FireScript("Target")
+    inst.bChooseSubsystemTargets = 1
+    pp = PreprocessingAI_Create(ours, "FirePP")
+    inst.pCodeAI = pp
+
+    # Run the real rating path, then the driver hook.
+    inst.ChooseTargetSubsystem(target)
+    assert inst.idTargetedSubsystem is not None      # rating picked something
+    _sync_fire_script_target_subsystem(inst)
+
+    chosen = ours.GetTargetSubsystem()
+    assert chosen is warp_core                        # critical wins
