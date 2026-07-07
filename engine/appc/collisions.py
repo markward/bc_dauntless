@@ -59,6 +59,16 @@ def _collisions_enabled(obj):
     return obj.__dict__.get("_collisions_on", True)
 
 
+_EMPTY_DISABLED = frozenset()
+
+
+def _collision_disabled_ids(obj):
+    """The set of peer ObjIDs this object has disabled collisions with via
+    DamageableObject.EnableCollisionsWith, or an empty set. obj.__dict__ lookup
+    (not getattr) to dodge TGObject.__getattr__'s truthy _Stub."""
+    return obj.__dict__.get("_collision_disabled_ids", _EMPTY_DISABLED)
+
+
 def _ensure_overlay(obj):
     """Get-or-create the mutable overlay vector (called only on impulse inject)."""
     cv = obj.__dict__.get("_collision_velocity")

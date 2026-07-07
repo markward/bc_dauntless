@@ -612,6 +612,22 @@ class DamageableObject(PhysicsObjectClass):
         object currently participates in collisions. Default TRUE."""
         return 1 if self.__dict__.get("_collisions_on", True) else 0
 
+    def EnableCollisionsWith(self, pOther, bOn) -> None:
+        """SDK ``DamageableObject_EnableCollisionsWith`` (App.py:5355): toggle
+        collision detection between THIS object and one specific other object,
+        independent of the global SetCollisionsOn flag. E1M1 uses it to stop
+        the docked player colliding with its drydock
+        (``pDryDock.EnableCollisionsWith(pPlayer, 0)``), re-enabling after the
+        undock cutscene. Stores the peer's stable ObjID; honoured by
+        ``engine.appc.collisions.resolve_collisions`` (symmetric skip).
+        """
+        ids = self.__dict__.setdefault("_collision_disabled_ids", set())
+        oid = pOther.GetObjID()
+        if bOn:
+            ids.discard(oid)   # re-enable this pair
+        else:
+            ids.add(oid)       # disable this pair
+
     # ── Visible (geometry) damage ───────────────────────────────────────────────
     # BC's DamageTool authored hull wrecks as body-frame damage spheres. These
     # methods route authored + runtime visible damage into our hull-carve

@@ -434,3 +434,30 @@ def test_tick_collisions_disabled_still_decays_existing_overlay():
     finally:
         cheats.reset()
         _dauntless_host.developer_mode = original_dev
+
+
+def test_enable_collisions_with_disables_and_reenables_pair():
+    from engine.appc.collisions import _collision_disabled_ids
+    a = _ship(0.0, 100.0, 0.0)
+    b = _ship(1.0, 100.0, 0.0)
+
+    # Fresh objects: empty disabled set, safe against the _Stub trap.
+    assert _collision_disabled_ids(a) == set()
+
+    a.EnableCollisionsWith(b, 0)          # disable a<->b
+    assert b.GetObjID() in _collision_disabled_ids(a)
+
+    a.EnableCollisionsWith(b, 1)          # re-enable
+    assert b.GetObjID() not in _collision_disabled_ids(a)
+
+
+def test_enable_collisions_with_is_idempotent():
+    from engine.appc.collisions import _collision_disabled_ids
+    a = _ship(0.0, 100.0, 0.0)
+    b = _ship(1.0, 100.0, 0.0)
+    a.EnableCollisionsWith(b, 0)
+    a.EnableCollisionsWith(b, 0)          # twice
+    assert len(_collision_disabled_ids(a)) == 1
+    a.EnableCollisionsWith(b, 1)
+    a.EnableCollisionsWith(b, 1)          # remove twice: no error
+    assert _collision_disabled_ids(a) == set()
