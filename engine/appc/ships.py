@@ -584,6 +584,16 @@ class ShipClass(DamageableObject):
     def SetModelFilename(self, v) -> None:              self._model_filename = str(v)
     def IsStationary(self) -> int:                      return self._stationary
     def SetStationary(self, v) -> None:                 self._stationary = int(v)
+
+    def IsImmobile(self) -> bool:
+        """True when this ship must be treated as a fixed anchor: either the
+        mission flagged it per-instance (SetStatic) or the hardpoint flagged
+        the class stationary (SetStationary). Honoured by the motion
+        integrator, collision response, and collision avoidance so stations /
+        drydocks neither drift nor rotate. Both backing flags are set in
+        __init__, so these are safe direct calls (no _Stub hazard)."""
+        return bool(self.IsStatic()) or bool(self.IsStationary())
+
     def GetDeathExplosionSound(self) -> str:            return self._death_explosion_sound
     def SetDeathExplosionSound(self, v) -> None:        self._death_explosion_sound = str(v)
     # SWIG surface: loadspacehelper.py:85 forwards the hardpoint stats'
