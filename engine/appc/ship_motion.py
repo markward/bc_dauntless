@@ -127,6 +127,13 @@ def _step_ship_motion(ship, dt: float) -> None:
     world-space velocity + residual angular momentum). Spec
     docs/superpowers/specs/2026-06-10-impulse-engine-degradation-design.md.
     """
+    # An immobile ship (SetStatic / SetStationary) is a fixed anchor: never
+    # integrate a translation or rotation, whatever setpoint the Stay AI (or
+    # anything else) wrote. Placed first so even a degenerate warp/setpoint
+    # state can't move a station.
+    if getattr(ship, "IsImmobile", None) is not None and ship.IsImmobile():
+        return
+
     # An active in-system-warp transit overrides normal setpoint motion:
     # the ship cruises straight at the warp drop point until arrival.
     if getattr(ship, "_insystem_warp_transit", None) is not None:

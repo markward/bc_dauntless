@@ -43,3 +43,45 @@ def test_isimmobile_reverts_when_static_cleared():
     s.SetStatic(True)
     s.SetStatic(False)
     assert s.IsImmobile() is False
+
+
+from engine.appc.objects import PhysicsObjectClass
+from engine.appc.ship_motion import _step_ship_motion
+
+
+def _rot_cols(ship):
+    R = ship.GetWorldRotation()
+    return [(R.GetCol(i).x, R.GetCol(i).y, R.GetCol(i).z) for i in range(3)]
+
+
+def test_immobile_ship_does_not_translate_despite_speed_setpoint():
+    s = ShipClass()
+    s.SetStatic(True)
+    s.SetTranslateXYZ(10.0, 20.0, 30.0)
+    # A non-zero linear setpoint that would move a mobile ship.
+    s.SetSpeed(50.0, TGPoint3(0.0, 1.0, 0.0),
+               PhysicsObjectClass.DIRECTION_MODEL_SPACE)
+    _step_ship_motion(s, 1.0)
+    p = s.GetTranslate()
+    assert (p.x, p.y, p.z) == pytest.approx((10.0, 20.0, 30.0))
+
+
+def test_immobile_ship_does_not_rotate_despite_angular_setpoint():
+    s = ShipClass()
+    s.SetStationary(1)
+    before = _rot_cols(s)
+    # A non-zero angular-velocity setpoint that would spin a mobile ship.
+    s.SetTargetAngularVelocityDirect(TGPoint3(0.0, 1.0, 0.0))
+    _step_ship_motion(s, 1.0)
+    assert _rot_cols(s) == pytest.approx(before)
+
+
+def test_mobile_ship_still_moves_control():
+    # Guard: the early-return must not affect ordinary ships.
+    s = ShipClass()
+    s.SetTranslateXYZ(0.0, 0.0, 0.0)
+    s.SetSpeed(50.0, TGPoint3(0.0, 1.0, 0.0),
+               PhysicsObjectClass.DIRECTION_MODEL_SPACE)
+    _step_ship_motion(s, 1.0)
+    p = s.GetTranslate()
+    assert (p.x, p.y, p.z) != pytest.approx((0.0, 0.0, 0.0))
