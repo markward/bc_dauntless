@@ -1680,12 +1680,23 @@ class _ViewModeController:
         TopWindow_GetTopWindow().ForceBridgeVisible()
 
     def apply(self, h) -> None:
-        """Poll space-pressed; on edge, route through the SDK chain."""
+        """Poll space-pressed; on edge, route through the SDK chain.
+
+        Respects MissionLib.RemoveControl (AllowKeyboardInput(0)): the
+        bridge/tactical toggle is keyboard input, so a mission that has
+        removed control (e.g. the E1M1 intro walk-on + Liu briefing, which
+        removes control continuously until char-select) holds the player's
+        current view. This mirrors the gate the SDK keyboard dispatch
+        already honours (engine/appc/input.py); the SPACE toggle is polled
+        natively here, so it must consult the same flag itself.
+        """
         if h.key_pressed(h.keys.KEY_SPACE):
             from engine.appc.top_window import (
+                keyboard_input_enabled,
                 dispatch_toggle_bridge_and_tactical,
             )
-            dispatch_toggle_bridge_and_tactical()
+            if keyboard_input_enabled():
+                dispatch_toggle_bridge_and_tactical()
 
 
 class _PauseMenuController:

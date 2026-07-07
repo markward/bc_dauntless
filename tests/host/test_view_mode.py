@@ -74,6 +74,34 @@ def test_view_mode_toggle_on_space_pressed():
     assert vm.is_bridge is True
 
 
+def test_space_toggle_suppressed_while_keyboard_input_removed():
+    """MissionLib.RemoveControl (AllowKeyboardInput(0)) must hold the
+    player's current view: the SPACE bridge/tactical toggle is keyboard
+    input, and the E1M1 intro removes control for the whole walk-on +
+    Liu-briefing + crew-intro stretch (E1M1.py:1860, no ReturnControl
+    until char-select). The natively-polled SPACE toggle must respect the
+    same flag the SDK keyboard dispatch already honours."""
+    import engine.appc.top_window as top_window
+    from engine.host_loop import _ViewModeController
+    top_window.reset_for_tests()
+    vm = _ViewModeController()
+    reader = _FakeKeyReader()
+
+    # Mission removes control (RemoveControl → AllowKeyboardInput(0)).
+    top_window.TopWindow_GetTopWindow().AllowKeyboardInput(0)
+
+    # SPACE pressed while control is removed → view held on bridge.
+    reader.pressed_once.add(reader.keys.KEY_SPACE)
+    vm.apply(reader)
+    assert vm.is_bridge is True
+
+    # Control returned (ReturnControl → AllowKeyboardInput(1)) → SPACE works.
+    top_window.TopWindow_GetTopWindow().AllowKeyboardInput(1)
+    reader.pressed_once.add(reader.keys.KEY_SPACE)
+    vm.apply(reader)
+    assert vm.is_exterior is True
+
+
 class _RecordingInputs:
     """Stand-ins for _PlayerControl / director that record whether
     apply() was called and what reader it was handed, without doing any
