@@ -497,7 +497,7 @@ class ShipSubsystem(TGEventHandlerObject):
             # destroyed -> disabled (partial repair from zero) is silent.
 
     def _threshold_state_now(self) -> int:
-        if self._condition <= 0.0 and self._max_condition > 0.0:
+        if self.IsDestroyed():
             return _THRESHOLD_DESTROYED
         if self.IsDisabled():
             return _THRESHOLD_DISABLED
