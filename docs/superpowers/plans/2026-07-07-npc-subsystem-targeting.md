@@ -379,7 +379,7 @@ This change is Python-only — **no `cmake` rebuild needed**. Give the user thes
 2. **Configuration → Gameplay → AI Difficulty = Hard** (guarantees `ChooseSubsystemTargets`; Medium/0.5 also works).
 3. Start a combat scenario with an attacking NPC (QuickBattle with an enemy ship, or a combat mission via the dev **Load Mission…** picker).
 4. Watch the developer console/log for `AI <ship> -> targeting <subsystem>` lines. **Expected:** NPCs report targeting high-value subsystems (weapons / shields / **Warp Core**), not "hull centre".
-5. Let a fight run to a kill. **Expected with the fix:** ships die to a sudden **warp-core breach** (instant destruction) or lose a specific subsystem (shields/engines disabled), rather than slow uniform hull attrition (the pre-fix behavior).
+5. Let a fight run to a kill. **Expected with the fix:** NPCs concentrate fire — shields drop faster than the hull and specific subsystems get disabled (weapons/engines), with occasional **warp-core breach** kills (instant destruction) — rather than slow uniform hull attrition (the pre-fix behavior). Note: the SDK rating favors weapons/shields (type-rating 5) and critical systems; the warp core is chosen only when its critical bonus wins, so don't expect warp-core-first every time.
 6. Cross-check: target the NPC under fire (or check your own ship if it's shooting you) via the target-subsystem HUD / Ship Property Viewer; confirm one subsystem's condition drops markedly faster than the rest — the one named in the log.
 
 If the log shows `hull centre` persistently at Hard difficulty, the FireScript rating isn't selecting a subsystem (difficulty/config/targetability) rather than the hook — capture the log and diagnose upstream.

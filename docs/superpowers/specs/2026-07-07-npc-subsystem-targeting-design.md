@@ -35,10 +35,19 @@ reward are never pulled.
   (`engine/ui/target_list_view.py:305/386/395`); NPCs never set it, so their
   `GetTargetSubsystem()` is always `None` -> centre-of-hull aim.
 
-Confirmed data support: the Galaxy warp core is `SetCritical(1)` + `SetTargetable(1)`
-(`sdk/Build/scripts/ships/Hardpoints/Galaxy.py:755`), so once aiming works it is the
-single highest-rated target (only Hull competes, at -200) — i.e. "target the warp
-core" is exactly what stock BC's AI is designed to do.
+What the SDK rating actually prefers (`RateSubsystemForTargeting`): weapons and
+shields carry a **type-rating of 5.0** (cloak 4, impulse 3), the **hull is -200**
+(effectively never targeted), and **critical** systems get **+6.0**. `IsTypeOf`
+only fires when the subsystem has a bound property (`subsystems.py:400-410`), which
+production ships have. So at full health the highest-rated targets are typically the
+enemy's **weapons and shields** (≈5-6), with the small damage-penalty terms
+(`-0.0005 x condition`) nudging toward easier kills. The **warp core** (critical,
+`SetCritical(1)` + `SetTargetable(1)`, `Galaxy.py:755`) is chosen when its +6 critical
+bonus outweighs its large max-condition damage penalty — condition-dependent, not a
+guaranteed first pick. Net: this is stock-BC-faithful subsystem targeting (go for
+weapons/shields/critical systems, avoid the hull), **not** a warp-core monomania.
+If warp-core-specific prioritization is later desired (the user's tactical intuition),
+that is a rating-heuristic change beyond stock BC — out of scope here.
 
 ## Approach
 
@@ -145,13 +154,14 @@ The change is Python-only; **no `cmake` rebuild needed**. Steps:
    enemy ship, or a combat mission via the dev **Load Mission...** picker.
 4. **Watch the developer console/log** for `AI <ship> -> targeting <subsystem>`
    lines as combat begins. **Expected:** NPCs report targeting high-value
-   subsystems (weapons / shields / **Warp Core**), not "hull centre". Seeing any
-   non-null subsystem name confirms the choice is now reaching the ship.
+   subsystems (typically **weapons** and **shields**, sometimes the **Warp Core**
+   or engines), not "hull centre". Seeing any non-null subsystem name confirms the
+   choice is now reaching the ship.
 5. **Behavioral tell (before/after):** let a fight run to a kill. **Expected with
-   the fix:** ships die to a sudden **warp-core breach** (instant destruction /
-   breach explosion) or lose a specific subsystem (shields/engines disabled),
-   rather than slow uniform hull attrition. On current `main` (pre-fix) NPCs only
-   ever whittle the hull.
+   the fix:** NPCs concentrate fire — shields drop faster than the hull, and
+   specific subsystems get disabled (weapons/engines), with occasional **warp-core
+   breach** kills (instant destruction) — rather than slow uniform hull attrition.
+   On current `main` (pre-fix) NPCs only ever whittle the hull.
 6. **Player-side cross-check:** target the NPC that is under fire (or check your own
    ship if the NPC is shooting you) and open the target-subsystem HUD / Ship
    Property Viewer; confirm one subsystem's condition drops markedly faster than
