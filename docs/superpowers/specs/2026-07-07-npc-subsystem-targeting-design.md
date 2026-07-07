@@ -70,8 +70,11 @@ player already uses and is a single, well-bounded hook.
 The only `GetTargetSubsystem()` readers that must stay player-scoped are the HUD
 (`target_list_view.py:281/296`, `target_reticle.py:41`); both read the *player*
 ship explicitly, so an NPC carrying a non-null target subsystem cannot disturb
-them. The two aim sites are firing-ship-scoped and are precisely what we want to
-drive. (Verified by grep in the audit.)
+them. The firing-ship-scoped readers are precisely what we want to drive: the
+phaser damage tick (`host_loop.py:614`), the torpedo launch aim
+(`weapon_subsystems.py:255`), and — a third, beneficial one confirmed in final
+review — the visible-beam terminator (`host_loop.py:863`), which now points an
+NPC's beam VFX at the chosen subsystem too. (Verified by grep in the audit + review.)
 
 ## Components / mechanism
 
