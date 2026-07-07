@@ -440,6 +440,8 @@ def tick_collision_avoidance(dt: float = 1.0 / 60.0) -> None:
             continue
         if obj.GetAI() is None:        # player / uncontrolled: never auto-steer
             continue
+        if obj.IsImmobile():           # stations/drydocks: anchored, never steered
+            continue
         live_ids.add(id(obj))
 
         st = _ship_state.setdefault(

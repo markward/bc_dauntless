@@ -357,3 +357,38 @@ def test_evasion_is_deterministic_across_runs():
     a = run()
     b = run()
     assert a == b, f"non-deterministic evasion: {a} != {b}"
+
+
+def test_immobile_ship_with_ai_is_not_steered(monkeypatch):
+    """Stations/drydocks (like the E1M1 docks) carry a Stay AI, so GetAI()
+    is non-None. Without the IsImmobile() guard, avoidance would try to
+    steer them; they must instead be skipped entirely (never evaluated,
+    never recorded in the per-ship override state).
+
+    NOTE: iter_collidables() is imported *locally* inside
+    tick_collision_avoidance (not a module-level name on `ca`), so it must
+    be exercised via a real set (App.g_kSetManager), not monkeypatched —
+    matching every other test in this file."""
+    import engine.appc.collision_avoidance as ca
+
+    ca.reset_avoidance_state()
+
+    pSet = App.SetClass_Create(); pSet.SetName("S")
+    App.g_kSetManager._sets["S"] = pSet
+
+    # A stationary ship that (like the E1M1 docks) carries a Stay AI.
+    dock = ShipClass_Create("Dock")
+    dock.SetStationary(1)
+    dock.SetRadius(5.0)
+    dock.SetAI(object())  # non-None AI: would otherwise be steered
+    pSet.AddObjectToSet(dock, "Dock")
+
+    # If avoidance tried to steer it, it would call _test_course_override.
+    called = []
+    monkeypatch.setattr(ca, "_test_course_override",
+                        lambda *a, **k: called.append(1) or (None, None))
+
+    ca.tick_collision_avoidance(1.0 / 60.0)
+
+    assert called == []                      # never evaluated
+    assert ca.is_overriding(dock) is False    # no state recorded
