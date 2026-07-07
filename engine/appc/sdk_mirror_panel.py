@@ -26,6 +26,7 @@ class SDKMirrorPanel(Panel):
         super().__init__()
         self._last_pushed: Optional[str] = json.dumps({"entries": []})
         self._logged_unrecognised: set[str] = set()
+        self._letterbox_emitted: bool = False
 
     @property
     def name(self) -> str:
@@ -49,6 +50,15 @@ class SDKMirrorPanel(Panel):
             else:
                 self._log_unrecognised_once(type(child).__name__)
 
+        # Cutscene letterbox bars (visible tracks StartCutscene..EndCutscene).
+        # Emit while visible, plus one final hidden frame so CEF animates the
+        # bars out — but stay silent when idle so the empty state pushes
+        # nothing.
+        lb = tw.letterbox_snapshot()
+        if lb["visible"] or self._letterbox_emitted:
+            entries.append(lb)
+        self._letterbox_emitted = bool(lb["visible"])
+
         payload = json.dumps({"entries": entries})
         if payload == self._last_pushed:
             return None
@@ -67,6 +77,7 @@ class SDKMirrorPanel(Panel):
         # blank — even a quiescent (empty) payload must fire once to
         # confirm the empty state to the freshly loaded JS.
         self._last_pushed = None
+        self._letterbox_emitted = False
 
     @staticmethod
     def _has_real_snapshot(child) -> bool:

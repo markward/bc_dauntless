@@ -117,6 +117,29 @@ def test_space_toggle_works_when_control_removed_but_no_cutscene():
     assert vm.is_exterior is True
 
 
+def test_tactical_hud_hidden_during_cutscene():
+    from engine.host_loop import _tactical_hud_visible
+    # Shown in exterior, no SPV, no cutscene.
+    assert _tactical_hud_visible(
+        is_exterior=True, spv_open=False, cutscene_active=False) is True
+    # Hidden during a cutscene even in exterior view.
+    assert _tactical_hud_visible(
+        is_exterior=True, spv_open=False, cutscene_active=True) is False
+    # Already hidden in bridge view regardless.
+    assert _tactical_hud_visible(
+        is_exterior=False, spv_open=False, cutscene_active=False) is False
+
+
+def test_bridge_freelook_suppressed_during_cutscene():
+    from engine.host_loop import _bridge_freelook_suppressed
+    assert _bridge_freelook_suppressed(
+        crew_menu_open=False, cutscene_active=False) is False
+    assert _bridge_freelook_suppressed(
+        crew_menu_open=False, cutscene_active=True) is True
+    assert _bridge_freelook_suppressed(
+        crew_menu_open=True, cutscene_active=False) is True
+
+
 def test_space_toggle_suppressed_while_bridge_cutscene_camera_pending():
     """A queued/playing bridge-cutscene camera path forces the view to
     bridge each frame; toggling would flip to exterior for one frame and

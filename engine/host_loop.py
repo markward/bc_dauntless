@@ -1709,6 +1709,25 @@ class _ViewModeController:
             dispatch_toggle_bridge_and_tactical()
 
 
+def _tactical_hud_visible(*, is_exterior: bool, spv_open: bool,
+                          cutscene_active: bool) -> bool:
+    """Whether the tactical HUD (ship displays, sensors, target list,
+    weapons) should show this frame. It is an exterior-view element, hidden
+    while the Ship Property Viewer owns the frame, and hidden during a
+    cutscene so the letterbox frame stays cinematic (BC hides the tactical
+    UI during StartCutscene..EndCutscene)."""
+    return is_exterior and not spv_open and not cutscene_active
+
+
+def _bridge_freelook_suppressed(*, crew_menu_open: bool,
+                                cutscene_active: bool) -> bool:
+    """Whether the bridge camera's mouse free-look is suppressed this frame.
+    Suppressed while a crew menu is open (the cursor is freed to click it)
+    and during a cutscene (the letterbox pins the view where the mission
+    wants it — no free-look)."""
+    return crew_menu_open or cutscene_active
+
+
 class _PauseMenuController:
     """ESC-toggled pause-menu overlay.
 
@@ -5381,7 +5400,11 @@ def run(mission_name: Optional[str] = None,
                 # the tactical panels while it's open (as bridge view does).
                 # _NULL_PICKER.is_open() is False, so this is a no-op in
                 # production / non-dev.
-                _tac_visible = view_mode.is_exterior and not ship_property_viewer.is_open()
+                from engine.appc.top_window import TopWindow_GetTopWindow
+                _tac_visible = _tactical_hud_visible(
+                    is_exterior=view_mode.is_exterior,
+                    spv_open=ship_property_viewer.is_open(),
+                    cutscene_active=TopWindow_GetTopWindow().IsCutsceneMode())
                 target_list_view.visible    = _tac_visible
                 sensors_panel.visible       = _tac_visible
                 ship_display_player.visible = _tac_visible
@@ -5965,7 +5988,12 @@ def run(mission_name: Optional[str] = None,
                         # (set_zoom_target's zoom already suspends mouse-look
                         # once an officer resolves; this also covers the case
                         # where no officer resolves and the zoom stays at 0.)
-                        if crew_menu_panel.has_open_menu():
+                        # Free-look is also suppressed during a cutscene: the
+                        # letterbox pins the view where the mission wants it.
+                        from engine.appc.top_window import TopWindow_GetTopWindow
+                        if _bridge_freelook_suppressed(
+                                crew_menu_open=crew_menu_panel.has_open_menu(),
+                                cutscene_active=TopWindow_GetTopWindow().IsCutsceneMode()):
                             mouse_dx, mouse_dy = 0.0, 0.0
                         bridge_camera.set_zoom_target(
                             _active_zoom_officer_world(crew_menu_panel, r),
@@ -6068,8 +6096,13 @@ def run(mission_name: Optional[str] = None,
                              fov_y_rad=director.fov_y_rad,
                              near=1.0, far=5000.0)
                 # Reticle is an exterior-view HUD element; in bridge view it
-                # would draw over the bridge scene.
-                if player is not None and view_mode.is_exterior:
+                # would draw over the bridge scene. Also hidden during a
+                # cutscene started with bHideReticle (BC's clean cinematic
+                # frame) — reticle_hidden() folds in the bHideReticle arg so
+                # E1M2's bHideReticle=FALSE cutscenes keep it.
+                from engine.appc.top_window import TopWindow_GetTopWindow
+                if (player is not None and view_mode.is_exterior
+                        and not TopWindow_GetTopWindow().reticle_hidden()):
                     r.set_target_reticle(build_target_reticle(player))
                     _rcam = _ReticleCam(eye=eye, target=target, up=up_vec,
                                         fov_y_rad=director.fov_y_rad,

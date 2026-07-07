@@ -142,6 +142,77 @@ def test_cutscene_does_not_touch_input_flags():
     top_window.reset_for_tests()
     tw = top_window.TopWindow_GetTopWindow()
     assert tw.IsKeyboardInputAllowed() is True
+
+
+# ── Cutscene overlay state (letterbox + reticle hide) ────────────────────────
+
+def test_start_cutscene_captures_covered_and_reticle_args():
+    """MissionLib.StartCutscene passes (fTimeToComeIn, fCoveredArea,
+    bHideReticle); the overlay snapshot must reflect them for the CEF
+    letterbox and the reticle gate."""
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.StartCutscene(1.0, 0.125, 1)
+    snap = tw.letterbox_snapshot()
+    assert snap["visible"] is True
+    assert snap["covered"] == 0.125
+    assert snap["transition_s"] == 1.0
+    assert tw.reticle_hidden() is True
+
+
+def test_letterbox_snapshot_default_before_cutscene():
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    snap = tw.letterbox_snapshot()
+    assert snap["type"] == "letterbox"
+    assert snap["visible"] is False
+    assert tw.reticle_hidden() is False
+
+
+def test_end_cutscene_hides_letterbox_and_reticle():
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.StartCutscene(1.0, 0.125, 1)
+    tw.EndCutscene(2.5)
+    snap = tw.letterbox_snapshot()
+    assert snap["visible"] is False
+    assert snap["transition_s"] == 2.5   # bars animate out over fTimeToLeave
+    assert tw.reticle_hidden() is False
+
+
+def test_start_cutscene_reticle_kept_when_flag_zero():
+    """E1M2's later cutscenes pass bHideReticle=FALSE — reticle stays."""
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.StartCutscene(1.0, 0.125, 0)
+    assert tw.IsCutsceneMode() is True
+    assert tw.reticle_hidden() is False
+
+
+def test_start_cutscene_defaults_when_no_args():
+    """Direct pTop.StartCutscene() (no args) uses BC defaults."""
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.StartCutscene()
+    snap = tw.letterbox_snapshot()
+    assert snap["visible"] is True
+    assert snap["covered"] == 0.125       # BC default fCoveredArea
+    assert tw.reticle_hidden() is True     # BC default bHideReticle=1
+
+
+def test_abort_cutscene_hides_letterbox():
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.StartCutscene(1.0, 0.125, 1)
+    tw.AbortCutscene()
+    assert tw.letterbox_snapshot()["visible"] is False
+    assert tw.reticle_hidden() is False
     tw.StartCutscene()
     assert tw.IsKeyboardInputAllowed() is True   # unchanged
     tw.EndCutscene()

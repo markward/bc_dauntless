@@ -35,6 +35,9 @@ class _TopWindow:
         self._keyboard_input_enabled: bool = True
         self._mouse_input_enabled: bool = True
         self._cutscene_active: bool = False
+        self._letterbox_covered: float = 0.125
+        self._letterbox_transition_s: float = 0.0
+        self._hide_reticle: bool = False
         self._fade_active: bool = False
         self._bridge_visible: bool = True
         self._tactical_visible: bool = False
@@ -74,21 +77,42 @@ class _TopWindow:
         return self._mouse_input_enabled
 
     # ── Cutscene ───────────────────────────────────────────────
-    def StartCutscene(self, *args) -> None:
-        # SDK passes (fTimeToComeIn, fCoveredArea, bHideReticle) via
-        # MissionLib.StartCutscene; we don't render fades or reticles
-        # so accept and ignore.
+    def StartCutscene(self, fTimeToComeIn=1.0, fCoveredArea=0.125,
+                      bHideReticle=1, *args) -> None:
+        # MissionLib.StartCutscene passes (fTimeToComeIn, fCoveredArea,
+        # bHideReticle). fCoveredArea is the TOTAL letterbox coverage
+        # (0.125 = 6.25% per bar); bHideReticle hides the targeting
+        # reticle. fTimeToComeIn is the bar slide-in duration.
         self._cutscene_active = True
+        self._letterbox_covered = float(fCoveredArea)
+        self._letterbox_transition_s = float(fTimeToComeIn)
+        self._hide_reticle = bool(bHideReticle)
 
-    def EndCutscene(self, fTime: float = 0.0) -> None:
-        # fTime is the fade-out duration; we don't render fades.
+    def EndCutscene(self, fTime: float = 1.0, *args) -> None:
+        # fTime is the bar slide-out duration.
         self._cutscene_active = False
+        self._letterbox_transition_s = float(fTime)
 
     def AbortCutscene(self) -> None:
         self._cutscene_active = False
+        self._letterbox_transition_s = 0.0   # snap, no slide-out
 
     def IsCutsceneMode(self) -> bool:
         return self._cutscene_active
+
+    def reticle_hidden(self) -> bool:
+        """True when the targeting reticle should be suppressed: a cutscene
+        is active and it was started with bHideReticle set."""
+        return self._cutscene_active and self._hide_reticle
+
+    def letterbox_snapshot(self) -> dict:
+        """Render-ready letterbox state for the CEF sdk-mirror overlay."""
+        return {
+            "type": "letterbox",
+            "visible": self._cutscene_active,
+            "covered": self._letterbox_covered,
+            "transition_s": self._letterbox_transition_s,
+        }
 
     # ── Fade ───────────────────────────────────────────────────
     def FadeOut(self, fTime: float = 0.0) -> None:
