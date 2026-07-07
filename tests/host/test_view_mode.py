@@ -74,29 +74,44 @@ def test_view_mode_toggle_on_space_pressed():
     assert vm.is_bridge is True
 
 
-def test_space_toggle_suppressed_while_keyboard_input_removed():
-    """MissionLib.RemoveControl (AllowKeyboardInput(0)) must hold the
-    player's current view: the SPACE bridge/tactical toggle is keyboard
-    input, and the E1M1 intro removes control for the whole walk-on +
-    Liu-briefing + crew-intro stretch (E1M1.py:1860, no ReturnControl
-    until char-select). The natively-polled SPACE toggle must respect the
-    same flag the SDK keyboard dispatch already honours."""
+def test_space_toggle_suppressed_during_cutscene():
+    """BC blocks the bridge/tactical toggle while a cutscene plays
+    (MissionLib.StartCutscene) and re-enables it at EndCutscene — E1M1's
+    "Captain, the bridge is yours" beat ends the intro cutscene. The gate
+    is cutscene mode, NOT keyboard input: RemoveControl (which gates ship
+    control) is not returned at that beat, yet the view toggle works."""
     import engine.appc.top_window as top_window
     from engine.host_loop import _ViewModeController
     top_window.reset_for_tests()
     vm = _ViewModeController()
     reader = _FakeKeyReader()
+    tw = top_window.TopWindow_GetTopWindow()
 
-    # Mission removes control (RemoveControl → AllowKeyboardInput(0)).
-    top_window.TopWindow_GetTopWindow().AllowKeyboardInput(0)
-
-    # SPACE pressed while control is removed → view held on bridge.
+    # Cutscene playing → SPACE held on the current view.
+    tw.StartCutscene(1.0, 0.125, 1)
     reader.pressed_once.add(reader.keys.KEY_SPACE)
     vm.apply(reader)
     assert vm.is_bridge is True
 
-    # Control returned (ReturnControl → AllowKeyboardInput(1)) → SPACE works.
-    top_window.TopWindow_GetTopWindow().AllowKeyboardInput(1)
+    # EndCutscene → SPACE works, even though ship control was never
+    # returned (keyboard input still 'removed' by RemoveControl).
+    tw.AllowKeyboardInput(0)
+    tw.EndCutscene(1.0)
+    reader.pressed_once.add(reader.keys.KEY_SPACE)
+    vm.apply(reader)
+    assert vm.is_exterior is True
+
+
+def test_space_toggle_works_when_control_removed_but_no_cutscene():
+    """RemoveControl alone must NOT block the view toggle — only cutscene
+    mode does. Guards against regressing to the keyboard-gated behaviour."""
+    import engine.appc.top_window as top_window
+    from engine.host_loop import _ViewModeController
+    top_window.reset_for_tests()
+    vm = _ViewModeController()
+    reader = _FakeKeyReader()
+    top_window.TopWindow_GetTopWindow().AllowKeyboardInput(0)  # no StartCutscene
+
     reader.pressed_once.add(reader.keys.KEY_SPACE)
     vm.apply(reader)
     assert vm.is_exterior is True

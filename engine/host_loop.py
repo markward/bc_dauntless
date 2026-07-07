@@ -1682,20 +1682,22 @@ class _ViewModeController:
     def apply(self, h) -> None:
         """Poll space-pressed; on edge, route through the SDK chain.
 
-        Respects MissionLib.RemoveControl (AllowKeyboardInput(0)): the
-        bridge/tactical toggle is keyboard input, so a mission that has
-        removed control (e.g. the E1M1 intro walk-on + Liu briefing, which
-        removes control continuously until char-select) holds the player's
-        current view. This mirrors the gate the SDK keyboard dispatch
-        already honours (engine/appc/input.py); the SPACE toggle is polled
-        natively here, so it must consult the same flag itself.
+        The bridge/tactical toggle is suppressed during cutscene mode
+        (MissionLib.StartCutscene .. EndCutscene): BC blocks the view
+        toggle while a cutscene plays and re-enables it when EndCutscene
+        runs — E1M1's "Captain, the bridge is yours" beat, which ends the
+        intro cutscene. This is deliberately independent of
+        RemoveControl/AllowKeyboardInput: that gates *ship* control (helm,
+        fire) and is NOT returned at "the bridge is yours", yet the view
+        toggle works there — so the toggle keys off cutscene mode, not the
+        keyboard-input flag.
         """
         if h.key_pressed(h.keys.KEY_SPACE):
             from engine.appc.top_window import (
-                keyboard_input_enabled,
+                TopWindow_GetTopWindow,
                 dispatch_toggle_bridge_and_tactical,
             )
-            if keyboard_input_enabled():
+            if not TopWindow_GetTopWindow().IsCutsceneMode():
                 dispatch_toggle_bridge_and_tactical()
 
 
