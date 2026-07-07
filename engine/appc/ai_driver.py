@@ -16,12 +16,16 @@ _next_update_time field; the driver consults it each tick. This keeps
 Step 3 testable independently of the TimeSliceProcess scheduler (Step 2).
 """
 import inspect
+import logging
 import random
 
+from engine import dev_mode
 from engine.appc.ai import (
     ArtificialIntelligence, PlainAI, PriorityListAI, SequenceAI,
     ConditionalAI, PreprocessingAI, BuilderAI, RandomAI,
 )
+
+_logger = logging.getLogger(__name__)
 
 US_ACTIVE = ArtificialIntelligence.US_ACTIVE
 US_DONE = ArtificialIntelligence.US_DONE
@@ -273,6 +277,75 @@ def _tick_conditional(ai: ConditionalAI, game_time: float) -> int:
     return ai._status
 
 
+def _subsystem_belongs_to(subsystem, target) -> bool:
+    """True if `subsystem` sits on `target`'s ship. In production, attached
+    subsystems know their owning ship (directly via GetParentShip, or by
+    climbing the parent-subsystem chain for children like torpedo tubes). A
+    membership fallback covers top-level subsystems assigned without a
+    parent-ship back-link."""
+    owner = subsystem.GetParentShip()
+    if owner is None:
+        climb = getattr(subsystem, "_climb_to_ship", None)
+        if callable(climb):
+            owner = climb()
+    if owner is target:
+        return True
+    try:
+        return subsystem in target.GetSubsystems()
+    except Exception:
+        return False
+
+
+def _sync_fire_script_target_subsystem(inst) -> None:
+    """Mirror a FireScript preprocessor's chosen target subsystem onto its
+    firing ship so the aim sites (host_loop phaser tick, weapon_subsystems
+    torpedo launch) that read ship.GetTargetSubsystem() honor the AI's choice.
+
+    No-op for any preprocessor that is not a FireScript (gated on the
+    lWeapons + idTargetedSubsystem markers). Only the AI driver calls this,
+    and only for AI-driven FireScript nodes, so the player is unaffected.
+    See docs/superpowers/specs/2026-07-07-npc-subsystem-targeting-design.md.
+    """
+    # Gate: FireScript instances only. lWeapons is the FireScript marker
+    # (also used by _ensure_fire_script_initialized); idTargetedSubsystem is
+    # set in FireScript.__init__ so it lives in __dict__ (bypass the _Stub
+    # __getattr__ that would otherwise mask a missing attr).
+    if not hasattr(inst, "lWeapons"):
+        return
+    if "idTargetedSubsystem" not in getattr(inst, "__dict__", {}):
+        return
+
+    code_ai = getattr(inst, "pCodeAI", None)
+    if code_ai is None:
+        return
+    ship = code_ai.GetShip()
+    if ship is None or not hasattr(ship, "SetTargetSubsystem"):
+        return
+
+    import App
+
+    chosen = None
+    sub_id = inst.idTargetedSubsystem
+    if sub_id is not None:
+        resolved = App.ShipSubsystem_Cast(App.TGObject_GetTGObjectPtr(sub_id))
+        # Accept only a live subsystem that belongs to the ship's current
+        # target; a stale id (old/other target) or dead id clears back to
+        # centre-of-hull aim.
+        if resolved is not None:
+            target = ship.GetTarget()
+            if target is not None and _subsystem_belongs_to(resolved, target):
+                chosen = resolved
+
+    # Only write on change — avoids churn and drives the dev log (below) on
+    # transitions rather than every fire tick.
+    if ship.GetTargetSubsystem() is not chosen:
+        ship.SetTargetSubsystem(chosen)
+        if dev_mode.is_enabled():
+            ship_name = ship.GetName() if hasattr(ship, "GetName") else "<ship>"
+            sub_name = chosen.GetName() if chosen is not None else "hull centre"
+            _logger.info("AI %s -> targeting %s", ship_name, sub_name)
+
+
 def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
     inst = ai._preprocessing_instance
     method = ai._preprocessing_method
@@ -377,6 +450,11 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
         if result is None:
             result = PS_NORMAL
         ai._last_preprocess_status = result
+
+        # Bridge FireScript's chosen subsystem to the firing ship so the aim
+        # sites honor it (spec 2026-07-07-npc-subsystem-targeting). No-op for
+        # non-FireScript preprocessors.
+        _sync_fire_script_target_subsystem(inst)
 
         # Reschedule from the preprocessor's own cadence. Default 0.0 (every
         # tick) when GetNextUpdateTime is absent — synthetic test fixtures and
