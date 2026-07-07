@@ -9,6 +9,12 @@ ET_KEYBOARD_EVENT: int = 0x1000
 ET_WEAPON_HIT:     int = 0x1100  # reserved range above input-event ids
 ET_WARP_BUTTON_PRESSED: int = 0x1200   # warp button activated (synthesized from CEF Set Course)
 
+# SPACE-bar bridge/tactical toggle. Value must stay in sync with the SDK's
+# event id; App.py re-exports this name (missions reference it as
+# App.ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL when registering
+# TacticalToggleHandler — E1M1.py:858, E1M2.py:1155).
+ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL = 1055
+
 
 class TGEvent(TGObject):
     def __init__(self):

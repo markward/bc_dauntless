@@ -610,6 +610,15 @@ def _reset_leakable_engine_globals():
         App._next_event_type_id = 1200
     except Exception:
         pass
+    # TopWindow singleton: _ViewModeController now reads bridge/tactical
+    # visibility straight off this singleton (pull model), so a test that
+    # calls ForceTacticalVisible/ToggleBridgeAndTactical would otherwise
+    # leak that flag into unrelated later tests.
+    try:
+        import engine.appc.top_window as top_window
+        top_window.reset_for_tests()
+    except Exception:
+        pass
     # Current game/player: a mission-load or warp test that calls
     # _set_current_game / Game_SetCurrentPlayer leaks the game (and its player)
     # into later tests. iter_ships/active_set now key world-scene iteration off

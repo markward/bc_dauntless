@@ -13,7 +13,7 @@ import json
 import logging
 from typing import Optional
 
-from engine.appc.characters import STButton, STMenu
+from engine.appc.characters import STButton, STMenu, dispatch_character_menu
 from engine.appc.tg_ui.st_widgets import SortedRegionMenu, STWarpButton
 from engine.appc.tg_ui.widgets import ensure_widget_id
 from engine.appc.windows import TacticalControlWindow
@@ -264,7 +264,16 @@ class CrewMenuPanel(Panel):
         # Open menu changed (toggle always closes or switches) — a reopened
         # menu starts with all submenus collapsed.
         self._expanded_ids.clear()
-        self._reconcile_turn(old_officer, self._menu_officer())
+        new_officer = self._menu_officer()
+        self._reconcile_turn(old_officer, new_officer)
+        # Notify missions tracking crew-menu interaction (e.g. E1M1's
+        # character-selection tutorial, which advances on a menu CLOSE) that
+        # the officer losing focus closed and the one gaining focus opened —
+        # mirroring the MenuDown/MenuUp turn above.
+        if old_officer is not None and old_officer is not new_officer:
+            dispatch_character_menu(old_officer, is_open=False)
+        if new_officer is not None and new_officer is not old_officer:
+            dispatch_character_menu(new_officer, is_open=True)
         if opening:
             self._acknowledge(menu)
             menu.SendActivationEvent()   # BC broadcasts activation event on open
@@ -306,6 +315,8 @@ class CrewMenuPanel(Panel):
                 officer.MenuDown()
             except Exception:
                 pass
+            # Menu closed — same tutorial-advancing signal as toggle_menu.
+            dispatch_character_menu(officer, is_open=False)
         return True
 
     def invalidate(self) -> None:

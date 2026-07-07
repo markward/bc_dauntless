@@ -7,6 +7,7 @@ from engine.appc.events import (
     ObjectExplodingEvent, ObjectExplodingEvent_Create,
     TGEventHandlerObject, TGEventManager,
     TGPythonInstanceWrapper,
+    ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL,
 )
 from engine.appc import input as _input_consts   # keyboard WC_/KY_ table source
 from engine.appc.input import (
@@ -884,7 +885,6 @@ ET_SET_ALERT_LEVEL              = 1051
 ET_QUICK_SAVE                   = 1052
 ET_QUICK_LOAD                   = 1053
 ET_INPUT_PRINT_SCREEN             = 1054
-ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL = 1055
 
 # ── Bridge-interaction event types ─────────────────────────────────────────────
 # Spec: docs/superpowers/specs/2026-06-12-tg-widget-tree-crew-menus-design.md.

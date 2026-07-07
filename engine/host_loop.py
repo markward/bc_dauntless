@@ -1648,38 +1648,84 @@ from engine.cameras.chase import _ChaseCamera as _CameraControl
 
 
 class _ViewModeController:
-    """Bridge/exterior view modality.
+    """Bridge/exterior view modality — a stateless facade over the SDK
+    TopWindow flags (engine/appc/top_window.py), which are the single
+    source of truth (pull model; spec
+    docs/superpowers/specs/2026-07-05-mission-view-camera-input-locks-design.md §1).
 
-    Edge-triggered on KEY_SPACE. Owns the single mode flag that input,
-    camera, and HUD dispatch off — see _apply_input and _compute_camera.
-
-    Bridge mode is currently a stub: the camera anchors at the ship
-    origin looking along ship-Y forward, ship input is suppressed (the
-    ship coasts on existing velocity), and a "BRIDGE VIEW" HUD panel
-    becomes visible. No bridge geometry yet.
+    SPACE dispatches ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL through
+    TopWindow's instance-handler chain so missions can swallow the toggle
+    (E1M1/E1M2 TacticalToggleHandler); the bottom-of-chain default
+    performs the flag flip synchronously during dispatch. SDK calls like
+    ForceBridgeVisible are plain flag writes the next frame's read picks
+    up — no listeners, nothing to re-wire on mission swap.
     """
-    EXTERIOR = 0
-    BRIDGE   = 1
-
-    def __init__(self):
-        self._mode = self.BRIDGE
 
     @property
-    def is_exterior(self) -> bool: return self._mode == self.EXTERIOR
+    def is_bridge(self) -> bool:
+        from engine.appc.top_window import bridge_flag
+        return bridge_flag()
+
     @property
-    def is_bridge(self)   -> bool: return self._mode == self.BRIDGE
+    def is_exterior(self) -> bool:
+        return not self.is_bridge
 
     def toggle(self) -> None:
-        self._mode = self.BRIDGE if self.is_exterior else self.EXTERIOR
+        from engine.appc.top_window import TopWindow_GetTopWindow
+        TopWindow_GetTopWindow().ToggleBridgeAndTactical()
 
     def set_bridge(self) -> None:
         """Force bridge view (used to start a bridge cutscene)."""
-        self._mode = self.BRIDGE
+        from engine.appc.top_window import TopWindow_GetTopWindow
+        TopWindow_GetTopWindow().ForceBridgeVisible()
 
     def apply(self, h) -> None:
-        """Poll space-pressed and toggle on edge."""
+        """Poll space-pressed; on edge, route through the SDK chain.
+
+        The bridge/tactical toggle is suppressed during a cutscene:
+
+        * MissionLib cutscene mode (StartCutscene .. EndCutscene). BC blocks
+          the view toggle while a cutscene plays and re-enables it at
+          EndCutscene — E1M1's "Captain, the bridge is yours" beat. This is
+          independent of RemoveControl/AllowKeyboardInput, which gates *ship*
+          control (helm, fire) and is NOT returned at that beat, yet the view
+          toggle works there.
+        * A bridge-cutscene camera path is queued or playing. Such a path
+          forces the view to bridge every frame (_compute_camera's set_bridge),
+          so a toggle would flip to exterior for a single frame before being
+          reverted — a visible flash. Suppress the toggle outright instead.
+        """
         if h.key_pressed(h.keys.KEY_SPACE):
-            self.toggle()
+            from engine.appc.top_window import (
+                TopWindow_GetTopWindow,
+                dispatch_toggle_bridge_and_tactical,
+            )
+            if TopWindow_GetTopWindow().IsCutsceneMode():
+                return
+            from engine.bridge_cutscene import get_controller
+            ctrl = get_controller()
+            if ctrl is not None and ctrl.has_pending_camera():
+                return
+            dispatch_toggle_bridge_and_tactical()
+
+
+def _tactical_hud_visible(*, is_exterior: bool, spv_open: bool,
+                          cutscene_active: bool) -> bool:
+    """Whether the tactical HUD (ship displays, sensors, target list,
+    weapons) should show this frame. It is an exterior-view element, hidden
+    while the Ship Property Viewer owns the frame, and hidden during a
+    cutscene so the letterbox frame stays cinematic (BC hides the tactical
+    UI during StartCutscene..EndCutscene)."""
+    return is_exterior and not spv_open and not cutscene_active
+
+
+def _bridge_freelook_suppressed(*, crew_menu_open: bool,
+                                cutscene_active: bool) -> bool:
+    """Whether the bridge camera's mouse free-look is suppressed this frame.
+    Suppressed while a crew menu is open (the cursor is freed to click it)
+    and during a cutscene (the letterbox pins the view where the mission
+    wants it — no free-look)."""
+    return crew_menu_open or cutscene_active
 
 
 class _PauseMenuController:
@@ -2814,7 +2860,7 @@ def _ship_load_key(nif_path, reps):
 def _resolve_active_set(player):
     """Return the SetClass whose lights & backdrops apply to the rendered
     scene. Order:
-      1. g_kSetManager.GetRenderedSet() — set explicitly via
+      1. g_kSetManager.get_explicit_rendered_set() — set explicitly via
          MissionLib.MakeRenderedSet during scene transitions.
       2. The set containing the player ship — Phase 1 fallback.
       3. None — caller falls through to per-system defaults
@@ -2824,7 +2870,7 @@ def _resolve_active_set(player):
     is 'live' so backdrop-only sets (rare but legal) are picked up.
     """
     import App
-    rendered = App.g_kSetManager.GetRenderedSet()
+    rendered = App.g_kSetManager.get_explicit_rendered_set()
     if rendered is not None and (
         getattr(rendered, "_lights", None) or
         getattr(rendered, "_backdrops", None)
@@ -3821,7 +3867,7 @@ def _active_cutscene_camera():
     cameras, and dead-target modes all return None and the director resumes.
     """
     import App as _App
-    rendered = _App.g_kSetManager.GetRenderedSet()
+    rendered = _App.g_kSetManager.get_explicit_rendered_set()
     if rendered is None:
         return None
     get_active = getattr(rendered, "GetActiveCamera", None)
@@ -5354,7 +5400,11 @@ def run(mission_name: Optional[str] = None,
                 # the tactical panels while it's open (as bridge view does).
                 # _NULL_PICKER.is_open() is False, so this is a no-op in
                 # production / non-dev.
-                _tac_visible = view_mode.is_exterior and not ship_property_viewer.is_open()
+                from engine.appc.top_window import TopWindow_GetTopWindow
+                _tac_visible = _tactical_hud_visible(
+                    is_exterior=view_mode.is_exterior,
+                    spv_open=ship_property_viewer.is_open(),
+                    cutscene_active=TopWindow_GetTopWindow().IsCutsceneMode())
                 target_list_view.visible    = _tac_visible
                 sensors_panel.visible       = _tac_visible
                 ship_display_player.visible = _tac_visible
@@ -5938,7 +5988,12 @@ def run(mission_name: Optional[str] = None,
                         # (set_zoom_target's zoom already suspends mouse-look
                         # once an officer resolves; this also covers the case
                         # where no officer resolves and the zoom stays at 0.)
-                        if crew_menu_panel.has_open_menu():
+                        # Free-look is also suppressed during a cutscene: the
+                        # letterbox pins the view where the mission wants it.
+                        from engine.appc.top_window import TopWindow_GetTopWindow
+                        if _bridge_freelook_suppressed(
+                                crew_menu_open=crew_menu_panel.has_open_menu(),
+                                cutscene_active=TopWindow_GetTopWindow().IsCutsceneMode()):
                             mouse_dx, mouse_dy = 0.0, 0.0
                         bridge_camera.set_zoom_target(
                             _active_zoom_officer_world(crew_menu_panel, r),
@@ -6041,8 +6096,13 @@ def run(mission_name: Optional[str] = None,
                              fov_y_rad=director.fov_y_rad,
                              near=1.0, far=5000.0)
                 # Reticle is an exterior-view HUD element; in bridge view it
-                # would draw over the bridge scene.
-                if player is not None and view_mode.is_exterior:
+                # would draw over the bridge scene. Also hidden during a
+                # cutscene started with bHideReticle (BC's clean cinematic
+                # frame) — reticle_hidden() folds in the bHideReticle arg so
+                # E1M2's bHideReticle=FALSE cutscenes keep it.
+                from engine.appc.top_window import TopWindow_GetTopWindow
+                if (player is not None and view_mode.is_exterior
+                        and not TopWindow_GetTopWindow().reticle_hidden()):
                     r.set_target_reticle(build_target_reticle(player))
                     _rcam = _ReticleCam(eye=eye, target=target, up=up_vec,
                                         fov_y_rad=director.fov_y_rad,

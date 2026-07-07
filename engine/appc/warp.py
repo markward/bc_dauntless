@@ -436,7 +436,7 @@ class _ArriveFinalizeAction(TGAction):
         # path tears it down earlier in _WarpDepartAction; this is the fallback
         # for the instant path and for a departure that failed open).
         if src is not None and App.g_kSetManager.GetSet(src.GetName()) is src:
-            if App.g_kSetManager.GetRenderedSet() is not src:
+            if App.g_kSetManager.get_explicit_rendered_set() is not src:
                 if _teardown_hook is not None:
                     _teardown_hook(src)
                 App.g_kSetManager.DeleteSet(src.GetName())
@@ -444,7 +444,7 @@ class _ArriveFinalizeAction(TGAction):
         # instant path). The player has been moved into the destination by
         # _PlacePlayerAction, so the transit set is now empty.
         transit = App.g_kSetManager.GetSet(_WARP_TRANSIT_SET_NAME)
-        if transit is not None and App.g_kSetManager.GetRenderedSet() is not transit:
+        if transit is not None and App.g_kSetManager.get_explicit_rendered_set() is not transit:
             App.g_kSetManager.DeleteSet(_WARP_TRANSIT_SET_NAME)
         # Undo SDK WarpPressed's RemoveControl (no-op if MissionLib absent).
         try:

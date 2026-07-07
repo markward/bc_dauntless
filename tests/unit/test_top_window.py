@@ -142,6 +142,77 @@ def test_cutscene_does_not_touch_input_flags():
     top_window.reset_for_tests()
     tw = top_window.TopWindow_GetTopWindow()
     assert tw.IsKeyboardInputAllowed() is True
+
+
+# ── Cutscene overlay state (letterbox + reticle hide) ────────────────────────
+
+def test_start_cutscene_captures_covered_and_reticle_args():
+    """MissionLib.StartCutscene passes (fTimeToComeIn, fCoveredArea,
+    bHideReticle); the overlay snapshot must reflect them for the CEF
+    letterbox and the reticle gate."""
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.StartCutscene(1.0, 0.125, 1)
+    snap = tw.letterbox_snapshot()
+    assert snap["visible"] is True
+    assert snap["covered"] == 0.125
+    assert snap["transition_s"] == 1.0
+    assert tw.reticle_hidden() is True
+
+
+def test_letterbox_snapshot_default_before_cutscene():
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    snap = tw.letterbox_snapshot()
+    assert snap["type"] == "letterbox"
+    assert snap["visible"] is False
+    assert tw.reticle_hidden() is False
+
+
+def test_end_cutscene_hides_letterbox_and_reticle():
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.StartCutscene(1.0, 0.125, 1)
+    tw.EndCutscene(2.5)
+    snap = tw.letterbox_snapshot()
+    assert snap["visible"] is False
+    assert snap["transition_s"] == 2.5   # bars animate out over fTimeToLeave
+    assert tw.reticle_hidden() is False
+
+
+def test_start_cutscene_reticle_kept_when_flag_zero():
+    """E1M2's later cutscenes pass bHideReticle=FALSE — reticle stays."""
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.StartCutscene(1.0, 0.125, 0)
+    assert tw.IsCutsceneMode() is True
+    assert tw.reticle_hidden() is False
+
+
+def test_start_cutscene_defaults_when_no_args():
+    """Direct pTop.StartCutscene() (no args) uses BC defaults."""
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.StartCutscene()
+    snap = tw.letterbox_snapshot()
+    assert snap["visible"] is True
+    assert snap["covered"] == 0.125       # BC default fCoveredArea
+    assert tw.reticle_hidden() is True     # BC default bHideReticle=1
+
+
+def test_abort_cutscene_hides_letterbox():
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.StartCutscene(1.0, 0.125, 1)
+    tw.AbortCutscene()
+    assert tw.letterbox_snapshot()["visible"] is False
+    assert tw.reticle_hidden() is False
     tw.StartCutscene()
     assert tw.IsKeyboardInputAllowed() is True   # unchanged
     tw.EndCutscene()
@@ -182,12 +253,12 @@ def test_abort_fade_clears_flag():
 
 
 def test_view_state_defaults():
-    """Dauntless has no bridge view and renders the tactical scene by default."""
+    """TopWindow's bridge/tactical view defaults to bridge-visible."""
     from engine.appc import top_window
     top_window.reset_for_tests()
     tw = top_window.TopWindow_GetTopWindow()
-    assert tw.IsBridgeVisible() is False
-    assert tw.IsTacticalVisible() is True
+    assert tw.IsBridgeVisible() is True
+    assert tw.IsTacticalVisible() is False
 
 
 def test_force_bridge_visible_swaps_state():
@@ -213,13 +284,13 @@ def test_toggle_bridge_and_tactical_swaps_both():
     from engine.appc import top_window
     top_window.reset_for_tests()
     tw = top_window.TopWindow_GetTopWindow()
-    # Default: bridge=False, tactical=True
-    tw.ToggleBridgeAndTactical()
-    assert tw.IsBridgeVisible() is True
-    assert tw.IsTacticalVisible() is False
+    # Default: bridge=True, tactical=False
     tw.ToggleBridgeAndTactical()
     assert tw.IsBridgeVisible() is False
     assert tw.IsTacticalVisible() is True
+    tw.ToggleBridgeAndTactical()
+    assert tw.IsBridgeVisible() is True
+    assert tw.IsTacticalVisible() is False
 
 
 def test_mwt_enums_are_distinct_integers():
@@ -434,15 +505,15 @@ def test_reset_sdk_globals_resets_top_window_state():
     tw = top_window.TopWindow_GetTopWindow()
     tw.StartCutscene()
     tw.AllowKeyboardInput(0)
-    tw.ForceBridgeVisible()
+    tw.ForceTacticalVisible()
 
     reset_sdk_globals()
 
     fresh = top_window.TopWindow_GetTopWindow()
     assert fresh.IsCutsceneMode() is False
     assert fresh.IsKeyboardInputAllowed() is True
-    assert fresh.IsBridgeVisible() is False
-    assert fresh.IsTacticalVisible() is True
+    assert fresh.IsBridgeVisible() is True
+    assert fresh.IsTacticalVisible() is False
 
 
 def test_start_cutscene_accepts_positional_args():
@@ -456,22 +527,6 @@ def test_start_cutscene_accepts_positional_args():
     assert tw.IsCutsceneMode() is True
 
 
-def test_add_python_func_handler_for_instance_records_registration():
-    """SDK Initialize() routines call pTop.AddPythonFuncHandlerForInstance(...)
-    to register per-instance event handlers. We record the registrations
-    but don't dispatch through them today — when an SDK event flow needs
-    these handlers, a follow-up will wire them into g_kEventManager."""
-    from engine.appc import top_window
-    top_window.reset_for_tests()
-    tw = top_window.TopWindow_GetTopWindow()
-    tw.AddPythonFuncHandlerForInstance(1001, "some.module.handler")
-    tw.AddPythonFuncHandlerForInstance(1002, "another.handler")
-    assert tw._handler_registrations == [
-        (1001, "some.module.handler"),
-        (1002, "another.handler"),
-    ]
-
-
 def test_add_python_func_handler_accepts_extra_args():
     """The underlying TGEventManager.AddBroadcastPythonFuncHandler has a
     *extra trailing varargs; mirror that on the shim so any SDK caller
@@ -481,7 +536,106 @@ def test_add_python_func_handler_accepts_extra_args():
     tw = top_window.TopWindow_GetTopWindow()
     # Should not raise even with extra trailing args
     tw.AddPythonFuncHandlerForInstance(1001, "x.y", "extra", 42)
-    assert len(tw._handler_registrations) == 1
+
+
+_chain_log = []
+
+
+def _swallowing_handler(dispatcher, event):
+    _chain_log.append("swallow")
+    # returns WITHOUT CallNextHandler -> chain stops (E1M1 tutorial shape)
+
+
+def _passthrough_handler(dispatcher, event):
+    _chain_log.append("pass")
+    dispatcher.CallNextHandler(event)
+
+
+def test_default_view_is_bridge():
+    from engine.appc.top_window import _TopWindow
+    tw = _TopWindow()
+    assert tw.IsBridgeVisible() is True
+    assert tw.IsTacticalVisible() is False
+
+
+def test_reset_restores_bridge_default():
+    import engine.appc.top_window as top_window
+    top_window.TopWindow_GetTopWindow().ForceTacticalVisible()
+    top_window.reset_for_tests()
+    assert top_window.TopWindow_GetTopWindow().IsBridgeVisible() is True
+
+
+def test_toggle_event_default_handler_flips_view():
+    import engine.appc.top_window as top_window
+    from engine.appc.events import TGEvent, ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    assert tw.IsBridgeVisible() is True
+    ev = TGEvent()
+    ev.SetEventType(ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL)
+    tw.ProcessEvent(ev)
+    assert tw.IsBridgeVisible() is False
+    assert tw.IsTacticalVisible() is True
+
+
+def test_mission_handler_swallows_toggle():
+    import engine.appc.top_window as top_window
+    from engine.appc.events import TGEvent, ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL
+    top_window.reset_for_tests()
+    _chain_log.clear()
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.AddPythonFuncHandlerForInstance(
+        ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL, __name__ + "._swallowing_handler")
+    ev = TGEvent()
+    ev.SetEventType(ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL)
+    tw.ProcessEvent(ev)
+    assert _chain_log == ["swallow"]
+    assert tw.IsBridgeVisible() is True      # default never ran — view held
+
+
+def test_mission_handler_passthrough_reaches_default():
+    import engine.appc.top_window as top_window
+    from engine.appc.events import TGEvent, ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL
+    top_window.reset_for_tests()
+    _chain_log.clear()
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.AddPythonFuncHandlerForInstance(
+        ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL, __name__ + "._passthrough_handler")
+    ev = TGEvent()
+    ev.SetEventType(ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL)
+    tw.ProcessEvent(ev)
+    assert _chain_log == ["pass"]
+    assert tw.IsBridgeVisible() is False     # default ran via CallNextHandler
+
+
+def test_remove_handler_for_instance():
+    import engine.appc.top_window as top_window
+    from engine.appc.events import TGEvent, ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL
+    top_window.reset_for_tests()
+    _chain_log.clear()
+    tw = top_window.TopWindow_GetTopWindow()
+    name = __name__ + "._swallowing_handler"
+    tw.AddPythonFuncHandlerForInstance(ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL, name)
+    tw.RemoveHandlerForInstance(ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL, name)
+    ev = TGEvent()
+    ev.SetEventType(ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL)
+    tw.ProcessEvent(ev)
+    assert _chain_log == []                  # removed handler never fired
+    assert tw.IsBridgeVisible() is False     # default still ran
+
+
+def test_reset_rebuilds_default_handler():
+    # The lifecycle rule: the default lives in __init__, so a singleton
+    # rebuild (mission swap) must re-arm it with no external wiring.
+    import engine.appc.top_window as top_window
+    from engine.appc.events import TGEvent, ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL
+    top_window.reset_for_tests()
+    top_window.reset_for_tests()             # twice — idempotent
+    tw = top_window.TopWindow_GetTopWindow()
+    ev = TGEvent()
+    ev.SetEventType(ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL)
+    tw.ProcessEvent(ev)
+    assert tw.IsBridgeVisible() is False
 
 
 def test_subtitle_window_seeded_after_init():
@@ -534,3 +688,26 @@ def test_reset_for_tests_resets_stylized_counter():
     assert _STStylizedWindow._counter == 2
     top_window.reset_for_tests()
     assert _STStylizedWindow._counter == 0
+
+
+def test_dispatch_toggle_helper_round_trip():
+    import engine.appc.top_window as top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    assert tw.IsBridgeVisible() is True
+    top_window.dispatch_toggle_bridge_and_tactical()
+    assert tw.IsBridgeVisible() is False
+    top_window.dispatch_toggle_bridge_and_tactical()
+    assert tw.IsBridgeVisible() is True
+
+
+def test_dispatch_toggle_helper_respects_mission_swallow():
+    import engine.appc.top_window as top_window
+    top_window.reset_for_tests()
+    _chain_log.clear()
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.AddPythonFuncHandlerForInstance(
+        top_window.ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL,
+        __name__ + "._swallowing_handler")
+    top_window.dispatch_toggle_bridge_and_tactical()
+    assert tw.IsBridgeVisible() is True      # held on bridge
