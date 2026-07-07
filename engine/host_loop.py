@@ -1648,38 +1648,44 @@ from engine.cameras.chase import _ChaseCamera as _CameraControl
 
 
 class _ViewModeController:
-    """Bridge/exterior view modality.
+    """Bridge/exterior view modality — a stateless facade over the SDK
+    TopWindow flags (engine/appc/top_window.py), which are the single
+    source of truth (pull model; spec
+    docs/superpowers/specs/2026-07-05-mission-view-camera-input-locks-design.md §1).
 
-    Edge-triggered on KEY_SPACE. Owns the single mode flag that input,
-    camera, and HUD dispatch off — see _apply_input and _compute_camera.
-
-    Bridge mode is currently a stub: the camera anchors at the ship
-    origin looking along ship-Y forward, ship input is suppressed (the
-    ship coasts on existing velocity), and a "BRIDGE VIEW" HUD panel
-    becomes visible. No bridge geometry yet.
+    SPACE dispatches ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL through
+    TopWindow's instance-handler chain so missions can swallow the toggle
+    (E1M1/E1M2 TacticalToggleHandler); the bottom-of-chain default
+    performs the flag flip synchronously during dispatch. SDK calls like
+    ForceBridgeVisible are plain flag writes the next frame's read picks
+    up — no listeners, nothing to re-wire on mission swap.
     """
-    EXTERIOR = 0
-    BRIDGE   = 1
-
-    def __init__(self):
-        self._mode = self.BRIDGE
 
     @property
-    def is_exterior(self) -> bool: return self._mode == self.EXTERIOR
+    def is_bridge(self) -> bool:
+        from engine.appc.top_window import bridge_flag
+        return bridge_flag()
+
     @property
-    def is_bridge(self)   -> bool: return self._mode == self.BRIDGE
+    def is_exterior(self) -> bool:
+        return not self.is_bridge
 
     def toggle(self) -> None:
-        self._mode = self.BRIDGE if self.is_exterior else self.EXTERIOR
+        from engine.appc.top_window import TopWindow_GetTopWindow
+        TopWindow_GetTopWindow().ToggleBridgeAndTactical()
 
     def set_bridge(self) -> None:
         """Force bridge view (used to start a bridge cutscene)."""
-        self._mode = self.BRIDGE
+        from engine.appc.top_window import TopWindow_GetTopWindow
+        TopWindow_GetTopWindow().ForceBridgeVisible()
 
     def apply(self, h) -> None:
-        """Poll space-pressed and toggle on edge."""
+        """Poll space-pressed; on edge, route through the SDK chain."""
         if h.key_pressed(h.keys.KEY_SPACE):
-            self.toggle()
+            from engine.appc.top_window import (
+                dispatch_toggle_bridge_and_tactical,
+            )
+            dispatch_toggle_bridge_and_tactical()
 
 
 class _PauseMenuController:

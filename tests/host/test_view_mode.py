@@ -22,22 +22,36 @@ class _FakeKeyReader:
         return False
 
 
+_chain_log = []
+
+
+def _swallowing_handler(dispatcher, event):
+    _chain_log.append("swallow")
+    # returns WITHOUT CallNextHandler -> chain stops (E1M1 tutorial shape)
+
+
 def _exterior_vm():
+    import engine.appc.top_window as top_window
     from engine.host_loop import _ViewModeController
+    top_window.reset_for_tests()
     vm = _ViewModeController()
     vm.toggle()  # bridge → exterior
     return vm
 
 
 def test_view_mode_starts_in_bridge():
+    import engine.appc.top_window as top_window
     from engine.host_loop import _ViewModeController
+    top_window.reset_for_tests()
     vm = _ViewModeController()
     assert vm.is_bridge is True
     assert vm.is_exterior is False
 
 
 def test_view_mode_toggle_on_space_pressed():
+    import engine.appc.top_window as top_window
     from engine.host_loop import _ViewModeController
+    top_window.reset_for_tests()
     vm = _ViewModeController()
     reader = _FakeKeyReader()
 
@@ -90,7 +104,9 @@ class _RecordingInputs:
 
 
 def test_apply_input_calls_both_in_exterior_mode():
+    import engine.appc.top_window as top_window
     from engine.host_loop import _ViewModeController, _apply_input
+    top_window.reset_for_tests()
     vm = _ViewModeController()
     vm.toggle()  # bridge → exterior
     inputs = _RecordingInputs()
@@ -106,7 +122,9 @@ def test_apply_input_in_bridge_keeps_player_integrating_with_no_input():
     """Bridge mode calls player_control.apply with a no-input reader so
     ship physics keep integrating (engines coast) while live keys are
     ignored. The orbit camera is not stepped at all."""
+    import engine.appc.top_window as top_window
     from engine.host_loop import _ViewModeController, _apply_input, _NO_INPUT
+    top_window.reset_for_tests()
     vm = _ViewModeController()
     inputs = _RecordingInputs()
     reader = _FakeKeyReader()
@@ -121,7 +139,9 @@ def test_apply_input_in_bridge_keeps_player_integrating_with_no_input():
 def test_apply_input_preserves_orbit_state_across_bridge_toggle():
     """Spec test 5: entering bridge mode must not mutate _CameraControl
     orbit state, so toggling back restores the same exterior framing."""
+    import engine.appc.top_window as top_window
     from engine.host_loop import _ViewModeController, _CameraControl, _apply_input
+    top_window.reset_for_tests()
 
     class _FakeDirectorWithChase:
         def __init__(self, chase): self.chase = chase
@@ -149,8 +169,10 @@ def test_apply_input_in_bridge_keeps_ship_moving_under_real_player_control():
     freeze the ship — it should keep coasting forward at its current
     speed. Drives the real _PlayerControl against a fake ship to prove
     that the integration step still runs in bridge mode."""
+    import engine.appc.top_window as top_window
     from engine.host_loop import _ViewModeController, _PlayerControl, _apply_input
     from engine.appc.math import TGPoint3, TGMatrix3
+    top_window.reset_for_tests()
 
     class _FakeShip:
         def __init__(self):
@@ -237,7 +259,9 @@ def test_apply_view_mode_side_effects_idempotent_within_a_mode():
     must not re-fire the renderer calls — bridge_pass_set_enabled is a
     cheap setter but cursor lock has visible side-effects we don't want
     to spam."""
+    import engine.appc.top_window as top_window
     from engine.host_loop import _ViewModeController, _apply_view_mode_side_effects
+    top_window.reset_for_tests()
     vm = _ViewModeController()
     rr = _RecordingRenderer()
     _apply_view_mode_side_effects(vm, rr)
@@ -250,9 +274,11 @@ def test_apply_view_mode_side_effects_idempotent_within_a_mode():
 def test_bridge_camera_anchors_at_ship_origin_looking_forward():
     """Spec test 4: bridge camera eye = ship loc, target along ship
     forward (row 1), up along ship up (row 2)."""
+    import engine.appc.top_window as top_window
     from engine.host_loop import _ViewModeController, _compute_camera
     from engine.cameras import _CameraDirector
     from engine.appc.math import TGPoint3, TGMatrix3
+    top_window.reset_for_tests()
 
     class _FakePlayer:
         def __init__(self, loc, rot):
@@ -293,5 +319,39 @@ def test_exterior_camera_delegates_to_director():
     assert len(eye) == 3
     assert len(target) == 3
     assert len(up_vec) == 3
+
+
+def test_space_edge_dispatches_through_top_window_chain():
+    """SPACE must route through the SDK event chain (missions swallow it),
+    not flip state directly."""
+    import engine.appc.top_window as top_window
+    from engine.host_loop import _ViewModeController
+    top_window.reset_for_tests()
+    _chain_log.clear()
+    top_window.TopWindow_GetTopWindow().AddPythonFuncHandlerForInstance(
+        top_window.ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL,
+        __name__ + "._swallowing_handler")
+    vm = _ViewModeController()
+    assert vm.is_bridge
+
+    class _H:
+        class keys: KEY_SPACE = 32
+        def key_pressed(self, code): return code == self.keys.KEY_SPACE
+    vm.apply(_H())
+    assert _chain_log == ["swallow"]
+    assert vm.is_bridge                      # held on bridge by the mission
+
+
+def test_controller_reads_top_window_truth():
+    """ForceBridgeVisible from SDK code must be visible to the host with
+    no listener wiring — the pull model's core promise."""
+    import engine.appc.top_window as top_window
+    from engine.host_loop import _ViewModeController
+    top_window.reset_for_tests()
+    vm = _ViewModeController()
+    top_window.TopWindow_GetTopWindow().ForceTacticalVisible()
+    assert vm.is_exterior
+    top_window.TopWindow_GetTopWindow().ForceBridgeVisible()
+    assert vm.is_bridge
 
 
