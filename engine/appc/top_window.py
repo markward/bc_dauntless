@@ -7,6 +7,8 @@ list (for a future CEF mirror), and FindMainWindow lookups.
 See docs/superpowers/specs/2026-06-03-top-window-shim-design.md.
 """
 
+from engine.appc.events import TGEventHandlerObject, ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL
+
 
 # ── Main-window-type enums ────────────────────────────────────
 # Real Appc exposes these via SWIG; the integer values are arbitrary
@@ -30,8 +32,8 @@ class _TopWindow:
         self._mouse_input_enabled: bool = True
         self._cutscene_active: bool = False
         self._fade_active: bool = False
-        self._bridge_visible: bool = False
-        self._tactical_visible: bool = True
+        self._bridge_visible: bool = True
+        self._tactical_visible: bool = False
         self._edit_mode: bool = False
         self._options_disabled: bool = False
         self._last_rendered_set = None
@@ -42,7 +44,17 @@ class _TopWindow:
             MWT_SUBTITLE: _SubtitleWindow(),
             MWT_OPTIONS: _OptionsWindow(),
         }
-        self._handler_registrations: list[tuple[int, str]] = []
+        # Instance event chain (composition, not inheritance: _TopWindow
+        # stays a plain class so missing methods raise AttributeError
+        # instead of vending _Stubs — see the focus/z-order comment below).
+        # The default toggle handler is registered HERE so every singleton
+        # rebuild (mission swap via reset_for_tests) re-arms it with no
+        # external wiring — spec §7 lifecycle rule.
+        self._events = TGEventHandlerObject()
+        self._events.AddPythonFuncHandlerForInstance(
+            ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL,
+            "engine.appc.top_window._default_toggle_handler",
+        )
 
     # ── Input gate ─────────────────────────────────────────────
     def AllowKeyboardInput(self, enabled) -> None:
@@ -111,16 +123,22 @@ class _TopWindow:
     def FindMainWindow(self, mwt):
         return self._main_windows.get(int(mwt))
 
-    # ── Event handler registration ─────────────────────────────
-    # SDK code calls pTop.AddPythonFuncHandlerForInstance(event_type, "qualified.name")
-    # to register per-instance handlers (inherited from TGEventHandlerObject
-    # in BC). We record the registrations but don't dispatch through them
-    # yet — a future spec will route them into g_kEventManager when an
-    # SDK event flow actually needs them.
+    # ── Event handler chain ────────────────────────────────────
+    # SDK code registers per-instance handlers (E1M1/E1M2
+    # TacticalToggleHandler) and swallows events by returning without
+    # CallNextHandler; the chain is LIFO (see TGEventHandlerObject).
     def AddPythonFuncHandlerForInstance(
         self, event_type, qualified_name, *_extra
     ) -> None:
-        self._handler_registrations.append((int(event_type), str(qualified_name)))
+        self._events.AddPythonFuncHandlerForInstance(
+            int(event_type), str(qualified_name))
+
+    def RemoveHandlerForInstance(self, event_type, qualified_name) -> None:
+        self._events.RemoveHandlerForInstance(
+            int(event_type), str(qualified_name))
+
+    def ProcessEvent(self, event) -> None:
+        self._events.ProcessEvent(event)
 
     # ── Children (tracked but not rendered — see CEF mirror follow-up) ──
     def AddChild(self, child, x: float = 0.0, y: float = 0.0, *_extra) -> None:
@@ -250,3 +268,17 @@ def keyboard_input_enabled() -> bool:
 def mouse_input_enabled() -> bool:
     """Reserved for a future mouse-event trampoline. No consumer today."""
     return _the_top_window._mouse_input_enabled
+
+
+def _default_toggle_handler(_dispatcher, _event) -> None:
+    """Bottom-of-chain default for ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL.
+    Runs synchronously inside CallNextHandler — E1M1's TacticalToggleHandler
+    reads IsBridgeVisible() immediately after CallNextHandler and expects
+    the flip to have already happened (E1M1.py:1194-1198)."""
+    _the_top_window.ToggleBridgeAndTactical()
+
+
+def bridge_flag() -> bool:
+    """Per-frame view selector consulted by host_loop's
+    _ViewModeController. Function, not constant: read at frame time."""
+    return _the_top_window._bridge_visible
