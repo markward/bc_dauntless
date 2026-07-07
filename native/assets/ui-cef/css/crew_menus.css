@@ -67,15 +67,56 @@
   margin-top: 6px;
   text-transform: uppercase;
 }
+/* The actively-worked section reads loudest: full-strength active teal,
+   distinct from the salmon chrome and the red destroyed hover. */
+.crew-repair-area-title--repairing {
+  opacity: 1;
+  color: #7fd8c0;
+}
+
+/* Affordance hint under the REPAIRING header. */
+.crew-repair-hint {
+  font-size: 10px;
+  opacity: 0.55;
+  font-style: italic;
+  margin: 0 0 2px 18px;
+  letter-spacing: 0.02em;
+}
 
 .crew-repair-row {
+  display: flex;
+  align-items: baseline;
   padding: 3px 4px;
   font-size: 13px;
   letter-spacing: 0.04em;
   cursor: pointer;
+  /* transparent rule on every row so REPAIRING's accent rule doesn't shift
+     the label left-edge relative to the other areas. */
+  border-left: 2px solid transparent;
 }
 
+/* Fixed-width marker slot — lit only on active rows, empty elsewhere, so
+   every label lines up. */
+.crew-repair-mark {
+  flex: 0 0 auto;
+  width: 14px;
+  text-align: center;
+  line-height: 1;
+  color: #7fd8c0;
+}
+.crew-repair-label { flex: 1 1 auto; }
+
+/* Actively-repaired rows: teal rule + tint + full weight = unmistakably
+   "being worked right now". */
+.crew-repair-row--repairing {
+  border-left-color: #7fd8c0;
+  background: rgba(127, 216, 192, 0.08);
+  font-weight: 700;
+}
+.crew-repair-row--waiting { opacity: 0.82; }
+
 .crew-repair-row:hover { background: rgba(216, 94, 86, 0.18); }
+.crew-repair-row--repairing:hover { background: rgba(127, 216, 192, 0.16); }
 
 .crew-repair-row.inert {
   cursor: default;

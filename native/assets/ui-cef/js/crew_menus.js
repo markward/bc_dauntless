@@ -90,21 +90,44 @@ function appendCrewRows(body, nodes, depth) {
 function renderRepairPane(node) {
   const pane = document.createElement("div");
   pane.className = "crew-repair-pane";
+  // kind drives the styling: REPAIRING reads loudest (active teal marker +
+  // rule), WAITING is muted-but-clickable, DESTROYED is inert. BC repairs
+  // several systems in parallel (up to the ship's repair-team count), so the
+  // whole REPAIRING group is "currently being worked", not a single row.
   const areas = [
-    ["REPAIRING", node.repair, true],
-    ["WAITING", node.waiting, true],
-    ["DESTROYED", node.destroyed, false],
+    ["REPAIRING", node.repair, true, "repairing"],
+    ["WAITING", node.waiting, true, "waiting"],
+    ["DESTROYED", node.destroyed, false, "destroyed"],
   ];
-  for (const [title, rows, clickable] of areas) {
+  const waitingCount = (node.waiting || []).length;
+  for (const [title, rows, clickable, kind] of areas) {
     if (!rows || !rows.length) continue;
     const h = document.createElement("div");
-    h.className = "crew-repair-area-title";
-    h.textContent = title;
+    h.className = "crew-repair-area-title crew-repair-area-title--" + kind;
+    h.textContent = title + " · " + rows.length;   // live count per area
     pane.appendChild(h);
+    // Hint under REPAIRING: explain the click affordance, but only when there
+    // are waiting systems to promote (otherwise there's nothing to prioritize).
+    if (kind === "repairing" && waitingCount) {
+      const hint = document.createElement("div");
+      hint.className = "crew-repair-hint";
+      hint.textContent = "click a waiting system to prioritize";
+      pane.appendChild(hint);
+    }
     for (const r of rows) {
       const row = document.createElement("div");
-      row.className = "crew-repair-row" + (clickable ? "" : " inert");
-      row.textContent = r.label + " — " + r.pct + "%";
+      row.className = "crew-repair-row crew-repair-row--" + kind +
+                      (clickable ? "" : " inert");
+      // Fixed-width marker slot on every row keeps labels aligned; only
+      // actively-repaired rows light it.
+      const mark = document.createElement("span");
+      mark.className = "crew-repair-mark";
+      mark.textContent = kind === "repairing" ? "●" : "";   // ● when active
+      row.appendChild(mark);
+      const label = document.createElement("span");
+      label.className = "crew-repair-label";
+      label.textContent = r.label + " — " + r.pct + "%";
+      row.appendChild(label);
       if (clickable) {
         row.onclick = () => dauntlessEvent("crew-menu/repair:" + r.id);
       }
