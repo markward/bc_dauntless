@@ -1682,23 +1682,31 @@ class _ViewModeController:
     def apply(self, h) -> None:
         """Poll space-pressed; on edge, route through the SDK chain.
 
-        The bridge/tactical toggle is suppressed during cutscene mode
-        (MissionLib.StartCutscene .. EndCutscene): BC blocks the view
-        toggle while a cutscene plays and re-enables it when EndCutscene
-        runs — E1M1's "Captain, the bridge is yours" beat, which ends the
-        intro cutscene. This is deliberately independent of
-        RemoveControl/AllowKeyboardInput: that gates *ship* control (helm,
-        fire) and is NOT returned at "the bridge is yours", yet the view
-        toggle works there — so the toggle keys off cutscene mode, not the
-        keyboard-input flag.
+        The bridge/tactical toggle is suppressed during a cutscene:
+
+        * MissionLib cutscene mode (StartCutscene .. EndCutscene). BC blocks
+          the view toggle while a cutscene plays and re-enables it at
+          EndCutscene — E1M1's "Captain, the bridge is yours" beat. This is
+          independent of RemoveControl/AllowKeyboardInput, which gates *ship*
+          control (helm, fire) and is NOT returned at that beat, yet the view
+          toggle works there.
+        * A bridge-cutscene camera path is queued or playing. Such a path
+          forces the view to bridge every frame (_compute_camera's set_bridge),
+          so a toggle would flip to exterior for a single frame before being
+          reverted — a visible flash. Suppress the toggle outright instead.
         """
         if h.key_pressed(h.keys.KEY_SPACE):
             from engine.appc.top_window import (
                 TopWindow_GetTopWindow,
                 dispatch_toggle_bridge_and_tactical,
             )
-            if not TopWindow_GetTopWindow().IsCutsceneMode():
-                dispatch_toggle_bridge_and_tactical()
+            if TopWindow_GetTopWindow().IsCutsceneMode():
+                return
+            from engine.bridge_cutscene import get_controller
+            ctrl = get_controller()
+            if ctrl is not None and ctrl.has_pending_camera():
+                return
+            dispatch_toggle_bridge_and_tactical()
 
 
 class _PauseMenuController:

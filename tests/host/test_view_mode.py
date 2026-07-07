@@ -117,6 +117,30 @@ def test_space_toggle_works_when_control_removed_but_no_cutscene():
     assert vm.is_exterior is True
 
 
+def test_space_toggle_suppressed_while_bridge_cutscene_camera_pending():
+    """A queued/playing bridge-cutscene camera path forces the view to
+    bridge each frame; toggling would flip to exterior for one frame and
+    flash. The toggle must be ignored outright (no dispatch)."""
+    import engine.appc.top_window as top_window
+    import engine.bridge_cutscene as bc
+    from engine.host_loop import _ViewModeController
+    top_window.reset_for_tests()
+
+    class _FakeCutscene:
+        def has_pending_camera(self):
+            return True
+
+    bc.set_controller(_FakeCutscene())
+    try:
+        vm = _ViewModeController()
+        reader = _FakeKeyReader()
+        reader.pressed_once.add(reader.keys.KEY_SPACE)
+        vm.apply(reader)
+        assert vm.is_bridge is True     # held — no flash toggle
+    finally:
+        bc.clear_controller()
+
+
 class _RecordingInputs:
     """Stand-ins for _PlayerControl / director that record whether
     apply() was called and what reader it was handed, without doing any
