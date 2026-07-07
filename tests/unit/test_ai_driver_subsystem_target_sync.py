@@ -7,6 +7,7 @@ the AI's choice. See docs/superpowers/specs/2026-07-07-npc-subsystem-targeting-d
 import pytest
 
 import App
+from engine import dev_mode
 from engine.appc.ai import PreprocessingAI, PreprocessingAI_Create
 from engine.appc.ai_driver import tick_ai, _sync_fire_script_target_subsystem
 from engine.appc.ships import ShipClass
@@ -194,3 +195,33 @@ def test_real_firescript_choice_reaches_ship_target_subsystem():
         App.TGObject_GetTGObjectPtr(inst.idTargetedSubsystem))
     assert ours.GetTargetSubsystem() is resolved
     assert ours.GetTargetSubsystem() is warp_core
+
+
+# ── Dev-mode diagnostic visibility (regression: logging.info was swallowed) ──
+# The host configures no logging handler, so logging.info(...) is invisible in
+# the running game. Dev-mode diagnostics MUST print() to reach the terminal —
+# matching the [viewscreen]/[host_loop] convention. See systematic-debugging
+# session 2026-07-07: "not seeing ais targeting subsystems" was this bug.
+
+def test_dev_mode_diagnostic_prints_to_stdout_on_change(monkeypatch, capsys):
+    monkeypatch.setattr(dev_mode, "is_enabled", lambda: True)
+    ours, target, shield = _ship_with_target_and_subsystem()
+    inst = _FireScriptLike(shield.GetObjID())
+    _wire(inst, ours)
+    inst.idTargetedSubsystem = shield.GetObjID()
+    _sync_fire_script_target_subsystem(inst)
+    out = capsys.readouterr().out
+    assert "[ai]" in out
+    assert "targeting" in out
+    assert shield.GetName() in out
+
+
+def test_dev_mode_diagnostic_silent_when_dev_mode_off(monkeypatch, capsys):
+    monkeypatch.setattr(dev_mode, "is_enabled", lambda: False)
+    ours, target, shield = _ship_with_target_and_subsystem()
+    inst = _FireScriptLike(shield.GetObjID())
+    _wire(inst, ours)
+    inst.idTargetedSubsystem = shield.GetObjID()
+    _sync_fire_script_target_subsystem(inst)
+    out = capsys.readouterr().out
+    assert "[ai]" not in out

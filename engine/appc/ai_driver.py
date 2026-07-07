@@ -16,7 +16,6 @@ _next_update_time field; the driver consults it each tick. This keeps
 Step 3 testable independently of the TimeSliceProcess scheduler (Step 2).
 """
 import inspect
-import logging
 import random
 
 from engine import dev_mode
@@ -24,8 +23,6 @@ from engine.appc.ai import (
     ArtificialIntelligence, PlainAI, PriorityListAI, SequenceAI,
     ConditionalAI, PreprocessingAI, BuilderAI, RandomAI,
 )
-
-_logger = logging.getLogger(__name__)
 
 US_ACTIVE = ArtificialIntelligence.US_ACTIVE
 US_DONE = ArtificialIntelligence.US_DONE
@@ -343,7 +340,10 @@ def _sync_fire_script_target_subsystem(inst) -> None:
         if dev_mode.is_enabled():
             ship_name = ship.GetName() if hasattr(ship, "GetName") else "<ship>"
             sub_name = chosen.GetName() if chosen is not None else "hull centre"
-            _logger.info("AI %s -> targeting %s", ship_name, sub_name)
+            # print(), not logging: the host configures no logging handler, so
+            # logging.info is swallowed and never reaches the terminal. Matches
+            # the [viewscreen]/[host_loop] dev-diagnostic convention.
+            print(f"[ai] {ship_name} -> targeting {sub_name}")
 
 
 def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:

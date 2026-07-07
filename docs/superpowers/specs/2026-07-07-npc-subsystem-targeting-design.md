@@ -111,12 +111,16 @@ Gated behind developer mode (`engine.dev_mode.is_enabled()`), emit a single line
 when an NPC's chosen subsystem *changes*:
 
 ```
-AI <ship name> -> targeting <subsystem name>   (or "-> targeting hull centre" for None)
+[ai] <ship name> -> targeting <subsystem name>   (or "-> targeting hull centre" for None)
 ```
 
-Off in production (never constructed/emitted without `--developer`). This makes the
-live test a direct observation instead of an inference. Use the existing dev-mode
-logging convention (match how other `dev_mode`-gated diagnostics emit).
+Off in production (never emitted without `--developer`). **Use `print()`, not
+`logging`** — the host configures no logging handler, so `logging.info(...)` is
+silently swallowed and never reaches the terminal (this was the "not seeing it"
+bug of 2026-07-07). Match the visible `[viewscreen]` / `[host_loop]` dev-diagnostic
+convention (a `[ai]` prefix, printed to stdout). This makes the live test a direct
+observation instead of an inference — provided the game is launched from a terminal
+so stdout is visible.
 
 ## Error handling / edge cases
 
@@ -155,7 +159,7 @@ The change is Python-only; **no `cmake` rebuild needed**. Steps:
    `ChooseSubsystemTargets` is on; Medium/0.5 also works).
 3. Start a combat scenario with at least one attacking NPC — QuickBattle with an
    enemy ship, or a combat mission via the dev **Load Mission...** picker.
-4. **Watch the developer console/log** for `AI <ship> -> targeting <subsystem>`
+4. **Launch from a terminal and watch stdout** for `[ai] <ship> -> targeting <subsystem>`
    lines as combat begins. **Expected:** NPCs report targeting high-value
    subsystems (typically **weapons** and **shields**, sometimes the **Warp Core**
    or engines), not "hull centre". Seeing any non-null subsystem name confirms the

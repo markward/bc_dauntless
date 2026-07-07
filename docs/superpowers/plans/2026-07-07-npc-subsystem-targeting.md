@@ -175,15 +175,16 @@ Expected: FAIL — `ImportError: cannot import name '_sync_fire_script_target_su
 
 - [ ] **Step 3: Implement the helpers in `engine/appc/ai_driver.py`**
 
-At the top of the module, add the logger + dev_mode import alongside the existing imports (after the `import inspect` / `import random` lines):
+At the top of the module, add the dev_mode import alongside the existing imports (after the `import inspect` / `import random` lines):
 
 ```python
-import logging
-
 from engine import dev_mode
-
-_logger = logging.getLogger(__name__)
 ```
+
+**Do NOT use `logging`** for the dev diagnostic — the host configures no logging
+handler, so `logging.info(...)` is swallowed and never reaches the terminal. Use
+`print()` (see Step 3), matching the visible `[viewscreen]` / `[host_loop]`
+dev-diagnostic convention.
 
 Add these two module-level functions (place them near the other `_tick_*` helpers, e.g. just above `_tick_preprocessing`):
 
@@ -254,7 +255,9 @@ def _sync_fire_script_target_subsystem(inst) -> None:
         if dev_mode.is_enabled():
             ship_name = ship.GetName() if hasattr(ship, "GetName") else "<ship>"
             sub_name = chosen.GetName() if chosen is not None else "hull centre"
-            _logger.info("AI %s -> targeting %s", ship_name, sub_name)
+            # print(), not logging: the host configures no logging handler, so
+            # logging.info is swallowed and never reaches the terminal.
+            print(f"[ai] {ship_name} -> targeting {sub_name}")
 ```
 
 Then wire it into `_tick_preprocessing`: immediately after the line `ai._last_preprocess_status = result` (~line 379, inside the `if not ai._preprocess_done and game_time >= ai._next_update_time:` block), add:
@@ -378,7 +381,7 @@ This change is Python-only — **no `cmake` rebuild needed**. Give the user thes
 1. Launch: `./build/dauntless --developer`
 2. **Configuration → Gameplay → AI Difficulty = Hard** (guarantees `ChooseSubsystemTargets`; Medium/0.5 also works).
 3. Start a combat scenario with an attacking NPC (QuickBattle with an enemy ship, or a combat mission via the dev **Load Mission…** picker).
-4. Watch the developer console/log for `AI <ship> -> targeting <subsystem>` lines. **Expected:** NPCs report targeting high-value subsystems (weapons / shields / **Warp Core**), not "hull centre".
+4. Launch from a terminal and watch stdout for `[ai] <ship> -> targeting <subsystem>` lines. **Expected:** NPCs report targeting high-value subsystems (weapons / shields, sometimes Warp Core / engines), not "hull centre".
 5. Let a fight run to a kill. **Expected with the fix:** NPCs concentrate fire — shields drop faster than the hull and specific subsystems get disabled (weapons/engines), with occasional **warp-core breach** kills (instant destruction) — rather than slow uniform hull attrition (the pre-fix behavior). Note: the SDK rating favors weapons/shields (type-rating 5) and critical systems; the warp core is chosen only when its critical bonus wins, so don't expect warp-core-first every time.
 6. Cross-check: target the NPC under fire (or check your own ship if it's shooting you) via the target-subsystem HUD / Ship Property Viewer; confirm one subsystem's condition drops markedly faster than the rest — the one named in the log.
 
