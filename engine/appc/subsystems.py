@@ -2066,6 +2066,7 @@ class CloakingSubsystem(PoweredSubsystem):
             return
         self._cloak_state = self.CLOAK_CLOAKING
         self._transition_elapsed = 0.0
+        self._cloak_dev_log("cloaking")
         self._fire("ET_CLOAK_BEGINNING")
         self._play_cloak_sfx("Cloak")
         self._collapse_shields()
@@ -2080,6 +2081,7 @@ class CloakingSubsystem(PoweredSubsystem):
             return
         self._cloak_state = self.CLOAK_DECLOAKING
         self._transition_elapsed = 0.0
+        self._cloak_dev_log("decloaking")
         self._fire("ET_DECLOAK_BEGINNING")
         self._play_cloak_sfx("Uncloak")
 
@@ -2161,8 +2163,19 @@ class CloakingSubsystem(PoweredSubsystem):
         was_cloaked = self._cloak_state == self.CLOAK_CLOAKED
         self._cloak_state = self.CLOAK_DECLOAKED
         self._transition_elapsed = 0.0
+        self._cloak_dev_log("forced decloak")
         if was_cloaked:
             self._fire("ET_DECLOAK_COMPLETED")
+
+    def _cloak_dev_log(self, verb: str) -> None:
+        """Dev-mode-only transition trace. print(), not logging — the host
+        configures no logging handler, so logging.* is swallowed. Matches the
+        [viewscreen]/[ai] convention; off in production."""
+        if not dev_mode.is_enabled():
+            return
+        ship = self.GetParentShip() if hasattr(self, "GetParentShip") else None
+        name = ship.GetName() if (ship is not None and hasattr(ship, "GetName")) else "<ship>"
+        print(f"[cloak] {name} -> {verb}")
 
     # ── Per-tick transition advance (game-loop subsystem update pass) ────────
 
