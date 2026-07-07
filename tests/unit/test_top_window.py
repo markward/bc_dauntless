@@ -617,3 +617,26 @@ def test_reset_for_tests_resets_stylized_counter():
     assert _STStylizedWindow._counter == 2
     top_window.reset_for_tests()
     assert _STStylizedWindow._counter == 0
+
+
+def test_dispatch_toggle_helper_round_trip():
+    import engine.appc.top_window as top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    assert tw.IsBridgeVisible() is True
+    top_window.dispatch_toggle_bridge_and_tactical()
+    assert tw.IsBridgeVisible() is False
+    top_window.dispatch_toggle_bridge_and_tactical()
+    assert tw.IsBridgeVisible() is True
+
+
+def test_dispatch_toggle_helper_respects_mission_swallow():
+    import engine.appc.top_window as top_window
+    top_window.reset_for_tests()
+    _chain_log.clear()
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.AddPythonFuncHandlerForInstance(
+        top_window.ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL,
+        __name__ + "._swallowing_handler")
+    top_window.dispatch_toggle_bridge_and_tactical()
+    assert tw.IsBridgeVisible() is True      # held on bridge

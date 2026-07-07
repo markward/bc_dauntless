@@ -7,7 +7,11 @@ list (for a future CEF mirror), and FindMainWindow lookups.
 See docs/superpowers/specs/2026-06-03-top-window-shim-design.md.
 """
 
-from engine.appc.events import TGEventHandlerObject, ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL
+from engine.appc.events import (
+    TGEvent,
+    TGEventHandlerObject,
+    ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL,
+)
 
 
 # ── Main-window-type enums ────────────────────────────────────
@@ -282,3 +286,13 @@ def bridge_flag() -> bool:
     """Per-frame view selector consulted by host_loop's
     _ViewModeController. Function, not constant: read at frame time."""
     return _the_top_window._bridge_visible
+
+
+def dispatch_toggle_bridge_and_tactical() -> None:
+    """Host entry point for the SPACE key: routes the toggle through the
+    TopWindow instance-handler chain so missions can swallow it
+    (E1M1/E1M2 TacticalToggleHandler hold the player on the bridge
+    during tutorials by returning without CallNextHandler)."""
+    ev = TGEvent()
+    ev.SetEventType(ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL)
+    _the_top_window.ProcessEvent(ev)
