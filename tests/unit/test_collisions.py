@@ -303,6 +303,34 @@ def test_tick_collisions_disabled_flag_suppresses_all_effects():
         _dauntless_host.developer_mode = original_dev
 
 
+def test_resolve_body_immobile_ship_is_treated_as_immovable():
+    from engine.appc.collisions import _resolve_body
+    s = _ship(0.0, 500.0, 7.0, radius=2.0)
+    s.SetStatic(True)
+    b = _resolve_body(s)
+    assert b.is_movable is False
+    assert b.inv_mass == 0.0
+    assert b.velocity.x == 0.0 and b.velocity.y == 0.0 and b.velocity.z == 0.0
+
+
+def test_ship_vs_immobile_ship_bounces_mover_leaves_anchor_fixed():
+    # Mirror of test_ship_vs_immovable_planet_bounces_planet_fixed, but the
+    # fixed body is a SetStatic ship instead of a planet.
+    from engine.appc.collisions import _resolve_body, _respond_pair
+    anchor = _ship(0.0, 500.0, 0.0, radius=2.0)
+    anchor.SetStationary(1)
+    mover = _ship(3.0, 100.0, -10.0, radius=2.0)  # approaching along -x
+    anchor_pos_before = anchor.GetTranslate()
+    _respond_pair(_resolve_body(anchor), _resolve_body(mover))
+    # Anchor unmoved (de-penetration only shoves the mover).
+    ap = anchor.GetTranslate()
+    assert (ap.x, ap.y, ap.z) == pytest.approx(
+        (anchor_pos_before.x, anchor_pos_before.y, anchor_pos_before.z))
+    # Anchor gains no collision overlay; mover does.
+    assert anchor.__dict__.get("_collision_velocity") is None
+    assert mover.__dict__.get("_collision_velocity") is not None
+
+
 def _live_pair():
     """Approaching, overlapping ship pair registered in a live set."""
     pSet = App.SetClass_Create()

@@ -75,7 +75,7 @@ def _resolve_body(obj) -> "_Body":
     from engine.appc.ships import ShipClass
     center = obj.GetWorldLocation()
     radius = obj.GetRadius()
-    if isinstance(obj, ShipClass):
+    if isinstance(obj, ShipClass) and not obj.IsImmobile():
         m = obj.GetMass()
         if m <= 0.0:
             m = COLLISION_FALLBACK_MASS
@@ -83,6 +83,9 @@ def _resolve_body(obj) -> "_Body":
         movable = True
         v = obj.GetVelocity()
     else:
+        # Planets/moons/suns AND immobile ships (SetStatic / SetStationary):
+        # fixed anchors. inv_mass 0 + zero velocity means the mover takes the
+        # full de-penetration and impulse, exactly as it does against a planet.
         inv_mass = 0.0
         movable = False
         v = TGPoint3(0.0, 0.0, 0.0)
