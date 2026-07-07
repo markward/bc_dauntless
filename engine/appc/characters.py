@@ -698,6 +698,31 @@ def CharacterClass_Cast(obj) -> "CharacterClass | None":
     return obj if isinstance(obj, CharacterClass) else None
 
 
+def dispatch_character_menu(character, is_open) -> None:
+    """Send ET_CHARACTER_MENU through a bridge officer's instance handler
+    chain on menu open/close.
+
+    Missions listen for this to track crew-menu interaction: E1M1 registers
+    HandleMenuEvent on every officer (E1M1.py:905-910) and advances the
+    character-selection tutorial when it sees a menu CLOSE (``GetBool()==0``)
+    with the officer as the event destination. Without this dispatch the
+    tutorial never progresses and player control is never returned.
+
+    ``destination`` and the bool mirror what HandleMenuEvent reads
+    (``GetDestination()`` / ``GetBool()``); ``is_open`` True -> 1 (opening),
+    False -> 0 (closing). A None character (unresolved menu) is a no-op.
+    """
+    if character is None:
+        return
+    import App
+    ev = App.TGBoolEvent_Create()
+    ev.SetEventType(App.ET_CHARACTER_MENU)
+    ev.SetSource(character)
+    ev.SetDestination(character)
+    ev.SetBool(1 if is_open else 0)
+    character.ProcessEvent(ev)
+
+
 def CharacterClass_GetObject(pSet, name) -> "CharacterClass | None":
     """Look up a character by name within a SetClass.
 

@@ -25,6 +25,9 @@ class _Officer:
         self._up = False
         self.up_calls = 0
         self.down_calls = 0
+        # Records GetBool() of each ET_CHARACTER_MENU event dispatched here
+        # (1 = opened, 0 = closed) so tests can assert the tutorial signal.
+        self.menu_events: list[int] = []
 
     def MenuUp(self) -> int:
         self._up = True
@@ -34,6 +37,9 @@ class _Officer:
     def MenuDown(self) -> None:
         self._up = False
         self.down_calls += 1
+
+    def ProcessEvent(self, event) -> None:
+        self.menu_events.append(event.GetBool())
 
     @property
     def is_up(self) -> bool:
@@ -195,3 +201,59 @@ def test_disabled_menu_ignored(monkeypatch):
 
     assert not officer.is_up
     assert officer.up_calls == 0
+
+
+# ── ET_CHARACTER_MENU dispatch (E1M1 char-select tutorial signal) ────────────
+
+def test_open_dispatches_character_menu_open(monkeypatch):
+    """Opening a menu dispatches ET_CHARACTER_MENU(bool=1) to the officer."""
+    helm = _make_menu("Helm")
+    officer = _Officer("Helm")
+    panel = _make_panel()
+    _patch_panel(monkeypatch, panel, officers_by_id={1: officer})
+
+    panel.toggle_menu(helm)  # open
+
+    assert officer.menu_events == [1]
+
+
+def test_close_dispatches_character_menu_close(monkeypatch):
+    """The tutorial-advancing signal: closing a menu dispatches bool=0."""
+    helm = _make_menu("Helm")
+    officer = _Officer("Helm")
+    panel = _make_panel()
+    _patch_panel(monkeypatch, panel, officers_by_id={1: officer})
+
+    panel.toggle_menu(helm)  # open  -> 1
+    panel.toggle_menu(helm)  # close -> 0
+
+    assert officer.menu_events == [1, 0]
+
+
+def test_switch_dispatches_close_old_then_open_new(monkeypatch):
+    """Switching A→B dispatches close(A) then open(B)."""
+    menu_a = _make_menu("Helm")
+    menu_b = _make_menu("Tactical")
+    officer_a = _Officer("Helm")
+    officer_b = _Officer("Tactical")
+    panel = _make_panel()
+    _patch_panel(monkeypatch, panel, officers_by_id={1: officer_a, 2: officer_b})
+
+    panel.toggle_menu(menu_a)  # open A -> A:[1]
+    panel.toggle_menu(menu_b)  # switch -> A:[1,0], B:[1]
+
+    assert officer_a.menu_events == [1, 0]
+    assert officer_b.menu_events == [1]
+
+
+def test_close_open_menu_dispatches_character_menu_close(monkeypatch):
+    """close_open_menu() (ESC path) dispatches bool=0 to the officer."""
+    helm = _make_menu("Helm")
+    officer = _Officer("Helm")
+    panel = _make_panel()
+    _patch_panel(monkeypatch, panel, officers_by_id={1: officer})
+
+    panel.toggle_menu(helm)       # open  -> [1]
+    panel.close_open_menu()       # close -> [1, 0]
+
+    assert officer.menu_events == [1, 0]
