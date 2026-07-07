@@ -61,11 +61,12 @@
 .crew-repair-pane { padding: 2px 12px 6px; }
 
 .crew-repair-area-title {
-  font-size: 10px;
-  letter-spacing: 0.12em;
+  font-size: 11px;
+  letter-spacing: 0.04em;
   opacity: 0.7;
   margin-top: 6px;
-  text-transform: uppercase;
+  /* Original BC labels ("Repair team assignments:") are sentence-case — render
+     them verbatim rather than upper-casing. */
 }
 /* The actively-worked section reads loudest: full-strength active teal,
    distinct from the salmon chrome and the red destroyed hover. */

@@ -90,28 +90,30 @@ function appendCrewRows(body, nodes, depth) {
 function renderRepairPane(node) {
   const pane = document.createElement("div");
   pane.className = "crew-repair-pane";
-  // kind drives the styling: REPAIRING reads loudest (active teal marker +
-  // rule), WAITING is muted-but-clickable, DESTROYED is inert. BC repairs
-  // several systems in parallel (up to the ship's repair-team count), so the
-  // whole REPAIRING group is "currently being worked", not a single row.
+  // kind drives the styling: the repair-team area reads loudest (active teal
+  // marker + rule), damaged is muted-but-clickable, destroyed is inert. BC
+  // repairs several systems in parallel (up to the ship's repair-team count),
+  // so the whole top group is "currently being worked", not a single row.
+  // Header strings are the original BC labels from Bridge Menus.TGL
+  // (REPAIR_AREA_LABEL / WAITING_AREA_LABEL / DESTROYED_AREA_LABEL).
   const areas = [
-    ["REPAIRING", node.repair, true, "repairing"],
-    ["WAITING", node.waiting, true, "waiting"],
-    ["DESTROYED", node.destroyed, false, "destroyed"],
+    ["Repair team assignments:", node.repair, true, "repairing"],
+    ["Damaged systems:", node.waiting, true, "waiting"],
+    ["Destroyed systems:", node.destroyed, false, "destroyed"],
   ];
   const waitingCount = (node.waiting || []).length;
   for (const [title, rows, clickable, kind] of areas) {
     if (!rows || !rows.length) continue;
     const h = document.createElement("div");
     h.className = "crew-repair-area-title crew-repair-area-title--" + kind;
-    h.textContent = title + " · " + rows.length;   // live count per area
+    h.textContent = title;
     pane.appendChild(h);
-    // Hint under REPAIRING: explain the click affordance, but only when there
-    // are waiting systems to promote (otherwise there's nothing to prioritize).
+    // Hint under the repair-team header: explain the click affordance, but
+    // only when there are damaged systems to promote.
     if (kind === "repairing" && waitingCount) {
       const hint = document.createElement("div");
       hint.className = "crew-repair-hint";
-      hint.textContent = "click a waiting system to prioritize";
+      hint.textContent = "click a damaged system to prioritize";
       pane.appendChild(hint);
     }
     for (const r of rows) {
