@@ -140,24 +140,32 @@ def test_bridge_freelook_suppressed_during_cutscene():
         crew_menu_open=True, cutscene_active=False) is True
 
 
-def test_bridge_freelook_suppressed_when_mission_removed_mouse_control():
-    """MissionLib.RemoveControl (start of a bridge cutscene) disables mouse
-    input BEFORE StartCutscene runs, so there is a window where cutscene_active
-    is still False but the mission owns the view. Free-look must be suppressed
-    then too — otherwise mouse motion in that gap accumulates bridge yaw and the
-    cutscene locks the camera off-target (E1M1 Picard/Saffi walk-on: the view
-    froze on the empty XO chair). mouse_input_allowed defaults True so ordinary
-    bridge control is unaffected."""
+def test_bridge_freelook_suppressed_while_bridge_cutscene_pending():
+    """The walk-on hand-off gap: a bridge cutscene camera is pending/active but
+    StartCutscene hasn't set cutscene_active yet. Free-look must be suppressed
+    then (else mouse motion accumulates bridge yaw and the cutscene locks the
+    view off-target — E1M1 froze on the empty XO chair)."""
     from engine.host_loop import _bridge_freelook_suppressed
-    # Control removed, no menu, not yet in cutscene mode -> suppressed.
     assert _bridge_freelook_suppressed(
         crew_menu_open=False, cutscene_active=False,
-        mouse_input_allowed=False) is True
-    # Control allowed + nothing else -> normal free-look (not suppressed).
+        bridge_cutscene_pending=True) is True
+
+
+def test_bridge_freelook_NOT_suppressed_when_ship_control_removed_for_char_select():
+    """Regression: E1M1 character selection runs with SHIP control removed
+    (MissionLib.RemoveControl at the intro, never returned until the set-course
+    step), yet the player must look around to aim at and select officers.
+    Free-look must NOT be suppressed just because ship control is gone — only a
+    real cutscene / open menu / pending bridge cutscene camera suppresses it.
+    (The old fix gated on IsMouseInputAllowed() and locked the whole bridge.)"""
+    from engine.host_loop import _bridge_freelook_suppressed
+    # Char-selection state: no menu, no cutscene, no pending bridge camera.
+    # Ship control being removed is NOT represented here at all any more, and
+    # must not suppress free-look.
     assert _bridge_freelook_suppressed(
         crew_menu_open=False, cutscene_active=False,
-        mouse_input_allowed=True) is False
-    # Default (no arg) preserves the prior behaviour.
+        bridge_cutscene_pending=False) is False
+    # Default (no pending arg) preserves ordinary bridge free-look.
     assert _bridge_freelook_suppressed(
         crew_menu_open=False, cutscene_active=False) is False
 

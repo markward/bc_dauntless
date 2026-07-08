@@ -65,6 +65,37 @@ def test_f1_keydown_reaches_tcw_through_sdk_pipeline():
     assert App.ET_INPUT_TALK_TO_HELM in _received
 
 
+def test_keyboard_lockout_still_allows_bridge_menu_keys():
+    """RemoveControl (AllowKeyboardInput(0)) blocks ship/tactical keys but NOT
+    the bridge crew-menu keys (F1-F5). E1M1's character-selection tutorial runs
+    the whole beat with ship control removed, and the player opens each
+    officer's menu with F1-F5 — so a keyboard lockout must let those through
+    while still dropping ship keys (fire)."""
+    import KeyConfig, DefaultKeyboardBinding
+    KeyConfig.MapScancodes()
+    DefaultKeyboardBinding.Initialize()
+    _received.clear()
+    TacticalControlWindow._instance = None
+    tcw = TacticalControlWindow.GetInstance()
+    App.g_kKeyboardBinding.SetDefaultDestination(tcw)
+    tcw.AddPythonFuncHandlerForInstance(
+        App.ET_INPUT_TALK_TO_HELM, __name__ + "._record")
+    tcw.AddPythonFuncHandlerForInstance(
+        App.ET_INPUT_FIRE_PRIMARY, __name__ + "._record")
+
+    from engine.appc.top_window import TopWindow_GetTopWindow
+    tw = TopWindow_GetTopWindow()
+    tw.AllowKeyboardInput(0)                 # MissionLib.RemoveControl
+    try:
+        App.g_kInputManager.OnKeyDown(App.WC_F1)   # bridge crew menu -> allowed
+        App.g_kInputManager.OnKeyDown(App.WC_F)    # fire (ship control) -> blocked
+    finally:
+        tw.AllowKeyboardInput(1)
+
+    assert App.ET_INPUT_TALK_TO_HELM in _received, "bridge menu key blocked by lockout"
+    assert App.ET_INPUT_FIRE_PRIMARY not in _received, "ship key leaked through lockout"
+
+
 def test_stock_mapping_bound_for_all_five():
     import KeyConfig, DefaultKeyboardBinding
     KeyConfig.MapScancodes()

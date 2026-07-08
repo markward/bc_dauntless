@@ -178,6 +178,14 @@ class KeyboardBinding(TGObject):
         """
         self._bindings[(int(wc_code), int(key_state))] = (int(event_type), int(flags), value)
 
+    def event_type_for(self, evt: TGKeyboardEvent):
+        """Resolve the bound event type for a keyboard event, or None if the
+        (key, state) pair isn't bound. Lets the dispatch trampoline decide
+        per-event whether to honour a keyboard-input lockout (SHIP/tactical
+        keys) or pass through regardless (bridge crew-menu keys)."""
+        binding = self._bindings.get((evt.GetUnicodeKey(), evt.GetKeyState()))
+        return binding[0] if binding is not None else None
+
     def OnKeyboardEvent(self, _obj, evt: TGKeyboardEvent) -> None:
         key = (evt.GetUnicodeKey(), evt.GetKeyState())
         binding = self._bindings.get(key)
@@ -230,19 +238,49 @@ def register_input_handlers(event_manager: TGEventManager) -> None:
     )
 
 
+_bridge_menu_event_types = None
+
+
+def _bridge_menu_events():
+    """The bridge crew-menu ('talk to officer') event types — F1-F5. Built
+    lazily so App need not be imported at module load."""
+    global _bridge_menu_event_types
+    if _bridge_menu_event_types is None:
+        import App
+        _bridge_menu_event_types = frozenset(
+            t for t in (
+                getattr(App, "ET_INPUT_TALK_TO_HELM", None),
+                getattr(App, "ET_INPUT_TALK_TO_TACTICAL", None),
+                getattr(App, "ET_INPUT_TALK_TO_XO", None),
+                getattr(App, "ET_INPUT_TALK_TO_SCIENCE", None),
+                getattr(App, "ET_INPUT_TALK_TO_ENGINEERING", None),
+            ) if isinstance(t, int))
+    return _bridge_menu_event_types
+
+
 def _OnKeyboardEvent_Dispatch(obj, evt):
     """Trampoline so AddBroadcastPythonFuncHandler can resolve a qualified
     name and reach the singleton's bound method.
 
-    Consults engine.appc.top_window.keyboard_input_enabled() so SDK code
-    that calls TopWindow.AllowKeyboardInput(0) during a cutscene actually
-    suppresses keyboard events instead of being a silent no-op."""
-    # Local import — top_window depends on nothing in input, and
-    # input is imported by App.py before top_window is registered as
-    # a TopWindow_GetTopWindow factory; the symbol is module-level so
-    # the lookup is one attribute read per event (cheap).
+    Consults engine.appc.top_window.keyboard_input_enabled() so SDK code that
+    calls TopWindow.AllowKeyboardInput(0) actually suppresses keyboard events
+    instead of being a silent no-op.
+
+    EXCEPTION — the bridge crew-menu keys (F1-F5 -> ET_INPUT_TALK_TO_*) are
+    bridge UI, not ship control, and must still work while ship control is
+    removed: E1M1's character-selection tutorial runs the whole beat with
+    RemoveControl (AllowKeyboardInput(0)) in effect, and the player opens each
+    officer's menu with F1-F5. BC's RemoveControl disables helm/tactical keys,
+    not the bridge menus. So a keyboard lockout drops everything EXCEPT the
+    crew-menu keys."""
+    # Local import — top_window depends on nothing in input, and input is
+    # imported by App.py before top_window is registered; the symbol is
+    # module-level so the lookup is one attribute read per event (cheap).
     from engine.appc.top_window import keyboard_input_enabled
-    if not keyboard_input_enabled():
+    if g_kKeyboardBinding is None:
         return
-    if g_kKeyboardBinding is not None:
-        g_kKeyboardBinding.OnKeyboardEvent(obj, evt)
+    if not keyboard_input_enabled():
+        et = g_kKeyboardBinding.event_type_for(evt)
+        if et not in _bridge_menu_events():
+            return
+    g_kKeyboardBinding.OnKeyboardEvent(obj, evt)

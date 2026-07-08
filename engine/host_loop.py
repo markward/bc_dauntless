@@ -1724,21 +1724,23 @@ _freelook_diag_last = None   # TEMP DIAGNOSTIC (E1M1 input-lock RE) — remove w
 
 def _bridge_freelook_suppressed(*, crew_menu_open: bool,
                                 cutscene_active: bool,
-                                mouse_input_allowed: bool = True) -> bool:
+                                bridge_cutscene_pending: bool = False) -> bool:
     """Whether the bridge camera's mouse free-look is suppressed this frame.
     Suppressed while a crew menu is open (the cursor is freed to click it),
-    during a cutscene (the letterbox pins the view where the mission wants
-    it — no free-look), and whenever the mission has removed mouse control
-    (MissionLib.RemoveControl -> AllowMouseInput(0)).
+    during a cutscene (the letterbox pins the view — no free-look), and while a
+    bridge cutscene camera is pending/active (the walk-on hand-off gap where the
+    mission owns the view before StartCutscene sets cutscene_active; this is the
+    yaw-drift window that froze the E1M1 view on the empty XO chair).
 
-    The RemoveControl case is load-bearing: a bridge cutscene calls
-    RemoveControl at its start but StartCutscene (which sets cutscene_active)
-    only later, so there is a window — e.g. right after the camera walk-on
-    hands back to the base pose, before the briefing's StartCutscene — where
-    cutscene_active is still False but the player must not steer. Without this,
-    mouse motion in that gap accumulates bridge yaw and the cutscene then locks
-    the camera off-target (E1M1: the view froze on the empty XO chair)."""
-    return crew_menu_open or cutscene_active or (not mouse_input_allowed)
+    NOT suppressed merely because the mission removed *ship* control
+    (MissionLib.RemoveControl -> AllowKeyboardInput(0)/AllowMouseInput(0)): BC's
+    RemoveControl disables helm/tactical control, not bridge interaction. E1M1's
+    character-selection tutorial runs with ship control removed for the whole
+    beat, yet the player MUST look around to aim at and select officers. Gating
+    free-look on IsMouseInputAllowed() (the earlier walk-on-gap fix, 6d5f38db)
+    broke that — the entire bridge locked up post-undock. The gap is covered
+    instead by bridge_cutscene_pending, which is False during char-selection."""
+    return crew_menu_open or cutscene_active or bridge_cutscene_pending
 
 
 def _pump_walk_controller(walk_ctrl, renderer, dt, *, paused: bool) -> None:
@@ -6160,7 +6162,7 @@ def run(mission_name: Optional[str] = None,
                         if _bridge_freelook_suppressed(
                                 crew_menu_open=crew_menu_panel.has_open_menu(),
                                 cutscene_active=_tw.IsCutsceneMode(),
-                                mouse_input_allowed=_tw.IsMouseInputAllowed()):
+                                bridge_cutscene_pending=cutscene.has_pending_camera()):
                             mouse_dx, mouse_dy = 0.0, 0.0
                         bridge_camera.set_zoom_target(
                             _active_zoom_officer_world(crew_menu_panel, r),

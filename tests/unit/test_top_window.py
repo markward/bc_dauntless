@@ -71,6 +71,10 @@ def test_input_dispatch_drops_event_when_gated_off():
         def OnKeyboardEvent(self, obj, evt):
             received.append(evt)
 
+        def event_type_for(self, evt):
+            # Not a bridge crew-menu key -> honours the keyboard lockout.
+            return None
+
     saved = appc_input.g_kKeyboardBinding
     appc_input.g_kKeyboardBinding = RecordingBinding()
     try:
