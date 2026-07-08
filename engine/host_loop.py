@@ -1738,6 +1738,27 @@ def _bridge_freelook_suppressed(*, crew_menu_open: bool,
     return crew_menu_open or cutscene_active or (not mouse_input_allowed)
 
 
+def _pump_walk_controller(walk_ctrl, renderer, dt, *, paused: bool) -> None:
+    """Advance the CharacterAction AT_MOVE walk lifecycle for one frame.
+
+    Runs every UNPAUSED frame regardless of view mode. This is deliberately NOT
+    gated on ``view_mode.is_bridge`` like the purely-visual bridge-character
+    pumps (idle gestures, gesture/turn anim, lip-sync, node anim): a walk's
+    SETTLE fires the CharacterAction's Completed(), which advances the mission
+    TGSequence. E1M1's UndockCutscene chains Picard's ``AT_MOVE "P"``
+    (walk-to-chair) -> Inspection (enables the crew menus) -> collision re-enable
+    right AFTER an exterior drydock cutscene, so the active view is not the
+    bridge when the AT_MOVE fires. Gating this pump on bridge view left that
+    walk unpumped -> never settled -> Completed() never fired -> the sequence
+    jammed before Inspection (crew menus never enabled, control never restored:
+    freelook + F1-F5 dead). The intro walk-on runs in bridge view, so it never
+    hit this. Keep this view-independent. Idle when no move is pending/active
+    (walk_ctrl.update early-returns), so the always-on pump is free."""
+    if paused:
+        return
+    walk_ctrl.update(dt, renderer=renderer)
+
+
 class _PauseMenuController:
     """ESC-toggled pause-menu overlay.
 
@@ -6049,6 +6070,12 @@ def run(mission_name: Optional[str] = None,
             _cc = None if pause.is_open else _active_cutscene_camera()
             _apply_bridge_pass_state(
                 view_mode.is_bridge and _cc is None, _h, view_mode)
+            # AT_MOVE walk completion advances the mission TGSequence (E1M1
+            # UndockCutscene -> Inspection enables the crew menus), so it must be
+            # pumped every unpaused frame regardless of view — NOT inside the
+            # is_bridge render block below (that block is purely visual). See
+            # _pump_walk_controller.
+            _pump_walk_controller(walk_ctrl, r, _player_dt, paused=pause.is_open)
             if fixed_camera:
                 fixed_radius = player.GetRadius() if player is not None else 1.0
                 eye = (0.0, 0.0, CAM_MAX_RADII * fixed_radius)
@@ -6087,7 +6114,9 @@ def run(mission_name: Optional[str] = None,
                         char_anim.update(
                             _player_dt, renderer=r,
                             anim_mgr=_App.g_kAnimationManager)
-                        walk_ctrl.update(_player_dt, renderer=r)
+                        # walk_ctrl is pumped view-independently above
+                        # (_pump_walk_controller) — its completion drives the
+                        # mission sequence and must not be gated on bridge view.
                         try:
                             lip_runtime.update()
                         except Exception as _e:
