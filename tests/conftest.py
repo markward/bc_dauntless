@@ -739,6 +739,15 @@ def _reset_leakable_engine_globals():
         warp.configure_warp_vfx(start=None, stop=None, enabled=None, vantage_of=None)
     except Exception:
         pass
+    # Defensive-cloak controller: per-ship DEFENSIVE mode set (mirrors
+    # collision_avoidance's per-tick reconciliation) leaks between tests
+    # since nothing else clears it. A ship id surviving from a prior test
+    # would suppress tick_all_ai for an unrelated test's ship.
+    try:
+        from engine.appc.defensive_cloak import reset_defensive_cloak_state
+        reset_defensive_cloak_state()
+    except Exception:
+        pass
 
 
 @pytest.fixture(autouse=True)

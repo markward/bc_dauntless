@@ -741,7 +741,12 @@ def tick_all_ai(game_time: float) -> None:
     within the tick so this fires before physics + render.
     """
     from engine.appc.ship_iter import iter_ships
+    from engine.appc import defensive_cloak
     for ship in iter_ships():
+        # A ship hiding-to-repair is owned by the defensive-cloak controller;
+        # suppress its SDK AI so the two cloak drivers never conflict.
+        if defensive_cloak.is_defensive(ship):
+            continue
         ai = ship.GetAI() if hasattr(ship, "GetAI") else None
         if ai is not None:
             status = tick_ai(ai, game_time)

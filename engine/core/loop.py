@@ -29,9 +29,11 @@ class GameLoop:
         from engine.appc.ship_motion import tick_all_ship_motion
         from engine.appc.collision_avoidance import tick_collision_avoidance
         from engine.appc.planet import evaluate_proximity_checks
+        from engine.appc.defensive_cloak import tick_defensive_cloak
         game_time = App.g_kTimerManager.get_time()
         real_time = App.g_kRealtimeTimerManager.get_time()
         g_kAIManager.tick(game_time=game_time, real_time=real_time)
+        tick_defensive_cloak(TICK_DELTA)
         tick_all_ai(game_time=game_time)
         # Per-tick proximity evaluation.  SDK conditions like
         # ConditionInRange register ProximityChecks; the per-tick sweep
