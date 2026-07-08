@@ -4129,24 +4129,18 @@ def _tag_comm_instance(r, iid, comm_set_id) -> None:
 def _place_one_character(controller, r, character, set_name, is_bridge,
                          *, comm_set_id: int = None) -> None:
     """Pose one SDK CharacterClass at its station and create its skinned
-    instance. Body extracted verbatim from the prior bridge-officer placement
-    loop; the only change is create_bridge_instance vs create_comm_instance
-    and the comm_instances_by_set bookkeeping.
+    instance. Delegates the instance-building tail to
+    _realize_character_instance; the only change is create_bridge_instance vs
+    create_comm_instance and the comm_instances_by_set bookkeeping.
 
     Leak-free + idempotent: per-character _render_instance tag prevents
     double-placement within a load (a fresh set rebuild enumerates fresh,
     untagged characters).
     """
-    from engine.appc.bridge_placement import capture_placement, capture_breathing
+    from engine.appc.bridge_placement import capture_placement
 
     if getattr(character, "_render_instance", None) is not None:
         return                                       # already placed this load
-
-    def _abs(p):
-        return str(PROJECT_ROOT / "game" / p) if p else None
-
-    create = r.create_bridge_instance if is_bridge else r.create_comm_instance
-
     try:
         placement = capture_placement(character)
         if not placement:
@@ -4162,72 +4156,9 @@ def _place_one_character(controller, r, character, set_name, is_bridge,
         # viewscreen but the character never does (Soams / Admiral Liu missing).
         if placement["hidden"] and is_bridge:
             return
-        ap = character.appearance()
-        if not ap.get("body_nif"):
-            return
-
-        # Lip-sync face textures: map the character's registered SDK facial
-        # images to the renderer's viseme/blink slot names. _abs resolves each
-        # game-relative .tga path. Absent images simply leave fewer slots.
-        _facial = getattr(character, "_facial_images", {}) or {}
-        _slot_of = {"SpeakA": "a", "SpeakE": "e", "SpeakU": "u",
-                    "Blink0": "blink1", "Blink1": "blink2", "Blink2": "eyesclosed"}
-        face_images = {slot: _abs(_facial[k])
-                       for k, slot in _slot_of.items() if _facial.get(k)}
-        if __import__("os").environ.get("LIPSYNC_DEBUG", "0") != "0":
-            import sys as _sys
-            print(f"[lipsync] assemble name={getattr(character, '_character_name', '?')!r} "
-                  f"faces={list(face_images)}", file=_sys.stderr)
-
-        model = r.assemble_officer(
-            _abs(ap.get("body_nif")), _abs(ap.get("head_nif")),
-            _abs(ap.get("body_tex")), _abs(ap.get("head_tex")),
-            _abs(placement["clip_nif"]),
-            placement["sample_at_start"],
-            face_images=face_images,
-        )
-        iid = create(model)
-        try:
-            r.set_world_transform(iid, OFFICER_TRANSFORM)
-            r.set_instance_rest_pose(iid, 0, placement["sample_at_start"])
-        except Exception:
-            try:
-                r.destroy_instance(iid)
-            except Exception as _e:
-                dev_mode.log_swallowed(
-                    "destroy officer instance (rollback)", _e)
-            raise
-        character._render_instance = iid
-        # Comm characters assembled while hidden start invisible; the per-frame
-        # _sync_comm_character_visibility reveals them when the SDK un-hides them
-        # for a hail. (Bridge hidden characters returned above, so this only
-        # fires for comm sets.)
-        if placement["hidden"]:
-            try:
-                r.set_visible(iid, False)
-            except Exception as _e:
-                dev_mode.log_swallowed("comm char initial hide", _e)
-        # Looping breathe idle (SDK-driven), layered over the placement pose so
-        # the body breathes while the root stays at the station. Best-effort: a
-        # breathing failure must not unplace a correctly-stationed officer.
-        # play_instance_idle is a REQUIRED renderer binding (always present).
-        try:
-            breathing = capture_breathing(character)
-            if breathing:
-                bidx = r.load_instance_clip(iid, _abs(breathing["clip_nif"]))
-                if bidx is not None and bidx >= 0:
-                    r.play_instance_idle(iid, bidx)
-                    from engine.bridge_character_anim import get_controller
-                    _ca = get_controller()
-                    if _ca is not None:
-                        _ca.set_idle(iid, bidx)
-        except Exception as _e:
-            dev_mode.log_swallowed("establish breathing", _e)
-        if is_bridge:
-            controller.officer_instances.append(iid)
-        else:
-            controller.comm_instances_by_set.setdefault(set_name, []).append(iid)
-            _tag_comm_instance(r, iid, comm_set_id)
+        _realize_character_instance(
+            controller, r, character, set_name, is_bridge,
+            comm_set_id=comm_set_id, start_hidden=placement["hidden"])
     except Exception:
         name = ""
         try:
@@ -4238,6 +4169,80 @@ def _place_one_character(controller, r, character, set_name, is_bridge,
         print(f"[host_loop] WARNING: failed to place character {name!r}",
               flush=True)
         traceback.print_exc()
+
+
+def _realize_character_instance(controller, r, character, set_name, is_bridge,
+                                *, comm_set_id: int = None,
+                                start_hidden: bool = False):
+    """Build the skinned instance for a character at its CURRENT placement, tag
+    _render_instance, wire breathing, and register it. Returns the iid or None.
+
+    Extracted from _place_one_character so the walk controller can realize a
+    hidden bridge character on demand (AT_MOVE reveal). start_hidden hides the
+    fresh instance (comm path); the walk controller passes start_hidden=False and
+    reveals via SetHidden(0)."""
+    from engine.appc.bridge_placement import capture_placement, capture_breathing
+
+    placement = capture_placement(character)
+    if not placement:
+        return None
+
+    def _abs(p):
+        return str(PROJECT_ROOT / "game" / p) if p else None
+
+    create = r.create_bridge_instance if is_bridge else r.create_comm_instance
+
+    ap = character.appearance()
+    if not ap.get("body_nif"):
+        return None
+
+    _facial = getattr(character, "_facial_images", {}) or {}
+    _slot_of = {"SpeakA": "a", "SpeakE": "e", "SpeakU": "u",
+                "Blink0": "blink1", "Blink1": "blink2", "Blink2": "eyesclosed"}
+    face_images = {slot: _abs(_facial[k])
+                   for k, slot in _slot_of.items() if _facial.get(k)}
+
+    model = r.assemble_officer(
+        _abs(ap.get("body_nif")), _abs(ap.get("head_nif")),
+        _abs(ap.get("body_tex")), _abs(ap.get("head_tex")),
+        _abs(placement["clip_nif"]),
+        placement["sample_at_start"],
+        face_images=face_images,
+    )
+    iid = create(model)
+    try:
+        r.set_world_transform(iid, OFFICER_TRANSFORM)
+        r.set_instance_rest_pose(iid, 0, placement["sample_at_start"])
+    except Exception:
+        try:
+            r.destroy_instance(iid)
+        except Exception as _e:
+            dev_mode.log_swallowed("destroy officer instance (rollback)", _e)
+        raise
+    character._render_instance = iid
+    if start_hidden:
+        try:
+            r.set_visible(iid, False)
+        except Exception as _e:
+            dev_mode.log_swallowed("char initial hide", _e)
+    try:
+        breathing = capture_breathing(character)
+        if breathing:
+            bidx = r.load_instance_clip(iid, _abs(breathing["clip_nif"]))
+            if bidx is not None and bidx >= 0:
+                r.play_instance_idle(iid, bidx)
+                from engine.bridge_character_anim import get_controller
+                _ca = get_controller()
+                if _ca is not None:
+                    _ca.set_idle(iid, bidx)
+    except Exception as _e:
+        dev_mode.log_swallowed("establish breathing", _e)
+    if is_bridge:
+        controller.officer_instances.append(iid)
+    else:
+        controller.comm_instances_by_set.setdefault(set_name, []).append(iid)
+        _tag_comm_instance(r, iid, comm_set_id)
+    return iid
 
 
 def _viewscreen_feed_on(viewscreen_obj) -> bool:
