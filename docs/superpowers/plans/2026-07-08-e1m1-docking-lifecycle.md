@@ -535,7 +535,28 @@ git branch --show-current   # must still print: main
 
 ## Verification
 
-_(Filled in by Task 6 Step 4.)_
+### Machine gate — ✅ GREEN (2026-07-08)
+
+`scripts/check_tests.sh`: build ok · pytest **0 failures** · ctest **0 failures** · **0** baselined known failures. All A/B/C changes are pure Python; no C++ regression. Commit range `96128263..f04cb4ae` (+ the emergent resolver + the cutscene-window fix).
+
+### Emergent findings during execution
+
+- **App.PhysicsObjectClass_GetObject was unimplemented (Task 3b, commit a0c2f2ea)** — the SDK `FollowWaypoints.Update` resolves its destination via this call *before* the `PlacementObject_GetObject` fallback (`FollowWaypoints.py:132`). Absent, it returned a truthy `_NamedStub`, so the `if pObject == None` guard never matched and every live waypoint AI's destination collapsed to garbage. This was the true, higher-impact sibling of the `TurnTowardOrientation` gap and is now fixed (mirrors `ShipClass_GetObject`'s type-filtered lookup). Without both fixes, live waypoint-following could not work.
+- **MWT_CINEMATIC top-window was unseeded (Task 4, commit 7fa90d78)** — `DockWithStarbase.SetupCutscene` dereferences `FindMainWindow(MWT_CINEMATIC).GetObjID()` with no None-guard; the shim returned `None`, a latent `AttributeError` crash on the reachable focus path. Fixed by seeding `_CinematicWindow` (mirrors the existing `_OptionsWindow` precedent).
+- **Out of scope (noted, not fixed):** `App.ET_SHOW_MISSION_LOG` appears undefined, making the XO menu's "Show Mission Log" handler dispatch miss via stub-identity hashing. Unrelated to docking; flagged for a future sweep.
+
+### Live-verify checklist — PENDING (Mark to run at workstation)
+
+Per the project's no-live-desktop-interaction guardrail, the in-game pass is run by Mark. Steps:
+
+1. `./build/dauntless --developer` → pause menu → **Load Mission…** → Maelstrom → Episode 1 → **E1M1**.
+2. **Undock from drydock:** click **Dock** button → `UndockCutscene` runs → confirm the ship physically undocks and flies to "Way 1" (straight-line path; should still work). Watch it does **not** bump the Station/Nightingale/other drydocks (immobility interaction; `AvoidObstacles` expected to prevent it).
+3. **Warp to Starbase 12** (Set Course / warp point).
+4. **Dock with Starbase 12** (Helm → Dock Starbase 12): confirm the `DockWithStarbase` compound AI drives the ship along the docking waypoints and — the key Task-2 signal — the ship **turns to track the curved approach** (before this work it flew straight past). Confirm the sequence advances `SetupCutscene → EnterStarbase → PlayerDocked → RepairShipFully/ReloadShip` without wedging, and the dock cutscene does not crash (Task-4 fix).
+5. **Undock from the starbase:** confirm `UndockFromStarbase` runs `SetupExitPositions → ExitStarbase → Undocked` without wedging.
+6. Record what actually happened here. Any residual gap becomes the next spec's input — do **not** expand scope in this plan.
+
+_(Live-verify results to be appended by Mark.)_
 
 ---
 
