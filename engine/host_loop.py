@@ -5157,6 +5157,18 @@ def run(mission_name: Optional[str] = None,
                 "Ship Property Viewer", ship_property_viewer.open,
             )
 
+            # Cutscene Cam Probe — dev-only on-demand trigger for the in-space
+            # cutscene camera-direction system. Fires a PlacementWatch on the
+            # current player ship so the exterior/bridge render override can be
+            # verified without reaching a scripted mission beat (E1M1 undock).
+            def _cutscene_probe_toggle():
+                from engine import dev_cutscene_probe
+                dev_cutscene_probe.toggle()
+                pause.close()
+            dev_mode.register_dev_pause_menu_entry(
+                "Cutscene Cam Probe (toggle)", _cutscene_probe_toggle,
+            )
+
         # AI Inspector — dev-only live AI-tree inspector modal. Registers its
         # pause-menu row + the panel into `registry` (created below). Done via
         # a helper so the registration is unit-testable; a no-op returning
