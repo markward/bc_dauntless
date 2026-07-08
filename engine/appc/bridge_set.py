@@ -575,8 +575,7 @@ class BridgeSet(SetClass):
         self._viewscreen = viewscreen
         self.AddObjectToSet(viewscreen, name)
 
-    def DeleteCameraFromSet(self, name):
-        self.RemoveCameraFromSet(name)
+    # DeleteCameraFromSet is inherited from SetClass (identical body).
 
 
 def BridgeSet_Create():
