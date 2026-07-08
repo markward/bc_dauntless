@@ -356,6 +356,26 @@ def test_find_main_window_cinematic_is_preseeded():
     assert isinstance(pCinematic.GetObjID(), int)
 
 
+def test_cinematic_window_reports_normal_non_cutscene_state():
+    """Real BC's Cinematic main window, in the normal (non-cutscene) state,
+    reports NOT active and interactive. _CinematicWindow previously only
+    inherited TGEventHandlerObject, so IsWindowActive()/IsInteractive()
+    fell through to a truthy _Stub, which flipped OR-guards at two
+    confirmed SDK sites (Bridge/TacticalInterfaceHandlers.GotFocus and
+    MissionLib.ExitGame) the wrong way.
+
+    A `_Stub` compares `== 0` as False (so `IsInteractive() == 1` fails)
+    and is truthy under `bool()` (so `bool(IsWindowActive()) is False`
+    fails) — this pins the RED reason before the explicit methods exist.
+    """
+    import App
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    pCinematic = top_window._the_top_window.FindMainWindow(App.MWT_CINEMATIC)
+    assert bool(pCinematic.IsWindowActive()) is False
+    assert pCinematic.IsInteractive() == 1
+
+
 def test_dock_cutscene_focus_check_does_not_crash_when_focus_is_set():
     """Reproduces AI/Compound/DockWithStarbase.SetupCutscene's exact
     unguarded pattern:

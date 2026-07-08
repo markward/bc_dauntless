@@ -307,10 +307,21 @@ class _CinematicWindow(TGEventHandlerObject):
     once FindMainWindow(MWT_CINEMATIC) returned raw None.
 
     Inherits TGEventHandlerObject (-> TGObject) purely for a real,
-    stable GetObjID() and the catch-all __getattr__ safety net — no
-    Cinematic-specific behaviour is needed here.
+    stable GetObjID() and the catch-all __getattr__ safety net.
+
+    IsWindowActive/IsInteractive are given explicit, BC-faithful normal-
+    state answers rather than being left to the truthy _Stub catch-all:
+    several SDK sites call FindMainWindow(MWT_CINEMATIC) WITHOUT a None
+    guard and then query these methods directly in an OR-guard (e.g.
+    Bridge/TacticalInterfaceHandlers.GotFocus, MissionLib.ExitGame) —
+    a truthy stub for IsWindowActive() silently flips those guards.
     """
-    pass
+
+    def IsWindowActive(self):
+        return 0
+
+    def IsInteractive(self):
+        return 1
 
 
 # ── STStylizedWindow ────────────────────────────────────────────────────────

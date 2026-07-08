@@ -108,3 +108,59 @@ def test_follow_waypoints_turns_to_offset_waypoint():
 
     assert end_dot > start_dot + 0.2, (
         f"nose did not turn toward the offset waypoint: {start_dot:.3f} -> {end_dot:.3f}")
+
+
+def test_follow_waypoints_turns_to_offset_real_waypoint():
+    """Same steering proof as test_follow_waypoints_turns_to_offset_waypoint,
+    but the target is a REAL App.Waypoint placement (not a ShipClass). This
+    is the exact seam the live E1M1 undock exercises: a Waypoint is not a
+    PhysicsObjectClass, so App.PhysicsObjectClass_GetObject(pSet, name)
+    returns None and FollowWaypoints.Update() falls back to
+    App.PlacementObject_GetObject(pSet, name) (FollowWaypoints.py:137).
+    """
+    from engine.appc.math import TGPoint3
+    from engine.appc.ship_motion import _step_ship_motion
+
+    pSet = App.SetClass_Create(); pSet.SetName("S")
+    App.g_kSetManager._sets["S"] = pSet
+    ours = ShipClass(); ours._hull = HullSubsystem("H")
+    ours._hull.SetMaxCondition(1000.0)
+    ies = ImpulseEngineSubsystem("IES")
+    ies.SetMaxSpeed(120.0); ies.SetMaxAccel(50.0)
+    ies.SetMaxAngularVelocity(0.5); ies.SetMaxAngularAccel(0.3)
+    ours._impulse_engine_subsystem = ies
+    pSet.AddObjectToSet(ours, "Ours")
+
+    # Real Waypoint placement, 90 deg off the +Y nose (dead abeam to starboard).
+    wp = App.Waypoint_Create("WP1", "S", None)
+    wp.SetTranslateXYZ(4000.0, 0.0, 0.0)
+
+    plain = PlainAI_Create(ours, "TestAI")
+    plain.SetScriptModule("FollowWaypoints")
+    inst = plain.GetScriptInstance()
+    inst.SetTargetWaypointName("WP1")
+
+    # Sanity check: the resolver must faithfully exercise the placement
+    # fallback path (PhysicsObjectClass_GetObject misses, PlacementObject_
+    # GetObject hits) rather than accidentally resolving via some other
+    # route.
+    assert App.PhysicsObjectClass_GetObject(pSet, "WP1") is None
+    assert App.PlacementObject_GetObject(pSet, "WP1") is wp
+
+    def bearing_dot():
+        fwd = ours.GetWorldRotation().GetCol(1)
+        d = TGPoint3(4000.0 - ours.GetTranslate().x,
+                     0.0 - ours.GetTranslate().y,
+                     0.0 - ours.GetTranslate().z)
+        d.Unitize()
+        return fwd.x * d.x + fwd.y * d.y + fwd.z * d.z
+
+    start_dot = bearing_dot()
+    # Re-command on the AI cadence, integrate at 60 Hz between commands.
+    for _ in range(600):            # 10 s
+        inst.Update()
+        _step_ship_motion(ours, 1.0 / 60.0)
+    end_dot = bearing_dot()
+
+    assert end_dot > start_dot + 0.2, (
+        f"nose did not turn toward the offset real waypoint: {start_dot:.3f} -> {end_dot:.3f}")
