@@ -44,6 +44,10 @@ class CameraMode:
         self._obj_id = _alloc_obj_id()
         self._cur = None        # current (eye, fwd, up) for sweep; None until seeded
         self._snap = False      # force snap on next Update
+        # The camera this mode was built for (CameraObjectClass.GetNamedCameraMode
+        # tags it). BC modes are owned by their camera; ZoomTargetMode uses it as
+        # the eye when no Source object was wired.
+        self._owner_camera = None
 
     # ── Attribute bag (NewMode picks the setter by arg type) ──────────────────
     def SetAttrFloat(self, name, v):     self._attrs[name] = float(v)
@@ -237,4 +241,44 @@ class PlacementMode(CameraMode):
             else:
                 dx, dy, dz = d.x, d.y, d.z
             fwd = _unit(dx - s.x, dy - s.y, dz - s.z)
+        return (eye, fwd, up)
+
+
+class ZoomTargetMode(CameraMode):
+    """Zoom onto a target (BC's "ZoomTarget" — Camera.LowZoomTarget →
+    NewMode("ZoomTarget", [("Source", pSource), ("Target", pTarget)])). Eye at
+    the Source object's position, looking at Target, up from Source col2.
+
+    Source fallback: BC's Camera.MakePlayerCamera_PlayerChanged wires
+    Source=player on the player camera's zoom modes; our shim never runs it, so
+    when no live Source is wired the eye degrades to the OWNING camera's own
+    pose (_owner_camera) — "zoom from the current viewpoint toward the target".
+    A Source that was set but died invalidates the mode; only unset/None falls
+    back to the camera."""
+
+    def _ideal(self):
+        dst = self.GetAttrIDObject("Target")
+        if not _target_alive(dst):
+            return None
+        src = self.GetAttrIDObject("Source")
+        if src is not None:
+            if not _target_alive(src):
+                return None
+            s = src.GetWorldLocation()
+            R = src.GetWorldRotation()
+        else:
+            cam = self._owner_camera
+            get_loc = getattr(cam, "GetWorldLocation", None)
+            get_rot = getattr(cam, "GetWorldRotation", None)
+            if not callable(get_loc) or not callable(get_rot):
+                return None
+            s = get_loc()
+            R = get_rot()
+            if s is None or R is None:            # camera pose not resolvable
+                return None
+        d = dst.GetWorldLocation()
+        eye = (s.x, s.y, s.z)
+        fwd = _unit(d.x - s.x, d.y - s.y, d.z - s.z)
+        u = R.GetCol(2)
+        up = _unit(u.x, u.y, u.z)
         return (eye, fwd, up)

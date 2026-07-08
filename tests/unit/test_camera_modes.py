@@ -239,3 +239,41 @@ def test_placement_mode_invalid_when_target_dead():
     m.SetAttrIDObject("Source", _FakeTarget((-50.0, 0.0, 0.0)))
     m.SetAttrIDObject("Target", _Dying())
     assert not m.IsValid()
+
+
+from engine.appc.camera_modes import ZoomTargetMode
+
+
+def test_zoom_target_mode_eye_at_source_looks_at_target():
+    src = _FakeTarget((5.0, 0.0, 0.0))
+    tgt = _FakeTarget((5.0, 10.0, 0.0))
+    m = ZoomTargetMode()
+    m.SetAttrIDObject("Source", src)
+    m.SetAttrIDObject("Target", tgt)
+    eye, fwd, up = m.Update()
+    assert eye == (5.0, 0.0, 0.0)
+    assert abs(fwd[1] - 1.0) < 1e-6                # looks +Y toward the target
+
+
+def test_zoom_target_mode_source_none_uses_owner_camera():
+    tgt = _FakeTarget((0.0, 100.0, 0.0))
+    m = ZoomTargetMode()
+    m._owner_camera = _FakeTarget((0.0, 0.0, 0.0))  # camera at origin
+    m.SetAttrIDObject("Target", tgt)
+    # Source left unset => falls back to the owning camera's pose.
+    eye, fwd, up = m.Update()
+    assert eye == (0.0, 0.0, 0.0)
+    assert abs(fwd[1] - 1.0) < 1e-6
+
+
+def test_zoom_target_mode_invalid_without_source_or_owner():
+    m = ZoomTargetMode()
+    m.SetAttrIDObject("Target", _FakeTarget((0.0, 10.0, 0.0)))
+    assert not m.IsValid()                          # no Source, no owner camera
+
+
+def test_zoom_target_mode_invalid_when_target_dead():
+    m = ZoomTargetMode()
+    m.SetAttrIDObject("Source", _FakeTarget((0.0, 0.0, 0.0)))
+    m.SetAttrIDObject("Target", _Dying())
+    assert not m.IsValid()
