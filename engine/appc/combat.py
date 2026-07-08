@@ -414,6 +414,16 @@ def apply_hit(ship, damage: float, hit_point, source, *,
     # entirely — full damage reaches the hull/subsystems, shield faces untouched.
     if bypass_shields:
         shields_online = False
+    # Cloak-transition vulnerability window: while a ship is fading in or out
+    # (CLOAKING / DECLOAKING) its shields are DOWN, so a hit reaches the hull —
+    # the brief window enemies get to attack a (de)cloaking ship. Charge is
+    # preserved (only blocking is suspended): shields snap back up once the
+    # transition completes. A fully-CLOAKED ship is untargetable so never reaches
+    # here; a fully-DECLOAKED ship shields normally.
+    _cloak = (ship.GetCloakingSubsystem()
+              if hasattr(ship, "GetCloakingSubsystem") else None)
+    if _cloak is not None and (_cloak.IsCloaking() or _cloak.IsDecloaking()):
+        shields_online = False
     if shields_online and hasattr(shields, "ApplyDamage"):
         face = _shield_face_from_hit_point(ship, hit_point)
         before = remaining
