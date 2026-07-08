@@ -81,8 +81,11 @@ class BridgeCharacterWalkController:
     def _start(self, renderer, mv) -> None:
         character = mv.character
         iid = getattr(character, "_render_instance", None)
-        if iid is None:
-            iid = self._realize(character)      # lazy build for hidden walk target
+        try:
+            if iid is None:
+                iid = self._realize(character)  # lazy build for hidden walk target
+        except Exception:
+            iid = None
         if iid is None:
             self._complete(mv)                  # can't render -> don't stall sequence
             return

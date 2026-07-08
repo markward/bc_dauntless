@@ -109,6 +109,38 @@ def test_move_completes_inline_when_realize_fails():
     assert r.walked == []
 
 
+class _FakeRendererClipLoadFails(_FakeRenderer):
+    def load_instance_clip(self, iid, path):
+        return -1
+
+
+def test_move_completes_inline_when_clip_load_fails():
+    ctrl, _ = _controller_with_realize()          # realize succeeds
+    r = _FakeRendererClipLoadFails()               # but clip load fails
+    ch = _Char()
+    done = []
+    ctrl.request_move(ch, "db_L1toP_P.nif", "DBGuest1",
+                      on_complete=lambda: done.append(True))
+    ctrl.update(0.0, renderer=r)
+    assert done == [True]                          # never stalls the sequence
+    assert r.walked == []
+    assert ctrl.is_moving(ch) is False
+
+
+def test_update_never_raises_when_realize_raises():
+    def realize_fn(character):
+        raise RuntimeError("boom")
+    ctrl = BridgeCharacterWalkController(realize_fn=realize_fn)
+    r = _FakeRenderer()
+    ch = _Char()
+    done = []
+    ctrl.request_move(ch, "db_L1toP_P.nif", "DBGuest1",
+                      on_complete=lambda: done.append(True))
+    ctrl.update(0.0, renderer=r)                   # must not raise
+    assert done == [True]
+    assert r.walked == []
+
+
 def test_reset_clears_active(monkeypatch):
     import engine.bridge_character_walk as bcw
     monkeypatch.setattr(bcw, "capture_breathing", lambda ch: None)
