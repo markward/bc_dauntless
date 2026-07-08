@@ -4957,6 +4957,12 @@ def run(mission_name: Optional[str] = None,
                 controller, r, ch, "bridge", True, start_hidden=False),
             asset_resolver=_game_asset_path)
         set_walk_ctrl(walk_ctrl)
+
+        from engine.bridge_camera_watch import (
+            BridgeCameraWatchController, set_controller as set_watch_ctrl,
+        )
+        watch_ctrl = BridgeCameraWatchController()
+        set_watch_ctrl(watch_ctrl)
         node_anim = BridgeNodeAnimController(
             bridge_iid_getter=lambda: controller.bridge_instance,
             asset_resolver=_game_asset_path,
@@ -5735,6 +5741,7 @@ def run(mission_name: Optional[str] = None,
                     cutscene.reset()
                     char_anim.reset()
                     walk_ctrl.reset()
+                    watch_ctrl.reset()
                     idle_gestures.reset()
                     node_anim.reset(renderer=r)
                     lip_runtime.clear()
@@ -6163,9 +6170,11 @@ def run(mission_name: Optional[str] = None,
                                 cutscene_active=_tw.IsCutsceneMode(),
                                 bridge_cutscene_pending=cutscene.has_pending_camera()):
                             mouse_dx, mouse_dy = 0.0, 0.0
+                        _focus = _resolve_bridge_focus_world(
+                            watch_ctrl, crew_menu_panel, r)
                         bridge_camera.set_zoom_target(
-                            _active_zoom_officer_world(crew_menu_panel, r),
-                            _player_dt)
+                            _focus, _player_dt,
+                            snap=watch_ctrl.consume_snap())
                         bridge_camera.apply(mouse_dx, mouse_dy)
                     b_eye, b_target, b_up, b_fov = bridge_camera.compute_camera()
                     # Bridge first-person camera uses separate (eye, target,
