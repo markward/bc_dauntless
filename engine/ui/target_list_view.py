@@ -81,6 +81,11 @@ def _query_shield_percentage(ship) -> int:
     if shields is None or not hasattr(shields, "GetShieldPercentage"):
         return 0
     try:
+        # Shields read down while the ship is fading in/out (they don't block —
+        # see combat.cloak_shields_suspended); the charge is preserved for after.
+        from engine.appc.combat import cloak_shields_suspended
+        if cloak_shields_suspended(ship):
+            return 0
         return int(round(shields.GetShieldPercentage() * 100))
     except Exception:
         return 0

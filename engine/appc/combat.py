@@ -315,6 +315,23 @@ def _shield_face_from_hit_point(ship, hit_point) -> int:
     return 4 if bx <= 0 else 5
 
 
+def cloak_shields_suspended(ship) -> bool:
+    """True while a ship is fading in or out (CLOAKING / DECLOAKING): its shields
+    are DOWN. They don't block damage (apply_hit routes the hit to the hull) and
+    read as down on the target status panels — even though the shield CHARGE is
+    preserved for when the transition completes. A fully-cloaked ship is
+    untargetable; a fully-decloaked ship shields normally. Shared by combat and
+    the HUD so both agree the shields are down during the fade."""
+    get = getattr(ship, "GetCloakingSubsystem", None)
+    cloak = get() if callable(get) else None
+    if cloak is None:
+        return False
+    try:
+        return bool(cloak.IsCloaking() or cloak.IsDecloaking())
+    except Exception:
+        return False
+
+
 def apply_hit(ship, damage: float, hit_point, source, *,
               normal=None, ship_instances=None,
               weapon_type: str | None = None,
@@ -415,14 +432,11 @@ def apply_hit(ship, damage: float, hit_point, source, *,
     if bypass_shields:
         shields_online = False
     # Cloak-transition vulnerability window: while a ship is fading in or out
-    # (CLOAKING / DECLOAKING) its shields are DOWN, so a hit reaches the hull —
-    # the brief window enemies get to attack a (de)cloaking ship. Charge is
-    # preserved (only blocking is suspended): shields snap back up once the
-    # transition completes. A fully-CLOAKED ship is untargetable so never reaches
-    # here; a fully-DECLOAKED ship shields normally.
-    _cloak = (ship.GetCloakingSubsystem()
-              if hasattr(ship, "GetCloakingSubsystem") else None)
-    if _cloak is not None and (_cloak.IsCloaking() or _cloak.IsDecloaking()):
+    # its shields are DOWN, so a hit reaches the hull — the brief window enemies
+    # get to attack a (de)cloaking ship. Charge is preserved (only blocking is
+    # suspended). Same predicate the target status panels use, so HUD and combat
+    # agree that the shields are down during the fade.
+    if cloak_shields_suspended(ship):
         shields_online = False
     if shields_online and hasattr(shields, "ApplyDamage"):
         face = _shield_face_from_hit_point(ship, hit_point)

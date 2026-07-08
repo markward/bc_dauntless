@@ -416,6 +416,12 @@ def _shields_tuple(ship) -> tuple[float, ...]:
         sh = ship.GetShieldSubsystem()
         if sh is None:
             return (0.0,) * 6
+        # A ship mid cloak-transition has its shields DOWN (they don't block —
+        # see combat.cloak_shields_suspended), so show them down rather than the
+        # preserved charge; they snap back once the fade completes.
+        from engine.appc.combat import cloak_shields_suspended
+        if cloak_shields_suspended(ship):
+            return (0.0,) * sh.NUM_SHIELDS
         return tuple(sh.GetSingleShieldPercentage(f) for f in range(sh.NUM_SHIELDS))
     except Exception:
         return (0.0,) * 6
