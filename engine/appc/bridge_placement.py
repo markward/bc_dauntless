@@ -146,6 +146,54 @@ def capture_registered_clip(character, suffix):
     return {"clip_nif": clip_nif}
 
 
+def capture_move(character, detail):
+    """Resolve the SDK-registered movement builder for AT_MOVE to `detail`.
+
+    AT_MOVE composes the animation key <current-location>To<detail> (e.g. location
+    "DBL1M" + "To" + "P1" = "DBL1MToP1") and runs the registered builder
+    (Picard.py:143 -> PicardAnimations.MoveFromL1ToP1). That builder returns a
+    TGSequence carrying the walk clip (a TGAnimAction on the character's anim
+    node) and a trailing AT_SET_LOCATION_NAME giving the station the character
+    occupies after the move.
+
+    Returns {"clip_nif": <data-root-relative path>, "end_location": <str|None>}
+    or None (no location / no <location>To<detail> registration / unresolvable
+    clip). Best-effort — mirrors the capture_* helpers.
+    """
+    # Import here so the module stays headless-importable; only needed for the
+    # AT_SET_LOCATION_NAME action-type constant.
+    from engine.appc.ai import CharacterAction
+
+    seq = _resolve_builder_sequence(character, "To" + str(detail))
+    if seq is None:
+        return None
+
+    # Walk clip: the last action targeting the CHARACTER anim node (same rule as
+    # capture_registered_clip — a move builder may also carry set/door actions).
+    clip_name = ""
+    for i in range(seq.GetNumActions() - 1, -1, -1):
+        a = seq.GetAction(i)
+        if getattr(getattr(a, "_anim_node", None), "kind", None) == "character":
+            clip_name = getattr(a, "_clip", "") or getattr(a, "name", "")
+            break
+    if not clip_name:
+        return None
+    clip_nif = _nif_path_for_clip(clip_name)
+    if not clip_nif:
+        _logger.warning("capture_move: no path for %r", clip_name)
+        return None
+
+    # End location: the trailing AT_SET_LOCATION_NAME detail, if the builder
+    # appends one (the station the character stands/sits at after the move).
+    end_location = None
+    for i in range(seq.GetNumActions()):
+        a = seq.GetAction(i)
+        if getattr(a, "_action_type", None) == CharacterAction.AT_SET_LOCATION_NAME:
+            end_location = getattr(a, "_detail", None)
+
+    return {"clip_nif": clip_nif, "end_location": end_location}
+
+
 def capture_chair_clip(character, suffix):
     """The CHAIR clip from a multi-action TurnCaptain/BackCaptain builder: the
     last action whose anim node is the BRIDGE node (kind=="object"), e.g.
