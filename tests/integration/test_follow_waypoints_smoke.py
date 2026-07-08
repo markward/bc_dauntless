@@ -57,32 +57,19 @@ def test_follow_waypoints_update_returns_valid_status():
     assert result in _VALID_STATUS
 
 
-def test_follow_waypoints_turns_to_offset_waypoint(monkeypatch):
+def test_follow_waypoints_turns_to_offset_waypoint():
     """With TurnTowardOrientation wired, a ship facing +Y must turn toward a
     waypoint that is NOT dead ahead and close the bearing. Before the fix the
     ship flew straight along +Y forever (TurnTowardOrientation was a no-op).
 
-    Harness note: FollowWaypoints.Update() resolves its target via
+    FollowWaypoints.Update() resolves its target via
     ``App.PhysicsObjectClass_GetObject(pSet, name)`` first, falling back to
     ``App.PlacementObject_GetObject`` only when that returns None
-    (sdk/.../AI/PlainAI/FollowWaypoints.py:132-137). Our App shim has never
-    implemented PhysicsObjectClass_GetObject, so the bare name lookup falls
-    through App's module ``__getattr__`` and returns a truthy _NamedStub
-    (never None) — the SDK script then computes its destination against
-    stub-poisoned (all-zero) vectors and the fallback path is never reached,
-    regardless of what the test puts in the set. That is a genuine, pre-
-    existing engine gap (confirmed against sdk/Build/scripts/App.py, which
-    wraps ``Appc.PhysicsObjectClass_GetObject``) — out of scope for this
-    test-only task. Patch it here, scoped to this test, with the same
-    real-lookup semantics ``PlacementObject_GetObject`` already uses
-    (``pSet.GetObject(name)``), so the real SDK script exercises a genuine
-    off-axis approach instead of degrading silently."""
+    (sdk/.../AI/PlainAI/FollowWaypoints.py:132-137). "WP1" is a ShipClass
+    (a PhysicsObjectClass), so it resolves directly through the real
+    resolver, exercising a genuine off-axis approach."""
     from engine.appc.math import TGPoint3
     from engine.appc.ship_motion import _step_ship_motion
-
-    monkeypatch.setattr(
-        App, "PhysicsObjectClass_GetObject",
-        lambda pSet, name: pSet.GetObject(name), raising=False)
 
     pSet = App.SetClass_Create(); pSet.SetName("S")
     App.g_kSetManager._sets["S"] = pSet

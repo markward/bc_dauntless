@@ -80,6 +80,7 @@ from engine.appc.objects import (
     ObjectGroup_ForceToGroup, ObjectGroup_FromModule, ObjectGroupWithInfo_Cast,
     ObjectClass_Cast, PhysicsObjectClass_Cast, DamageableObject_Cast,
     ObjectClass_GetObject, ObjectClass_GetObjectByID,
+    PhysicsObjectClass_GetObject,
     IsNull,
 )
 from engine.appc.sets import (

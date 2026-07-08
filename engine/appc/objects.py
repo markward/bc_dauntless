@@ -1001,6 +1001,25 @@ def ObjectClass_GetObject(pSet, name) -> "ObjectClass | None":
     return obj if isinstance(obj, ObjectClass) else None
 
 
+def PhysicsObjectClass_GetObject(pSet, name) -> "PhysicsObjectClass | None":
+    """Look up a PHYSICS object by name within a SetClass.
+
+    SDK signature: ``App.PhysicsObjectClass_GetObject(pSet, sName)`` — used by
+    AI.PlainAI.FollowWaypoints.Update (sdk/.../FollowWaypoints.py:132) to resolve
+    its destination before falling back to PlacementObject_GetObject. Mirrors
+    ShipClass_GetObject's type-filtered lookup: returns the object only when it is
+    a PhysicsObjectClass (ships, debris, physics props), else None so the SDK's
+    placement fallback runs for pure Waypoint/PlacementObject targets. Without
+    this the name fell through App.__getattr__ to a truthy _NamedStub, the SDK's
+    `pObject == None` guard never matched, and the destination collapsed."""
+    if pSet is None or not hasattr(pSet, "GetObject"):
+        return None
+    obj = pSet.GetObject(str(name))
+    if isinstance(obj, PhysicsObjectClass):
+        return obj
+    return None
+
+
 def ObjectClass_GetObjectByID(pSet, obj_id) -> "ObjectClass | None":
     """Look up an object by integer ID, scoped to pSet (or globally if None).
 
