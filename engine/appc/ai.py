@@ -1216,6 +1216,12 @@ class CharacterAction(TGAction):
             self._set_watch(at == self.AT_WATCH_ME)
             self.Completed()
             return
+        if at in (self.AT_TURN, self.AT_TURN_NOW,
+                  self.AT_TURN_BACK, self.AT_TURN_BACK_NOW):
+            self._queue_turn(
+                back=at in (self.AT_TURN_BACK, self.AT_TURN_BACK_NOW),
+                now=at in (self.AT_TURN_NOW, self.AT_TURN_BACK_NOW))
+            return
         # Speak types (and the remaining no-op types) keep the prior flow.
         dur = self._do_play()
         self._complete_after(dur or 0.0)
@@ -1238,6 +1244,41 @@ class CharacterAction(TGAction):
                 return
             ctrl.request_move(cc, move["clip_nif"], move["end_location"],
                               on_complete=self.Completed)
+        except Exception:
+            self.Completed()
+
+    def _queue_turn(self, *, back: bool, now: bool) -> None:
+        # Turn (AT_TURN/AT_TURN_BACK, + _NOW). Non-`now` completes when the turn
+        # controller settles (deferred, faithful to BC); `now` completes inline.
+        # Best-effort: Play() must never raise — any failure completes inline so
+        # the mission TGSequence advances instead of stalling.
+        from engine.appc.characters import CharacterClass_Cast
+        from engine import bridge_character_anim
+        try:
+            cc = CharacterClass_Cast(self._character) if self._character is not None else None
+            ctrl = bridge_character_anim.get_controller()
+            if cc is None or ctrl is None:
+                self.Completed()
+                return
+            if back:
+                detail = getattr(cc, "_last_turn_detail", None) or "Captain"
+                try:
+                    cc._last_turn_detail = None
+                except Exception:
+                    pass
+            else:
+                detail = str(self._detail) if self._detail is not None else "Captain"
+                try:
+                    cc._last_turn_detail = detail
+                except Exception:
+                    pass
+            if now:
+                ctrl.request_turn_to(cc, detail, back=back, now=True,
+                                     on_complete=None)
+                self.Completed()
+            else:
+                ctrl.request_turn_to(cc, detail, back=back, now=False,
+                                     on_complete=self.Completed)
         except Exception:
             self.Completed()
 
