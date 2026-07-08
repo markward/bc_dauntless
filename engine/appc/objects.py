@@ -508,6 +508,46 @@ class PhysicsObjectClass(ObjectClass):
     def SetupModel(self, *args) -> None:
         pass
 
+    # ── Geometry ──────────────────────────────────────────────────────────────
+
+    def LineCollides(self, p1, p2) -> int:
+        """1 if the segment p1->p2 crosses this object's bounding-sphere surface,
+        else 0. 'Crosses the surface' = the closest point on the segment is within
+        GetRadius() of the centre AND at least one endpoint is outside the radius
+        (so a segment fully inside the sphere is clear, and one that grazes past
+        outside the radius is clear). Sphere-clearance fidelity matches the rest of
+        the collision layer; full mesh collision is out of scope. Backs
+        AI.Compound.DockWithStarbase.IsInViewOfInsidePoints."""
+        c = self.GetWorldLocation()
+        r = self.GetRadius()
+        if r <= 0.0:
+            return 0
+        ax, ay, az = p1.x - c.x, p1.y - c.y, p1.z - c.z
+        bx, by, bz = p2.x - c.x, p2.y - c.y, p2.z - c.z
+        da = (ax * ax + ay * ay + az * az) ** 0.5
+        db = (bx * bx + by * by + bz * bz) ** 0.5
+        r2 = r * r
+        # Both endpoints inside -> segment stays inside -> no surface crossing.
+        if da <= r and db <= r:
+            return 0
+        # Closest point on the segment to the centre.
+        dx, dy, dz = bx - ax, by - ay, bz - az
+        seg2 = dx * dx + dy * dy + dz * dz
+        if seg2 <= 1e-12:
+            # Degenerate segment (a point). Inside-both handled above; a lone
+            # point outside does not "cross" the surface.
+            return 0
+        t = -(ax * dx + ay * dy + az * dz) / seg2
+        if t < 0.0:
+            t = 0.0
+        elif t > 1.0:
+            t = 1.0
+        cx, cy, cz = ax + dx * t, ay + dy * t, az + dz * t
+        closest2 = cx * cx + cy * cy + cz * cz
+        # At least one endpoint is outside (checked above). If the segment reaches
+        # within the radius, it crosses the surface.
+        return 1 if closest2 <= r2 else 0
+
 
 def _is_critical(subsystem) -> bool:
     """True when a subsystem carries the engine's critical flag. Guarded so
