@@ -77,6 +77,39 @@ def test_bridge_pass_off_while_cutscene_active_then_on_after_end():
     App.g_kSetManager.DeleteSet("DryDock")
 
 
+def test_player_ship_visible_while_cutscene_camera_active_in_bridge_state():
+    """The subject of an in-space cutscene must render even though the player is
+    on the bridge in state. Player-ship visibility uses the SAME effective-bridge
+    predicate as the bridge pass (`is_bridge and _cc is None`); without it the
+    hide-on-bridge leaves the cutscene exterior empty (ship invisible)."""
+    from engine.host_loop import _apply_bridge_player_visibility
+    s, cam, ship, wp = _drydock_scene()
+    Camera.Placement("Cam Pos 1", "player", "DryDock", 0, 1)
+    cc = _active_cutscene_camera()
+    assert cc is not None
+
+    class _R:
+        def __init__(self):
+            self.calls = []
+
+        def set_visible(self, iid, vis):
+            self.calls.append((iid, vis))
+
+    # On the bridge in state (is_bridge True) BUT a cutscene camera owns the
+    # frame → effective is_bridge False → ship visible.
+    r = _R()
+    _apply_bridge_player_visibility(r, 7, is_bridge=(True and cc is None),
+                                    spv_open=False)
+    assert r.calls == [(7, True)]
+
+    # No cutscene camera → the normal hide-on-bridge still applies.
+    r2 = _R()
+    _apply_bridge_player_visibility(r2, 7, is_bridge=(True and None is None),
+                                    spv_open=False)
+    assert r2.calls == [(7, False)]
+    App.g_kSetManager.DeleteSet("DryDock")
+
+
 def test_cutscene_pose_returns_lookat_point_not_direction():
     """Regression for the merged 365207f7 seam: mode.Update returns a forward
     DIRECTION; _cutscene_pose must return a look-at POINT (eye+fwd), else a

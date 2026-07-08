@@ -6294,9 +6294,15 @@ def run(mission_name: Optional[str] = None,
                 r, controller, _vs_ramp, _player_dt)
             _player_iid_vs = (session.ship_instances.get(player)
                               if session is not None and player is not None else None)
+            # Use the EFFECTIVE bridge state (same predicate as the bridge
+            # render pass): while an in-space cutscene camera owns the frame the
+            # player ship IS the subject of the shot and must render, even though
+            # the player is on the bridge in state. Without this the hide-on-
+            # bridge (so the ship doesn't show on its own viewscreen) leaves the
+            # cutscene exterior empty — the ship you're watching is invisible.
             _apply_bridge_player_visibility(
                 r, _player_iid_vs,
-                is_bridge=view_mode.is_bridge, spv_open=_spv_open)
+                is_bridge=view_mode.is_bridge and _cc is None, spv_open=_spv_open)
 
             # Audio listener (skipped while paused — silence the rumble).
             if not pause.is_open:
