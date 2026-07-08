@@ -9,9 +9,12 @@
 #include <nif/file.h>
 #include <nif/block.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <exception>
 #include <filesystem>
+#include <limits>
 #include <string>
 #include <unordered_map>
 #include <variant>
@@ -182,6 +185,40 @@ int main(int argc, char** argv) {
             printed_orphan_header = true;
         }
         print_node(f, links, i, 0, visited);
+    }
+
+    // Geometry bounds: authored bound sphere (BC's render-scale divisor) and
+    // raw vertex AABB (mesh-local, no node transforms) for every NiTriShapeData.
+    std::printf("\n# Geometry bounds (NiTriShapeData):\n");
+    for (std::size_t i = 0; i < f.blocks.size(); ++i) {
+        auto* d = std::get_if<nif::NiTriShapeData>(&f.blocks[i]);
+        if (!d) continue;
+        float lo[3] = { std::numeric_limits<float>::max(),
+                        std::numeric_limits<float>::max(),
+                        std::numeric_limits<float>::max() };
+        float hi[3] = { std::numeric_limits<float>::lowest(),
+                        std::numeric_limits<float>::lowest(),
+                        std::numeric_limits<float>::lowest() };
+        float max_vert_dist = 0.0f;
+        for (const auto& v : d->vertices) {
+            lo[0] = std::min(lo[0], v.x); hi[0] = std::max(hi[0], v.x);
+            lo[1] = std::min(lo[1], v.y); hi[1] = std::max(hi[1], v.y);
+            lo[2] = std::min(lo[2], v.z); hi[2] = std::max(hi[2], v.z);
+            max_vert_dist = std::max(max_vert_dist,
+                std::sqrt(v.x*v.x + v.y*v.y + v.z*v.z));
+        }
+        float hx = 0.5f*(hi[0]-lo[0]), hy = 0.5f*(hi[1]-lo[1]), hz = 0.5f*(hi[2]-lo[2]);
+        float cx = 0.5f*(hi[0]+lo[0]), cy = 0.5f*(hi[1]+lo[1]), cz = 0.5f*(hi[2]+lo[2]);
+        float half_len = std::sqrt(hx*hx + hy*hy + hz*hz);
+        float center_len = std::sqrt(cx*cx + cy*cy + cz*cz);
+        std::printf("  [%zu] num_vertices=%u\n", i, d->num_vertices);
+        std::printf("       authored bound: center=(%.3f, %.3f, %.3f)  radius=%.4f\n",
+                    d->bound_center.x, d->bound_center.y, d->bound_center.z,
+                    d->bound_radius);
+        std::printf("       vertex AABB:    center=(%.3f, %.3f, %.3f)  half=(%.3f, %.3f, %.3f)\n",
+                    cx, cy, cz, hx, hy, hz);
+        std::printf("       max_vert_dist=%.4f  |half|=%.4f  |center|+|half| (our extent)=%.4f\n",
+                    max_vert_dist, half_len, center_len + half_len);
     }
     return 0;
 }
