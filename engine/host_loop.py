@@ -1720,12 +1720,22 @@ def _tactical_hud_visible(*, is_exterior: bool, spv_open: bool,
 
 
 def _bridge_freelook_suppressed(*, crew_menu_open: bool,
-                                cutscene_active: bool) -> bool:
+                                cutscene_active: bool,
+                                mouse_input_allowed: bool = True) -> bool:
     """Whether the bridge camera's mouse free-look is suppressed this frame.
-    Suppressed while a crew menu is open (the cursor is freed to click it)
-    and during a cutscene (the letterbox pins the view where the mission
-    wants it — no free-look)."""
-    return crew_menu_open or cutscene_active
+    Suppressed while a crew menu is open (the cursor is freed to click it),
+    during a cutscene (the letterbox pins the view where the mission wants
+    it — no free-look), and whenever the mission has removed mouse control
+    (MissionLib.RemoveControl -> AllowMouseInput(0)).
+
+    The RemoveControl case is load-bearing: a bridge cutscene calls
+    RemoveControl at its start but StartCutscene (which sets cutscene_active)
+    only later, so there is a window — e.g. right after the camera walk-on
+    hands back to the base pose, before the briefing's StartCutscene — where
+    cutscene_active is still False but the player must not steer. Without this,
+    mouse motion in that gap accumulates bridge yaw and the cutscene then locks
+    the camera off-target (E1M1: the view froze on the empty XO chair)."""
+    return crew_menu_open or cutscene_active or (not mouse_input_allowed)
 
 
 class _PauseMenuController:
@@ -6035,9 +6045,11 @@ def run(mission_name: Optional[str] = None,
                         # Free-look is also suppressed during a cutscene: the
                         # letterbox pins the view where the mission wants it.
                         from engine.appc.top_window import TopWindow_GetTopWindow
+                        _tw = TopWindow_GetTopWindow()
                         if _bridge_freelook_suppressed(
                                 crew_menu_open=crew_menu_panel.has_open_menu(),
-                                cutscene_active=TopWindow_GetTopWindow().IsCutsceneMode()):
+                                cutscene_active=_tw.IsCutsceneMode(),
+                                mouse_input_allowed=_tw.IsMouseInputAllowed()):
                             mouse_dx, mouse_dy = 0.0, 0.0
                         bridge_camera.set_zoom_target(
                             _active_zoom_officer_world(crew_menu_panel, r),

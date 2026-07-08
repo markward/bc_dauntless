@@ -140,6 +140,28 @@ def test_bridge_freelook_suppressed_during_cutscene():
         crew_menu_open=True, cutscene_active=False) is True
 
 
+def test_bridge_freelook_suppressed_when_mission_removed_mouse_control():
+    """MissionLib.RemoveControl (start of a bridge cutscene) disables mouse
+    input BEFORE StartCutscene runs, so there is a window where cutscene_active
+    is still False but the mission owns the view. Free-look must be suppressed
+    then too — otherwise mouse motion in that gap accumulates bridge yaw and the
+    cutscene locks the camera off-target (E1M1 Picard/Saffi walk-on: the view
+    froze on the empty XO chair). mouse_input_allowed defaults True so ordinary
+    bridge control is unaffected."""
+    from engine.host_loop import _bridge_freelook_suppressed
+    # Control removed, no menu, not yet in cutscene mode -> suppressed.
+    assert _bridge_freelook_suppressed(
+        crew_menu_open=False, cutscene_active=False,
+        mouse_input_allowed=False) is True
+    # Control allowed + nothing else -> normal free-look (not suppressed).
+    assert _bridge_freelook_suppressed(
+        crew_menu_open=False, cutscene_active=False,
+        mouse_input_allowed=True) is False
+    # Default (no arg) preserves the prior behaviour.
+    assert _bridge_freelook_suppressed(
+        crew_menu_open=False, cutscene_active=False) is False
+
+
 def test_space_toggle_suppressed_while_bridge_cutscene_camera_pending():
     """A queued/playing bridge-cutscene camera path forces the view to
     bridge each frame; toggling would flip to exterior for one frame and
