@@ -2193,13 +2193,17 @@ class _BridgeCamera:
     def _lerp(a: float, b: float, t: float) -> float:
         return a + (b - a) * t
 
-    def set_zoom_target(self, world_xyz, dt: float) -> None:
+    def set_zoom_target(self, world_xyz, dt: float, snap: bool = False) -> None:
         """Select (world_xyz != None) or deselect (None) an officer to zoom
         onto; advance the ease by dt at rate 1/zoom_time, clamped to [0, 1].
+        snap=True jumps straight to fully-framed (AT_LOOK_AT_ME_NOW).
         Mouse-look is suspended whenever a zoom is in progress (see apply)."""
         self._zoom_active = world_xyz is not None
         if world_xyz is not None:
             self._zoom_target_world = world_xyz
+            if snap:
+                self._zoom_t = 1.0        # AT_LOOK_AT_ME_NOW: jump, don't ease
+                return
         step = dt / max(_BRIDGE_ZOOM_TIME, 1e-6)
         if self._zoom_active:
             self._zoom_t = min(1.0, self._zoom_t + step)
@@ -2337,6 +2341,18 @@ def _active_zoom_officer_world(crew_menu_panel, r):
     if not center:
         return None
     return (center[0], center[1], center[2])
+
+
+def _resolve_bridge_focus_world(watch_ctrl, crew_menu_panel, r):
+    """The world point the captain's-eye camera should frame this bridge frame,
+    or None (free-look). Precedence: an AT_WATCH_ME / AT_LOOK_AT_ME target (the
+    watched character's head-centre) over the crew-menu zoom-to-officer. A baked
+    cutscene camera path is handled separately (set_anim_pose) and outranks both."""
+    if watch_ctrl is not None:
+        w = watch_ctrl.resolve_target_world(r)
+        if w is not None:
+            return w
+    return _active_zoom_officer_world(crew_menu_panel, r)
 
 
 def _setup_sdk() -> None:
