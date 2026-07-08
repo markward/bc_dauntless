@@ -1209,11 +1209,15 @@ class CharacterAction(TGAction):
                     pass
             self.Completed()
             return
-        # AT_WATCH_ME / AT_STOP_WATCHING_ME set the watch-captain flag (visual
-        # head-track is a follow-up; sequencing must still advance). Other
-        # non-speak types remain inline no-ops.
-        if at in (self.AT_WATCH_ME, self.AT_STOP_WATCHING_ME):
-            self._set_watch(at == self.AT_WATCH_ME)
+        # Camera framing (AT_WATCH_ME / AT_LOOK_AT_ME[_NOW]) aims the captain's-eye
+        # bridge camera AT this character; AT_STOP_WATCHING_ME releases it. All
+        # complete inline — the camera eases underneath while the scene proceeds.
+        if at in (self.AT_WATCH_ME, self.AT_LOOK_AT_ME, self.AT_LOOK_AT_ME_NOW):
+            self._set_camera_watch(snap=(at == self.AT_LOOK_AT_ME_NOW))
+            self.Completed()
+            return
+        if at == self.AT_STOP_WATCHING_ME:
+            self._clear_camera_watch()
             self.Completed()
             return
         if at in (self.AT_TURN, self.AT_TURN_NOW,
@@ -1301,15 +1305,25 @@ class CharacterAction(TGAction):
         except Exception:
             self.Completed()
 
-    def _set_watch(self, watching: bool) -> None:
-        cc = self._character
-        if cc is None:
-            return
+    def _set_camera_watch(self, *, snap: bool) -> None:
+        # Frame this character with the captain's-eye camera (AT_WATCH_ME /
+        # AT_LOOK_AT_ME[_NOW]). Best-effort: never raises out of Play().
+        from engine.appc.characters import CharacterClass_Cast
+        from engine import bridge_camera_watch
         try:
-            if watching:
-                cc.SetStatus(cc.CS_TURNED)     # "watching the captain" state flag
-            else:
-                cc.ClearStatus(cc.CS_TURNED)
+            cc = CharacterClass_Cast(self._character) if self._character is not None else None
+            ctrl = bridge_camera_watch.get_controller()
+            if cc is not None and ctrl is not None:
+                ctrl.watch(cc, snap=snap)
+        except Exception:
+            pass
+
+    def _clear_camera_watch(self) -> None:
+        from engine import bridge_camera_watch
+        try:
+            ctrl = bridge_camera_watch.get_controller()
+            if ctrl is not None:
+                ctrl.clear()
         except Exception:
             pass
 

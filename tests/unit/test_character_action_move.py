@@ -76,39 +76,46 @@ def test_at_watch_me_completes_inline():
     assert act.IsPlaying() is False                   # sequencing advances
 
 
-class _WatchableChar(_Char):
-    """Character double with real SetStatus/ClearStatus tracking, so watch
-    tests can assert the flag actually toggles (not just that the action
-    completes)."""
-    CS_TURNED = "CS_TURNED"
-
-    def __init__(self, name="Picard"):
-        super().__init__(name)
-        self.status_calls = []
-        self.cleared_calls = []
-
-    def SetStatus(self, state):
-        self.status_calls.append(state)
-
-    def ClearStatus(self, state):
-        self.cleared_calls.append(state)
+class _RecordingCameraWatch:
+    """Watch-controller double so these regressions can assert the real
+    camera-framing target/clear calls, not just that the action completes.
+    AT_WATCH_ME/AT_LOOK_AT_ME(_NOW) aim the bridge camera at the character —
+    they do NOT toggle a CS_TURNED status flag (that was the placeholder
+    this task replaces)."""
+    def __init__(self):
+        self.watched = []
+        self.cleared = 0
+    def watch(self, character, snap=False):
+        self.watched.append((character, snap))
+    def clear(self):
+        self.cleared += 1
 
 
-def test_at_watch_me_sets_turned_status():
-    ch = _WatchableChar()
+def test_at_watch_me_sets_camera_watch_target(monkeypatch):
+    import engine.bridge_camera_watch as bridge_camera_watch
+    ch = _Char()
+    ctrl = _RecordingCameraWatch()
+    monkeypatch.setattr(bridge_camera_watch, "get_controller", lambda: ctrl)
+    monkeypatch.setattr("engine.appc.characters.CharacterClass_Cast",
+                        lambda c: c)
     act = CharacterAction(ch, CharacterAction.AT_WATCH_ME)
     act.Play()
-    assert ch.status_calls == [_WatchableChar.CS_TURNED]
-    assert ch.cleared_calls == []
+    assert ctrl.watched == [(ch, False)]
+    assert ctrl.cleared == 0
     assert act.IsPlaying() is False
 
 
-def test_at_stop_watching_me_clears_turned_status():
-    ch = _WatchableChar()
+def test_at_stop_watching_me_clears_camera_watch(monkeypatch):
+    import engine.bridge_camera_watch as bridge_camera_watch
+    ch = _Char()
+    ctrl = _RecordingCameraWatch()
+    monkeypatch.setattr(bridge_camera_watch, "get_controller", lambda: ctrl)
+    monkeypatch.setattr("engine.appc.characters.CharacterClass_Cast",
+                        lambda c: c)
     act = CharacterAction(ch, CharacterAction.AT_STOP_WATCHING_ME)
     act.Play()
-    assert ch.cleared_calls == [_WatchableChar.CS_TURNED]
-    assert ch.status_calls == []
+    assert ctrl.cleared == 1
+    assert ctrl.watched == []
     assert act.IsPlaying() is False
 
 
