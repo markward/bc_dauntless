@@ -1778,16 +1778,16 @@ class _PauseMenuController:
 
 
 def _apply_view_mode_side_effects(view_mode: "_ViewModeController", h) -> None:
-    """Mirror the view-mode flag into renderer-side state. Idempotent —
-    only fires when the mode has changed since the last call. `h` is
-    the bindings module (or fake) exposing bridge_pass_set_enabled and
-    set_cursor_locked.
+    """Mirror the view-mode flag into renderer-side state (cursor lock,
+    engine-rumble mute, bridge ambient). Idempotent — only fires when the mode
+    has changed since the last call. The bridge render PASS is driven
+    separately by _apply_bridge_pass_state (it also folds in the cutscene
+    override). `h` is the bindings module (or fake) exposing set_cursor_locked.
     """
     target = view_mode.is_bridge
     last = getattr(view_mode, "_last_synced_is_bridge", None)
     if last == target:
         return
-    h.bridge_pass_set_enabled(target)
     h.set_cursor_locked(target)
     # Engine rumble is direct radiation from each ship — silenced when
     # the player is inside the bridge.
@@ -1802,6 +1802,24 @@ def _apply_view_mode_side_effects(view_mode: "_ViewModeController", h) -> None:
     camera_shake.reset()
     hit_feedback.reset_audio_throttle()
     view_mode._last_synced_is_bridge = target
+
+
+def _apply_bridge_pass_state(effective_bridge, h, latch_owner):
+    """Drive bridge_pass_set_enabled from the EFFECTIVE bridge-render state
+    (view_mode.is_bridge AND no in-space cutscene camera owns the frame).
+    Idempotent/latched on latch_owner._last_synced_bridge_pass.
+
+    Split out of _apply_view_mode_side_effects so the bridge render PASS can
+    turn off for an in-space cutscene while cursor lock / engine-rumble mute /
+    bridge ambient stay keyed on the raw bridge flag — the player is still on
+    the bridge in state; only what they SEE changes."""
+    if h is None:
+        return
+    last = getattr(latch_owner, "_last_synced_bridge_pass", None)
+    if last == effective_bridge:
+        return
+    h.bridge_pass_set_enabled(effective_bridge)
+    latch_owner._last_synced_bridge_pass = effective_bridge
 
 
 class _NullPicker:
@@ -3920,6 +3938,17 @@ def _active_cutscene_camera():
     return (cam, mode)
 
 
+def _cutscene_pose(mode, dt):
+    """Convert a cutscene CameraMode's Update() result — (eye, forward_dir, up)
+    in world game units — into the (eye, look_at_point, up) triple the main
+    scene camera consumes. Update returns a forward DIRECTION; r.set_camera
+    expects a look-at POINT, so add eye. (Fixes the direction-as-point seam the
+    merged in-space controller (365207f7) shipped with.)"""
+    eye, fwd, up = mode.Update(dt)
+    look_at = (eye[0] + fwd[0], eye[1] + fwd[1], eye[2] + fwd[2])
+    return (eye, look_at, up)
+
+
 def _update_ui_for_tick(player, view_mode, session, active_set) -> None:
     """CEF integration hook — Stage 2 wires this up. Currently a no-op."""
     return
@@ -6008,6 +6037,16 @@ def run(mission_name: Optional[str] = None,
 
             # --- Render (always runs, including while paused) ---
             # Camera: orbit + zoom around the player ship (or origin fallback).
+            # In-space cutscene camera on the EXPLICITLY-rendered set: when a
+            # live valid mode owns the frame, the bridge render pass turns
+            # off and the main scene shows the exterior cutscene — even while
+            # the bridge flag is set (the player is on the bridge in state
+            # but sees the exterior; get_explicit_rendered_set() is the
+            # render-target authority; bridge_flag()/GetRenderedSet() are
+            # untouched). Reverts when CutsceneCameraEnd pops the mode.
+            _cc = None if pause.is_open else _active_cutscene_camera()
+            _apply_bridge_pass_state(
+                view_mode.is_bridge and _cc is None, _h, view_mode)
             if fixed_camera:
                 fixed_radius = player.GetRadius() if player is not None else 1.0
                 eye = (0.0, 0.0, CAM_MAX_RADII * fixed_radius)
@@ -6017,15 +6056,10 @@ def run(mission_name: Optional[str] = None,
                 eye, target, up_vec = _compute_camera(
                     view_mode, director,
                     player=player, dt=_player_dt)
-                # In-space cutscene camera: if the rendered set has an active
-                # cutscene camera with a live mode, drive the exterior view
-                # from it instead of the player director (SDK CutsceneCamera*
-                # + LockedView/ChaseCam/TargetWatch). Reverts automatically
-                # when CutsceneCameraEnd removes the camera/mode.
-                if not pause.is_open and not view_mode.is_bridge:
-                    _cc = _active_cutscene_camera()
-                    if _cc is not None:
-                        eye, target, up_vec = _cc[1].Update(_player_dt)
+                # Cutscene camera (computed above) drives the main-scene pose,
+                # converting the mode's forward DIRECTION to a look-at POINT.
+                if _cc is not None:
+                    eye, target, up_vec = _cutscene_pose(_cc[1], _player_dt)
                 # Camera shake — apply to the exterior view. The bridge
                 # first-person camera below gets its own perturb call
                 # against the shared shake state.

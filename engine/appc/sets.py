@@ -310,6 +310,13 @@ class SetClass(TGEventHandlerObject):
         if self._active_camera_name == name:
             self._active_camera_name = None
 
+    def DeleteCameraFromSet(self, name: str) -> None:
+        # Real SDK wires this onto the base SetClass, not just BridgeSet
+        # (sdk/Build/scripts/App.py:3598: SetClass.DeleteCameraFromSet =
+        # Appc.SetClass_DeleteCameraFromSet). CutsceneCameraEnd calls it on
+        # arbitrary space sets, not only the bridge set.
+        self.RemoveCameraFromSet(name)
+
     def GetActiveCamera(self):
         if self._active_camera_name is None:
             return None

@@ -342,19 +342,19 @@ class _RecordingRenderer:
         self.cursor_lock_calls.append(locked)
 
 
-def test_toggle_to_bridge_enables_pass_and_locks_cursor():
-    """Toggling exterior → bridge fires bridge_pass_set_enabled(True)
-    and set_cursor_locked(True) exactly once each."""
+def test_toggle_to_bridge_locks_cursor():
+    """Toggling exterior → bridge fires set_cursor_locked(True) exactly once.
+    (The bridge render PASS is driven separately by _apply_bridge_pass_state.)"""
     from engine.host_loop import _apply_view_mode_side_effects
     vm = _exterior_vm()
     rr = _RecordingRenderer()
     vm.toggle()  # exterior → bridge
     _apply_view_mode_side_effects(vm, rr)
-    assert rr.bridge_pass_calls == [True]
     assert rr.cursor_lock_calls == [True]
+    assert rr.bridge_pass_calls == []               # applier no longer touches it
 
 
-def test_toggle_to_exterior_disables_pass_and_releases_cursor():
+def test_toggle_to_exterior_releases_cursor():
     from engine.host_loop import _apply_view_mode_side_effects
     vm = _exterior_vm()
     vm.toggle()  # bridge
@@ -362,15 +362,29 @@ def test_toggle_to_exterior_disables_pass_and_releases_cursor():
     _apply_view_mode_side_effects(vm, rr)  # one true call
     vm.toggle()  # back to exterior
     _apply_view_mode_side_effects(vm, rr)
-    assert rr.bridge_pass_calls == [True, False]
     assert rr.cursor_lock_calls == [True, False]
+    assert rr.bridge_pass_calls == []
+
+
+def test_apply_bridge_pass_state_drives_and_latches():
+    """_apply_bridge_pass_state fires bridge_pass_set_enabled on change and is
+    idempotent; effective_bridge=False (cutscene owns the frame) turns it off."""
+    from engine.host_loop import _apply_bridge_pass_state
+
+    class _Latch:
+        pass
+
+    rr = _RecordingRenderer()
+    latch = _Latch()
+    _apply_bridge_pass_state(True, rr, latch)       # bridge visible
+    _apply_bridge_pass_state(True, rr, latch)       # no change → no re-fire
+    _apply_bridge_pass_state(False, rr, latch)      # cutscene → pass off
+    assert rr.bridge_pass_calls == [True, False]
 
 
 def test_apply_view_mode_side_effects_idempotent_within_a_mode():
-    """Calling _apply_view_mode_side_effects twice without toggling
-    must not re-fire the renderer calls — bridge_pass_set_enabled is a
-    cheap setter but cursor lock has visible side-effects we don't want
-    to spam."""
+    """Calling _apply_view_mode_side_effects twice without toggling must not
+    re-fire the cursor lock (it has visible side-effects we don't want to spam)."""
     import engine.appc.top_window as top_window
     from engine.host_loop import _ViewModeController, _apply_view_mode_side_effects
     top_window.reset_for_tests()
@@ -378,8 +392,6 @@ def test_apply_view_mode_side_effects_idempotent_within_a_mode():
     rr = _RecordingRenderer()
     _apply_view_mode_side_effects(vm, rr)
     _apply_view_mode_side_effects(vm, rr)  # no toggle in between
-    # Both lists should have at most 1 entry (the initial-sync call).
-    assert len(rr.bridge_pass_calls) <= 1
     assert len(rr.cursor_lock_calls) <= 1
 
 
