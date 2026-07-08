@@ -277,3 +277,33 @@ def test_zoom_target_mode_invalid_when_target_dead():
     m.SetAttrIDObject("Source", _FakeTarget((0.0, 0.0, 0.0)))
     m.SetAttrIDObject("Target", _Dying())
     assert not m.IsValid()
+
+
+from engine.appc.camera_modes import (
+    CameraMode_Create, ChaseMode, TargetMode, PlaceByDirectionMode,
+)
+
+
+def test_camera_mode_create_dispatches_on_kind():
+    from engine.appc.camera_modes import LockedMode
+    assert isinstance(CameraMode_Create("Locked"), LockedMode)
+    assert isinstance(CameraMode_Create("Chase"), ChaseMode)
+    assert isinstance(CameraMode_Create("Target"), TargetMode)
+    assert isinstance(CameraMode_Create("Placement"), PlacementMode)
+    assert isinstance(CameraMode_Create("ZoomTarget"), ZoomTargetMode)
+
+
+def test_camera_mode_create_reverse_chase_is_reversed():
+    m = CameraMode_Create("ReverseChase")
+    assert isinstance(m, ChaseMode)
+    assert m._reverse is True
+
+
+def test_camera_mode_create_default_is_place_by_direction():
+    assert isinstance(CameraMode_Create("PlaceByDirection"), PlaceByDirectionMode)
+    assert isinstance(CameraMode_Create("Bogus"), PlaceByDirectionMode)
+
+
+def test_camera_mode_create_tags_owner_camera():
+    sentinel = object()
+    assert CameraMode_Create("Chase", sentinel)._owner_camera is sentinel

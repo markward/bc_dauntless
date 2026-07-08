@@ -134,14 +134,26 @@ class PlaceByDirectionMode(CameraMode):
 
 
 def CameraMode_Create(kind, pCamera=None):
-    """App.CameraMode_Create shim. The SDK's CameraModes.* builders call this
-    with a mode-type string (e.g. "PlaceByDirection") then fill attrs via
-    SetAttrFloat/SetAttrPoint. Returns an attr-bag mode tagged with `kind`;
-    `pCamera` is accepted (the SDK passes it) but unused — these modes are
-    evaluated by their consumer, not bound to the camera here. The in-space
-    cutscene path does NOT route through here (it uses
-    CameraObjectClass._MODE_FACTORY)."""
-    return PlaceByDirectionMode(kind)
+    """App.CameraMode_Create shim. The SDK's CameraModes.* builders and
+    Camera.MakePlayerCamera call this with a mode-type string, then fill attrs
+    via SetAttr*. Dispatch on `kind` to the matching mode class; `PlaceByDirection`
+    and any unknown kind fall back to the PlaceByDirection attr-bag (the bridge
+    captain path — unchanged). `pCamera` is tagged as the mode owner (used by
+    ZoomTargetMode's Source fallback)."""
+    if kind == "ReverseChase":
+        mode = ChaseMode(reverse=True)
+    else:
+        _dispatch = {
+            "Locked": LockedMode,
+            "Chase": ChaseMode,
+            "Target": TargetMode,
+            "Placement": PlacementMode,
+            "ZoomTarget": ZoomTargetMode,
+        }
+        cls = _dispatch.get(kind)
+        mode = cls() if cls is not None else PlaceByDirectionMode(kind)
+    mode._owner_camera = pCamera
+    return mode
 
 
 class LockedMode(CameraMode):
