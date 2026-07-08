@@ -108,17 +108,22 @@ class BridgeCharacterAnimController:
         self._pending_glances.append((character, str(detail), on_complete))
 
     def _process_glance(self, renderer, character, detail, on_complete) -> None:
+        """Play a quick glance. Fires on_complete exactly once — via the
+        submitted _Action when submit() succeeds, else inline (unresolved clip
+        / no render instance / dropped by submit's equal-priority guard) so
+        completion is guaranteed and a waiting TGSequence never hangs."""
         clip = capture_registered_clip(character, "Glance" + detail)
         iid = getattr(character, "_render_instance", None)
-        if iid is None or not clip:
-            if on_complete is not None:
-                try:
-                    on_complete()
-                except Exception:
-                    pass
-            return
-        self.submit(character, [(self._resolve(clip["clip_nif"]), 0.0)],
-                    priority=_REACTION, on_complete=on_complete)
+        submitted = False
+        if iid is not None and clip:
+            submitted = self.submit(
+                character, [(self._resolve(clip["clip_nif"]), 0.0)],
+                priority=_REACTION, on_complete=on_complete)
+        if not submitted and on_complete is not None:
+            try:
+                on_complete()
+            except Exception:
+                pass
 
     def reset(self) -> None:
         self._active = {}
