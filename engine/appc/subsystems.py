@@ -2062,14 +2062,6 @@ class CloakingSubsystem(PoweredSubsystem):
         # inf until the first power pump, so a cold-started cloak is never
         # decloaked before its reserve has even been sampled.
         self._backup_reserve: float = float("inf")
-        # GetNormalPowerWanted() is no longer the actual draw amount (that's
-        # CLOAK_RESERVE_DRAIN_PER_SECOND, drawn direct-from-reserve in
-        # _update_power) — it now serves only as Update()'s "does this device
-        # draw power at all" flag for the starvation guard's zero-draw ("free
-        # cloak") carve-out. Default it to the drain rate so a freshly built
-        # cloak is starvation-eligible out of the box; legacy callers can still
-        # opt a specific instance out via SetNormalPowerPerSecond(0.0).
-        self._normal_power: float = self.CLOAK_RESERVE_DRAIN_PER_SECOND
 
     # ── Intent (called by the SDK CloakShip preprocessor) ────────────────────
 
@@ -2231,7 +2223,12 @@ class CloakingSubsystem(PoweredSubsystem):
         # no longer hold the cloak.  Keyed on the reserve level (snapshotted in
         # _update_power), NOT per-frame conduit efficiency — see
         # MIN_RESERVE_TO_HOLD_CLOAK for why efficiency was the wrong signal.
-        if (self.IsTryingToCloak() and self.GetNormalPowerWanted() > 0.0
+        # Gated on CLOAK_RESERVE_DRAIN_PER_SECOND (the ACTUAL direct-from-reserve
+        # draw amount used by _update_power), not GetNormalPowerWanted() — the
+        # latter is a legacy PoweredSubsystem field the cloak's B-path no longer
+        # reads, so a "free cloak" set via CLOAK_RESERVE_DRAIN_PER_SECOND = 0
+        # must disarm this guard regardless of _normal_power.
+        if (self.IsTryingToCloak() and self.CLOAK_RESERVE_DRAIN_PER_SECOND > 0.0
                 and self._backup_reserve <= self.MIN_RESERVE_TO_HOLD_CLOAK):
             self._force_decloak()
             return

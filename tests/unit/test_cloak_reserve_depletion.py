@@ -43,26 +43,42 @@ def test_cloak_drains_reserve_at_full_rate_not_conduit_throttled():
 
 
 def test_healthy_reactor_sustains_cloak():
-    # Reactor 1500/s > drain 1000/s: reserve holds, ship stays cloaked.
+    # Reactor 1500/s > drain 1000/s: refill exceeds drain, so a reserve that
+    # would otherwise empty within the run must instead hold (and even climb).
+    # Main battery is seeded FULL so every watt of reactor output spills
+    # straight into the backup reserve (_add_power_to_batteries fills main
+    # first) -- otherwise "reactor health" would be inert to the reserve.
     ship, power = _powered_ship(output=1500.0)
     cloak = _cloak_on(ship, drain=1000.0)
-    power.SetBackupBatteryPower(200000.0)
+    power.SetMainBatteryPower(power.GetMainBatteryLimit())   # main full -> spill to backup
+    power.SetBackupBatteryPower(3000.0)   # low reserve: would drain dry in 3s without refill
     cloak.StartCloaking()
     for _ in range(600):                      # 10 s
         power.Update(1.0 / 60.0)
         cloak.Update(1.0 / 60.0)
-    assert cloak.IsTryingToCloak() == 1
+    assert cloak.IsTryingToCloak() == 1, (
+        "healthy reactor (1500/s) out-refills the 1000/s drain and must sustain cloak"
+    )
+    assert power.GetBackupBatteryPower() > 3000.0, (
+        "reserve should have net-gained over the run, proving refill (not just non-depletion)"
+    )
 
 
 def test_damaged_reactor_depletes_reserve_and_forces_decloak():
-    # Reactor 1500 * 30% condition = 450/s < drain 1000/s: reserve empties ->
-    # Step 0 guard force-decloaks. Start with a small reserve so it empties fast.
+    # Reactor 1500 * 30% condition = 450/s < drain 1000/s: refill is active
+    # but falls behind the drain, so the reserve empties EVEN WITH the reactor
+    # feeding it, and Step 0's guard force-decloaks. Main battery seeded FULL
+    # so the (reduced) reactor output still spills straight into backup.
     ship, power = _powered_ship(output=1500.0)
-    power.SetCondition(power.GetMaxCondition() * 0.30)   # damaged reactor
+    power.SetCondition(power.GetMaxCondition() * 0.30)   # damaged reactor -> ~450/s output
     cloak = _cloak_on(ship, drain=1000.0)
+    power.SetMainBatteryPower(power.GetMainBatteryLimit())   # main full -> spill to backup
     power.SetBackupBatteryPower(2000.0)                  # small reserve
     cloak.StartCloaking()
     for _ in range(600):                                # up to 10 s
         power.Update(1.0 / 60.0)
         cloak.Update(1.0 / 60.0)
-    assert cloak.IsTryingToCloak() == 0
+    assert cloak.IsTryingToCloak() == 0, (
+        "damaged reactor's refill (~450/s) falls behind the 1000/s drain, "
+        "so the reserve must still empty and force a decloak"
+    )

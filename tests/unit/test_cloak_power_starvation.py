@@ -69,14 +69,16 @@ def test_cloak_drops_when_backup_battery_empties():
 
 
 def test_free_cloak_is_never_force_decloaked():
-    """A cloak with 0.0 pw/s authored draw is 'free' — GetNormalPowerWanted()
-    returns 0.0.  The starvation guard must NOT trigger for free cloaks even
-    when the backup battery is completely empty, because efficiency is
-    undefined (wanted == 0) and these devices are never supply-starved.
+    """A cloak with CLOAK_RESERVE_DRAIN_PER_SECOND == 0.0 is 'free' — it makes
+    no direct-from-reserve draw at all (see CloakingSubsystem._update_power).
+    The starvation guard must NOT trigger for free cloaks even when the
+    backup battery is completely empty, because a zero-drain cloak can never
+    be supply-starved by definition.
     """
     ship, power = _powered_ship()
     cloak = CloakingSubsystem("Free Cloak")
-    cloak.SetNormalPowerPerSecond(0.0)   # free (authored 0 pw/s)
+    cloak.CLOAK_RESERVE_DRAIN_PER_SECOND = 0.0   # free (no direct-from-reserve draw)
+    cloak.SetNormalPowerPerSecond(0.0)   # legacy field; no longer read by the B-path
     ship.AddPoweredConsumer(cloak)
     power.SetBackupBatteryPower(0.0)
     power.SetMainBatteryPower(0.0)
