@@ -920,6 +920,15 @@ ET_ORBIT_PLANET             = 1076
 # free value in this block (1075 is intentionally shared by ET_CLOAKED_COLLISION
 # and ET_POWER_FRACTION_CHANGED; everything else through 1076 is taken).
 ET_REPORT                   = 1077
+# Dock lifecycle notifications. Fired when the player completes a dock with a
+# starbase (ET_PLAYER_DOCKED_WITH_STARBASE) and when a tractored target finishes
+# docking (ET_TRACTOR_TARGET_DOCKED). Real distinct ints so any future handler
+# keyed on them dispatches; without this App.__getattr__ hands back a fresh
+# unstable _NamedStub (int()==0) per access. 1078/1079 are the next free values
+# in this block (1077 = ET_REPORT is the current high), below the 1200
+# Game_GetNextEventType allocator floor.
+ET_PLAYER_DOCKED_WITH_STARBASE = 1078
+ET_TRACTOR_TARGET_DOCKED       = 1079
 
 # ── FloatRangeWatcher condition event ─────────────────────────────────────────
 # Crossing event broadcast by a power subsystem's battery watcher when the
