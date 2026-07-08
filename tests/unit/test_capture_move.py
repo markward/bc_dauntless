@@ -61,3 +61,25 @@ def test_capture_move_none_when_clip_unresolvable(monkeypatch):
                         lambda ch, suffix: seq)
     monkeypatch.setattr(bridge_placement, "_nif_path_for_clip", lambda name: None)
     assert bridge_placement.capture_move(character=object(), detail="P1") is None
+
+
+def test_capture_move_end_location_none_when_no_set_location_action(monkeypatch):
+    # Builder returns a resolvable walk clip but no trailing set-location action.
+    seq = _Seq([_AnimAction("character", "db_L1toP_P")])
+    monkeypatch.setattr(bridge_placement, "_resolve_builder_sequence",
+                        lambda ch, suffix: seq if suffix == "ToP1" else None)
+    monkeypatch.setattr(bridge_placement, "_nif_path_for_clip",
+                        lambda name: "data/animations/db_L1toP_P.nif"
+                        if name == "db_L1toP_P" else None)
+
+    got = bridge_placement.capture_move(character=object(), detail="P1")
+    assert got == {"clip_nif": "data/animations/db_L1toP_P.nif",
+                   "end_location": None}
+
+
+def test_capture_move_none_when_no_character_kind_action(monkeypatch):
+    # Builder returns actions, but none targeting the character's anim node.
+    seq = _Seq([_AnimAction("object", "db_chair_move")])
+    monkeypatch.setattr(bridge_placement, "_resolve_builder_sequence",
+                        lambda ch, suffix: seq)
+    assert bridge_placement.capture_move(character=object(), detail="P1") is None
