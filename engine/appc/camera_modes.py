@@ -202,3 +202,39 @@ class TargetMode(CameraMode):
         fwd = _unit(d.x - s.x, d.y - s.y, d.z - s.z)
         up = _unit(*_apply_rot(src.GetWorldRotation(), TGPoint3(0.0, 0.0, 1.0)))
         return (eye, fwd, up)
+
+
+class PlacementMode(CameraMode):
+    """Watch an object from a fixed placement (BC's "PlacementWatch" —
+    Camera.LowPlacementWatch → NewMode("Placement", [("Source", pPlacement),
+    ("Target", pTarget)]); PlacementOffsetWatch adds ("TargetOffsetWorld", v)).
+    Eye sits at the Source placement's world position with its authored up
+    (col2). Target set → look at the target (plus the optional world offset);
+    Target None (legal — Camera.Placement's sTarget=None branch still calls
+    SetAttrIDObject("Target", None)) → look along the Source's own forward
+    (col1). A dead Target (or missing Source) makes the mode invalid."""
+
+    def _ideal(self):
+        src = self.GetAttrIDObject("Source")
+        if not _target_alive(src):
+            return None
+        s = src.GetWorldLocation()
+        R = src.GetWorldRotation()
+        eye = (s.x, s.y, s.z)
+        u = R.GetCol(2)
+        up = _unit(u.x, u.y, u.z)
+        dst = self.GetAttrIDObject("Target")
+        if dst is None:
+            f = R.GetCol(1)
+            fwd = _unit(f.x, f.y, f.z)
+        else:
+            if not _target_alive(dst):
+                return None
+            d = dst.GetWorldLocation()
+            off = self.GetAttrPoint("TargetOffsetWorld")
+            if off is not None:
+                dx, dy, dz = d.x + off.x, d.y + off.y, d.z + off.z
+            else:
+                dx, dy, dz = d.x, d.y, d.z
+            fwd = _unit(dx - s.x, dy - s.y, dz - s.z)
+        return (eye, fwd, up)

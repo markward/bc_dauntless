@@ -189,3 +189,53 @@ def test_target_alive_none_is_dead():
 def test_target_alive_real_is_dying():
     assert _target_alive(_Dying()) is False
     assert _target_alive(_NotDying()) is True
+
+
+from engine.appc.camera_modes import PlacementMode
+
+
+def test_placement_mode_eye_at_source_looks_at_target():
+    src = _FakeTarget((-50.0, 0.0, 0.0))          # placement 50 GU to port
+    tgt = _FakeTarget((0.0, 0.0, 0.0))            # ship at origin
+    m = PlacementMode()
+    m.SetAttrIDObject("Source", src)
+    m.SetAttrIDObject("Target", tgt)
+    eye, fwd, up = m.Update()                     # no dt => snap to ideal
+    assert eye == (-50.0, 0.0, 0.0)
+    assert abs(fwd[0] - 1.0) < 1e-6               # looks +X toward the ship
+    assert up == (0.0, 0.0, 1.0)                  # source col2 (identity)
+
+
+def test_placement_mode_target_none_looks_along_source_forward():
+    src = _FakeTarget((-50.0, 0.0, 0.0))
+    m = PlacementMode()
+    m.SetAttrIDObject("Source", src)
+    m.SetAttrIDObject("Target", None)
+    eye, fwd, up = m.Update()
+    assert eye == (-50.0, 0.0, 0.0)
+    assert fwd == (0.0, 1.0, 0.0)                 # source col1 (identity forward)
+
+
+def test_placement_mode_target_offset_world_shifts_lookat():
+    src = _FakeTarget((0.0, -50.0, 0.0))          # 50 GU behind (model -Y)
+    tgt = _FakeTarget((0.0, 0.0, 0.0))
+    m = PlacementMode()
+    m.SetAttrIDObject("Source", src)
+    m.SetAttrIDObject("Target", tgt)
+    m.SetAttrPoint("TargetOffsetWorld", TGPoint3(0.0, 0.0, 20.0))  # look 20 GU up
+    eye, fwd, up = m.Update()
+    # look-at = (0,0,20) from (0,-50,0) => mostly +Y, some +Z.
+    assert fwd[1] > 0.0 and fwd[2] > 0.0
+
+
+def test_placement_mode_invalid_without_source():
+    m = PlacementMode()
+    m.SetAttrIDObject("Target", _FakeTarget((0.0, 0.0, 0.0)))
+    assert not m.IsValid()
+
+
+def test_placement_mode_invalid_when_target_dead():
+    m = PlacementMode()
+    m.SetAttrIDObject("Source", _FakeTarget((-50.0, 0.0, 0.0)))
+    m.SetAttrIDObject("Target", _Dying())
+    assert not m.IsValid()
