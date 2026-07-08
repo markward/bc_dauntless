@@ -102,3 +102,20 @@ def test_exits_when_forced_out_by_exhaustion():
     tick_defensive_cloak(1.0 / 60.0)
     assert not is_defensive(ship)                        # controller released it
     _reset()
+
+
+def test_prunes_stale_id_when_ship_leaves_set():
+    _reset()
+    ship = _combat_cloak_ship(hull_pct=CLOAK_HULL_THRESHOLD - 0.05)
+    tick_defensive_cloak(1.0 / 60.0)                     # enter, cloaking
+    assert is_defensive(ship)
+
+    # Ship leaves the simulation (e.g. removed from its set ~10s after death,
+    # RemoveObjectFromSet) -> iter_ships() no longer yields it.
+    pSet = App.g_kSetManager._sets["S"]
+    pSet.RemoveObjectFromSet("Ship%d" % id(ship))
+
+    tick_defensive_cloak(1.0 / 60.0)
+    assert not is_defensive(ship)
+    assert id(ship) not in defensive_cloak._defensive
+    _reset()

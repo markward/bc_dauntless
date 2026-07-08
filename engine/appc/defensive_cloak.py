@@ -3,8 +3,9 @@
 A crippled cloak-capable AI ship breaks off, cloaks, and repairs in hiding, then
 re-engages once healed or is flushed out by reserve exhaustion (Part B). This is
 an engine behavior overlaid on the SDK AI (same pattern as collision_avoidance):
-while a ship is DEFENSIVE its SDK AI is suppressed (tick_all_ai skips it), so the
-SDK CloakShip/focus lifecycle never fights this controller for the cloak.
+while a ship is DEFENSIVE its SDK AI will be suppressed (tick_all_ai skips it,
+Task 3), so the SDK CloakShip/focus lifecycle never fights this controller for
+the cloak.
 
 Spec: docs/superpowers/specs/2026-07-07-cloak-survival-resource-design.md.
 """
@@ -59,8 +60,13 @@ def _dev_log(ship, verb: str) -> None:
 def tick_defensive_cloak(dt: float) -> None:
     """Per-frame controller. Runs BEFORE tick_all_ai each frame; ships it marks
     DEFENSIVE have their SDK AI suppressed by tick_all_ai this frame."""
-    for ship in iter_ships():
+    ships = list(iter_ships())
+    for ship in ships:
         _update_ship(ship)
+
+    # Drop state for ships that left play so the set can't grow unbounded
+    # (mirrors collision_avoidance.tick_collision_avoidance).
+    _defensive.intersection_update(id(s) for s in ships)
 
 
 def _update_ship(ship) -> None:
@@ -70,8 +76,7 @@ def _update_ship(ship) -> None:
         return
     cloak = _functional_cloak(ship)
     if cloak is None:                    # cloak lost / no cloak -> leave DEFENSIVE
-        if id(ship) in _defensive:
-            _defensive.discard(id(ship))
+        _defensive.discard(id(ship))
         return
     hull_pct = _hull_pct(ship)
     if hull_pct is None:
