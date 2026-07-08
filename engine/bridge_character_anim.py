@@ -61,16 +61,21 @@ class BridgeCharacterAnimController:
         return iid in self._active
 
     def submit(self, character, clips, priority, hold=False,
-               on_complete=None) -> None:
+               on_complete=None) -> bool:
+        """Returns True iff an _Action was actually created and stored; False
+        on every no-op path (no render instance, no clips, hidden character,
+        or dropped by the equal/higher-priority guard). Callers that need to
+        guarantee on_complete fires (e.g. _process_turn) must check this."""
         iid = getattr(character, "_render_instance", None)
         if iid is None or not clips:
-            return
+            return False
         if character.IsHidden():
-            return
+            return False
         cur = self._active.get(iid)
         if cur is not None and priority <= cur.priority:
-            return                  # don't preempt equal/higher priority
+            return False            # don't preempt equal/higher priority
         self._active[iid] = _Action(iid, list(clips), priority, hold, on_complete)
+        return True
 
     def set_idle(self, iid, clip_index) -> None:
         """Register the officer's looping breathe clip — what the controller
@@ -197,10 +202,9 @@ class BridgeCharacterAnimController:
         if not back:
             move = capture_registered_clip(character, turn_suffix)
             if move and not chair_driven:
-                self.submit(character,
-                            [(self._resolve(move["clip_nif"]), 0.0)],
-                            priority=_TURN, hold=hold, on_complete=action_cb)
-                body_submitted = True
+                body_submitted = self.submit(
+                    character, [(self._resolve(move["clip_nif"]), 0.0)],
+                    priority=_TURN, hold=hold, on_complete=action_cb)
         else:
             # Turn back: restore normal breathing as the default, then play the
             # reverse turn, which returns to that idle on completion.
@@ -212,10 +216,9 @@ class BridgeCharacterAnimController:
                     self.set_idle(iid, idx)
             move = capture_registered_clip(character, back_suffix)
             if move and not chair_driven:
-                self.submit(character,
-                            [(self._resolve(move["clip_nif"]), 0.0)],
-                            priority=_TURN, hold=False, on_complete=action_cb)
-                body_submitted = True
+                body_submitted = self.submit(
+                    character, [(self._resolve(move["clip_nif"]), 0.0)],
+                    priority=_TURN, hold=False, on_complete=action_cb)
         # Chair half: rotate the seat (always) + couple the officer only when
         # chair-driven. Standing officers have no chair action -> no-op.
         node_ctrl = getattr(self, "_node_ctrl", None)

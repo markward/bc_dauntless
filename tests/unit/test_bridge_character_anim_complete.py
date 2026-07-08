@@ -1,5 +1,4 @@
 from engine.bridge_character_anim import BridgeCharacterAnimController
-from engine.appc import bridge_placement
 
 
 class _FakeRenderer:
@@ -40,6 +39,11 @@ class _Char:
         return self._location
     def IsHidden(self):
         return 0
+
+
+class _HiddenChar(_Char):
+    def IsHidden(self):
+        return 1
 
 
 def _patch_clips(monkeypatch, chair=None):
@@ -108,6 +112,20 @@ def test_request_turn_to_now_completes_inline(monkeypatch):
     ctrl.request_turn_to(ch, "Captain", now=True,
                          on_complete=lambda: fired.append(True))
     ctrl.update(0.0, renderer=r)        # now -> inline, does not wait for settle
+    assert fired == [True]
+
+
+def test_request_turn_to_hidden_character_completes_inline(monkeypatch):
+    # Regression: submit() no-ops (IsHidden) without creating an _Action, so
+    # body_submitted must reflect that -> on_complete fires inline instead of
+    # being silently dropped waiting on an _Action that never exists.
+    _patch_clips(monkeypatch)
+    ctrl = BridgeCharacterAnimController()
+    r = _FakeRenderer(clip_dur=1.0)     # body-driven clip (would defer if visible)
+    ch = _HiddenChar()
+    fired = []
+    ctrl.request_turn_to(ch, "Captain", on_complete=lambda: fired.append(True))
+    ctrl.update(0.0, renderer=r)        # hidden -> body clip never submitted
     assert fired == [True]
 
 
