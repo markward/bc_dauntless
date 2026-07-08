@@ -1,6 +1,7 @@
 import App
 from engine.appc.bridge_set import CameraObjectClass_Create
 from engine.appc.camera_modes import LockedMode, ChaseMode, TargetMode
+from engine.appc.camera_modes import PlacementMode, ZoomTargetMode
 from engine.appc.math import TGPoint3
 
 
@@ -51,3 +52,31 @@ def test_camera_new_mode_pushes_live_mode():
     assert ok == 1
     assert isinstance(c.GetCurrentCameraMode(), ChaseMode)
     assert c.GetCurrentCameraMode().GetAttrIDObject("Target") is ship
+
+
+def test_factory_builds_placement_and_zoomtarget():
+    c = _cam()
+    assert isinstance(c.GetNamedCameraMode("Placement"), PlacementMode)
+    assert isinstance(c.GetNamedCameraMode("ZoomTarget"), ZoomTargetMode)
+
+
+def test_get_named_mode_tags_owner_camera():
+    c = _cam()
+    m = c.GetNamedCameraMode("Placement")
+    assert m._owner_camera is c
+
+
+def test_pop_camera_mode_by_name_string():
+    c = _cam()
+    m = c.GetNamedCameraMode("Placement")
+    c.PushCameraMode(m)
+    assert c.GetCurrentCameraMode() is m
+    popped = c.PopCameraMode("Placement")            # Camera.LowPop passes a str
+    assert popped is m
+    assert c.GetCurrentCameraMode() is None
+
+
+def test_pop_camera_mode_unknown_name_is_none():
+    c = _cam()
+    c.PushCameraMode(c.GetNamedCameraMode("Placement"))
+    assert c.PopCameraMode("NeverPushed") is None

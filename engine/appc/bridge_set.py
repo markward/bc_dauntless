@@ -373,6 +373,8 @@ class CameraObjectClass(_LoudStub):
         "Chase": ("ChaseMode", {}),
         "ReverseChase": ("ChaseMode", {"reverse": True}),
         "Target": ("TargetMode", {}),
+        "Placement": ("PlacementMode", {}),
+        "ZoomTarget": ("ZoomTargetMode", {}),
     }
 
     def GetNamedCameraMode(self, name, *args):
@@ -387,6 +389,7 @@ class CameraObjectClass(_LoudStub):
         from engine.appc import camera_modes
         cls = getattr(camera_modes, spec[0])
         mode = cls(**spec[1])
+        mode._owner_camera = self
         self._named_modes[name] = mode
         return mode
 
@@ -414,6 +417,16 @@ class CameraObjectClass(_LoudStub):
             return None
         if mode is None:
             return stack.pop()
+        if isinstance(mode, str):
+            # Camera.LowPop passes a mode-NAME string. Resolve it to the
+            # camera's named mode and pop that instance wherever it sits.
+            named = self._named_modes.get(mode) if "_named_modes" in self.__dict__ else None
+            if named is None:
+                return None
+            for i in range(len(stack) - 1, -1, -1):
+                if stack[i] is named:
+                    return stack.pop(i)
+            return None
         # Named/object pop: remove the matching mode wherever it sits.
         for i in range(len(stack) - 1, -1, -1):
             if stack[i] is mode or (
