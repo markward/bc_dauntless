@@ -4,7 +4,8 @@ BC enforces the cloak's combat rules in the C++ engine (the SDK Python never
 checks them), so Dauntless authors them here:
 
   * a cloaked / cloaking ship cannot fire (weapons forced offline);
-  * engaging the cloak collapses shields and suppresses regen until decloak;
+  * engaging the cloak PRESERVES shield charge and lets shields recharge while
+    hidden (2026-07-08 live-play fix — shields no longer come back empty);
   * a fully cloaked ship is undetectable to sensors / targeting;
   * the hull stays physically present — a collision still fires
     ET_CLOAKED_COLLISION.
@@ -126,35 +127,51 @@ def _shielded_cloak_ship():
     return ship, shields
 
 
-def test_engaging_cloak_collapses_shields():
+def test_engaging_cloak_preserves_shield_charge():
+    # Cloaking no longer zeroes the shields: their charge is PRESERVED so a
+    # decloaking ship isn't defenceless (2026-07-08 live-play fix).
     ship, shields = _shielded_cloak_ship()
     assert shields.GetCurrentShields(0) == 1000.0
     ship.GetCloakingSubsystem().StartCloaking()
     for f in range(ShieldSubsystem.NUM_SHIELDS):
-        assert shields.GetCurrentShields(f) == 0.0
+        assert shields.GetCurrentShields(f) == 1000.0   # unchanged by cloak
 
 
-def test_shields_do_not_regen_while_cloaked():
+def test_shields_recharge_while_cloaked():
+    # Shields recharge during cloak (the ship rebuilds shields while hiding).
     ship, shields = _shielded_cloak_ship()
-    cloak = ship.GetCloakingSubsystem()
-    cloak.InstantCloak()
-    # Collapse explicitly (InstantCloak skips StartCloaking's collapse).
     for f in range(ShieldSubsystem.NUM_SHIELDS):
-        shields.SetCurrentShields(f, 0.0)
+        shields.SetCurrentShields(f, 500.0)             # partially drained
+    ship.GetCloakingSubsystem().InstantCloak()          # fully cloaked
+    shields.Update(1.0)                                  # 100/s * 1s
+    for f in range(ShieldSubsystem.NUM_SHIELDS):
+        assert shields.GetCurrentShields(f) == 600.0     # recharged, not suppressed
+
+
+def test_shields_recharge_while_cloaked_even_if_not_up():
+    # "even if they aren't up": regen proceeds during cloak regardless of the
+    # normal IsOn (raised) gate — a cloaked ship with lowered shields still
+    # rebuilds their charge.
+    ship, shields = _shielded_cloak_ship()
+    shields.TurnOff()                                    # shields down (IsOn False), drained to 0
+    for f in range(ShieldSubsystem.NUM_SHIELDS):
+        shields.SetCurrentShields(f, 200.0)             # residual charge
+    ship.GetCloakingSubsystem().InstantCloak()
     shields.Update(1.0)
     for f in range(ShieldSubsystem.NUM_SHIELDS):
-        assert shields.GetCurrentShields(f) == 0.0
+        assert shields.GetCurrentShields(f) == 300.0     # recharged despite IsOn False
 
 
-def test_shields_regen_after_decloak():
+def test_shields_do_not_recharge_when_generator_offline():
+    # A disabled/destroyed shield generator still can't recharge, even cloaked.
     ship, shields = _shielded_cloak_ship()
-    cloak = ship.GetCloakingSubsystem()
-    cloak.StartCloaking()                         # collapses shields
-    cloak.InstantDecloak()                        # DECLOAKED — no longer hidden
-    shields.Update(1.0)
-    # 100/s for 1s from 0 → 100 on each face.
     for f in range(ShieldSubsystem.NUM_SHIELDS):
-        assert shields.GetCurrentShields(f) == 100.0
+        shields.SetCurrentShields(f, 200.0)
+    shields.SetCondition(0.0)                             # destroyed generator -> offline
+    ship.GetCloakingSubsystem().InstantCloak()
+    shields.Update(1.0)
+    for f in range(ShieldSubsystem.NUM_SHIELDS):
+        assert shields.GetCurrentShields(f) == 200.0     # no regen while offline
 
 
 # ── Sensor / targeting invisibility ───────────────────────────────────────────
