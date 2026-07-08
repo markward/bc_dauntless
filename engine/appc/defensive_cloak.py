@@ -16,12 +16,22 @@ import engine.dev_mode as dev_mode
 CLOAK_HULL_THRESHOLD: float = 0.35     # hide below this
 FIT_TO_FIGHT_THRESHOLD: float = 0.70   # re-engage at/above this
 
+# Anti-thrash re-entry gate (fraction 0..1 of the backup reserve's limit). A
+# ship forced out of DEFENSIVE by reserve exhaustion (Part B) has a ~0 reserve;
+# without this gate it would immediately re-enter (still crippled, still
+# targeted) and re-fire StartCloaking every few frames -- an audible/visual
+# strobe that also defeats the "flushed out -> fight" behavior. Requiring the
+# reserve to rebuild past this fraction before re-cloaking forces the ship to
+# fight via its SDK AI while its reactor recovers: a weak reactor rebuilds
+# slowly and stays out longer, a healthy one can hide again sooner.
+CLOAK_REENTRY_RESERVE_FRACTION: float = 0.5
+
 # Per-ship mode: ships present in this set are DEFENSIVE (hiding). Absent == NORMAL.
 _defensive: set = set()
 
 
 def reset_defensive_cloak_state() -> None:
-    """Clear all per-ship mode. Called on mission swap / test isolation (mirrors
+    """Clear all per-ship mode. For test isolation / mission swap (mirrors
     collision_avoidance.reset_avoidance_state)."""
     _defensive.clear()
 
@@ -97,6 +107,22 @@ def _update_ship(ship) -> None:
     # Enter: crippled + in combat (has a target).
     target = ship.GetTarget() if hasattr(ship, "GetTarget") else None
     if hull_pct < CLOAK_HULL_THRESHOLD and target is not None:
+        if not _reserve_recovered(ship):
+            return
         cloak.StartCloaking()
         _defensive.add(id(ship))
         _dev_log(ship, "defensive hide (hull %d%%)" % int(hull_pct * 100))
+
+
+def _reserve_recovered(ship) -> bool:
+    """Anti-thrash gate for entering DEFENSIVE (see CLOAK_REENTRY_RESERVE_FRACTION).
+    No PowerSubsystem / no usable backup limit -> ungated (existing behavior)."""
+    get_power = getattr(ship, "GetPowerSubsystem", None)
+    power = get_power() if callable(get_power) else None
+    if power is None:
+        return True
+    limit = power.GetBackupBatteryLimit() if hasattr(power, "GetBackupBatteryLimit") else None
+    if not limit:                        # None or 0/unavailable -> ungated
+        return True
+    reserve = power.GetBackupBatteryPower() if hasattr(power, "GetBackupBatteryPower") else 0.0
+    return reserve >= CLOAK_REENTRY_RESERVE_FRACTION * limit

@@ -4,11 +4,12 @@ forced out by reserve exhaustion (cloak no longer trying). Player/no-cloak ships
 are never entered. See docs/superpowers/specs/2026-07-07-cloak-survival-resource-design.md."""
 import App
 from engine.appc.ships import ShipClass
-from engine.appc.subsystems import CloakingSubsystem, HullSubsystem
+from engine.appc.subsystems import CloakingSubsystem, HullSubsystem, PowerSubsystem
+from engine.appc.properties import PowerProperty
 from engine.appc import defensive_cloak
 from engine.appc.defensive_cloak import (
     tick_defensive_cloak, is_defensive, reset_defensive_cloak_state,
-    CLOAK_HULL_THRESHOLD, FIT_TO_FIGHT_THRESHOLD,
+    CLOAK_HULL_THRESHOLD, FIT_TO_FIGHT_THRESHOLD, CLOAK_REENTRY_RESERVE_FRACTION,
 )
 
 
@@ -34,6 +35,22 @@ def _combat_cloak_ship(hull_pct=1.0, with_target=True, with_cloak=True, with_ai=
         tgt = ShipClass(); pSet.AddObjectToSet(tgt, "Tgt%d" % id(tgt))
         ship.SetTarget(tgt)
     return ship
+
+
+def _attach_power(ship, backup_limit=80000.0, backup_power=0.0):
+    """Give a ship a real PowerSubsystem with a backup reserve (see
+    test_cloak_reserve_depletion._powered_ship / test_cloak_power_starvation._powered_ship)."""
+    power = PowerSubsystem("Warp Core")
+    prop = PowerProperty("Warp Core")
+    prop.SetPowerOutput(1000.0)
+    prop.SetMainBatteryLimit(250000.0)
+    prop.SetBackupBatteryLimit(backup_limit)
+    prop.SetMainConduitCapacity(1200.0)
+    prop.SetBackupConduitCapacity(200.0)
+    power.SetProperty(prop)
+    ship.SetPowerSubsystem(power)
+    power.SetBackupBatteryPower(backup_power)
+    return power
 
 
 def test_enters_defensive_when_crippled_in_combat():
@@ -118,4 +135,23 @@ def test_prunes_stale_id_when_ship_leaves_set():
     tick_defensive_cloak(1.0 / 60.0)
     assert not is_defensive(ship)
     assert id(ship) not in defensive_cloak._defensive
+    _reset()
+
+
+def test_reentry_gated_when_reserve_not_recovered():
+    _reset()
+    ship = _combat_cloak_ship(hull_pct=CLOAK_HULL_THRESHOLD - 0.05)
+    _attach_power(ship, backup_limit=80000.0, backup_power=100.0)   # near-empty reserve
+    tick_defensive_cloak(1.0 / 60.0)
+    assert not is_defensive(ship)                        # anti-thrash: reserve not recovered
+    _reset()
+
+
+def test_reentry_allowed_when_reserve_recovered():
+    _reset()
+    ship = _combat_cloak_ship(hull_pct=CLOAK_HULL_THRESHOLD - 0.05)
+    power = _attach_power(ship, backup_limit=80000.0, backup_power=0.0)
+    power.SetBackupBatteryPower(80000.0 * CLOAK_REENTRY_RESERVE_FRACTION)   # exactly recovered
+    tick_defensive_cloak(1.0 / 60.0)
+    assert is_defensive(ship)
     _reset()
