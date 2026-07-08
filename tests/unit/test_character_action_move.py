@@ -74,3 +74,58 @@ def test_at_watch_me_completes_inline():
     act = CharacterAction(ch, CharacterAction.AT_WATCH_ME)
     act.Play()
     assert act.IsPlaying() is False                   # sequencing advances
+
+
+class _WatchableChar(_Char):
+    """Character double with real SetStatus/ClearStatus tracking, so watch
+    tests can assert the flag actually toggles (not just that the action
+    completes)."""
+    CS_TURNED = "CS_TURNED"
+
+    def __init__(self, name="Picard"):
+        super().__init__(name)
+        self.status_calls = []
+        self.cleared_calls = []
+
+    def SetStatus(self, state):
+        self.status_calls.append(state)
+
+    def ClearStatus(self, state):
+        self.cleared_calls.append(state)
+
+
+def test_at_watch_me_sets_turned_status():
+    ch = _WatchableChar()
+    act = CharacterAction(ch, CharacterAction.AT_WATCH_ME)
+    act.Play()
+    assert ch.status_calls == [_WatchableChar.CS_TURNED]
+    assert ch.cleared_calls == []
+    assert act.IsPlaying() is False
+
+
+def test_at_stop_watching_me_clears_turned_status():
+    ch = _WatchableChar()
+    act = CharacterAction(ch, CharacterAction.AT_STOP_WATCHING_ME)
+    act.Play()
+    assert ch.cleared_calls == [_WatchableChar.CS_TURNED]
+    assert ch.status_calls == []
+    assert act.IsPlaying() is False
+
+
+def test_at_move_does_not_raise_when_capture_move_raises(monkeypatch):
+    ch = _Char()
+    ctrl = _RecordingWalkController()
+    monkeypatch.setattr(bcw, "get_controller", lambda: ctrl)
+
+    def _raise(character, detail):
+        raise RuntimeError("SDK builder blew up")
+
+    monkeypatch.setattr(bridge_placement, "capture_move", _raise)
+    monkeypatch.setattr("engine.appc.characters.CharacterClass_Cast",
+                        lambda c: c)
+
+    act = CharacterAction(ch, CharacterAction.AT_MOVE, "P1")
+    act.Play()                                         # must not raise
+
+    assert ctrl.requests == []
+    assert act.IsPlaying() is False                    # completed inline

@@ -1221,17 +1221,25 @@ class CharacterAction(TGAction):
         self._complete_after(dur or 0.0)
 
     def _queue_move(self) -> None:
+        # Best-effort: capture_move runs an SDK builder function that CAN
+        # raise (production only), and any of the resolution steps below
+        # can fail. Play() must never raise — a failure here should
+        # complete the action inline so the mission TGSequence advances
+        # instead of stalling.
         from engine.appc import bridge_placement
         from engine.appc.characters import CharacterClass_Cast
         from engine import bridge_character_walk
-        cc = CharacterClass_Cast(self._character) if self._character is not None else None
-        ctrl = bridge_character_walk.get_controller()
-        move = bridge_placement.capture_move(cc, self._detail) if cc is not None else None
-        if cc is None or ctrl is None or move is None:
-            self.Completed()          # nothing to play → advance immediately
-            return
-        ctrl.request_move(cc, move["clip_nif"], move["end_location"],
-                          on_complete=self.Completed)
+        try:
+            cc = CharacterClass_Cast(self._character) if self._character is not None else None
+            ctrl = bridge_character_walk.get_controller()
+            move = bridge_placement.capture_move(cc, self._detail) if cc is not None else None
+            if cc is None or ctrl is None or move is None:
+                self.Completed()      # nothing to play → advance immediately
+                return
+            ctrl.request_move(cc, move["clip_nif"], move["end_location"],
+                              on_complete=self.Completed)
+        except Exception:
+            self.Completed()
 
     def _set_watch(self, watching: bool) -> None:
         cc = self._character
