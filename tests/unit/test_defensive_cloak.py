@@ -155,3 +155,44 @@ def test_reentry_allowed_when_reserve_recovered():
     tick_defensive_cloak(1.0 / 60.0)
     assert is_defensive(ship)
     _reset()
+
+
+# ── 60s timeout + re-hide cooldown (2026-07-08 live-play fix) ────────────────
+# AI ships were hiding cloaked too long. A defensive-cloak episode is capped at
+# DEFENSIVE_CLOAK_TIMEOUT_S; after a timeout the ship must fight for
+# DEFENSIVE_CLOAK_COOLDOWN_S before it can re-hide (else a healthy ship just
+# re-cloaks instantly and the timeout is meaningless).
+
+def test_defensive_cloak_times_out():
+    _reset()
+    ship = _combat_cloak_ship(hull_pct=CLOAK_HULL_THRESHOLD - 0.05)   # stays crippled
+    cloak = ship.GetCloakingSubsystem()
+    tick_defensive_cloak(1.0 / 60.0)                                  # enter
+    assert is_defensive(ship)
+    tick_defensive_cloak(defensive_cloak.DEFENSIVE_CLOAK_TIMEOUT_S + 1.0)  # exceed timeout
+    assert not is_defensive(ship)                                     # timed out -> released
+    assert cloak.IsTryingToCloak() == 0
+    _reset()
+
+
+def test_timeout_cooldown_blocks_then_allows_re_hide():
+    _reset()
+    ship = _combat_cloak_ship(hull_pct=CLOAK_HULL_THRESHOLD - 0.05)   # crippled the whole time
+    tick_defensive_cloak(1.0 / 60.0)                                  # enter
+    tick_defensive_cloak(defensive_cloak.DEFENSIVE_CLOAK_TIMEOUT_S + 1.0)  # timeout -> release + cooldown
+    assert not is_defensive(ship)
+    tick_defensive_cloak(1.0 / 60.0)                                  # cooldown still active
+    assert not is_defensive(ship)
+    tick_defensive_cloak(defensive_cloak.DEFENSIVE_CLOAK_COOLDOWN_S + 1.0)  # cooldown elapses
+    assert is_defensive(ship)                                         # may hide again
+    _reset()
+
+
+def test_normal_short_ticks_never_time_out():
+    _reset()
+    ship = _combat_cloak_ship(hull_pct=CLOAK_HULL_THRESHOLD - 0.05)
+    tick_defensive_cloak(1.0 / 60.0)                                  # enter
+    for _ in range(120):                                             # 2 s of real ticks
+        tick_defensive_cloak(1.0 / 60.0)
+    assert is_defensive(ship)                                         # nowhere near 60 s
+    _reset()

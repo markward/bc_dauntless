@@ -26,14 +26,37 @@ FIT_TO_FIGHT_THRESHOLD: float = 0.70   # re-engage at/above this
 # slowly and stays out longer, a healthy one can hide again sooner.
 CLOAK_REENTRY_RESERVE_FRACTION: float = 0.5
 
+# Max seconds a ship may stay defensively cloaked in one episode. AI ships were
+# hiding indefinitely; a hard cap forces them back out to fight. After a timeout
+# the ship is held out of DEFENSIVE for DEFENSIVE_CLOAK_COOLDOWN_S so a healthy
+# ship (reserve still full) can't just re-cloak on the next frame, which would
+# make the timeout meaningless. Both tunable by eye.
+DEFENSIVE_CLOAK_TIMEOUT_S: float = 60.0
+DEFENSIVE_CLOAK_COOLDOWN_S: float = 60.0
+
 # Per-ship mode: ships present in this set are DEFENSIVE (hiding). Absent == NORMAL.
 _defensive: set = set()
+# id(ship) -> seconds spent in the current DEFENSIVE episode (timeout accrual).
+_elapsed: dict = {}
+# id(ship) -> seconds remaining before a timed-out ship may re-enter DEFENSIVE.
+_cooldown: dict = {}
 
 
 def reset_defensive_cloak_state() -> None:
-    """Clear all per-ship mode. For test isolation / mission swap (mirrors
+    """Clear all per-ship state. For test isolation / mission swap (mirrors
     collision_avoidance.reset_avoidance_state)."""
     _defensive.clear()
+    _elapsed.clear()
+    _cooldown.clear()
+
+
+def _forget(sid: int, cooldown: float = 0.0) -> None:
+    """Release a ship from DEFENSIVE: drop its mode + timeout accrual, and
+    optionally start a re-hide cooldown."""
+    _defensive.discard(sid)
+    _elapsed.pop(sid, None)
+    if cooldown > 0.0:
+        _cooldown[sid] = cooldown
 
 
 def is_defensive(ship) -> bool:
@@ -72,45 +95,66 @@ def tick_defensive_cloak(dt: float) -> None:
     DEFENSIVE have their SDK AI suppressed by tick_all_ai this frame."""
     ships = list(iter_ships())
     for ship in ships:
-        _update_ship(ship)
+        _update_ship(ship, dt)
 
-    # Drop state for ships that left play so the set can't grow unbounded
+    # Drop state for ships that left play so the dicts can't grow unbounded
     # (mirrors collision_avoidance.tick_collision_avoidance).
-    _defensive.intersection_update(id(s) for s in ships)
+    live = {id(s) for s in ships}
+    _defensive.intersection_update(live)
+    for d in (_elapsed, _cooldown):
+        for sid in [k for k in d if k not in live]:
+            del d[sid]
 
 
-def _update_ship(ship) -> None:
+def _update_ship(ship, dt) -> None:
+    sid = id(ship)
     ai = ship.GetAI() if hasattr(ship, "GetAI") else None
     if ai is None:                       # never the player
-        _defensive.discard(id(ship))
+        _forget(sid)
         return
     cloak = _functional_cloak(ship)
     if cloak is None:                    # cloak lost / no cloak -> leave DEFENSIVE
-        _defensive.discard(id(ship))
+        _forget(sid)
         return
     hull_pct = _hull_pct(ship)
     if hull_pct is None:
         return
 
-    if id(ship) in _defensive:
-        # Exit conditions (healed-or-forced).
+    if sid in _defensive:
+        elapsed = _elapsed.get(sid, 0.0) + float(dt)
+        _elapsed[sid] = elapsed
+        # Exit conditions (forced-out / healed / timed-out).
         if not cloak.IsTryingToCloak():             # forced out (reserve dry) or lost
-            _defensive.discard(id(ship))
+            _forget(sid)
             _dev_log(ship, "re-engaging (forced out)")
             return
         if hull_pct >= FIT_TO_FIGHT_THRESHOLD:      # healed
             cloak.StopCloaking()
-            _defensive.discard(id(ship))
+            _forget(sid)
             _dev_log(ship, "re-engaging (repaired %d%%)" % int(hull_pct * 100))
+            return
+        if elapsed >= DEFENSIVE_CLOAK_TIMEOUT_S:     # hidden too long -> come out and fight
+            cloak.StopCloaking()
+            _forget(sid, cooldown=DEFENSIVE_CLOAK_COOLDOWN_S)
+            _dev_log(ship, "re-engaging (timeout)")
         return
 
-    # Enter: crippled + in combat (has a target).
+    # NORMAL: run down any post-timeout re-hide cooldown.
+    if sid in _cooldown:
+        _cooldown[sid] -= float(dt)
+        if _cooldown[sid] <= 0.0:
+            _cooldown.pop(sid, None)
+
+    # Enter: crippled + in combat (has a target), reserve recovered, not cooling down.
     target = ship.GetTarget() if hasattr(ship, "GetTarget") else None
     if hull_pct < CLOAK_HULL_THRESHOLD and target is not None:
+        if sid in _cooldown:                         # still fighting off a recent timeout
+            return
         if not _reserve_recovered(ship):
             return
         cloak.StartCloaking()
-        _defensive.add(id(ship))
+        _defensive.add(sid)
+        _elapsed[sid] = 0.0
         _dev_log(ship, "defensive hide (hull %d%%)" % int(hull_pct * 100))
 
 
