@@ -146,39 +146,47 @@ that `compute_camera` already prefers).
 ### Family A components
 
 **A1. Dispatch — `engine/appc/ai.py` `CharacterAction`.** New branches in
-`Play()`:
+`Play()`, routed through the generalized controller entry point (A2):
 
-- `AT_TURN` / `AT_TURN_NOW`: compose suffix `"Turn" + detail`; record
-  `self._character._last_turn_detail = detail`; resolve body clip via
-  `capture_registered_clip(cc, "Turn" + detail)` and chair via
-  `capture_chair_clip(cc, "Turn" + detail)`; `submit()` to the walk/anim
-  controller. Non-`NOW` defers completion (fires on settle); `NOW` plays and
-  `Completed()` inline.
+- `AT_TURN` / `AT_TURN_NOW`: record `cc._last_turn_detail = detail`; call
+  `ctrl.request_turn_to(cc, detail, back=False, now=<is _NOW>,
+  on_complete=self.Completed)`.
 - `AT_TURN_BACK` / `AT_TURN_BACK_NOW`: read
-  `getattr(cc, "_last_turn_detail", "Captain")`; compose `"Back" + detail`;
-  resolve + submit the reverse; same deferred/inline rule; clear
-  `_last_turn_detail`.
-- `AT_GLANCE_AT` / `AT_GLANCE_AWAY`: resolve a glance clip
-  (`capture_registered_clip(cc, "Glance" + detail)`, falling back to a direct
-  `GlanceLeft`/`GlanceRight` builder resolution if unregistered); submit as a
-  React-band transient that returns to the prior pose. Defers completion on
-  settle.
+  `getattr(cc, "_last_turn_detail", "Captain")`; call
+  `request_turn_to(cc, that_detail, back=True, now=<is _NOW>,
+  on_complete=self.Completed)`; clear `_last_turn_detail`.
+- `AT_GLANCE_AT` / `AT_GLANCE_AWAY`: resolve a glance clip via
+  `capture_registered_clip(cc, "Glance" + detail)` and, if it resolves, submit
+  as a React-band transient that returns to the prior pose (deferred completion
+  on settle). The exact registered key is **unverified** (used in 1 mission);
+  if it does not resolve, the action is a graceful inline no-op. A bespoke
+  direct-`GlanceLeft`/`GlanceRight`-builder fallback is a sub-follow-up, not
+  built here.
 
 All best-effort: no controller, no `CharacterClass` cast, or unresolved clip →
 `Completed()` inline so the sequence never stalls. `_do_play` is unchanged
 (still handles speak types); these branches intercept before it.
 
-**A2. Deferred completion on `engine/bridge_character_anim.py`.** `submit()`
-gains an optional `on_complete` callback stored on `_Action`. `update()` fires
-it exactly once when the action finishes:
+**A2. Generalize the turn path on `engine/bridge_character_anim.py`.** The
+controller already turns an officer toward the captain (body clip **+** chair
+coupling **+** hold) for the crew menu, but hardcoded to the suffix
+`"TurnCaptain"`/`"BackCaptain"` (`_process_turn`). Two changes:
 
-- non-`hold`: at the moment `_return_to_default` runs (clip settled → idle);
-- `hold=True`: when the last clip reaches its end (the hold point), so the
-  sequence advances while the turned pose is held.
-
-The crew-menu turn path passes no `on_complete` (unchanged behaviour). This is
-the only change to the existing controller; chair coupling, priorities, and
-hold/return are untouched.
+1. `submit()` / `_Action` gain an optional `on_complete` callback, fired exactly
+   once by `update()` when the action's last clip ends — at `_return_to_default`
+   for non-`hold`, at the hold-point for `hold=True`. A no-`on_complete` submit
+   (the current menu callers) is byte-for-byte unchanged.
+2. A new `request_turn_to(character, detail, *, back=False, hold=True,
+   now=False, on_complete=None)` runs the existing `_process_turn` logic with the
+   composed suffix `"Turn"+detail` / `"Back"+detail` (instead of the hardcoded
+   `"…Captain"`). It attaches `on_complete` to the submitted **body** `_Action`;
+   when the officer is **chair-driven** (empty body clip — e.g. Tactical), when
+   `now` is set, or when nothing resolves, it fires `on_complete` **inline** (the
+   chair eases underneath), so completion is always guaranteed. The existing
+   `request_turn`/`request_turn_back` (menu path) are refactored to delegate to
+   `request_turn_to(character, "Captain", back=…, hold=True, on_complete=None)` —
+   behaviour-preserving. Chair coupling, priorities, and hold/return are
+   otherwise untouched.
 
 ### Family B components
 
@@ -238,16 +246,20 @@ dialogue/speak path is untouched.
 
 ## Testing
 
-- **Family A dispatch** (`tests/unit/test_character_action_turn.py`): key
-  composition (`DBGuestTurnCaptain`, `Back<lastDetail>` for bare
-  `AT_TURN_BACK`), `_last_turn_detail` round-trip, submit to a recording
-  controller with `on_complete`, deferred completion (not done until controller
-  signals) vs `_NOW` inline, glance best-effort resolution + fallback, and the
-  unresolved → inline-completion path.
-- **Deferred completion** (`tests/unit/test_bridge_character_anim_complete.py`):
-  `submit(on_complete=…)` fires once on settle for non-hold, once at hold-point
-  for `hold=True`, and never for a no-`on_complete` submit (menu path
-  unchanged).
+- **Family A dispatch** (`tests/unit/test_character_action_turn.py`): dispatch
+  calls `request_turn_to` with the right `(detail, back, now, on_complete)`,
+  `_last_turn_detail` round-trip (bare `AT_TURN_BACK` reverses the last detail;
+  defaults to `"Captain"`), deferred completion (not done until the controller
+  fires `on_complete`) vs `_NOW` inline, glance best-effort resolution, and the
+  no-controller / unresolved → inline-completion path.
+- **Controller generalization**
+  (`tests/unit/test_bridge_character_anim_complete.py`): `submit(on_complete=…)`
+  fires once on settle for non-hold, once at the hold-point for `hold=True`, and
+  never for a no-`on_complete` submit; `request_turn_to` composes the
+  `"Turn"+detail` / `"Back"+detail` suffix, fires `on_complete` inline for a
+  chair-driven (empty body clip) officer and for `now=True`, and the refactored
+  `request_turn`/`request_turn_back` still delegate with the menu path's
+  behaviour intact.
 - **Family B controller** (`tests/unit/test_bridge_camera_watch.py`): `watch` /
   `clear` / `resolve_target_world` (fake renderer head-centre), snap consume,
   target supersession, reset.
