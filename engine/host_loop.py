@@ -4114,6 +4114,34 @@ def _sync_comm_character_visibility(controller, r) -> None:
                 dev_mode.log_swallowed("comm char visibility sync", _e)
 
 
+def _bridge_characters_for_sync(controller):
+    """Every realized-or-not bridge CharacterClass (the player bridge set). Split
+    out so the visibility sync is unit-testable without a live set manager."""
+    import App as _App
+    s = _App.g_kSetManager.GetSet("bridge")
+    if s is None:
+        return []
+    return list(_iter_set_characters(s))
+
+
+def _sync_bridge_character_visibility(controller, r) -> None:
+    """Drive each realized bridge character's instance visibility from its SDK
+    IsHidden() flag — the bridge analogue of _sync_comm_character_visibility.
+
+    Bridge walk-on characters (E1M1 Picard/Saffi) are realized on demand and
+    revealed by the walk controller's SetHidden(0); this per-frame sync turns any
+    IsHidden toggle into actual renderer visibility. Cheap: a handful of bridge
+    characters."""
+    for ch in _bridge_characters_for_sync(controller):
+        iid = getattr(ch, "_render_instance", None)
+        if iid is None:
+            continue
+        try:
+            r.set_visible(iid, not ch.IsHidden())
+        except Exception as _e:
+            dev_mode.log_swallowed("bridge char visibility sync", _e)
+
+
 def _tag_comm_instance(r, iid, comm_set_id) -> None:
     """Tag a comm instance with its set's id so the bridge pass can render the
     set into the viewscreen RTT. set_comm_set_id is a REQUIRED renderer binding
@@ -4811,6 +4839,15 @@ def run(mission_name: Optional[str] = None,
         import random as _random
         char_anim = BridgeCharacterAnimController(asset_resolver=_game_asset_path)
         set_char_anim(char_anim)
+
+        from engine.bridge_character_walk import (
+            BridgeCharacterWalkController, set_controller as set_walk_ctrl,
+        )
+        walk_ctrl = BridgeCharacterWalkController(
+            realize_fn=lambda ch: _realize_character_instance(
+                controller, r, ch, "bridge", True, start_hidden=False),
+            asset_resolver=_game_asset_path)
+        set_walk_ctrl(walk_ctrl)
         node_anim = BridgeNodeAnimController(
             bridge_iid_getter=lambda: controller.bridge_instance,
             asset_resolver=_game_asset_path,
@@ -5588,6 +5625,7 @@ def run(mission_name: Optional[str] = None,
                 if had_pending_swap:
                     cutscene.reset()
                     char_anim.reset()
+                    walk_ctrl.reset()
                     idle_gestures.reset()
                     node_anim.reset(renderer=r)
                     lip_runtime.clear()
@@ -5974,6 +6012,7 @@ def run(mission_name: Optional[str] = None,
                         char_anim.update(
                             _player_dt, renderer=r,
                             anim_mgr=_App.g_kAnimationManager)
+                        walk_ctrl.update(_player_dt, renderer=r)
                         try:
                             lip_runtime.update()
                         except Exception as _e:
@@ -6128,6 +6167,7 @@ def run(mission_name: Optional[str] = None,
             # (MissionLib.ViewscreenOn un-hides the hailing one) before the RTT
             # renders the set.
             _sync_comm_character_visibility(controller, r)
+            _sync_bridge_character_visibility(controller, r)
             # Comm-set feed: if the viewscreen's remote cam belongs to a comm
             # set, render that set into the RTT from its maincamera; otherwise
             # the RTT keeps the forward space view.
