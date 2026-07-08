@@ -136,18 +136,18 @@ def test_dispatch_toggle_specular_flips_and_calls_applier():
 def test_dispatch_fov_sets_and_applies_radians():
     p, kw = _make()
     p.open()
-    assert p.dispatch_event("fov:62") is True
+    assert p.dispatch_event("fov:45") is True
     kw["set_fov_rad"].assert_called_once()
     (called_rad,), _ = kw["set_fov_rad"].call_args
-    assert called_rad == pytest.approx(math.radians(62))
+    assert called_rad == pytest.approx(math.radians(45))
 
 
 def test_dispatch_fov_clamps_low():
     p, kw = _make()
     p.open()
-    p.dispatch_event("fov:30")
+    p.dispatch_event("fov:10")
     (called_rad,), _ = kw["set_fov_rad"].call_args
-    assert called_rad == pytest.approx(math.radians(40))
+    assert called_rad == pytest.approx(math.radians(25))
 
 
 def test_dispatch_fov_clamps_high():
@@ -155,7 +155,7 @@ def test_dispatch_fov_clamps_high():
     p.open()
     p.dispatch_event("fov:120")
     (called_rad,), _ = kw["set_fov_rad"].call_args
-    assert called_rad == pytest.approx(math.radians(80))
+    assert called_rad == pytest.approx(math.radians(55))
 
 
 def test_dispatch_fov_garbage_value_returns_false():
@@ -315,30 +315,33 @@ def test_space_on_dust_row_toggles():
 
 
 def test_right_arrow_on_fov_row_increments():
-    p, kw = _make()
+    p, kw = _make(initial_settings=SettingsSnapshot(
+        dust_on=True, specular_on=True, hdr_on=True, rim_on=True,
+        decals_on=True, fov_deg=30,
+    ))
     p.open()
     r = _FakeReader()
     for _ in range(4):  # focus → fov (index 3: tab, dust, specular, fov)
         r.press(r.keys.KEY_DOWN); p.handle_input(r)
     r.press(r.keys.KEY_RIGHT); p.handle_input(r)
     (called_rad,), _ = kw["set_fov_rad"].call_args
-    assert called_rad == pytest.approx(math.radians(75))  # 70 + 5
+    assert called_rad == pytest.approx(math.radians(35))  # 30 + 5
 
 
 def test_left_arrow_on_fov_row_decrements_and_clamps():
     p, kw = _make(initial_settings=SettingsSnapshot(
         dust_on=True, specular_on=True, hdr_on=True, rim_on=True,
-        decals_on=True, fov_deg=40,
+        decals_on=True, fov_deg=25,
     ))
     p.open()
     r = _FakeReader()
     for _ in range(4):  # focus → fov (index 3: tab, dust, specular, fov)
         r.press(r.keys.KEY_DOWN); p.handle_input(r)
     r.press(r.keys.KEY_LEFT); p.handle_input(r)
-    # Still 40 (clamped), but applier still fires (consistency: every
-    # press emits the current state to the renderer).
+    # Still 25 (clamped at FOV_MIN), but applier still fires (consistency:
+    # every press emits the current state to the renderer).
     (called_rad,), _ = kw["set_fov_rad"].call_args
-    assert called_rad == pytest.approx(math.radians(40))
+    assert called_rad == pytest.approx(math.radians(25))
 
 
 def test_handle_input_missing_optional_keys_does_not_crash():

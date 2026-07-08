@@ -11,6 +11,7 @@ import math as _math
 
 from engine.cameras import (
     EXTERIOR_FOV_Y_RAD, CAM_BACK_RADII, CAM_UP_RADII,
+    DEFAULT_ZOOM_OUT_CLICKS,
 )
 
 
@@ -34,9 +35,10 @@ class _TrackingCamera:
                                             # closest framing is less oppressive
                                             # (post-playtest tuning).
     ZOOM_MAX_RADII:        float = 30.0    # reuse CAM_MAX_RADII semantics
-    # ZoomTarget seed = ZOOM_MIN_RADII pulled back 5 zoom-out clicks
-    # (÷0.9 each) so the initial framing starts further out.
-    ZOOM_DEFAULT_RADII:    float = ZOOM_MIN_RADII / (ZOOM_FACTOR_PER_PRESS ** 5)
+    # ZoomTarget seed = ZOOM_MIN_RADII pulled back (5 + DEFAULT_ZOOM_OUT_CLICKS)
+    # zoom-out clicks (÷0.9 each) so the initial framing starts further out.
+    ZOOM_DEFAULT_RADII:    float = ZOOM_MIN_RADII / (
+        ZOOM_FACTOR_PER_PRESS ** (5 + DEFAULT_ZOOM_OUT_CLICKS))
 
     def __init__(self):
         self.v_fov_rad        = EXTERIOR_FOV_Y_RAD
@@ -64,7 +66,9 @@ class _TrackingCamera:
 
     def set_ship_radius(self, radius: float) -> None:
         radius = max(radius, 1e-6)
-        self.d_chase_tracking = _math.sqrt(CAM_BACK_RADII**2 + CAM_UP_RADII**2) * radius
+        self.d_chase_tracking = (
+            _math.sqrt(CAM_BACK_RADII**2 + CAM_UP_RADII**2) * radius
+            / (self.ZOOM_FACTOR_PER_PRESS ** DEFAULT_ZOOM_OUT_CLICKS))
         self.zoom_min         = self.ZOOM_MIN_RADII * radius
         self.zoom_max         = self.ZOOM_MAX_RADII * radius
         # ZoomTarget seeds 5 zoom-out clicks above the minimum so the
@@ -121,7 +125,9 @@ class _TrackingCamera:
         # Recover the radius from zoom_max / ZOOM_MAX_RADII.
         if self.zoom_max > 0.0:
             radius = self.zoom_max / self.ZOOM_MAX_RADII
-            self.d_chase_tracking = _math.sqrt(CAM_BACK_RADII**2 + CAM_UP_RADII**2) * radius
+            self.d_chase_tracking = (
+            _math.sqrt(CAM_BACK_RADII**2 + CAM_UP_RADII**2) * radius
+            / (self.ZOOM_FACTOR_PER_PRESS ** DEFAULT_ZOOM_OUT_CLICKS))
             self.d_chase_zoom     = self.ZOOM_DEFAULT_RADII * radius
         # Flag reset is unconditional — runs even when zoom_max == 0
         # (i.e. snap() called before set_ship_radius).

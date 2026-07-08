@@ -21,6 +21,7 @@ import math as _math
 
 from engine.cameras import (
     CAM_BACK_RADII, CAM_UP_RADII, CAM_MIN_RADII, CAM_MAX_RADII,
+    DEFAULT_ZOOM_OUT_CLICKS,
 )
 
 
@@ -48,7 +49,11 @@ class _ChaseCamera:
         user zoom that has occurred since the last reset."""
         radius = max(radius, 1e-6)
         prev_default = getattr(self, "default_distance", None)
-        self.default_distance    = _math.sqrt(CAM_BACK_RADII**2 + CAM_UP_RADII**2) * radius
+        # Base framing distance, then nudged out by DEFAULT_ZOOM_OUT_CLICKS.
+        self.default_distance    = (
+            _math.sqrt(CAM_BACK_RADII**2 + CAM_UP_RADII**2) * radius
+            / (self.ZOOM_FACTOR_PER_NOTCH ** DEFAULT_ZOOM_OUT_CLICKS)
+        )
         self.distance_min        = CAM_MIN_RADII * radius
         self.distance_max        = CAM_MAX_RADII * radius
         if prev_default is None or getattr(self, "distance", prev_default) == prev_default:
