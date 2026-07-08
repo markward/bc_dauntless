@@ -37,19 +37,6 @@ def reset_deferred_playing() -> None:
     _deferred_playing.clear()
 
 
-def _actdiag(msg: str) -> None:
-    """TEMP DIAGNOSTIC (E1M1 post-undock input-lock RE) — trace each action as it
-    plays so the last one before the freeze names the stalling action (its
-    completion never fires, so the sequence never reaches ReturnControl).
-    Dev-mode gated so headless tests stay quiet. REMOVE with the probe."""
-    try:
-        import engine.dev_mode as _dm
-        if _dm.is_enabled():
-            print("[ACTDIAG] " + msg, flush=True)
-    except Exception:
-        pass
-
-
 class TGAction(TGEventHandlerObject):
     def __init__(self):
         super().__init__()
@@ -191,8 +178,6 @@ class TGScriptAction(TGAction):
         self._playing = True
         self._deferred = False
         self._do_play()
-        _actdiag("script %s.%s deferred=%s" % (
-            self._module_name, self._func_name, self._deferred))
         if not self._deferred:
             self.Completed()
 

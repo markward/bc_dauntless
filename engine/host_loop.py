@@ -1719,9 +1719,6 @@ def _tactical_hud_visible(*, is_exterior: bool, spv_open: bool,
     return is_exterior and not spv_open and not cutscene_active
 
 
-_freelook_diag_last = None   # TEMP DIAGNOSTIC (E1M1 input-lock RE) — remove with the probe
-
-
 def _bridge_freelook_suppressed(*, crew_menu_open: bool,
                                 cutscene_active: bool,
                                 bridge_cutscene_pending: bool = False) -> bool:
@@ -6145,20 +6142,6 @@ def run(mission_name: Optional[str] = None,
                         # letterbox pins the view where the mission wants it.
                         from engine.appc.top_window import TopWindow_GetTopWindow
                         _tw = TopWindow_GetTopWindow()
-                        # TEMP DIAGNOSTIC (E1M1 post-undock input lock RE) — edge
-                        # -triggered so it only prints on state change. REMOVE.
-                        if dev_mode.is_enabled():
-                            _diag = (bool(crew_menu_panel.has_open_menu()),
-                                     bool(_tw.IsCutsceneMode()),
-                                     bool(_tw.IsMouseInputAllowed()),
-                                     bool(_tw.IsKeyboardInputAllowed()),
-                                     bool(view_mode.is_bridge))
-                            global _freelook_diag_last
-                            if _diag != _freelook_diag_last:
-                                _freelook_diag_last = _diag
-                                print("[INPUTLOCK] crew_menu_open=%s cutscene=%s "
-                                      "mouse_allowed=%s kbd_allowed=%s is_bridge=%s"
-                                      % _diag, flush=True)
                         if _bridge_freelook_suppressed(
                                 crew_menu_open=crew_menu_panel.has_open_menu(),
                                 cutscene_active=_tw.IsCutsceneMode(),

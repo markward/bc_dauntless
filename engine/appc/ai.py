@@ -1194,11 +1194,6 @@ class CharacterAction(TGAction):
         # Non-speak types (MOVE/TURN/GLANCE/...) complete inline as before.
         self._playing = True
         at = self._action_type
-        try:
-            from engine.appc.actions import _actdiag as _ad
-            _ad("char at=%s detail=%r" % (at, self._detail))
-        except Exception:
-            pass
         if at == self.AT_MOVE:
             # Movement (walk-on / sit-down) completes when the walk clip settles:
             # the walk controller calls our Completed(). If it can't be queued
