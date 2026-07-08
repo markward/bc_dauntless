@@ -319,21 +319,64 @@ def test_find_main_window_returns_none_when_unregistered():
     from engine.appc import top_window
     top_window.reset_for_tests()
     tw = top_window.TopWindow_GetTopWindow()
-    # MWT_CINEMATIC and MWT_MODAL_DIALOG are never seeded; only MWT_SUBTITLE
-    # is pre-seeded by _TopWindow.__init__ (Task 5).
-    assert tw.FindMainWindow(top_window.MWT_CINEMATIC) is None
+    # MWT_MODAL_DIALOG is never seeded; only MWT_SUBTITLE, MWT_OPTIONS, and
+    # MWT_CINEMATIC are pre-seeded by _TopWindow.__init__ (see
+    # test_find_main_window_cinematic_is_preseeded below for why).
     assert tw.FindMainWindow(top_window.MWT_MODAL_DIALOG) is None
 
 
 def test_find_main_window_returns_registered_window():
-    """Verify the lookup path — a future spec will land real backing
-    windows; today no one registers, but the path must work."""
+    """Verify the lookup path works for an arbitrary registration, on top
+    of whatever _TopWindow.__init__ pre-seeds."""
     from engine.appc import top_window
     top_window.reset_for_tests()
     tw = top_window.TopWindow_GetTopWindow()
     sentinel = object()
-    tw._main_windows[top_window.MWT_CINEMATIC] = sentinel
-    assert tw.FindMainWindow(top_window.MWT_CINEMATIC) is sentinel
+    tw._main_windows[top_window.MWT_MODAL_DIALOG] = sentinel
+    assert tw.FindMainWindow(top_window.MWT_MODAL_DIALOG) is sentinel
+
+
+def test_find_main_window_cinematic_is_preseeded():
+    """Real BC's Cinematic main window always exists, and
+    AI/Compound/DockWithStarbase.SetupCutscene dereferences
+    FindMainWindow(MWT_CINEMATIC).GetObjID() with no None-guard (unlike
+    Actions.CameraScriptActions.Start/StopCinematicMode, which checks
+    `if pCinematic:` first). Returning raw None here — as an earlier,
+    documented-intentional simplification did — is a live AttributeError
+    crash risk the moment anything calls TopWindow.SetFocus() with a
+    non-None value before the player docks (e.g. Bridge/XOMenuHandlers.
+    ShowLog's "Show Mission Log" button, which sets focus and never clears
+    it). MWT_CINEMATIC must resolve to a real object with a stable
+    GetObjID(), mirroring the MWT_OPTIONS / _OptionsWindow precedent."""
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    pCinematic = tw.FindMainWindow(top_window.MWT_CINEMATIC)
+    assert pCinematic is not None
+    assert isinstance(pCinematic.GetObjID(), int)
+
+
+def test_dock_cutscene_focus_check_does_not_crash_when_focus_is_set():
+    """Reproduces AI/Compound/DockWithStarbase.SetupCutscene's exact
+    unguarded pattern:
+
+        pFocus = pTopWindow.GetFocus()
+        pCinematic = pTopWindow.FindMainWindow(App.MWT_CINEMATIC)
+        if (not pFocus) or (pFocus.GetObjID() != pCinematic.GetObjID()):
+            pTopWindow.ToggleCinematicWindow()
+
+    Before the MWT_CINEMATIC pre-seed fix, this raised AttributeError on
+    'NoneType' object has no attribute 'GetObjID' whenever pFocus was
+    truthy (e.g. after the XO menu's mission-log button ran SetFocus)."""
+    from engine.appc import top_window
+    from engine.core.ids import TGObject
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.SetFocus(TGObject())  # simulate a non-None focus, e.g. the mission log
+    pFocus = tw.GetFocus()
+    pCinematic = tw.FindMainWindow(top_window.MWT_CINEMATIC)
+    if (not pFocus) or (pFocus.GetObjID() != pCinematic.GetObjID()):
+        tw.ToggleCinematicWindow()
 
 
 def test_children_empty_by_default():

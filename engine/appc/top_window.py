@@ -46,10 +46,17 @@ class _TopWindow:
         self._last_rendered_set = None
         self._children: list[tuple[object, float, float]] = []
         self._focus = None
-        from engine.appc.windows import _OptionsWindow, _SubtitleWindow
+        from engine.appc.windows import _CinematicWindow, _OptionsWindow, _SubtitleWindow
         self._main_windows: dict[int, object] = {
             MWT_SUBTITLE: _SubtitleWindow(),
             MWT_OPTIONS: _OptionsWindow(),
+            # AI/Compound/DockWithStarbase.SetupCutscene dereferences
+            # FindMainWindow(MWT_CINEMATIC).GetObjID() with no None-guard
+            # (unlike Actions.CameraScriptActions.Start/StopCinematicMode,
+            # which check `if pCinematic:` first) — real BC always has this
+            # window, so returning raw None here is the same class of gap
+            # _OptionsWindow fixed for MWT_OPTIONS above. See _CinematicWindow.
+            MWT_CINEMATIC: _CinematicWindow(),
         }
         # Instance event chain (composition, not inheritance: _TopWindow
         # stays a plain class so missing methods raise AttributeError

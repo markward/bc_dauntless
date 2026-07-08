@@ -284,6 +284,35 @@ class _OptionsWindow:
         return 0
 
 
+# ── CinematicWindow ─────────────────────────────────────────────────────────
+
+class _CinematicWindow(TGEventHandlerObject):
+    """Never-visible stand-in for BC's Cinematic main window.
+
+    Same rationale as _OptionsWindow just above: in real BC the Cinematic
+    main window always exists in the Appc UI hierarchy, so SDK code
+    dereferences FindMainWindow(MWT_CINEMATIC) without a None check.
+    AI/Compound/DockWithStarbase.SetupCutscene does exactly that:
+
+        pFocus = pTopWindow.GetFocus()
+        pCinematic = pTopWindow.FindMainWindow(App.MWT_CINEMATIC)
+        if (not pFocus) or (pFocus.GetObjID() != pCinematic.GetObjID()):
+
+    `or` short-circuits on `not pFocus`, so this was silent as long as
+    GetFocus() was always None — but Bridge/XOMenuHandlers.ShowLog (wired
+    live via LoadBridge.Load -> XOMenuHandlers.CreateMenus, the "Show
+    Mission Log" XO-menu button) calls pTopWindow.SetFocus(pLog) and never
+    clears it, so any later dock crashed with
+    AttributeError: 'NoneType' object has no attribute 'GetObjID'
+    once FindMainWindow(MWT_CINEMATIC) returned raw None.
+
+    Inherits TGEventHandlerObject (-> TGObject) purely for a real,
+    stable GetObjID() and the catch-all __getattr__ safety net — no
+    Cinematic-specific behaviour is needed here.
+    """
+    pass
+
+
 # ── STStylizedWindow ────────────────────────────────────────────────────────
 # Centred LCARS-framed content panel in BC; dauntless re-styles as a centred
 # modal panel via #sdk-stylized-stack. SDK pixel coords (parent/x/y/w/h) are
