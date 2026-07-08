@@ -409,6 +409,23 @@ class ShipClass(DamageableObject):
             return float(eta_angle / max_av)
         return 0.0
 
+    def TurnTowardOrientation(self, vForward, vUp):
+        """Steer world-forward onto vForward and world-up onto vUp.
+
+        The 2-arg orientation form AI.PlainAI.FollowWaypoints.TurnToward
+        (sdk/.../FollowWaypoints.py:276) commands. BC's PhysicsObjectClass
+        exposes this; we service it on ShipClass by supplying the ship's
+        CURRENT forward/up as the 'from' vectors and delegating to the shared
+        turn-rate-limited controller (TurnDirectionsToDirections), which writes
+        the body-frame angular-velocity setpoint that ship_motion integrates.
+        Non-ship physics props keep the PhysicsObjectClass no-op (no IES / no
+        turn controller; they never follow waypoints)."""
+        R = self.GetWorldRotation()
+        primary_from = R.GetCol(1)    # current world forward (model-Y)
+        secondary_from = R.GetCol(2)  # current world up
+        self.TurnDirectionsToDirections(primary_from, vForward,
+                                        secondary_from, vUp)
+
     def TurnTowardDirection(self, direction_vec) -> float:
         """Set the angular-velocity setpoint to rotate world-forward
         onto a world-space direction vector.
