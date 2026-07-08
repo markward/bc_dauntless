@@ -18,7 +18,10 @@ def test_menu_up_sets_flag_returns_truthy_and_requests_turn():
         ret = c.MenuUp()
         assert ret                                  # truthy (SDK checks it)
         assert c.IsMenuUp() == 1
-        assert ctrl._pending_turns == [(c, True)]
+        # _pending_turns entries are now the richer request_turn_to tuple
+        # (character, detail, back, hold, now, on_complete); MenuUp delegates
+        # to request_turn_to(character, "Captain", back=False, hold=True).
+        assert ctrl._pending_turns == [(c, "Captain", False, True, False, None)]
     finally:
         clear_controller()
 
@@ -31,7 +34,9 @@ def test_menu_down_clears_flag_and_requests_turn_back():
         c.MenuUp()
         c.MenuDown()
         assert c.IsMenuUp() == 0
-        assert ctrl._pending_turns[-1] == (c, False)
+        # MenuDown delegates to request_turn_to(character, "Captain", back=True,
+        # hold=True) — see shape note in test_menu_up_sets_flag_... above.
+        assert ctrl._pending_turns[-1] == (c, "Captain", True, True, False, None)
     finally:
         clear_controller()
 

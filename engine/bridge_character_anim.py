@@ -23,9 +23,9 @@ _MIN_GESTURE_HOLD_S = 0.4
 
 class _Action:
     __slots__ = ("iid", "clips", "priority", "index", "elapsed", "started",
-                 "cur_duration", "hold")
+                 "cur_duration", "hold", "on_complete")
 
-    def __init__(self, iid, clips, priority, hold=False):
+    def __init__(self, iid, clips, priority, hold=False, on_complete=None):
         self.iid = iid
         self.clips = clips          # [(nif_path, sdk_duration), ...]
         self.priority = priority
@@ -37,6 +37,7 @@ class _Action:
         # the default idle (turn-to-captain stays facing the captain while the
         # menu is open). The reverse turn (hold=False) returns to normal breathe.
         self.hold = hold
+        self.on_complete = on_complete   # fired once when the last clip ends
 
 
 class BridgeCharacterAnimController:
@@ -45,7 +46,8 @@ class BridgeCharacterAnimController:
         self._dur_cache = {}        # nif_path -> real clip duration (s)
         self._body_turns = {}       # nif_path -> bool (clip rotates the body)
         self._idle_clips = {}       # iid -> looping breathe clip index
-        self._pending_turns = []    # [(character, turn_bool), ...]
+        self._pending_turns = []    # [(character, detail, back, hold, now,
+                                     #   on_complete), ...]
         self._resolve = asset_resolver or (lambda p: p)
         self._node_ctrl = None      # BridgeNodeAnimController (optional)
 
@@ -58,7 +60,8 @@ class BridgeCharacterAnimController:
         iid = getattr(character, "_render_instance", None)
         return iid in self._active
 
-    def submit(self, character, clips, priority, hold=False) -> None:
+    def submit(self, character, clips, priority, hold=False,
+               on_complete=None) -> None:
         iid = getattr(character, "_render_instance", None)
         if iid is None or not clips:
             return
@@ -67,7 +70,7 @@ class BridgeCharacterAnimController:
         cur = self._active.get(iid)
         if cur is not None and priority <= cur.priority:
             return                  # don't preempt equal/higher priority
-        self._active[iid] = _Action(iid, list(clips), priority, hold)
+        self._active[iid] = _Action(iid, list(clips), priority, hold, on_complete)
 
     def set_idle(self, iid, clip_index) -> None:
         """Register the officer's looping breathe clip — what the controller
@@ -77,11 +80,21 @@ class BridgeCharacterAnimController:
     def request_turn(self, character) -> None:
         """Queue a turn-to-captain (drained on the next update, which has the
         renderer). Called from CharacterClass.MenuUp via the registry."""
-        self._pending_turns.append((character, True))
+        self.request_turn_to(character, "Captain", back=False, hold=True)
 
     def request_turn_back(self, character) -> None:
         """Queue a turn-back-to-normal (CharacterClass.MenuDown)."""
-        self._pending_turns.append((character, False))
+        self.request_turn_to(character, "Captain", back=True, hold=True)
+
+    def request_turn_to(self, character, detail, *, back=False, hold=True,
+                        now=False, on_complete=None) -> None:
+        """Queue a body turn toward `detail` (SDK AT_TURN / AT_TURN_BACK). Suffix
+        is "Turn"+detail (or "Back"+detail); reuses the menu turn's body+chair
+        coupling. on_complete fires once when the turn settles/holds, or inline
+        when chair-driven / now / unresolved."""
+        self._pending_turns.append(
+            (character, str(detail), bool(back), bool(hold), bool(now),
+             on_complete))
 
     def reset(self) -> None:
         self._active = {}
@@ -91,8 +104,8 @@ class BridgeCharacterAnimController:
     def update(self, dt, *, renderer, anim_mgr=None) -> None:
         if self._pending_turns:
             pending, self._pending_turns = self._pending_turns, []
-            for character, turn in pending:
-                self._process_turn(renderer, character, turn)
+            for entry in pending:
+                self._process_turn(renderer, *entry)
         done = []
         for iid, act in self._active.items():
             if not act.started or act.index < 0:
@@ -109,6 +122,11 @@ class BridgeCharacterAnimController:
                     self._return_to_default(renderer, iid)
                 # hold=True leaves the native renderer holding the last frame
                 # (the turned-to-captain pose) until the reverse turn replaces it.
+                if act.on_complete is not None:
+                    try:
+                        act.on_complete()
+                    except Exception:
+                        pass
                 done.append(iid)
         for iid in done:
             self._active.pop(iid, None)
@@ -142,65 +160,69 @@ class BridgeCharacterAnimController:
         self._body_turns[path] = result
         return result
 
-    def _process_turn(self, renderer, character, turn) -> None:
-        """On menu open the officer turns to face the captain and HOLDS it; on
-        close they turn back and resume normal breathing.
+    def _process_turn(self, renderer, character, detail, back, hold, now,
+                      on_complete) -> None:
+        """Turn `character` toward `detail` (body clip + chair). Suffix
+        "Turn"+detail forward, "Back"+detail reverse. Fires on_complete exactly
+        once — via the submitted body _Action for a body-driven, non-`now` turn,
+        else inline (chair-driven / now / unresolved) so completion is
+        guaranteed."""
+        turn_suffix = "Turn" + detail
+        back_suffix = "Back" + detail
 
-        Uses the SDK's TurnCaptain / BackCaptain. For seated officers the SDK
-        builder is a multi-action sequence — the officer's BODY turn clip
-        (e.g. db_face_capt_h) plus the CHAIR clip on the bridge-set node;
-        capture_registered_clip picks the body clip (the chair-on-bridge-node
-        is a separate set animation we don't drive). Best-effort: a missing clip
-        skips that half.
-        """
+        def _fire_inline():
+            if on_complete is not None:
+                try:
+                    on_complete()
+                except Exception:
+                    pass
+
         iid = getattr(character, "_render_instance", None)
         if iid is None:
+            _fire_inline()
             return
-        # A menu open/close is a deliberate user action and must always take
-        # effect: evict any in-flight transient for this officer so the new
-        # turn/back is never dropped by submit's equal-priority guard. Without
-        # this, a fast open+close would drop the reverse turn while the forward
-        # turn (same priority) is still playing, leaving the officer stuck
-        # facing the captain until the next interaction.
+        # A turn must always take effect: evict any in-flight transient so the
+        # new turn is never dropped by submit's equal-priority guard.
         self._active.pop(iid, None)
-        # Decide (from the FORWARD body clip) whether this officer turns via its
-        # own BODY clip or is CHAIR-DRIVEN. BC encodes this asymmetry per station:
-        # Helm/standing crew have a real db_face_capt_* clip that rotates Bip01
-        # ~72deg (body-driven); Tactical's db_face_capt_t is EMPTY (chair-driven),
-        # so the rotating chair must carry the officer. Driving BOTH double-turns
-        # the officer. Compute once and use it consistently for turn AND unturn.
+        # Body-driven vs chair-driven is decided from the FORWARD body clip
+        # (BC's per-station asymmetry): Helm rotates Bip01 ~72deg (body-driven);
+        # Tactical's clip is EMPTY (chair-driven). Compute once, use for both
+        # directions.
         chair_driven = not self._body_turns_officer(
-            renderer, capture_registered_clip(character, "TurnCaptain"))
-        if turn:
-            # Turn toward the captain and HOLD it while the menu is open. No
-            # BreatheTurned swap — that clip over the forward placement does not
-            # preserve the turn, so we hold the turn's last frame instead.
-            move = capture_registered_clip(character, "TurnCaptain")
+            renderer, capture_registered_clip(character, turn_suffix))
+        # The body _Action carries on_complete only for a body-driven, non-`now`
+        # turn; every other path fires inline below (avoids double-fire).
+        action_cb = None if now else on_complete
+        body_submitted = False
+        if not back:
+            move = capture_registered_clip(character, turn_suffix)
             if move and not chair_driven:
-                self.submit(character, [(self._resolve(move["clip_nif"]), 0.0)],
-                            priority=_TURN, hold=True)
-            # chair_driven: the chair carries the officer (below); no body clip.
+                self.submit(character,
+                            [(self._resolve(move["clip_nif"]), 0.0)],
+                            priority=_TURN, hold=hold, on_complete=action_cb)
+                body_submitted = True
         else:
             # Turn back: restore normal breathing as the default, then play the
             # reverse turn, which returns to that idle on completion.
             idle = capture_registered_clip(character, "Breathe")
             if idle:
-                idx = renderer.load_instance_clip(iid, self._resolve(idle["clip_nif"]))
+                idx = renderer.load_instance_clip(
+                    iid, self._resolve(idle["clip_nif"]))
                 if idx is not None and idx >= 0:
                     self.set_idle(iid, idx)
-            move = capture_registered_clip(character, "BackCaptain")
+            move = capture_registered_clip(character, back_suffix)
             if move and not chair_driven:
-                self.submit(character, [(self._resolve(move["clip_nif"]), 0.0)],
-                            priority=_TURN, hold=False)
-            # chair_driven: the chair reverse carries the officer back (below).
+                self.submit(character,
+                            [(self._resolve(move["clip_nif"]), 0.0)],
+                            priority=_TURN, hold=False, on_complete=action_cb)
+                body_submitted = True
         # Chair half: rotate the seat (always) + couple the officer only when
-        # chair-driven (delegated to the bridge-node controller). Standing
-        # officers have no chair action (capture_chair_clip -> None) -> no-op.
+        # chair-driven. Standing officers have no chair action -> no-op.
         node_ctrl = getattr(self, "_node_ctrl", None)
         if node_ctrl is not None:
-            chair = capture_chair_clip(character, "TurnCaptain" if turn
-                                       else "BackCaptain")
-            if turn:
+            chair = capture_chair_clip(character, turn_suffix if not back
+                                       else back_suffix)
+            if not back:
                 node_ctrl.turn_chair(character, chair, renderer=renderer,
                                      couple=chair_driven)
             else:
@@ -212,6 +234,10 @@ class BridgeCharacterAnimController:
                 # dropped only on reset() (mission swap) or when re-turned (the
                 # _coupled dict entry is overwritten). Releasing now would freeze
                 # the officer at the turned pose while the chair animates back.
+        # Guarantee completion: body-driven non-`now` turns complete when the
+        # _Action settles; everything else completes now.
+        if now or not body_submitted:
+            _fire_inline()
 
     def _return_to_default(self, renderer, iid) -> None:
         """Resume the looping breathe idle if one is registered; otherwise snap
