@@ -95,10 +95,20 @@ def _target_alive(obj):
     if obj is None:
         return False
     is_dying = getattr(obj, "IsDying", None)
+    if not callable(is_dying):
+        return True
     try:
-        return not (callable(is_dying) and is_dying())
+        dying = is_dying()
     except Exception:
         return False
+    # Waypoints / PlacementObjects don't implement IsDying — TGObject's
+    # __getattr__ returns a truthy recursive _Stub, which must read as
+    # "not dying" (placement objects never die; they are the Source of every
+    # placement/zoom camera shot).
+    from engine.core.ids import _Stub
+    if isinstance(dying, _Stub):
+        return True
+    return not dying
 
 
 class PlaceByDirectionMode(CameraMode):

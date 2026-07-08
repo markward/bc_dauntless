@@ -160,3 +160,32 @@ def test_target_invalid_without_both():
     m = TargetMode()
     m.SetAttrIDObject("Source", _FakeTarget((0.0, 0.0, 0.0)))
     assert not m.IsValid()
+
+
+from engine.appc.camera_modes import _target_alive
+from engine.appc.placement import Waypoint
+
+
+class _Dying:
+    def IsDying(self):
+        return 1
+
+
+class _NotDying:
+    def IsDying(self):
+        return 0
+
+
+def test_target_alive_waypoint_reads_alive():
+    # A Waypoint has no real IsDying; TGObject.__getattr__ hands back a truthy
+    # _Stub, which must read as "not dying" (placements never die).
+    assert _target_alive(Waypoint()) is True
+
+
+def test_target_alive_none_is_dead():
+    assert _target_alive(None) is False
+
+
+def test_target_alive_real_is_dying():
+    assert _target_alive(_Dying()) is False
+    assert _target_alive(_NotDying()) is True
