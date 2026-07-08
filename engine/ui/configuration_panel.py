@@ -18,8 +18,8 @@ from typing import Callable, List, Optional, Tuple
 from engine.ui.panel import Panel
 
 
-FOV_MIN  = 40
-FOV_MAX  = 80
+FOV_MIN  = 25
+FOV_MAX  = 55
 FOV_STEP = 5
 
 # AI difficulty index (0=Easy, 1=Medium, 2=Hard) — mirrors App.Game_GetDifficulty.

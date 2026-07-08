@@ -43,9 +43,11 @@ def test_default_state_matches_radius_framing():
     """Defaults frame a unit-radius ship at -CAM_BACK_RADII forward + CAM_UP_RADII up."""
     from engine.cameras.chase import _ChaseCamera as _CameraControl
     from engine.host_loop import CAM_BACK_RADII, CAM_UP_RADII
+    from engine.cameras import DEFAULT_ZOOM_OUT_CLICKS
 
     cc = _CameraControl()
-    expected_dist  = math.sqrt(CAM_BACK_RADII**2 + CAM_UP_RADII**2)
+    expected_dist  = (math.sqrt(CAM_BACK_RADII**2 + CAM_UP_RADII**2)
+                      / (cc.ZOOM_FACTOR_PER_NOTCH ** DEFAULT_ZOOM_OUT_CLICKS))
     expected_pitch = math.atan2(CAM_UP_RADII, CAM_BACK_RADII)
 
     assert cc.distance        == pytest.approx(expected_dist)
@@ -123,14 +125,16 @@ def test_compute_camera_at_defaults_at_origin_identity_rotation():
     (0, -CAM_BACK_RADII*r, CAM_UP_RADII*r) relative to a unit-radius ship."""
     from engine.cameras.chase import _ChaseCamera as _CameraControl
     from engine.host_loop import CAM_BACK_RADII, CAM_UP_RADII
+    from engine.cameras import DEFAULT_ZOOM_OUT_CLICKS
 
     cc = _CameraControl()
+    k = 1.0 / (cc.ZOOM_FACTOR_PER_NOTCH ** DEFAULT_ZOOM_OUT_CLICKS)
     loc, rot = _make_ship_pose(0.0, 0.0, 0.0)
     eye, target, up = cc.compute_camera(loc, rot)
 
-    assert eye[0] == pytest.approx(0.0,             abs=1e-3)
-    assert eye[1] == pytest.approx(-CAM_BACK_RADII, abs=1e-3)
-    assert eye[2] == pytest.approx( CAM_UP_RADII,   abs=1e-3)
+    assert eye[0] == pytest.approx(0.0,                 abs=1e-3)
+    assert eye[1] == pytest.approx(-CAM_BACK_RADII * k, abs=1e-3)
+    assert eye[2] == pytest.approx( CAM_UP_RADII * k,   abs=1e-3)
     assert target == pytest.approx((0.0, 0.0, 0.0))
     assert up     == pytest.approx((0.0, 0.0, 1.0))
 
@@ -140,8 +144,10 @@ def test_compute_camera_offset_is_in_ship_body_frame():
     rotate with the ship so the camera stays 'behind' the new heading."""
     from engine.cameras.chase import _ChaseCamera as _CameraControl
     from engine.host_loop import CAM_BACK_RADII, CAM_UP_RADII
+    from engine.cameras import DEFAULT_ZOOM_OUT_CLICKS
 
     cc = _CameraControl()
+    k = 1.0 / (cc.ZOOM_FACTOR_PER_NOTCH ** DEFAULT_ZOOM_OUT_CLICKS)
     loc, rot = _make_ship_pose(0.0, 0.0, 0.0)
     rot.MakeZRotation(math.radians(90))
     eye, target, _ = cc.compute_camera(loc, rot)
@@ -149,10 +155,11 @@ def test_compute_camera_offset_is_in_ship_body_frame():
     # Ship's body-Y after a +90° yaw points along R.GetCol(1) = (-1, 0, 0)
     # under column-vector convention (see CLAUDE.md). Body-Z is unchanged
     # (0, 0, 1). The camera sits at
-    #   -CAM_BACK_RADII*body_Y + CAM_UP_RADII*body_Z.
-    expected_eye_x =  CAM_BACK_RADII
+    #   -CAM_BACK_RADII*body_Y + CAM_UP_RADII*body_Z, scaled by the
+    #   default zoom-out nudge k.
+    expected_eye_x =  CAM_BACK_RADII * k
     expected_eye_y =  0.0
-    expected_eye_z =  CAM_UP_RADII
+    expected_eye_z =  CAM_UP_RADII * k
     assert eye[0] == pytest.approx(expected_eye_x, abs=1e-3)
     assert eye[1] == pytest.approx(expected_eye_y, abs=1e-3)
     assert eye[2] == pytest.approx(expected_eye_z, abs=1e-3)
@@ -291,14 +298,16 @@ def test_orbit_yaw_90_puts_camera_on_ship_right():
     (body +X) and slightly above. Identity ship rotation."""
     from engine.cameras.chase import _ChaseCamera as _CameraControl
     from engine.host_loop import CAM_BACK_RADII, CAM_UP_RADII
+    from engine.cameras import DEFAULT_ZOOM_OUT_CLICKS
     cc = _CameraControl()
+    k = 1.0 / (cc.ZOOM_FACTOR_PER_NOTCH ** DEFAULT_ZOOM_OUT_CLICKS)
     cc.orbit_yaw_rad = math.radians(90)
     loc, rot = _make_ship_pose(0.0, 0.0, 0.0)
     eye, _, _ = cc.compute_camera(loc, rot)
 
-    expected_x =  CAM_BACK_RADII                       # cos(default_pitch)*dist along +X
+    expected_x =  CAM_BACK_RADII * k                   # cos(default_pitch)*dist along +X
     expected_y =  0.0
-    expected_z =  CAM_UP_RADII
+    expected_z =  CAM_UP_RADII * k
     assert eye[0] == pytest.approx(expected_x, abs=1e-3)
     assert eye[1] == pytest.approx(expected_y, abs=1e-3)
     assert eye[2] == pytest.approx(expected_z, abs=1e-3)

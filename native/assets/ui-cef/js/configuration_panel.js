@@ -97,7 +97,7 @@ function _cpRenderGraphicsBody(state, focusables) {
     html += '<div class="cp-row' + (isFoc('fov') ? ' cp-focused' : '') + '">'
           +   '<div class="cp-row__label">Exterior Camera FOV</div>'
           +   '<div class="cp-row__control">'
-          +     '<input class="cp-slider" type="range" min="40" max="80" step="5"'
+          +     '<input class="cp-slider" type="range" min="25" max="55" step="5"'
           +        ' value="' + s.fov_deg + '"'
           +        ' onchange="dauntlessEvent(\'configuration/fov:\' + this.value)">'
           +     '<span class="cp-slider-value">' + s.fov_deg + '°</span>'

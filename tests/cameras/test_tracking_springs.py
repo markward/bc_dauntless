@@ -88,7 +88,9 @@ def test_snap_clears_spring_state():
 def test_set_ship_radius_updates_d_chase():
     from engine.cameras.tracking import _TrackingCamera
     from engine.cameras           import CAM_BACK_RADII, CAM_UP_RADII
+    from engine.cameras           import DEFAULT_ZOOM_OUT_CLICKS
     tc = _TrackingCamera()
     tc.set_ship_radius(2.0)
-    expected = math.sqrt(CAM_BACK_RADII**2 + CAM_UP_RADII**2) * 2.0
+    expected = (math.sqrt(CAM_BACK_RADII**2 + CAM_UP_RADII**2) * 2.0
+                / (tc.ZOOM_FACTOR_PER_PRESS ** DEFAULT_ZOOM_OUT_CLICKS))
     assert tc.d_chase_tracking == pytest.approx(expected)

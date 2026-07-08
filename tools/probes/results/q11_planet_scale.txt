@@ -1,0 +1,46 @@
+-- environment -------------------------------------------------
+python_version = 1.5.2 (#0, Jan 17 2002, 03:24:04) [MSC 32 bit (Intel)]
+has_math = 1
+frame = 78165
+game_time = 65.75
+set_name = Vesuvi6
+-- player ------------------------------------------------------
+player_name = player
+player_radius_gu = 4.36645269394
+player_scale = 1.0
+player_pos_gu = (213.23500061, 102.027534485, -0.236475780606)
+-- camera ------------------------------------------------------
+cam_eye_gu = (208.957687378, 85.211807251, 1.8453373909)
+cam_fwd = (0.227653250098, 0.971147537231, -0.0710390806198)
+cam_up = (0.0473902672529, 0.0618182942271, 0.996961653233)
+cam_frustum_LRTB = (-0.25, 0.25, 0.20000000298, -0.20000000298)
+cam_near = 1.0
+cam_far = 5000.0
+cam_vfov_deg = 22.6198635101
+cam_hfov_deg = 28.0724868774
+-- bodies ------------------------------------------------------
+n_candidates = 3
+n_objects_walked = 1
+body0_name = Haven
+body0_is_sun = 0
+body0_radius_gu = 90.0
+body0_scale = 1.0
+body0_atmos_radius = 50.0
+body0_pos_gu = (260.359619141, 331.673492432, 0.0)
+body0_center_dist_gu = 234.431350708
+body0_center_dist_km = 41.0254859924
+body0_surface_dist_km = 25.2754859924
+body0_angdiam_deg_at_getradius = 42.0043640137
+body0_screenfrac_at_getradius = 1.85696804523
+body1_name = Moon 1
+body1_is_sun = 0
+body1_radius_gu = 80.0
+body1_scale = 1.0
+body1_atmos_radius = 50.0
+body1_pos_gu = (-190.149047852, 1042.80639648, -214.851806641)
+body1_center_dist_gu = 1045.86962891
+body1_center_dist_km = 183.027191162
+body1_surface_dist_km = 169.027191162
+body1_angdiam_deg_at_getradius = 8.74822998047
+body1_screenfrac_at_getradius = 0.386749893427
+n_bodies = 2

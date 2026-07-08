@@ -36,7 +36,7 @@ def test_zoom_in_clamps_at_zoom_min():
     """zoom_in must never push d_chase_zoom below zoom_min: once at the
     floor, a further = press is a no-op (matches BC behaviour).
 
-    Note: set_ship_radius now seeds d_chase_zoom 5 zoom-out clicks above
+    Note: set_ship_radius seeds d_chase_zoom several zoom-out clicks above
     zoom_min (ZOOM_DEFAULT_RADII), so this test drives it to the floor
     explicitly before exercising the clamp."""
     tc = _seeded_camera()

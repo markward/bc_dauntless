@@ -14,12 +14,18 @@ import math
 # which also re-syncs the tracking solver's projection math.
 # host_loop.py reads director.fov_y_rad when calling r.set_camera,
 # so the constant is the source of truth at startup only.
-EXTERIOR_FOV_Y_RAD: float = math.radians(60.0)
+EXTERIOR_FOV_Y_RAD: float = math.radians(35.0)
 
 # Camera-follow distances as multiples of the player ship's GetRadius().
 CAM_BACK_RADII  =  1.5
 CAM_UP_RADII    =  0.25
 CAM_MIN_RADII   =  0.6
 CAM_MAX_RADII   = 30.0
+
+# Extra zoom-out clicks baked into every mode's default framing (Chase,
+# Tracking, and ZoomTarget), nudging the camera further back by default.
+# One click = ÷ the mode's per-notch zoom factor (~0.9), so N clicks ≈
+# ×(1/0.9)^N. Applied on top of each mode's base default distance.
+DEFAULT_ZOOM_OUT_CLICKS = 4
 
 from engine.cameras.director import CameraMode, _CameraDirector  # noqa: E402

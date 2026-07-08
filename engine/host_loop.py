@@ -2961,6 +2961,24 @@ def _model_extent_from_aabb(center: tuple, half_extents: tuple) -> float:
     return _math.sqrt(cx*cx + cy*cy + cz*cz) + _math.sqrt(hx*hx + hy*hy + hz*hz)
 
 
+def _model_sphere_radius_from_aabb(center: tuple, half_extents: tuple) -> float:
+    """Bounding-sphere radius of a NIF whose geometry is an origin-centred
+    sphere — the largest single-axis half-extent, which equals that sphere's
+    radius (and the NIF's authored bound_radius).
+
+    This is the correct divisor for planet/moon render scaling: BC computes
+    render_scale = GetRadius() / NIF_bound_radius, so the model draws at
+    exactly GetRadius() game units. `_model_extent_from_aabb` returns the AABB
+    *corner* distance instead (|half| = R·√3 for a sphere), which is ~1.73×
+    too large and shrinks the planet to GetRadius()/√3. See
+    docs/instrumented_experiments/2026-07-07-planet-render-scale.md.
+
+    All stock planet/moon NIFs are origin-centred spheres, so max-half-extent
+    is exact here; it is not a general model radius."""
+    hx, hy, hz = half_extents
+    return max(abs(hx), abs(hy), abs(hz))
+
+
 def _rot_determinant(rot) -> float:
     """3x3 determinant of a row-major BC TGMatrix3 stored as nested lists."""
     m = rot._m
@@ -3191,13 +3209,16 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False) -> No
             continue
         center, half_extents = r_.model_aabb(handle)
         extent = _model_extent_from_aabb(center, half_extents)
+        sphere_radius = _model_sphere_radius_from_aabb(center, half_extents)
         if planet.GetRadius() <= 0.0:
             try:
                 planet.SetRadius(extent * BC_MODEL_SCALE)
             except Exception as _e:
                 dev_mode.log_swallowed("realize planet.SetRadius fallback", _e)
         radius = planet.GetRadius()
-        natural_scale = (radius / extent) if extent > 0.0 else 1.0
+        # Divide by the bound-sphere radius (BC's render_scale divisor), not the
+        # AABB corner, so the planet draws at exactly GetRadius() game units.
+        natural_scale = (radius / sphere_radius) if sphere_radius > 0.0 else 1.0
         iid = r_.create_instance(handle)
         r_.set_world_transform(iid, _astro_world_matrix(planet, natural_scale))
         session.planet_instances[planet] = iid
@@ -3434,6 +3455,9 @@ class HostController:
         # Outer model-space extent per NIF path; survives mission swaps so
         # repeated loads of the same ship don't re-query model_aabb.
         self.nif_to_extent: dict[str, float] = {}
+        # Bounding-sphere radius per NIF path — the planet/moon render-scale
+        # divisor (see _model_sphere_radius_from_aabb). Cached alongside extent.
+        self.nif_to_sphere_radius: dict[str, float] = {}
         self.session: Optional[MissionSession] = None
         self.pending_swap: Optional[str] = None
         self.bridge_instance: Optional[Any] = None  # InstanceId; set by realize_set
@@ -3740,14 +3764,19 @@ class _MissionLoader:
                 self._c.nif_to_handle[nif_path] = handle
                 center, half_extents = r_.model_aabb(handle)
                 self._c.nif_to_extent[nif_path] = _model_extent_from_aabb(center, half_extents)
+                self._c.nif_to_sphere_radius[nif_path] = \
+                    _model_sphere_radius_from_aabb(center, half_extents)
             extent = self._c.nif_to_extent.get(nif_path, 1.0)
+            sphere_radius = self._c.nif_to_sphere_radius.get(nif_path, extent)
             if planet.GetRadius() <= 0.0:
                 try:
                     planet.SetRadius(extent * BC_MODEL_SCALE)
                 except Exception as _e:
                     dev_mode.log_swallowed("planet.SetRadius fallback", _e)
             radius = planet.GetRadius()
-            natural_scale = (radius / extent) if extent > 0.0 else 1.0
+            # Divide by the bound-sphere radius (BC's render_scale divisor), not
+            # the AABB corner, so the planet draws at exactly GetRadius() GU.
+            natural_scale = (radius / sphere_radius) if sphere_radius > 0.0 else 1.0
             iid = r_.create_instance(handle)
             r_.set_world_transform(iid, _astro_world_matrix(planet, natural_scale))
             sess.planet_instances[planet] = iid
