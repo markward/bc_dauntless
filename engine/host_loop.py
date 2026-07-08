@@ -1883,8 +1883,10 @@ def _apply_pause_menu_side_effects(pause: "_PauseMenuController",
     pause.is_open so the blocker isn't occluded.
 
     On close, the view-mode sync latch is invalidated so the next
-    _apply_view_mode_side_effects call re-applies cursor lock + bridge
-    pass state from whatever view mode is current.
+    _apply_view_mode_side_effects call re-applies cursor lock from
+    whatever view mode is current. (The bridge render pass is driven
+    separately by _apply_bridge_pass_state, which self-heals every frame,
+    so it needs no latch invalidation here.)
     """
     target = pause.is_open and not _any_blocker_open(blockers)
     last = getattr(pause, "_last_synced_is_open", None)
