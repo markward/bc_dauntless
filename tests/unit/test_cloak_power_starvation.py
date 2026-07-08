@@ -106,7 +106,10 @@ def test_full_backup_battery_does_not_decloak():
     """
     ship, power = _powered_ship()
     cloak = CloakingSubsystem("Cloaking Device")
-    cloak.SetNormalPowerPerSecond(100.0)    # draw 100, backup cap 200 → fully fed
+    cloak.SetNormalPowerPerSecond(100.0)    # legacy field; no longer read by the B-path.
+    # Actual draw is CLOAK_RESERVE_DRAIN_PER_SECOND (default 1000/s), taken
+    # directly from the reserve -- not this field or the backup conduit. A
+    # full backup battery + reactor output (1000/s) comfortably covers it.
     ship.AddPoweredConsumer(cloak)
     # Full batteries, normal output
     power.SetBackupBatteryPower(80000.0)

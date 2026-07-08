@@ -69,16 +69,49 @@ def test_damaged_reactor_depletes_reserve_and_forces_decloak():
     # but falls behind the drain, so the reserve empties EVEN WITH the reactor
     # feeding it, and Step 0's guard force-decloaks. Main battery seeded FULL
     # so the (reduced) reactor output still spills straight into backup.
+    #
+    # Asserting only the terminal "did it decloak" boolean can't tell a
+    # genuine-but-insufficient ~450/s refill apart from a refill that is
+    # silently broken (0/s) -- both decloak within the 10 s window. To make
+    # this test load-bearing for the refill, we also record WHEN the decloak
+    # happens and compare it against the prediction for a *pure* drain with
+    # no refill at all: reserve_seed / drain_per_second * ticks_per_second.
+    # If the reactor's partial refill is genuinely landing, the reserve lasts
+    # measurably longer than that pure-drain prediction (it merely delays,
+    # rather than prevents, the decloak); if the refill were silently a
+    # no-op, the decloak tick would collapse onto the pure-drain prediction.
+    reserve_seed = 2000.0
     ship, power = _powered_ship(output=1500.0)
     power.SetCondition(power.GetMaxCondition() * 0.30)   # damaged reactor -> ~450/s output
     cloak = _cloak_on(ship, drain=1000.0)
     power.SetMainBatteryPower(power.GetMainBatteryLimit())   # main full -> spill to backup
-    power.SetBackupBatteryPower(2000.0)                  # small reserve
+    power.SetBackupBatteryPower(reserve_seed)            # small reserve
     cloak.StartCloaking()
-    for _ in range(600):                                # up to 10 s
+    decloak_tick = None
+    for tick in range(600):                             # up to 10 s
         power.Update(1.0 / 60.0)
         cloak.Update(1.0 / 60.0)
-    assert cloak.IsTryingToCloak() == 0, (
+        if cloak.IsTryingToCloak() == 0:
+            decloak_tick = tick
+            break                                        # stop as soon as it decloaks
+
+    assert decloak_tick is not None, (
         "damaged reactor's refill (~450/s) falls behind the 1000/s drain, "
         "so the reserve must still empty and force a decloak"
+    )
+
+    pure_drain_ticks = (
+        reserve_seed / CloakingSubsystem.CLOAK_RESERVE_DRAIN_PER_SECOND * 60.0
+    )
+    # Empirically (this seed/condition): pure-drain-only predicts tick ~120
+    # (2000 / 1000 * 60); the ~450/s partial refill pushes the observed
+    # decloak out to ~tick 173. A 1.2x margin (144) sits comfortably below
+    # the observed value while staying well above the 1.0x pure-drain floor,
+    # so this is robust to minor float/update-order jitter without being
+    # satisfiable by a broken (0/s) refill.
+    assert decloak_tick > pure_drain_ticks * 1.2, (
+        "decloak tick (%d) is not meaningfully later than the pure-drain-only "
+        "prediction (%.1f ticks); the reactor's ~450/s partial refill should "
+        "delay the decloak well past pure drain, proving the refill actually "
+        "landed rather than being silently a no-op" % (decloak_tick, pure_drain_ticks)
     )
