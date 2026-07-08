@@ -48,6 +48,7 @@ class BridgeCharacterAnimController:
         self._idle_clips = {}       # iid -> looping breathe clip index
         self._pending_turns = []    # [(character, detail, back, hold, now,
                                      #   on_complete), ...]
+        self._pending_glances = []  # [(character, detail, on_complete), ...]
         self._resolve = asset_resolver or (lambda p: p)
         self._node_ctrl = None      # BridgeNodeAnimController (optional)
 
@@ -101,16 +102,39 @@ class BridgeCharacterAnimController:
             (character, str(detail), bool(back), bool(hold), bool(now),
              on_complete))
 
+    def request_glance(self, character, detail, on_complete=None) -> None:
+        """Queue a quick head/upper-body glance (SDK AT_GLANCE_AT/AWAY). Resolves
+        "Glance"+detail; a graceful inline no-op if unregistered (niche action)."""
+        self._pending_glances.append((character, str(detail), on_complete))
+
+    def _process_glance(self, renderer, character, detail, on_complete) -> None:
+        clip = capture_registered_clip(character, "Glance" + detail)
+        iid = getattr(character, "_render_instance", None)
+        if iid is None or not clip:
+            if on_complete is not None:
+                try:
+                    on_complete()
+                except Exception:
+                    pass
+            return
+        self.submit(character, [(self._resolve(clip["clip_nif"]), 0.0)],
+                    priority=_REACTION, on_complete=on_complete)
+
     def reset(self) -> None:
         self._active = {}
         self._idle_clips = {}
         self._pending_turns = []
+        self._pending_glances = []
 
     def update(self, dt, *, renderer, anim_mgr=None) -> None:
         if self._pending_turns:
             pending, self._pending_turns = self._pending_turns, []
             for entry in pending:
                 self._process_turn(renderer, *entry)
+        if self._pending_glances:
+            pending, self._pending_glances = self._pending_glances, []
+            for character, detail, on_complete in pending:
+                self._process_glance(renderer, character, detail, on_complete)
         done = []
         for iid, act in self._active.items():
             if not act.started or act.index < 0:

@@ -1222,6 +1222,9 @@ class CharacterAction(TGAction):
                 back=at in (self.AT_TURN_BACK, self.AT_TURN_BACK_NOW),
                 now=at in (self.AT_TURN_NOW, self.AT_TURN_BACK_NOW))
             return
+        if at in (self.AT_GLANCE_AT, self.AT_GLANCE_AWAY):
+            self._queue_glance()
+            return
         # Speak types (and the remaining no-op types) keep the prior flow.
         dur = self._do_play()
         self._complete_after(dur or 0.0)
@@ -1279,6 +1282,22 @@ class CharacterAction(TGAction):
             else:
                 ctrl.request_turn_to(cc, detail, back=back, now=False,
                                      on_complete=self.Completed)
+        except Exception:
+            self.Completed()
+
+    def _queue_glance(self) -> None:
+        # Quick glance (AT_GLANCE_AT/AWAY). Best-effort: completes inline on any
+        # failure so the sequence never stalls. Detail "Away" when bare.
+        from engine.appc.characters import CharacterClass_Cast
+        from engine import bridge_character_anim
+        try:
+            cc = CharacterClass_Cast(self._character) if self._character is not None else None
+            ctrl = bridge_character_anim.get_controller()
+            if cc is None or ctrl is None:
+                self.Completed()
+                return
+            detail = str(self._detail) if self._detail is not None else "Away"
+            ctrl.request_glance(cc, detail, on_complete=self.Completed)
         except Exception:
             self.Completed()
 
