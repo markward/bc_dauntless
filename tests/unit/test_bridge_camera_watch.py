@@ -63,3 +63,40 @@ def test_reset_clears():
     ctrl.reset()
     assert ctrl.is_watching() is False
     assert ctrl.consume_snap() is False
+
+
+def test_non_snap_watch_clears_stale_snap_pending():
+    # A snap watch followed by a superseding non-snap watch (before the host
+    # consumes the pending snap) must NOT leave the stale snap flag set — the
+    # new target did not request a snap.
+    ctrl = BridgeCameraWatchController()
+    a, b = _Char(1), _Char(2)
+    ctrl.watch(a, snap=True)
+    ctrl.watch(b)                                       # no snap requested
+    assert ctrl.consume_snap() is False
+
+
+class _RaisingRenderer:
+    def get_instance_head_center(self, iid):
+        raise RuntimeError("renderer exploded")
+
+
+class _NoneRenderer:
+    def __init__(self, value=None):
+        self._value = value
+
+    def get_instance_head_center(self, iid):
+        return self._value
+
+
+def test_resolve_target_world_never_raises_when_renderer_raises():
+    ctrl = BridgeCameraWatchController()
+    ctrl.watch(_Char(iid=42))
+    assert ctrl.resolve_target_world(_RaisingRenderer()) is None
+
+
+def test_resolve_target_world_returns_none_for_falsy_center():
+    ctrl = BridgeCameraWatchController()
+    ctrl.watch(_Char(iid=42))
+    assert ctrl.resolve_target_world(_NoneRenderer(None)) is None
+    assert ctrl.resolve_target_world(_NoneRenderer(())) is None

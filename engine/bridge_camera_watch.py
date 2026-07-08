@@ -20,8 +20,7 @@ class BridgeCameraWatchController:
         """Frame `character` (AT_WATCH_ME / AT_LOOK_AT_ME). snap=True (AT_..._NOW)
         jumps the camera instead of easing. Supersedes any prior target."""
         self._watched = character
-        if snap:
-            self._snap_pending = True
+        self._snap_pending = snap
 
     def clear(self) -> None:
         """Stop framing (AT_STOP_WATCHING_ME)."""
