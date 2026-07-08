@@ -216,8 +216,19 @@ class BridgeCharacterAnimController:
             _fire_inline()
             return
         # A turn must always take effect: evict any in-flight transient so the
-        # new turn is never dropped by submit's equal-priority guard.
-        self._active.pop(iid, None)
+        # new turn is never dropped by submit's equal-priority guard. Rescue a
+        # deferred on_complete off the evicted action first — a mission-driven
+        # AT_TURN/AT_MOVE etc. mid-clip carries a callback that a waiting
+        # TGSequence depends on; silently dropping it hangs that sequence
+        # forever. Firing it here (one clip early) is a one-time, guaranteed
+        # completion and cannot double-fire: the action is gone from _active,
+        # so update() can never reach it again.
+        prev = self._active.pop(iid, None)
+        if prev is not None and prev.on_complete is not None:
+            try:
+                prev.on_complete()
+            except Exception:
+                pass
         # Body-driven vs chair-driven is decided from the FORWARD body clip
         # (BC's per-station asymmetry): Helm rotates Bip01 ~72deg (body-driven);
         # Tactical's clip is EMPTY (chair-driven). Compute once, use for both

@@ -129,6 +129,44 @@ def test_request_turn_to_hidden_character_completes_inline(monkeypatch):
     assert fired == [True]
 
 
+def test_process_turn_eviction_rescues_prior_on_complete(monkeypatch):
+    # Regression: a second request_turn_to (e.g. crew-menu open, or another
+    # scripted turn) landing on a character whose FIRST body-driven turn is
+    # still mid-clip (in _active, not yet settled) must not silently drop
+    # the first turn's on_complete -- that would hang whatever mission
+    # TGSequence is waiting on it. _process_turn's eviction must rescue and
+    # fire the evicted callback exactly once.
+    _patch_clips(monkeypatch)
+    ctrl = BridgeCharacterAnimController()
+    r = _FakeRenderer(clip_dur=5.0)      # long clip so it's still running
+    ch = _Char()
+    first_fired = []
+    second_fired = []
+
+    ctrl.request_turn_to(ch, "Captain",
+                        on_complete=lambda: first_fired.append(True))
+    ctrl.update(0.0, renderer=r)         # drain -> submit first body _Action
+    assert first_fired == []             # deferred, genuinely in-flight
+    assert ch._render_instance in ctrl._active
+    assert not ctrl._active[ch._render_instance].on_complete is None
+
+    ctrl.update(0.5, renderer=r)         # advance, but well before settle
+    assert first_fired == []
+    assert ch._render_instance in ctrl._active   # still mid-clip, unsettled
+
+    # Second turn on the SAME character preempts the first via eviction.
+    ctrl.request_turn_to(ch, "Science",
+                        on_complete=lambda: second_fired.append(True))
+    ctrl.update(0.0, renderer=r)         # drains pending -> _process_turn evicts
+
+    assert first_fired == [True]         # rescued: fired exactly once
+    assert len(first_fired) == 1
+
+    ctrl.update(10.0, renderer=r)        # let second turn settle
+    assert second_fired == [True]
+    assert first_fired == [True]         # never double-fired
+
+
 def test_request_turn_back_delegates(monkeypatch):
     _patch_clips(monkeypatch)
     ctrl = BridgeCharacterAnimController()

@@ -69,6 +69,38 @@ def test_at_turn_back_defaults_to_captain(monkeypatch):
     assert ctrl.calls[0]["detail"] == "Captain"
 
 
+def test_at_turn_back_clears_last_turn_detail(monkeypatch):
+    ch = _Char()
+    ctrl = _RecordingTurnController()
+    _patch(monkeypatch, ctrl)
+    CharacterAction(ch, CharacterAction.AT_TURN, "Science").Play()
+    assert ch._last_turn_detail == "Science"
+    CharacterAction(ch, CharacterAction.AT_TURN_BACK).Play()   # bare
+    assert ctrl.calls[1]["detail"] == "Science"
+    assert ch._last_turn_detail is None    # reset, not left stale for next back
+
+
+def test_queue_turn_exception_is_best_effort(monkeypatch):
+    # Mirrors _queue_move's exception-path test: if the turn controller (or
+    # CharacterClass_Cast) blows up, Play() must not propagate and the
+    # action must complete inline so the mission TGSequence advances.
+    ch = _Char()
+
+    class _RaisingTurnController:
+        def request_turn_to(self, character, detail, *, back=False,
+                            hold=True, now=False, on_complete=None):
+            raise RuntimeError("turn controller blew up")
+
+    monkeypatch.setattr(bca, "get_controller", lambda: _RaisingTurnController())
+    monkeypatch.setattr("engine.appc.characters.CharacterClass_Cast",
+                        lambda c: c)
+
+    act = CharacterAction(ch, CharacterAction.AT_TURN, "Captain")
+    act.Play()                                          # must not raise
+
+    assert act.IsPlaying() is False                     # completed inline
+
+
 def test_at_turn_completes_inline_when_no_controller(monkeypatch):
     ch = _Char()
     monkeypatch.setattr(bca, "get_controller", lambda: None)
