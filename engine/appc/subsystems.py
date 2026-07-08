@@ -2041,6 +2041,14 @@ class CloakingSubsystem(PoweredSubsystem):
     # 0.0 = strictly dry; tune from live play.
     MIN_RESERVE_TO_HOLD_CLOAK = 0.0
 
+    # Reserve drain while cloaked (pw/s), drawn DIRECTLY from the backup battery
+    # via StealPowerFromReserve — bypassing the backup-conduit throttle so a
+    # sustained cloak genuinely depletes the reserve. Tunable here (no hardpoint
+    # edit). Biased to the crossover: a healthy reactor out-refills this and
+    # sustains cloak; a damaged one falls behind and the reserve empties, tripping
+    # the MIN_RESERVE_TO_HOLD_CLOAK guard. Mark tunes by eye.
+    CLOAK_RESERVE_DRAIN_PER_SECOND: float = 1000.0
+
     def __init__(self, name: str = ""):
         super().__init__(name)
         self._cloak_state: int = self.CLOAK_DECLOAKED
@@ -2054,6 +2062,14 @@ class CloakingSubsystem(PoweredSubsystem):
         # inf until the first power pump, so a cold-started cloak is never
         # decloaked before its reserve has even been sampled.
         self._backup_reserve: float = float("inf")
+        # GetNormalPowerWanted() is no longer the actual draw amount (that's
+        # CLOAK_RESERVE_DRAIN_PER_SECOND, drawn direct-from-reserve in
+        # _update_power) — it now serves only as Update()'s "does this device
+        # draw power at all" flag for the starvation guard's zero-draw ("free
+        # cloak") carve-out. Default it to the drain rate so a freshly built
+        # cloak is starvation-eligible out of the box; legacy callers can still
+        # opt a specific instance out via SetNormalPowerPerSecond(0.0).
+        self._normal_power: float = self.CLOAK_RESERVE_DRAIN_PER_SECOND
 
     # ── Intent (called by the SDK CloakShip preprocessor) ────────────────────
 
@@ -2117,12 +2133,28 @@ class CloakingSubsystem(PoweredSubsystem):
                                           self.CLOAK_CLOAKED) else 0
 
     def _update_power(self, dt: float, power) -> None:
-        """Draw as a normal backup-only consumer, then snapshot the reserve
-        level so Update()'s starvation guard keys on the BATTERY, not the
-        conduit-throttled per-frame efficiency (see MIN_RESERVE_TO_HOLD_CLOAK).
-        Runs each frame from PowerSubsystem._pump_consumers, before this
-        subsystem's Update() (engine/core/loop.py ticks power then cloak)."""
-        super()._update_power(dt, power)
+        """Direct-from-reserve draw. While trying to cloak, drain
+        CLOAK_RESERVE_DRAIN_PER_SECOND straight from the backup battery
+        (StealPowerFromReserve), bypassing the conduit throttle so the reserve
+        genuinely depletes. Snapshots the post-draw reserve for the Step 0
+        starvation guard in Update() (the loop ticks power before cloak, so the
+        snapshot is fresh when Update reads it). Not trying to cloak -> no draw."""
+        dt = float(dt)
+        if dt <= 0.0:
+            return
+        if not self._wants_power():
+            self._power_wanted = 0.0
+            self._power_received = 0.0
+            self._efficiency = 0.0
+            self._power_factor = 0.0
+            self._backup_reserve = power.GetBackupBatteryPower()
+            return
+        base = self.CLOAK_RESERVE_DRAIN_PER_SECOND * dt
+        received = power.StealPowerFromReserve(base) if base > 0.0 else 0.0
+        self._power_wanted = base
+        self._power_received = received
+        self._efficiency = received / base if base > 0.0 else 1.0
+        self._power_factor = self._efficiency
         self._backup_reserve = power.GetBackupBatteryPower()
 
     def _wants_power(self) -> bool:
