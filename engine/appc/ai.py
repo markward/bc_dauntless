@@ -1193,8 +1193,57 @@ class CharacterAction(TGAction):
         # sequence step chained after the line advances when the line finishes.
         # Non-speak types (MOVE/TURN/GLANCE/...) complete inline as before.
         self._playing = True
+        at = self._action_type
+        if at == self.AT_MOVE:
+            # Movement (walk-on / sit-down) completes when the walk clip settles:
+            # the walk controller calls our Completed(). If it can't be queued
+            # (headless / unresolved builder), complete inline so the mission
+            # TGSequence never stalls.
+            self._queue_move()
+            return
+        if at == self.AT_SET_LOCATION_NAME:
+            if self._character is not None and self._detail is not None:
+                try:
+                    self._character.SetLocation(self._detail)
+                except Exception:
+                    pass
+            self.Completed()
+            return
+        # AT_WATCH_ME / AT_STOP_WATCHING_ME set the watch-captain flag (visual
+        # head-track is a follow-up; sequencing must still advance). Other
+        # non-speak types remain inline no-ops.
+        if at in (self.AT_WATCH_ME, self.AT_STOP_WATCHING_ME):
+            self._set_watch(at == self.AT_WATCH_ME)
+            self.Completed()
+            return
+        # Speak types (and the remaining no-op types) keep the prior flow.
         dur = self._do_play()
         self._complete_after(dur or 0.0)
+
+    def _queue_move(self) -> None:
+        from engine.appc import bridge_placement
+        from engine.appc.characters import CharacterClass_Cast
+        from engine import bridge_character_walk
+        cc = CharacterClass_Cast(self._character) if self._character is not None else None
+        ctrl = bridge_character_walk.get_controller()
+        move = bridge_placement.capture_move(cc, self._detail) if cc is not None else None
+        if cc is None or ctrl is None or move is None:
+            self.Completed()          # nothing to play → advance immediately
+            return
+        ctrl.request_move(cc, move["clip_nif"], move["end_location"],
+                          on_complete=self.Completed)
+
+    def _set_watch(self, watching: bool) -> None:
+        cc = self._character
+        if cc is None:
+            return
+        try:
+            if watching:
+                cc.SetStatus(cc.CS_TURNED)     # "watching the captain" state flag
+            else:
+                cc.ClearStatus(cc.CS_TURNED)
+        except Exception:
+            pass
 
     def _do_play(self):
         at = self._action_type
