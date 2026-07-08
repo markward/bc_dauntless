@@ -121,6 +121,15 @@ def open_menu_for_label(panel, label) -> bool:
 def _on_talk_to(dest, event) -> None:
     """Instance handler: toggle the menu matching the event type."""
     panel = _wired_panel
+    # TEMP DIAGNOSTIC (E1M1 post-undock input lock RE) — proves an F-key
+    # TALK_TO event reached this handler (vs being blocked upstream by
+    # keyboard-input gating) and whether a menu was found. REMOVE.
+    try:
+        _et = event.GetEventType()
+    except Exception:
+        _et = "?"
+    print("[INPUTLOCK] talk_to et=%s panel=%s label=%r" % (
+        _et, panel is not None, _label_cache.get(_et)), flush=True)
     if panel is None:
         return
     label = _label_cache.get(event.GetEventType())
