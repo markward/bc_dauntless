@@ -1257,6 +1257,21 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "rest pose: gesture-tracked bones override, the root and untracked "
           "bones stay at the placement pose. Plays once and holds the last "
           "frame until restore_rest_pose.");
+    m.def("play_instance_walk",
+          [](scenegraph::InstanceId id, int clip_index) {
+              scenegraph::Instance::AnimationState st;
+              st.clip_index = clip_index;
+              st.loop = false;
+              st.layer_over_rest = false;   // FULL clip: root translation applied
+              st.sample_at_start = false;
+              st.sample_at_end = false;
+              st.start_wall_time = glfwGetTime();
+              g_world.set_animation(id, st);
+          },
+          py::arg("iid"), py::arg("clip_index"),
+          "Play a full clip with ROOT MOTION applied (non-layered): the clip's "
+          "baked Bip01 root translation moves the character across the set (e.g. "
+          "a turbolift walk-on). Plays once and settles at the last frame.");
     // ── Bridge-node (non-skinned) animation bindings ─────────────────────────
     m.def("play_instance_node_anim",
           [](scenegraph::InstanceId id, int clip_index, bool loop, bool reverse) {

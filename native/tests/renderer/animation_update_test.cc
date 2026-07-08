@@ -66,6 +66,25 @@ assets::Model two_bone_model_with_clip() {
     m.animations = {clip};
     return m;
 }
+
+// Model whose clip TRANSLATES the root (Bip01) over time: (0,0,0) at t=0 to
+// (100,0,0) at t=1. Used to verify walk playback applies root motion (unlike
+// layer_over_rest gestures, which anchor the root).
+assets::Model root_motion_model() {
+    assets::Model m;
+    assets::Bone b0; b0.name = "Bip01"; b0.parent_index = -1;
+    b0.local_transform = glm::mat4(1.0f);
+    m.skeleton.bones = {b0};
+    m.skeleton.root_bone_index = 0;
+    m.skeleton.bones[0].inverse_bind_pose = glm::mat4(1.0f);
+
+    assets::AnimationClip clip; clip.name = "walk"; clip.duration_seconds = 1.0f;
+    assets::AnimationClip::NodeTrack tr; tr.target_node_name = "Bip01";
+    tr.translation = {{0.0f, glm::vec3(0, 0, 0)}, {1.0f, glm::vec3(100, 0, 0)}};
+    clip.tracks = {tr};
+    m.animations = {clip};
+    return m;
+}
 }
 
 TEST(AnimationUpdate, PlayOnceHoldRebuildsThenSettles) {
@@ -264,4 +283,35 @@ TEST(AnimationUpdate, LoopingLayeredIdleStaysAnchoredAndNeverSettles) {
     // Root stays at the station at BOTH times (the idle clip has no root track).
     EXPECT_TRUE(glm::all(glm::epsilonEqual(r1, glm::vec3(33,-104,23), 1e-3f)));
     EXPECT_TRUE(glm::all(glm::epsilonEqual(r2, glm::vec3(33,-104,23), 1e-3f)));
+}
+
+TEST(AnimationUpdate, WalkFlagsApplyRootMotionAndPlayThrough) {
+    // The flag combo play_instance_walk sets (layer_over_rest=false, loop=false,
+    // sample_at_start=false, sample_at_end=false) must APPLY the clip's root
+    // translation and play through over time — the opposite of a layered gesture.
+    assets::Model model = root_motion_model();
+    auto lookup = [&](scenegraph::ModelHandle){ return &model; };
+
+    scenegraph::World world;
+    auto id = world.create_instance(/*model=*/1);
+    scenegraph::Instance::AnimationState st;   // exactly what play_instance_walk sets
+    st.clip_index = 0;
+    st.loop = false;
+    st.layer_over_rest = false;
+    st.sample_at_start = false;
+    st.sample_at_end = false;
+    st.start_wall_time = 100.0;
+    world.set_animation(id, st);
+
+    auto root_x_at = [&](double now) {
+        renderer::update_animations(world, lookup, now);
+        return (world.get(id)->bone_palette[0] * glm::vec4(0, 0, 0, 1)).x;
+    };
+
+    EXPECT_NEAR(root_x_at(100.0), 0.0f, 1e-3f);        // t=0: at lift
+    EXPECT_FALSE(world.get(id)->animation.settled);
+    EXPECT_NEAR(root_x_at(100.5), 50.0f, 1e-3f);       // t=0.5: mid-walk (root moved)
+    EXPECT_FALSE(world.get(id)->animation.settled);
+    EXPECT_NEAR(root_x_at(200.0), 100.0f, 1e-3f);      // t>=dur: arrived, settled
+    EXPECT_TRUE(world.get(id)->animation.settled);
 }

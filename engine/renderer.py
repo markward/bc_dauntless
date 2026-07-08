@@ -44,6 +44,7 @@ _REQUIRED_BINDINGS = frozenset({
     "load_instance_clip", "load_model", "model_aabb", "motion_blur_enabled",
     "motion_blur_set_enabled", "nebula_lightning_enabled",
     "nebula_lightning_set_enabled", "play_instance_gesture", "play_instance_idle",
+    "play_instance_walk",
     "procedural_sky_enabled", "procedural_sky_set_enabled", "restore_rest_pose",
     "rim_set_enabled", "set_backdrops", "set_bridge_ambient_scale",
     "set_bridge_camera", "set_bridge_lighting",
@@ -629,6 +630,14 @@ def play_instance_gesture(iid: InstanceId, clip_index: int) -> None:
     pose (root + un-animated bones stay at the station; only gesture-tracked
     bones move). Plays once and holds the last frame until restore_rest_pose."""
     _h.play_instance_gesture(iid, clip_index)
+
+
+def play_instance_walk(iid: InstanceId, clip_index: int) -> None:
+    """Play a full clip with root motion applied (non-layered): the clip's baked
+    Bip01 root translation moves the character across the set (turbolift walk-on).
+    Plays once and settles at the last frame — unlike play_instance_gesture, which
+    anchors the root at the placement pose."""
+    _h.play_instance_walk(iid, clip_index)
 
 
 def play_instance_node_anim(iid: InstanceId, clip_index: int,
