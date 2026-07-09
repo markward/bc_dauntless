@@ -4157,6 +4157,9 @@ def realize_all_sets(controller, r) -> None:
     _realize_comm_sets(controller, r)
 
 
+_graffset_logged = set()   # TEMP (Graff comm-set realize RE) — remove with the probe
+
+
 def _realize_comm_sets(controller, r) -> None:
     """Realize every comm/remote set (one that declares a background model or
     characters) that isn't realized yet, allocating it a stable comm_set_id.
@@ -4181,19 +4184,22 @@ def _realize_comm_sets(controller, r) -> None:
     for name, s in list(mgr.iter_sets()):
         if name == "bridge":
             continue
-        if s.GetBackgroundModelNIF() is None and not _iter_set_characters(s):
+        _nif = s.GetBackgroundModelNIF()
+        _chars = _iter_set_characters(s) or []
+        # TEMP probe (Graff comm-set realize RE) — logs each non-bridge set ONCE
+        # so we see whether FedOutpostSet_Graff is present, its nif + char count,
+        # and whether it's realized or skipped. REMOVE.
+        if dev_mode.is_enabled() and name not in _graffset_logged:
+            _graffset_logged.add(name)
+            print("[GRAFFSET] set=%r nif=%r chars=%d already_id=%r" % (
+                name, _nif, len(_chars), ids.get(name)), flush=True)
+        if _nif is None and not _chars:
             continue
         comm_set_id = ids.get(name)
         if comm_set_id is None:
             comm_set_id = next_id
             ids[name] = comm_set_id
             next_id += 1
-            if dev_mode.is_enabled():
-                # TEMP probe (Graff comm-set realize RE) — prints once per new
-                # comm set. REMOVE.
-                print("[GRAFFSET] realize comm set %r id=%d nif=%r chars=%d" % (
-                    name, comm_set_id, s.GetBackgroundModelNIF(),
-                    len(_iter_set_characters(s) or [])), flush=True)
         # create_comm_instance is a REQUIRED renderer binding (validated at
         # boot), so it is always present.
         realize_set(controller, r, s, is_bridge=False, comm_set_id=comm_set_id)
