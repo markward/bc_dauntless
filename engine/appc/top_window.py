@@ -99,10 +99,12 @@ class _TopWindow:
         # fTime is the bar slide-out duration.
         self._cutscene_active = False
         self._letterbox_transition_s = float(fTime)
+        _release_camera_watch()
 
     def AbortCutscene(self) -> None:
         self._cutscene_active = False
         self._letterbox_transition_s = 0.0   # snap, no slide-out
+        _release_camera_watch()
 
     def IsCutsceneMode(self) -> bool:
         return self._cutscene_active
@@ -274,6 +276,21 @@ class _TopWindow:
 
     def GetLastRenderedSet(self):
         return self._last_rendered_set
+
+
+def _release_camera_watch() -> None:
+    """Clear any AT_LOOK_AT_ME / AT_WATCH_ME camera-framing target when a cutscene
+    ends. BC scopes that framing to StartCutscene..EndCutscene (the QB intro's
+    AT_LOOK_AT_ME(XO) has no AT_STOP_WATCHING_ME); without this the persistent
+    target outranks the menu zoom-to-officer and locks the camera on the officer
+    forever. Best-effort: headless / no controller registered -> no-op."""
+    try:
+        from engine import bridge_camera_watch
+        ctrl = bridge_camera_watch.get_controller()
+        if ctrl is not None:
+            ctrl.clear()
+    except Exception:
+        pass
 
 
 _the_top_window = _TopWindow()
