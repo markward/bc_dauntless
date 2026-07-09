@@ -46,7 +46,9 @@ class _TopWindow:
         self._last_rendered_set = None
         self._children: list[tuple[object, float, float]] = []
         self._focus = None
-        from engine.appc.windows import _CinematicWindow, _OptionsWindow, _SubtitleWindow
+        from engine.appc.windows import (
+            _CinematicWindow, _MainViewWindow, _OptionsWindow, _SubtitleWindow,
+        )
         self._main_windows: dict[int, object] = {
             MWT_SUBTITLE: _SubtitleWindow(),
             MWT_OPTIONS: _OptionsWindow(),
@@ -57,6 +59,14 @@ class _TopWindow:
             # window, so returning raw None here is the same class of gap
             # _OptionsWindow fixed for MWT_OPTIONS above. See _CinematicWindow.
             MWT_CINEMATIC: _CinematicWindow(),
+            # Bridge/Tactical main windows: SDK UI re-parents the
+            # TacticalControlWindow into the visible one with no None guard —
+            # Tactical.Interface.TacticalControlWindow.Refresh (runs at the end
+            # of the E6M2 dock via DockWithStarbase.FinishedUndocking) does
+            # FindMainWindow(MWT_TACTICAL).AddChild(...). Raw None crashed. See
+            # _MainViewWindow.
+            MWT_BRIDGE: _MainViewWindow(),
+            MWT_TACTICAL: _MainViewWindow(),
         }
         # Instance event chain (composition, not inheritance: _TopWindow
         # stays a plain class so missing methods raise AttributeError

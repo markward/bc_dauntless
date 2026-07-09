@@ -323,10 +323,29 @@ def test_find_main_window_returns_none_when_unregistered():
     from engine.appc import top_window
     top_window.reset_for_tests()
     tw = top_window.TopWindow_GetTopWindow()
-    # MWT_MODAL_DIALOG is never seeded; only MWT_SUBTITLE, MWT_OPTIONS, and
-    # MWT_CINEMATIC are pre-seeded by _TopWindow.__init__ (see
-    # test_find_main_window_cinematic_is_preseeded below for why).
+    # MWT_MODAL_DIALOG is never seeded; only MWT_SUBTITLE, MWT_OPTIONS,
+    # MWT_CINEMATIC, MWT_BRIDGE and MWT_TACTICAL are pre-seeded by
+    # _TopWindow.__init__ (see the *_is_preseeded tests below for why).
     assert tw.FindMainWindow(top_window.MWT_MODAL_DIALOG) is None
+
+
+def test_find_main_window_bridge_tactical_preseeded_support_addchild():
+    """MWT_BRIDGE / MWT_TACTICAL must be pre-seeded and support AddChild: SDK UI
+    (Tactical.Interface.TacticalControlWindow.Refresh, run at the end of the
+    E6M2 dock via DockWithStarbase.FinishedUndocking) re-parents the TCW into the
+    visible main window with no None guard —
+    `pTop.FindMainWindow(MWT_TACTICAL).AddChild(pTacCtrlWindow, 0.0, 0.0, 0)`.
+    Raw None there crashed 'NoneType has no attribute AddChild'."""
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    child = object()
+    for mwt in (top_window.MWT_TACTICAL, top_window.MWT_BRIDGE):
+        w = tw.FindMainWindow(mwt)
+        assert w is not None
+        w.AddChild(child, 0.0, 0.0, 0)          # the exact Refresh() call — no crash
+        w.RemoveChild(child, 0)
+        assert w.GetObjID() is not None         # SDK also reads GetObjID on these
 
 
 def test_find_main_window_returns_registered_window():

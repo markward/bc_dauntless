@@ -324,6 +324,53 @@ class _CinematicWindow(TGEventHandlerObject):
         return 1
 
 
+class _MainViewWindow(TGEventHandlerObject):
+    """Never-composited stand-in for BC's MWT_BRIDGE / MWT_TACTICAL main windows.
+
+    Real BC always has both; SDK UI code re-parents the TacticalControlWindow
+    into whichever one is visible and dereferences the result with no None
+    guard. Tactical.Interface.TacticalControlWindow.Refresh does exactly that:
+
+        elif pTop.IsTacticalVisible():
+            pTacticalWindow = pTop.FindMainWindow(App.MWT_TACTICAL)
+            pTacticalWindow.AddChild(pTacCtrlWindow, 0.0, 0.0, 0)
+
+    Returning raw None there crashed FinishedUndocking at the end of the E6M2
+    dock (AttributeError: 'NoneType' has no attribute 'AddChild'). Same class of
+    gap as _CinematicWindow / _OptionsWindow.
+
+    Deliberately NOT a BridgeWindow/TacticalWindow/TGPane, so the cast-guarded
+    SDK sites (BridgeWindow_Cast/TacticalWindow_Cast/TGPane_Cast(FindMainWindow(
+    ...))) still resolve None and skip exactly as they did when the whole window
+    was None — no new code paths are activated. Only the direct-AddChild sites
+    are fixed. AddChild/RemoveChild record children (like the TCW); visibility is
+    a tracked no-op; IsWindowActive answers the BC normal-state value so a truthy
+    _Stub can't flip an OR-guard (see _CinematicWindow)."""
+
+    def __init__(self):
+        super().__init__()
+        self._children: list = []
+        self._visible = True
+
+    def AddChild(self, child, x: float = 0.0, y: float = 0.0, *_extra) -> None:
+        self._children.append((child, float(x), float(y)))
+
+    def RemoveChild(self, child, *_extra) -> None:
+        self._children = [c for c in self._children if c[0] is not child]
+
+    def SetVisible(self, *_a) -> None:
+        self._visible = True
+
+    def SetNotVisible(self, *_a) -> None:
+        self._visible = False
+
+    def IsVisible(self) -> int:
+        return 1 if self._visible else 0
+
+    def IsWindowActive(self):
+        return 0
+
+
 # ── STStylizedWindow ────────────────────────────────────────────────────────
 # Centred LCARS-framed content panel in BC; dauntless re-styles as a centred
 # modal panel via #sdk-stylized-stack. SDK pixel coords (parent/x/y/w/h) are
