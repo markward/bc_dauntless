@@ -191,6 +191,12 @@ def _refresh_conditional_status(ai: ConditionalAI) -> None:
         if status is None:
             status = US_DORMANT
         ai._status = int(status)
+        # Fold in the contained AI's completion (see _tick_conditional):
+        # an EvalFunc that reports US_ACTIVE forever must not mask a
+        # contained AI that has already finished.
+        if (ai._status == US_ACTIVE and ai._contained_ai is not None
+                and ai._contained_ai._status == US_DONE):
+            ai._status = US_DONE
         return
     if not ai._conditions:
         return
@@ -315,6 +321,14 @@ def _tick_conditional(ai: ConditionalAI, game_time: float) -> int:
         ai._status = int(status)
         if ai._status == US_ACTIVE and ai._contained_ai is not None:
             tick_ai(ai._contained_ai, game_time)
+            # Fold in the contained AI's completion. Some EvalFuncs (SDK
+            # static one-shot flags in DockWithStarbase's PriorityList
+            # children) report US_ACTIVE forever regardless of the
+            # contained AI's progress; without this, the ConditionalAI
+            # never reflects that its contained AI actually finished, so
+            # the parent PriorityList/Sequence never completes.
+            if ai._contained_ai._status == US_DONE:
+                ai._status = US_DONE
         return ai._status
     active = any(c.GetStatus() != 0 for c in ai._conditions) if ai._conditions else False
     if not active:

@@ -125,6 +125,29 @@ def test_conditional_does_not_run_when_condition_inactive():
     assert cai._status == ArtificialIntelligence.US_DORMANT
 
 
+def test_conditional_ai_propagates_contained_done():
+    """A ConditionalAI whose EvalFunc always reports US_ACTIVE must still
+    finish once its contained AI reaches US_DONE.
+
+    Regression for DockWithStarbase: its PriorityList children are
+    ConditionalAI wrapping static one-shot flags whose EvalFunc returns
+    US_ACTIVE forever. Without folding the contained AI's completion in,
+    the ConditionalAI stays ACTIVE forever even after the contained leaf
+    (e.g. PlayerDocked) reaches US_DONE, so the parent PriorityList/
+    Sequence never completes and EndCutscene never runs (locked in
+    cutscene)."""
+    leaf = _FakeLeaf(status=ArtificialIntelligence.US_DONE)
+    child = _make_plain(ShipClass(), leaf)
+    cond = TGCondition(); cond.SetActive(); cond.SetStatus(1)
+    cai = ConditionalAI(ShipClass(), "C")
+    cai.SetContainedAI(child)
+    cai.AddCondition(cond)
+    cai.SetEvaluationFunction(lambda *args: ArtificialIntelligence.US_ACTIVE)
+    tick_ai(cai, game_time=0.01)
+    assert child._status == ArtificialIntelligence.US_DONE
+    assert cai._status == ArtificialIntelligence.US_DONE
+
+
 class _FakePreprocessor:
     """Preprocessor stand-in. Set status to one of PS_*; tick_ai will call
     Preprocess() each tick and dispatch the contained AI accordingly."""
