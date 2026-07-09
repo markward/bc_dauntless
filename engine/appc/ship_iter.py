@@ -18,8 +18,14 @@ import App
 
 
 def iter_set_objects(pSet) -> Iterable:
-    """Walk every object in a set exactly once via _objects.values()."""
-    for obj in getattr(pSet, "_objects", {}).values():
+    """Walk every object in a set exactly once via _objects.values().
+
+    Snapshot the values into a list first: an object's AI tick can add to /
+    remove from the set mid-walk (the E6M2 dock AI adds waypoints / the Graff
+    control-room set / PlaceObjectByName targets during tick_all_ai), which
+    otherwise raises 'dictionary changed size during iteration'. Objects added
+    mid-tick are simply picked up on the next tick."""
+    for obj in list(getattr(pSet, "_objects", {}).values()):
         yield obj
 
 
@@ -59,7 +65,10 @@ def iter_ships(*, verbose: bool = False) -> Iterable:
     scope to the player's set; simulation stays global so off-screen scripted
     activity is unaffected."""
     from engine.appc.ships import ShipClass
-    for set_name, pSet in App.g_kSetManager._sets.items():
+    # Snapshot _sets too: a tick can create a whole set (E6M2 dock ->
+    # SetupGraffSet builds "FedOutpostSet_Graff"), which would mutate _sets
+    # mid-walk. New sets are picked up next tick.
+    for set_name, pSet in list(App.g_kSetManager._sets.items()):
         if verbose:
             count = len(getattr(pSet, "_objects", {}))
             obj_keys = list(getattr(pSet, "_objects", {}).keys())
