@@ -1972,6 +1972,16 @@ def _apply_crew_menu_side_effects(crew_menu_panel, view_mode, pause, h,
     crew_menu_panel._last_synced_cursor_free = target
 
 
+def _close_crew_menu_during_cutscene(crew_menu_panel, cutscene_active: bool) -> None:
+    """Close any open crew menu (F1-F5) once a cutscene is active. BC's
+    MissionLib.StartCutscene calls BridgeHandlers.DropMenusTurnBack() at cutscene
+    start, so the Helm/crew UI never sits over the letterboxed cutscene (E6M2:
+    the Helm menu stayed visible over the docking cutscene). Runs every frame;
+    idempotent (no-op once the menu is closed)."""
+    if cutscene_active and crew_menu_panel.has_open_menu():
+        crew_menu_panel.close_open_menu()
+
+
 def _dispatch_modal_esc(blockers, crew_menu_panel, pause, h) -> None:
     """ESC routing across the modal stack, in priority order.
 
@@ -5502,6 +5512,11 @@ def run(mission_name: Optional[str] = None,
                     crew_menu_panel, view_mode, pause, _h,
                     setting_course_panel,
                     controller.quick_battle_setup_panel)
+                # A cutscene must not have the Helm/crew UI sitting over it.
+                from engine.appc.top_window import (
+                    TopWindow_GetTopWindow as _TWget)
+                _close_crew_menu_during_cutscene(
+                    crew_menu_panel, _TWget().IsCutsceneMode())
                 if pause.is_open:
                     # When a settings modal is open it consumes keyboard
                     # input — pause-menu navigation would otherwise activate
