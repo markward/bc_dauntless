@@ -188,6 +188,7 @@ class SetClass(TGEventHandlerObject):
         from engine.appc import ship_lifecycle
         if isinstance(obj, ShipClass):
             ship_lifecycle.publish_added(obj)
+            self._resolve_player_identity_before_broadcast(obj, identifier)
         self._fire("added", obj, identifier)
         # BC broadcasts ET_ENTERED_SET whenever a ship is added to a set. Mission
         # region state machines (E2M2.EnterSet -> TrackPlayer, etc.) hang off it;
@@ -196,6 +197,37 @@ class SetClass(TGEventHandlerObject):
         # GetContainingSet().GetName() resolves. See _broadcast_set_transition.
         self._broadcast_set_transition(obj, entered=True)
         return True
+
+    @staticmethod
+    def _resolve_player_identity_before_broadcast(obj, identifier: str) -> None:
+        """MissionLib.CreatePlayerShip (SDK, unchanged) always does
+        ``loadspacehelper.CreateShip(...)`` — which lands here via
+        ``AddObjectToSet`` — *before* calling ``pGame.SetPlayer(pPlayer)``.
+        Every SDK call site creates the player's ship with the identifier
+        literally ``"player"`` (or ``"Player"`` in QuickBattle.py:2888) —
+        confirmed by grepping every ``CreatePlayerShip(`` call in the SDK.
+
+        Region scripts that auto-configure on the player's *initial* set
+        entry (e.g. Systems/Starbase12/Starbase12_S.py:EnterSet, which
+        enables Bridge's Dock button once Graff's control room is built)
+        read ``App.Game_GetCurrentPlayer()`` to confirm the entering ship is
+        the player. Because our event dispatch is synchronous (ET_ENTERED_SET
+        fires inline, not queued), that read happens *before* the SDK's own
+        SetPlayer call — so GetPlayer() is still None, the identity check
+        raises AttributeError, and EnterSet bails out silently, leaving the
+        Dock button permanently disabled (E6M2 Starbase 12 repro).
+
+        Resolve the player identity here, before the broadcast, so it's
+        already correct when EnterSet-style handlers read it. The SDK's own
+        later SetPlayer(pPlayer) call becomes a harmless re-assignment to the
+        same object (already a tolerated pattern — HelmMenuHandlers.SetPlayer
+        already runs once from CreateMenus() and again from ET_SET_PLAYER)."""
+        if identifier.lower() != "player":
+            return
+        import App
+        pGame = App.Game_GetCurrentGame()
+        if pGame is not None and pGame.GetPlayer() is not obj:
+            pGame.SetPlayer(obj)
 
     def GetObject(self, name: str):
         return self._objects.get(name)
