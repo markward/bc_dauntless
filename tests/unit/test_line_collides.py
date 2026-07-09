@@ -49,3 +49,17 @@ def test_degenerate_zero_length_segment_inside():
     o = _obj_at(0.0, 0.0, 0.0, 100.0)
     p = TGPoint3(5.0, 0.0, 0.0)
     assert o.LineCollides(p, p) == 0
+
+
+def test_unknown_radius_treated_as_collision():
+    """An un-realized object (radius 0, only ever seeded by the renderer) has an
+    unknown extent. LineCollides must fail-safe to "collides" rather than "clear",
+    since a segment can't be proven clear of an object whose size is unknown.
+    Regression for AI.Compound.DockWithStarbase.IsInViewOfInsidePoints falsely
+    reporting the ship already docked-inside for un-realized starbases."""
+    zero = _obj_at(0.0, 0.0, 0.0, 0.0)
+    negative = _obj_at(0.0, 0.0, 0.0, -5.0)
+    a = TGPoint3(-500.0, 0.0, 0.0)
+    b = TGPoint3(500.0, 0.0, 0.0)
+    assert zero.LineCollides(a, b) == 1
+    assert negative.LineCollides(a, b) == 1

@@ -517,11 +517,15 @@ class PhysicsObjectClass(ObjectClass):
         (so a segment fully inside the sphere is clear, and one that grazes past
         outside the radius is clear). Sphere-clearance fidelity matches the rest of
         the collision layer; full mesh collision is out of scope. Backs
-        AI.Compound.DockWithStarbase.IsInViewOfInsidePoints."""
+        AI.Compound.DockWithStarbase.IsInViewOfInsidePoints.
+
+        An unknown/degenerate extent (r <= 0.0, e.g. an un-realized object whose
+        radius is only ever seeded by the renderer) fails safe to "collides": a
+        segment can never be proven clear of an object whose size is unknown."""
         c = self.GetWorldLocation()
         r = self.GetRadius()
         if r <= 0.0:
-            return 0
+            return 1
         ax, ay, az = p1.x - c.x, p1.y - c.y, p1.z - c.z
         bx, by, bz = p2.x - c.x, p2.y - c.y, p2.z - c.z
         da = (ax * ax + ay * ay + az * az) ** 0.5
