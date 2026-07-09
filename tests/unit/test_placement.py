@@ -264,19 +264,26 @@ def test_app_exposes_placement_object_create():
     assert App.PlacementObject_Create is PlacementObject_Create
 
 
-# ── Waypoint.InsertAfterObj ──────────────────────────────────────────────────
+# ── Waypoint.InsertAfterObj ───────────────────────────────────────────────────
+#
+# SDK convention (ground truth): self.InsertAfterObj(other) splices `other` in
+# immediately AFTER `self` — i.e. self.GetNext() is other afterwards. See
+# AI/Compound/DockWithStarbase.py:296-299 (pWaypointStart.InsertAfterObj(
+# pWaypointEnd) followed by a guard that wants pWaypointStart.GetNext() ==
+# pWaypointEnd) and the auto-generated *_Placements.py cutscene chains
+# ("Attaching object <arg> after <self>").
 
 def test_insert_after_obj_links_pair():
     a, b = Waypoint(), Waypoint()
-    b.InsertAfterObj(a)
+    a.InsertAfterObj(b)
     assert a.GetNext() is b
     assert b.GetPrev() is a
 
 
 def test_insert_after_obj_chains_three():
     a, b, c = Waypoint(), Waypoint(), Waypoint()
-    b.InsertAfterObj(a)
-    c.InsertAfterObj(b)
+    a.InsertAfterObj(b)
+    b.InsertAfterObj(c)
     assert a.GetNext() is b
     assert b.GetNext() is c
     assert c.GetPrev() is b
@@ -285,28 +292,35 @@ def test_insert_after_obj_chains_three():
 
 def test_insert_after_obj_into_middle_relinks_neighbours():
     a, c = Waypoint(), Waypoint()
-    c.InsertAfterObj(a)        # a <-> c
+    a.InsertAfterObj(c)        # a <-> c
     b = Waypoint()
-    b.InsertAfterObj(a)        # a <-> b <-> c
+    a.InsertAfterObj(b)        # a <-> b <-> c
     assert a.GetNext() is b
     assert b.GetPrev() is a
     assert b.GetNext() is c
     assert c.GetPrev() is b
 
 
-def test_insert_after_obj_with_none_leaves_self_isolated():
-    a = Waypoint()
-    a.InsertAfterObj(None)
-    assert a.GetPrev() is None
-    assert a.GetNext() is None
-
-
-def test_insert_after_obj_detaches_self_from_prior_chain():
+def test_insert_after_obj_with_none_is_noop():
+    """self.InsertAfterObj(None) does nothing at all to self — it must not
+    detach self from any chain it's already part of (unlike the pre-fix
+    implementation, which unconditionally detached self first)."""
     a, b, c = Waypoint(), Waypoint(), Waypoint()
-    b.InsertAfterObj(a)        # a <-> b
-    c.InsertAfterObj(b)        # a <-> b <-> c
-    # Re-attach b directly after c — should detach b from between a and c.
-    b.InsertAfterObj(c)
+    a.InsertAfterObj(b)        # a <-> b
+    b.InsertAfterObj(c)        # a <-> b <-> c
+    b.InsertAfterObj(None)
+    assert a.GetNext() is b
+    assert b.GetPrev() is a
+    assert b.GetNext() is c
+    assert c.GetPrev() is b
+
+
+def test_insert_after_obj_detaches_other_from_prior_chain():
+    a, b, c = Waypoint(), Waypoint(), Waypoint()
+    a.InsertAfterObj(b)        # a <-> b
+    b.InsertAfterObj(c)        # a <-> b <-> c
+    # Re-splice c directly after a — should detach c from between a and b.
+    a.InsertAfterObj(c)
     assert a.GetNext() is c    # c is now directly after a
     assert c.GetPrev() is a
     assert c.GetNext() is b

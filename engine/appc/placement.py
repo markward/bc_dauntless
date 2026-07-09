@@ -70,30 +70,38 @@ class Waypoint(PlacementObject):
         return self._prev
 
     def InsertAfterObj(self, other: "Waypoint | None") -> None:
-        """Splice ``self`` into the waypoint chain immediately after ``other``.
+        """Splice ``other`` into the waypoint chain immediately after ``self``,
+        i.e. after the call ``self.GetNext() is other``.
 
-        Doubly-linked list mutation matching the SDK's Waypoint chain
-        (sdk/.../Maelstrom/.../E7M1_DeepSpace_Placements.py builds named
-        cutscene-camera chains this way).  If ``other`` is None, ``self``
-        becomes a free-standing waypoint with no neighbours.
+        This is the SDK convention (ground truth): ``self.InsertAfterObj(other)``
+        attaches ``other`` after ``self``. See
+        AI/Compound/DockWithStarbase.py:296-299, which calls
+        ``pWaypointStart.InsertAfterObj(pWaypointEnd)`` and then guards on
+        ``pWaypointStart.GetNext() == pWaypointEnd``; the auto-generated
+        ``*_Placements.py`` cutscene chains use the same convention
+        ("Attaching object <arg> after <self>").
+
+        Doubly-linked list mutation. If ``other`` is None (or is ``self``),
+        this is a no-op — ``self``'s own chain is left untouched. Otherwise
+        ``other`` is first detached from whatever chain it's currently part
+        of, then spliced in directly after ``self``.
         """
-        # Detach self from any current chain first to avoid corrupted links
-        # if the caller is re-arranging existing nodes.
-        if self._prev is not None:
-            self._prev._next = self._next
-        if self._next is not None:
-            self._next._prev = self._prev
-        self._prev = None
-        self._next = None
-
         if other is None or other is self:
             return
 
-        self._prev = other
-        self._next = other._next
+        # Detach `other` from any current chain to avoid corrupted links if
+        # the caller is re-arranging existing nodes.
+        if other._prev is not None:
+            other._prev._next = other._next
         if other._next is not None:
-            other._next._prev = self
-        other._next = self
+            other._next._prev = other._prev
+
+        # Splice `other` immediately after `self`.
+        other._prev = self
+        other._next = self._next
+        if self._next is not None:
+            self._next._prev = other
+        self._next = other
 
 
 def Waypoint_Create(name: str, set_name: str, parent=None) -> Waypoint:
