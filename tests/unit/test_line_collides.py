@@ -1,5 +1,6 @@
-"""PhysicsObjectClass.LineCollides(p1, p2): does the segment cross the object's
-bounding-sphere surface? Backs AI.Compound.DockWithStarbase.IsInViewOfInsidePoints
+"""PhysicsObjectClass.LineCollides(p1, p2): does the segment intersect the
+object's bounding sphere as a SOLID ball (closest point on the segment within
+GetRadius())? Backs AI.Compound.DockWithStarbase.IsInViewOfInsidePoints
 (sdk/.../DockWithStarbase.py:368). Was an unimplemented silent truthy _NamedStub."""
 from engine.appc.math import TGPoint3
 from engine.appc.objects import PhysicsObjectClass
@@ -20,12 +21,20 @@ def test_interior_point_to_outside_crosses_surface():
     assert o.LineCollides(inside, outside) == 1
 
 
-def test_both_endpoints_inside_no_crossing():
-    """Both endpoints inside the sphere -> no surface crossing -> clear."""
+def test_both_endpoints_inside_collides():
+    """Both endpoints inside the sphere -> the segment lies within the object's
+    volume -> COLLIDES (solid ball). This is the E6M2 docking case: a starbase's
+    bounding sphere (~150) is large and its bay is concave, so an interior
+    "Inside Visibility" point AND a ship parked right beside the starbase are
+    BOTH inside the sphere. DockWithStarbase.IsInViewOfInsidePoints asks "is the
+    interior point visible (no collision) to the ship" — the answer must be
+    "no, blocked" so the fly-in runs. A shell/'crosses-the-surface' model wrongly
+    returned 0 here -> "clear line of sight" -> fly-in skipped -> ship jumped
+    straight to the docked state."""
     o = _obj_at(0.0, 0.0, 0.0, 100.0)
     a = TGPoint3(10.0, 0.0, 0.0)
     b = TGPoint3(-20.0, 30.0, 0.0)
-    assert o.LineCollides(a, b) == 0
+    assert o.LineCollides(a, b) == 1
 
 
 def test_segment_passing_through_sphere_collides():
@@ -44,10 +53,18 @@ def test_segment_clear_of_sphere_misses():
     assert o.LineCollides(a, b) == 0
 
 
-def test_degenerate_zero_length_segment_inside():
-    """A zero-length segment inside the sphere does not cross the surface."""
+def test_degenerate_zero_length_segment_inside_collides():
+    """A zero-length segment (a point) inside the sphere is inside the object's
+    volume -> collides."""
     o = _obj_at(0.0, 0.0, 0.0, 100.0)
     p = TGPoint3(5.0, 0.0, 0.0)
+    assert o.LineCollides(p, p) == 1
+
+
+def test_degenerate_zero_length_segment_outside_misses():
+    """A zero-length segment outside the sphere -> no collision."""
+    o = _obj_at(0.0, 0.0, 0.0, 100.0)
+    p = TGPoint3(500.0, 0.0, 0.0)
     assert o.LineCollides(p, p) == 0
 
 

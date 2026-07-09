@@ -511,36 +511,40 @@ class PhysicsObjectClass(ObjectClass):
     # ── Geometry ──────────────────────────────────────────────────────────────
 
     def LineCollides(self, p1, p2) -> int:
-        """1 if the segment p1->p2 crosses this object's bounding-sphere surface,
-        else 0. 'Crosses the surface' = the closest point on the segment is within
-        GetRadius() of the centre AND at least one endpoint is outside the radius
-        (so a segment fully inside the sphere is clear, and one that grazes past
-        outside the radius is clear). Sphere-clearance fidelity matches the rest of
-        the collision layer; full mesh collision is out of scope. Backs
-        AI.Compound.DockWithStarbase.IsInViewOfInsidePoints.
+        """1 if the segment p1->p2 intersects this object as a SOLID ball (the
+        closest point on the segment is within GetRadius() of the centre), else 0.
+        A segment lying wholly inside the object counts as a collision — it is
+        inside the object's volume. Sphere fidelity matches the rest of the
+        collision layer; full mesh collision is out of scope.
+
+        Backs AI.Compound.DockWithStarbase.IsInViewOfInsidePoints, which asks "is
+        this interior point visible to the ship" (`not LineCollides(interiorPt,
+        ship)`). A starbase's bounding sphere is large (~150) and its docking bay
+        is concave: a ship that is OUTSIDE the hull but still within the bounding
+        sphere — E6M2 starts right beside Starbase 12 — must NOT read as a clear
+        line of sight to the interior, or the fly-in is skipped and the ship jumps
+        straight to the docked state. Solid-ball semantics deliver that: interior
+        points are inside the ball, so the segment to them always collides -> not
+        visible -> fly in. (The earlier shell/'crosses-the-surface' model wrongly
+        reported both-endpoints-inside as clear, which is exactly that bug.)
 
         An unknown/degenerate extent (r <= 0.0, e.g. an un-realized object whose
-        radius is only ever seeded by the renderer) fails safe to "collides": a
-        segment can never be proven clear of an object whose size is unknown."""
+        radius is only seeded by the renderer) fails safe to "collides": a segment
+        can never be proven clear of an object whose size is unknown."""
         c = self.GetWorldLocation()
         r = self.GetRadius()
         if r <= 0.0:
             return 1
         ax, ay, az = p1.x - c.x, p1.y - c.y, p1.z - c.z
         bx, by, bz = p2.x - c.x, p2.y - c.y, p2.z - c.z
-        da = (ax * ax + ay * ay + az * az) ** 0.5
-        db = (bx * bx + by * by + bz * bz) ** 0.5
         r2 = r * r
-        # Both endpoints inside -> segment stays inside -> no surface crossing.
-        if da <= r and db <= r:
-            return 0
-        # Closest point on the segment to the centre.
+        # Closest point on the segment to the centre; within r -> the segment
+        # enters the ball -> collides.
         dx, dy, dz = bx - ax, by - ay, bz - az
         seg2 = dx * dx + dy * dy + dz * dz
         if seg2 <= 1e-12:
-            # Degenerate segment (a point). Inside-both handled above; a lone
-            # point outside does not "cross" the surface.
-            return 0
+            # Degenerate segment (a point): collides iff the point is in the ball.
+            return 1 if (ax * ax + ay * ay + az * az) <= r2 else 0
         t = -(ax * dx + ay * dy + az * dz) / seg2
         if t < 0.0:
             t = 0.0
@@ -548,8 +552,6 @@ class PhysicsObjectClass(ObjectClass):
             t = 1.0
         cx, cy, cz = ax + dx * t, ay + dy * t, az + dz * t
         closest2 = cx * cx + cy * cy + cz * cz
-        # At least one endpoint is outside (checked above). If the segment reaches
-        # within the radius, it crosses the surface.
         return 1 if closest2 <= r2 else 0
 
 
