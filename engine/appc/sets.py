@@ -524,8 +524,22 @@ class SetManager:
         # needs the explicit MakeRenderedSet target (exterior lighting,
         # in-space cutscene camera, warp guards) must use
         # get_explicit_rendered_set() instead.
-        from engine.appc.top_window import bridge_flag
-        if bridge_flag():
+        #
+        # EXCEPT during a cutscene (StartCutscene..EndCutscene): the true
+        # on-screen target is whatever MakeRenderedSet last set (the space set
+        # for a docking cutscene), even with the bridge-visible flag up. The
+        # SDK reads this getter mid-cutscene — Bridge/HelmMenuHandlers.
+        # DockStarbase12 captures `sOldSet = GetRenderedSet().GetName()` to
+        # restore after the Graff greeting. On a BRIDGE-start dock the bridge
+        # shortcut made that capture "bridge", so the delayed
+        # ChangeRenderedSet(sOldSet) was a no-op and the undock exterior camera
+        # never re-engaged (it looks up get_explicit_rendered_set(), which
+        # stayed "bridge"). Suppressing the shortcut during a cutscene mirrors
+        # the authority _active_cutscene_camera() already trusts.
+        # MissionLib.EndCutscene clears cutscene mode (TopWindow.EndCutscene)
+        # BEFORE its own GetRenderedSet() comparison, so that path is unchanged.
+        from engine.appc.top_window import bridge_flag, TopWindow_GetTopWindow
+        if bridge_flag() and not TopWindow_GetTopWindow().IsCutsceneMode():
             bridge = self._sets.get("bridge")
             if bridge is not None:
                 return bridge

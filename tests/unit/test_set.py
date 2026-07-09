@@ -337,3 +337,33 @@ def test_resolve_active_set_ignores_bridge_visibility():
     App.g_kSetManager.MakeRenderedSet("Vesuvi6")
 
     assert _resolve_active_set(None) is space
+
+
+def test_get_rendered_set_ignores_bridge_shortcut_during_cutscene():
+    """During a cutscene the true render target (MakeRenderedSet — the space set
+    for a docking cutscene) must win over the bridge-visible shortcut, so
+    Bridge/HelmMenuHandlers.DockStarbase12's `sOldSet = GetRenderedSet()` capture
+    is correct on a BRIDGE-start dock (it was wrongly "bridge" before, so the
+    delayed ChangeRenderedSet(sOldSet) restore was a no-op and the undock
+    exterior camera never re-engaged). EndCutscene clears cutscene mode before
+    its own GetRenderedSet() comparison, so that path is unchanged."""
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    App.g_kSetManager._sets.clear()
+    space = SetClass_Create(); space.SetName("Starbase12")
+    App.g_kSetManager.AddSet(space, "Starbase12")
+    bridge = SetClass_Create(); bridge.SetName("bridge")
+    App.g_kSetManager.AddSet(bridge, "bridge")
+    App.g_kSetManager.MakeRenderedSet("Starbase12")
+
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.ForceBridgeVisible()                       # bridge-visible flag up
+
+    # Not in a cutscene: the bridge shortcut wins (stock BC semantics).
+    assert App.g_kSetManager.GetRenderedSet() is bridge
+    # In a cutscene: the real MakeRenderedSet target (space set) wins.
+    tw.StartCutscene()
+    assert App.g_kSetManager.GetRenderedSet() is space
+    # Cutscene ends: the shortcut is restored.
+    tw.EndCutscene()
+    assert App.g_kSetManager.GetRenderedSet() is bridge
