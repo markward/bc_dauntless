@@ -4086,17 +4086,8 @@ def realize_set(controller, r, set_obj, *, is_bridge: bool,
                 handle = r.load_model(nif_abs, tex_abs)
             except Exception as _e:
                 dev_mode.log_swallowed("comm set load_model %r" % set_name, _e)
-                if dev_mode.is_enabled():
-                    # TEMP probe (Graff comm-set realize RE) — surface the
-                    # swallowed comm background load failure. REMOVE.
-                    print("[GRAFFSET] load_model FAILED set=%r nif=%r tex=%r "
-                          "err=%s: %s" % (set_name, nif_abs, tex_abs,
-                                          type(_e).__name__, _e), flush=True)
                 handle = None
             iid = r.create_comm_instance(handle) if handle is not None else None
-            if dev_mode.is_enabled():
-                print("[GRAFFSET] bg realize set=%r handle=%r iid=%r nif=%r tex=%r"
-                      % (set_name, handle, iid, nif_abs, tex_abs), flush=True)
         if iid is not None:
             r.set_world_transform(iid, IDENTITY_MAT4)
             if hasattr(carrier, "render_instance"):
@@ -4166,9 +4157,6 @@ def realize_all_sets(controller, r) -> None:
     _realize_comm_sets(controller, r)
 
 
-_graffset_logged = set()   # TEMP (Graff comm-set realize RE) — remove with the probe
-
-
 def _realize_comm_sets(controller, r) -> None:
     """Realize every comm/remote set (one that declares a background model or
     characters) that isn't realized yet, allocating it a stable comm_set_id.
@@ -4195,13 +4183,6 @@ def _realize_comm_sets(controller, r) -> None:
             continue
         _nif = s.GetBackgroundModelNIF()
         _chars = _iter_set_characters(s) or []
-        # TEMP probe (Graff comm-set realize RE) — logs each non-bridge set ONCE
-        # so we see whether FedOutpostSet_Graff is present, its nif + char count,
-        # and whether it's realized or skipped. REMOVE.
-        if dev_mode.is_enabled() and name not in _graffset_logged:
-            _graffset_logged.add(name)
-            print("[GRAFFSET] set=%r nif=%r chars=%d already_id=%r" % (
-                name, _nif, len(_chars), ids.get(name)), flush=True)
         if _nif is None and not _chars:
             continue
         comm_set_id = ids.get(name)
@@ -6392,97 +6373,6 @@ def run(mission_name: Optional[str] = None,
                     _cam, _comm_bounds)
                 r.set_viewscreen_comm_source(_set_id, _eye, _tgt, _up,
                                              _fov, _near, _far)
-                # [GRAFFCAM] one-shot per-set evidence dump: is the station
-                # geometry (and the hailing character) actually inside the
-                # authored camera frustum?  Dev-mode only, once per set.
-                if dev_mode.is_enabled():
-                    _seen = getattr(controller, "_graffcam_seen", None)
-                    if _seen is None:
-                        _seen = controller._graffcam_seen = set()
-                    _sname = next((n for n, i in controller.comm_set_ids.items()
-                                   if i == _set_id), None)
-                    if _sname not in _seen:
-                        _seen.add(_sname)
-                        import App as _App2
-                        import math as _m2
-                        _fwd = (_tgt[0] - _eye[0], _tgt[1] - _eye[1],
-                                _tgt[2] - _eye[2])
-                        _fl = _m2.sqrt(sum(c * c for c in _fwd)) or 1.0
-                        _fwd = tuple(c / _fl for c in _fwd)
-                        _halfdeg = _m2.degrees(_fov * 0.5)
-
-                        def _off_axis(_bx, _by, _bz):
-                            _d = (_bx - _eye[0], _by - _eye[1], _bz - _eye[2])
-                            _dl = _m2.sqrt(sum(c * c for c in _d)) or 1.0
-                            _dot = sum(_fwd[k] * _d[k] for k in range(3)) / _dl
-                            _ang = _m2.degrees(_m2.acos(max(-1.0, min(1.0, _dot))))
-                            return _ang, _dl
-
-                        print("[GRAFFCAM] set=%r eye=(%.1f,%.1f,%.1f) "
-                              "fwd=(%.2f,%.2f,%.2f) fov=%.1fdeg near=%.1f far=%.1f"
-                              % (_sname, _eye[0], _eye[1], _eye[2],
-                                 _fwd[0], _fwd[1], _fwd[2],
-                                 _m2.degrees(_fov), _near, _far))
-                        _bb = _comm_bounds()
-                        if _bb:
-                            _a, _dd = _off_axis(_bb[0], _bb[1], _bb[2])
-                            print("[GRAFFCAM]   station center=(%.1f,%.1f,%.1f) "
-                                  "r=%.1f -> %.1fdeg off-axis dist=%.1f %s "
-                                  "(halfFOV=%.1f)"
-                                  % (_bb[0], _bb[1], _bb[2], _bb[3], _a, _dd,
-                                     "IN-FRAME" if _a < _halfdeg else "OFF-FRAME",
-                                     _halfdeg))
-                        else:
-                            print("[GRAFFCAM]   station bounds = None")
-                        # Compare the RENDERER's own composition of the Camera01
-                        # node (identity instance world, same path the geometry
-                        # takes) against the PARSED camera. A mismatch proves a
-                        # root-transform divergence between parse_set_camera and
-                        # the render instance.
-                        _bgiids = controller.comm_instances_by_set.get(_sname, [])
-                        _bgiid = _bgiids[0] if _bgiids else None
-                        _inw = getattr(r, "instance_node_world", None)
-                        if _bgiid is not None and _inw is not None:
-                            _cw = _inw(_bgiid, "Camera01", False)
-                            if _cw:
-                                print("[GRAFFCAM]   RENDER Camera01 pos="
-                                      "(%.1f,%.1f,%.1f) | PARSE eye=(%.1f,%.1f,%.1f)"
-                                      % (_cw[3], _cw[7], _cw[11],
-                                         _eye[0], _eye[1], _eye[2]))
-                                print("[GRAFFCAM]   RENDER Camera01 colX="
-                                      "(%.2f,%.2f,%.2f) colY=(%.2f,%.2f,%.2f) "
-                                      "colZ=(%.2f,%.2f,%.2f)"
-                                      % (_cw[0], _cw[4], _cw[8],
-                                         _cw[1], _cw[5], _cw[9],
-                                         _cw[2], _cw[6], _cw[10]))
-                            else:
-                                print("[GRAFFCAM]   RENDER Camera01 node = None")
-                        _s2 = _App2.g_kSetManager.GetSet(_sname)
-                        if _s2 is not None:
-                            for _ch in _iter_set_characters(_s2):
-                                _ciid = getattr(_ch, "_render_instance", None)
-                                _nm = (_ch.GetName() if hasattr(_ch, "GetName")
-                                       else "?")
-                                _hid = _ch.IsHidden() if hasattr(
-                                    _ch, "IsHidden") else "?"
-                                _cb = None
-                                if _ciid is not None:
-                                    try:
-                                        _cb = r.get_instance_bounds(_ciid)
-                                    except Exception:
-                                        _cb = None
-                                if _cb:
-                                    _a, _dd = _off_axis(_cb[0], _cb[1], _cb[2])
-                                    print("[GRAFFCAM]   char %r hidden=%r iid=%r "
-                                          "center=(%.1f,%.1f,%.1f) -> %.1fdeg "
-                                          "off-axis dist=%.1f %s"
-                                          % (_nm, _hid, _ciid, _cb[0], _cb[1],
-                                             _cb[2], _a, _dd,
-                                             "IN-FRAME" if _a < _halfdeg
-                                             else "OFF-FRAME"))
-                                else:
-                                    print("[GRAFFCAM]   char %r hidden=%r iid=%r "
-                                          "bounds=None" % (_nm, _hid, _ciid))
             else:
                 r.clear_viewscreen_comm_source()
             # Static overlay + ViewOn/ViewOff brightness fade (SDK-driven).
