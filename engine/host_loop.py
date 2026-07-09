@@ -62,7 +62,6 @@ from engine.appc import (
     hit_vfx,
     particles,
     ship_death,
-    subsystem_emitters,
     camera_shake,
     hit_feedback,
     combat,
@@ -564,7 +563,6 @@ def _advance_combat(ships, dt: float, ship_instances=None) -> None:
     core_breach_carve.advance(dt, ship_instances=ship_instances)
     from engine.appc import visible_damage
     visible_damage.advance(dt, ship_instances=ship_instances)
-    subsystem_emitters.pump(ships_list, None, dt)
     camera_shake.update(dt)
 
     # Continuous phaser damage tick.  Each ship's PhaserSystem has banks
@@ -1875,13 +1873,6 @@ def _register_ai_inspector(registry):
     registry.register(panel)
     dev_mode.register_dev_pause_menu_entry("AI Inspector…", panel.open)
     return panel
-
-# Install the real particle backend so Spec B plume state machine drives
-# actual SDK smoke controllers.  set_backend() only stores the reference and
-# sets _manager = None — no simulation side-effects at import time.
-from engine.appc import subsystem_emitters as _se_for_backend
-from engine.appc import particles as _particles_for_backend
-_se_for_backend.set_backend(_particles_for_backend.ParticleBackend())
 
 
 def _any_blocker_open(blockers) -> bool:
@@ -3585,8 +3576,6 @@ class HostController:
         registry_texture.reset()
         from engine.appc import shockwaves
         shockwaves.reset()
-        from engine.appc import subsystem_emitters
-        subsystem_emitters.reset_manager()
         from engine.appc import particles
         particles.reset()
         damage_eligibility.reset()
