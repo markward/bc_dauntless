@@ -1,8 +1,19 @@
 # Bridge Lighting & Materials — Design
 
-**Status:** Approved for implementation
+**Status:** Implemented (MVP shipped 2026-05-15); see the 2026-07-09 update below
 **Date:** 2026-05-15
 **Branch:** experimental (worktree)
+
+> **Update 2026-07-09.** The MVP below shipped, but two things have since diverged
+> from this document and are corrected at the end in
+> **[Post-implementation learnings](#post-implementation-learnings-2026-07-09)**:
+> (1) the render path evolved well past the §4 `base × ambient` body (per-material
+> emissive floor, Dark-slot lightmap composite, viewscreen-RTT + lip-sync uniforms);
+> and (2) the non-goal *"glow not authored in stock content"* is **wrong** — stock BC
+> self-illuminates bridge light fixtures and the Starbase-12 dock backdrop via
+> **per-vertex colors** (`NiVertexColorProperty`), which `bridge.vert` currently drops.
+> That is the open **vertex-color self-illumination gap** and the primary future work
+> for bridge lighting.
 
 ## Purpose
 
@@ -56,7 +67,7 @@ The asset pipeline is fixed in two ways: property-link inheritance walks up the 
 - Animated / red-alert bridge state.
 - Per-ship-class bridge variants (DBridge is hardcoded today in `host_loop.py:502`).
 - Bridge characters / skinned crew animation.
-- Specular / glow on bridge geometry (not authored in stock content).
+- Specular on bridge geometry (not authored in stock content). **[Corrected 2026-07-09: self-illumination / glow via `NiVertexColorProperty` *is* stock content and is a real open gap — see [Post-implementation learnings](#post-implementation-learnings-2026-07-09).]**
 - Resolving the `CreateAmbientLight` 4th-arg semantics with certainty (we pick visually; the "true" answer is unconfirmed).
 - Per-LCARS-panel alpha-test threshold tuning (hardcoded at 0.5 for v1).
 - NIF `Dark`-stage lightmap support (modern authoring tools; stock content doesn't use it).
@@ -194,7 +205,7 @@ FragColor = texture(u_lightmap, vUV0);
 3. **Animated bridge state.** Red-alert tint, viewscreen flicker, station-screen content.
 4. **Per-ship-class bridge variants.** DBridge hardcoded in `host_loop.py:502`; other classes need FBridge/EBridge/etc.
 5. **Bridge characters / skinned animation.**
-6. **Specular / glow on bridge geometry.** Not in stock content.
+6. **Specular on bridge geometry.** Not in stock content. **(Self-illumination / glow IS stock content — via `NiVertexColorProperty`; this is the open vertex-color self-illumination gap. See [Post-implementation learnings](#post-implementation-learnings-2026-07-09). Corrected 2026-07-09.)**
 7. **Per-LCARS-panel alpha-test threshold tuning.** Currently 0.5 hardcoded.
 8. **NIF `Dark`-stage lightmap support.** Modern authoring tools; non-stock content.
 9. **`CreateAmbientLight` 4th-arg true semantics.** Document the chosen interpretation and the evidence; the underlying ground truth remains unconfirmed.
@@ -208,3 +219,86 @@ FragColor = texture(u_lightmap, vUV0);
 | C++ integration | DBridge.NIF loads with 145 meshes; 128 `lightmap_pass=false`, 17 `lightmap_pass=true` |
 | Visual | F-key into bridge mode; eyeball vs stock-BC screenshot reference |
 | Regression | Ship-fixture test pins material count + base-texture identity for a representative ship |
+
+## Post-implementation learnings (2026-07-09)
+
+The MVP above shipped and works. Since then the render path has evolved and one
+stock-content case was mis-scoped as a non-goal. This section reflects the shipped
+reality and the single largest remaining gap in bridge lighting.
+
+### A. What actually shipped vs. the MVP §4/§5
+
+The final [`bridge.frag`](../../../native/src/renderer/shaders/bridge.frag) is
+richer than the `base × ambient` MVP body, and the separate multiply-blend
+lightmap sub-pass (§4/§5) was folded into it:
+
+- **Per-material emissive floor.** `light = max(u_ambient, u_emissive)`, where
+  `u_emissive` is the per-**material** self-illumination. BC authors
+  `Material::emissive == (1,1,1)` on ~22 DBridge light-fixture materials
+  (floor/doors/wall-insets/LCARS) so they stay full-bright when ambient dims for
+  red alert.
+- **Dark-slot lightmap composite.** The lightmap moved from a separate
+  `lightmap.{vert,frag}` multiply-blend sub-pass into the bridge shader as a
+  second-UV `u_dark_map` term (`base × dark_map × light`). `Material::lightmap_pass`
+  and `lightmap.{vert,frag}` are now dead code (see `deferred_work.md` cleanup item).
+- **Viewscreen-RTT reuse.** `u_flip_v`, `u_viewscreen_brightness`, and
+  `u_viewscreen_flash` let the comm/viewscreen feed render through this same pass
+  (the viewscreen-RTT non-goal has since landed).
+- **Lip-sync face blend.** `u_face_b` / `u_face_mix` / `u_face_blend` cross-fade
+  officer viseme textures on the head mesh.
+- **`CreateAmbientLight` 4th arg resolved for DBridge.** `LoadBridge.py` authors
+  `CreateAmbientLight(1,1,1, 0.7)` → ambient **0.7** (the old hardcoded startup
+  used 1.0). That 0.3 drop is exactly why the *non-emissive* ceiling lights read
+  as "not glowing" — see gap B.
+
+### B. The vertex-color self-illumination gap (open — primary future work)
+
+**The non-goal "glow not authored in stock content" is wrong.** Stock BC
+self-illuminates bridge/set geometry through **per-vertex colors**
+(`NiVertexColorProperty`), a distinct mechanism from the per-material `u_emissive`
+above. These are the bright surfaces the emissive floor does *not* cover:
+
+- **DBridge ceiling / console / com lights** (`roof light`, `console light *`,
+  `com light *`). `emissive=(0,0,0)`, no lightmap → under ambient 0.7 they read as
+  dim/not-glowing. Stock BC glows them via vertex colors. (Originally diagnosed
+  2026-06-20.)
+- **Starbase-12 dock backdrop** — `data/Models/Sets/FedOutpost/fedoutpost.nif`,
+  the set behind **Commander Graff** when you dock at Starbase 12 (E6M2, or the
+  E1M1 Starbase dock). Its `window` / `Plane01` / `Plane02` / `Box05` / `Box10` /
+  `stationright*` / `Cylinder01` shapes carry `NiVertexColorProperty` (the bright
+  grid-windows). Rendered on the comm viewscreen through this bridge pass they
+  collapse to `base × ambient` = near-black, so a correctly-framed Graff floats in
+  a dark void where stock BC shows a bright window-lit control room.
+- **Why Liu's comm set (`starbasecontrolRM.nif`) is unaffected** — it has exactly
+  ONE `NiVertexColorProperty` (the root) and is otherwise material-lit, so it
+  survives the drop and renders correctly. This asymmetry is the tell that isolates
+  the mechanism.
+
+**Evidence quality (Graff, 2026-07-09).** A live `[GRAFFCAM]` probe confirmed the
+set NIF loads (valid instance), `parse_set_camera` and the renderer's own node
+composition AGREE on the camera transform (no parse/framing bug), and Graff is
+framed. Side-by-side screenshots vs. stock BC isolate the *only* difference to the
+dropped vertex-color self-illumination.
+
+**Root cause.** [`bridge.vert`](../../../native/src/renderer/shaders/bridge.vert)
+reads position/normal/uv/uv1 only — it has **no color vertex attribute** — so the
+per-vertex colors the NIF parser already loads
+(`NiTriShapeData.has_vertex_colors` / `vertex_colors`) are dropped at mesh
+build/upload. (§Components.1 lists `NiVertexColorProperty` in the inherited-property
+set, so the *property* is walked; nothing consumes the per-vertex colors for shading.)
+
+**Future approach (not yet implemented — scope via brainstorming first):**
+1. **Asset/mesh:** carry `NiTriShapeData.vertex_colors` into the mesh vertex buffer
+   as a color attribute; default white `(1,1,1,1)` for shapes without them.
+2. **Renderer:** add `layout(location = N) in vec4 a_color` to `bridge.vert` (and
+   `skinned_bridge.vert`); pass `v_color` through to `bridge.frag`.
+3. **Shader:** fold vertex color into the self-illumination term, honouring the
+   `NiVertexColorProperty` source/lighting flags (emissive vs. ambient+diffuse).
+4. **Byte-identical guarantee:** shapes without a `NiVertexColorProperty` default
+   `v_color` to white → no change to any set that renders correctly today (Liu, all
+   material-lit bridges/rooms).
+5. **Build:** C++ + shader change → `cmake -B build -S .` reconfigure required.
+
+**One fix, two payoffs:** the same change lights the DBridge ceiling/console/com
+fixtures AND the fedoutpost Graff dock backdrop. Cross-refs: agent memory
+`project_bridge_ceiling_light_glow`; `deferred_work.md` bridge-lighting items.
