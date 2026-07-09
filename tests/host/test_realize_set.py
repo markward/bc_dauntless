@@ -485,3 +485,46 @@ def test_realize_set_comm_load_failure_is_nonfatal():
     r.set_comm_set_id = lambda *a, **k: None
     hl.realize_set(c, r, s, is_bridge=False, comm_set_id=1)   # must not raise
     assert [x for x in r.created if x[0] == "comm"] == []
+
+
+def test_realize_comm_sets_realizes_late_created_set():
+    """A comm set created AFTER mission load (E6M2's FedOutpostSet_Graff, built
+    lazily by SetupGraffSet at dock time) must still be realized + get a
+    comm_set_id — the per-tick _realize_comm_sets sweep. Without it the
+    viewscreen shows a black void behind Graff."""
+    import App
+    from engine.appc.sets import SetClass_Create
+    from engine.appc.characters import CharacterClass
+
+    App.g_kSetManager._sets.clear()
+
+    class _C:
+        bridge_instance = None
+        nif_to_handle = {}
+        comm_instances_by_set = {}
+        officer_instances = []
+        comm_set_ids = {}
+    c = _C(); r = _FakeRenderer()
+
+    # Load-time pass: only the bridge exists -> no comm sets yet.
+    hl.realize_all_sets(c, r)
+    assert c.comm_set_ids == {}
+
+    # LATE: a comm set with a background model appears (SetupGraffSet).
+    graff = SetClass_Create(); graff.SetName("FedOutpostSet_Graff")
+    graff.SetBackgroundModel("data/Models/Sets/FedOutpost/fedoutpost.nif", 0, 0, 0)
+    App.g_kSetManager.AddSet(graff, "FedOutpostSet_Graff")
+
+    before = len(r.created)
+    hl._realize_comm_sets(c, r)                 # the per-tick sweep
+
+    # It got a stable comm_set_id and its background was realized as a comm inst.
+    assert c.comm_set_ids.get("FedOutpostSet_Graff") is not None
+    assert len(r.created) > before
+    assert r.created[-1][0] == "comm"
+
+    # Idempotent: a second sweep does not re-create it.
+    again = len(r.created)
+    hl._realize_comm_sets(c, r)
+    assert len(r.created) == again
+    App.g_kSetManager._sets.clear()

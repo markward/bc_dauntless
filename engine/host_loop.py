@@ -4151,23 +4151,46 @@ def realize_all_sets(controller, r) -> None:
     """
     import App as _App
     mgr = _App.g_kSetManager
-    _next_comm_id = 1
     for name, s in list(mgr.iter_sets()):          # use the manager's set map
         if name == "bridge":
             realize_set(controller, r, s, is_bridge=True)
-        elif (s.GetBackgroundModelNIF() is not None or _iter_set_characters(s)):
-            # create_comm_instance is a REQUIRED renderer binding (validated at
-            # boot), so it is always present; realize any set with a background
-            # or characters.
-            # Allocate a stable small positive id for this comm set so its
-            # instances can be tagged + the viewscreen RTT can render it.
-            comm_set_id = controller.comm_set_ids.get(name)
-            if comm_set_id is None:
-                comm_set_id = _next_comm_id
-                controller.comm_set_ids[name] = comm_set_id
-            _next_comm_id = max(_next_comm_id, comm_set_id) + 1
-            realize_set(controller, r, s, is_bridge=False,
-                        comm_set_id=comm_set_id)
+    _realize_comm_sets(controller, r)
+
+
+def _realize_comm_sets(controller, r) -> None:
+    """Realize every comm/remote set (one that declares a background model or
+    characters) that isn't realized yet, allocating it a stable comm_set_id.
+
+    Runs at load (from realize_all_sets) AND once per tick, so a comm set
+    created LATE gets realized too. E6M2's FedOutpostSet_Graff is built lazily
+    by Systems/Starbase12/Starbase12_S.SetupGraffSet when the player docks —
+    long after the one-shot load-time realize pass — so without a per-tick sweep
+    its room geometry (fedoutpost.nif) and Graff's model never realize and its
+    viewscreen shows a black void (no comm_set_id => _active_comm_feed can't
+    resolve the feed either).
+
+    Idempotent + cheap: realize_set skips already-built instances (render_instance
+    guard) and a set keeps its existing id, so per-tick this is a dict-vs-
+    iter_sets diff over a handful of sets. comm_set_id allocation stays
+    monotonic (max existing + 1) so an already-tagged set is never renumbered.
+    """
+    import App as _App
+    mgr = _App.g_kSetManager
+    ids = controller.comm_set_ids
+    next_id = (max(ids.values()) + 1) if ids else 1
+    for name, s in list(mgr.iter_sets()):
+        if name == "bridge":
+            continue
+        if s.GetBackgroundModelNIF() is None and not _iter_set_characters(s):
+            continue
+        comm_set_id = ids.get(name)
+        if comm_set_id is None:
+            comm_set_id = next_id
+            ids[name] = comm_set_id
+            next_id += 1
+        # create_comm_instance is a REQUIRED renderer binding (validated at
+        # boot), so it is always present.
+        realize_set(controller, r, s, is_bridge=False, comm_set_id=comm_set_id)
 
 
 def _iter_set_characters(set_obj):
@@ -6311,6 +6334,12 @@ def run(mission_name: Optional[str] = None,
             # so it doesn't show on its own screen.
             _vs_obj = getattr(controller, "viewscreen_obj", None)
             r.set_viewscreen_enabled(_viewscreen_feed_on(_vs_obj))
+            # Realize any comm/remote set that appeared after mission load —
+            # E6M2's FedOutpostSet_Graff is built lazily at dock time — so its
+            # background geometry + characters render on the viewscreen instead
+            # of a black void. Idempotent; before the character visibility sync
+            # + RTT below.
+            _realize_comm_sets(controller, r)
             # Reveal/hide comm-set characters per their SDK IsHidden() flag
             # (MissionLib.ViewscreenOn un-hides the hailing one) before the RTT
             # renders the set.
