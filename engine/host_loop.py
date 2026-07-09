@@ -6434,6 +6434,29 @@ def run(mission_name: Optional[str] = None,
                                      _halfdeg))
                         else:
                             print("[GRAFFCAM]   station bounds = None")
+                        # Compare the RENDERER's own composition of the Camera01
+                        # node (identity instance world, same path the geometry
+                        # takes) against the PARSED camera. A mismatch proves a
+                        # root-transform divergence between parse_set_camera and
+                        # the render instance.
+                        _bgiids = controller.comm_instances_by_set.get(_sname, [])
+                        _bgiid = _bgiids[0] if _bgiids else None
+                        _inw = getattr(r, "instance_node_world", None)
+                        if _bgiid is not None and _inw is not None:
+                            _cw = _inw(_bgiid, "Camera01", False)
+                            if _cw:
+                                print("[GRAFFCAM]   RENDER Camera01 pos="
+                                      "(%.1f,%.1f,%.1f) | PARSE eye=(%.1f,%.1f,%.1f)"
+                                      % (_cw[3], _cw[7], _cw[11],
+                                         _eye[0], _eye[1], _eye[2]))
+                                print("[GRAFFCAM]   RENDER Camera01 colX="
+                                      "(%.2f,%.2f,%.2f) colY=(%.2f,%.2f,%.2f) "
+                                      "colZ=(%.2f,%.2f,%.2f)"
+                                      % (_cw[0], _cw[4], _cw[8],
+                                         _cw[1], _cw[5], _cw[9],
+                                         _cw[2], _cw[6], _cw[10]))
+                            else:
+                                print("[GRAFFCAM]   RENDER Camera01 node = None")
                         _s2 = _App2.g_kSetManager.GetSet(_sname)
                         if _s2 is not None:
                             for _ch in _iter_set_characters(_s2):
