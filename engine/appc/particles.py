@@ -338,32 +338,3 @@ def EffectAction_Create(controller):
     return EffectAction(controller)
 
 
-import importlib as _importlib
-
-
-_SPHERICAL_ANGLE = 150.0   # wide spread approximating omni for SPHERICAL plumes
-
-
-def _call_factory(factory_name, first_param, fLife, fSize, emit_from, emit_pos, emit_dir):
-    """Call an SDK Effects.py factory by name and return its EffectAction.
-
-    ``first_param`` is the first positional parameter after the standard
-    preamble:
-      - CreateSmokeHigh    → fVelocity
-      - CreateExplosionPlumeHigh → fConeAngle
-
-    Signature: (first_param, fLife, fSize, pEmitFrom, kEmitPos, kEmitDir, pAttachTo)
-
-    WARNING — arity coupling: this helper is only valid for factories with the
-    7-arg (fVel/fCone, fLife, fSize, pEmitFrom, kEmitPos, kEmitDir, pAttachTo)
-    shape — i.e. CreateSmokeHigh and CreateExplosionPlumeHigh, the two that the
-    Spec B built-in table drives.  It is NOT a general SDK-factory caller.
-    CreateWeaponSmoke(fDuration, fSize, pEvent, pEffectRoot) and
-    CreateDebrisSmoke(fDuration, fSize, pEmitFrom, bOwnsEmitFrom, pEffectRoot)
-    have different arities and must be called directly, not through this helper.
-    """
-    Effects = _importlib.import_module("Effects")
-    fn = getattr(Effects, factory_name)
-    return fn(first_param, fLife, fSize, emit_from, emit_pos, emit_dir, emit_from)
-
-

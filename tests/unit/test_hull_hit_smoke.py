@@ -39,7 +39,9 @@ def captured(monkeypatch):
     return box
 
 
-def _emit(rng_values, weapon, monkeypatch, ship_instances={"ship": 7}):
+def _emit(rng_values, weapon, monkeypatch, ship_instances=None):
+    if ship_instances is None:
+        ship_instances = {"ship": 7}
     rng = _RNG(rng_values)
     monkeypatch.setattr(hull_hit_smoke.App, "g_kSystemWrapper", rng)
     hull_hit_smoke.maybe_emit(
@@ -93,4 +95,12 @@ def test_missing_normal_skips(captured, monkeypatch):
 
 def test_no_instance_skips(captured, monkeypatch):
     _emit([0, 0], "torpedo", monkeypatch, ship_instances={})   # ship not mapped
+    assert "started" not in captured
+
+
+def test_ship_instances_none_skips(captured, monkeypatch):
+    rng = _RNG([0, 0])
+    monkeypatch.setattr(hull_hit_smoke.App, "g_kSystemWrapper", rng)
+    hull_hit_smoke.maybe_emit(
+        "ship", TGPoint3(5.0, 6.0, 7.0), TGPoint3(0.0, 1.0, 0.0), "torpedo")
     assert "started" not in captured
