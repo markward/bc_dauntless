@@ -14,7 +14,27 @@ from engine.appc.math import TGPoint3
 
 SWEEP_TAU_S = 0.35   # exponential time constant for sweep glide
 
+# Sweep-break thresholds: a jump larger than these between the current smoothed
+# pose and the ideal is a discontinuity (teleport / set-swap), not tracking
+# motion, so the mode cuts instead of gliding. Deliberately generous — real
+# per-frame tracking moves the eye a fraction of a GU and rotates the forward a
+# fraction of a degree; only a teleport clears these.
+_SWEEP_BREAK_EYE_GU = 10.0      # eye jump (game units)
+_SWEEP_BREAK_FWD_DOT = 0.90     # forward-direction dot < this ≈ >25° rotation
+
 _next_obj_id = [0]
+
+
+def _pose_discontinuity(cur, ideal) -> bool:
+    """True if the ideal pose has jumped discontinuously from the current
+    smoothed pose (eye moved > _SWEEP_BREAK_EYE_GU, or forward rotated past
+    _SWEEP_BREAK_FWD_DOT) — the signal to cut the sweep rather than glide."""
+    (ce, cf, _cu), (ie, if_, _iu) = cur, ideal
+    dx, dy, dz = ie[0] - ce[0], ie[1] - ce[1], ie[2] - ce[2]
+    if (dx * dx + dy * dy + dz * dz) > (_SWEEP_BREAK_EYE_GU * _SWEEP_BREAK_EYE_GU):
+        return True
+    dot = cf[0] * if_[0] + cf[1] * if_[1] + cf[2] * if_[2]
+    return dot < _SWEEP_BREAK_FWD_DOT
 
 
 def _alloc_obj_id():
@@ -82,6 +102,14 @@ class CameraMode:
         if self._cur is None or self._snap or dt is None:
             self._cur = ideal
             self._snap = False
+            return self._cur
+        # Break the sweep on a DISCONTINUITY (a teleport / set-swap): a docking
+        # cutscene begins watching the ship, then SetupDockPositions teleports
+        # the ship to the docking entry — gliding across that jump reads as an
+        # unwanted camera swoop. Cut instead. Normal frame-to-frame tracking
+        # motion is far below these thresholds, so ordinary sweeps are untouched.
+        if _pose_discontinuity(self._cur, ideal):
+            self._cur = ideal
             return self._cur
         a = 1.0 - _math.exp(-dt / SWEEP_TAU_S)
         self._cur = (

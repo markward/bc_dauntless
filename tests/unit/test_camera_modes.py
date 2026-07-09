@@ -56,7 +56,10 @@ def test_camera_mode_obj_ids_unique():
 
 
 def test_sweep_converges_toward_ideal():
-    t = _FakeTarget((100.0, 0.0, 0.0))
+    # Gap kept below _SWEEP_BREAK_EYE_GU so this exercises the GLIDE, not the
+    # discontinuity cut (a >10 GU single-frame gap is a teleport and now cuts —
+    # see test_sweep_breaks_on_target_teleport).
+    t = _FakeTarget((5.0, 0.0, 0.0))
     m = LockedMode()
     m.SetAttrIDObject("Target", t)
     m.SetAttrPoint("Position", TGPoint3(0.0, 0.0, 0.0))
@@ -65,11 +68,11 @@ def test_sweep_converges_toward_ideal():
     m.set_initial_pose((0.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
     # One small step does NOT reach the ideal...
     eye1, _, _ = m.Update(0.016)
-    assert 0.0 < eye1[0] < 100.0
+    assert 0.0 < eye1[0] < 5.0
     # ...but many steps do.
     for _ in range(600):
         eye, _, _ = m.Update(0.016)
-    assert abs(eye[0] - 100.0) < 1.0
+    assert abs(eye[0] - 5.0) < 0.1
 
 
 def test_dt_zero_does_not_snap_mid_sweep():
@@ -79,19 +82,20 @@ def test_dt_zero_does_not_snap_mid_sweep():
     (e.g., sim paused). The buggy condition `not dt` treats 0.0 as falsy and
     incorrectly snaps to the ideal; it should test `dt is None` explicitly.
     """
-    t = _FakeTarget((100.0, 0.0, 0.0))
+    # Gap below _SWEEP_BREAK_EYE_GU so this tests the glide/freeze, not the cut.
+    t = _FakeTarget((5.0, 0.0, 0.0))
     m = LockedMode()
     m.SetAttrIDObject("Target", t)
     m.SetAttrPoint("Position", TGPoint3(0.0, 0.0, 0.0))
     m.SetAttrPoint("Forward", TGPoint3(0.0, 1.0, 0.0))
     m.SetAttrPoint("Up", TGPoint3(0.0, 0.0, 1.0))
 
-    # Seed into mid-sweep: eye starts at origin, target ideal at (100, 0, 0)
+    # Seed into mid-sweep: eye starts at origin, target ideal at (5, 0, 0)
     m.set_initial_pose((0.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
 
-    # One small dt step glides partway: eye1[0] should be ~25
+    # One small dt step glides partway.
     eye1, _, _ = m.Update(0.016)
-    assert 0.0 < eye1[0] < 100.0
+    assert 0.0 < eye1[0] < 5.0
 
     # Now call Update(0.0) (sim paused). Should NOT snap to ideal.
     # The returned eye should be IDENTICAL to eye1 (frozen at mid-sweep point).
@@ -307,3 +311,35 @@ def test_camera_mode_create_default_is_place_by_direction():
 def test_camera_mode_create_tags_owner_camera():
     sentinel = object()
     assert CameraMode_Create("Chase", sentinel)._owner_camera is sentinel
+
+
+def test_sweep_breaks_on_target_teleport():
+    """A large jump in the ideal (teleport / set-swap) CUTS the sweep instead of
+    gliding: the docking cutscene begins watching the ship, then the ship is
+    teleported to the docking entry — smoothing that jump reads as a swoop."""
+    t = _FakeTarget((0.0, 0.0, 0.0))
+    m = LockedMode()
+    m.SetAttrIDObject("Target", t)
+    m.SetAttrPoint("Position", TGPoint3(0.0, -10.0, 0.0))
+    m.SetAttrPoint("Forward", TGPoint3(0.0, 1.0, 0.0))
+    m.SetAttrPoint("Up", TGPoint3(0.0, 0.0, 1.0))
+    m.Update()                                  # first frame snaps to start ideal
+    # Teleport the target far away.
+    t._loc = TGPoint3(500.0, 300.0, -200.0)
+    eye, _fwd, _up = m.Update(dt=1.0 / 60.0)    # WITH dt would glide; jump cuts
+    assert eye == (500.0, 290.0, -200.0)        # cut straight to the new pose
+
+
+def test_sweep_glides_on_small_tracking_motion():
+    """Ordinary frame-to-frame tracking still glides — the discontinuity break
+    must not turn smooth tracking into a cut."""
+    t = _FakeTarget((0.0, 0.0, 0.0))
+    m = LockedMode()
+    m.SetAttrIDObject("Target", t)
+    m.SetAttrPoint("Position", TGPoint3(0.0, -10.0, 0.0))
+    m.SetAttrPoint("Forward", TGPoint3(0.0, 1.0, 0.0))
+    m.SetAttrPoint("Up", TGPoint3(0.0, 0.0, 1.0))
+    m.Update()                                  # snap to start
+    t._loc = TGPoint3(1.0, 0.0, 0.0)            # 1 GU tracking step
+    eye, _fwd, _up = m.Update(dt=1.0 / 60.0)
+    assert 0.0 < eye[0] < 1.0                   # glided partway, not snapped
