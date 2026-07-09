@@ -50,6 +50,44 @@ def _make_obstacle(pSet, x, y, z, name, radius=20.0):
     return obs
 
 
+def test_avoidance_honors_per_pair_disabled_collisions():
+    """A ship docking with a starbase must be able to fly right up to it. The
+    SDK signals this by calling ``pShip.EnableCollisionsWith(pStarbase, 0)``
+    (AI.Compound.DockWithStarbase.SetupCutscene). Collision AVOIDANCE must honor
+    that per-pair disable exactly as ``collisions.resolve_collisions`` does —
+    otherwise it treats the dock target as an obstacle, overrides the docking
+    AI's steering every tick, and the ship spirals off (E6M2 fly-in flew off
+    'downward'). With collisions disabled for the pair, avoidance must NOT
+    engage against that object even though it is dead ahead with a real radius."""
+    from engine.appc import collision_avoidance
+    collision_avoidance.reset_avoidance_state()
+
+    pSet = App.SetClass_Create(); pSet.SetName("S")
+    App.g_kSetManager._sets["S"] = pSet
+
+    ship = ShipClass_Create("Galaxy")
+    _load_galaxy(ship)
+    ship.SetWorldLocation(TGPoint3(0, 0, 0))
+    ship.SetRadius(20.0)
+    ship.SetAI(object())
+    pSet.AddObjectToSet(ship, "Ship")
+
+    # Big obstacle dead ahead — but it's the dock target: collisions disabled.
+    target = _make_obstacle(pSet, 0, 150, 0, "Target", radius=150.0)
+    ship.EnableCollisionsWith(target, 0)
+
+    # Full-ahead toward the target.
+    ship.SetImpulse(1.0, TGPoint3(0, 1, 0),
+                    PhysicsObjectClass.DIRECTION_MODEL_SPACE)
+
+    for _ in range(120):                 # 2 s @ 60 Hz
+        tick_collision_avoidance()
+        tick_all_ship_motion(1.0 / 60.0)
+
+    # Avoidance never engaged against the collision-disabled dock target.
+    assert collision_avoidance.is_overriding(ship) is False
+
+
 def test_ai_ship_avoids_stationary_obstacle_ahead():
     pSet = App.SetClass_Create(); pSet.SetName("S")
     App.g_kSetManager._sets["S"] = pSet

@@ -383,10 +383,24 @@ def _test_course_override(ship, previous_heading=None):
     from engine.appc.ship_iter import iter_set_objects
     blacklist = _dont_avoid_types()
 
+    from engine.appc.collisions import _collision_disabled_ids
+
     avoid_list = []
     for other in iter_set_objects(pSet):
         if other is ship:
             continue
+        # Per-pair collision mask (DamageableObject.EnableCollisionsWith),
+        # honoured symmetrically exactly as collisions.resolve_collisions does:
+        # a ship docking with a starbase calls EnableCollisionsWith(pStarbase, 0)
+        # (AI.Compound.DockWithStarbase.SetupCutscene) precisely so it can fly
+        # right up to it — avoidance must not then evade the dock target and
+        # override the docking AI's steering (E6M2 fly-in flew off otherwise).
+        try:
+            if (other.GetObjID() in _collision_disabled_ids(ship)
+                    or ship.GetObjID() in _collision_disabled_ids(other)):
+                continue
+        except Exception:
+            pass
         # Type filtering: skip blacklisted class types (SDK NeedToAvoid first
         # check, via IsTypeOf against lDontAvoidTypes). We read the obstacle's
         # type with isinstance against the engine's CT_* classes.
