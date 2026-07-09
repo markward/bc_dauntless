@@ -6392,6 +6392,74 @@ def run(mission_name: Optional[str] = None,
                     _cam, _comm_bounds)
                 r.set_viewscreen_comm_source(_set_id, _eye, _tgt, _up,
                                              _fov, _near, _far)
+                # [GRAFFCAM] one-shot per-set evidence dump: is the station
+                # geometry (and the hailing character) actually inside the
+                # authored camera frustum?  Dev-mode only, once per set.
+                if dev_mode.is_enabled():
+                    _seen = getattr(controller, "_graffcam_seen", None)
+                    if _seen is None:
+                        _seen = controller._graffcam_seen = set()
+                    _sname = next((n for n, i in controller.comm_set_ids.items()
+                                   if i == _set_id), None)
+                    if _sname not in _seen:
+                        _seen.add(_sname)
+                        import App as _App2
+                        import math as _m2
+                        _fwd = (_tgt[0] - _eye[0], _tgt[1] - _eye[1],
+                                _tgt[2] - _eye[2])
+                        _fl = _m2.sqrt(sum(c * c for c in _fwd)) or 1.0
+                        _fwd = tuple(c / _fl for c in _fwd)
+                        _halfdeg = _m2.degrees(_fov * 0.5)
+
+                        def _off_axis(_bx, _by, _bz):
+                            _d = (_bx - _eye[0], _by - _eye[1], _bz - _eye[2])
+                            _dl = _m2.sqrt(sum(c * c for c in _d)) or 1.0
+                            _dot = sum(_fwd[k] * _d[k] for k in range(3)) / _dl
+                            _ang = _m2.degrees(_m2.acos(max(-1.0, min(1.0, _dot))))
+                            return _ang, _dl
+
+                        print("[GRAFFCAM] set=%r eye=(%.1f,%.1f,%.1f) "
+                              "fwd=(%.2f,%.2f,%.2f) fov=%.1fdeg near=%.1f far=%.1f"
+                              % (_sname, _eye[0], _eye[1], _eye[2],
+                                 _fwd[0], _fwd[1], _fwd[2],
+                                 _m2.degrees(_fov), _near, _far))
+                        _bb = _comm_bounds()
+                        if _bb:
+                            _a, _dd = _off_axis(_bb[0], _bb[1], _bb[2])
+                            print("[GRAFFCAM]   station center=(%.1f,%.1f,%.1f) "
+                                  "r=%.1f -> %.1fdeg off-axis dist=%.1f %s "
+                                  "(halfFOV=%.1f)"
+                                  % (_bb[0], _bb[1], _bb[2], _bb[3], _a, _dd,
+                                     "IN-FRAME" if _a < _halfdeg else "OFF-FRAME",
+                                     _halfdeg))
+                        else:
+                            print("[GRAFFCAM]   station bounds = None")
+                        _s2 = _App2.g_kSetManager.GetSet(_sname)
+                        if _s2 is not None:
+                            for _ch in _iter_set_characters(_s2):
+                                _ciid = getattr(_ch, "_render_instance", None)
+                                _nm = (_ch.GetName() if hasattr(_ch, "GetName")
+                                       else "?")
+                                _hid = _ch.IsHidden() if hasattr(
+                                    _ch, "IsHidden") else "?"
+                                _cb = None
+                                if _ciid is not None:
+                                    try:
+                                        _cb = r.get_instance_bounds(_ciid)
+                                    except Exception:
+                                        _cb = None
+                                if _cb:
+                                    _a, _dd = _off_axis(_cb[0], _cb[1], _cb[2])
+                                    print("[GRAFFCAM]   char %r hidden=%r iid=%r "
+                                          "center=(%.1f,%.1f,%.1f) -> %.1fdeg "
+                                          "off-axis dist=%.1f %s"
+                                          % (_nm, _hid, _ciid, _cb[0], _cb[1],
+                                             _cb[2], _a, _dd,
+                                             "IN-FRAME" if _a < _halfdeg
+                                             else "OFF-FRAME"))
+                                else:
+                                    print("[GRAFFCAM]   char %r hidden=%r iid=%r "
+                                          "bounds=None" % (_nm, _hid, _ciid))
             else:
                 r.clear_viewscreen_comm_source()
             # Static overlay + ViewOn/ViewOff brightness fade (SDK-driven).
