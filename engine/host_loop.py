@@ -4188,6 +4188,12 @@ def _realize_comm_sets(controller, r) -> None:
             comm_set_id = next_id
             ids[name] = comm_set_id
             next_id += 1
+            if dev_mode.is_enabled():
+                # TEMP probe (Graff comm-set realize RE) — prints once per new
+                # comm set. REMOVE.
+                print("[GRAFFSET] realize comm set %r id=%d nif=%r chars=%d" % (
+                    name, comm_set_id, s.GetBackgroundModelNIF(),
+                    len(_iter_set_characters(s) or [])), flush=True)
         # create_comm_instance is a REQUIRED renderer binding (validated at
         # boot), so it is always present.
         realize_set(controller, r, s, is_bridge=False, comm_set_id=comm_set_id)
