@@ -4086,8 +4086,17 @@ def realize_set(controller, r, set_obj, *, is_bridge: bool,
                 handle = r.load_model(nif_abs, tex_abs)
             except Exception as _e:
                 dev_mode.log_swallowed("comm set load_model %r" % set_name, _e)
+                if dev_mode.is_enabled():
+                    # TEMP probe (Graff comm-set realize RE) — surface the
+                    # swallowed comm background load failure. REMOVE.
+                    print("[GRAFFSET] load_model FAILED set=%r nif=%r tex=%r "
+                          "err=%s: %s" % (set_name, nif_abs, tex_abs,
+                                          type(_e).__name__, _e), flush=True)
                 handle = None
             iid = r.create_comm_instance(handle) if handle is not None else None
+            if dev_mode.is_enabled():
+                print("[GRAFFSET] bg realize set=%r handle=%r iid=%r nif=%r tex=%r"
+                      % (set_name, handle, iid, nif_abs, tex_abs), flush=True)
         if iid is not None:
             r.set_world_transform(iid, IDENTITY_MAT4)
             if hasattr(carrier, "render_instance"):
