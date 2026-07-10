@@ -1,11 +1,107 @@
 # ViewscreenZoomTarget camera mode — design
 
-**Status:** design
+**Status:** REVISED after live-verification (2026-07-10). See "Revision 2" below —
+the activation model and the FOV law in the original design were **wrong**, and
+the sections below them describe the superseded v1. Revision 2 governs.
 **Date:** 2026-07-09
 **Follow-up to:** `docs/superpowers/specs/2026-07-07-cutscene-camera-direction-design.md`
 (the "Out of scope" item), plan `docs/superpowers/plans/2026-07-08-cutscene-camera-direction.md`.
 
-## What it is
+---
+
+## Revision 2 — faithful auto-focus (supersedes Decision 3 + the FOV law)
+
+Live-verification (VZT rendered correctly, but the viewscreen showed blurry white
+blobs) surfaced two design errors.
+
+### Error 1 — activation was modelled as a flag; BC uses a first-valid-wins chain
+
+The v1 design claimed BC engages the viewscreen zoom via a deliberate trigger
+(mission call or a toggle key), and modelled it with a sticky `_vs_active` flag
+set through an `AddModeHierarchy` seam. **That is wrong.** `Camera.py`
+`MakePlayerCamera` installs the chain *at camera creation*:
+
+```
+pCamera.AddModeHierarchy("InvalidViewscreen", "ViewscreenZoomTarget")
+pCamera.AddModeHierarchy("ViewscreenZoomTarget", "ViewscreenForward")
+```
+
+and deliberately makes `InvalidViewscreen` an always-invalid mode ("It needs some
+special named modes which are always invalid"). The hierarchy is a
+**first-valid-wins fallback chain**; `Camera.PlayerTargetChanged` (registered on
+`ET_TARGET_WAS_CHANGED`) keeps `ViewscreenZoomTarget`'s `Target` synced to the
+player's current target; and `ViewscreenZoomTarget` is *valid* exactly when it
+holds a live `Target`.
+
+Therefore, in BC: **a target is selected → the viewscreen focuses it. No target →
+the chain falls through to `ViewscreenForward`.** Automatic. There is no flag and
+nothing to disengage — which also dissolves the v1 "sticky VZT can never return
+to forward" gap.
+
+`MissionLib.ViewscreenWatchObject(obj)` simply writes a *different* object into
+that same `Target` field; a subsequent player target change overwrites it
+(last-writer-wins), exactly as `PlayerTargetChanged` does in BC.
+
+**Our engine never dispatches `ET_TARGET_WAS_CHANGED`** (it appears only in a
+docstring). So we reproduce the sync in the pull-model resolver by remembering
+the player's target frame-to-frame on the camera:
+
+```
+cur  = player.GetTarget()
+if cur is not cam._vs_last_player_target:      # stands in for PlayerTargetChanged
+    mode.SetAttrIDObject("Target", cur)         # player target overwrites any watch
+    cam._vs_last_player_target = cur
+tgt = mode.GetAttrIDObject("Target")            # mission watch persists until next change
+if not _target_alive(tgt):
+    return None                                  # -> ViewscreenForward (forward feed)
+mode.SetAttrIDObject("Source", player)
+```
+
+Consequences: `_vs_active` is deleted; `AddModeHierarchy` reverts to a pure
+no-op; the hold-`Z` trigger is deleted. `_vs_last_player_target` **must** be
+initialized to `None` in `CameraObjectClass.__init__` (the `_LoudStub.__getattr__`
+truthy-lambda trap).
+
+### Error 2 — the adaptive-fill FOV law was invented, and caused a visual bug
+
+`ZoomTargetMode` produces only `(eye, forward, up)` — **it carries no FOV.** The
+v1 adaptive-fill law (`fov = 2·atan(VS_FILL_K·r/dist)`, clamped 6°–40°) was not
+BC behaviour; it was invented in the v1 design.
+
+It also caused a real artifact: the backdrop starfield is a **baked 1024²/face
+cubemap** (`backdrop_pass.h:kSkyFaceSize`) drawn unconditionally in
+`render_space`. A 90° cube face across 1024 texels, sampled at a ~10° FOV into
+the 640×360 RTT, magnifies the sky ~5.6× — baked star dots become blurry white
+blobs. (Space dust is *not* the cause: the single dust draw call is guarded by
+`!for_viewscreen || warp_streaking`, and `g_streak` defaults to 0.)
+
+A per-frame varying FOV is also wrong now that the viewscreen is *always*
+target-focused: it would zoom in and out continuously as range changes while
+manoeuvring.
+
+**Replacement:** the viewscreen scene uses the **forward feed's FOV times one
+constant zoom factor**:
+
+```
+VS_ZOOM_FACTOR: float = 0.7      # 1.0 = identical framing to the forward view
+fov_y_rad = forward_fov * VS_ZOOM_FACTOR
+```
+
+`_adaptive_vs_fov` and `VS_FILL_K` / `VS_FOV_MIN` / `VS_FOV_MAX` are deleted.
+`VS_NEAR` / `VS_FAR` remain. The resolver signature becomes
+`_viewscreen_scene_feed(player, dt, forward_fov)` — `zoom_held` is gone. The call
+site passes `director.fov_y_rad`.
+
+### What Revision 2 does NOT change
+
+Decision 1 (the native `SceneSource` RTT capability), Decision 2 (real
+`Game.GetPlayerCamera` + the `"ViewscreenZoomTarget"` mode-factory entry), the
+comm > scene > forward precedence, the byte-identical-when-inactive guarantee,
+and the player-hull visibility analysis all stand as built.
+
+---
+
+## What it is (v1 — superseded by Revision 2 for activation + FOV)
 
 `ViewscreenZoomTarget` (VZT) is BC's "zoom the bridge main viewer onto the
 player's current target." Unlike the modes shipped by the cutscene-camera work
