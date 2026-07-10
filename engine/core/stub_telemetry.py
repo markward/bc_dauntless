@@ -21,8 +21,10 @@ Constraints (see docs/superpowers/plans/2026-07-10-stub-observability.md):
 from __future__ import annotations
 
 import atexit
+import json
 import os
 import sys
+import time
 from collections import Counter
 
 
@@ -31,6 +33,19 @@ def _env_truthy(value: str) -> bool:
 
 
 ENABLED: bool = _env_truthy(os.environ.get("DAUNTLESS_STUB_TELEMETRY", ""))
+
+
+def _default_sidecar_path() -> str:
+    configured = os.environ.get("DAUNTLESS_STUB_TELEMETRY_FILE", "")
+    if configured:
+        return configured
+    # Resolve to absolute at import time — the atexit write runs at shutdown,
+    # and GLFW's macOS chdir-hijack can move the CWD after init, so a lazily
+    # resolved relative path could land in the wrong directory.
+    return os.path.abspath("stub_hits.jsonl")
+
+
+SIDECAR_PATH: str = _default_sidecar_path()
 
 _attr_hits: "Counter" = Counter()   # (owner_type, attr_name) -> count
 _bool_sites: "Counter" = Counter()  # "file:lineno" -> count
@@ -60,6 +75,7 @@ def _atexit_dump() -> None:
             dump_report()
         except Exception:
             pass
+        persist_run()
 
 
 def _caller(depth: int) -> str:
@@ -116,6 +132,30 @@ def dump_report(stream=None) -> str:
     except Exception:
         pass
     return report
+
+
+def persist_run(path: str | None = None) -> None:
+    """Append one JSON line describing this run's counters to the sidecar.
+
+    Never raises — a bad path / full disk / permission error is swallowed so
+    persistence can never crash the game. The (owner, attr) pair is encoded as
+    a tab-separated key so a dotted breadcrumb attr stays unambiguous."""
+    if path is None:
+        path = SIDECAR_PATH
+    try:
+        record = {
+            "t": time.time(),
+            "attr_hits": {
+                ("%s\t%s" % (owner, attr)): count
+                for (owner, attr), count in _attr_hits.items()
+            },
+            "bool_sites": dict(_bool_sites),
+        }
+        line = json.dumps(record)
+        with open(path, "a") as f:
+            f.write(line + "\n")
+    except Exception:
+        pass
 
 
 if ENABLED:
