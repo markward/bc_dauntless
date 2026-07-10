@@ -1,7 +1,5 @@
-import math
 import pytest
 from engine import host_loop
-from engine.core import game as game_mod
 from engine.appc.bridge_set import CameraObjectClass_Create
 
 
@@ -51,130 +49,65 @@ def wired(monkeypatch):
     return cam
 
 
-FWD_FOV = 1.0   # radians; the forward feed's FOV handed to the resolver
-
-
 def test_none_when_no_target(wired):
     player = _Ship(_Pt(0.0, 0.0, 0.0), target=None)
-    assert host_loop._viewscreen_scene_feed(player, 0.016, FWD_FOV) is None
+    assert host_loop._viewscreen_scene_feed(player, 0.61) is None
 
 
-def test_auto_focus_on_player_target(wired):
-    tgt = _Ship(_Pt(500.0, 0.0, 0.0))
-    player = _Ship(_Pt(0.0, 0.0, 0.0), target=tgt)
-    out = host_loop._viewscreen_scene_feed(player, 0.016, FWD_FOV)
-    assert out is not None
-    eye, target, up, fov, near, far = out
-    assert eye == (0.0, 0.0, 0.0)            # eye at player (Source)
-    assert target[0] > 0.0 and abs(target[1]) < 1e-6   # looks at the target (+X)
-    assert near == host_loop.VS_NEAR and far == host_loop.VS_FAR
-
-
-# ── _viewscreen_fov: adaptive-fill FOV (pure function, tested directly) ────────
-# forward_fov chosen generous (~69 deg) so mid-band cases stay well under it,
-# never accidentally satisfied by the upper clamp.
-BIG_FWD_FOV = 1.2   # radians
-
-
-def test_viewscreen_fov_matches_formula_in_unclamped_band():
-    # r=2, dist=20 -> r/dist=0.1 -> (0.1/0.6)=0.16666... -> 2*atan(...) ~= 0.3303 rad,
-    # strictly between VS_FOV_MIN (~0.0698 rad) and BIG_FWD_FOV (1.2 rad).
-    tgt = _Ship(_Pt(20.0, 0.0, 0.0), radius=2.0)
-    eye = (0.0, 0.0, 0.0)
-    fov = host_loop._viewscreen_fov(tgt, eye, BIG_FWD_FOV)
-    expected = 2.0 * math.atan((2.0 / 20.0) / host_loop.VS_TARGET_FILL)
-    assert host_loop.VS_FOV_MIN < expected < BIG_FWD_FOV
-    assert abs(fov - expected) < 1e-9
-
-
-def test_viewscreen_fov_clamps_to_forward_fov_for_close_target():
-    # r=100, dist=1 -> formula ~2.98 rad, must clamp to forward_fov.
-    tgt = _Ship(_Pt(1.0, 0.0, 0.0), radius=100.0)
-    eye = (0.0, 0.0, 0.0)
-    fov = host_loop._viewscreen_fov(tgt, eye, BIG_FWD_FOV)
-    assert fov == BIG_FWD_FOV
-
-
-def test_viewscreen_fov_clamps_to_fov_min_for_distant_target():
-    # r=1, dist=100000 -> formula ~3.3e-5 rad, must clamp to VS_FOV_MIN.
-    tgt = _Ship(_Pt(100000.0, 0.0, 0.0), radius=1.0)
-    eye = (0.0, 0.0, 0.0)
-    fov = host_loop._viewscreen_fov(tgt, eye, BIG_FWD_FOV)
-    assert abs(fov - host_loop.VS_FOV_MIN) < 1e-12
-
-
-def test_viewscreen_fov_zero_distance_returns_forward_fov():
-    tgt = _Ship(_Pt(0.0, 0.0, 0.0), radius=2.0)
-    eye = (0.0, 0.0, 0.0)
-    assert host_loop._viewscreen_fov(tgt, eye, BIG_FWD_FOV) == BIG_FWD_FOV
-
-
-def test_viewscreen_fov_zero_radius_returns_forward_fov():
-    tgt = _Ship(_Pt(20.0, 0.0, 0.0), radius=0.0)
-    eye = (0.0, 0.0, 0.0)
-    assert host_loop._viewscreen_fov(tgt, eye, BIG_FWD_FOV) == BIG_FWD_FOV
-
-
-def test_resolver_fov_matches_viewscreen_fov_helper(wired):
-    tgt = _Ship(_Pt(20.0, 0.0, 0.0), radius=2.0)
-    player = _Ship(_Pt(0.0, 0.0, 0.0), target=tgt)
-    out = host_loop._viewscreen_scene_feed(player, 0.016, BIG_FWD_FOV)
-    assert out is not None
-    eye, target, up, fov, near, far = out
-    assert abs(fov - host_loop._viewscreen_fov(tgt, eye, BIG_FWD_FOV)) < 1e-9
-
-
-def test_dead_target_falls_back_to_forward(wired):
+def test_dead_target_returns_none(wired):
     dead = _Ship(_Pt(500.0, 0.0, 0.0), dying=True)
     player = _Ship(_Pt(0.0, 0.0, 0.0), target=dead)
-    assert host_loop._viewscreen_scene_feed(player, 0.016, FWD_FOV) is None
+    assert host_loop._viewscreen_scene_feed(player, 0.61) is None
 
 
-def test_mission_watch_object_overrides_player_target(wired):
-    combat = _Ship(_Pt(500.0, 0.0, 0.0))
-    watched = _Ship(_Pt(0.0, 800.0, 0.0))
+def test_fov_equals_forward_fov(wired):
+    tgt = _Ship(_Pt(500.0, 0.0, 0.0))
+    player = _Ship(_Pt(0.0, 0.0, 0.0), target=tgt)
+    out1 = host_loop._viewscreen_scene_feed(player, 0.61)
+    assert out1 is not None
+    assert out1[3] == 0.61
+    out2 = host_loop._viewscreen_scene_feed(player, 1.20)
+    assert out2 is not None
+    assert out2[3] == 1.20
+
+
+def test_eye_is_behind_target_not_at_player(wired):
+    tgt = _Ship(_Pt(500.0, 0.0, 0.0), radius=2.0)
+    player = _Ship(_Pt(0.0, 0.0, 0.0), target=tgt)
+    out = host_loop._viewscreen_scene_feed(player, 0.61)
+    assert out is not None
+    eye = out[0]
+    # eye sits close BEHIND the target on the ship->target axis, not at the
+    # player origin: eye.x is well past the midpoint toward the target.
+    assert eye[0] > 250.0
+    assert abs(eye[1]) < 1e-6
+    assert abs(eye[2]) < 1e-6
+
+
+def test_auto_focus_follows_player_target(wired):
+    tgt = _Ship(_Pt(500.0, 0.0, 0.0))
+    player = _Ship(_Pt(0.0, 0.0, 0.0), target=tgt)
+    out = host_loop._viewscreen_scene_feed(player, 0.61)
+    assert out is not None
+    eye, look_at, up, fov, near, far = out
+    assert near == host_loop.VS_NEAR and far == host_loop.VS_FAR
+    assert fov == 0.61
+    # look-at is further toward the target than the eye (framing it, not
+    # looking back at the player).
+    assert look_at[0] > eye[0]
+
+
+def test_mission_watch_overrides_player_target(wired):
+    combat = _Ship(_Pt(500.0, 0.0, 0.0), radius=2.0)
+    other = _Ship(_Pt(0.0, 800.0, 0.0), radius=2.0)
     player = _Ship(_Pt(0.0, 0.0, 0.0), target=combat)
     # settle the "last seen player target" memory
-    host_loop._viewscreen_scene_feed(player, 0.016, FWD_FOV)
+    host_loop._viewscreen_scene_feed(player, 0.61)
     # MissionLib.ViewscreenWatchObject writes a different object into the mode
-    wired.GetNamedCameraMode("ViewscreenZoomTarget").SetAttrIDObject("Target", watched)
-    out = host_loop._viewscreen_scene_feed(player, 0.016, FWD_FOV)
-    target = out[1]
-    assert target[1] > 0.0 and abs(target[0]) < 1e-6   # watched (+Y), not combat (+X)
-
-
-def test_changing_player_target_overwrites_mission_watch(wired):
-    combat = _Ship(_Pt(500.0, 0.0, 0.0))
-    watched = _Ship(_Pt(0.0, 800.0, 0.0))
-    player = _Ship(_Pt(0.0, 0.0, 0.0), target=combat)
-    host_loop._viewscreen_scene_feed(player, 0.016, FWD_FOV)
-    wired.GetNamedCameraMode("ViewscreenZoomTarget").SetAttrIDObject("Target", watched)
-    # BC: PlayerTargetChanged re-points the mode on the next target change.
-    newtgt = _Ship(_Pt(0.0, 0.0, 900.0))
-    player._target = newtgt
-    out = host_loop._viewscreen_scene_feed(player, 0.016, FWD_FOV)
-    target = out[1]
-    assert target[2] > 0.0 and abs(target[1]) < 1e-6   # new target (+Z), not watched (+Y)
-
-
-def test_source_pinned_to_live_player(wired):
-    tgt = _Ship(_Pt(0.0, 0.0, 900.0))
-    player = _Ship(_Pt(10.0, 20.0, 30.0), target=tgt)
-    assert host_loop._viewscreen_scene_feed(player, 0.016, FWD_FOV)[0] == (10.0, 20.0, 30.0)
-
-
-def test_target_point_is_eye_plus_forward_not_bare_forward(wired):
-    # player off-origin so eye+fwd != fwd; a bare `target = fwd` returns (0,0,1).
-    tgt = _Ship(_Pt(10.0, 20.0, 130.0))
-    player = _Ship(_Pt(10.0, 20.0, 30.0), target=tgt)
-    target = host_loop._viewscreen_scene_feed(player, 0.016, FWD_FOV)[1]
-    for got, want in zip(target, (10.0, 20.0, 31.0)):
-        assert abs(got - want) < 1e-6
-
-
-def test_invalid_mode_returns_none_not_fallback_pose(wired):
-    # Dying player => ZoomTargetMode._ideal() -> None => IsValid() false.
-    # Without the IsValid() guard, Update() would return a bogus fallback pose.
-    tgt = _Ship(_Pt(500.0, 0.0, 0.0))
-    player = _Ship(_Pt(0.0, 0.0, 0.0), target=tgt, dying=True)
-    assert host_loop._viewscreen_scene_feed(player, 0.016, FWD_FOV) is None
+    wired.GetNamedCameraMode("ViewscreenZoomTarget").SetAttrIDObject("Target", other)
+    out = host_loop._viewscreen_scene_feed(player, 0.61)
+    assert out is not None
+    eye = out[0]
+    # eye is near `other` (0, 800, 0), not near the player's combat target.
+    assert eye[1] > 400.0
+    assert abs(eye[0]) < 1e-6

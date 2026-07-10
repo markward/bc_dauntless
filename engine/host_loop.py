@@ -3952,54 +3952,31 @@ def _compute_camera(view_mode, director, *, player, dt) -> tuple:
 
 # ── ViewscreenZoomTarget (VZT) framing ─────────────────────────────────────────
 # The bridge viewscreen auto-focuses the player's current target (BC's
-# first-valid-wins viewscreen mode chain). BC's ZoomTargetMode carries only
-# eye+direction — no FOV — so the scene render computes an adaptive-fill FOV
-# that keeps the target at a constant fraction of the viewscreen height,
-# clamped to the forward feed's FOV and a max-zoom floor. Tunable here (no
-# rebuild). Lengths in game units.
+# first-valid-wins viewscreen mode chain), rendering the SAME framing the
+# exterior view shows when holding Z (camera_zoom_target): eye placed close
+# behind the target on the ship->target axis, looking at the target's
+# subsystem aim point, FOV unchanged from the exterior view (never narrowed).
+# Lengths in game units.
 VS_NEAR: float = 1.0
 VS_FAR: float = 5000.0
-VS_TARGET_FILL: float = 0.60          # target diameter as a fraction of viewscreen height
-VS_FOV_MIN: float = _math.radians(4.0)  # max-zoom clamp (never tighter than this)
 
 
-def _viewscreen_fov(target, eye, forward_fov) -> float:
-    """Vertical FOV (radians) that makes `target` span VS_TARGET_FILL of the
-    viewscreen height. Never wider than the forward view (forward_fov is the
-    upper clamp); never tighter than VS_FOV_MIN. Degenerate inputs -> forward_fov.
+def _viewscreen_scene_feed(player, forward_fov):
+    """Resolve the ViewscreenZoomTarget scene feed: the SAME framing the
+    exterior view shows when holding Z (camera_zoom_target), rendered into the
+    bridge viewscreen RTT. Returns (eye, target, up, fov_y_rad, near, far) or
+    None to leave the plain forward feed.
 
-    Derivation: the target's diameter as a fraction of screen height is
-    (r/dist) / tan(fov/2); setting that equal to VS_TARGET_FILL gives
-    tan(fov/2) = (r/dist) / VS_TARGET_FILL."""
-    try:
-        loc = target.GetWorldLocation()
-        r = float(target.GetRadius())
-    except Exception:
-        return forward_fov
-    dx = loc.x - eye[0]; dy = loc.y - eye[1]; dz = loc.z - eye[2]
-    dist = _math.sqrt(dx * dx + dy * dy + dz * dz)
-    if dist <= 0.0 or r <= 0.0:
-        return forward_fov
-    fov = 2.0 * _math.atan((r / dist) / VS_TARGET_FILL)
-    return max(VS_FOV_MIN, min(forward_fov, fov))
+    BC's viewscreen mode chain is first-valid-wins, so a live Target IS the
+    engagement. The frame-to-frame `_vs_last_player_target` compare stands in for
+    Camera.PlayerTargetChanged (we never dispatch ET_TARGET_WAS_CHANGED), which
+    lets MissionLib.ViewscreenWatchObject(obj) persist until the player retargets.
 
-
-def _viewscreen_scene_feed(player, dt, forward_fov):
-    """Resolve the ViewscreenZoomTarget scene feed. Returns
-    (eye, target, up, fov_y_rad, near, far) to render the live exterior scene
-    focused on the player's target into the bridge viewscreen RTT, or None to
-    leave the plain forward feed.
-
-    BC's viewscreen mode chain (InvalidViewscreen -> ViewscreenZoomTarget ->
-    ViewscreenForward, installed by Camera.MakePlayerCamera) is first-valid-wins,
-    and ViewscreenZoomTarget is valid exactly when it holds a live Target. So a
-    selected target IS the engagement; no target falls through to forward.
-
-    Our engine never dispatches ET_TARGET_WAS_CHANGED, so the frame-to-frame
-    `_vs_last_player_target` comparison stands in for Camera.PlayerTargetChanged:
-    on a target change we re-point the mode, which is what lets a later
-    MissionLib.ViewscreenWatchObject(obj) override persist until the player
-    picks a different target (BC's last-writer-wins).
+    Framing reuses engine.cameras.tracking._TrackingCamera in ZoomTarget mode —
+    the identical solver the exterior Z zoom uses (eye close behind the target on
+    the ship->target axis, look-at the subsystem aim point, FOV unchanged at the
+    exterior value). Rigid (dt=None): no spring smoothing, which for an inset
+    reads as a clean lock rather than a swoop.
 
     Pull-model: reads SDK state, never writes bridge_flag()/GetRenderedSet()."""
     if player is None:
@@ -4011,7 +3988,7 @@ def _viewscreen_scene_feed(player, dt, forward_fov):
     cam = game.GetPlayerCamera()
     if cam is None:
         return None
-    mode = cam.GetNamedCameraMode("ViewscreenZoomTarget")
+    mode = cam.GetNamedCameraMode("ViewscreenZoomTarget")   # Target holder only
     if mode is None:
         return None
 
@@ -4024,12 +4001,16 @@ def _viewscreen_scene_feed(player, dt, forward_fov):
     if not _target_alive(tgt):
         return None                                  # -> ViewscreenForward
 
-    mode.SetAttrIDObject("Source", player)           # pin Source to the live player
-    if not mode.IsValid():                           # _ideal() resolvable?
-        return None
-    eye, fwd, up = mode.Update(dt)
-    target = (eye[0] + fwd[0], eye[1] + fwd[1], eye[2] + fwd[2])
-    return (eye, target, up, _viewscreen_fov(tgt, eye, forward_fov), VS_NEAR, VS_FAR)
+    from engine.cameras.tracking import _TrackingCamera
+    from engine.ui.target_reticle import target_aim_point
+    tc = _TrackingCamera()
+    tc.set_ship_radius(max(player.GetRadius(), 1e-6))
+    tc.enter_zoom_target()
+    # Subsystem-aware aim only when watching the player's OWN target; a mission
+    # ViewscreenWatchObject on a different object frames that object's centre.
+    aim = target_aim_point(player) if tgt is player.GetTarget() else None
+    eye, look_at, up = tc.compute(player=player, target=tgt, dt=None, aim_point=aim)
+    return (eye, look_at, up, forward_fov, VS_NEAR, VS_FAR)
 
 
 def _select_viewscreen_source(r, comm_feed, scene_feed):
@@ -6454,8 +6435,7 @@ def run(mission_name: Optional[str] = None,
             _feed = _active_comm_feed(controller)
             _scene = None
             if _feed is None:
-                _scene = _viewscreen_scene_feed(
-                    player, _player_dt, director.fov_y_rad)
+                _scene = _viewscreen_scene_feed(player, director.fov_y_rad)
             _vs_src = _select_viewscreen_source(r, _feed, _scene)
             if _vs_src == "comm":
                 _set_id, _cam = _feed
