@@ -1,0 +1,62 @@
+import pytest
+
+from engine.core import stub_telemetry
+
+
+@pytest.fixture(autouse=True)
+def _clean_telemetry():
+    prev = stub_telemetry.ENABLED
+    stub_telemetry.reset()
+    yield
+    stub_telemetry.set_enabled(prev)
+    stub_telemetry.reset()
+
+
+def test_disabled_by_default_records_nothing():
+    stub_telemetry.set_enabled(False)
+    stub_telemetry.record_attr("ShipClass", "GetWarpCore")
+    stub_telemetry.record_bool("ShipClass")
+    snap = stub_telemetry.snapshot()
+    assert snap["attr_hits"] == {}
+    assert snap["bool_sites"] == {}
+
+
+def test_enabled_records_attr_hits_with_counts():
+    stub_telemetry.set_enabled(True)
+    stub_telemetry.record_attr("ShipClass", "GetWarpCore")
+    stub_telemetry.record_attr("ShipClass", "GetWarpCore")
+    stub_telemetry.record_attr("Mission", "GetFriendlyGroup")
+    snap = stub_telemetry.snapshot()
+    assert snap["attr_hits"][("ShipClass", "GetWarpCore")] == 2
+    assert snap["attr_hits"][("Mission", "GetFriendlyGroup")] == 1
+
+
+def test_enabled_records_bool_site():
+    stub_telemetry.set_enabled(True)
+    stub_telemetry.record_bool("ShipClass")
+    sites = stub_telemetry.snapshot()["bool_sites"]
+    # Exactly one site recorded, keyed by a non-empty "file:line" string.
+    # NOTE: this calls record_bool() directly, so the captured frame is not
+    # this test line (the caller-depth is calibrated for the production path
+    # _Stub.__bool__ -> record_bool). Asserting the *identity* of the site is
+    # done in Task 3's test, which goes through __bool__. Here we only assert a
+    # site was captured.
+    assert sum(sites.values()) == 1
+    assert all(isinstance(key, str) and key for key in sites)
+
+
+def test_record_never_raises_even_on_bad_input():
+    stub_telemetry.set_enabled(True)
+    # None args must not blow up the game
+    stub_telemetry.record_attr(None, None)
+    stub_telemetry.record_bool(None)
+
+
+def test_dump_report_is_string_and_ranks_by_frequency():
+    stub_telemetry.set_enabled(True)
+    stub_telemetry.record_attr("A", "rare")
+    for _ in range(5):
+        stub_telemetry.record_attr("B", "common")
+    report = stub_telemetry.dump_report()
+    assert isinstance(report, str)
+    assert report.index("common") < report.index("rare")
