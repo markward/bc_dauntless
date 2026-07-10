@@ -57,6 +57,8 @@ class _Stub:
         return _Stub(self._stub_name, self._stub_owner)
 
     def __bool__(self) -> bool:
+        if stub_telemetry.ENABLED:
+            stub_telemetry.record_bool(self._stub_owner)
         return True
 
     def __hash__(self) -> int:
