@@ -3956,7 +3956,7 @@ def _compute_camera(view_mode, director, *, player, dt) -> tuple:
 # range. All lengths in game units; angles in radians.
 VS_NEAR: float = 1.0
 VS_FAR: float = 5000.0
-VS_FILL_K: float = 1.6                       # radius→apparent-fill gain; tune live
+VS_FILL_K: float = 1.6                       # framing margin: larger = target fills LESS; tune live
 VS_FOV_MIN: float = _math.radians(6.0)       # most-zoomed (distant target) clamp
 VS_FOV_MAX: float = _math.radians(40.0)      # least-zoomed (near target) clamp
 
@@ -3984,7 +3984,7 @@ def _adaptive_vs_fov(target, eye) -> float:
     return 2.0 * _math.atan(half)
 
 
-def _viewscreen_scene_feed(controller, player, dt, zoom_held):
+def _viewscreen_scene_feed(player, dt, zoom_held):
     """Resolve the ViewscreenZoomTarget scene feed. Returns
     (eye, target, up, fov_y_rad, near, far) to render the live exterior scene
     zoomed onto a target into the bridge viewscreen RTT, or None to leave the
@@ -6445,14 +6445,15 @@ def run(mission_name: Optional[str] = None,
             # set, render that set into the RTT from its maincamera; otherwise
             # the RTT keeps the forward space view.
             _feed = _active_comm_feed(controller)
-            # Hold Z in bridge view engages VZT (mirrors the exterior zoom read
-            # at ~:5966, which stays gated on is_exterior and is untouched).
+            # Hold Z in bridge view engages VZT (mirrors the exterior
+            # `z_held_now` read, gated on `is_exterior`, which stays
+            # untouched).
             _z_held_bridge = (view_mode.is_bridge
                               and host_io.key_state(input_map.code("camera_zoom_target")))
             _scene = None
             if _feed is None:
                 _scene = _viewscreen_scene_feed(
-                    controller, player, _player_dt, _z_held_bridge)
+                    player, _player_dt, _z_held_bridge)
             _vs_src = _select_viewscreen_source(r, _feed, _scene)
             if _vs_src == "comm":
                 _set_id, _cam = _feed

@@ -54,13 +54,13 @@ def wired(monkeypatch):
 def test_none_when_not_engaged(wired):
     tgt = _Ship(_Pt(500.0, 0.0, 0.0))
     player = _Ship(_Pt(0.0, 0.0, 0.0), target=tgt)
-    assert host_loop._viewscreen_scene_feed(None, player, 0.016, False) is None
+    assert host_loop._viewscreen_scene_feed(player, 0.016, False) is None
 
 
 def test_hold_zoom_uses_player_target(wired):
     tgt = _Ship(_Pt(500.0, 0.0, 0.0))
     player = _Ship(_Pt(0.0, 0.0, 0.0), target=tgt)
-    out = host_loop._viewscreen_scene_feed(None, player, 0.016, True)
+    out = host_loop._viewscreen_scene_feed(player, 0.016, True)
     assert out is not None
     eye, target, up, fov, near, far = out
     assert eye == (0.0, 0.0, 0.0)                       # eye at player (Source)
@@ -72,7 +72,7 @@ def test_hold_zoom_uses_player_target(wired):
 
 def test_hold_with_no_target_is_none(wired):
     player = _Ship(_Pt(0.0, 0.0, 0.0), target=None)
-    assert host_loop._viewscreen_scene_feed(None, player, 0.016, True) is None
+    assert host_loop._viewscreen_scene_feed(player, 0.016, True) is None
 
 
 def test_mission_sticky_engages_without_hold(wired):
@@ -81,7 +81,7 @@ def test_mission_sticky_engages_without_hold(wired):
     mode = wired.GetNamedCameraMode("ViewscreenZoomTarget")
     mode.SetAttrIDObject("Target", watched)
     wired.AddModeHierarchy("InvalidViewscreen", "ViewscreenZoomTarget")   # engage
-    out = host_loop._viewscreen_scene_feed(None, player, 0.016, False)
+    out = host_loop._viewscreen_scene_feed(player, 0.016, False)
     assert out is not None
     _eye, target, _up, _fov, _n, _f = out
     assert target[1] > 0.0                              # looks toward watched (+Y)
@@ -94,7 +94,7 @@ def test_mission_sticky_wins_over_hold_target(wired):
     mode = wired.GetNamedCameraMode("ViewscreenZoomTarget")
     mode.SetAttrIDObject("Target", watched)
     wired.AddModeHierarchy("InvalidViewscreen", "ViewscreenZoomTarget")
-    out = host_loop._viewscreen_scene_feed(None, player, 0.016, True)
+    out = host_loop._viewscreen_scene_feed(player, 0.016, True)
     _eye, target, _up, _fov, _n, _f = out
     assert target[1] > 0.0 and abs(target[0]) < 1e-6    # watched (+Y), not combat (+X)
 
@@ -102,7 +102,7 @@ def test_mission_sticky_wins_over_hold_target(wired):
 def test_source_pinned_to_live_player(wired):
     tgt = _Ship(_Pt(0.0, 0.0, 900.0))
     player = _Ship(_Pt(10.0, 20.0, 30.0), target=tgt)
-    out = host_loop._viewscreen_scene_feed(None, player, 0.016, True)
+    out = host_loop._viewscreen_scene_feed(player, 0.016, True)
     eye = out[0]
     assert eye == (10.0, 20.0, 30.0)                    # eye follows the live player
 
@@ -115,7 +115,7 @@ def test_target_point_is_eye_plus_forward_not_bare_forward(wired):
     # here instead of (10.0, 20.0, 31.0), and this assertion catches it.
     tgt = _Ship(_Pt(10.0, 20.0, 130.0))
     player = _Ship(_Pt(10.0, 20.0, 30.0), target=tgt)
-    out = host_loop._viewscreen_scene_feed(None, player, 0.016, True)
+    out = host_loop._viewscreen_scene_feed(player, 0.016, True)
     assert out is not None
     eye, target, _up, _fov, _n, _f = out
     assert eye == (10.0, 20.0, 30.0)
@@ -141,5 +141,5 @@ def test_invalid_mode_returns_none_not_fallback_pose(wired):
 
     tgt = _Ship(_Pt(500.0, 0.0, 0.0))
     player = _DyingShip(_Pt(0.0, 0.0, 0.0), target=tgt)
-    out = host_loop._viewscreen_scene_feed(None, player, 0.016, True)
+    out = host_loop._viewscreen_scene_feed(player, 0.016, True)
     assert out is None
