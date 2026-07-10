@@ -636,13 +636,16 @@ void frame() {
         }
         sky_use_cubemap = g_backdrop_pass->has_cubemap();  // false if alloc failed
     }
-    // Renders the space scene from `cam` into the currently-bound FBO.
-    // for_viewscreen=true skips the cockpit/screen-space effects that make no
-    // sense on (or would corrupt state for) the viewscreen RTT: dust (camera-
-    // anchored smear with cross-frame prev_eye state), lens flares (screen-
-    // space, sized to the main framebuffer), and particles. Order is otherwise
-    // identical to the historical inline block.
-    auto render_space = [&](const scenegraph::Camera& cam, bool for_viewscreen) {
+    // Renders the space scene from `cam` into `target` (bound by the caller),
+    // whose color/depth textures and viewport dims (vw, vh) drive the
+    // framebuffer-coupled passes (volumetric nebula, godrays, lens flares).
+    // The viewscreen RTT now renders every pass the main view does — dust
+    // (camera-anchored smear, keyed off for_viewscreen so the cockpit isn't
+    // smeared except during warp streaking), nebulae, godrays, lens flares,
+    // hull discharges, shockwaves, particles, and cloak refraction — so the
+    // bridge viewscreen matches the exterior view.
+    auto render_space = [&](const scenegraph::Camera& cam, bool for_viewscreen,
+                            renderer::HdrTarget& target, int vw, int vh) {
         if (sky_use_cubemap)
             g_backdrop_pass->render_cubemap(cam, *g_pipeline);
         else
@@ -650,11 +653,9 @@ void frame() {
                                     dauntless_procedural_sky::enabled(),
                                     static_cast<float>(now));
         g_sun_pass->render(g_suns, cam, *g_pipeline, now);
-        // Filmic ambient dim: -20% on the main exterior view only. The
-        // viewscreen inset (for_viewscreen) and a filmic-off toggle both keep
-        // full ambient (scale 1.0).
-        const float ambient_scale =
-            (!for_viewscreen) ? dauntless_filmic::ambient_scale() : 1.0f;
+        // Filmic ambient dim: -20% when the toggle is on, 1.0 when off. The
+        // viewscreen now matches the exterior view (no separate dim rule).
+        const float ambient_scale = dauntless_filmic::ambient_scale();
         g_submitter->submit_opaque_in_pass(
             g_world, cam, *g_pipeline, lookup, g_lighting,
             scenegraph::Pass::Space, g_decal_game_time, g_carve_cache.get(),
@@ -682,16 +683,15 @@ void frame() {
             g_dust_pass->render(cam, dt, *g_pipeline, g_suns, g_dust_planets,
                                 dauntless_warp_vfx::streak_intensity(),
                                 dauntless_warp_vfx::travel_dir());
-        if (!for_viewscreen && !g_nebulae.empty()) {
-            if (dauntless_volumetric_nebulae::enabled() && g_nebula_volumetric_pass
-                && g_hdr_target) {
+        if (!g_nebulae.empty()) {
+            if (dauntless_volumetric_nebulae::enabled() && g_nebula_volumetric_pass) {
                 // VOLUMETRIC (Modern VFX): raymarch the fbm field, blended
                 // into the HDR target, occluded by the scene depth texture.
                 const glm::mat4 inv_vp =
                     glm::inverse(cam.proj_matrix() * cam.view_matrix());
                 g_nebula_volumetric_pass->render(
                     cam, *g_pipeline, g_nebulae, g_lighting,
-                    g_hdr_target->color_texture(), g_hdr_target->depth_texture(),
+                    target.color_texture(), target.depth_texture(),
                     inv_vp, cam.eye, static_cast<float>(now));
             } else if (g_nebula_pass) {
                 g_nebula_pass->render(cam, *g_pipeline, g_nebulae);  // V1 faithful
@@ -703,25 +703,25 @@ void frame() {
                 g_nebula_wake_pass->render(cam, *g_pipeline, g_nebula_wake,
                                            static_cast<float>(now));
         }
-        if (!for_viewscreen && dauntless_nebula_lightning::enabled()
+        if (dauntless_nebula_lightning::enabled()
                 && g_nebula_godray_pass && !g_nebula_godrays.empty())
             g_nebula_godray_pass->render(cam, *g_pipeline, g_nebula_godrays,
-                                         g_hdr_target->color_texture());
-        if (!for_viewscreen && g_lens_flare_pass)
-            g_lens_flare_pass->render(g_lens_flares, cam, *g_pipeline, fw, fh, now);
+                                         target.color_texture());
+        if (g_lens_flare_pass)
+            g_lens_flare_pass->render(g_lens_flares, cam, *g_pipeline, vw, vh, now);
         if (g_torpedo_pass) g_torpedo_pass->render(g_torpedoes,    cam, *g_pipeline);
         if (g_phaser_pass)  g_phaser_pass ->render(g_phaser_beams, cam, *g_pipeline);
         if (g_phaser_pass)  g_phaser_pass ->render(g_tractor_beams, cam, *g_pipeline);
         if (g_hit_vfx_pass) g_hit_vfx_pass->render(g_hit_vfx, g_world, cam, *g_pipeline);
-        if (!for_viewscreen && dauntless_nebula_lightning::enabled()
+        if (dauntless_nebula_lightning::enabled()
                 && g_hull_discharge_pass && !g_hull_discharges.empty())
             g_hull_discharge_pass->render(cam, *g_pipeline, g_hull_discharges);
-        if (!for_viewscreen && g_shockwave_pass)
+        if (g_shockwave_pass)
             g_shockwave_pass->render(cam, g_shockwaves, *g_pipeline);
         // Venting jets: build per-frame descriptors from active breach events
         // and append to a combined emitter list for the particle pass.
         // Never mutate g_particle_emitters in place (Python-owned).
-        if (!for_viewscreen && g_particle_pass) {
+        if (g_particle_pass) {
             std::vector<renderer::ParticleEmitterDescriptor> all_emitters = g_particle_emitters;
             // Venting jets are hull-breach VFX; skip descriptor build entirely
             // when the hull-breach toggle is off (Python-owned g_particle_emitters
@@ -743,6 +743,12 @@ void frame() {
             }
             g_particle_pass->render(all_emitters, g_world, cam, *g_pipeline);
         }
+        // Cloak refraction: bend + chromatically disperse the scene behind each
+        // cloaking hull. Runs last (the target holds the fully lit scene and is
+        // still bound). Now shared by both the main view and the viewscreen RTT.
+        if (g_cloak_pass && !g_cloak_ships.empty())
+            g_cloak_pass->render(g_cloak_ships, g_world, cam, *g_pipeline, lookup,
+                                 static_cast<float>(now), g_lighting, ambient_scale);
     };
 
     // ── Sun shadow map (depth-only pre-pass) ───────────────────────────────
@@ -819,12 +825,14 @@ void frame() {
             scenegraph::Camera scam = g_scene_source.cam;
             scam.aspect = static_cast<float>(kViewscreenRttW)
                         / static_cast<float>(kViewscreenRttH);
-            render_space(scam, /*for_viewscreen=*/true);
+            render_space(scam, /*for_viewscreen=*/true, *g_viewscreen_hdr,
+                        kViewscreenRttW, kViewscreenRttH);
         } else {
             scenegraph::Camera vcam = g_camera;
             vcam.aspect = static_cast<float>(kViewscreenRttW)
                         / static_cast<float>(kViewscreenRttH);
-            render_space(vcam, /*for_viewscreen=*/true);
+            render_space(vcam, /*for_viewscreen=*/true, *g_viewscreen_hdr,
+                        kViewscreenRttW, kViewscreenRttH);
         }
         // Static/"snow" overlay over the feed (degraded-signal hail look).
         if (g_viewscreen_static.on && g_viewscreen_static_pass
@@ -854,16 +862,8 @@ void frame() {
     // bridge pass fills the screen either way). This also retires the old
     // "wasted space render in bridge mode".
     if (!viewer_mode && !bridge_active) {
-        render_space(g_camera, /*for_viewscreen=*/false);
+        render_space(g_camera, /*for_viewscreen=*/false, *g_hdr_target, fw, fh);
     }
-
-    // Cloak refraction: bend + chromatically disperse the scene behind each
-    // cloaking hull. Runs after render_space (the HDR target holds the lit
-    // scene and is still bound) and only in the real space view.
-    if (!viewer_mode && !bridge_active && g_cloak_pass && !g_cloak_ships.empty())
-        g_cloak_pass->render(g_cloak_ships, g_world, g_camera, *g_pipeline, lookup,
-                             static_cast<float>(now), g_lighting,
-                             dauntless_filmic::ambient_scale());
 
     if (g_hologram_pass && g_hologram_ship.active)
         g_hologram_pass->render(g_hologram_ship, g_world, g_camera, *g_pipeline, lookup);
