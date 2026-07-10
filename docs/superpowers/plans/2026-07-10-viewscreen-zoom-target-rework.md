@@ -396,3 +396,82 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 - [ ] **Step 3:** Tune `VS_ZOOM_FACTOR` if framing feels off (pure Python, no rebuild). `1.0` = same as forward.
 - [ ] **Step 4:** Remove the probe: delete `engine/dev_viewscreen_probe.py` + `tests/host/test_vzt_probe_registers.py`, remove the registration block from `engine/host_loop.py`.
 - [ ] **Step 5:** `scripts/check_tests.sh` → exit 0. Commit (explicit pathspec).
+
+---
+
+## Revision 3 — real fill framing + sharp sky under zoom
+
+Live-verify #2: `VS_ZOOM_FACTOR = 0.7` is far too weak; the target must fill ~60%
+of the viewscreen height. That demands large zoom, which exposes two *separate*
+sky problems (measured, not guessed):
+
+- **Texel blur (dominant).** The sky is a baked 1024²/face cubemap. One face =
+  90°. At a 6° FOV only ~68 texels cover the 640px-wide RTT → ~9× texel
+  magnification → smeared blobs.
+- **Star growth.** `backdrop.frag:proc_stars` places stars as **fixed angular
+  disks** (`g = dir*220.0`, radius `0.6` → angular radius ≈ 2.7 mrad). A star's
+  pixel radius is `2.7mrad ÷ (fov ÷ height)`, so it grows as FOV shrinks:
+  ~2.8 px at 20°/360px (identical to the main view at 60°/1080px — which is why
+  the forward feed never blobbed), but ~9.3 px at 6°/360px.
+
+Raising the RTT resolution does **not** help star growth (numerator and
+denominator both scale). Both fixes below are required.
+
+### Task R5 — native + shader: sharp sky for the zoomed viewscreen
+
+**Files:** `native/src/renderer/shaders/backdrop.frag`, `native/src/renderer/backdrop_pass.{h,cc}`, `native/src/host/host_bindings.cc`
+
+1. **Shader** (`backdrop.frag`): add `uniform float u_star_scale;` (semantic: 1.0 = current behaviour). In `proc_stars`, scale the disk radius:
+   `float core = present * smoothstep(0.6 * u_star_scale, 0.0, d);`
+   Keeping the star's angular radius proportional to the FOV holds its *pixel* size roughly constant. Apply to both `proc_stars` calls (the scale lives inside the function, so this is automatic).
+2. **`BackdropPass::render`** gains a trailing `float star_scale = 1.0f` parameter, forwarded through `draw_backdrops` to `shader.set_float("u_star_scale", star_scale)`. `render_cubemap` is untouched (the bake always uses 1.0).
+3. **`host_bindings.cc`**: give the `render_space` lambda a third parameter `bool sharp_sky = false`. When `sharp_sky` is true, bypass the baked cubemap and call `g_backdrop_pass->render(g_backdrops, cam, *g_pipeline, sky_procedural, now, star_scale)` where
+   `star_scale = clamp(cam.fov_y_rad / radians(60.0f), 0.15f, 1.0f)`.
+   Pass `sharp_sky=true` **only** from the `g_scene_source.active` branch. The two existing call sites pass `false` and must be byte-identical.
+
+**Shader files changed → `cmake -B build -S .` reconfigure BEFORE `cmake --build build -j`.**
+
+Byte-identical guarantee: with `g_scene_source.active == false`, no call site passes `sharp_sky=true` and `u_star_scale` defaults to 1.0, so both the main view and the forward viewscreen feed render exactly as today.
+
+### Task R6 — python: adaptive fill framing
+
+**Files:** `engine/host_loop.py`, `tests/host/test_viewscreen_scene_feed.py`
+
+Replace `VS_ZOOM_FACTOR` with:
+
+```python
+VS_TARGET_FILL: float = 0.60          # target diameter as a fraction of viewscreen height
+VS_FOV_MIN: float = _math.radians(4.0)  # max-zoom clamp
+```
+
+Add, next to the resolver:
+
+```python
+def _viewscreen_fov(target, eye, forward_fov) -> float:
+    """Vertical FOV (radians) that makes `target` span VS_TARGET_FILL of the
+    viewscreen height. Never wider than the forward view (forward_fov is the
+    upper clamp); never tighter than VS_FOV_MIN. Degenerate inputs -> forward_fov.
+
+    Derivation: the target's diameter fraction of screen height is
+    (r/dist) / tan(fov/2); setting that to VS_TARGET_FILL gives
+    tan(fov/2) = (r/dist) / VS_TARGET_FILL."""
+    try:
+        loc = target.GetWorldLocation()
+        r = float(target.GetRadius())
+    except Exception:
+        return forward_fov
+    dx = loc.x - eye[0]; dy = loc.y - eye[1]; dz = loc.z - eye[2]
+    dist = _math.sqrt(dx * dx + dy * dy + dz * dz)
+    if dist <= 0.0 or r <= 0.0:
+        return forward_fov
+    fov = 2.0 * _math.atan((r / dist) / VS_TARGET_FILL)
+    return max(VS_FOV_MIN, min(forward_fov, fov))
+```
+
+The resolver's last line becomes:
+
+```python
+    return (eye, target, up, _viewscreen_fov(tgt, eye, forward_fov), VS_NEAR, VS_FAR)
+```
+
+Tests must cover: exact fill math in the unclamped band; clamp to `forward_fov` for a very close target; clamp to `VS_FOV_MIN` for a very distant one; degenerate (zero distance / zero radius) → `forward_fov`. Choose values that provably land in the unclamped band (verify the arithmetic; do not let a clamp silently satisfy a "matches formula" assertion).
