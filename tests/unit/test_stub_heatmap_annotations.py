@@ -77,6 +77,59 @@ def test_render_flags_regression_and_is_deterministic():
     assert "Regressed" in out1 and "Foo" in out1
 
 
+def test_build_rows_synthesizes_zero_hit_row_for_resolved_key_missing_from_merge():
+    # A stub marked resolved has zero hits in the current sidecar (e.g. after
+    # stub_hits.jsonl was reset) -- it must still produce a Resolved row.
+    merged = {"M": 1, "attr": {"Other\tThing": {"total": 4, "runs_seen": 1}}, "bool": {}}
+    last_seen = {"Other\tThing": 10.0}
+    resolved = {("Gone", "Stub"): "2026-07-12"}
+    rows = {(r["owner"], r["attr"]): r for r in
+            stub_heatmap.build_rows(merged, last_seen, resolved)}
+    assert ("Gone", "Stub") in rows
+    row = rows[("Gone", "Stub")]
+    assert row["status"] == "resolved"
+    assert row["total"] == 0
+    assert row["runs_seen"] == 0
+    assert row["last_seen"] is None
+
+
+def test_parse_existing_annotations_skips_unparseable_resolved_date(tmp_path):
+    md = "\n".join([
+        "## Resolved",
+        "",
+        "| owner | attr | markedResolvedOn | lastSeenOn |",
+        "|---|---|---|---|",
+        "| Bad | Row | notadate | — |",
+        "| Good | Row | 2026-07-11 | — |",
+        "",
+    ])
+    path = tmp_path / "heatmap.md"
+    path.write_text(md)
+    m, skipped = stub_heatmap.parse_existing_annotations(str(path))
+    assert ("Bad", "Row") not in m
+    assert m[("Good", "Row")] == "2026-07-11"
+    assert skipped == 1
+
+
+def test_main_end_to_end_resolved_survives_sidecar_reset(tmp_path):
+    import json
+    sidecar = tmp_path / "hits.jsonl"
+    out = tmp_path / "heatmap.md"
+    # A prior heatmap marks Foo.Bar resolved.
+    out.write_text(
+        "## Resolved\n\n"
+        "| owner | attr | markedResolvedOn | lastSeenOn |\n"
+        "|---|---|---|---|\n"
+        "| Foo | Bar | 2026-07-01 |  |\n"
+    )
+    # The reset sidecar has no hits for Foo.Bar at all, only an unrelated stub.
+    with open(sidecar, "w") as f:
+        f.write(json.dumps({"t": 10.0, "attr_hits": {"Other\tThing": 1}, "bool_sites": {}}) + "\n")
+    assert stub_heatmap.main(["--sidecar", str(sidecar), "--out", str(out)]) == 0
+    final = out.read_text()
+    assert "| Foo | Bar | 2026-07-01 |" in final
+
+
 def test_main_end_to_end_regression_across_regen(tmp_path):
     import json
     sidecar = tmp_path / "hits.jsonl"

@@ -143,7 +143,10 @@ def parse_existing_annotations(path: str) -> "tuple[dict, int]":
     Reads any table whose header has 'owner', 'attr', and 'markedresolvedon'
     columns (the Regressed + Resolved sections). Missing file or old-format
     file -> ({}, 0). Rows with a short/garbled cell count are skipped and
-    counted; a single bad row never drops the rest."""
+    counted; a single bad row never drops the rest. A non-empty
+    markedResolvedOn cell (not '—'/'-') that fails to parse as a date (a
+    human typo) is also counted as skipped and excluded from the map, rather
+    than being silently accepted and misclassified as 'open' downstream."""
     try:
         with open(path) as f:
             lines = f.read().splitlines()
@@ -166,7 +169,10 @@ def parse_existing_annotations(path: str) -> "tuple[dict, int]":
                         attr = cells[cols["attr"]].strip()
                         marked = cells[cols["markedresolvedon"]].strip()
                         if owner and attr and marked and marked not in ("—", "-"):
-                            out[(owner, attr)] = marked
+                            if parse_resolved_date(marked) is None:
+                                skipped += 1
+                            else:
+                                out[(owner, attr)] = marked
                     except Exception:
                         skipped += 1
                     j += 1
@@ -180,15 +186,27 @@ def parse_existing_annotations(path: str) -> "tuple[dict, int]":
 
 
 def build_rows(merged: dict, last_seen: dict, resolved_map: dict) -> "list":
-    """One row dict per attr key, classified and carrying its annotation."""
+    """One row dict per attr key, classified and carrying its annotation.
+
+    Unions the current merge keys with the annotated (owner, attr) keys, so a
+    stub marked resolved that has zero hits in the current sidecar (e.g. after
+    stub_hits.jsonl was reset) still gets a synthesized zero-hit row and
+    survives regeneration instead of silently dropping out of the file."""
+    keys = set(merged["attr"].keys())
+    for owner, attr in resolved_map:
+        keys.add(owner + "\t" + attr)
     rows = []
-    for key, v in merged["attr"].items():
+    for key in keys:
         owner, _, attr = key.partition("\t")
         marked = resolved_map.get((owner, attr), "")
-        ls = last_seen.get(key)
+        v = merged["attr"].get(key)
+        if v is None:
+            total, runs_seen, ls = 0, 0, None
+        else:
+            total, runs_seen, ls = v["total"], v["runs_seen"], last_seen.get(key)
         rows.append({
             "owner": owner, "attr": attr,
-            "total": v["total"], "runs_seen": v["runs_seen"],
+            "total": total, "runs_seen": runs_seen,
             "last_seen": ls, "marked": marked,
             "status": classify(ls, marked),
         })
