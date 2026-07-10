@@ -28,6 +28,23 @@ def test_load_runs_skips_and_counts_malformed(tmp_path):
     assert skipped == 2
 
 
+def test_load_runs_skips_non_dict_attr_hits_value(tmp_path):
+    path = tmp_path / "hits.jsonl"
+    with open(path, "w") as f:
+        f.write(json.dumps({"attr_hits": ["x"]}) + "\n")  # valid JSON, dict rec,
+        # but attr_hits value is a list, not a dict -> must be rejected here
+        f.write(json.dumps({"attr_hits": {"A\tx": 1}, "bool_sites": {}}) + "\n")
+    runs, skipped = stub_heatmap.load_runs(str(path))
+    assert skipped == 1
+    assert len(runs) == 1
+    assert runs[0]["attr_hits"] == {"A\tx": 1}
+    # confirm merge/saturation only ever see the surviving, well-shaped run
+    m = stub_heatmap.merge(runs)
+    assert m["M"] == 1
+    assert m["attr"]["A\tx"] == {"total": 1, "runs_seen": 1}
+    assert stub_heatmap.saturation(runs) == [1]
+
+
 def test_merge_sums_hits_and_counts_coverage(tmp_path):
     path = _write(tmp_path, [
         {"attr_hits": {"TorpedoTube\tGetMaxCharge": 100}, "bool_sites": {"f.py:1": 5}},

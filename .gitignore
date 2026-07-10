@@ -323,7 +323,7 @@ cache/
 /Options.cfg
 /BCTickLog.cfg
 /Keybindings.cfg
-stub_hits.jsonl
+/stub_hits.jsonl
 
 # EXCEPTIONS — force-include these even if caught by rules above
 # =============================================================================

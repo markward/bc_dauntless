@@ -31,6 +31,9 @@ def test_render_has_no_wallclock_now(monkeypatch):
     monkeypatch.setattr(_t, "time", lambda: 9_999_999_999.0)
     merged = {"M": 1, "attr": {"A\tx": {"total": 1, "runs_seen": 1}}, "bool": {}}
     out = stub_heatmap.render(merged, [1], skipped=0, date_range=(0.0, 0.0))
+    # positive: the date shown must come from date_range (epoch 0), not the clock
+    assert "1970-01-01 00:00 UTC" in out
+    # negative: the monkeypatched wall-clock sentinel must never leak in
     assert "9999999999" not in out
 
 

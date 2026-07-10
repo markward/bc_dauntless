@@ -15,7 +15,8 @@ from collections import Counter
 
 def load_runs(path: str) -> "tuple[list, int]":
     """Return (runs, skipped). Missing file -> ([], 0). Blank lines ignored;
-    lines that don't parse to a dict with 'attr_hits' are skipped and counted."""
+    lines that don't parse to a dict with a dict-valued 'attr_hits' are
+    skipped and counted."""
     try:
         with open(path) as f:
             raw = f.read().splitlines()
@@ -32,7 +33,7 @@ def load_runs(path: str) -> "tuple[list, int]":
         except Exception:
             skipped += 1
             continue
-        if not isinstance(rec, dict) or "attr_hits" not in rec:
+        if not isinstance(rec, dict) or not isinstance(rec.get("attr_hits"), dict):
             skipped += 1
             continue
         runs.append(rec)
@@ -106,7 +107,7 @@ def render(merged: dict, series: "list", skipped: int, date_range) -> str:
         header += " (%s .. %s)" % (_fmt_ts(date_range[0]), _fmt_ts(date_range[1]))
     header += ". Distinct stubs: %d." % len(merged["attr"])
     if skipped:
-        header += " Skipped %d malformed line(s)." % skipped
+        header += " Skipped %d malformed line%s." % (skipped, "" if skipped == 1 else "s")
     lines.append(header)
     lines.append("")
     lines.append("_Observation only — the stubs_known.txt ledger (Piece 2) is separate._")
