@@ -267,6 +267,13 @@ constexpr int kViewscreenRttH = 360;
 struct CommSource { bool active = false; std::uint32_t set_id = 0; scenegraph::Camera cam; };
 CommSource g_comm_source;
 
+// Active scene source: when set (and no comm source is active), frame() renders
+// the main exterior scene from this camera into the viewscreen RTT instead of
+// the fixed forward g_camera feed. Drives ViewscreenZoomTarget (host_loop
+// _viewscreen_scene_feed). active == false → byte-identical forward feed.
+struct SceneSource { bool active = false; scenegraph::Camera cam; };
+SceneSource g_scene_source;
+
 // Viewscreen static/"snow" overlay: composited over the viewscreen RTT after
 // the feed (comm or forward) is rendered. on/intensity are pushed per frame by
 // host_loop (intensity = SDK fMin/fMax flicker); textures come from the
@@ -808,6 +815,11 @@ void frame() {
             g_bridge_pass->render(g_world, ccam, *g_pipeline, lookup,
                                   g_bridge_lighting, scenegraph::Pass::Comm,
                                   g_comm_source.set_id);
+        } else if (g_scene_source.active) {
+            scenegraph::Camera scam = g_scene_source.cam;
+            scam.aspect = static_cast<float>(kViewscreenRttW)
+                        / static_cast<float>(kViewscreenRttH);
+            render_space(scam, /*for_viewscreen=*/true);
         } else {
             scenegraph::Camera vcam = g_camera;
             vcam.aspect = static_cast<float>(kViewscreenRttW)
@@ -1714,6 +1726,23 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("up"), py::arg("fov_y_rad"), py::arg("near"), py::arg("far"));
     m.def("clear_viewscreen_comm_source",
           []() { g_comm_source.active = false; });
+    m.def("set_viewscreen_scene_source",
+          [](std::tuple<float,float,float> eye,
+             std::tuple<float,float,float> target,
+             std::tuple<float,float,float> up,
+             float fov_y_rad, float near, float far) {
+              g_scene_source.active = true;
+              g_scene_source.cam.eye    = {std::get<0>(eye),    std::get<1>(eye),    std::get<2>(eye)};
+              g_scene_source.cam.target = {std::get<0>(target), std::get<1>(target), std::get<2>(target)};
+              g_scene_source.cam.up     = {std::get<0>(up),     std::get<1>(up),     std::get<2>(up)};
+              g_scene_source.cam.fov_y_rad = fov_y_rad;
+              g_scene_source.cam.near = near;
+              g_scene_source.cam.far  = far;
+          },
+          py::arg("eye"), py::arg("target"), py::arg("up"),
+          py::arg("fov_y_rad"), py::arg("near"), py::arg("far"));
+    m.def("clear_viewscreen_scene_source",
+          []() { g_scene_source.active = false; });
     m.def("set_viewscreen_static_source",
           [](std::vector<std::string> paths) {
               if (g_viewscreen_static_pass)
