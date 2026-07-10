@@ -38,11 +38,10 @@ def test_load_runs_skips_non_dict_attr_hits_value(tmp_path):
     assert skipped == 1
     assert len(runs) == 1
     assert runs[0]["attr_hits"] == {"A\tx": 1}
-    # confirm merge/saturation only ever see the surviving, well-shaped run
+    # confirm merge only ever sees the surviving, well-shaped run
     m = stub_heatmap.merge(runs)
     assert m["M"] == 1
     assert m["attr"]["A\tx"] == {"total": 1, "runs_seen": 1}
-    assert stub_heatmap.saturation(runs) == [1]
 
 
 def test_merge_sums_hits_and_counts_coverage(tmp_path):
@@ -56,19 +55,3 @@ def test_merge_sums_hits_and_counts_coverage(tmp_path):
     assert m["attr"]["TorpedoTube\tGetMaxCharge"] == {"total": 150, "runs_seen": 2}
     assert m["attr"]["A\tx"] == {"total": 3, "runs_seen": 1}
     assert m["bool"]["f.py:1"] == {"total": 5, "runs_seen": 1}
-
-
-def test_saturation_counts_new_pairs_per_run(tmp_path):
-    path = _write(tmp_path, [
-        {"attr_hits": {"A\tx": 1, "B\ty": 1}, "bool_sites": {}},   # 2 new
-        {"attr_hits": {"A\tx": 1}, "bool_sites": {}},              # 0 new
-        {"attr_hits": {"C\tz": 1}, "bool_sites": {}},              # 1 new
-    ])
-    runs, _ = stub_heatmap.load_runs(path)
-    assert stub_heatmap.saturation(runs) == [2, 0, 1]
-
-
-def test_saturation_verdict_plateau_vs_discovering():
-    assert "SATURATED" in stub_heatmap.saturation_verdict([5, 2, 0, 0, 0])
-    assert "NOT" in stub_heatmap.saturation_verdict([5, 2, 0, 0, 4])
-    assert "NOT" in stub_heatmap.saturation_verdict([1])  # too few runs to call saturated

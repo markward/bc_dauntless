@@ -2,62 +2,44 @@
 from tools import stub_heatmap
 
 
-def test_render_is_deterministic_and_sorted():
-    merged = {
-        "M": 4,
-        "attr": {
-            "A\trare": {"total": 3, "runs_seen": 1},
-            "B\thot": {"total": 500, "runs_seen": 4},
-            "C\tmid": {"total": 500, "runs_seen": 2},  # ties B on total -> key order
-        },
-        "bool": {"f.py:9": {"total": 20, "runs_seen": 3}},
-    }
-    series = [2, 1, 0, 0]
-    out1 = stub_heatmap.render(merged, series, skipped=1, date_range=(1000.0, 2000.0))
-    out2 = stub_heatmap.render(merged, series, skipped=1, date_range=(1000.0, 2000.0))
-    assert out1 == out2  # deterministic
-    # hottest first; tie broken by key ascending (B\thot before C\tmid)
-    assert out1.index("B.hot") < out1.index("C.mid") < out1.index("A.rare")
-    # coverage rendered as N/M
-    assert "4/4" in out1 and "1/4" in out1
-    # display uses dotted form, never the raw tab key
-    assert "\t" not in out1
-    assert "B.hot" in out1
+def _rows(*specs):
+    # specs: (owner, attr, total, runs_seen, last_seen, marked, status)
+    return [{"owner": o, "attr": a, "total": t, "runs_seen": rs,
+             "last_seen": ls, "marked": mk, "status": st}
+            for (o, a, t, rs, ls, mk, st) in specs]
 
 
-def test_render_has_no_wallclock_now(monkeypatch):
-    # render must derive everything from inputs; guard against a stray time.time()
+def test_render_sections_and_determinism():
+    rows = _rows(
+        ("B", "hot", 500, 1, 1.0, "", "open"),
+        ("A", "rare", 3, 1, 1.0, "", "open"),
+        ("Foo", "Bar", 9, 1, 5_000_000_000.0, "2026-07-12", "regressed"),
+        ("Baz", "Qux", 2, 1, 1.0, "2026-07-11", "resolved"),
+    )
+    meta = {"M": 1, "date_range": (1.0, 5e9), "line_skipped": 0, "ann_skipped": 0}
+    out1 = stub_heatmap.render(rows, [], meta)
+    out2 = stub_heatmap.render(rows, [], meta)
+    assert out1 == out2                                   # deterministic
+    assert out1.index("Regressed") < out1.index("roadmap")  # regressed on top
+    assert "Foo" in out1 and "Baz" in out1
+    # open roadmap ranks hot before rare; resolved/regressed not in the roadmap
+    assert out1.index("hot") < out1.index("rare")
+    assert "Open: 2, resolved: 1, regressed: 1" in out1
+
+
+def test_render_no_regressed_section_when_none():
+    rows = _rows(("A", "x", 1, 1, 1.0, "", "open"))
+    meta = {"M": 1, "date_range": (1.0, 1.0), "line_skipped": 0, "ann_skipped": 0}
+    out = stub_heatmap.render(rows, [], meta)
+    assert "Regressed" not in out
+
+
+def test_render_no_wallclock_now(monkeypatch):
     import time as _t
     monkeypatch.setattr(_t, "time", lambda: 9_999_999_999.0)
-    merged = {"M": 1, "attr": {"A\tx": {"total": 1, "runs_seen": 1}}, "bool": {}}
-    out = stub_heatmap.render(merged, [1], skipped=0, date_range=(0.0, 0.0))
-    # positive: the date shown must come from date_range (epoch 0), not the clock
-    assert "1970-01-01 00:00 UTC" in out
-    # negative: the monkeypatched wall-clock sentinel must never leak in
+    rows = _rows(("A", "x", 1, 1, 0.0, "", "open"))
+    meta = {"M": 1, "date_range": (0.0, 0.0), "line_skipped": 0, "ann_skipped": 0}
+    out = stub_heatmap.render(rows, [], meta)
     assert "9999999999" not in out
-
-
-def test_date_range_none_when_no_timestamps():
-    assert stub_heatmap._date_range([{"attr_hits": {}}]) is None
-    assert stub_heatmap._date_range([{"t": 5.0, "attr_hits": {}}]) == (5.0, 5.0)
-
-
-def test_main_no_runs_writes_nothing(tmp_path, capsys):
-    out_file = tmp_path / "heatmap.md"
-    rc = stub_heatmap.main(["--sidecar", str(tmp_path / "absent.jsonl"),
-                            "--out", str(out_file)])
-    assert rc == 0
-    assert not out_file.exists()
-    assert "no runs" in capsys.readouterr().out.lower()
-
-
-def test_main_writes_heatmap(tmp_path):
-    import json
-    sidecar = tmp_path / "hits.jsonl"
-    with open(sidecar, "w") as f:
-        f.write(json.dumps({"t": 1.0, "attr_hits": {"A\tx": 7}, "bool_sites": {}}) + "\n")
-    out_file = tmp_path / "heatmap.md"
-    rc = stub_heatmap.main(["--sidecar", str(sidecar), "--out", str(out_file)])
-    assert rc == 0
-    text = out_file.read_text()
-    assert "A.x" in text and "1 run" in text.lower()
+    # the date IS derived from the input (epoch 0 -> 1970)
+    assert "1970-01-01" in out

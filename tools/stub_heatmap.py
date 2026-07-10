@@ -111,27 +111,6 @@ def merge(runs: "list") -> dict:
     }
 
 
-def saturation(runs: "list") -> "list":
-    """New attr_hits pairs introduced by each run, in append order."""
-    seen = set()
-    series = []
-    for rec in runs:
-        keys = set((rec.get("attr_hits") or {}).keys())
-        series.append(len(keys - seen))
-        seen |= keys
-    return series
-
-
-def saturation_verdict(series: "list", window: int = 3) -> str:
-    """Plain-English plateau assessment for the 'ready to baseline?' signal."""
-    if not series:
-        return "no runs accumulated"
-    tail = series[-window:]
-    if len(series) >= window and all(n == 0 for n in tail):
-        return "coverage appears SATURATED (last %d runs introduced no new stubs)" % len(tail)
-    return "coverage NOT yet saturated (last run introduced %d new stubs)" % series[-1]
-
-
 def _date_range(runs: "list"):
     ts = [r["t"] for r in runs if isinstance(r.get("t"), (int, float))]
     if not ts:
@@ -144,49 +123,129 @@ def _fmt_ts(t: float) -> str:
     return time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(t))
 
 
-def _sorted_items(section: dict):
-    # count descending, then key ascending for stable, deterministic ties
-    return sorted(section.items(), key=lambda kv: (-kv[1]["total"], kv[0]))
+def _split_row(line: str) -> "list":
+    """Cells of a markdown table row; outer pipes dropped, inner cells kept raw."""
+    parts = line.split("|")
+    if parts and parts[0].strip() == "":
+        parts = parts[1:]
+    if parts and parts[-1].strip() == "":
+        parts = parts[:-1]
+    return parts
 
 
-def render(merged: dict, series: "list", skipped: int, date_range) -> str:
-    M = merged["M"]
-    lines = []
-    lines.append("# Stub Telemetry Heatmap")
-    lines.append("")
+def _is_separator(line: str) -> bool:
+    return line.strip().startswith("|") and all(ch in "-|: " for ch in line)
+
+
+def parse_existing_annotations(path: str) -> "tuple[dict, int]":
+    """Extract {(owner, attr): markedResolvedOn} from an existing heatmap.
+
+    Reads any table whose header has 'owner', 'attr', and 'markedresolvedon'
+    columns (the Regressed + Resolved sections). Missing file or old-format
+    file -> ({}, 0). Rows with a short/garbled cell count are skipped and
+    counted; a single bad row never drops the rest."""
+    try:
+        with open(path) as f:
+            lines = f.read().splitlines()
+    except FileNotFoundError:
+        return {}, 0
+    out: dict = {}
+    skipped = 0
+    i, n = 0, len(lines)
+    while i < n:
+        line = lines[i]
+        if line.strip().startswith("|") and i + 1 < n and _is_separator(lines[i + 1]):
+            header = [c.strip().lower() for c in _split_row(line)]
+            cols = {name: idx for idx, name in enumerate(header)}
+            j = i + 2
+            if all(c in cols for c in ("owner", "attr", "markedresolvedon")):
+                while j < n and lines[j].strip().startswith("|") and not _is_separator(lines[j]):
+                    cells = _split_row(lines[j])
+                    try:
+                        owner = cells[cols["owner"]].strip()
+                        attr = cells[cols["attr"]].strip()
+                        marked = cells[cols["markedresolvedon"]].strip()
+                        if owner and attr and marked and marked not in ("—", "-"):
+                            out[(owner, attr)] = marked
+                    except Exception:
+                        skipped += 1
+                    j += 1
+            else:
+                while j < n and lines[j].strip().startswith("|") and not _is_separator(lines[j]):
+                    j += 1
+            i = j
+            continue
+        i += 1
+    return out, skipped
+
+
+def build_rows(merged: dict, last_seen: dict, resolved_map: dict) -> "list":
+    """One row dict per attr key, classified and carrying its annotation."""
+    rows = []
+    for key, v in merged["attr"].items():
+        owner, _, attr = key.partition("\t")
+        marked = resolved_map.get((owner, attr), "")
+        ls = last_seen.get(key)
+        rows.append({
+            "owner": owner, "attr": attr,
+            "total": v["total"], "runs_seen": v["runs_seen"],
+            "last_seen": ls, "marked": marked,
+            "status": classify(ls, marked),
+        })
+    return rows
+
+
+def _ls(epoch) -> str:
+    return _fmt_ts(epoch) if isinstance(epoch, (int, float)) else "—"
+
+
+def render(attr_rows: "list", bool_rows: "list", meta: dict) -> str:
+    M = meta["M"]
+    regressed = [r for r in attr_rows if r["status"] == "regressed"]
+    openr = [r for r in attr_rows if r["status"] == "open"]
+    resolved = [r for r in attr_rows if r["status"] == "resolved"]
+    regressed.sort(key=lambda r: (-r["total"], r["owner"], r["attr"]))
+    openr.sort(key=lambda r: (-r["total"], r["owner"], r["attr"]))
+    resolved.sort(key=lambda r: (r["marked"], r["owner"], r["attr"]))
+
+    L = ["# Stub Telemetry Heatmap", ""]
     run_word = "run" if M == 1 else "runs"
     header = "Accumulated from **%d %s**" % (M, run_word)
-    if date_range is not None:
-        header += " (%s .. %s)" % (_fmt_ts(date_range[0]), _fmt_ts(date_range[1]))
-    header += ". Distinct stubs: %d." % len(merged["attr"])
-    if skipped:
-        header += " Skipped %d malformed line%s." % (skipped, "" if skipped == 1 else "s")
-    lines.append(header)
-    lines.append("")
-    lines.append("_Observation only — the stubs_known.txt ledger (Piece 2) is separate._")
-    lines.append("")
-    lines.append("## Coverage saturation")
-    lines.append("")
-    lines.append("New stubs introduced per run (append order): %s" % (series or "-"))
-    lines.append("")
-    lines.append("**%s**" % saturation_verdict(series))
-    lines.append("")
-    lines.append("## Unimplemented-attribute roadmap")
-    lines.append("")
-    lines.append("| rank | owner.attr | total hits | coverage |")
-    lines.append("|---|---|---|---|")
-    for i, (key, v) in enumerate(_sorted_items(merged["attr"]), 1):
-        lines.append("| %d | %s | %d | %d/%d |"
-                     % (i, key.replace("\t", ".", 1), v["total"], v["runs_seen"], M))
-    lines.append("")
-    lines.append("## Boolean-test call sites (truthiness risk)")
-    lines.append("")
-    lines.append("| rank | file:line | total hits | coverage |")
-    lines.append("|---|---|---|---|")
-    for i, (key, v) in enumerate(_sorted_items(merged["bool"]), 1):
-        lines.append("| %d | %s | %d | %d/%d |" % (i, key, v["total"], v["runs_seen"], M))
-    lines.append("")
-    return "\n".join(lines)
+    if meta.get("date_range") is not None:
+        header += " (%s .. %s)" % (_fmt_ts(meta["date_range"][0]), _fmt_ts(meta["date_range"][1]))
+    header += ". Open: %d, resolved: %d, regressed: %d." % (len(openr), len(resolved), len(regressed))
+    if meta.get("line_skipped"):
+        header += " Skipped %d malformed sidecar line(s)." % meta["line_skipped"]
+    if meta.get("ann_skipped"):
+        header += " Skipped %d malformed annotation row(s)." % meta["ann_skipped"]
+    L += [header, ""]
+    L += ["_Regression check: a resolved stub hit again (lastSeenOn > markedResolvedOn) is flagged below._", ""]
+
+    if regressed:
+        L += ["## ⚠️ Regressed (hit again after being marked resolved)", ""]
+        L += ["| owner | attr | markedResolvedOn | lastSeenOn | hits |", "|---|---|---|---|---|"]
+        for r in regressed:
+            L.append("| %s | %s | %s | %s | %d |" % (r["owner"], r["attr"], r["marked"], _ls(r["last_seen"]), r["total"]))
+        L.append("")
+
+    L += ["## Unimplemented-attribute roadmap (open)", ""]
+    L += ["| rank | owner | attr | total hits | coverage | lastSeenOn |", "|---|---|---|---|---|---|"]
+    for i, r in enumerate(openr, 1):
+        L.append("| %d | %s | %s | %d | %d/%d | %s |" % (i, r["owner"], r["attr"], r["total"], r["runs_seen"], M, _ls(r["last_seen"])))
+    L.append("")
+
+    L += ["## Resolved", ""]
+    L += ["| owner | attr | markedResolvedOn | lastSeenOn |", "|---|---|---|---|"]
+    for r in resolved:
+        L.append("| %s | %s | %s | %s |" % (r["owner"], r["attr"], r["marked"], _ls(r["last_seen"])))
+    L.append("")
+
+    L += ["## Boolean-test call sites (truthiness risk)", ""]
+    L += ["| rank | file:line | total hits | coverage |", "|---|---|---|---|"]
+    for i, b in enumerate(sorted(bool_rows, key=lambda b: (-b["total"], b["site"])), 1):
+        L.append("| %d | %s | %d | %d/%d |" % (i, b["site"], b["total"], b["runs_seen"], M))
+    L.append("")
+    return "\n".join(L)
 
 
 def main(argv=None) -> int:
@@ -194,15 +253,24 @@ def main(argv=None) -> int:
     p.add_argument("--sidecar", default="stub_hits.jsonl")
     p.add_argument("--out", default="docs/stub_heatmap.md")
     args = p.parse_args(argv)
-    runs, skipped = load_runs(args.sidecar)
+    runs, line_skipped = load_runs(args.sidecar)
     if not runs:
         print("no runs accumulated yet (sidecar: %s)" % args.sidecar)
         return 0
+    resolved_map, ann_skipped = parse_existing_annotations(args.out)
     merged = merge(runs)
-    text = render(merged, saturation(runs), skipped, _date_range(runs))
+    last_seen = last_seen_by_key(runs)
+    attr_rows = build_rows(merged, last_seen, resolved_map)
+    bool_rows = [{"site": k, "total": v["total"], "runs_seen": v["runs_seen"]}
+                 for k, v in merged["bool"].items()]
+    meta = {"M": merged["M"], "date_range": _date_range(runs),
+            "line_skipped": line_skipped, "ann_skipped": ann_skipped}
+    text = render(attr_rows, bool_rows, meta)
     with open(args.out, "w") as f:
         f.write(text)
-    print("wrote %s (%d runs, %d distinct stubs)" % (args.out, merged["M"], len(merged["attr"])))
+    n_reg = sum(1 for r in attr_rows if r["status"] == "regressed")
+    print("wrote %s (%d runs, %d stubs, %d regressed)"
+          % (args.out, merged["M"], len(attr_rows), n_reg))
     return 0
 
 
