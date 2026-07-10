@@ -372,8 +372,9 @@ class CameraObjectClass(_LoudStub):
     # Real replacement for the _LoudStub no-ops so the SDK's Camera.NewMode
     # (sdk/Build/scripts/Camera.py) can push live modes. The mode's Update()
     # then drives the rendered exterior view (host_loop._active_cutscene_camera).
-    # AddModeHierarchy is a no-op except for the ViewscreenZoomTarget
-    # engagement seam below — the full mode-fallback tree is out of v1 scope.
+    # AddModeHierarchy stays a no-op — the mode-fallback tree is out of scope
+    # (the viewscreen zoom is resolved in host_loop._viewscreen_scene_feed, not
+    # via a recorded hierarchy).
 
     _MODE_FACTORY = {
         "Locked": ("LockedMode", {}),

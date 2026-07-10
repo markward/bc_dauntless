@@ -111,3 +111,25 @@ def test_mission_watch_overrides_player_target(wired):
     # eye is near `other` (0, 800, 0), not near the player's combat target.
     assert eye[1] > 400.0
     assert abs(eye[0]) < 1e-6
+
+
+def test_changing_player_target_overwrites_mission_watch(wired):
+    # BC's PlayerTargetChanged re-points ViewscreenZoomTarget on every target
+    # change (last-writer-wins). Our `_vs_last_player_target` compare stands in
+    # for it: a mission watch persists until the player picks a DIFFERENT target.
+    combat = _Ship(_Pt(500.0, 0.0, 0.0), radius=2.0)
+    watched = _Ship(_Pt(0.0, 800.0, 0.0), radius=2.0)
+    new_target = _Ship(_Pt(0.0, 0.0, 900.0), radius=2.0)
+    player = _Ship(_Pt(0.0, 0.0, 0.0), target=combat)
+    # settle the memory on `combat`, then a mission watch overrides to `watched`
+    host_loop._viewscreen_scene_feed(player, 0.61)
+    wired.GetNamedCameraMode("ViewscreenZoomTarget").SetAttrIDObject("Target", watched)
+    out = host_loop._viewscreen_scene_feed(player, 0.61)
+    assert out[0][1] > 400.0                       # framing `watched` (+Y)
+    # player retargets -> the watch must be overwritten, framing the new target
+    player._target = new_target
+    out = host_loop._viewscreen_scene_feed(player, 0.61)
+    eye = out[0]
+    assert eye[2] > 400.0                           # now framing new_target (+Z)
+    assert abs(eye[0]) < 1e-6
+    assert abs(eye[1]) < 1e-6
