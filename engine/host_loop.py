@@ -5309,16 +5309,6 @@ def run(mission_name: Optional[str] = None,
                 "Ship Property Viewer", ship_property_viewer.open,
             )
 
-            # VZT live-verify probe — fires MissionLib.ViewscreenWatchObject
-            # on a non-target ship in the player's set, so the mission-driven
-            # ViewscreenZoomTarget override is visibly distinct from the
-            # auto-focus-on-target behaviour when exercised from QuickBattle
-            # without reaching an E-series ViewscreenWatch beat. Throwaway;
-            # remove once live-verified (see project_viewscreen_zoom_target).
-            from engine.dev_viewscreen_probe import watch_non_target_ship
-            dev_mode.register_dev_pause_menu_entry(
-                "VZT: Watch Non-Target Ship", watch_non_target_ship)
-
         # AI Inspector — dev-only live AI-tree inspector modal. Registers its
         # pause-menu row + the panel into `registry` (created below). Done via
         # a helper so the registration is unit-testable; a no-op returning
