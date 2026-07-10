@@ -26,6 +26,6 @@ CAM_MAX_RADII   = 30.0
 # Tracking, and ZoomTarget), nudging the camera further back by default.
 # One click = ÷ the mode's per-notch zoom factor (~0.9), so N clicks ≈
 # ×(1/0.9)^N. Applied on top of each mode's base default distance.
-DEFAULT_ZOOM_OUT_CLICKS = 6
+DEFAULT_ZOOM_OUT_CLICKS = 5
 
 from engine.cameras.director import CameraMode, _CameraDirector  # noqa: E402
