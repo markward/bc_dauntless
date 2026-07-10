@@ -49,11 +49,23 @@ def maybe_emit(ship, point, normal, weapon_type, ship_instances=None) -> None:
 
 
 def _emit_smoke(ship, body_point, body_normal) -> None:
-    """Fire the SDK CreateSmokeHigh recipe (Effects.py fSize=0.3 hull puff),
-    body-frame anchored and attached to the ship so the puff glues to the moving
-    hull and self-expires (~10s) through the existing particle pipeline."""
+    """Fire the SDK CreateSmokeHigh recipe (Effects.py fSize=0.3 hull puff).
+
+    The emitter is body-frame anchored to the ship, so it tracks the impact point
+    on the moving hull; the puffs themselves are released into WORLD space, so a
+    moving ship leaves a trail rather than carrying the cloud with it.
+
+    Stock expresses that split by emitting from the ship node (`pEmitFrom`) while
+    attaching the particle geometry to the set's world-space effect root
+    (`pAttachTo = pSet.GetEffectRoot()`). Our particle pass has no attach-root
+    concept: it encodes "particle lives in world space" as `inherit == 0`, which
+    enables the `- emit_vel_world * (1 - inherit) * age` back-projection in
+    particle_pass.cc. CreateSmokeHigh's own `SetInheritsVelocity(1)` cancels that
+    term and pins every puff to the ship's current transform, so override it.
+    """
     import Effects
     fLife = 2.0 + App.g_kSystemWrapper.GetRandomNumber(30) / 10.0
     action = Effects.CreateSmokeHigh(
         0.2, fLife, 0.3, ship, body_point, body_normal, ship)
+    action.GetController().SetInheritsVelocity(0)
     action.Start()

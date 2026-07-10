@@ -27,7 +27,11 @@ def captured(monkeypatch):
         box.update(dict(fVelocity=fVelocity, fLife=fLife, fSize=fSize,
                         emit_from=pEmitFrom, emit_pos=kEmitPos, emit_dir=kEmitDir,
                         attach_to=pAttachTo))
-        return types.SimpleNamespace(Start=lambda: box.__setitem__("started", True))
+        controller = types.SimpleNamespace(
+            SetInheritsVelocity=lambda on: box.__setitem__("inherit", on))
+        return types.SimpleNamespace(
+            GetController=lambda: controller,
+            Start=lambda: box.__setitem__("started", True))
 
     fake_effects = types.SimpleNamespace(CreateSmokeHigh=fake_create)
     monkeypatch.setitem(__import__("sys").modules, "Effects", fake_effects)
@@ -60,6 +64,7 @@ def test_torpedo_emits_below_threshold(captured, monkeypatch):
     assert captured["emit_pos"] == (0.1, 0.2, 0.3)      # body-frame anchor
     assert captured["emit_dir"] == (0.0, 0.0, 1.0)
     assert captured["emit_from"] == "ship"
+    assert captured["inherit"] == 0                     # released into world space
 
 
 def test_torpedo_silent_at_threshold(captured, monkeypatch):
@@ -104,3 +109,24 @@ def test_ship_instances_none_skips(captured, monkeypatch):
     hull_hit_smoke.maybe_emit(
         "ship", TGPoint3(5.0, 6.0, 7.0), TGPoint3(0.0, 1.0, 0.0), "torpedo")
     assert "started" not in captured
+
+
+def test_emitted_puff_lives_in_world_space(monkeypatch):
+    """Puffs must be released into world space, not pinned to the ship.
+
+    Stock attaches the smoke geometry to the SET's world-space effect root
+    (`pSet.GetEffectRoot()`), so a moving hull leaves a trail. Our particle pass
+    expresses "particle lives in world space" as inherit == 0: it back-projects
+    the emitter's motion out of each particle via
+    `- emit_vel_world * (1 - inherit) * age` (particle_pass.cc). Stock
+    CreateSmokeHigh's own `SetInheritsVelocity(1)` cancels that term, pinning
+    every puff to the ship's current transform (the cloud rides the hull).
+
+    Uses the REAL Effects factory + particle controller, so this asserts the
+    value the renderer actually consumes.
+    """
+    monkeypatch.setattr(hull_hit_smoke.App, "g_kSystemWrapper", _RNG([5]))
+    particles.reset()
+    hull_hit_smoke._emit_smoke("ship", (0.1, 0.2, 0.3), (0.0, 0.0, 1.0))
+    assert particles.active_count() == 1
+    assert particles._active[0]._inherit == 0.0
