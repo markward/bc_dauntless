@@ -14,7 +14,7 @@
 - Never write `bridge_flag()` / `GetRenderedSet()`. The viewscreen source is derived from SDK/input state each frame (pull-model).
 - Production render path must be **byte-identical** when no VZT is active (`g_scene_source.active == false` → the forward `else` branch is the exact current code; resolver returns `None` → `clear_viewscreen_scene_source()`).
 - `host_bindings.cc` edits need a `dauntless` rebuild (`cmake --build build -j`); a module-only rebuild leaves `./build/dauntless` stale (memory `host_bindings_build_target`). No shader change here, so **no** `cmake -B build -S .` reconfigure needed.
-- One build tree only: `build/`. Binary `build/dauntless`, module `build/python/_open_stbc_host.cpython-*.so`. Never spawn a binary at another path.
+- One build tree only: `build/`. Binary `build/dauntless`, module `build/python/_dauntless_host.cpython-*.so`. Never spawn a binary at another path.
 - Shared git checkout with concurrent sessions: work on a feature branch, commit with **explicit pathspec** (never `git add -A`), verify committed files survive later merges (memory `shared_checkout_hazards`).
 - Gate: `scripts/check_tests.sh` (builds C++ + pytest + ctest, diffs against `tests/known_failures.txt`). Green before merge; the only allowed baselined failures are the 7 headless-GL `FrameTest`s.
 
@@ -46,7 +46,7 @@ Reference the spec throughout: `docs/superpowers/specs/2026-07-09-viewscreen-zoo
 - Modify: `native/src/host/host_bindings.cc` (struct near :268; bindings near :1716; `frame()` branch :811-816)
 
 **Interfaces:**
-- Produces (pybind, on `_open_stbc_host`):
+- Produces (pybind, on `_dauntless_host`):
   - `set_viewscreen_scene_source(eye, target, up, fov_y_rad, near, far)` — tuples `(float,float,float)` for eye/target/up; floats for the rest. Sets `g_scene_source.active = true` + camera.
   - `clear_viewscreen_scene_source()` — sets `g_scene_source.active = false`.
 - Behaviour: in `frame()`, the viewscreen-RTT non-comm path uses `g_scene_source.cam` when active, else `g_camera` (unchanged). Comm still wins over scene.
@@ -116,7 +116,7 @@ with:
 Run:
 ```bash
 cmake --build build -j
-PYTHONPATH=build/python python -c "import _open_stbc_host as m; assert hasattr(m,'set_viewscreen_scene_source') and hasattr(m,'clear_viewscreen_scene_source'); print('OK')"
+PYTHONPATH=build/python python -c "import _dauntless_host as m; assert hasattr(m,'set_viewscreen_scene_source') and hasattr(m,'clear_viewscreen_scene_source'); print('OK')"
 ```
 Expected: build succeeds; prints `OK`.
 
