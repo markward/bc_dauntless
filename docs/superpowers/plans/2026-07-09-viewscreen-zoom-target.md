@@ -14,7 +14,7 @@
 - Never write `bridge_flag()` / `GetRenderedSet()`. The viewscreen source is derived from SDK/input state each frame (pull-model).
 - Production render path must be **byte-identical** when no VZT is active (`g_scene_source.active == false` → the forward `else` branch is the exact current code; resolver returns `None` → `clear_viewscreen_scene_source()`).
 - `host_bindings.cc` edits need a `dauntless` rebuild (`cmake --build build -j`); a module-only rebuild leaves `./build/dauntless` stale (memory `host_bindings_build_target`). No shader change here, so **no** `cmake -B build -S .` reconfigure needed.
-- One build tree only: `build/`. Binary `build/dauntless`, module `build/python/_open_stbc_host.cpython-*.so`. Never spawn a binary at another path.
+- One build tree only: `build/`. Binary `build/dauntless`, module `build/python/_dauntless_host.cpython-*.so`. Never spawn a binary at another path.
 - Shared git checkout with concurrent sessions: work on a feature branch, commit with **explicit pathspec** (never `git add -A`), verify committed files survive later merges (memory `shared_checkout_hazards`).
 - Gate: `scripts/check_tests.sh` (builds C++ + pytest + ctest, diffs against `tests/known_failures.txt`). Green before merge; the only allowed baselined failures are the 7 headless-GL `FrameTest`s.
 
@@ -46,7 +46,7 @@ Reference the spec throughout: `docs/superpowers/specs/2026-07-09-viewscreen-zoo
 - Modify: `native/src/host/host_bindings.cc` (struct near :268; bindings near :1716; `frame()` branch :811-816)
 
 **Interfaces:**
-- Produces (pybind, on `_open_stbc_host`):
+- Produces (pybind, on `_dauntless_host`):
   - `set_viewscreen_scene_source(eye, target, up, fov_y_rad, near, far)` — tuples `(float,float,float)` for eye/target/up; floats for the rest. Sets `g_scene_source.active = true` + camera.
   - `clear_viewscreen_scene_source()` — sets `g_scene_source.active = false`.
 - Behaviour: in `frame()`, the viewscreen-RTT non-comm path uses `g_scene_source.cam` when active, else `g_camera` (unchanged). Comm still wins over scene.
@@ -116,7 +116,7 @@ with:
 Run:
 ```bash
 cmake --build build -j
-PYTHONPATH=build/python python -c "import _open_stbc_host as m; assert hasattr(m,'set_viewscreen_scene_source') and hasattr(m,'clear_viewscreen_scene_source'); print('OK')"
+PYTHONPATH=build/python python -c "import _dauntless_host as m; assert hasattr(m,'set_viewscreen_scene_source') and hasattr(m,'clear_viewscreen_scene_source'); print('OK')"
 ```
 Expected: build succeeds; prints `OK`.
 
@@ -735,9 +735,9 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: `_viewscreen_scene_feed` (Task 6); `renderer.set_viewscreen_scene_source` / `clear_viewscreen_scene_source` (Task 2); `host_io.key_state`, `input_map.code` (already imported in host_loop); `view_mode.is_bridge`.
-- Produces: per-frame RTT source selection with precedence **comm > scene > forward**; a held `Z` in bridge view engages VZT via `_z_held_bridge`.
+- Produces: `host_loop._select_viewscreen_source(r, comm_feed, scene_feed) -> str` (`"comm"|"scene"|"forward"`); per-frame RTT source selection with precedence **comm > scene > forward**; a held `Z` in bridge view engages VZT via `_z_held_bridge`.
 
-**Note on testing:** the surrounding `run()` loop is not unit-testable in isolation. Extract the three-way selection into a small pure helper `_select_viewscreen_source(r, controller, player, dt, comm_feed, scene_feed)` so precedence is testable, and call it from the loop. This keeps the loop edit tiny.
+**Note on testing:** the surrounding `run()` loop is not unit-testable in isolation. Extract the three-way selection into a small pure helper `_select_viewscreen_source(r, comm_feed, scene_feed)` so precedence is testable, and call it from the loop. This keeps the loop edit tiny. (The helper needs only the renderer and the two already-resolved feeds — do not thread `controller`/`player`/`dt` through it.)
 
 - [ ] **Step 1: Write the failing test.** Create `tests/host/test_viewscreen_feed_precedence.py`:
 
@@ -772,8 +772,7 @@ def test_comm_wins_and_clears_scene():
     # The helper does NOT render comm itself (the loop does, with set bounds); it
     # returns "comm" and guarantees the scene source is cleared.
     result = host_loop._select_viewscreen_source(
-        rec, controller=None, player=None, dt=0.016,
-        comm_feed=comm, scene_feed=(1, 2, 3, 4, 5, 6))
+        rec, comm_feed=comm, scene_feed=(1, 2, 3, 4, 5, 6))
     assert result == "comm"
     assert "clear_scene" in _names(rec)
     assert "clear_comm" not in _names(rec)
@@ -782,9 +781,10 @@ def test_comm_wins_and_clears_scene():
 
 def test_scene_when_no_comm():
     rec = _Recorder()
-    host_loop._select_viewscreen_source(
-        rec, controller=None, player=None, dt=0.016,
-        comm_feed=None, scene_feed=((0, 0, 0), (0, 1, 0), (0, 0, 1), 0.4, 1.0, 5000.0))
+    result = host_loop._select_viewscreen_source(
+        rec, comm_feed=None,
+        scene_feed=((0, 0, 0), (0, 1, 0), (0, 0, 1), 0.4, 1.0, 5000.0))
+    assert result == "scene"
     assert "clear_comm" in _names(rec)
     assert "scene" in _names(rec)
     assert "clear_scene" not in _names(rec)
@@ -792,9 +792,8 @@ def test_scene_when_no_comm():
 
 def test_forward_when_neither():
     rec = _Recorder()
-    host_loop._select_viewscreen_source(
-        rec, controller=None, player=None, dt=0.016,
-        comm_feed=None, scene_feed=None)
+    result = host_loop._select_viewscreen_source(rec, comm_feed=None, scene_feed=None)
+    assert result == "forward"
     assert "clear_comm" in _names(rec)
     assert "clear_scene" in _names(rec)
     assert "comm" not in _names(rec) and "scene" not in _names(rec)
@@ -808,12 +807,13 @@ Expected: FAIL — `AttributeError: module 'engine.host_loop' has no attribute '
 - [ ] **Step 3: Add the pure selection helper.** In `engine/host_loop.py`, just below `_viewscreen_scene_feed`, add:
 
 ```python
-def _select_viewscreen_source(r, controller, player, dt, comm_feed, scene_feed):
+def _select_viewscreen_source(r, comm_feed, scene_feed):
     """Push the viewscreen RTT source for this frame with precedence
     comm hail > VZT scene > forward. `comm_feed` is the tuple already resolved
     by _active_comm_feed (or None); `scene_feed` is _viewscreen_scene_feed's
     return (or None). Exactly one of comm/scene is active at a time; the other
-    source is always cleared, so an unset source can never linger."""
+    source is always cleared, so an unset source can never linger.
+    Returns "comm" | "scene" | "forward"."""
     if comm_feed is not None:
         # Caller renders the comm source (it owns the set-bounds framing); we
         # only guarantee the scene source is cleared so it can't co-render.
@@ -871,8 +871,7 @@ with (adds the `Z`-held read, resolves the scene feed, and routes both through t
             if _feed is None:
                 _scene = _viewscreen_scene_feed(
                     controller, player, _player_dt, _z_held_bridge)
-            _vs_src = _select_viewscreen_source(
-                r, controller, player, _player_dt, _feed, _scene)
+            _vs_src = _select_viewscreen_source(r, _feed, _scene)
             if _vs_src == "comm":
                 _set_id, _cam = _feed
                 def _comm_bounds(_set_id=_set_id):

@@ -273,6 +273,12 @@ class CameraObjectClass(_LoudStub):
         self._frustum = frustum              # _NiFrustum
         self._near = near
         self._far = far
+        # Last player target this camera observed, used by
+        # host_loop._viewscreen_scene_feed to stand in for BC's
+        # Camera.PlayerTargetChanged (our engine never dispatches
+        # ET_TARGET_WAS_CHANGED). MUST be a real attribute: _LoudStub.__getattr__
+        # hands back a truthy lambda for any missing name.
+        self._vs_last_player_target = None
 
     def GetNiFrustum(self):
         return self._frustum
@@ -366,7 +372,9 @@ class CameraObjectClass(_LoudStub):
     # Real replacement for the _LoudStub no-ops so the SDK's Camera.NewMode
     # (sdk/Build/scripts/Camera.py) can push live modes. The mode's Update()
     # then drives the rendered exterior view (host_loop._active_cutscene_camera).
-    # AddModeHierarchy stays a no-op — the mode-fallback tree is out of v1 scope.
+    # AddModeHierarchy stays a no-op — the mode-fallback tree is out of scope
+    # (the viewscreen zoom is resolved in host_loop._viewscreen_scene_feed, not
+    # via a recorded hierarchy).
 
     _MODE_FACTORY = {
         "Locked": ("LockedMode", {}),
@@ -375,6 +383,7 @@ class CameraObjectClass(_LoudStub):
         "Target": ("TargetMode", {}),
         "Placement": ("PlacementMode", {}),
         "ZoomTarget": ("ZoomTargetMode", {}),
+        "ViewscreenZoomTarget": ("ZoomTargetMode", {}),
     }
 
     def GetNamedCameraMode(self, name, *args):
@@ -439,6 +448,11 @@ class CameraObjectClass(_LoudStub):
         return stack[-1] if stack else None
 
     def AddModeHierarchy(self, *args):
+        # BC's viewscreen mode chain (InvalidViewscreen -> ViewscreenZoomTarget
+        # -> ViewscreenForward) is first-valid-wins and is installed at camera
+        # creation. We resolve that chain in host_loop._viewscreen_scene_feed by
+        # asking whether ViewscreenZoomTarget has a live Target, so nothing needs
+        # to be recorded here.
         return None
 
 

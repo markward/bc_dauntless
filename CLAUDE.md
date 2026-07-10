@@ -203,7 +203,7 @@ forward, it is a regression — fix it.
 
 ## Build layout — single source of truth
 
-There is **one** build tree at `<project-root>/build/`. The renderer host binary is at **`build/dauntless`** and the Python extension module is at **`build/python/_open_stbc_host.cpython-*.so`**. Do not introduce alternate output locations.
+There is **one** build tree at `<project-root>/build/`. The renderer host binary is at **`build/dauntless`** and the Python extension module is at **`build/python/_dauntless_host.cpython-*.so`**. Do not introduce alternate output locations.
 
 - Build: `cmake -B build -S . && cmake --build build -j`
 - Run:   `./build/dauntless`
@@ -212,7 +212,7 @@ Hard rules:
 
 - **Never** spawn a new binary at a different path (e.g. `build/bin/open_stbc_host`, `native/build/...`, anywhere else). If you find such a binary, treat it as stale and delete it — do not run it.
 - **Never** run `cmake` from inside `native/` (that produces a parallel `native/build/` tree that diverges from the canonical one).
-- If the runtime fails with `AttributeError: module '_open_stbc_host' has no attribute X`, the cause is a stale binary or stale `.so` — rebuild from `build/`, do not change the Python side.
+- If the runtime fails with `AttributeError: module '_dauntless_host' has no attribute X`, the cause is a stale binary or stale `.so` — rebuild from `build/`, do not change the Python side.
 
 ## Setup
 

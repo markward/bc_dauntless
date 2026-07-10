@@ -3950,6 +3950,89 @@ def _compute_camera(view_mode, director, *, player, dt) -> tuple:
     return director.compute(player=player, dt=dt)
 
 
+# ── ViewscreenZoomTarget (VZT) framing ─────────────────────────────────────────
+# The bridge viewscreen auto-focuses the player's current target (BC's
+# first-valid-wins viewscreen mode chain), rendering the SAME framing the
+# exterior view shows when holding Z (camera_zoom_target): eye placed close
+# behind the target on the ship->target axis, looking at the target's
+# subsystem aim point, FOV unchanged from the exterior view (never narrowed).
+# Lengths in game units.
+VS_NEAR: float = 1.0
+VS_FAR: float = 5000.0
+
+
+def _viewscreen_scene_feed(player, forward_fov):
+    """Resolve the ViewscreenZoomTarget scene feed: the SAME framing the
+    exterior view shows when holding Z (camera_zoom_target), rendered into the
+    bridge viewscreen RTT. Returns (eye, target, up, fov_y_rad, near, far) or
+    None to leave the plain forward feed.
+
+    BC's viewscreen mode chain is first-valid-wins, so a live Target IS the
+    engagement. The frame-to-frame `_vs_last_player_target` compare stands in for
+    Camera.PlayerTargetChanged (we never dispatch ET_TARGET_WAS_CHANGED), which
+    lets MissionLib.ViewscreenWatchObject(obj) persist until the player retargets.
+
+    Framing reuses engine.cameras.tracking._TrackingCamera in ZoomTarget mode —
+    the identical solver the exterior Z zoom uses (eye close behind the target on
+    the ship->target axis, look-at the subsystem aim point, FOV unchanged at the
+    exterior value). Rigid (dt=None): no spring smoothing, which for an inset
+    reads as a clean lock rather than a swoop.
+
+    Pull-model: reads SDK state, never writes bridge_flag()/GetRenderedSet()."""
+    if player is None:
+        return None
+    from engine.appc.camera_modes import _target_alive
+    game = Game_GetCurrentGame()
+    if game is None:
+        return None
+    cam = game.GetPlayerCamera()
+    if cam is None:
+        return None
+    mode = cam.GetNamedCameraMode("ViewscreenZoomTarget")   # Target holder only
+    if mode is None:
+        return None
+
+    cur = player.GetTarget()
+    if cur is not cam._vs_last_player_target:      # stands in for PlayerTargetChanged
+        mode.SetAttrIDObject("Target", cur)
+        cam._vs_last_player_target = cur
+
+    tgt = mode.GetAttrIDObject("Target")            # mission watch persists until then
+    if not _target_alive(tgt):
+        return None                                  # -> ViewscreenForward
+
+    from engine.cameras.tracking import _TrackingCamera
+    from engine.ui.target_reticle import target_aim_point
+    tc = _TrackingCamera()
+    tc.set_ship_radius(max(player.GetRadius(), 1e-6))
+    tc.enter_zoom_target()
+    # Subsystem-aware aim only when watching the player's OWN target; a mission
+    # ViewscreenWatchObject on a different object frames that object's centre.
+    aim = target_aim_point(player) if tgt is player.GetTarget() else None
+    eye, look_at, up = tc.compute(player=player, target=tgt, dt=None, aim_point=aim)
+    return (eye, look_at, up, forward_fov, VS_NEAR, VS_FAR)
+
+
+def _select_viewscreen_source(r, comm_feed, scene_feed):
+    """Push the viewscreen RTT source for this frame with precedence
+    comm hail > VZT scene > forward. `comm_feed` is the tuple already resolved
+    by _active_comm_feed (or None); `scene_feed` is _viewscreen_scene_feed's
+    return (or None). Exactly one of comm/scene is active at a time; the other
+    source is always cleared, so an unset source can never linger.
+    Returns "comm" | "scene" | "forward"."""
+    if comm_feed is not None:
+        # Caller renders the comm source (it owns the set-bounds framing); we
+        # only guarantee the scene source is cleared so it can't co-render.
+        r.clear_viewscreen_scene_source()
+        return "comm"
+    r.clear_viewscreen_comm_source()
+    if scene_feed is not None:
+        r.set_viewscreen_scene_source(*scene_feed)
+        return "scene"
+    r.clear_viewscreen_scene_source()
+    return "forward"
+
+
 def _active_cutscene_camera():
     """If the rendered set has an active cutscene camera with a live mode,
     return (camera, mode); else None.
@@ -6340,7 +6423,11 @@ def run(mission_name: Optional[str] = None,
             # set, render that set into the RTT from its maincamera; otherwise
             # the RTT keeps the forward space view.
             _feed = _active_comm_feed(controller)
-            if _feed is not None:
+            _scene = None
+            if _feed is None:
+                _scene = _viewscreen_scene_feed(player, director.fov_y_rad)
+            _vs_src = _select_viewscreen_source(r, _feed, _scene)
+            if _vs_src == "comm":
                 _set_id, _cam = _feed
                 # Frame the comm set by the camera's AUTHORED orientation (the
                 # faithful NiCamera shot, or the D/E explicit angle-axis pose).
@@ -6362,8 +6449,6 @@ def run(mission_name: Optional[str] = None,
                     _cam, _comm_bounds)
                 r.set_viewscreen_comm_source(_set_id, _eye, _tgt, _up,
                                              _fov, _near, _far)
-            else:
-                r.clear_viewscreen_comm_source()
             # Static overlay + ViewOn/ViewOff brightness fade (SDK-driven).
             _vs_ramp = getattr(controller, "_viewscreen_brightness_ramp", None)
             if _vs_ramp is None:

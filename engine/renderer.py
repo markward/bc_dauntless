@@ -34,7 +34,7 @@ _REQUIRED_BINDINGS = frozenset({
     "assemble_officer", "bridge_pass_set_enabled",
     "cef_composite", "cef_initialize", "cef_pump", "cef_reload", "cef_shutdown",
     "cef_toggle_devtools", "clear_hologram_ship", "clear_subsystem_pins",
-    "clear_viewscreen_comm_source",
+    "clear_viewscreen_comm_source", "clear_viewscreen_scene_source",
     "consume_mouse_delta", "create_bridge_instance", "create_comm_instance",
     "create_instance", "damage_decals_tick", "decals_set_enabled",
     "destroy_instance", "dust_set_density", "dust_set_enabled", "filmic_enabled",
@@ -56,7 +56,8 @@ _REQUIRED_BINDINGS = frozenset({
     "set_lighting", "set_nebula_godrays", "set_nebula_wake", "set_nebulae",
     "set_rim_eligible", "set_rim_strength", "set_subsystem_pins", "set_suns",
     "set_viewscreen_brightness", "set_viewscreen_comm_source",
-    "set_viewscreen_enabled", "set_viewscreen_model", "set_viewscreen_static",
+    "set_viewscreen_enabled", "set_viewscreen_model",
+    "set_viewscreen_scene_source", "set_viewscreen_static",
     "set_viewscreen_static_source", "set_visible", "set_warp_flash_intensity",
     "set_warp_streak_intensity", "set_warp_travel_dir", "set_world_transform",
     "shadows_set_enabled", "shield_hit", "shield_register", "shield_unregister",
@@ -726,6 +727,18 @@ def set_viewscreen_comm_source(set_id, eye, target, up, fov_y_rad, near, far) ->
 def clear_viewscreen_comm_source() -> None:
     """Disable the comm viewscreen feed, returning to the space view."""
     _h.clear_viewscreen_comm_source()
+
+
+def set_viewscreen_scene_source(eye, target, up, fov_y_rad, near, far) -> None:
+    """Render the live exterior scene into the viewscreen RTT through the given
+    camera (ViewscreenZoomTarget). Takes precedence over the forward feed; the
+    comm source still wins over this. Game units; column-vector convention."""
+    _h.set_viewscreen_scene_source(eye, target, up, fov_y_rad, near, far)
+
+
+def clear_viewscreen_scene_source() -> None:
+    """Disable the scene source, returning the viewscreen to the forward feed."""
+    _h.clear_viewscreen_scene_source()
 
 
 def set_viewscreen_static_source(paths) -> None:

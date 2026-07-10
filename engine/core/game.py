@@ -273,6 +273,7 @@ class Game(TGObject):
         super().__init__()
         self._current_episode: Episode | None = None
         self._player = None
+        self._player_camera = None   # lazy MainPlayerCamera (GetPlayerCamera)
         self._preload_done_event = None
         self._database = None
 
@@ -355,6 +356,19 @@ class Game(TGObject):
     # SDK uses both spellings; GetCurrentPlayer is the module-exposed form.
     GetCurrentPlayer = GetPlayer
     SetCurrentPlayer = SetPlayer
+
+    def GetPlayerCamera(self):
+        """BC's "MainPlayerCamera" (Camera.MakePlayerCamera), the SpaceCamera
+        that follows the player ship and feeds the bridge viewscreen. Our shim
+        never runs MakePlayerCamera, so lazily create a real CameraObjectClass
+        the SDK camera-mode surface can drive: MissionLib.ViewscreenWatchObject
+        needs GetNamedCameraMode("ViewscreenZoomTarget") + AddModeHierarchy to
+        run against a real mode instead of TGObject's truthy _Stub."""
+        if self._player_camera is None:
+            from engine.appc.bridge_set import CameraObjectClass_Create
+            self._player_camera = CameraObjectClass_Create(
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, "MainPlayerCamera")
+        return self._player_camera
 
     def GetPlayerSet(self):
         """Return the App set containing the player ship, or None.
