@@ -3951,48 +3951,33 @@ def _compute_camera(view_mode, director, *, player, dt) -> tuple:
 
 
 # ── ViewscreenZoomTarget (VZT) framing ─────────────────────────────────────────
-# The bridge viewscreen zoom onto a target. Tunable here (no rebuild). FOV is
-# adaptive-fill: the target subtends a fixed fraction of the viewscreen at any
-# range. All lengths in game units; angles in radians.
+# The bridge viewscreen auto-focuses the player's current target (BC's
+# first-valid-wins viewscreen mode chain). BC's ZoomTargetMode carries only
+# eye+direction — no FOV — so the scene render reuses the forward feed's FOV,
+# scaled by one constant. Tunable here (no rebuild). Lengths in game units.
 VS_NEAR: float = 1.0
 VS_FAR: float = 5000.0
-VS_FILL_K: float = 1.6                       # framing margin: larger = target fills LESS; tune live
-VS_FOV_MIN: float = _math.radians(6.0)       # most-zoomed (distant target) clamp
-VS_FOV_MAX: float = _math.radians(40.0)      # least-zoomed (near target) clamp
+VS_ZOOM_FACTOR: float = 0.7   # 1.0 == identical framing to the forward view
 
 
-def _adaptive_vs_fov(target, eye) -> float:
-    """Vertical FOV (radians) so `target` subtends a fixed fraction of the
-    viewscreen regardless of range ("zoom onto that ship"). Clamped to
-    [VS_FOV_MIN, VS_FOV_MAX]; degenerate inputs (zero distance / radius, missing
-    getters) return the widest FOV (VS_FOV_MAX)."""
-    try:
-        loc = target.GetWorldLocation()
-        r = float(target.GetRadius())
-    except Exception:
-        return VS_FOV_MAX
-    dx = loc.x - eye[0]
-    dy = loc.y - eye[1]
-    dz = loc.z - eye[2]
-    dist = _math.sqrt(dx * dx + dy * dy + dz * dz)
-    if dist <= 0.0 or r <= 0.0:
-        return VS_FOV_MAX
-    half = VS_FILL_K * r / dist
-    lo = _math.tan(VS_FOV_MIN / 2.0)
-    hi = _math.tan(VS_FOV_MAX / 2.0)
-    half = max(lo, min(hi, half))
-    return 2.0 * _math.atan(half)
-
-
-def _viewscreen_scene_feed(player, dt, zoom_held):
+def _viewscreen_scene_feed(player, dt, forward_fov):
     """Resolve the ViewscreenZoomTarget scene feed. Returns
     (eye, target, up, fov_y_rad, near, far) to render the live exterior scene
-    zoomed onto a target into the bridge viewscreen RTT, or None to leave the
-    forward feed. Pull-model: reads SDK/input state, never writes it.
+    focused on the player's target into the bridge viewscreen RTT, or None to
+    leave the plain forward feed.
 
-    Two engagement sources, mission-sticky first: the player camera's _vs_active
-    flag (set by ViewscreenWatchObject via AddModeHierarchy) with the mode's
-    explicit Target, else a held Z in bridge view following player.GetTarget()."""
+    BC's viewscreen mode chain (InvalidViewscreen -> ViewscreenZoomTarget ->
+    ViewscreenForward, installed by Camera.MakePlayerCamera) is first-valid-wins,
+    and ViewscreenZoomTarget is valid exactly when it holds a live Target. So a
+    selected target IS the engagement; no target falls through to forward.
+
+    Our engine never dispatches ET_TARGET_WAS_CHANGED, so the frame-to-frame
+    `_vs_last_player_target` comparison stands in for Camera.PlayerTargetChanged:
+    on a target change we re-point the mode, which is what lets a later
+    MissionLib.ViewscreenWatchObject(obj) override persist until the player
+    picks a different target (BC's last-writer-wins).
+
+    Pull-model: reads SDK state, never writes bridge_flag()/GetRenderedSet()."""
     if player is None:
         return None
     from engine.appc.camera_modes import _target_alive
@@ -4006,24 +3991,21 @@ def _viewscreen_scene_feed(player, dt, zoom_held):
     if mode is None:
         return None
 
-    explicit = mode.GetAttrIDObject("Target")
-    if cam._vs_active and _target_alive(explicit):
-        tgt = explicit                          # mission watch (sticky) wins
-    elif zoom_held:
-        tgt = player.GetTarget()                # Z held in bridge → live target
-    else:
-        return None                             # not engaged → forward feed
-    if not _target_alive(tgt):
-        return None
+    cur = player.GetTarget()
+    if cur is not cam._vs_last_player_target:      # stands in for PlayerTargetChanged
+        mode.SetAttrIDObject("Target", cur)
+        cam._vs_last_player_target = cur
 
-    mode.SetAttrIDObject("Source", player)      # pin Source to the live player
-    mode.SetAttrIDObject("Target", tgt)
-    if not mode.IsValid():                      # _ideal() resolvable?
+    tgt = mode.GetAttrIDObject("Target")            # mission watch persists until then
+    if not _target_alive(tgt):
+        return None                                  # -> ViewscreenForward
+
+    mode.SetAttrIDObject("Source", player)           # pin Source to the live player
+    if not mode.IsValid():                           # _ideal() resolvable?
         return None
     eye, fwd, up = mode.Update(dt)
     target = (eye[0] + fwd[0], eye[1] + fwd[1], eye[2] + fwd[2])
-    fov = _adaptive_vs_fov(tgt, eye)
-    return (eye, target, up, fov, VS_NEAR, VS_FAR)
+    return (eye, target, up, forward_fov * VS_ZOOM_FACTOR, VS_NEAR, VS_FAR)
 
 
 def _select_viewscreen_source(r, comm_feed, scene_feed):
@@ -6445,15 +6427,10 @@ def run(mission_name: Optional[str] = None,
             # set, render that set into the RTT from its maincamera; otherwise
             # the RTT keeps the forward space view.
             _feed = _active_comm_feed(controller)
-            # Hold Z in bridge view engages VZT (mirrors the exterior
-            # `z_held_now` read, gated on `is_exterior`, which stays
-            # untouched).
-            _z_held_bridge = (view_mode.is_bridge
-                              and host_io.key_state(input_map.code("camera_zoom_target")))
             _scene = None
             if _feed is None:
                 _scene = _viewscreen_scene_feed(
-                    player, _player_dt, _z_held_bridge)
+                    player, _player_dt, director.fov_y_rad)
             _vs_src = _select_viewscreen_source(r, _feed, _scene)
             if _vs_src == "comm":
                 _set_id, _cam = _feed

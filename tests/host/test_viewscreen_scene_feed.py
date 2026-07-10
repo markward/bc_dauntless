@@ -17,8 +17,8 @@ class _Rot:
 
 
 class _Ship:
-    def __init__(self, loc, radius=2.0, target=None):
-        self._loc, self._r, self._target = loc, radius, target
+    def __init__(self, loc, radius=2.0, target=None, dying=False):
+        self._loc, self._r, self._target, self._dying = loc, radius, target, dying
 
     def GetWorldLocation(self):
         return self._loc
@@ -33,7 +33,7 @@ class _Ship:
         return self._target
 
     def IsDying(self):
-        return 0
+        return 1 if self._dying else 0
 
 
 class _Game:
@@ -51,95 +51,86 @@ def wired(monkeypatch):
     return cam
 
 
-def test_none_when_not_engaged(wired):
-    tgt = _Ship(_Pt(500.0, 0.0, 0.0))
-    player = _Ship(_Pt(0.0, 0.0, 0.0), target=tgt)
-    assert host_loop._viewscreen_scene_feed(player, 0.016, False) is None
+FWD_FOV = 1.0   # radians; the forward feed's FOV handed to the resolver
 
 
-def test_hold_zoom_uses_player_target(wired):
+def test_none_when_no_target(wired):
+    player = _Ship(_Pt(0.0, 0.0, 0.0), target=None)
+    assert host_loop._viewscreen_scene_feed(player, 0.016, FWD_FOV) is None
+
+
+def test_auto_focus_on_player_target(wired):
     tgt = _Ship(_Pt(500.0, 0.0, 0.0))
     player = _Ship(_Pt(0.0, 0.0, 0.0), target=tgt)
-    out = host_loop._viewscreen_scene_feed(player, 0.016, True)
+    out = host_loop._viewscreen_scene_feed(player, 0.016, FWD_FOV)
     assert out is not None
     eye, target, up, fov, near, far = out
-    assert eye == (0.0, 0.0, 0.0)                       # eye at player (Source)
-    # looks toward the target (+X): target = eye + forward
-    assert target[0] > 0.0 and abs(target[1]) < 1e-6
+    assert eye == (0.0, 0.0, 0.0)            # eye at player (Source)
+    assert target[0] > 0.0 and abs(target[1]) < 1e-6   # looks at the target (+X)
     assert near == host_loop.VS_NEAR and far == host_loop.VS_FAR
-    assert host_loop.VS_FOV_MIN <= fov <= host_loop.VS_FOV_MAX
 
 
-def test_hold_with_no_target_is_none(wired):
-    player = _Ship(_Pt(0.0, 0.0, 0.0), target=None)
-    assert host_loop._viewscreen_scene_feed(player, 0.016, True) is None
+def test_fov_is_forward_fov_times_zoom_factor(wired):
+    tgt = _Ship(_Pt(500.0, 0.0, 0.0))
+    player = _Ship(_Pt(0.0, 0.0, 0.0), target=tgt)
+    fov = host_loop._viewscreen_scene_feed(player, 0.016, FWD_FOV)[3]
+    assert abs(fov - FWD_FOV * host_loop.VS_ZOOM_FACTOR) < 1e-9
+    # ...and it must TRACK the forward fov, not be a constant
+    fov2 = host_loop._viewscreen_scene_feed(player, 0.016, 2.0 * FWD_FOV)[3]
+    assert abs(fov2 - 2.0 * FWD_FOV * host_loop.VS_ZOOM_FACTOR) < 1e-9
 
 
-def test_mission_sticky_engages_without_hold(wired):
-    watched = _Ship(_Pt(0.0, 800.0, 0.0))
-    player = _Ship(_Pt(0.0, 0.0, 0.0), target=None)
-    mode = wired.GetNamedCameraMode("ViewscreenZoomTarget")
-    mode.SetAttrIDObject("Target", watched)
-    wired.AddModeHierarchy("InvalidViewscreen", "ViewscreenZoomTarget")   # engage
-    out = host_loop._viewscreen_scene_feed(player, 0.016, False)
-    assert out is not None
-    _eye, target, _up, _fov, _n, _f = out
-    assert target[1] > 0.0                              # looks toward watched (+Y)
+def test_dead_target_falls_back_to_forward(wired):
+    dead = _Ship(_Pt(500.0, 0.0, 0.0), dying=True)
+    player = _Ship(_Pt(0.0, 0.0, 0.0), target=dead)
+    assert host_loop._viewscreen_scene_feed(player, 0.016, FWD_FOV) is None
 
 
-def test_mission_sticky_wins_over_hold_target(wired):
-    watched = _Ship(_Pt(0.0, 800.0, 0.0))
+def test_mission_watch_object_overrides_player_target(wired):
     combat = _Ship(_Pt(500.0, 0.0, 0.0))
+    watched = _Ship(_Pt(0.0, 800.0, 0.0))
     player = _Ship(_Pt(0.0, 0.0, 0.0), target=combat)
-    mode = wired.GetNamedCameraMode("ViewscreenZoomTarget")
-    mode.SetAttrIDObject("Target", watched)
-    wired.AddModeHierarchy("InvalidViewscreen", "ViewscreenZoomTarget")
-    out = host_loop._viewscreen_scene_feed(player, 0.016, True)
-    _eye, target, _up, _fov, _n, _f = out
-    assert target[1] > 0.0 and abs(target[0]) < 1e-6    # watched (+Y), not combat (+X)
+    # settle the "last seen player target" memory
+    host_loop._viewscreen_scene_feed(player, 0.016, FWD_FOV)
+    # MissionLib.ViewscreenWatchObject writes a different object into the mode
+    wired.GetNamedCameraMode("ViewscreenZoomTarget").SetAttrIDObject("Target", watched)
+    out = host_loop._viewscreen_scene_feed(player, 0.016, FWD_FOV)
+    target = out[1]
+    assert target[1] > 0.0 and abs(target[0]) < 1e-6   # watched (+Y), not combat (+X)
+
+
+def test_changing_player_target_overwrites_mission_watch(wired):
+    combat = _Ship(_Pt(500.0, 0.0, 0.0))
+    watched = _Ship(_Pt(0.0, 800.0, 0.0))
+    player = _Ship(_Pt(0.0, 0.0, 0.0), target=combat)
+    host_loop._viewscreen_scene_feed(player, 0.016, FWD_FOV)
+    wired.GetNamedCameraMode("ViewscreenZoomTarget").SetAttrIDObject("Target", watched)
+    # BC: PlayerTargetChanged re-points the mode on the next target change.
+    newtgt = _Ship(_Pt(0.0, 0.0, 900.0))
+    player._target = newtgt
+    out = host_loop._viewscreen_scene_feed(player, 0.016, FWD_FOV)
+    target = out[1]
+    assert target[2] > 0.0 and abs(target[1]) < 1e-6   # new target (+Z), not watched (+Y)
 
 
 def test_source_pinned_to_live_player(wired):
     tgt = _Ship(_Pt(0.0, 0.0, 900.0))
     player = _Ship(_Pt(10.0, 20.0, 30.0), target=tgt)
-    out = host_loop._viewscreen_scene_feed(player, 0.016, True)
-    eye = out[0]
-    assert eye == (10.0, 20.0, 30.0)                    # eye follows the live player
+    assert host_loop._viewscreen_scene_feed(player, 0.016, FWD_FOV)[0] == (10.0, 20.0, 30.0)
 
 
 def test_target_point_is_eye_plus_forward_not_bare_forward(wired):
-    # Player at a NON-ORIGIN location so `eye + fwd != fwd` numerically.
-    # Target placed straight along +Z from the player so fwd is a clean unit
-    # vector (0,0,1); eye + fwd must then be (10,20,31), NOT (0,0,1). A
-    # regression `target = fwd` (dropping the `eye +`) would return (0,0,1)
-    # here instead of (10.0, 20.0, 31.0), and this assertion catches it.
+    # player off-origin so eye+fwd != fwd; a bare `target = fwd` returns (0,0,1).
     tgt = _Ship(_Pt(10.0, 20.0, 130.0))
     player = _Ship(_Pt(10.0, 20.0, 30.0), target=tgt)
-    out = host_loop._viewscreen_scene_feed(player, 0.016, True)
-    assert out is not None
-    eye, target, _up, _fov, _n, _f = out
-    assert eye == (10.0, 20.0, 30.0)
-    assert target[0] == pytest.approx(10.0, abs=1e-6)
-    assert target[1] == pytest.approx(20.0, abs=1e-6)
-    assert target[2] == pytest.approx(31.0, abs=1e-6)
+    target = host_loop._viewscreen_scene_feed(player, 0.016, FWD_FOV)[1]
+    for got, want in zip(target, (10.0, 20.0, 31.0)):
+        assert abs(got - want) < 1e-6
 
 
 def test_invalid_mode_returns_none_not_fallback_pose(wired):
-    # ZoomTargetMode._ideal() returns None when its pinned Source dies. The
-    # resolver pins Source = player, so a dying player invalidates the mode
-    # even though the target is alive (proving this exercises the
-    # `if not mode.IsValid(): return None` guard, not the earlier
-    # `_target_alive(tgt)` check on the target).
-    #
-    # Without the IsValid() guard, mode.Update(dt) does NOT return None for
-    # an invalid mode — it returns a bogus FALLBACK pose
-    # ((0,0,0), (0,1,0), (0,0,1)) — so `out` would be a real tuple instead of
-    # None, silently leaking that fallback pose to the renderer.
-    class _DyingShip(_Ship):
-        def IsDying(self):
-            return 1
-
+    # Dying player => ZoomTargetMode._ideal() -> None => IsValid() false.
+    # Without the IsValid() guard, Update() would return a bogus fallback pose.
     tgt = _Ship(_Pt(500.0, 0.0, 0.0))
-    player = _DyingShip(_Pt(0.0, 0.0, 0.0), target=tgt)
-    out = host_loop._viewscreen_scene_feed(player, 0.016, True)
-    assert out is None
+    player = _Ship(_Pt(0.0, 0.0, 0.0), target=tgt, dying=True)
+    assert host_loop._viewscreen_scene_feed(player, 0.016, FWD_FOV) is None

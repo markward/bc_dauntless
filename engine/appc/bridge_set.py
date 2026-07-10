@@ -273,12 +273,12 @@ class CameraObjectClass(_LoudStub):
         self._frustum = frustum              # _NiFrustum
         self._near = near
         self._far = far
-        # ViewscreenZoomTarget (VZT) engagement flag. MUST be a real attribute:
-        # _LoudStub.__getattr__ hands back a truthy lambda for any missing name,
-        # so an unset flag would read as permanently "engaged". Set by
-        # AddModeHierarchy("InvalidViewscreen", "ViewscreenZoomTarget"); read by
-        # host_loop._viewscreen_scene_feed each frame.
-        self._vs_active = False
+        # Last player target this camera observed, used by
+        # host_loop._viewscreen_scene_feed to stand in for BC's
+        # Camera.PlayerTargetChanged (our engine never dispatches
+        # ET_TARGET_WAS_CHANGED). MUST be a real attribute: _LoudStub.__getattr__
+        # hands back a truthy lambda for any missing name.
+        self._vs_last_player_target = None
 
     def GetNiFrustum(self):
         return self._frustum
@@ -447,15 +447,11 @@ class CameraObjectClass(_LoudStub):
         return stack[-1] if stack else None
 
     def AddModeHierarchy(self, *args):
-        # BC's viewscreen engagement seam. MissionLib.ViewscreenWatchObject
-        # (and BC's bridge zoom trigger) call AddModeHierarchy(
-        # "InvalidViewscreen", "ViewscreenZoomTarget") to make the viewscreen
-        # resolve to the zoom mode. We don't model the full fallback tree; we
-        # treat exactly that pair as "engage VZT" by flipping a flag the host
-        # reads each frame (host_loop._viewscreen_scene_feed). All other pairs
-        # stay no-ops, matching the prior stub.
-        if args[:2] == ("InvalidViewscreen", "ViewscreenZoomTarget"):
-            self._vs_active = True
+        # BC's viewscreen mode chain (InvalidViewscreen -> ViewscreenZoomTarget
+        # -> ViewscreenForward) is first-valid-wins and is installed at camera
+        # creation. We resolve that chain in host_loop._viewscreen_scene_feed by
+        # asking whether ViewscreenZoomTarget has a live Target, so nothing needs
+        # to be recorded here.
         return None
 
 
