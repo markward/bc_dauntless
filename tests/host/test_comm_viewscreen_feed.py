@@ -201,7 +201,9 @@ def test_camera_object_camera_mode_surface_no_ops():
     cam = CameraObjectClass("maincamera", (0.0, 0.0, 0.0), TGMatrix3(),
                             _NiFrustum(), 1.0, 800.0)
     # These must return None (falsey), not raise — SDK guards with `if pMode:`
-    assert cam.GetNamedCameraMode("ViewscreenZoomTarget") is None
+    # (unregistered name; "ViewscreenZoomTarget" is now a real _MODE_FACTORY
+    # entry — see test_viewscreen_zoom_target_mode.py)
+    assert cam.GetNamedCameraMode("NotARegisteredMode") is None
     assert cam.PushCameraMode(None) is None
     # truthy + isinstance checks must still hold
     assert bool(cam)

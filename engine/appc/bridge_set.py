@@ -273,6 +273,12 @@ class CameraObjectClass(_LoudStub):
         self._frustum = frustum              # _NiFrustum
         self._near = near
         self._far = far
+        # ViewscreenZoomTarget (VZT) engagement flag. MUST be a real attribute:
+        # _LoudStub.__getattr__ hands back a truthy lambda for any missing name,
+        # so an unset flag would read as permanently "engaged". Set by
+        # AddModeHierarchy("InvalidViewscreen", "ViewscreenZoomTarget"); read by
+        # host_loop._viewscreen_scene_feed each frame.
+        self._vs_active = False
 
     def GetNiFrustum(self):
         return self._frustum
@@ -366,7 +372,8 @@ class CameraObjectClass(_LoudStub):
     # Real replacement for the _LoudStub no-ops so the SDK's Camera.NewMode
     # (sdk/Build/scripts/Camera.py) can push live modes. The mode's Update()
     # then drives the rendered exterior view (host_loop._active_cutscene_camera).
-    # AddModeHierarchy stays a no-op — the mode-fallback tree is out of v1 scope.
+    # AddModeHierarchy is a no-op except for the ViewscreenZoomTarget
+    # engagement seam below — the full mode-fallback tree is out of v1 scope.
 
     _MODE_FACTORY = {
         "Locked": ("LockedMode", {}),
@@ -375,6 +382,7 @@ class CameraObjectClass(_LoudStub):
         "Target": ("TargetMode", {}),
         "Placement": ("PlacementMode", {}),
         "ZoomTarget": ("ZoomTargetMode", {}),
+        "ViewscreenZoomTarget": ("ZoomTargetMode", {}),
     }
 
     def GetNamedCameraMode(self, name, *args):
@@ -439,6 +447,15 @@ class CameraObjectClass(_LoudStub):
         return stack[-1] if stack else None
 
     def AddModeHierarchy(self, *args):
+        # BC's viewscreen engagement seam. MissionLib.ViewscreenWatchObject
+        # (and BC's bridge zoom trigger) call AddModeHierarchy(
+        # "InvalidViewscreen", "ViewscreenZoomTarget") to make the viewscreen
+        # resolve to the zoom mode. We don't model the full fallback tree; we
+        # treat exactly that pair as "engage VZT" by flipping a flag the host
+        # reads each frame (host_loop._viewscreen_scene_feed). All other pairs
+        # stay no-ops, matching the prior stub.
+        if args[:2] == ("InvalidViewscreen", "ViewscreenZoomTarget"):
+            self._vs_active = True
         return None
 
 
