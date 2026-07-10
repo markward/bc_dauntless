@@ -107,13 +107,20 @@ def dev_pause_menu_entries() -> list[tuple[str, Callable]]:
 
 
 def enable_stub_telemetry() -> None:
-    """Turn on stub-observability telemetry, but only under --developer.
+    """Default stub-observability telemetry ON under --developer.
 
-    No-op in production so the stub layer stays byte-identical. See
-    docs/superpowers/plans/2026-07-10-stub-observability.md.
+    No-op in production so the stub layer stays byte-identical. The env var
+    ``DAUNTLESS_STUB_TELEMETRY`` is an explicit override in both directions and
+    already took effect at import (``stub_telemetry.ENABLED``), so when it is
+    set we honor that and do nothing here — including ``=0`` to force-disable
+    even under --developer (the escape hatch for frame-timing / VFX profiling).
+    We only supply the --developer default when the env var is unset.
     """
     if not is_enabled():
         return
+    import os
+    if os.environ.get("DAUNTLESS_STUB_TELEMETRY") is not None:
+        return  # explicit env setting wins; already applied at import
     from engine.core import stub_telemetry
     stub_telemetry.set_enabled(True)
 

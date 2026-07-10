@@ -5247,6 +5247,11 @@ def run(mission_name: Optional[str] = None,
         developer_options_panel = _NULL_PICKER  # noop until dev mode confirmed
         ship_property_viewer = _NULL_PICKER  # noop until dev mode confirmed
         if dev_mode.is_enabled():
+            # Default stub-observability telemetry ON under --developer so every
+            # dev session passively accumulates coverage into stub_hits.jsonl
+            # (DAUNTLESS_STUB_TELEMETRY=0 force-disables). See
+            # docs/superpowers/specs/2026-07-10-stub-telemetry-accumulation-design.md.
+            dev_mode.enable_stub_telemetry()
             _picker_registry_cache: list = [None]
             def _get_mission_registry():
                 if _picker_registry_cache[0] is None:
