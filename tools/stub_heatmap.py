@@ -8,6 +8,7 @@ the game or the (future) stubs_known.txt ledger."""
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import time
 from collections import Counter
@@ -38,6 +39,58 @@ def load_runs(path: str) -> "tuple[list, int]":
             continue
         runs.append(rec)
     return runs, skipped
+
+
+def last_seen_by_key(runs: "list") -> dict:
+    """Newest run timestamp `t` among runs that hit each attr key.
+
+    Returns {"owner\\tattr": epoch_float}. Runs whose `t` is missing or
+    non-numeric contribute nothing (their hits have no usable time)."""
+    out: dict = {}
+    for rec in runs:
+        t = rec.get("t")
+        if not isinstance(t, (int, float)):
+            continue
+        for k in (rec.get("attr_hits") or {}):
+            if k not in out or t > out[k]:
+                out[k] = t
+    return out
+
+
+def parse_resolved_date(s):
+    """Parse a markedResolvedOn cell to a UTC datetime, or None.
+
+    'YYYY-MM-DD' -> end of that day UTC (23:59:59) so a run earlier the same
+    day (before the fix) is not a regression. 'YYYY-MM-DD HH:MM' (optionally
+    with a trailing ' UTC') -> that minute UTC. Empty/invalid -> None."""
+    if not s:
+        return None
+    s = s.strip()
+    if not s:
+        return None
+    if s.endswith("UTC"):
+        s = s[:-3].strip()
+    try:
+        if len(s) == 10:
+            d = datetime.datetime.strptime(s, "%Y-%m-%d")
+            return d.replace(hour=23, minute=59, second=59,
+                             tzinfo=datetime.timezone.utc)
+        d = datetime.datetime.strptime(s, "%Y-%m-%d %H:%M")
+        return d.replace(tzinfo=datetime.timezone.utc)
+    except Exception:
+        return None
+
+
+def classify(last_seen_epoch, marked_resolved_str: str) -> str:
+    """'open' (unresolved) | 'resolved' (quiet) | 'regressed' (hit after fix)."""
+    resolved_dt = parse_resolved_date(marked_resolved_str)
+    if resolved_dt is None:
+        return "open"
+    if last_seen_epoch is None:
+        return "resolved"
+    last_dt = datetime.datetime.fromtimestamp(
+        last_seen_epoch, tz=datetime.timezone.utc)
+    return "regressed" if last_dt > resolved_dt else "resolved"
 
 
 def merge(runs: "list") -> dict:
