@@ -3953,11 +3953,35 @@ def _compute_camera(view_mode, director, *, player, dt) -> tuple:
 # ── ViewscreenZoomTarget (VZT) framing ─────────────────────────────────────────
 # The bridge viewscreen auto-focuses the player's current target (BC's
 # first-valid-wins viewscreen mode chain). BC's ZoomTargetMode carries only
-# eye+direction — no FOV — so the scene render reuses the forward feed's FOV,
-# scaled by one constant. Tunable here (no rebuild). Lengths in game units.
+# eye+direction — no FOV — so the scene render computes an adaptive-fill FOV
+# that keeps the target at a constant fraction of the viewscreen height,
+# clamped to the forward feed's FOV and a max-zoom floor. Tunable here (no
+# rebuild). Lengths in game units.
 VS_NEAR: float = 1.0
 VS_FAR: float = 5000.0
-VS_ZOOM_FACTOR: float = 0.7   # 1.0 == identical framing to the forward view
+VS_TARGET_FILL: float = 0.60          # target diameter as a fraction of viewscreen height
+VS_FOV_MIN: float = _math.radians(4.0)  # max-zoom clamp (never tighter than this)
+
+
+def _viewscreen_fov(target, eye, forward_fov) -> float:
+    """Vertical FOV (radians) that makes `target` span VS_TARGET_FILL of the
+    viewscreen height. Never wider than the forward view (forward_fov is the
+    upper clamp); never tighter than VS_FOV_MIN. Degenerate inputs -> forward_fov.
+
+    Derivation: the target's diameter as a fraction of screen height is
+    (r/dist) / tan(fov/2); setting that equal to VS_TARGET_FILL gives
+    tan(fov/2) = (r/dist) / VS_TARGET_FILL."""
+    try:
+        loc = target.GetWorldLocation()
+        r = float(target.GetRadius())
+    except Exception:
+        return forward_fov
+    dx = loc.x - eye[0]; dy = loc.y - eye[1]; dz = loc.z - eye[2]
+    dist = _math.sqrt(dx * dx + dy * dy + dz * dz)
+    if dist <= 0.0 or r <= 0.0:
+        return forward_fov
+    fov = 2.0 * _math.atan((r / dist) / VS_TARGET_FILL)
+    return max(VS_FOV_MIN, min(forward_fov, fov))
 
 
 def _viewscreen_scene_feed(player, dt, forward_fov):
@@ -4005,7 +4029,7 @@ def _viewscreen_scene_feed(player, dt, forward_fov):
         return None
     eye, fwd, up = mode.Update(dt)
     target = (eye[0] + fwd[0], eye[1] + fwd[1], eye[2] + fwd[2])
-    return (eye, target, up, forward_fov * VS_ZOOM_FACTOR, VS_NEAR, VS_FAR)
+    return (eye, target, up, _viewscreen_fov(tgt, eye, forward_fov), VS_NEAR, VS_FAR)
 
 
 def _select_viewscreen_source(r, comm_feed, scene_feed):

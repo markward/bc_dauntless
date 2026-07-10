@@ -70,14 +70,58 @@ def test_auto_focus_on_player_target(wired):
     assert near == host_loop.VS_NEAR and far == host_loop.VS_FAR
 
 
-def test_fov_is_forward_fov_times_zoom_factor(wired):
-    tgt = _Ship(_Pt(500.0, 0.0, 0.0))
+# ── _viewscreen_fov: adaptive-fill FOV (pure function, tested directly) ────────
+# forward_fov chosen generous (~69 deg) so mid-band cases stay well under it,
+# never accidentally satisfied by the upper clamp.
+BIG_FWD_FOV = 1.2   # radians
+
+
+def test_viewscreen_fov_matches_formula_in_unclamped_band():
+    # r=2, dist=20 -> r/dist=0.1 -> (0.1/0.6)=0.16666... -> 2*atan(...) ~= 0.3303 rad,
+    # strictly between VS_FOV_MIN (~0.0698 rad) and BIG_FWD_FOV (1.2 rad).
+    tgt = _Ship(_Pt(20.0, 0.0, 0.0), radius=2.0)
+    eye = (0.0, 0.0, 0.0)
+    fov = host_loop._viewscreen_fov(tgt, eye, BIG_FWD_FOV)
+    expected = 2.0 * math.atan((2.0 / 20.0) / host_loop.VS_TARGET_FILL)
+    assert host_loop.VS_FOV_MIN < expected < BIG_FWD_FOV
+    assert abs(fov - expected) < 1e-9
+
+
+def test_viewscreen_fov_clamps_to_forward_fov_for_close_target():
+    # r=100, dist=1 -> formula ~2.98 rad, must clamp to forward_fov.
+    tgt = _Ship(_Pt(1.0, 0.0, 0.0), radius=100.0)
+    eye = (0.0, 0.0, 0.0)
+    fov = host_loop._viewscreen_fov(tgt, eye, BIG_FWD_FOV)
+    assert fov == BIG_FWD_FOV
+
+
+def test_viewscreen_fov_clamps_to_fov_min_for_distant_target():
+    # r=1, dist=100000 -> formula ~3.3e-5 rad, must clamp to VS_FOV_MIN.
+    tgt = _Ship(_Pt(100000.0, 0.0, 0.0), radius=1.0)
+    eye = (0.0, 0.0, 0.0)
+    fov = host_loop._viewscreen_fov(tgt, eye, BIG_FWD_FOV)
+    assert abs(fov - host_loop.VS_FOV_MIN) < 1e-12
+
+
+def test_viewscreen_fov_zero_distance_returns_forward_fov():
+    tgt = _Ship(_Pt(0.0, 0.0, 0.0), radius=2.0)
+    eye = (0.0, 0.0, 0.0)
+    assert host_loop._viewscreen_fov(tgt, eye, BIG_FWD_FOV) == BIG_FWD_FOV
+
+
+def test_viewscreen_fov_zero_radius_returns_forward_fov():
+    tgt = _Ship(_Pt(20.0, 0.0, 0.0), radius=0.0)
+    eye = (0.0, 0.0, 0.0)
+    assert host_loop._viewscreen_fov(tgt, eye, BIG_FWD_FOV) == BIG_FWD_FOV
+
+
+def test_resolver_fov_matches_viewscreen_fov_helper(wired):
+    tgt = _Ship(_Pt(20.0, 0.0, 0.0), radius=2.0)
     player = _Ship(_Pt(0.0, 0.0, 0.0), target=tgt)
-    fov = host_loop._viewscreen_scene_feed(player, 0.016, FWD_FOV)[3]
-    assert abs(fov - FWD_FOV * host_loop.VS_ZOOM_FACTOR) < 1e-9
-    # ...and it must TRACK the forward fov, not be a constant
-    fov2 = host_loop._viewscreen_scene_feed(player, 0.016, 2.0 * FWD_FOV)[3]
-    assert abs(fov2 - 2.0 * FWD_FOV * host_loop.VS_ZOOM_FACTOR) < 1e-9
+    out = host_loop._viewscreen_scene_feed(player, 0.016, BIG_FWD_FOV)
+    assert out is not None
+    eye, target, up, fov, near, far = out
+    assert abs(fov - host_loop._viewscreen_fov(tgt, eye, BIG_FWD_FOV)) < 1e-9
 
 
 def test_dead_target_falls_back_to_forward(wired):
