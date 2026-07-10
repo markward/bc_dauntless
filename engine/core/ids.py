@@ -1,5 +1,7 @@
 import itertools
 
+from engine.core import stub_telemetry
+
 _counter = itertools.count(1)
 _registry: dict[int, "TGObject"] = {}
 
@@ -32,12 +34,27 @@ class _Stub:
 
     Returned by TGObject.__getattr__ for unimplemented engine methods so SDK
     scripts can chain calls like pMission.GetFriendlyGroup().AddName(...).
+
+    Carries its own (name, owner) identity purely so stub_telemetry can report
+    *what* was accessed; this does not change any behavior when telemetry is
+    disabled.
     """
+
+    def __init__(self, name: str = "?", owner: str = "?") -> None:
+        self._stub_name = name
+        self._stub_owner = owner
+
     def __getattr__(self, name: str) -> "_Stub":
-        return _Stub()
+        if name in ("_stub_name", "_stub_owner"):
+            # Break the recursion if these are accessed before __init__ ran
+            # (e.g. during unpickling) — never build a stub for them.
+            raise AttributeError(name)
+        if stub_telemetry.ENABLED and not (name.startswith("__") and name.endswith("__")):
+            stub_telemetry.record_attr(self._stub_owner, self._stub_name + "." + name)
+        return _Stub(name, self._stub_owner)
 
     def __call__(self, *args, **kwargs) -> "_Stub":
-        return _Stub()
+        return _Stub(self._stub_name, self._stub_owner)
 
     def __bool__(self) -> bool:
         return True
@@ -104,4 +121,6 @@ class TGObject:
         return self._obj_id
 
     def __getattr__(self, name: str) -> _Stub:
-        return _Stub()
+        if stub_telemetry.ENABLED and not (name.startswith("__") and name.endswith("__")):
+            stub_telemetry.record_attr(type(self).__name__, name)
+        return _Stub(name, type(self).__name__)
