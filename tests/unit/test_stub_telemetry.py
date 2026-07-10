@@ -60,3 +60,16 @@ def test_dump_report_is_string_and_ranks_by_frequency():
     report = stub_telemetry.dump_report()
     assert isinstance(report, str)
     assert report.index("common") < report.index("rare")
+
+
+def test_env_truthy_parsing():
+    # Falsy cases: empty string, "0", "false", "False"
+    assert stub_telemetry._env_truthy("") is False
+    assert stub_telemetry._env_truthy("0") is False
+    assert stub_telemetry._env_truthy("false") is False
+    assert stub_telemetry._env_truthy("False") is False
+    # Truthy cases: "1", "true", "yes", and anything else
+    assert stub_telemetry._env_truthy("1") is True
+    assert stub_telemetry._env_truthy("true") is True
+    assert stub_telemetry._env_truthy("yes") is True
+    assert stub_telemetry._env_truthy("anything-else") is True

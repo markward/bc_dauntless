@@ -12,7 +12,9 @@ Constraints (see docs/superpowers/plans/2026-07-10-stub-observability.md):
 - OFF by default. When disabled every hook is one bool read + return, so the
   production path is byte-identical.
 - Stdlib only, so engine/core/ids.py can import it with no cycle.
-- Never raises into the game: every hook is wrapped.
+- Never raises into the game: every GAME-REACHABLE hook (record_attr,
+  record_bool, _caller) is wrapped. The report/inspection helpers (snapshot,
+  reset, dump_report) are not hot-path and are not wrapped.
 - Reports via print(), not logging (the embedded host installs no handler).
 """
 
