@@ -3950,6 +3950,40 @@ def _compute_camera(view_mode, director, *, player, dt) -> tuple:
     return director.compute(player=player, dt=dt)
 
 
+# ── ViewscreenZoomTarget (VZT) framing ─────────────────────────────────────────
+# The bridge viewscreen zoom onto a target. Tunable here (no rebuild). FOV is
+# adaptive-fill: the target subtends a fixed fraction of the viewscreen at any
+# range. All lengths in game units; angles in radians.
+VS_NEAR: float = 1.0
+VS_FAR: float = 5000.0
+VS_FILL_K: float = 1.6                       # radius→apparent-fill gain; tune live
+VS_FOV_MIN: float = _math.radians(6.0)       # most-zoomed (distant target) clamp
+VS_FOV_MAX: float = _math.radians(40.0)      # least-zoomed (near target) clamp
+
+
+def _adaptive_vs_fov(target, eye) -> float:
+    """Vertical FOV (radians) so `target` subtends a fixed fraction of the
+    viewscreen regardless of range ("zoom onto that ship"). Clamped to
+    [VS_FOV_MIN, VS_FOV_MAX]; degenerate inputs (zero distance / radius, missing
+    getters) return the widest FOV (VS_FOV_MAX)."""
+    try:
+        loc = target.GetWorldLocation()
+        r = float(target.GetRadius())
+    except Exception:
+        return VS_FOV_MAX
+    dx = loc.x - eye[0]
+    dy = loc.y - eye[1]
+    dz = loc.z - eye[2]
+    dist = _math.sqrt(dx * dx + dy * dy + dz * dz)
+    if dist <= 0.0 or r <= 0.0:
+        return VS_FOV_MAX
+    half = VS_FILL_K * r / dist
+    lo = _math.tan(VS_FOV_MIN / 2.0)
+    hi = _math.tan(VS_FOV_MAX / 2.0)
+    half = max(lo, min(hi, half))
+    return 2.0 * _math.atan(half)
+
+
 def _active_cutscene_camera():
     """If the rendered set has an active cutscene camera with a live mode,
     return (camera, mode); else None.
