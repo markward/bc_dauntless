@@ -32,7 +32,8 @@ public:
                 const scenegraph::Camera& camera,
                 Pipeline& pipeline,
                 bool procedural,
-                float now_seconds);
+                float now_seconds,
+                float star_scale = 1.0f);
 
     /// Bake `backdrops` into all 6 cubemap faces (camera at origin, 6 x 90deg
     /// views) using the same procedural shader path as render(). Returns false
@@ -56,7 +57,8 @@ private:
                         const glm::mat4& proj,
                         Pipeline& pipeline,
                         bool procedural,
-                        float now_seconds);
+                        float now_seconds,
+                        float star_scale = 1.0f);
 
     /// Lazy-tessellated UV sphere keyed by target_poly_count. Most BC
     /// systems use 256; cache grows on demand if a script requests

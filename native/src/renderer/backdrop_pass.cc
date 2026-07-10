@@ -77,11 +77,12 @@ void BackdropPass::render(const std::vector<Backdrop>& backdrops,
                           const scenegraph::Camera& camera,
                           Pipeline& pipeline,
                           bool procedural,
-                          float now_seconds) {
+                          float now_seconds,
+                          float star_scale) {
     if (backdrops.empty()) return;
     const glm::mat4 view_no_t = glm::mat4(glm::mat3(camera.view_matrix()));
     draw_backdrops(backdrops, view_no_t, camera.proj_matrix(),
-                   pipeline, procedural, now_seconds);
+                   pipeline, procedural, now_seconds, star_scale);
 }
 
 void BackdropPass::draw_backdrops(const std::vector<Backdrop>& backdrops,
@@ -89,7 +90,8 @@ void BackdropPass::draw_backdrops(const std::vector<Backdrop>& backdrops,
                                   const glm::mat4& proj,
                                   Pipeline& pipeline,
                                   bool procedural,
-                                  float now_seconds) {
+                                  float now_seconds,
+                                  float star_scale) {
     auto& shader = pipeline.backdrop_shader();
     shader.use();
     shader.set_mat4("u_view_no_translation", view_no_translation);
@@ -136,6 +138,7 @@ void BackdropPass::draw_backdrops(const std::vector<Backdrop>& backdrops,
         shader.set_float("u_coverage", b.coverage);
         shader.set_float("u_seed", b.seed);
         shader.set_float("u_time", now_seconds);
+        shader.set_float("u_star_scale", star_scale);
 
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, tex ? tex->id() : 0);

@@ -642,13 +642,26 @@ void frame() {
     // anchored smear with cross-frame prev_eye state), lens flares (screen-
     // space, sized to the main framebuffer), and particles. Order is otherwise
     // identical to the historical inline block.
-    auto render_space = [&](const scenegraph::Camera& cam, bool for_viewscreen) {
-        if (sky_use_cubemap)
+    auto render_space = [&](const scenegraph::Camera& cam, bool for_viewscreen,
+                            bool sharp_sky = false) {
+        // sharp_sky (VZT zoomed viewscreen only): bypass the baked 1024²/face
+        // cubemap (~9x texel blur at tight FOVs) and draw the procedural
+        // starfield directly, shrinking each star's angular disk in proportion
+        // to how far the FOV has narrowed from the baseline 60deg — otherwise
+        // stars stay a fixed angular size and visibly balloon as the zoom
+        // tightens. Every other call site leaves sharp_sky at its default
+        // (false), so this branch never executes for the main view or the
+        // plain forward viewscreen feed — both stay byte-identical.
+        if (sky_use_cubemap && !sharp_sky)
             g_backdrop_pass->render_cubemap(cam, *g_pipeline);
-        else
+        else {
+            const float star_scale = sharp_sky
+                ? glm::clamp(cam.fov_y_rad / glm::radians(60.0f), 0.15f, 1.0f)
+                : 1.0f;
             g_backdrop_pass->render(g_backdrops, cam, *g_pipeline,
                                     dauntless_procedural_sky::enabled(),
-                                    static_cast<float>(now));
+                                    static_cast<float>(now), star_scale);
+        }
         g_sun_pass->render(g_suns, cam, *g_pipeline, now);
         // Filmic ambient dim: -20% on the main exterior view only. The
         // viewscreen inset (for_viewscreen) and a filmic-off toggle both keep
@@ -819,7 +832,7 @@ void frame() {
             scenegraph::Camera scam = g_scene_source.cam;
             scam.aspect = static_cast<float>(kViewscreenRttW)
                         / static_cast<float>(kViewscreenRttH);
-            render_space(scam, /*for_viewscreen=*/true);
+            render_space(scam, /*for_viewscreen=*/true, /*sharp_sky=*/true);
         } else {
             scenegraph::Camera vcam = g_camera;
             vcam.aspect = static_cast<float>(kViewscreenRttW)
