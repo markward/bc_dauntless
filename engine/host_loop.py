@@ -3984,6 +3984,48 @@ def _adaptive_vs_fov(target, eye) -> float:
     return 2.0 * _math.atan(half)
 
 
+def _viewscreen_scene_feed(controller, player, dt, zoom_held):
+    """Resolve the ViewscreenZoomTarget scene feed. Returns
+    (eye, target, up, fov_y_rad, near, far) to render the live exterior scene
+    zoomed onto a target into the bridge viewscreen RTT, or None to leave the
+    forward feed. Pull-model: reads SDK/input state, never writes it.
+
+    Two engagement sources, mission-sticky first: the player camera's _vs_active
+    flag (set by ViewscreenWatchObject via AddModeHierarchy) with the mode's
+    explicit Target, else a held Z in bridge view following player.GetTarget()."""
+    if player is None:
+        return None
+    from engine.appc.camera_modes import _target_alive
+    game = Game_GetCurrentGame()
+    if game is None:
+        return None
+    cam = game.GetPlayerCamera()
+    if cam is None:
+        return None
+    mode = cam.GetNamedCameraMode("ViewscreenZoomTarget")
+    if mode is None:
+        return None
+
+    explicit = mode.GetAttrIDObject("Target")
+    if cam._vs_active and _target_alive(explicit):
+        tgt = explicit                          # mission watch (sticky) wins
+    elif zoom_held:
+        tgt = player.GetTarget()                # Z held in bridge → live target
+    else:
+        return None                             # not engaged → forward feed
+    if not _target_alive(tgt):
+        return None
+
+    mode.SetAttrIDObject("Source", player)      # pin Source to the live player
+    mode.SetAttrIDObject("Target", tgt)
+    if not mode.IsValid():                      # _ideal() resolvable?
+        return None
+    eye, fwd, up = mode.Update(dt)
+    target = (eye[0] + fwd[0], eye[1] + fwd[1], eye[2] + fwd[2])
+    fov = _adaptive_vs_fov(tgt, eye)
+    return (eye, target, up, fov, VS_NEAR, VS_FAR)
+
+
 def _active_cutscene_camera():
     """If the rendered set has an active cutscene camera with a live mode,
     return (camera, mode); else None.
