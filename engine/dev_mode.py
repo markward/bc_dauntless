@@ -106,6 +106,18 @@ def dev_pause_menu_entries() -> list[tuple[str, Callable]]:
     return _dev_pause_menu_entries
 
 
+def enable_stub_telemetry() -> None:
+    """Turn on stub-observability telemetry, but only under --developer.
+
+    No-op in production so the stub layer stays byte-identical. See
+    docs/superpowers/plans/2026-07-10-stub-observability.md.
+    """
+    if not is_enabled():
+        return
+    from engine.core import stub_telemetry
+    stub_telemetry.set_enabled(True)
+
+
 def dev_only(fn: Callable) -> Callable:
     """Wrap `fn` so it executes only in dev mode (else returns None).
 
