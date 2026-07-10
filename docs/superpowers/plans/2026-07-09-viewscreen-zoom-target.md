@@ -735,9 +735,9 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: `_viewscreen_scene_feed` (Task 6); `renderer.set_viewscreen_scene_source` / `clear_viewscreen_scene_source` (Task 2); `host_io.key_state`, `input_map.code` (already imported in host_loop); `view_mode.is_bridge`.
-- Produces: per-frame RTT source selection with precedence **comm > scene > forward**; a held `Z` in bridge view engages VZT via `_z_held_bridge`.
+- Produces: `host_loop._select_viewscreen_source(r, comm_feed, scene_feed) -> str` (`"comm"|"scene"|"forward"`); per-frame RTT source selection with precedence **comm > scene > forward**; a held `Z` in bridge view engages VZT via `_z_held_bridge`.
 
-**Note on testing:** the surrounding `run()` loop is not unit-testable in isolation. Extract the three-way selection into a small pure helper `_select_viewscreen_source(r, controller, player, dt, comm_feed, scene_feed)` so precedence is testable, and call it from the loop. This keeps the loop edit tiny.
+**Note on testing:** the surrounding `run()` loop is not unit-testable in isolation. Extract the three-way selection into a small pure helper `_select_viewscreen_source(r, comm_feed, scene_feed)` so precedence is testable, and call it from the loop. This keeps the loop edit tiny. (The helper needs only the renderer and the two already-resolved feeds — do not thread `controller`/`player`/`dt` through it.)
 
 - [ ] **Step 1: Write the failing test.** Create `tests/host/test_viewscreen_feed_precedence.py`:
 
@@ -772,8 +772,7 @@ def test_comm_wins_and_clears_scene():
     # The helper does NOT render comm itself (the loop does, with set bounds); it
     # returns "comm" and guarantees the scene source is cleared.
     result = host_loop._select_viewscreen_source(
-        rec, controller=None, player=None, dt=0.016,
-        comm_feed=comm, scene_feed=(1, 2, 3, 4, 5, 6))
+        rec, comm_feed=comm, scene_feed=(1, 2, 3, 4, 5, 6))
     assert result == "comm"
     assert "clear_scene" in _names(rec)
     assert "clear_comm" not in _names(rec)
@@ -782,9 +781,10 @@ def test_comm_wins_and_clears_scene():
 
 def test_scene_when_no_comm():
     rec = _Recorder()
-    host_loop._select_viewscreen_source(
-        rec, controller=None, player=None, dt=0.016,
-        comm_feed=None, scene_feed=((0, 0, 0), (0, 1, 0), (0, 0, 1), 0.4, 1.0, 5000.0))
+    result = host_loop._select_viewscreen_source(
+        rec, comm_feed=None,
+        scene_feed=((0, 0, 0), (0, 1, 0), (0, 0, 1), 0.4, 1.0, 5000.0))
+    assert result == "scene"
     assert "clear_comm" in _names(rec)
     assert "scene" in _names(rec)
     assert "clear_scene" not in _names(rec)
@@ -792,9 +792,8 @@ def test_scene_when_no_comm():
 
 def test_forward_when_neither():
     rec = _Recorder()
-    host_loop._select_viewscreen_source(
-        rec, controller=None, player=None, dt=0.016,
-        comm_feed=None, scene_feed=None)
+    result = host_loop._select_viewscreen_source(rec, comm_feed=None, scene_feed=None)
+    assert result == "forward"
     assert "clear_comm" in _names(rec)
     assert "clear_scene" in _names(rec)
     assert "comm" not in _names(rec) and "scene" not in _names(rec)
@@ -808,12 +807,13 @@ Expected: FAIL — `AttributeError: module 'engine.host_loop' has no attribute '
 - [ ] **Step 3: Add the pure selection helper.** In `engine/host_loop.py`, just below `_viewscreen_scene_feed`, add:
 
 ```python
-def _select_viewscreen_source(r, controller, player, dt, comm_feed, scene_feed):
+def _select_viewscreen_source(r, comm_feed, scene_feed):
     """Push the viewscreen RTT source for this frame with precedence
     comm hail > VZT scene > forward. `comm_feed` is the tuple already resolved
     by _active_comm_feed (or None); `scene_feed` is _viewscreen_scene_feed's
     return (or None). Exactly one of comm/scene is active at a time; the other
-    source is always cleared, so an unset source can never linger."""
+    source is always cleared, so an unset source can never linger.
+    Returns "comm" | "scene" | "forward"."""
     if comm_feed is not None:
         # Caller renders the comm source (it owns the set-bounds framing); we
         # only guarantee the scene source is cleared so it can't co-render.
@@ -871,8 +871,7 @@ with (adds the `Z`-held read, resolves the scene feed, and routes both through t
             if _feed is None:
                 _scene = _viewscreen_scene_feed(
                     controller, player, _player_dt, _z_held_bridge)
-            _vs_src = _select_viewscreen_source(
-                r, controller, player, _player_dt, _feed, _scene)
+            _vs_src = _select_viewscreen_source(r, _feed, _scene)
             if _vs_src == "comm":
                 _set_id, _cam = _feed
                 def _comm_bounds(_set_id=_set_id):
