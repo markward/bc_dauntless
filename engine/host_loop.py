@@ -4026,6 +4026,26 @@ def _viewscreen_scene_feed(controller, player, dt, zoom_held):
     return (eye, target, up, fov, VS_NEAR, VS_FAR)
 
 
+def _select_viewscreen_source(r, comm_feed, scene_feed):
+    """Push the viewscreen RTT source for this frame with precedence
+    comm hail > VZT scene > forward. `comm_feed` is the tuple already resolved
+    by _active_comm_feed (or None); `scene_feed` is _viewscreen_scene_feed's
+    return (or None). Exactly one of comm/scene is active at a time; the other
+    source is always cleared, so an unset source can never linger.
+    Returns "comm" | "scene" | "forward"."""
+    if comm_feed is not None:
+        # Caller renders the comm source (it owns the set-bounds framing); we
+        # only guarantee the scene source is cleared so it can't co-render.
+        r.clear_viewscreen_scene_source()
+        return "comm"
+    r.clear_viewscreen_comm_source()
+    if scene_feed is not None:
+        r.set_viewscreen_scene_source(*scene_feed)
+        return "scene"
+    r.clear_viewscreen_scene_source()
+    return "forward"
+
+
 def _active_cutscene_camera():
     """If the rendered set has an active cutscene camera with a live mode,
     return (camera, mode); else None.
@@ -6416,7 +6436,16 @@ def run(mission_name: Optional[str] = None,
             # set, render that set into the RTT from its maincamera; otherwise
             # the RTT keeps the forward space view.
             _feed = _active_comm_feed(controller)
-            if _feed is not None:
+            # Hold Z in bridge view engages VZT (mirrors the exterior zoom read
+            # at ~:5966, which stays gated on is_exterior and is untouched).
+            _z_held_bridge = (view_mode.is_bridge
+                              and host_io.key_state(input_map.code("camera_zoom_target")))
+            _scene = None
+            if _feed is None:
+                _scene = _viewscreen_scene_feed(
+                    controller, player, _player_dt, _z_held_bridge)
+            _vs_src = _select_viewscreen_source(r, _feed, _scene)
+            if _vs_src == "comm":
                 _set_id, _cam = _feed
                 # Frame the comm set by the camera's AUTHORED orientation (the
                 # faithful NiCamera shot, or the D/E explicit angle-axis pose).
@@ -6438,8 +6467,6 @@ def run(mission_name: Optional[str] = None,
                     _cam, _comm_bounds)
                 r.set_viewscreen_comm_source(_set_id, _eye, _tgt, _up,
                                              _fov, _near, _far)
-            else:
-                r.clear_viewscreen_comm_source()
             # Static overlay + ViewOn/ViewOff brightness fade (SDK-driven).
             _vs_ramp = getattr(controller, "_viewscreen_brightness_ramp", None)
             if _vs_ramp is None:
