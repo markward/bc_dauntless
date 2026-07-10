@@ -475,3 +475,125 @@ The resolver's last line becomes:
 ```
 
 Tests must cover: exact fill math in the unclamped band; clamp to `forward_fov` for a very close target; clamp to `VS_FOV_MIN` for a very distant one; degenerate (zero distance / zero radius) → `forward_fov`. Choose values that provably land in the unclamped band (verify the arithmetic; do not let a clamp silently satisfy a "matches formula" assertion).
+
+---
+
+## Revision 4 — reproduce the exterior Z view EXACTLY (supersedes R5 + R6)
+
+Live-verify #3 (Mark): the viewscreen zoom must be "basically the same as what we
+render in the exterior view when pressing Z." Reverse-engineering that path
+(`director.start_zoom_target` -> `_TrackingCamera` with `zoom_target_active`)
+shows why every prior attempt was wrong:
+
+- The exterior Z zoom keeps **FOV constant at EXTERIOR_FOV_Y_RAD (35°)**
+  (`tracking.py:v_fov_rad`, never narrowed; `zoom_in`/`zoom_out` change the
+  *distance* `d_chase_zoom`, not the FOV).
+- The "zoom" comes from **placing the eye close behind the target** on the
+  ship->target axis (`_compute_zoom_target`: eye = T - d_chase_zoom·e1, look-at =
+  T, up = body-up perpendicularised). `d_chase_zoom = ZOOM_DEFAULT_RADII · player
+  radius`, clamped to 0.9·D when the target is closer than that.
+- The framed point is `target_aim_point(player)` — the locked subsystem's world
+  position, or the target hull centre.
+
+Because the FOV stays 35°, the sky renders at 1:1 exactly as in the exterior
+view — **no magnification, so the blobs never appear.** This makes R5 (sharp-sky
+shader) and R6 (adaptive-fill FOV) unnecessary; both are reverted.
+
+### Task RB — revert R5 (native sharp-sky)
+
+`git revert --no-edit 41239dd9` (the "sharp procedural starfield" commit). It
+reverts `backdrop.frag`, `backdrop_pass.{h,cc}`, and the `sharp_sky` param +
+VZT call site in `host_bindings.cc`, restoring the sky to the normal
+baked/procedural path everywhere. **Shader file reverts → `cmake -B build -S .`
+reconfigure, then `cmake --build build -j`.** Verify the build + `ctest -R Frame`
+(36/36). If the revert conflicts (it should not — R6 touched only host_loop.py),
+resolve by hand to the pre-R5 state of those four files and note it.
+
+### Task RA — resolver reuses the tracking-camera zoom-target geometry
+
+**Files:** `engine/host_loop.py`, `engine/appc/bridge_set.py` (only if a helper field is needed — prefer stateless), `tests/host/test_viewscreen_scene_feed.py`
+
+1. Delete R6's additions from `engine/host_loop.py`: `VS_TARGET_FILL`,
+   `VS_FOV_MIN`, and the whole `_viewscreen_fov` function. Keep `VS_NEAR` /
+   `VS_FAR`.
+2. Rewrite `_viewscreen_scene_feed`. It no longer needs `dt` (the framing is
+   stateless/rigid — see note) or `ZoomTargetMode.Update`. New signature
+   `_viewscreen_scene_feed(player, forward_fov)`:
+
+```python
+def _viewscreen_scene_feed(player, forward_fov):
+    """Resolve the ViewscreenZoomTarget scene feed: the SAME framing the
+    exterior view shows when holding Z (camera_zoom_target), rendered into the
+    bridge viewscreen RTT. Returns (eye, target, up, fov_y_rad, near, far) or
+    None to leave the plain forward feed.
+
+    BC's viewscreen mode chain is first-valid-wins, so a live Target IS the
+    engagement. The frame-to-frame `_vs_last_player_target` compare stands in for
+    Camera.PlayerTargetChanged (we never dispatch ET_TARGET_WAS_CHANGED), which
+    lets MissionLib.ViewscreenWatchObject(obj) persist until the player retargets.
+
+    Framing reuses engine.cameras.tracking._TrackingCamera in ZoomTarget mode —
+    the identical solver the exterior Z zoom uses (eye close behind the target on
+    the ship->target axis, look-at the subsystem aim point, FOV unchanged at the
+    exterior value). Rigid (dt=None): no spring smoothing, which for an inset
+    reads as a clean lock rather than a swoop."""
+    if player is None:
+        return None
+    from engine.appc.camera_modes import _target_alive
+    game = Game_GetCurrentGame()
+    if game is None:
+        return None
+    cam = game.GetPlayerCamera()
+    if cam is None:
+        return None
+    mode = cam.GetNamedCameraMode("ViewscreenZoomTarget")   # Target holder only
+    if mode is None:
+        return None
+
+    cur = player.GetTarget()
+    if cur is not cam._vs_last_player_target:      # stands in for PlayerTargetChanged
+        mode.SetAttrIDObject("Target", cur)
+        cam._vs_last_player_target = cur
+
+    tgt = mode.GetAttrIDObject("Target")
+    if not _target_alive(tgt):
+        return None                                 # -> ViewscreenForward
+
+    from engine.cameras.tracking import _TrackingCamera
+    from engine.ui.target_reticle import target_aim_point
+    tc = _TrackingCamera()
+    tc.set_ship_radius(max(player.GetRadius(), 1e-6))
+    tc.enter_zoom_target()
+    # Subsystem-aware aim only when watching the player's OWN target; a mission
+    # ViewscreenWatchObject on a different object frames that object's centre.
+    aim = target_aim_point(player) if tgt is player.GetTarget() else None
+    eye, look_at, up = tc.compute(player=player, target=tgt, dt=None, aim_point=aim)
+    return (eye, look_at, up, forward_fov, VS_NEAR, VS_FAR)
+```
+
+3. Update the call site in `run()`:
+   `_scene = _viewscreen_scene_feed(player, director.fov_y_rad)` (drop `_player_dt`).
+
+**Tests** (`tests/host/test_viewscreen_scene_feed.py`): the `_Ship` helper already
+has GetWorldLocation/GetWorldRotation/GetRadius/GetTarget/IsDying. Rewrite the fov
++ framing tests:
+- none-when-no-target; dead-target -> None (keep).
+- `fov` returned == `forward_fov` exactly (proves NO custom FOV). Call with two
+  different forward_fov values and assert it tracks.
+- eye is near the TARGET, not at the player: player at origin, target at
+  (500,0,0), small radius -> `eye[0]` well past the midpoint (e.g. `> 250`) and
+  `abs(eye[1]) < 1e-6`; distinguishes new (eye behind target) from old (eye at
+  player origin).
+- mission override: set the mode Target to a different object than
+  `player.GetTarget()` and assert the framing centres on it (eye near it).
+- auto-focus follows player target; source/point sanity.
+  Keep tests that still apply; delete assertions tied to the removed FOV law.
+- Delete `tests/unit/test_adaptive_vs_fov.py` already gone; nothing else to remove.
+
+**Note (rigid vs springs):** dt=None gives the exterior Z *framing* without the
+spring sway. If Mark wants the exact spring dynamics, upgrade to a persistent
+`_TrackingCamera` on the player camera advanced with real dt (needs
+`_vs_tracking*` fields initialised in `CameraObjectClass.__init__` — the
+`_LoudStub` trap). Deferred unless requested.
+
+Gate: `scripts/check_tests.sh` green after RB + RA.
