@@ -597,3 +597,59 @@ spring sway. If Mark wants the exact spring dynamics, upgrade to a persistent
 `_LoudStub` trap). Deferred unless requested.
 
 Gate: `scripts/check_tests.sh` green after RB + RA.
+
+---
+
+## Revision 5 — viewscreen renders the FULL space scene (match the exterior camera)
+
+Live-verify #4 (Mark): "many visual effects including damage vfx and cloak vfx
+don't apply in this view. we want it to match the exterior camera. can we not
+just copy the space render pass and apply it on the viewscreen?"
+
+Yes. The `render_space` lambda already contains every space pass; it just (a)
+gates ~6 of them behind `!for_viewscreen`, and (b) hardcodes the MAIN HDR target
+(`g_hdr_target`) / main framebuffer size (`fw`,`fh`) in the three
+framebuffer-coupled passes, so they can't run against the viewscreen RTT.
+Cloak refraction runs OUTSIDE `render_space`, main-view only.
+
+KEY FINDING: the three coupled passes ALREADY take their target textures/dims as
+parameters — `lens_flare(…, viewport_w, viewport_h, …)`,
+`nebula_volumetric(…, hdr_color_tex, hdr_depth_tex, …)`,
+`nebula_godray(…, hdr_color_tex)` — and `g_viewscreen_hdr` is the same
+`renderer::HdrTarget` class as `g_hdr_target`, with `color_texture()` and
+`depth_texture()`. So NO pass-level API changes are needed; we only thread the
+BOUND target's handles into `render_space`. Cloak already reads the live viewport
+and copies the bound FBO (`cloak_pass.cc:70-76`), so it works in the RTT unchanged.
+
+**Rule after this change: the viewscreen renders identically to the exterior
+view, EXCEPT camera dust stays cockpit-only (Mark).** No shader change →
+`dauntless` rebuild only, no cmake reconfigure.
+
+### Task R7 — parameterize `render_space` on its render target; run all passes + cloak on the viewscreen
+
+**File:** `native/src/host/host_bindings.cc`
+
+1. Change the lambda signature (line ~645) to:
+   `auto render_space = [&](const scenegraph::Camera& cam, bool for_viewscreen, renderer::HdrTarget& target, int vw, int vh) {`
+2. Inside, replace the four hardcodes:
+   - volumetric nebula guard `&& g_hdr_target` → drop it (target is always valid; keep the `dauntless_volumetric_nebulae::enabled() && g_nebula_volumetric_pass` conditions).
+   - `g_hdr_target->color_texture(), g_hdr_target->depth_texture()` (volumetric) → `target.color_texture(), target.depth_texture()`.
+   - `g_hdr_target->color_texture()` (godray) → `target.color_texture()`.
+   - `g_lens_flare_pass->render(g_lens_flares, cam, *g_pipeline, fw, fh, now)` → `…, vw, vh, now`.
+3. Remove the `!for_viewscreen &&` prefix from these passes so they run on the viewscreen too: nebulae block (line ~685), nebula godrays (~706), lens flares (~710), hull discharges (~716), shockwave (~719), particles (~724). Do NOT remove it from DUST (~681) — dust stays `(!for_viewscreen || warp_streaking)`.
+4. Ambient dim: to match the exterior, make the viewscreen use the same filmic ambient. Change line ~656 from `(!for_viewscreen) ? dauntless_filmic::ambient_scale() : 1.0f` to just `dauntless_filmic::ambient_scale()`. (Behaviour change on the viewscreen tone — flagged for live-verify.)
+5. Move the CLOAK pass into `render_space`, at the very end of the lambda body (after the particle block), using `cam` and the local `ambient_scale`:
+   ```cpp
+   if (g_cloak_pass && !g_cloak_ships.empty())
+       g_cloak_pass->render(g_cloak_ships, g_world, cam, *g_pipeline, lookup,
+                            static_cast<float>(now), g_lighting, ambient_scale);
+   ```
+   Then DELETE the old standalone cloak call (the `if (!viewer_mode && !bridge_active && g_cloak_pass …)` block, ~line 863-866).
+6. Update the three call sites:
+   - viewscreen scene source (~822): `render_space(scam, /*for_viewscreen=*/true, *g_viewscreen_hdr, kViewscreenRttW, kViewscreenRttH);`
+   - viewscreen forward (~827): `render_space(vcam, /*for_viewscreen=*/true, *g_viewscreen_hdr, kViewscreenRttW, kViewscreenRttH);`
+   - main (~857): `render_space(g_camera, /*for_viewscreen=*/false, *g_hdr_target, fw, fh);`
+
+**Byte-identical for the MAIN view:** the main call passes `*g_hdr_target, fw, fh` (== the old hardcodes) and `for_viewscreen=false` (all gates already open for it). Cloak moves from just-after-`render_space` to the end of the lambda body — the same sequence point for the main view (nothing ran between). So the main exterior view is unchanged. The viewscreen forward feed (no target) gains the extra passes too — that's the intended "match".
+
+**Verify:** `cmake --build build -j` (NO reconfigure — no shader change); `PYTHONPATH=build/python python -c "import _dauntless_host"`; `ctest --test-dir build -R Frame` (36/36); then full `scripts/check_tests.sh` green. Live-verify: bridge viewscreen shows smoke/debris/explosions/shockwaves and cloak shimmer, matching the exterior view; main view unchanged.
