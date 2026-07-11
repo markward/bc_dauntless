@@ -1,11 +1,15 @@
 """SDK UI layout primitives: normalized (0..1, top-left, y-down) rects, the
 ALIGN_* anchor mapping, and the single normalized→CEF (vw/vh) boundary.
 
-These sentinels are our own; the SDK references App.TGUIObject.ALIGN_* which
-must resolve to these same values (wired in Task 4)."""
+These sentinels are the single source of truth; the root App.py shim's
+TGUIObject class imports them directly (App.TGUIObject.ALIGN_* == these same
+ints) so real SDK AlignTo calls resolve real anchors instead of falling
+through App's module __getattr__ to the int()==0 _NamedStub stub."""
 
-# Anchor sentinels (halign, valign codes). Values are internal but must be the
-# ones App.TGUIObject.ALIGN_* expose so SDK comparisons match (Task 4 wires them).
+# Anchor sentinels (halign, valign codes). App.TGUIObject.ALIGN_* (defined in
+# the root App.py shim, near the tg_ui.widgets import block) imports these
+# directly, so SDK comparisons against App.TGUIObject.ALIGN_* match by
+# construction — no duplicated/drifting int table.
 ALIGN_UL = 0   # (0.0, 0.0)
 ALIGN_UC = 1   # (0.5, 0.0)
 ALIGN_UR = 2   # (1.0, 0.0)

@@ -5802,11 +5802,17 @@ def run(mission_name: Optional[str] = None,
                     _officer_menu_window = (
                         _ipane.GetNthChild(TACTICAL_MENU)
                         if _ipane is not None else None)
-                    if (_officer_menu_window is not None
-                            and hasattr(_officer_menu_window, "_abs_rect")
-                            and _officer_menu_window._abs_rect is not None):
+                    # NOT hasattr: TGObject.__getattr__ returns a truthy
+                    # _Stub for any missing attribute, so hasattr(...,
+                    # "_abs_rect") is always True and would never skip a
+                    # window whose layout state was never seeded. Read the
+                    # instance dict directly, the same idiom the resolver
+                    # (_ensure_layout_state) and its tests use.
+                    _abs_rect = (_officer_menu_window.__dict__.get("_abs_rect")
+                                 if _officer_menu_window is not None else None)
+                    if _abs_rect is not None:
                         _officer_menu_pusher.push(
-                            {"officer-menu": _officer_menu_window._abs_rect})
+                            {"officer-menu": _abs_rect})
 
                 # Push the live pointer-arrow set to the CEF overlay
                 # (Task 9). emitted_arrows() reads TopWindow's recorded

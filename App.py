@@ -35,6 +35,28 @@ from engine.appc.tg_ui.widgets import (
     STTiledIcon, STTiledIcon_Create, STTiledIcon_Cast,
     WC_BACKSPACE, WC_TAB, WC_LINEFEED, WC_RETURN, WC_SPACE, WC_CURSOR,
 )
+from engine.appc.tg_ui import layout as _tg_ui_layout
+
+
+class TGUIObject:
+    """SDK-referenced anchor constants for AlignTo (widget.AlignTo(other,
+    App.TGUIObject.ALIGN_BL, App.TGUIObject.ALIGN_UL)). Bound directly to
+    engine.appc.tg_ui.layout's ALIGN_* sentinels — the single source of
+    truth the layout resolver's ANCHOR_FRACTIONS/AlignTo is keyed on — so
+    real SDK AlignTo calls resolve real anchors instead of both arguments
+    collapsing to the int()==0 _NamedStub stub (App's module __getattr__
+    would otherwise hand back a fresh stub for TGUIObject itself)."""
+    ALIGN_UL = _tg_ui_layout.ALIGN_UL
+    ALIGN_UC = _tg_ui_layout.ALIGN_UC
+    ALIGN_UR = _tg_ui_layout.ALIGN_UR
+    ALIGN_CL = _tg_ui_layout.ALIGN_CL
+    ALIGN_CC = _tg_ui_layout.ALIGN_CC
+    ALIGN_CR = _tg_ui_layout.ALIGN_CR
+    ALIGN_BL = _tg_ui_layout.ALIGN_BL
+    ALIGN_BC = _tg_ui_layout.ALIGN_BC
+    ALIGN_BR = _tg_ui_layout.ALIGN_BR
+
+
 from engine.appc.tg_ui.managers import (
     g_kFontManager, g_kIconManager, g_kImageManager,
     g_kFocusManager, g_kRootWindow,
