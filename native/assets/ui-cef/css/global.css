@@ -79,6 +79,47 @@ html, body {
 #tactical-bottom-row > * { pointer-events: auto; }
 
 /* ============================================================
+   Pointer-arrow overlay — SDK MissionLib.ShowPointerArrow, rendered by
+   engine/ui/pointer_arrow_overlay.py into #pointer-arrows (Task 9). The
+   layer sits above every panel (z-index) and never intercepts the mouse;
+   each arrow div carries its own left/top (vw/vh, set inline per-arrow by
+   the pusher) and a `.arrow--<dir>` class (0-9) that this stylesheet
+   rotates into the right heading. Direction mapping matches BC's
+   POINTER_* constants / corner-glyph convention:
+     0 = left (0deg), 2 = up (90deg), 4 = right (180deg), 6 = down (270deg)
+     1/8 = up-left/down-right diagonal (45deg), 3/9 = up-right/down-left (135deg)
+     5 = 225deg, 7 = 315deg
+   ============================================================ */
+
+#pointer-arrows {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 9000;
+}
+
+#pointer-arrows .arrow {
+    position: fixed;
+    width: 2vw;
+    height: 2vw;
+    background: no-repeat center / contain;
+    /* LCARS-white triangle pointing left at rotate(0); rotated per direction
+       class below. Inline SVG data-URI — CEF's CSP blocks external assets. */
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><path d='M0 5 L10 0 L10 10 Z' fill='white'/></svg>");
+}
+
+#pointer-arrows .arrow--0 { transform: rotate(0deg); }    /* LEFT */
+#pointer-arrows .arrow--2 { transform: rotate(90deg); }   /* UP */
+#pointer-arrows .arrow--4 { transform: rotate(180deg); }  /* RIGHT */
+#pointer-arrows .arrow--6 { transform: rotate(270deg); }  /* DOWN */
+#pointer-arrows .arrow--1,
+#pointer-arrows .arrow--8 { transform: rotate(45deg); }
+#pointer-arrows .arrow--3,
+#pointer-arrows .arrow--9 { transform: rotate(135deg); }
+#pointer-arrows .arrow--5 { transform: rotate(225deg); }
+#pointer-arrows .arrow--7 { transform: rotate(315deg); }
+
+/* ============================================================
    Pause menu — see docs/ui_designs/10-pause-menu.md
    Composes the shared panel chrome (00) + officer-menu row
    primitive (01). Tokens kept local until chrome.css / row.css
