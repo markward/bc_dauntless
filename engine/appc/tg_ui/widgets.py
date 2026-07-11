@@ -181,10 +181,14 @@ class TGPane(TGEventHandlerObject):
         self._local_left += float(dx)
         self._local_top += float(dy)
 
-    def AlignTo(self, *args) -> None:
-        # Anchor-relative positioning — resolved in Task 5. Safe no-op here
-        # so callers depending on the method existing don't break.
+    def AlignTo(self, other, my_anchor, other_anchor, *_extra) -> None:
+        # Records an alignment spec resolved at Layout() so my_anchor's point
+        # on this widget coincides with other_anchor's point on the
+        # already-resolved sibling `other`. See _resolve_child_rect.
         self._ensure_layout_state()
+        self._align_spec = (other, int(my_anchor), int(other_anchor))
+        self._local_left = 0.0
+        self._local_top = 0.0
 
     def Layout(self, *args) -> None:
         from engine.appc.tg_ui.layout import Rect
@@ -205,8 +209,17 @@ class TGPane(TGEventHandlerObject):
             child._layout_children()
 
     def _resolve_child_rect(self, child, origin_l, origin_t):
-        from engine.appc.tg_ui.layout import Rect
-        # AlignTo handled in Task 5; here: parent origin + child local.
+        from engine.appc.tg_ui.layout import (
+            Rect, anchor_point, ANCHOR_FRACTIONS, LayoutNotResolved,
+        )
+        if child._align_spec is not None:
+            other, my_anchor, other_anchor = child._align_spec
+            if getattr(other, "_abs_rect", None) is None:
+                raise LayoutNotResolved("AlignTo target not yet resolved")
+            ox, oy = anchor_point(other._abs_rect, other_anchor)
+            mfx, mfy = ANCHOR_FRACTIONS[my_anchor]
+            return Rect(ox - mfx * child._width, oy - mfy * child._height,
+                        child._width, child._height)
         return Rect(origin_l + child._local_left,
                     origin_t + child._local_top,
                     child._width, child._height)
