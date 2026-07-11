@@ -2,7 +2,9 @@
 
 **Date:** 2026-07-11
 **Status:** design approved, pending spec review
-**Proving feature:** an E1M1 tutorial pointer arrow landing on the real "Set Course" button in the CEF officer menu.
+**Proving feature:** the **real E1M1 Set Course tutorial** playing to its `ShowArrow`
+beat, with the pointer arrow landing on the actual "Set Course" button in the CEF
+officer menu.
 
 ## Goal
 
@@ -27,8 +29,11 @@ architecture; position is the prerequisite.
   screen from its SDK-resolved rect, replacing its CSS-flow placement.
 - `MissionLib.ShowPointerArrow` / `HidePointerArrows` / `g_lPointerArrows` +
   `POINTER_*` constants, rendering arrows as a CEF overlay layer.
-- End-to-end proof: E1M1 arrow lands on the "Set Course" button and tracks it on
-  the 0.125 s refresh.
+- **Driving the real E1M1 Set Course tutorial** (`ExplainWarp`) to its `ShowArrow`
+  beat: fixing whatever currently blocks that tutorial sequence from playing end
+  to end in Dauntless (integration of already-existing pieces; see Component 7).
+- End-to-end proof: the real tutorial plays, the arrow lands on the "Set Course"
+  button, and tracks it on the 0.125 s refresh.
 
 **Out (follow-on, reuses the same resolver):**
 - The rest of the tactical HUD (target list, ship/enemy display, weapons, radar,
@@ -184,6 +189,42 @@ channel only writes SDK-positioned panels' containers; invented panels keep thei
 `global.css` fixed positions. The registry is the single place that declares
 "this panelId is SDK-driven," which also documents the scope boundary in code.
 
+### 7. E1M1 Set Course tutorial trigger (the proof driver)
+
+The arrow architecture is inert without something calling `ShowArrow`. For this
+slice the driver is the **real E1M1 Set Course tutorial**, not a dev harness.
+
+Trigger chain (traced):
+- E1M1 builds Picard's menu with a `SettingCourse` button wired to
+  `ET_SET_COURSE_TUTORIAL → ExplainWarp`, then disables the menu
+  (`SetMenuEnabled(0)`) until the mission enables it (`E1M1.py:700/708/712`).
+- Player clicks `SettingCourse` in the CEF officer menu → SDK activation event
+  dispatches → `ExplainWarp` builds and plays a `TGSequence`:
+  `PreloadSequenceLines → StartCutscene → ChangeToBridge → SetTutorialFlag →
+  Picard AT_MENU_DOWN → Kiska AT_MENU_UP → SetCharWindowLock → ReturnControl →
+  ShowInfoBox → ShowArrow(pSetCourseMenu, POINTER_UR_CORNER)`
+  (`E1M1.py:3513-3534`).
+
+Status of each dependency in Dauntless (to confirm in the spike):
+- CEF menu button click → SDK activation dispatch — **exists** (crew-menu CEF
+  activation is merged).
+- `StartCutscene` / cutscene mode — exists (cutscene camera work).
+- `ChangeToBridge` / view switch — exists (view-sync pull model).
+- `AT_MENU_DOWN` / `AT_MENU_UP` — exists (bridge character animation / menus).
+- `SetCharWindowLock` / `ReturnControl` — exists (char-window / control gating).
+- `ShowInfoBox` — engine `info_box_panel.py` exists.
+- `ShowArrow` / `ShowPointerArrow` — this spec (Components 1–5).
+- **Mission progression enabling Picard's menu at the SettingCourse beat** —
+  unverified; the spike determines whether E1M1 reaches this state and what (if
+  anything) blocks it.
+
+This is **integration of existing pieces**, not net-new subsystems — but the only
+way to know the chain plays cleanly is live. Therefore the implementation plan
+**front-loads a spike** (task 1) that runs E1M1, drives it toward the SettingCourse
+beat, and enumerates the concrete blockers before any resolver code is written.
+If the spike surfaces a blocker that is itself a large subsystem, we stop and
+re-scope with Mark rather than absorbing it silently.
+
 ## Data flow
 
 ```
@@ -222,8 +263,10 @@ probe is the ground truth.)
 
 ### End-to-end acceptance (Mark-run)
 
-Run E1M1 to the "Set Course" / "Docking" arrow beat; confirm the arrow lands on
-the actual button in the CEF officer menu and tracks it on refresh.
+Play the **real E1M1 Set Course tutorial**: progress the mission until Picard's
+menu enables the `SettingCourse` button, click it, and confirm `ExplainWarp` plays
+its sequence to the `ShowArrow` call, with the arrow landing on the actual "Set
+Course" button in the CEF officer menu and tracking it on the 0.125 s refresh.
 
 ## Testing (TDD; both suites via `scripts/check_tests.sh`)
 
@@ -254,6 +297,11 @@ the actual button in the CEF officer menu and tracks it on refresh.
    (`LCARS_1024/1280/1600/...`). *Mitigation:* resolver reads the current LCARS
    module (as the SDK does) and works in normalized coords, so it is
    resolution-agnostic; the probe is captured at one resolution and normalized.
+5. **E1M1 tutorial chain plays cleanly** — the proof depends on the real
+   `ExplainWarp` sequence and mission progression to the SettingCourse beat. The
+   pieces mostly exist, but integration is unverified. *Mitigation:* the plan's
+   task 1 is a live spike that enumerates concrete blockers before resolver work;
+   a large blocker triggers a re-scope conversation, not silent absorption.
 
 ## Files (anticipated)
 
@@ -269,5 +317,9 @@ the actual button in the CEF officer menu and tracks it on refresh.
   SDK-driven inline position; `#pointer-arrows` overlay layer; remove officer-menu
   CSS-flow placement.
 - `docs/instrumented_experiments/` — the officer-menu geometry probe runbook.
+- E1M1 tutorial trigger: engine-side gaps surfaced by the task-1 spike (mission
+  progression to the SettingCourse beat, any broken `ExplainWarp` sequence
+  action). Specific files unknown until the spike; **no SDK edits** — fixes land
+  in `engine/` per "SDK drives everything."
 - Tests alongside each of the above.
 ```
