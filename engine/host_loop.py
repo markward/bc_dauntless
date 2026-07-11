@@ -5300,6 +5300,14 @@ def run(mission_name: Optional[str] = None,
             PositionPusher(_h.cef_execute_javascript) if _h is not None else None
         )
 
+        # Pointer-arrow overlay -> CEF (Task 9). Dirty-flagged: only pushes a
+        # script when the arrow set changes, same pattern as
+        # _officer_menu_pusher above. None when bindings aren't built.
+        from engine.ui.pointer_arrow_overlay import ArrowOverlayPusher
+        _arrow_overlay_pusher = (
+            ArrowOverlayPusher(_h.cef_execute_javascript) if _h is not None else None
+        )
+
         # Dev-only mission picker construction. Done BEFORE
         # default_pause_menu(...) so register_dev_pause_menu_entry
         # adds the "Load Mission…" row before the menu is built.
@@ -5799,6 +5807,15 @@ def run(mission_name: Optional[str] = None,
                             and _officer_menu_window._abs_rect is not None):
                         _officer_menu_pusher.push(
                             {"officer-menu": _officer_menu_window._abs_rect})
+
+                # Push the live pointer-arrow set to the CEF overlay
+                # (Task 9). emitted_arrows() reads TopWindow's recorded
+                # ShowPointerArrow placements; an empty list clears the
+                # layer (HidePointerArrows). Dirty-flagged inside the
+                # pusher so an unchanged set isn't re-emitted every frame.
+                if _arrow_overlay_pusher is not None:
+                    from engine.appc import pointer_arrows
+                    _arrow_overlay_pusher.push(pointer_arrows.emitted_arrows())
 
                 # Forward mouse to CEF outside the pause overlay so
                 # non-pause panels (target list) are clickable. The
