@@ -4701,6 +4701,55 @@ def _wire_target_menu_to_player_set(controller) -> None:
         menu.ResetAffiliationColors()
 
 
+def resolve_officer_menu_layout() -> None:
+    """Run the SDK's tactical-control-window layout so the officer-menu window
+    resolves an absolute on-screen rect.
+
+    The SDK's Tactical/Interface/TacticalControlWindow positions the officer-menu
+    window (InterfacePane.GetNthChild(TACTICAL_MENU)) via ResizeUI (SetMaximumSize)
+    + RepositionUI (SetPosition(0,0) then pTacCtrlWindow.Layout()). With
+    TacticalControlWindow.Layout() now real, that pass caches the window's
+    _abs_rect, so GetScreenOffset stops raising LayoutNotResolved — unblocking the
+    SDK-driven CEF positioning (GetScreenOffset / ResizeUI rects) tasks downstream.
+
+    Two entry paths:
+      * campaign / QuickBattle — LoadBridge.Load already ran CreateMenus (which
+        builds the interface pane and ends with ResizeUI/RepositionUI). We re-run
+        ResizeUI/RepositionUI; it is idempotent and re-drives Layout().
+      * dev mission picker — swaps the mission WITHOUT LoadBridge.Load, so the TCW
+        exists but has no interface pane. Build the menus once (CreateMenus ends
+        with its own ResizeUI/RepositionUI). Never call CreateMenus when the pane
+        already exists: the TCW is a singleton and a repeat appends duplicate panes.
+
+    Guarded: a layout hiccup must never take down mission load, so any exception is
+    logged with a traceback and swallowed.
+    """
+    import App as _App
+    from engine.appc.windows import INTERFACE_PANE
+    try:
+        tcw = _App.TacticalControlWindow_GetTacticalControlWindow()
+        if tcw is None:
+            return
+        import Tactical.Interface.TacticalControlWindow as _TCW
+        if tcw.GetNthChild(INTERFACE_PANE) is None:
+            # Dev-picker path: menus not built yet. CreateMenus ends with its
+            # own ResizeUI()/RepositionUI() -> TacticalControlWindow.Layout().
+            import Bridge.TacticalMenuHandlers as _TMH
+            _TMH.CreateMenus()
+        else:
+            # Campaign / QB path: interface pane already built. Re-drive the
+            # SDK resize+reposition (RepositionUI ends with TCW.Layout()).
+            _TCW.ResizeUI()
+            _TCW.RepositionUI()
+    except Exception:
+        import logging
+        import traceback
+        logging.getLogger(__name__).warning(
+            "resolve_officer_menu_layout failed; officer menu may be unpositioned:\n%s",
+            traceback.format_exc(),
+        )
+
+
 def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
                               game_time, model_scale, player_control=None) -> None:
     """Push ship + planet world transforms to the renderer for one frame.
@@ -5219,6 +5268,11 @@ def run(mission_name: Optional[str] = None,
             # exercise the exact code the live boot runs.
             from engine.bridge_officers import wire_after_mission_load
             wire_after_mission_load()
+            # Run the SDK tactical-control-window layout so the officer-menu
+            # window resolves an absolute rect (GetScreenOffset). Must run per
+            # load: reset_sdk_globals recreates the TCW + panes each swap, and
+            # the dev-picker path builds the menus here (no LoadBridge.Load).
+            resolve_officer_menu_layout()
             # Re-register the hit-reaction broadcast handler after every
             # reset_sdk_globals() call (swap or initial load). The handler
             # object (_hit_reactions) is swap-safe — it re-fetches player and

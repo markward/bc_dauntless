@@ -11,6 +11,12 @@ import time
 from engine.appc.events import TGEventHandlerObject
 from engine.appc.tg_ui.widgets import TGPane
 
+# Pane-index constants, mirrored from the SDK module
+# Tactical/Interface/TacticalControlWindow.py so host-side layout invocation
+# reads the same slots the SDK does. Only the two we use are defined here.
+INTERFACE_PANE = 0   # TacticalControlWindow.GetNthChild(INTERFACE_PANE)
+TACTICAL_MENU = 0    # interfacePane.GetNthChild(TACTICAL_MENU) -> officer-menu window
+
 
 class TacticalControlWindow(TGEventHandlerObject):
     _instance: "TacticalControlWindow | None" = None
@@ -163,6 +169,47 @@ class TacticalControlWindow(TGEventHandlerObject):
 
     def IsVisible(self) -> int:
         return 1
+
+    def Layout(self, *_args) -> None:
+        """Run the layout resolver over the interface pane's direct children.
+
+        The SDK's Tactical/Interface/TacticalControlWindow.RepositionUI() ends
+        with ``pTacCtrlWindow.Layout()`` to cascade the recorded SetPosition/
+        AlignTo placements into absolute rects. In real BC the TCW is a TGPane
+        and Layout() lays out its whole subtree; here the TCW is a plain
+        event-handler object, so we drive the resolver explicitly.
+
+        We lay out only the interface pane's *direct* children (that is all the
+        officer-menu window — TACTICAL_MENU=0 — and the downstream tasks need),
+        each resolved independently: several interface children AlignTo display
+        widgets (RadarDisplay, ShipDisplay) that never opt into resolver state,
+        so a single unresolvable AlignTo must NOT abort its siblings. We reuse
+        the TGPane resolver's own _resolve_child_rect; we do not recurse into
+        the stylized-window menu subtrees (their children are STMenu/STButton,
+        not positioned resolver panes).
+        """
+        from engine.appc.tg_ui.layout import Rect, LayoutNotResolved
+
+        ipane = self.GetNthChild(INTERFACE_PANE)
+        if not isinstance(ipane, TGPane):
+            return
+        ipane._ensure_layout_state()
+        if ipane._abs_rect is None:            # interface pane is the layout root
+            ipane._abs_rect = Rect(ipane._local_left, ipane._local_top,
+                                   ipane._width, ipane._height)
+        origin_l = ipane._abs_rect.left
+        origin_t = ipane._abs_rect.top
+        for child, _x, _y in ipane._children:
+            if not isinstance(child, TGPane):  # display widgets: not resolver panes
+                continue
+            child._ensure_layout_state()
+            try:
+                child._abs_rect = ipane._resolve_child_rect(child, origin_l, origin_t)
+            except LayoutNotResolved:
+                # AlignTo target isn't a laid-out resolver widget (e.g. a radar/
+                # ship display). Leave this child unresolved (GetScreenOffset
+                # stays fail-loud for it) and keep placing its siblings.
+                continue
 
 
 
@@ -475,6 +522,14 @@ class _STStylizedWindow(TGPane):
         # headless stores the values for potential introspection.
         self._max_w = float(w) if not isinstance(w, type(None)) else 0.0
         self._max_h = float(h) if not isinstance(h, type(None)) else 0.0
+        # The layout resolver reads a widget's box from the _width/_height
+        # attributes (TGPane._resolve_child_rect). A stylized window has no
+        # separate laid-out size — for the fixed tactical-menu window its
+        # on-screen box IS its maximum size — so mirror it here. The SDK-facing
+        # GetWidth()/GetHeight() stay 0.0 (BC pixel geometry we never render);
+        # only the resolver-input attributes are populated.
+        self._width = self._max_w
+        self._height = self._max_h
 
     def SetFixedSize(self, *_args) -> None:  pass
     def AlignTo(self, *_args) -> None:       pass  # layout-relative positioning; no-op headless
