@@ -74,6 +74,16 @@ class TGPane(TGEventHandlerObject):
 
     def AddChild(self, child, x: float = 0.0, y: float = 0.0, *_extra) -> None:
         self._children.append((child, float(x), float(y)))
+        # Some SDK call sites add non-TGPane duck-typed panels (e.g.
+        # engine/ui/ship_display_panel.py's ShipDisplayPanel) that implement
+        # their own SetPosition/GetLeft/Layout and never opt into resolver
+        # state. Only seed resolver state on real TGPane widgets — isinstance,
+        # not hasattr/getattr, because TGObject.__getattr__ vends a truthy
+        # _Stub for missing attributes on other engine base classes too.
+        if isinstance(child, TGPane):
+            child._ensure_layout_state()
+            child._local_left = float(x)
+            child._local_top = float(y)
 
     def GetChildren(self) -> list:
         # Returns (child, x, y) 3-tuples — dauntless-internal convenience,
@@ -134,20 +144,103 @@ class TGPane(TGEventHandlerObject):
 
     def GetWidth(self) -> float:              return self._width
     def GetHeight(self) -> float:             return self._height
-    def GetLeft(self) -> float:               return 0.0
-    def GetTop(self) -> float:                return 0.0
     def GetParent(self):                      return None  # No-op; callers null-guard via TGPane_Cast
     def Resize(self, *args) -> None:          pass
     def ResizeUI(self, *args) -> None:        pass
     def RepositionUI(self, *args) -> None:    pass
-    def Layout(self, *args) -> None:          pass
     def InteriorChangedSize(self, *args) -> None:  pass
     def SetNoFocus(self, *args) -> None:      pass
     def SetFocus(self, *args) -> None:        pass
     # CallNextHandler inherited from TGEventHandlerObject (LIFO chain advance).
     def SetNotMinimized(self, *args) -> None: pass
-    def AlignTo(self, *args) -> None:         pass
-    def SetPosition(self, *args) -> None:     pass
+
+    # ── Layout resolver state (Task 4/5) ─────────────────────────────────────
+    #   _local_left/_top : this widget's position relative to its parent origin
+    #   _abs_rect        : resolved absolute Rect (None until Layout runs)
+    #   _align_spec      : optional (other, my_anchor, other_anchor) for AlignTo
+    def _ensure_layout_state(self):
+        # Reads via __dict__, NOT hasattr: TGObject.__getattr__ (engine/core/ids.py)
+        # returns a truthy _Stub for any missing attribute instead of raising
+        # AttributeError, so hasattr(self, "_local_left") is always True and this
+        # guard would never initialize state. See ensure_widget_id() above for
+        # the same gotcha on widget ids.
+        if "_local_left" not in self.__dict__:
+            self._local_left = 0.0
+            self._local_top = 0.0
+            self._abs_rect = None
+            self._align_spec = None
+
+    def SetPosition(self, x: float = 0.0, y: float = 0.0, *_extra) -> None:
+        self._ensure_layout_state()
+        self._local_left = float(x)
+        self._local_top = float(y)
+        self._align_spec = None
+
+    def Move(self, dx: float = 0.0, dy: float = 0.0, *_extra) -> None:
+        self._ensure_layout_state()
+        self._local_left += float(dx)
+        self._local_top += float(dy)
+
+    def AlignTo(self, *args) -> None:
+        # Anchor-relative positioning — resolved in Task 5. Safe no-op here
+        # so callers depending on the method existing don't break.
+        self._ensure_layout_state()
+
+    def Layout(self, *args) -> None:
+        from engine.appc.tg_ui.layout import Rect
+        self._ensure_layout_state()
+        if self._abs_rect is None:            # root: place at its own local
+            self._abs_rect = Rect(self._local_left, self._local_top,
+                                  self._width, self._height)
+        self._layout_children()
+
+    def _layout_children(self):
+        origin_l = self._abs_rect.left
+        origin_t = self._abs_rect.top
+        for child, _x, _y in self._children:
+            if not isinstance(child, TGPane):  # see AddChild note above
+                continue
+            child._ensure_layout_state()
+            child._abs_rect = self._resolve_child_rect(child, origin_l, origin_t)
+            child._layout_children()
+
+    def _resolve_child_rect(self, child, origin_l, origin_t):
+        from engine.appc.tg_ui.layout import Rect
+        # AlignTo handled in Task 5; here: parent origin + child local.
+        return Rect(origin_l + child._local_left,
+                    origin_t + child._local_top,
+                    child._width, child._height)
+
+    def GetLeft(self) -> float:
+        # Best-effort, NOT fail-loud: real (read-only) SDK scripts read a
+        # sibling's GetLeft()/GetTop() immediately after AddChild/SetPosition
+        # — e.g. Bridge/PowerDisplay.py:474 chains
+        # `pPowerDisplay.AddChild(pMainRuler, 0.0, pWarpCoreRuler.GetTop(), 0)`
+        # with no top-down Layout() pass ever having run. Fall back to the
+        # known local placement (never a fabricated 0.0-for-everyone) instead
+        # of raising; GetScreenOffset is the strict, fail-loud one (below).
+        self._ensure_layout_state()
+        if self._abs_rect is not None:
+            return self._abs_rect.left
+        return self._local_left
+
+    def GetTop(self) -> float:
+        self._ensure_layout_state()
+        if self._abs_rect is not None:
+            return self._abs_rect.top
+        return self._local_top
+
+    def GetScreenOffset(self, out=None):
+        self._ensure_layout_state()
+        if self._abs_rect is None:
+            from engine.appc.tg_ui.layout import LayoutNotResolved
+            raise LayoutNotResolved("GetScreenOffset before Layout")
+        if out is not None:
+            if hasattr(out, "x"): out.x = self._abs_rect.left
+            if hasattr(out, "y"): out.y = self._abs_rect.top
+            return out
+        from engine.appc.math import TGPoint3
+        return TGPoint3(self._abs_rect.left, self._abs_rect.top, 0.0)
 
 
 class TGIcon(TGPane):

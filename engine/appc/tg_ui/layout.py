@@ -60,3 +60,14 @@ def norm_to_vhvw(left, top, width, height):
         "width": _fmt(width, "vw"),
         "height": _fmt(height, "vh"),
     }
+
+
+class LayoutNotResolved(RuntimeError):
+    """Raised when GetScreenOffset is called on a widget the resolver has not
+    placed (no top-down Layout() pass has reached it). Replaces the old
+    silent (0,0) stub so unimplemented panels are loud, not plausibly-wrong.
+
+    GetLeft()/GetTop() deliberately do NOT raise this: real (read-only) SDK
+    scripts read a sibling's GetLeft()/GetTop() immediately after AddChild,
+    before any Layout() pass runs (e.g. Bridge/PowerDisplay.py:474). They
+    fall back to the known local placement instead."""
