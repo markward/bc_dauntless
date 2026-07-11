@@ -5291,6 +5291,15 @@ def run(mission_name: Optional[str] = None,
         except ImportError:
             _h = None  # bindings module not built; skip input handling.
 
+        # SDK-resolved officer-menu rect -> CEF position channel (Task 8).
+        # Dirty-flagged: only pushes a script when the resolved rect changes.
+        # None when bindings aren't built (matches every other _h-gated
+        # feature in this loop).
+        from engine.ui.sdk_panel_positions import PositionPusher
+        _officer_menu_pusher = (
+            PositionPusher(_h.cef_execute_javascript) if _h is not None else None
+        )
+
         # Dev-only mission picker construction. Done BEFORE
         # default_pause_menu(...) so register_dev_pause_menu_entry
         # adds the "Load Mission…" row before the menu is built.
@@ -5772,6 +5781,24 @@ def run(mission_name: Optional[str] = None,
                 _scripts = registry.render_all()
                 for _panel_script in _scripts:
                     _h.cef_execute_javascript(_panel_script)
+
+                # Push the SDK-resolved officer-menu rect to CEF (Task 8).
+                # Guarded on the window actually having resolved a rect this
+                # load (resolve_officer_menu_layout runs on mission load;
+                # headless/pre-layout the rect is None and we skip silently).
+                if _officer_menu_pusher is not None:
+                    from engine.appc.windows import INTERFACE_PANE, TACTICAL_MENU
+                    _tcw = App.TacticalControlWindow_GetTacticalControlWindow()
+                    _ipane = (_tcw.GetNthChild(INTERFACE_PANE)
+                              if _tcw is not None else None)
+                    _officer_menu_window = (
+                        _ipane.GetNthChild(TACTICAL_MENU)
+                        if _ipane is not None else None)
+                    if (_officer_menu_window is not None
+                            and hasattr(_officer_menu_window, "_abs_rect")
+                            and _officer_menu_window._abs_rect is not None):
+                        _officer_menu_pusher.push(
+                            {"officer-menu": _officer_menu_window._abs_rect})
 
                 # Forward mouse to CEF outside the pause overlay so
                 # non-pause panels (target list) are clickable. The
