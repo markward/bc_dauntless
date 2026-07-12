@@ -815,6 +815,14 @@ ET_PRELOAD_DONE = 108
 # contiguous with this block and not collide.
 ET_SET_PLAYER = 110
 
+# Fired by every SDK character-move builder's completed-event (PicardAnimations,
+# MediumAnimations, ...) carrying a CS_* state as its int. BC's native engine
+# consumes it and applies that state to the destination character — that is how an
+# officer HIDES after walking into the turbolift (CS_HIDDEN) and how a walk-on ends
+# STANDING / SEATED. Not present in the original ET_* dump; 100-111 are all taken
+# in this block (checked), so 112 is the next free contiguous value.
+ET_CHARACTER_ANIMATION_DONE = 112
+
 # Used by Conditions/Condition*.py — broadcast events the SDK conditions
 # subscribe to. Values arbitrary but stable; keep contiguous with the
 # existing ET_* block so future grep finds them all in one place.

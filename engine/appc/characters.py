@@ -566,6 +566,34 @@ class CharacterClass(ObjectClass):
     def IsActive(self) -> int:                    return 1 if self._data.get("Active", True) else 0
     def SetActive(self, *args) -> None:           self._data["Active"] = True
 
+    def ProcessEvent(self, event) -> None:
+        # BC's native engine consumes ET_CHARACTER_ANIMATION_DONE (fired by every
+        # SDK move builder's completed-event, e.g. PicardAnimations.MoveFromPToL1)
+        # and applies the carried CS_* state to this character — that is how an
+        # officer HIDES after walking into the turbolift. Must never raise: a
+        # malformed event (missing int, unknown state) degrades quietly and falls
+        # through to the normal instance-handler chain.
+        import App
+        try:
+            et = event.GetEventType()
+        except Exception:
+            et = None
+        if et == App.ET_CHARACTER_ANIMATION_DONE:
+            try:
+                state = int(event.GetInt())
+            except Exception:
+                state = None
+            if state == self.CS_HIDDEN:
+                self.SetHidden(1)
+            elif state == self.CS_STANDING:
+                self.SetHidden(0)
+                self.SetStanding()
+            elif state == self.CS_SEATED:
+                self.SetHidden(0)
+                self.ClearStatus(self.CS_STANDING)
+            return
+        super().ProcessEvent(event)
+
     # ── Location / placement ────────────────────────────────────────────────
     def SetLocation(self, location) -> None:
         # Two SDK forms: SetLocation(Location-object) and SetLocation(name-str).
