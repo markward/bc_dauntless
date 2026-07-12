@@ -102,12 +102,62 @@ def test_menu_down_hides_clears_turns_back(monkeypatch):
     menu = _Menu()
     c = _officer(monkeypatch, menu, panel, turns, events)
     panel._officer = c                  # this officer's menu is the open one
+    c._data["MenuUp"] = True            # a REAL close: the menu must be up first
 
     c.MenuDown()
     assert panel.hidden == 1
     assert c._data["MenuUp"] is False
     assert turns == [False]             # turn-back
     assert events == [False]
+
+
+def test_menu_down_never_up_is_a_pure_noop(monkeypatch):
+    """SDK calls MenuDown() defensively (ContactStarfleet, DockStarbase12, ...)
+    on officers whose menu was never up. That must dispatch NOTHING -- no
+    close event, no turn request, no panel touch -- else it fires an unpaired
+    close that trips the tutorial's ET_CHARACTER_MENU close-count."""
+    panel, turns, events = _Panel(), [], []
+    menu = _Menu()
+    c = _officer(monkeypatch, menu, panel, turns, events)
+    assert "MenuUp" not in c._data or c._data.get("MenuUp") is False
+
+    c.MenuDown()
+    assert panel.hidden == 0
+    assert turns == []
+    assert events == []
+
+
+def test_menu_up_twice_with_panel_fires_open_once(monkeypatch):
+    """A second MenuUp() on an already-open officer must not re-drive the
+    view, re-request the turn, or re-dispatch the open event.
+
+    The real CrewMenuPanel.open_officer() resolves dynamically from the
+    open menu's ownership (c.GetMenu() is menu), so once show_menu has run
+    the panel would already report `c` as the open officer; the fake
+    _Panel has no menu-ownership resolver, so mirror that by setting
+    panel._officer explicitly after the first (real) open."""
+    panel, turns, events = _Panel(), [], []
+    menu = _Menu()
+    c = _officer(monkeypatch, menu, panel, turns, events)
+
+    assert c.MenuUp() == 1
+    panel._officer = c                  # panel now reflects c as the open officer
+    assert c.MenuUp() == 1              # idempotent raise
+    assert panel.shown == [menu]        # view driven exactly once
+    assert turns == [True]              # turn requested exactly once
+    assert events == [True]             # open event dispatched exactly once
+
+
+def test_menu_up_twice_headless_fires_open_once(monkeypatch):
+    """Same idempotency guarantee with no panel at all (headless)."""
+    turns, events = [], []
+    c = _officer(monkeypatch, _Menu(), panel=None, turns=turns, events=events)
+    monkeypatch.setattr(chars, "_get_menu_panel", lambda: None)
+
+    assert c.MenuUp() == 1
+    assert c.MenuUp() == 1              # idempotent raise, headless
+    assert turns == [True]              # turn requested exactly once
+    assert events == [True]             # open event dispatched exactly once
 
 
 def test_menu_down_does_not_hide_someone_elses_menu(monkeypatch):

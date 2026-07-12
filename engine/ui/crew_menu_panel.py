@@ -304,7 +304,22 @@ class CrewMenuPanel(Panel):
             if officer.MenuUp():                      # raises + turns + signals
                 self._acknowledge(menu)               # BC: CharacterInteraction
             return
-        # Unowned menu (no officer resolves): honour single-open + the view.
+        # Unowned menu: either genuinely unowned (no officer's label matches,
+        # silently harmless) or a BROKEN ATTACH — the label resolves to a real
+        # officer who simply doesn't hold this menu (configure_bridge_officers
+        # swallows per-station ConfigureForShip exceptions, so a station can
+        # end up unattached). The latter silently stalls the tutorial's
+        # dispatch_character_menu signal for that officer, so make it loud.
+        try:
+            from engine.ui import crew_menu_hotkeys
+            unowned_by = crew_menu_hotkeys.resolve_character(menu.GetLabel())
+        except Exception:
+            unowned_by = None
+        if unowned_by is not None:
+            _logger.warning(
+                "crew-menu: menu %r resolves to an officer that does not "
+                "own it (broken attach) -- falling back to a view-only open "
+                "with no turn/dispatch", menu.GetLabel())
         other = self.open_officer()
         if other is not None:
             other.MenuDown()

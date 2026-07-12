@@ -632,13 +632,19 @@ class CharacterClass(ObjectClass):
         It does NOT acknowledge — BC plays the "Yes sir" line in
         CharacterInteraction, on the CLICK path only, so a scripted AT_MENU_UP
         stays silent. Returns 1 when the menu was raised, 0 when there was
-        nothing to raise (no menu / disabled)."""
+        nothing to raise (no menu / disabled).
+
+        Idempotent: calling MenuUp() again while this officer's menu is
+        already the open one must not re-drive the view, re-request the
+        turn, or re-dispatch the tutorial open event — it just re-affirms 1."""
         menu = self.GetMenu()
         if not menu or not menu.IsEnabled():
             return 0                         # stock BC: nothing to raise
         panel = _get_menu_panel()
-        if panel is not None and panel.open_officer() is not self:
-            other = panel.open_officer()
+        other = panel.open_officer() if panel is not None else None
+        if self._data.get("MenuUp") and (panel is None or other is self):
+            return 1                         # already up: idempotent raise
+        if panel is not None:
             if other is not None:
                 other.MenuDown()             # single-open: close + turn them back
             panel.show_menu(menu)
@@ -650,9 +656,19 @@ class CharacterClass(ObjectClass):
     def MenuDown(self, *args) -> None:
         """Lower this officer's menu (BC's MenuDown). Hides the view only if this
         officer's menu is the open one, clears the flag, turns them back, and
-        fires the tutorial close signal."""
+        fires the tutorial close signal.
+
+        Idempotent w.r.t. this officer's own state: the SDK calls MenuDown()
+        defensively (ContactStarfleet, DockStarbase12, and others) even when
+        this officer's menu was never up. Before this primitive existed that
+        was a harmless no-op; now it must stay one — early-return with no
+        flag write, no turn-back, and no dispatch, so a defensive MenuDown()
+        never fires an unpaired close event."""
+        if not self._data.get("MenuUp"):
+            return                            # menu wasn't up: pure no-op
         panel = _get_menu_panel()
-        if panel is not None and panel.open_officer() is self:
+        other = panel.open_officer() if panel is not None else None
+        if other is self:
             panel.hide_menu()
         self._data["MenuUp"] = False
         self._notify_menu(turn=False)

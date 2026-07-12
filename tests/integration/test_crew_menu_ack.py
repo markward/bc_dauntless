@@ -48,17 +48,18 @@ def test_owned_menu_click_goes_through_menu_up():
     crew_menu_hotkeys.wire(tcw, panel)          # MenuUp reaches the view via this
     officer = crew_menu_hotkeys.resolve_character("Tactical")
     officer.SetMenu(menu)                       # SDK AttachMenuToTactical
+    try:
+        panel.toggle_menu(menu)                     # -> officer.MenuUp()
 
-    panel.toggle_menu(menu)                     # -> officer.MenuUp()
+        assert panel.has_open_menu() is True        # the PRIMITIVE opened the view
+        assert officer.IsMenuUp() == 1
+        assert _subtitle()._snapshot(now=0.0)["speaker"] == "Tactical"   # ack (click path)
 
-    assert panel.has_open_menu() is True        # the PRIMITIVE opened the view
-    assert officer.IsMenuUp() == 1
-    assert _subtitle()._snapshot(now=0.0)["speaker"] == "Tactical"   # ack (click path)
-
-    panel.toggle_menu(menu)                     # -> officer.MenuDown()
-    assert panel.has_open_menu() is False
-    assert officer.IsMenuUp() == 0
-    officer.SetMenu(None)                       # don't leak the attachment
+        panel.toggle_menu(menu)                     # -> officer.MenuDown()
+        assert panel.has_open_menu() is False
+        assert officer.IsMenuUp() == 0
+    finally:
+        officer.SetMenu(None)                       # don't leak the attachment
 
 
 def test_reset_sdk_globals_clean_after_ack():
