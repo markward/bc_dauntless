@@ -2457,6 +2457,19 @@ def reset_sdk_globals() -> None:
         MissionLib.g_idMasterSequenceObj = App.NULL_ID
     except Exception as _e:
         dev_mode.log_swallowed("MissionLib.ResetViewscreen on swap", _e)
+    # Re-apply the identifier-centric ShowPointerArrow/HidePointerArrows
+    # override (engine/ui/ui_attention.py). MissionLib the module is never
+    # reloaded/re-imported by a mission swap — it stays cached in
+    # sys.modules and its globals persist (see the "MissionLib globals leak
+    # across swaps" gotcha) — so this call is a no-op after the first, but it
+    # lives right here, alongside the other MissionLib re-touches this
+    # function already makes per load, so a future change to how MissionLib
+    # is (re)acquired can't silently drop the override.
+    try:
+        from engine.ui import ui_attention
+        ui_attention.install()
+    except Exception as _e:
+        dev_mode.log_swallowed("ui_attention.install on swap", _e)
     App.g_kSetManager._sets.clear()
     _waypoint_registry.clear()
     App._next_event_type_id = 1200
