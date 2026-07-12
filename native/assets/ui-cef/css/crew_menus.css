@@ -12,19 +12,6 @@
   font-weight: 600;
   color: var(--bc-label-text);
   -webkit-font-smoothing: antialiased;
-  /* engine/ui/sdk_panel_positions.py (Task 8) pushes inline
-     position:fixed + left/top/width/height (vw/vh) from the SDK-resolved
-     officer-menu rect, taking this element out of #tactical-target-stack's
-     flex flow so `width: 100%` above only matters before the first push
-     (and is otherwise harmlessly beaten by the inline width). The SDK rect
-     is HEADLESS-RESOLVED: ResizeUI/RepositionUI see GetMaximumHeight()==0
-     (no live font/border metrics yet), so the pushed height is currently
-     always 0vh. Force the box back to content-driven height so the open
-     menu stays visible instead of collapsing to a sliver — left/top/width
-     are NOT !important here, so the SDK still owns horizontal placement.
-     Real row-metric-driven height (live probe / STMenu line-height
-     fallback) is a separate, still-open concern. */
-  height: auto !important;
 }
 
 /* .crew-menu is a .bc-panel — header/body chrome inherited from the

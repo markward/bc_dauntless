@@ -5,8 +5,15 @@ never touched by this channel."""
 from engine.appc.tg_ui.layout import norm_to_vhvw
 
 SDK_POSITIONED_PANELS = {
-    "officer-menu": "#crew-menu-host",
-    # follow-on: "target-list": "#...", "ship-display": "#...", ...
+    # "officer-menu": "#crew-menu-host" was removed 2026-07-12: #crew-menu-host
+    # is a Dauntless-designed flex child of #tactical-target-stack
+    # (crew_menus.css), not an SDK-positioned window. Pushing the SDK-resolved
+    # rect onto it pinned it position:fixed at (0,0), ripping it out of its
+    # flex flow into the screen's top-left corner and hiding the XO menu,
+    # which halted E1M1's tutorial. Only SDK-invented ad-hoc panels with no
+    # competing CEF layout (ShowInfoBox/TextBanner/EpisodeTitleAction) belong
+    # in this registry.
+    # follow-on: "info-box": "#...", "text-banner": "#...", ...
 }
 
 
