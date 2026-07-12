@@ -1,12 +1,14 @@
 """PhaserBank, PulseWeapon, TractorBeam, TorpedoTube — live child classes.
 
 Each one is a per-hardpoint weapon emitter that hangs under the matching
-parent WeaponSystem.  All subclass WeaponSystem so they inherit firing
-state, target, and the SetProperty back-ref; fields will be added as
-SDK callers demand.
+parent WeaponSystem, EXCEPT TorpedoTube: BC's TorpedoTube derives from
+Weapon (a leaf under ShipSubsystem), not WeaponSystem (a powered aggregate).
+See sdk/Build/scripts/App.py:5988. PhaserBank, PulseWeapon, and TractorBeam
+subclass WeaponSystem so they inherit firing state, target, and the
+SetProperty back-ref; fields will be added as SDK callers demand.
 """
 from engine.appc.subsystems import (
-    WeaponSystem, PhaserBank, PulseWeapon, TractorBeam, TorpedoTube,
+    Weapon, WeaponSystem, PhaserBank, PulseWeapon, TractorBeam, TorpedoTube,
 )
 
 
@@ -28,10 +30,13 @@ def test_tractor_beam_is_weapon_system():
     assert tb.GetName() == "Aft Tractor 1"
 
 
-def test_torpedo_tube_is_weapon_system():
+def test_torpedo_tube_is_a_weapon_not_a_weapon_system():
+    """BC: TorpedoTube derives from Weapon (a leaf), not WeaponSystem (a powered
+    aggregate).  See sdk/Build/scripts/App.py:5988 and
+    docs/superpowers/specs/2026-07-12-torpedo-tube-recreation-design.md."""
     tt = TorpedoTube("Forward Torpedo 1")
-    assert isinstance(tt, WeaponSystem)
-    assert tt.GetName() == "Forward Torpedo 1"
+    assert isinstance(tt, Weapon)
+    assert not isinstance(tt, WeaponSystem)
 
 
 def test_child_weapon_inherits_property_back_reference():

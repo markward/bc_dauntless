@@ -2419,6 +2419,7 @@ def repair_ship_fully(ship) -> None:
 # first. The first access to any weapon name triggers the import, by which point
 # both modules are fully loaded.
 _WEAPON_EXPORTS = frozenset({
+    "Weapon",
     "WeaponSystem",
     "TorpedoAmmoType",
     "TorpedoSystem",

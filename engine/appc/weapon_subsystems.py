@@ -505,6 +505,67 @@ def _target_undetectable(weapon_system, target) -> bool:
         return False
 
 
+class Weapon(ShipSubsystem):
+    """BC leaf emitter — sdk/Build/scripts/App.py:5758 `class Weapon(ShipSubsystem)`.
+
+    Deliberately NOT a PoweredSubsystem: in BC a weapon has no power, no IsOn
+    and no charge.  Power lives on the parent WeaponSystem; charge lives on
+    EnergyWeapon (App.py:6426-6440), which torpedo tubes do not inherit.
+
+    Only the surface the SDK actually calls on a leaf weapon.  DELIBERATELY
+    ABSENT (verified zero SDK call sites on a tube): SetFiring,
+    IsMemberOfGroup, GetTargetID, IsDumbFire, GetOverallConditionPercentage,
+    IsInArc, CanHit, SetSkewFire, IsSkewFire.  IsInArc/CanHit are additionally
+    unspecifiable — their BC signatures cannot be recovered from the SDK.
+
+    GetProperty/SetProperty are inherited from ShipSubsystem (subsystems.py:273).
+    """
+
+    def __init__(self, name: str = ""):
+        super().__init__(name)
+        # Seeded here, not in the subclass: IsFiring() must return a real 0 on a
+        # fresh weapon.  Without this, __getattr__ hands back a truthy _Stub.
+        self._firing: bool = False
+        self._target = None
+        self._target_offset = None
+
+    def Fire(self, target=None, offset=None, **kwargs) -> None:
+        """Discrete shot.  Subclasses implement — the payload differs per weapon
+        (TorpedoTube.Fire additionally takes spread_unit/homing_delay for
+        Dual/Quad spread volleys; see TorpedoSystem.StartFiring)."""
+        raise NotImplementedError
+
+    def CanFire(self) -> int:
+        return 0
+
+    def StopFiring(self) -> None:
+        self._firing = False
+
+    def IsFiring(self) -> int:
+        return 1 if self._firing else 0
+
+    def FireDumb(self, iReserved=0, iForce=1) -> None:
+        """SDK AI/Preprocessors.py:458 — `pTube.FireDumb(0, 1)`.  Unguided shot,
+        no target.  The AI never checks CanFire() first, so this must be a silent
+        no-op when the weapon is not ready."""
+        self.Fire(target=None, offset=None)
+
+    def CalculateRoughDirection(self) -> TGPoint3:
+        """WORLD-space mount direction.  Implemented in Task 2."""
+        raise NotImplementedError
+
+    def CalculateWeaponAppeal(self) -> float:
+        """SDK AI/PlainAI/IntelligentCircleObject.py:238.  The AI sums appeal
+        across weapons facing a candidate heading and picks the best facing.
+
+        BC's exact formula is not recoverable from the SDK, so this is an
+        APPROXIMATION, not a reproduction: 1.0 for a functional weapon, 0.0 for
+        a disabled one.  That yields "face the direction with the most working
+        weapons", which matches the caller's intent.
+        """
+        return 0.0 if self.IsDisabled() else 1.0
+
+
 class WeaponSystem(PoweredSubsystem):
     """Weapon system — has firing state and an optional target.
 
@@ -1622,7 +1683,7 @@ class TractorBeam(_EnergyWeaponFireMixin, WeaponSystem):
         super().UpdateCharge(dt)
 
 
-class TorpedoTube(WeaponSystem):
+class TorpedoTube(Weapon):
     """Individual launcher under a parent TorpedoSystem.  Ammo-type tracking
     lives on the parent's slot table; this class owns per-tube reload state.
 
@@ -1637,9 +1698,6 @@ class TorpedoTube(WeaponSystem):
         self._immediate_delay: float = 0.0
         self._reload_delay: float = 0.0
         self._max_ready: int = 0
-        self._firing: bool = False
-        self._target = None
-        self._target_offset = None
 
     def GetNumReady(self) -> int:                   return self._num_ready
     def SetNumReady(self, v) -> None:               self._num_ready = int(v)
