@@ -106,3 +106,41 @@ def test_freeing_an_animation_drops_its_cached_duration():
     assert am.GetAnimationLength("x") == 2.0
     am.FreeAnimation("x")
     assert am.GetAnimationLength("x") == 0.0
+
+
+def test_reloading_a_name_with_a_different_path_invalidates_cached_duration():
+    """A bridge/mission reload can re-register the same NAME against a
+    DIFFERENT underlying clip (LoadAnimation's own docstring: a re-load of a
+    name overwrites). The cached duration measured against the OLD path must
+    not survive - otherwise the walk-off door timing silently uses the FIRST
+    mission's clip length forever (g_kAnimationManager is a process-lifetime
+    singleton)."""
+    am = AnimationManager()
+    am.LoadAnimation("data/animations/a.nif", "x")
+    am.set_duration_provider(lambda path: 4.5 if path.endswith("a.nif") else 9.0)
+    assert am.GetAnimationLength("x") == 4.5
+
+    am.LoadAnimation("data/animations/b.nif", "x")
+    assert am.GetAnimationLength("x") == 9.0
+
+
+def test_zero_length_provider_result_is_retried_not_poisoned():
+    """A provider exception is caught and degrades to 0.0 - but that must not
+    be cached forever, since a transient failure (e.g. renderer not ready
+    yet) should be retryable on the next query rather than poisoning the
+    cache for the process lifetime. (A genuinely zero-length clip is
+    re-measured every time as the deliberate cost of this safety.)"""
+    calls = []
+
+    def provider(path):
+        calls.append(path)
+        if len(calls) == 1:
+            raise RuntimeError("renderer not ready yet")
+        return 3.0
+
+    am = AnimationManager()
+    am.LoadAnimation("data/animations/x.nif", "x")
+    am.set_duration_provider(provider)
+    assert am.GetAnimationLength("x") == 0.0
+    assert am.GetAnimationLength("x") == 3.0
+    assert len(calls) == 2

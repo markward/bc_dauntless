@@ -19,7 +19,12 @@ class AnimationManager:
     def LoadAnimation(self, path, name) -> None:
         # SDK call shape: kAM.LoadAnimation("data/animations/db_stand_t_l.nif",
         # "db_stand_t_l"). Record name -> path; re-load of a name overwrites.
+        # A re-load can point the same NAME at a DIFFERENT clip (bridge/mission
+        # reload against the process-lifetime g_kAnimationManager singleton),
+        # so any cached duration measured against the OLD path is now stale
+        # and must be dropped.
         self._paths[str(name)] = str(path)
+        self._durations.pop(str(name), None)
 
     def FreeAnimation(self, name) -> None:
         # SDK unloads animations by name on bridge teardown; drop the record so
@@ -50,7 +55,13 @@ class AnimationManager:
         try:
             length = float(self._duration_provider(path))
         except Exception:
-            length = 0.0
+            # Do NOT cache this 0.0: it may be a transient provider failure
+            # (e.g. renderer not ready yet) rather than a real measurement,
+            # and poisoning the cache would make it wrong for the process
+            # lifetime. The cost is that a genuinely zero-length clip is
+            # re-measured on every query - cheap next to silently mistiming
+            # the walk-off door forever.
+            return 0.0
         self._durations[key] = length
         return length
 
