@@ -64,6 +64,7 @@
 #include <renderer/ray_trace.h>
 #include <renderer/glow_region.h>
 #include <renderer/node_anim.h>
+#include <renderer/bridge_node_anim_store.h>
 #include <scenegraph/world.h>
 #include <scenegraph/camera.h>
 #include <scenegraph/damage_decals.h>
@@ -305,17 +306,14 @@ struct LoadedModel {
 std::unique_ptr<assets::AssetCache> g_cache;
 std::vector<LoadedModel> g_loaded_models;  // index = our public ModelHandle - 1
 
-// Bridge-node animation store: active non-skinned node clips (doors, chairs).
-// Keyed by InstanceId.index.  A handful of entries at most.
-struct BridgeNodeAnim {
-    assets::AnimationClip clip;          // owned copy (embedded or external NIF)
-    scenegraph::InstanceId id;           // full id so we can call g_world.get(id)
-    double start_wall_time = 0.0;
-    bool   loop    = false;
-    bool   reverse = false;              // play t from dur -> 0
-    bool   settled = false;              // non-loop reached its end
-};
-std::unordered_map<std::uint32_t, BridgeNodeAnim> g_bridge_node_anims;
+// Bridge-node animation store: the active non-skinned node clips (doors, chairs).
+// A SET per instance, merged on sample — doors and chairs animate the same bridge
+// node hierarchy and BC never arbitrates between them.
+renderer::BridgeNodeAnimStore g_bridge_node_anims;
+
+// The store is keyed by InstanceId::index (it must not depend on scenegraph, so it
+// stays GL-free and unit-testable). World lookups need the full id, so keep it here.
+std::unordered_map<std::uint32_t, scenegraph::InstanceId> g_bridge_node_ids;
 
 // Resolve a model handle to its loaded asset (or nullptr). File-scope so both
 // frame()'s draw lookup and the get_instance_bounds binding share one path.
@@ -413,6 +411,7 @@ void init(int width, int height, const std::string& title) {
     g_world = scenegraph::World{};
     g_loaded_models.clear();
     g_bridge_node_anims.clear();
+    g_bridge_node_ids.clear();
     g_lighting = renderer::Lighting{};
     g_bridge_lighting = renderer::Lighting{};
     g_bridge_ambient_scale = 1.0f;
@@ -479,6 +478,7 @@ void shutdown() {
     renderer::reset_damage_decal_texture();
     g_loaded_models.clear();
     g_bridge_node_anims.clear();
+    g_bridge_node_ids.clear();
     g_cache.reset();
     g_world = scenegraph::World{};
     g_backdrops.clear();
@@ -562,27 +562,18 @@ bool should_close() {
 // Called once per frame() after update_animations so skinned characters
 // and non-skinned bridge geometry are both up to date before any draw pass.
 void update_bridge_node_anims(double now) {
-    for (auto it = g_bridge_node_anims.begin(); it != g_bridge_node_anims.end(); ) {
-        auto& a = it->second;
-        scenegraph::Instance* inst = g_world.get(a.id);
-        if (!inst) { it = g_bridge_node_anims.erase(it); continue; }
-        const assets::Model* m = resolve_model(inst->model_handle);
-        if (!m) { ++it; continue; }
-
-        const float dur = a.clip.duration_seconds;
-        double elapsed = now - a.start_wall_time;
-        if (elapsed < 0.0) elapsed = 0.0;
-        float t;
-        if (a.loop) {
-            t = dur > 0.0f ? static_cast<float>(std::fmod(elapsed, dur)) : 0.0f;
-        } else if (elapsed >= dur) {
-            t = dur; a.settled = true;
-        } else {
-            t = static_cast<float>(elapsed);
+    for (std::uint32_t index : g_bridge_node_anims.instances()) {
+        auto id_it = g_bridge_node_ids.find(index);
+        if (id_it == g_bridge_node_ids.end()) { g_bridge_node_anims.stop(index); continue; }
+        scenegraph::Instance* inst = g_world.get(id_it->second);
+        if (!inst) {                                  // instance destroyed
+            g_bridge_node_anims.stop(index);
+            g_bridge_node_ids.erase(id_it);
+            continue;
         }
-        if (a.reverse) t = dur - t;
-        inst->node_overrides = renderer::sample_node_overrides(a.clip, *m, t);
-        ++it;
+        const assets::Model* m = resolve_model(inst->model_handle);
+        if (!m) continue;
+        inst->node_overrides = g_bridge_node_anims.sample(index, *m, now);
     }
 }
 
@@ -1292,12 +1283,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
               const assets::Model* m = resolve_model(in->model_handle);
               if (!m || clip_index < 0 ||
                   clip_index >= static_cast<int>(m->animations.size())) return;
-              BridgeNodeAnim a;
-              a.clip = m->animations[clip_index];      // owned copy
-              a.id   = id;
-              a.start_wall_time = glfwGetTime();
-              a.loop = loop; a.reverse = reverse;
-              g_bridge_node_anims[id.index] = std::move(a);
+              g_bridge_node_ids[id.index] = id;
+              g_bridge_node_anims.play(id.index,
+                                       "embedded:" + std::to_string(clip_index),
+                                       m->animations[clip_index],   // owned copy
+                                       glfwGetTime(), loop, reverse);
           },
           py::arg("iid"), py::arg("clip_index"), py::arg("loop") = false,
           py::arg("reverse") = false,
@@ -1312,12 +1302,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
               auto clips = assets::load_animation_clips(
                   renderer::resolve_asset_path(path));
               if (clips.empty()) return;               // NIF had no clips
-              BridgeNodeAnim a;
-              a.clip = std::move(clips[0]);            // external chair clip
-              a.id   = id;
-              a.start_wall_time = glfwGetTime();
-              a.loop = loop; a.reverse = reverse;
-              g_bridge_node_anims[id.index] = std::move(a);
+              g_bridge_node_ids[id.index] = id;
+              g_bridge_node_anims.play(id.index, path, std::move(clips[0]),
+                                       glfwGetTime(), loop, reverse);
           },
           py::arg("iid"), py::arg("path"), py::arg("loop") = false,
           py::arg("reverse") = false,
@@ -1328,7 +1315,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
 
     m.def("stop_instance_node_anim",
           [](scenegraph::InstanceId id) {
-              g_bridge_node_anims.erase(id.index);
+              g_bridge_node_anims.stop(id.index);
+              g_bridge_node_ids.erase(id.index);
               auto* in = g_world.get(id);
               if (in) in->node_overrides.clear();      // snap back to static
           },

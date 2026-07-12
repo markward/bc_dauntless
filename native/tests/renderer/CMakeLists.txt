@@ -15,6 +15,7 @@ add_executable(renderer_tests
     bone_palette_test.cc
     pose_sampler_test.cc
     node_anim_test.cc
+    bridge_node_anim_store_test.cc
     animation_update_test.cc
     glow_region_test.cc
     ray_trace_test.cc

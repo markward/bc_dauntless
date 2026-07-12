@@ -92,6 +92,7 @@ add_library(renderer STATIC
     bone_palette.cc
     pose_sampler.cc
     node_anim.cc
+    bridge_node_anim_store.cc
     animation_update.cc
     pipeline.cc
     frame.cc
