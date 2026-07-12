@@ -145,10 +145,9 @@ class TGPane(TGEventHandlerObject):
     def GetWidth(self) -> float:              return self._width
     def GetHeight(self) -> float:             return self._height
     def GetParent(self):
-        # Defaults to None (callers null-guard via TGPane_Cast); TopWindow.
-        # PrependChild sets `_parent` on arrow icons so SDK MissionLib.
-        # HidePointerArrows (pIcon.GetParent().DeleteChild(pIcon)) reaches
-        # TopWindow.DeleteChild without any SDK edit.
+        # Defaults to None (callers null-guard via TGPane_Cast). Nothing
+        # sets `_parent` on a TGPane today — this is a plain, harmless
+        # fallback, not a load-bearing back-ref for any live caller.
         return self.__dict__.get("_parent")
     def Resize(self, *args) -> None:          pass
     def ResizeUI(self, *args) -> None:        pass
