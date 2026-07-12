@@ -232,6 +232,44 @@ class CrewMenuPanel(Panel):
         except Exception:
             return None
 
+    def open_officer(self):
+        """The CharacterClass owning the currently-open top-level menu, or None.
+        Public reader — CharacterClass.MenuUp needs it to enforce single-open."""
+        return self._menu_officer()
+
+    def _officer_for_menu(self, menu):
+        """The CharacterClass owning `menu` (resolved by its label), or None.
+        Unlike _menu_officer (which resolves the menu that is ALREADY open), this
+        resolves an arbitrary target menu — what toggle_menu needs before opening."""
+        try:
+            from engine.ui import crew_menu_hotkeys
+            return crew_menu_hotkeys.resolve_character(menu.GetLabel())
+        except Exception:
+            return None
+
+    def show_menu(self, menu) -> None:
+        """PURE view open: make `menu` the open top-level menu. Idempotent.
+
+        Never calls MenuUp/MenuDown and never acknowledges. CharacterClass.MenuUp
+        is BC's canonical primitive and the ONLY caller that should drive this —
+        that one-way rule is what makes recursion impossible."""
+        wid = ensure_widget_id(menu)
+        if self._open_menu_id == wid:
+            return                       # already open
+        self._open_menu_id = wid
+        self._expanded_ids.clear()       # a reopened menu starts collapsed
+        try:
+            menu.SendActivationEvent()   # BC broadcasts activation on open
+        except Exception:
+            _logger.debug("crew-menu: activation event failed", exc_info=True)
+
+    def hide_menu(self) -> None:
+        """PURE view close. Idempotent. Never calls MenuUp/MenuDown."""
+        if self._open_menu_id is None:
+            return
+        self._open_menu_id = None
+        self._expanded_ids.clear()
+
     @staticmethod
     def _reconcile_turn(old, new) -> None:
         """Turn the officer losing focus back, and the one gaining focus toward
