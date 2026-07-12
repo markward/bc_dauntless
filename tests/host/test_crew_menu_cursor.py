@@ -141,3 +141,41 @@ def test_close_crew_menu_during_cutscene_closes_open_menu():
     m2 = _FakeMenu(True)
     _close_crew_menu_during_cutscene(m2, cutscene_active=False)
     assert m2.has_open_menu() is True and m2.closed == 0
+
+
+def test_menu_raised_during_an_active_cutscene_is_not_slammed_shut():
+    """The drop is a cutscene-START edge, not a per-frame clamp.
+
+    BC's MissionLib.StartCutscene calls BridgeHandlers.DropMenusTurnBack() ONCE,
+    at cutscene start: it drops whatever is open, it does NOT forbid a menu being
+    raised later in the cutscene. Scripted beats deliberately raise menus DURING a
+    cutscene — E1M1's crew-intro raises each officer's menu (AT_MENU_UP) to teach
+    it while the letterbox is up. A per-frame clamp slammed those shut on the very
+    next frame, so the menu was raised and never seen (live: E1M1's crew-intro
+    dialogue played but no menu ever appeared).
+    """
+    from engine.host_loop import _close_crew_menu_during_cutscene
+
+    class _FakeMenu:
+        def __init__(self, open_):
+            self._open = open_
+            self.closed = 0
+
+        def has_open_menu(self):
+            return self._open
+
+        def close_open_menu(self):
+            self._open = False
+            self.closed += 1
+            return True
+
+    m = _FakeMenu(False)                       # cutscene starts, nothing open
+    _close_crew_menu_during_cutscene(m, cutscene_active=True)   # the START edge
+    assert m.closed == 0
+
+    m._open = True                             # scripted AT_MENU_UP raises a menu
+    _close_crew_menu_during_cutscene(m, cutscene_active=True)   # a later frame
+    assert m.has_open_menu() is True, (
+        "a menu raised by a script DURING a cutscene must stay up "
+        "(BC drops menus once at StartCutscene, it does not clamp)")
+    assert m.closed == 0
