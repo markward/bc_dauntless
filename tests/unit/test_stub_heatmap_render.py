@@ -34,6 +34,23 @@ def test_render_no_regressed_section_when_none():
     assert "Regressed" not in out
 
 
+def test_render_includes_coercion_section():
+    rows = _rows(("A", "x", 1, 1, 1.0, "", "open"))
+    meta = {"M": 1, "date_range": (1.0, 1.0), "line_skipped": 0, "ann_skipped": 0}
+    coercion_rows = [{"kind": "int", "site": "f.py:1", "total": 3, "runs_seen": 1}]
+    out = stub_heatmap.render(rows, [], meta, coercion_rows)
+    assert "Numeric-coercion call sites (int()==0 risk)" in out
+    assert "f.py:1" in out
+    assert "int" in out
+
+
+def test_render_coercion_section_empty_when_no_rows():
+    rows = _rows(("A", "x", 1, 1, 1.0, "", "open"))
+    meta = {"M": 1, "date_range": (1.0, 1.0), "line_skipped": 0, "ann_skipped": 0}
+    out = stub_heatmap.render(rows, [], meta, [])
+    assert "Numeric-coercion call sites (int()==0 risk)" in out
+
+
 def test_render_no_wallclock_now(monkeypatch):
     import time as _t
     monkeypatch.setattr(_t, "time", lambda: 9_999_999_999.0)

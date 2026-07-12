@@ -20,6 +20,8 @@ def test_persist_run_writes_one_valid_json_line(tmp_path):
     stub_telemetry.record_attr("TorpedoTube", "GetMaxCharge")
     stub_telemetry.record_attr("TorpedoTube", "GetMaxCharge")
     stub_telemetry.record_attr("ShipClass", "GetWarpCore.GetMaxPower")  # dotted attr
+    stub_telemetry.record_coercion("int")
+    stub_telemetry.record_coercion("int")
     path = str(tmp_path / "hits.jsonl")
 
     stub_telemetry.persist_run(path)
@@ -32,6 +34,9 @@ def test_persist_run_writes_one_valid_json_line(tmp_path):
     # pair key is tab-separated so a dotted attr is unambiguous
     assert rec["attr_hits"]["TorpedoTube\tGetMaxCharge"] == 2
     assert rec["attr_hits"]["ShipClass\tGetWarpCore.GetMaxPower"] == 1
+    # coercion_sites uses the same tab-separated "kind\tsite" key shape
+    assert sum(rec["coercion_sites"].values()) == 2
+    assert all(k.startswith("int\t") for k in rec["coercion_sites"])
 
 
 def test_persist_run_appends_a_line_per_call(tmp_path):

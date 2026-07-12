@@ -1,4 +1,5 @@
 import math
+from engine.core import stub_telemetry
 from engine.appc.events import (
     TGEvent, TGEvent_Create,
     TGBoolEvent, TGBoolEvent_Create,
@@ -1875,6 +1876,10 @@ class _Stub:
         return _Stub()
 
     def __bool__(self):
+        # Truthiness trap: an undefined name sails through `if (x):` guards.
+        if stub_telemetry.ENABLED:
+            name = getattr(self, "_name", None)
+            stub_telemetry.record_bool(name.partition(".")[0] if name else "App")
         return True
 
     def __hash__(self):
@@ -1894,9 +1899,23 @@ class _Stub:
 
     # Numeric operators: return 0/0.0 so arithmetic in SDK scripts doesn't crash.
     # GetRadius() / 2, position comparisons, etc. all need to produce a numeric.
-    def __int__(self):      return 0
-    def __float__(self):    return 0.0
-    def __index__(self):    return 0
+    # int()==0 is the collapse trap that has caused real bugs (WC_*/KY_*
+    # keyboard constants, TGUIObject.ALIGN_* before it was bound to real
+    # constants) — record_coercion is the signal that surfaces it.
+    def __int__(self):
+        if stub_telemetry.ENABLED:
+            stub_telemetry.record_coercion("int")
+        return 0
+
+    def __float__(self):
+        if stub_telemetry.ENABLED:
+            stub_telemetry.record_coercion("float")
+        return 0.0
+
+    def __index__(self):
+        if stub_telemetry.ENABLED:
+            stub_telemetry.record_coercion("index")
+        return 0
     def __add__(self, o):   return o if isinstance(o, str) else 0
     def __radd__(self, o):  return o if isinstance(o, str) else 0
     def __sub__(self, o):   return 0
@@ -1936,7 +1955,16 @@ class _NamedStub(_Stub):
 
     def __getattr__(self, attr):
         name = self.__dict__.get("_name", "<unknown>")
-        return _NamedStub(f"{name}.{attr}")
+        full = f"{name}.{attr}"
+        if stub_telemetry.ENABLED:
+            # Split at the FIRST dot so a chained access matches the
+            # heatmap's owner|attr table shape (e.g. TGUIObject.ALIGN_BL ->
+            # owner=TGUIObject, attr=ALIGN_BL; deeper chains keep the rest
+            # of the dotted path as a breadcrumb in attr, same as the
+            # instance stub path in engine/core/ids.py).
+            owner, _dot, rest = full.partition(".")
+            stub_telemetry.record_attr(owner, rest)
+        return _NamedStub(full)
 
     def __repr__(self):
         return f"<App._NamedStub {self._name!r}>"
@@ -1966,4 +1994,6 @@ def __getattr__(name):
         if isinstance(val, int):
             _py_globals()[name] = val   # memoize: future lookups skip __getattr__
             return val
+    if stub_telemetry.ENABLED:
+        stub_telemetry.record_attr("App", name)
     return _NamedStub(name)

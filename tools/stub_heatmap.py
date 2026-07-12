@@ -94,9 +94,14 @@ def classify(last_seen_epoch, marked_resolved_str: str) -> str:
 
 
 def merge(runs: "list") -> dict:
-    """Sum hit counts and count per-key coverage across runs."""
+    """Sum hit counts and count per-key coverage across runs.
+
+    ``coercion_sites`` is a newer sidecar key (App-module int()==0 collapse
+    telemetry) — older recorded runs predate it entirely, so it is read via
+    ``.get(...) or {}`` the same way ``bool_sites`` already is."""
     attr_total, attr_runs = Counter(), Counter()
     bool_total, bool_runs = Counter(), Counter()
+    coercion_total, coercion_runs = Counter(), Counter()
     for rec in runs:
         for k, c in (rec.get("attr_hits") or {}).items():
             attr_total[k] += c
@@ -104,10 +109,15 @@ def merge(runs: "list") -> dict:
         for k, c in (rec.get("bool_sites") or {}).items():
             bool_total[k] += c
             bool_runs[k] += 1
+        for k, c in (rec.get("coercion_sites") or {}).items():
+            coercion_total[k] += c
+            coercion_runs[k] += 1
     return {
         "M": len(runs),
         "attr": {k: {"total": attr_total[k], "runs_seen": attr_runs[k]} for k in attr_total},
         "bool": {k: {"total": bool_total[k], "runs_seen": bool_runs[k]} for k in bool_total},
+        "coercion": {k: {"total": coercion_total[k], "runs_seen": coercion_runs[k]}
+                     for k in coercion_total},
     }
 
 
@@ -217,7 +227,8 @@ def _ls(epoch) -> str:
     return _fmt_ts(epoch) if isinstance(epoch, (int, float)) else "—"
 
 
-def render(attr_rows: "list", bool_rows: "list", meta: dict) -> str:
+def render(attr_rows: "list", bool_rows: "list", meta: dict,
+           coercion_rows: "list | None" = None) -> str:
     M = meta["M"]
     regressed = [r for r in attr_rows if r["status"] == "regressed"]
     openr = [r for r in attr_rows if r["status"] == "open"]
@@ -269,6 +280,12 @@ def render(attr_rows: "list", bool_rows: "list", meta: dict) -> str:
     for i, b in enumerate(sorted(bool_rows, key=lambda b: (-b["total"], b["site"])), 1):
         L.append("| %d | %s | %d | %d/%d |" % (i, b["site"], b["total"], b["runs_seen"], M))
     L.append("")
+
+    L += ["## Numeric-coercion call sites (int()==0 risk)", ""]
+    L += ["| rank | kind | file:line | total hits | coverage |", "|---|---|---|---|---|"]
+    for i, c in enumerate(sorted(coercion_rows or [], key=lambda c: (-c["total"], c["kind"], c["site"])), 1):
+        L.append("| %d | %s | %s | %d | %d/%d |" % (i, c["kind"], c["site"], c["total"], c["runs_seen"], M))
+    L.append("")
     return "\n".join(L)
 
 
@@ -287,9 +304,14 @@ def main(argv=None) -> int:
     attr_rows = build_rows(merged, last_seen, resolved_map)
     bool_rows = [{"site": k, "total": v["total"], "runs_seen": v["runs_seen"]}
                  for k, v in merged["bool"].items()]
+    coercion_rows = []
+    for k, v in merged["coercion"].items():
+        kind, _, site = k.partition("\t")
+        coercion_rows.append({"kind": kind, "site": site,
+                               "total": v["total"], "runs_seen": v["runs_seen"]})
     meta = {"M": merged["M"], "date_range": _date_range(runs),
             "line_skipped": line_skipped, "ann_skipped": ann_skipped}
-    text = render(attr_rows, bool_rows, meta)
+    text = render(attr_rows, bool_rows, meta, coercion_rows)
     with open(args.out, "w") as f:
         f.write(text)
     n_reg = sum(1 for r in attr_rows if r["status"] == "regressed")

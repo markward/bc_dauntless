@@ -55,3 +55,27 @@ def test_merge_sums_hits_and_counts_coverage(tmp_path):
     assert m["attr"]["TorpedoTube\tGetMaxCharge"] == {"total": 150, "runs_seen": 2}
     assert m["attr"]["A\tx"] == {"total": 3, "runs_seen": 1}
     assert m["bool"]["f.py:1"] == {"total": 5, "runs_seen": 1}
+
+
+def test_merge_tolerates_missing_coercion_sites_key(tmp_path):
+    # Old sidecar lines predate coercion_sites entirely — merge must not KeyError.
+    path = _write(tmp_path, [
+        {"attr_hits": {"A\tx": 1}, "bool_sites": {}},
+    ])
+    runs, skipped = stub_heatmap.load_runs(path)
+    assert skipped == 0
+    assert len(runs) == 1
+    m = stub_heatmap.merge(runs)
+    assert m["M"] == 1
+    assert m["coercion"] == {}
+
+
+def test_merge_sums_coercion_sites(tmp_path):
+    path = _write(tmp_path, [
+        {"attr_hits": {}, "bool_sites": {}, "coercion_sites": {"int\tf.py:1": 4}},
+        {"attr_hits": {}, "bool_sites": {}, "coercion_sites": {"int\tf.py:1": 2, "float\tg.py:9": 1}},
+    ])
+    runs, _ = stub_heatmap.load_runs(path)
+    m = stub_heatmap.merge(runs)
+    assert m["coercion"]["int\tf.py:1"] == {"total": 6, "runs_seen": 2}
+    assert m["coercion"]["float\tg.py:9"] == {"total": 1, "runs_seen": 1}

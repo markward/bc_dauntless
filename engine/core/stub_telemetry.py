@@ -47,8 +47,9 @@ def _default_sidecar_path() -> str:
 
 SIDECAR_PATH: str = _default_sidecar_path()
 
-_attr_hits: "Counter" = Counter()   # (owner_type, attr_name) -> count
-_bool_sites: "Counter" = Counter()  # "file:lineno" -> count
+_attr_hits: "Counter" = Counter()      # (owner_type, attr_name) -> count
+_bool_sites: "Counter" = Counter()     # "file:lineno" -> count
+_coercion_sites: "Counter" = Counter()  # (kind, "file:lineno") -> count
 _atexit_registered = False
 
 
@@ -70,7 +71,7 @@ def _ensure_atexit() -> None:
 
 
 def _atexit_dump() -> None:
-    if _attr_hits or _bool_sites:
+    if _attr_hits or _bool_sites or _coercion_sites:
         try:
             dump_report()
         except Exception:
@@ -105,16 +106,35 @@ def record_bool(owner_type: str) -> None:
         pass
 
 
+def record_coercion(kind: str) -> None:
+    """Record a numeric-coercion (``int()``/``float()``/``__index__``) hit.
+
+    This is the int()==0 collapse trap: an undefined constant silently
+    coerces to 0 and sails through comparisons/dict lookups instead of
+    raising, so it needs its own signal distinct from record_bool's
+    truthiness trap."""
+    if not ENABLED:
+        return
+    try:
+        # depth 3: _caller -> record_coercion -> __int__/__float__/__index__
+        # -> the coercion site
+        _coercion_sites[(kind, _caller(3))] += 1
+    except Exception:
+        pass
+
+
 def snapshot() -> dict:
     return {
         "attr_hits": dict(_attr_hits),
         "bool_sites": dict(_bool_sites),
+        "coercion_sites": dict(_coercion_sites),
     }
 
 
 def reset() -> None:
     _attr_hits.clear()
     _bool_sites.clear()
+    _coercion_sites.clear()
 
 
 def dump_report(stream=None) -> str:
@@ -126,6 +146,9 @@ def dump_report(stream=None) -> str:
     lines.append("=== stub telemetry: boolean-test call sites (truthiness risk) ===")
     for site, count in _bool_sites.most_common():
         lines.append("  %6d  %s" % (count, site))
+    lines.append("=== stub telemetry: numeric-coercion call sites (int()==0 risk) ===")
+    for (kind, site), count in _coercion_sites.most_common():
+        lines.append("  %6d  %s  %s" % (count, kind, site))
     report = "\n".join(lines)
     try:
         print(report, file=stream)
@@ -150,6 +173,10 @@ def persist_run(path: str | None = None) -> None:
                 for (owner, attr), count in _attr_hits.items()
             },
             "bool_sites": dict(_bool_sites),
+            "coercion_sites": {
+                ("%s\t%s" % (kind, site)): count
+                for (kind, site), count in _coercion_sites.items()
+            },
         }
         line = json.dumps(record)
         with open(path, "a") as f:
