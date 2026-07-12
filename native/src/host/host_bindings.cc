@@ -1137,7 +1137,15 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](scenegraph::ModelHandle h) { return g_world.create_instance(h); },
           py::arg("model"));
     m.def("destroy_instance",
-          [](scenegraph::InstanceId id) { g_world.destroy_instance(id); },
+          [](scenegraph::InstanceId id) {
+              g_world.destroy_instance(id);
+              // Purge any bridge node-anim state keyed on this index BEFORE it
+              // can be recycled by a new instance in the same Python step (the
+              // lazy per-frame sweep in update_bridge_node_anims runs too late
+              // if teardown+reload happen inside a single frame).
+              g_bridge_node_anims.stop(id.index);
+              g_bridge_node_ids.erase(id.index);
+          },
           py::arg("id"));
     m.def("set_world_transform",
           [](scenegraph::InstanceId id, const std::vector<float>& m) {

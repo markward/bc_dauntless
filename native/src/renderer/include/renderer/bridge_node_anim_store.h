@@ -19,7 +19,6 @@ struct ActiveNodeClip {
     double start_wall_time = 0.0;
     bool   loop    = false;
     bool   reverse = false;
-    bool   settled = false;          ///< non-loop clip reached its end (holds last frame)
 };
 
 /// The bridge's active node animations.
@@ -61,7 +60,7 @@ public:
     /// Sample every active clip on `instance_index` at wall time `now` and merge
     /// the results into one node_index -> local_transform override map.
     std::unordered_map<int, glm::mat4> sample(std::uint32_t instance_index,
-                                              const assets::Model& model, double now);
+                                              const assets::Model& model, double now) const;
 
 private:
     std::unordered_map<std::uint32_t, std::vector<ActiveNodeClip>> clips_;
