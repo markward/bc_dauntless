@@ -42,8 +42,12 @@ struct ActiveNodeClip {
 /// and a door clip ends back at rest anyway, so holding it is invisible.
 class BridgeNodeAnimStore {
 public:
-    /// Start the clip under `key` on `instance_index`, or RESTART it in place if
-    /// that key is already active. Never stacks a duplicate.
+    /// Start the clip under `key` on `instance_index`. A re-play of a key that is
+    /// already active is a re-INSERTION, not an in-place restart: the existing
+    /// entry is erased and the restarted clip is pushed to the back, so sample()
+    /// (which merges in vector order, later wins on node overlap) keeps the
+    /// most-recently-played clip winning any node it shares with an older,
+    /// already-settled clip. Never stacks a duplicate.
     void play(std::uint32_t instance_index, const std::string& key,
               assets::AnimationClip clip, double now, bool loop, bool reverse);
 

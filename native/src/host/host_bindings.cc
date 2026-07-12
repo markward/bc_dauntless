@@ -1138,13 +1138,23 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("model"));
     m.def("destroy_instance",
           [](scenegraph::InstanceId id) {
+              // g_world.destroy_instance silently no-ops on a stale id (index
+              // reused by a later generation, or already-destroyed). Guard the
+              // purge below the same way: only fire it when this id was
+              // actually the CURRENT occupant of that index. Without this, a
+              // double-destroy on a stale id whose index has since been
+              // recycled by a live instance would wipe that live instance's
+              // bridge node-anim clips out from under it.
+              const bool was_valid = g_world.is_valid(id);
               g_world.destroy_instance(id);
-              // Purge any bridge node-anim state keyed on this index BEFORE it
-              // can be recycled by a new instance in the same Python step (the
-              // lazy per-frame sweep in update_bridge_node_anims runs too late
-              // if teardown+reload happen inside a single frame).
-              g_bridge_node_anims.stop(id.index);
-              g_bridge_node_ids.erase(id.index);
+              if (was_valid) {
+                  // Purge any bridge node-anim state keyed on this index BEFORE
+                  // it can be recycled by a new instance in the same Python step
+                  // (the lazy per-frame sweep in update_bridge_node_anims runs
+                  // too late if teardown+reload happen inside a single frame).
+                  g_bridge_node_anims.stop(id.index);
+                  g_bridge_node_ids.erase(id.index);
+              }
           },
           py::arg("id"));
     m.def("set_world_transform",
@@ -1331,6 +1341,15 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("iid"),
           "Stop any bridge-node clip on this instance and clear its node "
           "overrides (snaps the geometry back to its static pose).");
+
+    m.def("_debug_bridge_node_anim_active_count",
+          [](std::uint32_t instance_index) {
+              return g_bridge_node_anims.active_count(instance_index);
+          },
+          py::arg("instance_index"),
+          "Test-only introspection: how many bridge-node clips are active on "
+          "this instance INDEX (not id). Exists so the destroy_instance "
+          "stale-id purge guard can be regression-tested without a GL context.");
 
     m.def("instance_node_world",
           [](scenegraph::InstanceId id, const std::string& node_name,
