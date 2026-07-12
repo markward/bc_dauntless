@@ -634,18 +634,23 @@ class CharacterClass(ObjectClass):
         stays silent. Returns 1 when the menu was raised, 0 when there was
         nothing to raise (no menu / disabled).
 
-        Idempotent: calling MenuUp() again while this officer's menu is
-        already the open one must not re-drive the view, re-request the
-        turn, or re-dispatch the tutorial open event — it just re-affirms 1."""
+        Idempotent: calling MenuUp() again while THIS MENU is already the open
+        one must not re-drive the view, re-request the turn, or re-dispatch the
+        tutorial open event — it just re-affirms 1. Gated on
+        panel.is_menu_open(menu) (menu IDENTITY), not officer identity: the
+        officer-identity check (`panel.open_officer() is self`) resolves through
+        a 5-station label table and cannot see a non-station officer's
+        mission-made menu (E8M2's Liu, E3M1's MacCray), which would make this
+        idempotency check always miss for them."""
         menu = self.GetMenu()
         if not menu or not menu.IsEnabled():
             return 0                         # stock BC: nothing to raise
         panel = _get_menu_panel()
-        other = panel.open_officer() if panel is not None else None
-        if self._data.get("MenuUp") and (panel is None or other is self):
+        if self._data.get("MenuUp") and (panel is None or panel.is_menu_open(menu)):
             return 1                         # already up: idempotent raise
         if panel is not None:
-            if other is not None:
+            other = panel.open_officer()     # still officer-based: the only way
+            if other is not None:            # to turn the PREVIOUS officer back
                 other.MenuDown()             # single-open: close + turn them back
             panel.show_menu(menu)
         self._data["MenuUp"] = True
@@ -663,12 +668,21 @@ class CharacterClass(ObjectClass):
         this officer's menu was never up. Before this primitive existed that
         was a harmless no-op; now it must stay one — early-return with no
         flag write, no turn-back, and no dispatch, so a defensive MenuDown()
-        never fires an unpaired close event."""
+        never fires an unpaired close event.
+
+        Gates the view-hide on panel.is_menu_open(self.GetMenu()) — menu
+        IDENTITY — not `panel.open_officer() is self`. The officer-identity
+        check resolves the open menu's label against a 5-station table and
+        looks the officer up in the "bridge" set, so it can never resolve a
+        non-station officer with a mission-made menu (E8M2's Liu holding
+        "ChooseBattleGroup", E3M1's MacCray). With the old check, AT_MENU_DOWN
+        on such an officer cleared the flag/turned them back/fired the close
+        event while the menu view stayed pinned on screen for the rest of the
+        mission — a real stuck-UI bug."""
         if not self._data.get("MenuUp"):
             return                            # menu wasn't up: pure no-op
         panel = _get_menu_panel()
-        other = panel.open_officer() if panel is not None else None
-        if other is self:
+        if panel is not None and panel.is_menu_open(self.GetMenu()):
             panel.hide_menu()
         self._data["MenuUp"] = False
         self._notify_menu(turn=False)

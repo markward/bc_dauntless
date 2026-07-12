@@ -2487,6 +2487,16 @@ def reset_sdk_globals() -> None:
         except Exception as _e_tih:
             dev_mode.log_swallowed(
                 "TacticalInterfaceHandlers.Initialize after TCW reset", _e_tih)
+        # ORDERING IS LOAD-BEARING: TacticalInterfaceHandlers.Initialize (just
+        # above) registers the SDK's own BridgeHandlers.TalkTo* handlers on this
+        # same TCW for the same ET_INPUT_TALK_TO_* events that
+        # crew_menu_hotkeys.rewire() (just below) also registers _on_talk_to
+        # for. Event dispatch is LIFO, so rewire() running SECOND puts our
+        # handler on top, and _on_talk_to does not call CallNextHandler — that
+        # is what stops the chain before the SDK handler runs. Swap this
+        # ordering (or make _on_talk_to forward) and F1-F5 fire TWO MenuUp()s
+        # per press: ours, then the SDK's bridge-character-menu path, doubling
+        # the "Yes sir" acknowledgement.
         from engine.ui import crew_menu_hotkeys
         crew_menu_hotkeys.rewire()
     except Exception as _e:

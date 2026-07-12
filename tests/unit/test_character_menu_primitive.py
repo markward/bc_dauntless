@@ -19,21 +19,34 @@ class _Menu:
 
 
 class _Panel:
-    """Records the pure view calls MenuUp/MenuDown are supposed to make."""
+    """Records the pure view calls MenuUp/MenuDown are supposed to make.
+
+    Tracks the open menu by IDENTITY (_open_menu), mirroring the real
+    CrewMenuPanel's _open_menu_id -- MenuUp/MenuDown gate view changes on
+    is_menu_open(menu), not on open_officer() identity (see
+    test_menu_down_lowers_a_menu_open_officer_cannot_resolve below: the whole
+    point of that gate is that open_officer() can be wrong/None while a menu
+    is genuinely open)."""
 
     def __init__(self):
         self.shown = []
         self.hidden = 0
         self._officer = None
+        self._open_menu = None
 
     def open_officer(self):
         return self._officer
 
+    def is_menu_open(self, menu):
+        return menu is not None and self._open_menu is menu
+
     def show_menu(self, menu):
         self.shown.append(menu)
+        self._open_menu = menu
 
     def hide_menu(self):
         self.hidden += 1
+        self._open_menu = None
 
 
 def _officer(monkeypatch, menu, panel, turns, events):
@@ -102,6 +115,7 @@ def test_menu_down_hides_clears_turns_back(monkeypatch):
     menu = _Menu()
     c = _officer(monkeypatch, menu, panel, turns, events)
     panel._officer = c                  # this officer's menu is the open one
+    panel._open_menu = menu             # ...and IS the open menu (identity gate)
     c._data["MenuUp"] = True            # a REAL close: the menu must be up first
 
     c.MenuDown()
@@ -175,3 +189,34 @@ def test_headless_no_panel_is_safe(monkeypatch):
     assert c.MenuUp() == 1              # flag + turn + event still fire
     assert turns == [True] and events == [True]
     c.MenuDown()                        # must not raise
+
+
+def test_menu_down_lowers_a_menu_open_officer_cannot_resolve(monkeypatch):
+    """STUCK-UI REGRESSION (E8M2's Liu / E3M1's MacCray): a non-station
+    officer's mission-made menu (label not in the 5-station table, officer not
+    in the "bridge" set) can never be resolved by
+    CrewMenuPanel.open_officer() -- it returns None even while that officer's
+    menu genuinely IS the open one.
+
+    This fake deliberately leaves open_officer() returning None THROUGHOUT
+    (unlike every other test above, which sets panel._officer = c to simulate
+    "this officer's menu is the open one"). If MenuDown gated on
+    `panel.open_officer() is self` -- the pre-fix check -- `other` is None
+    here, `None is c` is False, and panel.hide_menu() never runs: the menu
+    stays pinned on screen for good. Gating on panel.is_menu_open(menu)
+    (identity of the MENU, not the officer) is what makes this pass."""
+    panel, turns, events = _Panel(), [], []
+    menu = _Menu()                      # stands in for Liu's "ChooseBattleGroup"
+    c = _officer(monkeypatch, menu, panel, turns, events)
+
+    assert c.MenuUp() == 1              # raises it
+    assert panel.is_menu_open(menu)     # sanity: the view really is open
+    assert panel.open_officer() is None  # ...and stays UNRESOLVABLE, like Liu
+
+    c.MenuDown()
+
+    assert panel.hidden == 1            # THE STUCK-UI BUG: must actually hide
+    assert not panel.is_menu_open(menu)  # open-menu state must clear too
+    assert c._data["MenuUp"] is False
+    assert turns == [True, False]
+    assert events == [True, False]
