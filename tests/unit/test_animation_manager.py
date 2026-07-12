@@ -124,12 +124,13 @@ def test_reloading_a_name_with_a_different_path_invalidates_cached_duration():
     assert am.GetAnimationLength("x") == 9.0
 
 
-def test_zero_length_provider_result_is_retried_not_poisoned():
-    """A provider exception is caught and degrades to 0.0 - but that must not
-    be cached forever, since a transient failure (e.g. renderer not ready
-    yet) should be retryable on the next query rather than poisoning the
-    cache for the process lifetime. (A genuinely zero-length clip is
-    re-measured every time as the deliberate cost of this safety.)"""
+def test_provider_exception_result_is_retried_not_poisoned():
+    """A provider EXCEPTION is caught and degrades to 0.0 - but that must not
+    be cached, since a transient failure (e.g. renderer not ready yet) should
+    be retryable on the next query rather than poisoning the cache for the
+    process lifetime. (This is distinct from a provider that successfully
+    returns a genuine 0.0 - that result IS cached, same as any other length;
+    see test_duration_is_cached_per_name.)"""
     calls = []
 
     def provider(path):

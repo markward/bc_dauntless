@@ -55,12 +55,13 @@ class AnimationManager:
         try:
             length = float(self._duration_provider(path))
         except Exception:
-            # Do NOT cache this 0.0: it may be a transient provider failure
-            # (e.g. renderer not ready yet) rather than a real measurement,
-            # and poisoning the cache would make it wrong for the process
-            # lifetime. The cost is that a genuinely zero-length clip is
-            # re-measured on every query - cheap next to silently mistiming
-            # the walk-off door forever.
+            # Do NOT cache this 0.0: the provider RAISED (e.g. renderer not
+            # ready yet), so it is not a real measurement, and poisoning the
+            # cache would make it wrong for the process lifetime. The cost is
+            # that a failing provider is re-queried on every call until it
+            # succeeds - cheap next to silently mistiming the walk-off door
+            # forever. A provider that returns a genuine 0.0 (no exception)
+            # IS cached below, same as any other length.
             return 0.0
         self._durations[key] = length
         return length
