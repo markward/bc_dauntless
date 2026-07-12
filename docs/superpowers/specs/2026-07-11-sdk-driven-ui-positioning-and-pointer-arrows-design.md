@@ -1,7 +1,29 @@
 # SDK-driven UI positioning + tutorial pointer arrows — design
 
+> ## ⚠️ PARTLY SUPERSEDED (2026-07-12)
+>
+> The **arrow / geometry half of this spec is superseded** by
+> `2026-07-12-identifier-centric-ui-attention-design.md`.
+>
+> **Why:** Chrome draws our UI, not BC's bitmap-font engine. A position-based arrow is
+> only correct if the geometry we report matches what *Chrome* laid out — and neither
+> source can give us that. Headless, BC's font metrics are `0` (menu resolves to height 0,
+> every row reports the same Y). And the planned live probe would have captured BC's
+> *bitmap-font metrics at 1024×768*, which don't match Chrome's layout and are
+> resolution-bound. Either way the arrow lands **confidently in the wrong place**.
+> Attention is therefore re-modelled as **identifier-centric** (style the element Chrome
+> already drew), which cannot mis-place and needs no geometry.
+>
+> **Consequently DROPPED:** Task 1 (original-BC geometry probe) and the whole
+> original-BC-machine dependency; the height-0 blocker dissolves.
+>
+> **STILL VALID and already built:** the **placement** half — the layout resolver
+> (Tasks 3/4/5), the officer-menu layout invocation (5b), and the SDK→CEF position push
+> channel (8). Mission-driven ad-hoc panels (`ShowInfoBox`, `TextBanner`,
+> `EpisodeTitleAction`) genuinely need SDK-driven position; hardcoded CSS cannot serve them.
+
 **Date:** 2026-07-11
-**Status:** design approved, pending spec review
+**Status:** placement half ACTIVE; arrow/geometry half SUPERSEDED (see banner)
 **Proving feature:** the **real E1M1 Set Course tutorial** playing to its `ShowArrow`
 beat, with the pointer arrow landing on the actual "Set Course" button in the CEF
 officer menu.
