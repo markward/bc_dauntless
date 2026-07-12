@@ -995,3 +995,15 @@ git commit --allow-empty -m "test(ui): E1M1 Set Course pointer arrow lands on re
 **Placeholder scan:** Task 11 is intentionally spike-gated (Task 2 defines it) — flagged explicitly, not a hidden TODO. Task 6's test has captured-value placeholders that Task 1 fills — flagged inline. All other tasks contain complete code.
 
 **Type consistency:** `Rect`, `anchor_point`, `norm_to_vhvw`, `LayoutNotResolved`, `_abs_rect`, `emitted_arrows()`, `PositionPusher.push`, `build_position_script`, `build_arrows_script`, `SDK_POSITIONED_PANELS` are used with consistent signatures across tasks. ✓
+
+---
+
+### Task 5b (INSERTED 2026-07-11 during execution): Officer-menu SDK layout invocation
+
+**Why inserted:** the spec assumed `host_loop.py:run_tactical_layout` runs the SDK
+tactical constructor; that exists only on the parked `feat/native_xo_menu_ui` branch.
+On this branch the SDK menus are built + projected to CEF, but nothing runs
+`ResizeUI`/`RepositionUI` + `Layout()` on the TCW, so the officer-menu window never
+resolves a rect. Without this, Tasks 6/8/9/10 have no rect to read. Re-derived fresh
+(no code copied from the parked branch; Mark's decision). Full brief:
+`.superpowers/sdd/task-5b-brief.md`. Dependency: after Tasks 4-5; before Tasks 6/8/9/10.
