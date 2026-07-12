@@ -45,7 +45,6 @@ class _TopWindow:
         self._options_disabled: bool = False
         self._last_rendered_set = None
         self._children: list[tuple[object, float, float]] = []
-        self._arrow_placements: list[tuple[object, float, float]] = []
         self._focus = None
         from engine.appc.windows import (
             _CinematicWindow, _MainViewWindow, _OptionsWindow, _SubtitleWindow,
@@ -196,24 +195,18 @@ class _TopWindow:
         self._children = [(c, x, y) for (c, x, y) in self._children if c is not child]
 
     def PrependChild(self, child, x: float = 0.0, y: float = 0.0, *_extra) -> None:
-        # Arrow icons from MissionLib.ShowPointerArrow land here as (icon, x, y)
-        # in normalized TopWindow coords. Record for the host arrow-overlay pass
-        # (engine/appc/pointer_arrows.py:emitted_arrows). Parent the icon back to
-        # this TopWindow so the SDK's own HidePointerArrows
-        # (pIcon.GetParent().DeleteChild(pIcon)) reaches DeleteChild below
-        # without any MissionLib edit.
-        if not hasattr(self, "_arrow_placements"):
-            self._arrow_placements = []
-        self._arrow_placements.append((child, float(x), float(y)))
+        # Parent the child back to this TopWindow so SDK callers that later
+        # do pChild.GetParent().DeleteChild(pChild) reach DeleteChild below
+        # without any SDK edit. MissionLib.HideLargeLoadingScreen relies on
+        # exactly this (pScreen.GetParent().DeleteChild(pScreen)) — the
+        # back-ref is load-bearing independent of the (now-removed)
+        # pointer-arrow overlay, which also used to call PrependChild.
         from engine.appc.tg_ui.widgets import TGPane
         if isinstance(child, TGPane):
             child._parent = self
 
     def DeleteChild(self, child) -> None:
-        if hasattr(self, "_arrow_placements"):
-            self._arrow_placements = [
-                p for p in self._arrow_placements if p[0] is not child
-            ]
+        pass
 
     def GetNumChildren(self) -> int:
         return len(self._children)

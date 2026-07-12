@@ -19,13 +19,6 @@
     <link rel="stylesheet" href="css/engineering_power.css">
 </head>
 <body>
-    <!-- Pointer-arrow overlay root — top-level, above every panel, ignores
-         pointer events. Populated by engine/ui/pointer_arrow_overlay.py
-         (ArrowOverlayPusher) with `<div class="arrow arrow--<dir>">` children
-         at SDK-resolved (x,y); dir 0-9 maps to a rotated LCARS triangle in
-         css/global.css. Mirrors BC's MissionLib.ShowPointerArrow. -->
-    <div id="pointer-arrows"></div>
-
     <!-- Target reticle text labels (name above box, range/speed below),
          positioned by js/reticle_text.js from Python-projected screen coords. -->
     <div id="reticle-name"></div>
