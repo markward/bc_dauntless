@@ -62,6 +62,13 @@ class CrewMenuPanel(Panel):
         # ET_WARP_BUTTON_PRESSED event (whose WarpPressed handler does
         # camera/control work deferred to later stages). None -> no-op.
         self._on_warp_engage = on_warp_engage
+        # Set by _officer_for_menu on a label-only resolution miss (broken
+        # attach); read back in toggle_menu's unowned-menu branch.
+        self._unowned_label_officer = None
+        # Guards the panel-mismatch diagnostic in toggle_menu so a
+        # never-wire()d panel (e.g. a bare test instance) warns once instead
+        # of on every toggle_menu call.
+        self._warned_panel_mismatch = False
 
     @property
     def name(self) -> str:
@@ -320,11 +327,16 @@ class CrewMenuPanel(Panel):
             # (crew_menu_hotkeys.get_panel()), not via `self`. If wire() never
             # ran (or wired a DIFFERENT panel instance), an owned-menu click
             # below still acks and turns the officer, but nothing shows on
-            # screen -- make that loud instead of a silent dead click.
-            _logger.warning(
-                "crew-menu: toggle_menu called on panel %r but "
-                "crew_menu_hotkeys.get_panel() is %r -- MenuUp will not reach "
-                "this panel's view", self, crew_menu_hotkeys.get_panel())
+            # screen -- make that loud instead of a silent dead click. Warn
+            # once per panel instance: a real misconfiguration is still
+            # surfaced, but a never-wire()d test panel doesn't spam every
+            # toggle_menu call.
+            if not getattr(self, "_warned_panel_mismatch", False):
+                self._warned_panel_mismatch = True
+                _logger.warning(
+                    "crew-menu: toggle_menu called on panel %r but "
+                    "crew_menu_hotkeys.get_panel() is %r -- MenuUp will not "
+                    "reach this panel's view", self, crew_menu_hotkeys.get_panel())
         if not isinstance(menu, STMenu) or not menu.IsEnabled():
             return
         wid = ensure_widget_id(menu)
@@ -348,6 +360,9 @@ class CrewMenuPanel(Panel):
         # dispatch_character_menu signal for that officer, so make it loud.
         # _officer_for_menu already ran this exact lookup above and stashed the
         # label-only result -- read it instead of re-resolving.
+        # _officer_for_menu (patched out in some tests) is the only writer of
+        # this attribute; getattr keeps a bypassed-__init__/patched-method
+        # panel safe rather than requiring every caller to have run it.
         unowned_by = getattr(self, "_unowned_label_officer", None)
         if unowned_by is not None:
             _logger.warning(
