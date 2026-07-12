@@ -137,3 +137,22 @@
   opacity: 0.5;
 }
 .crew-repair-row.inert:hover { background: transparent; }
+
+/* Tutorial attention: BC drew an LCARS arrow beside the widget; we glow the row
+   itself (identifier-centric — cannot mis-place). Persists until HidePointerArrows;
+   deliberately NOT time-boxed. Shared by every id-bearing row: menu/submenu
+   (caret) rows, leaf buttons, and repair-pane rows/container alike. */
+.crew-menu__row--attention {
+  --attention-color: rgb(255, 208, 112);
+  position: relative;
+  animation: crew-attention-pulse 1.2s ease-in-out infinite;
+  box-shadow: inset 0 0 0 2px var(--attention-color);
+}
+@keyframes crew-attention-pulse {
+  0%, 100% { box-shadow: inset 0 0 0 2px var(--attention-color); }
+  50%      { box-shadow: inset 0 0 0 2px var(--attention-color),
+                         0 0 12px 2px var(--attention-color); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .crew-menu__row--attention { animation: none; }
+}

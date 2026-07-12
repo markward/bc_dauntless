@@ -39,6 +39,19 @@ function renderCrewMenu(menu) {
   return panel;
 }
 
+// Tutorial attention (Task 2's ui_attention -> Task 3's snapshot flag):
+// glow the row itself rather than drawing a separate pointer arrow.
+// Applies to every id-bearing row on both render paths below — expandable
+// submenu (caret) rows equally with leaf rows and repair-pane rows, since
+// the E1M1 target ("Set Course") is itself a submenu row.
+function applyAttentionHighlight(el, node) {
+  if (!node || !node.highlighted) return;
+  el.classList.add("crew-menu__row--attention");
+  if (node.highlightColor) {
+    el.style.setProperty("--attention-color", node.highlightColor);
+  }
+}
+
 // Append rows for `nodes` at `depth`, recursing into expanded submenus.
 function appendCrewRows(body, nodes, depth) {
   for (const node of nodes) {
@@ -55,6 +68,7 @@ function appendCrewRows(body, nodes, depth) {
     row.className = "crew-menu__row" + (node.enabled ? "" : " disabled") +
                     (hasChildren ? "" : " crew-menu__row--leaf");
     row.setAttribute("data-depth", String(Math.min(depth, 2)));
+    applyAttentionHighlight(row, node);
 
     if (hasChildren) {
       const caret = document.createElement("span");
@@ -90,6 +104,7 @@ function appendCrewRows(body, nodes, depth) {
 function renderRepairPane(node) {
   const pane = document.createElement("div");
   pane.className = "crew-repair-pane";
+  applyAttentionHighlight(pane, node);
   // kind drives the styling: the repair-team area reads loudest (active teal
   // marker + rule), damaged is muted-but-clickable, destroyed is inert. BC
   // repairs several systems in parallel (up to the ship's repair-team count),
@@ -120,6 +135,7 @@ function renderRepairPane(node) {
       const row = document.createElement("div");
       row.className = "crew-repair-row crew-repair-row--" + kind +
                       (clickable ? "" : " inert");
+      applyAttentionHighlight(row, r);
       // Fixed-width marker slot on every row keeps labels aligned; only
       // actively-repaired rows light it.
       const mark = document.createElement("span");
