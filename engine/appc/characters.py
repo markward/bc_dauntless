@@ -624,16 +624,69 @@ class CharacterClass(ObjectClass):
         return 1 if self._data.get("AnimatedSpeaking", False) else 0
 
     def MenuUp(self, *args) -> int:
-        # SDK seam (BridgeHandlers: `if (pCharacter.MenuUp()): ...`). Set the
-        # state flag and ask the character-anim controller to turn this officer
-        # toward the captain (deferred — the controller pump has the renderer).
+        """Raise this officer's menu. BC's canonical primitive: BridgeHandlers'
+        click seam does `if (pCharacter.MenuUp()): CharacterInteraction(...)` and
+        QuickBattle does `g_pXO.MenuUp()` to bring Saffi's menu up. It drives the
+        panel view, sets the state flag, and turns the officer to the captain.
+
+        It does NOT acknowledge — BC plays the "Yes sir" line in
+        CharacterInteraction, on the CLICK path only, so a scripted AT_MENU_UP
+        stays silent. Returns 1 when the menu was raised, 0 when there was
+        nothing to raise (no menu / disabled).
+
+        Idempotent: calling MenuUp() again while THIS MENU is already the open
+        one must not re-drive the view, re-request the turn, or re-dispatch the
+        tutorial open event — it just re-affirms 1. Gated on
+        panel.is_menu_open(menu) (menu IDENTITY), not officer identity: the
+        officer-identity check (`panel.open_officer() is self`) resolves through
+        a 5-station label table and cannot see a non-station officer's
+        mission-made menu (E8M2's Liu, E3M1's MacCray), which would make this
+        idempotency check always miss for them."""
+        menu = self.GetMenu()
+        if not menu or not menu.IsEnabled():
+            return 0                         # stock BC: nothing to raise
+        panel = _get_menu_panel()
+        if self._data.get("MenuUp") and (panel is None or panel.is_menu_open(menu)):
+            return 1                         # already up: idempotent raise
+        if panel is not None:
+            other = panel.open_officer()     # still officer-based: the only way
+            if other is not None:            # to turn the PREVIOUS officer back
+                other.MenuDown()             # single-open: close + turn them back
+            panel.show_menu(menu)
         self._data["MenuUp"] = True
-        self._notify_menu(turn=True)
+        self._notify_menu(turn=True)         # turn-to-captain (None-ctrl guarded)
+        dispatch_character_menu(self, is_open=True)
         return 1
 
     def MenuDown(self, *args) -> None:
+        """Lower this officer's menu (BC's MenuDown). Hides the view only if this
+        officer's menu is the open one, clears the flag, turns them back, and
+        fires the tutorial close signal.
+
+        Idempotent w.r.t. this officer's own state: the SDK calls MenuDown()
+        defensively (ContactStarfleet, DockStarbase12, and others) even when
+        this officer's menu was never up. Before this primitive existed that
+        was a harmless no-op; now it must stay one — early-return with no
+        flag write, no turn-back, and no dispatch, so a defensive MenuDown()
+        never fires an unpaired close event.
+
+        Gates the view-hide on panel.is_menu_open(self.GetMenu()) — menu
+        IDENTITY — not `panel.open_officer() is self`. The officer-identity
+        check resolves the open menu's label against a 5-station table and
+        looks the officer up in the "bridge" set, so it can never resolve a
+        non-station officer with a mission-made menu (E8M2's Liu holding
+        "ChooseBattleGroup", E3M1's MacCray). With the old check, AT_MENU_DOWN
+        on such an officer cleared the flag/turned them back/fired the close
+        event while the menu view stayed pinned on screen for the rest of the
+        mission — a real stuck-UI bug."""
+        if not self._data.get("MenuUp"):
+            return                            # menu wasn't up: pure no-op
+        panel = _get_menu_panel()
+        if panel is not None and panel.is_menu_open(self.GetMenu()):
+            panel.hide_menu()
         self._data["MenuUp"] = False
         self._notify_menu(turn=False)
+        dispatch_character_menu(self, is_open=False)
 
     def _notify_menu(self, turn) -> None:
         try:
@@ -696,6 +749,16 @@ def CharacterClass_CreateNull() -> CharacterClass:
 
 def CharacterClass_Cast(obj) -> "CharacterClass | None":
     return obj if isinstance(obj, CharacterClass) else None
+
+
+def _get_menu_panel():
+    """The wired CrewMenuPanel, or None (headless / no UI). The seam MenuUp uses
+    to reach the view without engine.appc importing the UI at module load."""
+    try:
+        from engine.ui import crew_menu_hotkeys
+        return crew_menu_hotkeys.get_panel()
+    except Exception:
+        return None
 
 
 def dispatch_character_menu(character, is_open) -> None:

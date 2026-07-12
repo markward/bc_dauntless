@@ -80,6 +80,12 @@ def wire(tcw, panel) -> None:
             event_type, __name__ + "._on_talk_to")
 
 
+def get_panel():
+    """The CrewMenuPanel wired by wire(), or None (headless / no UI).
+    The seam CharacterClass.MenuUp uses to reach the view."""
+    return _wired_panel
+
+
 def rewire() -> None:
     """Mission-swap hook: re-register on the current TCW singleton.
     No-op when wire() was never called (headless tests, early reset)."""

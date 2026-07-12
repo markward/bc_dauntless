@@ -1964,13 +1964,23 @@ def _apply_crew_menu_side_effects(crew_menu_panel, view_mode, pause, h,
 
 
 def _close_crew_menu_during_cutscene(crew_menu_panel, cutscene_active: bool) -> None:
-    """Close any open crew menu (F1-F5) once a cutscene is active. BC's
-    MissionLib.StartCutscene calls BridgeHandlers.DropMenusTurnBack() at cutscene
-    start, so the Helm/crew UI never sits over the letterboxed cutscene (E6M2:
-    the Helm menu stayed visible over the docking cutscene). Runs every frame;
-    idempotent (no-op once the menu is closed)."""
-    if cutscene_active and crew_menu_panel.has_open_menu():
+    """Drop an open crew menu (F1-F5) on the cutscene-START EDGE, so the Helm/crew
+    UI never sits over the letterbox (E6M2: the Helm menu stayed visible over the
+    docking cutscene).
+
+    EDGE-triggered, not a per-frame clamp. BC's MissionLib.StartCutscene calls
+    BridgeHandlers.DropMenusTurnBack() exactly ONCE, at cutscene start: it drops
+    whatever is open, it does NOT forbid a menu being raised later in the cutscene.
+    Scripted beats deliberately raise menus DURING a cutscene — E1M1's crew-intro
+    raises each officer's menu (AT_MENU_UP) to teach it while the letterbox is up.
+    Clamping every frame slammed those shut on the next frame, so the menu was
+    raised and never seen (live: the crew-intro dialogue played, no menu appeared).
+    The player cannot open one mid-cutscene anyway (input is gated), so only
+    scripts reach this window."""
+    was_active = getattr(crew_menu_panel, "_last_cutscene_active", False)
+    if cutscene_active and not was_active and crew_menu_panel.has_open_menu():
         crew_menu_panel.close_open_menu()
+    crew_menu_panel._last_cutscene_active = cutscene_active
 
 
 def _dispatch_modal_esc(blockers, crew_menu_panel, pause, h) -> None:
@@ -2487,6 +2497,16 @@ def reset_sdk_globals() -> None:
         except Exception as _e_tih:
             dev_mode.log_swallowed(
                 "TacticalInterfaceHandlers.Initialize after TCW reset", _e_tih)
+        # ORDERING IS LOAD-BEARING: TacticalInterfaceHandlers.Initialize (just
+        # above) registers the SDK's own BridgeHandlers.TalkTo* handlers on this
+        # same TCW for the same ET_INPUT_TALK_TO_* events that
+        # crew_menu_hotkeys.rewire() (just below) also registers _on_talk_to
+        # for. Event dispatch is LIFO, so rewire() running SECOND puts our
+        # handler on top, and _on_talk_to does not call CallNextHandler — that
+        # is what stops the chain before the SDK handler runs. Swap this
+        # ordering (or make _on_talk_to forward) and F1-F5 fire TWO MenuUp()s
+        # per press: ours, then the SDK's bridge-character-menu path, doubling
+        # the "Yes sir" acknowledgement.
         from engine.ui import crew_menu_hotkeys
         crew_menu_hotkeys.rewire()
     except Exception as _e:

@@ -247,9 +247,15 @@ def render(attr_rows: "list", bool_rows: "list", meta: dict) -> str:
         L.append("")
 
     L += ["## Unimplemented-attribute roadmap (open)", ""]
-    L += ["| rank | owner | attr | total hits | coverage | lastSeenOn |", "|---|---|---|---|---|---|"]
+    L += ["_Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn`"
+          " cell and commit — it moves to Resolved on the next regeneration, and is"
+          " flagged again if it is ever hit after that date._", ""]
+    L += ["| rank | owner | attr | total hits | coverage | lastSeenOn | markedResolvedOn |",
+          "|---|---|---|---|---|---|---|"]
     for i, r in enumerate(openr, 1):
-        L.append("| %d | %s | %s | %d | %d/%d | %s |" % (i, r["owner"], r["attr"], r["total"], r["runs_seen"], M, _ls(r["last_seen"])))
+        L.append("| %d | %s | %s | %d | %d/%d | %s | %s |"
+                 % (i, r["owner"], r["attr"], r["total"], r["runs_seen"], M,
+                    _ls(r["last_seen"]), r["marked"]))
     L.append("")
 
     L += ["## Resolved", ""]

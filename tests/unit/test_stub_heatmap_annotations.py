@@ -6,6 +6,48 @@ def test_split_row():
     assert stub_heatmap._split_row("| a | b | c |") == [" a ", " b ", " c "]
 
 
+def test_open_roadmap_has_a_markedresolvedon_cell_to_fill_in():
+    """The roadmap is where you mark a stub resolved, so it MUST carry the
+    column — otherwise there is nowhere to type the date and the whole
+    resolution workflow is unreachable."""
+    rows = [{"owner": "TorpedoTube", "attr": "GetMaxCharge", "total": 9,
+             "runs_seen": 1, "last_seen": 1.0, "marked": "", "status": "open"}]
+    meta = {"M": 1, "date_range": (1.0, 1.0), "line_skipped": 0, "ann_skipped": 0}
+    out = stub_heatmap.render(rows, [], meta)
+    roadmap = out.split("## Unimplemented-attribute roadmap (open)")[1].split("##")[0]
+    assert "markedResolvedOn" in roadmap
+
+
+def test_date_typed_into_the_roadmap_resolves_the_stub_on_regen(tmp_path):
+    """End-to-end of the real workflow: user implements a stub, types a date
+    into its roadmap row, regenerates -> it becomes resolved."""
+    import json
+    sidecar = tmp_path / "hits.jsonl"
+    out = tmp_path / "heatmap.md"
+    # a stub hit at epoch 1000 (1970) -> lands in the open roadmap
+    with open(sidecar, "w") as f:
+        f.write(json.dumps({"t": 1000.0, "attr_hits": {"Foo\tBar": 4},
+                            "bool_sites": {}}) + "\n")
+    assert stub_heatmap.main(["--sidecar", str(sidecar), "--out", str(out)]) == 0
+    assert "Open: 1, resolved: 0" in out.read_text()
+
+    # user implements it and types a date into the roadmap row's empty
+    # trailing markedResolvedOn cell
+    assert "| Foo | Bar |" in out.read_text()
+    lines = []
+    for line in out.read_text().splitlines():
+        if line.startswith("|") and "| Foo | Bar |" in line and line.rstrip().endswith("|  |"):
+            line = line.rstrip()[:-3] + "2026-07-12 |"
+        lines.append(line)
+    out.write_text("\n".join(lines))
+
+    # regenerate: the typed date is picked up and the stub moves to Resolved
+    assert stub_heatmap.main(["--sidecar", str(sidecar), "--out", str(out)]) == 0
+    final = out.read_text()
+    assert "Open: 0, resolved: 1" in final
+    assert "Regressed" not in final  # last hit (1970) predates the fix
+
+
 def test_parse_existing_annotations_missing_file(tmp_path):
     m, skipped = stub_heatmap.parse_existing_annotations(str(tmp_path / "nope.md"))
     assert m == {} and skipped == 0

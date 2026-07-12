@@ -72,6 +72,7 @@ Status meanings:
 
 | File | Status | Topic |
 |------|--------|-------|
+| [2026-07-12-torpedo-event-probe.md](2026-07-12-torpedo-event-probe.md) | PENDING | Who posts `ET_TORPEDO_FIRED`, and what are its Source/Destination? Blocks the `TorpedoTube` reimplementation — Episode 7 **destroys** the event's Destination subsystem, so we cannot guess. Also captures the numeric IDs of the five torpedo/weapon events. **Approach 2**, but an *event-driven* probe: `import`ed and armed, not `execfile`'d. |
 | [2026-06-29-weapon-exchange-console-probe.md](2026-06-29-weapon-exchange-console-probe.md) | PENDING | **#1 question** — what curve converts range→damage, and how does a hit split across shield/subsystem/hull? (+ charge unit). Uses **approach 2** (dev console); subsumes the two combat experiments below. |
 | [2026-05-12-system-scale-investigation.md](2026-05-12-system-scale-investigation.md) | PENDING | What unit/scale convention does BC's C++ engine use for ships vs planets vs suns? |
 | [2026-05-26-radar-range-calibration.md](2026-05-26-radar-range-calibration.md) | PENDING | What world-space radius does the bottom-left radar disc represent in stock BC? |
