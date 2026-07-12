@@ -498,7 +498,21 @@ def setup_sdk() -> None:
         # stubs (real modules, speech worked) while the live harness kept them
         # (no registration, no speech). Keep this list and tests/conftest.py's
         # twin in sync.
-        "BridgeHandlers",
+        #
+        # NOTE: BridgeHandlers itself is REAL now too (removed from this list
+        # 2026-07-12). MissionLib.StartCutscene calls
+        # BridgeHandlers.DropMenusTurnBack() to drop whatever crew menu is
+        # open before a cutscene starts; as a _StubModule that call was a
+        # total no-op, so a scripted menu raised later in the SAME tick
+        # (E1M1 ExplainWarp: StartCutscene then Kiska's AT_MENU_UP) never
+        # got its predecessor dropped by the SDK's own mechanism — the same
+        # live-silence bug class as the CharacterHandlers note above. Made
+        # safe by implementing App.STTopLevelMenu_GetOpenMenu() and
+        # STTopLevelMenu.GetOwner()/SetOwner() (engine/appc/characters.py);
+        # by mission-boot time Bridge.TacticalMenuHandlers.CreateMenus() has
+        # already run (see resolve_officer_menu_layout in engine/host_loop.py),
+        # so DropMenusTurnBack's DropOutOfManualFireMode -> ResetPickFireButton
+        # call finds a real Tactical menu instead of None.
         # NOTE: Actions.MissionScriptActions must NOT be stubbed. It is a tiny
         # real module (imports only App + MissionLib; one function, ChangeToBridge)
         # that cutscene/briefing TGSequences call. As a _StubModule its

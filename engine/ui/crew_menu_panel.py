@@ -425,6 +425,15 @@ class CrewMenuPanel(Panel):
     def has_open_menu(self) -> bool:
         return self._open_menu_id is not None
 
+    def get_open_menu(self):
+        """The currently open top-level menu OBJECT, or None. Source of truth
+        for App.STTopLevelMenu_GetOpenMenu (engine/appc/characters.py) --
+        BridgeHandlers.DropMenusTurnBack reads this to find (via GetOwner())
+        which character to MenuDown() at cutscene start."""
+        if self._open_menu_id is None:
+            return None
+        return self._root_of(self._open_menu_id)
+
     def close_open_menu(self) -> bool:
         """Close any open menu; True if one was open (ESC consumes the press in
         that case — see host_loop's modal ladder). Delegates to the officer's

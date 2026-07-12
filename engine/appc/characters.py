@@ -223,9 +223,23 @@ class STTopLevelMenu(STMenu):
     def __init__(self, label: str = ""):
         super().__init__(label)
         self._no_skip_parent = False
+        self._owner = None
 
     def SetNoSkipParent(self, *args) -> None:
         self._no_skip_parent = True
+
+    # ── Owner (CharacterClass / ViewScreenObject) ───────────────────────────
+    # sdk/Build/scripts/App.py:7820-7841 binds GetOwner/SetOwner straight to
+    # Appc. BridgeHandlers.DropMenusTurnBack (called from
+    # MissionLib.StartCutscene) reads GetOwner() off the currently-open menu
+    # to find which character/viewscreen to MenuDown(). Set by
+    # CharacterClass.SetMenu — the SDK's own attach point
+    # (`pHelm.SetMenu(tcw.FindMenu("Helm"))`).
+    def SetOwner(self, owner) -> None:
+        self._owner = owner
+
+    def GetOwner(self):
+        return self._owner
 
 
 # ── Module-level menu factories used by SDK call sites ───────────────────────
@@ -441,7 +455,17 @@ class CharacterClass(ObjectClass):
     def GetDatabase(self):                        return self._database
 
     # ── Menu ────────────────────────────────────────────────────────────────
-    def SetMenu(self, menu) -> None:              self._menu = menu
+    def SetMenu(self, menu) -> None:
+        # The SDK's own attach point (`pHelm.SetMenu(tcw.FindMenu("Helm"))`,
+        # HelmCharacterHandlers:50 and its 4 siblings). Stamp the reverse
+        # link too — STTopLevelMenu.GetOwner() is how BridgeHandlers.
+        # DropMenusTurnBack() finds the character to MenuDown() when it
+        # drops whatever menu is open. Skip the shared NULL-menu sentinel
+        # (DetachMenuFrom* assigns it) so many characters detaching don't
+        # all stamp their identity onto one global singleton.
+        self._menu = menu
+        if isinstance(menu, STTopLevelMenu) and menu is not _NULL_MENU:
+            menu.SetOwner(self)
 
     def GetMenu(self):
         # Faithful to Appc: an unattached character holds a NULL menu handle —
@@ -759,6 +783,33 @@ def _get_menu_panel():
         return crew_menu_hotkeys.get_panel()
     except Exception:
         return None
+
+
+def STTopLevelMenu_GetOpenMenu():
+    """The currently open top-level bridge menu, or None.
+
+    sdk/Build/scripts/App.py:11897 binds this straight to
+    Appc.STTopLevelMenu_GetOpenMenu. BridgeHandlers.DropMenusTurnBack (called
+    once, at the right moment, by MissionLib.StartCutscene) reads it to close
+    whatever menu is open before a cutscene's own script goes on to raise a
+    new one.
+
+    Before this was implemented, App's module __getattr__ handed back a
+    fresh _NamedStub for the undefined name on every access. A _NamedStub is
+    TRUTHY, so DropMenusTurnBack's `if (pOpenMenu):` guard always passed, but
+    `pOpenMenu.GetOwner()` was itself another _NamedStub — so the drop
+    silently did nothing (the recurring "undefined App.* -> _NamedStub ->
+    silently wrong" bug class). That's what let a same-tick scripted MenuUp()
+    (E1M1 ExplainWarp's Kiska AT_MENU_UP) collide with a since-deleted
+    host-loop clamp that tried to paper over the gap at end-of-tick.
+
+    Delegates to the wired CrewMenuPanel — the single source of truth for
+    which menu is open (see CrewMenuPanel.get_open_menu). None (not a stub)
+    both when nothing is open and when no panel is wired (headless)."""
+    panel = _get_menu_panel()
+    if panel is None:
+        return None
+    return panel.get_open_menu()
 
 
 def dispatch_character_menu(character, is_open) -> None:

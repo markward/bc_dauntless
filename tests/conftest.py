@@ -506,7 +506,10 @@ def pytest_configure(config):
         # The five Bridge.*CharacterHandlers are REAL modules (officer menu
         # acknowledgements + DetachCrewMenus path) — see the matching note in
         # tools/mission_harness.py. Keep both lists in sync.
-        "BridgeHandlers",
+        #
+        # BridgeHandlers itself is REAL now too — see the matching note in
+        # tools/mission_harness.py (2026-07-12, DropMenusTurnBack / E1M1
+        # ExplainWarp cutscene-menu-drop fix). Keep both lists in sync.
         # Actions.MissionScriptActions intentionally NOT stubbed — see the
         # matching note in tools/mission_harness.py. Stubbing it makes
         # ChangeToBridge return a truthy _Stub, which defers the TGScriptAction

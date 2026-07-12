@@ -1963,26 +1963,6 @@ def _apply_crew_menu_side_effects(crew_menu_panel, view_mode, pause, h,
     crew_menu_panel._last_synced_cursor_free = target
 
 
-def _close_crew_menu_during_cutscene(crew_menu_panel, cutscene_active: bool) -> None:
-    """Drop an open crew menu (F1-F5) on the cutscene-START EDGE, so the Helm/crew
-    UI never sits over the letterbox (E6M2: the Helm menu stayed visible over the
-    docking cutscene).
-
-    EDGE-triggered, not a per-frame clamp. BC's MissionLib.StartCutscene calls
-    BridgeHandlers.DropMenusTurnBack() exactly ONCE, at cutscene start: it drops
-    whatever is open, it does NOT forbid a menu being raised later in the cutscene.
-    Scripted beats deliberately raise menus DURING a cutscene — E1M1's crew-intro
-    raises each officer's menu (AT_MENU_UP) to teach it while the letterbox is up.
-    Clamping every frame slammed those shut on the next frame, so the menu was
-    raised and never seen (live: the crew-intro dialogue played, no menu appeared).
-    The player cannot open one mid-cutscene anyway (input is gated), so only
-    scripts reach this window."""
-    was_active = getattr(crew_menu_panel, "_last_cutscene_active", False)
-    if cutscene_active and not was_active and crew_menu_panel.has_open_menu():
-        crew_menu_panel.close_open_menu()
-    crew_menu_panel._last_cutscene_active = cutscene_active
-
-
 def _dispatch_modal_esc(blockers, crew_menu_panel, pause, h) -> None:
     """ESC routing across the modal stack, in priority order.
 
@@ -5702,11 +5682,6 @@ def run(mission_name: Optional[str] = None,
                     crew_menu_panel, view_mode, pause, _h,
                     setting_course_panel,
                     controller.quick_battle_setup_panel)
-                # A cutscene must not have the Helm/crew UI sitting over it.
-                from engine.appc.top_window import (
-                    TopWindow_GetTopWindow as _TWget)
-                _close_crew_menu_during_cutscene(
-                    crew_menu_panel, _TWget().IsCutsceneMode())
                 if pause.is_open:
                     # When a settings modal is open it consumes keyboard
                     # input — pause-menu navigation would otherwise activate

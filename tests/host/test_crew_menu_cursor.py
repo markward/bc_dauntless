@@ -111,71 +111,19 @@ def test_open_quick_battle_setup_frees_cursor():
     assert h.cursor_lock_calls == [False]
 
 
-def test_close_crew_menu_during_cutscene_closes_open_menu():
-    """A cutscene must not leave the Helm/crew UI over the letterbox — an open
-    crew menu is auto-closed once IsCutsceneMode() is True (BC's StartCutscene
-    calls DropMenusTurnBack). Idempotent, and a no-op outside a cutscene."""
-    from engine.host_loop import _close_crew_menu_during_cutscene
-
-    class _FakeMenu:
-        def __init__(self, open_):
-            self._open = open_
-            self.closed = 0
-
-        def has_open_menu(self):
-            return self._open
-
-        def close_open_menu(self):
-            self._open = False
-            self.closed += 1
-            return True
-
-    # Cutscene active + menu open -> close it.
-    m = _FakeMenu(True)
-    _close_crew_menu_during_cutscene(m, cutscene_active=True)
-    assert m.has_open_menu() is False and m.closed == 1
-    # Idempotent — already closed, no second close.
-    _close_crew_menu_during_cutscene(m, cutscene_active=True)
-    assert m.closed == 1
-    # Not a cutscene -> the open menu is left alone.
-    m2 = _FakeMenu(True)
-    _close_crew_menu_during_cutscene(m2, cutscene_active=False)
-    assert m2.has_open_menu() is True and m2.closed == 0
-
-
-def test_menu_raised_during_an_active_cutscene_is_not_slammed_shut():
-    """The drop is a cutscene-START edge, not a per-frame clamp.
-
-    BC's MissionLib.StartCutscene calls BridgeHandlers.DropMenusTurnBack() ONCE,
-    at cutscene start: it drops whatever is open, it does NOT forbid a menu being
-    raised later in the cutscene. Scripted beats deliberately raise menus DURING a
-    cutscene — E1M1's crew-intro raises each officer's menu (AT_MENU_UP) to teach
-    it while the letterbox is up. A per-frame clamp slammed those shut on the very
-    next frame, so the menu was raised and never seen (live: E1M1's crew-intro
-    dialogue played but no menu ever appeared).
-    """
-    from engine.host_loop import _close_crew_menu_during_cutscene
-
-    class _FakeMenu:
-        def __init__(self, open_):
-            self._open = open_
-            self.closed = 0
-
-        def has_open_menu(self):
-            return self._open
-
-        def close_open_menu(self):
-            self._open = False
-            self.closed += 1
-            return True
-
-    m = _FakeMenu(False)                       # cutscene starts, nothing open
-    _close_crew_menu_during_cutscene(m, cutscene_active=True)   # the START edge
-    assert m.closed == 0
-
-    m._open = True                             # scripted AT_MENU_UP raises a menu
-    _close_crew_menu_during_cutscene(m, cutscene_active=True)   # a later frame
-    assert m.has_open_menu() is True, (
-        "a menu raised by a script DURING a cutscene must stay up "
-        "(BC drops menus once at StartCutscene, it does not clamp)")
-    assert m.closed == 0
+# _close_crew_menu_during_cutscene (formerly tested here) was an end-of-tick
+# host-loop clamp that papered over App.STTopLevelMenu_GetOpenMenu() being an
+# unimplemented stub: BridgeHandlers.DropMenusTurnBack() (called once, at the
+# correct moment, by MissionLib.StartCutscene) silently did nothing, so this
+# clamp closed any open menu on the cutscene-start edge instead. That timing
+# was wrong: E1M1 ExplainWarp runs StartCutscene AND Kiska's scripted
+# AT_MENU_UP in the SAME TICK, so the end-of-tick clamp saw the freshly
+# raised menu and slammed it shut before the player ever saw it.
+#
+# Fixed by implementing App.STTopLevelMenu_GetOpenMenu() and
+# STTopLevelMenu.GetOwner()/SetOwner() (engine/appc/characters.py) so
+# DropMenusTurnBack() actually works, INSIDE StartCutscene, before the
+# cutscene's own script raises a new menu — the clamp is now redundant and
+# actively wrong, so it was deleted along with these two tests. The new
+# contract (SDK-driven drop, not a host-loop clamp) is covered by
+# tests/unit/test_cutscene_menu_drop.py.
