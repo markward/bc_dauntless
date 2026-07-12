@@ -1229,6 +1229,9 @@ class CharacterAction(TGAction):
         if at in (self.AT_GLANCE_AT, self.AT_GLANCE_AWAY):
             self._queue_glance()
             return
+        if at in (self.AT_MENU_UP, self.AT_MENU_DOWN):
+            self._menu_action(up=(at == self.AT_MENU_UP))
+            return
         # Speak types (and the remaining no-op types) keep the prior flow.
         dur = self._do_play()
         self._complete_after(dur or 0.0)
@@ -1304,6 +1307,26 @@ class CharacterAction(TGAction):
             ctrl.request_glance(cc, detail, on_complete=self.Completed)
         except Exception:
             self.Completed()
+
+    def _menu_action(self, *, up: bool) -> None:
+        # AT_MENU_UP/AT_MENU_DOWN are the sequenceable wrappers around BC's
+        # CharacterClass.MenuUp()/MenuDown() (E1M1 crew-intro raises Brex's menu
+        # then points the tutorial cursor at its buttons; E8M2 raises Liu's).
+        # Completes INLINE — raising/lowering a menu is instant; sequences supply
+        # their own delays. No acknowledgement: BC plays "Yes sir" in
+        # CharacterInteraction on the CLICK path only, so a scripted menu-up must
+        # stay silent. Best-effort: Play() must never raise.
+        from engine.appc.characters import CharacterClass_Cast
+        try:
+            cc = CharacterClass_Cast(self._character) if self._character is not None else None
+            if cc is not None:
+                if up:
+                    cc.MenuUp()
+                else:
+                    cc.MenuDown()
+        except Exception:
+            pass
+        self.Completed()
 
     def _set_camera_watch(self, *, snap: bool) -> None:
         # Frame this character with the captain's-eye camera (AT_WATCH_ME /
