@@ -42,7 +42,63 @@ def log_swallowed(context: str, exc: BaseException) -> None:
     """
     if not is_enabled():
         return
-    _logger.warning("swallowed exception [%s]: %r", context, exc)
+    key = (context, type(exc).__name__)
+    seen = _swallowed_counts.get(key, 0) + 1
+    _swallowed_counts[key] = seen
+    if seen == 1:
+        # exc_info renders the FULL TRACEBACK. Without it the log tells you
+        # *what* broke but never *where* — on 2026-07-12 a swallowed
+        # AttributeError inside SendActivationEvent silently killed an entire
+        # E1M1 mission sequence and had to be reproduced by hand to locate.
+        _register_swallowed_atexit()
+        _logger.warning(
+            "swallowed exception [%s]: %r", context, exc, exc_info=exc
+        )
+    # Repeats are counted, not logged: ~88 call sites, some per-frame, so a
+    # traceback per occurrence would flood the console into uselessness.
+    # swallowed_summary_lines() surfaces the counts at exit.
+
+
+# ── swallowed-exception observability (dev mode only) ──────────────────────
+# Keyed by (context, exception type): the traceback is logged in full ONCE per
+# key; repeats are counted so a hot-path swallow shows up as a number rather
+# than 10,000 stack traces.
+_swallowed_counts: dict[tuple[str, str], int] = {}
+_swallowed_atexit_registered = False
+
+
+def reset_swallowed() -> None:
+    """Clear the recorded swallow counts (tests; mission swap if ever wanted)."""
+    _swallowed_counts.clear()
+
+
+def swallowed_counts() -> dict[tuple[str, str], int]:
+    """{(context, exception type): occurrences}. Empty in production."""
+    return dict(_swallowed_counts)
+
+
+def swallowed_summary_lines() -> list[str]:
+    """Ranked at-exit summary, so swallows deduped away are still visible."""
+    if not _swallowed_counts:
+        return []
+    lines = ["=== swallowed exceptions (dev mode) ==="]
+    for (context, exc_type), count in sorted(
+        _swallowed_counts.items(), key=lambda kv: (-kv[1], kv[0])
+    ):
+        lines.append("  %7d  [%s] %s" % (count, context, exc_type))
+    return lines
+
+
+def _register_swallowed_atexit() -> None:
+    global _swallowed_atexit_registered
+    if _swallowed_atexit_registered:
+        return
+    _swallowed_atexit_registered = True
+    import atexit
+
+    # print(), not logging: the embedded host installs no logging handler for
+    # anything below WARNING, and stub_telemetry reports the same way.
+    atexit.register(lambda: [print(ln) for ln in swallowed_summary_lines()])
 
 
 def register_dev_keybinding(key: int, handler: Callable, description: str) -> None:
