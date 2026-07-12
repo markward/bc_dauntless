@@ -23,8 +23,8 @@ class _Char:
 class _RecordingWalkController:
     def __init__(self):
         self.requests = []
-    def request_move(self, character, clip_nif, end_location, on_complete):
-        self.requests.append((character, clip_nif, end_location, on_complete))
+    def request_move(self, character, clip_nif, on_complete):
+        self.requests.append((character, clip_nif, on_complete))
 
 
 def _builder_seq(ch, clip, end_location):
@@ -56,10 +56,10 @@ def test_at_move_queues_walk_and_defers_completion(monkeypatch):
 
     assert act.IsPlaying() is True                    # deferred: not yet complete
     assert len(ctrl.requests) == 1
-    character, clip_nif, end_location, on_complete = ctrl.requests[0]
-    # end_location is None by design: the builder's own trailing
+    character, clip_nif, on_complete = ctrl.requests[0]
+    # request_move carries no end-location: the builder's own trailing
     # AT_SET_LOCATION_NAME action re-stations the officer (the SDK's mechanism).
-    assert (clip_nif, end_location) == ("db_L1toP_P.nif", None)
+    assert clip_nif == "db_L1toP_P.nif"
     assert ch.GetLocation() == "DBL1M"                # not yet re-stationed
 
     on_complete()                                     # controller signals settle

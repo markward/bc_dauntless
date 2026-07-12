@@ -57,11 +57,11 @@ def _picard_at_the_lift():
 
 class _FakeWalkController:
     def __init__(self):
-        self.moves = []                 # (character, clip_nif, end_location)
+        self.moves = []                 # (character, clip_nif)
         self._on_complete = None
 
-    def request_move(self, character, clip_nif, end_location, on_complete):
-        self.moves.append((character, clip_nif, end_location))
+    def request_move(self, character, clip_nif, on_complete):
+        self.moves.append((character, clip_nif))
         self._on_complete = on_complete
 
     def finish(self):

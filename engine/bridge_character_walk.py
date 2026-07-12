@@ -21,13 +21,12 @@ _MIN_WALK_S = 0.0
 
 
 class _Move:
-    __slots__ = ("character", "clip_nif", "iid", "clip_index", "end_location",
+    __slots__ = ("character", "clip_nif", "iid", "clip_index",
                  "on_complete", "elapsed", "duration")
 
-    def __init__(self, character, clip_nif, end_location, on_complete):
+    def __init__(self, character, clip_nif, on_complete):
         self.character = character
         self.clip_nif = clip_nif
-        self.end_location = end_location
         self.on_complete = on_complete
         self.iid = None
         self.clip_index = -1
@@ -42,13 +41,8 @@ class BridgeCharacterWalkController:
         self._realize = realize_fn or (lambda character: None)
         self._resolve = asset_resolver or (lambda p: p)
 
-    def is_moving(self, character) -> bool:
-        iid = getattr(character, "_render_instance", None)
-        return iid is not None and iid in self._active
-
-    def request_move(self, character, clip_nif, end_location, on_complete) -> None:
-        self._pending.append(
-            _Move(character, clip_nif, end_location, on_complete))
+    def request_move(self, character, clip_nif, on_complete) -> None:
+        self._pending.append(_Move(character, clip_nif, on_complete))
 
     def reset(self) -> None:
         self._pending = []
@@ -114,9 +108,18 @@ class BridgeCharacterWalkController:
         Completion goes FIRST, and that ordering is load-bearing. The officer's new
         location is set by the SDK builder's own trailing AT_SET_LOCATION_NAME action
         (we deliberately hold no engine-side end_location — the SDK is the single
-        source of truth), and in every real builder that action is chained onto the
-        WALK step (PicardAnimations.MoveFromP1ToP:126 et al), so it does not run until
-        the walk action Completes. The whole chain is SYNCHRONOUS —
+        source of truth). TGSequence.AppendAction chains onto the LAST STEP ADDED to
+        the sequence, not onto the walk specifically: in every builder that has a
+        door step, AppendAction lands on the DOOR (or a chair-turn), not the walk
+        (PicardAnimations.MoveFromL1ToP1:105, MoveFromPToL1:155; MediumAnimations.
+        MoveFromL1ToC:203, MoveFromL1ToH:235, MoveFromCToL1:265, MoveFromHToL1:300,
+        MoveFromL1ToC2:387) — and the door completes fire-and-forget within its
+        0.125s schedule delay, long before the ~2s walk clip settles, so by the time
+        this method runs the location is already set. The load-bearing case is the
+        door-less SIT builders (PicardAnimations.MoveFromP1ToP/MoveFromPToH/
+        MoveFromHToT/MoveFromTToC1), where the walk action IS the last step added,
+        so AppendAction chains AT_SET_LOCATION_NAME directly onto it. There the whole
+        chain is SYNCHRONOUS —
 
             _complete(mv) -> walk_action.Completed() -> g_kEventManager.AddEvent
             (dispatches inline) -> TGSequence._on_dependency_complete -> _begin_step

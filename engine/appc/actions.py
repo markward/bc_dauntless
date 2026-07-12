@@ -663,9 +663,9 @@ class TGAnimAction(TGTimedAction):
             clip_nif = _nif_path_for_clip(self._clip)
             if not clip_nif:
                 return
-            # end_location=None: the builder's own trailing AT_SET_LOCATION_NAME
-            # sets it (that is the SDK's mechanism; do not duplicate it here).
-            ctrl.request_move(character, clip_nif, None, self.Completed)
+            # The builder's own trailing AT_SET_LOCATION_NAME action sets the
+            # end location; we deliberately hold no engine-side copy of it.
+            ctrl.request_move(character, clip_nif, self.Completed)
             self._deferred = True
             return
         from engine.bridge_cutscene import get_controller

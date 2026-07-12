@@ -58,7 +58,7 @@ def test_move_realizes_reveals_and_walks(monkeypatch):
     r = _FakeRenderer()
     ch = _Char()
     done = []
-    ctrl.request_move(ch, "db_L1toP_P.nif", "DBGuest1",
+    ctrl.request_move(ch, "db_L1toP_P.nif",
                       on_complete=lambda: done.append(True))
 
     ctrl.update(0.0, renderer=r)                 # drain: realize + reveal + walk
@@ -66,7 +66,6 @@ def test_move_realizes_reveals_and_walks(monkeypatch):
     assert ch.IsHidden() == 0                    # revealed
     iid = ch._render_instance
     assert r.walked == [(iid, r.loaded[(iid, "db_L1toP_P.nif")])]
-    assert ctrl.is_moving(ch) is True
     assert done == []                            # not complete until settle
 
 
@@ -92,13 +91,12 @@ def test_move_settles_restations_and_completes(monkeypatch):
                         lambda c: {"clip_nif": "DBGuest1Breathe.nif"}
                         if c.GetLocation() == "DBGuest1" else None)
 
-    ctrl.request_move(ch, "db_L1toP_P.nif", None, on_complete=on_complete)
+    ctrl.request_move(ch, "db_L1toP_P.nif", on_complete=on_complete)
     ctrl.update(0.0, renderer=r)                 # start (duration 2.0)
     iid = ch._render_instance
     walk_clip = r.loaded[(iid, "db_L1toP_P.nif")]
 
     ctrl.update(1.0, renderer=r)                 # mid-walk: still moving
-    assert ctrl.is_moving(ch) is True
     assert done == []
     assert ch.GetLocation() == "DBL1M"           # not re-stationed until completion
 
@@ -109,7 +107,6 @@ def test_move_settles_restations_and_completes(monkeypatch):
     # the idle was resolved AFTER the re-station, so it is the DESTINATION's clip
     assert r.idled == [(iid, r.loaded[(iid, "DBGuest1Breathe.nif")])]
     assert done == [True]                        # completion fired exactly once
-    assert ctrl.is_moving(ch) is False
 
 
 def test_move_completes_inline_when_realize_fails():
@@ -117,7 +114,7 @@ def test_move_completes_inline_when_realize_fails():
     r = _FakeRenderer()
     ch = _Char()
     done = []
-    ctrl.request_move(ch, "db_L1toP_P.nif", "DBGuest1",
+    ctrl.request_move(ch, "db_L1toP_P.nif",
                       on_complete=lambda: done.append(True))
     ctrl.update(0.0, renderer=r)
     assert done == [True]                        # never stalls the sequence
@@ -134,12 +131,11 @@ def test_move_completes_inline_when_clip_load_fails():
     r = _FakeRendererClipLoadFails()               # but clip load fails
     ch = _Char()
     done = []
-    ctrl.request_move(ch, "db_L1toP_P.nif", "DBGuest1",
+    ctrl.request_move(ch, "db_L1toP_P.nif",
                       on_complete=lambda: done.append(True))
     ctrl.update(0.0, renderer=r)
     assert done == [True]                          # never stalls the sequence
     assert r.walked == []
-    assert ctrl.is_moving(ch) is False
 
 
 def test_update_never_raises_when_realize_raises():
@@ -149,7 +145,7 @@ def test_update_never_raises_when_realize_raises():
     r = _FakeRenderer()
     ch = _Char()
     done = []
-    ctrl.request_move(ch, "db_L1toP_P.nif", "DBGuest1",
+    ctrl.request_move(ch, "db_L1toP_P.nif",
                       on_complete=lambda: done.append(True))
     ctrl.update(0.0, renderer=r)                   # must not raise
     assert done == [True]
@@ -162,7 +158,7 @@ def test_reset_clears_active(monkeypatch):
     ctrl, _ = _controller_with_realize()
     r = _FakeRenderer()
     ch = _Char()
-    ctrl.request_move(ch, "w.nif", "DBGuest1", on_complete=lambda: None)
+    ctrl.request_move(ch, "w.nif", on_complete=lambda: None)
     ctrl.update(0.0, renderer=r)
     ctrl.reset()
-    assert ctrl.is_moving(ch) is False
+    assert ch._render_instance not in ctrl._active
