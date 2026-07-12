@@ -112,13 +112,16 @@ def test_camera_path_drives_pose_and_completes_at_duration():
 
 
 def test_object_anim_plays_the_named_door_clip():
+    """Doors are drained by _update_doors directly -- the view-independent
+    half of the pump (see host_loop._pump_bridge_doors) -- NOT by update()
+    (the view-gated camera half)."""
     ctrl = BridgeCutsceneController()
     action = _FakeAction()
     node = _FakeNode("object", owner=_Owner())
     ctrl.request_object_anim(action, node, "DB_Door_L1")
 
-    cam, vm, rend, mgr = _FakeCamera(), _FakeViewMode(), _FakeRenderer(), _FakeAnimMgr()
-    ctrl.update(0.0, **_ctx(cam, vm, rend, mgr))
+    rend, mgr = _FakeRenderer(), _FakeAnimMgr()
+    ctrl._update_doors(rend, mgr)
     # Plays ONLY the named door's own external keyframe NIF (resolved through
     # AnimationManager) on the owner's render instance -- never the bridge
     # model's embedded all-doors clip.
@@ -136,11 +139,11 @@ def test_object_anim_waits_for_render_instance():
     node = _FakeNode("object", owner=owner)
     ctrl.request_object_anim(action, node, "DB_Door_L1")
 
-    cam, vm, rend, mgr = _FakeCamera(), _FakeViewMode(), _FakeRenderer(), _FakeAnimMgr()
-    ctrl.update(0.0, **_ctx(cam, vm, rend, mgr))
+    rend, mgr = _FakeRenderer(), _FakeAnimMgr()
+    ctrl._update_doors(rend, mgr)
     assert rend.node_clip_calls == []     # deferred
     owner.render_instance = 99
-    ctrl.update(0.0, **_ctx(cam, vm, rend, mgr))
+    ctrl._update_doors(rend, mgr)
     assert rend.node_clip_calls == [
         (99, "data/animations/db_door_l1.nif", False, False)]
 

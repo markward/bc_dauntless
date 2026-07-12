@@ -61,7 +61,10 @@ class BridgeCutsceneController:
 
     # ── per-tick host pump ───────────────────────────────────────────────
     def update(self, dt, *, bridge_camera, view_mode, renderer, anim_mgr):
-        self._update_doors(renderer, anim_mgr)
+        """The CAMERA half of the per-tick pump. View-gated in the host loop
+        (it drives the bridge first-person camera, so it only makes sense
+        while that view is showing). The DOOR half is drained separately and
+        view-independently — see _update_doors and host_loop._pump_bridge_doors."""
         self._update_camera(dt, bridge_camera, view_mode, renderer, anim_mgr)
 
     def _update_doors(self, renderer, anim_mgr):

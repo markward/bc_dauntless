@@ -1783,6 +1783,26 @@ def _pump_walk_controller(walk_ctrl, renderer, dt, *, paused: bool) -> None:
     walk_ctrl.update(dt, renderer=renderer)
 
 
+def _pump_bridge_doors(cutscene, renderer, *, paused: bool) -> None:
+    """Drain queued lift-door TGAnimActions every unpaused frame, regardless
+    of view mode.
+
+    cutscene.update() (the CAMERA half of the per-tick bridge pump) only runs
+    inside ``if view_mode.is_bridge:`` -- appropriate for the camera, which
+    has nothing to drive outside that view. But LiftDoorAction's own
+    TGSoundAction plays view-independently the instant its builder sequence
+    fires (see PicardAnimations.MoveFromL1ToP1's 0.125s-delayed door step),
+    so an AT_MOVE fired from EXTERIOR view (the same E1M1 UndockCutscene beat
+    documented on _pump_walk_controller) played the door SOUND on time but
+    left the door draw queued until the player next entered bridge view --
+    where it swung open with nobody there. Keep this view-independent; the
+    camera half of cutscene.update() stays view-gated where it already is."""
+    if paused:
+        return
+    import App as _App
+    cutscene._update_doors(renderer, _App.g_kAnimationManager)
+
+
 class _PauseMenuController:
     """ESC-toggled pause-menu overlay.
 
@@ -6316,6 +6336,9 @@ def run(mission_name: Optional[str] = None,
             # is_bridge render block below (that block is purely visual). See
             # _pump_walk_controller.
             _pump_walk_controller(walk_ctrl, r, _player_dt, paused=pause.is_open)
+            # The door half of the bridge cutscene pump is likewise
+            # view-independent — see _pump_bridge_doors.
+            _pump_bridge_doors(cutscene, r, paused=pause.is_open)
             if fixed_camera:
                 fixed_radius = player.GetRadius() if player is not None else 1.0
                 eye = (0.0, 0.0, CAM_MAX_RADII * fixed_radius)
@@ -6340,6 +6363,8 @@ def run(mission_name: Optional[str] = None,
                 if view_mode.is_bridge:
                     import App as _App
                     if not pause.is_open:
+                        # CAMERA half only — the door half (_update_doors) is
+                        # pumped view-independently above (_pump_bridge_doors).
                         cutscene.update(
                             _player_dt,
                             bridge_camera=bridge_camera,
