@@ -5,8 +5,15 @@ from engine.bridge_character_anim import (
 
 
 def _char():
+    """A bridge officer with a menu ATTACHED, as the SDK does
+    (`pHelm.SetMenu(tcw.FindMenu("Helm"))`, HelmCharacterHandlers:50).
+
+    The attachment is load-bearing: MenuUp() raises the officer's OWN menu
+    (GetMenu()), so an officer holding the NULL menu has nothing to raise and
+    returns 0 — see tests/unit/test_character_menu_primitive.py."""
     c = App.CharacterClass_Create("b.nif", "h.nif")
     c.SetCharacterName("Test")
+    c.SetMenu(App.STTopLevelMenu_CreateW("Test"))
     return c
 
 

@@ -1,14 +1,19 @@
 """Tests: crew-menu open/close/switch drives MenuUp/MenuDown on the resolved officer.
 
-Exercises the REAL toggle_menu / close_open_menu on CrewMenuPanel.
+Exercises the REAL toggle_menu / close_open_menu on CrewMenuPanel, which now
+DELEGATES to BC's canonical primitive (CharacterClass.MenuUp/MenuDown — the thing
+that actually raises/lowers the view, turns the officer, and fires the
+ET_CHARACTER_MENU tutorial signal).
+
 The test bypasses heavy __init__ (TacticalControlWindow, CEF), sets only the
 state that toggle_menu touches (_open_menu_id, _expanded_ids), and monkeypatches:
-  - ensure_widget_id   -> deterministic ints per menu object
-  - _menu_officer      -> returns the fake officer matching the open id
-  - crew_menu_hotkeys.resolve_character  (via _acknowledge path, unused here)
+  - ensure_widget_id     -> deterministic ints per menu object
+  - _officer_for_menu    -> the fake officer owning a TARGET menu
+  - open_officer         -> the fake officer owning the OPEN menu
   - the _acknowledge method (to skip speech, irrelevant to turn testing)
 
-Officers are stubs with MenuUp/MenuDown call recorders.
+Officers are stubs that behave like the real MenuUp/MenuDown: they drive the
+panel's pure view primitives and record the open/close tutorial signal.
 """
 from __future__ import annotations
 
@@ -20,26 +25,37 @@ from engine.appc.characters import STMenu
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 class _Officer:
-    def __init__(self, name: str):
+    """Fake officer that behaves like the REAL CharacterClass.MenuUp: it drives
+    the panel view (that is the whole point of the canonical primitive)."""
+
+    def __init__(self, name: str, panel=None, menu=None):
         self.name = name
         self._up = False
         self.up_calls = 0
         self.down_calls = 0
-        # Records GetBool() of each ET_CHARACTER_MENU event dispatched here
-        # (1 = opened, 0 = closed) so tests can assert the tutorial signal.
+        # 1 = opened, 0 = closed — the ET_CHARACTER_MENU tutorial signal, which
+        # the real MenuUp/MenuDown fire via dispatch_character_menu.
         self.menu_events: list[int] = []
+        self._panel = panel
+        self._menu = menu
 
     def MenuUp(self) -> int:
         self._up = True
         self.up_calls += 1
-        return 1  # truthy
+        if self._panel is not None and self._menu is not None:
+            other = self._panel.open_officer()
+            if other is not None and other is not self:
+                other.MenuDown()
+            self._panel.show_menu(self._menu)
+        self.menu_events.append(1)
+        return 1
 
     def MenuDown(self) -> None:
         self._up = False
         self.down_calls += 1
-
-    def ProcessEvent(self, event) -> None:
-        self.menu_events.append(event.GetBool())
+        if self._panel is not None and self._panel.open_officer() is self:
+            self._panel.hide_menu()
+        self.menu_events.append(0)
 
     @property
     def is_up(self) -> bool:
@@ -63,32 +79,34 @@ def _make_panel() -> CrewMenuPanel:
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
-def _patch_panel(monkeypatch, panel, officers_by_id: dict):
-    """Wire up ensure_widget_id and _menu_officer so toggle_menu resolves cleanly.
+def _patch_panel(monkeypatch, panel, officers_by_menu: dict):
+    """Wire ensure_widget_id + officer resolution for the DELEGATING toggle_menu.
 
-    officers_by_id: {int_wid: _Officer}  (None value = no officer for that id)
-    """
-    # Map from menu object identity -> widget id (assigned on first call, stable).
-    _id_map: dict[int, int] = {}
-    _next_id = [1]
+    officers_by_menu: {menu_object: _Officer|None}. toggle_menu now resolves the
+    TARGET menu's officer (_officer_for_menu) before opening, and the OPEN menu's
+    officer (open_officer) to close/switch."""
+    ids: dict[int, int] = {}
+    nxt = [1]
 
-    def _ensure_widget_id(m):
-        oid = id(m)
-        if oid not in _id_map:
-            _id_map[oid] = _next_id[0]
-            _next_id[0] += 1
-        return _id_map[oid]
+    def _ensure(m):
+        if id(m) not in ids:
+            ids[id(m)] = nxt[0]
+            nxt[0] += 1
+        return ids[id(m)]
 
-    monkeypatch.setattr(cmp_mod, "ensure_widget_id", _ensure_widget_id)
+    monkeypatch.setattr(cmp_mod, "ensure_widget_id", _ensure)
 
-    # _menu_officer reads _open_menu_id then resolves via open_menu_label() +
-    # crew_menu_hotkeys.  We patch the method directly to avoid App/TGL deps.
-    def _menu_officer(self=panel):
-        return officers_by_id.get(panel._open_menu_id)
+    def _officer_for_menu(menu, _p=panel):
+        return officers_by_menu.get(menu)
 
-    monkeypatch.setattr(panel, "_menu_officer", _menu_officer, raising=False)
+    def _open_officer(_p=panel):
+        for m, off in officers_by_menu.items():
+            if panel._open_menu_id == _ensure(m):
+                return off
+        return None
 
-    # Silence _acknowledge (speech system, not relevant to turn tests).
+    monkeypatch.setattr(panel, "_officer_for_menu", _officer_for_menu, raising=False)
+    monkeypatch.setattr(panel, "open_officer", _open_officer, raising=False)
     monkeypatch.setattr(panel, "_acknowledge", lambda menu: None, raising=False)
 
 
@@ -97,11 +115,9 @@ def _patch_panel(monkeypatch, panel, officers_by_id: dict):
 def test_open_calls_menu_up(monkeypatch):
     """Opening a menu calls MenuUp() on the resolved officer."""
     helm = _make_menu("Helm")
-    officer = _Officer("Helm")
     panel = _make_panel()
-
-    # ensure_widget_id will assign wid=1 to the first menu it sees.
-    _patch_panel(monkeypatch, panel, officers_by_id={1: officer})
+    officer = _Officer("Helm", panel=panel, menu=helm)
+    _patch_panel(monkeypatch, panel, officers_by_menu={helm: officer})
 
     panel.toggle_menu(helm)  # open
 
@@ -113,10 +129,9 @@ def test_open_calls_menu_up(monkeypatch):
 def test_close_same_calls_menu_down(monkeypatch):
     """Toggling the same menu again closes it and calls MenuDown()."""
     helm = _make_menu("Helm")
-    officer = _Officer("Helm")
     panel = _make_panel()
-
-    _patch_panel(monkeypatch, panel, officers_by_id={1: officer})
+    officer = _Officer("Helm", panel=panel, menu=helm)
+    _patch_panel(monkeypatch, panel, officers_by_menu={helm: officer})
 
     panel.toggle_menu(helm)  # open  -> MenuUp
     panel.toggle_menu(helm)  # close -> MenuDown
@@ -124,18 +139,18 @@ def test_close_same_calls_menu_down(monkeypatch):
     assert not officer.is_up, "MenuDown() should have been called on close"
     assert officer.up_calls == 1
     assert officer.down_calls == 1
+    assert panel._open_menu_id is None, "the view must actually close"
 
 
 def test_switch_menu_turns_old_down_new_up(monkeypatch):
     """Switching A→B calls MenuDown(A) then MenuUp(B) (single toggle call)."""
     menu_a = _make_menu("Helm")
     menu_b = _make_menu("Tactical")
-    officer_a = _Officer("Helm")
-    officer_b = _Officer("Tactical")
     panel = _make_panel()
-
-    # ensure_widget_id assigns 1 to the first menu seen, 2 to the second.
-    _patch_panel(monkeypatch, panel, officers_by_id={1: officer_a, 2: officer_b})
+    officer_a = _Officer("Helm", panel=panel, menu=menu_a)
+    officer_b = _Officer("Tactical", panel=panel, menu=menu_b)
+    _patch_panel(monkeypatch, panel,
+                 officers_by_menu={menu_a: officer_a, menu_b: officer_b})
 
     panel.toggle_menu(menu_a)  # open A -> MenuUp(A)
     assert officer_a.is_up
@@ -153,10 +168,9 @@ def test_switch_menu_turns_old_down_new_up(monkeypatch):
 def test_close_open_menu_calls_menu_down(monkeypatch):
     """close_open_menu() calls MenuDown on the current officer."""
     helm = _make_menu("Helm")
-    officer = _Officer("Helm")
     panel = _make_panel()
-
-    _patch_panel(monkeypatch, panel, officers_by_id={1: officer})
+    officer = _Officer("Helm", panel=panel, menu=helm)
+    _patch_panel(monkeypatch, panel, officers_by_menu={helm: officer})
 
     panel.toggle_menu(helm)      # open -> MenuUp
     result = panel.close_open_menu()  # -> MenuDown
@@ -164,12 +178,13 @@ def test_close_open_menu_calls_menu_down(monkeypatch):
     assert result is True, "close_open_menu should return True when a menu was open"
     assert not officer.is_up
     assert officer.down_calls == 1
+    assert panel._open_menu_id is None
 
 
 def test_close_open_menu_no_open_is_noop(monkeypatch):
     """close_open_menu() with nothing open returns False without crashing."""
     panel = _make_panel()
-    _patch_panel(monkeypatch, panel, officers_by_id={})
+    _patch_panel(monkeypatch, panel, officers_by_menu={})
 
     result = panel.close_open_menu()
 
@@ -177,25 +192,27 @@ def test_close_open_menu_no_open_is_noop(monkeypatch):
 
 
 def test_no_officer_resolved_does_not_crash(monkeypatch):
-    """If _menu_officer returns None, toggle_menu still works cleanly."""
+    """If no officer resolves for the menu, toggle_menu still works cleanly —
+    the view opens and closes on the panel's own primitives."""
     helm = _make_menu("Helm")
     panel = _make_panel()
 
-    _patch_panel(monkeypatch, panel, officers_by_id={1: None})
+    _patch_panel(monkeypatch, panel, officers_by_menu={helm: None})
 
-    # Must not raise.
+    # Must not raise, and must still honour the open/close view toggle.
     panel.toggle_menu(helm)
+    assert panel._open_menu_id is not None
     panel.toggle_menu(helm)
+    assert panel._open_menu_id is None
 
 
 def test_disabled_menu_ignored(monkeypatch):
     """toggle_menu ignores disabled menus (MenuUp must NOT be called)."""
     helm = _make_menu("Helm")
     helm.SetDisabled()  # disabled
-    officer = _Officer("Helm")
     panel = _make_panel()
-
-    _patch_panel(monkeypatch, panel, officers_by_id={1: officer})
+    officer = _Officer("Helm", panel=panel, menu=helm)
+    _patch_panel(monkeypatch, panel, officers_by_menu={helm: officer})
 
     panel.toggle_menu(helm)
 
@@ -204,13 +221,15 @@ def test_disabled_menu_ignored(monkeypatch):
 
 
 # ── ET_CHARACTER_MENU dispatch (E1M1 char-select tutorial signal) ────────────
+# The signal now fires from MenuUp/MenuDown (BC's primitive), not from the panel;
+# the fake officers record it exactly as the real dispatch_character_menu would.
 
 def test_open_dispatches_character_menu_open(monkeypatch):
     """Opening a menu dispatches ET_CHARACTER_MENU(bool=1) to the officer."""
     helm = _make_menu("Helm")
-    officer = _Officer("Helm")
     panel = _make_panel()
-    _patch_panel(monkeypatch, panel, officers_by_id={1: officer})
+    officer = _Officer("Helm", panel=panel, menu=helm)
+    _patch_panel(monkeypatch, panel, officers_by_menu={helm: officer})
 
     panel.toggle_menu(helm)  # open
 
@@ -220,9 +239,9 @@ def test_open_dispatches_character_menu_open(monkeypatch):
 def test_close_dispatches_character_menu_close(monkeypatch):
     """The tutorial-advancing signal: closing a menu dispatches bool=0."""
     helm = _make_menu("Helm")
-    officer = _Officer("Helm")
     panel = _make_panel()
-    _patch_panel(monkeypatch, panel, officers_by_id={1: officer})
+    officer = _Officer("Helm", panel=panel, menu=helm)
+    _patch_panel(monkeypatch, panel, officers_by_menu={helm: officer})
 
     panel.toggle_menu(helm)  # open  -> 1
     panel.toggle_menu(helm)  # close -> 0
@@ -234,10 +253,11 @@ def test_switch_dispatches_close_old_then_open_new(monkeypatch):
     """Switching A→B dispatches close(A) then open(B)."""
     menu_a = _make_menu("Helm")
     menu_b = _make_menu("Tactical")
-    officer_a = _Officer("Helm")
-    officer_b = _Officer("Tactical")
     panel = _make_panel()
-    _patch_panel(monkeypatch, panel, officers_by_id={1: officer_a, 2: officer_b})
+    officer_a = _Officer("Helm", panel=panel, menu=menu_a)
+    officer_b = _Officer("Tactical", panel=panel, menu=menu_b)
+    _patch_panel(monkeypatch, panel,
+                 officers_by_menu={menu_a: officer_a, menu_b: officer_b})
 
     panel.toggle_menu(menu_a)  # open A -> A:[1]
     panel.toggle_menu(menu_b)  # switch -> A:[1,0], B:[1]
@@ -249,9 +269,9 @@ def test_switch_dispatches_close_old_then_open_new(monkeypatch):
 def test_close_open_menu_dispatches_character_menu_close(monkeypatch):
     """close_open_menu() (ESC path) dispatches bool=0 to the officer."""
     helm = _make_menu("Helm")
-    officer = _Officer("Helm")
     panel = _make_panel()
-    _patch_panel(monkeypatch, panel, officers_by_id={1: officer})
+    officer = _Officer("Helm", panel=panel, menu=helm)
+    _patch_panel(monkeypatch, panel, officers_by_menu={helm: officer})
 
     panel.toggle_menu(helm)       # open  -> [1]
     panel.close_open_menu()       # close -> [1, 0]

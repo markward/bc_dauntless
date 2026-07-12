@@ -619,6 +619,15 @@ def _reset_leakable_engine_globals():
         top_window.reset_for_tests()
     except Exception:
         pass
+    # Wired CrewMenuPanel: CharacterClass.MenuUp/MenuDown (BC's canonical menu
+    # primitive) now reach the view through crew_menu_hotkeys.get_panel(), so a
+    # test that wires a panel would otherwise leave a dead panel behind for every
+    # later test whose officer raises a menu.
+    try:
+        from engine.ui import crew_menu_hotkeys
+        crew_menu_hotkeys._wired_panel = None
+    except Exception:
+        pass
     # Current game/player: a mission-load or warp test that calls
     # _set_current_game / Game_SetCurrentPlayer leaks the game (and its player)
     # into later tests. iter_ships/active_set now key world-scene iteration off

@@ -13,7 +13,7 @@ import json
 import logging
 from typing import Optional
 
-from engine.appc.characters import STButton, STMenu, dispatch_character_menu
+from engine.appc.characters import STButton, STMenu
 from engine.appc.tg_ui.st_widgets import SortedRegionMenu, STWarpButton
 from engine.appc.tg_ui.widgets import ensure_widget_id
 from engine.appc.windows import TacticalControlWindow
@@ -223,14 +223,12 @@ class CrewMenuPanel(Panel):
 
     def _menu_officer(self):
         """The CharacterClass owning the currently-open top-level menu, or None."""
-        label = self.open_menu_label()
-        if label is None:
+        if self._open_menu_id is None:
             return None
-        try:
-            from engine.ui import crew_menu_hotkeys
-            return crew_menu_hotkeys.resolve_character(label)
-        except Exception:
+        root = self._root_of(self._open_menu_id)
+        if root is None:
             return None
+        return self._officer_for_menu(root)
 
     def open_officer(self):
         """The CharacterClass owning the currently-open top-level menu, or None.
@@ -238,12 +236,23 @@ class CrewMenuPanel(Panel):
         return self._menu_officer()
 
     def _officer_for_menu(self, menu):
-        """The CharacterClass owning `menu` (resolved by its label), or None.
-        Unlike _menu_officer (which resolves the menu that is ALREADY open), this
-        resolves an arbitrary target menu — what toggle_menu needs before opening."""
+        """The CharacterClass OWNING `menu`, or None.
+
+        Resolved by label (crew_menu_hotkeys), then confirmed by ownership: the
+        SDK attaches a station menu to its officer with
+        `pHelm.SetMenu(tcw.FindMenu("Helm"))` (HelmCharacterHandlers:50 and the
+        four siblings), so the owner is the officer whose GetMenu() IS this menu.
+        The ownership check matters because MenuUp() raises the officer's OWN menu
+        (GetMenu()): a label-matching officer holding the NULL menu (never
+        attached, or DetachMenuFrom* ran) has nothing to raise, so treating them
+        as the owner would make the click a silent dead no-op. Returning None there
+        routes toggle_menu down its unowned-menu path, which still opens the view."""
         try:
             from engine.ui import crew_menu_hotkeys
-            return crew_menu_hotkeys.resolve_character(menu.GetLabel())
+            char = crew_menu_hotkeys.resolve_character(menu.GetLabel())
+            if char is None or char.GetMenu() is not menu:
+                return None
+            return char
         except Exception:
             return None
 
@@ -270,51 +279,37 @@ class CrewMenuPanel(Panel):
         self._open_menu_id = None
         self._expanded_ids.clear()
 
-    @staticmethod
-    def _reconcile_turn(old, new) -> None:
-        """Turn the officer losing focus back, and the one gaining focus toward
-        the captain. old/new are CharacterClass or None; identical -> no-op."""
-        if old is new:
-            return
-        if old is not None:
-            try:
-                old.MenuDown()
-            except Exception:
-                pass
-        if new is not None:
-            try:
-                new.MenuUp()
-            except Exception:
-                pass
-
     def toggle_menu(self, menu) -> None:
         """Open `menu` (closing any other), or close it if already open.
         Single-open invariant shared by hotkeys and CEF title clicks.
-        Disabled menus stay closed (stock BC) and non-menus are ignored
-        (the JS only emits toggle: for top-level titles, but hotkey code
-        may resolve unexpected objects)."""
+        Disabled menus stay closed (stock BC); non-menus are ignored.
+
+        DELEGATES to the officer's MenuUp()/MenuDown() — BC's canonical primitive,
+        which drives the view, the turn, and the tutorial event. The spoken
+        acknowledgement fires HERE, on the click path only, mirroring BC's
+        `if (pCharacter.MenuUp()): CharacterInteraction(pCharacter)` — a SCRIPTED
+        AT_MENU_UP must stay silent."""
         if not isinstance(menu, STMenu) or not menu.IsEnabled():
             return
         wid = ensure_widget_id(menu)
-        old_officer = self._menu_officer()
-        opening = self._open_menu_id != wid
-        self._open_menu_id = None if self._open_menu_id == wid else wid
-        # Open menu changed (toggle always closes or switches) — a reopened
-        # menu starts with all submenus collapsed.
-        self._expanded_ids.clear()
-        new_officer = self._menu_officer()
-        self._reconcile_turn(old_officer, new_officer)
-        # Notify missions tracking crew-menu interaction (e.g. E1M1's
-        # character-selection tutorial, which advances on a menu CLOSE) that
-        # the officer losing focus closed and the one gaining focus opened —
-        # mirroring the MenuDown/MenuUp turn above.
-        if old_officer is not None and old_officer is not new_officer:
-            dispatch_character_menu(old_officer, is_open=False)
-        if new_officer is not None and new_officer is not old_officer:
-            dispatch_character_menu(new_officer, is_open=True)
-        if opening:
-            self._acknowledge(menu)
-            menu.SendActivationEvent()   # BC broadcasts activation event on open
+        if self._open_menu_id == wid:                 # already open -> close it
+            officer = self.open_officer()
+            if officer is not None:
+                officer.MenuDown()
+            else:
+                self.hide_menu()                      # unowned menu: view only
+            return
+        officer = self._officer_for_menu(menu)
+        if officer is not None:
+            if officer.MenuUp():                      # raises + turns + signals
+                self._acknowledge(menu)               # BC: CharacterInteraction
+            return
+        # Unowned menu (no officer resolves): honour single-open + the view.
+        other = self.open_officer()
+        if other is not None:
+            other.MenuDown()
+        self.show_menu(menu)
+        self._acknowledge(menu)
 
     def _acknowledge(self, menu) -> None:
         """Fire the owning officer's spoken acknowledgement. A resolution miss
@@ -341,20 +336,16 @@ class CrewMenuPanel(Panel):
         return self._open_menu_id is not None
 
     def close_open_menu(self) -> bool:
-        """Close any open menu; True if one was open (ESC consumes the
-        press in that case — see host_loop's modal ladder)."""
+        """Close any open menu; True if one was open (ESC consumes the press in
+        that case — see host_loop's modal ladder). Delegates to the officer's
+        MenuDown() (which hides the view, turns them back, and signals)."""
         if self._open_menu_id is None:
             return False
-        officer = self._menu_officer()
-        self._open_menu_id = None
-        self._expanded_ids.clear()
+        officer = self.open_officer()
         if officer is not None:
-            try:
-                officer.MenuDown()
-            except Exception:
-                pass
-            # Menu closed — same tutorial-advancing signal as toggle_menu.
-            dispatch_character_menu(officer, is_open=False)
+            officer.MenuDown()
+        else:
+            self.hide_menu()
         return True
 
     def invalidate(self) -> None:

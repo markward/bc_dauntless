@@ -33,6 +33,34 @@ def test_fkey_talk_to_opens_menu_and_acknowledges():
     assert snap["speaker"] == "Tactical"
 
 
+def test_owned_menu_click_goes_through_menu_up():
+    """The real in-game chain: the SDK attaches a station menu to its officer
+    (`pTactical.SetMenu(tcw.FindMenu("Tactical"))`), so a title click DELEGATES to
+    BC's canonical primitive — CharacterClass.MenuUp() raises the menu (driving the
+    wired panel's view), flags the officer as menu-up, and the click path acks."""
+    top_window.reset_for_tests()
+    crew_speech.bus().reset()
+    tcw = TacticalControlWindow.GetInstance()
+    menu = STTopLevelMenu("Tactical")
+    tcw.AddMenuToList(menu)
+
+    panel = CrewMenuPanel()
+    crew_menu_hotkeys.wire(tcw, panel)          # MenuUp reaches the view via this
+    officer = crew_menu_hotkeys.resolve_character("Tactical")
+    officer.SetMenu(menu)                       # SDK AttachMenuToTactical
+
+    panel.toggle_menu(menu)                     # -> officer.MenuUp()
+
+    assert panel.has_open_menu() is True        # the PRIMITIVE opened the view
+    assert officer.IsMenuUp() == 1
+    assert _subtitle()._snapshot(now=0.0)["speaker"] == "Tactical"   # ack (click path)
+
+    panel.toggle_menu(menu)                     # -> officer.MenuDown()
+    assert panel.has_open_menu() is False
+    assert officer.IsMenuUp() == 0
+    officer.SetMenu(None)                       # don't leak the attachment
+
+
 def test_reset_sdk_globals_clean_after_ack():
     from engine.host_loop import reset_sdk_globals
     top_window.reset_for_tests()

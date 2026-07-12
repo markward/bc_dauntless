@@ -624,16 +624,39 @@ class CharacterClass(ObjectClass):
         return 1 if self._data.get("AnimatedSpeaking", False) else 0
 
     def MenuUp(self, *args) -> int:
-        # SDK seam (BridgeHandlers: `if (pCharacter.MenuUp()): ...`). Set the
-        # state flag and ask the character-anim controller to turn this officer
-        # toward the captain (deferred — the controller pump has the renderer).
+        """Raise this officer's menu. BC's canonical primitive: BridgeHandlers'
+        click seam does `if (pCharacter.MenuUp()): CharacterInteraction(...)` and
+        QuickBattle does `g_pXO.MenuUp()` to bring Saffi's menu up. It drives the
+        panel view, sets the state flag, and turns the officer to the captain.
+
+        It does NOT acknowledge — BC plays the "Yes sir" line in
+        CharacterInteraction, on the CLICK path only, so a scripted AT_MENU_UP
+        stays silent. Returns 1 when the menu was raised, 0 when there was
+        nothing to raise (no menu / disabled)."""
+        menu = self.GetMenu()
+        if not menu or not menu.IsEnabled():
+            return 0                         # stock BC: nothing to raise
+        panel = _get_menu_panel()
+        if panel is not None and panel.open_officer() is not self:
+            other = panel.open_officer()
+            if other is not None:
+                other.MenuDown()             # single-open: close + turn them back
+            panel.show_menu(menu)
         self._data["MenuUp"] = True
-        self._notify_menu(turn=True)
+        self._notify_menu(turn=True)         # turn-to-captain (None-ctrl guarded)
+        dispatch_character_menu(self, is_open=True)
         return 1
 
     def MenuDown(self, *args) -> None:
+        """Lower this officer's menu (BC's MenuDown). Hides the view only if this
+        officer's menu is the open one, clears the flag, turns them back, and
+        fires the tutorial close signal."""
+        panel = _get_menu_panel()
+        if panel is not None and panel.open_officer() is self:
+            panel.hide_menu()
         self._data["MenuUp"] = False
         self._notify_menu(turn=False)
+        dispatch_character_menu(self, is_open=False)
 
     def _notify_menu(self, turn) -> None:
         try:
@@ -696,6 +719,16 @@ def CharacterClass_CreateNull() -> CharacterClass:
 
 def CharacterClass_Cast(obj) -> "CharacterClass | None":
     return obj if isinstance(obj, CharacterClass) else None
+
+
+def _get_menu_panel():
+    """The wired CrewMenuPanel, or None (headless / no UI). The seam MenuUp uses
+    to reach the view without engine.appc importing the UI at module load."""
+    try:
+        from engine.ui import crew_menu_hotkeys
+        return crew_menu_hotkeys.get_panel()
+    except Exception:
+        return None
 
 
 def dispatch_character_menu(character, is_open) -> None:
