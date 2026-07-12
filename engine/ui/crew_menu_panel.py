@@ -17,6 +17,7 @@ from engine.appc.characters import STButton, STMenu
 from engine.appc.tg_ui.st_widgets import SortedRegionMenu, STWarpButton
 from engine.appc.tg_ui.widgets import ensure_widget_id
 from engine.appc.windows import TacticalControlWindow
+from engine.ui import ui_attention
 from engine.ui.panel import Panel
 
 _logger = logging.getLogger(__name__)
@@ -75,6 +76,29 @@ class CrewMenuPanel(Panel):
         return "crew-menu"
 
     def render_payload(self) -> Optional[str]:
+        payload = json.dumps(self.snapshot())
+        if payload == self._last_pushed:
+            return None
+        self._last_pushed = payload
+        return "setCrewMenus(" + payload + ");"
+
+    def snapshot(self) -> dict:
+        """Structured (dict) snapshot of the current menu tree.
+
+        Rebuilt fresh on every call — unlike render_payload(), this is NOT
+        diff-gated against the last CEF push, so callers (tests, other
+        Python-side consumers) always see live state. render_payload() is
+        the sole gate protecting the CEF push from the flicker described in
+        ui_attention's module docstring: MissionLib's RefreshArrows timer
+        calls HidePointerArrows() then re-issues ShowPointerArrow for every
+        entry, 8x/second, both inside one tick. Because _snapshot_node reads
+        ui_attention state fresh each call and produces the exact same dict
+        (and therefore the exact same JSON string) when highlight state is
+        unchanged end-to-end, render_payload's string-equality check against
+        self._last_pushed absorbs that hide->show cycle as a no-op — CEF
+        never sees the transient empty state and the CSS pulse never
+        restarts.
+        """
         self._widgets_by_id = {}
         menus = []
         for m in TacticalControlWindow.GetInstance().GetMenuList():
@@ -82,11 +106,7 @@ class CrewMenuPanel(Panel):
             if node is not None:
                 node["open"] = (node["id"] == self._open_menu_id)
                 menus.append(node)
-        payload = json.dumps({"menus": menus})
-        if payload == self._last_pushed:
-            return None
-        self._last_pushed = payload
-        return "setCrewMenus(" + payload + ");"
+        return {"menus": menus}
 
     def _snapshot_node(self, widget) -> Optional[dict]:
         # Set Course (the one SortedRegionMenu) is projected as a leaf
@@ -118,6 +138,13 @@ class CrewMenuPanel(Panel):
             "enabled": bool(widget.IsEnabled()),
             "visible": bool(widget.IsVisible()),
         }
+        # Applies to every node type that gets an id — STMenu/submenu rows
+        # (the E1M1 "Set Course" target is a submenu, not a leaf) AND
+        # STButton leaves alike.
+        node["highlighted"] = wid in ui_attention.highlighted_ids()
+        _color = ui_attention.highlight_color(wid)
+        if _color is not None:
+            node["highlightColor"] = _color
         if isinstance(widget, STMenu) and not isinstance(widget, SortedRegionMenu):
             node["expanded"] = wid in self._expanded_ids
             node["openable"] = bool(widget.IsOpenable())
