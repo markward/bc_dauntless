@@ -4742,8 +4742,9 @@ def resolve_officer_menu_layout() -> None:
     window (InterfacePane.GetNthChild(TACTICAL_MENU)) via ResizeUI (SetMaximumSize)
     + RepositionUI (SetPosition(0,0) then pTacCtrlWindow.Layout()). With
     TacticalControlWindow.Layout() now real, that pass caches the window's
-    _abs_rect, so GetScreenOffset stops raising LayoutNotResolved — unblocking the
-    SDK-driven CEF positioning (GetScreenOffset / ResizeUI rects) tasks downstream.
+    _abs_rect, so GetScreenOffset returns the RESOLVED absolute rect instead
+    of falling back to local placement — unblocking the SDK-driven CEF
+    positioning (GetScreenOffset / ResizeUI rects) tasks downstream.
 
     Two entry paths:
       * campaign / QuickBattle — LoadBridge.Load already ran CreateMenus (which

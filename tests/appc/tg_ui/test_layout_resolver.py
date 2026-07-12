@@ -1,6 +1,4 @@
-import pytest
 from engine.appc.tg_ui.widgets import TGPane
-from engine.appc.tg_ui.layout import LayoutNotResolved
 
 
 class _Pt:
@@ -39,7 +37,30 @@ def test_move_accumulates():
     assert abs(off.x - 0.15) < 1e-9
 
 
-def test_unresolved_raises_not_zero():
+def test_unresolved_falls_back_to_local_placement():
+    # GetScreenOffset must never raise onto an SDK call path (BC's own
+    # script-action convention: "Return 0 to keep calling sequence from
+    # crashing"). This used to raise LayoutNotResolved for any pane with no
+    # _abs_rect — that's what killed E1M1's crew-intro sequence when it
+    # called MissionLib.MoveMouseCursorToUIObject(App.g_kRootWindow, ...) on
+    # a TGPane nothing ever laid out. A never-laid-out pane now falls back
+    # to its local placement (0.0, 0.0 by default) instead of raising.
     orphan = TGPane(0.1, 0.1)
-    with pytest.raises(LayoutNotResolved):
-        orphan.GetScreenOffset(_Pt())
+    out = _Pt()
+    result = orphan.GetScreenOffset(out)
+    assert (out.x, out.y) == (0.0, 0.0)
+    assert result is out
+
+    # Same fallback on the no-arg (return-a-point) call shape.
+    pt = TGPane(0.1, 0.1).GetScreenOffset()
+    assert (pt.x, pt.y) == (0.0, 0.0)
+
+
+def test_unresolved_falls_back_to_nonzero_local_placement():
+    # The fallback reads the widget's own _local_left/_local_top, not a
+    # hardcoded 0.0 — prove it's not a fabricated constant.
+    orphan = TGPane(0.1, 0.1)
+    orphan.SetPosition(0.3, 0.4, 0)   # local placement only, no Layout()
+    out = _Pt()
+    orphan.GetScreenOffset(out)
+    assert (out.x, out.y) == (0.3, 0.4)

@@ -213,17 +213,19 @@ class TGPane(TGEventHandlerObject):
             child._layout_children()
 
     def _resolve_child_rect(self, child, origin_l, origin_t):
-        from engine.appc.tg_ui.layout import (
-            Rect, anchor_point, ANCHOR_FRACTIONS, LayoutNotResolved,
-        )
+        from engine.appc.tg_ui.layout import Rect, anchor_point, ANCHOR_FRACTIONS
         if child._align_spec is not None:
             other, my_anchor, other_anchor = child._align_spec
-            if getattr(other, "_abs_rect", None) is None:
-                raise LayoutNotResolved("AlignTo target not yet resolved")
-            ox, oy = anchor_point(other._abs_rect, other_anchor)
-            mfx, mfy = ANCHOR_FRACTIONS[my_anchor]
-            return Rect(ox - mfx * child._width, oy - mfy * child._height,
-                        child._width, child._height)
+            if getattr(other, "_abs_rect", None) is not None:
+                ox, oy = anchor_point(other._abs_rect, other_anchor)
+                mfx, mfy = ANCHOR_FRACTIONS[my_anchor]
+                return Rect(ox - mfx * child._width, oy - mfy * child._height,
+                            child._width, child._height)
+            # AlignTo target isn't resolved (e.g. a duck-typed display widget
+            # that never opts into resolver state). A Layout() pass must
+            # never explode onto an SDK path — e.g. SDK code calls
+            # pIcon.Layout() / pane.Layout() directly — so fall back to
+            # parent-origin + the child's own local placement instead.
         return Rect(origin_l + child._local_left,
                     origin_t + child._local_top,
                     child._width, child._height)
@@ -235,7 +237,8 @@ class TGPane(TGEventHandlerObject):
         # `pPowerDisplay.AddChild(pMainRuler, 0.0, pWarpCoreRuler.GetTop(), 0)`
         # with no top-down Layout() pass ever having run. Fall back to the
         # known local placement (never a fabricated 0.0-for-everyone) instead
-        # of raising; GetScreenOffset is the strict, fail-loud one (below).
+        # of raising; GetScreenOffset (below) uses the same non-raising
+        # fallback for the same reason.
         self._ensure_layout_state()
         if self._abs_rect is not None:
             return self._abs_rect.left
@@ -248,16 +251,25 @@ class TGPane(TGEventHandlerObject):
         return self._local_top
 
     def GetScreenOffset(self, out=None):
+        # Best-effort, NOT fail-loud — mirrors GetLeft()/GetTop() above. Real
+        # SDK script actions call this on widgets that were never laid out
+        # (e.g. MissionLib.MoveMouseCursorToUIObject(App.g_kRootWindow, ...),
+        # called from E1M1's crew-intro sequence) and BC's own convention is
+        # that these must not throw ("Return 0 to keep calling sequence from
+        # crashing"). A raise here kills the calling TGScriptAction, which
+        # can stall an entire mission sequence. Fall back to the known local
+        # placement (never a fabricated 0.0-for-everyone) instead of raising.
         self._ensure_layout_state()
-        if self._abs_rect is None:
-            from engine.appc.tg_ui.layout import LayoutNotResolved
-            raise LayoutNotResolved("GetScreenOffset before Layout")
+        if self._abs_rect is not None:
+            left, top = self._abs_rect.left, self._abs_rect.top
+        else:
+            left, top = self._local_left, self._local_top
         if out is not None:
-            if hasattr(out, "x"): out.x = self._abs_rect.left
-            if hasattr(out, "y"): out.y = self._abs_rect.top
+            if hasattr(out, "x"): out.x = left
+            if hasattr(out, "y"): out.y = top
             return out
         from engine.appc.math import TGPoint3
-        return TGPoint3(self._abs_rect.left, self._abs_rect.top, 0.0)
+        return TGPoint3(left, top, 0.0)
 
 
 class TGIcon(TGPane):

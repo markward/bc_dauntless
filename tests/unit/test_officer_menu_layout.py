@@ -4,15 +4,21 @@ The SDK's Tactical/Interface/TacticalControlWindow.RepositionUI() positions the
 officer-menu window (InterfacePane.GetNthChild(TACTICAL_MENU)) via SetPosition(0,0)
 and ends with pTacCtrlWindow.Layout(). host_loop.resolve_officer_menu_layout() runs
 that SDK layout on mission-load so the window's _abs_rect resolves (GetScreenOffset
-stops raising LayoutNotResolved). Geometry is asserted against the SDK LCARS module,
-never a bare literal.
+returns the RESOLVED absolute rect rather than falling back to local placement).
+Geometry is asserted against the SDK LCARS module, never a bare literal.
+
+NOTE: GetScreenOffset used to raise LayoutNotResolved before a Layout() pass
+reached a widget. That raise had zero real consumers (attention is now
+identifier-centric, engine/ui/ui_attention.py) and broke real SDK call paths
+(E1M1's crew-intro sequence via MissionLib.MoveMouseCursorToUIObject) — it was
+removed. GetScreenOffset now always falls back to local placement instead, so
+this test only asserts the LAID-OUT rect below, not a pre-Layout raise.
 """
 import App
 import pytest
 
 import Tactical.Interface.TacticalControlWindow as TCWmod
 from engine.appc.windows import TacticalControlWindow, INTERFACE_PANE, TACTICAL_MENU
-from engine.appc.tg_ui.layout import LayoutNotResolved
 from engine.host_loop import resolve_officer_menu_layout
 
 
@@ -34,9 +40,10 @@ def _expected_menu_width():
 
 
 def test_tcw_layout_resolves_the_officer_menu_window():
-    """The mechanism: a stylized officer-menu window under an interface pane is
-    unresolved (GetScreenOffset raises) until TacticalControlWindow.Layout()
-    runs the resolver over it; then its rect matches the SDK geometry."""
+    """The mechanism: a stylized officer-menu window under an interface pane has
+    no resolved rect (falls back to local placement) until
+    TacticalControlWindow.Layout() runs the resolver over it; then its rect
+    matches the SDK geometry."""
     from engine.appc.windows import _STStylizedWindow
     from engine.appc.tg_ui.widgets import TGPane_Create
 
@@ -52,10 +59,11 @@ def test_tcw_layout_resolves_the_officer_menu_window():
     ipane.AddChild(omw, 0.0, 0.0, 0)           # AddChild seeds local (0,0)
     tcw.AddChild(ipane, 0.0, 0.0, 0)
 
-    # RED: no Layout() pass has reached the window yet.
+    # RED: no Layout() pass has reached the window yet — GetScreenOffset must
+    # not raise (falls back to local placement, seeded (0,0) by AddChild).
     assert omw.__dict__.get("_abs_rect") is None
-    with pytest.raises(LayoutNotResolved):
-        omw.GetScreenOffset()
+    off = omw.GetScreenOffset()
+    assert (off.x, off.y) == pytest.approx((0.0, 0.0))
 
     # GREEN: the resolver caches an absolute rect from the recorded SDK geometry.
     tcw.Layout()

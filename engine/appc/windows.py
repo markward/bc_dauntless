@@ -182,13 +182,15 @@ class TacticalControlWindow(TGEventHandlerObject):
         We lay out only the interface pane's *direct* children (that is all the
         officer-menu window — TACTICAL_MENU=0 — and the downstream tasks need),
         each resolved independently: several interface children AlignTo display
-        widgets (RadarDisplay, ShipDisplay) that never opt into resolver state,
-        so a single unresolvable AlignTo must NOT abort its siblings. We reuse
-        the TGPane resolver's own _resolve_child_rect; we do not recurse into
-        the stylized-window menu subtrees (their children are STMenu/STButton,
-        not positioned resolver panes).
+        widgets (RadarDisplay, ShipDisplay) that never opt into resolver state.
+        We reuse the TGPane resolver's own _resolve_child_rect, which already
+        falls back to parent-origin + local placement when an AlignTo target
+        isn't resolved (never raises), so a single unresolvable AlignTo can't
+        abort its siblings. We do not recurse into the stylized-window menu
+        subtrees (their children are STMenu/STButton, not positioned resolver
+        panes).
         """
-        from engine.appc.tg_ui.layout import Rect, LayoutNotResolved
+        from engine.appc.tg_ui.layout import Rect
 
         ipane = self.GetNthChild(INTERFACE_PANE)
         if not isinstance(ipane, TGPane):
@@ -203,13 +205,7 @@ class TacticalControlWindow(TGEventHandlerObject):
             if not isinstance(child, TGPane):  # display widgets: not resolver panes
                 continue
             child._ensure_layout_state()
-            try:
-                child._abs_rect = ipane._resolve_child_rect(child, origin_l, origin_t)
-            except LayoutNotResolved:
-                # AlignTo target isn't a laid-out resolver widget (e.g. a radar/
-                # ship display). Leave this child unresolved (GetScreenOffset
-                # stays fail-loud for it) and keep placing its siblings.
-                continue
+            child._abs_rect = ipane._resolve_child_rect(child, origin_l, origin_t)
 
 
 
