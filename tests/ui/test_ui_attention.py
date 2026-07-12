@@ -5,6 +5,8 @@ See engine/ui/ui_attention.py and
 docs/superpowers/specs/2026-07-12-identifier-centric-ui-attention-design.md.
 """
 from engine.ui import ui_attention
+import json
+
 from engine.appc.tg_ui.widgets import ensure_widget_id, TGPane
 
 
@@ -55,6 +57,44 @@ def test_show_records_color():
     w = _Widget()
     ui_attention.show_pointer_arrow(None, w, 0, 0.0, "gold")
     assert ui_attention.highlight_color(ensure_widget_id(w)) == "gold"
+
+
+def test_show_coerces_tgcolora_to_css_string():
+    """No live SDK call site passes kColor today, but the signature accepts
+    a TGColorA/NiColorA (App.py's r/g/b/a 0.0-1.0 float object). If one ever
+    does, the raw object must never reach the highlight dict -- it lands in
+    the CrewMenuPanel snapshot and json.dumps()'d every frame."""
+    import App
+    w = _Widget()
+    ui_attention.show_pointer_arrow(None, w, 0, 0.0, App.NiColorA_WHITE)
+    color = ui_attention.highlight_color(ensure_widget_id(w))
+    assert isinstance(color, str)
+    json.dumps(color)  # must not raise
+
+
+def test_show_drops_unusable_color_object():
+    class _NotAColor:
+        pass
+
+    w = _Widget()
+    ui_attention.show_pointer_arrow(None, w, 0, 0.0, _NotAColor())
+    assert ui_attention.highlight_color(ensure_widget_id(w)) is None
+
+
+def test_install_clears_stale_highlight_state():
+    """install() is called from reset_sdk_globals() on every mission-entry
+    path (first load AND every in-process swap). Highlight state must not
+    survive a mission swap -- otherwise stale widget ids accumulate for the
+    whole process lifetime and can even be misapplied to a same-id widget
+    in the next mission."""
+    w = _Widget()
+    ui_attention.show_pointer_arrow(None, w, 0, 0.0, "gold")
+    assert ui_attention.highlighted_ids() != set()
+
+    ui_attention.install()
+
+    assert ui_attention.highlighted_ids() == set()
+    assert ui_attention.highlight_color(ensure_widget_id(w)) is None
 
 
 def test_install_overrides_missionlib():

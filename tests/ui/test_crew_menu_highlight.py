@@ -9,6 +9,8 @@ never make the CEF-facing payload flicker.
 See docs/superpowers/specs/2026-07-12-identifier-centric-ui-attention-design.md
 and engine/ui/ui_attention.py's module docstring.
 """
+import json
+
 import App
 from engine.appc.characters import STButton, STMenu, STTopLevelMenu
 from engine.appc.tg_ui.widgets import ensure_widget_id
@@ -75,6 +77,22 @@ def test_snapshot_carries_highlight_color_when_set(crew_panel_with_helm_menu):
     ui_attention.show_pointer_arrow(None, set_course_submenu, 0, 0.0, "gold")
     node = _find(panel.snapshot(), set_course_submenu)
     assert node["highlightColor"] == "gold"
+
+
+def test_render_payload_json_safe_with_tgcolora_kcolor(crew_panel_with_helm_menu):
+    """kColor is DEAD in every live SDK ShowArrow call site today, but the
+    signature accepts a raw TGColorA/NiColorA. If a mission ever did pass
+    one, render_payload's json.dumps() must not blow up -- ui_attention
+    coerces kColor to a CSS string at capture time rather than storing the
+    object as-is."""
+    panel, set_course_submenu = crew_panel_with_helm_menu
+    ui_attention.hide_pointer_arrows()
+    ui_attention.show_pointer_arrow(None, set_course_submenu, 0, 0.0, App.NiColorA_WHITE)
+    payload_json = panel.render_payload()  # calls json.dumps() internally -- must not raise
+    assert payload_json is not None
+    json.dumps(panel.snapshot())  # same proof, directly against the raw payload dict
+    node = _find(panel.snapshot(), set_course_submenu)
+    assert isinstance(node["highlightColor"], str)
 
 
 def test_snapshot_omits_highlight_color_when_unset(crew_panel_with_helm_menu):
