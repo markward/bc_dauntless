@@ -43,3 +43,66 @@ def test_app_exposes_singleton():
     assert hasattr(App, "g_kAnimationManager")
     App.g_kAnimationManager.LoadAnimation("data/animations/foo.nif", "foo")
     assert App.g_kAnimationManager.path_for("foo") == "data/animations/foo.nif"
+
+
+# GetAnimationLength must return the REAL clip length.
+#
+# The SDK schedules the walk-off lift door relative to it:
+#     fTime = kAM.GetAnimationLength("db_PtoL1_P")
+#     pSequence.AddAction(pDoorAction, pAnimAction_Stand, fTime - 1.25)
+# Returning 0.0 makes that offset -1.25s, so the door timing is meaningless.
+
+def test_get_animation_length_uses_the_duration_provider():
+    am = AnimationManager()
+    am.LoadAnimation("data/animations/db_PtoL1_P.nif", "db_PtoL1_P")
+    am.set_duration_provider(lambda path: 4.5 if path.endswith("db_PtoL1_P.nif") else 0.0)
+    assert am.GetAnimationLength("db_PtoL1_P") == 4.5
+
+
+def test_walk_off_door_offset_is_positive():
+    """The whole point: fTime - 1.25 must land INSIDE the walk, not before it."""
+    am = AnimationManager()
+    am.LoadAnimation("data/animations/db_PtoL1_P.nif", "db_PtoL1_P")
+    am.set_duration_provider(lambda path: 4.5)
+    assert am.GetAnimationLength("db_PtoL1_P") - 1.25 > 0.0
+
+
+def test_duration_is_cached_per_name():
+    calls = []
+
+    def provider(path):
+        calls.append(path)
+        return 2.0
+
+    am = AnimationManager()
+    am.LoadAnimation("data/animations/x.nif", "x")
+    am.set_duration_provider(provider)
+    assert am.GetAnimationLength("x") == 2.0
+    assert am.GetAnimationLength("x") == 2.0
+    assert len(calls) == 1, "the clip must be measured once, not once per query"
+
+
+def test_unknown_name_and_no_provider_return_zero_not_raise():
+    am = AnimationManager()
+    assert am.GetAnimationLength("nope") == 0.0        # no provider, headless
+    am.set_duration_provider(lambda path: 3.0)
+    assert am.GetAnimationLength("nope") == 0.0        # name never registered
+
+
+def test_provider_failure_degrades_to_zero():
+    def boom(path):
+        raise RuntimeError("no renderer")
+
+    am = AnimationManager()
+    am.LoadAnimation("data/animations/x.nif", "x")
+    am.set_duration_provider(boom)
+    assert am.GetAnimationLength("x") == 0.0
+
+
+def test_freeing_an_animation_drops_its_cached_duration():
+    am = AnimationManager()
+    am.LoadAnimation("data/animations/x.nif", "x")
+    am.set_duration_provider(lambda path: 2.0)
+    assert am.GetAnimationLength("x") == 2.0
+    am.FreeAnimation("x")
+    assert am.GetAnimationLength("x") == 0.0

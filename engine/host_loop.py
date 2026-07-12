@@ -1081,6 +1081,30 @@ def _game_asset_path(p):
     return str(PROJECT_ROOT / "game" / p) if p else None
 
 
+def _clip_duration(renderer, rel_path) -> float:
+    """Max keyframe time across a clip's tracks - the clip's real length.
+
+    Feeds App.g_kAnimationManager.set_duration_provider so
+    GetAnimationLength("db_PtoL1_P") returns the real walk-clip duration
+    instead of 0.0 (PicardAnimations.py:145 schedules the lift door at
+    GetAnimationLength(walk) - 1.25). Any failure degrades to 0.0 rather
+    than raising, so a missing/broken clip can never stall a TGSequence.
+    """
+    try:
+        clips = renderer.load_animation_clips(_game_asset_path(rel_path))
+    except Exception:
+        return 0.0
+    if not clips:
+        return 0.0
+    longest = 0.0
+    for track in clips[0].get("tracks", []):
+        for channel in ("translation", "rotation"):
+            keys = track.get(channel) or []
+            if keys:
+                longest = max(longest, float(keys[-1][0]))
+    return longest
+
+
 # v1 ship-gate selections — Task 25 pins these from the pick_*.py scan results.
 SHIP_GATE_MISSION = "Custom.Tutorial.Episode.M2Objects.M2Objects"
 DEFAULT_TEXTURE_SEARCH = "data/Models/SharedTextures/FedShips/High"
@@ -5152,6 +5176,11 @@ def run(mission_name: Optional[str] = None,
 
         from engine.bridge_hit_reactions import HitReactionHandler
         import App as _App
+        # Wire the walk-off lift door's real timing (Task 3, SP: lift door
+        # ownership): headless test/harness runs never reach here, so
+        # GetAnimationLength stays a safe 0.0 there.
+        _App.g_kAnimationManager.set_duration_provider(
+            lambda rel_path: _clip_duration(r, rel_path))
         def _get_player():
             g = Game_GetCurrentGame()
             return g.GetPlayer() if g is not None else None
