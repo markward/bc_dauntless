@@ -5271,6 +5271,12 @@ def run(mission_name: Optional[str] = None,
             global _BRIDGE_ZOOM_MIN, _BRIDGE_ZOOM_MAX, _BRIDGE_ZOOM_TIME
             import App as _App
             _bridge = _App.g_kSetManager.GetSet("bridge")
+            # Documented SDK deviation: LoadBridge.Load (run by the mission's
+            # StartMission just before this hook fires) never calls the bridge
+            # config module's LoadSounds() -- see engine/bridge_sounds.py for
+            # the full account of why we call it ourselves here.
+            from engine import bridge_sounds
+            bridge_sounds.load_bridge_module_sounds(_bridge)
             _cam = _bridge.GetCamera("maincamera") if _bridge is not None else None
             if _cam is not None and hasattr(_cam, "position"):
                 # The seated captain eye is the bridge's pushed camera MODE's
