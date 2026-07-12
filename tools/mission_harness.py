@@ -498,21 +498,29 @@ def setup_sdk() -> None:
         # stubs (real modules, speech worked) while the live harness kept them
         # (no registration, no speech). Keep this list and tests/conftest.py's
         # twin in sync.
-        #
-        # NOTE: BridgeHandlers itself is REAL now too (removed from this list
-        # 2026-07-12). MissionLib.StartCutscene calls
-        # BridgeHandlers.DropMenusTurnBack() to drop whatever crew menu is
-        # open before a cutscene starts; as a _StubModule that call was a
-        # total no-op, so a scripted menu raised later in the SAME tick
-        # (E1M1 ExplainWarp: StartCutscene then Kiska's AT_MENU_UP) never
-        # got its predecessor dropped by the SDK's own mechanism — the same
-        # live-silence bug class as the CharacterHandlers note above. Made
-        # safe by implementing App.STTopLevelMenu_GetOpenMenu() and
-        # STTopLevelMenu.GetOwner()/SetOwner() (engine/appc/characters.py);
-        # by mission-boot time Bridge.TacticalMenuHandlers.CreateMenus() has
-        # already run (see resolve_officer_menu_layout in engine/host_loop.py),
-        # so DropMenusTurnBack's DropOutOfManualFireMode -> ResetPickFireButton
-        # call finds a real Tactical menu instead of None.
+        "BridgeHandlers",
+        # NOTE: BridgeHandlers was briefly unstubbed 2026-07-12 (commit
+        # cc218371) on the theory that its own DropMenusTurnBack() should
+        # perform the cutscene-start crew-menu drop. That was WRONG:
+        # DropMenusTurnBack() -> DropOutOfManualFireMode() ->
+        # Bridge.TacticalMenuHandlers.ResetPickFireButton() dereferences
+        # TacticalControlWindow.GetTacticalMenu() with NO None-guard and
+        # RAISES (AttributeError: 'NoneType' object has no attribute
+        # 'GetButtonW') — the exception unwound out of
+        # MissionLib.StartCutscene and was silently swallowed by
+        # CharacterClass.SendActivationEvent, so E1M1's ExplainWarp
+        # cutscene never reached Kiska's scripted AT_MENU_UP at all (live
+        # regression). RE-STUBBED here 2026-07-12: DropMenusTurnBack() is
+        # now a harmless no-op again. The actual crew-menu drop happens
+        # directly in our engine, inside
+        # engine/appc/top_window.py:_TopWindow.StartCutscene — the SAME
+        # moment MissionLib.StartCutscene calls the (now inert)
+        # BridgeHandlers.DropMenusTurnBack() and then pTop.StartCutscene(...),
+        # so it still runs BEFORE any later same-tick scripted AT_MENU_UP.
+        # Uses the real App.STTopLevelMenu_GetOpenMenu() /
+        # STTopLevelMenu.GetOwner()/SetOwner() primitives
+        # (engine/appc/characters.py) — those stay. Keep this list and
+        # tests/conftest.py's twin in sync.
         # NOTE: Actions.MissionScriptActions must NOT be stubbed. It is a tiny
         # real module (imports only App + MissionLib; one function, ChangeToBridge)
         # that cutscene/briefing TGSequences call. As a _StubModule its

@@ -506,10 +506,14 @@ def pytest_configure(config):
         # The five Bridge.*CharacterHandlers are REAL modules (officer menu
         # acknowledgements + DetachCrewMenus path) — see the matching note in
         # tools/mission_harness.py. Keep both lists in sync.
-        #
-        # BridgeHandlers itself is REAL now too — see the matching note in
-        # tools/mission_harness.py (2026-07-12, DropMenusTurnBack / E1M1
-        # ExplainWarp cutscene-menu-drop fix). Keep both lists in sync.
+        "BridgeHandlers",
+        # BridgeHandlers RE-STUBBED 2026-07-12 (reverting the 2026-07-12
+        # unstub above it in history) — see the matching note in
+        # tools/mission_harness.py. Its real DropMenusTurnBack() body walks
+        # into a None-dereferencing SDK path (ResetPickFireButton) and
+        # RAISES; the cutscene-start menu drop is now done directly by
+        # engine/appc/top_window.py:_TopWindow.StartCutscene instead. Keep
+        # both lists in sync.
         # Actions.MissionScriptActions intentionally NOT stubbed — see the
         # matching note in tools/mission_harness.py. Stubbing it makes
         # ChangeToBridge return a truthy _Stub, which defers the TGScriptAction

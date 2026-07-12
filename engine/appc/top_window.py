@@ -100,6 +100,7 @@ class _TopWindow:
         # bHideReticle). fCoveredArea is the TOTAL letterbox coverage
         # (0.125 = 6.25% per bar); bHideReticle hides the targeting
         # reticle. fTimeToComeIn is the bar slide-in duration.
+        _drop_open_crew_menu()
         self._cutscene_active = True
         self._letterbox_covered = float(fCoveredArea)
         self._letterbox_transition_s = float(fTimeToComeIn)
@@ -286,6 +287,41 @@ class _TopWindow:
 
     def GetLastRenderedSet(self):
         return self._last_rendered_set
+
+
+def _drop_open_crew_menu() -> None:
+    """Drop whatever crew/officer menu is currently open, at cutscene START.
+
+    Mirrors BC's own BridgeHandlers.DropMenusTurnBack()
+    (BridgeHandlers.py:1019-1031), the call MissionLib.StartCutscene makes
+    (MissionLib.py:744) immediately before pTop.StartCutscene(...)
+    (MissionLib.py:751) -- i.e. this hook fires at that exact moment. Doing
+    the drop HERE, not in DropMenusTurnBack itself, matters: BridgeHandlers
+    is stubbed in our harness (its real body walks into a None-dereferencing
+    SDK path -- Bridge.TacticalMenuHandlers.ResetPickFireButton -- and
+    raises), so its own drop is a no-op. This hook is BC-faithful (same
+    moment, same primitives) but crash-proof, and -- critically -- it runs
+    before any later same-tick scripted AT_MENU_UP (E1M1 ExplainWarp raises
+    Kiska's Helm menu in the same tick as StartCutscene), so a menu raised
+    later in the cutscene survives by construction.
+
+    Only the CharacterClass owner case is handled (not
+    ViewScreenObject.MenuDown, which BridgeHandlers.DropMenusTurnBack also
+    covers) -- no SDK content exercises a viewscreen-owned top-level menu at
+    a cutscene boundary today, so that arm is intentionally left for the SDK
+    body to widen scope on Appc.STTopLevelMenu_GetOpenMenu (rather than
+    reason about it here). Best-effort: any failure must never block
+    cutscene start."""
+    try:
+        import App
+        menu = App.STTopLevelMenu_GetOpenMenu()
+        if menu is not None:
+            owner = menu.GetOwner()
+            if owner is not None:
+                owner.MenuDown()
+    except Exception as exc:
+        from engine import dev_mode
+        dev_mode.log_swallowed("TopWindow.StartCutscene crew-menu drop", exc)
 
 
 def _release_camera_watch() -> None:
