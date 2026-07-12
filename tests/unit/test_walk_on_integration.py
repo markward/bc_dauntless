@@ -27,13 +27,16 @@ class _FakeRenderer:
         self.idled.append((iid, ci))
     def load_animation_clips(self, path):
         return [{"duration": 1.0}]
+    def idle_clip_paths(self):
+        rev = {idx: path for (_iid, path), idx in self.loaded.items()}
+        return [rev.get(ci) for _iid, ci in self.idled]
 
 
 class _Char:
-    def __init__(self):
+    def __init__(self, location="DBL1M"):
         self._character_name = "Picard"
         self._render_instance = None
-        self._location = "DBL1M"
+        self._location = location
         self._hidden = 1
         self._node = TGAnimNode(owner=self, kind="character")
     def GetCharacterName(self): return self._character_name
@@ -55,13 +58,14 @@ def _builder_seq(ch, clip, end_location):
     return seq
 
 
-def _run_move(monkeypatch, detail, clip, end_location):
-    ch = _Char()
+def _run_move(monkeypatch, detail, clip, end_location, *,
+              origin="DBL1M", breathing=lambda c: None):
+    ch = _Char(location=origin)
     walk = BridgeCharacterWalkController(
         realize_fn=lambda c: setattr(c, "_render_instance", 777)
         or c._render_instance)
     monkeypatch.setattr(bcw, "get_controller", lambda: walk)
-    monkeypatch.setattr(bcw, "capture_breathing", lambda c: None)
+    monkeypatch.setattr(bcw, "capture_breathing", breathing)
     monkeypatch.setattr(bridge_placement, "_resolve_builder_sequence",
                         lambda c, suffix: _builder_seq(c, clip, end_location)
                         if suffix == "To" + detail else None)
@@ -91,3 +95,47 @@ def test_seated_sit_down(monkeypatch):
     # Same primitive: only clip + end-location differ (MoveFromP1ToP -> db_sit_P).
     r = _run_move(monkeypatch, "P", "db_sit_P.nif", "DBGuest")
     assert any(rp[2] is False for rp in r.rest_poses)
+
+
+# ── the post-move idle must resolve against the DESTINATION location ──────────
+#
+# capture_breathing resolves the officer's looping idle from the SDK's registered
+# "<GetLocation()>Breathe" builder. AT_MOVE no longer passes an engine-side
+# end_location (the builder's own trailing AT_SET_LOCATION_NAME is the SDK's
+# mechanism), and in the real builders that action chains onto the WALK step --
+# so it only runs when the walk action Completes. If the walk controller resolves
+# breathing BEFORE it fires that completion, it resolves against the ORIGIN.
+
+_BREATHE_BY_LOCATION = {
+    "DBGuest1": "db_breathe_standing_P.nif",   # standing at the guest-1 mark
+    "DBGuest":  "db_breathe_seated_P.nif",     # seated in the guest chair
+    "DBGuestT": "db_breathe_tactical_P.nif",
+    # NB: no "DBGuestH" entry -- MoveFromHToT's ORIGIN has no registered
+    # <origin>Breathe builder in the SDK either.
+}
+
+
+def _breathe_for_location(character):
+    """The real capture_breathing shape: resolves against GetLocation() NOW."""
+    nif = _BREATHE_BY_LOCATION.get(character.GetLocation())
+    return {"clip_nif": nif} if nif else None
+
+
+def test_seated_idle_resolves_against_the_destination_not_the_origin(monkeypatch):
+    """MoveFromP1ToP: standing at DBGuest1 -> seated at DBGuest. The officer must
+    get the SEATED breathe loop. Resolving against the stale origin gives a seated
+    officer the STANDING idle."""
+    r = _run_move(monkeypatch, "P", "db_sit_P.nif", "DBGuest",
+                  origin="DBGuest1", breathing=_breathe_for_location)
+    assert r.idle_clip_paths() == ["db_breathe_seated_P.nif"], \
+        "the idle must be resolved against the destination location (DBGuest)"
+
+
+def test_idle_still_applies_when_only_the_destination_has_a_breathe_clip(monkeypatch):
+    """MoveFromHToT: the ORIGIN (DBGuestH) has no registered <origin>Breathe, the
+    DESTINATION (DBGuestT) does. Resolving against the origin returns None and the
+    officer ends up with NO idle at all."""
+    r = _run_move(monkeypatch, "T", "DB_HtoT_P.nif", "DBGuestT",
+                  origin="DBGuestH", breathing=_breathe_for_location)
+    assert r.idle_clip_paths() == ["db_breathe_tactical_P.nif"], \
+        "an officer whose origin has no Breathe entry must still get the destination idle"

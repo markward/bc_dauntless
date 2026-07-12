@@ -71,15 +71,28 @@ def test_move_realizes_reveals_and_walks(monkeypatch):
 
 
 def test_move_settles_restations_and_completes(monkeypatch):
+    """The controller does NOT set the end location itself -- the SDK builder's own
+    trailing AT_SET_LOCATION_NAME does, synchronously, inside the completion callback
+    (that is why _settle fires completion BEFORE resolving the idle). Model that
+    contract: on_complete re-stations the officer, and capture_breathing resolves
+    against whatever GetLocation() says AT THAT MOMENT."""
     import engine.bridge_character_walk as bcw
-    monkeypatch.setattr(bcw, "capture_breathing",
-                        lambda ch: {"clip_nif": "DBGuest1Breathe.nif"})
     ctrl, _ = _controller_with_realize()
     r = _FakeRenderer()
-    ch = _Char()
+    ch = _Char()                                 # origin: DBL1M (the turbolift)
     done = []
-    ctrl.request_move(ch, "db_L1toP_P.nif", "DBGuest1",
-                      on_complete=lambda: done.append(True))
+
+    def on_complete():                           # == the builder's AT_SET_LOCATION_NAME
+        ch.SetLocation("DBGuest1")
+        done.append(True)
+
+    # The turbolift origin has no breathe clip; the guest-1 destination does. Resolving
+    # the idle against a stale origin would therefore yield NO idle at all.
+    monkeypatch.setattr(bcw, "capture_breathing",
+                        lambda c: {"clip_nif": "DBGuest1Breathe.nif"}
+                        if c.GetLocation() == "DBGuest1" else None)
+
+    ctrl.request_move(ch, "db_L1toP_P.nif", None, on_complete=on_complete)
     ctrl.update(0.0, renderer=r)                 # start (duration 2.0)
     iid = ch._render_instance
     walk_clip = r.loaded[(iid, "db_L1toP_P.nif")]
@@ -87,13 +100,15 @@ def test_move_settles_restations_and_completes(monkeypatch):
     ctrl.update(1.0, renderer=r)                 # mid-walk: still moving
     assert ctrl.is_moving(ch) is True
     assert done == []
+    assert ch.GetLocation() == "DBL1M"           # not re-stationed until completion
 
     ctrl.update(1.5, renderer=r)                 # elapsed 2.5 >= 2.0: settle
-    assert ch.GetLocation() == "DBGuest1"        # re-stationed
+    assert ch.GetLocation() == "DBGuest1"        # re-stationed, via completion
     # rest pose frozen at the walk clip's LAST frame (at_start=False)
     assert (iid, walk_clip, False) in r.rest_poses
+    # the idle was resolved AFTER the re-station, so it is the DESTINATION's clip
     assert r.idled == [(iid, r.loaded[(iid, "DBGuest1Breathe.nif")])]
-    assert done == [True]                        # completion fired
+    assert done == [True]                        # completion fired exactly once
     assert ctrl.is_moving(ch) is False
 
 

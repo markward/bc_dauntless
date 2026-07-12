@@ -139,6 +139,46 @@ def test_at_move_completes_exactly_once_when_the_sequence_finishes(monkeypatch):
     assert len(completions) == 1, "zero completions hangs the mission; two double-advance it"
 
 
+def _picard_standing_at_guest1():
+    """Picard's SIT-DOWN (MoveFromP1ToP, PicardAnimations.py:108): standing at the
+    guest-1 mark, moving to the guest chair. Its AppendAction chains the trailing
+    AT_SET_LOCATION_NAME onto the WALK action, not the door."""
+    c = App.CharacterClass_Create(
+        "data/Models/Characters/Bodies/BodyMaleL/BodyMaleL.nif",
+        "data/Models/Characters/Heads/HeadFelix/felix_head.nif",
+    )
+    c.SetCharacterName("Picard")
+    c.SetLocation("DBGuest1")
+    c.AddAnimation("DBGuest1ToP", "Bridge.Characters.PicardAnimations.MoveFromP1ToP")
+    return c
+
+
+def test_walk_completion_sets_the_location_synchronously(monkeypatch):
+    """The load-bearing ordering guarantee behind BridgeCharacterWalkController._settle.
+
+    _settle fires the walk action's Completed() and then resolves the officer's idle
+    from GetLocation(). That is only correct if the builder's trailing
+    AT_SET_LOCATION_NAME runs SYNCHRONOUSLY inside that Completed() -- i.e. the whole
+    chain (Completed -> g_kEventManager.AddEvent -> TGSequence._on_dependency_complete
+    -> _begin_step at delay 0 -> CharacterAction.Play -> SetLocation) is inline, with
+    no deferred timer. Pinned here against the REAL SDK builder: if any link in that
+    chain ever starts deferring, this test fails and _settle's ordering is unsound."""
+    walk, cutscene = _FakeWalkController(), _RecordingCutscene()
+    monkeypatch.setattr("engine.bridge_character_walk.get_controller", lambda: walk)
+    monkeypatch.setattr("engine.bridge_cutscene.get_controller", lambda: cutscene)
+
+    ch = _picard_standing_at_guest1()
+    act = App.CharacterAction_Create(ch, CharacterAction.AT_MOVE, "P")
+    act.Play()
+    assert walk.moves, "the real builder's walk action must reach the walk controller"
+    assert ch.GetLocation() == "DBGuest1"       # not re-stationed until the walk ends
+
+    walk.finish()                               # exactly what _settle's _complete(mv) does
+    # NO tick: the location must already be the destination the instant Completed returns.
+    assert ch.GetLocation() == "DBGuest", \
+        "the builder's AT_SET_LOCATION_NAME must run synchronously on walk completion"
+
+
 def test_unresolvable_builder_completes_inline(monkeypatch):
     """No registered <location>To<detail> builder -> complete, never stall."""
     monkeypatch.setattr("engine.bridge_character_walk.get_controller",

@@ -107,17 +107,38 @@ class BridgeCharacterWalkController:
         self._active[iid] = mv
 
     def _settle(self, renderer, mv) -> None:
-        """Walk finished: re-station the character (rest pose = walk's last frame),
-        set its end location, resume breathing, and fire completion."""
+        """Walk finished: fire completion (which re-stations the character), freeze
+        the rest pose at the walk's last frame, and resume breathing AT THE
+        DESTINATION.
+
+        Completion goes FIRST, and that ordering is load-bearing. The officer's new
+        location is set by the SDK builder's own trailing AT_SET_LOCATION_NAME action
+        (we deliberately hold no engine-side end_location — the SDK is the single
+        source of truth), and in every real builder that action is chained onto the
+        WALK step (PicardAnimations.MoveFromP1ToP:126 et al), so it does not run until
+        the walk action Completes. The whole chain is SYNCHRONOUS —
+
+            _complete(mv) -> walk_action.Completed() -> g_kEventManager.AddEvent
+            (dispatches inline) -> TGSequence._on_dependency_complete -> _begin_step
+            (delay 0 -> fires inline) -> CharacterAction(AT_SET_LOCATION_NAME).Play()
+            -> character.SetLocation(...)
+
+        — so GetLocation() is already the DESTINATION by the time _complete returns,
+        and capture_breathing (which resolves the idle from GetLocation()) picks the
+        right clip. Resolving breathing before completing read the STALE origin: a
+        seated officer got the standing breathe loop, and a move whose origin has no
+        registered <origin>Breathe (MoveFromHToT) got no idle at all.
+
+        _complete still fires EXACTLY ONCE — only its position in this method moved.
+        """
         character = mv.character
         iid = mv.iid
+        self._complete(mv)          # -> the builder's AT_SET_LOCATION_NAME, synchronously
         try:
-            if mv.end_location:
-                character.SetLocation(mv.end_location)
             # Freeze the rest pose at the walk clip's LAST frame -- the character is
             # now standing/seated at the destination -- so breathing layers over it.
             renderer.set_instance_rest_pose(iid, mv.clip_index, False)
-            breathing = capture_breathing(character)
+            breathing = capture_breathing(character)   # resolves against the DESTINATION
             if breathing:
                 bidx = renderer.load_instance_clip(
                     iid, self._resolve(breathing["clip_nif"]))
@@ -129,7 +150,6 @@ class BridgeCharacterWalkController:
                         ca.set_idle(iid, bidx)
         except Exception:
             pass
-        self._complete(mv)
 
     def _real_duration(self, renderer, path) -> float:
         fn = getattr(renderer, "load_animation_clips", None)

@@ -140,6 +140,56 @@ def test_at_stop_watching_me_clears_camera_watch(monkeypatch):
     assert act.IsPlaying() is False
 
 
+# ── degrade paths (re-homed from the deleted tests/unit/test_capture_move.py) ──
+
+def test_marked_walk_action_completes_inline_when_the_clip_is_unresolvable(monkeypatch):
+    """TGAnimAction._do_play: a MARKED walk action whose clip resolves to no NIF
+    must instant-complete -- never stall, never reach the walk controller."""
+    ch = _Char()
+    ctrl = _RecordingWalkController()
+    monkeypatch.setattr(bcw, "get_controller", lambda: ctrl)
+    monkeypatch.setattr(bridge_placement, "_nif_path_for_clip", lambda name: None)
+
+    act = App.TGAnimAction_Create(ch.GetAnimNode(), "db_L1toP_P")
+    act._walk_move = True                              # as AT_MOVE marks the walk
+    act.Play()
+
+    assert ctrl.requests == []                         # never reached the controller
+    assert act.IsPlaying() is False                    # completed inline
+
+
+def test_at_move_with_no_character_action_in_the_builder_completes_once(monkeypatch):
+    """A builder sequence carrying NO character-node action (walk_action_of -> None)
+    must still PLAY the sequence and complete exactly once."""
+    ch = _Char()
+    ctrl = _RecordingWalkController()
+    monkeypatch.setattr(bcw, "get_controller", lambda: ctrl)
+
+    def _no_character_seq(c, suffix):
+        if suffix != "ToP1":
+            return None
+        seq = App.TGSequence_Create()
+        # An object-node action only: no character clip anywhere in the builder.
+        seq.AddAction(App.CharacterAction_Create(
+            c, CharacterAction.AT_SET_LOCATION_NAME, "DBGuest1"))
+        return seq
+
+    monkeypatch.setattr(bridge_placement, "_resolve_builder_sequence", _no_character_seq)
+    monkeypatch.setattr("engine.appc.characters.CharacterClass_Cast", lambda c: c)
+
+    act = CharacterAction(ch, CharacterAction.AT_MOVE, "P1")
+    completions = []
+    real_completed = act.Completed
+    act.Completed = lambda: (completions.append(1), real_completed())
+
+    act.Play()
+
+    assert ctrl.requests == []                    # nothing to walk
+    assert ch.GetLocation() == "DBGuest1"         # the sequence still PLAYED
+    assert len(completions) == 1, "zero completions hangs the sequence; two double-advance it"
+    assert act.IsPlaying() is False
+
+
 def test_at_move_does_not_raise_when_the_builder_raises(monkeypatch):
     ch = _Char()
     ctrl = _RecordingWalkController()
