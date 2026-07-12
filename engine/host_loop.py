@@ -5107,7 +5107,7 @@ def run(mission_name: Optional[str] = None,
         from engine.bridge_cutscene import (
             BridgeCutsceneController, set_controller,
         )
-        cutscene = BridgeCutsceneController()
+        cutscene = BridgeCutsceneController(asset_resolver=_game_asset_path)
         set_controller(cutscene)
 
         from engine.bridge_character_anim import (

@@ -6,12 +6,19 @@ A camera TGAnimAction queues a camera-path request here and defers its own
 completion; each host tick update() loads the clip (native), samples it, and
 drives _BridgeCamera, completing the action when the clip ends so the SDK
 sequence proceeds (firing ET_CAMERA_ANIMATION_DONE). A door TGAnimAction
-queues an object request, which plays the bridge model's embedded clip 0
-(the door keyframes baked into DBridge.nif) via play_instance_node_anim.
+queues an object request naming its door clip (e.g. "doorl1"); each host
+tick resolves that name through AnimationManager.path_for(...) and plays
+ONLY that door's own external keyframe NIF via play_instance_node_clip
+(fire-and-forget: LiftDoorAction returns 0, so the request completes the
+instant the clip is queued).
 
 See docs/superpowers/specs/2026-06-17-bridge-camera-walkon-cutscene-design.md.
 """
+import logging
+
 from engine.anim_sample import sample_translation, sample_rotation, quat_rotate
+
+_logger = logging.getLogger(__name__)
 
 # Camera node local basis the keyframe rotation orients. Derived from the
 # db_camera_walk_capt.nif "Camera01" track: its rotation maps local +X to the
@@ -24,20 +31,22 @@ LOCAL_UP = (0.0, 1.0, 0.0)
 
 
 class BridgeCutsceneController:
-    def __init__(self):
+    def __init__(self, asset_resolver=None):
         # Pending camera request: (action, clip_name) before the clip loads.
         self._pending_camera = None
         # Active camera playback: dict(action, track, duration, t).
         self._active_camera = None
-        # Pending door requests: list of (action, owner).
+        # Pending door requests: list of (action, owner, clip_name).
         self._pending_doors = []
+        self._resolve = asset_resolver or (lambda p: p)
 
     # ── requests (called from TGAnimAction._do_play, headless) ───────────
     def request_camera_path(self, action, anim_node, clip_name):
         self._pending_camera = (action, str(clip_name))
 
     def request_object_anim(self, action, anim_node, clip_name):
-        self._pending_doors.append((action, getattr(anim_node, "owner", None)))
+        self._pending_doors.append(
+            (action, getattr(anim_node, "owner", None), str(clip_name)))
 
     def has_pending_camera(self):
         """True when a camera path is queued or actively playing."""
@@ -52,22 +61,34 @@ class BridgeCutsceneController:
 
     # ── per-tick host pump ───────────────────────────────────────────────
     def update(self, dt, *, bridge_camera, view_mode, renderer, anim_mgr):
-        self._update_doors(renderer)
+        self._update_doors(renderer, anim_mgr)
         self._update_camera(dt, bridge_camera, view_mode, renderer, anim_mgr)
 
-    def _update_doors(self, renderer):
+    def _update_doors(self, renderer, anim_mgr):
         still_pending = []
-        for action, owner in self._pending_doors:
+        for action, owner, clip_name in self._pending_doors:
             iid = getattr(owner, "render_instance", None)
             if iid is None:
-                still_pending.append((action, owner))   # wait for realize
+                still_pending.append((action, owner, clip_name))   # wait for realize
                 continue
-            # Door keyframes are the bridge model's embedded clip 0 (DBridge.nif's
-            # NiKeyframeControllers). play_instance_node_anim animates the
-            # non-skinned door-leaf nodes (set_instance_animation only built a
-            # bone palette, which the bridge — having no skeleton — ignored).
-            renderer.play_instance_node_anim(iid, 0, loop=False, reverse=False)
-            action.Completed()                            # fire-and-forget
+            # BC's doors are NAMED external keyframe NIFs registered on the
+            # AnimationManager (GalaxyBridge.PreloadAnimations: "doorl1" ->
+            # db_door_l1.nif). Each clip drives exactly ONE door pair and opens
+            # and closes itself over 1s -- which is why no LiftDoorAction call
+            # site in the SDK ever passes the optional close clip.
+            #
+            # NOT the bridge model's embedded clip: that one animates all six
+            # door pairs at once (and, on EBridge, both commander chairs).
+            path = anim_mgr.path_for(clip_name) if anim_mgr is not None else None
+            if path:
+                try:
+                    renderer.play_instance_node_clip(
+                        iid, self._resolve(path), False, False)
+                except Exception:
+                    _logger.debug("door play failed: %r", clip_name, exc_info=True)
+            else:
+                _logger.warning("door clip %r not registered", clip_name)
+            action.Completed()      # fire-and-forget: LiftDoorAction returns 0
         self._pending_doors = still_pending
 
     def _update_camera(self, dt, bridge_camera, view_mode, renderer, anim_mgr):

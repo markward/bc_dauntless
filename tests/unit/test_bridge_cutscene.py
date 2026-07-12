@@ -37,6 +37,7 @@ class _FakeRenderer:
     def __init__(self):
         self.anim_calls = []
         self.node_anim_calls = []
+        self.node_clip_calls = []
 
     def load_animation_clips(self, path):
         # Two-key straight slide on +X over 1 second, identity rotation.
@@ -56,10 +57,19 @@ class _FakeRenderer:
     def play_instance_node_anim(self, iid, clip_index, loop=False, reverse=False):
         self.node_anim_calls.append((iid, clip_index, loop, reverse))
 
+    def play_instance_node_clip(self, iid, path, loop, reverse):
+        self.node_clip_calls.append((iid, path, loop, reverse))
+
 
 class _FakeAnimMgr:
+    def __init__(self, paths=None):
+        self._paths = paths or {
+            "WalkCameraToCaptD": "data/animations/db_camera_walk_capt.nif",
+            "DB_Door_L1": "data/animations/db_door_l1.nif",
+        }
+
     def path_for(self, name):
-        return "data/animations/db_camera_walk_capt.nif"
+        return self._paths.get(str(name), "data/animations/db_camera_walk_capt.nif")
 
 
 class _Owner:
@@ -101,7 +111,7 @@ def test_camera_path_drives_pose_and_completes_at_duration():
     assert cam.cleared is True
 
 
-def test_object_anim_plays_embedded_bridge_clip():
+def test_object_anim_plays_the_named_door_clip():
     ctrl = BridgeCutsceneController()
     action = _FakeAction()
     node = _FakeNode("object", owner=_Owner())
@@ -109,9 +119,12 @@ def test_object_anim_plays_embedded_bridge_clip():
 
     cam, vm, rend, mgr = _FakeCamera(), _FakeViewMode(), _FakeRenderer(), _FakeAnimMgr()
     ctrl.update(0.0, **_ctx(cam, vm, rend, mgr))
-    # Plays the bridge model's embedded clip 0 on the owner's render instance
-    # via play_instance_node_anim (animates non-skinned door-leaf nodes).
-    assert rend.node_anim_calls == [(77, 0, False, False)]
+    # Plays ONLY the named door's own external keyframe NIF (resolved through
+    # AnimationManager) on the owner's render instance -- never the bridge
+    # model's embedded all-doors clip.
+    assert rend.node_clip_calls == [
+        (77, "data/animations/db_door_l1.nif", False, False)]
+    assert rend.node_anim_calls == []
     assert action.completed is True       # door is fire-and-forget
 
 
@@ -125,10 +138,11 @@ def test_object_anim_waits_for_render_instance():
 
     cam, vm, rend, mgr = _FakeCamera(), _FakeViewMode(), _FakeRenderer(), _FakeAnimMgr()
     ctrl.update(0.0, **_ctx(cam, vm, rend, mgr))
-    assert rend.node_anim_calls == []     # deferred
+    assert rend.node_clip_calls == []     # deferred
     owner.render_instance = 99
     ctrl.update(0.0, **_ctx(cam, vm, rend, mgr))
-    assert rend.node_anim_calls == [(99, 0, False, False)]
+    assert rend.node_clip_calls == [
+        (99, "data/animations/db_door_l1.nif", False, False)]
 
 
 def test_has_pending_camera_flag():
