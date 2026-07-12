@@ -1,5 +1,7 @@
+import App
 from engine.appc.ai import CharacterAction
 from engine.appc import bridge_placement
+from engine.appc.anim_node import TGAnimNode
 import engine.bridge_character_walk as bcw
 
 
@@ -7,8 +9,11 @@ class _Char:
     def __init__(self, name="Picard"):
         self._character_name = name
         self._location = "DBL1M"
+        self._node = TGAnimNode(owner=self, kind="character")
     def GetCharacterName(self):
         return self._character_name
+    def GetAnimNode(self):
+        return self._node
     def SetLocation(self, loc):
         self._location = loc
     def GetLocation(self):
@@ -22,14 +27,26 @@ class _RecordingWalkController:
         self.requests.append((character, clip_nif, end_location, on_complete))
 
 
+def _builder_seq(ch, clip, end_location):
+    """A stand-in for an SDK move builder's TGSequence (PicardAnimations.
+    MoveFromL1ToP1): the walk clip on the character's anim node, then the trailing
+    AT_SET_LOCATION_NAME that re-stations the officer once the walk completes."""
+    seq = App.TGSequence_Create()
+    seq.AddAction(App.TGAnimAction_Create(ch.GetAnimNode(), clip))
+    seq.AppendAction(App.CharacterAction_Create(
+        ch, CharacterAction.AT_SET_LOCATION_NAME, end_location))
+    return seq
+
+
 def test_at_move_queues_walk_and_defers_completion(monkeypatch):
     ch = _Char()
     ctrl = _RecordingWalkController()
     monkeypatch.setattr(bcw, "get_controller", lambda: ctrl)
-    monkeypatch.setattr(bridge_placement, "capture_move",
-                        lambda character, detail: {
-                            "clip_nif": "db_L1toP_P.nif",
-                            "end_location": "DBGuest1"} if detail == "P1" else None)
+    monkeypatch.setattr(bridge_placement, "_resolve_builder_sequence",
+                        lambda c, suffix: _builder_seq(c, "db_L1toP_P", "DBGuest1")
+                        if suffix == "ToP1" else None)
+    monkeypatch.setattr(bridge_placement, "_nif_path_for_clip",
+                        lambda name: "db_L1toP_P.nif")
     # Cast is identity for our fake (it isn't a real CharacterClass).
     monkeypatch.setattr("engine.appc.characters.CharacterClass_Cast",
                         lambda c: c)
@@ -40,18 +57,22 @@ def test_at_move_queues_walk_and_defers_completion(monkeypatch):
     assert act.IsPlaying() is True                    # deferred: not yet complete
     assert len(ctrl.requests) == 1
     character, clip_nif, end_location, on_complete = ctrl.requests[0]
-    assert (clip_nif, end_location) == ("db_L1toP_P.nif", "DBGuest1")
+    # end_location is None by design: the builder's own trailing
+    # AT_SET_LOCATION_NAME action re-stations the officer (the SDK's mechanism).
+    assert (clip_nif, end_location) == ("db_L1toP_P.nif", None)
+    assert ch.GetLocation() == "DBL1M"                # not yet re-stationed
 
     on_complete()                                     # controller signals settle
     assert act.IsPlaying() is False                   # now complete
+    assert ch.GetLocation() == "DBGuest1"             # the builder set the station
 
 
 def test_at_move_completes_inline_when_unresolvable(monkeypatch):
     ch = _Char()
     ctrl = _RecordingWalkController()
     monkeypatch.setattr(bcw, "get_controller", lambda: ctrl)
-    monkeypatch.setattr(bridge_placement, "capture_move",
-                        lambda character, detail: None)   # no builder
+    monkeypatch.setattr(bridge_placement, "_resolve_builder_sequence",
+                        lambda c, suffix: None)          # no builder
     monkeypatch.setattr("engine.appc.characters.CharacterClass_Cast",
                         lambda c: c)
 
@@ -119,15 +140,15 @@ def test_at_stop_watching_me_clears_camera_watch(monkeypatch):
     assert act.IsPlaying() is False
 
 
-def test_at_move_does_not_raise_when_capture_move_raises(monkeypatch):
+def test_at_move_does_not_raise_when_the_builder_raises(monkeypatch):
     ch = _Char()
     ctrl = _RecordingWalkController()
     monkeypatch.setattr(bcw, "get_controller", lambda: ctrl)
 
-    def _raise(character, detail):
+    def _raise(character, suffix):
         raise RuntimeError("SDK builder blew up")
 
-    monkeypatch.setattr(bridge_placement, "capture_move", _raise)
+    monkeypatch.setattr(bridge_placement, "_resolve_builder_sequence", _raise)
     monkeypatch.setattr("engine.appc.characters.CharacterClass_Cast",
                         lambda c: c)
 

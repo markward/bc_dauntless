@@ -629,6 +629,12 @@ class TGAnimAction(TGTimedAction):
         self._anim_node = anim_node
         self._clip = str(clip_name)
         self._deferred = False
+        # Set by AT_MOVE on the ONE action in a move builder that is the walk (the
+        # last character-node action). Only a marked action plays as a root-motion
+        # body clip. Every other character-node TGAnimAction in these builders is a
+        # facial/idle clip -- EyesOpenMouthClosed, Twitch -- which we do not play at
+        # all, and which the door's schedule depends on completing promptly.
+        self._walk_move = False
 
     def Play(self) -> None:
         self._playing = True
@@ -642,7 +648,25 @@ class TGAnimAction(TGTimedAction):
         # Character gesture clips are driven by BridgeCharacterAnimController via
         # the idle/hit schedulers (engine/bridge_character_anim.py), NOT by this
         # action path, which stays instant-complete for headless SDK sequences.
+        # The single exception is the walk action AT_MOVE marks (_walk_move):
+        # that one is the officer's root-motion body clip and goes to the walk
+        # controller, which completes us when the walk settles.
         if kind not in ("camera", "object"):
+            if not self._walk_move:
+                return                     # facial/gesture clip: instant-complete
+            from engine.bridge_character_walk import get_controller as walk_ctrl
+            ctrl = walk_ctrl()
+            character = getattr(self._anim_node, "owner", None)
+            if ctrl is None or character is None:
+                return                     # headless: instant-complete, never stall
+            from engine.appc.bridge_placement import _nif_path_for_clip
+            clip_nif = _nif_path_for_clip(self._clip)
+            if not clip_nif:
+                return
+            # end_location=None: the builder's own trailing AT_SET_LOCATION_NAME
+            # sets it (that is the SDK's mechanism; do not duplicate it here).
+            ctrl.request_move(character, clip_nif, None, self.Completed)
+            self._deferred = True
             return
         from engine.bridge_cutscene import get_controller
         ctrl = get_controller()

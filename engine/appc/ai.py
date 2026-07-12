@@ -1237,23 +1237,44 @@ class CharacterAction(TGAction):
         self._complete_after(dur or 0.0)
 
     def _queue_move(self) -> None:
-        # Best-effort: capture_move runs an SDK builder function that CAN
-        # raise (production only), and any of the resolution steps below
-        # can fail. Play() must never raise — a failure here should
-        # complete the action inline so the mission TGSequence advances
-        # instead of stalling.
+        """Play the SDK's registered move builder, exactly as BC does.
+
+        The builder's TGSequence carries everything: the walk clip, the
+        LiftDoorAction at its scheduled offset (with the door sound), the trailing
+        AT_SET_LOCATION_NAME, and the CS_STANDING / CS_SEATED / CS_HIDDEN completion
+        event. Mining a single clip out of it — the old capture_move path — dropped
+        the door, the sound and the events on the floor.
+
+        Best-effort throughout: an unresolved builder, a missing controller (headless)
+        or any exception completes the action inline, so a mission TGSequence can
+        never stall on a move.
+        """
         from engine.appc import bridge_placement
         from engine.appc.characters import CharacterClass_Cast
-        from engine import bridge_character_walk
         try:
             cc = CharacterClass_Cast(self._character) if self._character is not None else None
-            ctrl = bridge_character_walk.get_controller()
-            move = bridge_placement.capture_move(cc, self._detail) if cc is not None else None
-            if cc is None or ctrl is None or move is None:
-                self.Completed()      # nothing to play → advance immediately
+            seq = (bridge_placement._resolve_builder_sequence(cc, "To" + str(self._detail))
+                   if cc is not None else None)
+            if seq is None:
+                self.Completed()          # nothing registered → advance immediately
                 return
-            ctrl.request_move(cc, move["clip_nif"], move["end_location"],
-                              on_complete=self.Completed)
+
+            walk = bridge_placement.walk_action_of(seq)
+            if walk is not None:
+                walk._walk_move = True    # the ONE action that plays as a body clip
+
+            # Defer our completion to the sequence's, via the SDK's own route:
+            # TGActionManager.ProcessEvent calls owner.Completed() for an
+            # ET_ACTION_COMPLETED whose ObjPtr is the owner (actions.py:730) —
+            # the same mechanism ViewscreenOn and PlayDialog use.
+            import App
+            ev = App.TGObjPtrEvent_Create()
+            ev.SetEventType(App.ET_ACTION_COMPLETED)
+            ev.SetDestination(App.g_kTGActionManager)
+            ev.SetObjPtr(self)
+            seq.AddCompletedEvent(ev)
+
+            seq.Play()
         except Exception:
             self.Completed()
 

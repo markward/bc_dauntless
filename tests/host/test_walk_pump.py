@@ -19,8 +19,10 @@ frame regardless of view. These tests drive an AT_MOVE to completion through
 that seam alone — with no bridge view anywhere — proving the walk can no longer
 hang the mission sequence.
 """
+import App
 from engine.appc.ai import CharacterAction
 from engine.appc import bridge_placement
+from engine.appc.anim_node import TGAnimNode
 import engine.bridge_character_walk as bcw
 from engine.bridge_character_walk import BridgeCharacterWalkController
 from engine.host_loop import _pump_walk_controller
@@ -51,9 +53,13 @@ class _Char:
         self._render_instance = 777        # already realised (like Picard post-intro)
         self._location = "DBstand"
         self._hidden = 0
+        self._node = TGAnimNode(owner=self, kind="character")
 
     def GetCharacterName(self):
         return "Picard"
+
+    def GetAnimNode(self):
+        return self._node
 
     def SetHidden(self, h):
         self._hidden = 1 if h else 0
@@ -68,14 +74,25 @@ class _Char:
         return self._location
 
 
+def _builder_seq(ch):
+    """Stands in for the SDK move builder (PicardAnimations.MoveFromP1ToP): the
+    sit-down clip on the character's anim node, then the trailing
+    AT_SET_LOCATION_NAME that re-stations the officer once the clip settles."""
+    seq = App.TGSequence_Create()
+    seq.AddAction(App.TGAnimAction_Create(ch.GetAnimNode(), "db_sit_P"))
+    seq.AppendAction(App.CharacterAction_Create(
+        ch, CharacterAction.AT_SET_LOCATION_NAME, "DBGuest"))
+    return seq
+
+
 def _wire(monkeypatch):
     walk = BridgeCharacterWalkController()
     monkeypatch.setattr(bcw, "get_controller", lambda: walk)
     monkeypatch.setattr(bcw, "capture_breathing", lambda c: None)
-    monkeypatch.setattr(
-        bridge_placement, "capture_move",
-        lambda character, d: {"clip_nif": "db_sit_P.nif",
-                              "end_location": "DBGuest"})
+    monkeypatch.setattr(bridge_placement, "_resolve_builder_sequence",
+                        lambda c, suffix: _builder_seq(c))
+    monkeypatch.setattr(bridge_placement, "_nif_path_for_clip",
+                        lambda name: "db_sit_P.nif")
     monkeypatch.setattr("engine.appc.characters.CharacterClass_Cast", lambda c: c)
     return walk
 
