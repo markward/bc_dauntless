@@ -34,6 +34,18 @@ def highlight_color(wid):
     return _colors.get(wid)
 
 
+def apply(node: dict, wid: int) -> None:
+    """Set `node["highlighted"]` (+ `node["highlightColor"]` when set) for
+    widget id `wid`. The single source of truth for the flag-setting
+    two-liner: every id-bearing node in a CEF-facing snapshot -- menu/button
+    nodes, the EngRepairPaneWidget node itself, and each eng_repair_pane
+    row -- must call this so none of them are silently un-highlightable."""
+    node["highlighted"] = wid in highlighted_ids()
+    color = highlight_color(wid)
+    if color is not None:
+        node["highlightColor"] = color
+
+
 def show_pointer_arrow(pAction=None, pUIObject=None, eDirection=0,
                         fSpacing=0.0, kColor=None) -> int:
     # Preserve the SDK's own gates (MissionLib.py:4413-4416).

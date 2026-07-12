@@ -1,5 +1,7 @@
 """EngRepairPane snapshot + click routing."""
 import App
+from engine.appc.tg_ui.widgets import ensure_widget_id
+from engine.ui import ui_attention
 from engine.ui.eng_repair_pane import repair_pane_snapshot
 
 
@@ -43,7 +45,7 @@ def test_snapshot_splits_repair_waiting_destroyed():
     destroyed_labels = [r["label"] for r in snap["destroyed"]]
     assert "Shield Generator" in destroyed_labels
     for row in snap["repair"] + snap["waiting"] + snap["destroyed"]:
-        assert set(row) == {"id", "label", "icon", "pct"}
+        assert set(row) == {"id", "label", "icon", "pct", "highlighted"}
 
 
 def test_snapshot_none_ship_or_bay_is_empty():
@@ -124,3 +126,62 @@ def test_current_player_resolves_real_object_not_stub():
     player = _current_player()
     assert player is ship
     assert not isinstance(player, App._NamedStub)
+
+
+def test_repair_queue_row_highlighted_when_marked():
+    """Task 3 gap: eng_repair_pane._row() built each row's own dict and never
+    consulted ui_attention, so a repair-queue row could never be highlighted
+    -- E2M0's ShowArrow(pWaitingArea, ...) / ShowArrow(pRepairArea, ...)
+    (Maelstrom/Episode2/E2M0/E2M0.py:4059,4164) would silently render
+    nothing for it."""
+    ship = _ship_with_queue()
+    sensors = ship.GetSensorSubsystem()
+    sensors.SetCondition(4000.0)
+    wid = ensure_widget_id(sensors)
+    ui_attention.hide_pointer_arrows()
+    ui_attention.show_pointer_arrow(None, sensors, 0, 0.0, None)
+    try:
+        snap = repair_pane_snapshot(ship, lambda *_a: None)
+        row = snap["repair"][0]
+        assert row["id"] == wid
+        assert row["highlighted"] is True
+    finally:
+        ui_attention.hide_pointer_arrows()
+
+
+def test_repair_queue_row_unhighlighted_by_default():
+    ship = _ship_with_queue()
+    ship.GetSensorSubsystem().SetCondition(4000.0)
+    ui_attention.hide_pointer_arrows()
+    snap = repair_pane_snapshot(ship, lambda *_a: None)
+    assert snap["repair"][0]["highlighted"] is False
+
+
+def test_repair_pane_widget_node_highlighted_when_marked():
+    """Task 3 gap: the EngRepairPaneWidget branch in
+    CrewMenuPanel._snapshot_node built and returned its own dict before ever
+    reaching the shared node["highlighted"] lines, so the repair-pane node
+    itself was id-bearing but un-highlightable."""
+    from engine.ui.crew_menu_panel import CrewMenuPanel
+
+    widget = App.EngRepairPane_Create(1.0, 0.4, 3)
+    wid = ensure_widget_id(widget)
+    ui_attention.hide_pointer_arrows()
+    ui_attention.show_pointer_arrow(None, widget, 0, 0.0, None)
+    try:
+        panel = CrewMenuPanel()
+        node = panel._snapshot_node(widget)
+        assert node["id"] == wid
+        assert node["highlighted"] is True
+    finally:
+        ui_attention.hide_pointer_arrows()
+
+
+def test_repair_pane_widget_node_unhighlighted_by_default():
+    from engine.ui.crew_menu_panel import CrewMenuPanel
+
+    widget = App.EngRepairPane_Create(1.0, 0.4, 3)
+    ui_attention.hide_pointer_arrows()
+    panel = CrewMenuPanel()
+    node = panel._snapshot_node(widget)
+    assert node["highlighted"] is False

@@ -117,9 +117,11 @@ class CrewMenuPanel(Panel):
             wid = ensure_widget_id(widget)
             self._widgets_by_id[wid] = widget
             areas = repair_pane_snapshot(_current_player(), self._widgets_by_id.__setitem__)
-            return {"id": wid, "type": "repair-pane",
+            node = {"id": wid, "type": "repair-pane",
                     "label": "Damage Control", "enabled": True,
                     "visible": bool(widget.IsVisible()), **areas}
+            ui_attention.apply(node, wid)
+            return node
         if isinstance(widget, SortedRegionMenu):
             node_type = "button"
         elif isinstance(widget, STMenu):
@@ -141,10 +143,7 @@ class CrewMenuPanel(Panel):
         # Applies to every node type that gets an id — STMenu/submenu rows
         # (the E1M1 "Set Course" target is a submenu, not a leaf) AND
         # STButton leaves alike.
-        node["highlighted"] = wid in ui_attention.highlighted_ids()
-        _color = ui_attention.highlight_color(wid)
-        if _color is not None:
-            node["highlightColor"] = _color
+        ui_attention.apply(node, wid)
         if isinstance(widget, STMenu) and not isinstance(widget, SortedRegionMenu):
             node["expanded"] = wid in self._expanded_ids
             node["openable"] = bool(widget.IsOpenable())

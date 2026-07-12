@@ -16,6 +16,7 @@ excluded from REPAIR/WAITING).
 from __future__ import annotations
 
 from engine.appc.tg_ui.widgets import ensure_widget_id
+from engine.ui import ui_attention
 from engine.ui.damage_icons import icon_num_for_subsystem
 
 
@@ -24,12 +25,14 @@ def _row(sub, register) -> dict:
     register(wid, sub)
     mx = sub.GetMaxCondition()
     pct = int(round(100.0 * sub.GetCondition() / mx)) if mx > 0 else 0
-    return {
+    row = {
         "id": wid,
         "label": sub.GetName() or "",
         "icon": icon_num_for_subsystem(sub),
         "pct": pct,
     }
+    ui_attention.apply(row, wid)
+    return row
 
 
 def _iter_ship_subsystems(ship):
