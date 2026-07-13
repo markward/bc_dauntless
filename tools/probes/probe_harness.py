@@ -270,32 +270,71 @@ def provenance():
     pEp = episode()
     pSet = _rendered_set()
 
-    # Scenario is DERIVED from live state, never a flag.
+    set_name = None
+    if pSet is not None:
+        set_name = _safe(pSet, "GetName", ())
+    sset = ""
+    if set_name is not None:
+        sset = str(set_name)
+
+    # Scenario is DERIVED from live state, never a flag. NB: QuickBattle also has
+    # an episode object (QuickBattleEpisode), so episode-presence does NOT
+    # distinguish A from B -- key off the set name instead.
     if pPlayer is None:
         scen = "menu (no current player)"
+    elif string.find(sset, "QuickBattle") >= 0:
+        scen = "A (QuickBattle, set=%s)" % sset
     elif pEp is not None:
-        scen = "B (mission: %s)" % _episode_name(pEp)
+        scen = "B (mission, set=%s)" % sset
     else:
-        scen = "A (Galaxy vs Galaxy QB?) -- confirm via roster below"
+        scen = "battle (unknown scenario, set=%s)" % sset
     out.append("scenario = %s" % scen)
 
-    if pSet is not None:
-        out.append("set_name = %s" % str(_safe(pSet, "GetName", ())))
-    else:
-        out.append("set_name = None")
+    out.append("set_name = %s" % sset)
     out.append("game_time = %s" % str(_safe(App.g_kUtopiaModule, "GetGameTime", ())))
     out.append("frame = %s" % str(_safe(App.g_kSystemWrapper, "GetUpdateNumber", ())))
 
-    # Roster: every ship in the rendered set.
+    # Roster: every ship in the rendered set. This is the same set-walk q16
+    # relies on, so it carries diagnostics: roster_scanned tells us whether the
+    # iterator advanced at all, and obj_seenN (emitted only when NO ship was
+    # found) shows what the walk actually returned -- so a 0-ship result is
+    # self-diagnosing rather than a mystery.
+    objs = iter_set_objids(pSet)
     nships = 0
-    if pSet is not None:
-        obj = _safe(pSet, "GetFirstObject", ())
-        guard = 0
-        while obj is not None and guard < 4000:
-            if _cast("ShipClass_Cast", obj):
-                out.append("ship%d = %s" % (nships, describe(obj)))
-                nships = nships + 1
-            obj = _safe(pSet, "GetNextObject", (obj,))
-            guard = guard + 1
+    for pair in objs:
+        if _cast("ShipClass_Cast", pair[1]):
+            out.append("ship%d = %s" % (nships, describe(pair[1])))
+            nships = nships + 1
     out.append("roster_ships = %d" % nships)
+    out.append("roster_scanned = %d" % len(objs))
+    return out
+
+
+def iter_set_objids(pSet):
+    """Yield-equivalent (returns a list of) every distinct object in a set,
+    walking BC's set iterator correctly. Two gotchas, both found in q14:
+      1. GetNextObject advances by OBJID, not by the object -- passing the
+         object returns None after one element.  SDK: GetNextObject(pObj.GetObjID()).
+      2. The iterator is CIRCULAR -- after the last object it wraps to the first
+         rather than returning None -- so we must dedup on objid and stop on a
+         repeat, or the walk never terminates.
+    Returns a list of (objid, object) pairs. Shared so q16/q17 reuse the exact
+    same corrected walk."""
+    out = []
+    if pSet is None:
+        return out
+    visited = {}
+    obj = _safe(pSet, "GetFirstObject", ())
+    guard = 0
+    while obj is not None and guard < 8000:
+        oid = _safe(obj, "GetObjID", ())
+        if oid is not None and visited.has_key(oid):
+            break                                   # iterator wrapped -> done
+        if oid is not None:
+            visited[oid] = 1
+        out.append((oid, obj))
+        if oid is None:
+            break
+        obj = _safe(pSet, "GetNextObject", (oid,))
+        guard = guard + 1
     return out
