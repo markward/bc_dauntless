@@ -2,8 +2,6 @@
 defaults and the getter surface; Pass 4 (Task 3) populates these from
 property copies, PR 2 will fill/drain them.
 """
-import math
-
 from engine.appc.subsystems import (
     PhaserBank, PulseWeapon, TractorBeam, TorpedoTube,
 )
@@ -57,17 +55,42 @@ def test_torpedo_tube_default_reload_fields():
     assert t.GetImmediateDelay() == 0.0
     assert t.GetReloadDelay() == 0.0
     assert t.GetMaxReady() == 0
-    assert t.GetLastFireTime() == -math.inf
+    # BC inits GAME time to -1000.0 (combat-and-damage.md:757), not -inf --
+    # see tests/unit/test_torpedo_tube_reload.py.
+    assert t.GetLastFireTime() == -1000.0
 
 
 def test_torpedo_tube_num_ready_setters():
     t = TorpedoTube("Forward Torpedo 1")
+    # MaxReady must be configured first: _num_ready is clamped to it, because a
+    # tube that can hold N rounds must never report more than N loaded. A
+    # default tube has MaxReady=0 and therefore cannot hold anything. See
+    # tests/unit/test_torpedo_tube_invariants.py — unclamped, SetNumReady(5) on
+    # a 1-slot tube launched FOUR torpedoes and then bricked the tube.
+    t._max_ready = 3
+    t._resize_slots()
+
     t.SetNumReady(2)
     assert t.GetNumReady() == 2
     t.IncNumReady()
     assert t.GetNumReady() == 3
     t.DecNumReady()
     assert t.GetNumReady() == 2
+
+
+def test_torpedo_tube_num_ready_setters_clamp_to_max_ready():
+    t = TorpedoTube("Forward Torpedo 1")
+    t._max_ready = 1
+    t._resize_slots()
+
+    t.SetNumReady(5)            # SDK surface (App.py:6018) — a mission can do this
+    assert t.GetNumReady() == 1
+    t.IncNumReady()             # already full
+    assert t.GetNumReady() == 1
+    t.SetNumReady(-3)
+    assert t.GetNumReady() == 0
+    t.DecNumReady()             # already empty
+    assert t.GetNumReady() == 0
 
 
 def test_torpedo_tube_last_fire_time_roundtrip():

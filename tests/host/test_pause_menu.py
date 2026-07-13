@@ -64,6 +64,59 @@ def test_pause_menu_held_escape_does_not_re_toggle():
     assert p.is_open is False
 
 
+def test_sim_frozen_tracks_the_menu():
+    """The sim-freeze flag follows the menu — opening ESC freezes the world."""
+    from engine.host_loop import _PauseMenuController
+    p = _PauseMenuController()
+    assert p.sim_frozen is False
+    p.toggle()
+    assert p.sim_frozen is True
+
+
+def test_external_freeze_freezes_sim_without_opening_the_menu():
+    """DevTools (F12) freezes the simulation so the UI being inspected cannot
+    advance, but must NOT raise the pause menu over the thing you're looking
+    at — is_open (menu visibility, input routing) stays False."""
+    from engine.host_loop import _PauseMenuController
+    p = _PauseMenuController()
+    p.set_external_freeze(True)
+    assert p.sim_frozen is True
+    assert p.is_open is False
+    p.set_external_freeze(False)
+    assert p.sim_frozen is False
+
+
+def test_external_freeze_does_not_unfreeze_an_open_menu():
+    """Closing DevTools while the pause menu is up must leave the world frozen."""
+    from engine.host_loop import _PauseMenuController
+    p = _PauseMenuController()
+    p.toggle()                    # menu open
+    p.set_external_freeze(True)   # + DevTools
+    p.set_external_freeze(False)  # DevTools closed
+    assert p.sim_frozen is True
+
+
+class _FakeDevToolsHost:
+    def __init__(self, open_):
+        self._open = open_
+
+    def cef_devtools_open(self):
+        return self._open
+
+
+def test_devtools_frozen_reads_the_binding():
+    from engine.host_loop import _devtools_frozen
+    assert _devtools_frozen(_FakeDevToolsHost(True)) is True
+    assert _devtools_frozen(_FakeDevToolsHost(False)) is False
+
+
+def test_devtools_frozen_is_false_without_a_host():
+    """Headless/fake hosts (no CEF surface) never freeze."""
+    from engine.host_loop import _devtools_frozen
+    assert _devtools_frozen(None) is False
+    assert _devtools_frozen(object()) is False
+
+
 class _RecordingHost:
     """Records cef_execute_javascript and set_cursor_locked calls."""
 

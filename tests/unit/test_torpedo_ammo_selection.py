@@ -352,3 +352,48 @@ def test_fire_uses_selected_ammo_slot():
 
     # Tube fired (no power-gate blocks it — Task 4b: no per-shot debit)
     assert tube.GetNumReady() == 0
+
+
+# ── Task 3 review I-3: ReloadTorpedo/CanFire ammo guard ──────────────────────
+# combat-and-damage.md:788 (ReloadTorpedo "if no ammo left: return") and :823
+# (CanFire requires "Ammo available") — neither was implemented; a finite
+# type exhausted at the RESERVE level (GetAvailable()==0) still reloaded
+# every tube to full and reported CanFire()==1.
+
+def test_exhausted_finite_ammo_blocks_canfire_and_reload():
+    """A finite magazine at zero rounds: CanFire()==0 and ReloadTorpedo()
+    does not refill, even with a cooling slot ready to receive a round."""
+    from engine.appc import projectiles
+    projectiles._active.clear()
+    parent, tgt = _firing_system_with_reserve(max_torpedoes=1)
+    tube = parent.GetWeapon(0)
+    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
+        parent.StartFiring(target=tgt, offset=None)   # fires the only round
+    assert parent.GetNumAvailableTorpsToType(0) == 0
+    ready_after_fire = tube.GetNumReady()
+    assert ready_after_fire < tube.GetMaxReady()        # a slot is cooling, ready to reload
+
+    assert tube.CanFire() == 0                          # ammo gate (num_ready alone is > 0)
+
+    tube.ReloadTorpedo()
+    assert tube.GetNumReady() == ready_after_fire        # still gated -- no refill
+    projectiles._active.clear()
+
+
+def test_unlimited_ammo_never_gates_canfire_or_reload():
+    """Unlimited/undeclared ammo types must NEVER gate CanFire or
+    ReloadTorpedo -- the legacy/undeclared firing path stays byte-identical."""
+    from engine.appc import projectiles
+    projectiles._active.clear()
+    parent, tgt = _firing_system_with_reserve(max_torpedoes=None)
+    tube = parent.GetWeapon(0)
+    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
+        parent.StartFiring(target=tgt, offset=None)
+    ready_after_fire = tube.GetNumReady()
+    assert ready_after_fire < tube.GetMaxReady()
+
+    assert tube.CanFire() == 1                          # not gated by (unlimited) ammo
+
+    tube.ReloadTorpedo()
+    assert tube.GetNumReady() == ready_after_fire + 1    # refills normally
+    projectiles._active.clear()

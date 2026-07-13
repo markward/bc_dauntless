@@ -1234,6 +1234,17 @@ class WarpEngineSubsystem(PoweredSubsystem):
     WES_DEWARP_BEGINNING  = 6
     WES_DEWARP_ENDING     = 7
 
+    # The inbound half of the FSM. Only these states carry a completion
+    # deadline: the SDK fires TransitionToState(WES_DEWARP_*) and expects the
+    # engine to run the dewarp out (Actions/EffectScriptActions.py:226) — with
+    # no completion the ship is stranded mid-warp forever.
+    DEWARP_STATES = frozenset(
+        (WES_DEWARP_INITIATED, WES_DEWARP_BEGINNING, WES_DEWARP_ENDING))
+
+    # Used when a script transitions to a dewarp state without ever setting a
+    # warp effect time (GetWarpEffectTime() == 0.0).
+    DEFAULT_DEWARP_SECONDS = 2.0
+
     def __init__(self, name: str = ""):
         super().__init__(name)
         # Powered from spawn, like ImpulseEngineSubsystem — see the comment
@@ -1243,6 +1254,9 @@ class WarpEngineSubsystem(PoweredSubsystem):
         self._warp_sequence = None
         self._warp_effect_time = 0.0
         self._warp_state = self.WES_NOT_WARPING
+        # Seconds left on an engine-driven dewarp transition; None when no
+        # transition is pending. See TransitionToState / tick_transition.
+        self._transition_remaining = None
 
     def GetWarpSequence(self):
         return self._warp_sequence
@@ -1260,7 +1274,43 @@ class WarpEngineSubsystem(PoweredSubsystem):
         return self._warp_state
 
     def SetWarpState(self, state) -> None:
+        """SDK setter — sets the state outright, with no transition. Clearing
+        to WES_NOT_WARPING cancels any pending dewarp completion."""
         self._warp_state = int(state)
+        if self._warp_state == self.WES_NOT_WARPING:
+            self._transition_remaining = None
+
+    def TransitionToState(self, state) -> None:
+        """SDK `WarpEngineSubsystem_TransitionToState` (App.py:6747): enter a
+        state that the ENGINE then runs to completion. The SDK's NPC warp-in
+        (Actions/EffectScriptActions.py:225-226) sets WES_WARPING and then
+        transitions to WES_DEWARP_INITIATED, and never touches the state
+        again — so a dewarp transition must land back on WES_NOT_WARPING by
+        itself, or the ship stays 'warping' for the rest of the mission."""
+        self._warp_state = int(state)
+        if self._warp_state in self.DEWARP_STATES:
+            t = self.GetWarpEffectTime()
+            self._transition_remaining = t if t > 0.0 else self.DEFAULT_DEWARP_SECONDS
+        else:
+            self._transition_remaining = None
+
+    def tick_transition(self, dt: float) -> None:
+        """Advance a pending dewarp transition; land on WES_NOT_WARPING when it
+        expires. Driven by engine.appc.warp_state.tick_warp_states."""
+        remaining = self._transition_remaining
+        if remaining is None:
+            return
+        remaining -= float(dt)
+        if remaining <= 0.0:
+            self._warp_state = self.WES_NOT_WARPING
+            self._transition_remaining = None
+        else:
+            self._transition_remaining = remaining
+
+    def IsWarping(self) -> bool:
+        """True for every state other than WES_NOT_WARPING — the same test BC's
+        own scripts make (WarpSequence.py:638, HelmMenuHandlers.py:2465)."""
+        return self._warp_state != self.WES_NOT_WARPING
 
 
 class ShieldSubsystem(PoweredSubsystem):
@@ -2419,6 +2469,7 @@ def repair_ship_fully(ship) -> None:
 # first. The first access to any weapon name triggers the import, by which point
 # both modules are fully loaded.
 _WEAPON_EXPORTS = frozenset({
+    "Weapon",
     "WeaponSystem",
     "TorpedoAmmoType",
     "TorpedoSystem",

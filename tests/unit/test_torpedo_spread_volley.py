@@ -93,6 +93,23 @@ def test_quad_spread_fires_four_torpedoes():
     assert len(projectiles._active) == 4
 
 
+def test_quad_spread_fires_four_torpedoes_with_immediate_delay_gate_armed():
+    """The ImmediateDelay refire gate (gameTime - last_fire_time >= delay) is
+    PER-TUBE: each of the 4 tubes starts fresh (_last_fire_time == -1000.0),
+    so a nonzero ImmediateDelay must not block a volley where every tube
+    fires exactly once.  Without this case, _immediate_delay stayed 0.0 in
+    every spread test and the refire gate added by the reload rewrite was
+    never exercised here."""
+    tgt = _Tgt(0, 100, 0)
+    system, _ = _system_with_tubes(4, target=tgt, rot=_identity())
+    for tube in system._children:
+        tube._immediate_delay = 5.0
+    system.SetSpread(4)
+    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
+        system.StartFiring(target=tgt, offset=None)
+    assert len(projectiles._active) == 4
+
+
 def test_spread_clamped_to_eligible_tube_count():
     """Quad(4) requested but only 2 tubes ready → fires 2."""
     tgt = _Tgt(0, 100, 0)

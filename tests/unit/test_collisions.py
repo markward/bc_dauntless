@@ -491,3 +491,80 @@ def test_resolve_collisions_disabled_pair_leaves_other_pairs_colliding():
     pairs = {frozenset((id(x), id(y))) for (x, y, *_rest) in hits}
     assert frozenset((id(a), id(b))) not in pairs   # skipped
     assert frozenset((id(b), id(c))) in pairs        # still collides
+
+
+def _warping_ship(x, mass, vx, radius=1.0, state=None):
+    from engine.appc.subsystems import WarpEngineSubsystem
+    s = _ship(x, mass, vx, radius)
+    s.SetWarpEngineSubsystem(WarpEngineSubsystem("Warp Engines"))
+    if state is not None:
+        s.GetWarpEngineSubsystem().SetWarpState(state)
+    return s
+
+
+def test_warping_ship_is_not_collidable():
+    from engine.appc.collisions import _collisions_enabled
+    from engine.appc.subsystems import WarpEngineSubsystem
+    s = _warping_ship(0.0, 1000.0, 0.0, state=WarpEngineSubsystem.WES_WARPING)
+    assert _collisions_enabled(s) is False
+
+
+def test_ship_out_of_warp_is_collidable_again():
+    from engine.appc.collisions import _collisions_enabled
+    from engine.appc.subsystems import WarpEngineSubsystem
+    s = _warping_ship(0.0, 1000.0, 0.0, state=WarpEngineSubsystem.WES_WARPING)
+    s.GetWarpEngineSubsystem().SetWarpState(WarpEngineSubsystem.WES_NOT_WARPING)
+    assert _collisions_enabled(s) is True
+
+
+def test_warp_suppression_does_not_stomp_the_sdk_collision_flag():
+    # CanCollide() is the ONLY collision getter any SDK script can read. Warp
+    # suppression is an engine overlay and must leave it alone.
+    from engine.appc.subsystems import WarpEngineSubsystem
+    s = _warping_ship(0.0, 1000.0, 0.0, state=WarpEngineSubsystem.WES_WARPING)
+    assert s.CanCollide() == 1
+
+
+def test_sdk_collisions_off_composes_with_warp_rather_than_being_overridden():
+    # M-2.2: the two gates must COMPOSE, not have one override the other —
+    # exercised at every combination, including WHILE warping (the prior
+    # version of this test only asserted after clearing warp, so it never
+    # actually exercised composition during warp and passed even before the
+    # warp gate was wired in at all).
+    from engine.appc.collisions import _collisions_enabled
+    from engine.appc.subsystems import WarpEngineSubsystem
+    s = _warping_ship(0.0, 1000.0, 0.0, state=WarpEngineSubsystem.WES_WARPING)
+
+    s.SetCollisionsOn(0)
+    assert _collisions_enabled(s) is False   # SDK flag off + warping
+
+    s.GetWarpEngineSubsystem().SetWarpState(WarpEngineSubsystem.WES_NOT_WARPING)
+    assert _collisions_enabled(s) is False   # warp clears; the flag still holds
+
+    s.SetCollisionsOn(1)
+    assert _collisions_enabled(s) is True    # flag back on, not warping
+
+
+def test_planet_stays_collidable_the_stub_trap():
+    # A Planet has no GetWarpEngineSubsystem: TGObject.__getattr__ returns a
+    # TRUTHY _Stub, and _Stub != WES_NOT_WARPING is True. A duck-typed warp
+    # predicate would make every planet in the game non-collidable.
+    from engine.appc.collisions import _collisions_enabled
+    p = Planet_Create(170.0, "")
+    assert _collisions_enabled(p) is True
+
+
+def test_warping_ship_is_excluded_from_pair_resolution():
+    # Head-on overlap that WOULD collide: a warping ship generates no contact,
+    # while the same pair out of warp does.
+    from engine.appc.collisions import _collisions_enabled, resolve_collisions
+    from engine.appc.subsystems import WarpEngineSubsystem
+    a = _warping_ship(0.0, 1000.0, 10.0, radius=5.0,
+                      state=WarpEngineSubsystem.WES_WARPING)
+    b = _ship(4.0, 1000.0, -10.0, radius=5.0)
+    live = [o for o in (a, b) if _collisions_enabled(o)]
+    assert live == [b]
+    assert resolve_collisions(live) == []
+
+    a.GetWarpEngineSubsystem().SetWarpState(WarpEngineSubsystem.WES_NOT_WARPING)
+    assert resolve_collisions([a, b]) != []

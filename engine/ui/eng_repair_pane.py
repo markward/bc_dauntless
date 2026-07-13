@@ -31,7 +31,11 @@ def _row(sub, register) -> dict:
         "icon": icon_num_for_subsystem(sub),
         "pct": pct,
     }
-    ui_attention.apply(row, wid)
+    # `sub` is a ShipSubsystem, not a TG widget — it carries no _highlighted
+    # flag, so its node["highlighted"] is always False. apply() reads __dict__
+    # rather than getattr precisely so that stays False instead of picking up
+    # a truthy TGObject.__getattr__ stub.
+    ui_attention.apply(row, wid, sub)
     return row
 
 

@@ -222,15 +222,17 @@ def _species_key_for(ship) -> str:
 def _has_charge_model(mount) -> bool:
     """True when the mount carries an energy-weapon charge reservoir.
 
-    PhaserBank / PulseWeapon / TractorBeam inherit a charge model from
-    EnergyWeaponProperty (max_charge > 0). TorpedoTube also inherits
-    GetChargePercentage from the shared ShipSubsystem hierarchy, but
-    its ``_max_charge`` is 0 and the method returns 0 — the tube's
-    "ready to fire" state is timer-driven via the reload delay
-    instead. Predicate on max_charge so the descriptor routes tubes
-    through the reload-based ratio below.
+    isinstance, NOT hasattr: TGObject.__getattr__ returns a truthy _Stub for any
+    missing attribute, so `hasattr(mount, "GetMaxCharge")` is True even for a
+    torpedo tube -- which is where rank 2 of docs/stub_heatmap.md (1.2M hits)
+    came from.
+
+    Charge is an EnergyWeapon concept (sdk/.../App.py:6426-6440): PhaserBank,
+    PulseWeapon and TractorBeam have it; TorpedoTube does not and never did. A
+    tube's readiness is discrete ammo + a reload timer -- see _has_reload_model.
     """
-    if not hasattr(mount, "GetMaxCharge"):
+    from engine.appc.subsystems import _EnergyWeaponFireMixin
+    if not isinstance(mount, _EnergyWeaponFireMixin):
         return False
     try:
         return float(mount.GetMaxCharge()) > 0.0

@@ -1,10 +1,13 @@
-"""CrewMenuPanel snapshot carries ui_attention's highlight flag.
+"""CrewMenuPanel snapshot carries ui_attention's pointer-arrow flag.
 
 Covers the identifier-centric UI attention design's Task 3: every node that
 gets a widget id (STMenu/submenu rows AND STButton leaves) must carry
-"highlighted" (and "highlightColor" when set), and the mission's
+"attention" (and "attentionColor" when set), and the mission's
 RefreshArrows hide->show cycle (both inside one Python tick, 8x/second) must
 never make the CEF-facing payload flicker.
+
+BC's OTHER attention verb — TGUIObject.SetHighlighted, node["highlighted"] —
+is a separate flag with a separate look; see tests/ui/test_sdk_widget_highlight.py.
 
 See docs/superpowers/specs/2026-07-12-identifier-centric-ui-attention-design.md
 and engine/ui/ui_attention.py's module docstring.
@@ -61,14 +64,14 @@ def test_snapshot_marks_highlighted_node(crew_panel_with_helm_menu):
     ui_attention.show_pointer_arrow(None, set_course_submenu, 0, 0.0, None)
     payload = panel.snapshot()
     node = _find(payload, set_course_submenu)
-    assert node["highlighted"] is True
+    assert node["attention"] is True
 
 
 def test_snapshot_unhighlighted_by_default(crew_panel_with_helm_menu):
     panel, set_course_submenu = crew_panel_with_helm_menu
     ui_attention.hide_pointer_arrows()
     node = _find(panel.snapshot(), set_course_submenu)
-    assert node["highlighted"] is False
+    assert node["attention"] is False
 
 
 def test_snapshot_carries_highlight_color_when_set(crew_panel_with_helm_menu):
@@ -76,7 +79,7 @@ def test_snapshot_carries_highlight_color_when_set(crew_panel_with_helm_menu):
     ui_attention.hide_pointer_arrows()
     ui_attention.show_pointer_arrow(None, set_course_submenu, 0, 0.0, "gold")
     node = _find(panel.snapshot(), set_course_submenu)
-    assert node["highlightColor"] == "gold"
+    assert node["attentionColor"] == "gold"
 
 
 def test_render_payload_json_safe_with_tgcolora_kcolor(crew_panel_with_helm_menu):
@@ -92,7 +95,7 @@ def test_render_payload_json_safe_with_tgcolora_kcolor(crew_panel_with_helm_menu
     assert payload_json is not None
     json.dumps(panel.snapshot())  # same proof, directly against the raw payload dict
     node = _find(panel.snapshot(), set_course_submenu)
-    assert isinstance(node["highlightColor"], str)
+    assert isinstance(node["attentionColor"], str)
 
 
 def test_snapshot_omits_highlight_color_when_unset(crew_panel_with_helm_menu):
@@ -100,7 +103,7 @@ def test_snapshot_omits_highlight_color_when_unset(crew_panel_with_helm_menu):
     ui_attention.hide_pointer_arrows()
     ui_attention.show_pointer_arrow(None, set_course_submenu, 0, 0.0, None)
     node = _find(panel.snapshot(), set_course_submenu)
-    assert "highlightColor" not in node
+    assert "attentionColor" not in node
 
 
 def test_highlight_flag_reaches_button_leaves_too(crew_panel_with_helm_menu):
@@ -110,7 +113,7 @@ def test_highlight_flag_reaches_button_leaves_too(crew_panel_with_helm_menu):
     ui_attention.hide_pointer_arrows()
     ui_attention.show_pointer_arrow(None, leaf, 0, 0.0, None)
     node = _find(panel.snapshot(), leaf)
-    assert node["highlighted"] is True
+    assert node["attention"] is True
 
 
 def test_refresh_cycle_leaves_payload_identical(crew_panel_with_helm_menu):

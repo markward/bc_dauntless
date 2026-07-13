@@ -4,7 +4,7 @@ SDK Preprocessors.py:454-458 — dumb-fire path picks torp tubes facing
 the target by dot-product with CalculateRoughDirection() > 0."""
 import pytest
 
-import App
+from engine.appc.math import TGPoint3
 from engine.appc.ships import ShipClass
 from engine.appc.subsystems import TorpedoTube, PhaserSystem, TorpedoSystem
 
@@ -19,18 +19,18 @@ def test_fire_dumb_calls_fire():
     assert len(fired) == 1
 
 
-def test_calculate_rough_direction_returns_ship_forward_when_attached():
-    """Per-tube arcs are deferred to Slice D; for now, all tubes share
-    the parent ship's forward vector."""
+def test_calculate_rough_direction_is_world_space_when_attached():
+    """Was: asserted model-forward for every tube. That WAS the dumb-fire bug --
+    see tests/unit/test_torpedo_tube_direction.py for the real coverage."""
     ship = ShipClass()
-    tube = TorpedoTube("Tube")
-    tube._parent_ship = ship
-    direction = tube.CalculateRoughDirection()
-    # Default ship forward (ModelForward = +Y) per App.TGPoint3 conventions.
-    fwd = App.TGPoint3_GetModelForward()
-    assert abs(direction.GetX() - fwd.GetX()) < 1e-9
-    assert abs(direction.GetY() - fwd.GetY()) < 1e-9
-    assert abs(direction.GetZ() - fwd.GetZ()) < 1e-9
+    system = TorpedoSystem("Torpedoes")
+    tube = TorpedoTube("Forward Torpedo 1")
+    tube.SetDirection(TGPoint3(0.0, 1.0, 0.0))
+    system.AddChildSubsystem(tube)
+    ship._attach_subsystem(system)
+
+    world = tube.CalculateRoughDirection()
+    assert abs(world.y - 1.0) < 1e-6      # identity rotation -> body == world
 
 
 def test_calculate_rough_direction_falls_back_to_y_axis_when_orphaned():

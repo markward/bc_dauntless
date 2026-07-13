@@ -1041,7 +1041,10 @@ def ObjectClass_GetObject(pSet, name) -> "ObjectClass | None":
     Mirrors the per-class GetObject helpers (ShipClass_GetObject, CharacterClass_GetObject)
     but without the type filter — returns whatever is registered under the name.
     """
-    if pSet is None or not hasattr(pSet, "GetObject"):
+    if pSet is None:
+        from engine.appc.sets import SetClass_GetNull
+        pSet = SetClass_GetNull()
+    if not hasattr(pSet, "GetObject"):
         return None
     obj = pSet.GetObject(str(name))
     return obj if isinstance(obj, ObjectClass) else None

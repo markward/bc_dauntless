@@ -35,6 +35,40 @@ _SPREAD_DIVERGENCE_TAN = _math.tan(_math.radians(15.0))  # ≈0.268
 _SPREAD_DELAY = 0.2
 
 
+# ── Torpedo reload slots ───────────────────────────────────────────────────
+# BC stores one float per MaxReady at TorpedoTube+0xAC
+# (docs/original_game_reference/gameplay/combat-and-damage.md:748).  We store the
+# GAME TIME at which each slot began cooling; _SLOT_LOADED means "ready".
+_SLOT_LOADED = -1.0
+
+
+def _game_time() -> float:
+    """The game clock — pause-frozen and frame-rate independent.
+
+    NEVER time.monotonic(): wall time advances while the sim is frozen, which
+    made every tube instantly reload on unpause.  Deferred import is the
+    established idiom in this module (see _spawn_torpedo).
+
+    The import lives INSIDE the try: an ImportError here must fall through to
+    the same 0.0 sentinel as any other clock failure, not escape uncaught.
+
+    The 0.0 fallback is silent by design (a per-frame weapon loop must never
+    raise), but silent-and-permanent is dangerous here: CanFire's gate
+    (0 - 0 = 0 < ImmediateDelay) and UpdateReload's gate (0 - 0 = 0 <
+    ReloadDelay) both stay false forever once every stamp is 0.0, bricking
+    every torpedo tube with no exception anywhere. Route the swallow through
+    dev_mode.log_swallowed (same idiom as _broadcast_reload below) so a
+    developer can see it happened instead of just watching torpedoes stop
+    reloading."""
+    try:
+        import App
+        return float(App.g_kUtopiaModule.GetGameTime())
+    except Exception as _e:
+        from engine import dev_mode
+        dev_mode.log_swallowed("torpedo tube _game_time clock read", _e)
+        return 0.0
+
+
 def _resolve_aim_world(ship, target):
     """Unit vector in world space from ship → target, or ship-forward if no target."""
     if (ship is not None and target is not None
@@ -93,6 +127,35 @@ def _resolve_bank_aim_world(bank, target):
     return _resolve_aim_world(ship, None)
 
 
+def _emitter_world_direction(emitter, ship) -> TGPoint3:
+    """The emitter's mount direction rotated into WORLD space.
+
+    This is what BC's Weapon::CalculateRoughDirection returns.  Evidence:
+    AI/Preprocessors.py:447-456 dots the result against a world-space target
+    delta, and AI/PlainAI/IntelligentCircleObject.py:204,234 converts it
+    world->model explicitly ("Change it to model space").
+
+    DISTINCT from GetDirection(), which stays MODEL space — ConditionTorpsReady
+    .py:128 dots that against a model-space restriction vector.  Do not conflate.
+
+    Orphaned emitter (no owning ship): return the un-rotated body direction.
+
+    Guards on hasattr, not isinstance(emitter, ShipSubsystem): _emitter_in_arc
+    reuses this helper with duck-typed test doubles (see
+    tests/unit/test_property_set_orientation.py::_FakeEmitter) that implement
+    GetDirection() without subclassing ShipSubsystem.
+    """
+    local = emitter.GetDirection() if hasattr(emitter, "GetDirection") else None
+    if not isinstance(local, TGPoint3):
+        local = TGPoint3(0.0, 1.0, 0.0)     # BC model-forward default
+    world = TGPoint3(local.x, local.y, local.z)
+    if ship is not None and hasattr(ship, "GetWorldRotation"):
+        rot = ship.GetWorldRotation()
+        if isinstance(rot, TGMatrix3):
+            world.MultMatrixLeft(rot)       # v_world = R . v_body (column-vector)
+    return world
+
+
 def _emitter_in_arc(emitter, ship, aim_world):
     """Returns True if `aim_world` (unit vector) lies inside the emitter's
     firing arc, rotated into world space via the ship's rotation.
@@ -110,12 +173,7 @@ def _emitter_in_arc(emitter, ship, aim_world):
         return True
     if not isinstance(local_dir, TGPoint3):
         return True
-    # Rotate emitter direction into world space.
-    world_dir = TGPoint3(local_dir.x, local_dir.y, local_dir.z)
-    if ship is not None and hasattr(ship, "GetWorldRotation"):
-        rot = ship.GetWorldRotation()
-        if isinstance(rot, TGMatrix3):
-            world_dir.MultMatrixLeft(rot)
+    world_dir = _emitter_world_direction(emitter, ship)
 
     # Emitter without explicit arc bounds (torpedo tubes) — fall back to
     # a 90° dot-product cone.  ShipSubsystem always exposes a typed
@@ -503,6 +561,86 @@ def _target_undetectable(weapon_system, target) -> bool:
         return not can_detect(ship, target)
     except Exception:
         return False
+
+
+class Weapon(ShipSubsystem):
+    """BC leaf emitter — sdk/Build/scripts/App.py:5758 `class Weapon(ShipSubsystem)`.
+
+    Deliberately NOT a PoweredSubsystem: in BC a weapon has no power, no IsOn
+    and no charge.  Power lives on the parent WeaponSystem; charge lives on
+    EnergyWeapon (App.py:6426-6440), which torpedo tubes do not inherit.
+
+    Only the surface the SDK actually calls on a leaf weapon.  DELIBERATELY
+    ABSENT (verified zero SDK call sites on a tube): SetFiring,
+    IsMemberOfGroup, GetTargetID, IsDumbFire, GetOverallConditionPercentage,
+    IsInArc, CanHit, SetSkewFire, IsSkewFire.  IsInArc/CanHit are additionally
+    unspecifiable — their BC signatures cannot be recovered from the SDK.
+
+    GetProperty/SetProperty are inherited from ShipSubsystem (subsystems.py:273).
+    """
+
+    def __init__(self, name: str = ""):
+        super().__init__(name)
+        # Seeded here, not in the subclass: IsFiring() must return a real 0 on a
+        # fresh weapon.  Without this, __getattr__ hands back a truthy _Stub.
+        self._firing: bool = False
+        self._target = None
+        self._target_offset = None
+
+    def Fire(self, target=None, offset=None, **kwargs) -> None:
+        """Discrete shot.  Subclasses implement — the payload differs per weapon
+        (TorpedoTube.Fire additionally takes spread_unit/homing_delay for
+        Dual/Quad spread volleys; see TorpedoSystem.StartFiring)."""
+        raise NotImplementedError
+
+    def CanFire(self) -> int:
+        return 0
+
+    def StopFiring(self) -> None:
+        self._firing = False
+
+    def IsFiring(self) -> int:
+        return 1 if self._firing else 0
+
+    def FireDumb(self, iReserved=0, iForce=1) -> None:
+        """SDK AI/Preprocessors.py:458 — `pTube.FireDumb(0, 1)`.  Unguided shot,
+        no target.
+
+        The AI calls this WITHOUT checking CanFire() first, so it must be a
+        silent no-op when the weapon is NOT READY.  That contract is met by the
+        implementing subclass: TorpedoTube.Fire returns early on `not CanFire()`.
+
+        Deliberately NOT gated on CanFire() here.  Doing so would make a subclass
+        that has not implemented Fire() silently do nothing forever, instead of
+        raising NotImplementedError — trading a loud programming error for the
+        silent-failure pattern this engine is riddled with.  "Not ready" is a
+        runtime state and must no-op; "not implemented" is a bug and must shout.
+
+        iReserved/iForce are kept for SDK signature compatibility and unused.
+        """
+        self.Fire(target=None, offset=None)
+
+    def CalculateRoughDirection(self) -> TGPoint3:
+        """WORLD-space mount direction.  SDK AI/Preprocessors.py:456 and
+        AI/PlainAI/IntelligentCircleObject.py:234.
+
+        _climb_to_ship() — NOT GetParentShip().  ShipClass._attach_subsystem
+        (ships.py:690-700) sets _parent_ship only on TOP-LEVEL subsystems.  A
+        torpedo tube is a CHILD of the TorpedoSystem, so its _parent_ship is
+        None and GetParentShip() would silently return None on every real tube.
+        """
+        return _emitter_world_direction(self, self._climb_to_ship())
+
+    def CalculateWeaponAppeal(self) -> float:
+        """SDK AI/PlainAI/IntelligentCircleObject.py:238.  The AI sums appeal
+        across weapons facing a candidate heading and picks the best facing.
+
+        BC's exact formula is not recoverable from the SDK, so this is an
+        APPROXIMATION, not a reproduction: 1.0 for a functional weapon, 0.0 for
+        a disabled one.  That yields "face the direction with the most working
+        weapons", which matches the caller's intent.
+        """
+        return 0.0 if self.IsDisabled() else 1.0
 
 
 class WeaponSystem(PoweredSubsystem):
@@ -1622,39 +1760,158 @@ class TractorBeam(_EnergyWeaponFireMixin, WeaponSystem):
         super().UpdateCharge(dt)
 
 
-class TorpedoTube(WeaponSystem):
+class TorpedoTube(Weapon):
     """Individual launcher under a parent TorpedoSystem.  Ammo-type tracking
     lives on the parent's slot table; this class owns per-tube reload state.
 
-    Reload model (galaxy.py:28-30): ImmediateDelay=delay from fire request
-    to launch, ReloadDelay=per-tube reload after firing, MaxReady=shots
-    queued before reload begins.
+    Reload model recovered from stbc.exe
+    (docs/original_game_reference/gameplay/combat-and-damage.md:740-830):
+    reload state is a per-slot timer array, one slot per MaxReady, driven by
+    the GAME clock (not wall time, so a paused sim makes no reload progress).
+    ImmediateDelay is a CanFire refire gate (gameTime - last_fire_time >=
+    ImmediateDelay), not a fire-to-launch latency. ReloadDelay is the per-slot
+    cooldown after firing.
     """
     def __init__(self, name: str = ""):
-        super().__init__(name)
+        super().__init__(name)          # Weapon.__init__ seeds _firing/_target
         self._num_ready: int = 0
-        self._last_fire_time: float = float("-inf")
+        # GAME time. BC inits to -1000.0 (combat-and-damage.md:757) so a fresh
+        # tube already satisfies the ImmediateDelay gate. NOT -inf: -inf poisons
+        # any subtraction a caller might do on GetLastFireTime().
+        self._last_fire_time: float = -1000.0
         self._immediate_delay: float = 0.0
         self._reload_delay: float = 0.0
         self._max_ready: int = 0
-        self._firing: bool = False
-        self._target = None
-        self._target_offset = None
+        # One slot per MaxReady. Value = game time cooling began; _SLOT_LOADED = ready.
+        self._reload_timers: list[float] = []
+
+    def _resize_slots(self) -> None:
+        """(Re)build the per-slot reload array to MaxReady, all slots loaded.
+        Called by ships.py after the hardpoint property is copied in."""
+        self._reload_timers = [_SLOT_LOADED] * max(0, int(self._max_ready))
+
+    def _ensure_slots(self) -> None:
+        """Self-heal: rebuild _reload_timers if it has desynced from
+        _max_ready. Production always calls _resize_slots() from
+        ships.py:_copy_torpedo_tube_fields, but _max_ready is real SDK/test
+        surface that can be set directly (six unit-test fixtures do exactly
+        that) — without this, a tube that fires would stamp NO slot and
+        UpdateReload would find nothing cooling, bricking the tube forever
+        with no exception raised.  Called at the top of every method that
+        reads or writes _reload_timers."""
+        if len(self._reload_timers) != self._max_ready:
+            self._resize_slots()
+
+    def _start_slot_cooldown(self, now: float) -> None:
+        """Put one loaded slot into cooldown, stamped at `now`."""
+        self._ensure_slots()
+        for i in range(len(self._reload_timers)):
+            if self._reload_timers[i] == _SLOT_LOADED:
+                self._reload_timers[i] = now
+                return
+
+    def _sync_slots_to_num_ready(self) -> None:
+        """Keep _reload_timers consistent after a direct _num_ready mutation.
+
+        SetNumReady/IncNumReady/DecNumReady are real SDK surface (App.py:
+        6018-6020) — a mission can call them directly, bypassing Fire/
+        ReloadTorpedo.  Without this, the slot array and _num_ready silently
+        disagree: e.g. SetNumReady(0) left every slot LOADED, so UpdateReload
+        found nothing cooling and the tube never refilled.
+
+        Demotes/promotes the minimum number of slots needed to make exactly
+        `_num_ready` (clamped to the slot count) read LOADED: demoted slots
+        start cooling from now; promotion prefers the slot that has been
+        cooling longest (smallest stamp), matching ReloadTorpedo's own
+        "oldest cooling slot wins" rule."""
+        self._ensure_slots()
+        target = max(0, min(int(self._num_ready), len(self._reload_timers)))
+        loaded_idx = [i for i, t in enumerate(self._reload_timers) if t == _SLOT_LOADED]
+        cooling_idx = [i for i, t in enumerate(self._reload_timers) if t != _SLOT_LOADED]
+        if len(loaded_idx) > target:
+            now = _game_time()
+            for i in loaded_idx[target:]:
+                self._reload_timers[i] = now
+        elif len(loaded_idx) < target:
+            cooling_idx.sort(key=lambda i: self._reload_timers[i])
+            need = target - len(loaded_idx)
+            for i in cooling_idx[:need]:
+                self._reload_timers[i] = _SLOT_LOADED
 
     def GetNumReady(self) -> int:                   return self._num_ready
-    def SetNumReady(self, v) -> None:               self._num_ready = int(v)
-    def IncNumReady(self) -> None:                  self._num_ready += 1
-    def DecNumReady(self) -> None:                  self._num_ready -= 1
+
+    def _clamp_num_ready(self, v) -> None:
+        """_num_ready must never exceed MaxReady, or fall below zero.
+
+        These three setters are real SDK surface (App.py:6018-6020), so a
+        mission can drive them directly.  Unclamped, _num_ready ran ahead of the
+        slot array and _sync_slots_to_num_ready only clamped its own TARGET, not
+        the field — so a 1-slot tube told SetNumReady(5) would launch FOUR
+        torpedoes (Fire kept decrementing and spawning while
+        _start_slot_cooldown found no loaded slot and silently no-op'd), and
+        then never reload again (UpdateReload's `num_ready >= max_ready` guard
+        held forever).  Neither failure raised.
+        """
+        self._num_ready = max(0, min(int(v), int(self._max_ready)))
+        self._sync_slots_to_num_ready()
+
+    def SetNumReady(self, v) -> None:
+        self._clamp_num_ready(v)
+
+    def IncNumReady(self) -> None:
+        self._clamp_num_ready(self._num_ready + 1)
+
+    def DecNumReady(self) -> None:
+        self._clamp_num_ready(self._num_ready - 1)
+
     def GetLastFireTime(self) -> float:             return self._last_fire_time
     def SetLastFireTime(self, v) -> None:           self._last_fire_time = float(v)
     def GetImmediateDelay(self) -> float:           return self._immediate_delay
     def GetReloadDelay(self) -> float:              return self._reload_delay
     def GetMaxReady(self) -> int:                   return self._max_ready
 
-    def CanFire(self) -> int:
+    def _parent_ammo(self):
+        """The parent TorpedoSystem's currently-selected ammo type, or None
+        if there is no parent or no ammo type is configured.
+        GetParentSubsystem() is always the TorpedoSystem this tube was
+        AddChildSubsystem'd under."""
         parent = self.GetParentSubsystem()
-        on = parent is not None and parent.IsOn()
-        return 1 if (on and self._num_ready > 0) else 0
+        if parent is None:
+            return None
+        return parent.GetCurrentAmmoType()
+
+    def _ammo_exhausted(self) -> bool:
+        """True when the parent's selected ammo type is a FINITE magazine
+        with zero rounds left (combat-and-damage.md:788 ReloadTorpedo,
+        :823 CanFire — both require "Ammo available").  Unlimited/undeclared
+        ammo (or no ammo configured at all) NEVER gates — mirrors the
+        existing TorpedoSystem.StartFiring reserve-gate pattern so the
+        legacy/undeclared firing path stays byte-identical."""
+        ammo = self._parent_ammo()
+        finite = ammo is not None and not getattr(ammo, "_unlimited", True)
+        return finite and ammo.GetAvailable() <= 0
+
+    def CanFire(self) -> int:
+        """BC torpedo CanFire (combat-and-damage.md:822-826):
+        powered AND num_ready > 0 AND the ImmediateDelay refire gate has
+        expired AND ammo is available.
+
+        ImmediateDelay is a REFIRE GATE, not a fire->launch latency: it prevents
+        rapid double-fires. Hardpoint values run 0.25s (galaxy) to 5.0s.
+        The volley-level ammo reserve gate also lives on the parent
+        TorpedoSystem.StartFiring; this per-tube check additionally covers
+        direct CanFire() callers that bypass StartFiring.
+        """
+        parent = self.GetParentSubsystem()
+        if parent is None or not parent.IsOn():
+            return 0
+        if self._num_ready <= 0:
+            return 0
+        if _game_time() - self._last_fire_time < self._immediate_delay:
+            return 0
+        if self._ammo_exhausted():
+            return 0
+        return 1
 
     def Fire(self, target=None, offset=None, *,
              spread_unit=None, homing_delay=0.0) -> None:
@@ -1663,9 +1920,10 @@ class TorpedoTube(WeaponSystem):
         self._firing = True
         self._target = target
         self._target_offset = offset
+        now = _game_time()
         self._num_ready -= 1
-        import time as _time
-        self._last_fire_time = _time.monotonic()
+        self._last_fire_time = now
+        self._start_slot_cooldown(now)
 
         # PR 2b: spawn the projectile via the bound SDK script.  spread_unit /
         # homing_delay are only non-default when the parent TorpedoSystem is
@@ -1703,42 +1961,163 @@ class TorpedoTube(WeaponSystem):
         except ImportError:
             return
 
-        _spawn_projectile(self, mod, drf_override=self.GetDamageRadiusFactor(),
-                          spread_unit=spread_unit, homing_delay=homing_delay)
+        torp = _spawn_projectile(self, mod,
+                                 drf_override=self.GetDamageRadiusFactor(),
+                                 spread_unit=spread_unit,
+                                 homing_delay=homing_delay)
+        # ET_TORPEDO_FIRED carries the PROJECTILE as its source, so it can only be
+        # posted once the projectile exists.  Posted here rather than inside
+        # _spawn_projectile because that helper is shared with pulse cannons, and
+        # q12 shows this event's destination is always a TorpedoTube.
+        self._broadcast_torpedo_fired(torp)
 
-    def StopFiring(self) -> None:
-        self._firing = False
+    # FireDumb is inherited from Weapon — it was a byte-identical duplicate here,
+    # and keeping the override would have skipped the base's new CanFire() gate.
 
-    def FireDumb(self, iReserved=0, iForce=1) -> None:
-        """SDK Preprocessors.py:458 — `pTube.FireDumb(0, 1)` in the
-        dumb-fire path. Routes through the regular Fire() so the
-        ET_WEAPON_HIT combat broadcast still fires.
+    def UpdateReload(self, dt: float = 0.0) -> None:
+        """Poll each cooling slot; reload one when ReloadDelay of GAME time has passed.
 
-        iReserved/iForce kept for SDK signature compatibility; the
-        target/offset come from upstream FireScript state in Phase 1.
+        `dt` is accepted for call-site compatibility (host_loop._advance_weapons)
+        and DELIBERATELY IGNORED. _advance_weapons runs once per RENDER frame with
+        a constant TICK_DT = 1/60 (host_loop.py:6054, :5525) — it is NOT inside the
+        fixed-timestep sim loop. Integrating dt there would make reload frame-rate
+        dependent: a Galaxy tube would reload in 20s on a 120Hz display. BC compares
+        against the game clock instead (combat-and-damage.md:812-815).
+
+        Power throttles the reload: a half-powered torpedo system reloads at half
+        rate (existing behaviour, preserved).
         """
-        self.Fire(target=None, offset=None)
-
-    def CalculateRoughDirection(self):
-        """SDK Preprocessors.py:456 — returns the tube's local forward
-        vector. Per-tube arcs are deferred to Slice D; until then, all
-        tubes share the parent ship's forward vector. Orphaned tubes
-        (no parent ship) return the model's +Y axis as a safe default."""
-        import App
-        return App.TGPoint3_GetModelForward()
-
-    def IsFiring(self) -> int:
-        return 1 if self._firing else 0
-
-    def UpdateReload(self, dt: float) -> None:
+        self._ensure_slots()
         if self._num_ready >= self._max_ready:
             return
         parent = self.GetParentSubsystem()
         factor = (parent.GetNormalPowerPercentage()
                   if parent is not None else 1.0)
-        if factor <= 0.0:
+        # isinstance FIRST: `factor <= 0.0` cannot see a _Stub. TGObject.
+        # __getattr__ hands back a truthy _Stub for a missing method, and
+        # _Stub.__le__ returns False — so the guard did not fire, execution
+        # reached the division, and `40.0 / _Stub` is 0.0 (__rtruediv__). A zero
+        # delay makes `now - slot >= delay` true for every slot, so the tube
+        # reloaded EVERY FRAME. The guard's intent ("no power => no reload")
+        # was inverted into infinite ammo, silently.
+        if not isinstance(factor, (int, float)) or factor <= 0.0:
             return
-        import time as _time
-        if _time.monotonic() - self._last_fire_time >= self._reload_delay / factor:
-            self._num_ready += 1
-            self._last_fire_time = _time.monotonic()
+        delay = self._reload_delay / factor
+        now = _game_time()
+        for slot in self._reload_timers:
+            if slot != _SLOT_LOADED and now - slot >= delay:
+                self.ReloadTorpedo()      # loads the OLDEST cooling slot
+                return                    # one round per tick, as BC does
+
+    def ReloadTorpedo(self) -> None:
+        """Load one round into the oldest cooling slot. BC FUN_0057D8A0
+        (combat-and-damage.md:786-793).
+
+        BC says "find slot with greatest timer". Its timers count UP while
+        cooling, so the greatest timer is the slot cooling LONGEST. We store
+        cooldown START stamps, so the equivalent is the SMALLEST stamp.
+
+        Guarded on ammo availability (combat-and-damage.md:788 "if no ammo
+        left: return") — a finite magazine at zero rounds must not keep
+        topping tubes up to full while the ammo panel reads empty.
+        Unlimited/undeclared ammo never gates (see _ammo_exhausted).
+
+        DIVERGENCE (deliberate, documented): BC decrements the magazine here
+        ("total_ammo_consumed++"). We already debit ammo at FIRE time, in
+        TorpedoSystem.StartFiring. Debiting again here would double-count —
+        this method only GATES on ammo, it never decrements it.
+        Aligning the debit point with BC is a follow-up; it touches TorpedoSystem.
+        """
+        self._ensure_slots()
+        if self._num_ready >= self._max_ready:
+            return
+        if self._ammo_exhausted():
+            return
+        oldest_i, oldest_t = -1, None
+        for i in range(len(self._reload_timers)):
+            t = self._reload_timers[i]
+            if t == _SLOT_LOADED:
+                continue
+            if oldest_t is None or t < oldest_t:
+                oldest_i, oldest_t = i, t
+        if oldest_i < 0:
+            return
+        self._reload_timers[oldest_i] = _SLOT_LOADED
+        self._num_ready += 1
+        self._broadcast_reload()
+
+    def _broadcast_reload(self) -> None:
+        """Post ET_TORPEDO_RELOAD: Destination = the TUBE, NO Source.
+
+        Both halves are MEASURED, from probe q12 against the original game
+        (tools/probes/results/q12_torpedo_events.txt, e035):
+
+            ET_TORPEDO_RELOAD | SRC None | DST TorpedoTube(name='Forward Torpedo 1' ready=1)
+
+        Destination is load-bearing: ConditionTorpsReady.py:140 registers with a
+        tube destination-filter, and :169 casts GetDestination() to a TorpedoTube.
+
+        We previously set Source to the parent TorpedoSystem and labelled it "a
+        CHOICE, not a finding". The probe says BC posts NO source. Corrected —
+        do not re-add one.
+        """
+        import App
+        from engine import dev_mode
+        try:
+            evt = App.TGEvent_Create()
+            evt.SetEventType(App.ET_TORPEDO_RELOAD)
+            evt.SetDestination(self)
+            App.g_kEventManager.AddEvent(evt)
+        except Exception as _e:
+            dev_mode.log_swallowed("ET_TORPEDO_RELOAD broadcast", _e)
+
+    def _broadcast_torpedo_fired(self, torp) -> None:
+        """Post ET_TORPEDO_FIRED: Source = the PROJECTILE, Destination = the TUBE.
+
+        Measured, from probe q12 against the original game
+        (tools/probes/results/q12_torpedo_events.txt, e001):
+
+            ET_TORPEDO_FIRED | SRC Torpedo(parent=13323 target=15013)
+                             | DST TorpedoTube(name='Forward Torpedo 1' ready=0)
+
+        ⚠️ THE DESTINATION IS DANGEROUS. Maelstrom/Episode7/Episode7.py:88-115
+        listens for this event and DESTROYS pEvent.GetDestination() outright
+        (MissionLib.SetConditionPercentage(pLauncher, 0)) on a 10% roll — the
+        E7M1 phased-plasma story beat, where the unstable experimental torpedoes
+        blow out the tube that fired them. Post this with the wrong destination
+        and the game destroys the WRONG subsystem. It must be the TUBE.
+
+        Posted UNCONDITIONALLY, for every torpedo: q12 captured `ammo=Photon` on
+        every ET_TORPEDO_FIRED, so the engine does not filter by ammo type. The
+        Phased-Plasma check lives in Episode7's HANDLER, not here.
+
+        Only torpedo tubes post this. _spawn_projectile is shared with pulse
+        cannons, hence the call site is here in TorpedoTube, not in that helper.
+        """
+        if torp is None:
+            return
+        import App
+        from engine import dev_mode
+        try:
+            evt = App.TGEvent_Create()
+            evt.SetEventType(App.ET_TORPEDO_FIRED)
+            evt.SetSource(torp)
+            evt.SetDestination(self)
+            App.g_kEventManager.AddEvent(evt)
+        except Exception as _e:
+            dev_mode.log_swallowed("ET_TORPEDO_FIRED broadcast", _e)
+
+    def UnloadTorpedo(self) -> None:
+        """Remove one ready round; its slot goes back into cooldown.
+
+        Mirrors BC's decompiled FUN_0057D9A0 (combat-and-damage.md:833-838),
+        which stock BC calls on an ammo-type switch. SDK-facing surface only:
+        our TorpedoSystem.SetAmmoType (weapon_subsystems.py — see its
+        docstring) SELECTS a slot and explicitly ignores its second arg; it
+        never calls UnloadTorpedo. As of this writing UnloadTorpedo has zero
+        callers anywhere in this engine, the tests, or the SDK — do not infer
+        that SetAmmoType wires it in."""
+        if self._num_ready <= 0:
+            return
+        self._num_ready -= 1
+        self._start_slot_cooldown(_game_time())
