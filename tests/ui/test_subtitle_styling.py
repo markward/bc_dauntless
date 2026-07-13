@@ -5,6 +5,7 @@ blue palette; these assertions stop it coming back, and pin the DOM contract
 between index.html and sdk_mirror.js.
 Spec: docs/superpowers/specs/2026-07-13-subtitle-episode-title-visual-language-design.md
 """
+import re
 from pathlib import Path
 
 import pytest
@@ -14,11 +15,17 @@ CSS = (UI / "css" / "sdk_mirror.css").read_text()
 JS = (UI / "js" / "sdk_mirror.js").read_text()
 HTML = (UI / "index.html").read_text()
 
+# Comments (including the header block) can legitimately mention a selector or
+# the words "transition"/"animation" in prose -- strip them before searching
+# so a rule lookup or a banned-word check never keys off a /* ... */ block.
+_CSS_NO_COMMENTS = re.sub(r"/\*.*?\*/", "", CSS, flags=re.DOTALL)
+
 
 def _rule(css: str, selector: str) -> str:
     """Return the declaration block for `selector` (raises if absent)."""
-    start = css.index(selector + " {") + len(selector) + 2
-    return css[start:css.index("}", start)]
+    stripped = re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)
+    start = stripped.index(selector + " {") + len(selector) + 2
+    return stripped[start:stripped.index("}", start)]
 
 
 def test_caption_box_uses_antonio_not_bare_sans_serif():
@@ -62,10 +69,13 @@ def test_episode_card_rules_exist(selector):
 
 
 def test_fades_are_not_css_transitions():
-    # Opacity is pushed per-frame from Python so fades freeze under pause.
-    # A CSS transition/animation here would run on wall-clock -- see the spec.
-    for banned in ("transition", "animation", "@keyframes"):
-        assert banned not in CSS
+    # Opacity is pushed per-frame from Python so fades freeze under pause. A CSS
+    # transition/animation here would run on wall-clock instead -- see the spec.
+    # Matched as declarations, not as prose: the header comment must stay free to
+    # explain WHY the rule exists.
+    assert not re.search(r"\btransition\s*:", _CSS_NO_COMMENTS)
+    assert not re.search(r"\banimation\s*:", _CSS_NO_COMMENTS)
+    assert "@keyframes" not in _CSS_NO_COMMENTS
 
 
 @pytest.mark.parametrize("dom_id", ["sdk-episode-title"])

@@ -5,9 +5,11 @@
    STStylizedWindow instances. SDK pixel coords are ignored; layout is
    dictated by these slot rules.
 
-   Fades are driven by a per-frame `opacity` in the payload, NOT by any
-   wall-clock CSS effect — that would keep moving while the sim is frozen
-   (pause / DevTools). See the spec.
+   Fades are driven by a per-frame `opacity` written into the payload from
+   Python, NOT by a CSS transition or animation: a CSS transition runs on
+   wall-clock and would keep animating while the sim is frozen (pause /
+   F12 DevTools) -- the letterbox pass shipped exactly that bug once. Do not
+   add `transition`/`animation` properties or `@keyframes` to this file.
    Spec: docs/superpowers/specs/2026-07-13-subtitle-episode-title-visual-language-design.md */
 
 #sdk-subtitle {
