@@ -120,7 +120,7 @@ class CrewMenuPanel(Panel):
             node = {"id": wid, "type": "repair-pane",
                     "label": "Damage Control", "enabled": True,
                     "visible": bool(widget.IsVisible()), **areas}
-            ui_attention.apply(node, wid)
+            ui_attention.apply(node, wid, widget)
             return node
         if isinstance(widget, SortedRegionMenu):
             node_type = "button"
@@ -143,7 +143,7 @@ class CrewMenuPanel(Panel):
         # Applies to every node type that gets an id — STMenu/submenu rows
         # (the E1M1 "Set Course" target is a submenu, not a leaf) AND
         # STButton leaves alike.
-        ui_attention.apply(node, wid)
+        ui_attention.apply(node, wid, widget)
         if isinstance(widget, STMenu) and not isinstance(widget, SortedRegionMenu):
             node["expanded"] = wid in self._expanded_ids
             node["openable"] = bool(widget.IsOpenable())

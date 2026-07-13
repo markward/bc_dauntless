@@ -125,10 +125,23 @@
 }
 .crew-repair-row.inert:hover { background: transparent; }
 
+/* BC's SetHighlighted (E1M1's SetUIObjectHighlighted script action lights the
+   button an officer just asked for — Brex's "Report", Miguel's "Scan Area").
+   BC redrew the widget in its highlighted colour, so this is a STEADY lit
+   state, not a pulse: outside the tutorial the same flag is plain list
+   selection (Multiplayer/MissionMenusShared.py:352), which must not throb.
+   Reads as a persistent version of the row's own hover tint. */
+.crew-menu__row--highlighted,
+.crew-repair-row.crew-menu__row--highlighted {
+  background: rgba(216, 94, 86, 0.34);
+  color: white;
+}
+
 /* Tutorial attention: BC drew an LCARS arrow beside the widget; we glow the row
    itself (identifier-centric — cannot mis-place). Persists until HidePointerArrows;
    deliberately NOT time-boxed. Shared by every id-bearing row: menu/submenu
-   (caret) rows, leaf buttons, and repair-pane rows/container alike. */
+   (caret) rows, leaf buttons, and repair-pane rows/container alike. Composes
+   with --highlighted above: a widget can carry both flags at once. */
 .crew-menu__row--attention {
   --attention-color: rgb(255, 208, 112);
   position: relative;

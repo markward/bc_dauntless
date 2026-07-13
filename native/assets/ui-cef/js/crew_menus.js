@@ -39,16 +39,30 @@ function renderCrewMenu(menu) {
   return panel;
 }
 
-// Tutorial attention (Task 2's ui_attention -> Task 3's snapshot flag):
-// glow the row itself rather than drawing a separate pointer arrow.
-// Applies to every id-bearing row on both render paths below — expandable
-// submenu (caret) rows equally with leaf rows and repair-pane rows, since
-// the E1M1 target ("Set Course") is itself a submenu row.
-function applyAttentionHighlight(el, node) {
-  if (!node || !node.highlighted) return;
-  el.classList.add("crew-menu__row--attention");
-  if (node.highlightColor) {
-    el.style.setProperty("--attention-color", node.highlightColor);
+// BC's two attention verbs, rendered distinctly. Applied to every id-bearing
+// row on both render paths below — expandable submenu (caret) rows equally
+// with leaf rows and repair-pane rows, since the E1M1 ShowPointerArrow target
+// ("Set Course") is itself a submenu row.
+//
+//   node.attention   <- MissionLib.ShowPointerArrow: BC drew an LCARS arrow
+//                       beside the widget; we pulse a ring around the row
+//                       instead (identifier-centric — cannot mis-place).
+//   node.highlighted <- TGUIObject.SetHighlighted, driven by E1M1's
+//                       SetUIObjectHighlighted script action: BC's own lit /
+//                       selected widget state. Steady, never pulsing — it is
+//                       also plain list selection outside the tutorial.
+//
+// Both can be set at once; the classes compose.
+function applyHighlightClasses(el, node) {
+  if (!node) return;
+  if (node.attention) {
+    el.classList.add("crew-menu__row--attention");
+    if (node.attentionColor) {
+      el.style.setProperty("--attention-color", node.attentionColor);
+    }
+  }
+  if (node.highlighted) {
+    el.classList.add("crew-menu__row--highlighted");
   }
 }
 
@@ -68,7 +82,7 @@ function appendCrewRows(body, nodes, depth) {
     row.className = "crew-menu__row" + (node.enabled ? "" : " disabled") +
                     (hasChildren ? "" : " crew-menu__row--leaf");
     row.setAttribute("data-depth", String(Math.min(depth, 2)));
-    applyAttentionHighlight(row, node);
+    applyHighlightClasses(row, node);
 
     if (hasChildren) {
       const caret = document.createElement("span");
@@ -104,7 +118,7 @@ function appendCrewRows(body, nodes, depth) {
 function renderRepairPane(node) {
   const pane = document.createElement("div");
   pane.className = "crew-repair-pane";
-  applyAttentionHighlight(pane, node);
+  applyHighlightClasses(pane, node);
   // kind drives the styling: the repair-team area reads loudest (active teal
   // marker + rule), damaged is muted-but-clickable, destroyed is inert. BC
   // repairs several systems in parallel (up to the ship's repair-team count),
@@ -135,7 +149,7 @@ function renderRepairPane(node) {
       const row = document.createElement("div");
       row.className = "crew-repair-row crew-repair-row--" + kind +
                       (clickable ? "" : " inert");
-      applyAttentionHighlight(row, r);
+      applyHighlightClasses(row, r);
       // Fixed-width marker slot on every row keeps labels aligned; only
       // actively-repaired rows light it.
       const mark = document.createElement("span");
