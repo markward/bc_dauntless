@@ -260,6 +260,25 @@ def _episode_name(pEp):
     return str(pEp)
 
 
+def scenario_tag():
+    """Short scenario id for result filenames: 'A' (QuickBattle), 'B' (a scripted
+    mission), 'menu', or 'unknown'. Keys off the set name -- NB QuickBattle also
+    has an episode, so episode-presence alone does NOT distinguish A from B."""
+    if current_player() is None:
+        return "menu"
+    pSet = _rendered_set()
+    sset = ""
+    if pSet is not None:
+        nm = _safe(pSet, "GetName", ())
+        if nm is not None:
+            sset = str(nm)
+    if string.find(sset, "QuickBattle") >= 0:
+        return "A"
+    if episode() is not None:
+        return "B"
+    return "unknown"
+
+
 def provenance():
     """Return (does NOT print) the self-identifying header lines for a live-state
     dump: scenario classification, set, game time/frame, and the ship roster.
