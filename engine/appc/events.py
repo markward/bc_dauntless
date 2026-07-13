@@ -1,6 +1,7 @@
 import sys
 import traceback
 from engine.core.ids import TGObject
+from engine.core import stub_telemetry
 
 # Event type IDs.  SDK uses int constants from App.py; here we pick a stable
 # value that won't collide with the SDK's ET_INPUT_FIRE_* range (those are
@@ -196,6 +197,44 @@ def _resolve_handler(qualified_name: str):
     return getattr(mod, func_name, None)
 
 
+# Undefined event-type names already warned about, so a per-frame registration
+# cannot spam the log.
+_warned_event_types: set[str] = set()
+
+
+def _validate_event_type(event_type, where: str) -> bool:
+    """False if `event_type` is not a usable dict key.
+
+    An ET_* constant absent from our App.py resolves through App's module
+    __getattr__ (App.py:1935) to a _NamedStub. We key handlers on the raw
+    object; _Stub.__hash__ is id(self) and __getattr__ does NOT memoize ET_*
+    names, so every access mints a FRESH key -- the handler becomes unreachable
+    forever. 89 stub ET_ names across ~270 SDK sites are dead this way.
+
+    We RECORD (surfacing it in docs/stub_heatmap.md) and warn once per name. We
+    do NOT refuse: Tactical/Interface/CinematicInterfaceHandlers.py:15 keeps a
+    module-level stub as a LIVE same-object dispatch key (registered :229, fired
+    :275 through that same global), so refusing would break it.
+
+    Test `not isinstance(x, int)` -- NOT isinstance(x, App._NamedStub). There are
+    two unrelated _Stub hierarchies (App._Stub and engine.core.ids._Stub) and a
+    class check would miss one.
+    """
+    if isinstance(event_type, int):
+        return True
+    name = str(getattr(event_type, "_name", None) or repr(event_type))
+    stub_telemetry.record_attr("EventType", name)
+    if name not in _warned_event_types:
+        _warned_event_types.add(name)
+        print(
+            "WARNING: %s registered on undefined event type %s -- this handler "
+            "can never fire. Define it in engine/appc/events.py."
+            % (where, name),
+            file=sys.stderr,
+        )
+    return False
+
+
 class TGEventHandlerObject(TGObject):
     def __init__(self):
         super().__init__()
@@ -207,6 +246,7 @@ class TGEventHandlerObject(TGObject):
         self._dispatch_stack: list = []
 
     def AddPythonFuncHandlerForInstance(self, event_type: int, qualified_name: str) -> None:
+        _validate_event_type(event_type, "AddPythonFuncHandlerForInstance(%s)" % qualified_name)
         self._handlers.setdefault(event_type, []).append(qualified_name)
 
     def RemoveHandlerForInstance(self, event_type: int, qualified_name: str) -> None:
@@ -296,6 +336,7 @@ class TGPythonInstanceWrapper(TGEventHandlerObject):
         """Register a self-targeted method handler. Used by SDK conditions
         that listen for events sent directly to the wrapper (e.g. timer
         events) rather than broadcast across the bus."""
+        _validate_event_type(event_type, "AddPythonMethodHandlerForInstance(%s)" % method_name)
         self._method_handlers.setdefault(event_type, []).append(method_name)
 
     def ProcessEvent(self, event):
@@ -326,6 +367,7 @@ class TGEventManager(TGObject):
     def AddBroadcastPythonFuncHandler(
         self, event_type: int, dest: "TGEventHandlerObject", qualified_name: str, *extra
     ) -> None:
+        _validate_event_type(event_type, "AddBroadcastPythonFuncHandler(%s)" % qualified_name)
         self._broadcast_handlers.setdefault(event_type, []).append((dest, qualified_name))
 
     def AddBroadcastPythonMethodHandler(
@@ -337,6 +379,7 @@ class TGEventManager(TGObject):
         instead of a module-qualified function. `target` (if given) restricts
         dispatch to events whose destination matches `target` by identity;
         None matches all events of `event_type`."""
+        _validate_event_type(event_type, "AddBroadcastPythonMethodHandler(%s)" % method_name)
         self._method_handlers.setdefault(event_type, []).append(
             (wrapper, method_name, target)
         )
@@ -351,17 +394,21 @@ class TGEventManager(TGObject):
         and `(eType, wrapper, method_name[, target])` (method handler, new).
         Falls through to the func-handler list first; if not found there,
         tries the method-handler list."""
-        # Func handlers: (dest, qualified_name) tuples.
+        # Func handlers: (dest, qualified_name).  Identity-compare the object.
+        # `entry in list` / list.remove() compare with ==, and _Stub.__eq__ is
+        # TYPE-based -- any all-stub tuple equals any other, so == would delete
+        # the WRONG handler. Only the first element needs to be a stub.
         func_handlers = self._broadcast_handlers.get(event_type, [])
-        entry = (dest_or_wrapper, qualified_name_or_method)
-        if entry in func_handlers:
-            func_handlers.remove(entry)
-            return
-        # Method handlers: (wrapper, method_name, target) tuples.
+        for i, (d, q) in enumerate(func_handlers):
+            if d is dest_or_wrapper and q == qualified_name_or_method:
+                del func_handlers[i]
+                return
+        # Method handlers: (wrapper, method_name, target).
         method_handlers = self._method_handlers.get(event_type, [])
-        entry_m = (dest_or_wrapper, qualified_name_or_method, target)
-        if entry_m in method_handlers:
-            method_handlers.remove(entry_m)
+        for i, (w, m, t) in enumerate(method_handlers):
+            if w is dest_or_wrapper and m == qualified_name_or_method and t is target:
+                del method_handlers[i]
+                return
 
     RemoveBroadcastHandlerForInstance = RemoveBroadcastHandler
 
