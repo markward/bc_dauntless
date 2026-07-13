@@ -108,6 +108,31 @@ Re-export the `_record` / `_section` / `_flush` / `_exc_name` helpers from
 the q13-style chunked flush (with the `total_dump_lines` truncation invariant) —
 q15's tally is small but q16/q17's graph dumps can be large.
 
+### Console output discipline — the q13 friction lesson (MANDATORY)
+
+q13 taught us that **printing to the in-game console is the dominant cost**:
+`print` is a synchronous write to the `-TestMode` console, and the `_template.py`
+helpers `print` **every buffered line** (`_record` does `_log.append(line)` *and*
+`print line`). A ~2000-line dump therefore did ~2000 console writes and took **~30
+minutes**; removing the per-line prints cut it to **~10 seconds**. Every q14–q17
+probe emits many lines through these helpers, so this is a cross-cutting hazard,
+not a q13 quirk.
+
+The harness fixes it **once, for all four probes**, by decoupling buffering from
+echoing:
+
+- `_record` / `_emit` / `_section` append to `_log` **only — no `print`.** This is
+  the change from `_template.py`. The result file is unaffected (it is built from
+  `_log`); only the console spam goes away.
+- A separate `_echo(msg)` is the *only* thing that prints, reserved for a **handful
+  of status lines**: armed/owner confirmation, `wrote <file> with N lines`,
+  `save FAILED`, `done`, and `FATAL`. Never call `_echo` inside a data loop.
+- Optional `_VERBOSE = 0` knob: when set to `1`, `_record` also echoes, for
+  interactive debugging of a *small* run only. Ships as `0`.
+
+**Rule for q15/q16/q17:** nothing that runs per-object, per-subsystem, per-event, or
+per-constant may `print`. Emit into `_log`; print a one-line summary at the end.
+
 > **push.py note:** the operator must push `probe_harness.py` into `game/` too.
 > Either extend `push.py` to always copy `probe_harness.py` alongside any `q1[4-7]`
 > probe, or document `uv run python tools/probes/push.py probe_harness` as an

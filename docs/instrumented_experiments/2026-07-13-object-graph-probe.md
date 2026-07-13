@@ -66,6 +66,13 @@ harness flush (chunked-capable — a full E1M1 set can be large).
 
 Structure:
 
+0. **Console discipline (q13 lesson).** This probe emits the most lines of the four
+   — every object plus every subsystem of every ship, easily hundreds to low
+   thousands. It relies entirely on the q14 harness's **buffer-only** helpers: the
+   per-object and per-subsystem loops call `_record`/`_emit` (which append to `_log`
+   without printing) and **never** `print`. Only a final one-line summary echoes.
+   Printing each line here would reproduce q13's ~30-minute stall.
+
 1. **provenance()** header (scenario, set, roster, game_time).
 2. **Set enumeration.** `GetAllSets()` for Q16-4; then walk the rendered set with
    the q11 `GetFirstObject`/`GetNextObject` loop, bounded (`_MAX_OBJECTS`, e.g.

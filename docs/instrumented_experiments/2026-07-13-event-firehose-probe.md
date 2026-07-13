@@ -73,6 +73,18 @@ Per event type, a small record:
 Total memory is O(number of *distinct* event types that fire) ≈ tens, not the raw
 event count — safe for an entire E1M1 run.
 
+**`OnEvent` must be print-free and record-free.** It fires on *every* event, every
+frame — a firehose. It may touch **only in-memory dicts** (the per-type tallies);
+it must never call `print`, `_record`, `_emit`, or `_section` (all of which the
+q14 harness keeps buffer-only anyway, but `OnEvent` should not even buffer per
+event). The `_describe()` cast-ladder call is bounded to the *first* firing of each
+type, so it runs tens of times total, not per event. This is the q13 console-cost
+lesson applied to the hottest possible loop: a single stray `print` in `OnEvent`
+would reproduce — and dwarf — q13's 30-minute stall. `Focus` mode's raw log
+buffers into a capped list; it does **not** print either. Only `Install()` and
+`Dump()` echo, and only their handful of status/summary lines (via the harness
+`_echo`).
+
 ## Specific questions
 
 - **Q15-1** — Which `ET_*` types fire at all in Scenario A (Galaxy v Galaxy QB)?

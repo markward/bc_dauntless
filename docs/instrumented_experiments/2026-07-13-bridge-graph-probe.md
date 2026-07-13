@@ -97,7 +97,10 @@ Structure:
 
 Python-1.5 constraints as always (`console-probe-workflow.md`): guard every
 accessor with bare `except`, no f-strings, `print` is a statement, `SaveConfigFile`
-is the only write path.
+is the only write path. **Console discipline (q13 lesson):** the object/officer/dir
+loops use the q14 harness's **buffer-only** helpers and never `print` per line —
+only a final summary echoes. q17's volume is smaller than q16's, but the rule is
+the same.
 
 ## How to run
 
