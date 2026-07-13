@@ -131,6 +131,11 @@ class STMenu(ObjectClass):
         self._openable = True
         self._visible = True
         self._focus = False
+        # BC puts SetHighlighted on the TGUIObject base (sdk App.py:1293), so
+        # submenu rows are highlightable too, not just leaf buttons. Without
+        # this, TGObject.__getattr__ answered SetHighlighted() with a silent
+        # _Stub and a submenu target could never light up.
+        self._highlighted = False
         self._event = None
 
     def GetLabel(self) -> str:                    return self._label
@@ -211,6 +216,8 @@ class STMenu(ObjectClass):
         # GetTacticalMenu before toggling the manual-aim button).
         return self.IsVisible()
     def SetFocus(self, *args) -> None:            self._focus = True
+    def SetHighlighted(self, *args) -> None:      self._highlighted = True
+    def SetNotHighlighted(self, *args) -> None:   self._highlighted = False
     def IsTypeOf(self, type_id) -> int:           return 0
     def Close(self, *args) -> None:               pass
     # CallNextHandler is inherited from TGEventHandlerObject, which advances
