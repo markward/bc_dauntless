@@ -459,3 +459,24 @@ Conclusions:
 - **`menu` is the canonical dump** — it is the real engine surface without the
   `iNumFires` script-noise. Use `results/q13_constants_menu.txt` for the shim fix
   pass. (Any future static-surface probe can dump in a single state.)
+
+### Q13-5 (stretch) — method surface (`results/q13b_method_surface.txt`)
+
+Captured 2026-07-13 with the print-light probe (**~10 s**, vs 30+ min before the
+print fix). 630 classes, **36,538 method rows** (≈½ unique after SWIG `*Ptr`
+twins), 1.6 MB cfg, no truncation. Biggest class: `ShipClass` (202 methods).
+
+**Headline: the top two stub-heatmap methods are a category error in OUR code,
+not missing engine surface.** `TorpedoTube.UpdateCharge` (heatmap #1, 4.9M hits)
+and `TorpedoTube.GetMaxCharge` (#2, 1.4M) are **absent from `TorpedoTube`** in the
+engine dump. They *do* exist — but only on **energy weapons** (`EnergyWeapon`,
+`PhaserBank`, `PulseWeapon`, `TractorBeamProjector`), which charge. A torpedo tube
+has no charge concept; its surface is `ReloadTorpedo` / `GetReloadDelay` /
+`GetNumReady` / `IncNumReady` (discrete rounds). Our `host_loop.py:488`
+(`emitter.UpdateCharge(dt)`) and `ships.py:1108` (`prop.GetMaxCharge()`) call
+charge methods on tubes without filtering by weapon type, so they hit `_Stub`
+millions of times. **Fix the caller (guard by weapon type); do NOT implement
+`TorpedoTube.UpdateCharge`** — BC never had it, and adding it would mask the bug.
+
+This validates the method-coverage diff as strongly as the constant diff: it
+surfaces bugs in our own call sites, not just gaps in the shim.
