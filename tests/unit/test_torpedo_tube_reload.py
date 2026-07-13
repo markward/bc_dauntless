@@ -93,13 +93,22 @@ def test_reload_completes_after_reload_delay_of_game_time(clock):
 def test_pause_does_not_advance_reload(clock):
     """The bug this replaces: with time.monotonic(), pausing for 40s of WALL
     time instantly reloaded every tube.  Game time does not advance while
-    paused, so a frozen clock must make no progress."""
+    paused, so a frozen clock must make no progress.
+
+    Frame count: a dt-INTEGRATING implementation (self._accum += dt) would
+    reload once total accumulated dt reaches ReloadDelay/dt = 40s / (1/60s)
+    = 2400 frames.  100 frames (1.67s of dt) never exceeds that threshold
+    either way, so it can't tell a game-clock implementation apart from a
+    dt-integrating one -- both pass.  3000 frames (>2400, with margin) is
+    the minimum that actually discriminates: a dt-integrating tube WOULD
+    have reloaded by then, while a game-clock tube (frozen clock) must not.
+    """
     tube = _tube(reload_delay=40.0)
     clock(100.0)
     tube.Fire()
 
-    for _ in range(100):                     # 100 frames, clock frozen (paused)
-        tube.UpdateReload(1.0 / 60.0)
+    for _ in range(3000):                    # >40s worth of dt at 1/60s/frame
+        tube.UpdateReload(1.0 / 60.0)        # clock frozen throughout (paused)
     assert tube.GetNumReady() == 0
 
 
@@ -132,3 +141,61 @@ def test_reload_never_exceeds_max_ready(clock):
     for _ in range(5):
         tube.UpdateReload(0.0)
     assert tube.GetNumReady() == 1
+
+
+def test_reloads_correctly_when_max_ready_set_without_resize_slots(clock):
+    """_max_ready set directly, with NO _resize_slots() call -- exactly the
+    pattern six existing test fixtures use (test_torpedo_tube_fire.py,
+    test_torpedo_tube_power_gate.py, test_torpedo_spread_volley.py,
+    test_weapon_config.py, test_weapon_tactical_commands.py,
+    test_torpedo_ammo_selection.py).  Before the self-heal fix, Fire()
+    would decrement _num_ready but stamp NO slot (the empty _reload_timers
+    loop is a no-op), so UpdateReload found nothing cooling and the tube
+    never reloaded again -- a silent, permanent brick with no exception.
+    """
+    system = TorpedoSystem("Torpedoes")
+    system.TurnOn()
+    tube = TorpedoTube("Forward Torpedo 1")
+    tube._reload_delay = 40.0
+    tube._immediate_delay = 0.25
+    tube._max_ready = 1
+    tube._num_ready = 1
+    # Deliberately NOT calling tube._resize_slots() -- _reload_timers stays [].
+    system.AddChildSubsystem(tube)
+
+    clock(100.0)
+    tube.Fire()
+    assert tube.GetNumReady() == 0
+
+    clock(140.0)                             # 40s of game time elapsed
+    tube.UpdateReload(0.0)
+    assert tube.GetNumReady() == 1           # self-healed and reloaded
+
+
+def test_set_num_ready_zero_keeps_tube_reloadable(clock):
+    """SetNumReady/IncNumReady/DecNumReady are real SDK surface (App.py:
+    6018-6020) a mission can call directly, bypassing Fire().  Before the
+    slot-sync fix, SetNumReady(0) left every slot LOADED (Fire never ran to
+    put one into cooldown), so UpdateReload found nothing cooling and the
+    tube never refilled -- a silent, permanent brick."""
+    tube = _tube(max_ready=1, reload_delay=40.0)
+    clock(100.0)
+    tube.SetNumReady(0)
+    assert tube.GetNumReady() == 0
+
+    clock(140.0)                             # 40s of game time elapsed
+    tube.UpdateReload(0.0)
+    assert tube.GetNumReady() == 1           # slot was put into cooldown, now reloaded
+
+
+def test_dec_num_ready_keeps_tube_reloadable(clock):
+    """Same guarantee via DecNumReady on a MaxReady=2 tube: only the
+    decremented slot should start cooling, the other stays loaded."""
+    tube = _tube(max_ready=2, reload_delay=40.0)
+    clock(100.0)
+    tube.DecNumReady()
+    assert tube.GetNumReady() == 1
+
+    clock(140.0)
+    tube.UpdateReload(0.0)
+    assert tube.GetNumReady() == 2           # the decremented slot reloaded

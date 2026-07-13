@@ -47,9 +47,12 @@ def _game_time() -> float:
 
     NEVER time.monotonic(): wall time advances while the sim is frozen, which
     made every tube instantly reload on unpause.  Deferred import is the
-    established idiom in this module (see _spawn_torpedo)."""
-    import App
+    established idiom in this module (see _spawn_torpedo).
+
+    The import lives INSIDE the try: an ImportError here must fall through to
+    the same 0.0 sentinel as any other clock failure, not escape uncaught."""
     try:
+        import App
         return float(App.g_kUtopiaModule.GetGameTime())
     except Exception:
         return 0.0
@@ -1764,30 +1767,105 @@ class TorpedoTube(Weapon):
         Called by ships.py after the hardpoint property is copied in."""
         self._reload_timers = [_SLOT_LOADED] * max(0, int(self._max_ready))
 
+    def _ensure_slots(self) -> None:
+        """Self-heal: rebuild _reload_timers if it has desynced from
+        _max_ready. Production always calls _resize_slots() from
+        ships.py:_copy_torpedo_tube_fields, but _max_ready is real SDK/test
+        surface that can be set directly (six unit-test fixtures do exactly
+        that) — without this, a tube that fires would stamp NO slot and
+        UpdateReload would find nothing cooling, bricking the tube forever
+        with no exception raised.  Called at the top of every method that
+        reads or writes _reload_timers."""
+        if len(self._reload_timers) != self._max_ready:
+            self._resize_slots()
+
     def _start_slot_cooldown(self, now: float) -> None:
         """Put one loaded slot into cooldown, stamped at `now`."""
+        self._ensure_slots()
         for i in range(len(self._reload_timers)):
             if self._reload_timers[i] == _SLOT_LOADED:
                 self._reload_timers[i] = now
                 return
 
+    def _sync_slots_to_num_ready(self) -> None:
+        """Keep _reload_timers consistent after a direct _num_ready mutation.
+
+        SetNumReady/IncNumReady/DecNumReady are real SDK surface (App.py:
+        6018-6020) — a mission can call them directly, bypassing Fire/
+        ReloadTorpedo.  Without this, the slot array and _num_ready silently
+        disagree: e.g. SetNumReady(0) left every slot LOADED, so UpdateReload
+        found nothing cooling and the tube never refilled.
+
+        Demotes/promotes the minimum number of slots needed to make exactly
+        `_num_ready` (clamped to the slot count) read LOADED: demoted slots
+        start cooling from now; promotion prefers the slot that has been
+        cooling longest (smallest stamp), matching ReloadTorpedo's own
+        "oldest cooling slot wins" rule."""
+        self._ensure_slots()
+        target = max(0, min(int(self._num_ready), len(self._reload_timers)))
+        loaded_idx = [i for i, t in enumerate(self._reload_timers) if t == _SLOT_LOADED]
+        cooling_idx = [i for i, t in enumerate(self._reload_timers) if t != _SLOT_LOADED]
+        if len(loaded_idx) > target:
+            now = _game_time()
+            for i in loaded_idx[target:]:
+                self._reload_timers[i] = now
+        elif len(loaded_idx) < target:
+            cooling_idx.sort(key=lambda i: self._reload_timers[i])
+            need = target - len(loaded_idx)
+            for i in cooling_idx[:need]:
+                self._reload_timers[i] = _SLOT_LOADED
+
     def GetNumReady(self) -> int:                   return self._num_ready
-    def SetNumReady(self, v) -> None:               self._num_ready = int(v)
-    def IncNumReady(self) -> None:                  self._num_ready += 1
-    def DecNumReady(self) -> None:                  self._num_ready -= 1
+
+    def SetNumReady(self, v) -> None:
+        self._num_ready = int(v)
+        self._sync_slots_to_num_ready()
+
+    def IncNumReady(self) -> None:
+        self._num_ready += 1
+        self._sync_slots_to_num_ready()
+
+    def DecNumReady(self) -> None:
+        self._num_ready -= 1
+        self._sync_slots_to_num_ready()
+
     def GetLastFireTime(self) -> float:             return self._last_fire_time
     def SetLastFireTime(self, v) -> None:           self._last_fire_time = float(v)
     def GetImmediateDelay(self) -> float:           return self._immediate_delay
     def GetReloadDelay(self) -> float:              return self._reload_delay
     def GetMaxReady(self) -> int:                   return self._max_ready
 
+    def _parent_ammo(self):
+        """The parent TorpedoSystem's currently-selected ammo type, or None
+        if there is no parent or no ammo type is configured.
+        GetParentSubsystem() is always the TorpedoSystem this tube was
+        AddChildSubsystem'd under."""
+        parent = self.GetParentSubsystem()
+        if parent is None:
+            return None
+        return parent.GetCurrentAmmoType()
+
+    def _ammo_exhausted(self) -> bool:
+        """True when the parent's selected ammo type is a FINITE magazine
+        with zero rounds left (combat-and-damage.md:788 ReloadTorpedo,
+        :823 CanFire — both require "Ammo available").  Unlimited/undeclared
+        ammo (or no ammo configured at all) NEVER gates — mirrors the
+        existing TorpedoSystem.StartFiring reserve-gate pattern so the
+        legacy/undeclared firing path stays byte-identical."""
+        ammo = self._parent_ammo()
+        finite = ammo is not None and not getattr(ammo, "_unlimited", True)
+        return finite and ammo.GetAvailable() <= 0
+
     def CanFire(self) -> int:
         """BC torpedo CanFire (combat-and-damage.md:822-826):
-        powered AND num_ready > 0 AND the ImmediateDelay refire gate has expired.
+        powered AND num_ready > 0 AND the ImmediateDelay refire gate has
+        expired AND ammo is available.
 
         ImmediateDelay is a REFIRE GATE, not a fire->launch latency: it prevents
         rapid double-fires. Hardpoint values run 0.25s (galaxy) to 5.0s.
-        The ammo reserve gate lives on the parent TorpedoSystem.StartFiring.
+        The volley-level ammo reserve gate also lives on the parent
+        TorpedoSystem.StartFiring; this per-tube check additionally covers
+        direct CanFire() callers that bypass StartFiring.
         """
         parent = self.GetParentSubsystem()
         if parent is None or not parent.IsOn():
@@ -1795,6 +1873,8 @@ class TorpedoTube(Weapon):
         if self._num_ready <= 0:
             return 0
         if _game_time() - self._last_fire_time < self._immediate_delay:
+            return 0
+        if self._ammo_exhausted():
             return 0
         return 1
 
@@ -1872,6 +1952,7 @@ class TorpedoTube(Weapon):
         Power throttles the reload: a half-powered torpedo system reloads at half
         rate (existing behaviour, preserved).
         """
+        self._ensure_slots()
         if self._num_ready >= self._max_ready:
             return
         parent = self.GetParentSubsystem()
@@ -1894,12 +1975,21 @@ class TorpedoTube(Weapon):
         cooling, so the greatest timer is the slot cooling LONGEST. We store
         cooldown START stamps, so the equivalent is the SMALLEST stamp.
 
+        Guarded on ammo availability (combat-and-damage.md:788 "if no ammo
+        left: return") — a finite magazine at zero rounds must not keep
+        topping tubes up to full while the ammo panel reads empty.
+        Unlimited/undeclared ammo never gates (see _ammo_exhausted).
+
         DIVERGENCE (deliberate, documented): BC decrements the magazine here
         ("total_ammo_consumed++"). We already debit ammo at FIRE time, in
-        TorpedoSystem.StartFiring. Debiting again here would double-count.
+        TorpedoSystem.StartFiring. Debiting again here would double-count —
+        this method only GATES on ammo, it never decrements it.
         Aligning the debit point with BC is a follow-up; it touches TorpedoSystem.
         """
+        self._ensure_slots()
         if self._num_ready >= self._max_ready:
+            return
+        if self._ammo_exhausted():
             return
         oldest_i, oldest_t = -1, None
         for i in range(len(self._reload_timers)):
