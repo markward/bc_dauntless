@@ -1,31 +1,75 @@
 /* SDK UI mirror slots — receives JSON payloads from SDKMirrorPanel.
-   #sdk-subtitle is a centred bottom-anchored strip for SubtitleWindow text.
+   #sdk-subtitle is the caption box: crew speech (speaker + line) and transient
+   mission banners. #sdk-episode-title is the two-tier episode card.
    #sdk-stylized-stack is a centred column of dauntless modals for
    STStylizedWindow instances. SDK pixel coords are ignored; layout is
    dictated by these slot rules.
-   Spec: docs/superpowers/specs/2026-06-03-cef-sdk-ui-mirror-design.md */
+
+   Fades are driven by a per-frame `opacity` in the payload, NOT by any
+   wall-clock CSS effect — that would keep moving while the sim is frozen
+   (pause / DevTools). See the spec.
+   Spec: docs/superpowers/specs/2026-07-13-subtitle-episode-title-visual-language-design.md */
 
 #sdk-subtitle {
   position: absolute;
   left: 50%;
-  bottom: 12vh;
+  bottom: 14vh;                             /* clears the 6.25vh max letterbox bar */
   transform: translateX(-50%);
-  max-width: 60vw;
-  padding: 12px 20px;
-  background: rgba(20, 40, 80, 0.85);
-  border: 1px solid #3a6bb8;
-  border-radius: 4px;
-  color: #e8f0ff;
-  font-family: sans-serif;
-  font-size: 14px;
-  text-align: center;
+  max-width: 52vw;
+  padding: 10px 20px 12px 16px;
+  text-align: left;
+
+  background: rgba(10, 10, 16, 0.85);       /* --bc-body-bg */
+  border-left: 4px solid rgb(216, 94, 86);  /* --bc-menu1-base */
+  border-top-right-radius: 14px;            /* the bc-panel tell — no other radius */
+
+  font-family: "Antonio", sans-serif;
+  font-size: 17px;
+  line-height: 1.25;
+  color: rgb(235, 225, 255);                /* --bc-label-text */
+  text-shadow: 0 0 3px #000;
   z-index: 50;
   pointer-events: none;
 }
 
 .sdk-subtitle__speaker {
-  font-weight: 700;
-  color: #9cc4ff;
+  display: block;                           /* own line, no colon */
+  color: #d88450;                           /* chrome orange, per reticle names */
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  margin-bottom: 3px;
+}
+
+.sdk-subtitle__line {
+  display: inline-block;
+}
+
+#sdk-episode-title {
+  position: absolute;
+  left: 5vw;
+  bottom: 16vh;
+  font-family: "Antonio", sans-serif;
+  text-align: left;
+  z-index: 50;
+  pointer-events: none;
+}
+
+.sdk-episode__eyebrow {
+  font-size: 20px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: rgb(147, 103, 255);                /* house purple */
+  margin-bottom: 6px;
+}
+
+.sdk-episode__title {
+  font-size: clamp(40px, 5.4vw, 72px);
+  line-height: 1.0;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #fff;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.75);
 }
 
 #sdk-stylized-stack {

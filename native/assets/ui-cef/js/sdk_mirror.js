@@ -4,7 +4,9 @@
 
 function setSdkMirror(payload) {
   const entries = (payload && payload.entries) || [];
-  renderSubtitle(entries.find(e => e.type === "subtitle"));
+  const subtitle = entries.find(e => e.type === "subtitle");
+  renderSubtitle(subtitle);
+  renderEpisodeTitle(subtitle);
   renderStylizedStack(entries.filter(e => e.type === "stylized"));
 }
 
@@ -19,15 +21,36 @@ function renderSubtitle(entry) {
     return;
   }
   el.hidden = false;
-  const parts = lines.map(escapeHtml);
+  // Banner lines carry their own fade opacity (computed in Python, so it
+  // freezes under pause); crew captions pop on and off at full opacity.
+  const parts = lines.map(line =>
+    '<span class="sdk-subtitle__line" style="opacity:' +
+    Number(line.opacity).toFixed(3) + '">' + escapeHtml(line.text) + "</span>"
+  );
   if (hasSpeech) {
     const speaker = entry.speaker
       ? '<span class="sdk-subtitle__speaker">' +
-        escapeHtml(entry.speaker) + ":</span> "
+        escapeHtml(entry.speaker) + "</span>"
       : "";
     parts.push(speaker + escapeHtml(entry.speech));
   }
   el.innerHTML = parts.join("<br>");
+}
+
+function renderEpisodeTitle(entry) {
+  const el = document.getElementById("sdk-episode-title");
+  if (!el) return;
+  if (!entry || !entry.visible || !entry.title_text) {
+    el.hidden = true;
+    return;
+  }
+  el.hidden = false;
+  el.querySelector(".sdk-episode__eyebrow").textContent =
+    entry.title_eyebrow || "";
+  el.querySelector(".sdk-episode__title").textContent = entry.title_text;
+  el.style.opacity = Number(
+    entry.title_opacity === undefined ? 1 : entry.title_opacity
+  ).toFixed(3);
 }
 
 function renderStylizedStack(entries) {
