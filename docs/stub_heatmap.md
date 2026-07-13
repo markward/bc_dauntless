@@ -28,15 +28,15 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 |---|---|---|---|---|---|---|
 | 1 | TorpedoTube | UpdateCharge | 4988686 | 11/11 | 2026-07-12 13:20 UTC | 2026-07-13 |
 | 2 | TorpedoTube | GetMaxCharge | 1394148 | 7/11 | 2026-07-12 12:57 UTC | 2026-07-13 |
-| 3 | CharacterAction | _clip | 57942 | 9/11 | 2026-07-12 13:20 UTC |  |
-| 4 | Waypoint | IsDying | 23372 | 4/11 | 2026-07-12 13:20 UTC |  |
+| 3 | CharacterAction | _clip | 57942 | 9/11 | 2026-07-12 13:20 UTC | 2026-07-13 |
+| 4 | Waypoint | IsDying | 23372 | 4/11 | 2026-07-12 13:20 UTC | 2026-07-13 |
 | 5 | WeaponHitEvent | GetWeaponType | 16023 | 5/11 | 2026-07-12 12:57 UTC |  |
 | 6 | WeaponHitEvent | TRACTOR_BEAM | 16023 | 5/11 | 2026-07-12 12:57 UTC |  |
 | 7 | Planet | GetVelocity | 4924 | 1/11 | 2026-07-10 21:53 UTC |  |
 | 8 | Planet | GetVelocity.x | 4924 | 1/11 | 2026-07-10 21:53 UTC |  |
 | 9 | Planet | GetVelocity.y | 4924 | 1/11 | 2026-07-10 21:53 UTC |  |
 | 10 | Planet | GetVelocity.z | 4924 | 1/11 | 2026-07-10 21:53 UTC |  |
-| 11 | Planet | IsDying | 3578 | 1/11 | 2026-07-10 21:53 UTC |  |
+| 11 | Planet | IsDying | 3578 | 1/11 | 2026-07-10 21:53 UTC | 2026-07-13 |
 | 12 | ImpulseEngineSubsystem | GetCurMaxSpeed | 3491 | 4/11 | 2026-07-12 12:57 UTC |  |
 | 13 | TorpedoSystem | ShouldBeAimed | 3491 | 4/11 | 2026-07-12 12:57 UTC |  |
 | 14 | PhaserSystem | ShouldBeAimed | 2700 | 4/11 | 2026-07-12 12:57 UTC |  |
@@ -76,14 +76,14 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 48 | TGPane | GetScreenOffset | 39 | 3/11 | 2026-07-12 13:20 UTC |  |
 | 49 | STCharacterMenu | GetNthChild | 36 | 8/11 | 2026-07-12 13:20 UTC |  |
 | 50 | STCharacterMenu | GetNthChild.IsEnabled | 36 | 8/11 | 2026-07-12 13:20 UTC |  |
-| 51 | ShipClass | _drift_velocity | 33 | 9/11 | 2026-07-12 13:20 UTC |  |
-| 52 | ShipClass | _drift_velocity.Length | 33 | 9/11 | 2026-07-12 13:20 UTC |  |
+| 51 | ShipClass | _drift_velocity | 33 | 9/11 | 2026-07-12 13:20 UTC | 2026-07-13 |
+| 52 | ShipClass | _drift_velocity.Length | 33 | 9/11 | 2026-07-12 13:20 UTC | 2026-07-13 |
 | 53 | LightPlacement | GetPhaserSystem.GetNumChildSubsystems | 32 | 2/11 | 2026-07-10 22:08 UTC |  |
 | 54 | LightPlacement | GetPulseWeaponSystem.GetNumChildSubsystems | 32 | 2/11 | 2026-07-10 22:08 UTC |  |
 | 55 | LightPlacement | GetTorpedoSystem.GetNumChildSubsystems | 32 | 2/11 | 2026-07-10 22:08 UTC |  |
 | 56 | LightPlacement | GetTractorBeamSystem.GetNumChildSubsystems | 32 | 2/11 | 2026-07-10 22:08 UTC |  |
 | 57 | EngPowerCtrl | GetRight | 30 | 10/11 | 2026-07-12 13:20 UTC |  |
-| 58 | TGAnimAction | _action_type | 30 | 4/11 | 2026-07-12 13:20 UTC |  |
+| 58 | TGAnimAction | _action_type | 30 | 4/11 | 2026-07-12 13:20 UTC | 2026-07-13 |
 | 59 | TGFrame | GetBottom | 30 | 10/11 | 2026-07-12 13:20 UTC |  |
 | 60 | TGParagraph | GetBottom | 30 | 10/11 | 2026-07-12 13:20 UTC |  |
 | 61 | TorpedoSystem | GetObjType | 30 | 4/11 | 2026-07-12 12:57 UTC |  |
@@ -113,8 +113,8 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 85 | STTargetMenu | ForceUpdate | 14 | 7/11 | 2026-07-12 13:20 UTC |  |
 | 86 | STTopLevelMenu | Resize | 14 | 7/11 | 2026-07-12 13:20 UTC |  |
 | 87 | STTopLevelMenu | ResizeToContents | 14 | 7/11 | 2026-07-12 13:20 UTC |  |
-| 88 | CharacterAction | _anim_node | 13 | 4/11 | 2026-07-12 13:20 UTC |  |
-| 89 | CharacterAction | _anim_node.kind | 13 | 4/11 | 2026-07-12 13:20 UTC |  |
+| 88 | CharacterAction | _anim_node | 13 | 4/11 | 2026-07-12 13:20 UTC | 2026-07-13 |
+| 89 | CharacterAction | _anim_node.kind | 13 | 4/11 | 2026-07-12 13:20 UTC | 2026-07-13 |
 | 90 | _STStylizedWindow | ScrollToTop | 13 | 3/11 | 2026-07-12 12:57 UTC |  |
 | 91 | STCharacterMenu | GetFirstChild.SetEnabled | 12 | 4/11 | 2026-07-12 13:20 UTC |  |
 | 92 | Game | AddPersistentModule | 11 | 11/11 | 2026-07-12 13:20 UTC |  |
@@ -135,7 +135,7 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 107 | STButton | GetName | 6 | 4/11 | 2026-07-12 13:20 UTC |  |
 | 108 | ShipClass | SetLifeTime | 6 | 1/11 | 2026-07-10 21:53 UTC |  |
 | 109 | TGAnimAction | GetAction._anim_node | 6 | 1/11 | 2026-07-10 22:03 UTC |  |
-| 110 | TGAnimAction | _anim_node.kind | 6 | 1/11 | 2026-07-10 22:03 UTC |  |
+| 110 | TGAnimAction | _anim_node.kind | 6 | 1/11 | 2026-07-10 22:03 UTC | 2026-07-13 |
 | 111 | GridClass | GetPhaserSystem | 4 | 2/11 | 2026-07-10 22:08 UTC |  |
 | 112 | GridClass | GetPulseWeaponSystem | 4 | 2/11 | 2026-07-10 22:08 UTC |  |
 | 113 | GridClass | GetTorpedoSystem | 4 | 2/11 | 2026-07-10 22:08 UTC |  |
@@ -153,9 +153,9 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 125 | Sun | GetTorpedoSystem | 4 | 2/11 | 2026-07-10 22:08 UTC |  |
 | 126 | Sun | GetTractorBeamSystem | 4 | 2/11 | 2026-07-10 22:08 UTC |  |
 | 127 | TGAnimAction | GetAction._clip | 4 | 1/11 | 2026-07-10 22:03 UTC |  |
-| 128 | TGScriptAction | _action_type | 4 | 4/11 | 2026-07-12 13:20 UTC |  |
-| 129 | TGScriptAction | _anim_node | 4 | 4/11 | 2026-07-12 13:20 UTC |  |
-| 130 | TGScriptAction | _anim_node.kind | 4 | 4/11 | 2026-07-12 13:20 UTC |  |
+| 128 | TGScriptAction | _action_type | 4 | 4/11 | 2026-07-12 13:20 UTC | 2026-07-13 |
+| 129 | TGScriptAction | _anim_node | 4 | 4/11 | 2026-07-12 13:20 UTC | 2026-07-13 |
+| 130 | TGScriptAction | _anim_node.kind | 4 | 4/11 | 2026-07-12 13:20 UTC | 2026-07-13 |
 | 131 | TGPane | SetAlwaysHandleEvents | 3 | 3/11 | 2026-07-12 12:57 UTC |  |
 | 132 | TGPane | SetNotAlwaysHandleEvents | 3 | 3/11 | 2026-07-12 12:57 UTC |  |
 | 133 | TGParagraph | SetString | 3 | 3/11 | 2026-07-12 12:57 UTC |  |

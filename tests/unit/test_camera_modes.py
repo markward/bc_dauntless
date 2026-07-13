@@ -181,8 +181,10 @@ class _NotDying:
 
 
 def test_target_alive_waypoint_reads_alive():
-    # A Waypoint has no real IsDying; TGObject.__getattr__ hands back a truthy
-    # _Stub, which must read as "not dying" (placements never die).
+    # A Waypoint does not implement IsDying (DamageableObject surface) and
+    # never dies, so it must read as alive. Decided on the MRO: hasattr /
+    # getattr cannot answer it, because TGObject.__getattr__ hands back a
+    # truthy _Stub for any unknown engine name.
     assert _target_alive(Waypoint()) is True
 
 
