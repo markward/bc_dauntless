@@ -1238,7 +1238,8 @@ class WarpEngineSubsystem(PoweredSubsystem):
     # deadline: the SDK fires TransitionToState(WES_DEWARP_*) and expects the
     # engine to run the dewarp out (Actions/EffectScriptActions.py:226) — with
     # no completion the ship is stranded mid-warp forever.
-    DEWARP_STATES = frozenset((5, 6, 7))
+    DEWARP_STATES = frozenset(
+        (WES_DEWARP_INITIATED, WES_DEWARP_BEGINNING, WES_DEWARP_ENDING))
 
     # Used when a script transitions to a dewarp state without ever setting a
     # warp effect time (GetWarpEffectTime() == 0.0).

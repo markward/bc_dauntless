@@ -195,6 +195,29 @@ Filed so they are not lost; each is a separate change.
    is unimplemented (heatmap ranks 7-10, 4924 hits), so avoidance mis-predicts
    planet motion. `collisions._resolve_body` dodges this by forcing planets to
    zero velocity; avoidance should do the same.
+3. **Blast radius not in the original design:** every SDK warp-in NPC
+   (`loadspacehelper.py:124-127` → `EffectScriptActions.CreateEndWarpSequence` →
+   `InitiateDewarp`) now gets ~2 s of non-collidability at mission load, where
+   it previously got none. Almost certainly desirable, but it is a real
+   behaviour delta across every mission that spawns ships with a warp-in.
+4. **`GetWarpState()` non-zero while `GetWarpSequence()` is `None`** — a pairing
+   BC never produces (we never call `SetWarpSequence`). Inert today
+   (`ConditionWarpingToSet.py:63` and `AI/PlainAI/FollowThroughWarp.py:122,143`
+   read only the sequence), but a trap for whoever next wires
+   `FollowThroughWarp`.
+5. **The dewarp completion timer ticks on wall-clock `_player_dt`, while the SDK
+   half of the same FSM (`CreateEndWarpSequence`'s `GetWarpEffectTime()/2`
+   delays) runs on GAME time (`g_kTimerManager`).** Under any
+   game-time/real-time divergence the engine's auto-complete fires early or
+   late relative to the SDK's own explicit clear. Not fatal (the SDK always
+   clears explicitly, and `SetWarpState(0)` cancels the pending timer), but the
+   FSM should tick on the clock its other half runs on.
+6. **Suppression can leave a ship embedded in a body:** if the exit glide ends
+   inside a planet/starbase, collisions resume with the ship overlapping and at
+   rest — `_respond_pair` returns `None` for any non-approaching pair, so there
+   is no de-penetration: the ship silently sits inside the body. BC avoided
+   this with `CheckWarpInPath` geometric deconfliction (`WarpSequence.py:614-
+   721`), which we do not implement.
 
 ## Tests
 

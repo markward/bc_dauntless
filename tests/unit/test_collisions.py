@@ -526,12 +526,23 @@ def test_warp_suppression_does_not_stomp_the_sdk_collision_flag():
 
 
 def test_sdk_collisions_off_composes_with_warp_rather_than_being_overridden():
+    # M-2.2: the two gates must COMPOSE, not have one override the other —
+    # exercised at every combination, including WHILE warping (the prior
+    # version of this test only asserted after clearing warp, so it never
+    # actually exercised composition during warp and passed even before the
+    # warp gate was wired in at all).
     from engine.appc.collisions import _collisions_enabled
     from engine.appc.subsystems import WarpEngineSubsystem
     s = _warping_ship(0.0, 1000.0, 0.0, state=WarpEngineSubsystem.WES_WARPING)
+
     s.SetCollisionsOn(0)
+    assert _collisions_enabled(s) is False   # SDK flag off + warping
+
     s.GetWarpEngineSubsystem().SetWarpState(WarpEngineSubsystem.WES_NOT_WARPING)
-    assert _collisions_enabled(s) is False   # the mission's flag still holds
+    assert _collisions_enabled(s) is False   # warp clears; the flag still holds
+
+    s.SetCollisionsOn(1)
+    assert _collisions_enabled(s) is True    # flag back on, not warping
 
 
 def test_planet_stays_collidable_the_stub_trap():

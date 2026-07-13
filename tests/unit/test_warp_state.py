@@ -56,6 +56,26 @@ def test_planet_is_never_warping():
     assert warp_state.is_ship_warping(p) is False
 
 
+def test_non_ship_with_a_real_warping_subsystem_is_never_warping():
+    # M-2.1: test_planet_is_never_warping does NOT discriminate the OUTER
+    # isinstance(obj, ShipClass) guard on its own — Planet's
+    # GetWarpEngineSubsystem() is a truthy _Stub, and the INNER
+    # `isinstance(sub, WarpEngineSubsystem)` check in _warp_subsystem
+    # independently saves it (a _Stub is not a WarpEngineSubsystem). This
+    # test uses a non-ShipClass object that duck-types GetWarpEngineSubsystem
+    # to a REAL, warping WarpEngineSubsystem — the inner check can't save it,
+    # so only the outer isinstance(ShipClass) guard can. Verified to FAIL
+    # with that guard commented out (see final-fix-report.md).
+    sub = WarpEngineSubsystem("Warp Engines")
+    sub.SetWarpState(WarpEngineSubsystem.WES_WARPING)
+
+    class _NotAShip:
+        def GetWarpEngineSubsystem(self):
+            return sub
+
+    assert warp_state.is_ship_warping(_NotAShip()) is False
+
+
 def test_tick_warp_states_completes_a_dewarp_across_the_sets():
     from engine.appc.sets import SetClass_Create
     pSet = SetClass_Create()

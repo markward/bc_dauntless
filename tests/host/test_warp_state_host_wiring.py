@@ -31,17 +31,33 @@ def test_warp_state_is_ticked_before_collisions_in_the_host_loop():
 
 
 def test_mission_swap_clears_a_mid_warp_ship():
-    # The swap destroys the ship, so reset() drops the registration without
-    # touching it — a later frame must not find a stale flythrough ship.
+    # C-2: the design's "Leak safety" section requires that a mission swap
+    # mid-warp leaves the ship at WES_NOT_WARPING. warp_state.reset() only
+    # drops the registration WITHOUT touching the ship's own warp state —
+    # it survived only by the coincidence that reset_sdk_globals() also
+    # clears App.g_kSetManager._sets, making the ship (usually) unreachable.
+    # Any path that keeps a reference to the ship across a swap (as this
+    # test itself does) re-opens the leak. Drive the REAL swap teardown
+    # (HostController._drain_pending_swap) and assert on the ACTUAL mid-warp
+    # ship, not a freshly constructed stand-in.
     s = ShipClass()
     s.SetWarpEngineSubsystem(WarpEngineSubsystem("Warp Engines"))
     warp_state.begin_flythrough(s)
     warp_state.set_state(s, WarpEngineSubsystem.WES_WARPING)
 
     import engine.host_loop as hl
-    assert "warp_state.reset()" in inspect.getsource(hl)
+    assert "warp_state.end_flythrough()" in inspect.getsource(hl)
 
-    warp_state.reset()
+    class _StubLoader:
+        def load(self, name):
+            return None
+
+    hc = hl.HostController()
+    hc.loader = _StubLoader()
+    hc.pending_swap = "SomeMission"
+    hc._drain_pending_swap()
+
+    assert warp_state.get_state(s) == WarpEngineSubsystem.WES_NOT_WARPING
     assert warp_state.flythrough_ship() is None
     # A fresh ship in the new mission is collidable.
     from engine.appc.collisions import _collisions_enabled

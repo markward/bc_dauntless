@@ -13,6 +13,7 @@ import math
 from dataclasses import dataclass
 
 from engine.appc.math import TGPoint3
+from engine.appc.warp_state import is_ship_warping
 
 # -- Tuning constants (single home; see spec §9) --
 COLLISION_RESTITUTION = 0.2      # bounciness e; mostly inelastic crunch
@@ -71,7 +72,6 @@ def _collisions_enabled(obj):
     """
     if not obj.__dict__.get("_collisions_on", True):
         return False
-    from engine.appc.warp_state import is_ship_warping
     return not is_ship_warping(obj)
 
 

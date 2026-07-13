@@ -3650,8 +3650,13 @@ class HostController:
         except Exception:
             pass
         try:
+            # end_flythrough() (no ship) releases EVERY registered ship and
+            # sets each back to WES_NOT_WARPING — not warp_state.reset(),
+            # which only drops the registration and leaves the ship's own
+            # warp state untouched. It is a strict superset of reset() and
+            # harmless on a ship about to be destroyed by this same swap.
             from engine.appc import warp_state as _warp_state
-            _warp_state.reset()
+            _warp_state.end_flythrough()
         except Exception:
             pass
         try:
