@@ -18,6 +18,7 @@ import math as _math
 from engine.appc.events import TGEventHandlerObject
 from engine.appc.float_range_watcher import FloatRangeWatcher
 from engine.appc.math import TGPoint3, TGMatrix3
+from engine.core.ids import implements
 import engine.dev_mode as dev_mode
 
 
@@ -1855,7 +1856,10 @@ class PowerSubsystem(ShipSubsystem):
             if ship is None:
                 return
             warp_core_breach.arm(ship)
-            if hasattr(ship, "IsDying") and hasattr(ship, "IsDead") \
+            # implements(), NOT hasattr(): __getattr__ answers every hasattr
+            # probe on a TGObject with a truthy _Stub, so the old guard could
+            # not tell a real IsDying() from a stub that reads as "dying".
+            if implements(ship, "IsDying") and implements(ship, "IsDead") \
                     and not ship.IsDying() and not ship.IsDead():
                 from engine.appc import ship_death
                 ship_death.begin(ship)

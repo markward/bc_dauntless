@@ -29,6 +29,7 @@ from dataclasses import dataclass
 
 from engine.appc.math import TGMatrix3, TGPoint3
 from engine.appc.objects import PhysicsObjectClass
+from engine.core.ids import implements
 
 # Match _PlayerControl.FALLBACK_MAX_ACCEL in engine/host_loop.py:613.
 # Used when a ship has no ImpulseEngineSubsystem with non-zero MaxSpeed
@@ -138,7 +139,15 @@ def _step_ship_motion(ship, dt: float) -> None:
     # integrate a translation or rotation, whatever setpoint the Stay AI (or
     # anything else) wrote. Placed first so even a degenerate warp/setpoint
     # state can't move a station.
-    if getattr(ship, "IsImmobile", None) is not None and ship.IsImmobile():
+    #
+    # implements(), NOT getattr(...) is not None: IsImmobile is a ShipClass
+    # method, and TGObject.__getattr__ hands back a truthy _Stub for it on any
+    # other object — so the old gate returned for EVERY non-ship, i.e. it gave
+    # the right answer for the wrong reason. tick_all_ship_motion feeds this
+    # from iter_ships(), which is already ShipClass-filtered, so no non-ship
+    # reaches it via that path; the gate still has to be honest for direct
+    # callers (and for the day someone makes _Stub falsy).
+    if implements(ship, "IsImmobile") and ship.IsImmobile():
         return
 
     # An active in-system-warp transit overrides normal setpoint motion:

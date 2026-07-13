@@ -59,13 +59,10 @@ class ShipClass(DamageableObject):
         # Targeting state
         self._target = None
         self._target_subsystem = None
-        # Lifecycle flags — IsDocked/IsDying/IsDead drive cutscene + game-over
-        # branching in MissionLib and per-mission scripts.  Defaults are
-        # the "alive, undocked, not dying" state that a freshly-spawned ship
-        # has at mission start.
+        # IsDocked drives cutscene + game-over branching in MissionLib and
+        # per-mission scripts. Freshly-spawned ships are undocked. (_dying /
+        # _dead are initialised by DamageableObject, which owns IsDying/IsDead.)
         self._docked = False
-        self._dying = False
-        self._dead = False
         # Ship-level identity populated by SetupProperties from ShipProperty.
         self._genus: int = 0
         self._species: int = 0
@@ -1303,18 +1300,8 @@ class ShipClass(DamageableObject):
     def IsDocked(self) -> int:    return 1 if self._docked else 0
     def SetDocked(self, v) -> None:
         self._docked = bool(v)
-    def IsDying(self) -> int:     return 1 if self._dying else 0
-    def SetDying(self, v) -> None:
-        self._dying = bool(v)
-    def IsDead(self) -> int:      return 1 if self._dead else 0
-    def SetDead(self, v=True) -> None:
-        # Single-arg form (truthy) and zero-arg form (sets dead) both used.
-        new_dead = bool(v) if v is not True else True
-        was_dead = self._dead
-        self._dead = new_dead
-        if new_dead and not was_dead:
-            from engine.appc import ship_lifecycle
-            ship_lifecycle.publish_destroyed(self)
+    # IsDying / SetDying / IsDead / SetDead live on DamageableObject, where BC
+    # declares them (App.py:5363-5365).
 
     # ── Subsystem iteration ───────────────────────────────────────────────────
     # Phase 1 ships have no subsystems registered for matching; these stubs

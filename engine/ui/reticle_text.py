@@ -7,6 +7,7 @@ See docs/superpowers/specs/2026-06-09-reticle-chrome-bars-text-design.md
 """
 from __future__ import annotations
 
+from engine.core.ids import implements
 from engine.units import GU_TO_KM, GUPS_TO_KPH
 from engine.ui.ship_property_viewer import project
 from engine.ui.target_reticle import _valid_target, _valid_subsystem
@@ -55,7 +56,11 @@ def build_reticle_text(player, camera, viewport) -> dict:
     # planet itself renders wider than 25 km. Negligible for small ships,
     # decisive for planets/stations.
     dist_gu = dist_gu - radius if dist_gu > radius else 0.0
-    vel = target.GetVelocity() if hasattr(target, "GetVelocity") else None
+    # implements(), NOT hasattr(): a targeted planet is an ObjectClass with no
+    # GetVelocity, and hasattr() is vacuously true on any TGObject — so this
+    # read a _Stub and only came out as 0 kph because _Stub arithmetic collapses
+    # to 0. Planets don't move; say so honestly.
+    vel = target.GetVelocity() if implements(target, "GetVelocity") else None
     speed_gu = (vel.x * vel.x + vel.y * vel.y + vel.z * vel.z) ** 0.5 if vel else 0.0
 
     sub = _valid_subsystem(player)

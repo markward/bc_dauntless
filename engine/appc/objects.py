@@ -616,9 +616,36 @@ class DamageableObject(PhysicsObjectClass):
         # carves now; strength mod is stored-only until Gap 2 plumbs strength.
         self._vis_dmg_radius_mod: float = 1.0
         self._vis_dmg_strength_mod: float = 1.0
+        # Lifecycle flags. BC declares IsDying/IsDead/SetDead on
+        # DamageableObject (sdk/Build/scripts/App.py:5363-5365), not on
+        # ShipClass — and the death guards below (`... and not self.IsDying()`)
+        # are written against `self` as a DamageableObject. Defining them any
+        # lower left those guards reading a truthy _Stub on any non-ship
+        # DamageableObject, i.e. permanently False. Fresh objects are alive.
+        self._dying = False
+        self._dead = False
 
     def GetPropertySet(self):
         return self._property_set
+
+    # ── Lifecycle state (App.py:5363-5365) ───────────────────────────────────
+    def IsDying(self) -> int:
+        return 1 if self._dying else 0
+
+    def SetDying(self, v) -> None:
+        self._dying = bool(v)
+
+    def IsDead(self) -> int:
+        return 1 if self._dead else 0
+
+    def SetDead(self, v=True) -> None:
+        # Single-arg form (truthy) and zero-arg form (sets dead) both used.
+        new_dead = bool(v) if v is not True else True
+        was_dead = self._dead
+        self._dead = new_dead
+        if new_dead and not was_dead:
+            from engine.appc import ship_lifecycle
+            ship_lifecycle.publish_destroyed(self)
 
     def HasClonedModel(self) -> int:
         """Whether this object has a cloned model carrying a separate
@@ -755,7 +782,6 @@ class DamageableObject(PhysicsObjectClass):
         subsystem.SetCondition(new_cond)
         _route_zero_crossing(self, subsystem, cur > 0.0 and new_cond <= 0.0)
         if new_cond <= 0.0 and _is_critical(subsystem) \
-                and hasattr(self, "IsDying") and hasattr(self, "IsDead") \
                 and not self.IsDying() and not self.IsDead():
             from engine.appc import ship_death
             ship_death.begin(self, killer=source)
@@ -773,7 +799,6 @@ class DamageableObject(PhysicsObjectClass):
             subsystem.SetDestroyed(True)
         _route_zero_crossing(self, subsystem, cur > 0.0)
         if _is_critical(subsystem) \
-                and hasattr(self, "IsDying") and hasattr(self, "IsDead") \
                 and not self.IsDying() and not self.IsDead():
             from engine.appc import ship_death
             ship_death.begin(self)

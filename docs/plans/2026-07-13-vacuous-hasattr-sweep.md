@@ -21,6 +21,10 @@ implement the method, so the guard is merely redundant. Target the sites where
 the receiver can be the *wrong kind of object*. The stub heatmap already names
 them.
 
+> **RESOLVED 2026-07-13** (branch `fix/ship-only-loops-non-ship-objects`), with
+> one correction to §1: the consumer named below was **wrong**. See
+> "What §1 actually was" at the bottom.
+
 ## 1. Ship-only loops iterate every set object (evidence: 12 heatmap rows)
 
 `iter_ships` walks `pSet._objects.values()` — **every** object in the set:
@@ -74,3 +78,41 @@ the question.
 
 1 is the one with live hit counts behind it; 2 and 3 are hardening. None is
 urgent — all three are latent as far as the evidence goes.
+
+## What §1 actually was (written 2026-07-13, after the fix)
+
+`_advance_weapons` was **never** the culprit, and `iter_ships` has not walked
+non-ships since `c3c17f34` (2026-05-12) — it already filters
+`isinstance(obj, ShipClass)`, and `_advance_weapons` consumes it via
+`_all_ships_for_tick`. The above was inferred, not traced.
+
+The real source of all 24 `{Waypoint,LightPlacement,Planet}.Get*System[.GetNum
+ChildSubsystems]` rows is **`engine/appc/warp.py:_silence_ship_weapons`**, called
+from `_WarpDepartAction` / `_ArriveFinalizeAction` on `src._objects.values()` —
+every member of the source set, on every warp. Its own `hasattr(wsys,
+"GetNumChildSubsystems")`-then-call pattern is what produced the exact 2:1 ratio
+between the chained rows (108/54) and the getter rows. Fixed with an
+`isinstance(ship, ShipClass)` gate in the function, so both call sites are
+covered.
+
+`Planet.GetVelocity` (§1's second bullet) had a **second** source the plan
+missed: `engine/ui/reticle_text.py:58` reads the *target's* velocity, and a
+planet is targetable. Both are fixed with `implements()`.
+
+**Empirical answer to the open question** — does the stub velocity perturb an
+avoidance prediction? **No.** `TGPoint3.__init__` calls `float()` on each
+component and `_Stub.__float__` returns `0.0`, so the planet's velocity was
+already coerced to exactly the zero vector that `collisions._resolve_body`
+forces for planets. It was pure churn, not a wrong number — and the same is true
+of the reticle's 0 kph readout. Both are pinned by tests now.
+
+## Follow-up: `hasattr(target, "IsDead")` on a targetable non-ship
+
+Five sites read a *target* — which can be a planet — through a vacuous
+`hasattr`: `engine/host_loop.py:607`, `engine/appc/tractor.py:127`,
+`engine/appc/weapon_subsystems.py:312,1287,1526`. A planet is an `ObjectClass`,
+so `IsDead()` returns a truthy `_Stub`, i.e. **a targeted planet reads as
+dead**. Moving `IsDying`/`IsDead` up to `DamageableObject` (§3, done) does not
+reach it — `Planet` is not damageable. No `Planet.IsDead` / `Waypoint.IsDead`
+heatmap row exists across 16 runs, so nothing hits this today; it is latent.
+Deliberately left alone rather than swept blind.

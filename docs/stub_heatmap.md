@@ -37,10 +37,10 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 25 | App | ET_TARGET_WAS_CHANGED | 102 | 13/16 | 2026-07-13 20:23 UTC |  |
 | 26 | ShipClass | SetSplashDamage | 100 | 13/16 | 2026-07-13 20:23 UTC |  |
 | 27 | TGInputManager | MoveMouseCursorTo | 97 | 16/16 | 2026-07-13 20:23 UTC |  |
-| 28 | Waypoint | GetPhaserSystem.GetNumChildSubsystems | 90 | 2/16 | 2026-07-13 12:09 UTC |  |
-| 29 | Waypoint | GetPulseWeaponSystem.GetNumChildSubsystems | 90 | 2/16 | 2026-07-13 12:09 UTC |  |
-| 30 | Waypoint | GetTorpedoSystem.GetNumChildSubsystems | 90 | 2/16 | 2026-07-13 12:09 UTC |  |
-| 31 | Waypoint | GetTractorBeamSystem.GetNumChildSubsystems | 90 | 2/16 | 2026-07-13 12:09 UTC |  |
+| 28 | Waypoint | GetPhaserSystem.GetNumChildSubsystems | 90 | 2/16 | 2026-07-13 12:09 UTC | 2026-07-13 |
+| 29 | Waypoint | GetPulseWeaponSystem.GetNumChildSubsystems | 90 | 2/16 | 2026-07-13 12:09 UTC | 2026-07-13 |
+| 30 | Waypoint | GetTorpedoSystem.GetNumChildSubsystems | 90 | 2/16 | 2026-07-13 12:09 UTC | 2026-07-13 |
+| 31 | Waypoint | GetTractorBeamSystem.GetNumChildSubsystems | 90 | 2/16 | 2026-07-13 12:09 UTC | 2026-07-13 |
 | 32 | ShipClass | subsystems | 78 | 13/16 | 2026-07-13 20:23 UTC |  |
 | 33 | Mission | AddPrecreatedShip | 77 | 10/16 | 2026-07-13 19:30 UTC |  |
 | 34 | App | ExplodeEmitterProperty_Create | 71 | 10/16 | 2026-07-13 19:30 UTC |  |
@@ -70,10 +70,10 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 58 | App | WC_ALT_C | 48 | 16/16 | 2026-07-13 20:23 UTC |  |
 | 59 | App | WC_ALT_T | 48 | 16/16 | 2026-07-13 20:23 UTC |  |
 | 60 | App | ET_OBJECTIVES | 46 | 13/16 | 2026-07-13 20:23 UTC |  |
-| 61 | Waypoint | GetPhaserSystem | 45 | 2/16 | 2026-07-13 12:09 UTC |  |
-| 62 | Waypoint | GetPulseWeaponSystem | 45 | 2/16 | 2026-07-13 12:09 UTC |  |
-| 63 | Waypoint | GetTorpedoSystem | 45 | 2/16 | 2026-07-13 12:09 UTC |  |
-| 64 | Waypoint | GetTractorBeamSystem | 45 | 2/16 | 2026-07-13 12:09 UTC |  |
+| 61 | Waypoint | GetPhaserSystem | 45 | 2/16 | 2026-07-13 12:09 UTC | 2026-07-13 |
+| 62 | Waypoint | GetPulseWeaponSystem | 45 | 2/16 | 2026-07-13 12:09 UTC | 2026-07-13 |
+| 63 | Waypoint | GetTorpedoSystem | 45 | 2/16 | 2026-07-13 12:09 UTC | 2026-07-13 |
+| 64 | Waypoint | GetTractorBeamSystem | 45 | 2/16 | 2026-07-13 12:09 UTC | 2026-07-13 |
 | 65 | STCharacterMenu | GetFirstChild | 44 | 11/16 | 2026-07-13 20:01 UTC |  |
 | 66 | KeyboardBinding | FindKey | 42 | 7/16 | 2026-07-13 19:30 UTC |  |
 | 67 | TGInputManager | GetDisplayStringFromUnicode | 42 | 7/16 | 2026-07-13 19:30 UTC |  |
@@ -251,19 +251,19 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 239 | WaypointEvent_Create() | SetDestination | 13 | 3/16 | 2026-07-13 13:43 UTC |  |
 | 240 | WaypointEvent_Create() | SetEventType | 13 | 3/16 | 2026-07-13 13:43 UTC |  |
 | 241 | WaypointEvent_Create() | SetPlacement | 13 | 3/16 | 2026-07-13 13:43 UTC |  |
-| 242 | LightPlacement | GetPhaserSystem.GetNumChildSubsystems | 12 | 2/16 | 2026-07-13 12:09 UTC |  |
-| 243 | LightPlacement | GetPulseWeaponSystem.GetNumChildSubsystems | 12 | 2/16 | 2026-07-13 12:09 UTC |  |
-| 244 | LightPlacement | GetTorpedoSystem.GetNumChildSubsystems | 12 | 2/16 | 2026-07-13 12:09 UTC |  |
-| 245 | LightPlacement | GetTractorBeamSystem.GetNumChildSubsystems | 12 | 2/16 | 2026-07-13 12:09 UTC |  |
+| 242 | LightPlacement | GetPhaserSystem.GetNumChildSubsystems | 12 | 2/16 | 2026-07-13 12:09 UTC | 2026-07-13 |
+| 243 | LightPlacement | GetPulseWeaponSystem.GetNumChildSubsystems | 12 | 2/16 | 2026-07-13 12:09 UTC | 2026-07-13 |
+| 244 | LightPlacement | GetTorpedoSystem.GetNumChildSubsystems | 12 | 2/16 | 2026-07-13 12:09 UTC | 2026-07-13 |
+| 245 | LightPlacement | GetTractorBeamSystem.GetNumChildSubsystems | 12 | 2/16 | 2026-07-13 12:09 UTC | 2026-07-13 |
 | 246 | STCharacterMenu | GetFirstChild.SetEnabled | 12 | 3/16 | 2026-07-13 20:01 UTC |  |
 | 247 | STSubPane | ResizeToContents | 12 | 4/16 | 2026-07-13 20:23 UTC |  |
 | 248 | Torpedo_Cast() | GetObjID | 12 | 1/16 | 2026-07-13 20:01 UTC |  |
 | 249 | _STStylizedWindow | ScrollToBottom | 12 | 4/16 | 2026-07-13 20:23 UTC |  |
 | 250 | EventType | ET_AI_SHIELD_WATCHER | 11 | 5/16 | 2026-07-13 20:23 UTC |  |
-| 251 | Planet | GetVelocity | 11 | 1/16 | 2026-07-13 08:53 UTC |  |
-| 252 | Planet | GetVelocity.x | 11 | 1/16 | 2026-07-13 08:53 UTC |  |
-| 253 | Planet | GetVelocity.y | 11 | 1/16 | 2026-07-13 08:53 UTC |  |
-| 254 | Planet | GetVelocity.z | 11 | 1/16 | 2026-07-13 08:53 UTC |  |
+| 251 | Planet | GetVelocity | 11 | 1/16 | 2026-07-13 08:53 UTC | 2026-07-13 |
+| 252 | Planet | GetVelocity.x | 11 | 1/16 | 2026-07-13 08:53 UTC | 2026-07-13 |
+| 253 | Planet | GetVelocity.y | 11 | 1/16 | 2026-07-13 08:53 UTC | 2026-07-13 |
+| 254 | Planet | GetVelocity.z | 11 | 1/16 | 2026-07-13 08:53 UTC | 2026-07-13 |
 | 255 | Planet | IsScannable | 11 | 10/16 | 2026-07-13 19:30 UTC |  |
 | 256 | App | ET_IN_SYSTEM_WARP | 10 | 10/16 | 2026-07-13 19:30 UTC |  |
 | 257 | App | ET_MOUSE | 10 | 10/16 | 2026-07-13 19:30 UTC |  |
@@ -296,14 +296,14 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 284 | GridClass | GetPulseWeaponSystem.GetNumChildSubsystems | 6 | 2/16 | 2026-07-13 12:09 UTC |  |
 | 285 | GridClass | GetTorpedoSystem.GetNumChildSubsystems | 6 | 2/16 | 2026-07-13 12:09 UTC |  |
 | 286 | GridClass | GetTractorBeamSystem.GetNumChildSubsystems | 6 | 2/16 | 2026-07-13 12:09 UTC |  |
-| 287 | LightPlacement | GetPhaserSystem | 6 | 2/16 | 2026-07-13 12:09 UTC |  |
-| 288 | LightPlacement | GetPulseWeaponSystem | 6 | 2/16 | 2026-07-13 12:09 UTC |  |
-| 289 | LightPlacement | GetTorpedoSystem | 6 | 2/16 | 2026-07-13 12:09 UTC |  |
-| 290 | LightPlacement | GetTractorBeamSystem | 6 | 2/16 | 2026-07-13 12:09 UTC |  |
-| 291 | Planet | GetPhaserSystem.GetNumChildSubsystems | 6 | 2/16 | 2026-07-13 12:09 UTC |  |
-| 292 | Planet | GetPulseWeaponSystem.GetNumChildSubsystems | 6 | 2/16 | 2026-07-13 12:09 UTC |  |
-| 293 | Planet | GetTorpedoSystem.GetNumChildSubsystems | 6 | 2/16 | 2026-07-13 12:09 UTC |  |
-| 294 | Planet | GetTractorBeamSystem.GetNumChildSubsystems | 6 | 2/16 | 2026-07-13 12:09 UTC |  |
+| 287 | LightPlacement | GetPhaserSystem | 6 | 2/16 | 2026-07-13 12:09 UTC | 2026-07-13 |
+| 288 | LightPlacement | GetPulseWeaponSystem | 6 | 2/16 | 2026-07-13 12:09 UTC | 2026-07-13 |
+| 289 | LightPlacement | GetTorpedoSystem | 6 | 2/16 | 2026-07-13 12:09 UTC | 2026-07-13 |
+| 290 | LightPlacement | GetTractorBeamSystem | 6 | 2/16 | 2026-07-13 12:09 UTC | 2026-07-13 |
+| 291 | Planet | GetPhaserSystem.GetNumChildSubsystems | 6 | 2/16 | 2026-07-13 12:09 UTC | 2026-07-13 |
+| 292 | Planet | GetPulseWeaponSystem.GetNumChildSubsystems | 6 | 2/16 | 2026-07-13 12:09 UTC | 2026-07-13 |
+| 293 | Planet | GetTorpedoSystem.GetNumChildSubsystems | 6 | 2/16 | 2026-07-13 12:09 UTC | 2026-07-13 |
+| 294 | Planet | GetTractorBeamSystem.GetNumChildSubsystems | 6 | 2/16 | 2026-07-13 12:09 UTC | 2026-07-13 |
 | 295 | STButton | GetName | 6 | 3/16 | 2026-07-13 20:01 UTC |  |
 | 296 | Sun | GetPhaserSystem.GetNumChildSubsystems | 6 | 2/16 | 2026-07-13 12:09 UTC |  |
 | 297 | Sun | GetPulseWeaponSystem.GetNumChildSubsystems | 6 | 2/16 | 2026-07-13 12:09 UTC |  |
@@ -344,10 +344,10 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 332 | GridClass | GetPulseWeaponSystem | 3 | 2/16 | 2026-07-13 12:09 UTC |  |
 | 333 | GridClass | GetTorpedoSystem | 3 | 2/16 | 2026-07-13 12:09 UTC |  |
 | 334 | GridClass | GetTractorBeamSystem | 3 | 2/16 | 2026-07-13 12:09 UTC |  |
-| 335 | Planet | GetPhaserSystem | 3 | 2/16 | 2026-07-13 12:09 UTC |  |
-| 336 | Planet | GetPulseWeaponSystem | 3 | 2/16 | 2026-07-13 12:09 UTC |  |
-| 337 | Planet | GetTorpedoSystem | 3 | 2/16 | 2026-07-13 12:09 UTC |  |
-| 338 | Planet | GetTractorBeamSystem | 3 | 2/16 | 2026-07-13 12:09 UTC |  |
+| 335 | Planet | GetPhaserSystem | 3 | 2/16 | 2026-07-13 12:09 UTC | 2026-07-13 |
+| 336 | Planet | GetPulseWeaponSystem | 3 | 2/16 | 2026-07-13 12:09 UTC | 2026-07-13 |
+| 337 | Planet | GetTorpedoSystem | 3 | 2/16 | 2026-07-13 12:09 UTC | 2026-07-13 |
+| 338 | Planet | GetTractorBeamSystem | 3 | 2/16 | 2026-07-13 12:09 UTC | 2026-07-13 |
 | 339 | STCharacterMenu | RemoveItemW | 3 | 2/16 | 2026-07-13 20:01 UTC |  |
 | 340 | Sun | GetPhaserSystem | 3 | 2/16 | 2026-07-13 12:09 UTC |  |
 | 341 | Sun | GetPulseWeaponSystem | 3 | 2/16 | 2026-07-13 12:09 UTC |  |

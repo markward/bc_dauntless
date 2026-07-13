@@ -352,8 +352,17 @@ def _silence_ship_weapons(ship):
     Energy banks (phaser/pulse) start a looped _PlayingSound on Fire() and stop
     it in StopFiring(). Warping out doesn't go through the normal cease-fire, so
     a mid-fire bank would loop forever in the new system. Walk each weapon
-    system's child banks and StopFiring() any that expose it."""
-    if ship is None:
+    system's child banks and StopFiring() any that expose it.
+
+    Ship-only. Both callers hand us every member of the source set — waypoints,
+    light placements and planets included — and only a ShipClass carries weapon
+    systems. isinstance, NOT hasattr: TGObject.__getattr__ returns a truthy
+    _Stub for any missing engine method, so the four getters (and the
+    GetNumChildSubsystems probe on each result) were called on every inert set
+    member on every warp. That is the whole of heatmap ranks 25-28 / 40-43 /
+    53-56 / 78-81 / 99-102 / 115-118."""
+    from engine.appc.ships import ShipClass
+    if not isinstance(ship, ShipClass):
         return
     for getter in ("GetPhaserSystem", "GetPulseWeaponSystem",
                    "GetTorpedoSystem", "GetTractorBeamSystem"):

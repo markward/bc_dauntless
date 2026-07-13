@@ -37,6 +37,7 @@ import random
 
 from engine.appc.math import TGPoint3
 from engine.appc.objects import PhysicsObjectClass
+from engine.core.ids import implements
 
 # ── SDK AvoidObstacles tunables (Preprocessors.py:1622-1665) ────────────────
 
@@ -120,11 +121,25 @@ def _dont_avoid_types():
 def _world_velocity(obj) -> TGPoint3:
     """Best-estimate world velocity: thrust velocity plus any active
     collision-response overlay. Mirrors collisions._resolve_body so the
-    prediction matches the integrator the ship actually moves under."""
-    try:
-        v = obj.GetVelocity()
-        v = TGPoint3(v.x, v.y, v.z)
-    except Exception:
+    prediction matches the integrator the ship actually moves under.
+
+    The obstacle list is every object in the set, so `obj` is regularly a
+    Planet / Waypoint — an ObjectClass, with no GetVelocity (that starts at
+    PhysicsObjectClass). implements(), NOT hasattr(): TGObject.__getattr__
+    hands back a truthy _Stub for any missing engine method, so the old call
+    reached a stub on every planet, every evaluation (heatmap ranks 7-10,
+    4,924 hits). It was harmless — TGPoint3 floats its args and _Stub.__float__
+    is 0.0, so the components landed on exactly the zero vector
+    collisions._resolve_body forces for a planet — but it was churn, and it
+    only stayed harmless by accident."""
+    if implements(obj, "GetVelocity"):
+        try:
+            v = obj.GetVelocity()
+            v = TGPoint3(v.x, v.y, v.z)
+        except Exception:
+            v = TGPoint3(0.0, 0.0, 0.0)
+    else:
+        # Planets/moons/suns/waypoints: fixed anchors, zero velocity.
         v = TGPoint3(0.0, 0.0, 0.0)
     cv = obj.__dict__.get("_collision_velocity")
     if cv is not None:
