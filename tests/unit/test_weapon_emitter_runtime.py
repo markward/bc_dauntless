@@ -2,8 +2,6 @@
 defaults and the getter surface; Pass 4 (Task 3) populates these from
 property copies, PR 2 will fill/drain them.
 """
-import math
-
 from engine.appc.subsystems import (
     PhaserBank, PulseWeapon, TractorBeam, TorpedoTube,
 )
@@ -57,7 +55,9 @@ def test_torpedo_tube_default_reload_fields():
     assert t.GetImmediateDelay() == 0.0
     assert t.GetReloadDelay() == 0.0
     assert t.GetMaxReady() == 0
-    assert t.GetLastFireTime() == -math.inf
+    # BC inits GAME time to -1000.0 (combat-and-damage.md:757), not -inf --
+    # see tests/unit/test_torpedo_tube_reload.py.
+    assert t.GetLastFireTime() == -1000.0
 
 
 def test_torpedo_tube_num_ready_setters():

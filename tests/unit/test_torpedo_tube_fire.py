@@ -60,19 +60,19 @@ def test_fire_auto_stops_firing():
 
 
 def test_fire_stamps_last_fire_time():
-    import math
+    """BC inits _last_fire_time to -1000.0, GAME time, not -inf
+    (combat-and-damage.md:757) — see test_torpedo_tube_reload.py."""
     tube = _loaded_tube()
-    assert tube.GetLastFireTime() == -math.inf
+    assert tube.GetLastFireTime() == -1000.0
     tube.Fire(target=None, offset=None)
-    assert tube.GetLastFireTime() > -math.inf
+    assert tube.GetLastFireTime() > -1000.0
 
 
 def test_fire_no_ops_when_empty():
     tube = _loaded_tube(num_ready=0)
-    import math
     tube.Fire(target=None, offset=None)
     assert tube.GetNumReady() == 0  # no underflow
-    assert tube.GetLastFireTime() == -math.inf  # no fire-time update
+    assert tube.GetLastFireTime() == -1000.0  # no fire-time update
 
 
 def test_fire_no_sfx_in_pr2a():

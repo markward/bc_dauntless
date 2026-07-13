@@ -1129,6 +1129,7 @@ class ShipClass(DamageableObject):
             v = prop.GetMaxReady()
             if v is not None: tube._max_ready = int(v)
             tube._num_ready = tube._max_ready
+            tube._resize_slots()     # one reload slot per MaxReady, all loaded
 
         _CHILD_DISPATCH = (
             (PhaserProperty,      "_phaser_system",        PhaserBank),

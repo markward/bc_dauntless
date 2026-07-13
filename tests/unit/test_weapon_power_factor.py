@@ -7,16 +7,32 @@ delay is reload_delay / factor.  At factor 0 there is no recharge and no reload.
 
 Fixtures copied verbatim from tests/unit/test_weapon_system_powered.py and
 tests/unit/test_torpedo_tube_power_gate.py per Task 8 brief.
+
+Torpedo reload runs on the GAME clock (App.g_kTimerManager._time), not
+time.monotonic() — see tests/unit/test_torpedo_tube_reload.py.
 """
-import time
+import pytest
 from unittest.mock import patch
 
+import App
 from engine.appc.subsystems import (
     PhaserSystem, TorpedoSystem, TorpedoTube,
 )
 from engine.appc.weapon_subsystems import PhaserBank
 from engine.appc.ships import ShipClass_Create
 from engine.appc.properties import WeaponSystemProperty
+
+
+@pytest.fixture
+def clock():
+    """Drive the game clock directly, matching test_torpedo_tube_reload.py."""
+    App.g_kTimerManager._time = 0.0
+
+    def _set(t: float) -> None:
+        App.g_kTimerManager._time = float(t)
+
+    yield _set
+    App.g_kTimerManager._time = 0.0
 
 
 # ── Shared fixture helpers ──────────────────────────────────────────────────
@@ -74,6 +90,7 @@ def _torpedo_fixture():
     tube._max_ready = 1
     tube._num_ready = 1
     tube._reload_delay = 40.0
+    tube._resize_slots()
     system.AddChildSubsystem(tube)
     return system, tube
 
@@ -137,76 +154,93 @@ def test_phaser_no_parent_recharges_normally():
 
 # ── Torpedo reload tests ─────────────────────────────────────────────────────
 
-def test_torpedo_reload_stalls_at_zero_factor():
+def test_torpedo_reload_stalls_at_zero_factor(clock):
     """factor 0 ⇒ UpdateReload never loads a new torpedo, regardless of elapsed time."""
     system, tube = _torpedo_fixture()
     system._power_factor = 0.0
 
-    # Fire so num_ready drops to 0 and _last_fire_time is set.
+    # Fire so num_ready drops to 0 and a slot starts cooling.
     # Bypass projectile spawn by not binding a script — Fire fails CanFire check
     # (num_ready=1 with parent on, so it will succeed), but we need _spawn to be
     # a no-op.  Use the property path: tube has no property, so _spawn_torpedo
-    # silently no-ops; Fire still decrements _num_ready and sets _last_fire_time.
+    # silently no-ops; Fire still decrements _num_ready and stamps the slot.
+    clock(100.0)
     tube.Fire(target=None, offset=None)
     assert tube._num_ready == 0
 
-    # Set last_fire_time far in the past so the normal threshold is already exceeded.
-    tube._last_fire_time = time.monotonic() - 1000.0
+    # Elapse far more than reload_delay so the normal threshold is already exceeded.
+    clock(100.0 + 1000.0)
 
     # With factor 0.0 UpdateReload should return early without reloading.
     tube.UpdateReload(0.0)
     assert tube._num_ready == 0
 
 
-def test_torpedo_reload_threshold_scales_with_factor():
+def test_torpedo_reload_threshold_scales_with_factor(clock):
     """At factor 0.5 the effective reload delay doubles (reload_delay / 0.5 = 80 s)."""
     system, tube = _torpedo_fixture()
     system._power_factor = 0.5
     tube._reload_delay = 40.0
 
-    # Set last_fire_time so that 50 s have elapsed — beyond the stock 40 s but
-    # below the factor-scaled 80 s.  At factor 0.5 the tube should NOT reload.
-    tube._num_ready = 0
-    tube._last_fire_time = time.monotonic() - 50.0
+    clock(100.0)
+    tube.Fire()
+    assert tube._num_ready == 0
 
+    # 50 s elapsed — beyond the stock 40 s but below the factor-scaled 80 s.
+    # At factor 0.5 the tube should NOT reload.
+    clock(150.0)
     tube.UpdateReload(0.0)
     assert tube._num_ready == 0, "Should not reload at half-power: 50 s < 80 s threshold"
 
 
-def test_torpedo_reload_completes_at_full_factor():
+def test_torpedo_reload_completes_at_full_factor(clock):
     """At factor 1.0 the tube reloads after the normal delay."""
     system, tube = _torpedo_fixture()
     system._power_factor = 1.0
     tube._reload_delay = 40.0
 
-    tube._num_ready = 0
-    # 50 s elapsed > 40 s delay, factor 1.0 ⇒ should reload
-    tube._last_fire_time = time.monotonic() - 50.0
+    clock(100.0)
+    tube.Fire()
+    assert tube._num_ready == 0
 
+    # 50 s elapsed > 40 s delay, factor 1.0 ⇒ should reload
+    clock(150.0)
     tube.UpdateReload(0.0)
     assert tube._num_ready == 1
 
 
-def test_torpedo_reload_fast_at_boosted_factor():
+def test_torpedo_reload_fast_at_boosted_factor(clock):
     """At factor 2.0 the effective threshold is 20 s (40/2); 25 s elapsed ⇒ reloads."""
     system, tube = _torpedo_fixture()
     system._power_factor = 2.0
     tube._reload_delay = 40.0
 
-    tube._num_ready = 0
-    tube._last_fire_time = time.monotonic() - 25.0
+    clock(100.0)
+    tube.Fire()
+    assert tube._num_ready == 0
 
+    clock(125.0)
     tube.UpdateReload(0.0)
     assert tube._num_ready == 1
 
 
-def test_torpedo_reload_no_parent_uses_normal_delay():
-    """A tube with no parent subsystem reloads against the normal delay (factor 1.0)."""
+def test_torpedo_reload_no_parent_uses_normal_delay(clock):
+    """A tube with no parent subsystem reloads against the normal delay (factor 1.0).
+
+    Fire() requires a parent (CanFire gates on GetParentSubsystem()), so an
+    orphan tube can't fire itself into a cooling slot — seed the slot array
+    directly to simulate one round that started cooling at t=100.
+    """
     tube = TorpedoTube("Orphan")
     tube._max_ready = 1
     tube._num_ready = 0
     tube._reload_delay = 40.0
-    tube._last_fire_time = time.monotonic() - 50.0
+    tube._resize_slots()
 
+    clock(100.0)
+    tube._reload_timers[0] = 100.0
+
+    # 50 s elapsed > 40 s delay, factor 1.0 (no parent) ⇒ should reload
+    clock(150.0)
     tube.UpdateReload(0.0)
     assert tube._num_ready == 1
