@@ -113,13 +113,30 @@ def test_partial_loss_does_not_brake_ship_already_above_cap():
     # not dragged down to the new lower cap.
     ship = _galaxy()
     _fwd_setpoint(ship, 6.3)
-    for _ in range(60 * 10):
+    # 20 s, not 10: the ramp is a rate-limited asymptote (BC_IMPULSE_TAU), so
+    # the last sliver of the gap closes slowly (10 s still leaves 1.6e-3).
+    for _ in range(60 * 20):
         _step_ship_motion(ship, 1.0 / 60)
     assert abs(ship._current_speed - 6.3) < 1e-3
+    v_at_cap = ship._current_speed
     _disable_pods(ship, 1)          # cap drops to 4.2, ship is at 6.3
     for _ in range(60 * 5):
         _step_ship_motion(ship, 1.0 / 60)
-    assert abs(ship._current_speed - 6.3) < 1e-3  # unchanged, not braked
+    assert abs(ship._current_speed - v_at_cap) < 1e-6  # unchanged, not braked
+
+
+def test_first_frame_accelerates_it_does_not_teleport_to_commanded_speed():
+    """Regression: the powered branch reads its drift snapshot with
+    getattr(ship, "_drift_velocity", None). While TGObject.__getattr__ stubbed
+    private names that default never fired -- it got a truthy _Stub, assigned
+    _current_speed = _Stub.Length(), and _ramp_toward's `abs(delta) <= step`
+    then evaluated 0 <= 0 and returned the TARGET. Every ship snapped to its
+    commanded speed on its first motion frame instead of accelerating."""
+    ship = _galaxy()
+    _fwd_setpoint(ship, 6.3)
+    _step_ship_motion(ship, 1.0 / 60)
+    assert 0.0 < ship._current_speed < 0.1     # one tick of accel, not 6.3
+    assert isinstance(ship._current_speed, float)
 
 
 def test_total_loss_drifts_at_constant_velocity():

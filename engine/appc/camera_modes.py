@@ -124,23 +124,23 @@ class CameraMode:
 
 
 def _target_alive(obj):
+    # Waypoints / PlacementObjects don't implement IsDying (it is
+    # DamageableObject surface) and never die -- they are the Source of every
+    # placement/zoom camera shot, so they must read as alive. Ask the MRO:
+    # neither getattr-with-default nor hasattr can answer that on a TGObject,
+    # whose __getattr__ hands back a truthy recursive _Stub. (This used to
+    # sniff the returned value for isinstance(_Stub), which worked but called
+    # a stub on the camera target every frame -- Waypoint.IsDying, rank 4 of
+    # docs/stub_heatmap.md.)
+    from engine.core.ids import implements
     if obj is None:
         return False
-    is_dying = getattr(obj, "IsDying", None)
-    if not callable(is_dying):
+    if not implements(obj, "IsDying"):
         return True
     try:
-        dying = is_dying()
+        return not obj.IsDying()
     except Exception:
         return False
-    # Waypoints / PlacementObjects don't implement IsDying — TGObject's
-    # __getattr__ returns a truthy recursive _Stub, which must read as
-    # "not dying" (placement objects never die; they are the Source of every
-    # placement/zoom camera shot).
-    from engine.core.ids import _Stub
-    if isinstance(dying, _Stub):
-        return True
-    return not dying
 
 
 class PlaceByDirectionMode(CameraMode):

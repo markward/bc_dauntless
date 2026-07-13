@@ -37,8 +37,10 @@ def test_all_pods_offline_drift_then_repair_recovers():
         6.3, TGPoint3(0.0, 1.0, 0.0), PhysicsObjectClass.DIRECTION_MODEL_SPACE,
     )
 
-    # 1. Healthy: ramp to full impulse.
-    for _ in range(60 * 5):
+    # 1. Healthy: ramp to full impulse. The ramp is a rate-limited asymptote
+    # (BC_IMPULSE_TAU), so closing the last 4% of the gap takes most of the
+    # window: 5 s only reaches 6.06, 20 s lands within 1e-7.
+    for _ in range(60 * 20):
         _step_ship_motion(ship, 1.0 / 60)
     assert abs(ship._current_speed - 6.3) < 1e-3
 

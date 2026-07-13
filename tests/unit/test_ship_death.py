@@ -713,3 +713,13 @@ def test_locks_held_through_throes_and_released_at_finish():
         assert bystander.GetTarget() is other
     finally:
         App.g_kSetManager._sets.pop("lock_test", None)
+
+
+def test_out_of_action_false_for_non_damageable_object():
+    """A Waypoint / Planet / LightPlacement is not a DamageableObject and never
+    dies. The old hasattr() guards read as True on any TGObject (__getattr__
+    hands back a truthy _Stub), so every inert placement object reported itself
+    DYING to the AI / weapon / target-list gates. Guard on the MRO instead."""
+    from engine.appc.placement import Waypoint
+
+    assert ship_death._out_of_action(Waypoint()) is False

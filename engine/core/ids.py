@@ -114,6 +114,18 @@ class _Stub:
     def __ne__(self, o): return not isinstance(o, type(self))
 
 
+def implements(obj, name: str) -> bool:
+    """True iff `obj`'s class really defines `name` somewhere in its MRO.
+
+    The hasattr()-safe way to ask "does this object support this call?".
+    hasattr() cannot answer it on a TGObject: __getattr__ hands back a truthy
+    _Stub for any unknown non-underscore name, so hasattr() is vacuously True
+    for every engine method on every object (that is how TorpedoTube.UpdateCharge
+    reached 4.9M no-op stub hits -- see docs/stub_heatmap.md).
+    """
+    return any(name in klass.__dict__ for klass in type(obj).__mro__)
+
+
 class TGObject:
     def __init__(self):
         self._obj_id = next(_counter)
@@ -123,6 +135,15 @@ class TGObject:
         return self._obj_id
 
     def __getattr__(self, name: str) -> _Stub:
+        # A single-underscore name is never engine surface: zero of the 36,538
+        # method rows in tools/probes/results/q13b_method_surface.txt (the live
+        # dump of the real BC engine) start with one. So every `_foo` here is
+        # one of OUR OWN Python internals, and handing back a truthy _Stub for
+        # it made hasattr() vacuously true and getattr(obj, name, default)
+        # never reach its default -- e.g. ship_motion's _drift_velocity
+        # snapshot. Raise, as a normal Python object would.
+        if name.startswith("_") and not (name.startswith("__") and name.endswith("__")):
+            raise AttributeError(name)
         if stub_telemetry.ENABLED and not (name.startswith("__") and name.endswith("__")):
             stub_telemetry.record_attr(type(self).__name__, name)
         return _Stub(name, type(self).__name__)

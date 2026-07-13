@@ -12,6 +12,7 @@ See docs/superpowers/specs/2026-06-11-ship-death-sequence-design.md.
 """
 
 import engine.dev_mode as dev_mode
+from engine.core.ids import implements
 
 THROES_DURATION       = 5.0   # seconds the ship coasts, dying, before removal
 WRECK_LINGER_DURATION = 5.0   # seconds a dead hull lingers, selectable in the
@@ -34,12 +35,17 @@ _active: list[dict] = []
 
 def _out_of_action(ship) -> bool:
     """True when `ship` is dying or dead. The single definition of 'inert',
-    which the AI and weapon gate sites will call in later tasks. hasattr-
-    guarded so non-ship objects never read as out of action."""
+    which the AI and weapon gate sites call.
+
+    MRO-guarded, NOT hasattr-guarded: IsDying/IsDead are DamageableObject
+    surface (sdk/Build/scripts/App.py:5363), and a Waypoint / Planet /
+    LightPlacement has neither. hasattr() cannot express that -- it is
+    vacuously True on any TGObject -- so the old guards made every inert
+    placement object read back as DYING."""
     if ship is None:
         return False
-    dying = bool(ship.IsDying()) if hasattr(ship, "IsDying") else False
-    dead = bool(ship.IsDead()) if hasattr(ship, "IsDead") else False
+    dying = bool(ship.IsDying()) if implements(ship, "IsDying") else False
+    dead = bool(ship.IsDead()) if implements(ship, "IsDead") else False
     return dying or dead
 
 
