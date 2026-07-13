@@ -203,6 +203,44 @@ Branch `worktree-matrix-convention-unify` consolidated everything onto
 column. If you see `GetRow(1)` in code that's reading a ship's world
 forward, it is a regression — fix it.
 
+## Shared checkout — NEVER run destructive git
+
+This working tree is shared by **concurrent Claude sessions**, and feature
+branches live in it directly (not in worktrees). Work is often deliberately
+**uncommitted** for long stretches. In that situation, any git command that
+restores the working tree from the index or from HEAD is a **destructive
+command** — it silently deletes another session's (or your own) in-flight work,
+and git offers no undo for uncommitted content.
+
+**Banned outright — do not run these, and tell every subagent you dispatch not
+to either (reviewers included):**
+
+```
+git checkout -- <path>     git checkout .      git restore <path>
+git stash                  git clean           git reset --hard
+git add -A / git add .     (sweeps other sessions' files into your commit)
+```
+
+`git checkout -b <new>` and `git checkout <branch>` are fine. Read-only git is
+fine. Always stage with an **explicit pathspec**.
+
+**To mutate a file temporarily** — which reviewers legitimately need to do, to
+prove a test actually catches the bug it claims to — back it up and restore by
+copy, never by git:
+
+```bash
+cp path/to/file /tmp/bak            # 1. back up
+# ...mutate with Edit, run the test, watch it FAIL...
+cp /tmp/bak path/to/file            # 2. restore
+diff path/to/file /tmp/bak          # 3. PROVE the restore is byte-identical
+```
+
+**Why this rule exists:** during the letterbox work a *reviewer* subagent used
+`git checkout --` to revert its own probe mutation and wiped the task's real,
+uncommitted edit along with it. It only recovered because it happened to
+re-check. A PreToolUse hook now denies these commands, but the hook is a net,
+not the rule — do not go looking for a way around it.
+
 ## Build layout — single source of truth
 
 There is **one** build tree at `<project-root>/build/`. The renderer host binary is at **`build/dauntless`** and the Python extension module is at **`build/python/_dauntless_host.cpython-*.so`**. Do not introduce alternate output locations.
